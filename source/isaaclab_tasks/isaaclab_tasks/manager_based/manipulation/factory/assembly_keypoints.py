@@ -58,7 +58,7 @@ class KeyPointsNistBoard:
 class KeyPointsBoltM16:
     bolt_tip_offset: Offset = Offset(pos=(0, 0, 0.035))
     bolt_base_offset: Offset = Offset(pos=(0, 0, 0.01))
-    screwed_nut_offset: Offset = Offset(pos=(0, 0, 0.031))
+    screwed_nut_offset: Offset = Offset(pos=(0, 0, 0.0315))
 
 
 @configclass
