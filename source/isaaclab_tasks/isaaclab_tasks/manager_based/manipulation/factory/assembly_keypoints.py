@@ -58,7 +58,10 @@ class KeyPointsNistBoard:
 class KeyPointsBoltM16:
     bolt_tip_offset: Offset = Offset(pos=(0, 0, 0.035))
     bolt_base_offset: Offset = Offset(pos=(0, 0, 0.01))
-    screwed_nut_offset: Offset = Offset(pos=(0, 0, 0.0315))
+    first_thread_screwed_nut_offset: Offset = Offset(pos=(0, 0, 0.034))
+    second_thread_screwed_nut_offset: Offset = Offset(pos=(0, 0, 0.031))
+    fully_screwed_to_nist_board_nut_offset: Offset = Offset(pos=(0, 0, 0.020))
+    fully_screwed_nut_offset: Offset = Offset(pos=(0, 0, 0.01))
 
 
 @configclass
@@ -68,6 +71,7 @@ class KeyPointsNutM16:
     center_axis_top: Offset = Offset(pos=(0.0, 0.0, 0.023))
     grasp_point: Offset = Offset(pos=(0.0, 0.0, 0.01), quat=(0.70711, 0.0, 0.0, -0.70711))
     grasp_diameter: float = 0.024
+    screw_ratio: float = 0.002
 
 
 @configclass
