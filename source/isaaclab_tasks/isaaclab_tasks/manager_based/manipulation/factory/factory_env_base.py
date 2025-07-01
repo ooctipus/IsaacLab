@@ -243,7 +243,7 @@ class FactoryEventCfg:
         mode="reset",
         params={
             "terms":{
-                # "strategy1": ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE,
+                "strategy1": ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE,
                 "strategy2": GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
             }
         }
@@ -285,11 +285,11 @@ class FactoryRewardsCfg:
 
     # concentric_alignment_fine = RewTerm(func=mdp.concentric_reward, weight=2.0, params={"std": 0.005})
 
-    progress_reward_coarse = RewTerm(func=mdp.progress_reward, weight=1.0, params={"std": 0.02})
+    progress_reward_coarse = RewTerm(func=mdp.progress_reward, weight=0.5, params={"std": 0.02})
 
-    progress_reward_fine = RewTerm(func=mdp.progress_reward, weight=2.0, params={"std": 0.005})
+    progress_reward_fine = RewTerm(func=mdp.progress_reward, weight=1.0, params={"std": 0.005})
 
-    success_reward = RewTerm(func=mdp.success_reward, weight=4.0)
+    success_reward = RewTerm(func=mdp.success_reward, weight=5.0)
 
 
 @configclass
