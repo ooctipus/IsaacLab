@@ -243,13 +243,12 @@ class TermChoice(ManagerTermBase):
                 term_cfg.func = term_cfg.func(term_cfg, env)  # type: ignore
         
         self.term_samples = torch.zeros((env.num_envs,), dtype=torch.int, device=env.device)
-        if sampling_strategy == "failure_rate":
-            success_monitor_cfg = SuccessMonitorCfg(
-                monitored_history_len=100,
-                num_monitored_data=self.num_partitions,
-                device=env.device,
-            )
-            self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
+        success_monitor_cfg = SuccessMonitorCfg(
+            monitored_history_len=100,
+            num_monitored_data=self.num_partitions,
+            device=env.device,
+        )
+        self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
 
     def __call__(
         self,
@@ -261,7 +260,7 @@ class TermChoice(ManagerTermBase):
         # report
         
         success_rate = self.success_monitor.get_success_rate()
-        log = {env.extras[f"Metrics/term_samples_{str(i)}"]: success_rate[i].item() for i in range(self.num_partitions)}
+        log = {f"Metrics/term_samples_{str(i)}": success_rate[i].item() for i in range(self.num_partitions)}
 
         context_term: ManagerTermBase = env.reward_manager.get_term_cfg("progress_context").func  # type: ignore
         orientation_aligned: torch.Tensor = getattr(context_term, "orientation_aligned")[env_ids]
@@ -271,7 +270,7 @@ class TermChoice(ManagerTermBase):
         self.success_monitor.success_update(self.term_samples[env_ids], term_successes)
         
         if sampling_strategy == "uniform":
-            self.term_samples[env_ids] = torch.randint(0, self.num_partitions, (env_ids.size(0),), device=env_ids.device)
+            self.term_samples[env_ids] = torch.randint(0, self.num_partitions, (env_ids.size(0),), device=env_ids.device, dtype=self.term_samples.dtype)
         else:
             self.term_samples[env_ids] = self.success_monitor.failure_rate_sampling(env_ids)
 
@@ -282,7 +281,8 @@ class TermChoice(ManagerTermBase):
             if term_ids.numel() > 0:
                 term_cfg.func(env, term_ids, **term_cfg.params)
             i += 1
-        
+        if "log" not in env.extras:
+            env.extras["log"] = {}
         env.extras["log"].update(log)  # type: ignore
         
 
