@@ -245,7 +245,8 @@ class FactoryEventCfg:
             "terms":{
                 "strategy1": ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE,
                 "strategy2": GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
-            }
+            },
+            "sampling_strategy": "failure_rate"
         }
     )
 

@@ -19,7 +19,10 @@ class ActionCfg:
     arm_action = mdp.RelativeJointPositionActionCfg(
         asset_name="robot",
         joint_names=["panda_joint.*"],
-        scale=0.02,
+        scale={
+            "(?!panda_joint7).*": 0.02,
+            "panda_joint7": 0.2,
+        },
         use_zero_offset=True,
     )
 
