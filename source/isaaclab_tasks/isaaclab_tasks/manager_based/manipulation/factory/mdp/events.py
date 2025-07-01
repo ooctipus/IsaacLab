@@ -257,10 +257,8 @@ class TermChoice(ManagerTermBase):
         terms: dict[str, ManagerTermBase],
         sampling_strategy: Literal["uniform", "failure_rate"] = "uniform",
     ) -> None:
-        # report
-        
         success_rate = self.success_monitor.get_success_rate()
-        log = {f"Metrics/term_samples_{str(i)}": success_rate[i].item() for i in range(self.num_partitions)}
+        log = {f"Metrics/{name}": success_rate[i].item() for i, name in enumerate(self.term_partitions.keys())}
 
         context_term: ManagerTermBase = env.reward_manager.get_term_cfg("progress_context").func  # type: ignore
         orientation_aligned: torch.Tensor = getattr(context_term, "orientation_aligned")[env_ids]
