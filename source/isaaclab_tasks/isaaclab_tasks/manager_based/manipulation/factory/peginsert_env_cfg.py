@@ -58,9 +58,7 @@ class PegInsertEventCfg(FactoryEventCfg):
             reset_s1["reset_end_effector_around_held_asset"]["robot_ik_cfg"].joint_names = ["panda_joint.*"]
             reset_s1["reset_end_effector_around_held_asset"]["robot_ik_cfg"].body_names = "panda_fingertip_centered"
             reset_s1["reset_end_effector_around_held_asset"]["pose_range_b"] = {
-                "x": (-0.02, 0.02),
-                "y": (-0.02, 0.02),
-                "z": (0.047, 0.057),
+                "z": (0.0, 0.0),
                 "roll": (3.141, 3.141),
                 "yaw": (-0.785, 0.785),
             }
