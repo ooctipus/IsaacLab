@@ -58,15 +58,15 @@ class GearMeshEventCfg(FactoryEventCfg):
             reset_s1["reset_held_asset_on_fixed_asset"]["fixed_asset_cfg"] = SceneEntityCfg("gear_base")
             reset_s1["reset_held_asset_on_fixed_asset"]["assembled_offset"] = KEYPOINTS_GEARBASE.medium_gear_assembled_bottom_offset
             reset_s1["reset_held_asset_on_fixed_asset"]["entry_offset"] = KEYPOINTS_GEARBASE.medium_gear_tip_offset
-            reset_s1["reset_held_asset_on_fixed_asset"]["assembly_fraction_range"] = (0.0, 1.0)  # 0.6 hits the nistboard
-            reset_s1["reset_held_asset_on_fixed_asset"]["assembly_ratio"] = (0., 0., 0.002 / 6.2832)
+            reset_s1["reset_held_asset_on_fixed_asset"]["assembly_fraction_range"] = (0.3, 1.)  # 0.6 hits the nistboard
+            reset_s1["reset_held_asset_on_fixed_asset"]["assembly_ratio"] = (0., 0., 0.)
             
             reset_s1["reset_end_effector_around_held_asset"]["fixed_asset_cfg"] = SceneEntityCfg("medium_gear")
-            reset_s1["reset_end_effector_around_held_asset"]["fixed_asset_offset"] = KEYPOINTS_MEDIUMGEAR.center_axis_bottom
+            reset_s1["reset_end_effector_around_held_asset"]["fixed_asset_offset"] = KEYPOINTS_MEDIUMGEAR.grasp_point
             reset_s1["reset_end_effector_around_held_asset"]["robot_ik_cfg"].joint_names = ["panda_joint.*"]
             reset_s1["reset_end_effector_around_held_asset"]["robot_ik_cfg"].body_names = "panda_fingertip_centered"
             reset_s1["reset_end_effector_around_held_asset"]["pose_range_b"] = {
-                "z": (-0.005, -0.005),
+                "z": (0.0, 0.0),
                 "roll": (3.141, 3.141),
                 "yaw": (1.57, 2.09),
             }
