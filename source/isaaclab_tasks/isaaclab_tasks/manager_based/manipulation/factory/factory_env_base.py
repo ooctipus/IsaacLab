@@ -82,52 +82,6 @@ class FactoryObservationsCfg:
             },
         )
 
-        fixed_asset_in_end_effector_frame: ObsTerm = ObsTerm(
-            func=mdp.target_asset_pose_in_root_asset_frame,
-            params={
-                "target_asset_cfg": SceneEntityCfg("fixed_asset"),
-                "root_asset_cfg": SceneEntityCfg("robot", body_names="end_effector"),
-            },
-        )
-
-        prev_action = ObsTerm(func=mdp.last_action)
-
-        def __post_init__(self) -> None:
-            self.enable_corruption = False
-            self.concatenate_terms = True
-
-    @configclass
-    class CriticCfg(ObsGroup):
-        prev_actions = ObsTerm(func=mdp.last_action)
-
-        joint_pos = ObsTerm(func=mdp.joint_pos)
-
-        end_effector_pose = ObsTerm(
-            func=mdp.target_asset_pose_in_root_asset_frame,
-            params={
-                "target_asset_cfg": SceneEntityCfg("robot", body_names="end_effector"),
-                "root_asset_cfg": SceneEntityCfg("robot"),
-            },
-        )
-
-        end_effector_vel_lin_ang_b = ObsTerm(
-            func=mdp.asset_link_velocity_in_root_asset_frame,
-            params={
-                "target_asset_cfg": SceneEntityCfg("robot", body_names="end_effector"),
-                "root_asset_cfg": SceneEntityCfg("robot"),
-            },
-        )
-
-        held_asset_pose = ObsTerm(
-            func=mdp.target_asset_pose_in_root_asset_frame,
-            params={"target_asset_cfg": SceneEntityCfg("held_asset"), "root_asset_cfg": SceneEntityCfg("robot")},
-        )
-
-        fixed_asset_pose = ObsTerm(
-            func=mdp.target_asset_pose_in_root_asset_frame,
-            params={"target_asset_cfg": SceneEntityCfg("fixed_asset"), "root_asset_cfg": SceneEntityCfg("robot")},
-        )
-
         held_asset_in_fixed_asset_frame: ObsTerm = ObsTerm(
             func=mdp.target_asset_pose_in_root_asset_frame,
             params={
@@ -136,13 +90,90 @@ class FactoryObservationsCfg:
             },
         )
 
+        fixed_asset_in_end_effector_frame: ObsTerm = ObsTerm(
+            func=mdp.target_asset_pose_in_root_asset_frame,
+            params={
+                "target_asset_cfg": SceneEntityCfg("fixed_asset"),
+                "root_asset_cfg": SceneEntityCfg("robot", body_names="end_effector"),
+            },
+        )
+        
+        joint_pos = ObsTerm(func=mdp.joint_pos)
+
+        prev_action = ObsTerm(func=mdp.last_action)
+
         def __post_init__(self) -> None:
             self.enable_corruption = False
             self.concatenate_terms = True
 
+    @configclass
+    class CriticCfg(PolicyCfg):
+        pass
+
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
 
+
+ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE = EventTerm(
+    func=mdp.ChainedResetTerms,
+    mode="reset",
+    params={
+        "terms":{
+            "reset_held_asset_on_fixed_asset": mdp.reset_held_asset_on_fixed_asset,
+            "reset_end_effector_around_held_asset": mdp.reset_end_effector_around_asset,
+            "grasp_held_asset": mdp.grasp_held_asset,
+        },
+        "params":{
+            "reset_held_asset_on_fixed_asset": {
+                "assembled_offset": MISSING,
+                "entry_offset": MISSING,
+                "assembly_fraction_range": (0., 1.),
+                "assembly_ratio": (0., 0., 0.),
+                "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
+                "held_asset_cfg": SceneEntityCfg("held_asset"),
+            },
+            "reset_end_effector_around_held_asset": {
+                "fixed_asset_cfg": MISSING,
+                "fixed_asset_offset": MISSING,
+                "pose_range_b": MISSING,
+                "robot_ik_cfg": SceneEntityCfg("robot"),
+                "ik_iterations": 30,
+            },
+            "grasp_held_asset": {
+                "robot_cfg": SceneEntityCfg("robot", body_names="end_effector"), "held_asset_diameter": MISSING
+            }
+        }
+    }
+)
+
+GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER = EventTerm(
+    func=mdp.ChainedResetTerms,
+    mode="reset",
+    params={
+        "terms":{
+            "reset_end_effector_around_fixed_asset": mdp.reset_end_effector_around_asset,
+            "reset_held_asset_in_hand": mdp.reset_held_asset_in_gripper,
+            "grasp_held_asset": mdp.grasp_held_asset,
+        },
+        "params":{
+            "reset_end_effector_around_fixed_asset": {
+                "fixed_asset_cfg": MISSING,
+                "fixed_asset_offset": MISSING,
+                "pose_range_b": MISSING,
+                "robot_ik_cfg": SceneEntityCfg("robot"),
+            },
+            "reset_held_asset_in_hand": {
+                "holding_body_cfg": SceneEntityCfg("robot", body_names="end_effector"),
+                "held_asset_cfg": SceneEntityCfg("held_asset"),
+                "held_asset_graspable_offset": MISSING,
+                "held_asset_inhand_range": {},
+            },
+            "grasp_held_asset": {
+                "robot_cfg": SceneEntityCfg("robot", body_names="end_effector"), "held_asset_diameter": MISSING
+            }
+        }
+    }
+)
 
 @configclass
 class FactoryEventCfg:
@@ -206,34 +237,18 @@ class FactoryEventCfg:
             "asset_list": ["fixed_asset"],
         },
     )
-
-    reset_end_effector_around_fixed_asset = EventTerm(
-        func=mdp.reset_end_effector_round_fixed_asset,  # type: ignore
+    
+    reset_strategies = EventTerm(
+        func=mdp.TermChoice,
         mode="reset",
         params={
-            "fixed_asset_cfg": MISSING,
-            "fixed_asset_offset": MISSING,
-            "pose_range_b": MISSING,
-            "robot_ik_cfg": SceneEntityCfg("robot"),
-        },
+            "terms":{
+                # "strategy1": ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE,
+                "strategy2": GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
+            }
+        }
     )
 
-    reset_held_asset_in_hand = EventTerm(
-        func=mdp.reset_held_asset,
-        mode="reset",
-        params={
-            "holding_body_cfg": SceneEntityCfg("robot", body_names="end_effector"),
-            "held_asset_cfg": SceneEntityCfg("held_asset"),
-            "held_asset_graspable_offset": MISSING,
-            "held_asset_inhand_range": {},
-        },
-    )
-
-    grasp_held_asset = EventTerm(
-        func=mdp.grasp_held_asset,
-        mode="reset",
-        params={"robot_cfg": SceneEntityCfg("robot", body_names="end_effector"), "held_asset_diameter": MISSING},
-    )
 
 
 @configclass
@@ -266,9 +281,9 @@ class FactoryRewardsCfg:
 
     # orientation_alignment = RewTerm(func=mdp.orientation_reward, weight=1.0, params={"std": 0.02})
 
-    concentric_alignment_coarse = RewTerm(func=mdp.concentric_reward, weight=1.0, params={"std": 0.02})
+    # concentric_alignment_coarse = RewTerm(func=mdp.concentric_reward, weight=1.0, params={"std": 0.02})
 
-    concentric_alignment_fine = RewTerm(func=mdp.concentric_reward, weight=2.0, params={"std": 0.005})
+    # concentric_alignment_fine = RewTerm(func=mdp.concentric_reward, weight=2.0, params={"std": 0.005})
 
     progress_reward_coarse = RewTerm(func=mdp.progress_reward, weight=1.0, params={"std": 0.02})
 
@@ -300,6 +315,9 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     viewer: ViewerCfg = ViewerCfg(
         eye=(0.0, 0.5, 0.1), origin_type="asset_body", asset_name="robot", body_name="panda_fingertip_centered"
     )
+    # viewer: ViewerCfg = ViewerCfg(
+    #     eye=(0.0, 0.5, 0.1), origin_type="asset_root", asset_name="bolt_m16"
+    # )
     actions = MISSING
 
     # Post initialization

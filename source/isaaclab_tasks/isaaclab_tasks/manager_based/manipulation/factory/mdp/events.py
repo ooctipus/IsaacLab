@@ -6,7 +6,8 @@
 from __future__ import annotations
 
 import torch
-from typing import TYPE_CHECKING
+import inspect
+from typing import TYPE_CHECKING, Literal
 
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.controllers import DifferentialIKControllerCfg
@@ -16,6 +17,7 @@ from isaaclab.utils import math as math_utils
 from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 
 from ..assembly_keypoints import KEYPOINTS_NISTBOARD
+from .success_monitor_cfg import SuccessMonitorCfg
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -40,7 +42,35 @@ def reset_fixed_assets(env: ManagerBasedRLEnv, env_ids: torch.tensor, asset_list
         asset.write_root_velocity_to_sim(torch.zeros_like(asset.data.root_vel_w[env_ids]), env_ids=env_ids)
 
 
-def reset_held_asset(
+def reset_held_asset_on_fixed_asset(
+    env: ManagerBasedRLEnv,
+    env_ids: torch.Tensor,
+    assembled_offset: Offset,
+    entry_offset: Offset,
+    assembly_fraction_range: tuple[float, float],
+    assembly_ratio: tuple[float, float, float], # m / radian
+    fixed_asset_cfg: SceneEntityCfg,
+    held_asset_cfg: SceneEntityCfg,
+):
+    fixed_asset: RigidObject = env.scene[fixed_asset_cfg.name]
+    held_asset: Articulation = env.scene[held_asset_cfg.name]
+    
+    assembly_fraction = math_utils.sample_uniform(
+        assembly_fraction_range[0], assembly_fraction_range[1], (len(env_ids), 1), device=env.device
+    )
+    pos_delta = torch.tensor(entry_offset.pos, device=env.device) - torch.tensor(assembled_offset.pos, device=env.device)
+    pos_delta = pos_delta.repeat(len(env_ids), 1) * assembly_fraction
+    ratio = torch.tensor(assembly_ratio, device=env.device)
+    rot_delta = math_utils.wrap_to_pi(torch.where(ratio != 0, 1 / ratio * pos_delta, 0.0))
+    quat_delta = math_utils.quat_from_euler_xyz(rot_delta[:, 0], rot_delta[:, 1], rot_delta[:, 2])
+    held_asset_on_fixed_asset_pose = torch.cat(math_utils.combine_frame_transforms(
+        fixed_asset.data.root_pos_w[env_ids], fixed_asset.data.root_quat_w[env_ids],
+        pos_delta, quat_delta
+    ), dim=1)
+    held_asset.write_root_pose_to_sim(held_asset_on_fixed_asset_pose, env_ids=env_ids)
+
+
+def reset_held_asset_in_gripper(
     env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
     holding_body_cfg: SceneEntityCfg,
@@ -88,7 +118,7 @@ def grasp_held_asset(
     robot.write_joint_state_to_sim(joint_pos, torch.zeros_like(joint_pos), robot_cfg.joint_ids, env_ids)  # type: ignore
 
 
-class reset_end_effector_round_fixed_asset(ManagerTermBase):
+class reset_end_effector_around_asset(ManagerTermBase):
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedRLEnv):
         fixed_asset_cfg: SceneEntityCfg = cfg.params.get("fixed_asset_cfg")  # type: ignore
         fixed_asset_offset: Offset = cfg.params.get("fixed_asset_offset")  # type: ignore
@@ -118,6 +148,7 @@ class reset_end_effector_round_fixed_asset(ManagerTermBase):
         fixed_asset_offset: Offset,
         pose_range_b: dict[str, tuple[float, float]],
         robot_ik_cfg: SceneEntityCfg,
+        ik_iterations: int = 10,
     ) -> None:
         if self.solver is None:
             self.solver = self.robot_ik_solver_cfg.class_type(self.robot_ik_solver_cfg, env)
@@ -132,8 +163,9 @@ class reset_end_effector_round_fixed_asset(ManagerTermBase):
         )
         self.solver.process_actions(torch.cat([pos_b, quat_b], dim=1))
         n_joints: int = self.robot.num_joints if isinstance(self.joint_ids, slice) else len(self.joint_ids)
+        
         # Error Rate 75% ^ 10 = 0.05 (final error)
-        for i in range(10):
+        for i in range(ik_iterations):
             self.solver.apply_actions()
             delta_joint_pos = 0.25 * (self.robot.data.joint_pos_target[env_ids] - self.robot.data.joint_pos[env_ids])
             self.robot.write_joint_state_to_sim(
@@ -194,6 +226,106 @@ def reset_root_state_uniform_on_offset(
     asset.write_root_pose_to_sim(torch.cat([positions, orientations], dim=-1), env_ids=env_ids)
     asset.write_root_velocity_to_sim(velocities, env_ids=env_ids)
 
+
+class TermChoice(ManagerTermBase):
+    def __init__(self, cfg: EventTermCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.term_partitions: dict[str, EventTermCfg] = cfg.params["terms"]  # type: ignore
+        self.num_partitions = len(self.term_partitions)
+        sampling_strategy = cfg.params.get("sampling_strategy", "uniform")  # type: ignore
+        for term_name, term_cfg in self.term_partitions.items():
+            for key, val in term_cfg.params.items():
+                if isinstance(val, SceneEntityCfg):
+                    val.resolve(env.scene)
+
+        for term_name, term_cfg in self.term_partitions.items():
+            if inspect.isclass(term_cfg.func):
+                term_cfg.func = term_cfg.func(term_cfg, env)  # type: ignore
+        
+        self.term_samples = torch.zeros((env.num_envs,), dtype=torch.int, device=env.device)
+        if sampling_strategy == "failure_rate":
+            success_monitor_cfg = SuccessMonitorCfg(
+                monitored_history_len=100,
+                num_monitored_data=self.num_partitions,
+                device=env.device,
+            )
+            self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        env_ids: torch.Tensor,
+        terms: dict[str, ManagerTermBase],
+        sampling_strategy: Literal["uniform", "failure_rate"] = "uniform",
+    ) -> None:
+        # report
+        
+        success_rate = self.success_monitor.get_success_rate()
+        log = {env.extras[f"Metrics/term_samples_{str(i)}"]: success_rate[i].item() for i in range(self.num_partitions)}
+
+        context_term: ManagerTermBase = env.reward_manager.get_term_cfg("progress_context").func  # type: ignore
+        orientation_aligned: torch.Tensor = getattr(context_term, "orientation_aligned")[env_ids]
+        position_centered: torch.Tensor = getattr(context_term, "position_centered")[env_ids]
+        z_distance_reached: torch.Tensor = getattr(context_term, "z_distance_reached")[env_ids]
+        term_successes = torch.where(orientation_aligned & position_centered & z_distance_reached, 1.0, 0.0)
+        self.success_monitor.success_update(self.term_samples[env_ids], term_successes)
+        
+        if sampling_strategy == "uniform":
+            self.term_samples[env_ids] = torch.randint(0, self.num_partitions, (env_ids.size(0),), device=env_ids.device)
+        else:
+            self.term_samples[env_ids] = self.success_monitor.failure_rate_sampling(env_ids)
+
+        i = 0
+        for term_name, term_cfg in self.term_partitions.items():
+            # get the env_ids that belong to the current term
+            term_ids = env_ids[self.term_samples[env_ids] == i]
+            if term_ids.numel() > 0:
+                term_cfg.func(env, term_ids, **term_cfg.params)
+            i += 1
+        
+        env.extras["log"].update(log)  # type: ignore
+        
+
+
+class ChainedResetTerms(ManagerTermBase):
+
+    def __init__(self, cfg: EventTermCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.terms: dict[str, callable] = cfg.params["terms"]  # type: ignore
+        self.params: dict[str, dict[str, any]] = cfg.params["params"]  # type: ignore
+        self.class_terms = {}
+
+        for term_name, term_func in self.terms.items():
+            if inspect.isclass(term_func):
+                self.class_terms[term_name] = term_func
+
+        for term_name, term_cfg in self.params.items():
+            for val in term_cfg.values():
+                if isinstance(val, SceneEntityCfg):
+                    val.resolve(env.scene)
+
+        class ParamsAttrMock:
+            def __init__(self, params):
+                self.params = params
+
+        for term_name, term_cls in self.class_terms.items():
+            params_attr_mock = ParamsAttrMock(self.params[term_name])
+            self.terms[term_name] = term_cls(params_attr_mock, env)
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        env_ids: torch.Tensor,
+        terms: dict[str, callable],
+        params: dict[str, dict[str, any]],
+        probability: float = 1.0,
+    ) -> None:
+        keep = torch.rand(env_ids.size(0), device=env_ids.device) < probability
+        if not keep.any():
+            return
+        env_ids_to_reset = env_ids[keep]
+        for func_name, func in terms.items():
+            func(env, env_ids_to_reset, **params[func_name])  # type: ignore
 
 def _pose_a_when_frame_ba_aligns_pose_c(
     pos_c: torch.Tensor, quat_c: torch.Tensor, pos_ba: torch.Tensor, quat_ba: torch.Tensor
