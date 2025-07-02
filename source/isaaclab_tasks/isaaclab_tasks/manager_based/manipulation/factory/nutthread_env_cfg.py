@@ -50,7 +50,7 @@ class NutThreadEventCfg(FactoryEventCfg):
             reset_s1["reset_held_asset_on_fixed_asset"]["fixed_asset_cfg"] = SceneEntityCfg("bolt_m16")
             reset_s1["reset_held_asset_on_fixed_asset"]["assembled_offset"] = KEYPOINTS_BOLTM16.fully_screwed_nut_offset
             reset_s1["reset_held_asset_on_fixed_asset"]["entry_offset"] = KEYPOINTS_BOLTM16.bolt_tip_offset
-            reset_s1["reset_held_asset_on_fixed_asset"]["assembly_fraction_range"] = (0.91, 1.1)  # 0.6 hits the nistboard
+            reset_s1["reset_held_asset_on_fixed_asset"]["assembly_fraction_range"] = (0.91, 1.0)  # 0.6 hits the nistboard
             reset_s1["reset_held_asset_on_fixed_asset"]["assembly_ratio"] = (0., 0., 0.002 / 6.2832)
 
             reset_s1["reset_end_effector_around_held_asset"]["fixed_asset_cfg"] = SceneEntityCfg("nut_m16")
@@ -66,7 +66,6 @@ class NutThreadEventCfg(FactoryEventCfg):
             reset_s1["grasp_held_asset"]["robot_cfg"].body_names = "panda_fingertip_centered"
             reset_s1["grasp_held_asset"]["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
             reset_s1["grasp_held_asset"]["held_asset_diameter"] = KEYPOINTS_NUTM16.grasp_diameter
-
 
         if "strategy2" in self.reset_strategies.params["terms"]:
             reset_s2: dict = self.reset_strategies.params["terms"]["strategy2"].params["params"]
