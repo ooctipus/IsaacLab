@@ -223,13 +223,14 @@ class PbtAlgoObserver(AlgoObserver):
         std_obj  = float(np.std(initialized_objectives))
         upper_cut = mean_obj + self.pbt_replace_threshold_frac_std * std_obj
         lower_cut = mean_obj - self.pbt_replace_threshold_frac_std * std_obj
+        absolute_cut = self.pbt_replace_threshold_frac_absolute * abs(max(initialized_objectives))
 
         # 2) Leaders & laggards
         leaders = [
-            p for obj, p in zip(initialized_objectives, initialized_policies) if obj > upper_cut and (obj - mean_obj) > self.pbt_replace_threshold_frac_absolute
+            p for obj, p in zip(initialized_objectives, initialized_policies) if obj > upper_cut and obj > absolute_cut
         ]
         laggards = [
-            p for obj, p in zip(initialized_objectives, initialized_policies) if obj < lower_cut and (max(initialized_objectives) - obj) > self.pbt_replace_threshold_frac_absolute
+            p for obj, p in zip(initialized_objectives, initialized_policies) if obj < lower_cut
         ]
 
         print(f"mean={mean_obj:.4f}, std={std_obj:.4f}, upper={upper_cut:.4f}, lower={lower_cut:.4f}")
