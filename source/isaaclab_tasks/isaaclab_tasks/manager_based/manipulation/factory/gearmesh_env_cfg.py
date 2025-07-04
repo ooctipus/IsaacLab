@@ -51,38 +51,38 @@ class GearMeshEventCfg(FactoryEventCfg):
         # For reset_fixed_asset
         self.reset_fixed_asset.params["asset_list"] = ["gear_base", "large_gear", "small_gear"]
 
-        if "strategy1" in self.reset_strategies.params["terms"]:
-            reset_s1: dict = self.reset_strategies.params["terms"]["strategy1"].params["params"]
+        if "start_assembled" in self.reset_strategies.params["terms"]:
+            reset_s1: dict = self.reset_strategies.params["terms"]["start_assembled"].params["terms"]
             # For reset held_asset on fixed_asset
-            reset_s1["reset_held_asset_on_fixed_asset"]["held_asset_cfg"] = SceneEntityCfg("medium_gear")
-            reset_s1["reset_held_asset_on_fixed_asset"]["fixed_asset_cfg"] = SceneEntityCfg("gear_base")
-            reset_s1["reset_held_asset_on_fixed_asset"]["assembled_offset"] = KEYPOINTS_GEARBASE.medium_gear_assembled_bottom_offset
-            reset_s1["reset_held_asset_on_fixed_asset"]["entry_offset"] = KEYPOINTS_GEARBASE.medium_gear_tip_offset
-            reset_s1["reset_held_asset_on_fixed_asset"]["assembly_fraction_range"] = (0.3, 1.)  # 0.6 hits the nistboard
-            reset_s1["reset_held_asset_on_fixed_asset"]["assembly_ratio"] = (0., 0., 0.)
+            reset_s1["reset_held_asset_on_fixed_asset"].params["held_asset_cfg"] = SceneEntityCfg("medium_gear")
+            reset_s1["reset_held_asset_on_fixed_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("gear_base")
+            reset_s1["reset_held_asset_on_fixed_asset"].params["assembled_offset"] = KEYPOINTS_GEARBASE.medium_gear_assembled_bottom_offset
+            reset_s1["reset_held_asset_on_fixed_asset"].params["entry_offset"] = KEYPOINTS_GEARBASE.medium_gear_tip_offset
+            reset_s1["reset_held_asset_on_fixed_asset"].params["assembly_fraction_range"] = (0.3, 1.)  # 0.6 hits the nistboard
+            reset_s1["reset_held_asset_on_fixed_asset"].params["assembly_ratio"] = (0., 0., 0.)
             
-            reset_s1["reset_end_effector_around_held_asset"]["fixed_asset_cfg"] = SceneEntityCfg("medium_gear")
-            reset_s1["reset_end_effector_around_held_asset"]["fixed_asset_offset"] = KEYPOINTS_MEDIUMGEAR.grasp_point
-            reset_s1["reset_end_effector_around_held_asset"]["robot_ik_cfg"].joint_names = ["panda_joint.*"]
-            reset_s1["reset_end_effector_around_held_asset"]["robot_ik_cfg"].body_names = "panda_fingertip_centered"
-            reset_s1["reset_end_effector_around_held_asset"]["pose_range_b"] = {
+            reset_s1["reset_end_effector_around_held_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("medium_gear")
+            reset_s1["reset_end_effector_around_held_asset"].params["fixed_asset_offset"] = KEYPOINTS_MEDIUMGEAR.grasp_point
+            reset_s1["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
+            reset_s1["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
+            reset_s1["reset_end_effector_around_held_asset"].params["pose_range_b"] = {
                 "z": (0.0, 0.0),
                 "roll": (3.141, 3.141),
                 "yaw": (1.57, 2.09),
             }
             
-            reset_s1["grasp_held_asset"]["robot_cfg"].body_names = "panda_fingertip_centered"
-            reset_s1["grasp_held_asset"]["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
-            reset_s1["grasp_held_asset"]["held_asset_diameter"] = KEYPOINTS_MEDIUMGEAR.grasp_diameter
+            reset_s1["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
+            reset_s1["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
+            reset_s1["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_MEDIUMGEAR.grasp_diameter
 
-        if "strategy2" in self.reset_strategies.params["terms"]:
-            reset_s2: dict = self.reset_strategies.params["terms"]["strategy2"].params["params"]
+        if "start_grasped_not_assembled" in self.reset_strategies.params["terms"]:
+            reset_s2: dict = self.reset_strategies.params["terms"]["start_grasped_not_assembled"].params["terms"]
             # For reset_hand
-            reset_s2["reset_end_effector_around_fixed_asset"]["fixed_asset_cfg"] = SceneEntityCfg("gear_base")
-            reset_s2["reset_end_effector_around_fixed_asset"]["fixed_asset_offset"] = KEYPOINTS_GEARBASE.medium_gear_tip_offset
-            reset_s2["reset_end_effector_around_fixed_asset"]["robot_ik_cfg"].joint_names = ["panda_joint.*"]
-            reset_s2["reset_end_effector_around_fixed_asset"]["robot_ik_cfg"].body_names = "panda_fingertip_centered"
-            reset_s2["reset_end_effector_around_fixed_asset"]["pose_range_b"] = {
+            reset_s2["reset_end_effector_around_fixed_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("gear_base")
+            reset_s2["reset_end_effector_around_fixed_asset"].params["fixed_asset_offset"] = KEYPOINTS_GEARBASE.medium_gear_tip_offset
+            reset_s2["reset_end_effector_around_fixed_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
+            reset_s2["reset_end_effector_around_fixed_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
+            reset_s2["reset_end_effector_around_fixed_asset"].params["pose_range_b"] = {
                 "x": (-0.02, 0.02),
                 "y": (-0.02, 0.02),
                 "z": (0.035, 0.045),
@@ -91,14 +91,14 @@ class GearMeshEventCfg(FactoryEventCfg):
             }
 
             # For reset_held_asset
-            reset_s2["reset_held_asset_in_hand"]["holding_body_cfg"].body_names = "panda_fingertip_centered"
-            reset_s2["reset_held_asset_in_hand"]["held_asset_cfg"] = SceneEntityCfg("medium_gear")
-            reset_s2["reset_held_asset_in_hand"]["held_asset_graspable_offset"] = KEYPOINTS_MEDIUMGEAR.grasp_point
+            reset_s2["reset_held_asset_in_hand"].params["holding_body_cfg"].body_names = "panda_fingertip_centered"
+            reset_s2["reset_held_asset_in_hand"].params["held_asset_cfg"] = SceneEntityCfg("medium_gear")
+            reset_s2["reset_held_asset_in_hand"].params["held_asset_graspable_offset"] = KEYPOINTS_MEDIUMGEAR.grasp_point
 
             # For grasp_held_assset
-            reset_s2["grasp_held_asset"]["robot_cfg"].body_names = "panda_fingertip_centered"
-            reset_s2["grasp_held_asset"]["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
-            reset_s2["grasp_held_asset"]["held_asset_diameter"] = KEYPOINTS_MEDIUMGEAR.grasp_diameter
+            reset_s2["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
+            reset_s2["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
+            reset_s2["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_MEDIUMGEAR.grasp_diameter
 
 
 @configclass

@@ -58,9 +58,6 @@ class ProgressContext(ManagerTermBase):
 
         e_x, e_y, _ = math_utils.euler_xyz_from_quat(held_asset_in_fixed_asset_frame_quat)
         self.euler_xy_diff[:] = math_utils.wrap_to_pi(e_x).abs() + math_utils.wrap_to_pi(e_y).abs()
-        # self.pos_error[:] = held_asset_in_fixed_asset_frame_pos.abs()
-        # self.rot_error[:, 0] = math_utils.wrap_to_pi(e_x).abs()
-        # self.rot_error[:, 1] = math_utils.wrap_to_pi(e_y).abs()
         self.xy_distance[:] = torch.norm(held_asset_in_fixed_asset_frame_pos[:, 0:2], dim=1)
         self.z_distance[:] = held_asset_in_fixed_asset_frame_pos[:, 2]
         self.orientation_aligned[:] = self.euler_xy_diff < 0.025
@@ -89,14 +86,6 @@ def progress_reward(env: ManagerBasedRLEnv, std: float, context: str = "progress
     position_centered: torch.Tensor = getattr(context_term, "position_centered")
     z_distance: torch.Tensor = getattr(context_term, "z_distance")
     return torch.where(orientation_aligned & position_centered, 1 - torch.tanh(z_distance / std), 0.0)
-
-# def progress_reward(env: ManagerBasedRLEnv, pos_std: list[float], rot_std: list[float], context: str = "progress_context") -> torch.Tensor:
-#     context_term: ManagerTermBase = env.reward_manager.get_term_cfg(context).func  # type: ignore
-#     pos_error: torch.Tensor = getattr(context_term, "pos_error")
-#     rot_error: torch.Tensor = getattr(context_term, "rot_error")
-#     pos_norm = torch.linalg.norm((pos_error / torch.tensor(pos_std, device=env.device)), dim=-1)
-#     rot_norm = torch.linalg.norm((rot_error / torch.tensor(rot_std, device=env.device)), dim=-1)
-#     return (1 - torch.tanh(pos_norm)) * (1 - torch.tanh(rot_norm))
 
 
 def success_reward(env: ManagerBasedRLEnv, context: str = "progress_context") -> torch.Tensor:
