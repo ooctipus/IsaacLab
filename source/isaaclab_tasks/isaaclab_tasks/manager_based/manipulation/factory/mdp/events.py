@@ -232,7 +232,6 @@ class TermChoice(ManagerTermBase):
         super().__init__(cfg, env)
         self.term_partitions: dict[str, EventTermCfg] = cfg.params["terms"]  # type: ignore
         self.num_partitions = len(self.term_partitions)
-        sampling_strategy = cfg.params.get("sampling_strategy", "uniform")  # type: ignore
         for term_name, term_cfg in self.term_partitions.items():
             for key, val in term_cfg.params.items():
                 if isinstance(val, SceneEntityCfg):
@@ -258,7 +257,7 @@ class TermChoice(ManagerTermBase):
         sampling_strategy: Literal["uniform", "failure_rate"] = "uniform",
     ) -> None:
         success_rate = self.success_monitor.get_success_rate()
-        log = {f"Metrics/{name}": success_rate[i].item() for i, name in enumerate(self.term_partitions.keys())}
+        log = {f"Metrics/SuccessRate/{name}": success_rate[i].item() for i, name in enumerate(self.term_partitions.keys())}
 
         context_term: ManagerTermBase = env.reward_manager.get_term_cfg("progress_context").func  # type: ignore
         orientation_aligned: torch.Tensor = getattr(context_term, "orientation_aligned")[env_ids]
@@ -289,41 +288,29 @@ class ChainedResetTerms(ManagerTermBase):
 
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
-        self.terms: dict[str, callable] = cfg.params["terms"]  # type: ignore
-        self.params: dict[str, dict[str, any]] = cfg.params["params"]  # type: ignore
-        self.class_terms = {}
-
-        for term_name, term_func in self.terms.items():
-            if inspect.isclass(term_func):
-                self.class_terms[term_name] = term_func
-
-        for term_name, term_cfg in self.params.items():
-            for val in term_cfg.values():
+        self.terms: dict[str, EventTermCfg] = cfg.params["terms"]  # type: ignore
+        for term_name, term_cfg in self.terms.items():
+            for key, val in term_cfg.params.items():
                 if isinstance(val, SceneEntityCfg):
                     val.resolve(env.scene)
 
-        class ParamsAttrMock:
-            def __init__(self, params):
-                self.params = params
-
-        for term_name, term_cls in self.class_terms.items():
-            params_attr_mock = ParamsAttrMock(self.params[term_name])
-            self.terms[term_name] = term_cls(params_attr_mock, env)
+        for term_name, term_cfg in self.terms.items():
+            if inspect.isclass(term_cfg.func):
+                term_cfg.func = term_cfg.func(term_cfg, env)  # type: ignore
 
     def __call__(
         self,
         env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
         terms: dict[str, callable],
-        params: dict[str, dict[str, any]],
         probability: float = 1.0,
     ) -> None:
         keep = torch.rand(env_ids.size(0), device=env_ids.device) < probability
         if not keep.any():
             return
         env_ids_to_reset = env_ids[keep]
-        for func_name, func in terms.items():
-            func(env, env_ids_to_reset, **params[func_name])  # type: ignore
+        for func_name, term in terms.items():
+            term.func(env, env_ids_to_reset, **term.params)  # type: ignore
 
 def _pose_a_when_frame_ba_aligns_pose_c(
     pos_c: torch.Tensor, quat_c: torch.Tensor, pos_ba: torch.Tensor, quat_ba: torch.Tensor
