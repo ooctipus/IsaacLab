@@ -15,7 +15,7 @@ from typing import Any, ClassVar
 
 from isaacsim.core.version import get_version
 
-from isaaclab.managers import CommandManager, CurriculumManager, RewardManager, TerminationManager
+from isaaclab.managers import CommandManager, CurriculumManager, RewardManager, TerminationManager, DataManager
 from isaaclab.ui.widgets import ManagerLiveVisualizer
 
 from .common import VecEnvStepReturn
@@ -113,6 +113,10 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         # -- command manager
         self.command_manager: CommandManager = CommandManager(self.cfg.commands, self)
         print("[INFO] Command Manager: ", self.command_manager)
+        
+        if getattr(self.cfg, "data", None) is not None:
+            self.data_manager: DataManager = DataManager(self.cfg.data, self)
+            print("[INFO] Data Manager: ", self.data_manager)
 
         # call the parent class to load the managers for observations and actions.
         super().load_managers()
@@ -134,6 +138,9 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         # perform events at the start of the simulation
         if "startup" in self.event_manager.available_modes:
             self.event_manager.apply(mode="startup")
+
+        if getattr(self, "data_manager", None) is not None:
+            self.data_manager.reset()
 
     def setup_manager_visualizers(self):
         """Creates live visualizers for manager terms."""
@@ -196,6 +203,8 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
             # update buffers at sim dt
             self.scene.update(dt=self.physics_dt)
 
+        if hasattr(self, "data_manager"):
+            self.data_manager.compute(dt=self.step_dt)
         # post-step:
         # -- update env counters (used for curriculum generation)
         self.episode_length_buf += 1  # step in current episode (per env)
@@ -382,6 +391,9 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         # -- command manager
         info = self.command_manager.reset(env_ids)
         self.extras["log"].update(info)
+        # -- data manager
+        if getattr(self, "data_manager", None) is not None:
+            self.data_manager.reset(env_ids)
         # -- event manager
         info = self.event_manager.reset(env_ids)
         self.extras["log"].update(info)

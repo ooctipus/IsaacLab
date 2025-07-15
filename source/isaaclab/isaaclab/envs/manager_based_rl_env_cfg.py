@@ -53,6 +53,8 @@ class ManagerBasedRLEnvCfg(ManagerBasedEnvCfg):
     For example, if the decimation rate is 10, the physics time step is 0.01, and the episode length is 10 seconds,
     then the episode length in steps is 100.
     """
+    
+    data: object | None = None
 
     # environment settings
     rewards: object = MISSING

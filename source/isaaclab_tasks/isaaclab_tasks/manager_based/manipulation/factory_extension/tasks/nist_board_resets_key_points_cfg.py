@@ -1,0 +1,137 @@
+from __future__ import annotations
+from isaaclab.utils import configclass
+
+from . import assembly_object_key_points as kps
+from . import AssetResetOnTaskBoardKeyPointCfg
+
+
+@configclass
+class NistBoardReset(AssetResetOnTaskBoardKeyPointCfg):
+    key_points = AssetResetOnTaskBoardKeyPointCfg.AssetResetKeyPoints(
+        bnc_plug=kps.NIST_BOARD_KEY_POINTS_CFG.bnc_plug,
+        bnc_socket=kps.NIST_BOARD_KEY_POINTS_CFG.bnc_socket,
+        dsub_plug=kps.NIST_BOARD_KEY_POINTS_CFG.dsub_plug,
+        dsub_socket=kps.NIST_BOARD_KEY_POINTS_CFG.dsub_socket,
+        rj_45_plug=kps.NIST_BOARD_KEY_POINTS_CFG.rj_45_plug,
+        rj_45_socket=kps.NIST_BOARD_KEY_POINTS_CFG.rj_45_socket,
+        waterproof_plug=kps.NIST_BOARD_KEY_POINTS_CFG.waterproof_plug,
+        waterproof_socket=kps.NIST_BOARD_KEY_POINTS_CFG.waterproof_socket,
+        usba_plug=kps.NIST_BOARD_KEY_POINTS_CFG.usba_plug,
+        usba_socket=kps.NIST_BOARD_KEY_POINTS_CFG.usba_socket,
+        nut_m4=kps.NIST_BOARD_KEY_POINTS_CFG.nut_m4,
+        bolt_m4=kps.NIST_BOARD_KEY_POINTS_CFG.bolt_m4,
+        nut_m8=kps.NIST_BOARD_KEY_POINTS_CFG.nut_m8,
+        bolt_m8=kps.NIST_BOARD_KEY_POINTS_CFG.bolt_m8,
+        nut_m12=kps.NIST_BOARD_KEY_POINTS_CFG.nut_m12,
+        bolt_m12=kps.NIST_BOARD_KEY_POINTS_CFG.bolt_m12,
+        nut_m16=kps.NIST_BOARD_KEY_POINTS_CFG.nut_m16,
+        bolt_m16=kps.NIST_BOARD_KEY_POINTS_CFG.bolt_m16,
+        rectangular_peg_4mm=kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_peg_4mm,
+        rectangular_hole_4mm=kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_hole_4mm,
+        rectangular_peg_8mm=kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_peg_8mm,
+        rectangular_hole_8mm=kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_hole_8mm,
+        rectangular_peg_12mm=kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_peg_12mm,
+        rectangular_hole_12mm=kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_hole_12mm,
+        rectangular_peg_16mm=kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_peg_16mm,
+        rectangular_hole_16mm=kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_hole_16mm,
+        rod_4mm=kps.NIST_BOARD_KEY_POINTS_CFG.rod_4mm,
+        hole_4mm=kps.NIST_BOARD_KEY_POINTS_CFG.hole_4mm,
+        rod_8mm=kps.NIST_BOARD_KEY_POINTS_CFG.rod_8mm,
+        hole_8mm=kps.NIST_BOARD_KEY_POINTS_CFG.hole_8mm,
+        rod_12mm=kps.NIST_BOARD_KEY_POINTS_CFG.rod_12mm,
+        hole_12mm=kps.NIST_BOARD_KEY_POINTS_CFG.hole_12mm,
+        rod_16mm=kps.NIST_BOARD_KEY_POINTS_CFG.rod_16mm,
+        hole_16mm=kps.NIST_BOARD_KEY_POINTS_CFG.hole_16mm,
+        large_gear=kps.NIST_BOARD_KEY_POINTS_CFG.large_gear,
+        medium_gear=kps.NIST_BOARD_KEY_POINTS_CFG.medium_gear,
+        small_gear=kps.NIST_BOARD_KEY_POINTS_CFG.small_gear,
+        gear_base=kps.NIST_BOARD_KEY_POINTS_CFG.gear_base
+    )
+
+
+@configclass
+class KitTrayReset(AssetResetOnTaskBoardKeyPointCfg):
+    key_points = AssetResetOnTaskBoardKeyPointCfg.AssetResetKeyPoints(
+        bnc_plug=kps.KIT_TRAY_KEY_POINTS_CFG.bnc_plug,
+        bnc_socket=kps.NIST_BOARD_KEY_POINTS_CFG.bnc_socket,
+        dsub_plug=kps.KIT_TRAY_KEY_POINTS_CFG.dsub_plug,
+        dsub_socket=kps.NIST_BOARD_KEY_POINTS_CFG.dsub_socket,
+        rj_45_plug=kps.KIT_TRAY_KEY_POINTS_CFG.rj_45_plug,
+        rj_45_socket=kps.NIST_BOARD_KEY_POINTS_CFG.rj_45_socket,
+        waterproof_plug=kps.KIT_TRAY_KEY_POINTS_CFG.waterproof_plug,
+        waterproof_socket=kps.NIST_BOARD_KEY_POINTS_CFG.waterproof_socket,
+        usba_plug=kps.KIT_TRAY_KEY_POINTS_CFG.usba_plug,
+        usba_socket=kps.NIST_BOARD_KEY_POINTS_CFG.usba_socket,
+        nut_m4=kps.KIT_TRAY_KEY_POINTS_CFG.nut_m4,
+        bolt_m4=kps.NIST_BOARD_KEY_POINTS_CFG.bolt_m4,
+        nut_m8=kps.KIT_TRAY_KEY_POINTS_CFG.nut_m8,
+        bolt_m8=kps.NIST_BOARD_KEY_POINTS_CFG.bolt_m8,
+        nut_m12=kps.KIT_TRAY_KEY_POINTS_CFG.nut_m12,
+        bolt_m12=kps.NIST_BOARD_KEY_POINTS_CFG.bolt_m12,
+        nut_m16=kps.KIT_TRAY_KEY_POINTS_CFG.nut_m16,
+        bolt_m16=kps.NIST_BOARD_KEY_POINTS_CFG.bolt_m16,
+        rectangular_peg_4mm=kps.KIT_TRAY_KEY_POINTS_CFG.rectangular_peg_4mm,
+        rectangular_hole_4mm=kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_hole_4mm,
+        rectangular_peg_8mm=kps.KIT_TRAY_KEY_POINTS_CFG.rectangular_peg_8mm,
+        rectangular_hole_8mm=kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_hole_8mm,
+        rectangular_peg_12mm=kps.KIT_TRAY_KEY_POINTS_CFG.rectangular_peg_12mm,
+        rectangular_hole_12mm=kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_hole_12mm,
+        rectangular_peg_16mm=kps.KIT_TRAY_KEY_POINTS_CFG.rectangular_peg_16mm,
+        rectangular_hole_16mm=kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_hole_16mm,
+        rod_4mm=kps.KIT_TRAY_KEY_POINTS_CFG.rod_4mm,
+        hole_4mm=kps.NIST_BOARD_KEY_POINTS_CFG.hole_4mm,
+        rod_8mm=kps.KIT_TRAY_KEY_POINTS_CFG.rod_8mm,
+        hole_8mm=kps.NIST_BOARD_KEY_POINTS_CFG.hole_8mm,
+        rod_12mm=kps.KIT_TRAY_KEY_POINTS_CFG.rod_12mm,
+        hole_12mm=kps.NIST_BOARD_KEY_POINTS_CFG.hole_12mm,
+        rod_16mm=kps.KIT_TRAY_KEY_POINTS_CFG.rod_16mm,
+        hole_16mm=kps.NIST_BOARD_KEY_POINTS_CFG.hole_16mm,
+        large_gear=kps.KIT_TRAY_KEY_POINTS_CFG.large_gear,
+        medium_gear=kps.KIT_TRAY_KEY_POINTS_CFG.medium_gear,
+        small_gear=kps.KIT_TRAY_KEY_POINTS_CFG.small_gear,
+        gear_base=kps.NIST_BOARD_KEY_POINTS_CFG.gear_base
+    )
+
+
+@configclass
+class KitTrayAndNistBoardReset(AssetResetOnTaskBoardKeyPointCfg):
+    key_points = AssetResetOnTaskBoardKeyPointCfg.AssetResetKeyPoints(
+        bnc_plug=[kps.KIT_TRAY_KEY_POINTS_CFG.bnc_plug, kps.NIST_BOARD_KEY_POINTS_CFG.bnc_plug],
+        bnc_socket=kps.NIST_BOARD_KEY_POINTS_CFG.bnc_socket,
+        dsub_plug=[kps.KIT_TRAY_KEY_POINTS_CFG.dsub_plug, kps.NIST_BOARD_KEY_POINTS_CFG.dsub_plug],
+        dsub_socket=kps.NIST_BOARD_KEY_POINTS_CFG.dsub_socket,
+        rj_45_plug=[kps.KIT_TRAY_KEY_POINTS_CFG.rj_45_plug, kps.NIST_BOARD_KEY_POINTS_CFG.rj_45_plug],
+        rj_45_socket=kps.NIST_BOARD_KEY_POINTS_CFG.rj_45_socket,
+        waterproof_plug=[kps.KIT_TRAY_KEY_POINTS_CFG.waterproof_plug, kps.NIST_BOARD_KEY_POINTS_CFG.waterproof_plug],
+        waterproof_socket=kps.NIST_BOARD_KEY_POINTS_CFG.waterproof_socket,
+        usba_plug=[kps.KIT_TRAY_KEY_POINTS_CFG.usba_plug, kps.NIST_BOARD_KEY_POINTS_CFG.usba_plug],
+        usba_socket=kps.NIST_BOARD_KEY_POINTS_CFG.usba_socket,
+        nut_m4=[kps.KIT_TRAY_KEY_POINTS_CFG.nut_m4, kps.NIST_BOARD_KEY_POINTS_CFG.nut_m4],
+        bolt_m4=kps.NIST_BOARD_KEY_POINTS_CFG.bolt_m4,
+        nut_m8=[kps.KIT_TRAY_KEY_POINTS_CFG.nut_m8, kps.NIST_BOARD_KEY_POINTS_CFG.nut_m8],
+        bolt_m8=kps.NIST_BOARD_KEY_POINTS_CFG.bolt_m8,
+        nut_m12=[kps.KIT_TRAY_KEY_POINTS_CFG.nut_m12, kps.NIST_BOARD_KEY_POINTS_CFG.nut_m12],
+        bolt_m12=kps.NIST_BOARD_KEY_POINTS_CFG.bolt_m12,
+        nut_m16=[kps.KIT_TRAY_KEY_POINTS_CFG.nut_m16, kps.NIST_BOARD_KEY_POINTS_CFG.nut_m16],
+        bolt_m16=kps.NIST_BOARD_KEY_POINTS_CFG.bolt_m16,
+        rectangular_peg_4mm=[kps.KIT_TRAY_KEY_POINTS_CFG.rectangular_peg_4mm, kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_peg_4mm],
+        rectangular_hole_4mm=kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_hole_4mm,
+        rectangular_peg_8mm=[kps.KIT_TRAY_KEY_POINTS_CFG.rectangular_peg_8mm, kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_peg_8mm],
+        rectangular_hole_8mm=kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_hole_8mm,
+        rectangular_peg_12mm=[kps.KIT_TRAY_KEY_POINTS_CFG.rectangular_peg_12mm, kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_peg_12mm],
+        rectangular_hole_12mm=kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_hole_12mm,
+        rectangular_peg_16mm=[kps.KIT_TRAY_KEY_POINTS_CFG.rectangular_peg_16mm, kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_peg_16mm],
+        rectangular_hole_16mm=kps.NIST_BOARD_KEY_POINTS_CFG.rectangular_hole_16mm,
+        rod_4mm=[kps.KIT_TRAY_KEY_POINTS_CFG.rod_4mm, kps.NIST_BOARD_KEY_POINTS_CFG.rod_4mm],
+        hole_4mm=kps.NIST_BOARD_KEY_POINTS_CFG.hole_4mm,
+        rod_8mm=[kps.KIT_TRAY_KEY_POINTS_CFG.rod_8mm, kps.NIST_BOARD_KEY_POINTS_CFG.rod_8mm],
+        hole_8mm=kps.NIST_BOARD_KEY_POINTS_CFG.hole_8mm,
+        rod_12mm=[kps.KIT_TRAY_KEY_POINTS_CFG.rod_12mm, kps.NIST_BOARD_KEY_POINTS_CFG.rod_12mm],
+        hole_12mm=kps.NIST_BOARD_KEY_POINTS_CFG.hole_12mm,
+        rod_16mm=[kps.KIT_TRAY_KEY_POINTS_CFG.rod_16mm, kps.NIST_BOARD_KEY_POINTS_CFG.rod_16mm],
+        hole_16mm=kps.NIST_BOARD_KEY_POINTS_CFG.hole_16mm,
+        large_gear=[kps.KIT_TRAY_KEY_POINTS_CFG.large_gear, kps.NIST_BOARD_KEY_POINTS_CFG.large_gear],
+        medium_gear=[kps.KIT_TRAY_KEY_POINTS_CFG.medium_gear, kps.NIST_BOARD_KEY_POINTS_CFG.medium_gear],
+        small_gear=[kps.KIT_TRAY_KEY_POINTS_CFG.small_gear, kps.NIST_BOARD_KEY_POINTS_CFG.small_gear],
+        gear_base=kps.NIST_BOARD_KEY_POINTS_CFG.gear_base
+    )
