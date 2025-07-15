@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 
 def reset_collection_asset(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
     offset: Offset,
     pose_range: dict[str, tuple[float, float]],
@@ -84,7 +84,7 @@ def reset_collection_asset(
 
 
 def reset_assets(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
     asset_cfg: SceneEntityCfg,
     asset_reset_key_points_cfg: KeyPointDataCfg,
@@ -104,7 +104,7 @@ def reset_assets(
 
 
 def reset_task_assets(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
     asset_cfg: SceneEntityCfg,
     asset_reset_spec_cfg: KeyPointDataCfg,
@@ -157,7 +157,7 @@ def reset_task_assets(
 
 class ChainedResetTerms(ManagerTermBase):
 
-    def __init__(self, cfg: EventTermCfg, env: DataManagerBasedRLEnv):
+    def __init__(self, cfg: EventTermCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
         self.terms: dict[str, callable] = cfg.params["terms"]  # type: ignore
         self.params: dict[str, dict[str, any]] = cfg.params["params"]  # type: ignore
@@ -182,7 +182,7 @@ class ChainedResetTerms(ManagerTermBase):
 
     def __call__(
         self,
-        env: DataManagerBasedRLEnv,
+        env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
         terms: dict[str, callable],
         params: dict[str, dict[str, any]],
@@ -199,7 +199,7 @@ class ChainedResetTerms(ManagerTermBase):
 
 
 def reset_held_asset_against(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
     aligning_point_offset_cfg: KeyPointDataCfg,
     aligning_point_asset_id_cfg: KeyPointDataCfg,
@@ -243,7 +243,7 @@ def reset_held_asset_against(
 
 
 def grasp_held_asset(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
     robot_cfg: SceneEntityCfg,
     held_asset_diameter_cfg: DataCfg,
@@ -256,7 +256,7 @@ def grasp_held_asset(
 
 
 def reset_attachments(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
     asset_cfg: SceneEntityCfg,
     attach_to_asset_cfg: SceneEntityCfg,
@@ -268,7 +268,7 @@ def reset_attachments(
 
 
 class reset_end_effector_round_fixed_asset(ManagerTermBase):
-    def __init__(self, cfg: EventTermCfg, env: DataManagerBasedRLEnv):
+    def __init__(self, cfg: EventTermCfg, env: ManagerBasedRLEnv):
         pose_range_b: dict[str, tuple[float, float]] = cfg.params.get("pose_range_b")  # type: ignore
         robot_ik_cfg: SceneEntityCfg = cfg.params.get("robot_ik_cfg", SceneEntityCfg("robot"))
         range_list = [pose_range_b.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
@@ -287,7 +287,7 @@ class reset_end_effector_round_fixed_asset(ManagerTermBase):
 
     def __call__(
         self,
-        env: DataManagerBasedRLEnv,
+        env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
         ee_reset_point_cfg: KeyPointDataCfg,
         pose_range_b: dict[str, tuple[float, float]],

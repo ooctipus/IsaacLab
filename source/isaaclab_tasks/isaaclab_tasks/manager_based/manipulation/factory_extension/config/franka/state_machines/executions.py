@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 def gripper_action(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
     gripper_command: float
 ):
@@ -30,7 +30,7 @@ def gripper_action(
 
 
 def gripper_stay_still(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
     action_idx: int
 ):
@@ -39,7 +39,7 @@ def gripper_stay_still(
 
 
 def ee_stay_still(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
     ee_src_cfg: Kp,
 ):
@@ -49,7 +49,7 @@ def ee_stay_still(
 
 
 def lift_up_execution(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
     supporting_asset_cfg: SceneEntityCfg,
     object_holding_kp_cfg: Kp,
@@ -81,7 +81,7 @@ def lift_up_execution(
 
 
 def insertion_execution(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
     entry_alignment_cfg: Align,
     grasp_alignment_cfg: Align,
@@ -135,7 +135,7 @@ def insertion_execution(
 
 
 def align_holding_asset(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
     asset_alignment_cfg: Align,
     grasp_alignment_cfg: Align,
@@ -209,7 +209,7 @@ def align_holding_asset(
 
 
 def screw_execution(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     mask: torch.Tensor,
     nist_board_cfg: SceneEntityCfg,
     task_alignment_cfg: Align,
@@ -267,7 +267,7 @@ def screw_execution(
 
 
 def unwind_execution(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     mask: torch.Tensor,
     nist_board_cfg: SceneEntityCfg,
     grasp_alignment_cfg: Align,
@@ -303,7 +303,7 @@ def unwind_execution(
 
 
 def align_gripper_to_held_asset_grasp_point(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
     supporting_asset_cfg: SceneEntityCfg,
     grasp_alignment_cfg: Align,

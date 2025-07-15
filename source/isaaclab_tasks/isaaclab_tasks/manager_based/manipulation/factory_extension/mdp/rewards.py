@@ -15,26 +15,26 @@ if TYPE_CHECKING:
     from .data import AlignmentMetric
 
 
-def progress_reward_prod(env: DataManagerBasedRLEnv, alignment: AlignmentDataCfg) -> torch.Tensor:
+def progress_reward_prod(env: ManagerBasedRLEnv, alignment: AlignmentDataCfg) -> torch.Tensor:
     alignment_data: AlignmentMetric.AlignmentData = alignment.get(env.data_manager)
     pos_diff_rew = (1 - torch.tanh(alignment_data.pos_error / alignment_data.pos_std)).prod(dim=1)
     rot_diff_rew = (1 - torch.tanh(alignment_data.rot_error / alignment_data.rot_std)).prod(dim=1)
     return pos_diff_rew * rot_diff_rew
 
 
-def progress_reward_l2(env: DataManagerBasedRLEnv, alignment: AlignmentDataCfg) -> torch.Tensor:
+def progress_reward_l2(env: ManagerBasedRLEnv, alignment: AlignmentDataCfg) -> torch.Tensor:
     alignment_data: AlignmentMetric.AlignmentData = alignment.get(env.data_manager)
     pos_norm = torch.linalg.norm(alignment_data.pos_error / alignment_data.pos_std, dim=-1)
     rot_norm = torch.linalg.norm(alignment_data.rot_error / alignment_data.rot_std, dim=-1)
     return (1 - torch.tanh(pos_norm)) * (1 - torch.tanh(rot_norm))
 
 
-def success_reward(env: DataManagerBasedRLEnv, alignment: AlignmentDataCfg) -> torch.Tensor:
+def success_reward(env: ManagerBasedRLEnv, alignment: AlignmentDataCfg) -> torch.Tensor:
     alignment_data: AlignmentMetric.AlignmentData = alignment.get(env.data_manager)
     return torch.where(alignment_data.pos_aligned & alignment_data.rot_aligned, 1.0, 0.0)
 
 
-def still_on_success(env: DataManagerBasedRLEnv, alignment: AlignmentDataCfg) -> torch.Tensor:
+def still_on_success(env: ManagerBasedRLEnv, alignment: AlignmentDataCfg) -> torch.Tensor:
     alignment_data: AlignmentMetric.AlignmentData = alignment.resolve(env.data_manager)
     success_mask = alignment_data.pos_aligned & alignment_data.rot_aligned
     robot: Articulation = env.scene["robot"]

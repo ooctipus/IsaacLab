@@ -27,10 +27,10 @@ class AssemblyTaskCommand(CommandTerm):
         Insert: int = 1
         Screw: int = 2
 
-    def __init__(self, cfg: AssemblyTaskCommandCfg, env: DataManagerBasedRLEnv):
+    def __init__(self, cfg: AssemblyTaskCommandCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
         # extract the robot and body index for which the command is generated
-        self._env: DataManagerBasedRLEnv = env
+        self._env: ManagerBasedRLEnv = env
         self.tasks: list[str] = cfg.tasks
         self.task_categories = self._categorize_tasks(self.tasks)
         self.num_tasks = len(self.tasks)

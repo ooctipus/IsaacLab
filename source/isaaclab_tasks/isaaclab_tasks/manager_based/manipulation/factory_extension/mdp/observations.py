@@ -26,14 +26,14 @@ if TYPE_CHECKING:
     from .data_cfg import AlignmentMetric
 
 
-def task_encoding(env: DataManagerBasedRLEnv, command_term="task_command") -> torch.Tensor:
+def task_encoding(env: ManagerBasedRLEnv, command_term="task_command") -> torch.Tensor:
     """Returns the task encoding for the given task ID."""
     command_term = env.command_manager.get_term(command_term)
     return command_term.one_hot_command
 
 
 def target_asset_pose_in_root_asset_frame_min_error(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     alignment_cfg: Align,
 ):
     alignment: AlignmentMetric.AlignmentData = alignment_cfg.get(env.data_manager)
@@ -41,7 +41,7 @@ def target_asset_pose_in_root_asset_frame_min_error(
 
 
 def target_asset_pose_in_root_asset_frame(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     target_kp_cfg: KeyPointDataCfg,
     root_kp_cfg: KeyPointDataCfg,
 ):
@@ -108,7 +108,7 @@ def fps(xyz: torch.Tensor, npoint: int):
 
 class PointCloud(ManagerTermBase):
 
-    def __init__(self, cfg: ObservationTermCfg, env: DataManagerBasedRLEnv):
+    def __init__(self, cfg: ObservationTermCfg, env: ManagerBasedRLEnv):
         from pxr import UsdGeom
         from isaaclab.sim.utils import get_all_matching_child_prims
         super().__init__(cfg, env)
@@ -191,7 +191,7 @@ class PointCloud(ManagerTermBase):
 
     def __call__(
         self,
-        env: DataManagerBasedRLEnv,
+        env: ManagerBasedRLEnv,
         robot_cfg: SceneEntityCfg,
         object_cfg: SceneEntityCfg,
         num_points: int = 1000,
