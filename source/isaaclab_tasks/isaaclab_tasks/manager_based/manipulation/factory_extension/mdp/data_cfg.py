@@ -159,12 +159,12 @@ class KeyPointTrackerCfg(DataTermCfg):
     )
 
 
-def task_id_callback(env: DataManagerBasedRLEnv, env_ids: torch.Tensor) -> torch.Tensor:
+def task_id_callback(env: ManagerBasedRLEnv, env_ids: torch.Tensor) -> torch.Tensor:
     return env.command_manager.get_command("task_command")[env_ids]
 
 
 def asset_id_callback_deterministic(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,    # shape (E,)
     kp_asset_id_cfg: KeyPointDataCfg,  # shape (E, A)
     asset_to_kps_cfg: KeyPointDataCfg,  # shape (num_assets, 1, n_contexts)
@@ -182,7 +182,7 @@ def asset_id_callback_deterministic(
 
 
 def random_context_callback(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,  # shape (E,)
     reset_kp_asset_id_cfg: KeyPointDataCfg,  # shape (E, 1, n_assets)
 ) -> torch.Tensor:

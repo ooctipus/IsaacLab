@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 def out_of_bounds(
-    env: DataManagerBasedRLEnv,
+    env: ManagerBasedRLEnv,
     assets_cfg: SceneEntityCfg,
     pos_range: tuple[tuple[float, float, float], tuple[float, float, float]],
     robot_cfg: SceneEntityCfg,

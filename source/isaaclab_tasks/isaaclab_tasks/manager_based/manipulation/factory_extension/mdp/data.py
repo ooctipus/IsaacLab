@@ -54,10 +54,10 @@ class AlignmentMetric(DataTerm):
         def pos_error_w(self):
             return self.pos_error[..., :3]
 
-    def __init__(self, cfg: AlignmentMetricCfg, env: DataManagerBasedRLEnv):
+    def __init__(self, cfg: AlignmentMetricCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
         self.ALL_ENV_INDICES = torch.arange(env.num_envs)
-        self.env: DataManagerBasedRLEnv = env
+        self.env: ManagerBasedRLEnv = env
         self.spec = self.AlignmentMetricSpec(*self._filling_alignment_metric_table(cfg.spec, env))
         self.align_kp_cfg, self.align_against_kp_cfg = cfg.align_kp_cfg, cfg.align_against_kp_cfg
         self.data_manager_hook = cfg.data_manager_hook
@@ -140,7 +140,7 @@ class AlignmentMetric(DataTerm):
         self.data.pos_aligned[:] = torch.all(self.data.pos_error < self.data.pos_threshold, dim=1)
         self.data.rot_aligned[:] = torch.all(self.data.rot_error < self.data.rot_threshold, dim=1)
 
-    def _filling_alignment_metric_table(self, spec: list[SuccessCondition], env: DataManagerBasedRLEnv):
+    def _filling_alignment_metric_table(self, spec: list[SuccessCondition], env: ManagerBasedRLEnv):
         # filling tables # don't include nist board
         device = env.device
         pos_threshold = torch.as_tensor([c.pos_threshold for c in spec], device=device)
@@ -232,7 +232,7 @@ class KeyPointsTracker(DataTerm):
         key_points_asset_id_mask: torch.Tensor
         """mask for the asset ids. Shape: (num_envs, num_key_points, max_num_assets)"""
 
-    def __init__(self, cfg: KeyPointTrackerCfg, env: DataManagerBasedRLEnv):
+    def __init__(self, cfg: KeyPointTrackerCfg, env: ManagerBasedRLEnv):
         self._env = env
         self.spec = self.KeyPointsSpec(*self._filling_key_point_offset_table(cfg.spec, env))
         self.update_only_on_reset = cfg.update_only_on_reset
@@ -425,7 +425,7 @@ class KeyPointsTracker(DataTerm):
 
 class DiameterLookUp(DataTerm):
 
-    def __init__(self, cfg: DiameterLookUpCfg, env: DataManagerBasedRLEnv):
+    def __init__(self, cfg: DiameterLookUpCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
         self.env = env
         self.diameter_table = torch.tensor(cfg.manipulation_diameters, device=env.device)
