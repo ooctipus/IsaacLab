@@ -14,6 +14,7 @@ from .action_manager import ActionManager, ActionTerm
 from .command_manager import CommandManager, CommandTerm
 from .curriculum_manager import CurriculumManager
 from .event_manager import EventManager
+from .data_manager import DataManager, DataTerm
 from .manager_base import ManagerBase, ManagerTermBase
 from .manager_term_cfg import (
     ActionTermCfg,
@@ -26,6 +27,7 @@ from .manager_term_cfg import (
     RecorderTermCfg,
     RewardTermCfg,
     TerminationTermCfg,
+    DataTermCfg,
 )
 from .observation_manager import ObservationManager
 from .recorder_manager import DatasetExportMode, RecorderManager, RecorderManagerBaseCfg, RecorderTerm

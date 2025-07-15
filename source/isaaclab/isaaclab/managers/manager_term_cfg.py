@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from .command_manager import CommandTerm
     from .manager_base import ManagerTermBase
     from .recorder_manager import RecorderTerm
+    from .data_manager import DataTerm
 
 
 @configclass
@@ -50,6 +51,25 @@ class ManagerTermBaseCfg:
         from the :class:`InteractiveScene` and process the entity's joints and bodies as specified
         in the :class:`SceneEntityCfg` object.
     """
+
+
+##
+# Data manager.
+##
+
+
+@configclass
+class DataTermCfg:
+    """Configuration for a data generator term."""
+
+    class_type: type[DataTerm] = MISSING
+    """The associated data term class to use.
+
+    The class should inherit from :class:`isaaclab.managers.data_manager.DataTerm`.
+    """
+
+    debug_vis: bool = False
+    """Whether to visualize debug information. Defaults to False."""
 
 
 ##
