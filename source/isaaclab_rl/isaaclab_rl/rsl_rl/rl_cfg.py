@@ -32,11 +32,11 @@ class RslRlPpoActorCriticCfg:
     noise_std_type: Literal["scalar", "log"] = "scalar"
     """The type of noise standard deviation for the policy. Default is scalar."""
 
-    actor_obs_normalization: bool = MISSING
-    """Whether to normalize the observation for the actor network."""
+    actor_obs_normalization: bool = False
+    """Whether to normalize the observation for the actor network. Default is False."""
 
-    critic_obs_normalization: bool = MISSING
-    """Whether to normalize the observation for the critic network."""
+    critic_obs_normalization: bool = False
+    """Whether to normalize the observation for the critic network. Default is False."""
 
     actor_hidden_dims: list[int] = MISSING
     """The hidden dimensions of the actor network."""
@@ -147,12 +147,6 @@ class RslRlBaseRunnerCfg:
 
     max_iterations: int = MISSING
     """The maximum number of iterations."""
-
-    empirical_normalization: bool | None = None
-    """This parameter is deprecated and will be removed in the future.
-
-    Use `actor_obs_normalization` and `critic_obs_normalization` instead.
-    """
 
     obs_groups: dict[str, list[str]] = MISSING
     """A mapping from observation groups to observation sets.
