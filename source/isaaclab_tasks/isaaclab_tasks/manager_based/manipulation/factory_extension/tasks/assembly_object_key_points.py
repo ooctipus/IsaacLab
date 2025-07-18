@@ -7,7 +7,7 @@ class KitTrayKeyPointsCfg(ObjectKeyPointsCfg):
     kit_tray_center = KeyPointCfg([Offset(pos=(0.0000, 0.0000, 0.0000))])
     bnc_plug = KeyPointCfg([Offset(pos=(0.0954, 0.0635, -0.0108), quat=(0.70711, 0.0000, 0.0000, 0.7071))])
     dsub_plug = KeyPointCfg([Offset(pos=(0.0156, 0.0327, 0.0060), quat=(0.5000, 0.5000, -0.5000, -0.5000))])
-    rj_45_plug = KeyPointCfg([Offset(pos=(-0.1500, 0.0821, 0.0060), quat=(0.5000, 0.5000, 0.5000, -0.5000))])
+    rj45_plug = KeyPointCfg([Offset(pos=(-0.1500, 0.0821, 0.0060), quat=(0.5000, 0.5000, 0.5000, -0.5000))])
     waterproof_plug = KeyPointCfg([Offset(pos=(0.1345, -0.1051, -0.015), quat=(0.70711, 0.0000, 0.0000, 0.7071))])
     usba_plug = KeyPointCfg([Offset(pos=(-0.1834, -0.0906, 0.0060), quat=(0.7071, 0.0000, 0.7071, 0.0000))])
 
@@ -36,7 +36,7 @@ class KitTrayKeyPointsCfgStanding(ObjectKeyPointsCfg):
     kit_tray_center = KeyPointCfg([Offset(pos=(0.0000, 0.0000, 0.0000))])
     bnc_plug = KeyPointCfg([Offset(pos=(0.0954, 0.0635, -0.0108), quat=(0.70711, 0.0000, 0.0000, 0.7071))])
     dsub_plug = KeyPointCfg([Offset(pos=(0.0156, 0.0327, 0.0060), quat=(0.70711, 0.0000, 0.0000, 0.7071))])
-    rj_45_plug = KeyPointCfg([Offset(pos=(-0.1500, 0.0821, 0.0060), quat=(0.70711, 0.0000, 0.0000, 0.7071))])
+    rj45_plug = KeyPointCfg([Offset(pos=(-0.1500, 0.0821, 0.0060), quat=(0.70711, 0.0000, 0.0000, 0.7071))])
     waterproof_plug = KeyPointCfg([Offset(pos=(0.1345, -0.1051, -0.015), quat=(0.70711, 0.0000, 0.0000, 0.7071))])
     usba_plug = KeyPointCfg([Offset(pos=(-0.1834, -0.0906, 0.0060), quat=(0.7071, 0.0000, 0.7071, 0.0000))])
 
@@ -66,8 +66,8 @@ class NistBoardKeyPointsCfg(ObjectKeyPointsCfg):
     bnc_socket = KeyPointCfg([Offset(pos=(0.2797, -0.1915, 0.0000), quat=(0.0000, 0.7071, 0.7071, 0.0000))])
     dsub_plug = KeyPointCfg([Offset(pos=(0.2129, -0.2659, -0.0190), quat=(0.0000, 0.7071, -0.7071, 0.0000))])
     dsub_socket = KeyPointCfg([Offset(pos=(0.2129, -0.2659, -0.0190), quat=(0.0000, 0.7071, -0.7071, 0.0000))])
-    rj_45_plug = KeyPointCfg([Offset(pos=(0.3473, -0.3415, 0.0000), quat=(0.0000, 0.0000, 1.0, 0.0000))])
-    rj_45_socket = KeyPointCfg([Offset(pos=(0.3473, -0.3415, 0.0000), quat=(0.0000, 0.0000, 1.0, 0.0000))])
+    rj45_plug = KeyPointCfg([Offset(pos=(0.3473, -0.3415, 0.0000), quat=(0.0000, 0.0000, 1.0, 0.0000))])
+    rj45_socket = KeyPointCfg([Offset(pos=(0.3473, -0.3415, 0.0000), quat=(0.0000, 0.0000, 1.0, 0.0000))])
     waterproof_plug = KeyPointCfg([Offset(pos=(0.1981, -0.1166, -0.0002), quat=(0.0000, 0.0000, 1.0, 0.0000))])
     waterproof_socket = KeyPointCfg([Offset(pos=(0.1981, -0.1166, -0.0002), quat=(0.0000, 0.0000, 1.0, 0.0000))])
     usba_plug = KeyPointCfg([Offset(pos=(0.2721, -0.0415, -0.0001), quat=(0.0000, 0.7071, 0.7071, 0.0000))])
