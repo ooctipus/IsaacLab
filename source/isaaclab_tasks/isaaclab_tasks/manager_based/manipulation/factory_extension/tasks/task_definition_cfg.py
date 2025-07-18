@@ -96,8 +96,8 @@ class AssetResetOnTaskBoardKeyPointCfg(BaseTaskKeyPointCfg):
         bnc_socket: KeyPointCfg | list[KeyPointCfg] | dict[str, KeyPointCfg] = MISSING  # type:ignore
         dsub_plug: KeyPointCfg | list[KeyPointCfg] | dict[str, KeyPointCfg] = MISSING  # type:ignore
         dsub_socket: KeyPointCfg | list[KeyPointCfg] | dict[str, KeyPointCfg] = MISSING  # type:ignore
-        rj_45_plug: KeyPointCfg | list[KeyPointCfg] | dict[str, KeyPointCfg] = MISSING  # type:ignore
-        rj_45_socket: KeyPointCfg | list[KeyPointCfg] | dict[str, KeyPointCfg] = MISSING  # type:ignore
+        rj45_plug: KeyPointCfg | list[KeyPointCfg] | dict[str, KeyPointCfg] = MISSING  # type:ignore
+        rj45_socket: KeyPointCfg | list[KeyPointCfg] | dict[str, KeyPointCfg] = MISSING  # type:ignore
         waterproof_plug: KeyPointCfg | list[KeyPointCfg] | dict[str, KeyPointCfg] = MISSING  # type:ignore
         waterproof_socket: KeyPointCfg | list[KeyPointCfg] | dict[str, KeyPointCfg] = MISSING  # type:ignore
         usba_plug: KeyPointCfg | list[KeyPointCfg] | dict[str, KeyPointCfg] = MISSING  # type:ignore
