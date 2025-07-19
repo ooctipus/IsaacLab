@@ -119,18 +119,11 @@ class ObservationsCfg:
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True
-
-    @configclass
-    class CriticCfg(PolicyCfg):
-        pass 
-
-        def __post_init__(self):
-            self.enable_corruption = False
-            self.concatenate_terms = True
+            self.history_length = 1
 
     # observation groups
     policy: PolicyCfg = PolicyCfg()
-    critic: CriticCfg = CriticCfg()
+    critic: PolicyCfg = PolicyCfg()
 
 @configclass
 class EventCfg:
@@ -144,7 +137,7 @@ class EventCfg:
 
     robot_physics_material = EventTerm(
         func=mdp.randomize_rigid_body_material,
-        mode="prestartup",
+        mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
             "static_friction_range": [0.6, 1.],
@@ -156,7 +149,7 @@ class EventCfg:
     
     object_physics_material = EventTerm(
         func=mdp.randomize_rigid_body_material,
-        mode="prestartup",
+        mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("object", body_names=".*"),
             "static_friction_range": [0.6, 1.],
