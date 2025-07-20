@@ -9,39 +9,39 @@ from isaaclab.assets import RigidObjectCfg
 from isaaclab.sim import CuboidCfg, SphereCfg, CapsuleCfg, ConeCfg, RigidBodyMaterialCfg
 from isaaclab.utils import configclass
 
-# from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
-ISAACLAB_NUCLEUS_DIR = "source/isaaclab_assets/data"
-objects_dir = f"{ISAACLAB_NUCLEUS_DIR}/Props/Dextrah/Objects"
-sub_dirs = sorted(os.listdir(objects_dir))
-dirs = [object_name for object_name in sub_dirs if os.path.isdir(os.path.join(objects_dir, object_name))]
+# from isaaclab.utils.assets import LOCAL_ASSET_PATH_DIR
+# ISAACLAB_NUCLEUS_DIR = "source/isaaclab_assets/data"
+# objects_dir = f"{ISAACLAB_NUCLEUS_DIR}/Props/Dextrah/Objects"
+# sub_dirs = sorted(os.listdir(objects_dir))
+# dirs = [object_name for object_name in sub_dirs if os.path.isdir(os.path.join(objects_dir, object_name))]
 
 @configclass
 class EnvConfigurables:
     env: dict[str, any] = {
         "scene.object": {
-            "visdex": RigidObjectCfg(
-                prim_path="{ENV_REGEX_NS}/Object",
-                spawn=sim_utils.MultiAssetSpawnerCfg(
-                    assets_cfg=[
-                        sim_utils.UsdFileCfg(usd_path=os.path.join(objects_dir, name, f"{name}.usd")) for name in dirs],
-                    random_choice=True,
-                    rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                        rigid_body_enabled=True,
-                        solver_position_iteration_count=16,
-                        solver_velocity_iteration_count=0,
-                        kinematic_enabled=False,
-                        disable_gravity=False,
-                        sleep_threshold=0.005,
-                        stabilization_threshold=0.0025,
-                        max_linear_velocity=1000.0,
-                        max_angular_velocity=1000.0,
-                        max_depenetration_velocity=1000.0,
-                    ),
-                    collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
-                    mass_props=sim_utils.MassPropertiesCfg(mass=0.2),
-                ),
-                init_state=RigidObjectCfg.InitialStateCfg(pos=(-0.55, 0.1, 0.35)),
-            ),
+            # "visdex": RigidObjectCfg(
+            #     prim_path="{ENV_REGEX_NS}/Object",
+            #     spawn=sim_utils.MultiAssetSpawnerCfg(
+            #         assets_cfg=[
+            #             sim_utils.UsdFileCfg(usd_path=os.path.join(objects_dir, name, f"{name}.usd")) for name in dirs],
+            #         random_choice=True,
+            #         rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            #             rigid_body_enabled=True,
+            #             solver_position_iteration_count=16,
+            #             solver_velocity_iteration_count=0,
+            #             kinematic_enabled=False,
+            #             disable_gravity=False,
+            #             sleep_threshold=0.005,
+            #             stabilization_threshold=0.0025,
+            #             max_linear_velocity=1000.0,
+            #             max_angular_velocity=1000.0,
+            #             max_depenetration_velocity=1000.0,
+            #         ),
+            #         collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
+            #         mass_props=sim_utils.MassPropertiesCfg(mass=0.2),
+            #     ),
+            #     init_state=RigidObjectCfg.InitialStateCfg(pos=(-0.55, 0.1, 0.35)),
+            # ),
             "cube": RigidObjectCfg(
                 prim_path="{ENV_REGEX_NS}/Object",  
                 spawn=sim_utils.MultiAssetSpawnerCfg(
