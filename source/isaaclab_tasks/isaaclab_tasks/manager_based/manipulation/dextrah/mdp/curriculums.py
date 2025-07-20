@@ -33,7 +33,7 @@ def initial_final_interpolate_fn(env: ManagerBasedRLEnv, env_id, data, iv, fv, d
     at the leaves.
     """
     # get the fraction scalar on the device
-    difficulty_term: DifficultyScheduler = env.curriculum_manager.get_term_cfg(difficulty_term_str).func
+    difficulty_term: DifficultyScheduler = getattr(env.curriculum_manager.cfg, difficulty_term_str).func
     frac = difficulty_term.difficulty_frac
     if frac < 0.1:
         return mdp.modify_env_param.NO_CHANGE
