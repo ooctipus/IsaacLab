@@ -50,7 +50,6 @@ params:
 
   config:
     name: dextrah_lstm
-    full_experiment_name: ''
     env_name: rlgpu
     device: 'cuda:0'
     device_name: 'cuda:0'
@@ -60,7 +59,7 @@ params:
     normalize_input: True
     normalize_value: True
     value_bootstrap: False
-    num_actors: -1  # configured from the script (based on num_envs)
+    num_actors: -1
     reward_shaper:
       scale_value: 0.01
     normalize_advantage: True
@@ -88,36 +87,6 @@ params:
     bound_loss_type: regularization
     bounds_loss_coef: 0.005
     zero_rnn_on_done: True
-
-    central_value_config:
-      minibatch_size: 16384 
-      mini_epochs: 4
-      learning_rate: 5e-5
-      kl_threshold: 0.016
-      clip_value: True
-      normalize_input: True
-      truncate_grads: True
-
-      network:
-        name: actor_critic
-        central_value: True
-        mlp:
-          units: [1024, 512] 
-          activation: elu
-          d2rl: False
-          initializer:
-            name: default
-          regularizer:
-            name: None
-        rnn:
-          name: lstm
-          units: 2048
-          layers: 1
-          before_mlp: False
-          layer_norm: True
-          concat_input: True
-          concat_output: True
-
 
     player:
       deterministic: True
