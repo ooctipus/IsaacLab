@@ -90,10 +90,12 @@ def task_type(env: ManagerBasedRLEnv, env_ids: torch.Tensor, task_type: list[int
 
 
 def not_during_screw_task(env: ManagerBasedRLEnv, env_ids: torch.Tensor, robot_cfg: SceneEntityCfg, task_alignment_cfg: Align):
-    return ~(task_type(env, env_ids, [2]) 
+    not_skip_screw = ~(task_type(env, env_ids, [2]) 
              & ~wrist_counter_clockwise_limit_reached(env, env_ids, robot_cfg) 
              & task_not_success(env, env_ids, task_alignment_cfg))
-        
+    return torch.where(
+        task_type(env, env_ids, [1, 0]), task_success(env, env_ids, task_alignment_cfg), not_skip_screw
+    )
         
 class SpeedLow:
     def __init__(self, condition_cfg: ConditionCfg, env: ManagerBasedRLEnv):
@@ -146,10 +148,11 @@ class GraspAssetSpeedLow:
         grasp_kp_asset_id_cfg: Kp,
         speed_limit,
         entry_alignment_cfg: Align,
+        task_alignment_cfg: Align,
         history_length=5
     ):
         entry_met: AlignmentMetric.AlignmentData = entry_alignment_cfg.get(env.data_manager)
-        inserted = entry_met.pos_delta[env_ids, 2] < -0.0010
+        inserted = entry_met.pos_delta[env_ids, 2] < -0.0005
         inserted_env_ids = env_ids[inserted]
         if len(inserted_env_ids) > 0:
             asset_id, _ = self.grasp_kp_asset_id_cfg.get(env.data_manager)  # (n_envs, 1, n_assets, n_offsets, 7)
@@ -163,7 +166,7 @@ class GraspAssetSpeedLow:
         sum_hist = self.speed_history[env_ids].sum(dim=1)
         mean_speed = sum_hist / (self.history_size[env_ids].clamp(min=1))
         # print(f"mean_speed: {mean_speed}, history_size: {self.history_size[env_ids]}, history: {self.speed_history[env_ids]}")
-        return ((mean_speed < self.speed_limit) & (self.history_size[env_ids] > (self.history_length // 2)))
+        return ((mean_speed < self.speed_limit) & (self.history_size[env_ids] > (self.history_length // 2))) | task_success(env, env_ids, task_alignment_cfg)
 
 
 def entry_met(

@@ -39,6 +39,8 @@ class StateMachine:
         print("[INFO] State Machine Data Manager: ", self.data_manager)
         self.data_manager.reset()
 
+        if not hasattr(env, "extensions"):
+            setattr(env, "extensions", {})
         env.extensions['fsm'] = self
         env.data_manager._terms.update(self.data_manager._terms)
 

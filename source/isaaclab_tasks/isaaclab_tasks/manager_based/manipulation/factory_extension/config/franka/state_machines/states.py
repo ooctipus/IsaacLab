@@ -288,6 +288,7 @@ FRANKA_FACTORY_STATES = {
                     "asset_cfg": SceneEntityCfg("assets"),
                     "history_length": 2,
                     "entry_alignment_cfg" : Align(term="auxiliary_task_alignment_data"),
+                    "task_alignment_cfg": Align(term="alignment_data"),
                     "speed_limit": 0.0075
                 }
             )},
@@ -343,7 +344,7 @@ FRANKA_FACTORY_STATES = {
             }          
         ),
         gripper_exec=Exec(func=exec.gripper_action, args={"gripper_command": gripper_state.CLOSE}),
-        limits=(0.0004, 0.10),
+        limits=(0.0004, 0.05),
         noise=0.0
     ),
 
@@ -358,15 +359,7 @@ FRANKA_FACTORY_STATES = {
                 func=cond.gripper_open,
                 args={"robot_cfg": SceneEntityCfg("robot", joint_names="panda_finger_joint1"), "threshold": 0.035}
             ),
-            # "grasp_aligned" : Condition(
-            #     func=cond.gripper_aligned_with_held_asset,
-            #     args={
-            #         "manipulation_alignment_cfg": Align(term="manipulation_alignment_data"),
-            #         "only_pos": True,
-            #         "pos_threshold": (0.03, 0.03, 0.03),
-            #     }
-            # )
-            # Condition(func=cond.gripper_aligned_with_held_asset, args={"interpolate": True}),
+            "is_screw_task": Condition(func=cond.task_type, args={"task_type": [2]}),
         },
         post_condition={
             "gripper_open": Condition(
