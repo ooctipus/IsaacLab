@@ -388,8 +388,24 @@ while [[ $# -gt 0 ]]; do
             # install the learning frameworks specified
             ${python_exe} -m pip install -e ${ISAACLAB_PATH}/source/isaaclab_rl["${framework_name}"]
             ${python_exe} -m pip install -e ${ISAACLAB_PATH}/source/isaaclab_mimic["${framework_name}"]
-            chmod +x ${ISAACLAB_PATH}/fabrics-sim/urdfpy_patch.sh
-            ${python_exe} -m pip install -e ${ISAACLAB_PATH}/fabrics-sim && ${ISAACLAB_PATH}/fabrics-sim/urdfpy_patch.sh --docker
+
+            # Fabric Sim installation logic
+            if [ ! -d "${ISAACLAB_PATH}/fabrics-sim" ]; then
+                git clone https://gitlab-master.nvidia.com/srl/fabrics-sim ${ISAACLAB_PATH}/fabrics-sim
+            fi
+
+            # Enter, checkout, then return
+            pushd ${ISAACLAB_PATH}/fabrics-sim
+            git checkout develop
+            chmod +x urdfpy_patch.sh
+            popd
+            PATCH_ARGS=""
+            if [ -f "/isaac-sim/python.sh" ]; then
+                PATCH_ARGS="--docker"
+            fi
+
+            ${python_exe} -m pip install -e ${ISAACLAB_PATH}/fabrics-sim && \
+            ${ISAACLAB_PATH}/fabrics-sim/urdfpy_patch.sh ${PATCH_ARGS}
 
             # check if we are inside a docker container or are building a docker image
             # in that case don't setup VSCode since it asks for EULA agreement which triggers user interaction
