@@ -8,7 +8,7 @@ from isaaclab.actuators.actuator_cfg import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 
 # This is where we will get the Robot that we want to use
-from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR, ISAACLAB_ASSET_PATH
+from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR, LOCAL_ASSET_PATH_DIR
 from .assembly_keypoints import KEYPOINTS_NISTBOARD
 
 ASSET_DIR = f"{ISAACLAB_NUCLEUS_DIR}/Factory"
@@ -102,7 +102,7 @@ FRANKA_PANDA_CFG = ArticulationCfg(
 TABLE_CFG = RigidObjectCfg(
     prim_path="{ENV_REGEX_NS}/Table",
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ISAACLAB_ASSET_PATH}/Props/Mounts/UWPatVention/pat_vention.usd",
+        usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/Mounts/UWPatVention/pat_vention.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
     ),
     init_state=RigidObjectCfg.InitialStateCfg(pos=(0.4, 0.0, -0.868), rot=(0.70711, 0.0, 0.0, -0.70711)),
@@ -113,7 +113,7 @@ x, y, z = KEYPOINTS_NISTBOARD.nist_board_center.pos
 NISTBOARD_CFG = RigidObjectCfg(
     prim_path="{ENV_REGEX_NS}/NistBoard",
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ISAACLAB_ASSET_PATH}/Props/NIST/Taskboard/nistboard.usd",
+        usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST/Taskboard/nistboard.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
     ),
     init_state=RigidObjectCfg.InitialStateCfg(pos=(0.65 - x, 0.0 - y, 0.0206 - z), rot=(0., 0., 1., 0.)),
