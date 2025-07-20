@@ -106,12 +106,9 @@ class FactoryObservationsCfg:
             self.enable_corruption = False
             self.concatenate_terms = True
 
-    @configclass
-    class CriticCfg(PolicyCfg):
-        pass
 
     policy: PolicyCfg = PolicyCfg()
-    critic: CriticCfg = CriticCfg()
+    critic: PolicyCfg = PolicyCfg()
 
 ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE = EventTerm(
     func=mdp.ChainedResetTerms,
