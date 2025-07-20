@@ -24,12 +24,6 @@ from . import mdp
 from .mdp.curriculums import cfg_get
 from .adr_curriculum import CurriculumCfg
 
-# from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
-ISAACLAB_NUCLEUS_DIR = "source/isaaclab_assets/data"
-objects_dir = f"{ISAACLAB_NUCLEUS_DIR}/Props/Dextrah/Objects"
-sub_dirs = sorted(os.listdir(objects_dir))
-dirs = [object_name for object_name in sub_dirs if os.path.isdir(os.path.join(objects_dir, object_name))]
-
 
 @configclass
 class SceneCfg(InteractiveSceneCfg):
