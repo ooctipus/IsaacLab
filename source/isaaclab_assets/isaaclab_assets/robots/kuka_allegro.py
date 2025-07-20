@@ -13,8 +13,7 @@ import os
 import isaaclab.sim as sim_utils
 from isaaclab.actuators.actuator_cfg import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
-# from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
-ISAACLAB_NUCLEUS_DIR = "source/isaaclab_assets/data"
+from isaaclab.utils.assets import LOCAL_ASSET_PATH_DIR
 
 ##
 # Configuration
@@ -23,7 +22,7 @@ ISAACLAB_NUCLEUS_DIR = "source/isaaclab_assets/data"
 
 KUKA_ALLEGRO_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Robots/KUKA/kuka_allegro_optimized.usd",
+        usd_path=f"{LOCAL_ASSET_PATH_DIR}/Robots/KukaAllegro/kuka_allegro_optimized.usd",
         activate_contact_sensors=False,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=True,
