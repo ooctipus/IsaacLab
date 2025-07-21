@@ -3,11 +3,11 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-import os
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
 from isaaclab.sim import CuboidCfg, SphereCfg, CapsuleCfg, ConeCfg, RigidBodyMaterialCfg
 from isaaclab.utils import configclass
+from ... import mdp
 
 # from isaaclab.utils.assets import LOCAL_ASSET_PATH_DIR
 # ISAACLAB_NUCLEUS_DIR = "source/isaaclab_assets/data"
@@ -16,8 +16,23 @@ from isaaclab.utils import configclass
 # dirs = [object_name for object_name in sub_dirs if os.path.isdir(os.path.join(objects_dir, object_name))]
 
 @configclass
+class KukaAllegroPCAActionCfg:
+    actions = mdp.PCAHandActionCfg(asset_name="robot")
+
+
+@configclass
+class KukaAllegroFabricActionCfg:
+    actions = mdp.FabricActionCfg(asset_name="robot")
+
+
+
+@configclass
 class EnvConfigurables:
     env: dict[str, any] = {
+        "actions": {
+            "geometry_fabric": KukaAllegroFabricActionCfg(),
+            "pca": KukaAllegroPCAActionCfg()
+        },
         "scene.object": {
             # "visdex": RigidObjectCfg(
             #     prim_path="{ENV_REGEX_NS}/Object",

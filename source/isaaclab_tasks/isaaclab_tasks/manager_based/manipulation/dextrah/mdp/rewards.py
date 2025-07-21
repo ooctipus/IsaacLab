@@ -84,60 +84,6 @@ class lifted(ManagerTermBase):
         return self.lifted.float()
 
 
-class Cubelifted(ManagerTermBase):
-
-    def __init__(self, cfg, env: ManagerBasedRLEnv):
-        import isaacsim.core.utils.prims as prim_utils
-        super().__init__(cfg, env)
-
-        self.object_cfg: SceneEntityCfg = cfg.params.get("object_cfg", SceneEntityCfg('object'))
-        self.visualize = cfg.params.get("visualize", True)
-        self.object: RigidObject = env.scene[self.object_cfg.name]
-
-        # uncomment to visualize
-        if self.visualize:
-            from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
-            from isaaclab.markers import VisualizationMarkers
-            ray_cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/CameraPointCloud")
-            ray_cfg.markers["hit"].radius = 0.001
-            self.visualizer = VisualizationMarkers(ray_cfg)
-
-        self.points = torch.zeros((env.num_envs, 8, 3), device=self.device)
-        self.lifted = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
-        for i in range(env.num_envs):
-            object_cfg = self.object.cfg
-            prim_path = object_cfg.prim_path
-
-            prim = prim_utils.get_prim_at_path(prim_path.replace(".*", str(i)))
-            # prim_spec = Sdf.CreatePrimInLayer(stage_utils.get_current_stage().GetRootLayer(), )
-            scale = prim.GetAttribute("xformOp:scale").Get()
-            self.points[i, 0] = torch.tensor([-scale[0] / 2, -scale[1] / 2, -scale[2] / 2], device=env.device)
-            self.points[i, 1] = torch.tensor([-scale[0] / 2, -scale[1] / 2, scale[2] / 2], device=env.device)
-            self.points[i, 2] = torch.tensor([-scale[0] / 2, scale[1] / 2, scale[2] / 2], device=env.device)
-            self.points[i, 3] = torch.tensor([-scale[0] / 2, scale[1] / 2, -scale[2] / 2], device=env.device)
-            self.points[i, 4] = torch.tensor([scale[0] / 2, -scale[1] / 2, -scale[2] / 2], device=env.device)
-            self.points[i, 5] = torch.tensor([scale[0] / 2, -scale[1] / 2, scale[2] / 2], device=env.device)
-            self.points[i, 6] = torch.tensor([scale[0] / 2, scale[1] / 2, -scale[2] / 2], device=env.device)
-            self.points[i, 7] = torch.tensor([scale[0] / 2, scale[1] / 2, scale[2] / 2], device=env.device)
-
-    def __call__(
-        self,
-        env: ManagerBasedRLEnv,
-        min_height: float,
-        object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
-        visualize: bool = True
-    ):
-        object_pos_w = self.object.data.root_pos_w.unsqueeze(1).repeat(1, 8, 1)
-        object_rot_w = self.object.data.root_quat_w.unsqueeze(1).repeat(1, 8, 1)
-
-        # apply rotation + translation
-        object_point_cloud_w = math_utils.quat_apply(object_rot_w, self.points) + object_pos_w
-
-        if visualize:
-            self.visualizer.visualize(translations=object_point_cloud_w.reshape(-1, 3))
-        self.lifted = (contacts(env, 1.0)) & (torch.all(object_point_cloud_w[..., 2] > min_height, dim=1))
-        return self.lifted.float()
-
 def contacts(env: ManagerBasedRLEnv, threshold: float) -> torch.Tensor:
     """Penalize undesired contacts as the number of violations that are above a threshold."""
     # extract the used quantities (to enable type-hinting)
