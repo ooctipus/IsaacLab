@@ -88,16 +88,16 @@ from isaaclab.envs import (
     ManagerBasedRLEnvCfg,
     multi_agent_to_single_agent,
 )
+from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_pickle, dump_yaml
+from isaaclab.utils.wandb_upload_record_video import patch_record_video_with_wandb_upload
 
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
 
 import isaaclab_tasks  # noqa: F401
-from isaaclab.utils.assets import retrieve_file_path
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
-from isaaclab.utils.wandb_upload_record_video import patch_record_video_with_wandb_upload
 
 # PLACEHOLDER: Extension template (do not remove this comment)
 
@@ -200,7 +200,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # run training
     use_wandb = args_cli.logger == "wandb"
-    with patch_record_video_with_wandb_upload(enable=use_wandb, wandb_project=args_cli.task, wandb_runid=log_dir.split('/')[-1]):
+    with patch_record_video_with_wandb_upload(
+        enable=use_wandb, wandb_project=args_cli.task, wandb_runid=log_dir.split("/")[-1]
+    ):
         runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
     # close the simulator
     env.close()
