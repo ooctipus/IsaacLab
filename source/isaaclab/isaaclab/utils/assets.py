@@ -36,6 +36,7 @@ ISAACLAB_NUCLEUS_DIR = f"{ISAAC_NUCLEUS_DIR}/IsaacLab"
 LOCAL_ASSET_PATH_DIR = "https://octilab-assets.s3.us-west-004.backblazeb2.com"
 """Path to Octi's LOCAL path for pre release asset storage"""
 
+
 def check_file_path(path: str) -> Literal[0, 1, 2]:
     """Checks if a file exists on the Nucleus Server or locally.
 
