@@ -24,8 +24,6 @@ class KukaAllegroPCAActionCfg:
 class KukaAllegroFabricActionCfg:
     actions = mdp.FabricActionCfg(asset_name="robot")
 
-
-
 @configclass
 class EnvConfigurables:
     env: dict[str, any] = {
