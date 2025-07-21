@@ -67,19 +67,19 @@ class CurriculumCfg:
         }
     )
 
-    object_pose_unoise_min_adr = CurrTerm(
+    object_quat_unoise_min_adr = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
-            "address": "observations.policy.object_pose_b.noise.n_min",
+            "address": "observations.policy.object_quat_b.noise.n_min",
             "modify_fn": mdp.initial_final_interpolate_fn,
             "modify_params": {"iv": 0., "fv": -.03, "difficulty_term_str": "adr"}
         }
     )
 
-    object_pose_unoise_max_adr = CurrTerm(
+    object_quat_unoise_max_adr = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
-            "address": "observations.policy.object_pose_b.noise.n_max",
+            "address": "observations.policy.object_quat_b.noise.n_max",
             "modify_fn": mdp.initial_final_interpolate_fn,
             "modify_params": {"iv": 0., "fv": .03, "difficulty_term_str": "adr"}
         }
