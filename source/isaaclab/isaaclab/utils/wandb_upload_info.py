@@ -1,10 +1,16 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 from __future__ import annotations
 
-import os
 import logging
-from contextlib import contextmanager, nullcontext
-from isaaclab.envs.manager_based_rl_env import ManagerBasedRLEnv
+import os
 import torch
+from contextlib import contextmanager, nullcontext
+
+from isaaclab.envs.manager_based_rl_env import ManagerBasedRLEnv
 
 # from ...summary_writer import WandbSummaryWriter
 
@@ -16,7 +22,14 @@ except ModuleNotFoundError:
 
 class InfoWandbUploadPatcher:
 
-    def __init__(self, wandb_project: str = "", wandb_group: str = "", wandb_runid: str = "", info_interval: int = 50, pad: int = 35):
+    def __init__(
+        self,
+        wandb_project: str = "",
+        wandb_group: str = "",
+        wandb_runid: str = "",
+        info_interval: int = 50,
+        pad: int = 35,
+    ):
         self.round_counter = 0
         self.wandb_project = wandb_project
         self.wandb_runid = wandb_runid
@@ -24,10 +37,10 @@ class InfoWandbUploadPatcher:
         self.pad = pad
 
         self.original_manager_based_rl_env_step = ManagerBasedRLEnv.step
-    
+
     def apply_patch(self):
         logging.debug("WandB info upload ManagerBasedRLEnv patcher: Patching.... ")
-        
+
         def wandb_upload_info_step(info_self, action):
             # Initialize WandB on first use
             if wandb.run is None:
@@ -39,23 +52,21 @@ class InfoWandbUploadPatcher:
                         "Wandb username not found. Please run or add to ~/.bashrc: export WANDB_USERNAME=YOUR_USERNAME"
                     )
 
-                wandb.init(
-                    project=wandb_args.get("project"), entity=entity, group=wandb_args.get("group")
-                )
+                wandb.init(project=wandb_args.get("project"), entity=entity, group=wandb_args.get("group"))
                 wandb.run.name = wandb_args.get("name") + wandb.run.name.split("-")[-1]  # type: ignore
 
             # Original step
             original_step = self.original_manager_based_rl_env_step
-            
+
             obs_buf, reward_buf, reset_terminated, sreset_time_outs, extras = original_step(info_self, action)
-            
+
             # Upload to wandb
             ep_infos = []
             if "episode" in extras:
                 ep_infos.append(extras["episode"])
             elif "log" in extras:
                 ep_infos.append(extras["log"])
-                
+
             # -- Episode info
             ep_string = ""
             if ep_infos:
@@ -71,11 +82,11 @@ class InfoWandbUploadPatcher:
                             ep_info[key] = ep_info[key].unsqueeze(0)
                         infotensor = torch.cat((infotensor, ep_info[key].to(info_self.device)))
                     value = torch.mean(infotensor)
-                    
+
                     # log to logger and terminal
                     info_interval = self.info_interval
                     pad = self.pad
-                    
+
                     if info_self.common_step_counter % info_interval == 0:
                         if "/" in key:
                             wandb.log({key: value}, step=info_self.common_step_counter)
