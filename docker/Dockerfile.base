@@ -42,6 +42,7 @@ RUN --mount=type=cache,target=/var/cache/apt \
     build-essential \
     cmake \
     git \
+    git-lfs \
     libglib2.0-0 \
     ncurses-term \
     wget && \
