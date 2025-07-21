@@ -48,6 +48,21 @@ class CameraSceneCfg(dexsuite_state_impl.SceneCfg):
         height=64,
     )
     
+    
+    # wrist_camera = TiledCameraCfg(
+    #     prim_path="/World/envs/env_.*/Robot/wrist/Camera",
+    #     offset=TiledCameraCfg.OffsetCfg(
+    #         pos=(0.038, -0.38, -0.18),
+    #         rot=(0.29884, 0.64086, 0.64086, -0.29884),  # (x: 130 degree, y: 0 degree, z: -90 degree)
+    #         convention="opengl"),
+    #     data_types=["depth"],
+    #     spawn=sim_utils.PinholeCameraCfg(
+    #         focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
+    #     ),
+    #     width=128,
+    #     height=128,
+    # )
+    
     wall = RigidObjectCfg(
         prim_path="/World/envs/env_.*/wall",
         spawn=sim_utils.CuboidCfg(
