@@ -156,6 +156,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
     agent_cfg["seed"] = args_cli.seed if args_cli.seed is not None else agent_cfg["seed"]
     env_cfg.seed = agent_cfg["seed"]
 
+    # randomly sample a seed if seed = -1
+    if args_cli.seed == -1:
+        args_cli.seed = random.randint(0, 10000)
+
+    # set the agent and environment seed from command line
+    # note: certain randomization occur in the environment initialization so we set the seed here
+    agent_cfg["seed"] = args_cli.seed if args_cli.seed is not None else agent_cfg["seed"]
+    env_cfg.seed = agent_cfg["seed"]
+
     # specify directory for logging experiments (load checkpoint)
     log_root_path = os.path.join("logs", "skrl", experiment_cfg["agent"]["experiment"]["directory"])
     log_root_path = os.path.abspath(log_root_path)
