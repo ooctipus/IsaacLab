@@ -58,6 +58,15 @@ import random
 import time
 import torch
 
+_orig_torch_load = torch.load
+
+
+def _full_unpickle(f, *args, **kwargs):
+    return _orig_torch_load(f, *args, weights_only=False, **kwargs)
+
+
+torch.load = _full_unpickle
+
 from rl_games.common import env_configurations, vecenv
 from rl_games.common.player import BasePlayer
 from rl_games.torch_runner import Runner
