@@ -1,7 +1,7 @@
-# Copyright (c) 2024-2025, The Octi Lab Project Developers.
-# Proprietary and Confidential - All Rights Reserved.
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
 #
-# Unauthorized copying of this file, via any medium is strictly prohibited
+# SPDX-License-Identifier: BSD-3-Clause
 
 """Script to train RL agent with RSL-RL."""
 
@@ -37,9 +37,12 @@ import gymnasium as gym
 import torch
 from datetime import datetime
 
-import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.utils import parse_env_cfg, load_cfg_from_registry
 from isaaclab.utils.wandb_upload_info import InfoWandbUploadPatcher
+
+import isaaclab_tasks  # noqa: F401
+from isaaclab_tasks.utils import load_cfg_from_registry, parse_env_cfg
+
+
 def main():
     # exp_mgr.update_experiment_cfg(args_cli, "state_machine", "state_machine_entry_point")
     task_name = args_cli.task.split(":")[-1]
@@ -47,19 +50,17 @@ def main():
         args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
     )
     sm_cfg = load_cfg_from_registry(task_name, "state_machine_entry_point")
-    
+
     sim_env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
     sm = sm_cfg.class_type(sm_cfg, sim_env.unwrapped)
 
     if args_cli.logger == "wandb":
         info_upload_patcher = InfoWandbUploadPatcher(
-            wandb_project=task_name,
-            wandb_group="info",
-            wandb_runid=datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            wandb_project=task_name, wandb_group="info", wandb_runid=datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         )
         info_upload_patcher.apply_patch()
-    
+
     # reset environment at start
     sim_env.reset()
     sm.reset()
