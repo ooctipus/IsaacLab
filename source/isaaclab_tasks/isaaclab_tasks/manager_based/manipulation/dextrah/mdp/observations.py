@@ -17,7 +17,7 @@ from isaaclab.assets import RigidObject, Articulation
 from isaaclab.sensors import ContactSensor
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import ManagerTermBase
-from isaaclab.utils.math import subtract_frame_transforms, quat_apply_inverse, quat_apply
+from isaaclab.utils.math import subtract_frame_transforms, quat_apply_inverse, quat_apply, quat_inv, quat_mul
 from .utils import sample_object_point_cloud
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -38,9 +38,26 @@ def object_pose_b(
     )
     return torch.cat((object_pos_b, object_quat_b), dim=1)
 
-def projected_joint_force(env: ManagerBasedRLEnv, asset_cfg = SceneEntityCfg("robot")) -> torch.Tensor:
-    asset: Articulation = env.scene[asset_cfg.name]
-    return asset.root_physx_view.get_dof_projected_joint_forces()[:, asset_cfg.joint_ids]
+def object_pos_b(
+    env: ManagerBasedRLEnv,
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+):
+    """The position of the object in the robot's root frame."""
+    robot: RigidObject = env.scene[robot_cfg.name]
+    object: RigidObject = env.scene[object_cfg.name]
+    return quat_apply(quat_inv(robot.data.root_quat_w), object.data.root_pos_w - robot.data.root_pos_w)
+    return object_pos_b
+
+def object_quat_b(
+    env: ManagerBasedRLEnv,
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+) -> torch.Tensor:
+    """The quaternion of the object in the robot's root frame."""
+    robot: RigidObject = env.scene[robot_cfg.name]
+    object: RigidObject = env.scene[object_cfg.name]
+    return quat_mul(quat_inv(robot.data.root_quat_w), object.data.root_quat_w)
 
 def body_state_b(
     env: ManagerBasedRLEnv,
@@ -65,32 +82,6 @@ def body_state_b(
     # concate and return
     out = torch.cat((body_pos_b, body_quat_b, body_lin_vel_b, body_ang_vel_b), dim=1) 
     return out.view(env.num_envs, -1)
-
-
-class object_scale(ManagerTermBase):
-
-    def __init__(self, cfg, env: ManagerBasedRLEnv):
-        import isaacsim.core.utils.prims as prim_utils
-        super().__init__(cfg, env)
-
-        self.object_cfg: SceneEntityCfg = cfg.params.get("object_cfg", SceneEntityCfg('object'))
-        self.object: RigidObject = env.scene[self.object_cfg.name]
-        self.scale = torch.zeros((env.num_envs, 3), device=self.device)
-
-        for i in range(env.num_envs):
-            object_cfg = self.object.cfg
-            prim_path = object_cfg.prim_path
-            prim = prim_utils.get_prim_at_path(prim_path.replace(".*", str(i)))
-            # prim_spec = Sdf.CreatePrimInLayer(stage_utils.get_current_stage().GetRootLayer(), )
-            scale = prim.GetAttribute("xformOp:scale").Get()
-            self.scale[i] = torch.tensor(scale, device=env.device)
-
-    def __call__(
-        self,
-        env: ManagerBasedRLEnv,
-        object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
-    ):
-        return self.scale
 
 
 class object_point_cloud_b(ManagerTermBase):
