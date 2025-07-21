@@ -80,6 +80,7 @@ from isaaclab.envs import (
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_pickle, dump_yaml
+from isaaclab.utils.wandb_upload_record_video import patch_record_video_with_wandb_upload
 
 from isaaclab_rl.rl_games import RlGamesGpuEnv, RlGamesVecEnvWrapper
 from isaaclab_rl.rl_games_utils import MultiObserver
@@ -87,6 +88,11 @@ import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 # PLACEHOLDER: Extension template (do not remove this comment)
+# import torch
+# _orig_torch_load = torch.load
+# def _full_unpickle(f, *args, **kwargs):
+#     return _orig_torch_load(f, *args, weights_only=False, **kwargs)
+# torch.load = _full_unpickle
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -127,7 +133,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # specify directory for logging experiments
     config_name = agent_cfg["params"]["config"]["name"]
     log_root_path = os.path.join("logs", "rl_games", config_name)
-    log_root_path = os.path.abspath(log_root_path)
+    if agent_cfg["hydra"]["run"]["dir"] == ".":
+        log_root_path = os.path.abspath(log_root_path)
+    else:
+        log_root_path = os.path.join(agent_cfg["hydra"]["run"]["dir"], log_root_path)
+
     print(f"[INFO] Logging experiment in directory: {log_root_path}")
     # specify directory for logging runs
     log_dir = agent_cfg["params"]["config"].get("full_experiment_name", datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
@@ -190,6 +200,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # set number of actors into agent config
     agent_cfg["params"]["config"]["num_actors"] = env.unwrapped.num_envs
     # create runner from rl-games
+    agent_cfg["params"]["config"]["minibatch_size"] = int(
+        agent_cfg["params"]["config"]["horizon_length"]
+        * env.unwrapped.num_envs
+        / agent_cfg["params"]["config"]["num_mini_batches"]
+    )
+    print("*" * 50)
+    print("*" * 50)
+    print("*" * 50)
+    print(f"WARNING: minibatch size is set to {agent_cfg['params']['config']['minibatch_size']}")
+    print("*" * 50)
+    print("*" * 50)
+    print("*" * 50)
 
     observers = [IsaacAlgoObserver()]
 
@@ -199,7 +221,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     agent_cfg["args_cli"]["distributed"] = args_cli.distributed
     agent_cfg["args_cli"]["num_gpus"] = os.environ.get("WORLD_SIZE", 1)
     agent_cfg["args_cli"]["global_rank"] = int(os.environ.get("RANK", 0))
-    agent_cfg["args_cli"]["enable_cameras"] = 'rendering' in simulation_app.DEFAULT_LAUNCHER_CONFIG['experience'].split('/')[-1]
+    agent_cfg["args_cli"]["enable_cameras"] = (
+        "rendering" in simulation_app.DEFAULT_LAUNCHER_CONFIG["experience"].split("/")[-1]
+    )
     agent_cfg["args_cli"]["video"] = args_cli.video
     agent_cfg["args_cli"]["video_interval"] = args_cli.video_interval
     agent_cfg["args_cli"]["video_length"] = args_cli.video_length
@@ -233,10 +257,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         wandb.config.update({"env_cfg": env_cfg.to_dict()})
         wandb.config.update({"agent_cfg": agent_cfg})
 
-    if args_cli.checkpoint is not None:
-        runner.run({"train": True, "play": False, "sigma": train_sigma, "checkpoint": resume_path})
-    else:
-        runner.run({"train": True, "play": False, "sigma": train_sigma})
+    with patch_record_video_with_wandb_upload(enable=args_cli.track, wandb_project=wandb_project, wandb_runid=log_dir):
+        if args_cli.checkpoint is not None:
+            runner.run({"train": True, "play": False, "sigma": train_sigma, "checkpoint": resume_path})
+        else:
+            runner.run({"train": True, "play": False, "sigma": train_sigma})
 
     # close the simulator
     env.close()
