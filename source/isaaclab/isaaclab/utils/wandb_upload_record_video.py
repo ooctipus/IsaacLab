@@ -1,12 +1,18 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 from __future__ import annotations
 
-import os
+import gc
 import logging
+import os
 from contextlib import contextmanager, nullcontext
 from gymnasium.wrappers import RecordVideo
 
 from .wandb_summary_writer import WandbSummaryWriter
-import gc
+
 
 class RecordVideoWandbUploadPatcher:
 
@@ -19,10 +25,10 @@ class RecordVideoWandbUploadPatcher:
 
         self.original_step = RecordVideo.step
         self.original_stop_recording = RecordVideo.stop_recording
-    
+
     def apply_patch(self):
         logging.debug("WandB video upload RecordVideo patcher: Patching.... ")
-        
+
         def wandb_upload_record_video_step(record_video_self, action):
             # Initialize WandB writer on first use
             if not self.setup_writer:
