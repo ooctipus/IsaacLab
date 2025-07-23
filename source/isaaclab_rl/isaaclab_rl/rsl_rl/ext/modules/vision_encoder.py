@@ -2,13 +2,12 @@ import torch
 import numpy as np
 import torch.nn as nn
 from gymnasium import spaces
-import torch.nn.functional as F
-from torchvision import models, transforms
 from typing import Tuple, Dict, List, Optional, Union, Any
 from enum import Enum
 
 # Import the activation resolver
 from rsl_rl.utils import resolve_nn_activation
+from ...actor_critic_vision_cfg import CNNEncoderCfg, PretrainedEncoderCfg, ActorCriticVisionAdapterCfg
 
 
 class EncoderType(str, Enum):
@@ -18,24 +17,13 @@ class EncoderType(str, Enum):
     DINOv2 = "dinov2"
 
 
-class VisionEncoder(nn.Module):
+class VisionAdapter(nn.Module):
     """Base class for all vision encoders."""
-    def __init__(
-        self,
-        obs_space: spaces.Box,
-        feature_dim: Optional[int] = 128,
-        activation: str = "relu",
-        freeze: bool = True,
-        normalize: bool = True,
-        normalize_style: str = "normal"
-    ):
+    def __init__(self, obs_space: spaces.Box, adapter_cfg: ActorCriticVisionAdapterCfg):
         super().__init__()
+        self.cfg = adapter_cfg
         self.obs_space = obs_space
-        self.feature_dim = feature_dim
-        self.activation_fn = resolve_nn_activation(activation)
-        self.freeze_encoder = freeze
-        self.normalize_style = normalize_style
-        self._processors: List[Callable] = []
+        self._processors: List[callable] = []
         self._processor_descriptions: List[str] = []
         
         if obs_space.shape[1] in [3, 1, 4]:
@@ -50,16 +38,16 @@ class VisionEncoder(nn.Module):
         if obs_space.dtype != np.float32:
             self._processors.append(lambda x : x.float())
             self._processor_descriptions.append("cast to float32")
-        if normalize:  # rgb indicator
-            if obs_space.shape[1] == 3 or obs_space.shape[-1] == 3:
+        if self.cfg.normalize:
+            if obs_space.shape[1] == 3 or obs_space.shape[-1] == 3:  # rgb indicator
                 processors, descriptions = self._compile_rgb_processors(obs_space)
                 self._processors.extend(processors)
                 self._processor_descriptions.extend(descriptions)
-            elif obs_space.shape[1] == 1 or obs_space.shape[-1] == 1:
+            elif obs_space.shape[1] == 1 or obs_space.shape[-1] == 1:  # depth indicator
                 processors, descriptions = self._compile_depth_processors(obs_space)
                 self._processors.extend(processors)
                 self._processor_descriptions.extend(descriptions)
-            elif obs_space.shape[1] == 4 or obs_space.shape[-1] == 4:
+            elif obs_space.shape[1] == 4 or obs_space.shape[-1] == 4:  # rgbd indicator
                 processors, descriptions = self._compile_rgbd_processors(obs_space)
                 self._processors.extend(processors)
                 self._processor_descriptions.extend(descriptions)
@@ -73,7 +61,7 @@ class VisionEncoder(nn.Module):
         """Build processors for 3-channel inputs."""
         procs: List[callable] = []
         desc: List[str] = []
-        if self.normalize_style == "imagenet":
+        if self.cfg.normalize_style == "imagenet":
             # ImageNet stats
             mean = torch.tensor([0.485,0.456,0.406]).view(1,3,1,1)
             std  = torch.tensor([0.229,0.224,0.225]).view(1,3,1,1)
@@ -87,7 +75,7 @@ class VisionEncoder(nn.Module):
             else:
                 procs.append(lambda x: (x-mean)/std)
                 desc.append("ImageNet normalize")
-        elif self.normalize_style == "normal":
+        elif self.cfg.normalize_style == "normal":
             # "normal": scale to [-1,1] then standardize
             if obs_space.high == 255:
                 procs.append(lambda x: (x / 255.0) * 2 - 1)
@@ -134,17 +122,14 @@ class VisionEncoder(nn.Module):
         Returns:
             Projector module
         """
-        if self.feature_dim:
-            return nn.Sequential(
-                nn.Linear(input_dim, self.feature_dim),
-                self.activation_fn
-            )
+        if self.cfg.feature_dim:
+            return nn.Sequential(nn.Linear(input_dim, self.cfg.feature_dim), resolve_nn_activation(self.cfg.activation))
         else:
             return nn.Identity()
 
     def initialize(self):
         """Hook called at the end of initialization to set up model."""
-        if self.freeze_encoder:
+        if self.cfg.freeze:
             self.freeze()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -157,85 +142,44 @@ class VisionEncoder(nn.Module):
         raise NotImplementedError("Subclasses must implement forward method")
 
 
-class CNNEncoder(VisionEncoder):
+class CNNEncoder(VisionAdapter):
     """CNN encoder with configurable architecture."""
+    
+    cfg: ActorCriticVisionAdapterCfg
 
-    def __init__(
-        self,
-        obs_space: Any,                      # e.g. gym.spaces.Box
-        feature_dim: Optional[int] = 128,
-        activation: str = "relu",
-        freeze: bool = False,
-        normalize: bool = True,
-        normalize_style: str = "normal",
-        config: Optional[Dict[str, Any]] = None,
-    ):
-        # 1) Initialize base VisionEncoder, which sets up self._processors + normalization
-        super().__init__(
-            obs_space,
-            feature_dim=feature_dim,
-            activation=activation,
-            freeze=freeze,
-            normalize=normalize,
-            normalize_style=normalize_style,
-        )
-        assert not freeze, "CNNEncoder: freezing not supported for untrained CNN"
-
-        # 2) CNN architecture config
-        self.config = {
-            "channels": [32, 64, 128],
-            "kernel_sizes":[3, 3, 3],
-            "strides": [2, 2, 2],
-            "paddings": [1, 1, 1],
-            "use_maxpool": True,
-            "pool_size": 2,
-        }
-        if config is not None:
-            self.config.update(config)
-
-        # 3) Build the conv / flatten stack and the projector
-        self._build_encoder()
+    def __init__(self, obs_space: spaces.Box, adapter_cfg: ActorCriticVisionAdapterCfg):
+        super().__init__(obs_space, adapter_cfg)
+        self._build_encoder(obs_space)
         self.initialize()
 
-    def _build_encoder(self):
+    def _build_encoder(self, obs_space):
         layers: List[nn.Module] = []
-        in_ch = self.num_channel
-        # conv → activation → optional pool
-        for i, out_ch in enumerate(self.config["channels"]):
-            layers.append(nn.Conv2d(
-                in_ch,
-                out_ch,
-                kernel_size=self.config["kernel_sizes"][i],
-                stride=self.config["strides"][i],
-                padding=self.config["paddings"][i],
-            ))
-            layers.append(self.activation_fn)
-            if self.config["use_maxpool"]:
-                layers.append(nn.MaxPool2d(self.config["pool_size"]))
-            in_ch = out_ch
+        in_c = self.num_channel
+        ec: CNNEncoderCfg = self.cfg.encoder_cfg
+        for i, out_c in enumerate(ec.channels):
+            c = nn.Conv2d(in_c, out_c, kernel_size=ec.kernel_sizes[i], stride=ec.strides[i], padding=ec.paddings[i])
+            layers.append(c)
+            layers.append(resolve_nn_activation(self.cfg.activation))
+            if ec.use_maxpool:
+                layers.append(nn.MaxPool2d(ec.pool_size))
+            in_c = out_c
 
         layers.append(nn.Flatten())
         self.encoder = nn.Sequential(*layers)
 
         # determine flattened size via a dummy forward (after preprocessing)
         with torch.no_grad():
-            dummy = torch.zeros(1, *self.obs_space.shape[1:])
-            dummy = self.preprocess(dummy)          # HWC→CHW, cast, normalize
+            dummy = self.preprocess(torch.tensor(obs_space.sample())) # HWC→CHW, cast, normalize
             flat_sz = self.encoder(dummy).shape[1]
 
         self.projector = self.build_projector(flat_sz)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        x may be uint8 [0 - 255] or float, HWC or CHW.
-        VisionEncoder.preprocess will handle all casts, permutes, and norms.
-        """
-        x = self.preprocess(x)      # now BCHW, float, normalized
-        feats = self.encoder(x)     # → (B, flat_dim)
+        feats = self.encoder(self.preprocess(x))
         return self.projector(feats)  # → (B, feature_dim)
 
 
-class R3MEncoder(VisionEncoder):
+class R3MEncoder(VisionAdapter):
     """R3M pretrained encoder using ResNet backbone."""
 
     def __init__(
@@ -339,7 +283,7 @@ class R3MEncoder(VisionEncoder):
         return self.projector(features)
 
 
-class DINOv2Encoder(VisionEncoder):
+class DINOv2Encoder(VisionAdapter):
     """DINOv2 pretrained encoder using ViT backbone."""
 
     def __init__(
@@ -410,63 +354,15 @@ class DINOv2Encoder(VisionEncoder):
         return self.projector(features)
 
 
-def get_vision_encoder(
-    encoder_type: Union[str, EncoderType],
-    observation_space: any,
-    feature_dim: Optional[int] = 128,
-    activation: str = "relu",
-    freeze: bool = True,
-    encoder_config: Optional[Dict[str, Any]] = None,
-    normalize = True
-) -> VisionEncoder:
-    """
-    Factory function to create a vision encoder based on type.
-    Args:
-        encoder_type: Type of encoder to create
-        input_shape: Shape of input images (C, H, W)
-        feature_dim: Dimension of output feature vector
-        activation: Activation function to use
-        freeze: Whether to freeze the encoder parameters
-        encoder_config: Additional arguments specific to certain encoders
-    Returns:
-        VisionEncoder: An instance of the requested encoder type
-    """
-    # Convert string to enum if needed
-    if isinstance(encoder_type, str):
-        try:
-            encoder_type = EncoderType(encoder_type.lower())
-        except ValueError:
-            valid_types = [e.value for e in EncoderType]
-            raise ValueError(
-                f"Unsupported encoder type: {encoder_type}. "
-                f"Available types: {valid_types}"
-            )
-
-    # Create appropriate encoder
-    if encoder_type == EncoderType.CNN:
-        return CNNEncoder(
-            obs_space=observation_space,
-            feature_dim=feature_dim,
-            activation=activation,
-            freeze=freeze,
-            config=encoder_config,
-            normalize=normalize
-        )
-    elif encoder_type == EncoderType.R3M:
-        return R3MEncoder(
-            input_shape=observation_space,
-            feature_dim=feature_dim,
-            activation=activation,
-            freeze=freeze,
-            config=encoder_config
-        )
-    elif encoder_type == EncoderType.DINOv2:
-        return DINOv2Encoder(
-            input_shape=observation_space,
-            feature_dim=feature_dim,
-            activation=activation,
-            freeze=freeze,
-            config=encoder_config
-        )
+def get_vision_adapter(
+    encoder_cfg: CNNEncoderCfg | PretrainedEncoderCfg
+):
+    if isinstance(encoder_cfg, CNNEncoderCfg):
+        return CNNEncoder
+    if isinstance(encoder_cfg, PretrainedEncoderCfg):
+        if encoder_cfg.model_name == 'r3m':
+            return R3MEncoder
+        if encoder_cfg.model_name == 'dinov2':
+            return DINOv2Encoder
     else:
-        raise ValueError(f"Encoder type {encoder_type} is not implemented")
+        raise KeyError("does not recognize the encoder cfg")
