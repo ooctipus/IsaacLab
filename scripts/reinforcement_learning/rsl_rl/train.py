@@ -94,6 +94,7 @@ from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_pickle, dump_yaml
 from isaaclab.utils.wandb_upload_record_video import patch_record_video_with_wandb_upload
+from isaaclab_rl.rsl_rl.ext.modules.actor_critic_vision import ActorCriticVisionExtensionPatcher
 
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper
 
@@ -194,7 +195,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-
+    
+    # apply encoder patch
+    actor_critic_vision_patcher = ActorCriticVisionExtensionPatcher(agent_cfg.policy, env.observation_space)
+    actor_critic_vision_patcher.apply_patch()
     # create runner from rsl-rl
     if agent_cfg.class_name == "OnPolicyRunner":
         runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
@@ -216,9 +220,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # run training
     use_wandb = args_cli.logger == "wandb"
-    with patch_record_video_with_wandb_upload(
-        enable=use_wandb, wandb_project=args_cli.task, wandb_runid=log_dir.split("/")[-1]
-    ):
+    with patch_record_video_with_wandb_upload(use_wandb, args_cli.task, log_dir.split("/")[-1]):
         runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
     # close the simulator
     env.close()
