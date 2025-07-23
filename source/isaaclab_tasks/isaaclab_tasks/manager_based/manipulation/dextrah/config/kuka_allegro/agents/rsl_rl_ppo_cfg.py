@@ -6,7 +6,7 @@
 from isaaclab.utils import configclass
 
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
-from isaaclab_rl.rsl_rl.actor_critic_vision_cfg import ActorCriticVisionEncoderCfg
+from isaaclab_rl.rsl_rl.actor_critic_vision_cfg import ActorCriticVisionAdapterCfg, CNNEncoderCfg
 
 @configclass
 class DexsuiteKukaAllegroPPORunnerCfg(RslRlOnPolicyRunnerCfg):
@@ -25,7 +25,17 @@ class DexsuiteKukaAllegroPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
         activation="elu",
-        encoder=ActorCriticVisionEncoderCfg(normalize=False)
+        encoder=ActorCriticVisionAdapterCfg(
+            normalize=False,
+            encoder_cfg=CNNEncoderCfg(
+                channels=[32, 64, 128],
+                kernel_sizes=[3, 3, 3],
+                strides=[2, 2, 2],
+                paddings=[1, 1, 1],
+                use_maxpool=True,
+                pool_size=2
+            )
+        )
     )
     algorithm = RslRlPpoAlgorithmCfg(
         value_loss_coef=1.0,
