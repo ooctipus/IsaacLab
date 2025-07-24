@@ -4,20 +4,21 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import isaaclab.sim as sim_utils
-from isaaclab.managers import SceneEntityCfg
+from isaaclab.utils import configclass
 from isaaclab.assets import RigidObjectCfg
+from isaaclab.sensors import TiledCameraCfg
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
-from isaaclab.sensors import TiledCameraCfg
+from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
-from isaaclab.utils import configclass
 
-from . import mdp
-from . import dexsuite_env_cfg as dexsuite_state_impl
+from .dexsuite_kuka_allegro_env_cfg import KukaAllegroMixinCfg
+from ... import dexsuite_env_cfg as dexsuite_state_impl
+from ... import mdp
 
 
 @configclass
-class CameraSceneCfg(dexsuite_state_impl.SceneCfg):
+class KukaAllegroCameraSceneCfg(dexsuite_state_impl.SceneCfg):
     """Dexsuite scene for multi-objects Lifting/Reorientation"""
     base_camera = TiledCameraCfg(
         prim_path="/World/envs/env_.*/Camera",
@@ -35,22 +36,7 @@ class CameraSceneCfg(dexsuite_state_impl.SceneCfg):
     
     
     wrist_camera = TiledCameraCfg(
-        prim_path="/World/envs/env_.*/Robot/wrist/Camera",
-        offset=TiledCameraCfg.OffsetCfg(
-            pos=(0.038, -0.38, -0.18),
-            rot=(0.29884, 0.64086, 0.64086, -0.29884),  # (x: 130 degree, y: 0 degree, z: -90 degree)
-            convention="opengl"),
-        data_types=["depth"],
-        spawn=sim_utils.PinholeCameraCfg(
-            focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
-        ),
-        width=64,
-        height=64,
-    )
-    
-    
-    wrist_camera = TiledCameraCfg(
-        prim_path="/World/envs/env_.*/Robot/wrist/Camera",
+        prim_path="/World/envs/env_.*/Robot/palm_link/Camera",
         offset=TiledCameraCfg.OffsetCfg(
             pos=(0.038, -0.38, -0.18),
             rot=(0.29884, 0.64086, 0.64086, -0.29884),  # (x: 130 degree, y: 0 degree, z: -90 degree)
@@ -73,8 +59,9 @@ class CameraSceneCfg(dexsuite_state_impl.SceneCfg):
         init_state=RigidObjectCfg.InitialStateCfg(pos=(-1.2, 0.0, 0.0), rot=(1.0, 0.0, 0.0, 0.0))
     )
 
+
 @configclass
-class CameraObservationsCfg(dexsuite_state_impl.ObservationsCfg):
+class KukaAllegroCameraObservationsCfg(dexsuite_state_impl.ObservationsCfg):
     """Observation specifications for the MDP."""
 
     @configclass
@@ -103,12 +90,26 @@ class CameraObservationsCfg(dexsuite_state_impl.ObservationsCfg):
 
 
 @configclass
-class DexSuiteCameraReorientEnvCfg(dexsuite_state_impl.DexSuiteReorientEnvCfg):
-    scene: CameraSceneCfg = CameraSceneCfg()
-    observations: CameraObservationsCfg = CameraObservationsCfg()
+class KukaAllegroCameraMixinCfg(KukaAllegroMixinCfg):
+    scene: KukaAllegroCameraSceneCfg = KukaAllegroCameraSceneCfg(num_envs=4096, env_spacing=3, replicate_physics=False)
+    observations: KukaAllegroCameraObservationsCfg = KukaAllegroCameraObservationsCfg()
 
 
 @configclass
-class DexSuiteCameraLiftEnvCfg(dexsuite_state_impl.DexSuiteLiftEnvCfg):
-    scene: CameraSceneCfg = CameraSceneCfg(num_envs=4096, env_spacing=3, replicate_physics=False)
-    observations: CameraObservationsCfg = CameraObservationsCfg()
+class DexsuiteKukaAllegroReorientCameraEnvCfg(KukaAllegroCameraMixinCfg, dexsuite_state_impl.DexSuiteReorientEnvCfg):
+    pass
+
+
+@configclass
+class DexsuiteKukaAllegroReorientCameraEnvCfg_PLAY(KukaAllegroCameraMixinCfg, dexsuite_state_impl.DexSuiteReorientEnvCfg_PLAY):
+    pass
+
+
+@configclass
+class DexsuiteKukaAllegroLiftCameraEnvCfg(KukaAllegroCameraMixinCfg, dexsuite_state_impl.DexSuiteLiftEnvCfg):
+    pass
+
+
+@configclass
+class DexsuiteKukaAllegroLiftCameraEnvCfg_PLAY(KukaAllegroCameraMixinCfg, dexsuite_state_impl.DexSuiteLiftEnvCfg_PLAY):
+    pass
