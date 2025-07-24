@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers.
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 from isaaclab.utils import configclass
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import RewardTermCfg as RewTerm
@@ -6,7 +11,6 @@ from isaaclab.assets import ArticulationCfg
 from isaaclab_assets.robots.kuka_allegro import KUKA_ALLEGRO_CFG  # isort: skip
 from isaaclab.sensors import ContactSensorCfg
 
-from ... import dexsuite_camera_env_cfg as dexsuite_camera
 from ... import dexsuite_env_cfg as dexsuite
 from ... import mdp
 
@@ -83,19 +87,8 @@ class KukaAllegroMixinCfg:
             )
             setattr(self.scene, f"{link_name}_contact_sensor", link_contact_senor)
 
-        if hasattr(self.observations, "wrist_image") and hasattr(self.observations.wrist_image, "wrist_observation"):
-            self.scene.wrist_camera.prim_path="/World/envs/env_.*/Robot/palm_link/Camera"
-        else:
-            if hasattr(self.scene, "wrist_camera"):
-                del self.scene.wrist_camera
-
 @configclass
 class DexsuiteKukaAllegroReorientEnvCfg(KukaAllegroMixinCfg, dexsuite.DexSuiteReorientEnvCfg):
-    pass
-
-
-@configclass
-class DexsuiteKukaAllegroReorientCameraEnvCfg(KukaAllegroMixinCfg, dexsuite_camera.DexSuiteCameraReorientEnvCfg):
     pass
 
 
@@ -106,11 +99,6 @@ class DexsuiteKukaAllegroReorientEnvCfg_PLAY(KukaAllegroMixinCfg, dexsuite.DexSu
 
 @configclass
 class DexsuiteKukaAllegroLiftEnvCfg(KukaAllegroMixinCfg, dexsuite.DexSuiteLiftEnvCfg):
-    pass
-
-
-@configclass
-class DexsuiteKukaAllegroLiftCameraEnvCfg(KukaAllegroMixinCfg, dexsuite_camera.DexSuiteCameraLiftEnvCfg):
     pass
 
 
