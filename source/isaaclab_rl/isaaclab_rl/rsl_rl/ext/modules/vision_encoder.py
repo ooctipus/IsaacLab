@@ -26,6 +26,8 @@ class VisionAdapter(nn.Module):
         self._processors: List[callable] = []
         self._processor_descriptions: List[str] = []
         
+        # determine whether permutation processor and dtype caster processor is needed
+        # is normalize is false, permutation and dtype casting should be only processing needed
         if obs_space.shape[1] in [3, 1, 4]:
             self.num_channel = obs_space.shape[1]
         elif obs_space.shape[-1] in [3, 1, 4]:
@@ -38,6 +40,8 @@ class VisionAdapter(nn.Module):
         if obs_space.dtype != np.float32:
             self._processors.append(lambda x : x.float())
             self._processor_descriptions.append("cast to float32")
+        
+        # if normalize is True we need more processors.
         if self.cfg.normalize:
             if obs_space.shape[1] == 3 or obs_space.shape[-1] == 3:  # rgb indicator
                 processors, descriptions = self._compile_rgb_processors(obs_space)
@@ -51,6 +55,7 @@ class VisionAdapter(nn.Module):
                 processors, descriptions = self._compile_rgbd_processors(obs_space)
                 self._processors.extend(processors)
                 self._processor_descriptions.extend(descriptions)
+
     def freeze(self):
         """Freeze all parameters in the model."""
         for param in self.parameters():
@@ -205,11 +210,6 @@ class R3MEncoder(VisionAdapter):
         self.model_name = config.get("model_name", "resnet18")
         self._build_encoder()
         self.initialize()
-    
-    def _ensure_chw(self, x: torch.Tensor) -> torch.Tensor:
-        if x.shape[-1] == self.input_shape[0]:
-            return x.permute(0, 3, 1, 2)
-        return x
 
     def _build_encoder(self):
         """Set up the R3M encoder with proper weights."""
