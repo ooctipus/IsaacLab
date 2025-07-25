@@ -148,16 +148,18 @@ class PbtAlgoObserver(AlgoObserver):
         if self.distributed:
             dist.broadcast(self.restart_flag, src=0) 
 
-        if self.global_rank != 0:
-            self._restart_with_new_params_dryrun()
-            return
-        
-        elif self.global_rank == 0 and self.restart_flag.cpu().item() == 1:
-            
-            print(f'Restarting the process with new params on {self.global_rank=}, {self.device=}')
-            self._restart_with_new_params(self.restart_params['new_params'], 
-                                          self.restart_params['restart_from_checkpoint'])
-            return 
+            if self.global_rank != 0:
+                reset_item = self.restart_flag.cpu().item()
+                if reset_item == 1:
+                    print('Exiting this process on device = {}'.format(self.device))
+                    os._exit(0)
+                return
+
+            elif self.restart_flag.cpu().item() == 1:
+                print(f'Restarting the process with new params on {self.global_rank=}, {self.device=}')
+                self._restart_with_new_params(self.restart_params['new_params'], 
+                                            self.restart_params['restart_from_checkpoint'])
+                return 
         
                               
         if self.pbt_iteration == -1:
@@ -227,7 +229,7 @@ class PbtAlgoObserver(AlgoObserver):
             p for obj, p in zip(initialized_objectives, initialized_policies) if obj > upper_cut and (obj - mean_obj) > self.pbt_replace_threshold_frac_absolute
         ]
         laggards = [
-            p for obj, p in zip(initialized_objectives, initialized_policies) if obj < lower_cut and (mean_obj - obj) > self.pbt_replace_threshold_frac_absolute
+            p for obj, p in zip(initialized_objectives, initialized_policies) if obj < lower_cut and (max(initialized_objectives) - obj) > self.pbt_replace_threshold_frac_absolute
         ]
 
         print(f"mean={mean_obj:.4f}, std={std_obj:.4f}, upper={upper_cut:.4f}, lower={lower_cut:.4f}")
@@ -480,16 +482,10 @@ class PbtAlgoObserver(AlgoObserver):
 
         return True
 
-    def _restart_with_new_params_dryrun(self):
+    # def _restart_with_new_params_dryrun(self):
         
-        import os
-        reset_item = self.restart_flag.cpu().item()
-
-        if reset_item == 1:
-            print('Exiting this process on device = {}'.format(self.device))
-            os._exit(0)
-        else:
-            return
+    #     import os
+        
 
     def _restart_with_new_params(self, new_params, restart_from_checkpoint):
         
