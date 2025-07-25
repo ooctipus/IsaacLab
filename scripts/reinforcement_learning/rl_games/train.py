@@ -83,6 +83,7 @@ from isaaclab.utils.io import dump_pickle, dump_yaml
 from isaaclab.utils.wandb_upload_record_video import patch_record_video_with_wandb_upload
 
 from isaaclab_rl.rl_games import RlGamesGpuEnv, RlGamesVecEnvWrapper
+from isaaclab_rl.observation_adapter import GroupToActorCriticGymObservationSpacePatch
 from isaaclab_rl.rl_games_utils import MultiObserver
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils.hydra import hydra_task_config
