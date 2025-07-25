@@ -5,6 +5,9 @@ params:
   env:
     clip_observations: 100.0
     clip_actions: 100.0
+    obs_groups:
+      policy: ["policy", "privileged"]
+      critic: ["policy", "privileged"]
 
   algo:
     name: a2c_continuous
