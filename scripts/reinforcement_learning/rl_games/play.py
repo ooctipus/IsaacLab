@@ -86,7 +86,7 @@ from isaaclab.utils.dict import print_dict
 from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 
 from isaaclab_rl.rl_games import RlGamesGpuEnv, RlGamesVecEnvWrapper
-
+from isaaclab_rl.observation_adapter import GroupToActorCriticGymObservationSpacePatch
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
@@ -149,6 +149,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     obs_groups = agent_cfg["params"]["env"].get("obs_groups")
     concate_obs_groups = agent_cfg["params"]["env"].get("concate_obs_groups", True)
 
+    if "obs_groups" in agent_cfg["params"]["env"]:
+        obs_patch = GroupToActorCriticGymObservationSpacePatch(agent_cfg["params"]["env"]["obs_groups"])
+        obs_patch.apply_patch()
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
