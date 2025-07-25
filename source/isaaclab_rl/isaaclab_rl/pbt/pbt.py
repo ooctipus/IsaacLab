@@ -229,7 +229,7 @@ class PbtAlgoObserver(AlgoObserver):
             p for obj, p in zip(initialized_objectives, initialized_policies) if obj > upper_cut and (obj - mean_obj) > self.pbt_replace_threshold_frac_absolute
         ]
         laggards = [
-            p for obj, p in zip(initialized_objectives, initialized_policies) if obj < lower_cut and (mean_obj - obj) > self.pbt_replace_threshold_frac_absolute
+            p for obj, p in zip(initialized_objectives, initialized_policies) if obj < lower_cut and (max(initialized_objectives) - obj) > self.pbt_replace_threshold_frac_absolute
         ]
 
         print(f"mean={mean_obj:.4f}, std={std_obj:.4f}, upper={upper_cut:.4f}, lower={lower_cut:.4f}")
