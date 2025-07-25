@@ -78,6 +78,7 @@ from isaaclab.utils.io import dump_pickle, dump_yaml
 from isaaclab.utils.wandb_upload_record_video import patch_record_video_with_wandb_upload
 
 from isaaclab_rl.rl_games import RlGamesGpuEnv, RlGamesVecEnvWrapper
+from isaaclab_rl.observation_adapter import GroupToActorCriticGymObservationSpacePatch
 from isaaclab_rl.rl_games_utils import MultiObserver
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils.hydra import hydra_task_config
@@ -153,7 +154,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     rl_device = agent_cfg["params"]["config"]["device"]
     clip_obs = agent_cfg["params"]["env"].get("clip_observations", math.inf)
     clip_actions = agent_cfg["params"]["env"].get("clip_actions", math.inf)
-
+    
+    if "obs_groups" in agent_cfg["params"]["env"]:
+        obs_patch = GroupToActorCriticGymObservationSpacePatch(agent_cfg["params"]["env"]["obs_groups"])
+        obs_patch.apply_patch()
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
