@@ -75,21 +75,19 @@ class PbtAlgoObserver(AlgoObserver):
         # TODO: Fix this 
         # Ensure "agent" key exists
         # Need to add agent because when we are restarting, IsaacLab expects params in agent.params.config.blah
-        params_ = copy.deepcopy(params)
-        if "agent" not in params_:
-            params_["agent"] = {}
+        params_copy = copy.deepcopy(params)
+        if "agent" not in params_copy:
+            params_copy["agent"] = {}
 
         # List the keys to be moved (assuming you want to move all keys except "agent")
-        keys_to_move = [key for key in params_ if key != "agent"]
+        keys_to_move = [key for key in params_copy if key != "agent"]
 
         # Move all selected keys under params["agent"]
         for key in keys_to_move:
-            params_["agent"][key] = params_.pop(key)
+            params_copy["agent"][key] = params_copy.pop(key)
 
-        self.params = self._flatten_params(params_)
-        self.params_to_mutate = pbt_params['mutation']
-
-        self.params = self._filter_params(self.params, self.params_to_mutate)
+        self.params = flatten_dict(params_copy)
+        self.params = self._filter_params(self.params, params['pbt']['mutation'])
         assert self.params, "[DANGER]: Dictionary that contains params to mutate is empty"
         print(f'----------------------------------------')
         print(f'List of params to mutate: {self.params=}')
@@ -101,16 +99,10 @@ class PbtAlgoObserver(AlgoObserver):
         self.count = 0 
 
     @staticmethod
-    def _flatten_params(params, prefix='', separator='.'):
-        all_params = flatten_dict(params, prefix, separator)
-        return all_params
-
-    @staticmethod
     def _filter_params(params, params_to_mutate):
         filtered_params = dict()
 
         for key, value in params.items():    
-
             if key in params_to_mutate:
                 if isinstance(value, str):
                     try:
@@ -268,7 +260,7 @@ class PbtAlgoObserver(AlgoObserver):
 
         # Decided to replace the policy weights!
         new_params = checkpoints[replacement_policy_candidate]['params']
-        new_params = mutate(new_params, self.params_to_mutate, self.pbt_mutation_rate, self.pbt_change_min, self.pbt_change_max)
+        new_params = mutate(new_params, self.params['pbt']['mutation'], self.pbt_mutation_rate, self.pbt_change_min, self.pbt_change_max)
 
         restart_from_checkpoint = os.path.abspath(checkpoints[replacement_policy_candidate]['checkpoint'])
         experiment_name = checkpoints[self.policy_idx]['experiment_name']
