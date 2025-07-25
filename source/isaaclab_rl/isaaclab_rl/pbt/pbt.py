@@ -3,7 +3,6 @@ import random
 import shutil
 import time
 from pprint import pprint
-from os.path import join
 from typing import List
 
 import numpy as np
@@ -64,7 +63,6 @@ class PbtAlgoObserver(AlgoObserver):
         self.pbt_num_policies = pbt_params['num_policies']
         self.algo = None
         self.pbt_workspace = pbt_params['workspace']
-        self.pbt_workspace_dir = self.curr_policy_workspace_dir = None
 
         self.pbt_iteration = -1  # dummy value, stands for "not initialized"
         self.pbt_interval_steps = pbt_params['interval_steps']
@@ -131,9 +129,8 @@ class PbtAlgoObserver(AlgoObserver):
             return
         
         self.algo = algo
-
-        self.pbt_workspace_dir = join(algo.train_dir, self.pbt_workspace)
-        self.curr_policy_workspace_dir = self._policy_workspace_dir(self.policy_idx)
+        self.pbt_workspace_dir = os.path.join(algo.train_dir, self.pbt_workspace)
+        self.curr_policy_workspace_dir = os.path.join(self.pbt_workspace_dir, f'{self.policy_idx:03d}')
         os.makedirs(self.curr_policy_workspace_dir, exist_ok=True)
 
     def process_infos(self, infos, done_indices):
@@ -232,14 +229,13 @@ class PbtAlgoObserver(AlgoObserver):
         std_obj  = float(np.std(initialized_objectives))
         upper_cut = mean_obj + self.pbt_replace_threshold_frac_std * std_obj
         lower_cut = mean_obj - self.pbt_replace_threshold_frac_std * std_obj
-        absolute_cut = self.pbt_replace_threshold_frac_absolute * abs(max(initialized_objectives))
 
         # 2) Leaders & laggards
         leaders = [
-            p for obj, p in zip(initialized_objectives, initialized_policies) if obj > upper_cut and obj > absolute_cut
+            p for obj, p in zip(initialized_objectives, initialized_policies) if obj > upper_cut and (obj - mean_obj) > self.pbt_replace_threshold_frac_absolute
         ]
         laggards = [
-            p for obj, p in zip(initialized_objectives, initialized_policies) if obj < lower_cut
+            p for obj, p in zip(initialized_objectives, initialized_policies) if obj < lower_cut and (mean_obj - obj) > self.pbt_replace_threshold_frac_absolute
         ]
 
         print(f"mean={mean_obj:.4f}, std={std_obj:.4f}, upper={upper_cut:.4f}, lower={lower_cut:.4f}")
@@ -247,7 +243,7 @@ class PbtAlgoObserver(AlgoObserver):
         print(f"Laggards: {laggards}")
 
         # 3) Best‐policy summary
-        best_policy    = max(zip(initialized_objectives, initialized_policies), key=lambda x: x[0])[1]
+        best_policy = max(zip(initialized_objectives, initialized_policies), key=lambda x: x[0])[1]
         best_objective = max(initialized_objectives)
         self._maybe_save_best_policy(best_objective, best_policy, checkpoints[best_policy])
 
@@ -286,22 +282,16 @@ class PbtAlgoObserver(AlgoObserver):
         self.restart_params['restart_from_checkpoint'] = restart_from_checkpoint
         self.restart_params['experiment_name'] = experiment_name
 
-        # self._restart_with_new_params(new_params, restart_from_checkpoint, experiment_name)
-
     def _save_pbt_checkpoint(self):
         if self.global_rank != 0:
             return
         
         """Save PBT-specific information including iteration number, policy index and hyperparameters."""
-        checkpoint_file = join(self.curr_policy_workspace_dir, _model_checkpnt_name(self.pbt_iteration))
-        
-        # It is in 
-        # https://github.com/Denys88/rl_games/blob/b483bd62982f668e3fb4d457b418e56fae38ebf2/rl_games/common/a2c_common.py#L630
-        
+        checkpoint_file = os.path.join(self.curr_policy_workspace_dir, _model_checkpnt_name(self.pbt_iteration))
         algo_state = self.algo.get_full_state_weights()
         safe_save(algo_state, checkpoint_file)
 
-        pbt_checkpoint_file = join(self.curr_policy_workspace_dir, _checkpnt_name(self.pbt_iteration))
+        pbt_checkpoint_file = os.path.join(self.curr_policy_workspace_dir, _checkpnt_name(self.pbt_iteration))
 
         pbt_checkpoint = {
             'iteration': self.pbt_iteration,
@@ -314,13 +304,9 @@ class PbtAlgoObserver(AlgoObserver):
         }
 
         print(f'Policy {self.policy_idx}: PBT checkpoint saving the dict {pbt_checkpoint} in {pbt_checkpoint_file} ...')
-
         with open(pbt_checkpoint_file, 'w') as fobj:
             print(f'Policy {self.policy_idx}: Saving {pbt_checkpoint_file}...')
             yaml.dump(pbt_checkpoint, fobj)
-
-    def _policy_workspace_dir(self, policy_idx):
-        return join(self.pbt_workspace_dir, f'{policy_idx:03d}')
 
     def _load_population_checkpoints(self):
         if self.global_rank != 0:
@@ -335,7 +321,7 @@ class PbtAlgoObserver(AlgoObserver):
         for policy_idx in range(self.pbt_num_policies):
             checkpoints[policy_idx] = None
 
-            policy_workspace_dir = self._policy_workspace_dir(policy_idx)
+            policy_workspace_dir = os.path.join(self.pbt_workspace_dir, f'{policy_idx:03d}')
 
             if not os.path.isdir(policy_workspace_dir):
                 
@@ -354,11 +340,11 @@ class PbtAlgoObserver(AlgoObserver):
                 # current local time
                 now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
-                ctime_ts = os.path.getctime(join(policy_workspace_dir, pbt_checkpoint_file))
+                ctime_ts = os.path.getctime(os.path.join(policy_workspace_dir, pbt_checkpoint_file))
                 created_str = datetime.datetime.fromtimestamp(ctime_ts).strftime("%Y-%m-%d %H:%M:%S")   
 
                 if iteration <= self.pbt_iteration:
-                    with open(join(policy_workspace_dir, pbt_checkpoint_file), 'r') as fobj:
+                    with open(os.path.join(policy_workspace_dir, pbt_checkpoint_file), 'r') as fobj:
                         print(f'Policy {self.policy_idx} [{now_str}]: Loading policy-{policy_idx} {pbt_checkpoint_file} (created at {created_str})')
                         checkpoints[policy_idx] = safe_filesystem_op(yaml.load, fobj, Loader=yaml.FullLoader)
                         break
@@ -375,7 +361,7 @@ class PbtAlgoObserver(AlgoObserver):
             return
         
         # make a directory containing best policy checkpoints using safe_filesystem_op
-        best_policy_workspace_dir = join(self.pbt_workspace_dir, f'best{self.policy_idx}')
+        best_policy_workspace_dir = os.path.join(self.pbt_workspace_dir, f'best{self.policy_idx}')
         safe_filesystem_op(os.makedirs, best_policy_workspace_dir, exist_ok=True)
 
         best_objective_so_far = _UNINITIALIZED_VALUE
@@ -383,7 +369,7 @@ class PbtAlgoObserver(AlgoObserver):
         best_policy_checkpoint_files = [f for f in os.listdir(best_policy_workspace_dir) if f.endswith('.yaml')]
         best_policy_checkpoint_files.sort(reverse=True)
         if best_policy_checkpoint_files:
-            with open(join(best_policy_workspace_dir, best_policy_checkpoint_files[0]), 'r') as fobj:
+            with open(os.path.join(best_policy_workspace_dir, best_policy_checkpoint_files[0]), 'r') as fobj:
                 best_policy_checkpoint_so_far = safe_filesystem_op(yaml.load, fobj, Loader=yaml.FullLoader)
                 best_objective_so_far = best_policy_checkpoint_so_far['true_objective']
 
@@ -398,8 +384,8 @@ class PbtAlgoObserver(AlgoObserver):
 
         # copy the checkpoint file to the best policy directory
         try:
-            shutil.copy(best_policy_checkpoint['checkpoint'], join(best_policy_workspace_dir, f'{best_policy_checkpoint_name}.pth'))
-            shutil.copy(best_policy_checkpoint['pbt_checkpoint'], join(best_policy_workspace_dir, f'{best_policy_checkpoint_name}.yaml'))
+            shutil.copy(best_policy_checkpoint['checkpoint'], os.path.join(best_policy_workspace_dir, f'{best_policy_checkpoint_name}.pth'))
+            shutil.copy(best_policy_checkpoint['pbt_checkpoint'], os.path.join(best_policy_workspace_dir, f'{best_policy_checkpoint_name}.yaml'))
 
             # cleanup older best policy checkpoints, we want to keep only N latest files
             best_policy_checkpoint_files = [f for f in os.listdir(best_policy_workspace_dir)]
@@ -407,7 +393,7 @@ class PbtAlgoObserver(AlgoObserver):
 
             n_to_keep = 6
             for best_policy_checkpoint_file in best_policy_checkpoint_files[n_to_keep:]:
-                os.remove(join(best_policy_workspace_dir, best_policy_checkpoint_file))
+                os.remove(os.path.join(best_policy_workspace_dir, best_policy_checkpoint_file))
 
         except Exception as exc:
             print(f'Policy {self.policy_idx}: Exception {exc} when copying best checkpoint!')
@@ -446,7 +432,7 @@ class PbtAlgoObserver(AlgoObserver):
                 if iteration_idx <= cleanup_threshold:
                     print(f'Policy {self.policy_idx}: PBT cleanup: removing checkpoint {f}')
                     # we catch all exceptions in this function so no need to use safe_filesystem_op
-                    os.remove(join(self.curr_policy_workspace_dir, f))
+                    os.remove(os.path.join(self.curr_policy_workspace_dir, f))
 
         # Sometimes, one of the PBT processes can get stuck, or crash, or be scheduled significantly later on Slurm
         # or a similar cluster management system.
@@ -498,7 +484,7 @@ class PbtAlgoObserver(AlgoObserver):
         files_to_remove = [best_candidate_file, _model_checkpnt_name(_iter(best_candidate_file))]
         for file_to_remove in files_to_remove:
             print(f'Policy {self.policy_idx}: PBT cleanup old checkpoints, removing checkpoint {file_to_remove} (best gap {best_gap})')
-            os.remove(join(self.curr_policy_workspace_dir, file_to_remove))
+            os.remove(os.path.join(self.curr_policy_workspace_dir, file_to_remove))
 
         return True
 
