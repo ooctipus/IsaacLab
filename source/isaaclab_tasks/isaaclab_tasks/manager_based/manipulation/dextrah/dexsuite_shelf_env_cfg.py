@@ -34,7 +34,7 @@ class ShelvesEventCfg(EventCfg):
         mode="reset",
         params={
             "pose_range": {
-                "x": [-0.2, 0.2], "y": [-0.2, 0.2], "z": [0.0, 0.4],
+                "x": [-0.2, 0.2], "y": [-0.4, 0.4], "z": [-0.25, 0.4],
                 "roll":[-3.14, 3.14], "pitch":[-3.14, 3.14], "yaw": [-3.14, 3.14]
             },
             "velocity_range": {"x": [-0., 0.], "y": [-0., 0.], "z": [-0., 0.]},
@@ -60,6 +60,6 @@ class DexSuiteShelvesEnvCfg(DexSuiteReorientEnvCfg):
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
                 collision_props=sim_utils.CollisionPropertiesCfg(),
             ),
-            init_state=RigidObjectCfg.InitialStateCfg(pos=(-0.7, 0.5, 0.0), rot=(0.7071068, 0, 0, -0.7071068)),
+            init_state=RigidObjectCfg.InitialStateCfg(pos=(-0.775, 0.5, 0.0), rot=(0.7071068, 0, 0, -0.7071068)),
         )
         self.episode_length_s = 0.5
