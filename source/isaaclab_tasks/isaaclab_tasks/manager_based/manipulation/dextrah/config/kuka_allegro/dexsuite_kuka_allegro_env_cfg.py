@@ -12,6 +12,7 @@ from isaaclab_assets.robots.kuka_allegro import KUKA_ALLEGRO_CFG  # isort: skip
 from isaaclab.sensors import ContactSensorCfg
 
 from ... import dexsuite_env_cfg as dexsuite
+from ... import dexsuite_shelf_env_cfg as dexsuite_shelf
 from ... import mdp
 
 
@@ -104,4 +105,9 @@ class DexsuiteKukaAllegroLiftEnvCfg(KukaAllegroMixinCfg, dexsuite.DexSuiteLiftEn
 
 @configclass
 class DexsuiteKukaAllegroLiftEnvCfg_PLAY(KukaAllegroMixinCfg, dexsuite.DexSuiteLiftEnvCfg_PLAY):
+    pass
+
+
+@configclass
+class DexsuiteKukaAllegroShelvesEnvCfg(KukaAllegroMixinCfg, dexsuite_shelf.DexSuiteShelvesEnvCfg):
     pass
