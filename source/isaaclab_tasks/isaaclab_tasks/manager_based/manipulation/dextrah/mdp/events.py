@@ -18,7 +18,7 @@ from isaaclab.utils import math as math_utils
 from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 from isaaclab.envs.mdp.events import reset_root_state_uniform
 import isaaclab.sim as sim_utils
-from .utils import sample_object_point_cloud, prim_to_warp_mesh, get_pen_multi_agg
+from .utils import sample_object_point_cloud, prim_to_warp_mesh, get_sign_distance
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
     from pxr import Usd
@@ -35,28 +35,30 @@ class reset_asset_collision_free(ManagerTermBase):
         super().__init__(cfg, env)
         self.max_dist = 0.5
         self.num_points = 128
-        asset: RigidObject = env.scene[cfg.params.get("collision_check_asset_cfg").name]
-        obstacle: RigidObject = env.scene[cfg.params.get("collision_check_against_asset_cfg").name]
+        asset_cfg = cfg.params.get("collision_check_asset_cfg")
+        asset: RigidObject = env.scene[asset_cfg.name]
         self.local_pts = sample_object_point_cloud(
             num_envs=env.num_envs, num_points=self.num_points, prim_path=asset.cfg.prim_path, device=env.device
         )
+        obstacle_cfgs: list[SceneEntityCfg] = cfg.params.get("collision_check_against_asset_cfg")
         self.obstacle_meshes: list[tuple[wp.Mesh, Usd.Prim]] = []
         all_handles = []
         prim_counts = []
         for i in range(env.num_envs):
-            obj_path = obstacle.cfg.prim_path.replace(".*", str(i))
-            prims = sim_utils.get_all_matching_child_prims(
-                obj_path,
-                predicate=lambda p: p.GetTypeName() in ("Cube","Sphere","Cylinder","Capsule","Cone","Mesh")
-            )
-            ids = []
-            for p in prims:
-                # convert each USD prim → Warp mesh...
-                wp_mesh = prim_to_warp_mesh(p, device=env.device)
-                self.obstacle_meshes.append((wp_mesh, p))
-                ids.append(int(wp_mesh.id))
-            all_handles.append(ids)
-            prim_counts.append(len(ids))
+            for obstacle_cfg in obstacle_cfgs:
+                obj_path = env.scene[obstacle_cfg.name].cfg.prim_path.replace(".*", str(i))
+                prims = sim_utils.get_all_matching_child_prims(
+                    obj_path,
+                    predicate=lambda p: p.GetTypeName() in ("Cube","Sphere","Cylinder","Capsule","Cone","Mesh")
+                )
+                ids = []
+                for p in prims:
+                    # convert each USD prim → Warp mesh...
+                    wp_mesh = prim_to_warp_mesh(p, device=env.device)
+                    self.obstacle_meshes.append((wp_mesh, p))
+                    ids.append(int(wp_mesh.id))
+                all_handles.append(ids)
+                prim_counts.append(len(ids))
 
         self.max_prims = max(prim_counts)
         assert self.max_prims > 0, f"No collision primitives found under {obstacle.cfg.prim_path}"
@@ -64,21 +66,17 @@ class reset_asset_collision_free(ManagerTermBase):
         self.handles_tensor = torch.tensor(padded, dtype=torch.int64, device=env.device)
         self.prim_counts = torch.tensor(prim_counts, dtype=torch.int32, device=env.device)
 
-        total_state_dim = self._get_reset_state(torch.tensor([0], device=env.device)).shape[-1]
+        self.asset_keys = [asset_cfg.name, *[cfg.name for cfg in obstacle_cfgs]]
+        total_state_dim = self._get_reset_state(torch.tensor([0], device=env.device), self.asset_keys).shape[-1]
         self.max_size = 50
         self.collision_free_tensor = torch.zeros((env.num_envs, self.max_size, total_state_dim), device=env.device)
         self.collision_free_state_tensor_size = torch.zeros((env.num_envs,), device=env.device, dtype=torch.int)
         self.collision_free_ptr = torch.zeros((env.num_envs,), device=env.device, dtype=torch.int)
+        self.precollecting_phase = True
         while (self.collision_free_state_tensor_size < self.max_size).any():
             env_ids = torch.arange(env.num_envs, device=env.device)[self.collision_free_state_tensor_size < self.max_size]
             self.__call__(env, env_ids, **self.cfg.params)
-        while True:
-            env_id_arange = torch.arange(env.num_envs, device=env.device)
-            rand_idx = torch.randint(0, self.max_size, (env.num_envs,), device=env.device)
-            sampled_states = self.collision_free_tensor[env_id_arange, rand_idx]
-            self._set_reset_state(sampled_states, env_id_arange)
-            for i in range(50):
-                env.sim.render()
+        self.precollecting_phase = False
 
     def __call__(
         self,
@@ -102,59 +100,69 @@ class reset_asset_collision_free(ManagerTermBase):
         counts_w = wp.from_torch(counts_sub, dtype=wp.int32)
         sign_w  = wp.zeros((len(env_ids) * self.num_points,), dtype=float)            
         wp.launch(
-            get_pen_multi_agg,
+            get_sign_distance,
             dim=len(env_ids) * self.num_points,
             inputs=[queries_w, handles_w, counts_w, float(self.max_dist), self.num_points, self.max_prims],
             outputs=[sign_w]
         )
         signs = wp.to_torch(sign_w).view(len(env_ids), self.num_points)
-        coll_free_id = env_ids[(signs >= 0.0).all(dim=1).bool()]
+        cooll_free_mask = (signs >= 0.0).all(dim=1).bool()
+        coll_free_id = env_ids[cooll_free_mask]
+        coll_id = env_ids[~cooll_free_mask]
 
-        states = self._get_reset_state(coll_free_id)
+        states = self._get_reset_state(coll_free_id, self.asset_keys)
         idx = self.collision_free_ptr[coll_free_id]
         self.collision_free_tensor[coll_free_id, idx] = states
         self.collision_free_ptr[coll_free_id] = (idx + 1) % self.max_size
         self.collision_free_state_tensor_size[coll_free_id] = torch.clamp(self.collision_free_state_tensor_size[coll_free_id] + 1, max=self.max_size)
+        if not self.precollecting_phase:
+            rand_idx = torch.randint(0, self.max_size, (len(coll_id),), device=env.device)
+            sampled_states = self.collision_free_tensor[coll_id, rand_idx]
+            self._set_reset_state(sampled_states, coll_id, self.asset_keys)
 
     
-    def _set_reset_state(self, states: torch.Tensor, env_ids: torch.Tensor, is_relative: bool = False):
+    def _set_reset_state(self, states: torch.Tensor, env_ids: torch.Tensor, keys: list[str], is_relative: bool = False):
         idx = 0
-        for articulation in self._env.scene._articulations.values():
-            root_state = states[:, idx : idx + 13].clone()
-            if is_relative:
-                root_state[:, :3] += self._env.scene.env_origins[env_ids]
-            articulation.write_root_state_to_sim(root_state, env_ids=env_ids)
-            # joint state
-            n_j = articulation.num_joints
-            joint_position = states[:, idx + 13 : idx + 13 + n_j].clone()
-            joint_velocity = states[:, idx + 13 + n_j : idx + 13 + 2 * n_j].clone()
-            articulation.write_joint_state_to_sim(joint_position, joint_velocity, env_ids=env_ids)
-            idx += (13 + 2 * n_j)
+        for name, articulation in self._env.scene._articulations.items():
+            if name in keys:
+                root_state = states[:, idx : idx + 13].clone()
+                if is_relative:
+                    root_state[:, :3] += self._env.scene.env_origins[env_ids]
+                articulation.write_root_state_to_sim(root_state, env_ids=env_ids)
+                # joint state
+                n_j = articulation.num_joints
+                joint_position = states[:, idx + 13 : idx + 13 + n_j].clone()
+                joint_velocity = states[:, idx + 13 + n_j : idx + 13 + 2 * n_j].clone()
+                articulation.write_joint_state_to_sim(joint_position, joint_velocity, env_ids=env_ids)
+                idx += (13 + 2 * n_j)
         # rigid objects
-        for rigid_object in self._env.scene._rigid_objects.values():
-            root_state = states[:, idx : idx + 13].clone()
-            if is_relative:
-                root_state[:, :3] += self._env.scene.env_origins[env_ids]
-            rigid_object.write_root_state_to_sim(root_state, env_ids)
-            idx += 13
+        for name, rigid_object in self._env.scene._rigid_objects.items():
+            if name in keys:
+                root_state = states[:, idx : idx + 13].clone()
+                if is_relative:
+                    root_state[:, :3] += self._env.scene.env_origins[env_ids]
+                rigid_object.write_root_state_to_sim(root_state, env_ids)
+                idx += 13
 
 
-    def _get_reset_state(self, env_id: torch.Tensor, is_relative=False):
+    def _get_reset_state(self, env_id: torch.Tensor, keys: list[str], is_relative=False):
         states = []
         # articulations
-        for articulation in self._env.scene._articulations.values():
-            state = articulation.data.root_state_w[env_id].clone()
-            if is_relative:
-                state[:, :3] -= self._env.scene.env_origins[env_id]
-            states.append(state)
-            states.append(articulation.data.joint_pos[env_id].clone())
-            states.append(articulation.data.joint_vel[env_id].clone())
+        for name, articulation in self._env.scene._articulations.items():
+            if name in keys:
+                state = articulation.data.root_state_w[env_id].clone()
+                if is_relative:
+                    state[:, :3] -= self._env.scene.env_origins[env_id]
+                states.append(state)
+                states.append(articulation.data.joint_pos[env_id].clone())
+                states.append(articulation.data.joint_vel[env_id].clone())
         # rigid objects
-        for rigid_object in self._env.scene._rigid_objects.values():
-            state = rigid_object.data.root_state_w[env_id].clone()
-            if is_relative:
-                state[:, :3] -= self._env.scene.env_origins[env_id]
-            states.append(state)
+        for name, rigid_object in self._env.scene._rigid_objects.items():
+            if name in keys:
+                state = rigid_object.data.root_state_w[env_id].clone()
+                if is_relative:
+                    state[:, :3] -= self._env.scene.env_origins[env_id]
+                states.append(state)
         return torch.cat(states, dim=-1)
 
 class reset_end_effector_around_asset(ManagerTermBase):
