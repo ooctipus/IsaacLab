@@ -1,20 +1,16 @@
 import os
+import omni
 import hashlib
 import numpy as np
 import torch
 import trimesh
 import logging
+import warp as wp
 from trimesh.sample import sample_surface
 from pxr import UsdGeom, Gf
 import isaacsim.core.utils.prims as prim_utils
 from isaaclab.sim.utils import get_all_matching_child_prims
-
-# Threshold for using full-distance-matrix FPS (in bytes)
-
-
-class PointCloudSamplingError(Exception):
-    """Custom exception for point cloud sampling errors."""
-    pass
+from isaaclab.utils.warp import convert_to_warp_mesh
 
 
 def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str,
@@ -37,9 +33,6 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str,
 
     Returns:
         torch.Tensor: Shape (num_envs, num_points, 3).
-
-    Raises:
-        PointCloudSamplingError on errors.
     """
     # Prepare cache directories
     prim_cache_dir = os.path.join(cache_dir, "prim_samples")
@@ -61,7 +54,7 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str,
             )
         )
         if not prims:
-            raise PointCloudSamplingError(f"No valid prims under {obj_path}")
+            raise KeyError(f"No valid prims under {obj_path}")
 
         # Compute per-prim geometry hashes for env-level cache key
         prim_hashes = []
@@ -138,7 +131,7 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str,
                     faces = _triangulate_faces(prim)
                     mesh_tm = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
                 else:
-                    mesh_tm = _create_primitive_mesh(prim, prim_type)
+                    mesh_tm = create_primitive_mesh(prim)
 
                 face_weights = mesh_tm.area_faces
                 samples_np, _ = sample_surface(mesh_tm, num_points * 2, face_weight=face_weights)
@@ -180,7 +173,8 @@ def _triangulate_faces(prim) -> np.ndarray:
     return np.asarray(faces, dtype=np.int64)
 
 
-def _create_primitive_mesh(prim, prim_type: str) -> trimesh.Trimesh:
+def create_primitive_mesh(prim) -> trimesh.Trimesh:
+    prim_type = prim.GetTypeName()
     if prim_type == "Cube":
         size = UsdGeom.Cube(prim).GetSizeAttr().Get()
         return trimesh.creation.box(extents=(size, size, size))
@@ -197,11 +191,13 @@ def _create_primitive_mesh(prim, prim_type: str) -> trimesh.Trimesh:
         return trimesh.creation.capsule(
             radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get()
         )
-    else:  # Cone
+    elif prim_type == "Cone":  # Cone
         c = UsdGeom.Cone(prim)
         return trimesh.creation.cone(
             radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get()
         )
+    else:
+        raise KeyError(f"{prim_type} is not a valid primitive mesh type")
 
 
 def fps(points: torch.Tensor, n_samples: int, memory_threashold= 2 * 1024 ** 3) -> torch.Tensor:  # 2 GiB
@@ -229,3 +225,47 @@ def fps(points: torch.Tensor, n_samples: int, memory_threashold= 2 * 1024 ** 3) 
         distances = torch.minimum(distances, dist)
         farthest = torch.argmax(distances)
     return sampled_idx
+
+
+def prim_to_warp_mesh(prim, device) -> wp.Mesh:
+    transform_matrix = np.array(omni.usd.get_world_transform_matrix(prim)).T
+    if prim.GetTypeName() == "Mesh":
+        # cast into UsdGeomMesh
+        mesh_prim = UsdGeom.Mesh(prim)
+        points = np.asarray(mesh_prim.GetPointsAttr().Get())
+        indices = np.asarray(mesh_prim.GetFaceVertexIndicesAttr().Get())
+    else:
+        mesh = create_primitive_mesh(prim)
+        points = mesh.vertices
+        indices = mesh.faces
+        
+    points = np.matmul(points, transform_matrix[:3, :3].T) + transform_matrix[:3, 3]
+    wp_mesh = convert_to_warp_mesh(points, indices, device=device)
+    return wp_mesh
+
+
+@wp.kernel
+def get_pen_multi_agg(
+    queries:        wp.array(dtype=wp.vec3),   # [E_bad * N]
+    mesh_handles:   wp.array(dtype=wp.uint64), # [E_bad * max_prims]
+    prim_counts:    wp.array(dtype=wp.int32),  # [E_bad]
+    max_dist:       float,
+    num_points:     int,
+    max_prims:      int,
+    signs:          wp.array(dtype=float),     # [E_bad * N]
+):
+    tid = wp.tid()
+    env_id = tid // num_points
+    q = queries[tid]
+    # accumulator for the lowest‐sign (start large)
+    best_sign = float(1)
+
+    base = env_id * max_prims
+    for p in range(prim_counts[env_id]):
+        mid = mesh_handles[base + p]
+        if mid != 0:
+            mp = wp.mesh_query_point(mid, q, max_dist)
+            if mp.result and mp.sign < best_sign:
+                best_sign = mp.sign
+    # write final values exactly once
+    signs[tid] = best_sign
