@@ -39,7 +39,7 @@ class ShelvesEventCfg(EventCfg):
             },
             "velocity_range": {"x": [-0., 0.], "y": [-0., 0.], "z": [-0., 0.]},
             "collision_check_asset_cfg": SceneEntityCfg("object"),
-            "collision_check_against_asset_cfg": SceneEntityCfg("table")
+            "collision_check_against_asset_cfg": [SceneEntityCfg("table"), SceneEntityCfg("robot")] 
         },
     )
 
