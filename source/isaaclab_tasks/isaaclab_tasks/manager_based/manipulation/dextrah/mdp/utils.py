@@ -245,7 +245,7 @@ def prim_to_warp_mesh(prim, device) -> wp.Mesh:
 
 
 @wp.kernel
-def get_pen_multi_agg(
+def get_sign_distance(
     queries:        wp.array(dtype=wp.vec3),   # [E_bad * N]
     mesh_handles:   wp.array(dtype=wp.uint64), # [E_bad * max_prims]
     prim_counts:    wp.array(dtype=wp.int32),  # [E_bad]
