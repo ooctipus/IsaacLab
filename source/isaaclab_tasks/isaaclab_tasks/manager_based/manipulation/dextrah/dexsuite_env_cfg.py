@@ -306,7 +306,7 @@ class TerminationsCfg:
 
     object_out_of_bound = DoneTerm(
         func=mdp.out_of_bound,
-        params={"in_bound_range": {"x":(-1.5, 0.5), "y": (-2.0, 2.0), "z": (.2, 2.)}, "asset_cfg": SceneEntityCfg("object")}
+        params={"in_bound_range": {"x":(-1.5, 0.5), "y": (-2.0, 2.0), "z": (.0, 2.)}, "asset_cfg": SceneEntityCfg("object")}
     )
     
     abnormal_robot = DoneTerm(func=mdp.abnormal_robot_state)

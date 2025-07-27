@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-"""
-Generate a scene of randomized shelves in USD using the Pixar USD Python API.
-"""
-
 from pxr import Usd, UsdGeom, Gf, UsdPhysics
 from isaaclab.sim.schemas import schemas, schemas_cfg
 import numpy as np
