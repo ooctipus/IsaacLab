@@ -5,7 +5,6 @@
 
 from dataclasses import MISSING
 
-import os
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, RigidObjectCfg, AssetBaseCfg
 from isaaclab.envs import ManagerBasedEnvCfg
@@ -104,7 +103,6 @@ class ObservationsCfg:
                 "body_asset_cfg": SceneEntityCfg("robot"),
                 "base_asset_cfg": SceneEntityCfg("robot"),
             })
-        # object_pose_b = ObsTerm(func=mdp.object_pose_b, noise=Unoise(n_min=-0., n_max=0.))
         object_quat_b = ObsTerm(func=mdp.object_quat_b, noise=Unoise(n_min=-0., n_max=0.))
         target_object_pose_b = ObsTerm(func=mdp.generated_commands, params={"command_name": "object_pose"})
         actions = ObsTerm(func=mdp.last_action)
