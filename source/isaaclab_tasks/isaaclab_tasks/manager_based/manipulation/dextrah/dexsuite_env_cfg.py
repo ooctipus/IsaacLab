@@ -118,6 +118,9 @@ class ObservationsCfg:
         object_observation_b = ObsTerm(
             func=mdp.object_point_cloud_b, noise=Unoise(n_min=-0., n_max=0.), params={"num_points": 64}
         )
+        table_observation_b = ObsTerm(
+            func=mdp.object_point_cloud_b, noise=Unoise(n_min=-0., n_max=0.), params={"num_points": 256, "object_cfg": SceneEntityCfg("table")}
+        )
 
         def __post_init__(self):
             self.enable_corruption = False
@@ -193,7 +196,52 @@ class EventCfg:
             "operation": "scale",
         },
     )
-
+    
+    reset_robot = EventTerm(
+        func=mdp.chained_reset_terms,
+        mode="reset",
+        params={
+            "terms":{
+                "reset_root": EventTerm(
+                    func=mdp.reset_root_state_uniform,
+                    mode="reset",
+                    params={
+                        "pose_range": {"x": [-0., 0.], "y": [-0., 0.], "yaw": [-0., 0.]},
+                        "velocity_range": {"x": [-0., 0.], "y": [-0., 0.], "z": [-0., 0.]},
+                        "asset_cfg": SceneEntityCfg("robot"),
+                    },
+                ),
+                "reset_robot_joints": EventTerm(
+                    func=mdp.reset_joints_by_offset,
+                    mode="reset",
+                    params={
+                        "position_range": [-0.50, 0.50],
+                        "velocity_range": [0., 0.],
+                    },
+                ),
+                "reset_robot_wrist_joint": EventTerm(
+                    func=mdp.reset_joints_by_offset,
+                    mode="reset",
+                    params={
+                        "asset_cfg": SceneEntityCfg("robot", joint_names="iiwa7_joint_7"),
+                        "position_range": [-3, 3],
+                        "velocity_range": [0., 0.],
+                    },
+                )
+            }
+        },
+    )
+    
+    reset_table = EventTerm(
+        func=mdp.reset_root_state_uniform,
+        mode="reset",
+        params={
+            "pose_range": {"x": [-0.0, 0.0], "y": [-0.0, 0.0], "z": [0.0, 0.0]},
+            "velocity_range": {"x": [-0., 0.], "y": [-0., 0.], "z": [-0., 0.]},
+            "asset_cfg": SceneEntityCfg("table"),
+        },
+    )
+    
     reset_object = EventTerm(
         func=mdp.reset_root_state_uniform,
         mode="reset",
@@ -204,35 +252,6 @@ class EventCfg:
             },
             "velocity_range": {"x": [-0., 0.], "y": [-0., 0.], "z": [-0., 0.]},
             "asset_cfg": SceneEntityCfg("object"),
-        },
-    )
-    
-    reset_robot = EventTerm(
-        func=mdp.reset_root_state_uniform,
-        mode="reset",
-        params={
-            "pose_range": {"x": [-0., 0.], "y": [-0., 0.], "yaw": [-0., 0.]},
-            "velocity_range": {"x": [-0., 0.], "y": [-0., 0.], "z": [-0., 0.]},
-            "asset_cfg": SceneEntityCfg("robot"),
-        },
-    )
-
-    reset_robot_joints = EventTerm(
-        func=mdp.reset_joints_by_offset,
-        mode="reset",
-        params={
-            "position_range": [-0.50, 0.50],
-            "velocity_range": [0., 0.],
-        },
-    )
-    
-    reset_robot_wrist_joint = EventTerm(
-        func=mdp.reset_joints_by_offset,
-        mode="reset",
-        params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names="iiwa7_joint_7"),
-            "position_range": [-3, 3],
-            "velocity_range": [0., 0.],
         },
     )
     
