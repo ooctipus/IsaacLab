@@ -56,12 +56,18 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str,
         if not prims:
             raise KeyError(f"No valid prims under {obj_path}")
 
-        # Compute per-prim geometry hashes for env-level cache key
+        object_prim = prim_utils.get_prim_at_path(obj_path)
+        world_root  = xform_cache.GetLocalToWorldTransform(object_prim)
         prim_hashes = []
         for prim in prims:
             prim_type = prim.GetTypeName()
             hasher = hashlib.sha256()
-            hasher.update(prim_type.encode())
+            # 1) include the full prim→root transform
+            rel = world_root.GetInverse() * xform_cache.GetLocalToWorldTransform(prim)    # Gf.Matrix4d
+            mat_np = np.array([[rel[r][c] for c in range(4)] for r in range(4)], dtype=np.float32)
+            hasher.update(mat_np.tobytes())
+
+            # 2) include geometry shape
             if prim_type == "Mesh":
                 mesh = UsdGeom.Mesh(prim)
                 verts = np.asarray(mesh.GetPointsAttr().Get(), dtype=np.float32)
@@ -88,16 +94,7 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str,
             prim_hashes.append(hasher.hexdigest())
         
         # Compute USD scale between root and first prim
-        object_prim = prim_utils.get_prim_at_path(obj_path)
-        base_scale = torch.tensor(object_prim.GetAttribute("xformOp:scale").Get(), dtype=torch.float32)
-        world_root = xform_cache.GetLocalToWorldTransform(object_prim)
-        world_child = xform_cache.GetLocalToWorldTransform(prims[0])
-        rel = world_root.GetInverse() * world_child
-        sx = Gf.Vec3d(rel[0][0], rel[1][0], rel[2][0]).GetLength()
-        sy = Gf.Vec3d(rel[0][1], rel[1][1], rel[2][1]).GetLength()
-        sz = Gf.Vec3d(rel[0][2], rel[1][2], rel[2][2]).GetLength()
-        usd_scale = (base_scale * torch.tensor([sx, sy, sz], dtype=torch.float32)).to(device)
-
+        base_scale = torch.tensor(object_prim.GetAttribute("xformOp:scale").Get(), dtype=torch.float32, device=device)
         # Final cache key combines all prim hashes and num_points
         env_key = "_".join(sorted(prim_hashes)) + f"_{num_points}"
         env_hash = hashlib.sha256(env_key.encode()).hexdigest()
@@ -107,7 +104,7 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str,
         if os.path.exists(final_file):
             arr = np.load(final_file)
             if arr.shape == (num_points, 3):
-                points[i] = torch.from_numpy(arr).to(device)  * usd_scale.unsqueeze(0)
+                points[i] = torch.from_numpy(arr).to(device)  * base_scale.unsqueeze(0)
                 continue
 
         # Collect samples from each prim with per-prim caching
@@ -138,7 +135,16 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str,
                 # prim-level FPS down to num_points
                 tensor_pts = torch.from_numpy(samples_np.astype(np.float32)).to(device)
                 prim_idxs = fps(tensor_pts, num_points)
-                samples = tensor_pts[prim_idxs].cpu().numpy()
+                local_pts = tensor_pts[prim_idxs]
+                # compute full prim→root transform
+                rel = world_root.GetInverse() * xform_cache.GetLocalToWorldTransform(prim)
+                mat_np = np.array([[rel[r][c] for c in range(4)] for r in range(4)], dtype=np.float32)
+                mat_t = torch.from_numpy(mat_np).to(device)
+                # apply homogeneous transform
+                ones = torch.ones((num_points,1), device=device)
+                pts_h  = torch.cat([local_pts, ones], dim=1)
+                world_h= pts_h @ mat_t
+                samples= world_h[:, :3].cpu().numpy()
                 if prim_type == "Cone":
                     samples[:, 2] -= UsdGeom.Cone(prim).GetHeightAttr().Get() / 2
                 # save prim-level cache
@@ -155,7 +161,7 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str,
 
         # Save final downsampled cloud
         np.save(final_file, samples_final.cpu().numpy())
-        points[i] = samples_final * usd_scale.unsqueeze(0)
+        points[i] = samples_final * base_scale.unsqueeze(0)
 
     return points
 
@@ -242,6 +248,51 @@ def prim_to_warp_mesh(prim, device) -> wp.Mesh:
     points = np.matmul(points, transform_matrix[:3, :3].T) + transform_matrix[:3, 3]
     wp_mesh = convert_to_warp_mesh(points, indices, device=device)
     return wp_mesh
+
+
+def set_reset_state(env, states: torch.Tensor, env_ids: torch.Tensor, keys: list[str], is_relative: bool = False):
+    idx = 0
+    for name, articulation in env.scene._articulations.items():
+        if name in keys:
+            root_state = states[:, idx : idx + 13].clone()
+            if is_relative:
+                root_state[:, :3] += env.scene.env_origins[env_ids]
+            articulation.write_root_state_to_sim(root_state, env_ids=env_ids)
+            # joint state
+            n_j = articulation.num_joints
+            joint_position = states[:, idx + 13 : idx + 13 + n_j].clone()
+            joint_velocity = states[:, idx + 13 + n_j : idx + 13 + 2 * n_j].clone()
+            articulation.write_joint_state_to_sim(joint_position, joint_velocity, env_ids=env_ids)
+            idx += (13 + 2 * n_j)
+    # rigid objects
+    for name, rigid_object in env.scene._rigid_objects.items():
+        if name in keys:
+            root_state = states[:, idx : idx + 13].clone()
+            if is_relative:
+                root_state[:, :3] += env.scene.env_origins[env_ids]
+            rigid_object.write_root_state_to_sim(root_state, env_ids)
+            idx += 13
+
+
+def get_reset_state(env, env_id: torch.Tensor, keys: list[str], is_relative=False):
+    states = []
+    # articulations
+    for name, articulation in env.scene._articulations.items():
+        if name in keys:
+            state = articulation.data.root_state_w[env_id].clone()
+            if is_relative:
+                state[:, :3] -= env.scene.env_origins[env_id]
+            states.append(state)
+            states.append(articulation.data.joint_pos[env_id].clone())
+            states.append(articulation.data.joint_vel[env_id].clone())
+    # rigid objects
+    for name, rigid_object in env.scene._rigid_objects.items():
+        if name in keys:
+            state = rigid_object.data.root_state_w[env_id].clone()
+            if is_relative:
+                state[:, :3] -= env.scene.env_origins[env_id]
+            states.append(state)
+    return torch.cat(states, dim=-1)
 
 
 @wp.kernel
