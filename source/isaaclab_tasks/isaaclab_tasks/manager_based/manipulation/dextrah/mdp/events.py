@@ -123,12 +123,13 @@ class reset_asset_collision_free(ManagerTermBase):
         queries_w = wp.from_torch(cloud.reshape(-1,3), dtype=wp.vec3)
         handles_w = wp.from_torch(handles_sub.reshape(-1), dtype=wp.uint64)
         counts_w = wp.from_torch(counts_sub, dtype=wp.int32)
-        sign_w  = wp.zeros((len(env_ids) * self.num_points * len(self.body_ids),), dtype=float)
+        sign_w  = wp.zeros((len(env_ids) * self.num_points * len(self.body_ids),), dtype=float, device=env.device)
         wp.launch(
             dexsuite_utils.get_sign_distance,
             dim=len(env_ids) * total_points,
             inputs=[queries_w, handles_w, counts_w, float(self.max_dist), total_points, self.max_prims],
-            outputs=[sign_w]
+            outputs=[sign_w],
+            device=env.device,
         )
         signs = wp.to_torch(sign_w).view(len(env_ids), len(self.body_ids), self.num_points)
 
