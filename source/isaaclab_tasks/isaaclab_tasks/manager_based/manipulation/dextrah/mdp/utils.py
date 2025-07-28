@@ -3,6 +3,8 @@ import omni
 import hashlib
 import numpy as np
 import torch
+import time
+import torch.distributed as dist
 import trimesh
 import logging
 import warp as wp
@@ -117,11 +119,30 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str,
         final_file = os.path.join(final_cache_dir, f"{env_hash}.npy")
 
         # Load from final cache if present
+        # Wait for any writer to finish
+        if dist.is_initialized():
+            dist.barrier()
+
         if os.path.exists(final_file):
-            arr = np.load(final_file)
-            if arr.shape == (num_points, 3):
-                points[i] = torch.from_numpy(arr).to(device)  * base_scale.unsqueeze(0)
-                continue
+            rank = dist.get_rank() if dist.is_initialized() else 0
+            arr = None
+            if rank == 0:
+                for attempt in range(3):
+                    try:
+                        arr = np.load(final_file)
+                        break
+                    except EOFError:
+                        if attempt == 2:
+                            raise
+                        time.sleep(0.01)
+            # broadcast into a tensor
+            arr_tensor = torch.empty((num_points, 3), dtype=torch.float32)
+            if rank == 0:
+                arr_tensor.copy_(torch.from_numpy(arr))
+            if dist.is_initialized():
+                dist.broadcast(arr_tensor, src=0)
+            points[i] = arr_tensor.to(device) * base_scale.unsqueeze(0)
+            continue
 
         # Collect samples from each prim with per-prim caching
         all_samples = []
