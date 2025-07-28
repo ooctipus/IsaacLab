@@ -44,13 +44,10 @@ class KukaAllegroMixinCfg:
                 pos=(0.0, 0.0, 0.0),
                 rot=(1.0, 0.0, 0.0, 0.0),
                 joint_pos={
-                    'iiwa7_joint_1': -0.85,
-                    'iiwa7_joint_2': 0.0,
-                    'iiwa7_joint_3': 0.76,
-                    'iiwa7_joint_4': 1.25,
-                    'iiwa7_joint_5': -1.76,
-                    'iiwa7_joint_6': 0.90,
-                    'iiwa7_joint_7': 0.64,
+                    "iiwa7_joint_(1|2|7)": 0.,
+                    "iiwa7_joint_3": 0.7854,
+                    "iiwa7_joint_4": 1.5708,
+                    "iiwa7_joint_(5|6)": -1.5708,
                     '(index|middle|ring)_joint_0': 0.0,
                     '(index|middle|ring)_joint_1': 0.3,
                     '(index|middle|ring)_joint_2': 0.3,
@@ -109,5 +106,10 @@ class DexsuiteKukaAllegroLiftEnvCfg_PLAY(KukaAllegroMixinCfg, dexsuite.DexSuiteL
 
 
 @configclass
-class DexsuiteKukaAllegroShelvesEnvCfg(KukaAllegroMixinCfg, dexsuite_shelf.DexSuiteShelvesEnvCfg):
+class DexsuiteKukaAllegroShelvesReorientEnvCfg(KukaAllegroMixinCfg, dexsuite_shelf.DexSuiteShelvesReorientEnvCfg):
+    pass
+
+
+@configclass
+class DexsuiteKukaAllegroShelvesPlaceEnvCfg(KukaAllegroMixinCfg, dexsuite_shelf.DexSuiteShelvesPlaceEnvCfg):
     pass

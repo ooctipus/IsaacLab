@@ -317,7 +317,10 @@ def usd_build_shelf_range(stage, parentPath,
                 stage=stage
             )
 
-def build_shelf_usd(usd_path, length_range, depth_range, height_range, thickness_range, row_range, col_range):
+def build_shelf_usd(usd_path, length_range, depth_range, height_range, thickness_range, row_range, col_range, seed=None):
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
     stage = Usd.Stage.CreateNew(usd_path)
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
     root = UsdGeom.Xform.Define(stage, "/Shelves")

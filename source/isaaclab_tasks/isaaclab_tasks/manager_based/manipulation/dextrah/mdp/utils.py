@@ -6,16 +6,19 @@ import torch
 import trimesh
 import logging
 import warp as wp
+from pxr import UsdPhysics
 from trimesh.sample import sample_surface
+from trimesh.transformations import rotation_matrix
 from pxr import UsdGeom, Gf
 import isaacsim.core.utils.prims as prim_utils
 from isaaclab.sim.utils import get_all_matching_child_prims
+import isaaclab.utils.math as math_utils
 from isaaclab.utils.warp import convert_to_warp_mesh
 
 
 def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str,
                               cache_dir: str = "/tmp/isaaclab/sample_point_cloud",
-                              device: str = "cpu") -> torch.Tensor:
+                              device: str = "cpu") -> torch.Tensor | None:
     """
     Samples point clouds for each environment instance by collecting points
     from all matching USD prims under `prim_path`, then downsamples to
@@ -32,7 +35,7 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str,
         cache_dir (str): Base directory for on-disk caching.
 
     Returns:
-        torch.Tensor: Shape (num_envs, num_points, 3).
+        torch.Tensor: Shape (num_envs, num_points, 3). None if no valid prims found.
     """
     # Prepare cache directories
     prim_cache_dir = os.path.join(cache_dir, "prim_samples")
@@ -51,21 +54,33 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str,
             obj_path,
             predicate=lambda p: p.GetTypeName() in (
                 "Mesh","Cube","Sphere","Cylinder","Capsule","Cone"
-            )
+            ) and p.HasAPI(UsdPhysics.CollisionAPI)
         )
         if not prims:
-            raise KeyError(f"No valid prims under {obj_path}")
+            return None
 
         object_prim = prim_utils.get_prim_at_path(obj_path)
-        world_root  = xform_cache.GetLocalToWorldTransform(object_prim)
+        root_xf = Gf.Transform(xform_cache.GetLocalToWorldTransform(object_prim))
+        q_root = root_xf.GetRotation().GetQuat()
+        q_root = torch.tensor([q_root.GetReal(), *q_root.GetImaginary()], dtype=torch.float32, device=device)
+        t_root = torch.tensor([*root_xf.GetTranslation()], dtype=torch.float32, device=device)
+        s_root = torch.tensor([*root_xf.GetScale()], dtype=torch.float32, device=device)
         prim_hashes = []
         for prim in prims:
             prim_type = prim.GetTypeName()
             hasher = hashlib.sha256()
             # 1) include the full prim→root transform
-            rel = world_root.GetInverse() * xform_cache.GetLocalToWorldTransform(prim)    # Gf.Matrix4d
-            mat_np = np.array([[rel[r][c] for c in range(4)] for r in range(4)], dtype=np.float32)
-            hasher.update(mat_np.tobytes())
+            t_root_cpu, q_root_cpu, s_root_cpu = t_root.cpu(), q_root.cpu(), s_root.cpu()
+            child_xf = Gf.Transform(xform_cache.GetLocalToWorldTransform(prim))
+            q_child = child_xf.GetRotation().GetQuat()      # Gf.Quatd
+            q_child = torch.tensor([q_child.GetReal(), *q_child.GetImaginary()], dtype=torch.float32, device="cpu")
+            t_child = torch.tensor([*child_xf.GetTranslation()], dtype=torch.float32, device="cpu")
+            s_child = torch.tensor([*child_xf.GetScale()], dtype=torch.float32, device="cpu")
+            t_rel, q_rel = math_utils.subtract_frame_transforms(t_root_cpu, q_root_cpu, t_child, q_child)
+            s_rel = s_child / s_root_cpu
+            hasher.update(t_rel.numpy().astype(np.float32).tobytes())
+            hasher.update(q_rel.numpy().astype(np.float32).tobytes())
+            hasher.update(s_rel.numpy().astype(np.float32).tobytes())
 
             # 2) include geometry shape
             if prim_type == "Mesh":
@@ -85,6 +100,7 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str,
                     hasher.update(np.float32(c.GetHeightAttr().Get()).tobytes())
                 elif prim_type == "Capsule":
                     c = UsdGeom.Capsule(prim)
+                    hasher.update(c.GetAxisAttr().Get().encode('utf-8'))
                     hasher.update(np.float32(c.GetRadiusAttr().Get()).tobytes())
                     hasher.update(np.float32(c.GetHeightAttr().Get()).tobytes())
                 elif prim_type == "Cone":
@@ -137,14 +153,16 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str,
                 prim_idxs = fps(tensor_pts, num_points)
                 local_pts = tensor_pts[prim_idxs]
                 # compute full prim→root transform
-                rel = world_root.GetInverse() * xform_cache.GetLocalToWorldTransform(prim)
-                mat_np = np.array([[rel[r][c] for c in range(4)] for r in range(4)], dtype=np.float32)
-                mat_t = torch.from_numpy(mat_np).to(device)
-                # apply homogeneous transform
-                ones = torch.ones((num_points,1), device=device)
-                pts_h  = torch.cat([local_pts, ones], dim=1)
-                world_h= pts_h @ mat_t
-                samples= world_h[:, :3].cpu().numpy()
+                child_xf = Gf.Transform(xform_cache.GetLocalToWorldTransform(prim))
+                q_child = child_xf.GetRotation().GetQuat()      # Gf.Quatd
+                q_child = torch.tensor([q_child.GetReal(), *q_child.GetImaginary()], dtype=torch.float32, device=device)
+                t_child = torch.tensor([*child_xf.GetTranslation()], dtype=torch.float32, device=device)
+                s_child = torch.tensor([*child_xf.GetScale()], dtype=torch.float32, device=device)
+                t_rel, q_rel = math_utils.subtract_frame_transforms(t_root, q_root, t_child, q_child)
+                s_rel = s_child / s_root
+                local_pts = local_pts * s_rel.unsqueeze(0)
+                samples = (math_utils.quat_apply(q_rel, local_pts) + t_rel.unsqueeze(0)).cpu().numpy()
+                # samples= world_h[:, :3].cpu().numpy()
                 if prim_type == "Cone":
                     samples[:, 2] -= UsdGeom.Cone(prim).GetHeightAttr().Get() / 2
                 # save prim-level cache
@@ -194,9 +212,19 @@ def create_primitive_mesh(prim) -> trimesh.Trimesh:
         )
     elif prim_type == "Capsule":
         c = UsdGeom.Capsule(prim)
-        return trimesh.creation.capsule(
+        tri_mesh = trimesh.creation.capsule(
             radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get()
         )
+        if c.GetAxisAttr().Get() == "X":
+            # rotate −90° about Y to point the length along +X
+            R = rotation_matrix(np.radians(-90), [0, 1, 0])
+            tri_mesh.apply_transform(R)
+        elif c.GetAxisAttr().Get() == "Y":
+            # rotate +90° about X to point the length along +Y
+            R = rotation_matrix(np.radians(90), [1, 0, 0])
+            tri_mesh.apply_transform(R)
+        return tri_mesh
+        
     elif prim_type == "Cone":  # Cone
         c = UsdGeom.Cone(prim)
         return trimesh.creation.cone(

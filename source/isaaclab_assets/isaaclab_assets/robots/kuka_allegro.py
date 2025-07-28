@@ -46,7 +46,10 @@ KUKA_ALLEGRO_CFG = ArticulationCfg(
         pos=(0.0, 0.0, 0.0),
         rot=(1.0, 0.0, 0.0, 0.0),
         joint_pos={
-            "iiwa7_joint_(1|2|3|4|5|6|7)": 0.,
+            "iiwa7_joint_(1|2|7)": 0.,
+            "iiwa7_joint_3": -0.7854,
+            "iiwa7_joint_4": -1.5708,
+            "iiwa7_joint_(5|6)": 1.5708,
             "index_joint_(0|1|2|3)": 0.,
             "middle_joint_(0|1|2|3)": 0.,
             "ring_joint_(0|1|2|3)": 0.,
