@@ -34,8 +34,8 @@ visualizer = VisualizationMarkers(ray_cfg)
 class reset_asset_collision_free(ManagerTermBase):
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
-        self.max_dist = 0.5
-        self.num_points = 64
+        self.max_dist = 0.5 
+        self.num_points = 32
         asset_cfg = cfg.params.get("collision_check_asset_cfg")
         asset: RigidObject = env.scene[asset_cfg.name]
         body_names = asset.body_names if asset_cfg.body_names is None else asset_cfg.body_names
@@ -52,7 +52,7 @@ class reset_asset_collision_free(ManagerTermBase):
             local_pts = dexsuite_utils.sample_object_point_cloud(
                 num_envs=env.num_envs,
                 num_points=self.num_points,
-                prim_path=str(prim.GetPath()).replace("env_0", "env_.*", 1),
+                prim_path_pattern=str(prim.GetPath()).replace("env_0", "env_.*", 1),
                 device=env.device
             )
             if local_pts is not None:
@@ -74,7 +74,7 @@ class reset_asset_collision_free(ManagerTermBase):
                 )
                 for p in prims:
                     # convert each USD prim → Warp mesh...
-                    wp_mesh = dexsuite_utils.prim_to_warp_mesh(p, device=env.device)
+                    wp_mesh = dexsuite_utils.prim_to_warp_mesh(p, device=env.device, relative_to_world=True)
                     self.obstacle_meshes.append((wp_mesh, p))
                     ids.append(int(wp_mesh.id))
             all_handles.append(ids)
@@ -135,7 +135,7 @@ class reset_asset_collision_free(ManagerTermBase):
 
         # collision_points = cloud[(signs < 0.0)]
         # collision_against_points = torch.cat([wp.to_torch(mesh[0].points) for mesh in self.obstacle_meshes], dim=0)
-        # for _ in range(200):
+        # while True:
         #     env.sim.render()
         #     visualizer.visualize(torch.cat((collision_points.view(-1, 3), collision_against_points.view(-1, 3)), dim=0))
 
