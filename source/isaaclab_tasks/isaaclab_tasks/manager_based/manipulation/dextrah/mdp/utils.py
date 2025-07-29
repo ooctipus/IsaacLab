@@ -2,6 +2,7 @@ import omni
 import numpy as np
 import torch
 import torch.distributed as dist
+import time
 from pathlib import Path
 import trimesh
 import logging
@@ -19,84 +20,48 @@ def sample_object_point_cloud(
     num_envs: int,
     num_points: int,
     prim_path_pattern: str,
-    cache_dir: str = "/tmp/isaaclab/sample_point_cloud",
     device: str = "cpu",
     rigid_object_hasher: RigidObjectHasher | None = None,
 ) -> torch.Tensor | None:
     """
-    Samples point clouds across multiple envs with distributed-safe caching.
-
-    - Uses RigidObjectHasher for prim discovery, transforms, and hashing.
-    - Rank 0 reads/writes .npy files; others sync via barrier and broadcast.
+    Samples point clouds across multiple envs.
     """
-    prim_cache_dir, final_cache_dir = Path(cache_dir) / "prim_samples", Path(cache_dir) / "final_samples"
-    prim_cache_dir.mkdir(parents=True, exist_ok=True); final_cache_dir.mkdir(parents=True, exist_ok=True)
-
-    is_dist = dist.is_initialized()
-    rank = dist.get_rank() if is_dist else 0
-
-    # Broadcast a boolean flag from rank0
-    def broadcast_flag(val: bool) -> bool:
-        flag = torch.tensor(int(val), dtype=torch.uint8, device=device)
-        if is_dist:
-            dist.broadcast(flag, src=0)
-        return bool(flag.item())
-
+    sample_start, hasher_time = time.perf_counter(), time.perf_counter()
     hasher = rigid_object_hasher if rigid_object_hasher is not None else RigidObjectHasher(num_envs, prim_path_pattern, device=device)
+    print(f"{prim_path_pattern} hasher initialized in {(time.perf_counter() - hasher_time):.3f}s")
     if hasher.num_root == 0:
         return None
+
     points = torch.zeros((hasher.num_root, num_points, 3), dtype=torch.float32, device=device)
-    xform_cache = UsdGeom.XformCache()
     for i in range(hasher.num_root):
         root_hash = hasher.root_prim_hashes[i].item()
+        arr = hasher.get_val(f"{root_hash}_{num_points}_cloud")
+        if arr is not None:
+            points[i] = arr.to(device)
+            continue
+        # Collect samples   
+        all_pts = []
         mask = (hasher.collider_prim_env_ids == i)
         collider_prims = [p for p, m in zip(hasher.collider_prims, mask) if m]
         rel_tf = hasher.collider_prim_relative_transforms[mask]
         prim_hashes = hasher.collider_prim_hashes[mask].tolist()
-        
-        object_prim = prim_utils.get_prim_at_path(prim_path_pattern.replace(".*", str(i), 1))
-        root_xf = Gf.Transform(xform_cache.GetLocalToWorldTransform(object_prim))
-        s_root = torch.tensor([*root_xf.GetScale()], dtype=torch.float32, device=device)
-        
-        # Try final cache
-        final_path = final_cache_dir / f"{root_hash}_{num_points}.npy"
-        exists_final = broadcast_flag(final_path.exists() if rank == 0 else False)
-        if exists_final:
-            # rank0 loads, others get via broadcast
-            arr = torch.from_numpy(np.load(final_path)).to(device) if rank == 0 else torch.empty((num_points, 3), device=device)
-            tensor = dist.broadcast(arr, src=0) if is_dist else arr
-            points[i] = tensor * s_root.unsqueeze(0)
-            continue
-
-        # Collect samples
-        all_pts = []
         for prim, phash, rel in zip(collider_prims, prim_hashes, rel_tf):
-            prim_cache_path = prim_cache_dir / f"{phash}_{num_points}.npy"
-            exists_prim = broadcast_flag(prim_cache_path.exists() if rank == 0 else False)
+            phash = f"{phash}_{num_points}_cloud"
+            pts = hasher.get_val(phash)
+            if pts is not None:
+                all_pts.append(pts.to(device))
+                continue
 
-            samples = None
-            if exists_prim:
-                arr = torch.from_numpy(np.load(prim_cache_path)).to(device) if rank == 0 else torch.empty((num_points, 3), device=device)
-                pts = dist.broadcast(arr, src=0) if is_dist else arr
-                samples = pts.cpu().numpy()[:num_points]
-
-            # rank0 samples if missing
-            if samples is None and rank == 0:
-                mesh_tm = prim_to_trimesh(prim)
-                pts_np, _ = sample_surface(mesh_tm, num_points * 2, face_weight=mesh_tm.area_faces)
-                pts_t = torch.from_numpy(pts_np.astype(np.float32)).to(device)
-                idxs = fps(pts_t, num_points)
-                local = pts_t[idxs]
-                t_rel, q_rel, s_rel = rel[:3].to(device), rel[3:7].to(device), rel[7:].to(device)
-                local = local * s_rel.unsqueeze(0)
-                world = math_utils.quat_apply(q_rel.unsqueeze(0).expand(num_points,-1), local.unsqueeze(0)).squeeze(0) + t_rel
-                samples = world.cpu().numpy()
-                np.save(prim_cache_path, samples)
-
-            # broadcast new samples
-            arr = torch.from_numpy(samples).to(device) if rank == 0 else torch.empty((num_points, 3), device=device)
-            pts = dist.broadcast(arr, src=0) if is_dist else arr
-            all_pts.append(pts)
+            mesh_tm = prim_to_trimesh(prim)
+            pts_np, _ = sample_surface(mesh_tm, num_points * 2, face_weight=mesh_tm.area_faces)
+            pts_t = torch.from_numpy(pts_np.astype(np.float32)).to(device)
+            idxs = fps(pts_t, num_points)
+            local = pts_t[idxs]
+            t_rel, q_rel, s_rel = rel[:3].to(device), rel[3:7].to(device), rel[7:].to(device)
+            local = local * s_rel.unsqueeze(0)
+            world = math_utils.quat_apply(q_rel.unsqueeze(0).expand(num_points,-1), local.unsqueeze(0)).squeeze(0) + t_rel
+            all_pts.append(world)
+            hasher.set_val(phash, world.cpu())
 
         # Merge and downsample
         if len(all_pts) == 1:
@@ -105,17 +70,13 @@ def sample_object_point_cloud(
             cat = torch.cat(all_pts, dim=0)
             idxs = fps(cat, num_points)
             final_pts = cat[idxs]
+        points[i] = final_pts
+        hasher.set_val(f"{root_hash}_{num_points}_cloud", final_pts)
+    
+    print(f"Sampled {num_points} points for body '{prim_path_pattern}' in {(time.perf_counter() - sample_start):.3f}s")
+    return points * hasher.root_prim_transforms[:, 7:].unsqueeze(1)
 
-        # rank0 save final
-        if rank == 0:
-            np.save(final_path, final_pts.cpu().numpy())
-        if is_dist:
-            dist.barrier()
-        points[i] = final_pts * s_root.unsqueeze(0)
 
-    return points
-
-        
 def fps(points: torch.Tensor, n_samples: int, memory_threashold= 2 * 1024 ** 3) -> torch.Tensor:  # 2 GiB
     device = points.device
     N = points.shape[0]
@@ -184,11 +145,14 @@ def create_primitive_mesh(prim) -> trimesh.Trimesh:
             tri_mesh.apply_transform(R)
         return tri_mesh
         
-    elif prim_type == "Cone":  # Cone
+    elif prim_type == "Cone":
         c = UsdGeom.Cone(prim)
-        return trimesh.creation.cone(
-            radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get()
-        )
+        radius = c.GetRadiusAttr().Get()
+        height = c.GetHeightAttr().Get()
+        mesh = trimesh.creation.cone(radius=radius, height=height)
+        # shift all vertices down by height/2 for usd / trimesh cone primitive definiton discrepancy
+        mesh.apply_translation((0.0, 0.0, -height/2.0))
+        return mesh
     else:
         raise KeyError(f"{prim_type} is not a valid primitive mesh type")
 
