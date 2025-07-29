@@ -159,3 +159,7 @@ def orientation_command_error_tanh(
 
     return (1 - torch.tanh(quat_distance / std)) * contacts(env, 1.0).float()
 
+
+def abnormal_penalty(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    robot = env.scene[asset_cfg.name]
+    return (robot.data.joint_vel.abs() > (robot.data.joint_vel_limits * 2)).any(dim=1)
