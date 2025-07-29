@@ -38,7 +38,7 @@ class reset_asset_collision_free(ManagerTermBase):
         self.num_points = 32
         asset_cfg = cfg.params.get("collision_check_asset_cfg")
         asset: RigidObject = env.scene[asset_cfg.name]
-        body_names = asset.body_names if asset_cfg.body_names is None else asset_cfg.body_names
+        body_names = asset.body_names if asset_cfg.body_names is None else [asset.body_names[i] for i in asset_cfg.body_ids]
         if isinstance(body_names, str):
             body_names = [body_names]
 
