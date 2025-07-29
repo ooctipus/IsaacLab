@@ -1,7 +1,6 @@
 import hashlib
 import numpy as np
 import torch
-import re
 from pxr import UsdPhysics
 from pxr import UsdGeom, Gf, Usd
 import isaacsim.core.utils.prims as prim_utils
@@ -26,13 +25,11 @@ class RigidObjectHasher:
             "collider_prim_hashes": [],
             "collider_prim_env_ids": [],
             "collider_prim_relative_transforms": [],
-            "root_prim_hashes": []
+            "root_prim_hashes": [],
+            "root_prim_transforms": [],
         }
         stor = HASH_STORE[prim_path_pattern]
         xform_cache = UsdGeom.XformCache()
-        # prim_paths = prim_utils.get_all_matching_child_prims(
-        #     "/World/envs", predicate=lambda p: bool(pattern.match(p)) and prim_utils.get_prim_at_path(p).HasAPI(UsdPhysics.RigidBodyAPI)
-        # )
         prim_paths = [prim_path_pattern.replace(".*", f"{i}", 1) for i in range(num_envs)]
 
         num_roots = len(prim_paths)
@@ -41,6 +38,7 @@ class RigidObjectHasher:
         collider_prim_relative_transforms = []
         collider_prim_hashes = []
         root_prim_hashes = []
+        root_prim_transforms = []
         for i in range(num_roots):
             # 1: Get all child prims that are colliders, count them, and store their belonging env id
             coll_prims = prim_utils.get_all_matching_child_prims(
@@ -60,6 +58,7 @@ class RigidObjectHasher:
             q_root = torch.tensor([q_root.GetReal(), *q_root.GetImaginary()], dtype=torch.float32, device="cpu")
             t_root = torch.tensor([*root_xf.GetTranslation()], dtype=torch.float32, device="cpu")
             s_root = torch.tensor([*root_xf.GetScale()], dtype=torch.float32, device="cpu")
+            root_prim_transforms.append(torch.cat([t_root, q_root, s_root], dim=0).flatten())
             for prim in coll_prims:
                 child_xf = Gf.Transform(xform_cache.GetLocalToWorldTransform(prim))
                 q_child = child_xf.GetRotation().GetQuat()      # Gf.Quatd
@@ -70,7 +69,7 @@ class RigidObjectHasher:
             t, q, s = torch.stack(ts), torch.stack(qs), torch.stack(ss)
             tq_rel = math_utils.subtract_frame_transforms(t_root.repeat(len(t), 1), q_root.repeat(len(t), 1), t, q)
             s_rel = s / s_root
-            coll_relative_transform = torch.cat([tq_rel[0], tq_rel[1], s_rel], dim=1).flatten()
+            coll_relative_transform = torch.cat([tq_rel[0], tq_rel[1], s_rel], dim=1)
             collider_prim_relative_transforms.append(coll_relative_transform)
            
             # 3: Store the collider prims hash
@@ -111,39 +110,50 @@ class RigidObjectHasher:
 
         stor["num_roots"] = num_roots
         stor["collider_prims"] = collider_prims
-        stor["collider_prim_hashes"] = torch.tensor(collider_prim_hashes, dtype=torch.int64, device=device)
-        stor["collider_prim_env_ids"] = torch.tensor(collider_prim_env_ids, dtype=torch.int64, device=device)
-        stor["collider_prim_relative_transforms"] = torch.cat(collider_prim_relative_transforms).view(-1, 10).to(device)
-        stor["root_prim_hashes"] = torch.tensor(root_prim_hashes, dtype=torch.int64, device=device)
+        stor["collider_prim_hashes"] = torch.tensor(collider_prim_hashes, dtype=torch.int64, device="cpu")
+        stor["collider_prim_env_ids"] = torch.tensor(collider_prim_env_ids, dtype=torch.int64, device="cpu")
+        stor["collider_prim_relative_transforms"] = torch.cat(collider_prim_relative_transforms).view(-1, 10).to("cpu")
+        stor["root_prim_hashes"] = torch.tensor(root_prim_hashes, dtype=torch.int64, device="cpu")
+        stor["root_prim_transforms"] = torch.stack(root_prim_transforms).to("cpu")
 
     @property
     def num_root(self) -> int:
-        return self.get_key("num_roots")
+        return self.get_val("num_roots")
 
     @property
     def root_prim_hashes(self) -> torch.Tensor:
-        return self.get_key("root_prim_hashes")
+        return self.get_val("root_prim_hashes").to(self.device)
+    
+    @property
+    def root_prim_transforms(self) -> torch.Tensor:
+        """Get the root prim transforms."""
+        return self.get_val("root_prim_transforms").to(self.device)
     
     @property
     def collider_prim_relative_transforms(self) -> torch.Tensor:
-        return self.get_key("collider_prim_relative_transforms")
+        return self.get_val("collider_prim_relative_transforms").to(self.device)
     
     @property
     def collider_prim_hashes(self) -> torch.Tensor:
-        return self.get_key("collider_prim_hashes")
+        return self.get_val("collider_prim_hashes").to(self.device)
     
     @property
     def collider_prims(self) -> list[Usd.Prim]:
-        return self.get_key("collider_prims")
+        return self.get_val("collider_prims")
     
     @property
     def collider_prim_env_ids(self) -> torch.Tensor:
-        return self.get_key("collider_prim_env_ids")
+        return self.get_val("collider_prim_env_ids").to(self.device)
     
-    def get_key(self, key: str):
+    def get_val(self, key: str):
         """Get the hash store for the hasher."""
         return HASH_STORE.get(self.prim_path_pattern, {}).get(key, None)
     
+    def set_val(self, key: str, val: any):
+        if isinstance(val, torch.Tensor):
+            val = val.to("cpu")
+        HASH_STORE[self.prim_path_pattern][key] = val
+
     def get_warp_mesh_store(self):
         """Get the warp mesh store for the hasher."""
         return HASH_STORE["warp_mesh_store"]
