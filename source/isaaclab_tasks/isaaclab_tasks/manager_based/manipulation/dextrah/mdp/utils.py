@@ -12,7 +12,7 @@ from pxr import UsdGeom, Gf
 import isaaclab.utils.math as math_utils
 import isaacsim.core.utils.prims as prim_utils
 from isaaclab.utils.warp import convert_to_warp_mesh
-from .rigid_object_analyzer import RigidObjectHasher
+from .rigid_object_hasher import RigidObjectHasher
 
 
 def sample_object_point_cloud(
@@ -42,12 +42,12 @@ def sample_object_point_cloud(
             dist.broadcast(flag, src=0)
         return bool(flag.item())
 
-    hasher = rigid_object_hasher if rigid_object_hasher is not None else RigidObjectHasher(prim_path_pattern, device=device)
-    if len(hasher.root_prim_hashes) == 0:
+    hasher = rigid_object_hasher if rigid_object_hasher is not None else RigidObjectHasher(num_envs, prim_path_pattern, device=device)
+    if hasher.num_root == 0:
         return None
-    points = torch.zeros((num_envs, num_points, 3), dtype=torch.float32, device=device)
+    points = torch.zeros((hasher.num_root, num_points, 3), dtype=torch.float32, device=device)
     xform_cache = UsdGeom.XformCache()
-    for i in range(num_envs):
+    for i in range(hasher.num_root):
         root_hash = hasher.root_prim_hashes[i].item()
         mask = (hasher.collider_prim_env_ids == i)
         collider_prims = [p for p, m in zip(hasher.collider_prims, mask) if m]
@@ -297,3 +297,59 @@ def get_sign_distance(
                 best_sign = mp.sign
     # write final values exactly once
     signs[tid] = best_sign
+
+
+@wp.kernel
+def get_sign_distance_no_mem(
+    queries: wp.array(dtype=wp.vec3),    # [E_bad * N]
+    mesh_handles: wp.array(dtype=wp.uint64),  # [E_bad * max_prims]
+    prim_counts: wp.array(dtype=wp.int32),   # [E_bad]
+    handle_root_pos: wp.array(dtype=wp.vec3),    # [E_bad * max_prims]
+    handle_root_quat: wp.array(dtype=wp.quat),    # [E_bad * max_prims]
+    handle_root_scale: wp.array(dtype=wp.vec3),    # [E_bad * max_prims]
+    rel_pos: wp.array(dtype=wp.vec3),    # [E_bad * max_prims]
+    rel_quat: wp.array(dtype=wp.quat),    # [E_bad * max_prims]
+    rel_scale: wp.array(dtype=wp.vec3),    # [E_bad * max_prims]
+    max_dist: float,
+    num_points: int,
+    max_prims: int,
+    signs: wp.array(dtype=float)       # [E_bad * N]
+):
+    tid    = wp.tid()                        # global thread index
+    env_id = tid // num_points               # which environment
+    q_w    = queries[tid]                    # world‐space query point
+    base   = env_id * max_prims              # start index for this env’s handles
+    best = float(1)                              # accumulator for min signed distance
+
+    # transform world→root and root→local per‐handle
+    for p in range(prim_counts[env_id]):
+        idx = base + p
+        mid = mesh_handles[idx]
+        if mid != 0:
+            # // 1) world → root‐local
+            v = q_w - handle_root_pos[idx]
+            inv_rq = wp.quat_inverse(handle_root_quat[idx])
+            v2 = wp.quat_rotate(inv_rq, v)
+            
+            s     = handle_root_scale[idx]
+            inv_s = wp.vec3(1.0/s.x, 1.0/s.y, 1.0/s.z)
+            v3    = comp_mul(v2, inv_s)
+
+            # // 2 root‐local → mesh‐local
+            v4 = v3 - rel_pos[idx]
+            inv_lq = wp.quat_inverse(rel_quat[idx])
+            v5 = wp.quat_rotate(inv_lq, v4)
+            
+            rs    = rel_scale[idx]
+            inv_rs= wp.vec3(1.0/rs.x, 1.0/rs.y, 1.0/rs.z)
+            q_local = comp_mul(v5, inv_rs)
+
+            mp = wp.mesh_query_point(mid, q_local, max_dist)
+            if mp.result and mp.sign < best:
+                best = mp.sign
+
+    signs[tid] = best
+
+@wp.func
+def comp_mul(a: wp.vec3, b: wp.vec3) -> wp.vec3:
+    return wp.vec3(a.x * b.x, a.y * b.y, a.z * b.z)
