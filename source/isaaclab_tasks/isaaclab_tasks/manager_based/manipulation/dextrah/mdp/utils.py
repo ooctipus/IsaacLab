@@ -71,7 +71,7 @@ def sample_object_point_cloud(
         # Collect samples
         all_pts = []
         for prim, phash, rel in zip(collider_prims, prim_hashes, rel_tf):
-            prim_cache_path = prim_cache_dir / f"{phash}.npy"
+            prim_cache_path = prim_cache_dir / f"{phash}_{num_points}.npy"
             exists_prim = broadcast_flag(prim_cache_path.exists() if rank == 0 else False)
 
             samples = None

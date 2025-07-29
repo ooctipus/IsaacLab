@@ -316,6 +316,8 @@ class RewardsCfg:
             "align_asset_cfg": SceneEntityCfg("object")
         },
     )
+    
+    early_termination = RewTerm(func=mdp.abnormal_penalty, weight=-40, params={})
 
 @configclass
 class TerminationsCfg:

@@ -29,7 +29,6 @@ class RigidObjectHasher:
             "root_prim_hashes": []
         }
         stor = HASH_STORE[prim_path_pattern]
-        pattern = re.compile(f"^{prim_path_pattern}$")
         xform_cache = UsdGeom.XformCache()
         # prim_paths = prim_utils.get_all_matching_child_prims(
         #     "/World/envs", predicate=lambda p: bool(pattern.match(p)) and prim_utils.get_prim_at_path(p).HasAPI(UsdPhysics.RigidBodyAPI)
@@ -55,7 +54,7 @@ class RigidObjectHasher:
             collider_prim_env_ids.extend([i] * len(coll_prims))
             
             # 2: Get relative transforms of all collider prims
-            root_xf = Gf.Transform(xform_cache.GetLocalToWorldTransform(prim_paths[i]))
+            root_xf = Gf.Transform(xform_cache.GetLocalToWorldTransform(prim_utils.get_prim_at_path(prim_paths[i])))
             ts, qs, ss = [], [], []
             q_root = root_xf.GetRotation().GetQuat()
             q_root = torch.tensor([q_root.GetReal(), *q_root.GetImaginary()], dtype=torch.float32, device="cpu")
