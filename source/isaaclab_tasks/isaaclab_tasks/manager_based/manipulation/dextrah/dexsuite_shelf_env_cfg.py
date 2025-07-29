@@ -93,7 +93,7 @@ class ShelvesEventCfg(EventCfg):
                     }
                 },
             ),
-            "collision_check_asset_cfg": SceneEntityCfg("robot", body_names=["iiwa7_joint_(5|6)", "(index|middle|ring|thumb).*"]),
+            "collision_check_asset_cfg": SceneEntityCfg("robot", body_names=["iiwa7_link_(5|6|7|ee)", "allegro_mount", "palm_link", "(index|middle|ring|thumb).*"]),
             "collision_check_against_asset_cfg": [SceneEntityCfg("table")] 
         },
     )
