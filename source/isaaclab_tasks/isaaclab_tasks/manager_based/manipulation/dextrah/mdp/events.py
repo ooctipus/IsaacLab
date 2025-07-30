@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import torch
 import inspect
+import time
 import warp as wp
 from pxr import UsdPhysics
 from typing import TYPE_CHECKING
-
+from torch.nn.utils.rnn import pad_sequence
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.controllers import DifferentialIKControllerCfg
 from isaaclab.envs.mdp.actions.task_space_actions import DifferentialInverseKinematicsAction
@@ -18,7 +19,7 @@ from isaaclab.managers import EventTermCfg, ManagerTermBase, SceneEntityCfg
 from isaaclab.utils import math as math_utils
 from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 from isaaclab.sim.utils import get_first_matching_child_prim
-import isaaclab.sim as sim_utils
+from .rigid_object_hasher import RigidObjectHasher 
 from . import utils as dexsuite_utils
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -45,6 +46,7 @@ class reset_asset_collision_free(ManagerTermBase):
         self.body_ids = []
         self.local_pts = []
         for body_name in body_names:
+            start = time.perf_counter()
             prim = get_first_matching_child_prim(
                 asset.cfg.prim_path.replace(".*", "0", 1),  # we use the 0th env prim as template
                 predicate=lambda p: p.GetName() == body_name and p.HasAPI(UsdPhysics.RigidBodyAPI)
@@ -58,33 +60,29 @@ class reset_asset_collision_free(ManagerTermBase):
             if local_pts is not None:
                 self.local_pts.append(local_pts.view(env.num_envs, 1, self.num_points, 3))
                 self.body_ids.append(asset.body_names.index(body_name))
+            pc_time = time.perf_counter() - start
         self.local_pts = torch.cat(self.local_pts, dim=1)
         self.body_ids = torch.tensor(self.body_ids, dtype=torch.int, device=env.device)
         obstacle_cfgs: list[SceneEntityCfg] = cfg.params.get("collision_check_against_asset_cfg")
         self.obstacle_meshes: list[tuple[wp.Mesh, Usd.Prim]] = []
-        all_handles = []
-        prim_counts = []
-        for i in range(env.num_envs):
-            ids = []
-            for obstacle_cfg in obstacle_cfgs:
-                obj_path = env.scene[obstacle_cfg.name].cfg.prim_path.replace(".*", str(i))
-                prims = sim_utils.get_all_matching_child_prims(
-                    obj_path,
-                    predicate=lambda p: p.GetTypeName() in ("Cube","Sphere","Cylinder","Capsule","Cone","Mesh") and p.HasAPI(UsdPhysics.CollisionAPI)
-                )
-                for p in prims:
-                    # convert each USD prim → Warp mesh...
-                    wp_mesh = dexsuite_utils.prim_to_warp_mesh(p, device=env.device, relative_to_world=True)
-                    self.obstacle_meshes.append((wp_mesh, p))
-                    ids.append(int(wp_mesh.id))
-            all_handles.append(ids)
-            prim_counts.append(len(ids))
+        env_handles: list[list[int]] = [[] for _ in range(env.num_envs)]
+        prim_counts = torch.empty((len(obstacle_cfgs), env.num_envs), dtype=torch.int32, device=env.device)
+        for i, obstacle_cfg in enumerate(obstacle_cfgs):
+            start = time.perf_counter()
+            obs_h = RigidObjectHasher(env.num_envs, prim_path_pattern=env.scene[obstacle_cfg.name].cfg.prim_path)
+            for prim, eid in zip(obs_h.collider_prims, obs_h.collider_prim_env_ids):
+                # convert each USD prim → Warp mesh...
+                wp_mesh = dexsuite_utils.prim_to_warp_mesh(prim, device=env.device, relative_to_world=True)
+                self.obstacle_meshes.append((wp_mesh, prim))
+                env_handles[eid].append(int(wp_mesh.id))
+            prim_counts[i] = torch.bincount(obs_h.collider_prim_env_ids)
+            pc_time = time.perf_counter() - start
+            print(f"Sampled {len(obs_h.collider_prims)} collision primitives for obstacle '{obstacle_cfg.name}' in {pc_time:.3f}s")
 
-        self.max_prims = max(prim_counts)
-        assert self.max_prims > 0, f"No collision primitives found under {obstacle_cfgs}"
-        padded = [ids + [0]*(self.max_prims - len(ids)) for ids in all_handles]
-        self.handles_tensor = torch.tensor(padded, dtype=torch.int64, device=env.device)
-        self.prim_counts = torch.tensor(prim_counts, dtype=torch.int32, device=env.device)
+        self.max_prims = torch.max((torch.sum(prim_counts, dim=0))).item()
+        handles_list = [torch.tensor(lst, dtype=torch.int64, device=env.device)for lst in env_handles]
+        self.handles_tensor = pad_sequence(handles_list, batch_first=True, padding_value=0)
+        self.prim_counts = torch.sum(prim_counts, dim=0).to(torch.int32)
 
         self.asset_keys = [asset_cfg.name, *[cfg.name for cfg in obstacle_cfgs]]
         total_state_dim = dexsuite_utils.get_reset_state(self._env, torch.tensor([0], device=env.device), self.asset_keys).shape[-1]
