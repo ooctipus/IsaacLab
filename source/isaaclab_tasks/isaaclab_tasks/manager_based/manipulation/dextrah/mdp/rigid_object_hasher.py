@@ -52,29 +52,28 @@ class RigidObjectHasher:
             collider_prim_env_ids.extend([i] * len(coll_prims))
             
             # 2: Get relative transforms of all collider prims
-            root_xf = Gf.Transform(xform_cache.GetLocalToWorldTransform(prim_utils.get_prim_at_path(prim_paths[i])))
-            ts, qs, ss = [], [], []
-            q_root = root_xf.GetRotation().GetQuat()
-            q_root = torch.tensor([q_root.GetReal(), *q_root.GetImaginary()], dtype=torch.float32, device="cpu")
-            t_root = torch.tensor([*root_xf.GetTranslation()], dtype=torch.float32, device="cpu")
-            s_root = torch.tensor([*root_xf.GetScale()], dtype=torch.float32, device="cpu")
+            root_xf = xform_cache.GetLocalToWorldTransform(prim_utils.get_prim_at_path(prim_paths[i]))
+            root_tf = Gf.Transform(root_xf)
+            root_quat = root_tf.GetRotation().GetQuat()
+            t_root = torch.tensor(root_tf.GetTranslation())
+            q_root = torch.tensor([root_quat.GetReal(), *root_quat.GetImaginary()])
+            s_root = torch.tensor(root_tf.GetScale())
+            rel_tfs = []
             root_prim_transforms.append(torch.cat([t_root, q_root, s_root], dim=0).flatten())
             for prim in coll_prims:
-                child_xf = Gf.Transform(xform_cache.GetLocalToWorldTransform(prim))
-                q_child = child_xf.GetRotation().GetQuat()      # Gf.Quatd
-                qs.append(torch.tensor([q_child.GetReal(), *q_child.GetImaginary()], dtype=torch.float32, device="cpu"))
-                ts.append(torch.tensor([*child_xf.GetTranslation()], dtype=torch.float32, device="cpu"))
-                ss.append(torch.tensor([*child_xf.GetScale()], dtype=torch.float32, device="cpu"))
+                child_xf = xform_cache.GetLocalToWorldTransform(prim)
+                rel_mat_tf = Gf.Transform(child_xf * root_xf.GetInverse())
+                rel_quat = rel_mat_tf.GetRotation().GetQuat()
+                rel_t = torch.tensor(rel_mat_tf.GetTranslation())
+                rel_q = torch.tensor([rel_quat.GetReal(), *rel_quat.GetImaginary()])
+                rel_s = torch.tensor(rel_mat_tf.GetScale())
+                rel_tfs.append(torch.cat([rel_t, rel_q, rel_s]))
+            rel_tfs = torch.cat(rel_tfs)
+            collider_prim_relative_transforms.append(rel_tfs)
 
-            t, q, s = torch.stack(ts), torch.stack(qs), torch.stack(ss)
-            tq_rel = math_utils.subtract_frame_transforms(t_root.repeat(len(t), 1), q_root.repeat(len(t), 1), t, q)
-            s_rel = s / s_root
-            coll_relative_transform = torch.cat([tq_rel[0], tq_rel[1], s_rel], dim=1)
-            collider_prim_relative_transforms.append(coll_relative_transform)
-           
             # 3: Store the collider prims hash
             root_hash = hashlib.sha256()
-            for prim, prim_rel_tf in zip(coll_prims, coll_relative_transform.numpy()):
+            for prim, prim_rel_tf in zip(coll_prims, rel_tfs.numpy()):
                 h = hashlib.sha256()
                 h.update(np.round(prim_rel_tf * 50).astype(np.int64)) # round so small, +-2cm tol, difference won't cause issue
                 prim_type = prim.GetTypeName()
