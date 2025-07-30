@@ -76,7 +76,7 @@ class RigidObjectHasher:
             root_hash = hashlib.sha256()
             for prim, prim_rel_tf in zip(coll_prims, coll_relative_transform.numpy()):
                 h = hashlib.sha256()
-                h.update(prim_rel_tf.tobytes())
+                h.update(np.round(prim_rel_tf * 50).astype(np.int64)) # round so small, +-2cm tol, difference won't cause issue
                 prim_type = prim.GetTypeName()
                 h.update(prim_type.encode("utf-8"))
                 if prim_type == "Mesh":
