@@ -28,74 +28,57 @@ def sample_object_point_cloud(
     device: str = "cuda",  # assume GPU
     rigid_object_hasher: RigidObjectHasher | None = None,
 ) -> torch.Tensor | None:
-    hash_start = time.perf_counter()
+
     hasher = (
         rigid_object_hasher
         if rigid_object_hasher is not None
         else RigidObjectHasher(num_envs, prim_path_pattern, device=device)
     )
-    print(f"{prim_path_pattern} hasher init {(time.perf_counter()-hash_start):.3f}s")
-    samp_start = time.perf_counter()
+
     if hasher.num_root == 0:
         return None
-
-    M = len(hasher.collider_prims)
-    if M == 0:
-        return None
     
-    if torch.all(hasher.root_prim_hashes == hasher.root_prim_hashes[0]):
-        # 1) Pick env 0’s colliders
+    replicated_env = torch.all(hasher.root_prim_hashes == hasher.root_prim_hashes[0])
+    if replicated_env:
+        # Pick env 0’s colliders
         mask_env0 = (hasher.collider_prim_env_ids == 0)
         verts_list, faces_list = zip(*[_load_mesh_tensors(p) for p, m in zip(hasher.collider_prims, mask_env0) if m])
-        rels0 = hasher.collider_prim_relative_transforms[mask_env0].to(device)  # (C,10)
+        meshes = Meshes(verts=[v.to(device) for v in verts_list], faces=[f.to(device) for f in faces_list])
+        rel_tf = hasher.collider_prim_relative_transforms[mask_env0]
+    else:
+        # Build all envs's colliders
+        verts_list, faces_list = zip(*[_load_mesh_tensors(p) for p in hasher.collider_prims])
+        meshes = Meshes(verts=[v.to(device) for v in verts_list], faces=[f.to(device) for f in faces_list])
+        rel_tf = hasher.collider_prim_relative_transforms
 
-        # 2) Sample each unique collider *once*
-        meshes0 = Meshes(verts=[v.to(device) for v in verts_list], faces=[f.to(device) for f in faces_list])
-        samp0, _ = sample_points_from_meshes(meshes0, num_points * 2), None # (C,2N,3)
-        point_local0, _ = sample_farthest_points(samp0, K=num_points) # (C,  N,3)
+    # Uniform‐surface sample then scale to root
+    samp  = sample_points_from_meshes(meshes, num_points * 2)
+    local, _ = sample_farthest_points(samp, K=num_points)
+    t_rel, q_rel, s_rel = rel_tf[:, :3].unsqueeze(1), rel_tf[:, 3:7].unsqueeze(1), rel_tf[:, 7:].unsqueeze(1)
+    world = math_utils.quat_apply(q_rel.expand(-1, num_points, -1), local * s_rel) + t_rel
+    
+    # Merge Colliders
+    if replicated_env:
+        buf = world.reshape(1, -1, 3)
+        merged, _ = sample_farthest_points(buf, K=num_points)
+        result = merged.view(1, num_points, 3).expand(num_envs, -1, -1) * hasher.root_prim_transforms[:, 7:].unsqueeze(1)
+    else:
+        # 4) Scatter each collider into a padded per‐root buffer
+        env_ids = hasher.collider_prim_env_ids.to(device)  # (M,)
+        counts = torch.bincount(env_ids, minlength=hasher.num_root)   # (num_root,)
+        max_c = int(counts.max().item())
+        buf = torch.zeros((hasher.num_root, max_c * num_points, 3), device=device, dtype=world.dtype)
+        # track how many placed in each root
+        placed = torch.zeros_like(counts)
+        for i in range(len(hasher.collider_prims)):
+            r = int(env_ids[i].item())
+            start = placed[r].item() * num_points
+            buf[r, start:start+num_points] = world[i]
+            placed[r] += 1
+        # 5) One batch‐FPS to merge per‐root
+        merged, _ = sample_farthest_points(buf, K=num_points)
+        result = merged * hasher.root_prim_transforms[:, 7:].unsqueeze(1)
 
-        t0, q0, s0 = rels0[:, :3].unsqueeze(1), rels0[:, 3:7].unsqueeze(1), rels0[:, 7:].unsqueeze(1)
-        point_root0 = math_utils.quat_apply(q0.expand(-1, num_points, -1), point_local0 * s0) + t0
-
-        # 4) Merge those C colliders into one cloud
-        merged0, _ = sample_farthest_points(point_root0.reshape(1, -1, 3), K=num_points)
-        result = merged0.view(1, num_points, 3).expand(num_envs, -1, -1) * hasher.root_prim_transforms[:, 7:].unsqueeze(1)
-        print(f"{prim_path_pattern} fastpath sampling {(time.perf_counter()-samp_start):.3f}s")
-        return result
-
-    # 2) Build one giant Meshes batch of size M
-    verts_list, faces_list = zip(*[_load_mesh_tensors(p) for p in hasher.collider_prims])
-    meshes = Meshes(verts=[v.to(device) for v in verts_list], faces=[f.to(device) for f in faces_list])
-
-    # 3) Uniform‐surface sample 2N pts then FPS to N pts, all in one GPU call
-    samp  = sample_points_from_meshes(meshes, num_points * 2) # (M, 2N, 3)
-    local, _ = sample_farthest_points(samp, K=num_points)  # (M,   N, 3)
-    # 4) Apply per‐collider scale/rotate/translate
-    t_rel = hasher.collider_prim_relative_transforms[:, :3].unsqueeze(1)  # (M,1,3)
-    q_rel = hasher.collider_prim_relative_transforms[:, 3:7].unsqueeze(1)  # (M, 1, 4)
-    s_rel = hasher.collider_prim_relative_transforms[:, 7:].unsqueeze(1)  # (M,1,3)
-    scaled = local * s_rel  # (M,N,3)
-    world  = math_utils.quat_apply(q_rel.expand(-1, num_points, -1), scaled) + t_rel # (M,N,3)
-
-    # 4) Scatter each collider into a padded per‐root buffer
-    env_ids = hasher.collider_prim_env_ids.to(device)  # (M,)
-    counts = torch.bincount(env_ids, minlength=hasher.num_root)   # (num_root,)
-    max_c = int(counts.max().item())
-    buf = torch.zeros((hasher.num_root, max_c * num_points, 3), device=device, dtype=world.dtype)
-    # track how many placed in each root
-    placed = torch.zeros_like(counts)
-    for i in range(M):
-        r = int(env_ids[i].item())
-        idx = placed[r].item()
-        start = idx * num_points
-        buf[r, start:start+num_points] = world[i]
-        placed[r] += 1
-
-    # 5) One batch‐FPS to merge per‐root
-    merged, _ = sample_farthest_points(buf, K=num_points)
-    result = merged * hasher.root_prim_transforms[:, 7:].unsqueeze(1)
-
-    print(f"Done sampling {num_points} pts for '{prim_path_pattern}' in {(time.perf_counter()-samp_start):.3f}s")
     return result
 
 def _triangulate_faces(prim) -> np.ndarray:
