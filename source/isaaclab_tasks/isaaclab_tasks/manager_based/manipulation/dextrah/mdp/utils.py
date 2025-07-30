@@ -1,18 +1,13 @@
 import omni
 import numpy as np
 import torch
-import torch.distributed as dist
 import time
 from functools import lru_cache
-from pathlib import Path
 import trimesh
-import logging
 import warp as wp
-from trimesh.sample import sample_surface
 from trimesh.transformations import rotation_matrix
-from pxr import UsdGeom, Gf
+from pxr import UsdGeom
 import isaaclab.utils.math as math_utils
-import isaacsim.core.utils.prims as prim_utils
 from isaaclab.utils.warp import convert_to_warp_mesh
 from .rigid_object_hasher import RigidObjectHasher
 
@@ -102,94 +97,6 @@ def sample_object_point_cloud(
 
     print(f"Done sampling {num_points} pts for '{prim_path_pattern}' in {(time.perf_counter()-samp_start):.3f}s")
     return result
-
-# def sample_object_point_cloud_v2(
-#     num_envs: int,
-#     num_points: int,
-#     prim_path_pattern: str,
-#     device: str = "cpu",
-#     rigid_object_hasher: RigidObjectHasher | None = None,
-# ) -> torch.Tensor | None:
-#     """
-#     Samples point clouds across multiple envs.
-#     """
-#     sample_start, hasher_time = time.perf_counter(), time.perf_counter()
-#     hasher = rigid_object_hasher if rigid_object_hasher is not None else RigidObjectHasher(num_envs, prim_path_pattern, device=device)
-#     print(f"{prim_path_pattern} hasher initialized in {(time.perf_counter() - hasher_time):.3f}s")
-#     if hasher.num_root == 0:
-#         return None
-
-#     points = torch.zeros((hasher.num_root, num_points, 3), dtype=torch.float32, device=device)
-#     for i in range(hasher.num_root):
-#         root_hash = hasher.root_prim_hashes[i].item()
-#         arr = hasher.get_val(f"{root_hash}_{num_points}_cloud")
-#         if arr is not None:
-#             points[i] = arr.to(device)
-#             continue
-#         # Collect samples   
-#         all_pts = []
-#         mask = (hasher.collider_prim_env_ids == i)
-#         collider_prims = [p for p, m in zip(hasher.collider_prims, mask) if m]
-#         rel_tf = hasher.collider_prim_relative_transforms[mask]
-#         prim_hashes = hasher.collider_prim_hashes[mask].tolist()
-#         for prim, phash, rel in zip(collider_prims, prim_hashes, rel_tf):
-#             phash = f"{phash}_{num_points}_cloud"
-#             pts = hasher.get_val(phash)
-#             if pts is not None:
-#                 all_pts.append(pts.to(device))
-#                 continue
-
-#             mesh_tm = prim_to_trimesh(prim)
-#             pts_np, _ = sample_surface(mesh_tm, num_points * 2, face_weight=mesh_tm.area_faces)
-#             pts_t = torch.from_numpy(pts_np.astype(np.float32)).to(device)
-#             idxs = fps(pts_t, num_points)
-#             local = pts_t[idxs]
-#             t_rel, q_rel, s_rel = rel[:3].to(device), rel[3:7].to(device), rel[7:].to(device)
-#             local = local * s_rel.unsqueeze(0)
-#             world = math_utils.quat_apply(q_rel.unsqueeze(0).expand(num_points,-1), local.unsqueeze(0)).squeeze(0) + t_rel
-#             all_pts.append(world)
-#             hasher.set_val(phash, world.cpu())
-
-#         # Merge and downsample
-#         if len(all_pts) == 1:
-#             final_pts = all_pts[0]
-#         else:
-#             cat = torch.cat(all_pts, dim=0)
-#             idxs = fps(cat, num_points)
-#             final_pts = cat[idxs]
-#         points[i] = final_pts
-#         hasher.set_val(f"{root_hash}_{num_points}_cloud", final_pts)
-    
-#     print(f"Sampled {num_points} points for body '{prim_path_pattern}' in {(time.perf_counter() - sample_start):.3f}s")
-#     return points * hasher.root_prim_transforms[:, 7:].unsqueeze(1)
-
-
-# def fps(points: torch.Tensor, n_samples: int, memory_threashold= 2 * 1024 ** 3) -> torch.Tensor:  # 2 GiB
-#     device = points.device
-#     N = points.shape[0]
-#     elem_size = points.element_size()
-#     bytes_needed = N * N * elem_size
-#     if bytes_needed <= memory_threashold:
-#         dist_mat = torch.cdist(points, points)
-#         sampled_idx = torch.zeros(n_samples, dtype=torch.long, device=device)
-#         min_dists = torch.full((N,), float('inf'), device=device)
-#         farthest = torch.randint(0, N, (1,), device=device)
-#         for j in range(n_samples):
-#             sampled_idx[j] = farthest
-#             min_dists = torch.minimum(min_dists, dist_mat[farthest].view(-1))
-#             farthest = torch.argmax(min_dists)
-#         return sampled_idx
-#     logging.warning(f"FPS fallback to iterative (needed {bytes_needed} > {memory_threashold})")
-#     sampled_idx = torch.zeros(n_samples, dtype=torch.long, device=device)
-#     distances = torch.full((N,), float('inf'), device=device)
-#     farthest = torch.randint(0, N, (1,), device=device)
-#     for j in range(n_samples):
-#         sampled_idx[j] = farthest
-#         dist = torch.norm(points - points[farthest], dim=1)
-#         distances = torch.minimum(distances, dist)
-#         farthest = torch.argmax(distances)
-#     return sampled_idx
-
 
 def _triangulate_faces(prim) -> np.ndarray:
     mesh = UsdGeom.Mesh(prim)
