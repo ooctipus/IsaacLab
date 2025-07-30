@@ -94,6 +94,8 @@ RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/pip \
 
 # HACK: Remove install of quadprog dependency
 RUN ${ISAACLAB_PATH}/isaaclab.sh -p -m pip uninstall -y quadprog
+# HACK:
+RUN ${ISAACLAB_PATH}/isaaclab.sh -p -m pip install --extra-index-url https://miropsota.github.io/torch_packages_builder pytorch3d==0.7.8+pt2.7.0cu128
 
 # aliasing isaaclab.sh and python for convenience
 RUN echo "export ISAACLAB_PATH=${ISAACLAB_PATH}" >> ${HOME}/.bashrc && \
