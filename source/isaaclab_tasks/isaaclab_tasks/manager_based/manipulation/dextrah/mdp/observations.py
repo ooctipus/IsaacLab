@@ -101,7 +101,7 @@ class object_point_cloud_b(ManagerTermBase):
             from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
             from isaaclab.markers import VisualizationMarkers
             ray_cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/ObservationPointCloud")
-            ray_cfg.markers["hit"].radius = 0.001
+            ray_cfg.markers["hit"].radius = 0.0015
             self.visualizer = VisualizationMarkers(ray_cfg)
         self.points = sample_object_point_cloud(env.num_envs, self.num_points, self.object.cfg.prim_path, device=env.device)
 
@@ -129,10 +129,10 @@ class object_point_cloud_b(ManagerTermBase):
 def fingers_contact_force_w(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Penalize undesired contacts as the number of violations that are above a threshold."""
     # extract the used quantities (to enable type-hinting)
-    thumb_contact_sensor: ContactSensor = env.scene.sensors["thumb_link_3_contact_sensor"]
-    index_contact_sensor: ContactSensor = env.scene.sensors["index_link_3_contact_sensor"]
-    middle_contact_sensor: ContactSensor = env.scene.sensors["middle_link_3_contact_sensor"]
-    ring_contact_sensor: ContactSensor = env.scene.sensors["ring_link_3_contact_sensor"]
+    thumb_contact_sensor: ContactSensor = env.scene.sensors["thumb_link_3_object_s"]
+    index_contact_sensor: ContactSensor = env.scene.sensors["index_link_3_object_s"]
+    middle_contact_sensor: ContactSensor = env.scene.sensors["middle_link_3_object_s"]
+    ring_contact_sensor: ContactSensor = env.scene.sensors["ring_link_3_object_s"]
     # check if contact force is above threshold
     thumb_contact = thumb_contact_sensor.data.force_matrix_w.view(env.num_envs, 3)
     index_contact = index_contact_sensor.data.force_matrix_w.view(env.num_envs, 3)
