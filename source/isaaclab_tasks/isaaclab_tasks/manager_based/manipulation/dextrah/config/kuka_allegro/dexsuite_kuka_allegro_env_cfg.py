@@ -27,13 +27,13 @@ class KukaAllegroReorientRewardCfg(dexsuite.RewardsCfg):
     good_finger_contact = RewTerm(
         func=mdp.contacts,
         weight=0.5,
-        params={"threshold": 0.5},
+        params={"threshold": 1.0},
     )
     
     bad_finger_contact = RewTerm(
         func=mdp.contacts_sum,
         weight=-0.5,
-        params={"threshold": 2.0, "sensors":[
+        params={"threshold": 5.0, "sensors":[
             "index_link_3_table_s", "middle_link_3_table_s", "ring_link_3_table_s", "thumb_link_3_table_s",
             "index_link_2_table_s", "middle_link_2_table_s", "ring_link_2_table_s", "thumb_link_2_table_s",
             "palm_link_table_s"
