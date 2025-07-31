@@ -87,10 +87,10 @@ class lifted(ManagerTermBase):
 def contacts(env: ManagerBasedRLEnv, threshold: float) -> torch.Tensor:
     """Penalize undesired contacts as the number of violations that are above a threshold."""
     # extract the used quantities (to enable type-hinting)
-    thumb_contact_sensor: ContactSensor = env.scene.sensors["thumb_link_3_contact_sensor"]
-    index_contact_sensor: ContactSensor = env.scene.sensors["index_link_3_contact_sensor"]
-    middle_contact_sensor: ContactSensor = env.scene.sensors["middle_link_3_contact_sensor"]
-    ring_contact_sensor: ContactSensor = env.scene.sensors["ring_link_3_contact_sensor"]
+    thumb_contact_sensor: ContactSensor = env.scene.sensors["thumb_link_3_object_s"]
+    index_contact_sensor: ContactSensor = env.scene.sensors["index_link_3_object_s"]
+    middle_contact_sensor: ContactSensor = env.scene.sensors["middle_link_3_object_s"]
+    ring_contact_sensor: ContactSensor = env.scene.sensors["ring_link_3_object_s"]
     # check if contact force is above threshold
     thumb_contact = thumb_contact_sensor.data.force_matrix_w.view(env.num_envs, 3)
     index_contact = index_contact_sensor.data.force_matrix_w.view(env.num_envs, 3)
@@ -106,6 +106,19 @@ def contacts(env: ManagerBasedRLEnv, threshold: float) -> torch.Tensor:
                         (middle_contact_mag > threshold) | (ring_contact_mag > threshold))
 
     return good_contact_cond1
+
+
+def contacts_sum(env: ManagerBasedRLEnv, threshold: float, sensors: list[str]) -> torch.Tensor:
+    """Penalize undesired contacts as the number of violations that are above a threshold."""
+    # extract the used quantities (to enable type-hinting)
+    contacts_sum = torch.zeros(env.num_envs, device=env.device)
+    for sensor_name in sensors:
+        contact_sensor: ContactSensor = env.scene.sensors[sensor_name]
+        contact_force_w = contact_sensor.data.force_matrix_w.view(env.num_envs, 3)
+        contact_force_mag = torch.norm(contact_force_w, dim=-1)
+        contacts_sum += (contact_force_mag > threshold).float()
+    return contacts_sum
+
 
 def success_reward(
     env: ManagerBasedRLEnv,
