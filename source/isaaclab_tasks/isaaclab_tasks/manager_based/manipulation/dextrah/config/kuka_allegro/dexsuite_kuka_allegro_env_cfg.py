@@ -27,7 +27,17 @@ class KukaAllegroReorientRewardCfg(dexsuite.RewardsCfg):
     good_finger_contact = RewTerm(
         func=mdp.contacts,
         weight=0.5,
-        params={"threshold": 1.0},
+        params={"threshold": 0.5},
+    )
+    
+    bad_finger_contact = RewTerm(
+        func=mdp.contacts_sum,
+        weight=-0.5,
+        params={"threshold": 2.0, "sensors":[
+            "index_link_3_table_s", "middle_link_3_table_s", "ring_link_3_table_s", "thumb_link_3_table_s",
+            "index_link_2_table_s", "middle_link_2_table_s", "ring_link_2_table_s", "thumb_link_2_table_s",
+            "palm_link_table_s"
+        ]},
     )
 
 
@@ -39,7 +49,7 @@ class KukaAllegroMixinCfg:
         super().__post_init__()
         self.observations.policy.contact = ObsTerm(func=mdp.fingers_contact_force_w)
         self.commands.object_pose.body_name = "palm_link"
-        self.scene.robot = KUKA_ALLEGRO_CFG.replace(prim_path="/World/envs/env_.*/Robot").replace(
+        self.scene.robot = KUKA_ALLEGRO_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot").replace(
             init_state=ArticulationCfg.InitialStateCfg(
                 pos=(0.0, 0.0, 0.0),
                 rot=(1.0, 0.0, 0.0, 0.0),
@@ -74,16 +84,22 @@ class KukaAllegroMixinCfg:
         self.observations.policy.hand_tips_state_b.params["body_asset_cfg"].body_names = ["palm_link", ".*_tip"]
         self.rewards.fingers_to_object.params["asset_cfg"] = SceneEntityCfg("robot", body_names=["palm_link", ".*_tip"])
         self.scene.robot.spawn.activate_contact_sensors = True
-        for finger in ["index", "middle", "ring", "thumb"]:
-            link_name = f"{finger}_link_3"
+        for link_name in [
+            "index_link_3", "middle_link_3", "ring_link_3", "thumb_link_3",
+        ]:
+            setattr(self.scene, f"{link_name}_object_s", ContactSensorCfg(
+                prim_path="{ENV_REGEX_NS}/Robot/" + link_name, filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"]
+            ))
+        
+        for link_name in [
+            "index_link_3", "middle_link_3", "ring_link_3", "thumb_link_3",
+            "index_link_2", "middle_link_2", "ring_link_2", "thumb_link_2",
+            "palm_link"
+        ]:
             link_contact_senor = ContactSensorCfg(
-                prim_path=f"/World/envs/env_.*/Robot/{link_name}",
-                update_period=0.0,
-                history_length=6,
-                debug_vis=False,
-                filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"]
+                prim_path="{ENV_REGEX_NS}/Robot/" + link_name, filter_prim_paths_expr=["{ENV_REGEX_NS}/table"]
             )
-            setattr(self.scene, f"{link_name}_contact_sensor", link_contact_senor)
+            setattr(self.scene, f"{link_name}_table_s", link_contact_senor)
 
 @configclass
 class DexsuiteKukaAllegroReorientEnvCfg(KukaAllegroMixinCfg, dexsuite.DexSuiteReorientEnvCfg):
