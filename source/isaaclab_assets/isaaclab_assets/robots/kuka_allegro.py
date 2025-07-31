@@ -22,7 +22,7 @@ from isaaclab.utils.assets import LOCAL_ASSET_PATH_DIR
 
 KUKA_ALLEGRO_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{LOCAL_ASSET_PATH_DIR}/Robots/KukaAllegro/kuka_allegro_optimized.usd",
+        usd_path=f"{LOCAL_ASSET_PATH_DIR}/Robots/KukaAllegro/kuka_allegro_optimizedv2.usd",
         activate_contact_sensors=False,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=True,
