@@ -19,9 +19,9 @@ def generate_shelf_usds(num_shelfs) -> list[sim_utils.SpawnerCfg]:
             f"/tmp/generated_shelves/shelf{i}.usd",
             length_range=(0.8, 1.6),
             depth_range=(0.3, 0.4),
-            height_range=(0.5, 1.2),
+            height_range=(0.7, 1.2),
             thickness_range=(0.02, 0.03),
-            row_range=(3, 5),
+            row_range=(3, 4),
             col_range=(2, 5),
             seed=i
         )
@@ -38,7 +38,7 @@ class ShevlesCommandsCfg:
         resampling_time_range=(3.0, 5.0),
         debug_vis=False,
         ranges=mdp.ObjectUniformPoseCommandCfg.Ranges(
-            pos_x=(-0.7, -0.375), pos_y=(-0.4, 0.4), pos_z=(0.1, 0.75), roll=(-3.14, 3.14), pitch=(-3.14, 3.14), yaw=(0., 0.)
+            pos_x=(-0.925, -0.275), pos_y=(-0.4, 0.4), pos_z=(0.1, 0.75), roll=(-3.14, 3.14), pitch=(-3.14, 3.14), yaw=(0., 0.)
         ),
     )
 
@@ -107,7 +107,7 @@ class ShelvesEventCfg(EventCfg):
                 mode="reset",
                 params={
                     "pose_range": {
-                        "x": [-0.2, 0.2], "y": [-0.5, 0.5], "z": [0.0, 0.4],
+                        "x": [-0.35, 0.2], "y": [-0.5, 0.5], "z": [0.0, 0.4],
                         "roll":[-3.14, 3.14], "pitch":[-3.14, 3.14], "yaw": [-3.14, 3.14]
                     },
                     "velocity_range": {"x": [-0., 0.], "y": [-0., 0.], "z": [-0., 0.]},
@@ -137,7 +137,7 @@ class DexSuiteShelvesReorientEnvCfg(DexSuiteReorientEnvCfg):
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
                 collision_props=sim_utils.CollisionPropertiesCfg(),
             ),
-            init_state=RigidObjectCfg.InitialStateCfg(pos=(-0.775, 0.5, 0.0), rot=(0.7071068, 0, 0, -0.7071068)),
+            init_state=RigidObjectCfg.InitialStateCfg(pos=(-0.975, 0.5, 0.0), rot=(0.7071068, 0, 0, -0.7071068)),
         )
 
 
