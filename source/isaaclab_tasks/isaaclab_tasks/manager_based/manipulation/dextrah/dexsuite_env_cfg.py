@@ -276,9 +276,7 @@ class RewardsCfg:
     action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-0.005)
     
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-0.005)
-    
-    # early_termination = RewTerm(func=mdp.is_terminated, weight=-100)
-    
+
     # joint_pos_reg = RewTerm(func=mdp.joint_deviation_l1, params={"asset_cfg": SceneEntityCfg("robot")}, weight=-0.01)
 
     fingers_to_object = RewTerm(func=mdp.object_ee_distance, params={"std": 0.4}, weight=1.0)
