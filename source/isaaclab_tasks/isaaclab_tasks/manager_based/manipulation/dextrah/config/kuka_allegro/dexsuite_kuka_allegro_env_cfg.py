@@ -30,15 +30,15 @@ class KukaAllegroReorientRewardCfg(dexsuite.RewardsCfg):
         params={"threshold": 1.0},
     )
     
-    bad_finger_contact = RewTerm(
-        func=mdp.contacts_sum,
-        weight=-0.5,
-        params={"threshold": 5.0, "sensors":[
-            "index_link_3_table_s", "middle_link_3_table_s", "ring_link_3_table_s", "thumb_link_3_table_s",
-            "index_link_2_table_s", "middle_link_2_table_s", "ring_link_2_table_s", "thumb_link_2_table_s",
-            "palm_link_table_s"
-        ]},
-    )
+    # bad_finger_contact = RewTerm(
+    #     func=mdp.contacts_sum,
+    #     weight=-0.5,
+    #     params={"threshold": 5.0, "sensors":[
+    #         "index_link_3_table_s", "middle_link_3_table_s", "ring_link_3_table_s", "thumb_link_3_table_s",
+    #         "index_link_2_table_s", "middle_link_2_table_s", "ring_link_2_table_s", "thumb_link_2_table_s",
+    #         "palm_link_table_s"
+    #     ]},
+    # )
 
 
 @configclass
@@ -91,15 +91,15 @@ class KukaAllegroMixinCfg:
                 prim_path="{ENV_REGEX_NS}/Robot/" + link_name, filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"]
             ))
         
-        for link_name in [
-            "index_link_3", "middle_link_3", "ring_link_3", "thumb_link_3",
-            "index_link_2", "middle_link_2", "ring_link_2", "thumb_link_2",
-            "palm_link"
-        ]:
-            link_contact_senor = ContactSensorCfg(
-                prim_path="{ENV_REGEX_NS}/Robot/" + link_name, filter_prim_paths_expr=["{ENV_REGEX_NS}/table"]
-            )
-            setattr(self.scene, f"{link_name}_table_s", link_contact_senor)
+        # for link_name in [
+        #     "index_link_3", "middle_link_3", "ring_link_3", "thumb_link_3",
+        #     "index_link_2", "middle_link_2", "ring_link_2", "thumb_link_2",
+        #     "palm_link"
+        # ]:
+        #     link_contact_senor = ContactSensorCfg(
+        #         prim_path="{ENV_REGEX_NS}/Robot/" + link_name, filter_prim_paths_expr=["{ENV_REGEX_NS}/table"]
+        #     )
+        #     setattr(self.scene, f"{link_name}_table_s", link_contact_senor)
 
 @configclass
 class DexsuiteKukaAllegroReorientEnvCfg(KukaAllegroMixinCfg, dexsuite.DexSuiteReorientEnvCfg):
