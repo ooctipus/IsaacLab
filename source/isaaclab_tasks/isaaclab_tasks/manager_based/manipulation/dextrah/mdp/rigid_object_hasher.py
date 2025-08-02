@@ -1,6 +1,7 @@
 import hashlib
 import numpy as np
 import torch
+import warp as wp
 from pxr import UsdPhysics
 from pxr import UsdGeom, Gf, Usd
 import isaacsim.core.utils.prims as prim_utils
@@ -153,10 +154,10 @@ class RigidObjectHasher:
             val = val.to("cpu")
         HASH_STORE[self.prim_path_pattern][key] = val
 
-    def get_warp_mesh_store(self):
+    def get_warp_mesh_store(self) -> dict[int, wp.Mesh]:
         """Get the warp mesh store for the hasher."""
         return HASH_STORE["warp_mesh_store"]
-    
-    def get_hash_store(self):
+
+    def get_hash_store(self) -> dict[int, any]:
         """Get the entire hash store"""
         return HASH_STORE

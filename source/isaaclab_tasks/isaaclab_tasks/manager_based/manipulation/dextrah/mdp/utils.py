@@ -1,7 +1,6 @@
 import omni
 import numpy as np
 import torch
-import time
 from functools import lru_cache
 import trimesh
 import warp as wp
