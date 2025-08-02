@@ -70,11 +70,15 @@ class reset_asset_collision_free(ManagerTermBase):
         for i, obstacle_cfg in enumerate(obstacle_cfgs):
             start = time.perf_counter()
             obs_h = RigidObjectHasher(env.num_envs, prim_path_pattern=env.scene[obstacle_cfg.name].cfg.prim_path)
-            for prim, eid in zip(obs_h.collider_prims, obs_h.collider_prim_env_ids):
+            for prim, p_hash, eid in zip(obs_h.collider_prims, obs_h.collider_prim_hashes, obs_h.collider_prim_env_ids):
                 # convert each USD prim → Warp mesh...
-                wp_mesh = dexsuite_utils.prim_to_warp_mesh(prim, device=env.device, relative_to_world=True)
-                self.obstacle_meshes.append((wp_mesh, prim))
-                env_handles[eid].append(int(wp_mesh.id))
+                if (p_hash.item(), eid.item()) in obs_h.get_warp_mesh_store():
+                    env_handles[eid].append(obs_h.get_warp_mesh_store()[(p_hash.item(), eid.item())].id)
+                else:
+                    wp_mesh = dexsuite_utils.prim_to_warp_mesh(prim, device=env.device, relative_to_world=True)
+                    obs_h.get_warp_mesh_store()[(p_hash.item(), eid.item())] = wp_mesh
+                    env_handles[eid].append(wp_mesh.id)
+
             prim_counts[i] = torch.bincount(obs_h.collider_prim_env_ids)
             pc_time = time.perf_counter() - start
             print(f"Sampled {len(obs_h.collider_prims)} collision primitives for obstacle '{obstacle_cfg.name}' in {pc_time:.3f}s")
