@@ -13,6 +13,37 @@ from .rigid_object_hasher import RigidObjectHasher
 from pytorch3d.structures import Meshes
 from pytorch3d.ops import sample_points_from_meshes, sample_farthest_points
 
+
+def tqs_apply(pos, quat, scale, vec) -> torch.Tensor:
+    """Apply a translation, quaternion rotation, scale to a vector.
+
+    Args:
+        pos: The position in (x, y, z). Shape is (..., 3)
+        quat: The quaternion in (w, x, y, z). Shape is (..., 4).
+        scale: The scale in (x, y, z). Shape is (..., 3)
+        vec: The vector in (x, y, z). Shape is (..., 3) or 1.
+
+    Returns:
+        The rotated vector in (x, y, z). Shape is (..., 3).
+    """
+    return math_utils.quat_apply(quat, vec * scale) + pos
+
+
+def tqs_apply_inverse(pos, quat, scale, vec) -> torch.Tensor:
+    """Apply a the inverse translation, quaternion rotation, scale to a vector.
+
+    Args:
+        pos: The position in (x, y, z). Shape is (..., 3)
+        quat: The quaternion in (w, x, y, z). Shape is (..., 4).
+        scale: The scale in (x, y, z). Shape is (..., 3)
+        vec: The vector in (x, y, z). Shape is (..., 3).
+
+    Returns:
+        The rotated vector in (x, y, z). Shape is (..., 3).
+    """
+    return math_utils.quat_apply_inverse(quat, (vec - pos)) / scale
+
+
 @lru_cache(maxsize=None)
 def _load_mesh_tensors(prim):
     tm  = prim_to_trimesh(prim)
@@ -27,6 +58,30 @@ def sample_object_point_cloud(
     device: str = "cuda",  # assume GPU
     rigid_object_hasher: RigidObjectHasher | None = None,
 ) -> torch.Tensor | None:
+    """Generating point cloud given the path regex expression. This methood samples point cloud on ALL colliders
+    falls under the prim path pattern. It is robust even if there are different numbers of colliders under the same
+    regex expression. e.g. envs_0/object has 2 colliders, while envs_1/object has 4 colliders. This method will ensure
+    each object has exactly num_points pointcloud regardless of number of colliders. If detected 0 collider, this method
+    will return None, indicating no pointcloud can be sampled.
+    
+    To save memory and time, this method utilize RigidObjectHasher to make sure collider that hash to the same key will
+    only be sampled once. It worths noting there are two kinds of hash:
+    
+    collider hash, and root hash. As name suggest, collider hash describes the uniqueness of collider from the view of root,
+    collider hash is generated at atomic level and can not be representing aggregated. The root hash describes the 
+    uniqueness of aggregate of root, and can be hash that represent aggregate of multiple components that composes root.
+    
+    Be mindful that root's transform: translation, quaternion, scale, do no account for root's hash
+
+    Args:
+        num_envs (int): _description_
+        num_points (int): _description_
+        prim_path_pattern (str): _description_
+        device (str, optional): _description_. Defaults to "cuda".
+
+    Returns:
+        torch.Tensor | None: _description_
+    """
 
     hasher = (
         rigid_object_hasher
@@ -54,11 +109,13 @@ def sample_object_point_cloud(
     samp  = sample_points_from_meshes(meshes, num_points * 2)
     local, _ = sample_farthest_points(samp, K=num_points)
     t_rel, q_rel, s_rel = rel_tf[:, :3].unsqueeze(1), rel_tf[:, 3:7].unsqueeze(1), rel_tf[:, 7:].unsqueeze(1)
-    world = math_utils.quat_apply(q_rel.expand(-1, num_points, -1), local * s_rel) + t_rel
+    # here is tqs_apply not tqs_apply_inverse, because when mesh loaded, it is unscaled. But inorder to view it from
+    # root, you need to apply forward transformation of root->child, which is exactly tqs_root_child.
+    root = tqs_apply(t_rel, q_rel.expand(-1, num_points, -1), s_rel, local)
     
     # Merge Colliders
     if replicated_env:
-        buf = world.reshape(1, -1, 3)
+        buf = root.reshape(1, -1, 3)
         merged, _ = sample_farthest_points(buf, K=num_points)
         result = merged.view(1, num_points, 3).expand(num_envs, -1, -1) * hasher.root_prim_scales.unsqueeze(1)
     else:
@@ -66,13 +123,13 @@ def sample_object_point_cloud(
         env_ids = hasher.collider_prim_env_ids.to(device)  # (M,)
         counts = torch.bincount(env_ids, minlength=hasher.num_root)   # (num_root,)
         max_c = int(counts.max().item())
-        buf = torch.zeros((hasher.num_root, max_c * num_points, 3), device=device, dtype=world.dtype)
+        buf = torch.zeros((hasher.num_root, max_c * num_points, 3), device=device, dtype=root.dtype)
         # track how many placed in each root
         placed = torch.zeros_like(counts)
         for i in range(len(hasher.collider_prims)):
             r = int(env_ids[i].item())
             start = placed[r].item() * num_points
-            buf[r, start:start+num_points] = world[i]
+            buf[r, start:start+num_points] = root[i]
             placed[r] += 1
         # 5) One batch‐FPS to merge per‐root
         merged, _ = sample_farthest_points(buf, K=num_points)
@@ -213,7 +270,7 @@ def get_reset_state(env, env_id: torch.Tensor, keys: list[str], is_relative=Fals
 
 
 @wp.kernel
-def get_sign_distance(
+def get_sign_distance_back_up(
     queries:        wp.array(dtype=wp.vec3),   # [E_bad * N]
     mesh_handles:   wp.array(dtype=wp.uint64), # [E_bad * max_prims]
     prim_counts:    wp.array(dtype=wp.int32),  # [E_bad]
@@ -236,6 +293,38 @@ def get_sign_distance(
             if mp.result and mp.sign < best_sign:
                 best_sign = mp.sign
     # write final values exactly once
+    signs[tid] = best_sign
+
+
+@wp.kernel
+def get_sign_distance(
+    queries: wp.array(dtype=wp.vec3),   # [E_bad * N]
+    mesh_handles: wp.array(dtype=wp.uint64), # [n_obstacles * E_bad * max_prims]
+    prim_counts: wp.array(dtype=wp.int32),  # [n_obstacles * E_bad]
+    coll_rel_pos: wp.array(dtype=wp.vec3),  # [n_obstacles * E_bad * 3]
+    coll_rel_quat: wp.array(dtype=wp.quat),  # [n_obstacles * E_bad * 4]
+    coll_rel_scale: wp.array(dtype=wp.vec3),  # [n_obstacles * E_bad * 3]
+    max_dist: float,
+    num_obstacles: int,
+    num_envs: int,
+    num_points: int,
+    max_prims: int,
+    signs: wp.array(dtype=float),     # [E_bad * N]
+):
+    tid = wp.tid()
+    env_id = tid // num_points  # this env_id is index of arange(0, len(env_id)), its sequence, not selective indexing
+    q = queries[tid]
+    # accumulator for the lowest‐sign (start large)
+    best_sign = float(1)
+    for i in range(num_obstacles):
+        obstacle_id_env_id = i * num_envs * max_prims + env_id * max_prims
+        prim_id = i * num_envs + env_id
+        for p in range(prim_counts[prim_id]):
+            mid = mesh_handles[obstacle_id_env_id + p]
+            if mid != 0:
+                mp = wp.mesh_query_point(mid, q, max_dist)
+                if mp.result and mp.sign < best_sign:
+                    best_sign = mp.sign
     signs[tid] = best_sign
 
 
