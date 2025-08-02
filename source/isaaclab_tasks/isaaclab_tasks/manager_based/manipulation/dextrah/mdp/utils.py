@@ -60,7 +60,7 @@ def sample_object_point_cloud(
     if replicated_env:
         buf = world.reshape(1, -1, 3)
         merged, _ = sample_farthest_points(buf, K=num_points)
-        result = merged.view(1, num_points, 3).expand(num_envs, -1, -1) * hasher.root_prim_transforms[:, 7:].unsqueeze(1)
+        result = merged.view(1, num_points, 3).expand(num_envs, -1, -1) * hasher.root_prim_scales.unsqueeze(1)
     else:
         # 4) Scatter each collider into a padded per‐root buffer
         env_ids = hasher.collider_prim_env_ids.to(device)  # (M,)
@@ -76,7 +76,7 @@ def sample_object_point_cloud(
             placed[r] += 1
         # 5) One batch‐FPS to merge per‐root
         merged, _ = sample_farthest_points(buf, K=num_points)
-        result = merged * hasher.root_prim_transforms[:, 7:].unsqueeze(1)
+        result = merged * hasher.root_prim_scales.unsqueeze(1)
 
     return result
 
