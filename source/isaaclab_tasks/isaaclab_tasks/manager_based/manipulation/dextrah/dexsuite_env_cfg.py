@@ -200,7 +200,7 @@ class EventCfg:
         func=mdp.chained_reset_terms,
         mode="reset",
         params={
-            "terms": {
+            "terms":{
                 "reset_table": EventTerm(
                     func=mdp.reset_root_state_uniform,
                     mode="reset",
@@ -221,16 +221,7 @@ class EventCfg:
                         "velocity_range": {"x": [-0., 0.], "y": [-0., 0.], "z": [-0., 0.]},
                         "asset_cfg": SceneEntityCfg("object"),
                     },
-                )
-            }
-        }
-    )
-    
-    reset_robot = EventTerm(
-        func=mdp.chained_reset_terms,
-        mode="reset",
-        params={
-            "terms":{
+                ),
                 "reset_root": EventTerm(
                     func=mdp.reset_root_state_uniform,
                     mode="reset",
