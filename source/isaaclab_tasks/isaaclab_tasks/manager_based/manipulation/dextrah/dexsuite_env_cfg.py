@@ -167,7 +167,7 @@ class EventCfg:
 
     joint_stiffness_and_damping = EventTerm(
         func=mdp.randomize_actuator_gains,
-        mode="reset",
+        mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
             "stiffness_distribution_params": [1., 1.],
@@ -178,7 +178,7 @@ class EventCfg:
 
     joint_friction = EventTerm(
         func=mdp.randomize_joint_parameters,
-        mode="reset",
+        mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
             "friction_distribution_params": [1. , 1.],
@@ -186,15 +186,44 @@ class EventCfg:
         },
     )
 
-    # -- object
     object_scale_mass = EventTerm(
         func=mdp.randomize_rigid_body_mass,
-        mode="reset",
+        mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "mass_distribution_params": [1., 1.],
             "operation": "scale",
         },
+    )
+    
+    reset_scene = EventTerm(
+        func=mdp.chained_reset_terms,
+        mode="reset",
+        params={
+            "terms": {
+                "reset_table": EventTerm(
+                    func=mdp.reset_root_state_uniform,
+                    mode="reset",
+                    params={
+                        "pose_range": {"x": [-0.05, 0.05], "y": [-0.05, 0.05], "z": [0.0, 0.0]},
+                        "velocity_range": {"x": [-0., 0.], "y": [-0., 0.], "z": [-0., 0.]},
+                        "asset_cfg": SceneEntityCfg("table"),
+                    },
+                ),
+                "reset_object": EventTerm(
+                    func=mdp.reset_root_state_uniform,
+                    mode="reset",
+                    params={
+                        "pose_range": {
+                            "x": [-0.2, 0.2], "y": [-0.2, 0.2], "z": [0.0, 0.4],
+                            "roll":[-3.14, 3.14], "pitch":[-3.14, 3.14], "yaw": [-3.14, 3.14]
+                        },
+                        "velocity_range": {"x": [-0., 0.], "y": [-0., 0.], "z": [-0., 0.]},
+                        "asset_cfg": SceneEntityCfg("object"),
+                    },
+                )
+            }
+        }
     )
     
     reset_robot = EventTerm(
@@ -229,29 +258,6 @@ class EventCfg:
                     },
                 )
             }
-        },
-    )
-    
-    reset_table = EventTerm(
-        func=mdp.reset_root_state_uniform,
-        mode="reset",
-        params={
-            "pose_range": {"x": [-0.0, 0.0], "y": [-0.0, 0.0], "z": [0.0, 0.0]},
-            "velocity_range": {"x": [-0., 0.], "y": [-0., 0.], "z": [-0., 0.]},
-            "asset_cfg": SceneEntityCfg("table"),
-        },
-    )
-    
-    reset_object = EventTerm(
-        func=mdp.reset_root_state_uniform,
-        mode="reset",
-        params={
-            "pose_range": {
-                "x": [-0.2, 0.2], "y": [-0.2, 0.2], "z": [0.0, 0.4],
-                "roll":[-3.14, 3.14], "pitch":[-3.14, 3.14], "yaw": [-3.14, 3.14]
-            },
-            "velocity_range": {"x": [-0., 0.], "y": [-0., 0.], "z": [-0., 0.]},
-            "asset_cfg": SceneEntityCfg("object"),
         },
     )
     
@@ -315,7 +321,7 @@ class RewardsCfg:
         },
     )
     
-    early_termination = RewTerm(func=mdp.abnormal_penalty, weight=-40, params={})
+    early_termination = RewTerm(func=mdp.abnormal_penalty, weight=-100, params={})
 
 @configclass
 class TerminationsCfg:
