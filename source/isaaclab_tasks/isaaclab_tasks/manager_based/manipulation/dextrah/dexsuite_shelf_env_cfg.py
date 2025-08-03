@@ -13,16 +13,21 @@ from .dexsuite_env_cfg import DexSuiteReorientEnvCfg, EventCfg
 from .rigid_object_generator.rigid_object_generator_usd import build_shelf_usd
 from . import mdp
 
+
+LENGTH_RANGE = (1.4, 1.4)
+DEPTH_RANGE = (0.4, 0.4)
+HEIGHT_RANGE = (1.1, 1.1)
+
 def generate_shelf_usds(num_shelfs) -> list[sim_utils.SpawnerCfg]:
     for i in range(num_shelfs):
         build_shelf_usd(
             f"/tmp/generated_shelves/shelf{i}.usd",
-            length_range=(0.8, 1.6),
-            depth_range=(0.3, 0.4),
-            height_range=(0.7, 1.2),
+            length_range=LENGTH_RANGE,
+            depth_range=DEPTH_RANGE,
+            height_range=HEIGHT_RANGE,
             thickness_range=(0.02, 0.03),
             row_range=(3, 4),
-            col_range=(2, 5),
+            col_range=(2, 4),
             seed=i
         )
     return [sim_utils.UsdFileCfg(usd_path=f"/tmp/generated_shelves/shelf{j}.usd") for j in range(num_shelfs)]
@@ -41,6 +46,24 @@ class ShevlesCommandsCfg:
             pos_x=(-0.925, -0.275), pos_y=(-0.4, 0.4), pos_z=(0.1, 0.75), roll=(-3.14, 3.14), pitch=(-3.14, 3.14), yaw=(0., 0.)
         ),
     )
+    
+    
+    # object_pose = mdp.ObjectUniformTableTopRestPoseCommandCfg(
+    #     asset_name="robot",
+    #     object_name="object",
+    #     table_name="table",
+    #     resampling_time_range=(3.0, 5.0),
+    #     debug_vis=False,
+    #     ranges=mdp.ObjectUniformTableTopRestPoseCommandCfg.Ranges(
+    #         pos_x=(LENGTH_RANGE[1] * 0.2, LENGTH_RANGE[1] * 0.8),
+    #         pos_y=(DEPTH_RANGE[1] * 0.25, DEPTH_RANGE[1] * 0.75),
+    #         pos_z=(0.1, HEIGHT_RANGE[1]),
+    #         roll=(-3.14, 3.14),
+    #         pitch=(-3.14, 3.14),
+    #         yaw=(0., 0.)
+    #     ),
+    #     num_samples=30
+    # )
 
 
 @configclass
