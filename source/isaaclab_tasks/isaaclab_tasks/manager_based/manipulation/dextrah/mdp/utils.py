@@ -298,33 +298,41 @@ def get_sign_distance_back_up(
 
 @wp.kernel
 def get_sign_distance(
-    queries: wp.array(dtype=wp.vec3),   # [E_bad * N]
+    queries: wp.array(dtype=wp.vec3),   # [n_obstacles * E_bad * n_points, 3]
     mesh_handles: wp.array(dtype=wp.uint64), # [n_obstacles * E_bad * max_prims]
     prim_counts: wp.array(dtype=wp.int32),  # [n_obstacles * E_bad]
-    coll_rel_pos: wp.array(dtype=wp.vec3),  # [n_obstacles * E_bad * 3]
-    coll_rel_quat: wp.array(dtype=wp.quat),  # [n_obstacles * E_bad * 4]
-    coll_rel_scale: wp.array(dtype=wp.vec3),  # [n_obstacles * E_bad * 3]
+    coll_rel_pos: wp.array(dtype=wp.vec3),  # [n_obstacles * E_bad * max_prims, 3]
+    coll_rel_quat: wp.array(dtype=wp.quat),  # [n_obstacles * E_bad * max_prims, 4]
+    coll_rel_scale: wp.array(dtype=wp.vec3),  # [n_obstacles * E_bad * max_prims, 3]
     max_dist: float,
     num_obstacles: int,
     num_envs: int,
     num_points: int,
     max_prims: int,
-    signs: wp.array(dtype=float),     # [E_bad * N]
+    signs: wp.array(dtype=float),     # [E_bad * n_points]
 ):
     tid = wp.tid()
-    env_id = tid // num_points  # this env_id is index of arange(0, len(env_id)), its sequence, not selective indexing
+    per_obstacle_stride = num_envs * num_points
+    obstacle_idx = tid // per_obstacle_stride
+    rem = tid - obstacle_idx * per_obstacle_stride
+    env_id = rem // num_points  # this env_id is index of arange(0, len(env_id)), its sequence, not selective indexing
     q = queries[tid]
     # accumulator for the lowest‐sign (start large)
     best_sign = float(1)
-    for i in range(num_obstacles):
-        obstacle_id_env_id = i * num_envs * max_prims + env_id * max_prims
-        prim_id = i * num_envs + env_id
-        for p in range(prim_counts[prim_id]):
-            mid = mesh_handles[obstacle_id_env_id + p]
-            if mid != 0:
-                mp = wp.mesh_query_point(mid, q, max_dist)
-                if mp.result and mp.sign < best_sign:
-                    best_sign = mp.sign
+    obstacle_env_base = obstacle_idx * num_envs * max_prims + env_id * max_prims
+    prim_id = obstacle_idx * num_envs + env_id
+
+    for p in range(prim_counts[prim_id]):
+        index = obstacle_env_base + p
+        mid = mesh_handles[index]
+        if mid != 0:
+            q1 = q - coll_rel_pos[index]
+            q2 = wp.quat_rotate_inv(coll_rel_quat[index], q1)
+            crs = coll_rel_scale[index]
+            q3 = wp.vec3(q2.x / crs.x, q2.y / crs.y, q2.z / crs.z)
+            mp = wp.mesh_query_point(mid, q3, max_dist)
+            if mp.result and mp.sign < best_sign:
+                best_sign = mp.sign
     signs[tid] = best_sign
 
 
