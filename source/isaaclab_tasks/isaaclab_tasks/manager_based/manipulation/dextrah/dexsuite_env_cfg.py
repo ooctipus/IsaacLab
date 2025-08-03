@@ -138,7 +138,7 @@ class EventCfg:
     randomize_object_scale = EventTerm(
         func=mdp.randomize_rigid_body_scale,
         mode="prestartup",
-        params={"scale_range": (0.5, 2.0), "asset_cfg": SceneEntityCfg("object")},
+        params={"scale_range": (0.75, 1.5), "asset_cfg": SceneEntityCfg("object")},
     )
 
     robot_physics_material = EventTerm(
@@ -146,8 +146,8 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
-            "static_friction_range": [0.6, 1.],
-            "dynamic_friction_range": [0.5, 1.],
+            "static_friction_range": [1.0, 1.],
+            "dynamic_friction_range": [1.0, 1.],
             "restitution_range": [0.0, 0.0],
             "num_buckets": 250
         },
@@ -158,8 +158,8 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("object", body_names=".*"),
-            "static_friction_range": [0.6, 1.],
-            "dynamic_friction_range": [0.5, 1.],
+            "static_friction_range": [1., 1.],
+            "dynamic_friction_range": [1., 1.],
             "restitution_range": [0.0, 0.0],
             "num_buckets": 250,
         },
@@ -312,7 +312,7 @@ class RewardsCfg:
         },
     )
     
-    early_termination = RewTerm(func=mdp.abnormal_penalty, weight=-100, params={})
+    early_termination = RewTerm(func=mdp.abnormal_penalty, weight=-140, params={})
 
 @configclass
 class TerminationsCfg:
@@ -347,7 +347,7 @@ class DexSuiteReorientEnvCfg(ManagerBasedEnvCfg):
     def __post_init__(self):
         """Post initialization."""
         # general settings
-        self.decimation = 2
+        self.decimation = 4
         # *multi-goal setup
         # self.is_finite_horizon = False
         # self.episode_length_s = 20.
@@ -358,7 +358,7 @@ class DexSuiteReorientEnvCfg(ManagerBasedEnvCfg):
         self.is_finite_horizon = True
         
         # simulation settings
-        self.sim.dt = 1 / 120  # 60Hz
+        self.sim.dt = 1 / 200  # 60Hz
         self.sim.render_interval = self.decimation
         self.sim.physx.bounce_threshold_velocity = 0.2
         self.sim.physx.bounce_threshold_velocity = 0.01
