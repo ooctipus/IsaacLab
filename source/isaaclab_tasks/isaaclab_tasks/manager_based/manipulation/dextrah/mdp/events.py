@@ -75,7 +75,7 @@ class reset_asset_collision_free(ManagerTermBase):
             for prim, p_hash, rel_tf, eid in zip(obs_h.collider_prims, obs_h.collider_prim_hashes, obs_h.collider_prim_relative_transforms, obs_h.collider_prim_env_ids):
                 # convert each USD prim → Warp mesh...
                 obstacle_relative_transforms[i][eid].append(rel_tf)
-                if (p_hash.item(), eid.item()) in obs_h.get_warp_mesh_store():
+                if p_hash.item() in obs_h.get_warp_mesh_store():
                     env_handles[i][eid].append(obs_h.get_warp_mesh_store()[p_hash.item()].id)
                 else:
                     wp_mesh = dexsuite_utils.prim_to_warp_mesh(prim, device=env.device, relative_to_world=False)
