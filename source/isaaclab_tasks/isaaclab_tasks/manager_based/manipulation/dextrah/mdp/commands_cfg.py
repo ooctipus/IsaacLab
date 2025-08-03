@@ -16,7 +16,7 @@ from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.utils import configclass
 
-from .commands import ObjectUniformPoseCommand
+from .commands import ObjectUniformPoseCommand, ObjectUniformTableTopRestPoseCommand
 
 
 @configclass
@@ -74,3 +74,14 @@ class ObjectUniformPoseCommandCfg(CommandTermCfg):
     goal_pose_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
     current_pose_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
 
+
+
+@configclass
+class ObjectUniformTableTopRestPoseCommandCfg(ObjectUniformPoseCommandCfg):
+    """Configuration for uniform pose command generator."""
+
+    class_type: type = ObjectUniformTableTopRestPoseCommand
+    
+    table_name: str = "table"
+    
+    num_samples: int = 25

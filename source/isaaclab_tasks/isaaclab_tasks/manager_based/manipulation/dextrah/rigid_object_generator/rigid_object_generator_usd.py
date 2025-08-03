@@ -246,8 +246,8 @@ def usd_build_shelf(stage, parentPath,
           'random_vertical':False, 'random_horizontal':False, 'no_vertical_devider':True  },
         { 'type':'grid', 'variant':'one_side_open', 'open_sides':['front','left','right'],
           'random_vertical':False, 'random_horizontal':False, 'no_vertical_devider':True  },
-        { 'type':'rod',  'random_horizontal':True,  'rod_y_scale_range':(0.5, 1.0) },
-        { 'type':'rod',  'random_horizontal':False, 'rod_y_scale_range':(0.5, 1.0) }
+        # { 'type':'rod',  'random_horizontal':True,  'rod_y_scale_range':(0.5, 1.0) },
+        # { 'type':'rod',  'random_horizontal':False, 'rod_y_scale_range':(0.5, 1.0) }
     ]
     cfg = random.choice(presets)
 
@@ -287,8 +287,8 @@ def usd_build_shelf_range(stage, parentPath,
                 return max(rng[0], rng[1] - red)
         return rng[1]
 
-    len_scale = (length - length_range[0])/(length_range[1]-length_range[0])
-    hgt_scale = (height - height_range[0])/(height_range[1]-height_range[0])
+    len_scale = 1.0 if length_range[1] == length_range[0] else (length - length_range[0])/(length_range[1]-length_range[0])
+    hgt_scale = 1.0 if height_range[1] == height_range[0] else (height - height_range[0])/(height_range[1]-height_range[0])
     max_rows = clamp(hgt_scale, row_range)
     max_cols = clamp(len_scale, col_range)
     rows = random.randint(max(1, row_range[0]), max_rows)
