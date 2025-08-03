@@ -14,36 +14,6 @@ from pytorch3d.structures import Meshes
 from pytorch3d.ops import sample_points_from_meshes, sample_farthest_points
 
 
-def tqs_apply(pos, quat, scale, vec) -> torch.Tensor:
-    """Apply a translation, quaternion rotation, scale to a vector.
-
-    Args:
-        pos: The position in (x, y, z). Shape is (..., 3)
-        quat: The quaternion in (w, x, y, z). Shape is (..., 4).
-        scale: The scale in (x, y, z). Shape is (..., 3)
-        vec: The vector in (x, y, z). Shape is (..., 3) or 1.
-
-    Returns:
-        The rotated vector in (x, y, z). Shape is (..., 3).
-    """
-    return math_utils.quat_apply(quat, vec * scale) + pos
-
-
-def tqs_apply_inverse(pos, quat, scale, vec) -> torch.Tensor:
-    """Apply a the inverse translation, quaternion rotation, scale to a vector.
-
-    Args:
-        pos: The position in (x, y, z). Shape is (..., 3)
-        quat: The quaternion in (w, x, y, z). Shape is (..., 4).
-        scale: The scale in (x, y, z). Shape is (..., 3)
-        vec: The vector in (x, y, z). Shape is (..., 3).
-
-    Returns:
-        The rotated vector in (x, y, z). Shape is (..., 3).
-    """
-    return math_utils.quat_apply_inverse(quat, (vec - pos)) / scale
-
-
 @lru_cache(maxsize=None)
 def _load_mesh_tensors(prim):
     tm  = prim_to_trimesh(prim)
@@ -109,9 +79,9 @@ def sample_object_point_cloud(
     samp  = sample_points_from_meshes(meshes, num_points * 2)
     local, _ = sample_farthest_points(samp, K=num_points)
     t_rel, q_rel, s_rel = rel_tf[:, :3].unsqueeze(1), rel_tf[:, 3:7].unsqueeze(1), rel_tf[:, 7:].unsqueeze(1)
-    # here is tqs_apply not tqs_apply_inverse, because when mesh loaded, it is unscaled. But inorder to view it from
+    # here is apply_forward not apply_inverse, because when mesh loaded, it is unscaled. But inorder to view it from
     # root, you need to apply forward transformation of root->child, which is exactly tqs_root_child.
-    root = tqs_apply(t_rel, q_rel.expand(-1, num_points, -1), s_rel, local)
+    root = math_utils.quat_apply(q_rel.expand(-1, num_points, -1), local * s_rel) + t_rel
     
     # Merge Colliders
     if replicated_env:
@@ -270,33 +240,6 @@ def get_reset_state(env, env_id: torch.Tensor, keys: list[str], is_relative=Fals
 
 
 @wp.kernel
-def get_sign_distance_back_up(
-    queries:        wp.array(dtype=wp.vec3),   # [E_bad * N]
-    mesh_handles:   wp.array(dtype=wp.uint64), # [E_bad * max_prims]
-    prim_counts:    wp.array(dtype=wp.int32),  # [E_bad]
-    max_dist:       float,
-    num_points:     int,
-    max_prims:      int,
-    signs:          wp.array(dtype=float),     # [E_bad * N]
-):
-    tid = wp.tid()
-    env_id = tid // num_points
-    q = queries[tid]
-    # accumulator for the lowest‐sign (start large)
-    best_sign = float(1)
-
-    base = env_id * max_prims
-    for p in range(prim_counts[env_id]):
-        mid = mesh_handles[base + p]
-        if mid != 0:
-            mp = wp.mesh_query_point(mid, q, max_dist)
-            if mp.result and mp.sign < best_sign:
-                best_sign = mp.sign
-    # write final values exactly once
-    signs[tid] = best_sign
-
-
-@wp.kernel
 def get_sign_distance(
     queries: wp.array(dtype=wp.vec3),   # [n_obstacles * E_bad * n_points, 3]
     mesh_handles: wp.array(dtype=wp.uint64), # [n_obstacles * E_bad * max_prims]
@@ -334,59 +277,3 @@ def get_sign_distance(
             if mp.result and mp.sign < best_sign:
                 best_sign = mp.sign
     signs[tid] = best_sign
-
-
-@wp.kernel
-def get_sign_distance_no_mem(
-    queries: wp.array(dtype=wp.vec3),    # [E_bad * N]
-    mesh_handles: wp.array(dtype=wp.uint64),  # [E_bad * max_prims]
-    prim_counts: wp.array(dtype=wp.int32),   # [E_bad]
-    handle_root_pos: wp.array(dtype=wp.vec3),    # [E_bad * max_prims]
-    handle_root_quat: wp.array(dtype=wp.quat),    # [E_bad * max_prims]
-    handle_root_scale: wp.array(dtype=wp.vec3),    # [E_bad * max_prims]
-    rel_pos: wp.array(dtype=wp.vec3),    # [E_bad * max_prims]
-    rel_quat: wp.array(dtype=wp.quat),    # [E_bad * max_prims]
-    rel_scale: wp.array(dtype=wp.vec3),    # [E_bad * max_prims]
-    max_dist: float,
-    num_points: int,
-    max_prims: int,
-    signs: wp.array(dtype=float)       # [E_bad * N]
-):
-    tid    = wp.tid()                        # global thread index
-    env_id = tid // num_points               # which environment
-    q_w    = queries[tid]                    # world‐space query point
-    base   = env_id * max_prims              # start index for this env’s handles
-    best = float(1)                              # accumulator for min signed distance
-
-    # transform world→root and root→local per‐handle
-    for p in range(prim_counts[env_id]):
-        idx = base + p
-        mid = mesh_handles[idx]
-        if mid != 0:
-            # // 1) world → root‐local
-            v = q_w - handle_root_pos[idx]
-            inv_rq = wp.quat_inverse(handle_root_quat[idx])
-            v2 = wp.quat_rotate(inv_rq, v)
-            
-            s     = handle_root_scale[idx]
-            inv_s = wp.vec3(1.0/s.x, 1.0/s.y, 1.0/s.z)
-            v3    = comp_mul(v2, inv_s)
-
-            # // 2 root‐local → mesh‐local
-            v4 = v3 - rel_pos[idx]
-            inv_lq = wp.quat_inverse(rel_quat[idx])
-            v5 = wp.quat_rotate(inv_lq, v4)
-            
-            rs    = rel_scale[idx]
-            inv_rs= wp.vec3(1.0/rs.x, 1.0/rs.y, 1.0/rs.z)
-            q_local = comp_mul(v5, inv_rs)
-
-            mp = wp.mesh_query_point(mid, q_local, max_dist)
-            if mp.result and mp.sign < best:
-                best = mp.sign
-
-    signs[tid] = best
-
-@wp.func
-def comp_mul(a: wp.vec3, b: wp.vec3) -> wp.vec3:
-    return wp.vec3(a.x * b.x, a.y * b.y, a.z * b.z)

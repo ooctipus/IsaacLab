@@ -11,6 +11,7 @@ import warp as wp
 from pxr import UsdPhysics
 from typing import TYPE_CHECKING
 from torch.nn.utils.rnn import pad_sequence
+import isaaclab.utils.math as math_utils
 from isaaclab.assets import RigidObject
 from isaaclab.sim.utils import get_first_matching_child_prim
 from .rigid_object_hasher import RigidObjectHasher 
@@ -95,12 +96,12 @@ class CollisionAnalyzer:
     def __call__(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor):
         pos_w = self.asset.data.body_link_pos_w[env_ids][:, self.body_ids].unsqueeze(2).expand(-1, -1, self.cfg.num_points, 3)
         quat_w = self.asset.data.body_link_quat_w[env_ids][:, self.body_ids].unsqueeze(2).expand(-1, -1, self.cfg.num_points, 4)
-        cloud = dexsuite_utils.tqs_apply(pos_w, quat_w, 1, self.local_pts[env_ids])
+        cloud = math_utils.quat_apply(quat_w, self.local_pts[env_ids]) + pos_w  # omit scale 1
         
         obstacles_pos_w = torch.cat([obstacle.data.root_pos_w[env_ids].view(-1, 1, 1, 3).expand(-1, -1, self.cfg.num_points, 3) for obstacle in self.obstacles], dim=0)
         obstacles_quat_w = torch.cat([obstacle.data.root_quat_w[env_ids].view(-1, 1, 1, 4).expand(-1, cloud.shape[1], self.cfg.num_points, 4) for obstacle in self.obstacles], dim=0)
         obstacles_scale_w = self.obstacle_root_scales[:, env_ids].view(-1, 1, 1, 3).expand(-1, -1, self.cfg.num_points, 3)
-        could_root = dexsuite_utils.tqs_apply_inverse(obstacles_pos_w, obstacles_quat_w, obstacles_scale_w, cloud.repeat(len(self.obstacles), 1, 1, 1))
+        could_root = math_utils.quat_apply_inverse(obstacles_quat_w, (cloud.repeat(len(self.obstacles), 1, 1, 1)) - obstacles_pos_w) / obstacles_scale_w
         
         total_points = len(self.body_ids) * self.cfg.num_points * len(self.obstacles)
         queries = wp.from_torch(could_root.reshape(-1,3), dtype=wp.vec3)
