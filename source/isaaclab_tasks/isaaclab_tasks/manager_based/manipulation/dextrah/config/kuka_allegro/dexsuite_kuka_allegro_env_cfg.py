@@ -90,16 +90,6 @@ class KukaAllegroMixinCfg:
             setattr(self.scene, f"{link_name}_object_s", ContactSensorCfg(
                 prim_path="{ENV_REGEX_NS}/Robot/" + link_name, filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"]
             ))
-        
-        # for link_name in [
-        #     "index_link_3", "middle_link_3", "ring_link_3", "thumb_link_3",
-        #     "index_link_2", "middle_link_2", "ring_link_2", "thumb_link_2",
-        #     "palm_link"
-        # ]:
-        #     link_contact_senor = ContactSensorCfg(
-        #         prim_path="{ENV_REGEX_NS}/Robot/" + link_name, filter_prim_paths_expr=["{ENV_REGEX_NS}/table"]
-        #     )
-        #     setattr(self.scene, f"{link_name}_table_s", link_contact_senor)
 
 @configclass
 class DexsuiteKukaAllegroReorientEnvCfg(KukaAllegroMixinCfg, dexsuite.DexSuiteReorientEnvCfg):
