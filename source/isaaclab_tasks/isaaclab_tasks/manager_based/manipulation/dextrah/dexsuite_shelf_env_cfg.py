@@ -45,11 +45,26 @@ class ShevlesCommandsCfg:
 
 @configclass
 class ShelvesEventCfg(EventCfg):
-
+    
     reset_scene = EventTerm(
-        func=mdp.reset_asset_collision_free,
+        func=mdp.reset_accumulator,
         mode="reset",
         params={
+            "reset_assets": ["table", "object", "robot"],
+            "acceptance_conditions": {
+                "object_collision_free": mdp.CollisionAnalyzerCfg(
+                    num_points=32,
+                    max_dist=0.5,
+                    asset_cfg=SceneEntityCfg("object"),
+                    obstacle_cfgs=[SceneEntityCfg("table")]
+                ),
+                "collision_robot_free": mdp.CollisionAnalyzerCfg(
+                    num_points=32,
+                    max_dist=0.5,
+                    asset_cfg=SceneEntityCfg("robot", body_names=["iiwa7_link_(5|6|7|ee)", "allegro_mount", "palm_link", "(index|middle|ring|thumb).*"]),
+                    obstacle_cfgs=[SceneEntityCfg("table"), SceneEntityCfg("object")]
+                )
+            },
             "reset_term": EventTerm(
                 func=mdp.chained_reset_terms,
                 mode="reset",
@@ -77,24 +92,7 @@ class ShelvesEventCfg(EventCfg):
                                 "velocity_range": {"x": [-0., 0.], "y": [-0., 0.], "z": [-0., 0.]},
                                 "asset_cfg": SceneEntityCfg("object"),
                             },
-                        )
-                    }
-                }
-            ),
-            "collision_check_asset_cfg": SceneEntityCfg("object"),
-            "collision_check_against_asset_cfg": [SceneEntityCfg("table")] 
-        },
-    )
-    
-    reset_robot = EventTerm(
-        func=mdp.reset_asset_collision_free,
-        mode="reset",
-        params={
-            "reset_term": EventTerm(
-                func=mdp.chained_reset_terms,
-                mode="reset",
-                params={
-                    "terms":{
+                        ),
                         "reset_root": EventTerm(
                             func=mdp.reset_root_state_uniform,
                             mode="reset",
@@ -133,8 +131,6 @@ class ShelvesEventCfg(EventCfg):
                     }
                 },
             ),
-            "collision_check_asset_cfg": SceneEntityCfg("robot", body_names=["iiwa7_link_(5|6|7|ee)", "allegro_mount", "palm_link", "(index|middle|ring|thumb).*"]),
-            "collision_check_against_asset_cfg": [SceneEntityCfg("table"), SceneEntityCfg("object")] 
         },
     )
 
