@@ -64,6 +64,24 @@ class ShevlesCommandsCfg:
     #     ),
     #     num_samples=30
     # )
+    
+    
+    # object_pose = mdp.ObjectUniformTableTopCollisionFreePoseCommandCfg(
+    #     asset_name="robot",
+    #     object_name="object",
+    #     table_name="table",
+    #     resampling_time_range=(3.0, 5.0),
+    #     debug_vis=False,
+    #     ranges=mdp.ObjectUniformTableTopCollisionFreePoseCommandCfg.Ranges(
+    #         pos_x=(LENGTH_RANGE[1] * 0.2, LENGTH_RANGE[1] * 0.8),
+    #         pos_y=(DEPTH_RANGE[1] * 0.25, DEPTH_RANGE[1] * 0.75),
+    #         pos_z=(0.1, HEIGHT_RANGE[1]),
+    #         roll=(-3.14, 3.14),
+    #         pitch=(-3.14, 3.14),
+    #         yaw=(0., 0.)
+    #     ),
+    #     num_samples=30
+    # )
 
 
 @configclass
@@ -84,6 +102,7 @@ class ShelvesEventCfg(EventCfg):
                 "collision_robot_free": mdp.CollisionAnalyzerCfg(
                     num_points=32,
                     max_dist=0.5,
+                    min_dist=0.01,
                     asset_cfg=SceneEntityCfg("robot", body_names=["iiwa7_link_(5|6|7|ee)", "allegro_mount", "palm_link", "(index|middle|ring|thumb).*"]),
                     obstacle_cfgs=[SceneEntityCfg("table"), SceneEntityCfg("object")]
                 )
