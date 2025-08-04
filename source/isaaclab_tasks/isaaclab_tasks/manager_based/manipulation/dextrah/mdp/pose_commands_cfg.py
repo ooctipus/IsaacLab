@@ -15,18 +15,31 @@ from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.utils import configclass
 
-import .commands as dex_cmd
+from . import pose_commands as dex_cmd
 
 
 @configclass
-class CommandChoiceCfg(CommandTermCfg):
+class PoseAlignmentCommandChoiceCfg(CommandTermCfg):
     
-    class_type: type = dex_cmd.CommandChoice
+    class_type: type = dex_cmd.PoseAlignmentCommandChoice
     
     terms: dict[str, CommandTermCfg] = {}
     
     sampling_strategy: str = "uniform"
 
+    asset_name: str = MISSING
+
+    object_name: str = MISSING
+
+    goal_pose_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(prim_path="/Visuals/Command/align_goal_pose")
+    """The configuration for the goal pose visualization marker. Defaults to FRAME_MARKER_CFG."""
+
+    current_pose_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(
+        prim_path="/Visuals/Command/align_body_pose"
+    )
+    
+    goal_pose_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+    current_pose_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
 
 @configclass
 class ObjectUniformPoseCommandCfg(CommandTermCfg):

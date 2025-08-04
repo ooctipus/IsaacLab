@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from .commands_cfg import *  # noqa: F401, F403
+from .pose_commands_cfg import *  # noqa: F401, F403
 from .action_cfg import *  # noqa: F401, F403
 from .action import *  # noqa: F401, F403
 from .rewards import *  # noqa: F401, F403

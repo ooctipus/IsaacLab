@@ -19,34 +19,135 @@ from isaaclab.markers import VisualizationMarkers
 from isaaclab.utils.math import combine_frame_transforms, subtract_frame_transforms, compute_pose_error, quat_from_euler_xyz, quat_unique
 
 from .collision_analyzer_cfg import CollisionAnalyzerCfg
-
+from .success_monitor_cfg import SuccessMonitorCfg
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
-    import .commands_cfg as dex_cmd_cfgs
+    from . import pose_commands_cfg as dex_cmd_cfgs
 
 
-class CommandChoice(CommandTerm):
+class PoseAlignmentCommandChoice(CommandTerm):
     
-    cfg: dex_cmd_cfgs.CommandChoiceCfg
+    cfg: dex_cmd_cfgs.PoseAlignmentCommandChoiceCfg
     
-    def __init__(self, cfg: dex_cmd_cfgs.CommandChoiceCfg, env: ManagerBasedEnv):
-        self.terms = []
+    def __init__(self, cfg: dex_cmd_cfgs.PoseAlignmentCommandChoiceCfg, env: ManagerBasedEnv):
+        self.terms: list[CommandTerm] = []
+        self.term_names: list[str] = []
+        self.sampling_strategy = cfg.sampling_strategy
+        self.root_asset: RigidObject | Articulation = env.scene[cfg.asset_name]
+        self.object: RigidObject = env.scene[cfg.object_name]
+        self.pos_only = True
         for term_name, term_cfg in cfg.terms.items():
             term_cfg.resampling_time_range = cfg.resampling_time_range
             self.terms.append(term_cfg.class_type(term_cfg, env))
-    
+            self.term_names.append(term_name)
+
+        super().__init__(cfg, env)        
+        self.term_samples = torch.zeros((env.num_envs,), dtype=torch.int, device=env.device)
+        self.last_term_samples = torch.zeros((env.num_envs,), dtype=torch.int, device=env.device)
+        success_monitor_cfg = SuccessMonitorCfg(
+            monitored_history_len=100,
+            num_monitored_data=len(self.terms),
+            device=env.device,
+        )
+        self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
+        self._command = torch.zeros((env.num_envs, 7), device=self.device)
+        self.success_recorder = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+        
+        for term_name in self.term_names:
+            self.metrics[f"position_error_{term_name}"] = torch.zeros(self.num_envs, device=self.device)
+            self.metrics[f"orientation_error_{term_name}"] = torch.zeros(self.num_envs, device=self.device)
+
     def __str__(self):
         msg = "TERM CHOICES:"
         for term_cfg in self.terms:
             msg += term_cfg.__str__()
-    
+
+
     @property
     def command(self) -> torch.Tensor:
+        return self._command
+
+    def _resample_command(self, env_ids: torch.Tensor):
+        self.last_term_samples[env_ids] = self.term_samples[env_ids]
+        if self.sampling_strategy == "uniform":
+            self.term_samples[env_ids] = torch.randint(0, len(self.terms), (len(env_ids),), device=self.device, dtype=self.term_samples.dtype)
+        else:
+            self.term_samples[env_ids] = self.success_monitor.failure_rate_sampling(env_ids)
+
+        for i, term in enumerate(self.terms):
+            term_id_mask = self.term_samples[env_ids] == i
+            term_ids = env_ids[term_id_mask]
+            if term_ids.numel() > 0:
+                term._resample_command(term_ids)
+
+
+    def _update_metrics(self):
+        # logs end of episode data
+        reset_env = self._env.episode_length_buf == 0
+        if torch.any(reset_env):
+            success_mask = torch.where(self.success_recorder[reset_env], True, False)
+            reset_term_samples = self.last_term_samples[reset_env]
+            self.success_monitor.success_update(reset_term_samples, success_mask)
+        cmd_succ_rate = self.success_monitor.get_success_rate()
+        log = {f"Metrics/task_success/{self.term_names[i]}": cmd_succ_rate[i].item() for i in range(len(self.terms))}
+        for i, term in enumerate(self.terms):
+            term._update_metrics()
+            term_id_mask = self.term_samples == i
+            name = self.term_names[i]
+            term_pos_error = term.metrics["position_error"][term_id_mask]
+            term_rot_error = term.metrics["orientation_error"][term_id_mask]
+            self.metrics[f"position_error_{name}"][term_id_mask] = term_pos_error
+            self.metrics[f"orientation_error_{name}"][term_id_mask] = term_rot_error
+            if self.pos_only:
+                self.success_recorder[term_id_mask] = term_pos_error < 0.05
+            else:
+                self.success_recorder[term_id_mask] = (term_pos_error < 0.05) & (term_rot_error < 0.4)
+        self._env.extras['log'].update(log)
+
+    def _update_command(self):
+        for term in self.terms:
+            term._update_command()
+
+        for i, term in enumerate(self.terms):
+            term_id_mask = self.term_samples == i
+            self._command[term_id_mask] = term.command[term_id_mask]
+
+    def _set_debug_vis_impl(self, debug_vis: bool):
+        # create markers if necessary for the first tome
+        if debug_vis:
+            if not hasattr(self, "goal_pose_visualizer"):
+                # -- goal pose
+                self.goal_pose_visualizer = VisualizationMarkers(self.cfg.goal_pose_visualizer_cfg)
+                # -- current body pose
+                self.current_pose_visualizer = VisualizationMarkers(self.cfg.current_pose_visualizer_cfg)
+            # set their visibility to true
+            self.goal_pose_visualizer.set_visibility(True)
+            self.current_pose_visualizer.set_visibility(True)
+        else:
+            if hasattr(self, "goal_pose_visualizer"):
+                self.goal_pose_visualizer.set_visibility(False)
+                self.current_pose_visualizer.set_visibility(False)
+
+
+    def _debug_vis_callback(self, event):
+        # check if robot is initialized
+        # note: this is needed in-case the robot is de-initialized. we can't access the data
+        if not self.root_asset.is_initialized:
+            return
         
-        pass
-    
-    
-    
+        pos_command_w, quat_command_w = combine_frame_transforms(
+            self.root_asset.data.root_pos_w,
+            self.root_asset.data.root_quat_w,
+            self._command[:, :3],
+            self._command[:, 3:],
+        )
+        # update the markers
+        # -- goal pose
+        self.goal_pose_visualizer.visualize(pos_command_w, quat_command_w)
+        # -- current body pose
+        object_pose_w = self.object.data.root_pose_w
+        self.current_pose_visualizer.visualize(object_pose_w[:, :3], object_pose_w[:, 3:7])
+
 
 class ObjectUniformPoseCommand(CommandTerm):
     """Command generator for generating pose commands uniformly.
@@ -334,7 +435,7 @@ class ObjectUniformTableTopCollisionFreePoseCommand(ObjectUniformPoseCommand):
 
 class ObjectUniformTableTopRestPoseCommand(ObjectUniformTableTopCollisionFreePoseCommand):
 
-    cfg: ObjectUniformTableTopRestPoseCommandCfg
+    cfg: dex_cmd_cfgs.ObjectUniformTableTopRestPoseCommandCfg
     """Configuration for the command generator."""
 
     def _collect_candidate_command_b(self):
