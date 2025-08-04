@@ -68,7 +68,7 @@ class InfoWandbUploadPatcher:
                 ep_infos.append(extras["log"])
 
             # -- Episode info
-            ep_string = ""
+            
             if ep_infos:
                 for key in ep_infos[0]:
                     infotensor = torch.tensor([], device=info_self.device)
@@ -88,13 +88,15 @@ class InfoWandbUploadPatcher:
                     pad = self.pad
 
                     if info_self.common_step_counter % info_interval == 0:
+                        ep_string = ""
                         if "/" in key:
-                            wandb.log({key: value}, step=info_self.common_step_counter)
+                            wandb.log({key: value}, step=self.round_counter)
                             ep_string += f"""{f'{key}:':>{pad}} {value:.4f}\n"""
                         else:
-                            wandb.log({"Episode/" + key: value}, step=info_self.common_step_counter)
+                            wandb.log({"Episode/" + key: value}, step=self.round_counter)
                             ep_string += f"""{f'Mean episode {key}:':>{pad}} {value:.4f}\n"""
-            print(ep_string)
+                        self.round_counter += 1
+                        print(ep_string)
             return obs_buf, reward_buf, reset_terminated, sreset_time_outs, extras
 
         # Patch methods on ManagerBasedEnv
