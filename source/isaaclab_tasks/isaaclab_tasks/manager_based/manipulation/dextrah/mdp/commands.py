@@ -22,8 +22,31 @@ from .collision_analyzer_cfg import CollisionAnalyzerCfg
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
-    from .commands_cfg import ObjectUniformPoseCommandCfg, ObjectUniformTableTopRestPoseCommandCfg, ObjectUniformTableTopCollisionFreePoseCommandCfg
+    import .commands_cfg as dex_cmd_cfgs
 
+
+class CommandChoice(CommandTerm):
+    
+    cfg: dex_cmd_cfgs.CommandChoiceCfg
+    
+    def __init__(self, cfg: dex_cmd_cfgs.CommandChoiceCfg, env: ManagerBasedEnv):
+        self.terms = []
+        for term_name, term_cfg in cfg.terms.items():
+            term_cfg.resampling_time_range = cfg.resampling_time_range
+            self.terms.append(term_cfg.class_type(term_cfg, env))
+    
+    def __str__(self):
+        msg = "TERM CHOICES:"
+        for term_cfg in self.terms:
+            msg += term_cfg.__str__()
+    
+    @property
+    def command(self) -> torch.Tensor:
+        
+        pass
+    
+    
+    
 
 class ObjectUniformPoseCommand(CommandTerm):
     """Command generator for generating pose commands uniformly.
@@ -44,10 +67,10 @@ class ObjectUniformPoseCommand(CommandTerm):
 
     """
 
-    cfg: ObjectUniformPoseCommandCfg
+    cfg: dex_cmd_cfgs.ObjectUniformPoseCommandCfg
     """Configuration for the command generator."""
 
-    def __init__(self, cfg: ObjectUniformPoseCommandCfg, env: ManagerBasedEnv):
+    def __init__(self, cfg: dex_cmd_cfgs.ObjectUniformPoseCommandCfg, env: ManagerBasedEnv):
         """Initialize the command generator class.
 
         Args:
@@ -178,10 +201,10 @@ class ObjectUniformTableTopCollisionFreePoseCommand(ObjectUniformPoseCommand):
 
     """
 
-    cfg: ObjectUniformTableTopCollisionFreePoseCommandCfg
+    cfg: dex_cmd_cfgs.ObjectUniformTableTopCollisionFreePoseCommandCfg
     """Configuration for the command generator."""
 
-    def __init__(self, cfg: ObjectUniformTableTopCollisionFreePoseCommandCfg, env: ManagerBasedEnv):
+    def __init__(self, cfg: dex_cmd_cfgs.ObjectUniformTableTopCollisionFreePoseCommandCfg, env: ManagerBasedEnv):
         """Initialize the command generator class.
 
         Args:

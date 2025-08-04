@@ -15,14 +15,24 @@ from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.utils import configclass
 
-from .commands import ObjectUniformPoseCommand, ObjectUniformTableTopRestPoseCommand, ObjectUniformTableTopCollisionFreePoseCommand
+import .commands as dex_cmd
+
+
+@configclass
+class CommandChoiceCfg(CommandTermCfg):
+    
+    class_type: type = dex_cmd.CommandChoice
+    
+    terms: dict[str, CommandTermCfg] = {}
+    
+    sampling_strategy: str = "uniform"
 
 
 @configclass
 class ObjectUniformPoseCommandCfg(CommandTermCfg):
     """Configuration for uniform pose command generator."""
 
-    class_type: type = ObjectUniformPoseCommand
+    class_type: type = dex_cmd.ObjectUniformPoseCommand
 
     asset_name: str = MISSING
     """Name of the coordinate referencing asset in the environment for which the commands are generated respect to."""
@@ -79,7 +89,7 @@ class ObjectUniformPoseCommandCfg(CommandTermCfg):
 class ObjectUniformTableTopRestPoseCommandCfg(ObjectUniformPoseCommandCfg):
     """Configuration for uniform pose command generator."""
 
-    class_type: type = ObjectUniformTableTopRestPoseCommand
+    class_type: type = dex_cmd.ObjectUniformTableTopRestPoseCommand
     
     table_name: str = "table"
     
@@ -90,4 +100,4 @@ class ObjectUniformTableTopRestPoseCommandCfg(ObjectUniformPoseCommandCfg):
 class ObjectUniformTableTopCollisionFreePoseCommandCfg(ObjectUniformTableTopRestPoseCommandCfg):
     """Configuration for uniform pose command generator."""
 
-    class_type: type = ObjectUniformTableTopCollisionFreePoseCommand
+    class_type: type = dex_cmd.ObjectUniformTableTopCollisionFreePoseCommand
