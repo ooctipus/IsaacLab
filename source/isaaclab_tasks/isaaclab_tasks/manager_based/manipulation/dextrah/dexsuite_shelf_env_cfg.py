@@ -115,13 +115,11 @@ class ShelvesEventCfg(EventCfg):
                 mode="reset",
                 params={
                     "terms":{
-                        # BUG: REPORT THAT KINEMATIC ENABLED ASSEST RESET DOESN'T WORK IN RENDERING
-                        # SO I SET IT TO 0 FOR NOW
                         "reset_table": EventTerm(
                             func=mdp.reset_root_state_uniform,
                             mode="reset",
                             params={
-                                "pose_range": {"x": [-0.0, 0.0], "y": [-0.0, 0.0], "z": [0.0, 0.0]},
+                                "pose_range": {"x": [-0.05, 0.10], "y": [-0.05, 0.05], "z": [0.0, 0.0]},
                                 "velocity_range": {},
                                 "asset_cfg": SceneEntityCfg("table"),
                             },
@@ -197,7 +195,7 @@ class DexSuiteShelvesReorientEnvCfg(DexSuiteReorientEnvCfg):
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
                 collision_props=sim_utils.CollisionPropertiesCfg(),
             ),
-            init_state=RigidObjectCfg.InitialStateCfg(pos=(-0.975, 0.5, 0.0), rot=(0.7071068, 0, 0, -0.7071068)),
+            init_state=RigidObjectCfg.InitialStateCfg(pos=(-0.925, 0.5, 0.0), rot=(0.7071068, 0, 0, -0.7071068)),
         )
 
 
