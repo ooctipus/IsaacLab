@@ -36,53 +36,56 @@ def generate_shelf_usds(num_shelfs) -> list[sim_utils.SpawnerCfg]:
 @configclass
 class ShevlesCommandsCfg:
     """Command terms for the MDP."""
-
-    object_pose = mdp.ObjectUniformPoseCommandCfg(
+    object_pose = mdp.PoseAlignmentCommandChoiceCfg(
+        resampling_time_range=(3.0, 5.0),
         asset_name="robot",
         object_name="object",
-        resampling_time_range=(3.0, 5.0),
         debug_vis=False,
-        ranges=mdp.ObjectUniformPoseCommandCfg.Ranges(
-            pos_x=(-0.925, -0.275), pos_y=(-0.4, 0.4), pos_z=(0.1, 0.75), roll=(-3.14, 3.14), pitch=(-3.14, 3.14), yaw=(0., 0.)
-        ),
+        terms={
+            "uniform": mdp.ObjectUniformPoseCommandCfg(
+                asset_name="robot",
+                object_name="object",
+                ranges=mdp.ObjectUniformPoseCommandCfg.Ranges(
+                    pos_x=(-0.925, -0.275), pos_y=(-0.4, 0.4), pos_z=(0.1, 0.75),
+                    roll=(-3.14, 3.14), pitch=(-3.14, 3.14), yaw=(0., 0.)
+                ),
+            ),
+            "table_top_rest_pose": mdp.ObjectUniformTableTopRestPoseCommandCfg(
+                asset_name="robot",
+                object_name="object",
+                table_name="table",
+                ranges=mdp.ObjectUniformTableTopRestPoseCommandCfg.Ranges(
+                    pos_x=(LENGTH_RANGE[1] * 0.2, LENGTH_RANGE[1] * 0.8),
+                    pos_y=(DEPTH_RANGE[1] * 0.25, DEPTH_RANGE[1] * 0.75),
+                    pos_z=(0.1, HEIGHT_RANGE[1]),
+                    roll=(-3.14, 3.14),
+                    pitch=(-3.14, 3.14),
+                    yaw=(0., 0.)
+                ),
+                num_samples=30
+            ),
+            "table_top_collision_free_pose": mdp.ObjectUniformTableTopCollisionFreePoseCommandCfg(
+                asset_name="robot",
+                object_name="object",
+                table_name="table",
+                ranges=mdp.ObjectUniformTableTopCollisionFreePoseCommandCfg.Ranges(
+                    pos_x=(LENGTH_RANGE[1] * 0.2, LENGTH_RANGE[1] * 0.8),
+                    pos_y=(DEPTH_RANGE[1] * 0.25, DEPTH_RANGE[1] * 0.75),
+                    pos_z=(0.1, HEIGHT_RANGE[1]),
+                    roll=(-3.14, 3.14),
+                    pitch=(-3.14, 3.14),
+                    yaw=(0., 0.)
+                ),
+                num_samples=30
+            )
+        }
     )
     
-    
-    # object_pose = mdp.ObjectUniformTableTopRestPoseCommandCfg(
-    #     asset_name="robot",
-    #     object_name="object",
-    #     table_name="table",
-    #     resampling_time_range=(3.0, 5.0),
-    #     debug_vis=False,
-    #     ranges=mdp.ObjectUniformTableTopRestPoseCommandCfg.Ranges(
-    #         pos_x=(LENGTH_RANGE[1] * 0.2, LENGTH_RANGE[1] * 0.8),
-    #         pos_y=(DEPTH_RANGE[1] * 0.25, DEPTH_RANGE[1] * 0.75),
-    #         pos_z=(0.1, HEIGHT_RANGE[1]),
-    #         roll=(-3.14, 3.14),
-    #         pitch=(-3.14, 3.14),
-    #         yaw=(0., 0.)
-    #     ),
-    #     num_samples=30
-    # )
-    
-    
-    # object_pose = mdp.ObjectUniformTableTopCollisionFreePoseCommandCfg(
-    #     asset_name="robot",
-    #     object_name="object",
-    #     table_name="table",
-    #     resampling_time_range=(3.0, 5.0),
-    #     debug_vis=False,
-    #     ranges=mdp.ObjectUniformTableTopCollisionFreePoseCommandCfg.Ranges(
-    #         pos_x=(LENGTH_RANGE[1] * 0.2, LENGTH_RANGE[1] * 0.8),
-    #         pos_y=(DEPTH_RANGE[1] * 0.25, DEPTH_RANGE[1] * 0.75),
-    #         pos_z=(0.1, HEIGHT_RANGE[1]),
-    #         roll=(-3.14, 3.14),
-    #         pitch=(-3.14, 3.14),
-    #         yaw=(0., 0.)
-    #     ),
-    #     num_samples=30
-    # )
-
+    def __post_init__(self):
+        if hasattr(self.object_pose, "terms"):
+            for name, term in self.object_pose.terms.items():
+                term.resampling_time_range = self.object_pose.resampling_time_range
+                term.debug_vis = False
 
 @configclass
 class ShelvesEventCfg(EventCfg):
