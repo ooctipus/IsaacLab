@@ -112,7 +112,7 @@ class CollisionAnalyzer:
         coll_rel_scale = wp.from_torch(self.collider_rel_transform[:, env_ids, :, 7:10].view(-1, 3), dtype=wp.vec3)
         sign_w = wp.zeros((len(env_ids) * total_points,), dtype=float, device=env.device)
         wp.launch(
-            dexsuite_utils.get_sign_distance,
+            dexsuite_utils.get_signed_distance,
             dim=len(env_ids) * total_points,
             inputs=[
                 queries,
@@ -122,7 +122,7 @@ class CollisionAnalyzer:
                 coll_rel_quat,
                 coll_rel_scale,
                 float(self.cfg.max_dist),
-                len(self.num_coll_per_obstacle_per_env),
+                self.cfg.min_dist != 0.0,
                 len(env_ids),
                 len(self.body_ids) * self.cfg.num_points,
                 self.max_prims
@@ -136,5 +136,5 @@ class CollisionAnalyzer:
         #     env.sim.render()
         #     visualizer.visualize(collision_points.view(-1, 3))
 
-        coll_free_mask = (signs >= 0.0).view(len(env_ids), -1).all(dim=1).bool()
+        coll_free_mask = signs.amin(dim=(1, 2)) >= self.cfg.min_dist
         return coll_free_mask

@@ -19,6 +19,8 @@ class CollisionAnalyzerCfg:
     
     max_dist: float = 0.5
     
+    min_dist: float = 0.0
+    
     asset_cfg: SceneEntityCfg = MISSING
     
     obstacle_cfgs: list[SceneEntityCfg] = MISSING
