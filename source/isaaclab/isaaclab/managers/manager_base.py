@@ -374,6 +374,46 @@ class ManagerBase(ABC):
         if self._env.sim.is_playing():
             self._process_term_cfg_at_play(term_name, term_cfg)
 
+    # def _process_term_cfg_at_play(self, term_name: str, term_cfg: ManagerTermBaseCfg):
+    #     """Process the term configuration at runtime.
+
+    #     This function is called when the simulation starts playing. It is used to process the term
+    #     configuration at runtime. This includes:
+
+    #     * Resolving the scene entity configuration for the term.
+    #     * Initializing the term if it is a class.
+
+    #     Since the above steps rely on PhysX to parse over the simulation scene, they are deferred
+    #     until the simulation starts playing.
+
+    #     Args:
+    #         term_name: The name of the term.
+    #         term_cfg: The term configuration.
+    #     """
+    #     for key, value in term_cfg.params.items():
+    #         if isinstance(value, SceneEntityCfg):
+    #             # load the entity
+    #             try:
+    #                 value.resolve(self._env.scene)
+    #             except ValueError as e:
+    #                 raise ValueError(f"Error while parsing '{term_name}:{key}'. {e}")
+    #             # log the entity for checking later
+    #             msg = f"[{term_cfg.__class__.__name__}:{term_name}] Found entity '{value.name}'."
+    #             if value.joint_ids is not None:
+    #                 msg += f"\n\tJoint names: {value.joint_names} [{value.joint_ids}]"
+    #             if value.body_ids is not None:
+    #                 msg += f"\n\tBody names: {value.body_names} [{value.body_ids}]"
+    #             # print the information
+    #             omni.log.info(msg)
+    #         # store the entity
+    #         term_cfg.params[key] = value
+
+    #     # initialize the term if it is a class
+    #     if inspect.isclass(term_cfg.func):
+    #         omni.log.info(f"Initializing term '{term_name}' with class '{term_cfg.func.__name__}'.")
+    #         term_cfg.func = term_cfg.func(cfg=term_cfg, env=self._env)
+
+
     def _process_term_cfg_at_play(self, term_name: str, term_cfg: ManagerTermBaseCfg):
         """Process the term configuration at runtime.
 
@@ -390,25 +430,63 @@ class ManagerBase(ABC):
             term_name: The name of the term.
             term_cfg: The term configuration.
         """
-        for key, value in term_cfg.params.items():
+
+        def _recursive_resolve(value, path=""):
+            """Recursively resolve SceneEntityCfg instances inside value."""
+            resolved_cfgs = []
+
             if isinstance(value, SceneEntityCfg):
-                # load the entity
                 try:
                     value.resolve(self._env.scene)
                 except ValueError as e:
-                    raise ValueError(f"Error while parsing '{term_name}:{key}'. {e}")
-                # log the entity for checking later
-                msg = f"[{term_cfg.__class__.__name__}:{term_name}] Found entity '{value.name}'."
-                if value.joint_ids is not None:
-                    msg += f"\n\tJoint names: {value.joint_names} [{value.joint_ids}]"
-                if value.body_ids is not None:
-                    msg += f"\n\tBody names: {value.body_names} [{value.body_ids}]"
-                # print the information
-                omni.log.info(msg)
-            # store the entity
-            term_cfg.params[key] = value
+                    raise ValueError(f"Error while parsing '{term_name}:{path or key}'. {e}")
+                resolved_cfgs.append((path or key, value))
+                return value, resolved_cfgs
 
-        # initialize the term if it is a class
+            if isinstance(value, dict):
+                for k, v in value.items():
+                    new_path = f"{path}.{k}" if path else k
+                    resolved_v, child_cfgs = _recursive_resolve(v, new_path)
+                    value[k] = resolved_v
+                    resolved_cfgs.extend(child_cfgs)
+                return value, resolved_cfgs
+
+            if isinstance(value, (list, tuple)):
+                new_list = []
+                for idx, item in enumerate(value):
+                    new_path = f"{path}[{idx}]"
+                    resolved_item, child_cfgs = _recursive_resolve(item, new_path)
+                    new_list.append(resolved_item)
+                    resolved_cfgs.extend(child_cfgs)
+                return type(value)(new_list), resolved_cfgs
+
+            # For generic objects (excluding types), only inspect immediate attributes for SceneEntityCfg
+            if hasattr(value, "__dict__") and not isinstance(value, type):
+                for attr, attr_v in vars(value).items():
+                    attr_path = f"{path}.{attr}" if path else attr
+                    if isinstance(attr_v, SceneEntityCfg):
+                        try:
+                            attr_v.resolve(self._env.scene)
+                        except ValueError as e:
+                            raise ValueError(f"Error while parsing '{term_name}:{attr_path}'. {e}")
+                        resolved_cfgs.append((attr_path, attr_v))
+                        setattr(value, attr, attr_v)
+                return value, resolved_cfgs
+
+            return value, resolved_cfgs
+
+        for key, value in list(term_cfg.params.items()):
+            resolved_value, found_cfgs = _recursive_resolve(value, key)
+            term_cfg.params[key] = resolved_value
+
+            for cfg_path, cfg in found_cfgs:
+                msg = f"[{term_cfg.__class__.__name__}:{term_name}] Found entity '{cfg.name}' at '{cfg_path}'."
+                if cfg.joint_ids is not None:
+                    msg += f"\n\tJoint names: {cfg.joint_names} [{cfg.joint_ids}]"
+                if cfg.body_ids is not None:
+                    msg += f"\n\tBody names: {cfg.body_names} [{cfg.body_ids}]"
+                omni.log.info(msg)
+
         if inspect.isclass(term_cfg.func):
             omni.log.info(f"Initializing term '{term_name}' with class '{term_cfg.func.__name__}'.")
             term_cfg.func = term_cfg.func(cfg=term_cfg, env=self._env)
