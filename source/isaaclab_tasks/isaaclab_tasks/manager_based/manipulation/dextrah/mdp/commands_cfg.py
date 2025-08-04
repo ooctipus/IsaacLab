@@ -8,7 +8,6 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-import math
 from dataclasses import MISSING
 
 from isaaclab.managers import CommandTermCfg
@@ -16,7 +15,7 @@ from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.utils import configclass
 
-from .commands import ObjectUniformPoseCommand, ObjectUniformTableTopRestPoseCommand
+from .commands import ObjectUniformPoseCommand, ObjectUniformTableTopRestPoseCommand, ObjectUniformTableTopCollisionFreePoseCommand
 
 
 @configclass
@@ -85,3 +84,10 @@ class ObjectUniformTableTopRestPoseCommandCfg(ObjectUniformPoseCommandCfg):
     table_name: str = "table"
     
     num_samples: int = 25
+
+
+@configclass
+class ObjectUniformTableTopCollisionFreePoseCommandCfg(ObjectUniformTableTopRestPoseCommandCfg):
+    """Configuration for uniform pose command generator."""
+
+    class_type: type = ObjectUniformTableTopCollisionFreePoseCommand
