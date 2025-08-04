@@ -240,7 +240,7 @@ def get_reset_state(env, env_id: torch.Tensor, keys: list[str], is_relative=Fals
 
 
 @wp.kernel
-def get_sign_distance(
+def get_signed_distance(
     queries: wp.array(dtype=wp.vec3),   # [n_obstacles * E_bad * n_points, 3]
     mesh_handles: wp.array(dtype=wp.uint64), # [n_obstacles * E_bad * max_prims]
     prim_counts: wp.array(dtype=wp.int32),  # [n_obstacles * E_bad]
@@ -248,7 +248,7 @@ def get_sign_distance(
     coll_rel_quat: wp.array(dtype=wp.quat),  # [n_obstacles * E_bad * max_prims, 4]
     coll_rel_scale: wp.array(dtype=wp.vec3),  # [n_obstacles * E_bad * max_prims, 3]
     max_dist: float,
-    num_obstacles: int,
+    check_dist: bool,
     num_envs: int,
     num_points: int,
     max_prims: int,
@@ -261,7 +261,7 @@ def get_sign_distance(
     env_id = rem // num_points  # this env_id is index of arange(0, len(env_id)), its sequence, not selective indexing
     q = queries[tid]
     # accumulator for the lowest‐sign (start large)
-    best_sign = float(1)
+    best_signed_dist = max_dist
     obstacle_env_base = obstacle_idx * num_envs * max_prims + env_id * max_prims
     prim_id = obstacle_idx * num_envs + env_id
 
@@ -274,6 +274,16 @@ def get_sign_distance(
             crs = coll_rel_scale[index]
             q3 = wp.vec3(q2.x / crs.x, q2.y / crs.y, q2.z / crs.z)
             mp = wp.mesh_query_point(mid, q3, max_dist)
-            if mp.result and mp.sign < best_sign:
-                best_sign = mp.sign
-    signs[tid] = best_sign
+            if mp.result:
+                if check_dist:
+                    closest = wp.mesh_eval_position(mid, mp.face, mp.u, mp.v)
+                    local_dist = (q3 - closest)
+                    unscaled_local_dist = wp.vec3(local_dist.x * crs.x, local_dist.y * crs.y, local_dist.z * crs.z)
+                    delta_root = wp.quat_rotate(coll_rel_quat[index], unscaled_local_dist)
+                    dist = wp.length(delta_root)
+                    signed_dist = dist * mp.sign
+                else:
+                    signed_dist = mp.sign
+                if signed_dist < best_signed_dist:
+                    best_signed_dist = signed_dist
+    signs[tid] = best_signed_dist

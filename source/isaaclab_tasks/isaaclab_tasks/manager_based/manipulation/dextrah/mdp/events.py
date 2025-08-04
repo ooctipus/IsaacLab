@@ -46,7 +46,6 @@ class reset_accumulator(ManagerTermBase):
             reset_term.func = reset_term.func(reset_term, env)
         while (self.valid_state_tensor_size < self.max_size).any():
             env_ids = torch.arange(env.num_envs, device=env.device)[self.valid_state_tensor_size < self.max_size]
-            env_ids = torch.arange(env.num_envs, device=env.device)
             self.__call__(env, env_ids, **self.cfg.params)
             
         self.precollecting_phase = False
