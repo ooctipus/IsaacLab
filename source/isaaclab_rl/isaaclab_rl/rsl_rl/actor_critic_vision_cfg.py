@@ -12,11 +12,9 @@ class ActorCriticVisionEncoderCfg:
 
     encoder_cfg: CNNEncoderCfg | PretrainedEncoderCfg | PointNetEncoderCfg = MISSING
 
-    encoder_type: str = "cnn"
-
-    encoder_config: Optional[Dict] = dict(model_name="resnet18")
-
-    freeze_encoder: bool = False
+    feature_dim: int | None = 128
+    
+    activation: str | None  = None
     
     normalize: bool = False
     
@@ -30,10 +28,16 @@ class PointNetEncoderCfg:
     """Config for per-point MLP → max-pool PointNet encoder."""
 
     class_type: type[encoders.PointNetEncoder] = encoders.PointNetEncoder
-    # sizes of each hidden MLP layer (1×1 conv dims)
+
     channels: list[int] = [64, 128, 256]
-    # whether to use the last layer’s output as a global feature
+    
+    kernel_sizes: list[int] = [1, 1, 1]
+    
+    strides: list[int] = [2, 2, 2]
+
     use_global_feat: bool = True
+    
+    feature_dim: int | None = None
 
 
 @configclass
