@@ -1,22 +1,15 @@
+from __future__ import annotations
 import torch
 import numpy as np
 import torch.nn as nn
 from gymnasium import spaces
-import torch.nn.functional as F
-from torchvision import models, transforms
-from typing import Tuple, Dict, List, Optional, Union, Any
-from enum import Enum
+from typing import Tuple, Dict, List, Optional, Any, TYPE_CHECKING
 
 # Import the activation resolver
 from rsl_rl.utils import resolve_nn_activation
 
-
-class EncoderType(str, Enum):
-    """Enum for supported encoder types."""
-    CNN = "cnn"
-    R3M = "r3m"
-    DINOv2 = "dinov2"
-
+if TYPE_CHECKING:
+    from ...actor_critic_vision_cfg import CNNEncoderCfg, PretrainedEncoderCfg, PointNetEncoderCfg, ActorCriticVisionAdapterCfg
 
 class VisionEncoder(nn.Module):
     """Base class for all vision encoders."""
@@ -37,37 +30,68 @@ class VisionEncoder(nn.Module):
         self.normalize_style = normalize_style
         self._processors: List[Callable] = []
         self._processor_descriptions: List[str] = []
-        
-        if obs_space.shape[1] in [3, 1, 4]:
-            self.num_channel = obs_space.shape[1]
-        elif obs_space.shape[-1] in [3, 1, 4]:
-            self._processors.append(lambda x : x.permute(0, 3, 1, 2))
-            self._processor_descriptions.append("permute HWC->CHW")
-            self.num_channel = obs_space.shape[-1]
-        else:
-            raise ValueError("did not detect correct channel")
 
         if obs_space.dtype != np.float32:
             self._processors.append(lambda x : x.float())
             self._processor_descriptions.append("cast to float32")
-        if normalize:  # rgb indicator
-            if obs_space.shape[1] == 3 or obs_space.shape[-1] == 3:
-                processors, descriptions = self._compile_rgb_processors(obs_space)
-                self._processors.extend(processors)
-                self._processor_descriptions.extend(descriptions)
-            elif obs_space.shape[1] == 1 or obs_space.shape[-1] == 1:
-                processors, descriptions = self._compile_depth_processors(obs_space)
-                self._processors.extend(processors)
-                self._processor_descriptions.extend(descriptions)
-            elif obs_space.shape[1] == 4 or obs_space.shape[-1] == 4:
-                processors, descriptions = self._compile_rgbd_processors(obs_space)
-                self._processors.extend(processors)
-                self._processor_descriptions.extend(descriptions)
+        
+        if len(obs_space.shape) == 4:
+            # determine whether permutation processor and dtype caster processor is needed
+            # is normalize is false, permutation and dtype casting should be only processing needed
+            if obs_space.shape[1] in [3, 1, 4]:
+                self.num_channel = obs_space.shape[1]
+            elif obs_space.shape[-1] in [3, 1, 4]:
+                self._processors.append(lambda x : x.permute(0, 3, 1, 2))
+                self._processor_descriptions.append("permute HWC->CHW")
+                self.num_channel = obs_space.shape[-1]
+            else:
+                raise ValueError("did not detect correct channel")
+            
+            # if normalize is True we need more processors.
+            if self.cfg.normalize:
+                if obs_space.shape[1] == 3 or obs_space.shape[-1] == 3:  # rgb indicator
+                    processors, descriptions = self._compile_rgb_processors(obs_space)
+                    self._processors.extend(processors)
+                    self._processor_descriptions.extend(descriptions)
+                elif obs_space.shape[1] == 1 or obs_space.shape[-1] == 1:  # depth indicator
+                    processors, descriptions = self._compile_depth_processors(obs_space)
+                    self._processors.extend(processors)
+                    self._processor_descriptions.extend(descriptions)
+                elif obs_space.shape[1] == 4 or obs_space.shape[-1] == 4:  # rgbd indicator
+                    processors, descriptions = self._compile_rgbd_processors(obs_space)
+                    self._processors.extend(processors)
+                    self._processor_descriptions.extend(descriptions)
+        elif len(obs_space.shape) == 3:
+            # expect (B, N_points, C)
+            self.num_channel = obs_space.shape[-1]
+            if self.cfg.normalize:
+                procs, desc = self._compile_point_cloud_processors(obs_space)
+                self._processors.extend(procs)
+                self._processor_descriptions.extend(desc)
+        else:
+            raise ValueError(f"Does not recognize this perception with dim {len(obs_space.shape)}")
+
     def freeze(self):
         """Freeze all parameters in the model."""
         for param in self.parameters():
             param.requires_grad = False
         self.eval()
+    
+    def _compile_point_cloud_processors(self, obs_space: Any) -> Tuple[List[callable], List[str]]:
+        """Build processors for point-cloud inputs (center + unit-sphere scale)."""
+        procs: List[callable] = []
+        desc: List[str] = []
+        # center each cloud at its centroid
+        procs.append(lambda x: x - x.mean(dim=1, keepdim=True))
+        desc.append("center to centroid")
+        # scale to fit in unit sphere
+        def scale_unit(x):
+            d = torch.norm(x, dim=-1)            # (B, N)
+            m = d.max(dim=1, keepdim=True)[0]    # (B, 1)
+            return x / (m.unsqueeze(-1) + 1e-6)
+        procs.append(scale_unit)
+        desc.append("scale to unit sphere")
+        return procs, desc
     
     def _compile_rgb_processors(self, obs_space: Any) -> List[Any]:
         """Build processors for 3-channel inputs."""
@@ -235,7 +259,46 @@ class CNNEncoder(VisionEncoder):
         return self.projector(feats)  # → (B, feature_dim)
 
 
-class R3MEncoder(VisionEncoder):
+class PointNetEncoder(VisionAdapter):
+    """Point-cloud encoder: per-point MLP → global-pool → projector."""
+    def __init__(self, obs_space: spaces.Box, adapter_cfg: ActorCriticVisionAdapterCfg):
+        super().__init__(obs_space, adapter_cfg)
+        self._build_encoder(obs_space)
+        self.initialize()
+
+    def _build_encoder(self, obs_space: spaces.Box):
+        pc_cfg: PointNetEncoderCfg = self.cfg.encoder_cfg
+        in_c = self.num_channel
+        convs: List[nn.Module] = []
+        for out_c in pc_cfg.channels:
+            convs.append(nn.Conv1d(in_c, out_c, kernel_size=1))
+            convs.append(resolve_nn_activation(self.cfg.activation))
+            in_c = out_c
+        self.point_mlp = nn.Sequential(*convs)
+
+        # pooling
+        if pc_cfg.use_global_feat:
+            self.pool = nn.AdaptiveMaxPool1d(1)
+            feat_dim = pc_cfg.channels[-1]
+        else:
+            self.pool = None
+            feat_dim = pc_cfg.channels[-1]
+
+        # projector to feature_dim
+        self.projector = self.build_projector(feat_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.preprocess(x)            # (B,N,C)
+        x = x.transpose(1,2)              # (B,C,N)
+        x = self.point_mlp(x)             # (B,hidden,N)
+        if self.pool:
+            x = self.pool(x).squeeze(-1)  # (B, hidden)
+        else:
+            B,C,N = x.shape
+            x = x.view(B, C*N)
+        return self.projector(x)          # (B, feature_dim)
+
+class R3MEncoder(VisionAdapter):
     """R3M pretrained encoder using ResNet backbone."""
 
     def __init__(
@@ -408,65 +471,3 @@ class DINOv2Encoder(VisionEncoder):
             features = self.encoder(x)
 
         return self.projector(features)
-
-
-def get_vision_encoder(
-    encoder_type: Union[str, EncoderType],
-    observation_space: any,
-    feature_dim: Optional[int] = 128,
-    activation: str = "relu",
-    freeze: bool = True,
-    encoder_config: Optional[Dict[str, Any]] = None,
-    normalize = True
-) -> VisionEncoder:
-    """
-    Factory function to create a vision encoder based on type.
-    Args:
-        encoder_type: Type of encoder to create
-        input_shape: Shape of input images (C, H, W)
-        feature_dim: Dimension of output feature vector
-        activation: Activation function to use
-        freeze: Whether to freeze the encoder parameters
-        encoder_config: Additional arguments specific to certain encoders
-    Returns:
-        VisionEncoder: An instance of the requested encoder type
-    """
-    # Convert string to enum if needed
-    if isinstance(encoder_type, str):
-        try:
-            encoder_type = EncoderType(encoder_type.lower())
-        except ValueError:
-            valid_types = [e.value for e in EncoderType]
-            raise ValueError(
-                f"Unsupported encoder type: {encoder_type}. "
-                f"Available types: {valid_types}"
-            )
-
-    # Create appropriate encoder
-    if encoder_type == EncoderType.CNN:
-        return CNNEncoder(
-            obs_space=observation_space,
-            feature_dim=feature_dim,
-            activation=activation,
-            freeze=freeze,
-            config=encoder_config,
-            normalize=normalize
-        )
-    elif encoder_type == EncoderType.R3M:
-        return R3MEncoder(
-            input_shape=observation_space,
-            feature_dim=feature_dim,
-            activation=activation,
-            freeze=freeze,
-            config=encoder_config
-        )
-    elif encoder_type == EncoderType.DINOv2:
-        return DINOv2Encoder(
-            input_shape=observation_space,
-            feature_dim=feature_dim,
-            activation=activation,
-            freeze=freeze,
-            config=encoder_config
-        )
-    else:
-        raise ValueError(f"Encoder type {encoder_type} is not implemented")
