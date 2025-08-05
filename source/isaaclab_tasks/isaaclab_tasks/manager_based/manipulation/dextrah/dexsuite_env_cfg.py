@@ -116,15 +116,19 @@ class ObservationsCfg:
     @configclass
     class PrivilegedObsCfg(ObsGroup):
         object_observation_b = ObsTerm(
-            func=mdp.object_point_cloud_b, noise=Unoise(n_min=-0., n_max=0.), params={"num_points": 64}
+            func=mdp.object_point_cloud_b, noise=Unoise(n_min=-0., n_max=0.), params={"num_points": 64, "flatten": False}
         )
         table_observation_b = ObsTerm(
-            func=mdp.object_point_cloud_b, noise=Unoise(n_min=-0., n_max=0.), params={"num_points": 256, "object_cfg": SceneEntityCfg("table")}
+            func=mdp.object_point_cloud_b, noise=Unoise(n_min=-0., n_max=0.), params={
+                "num_points": 256, "object_cfg": SceneEntityCfg("table"), "static": True, "flatten": False
+            }
         )
 
         def __post_init__(self):
             self.enable_corruption = False
+            self.concatenate_dim = 0
             self.concatenate_terms = True
+            self.flatten_history_dim = True
             self.history_length = 5
 
     # observation groups
