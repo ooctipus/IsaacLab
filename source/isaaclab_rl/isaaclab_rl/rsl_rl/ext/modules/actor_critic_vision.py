@@ -9,7 +9,7 @@ import textwrap
 import torch.nn as nn
 
 import logging
-from typing import List
+from typing import List, TYPE_CHECKING
 from tensordict import TensorDict
 from types import MethodType
 
@@ -33,11 +33,7 @@ class ActorCriticVisionExtensionPatcher:
     def __init__(self, actor_critic_cfg, obs_space):
         self.encoder_applicable = False
         if hasattr(actor_critic_cfg, "encoder") and getattr(actor_critic_cfg, "encoder") is not None:
-            self.image_feature_dim = actor_critic_cfg.encoder.image_feature_dim
-            self.encoder_type = actor_critic_cfg.encoder.encoder_type
-            self.encoder_config = actor_critic_cfg.encoder.encoder_config
-            self.freeze_encoder = actor_critic_cfg.encoder.freeze_encoder
-            self.normalize = actor_critic_cfg.encoder.normalize
+            self.adapter_cfg: ActorCriticVisionAdapterCfg = actor_critic_cfg.encoder
             self.observation_space = obs_space
             self.encoder_applicable = True
 
@@ -55,9 +51,7 @@ class ActorCriticVisionExtensionPatcher:
             actor_obs = self._vision_forward(obs_arg.to('cpu'))
             new_args = (actor_obs, *rest)
             self._orig_init(actor_critic_self, *new_args, **kwargs)
-            actor_critic_self.image_encoders = self.image_encoders
-            actor_critic_self.add_module("image_encoders", self.image_encoders)
-            actor_critic_self.feature_projectors = self.feature_projectors
+            actor_critic_self.add_module("perception_encoder", self.perception_encoder)
             actor_critic_self.add_module("feature_projectors", self.feature_projectors)
             actor_critic_self._vision_forward = MethodType(self._vision_forward, actor_critic_self)
 
@@ -76,8 +70,8 @@ class ActorCriticVisionExtensionPatcher:
 
     def remove_patch(self) -> None:
         """Restore original methods on policy."""
-        ActorCritic.get_actor_obs = policy._orig_get_actor_obs
-        ActorCritic.get_critic_obs = policy._orig_get_critic_obs
+        ActorCritic.get_actor_obs = self._orig_get_actor_obs
+        ActorCritic.get_critic_obs = self._orig_get_critic_obs
 
         logging.warning("Removed vision patch from ActorCritic.")
 
@@ -85,11 +79,10 @@ class ActorCriticVisionExtensionPatcher:
         """
         Convert high-dim inputs to feature vectors in a new TensorDict.
         """
-        device = obs.device
         proc = TensorDict({}, batch_size=obs.batch_size, device=obs.device)
         for key, val in obs.items():
-            if key in self.image_encoders:
-                proc[key] = self.image_encoders[key](val)
+            if key in self.perception_encoder:
+                proc[key] = self.perception_encoder[key](val)
             elif key in self.feature_projectors:
                 proc[key] = self.feature_projectors[key](val)
             else:
@@ -108,7 +101,8 @@ class ActorCriticVisionExtensionPatcher:
                 self.feature_keys.append(key)
 
         # build encoders
-        self.image_encoders = nn.ModuleDict()
+        self.adapter_cfg.activation = self.adapter_cfg.activation if self.adapter_cfg.activation else activation
+        self.perception_encoder = nn.ModuleDict()
         for key in self.image_keys:
             adapter_cfg_class = self.adapter_cfg.encoder_cfg.class_type
             self.perception_encoder[key] = adapter_cfg_class(self.observation_space[key], self.adapter_cfg)
@@ -117,16 +111,16 @@ class ActorCriticVisionExtensionPatcher:
         for key in self.feature_keys:
             dim = obs[key].shape[-1]
             self.feature_projectors[key] = nn.Sequential(
-                nn.Linear(dim, max(dim//2, self.image_feature_dim)),
+                nn.Linear(dim, max(dim // 2, self.adapter_cfg["image_feature_dim"])),
                 resolve_nn_activation(activation),
-                nn.Linear(max(dim//2, self.image_feature_dim), self.image_feature_dim),
+                nn.Linear(max(dim // 2, self.adapter_cfg["image_feature_dim"]), self.adapter_cfg["image_feature_dim"]),
                 resolve_nn_activation(activation),
             )
 
         print("Vision Encoder initialized with the following modules:")
-        if self.image_encoders:
+        if self.perception_encoder:
             print("  Image encoders:")
-            for name, encoder in self.image_encoders.items():
+            for name, encoder in self.perception_encoder.items():
                 print(f"\n  • Encoder '{name}':")
                 # Print the preprocessing pipeline
                 print("      Preprocessing steps:")
@@ -136,9 +130,7 @@ class ActorCriticVisionExtensionPatcher:
                 else:
                     print("        (no preprocessing steps)")
 
-                # Print a little header before the architecture
                 print("      Architecture:")
-                # indent the repr by 8 spaces so it nests nicely under “Architecture:”
                 print(textwrap.indent(repr(encoder), "        "))
 
         if self.feature_projectors:
