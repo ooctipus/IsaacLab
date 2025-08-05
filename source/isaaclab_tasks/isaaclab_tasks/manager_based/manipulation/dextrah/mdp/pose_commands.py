@@ -316,7 +316,7 @@ class ObjectUniformTableTopCollisionFreePoseCommand(ObjectUniformPoseCommand):
         super().__init__(cfg, env)
         self.table: RigidObject = env.scene[cfg.table_name]
         self.precollecting_phase = True
-        self.valid_samples, self.valid_sample_counts = self._collect_candidate_command_b()
+        self.valid_samples, self.valid_sample_counts = self._collect_candidate_command_b(self.cfg.num_samples)
         self.precollecting_phase = False
 
     def __str__(self) -> str:
@@ -378,32 +378,30 @@ class ObjectUniformTableTopCollisionFreePoseCommand(ObjectUniformPoseCommand):
         self.metrics["orientation_error"] = torch.norm(rot_error, dim=-1)
 
 
-    def _collect_candidate_command_b(self):
-        collision_analyzer_cfg = CollisionAnalyzerCfg(
-            num_points=32,
-            max_dist=0.5,
-            min_dist=0.25,
-            asset_cfg=SceneEntityCfg(self.cfg.object_name),
-            obstacle_cfgs=[SceneEntityCfg(self.cfg.table_name)]
-        )
-        collision_analyzer = collision_analyzer_cfg.class_type(collision_analyzer_cfg, self._env)
-        valid_tensor = torch.zeros((self._env.num_envs, self.cfg.num_samples, 7), device=self.device)
+    def _collect_candidate_command_b(self, num_samples, validator = None):
+        if not validator:
+            collision_analyzer_cfg = CollisionAnalyzerCfg(
+                num_points=32,
+                max_dist=0.5,
+                min_dist=0.25,
+                asset_cfg=SceneEntityCfg(self.cfg.object_name),
+                obstacle_cfgs=[SceneEntityCfg(self.cfg.table_name)]
+            )
+            validator = collision_analyzer_cfg.class_type(collision_analyzer_cfg, self._env)
+        valid_tensor = torch.zeros((self._env.num_envs, num_samples, 7), device=self.device)
         env_arange = torch.arange(self._env.num_envs, dtype=torch.int , device=self.device)
-        for i in range(self.cfg.num_samples):
+        for i in range(num_samples):
             self._resample_command(env_arange)
             valid_tensor[:, i] = self.pose_command_b
 
         valid_sample_counts = torch.zeros((self._env.num_envs,), device=self.device, dtype=torch.int)
         valid_ptr = torch.zeros((self._env.num_envs,), device=self.device, dtype=torch.int)
-        total_needed = int(self._env.num_envs * self.cfg.num_samples)
+        total_needed = int(self._env.num_envs * num_samples)
         pbar = tqdm(total=total_needed, desc="collect candidate commands", unit="sample")
         prev_have = 0
-        # this commented loop option may take long long time
-        while torch.any(valid_sample_counts < self.cfg.num_samples):
-        # for i in range(2 * self.cfg.num_samples):
-            if torch.all(valid_sample_counts >= self.cfg.num_samples):
-                break
-            left_env_ids = torch.arange(self._env.num_envs, device=self.device)[valid_sample_counts < self.cfg.num_samples]
+
+        while torch.any(valid_sample_counts < num_samples):
+            left_env_ids = torch.arange(self._env.num_envs, device=self.device)[valid_sample_counts < num_samples]
             self._resample_command(left_env_ids)
             pos_command_w, quat_command_w = combine_frame_transforms(
                 self.table.data.root_pos_w[left_env_ids],
@@ -413,13 +411,13 @@ class ObjectUniformTableTopCollisionFreePoseCommand(ObjectUniformPoseCommand):
             )
             self.object.write_root_pose_to_sim(torch.cat((pos_command_w, quat_command_w), dim=1), env_ids=left_env_ids)
 
-            collision_free_mask = collision_analyzer(self._env, left_env_ids)
+            collision_free_mask = validator(self._env, left_env_ids)
             valid_env_ids = left_env_ids[collision_free_mask]
             idx = valid_ptr[valid_env_ids]
             pos_candidate_b, quat_candidate_b = self.pose_command_b[valid_env_ids, :3], self.pose_command_b[valid_env_ids, 3:]
             valid_tensor[valid_env_ids, idx] = torch.cat((pos_candidate_b, quat_candidate_b), dim=1)
-            valid_ptr[valid_env_ids] = (idx + 1) % self.cfg.num_samples
-            valid_sample_counts[valid_env_ids] = torch.clamp(valid_sample_counts[valid_env_ids] + 1, max=self.cfg.num_samples)
+            valid_ptr[valid_env_ids] = (idx + 1) % num_samples
+            valid_sample_counts[valid_env_ids] = torch.clamp(valid_sample_counts[valid_env_ids] + 1, max=num_samples)
 
             # update progress bar
             current_have = int(valid_sample_counts.sum().item())
@@ -438,30 +436,33 @@ class ObjectUniformTableTopRestPoseCommand(ObjectUniformTableTopCollisionFreePos
     cfg: dex_cmd_cfgs.ObjectUniformTableTopRestPoseCommandCfg
     """Configuration for the command generator."""
 
-    def _collect_candidate_command_b(self):
-        collision_analyzer_cfg = CollisionAnalyzerCfg(
-            num_points=32,
-            max_dist=0.5,
-            min_dist=0.1,
-            asset_cfg=SceneEntityCfg(self.cfg.object_name),
-            obstacle_cfgs=[SceneEntityCfg(self.cfg.table_name)]
-        )
-        collision_analyzer = collision_analyzer_cfg.class_type(collision_analyzer_cfg, self._env)
-        valid_tensor = torch.zeros((self._env.num_envs, self.cfg.num_samples, 7), device=self.device)
+    def _collect_candidate_command_b(self, num_samples, validator=None):
+        if not validator:
+            collision_analyzer_cfg = CollisionAnalyzerCfg(
+                num_points=32,
+                max_dist=0.5,
+                min_dist=0.1,
+                asset_cfg=SceneEntityCfg(self.cfg.object_name),
+                obstacle_cfgs=[SceneEntityCfg(self.cfg.table_name)]
+            )
+            validator = collision_analyzer_cfg.class_type(collision_analyzer_cfg, self._env)
+
+        valid_tensor = torch.zeros((self._env.num_envs, num_samples, 7), device=self.device)
         valid_sample_counts = torch.zeros((self._env.num_envs,), device=self.device, dtype=torch.int)
         valid_ptr = torch.zeros((self._env.num_envs,), device=self.device, dtype=torch.int)
+        
         self._env.scene.reset()
         pos = self._env.scene["plane"].get_world_poses()[0]
         self._env.scene["plane"].set_world_poses(torch.tensor([[0.0, 0.0, -10.0]]))
         
-        total_needed = int(self._env.num_envs * self.cfg.num_samples)
+        total_needed = int(self._env.num_envs * num_samples)
         pbar = tqdm(total=total_needed, desc="collect candidate commands", unit="sample")
         prev_have = 0
         # this commented loop option may take long long time
-        # while torch.any(valid_sample_counts < self.cfg.num_samples):
+        # while torch.any(valid_sample_counts < num_samples):
         count = 0
-        while (count <= 2 * self.cfg.num_samples) or torch.any(valid_sample_counts < 2):
-            left_env_ids = torch.arange(self._env.num_envs, device=self.device)[valid_sample_counts < self.cfg.num_samples]
+        while (count <= 2 * num_samples):
+            left_env_ids = torch.arange(self._env.num_envs, device=self.device)[valid_sample_counts < num_samples]
             self._resample_command(left_env_ids)
             pos_command_w, quat_command_w = combine_frame_transforms(
                 self.table.data.root_pos_w[left_env_ids],
@@ -470,7 +471,7 @@ class ObjectUniformTableTopRestPoseCommand(ObjectUniformTableTopCollisionFreePos
                 self.pose_command_b[left_env_ids, 3:],
             )
             self.object.write_root_pose_to_sim(torch.cat((pos_command_w, quat_command_w), dim=1), env_ids=left_env_ids)
-            collision_free = collision_analyzer(self._env, left_env_ids)
+            collision_free = validator(self._env, left_env_ids)
             half_sec_steps = int(1 / self._env.sim.get_physics_dt())
             for i in range(half_sec_steps):
                 self._env.sim.step(render=False)
@@ -487,8 +488,8 @@ class ObjectUniformTableTopRestPoseCommand(ObjectUniformTableTopCollisionFreePos
                 self.object.data.root_quat_w[valid_env_ids]
             )
             valid_tensor[valid_env_ids, idx] = torch.cat((pos_candidate_b, quat_candidate_b), dim=1)
-            valid_ptr[valid_env_ids] = (idx + 1) % self.cfg.num_samples
-            valid_sample_counts[valid_env_ids] = torch.clamp(valid_sample_counts[valid_env_ids] + 1, max=self.cfg.num_samples)
+            valid_ptr[valid_env_ids] = (idx + 1) % num_samples
+            valid_sample_counts[valid_env_ids] = torch.clamp(valid_sample_counts[valid_env_ids] + 1, max=num_samples)
             count += 1
             # update progress bar
             current_have = int(valid_sample_counts.sum().item())
@@ -500,4 +501,11 @@ class ObjectUniformTableTopRestPoseCommand(ObjectUniformTableTopCollisionFreePos
         print("Min Sample Collected: ", torch.amin(valid_sample_counts).item(), "Max Sample Collected: ", torch.amax(valid_sample_counts).item())
         self._env.scene["plane"].set_world_poses(pos)
         self._env.scene.reset()
+        if torch.any(valid_sample_counts ==0):
+            mask = valid_sample_counts == 0
+            ptr = valid_ptr[mask]
+            back_up_samples, _ = super()._collect_candidate_command_b(1, validator)
+            valid_tensor[mask, ptr] = back_up_samples[mask, 0]
+            valid_sample_counts[mask] = 1
+        
         return valid_tensor, valid_sample_counts
