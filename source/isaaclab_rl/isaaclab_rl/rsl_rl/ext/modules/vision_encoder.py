@@ -270,8 +270,8 @@ class PointNetEncoder(VisionAdapter):
         pc_cfg: PointNetEncoderCfg = self.cfg.encoder_cfg
         in_c = self.num_channel
         convs: List[nn.Module] = []
-        for out_c in pc_cfg.channels:
-            convs.append(nn.Conv1d(in_c, out_c, kernel_size=1))
+        for i, out_c in enumerate(pc_cfg.channels):
+            convs.append(nn.Conv1d(in_c, out_c, kernel_size=pc_cfg.kernel_sizes[i], stride=pc_cfg.strides[i]))
             convs.append(resolve_nn_activation(self.cfg.activation))
             in_c = out_c
         self.point_mlp = nn.Sequential(*convs)
@@ -279,13 +279,13 @@ class PointNetEncoder(VisionAdapter):
         # pooling
         if pc_cfg.use_global_feat:
             self.pool = nn.AdaptiveMaxPool1d(1)
-            feat_dim = pc_cfg.channels[-1]
         else:
             self.pool = None
+            
+        if pc_cfg.feature_dim is not None:
             feat_dim = pc_cfg.channels[-1]
-
-        # projector to feature_dim
-        self.projector = self.build_projector(feat_dim)
+            # projector to feature_dim
+            self.projector = self.build_projector(feat_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.preprocess(x)            # (B,N,C)
