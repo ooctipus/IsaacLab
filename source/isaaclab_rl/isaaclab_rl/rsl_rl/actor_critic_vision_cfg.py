@@ -4,11 +4,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 from __future__ import annotations
 
+from dataclasses import MISSING
 from isaaclab.utils import configclass
 from .ext.modules import vision_encoder as encoders 
 
 @configclass
-class ActorCriticVisionEncoderCfg:
+class ActorCriticVisionAdapterCfg:
 
     encoder_cfg: CNNEncoderCfg | PretrainedEncoderCfg | PointNetEncoderCfg = MISSING
 
