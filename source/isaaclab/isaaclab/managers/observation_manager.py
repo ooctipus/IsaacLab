@@ -416,7 +416,9 @@ class ObservationManager(ManagerBase):
                     circular_buffer.append(obs)
 
                 if term_cfg.flatten_history_dim:
-                    group_obs[term_name] = circular_buffer.buffer.reshape(self._env.num_envs, -1)
+                    history_shape = circular_buffer.buffer.shape[1] * circular_buffer.buffer.shape[2]
+                    new_shape = (self._env.num_envs, history_shape, *circular_buffer.buffer.shape[3:])
+                    group_obs[term_name] = circular_buffer.buffer.reshape(new_shape)
                 else:
                     group_obs[term_name] = circular_buffer.buffer
             else:
@@ -634,7 +636,7 @@ class ObservationManager(ManagerBase):
                     old_dims.insert(1, term_cfg.history_length)
                     obs_dims = tuple(old_dims)
                     if term_cfg.flatten_history_dim:
-                        obs_dims = (obs_dims[0], np.prod(obs_dims[1:]))
+                        obs_dims = (obs_dims[0], obs_dims[1] * obs_dims[2], *obs_dims[3:])
 
                 self._group_obs_term_dim[group_name].append(obs_dims[1:])
 
