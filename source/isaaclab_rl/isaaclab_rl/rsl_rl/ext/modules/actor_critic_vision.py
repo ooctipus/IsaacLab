@@ -15,23 +15,9 @@ from types import MethodType
 
 from rsl_rl.modules.actor_critic import ActorCritic
 from rsl_rl.utils import resolve_nn_activation
-from isaaclab_rl.rsl_rl.ext.modules.vision_encoder import get_vision_encoder
 
-
-def _placeholder_for(item: TensorDict | torch.Tensor, image_feature_dim: int) -> torch.Tensor:
-    if isinstance(item, torch.Tensor):
-        if item.ndim == 2:
-            return item
-        if item.ndim == 3:
-            batch = item.shape[0]
-            return item.new_zeros(batch, image_feature_dim)
-        raise ValueError(f"Unsupported tensor ndim={item.ndim}")
-    if isinstance(item, TensorDict):
-        parts: List[torch.Tensor] = []
-        for key in item.keys():
-            parts.append(_placeholder_for(item[key], image_feature_dim))
-        return torch.cat(parts, dim=-1)
-    raise TypeError(f"Expected Tensor or TensorDict, got {type(item)}")
+if TYPE_CHECKING:
+    from ...actor_critic_vision_cfg import ActorCriticVisionAdapterCfg
 
 
 class ActorCriticVisionExtensionPatcher:
@@ -114,7 +100,7 @@ class ActorCriticVisionExtensionPatcher:
         self.image_keys: List[str] = []
         self.feature_keys: List[str] = []
         for key, val in obs.items():
-            if isinstance(val, torch.Tensor) and val.ndim == 4:
+            if isinstance(val, torch.Tensor) and val.ndim in [3, 4] :
                 self.image_keys.append(key)
             elif isinstance(val, torch.Tensor) and val.ndim == 2 and any(
                 term in key.lower() for term in ["rgb","image","feature","encoding"]
@@ -124,15 +110,8 @@ class ActorCriticVisionExtensionPatcher:
         # build encoders
         self.image_encoders = nn.ModuleDict()
         for key in self.image_keys:
-            shape = obs[key].shape[1:]
-            self.image_encoders[key] = get_vision_encoder(
-                encoder_type=self.encoder_type,
-                observation_space=self.observation_space[key],
-                feature_dim=self.image_feature_dim,
-                activation=activation,
-                freeze=self.freeze_encoder,
-                encoder_config=self.encoder_config,
-            )
+            adapter_cfg_class = self.adapter_cfg.encoder_cfg.class_type
+            self.perception_encoder[key] = adapter_cfg_class(self.observation_space[key], self.adapter_cfg)
 
         self.feature_projectors = nn.ModuleDict()
         for key in self.feature_keys:
