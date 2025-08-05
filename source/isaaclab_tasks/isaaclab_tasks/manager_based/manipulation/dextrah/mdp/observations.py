@@ -3,11 +3,6 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers.
-# All rights reserved.
-#
-# SPDX-License-Identifier: BSD-3-Clause
-
 from __future__ import annotations
 
 import torch
@@ -83,6 +78,64 @@ def body_state_b(
     out = torch.cat((body_pos_b, body_quat_b, body_lin_vel_b, body_ang_vel_b), dim=1) 
     return out.view(env.num_envs, -1)
 
+class objects_point_cloud_b(ManagerTermBase):
+
+    def __init__(self, cfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+
+        object_cfgs: list[SceneEntityCfg] = cfg.params.get("object_cfgs", [SceneEntityCfg('object')])
+        self.num_points: list[int] = cfg.params.get("num_points", [10])
+        self.visualize = cfg.params.get("visualize", True)
+        self.ref_asset_cfg: SceneEntityCfg = cfg.params.get("ref_asset_cfg", SceneEntityCfg("robot"))
+        self.statics: list[bool] = cfg.params.get("statics", [False])
+        self.objects: list[RigidObject] = [env.scene[object_cfg.name] for object_cfg in object_cfgs]
+        self.ref_asset: Articulation = env.scene[self.ref_asset_cfg.name]
+
+        if self.visualize:
+            from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
+            from isaaclab.markers import VisualizationMarkers
+            ray_cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/ObservationPointCloud")
+            ray_cfg.markers["hit"].radius = 0.0015
+            self.visualizer = VisualizationMarkers(ray_cfg)
+
+        points = []
+        for object, n_point in zip(self.objects, self.num_points):
+            points.append(sample_object_point_cloud(env.num_envs, n_point, object.cfg.prim_path, device=env.device))
+        self.points_w = torch.cat(points, dim=1)
+    
+    def reset(self, env_ids = slice(None)):
+        idx = 0
+        for i, object in enumerate(self.objects):
+            if self.statics[i]:
+                object_pos_w = object.data.root_pos_w[env_ids].unsqueeze(1).repeat(1, self.num_points[i], 1)
+                object_quat_w = object.data.root_quat_w[env_ids].unsqueeze(1).repeat(1, self.num_points[i], 1)
+                self.points_w[env_ids, idx : idx + self.num_points[i]] = (quat_apply(object_quat_w, self.points_w[env_ids, idx : idx + self.num_points[i]]) + object_pos_w)
+            idx += self.num_points[i]
+            
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        ref_asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+        object_cfgs: list[SceneEntityCfg] = [SceneEntityCfg("object")],
+        num_points: list[int] = [10],
+        statics: list[bool] = [False],
+        visualize: bool = True
+    ):
+        idx = 0
+        ref_pos_w = self.ref_asset.data.root_pos_w.unsqueeze(1).repeat(1, self.points_w.shape[1], 1)
+        ref_quat_w = self.ref_asset.data.root_quat_w.unsqueeze(1).repeat(1, self.points_w.shape[1], 1)
+        for i, object in enumerate(self.objects):
+            if not statics[i]:
+                object_pos_w = object.data.root_pos_w.unsqueeze(1).repeat(1, num_points[i], 1)
+                object_quat_w = object.data.root_quat_w.unsqueeze(1).repeat(1, num_points[i], 1)
+                self.points_w[:, idx : idx + num_points[i]] = quat_apply(object_quat_w, self.points_w[:, idx : idx + num_points[i]]) + object_pos_w
+            idx += num_points[i]
+
+        if visualize:
+            self.visualizer.visualize(translations=self.points_w.view(-1, 3))
+        object_point_cloud_pos_b, _ = subtract_frame_transforms(ref_pos_w, ref_quat_w, self.points_w, None)
+        return object_point_cloud_pos_b
+
 
 class object_point_cloud_b(ManagerTermBase):
 
@@ -93,9 +146,9 @@ class object_point_cloud_b(ManagerTermBase):
         self.ref_asset_cfg: SceneEntityCfg = cfg.params.get("ref_asset_cfg", SceneEntityCfg("robot"))
         self.num_points: int = cfg.params.get("num_points", 10)
         self.visualize = cfg.params.get("visualize", True)
+        self.static: bool = cfg.params.get("static", False)
         self.object: RigidObject = env.scene[self.object_cfg.name]
         self.ref_asset: Articulation = env.scene[self.ref_asset_cfg.name]
-
         # uncomment to visualize
         if self.visualize:
             from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
@@ -103,27 +156,38 @@ class object_point_cloud_b(ManagerTermBase):
             ray_cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/ObservationPointCloud")
             ray_cfg.markers["hit"].radius = 0.0015
             self.visualizer = VisualizationMarkers(ray_cfg)
-        self.points = sample_object_point_cloud(env.num_envs, self.num_points, self.object.cfg.prim_path, device=env.device)
+        self.points_b = sample_object_point_cloud(env.num_envs, self.num_points, self.object.cfg.prim_path, device=env.device)
+        self.points_w = torch.zeros_like(self.points_b)
 
+    def reset(self, env_ids: slice | torch.Tensor = slice(None)):
+        if self.static:
+            object_pos_w = self.object.data.root_pos_w.unsqueeze(1).repeat(1, self.num_points, 1)
+            object_quat_w = self.object.data.root_quat_w.unsqueeze(1).repeat(1, self.num_points, 1)
+            # apply rotation + translation
+            self.points_w = quat_apply(object_quat_w, self.points_b) + object_pos_w
+    
     def __call__(
         self,
         env: ManagerBasedRLEnv,
         ref_asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
         object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
         num_points: int = 10,
+        static: bool = False,
+        flatten: bool = False,
         visualize: bool = True
     ):
         ref_pos_w = self.ref_asset.data.root_pos_w.unsqueeze(1).repeat(1, self.num_points, 1)
         ref_quat_w = self.ref_asset.data.root_quat_w.unsqueeze(1).repeat(1, self.num_points, 1)
-        object_pos_w = self.object.data.root_pos_w.unsqueeze(1).repeat(1, self.num_points, 1)
-        object_quat_w = self.object.data.root_quat_w.unsqueeze(1).repeat(1, self.num_points, 1)
-        # apply rotation + translation
-        object_point_cloud_pos_w = quat_apply(object_quat_w, self.points) + object_pos_w
+        if not static:
+            object_pos_w = self.object.data.root_pos_w.unsqueeze(1).repeat(1, self.num_points, 1)
+            object_quat_w = self.object.data.root_quat_w.unsqueeze(1).repeat(1, self.num_points, 1)
+            # apply rotation + translation
+            self.points_w = quat_apply(object_quat_w, self.points_b) + object_pos_w
         if visualize:
-            self.visualizer.visualize(translations=object_point_cloud_pos_w.view(-1, 3))
-        object_point_cloud_pos_b, _ = subtract_frame_transforms(ref_pos_w, ref_quat_w, object_point_cloud_pos_w, None)
+            self.visualizer.visualize(translations=self.points_w.view(-1, 3))
+        object_point_cloud_pos_b, _ = subtract_frame_transforms(ref_pos_w, ref_quat_w, self.points_w, None)
 
-        return object_point_cloud_pos_b.view(env.num_envs, -1)
+        return object_point_cloud_pos_b.view(env.num_envs, -1) if flatten else object_point_cloud_pos_b
 
 
 def fingers_contact_force_w(env: ManagerBasedRLEnv) -> torch.Tensor:
