@@ -7,7 +7,6 @@ from typing import Tuple, Dict, List, Optional, Any, TYPE_CHECKING
 
 # Import the activation resolver
 from rsl_rl.utils import resolve_nn_activation
-from ...actor_critic_vision_cfg import CNNEncoderCfg, PretrainedEncoderCfg, ActorCriticVisionAdapterCfg
 
 if TYPE_CHECKING:
     from ...actor_critic_vision_cfg import CNNEncoderCfg, PretrainedEncoderCfg, PointNetEncoderCfg, ActorCriticVisionAdapterCfg
@@ -217,7 +216,7 @@ class PointNetEncoder(VisionAdapter):
         in_c = self.num_channel
         convs: List[nn.Module] = []
         for i, out_c in enumerate(pc_cfg.channels):
-            convs.append(nn.Conv1d(in_c, out_c, kernel_size=pc_cfg.kernel_sizes[i], stride=pc_cfg.strides[i]))
+            convs.append(nn.Conv1d(in_c, out_c, kernel_size=1, stride=pc_cfg.strides[i]))
             convs.append(resolve_nn_activation(self.cfg.activation))
             in_c = out_c
         self.point_mlp = nn.Sequential(*convs)
