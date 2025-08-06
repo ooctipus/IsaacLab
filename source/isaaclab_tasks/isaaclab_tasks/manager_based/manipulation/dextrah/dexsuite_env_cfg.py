@@ -115,20 +115,32 @@ class ObservationsCfg:
 
     @configclass
     class PrivilegedObsCfg(ObsGroup):
-        object_observation_b = ObsTerm(
-            func=mdp.object_point_cloud_b, noise=Unoise(n_min=-0., n_max=0.), params={"num_points": 64, "flatten": False}
-        )
-        table_observation_b = ObsTerm(
-            func=mdp.object_point_cloud_b, noise=Unoise(n_min=-0., n_max=0.), params={
-                "num_points": 256, "object_cfg": SceneEntityCfg("table"), "static": True, "flatten": False
+        # object_observation_b = ObsTerm(
+        #     func=mdp.object_point_cloud_b, noise=Unoise(n_min=-0., n_max=0.), params={"num_points": 64, "flatten": False}
+        # )
+        # table_observation_b = ObsTerm(
+        #     func=mdp.object_point_cloud_b, noise=Unoise(n_min=-0., n_max=0.), params={
+        #         "num_points": 256, "object_cfg": SceneEntityCfg("table"), "static": True, "flatten": False
+        #     }
+        # )
+        # body_pos_b = ObsTerm(
+        #     func=mdp.body_pos_b, noise=Unoise(n_min=-0., n_max=0.), params={
+        #         "body_asset_cfg": SceneEntityCfg("robot"),
+        #         "base_asset_cfg": SceneEntityCfg("robot"),
+        #         "flatten": False,
+        #     })
+        
+        perception = ObsTerm(
+            func=mdp.objects_point_cloud_b,
+            params={
+                "num_points": [64, 256, 8],
+                "ref_asset_cfg": SceneEntityCfg("robot"),
+                "object_cfgs": [SceneEntityCfg("object"), SceneEntityCfg("table"), SceneEntityCfg("robot")],
+                "statics": [False, True, False],
+                "normalize": True,
+                "flatten": True,
             }
         )
-        body_pos_b = ObsTerm(
-            func=mdp.body_pos_b, noise=Unoise(n_min=-0., n_max=0.), params={
-                "body_asset_cfg": SceneEntityCfg("robot"),
-                "base_asset_cfg": SceneEntityCfg("robot"),
-                "flatten": False,
-            })
 
         def __post_init__(self):
             self.enable_corruption = False
