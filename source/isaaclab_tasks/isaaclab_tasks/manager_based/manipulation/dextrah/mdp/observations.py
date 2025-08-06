@@ -78,6 +78,26 @@ def body_state_b(
     out = torch.cat((body_pos_b, body_quat_b, body_lin_vel_b, body_ang_vel_b), dim=1) 
     return out.view(env.num_envs, -1)
 
+
+
+def body_pos_b(
+    env: ManagerBasedRLEnv,
+    body_asset_cfg: SceneEntityCfg,
+    base_asset_cfg: SceneEntityCfg,
+    flatten: bool = False,
+) -> torch.Tensor:
+    body_asset: Articulation = env.scene[body_asset_cfg.name]
+    base_asset: Articulation = env.scene[base_asset_cfg.name]
+    # get world pose of bodies
+    body_pos_w = body_asset.data.body_pos_w[:, body_asset_cfg.body_ids].clone().view(-1, 3)
+    num_bodies = int(body_pos_w.shape[0] / env.num_envs)
+    # get world pose of base frame
+    root_pos_w = base_asset.data.root_link_pos_w.unsqueeze(1).repeat_interleave(num_bodies, dim=1).view(-1, 3)
+    root_quat_w = base_asset.data.root_link_quat_w.unsqueeze(1).repeat_interleave(num_bodies, dim=1).view(-1, 4)
+    body_pos_b, _ = subtract_frame_transforms(root_pos_w, root_quat_w, body_pos_w)
+    # concate and return
+    return body_pos_b.view(env.num_envs, -1) if flatten else body_pos_b.view(env.num_envs, -1, 3)
+
 class objects_point_cloud_b(ManagerTermBase):
 
     def __init__(self, cfg, env: ManagerBasedRLEnv):
