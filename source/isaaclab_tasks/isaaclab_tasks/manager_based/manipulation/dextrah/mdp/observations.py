@@ -109,19 +109,36 @@ class objects_point_cloud_b(ManagerTermBase):
         self.ref_asset_cfg: SceneEntityCfg = cfg.params.get("ref_asset_cfg", SceneEntityCfg("robot"))
         self.statics: list[bool] = cfg.params.get("statics", [False])
         self.objects: list[RigidObject] = [env.scene[object_cfg.name] for object_cfg in object_cfgs]
+        self.body_ids = []
+        self.body_names: list = [object.data.body_names if isinstance(cfg.body_ids, slice) else cfg.body_names for object, cfg in zip(self.objects, object_cfgs)]
         self.ref_asset: Articulation = env.scene[self.ref_asset_cfg.name]
 
         if self.visualize:
             from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
             from isaaclab.markers import VisualizationMarkers
             ray_cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/ObservationPointCloud")
-            ray_cfg.markers["hit"].radius = 0.0015
+            ray_cfg.markers["hit"].radius = 0.0055
             self.visualizer = VisualizationMarkers(ray_cfg)
 
         points = []
-        for object, n_point in zip(self.objects, self.num_points):
-            points.append(sample_object_point_cloud(env.num_envs, n_point, object.cfg.prim_path, device=env.device))
-        self.points_w = torch.cat(points, dim=1)
+        for object, n_point, body_name in zip(self.objects, self.num_points, self.body_names):
+            if len(body_name) == 1:
+                local_pts = sample_object_point_cloud(env.num_envs, n_point, object.cfg.prim_path, device=env.device)
+                if local_pts is not None:
+                    points.append(local_pts)
+                    self.body_ids.append([0])
+                else:
+                    raise(f"Found no Collider to sample point cloud in {object.cfg.prim_path}")
+            else:
+                body_ids = []
+                for bn in body_name:
+                    local_pts = sample_object_point_cloud(env.num_envs, n_point, f"{object.cfg.prim_path}/{bn}", device=env.device)
+                    if local_pts is not None:
+                        points.append(local_pts)
+                        body_ids.append(object.body_names.index(bn))
+                self.body_ids.append(body_ids)
+        self.points_b = torch.cat(points, dim=1)
+        self.points_w = torch.zeros_like(self.points_b)
     
     def reset(self, env_ids = slice(None)):
         idx = 0
@@ -129,7 +146,7 @@ class objects_point_cloud_b(ManagerTermBase):
             if self.statics[i]:
                 object_pos_w = object.data.root_pos_w[env_ids].unsqueeze(1).repeat(1, self.num_points[i], 1)
                 object_quat_w = object.data.root_quat_w[env_ids].unsqueeze(1).repeat(1, self.num_points[i], 1)
-                self.points_w[env_ids, idx : idx + self.num_points[i]] = (quat_apply(object_quat_w, self.points_w[env_ids, idx : idx + self.num_points[i]]) + object_pos_w)
+                self.points_w[env_ids, idx : idx + self.num_points[i]] = (quat_apply(object_quat_w, self.points_b[env_ids, idx : idx + self.num_points[i]]) + object_pos_w)
             idx += self.num_points[i]
             
     def __call__(
@@ -139,22 +156,29 @@ class objects_point_cloud_b(ManagerTermBase):
         object_cfgs: list[SceneEntityCfg] = [SceneEntityCfg("object")],
         num_points: list[int] = [10],
         statics: list[bool] = [False],
-        visualize: bool = True
+        visualize: bool = True,
+        normalize: bool = False,
+        flatten: bool = False,
     ):
         idx = 0
         ref_pos_w = self.ref_asset.data.root_pos_w.unsqueeze(1).repeat(1, self.points_w.shape[1], 1)
         ref_quat_w = self.ref_asset.data.root_quat_w.unsqueeze(1).repeat(1, self.points_w.shape[1], 1)
-        for i, object in enumerate(self.objects):
-            if not statics[i]:
-                object_pos_w = object.data.root_pos_w.unsqueeze(1).repeat(1, num_points[i], 1)
-                object_quat_w = object.data.root_quat_w.unsqueeze(1).repeat(1, num_points[i], 1)
-                self.points_w[:, idx : idx + num_points[i]] = quat_apply(object_quat_w, self.points_w[:, idx : idx + num_points[i]]) + object_pos_w
-            idx += num_points[i]
+        for object, body_id, static, n_pts in zip(self.objects, self.body_ids, statics, num_points):
+            if not static:
+                pos_w = object.data.body_link_pos_w[:, body_id].unsqueeze(2).expand(-1, -1, n_pts, 3).reshape(env.num_envs, -1, 3)
+                quat_w = object.data.body_link_quat_w[:, body_id].unsqueeze(2).expand(-1, -1, n_pts, 4).reshape(env.num_envs, -1, 4)
+                self.points_w[:, idx : idx + n_pts * len(body_id)] = quat_apply(quat_w, self.points_b[:, idx : idx + n_pts * len(body_id)]) + pos_w
+            idx += n_pts
 
         if visualize:
             self.visualizer.visualize(translations=self.points_w.view(-1, 3))
         object_point_cloud_pos_b, _ = subtract_frame_transforms(ref_pos_w, ref_quat_w, self.points_w, None)
-        return object_point_cloud_pos_b
+        if normalize:
+            object_point_cloud_pos_b = object_point_cloud_pos_b - object_point_cloud_pos_b.mean(dim=1, keepdim=True)
+            d = torch.norm(object_point_cloud_pos_b, dim=-1)
+            m = d.max(dim=1, keepdim=True)[0]
+            object_point_cloud_pos_b = object_point_cloud_pos_b / (m.unsqueeze(-1) + 1e-6)
+        return object_point_cloud_pos_b.view(self.num_envs, -1) if flatten else object_point_cloud_pos_b
 
 
 class object_point_cloud_b(ManagerTermBase):
