@@ -32,8 +32,6 @@ class PointNetEncoderCfg:
 
     channels: list[int] = [64, 128, 256]
     
-    kernel_sizes: list[int] = [1, 1, 1]
-    
     strides: list[int] = [2, 2, 2]
 
     use_global_feat: bool = True
