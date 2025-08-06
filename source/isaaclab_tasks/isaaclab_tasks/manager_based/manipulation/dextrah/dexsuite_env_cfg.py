@@ -123,7 +123,7 @@ class ObservationsCfg:
                 "num_points": 256, "object_cfg": SceneEntityCfg("table"), "static": True, "flatten": False
             }
         )
-        hand_tips_pos_b = ObsTerm(
+        body_pos_b = ObsTerm(
             func=mdp.body_pos_b, noise=Unoise(n_min=-0., n_max=0.), params={
                 "body_asset_cfg": SceneEntityCfg("robot"),
                 "base_asset_cfg": SceneEntityCfg("robot"),
