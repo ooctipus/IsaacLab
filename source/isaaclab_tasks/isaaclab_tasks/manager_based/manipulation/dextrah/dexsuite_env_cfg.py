@@ -137,8 +137,8 @@ class ObservationsCfg:
                 "ref_asset_cfg": SceneEntityCfg("robot"),
                 "object_cfgs": [SceneEntityCfg("object"), SceneEntityCfg("table"), SceneEntityCfg("robot")],
                 "statics": [False, True, False],
-                "normalize": True,
-                "flatten": True,
+                "normalize": False,
+                "flatten": False,
             }
         )
 
