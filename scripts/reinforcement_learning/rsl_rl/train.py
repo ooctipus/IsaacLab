@@ -155,6 +155,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # set the log directory for the environment (works for all environment types)
     env_cfg.log_dir = log_dir
 
+    # apply encoder patch
+    actor_critic_vision_patcher = ActorCriticVisionExtensionPatcher(agent_cfg.policy)
+    actor_critic_vision_patcher.apply_patch()
+    
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
@@ -183,10 +187,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-    
-    # apply encoder patch
-    actor_critic_vision_patcher = ActorCriticVisionExtensionPatcher(agent_cfg.policy, env.observation_space)
-    actor_critic_vision_patcher.apply_patch()
+
     # create runner from rsl-rl
     if agent_cfg.class_name == "OnPolicyRunner":
         runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
