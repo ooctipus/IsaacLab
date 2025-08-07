@@ -11,7 +11,7 @@ from .ext.modules import vision_encoder as encoders
 @configclass
 class ActorCriticVisionAdapterCfg:
 
-    encoder_cfg: CNNEncoderCfg | PretrainedEncoderCfg | PointNetEncoderCfg = MISSING
+    encoder_cfg: CNNEncoderCfg | PretrainedEncoderCfg | PointNetEncoderCfg | MLPEncoderCfg = MISSING
 
     feature_dim: int | None = 128
     
@@ -55,6 +55,16 @@ class CNNEncoderCfg:
     use_maxpool: bool = True
     
     pool_size: int = 2
+
+
+@configclass
+class MLPEncoderCfg:
+    
+    class_type: type[encoders.MLPEncoder] = encoders.MLPEncoder
+    
+    layers: list[int] = [512, 256, 128]
+    
+    feature_dim: int | None = None
 
 
 @configclass
