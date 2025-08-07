@@ -9,11 +9,12 @@ from typing import Tuple, Dict, List, Optional, Any, TYPE_CHECKING
 from rsl_rl.utils import resolve_nn_activation
 
 if TYPE_CHECKING:
-    from ...actor_critic_vision_cfg import CNNEncoderCfg, PretrainedEncoderCfg, PointNetEncoderCfg, ActorCriticVisionAdapterCfg
+    
+    from ... import actor_critic_vision_cfg as cfg
 
 class VisionAdapter(nn.Module):
     """Base class for all vision encoders."""
-    def __init__(self, obs_space: spaces.Box, adapter_cfg: ActorCriticVisionAdapterCfg):
+    def __init__(self, obs_space: spaces.Box, adapter_cfg: cfg.ActorCriticVisionAdapterCfg):
         super().__init__()
         self.cfg = adapter_cfg
         self.obs_space = obs_space
@@ -170,9 +171,9 @@ class VisionAdapter(nn.Module):
 class CNNEncoder(VisionAdapter):
     """CNN encoder with configurable architecture."""
     
-    cfg: ActorCriticVisionAdapterCfg
+    cfg: cfg.ActorCriticVisionAdapterCfg
 
-    def __init__(self, obs_space: spaces.Box, adapter_cfg: ActorCriticVisionAdapterCfg):
+    def __init__(self, obs_space: spaces.Box, adapter_cfg: cfg.ActorCriticVisionAdapterCfg):
         super().__init__(obs_space, adapter_cfg)
         self._build_encoder(obs_space)
         self.initialize()
@@ -180,7 +181,7 @@ class CNNEncoder(VisionAdapter):
     def _build_encoder(self, obs_space):
         layers: List[nn.Module] = []
         in_c = self.num_channel
-        ec: CNNEncoderCfg = self.cfg.encoder_cfg
+        ec: cfg.CNNEncoderCfg = self.cfg.encoder_cfg
         for i, out_c in enumerate(ec.channels):
             c = nn.Conv2d(in_c, out_c, kernel_size=ec.kernel_sizes[i], stride=ec.strides[i], padding=ec.paddings[i])
             layers.append(c)
@@ -206,18 +207,19 @@ class CNNEncoder(VisionAdapter):
 
 class PointNetEncoder(VisionAdapter):
     """Point-cloud encoder: per-point MLP → global-pool → projector."""
-    def __init__(self, obs_space: spaces.Box, adapter_cfg: ActorCriticVisionAdapterCfg):
+    def __init__(self, obs_space: spaces.Box, adapter_cfg: cfg.ActorCriticVisionAdapterCfg):
         super().__init__(obs_space, adapter_cfg)
         self._build_encoder(obs_space)
         self.initialize()
 
     def _build_encoder(self, obs_space: spaces.Box):
-        pc_cfg: PointNetEncoderCfg = self.cfg.encoder_cfg
+        pc_cfg: cfg.PointNetEncoderCfg = self.cfg.encoder_cfg
         in_c = self.num_channel
         convs: List[nn.Module] = []
         for i, out_c in enumerate(pc_cfg.channels):
             convs.append(nn.Conv1d(in_c, out_c, kernel_size=1, stride=pc_cfg.strides[i]))
-            convs.append(resolve_nn_activation(self.cfg.activation))
+            convs.append(nn.BatchNorm1d(out_c))
+            convs.append(torch.nn.ReLU())
             in_c = out_c
         self.point_mlp = nn.Sequential(*convs)
 
@@ -226,11 +228,11 @@ class PointNetEncoder(VisionAdapter):
             self.pool = nn.AdaptiveMaxPool1d(1)
         else:
             self.pool = None
-            
+
         if pc_cfg.feature_dim is not None:
-            feat_dim = pc_cfg.channels[-1]
-            # projector to feature_dim
-            self.projector = self.build_projector(feat_dim)
+            self.projector = self.build_projector(pc_cfg.feature_dim)
+        else:
+            self.projector = nn.Identity()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.preprocess(x)            # (B,N,C)
@@ -242,6 +244,92 @@ class PointNetEncoder(VisionAdapter):
             B,C,N = x.shape
             x = x.view(B, C*N)
         return self.projector(x)          # (B, feature_dim)
+    
+
+class MLPEncoder(VisionAdapter):
+    """Simple MLP encoder: flatten → hidden-layer MLP → projector."""
+    def __init__(self, obs_space, adapter_cfg):
+        super().__init__(obs_space, adapter_cfg)
+        self._build_encoder(obs_space)
+        self.initialize()
+
+    def _build_encoder(self, obs_space):
+        mlp_cfg: cfg.MLPEncoderCfg = self.cfg.encoder_cfg   # assume it has .hidden_sizes: List[int]
+        
+        # figure out total input dim (drop batch axis)
+        flat_in = int(np.prod(obs_space.shape[1:]))
+
+        layers = [nn.Flatten()]
+        in_dim = flat_in
+        for out_dim in mlp_cfg.layers:
+            layers.append(nn.Linear(in_dim, out_dim))
+            layers.append(resolve_nn_activation(self.cfg.activation))
+            in_dim = out_dim
+
+        self.encoder = nn.Sequential(*layers)
+        # final projector maps ‘in_dim’ → feature_dim if requested
+        if mlp_cfg.feature_dim is not None:
+            self.projector = self.build_projector(mlp_cfg.feature_dim)
+        else:
+            self.projector = nn.Identity()
+
+    def forward(self, x):
+        x = self.preprocess(x)        # casting / normalization etc.
+        h = self.encoder(x)           # → (B, hidden_sizes[-1])
+        return self.projector(h)      # → (B, feature_dim) or (B, hidden)
+
+
+class PreTrainedPointNetEncoder(VisionAdapter):
+    """
+    Only the SA layers from PointNet++, no classification head.
+    Loads pretrained weights (ignores fc1/fc2/fc3 via strict=False).
+    """
+    def __init__(self, obs_space, adapter_cfg):
+        super().__init__(obs_space, adapter_cfg)
+        self.normal_vector = False
+        # 1) instantiate the full model
+        from .pointnet2_ssg_wo_normals import pointnet2_cls_ssg
+        full = pointnet2_cls_ssg.get_model(num_class=40, normal_channel=False)
+
+        # 2) load your checkpoint on THAT
+        ckpt = torch.load("logs/pointnet/classification/pointnet2_ssg_wo_normals/checkpoints/best_model.pth", weights_only=False)
+        full.load_state_dict(ckpt["model_state_dict"])
+
+        # 3) copy over only the SA layers into our own modules
+        self.sa1 = full.sa1
+        self.sa2 = full.sa2
+        self.sa3 = full.sa3
+
+        # 4) optionally freeze them
+        if self.cfg.freeze:
+            for p in list(self.sa1.parameters()) + list(self.sa2.parameters()) + list(self.sa3.parameters()):
+                p.requires_grad = False
+            self.sa1.eval(); self.sa2.eval(); self.sa3.eval()
+
+        # 5) build your projector 1024→feature_dim (or Identity)
+        feat_dim = getattr(self.cfg.encoder_cfg, "feature_dim", None)
+        if feat_dim is not None:
+            self.projector = nn.Sequential(nn.Linear(1024, feat_dim), resolve_nn_activation('relu'))
+        else:
+            self.projector = nn.Identity()
+
+    def forward(self, x):
+        x = self.preprocess(x)
+        x = x.transpose(1, 2)
+        if self.normal_vector:
+            norm = x[:, 3:, :]
+            xyz  = x[:, :3, :]
+        else:
+            norm = None
+            xyz  = x
+
+        # 3) Stage 1: get new coords & features
+        l1_xyz, l1_points = self.sa1(xyz, norm)
+        l2_xyz, l2_points = self.sa2(l1_xyz, l1_points)
+        _, l3_points = self.sa3(l2_xyz, l2_points)
+
+        feats = l3_points.view(l3_points.size(0), -1)   # (B,1024)
+        return self.projector(feats)
 
 class R3MEncoder(VisionAdapter):
     """R3M pretrained encoder using ResNet backbone."""
