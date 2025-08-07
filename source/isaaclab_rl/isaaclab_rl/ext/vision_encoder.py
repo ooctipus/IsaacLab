@@ -9,8 +9,7 @@ from typing import Tuple, Dict, List, Optional, Any, TYPE_CHECKING
 from rsl_rl.utils import resolve_nn_activation
 
 if TYPE_CHECKING:
-    
-    from ....ext import actor_critic_vision_cfg as cfg
+    from . import actor_critic_vision_cfg as cfg
 
 class VisionAdapter(nn.Module):
     """Base class for all vision encoders."""
