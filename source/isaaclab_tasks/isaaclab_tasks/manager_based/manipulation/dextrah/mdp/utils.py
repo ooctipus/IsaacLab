@@ -3,6 +3,7 @@ import numpy as np
 import torch
 from functools import lru_cache
 import trimesh
+import io
 import warp as wp
 from trimesh.transformations import rotation_matrix
 from pxr import UsdGeom
@@ -11,7 +12,7 @@ import isaaclab.utils.math as math_utils
 import random
 from isaaclab.utils.warp import convert_to_warp_mesh
 from .rigid_object_hasher import RigidObjectHasher
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout, redirect_stderr
 from pytorch3d.structures import Meshes
 from pytorch3d.ops import sample_points_from_meshes, sample_farthest_points
 
@@ -300,8 +301,9 @@ def temporary_seed(seed: int, restore_numpy: bool = True, restore_python: bool =
     py_state = random.getstate()     if restore_python else None
 
     try:
-        # seed everything the same way Isaac does
-        torch_utils.set_seed(seed)
+        sink = io.StringIO()
+        with redirect_stdout(sink), redirect_stderr(sink):
+            torch_utils.set_seed(seed)
         yield
     finally:
         # restore everything
