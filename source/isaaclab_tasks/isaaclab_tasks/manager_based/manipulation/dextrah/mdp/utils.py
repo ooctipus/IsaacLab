@@ -6,10 +6,12 @@ import trimesh
 import warp as wp
 from trimesh.transformations import rotation_matrix
 from pxr import UsdGeom
+import isaacsim.core.utils.torch as torch_utils
 import isaaclab.utils.math as math_utils
+import random
 from isaaclab.utils.warp import convert_to_warp_mesh
 from .rigid_object_hasher import RigidObjectHasher
-
+from contextlib import contextmanager
 from pytorch3d.structures import Meshes
 from pytorch3d.ops import sample_points_from_meshes, sample_farthest_points
 
@@ -27,6 +29,7 @@ def sample_object_point_cloud(
     prim_path_pattern: str,
     device: str = "cuda",  # assume GPU
     rigid_object_hasher: RigidObjectHasher | None = None,
+    seed: int = 42,
 ) -> torch.Tensor | None:
     """Generating point cloud given the path regex expression. This methood samples point cloud on ALL colliders
     falls under the prim path pattern. It is robust even if there are different numbers of colliders under the same
@@ -52,7 +55,6 @@ def sample_object_point_cloud(
     Returns:
         torch.Tensor | None: _description_
     """
-
     hasher = (
         rigid_object_hasher
         if rigid_object_hasher is not None
@@ -74,36 +76,36 @@ def sample_object_point_cloud(
         verts_list, faces_list = zip(*[_load_mesh_tensors(p) for p in hasher.collider_prims])
         meshes = Meshes(verts=[v.to(device) for v in verts_list], faces=[f.to(device) for f in faces_list])
         rel_tf = hasher.collider_prim_relative_transforms
-
-    # Uniform‐surface sample then scale to root
-    samp  = sample_points_from_meshes(meshes, num_points * 2)
-    local, _ = sample_farthest_points(samp, K=num_points)
-    t_rel, q_rel, s_rel = rel_tf[:, :3].unsqueeze(1), rel_tf[:, 3:7].unsqueeze(1), rel_tf[:, 7:].unsqueeze(1)
-    # here is apply_forward not apply_inverse, because when mesh loaded, it is unscaled. But inorder to view it from
-    # root, you need to apply forward transformation of root->child, which is exactly tqs_root_child.
-    root = math_utils.quat_apply(q_rel.expand(-1, num_points, -1), local * s_rel) + t_rel
-    
-    # Merge Colliders
-    if replicated_env:
-        buf = root.reshape(1, -1, 3)
-        merged, _ = sample_farthest_points(buf, K=num_points)
-        result = merged.view(1, num_points, 3).expand(num_envs, -1, -1) * hasher.root_prim_scales.unsqueeze(1)
-    else:
-        # 4) Scatter each collider into a padded per‐root buffer
-        env_ids = hasher.collider_prim_env_ids.to(device)  # (M,)
-        counts = torch.bincount(env_ids, minlength=hasher.num_root)   # (num_root,)
-        max_c = int(counts.max().item())
-        buf = torch.zeros((hasher.num_root, max_c * num_points, 3), device=device, dtype=root.dtype)
-        # track how many placed in each root
-        placed = torch.zeros_like(counts)
-        for i in range(len(hasher.collider_prims)):
-            r = int(env_ids[i].item())
-            start = placed[r].item() * num_points
-            buf[r, start:start+num_points] = root[i]
-            placed[r] += 1
-        # 5) One batch‐FPS to merge per‐root
-        merged, _ = sample_farthest_points(buf, K=num_points)
-        result = merged * hasher.root_prim_scales.unsqueeze(1)
+    with temporary_seed(seed):
+        # Uniform‐surface sample then scale to root
+        samp  = sample_points_from_meshes(meshes, num_points * 2)
+        local, _ = sample_farthest_points(samp, K=num_points)
+        t_rel, q_rel, s_rel = rel_tf[:, :3].unsqueeze(1), rel_tf[:, 3:7].unsqueeze(1), rel_tf[:, 7:].unsqueeze(1)
+        # here is apply_forward not apply_inverse, because when mesh loaded, it is unscaled. But inorder to view it from
+        # root, you need to apply forward transformation of root->child, which is exactly tqs_root_child.
+        root = math_utils.quat_apply(q_rel.expand(-1, num_points, -1), local * s_rel) + t_rel
+        
+        # Merge Colliders
+        if replicated_env:
+            buf = root.reshape(1, -1, 3)
+            merged, _ = sample_farthest_points(buf, K=num_points)
+            result = merged.view(1, num_points, 3).expand(num_envs, -1, -1) * hasher.root_prim_scales.unsqueeze(1)
+        else:
+            # 4) Scatter each collider into a padded per‐root buffer
+            env_ids = hasher.collider_prim_env_ids.to(device)  # (M,)
+            counts = torch.bincount(env_ids, minlength=hasher.num_root)   # (num_root,)
+            max_c = int(counts.max().item())
+            buf = torch.zeros((hasher.num_root, max_c * num_points, 3), device=device, dtype=root.dtype)
+            # track how many placed in each root
+            placed = torch.zeros_like(counts)
+            for i in range(len(hasher.collider_prims)):
+                r = int(env_ids[i].item())
+                start = placed[r].item() * num_points
+                buf[r, start:start+num_points] = root[i]
+                placed[r] += 1
+            # 5) One batch‐FPS to merge per‐root
+            merged, _ = sample_farthest_points(buf, K=num_points)
+            result = merged * hasher.root_prim_scales.unsqueeze(1)
 
     return result
 
@@ -287,3 +289,26 @@ def get_signed_distance(
                 if signed_dist < best_signed_dist:
                     best_signed_dist = signed_dist
     signs[tid] = best_signed_dist
+
+
+@contextmanager
+def temporary_seed(seed: int, restore_numpy: bool = True, restore_python: bool = True):
+    # snapshot states
+    cpu_state = torch.get_rng_state()
+    cuda_states = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+    np_state = np.random.get_state() if restore_numpy else None
+    py_state = random.getstate()     if restore_python else None
+
+    try:
+        # seed everything the same way Isaac does
+        torch_utils.set_seed(seed)
+        yield
+    finally:
+        # restore everything
+        torch.set_rng_state(cpu_state)
+        if cuda_states is not None:
+            torch.cuda.set_rng_state_all(cuda_states)
+        if np_state is not None:
+            np.random.set_state(np_state)
+        if py_state is not None:
+            random.setstate(py_state)
