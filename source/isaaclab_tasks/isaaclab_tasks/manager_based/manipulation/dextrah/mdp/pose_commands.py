@@ -9,17 +9,14 @@
 from __future__ import annotations
 
 import torch
-from tqdm.auto import tqdm
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from isaaclab.assets import Articulation, RigidObject
-from isaaclab.managers import CommandTerm, SceneEntityCfg
+from isaaclab.managers import CommandTerm
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.utils.math import combine_frame_transforms, subtract_frame_transforms, compute_pose_error, quat_from_euler_xyz, quat_unique
 
-from .collision_analyzer_cfg import CollisionAnalyzerCfg
-from .success_monitor_cfg import SuccessMonitorCfg
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
     from . import pose_commands_cfg as dex_cmd_cfgs
