@@ -19,21 +19,6 @@ if TYPE_CHECKING:
     from isaaclab.sensors import TiledCamera, Camera, RayCasterCamera
 
 
-def object_pose_b(
-    env: ManagerBasedRLEnv,
-    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
-) -> torch.Tensor:
-    """The position and quaternion of the object in the robot's root frame."""
-    robot: RigidObject = env.scene[robot_cfg.name]
-    object: RigidObject = env.scene[object_cfg.name]
-    object_pos_w = object.data.root_pos_w
-    object_quat_w = object.data.root_quat_w
-    object_pos_b, object_quat_b = subtract_frame_transforms(
-        robot.data.root_state_w[:, :3], robot.data.root_state_w[:, 3:7], object_pos_w, object_quat_w
-    )
-    return torch.cat((object_pos_b, object_quat_b), dim=1)
-
 def object_pos_b(
     env: ManagerBasedRLEnv,
     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
@@ -43,7 +28,6 @@ def object_pos_b(
     robot: RigidObject = env.scene[robot_cfg.name]
     object: RigidObject = env.scene[object_cfg.name]
     return quat_apply(quat_inv(robot.data.root_quat_w), object.data.root_pos_w - robot.data.root_pos_w)
-    return object_pos_b
 
 def object_quat_b(
     env: ManagerBasedRLEnv,
