@@ -29,16 +29,6 @@ class KukaAllegroReorientRewardCfg(dexsuite.RewardsCfg):
         weight=0.5,
         params={"threshold": 1.0},
     )
-    
-    # bad_finger_contact = RewTerm(
-    #     func=mdp.contacts_sum,
-    #     weight=-0.5,
-    #     params={"threshold": 5.0, "sensors":[
-    #         "index_link_3_table_s", "middle_link_3_table_s", "ring_link_3_table_s", "thumb_link_3_table_s",
-    #         "index_link_2_table_s", "middle_link_2_table_s", "ring_link_2_table_s", "thumb_link_2_table_s",
-    #         "palm_link_table_s"
-    #     ]},
-    # )
 
 
 @configclass
@@ -84,9 +74,7 @@ class KukaAllegroMixinCfg:
         self.observations.policy.hand_tips_state_b.params["body_asset_cfg"].body_names = ["palm_link", ".*_tip"]
         self.rewards.fingers_to_object.params["asset_cfg"] = SceneEntityCfg("robot", body_names=["palm_link", ".*_tip"])
         self.scene.robot.spawn.activate_contact_sensors = True
-        for link_name in [
-            "index_link_3", "middle_link_3", "ring_link_3", "thumb_link_3",
-        ]:
+        for link_name in ["index_link_3", "middle_link_3", "ring_link_3", "thumb_link_3"]:
             setattr(self.scene, f"{link_name}_object_s", ContactSensorCfg(
                 prim_path="{ENV_REGEX_NS}/Robot/" + link_name, filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"]
             ))
