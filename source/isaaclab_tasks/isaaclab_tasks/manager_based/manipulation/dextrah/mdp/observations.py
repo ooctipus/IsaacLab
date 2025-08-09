@@ -146,4 +146,4 @@ def depth_image(
         images = torch.tanh(images / 2) * 2
         images -= torch.mean(images, dim=(1, 2), keepdim=True)
 
-    return images
+    return images.view(env.num_envs, -1)
