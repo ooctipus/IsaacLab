@@ -17,8 +17,6 @@ from isaaclab.utils import math as math_utils
 from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 
 from ..assembly_keypoints import KEYPOINTS_NISTBOARD
-from .success_monitor_cfg import SuccessMonitorCfg
-
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
@@ -257,11 +255,6 @@ class TermChoice(ManagerTermBase):
             if term_ids.numel() > 0:
                 term_cfg.func(env, term_ids, **term_cfg.params)
             i += 1
-        if "log" not in env.extras:
-            env.extras["log"] = {}
-        env.extras["log"].update(log)  # type: ignore
-        
-
 
 class ChainedResetTerms(ManagerTermBase):
 
