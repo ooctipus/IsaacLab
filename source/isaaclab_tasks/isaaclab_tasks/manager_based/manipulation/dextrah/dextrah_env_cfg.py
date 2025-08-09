@@ -103,6 +103,7 @@ class ObservationsCfg:
                 "body_asset_cfg": SceneEntityCfg("robot"),
                 "base_asset_cfg": SceneEntityCfg("robot"),
             })
+        object_pos_b = ObsTerm(func=mdp.object_pos_b, noise=Unoise(n_min=-0., n_max=0.))
         object_quat_b = ObsTerm(func=mdp.object_quat_b, noise=Unoise(n_min=-0., n_max=0.))
         target_object_pose_b = ObsTerm(func=mdp.generated_commands, params={"command_name": "object_pose"})
         actions = ObsTerm(func=mdp.last_action)
@@ -113,31 +114,9 @@ class ObservationsCfg:
             self.concatenate_terms = True
             self.history_length = 5
 
-    @configclass
-    class PrivilegedObsCfg(ObsGroup):
-        
-        perception = ObsTerm(
-            func=mdp.objects_point_cloud_b,
-            params={
-                "num_points": [64, 256, 8],
-                "ref_asset_cfg": SceneEntityCfg("robot"),
-                "object_cfgs": [SceneEntityCfg("object"), SceneEntityCfg("table"), SceneEntityCfg("robot")],
-                "statics": [False, True, False],
-                "normalize": True,
-                "flatten": False,
-            }
-        )
-
-        def __post_init__(self):
-            self.enable_corruption = False
-            self.concatenate_dim = 0
-            self.concatenate_terms = True
-            self.flatten_history_dim = True
-            self.history_length = 5
-
     # observation groups
     policy: PolicyCfg = PolicyCfg()
-    privileged: PrivilegedObsCfg = PrivilegedObsCfg()
+    critic: PolicyCfg = PolicyCfg()
 
 @configclass
 class EventCfg:
