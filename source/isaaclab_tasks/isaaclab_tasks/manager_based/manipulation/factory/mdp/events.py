@@ -240,14 +240,7 @@ class TermChoice(ManagerTermBase):
         for term_name, term_cfg in self.term_partitions.items():
             if inspect.isclass(term_cfg.func):
                 term_cfg.func = term_cfg.func(term_cfg, env)  # type: ignore
-        
         self.term_samples = torch.zeros((env.num_envs,), dtype=torch.int, device=env.device)
-        success_monitor_cfg = SuccessMonitorCfg(
-            monitored_history_len=100,
-            num_monitored_data=self.num_partitions,
-            device=env.device,
-        )
-        self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
 
     def __call__(
         self,
@@ -256,21 +249,7 @@ class TermChoice(ManagerTermBase):
         terms: dict[str, ManagerTermBase],
         sampling_strategy: Literal["uniform", "failure_rate"] = "uniform",
     ) -> None:
-        success_rate = self.success_monitor.get_success_rate()
-        log = {f"Metrics/SuccessRate/{name}": success_rate[i].item() for i, name in enumerate(self.term_partitions.keys())}
-
-        context_term: ManagerTermBase = env.reward_manager.get_term_cfg("progress_context").func  # type: ignore
-        orientation_aligned: torch.Tensor = getattr(context_term, "orientation_aligned")[env_ids]
-        position_centered: torch.Tensor = getattr(context_term, "position_centered")[env_ids]
-        z_distance_reached: torch.Tensor = getattr(context_term, "z_distance_reached")[env_ids]
-        term_successes = torch.where(orientation_aligned & position_centered & z_distance_reached, 1.0, 0.0)
-        self.success_monitor.success_update(self.term_samples[env_ids], term_successes)
-        
-        if sampling_strategy == "uniform":
-            self.term_samples[env_ids] = torch.randint(0, self.num_partitions, (env_ids.size(0),), device=env_ids.device, dtype=self.term_samples.dtype)
-        else:
-            self.term_samples[env_ids] = self.success_monitor.failure_rate_sampling(env_ids)
-
+        self.term_samples[env_ids] = torch.randint(0, self.num_partitions, (env_ids.size(0),), device=env_ids.device, dtype=self.term_samples.dtype)
         i = 0
         for term_name, term_cfg in self.term_partitions.items():
             # get the env_ids that belong to the current term
