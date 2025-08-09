@@ -119,7 +119,7 @@ class ContainerInterface:
         if not container_history_file.exists():
             # Create the file with sticky bit on the group
             container_history_file.touch(mode=0o2644, exist_ok=True)
-
+        nocache = os.getenv("ISAACLAB_NOCACHE", "0").lower() in ("1","true","yes")
         # build the image for the base profile if not running base (up will build base already if profile is base)
         if self.profile != "base":
             subprocess.run(
@@ -131,13 +131,24 @@ class ContainerInterface:
                     "--env-file",
                     ".env.base",
                     "build",
+                    *(["--no-cache", "--pull"] if nocache else []),
                     "isaac-lab-base",
                 ],
                 check=False,
                 cwd=self.context_dir,
                 env=self.environ,
             )
-
+        # build the image for the profile (before 'up' so we can pass --no-cache)
+        subprocess.run(
+            ["docker", "compose"]
+            + self.add_yamls
+            + self.add_profiles
+            + self.add_env_files
+            + ["build", *(["--no-cache", "--pull"] if nocache else [])],
+            check=False,
+            cwd=self.context_dir,
+            env=self.environ,
+        )
         # build the image for the profile
         subprocess.run(
             ["docker", "compose"]
