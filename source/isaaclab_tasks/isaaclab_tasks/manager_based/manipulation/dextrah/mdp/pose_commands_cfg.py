@@ -19,29 +19,6 @@ from . import pose_commands as dex_cmd
 
 
 @configclass
-class PoseAlignmentCommandChoiceCfg(CommandTermCfg):
-    
-    class_type: type = dex_cmd.PoseAlignmentCommandChoice
-    
-    terms: dict[str, CommandTermCfg] = {}
-    
-    sampling_strategy: str = "uniform"
-
-    asset_name: str = MISSING
-
-    object_name: str = MISSING
-
-    goal_pose_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(prim_path="/Visuals/Command/align_goal_pose")
-    """The configuration for the goal pose visualization marker. Defaults to FRAME_MARKER_CFG."""
-
-    current_pose_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(
-        prim_path="/Visuals/Command/align_body_pose"
-    )
-    
-    goal_pose_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-    current_pose_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-
-@configclass
 class ObjectUniformPoseCommandCfg(CommandTermCfg):
     """Configuration for uniform pose command generator."""
 
@@ -95,22 +72,3 @@ class ObjectUniformPoseCommandCfg(CommandTermCfg):
     # Set the scale of the visualization markers to (0.1, 0.1, 0.1)
     goal_pose_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
     current_pose_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-
-
-
-@configclass
-class ObjectUniformTableTopRestPoseCommandCfg(ObjectUniformPoseCommandCfg):
-    """Configuration for uniform pose command generator."""
-
-    class_type: type = dex_cmd.ObjectUniformTableTopRestPoseCommand
-    
-    table_name: str = "table"
-    
-    num_samples: int = 25
-
-
-@configclass
-class ObjectUniformTableTopCollisionFreePoseCommandCfg(ObjectUniformTableTopRestPoseCommandCfg):
-    """Configuration for uniform pose command generator."""
-
-    class_type: type = dex_cmd.ObjectUniformTableTopCollisionFreePoseCommand
