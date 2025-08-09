@@ -126,7 +126,7 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str, de
                 local_pts = tensor_pts[prim_idxs]
 
                 # prim -> root transform
-                rel = world_root.GetInverse() * xform_cache.GetLocalToWorldTransform(prim)
+                rel = xform_cache.GetLocalToWorldTransform(prim) * world_root.GetInverse() 
                 mat_np = np.array([[rel[r][c] for c in range(4)] for r in range(4)], dtype=np.float32)
                 mat_t = torch.from_numpy(mat_np).to(device)
 

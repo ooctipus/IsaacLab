@@ -15,7 +15,6 @@ from . import agents
 # Register Gym environments.
 ##
 
-# Dextrah Reorient Environments
 # State Observation
 gym.register(
     id="Dextrah-Kuka-Allegro-Reorient-State-v0",
@@ -35,54 +34,6 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{__name__}.dextrah_kuka_allegro_env_cfg:DextrahKukaAllegroReorientEnvCfg_PLAY",
-        "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_pbt_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DextrahKukaAllegroPPORunnerCameraCfg",
-        "configurable_entry_point": f"{__name__}.configurables:EnvConfigurables",
-    },
-)
-
-gym.register(
-    id="Dextrah-Kuka-Allegro-Shelves-Reorient-State-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.dextrah_kuka_allegro_env_cfg:DextrahKukaAllegroShelvesReorientEnvCfg",
-        "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_pbt_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DextrahKukaAllegroPPORunnerCfg",
-        "configurable_entry_point": f"{__name__}.configurables:EnvConfigurables",
-    },
-)
-
-gym.register(
-    id="Dextrah-Kuka-Allegro-Shelves-Reorient-State-Play-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.dextrah_kuka_allegro_env_cfg:DextrahKukaAllegroShelvesReorientEnvCfg_PLAY",
-        "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_pbt_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DextrahKukaAllegroPPORunnerCameraCfg",
-        "configurable_entry_point": f"{__name__}.configurables:EnvConfigurables",
-    },
-)
-
-gym.register(
-    id="Dextrah-Kuka-Allegro-Shelves-Place-State-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.dextrah_kuka_allegro_env_cfg:DextrahKukaAllegroShelvesPlaceEnvCfg",
-        "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_pbt_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DextrahKukaAllegroPPORunnerCfg",
-        "configurable_entry_point": f"{__name__}.configurables:EnvConfigurables",
-    },
-)
-
-gym.register(
-    id="Dextrah-Kuka-Allegro-Shelves-Place-State-Play-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.dextrah_kuka_allegro_env_cfg:DextrahKukaAllegroShelvesPlaceEnvCfg_PLAY",
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_pbt_cfg.yaml",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DextrahKukaAllegroPPORunnerCameraCfg",
         "configurable_entry_point": f"{__name__}.configurables:EnvConfigurables",

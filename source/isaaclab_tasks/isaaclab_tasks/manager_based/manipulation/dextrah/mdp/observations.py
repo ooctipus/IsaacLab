@@ -80,7 +80,7 @@ class object_point_cloud_b(ManagerTermBase):
             from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
             from isaaclab.markers import VisualizationMarkers
             ray_cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/ObservationPointCloud")
-            ray_cfg.markers["hit"].radius = 0.0015
+            ray_cfg.markers["hit"].radius = 0.0025
             self.visualizer = VisualizationMarkers(ray_cfg)
         self.points_b = sample_object_point_cloud(env.num_envs, self.num_points, self.object.cfg.prim_path, device=env.device)
         self.points_w = torch.zeros_like(self.points_b)
