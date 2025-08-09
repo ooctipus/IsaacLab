@@ -20,7 +20,7 @@ from isaaclab.utils.math import combine_frame_transforms, compute_pose_error, qu
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
 
-    from . import commands_cfg as dex_cmd_cfgs
+    from . import pose_commands_cfg as dex_cmd_cfgs
 
 
 class ObjectUniformPoseCommand(CommandTerm):
