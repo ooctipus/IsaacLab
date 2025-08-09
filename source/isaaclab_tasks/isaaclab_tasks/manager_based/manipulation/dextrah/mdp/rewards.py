@@ -101,7 +101,6 @@ def contacts(env: ManagerBasedRLEnv, threshold: float) -> torch.Tensor:
     index_contact_mag = torch.norm(index_contact, dim=-1)
     middle_contact_mag = torch.norm(middle_contact, dim=-1)
     ring_contact_mag = torch.norm(ring_contact, dim=-1)
-    # print(f"force_matric: {contact_sensor.data.force_matrix_w}, net_force: {contact_sensor.data.net_forces_w}")
     good_contact_cond1 = (thumb_contact_mag > threshold) & ((index_contact_mag > threshold) |\
                         (middle_contact_mag > threshold) | (ring_contact_mag > threshold))
 
@@ -171,8 +170,3 @@ def orientation_command_error_tanh(
     quat_distance = math_utils.quat_error_magnitude(object.data.root_quat_w, des_quat_w)
 
     return (1 - torch.tanh(quat_distance / std)) * contacts(env, 1.0).float()
-
-
-def abnormal_penalty(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
-    robot = env.scene[asset_cfg.name]
-    return (robot.data.joint_vel.abs() > (robot.data.joint_vel_limits * 2)).any(dim=1)
