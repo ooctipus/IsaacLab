@@ -11,7 +11,7 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
-
+from isaaclab.envs import ViewerCfg
 from .dextrah_kuka_allegro_env_cfg import KukaAllegroMixinCfg
 from ... import dextrah_env_cfg as dextrah_state_impl
 from ... import mdp
@@ -91,6 +91,7 @@ class KukaAllegroCameraObservationsCfg(dextrah_state_impl.ObservationsCfg):
 
 @configclass
 class KukaAllegroCameraMixinCfg(KukaAllegroMixinCfg):
+    viewer: ViewerCfg = ViewerCfg(eye=(0.75, -1.75, 0.75), lookat=(-0.5, 0.0, 0.50), origin_type='env')
     scene: KukaAllegroCameraSceneCfg = KukaAllegroCameraSceneCfg(num_envs=4096, env_spacing=3, replicate_physics=False)
     observations: KukaAllegroCameraObservationsCfg = KukaAllegroCameraObservationsCfg()
 
