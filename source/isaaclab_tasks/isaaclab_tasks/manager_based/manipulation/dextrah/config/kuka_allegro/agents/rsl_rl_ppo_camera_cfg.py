@@ -13,7 +13,7 @@ class DextrahKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 36
     obs_groups = {
         "policy": ["policy", "base_image", "wrist_image"],
-        "critic": ["policy", "privileged"]
+        "critic": ["policy", "critic"]
     }
     max_iterations = 15000
     save_interval = 250
@@ -25,17 +25,6 @@ class DextrahKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
         activation="elu",
-        encoder=ActorCriticVisionAdapterCfg(
-            normalize=False,
-            encoder_cfg=CNNEncoderCfg(
-                channels=[32, 64, 128],
-                kernel_sizes=[3, 3, 3],
-                strides=[2, 2, 2],
-                paddings=[1, 1, 1],
-                use_maxpool=True,
-                pool_size=2
-            )
-        )
     )
     algorithm = RslRlPpoAlgorithmCfg(
         value_loss_coef=1.0,
