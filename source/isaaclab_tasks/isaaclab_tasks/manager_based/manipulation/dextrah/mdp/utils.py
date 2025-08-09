@@ -1,4 +1,3 @@
-import os
 import hashlib
 import numpy as np
 import torch
@@ -9,61 +8,55 @@ from pxr import UsdGeom
 import isaacsim.core.utils.prims as prim_utils
 from isaaclab.sim.utils import get_all_matching_child_prims
 
-def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str,
-                              cache_dir: str = "/tmp/isaaclab/sample_point_cloud",
-                              device: str = "cpu") -> torch.Tensor:
+# ---- module-scope caches ----
+_PRIM_SAMPLE_CACHE: dict[tuple[str, int], np.ndarray] = {}   # (prim_hash, num_points) -> (N,3) in root frame
+_FINAL_SAMPLE_CACHE: dict[str, np.ndarray] = {}              # env_hash -> (num_points,3) in root frame
+
+def clear_pointcloud_caches():
+    _PRIM_SAMPLE_CACHE.clear()
+    _FINAL_SAMPLE_CACHE.clear()
+
+def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str, device: str = "cpu") -> torch.Tensor:
     """
     Samples point clouds for each environment instance by collecting points
     from all matching USD prims under `prim_path`, then downsamples to
     exactly `num_points` per env using farthest-point sampling.
 
-    Caches:
-      - per-prim raw samples in `cache_dir/prim_samples/<hash>.npy`
-      - final downsampled clouds in `cache_dir/final_samples/<hash>.npy`
-
-    Args:
-        num_envs (int): Number of environment instances.
-        num_points (int): Points per instance.
-        prim_path (str): USD prim path template with '{i}'.
-        cache_dir (str): Base directory for on-disk caching.
+    Caching is in-memory within this module:
+      - per-prim raw samples:   _PRIM_SAMPLE_CACHE[(prim_hash, num_points)]
+      - final downsampled env:  _FINAL_SAMPLE_CACHE[env_hash]
 
     Returns:
-        torch.Tensor: Shape (num_envs, num_points, 3).
+        torch.Tensor: Shape (num_envs, num_points, 3) on `device`.
     """
-    # Prepare cache directories
-    prim_cache_dir = os.path.join(cache_dir, "prim_samples")
-    final_cache_dir = os.path.join(cache_dir, "final_samples")
-    os.makedirs(prim_cache_dir, exist_ok=True)
-    os.makedirs(final_cache_dir, exist_ok=True)
-
     points = torch.zeros((num_envs, num_points, 3), dtype=torch.float32, device=device)
     xform_cache = UsdGeom.XformCache()
 
     for i in range(num_envs):
         # Resolve prim path
         obj_path = prim_path.replace(".*", str(i))
+
         # Gather prims
         prims = get_all_matching_child_prims(
             obj_path,
-            predicate=lambda p: p.GetTypeName() in (
-                "Mesh","Cube","Sphere","Cylinder","Capsule","Cone"
-            )
+            predicate=lambda p: p.GetTypeName() in ("Mesh", "Cube", "Sphere", "Cylinder", "Capsule", "Cone")
         )
         if not prims:
             raise KeyError(f"No valid prims under {obj_path}")
 
         object_prim = prim_utils.get_prim_at_path(obj_path)
-        world_root  = xform_cache.GetLocalToWorldTransform(object_prim)
+        world_root = xform_cache.GetLocalToWorldTransform(object_prim)
+
+        # hash each child prim by its rel transform + geometry
         prim_hashes = []
         for prim in prims:
             prim_type = prim.GetTypeName()
             hasher = hashlib.sha256()
-            # 1) include the full prim→root transform
-            rel = world_root.GetInverse() * xform_cache.GetLocalToWorldTransform(prim)    # Gf.Matrix4d
+
+            rel = world_root.GetInverse() * xform_cache.GetLocalToWorldTransform(prim)  # prim -> root
             mat_np = np.array([[rel[r][c] for c in range(4)] for r in range(4)], dtype=np.float32)
             hasher.update(mat_np.tobytes())
 
-            # 2) include geometry shape
             if prim_type == "Mesh":
                 mesh = UsdGeom.Mesh(prim)
                 verts = np.asarray(mesh.GetPointsAttr().Get(), dtype=np.float32)
@@ -87,37 +80,35 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str,
                     c = UsdGeom.Cone(prim)
                     hasher.update(np.float32(c.GetRadiusAttr().Get()).tobytes())
                     hasher.update(np.float32(c.GetHeightAttr().Get()).tobytes())
+
             prim_hashes.append(hasher.hexdigest())
-        
-        # Compute USD scale between root and first prim
-        base_scale = torch.tensor(object_prim.GetAttribute("xformOp:scale").Get(), dtype=torch.float32, device=device)
-        # Final cache key combines all prim hashes and num_points
+
+        # scale on root (default to 1 if missing)
+        attr = object_prim.GetAttribute("xformOp:scale")
+        scale_val = attr.Get() if attr else None
+        if scale_val is None:
+            base_scale = torch.ones(3, dtype=torch.float32, device=device)
+        else:
+            base_scale = torch.tensor(scale_val, dtype=torch.float32, device=device)
+
+        # env-level cache key (includes num_points)
         env_key = "_".join(sorted(prim_hashes)) + f"_{num_points}"
         env_hash = hashlib.sha256(env_key.encode()).hexdigest()
-        final_file = os.path.join(final_cache_dir, f"{env_hash}.npy")
 
-        # Load from final cache if present
-        if os.path.exists(final_file):
-            arr = np.load(final_file)
-            if arr.shape == (num_points, 3):
-                points[i] = torch.from_numpy(arr).to(device)  * base_scale.unsqueeze(0)
-                continue
+        # load from env-level in-memory cache
+        if env_hash in _FINAL_SAMPLE_CACHE:
+            arr = _FINAL_SAMPLE_CACHE[env_hash]  # (num_points,3) in root frame
+            points[i] = torch.from_numpy(arr).to(device) * base_scale.unsqueeze(0)
+            continue
 
-        # Collect samples from each prim with per-prim caching
-        all_samples = []
-        for prim, prim_hash in zip(prims, prim_hashes):
-            prim_type = prim.GetTypeName()
-            prim_file = os.path.join(prim_cache_dir, f"{prim_hash}.npy")
-            # Load or sample
-            if os.path.exists(prim_file):
-                arr = np.load(prim_file)
-                if arr.shape[0] >= num_points:
-                    samples = arr[:num_points]
-                else:
-                    samples = None
+        # otherwise build per-prim samples (with per-prim cache)
+        all_samples_np: list[np.ndarray] = []
+        for prim, ph in zip(prims, prim_hashes):
+            key = (ph, num_points)
+            if key in _PRIM_SAMPLE_CACHE:
+                samples = _PRIM_SAMPLE_CACHE[key]
             else:
-                samples = None
-            if samples is None:
+                prim_type = prim.GetTypeName()
                 if prim_type == "Mesh":
                     mesh = UsdGeom.Mesh(prim)
                     verts = np.asarray(mesh.GetPointsAttr().Get(), dtype=np.float32)
@@ -128,35 +119,41 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str,
 
                 face_weights = mesh_tm.area_faces
                 samples_np, _ = sample_surface(mesh_tm, num_points * 2, face_weight=face_weights)
-                # prim-level FPS down to num_points
+
+                # FPS to num_points on chosen device
                 tensor_pts = torch.from_numpy(samples_np.astype(np.float32)).to(device)
                 prim_idxs = fps(tensor_pts, num_points)
                 local_pts = tensor_pts[prim_idxs]
-                # compute full prim→root transform
+
+                # prim -> root transform
                 rel = world_root.GetInverse() * xform_cache.GetLocalToWorldTransform(prim)
                 mat_np = np.array([[rel[r][c] for c in range(4)] for r in range(4)], dtype=np.float32)
                 mat_t = torch.from_numpy(mat_np).to(device)
-                # apply homogeneous transform
-                ones = torch.ones((num_points,1), device=device)
-                pts_h  = torch.cat([local_pts, ones], dim=1)
-                world_h= pts_h @ mat_t
-                samples= world_h[:, :3].cpu().numpy()
+
+                ones = torch.ones((num_points, 1), device=device)
+                pts_h = torch.cat([local_pts, ones], dim=1)
+                root_h = pts_h @ mat_t
+                samples = root_h[:, :3].detach().cpu().numpy()
+
                 if prim_type == "Cone":
                     samples[:, 2] -= UsdGeom.Cone(prim).GetHeightAttr().Get() / 2
-                # save prim-level cache
-                np.save(prim_file, samples)
-            all_samples.append(samples)
 
-        # Downsample combined samples if multiple prims
-        if len(all_samples) == 1: # if this prim is not composite mesh, then we don't need to fps
-            samples_final = torch.from_numpy(all_samples[0]).to(device)
+                _PRIM_SAMPLE_CACHE[key] = samples  # cache in root frame @ num_points
+
+            all_samples_np.append(samples)
+
+        # combine & env-level FPS (if needed)
+        if len(all_samples_np) == 1:
+            samples_final = torch.from_numpy(all_samples_np[0]).to(device)
         else:
-            combined = torch.cat([torch.from_numpy(s) for s in all_samples], dim=0).to(device)
+            combined = torch.from_numpy(np.concatenate(all_samples_np, axis=0)).to(device)
             idxs = fps(combined, num_points)
             samples_final = combined[idxs]
 
-        # Save final downsampled cloud
-        np.save(final_file, samples_final.cpu().numpy())
+        # store env-level cache in root frame (CPU)
+        _FINAL_SAMPLE_CACHE[env_hash] = samples_final.detach().cpu().numpy()
+
+        # apply root scale and write out
         points[i] = samples_final * base_scale.unsqueeze(0)
 
     return points
