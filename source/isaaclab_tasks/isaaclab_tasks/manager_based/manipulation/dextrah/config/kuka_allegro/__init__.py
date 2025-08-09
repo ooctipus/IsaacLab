@@ -15,128 +15,128 @@ from . import agents
 # Register Gym environments.
 ##
 
-# Dexsuite Reorient Environments
+# Dextrah Reorient Environments
 # State Observation
 gym.register(
-    id="Dexsuite-Kuka-Allegro-Reorient-State-v0",
+    id="Dextrah-Kuka-Allegro-Reorient-State-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.dexsuite_kuka_allegro_env_cfg:DexsuiteKukaAllegroReorientEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.dextrah_kuka_allegro_env_cfg:DextrahKukaAllegroReorientEnvCfg",
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_pbt_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DexsuiteKukaAllegroPPORunnerCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DextrahKukaAllegroPPORunnerCfg",
         "configurable_entry_point": f"{__name__}.configurables:EnvConfigurables",
     },
 )
 
 gym.register(
-    id="Dexsuite-Kuka-Allegro-Reorient-State-Play-v0",
+    id="Dextrah-Kuka-Allegro-Reorient-State-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.dexsuite_kuka_allegro_env_cfg:DexsuiteKukaAllegroReorientEnvCfg_PLAY",
+        "env_cfg_entry_point": f"{__name__}.dextrah_kuka_allegro_env_cfg:DextrahKukaAllegroReorientEnvCfg_PLAY",
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_pbt_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DexsuiteKukaAllegroPPORunnerCameraCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DextrahKukaAllegroPPORunnerCameraCfg",
         "configurable_entry_point": f"{__name__}.configurables:EnvConfigurables",
     },
 )
 
 gym.register(
-    id="Dexsuite-Kuka-Allegro-Shelves-Reorient-State-v0",
+    id="Dextrah-Kuka-Allegro-Shelves-Reorient-State-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.dexsuite_kuka_allegro_env_cfg:DexsuiteKukaAllegroShelvesReorientEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.dextrah_kuka_allegro_env_cfg:DextrahKukaAllegroShelvesReorientEnvCfg",
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_pbt_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DexsuiteKukaAllegroPPORunnerCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DextrahKukaAllegroPPORunnerCfg",
         "configurable_entry_point": f"{__name__}.configurables:EnvConfigurables",
     },
 )
 
 gym.register(
-    id="Dexsuite-Kuka-Allegro-Shelves-Reorient-State-Play-v0",
+    id="Dextrah-Kuka-Allegro-Shelves-Reorient-State-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.dexsuite_kuka_allegro_env_cfg:DexsuiteKukaAllegroShelvesReorientEnvCfg_PLAY",
+        "env_cfg_entry_point": f"{__name__}.dextrah_kuka_allegro_env_cfg:DextrahKukaAllegroShelvesReorientEnvCfg_PLAY",
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_pbt_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DexsuiteKukaAllegroPPORunnerCameraCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DextrahKukaAllegroPPORunnerCameraCfg",
         "configurable_entry_point": f"{__name__}.configurables:EnvConfigurables",
     },
 )
 
 gym.register(
-    id="Dexsuite-Kuka-Allegro-Shelves-Place-State-v0",
+    id="Dextrah-Kuka-Allegro-Shelves-Place-State-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.dexsuite_kuka_allegro_env_cfg:DexsuiteKukaAllegroShelvesPlaceEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.dextrah_kuka_allegro_env_cfg:DextrahKukaAllegroShelvesPlaceEnvCfg",
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_pbt_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DexsuiteKukaAllegroPPORunnerCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DextrahKukaAllegroPPORunnerCfg",
         "configurable_entry_point": f"{__name__}.configurables:EnvConfigurables",
     },
 )
 
 gym.register(
-    id="Dexsuite-Kuka-Allegro-Shelves-Place-State-Play-v0",
+    id="Dextrah-Kuka-Allegro-Shelves-Place-State-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.dexsuite_kuka_allegro_env_cfg:DexsuiteKukaAllegroShelvesPlaceEnvCfg_PLAY",
+        "env_cfg_entry_point": f"{__name__}.dextrah_kuka_allegro_env_cfg:DextrahKukaAllegroShelvesPlaceEnvCfg_PLAY",
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_pbt_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DexsuiteKukaAllegroPPORunnerCameraCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DextrahKukaAllegroPPORunnerCameraCfg",
         "configurable_entry_point": f"{__name__}.configurables:EnvConfigurables",
     },
 )
 
 # Camera Observation
 gym.register(
-    id="Dexsuite-Kuka-Allegro-Reorient-Camera-v0",
+    id="Dextrah-Kuka-Allegro-Reorient-Camera-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.dexsuite_kuka_allegro_camera_env_cfg:DexsuiteKukaAllegroReorientCameraEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.dextrah_kuka_allegro_camera_env_cfg:DextrahKukaAllegroReorientCameraEnvCfg",
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_pbt_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_camera_cfg:DexsuiteKukaAllegroPPORunnerCameraCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_camera_cfg:DextrahKukaAllegroPPORunnerCameraCfg",
         "configurable_entry_point": f"{__name__}.configurables:EnvConfigurables",
     },
 )
 
 
 gym.register(
-    id="Dexsuite-Kuka-Allegro-Reorient-Camera-Play-v0",
+    id="Dextrah-Kuka-Allegro-Reorient-Camera-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.dexsuite_kuka_allegro_camera_env_cfg:DexsuiteKukaAllegroReorientCameraEnvCfg_PLAY",
+        "env_cfg_entry_point": f"{__name__}.dextrah_kuka_allegro_camera_env_cfg:DextrahKukaAllegroReorientCameraEnvCfg_PLAY",
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_pbt_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_camera_cfg:DexsuiteKukaAllegroPPORunnerCameraCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_camera_cfg:DextrahKukaAllegroPPORunnerCameraCfg",
         "configurable_entry_point": f"{__name__}.configurables:EnvConfigurables",
     },
 )
 
-# Dexsuite Lift Environments
+# Dextrah Lift Environments
 # State Observation
 gym.register(
-    id="Dexsuite-Kuka-Allegro-Lift-State-v0",
+    id="Dextrah-Kuka-Allegro-Lift-State-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.dexsuite_kuka_allegro_env_cfg:DexsuiteKukaAllegroLiftEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.dextrah_kuka_allegro_env_cfg:DextrahKukaAllegroLiftEnvCfg",
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_pbt_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DexsuiteKukaAllegroPPORunnerCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DextrahKukaAllegroPPORunnerCfg",
         "configurable_entry_point": f"{__name__}.configurables:EnvConfigurables",
     },
 )
 
 gym.register(
-    id="Dexsuite-Kuka-Allegro-Lift-State-Play-v0",
+    id="Dextrah-Kuka-Allegro-Lift-State-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.dexsuite_kuka_allegro_env_cfg:DexsuiteKukaAllegroLiftEnvCfg_PLAY",
+        "env_cfg_entry_point": f"{__name__}.dextrah_kuka_allegro_env_cfg:DextrahKukaAllegroLiftEnvCfg_PLAY",
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_pbt_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DexsuiteKukaAllegroPPORunnerCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:DextrahKukaAllegroPPORunnerCfg",
         "configurable_entry_point": f"{__name__}.configurables:EnvConfigurables",
     },
 )
@@ -144,13 +144,13 @@ gym.register(
 
 # Camera Observation
 gym.register(
-    id="Dexsuite-Kuka-Allegro-Lift-Camera-v0",
+    id="Dextrah-Kuka-Allegro-Lift-Camera-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.dexsuite_kuka_allegro_camera_env_cfg:DexsuiteKukaAllegroLiftCameraEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.dextrah_kuka_allegro_camera_env_cfg:DextrahKukaAllegroLiftCameraEnvCfg",
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_pbt_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_camera_cfg:DexsuiteKukaAllegroPPORunnerCameraCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_camera_cfg:DextrahKukaAllegroPPORunnerCameraCfg",
         "configurable_entry_point": f"{__name__}.configurables:EnvConfigurables",
     },
 )
@@ -158,13 +158,13 @@ gym.register(
 
 
 gym.register(
-    id="Dexsuite-Kuka-Allegro-Lift-Camera-Play-v0",
+    id="Dextrah-Kuka-Allegro-Lift-Camera-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.dexsuite_kuka_allegro_camera_env_cfg:DexsuiteKukaAllegroLiftCameraEnvCfg_PLAY",
+        "env_cfg_entry_point": f"{__name__}.dextrah_kuka_allegro_camera_env_cfg:DextrahKukaAllegroLiftCameraEnvCfg_PLAY",
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_pbt_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_camera_cfg:DexsuiteKukaAllegroPPORunnerCameraCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_camera_cfg:DextrahKukaAllegroPPORunnerCameraCfg",
         "configurable_entry_point": f"{__name__}.configurables:EnvConfigurables",
     },
 )

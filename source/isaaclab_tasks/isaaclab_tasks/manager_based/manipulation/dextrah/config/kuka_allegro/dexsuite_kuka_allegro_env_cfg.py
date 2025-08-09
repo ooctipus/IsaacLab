@@ -11,8 +11,8 @@ from isaaclab.assets import ArticulationCfg
 from isaaclab_assets.robots.kuka_allegro import KUKA_ALLEGRO_CFG  # isort: skip
 from isaaclab.sensors import ContactSensorCfg
 
-from ... import dexsuite_env_cfg as dexsuite
-from ... import dexsuite_shelf_env_cfg as dexsuite_shelf
+from ... import dextrah_env_cfg as dextrah
+from ... import dextrah_shelf_env_cfg as dextrah_shelf
 from ... import mdp
 
 
@@ -21,7 +21,7 @@ class KukaAllegroRelJointPosActionCfg:
     action = mdp.RelativeJointPositionActionCfg(asset_name="robot", joint_names=[".*"], scale=0.1)
 
 @configclass
-class KukaAllegroReorientRewardCfg(dexsuite.RewardsCfg):
+class KukaAllegroReorientRewardCfg(dextrah.RewardsCfg):
 
     # bool awarding term if 2 finger tips are in contact with object, one of the contacting fingers has to be thumb. 
     good_finger_contact = RewTerm(
@@ -35,7 +35,7 @@ class KukaAllegroReorientRewardCfg(dexsuite.RewardsCfg):
 class KukaAllegroMixinCfg:
     rewards: KukaAllegroReorientRewardCfg = KukaAllegroReorientRewardCfg()
     actions: KukaAllegroRelJointPosActionCfg = KukaAllegroRelJointPosActionCfg()
-    def __post_init__(self: dexsuite.DexSuiteReorientEnvCfg):
+    def __post_init__(self: dextrah.DexSuiteReorientEnvCfg):
         super().__post_init__()
         self.observations.policy.contact = ObsTerm(func=mdp.fingers_contact_force_w)
         self.commands.object_pose.body_name = "palm_link"
@@ -80,30 +80,30 @@ class KukaAllegroMixinCfg:
             ))
 
 @configclass
-class DexsuiteKukaAllegroReorientEnvCfg(KukaAllegroMixinCfg, dexsuite.DexSuiteReorientEnvCfg):
+class DextrahKukaAllegroReorientEnvCfg(KukaAllegroMixinCfg, dextrah.DexSuiteReorientEnvCfg):
     pass
 
 
 @configclass
-class DexsuiteKukaAllegroReorientEnvCfg_PLAY(KukaAllegroMixinCfg, dexsuite.DexSuiteReorientEnvCfg_PLAY):
+class DextrahKukaAllegroReorientEnvCfg_PLAY(KukaAllegroMixinCfg, dextrah.DexSuiteReorientEnvCfg_PLAY):
     pass
 
 
 @configclass
-class DexsuiteKukaAllegroLiftEnvCfg(KukaAllegroMixinCfg, dexsuite.DexSuiteLiftEnvCfg):
+class DextrahKukaAllegroLiftEnvCfg(KukaAllegroMixinCfg, dextrah.DexSuiteLiftEnvCfg):
     pass
 
 
 @configclass
-class DexsuiteKukaAllegroLiftEnvCfg_PLAY(KukaAllegroMixinCfg, dexsuite.DexSuiteLiftEnvCfg_PLAY):
+class DextrahKukaAllegroLiftEnvCfg_PLAY(KukaAllegroMixinCfg, dextrah.DexSuiteLiftEnvCfg_PLAY):
     pass
 
 
 @configclass
-class DexsuiteKukaAllegroShelvesReorientEnvCfg(KukaAllegroMixinCfg, dexsuite_shelf.DexSuiteShelvesReorientEnvCfg):
+class DextrahKukaAllegroShelvesReorientEnvCfg(KukaAllegroMixinCfg, dextrah_shelf.DexSuiteShelvesReorientEnvCfg):
     pass
 
 
 @configclass
-class DexsuiteKukaAllegroShelvesPlaceEnvCfg(KukaAllegroMixinCfg, dexsuite_shelf.DexSuiteShelvesPlaceEnvCfg):
+class DextrahKukaAllegroShelvesPlaceEnvCfg(KukaAllegroMixinCfg, dextrah_shelf.DexSuiteShelvesPlaceEnvCfg):
     pass

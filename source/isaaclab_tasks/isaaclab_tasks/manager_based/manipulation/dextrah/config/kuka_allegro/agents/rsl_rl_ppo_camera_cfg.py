@@ -9,7 +9,7 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, R
 from isaaclab_rl.rsl_rl.actor_critic_vision_cfg import ActorCriticVisionAdapterCfg, CNNEncoderCfg
 
 @configclass
-class DexsuiteKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
+class DextrahKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 36
     obs_groups = {
         "policy": ["policy", "base_image", "wrist_image"],
@@ -17,7 +17,7 @@ class DexsuiteKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
     }
     max_iterations = 15000
     save_interval = 250
-    experiment_name = "dexsuite_kuka_allegro"
+    experiment_name = "dextrah_kuka_allegro"
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,

@@ -49,8 +49,7 @@ def recurse(iv_elem, fv_elem, data_elem, frac):
     if isinstance(data_elem, Sequence) and not isinstance(data_elem, (str, bytes)):
         # Note: we assume iv_elem and fv_elem have the same structure as data_elem
         return type(data_elem)(
-            recurse(iv_e, fv_e, d_e, frac)
-            for iv_e, fv_e, d_e in zip(iv_elem, fv_elem, data_elem)
+            recurse(iv_e, fv_e, d_e, frac) for iv_e, fv_e, d_e in zip(iv_elem, fv_elem, data_elem)
         )
     # Otherwise it's a leaf scalar: do the interpolation
     new_val = frac * (fv_elem - iv_elem) + iv_elem

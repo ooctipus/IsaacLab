@@ -12,14 +12,14 @@ from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 
-from .dexsuite_kuka_allegro_env_cfg import KukaAllegroMixinCfg
-from ... import dexsuite_env_cfg as dexsuite_state_impl
+from .dextrah_kuka_allegro_env_cfg import KukaAllegroMixinCfg
+from ... import dextrah_env_cfg as dextrah_state_impl
 from ... import mdp
 
 
 @configclass
-class KukaAllegroCameraSceneCfg(dexsuite_state_impl.SceneCfg):
-    """Dexsuite scene for multi-objects Lifting/Reorientation"""
+class KukaAllegroCameraSceneCfg(dextrah_state_impl.SceneCfg):
+    """Dextrah scene for multi-objects Lifting/Reorientation"""
     base_camera = TiledCameraCfg(
         prim_path="/World/envs/env_.*/Camera",
         offset=TiledCameraCfg.OffsetCfg(
@@ -61,7 +61,7 @@ class KukaAllegroCameraSceneCfg(dexsuite_state_impl.SceneCfg):
 
 
 @configclass
-class KukaAllegroCameraObservationsCfg(dexsuite_state_impl.ObservationsCfg):
+class KukaAllegroCameraObservationsCfg(dextrah_state_impl.ObservationsCfg):
     """Observation specifications for the MDP."""
 
     @configclass
@@ -96,20 +96,20 @@ class KukaAllegroCameraMixinCfg(KukaAllegroMixinCfg):
 
 
 @configclass
-class DexsuiteKukaAllegroReorientCameraEnvCfg(KukaAllegroCameraMixinCfg, dexsuite_state_impl.DexSuiteReorientEnvCfg):
+class DextrahKukaAllegroReorientCameraEnvCfg(KukaAllegroCameraMixinCfg, dextrah_state_impl.DexSuiteReorientEnvCfg):
     pass
 
 
 @configclass
-class DexsuiteKukaAllegroReorientCameraEnvCfg_PLAY(KukaAllegroCameraMixinCfg, dexsuite_state_impl.DexSuiteReorientEnvCfg_PLAY):
+class DextrahKukaAllegroReorientCameraEnvCfg_PLAY(KukaAllegroCameraMixinCfg, dextrah_state_impl.DexSuiteReorientEnvCfg_PLAY):
     pass
 
 
 @configclass
-class DexsuiteKukaAllegroLiftCameraEnvCfg(KukaAllegroCameraMixinCfg, dexsuite_state_impl.DexSuiteLiftEnvCfg):
+class DextrahKukaAllegroLiftCameraEnvCfg(KukaAllegroCameraMixinCfg, dextrah_state_impl.DexSuiteLiftEnvCfg):
     pass
 
 
 @configclass
-class DexsuiteKukaAllegroLiftCameraEnvCfg_PLAY(KukaAllegroCameraMixinCfg, dexsuite_state_impl.DexSuiteLiftEnvCfg_PLAY):
+class DextrahKukaAllegroLiftCameraEnvCfg_PLAY(KukaAllegroCameraMixinCfg, dextrah_state_impl.DexSuiteLiftEnvCfg_PLAY):
     pass
