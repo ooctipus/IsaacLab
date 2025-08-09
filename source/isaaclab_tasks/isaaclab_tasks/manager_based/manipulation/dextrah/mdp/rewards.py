@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers.
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
@@ -9,15 +9,16 @@ import torch
 from typing import TYPE_CHECKING
 
 from isaaclab.assets import RigidObject
+from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 from isaaclab.sensors import ContactSensor
-from isaaclab.managers import SceneEntityCfg
-from isaaclab.utils.math import combine_frame_transforms, compute_pose_error
 from isaaclab.utils import math as math_utils
-from isaaclab.managers import ManagerTermBase
+from isaaclab.utils.math import combine_frame_transforms, compute_pose_error
+
 from .utils import sample_object_point_cloud
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
+
 
 def action_rate_l2_clamped(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Penalize the rate of change of the actions using L2 squared kernel."""
@@ -44,25 +45,29 @@ def object_ee_distance(
     object_ee_distance = torch.norm(asset_pos - object_pos[:, None, :], dim=-1).max(dim=-1).values
     return 1 - torch.tanh(object_ee_distance / std)
 
+
 class lifted(ManagerTermBase):
 
     def __init__(self, cfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
 
-        self.object_cfg: SceneEntityCfg = cfg.params.get("object_cfg", SceneEntityCfg('object'))
+        self.object_cfg: SceneEntityCfg = cfg.params.get("object_cfg", SceneEntityCfg("object"))
         self.num_points: int = cfg.params.get("num_points", 10)
         self.visualize = cfg.params.get("visualize", True)
         self.object: RigidObject = env.scene[self.object_cfg.name]
 
         # uncomment to visualize
         if self.visualize:
-            from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
             from isaaclab.markers import VisualizationMarkers
+            from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
+
             ray_cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/RewardPointCloud")
             ray_cfg.markers["hit"].radius = 0.001
             self.visualizer = VisualizationMarkers(ray_cfg)
 
-        self.points = sample_object_point_cloud(env.num_envs, self.num_points, self.object.cfg.prim_path, use_cache=True).to(env.device)
+        self.points = sample_object_point_cloud(
+            env.num_envs, self.num_points, self.object.cfg.prim_path, use_cache=True
+        ).to(env.device)
 
     def __call__(
         self,
@@ -70,7 +75,7 @@ class lifted(ManagerTermBase):
         min_height: float,
         object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
         num_points: int = 10,
-        visualize: bool = True
+        visualize: bool = True,
     ):
         object_pos_w = self.object.data.root_pos_w.unsqueeze(1).repeat(1, self.num_points, 1)
         object_rot_w = self.object.data.root_quat_w.unsqueeze(1).repeat(1, self.num_points, 1)
@@ -96,13 +101,14 @@ def contacts(env: ManagerBasedRLEnv, threshold: float) -> torch.Tensor:
     index_contact = index_contact_sensor.data.force_matrix_w.view(env.num_envs, 3)
     middle_contact = middle_contact_sensor.data.force_matrix_w.view(env.num_envs, 3)
     ring_contact = ring_contact_sensor.data.force_matrix_w.view(env.num_envs, 3)
-    
+
     thumb_contact_mag = torch.norm(thumb_contact, dim=-1)
     index_contact_mag = torch.norm(index_contact, dim=-1)
     middle_contact_mag = torch.norm(middle_contact, dim=-1)
     ring_contact_mag = torch.norm(ring_contact, dim=-1)
-    good_contact_cond1 = (thumb_contact_mag > threshold) & ((index_contact_mag > threshold) |\
-                        (middle_contact_mag > threshold) | (ring_contact_mag > threshold))
+    good_contact_cond1 = (thumb_contact_mag > threshold) & (
+        (index_contact_mag > threshold) | (middle_contact_mag > threshold) | (ring_contact_mag > threshold)
+    )
 
     return good_contact_cond1
 
@@ -130,7 +136,9 @@ def success_reward(
     asset: RigidObject = env.scene[asset_cfg.name]
     object: RigidObject = env.scene[align_asset_cfg.name]
     command = env.command_manager.get_command(command_name)
-    des_pos_w, des_quat_w = combine_frame_transforms(asset.data.root_pos_w, asset.data.root_quat_w, command[:, :3], command[:, 3:7])
+    des_pos_w, des_quat_w = combine_frame_transforms(
+        asset.data.root_pos_w, asset.data.root_quat_w, command[:, :3], command[:, 3:7]
+    )
     pos_err, rot_err = compute_pose_error(des_pos_w, des_quat_w, object.data.root_pos_w, object.data.root_quat_w)
     pos_dist = torch.norm(pos_err, dim=1)
     if not rot_std:
@@ -139,11 +147,11 @@ def success_reward(
     rot_dist = torch.norm(rot_err, dim=1)
     return (1 - torch.tanh(pos_dist / pos_std)) * (1 - torch.tanh(rot_dist / rot_std))
 
+
 def position_command_error_tanh(
     env: ManagerBasedRLEnv, std: float, command_name: str, asset_cfg: SceneEntityCfg, align_asset_cfg: SceneEntityCfg
 ) -> torch.Tensor:
-    """Reward tracking of the position using the tanh kernel.
-    """
+    """Reward tracking of the position using the tanh kernel."""
     # extract the asset (to enable type hinting)
     asset: RigidObject = env.scene[asset_cfg.name]
     object: RigidObject = env.scene[align_asset_cfg.name]
@@ -158,8 +166,7 @@ def position_command_error_tanh(
 def orientation_command_error_tanh(
     env: ManagerBasedRLEnv, std: float, command_name: str, asset_cfg: SceneEntityCfg, align_asset_cfg: SceneEntityCfg
 ) -> torch.Tensor:
-    """Reward tracking of the orientation using the tanh kernel.
-    """
+    """Reward tracking of the orientation using the tanh kernel."""
     # extract the asset (to enable type hinting)
     asset: RigidObject = env.scene[asset_cfg.name]
     object: RigidObject = env.scene[align_asset_cfg.name]

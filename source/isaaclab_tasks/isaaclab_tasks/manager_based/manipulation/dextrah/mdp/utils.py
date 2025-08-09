@@ -1,20 +1,29 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 import hashlib
+import logging
 import numpy as np
 import torch
 import trimesh
-import logging
 from trimesh.sample import sample_surface
-from pxr import UsdGeom
+
 import isaacsim.core.utils.prims as prim_utils
+from pxr import UsdGeom
+
 from isaaclab.sim.utils import get_all_matching_child_prims
 
 # ---- module-scope caches ----
-_PRIM_SAMPLE_CACHE: dict[tuple[str, int], np.ndarray] = {}   # (prim_hash, num_points) -> (N,3) in root frame
-_FINAL_SAMPLE_CACHE: dict[str, np.ndarray] = {}              # env_hash -> (num_points,3) in root frame
+_PRIM_SAMPLE_CACHE: dict[tuple[str, int], np.ndarray] = {}  # (prim_hash, num_points) -> (N,3) in root frame
+_FINAL_SAMPLE_CACHE: dict[str, np.ndarray] = {}  # env_hash -> (num_points,3) in root frame
+
 
 def clear_pointcloud_caches():
     _PRIM_SAMPLE_CACHE.clear()
     _FINAL_SAMPLE_CACHE.clear()
+
 
 def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str, device: str = "cpu") -> torch.Tensor:
     """
@@ -38,8 +47,7 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str, de
 
         # Gather prims
         prims = get_all_matching_child_prims(
-            obj_path,
-            predicate=lambda p: p.GetTypeName() in ("Mesh", "Cube", "Sphere", "Cylinder", "Capsule", "Cone")
+            obj_path, predicate=lambda p: p.GetTypeName() in ("Mesh", "Cube", "Sphere", "Cylinder", "Capsule", "Cone")
         )
         if not prims:
             raise KeyError(f"No valid prims under {obj_path}")
@@ -126,7 +134,7 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str, de
                 local_pts = tensor_pts[prim_idxs]
 
                 # prim -> root transform
-                rel = xform_cache.GetLocalToWorldTransform(prim) * world_root.GetInverse() 
+                rel = xform_cache.GetLocalToWorldTransform(prim) * world_root.GetInverse()
                 mat_np = np.array([[rel[r][c] for c in range(4)] for r in range(4)], dtype=np.float32)
                 mat_t = torch.from_numpy(mat_np).to(device)
 
@@ -167,8 +175,8 @@ def _triangulate_faces(prim) -> np.ndarray:
     it = iter(indices)
     for cnt in counts:
         poly = [next(it) for _ in range(cnt)]
-        for k in range(1, cnt-1):
-            faces.append([poly[0], poly[k], poly[k+1]])
+        for k in range(1, cnt - 1):
+            faces.append([poly[0], poly[k], poly[k + 1]])
     return np.asarray(faces, dtype=np.int64)
 
 
@@ -182,24 +190,18 @@ def create_primitive_mesh(prim) -> trimesh.Trimesh:
         return trimesh.creation.icosphere(subdivisions=3, radius=r)
     elif prim_type == "Cylinder":
         c = UsdGeom.Cylinder(prim)
-        return trimesh.creation.cylinder(
-            radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get()
-        )
+        return trimesh.creation.cylinder(radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get())
     elif prim_type == "Capsule":
         c = UsdGeom.Capsule(prim)
-        return trimesh.creation.capsule(
-            radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get()
-        )
+        return trimesh.creation.capsule(radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get())
     elif prim_type == "Cone":  # Cone
         c = UsdGeom.Cone(prim)
-        return trimesh.creation.cone(
-            radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get()
-        )
+        return trimesh.creation.cone(radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get())
     else:
         raise KeyError(f"{prim_type} is not a valid primitive mesh type")
 
 
-def fps(points: torch.Tensor, n_samples: int, memory_threashold= 2 * 1024 ** 3) -> torch.Tensor:  # 2 GiB
+def fps(points: torch.Tensor, n_samples: int, memory_threashold=2 * 1024**3) -> torch.Tensor:  # 2 GiB
     device = points.device
     N = points.shape[0]
     elem_size = points.element_size()
@@ -207,7 +209,7 @@ def fps(points: torch.Tensor, n_samples: int, memory_threashold= 2 * 1024 ** 3) 
     if bytes_needed <= memory_threashold:
         dist_mat = torch.cdist(points, points)
         sampled_idx = torch.zeros(n_samples, dtype=torch.long, device=device)
-        min_dists = torch.full((N,), float('inf'), device=device)
+        min_dists = torch.full((N,), float("inf"), device=device)
         farthest = torch.randint(0, N, (1,), device=device)
         for j in range(n_samples):
             sampled_idx[j] = farthest
@@ -216,7 +218,7 @@ def fps(points: torch.Tensor, n_samples: int, memory_threashold= 2 * 1024 ** 3) 
         return sampled_idx
     logging.warning(f"FPS fallback to iterative (needed {bytes_needed} > {memory_threashold})")
     sampled_idx = torch.zeros(n_samples, dtype=torch.long, device=device)
-    distances = torch.full((N,), float('inf'), device=device)
+    distances = torch.full((N,), float("inf"), device=device)
     farthest = torch.randint(0, N, (1,), device=device)
     for j in range(n_samples):
         sampled_idx[j] = farthest

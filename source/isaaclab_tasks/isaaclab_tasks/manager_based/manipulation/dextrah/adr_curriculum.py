@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.utils import configclass
 
@@ -9,10 +14,9 @@ class CurriculumCfg:
     """Curriculum terms for the MDP."""
 
     adr = CurrTerm(
-        func=mdp.DifficultyScheduler,
-        params={"init_difficulty": 0, "min_difficulty": 0, "max_difficulty": 10}
+        func=mdp.DifficultyScheduler, params={"init_difficulty": 0, "min_difficulty": 0, "max_difficulty": 10}
     )
-    
+
     # joint_pos_unoise_min_adr = CurrTerm(
     #     func=mdp.modify_term_cfg,
     #     params={
@@ -84,7 +88,7 @@ class CurriculumCfg:
     #         "modify_params": {"iv": 0., "fv": .03, "difficulty_term_str": "adr"}
     #     }
     # )
-    
+
     # object_obs_unoise_min_adr = CurrTerm(
     #     func=mdp.modify_term_cfg,
     #     params={
@@ -93,7 +97,7 @@ class CurriculumCfg:
     #         "modify_params": {"iv": 0., "fv": -.01, "difficulty_term_str": "adr"}
     #     }
     # )
-    
+
     # object_obs_unoise_max_adr = CurrTerm(
     #     func=mdp.modify_term_cfg,
     #     params={
@@ -138,7 +142,7 @@ class CurriculumCfg:
     #         "modify_params": {"iv": (0., 0.), "fv": (0., 5.), "difficulty_term_str": "adr"}
     #     }
     # )
-    
+
     gravity_adr = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
@@ -147,7 +151,7 @@ class CurriculumCfg:
             "modify_params": {
                 "iv": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
                 "fv": ((0.0, 0.0, -9.81), (0.0, 0.0, -9.81)),
-                "difficulty_term_str": "adr"
-            }
-        }
+                "difficulty_term_str": "adr",
+            },
+        },
     )

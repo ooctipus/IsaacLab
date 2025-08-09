@@ -26,7 +26,7 @@ class ObjectUniformPoseCommandCfg(CommandTermCfg):
 
     asset_name: str = MISSING
     """Name of the coordinate referencing asset in the environment for which the commands are generated respect to."""
-    
+
     object_name: str = MISSING
     """Name of the object in the environment for which the commands are generated."""
 
