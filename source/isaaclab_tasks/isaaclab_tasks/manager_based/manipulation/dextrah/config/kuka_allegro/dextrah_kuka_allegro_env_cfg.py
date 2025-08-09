@@ -12,7 +12,6 @@ from isaaclab_assets.robots.kuka_allegro import KUKA_ALLEGRO_CFG  # isort: skip
 from isaaclab.sensors import ContactSensorCfg
 
 from ... import dextrah_env_cfg as dextrah
-from ... import dextrah_shelf_env_cfg as dextrah_shelf
 from ... import mdp
 
 

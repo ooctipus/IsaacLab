@@ -116,7 +116,6 @@ class ObservationsCfg:
 
     # observation groups
     policy: PolicyCfg = PolicyCfg()
-    critic: PolicyCfg = PolicyCfg()
 
 @configclass
 class EventCfg:
