@@ -11,7 +11,7 @@ BASE_IMAGE="isaac-lab-base"
 FINAL_IMAGE="nvcr.io/nvidian/octi-isaac-lab:${TAG}"
 
 echo "▶️  Starting container service"
-./docker/container.py start
+ISAACLAB_NOCACHE=1  ./docker/container.py start
 
 echo "🏷  Tagging image as ${FINAL_IMAGE}"
 docker tag "${BASE_IMAGE}" "${FINAL_IMAGE}"
