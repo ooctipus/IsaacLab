@@ -12,17 +12,6 @@ from .action import FabricAction
 
 
 @configclass
-class LimitsScaledJointPositionActionCfg(JointActionCfg):
-    """Configuration for the joint position action term.
-
-    See :class:`LimitsScaledJointPositionAction` for more details.
-    """
-
-    class_type: type[ActionTerm] = action.LimitsScaledJointPositionAction
-
-    ema_lambda: float = 0.9
-
-@configclass
 class PCAHandActionCfg(ActionTermCfg):
 
     class_type: type[ActionTerm] = action.PCAAction
