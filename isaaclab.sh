@@ -46,18 +46,20 @@ install_system_deps() {
 # Returns success (exit code 0 / "true") if the detected Isaac Sim version starts with 4.5,
 # otherwise returns non-zero ("false"). Works with both symlinked binary installs and pip installs.
 is_isaacsim_version_4_5() {
+    # We'll store the detected version string here (e.g., "4.5.1").
     local version=""
+    # Get the Python interpreter used by Isaac Lab (kit python, conda python, or system python).
     local python_exe
     python_exe=$(extract_python_exe)
 
-    # 0) Fast path: read VERSION file from the symlinked _isaac_sim directory (binary install)
+    # --- 0) Fast path: read VERSION file from the symlinked _isaac_sim directory (binary install) ---
     # If the repository has _isaac_sim → <IsaacSimRoot> symlink, the VERSION file is the simplest source of truth.
     if [[ -f "${ISAACLAB_PATH}/_isaac_sim/VERSION" ]]; then
         # Read first line of the VERSION file; don't fail the whole script on errors.
         version=$(head -n1 "${ISAACLAB_PATH}/_isaac_sim/VERSION" || true)
     fi
 
-    # 1) Package-path probe: import isaacsim and walk up to ../../VERSION (pip or nonstandard layouts)
+    # --- 1) Package-path probe: import isaacsim and walk up to ../../VERSION (pip or nonstandard layouts) ---
     # If we still don't know the version, ask Python where the isaacsim package lives
     if [[ -z "$version" ]]; then
         local sim_file=""
@@ -71,7 +73,7 @@ is_isaacsim_version_4_5() {
         fi
     fi
 
-    # 2) Fallback: use package metadata via importlib.metadata.version("isaacsim")
+    # --- 2) Fallback: use package metadata via importlib.metadata.version("isaacsim") ---
     if [[ -z "$version" ]]; then
         version=$("${python_exe}" <<'PY' 2>/dev/null || true
 from importlib.metadata import version, PackageNotFoundError
@@ -83,7 +85,7 @@ PY
 )
     fi
 
-    # Final decision: return success if version begins with "4.5", 0 if match, 1 otherwise.
+    # --- Final decision: return success if version begins with "4.5", 0 if match, 1 otherwise. ---
     [[ "$version" == 4.5* ]]
 }
 
