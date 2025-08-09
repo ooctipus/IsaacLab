@@ -19,7 +19,7 @@ from isaaclab.utils.math import combine_frame_transforms, subtract_frame_transfo
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
-    from . import pose_commands_cfg as dex_cmd_cfgs
+    from . import commands_cfg as dex_cmd_cfgs
 
 class ObjectUniformPoseCommand(CommandTerm):
     """Command generator for generating pose commands uniformly.

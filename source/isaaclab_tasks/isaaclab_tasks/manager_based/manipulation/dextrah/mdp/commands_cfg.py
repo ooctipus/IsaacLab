@@ -15,7 +15,7 @@ from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.utils import configclass
 
-from . import pose_commands as dex_cmd
+from . import commands as dex_cmd
 
 
 @configclass
