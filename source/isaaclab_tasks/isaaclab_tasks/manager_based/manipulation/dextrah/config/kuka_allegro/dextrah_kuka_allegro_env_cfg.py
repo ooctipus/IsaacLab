@@ -96,13 +96,3 @@ class DextrahKukaAllegroLiftEnvCfg(KukaAllegroMixinCfg, dextrah.DexSuiteLiftEnvC
 @configclass
 class DextrahKukaAllegroLiftEnvCfg_PLAY(KukaAllegroMixinCfg, dextrah.DexSuiteLiftEnvCfg_PLAY):
     pass
-
-
-@configclass
-class DextrahKukaAllegroShelvesReorientEnvCfg(KukaAllegroMixinCfg, dextrah_shelf.DexSuiteShelvesReorientEnvCfg):
-    pass
-
-
-@configclass
-class DextrahKukaAllegroShelvesPlaceEnvCfg(KukaAllegroMixinCfg, dextrah_shelf.DexSuiteShelvesPlaceEnvCfg):
-    pass
