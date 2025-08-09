@@ -60,29 +60,6 @@ def recurse(iv_elem, fv_elem, data_elem, frac):
         return new_val.item()
 
 
-def resample_bucket_range(
-    env: ManagerBasedRLEnv,
-    env_id,
-    data,
-    static_fric_range: tuple[tuple[float, float], tuple[float, float]],
-    dynamic_fric_range: tuple[tuple[float, float], tuple[float, float]],
-    restitution_range: tuple[tuple[float, float], tuple[float, float]],
-    difficulty_term_str: str
-):
-    # cpu only
-    iv_s, fv_s = torch.tensor(static_fric_range[0]), torch.tensor(static_fric_range[1])
-    iv_d, fv_d = torch.tensor(dynamic_fric_range[0]), torch.tensor(dynamic_fric_range[1])
-    iv_r, fv_r = torch.tensor(restitution_range[0]), torch.tensor(restitution_range[1])
-    difficulty_term: DifficultyScheduler = env.curriculum_manager.get_term_cfg(difficulty_term_str).func
-    difficulty_frac = difficulty_term.difficulty_frac.item()
-    new_static_fric_range = difficulty_frac * (fv_s - iv_s) + iv_s
-    new_dynamic_fric_range = difficulty_frac * (fv_d - iv_d) + iv_d
-    new_restitution_range = difficulty_frac * (fv_r - iv_r) + iv_r
-    ranges = torch.stack([new_static_fric_range, new_dynamic_fric_range, new_restitution_range], dim=0)
-    new_buckets = sample_uniform(ranges[:, 0], ranges[:, 1], (len(data), 3), device="cpu")
-    return new_buckets
-
-
 def value_override(env: ManagerBasedRLEnv, env_id, data, new_val, num_steps):
     if env.common_step_counter > num_steps:
         return new_val
