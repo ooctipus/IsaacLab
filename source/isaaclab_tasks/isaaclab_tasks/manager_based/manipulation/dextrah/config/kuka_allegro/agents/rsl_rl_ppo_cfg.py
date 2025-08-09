@@ -14,7 +14,7 @@ class DextrahKukaAllegroPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     max_iterations = 15000
     save_interval = 250
     experiment_name = "dextrah_kuka_allegro"
-    empirical_normalization=True
+    empirical_normalization = True
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
         actor_hidden_dims=[512, 256, 128],

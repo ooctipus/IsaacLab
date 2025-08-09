@@ -82,7 +82,7 @@ class KukaAllegroCameraObservationsCfg(dextrah_state_impl.ObservationsCfg):
             clip=(-1.0, 1.0),
             params={"sensor_cfg": SceneEntityCfg("wrist_camera")},
         )
-    
+
         def __post_init__(self):
             super().__post_init__()
             self.history_length = None
@@ -95,10 +95,9 @@ class KukaAllegroCameraMixinCfg(KukaAllegroMixinCfg):
     viewer: ViewerCfg = ViewerCfg(eye=(0.75, -1.75, 0.75), lookat=(-0.5, 0.0, 0.50), origin_type="env")
     scene: KukaAllegroCameraSceneCfg = KukaAllegroCameraSceneCfg(num_envs=4096, env_spacing=3, replicate_physics=False)
     observations: KukaAllegroCameraObservationsCfg = KukaAllegroCameraObservationsCfg()
-    
+
     def __post_init__(self):
         super().__post_init__()
-        
 
 
 @configclass
