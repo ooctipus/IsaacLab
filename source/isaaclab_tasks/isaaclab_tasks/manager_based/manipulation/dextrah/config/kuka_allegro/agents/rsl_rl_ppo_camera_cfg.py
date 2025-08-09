@@ -6,14 +6,13 @@
 from isaaclab.utils import configclass
 
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
-from isaaclab_rl.rsl_rl.actor_critic_vision_cfg import ActorCriticVisionAdapterCfg, CNNEncoderCfg
 
 @configclass
 class DextrahKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 36
     obs_groups = {
         "policy": ["policy", "base_image", "wrist_image"],
-        "critic": ["policy", "critic"]
+        "critic": ["policy", "privileged"]
     }
     max_iterations = 15000
     save_interval = 250
