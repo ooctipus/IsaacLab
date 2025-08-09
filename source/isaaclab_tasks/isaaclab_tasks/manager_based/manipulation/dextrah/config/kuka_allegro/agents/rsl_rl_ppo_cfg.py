@@ -11,14 +11,12 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, R
 @configclass
 class DextrahKukaAllegroPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 36
-    obs_groups = {"policy": ["policy", "privileged"], "critic": ["policy", "privileged"]}
     max_iterations = 15000
     save_interval = 250
     experiment_name = "dextrah_kuka_allegro"
+    empirical_normalization=True
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
-        actor_obs_normalization=True,
-        critic_obs_normalization=True,
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
         activation="elu",
