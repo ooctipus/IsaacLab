@@ -5,8 +5,9 @@
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
-from isaaclab.sim import CuboidCfg, SphereCfg, CapsuleCfg, ConeCfg, RigidBodyMaterialCfg
+from isaaclab.sim import CapsuleCfg, ConeCfg, CuboidCfg, RigidBodyMaterialCfg, SphereCfg
 from isaaclab.utils import configclass
+
 from ... import mdp
 
 
@@ -23,13 +24,10 @@ class KukaAllegroFabricActionCfg:
 @configclass
 class EnvConfigurables:
     env: dict[str, any] = {
-        "actions": {
-            "geometry_fabric": KukaAllegroFabricActionCfg(),
-            "pca": KukaAllegroPCAActionCfg()
-        },
+        "actions": {"geometry_fabric": KukaAllegroFabricActionCfg(), "pca": KukaAllegroPCAActionCfg()},
         "scene.object": {
             "cube": RigidObjectCfg(
-                prim_path="{ENV_REGEX_NS}/Object",  
+                prim_path="{ENV_REGEX_NS}/Object",
                 spawn=sim_utils.MultiAssetSpawnerCfg(
                     assets_cfg=[
                         CuboidCfg(size=(0.1, 0.1, 0.1), physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
@@ -61,11 +59,19 @@ class EnvConfigurables:
                         CuboidCfg(size=(0.01, 0.1, 0.1), physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
                         SphereCfg(radius=0.05, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
                         SphereCfg(radius=0.025, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
-                        CapsuleCfg(radius=0.04, height=0.025, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
-                        CapsuleCfg(radius=0.04, height=0.01, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
+                        CapsuleCfg(
+                            radius=0.04, height=0.025, physics_material=RigidBodyMaterialCfg(static_friction=0.5)
+                        ),
+                        CapsuleCfg(
+                            radius=0.04, height=0.01, physics_material=RigidBodyMaterialCfg(static_friction=0.5)
+                        ),
                         CapsuleCfg(radius=0.04, height=0.1, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
-                        CapsuleCfg(radius=0.025, height=0.1, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
-                        CapsuleCfg(radius=0.025, height=0.2, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
+                        CapsuleCfg(
+                            radius=0.025, height=0.1, physics_material=RigidBodyMaterialCfg(static_friction=0.5)
+                        ),
+                        CapsuleCfg(
+                            radius=0.025, height=0.2, physics_material=RigidBodyMaterialCfg(static_friction=0.5)
+                        ),
                         CapsuleCfg(radius=0.01, height=0.2, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
                         ConeCfg(radius=0.05, height=0.1, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
                         ConeCfg(radius=0.025, height=0.1, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),

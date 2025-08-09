@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers.
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
@@ -7,13 +7,11 @@ from isaaclab.utils import configclass
 
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
 
+
 @configclass
 class DextrahKukaAllegroPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 36
-    obs_groups = {
-        "policy": ["policy", "privileged"],
-        "critic": ["policy", "privileged"]
-    }
+    obs_groups = {"policy": ["policy", "privileged"], "critic": ["policy", "privileged"]}
     max_iterations = 15000
     save_interval = 250
     experiment_name = "dextrah_kuka_allegro"
