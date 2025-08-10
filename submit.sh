@@ -212,16 +212,20 @@ if [[ "$mode" == "submit" ]]; then
   platform_explicit=""
 
   for arg in "${args[@]}"; do
-    if [[ $arg == --* ]]; then
+    # keep special bool flags normalized
+    if [[ $arg == --video || $arg == --enable_cameras || $arg == --video=* || $arg == --enable_cameras=* ]]; then
       handle_cli_flag "$arg"
-    elif [[ $arg == *=* ]]; then
+      continue
+    fi
+
+    # parse key=val (this now also catches --key=val like --task=...)
+    if [[ $arg == *=* ]]; then
       key=${arg%%=*}; val=${arg#*=}
       if [[ "$key" == "pool" ]]; then
-        pool_explicit="$val"
-        continue
+        pool_explicit="$val"; continue
       elif [[ "$key" == "platform" ]]; then
         platform_explicit="$val"
-        cluster[platform]="$val"  # honor platform override
+        cluster[platform]="$val"
         continue
       fi
 
@@ -233,6 +237,9 @@ if [[ "$mode" == "submit" ]]; then
       else
         fixed["$key"]="$val"
       fi
+    elif [[ $arg == --* ]]; then
+      # bare flags (no '=') pass through
+      cli_flags+=( "$arg" )
     else
       echo "Invalid argument: $arg" >&2
       usage
