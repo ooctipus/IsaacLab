@@ -110,7 +110,7 @@ declare -A pool_to_platform=(
 
 # default cluster settings
 declare -A cluster=(
-  [image]="nvcr.io/nvidian/octi-isaac-lab:dextrah"
+  [image]="factory"
   [num_gpu]=1
   [num_cpu]=2
   [num_node]=1
