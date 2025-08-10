@@ -55,12 +55,12 @@ class TerminationManager(ManagerBase):
         """
         # create buffers to parse and store terms
         self._term_names: list[str] = list()
-        self._term_name_to_term_idx = {name: i for i, name in enumerate(self._term_names)}
         self._term_cfgs: list[TerminationTermCfg] = list()
         self._class_term_cfgs: list[TerminationTermCfg] = list()
 
         # call the base class constructor (this will parse the terms config)
         super().__init__(cfg, env)
+        self._term_name_to_term_idx = {name: i for i, name in enumerate(self._term_names)}
         # prepare extra info to store individual termination term information
         self._term_dones = torch.zeros((self.num_envs, len(self._term_names)), device=self.device, dtype=torch.bool)
         # create buffer for managing termination per environment
@@ -183,7 +183,7 @@ class TerminationManager(ManagerBase):
         Returns:
             The corresponding termination term value. Shape is (num_envs,).
         """
-        return self._term_dones[:, self._term_name_to_term_idx[term_name]]
+        return self._term_dones[:, self._term_name_to_term_idx[name]]
 
     def get_active_iterable_terms(self, env_idx: int) -> Sequence[tuple[str, Sequence[float]]]:
         """Returns the active terms as iterable sequence of tuples.
