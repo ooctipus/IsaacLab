@@ -334,7 +334,7 @@ class RewardsCfg:
 
     position_tracking = RewTerm(
         func=mdp.position_command_error_tanh,
-        weight=2.0,
+        weight=1.0,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "std": 0.2,
@@ -345,7 +345,7 @@ class RewardsCfg:
 
     orientation_tracking = RewTerm(
         func=mdp.orientation_command_error_tanh,
-        weight=4.0,
+        weight=2.0,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "std": 1.5,
@@ -356,7 +356,7 @@ class RewardsCfg:
 
     success = RewTerm(
         func=mdp.success_reward,
-        weight=10,
+        weight=5,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "pos_std": 0.1,

@@ -26,7 +26,7 @@ class KukaAllegroReorientRewardCfg(dexsuite.RewardsCfg):
     # bool awarding term if 2 finger tips are in contact with object, one of the contacting fingers has to be thumb.
     good_finger_contact = RewTerm(
         func=mdp.contacts,
-        weight=0.5,
+        weight=0.33,
         params={"threshold": 1.0},
     )
 
