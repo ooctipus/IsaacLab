@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers.
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
@@ -13,14 +13,13 @@ from __future__ import annotations
 
 import re
 import torch
-from typing import Any
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from isaaclab.assets import Articulation, RigidObject
-from isaaclab.managers import SceneEntityCfg, ManagerTermBase
-from isaaclab.utils.math import combine_frame_transforms, compute_pose_error, sample_uniform
 from isaaclab.envs import mdp
+from isaaclab.managers import ManagerTermBase, SceneEntityCfg
+from isaaclab.utils.math import combine_frame_transforms, compute_pose_error
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -44,13 +43,12 @@ def initial_final_interpolate_fn(env: ManagerBasedRLEnv, env_id, data, iv, fv, d
 
     return recurse(iv_t.tolist(), fv_t.tolist(), data, frac)
 
+
 def recurse(iv_elem, fv_elem, data_elem, frac):
     # If it's a sequence, rebuild the same type with each element recursed
     if isinstance(data_elem, Sequence) and not isinstance(data_elem, (str, bytes)):
         # Note: we assume iv_elem and fv_elem have the same structure as data_elem
-        return type(data_elem)(
-            recurse(iv_e, fv_e, d_e, frac) for iv_e, fv_e, d_e in zip(iv_elem, fv_elem, data_elem)
-        )
+        return type(data_elem)(recurse(iv_e, fv_e, d_e, frac) for iv_e, fv_e, d_e in zip(iv_elem, fv_elem, data_elem))
     # Otherwise it's a leaf scalar: do the interpolation
     new_val = frac * (fv_elem - iv_elem) + iv_elem
     if isinstance(data_elem, int):
@@ -60,20 +58,17 @@ def recurse(iv_elem, fv_elem, data_elem, frac):
         return new_val.item()
 
 
-def value_override(env: ManagerBasedRLEnv, env_id, data, new_val, num_steps):
-    if env.common_step_counter > num_steps:
-        return new_val
-
 class DifficultyScheduler(ManagerTermBase):
-    
+
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
         init_difficulty = self.cfg.params.get("init_difficulty", 0)
         self.current_adr_difficulties = torch.ones(env.num_envs, device=env.device) * init_difficulty
         self.difficulty_frac = 0
+
     def get_state(self):
         return self.current_adr_difficulties
-    
+
     def set_state(self, state: torch.Tensor):
         self.current_adr_difficulties = state.clone().to(self._env.device)
 
@@ -88,7 +83,7 @@ class DifficultyScheduler(ManagerTermBase):
         init_difficulty: int = 0,
         min_difficulty: int = 0,
         max_difficulty: int = 50,
-        promotion_only: bool = False
+        promotion_only: bool = False,
     ):
         asset: Articulation = env.scene[asset_cfg.name]
         object: RigidObject = env.scene[object_cfg.name]
@@ -104,10 +99,13 @@ class DifficultyScheduler(ManagerTermBase):
         move_up = (pos_dist < pos_tol) & (rot_dist < rot_tol) if rot_tol else pos_dist < pos_tol
         demot = self.current_adr_difficulties[env_ids] if promotion_only else self.current_adr_difficulties[env_ids] - 1
         self.current_adr_difficulties[env_ids] = torch.where(
-            move_up, self.current_adr_difficulties[env_ids] + 1, demot,
+            move_up,
+            self.current_adr_difficulties[env_ids] + 1,
+            demot,
         ).clamp(min=min_difficulty, max=max_difficulty)
         self.difficulty_frac = torch.mean(self.current_adr_difficulties) / max(max_difficulty, 1)
         return self.difficulty_frac
+
 
 def cfg_get(root: Any, path: str) -> Any:
     """
@@ -130,6 +128,7 @@ def cfg_get(root: Any, path: str) -> Any:
             # plain attr or dict lookup
             current = current[part] if isinstance(current, dict) else getattr(current, part)
     return current
+
 
 def cfg_set(root: Any, path: str, value: Any) -> None:
     """

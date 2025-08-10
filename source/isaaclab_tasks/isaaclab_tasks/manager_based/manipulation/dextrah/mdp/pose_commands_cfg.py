@@ -15,7 +15,7 @@ from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.utils import configclass
 
-from . import commands as dex_cmd
+from . import pose_commands as dex_cmd
 
 
 @configclass
@@ -26,7 +26,7 @@ class ObjectUniformPoseCommandCfg(CommandTermCfg):
 
     asset_name: str = MISSING
     """Name of the coordinate referencing asset in the environment for which the commands are generated respect to."""
-    
+
     object_name: str = MISSING
     """Name of the object in the environment for which the commands are generated."""
 
