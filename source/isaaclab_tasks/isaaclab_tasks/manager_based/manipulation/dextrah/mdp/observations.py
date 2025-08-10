@@ -8,15 +8,16 @@ from __future__ import annotations
 import torch
 from typing import TYPE_CHECKING
 
-from isaaclab.assets import RigidObject, Articulation
+from isaaclab.assets import Articulation, RigidObject
+from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 from isaaclab.sensors import ContactSensor
-from isaaclab.managers import SceneEntityCfg
-from isaaclab.managers import ManagerTermBase
-from isaaclab.utils.math import subtract_frame_transforms, quat_apply_inverse, quat_apply, quat_inv, quat_mul
+from isaaclab.utils.math import quat_apply, quat_apply_inverse, quat_inv, quat_mul, subtract_frame_transforms
+
 from .utils import sample_object_point_cloud
+
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
-    from isaaclab.sensors import TiledCamera, Camera, RayCasterCamera
+    from isaaclab.sensors import Camera, RayCasterCamera, TiledCamera
 
 
 def object_pos_b(
@@ -29,6 +30,7 @@ def object_pos_b(
     object: RigidObject = env.scene[object_cfg.name]
     return quat_apply(quat_inv(robot.data.root_quat_w), object.data.root_pos_w - robot.data.root_pos_w)
 
+
 def object_quat_b(
     env: ManagerBasedRLEnv,
     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
@@ -38,6 +40,7 @@ def object_quat_b(
     robot: RigidObject = env.scene[robot_cfg.name]
     object: RigidObject = env.scene[object_cfg.name]
     return quat_mul(quat_inv(robot.data.root_quat_w), object.data.root_quat_w)
+
 
 def body_state_b(
     env: ManagerBasedRLEnv,
@@ -60,15 +63,16 @@ def body_state_b(
     body_lin_vel_b = quat_apply_inverse(root_quat_w, body_lin_vel_w)
     body_ang_vel_b = quat_apply_inverse(root_quat_w, body_ang_vel_w)
     # concate and return
-    out = torch.cat((body_pos_b, body_quat_b, body_lin_vel_b, body_ang_vel_b), dim=1) 
+    out = torch.cat((body_pos_b, body_quat_b, body_lin_vel_b, body_ang_vel_b), dim=1)
     return out.view(env.num_envs, -1)
+
 
 class object_point_cloud_b(ManagerTermBase):
 
     def __init__(self, cfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
 
-        self.object_cfg: SceneEntityCfg = cfg.params.get("object_cfg", SceneEntityCfg('object'))
+        self.object_cfg: SceneEntityCfg = cfg.params.get("object_cfg", SceneEntityCfg("object"))
         self.ref_asset_cfg: SceneEntityCfg = cfg.params.get("ref_asset_cfg", SceneEntityCfg("robot"))
         self.num_points: int = cfg.params.get("num_points", 10)
         self.visualize = cfg.params.get("visualize", True)
@@ -77,12 +81,15 @@ class object_point_cloud_b(ManagerTermBase):
         self.ref_asset: Articulation = env.scene[self.ref_asset_cfg.name]
         # uncomment to visualize
         if self.visualize:
-            from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
             from isaaclab.markers import VisualizationMarkers
+            from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
+
             ray_cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/ObservationPointCloud")
             ray_cfg.markers["hit"].radius = 0.0025
             self.visualizer = VisualizationMarkers(ray_cfg)
-        self.points_b = sample_object_point_cloud(env.num_envs, self.num_points, self.object.cfg.prim_path, device=env.device)
+        self.points_b = sample_object_point_cloud(
+            env.num_envs, self.num_points, self.object.cfg.prim_path, device=env.device
+        )
         self.points_w = torch.zeros_like(self.points_b)
 
     def reset(self, env_ids: slice | torch.Tensor = slice(None)):
@@ -91,7 +98,7 @@ class object_point_cloud_b(ManagerTermBase):
             object_quat_w = self.object.data.root_quat_w.unsqueeze(1).repeat(1, self.num_points, 1)
             # apply rotation + translation
             self.points_w = quat_apply(object_quat_w, self.points_b) + object_pos_w
-    
+
     def __call__(
         self,
         env: ManagerBasedRLEnv,
@@ -100,7 +107,7 @@ class object_point_cloud_b(ManagerTermBase):
         num_points: int = 10,
         static: bool = False,
         flatten: bool = False,
-        visualize: bool = True
+        visualize: bool = True,
     ):
         ref_pos_w = self.ref_asset.data.root_pos_w.unsqueeze(1).repeat(1, self.num_points, 1)
         ref_quat_w = self.ref_asset.data.root_quat_w.unsqueeze(1).repeat(1, self.num_points, 1)
