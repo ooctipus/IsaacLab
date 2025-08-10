@@ -278,17 +278,15 @@ class ActionsCfg:
 class RewardsCfg:
     """Reward terms for the MDP."""
     
-    action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-0.005)
+    action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-0.0033)
     
-    action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-0.005)
+    action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-0.0033)
 
-    # joint_pos_reg = RewTerm(func=mdp.joint_deviation_l1, params={"asset_cfg": SceneEntityCfg("robot")}, weight=-0.01)
-
-    fingers_to_object = RewTerm(func=mdp.object_ee_distance, params={"std": 0.4}, weight=1.0)
+    fingers_to_object = RewTerm(func=mdp.object_ee_distance, params={"std": 0.4}, weight=0.5)
     
     position_tracking = RewTerm(
         func=mdp.position_command_error_tanh,
-        weight=2.0,
+        weight=1.0,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "std": 0.2,
@@ -299,7 +297,7 @@ class RewardsCfg:
 
     orientation_tracking = RewTerm(
         func=mdp.orientation_command_error_tanh,
-        weight=4.0,
+        weight=2.0,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "std": 1.5,
@@ -310,7 +308,7 @@ class RewardsCfg:
     
     success = RewTerm(
         func=mdp.success_reward,
-        weight=10,
+        weight=5,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "pos_std": 0.1,
@@ -320,7 +318,7 @@ class RewardsCfg:
         },
     )
     
-    early_termination = RewTerm(func=mdp.is_terminated_term, weight=-200, params={"term_keys": "abnormal_robot"})
+    early_termination = RewTerm(func=mdp.is_terminated_term, weight=-150, params={"term_keys": "abnormal_robot"})
 
 @configclass
 class TerminationsCfg:
