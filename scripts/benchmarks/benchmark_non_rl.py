@@ -73,6 +73,7 @@ from scripts.benchmarks.utils import (
     log_task_start_time,
     log_total_start_time,
 )
+from scripts.benchmarks.step_profiler import install_env_profiler
 
 imports_time_begin = time.perf_counter_ns()
 
@@ -142,6 +143,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
     task_startup_time_end = time.perf_counter_ns()
+    prof = install_env_profiler(env.unwrapped)
 
     env.reset()
 
@@ -195,6 +197,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         log_runtime_step_times(benchmark, environment_step_times, compute_stats=True)
 
         benchmark.stop()
+        print(prof.render_table(len(step_times)))
 
     # close the simulator
     env.close()
