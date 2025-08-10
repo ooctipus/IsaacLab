@@ -57,6 +57,7 @@ import gymnasium as gym
 import os
 import time
 import torch
+from datetime import datetime
 
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
@@ -72,6 +73,8 @@ from isaaclab.utils.dict import print_dict
 from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
+from isaaclab_rl.rsl_rl.ext.modules.actor_critic_vision import ActorCriticVisionExtensionPatcher
+from isaaclab.utils.wandb_upload_info import InfoWandbUploadPatcher
 
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
@@ -95,6 +98,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # note: certain randomizations occur in the environment initialization so we set the seed here
     env_cfg.seed = agent_cfg.seed
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
+    
+    if args_cli.logger == "wandb":
+        info_upload_patcher = InfoWandbUploadPatcher(
+            wandb_project=task_name, wandb_group="info", wandb_runid=datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        )
+        info_upload_patcher.apply_patch()
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
@@ -125,10 +134,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # wrap for video recording
     if args_cli.video:
         video_kwargs = {
-            "video_folder": os.path.join(log_dir, "videos", "play"),
+            "video_folder": os.path.join(log_dir, "videos", f"play_{env_cfg.seed}"),
             "step_trigger": lambda step: step == 0,
             "video_length": args_cli.video_length,
             "disable_logger": True,
+            "fps": 25,
         }
         print("[INFO] Recording videos during training.")
         print_dict(video_kwargs, nesting=4)
@@ -136,7 +146,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-
+    # apply encoder patch
+    actor_critic_vision_patcher = ActorCriticVisionExtensionPatcher(agent_cfg.policy, env.observation_space)
+    actor_critic_vision_patcher.apply_patch()
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model
     if agent_cfg.class_name == "OnPolicyRunner":
