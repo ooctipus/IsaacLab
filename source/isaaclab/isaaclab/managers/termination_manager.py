@@ -183,7 +183,7 @@ class TerminationManager(ManagerBase):
         Returns:
             The corresponding termination term value. Shape is (num_envs,).
         """
-        return self._term_dones[name, self._term_names.index(name)]
+        return self._term_dones[:, self._term_name_to_term_idx[term_name]]
 
     def get_active_iterable_terms(self, env_idx: int) -> Sequence[tuple[str, Sequence[float]]]:
         """Returns the active terms as iterable sequence of tuples.
@@ -218,7 +218,7 @@ class TerminationManager(ManagerBase):
         if term_name not in self._term_names:
             raise ValueError(f"Termination term '{term_name}' not found.")
         # set the configuration
-        self._term_cfgs[self._term_names.index(term_name)] = cfg
+        self._term_cfgs[self._term_name_to_term_idx[term_name]] = cfg
 
     def get_term_cfg(self, term_name: str) -> TerminationTermCfg:
         """Gets the configuration for the specified term.
