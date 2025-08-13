@@ -195,10 +195,16 @@ class CNNEncoder(VisionAdapter):
 
         # determine flattened size via a dummy forward (after preprocessing)
         with torch.no_grad():
-            dummy = self.preprocess(torch.tensor(obs_space.sample())) # HWC→CHW, cast, normalize
+            if isinstance(obs_space, torch.Tensor):
+                dummy = self.preprocess(obs_space.cpu())
+            else:
+                dummy = self.preprocess(torch.tensor(obs_space.sample()))
             flat_sz = self.encoder(dummy).shape[1]
 
-        self.projector = self.build_projector(flat_sz)
+        if self.cfg.feature_dim is not None:
+            self.projector = self.build_projector(flat_sz)
+        else:
+            self.projector = nn.Identity()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         feats = self.encoder(self.preprocess(x))
