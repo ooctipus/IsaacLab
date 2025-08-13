@@ -318,7 +318,7 @@ class RewardsCfg:
         },
     )
     
-    early_termination = RewTerm(func=mdp.is_terminated_term, weight=-150, params={"term_keys": "abnormal_robot"})
+    # early_termination = RewTerm(func=mdp.is_terminated_term, weight=-20, params={"term_keys": "abnormal_robot"})
 
 @configclass
 class TerminationsCfg:

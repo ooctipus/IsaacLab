@@ -13,7 +13,7 @@ class DexsuiteKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 36
     obs_groups = {
         "policy": ["policy", "base_image", "wrist_image"],
-        "critic": ["policy", "privileged"]
+        "critic": ["policy", "base_image", "wrist_image"]
     }
     max_iterations = 15000
     save_interval = 250
