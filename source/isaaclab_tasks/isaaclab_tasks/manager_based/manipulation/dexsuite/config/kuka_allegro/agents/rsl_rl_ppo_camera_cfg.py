@@ -27,6 +27,7 @@ class DexsuiteKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
         activation="elu",
         encoder=ActorCriticVisionAdapterCfg(
             normalize=False,
+            feature_dim=None,
             encoder_cfg=CNNEncoderCfg(
                 channels=[32, 64, 128],
                 kernel_sizes=[3, 3, 3],
