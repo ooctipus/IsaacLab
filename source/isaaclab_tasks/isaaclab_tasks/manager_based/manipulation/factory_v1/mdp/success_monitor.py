@@ -19,10 +19,6 @@ class SuccessMonitor:
         self.success_pointer = torch.zeros((cfg.num_monitored_data), device=self.device, dtype=torch.int32)
         self.success_size = torch.zeros((cfg.num_monitored_data), device=self.device, dtype=torch.int32)
 
-    def failure_rate_sampling(self, env_ids):
-        failure_rate = (1 - self.success_rate).clamp(min=1e-6)
-        return torch.multinomial(failure_rate.view(-1), len(env_ids), replacement=True).to(torch.int32)
-
     def success_update(self, ids_all, success_mask):
         unique_indices, inv, counts = torch.unique(ids_all, return_inverse=True, return_counts=True)
         counts_clamped = counts.clamp(max=self.monitored_history_len).to(dtype=self.success_pointer.dtype)
@@ -48,3 +44,48 @@ class SuccessMonitor:
 
     def get_success_rate(self):
         return self.success_rate.clone()
+
+    def sample_by_target_rate(
+        self,
+        env_ids: torch.Tensor,
+        target: float = 0.5,
+        kappa: float = 2.0,
+        return_probs: bool = False,
+    ):
+        """
+        Sample partitions preferring success rates near `target` in [0, 1].
+
+        Weight ~ Beta(a, b) shape on p, with:
+            a = 1 + kappa * target
+            b = 1 + kappa * (1 - target)
+
+        Special cases:
+          - target=0, kappa=1  => w ∝ (1 - p) (failure-focused, like before)
+          - target=1, kappa=1  => w ∝ p       (success-focused)
+          - target=0.5, kappa=2 => w ∝ p(1 - p) (balanced around 0.5)
+
+        Args:
+            env_ids: environments to draw assignments for (length = batch size)
+            target: desired success rate peak in [0, 1]
+            kappa: concentration (sharpness). Larger -> tighter around `target`.
+            return_probs: also return the normalized probs used for sampling.
+
+        Returns:
+            choices (int32 indices) [len(env_ids)]
+            (optionally) probs [num_partitions]
+        """
+        p = self.success_rate  # [num_partitions], float
+        t = float(max(0.0, min(1.0, target)))
+        k = float(max(0.0, kappa))
+
+        # Beta-like shape on p with mode near `t`
+        # a,b >= 1 ensures nonnegative exponents even at edges; interior mode if a,b>1.
+        a = 1.0 + k * t
+        b = 1.0 + k * (1.0 - t)
+
+        eps = 1e-8  # avoids 0^0 and zero-sum
+        w = ((p + eps).pow(a - 1.0) * (1.0 - p + eps).pow(b - 1.0)).clamp_min(eps)
+
+        probs = w / w.sum()  # no fallback; eps guarantees nonzero sum
+        choices = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
+        return (choices, probs) if return_probs else choices
