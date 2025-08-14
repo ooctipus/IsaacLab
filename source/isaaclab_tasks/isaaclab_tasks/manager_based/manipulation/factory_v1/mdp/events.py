@@ -260,6 +260,7 @@ class TermChoice(ManagerTermBase):
             return  # return immediately if there is no terms
         success_rate = self.success_monitor.get_success_rate()
         log = {f"Metrics/SuccessRate/{name}": success_rate[i].item() for i, name in enumerate(self.term_partitions.keys())}
+        
 
         context_term: ManagerTermBase = env.reward_manager.get_term_cfg("progress_context").func  # type: ignore
         orientation_aligned: torch.Tensor = getattr(context_term, "orientation_aligned")[env_ids]
@@ -271,7 +272,10 @@ class TermChoice(ManagerTermBase):
         if sampling_strategy == "uniform":
             self.term_samples[env_ids] = torch.randint(0, self.num_partitions, (env_ids.size(0),), device=env_ids.device, dtype=self.term_samples.dtype)
         else:
-            self.term_samples[env_ids] = self.success_monitor.failure_rate_sampling(env_ids)
+            # self.term_samples[env_ids] = self.success_monitor.failure_rate_sampling(env_ids)
+            choices, probs = self.success_monitor.sample_by_target_rate(env_ids, target=0.5, kappa=1, return_probs=True)
+            log.update({f"Metrics/SampleProb/{name}": probs[i].item() for i, name in enumerate(self.term_partitions.keys())})
+            self.term_samples[env_ids] = choices
 
         i = 0
         for term_name, term_cfg in self.term_partitions.items():
