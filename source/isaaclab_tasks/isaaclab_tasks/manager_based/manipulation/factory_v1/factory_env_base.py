@@ -180,9 +180,9 @@ class FactoryEventCfg:
         mode="reset",
         params={
             "terms":{
-                # "grasp_asset_in_air": staging_cfg.GRIPPER_GRASP_ASSET_IN_AIR,
+                "grasp_asset_in_air": staging_cfg.GRIPPER_GRASP_ASSET_IN_AIR,
                 "start_assembled": staging_cfg.ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE,
-                # "start_grasped_then_assembled": staging_cfg.GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
+                "start_grasped_then_assembled": staging_cfg.GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
             },
             "sampling_strategy": "failure_rate"
         }
