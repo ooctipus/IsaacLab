@@ -29,7 +29,7 @@ class ActionCfg:
     gripper_action = mdp.BinaryJointPositionActionCfg(
         asset_name="robot",
         joint_names=["panda_finger.*"],
-        open_command_expr={"panda_finger_.*": 0.0},
+        open_command_expr={"panda_finger_.*": 0.04},
         close_command_expr={"panda_finger_.*": 0.0},
     )
 

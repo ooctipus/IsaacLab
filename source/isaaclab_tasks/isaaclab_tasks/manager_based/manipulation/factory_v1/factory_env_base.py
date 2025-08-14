@@ -106,85 +106,11 @@ class FactoryObservationsCfg:
         def __post_init__(self) -> None:
             self.enable_corruption = False
             self.concatenate_terms = True
+            self.history_length = 5
 
 
     policy: PolicyCfg = PolicyCfg()
     critic: PolicyCfg = PolicyCfg()
-
-ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE = EventTerm(
-    func=mdp.ChainedResetTerms,
-    mode="reset",
-    params={
-        "terms":{
-            "reset_held_asset_on_fixed_asset": EventTerm(
-                func=mdp.reset_held_asset_on_fixed_asset,
-                mode="reset",
-                params={
-                    "assembled_offset": MISSING,
-                    "entry_offset": MISSING,
-                    "assembly_fraction_range": (0., 1.),
-                    "assembly_ratio": (0., 0., 0.),
-                    "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
-                    "held_asset_cfg": SceneEntityCfg("held_asset"),
-                }
-            ),
-            "reset_end_effector_around_held_asset": EventTerm(
-                func=mdp.reset_end_effector_around_asset,
-                mode="reset",
-                params={
-                    "fixed_asset_cfg": MISSING,
-                    "fixed_asset_offset": MISSING,
-                    "pose_range_b": MISSING,
-                    "robot_ik_cfg": SceneEntityCfg("robot"),
-                    "ik_iterations": 30,
-                }
-            ),
-            "grasp_held_asset": EventTerm(
-                func=mdp.grasp_held_asset,
-                mode="reset",
-                params={
-                    "robot_cfg": SceneEntityCfg("robot", body_names="end_effector"), "held_asset_diameter": MISSING
-                }
-            ),
-        }
-    }
-)
-
-GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER = EventTerm(
-    func=mdp.ChainedResetTerms,
-    mode="reset",
-    params={
-        "terms":{
-            "reset_end_effector_around_fixed_asset": EventTerm(
-                func=mdp.reset_end_effector_around_asset,
-                mode="reset",
-                params={
-                    "fixed_asset_cfg": MISSING,
-                    "fixed_asset_offset": MISSING,
-                    "pose_range_b": MISSING,
-                    "robot_ik_cfg": SceneEntityCfg("robot"),
-                }
-            ),
-            "reset_held_asset_in_hand": EventTerm(
-                func=mdp.reset_held_asset_in_gripper,
-                mode="reset",
-                params={
-                    "holding_body_cfg": SceneEntityCfg("robot", body_names="end_effector"),
-                    "held_asset_cfg": SceneEntityCfg("held_asset"),
-                    "held_asset_graspable_offset": MISSING,
-                    "held_asset_inhand_range": {},
-                }
-            ),
-            "grasp_held_asset": EventTerm(
-                func=mdp.grasp_held_asset,
-                mode="reset",
-                params={
-                    "robot_cfg": SceneEntityCfg("robot", body_names="end_effector"), "held_asset_diameter": MISSING
-                }
-            ),
-        }
-    }
-)
 
 @configclass
 class FactoryEventCfg:
@@ -249,16 +175,16 @@ class FactoryEventCfg:
         },
     )
     
-    staging = EventTerm(
-        func=mdp.ChainedResetTerms,
+    reset_strategies = EventTerm(
+        func=mdp.TermChoice,
         mode="reset",
         params={
-            "terms": {
-                "scene_staging": staging_cfg.STAGING_EVENTS,
-                "player_enters": staging_cfg.PLAYER_EVENTS,
-                "task_assigning": staging_cfg.TASK_ASSIGNING_EVENTS,
-                "player_prepares_for_task": staging_cfg.PLAYER_PREPARE_FOR_TASK_EVENTS
-            }
+            "terms":{
+                "grasp_asset_in_air": staging_cfg.GRIPPER_GRASP_ASSET_IN_AIR,
+                "start_assembled": staging_cfg.ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE,
+                "start_grasped_then_assembled": staging_cfg.GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
+            },
+            "sampling_strategy": "failure_rate"
         }
     )
 
@@ -312,9 +238,9 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     events: FactoryEventCfg = FactoryEventCfg()
     terminations: FactoryTerminationsCfg = FactoryTerminationsCfg()
     rewards: FactoryRewardsCfg = FactoryRewardsCfg()
-    viewer: ViewerCfg = ViewerCfg(
-        eye=(0.0, 0.25, 0.1), origin_type="asset_body", asset_name="robot", body_name="panda_fingertip_centered"
-    )
+    # viewer: ViewerCfg = ViewerCfg(
+    #     eye=(0.0, 0.25, 0.1), origin_type="asset_body", asset_name="robot", body_name="panda_fingertip_centered"
+    # )
     actions = MISSING
 
     # Post initialization
@@ -322,7 +248,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
         """Post initialization."""
         # general settings
         self.decimation = 8  # 20hz
-        self.episode_length_s = 5
+        self.episode_length_s = 1.0
         # simulation settings
         self.sim.dt = 0.05 / self.decimation
         self.sim.render_interval = self.decimation
