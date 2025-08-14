@@ -50,7 +50,7 @@ class NutThreadEventCfg(FactoryEventCfg):
             reset_s1["reset_held_asset_on_fixed_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("bolt_m16")
             reset_s1["reset_held_asset_on_fixed_asset"].params["assembled_offset"] = KEYPOINTS_BOLTM16.fully_screwed_nut_offset
             reset_s1["reset_held_asset_on_fixed_asset"].params["entry_offset"] = KEYPOINTS_BOLTM16.bolt_tip_offset
-            reset_s1["reset_held_asset_on_fixed_asset"].params["assembly_fraction_range"] = (0.91, 1.0)  # 0.6 hits the nistboard
+            reset_s1["reset_held_asset_on_fixed_asset"].params["assembly_fraction_range"] = (0.6, 1.0)  # 0.6 hits the nistboard
             reset_s1["reset_held_asset_on_fixed_asset"].params["assembly_ratio"] = (0., 0., 0.002 / 6.2832)
 
             reset_s1["reset_end_effector_around_held_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("nut_m16")
@@ -116,7 +116,7 @@ class NutThreadRewardsCfg(FactoryRewardsCfg):
         self.progress_context.params["fixed_asset_cfg"] = SceneEntityCfg("bolt_m16")
         self.progress_context.params["held_asset_cfg"] = SceneEntityCfg("nut_m16")
         self.progress_context.params["held_asset_offset"] = KEYPOINTS_NUTM16.center_axis_bottom
-        self.progress_context.params["fixed_asset_offset"] = KEYPOINTS_BOLTM16.second_thread_screwed_nut_offset
+        self.progress_context.params["fixed_asset_offset"] = KEYPOINTS_BOLTM16.fully_screwed_to_nist_board_nut_offset
 
 
 @configclass
