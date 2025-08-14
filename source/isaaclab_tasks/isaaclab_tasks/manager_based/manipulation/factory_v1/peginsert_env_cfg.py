@@ -110,6 +110,28 @@ class PegInsertEventCfg(FactoryEventCfg):
             reset_s3["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
             reset_s3["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_PEG8MM.grasp_diameter
 
+        if "start_fully_assembled" in self.reset_strategies.params["terms"]:
+            reset_s4: dict = self.reset_strategies.params["terms"]["start_fully_assembled"].params["terms"]
+            reset_s4["reset_held_asset_on_fixed_asset"].params["held_asset_cfg"] = SceneEntityCfg("peg_8mm")
+            reset_s4["reset_held_asset_on_fixed_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("hole_8mm")
+            reset_s4["reset_held_asset_on_fixed_asset"].params["assembled_offset"] = KEYPOINTS_HOLE8MM.inserted_peg_base_offset
+            reset_s4["reset_held_asset_on_fixed_asset"].params["entry_offset"] = KEYPOINTS_HOLE8MM.hole_tip_offset
+            reset_s4["reset_held_asset_on_fixed_asset"].params["assembly_fraction_range"] = (0.0, 0.5)
+            reset_s4["reset_held_asset_on_fixed_asset"].params["assembly_ratio"] = (0., 0., 0.)
+
+            reset_s4["reset_end_effector_around_held_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("peg_8mm")
+            reset_s4["reset_end_effector_around_held_asset"].params["fixed_asset_offset"] = KEYPOINTS_PEG8MM.grasp_point
+            reset_s4["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
+            reset_s4["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
+            reset_s4["reset_end_effector_around_held_asset"].params["pose_range_b"] = {
+                "z": (0.0, 0.0),
+                "roll": (3.141, 3.141),
+                "yaw": (-0.785, 0.785),
+            }
+            
+            reset_s4["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
+            reset_s4["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
+            reset_s4["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_PEG8MM.grasp_diameter
 
 @configclass
 class PegInsertRewardsCfg(FactoryRewardsCfg):

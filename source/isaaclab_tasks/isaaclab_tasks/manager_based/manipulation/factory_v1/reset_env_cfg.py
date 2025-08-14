@@ -40,6 +40,45 @@ GRIPPER_GRASP_ASSET_IN_AIR = EventTerm(
     }
 )
 
+FULL_ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE = EventTerm(
+    func=mdp.ChainedResetTerms,
+    mode="reset",
+    params={
+        "terms":{
+            "reset_held_asset_on_fixed_asset": EventTerm(
+                func=mdp.reset_held_asset_on_fixed_asset,
+                mode="reset",
+                params={
+                    "assembled_offset": MISSING,
+                    "entry_offset": MISSING,
+                    "assembly_fraction_range": (0., 1.),
+                    "assembly_ratio": (0., 0., 0.),
+                    "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
+                    "held_asset_cfg": SceneEntityCfg("held_asset"),
+                }
+            ),
+            "reset_end_effector_around_held_asset": EventTerm(
+                func=mdp.reset_end_effector_around_asset,
+                mode="reset",
+                params={
+                    "fixed_asset_cfg": MISSING,
+                    "fixed_asset_offset": MISSING,
+                    "pose_range_b": MISSING,
+                    "robot_ik_cfg": SceneEntityCfg("robot"),
+                    "ik_iterations": 30,
+                }
+            ),
+            "grasp_held_asset": EventTerm(
+                func=mdp.grasp_held_asset,
+                mode="reset",
+                params={
+                    "robot_cfg": SceneEntityCfg("robot", body_names="end_effector"), "held_asset_diameter": MISSING
+                }
+            ),
+        }
+    }
+)
+
 ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE = EventTerm(
     func=mdp.ChainedResetTerms,
     mode="reset",
