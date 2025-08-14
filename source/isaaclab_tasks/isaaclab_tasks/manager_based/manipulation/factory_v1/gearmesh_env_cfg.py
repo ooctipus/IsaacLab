@@ -117,6 +117,29 @@ class GearMeshEventCfg(FactoryEventCfg):
             reset_s3["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
             reset_s3["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_MEDIUMGEAR.grasp_diameter
 
+        if "start_fully_assembled" in self.reset_strategies.params["terms"]:
+            reset_s4: dict = self.reset_strategies.params["terms"]["start_fully_assembled"].params["terms"]
+            reset_s4["reset_held_asset_on_fixed_asset"].params["held_asset_cfg"] = SceneEntityCfg("medium_gear")
+            reset_s4["reset_held_asset_on_fixed_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("gear_base")
+            reset_s4["reset_held_asset_on_fixed_asset"].params["assembled_offset"] = KEYPOINTS_GEARBASE.medium_gear_assembled_bottom_offset
+            reset_s4["reset_held_asset_on_fixed_asset"].params["entry_offset"] = KEYPOINTS_GEARBASE.medium_gear_tip_offset
+            reset_s4["reset_held_asset_on_fixed_asset"].params["assembly_fraction_range"] = (0.1, 0.5)  # 0.6 hits the nistboard
+            reset_s4["reset_held_asset_on_fixed_asset"].params["assembly_ratio"] = (0., 0., 0.)
+            
+            reset_s4["reset_end_effector_around_held_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("medium_gear")
+            reset_s4["reset_end_effector_around_held_asset"].params["fixed_asset_offset"] = KEYPOINTS_MEDIUMGEAR.grasp_point
+            reset_s4["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
+            reset_s4["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
+            reset_s4["reset_end_effector_around_held_asset"].params["pose_range_b"] = {
+                "z": (0.0, 0.0),
+                "roll": (3.141, 3.141),
+                "yaw": (1.57, 2.09),
+            }
+            
+            reset_s4["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
+            reset_s4["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
+            reset_s4["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_MEDIUMGEAR.grasp_diameter
+
 
 @configclass
 class GearMeshRewardsCfg(FactoryRewardsCfg):

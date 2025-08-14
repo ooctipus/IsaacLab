@@ -18,6 +18,12 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
+# viz for debug, remove when done debugging
+# from isaaclab.markers import FRAME_MARKER_CFG, VisualizationMarkers
+# frame_marker_cfg = FRAME_MARKER_CFG.copy()  # type: ignore
+# frame_marker_cfg.markers["frame"].scale = (0.025, 0.025, 0.025)
+# pose_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/debug_transform"))
+
 class ProgressContext(ManagerTermBase):
     def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
@@ -60,6 +66,7 @@ class ProgressContext(ManagerTermBase):
         self.euler_xy_diff[:] = math_utils.wrap_to_pi(e_x).abs() + math_utils.wrap_to_pi(e_y).abs()
         self.xy_distance[:] = torch.norm(held_asset_in_fixed_asset_frame_pos[:, 0:2], dim=1)
         self.z_distance[:] = held_asset_in_fixed_asset_frame_pos[:, 2]
+
         self.orientation_aligned[:] = self.euler_xy_diff < 0.025
         self.position_centered[:] = self.xy_distance < 0.0025
         self.z_distance_reached[:] = self.z_distance < self.success_threshold
