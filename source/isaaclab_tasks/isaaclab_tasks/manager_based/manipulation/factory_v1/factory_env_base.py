@@ -181,6 +181,7 @@ class FactoryEventCfg:
         params={
             "terms":{
                 "grasp_asset_in_air": staging_cfg.GRIPPER_GRASP_ASSET_IN_AIR,
+                "start_fully_assembled": staging_cfg.FULL_ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE,
                 "start_assembled": staging_cfg.ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE,
                 "start_grasped_then_assembled": staging_cfg.GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
             },
@@ -248,7 +249,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
         """Post initialization."""
         # general settings
         self.decimation = 8  # 20hz
-        self.episode_length_s = 1.0
+        self.episode_length_s = 15.0
         # simulation settings
         self.sim.dt = 0.05 / self.decimation
         self.sim.render_interval = self.decimation
