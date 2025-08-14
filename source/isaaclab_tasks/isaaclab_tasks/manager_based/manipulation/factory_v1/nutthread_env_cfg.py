@@ -43,54 +43,71 @@ class NutThreadEventCfg(FactoryEventCfg):
         # For reset_fixed_asset
         self.reset_fixed_asset.params["asset_list"] = ["bolt_m16"]
 
-        scene_staging = self.staging.params["terms"]["scene_staging"].params["terms"]
-        player_enters = self.staging.params["terms"]["player_enters"].params["terms"]
-        task_assigning = self.staging.params["terms"]["task_assigning"].params["terms"]
-        player_prepares_for_task = self.staging.params["terms"]["player_prepares_for_task"].params["terms"]
+        if "start_assembled" in self.reset_strategies.params["terms"]:
+            reset_s1: dict = self.reset_strategies.params["terms"]["start_assembled"].params["terms"]
+            # For reset held_asset on fixed_asset
+            reset_s1["reset_held_asset_on_fixed_asset"].params["held_asset_cfg"] = SceneEntityCfg("nut_m16")
+            reset_s1["reset_held_asset_on_fixed_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("bolt_m16")
+            reset_s1["reset_held_asset_on_fixed_asset"].params["assembled_offset"] = KEYPOINTS_BOLTM16.fully_screwed_nut_offset
+            reset_s1["reset_held_asset_on_fixed_asset"].params["entry_offset"] = KEYPOINTS_BOLTM16.bolt_tip_offset
+            reset_s1["reset_held_asset_on_fixed_asset"].params["assembly_fraction_range"] = (0.91, 1.0)  # 0.6 hits the nistboard
+            reset_s1["reset_held_asset_on_fixed_asset"].params["assembly_ratio"] = (0., 0., 0.002 / 6.2832)
+
+            reset_s1["reset_end_effector_around_held_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("nut_m16")
+            reset_s1["reset_end_effector_around_held_asset"].params["fixed_asset_offset"] = KEYPOINTS_NUTM16.center_axis_middle
+            reset_s1["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
+            reset_s1["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
+            reset_s1["reset_end_effector_around_held_asset"].params["pose_range_b"] = {
+                "z": (-0.005, -0.005),
+                "roll": (3.141, 3.141),
+                "yaw": (1.57, 2.09),
+            }
+
+            reset_s1["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
+            reset_s1["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
+            reset_s1["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_NUTM16.grasp_diameter
+
+        if "start_grasped_then_assembled" in self.reset_strategies.params["terms"]:
+            reset_s2: dict = self.reset_strategies.params["terms"]["start_grasped_then_assembled"].params["terms"]
+            # For reset_hand
+            reset_s2["reset_end_effector_around_fixed_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("bolt_m16")
+            reset_s2["reset_end_effector_around_fixed_asset"].params["fixed_asset_offset"] = KEYPOINTS_BOLTM16.bolt_tip_offset
+            reset_s2["reset_end_effector_around_fixed_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
+            reset_s2["reset_end_effector_around_fixed_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
+            reset_s2["reset_end_effector_around_fixed_asset"].params["pose_range_b"] = {
+                "x": (-0.02, 0.02),
+                "y": (-0.02, 0.02),
+                "z": (0.015, 0.025),
+                "roll": (3.141, 3.141),
+                "yaw": (1.57, 2.09),
+            }
+
+            # For reset_held_asset
+            reset_s2["reset_held_asset_in_hand"].params["holding_body_cfg"].body_names = "panda_fingertip_centered"
+            reset_s2["reset_held_asset_in_hand"].params["held_asset_cfg"] = SceneEntityCfg("nut_m16")
+            reset_s2["reset_held_asset_in_hand"].params["held_asset_graspable_offset"] = KEYPOINTS_NUTM16.grasp_point
+
+            # For grasp_held_assset
+            reset_s2["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
+            reset_s2["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
+            reset_s2["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_NUTM16.grasp_diameter
         
-        scene_staging["reset_held_asset_on_fixed_asset"].params["held_asset_cfg"] = SceneEntityCfg("nut_m16")
-        scene_staging["reset_held_asset_on_fixed_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("bolt_m16")
-        scene_staging["reset_held_asset_on_fixed_asset"].params["assembled_offset"] = KEYPOINTS_BOLTM16.fully_screwed_nut_offset
-        scene_staging["reset_held_asset_on_fixed_asset"].params["entry_offset"] = KEYPOINTS_BOLTM16.bolt_tip_offset
-        scene_staging["reset_held_asset_on_fixed_asset"].params["assembly_fraction_range"] = (0.91, 1.0)  # 0.6 hits the nistboard
-        scene_staging["reset_held_asset_on_fixed_asset"].params["assembly_ratio"] = (0., 0., 0.002 / 6.2832)
-        scene_staging["reset_asset_on_table"].params["asset_cfg"] = SceneEntityCfg("nut_m16")
-        scene_staging["reset_asset_in_air"].params["asset_cfg"] = SceneEntityCfg("nut_m16")
-        
-        task_assigning["reset_end_effector_around_fixed_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("bolt_m16")
-        task_assigning["reset_end_effector_around_fixed_asset"].params["fixed_asset_offset"] = KEYPOINTS_BOLTM16.bolt_tip_offset
-        task_assigning["reset_end_effector_around_fixed_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
-        task_assigning["reset_end_effector_around_fixed_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
-        task_assigning["reset_end_effector_around_fixed_asset"].params["pose_range_b"] = {
-            "x": (-0.02, 0.02),
-            "y": (-0.02, 0.02),
-            "z": (0.015, 0.025),
-            "roll": (3.141, 3.141),
-            "yaw": (1.57, 2.09),
-        }
-        
-                
-        move_and_grasb_asset = player_prepares_for_task["move_and_grasb_asset"].params["terms"]
-        move_and_grasb_asset["reset_end_effector_around_held_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("nut_m16")
-        move_and_grasb_asset["reset_end_effector_around_held_asset"].params["fixed_asset_offset"] = KEYPOINTS_NUTM16.center_axis_middle
-        move_and_grasb_asset["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
-        move_and_grasb_asset["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
-        move_and_grasb_asset["reset_end_effector_around_held_asset"].params["pose_range_b"] = {
-            "z": (-0.005, -0.005),
-            "roll": (3.141, 3.141),
-            "yaw": (1.57, 2.09),
-        }
-        move_and_grasb_asset["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
-        move_and_grasb_asset["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
-        move_and_grasb_asset["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_NUTM16.grasp_diameter
-        
-        move_held_asset_in_hand_then_grasp = player_prepares_for_task["move_held_asset_in_hand_then_grasp"].params["terms"]
-        move_held_asset_in_hand_then_grasp["reset_held_asset_in_hand"].params["holding_body_cfg"].body_names = "panda_fingertip_centered"
-        move_held_asset_in_hand_then_grasp["reset_held_asset_in_hand"].params["held_asset_cfg"] = SceneEntityCfg("nut_m16")
-        move_held_asset_in_hand_then_grasp["reset_held_asset_in_hand"].params["held_asset_graspable_offset"] = KEYPOINTS_NUTM16.grasp_point
-        move_held_asset_in_hand_then_grasp["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
-        move_held_asset_in_hand_then_grasp["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
-        move_held_asset_in_hand_then_grasp["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_NUTM16.grasp_diameter
+        if "grasp_asset_in_air" in self.reset_strategies.params["terms"]:
+            reset_s3: dict = self.reset_strategies.params["terms"]["grasp_asset_in_air"].params["terms"]
+            reset_s3["reset_asset_in_air"].params["asset_cfg"] = SceneEntityCfg("nut_m16")
+            reset_s3["reset_end_effector_around_held_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("nut_m16")
+            reset_s3["reset_end_effector_around_held_asset"].params["fixed_asset_offset"] = KEYPOINTS_NUTM16.center_axis_middle
+            reset_s3["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
+            reset_s3["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
+            reset_s3["reset_end_effector_around_held_asset"].params["pose_range_b"] = {
+                "z": (-0.005, -0.005),
+                "roll": (3.141, 3.141),
+                "yaw": (1.57, 2.09),
+            }
+
+            reset_s3["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
+            reset_s3["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
+            reset_s3["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_NUTM16.grasp_diameter
 
 @configclass
 class NutThreadRewardsCfg(FactoryRewardsCfg):
