@@ -10,7 +10,7 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, R
 
 @configclass
 class DextrahKukaAllegroPPORunnerCfg(RslRlOnPolicyRunnerCfg):
-    num_steps_per_env = 36
+    num_steps_per_env = 32
     max_iterations = 15000
     save_interval = 250
     experiment_name = "dextrah_kuka_allegro"
@@ -27,7 +27,7 @@ class DextrahKukaAllegroPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         clip_param=0.2,
         entropy_coef=0.005,
         num_learning_epochs=5,
-        num_mini_batches=16,
+        num_mini_batches=4,
         learning_rate=1.0e-3,
         schedule="adaptive",
         gamma=0.99,
