@@ -193,6 +193,9 @@ if FABRICS_AVAILABLE:
         actions: KukaAllegroFabricActionCfg = KukaAllegroFabricActionCfg()
         def __post_init__(self):
             super().__post_init__()
+            # Octi: Seems geometric fabric has some contraint how it wants to be initialized
+            # extreme angles will likely make it not work we therefore needs some customization if action space 
+            # is geometry fabric
             self.scene.robot.init_state.joint_pos={
                 'iiwa7_joint_1': -0.85,
                 'iiwa7_joint_2': 0.0,
