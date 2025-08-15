@@ -38,7 +38,7 @@ class KukaAllegroMixinCfg:
     rewards: KukaAllegroReorientRewardCfg = KukaAllegroReorientRewardCfg()
     actions: KukaAllegroRelJointPosActionCfg = KukaAllegroRelJointPosActionCfg()
 
-    def __post_init__(self: dextrah.DexSuiteReorientEnvCfg):
+    def __post_init__(self: dextrah.DextrahReorientEnvCfg):
         super().__post_init__()
         self.observations.policy.contact = ObsTerm(func=mdp.fingers_contact_force_w)
         self.observations.critic.contact = ObsTerm(func=mdp.fingers_contact_force_w)
@@ -145,22 +145,30 @@ class KukaAllegroMixinCfg:
                 ),
             )
 
+@configclass
+class De
+
 
 @configclass
-class DextrahKukaAllegroReorientEnvCfg(KukaAllegroMixinCfg, dextrah.DexSuiteReorientEnvCfg):
+class DextrahKukaAllegroReorientEnvCfg(KukaAllegroMixinCfg, dextrah.DextrahReorientEnvCfg):
     pass
 
 
 @configclass
-class DextrahKukaAllegroReorientEnvCfg_PLAY(KukaAllegroMixinCfg, dextrah.DexSuiteReorientEnvCfg_PLAY):
+class DextrahKukaAllegroReorientEnvCfg_PLAY(KukaAllegroMixinCfg, dextrah.DextrahReorientEnvCfg_PLAY):
     pass
 
 
 @configclass
-class DextrahKukaAllegroLiftEnvCfg(KukaAllegroMixinCfg, dextrah.DexSuiteLiftEnvCfg):
+class DextrahKukaAllegroLiftEnvCfg(KukaAllegroMixinCfg, dextrah.DextrahLiftEnvCfg):
     pass
 
 
 @configclass
-class DextrahKukaAllegroLiftEnvCfg_PLAY(KukaAllegroMixinCfg, dextrah.DexSuiteLiftEnvCfg_PLAY):
+class DextrahKukaAllegroFabricLiftEnvCfg(KukaAllegroMixinCfg, dextrah.DextrahLiftEnvCfg):
+    pass
+
+
+@configclass
+class DextrahKukaAllegroLiftEnvCfg_PLAY(KukaAllegroMixinCfg, dextrah.DextrahLiftEnvCfg_PLAY):
     pass

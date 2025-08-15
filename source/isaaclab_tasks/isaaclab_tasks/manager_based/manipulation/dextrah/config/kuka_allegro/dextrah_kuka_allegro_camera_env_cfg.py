@@ -144,43 +144,43 @@ class KukaAllegroRGBCameraMixinCfg(KukaAllegroMixinCfg):
 
 
 @configclass
-class DextrahKukaAllegroReorientDepthCameraEnvCfg(KukaAllegroDepthCameraMixinCfg, dextrah_state_impl.DexSuiteReorientEnvCfg):
+class DextrahKukaAllegroReorientDepthCameraEnvCfg(KukaAllegroDepthCameraMixinCfg, dextrah_state_impl.DextrahReorientEnvCfg):
     pass
 
 
 @configclass
 class DextrahKukaAllegroReorientDepthCameraEnvCfg_PLAY(
-    KukaAllegroDepthCameraMixinCfg, dextrah_state_impl.DexSuiteReorientEnvCfg_PLAY
+    KukaAllegroDepthCameraMixinCfg, dextrah_state_impl.DextrahReorientEnvCfg_PLAY
 ):
     pass
 
 
 @configclass
-class DextrahKukaAllegroLiftDepthCameraEnvCfg(KukaAllegroDepthCameraMixinCfg, dextrah_state_impl.DexSuiteLiftEnvCfg):
+class DextrahKukaAllegroLiftDepthCameraEnvCfg(KukaAllegroDepthCameraMixinCfg, dextrah_state_impl.DextrahLiftEnvCfg):
     pass
 
 
 @configclass
-class DextrahKukaAllegroLiftDepthCameraEnvCfg_PLAY(KukaAllegroDepthCameraMixinCfg, dextrah_state_impl.DexSuiteLiftEnvCfg_PLAY):
+class DextrahKukaAllegroLiftDepthCameraEnvCfg_PLAY(KukaAllegroDepthCameraMixinCfg, dextrah_state_impl.DextrahLiftEnvCfg_PLAY):
     pass
 
 @configclass
-class DextrahKukaAllegroReorientRGBCameraEnvCfg(KukaAllegroRGBCameraMixinCfg, dextrah_state_impl.DexSuiteReorientEnvCfg):
+class DextrahKukaAllegroReorientRGBCameraEnvCfg(KukaAllegroRGBCameraMixinCfg, dextrah_state_impl.DextrahReorientEnvCfg):
     pass
 
 
 @configclass
 class DextrahKukaAllegroReorientRGBCameraEnvCfg_PLAY(
-    KukaAllegroRGBCameraMixinCfg, dextrah_state_impl.DexSuiteReorientEnvCfg_PLAY
+    KukaAllegroRGBCameraMixinCfg, dextrah_state_impl.DextrahReorientEnvCfg_PLAY
 ):
     pass
 
 
 @configclass
-class DextrahKukaAllegroLiftRGBCameraEnvCfg(KukaAllegroRGBCameraMixinCfg, dextrah_state_impl.DexSuiteLiftEnvCfg):
+class DextrahKukaAllegroLiftRGBCameraEnvCfg(KukaAllegroRGBCameraMixinCfg, dextrah_state_impl.DextrahLiftEnvCfg):
     pass
 
 
 @configclass
-class DextrahKukaAllegroLiftRGBCameraEnvCfg_PLAY(KukaAllegroRGBCameraMixinCfg, dextrah_state_impl.DexSuiteLiftEnvCfg_PLAY):
+class DextrahKukaAllegroLiftRGBCameraEnvCfg_PLAY(KukaAllegroRGBCameraMixinCfg, dextrah_state_impl.DextrahLiftEnvCfg_PLAY):
     pass
