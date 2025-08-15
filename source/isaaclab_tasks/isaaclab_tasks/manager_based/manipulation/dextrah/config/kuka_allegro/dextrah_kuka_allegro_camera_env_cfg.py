@@ -18,7 +18,7 @@ from .dextrah_kuka_allegro_env_cfg import KukaAllegroMixinCfg
 
 
 @configclass
-class KukaAllegroCameraSceneCfg(dextrah_state_impl.SceneCfg):
+class KukaAllegroDepthCameraSceneCfg(dextrah_state_impl.SceneCfg):
     """Dextrah scene for multi-objects Lifting/Reorientation"""
 
     base_camera = TiledCameraCfg(
@@ -61,9 +61,17 @@ class KukaAllegroCameraSceneCfg(dextrah_state_impl.SceneCfg):
         init_state=RigidObjectCfg.InitialStateCfg(pos=(-1.2, 0.0, 0.0), rot=(1.0, 0.0, 0.0, 0.0)),
     )
 
+@configclass
+class KukaAllegroRGBCameraSceneCfg(KukaAllegroDepthCameraSceneCfg):
+    """Dextrah scene for multi-objects Lifting/Reorientation"""
+
+    def __post_init__(self):
+        self.base_camera.data_types=["rgb"]
+        self.wrist_camera.data_types=["rgb"]
+
 
 @configclass
-class KukaAllegroCameraObservationsCfg(dextrah_state_impl.ObservationsCfg):
+class KukaAllegroDepthCameraObservationsCfg(dextrah_state_impl.ObservationsCfg):
     """Observation specifications for the MDP."""
 
     @configclass
@@ -91,32 +99,88 @@ class KukaAllegroCameraObservationsCfg(dextrah_state_impl.ObservationsCfg):
 
 
 @configclass
-class KukaAllegroCameraMixinCfg(KukaAllegroMixinCfg):
+class KukaAllegroRGBPreTrainedResNet18ObservationsCfg(dextrah_state_impl.ObservationsCfg):
+    """Observation specifications for the MDP."""
+
+    @configclass
+    class RGBImageObsCfg(dextrah_state_impl.ObservationsCfg.PolicyCfg):
+        """Camera observations for policy group."""
+
+        object_observation_b = ObsTerm(
+            func=mdp.image_features,
+            params={"model_device": "cuda", "sensor_cfg": SceneEntityCfg("base_camera")},
+        )
+        wrist_observation_b = ObsTerm(
+            func=mdp.image_features,
+            clip=(-1.0, 1.0),
+            params={"model_device": "cuda", "sensor_cfg": SceneEntityCfg("wrist_camera")},
+        )
+
+        def __post_init__(self):
+            super().__post_init__()
+            self.history_length = None
+
+    policy: RGBImageObsCfg = RGBImageObsCfg()
+
+
+@configclass
+class KukaAllegroDepthCameraMixinCfg(KukaAllegroMixinCfg):
     viewer: ViewerCfg = ViewerCfg(eye=(0.75, -1.75, 0.75), lookat=(-0.5, 0.0, 0.50), origin_type="env")
-    scene: KukaAllegroCameraSceneCfg = KukaAllegroCameraSceneCfg(num_envs=4096, env_spacing=3, replicate_physics=False)
-    observations: KukaAllegroCameraObservationsCfg = KukaAllegroCameraObservationsCfg()
+    scene: KukaAllegroDepthCameraSceneCfg = KukaAllegroDepthCameraSceneCfg(num_envs=4096, env_spacing=3, replicate_physics=False)
+    observations: KukaAllegroDepthCameraObservationsCfg = KukaAllegroDepthCameraObservationsCfg()
 
     def __post_init__(self):
         super().__post_init__()
 
 
 @configclass
-class DextrahKukaAllegroReorientCameraEnvCfg(KukaAllegroCameraMixinCfg, dextrah_state_impl.DexSuiteReorientEnvCfg):
+class KukaAllegroRGBCameraMixinCfg(KukaAllegroMixinCfg):
+    viewer: ViewerCfg = ViewerCfg(eye=(0.75, -1.75, 0.75), lookat=(-0.5, 0.0, 0.50), origin_type="env")
+    scene: KukaAllegroRGBCameraSceneCfg = KukaAllegroRGBCameraSceneCfg(num_envs=4096, env_spacing=3, replicate_physics=False)
+    observations: KukaAllegroRGBPreTrainedResNet18ObservationsCfg = KukaAllegroRGBPreTrainedResNet18ObservationsCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+
+
+@configclass
+class DextrahKukaAllegroReorientDepthCameraEnvCfg(KukaAllegroDepthCameraMixinCfg, dextrah_state_impl.DexSuiteReorientEnvCfg):
     pass
 
 
 @configclass
-class DextrahKukaAllegroReorientCameraEnvCfg_PLAY(
-    KukaAllegroCameraMixinCfg, dextrah_state_impl.DexSuiteReorientEnvCfg_PLAY
+class DextrahKukaAllegroReorientDepthCameraEnvCfg_PLAY(
+    KukaAllegroDepthCameraMixinCfg, dextrah_state_impl.DexSuiteReorientEnvCfg_PLAY
 ):
     pass
 
 
 @configclass
-class DextrahKukaAllegroLiftCameraEnvCfg(KukaAllegroCameraMixinCfg, dextrah_state_impl.DexSuiteLiftEnvCfg):
+class DextrahKukaAllegroLiftDepthCameraEnvCfg(KukaAllegroDepthCameraMixinCfg, dextrah_state_impl.DexSuiteLiftEnvCfg):
     pass
 
 
 @configclass
-class DextrahKukaAllegroLiftCameraEnvCfg_PLAY(KukaAllegroCameraMixinCfg, dextrah_state_impl.DexSuiteLiftEnvCfg_PLAY):
+class DextrahKukaAllegroLiftDepthCameraEnvCfg_PLAY(KukaAllegroDepthCameraMixinCfg, dextrah_state_impl.DexSuiteLiftEnvCfg_PLAY):
+    pass
+
+@configclass
+class DextrahKukaAllegroReorientRGBCameraEnvCfg(KukaAllegroRGBCameraMixinCfg, dextrah_state_impl.DexSuiteReorientEnvCfg):
+    pass
+
+
+@configclass
+class DextrahKukaAllegroReorientRGBCameraEnvCfg_PLAY(
+    KukaAllegroRGBCameraMixinCfg, dextrah_state_impl.DexSuiteReorientEnvCfg_PLAY
+):
+    pass
+
+
+@configclass
+class DextrahKukaAllegroLiftRGBCameraEnvCfg(KukaAllegroRGBCameraMixinCfg, dextrah_state_impl.DexSuiteLiftEnvCfg):
+    pass
+
+
+@configclass
+class DextrahKukaAllegroLiftRGBCameraEnvCfg_PLAY(KukaAllegroRGBCameraMixinCfg, dextrah_state_impl.DexSuiteLiftEnvCfg_PLAY):
     pass
