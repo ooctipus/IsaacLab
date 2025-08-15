@@ -60,7 +60,7 @@ class NutThreadEventCfg(FactoryEventCfg):
             reset_s1["reset_end_effector_around_held_asset"].params["pose_range_b"] = {
                 "z": (-0.005, -0.005),
                 "roll": (3.141, 3.141),
-                "yaw": (1.57, 2.09),
+                "yaw": (-2.09, 2.09),
             }
 
             reset_s1["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
@@ -125,7 +125,7 @@ class NutThreadEventCfg(FactoryEventCfg):
             reset_s4["reset_end_effector_around_held_asset"].params["pose_range_b"] = {
                 "z": (-0.005, -0.005),
                 "roll": (3.141, 3.141),
-                "yaw": (1.57, 2.09),
+                "yaw": (-2.09, 2.09),
             }
 
             reset_s4["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
