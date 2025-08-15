@@ -11,6 +11,7 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils import configclass
+from isaaclab.utils.assets import LOCAL_ASSET_PATH_DIR
 
 from ... import dextrah_env_cfg as dextrah
 from ... import mdp
@@ -45,7 +46,8 @@ class KukaAllegroMixinCfg:
         self.scene.robot = ArticulationCfg(
             prim_path="{ENV_REGEX_NS}/Robot",
             spawn=sim_utils.UsdFileCfg(
-                usd_path="https://isaac-dev.ov.nvidia.com/omni/web3/omniverse://isaac-dev.ov.nvidia.com/Users/zhengyuz@nvidia.com/Robots/KukaAllegro/kuka_allegro_optimized.usd",
+                usd_path=f"{LOCAL_ASSET_PATH_DIR}/Robots/KukaAllegro/kuka_allegro_optimizedv2.usd",
+                # usd_path="https://isaac-dev.ov.nvidia.com/omni/web3/omniverse://isaac-dev.ov.nvidia.com/Users/zhengyuz@nvidia.com/Robots/KukaAllegro/kuka_allegro_optimized.usd",
                 activate_contact_sensors=True,
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(
                     disable_gravity=True,
