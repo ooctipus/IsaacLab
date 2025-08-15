@@ -340,7 +340,7 @@ class TerminationsCfg:
 
 
 @configclass
-class DexSuiteReorientEnvCfg(ManagerBasedEnvCfg):
+class DextrahReorientEnvCfg(ManagerBasedEnvCfg):
 
     # Scene settings
     viewer: ViewerCfg = ViewerCfg(eye=(-2.25, 0.0, 0.75), lookat=(0.0, 0.0, 0.45), origin_type="env")
@@ -394,7 +394,7 @@ class DexSuiteReorientEnvCfg(ManagerBasedEnvCfg):
                 delattr(self.curriculum, attr)
 
 
-class DexSuiteLiftEnvCfg(DexSuiteReorientEnvCfg):
+class DextrahLiftEnvCfg(DextrahReorientEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
@@ -404,7 +404,7 @@ class DexSuiteLiftEnvCfg(DexSuiteReorientEnvCfg):
             self.curriculum.adr.params["rot_tol"] = None  # make adr not tracking orientation
 
 
-class DexSuiteReorientEnvCfg_PLAY(DexSuiteReorientEnvCfg):
+class DextrahReorientEnvCfg_PLAY(DextrahReorientEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
@@ -413,7 +413,7 @@ class DexSuiteReorientEnvCfg_PLAY(DexSuiteReorientEnvCfg):
         self.curriculum.adr.params["init_difficulty"] = self.curriculum.adr.params["max_difficulty"]
 
 
-class DexSuiteLiftEnvCfg_PLAY(DexSuiteLiftEnvCfg):
+class DextrahLiftEnvCfg_PLAY(DextrahLiftEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
