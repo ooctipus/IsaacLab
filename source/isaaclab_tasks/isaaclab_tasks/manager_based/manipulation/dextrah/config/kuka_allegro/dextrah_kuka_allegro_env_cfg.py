@@ -23,6 +23,11 @@ class KukaAllegroRelJointPosActionCfg:
 
 
 @configclass
+class KukaAllegroFabricActionCfg:
+    actions = mdp.FabricActionCfg(asset_name="robot")
+
+
+@configclass
 class KukaAllegroReorientRewardCfg(dextrah.RewardsCfg):
 
     # bool awarding term if 2 finger tips are in contact with object, one of the contacting fingers has to be thumb.
@@ -146,7 +151,46 @@ class KukaAllegroMixinCfg:
             )
 
 @configclass
-class De
+class DextrahFabricLiftEnvCfg(dextrah.DextrahLiftEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.events.reset_robot_joints.params["position_range"] = (0.0, 0.0)
+        self.events.reset_robot_wrist_joint = None
+        self.events.variable_gravity.params["gravity_distribution_params"] = ([0.0, 0.0, -9.81], [0.0, 0.0, -9.81])
+
+
+@configclass
+class KukaAllegroFabricMixinCfg(KukaAllegroMixinCfg):
+    actions: KukaAllegroFabricActionCfg = KukaAllegroFabricActionCfg()
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.robot.init_state.joint_pos={
+            'iiwa7_joint_1': -0.85,
+            'iiwa7_joint_2': 0.0,
+            'iiwa7_joint_3': 0.76,
+            'iiwa7_joint_4': 1.25,
+            'iiwa7_joint_5': -1.76,
+            'iiwa7_joint_6': 0.90,
+            'iiwa7_joint_7': 0.64,
+            '(index|middle|ring)_joint_0': 0.0,
+            '(index|middle|ring)_joint_1': 0.3,
+            '(index|middle|ring)_joint_2': 0.3,
+            '(index|middle|ring)_joint_3': 0.3,
+            'thumb_joint_0': 1.5,
+            'thumb_joint_1': 0.60147215,
+            'thumb_joint_2': 0.33795027,
+            'thumb_joint_3': 0.60845138
+        }
+
+@configclass
+class DextrahFabricKukaAllegroLiftEnvCfg(KukaAllegroFabricMixinCfg, DextrahFabricLiftEnvCfg):
+    pass
+
+
+@configclass
+class DextrahFabricKukaAllegroLiftEnvCfg_PLAY(KukaAllegroMixinCfg, DextrahFabricLiftEnvCfg):
+    pass
+
 
 
 @configclass

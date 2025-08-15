@@ -15,16 +15,10 @@ from ... import mdp
 class KukaAllegroPCAActionCfg:
     actions = mdp.PCAHandActionCfg(asset_name="robot")
 
-
-@configclass
-class KukaAllegroFabricActionCfg:
-    actions = mdp.FabricActionCfg(asset_name="robot")
-
-
 @configclass
 class EnvConfigurables:
     env: dict[str, any] = {
-        "actions": {"pca": KukaAllegroPCAActionCfg(), "geometry_fabric": KukaAllegroFabricActionCfg()},
+        "actions": {"pca": KukaAllegroPCAActionCfg()},
         "scene.object": {
             "cube": RigidObjectCfg(
                 prim_path="{ENV_REGEX_NS}/Object",
