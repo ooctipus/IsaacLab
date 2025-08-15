@@ -133,3 +133,40 @@ class PCAHandActionCfg(ActionTermCfg):
             -3.1222e-01,
         ],
     ]
+
+
+@configclass
+class FabricActionCfg(ActionTermCfg):
+    """Configuration for the joint position action term.
+
+    See :class:`JointPositionAction` for more details.
+    """
+
+    class_type: type[ActionTerm] = action.FabricAction
+
+    palm_rot_range = 0.7854
+
+    fabric_damping_gain = 10
+
+    fabrics_dt = 1/60.
+
+    fabric_decimation = 2
+
+    pd_vel_factor = 1.0
+
+    pca_feat_min = [0.2475, -0.3286, -0.7238, -0.0192, -0.5532]
+
+    pca_feat_max = [3.8336, 3.0025, 0.8977, 1.0243, 0.0629]
+    
+    fabric_robot_scene_cfg = SceneEntityCfg(
+        "robot",
+        body_names=["palm_link", "index_biotac_tip", "middle_biotac_tip", "ring_biotac_tip", "thumb_biotac_tip"],
+        joint_names=[
+            "iiwa7_joint_1", "iiwa7_joint_2", "iiwa7_joint_3", "iiwa7_joint_4", "iiwa7_joint_5", "iiwa7_joint_6", "iiwa7_joint_7",
+            "index_joint_0", "index_joint_1", "index_joint_2", "index_joint_3",
+            "middle_joint_0", "middle_joint_1", "middle_joint_2", "middle_joint_3",
+            "ring_joint_0", "ring_joint_1", "ring_joint_2", "ring_joint_3",
+            "thumb_joint_0", "thumb_joint_1", "thumb_joint_2", "thumb_joint_3",
+        ],
+        preserve_order=True,
+    )
