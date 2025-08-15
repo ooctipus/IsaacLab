@@ -17,9 +17,14 @@ class KukaAllegroPCAActionCfg:
 
 
 @configclass
+class KukaAllegroFabricActionCfg:
+    actions = mdp.FabricActionCfg(asset_name="robot")
+
+
+@configclass
 class EnvConfigurables:
     env: dict[str, any] = {
-        "actions": {"pca": KukaAllegroPCAActionCfg()},
+        "actions": {"pca": KukaAllegroPCAActionCfg(), "geometry_fabric": KukaAllegroFabricActionCfg()},
         "scene.object": {
             "cube": RigidObjectCfg(
                 prim_path="{ENV_REGEX_NS}/Object",
