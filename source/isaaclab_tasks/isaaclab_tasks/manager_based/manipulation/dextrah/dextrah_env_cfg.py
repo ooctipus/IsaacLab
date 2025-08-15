@@ -358,7 +358,7 @@ class DexSuiteReorientEnvCfg(ManagerBasedEnvCfg):
     def __post_init__(self):
         """Post initialization."""
         # general settings
-        self.decimation = 4
+        self.decimation = 2
         # *multi-goal setup
         # self.is_finite_horizon = False
         # self.episode_length_s = 20.
