@@ -118,11 +118,6 @@ class ObservationsCfg:
                 "base_asset_cfg": SceneEntityCfg("robot"),
             },
         )
-        object_observation_b = ObsTerm(
-            func=mdp.object_point_cloud_b,
-            noise=Unoise(n_min=-0.0, n_max=0.0),
-            params={"num_points": 64, "flatten": True},
-        )
         object_quat_b = ObsTerm(func=mdp.object_quat_b, noise=Unoise(n_min=-0.0, n_max=0.0))
         target_object_pose_b = ObsTerm(func=mdp.generated_commands, params={"command_name": "object_pose"})
         actions = ObsTerm(func=mdp.last_action)
@@ -133,9 +128,27 @@ class ObservationsCfg:
             self.concatenate_terms = True
             self.history_length = 5
 
+    @configclass
+    class PrivilegedObsCfg(ObsGroup):
+        
+        perception = ObsTerm(
+            func=mdp.object_point_cloud_b,
+            noise=Unoise(n_min=-0.0, n_max=0.0),
+            params={"num_points": 64, "flatten": True},
+        )
+
+
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_dim = 0
+            self.concatenate_terms = True
+            self.flatten_history_dim = True
+            self.history_length = 5
+
+
     # observation groups
     policy: PolicyCfg = PolicyCfg()
-    critic: PolicyCfg = PolicyCfg()
+    privileged: PrivilegedObsCfg = PrivilegedObsCfg()
 
 
 @configclass
