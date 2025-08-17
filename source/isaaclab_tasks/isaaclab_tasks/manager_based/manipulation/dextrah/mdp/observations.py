@@ -143,6 +143,7 @@ def depth_image(
     env: ManagerBasedRLEnv,
     sensor_cfg: SceneEntityCfg = SceneEntityCfg("tiled_camera"),
     normalize: bool = True,
+    flatten: bool = False,
 ) -> torch.Tensor:
     # extract the used quantities (to enable type-hinting)
     sensor: TiledCamera | Camera | RayCasterCamera = env.scene.sensors[sensor_cfg.name]
@@ -153,4 +154,4 @@ def depth_image(
         images = torch.tanh(images / 2) * 2
         images -= torch.mean(images, dim=(1, 2), keepdim=True)
 
-    return images.view(env.num_envs, -1)
+    return images.view(env.num_envs, -1) if flatten else images

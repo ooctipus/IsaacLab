@@ -40,8 +40,6 @@ class KukaAllegroMixinCfg:
 
     def __post_init__(self: dextrah.DextrahReorientEnvCfg):
         super().__post_init__()
-        self.observations.policy.contact = ObsTerm(func=mdp.fingers_contact_force_w)
-        self.observations.critic.contact = ObsTerm(func=mdp.fingers_contact_force_w)
         self.commands.object_pose.body_name = "palm_link"
         self.scene.robot = ArticulationCfg(
             prim_path="{ENV_REGEX_NS}/Robot",
@@ -132,9 +130,8 @@ class KukaAllegroMixinCfg:
             },
             soft_joint_pos_limit_factor=1.0,
         )
-
+        self.observations.policy.contact = ObsTerm(func=mdp.fingers_contact_force_w)
         self.observations.policy.hand_tips_state_b.params["body_asset_cfg"].body_names = ["palm_link", ".*_tip"]
-        self.observations.critic.hand_tips_state_b.params["body_asset_cfg"].body_names = ["palm_link", ".*_tip"]
         self.rewards.fingers_to_object.params["asset_cfg"] = SceneEntityCfg("robot", body_names=["palm_link", ".*_tip"])
         for link_name in ["index_link_3", "middle_link_3", "ring_link_3", "thumb_link_3"]:
             setattr(
