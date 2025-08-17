@@ -83,7 +83,6 @@ from isaaclab.utils.io import dump_pickle, dump_yaml
 from isaaclab.utils.wandb_upload_record_video import patch_record_video_with_wandb_upload
 
 from isaaclab_rl.rl_games import RlGamesGpuEnv, RlGamesVecEnvWrapper
-from isaaclab_rl.observation_adapter import GroupToActorCriticGymObservationSpacePatch
 from isaaclab_rl.rl_games_utils import MultiObserver
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils.hydra import hydra_task_config
@@ -160,6 +159,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     rl_device = agent_cfg["params"]["config"]["device"]
     clip_obs = agent_cfg["params"]["env"].get("clip_observations", math.inf)
     clip_actions = agent_cfg["params"]["env"].get("clip_actions", math.inf)
+    
+    if "encoder" in agent_cfg["params"]["env"]:
+        from isaaclab_rl.rsl_rl.actor_critic_vision_cfg import CNNEncoderCfg, ActorCriticVisionAdapterCfg
+        from isaaclab_rl.rl_games_vision_encoding_patcher import RLGamesVisionPatch
+        encoder_cfg = CNNEncoderCfg(**agent_cfg["params"]["env"]["encoder"]["encoder_cfg"])
+        del agent_cfg["params"]["env"]["encoder"]["encoder_cfg"]
+        agent_cfg["params"]["env"]["encoder"] = ActorCriticVisionAdapterCfg(encoder_cfg=encoder_cfg, **agent_cfg["params"]["env"]["encoder"])
+        encoder_patch = RLGamesVisionPatch(agent_cfg["params"]["env"])
+        encoder_patch.apply_patch()
 
     # set the IO descriptors output directory if requested
     if isinstance(env_cfg, ManagerBasedRLEnvCfg):
