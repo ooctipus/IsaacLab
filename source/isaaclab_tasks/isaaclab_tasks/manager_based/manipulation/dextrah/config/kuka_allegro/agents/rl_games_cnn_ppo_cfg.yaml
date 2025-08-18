@@ -13,17 +13,6 @@ params:
     obs_groups:
       policy: ["policy", "base_image", "wrist_image"]
       critic: ["policy", "privileged"]
-    encoder:
-      normalize: False
-      feature_dim: null
-      activation: elu
-      encoder_cfg:
-        channels: [32, 64, 128]
-        kernel_sizes: [3, 3, 3]
-        strides: [2, 2, 2]
-        paddings: [1, 1, 1]
-        use_maxpool: True
-        pool_size: 2
 
   algo:
     name: a2c_continuous
@@ -34,6 +23,17 @@ params:
   network:
     name: actor_critic
     separate: False
+    encoders:
+      encoder_cfgs:
+        depth_image:
+          encoding_groups: ["base_image", "wrist_image"]
+          channels: [32, 64, 128]
+          kernel_sizes: [3, 3, 3]
+          strides: [2, 2, 2]
+          paddings: [1, 1, 1]
+          use_maxpool: True
+          pool_size: 2
+          activation: elu
 
     space:
       continuous:

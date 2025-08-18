@@ -160,14 +160,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     clip_obs = agent_cfg["params"]["env"].get("clip_observations", math.inf)
     clip_actions = agent_cfg["params"]["env"].get("clip_actions", math.inf)
     
-    if "encoder" in agent_cfg["params"]["env"]:
+    if "encoders" in agent_cfg["params"]["network"]:
         from isaaclab_rl.rsl_rl.actor_critic_vision_cfg import CNNEncoderCfg, ActorCriticVisionAdapterCfg
         from isaaclab_rl.rl_games_vision_encoding_patcher import RLGamesVisionPatch
-        encoder_cfg = CNNEncoderCfg(**agent_cfg["params"]["env"]["encoder"]["encoder_cfg"])
-        del agent_cfg["params"]["env"]["encoder"]["encoder_cfg"]
-        agent_cfg["params"]["env"]["encoder"] = ActorCriticVisionAdapterCfg(encoder_cfg=encoder_cfg, **agent_cfg["params"]["env"]["encoder"])
-        encoder_patch = RLGamesVisionPatch(agent_cfg["params"]["env"])
+        encoder_cfgs_dict = agent_cfg["params"]["network"]["encoders"]["encoder_cfgs"]
+        encoder_cfgs = {key : CNNEncoderCfg(**encoder_cfg) for key, encoder_cfg in encoder_cfgs_dict.items()}
+        agent_cfg["params"]["network"]["encoders"] = ActorCriticVisionAdapterCfg(encoder_cfgs=encoder_cfgs)
+        encoder_patch = RLGamesVisionPatch(agent_cfg["params"]["network"])
         encoder_patch.apply_patch()
+        del agent_cfg["params"]["network"]["encoders"]
 
     # set the IO descriptors output directory if requested
     if isinstance(env_cfg, ManagerBasedRLEnvCfg):
