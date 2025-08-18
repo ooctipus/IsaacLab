@@ -11,21 +11,39 @@ from .ext.modules import vision_encoder as encoders
 @configclass
 class ActorCriticVisionAdapterCfg:
 
-    encoder_cfg: CNNEncoderCfg | PretrainedEncoderCfg | PointNetEncoderCfg | MLPEncoderCfg = MISSING
+    encoder_cfgs: dict[str, CNNEncoderCfg | PretrainedEncoderCfg | PointNetEncoderCfg | MLPEncoderCfg] = MISSING
+    """Encoders backbone that predicts feature for downstram usecases"""
 
-    feature_dim: int | None = 128
+    projectors_cfg: dict[str, ProjectorCfg] | None = None
+    """Extra heads that predict secondary objectives for encoder, primary objective is policy objective."""
+
+@configclass
+class ProjectorCfg:
+    
+    prediction_group: list[str] = MISSING
+    
+    layers: list[int] = [64, 64]
+    
+    activation: str = 'elu'
+    
+    freeze = False
+
+
+@configclass
+class EncoderBaseCfg:
+    
+    encoding_groups: list[str] = MISSING
+    
+    output_dim: int | None = None
     
     activation: str | None  = None
     
     normalize: bool = False
     
-    normalize_style: str = "normal"
-    
     freeze: bool = False
 
-
 @configclass
-class PointNetEncoderCfg:
+class PointNetEncoderCfg(EncoderBaseCfg):
     """Config for per-point MLP → max-pool PointNet encoder."""
 
     class_type: type[encoders.PointNetEncoder] = encoders.PointNetEncoder
@@ -35,12 +53,10 @@ class PointNetEncoderCfg:
     strides: list[int] = [2, 2, 2]
 
     use_global_feat: bool = True
-    
-    feature_dim: int | None = None
 
 
 @configclass
-class CNNEncoderCfg:
+class CNNEncoderCfg(EncoderBaseCfg):
     
     class_type: type[encoders.CNNEncoder] = encoders.CNNEncoder
     
@@ -58,17 +74,17 @@ class CNNEncoderCfg:
 
 
 @configclass
-class MLPEncoderCfg:
+class MLPEncoderCfg(EncoderBaseCfg):
     
     class_type: type[encoders.MLPEncoder] = encoders.MLPEncoder
     
     layers: list[int] = [512, 256, 128]
-    
-    feature_dim: int | None = None
 
 
 @configclass
-class PretrainedEncoderCfg:
+class PretrainedEncoderCfg(EncoderBaseCfg):
+    # BUG!!!!
+    class_type: type[encoders.MLPEncoder] = encoders.MLPEncoder
     
     model_name: str = 'resnet18'
     

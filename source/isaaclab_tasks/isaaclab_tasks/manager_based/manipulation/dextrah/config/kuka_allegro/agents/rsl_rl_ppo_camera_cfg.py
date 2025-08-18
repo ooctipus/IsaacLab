@@ -26,17 +26,19 @@ class DextrahKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
         activation="elu",
-        encoder=ActorCriticVisionAdapterCfg(
-            normalize=False,
-            feature_dim=None,
-            encoder_cfg=CNNEncoderCfg(
-                channels=[32, 64, 128],
-                kernel_sizes=[3, 3, 3],
-                strides=[2, 2, 2],
-                paddings=[1, 1, 1],
-                use_maxpool=True,
-                pool_size=2
-            )
+        encoders=ActorCriticVisionAdapterCfg(
+            encoder_cfgs={
+                "depth_image" : CNNEncoderCfg(
+                    encoding_groups=["base_image", "wrist_image"],
+                    channels=[32, 64, 128],
+                    kernel_sizes=[3, 3, 3],
+                    strides=[2, 2, 2],
+                    paddings=[1, 1, 1],
+                    use_maxpool=True,
+                    pool_size=2,
+                    activation='elu'
+                )
+            }
         )
     )
     algorithm = RslRlPpoAlgorithmCfg(
