@@ -13,6 +13,7 @@ params:
     obs_groups:
       obs: ["policy", "base_image", "wrist_image"]
       states: ["policy", "privileged"]
+    concate_obs_groups: False
 
   algo:
     name: a2c_continuous
