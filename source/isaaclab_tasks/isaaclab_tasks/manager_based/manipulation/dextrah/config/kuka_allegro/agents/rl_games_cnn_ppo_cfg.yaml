@@ -11,8 +11,8 @@ params:
     clip_observations: 100.0
     clip_actions: 100.0
     obs_groups:
-      policy: ["policy", "privileged"]
-      critic: ["policy", "base_image", "wrist_image"]
+      policy: ["policy", "base_image", "wrist_image"]
+      critic: ["policy", "privileged"]
     encoder:
       normalize: False
       feature_dim: null
