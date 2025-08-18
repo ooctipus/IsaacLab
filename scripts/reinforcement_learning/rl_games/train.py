@@ -199,10 +199,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
     # wrap around environment for rl-games
-    obs_groups = None
-    if "obs_groups" in agent_cfg["params"]["env"]:
-        obs_groups = agent_cfg["params"]["env"]["obs_groups"]
-    env = RlGamesVecEnvWrapper(env, rl_device, clip_obs, clip_actions, obs_groups)
+    obs_groups = agent_cfg["params"]["env"].get("obs_groups", None)
+    concate_obs_groups = agent_cfg["params"]["env"].get("concate_obs_groups", True)
+    env = RlGamesVecEnvWrapper(env, rl_device, clip_obs, clip_actions, obs_groups, concate_obs_groups)
 
     # register the environment to rl-games registry
     # note: in agents configuration: environment name must be "rlgpu"
