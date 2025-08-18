@@ -65,9 +65,7 @@ class lifted(ManagerTermBase):
             ray_cfg.markers["hit"].radius = 0.001
             self.visualizer = VisualizationMarkers(ray_cfg)
 
-        self.points = sample_object_point_cloud(
-            env.num_envs, self.num_points, self.object.cfg.prim_path, use_cache=True
-        ).to(env.device)
+        self.points = sample_object_point_cloud(env.num_envs, self.num_points, self.object.cfg.prim_path).to(env.device)
 
     def __call__(
         self,

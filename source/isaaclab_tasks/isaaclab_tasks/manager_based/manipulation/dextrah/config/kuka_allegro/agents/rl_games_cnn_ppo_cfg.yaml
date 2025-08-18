@@ -11,9 +11,9 @@ params:
     clip_observations: 100.0
     clip_actions: 100.0
     obs_groups:
-      obs: ["policy", "privileged"]
+      obs: ["policy", "base_image", "wrist_image"]
       states: ["policy", "privileged"]
-    concate_obs_groups: True
+    concate_obs_groups: False
 
   algo:
     name: a2c_continuous
@@ -23,7 +23,19 @@ params:
 
   network:
     name: actor_critic
-    separate: True
+    separate: False
+    encoders:
+      encoder_cfgs:
+        depth_image:
+          encoding_groups: ["base_image", "wrist_image"]
+          channels: [32, 64, 128]
+          kernel_sizes: [3, 3, 3]
+          strides: [2, 2, 2]
+          paddings: [1, 1, 1]
+          use_maxpool: True
+          pool_size: 2
+          activation: elu
+
     space:
       continuous:
         mu_activation: None
@@ -76,8 +88,8 @@ params:
     entropy_coef: 0.001
     truncate_grads: True
     e_clip: 0.2
-    horizon_length: 36
-    num_mini_batches: 4
+    horizon_length: 32
+    num_mini_batches: 16
     minibatch_size: -1
     mini_epochs: 5
     critic_coef: 4
@@ -85,6 +97,30 @@ params:
     clip_actions: False
     seq_len: 4
     bounds_loss_coef: 0.0001
+
+    central_value_config:
+      minibatch_size: -1
+      mini_epochs: 5
+      learning_rate: 1e-3
+      lr_schedule: adaptive
+      kl_threshold: 0.008
+      clip_value: True
+      normalize_input: True
+      truncate_grads: True
+
+      network:
+        name: actor_critic
+        central_value: True
+
+        mlp:
+          units: [512, 128, 64]
+          activation: elu
+          d2rl: False
+
+          initializer:
+            name: default
+          regularizer:
+            name: None
 
 hydra:
   output_subdir: null

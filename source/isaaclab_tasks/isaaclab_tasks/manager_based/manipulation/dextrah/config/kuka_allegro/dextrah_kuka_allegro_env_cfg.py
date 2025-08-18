@@ -11,6 +11,7 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils import configclass
+from isaaclab.utils.assets import LOCAL_ASSET_PATH_DIR
 
 from ... import dextrah_env_cfg as dextrah
 from ... import mdp
@@ -37,15 +38,14 @@ class KukaAllegroMixinCfg:
     rewards: KukaAllegroReorientRewardCfg = KukaAllegroReorientRewardCfg()
     actions: KukaAllegroRelJointPosActionCfg = KukaAllegroRelJointPosActionCfg()
 
-    def __post_init__(self: dextrah.DexSuiteReorientEnvCfg):
+    def __post_init__(self: dextrah.DextrahReorientEnvCfg):
         super().__post_init__()
-        self.observations.policy.contact = ObsTerm(func=mdp.fingers_contact_force_w)
-        self.observations.critic.contact = ObsTerm(func=mdp.fingers_contact_force_w)
         self.commands.object_pose.body_name = "palm_link"
         self.scene.robot = ArticulationCfg(
             prim_path="{ENV_REGEX_NS}/Robot",
             spawn=sim_utils.UsdFileCfg(
-                usd_path="https://isaac-dev.ov.nvidia.com/omni/web3/omniverse://isaac-dev.ov.nvidia.com/Users/zhengyuz@nvidia.com/Robots/KukaAllegro/kuka_allegro_optimized.usd",
+                usd_path=f"{LOCAL_ASSET_PATH_DIR}/Robots/KukaAllegro/kuka_allegro_optimizedv2.usd",
+                # usd_path="https://isaac-dev.ov.nvidia.com/omni/web3/omniverse://isaac-dev.ov.nvidia.com/Users/zhengyuz@nvidia.com/Robots/KukaAllegro/kuka_allegro_optimized.usd",
                 activate_contact_sensors=True,
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(
                     disable_gravity=True,
@@ -130,9 +130,8 @@ class KukaAllegroMixinCfg:
             },
             soft_joint_pos_limit_factor=1.0,
         )
-
+        self.observations.policy.contact = ObsTerm(func=mdp.fingers_contact_force_w)
         self.observations.policy.hand_tips_state_b.params["body_asset_cfg"].body_names = ["palm_link", ".*_tip"]
-        self.observations.critic.hand_tips_state_b.params["body_asset_cfg"].body_names = ["palm_link", ".*_tip"]
         self.rewards.fingers_to_object.params["asset_cfg"] = SceneEntityCfg("robot", body_names=["palm_link", ".*_tip"])
         for link_name in ["index_link_3", "middle_link_3", "ring_link_3", "thumb_link_3"]:
             setattr(
@@ -145,20 +144,78 @@ class KukaAllegroMixinCfg:
 
 
 @configclass
-class DextrahKukaAllegroReorientEnvCfg(KukaAllegroMixinCfg, dextrah.DexSuiteReorientEnvCfg):
+class DextrahKukaAllegroReorientEnvCfg(KukaAllegroMixinCfg, dextrah.DextrahReorientEnvCfg):
     pass
 
 
 @configclass
-class DextrahKukaAllegroReorientEnvCfg_PLAY(KukaAllegroMixinCfg, dextrah.DexSuiteReorientEnvCfg_PLAY):
+class DextrahKukaAllegroReorientEnvCfg_PLAY(KukaAllegroMixinCfg, dextrah.DextrahReorientEnvCfg_PLAY):
     pass
 
 
 @configclass
-class DextrahKukaAllegroLiftEnvCfg(KukaAllegroMixinCfg, dextrah.DexSuiteLiftEnvCfg):
+class DextrahKukaAllegroLiftEnvCfg(KukaAllegroMixinCfg, dextrah.DextrahLiftEnvCfg):
     pass
 
 
 @configclass
-class DextrahKukaAllegroLiftEnvCfg_PLAY(KukaAllegroMixinCfg, dextrah.DexSuiteLiftEnvCfg_PLAY):
+class DextrahKukaAllegroFabricLiftEnvCfg(KukaAllegroMixinCfg, dextrah.DextrahLiftEnvCfg):
     pass
+
+
+@configclass
+class DextrahKukaAllegroLiftEnvCfg_PLAY(KukaAllegroMixinCfg, dextrah.DextrahLiftEnvCfg_PLAY):
+    pass
+
+
+from importlib.util import find_spec
+FABRICS_AVAILABLE = find_spec("fabrics_sim") is not None
+if FABRICS_AVAILABLE:
+    @configclass
+    class KukaAllegroFabricActionCfg:
+        actions = mdp.FabricActionCfg(asset_name="robot")
+
+
+    @configclass
+    class DextrahFabricLiftEnvCfg(dextrah.DextrahLiftEnvCfg):
+        def __post_init__(self):
+            super().__post_init__()
+            self.events.reset_robot_joints.params["position_range"] = (0.0, 0.0)
+            self.events.reset_robot_wrist_joint = None
+            self.events.variable_gravity.params["gravity_distribution_params"] = ([0.0, 0.0, -9.81], [0.0, 0.0, -9.81])
+
+
+    @configclass
+    class KukaAllegroFabricMixinCfg(KukaAllegroMixinCfg):
+        actions: KukaAllegroFabricActionCfg = KukaAllegroFabricActionCfg()
+        def __post_init__(self):
+            super().__post_init__()
+            # Octi: Seems geometric fabric has some contraint how it wants to be initialized
+            # extreme angles will likely make it not work we therefore needs some customization if action space 
+            # is geometry fabric
+            self.scene.robot.init_state.joint_pos={
+                'iiwa7_joint_1': -0.85,
+                'iiwa7_joint_2': 0.0,
+                'iiwa7_joint_3': 0.76,
+                'iiwa7_joint_4': 1.25,
+                'iiwa7_joint_5': -1.76,
+                'iiwa7_joint_6': 0.90,
+                'iiwa7_joint_7': 0.64,
+                '(index|middle|ring)_joint_0': 0.0,
+                '(index|middle|ring)_joint_1': 0.3,
+                '(index|middle|ring)_joint_2': 0.3,
+                '(index|middle|ring)_joint_3': 0.3,
+                'thumb_joint_0': 1.5,
+                'thumb_joint_1': 0.60147215,
+                'thumb_joint_2': 0.33795027,
+                'thumb_joint_3': 0.60845138
+            }
+
+    @configclass
+    class DextrahFabricKukaAllegroLiftEnvCfg(KukaAllegroFabricMixinCfg, DextrahFabricLiftEnvCfg):
+        pass
+
+
+    @configclass
+    class DextrahFabricKukaAllegroLiftEnvCfg_PLAY(KukaAllegroMixinCfg, DextrahFabricLiftEnvCfg):
+        pass

@@ -15,7 +15,6 @@ from ... import mdp
 class KukaAllegroPCAActionCfg:
     actions = mdp.PCAHandActionCfg(asset_name="robot")
 
-
 @configclass
 class EnvConfigurables:
     env: dict[str, any] = {
