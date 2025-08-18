@@ -77,11 +77,15 @@ from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_pickle, dump_yaml
 
 from isaaclab_rl.rl_games import RlGamesGpuEnv, RlGamesVecEnvWrapper
-
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 # PLACEHOLDER: Extension template (do not remove this comment)
+# import torch
+# _orig_torch_load = torch.load
+# def _full_unpickle(f, *args, **kwargs):
+#     return _orig_torch_load(f, *args, weights_only=False, **kwargs)
+# torch.load = _full_unpickle
 
 
 @hydra_task_config(args_cli.task, "rl_games_cfg_entry_point")
@@ -143,8 +147,17 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     rl_device = agent_cfg["params"]["config"]["device"]
     clip_obs = agent_cfg["params"]["env"].get("clip_observations", math.inf)
     clip_actions = agent_cfg["params"]["env"].get("clip_actions", math.inf)
+    
+    if "encoders" in agent_cfg["params"]["network"]:
+        from isaaclab_rl.ext.actor_critic_vision_cfg import CNNEncoderCfg, ActorCriticVisionAdapterCfg
+        from isaaclab_rl.rl_games_vision_encoding_patcher import RLGamesVisionPatch
+        encoder_cfgs_dict = agent_cfg["params"]["network"]["encoders"]["encoder_cfgs"]
+        encoder_cfgs = {key : CNNEncoderCfg(**encoder_cfg) for key, encoder_cfg in encoder_cfgs_dict.items()}
+        agent_cfg["params"]["network"]["encoders"] = ActorCriticVisionAdapterCfg(encoder_cfgs=encoder_cfgs)
+        encoder_patch = RLGamesVisionPatch(agent_cfg["params"]["network"])
+        encoder_patch.apply_patch()
+        del agent_cfg["params"]["network"]["encoders"]
 
-    # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
     # convert to single-agent instance if required by the RL algorithm
@@ -164,7 +177,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
     # wrap around environment for rl-games
-    env = RlGamesVecEnvWrapper(env, rl_device, clip_obs, clip_actions)
+    obs_groups = agent_cfg["params"]["env"].get("obs_groups", None)
+    concate_obs_groups = agent_cfg["params"]["env"].get("concate_obs_groups", True)
+    env = RlGamesVecEnvWrapper(env, rl_device, clip_obs, clip_actions, obs_groups, concate_obs_groups)
 
     # register the environment to rl-games registry
     # note: in agents configuration: environment name must be "rlgpu"
