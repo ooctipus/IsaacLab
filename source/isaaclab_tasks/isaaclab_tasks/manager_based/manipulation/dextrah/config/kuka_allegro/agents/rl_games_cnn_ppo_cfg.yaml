@@ -11,8 +11,8 @@ params:
     clip_observations: 100.0
     clip_actions: 100.0
     obs_groups:
-      policy: ["policy", "base_image", "wrist_image"]
-      critic: ["policy", "privileged"]
+      obs: ["policy", "base_image", "wrist_image"]
+      states: ["policy", "privileged"]
 
   algo:
     name: a2c_continuous
