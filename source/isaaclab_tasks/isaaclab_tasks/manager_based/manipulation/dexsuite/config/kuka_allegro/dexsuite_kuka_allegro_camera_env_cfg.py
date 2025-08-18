@@ -88,10 +88,6 @@ class KukaAllegroCameraObservationsCfg(dexsuite_state_impl.ObservationsCfg):
     base_image: BaseImageObsCfg = BaseImageObsCfg()
     wrist_image: WristImageObsCfg = WristImageObsCfg()
 
-    def __post_init__(self):
-        # Hack: my encoder doesn't support multiple different observation source
-        self.privileged.perception.params["flatten"] = True
-
 @configclass
 class KukaAllegroCameraMixinCfg(KukaAllegroMixinCfg):
     scene: KukaAllegroCameraSceneCfg = KukaAllegroCameraSceneCfg(num_envs=4096, env_spacing=3, replicate_physics=False)
