@@ -29,12 +29,14 @@ def single_observation_space_from_obs(obs_dict: TensorDict | dict[str, torch.Ten
 
 class ActorCriticVisionExtensionPatcher:
     def __init__(self, a2c_cfg):
-        enc = a2c_cfg.get("encoder", None) if isinstance(a2c_cfg, Mapping) else getattr(a2c_cfg, "encoder", None)
+        enc = a2c_cfg.get("encoders", None) if isinstance(a2c_cfg, Mapping) else getattr(a2c_cfg, "encoders", None)
         self.vision = ActorCriticVision(enc)
 
     def apply_patch(self) -> None:
         """Attach encoders to policy instance and patch its observation methods."""
-        if not self.vision.adapter_cfg.freeze:
+        encoders = self.vision.adapter_cfg.encoder_cfgs
+        first_encoder = list(encoders.values())[0]
+        if not first_encoder.freeze:
             self._orig_get_actor_obs = ActorCritic.get_actor_obs
             self._orig_get_critic_obs = ActorCritic.get_critic_obs
             self._orig_actor_critic_init = ActorCritic.__init__
@@ -42,23 +44,23 @@ class ActorCriticVisionExtensionPatcher:
             
             def vision_encoder_creation_init(actor_critic_self, *args, **kwargs) -> None:
                 obs_arg, *rest = args
-                self.vision.encoder_init(obs_arg, activation=kwargs.get('activation'))
+                self.vision.encoder_init(obs_arg)
                 # when adapter is not freeze, it is a part of the nn.module, and its device is the same as 
                 # the ActorCritic Module
-                actor_obs = vision_forward(self.vision, obs_arg.to('cpu'), obs_arg.batch_size, "cpu")
+                actor_obs = vision_forward(self.vision, obs_arg.to('cpu'), self.vision.group2encoder, obs_arg.batch_size, "cpu")
                 new_args = (actor_obs, *rest)
                 self._orig_actor_critic_init(actor_critic_self, *new_args, **kwargs)
-                actor_critic_self.add_module("perception_encoder", self.vision.perception_encoder)
-                actor_critic_self.add_module("feature_projectors", self.vision.feature_projectors)
+                actor_critic_self.add_module("encoders", self.vision.encoders)
+                actor_critic_self.add_module("projectors", self.vision.projectors)
                 actor_critic_self.vision_forward = MethodType(vision_forward, actor_critic_self)
                 self.vision.print_vision_encoders()
 
             def vision_encoded_get_actor_obs(actor_critic_self, obs: TensorDict) -> torch.Tensor:
-                encoded_obs = actor_critic_self.vision_forward(obs, obs.batch_size, obs.device)
+                encoded_obs = actor_critic_self.vision_forward(obs, self.vision.group2encoder, obs.batch_size, obs.device)
                 return self._orig_get_actor_obs(actor_critic_self, encoded_obs)
 
             def vision_encoded_get_critic_obs_patched(actor_critic_self, obs: TensorDict) -> torch.Tensor:
-                encoded_obs = actor_critic_self.vision_forward(obs, obs.batch_size, obs.device)
+                encoded_obs = actor_critic_self.vision_forward(obs, self.vision.group2encoder, obs.batch_size, obs.device)
                 return self._orig_get_critic_obs(actor_critic_self, encoded_obs)
             
             def sol_update(ppo_self: PPO):
