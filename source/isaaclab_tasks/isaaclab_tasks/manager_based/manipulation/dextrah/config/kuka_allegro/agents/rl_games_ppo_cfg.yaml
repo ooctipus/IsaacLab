@@ -10,6 +10,10 @@ params:
   env:
     clip_observations: 100.0
     clip_actions: 100.0
+    obs_groups:
+      obs: ["policy", "privileged"]
+      states: ["policy", "privileged"]
+    concate_obs_groups: True
 
   algo:
     name: a2c_continuous
