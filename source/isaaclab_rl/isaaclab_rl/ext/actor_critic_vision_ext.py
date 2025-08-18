@@ -12,7 +12,6 @@ import torch.nn as nn
 import gymnasium
 import gym
 from typing import List, Union, Dict
-from tensordict import TensorDict
 from .actor_critic_vision_cfg import ActorCriticVisionAdapterCfg
 
 def vision_forward(
@@ -21,9 +20,9 @@ def vision_forward(
     group2encoder: dict[str, str],
     batch_size: int,
     device: str = "cpu"
-) -> TensorDict:
+) -> dict:
     enc = self.encoders
-    proc = TensorDict({}, batch_size=batch_size, device=device)
+    proc = {}
     for key, val in obs.items():
         if key in group2encoder:
             proc[key] = enc[group2encoder[key]](val)
@@ -44,7 +43,7 @@ def resolve_nn_activation(act_name: str) -> torch.nn.Module:
 
 class ActorCriticVision:
     
-    ObsSpaceLike = Union[gymnasium.spaces.Dict, gym.spaces.Dict, TensorDict, Dict[str, torch.Tensor]]
+    ObsSpaceLike = Union[gymnasium.spaces.Dict, gym.spaces.Dict, dict, Dict[str, torch.Tensor]]
     
     def __init__(self, adapter_cfg: ActorCriticVisionAdapterCfg):
         if not isinstance(adapter_cfg, ActorCriticVisionAdapterCfg):

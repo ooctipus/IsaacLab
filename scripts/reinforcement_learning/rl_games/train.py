@@ -191,6 +191,23 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # set number of actors into agent config
     agent_cfg["params"]["config"]["num_actors"] = env.unwrapped.num_envs
     # create runner from rl-games
+    if "num_mini_batches" in agent_cfg["params"]["config"]:
+        agent_cfg["params"]["config"]["minibatch_size"] = int(
+            agent_cfg["params"]["config"]["horizon_length"]
+            * env.unwrapped.num_envs
+            / agent_cfg["params"]["config"]["num_mini_batches"]
+        )
+
+        print("*" * 50)
+        print("*" * 50)
+        print("*" * 50)
+        print(f"WARNING: minibatch size is set to {agent_cfg['params']['config']['minibatch_size']}")
+        if "central_value_config" in agent_cfg["params"]["config"]:
+            agent_cfg["params"]["config"]["central_value_config"]["minibatch_size"] = agent_cfg['params']['config']['minibatch_size']
+        print("*" * 50)
+        print("*" * 50)
+        print("*" * 50)
+    # create runner from rl-games
     runner = Runner(IsaacAlgoObserver())
     runner.load(agent_cfg)
 
