@@ -79,7 +79,7 @@ class RlGamesVecEnvWrapper(IVecEnv):
         https://github.com/NVIDIA-Omniverse/IsaacGymEnvs
     """
 
-    def __init__(self, env: ManagerBasedRLEnv | DirectRLEnv, rl_device: str, clip_obs: float, clip_actions: float):
+    def __init__(self, env: ManagerBasedRLEnv | DirectRLEnv, rl_device: str, clip_obs: float, clip_actions: float, obs_groups: dict[str, list[str]] | None, concate_obs_group: bool = False):
         """Initializes the wrapper instance.
 
         Args:
@@ -104,12 +104,18 @@ class RlGamesVecEnvWrapper(IVecEnv):
         self._rl_device = rl_device
         self._clip_obs = clip_obs
         self._clip_actions = clip_actions
+        self._obs_groups = obs_groups
+        self._concate_obs_groups = concate_obs_group
         self._sim_device = env.unwrapped.device
         # information for privileged observations
         if self.state_space is None:
             self.rlg_num_states = 0
         else:
-            self.rlg_num_states = self.state_space.shape[0]
+            if self._concate_obs_groups:
+                self.rlg_num_states = self.state_space.shape[0]
+            else:
+                space = [space.shape[0] for space in self.state_space.values()]
+                self.rlg_num_states = sum(space)
 
     def __str__(self):
         """Returns the wrapper name and the :attr:`env` representation string."""
@@ -135,19 +141,31 @@ class RlGamesVecEnvWrapper(IVecEnv):
         return self.env.render_mode
 
     @property
-    def observation_space(self) -> gym.spaces.Box:
+    def observation_space(self) -> gym.spaces.Box | gym.spaces.Dict:
         """Returns the :attr:`Env` :attr:`observation_space`."""
         # note: rl-games only wants single observation space
         policy_obs_space = self.unwrapped.single_observation_space["policy"]
-        if not isinstance(policy_obs_space, gymnasium.spaces.Box):
-            raise NotImplementedError(
-                f"The RL-Games wrapper does not currently support observation space: '{type(policy_obs_space)}'."
-                f" If you need to support this, please modify the wrapper: {self.__class__.__name__},"
-                " and if you are nice, please send a merge-request."
-            )
-        # note: maybe should check if we are a sub-set of the actual space. don't do it right now since
-        #   in ManagerBasedRLEnv we are setting action space as (-inf, inf).
-        return gym.spaces.Box(-self._clip_obs, self._clip_obs, policy_obs_space.shape)
+
+        if self._obs_groups is not None and 'obs' in self._obs_groups:
+            if not self._concate_obs_groups:
+                policy_space = gym.spaces.Dict(
+                    {group : gym.spaces.Box(-self._clip_obs, self._clip_obs, self.unwrapped.single_observation_space.get(group).shape) for group in self._obs_groups['obs']}
+                )
+                return policy_space
+            else:
+                shape_list = [self.unwrapped.single_observation_space.get(group).shape[0] for group in self._obs_groups['obs']]
+                flat_space = sum(shape_list)
+                return gym.spaces.Box(-self._clip_obs, self._clip_obs, (flat_space, ))
+        else:
+            if not isinstance(policy_obs_space, gymnasium.spaces.Box):
+                raise NotImplementedError(
+                    f"The RL-Games wrapper does not currently support observation space: '{type(policy_obs_space)}'."
+                    f" If you need to support this, please modify the wrapper: {self.__class__.__name__},"
+                    " and if you are nice, please send a merge-request."
+                )
+            # note: maybe should check if we are a sub-set of the actual space. don't do it right now since
+            #   in ManagerBasedRLEnv we are setting action space as (-inf, inf).
+            return gym.spaces.Box(-self._clip_obs, self._clip_obs, policy_obs_space.shape)
 
     @property
     def action_space(self) -> gym.Space:
@@ -193,23 +211,34 @@ class RlGamesVecEnvWrapper(IVecEnv):
         return self.unwrapped.device
 
     @property
-    def state_space(self) -> gym.spaces.Box | None:
+    def state_space(self) -> gym.spaces.Box | gym.spaces.Dict | None:
         """Returns the :attr:`Env` :attr:`observation_space`."""
-        # note: rl-games only wants single observation space
-        critic_obs_space = self.unwrapped.single_observation_space.get("critic")
-        # check if we even have a critic obs
-        if critic_obs_space is None:
-            return None
-        elif not isinstance(critic_obs_space, gymnasium.spaces.Box):
-            raise NotImplementedError(
-                f"The RL-Games wrapper does not currently support state space: '{type(critic_obs_space)}'."
-                f" If you need to support this, please modify the wrapper: {self.__class__.__name__},"
-                " and if you are nice, please send a merge-request."
-            )
-        # return casted space in gym.spaces.Box (OpenAI Gym)
-        # note: maybe should check if we are a sub-set of the actual space. don't do it right now since
-        #   in ManagerBasedRLEnv we are setting action space as (-inf, inf).
-        return gym.spaces.Box(-self._clip_obs, self._clip_obs, critic_obs_space.shape)
+        # # note: rl-games only wants single observation space
+        if self._obs_groups is not None and 'states' in self._obs_groups:
+            if not self._concate_obs_groups:
+                state_space = gym.spaces.Dict(
+                    {group : gym.spaces.Box(-self._clip_obs, self._clip_obs, self.unwrapped.single_observation_space.get(group).shape) for group in self._obs_groups['states']}
+                )
+                return state_space
+            else:
+                shape_list = [self.unwrapped.single_observation_space.get(group).shape[0] for group in self._obs_groups['states']]
+                flat_space = sum(shape_list)
+                return gym.spaces.Box(-self._clip_obs, self._clip_obs, (flat_space, ))
+        else:
+            critic_obs_space = self.unwrapped.single_observation_space.get("critic")
+            # check if we even have a critic obs
+            if critic_obs_space is None:
+                return None
+            elif not isinstance(critic_obs_space, gymnasium.spaces.Box):
+                raise NotImplementedError(
+                    f"The RL-Games wrapper does not currently support state space: '{type(critic_obs_space)}'."
+                    f" If you need to support this, please modify the wrapper: {self.__class__.__name__},"
+                    " and if you are nice, please send a merge-request."
+                )
+            # return casted space in gym.spaces.Box (OpenAI Gym)
+            # note: maybe should check if we are a sub-set of the actual space. don't do it right now since
+            #   in ManagerBasedRLEnv we are setting action space as (-inf, inf).
+            return gym.spaces.Box(-self._clip_obs, self._clip_obs, critic_obs_space.shape)
 
     def get_number_of_agents(self) -> int:
         """Returns number of actors in the environment."""
@@ -284,28 +313,41 @@ class RlGamesVecEnvWrapper(IVecEnv):
             If environment provides states, then a dictionary containing the observations and states is returned.
             Otherwise just the observations tensor is returned.
         """
-        # process policy obs
-        obs = obs_dict["policy"]
-        # clip the observations
-        obs = torch.clamp(obs, -self._clip_obs, self._clip_obs)
-        # move the buffer to rl-device
-        obs = obs.to(device=self._rl_device).clone()
-
-        # check if asymmetric actor-critic or not
-        if self.rlg_num_states > 0:
-            # acquire states from the environment if it exists
-            try:
-                states = obs_dict["critic"]
-            except AttributeError:
-                raise NotImplementedError("Environment does not define key 'critic' for privileged observations.")
-            # clip the states
-            states = torch.clamp(states, -self._clip_obs, self._clip_obs)
-            # move buffers to rl-device
-            states = states.to(self._rl_device).clone()
-            # convert to dictionary
-            return {"obs": obs, "states": states}
+        
+        if self._obs_groups:
+            for key, obs in obs_dict.items():
+                obs_dict[key] = torch.clamp(obs, -self._clip_obs, self._clip_obs)
+            if self._concate_obs_groups:
+                obs = torch.cat([obs_dict[group] for group in self._obs_groups['obs']], dim=1)
+                states = torch.cat([obs_dict[group] for group in self._obs_groups['states']], dim=1)
+            else:
+                obs = {group : obs_dict[group] for group in self._obs_groups['obs']}
+                states = {group : obs_dict[group] for group in self._obs_groups['states']}
+            rl_games_obs = {"obs" : obs, "states" : states}
+            return rl_games_obs
         else:
-            return obs
+            # process policy obs
+            obs = obs_dict["policy"]
+            # clip the observations
+            obs = torch.clamp(obs, -self._clip_obs, self._clip_obs)
+            # move the buffer to rl-device
+            obs = obs.to(device=self._rl_device).clone()
+            
+            # check if asymmetric actor-critic or not
+            if self.rlg_num_states > 0:
+                # acquire states from the environment if it exists
+                try:
+                    states = obs_dict["critic"]
+                except AttributeError:
+                    raise NotImplementedError("Environment does not define key 'critic' for privileged observations.")
+                # clip the states
+                states = torch.clamp(states, -self._clip_obs, self._clip_obs)
+                # move buffers to rl-device
+                states = states.to(self._rl_device).clone()
+                # convert to dictionary
+                return {"obs": obs, "states": states}
+            else:
+                return obs
 
 
 """
@@ -332,6 +374,25 @@ class RlGamesGpuEnv(IVecEnv):
 
     def reset(self):  # noqa: D102
         return self.env.reset()
+
+    def get_env_state(self):
+        if 'true_objective' in self.env.unwrapped.extras:
+            state = {
+                'curriculum': self.env.unwrapped.extras['true_objective']
+            }
+        elif hasattr(self.env.unwrapped, "curriculum_manager"):
+            state = {
+                "curriculum": self.env.unwrapped.curriculum_manager._term_cfgs[0].func.get_state()
+            }
+        return state
+
+    def set_env_state(self, env_state: dict[str, dict[str, dict[str, torch.Tensor]]]):
+        curriculum = env_state['curriculum'][:self.env.num_envs]
+
+        if hasattr(self.env.unwrapped, "curriculum_manager"):
+            self.env.unwrapped.curriculum_manager._term_cfgs[0].func.set_state(curriculum)
+        else:
+            self.env.unwrapped.dextrah_adr.set_num_increments(int(curriculum.float().mean().item()))
 
     def get_number_of_agents(self) -> int:
         """Get number of agents in the environment.
