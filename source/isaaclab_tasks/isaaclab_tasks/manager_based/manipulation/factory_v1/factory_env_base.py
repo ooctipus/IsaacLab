@@ -211,6 +211,8 @@ class FactoryRewardsCfg:
             "fixed_asset_offset": MISSING,
         },
     )
+    
+    reach_reward = RewTerm(func=mdp.reach_reward, weight=0.2, params={"std": 0.1})
 
     progress_reward_coarse = RewTerm(func=mdp.progress_reward, weight=0.5, params={"std": 0.02})
 
