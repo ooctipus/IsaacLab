@@ -79,7 +79,7 @@ class NutThreadEventCfg(FactoryEventCfg):
                 "y": (-0.02, 0.02),
                 "z": (0.015, 0.025),
                 "roll": (3.141, 3.141),
-                "yaw": (1.57, 2.09),
+                "yaw": (-2.09, 2.09),
             }
 
             # For reset_held_asset
@@ -102,7 +102,7 @@ class NutThreadEventCfg(FactoryEventCfg):
             reset_s3["reset_end_effector_around_held_asset"].params["pose_range_b"] = {
                 "z": (-0.005, -0.005),
                 "roll": (3.141, 3.141),
-                "yaw": (1.57, 2.09),
+                "yaw": (-2.09, 2.09),
             }
 
             reset_s3["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
