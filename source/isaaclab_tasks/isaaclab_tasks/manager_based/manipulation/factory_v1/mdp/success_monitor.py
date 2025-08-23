@@ -51,6 +51,7 @@ class SuccessMonitor:
         target: float = 0.5,
         kappa: float = 2.0,
         return_probs: bool = False,
+        temperature: float = 2.0,
     ):
         """
         Sample partitions preferring success rates near `target` in [0, 1].
@@ -86,6 +87,7 @@ class SuccessMonitor:
         eps = 1e-8  # avoids 0^0 and zero-sum
         w = ((p + eps).pow(a - 1.0) * (1.0 - p + eps).pow(b - 1.0)).clamp_min(eps)
 
-        probs = w / w.sum()  # no fallback; eps guarantees nonzero sum
+        logits = torch.log(w + eps)
+        probs = torch.softmax(logits / max(1.0, float(temperature)), dim=0)
         choices = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
         return (choices, probs) if return_probs else choices
