@@ -152,6 +152,8 @@ class NutThreadEnvCfg(FactoryBaseEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
+        self.rewards.reach_reward.params["held_asset_cfg"] = SceneEntityCfg("nut_m16")
+        self.rewards.reach_reward.params["ee_cfg"] = SceneEntityCfg("robot", body_names="panda_fingertip_centered")
         self.terminations.oob.params["asset_cfg"] = SceneEntityCfg("nut_m16")
         for asset in ["gear_base", "hole_8mm", "small_gear", "large_gear", "medium_gear", "peg_8mm"]:
             delattr(self.scene, asset)
