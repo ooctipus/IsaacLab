@@ -226,6 +226,10 @@ class FactoryTerminationsCfg:
     # (1) Time out
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
+    oob = DoneTerm(func=mdp.out_of_bound, params={
+        "asset_cfg": SceneEntityCfg("held_asset"),
+        "in_bound_range":{"x": (-0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)}
+    })
 
 ##
 # Environment configuration
@@ -262,7 +266,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.physx.friction_correlation_distance = 0.00625
         self.sim.physx.gpu_max_rigid_contact_count = 2**23
         self.sim.physx.gpu_max_rigid_patch_count = 2**23
-        self.sim.physx.gpu_collision_stack_size = 2**31
+        self.sim.physx.gpu_collision_stack_size = 2**32 - 1
         self.sim.physx.gpu_max_num_partitions = 1
 
         self.sim.physics_material.static_friction = 1.0
