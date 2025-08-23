@@ -12,7 +12,7 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, R
 class FactoryPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 32
     max_iterations = 5000
-    save_interval = 50
+    save_interval = 200
     experiment_name = "factory"
     empirical_normalization = True
     policy = RslRlPpoActorCriticCfg(
@@ -25,13 +25,13 @@ class FactoryPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,
-        entropy_coef=1e-3,
+        entropy_coef=4e-3,
         num_learning_epochs=5,
         num_mini_batches=4,
-        learning_rate=5.0e-4,
+        learning_rate=1.0e-4,
         schedule="adaptive",
         gamma=0.99,
         lam=0.95,
-        desired_kl=0.02,
+        desired_kl=0.01,
         max_grad_norm=1.0,
     )
