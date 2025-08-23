@@ -121,8 +121,8 @@ class FactoryEventCfg:
         func=mdp.randomize_rigid_body_material,  # type: ignore
         mode="startup",
         params={
-            "static_friction_range": (0.75, 0.75),
-            "dynamic_friction_range": (0.75, 0.75),
+            "static_friction_range": (0.3, 0.5),
+            "dynamic_friction_range": (0.3, 0.5),
             "restitution_range": (0.0, 0.0),
             "num_buckets": 64,
             "asset_cfg": SceneEntityCfg("held_asset"),
@@ -133,8 +133,8 @@ class FactoryEventCfg:
         func=mdp.randomize_rigid_body_material,  # type: ignore
         mode="startup",
         params={
-            "static_friction_range": (0.75, 0.75),
-            "dynamic_friction_range": (0.75, 0.75),
+            "static_friction_range": (0.3, 0.5),
+            "dynamic_friction_range": (0.3, 0.5),
             "restitution_range": (0.0, 0.0),
             "num_buckets": 64,
             "asset_cfg": SceneEntityCfg("fixed_asset"),
@@ -225,6 +225,8 @@ class FactoryTerminationsCfg:
 
     # (1) Time out
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
+    
+    oob = DoneTerm(func=mdp.)
 
     oob = DoneTerm(func=mdp.out_of_bound, params={
         "asset_cfg": SceneEntityCfg("held_asset"),
@@ -252,7 +254,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     def __post_init__(self) -> None:
         """Post initialization."""
         # general settings
-        self.decimation = 8  # 20hz
+        self.decimation = 6
         self.episode_length_s = 15.0
         # simulation settings
         self.sim.dt = 0.05 / self.decimation
@@ -269,8 +271,8 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.physx.gpu_collision_stack_size = 2**32 - 1
         self.sim.physx.gpu_max_num_partitions = 1
 
-        self.sim.physics_material.static_friction = 1.0
-        self.sim.physics_material.dynamic_friction = 1.0
+        self.sim.physics_material.static_friction = 0.5
+        self.sim.physics_material.dynamic_friction = 0.5
 
         self.sim.render.enable_ambient_occlusion = True
         self.sim.render.enable_dlssg = True
