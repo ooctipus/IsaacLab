@@ -227,6 +227,8 @@ class FactoryTerminationsCfg:
 
     # (1) Time out
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
+    
+    abnormal = DoneTerm(func=mdp.abnormal_robot_state)
 
     oob = DoneTerm(func=mdp.out_of_bound, params={
         "asset_cfg": SceneEntityCfg("held_asset"),
