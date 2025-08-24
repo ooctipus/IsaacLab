@@ -28,7 +28,7 @@ class RslRlPpoActorCriticCfg:
     init_noise_std: float = MISSING
     """The initial noise standard deviation for the policy."""
 
-    noise_std_type: Literal["scalar", "log"] = "scalar"
+    noise_std_type: Literal["scalar", "log", "gsde"] = "scalar"
     """The type of noise standard deviation for the policy. Default is scalar."""
 
     actor_obs_normalization: bool = MISSING
