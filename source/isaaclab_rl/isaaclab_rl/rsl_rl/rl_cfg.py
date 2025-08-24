@@ -46,7 +46,7 @@ class RslRlPpoActorCriticCfg:
     activation: str = MISSING
     """The activation function for the actor and critic networks."""
     
-    encoder: ActorCriticVisionAdapterCfg | None = None
+    encoders: ActorCriticVisionAdapterCfg | None = None
     """The encoder for actor critic network"""
 
 
