@@ -4,12 +4,16 @@ set -euo pipefail
 function usage() {
   cat <<EOF
 Usage:
-  $0 [--pbt|-p] <spec.yaml> <script> [key=val ...]
+  $0 [--pbt|-p] <script> [key=val ...]
   $0 [--cancel|-c] <prefix-start> <num_to_cancel>
-  $0 [--submit|-s]  <spec.yaml> <script> [cluster_key=val ...] [fixed_key=val ...] sweep_key=val1,val2,...
+  $0 [--submit|-s]  <script> [cluster_key=val ...] [fixed_key=val ...] sweep_key=val1,val2,...
 EOF
   exit 1
 }
+
+# Prefer these spec paths; we’ll select one based on num_node
+SPEC_SINGLE="/home/zhengyuz/workflow_specs/single_node.yaml"
+SPEC_MULTI="/home/zhengyuz/workflow_specs/multi_node.yaml"
 
 truthy() { case "${1,,}" in 1|true|yes|on) return 0;; *) return 1;; esac; }
 falsy() { case "${1,,}" in 0|false|no|off) return 0;; *) return 1;; esac; }
@@ -37,21 +41,25 @@ handle_cli_flag() {
   esac
 }
 
-# Validate that spec and script exist
-function require_spec_and_script() {
-  [[ -f "$1" ]] || { echo "Spec file not found: $1" >&2; exit 1; }
-  [[ -f "$2" ]] || { echo "Script not found: $2" >&2; exit 1; }
-}
+# (validation happens after we know the call form)
 
 # Build the --set cluster string from the associative array
 function build_cluster_str() {
-  local keys=(image num_gpu num_cpu memory platform dataset num_node storage)
+  local keys=(image num_gpu num_cpu memory platform dataset num_node storage master_port)
   local str=""
   for k in "${keys[@]}"; do
     str+=" $k=${cluster[$k]}"
   done
   echo "${str# }"
 }
+
+# Decide which spec to use based on num_node (1 => single, >1 => multi)
+function choose_spec_by_nodes() {
+  local nodes="${cluster[num_node]:-1}"
+  if (( nodes > 1 )); then spec="$SPEC_MULTI"; else spec="$SPEC_SINGLE"; fi
+  [[ -f "$spec" ]] || { echo "Spec file not found: $spec" >&2; exit 1; }
+}
+
 
 # Parse and remove any cluster overrides *in this shell*
 parsed_args=()
@@ -91,17 +99,20 @@ if [[ "$mode" == "cancel" ]]; then
   exit
 fi
 
-# For both PBT and SUBMIT we need at least spec+script
+# For PBT/SUBMIT: first positional is always <script>
 if [[ "$mode" == "pbt" || "$mode" == "submit" ]]; then
-  (( $# >= 2 )) || usage
-  spec="$1"; script="$2"; shift 2
-  require_spec_and_script "$spec" "$script"
+  (( $# >= 1 )) || usage
+  spec=""                     # will be chosen by num_node later
+  script="$1"; shift 1
+  [[ -f "$script" ]] || { echo "Script not found: $script" >&2; exit 1; }
 fi
 
 # default pool to platform settings
 declare -A pool_to_platform=(
   [isaac-dev-h100-01]="dgx-h100"
   [isaac-dev-l40-03]="ovx-l40"
+  [isaac-srl-l40-04]="ovx-l40"
+  [isaac-dex-l40s-04]="ovx-l40s"
   [isaac-dev-l40s-03]="ovx-l40s"
   [isaac-dex-l40s-02]="ovx-l40s"
   [isaac-dex-l40s-03]="ovx-l40s"
@@ -118,6 +129,7 @@ declare -A cluster=(
   [storage]=64
   [platform]="dgx-h100"
   [dataset]="isaac-lab-ppo-model"
+  [master_port]=29400
 )
 
 # -------------------------------------------------------------------
@@ -169,6 +181,8 @@ if [[ "$mode" == "pbt" ]]; then
   : "${kv[num_populations]:?Missing required: num_populations}"
 
   date_time=$(date +'%Y-%m-%dT%H:%M:%S')
+  # Pick the right spec now that cluster overrides are parsed
+  choose_spec_by_nodes
   cluster_str=$(build_cluster_str)
 
   echo "⏳ Submitting PBT: populations=${kv[num_populations]}"
@@ -258,6 +272,8 @@ if [[ "$mode" == "submit" ]]; then
     fi
   fi
 
+  # Pick the right spec now that cluster overrides are parsed
+  choose_spec_by_nodes
   cluster_str=$(build_cluster_str)
 
   # fixed args
