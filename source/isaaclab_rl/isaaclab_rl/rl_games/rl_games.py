@@ -119,6 +119,8 @@ class RlGamesVecEnvWrapper(IVecEnv):
         self._rl_device = rl_device
         self._clip_obs = clip_obs
         self._clip_actions = clip_actions
+        self._obs_groups = obs_groups
+        self._concate_obs_groups = concate_obs_group
         self._sim_device = env.unwrapped.device
 
         # resolve the observation group
@@ -395,6 +397,25 @@ class RlGamesGpuEnv(IVecEnv):
 
     def reset(self):  # noqa: D102
         return self.env.reset()
+
+    def get_env_state(self):
+        if 'true_objective' in self.env.unwrapped.extras:
+            state = {
+                'curriculum': self.env.unwrapped.extras['true_objective']
+            }
+        elif hasattr(self.env.unwrapped, "curriculum_manager"):
+            state = {
+                "curriculum": self.env.unwrapped.curriculum_manager._term_cfgs[0].func.get_state()
+            }
+        return state
+
+    def set_env_state(self, env_state: dict[str, dict[str, dict[str, torch.Tensor]]]):
+        curriculum = env_state['curriculum'][:self.env.num_envs]
+
+        if hasattr(self.env.unwrapped, "curriculum_manager"):
+            self.env.unwrapped.curriculum_manager._term_cfgs[0].func.set_state(curriculum)
+        else:
+            self.env.unwrapped.dextrah_adr.set_num_increments(int(curriculum.float().mean().item()))
 
     def get_number_of_agents(self) -> int:
         """Get number of agents in the environment.
