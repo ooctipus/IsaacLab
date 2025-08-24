@@ -20,6 +20,7 @@ class FactoryPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         actor_hidden_dims=[512, 256, 128, 64],
         critic_hidden_dims=[512, 256, 128, 64],
         activation="elu",
+        noise_std_type='gsde'
     )
     algorithm = RslRlPpoAlgorithmCfg(
         value_loss_coef=1.0,
