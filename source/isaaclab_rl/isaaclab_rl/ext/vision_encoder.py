@@ -10,7 +10,7 @@ from rsl_rl.utils import resolve_nn_activation
 
 if TYPE_CHECKING:
     
-    from ... import actor_critic_vision_cfg as cfg
+    from ....ext import actor_critic_vision_cfg as cfg
 
 class VisionAdapter(nn.Module):
     """Base class for all vision encoders."""
@@ -20,6 +20,7 @@ class VisionAdapter(nn.Module):
         self.obs_space = obs_space
         self._processors: List[callable] = []
         self._processor_descriptions: List[str] = []
+        self._feature_dim = -1
 
         if obs_space.dtype != np.float32:
             self._processors.append(lambda x : x.float())
@@ -61,6 +62,9 @@ class VisionAdapter(nn.Module):
         else:
             raise ValueError(f"Does not recognize this perception with dim {len(obs_space.shape)}")
 
+    def feature_dim(self):
+        return self._feature_dim
+    
     def freeze(self):
         """Freeze all parameters in the model."""
         for param in self.parameters():
@@ -140,18 +144,6 @@ class VisionAdapter(nn.Module):
         for fn in self._processors:
             x = fn(x)
         return x
-    
-    def build_projector(self, input_dim: int) -> nn.Module:
-        """Create a projector that maps encoder output to desired feature dimension.
-        Args:
-            input_dim: Input dimension to the projector
-        Returns:
-            Projector module
-        """
-        if self.cfg.feature_dim:
-            return nn.Sequential(nn.Linear(input_dim, self.cfg.feature_dim), resolve_nn_activation(self.cfg.activation))
-        else:
-            return nn.Identity()
 
     def initialize(self):
         """Hook called at the end of initialization to set up model."""
@@ -171,21 +163,22 @@ class VisionAdapter(nn.Module):
 class CNNEncoder(VisionAdapter):
     """CNN encoder with configurable architecture."""
     
-    cfg: cfg.ActorCriticVisionAdapterCfg
+    cfg: cfg.CNNEncoderCfg
 
-    def __init__(self, obs_space: spaces.Box, adapter_cfg: cfg.ActorCriticVisionAdapterCfg):
-        super().__init__(obs_space, adapter_cfg)
+    def __init__(self, obs_space: spaces.Box, encoder_cfg: cfg.CNNEncoderCfg):
+        super().__init__(obs_space, encoder_cfg)
         self._build_encoder(obs_space)
         self.initialize()
 
     def _build_encoder(self, obs_space):
         layers: List[nn.Module] = []
         in_c = self.num_channel
-        ec: cfg.CNNEncoderCfg = self.cfg.encoder_cfg
+        ec = self.cfg
+        activation = resolve_nn_activation(ec.activation)
         for i, out_c in enumerate(ec.channels):
             c = nn.Conv2d(in_c, out_c, kernel_size=ec.kernel_sizes[i], stride=ec.strides[i], padding=ec.paddings[i])
             layers.append(c)
-            layers.append(resolve_nn_activation(self.cfg.activation))
+            layers.append(activation)
             if ec.use_maxpool:
                 layers.append(nn.MaxPool2d(ec.pool_size))
             in_c = out_c
@@ -199,10 +192,10 @@ class CNNEncoder(VisionAdapter):
                 dummy = self.preprocess(obs_space.cpu())
             else:
                 dummy = self.preprocess(torch.tensor(obs_space.sample()))
-            flat_sz = self.encoder(dummy).shape[1]
+            self._feature_dim = self.encoder(dummy).shape[1]
 
-        if self.cfg.feature_dim is not None:
-            self.projector = self.build_projector(flat_sz)
+        if self.cfg.output_dim is not None:
+            self.projector = nn.Sequential(nn.Linear(self._feature_dim, self.cfg.output_dim), activation)
         else:
             self.projector = nn.Identity()
 
@@ -235,8 +228,8 @@ class PointNetEncoder(VisionAdapter):
         else:
             self.pool = None
 
-        if pc_cfg.feature_dim is not None:
-            self.projector = self.build_projector(pc_cfg.feature_dim)
+        if self.cfg.output_dim is not None:
+            self.projector = nn.Sequential(nn.Linear(self._feature_dim, self.cfg.output_dim), torch.nn.ReLU())
         else:
             self.projector = nn.Identity()
 
@@ -254,28 +247,27 @@ class PointNetEncoder(VisionAdapter):
 
 class MLPEncoder(VisionAdapter):
     """Simple MLP encoder: flatten → hidden-layer MLP → projector."""
-    def __init__(self, obs_space, adapter_cfg):
-        super().__init__(obs_space, adapter_cfg)
+    cfg: cfg.MLPEncoderCfg
+
+    def __init__(self, obs_space, encoder_cfg: cfg.MLPEncoderCfg):
+        super().__init__(obs_space, encoder_cfg)
         self._build_encoder(obs_space)
         self.initialize()
 
     def _build_encoder(self, obs_space):
-        mlp_cfg: cfg.MLPEncoderCfg = self.cfg.encoder_cfg   # assume it has .hidden_sizes: List[int]
-        
         # figure out total input dim (drop batch axis)
         flat_in = int(np.prod(obs_space.shape[1:]))
-
         layers = [nn.Flatten()]
         in_dim = flat_in
-        for out_dim in mlp_cfg.layers:
+        for out_dim in self.cfg.layers:
             layers.append(nn.Linear(in_dim, out_dim))
             layers.append(resolve_nn_activation(self.cfg.activation))
             in_dim = out_dim
 
         self.encoder = nn.Sequential(*layers)
         # final projector maps ‘in_dim’ → feature_dim if requested
-        if mlp_cfg.feature_dim is not None:
-            self.projector = self.build_projector(mlp_cfg.feature_dim)
+        if self.cfg.output_dim is not None:
+            self.projector = nn.Sequential(nn.Linear(self._feature_dim, self.cfg.output_dim), torch.nn.ReLU())
         else:
             self.projector = nn.Identity()
 
