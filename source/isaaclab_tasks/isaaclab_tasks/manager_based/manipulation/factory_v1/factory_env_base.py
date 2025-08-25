@@ -211,12 +211,10 @@ class FactoryRewardsCfg:
             "fixed_asset_offset": MISSING,
         },
     )
-    
-    reach_reward = RewTerm(func=mdp.reach_reward, weight=0.1, params={"std": 0.1})
 
-    progress_reward_coarse = RewTerm(func=mdp.progress_reward, weight=0.1, params={"std": 0.02})
+    reach_reward = RewTerm(func=mdp.reach_reward, weight=0.1, params={"std": 1.0})
 
-    progress_reward_fine = RewTerm(func=mdp.progress_reward, weight=0.2, params={"std": 0.005})
+    progress_reward_fine = RewTerm(func=mdp.progress_reward, weight=0.1, params={"std": 0.005})
 
     success_reward = RewTerm(func=mdp.success_reward, weight=1.0)
 
@@ -256,10 +254,10 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     def __post_init__(self) -> None:
         """Post initialization."""
         # general settings
-        self.decimation = 6
-        self.episode_length_s = 15.0
+        self.decimation = 12
+        self.episode_length_s = 10.0
         # simulation settings
-        self.sim.dt = 0.05 / self.decimation
+        self.sim.dt = 0.1 / self.decimation
         self.sim.render_interval = self.decimation
 
         self.sim.physx.solver_type = 1
