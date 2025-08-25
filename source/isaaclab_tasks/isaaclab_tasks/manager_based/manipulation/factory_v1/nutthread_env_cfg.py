@@ -115,7 +115,7 @@ class NutThreadEventCfg(FactoryEventCfg):
             reset_s4["reset_held_asset_on_fixed_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("bolt_m16")
             reset_s4["reset_held_asset_on_fixed_asset"].params["assembled_offset"] = KEYPOINTS_BOLTM16.fully_screwed_nut_offset
             reset_s4["reset_held_asset_on_fixed_asset"].params["entry_offset"] = KEYPOINTS_BOLTM16.bolt_tip_offset
-            reset_s4["reset_held_asset_on_fixed_asset"].params["assembly_fraction_range"] = (0.40, 0.70)  # 0.4 hits the nistboard
+            reset_s4["reset_held_asset_on_fixed_asset"].params["assembly_fraction_range"] = (0.40, 0.55)  # 0.4 hits the nistboard
             reset_s4["reset_held_asset_on_fixed_asset"].params["assembly_ratio"] = (0., 0., 0.002 / 6.2832)
 
             reset_s4["reset_end_effector_around_held_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("nut_m16")
