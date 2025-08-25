@@ -212,9 +212,9 @@ class FactoryRewardsCfg:
         },
     )
 
-    reach_reward = RewTerm(func=mdp.reach_reward, weight=0.1, params={"std": 1.0})
+    reach_reward = RewTerm(func=mdp.reach_reward, weight=0.2, params={"std": 1.0})
 
-    progress_reward_fine = RewTerm(func=mdp.progress_reward, weight=0.1, params={"std": 0.005})
+    progress_reward_fine = RewTerm(func=mdp.progress_reward, weight=0.2, params={"std": 0.005})
 
     success_reward = RewTerm(func=mdp.success_reward, weight=1.0)
 
