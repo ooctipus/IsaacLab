@@ -109,3 +109,13 @@ def success_reward(env: ManagerBasedRLEnv, context: str = "progress_context") ->
     position_centered: torch.Tensor = getattr(context_term, "position_centered")
     z_distance_reached: torch.Tensor = getattr(context_term, "z_distance_reached")
     return torch.where(orientation_aligned & position_centered & z_distance_reached, 1.0, 0.0)
+
+
+def action_rate_l2_clamped(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Penalize the rate of change of the actions using L2 squared kernel."""
+    return torch.sum(torch.square(env.action_manager.action - env.action_manager.prev_action), dim=1).clamp(-5000, 5000)
+
+
+def action_l2_clamped(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Penalize the actions using L2 squared kernel."""
+    return torch.sum(torch.square(env.action_manager.action), dim=1).clamp(-5000, 5000)
