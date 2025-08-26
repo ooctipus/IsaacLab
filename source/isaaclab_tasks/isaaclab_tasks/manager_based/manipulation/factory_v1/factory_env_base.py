@@ -198,6 +198,8 @@ class FactoryRewardsCfg:
     action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-1e-4)
 
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-1e-4)
+    
+    early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-100)
 
     # progress rewards
     progress_context = RewTerm(
