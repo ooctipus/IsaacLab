@@ -148,7 +148,7 @@ class reset_end_effector_around_asset(ManagerTermBase):
         fixed_asset_offset: Offset,
         pose_range_b: dict[str, tuple[float, float]],
         robot_ik_cfg: SceneEntityCfg,
-        ik_iterations: int = 10,
+        ik_iterations: tuple[int, int] = (5, 10),
     ) -> None:
         if self.solver is None:
             self.solver = self.robot_ik_solver_cfg.class_type(self.robot_ik_solver_cfg, env)
