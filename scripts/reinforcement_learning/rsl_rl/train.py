@@ -93,7 +93,7 @@ from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_pickle, dump_yaml
 from isaaclab.utils.wandb_upload_record_video import patch_record_video_with_wandb_upload
-from isaaclab_rl.rsl_rl.ext.modules.actor_critic_vision import ActorCriticVisionExtensionPatcher
+from isaaclab_rl.rsl_rl.ext.rsl_rl_vision_encoder_patcher import ActorCriticVisionExtensionPatcher
 from isaaclab_rl.rsl_rl.ext.modules.obs_dep_std import StateDependendNoiseDistributionPatcher
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper
 
