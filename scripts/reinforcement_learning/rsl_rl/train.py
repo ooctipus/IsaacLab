@@ -80,6 +80,7 @@ import gymnasium as gym
 import logging
 import os
 import torch
+import torch.distributed as dist
 from datetime import datetime
 
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
@@ -139,9 +140,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if args_cli.distributed:
         env_cfg.sim.device = f"cuda:{app_launcher.local_rank}"
         agent_cfg.device = f"cuda:{app_launcher.local_rank}"
+        if dist.is_available() and dist.is_initialized():
+            global_rank = dist.get_rank()
+        else:
+            # fallback for non-DDP or early call (works with torchrun/SLURM)
+            global_rank = int(os.getenv("RANK", os.getenv("SLURM_PROCID", 0)))
 
-        # set seed to have diversity in different threads
-        seed = agent_cfg.seed + app_launcher.local_rank
+        seed = int(agent_cfg.seed) + global_rank
         env_cfg.seed = seed
         agent_cfg.seed = seed
 
