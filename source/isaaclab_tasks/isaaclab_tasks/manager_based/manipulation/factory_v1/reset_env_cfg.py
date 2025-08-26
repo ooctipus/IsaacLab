@@ -26,7 +26,7 @@ GRIPPER_GRASP_ASSET_IN_AIR = EventTerm(
                     "fixed_asset_offset": MISSING,
                     "pose_range_b": MISSING,
                     "robot_ik_cfg": SceneEntityCfg("robot"),
-                    "ik_iterations": 30,
+                    "ik_iterations": (5, 30),
                 }
             ),
             "grasp_held_asset": EventTerm(
@@ -65,7 +65,7 @@ FULL_ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE = EventTerm(
                     "fixed_asset_offset": MISSING,
                     "pose_range_b": MISSING,
                     "robot_ik_cfg": SceneEntityCfg("robot"),
-                    "ik_iterations": 30,
+                    "ik_iterations": (5, 15),
                 }
             ),
             "grasp_held_asset": EventTerm(
@@ -104,7 +104,7 @@ ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE = EventTerm(
                     "fixed_asset_offset": MISSING,
                     "pose_range_b": MISSING,
                     "robot_ik_cfg": SceneEntityCfg("robot"),
-                    "ik_iterations": 30,
+                    "ik_iterations": (5, 15),
                 }
             ),
             "grasp_held_asset": EventTerm(
