@@ -6,8 +6,7 @@
 from isaaclab.utils import configclass
 
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
-from isaaclab_rl.ext import actor_critic_vision_cfg as encoder_cfg
-
+from isaaclab_rl.ext.actor_critic_vision_cfg import ActorCriticVisionAdapterCfg, MLPEncoderCfg
 @configclass
 class DexsuiteKukaAllegroPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 36
@@ -25,10 +24,14 @@ class DexsuiteKukaAllegroPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
         activation="elu",
-        encoder=encoder_cfg.ActorCriticVisionAdapterCfg(
-            normalize=False,
-            activation='elu',
-            encoder_cfg=encoder_cfg.MLPEncoderCfg(layers=[1024, 512, 256])
+        encoders=ActorCriticVisionAdapterCfg(
+            encoder_cfgs={
+                "point_cloud" : MLPEncoderCfg(
+                    encoding_groups=["privileged"],
+                    layers=[512, 256, 128],
+                    activation='elu'
+                )
+            }
         )
     )
     algorithm = RslRlPpoAlgorithmCfg(
