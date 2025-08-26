@@ -195,9 +195,9 @@ class FactoryRewardsCfg:
     """Reward terms for Factory"""
 
     # penalties
-    action_l2 = RewTerm(func=mdp.action_l2, weight=-1e-4)
+    action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-1e-4)
 
-    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-1e-4)
+    action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-1e-4)
 
     # progress rewards
     progress_context = RewTerm(
