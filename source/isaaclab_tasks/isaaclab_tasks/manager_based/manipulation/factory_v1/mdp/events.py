@@ -115,7 +115,7 @@ def grasp_held_asset(
     robot: Articulation = env.scene[robot_cfg.name]
     joint_pos = robot.data.joint_pos[:, robot_cfg.joint_ids][env_ids].clone()
     joint_pos[:, :] = held_asset_diameter / 2 * 1.05
-    robot.write_joint_state_to_sim(joint_pos, torch.zeros_like(joint_pos), robot_cfg.joint_ids, env_ids)  # type: ignore
+    robot.write_joint_position_to_sim(joint_pos, robot_cfg.joint_ids, env_ids)  # type: ignore
 
 
 class reset_end_effector_around_asset(ManagerTermBase):
@@ -165,7 +165,9 @@ class reset_end_effector_around_asset(ManagerTermBase):
         n_joints: int = self.robot.num_joints if isinstance(self.joint_ids, slice) else len(self.joint_ids)
         
         # Error Rate 75% ^ 10 = 0.05 (final error)
-        for i in range(ik_iterations):
+        lo, hi = ik_iterations
+        k = int(torch.randint(low=lo, high=hi + 1, size=(1,)).item())
+        for _ in range(k):
             self.solver.apply_actions()
             delta_joint_pos = 0.25 * (self.robot.data.joint_pos_target[env_ids] - self.robot.data.joint_pos[env_ids])
             self.robot.write_joint_state_to_sim(
