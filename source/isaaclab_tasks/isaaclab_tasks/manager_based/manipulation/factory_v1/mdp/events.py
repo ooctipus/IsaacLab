@@ -126,6 +126,7 @@ class reset_end_effector_around_asset(ManagerTermBase):
         robot_ik_cfg: SceneEntityCfg = cfg.params.get("robot_ik_cfg", SceneEntityCfg("robot"))
 
         range_list = [pose_range_b.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
+        self.wrist_idx = 6
         self.ranges = torch.tensor(range_list, device=env.device)
         self.fixed_asset: Articulation | RigidObject = env.scene[fixed_asset_cfg.name]
         self.fixed_asset_offset: Offset = fixed_asset_offset
@@ -170,12 +171,16 @@ class reset_end_effector_around_asset(ManagerTermBase):
         for _ in range(k):
             self.solver.apply_actions()
             delta_joint_pos = 0.25 * (self.robot.data.joint_pos_target[env_ids] - self.robot.data.joint_pos[env_ids])
-            self.robot.write_joint_state_to_sim(
+            self.robot.write_joint_position_to_sim(
                 position=(delta_joint_pos + self.robot.data.joint_pos[env_ids])[:, self.joint_ids],
-                velocity=torch.zeros((len(env_ids), n_joints), device=env.device),
                 joint_ids=self.joint_ids,
                 env_ids=env_ids,  # type: ignore
             )
+        
+        wrist_low  = self.robot.data.joint_pos_limits[env_ids, self.wrist_idx, 0]
+        wrist_high = self.robot.data.joint_pos_limits[env_ids, self.wrist_idx, 1]
+        wrist_pos = (wrist_low + (wrist_high - wrist_low) * torch.rand_like(wrist_low)).view(len(env_ids), -1)
+        self.robot.write_joint_position_to_sim(position=wrist_pos, joint_ids=self.wrist_idx, env_ids=env_ids)
         self.robot.root_physx_view.get_jacobians()
 
 
