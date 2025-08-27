@@ -7,7 +7,8 @@
 
 import os
 import toml
-
+import platform
+import sys
 from setuptools import setup
 
 # Obtain the extension data from the extension.toml file
@@ -19,7 +20,6 @@ EXTENSION_TOML_DATA = toml.load(os.path.join(EXTENSION_PATH, "config", "extensio
 INSTALL_REQUIRES = [
     # generic
     "numpy<2",
-    "pytorch3d==0.7.8+pt2.7.0cu128",
     "torch>=2.7",
     "torchvision>=0.14.1",  # ensure compatibility with torch 1.13.1
     "protobuf>=4.25.8,!=5.26.0",
@@ -31,6 +31,19 @@ INSTALL_REQUIRES = [
 ]
 
 PYTORCH_INDEX_URL = ["https://download.pytorch.org/whl/cu128"]
+
+is_linux_x86_64 = (platform.system() == "Linux" and platform.machine() in ("x86_64", "AMD64"))
+py = f"cp{sys.version_info.major}{sys.version_info.minor}"
+
+wheel_by_py = {
+    "cp311": "https://github.com/MiroPsota/torch_packages_builder/releases/download/pytorch3d-0.7.8/"
+             "pytorch3d-0.7.8%2Bpt2.7.0cu128-cp311-cp311-linux_x86_64.whl",
+    "cp310": "https://github.com/MiroPsota/torch_packages_builder/releases/download/pytorch3d-0.7.8/"
+             "pytorch3d-0.7.8%2Bpt2.7.0cu128-cp310-cp310-linux_x86_64.whl",
+}
+
+if is_linux_x86_64 and py in wheel_by_py:
+    INSTALL_REQUIRES.append(f"pytorch3d @ {wheel_by_py[py]}")
 
 # Installation operation
 setup(
