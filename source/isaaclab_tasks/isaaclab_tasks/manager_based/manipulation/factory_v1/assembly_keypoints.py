@@ -45,7 +45,7 @@ class Offset:
         )
 
 class KeyPointsNistBoard:
-    bolt_m16: Offset = Offset(pos=(0.04715, -0.3416, 0.0194), quat=(0.0000, 1.0, 0.0000, 0.0000))
+    bolt_m16: Offset = Offset(pos=(0.04715, -0.3416, 0.0160), quat=(0.0000, 1.0, 0.0000, 0.0000))
     hole_8mm: Offset = Offset(pos=(0.3473, -0.1164, -0.0001), quat=(0.0000, 0.7071, -0.7071, 0.0000))
     gear_base: Offset = Offset(pos=(0.0474, -0.1713, -0.0002), quat=(0.0000, 0.7071, -0.7071, 0.0000))
     small_gear: Offset = Offset(pos=(0.0474, -0.1713, -0.0002), quat=(0.0000, 0.7071, -0.7071, 0.0000))
@@ -56,11 +56,11 @@ class KeyPointsNistBoard:
 
 @configclass
 class KeyPointsBoltM16:
-    bolt_tip_offset: Offset = Offset(pos=(0, 0, 0.035))
+    bolt_tip_offset: Offset = Offset(pos=(0, 0, 0.025))
     bolt_base_offset: Offset = Offset(pos=(0, 0, 0.01))
-    first_thread_screwed_nut_offset: Offset = Offset(pos=(0, 0, 0.034))
-    second_thread_screwed_nut_offset: Offset = Offset(pos=(0, 0, 0.031))
-    fully_screwed_to_nist_board_nut_offset: Offset = Offset(pos=(0, 0, 0.020))
+    first_thread_screwed_nut_offset: Offset = Offset(pos=(0, 0, 0.024))
+    second_thread_screwed_nut_offset: Offset = Offset(pos=(0, 0, 0.021))
+    fully_screwed_to_nist_board_nut_offset: Offset = Offset(pos=(0, 0, 0.0185))
     fully_screwed_nut_offset: Offset = Offset(pos=(0, 0, 0.01))
 
 

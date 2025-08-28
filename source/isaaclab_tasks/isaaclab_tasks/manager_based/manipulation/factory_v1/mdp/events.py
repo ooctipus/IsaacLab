@@ -25,10 +25,10 @@ if TYPE_CHECKING:
     from ..assembly_keypoints import Offset
 
 # viz for debug, remove when done debugging
-# from isaaclab.markers import FRAME_MARKER_CFG, VisualizationMarkers
-# frame_marker_cfg = FRAME_MARKER_CFG.copy()  # type: ignore
-# frame_marker_cfg.markers["frame"].scale = (0.025, 0.025, 0.025)
-# pose_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/debug_transform"))
+from isaaclab.markers import FRAME_MARKER_CFG, VisualizationMarkers
+frame_marker_cfg = FRAME_MARKER_CFG.copy()  # type: ignore
+frame_marker_cfg.markers["frame"].scale = (0.025, 0.025, 0.025)
+pose_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/debug_transform"))
 
 
 def reset_fixed_assets(env: ManagerBasedRLEnv, env_ids: torch.tensor, asset_list: list[str]):
@@ -47,6 +47,7 @@ def reset_held_asset_on_fixed_asset(
     env_ids: torch.Tensor,
     assembled_offset: Offset,
     entry_offset: Offset,
+    held_asset_align_offset: Offset,
     assembly_fraction_range: tuple[float, float],
     assembly_ratio: tuple[float, float, float], # m / radian
     fixed_asset_cfg: SceneEntityCfg,
@@ -63,9 +64,16 @@ def reset_held_asset_on_fixed_asset(
     ratio = torch.tensor(assembly_ratio, device=env.device)
     rot_delta = math_utils.wrap_to_pi(torch.where(ratio != 0, 1 / ratio * pos_delta, 0.0))
     quat_delta = math_utils.quat_from_euler_xyz(rot_delta[:, 0], rot_delta[:, 1], rot_delta[:, 2])
-    held_asset_on_fixed_asset_pose = torch.cat(math_utils.combine_frame_transforms(
-        fixed_asset.data.root_pos_w[env_ids], fixed_asset.data.root_quat_w[env_ids],
+    fixed_assembled_pos_w, fixed_assembled_quat_w = assembled_offset.apply(fixed_asset)
+    held_asset_on_fixed_asset_pos, held_asset_on_fixed_asset_quat = math_utils.combine_frame_transforms(
+        fixed_assembled_pos_w[env_ids], fixed_assembled_quat_w[env_ids],
         pos_delta, quat_delta
+    )
+    held_align_pos_b = torch.tensor(held_asset_align_offset.pos, device=env.device).repeat(len(env_ids), 1)
+    held_align_quat_b = torch.tensor(held_asset_align_offset.quat, device=env.device).repeat(len(env_ids), 1)
+    
+    held_asset_on_fixed_asset_pose = torch.cat(_pose_a_when_frame_ba_aligns_pose_c(
+        held_asset_on_fixed_asset_pos, held_asset_on_fixed_asset_quat, held_align_pos_b, held_align_quat_b
     ), dim=1)
     held_asset.write_root_pose_to_sim(held_asset_on_fixed_asset_pose, env_ids=env_ids)
 
