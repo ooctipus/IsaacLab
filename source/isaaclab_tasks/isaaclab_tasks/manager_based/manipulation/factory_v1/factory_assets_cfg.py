@@ -115,6 +115,7 @@ NISTBOARD_CFG = RigidObjectCfg(
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST/Taskboard/nistboard.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+        scale=(1.0, 1.0, 0.5)
     ),
     init_state=RigidObjectCfg.InitialStateCfg(pos=(0.65 - x, 0.0 - y, 0.0206 - z), rot=(0., 0., 1., 0.)),
 )
@@ -124,55 +125,29 @@ NISTBOARD_CFG = RigidObjectCfg(
 ##
 
 
-BOLT_M16_CFG = ArticulationCfg(
+BOLT_M16_CFG = RigidObjectCfg(
     prim_path="/World/envs/env_.*/BoltAsset",
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST/bolt_m16_low_poly.usd",
+        usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST/bolt_m16_low_poly_short.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
-            disable_gravity=False,
-            max_depenetration_velocity=5.0,
-            linear_damping=0.0,
-            angular_damping=0.0,
-            max_linear_velocity=1000.0,
-            max_angular_velocity=3666.0,
-            enable_gyroscopic_forces=True,
-            solver_position_iteration_count=192,
-            solver_velocity_iteration_count=1,
-            max_contact_impulse=1e32,
+            disable_gravity=False, solver_position_iteration_count=192, solver_velocity_iteration_count=1, kinematic_enabled=True
         ),
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
-        collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
     ),
-    init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.55, 0.0, 0.05), rot=(1.0, 0.0, 0.0, 0.0), joint_pos={}, joint_vel={}
-    ),
-    actuators={},
+    init_state=RigidObjectCfg.InitialStateCfg(pos=(0.55, 0.0, 0.05), rot=(1.0, 0.0, 0.0, 0.0)),
 )
 
-NUT_M16_CFG = ArticulationCfg(
+NUT_M16_CFG = RigidObjectCfg(
     prim_path="/World/envs/env_.*/NutAsset",
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST/nut_m16_low_poly.usd",
+        usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST/nut_m16_low_poly_short.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
-            disable_gravity=True,
-            max_depenetration_velocity=5.0,
-            linear_damping=0.0,
-            angular_damping=0.0,
-            max_linear_velocity=1000.0,
-            max_angular_velocity=3666.0,
-            enable_gyroscopic_forces=True,
-            solver_position_iteration_count=192,
-            solver_velocity_iteration_count=1,
-            max_contact_impulse=1e32,
+            disable_gravity=False, solver_position_iteration_count=192, solver_velocity_iteration_count=1,
         ),
         mass_props=sim_utils.MassPropertiesCfg(mass=0.03),
-        collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
     ),
-    init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.4, 0.0, 0.0), rot=(1.0, 0.0, 0.0, 0.0), joint_pos={}, joint_vel={}
-    ),
-    actuators={},
+    init_state=RigidObjectCfg.InitialStateCfg(pos=(0.4, 0.0, 0.0), rot=(1.0, 0.0, 0.0, 0.0)),
 )
 
 
