@@ -121,8 +121,8 @@ class FactoryEventCfg:
         func=mdp.randomize_rigid_body_material,  # type: ignore
         mode="startup",
         params={
-            "static_friction_range": (0.3, 0.5),
-            "dynamic_friction_range": (0.3, 0.5),
+            "static_friction_range": (0.1, 0.25),
+            "dynamic_friction_range": (0.1, 0.25),
             "restitution_range": (0.0, 0.0),
             "num_buckets": 64,
             "asset_cfg": SceneEntityCfg("held_asset"),
@@ -133,8 +133,8 @@ class FactoryEventCfg:
         func=mdp.randomize_rigid_body_material,  # type: ignore
         mode="startup",
         params={
-            "static_friction_range": (0.3, 0.5),
-            "dynamic_friction_range": (0.3, 0.5),
+            "static_friction_range": (0.1, 0.25),
+            "dynamic_friction_range": (0.1, 0.25),
             "restitution_range": (0.0, 0.0),
             "num_buckets": 64,
             "asset_cfg": SceneEntityCfg("fixed_asset"),
