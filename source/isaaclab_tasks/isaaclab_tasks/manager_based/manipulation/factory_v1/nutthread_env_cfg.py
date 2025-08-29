@@ -59,8 +59,11 @@ class NutThreadEventCfg(FactoryEventCfg):
             reset_s1["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
             reset_s1["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
             reset_s1["reset_end_effector_around_held_asset"].params["pose_range_b"] = {
-                "z": (-0.005, -0.005),
-                "roll": (3.141, 3.141),
+                "x": (-0.005, 0.005),
+                "y": (-0.005, 0.005),
+                "z": (-0.015, 0.025),
+                "roll": (3.141 - 0.1, 3.141 + 0.1),
+                "pitch": (-1.0, 1.0),
                 "yaw": (-2.09, 2.09),
             }
 
@@ -76,10 +79,11 @@ class NutThreadEventCfg(FactoryEventCfg):
             reset_s2["reset_end_effector_around_fixed_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
             reset_s2["reset_end_effector_around_fixed_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
             reset_s2["reset_end_effector_around_fixed_asset"].params["pose_range_b"] = {
-                "x": (-0.02, 0.02),
-                "y": (-0.02, 0.02),
-                "z": (0.015, 0.025),
+                "x": (-0.005, 0.005),
+                "y": (-0.005, 0.005),
+                "z": (-0.015, 0.025),
                 "roll": (3.141, 3.141),
+                "pitch": (-1.0, 1.0),
                 "yaw": (-2.09, 2.09),
             }
 
@@ -101,8 +105,11 @@ class NutThreadEventCfg(FactoryEventCfg):
             reset_s3["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
             reset_s3["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
             reset_s3["reset_end_effector_around_held_asset"].params["pose_range_b"] = {
-                "z": (-0.005, -0.005),
-                "roll": (3.141, 3.141),
+                "x": (-0.005, 0.005),
+                "y": (-0.005, 0.005),
+                "z": (-0.015, 0.025),
+                "roll": (3.141 - 0.1, 3.141 + 0.1),
+                "pitch": (-1.0, 1.0),
                 "yaw": (-2.09, 2.09),
             }
 
@@ -125,8 +132,11 @@ class NutThreadEventCfg(FactoryEventCfg):
             reset_s4["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
             reset_s4["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
             reset_s4["reset_end_effector_around_held_asset"].params["pose_range_b"] = {
-                "z": (-0.005, -0.005),
-                "roll": (3.141, 3.141),
+                "x": (-0.005, 0.005),
+                "y": (-0.005, 0.005),
+                "z": (-0.015, 0.025),
+                "roll": (3.141 - 0.1, 3.141 + 0.1),
+                "pitch": (-1.0, 1.0),
                 "yaw": (-2.09, 2.09),
             }
 

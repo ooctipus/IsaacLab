@@ -161,7 +161,7 @@ class FactoryEventCfg:
         mode="reset",
         params={
             "offset": KEYPOINTS_NISTBOARD.nist_board_center,
-            "pose_range": {"x": (-0.00, 0.00), "y": (-0.25, 0.25), "yaw": (-3.14, 3.14)},
+            "pose_range": {"x": (-0.00, 0.00), "y": (-0.05, 0.05), "yaw": (-3.14, 3.14)},
             "velocity_range": {},
             "asset_cfg": SceneEntityCfg("nistboard"),
         },
@@ -247,8 +247,11 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     events: FactoryEventCfg = FactoryEventCfg()
     terminations: FactoryTerminationsCfg = FactoryTerminationsCfg()
     rewards: FactoryRewardsCfg = FactoryRewardsCfg()
+    # viewer: ViewerCfg = ViewerCfg(
+    #     eye=(0.0, 0.25, 0.1), origin_type="asset_body", asset_name="robot", body_name="panda_fingertip_centered"
+    # )
     viewer: ViewerCfg = ViewerCfg(
-        eye=(0.0, 0.25, 0.1), origin_type="asset_body", asset_name="robot", body_name="panda_fingertip_centered"
+        eye=(0.3, 1.2, 0.4), lookat=(0.3, 0.0, 0.0)
     )
     actions = MISSING
 
