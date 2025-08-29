@@ -122,7 +122,10 @@ def grasp_held_asset(
 ) -> None:
     robot: Articulation = env.scene[robot_cfg.name]
     joint_pos = robot.data.joint_pos[:, robot_cfg.joint_ids][env_ids].clone()
-    joint_pos[:, :] = held_asset_diameter / 2 * 1.05
+    min_angle = held_asset_diameter / 2 * 1.05
+    max_angle = robot.data.joint_pos_limits[0, robot_cfg.joint_ids[0], 1]
+    joint_pos[:] = (torch.rand((len(env_ids),), device=env.device) * (max_angle - min_angle) + min_angle).unsqueeze(1)
+    
     robot.write_joint_position_to_sim(joint_pos, robot_cfg.joint_ids, env_ids)  # type: ignore
 
 
@@ -148,6 +151,7 @@ class reset_end_effector_around_asset(ManagerTermBase):
             scale=1.0,
         )
         self.solver: DifferentialInverseKinematicsAction = None  # type: ignore
+        self.grasp_angle_range  = (0.3, 0.7)
 
     def __call__(
         self,
@@ -167,6 +171,7 @@ class reset_end_effector_around_asset(ManagerTermBase):
         # for those non_reset_id, we will let ik solve for its current position
         pos_w = fixed_tip_pos_w[env_ids] + samples[:, 0:3]
         quat_w = math_utils.quat_from_euler_xyz(samples[:, 3], samples[:, 4], samples[:, 5])
+        
         pos_b[env_ids], quat_b[env_ids] = math_utils.subtract_frame_transforms(
             self.robot.data.root_link_pos_w[env_ids], self.robot.data.root_link_quat_w[env_ids], pos_w, quat_w
         )
@@ -184,11 +189,11 @@ class reset_end_effector_around_asset(ManagerTermBase):
                 joint_ids=self.joint_ids,
                 env_ids=env_ids,  # type: ignore
             )
-        
-        wrist_low  = self.robot.data.joint_pos_limits[env_ids, self.wrist_idx, 0]
-        wrist_high = self.robot.data.joint_pos_limits[env_ids, self.wrist_idx, 1]
-        wrist_pos = (wrist_low + (wrist_high - wrist_low) * torch.rand_like(wrist_low)).view(len(env_ids), -1)
-        self.robot.write_joint_position_to_sim(position=wrist_pos, joint_ids=self.wrist_idx, env_ids=env_ids)
+
+        # wrist_low  = self.robot.data.joint_pos_limits[env_ids, self.wrist_idx, 0]
+        # wrist_high = self.robot.data.joint_pos_limits[env_ids, self.wrist_idx, 1]
+        # wrist_pos = (wrist_low + (wrist_high - wrist_low) * torch.rand_like(wrist_low)).view(len(env_ids), -1)
+        # self.robot.write_joint_position_to_sim(position=wrist_pos, joint_ids=self.wrist_idx, env_ids=env_ids)
         self.robot.root_physx_view.get_jacobians()
 
 
@@ -340,3 +345,57 @@ def _pose_a_when_frame_ba_aligns_pose_c(
     inv_pos_ba = -math_utils.quat_apply(math_utils.quat_inv(quat_ba), pos_ba)
     inv_quat_ba = math_utils.quat_inv(quat_ba)
     return math_utils.combine_frame_transforms(pos_c, quat_c, inv_pos_ba, inv_quat_ba)
+
+
+# @torch.jit.script
+def interpolate_grasp_quat(
+    held_asset_grasp_point_quat_w: torch.Tensor,
+    grasped_object_quat_in_ee_frame: torch.Tensor,
+    secondary_z_axis: torch.Tensor | None = None,
+    secondary_z_axis_weight: torch.Tensor | float = 0.3,
+) -> torch.Tensor:
+    if secondary_z_axis is not None:
+        table_z_axis = secondary_z_axis
+        leg_grasp_z_axis = math_utils.matrix_from_quat(held_asset_grasp_point_quat_w)[..., 2]
+        leg_grasp_point_z_axis = math_utils.normalize((1.0 - secondary_z_axis_weight) * leg_grasp_z_axis + secondary_z_axis_weight * table_z_axis)
+
+        # determine the closest y axis
+        leg_grasp_point_y_axis_case1 = leg_grasp_point_z_axis.cross(table_z_axis)
+        leg_grasp_point_y_axis_case2 = -leg_grasp_point_z_axis.cross(table_z_axis)
+        robot_grasp_y = math_utils.matrix_from_quat(grasped_object_quat_in_ee_frame)[..., 1]
+        dot_dist_1 = (robot_grasp_y * leg_grasp_point_y_axis_case1).sum(dim=1)
+        dot_dist_2 = (robot_grasp_y * leg_grasp_point_y_axis_case2).sum(dim=1)
+        leg_grasp_point_y_axis = torch.where(
+            (dot_dist_1 > dot_dist_2).view(-1, 1), leg_grasp_point_y_axis_case1, leg_grasp_point_y_axis_case2
+        )
+        leg_grasp_point_x_axis = leg_grasp_point_y_axis.cross(leg_grasp_point_z_axis)
+    else:
+        leg_grasp_z_axis = math_utils.matrix_from_quat(held_asset_grasp_point_quat_w)[..., 2]
+        leg_grasp_point_z_axis = math_utils.normalize(leg_grasp_z_axis)
+        robot_grasp_y = math_utils.matrix_from_quat(grasped_object_quat_in_ee_frame)[..., 1]
+
+        leg_grasp_x_axis = math_utils.matrix_from_quat(held_asset_grasp_point_quat_w)[..., 0]
+        leg_grasp_y_axis = math_utils.matrix_from_quat(held_asset_grasp_point_quat_w)[..., 1]
+        leg_grasp_neg_x_axis = -leg_grasp_x_axis.clone()
+        leg_grasp_neg_y_axis = -leg_grasp_y_axis.clone()
+
+        # Stack all candidate axes into a tensor of shape (num_envs, 4, 3)
+        candidate_axes = torch.stack(
+            [leg_grasp_x_axis, leg_grasp_neg_x_axis, leg_grasp_y_axis, leg_grasp_neg_y_axis], dim=1
+        )  # shape: (N, 4, 3)
+
+        # Compute dot products between each candidate axis and robot_grasp_y.
+        # robot_grasp_y is (N, 3) and unsqueezed to (N, 1, 3) so that broadcasting gives (N, 4, 3).
+        dot_products = (candidate_axes * robot_grasp_y.unsqueeze(1)).sum(dim=2)  # shape: (N, 4)
+        # Get the index of the candidate with the maximum dot product for each environment.
+        max_indices = dot_products.argmax(dim=1)  # shape: (N,)
+
+        # Index the best candidate out.
+        leg_grasp_point_y_axis = candidate_axes[torch.arange(candidate_axes.shape[0]), max_indices]  # shape: (N, 3)
+        leg_grasp_point_x_axis = leg_grasp_point_y_axis.cross(leg_grasp_z_axis)
+
+    # compose to grasp quat
+    des_leg_grasp_quat_w = math_utils.quat_from_matrix(
+        torch.stack((leg_grasp_point_x_axis, leg_grasp_point_y_axis, leg_grasp_point_z_axis), dim=1).transpose(1, 2)
+    )
+    return des_leg_grasp_quat_w
