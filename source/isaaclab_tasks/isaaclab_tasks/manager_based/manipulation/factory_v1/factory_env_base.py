@@ -247,12 +247,12 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     events: FactoryEventCfg = FactoryEventCfg()
     terminations: FactoryTerminationsCfg = FactoryTerminationsCfg()
     rewards: FactoryRewardsCfg = FactoryRewardsCfg()
-    # viewer: ViewerCfg = ViewerCfg(
-    #     eye=(0.0, 0.25, 0.1), origin_type="asset_body", asset_name="robot", body_name="panda_fingertip_centered"
-    # )
     viewer: ViewerCfg = ViewerCfg(
-        eye=(0.3, 1.2, 0.4), lookat=(0.3, 0.0, 0.0)
+        eye=(0.0, 0.25, 0.1), origin_type="asset_body", asset_name="robot", body_name="panda_fingertip_centered"
     )
+    # viewer: ViewerCfg = ViewerCfg(
+    #     eye=(0.3, 1.2, 0.4), lookat=(0.3, 0.0, 0.0)
+    # )
     actions = MISSING
 
     # Post initialization
