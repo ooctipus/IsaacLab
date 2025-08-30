@@ -41,10 +41,11 @@ class FrankaFactoryEnvMixIn:
     def __post_init__(self: FactoryBaseEnvCfg):
         super().__post_init__()
         self.scene.robot = FRANKA_PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-        self.scene.robot.actuators["panda_arm1"].stiffness = 80.0
-        self.scene.robot.actuators["panda_arm1"].damping = 4.0
-        self.scene.robot.actuators["panda_arm2"].stiffness = 80.0
-        self.scene.robot.actuators["panda_arm2"].damping = 4.0
+        self.scene.robot.actuators["panda_arm1"].stiffness = 8.0 * 2
+        self.scene.robot.actuators["panda_arm1"].damping = 4.0 * 2
+        self.scene.robot.actuators["panda_arm2"].stiffness = 8.0 * 2
+        self.scene.robot.actuators["panda_arm2"].damping = 4.0 * 2
+        self.scene.robot.actuators["panda_hand"].stiffness = 750
 
 
 @configclass
