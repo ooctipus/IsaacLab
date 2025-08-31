@@ -195,10 +195,10 @@ class FactoryRewardsCfg:
     """Reward terms for Factory"""
 
     # penalties
-    action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-1e-2)
+    action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-1e-4)
 
-    action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-1e-2)
-    
+    action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-1e-4)
+
     early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-0.5)
 
     # progress rewards
@@ -214,9 +214,9 @@ class FactoryRewardsCfg:
         },
     )
 
-    reach_reward = RewTerm(func=mdp.reach_reward, weight=0.2, params={"std": 1.0})
+    reach_reward = RewTerm(func=mdp.reach_reward, weight=0.1, params={"std": 1.0})
 
-    progress_reward_fine = RewTerm(func=mdp.progress_reward, weight=0.2, params={"std": 0.005})
+    progress_reward_fine = RewTerm(func=mdp.progress_reward, weight=0.1, params={"std": 0.005})
 
     success_reward = RewTerm(func=mdp.success_reward, weight=1.0)
 

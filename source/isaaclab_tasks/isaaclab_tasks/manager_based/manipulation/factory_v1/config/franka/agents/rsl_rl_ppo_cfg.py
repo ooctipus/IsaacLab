@@ -14,11 +14,12 @@ class FactoryPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     max_iterations = 15000
     save_interval = 200
     experiment_name = "factory"
-    empirical_normalization = True
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
         actor_hidden_dims=[512, 256, 128, 64],
         critic_hidden_dims=[512, 256, 128, 64],
+        actor_obs_normalization=True,
+        critic_obs_normalization=True,
         activation="elu",
         noise_std_type='scalar'
     )
