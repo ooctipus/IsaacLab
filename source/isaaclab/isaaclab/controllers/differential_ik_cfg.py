@@ -8,7 +8,7 @@ from typing import Literal
 
 from isaaclab.utils import configclass
 
-from .differential_ik import DifferentialIKController
+from .differential_ik import DifferentialIKController, MultiConstraintDifferentialIKController
 
 
 @configclass
@@ -68,3 +68,12 @@ class DifferentialIKControllerCfg:
         if self.ik_params is not None:
             ik_params.update(self.ik_params)
         self.ik_params = ik_params
+
+
+
+@configclass
+class MultiConstraintDifferentialIKControllerCfg(DifferentialIKControllerCfg):
+    """Configuration for multi-constraint differential inverse kinematics controller."""
+
+    class_type: type = MultiConstraintDifferentialIKController
+    """The associated controller class."""

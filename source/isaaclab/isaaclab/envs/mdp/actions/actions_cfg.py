@@ -9,7 +9,7 @@ from isaaclab.controllers import DifferentialIKControllerCfg, OperationalSpaceCo
 from isaaclab.managers.action_manager import ActionTerm, ActionTermCfg
 from isaaclab.utils import configclass
 
-from . import binary_joint_actions, joint_actions, joint_actions_to_limits, non_holonomic_actions, task_space_actions
+from . import binary_joint_actions, joint_actions, joint_actions_to_limits, non_holonomic_actions, task_space_actions, default_joint_static_action
 
 ##
 # Joint actions.
@@ -310,3 +310,55 @@ class OperationalSpaceControllerActionCfg(ActionTermCfg):
     Note: Functional only when ``nullspace_control`` is set to ``"position"`` within the
         ``OperationalSpaceControllerCfg``.
     """
+
+
+@configclass
+class DefaultJointPositionStaticActionCfg(JointActionCfg):
+    """Configuration for the joint position action term.
+
+    See :class:`JointPositionAction` for more details.
+    """
+
+    class_type: type[ActionTerm] = default_joint_static_action.DefaultJointPositionStaticAction
+
+    use_default_offset: bool = True
+
+
+
+@configclass
+class MultiConstraintsDifferentialInverseKinematicsActionCfg(DifferentialInverseKinematicsActionCfg):
+    """Configuration for inverse differential kinematics action term with multi constraints.
+    This class amend attr body_name from type:str to type:list[str] reflecting its capability to
+    received the desired positions, poses from multiple target bodies. This will be particularly
+    useful for controlling dextrous hand robot with only positions of multiple key frame positions
+    and poses, and output joint positions that satisfy key frame position/pose constrains
+
+    See :class:`DifferentialInverseKinematicsAction` for more details.
+    """
+
+    @configclass
+    class OffsetCfg:
+        @configclass
+        class BodyOffsetCfg:
+            """The offset pose from parent frame to child frame.
+
+            On many robots, end-effector frames are fictitious frames that do not have a corresponding
+            rigid body. In such cases, it is easier to define this transform w.r.t. their parent rigid body.
+            For instance, for the Franka Emika arm, the end-effector is defined at an offset to the the
+            "panda_hand" frame.
+            """
+
+            pos: tuple[float, float, float] = (0.0, 0.0, 0.0)
+            """Translation w.r.t. the parent frame. Defaults to (0.0, 0.0, 0.0)."""
+            rot: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
+            """Quaternion rotation ``(w, x, y, z)`` w.r.t. the parent frame. Defaults to (1.0, 0.0, 0.0, 0.0)."""
+
+        pose: dict[str, BodyOffsetCfg] = {}
+
+    body_name: list[str] = MISSING
+
+    class_type: type[ActionTerm] = task_space_actions.MultiConstraintDifferentialInverseKinematicsAction
+
+    body_offset: OffsetCfg | None = None
+
+    task_space_boundary: list[tuple[float, float]] | None = None
