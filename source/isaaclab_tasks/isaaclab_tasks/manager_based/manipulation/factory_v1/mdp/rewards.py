@@ -73,6 +73,7 @@ class ProgressContext(ManagerTermBase):
 
         return torch.zeros(env.num_envs, device=env.device)
 
+
 def reach_reward(env: ManagerBasedRLEnv, held_asset_cfg: SceneEntityCfg, ee_cfg: SceneEntityCfg, std: float = 0.1):
     robot: Articulation = env.scene[ee_cfg.name]
     held_asset: RigidObject = env.scene[held_asset_cfg.name]
@@ -80,8 +81,8 @@ def reach_reward(env: ManagerBasedRLEnv, held_asset_cfg: SceneEntityCfg, ee_cfg:
     nut_pos_w = held_asset.data.root_pos_w
     dist = torch.norm((nut_pos_w - ee_pos_w), dim=1)
     return 1 - torch.tanh(dist / std)
-    
-    
+
+
 def orientation_reward(env: ManagerBasedRLEnv, std: float, context: str = "progress_context") -> torch.Tensor:
     context_term: ManagerTermBase = env.reward_manager.get_term_cfg(context).func  # type: ignore
     euler_xy_diff: torch.Tensor = getattr(context_term, "euler_xy_diff")

@@ -128,7 +128,7 @@ NISTBOARD_CFG = RigidObjectCfg(
 BOLT_M16_CFG = RigidObjectCfg(
     prim_path="/World/envs/env_.*/BoltAsset",
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST/bolt_m16_low_poly_short.usd",
+        usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST/bolt_m16_low_poly_half.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False, solver_position_iteration_count=192, solver_velocity_iteration_count=0, kinematic_enabled=True
         ),
@@ -140,7 +140,7 @@ BOLT_M16_CFG = RigidObjectCfg(
 NUT_M16_CFG = RigidObjectCfg(
     prim_path="/World/envs/env_.*/NutAsset",
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST/nut_m16_low_poly_short.usd",
+        usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST/nut_m16_low_poly.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False, solver_position_iteration_count=192, solver_velocity_iteration_count=0,

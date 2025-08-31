@@ -179,11 +179,11 @@ class FactoryEventCfg:
         func=mdp.TermChoice,
         mode="reset",
         params={
-            "terms":{
-                "grasp_asset_in_air": staging_cfg.GRIPPER_GRASP_ASSET_IN_AIR,
+            "terms" : {
+                # "grasp_asset_in_air": staging_cfg.GRIPPER_GRASP_ASSET_IN_AIR,
                 "start_fully_assembled": staging_cfg.FULL_ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE,
-                "start_assembled": staging_cfg.ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE,
-                "start_grasped_then_assembled": staging_cfg.GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
+                # "start_assembled": staging_cfg.ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE,
+                # "start_grasped_then_assembled": staging_cfg.GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
             },
             "sampling_strategy": "failure_rate"
         }
@@ -247,9 +247,9 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     events: FactoryEventCfg = FactoryEventCfg()
     terminations: FactoryTerminationsCfg = FactoryTerminationsCfg()
     rewards: FactoryRewardsCfg = FactoryRewardsCfg()
-    viewer: ViewerCfg = ViewerCfg(
-        eye=(0.0, 0.25, 0.1), origin_type="asset_body", asset_name="robot", body_name="panda_fingertip_centered"
-    )
+    # viewer: ViewerCfg = ViewerCfg(
+    #     eye=(0.0, 0.25, 0.1), origin_type="asset_body", asset_name="robot", body_name="panda_fingertip_centered"
+    # )
     # viewer: ViewerCfg = ViewerCfg(
     #     eye=(0.3, 1.2, 0.4), lookat=(0.3, 0.0, 0.0)
     # )
