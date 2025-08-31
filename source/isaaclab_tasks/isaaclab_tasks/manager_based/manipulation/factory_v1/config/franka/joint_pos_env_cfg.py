@@ -45,7 +45,6 @@ class FrankaFactoryEnvMixIn:
         self.scene.robot.actuators["panda_arm1"].damping = 4.0
         self.scene.robot.actuators["panda_arm2"].stiffness = 80.0
         self.scene.robot.actuators["panda_arm2"].damping = 4.0
-        self.scene.robot.actuators["panda_hand"].stiffness = 750
 
 
 @configclass
