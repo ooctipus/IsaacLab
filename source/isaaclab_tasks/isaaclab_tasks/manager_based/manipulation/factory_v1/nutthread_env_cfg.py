@@ -63,7 +63,7 @@ class NutThreadEventCfg(FactoryEventCfg):
                 "y": (-0.005, 0.005),
                 "z": (-0.015, 0.025),
                 "roll": (3.141 - 0.1, 3.141 + 0.1),
-                "pitch": (-1.0, 1.0),
+                "pitch": (-0.5, 0.5),
                 "yaw": (-2.09, 2.09),
             }
 
@@ -83,7 +83,7 @@ class NutThreadEventCfg(FactoryEventCfg):
                 "y": (-0.005, 0.005),
                 "z": (-0.015, 0.025),
                 "roll": (3.141, 3.141),
-                "pitch": (-1.0, 1.0),
+                "pitch": (-0.5, 0.5),
                 "yaw": (-2.09, 2.09),
             }
 
@@ -109,7 +109,7 @@ class NutThreadEventCfg(FactoryEventCfg):
                 "y": (-0.005, 0.005),
                 "z": (-0.015, 0.025),
                 "roll": (3.141 - 0.1, 3.141 + 0.1),
-                "pitch": (-1.0, 1.0),
+                "pitch": (-0.5, 0.5),
                 "yaw": (-2.09, 2.09),
             }
 
@@ -136,7 +136,7 @@ class NutThreadEventCfg(FactoryEventCfg):
                 "y": (-0.005, 0.005),
                 "z": (-0.015, 0.025),
                 "roll": (3.141 - 0.1, 3.141 + 0.1),
-                "pitch": (-1.0, 1.0),
+                "pitch": (-0.5, 0.5),
                 "yaw": (-2.09, 2.09),
             }
 
