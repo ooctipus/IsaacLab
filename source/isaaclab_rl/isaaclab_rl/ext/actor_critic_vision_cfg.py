@@ -17,10 +17,15 @@ class ActorCriticVisionAdapterCfg:
     projectors_cfg: dict[str, ProjectorCfg] | None = None
     """Extra heads that predict secondary objectives for encoder, primary objective is policy objective."""
 
+
 @configclass
 class ProjectorCfg:
     
-    prediction_group: list[str] = MISSING
+    features: list[str] = MISSING
+    
+    feature_empirical_normalize: bool = True
+    
+    predictions: list[str] = MISSING
     
     layers: list[int] = [64, 64]
     

@@ -18,7 +18,7 @@ from isaaclab.envs import ManagerBasedRLEnv, DirectRLEnv
 from isaaclab.managers import ObservationManager
 from rsl_rl.modules.actor_critic import ActorCritic
 from rsl_rl.algorithms.ppo import PPO
-from ...ext.actor_critic_vision_ext import ActorCriticVision, vision_forward
+from ...ext.actor_critic_vision_ext import ActorCriticVision, vision_forward, projector_forward
 
 def single_observation_space_from_obs(obs_dict: TensorDict | dict[str, torch.Tensor]):
     new_gym_space_dict = gymnasium.spaces.Dict()
@@ -41,7 +41,7 @@ class ActorCriticVisionExtensionPatcher:
             self._orig_get_critic_obs = ActorCritic.get_critic_obs
             self._orig_actor_critic_init = ActorCritic.__init__
             self._orig_ppo_update = PPO.update
-            
+
             def vision_encoder_creation_init(actor_critic_self, *args, **kwargs) -> None:
                 obs_arg, *rest = args
                 self.vision.encoder_init(obs_arg)
@@ -52,7 +52,10 @@ class ActorCriticVisionExtensionPatcher:
                 self._orig_actor_critic_init(actor_critic_self, *new_args, **kwargs)
                 actor_critic_self.add_module("encoders", self.vision.encoders)
                 actor_critic_self.add_module("projectors", self.vision.projectors)
+                actor_critic_self.add_module("projector_feature_normalizers", self.vision.projector_feature_normalizers)
+                actor_critic_self.add_module("projector_ground_truth_normalizers", self.vision.projector_ground_truth_normalizers)
                 actor_critic_self.vision_forward = MethodType(vision_forward, actor_critic_self)
+                actor_critic_self.projector_forward = MethodType(projector_forward, actor_critic_self)
                 self.vision.print_vision_encoders()
 
             def vision_encoded_get_actor_obs(actor_critic_self, obs: TensorDict) -> torch.Tensor:
@@ -67,6 +70,11 @@ class ActorCriticVisionExtensionPatcher:
                 mean_value_loss = 0
                 mean_surrogate_loss = 0
                 mean_entropy = 0
+                # -- Reconstruction loss
+                has_reconstruction_loss = False
+                if len(ppo_self.policy.projectors.keys()) > 0:
+                    has_reconstruction_loss = True
+                    mean_reconstruction_loss = {projector_key : 0 for projector_key in self.vision.projectors.keys()}
                 # -- RND loss
                 if ppo_self.rnd:
                     mean_rnd_loss = 0
@@ -201,9 +209,11 @@ class ActorCriticVisionExtensionPatcher:
                         value_loss = (returns_batch - value_batch).pow(2).mean()
 
                     loss = surrogate_loss + ppo_self.value_loss_coef * value_loss - ppo_self.entropy_coef * entropy_batch.mean()
-                    # Begin Octi Edit
-                    loss += getattr(self, "sol", torch.tensor(0.0, device=obs_batch.device))
-                    # End Octi Edit
+                    if has_reconstruction_loss:
+                        reconstruction_loss = {}
+                        encoded_obs = ppo_self.policy.vision_forward(obs_batch, self.vision.group2encoder, obs_batch.batch_size, obs_batch.device)
+                        reconstruction_loss = ppo_self.policy.projector_forward(encoded_obs, self.vision.projector_feature_sources, self.vision.projector_prediction_targets)
+                        loss += torch.sum(torch.stack(list(reconstruction_loss.values())))
                     # Symmetry loss
                     if ppo_self.symmetry:
                         # obtain the symmetric actions
@@ -283,7 +293,10 @@ class ActorCriticVisionExtensionPatcher:
                     # -- Symmetry loss
                     if mean_symmetry_loss is not None:
                         mean_symmetry_loss += symmetry_loss.item()
-
+                    # -- Reconstruction loss
+                    if has_reconstruction_loss:
+                        for key in mean_reconstruction_loss.keys():
+                            mean_reconstruction_loss[key] += reconstruction_loss[key].item()
                 # -- For PPO
                 num_updates = ppo_self.num_learning_epochs * ppo_self.num_mini_batches
                 mean_value_loss /= num_updates
@@ -295,6 +308,10 @@ class ActorCriticVisionExtensionPatcher:
                 # -- For Symmetry
                 if mean_symmetry_loss is not None:
                     mean_symmetry_loss /= num_updates
+                # -- For Reconstruction loss
+                if has_reconstruction_loss:
+                    for key in mean_reconstruction_loss.keys():
+                        mean_reconstruction_loss[key] /= num_updates
                 # -- Clear the storage
                 ppo_self.storage.clear()
 
@@ -308,7 +325,8 @@ class ActorCriticVisionExtensionPatcher:
                     loss_dict["rnd"] = mean_rnd_loss
                 if ppo_self.symmetry:
                     loss_dict["symmetry"] = mean_symmetry_loss
-
+                if has_reconstruction_loss:
+                    loss_dict.update({f"reconstruction_{key}": val for key, val in mean_reconstruction_loss.items()})
                 return loss_dict
 
             PPO.update = sol_update
@@ -371,4 +389,5 @@ class ActorCriticVisionExtensionPatcher:
             ObservationManager.compute = self.original_observaiton_manager_compute
             DirectRLEnv._configure_gym_env_spaces = self.original_direct_configure_gym_env_spaces
             DirectRLEnv._get_observations = self.original_direct_get_observation
+
     
