@@ -6,12 +6,12 @@
 from isaaclab.utils import configclass
 
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
-from isaaclab_rl.ext.actor_critic_vision_cfg import ActorCriticVisionAdapterCfg, MLPEncoderCfg
+from isaaclab_rl.ext.actor_critic_vision_cfg import ActorCriticVisionAdapterCfg, MLPEncoderCfg, ProjectorCfg
 @configclass
 class DexsuiteKukaAllegroPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 36
     obs_groups = {
-        "policy": ["proprioception", "point_cloud_perception", "task_description", "privileged_perception"],
+        "policy": ["proprioception", "point_cloud_perception", "task_description"],
         "critic": ["proprioception", "point_cloud_perception", "task_description", "privileged_perception"]
     }
     max_iterations = 15000
@@ -31,6 +31,15 @@ class DexsuiteKukaAllegroPPORunnerCfg(RslRlOnPolicyRunnerCfg):
                     layers=[512, 256, 128],
                     activation='elu'
                 )
+            },
+            projectors_cfg={
+                "state": ProjectorCfg(
+                    features=["point_cloud_perception"],
+                    feature_empirical_normalize=True,
+                    predictions=["privileged_perception"],
+                    layers=[256, 256],
+                    activation='elu'
+                ),
             }
         )
     )
