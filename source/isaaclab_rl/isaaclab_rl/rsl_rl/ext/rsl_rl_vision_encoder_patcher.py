@@ -103,7 +103,7 @@ class ActorCriticVisionExtensionPatcher:
                     num_aug = 1
                     # original batch size
                     # we assume policy group is always there and needs augmentation
-                    original_batch_size = obs_batch["policy"].shape[0]
+                    original_batch_size = ppo_self.policy.get_actor_obs(obs_batch).shape[0]
 
                     # check if we should normalize advantages per mini batch
                     if ppo_self.normalize_advantage_per_mini_batch:
