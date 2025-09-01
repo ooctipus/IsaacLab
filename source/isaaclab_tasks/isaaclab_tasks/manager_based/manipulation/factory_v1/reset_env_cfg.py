@@ -8,7 +8,7 @@ GRIPPER_GRASP_ASSET_IN_AIR = EventTerm(
     func=mdp.ChainedResetTerms,
     mode="reset",
     params={
-        "terms":{
+        "terms" : {
             "reset_asset_in_air": EventTerm(
                 func=mdp.reset_root_state_uniform,
                 mode="reset",
@@ -40,11 +40,11 @@ GRIPPER_GRASP_ASSET_IN_AIR = EventTerm(
     }
 )
 
-FULL_ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE = EventTerm(
+FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
     func=mdp.ChainedResetTerms,
     mode="reset",
     params={
-        "terms":{
+        "terms" : {
             "reset_held_asset_on_fixed_asset": EventTerm(
                 func=mdp.reset_held_asset_on_fixed_asset,
                 mode="reset",
@@ -79,11 +79,11 @@ FULL_ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE = EventTerm(
     }
 )
 
-ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE = EventTerm(
+ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
     func=mdp.ChainedResetTerms,
     mode="reset",
     params={
-        "terms":{
+        "terms" : {
             "reset_held_asset_on_fixed_asset": EventTerm(
                 func=mdp.reset_held_asset_on_fixed_asset,
                 mode="reset",
@@ -122,7 +122,7 @@ GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER = EventTerm(
     func=mdp.ChainedResetTerms,
     mode="reset",
     params={
-        "terms":{
+        "terms" : {
             "reset_end_effector_around_fixed_asset": EventTerm(
                 func=mdp.reset_end_effector_around_asset,
                 mode="reset",

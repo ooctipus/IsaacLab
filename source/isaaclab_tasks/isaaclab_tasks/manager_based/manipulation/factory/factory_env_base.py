@@ -97,7 +97,7 @@ class FactoryObservationsCfg:
                 "root_asset_cfg": SceneEntityCfg("robot", body_names="end_effector"),
             },
         )
-        
+
         joint_pos = ObsTerm(func=mdp.joint_pos)
 
         prev_action = ObsTerm(func=mdp.last_action)
@@ -106,15 +106,15 @@ class FactoryObservationsCfg:
             self.enable_corruption = False
             self.concatenate_terms = True
 
-
     policy: PolicyCfg = PolicyCfg()
     critic: PolicyCfg = PolicyCfg()
 
-ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE = EventTerm(
+
+ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
     func=mdp.ChainedResetTerms,
     mode="reset",
     params={
-        "terms":{
+        "terms" : {
             "reset_held_asset_on_fixed_asset": EventTerm(
                 func=mdp.reset_held_asset_on_fixed_asset,
                 mode="reset",
@@ -153,7 +153,7 @@ GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER = EventTerm(
     func=mdp.ChainedResetTerms,
     mode="reset",
     params={
-        "terms":{
+        "terms" : {
             "reset_end_effector_around_fixed_asset": EventTerm(
                 func=mdp.reset_end_effector_around_asset,
                 mode="reset",
@@ -184,6 +184,7 @@ GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER = EventTerm(
         }
     }
 )
+
 
 @configclass
 class FactoryEventCfg:
@@ -247,13 +248,13 @@ class FactoryEventCfg:
             "asset_list": ["fixed_asset"],
         },
     )
-    
+
     reset_strategies = EventTerm(
         func=mdp.TermChoice,
         mode="reset",
         params={
-            "terms":{
-                "start_assembled": ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE,
+            "terms" : {
+                "start_assembled": ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
                 "start_grasped_not_assembled": GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
             },
             "sampling_strategy": "failure_rate"

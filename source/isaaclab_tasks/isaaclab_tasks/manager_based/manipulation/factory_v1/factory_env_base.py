@@ -5,7 +5,7 @@
 
 from dataclasses import MISSING
 
-from isaaclab.assets import ArticulationCfg
+from isaaclab.assets import ArticulationCfg, RigidObjectCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
@@ -41,7 +41,7 @@ class FactorySceneCfg(InteractiveSceneCfg):
     nistboard = assets.NISTBOARD_CFG
 
     # "FIXED ASSETS"
-    bolt_m16: ArticulationCfg = assets.BOLT_M16_CFG
+    bolt_m16: RigidObjectCfg = assets.BOLT_M16_CFG
     gear_base: ArticulationCfg = assets.GEAR_BASE_CFG
     hole_8mm: ArticulationCfg = assets.HOLE_8MM_CFG
 
@@ -50,7 +50,7 @@ class FactorySceneCfg(InteractiveSceneCfg):
     large_gear: ArticulationCfg = assets.LARGE_GEAR_CFG
 
     # "HELD ASSETS"
-    nut_m16: ArticulationCfg = assets.NUT_M16_CFG
+    nut_m16: RigidObjectCfg = assets.NUT_M16_CFG
     medium_gear: ArticulationCfg = assets.MEDIUM_GEAR_CFG
     peg_8mm: ArticulationCfg = assets.PEG_8MM_CFG
 
@@ -98,7 +98,7 @@ class FactoryObservationsCfg:
                 "root_asset_cfg": SceneEntityCfg("robot", body_names="end_effector"),
             },
         )
-        
+
         joint_pos = ObsTerm(func=mdp.joint_pos)
 
         prev_action = ObsTerm(func=mdp.last_action)
@@ -111,6 +111,7 @@ class FactoryObservationsCfg:
 
     policy: PolicyCfg = PolicyCfg()
     critic: PolicyCfg = PolicyCfg()
+
 
 @configclass
 class FactoryEventCfg:
@@ -174,16 +175,16 @@ class FactoryEventCfg:
             "asset_list": ["fixed_asset"],
         },
     )
-    
+
     reset_strategies = EventTerm(
         func=mdp.TermChoice,
         mode="reset",
         params={
             "terms" : {
-                # "grasp_asset_in_air": staging_cfg.GRIPPER_GRASP_ASSET_IN_AIR,
-                "start_fully_assembled": staging_cfg.FULL_ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE,
-                # "start_assembled": staging_cfg.ASSEMBLE_FISRT_THEN_GRIPPER_CLOSE,
-                # "start_grasped_then_assembled": staging_cfg.GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
+                "grasp_asset_in_air": staging_cfg.GRIPPER_GRASP_ASSET_IN_AIR,
+                "start_fully_assembled": staging_cfg.FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
+                "start_assembled": staging_cfg.ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
+                "start_grasped_then_assembled": staging_cfg.GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
             },
             "sampling_strategy": "failure_rate"
         }
@@ -227,17 +228,18 @@ class FactoryTerminationsCfg:
 
     # (1) Time out
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
-    
+
     abnormal = DoneTerm(func=mdp.abnormal_robot_state)
 
     oob = DoneTerm(func=mdp.out_of_bound, params={
         "asset_cfg": SceneEntityCfg("held_asset"),
-        "in_bound_range":{"x": (-0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)}
+        "in_bound_range" : {"x": (-0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)}
     })
 
 ##
 # Environment configuration
 ##
+
 @configclass
 class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the base Factory environment."""
@@ -247,9 +249,9 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     events: FactoryEventCfg = FactoryEventCfg()
     terminations: FactoryTerminationsCfg = FactoryTerminationsCfg()
     rewards: FactoryRewardsCfg = FactoryRewardsCfg()
-    # viewer: ViewerCfg = ViewerCfg(
-    #     eye=(0.0, 0.25, 0.1), origin_type="asset_body", asset_name="robot", body_name="panda_fingertip_centered"
-    # )
+    viewer: ViewerCfg = ViewerCfg(
+        eye=(0.0, 0.25, 0.1), origin_type="asset_body", asset_name="robot", body_name="panda_fingertip_centered"
+    )
     # viewer: ViewerCfg = ViewerCfg(
     #     eye=(0.3, 1.2, 0.4), lookat=(0.3, 0.0, 0.0)
     # )
