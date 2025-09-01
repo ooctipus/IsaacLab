@@ -12,7 +12,7 @@ from isaaclab.assets import RigidObject, Articulation
 from isaaclab.sensors import ContactSensor
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import ManagerTermBase
-from isaaclab.utils.math import subtract_frame_transforms, quat_apply_inverse, quat_apply, quat_inv, quat_mul
+from isaaclab.utils.math import subtract_frame_transforms, quat_apply_inverse, quat_apply, quat_inv, quat_mul, combine_frame_transforms, compute_pose_error
 from .utils import sample_object_point_cloud
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -164,6 +164,19 @@ class objects_point_cloud_b(ManagerTermBase):
             m = d.max(dim=1, keepdim=True)[0]
             object_point_cloud_pos_b = object_point_cloud_pos_b / (m.unsqueeze(-1) + 1e-6)
         return object_point_cloud_pos_b.view(self.num_envs, -1) if flatten else object_point_cloud_pos_b
+
+
+def task_pose_error(
+    env: ManagerBasedRLEnv,
+    command_name: str = "object_pose",
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+) -> torch.Tensor:
+    """The pose error between the object and the target object in the world frame."""
+    asset: RigidObject = env.scene[object_cfg.name]
+    command_pose_b = env.command_manager.get_command(command_name)
+    des_pos_w, des_quat_w = combine_frame_transforms(asset.data.root_pos_w, asset.data.root_quat_w, command_pose_b[:, :3], command_pose_b[:, 3:7])
+    pos_error, quat_error = compute_pose_error(des_pos_w, des_quat_w, asset.data.root_pos_w, asset.data.root_quat_w)
+    return torch.cat((pos_error, quat_error), dim=1)
 
 
 class object_point_cloud_b(ManagerTermBase):

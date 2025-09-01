@@ -11,8 +11,8 @@ from isaaclab_rl.ext.actor_critic_vision_cfg import ActorCriticVisionAdapterCfg,
 class DexsuiteKukaAllegroPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 36
     obs_groups = {
-        "policy": ["policy", "privileged"],
-        "critic": ["policy", "privileged"]
+        "policy": ["proprioception", "point_cloud_perception", "task_description", "privileged_perception"],
+        "critic": ["proprioception", "point_cloud_perception", "task_description", "privileged_perception"]
     }
     max_iterations = 15000
     save_interval = 250
@@ -27,7 +27,7 @@ class DexsuiteKukaAllegroPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         encoders=ActorCriticVisionAdapterCfg(
             encoder_cfgs={
                 "point_cloud" : MLPEncoderCfg(
-                    encoding_groups=["privileged"],
+                    encoding_groups=["point_cloud_perception"],
                     layers=[512, 256, 128],
                     activation='elu'
                 )

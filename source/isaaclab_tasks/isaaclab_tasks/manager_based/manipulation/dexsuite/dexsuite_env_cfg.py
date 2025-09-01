@@ -94,8 +94,17 @@ class ObservationsCfg:
     """Observation specifications for the MDP."""
 
     @configclass
-    class PolicyCfg(ObsGroup):
-        """Observations for policy group."""
+    class TaskObsCfg(ObsGroup):
+        task_pose_error = ObsTerm(func=mdp.task_pose_error, noise=Unoise(n_min=-0., n_max=0.))
+
+        def __post_init__(self):
+            self.enable_corruption = True
+            self.concatenate_terms = True
+            self.history_length = 5
+
+    @configclass
+    class ProprioceptionObsCfg(ObsGroup):
+        actions = ObsTerm(func=mdp.last_action)
         joint_pos = ObsTerm(func=mdp.joint_pos, noise=Unoise(n_min=-0., n_max=0.))
         joint_vel = ObsTerm(func=mdp.joint_vel, noise=Unoise(n_min=-0., n_max=0.))
         hand_tips_state_b = ObsTerm(
@@ -103,9 +112,15 @@ class ObservationsCfg:
                 "body_asset_cfg": SceneEntityCfg("robot"),
                 "base_asset_cfg": SceneEntityCfg("robot"),
             })
-        object_quat_b = ObsTerm(func=mdp.object_quat_b, noise=Unoise(n_min=-0., n_max=0.))
-        target_object_pose_b = ObsTerm(func=mdp.generated_commands, params={"command_name": "object_pose"})
-        actions = ObsTerm(func=mdp.last_action)
+
+        def __post_init__(self):
+            self.enable_corruption = True
+            self.concatenate_terms = True
+            self.history_length = 5
+
+    @configclass
+    class PrivilegedPerceptionObsCfg(ObsGroup):
+        object_pos_b = ObsTerm(func=mdp.object_pos_b, noise=Unoise(n_min=-0., n_max=0.))
         contact: ObsTerm = MISSING
         
         def __post_init__(self):
@@ -114,8 +129,7 @@ class ObservationsCfg:
             self.history_length = 5
 
     @configclass
-    class PrivilegedObsCfg(ObsGroup):
-        
+    class PointCloudPerceptionObsCfg(ObsGroup):
         perception = ObsTerm(
             func=mdp.objects_point_cloud_b,
             params={
@@ -136,8 +150,11 @@ class ObservationsCfg:
             self.history_length = 5
 
     # observation groups
-    policy: PolicyCfg = PolicyCfg()
-    privileged: PrivilegedObsCfg = PrivilegedObsCfg()
+    point_cloud_perception: PointCloudPerceptionObsCfg = PointCloudPerceptionObsCfg()
+    privileged_perception: PrivilegedPerceptionObsCfg = PrivilegedPerceptionObsCfg()
+    proprioception: ProprioceptionObsCfg = ProprioceptionObsCfg()
+    task_description: TaskObsCfg = TaskObsCfg()
+
 
 @configclass
 class EventCfg:
@@ -317,8 +334,7 @@ class RewardsCfg:
             "align_asset_cfg": SceneEntityCfg("object")
         },
     )
-    
-    # early_termination = RewTerm(func=mdp.is_terminated_term, weight=-20, params={"term_keys": "abnormal_robot"})
+    early_termination = RewTerm(func=mdp.is_terminated_term, weight=-5, params={"term_keys": "abnormal_robot"})
 
 @configclass
 class TerminationsCfg:
@@ -328,7 +344,7 @@ class TerminationsCfg:
 
     object_out_of_bound = DoneTerm(
         func=mdp.out_of_bound,
-        params={"in_bound_range": {"x":(-1.5, 0.5), "y": (-2.0, 2.0), "z": (.0, 2.)}, "asset_cfg": SceneEntityCfg("object")}
+        params={"in_bound_range": {"x": (-1.5, 0.5), "y": (-2.0, 2.0), "z": (.0, 2.)}, "asset_cfg": SceneEntityCfg("object")}
     )
     
     abnormal_robot = DoneTerm(func=mdp.abnormal_robot_state)

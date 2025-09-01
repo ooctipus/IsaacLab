@@ -37,7 +37,7 @@ class KukaAllegroMixinCfg:
     actions: KukaAllegroRelJointPosActionCfg = KukaAllegroRelJointPosActionCfg()
     def __post_init__(self: dexsuite.DexSuiteReorientEnvCfg):
         super().__post_init__()
-        self.observations.policy.contact = ObsTerm(func=mdp.fingers_contact_force_w)
+        self.observations.privileged_perception.contact = ObsTerm(func=mdp.fingers_contact_force_w)
         self.commands.object_pose.body_name = "palm_link"
         self.scene.robot = KUKA_ALLEGRO_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot").replace(
             init_state=ArticulationCfg.InitialStateCfg(
@@ -71,7 +71,7 @@ class KukaAllegroMixinCfg:
             },
         )
 
-        self.observations.policy.hand_tips_state_b.params["body_asset_cfg"].body_names = ["palm_link", ".*_tip"]
+        self.observations.proprioception.hand_tips_state_b.params["body_asset_cfg"].body_names = ["palm_link", ".*_tip"]
         self.rewards.fingers_to_object.params["asset_cfg"] = SceneEntityCfg("robot", body_names=["palm_link", ".*_tip"])
         self.scene.robot.spawn.activate_contact_sensors = True
         for link_name in ["index_link_3", "middle_link_3", "ring_link_3", "thumb_link_3"]:
