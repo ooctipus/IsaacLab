@@ -137,21 +137,3 @@ def fingers_contact_force_w(env: ManagerBasedRLEnv) -> torch.Tensor:
     ring_contact = ring_contact_sensor.data.force_matrix_w.view(env.num_envs, 3)
 
     return torch.cat((thumb_contact, index_contact, middle_contact, ring_contact), dim=1)
-
-
-def depth_image(
-    env: ManagerBasedRLEnv,
-    sensor_cfg: SceneEntityCfg = SceneEntityCfg("tiled_camera"),
-    normalize: bool = True,
-    flatten: bool = False,
-) -> torch.Tensor:
-    # extract the used quantities (to enable type-hinting)
-    sensor: TiledCamera | Camera | RayCasterCamera = env.scene.sensors[sensor_cfg.name]
-    # obtain the input image
-    images = sensor.data.output["depth"]
-    # depth image normalization
-    if normalize:
-        images = torch.tanh(images / 2) * 2
-        images -= torch.mean(images, dim=(1, 2), keepdim=True)
-
-    return images.view(env.num_envs, -1) if flatten else images

@@ -15,13 +15,12 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sim import CuboidCfg, SphereCfg, ConeCfg, CapsuleCfg, RigidBodyMaterialCfg
+from isaaclab.sim import CapsuleCfg, ConeCfg, CuboidCfg, RigidBodyMaterialCfg, SphereCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 
 from . import mdp
 from .adr_curriculum import CurriculumCfg
-from .mdp.curriculums import cfg_get
 
 
 @configclass
@@ -123,6 +122,9 @@ class ObservationsCfg:
         hand_tips_state_b = ObsTerm(
             func=mdp.body_state_b,
             noise=Unoise(n_min=-0.0, n_max=0.0),
+            # good behaving number for position in m, velocity in m/s, rad/s,
+            # and quaternion are unlikely to exceed -2 to 2 range
+            clip=(-2.0, 2.0),
             params={
                 "body_asset_cfg": SceneEntityCfg("robot"),
                 "base_asset_cfg": SceneEntityCfg("robot"),
@@ -144,6 +146,7 @@ class ObservationsCfg:
         object_point_cloud = ObsTerm(
             func=mdp.object_point_cloud_b,
             noise=Unoise(n_min=-0.0, n_max=0.0),
+            clip=(-2.0, 2.0),  # clamp between -2 m to 2 m
             params={"num_points": 64, "flatten": True},
         )
 
@@ -199,8 +202,8 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
-            "stiffness_distribution_params": [.5, 2.],
-            "damping_distribution_params": [.5, 2.],
+            "stiffness_distribution_params": [0.5, 2.0],
+            "damping_distribution_params": [0.5, 2.0],
             "operation": "scale",
         },
     )
@@ -210,7 +213,7 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
-            "friction_distribution_params": [0., 5.],
+            "friction_distribution_params": [0.0, 5.0],
             "operation": "scale",
         },
     )
@@ -297,8 +300,10 @@ class RewardsCfg:
 
     fingers_to_object = RewTerm(func=mdp.object_ee_distance, params={"std": 0.4}, weight=1.0)
 
-    lift = RewTerm(func=mdp.lifted, params={
-        "object_cfg": SceneEntityCfg("object"), "num_points" : 32, "min_height": 0.26}, weight=1.0
+    lift = RewTerm(
+        func=mdp.lifted,
+        params={"object_cfg": SceneEntityCfg("object"), "num_points": 32, "min_height": 0.26},
+        weight=1.0,
     )
 
     position_tracking = RewTerm(

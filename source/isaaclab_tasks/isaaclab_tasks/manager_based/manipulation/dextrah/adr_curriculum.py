@@ -22,8 +22,8 @@ class CurriculumCfg:
         params={
             "address": "observations.policy.joint_pos.noise.n_min",
             "modify_fn": mdp.initial_final_interpolate_fn,
-            "modify_params": {"iv": 0., "fv": -.1, "difficulty_term_str": "adr"}
-        }
+            "modify_params": {"iv": 0.0, "fv": -0.1, "difficulty_term_str": "adr"},
+        },
     )
 
     joint_pos_unoise_max_adr = CurrTerm(
@@ -31,8 +31,8 @@ class CurriculumCfg:
         params={
             "address": "observations.policy.joint_pos.noise.n_max",
             "modify_fn": mdp.initial_final_interpolate_fn,
-            "modify_params": {"iv": 0., "fv": .1, "difficulty_term_str": "adr"}
-        }
+            "modify_params": {"iv": 0.0, "fv": 0.1, "difficulty_term_str": "adr"},
+        },
     )
 
     joint_vel_unoise_min_adr = CurrTerm(
@@ -40,8 +40,8 @@ class CurriculumCfg:
         params={
             "address": "observations.policy.joint_vel.noise.n_min",
             "modify_fn": mdp.initial_final_interpolate_fn,
-            "modify_params": {"iv": 0., "fv": -.2, "difficulty_term_str": "adr"}
-        }
+            "modify_params": {"iv": 0.0, "fv": -0.2, "difficulty_term_str": "adr"},
+        },
     )
 
     joint_vel_unoise_max_adr = CurrTerm(
@@ -49,8 +49,8 @@ class CurriculumCfg:
         params={
             "address": "observations.policy.joint_vel.noise.n_max",
             "modify_fn": mdp.initial_final_interpolate_fn,
-            "modify_params": {"iv": 0., "fv": .2, "difficulty_term_str": "adr"}
-        }
+            "modify_params": {"iv": 0.0, "fv": 0.2, "difficulty_term_str": "adr"},
+        },
     )
 
     hand_tips_pos_unoise_min_adr = CurrTerm(
@@ -58,8 +58,8 @@ class CurriculumCfg:
         params={
             "address": "observations.policy.hand_tips_state_b.noise.n_min",
             "modify_fn": mdp.initial_final_interpolate_fn,
-            "modify_params": {"iv": 0., "fv": -.01, "difficulty_term_str": "adr"}
-        }
+            "modify_params": {"iv": 0.0, "fv": -0.01, "difficulty_term_str": "adr"},
+        },
     )
 
     hand_tips_pos_unoise_max_adr = CurrTerm(
@@ -67,8 +67,8 @@ class CurriculumCfg:
         params={
             "address": "observations.policy.hand_tips_state_b.noise.n_max",
             "modify_fn": mdp.initial_final_interpolate_fn,
-            "modify_params": {"iv": 0., "fv": .01, "difficulty_term_str": "adr"}
-        }
+            "modify_params": {"iv": 0.0, "fv": 0.01, "difficulty_term_str": "adr"},
+        },
     )
 
     object_quat_unoise_min_adr = CurrTerm(
@@ -76,8 +76,8 @@ class CurriculumCfg:
         params={
             "address": "observations.policy.object_quat_b.noise.n_min",
             "modify_fn": mdp.initial_final_interpolate_fn,
-            "modify_params": {"iv": 0., "fv": -.03, "difficulty_term_str": "adr"}
-        }
+            "modify_params": {"iv": 0.0, "fv": -0.03, "difficulty_term_str": "adr"},
+        },
     )
 
     object_quat_unoise_max_adr = CurrTerm(
@@ -85,8 +85,8 @@ class CurriculumCfg:
         params={
             "address": "observations.policy.object_quat_b.noise.n_max",
             "modify_fn": mdp.initial_final_interpolate_fn,
-            "modify_params": {"iv": 0., "fv": .03, "difficulty_term_str": "adr"}
-        }
+            "modify_params": {"iv": 0.0, "fv": 0.03, "difficulty_term_str": "adr"},
+        },
     )
 
     object_obs_unoise_min_adr = CurrTerm(
@@ -94,8 +94,8 @@ class CurriculumCfg:
         params={
             "address": "observations.perception.object_point_cloud.noise.n_min",
             "modify_fn": mdp.initial_final_interpolate_fn,
-            "modify_params": {"iv": 0., "fv": -.01, "difficulty_term_str": "adr"}
-        }
+            "modify_params": {"iv": 0.0, "fv": -0.01, "difficulty_term_str": "adr"},
+        },
     )
 
     object_obs_unoise_max_adr = CurrTerm(
@@ -103,6 +103,6 @@ class CurriculumCfg:
         params={
             "address": "observations.perception.object_point_cloud.noise.n_max",
             "modify_fn": mdp.initial_final_interpolate_fn,
-            "modify_params": {"iv": 0., "fv": -.01, "difficulty_term_str": "adr"}
-        }
+            "modify_params": {"iv": 0.0, "fv": -0.01, "difficulty_term_str": "adr"},
+        },
     )
