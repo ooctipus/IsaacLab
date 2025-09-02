@@ -58,6 +58,7 @@ class ObjectUniformPoseCommand(CommandTerm):
         # extract the robot and body index for which the command is generated
         self.robot: Articulation = env.scene[cfg.asset_name]
         self.object: RigidObject = env.scene[cfg.object_name]
+        self.success_vis_asset: RigidObject = env.scene[cfg.success_vis_asset_name]
 
         # create buffers
         # -- commands: (x, y, z, qw, qx, qy, qz) in root frame
@@ -141,13 +142,17 @@ class ObjectUniformPoseCommand(CommandTerm):
                     self.goal_visualizer = VisualizationMarkers(self.cfg.goal_pose_visualizer_cfg)
                     # -- current body pose
                     self.curr_visualizer = VisualizationMarkers(self.cfg.current_pose_visualizer_cfg)
+
+                self.success_visualizer = VisualizationMarkers(self.cfg.success_visualizer_cfg)
             # set their visibility to true
             self.goal_visualizer.set_visibility(True)
             self.curr_visualizer.set_visibility(True)
+            self.success_visualizer.set_visibility(True)
         else:
             if hasattr(self, "goal_visualizer"):
                 self.goal_visualizer.set_visibility(False)
                 self.curr_visualizer.set_visibility(False)
+                self.success_visualizer.set_visibility(False)
 
     def _debug_vis_callback(self, event):
         # check if robot is initialized
@@ -167,3 +172,5 @@ class ObjectUniformPoseCommand(CommandTerm):
             self.goal_visualizer.visualize(self.pose_command_w[:, :3], marker_indices=indices)
             # -- current object position
             self.curr_visualizer.visualize(self.object.data.root_pos_w, marker_indices=indices)
+
+        self.success_visualizer.visualize(self.success_vis_asset.data.root_pos_w, marker_indices=indices)

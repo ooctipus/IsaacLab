@@ -106,6 +106,7 @@ class CommandsCfg:
             pitch=(-3.14, 3.14),
             yaw=(0.0, 0.0),
         ),
+        success_vis_asset_name="table",
     )
 
 
@@ -383,6 +384,15 @@ class DextrahReorientEnvCfg(ManagerBasedEnvCfg):
 
         # *single-goal setup
         self.commands.object_pose.resampling_time_range = (10.0, 10.0)
+
+        self.commands.object_pose.success_visualizer_cfg.markers["failure"] = self.scene.table.spawn.replace(
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.3, 0.15, 0.15), roughness=0.25)
+        )
+        self.commands.object_pose.success_visualizer_cfg.markers["success"] = self.scene.table.spawn.replace(
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.15, 0.3, 0.15), roughness=0.25)
+        )
+        self.scene.table.spawn.visible = False # we let success visualizer to color the table
+
         self.episode_length_s = 4.0
         self.is_finite_horizon = True
 
@@ -414,6 +424,7 @@ class DextrahReorientEnvCfg_PLAY(DextrahReorientEnvCfg):
         super().__post_init__()
         self.commands.object_pose.resampling_time_range = (2.0, 3.0)
         self.commands.object_pose.debug_vis = True
+        self.commands.object_pose.position_only = False
         self.curriculum.adr.params["init_difficulty"] = self.curriculum.adr.params["max_difficulty"]
 
 
@@ -423,4 +434,5 @@ class DextrahLiftEnvCfg_PLAY(DextrahLiftEnvCfg):
         super().__post_init__()
         self.commands.object_pose.resampling_time_range = (2.0, 3.0)
         self.commands.object_pose.debug_vis = True
+        self.commands.object_pose.position_only = False
         self.curriculum.adr.params["init_difficulty"] = self.curriculum.adr.params["max_difficulty"]

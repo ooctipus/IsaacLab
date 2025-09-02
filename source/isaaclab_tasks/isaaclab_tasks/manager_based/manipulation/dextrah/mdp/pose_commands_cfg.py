@@ -81,3 +81,12 @@ class ObjectUniformPoseCommandCfg(CommandTermCfg):
     )
 
     """The configuration for the current position visualization marker. Defaults to POSITION_GOAL_MARKER_CFG."""
+
+    success_vis_asset_name: str = MISSING
+    """Name of the asset in the environment for which the success color are indicated."""
+
+    # success markers
+    success_visualizer_cfg = VisualizationMarkersCfg(
+        prim_path="/Visuals/myMarkers",
+        markers={}
+    )
