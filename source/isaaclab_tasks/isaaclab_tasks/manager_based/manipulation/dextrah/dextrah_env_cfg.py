@@ -384,7 +384,7 @@ class DextrahReorientEnvCfg(ManagerBasedEnvCfg):
 
         # *single-goal setup
         self.commands.object_pose.resampling_time_range = (10.0, 10.0)
-
+        self.commands.object_pose.position_only = False
         self.commands.object_pose.success_visualizer_cfg.markers["failure"] = self.scene.table.spawn.replace(
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.3, 0.15, 0.15), roughness=0.25)
         )
@@ -413,6 +413,7 @@ class DextrahLiftEnvCfg(DextrahReorientEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         self.rewards.orientation_tracking = None  # no orientation reward
+        self.commands.object_pose.position_only = True
         if self.curriculum is not None:
             self.rewards.success.params["rot_std"] = None  # make success reward not consider orientation
             self.curriculum.adr.params["rot_tol"] = None  # make adr not tracking orientation
@@ -424,7 +425,6 @@ class DextrahReorientEnvCfg_PLAY(DextrahReorientEnvCfg):
         super().__post_init__()
         self.commands.object_pose.resampling_time_range = (2.0, 3.0)
         self.commands.object_pose.debug_vis = True
-        self.commands.object_pose.position_only = False
         self.curriculum.adr.params["init_difficulty"] = self.curriculum.adr.params["max_difficulty"]
 
 
@@ -434,5 +434,5 @@ class DextrahLiftEnvCfg_PLAY(DextrahLiftEnvCfg):
         super().__post_init__()
         self.commands.object_pose.resampling_time_range = (2.0, 3.0)
         self.commands.object_pose.debug_vis = True
-        self.commands.object_pose.position_only = False
+        self.commands.object_pose.position_only = True
         self.curriculum.adr.params["init_difficulty"] = self.curriculum.adr.params["max_difficulty"]
