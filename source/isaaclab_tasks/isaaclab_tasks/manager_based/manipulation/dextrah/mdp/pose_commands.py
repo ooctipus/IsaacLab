@@ -130,18 +130,24 @@ class ObjectUniformPoseCommand(CommandTerm):
     def _set_debug_vis_impl(self, debug_vis: bool):
         # create markers if necessary for the first tome
         if debug_vis:
-            if not hasattr(self, "goal_pose_visualizer"):
-                # -- goal pose
-                self.goal_pose_visualizer = VisualizationMarkers(self.cfg.goal_pose_visualizer_cfg)
-                # -- current body pose
-                self.current_pose_visualizer = VisualizationMarkers(self.cfg.current_pose_visualizer_cfg)
+            if not hasattr(self, "goal_visualizer"):
+                if self.cfg.position_only:
+                    # -- goal pose
+                    self.goal_visualizer = VisualizationMarkers(self.cfg.goal_pos_visualizer_cfg)
+                    # -- current body pose
+                    self.curr_visualizer = VisualizationMarkers(self.cfg.current_pos_visualizer_cfg)
+                else:
+                    # -- goal pose
+                    self.goal_visualizer = VisualizationMarkers(self.cfg.goal_pose_visualizer_cfg)
+                    # -- current body pose
+                    self.curr_visualizer = VisualizationMarkers(self.cfg.current_pose_visualizer_cfg)
             # set their visibility to true
-            self.goal_pose_visualizer.set_visibility(True)
-            self.current_pose_visualizer.set_visibility(True)
+            self.goal_visualizer.set_visibility(True)
+            self.curr_visualizer.set_visibility(True)
         else:
-            if hasattr(self, "goal_pose_visualizer"):
-                self.goal_pose_visualizer.set_visibility(False)
-                self.current_pose_visualizer.set_visibility(False)
+            if hasattr(self, "goal_visualizer"):
+                self.goal_visualizer.set_visibility(False)
+                self.curr_visualizer.set_visibility(False)
 
     def _debug_vis_callback(self, event):
         # check if robot is initialized
@@ -149,8 +155,15 @@ class ObjectUniformPoseCommand(CommandTerm):
         if not self.robot.is_initialized:
             return
         # update the markers
-        # -- goal pose
-        self.goal_pose_visualizer.visualize(self.pose_command_w[:, :3], self.pose_command_w[:, 3:])
-        # -- current body pose
-        root_state_w = self.object.data.root_state_w
-        self.current_pose_visualizer.visualize(root_state_w[:, :3], root_state_w[:, 3:7])
+        if not self.cfg.position_only:
+            # -- goal pose
+            self.goal_visualizer.visualize(self.pose_command_w[:, :3], self.pose_command_w[:, 3:])
+            # -- current object pose
+            self.curr_visualizer.visualize(self.object.data.root_pos_w, self.object.data.root_quat_w)
+        else:
+            distance = torch.norm(self.pose_command_w[:, :3] - self.object.data.root_pos_w[:, :3], dim=1)
+            indices = torch.where(distance < 0.05, 1, 0)
+            # -- goal position
+            self.goal_visualizer.visualize(self.pose_command_w[:, :3], marker_indices=indices)
+            # -- current object position
+            self.curr_visualizer.visualize(self.object.data.root_pos_w, marker_indices=indices)

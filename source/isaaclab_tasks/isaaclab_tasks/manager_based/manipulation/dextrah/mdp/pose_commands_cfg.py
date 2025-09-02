@@ -3,16 +3,11 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers.
-# All rights reserved.
-#
-# SPDX-License-Identifier: BSD-3-Clause
-
 from dataclasses import MISSING
 
 from isaaclab.managers import CommandTermCfg
 from isaaclab.markers import VisualizationMarkersCfg
-from isaaclab.markers.config import FRAME_MARKER_CFG
+from isaaclab.markers.config import FRAME_MARKER_CFG, POSITION_GOAL_MARKER_CFG
 from isaaclab.utils import configclass
 
 from . import pose_commands as dex_cmd
@@ -61,6 +56,10 @@ class ObjectUniformPoseCommandCfg(CommandTermCfg):
     ranges: Ranges = MISSING
     """Ranges for the commands."""
 
+    position_only: bool = True
+    """Command goal position only. Command includes goal quat if False"""
+
+    # Pose Markers
     goal_pose_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(prim_path="/Visuals/Command/goal_pose")
     """The configuration for the goal pose visualization marker. Defaults to FRAME_MARKER_CFG."""
 
@@ -72,3 +71,13 @@ class ObjectUniformPoseCommandCfg(CommandTermCfg):
     # Set the scale of the visualization markers to (0.1, 0.1, 0.1)
     goal_pose_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
     current_pose_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+
+    # Position Markers
+    goal_pos_visualizer_cfg: VisualizationMarkersCfg = POSITION_GOAL_MARKER_CFG.replace(prim_path="/Visuals/Command/goal_pos")
+    """The configuration for the goal pose visualization marker. Defaults to POSITION_GOAL_MARKER_CFG."""
+
+    current_pos_visualizer_cfg: VisualizationMarkersCfg = POSITION_GOAL_MARKER_CFG.replace(
+        prim_path="/Visuals/Command/object_pos"
+    )
+
+    """The configuration for the current position visualization marker. Defaults to POSITION_GOAL_MARKER_CFG."""

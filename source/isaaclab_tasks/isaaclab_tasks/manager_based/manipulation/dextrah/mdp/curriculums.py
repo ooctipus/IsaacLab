@@ -11,10 +11,9 @@ the curriculum introduced by the function.
 
 from __future__ import annotations
 
-import re
 import torch
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.envs import mdp
@@ -105,62 +104,3 @@ class DifficultyScheduler(ManagerTermBase):
         ).clamp(min=min_difficulty, max=max_difficulty)
         self.difficulty_frac = torch.mean(self.current_adr_difficulties) / max(max_difficulty, 1)
         return self.difficulty_frac
-
-
-def cfg_get(root: Any, path: str) -> Any:
-    """
-    Retrieve a deeply nested attribute/key/index from `root` using a string path.
-    Examples:
-      get_by_path(obj, "a.b.c")
-      get_by_path(obj, "a.list_field[2].x")
-    """
-    # Matches “name[3]” → group(1)=name, group(2)=3
-    _INDEX_RE = re.compile(r"^(\w+)\[(\d+)\]$")
-    current = root
-    for part in path.split("."):
-        m = _INDEX_RE.match(part)
-        if m:
-            name, idx = m.group(1), int(m.group(2))
-            # first attribute/key, then index
-            current = getattr(current, name) if not isinstance(current, dict) else current[name]
-            current = current[idx]
-        else:
-            # plain attr or dict lookup
-            current = current[part] if isinstance(current, dict) else getattr(current, part)
-    return current
-
-
-def cfg_set(root: Any, path: str, value: Any) -> None:
-    """
-    Assign `value` to the leaf specified by `path` on `root`.
-    Examples:
-      set_by_path(obj, "a.b.c", 123)
-      set_by_path(obj, "a.list_field[2].x", "foo")
-    """
-    # Matches “name[3]” → group(1)=name, group(2)=3
-    _INDEX_RE = re.compile(r"^(\w+)\[(\d+)\]$")
-    parts = path.split(".")
-    target = root
-    # walk to the parent of the leaf
-    for part in parts[:-1]:
-        m = _INDEX_RE.match(part)
-        if m:
-            name, idx = m.group(1), int(m.group(2))
-            # attr/dict lookup then index
-            node = getattr(target, name) if not isinstance(target, dict) else target[name]
-            target = node[idx]
-        else:
-            target = target[part] if isinstance(target, dict) else getattr(target, part)
-
-    # now 'target' is the container whose child we want to set:
-    last = parts[-1]
-    m = _INDEX_RE.match(last)
-    if m:
-        name, idx = m.group(1), int(m.group(2))
-        container = getattr(target, name) if not isinstance(target, dict) else target[name]
-        container[idx] = value
-    else:
-        if isinstance(target, dict):
-            target[last] = value
-        else:
-            setattr(target, last, value)

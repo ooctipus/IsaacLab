@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Common functions that can be used to activate certain terminations for the lift task.
+"""Common functions that can be used to activate certain terminations for the dexsuite task.
 
 The functions can be passed to the :class:`isaaclab.managers.TerminationTermCfg` object to enable
 the termination introduced by the function.
@@ -43,5 +43,7 @@ def out_of_bound(
 
 
 def abnormal_robot_state(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Terminating environment when violation of velocity limits detects, this usually indicates unstable physics caused
+    by very bad, or aggressive action"""
     robot: Articulation = env.scene[asset_cfg.name]
     return (robot.data.joint_vel.abs() > (robot.data.joint_vel_limits * 2)).any(dim=1)

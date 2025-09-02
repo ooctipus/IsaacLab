@@ -36,8 +36,10 @@ def object_ee_distance(
     object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
-    """Reward the agent for reaching the object using tanh-kernel."""
+    """Reward reaching the object using a tanh-kernel on end-effector distance.
 
+    The reward is close to 1 when the maximum distance between the object and any end-effector body is small.
+    """
     asset: RigidObject = env.scene[asset_cfg.name]
     object: RigidObject = env.scene[object_cfg.name]
     asset_pos = asset.data.body_pos_w[:, asset_cfg.body_ids]
@@ -47,16 +49,14 @@ def object_ee_distance(
 
 
 class lifted(ManagerTermBase):
+    """Reward for lifting an object above a minimum height while maintaining contact."""
 
     def __init__(self, cfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
+        self.object: RigidObject = env.scene[cfg.params.get("object_cfg", SceneEntityCfg("object")).name]
+        num_points: int = cfg.params.get("num_points", 10)
 
-        self.object_cfg: SceneEntityCfg = cfg.params.get("object_cfg", SceneEntityCfg("object"))
-        self.num_points: int = cfg.params.get("num_points", 10)
-        self.visualize = cfg.params.get("visualize", True)
-        self.object: RigidObject = env.scene[self.object_cfg.name]
-
-        if self.visualize:
+        if cfg.params.get("visualize", True):
             from isaaclab.markers import VisualizationMarkers
             from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
 
@@ -64,7 +64,9 @@ class lifted(ManagerTermBase):
             ray_cfg.markers["hit"].radius = 0.001
             self.visualizer = VisualizationMarkers(ray_cfg)
 
-        self.points = sample_object_point_cloud(env.num_envs, self.num_points, self.object.cfg.prim_path).to(env.device)
+        self.points_local = sample_object_point_cloud(env.num_envs, num_points, self.object.cfg.prim_path).to(
+            env.device
+        )
 
     def __call__(
         self,
@@ -74,11 +76,13 @@ class lifted(ManagerTermBase):
         num_points: int = 10,
         visualize: bool = True,
     ):
-        object_pos_w = self.object.data.root_pos_w.unsqueeze(1).repeat(1, self.num_points, 1)
-        object_rot_w = self.object.data.root_quat_w.unsqueeze(1).repeat(1, self.num_points, 1)
+        """Reward if the object is lifted above ``min_height`` and good contact is maintained."""
+
+        object_pos_w = self.object.data.root_pos_w.unsqueeze(1).repeat(1, num_points, 1)
+        object_rot_w = self.object.data.root_quat_w.unsqueeze(1).repeat(1, num_points, 1)
 
         # apply rotation + translation
-        object_point_cloud_w = math_utils.quat_apply(object_rot_w, self.points) + object_pos_w
+        object_point_cloud_w = math_utils.quat_apply(object_rot_w, self.points_local) + object_pos_w
 
         if visualize:
             self.visualizer.visualize(translations=object_point_cloud_w.reshape(-1, 3))
@@ -88,7 +92,7 @@ class lifted(ManagerTermBase):
 
 def contacts(env: ManagerBasedRLEnv, threshold: float) -> torch.Tensor:
     """Penalize undesired contacts as the number of violations that are above a threshold."""
-    # extract the used quantities (to enable type-hinting)
+
     thumb_contact_sensor: ContactSensor = env.scene.sensors["thumb_link_3_object_s"]
     index_contact_sensor: ContactSensor = env.scene.sensors["index_link_3_object_s"]
     middle_contact_sensor: ContactSensor = env.scene.sensors["middle_link_3_object_s"]
@@ -111,8 +115,8 @@ def contacts(env: ManagerBasedRLEnv, threshold: float) -> torch.Tensor:
 
 
 def contacts_sum(env: ManagerBasedRLEnv, threshold: float, sensors: list[str]) -> torch.Tensor:
-    """Penalize undesired contacts as the number of violations that are above a threshold."""
-    # extract the used quantities (to enable type-hinting)
+    """Count the number of contacts across multiple sensors above a force threshold."""
+
     contacts_sum = torch.zeros(env.num_envs, device=env.device)
     for sensor_name in sensors:
         contact_sensor: ContactSensor = env.scene.sensors[sensor_name]
@@ -130,6 +134,8 @@ def success_reward(
     pos_std: float,
     rot_std: float | None = None,
 ) -> torch.Tensor:
+    """Reward success by comparing commanded pose to the object pose using tanh kernels on error."""
+
     asset: RigidObject = env.scene[asset_cfg.name]
     object: RigidObject = env.scene[align_asset_cfg.name]
     command = env.command_manager.get_command(command_name)
@@ -148,8 +154,8 @@ def success_reward(
 def position_command_error_tanh(
     env: ManagerBasedRLEnv, std: float, command_name: str, asset_cfg: SceneEntityCfg, align_asset_cfg: SceneEntityCfg
 ) -> torch.Tensor:
-    """Reward tracking of the position using the tanh kernel."""
-    # extract the asset (to enable type hinting)
+    """Reward tracking of commanded position using tanh kernel, gated by contact presence."""
+
     asset: RigidObject = env.scene[asset_cfg.name]
     object: RigidObject = env.scene[align_asset_cfg.name]
     command = env.command_manager.get_command(command_name)
@@ -163,8 +169,8 @@ def position_command_error_tanh(
 def orientation_command_error_tanh(
     env: ManagerBasedRLEnv, std: float, command_name: str, asset_cfg: SceneEntityCfg, align_asset_cfg: SceneEntityCfg
 ) -> torch.Tensor:
-    """Reward tracking of the orientation using the tanh kernel."""
-    # extract the asset (to enable type hinting)
+    """Reward tracking of commanded orientation using tanh kernel, gated by contact presence."""
+
     asset: RigidObject = env.scene[asset_cfg.name]
     object: RigidObject = env.scene[align_asset_cfg.name]
     command = env.command_manager.get_command(command_name)
