@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.managers import ManagerTermBase, SceneEntityCfg
-from isaaclab.sensors import ContactSensor
 from isaaclab.utils.math import quat_apply, quat_apply_inverse, quat_inv, quat_mul, subtract_frame_transforms
 
 from .utils import sample_object_point_cloud
@@ -24,7 +23,16 @@ def object_pos_b(
     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
 ):
-    """The position of the object in the robot's root frame."""
+    """Object position in the robot's root frame.
+
+    Args:
+        env: The environment.
+        robot_cfg: Scene entity for the robot (reference frame). Defaults to ``SceneEntityCfg("robot")``.
+        object_cfg: Scene entity for the object. Defaults to ``SceneEntityCfg("object")``.
+
+    Returns:
+        Tensor of shape ``(num_envs, 3)``: object position [x, y, z] expressed in the robot root frame.
+    """
     robot: RigidObject = env.scene[robot_cfg.name]
     object: RigidObject = env.scene[object_cfg.name]
     return quat_apply(quat_inv(robot.data.root_quat_w), object.data.root_pos_w - robot.data.root_pos_w)
@@ -35,7 +43,16 @@ def object_quat_b(
     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
 ) -> torch.Tensor:
-    """The quaternion of the object in the robot's root frame."""
+    """Object orientation in the robot's root frame.
+
+    Args:
+        env: The environment.
+        robot_cfg: Scene entity for the robot (reference frame). Defaults to ``SceneEntityCfg("robot")``.
+        object_cfg: Scene entity for the object. Defaults to ``SceneEntityCfg("object")``.
+
+    Returns:
+        Tensor of shape ``(num_envs, 4)``: object quaternion ``(w, x, y, z)`` in the robot root frame.
+    """
     robot: RigidObject = env.scene[robot_cfg.name]
     object: RigidObject = env.scene[object_cfg.name]
     return quat_mul(quat_inv(robot.data.root_quat_w), object.data.root_quat_w)
@@ -46,6 +63,19 @@ def body_state_b(
     body_asset_cfg: SceneEntityCfg,
     base_asset_cfg: SceneEntityCfg,
 ) -> torch.Tensor:
+    """Body state (pos, quat, lin vel, ang vel) in the base asset's root frame.
+
+    The state for each body is stacked horizontally as
+    ``[position(3), quaternion(4)(wxyz), linvel(3), angvel(3)]`` and then concatenated over bodies.
+
+    Args:
+        env: The environment.
+        body_asset_cfg: Scene entity for the articulated body whose links are observed.
+        base_asset_cfg: Scene entity providing the reference (root) frame.
+
+    Returns:
+        Tensor of shape ``(num_envs, num_bodies * 13)`` with per-body states expressed in the base root frame.
+    """
     body_asset: Articulation = env.scene[body_asset_cfg.name]
     base_asset: Articulation = env.scene[base_asset_cfg.name]
     # get world pose of bodies
@@ -67,36 +97,43 @@ def body_state_b(
 
 
 class object_point_cloud_b(ManagerTermBase):
+    """Object surface point cloud expressed in a reference asset's root frame.
+
+    Points are pre-sampled on the object's surface in its local frame and transformed to world,
+    then into the reference (e.g., robot) root frame. Optionally visualizes the points.
+
+    Args (from ``cfg.params``):
+        object_cfg: Scene entity for the object to sample. Defaults to ``SceneEntityCfg("object")``.
+        ref_asset_cfg: Scene entity providing the reference frame. Defaults to ``SceneEntityCfg("robot")``.
+        num_points: Number of points to sample on the object surface. Defaults to ``10``.
+        visualize: Whether to draw markers for the points. Defaults to ``True``.
+        static: If ``True``, cache world-space points on reset and reuse them (no per-step resampling).
+
+    Returns (from ``__call__``):
+        If ``flatten=False``: tensor of shape ``(num_envs, num_points, 3)``.
+        If ``flatten=True``: tensor of shape ``(num_envs, 3 * num_points)``.
+    """
 
     def __init__(self, cfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
 
         self.object_cfg: SceneEntityCfg = cfg.params.get("object_cfg", SceneEntityCfg("object"))
         self.ref_asset_cfg: SceneEntityCfg = cfg.params.get("ref_asset_cfg", SceneEntityCfg("robot"))
-        self.num_points: int = cfg.params.get("num_points", 10)
-        self.visualize = cfg.params.get("visualize", True)
-        self.static: bool = cfg.params.get("static", False)
+        num_points: int = cfg.params.get("num_points", 10)
         self.object: RigidObject = env.scene[self.object_cfg.name]
         self.ref_asset: Articulation = env.scene[self.ref_asset_cfg.name]
-        # uncomment to visualize
-        if self.visualize:
+        # lazy initialize visualizer and point cloud
+        if cfg.params.get("visualize", True):
             from isaaclab.markers import VisualizationMarkers
             from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
 
             ray_cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/ObservationPointCloud")
             ray_cfg.markers["hit"].radius = 0.0025
             self.visualizer = VisualizationMarkers(ray_cfg)
-        self.points_b = sample_object_point_cloud(
-            env.num_envs, self.num_points, self.object.cfg.prim_path, device=env.device
+        self.points_local = sample_object_point_cloud(
+            env.num_envs, num_points, self.object.cfg.prim_path, device=env.device
         )
-        self.points_w = torch.zeros_like(self.points_b)
-
-    def reset(self, env_ids: slice | torch.Tensor = slice(None)):
-        if self.static:
-            object_pos_w = self.object.data.root_pos_w.unsqueeze(1).repeat(1, self.num_points, 1)
-            object_quat_w = self.object.data.root_quat_w.unsqueeze(1).repeat(1, self.num_points, 1)
-            # apply rotation + translation
-            self.points_w = quat_apply(object_quat_w, self.points_b) + object_pos_w
+        self.points_w = torch.zeros_like(self.points_local)
 
     def __call__(
         self,
@@ -104,17 +141,33 @@ class object_point_cloud_b(ManagerTermBase):
         ref_asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
         object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
         num_points: int = 10,
-        static: bool = False,
         flatten: bool = False,
         visualize: bool = True,
     ):
-        ref_pos_w = self.ref_asset.data.root_pos_w.unsqueeze(1).repeat(1, self.num_points, 1)
-        ref_quat_w = self.ref_asset.data.root_quat_w.unsqueeze(1).repeat(1, self.num_points, 1)
-        if not static:
-            object_pos_w = self.object.data.root_pos_w.unsqueeze(1).repeat(1, self.num_points, 1)
-            object_quat_w = self.object.data.root_quat_w.unsqueeze(1).repeat(1, self.num_points, 1)
-            # apply rotation + translation
-            self.points_w = quat_apply(object_quat_w, self.points_b) + object_pos_w
+        """Compute the object point cloud in the reference asset's root frame.
+
+        Note:
+            Points are pre-sampled at initialization using ``self.num_points``; the ``num_points`` argument is
+            kept for API symmetry and does not change the sampled set at runtime.
+
+        Args:
+            env: The environment.
+            ref_asset_cfg: Reference frame provider (root). Defaults to ``SceneEntityCfg("robot")``.
+            object_cfg: Object to sample. Defaults to ``SceneEntityCfg("object")``.
+            num_points: Unused at runtime; see note above.
+            flatten: If ``True``, return a flattened tensor ``(num_envs, 3 * num_points)``.
+            visualize: If ``True``, draw markers for the points.
+
+        Returns:
+            Tensor of shape ``(num_envs, num_points, 3)`` or flattened if requested.
+        """
+        ref_pos_w = self.ref_asset.data.root_pos_w.unsqueeze(1).repeat(1, num_points, 1)
+        ref_quat_w = self.ref_asset.data.root_quat_w.unsqueeze(1).repeat(1, num_points, 1)
+
+        object_pos_w = self.object.data.root_pos_w.unsqueeze(1).repeat(1, num_points, 1)
+        object_quat_w = self.object.data.root_quat_w.unsqueeze(1).repeat(1, num_points, 1)
+        # apply rotation + translation
+        self.points_w = quat_apply(object_quat_w, self.points_local) + object_pos_w
         if visualize:
             self.visualizer.visualize(translations=self.points_w.view(-1, 3))
         object_point_cloud_pos_b, _ = subtract_frame_transforms(ref_pos_w, ref_quat_w, self.points_w, None)
@@ -122,17 +175,23 @@ class object_point_cloud_b(ManagerTermBase):
         return object_point_cloud_pos_b.view(env.num_envs, -1) if flatten else object_point_cloud_pos_b
 
 
-def fingers_contact_force_w(env: ManagerBasedRLEnv) -> torch.Tensor:
-    """Penalize undesired contacts as the number of violations that are above a threshold."""
-    # extract the used quantities (to enable type-hinting)
-    thumb_contact_sensor: ContactSensor = env.scene.sensors["thumb_link_3_object_s"]
-    index_contact_sensor: ContactSensor = env.scene.sensors["index_link_3_object_s"]
-    middle_contact_sensor: ContactSensor = env.scene.sensors["middle_link_3_object_s"]
-    ring_contact_sensor: ContactSensor = env.scene.sensors["ring_link_3_object_s"]
-    # check if contact force is above threshold
-    thumb_contact = thumb_contact_sensor.data.force_matrix_w.view(env.num_envs, 3)
-    index_contact = index_contact_sensor.data.force_matrix_w.view(env.num_envs, 3)
-    middle_contact = middle_contact_sensor.data.force_matrix_w.view(env.num_envs, 3)
-    ring_contact = ring_contact_sensor.data.force_matrix_w.view(env.num_envs, 3)
+def fingers_contact_force_w(
+    env: ManagerBasedRLEnv,
+    contact_sensor_names: list[str],
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """World-frame contact forces from listed sensors, concatenated per env.
 
-    return torch.cat((thumb_contact, index_contact, middle_contact, ring_contact), dim=1)
+    Args:
+        env: The environment.
+        contact_sensor_names: Names of contact sensors in ``env.scene.sensors`` to read.
+
+    Returns:
+        Tensor of shape ``(num_envs, 3 * num_sensors)`` with forces stacked horizontally as
+        ``[fx, fy, fz]`` per sensor.
+    """
+    force_w = [env.scene.sensors[name].data.force_matrix_w.view(env.num_envs, 3) for name in contact_sensor_names]
+    force_w = torch.stack(force_w, dim=1)
+    robot: Articulation = env.scene[asset_cfg.name]
+    forces_b = quat_apply_inverse(robot.data.root_link_quat_w.unsqueeze(1).repeat(1, force_w.shape[1], 1), force_w)
+    return forces_b

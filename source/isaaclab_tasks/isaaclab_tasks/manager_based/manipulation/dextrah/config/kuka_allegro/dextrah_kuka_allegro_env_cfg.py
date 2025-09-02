@@ -130,10 +130,8 @@ class KukaAllegroMixinCfg:
             },
             soft_joint_pos_limit_factor=1.0,
         )
-        self.observations.policy.contact = ObsTerm(func=mdp.fingers_contact_force_w)
-        self.observations.policy.hand_tips_state_b.params["body_asset_cfg"].body_names = ["palm_link", ".*_tip"]
-        self.rewards.fingers_to_object.params["asset_cfg"] = SceneEntityCfg("robot", body_names=["palm_link", ".*_tip"])
-        for link_name in ["index_link_3", "middle_link_3", "ring_link_3", "thumb_link_3"]:
+        finger_tip_body_list = ["index_link_3", "middle_link_3", "ring_link_3", "thumb_link_3"]
+        for link_name in finger_tip_body_list:
             setattr(
                 self.scene,
                 f"{link_name}_object_s",
@@ -141,6 +139,13 @@ class KukaAllegroMixinCfg:
                     prim_path="{ENV_REGEX_NS}/Robot/" + link_name, filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"]
                 ),
             )
+        self.observations.policy.contact = ObsTerm(
+            func=mdp.fingers_contact_force_w,
+            params={"contact_sensor_names": [f"{link}_object_s" for link in finger_tip_body_list]},
+            clip=(-20.0, 20.0),  # contact force in finger tips is under 20N normally
+        )
+        self.observations.policy.hand_tips_state_b.params["body_asset_cfg"].body_names = ["palm_link", ".*_tip"]
+        self.rewards.fingers_to_object.params["asset_cfg"] = SceneEntityCfg("robot", body_names=["palm_link", ".*_tip"])
 
 
 @configclass
