@@ -9,6 +9,8 @@ import gym.spaces
 import torch
 import textwrap
 import torch.nn as nn
+import torch.optim as optim
+
 import gymnasium
 import gym
 from typing import Union, Dict
@@ -37,6 +39,7 @@ def vision_forward(
 def projector_forward(
     self,
     obs_batch: dict[str, torch.Tensor],
+    encoded_obs_batch: dict[str, torch.Tensor],
     projector_features: dict[str, list[str]],
     projector_prediction_targets: dict[str, list[str]],
 ) -> dict[str, torch.Tensor]:
@@ -45,11 +48,12 @@ def projector_forward(
     projector_normalizers = self.projector_feature_normalizers
     projector_ground_truth_normalizers = self.projector_ground_truth_normalizers
     for projector_key, feature_keys in projector_features.items():
-        in_feature_batch = torch.cat([obs_batch[feat_key] for feat_key in feature_keys], dim=1)
-        loss[projector_key] = projectors[projector_key](projector_normalizers[projector_key](in_feature_batch))
+        in_feature_batch = torch.cat([encoded_obs_batch[feat_key] for feat_key in feature_keys], dim=1)
+        in_feature_batch = projector_normalizers[projector_key](in_feature_batch)
+        loss[projector_key] = projectors[projector_key](in_feature_batch)
         prediction_targets = torch.cat([obs_batch[tgt_key] for tgt_key in projector_prediction_targets[projector_key]], dim=1)
-        normalized_prediction_targets = projector_ground_truth_normalizers[projector_key](prediction_targets)
-        mse_loss = nn.functional.mse_loss(loss[projector_key], normalized_prediction_targets)
+        prediction_targets = projector_ground_truth_normalizers[projector_key](prediction_targets)
+        mse_loss = nn.functional.mse_loss(loss[projector_key], prediction_targets)
         loss[projector_key] = mse_loss
     return loss
 
@@ -84,6 +88,7 @@ class ActorCriticVision:
         self.projector_feature_normalizers = nn.ModuleDict()
         self.projector_ground_truth_normalizers = nn.ModuleDict()
         self.projectors = nn.ModuleDict()
+        self.projector_optimizers = {}
 
     def encoder_init(self, obs: ObsSpaceLike):
         # process gym.space input so encoder only worries about dict input
@@ -124,6 +129,7 @@ class ActorCriticVision:
                     prev = h
                 layers += [nn.Linear(prev, prediction_dim)]  # final linear, no activation
                 self.projectors[project_key] = nn.Sequential(*layers)
+                self.projector_optimizers[project_key] = optim.Adam(self.projectors[project_key].parameters(), lr=1e-4)
 
     def print_vision_encoders(self):
         print("Vision Encoder initialized with the following modules:")
