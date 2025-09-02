@@ -92,7 +92,7 @@ class CurriculumCfg:
     object_obs_unoise_min_adr = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
-            "address": "observations.privileged.perception.noise.n_min",
+            "address": "observations.perception.object_point_cloud.noise.n_min",
             "modify_fn": mdp.initial_final_interpolate_fn,
             "modify_params": {"iv": 0., "fv": -.01, "difficulty_term_str": "adr"}
         }
@@ -101,7 +101,7 @@ class CurriculumCfg:
     object_obs_unoise_max_adr = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
-            "address": "observations.privileged.perception.noise.n_max",
+            "address": "observations.perception.object_point_cloud.noise.n_max",
             "modify_fn": mdp.initial_final_interpolate_fn,
             "modify_params": {"iv": 0., "fv": -.01, "difficulty_term_str": "adr"}
         }

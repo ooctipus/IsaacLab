@@ -3,6 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+import os
+
 from isaaclab import sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg
@@ -43,8 +45,7 @@ class KukaAllegroMixinCfg:
         self.scene.robot = ArticulationCfg(
             prim_path="{ENV_REGEX_NS}/Robot",
             spawn=sim_utils.UsdFileCfg(
-                # usd_path=f"{LOCAL_ASSET_PATH_DIR}/Robots/KukaAllegro/kuka_allegro_optimizedv2.usd",
-                usd_path="https://isaac-dev.ov.nvidia.com/omni/web3/omniverse://isaac-dev.ov.nvidia.com/Users/zhengyuz@nvidia.com/Robots/KukaAllegro/kuka_allegro_optimized.usd",
+                usd_path=os.path.join(os.path.dirname(__file__), "kuka_allegro.usd"),
                 activate_contact_sensors=True,
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(
                     disable_gravity=True,
@@ -158,63 +159,5 @@ class DextrahKukaAllegroLiftEnvCfg(KukaAllegroMixinCfg, dextrah.DextrahLiftEnvCf
 
 
 @configclass
-class DextrahKukaAllegroFabricLiftEnvCfg(KukaAllegroMixinCfg, dextrah.DextrahLiftEnvCfg):
-    pass
-
-
-@configclass
 class DextrahKukaAllegroLiftEnvCfg_PLAY(KukaAllegroMixinCfg, dextrah.DextrahLiftEnvCfg_PLAY):
     pass
-
-
-from importlib.util import find_spec
-FABRICS_AVAILABLE = find_spec("fabrics_sim") is not None
-if FABRICS_AVAILABLE:
-    @configclass
-    class KukaAllegroFabricActionCfg:
-        actions = mdp.FabricActionCfg(asset_name="robot")
-
-
-    @configclass
-    class DextrahFabricLiftEnvCfg(dextrah.DextrahLiftEnvCfg):
-        def __post_init__(self):
-            super().__post_init__()
-            self.events.reset_robot_joints.params["position_range"] = (0.0, 0.0)
-            self.events.reset_robot_wrist_joint = None
-            self.events.variable_gravity.params["gravity_distribution_params"] = ([0.0, 0.0, -9.81], [0.0, 0.0, -9.81])
-
-
-    @configclass
-    class KukaAllegroFabricMixinCfg(KukaAllegroMixinCfg):
-        actions: KukaAllegroFabricActionCfg = KukaAllegroFabricActionCfg()
-        def __post_init__(self):
-            super().__post_init__()
-            # Octi: Seems geometric fabric has some contraint how it wants to be initialized
-            # extreme angles will likely make it not work we therefore needs some customization if action space 
-            # is geometry fabric
-            self.scene.robot.init_state.joint_pos={
-                'iiwa7_joint_1': -0.85,
-                'iiwa7_joint_2': 0.0,
-                'iiwa7_joint_3': 0.76,
-                'iiwa7_joint_4': 1.25,
-                'iiwa7_joint_5': -1.76,
-                'iiwa7_joint_6': 0.90,
-                'iiwa7_joint_7': 0.64,
-                '(index|middle|ring)_joint_0': 0.0,
-                '(index|middle|ring)_joint_1': 0.3,
-                '(index|middle|ring)_joint_2': 0.3,
-                '(index|middle|ring)_joint_3': 0.3,
-                'thumb_joint_0': 1.5,
-                'thumb_joint_1': 0.60147215,
-                'thumb_joint_2': 0.33795027,
-                'thumb_joint_3': 0.60845138
-            }
-
-    @configclass
-    class DextrahFabricKukaAllegroLiftEnvCfg(KukaAllegroFabricMixinCfg, DextrahFabricLiftEnvCfg):
-        pass
-
-
-    @configclass
-    class DextrahFabricKukaAllegroLiftEnvCfg_PLAY(KukaAllegroMixinCfg, DextrahFabricLiftEnvCfg):
-        pass

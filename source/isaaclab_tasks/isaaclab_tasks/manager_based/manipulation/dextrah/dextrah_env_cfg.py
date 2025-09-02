@@ -141,7 +141,7 @@ class ObservationsCfg:
     @configclass
     class PerceptionObsCfg(ObsGroup):
 
-        perception = ObsTerm(
+        object_point_cloud = ObsTerm(
             func=mdp.object_point_cloud_b,
             noise=Unoise(n_min=-0.0, n_max=0.0),
             params={"num_points": 64, "flatten": True},
