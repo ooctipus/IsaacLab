@@ -41,6 +41,7 @@ class ActorCriticVisionExtensionPatcher:
             self._orig_get_critic_obs = ActorCritic.get_critic_obs
             self._orig_actor_critic_init = ActorCritic.__init__
             self._orig_ppo_update = PPO.update
+            self._orig_ppo_process_env_step = PPO.process_env_step
 
             def vision_encoder_creation_init(actor_critic_self, *args, **kwargs) -> None:
                 obs_arg, *rest = args
@@ -65,7 +66,22 @@ class ActorCriticVisionExtensionPatcher:
             def vision_encoded_get_critic_obs_patched(actor_critic_self, obs: TensorDict) -> torch.Tensor:
                 encoded_obs = actor_critic_self.vision_forward(obs, self.vision.group2encoder, obs.batch_size, obs.device)
                 return self._orig_get_critic_obs(actor_critic_self, encoded_obs)
-            
+
+            def sol_process_env_step(ppo_self: PPO, obs, rewards, dones, infos):
+                # update projector normalizers
+                projector_keys = ppo_self.policy.projectors.keys()
+                if len(projector_keys) > 0:
+                    projector_ground_truth_normalizers = ppo_self.policy.projector_ground_truth_normalizers
+                    projector_feature_normalizers = ppo_self.policy.projector_feature_normalizers
+                    encoded_obs = ppo_self.policy.vision_forward(obs, self.vision.group2encoder, obs.batch_size, obs.device)
+                    for projector_key in projector_keys:
+                        in_feature_batch = torch.cat([encoded_obs[feat_key] for feat_key in self.vision.projector_feature_sources[projector_key]], dim=1)
+                        projector_feature_normalizers[projector_key].update(in_feature_batch)
+
+                        prediction_targets = torch.cat([obs[tgt_key] for tgt_key in self.vision.projector_prediction_targets[projector_key]], dim=1)
+                        projector_ground_truth_normalizers[projector_key].update(prediction_targets)
+                self._orig_ppo_process_env_step(ppo_self, obs, rewards, dones, infos)
+
             def sol_update(ppo_self: PPO):
                 mean_value_loss = 0
                 mean_surrogate_loss = 0
@@ -210,10 +226,10 @@ class ActorCriticVisionExtensionPatcher:
 
                     loss = surrogate_loss + ppo_self.value_loss_coef * value_loss - ppo_self.entropy_coef * entropy_batch.mean()
                     if has_reconstruction_loss:
-                        reconstruction_loss = {}
                         encoded_obs = ppo_self.policy.vision_forward(obs_batch, self.vision.group2encoder, obs_batch.batch_size, obs_batch.device)
-                        reconstruction_loss = ppo_self.policy.projector_forward(encoded_obs, self.vision.projector_feature_sources, self.vision.projector_prediction_targets)
-                        loss += torch.sum(torch.stack(list(reconstruction_loss.values())))
+                        reconstruction_loss = ppo_self.policy.projector_forward(obs_batch, encoded_obs, self.vision.projector_feature_sources, self.vision.projector_prediction_targets)
+                        reconstruct_loss = torch.sum(torch.stack(list(reconstruction_loss.values())))
+                        # loss += torch.sum(torch.stack(list(reconstruction_loss.values())))
                     # Symmetry loss
                     if ppo_self.symmetry:
                         # obtain the symmetric actions
@@ -275,6 +291,10 @@ class ActorCriticVisionExtensionPatcher:
                     if ppo_self.is_multi_gpu:
                         ppo_self.reduce_parameters()
 
+                    if has_reconstruction_loss:
+                        for projector_key in self.vision.projectors.keys():
+                            self.vision.projector_optimizers[projector_key].zero_grad()
+                        reconstruct_loss.backward()
                     # Apply the gradients
                     # -- For PPO
                     nn.utils.clip_grad_norm_(ppo_self.policy.parameters(), ppo_self.max_grad_norm)
@@ -330,6 +350,7 @@ class ActorCriticVisionExtensionPatcher:
                 return loss_dict
 
             PPO.update = sol_update
+            PPO.process_env_step = sol_process_env_step
             ActorCritic.__init__ = vision_encoder_creation_init
             ActorCritic.get_actor_obs = vision_encoded_get_actor_obs
             ActorCritic.get_critic_obs = vision_encoded_get_critic_obs_patched

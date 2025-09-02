@@ -120,9 +120,9 @@ class ObservationsCfg:
 
     @configclass
     class PrivilegedPerceptionObsCfg(ObsGroup):
-        object_pos_b = ObsTerm(func=mdp.object_pos_b, noise=Unoise(n_min=-0., n_max=0.))
+        object_pos_b = ObsTerm(func=mdp.object_pos_b, noise=Unoise(n_min=-0., n_max=0.), clip=(-5.0, 5.0))
         contact: ObsTerm = MISSING
-        
+
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True

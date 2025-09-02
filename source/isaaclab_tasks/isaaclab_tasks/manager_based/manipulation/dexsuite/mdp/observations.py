@@ -158,6 +158,7 @@ class objects_point_cloud_b(ManagerTermBase):
         if visualize:
             self.visualizer.visualize(translations=self.points_w.view(-1, 3))
         object_point_cloud_pos_b, _ = subtract_frame_transforms(ref_pos_w, ref_quat_w, self.points_w, None)
+        object_point_cloud_pos_b.clamp_(-5.0, 5.0)
         if normalize:
             object_point_cloud_pos_b = object_point_cloud_pos_b - object_point_cloud_pos_b.mean(dim=1, keepdim=True)
             d = torch.norm(object_point_cloud_pos_b, dim=-1)
