@@ -69,3 +69,6 @@ tests/
 
 # Docker history
 .isaac-lab-docker-history
+**/isaaclab_assets/data/*
+**/furniture_bench/*
+**/ur5/*
