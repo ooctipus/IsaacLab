@@ -196,9 +196,9 @@ class FactoryRewardsCfg:
     """Reward terms for Factory"""
 
     # penalties
-    action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-1e-4)
+    action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-1e-3)
 
-    action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-1e-4)
+    action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-1e-3)
 
     early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-0.5)
 
@@ -262,7 +262,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
         """Post initialization."""
         # general settings
         self.decimation = 12
-        self.episode_length_s = 8.0
+        self.episode_length_s = 10.0
         # simulation settings
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
