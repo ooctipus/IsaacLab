@@ -12,6 +12,7 @@ from typing import Optional
 from torch.types import _size
 
 from rsl_rl.modules import ActorCritic
+from rsl_rl.algorithms import PPO
 from ...rl_cfg import RslRlPpoActorCriticCfg
 
 class StateDependentNoiseDistribution(Distribution):
@@ -58,12 +59,14 @@ class StateDependentNoiseDistribution(Distribution):
         log_std: torch.Tensor,
         latent_sde: torch.Tensor
     ) -> 'StateDependentNoiseDistribution':
+        # cache for sampling path
         self._latent_sde = latent_sde
-        # Move exploration matrices to the same device as latent_sde
+        self._mean_actions = mean_actions
+        # Move exploration matrices to same device/dtype as latent_sde
         if self.exploration_mat is not None:
-            self.exploration_mat = self.exploration_mat.to(latent_sde.device)
+            self.exploration_mat = self.exploration_mat.to(latent_sde.device, latent_sde.dtype)
         if self.exploration_matrices is not None:
-            self.exploration_matrices = self.exploration_matrices.to(latent_sde.device)
+            self.exploration_matrices = self.exploration_matrices.to(latent_sde.device, latent_sde.dtype)
         variance = torch.mm(self._latent_sde**2, self.get_std(log_std) ** 2)
         self.distribution = Normal(mean_actions, torch.sqrt(variance + self.epsilon))
         return self
@@ -76,14 +79,19 @@ class StateDependentNoiseDistribution(Distribution):
     def entropy(self) -> torch.Tensor:
         return self.distribution.entropy()
 
+    def rsample(self, sample_shape: _size = torch.Size()) -> torch.Tensor:
+        if self.distribution is None or self._latent_sde is None:
+            raise ValueError("Distribution not initialized. Call proba_distribution first.")
+        noise = self.get_noise(self._latent_sde)  # phi(s) @ W (or batched)
+        if sample_shape != torch.Size():
+            noise = noise.unsqueeze(0).expand(sample_shape + noise.shape)
+            mean = self.distribution.mean.unsqueeze(0).expand_as(noise)
+            return mean + noise
+        return self.distribution.mean + noise
+
     def sample(self, sample_shape: _size = torch.Size()) -> torch.Tensor:
         with torch.no_grad():
             return self.rsample(sample_shape)
-
-    def rsample(self, sample_shape: _size = torch.Size()) -> torch.Tensor:
-        if self.distribution is None:
-            raise ValueError("Distribution not initialized. Call proba_distribution first.")
-        return self.distribution.rsample(sample_shape)
 
     @property
     def mean(self) -> torch.Tensor:
@@ -143,6 +151,7 @@ class StateDependendNoiseDistributionPatcher:
         
         self._orignal_actor_critic_init = ActorCritic.__init__
         self._original_update_distribution = ActorCritic.update_distribution
+        self._original_ppo_update = PPO.update
         
         def state_dependent_std_init(actor_critic_self, *args, **kwargs):
             # init base with a supported type
@@ -162,6 +171,11 @@ class StateDependendNoiseDistributionPatcher:
             actor_critic_self.log_std = nn.Parameter(torch.ones(actor_hidden_dims[-1], num_actions) * torch.log(torch.tensor(init_noise_std)))
             actor_critic_self.distribution.sample_weights(actor_critic_self.log_std)
 
+        def state_dependent_dist_resampled_update(ppo_self: PPO):
+            loss_dict = self._original_ppo_update(ppo_self)
+            ppo_self.policy.distribution.sample_weights(ppo_self.policy.log_std, batch_size=ppo_self.storage.num_envs)
+            return loss_dict
+
         def state_dependent_update_distribution(actor_critic_self, observation):
             features = actor_critic_self._gsde_body(observation)
             mean = actor_critic_self._gsde_head(features)
@@ -169,6 +183,7 @@ class StateDependendNoiseDistributionPatcher:
 
         ActorCritic.__init__ = state_dependent_std_init
         ActorCritic.update_distribution = state_dependent_update_distribution
+        PPO.update = state_dependent_dist_resampled_update
     
     def remove_patch(self):
         ActorCritic.__init__ = self._orignal_actor_critic_init
