@@ -8,4 +8,4 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Dextrah environments."""
+"""Dexsuite environments."""

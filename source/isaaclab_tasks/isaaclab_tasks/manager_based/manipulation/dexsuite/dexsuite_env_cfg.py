@@ -25,7 +25,7 @@ from .adr_curriculum import CurriculumCfg
 
 @configclass
 class SceneCfg(InteractiveSceneCfg):
-    """Dextrah Scene for multi-objects Lifting"""
+    """Dexsuite Scene for multi-objects Lifting"""
 
     # robot
     robot: ArticulationCfg = MISSING
@@ -362,7 +362,7 @@ class TerminationsCfg:
 
 
 @configclass
-class DextrahReorientEnvCfg(ManagerBasedEnvCfg):
+class DexsuiteReorientEnvCfg(ManagerBasedEnvCfg):
 
     # Scene settings
     viewer: ViewerCfg = ViewerCfg(eye=(-2.25, 0.0, 0.75), lookat=(0.0, 0.0, 0.45), origin_type="env")
@@ -408,7 +408,7 @@ class DextrahReorientEnvCfg(ManagerBasedEnvCfg):
             self.curriculum.adr.params["rot_tol"] = self.rewards.success.params["rot_std"] / 2
 
 
-class DextrahLiftEnvCfg(DextrahReorientEnvCfg):
+class DexsuiteLiftEnvCfg(DexsuiteReorientEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
@@ -419,7 +419,7 @@ class DextrahLiftEnvCfg(DextrahReorientEnvCfg):
             self.curriculum.adr.params["rot_tol"] = None  # make adr not tracking orientation
 
 
-class DextrahReorientEnvCfg_PLAY(DextrahReorientEnvCfg):
+class DexsuiteReorientEnvCfg_PLAY(DexsuiteReorientEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
@@ -428,7 +428,7 @@ class DextrahReorientEnvCfg_PLAY(DextrahReorientEnvCfg):
         self.curriculum.adr.params["init_difficulty"] = self.curriculum.adr.params["max_difficulty"]
 
 
-class DextrahLiftEnvCfg_PLAY(DextrahLiftEnvCfg):
+class DexsuiteLiftEnvCfg_PLAY(DexsuiteLiftEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()

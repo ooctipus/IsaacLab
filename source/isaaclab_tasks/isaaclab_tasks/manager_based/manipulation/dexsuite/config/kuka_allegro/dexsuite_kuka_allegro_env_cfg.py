@@ -14,7 +14,7 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils import configclass
 
-from ... import dextrah_env_cfg as dextrah
+from ... import dexsuite_env_cfg as dexsuite
 from ... import mdp
 
 
@@ -24,7 +24,7 @@ class KukaAllegroRelJointPosActionCfg:
 
 
 @configclass
-class KukaAllegroReorientRewardCfg(dextrah.RewardsCfg):
+class KukaAllegroReorientRewardCfg(dexsuite.RewardsCfg):
 
     # bool awarding term if 2 finger tips are in contact with object, one of the contacting fingers has to be thumb.
     good_finger_contact = RewTerm(
@@ -39,7 +39,7 @@ class KukaAllegroMixinCfg:
     rewards: KukaAllegroReorientRewardCfg = KukaAllegroReorientRewardCfg()
     actions: KukaAllegroRelJointPosActionCfg = KukaAllegroRelJointPosActionCfg()
 
-    def __post_init__(self: dextrah.DextrahReorientEnvCfg):
+    def __post_init__(self: dexsuite.DexsuiteReorientEnvCfg):
         super().__post_init__()
         self.commands.object_pose.body_name = "palm_link"
         self.scene.robot = ArticulationCfg(
@@ -149,20 +149,20 @@ class KukaAllegroMixinCfg:
 
 
 @configclass
-class DextrahKukaAllegroReorientEnvCfg(KukaAllegroMixinCfg, dextrah.DextrahReorientEnvCfg):
+class DexsuiteKukaAllegroReorientEnvCfg(KukaAllegroMixinCfg, dexsuite.DexsuiteReorientEnvCfg):
     pass
 
 
 @configclass
-class DextrahKukaAllegroReorientEnvCfg_PLAY(KukaAllegroMixinCfg, dextrah.DextrahReorientEnvCfg_PLAY):
+class DexsuiteKukaAllegroReorientEnvCfg_PLAY(KukaAllegroMixinCfg, dexsuite.DexsuiteReorientEnvCfg_PLAY):
     pass
 
 
 @configclass
-class DextrahKukaAllegroLiftEnvCfg(KukaAllegroMixinCfg, dextrah.DextrahLiftEnvCfg):
+class DexsuiteKukaAllegroLiftEnvCfg(KukaAllegroMixinCfg, dexsuite.DexsuiteLiftEnvCfg):
     pass
 
 
 @configclass
-class DextrahKukaAllegroLiftEnvCfg_PLAY(KukaAllegroMixinCfg, dextrah.DextrahLiftEnvCfg_PLAY):
+class DexsuiteKukaAllegroLiftEnvCfg_PLAY(KukaAllegroMixinCfg, dexsuite.DexsuiteLiftEnvCfg_PLAY):
     pass
