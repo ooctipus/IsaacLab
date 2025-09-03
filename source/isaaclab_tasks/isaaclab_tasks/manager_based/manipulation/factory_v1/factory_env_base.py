@@ -264,7 +264,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
         self.decimation = 12
         self.episode_length_s = 8.0
         # simulation settings
-        self.sim.dt = 0.1 / self.decimation
+        self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
 
         self.sim.physx.solver_type = 1
