@@ -115,7 +115,7 @@ class CurriculumCfg:
             "modify_params": {
                 "iv": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
                 "fv": ((0.0, 0.0, -9.81), (0.0, 0.0, -9.81)),
-                "difficulty_term_str": "adr"
-            }
-        }
+                "difficulty_term_str": "adr",
+            },
+        },
     )

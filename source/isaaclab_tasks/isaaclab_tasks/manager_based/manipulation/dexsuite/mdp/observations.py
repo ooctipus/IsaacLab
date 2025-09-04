@@ -16,7 +16,7 @@ from .utils import sample_object_point_cloud
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
-    from isaaclab.sensors import TiledCamera, Camera
+    from isaaclab.sensors import Camera, TiledCamera
 
 
 def object_pos_b(

@@ -1,5 +1,11 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 import torch
 import torch.nn as nn
+
 
 class Permute(nn.Module):
     def __init__(self, *dims):
@@ -25,7 +31,12 @@ class CNN(nn.Module):
         feature_size = kwargs.get("feature_size", None)
         assert len(channels) == len(kernel_sizes) == len(strides) == len(paddings), "lists must match length"
         act_cls = {
-            "relu": nn.ReLU, "elu": nn.ELU, "gelu": nn.GELU, "silu": nn.SiLU, "tanh": nn.Tanh, "none": nn.Identity,
+            "relu": nn.ReLU,
+            "elu": nn.ELU,
+            "gelu": nn.GELU,
+            "silu": nn.SiLU,
+            "tanh": nn.Tanh,
+            "none": nn.Identity,
         }[activation.lower()]
 
         C, H, W = input_shape

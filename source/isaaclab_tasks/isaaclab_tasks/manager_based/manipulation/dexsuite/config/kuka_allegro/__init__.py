@@ -68,7 +68,9 @@ gym.register(
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.dexsuite_kuka_allegro_camera_env_cfg:DexsuiteKukaAllegroLiftDepthCameraEnvCfg",
+        "env_cfg_entry_point": (
+            f"{__name__}.dexsuite_kuka_allegro_camera_env_cfg:DexsuiteKukaAllegroLiftDepthCameraEnvCfg"
+        ),
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cnn_cfg.yaml",
     },
 )
@@ -79,7 +81,9 @@ gym.register(
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.dexsuite_kuka_allegro_camera_env_cfg:DexsuiteKukaAllegroLiftDepthCameraEnvCfg_PLAY",
+        "env_cfg_entry_point": (
+            f"{__name__}.dexsuite_kuka_allegro_camera_env_cfg:DexsuiteKukaAllegroLiftDepthCameraEnvCfg_PLAY"
+        ),
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cnn_cfg.yaml",
     },
 )

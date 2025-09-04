@@ -17,8 +17,8 @@ from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import CapsuleCfg, ConeCfg, CuboidCfg, RigidBodyMaterialCfg, SphereCfg
 from isaaclab.utils import configclass
-from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 
 from . import mdp
 from .adr_curriculum import CurriculumCfg
@@ -398,7 +398,7 @@ class DexsuiteReorientEnvCfg(ManagerBasedEnvCfg):
         self.commands.object_pose.success_visualizer_cfg.markers["success"] = self.scene.table.spawn.replace(
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.15, 0.3, 0.15), roughness=0.25)
         )
-        self.scene.table.spawn.visible = False # we let success visualizer to color the table
+        self.scene.table.spawn.visible = False  # we let success visualizer to color the table
 
         self.episode_length_s = 4.0
         self.is_finite_horizon = True

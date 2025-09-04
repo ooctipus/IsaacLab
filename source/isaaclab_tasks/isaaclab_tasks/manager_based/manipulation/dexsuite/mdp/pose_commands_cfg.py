@@ -73,7 +73,9 @@ class ObjectUniformPoseCommandCfg(CommandTermCfg):
     current_pose_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
 
     # Position Markers
-    goal_pos_visualizer_cfg: VisualizationMarkersCfg = POSITION_GOAL_MARKER_CFG.replace(prim_path="/Visuals/Command/goal_pos")
+    goal_pos_visualizer_cfg: VisualizationMarkersCfg = POSITION_GOAL_MARKER_CFG.replace(
+        prim_path="/Visuals/Command/goal_pos"
+    )
     """The configuration for the goal pose visualization marker. Defaults to POSITION_GOAL_MARKER_CFG."""
 
     current_pos_visualizer_cfg: VisualizationMarkersCfg = POSITION_GOAL_MARKER_CFG.replace(
@@ -86,7 +88,4 @@ class ObjectUniformPoseCommandCfg(CommandTermCfg):
     """Name of the asset in the environment for which the success color are indicated."""
 
     # success markers
-    success_visualizer_cfg = VisualizationMarkersCfg(
-        prim_path="/Visuals/myMarkers",
-        markers={}
-    )
+    success_visualizer_cfg = VisualizationMarkersCfg(prim_path="/Visuals/myMarkers", markers={})
