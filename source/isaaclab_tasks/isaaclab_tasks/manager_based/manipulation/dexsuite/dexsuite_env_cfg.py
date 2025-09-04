@@ -289,6 +289,15 @@ class EventCfg:
         },
     )
 
+    variable_gravity = EventTerm(
+        func=mdp.randomize_physics_scene_gravity,
+        mode="reset",
+        params={
+            "gravity_distribution_params": ([0.0, 0.0, 0.0], [0.0, 0.0, 0.0]),
+            "operation": "abs",
+        },
+    )
+
 
 @configclass
 class ActionsCfg:
@@ -303,15 +312,7 @@ class RewardsCfg:
 
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-0.005)
 
-    joint_deviation_l1 = RewTerm(func=mdp.joint_deviation_l1, weight=-0.05)
-
     fingers_to_object = RewTerm(func=mdp.object_ee_distance, params={"std": 0.4}, weight=1.0)
-
-    lift = RewTerm(
-        func=mdp.lifted,
-        params={"object_cfg": SceneEntityCfg("object"), "num_points": 32, "min_height": 0.26},
-        weight=1.0,
-    )
 
     position_tracking = RewTerm(
         func=mdp.position_command_error_tanh,
