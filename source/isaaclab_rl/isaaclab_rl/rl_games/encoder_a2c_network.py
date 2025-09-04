@@ -12,7 +12,8 @@ from rl_games.common.layers.value import TwoHotEncodedValue, DefaultValue
 # Edit Begins
 from rl_games.algos_torch.running_mean_std import RunningMeanStd
 from .aux_networks import AuxInit
-from .encoder_networks import CustomCNN, Permute, CNN_OUT_FEATURES
+from .encoder_networks import Permute
+from . import encoder_networks as encoders
 # Edit Ends
 
 def _create_initializer(func, **kwargs):
@@ -214,7 +215,7 @@ class A2CBuilder(NetworkBuilder):
             self.load(params)
             # Edit Begins
             # rl-games reuses the memory space of input, we can't directly change the input_shape's value and
-            # have to make copy, otherwise the input_shape for other task is corrupted....
+            # have to make copy, otherwise the input_shape for other task is corrupted and will cause severe bug....
             input_shape_cp = input_shape.copy()
             self.is_aux = 'aux_outputs' in params
             self.encoders = None
@@ -227,18 +228,24 @@ class A2CBuilder(NetworkBuilder):
                     if encoder_cfg["transpose"]:
                         ops.append(Permute(0, 3, 1, 2))
                         h, w, c = encoder_input
+                        dummy = torch.zeros(1, h, w, c)
                     else:
                         c, h, w = encoder_input
-
-                    for grp in encoder_cfg["encoding_group"]:
-                        input_shape_cp[grp] = (CNN_OUT_FEATURES, )
+                        dummy = torch.zeros(1, c, h, w)
 
                     if encoder_cfg["normalize"]:
                         ops.append(RunningMeanStd((c, h, w)))  # expects BCHW
-                    ops.append(CustomCNN(h, w, depth=(c == 1), num_channel=c))
+                    encoder_cls = getattr(encoders, encoder_cfg["encoder_class"])
+                    ops.append(encoder_cls((c, h, w), **encoder_cfg))
 
                     self.encoders[encoder_name] = nn.Sequential(*ops)
                     self.encoder_group[encoder_name] = encoder_cfg["encoding_group"]
+                    with torch.no_grad():
+                        out = self.encoders[encoder_name](dummy)
+                        feature_dim = out.size(1)
+
+                    for grp in encoder_cfg["encoding_group"]:
+                        input_shape_cp[grp] = (feature_dim,)
 
                 self.is_aux = 'aux_outputs' in params
                 if self.is_aux:
