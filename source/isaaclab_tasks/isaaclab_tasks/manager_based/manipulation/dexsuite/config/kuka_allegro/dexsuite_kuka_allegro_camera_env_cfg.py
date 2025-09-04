@@ -30,8 +30,8 @@ class KukaAllegroCameraSceneCfg(dexsuite_state_impl.SceneCfg):
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
         ),
-        width=92,
-        height=92,
+        width=86,
+        height=86,
     )
 
     wrist_camera = TiledCameraCfg(
@@ -44,8 +44,8 @@ class KukaAllegroCameraSceneCfg(dexsuite_state_impl.SceneCfg):
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
         ),
-        width=92,
-        height=92,
+        width=86,
+        height=86,
     )
 
     wall = RigidObjectCfg(
