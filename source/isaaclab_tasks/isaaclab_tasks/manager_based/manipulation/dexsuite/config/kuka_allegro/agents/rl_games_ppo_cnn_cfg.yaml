@@ -36,9 +36,18 @@ params:
         fixed_sigma: True
     encoders:
       depth_encoder:
+        encoder_class: CNN
         encoding_group: ["base_image", "wrist_image"]
         normalize: False
         transpose: True
+        channels: [16, 32, 64, 128]
+        kernel_sizes: [6, 4, 4, 4]
+        strides: [2, 2, 2, 2]
+        paddings: [0, 0, 0, 0]
+        activation: relu
+        norm: batch
+        gap: True
+        feature_size: null
     mlp:
       units: [512, 256, 128]
       activation: elu
