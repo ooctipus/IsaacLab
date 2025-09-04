@@ -16,6 +16,7 @@ from .utils import sample_object_point_cloud
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
+    from isaaclab.sensors import TiledCamera, Camera
 
 
 def object_pos_b(
@@ -195,3 +196,20 @@ def fingers_contact_force_w(
     robot: Articulation = env.scene[asset_cfg.name]
     forces_b = quat_apply_inverse(robot.data.root_link_quat_w.unsqueeze(1).repeat(1, force_w.shape[1], 1), force_w)
     return forces_b
+
+
+def depth_image(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("tiled_camera"),
+    normalize: bool = True,
+) -> torch.Tensor:
+    # extract the used quantities (to enable type-hinting)
+    sensor: TiledCamera | Camera = env.scene.sensors[sensor_cfg.name]
+    # obtain the input image
+    images = sensor.data.output["depth"]
+    # depth image normalization
+    if normalize:
+        images = torch.tanh(images / 2) * 2
+        images -= torch.mean(images, dim=(1, 2), keepdim=True)
+
+    return images.view(env.num_envs, -1)
