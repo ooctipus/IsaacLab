@@ -13,7 +13,7 @@ params:
     obs_groups:
       obs: ["policy", "base_image", "wrist_image"]
       states: ["policy", "perception"]
-    concate_obs_groups: True
+    concate_obs_groups: False
 
   algo:
     name: a2c_continuous
@@ -22,7 +22,7 @@ params:
     name: continuous_a2c_logstd
 
   network:
-    name: actor_critic
+    name: encoder_actor_critic
     separate: True
     space:
       continuous:
@@ -34,6 +34,11 @@ params:
           name: const_initializer
           val: 0
         fixed_sigma: True
+    encoders:
+      depth_encoder:
+        encoding_group: ["base_image", "wrist_image"]
+        normalize: False
+        transpose: True
     mlp:
       units: [512, 256, 128]
       activation: elu
@@ -77,7 +82,7 @@ params:
     truncate_grads: True
     e_clip: 0.2
     horizon_length: 36
-    minibatch_size: 36864
+    minibatch_size: 9216
     mini_epochs: 5
     critic_coef: 4
     clip_value: True

@@ -86,6 +86,8 @@ from isaaclab_rl.rl_games import RlGamesGpuEnv, RlGamesVecEnvWrapper
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
+from rl_games.algos_torch import model_builder
+from isaaclab_rl.encoder_a2c_network import A2CBuilder as A2CWithEncoderBuilder
 # PLACEHOLDER: Extension template (do not remove this comment)
 
 
@@ -93,6 +95,7 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: dict):
     """Train with RL-Games agent."""
     # override configurations with non-hydra CLI arguments
+    model_builder.register_network("encoder_actor_critic", A2CWithEncoderBuilder)
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
 
