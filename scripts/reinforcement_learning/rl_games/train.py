@@ -130,7 +130,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # specify directory for logging experiments
     config_name = agent_cfg["params"]["config"]["name"]
     log_root_path = os.path.join("logs", "rl_games", config_name)
-    log_root_path = os.path.abspath(log_root_path)
+    if "hydra" in agent_cfg:
+        if agent_cfg["hydra"]["run"]["dir"] == ".":
+            log_root_path = os.path.abspath(log_root_path)
+        else:
+            log_root_path = os.path.join(agent_cfg["hydra"]["run"]["dir"], log_root_path)
+
     print(f"[INFO] Logging experiment in directory: {log_root_path}")
     # specify directory for logging runs
     log_dir = agent_cfg["params"]["config"].get("full_experiment_name", datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
@@ -195,7 +200,48 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # set number of actors into agent config
     agent_cfg["params"]["config"]["num_actors"] = env.unwrapped.num_envs
     # create runner from rl-games
-    runner = Runner(IsaacAlgoObserver())
+    if "num_mini_batches" in agent_cfg["params"]["config"]:
+        agent_cfg["params"]["config"]["minibatch_size"] = int(
+            agent_cfg["params"]["config"]["horizon_length"]
+            * env.unwrapped.num_envs
+            / agent_cfg["params"]["config"]["num_mini_batches"]
+        )
+
+        print("*" * 50)
+        print("*" * 50)
+        print("*" * 50)
+        print(f"WARNING: minibatch size is set to {agent_cfg['params']['config']['minibatch_size']}")
+        if "central_value_config" in agent_cfg["params"]["config"]:
+            agent_cfg["params"]["config"]["central_value_config"]["minibatch_size"] = agent_cfg['params']['config']['minibatch_size']
+        print("*" * 50)
+        print("*" * 50)
+        print("*" * 50)
+
+    
+
+    agent_cfg["args_cli"] = {}
+    agent_cfg["args_cli"]["task"] = args_cli.task
+    agent_cfg["args_cli"]["num_envs"] = args_cli.num_envs
+    agent_cfg["args_cli"]["distributed"] = args_cli.distributed
+    agent_cfg["args_cli"]["num_gpus"] = os.environ.get("WORLD_SIZE", 1)
+    agent_cfg["args_cli"]["global_rank"] = int(os.environ.get("RANK", 0))
+    agent_cfg["args_cli"]["enable_cameras"] = (
+        "rendering" in simulation_app.DEFAULT_LAUNCHER_CONFIG["experience"].split("/")[-1]
+    )
+    agent_cfg["args_cli"]["video"] = args_cli.video
+    agent_cfg["args_cli"]["video_interval"] = args_cli.video_interval
+    agent_cfg["args_cli"]["video_length"] = args_cli.video_length
+    agent_cfg["wandb_activate"] = args_cli.track
+    global_rank = int(os.environ.get("RANK", 0))
+
+    if "pbt" in agent_cfg and agent_cfg["pbt"]["enabled"]:
+        from isaaclab_rl.rl_games.pbt.pbt import PbtAlgoObserver
+        from isaaclab_rl.rl_games.pbt.pbt import MultiObserver
+        observers = MultiObserver([IsaacAlgoObserver(), PbtAlgoObserver(agent_cfg)])
+        runner = Runner(observers)
+    else:
+        runner = Runner(IsaacAlgoObserver())
+    
     runner.load(agent_cfg)
 
     # reset the agent and env
