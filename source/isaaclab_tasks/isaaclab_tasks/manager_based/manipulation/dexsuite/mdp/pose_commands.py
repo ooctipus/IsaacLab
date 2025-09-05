@@ -165,6 +165,14 @@ class ObjectUniformPoseCommand(CommandTerm):
             self.goal_visualizer.visualize(self.pose_command_w[:, :3], self.pose_command_w[:, 3:])
             # -- current object pose
             self.curr_visualizer.visualize(self.object.data.root_pos_w, self.object.data.root_quat_w)
+
+            pos_error, rot_error = compute_pose_error(
+                self.pose_command_w[:, :3],
+                self.pose_command_w[:, 3:],
+                self.object.data.root_state_w[:, :3],
+                self.object.data.root_state_w[:, 3:7],
+            )
+            indices = torch.where((torch.norm(pos_error, dim=1) < 0.05) & (torch.norm(rot_error, dim=1) < 0.5), 1, 0)
         else:
             distance = torch.norm(self.pose_command_w[:, :3] - self.object.data.root_pos_w[:, :3], dim=1)
             indices = torch.where(distance < 0.05, 1, 0)
