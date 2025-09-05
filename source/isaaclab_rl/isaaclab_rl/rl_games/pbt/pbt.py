@@ -105,7 +105,7 @@ class PbtAlgoObserver(AlgoObserver):
             self._restart_with_new_params(self.restart_params['new_params'], self.restart_params['restart_from_checkpoint'])
             return
 
-        if self.algo.frame // self.cfg.interval_steps <= self.pbt_iteration:
+        if self.algo.frame // self.cfg.interval_steps <= self.pbt_iteration or self.pbt_iteration == -1:
             return
 
         self.pbt_iteration = self.algo.frame // self.cfg.interval_steps
