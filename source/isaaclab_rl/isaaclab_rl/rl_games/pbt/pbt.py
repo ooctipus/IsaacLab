@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 import os
 import sys
 import random
@@ -130,28 +135,25 @@ class PbtAlgoObserver(AlgoObserver):
         # 1) Stats
         mean_obj = float(np.mean(initialized_objectives))
         std_obj = float(np.std(initialized_objectives))
-        upper_cut = mean_obj + self.cfg.replace_threshold_frac_std * std_obj
-        lower_cut = mean_obj - self.cfg.replace_threshold_frac_std * std_obj
-
-        # 2) Leaders & laggards
-        leaders = [p for obj, p in zip(initialized_objectives, initialized_policies) if obj > upper_cut and (obj - mean_obj) > self.cfg.replace_threshold_frac_absolute]
-        laggards = [p for obj, p in zip(initialized_objectives, initialized_policies) if obj < lower_cut and (max(initialized_objectives) - obj) > self.cfg.replace_threshold_frac_absolute]
+        upper_cut = max(mean_obj + self.cfg.threshold_std * std_obj, mean_obj + self.cfg.threshold_abs)
+        lower_cut = min(mean_obj - self.cfg.threshold_std * std_obj, mean_obj - self.cfg.threshold_abs)
+        leaders = [p for obj, p in zip(initialized_objectives, initialized_policies) if obj > upper_cut]
+        underperformers = [p for obj, p in zip(initialized_objectives, initialized_policies) if obj < lower_cut]
 
         print(f"mean={mean_obj:.4f}, std={std_obj:.4f}, upper={upper_cut:.4f}, lower={lower_cut:.4f}")
-        print(f"Leaders: {leaders}")
-        print(f"Laggards: {laggards}")
+        print(f"Leaders: {leaders} Underperformers: {underperformers}")
 
-        # 3) Best‐policy summary
+        # 2) Best‐policy summary
         best_policy = max(zip(initialized_objectives, initialized_policies), key=lambda x: x[0])[1]
         best_objective = max(initialized_objectives)
         self._maybe_save_best_policy(best_objective, best_policy, ckpts[best_policy])
 
-        # 4) Only replace if *this* policy is a laggard
-        if self.cfg.policy_idx not in laggards:
+        # 3) Only replace if *this* policy is an underperformer
+        if self.cfg.policy_idx not in underperformers:
             print(f"Policy {self.cfg.policy_idx} is within the normal band; no weight replacement.")
             return
 
-        # 5) If there are any leaders, pick one at random; else simply mutate with no replacement
+        # 4) If there are any leaders, pick one at random; else simply mutate with no replacement
         if leaders:
             replacement_policy_candidate = random.choice(leaders)
             print(f"Replacing policy {self.cfg.policy_idx} with random leader {replacement_policy_candidate}.")

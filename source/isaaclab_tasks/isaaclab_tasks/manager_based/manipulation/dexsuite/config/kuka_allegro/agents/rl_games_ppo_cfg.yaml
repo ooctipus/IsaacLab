@@ -88,37 +88,18 @@ params:
 
 pbt: 
   enabled: False
-
-  policy_idx: 0  # policy index in a population: should always be specified explicitly! Each run in a population should have a unique idx from [0..N-1]
-  
-  num_policies: 8  # total number of policies in the population, the total number of learners. Override through CLI!
-  
+  policy_idx: 0  # policy index in a population
+  num_policies: 8  # total number of policies in the population
   directory: .
-  
-  workspace: "pbt_workspace"  # suffix of the workspace dir name inside train_dir, used to distinguish different PBT runs with the same experiment name. Recommended to specify a unique name
+  workspace: "pbt_workspace"  # suffix of the workspace dir name inside train_dir
 
   # PBT hyperparams
-  interval_steps: 100  # Interval in env steps between PBT iterations (checkpointing, mutation, etc.)
-  # Fraction of the underperforming policies whose weights are to be replaced by better performing policies
-  # This is rounded up, i.e. for 8 policies and fraction 0.3 we replace ceil(0.3*8)=3 worst policies
-  replace_fraction: 0.4
-
-  # Replace an underperforming policy only if its reward is lower by at least this fraction of standard deviation
-  # within the population.
+  interval_steps: 5000000
   replace_threshold_frac_std: 0.1
-
-  # Replace an underperforming policy only if its reward is lower by at least this fraction of the absolute value
-  # of the objective of a better policy
-  replace_threshold_frac_absolute: 0.1
-
-  # Probability to mutate a certain parameter
+  replace_threshold_frac_absolute: 0.025
   mutation_rate: 0.25
-
-  # min and max values for the mutation of a parameter
-  # The mutation is performed by multiplying or dividing (randomly) the parameter value by a value sampled from [change_min, change_max]
   change_min: 1.1
   change_max: 2.0
-
   mutation:
 
     agent.params.config.learning_rate: "mutate_float"

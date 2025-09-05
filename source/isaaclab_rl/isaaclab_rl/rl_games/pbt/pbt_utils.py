@@ -1,4 +1,10 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 import os
+import socket
 import random
 import datetime
 import yaml
@@ -82,7 +88,8 @@ class WandbArgs:
 
 
 def dump_env_sizes():
-    # number of env vars
+    """Print summary of environment variable usage (count, bytes, top-5 largest, SC_ARG_MAX)."""
+
     n = len(os.environ)
     # total bytes in "KEY=VAL\0" for all envp entries
     total = sum(len(k) + 1 + len(v) + 1 for k, v in os.environ.items())
@@ -101,6 +108,8 @@ def dump_env_sizes():
 
 
 def flatten_dict(d, prefix='', separator='.'):
+    """Flatten nested dictionaries into a flat dict with keys joined by `separator`."""
+
     res = dict()
     for key, value in d.items():
         if isinstance(value, (dict, OrderedDict)):
@@ -112,49 +121,35 @@ def flatten_dict(d, prefix='', separator='.'):
 
 
 def find_free_port(max_tries: int = 20) -> int:
-    """
-    Return an OS-allocated free TCP port.
-    Retries a few times to avoid rare 'bad file descriptor' races.
-    """
-    import socket
+    """Return an OS-assigned free TCP port, with a few retries; fall back to a random high port."""
     for _ in range(max_tries):
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            # Let the kernel pick an available port.
-            s.bind(("", 0))
-            port = s.getsockname()[1]
-            s.close()
-            return port
-        except OSError:          # includes 'Bad file descriptor'
-            s.close()
-            continue
-    # Fallback: choose a random high port (still extremely unlikely to collide)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("", 0))
+                return s.getsockname()[1]
+            except OSError:
+                continue
     return random.randint(20000, 65000)
 
 
 def filter_params(params, params_to_mutate):
-    filtered_params = dict()
+    """Filter `params` to only those in `params_to_mutate`, converting str floats (e.g. '1e-4') to float."""
+    def try_float(v):
+        if isinstance(v, str):
+            try:
+                return float(v)
+            except ValueError:
+                return v
+        return v
 
-    for key, value in params.items():
-        if key in params_to_mutate:
-            if isinstance(value, str):
-                try:
-                    # trying to convert values such as "1e-4" to floats because yaml fails to recognize them as such
-                    float_value = float(value)
-                    value = float_value
-                except ValueError:
-                    pass
-            filtered_params[key] = value
-    return filtered_params
+    return {k: try_float(v) for k, v in params.items() if k in params_to_mutate}
 
 
 def save_pbt_checkpoint(workspace_dir, curr_policy_score, curr_iter, algo, params):
-    """Save PBT-specific information including iteration number, policy index and hyperparameters."""
+    """Save a PBT checkpoint (.pth and .yaml) with policy state, score, and metadata (rank 0 only)."""
     if int(os.environ.get("RANK", "0")) == 0:
         checkpoint_file = os.path.join(workspace_dir, f'{curr_iter:06d}.pth')
-        algo_state = algo.get_full_state_weights()
-        safe_save(algo_state, checkpoint_file)
-
+        safe_save(algo.get_full_state_weights(), checkpoint_file)
         pbt_checkpoint_file = os.path.join(workspace_dir, f'{curr_iter:06d}.yaml')
 
         pbt_checkpoint = {
@@ -173,8 +168,8 @@ def save_pbt_checkpoint(workspace_dir, curr_policy_score, curr_iter, algo, param
 
 def load_population_checkpoints(workspace_dir, cur_policy_id, num_policies, pbt_iteration):
     """
-    Load checkpoints for other policies in the population.
-    Pick the newest checkpoint, but not newer than our current iteration.
+    Load the latest available PBT checkpoint for each policy (≤ current iteration).
+    Returns a dict mapping policy_idx → checkpoint dict or None. (rank 0 only)
     """
     if int(os.environ.get("RANK", "0")) != 0:
         return
@@ -186,12 +181,9 @@ def load_population_checkpoints(workspace_dir, cur_policy_id, num_policies, pbt_
         if not os.path.isdir(policy_dir):
             continue
 
-        pbt_checkpoint_files = [f for f in os.listdir(policy_dir) if f.endswith('.yaml')]
-        pbt_checkpoint_files.sort(reverse=True)
-
+        pbt_checkpoint_files = sorted([f for f in os.listdir(policy_dir) if f.endswith('.yaml')], reverse=True)
         for pbt_checkpoint_file in pbt_checkpoint_files:
-            iteration_str = pbt_checkpoint_file.split('.')[0]
-            iteration = int(iteration_str)
+            iteration = int(pbt_checkpoint_file.split('.')[0])
 
             # current local time
             now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -200,18 +192,20 @@ def load_population_checkpoints(workspace_dir, cur_policy_id, num_policies, pbt_
 
             if iteration <= pbt_iteration:
                 with open(os.path.join(policy_dir, pbt_checkpoint_file), 'r') as fobj:
+                    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     print(f'Policy {cur_policy_id} [{now_str}]: Loading policy-{policy_idx} {pbt_checkpoint_file} (created at {created_str})')
                     checkpoints[policy_idx] = safe_filesystem_op(yaml.load, fobj, Loader=yaml.FullLoader)
                     break
-            else:
-                print(f'Policy {cur_policy_id}: Not loading {pbt_checkpoint_file} \
-                    because current {iteration} < {pbt_iteration}')
-                pass
 
     return checkpoints
 
 
 def cleanup(checkpoints: Dict[int, dict], policy_dir, keep_back: int = 20, max_yaml: int = 50) -> None:
+    """
+    Cleanup old checkpoints for the current policy directory (rank 0 only).
+    - Delete files older than (oldest iteration - keep_back).
+    - Keep at most `max_yaml` latest YAML iterations.
+    """
     if int(os.environ.get("RANK", "0")) == 0:
         oldest = min((ckpt['iteration'] if ckpt else 0) for ckpt in checkpoints.values())
         threshold = max(0, oldest - keep_back)
@@ -220,18 +214,13 @@ def cleanup(checkpoints: Dict[int, dict], policy_dir, keep_back: int = 20, max_y
         # group files by numeric iteration (only *.yaml / *.pth)
         groups: Dict[int, List[Path]] = {}
         for p in root.iterdir():
-            if p.suffix not in ('.yaml', '.pth'):
-                continue
-            if p.stem.isdigit():
+            if p.suffix in (".yaml", ".pth") and p.stem.isdigit():
                 groups.setdefault(int(p.stem), []).append(p)
-
-        removed = 0
 
         # 1) drop anything older than threshold
         for it in [i for i in groups if i <= threshold]:
             for p in groups[it]:
                 p.unlink(missing_ok=True)
-                removed += 1
             groups.pop(it, None)
 
         # 2) cap total YAML checkpoints: keep newest `max_yaml` iters
@@ -239,5 +228,4 @@ def cleanup(checkpoints: Dict[int, dict], policy_dir, keep_back: int = 20, max_y
         for it in yaml_iters[max_yaml:]:
             for p in groups.get(it, []):
                 p.unlink(missing_ok=True)
-                removed += 1
             groups.pop(it, None)
