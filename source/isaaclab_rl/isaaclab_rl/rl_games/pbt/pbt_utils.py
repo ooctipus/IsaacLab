@@ -171,7 +171,7 @@ def save_pbt_checkpoint(workspace_dir, curr_policy_score, curr_iter, algo, param
             yaml.dump(pbt_checkpoint, fobj)
 
 
-def load_population_checkpoints(policy_dir, cur_policy_id, num_policies, pbt_iteration):
+def load_population_checkpoints(workspace_dir, cur_policy_id, num_policies, pbt_iteration):
     """
     Load checkpoints for other policies in the population.
     Pick the newest checkpoint, but not newer than our current iteration.
@@ -181,7 +181,7 @@ def load_population_checkpoints(policy_dir, cur_policy_id, num_policies, pbt_ite
     checkpoints = dict()
     for policy_idx in range(num_policies):
         checkpoints[policy_idx] = None
-        policy_dir = os.path.join(policy_dir, f'{policy_idx:03d}')
+        policy_dir = os.path.join(workspace_dir, f'{policy_idx:03d}')
 
         if not os.path.isdir(policy_dir):
             continue

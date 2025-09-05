@@ -107,7 +107,7 @@ class PbtAlgoObserver(AlgoObserver):
         frame_left = (self.pbt_iteration + 1) * self.cfg.interval_steps - self.algo.frame
         print(f'Policy {self.cfg.policy_idx}, frames_left {frame_left}, PBT it {self.pbt_iteration}')
         try:
-            pbt_utils.save_pbt_checkpoint(self.workspace_dir, self.score, self.pbt_iteration, self.algo, self.params)
+            pbt_utils.save_pbt_checkpoint(self.curr_policy_dir, self.score, self.pbt_iteration, self.algo, self.params)
             ckpts = pbt_utils.load_population_checkpoints(self.workspace_dir, self.cfg.policy_idx, self.cfg.num_policies, self.pbt_iteration)
             pbt_utils.cleanup(ckpts, self.curr_policy_dir)
         except Exception as exc:
