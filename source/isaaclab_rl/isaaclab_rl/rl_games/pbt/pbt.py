@@ -2,19 +2,16 @@ import os
 import sys
 import random
 import shutil
-from pathlib import Path
-from typing import Dict, List
 from pprint import pprint
 
 import numpy as np
 import yaml
 
-from rl_games.algos_torch.torch_ext import safe_save, safe_filesystem_op
+
 from rl_games.common.algo_observer import AlgoObserver
 from .mutation import mutate
 
 import torch
-import datetime
 import torch.distributed as dist
 from .pbt_cfg import PbtCfg
 from . import pbt_utils
@@ -54,7 +51,7 @@ class PbtAlgoObserver(AlgoObserver):
         )
         self.cfg = PbtCfg(**params['pbt'])
         self.pbt_iteration = -1  # dummy value, stands for "not initialized"
-        self.curr_target_objective_value = _UNINITIALIZED_VALUE
+        self.score = _UNINITIALIZED_VALUE
         self.params = pbt_utils.filter_params(pbt_utils.flatten_dict({"agent": params}), self.cfg.mutation)
 
         assert len(self.params) > 0, "[DANGER]: Dictionary that contains params to mutate is empty"
@@ -70,8 +67,9 @@ class PbtAlgoObserver(AlgoObserver):
 
         self.algo = algo
         self.root_dir = algo.train_dir
-        self.curr_policy_workspace_dir = os.path.join(os.path.join(self.root_dir, self.cfg.workspace), f'{self.cfg.policy_idx:03d}')
-        os.makedirs(self.curr_policy_workspace_dir, exist_ok=True)
+        self.workspace_dir = os.path.join(self.root_dir, self.cfg.workspace)
+        self.curr_policy_dir = os.path.join(self.workspace_dir, f'{self.cfg.policy_idx:03d}')
+        os.makedirs(self.curr_policy_dir, exist_ok=True)
 
     def process_infos(self, infos, done_indices):
         if "true_objective" not in infos and 'Curriculum/adr' in infos['episode']:
@@ -85,10 +83,10 @@ class PbtAlgoObserver(AlgoObserver):
             infos['true_objective'] = infos["true_objective"].float().mean().item()
 
         if 'true_objective' in infos and isinstance(infos['true_objective'], (int, float)):
-            self.curr_target_objective_value = infos['true_objective']
+            self.score = infos['true_objective']
         else:
             if self.algo.game_rewards.current_size >= self.algo.games_to_track:
-                self.curr_target_objective_value = float(self.algo.mean_rewards)
+                self.score = float(self.algo.mean_rewards)
 
     def after_steps(self):
         if self.distributed_args.rank != 0:
@@ -108,11 +106,10 @@ class PbtAlgoObserver(AlgoObserver):
         self.pbt_iteration = self.algo.frame // self.cfg.interval_steps
         frame_left = (self.pbt_iteration + 1) * self.cfg.interval_steps - self.algo.frame
         print(f'Policy {self.cfg.policy_idx}, frames_left {frame_left}, PBT it {self.pbt_iteration}')
-
         try:
-            self._save_pbt_checkpoint()
-            ckpts = self._load_population_checkpoints()
-            self._cleanup(ckpts)
+            pbt_utils.save_pbt_checkpoint(self.workspace_dir, self.score, self.pbt_iteration, self.algo, self.params)
+            ckpts = pbt_utils.load_population_checkpoints(self.workspace_dir, self.cfg.policy_idx, self.cfg.num_policies, self.pbt_iteration)
+            pbt_utils.cleanup(ckpts, self.curr_policy_dir)
         except Exception as exc:
             print(f'Policy {self.cfg.policy_idx}: Exception {exc} during sanity log!')
             return
@@ -150,9 +147,9 @@ class PbtAlgoObserver(AlgoObserver):
         self._maybe_save_best_policy(best_objective, best_policy, ckpts[best_policy])
 
         # 4) Only replace if *this* policy is a laggard
-        # if self.cfg.policy_idx not in laggards:
-        #     print(f"Policy {self.cfg.policy_idx} is within the normal band; no weight replacement.")
-        #     return
+        if self.cfg.policy_idx not in laggards:
+            print(f"Policy {self.cfg.policy_idx} is within the normal band; no weight replacement.")
+            return
 
         # 5) If there are any leaders, pick one at random; else simply mutate with no replacement
         if leaders:
@@ -180,82 +177,13 @@ class PbtAlgoObserver(AlgoObserver):
         self.restart_params['restart_from_checkpoint'] = restart_from_checkpoint
         self.restart_params['experiment_name'] = experiment_name
 
-    def _save_pbt_checkpoint(self):
-        if self.distributed_args.rank != 0:
-            return
-
-        """Save PBT-specific information including iteration number, policy index and hyperparameters."""
-        checkpoint_file = os.path.join(self.curr_policy_workspace_dir, f'{self.pbt_iteration:06d}.pth')
-        algo_state = self.algo.get_full_state_weights()
-        safe_save(algo_state, checkpoint_file)
-
-        pbt_checkpoint_file = os.path.join(self.curr_policy_workspace_dir, f'{self.pbt_iteration:06d}.yaml')
-
-        pbt_checkpoint = {
-            'iteration': self.pbt_iteration,
-            'true_objective': self.curr_target_objective_value,
-            'frame': self.algo.frame,
-            'params': self.params,
-            'checkpoint': os.path.abspath(checkpoint_file),
-            'pbt_checkpoint': os.path.abspath(pbt_checkpoint_file),
-            'experiment_name': self.algo.experiment_name,
-        }
-
-        print(f'Policy {self.cfg.policy_idx}: PBT checkpoint saving the dict {pbt_checkpoint} in {pbt_checkpoint_file} ...')
-        with open(pbt_checkpoint_file, 'w') as fobj:
-            print(f'Policy {self.cfg.policy_idx}: Saving {pbt_checkpoint_file}...')
-            yaml.dump(pbt_checkpoint, fobj)
-
-    def _load_population_checkpoints(self):
-        if self.distributed_args.rank != 0:
-            return
-
-        """
-        Load checkpoints for other policies in the population.
-        Pick the newest checkpoint, but not newer than our current iteration.
-        """
-        checkpoints = dict()
-
-        for policy_idx in range(self.cfg.num_policies):
-            checkpoints[policy_idx] = None
-            policy_dir = os.path.join(os.path.join(self.root_dir, self.cfg.workspace), f'{policy_idx:03d}')
-
-            if not os.path.isdir(policy_dir):
-                print(f'Policy {self.cfg.policy_idx}: {policy_idx} does not exist in {policy_dir}')
-                continue
-
-            pbt_checkpoint_files = [f for f in os.listdir(policy_dir) if f.endswith('.yaml')]
-            pbt_checkpoint_files.sort(reverse=True)
-
-            for pbt_checkpoint_file in pbt_checkpoint_files:
-                iteration_str = pbt_checkpoint_file.split('.')[0]
-                iteration = int(iteration_str)
-
-                # current local time
-                now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                ctime_ts = os.path.getctime(os.path.join(policy_dir, pbt_checkpoint_file))
-                created_str = datetime.datetime.fromtimestamp(ctime_ts).strftime("%Y-%m-%d %H:%M:%S")   
-
-                if iteration <= self.pbt_iteration:
-                    with open(os.path.join(policy_dir, pbt_checkpoint_file), 'r') as fobj:
-                        print(f'Policy {self.cfg.policy_idx} [{now_str}]: Loading policy-{policy_idx} {pbt_checkpoint_file} (created at {created_str})')
-                        checkpoints[policy_idx] = safe_filesystem_op(yaml.load, fobj, Loader=yaml.FullLoader)
-                        break
-                else:
-                    print(f'Policy {self.cfg.policy_idx}: Not loading {pbt_checkpoint_file} \
-                        because current {iteration} < {self.pbt_iteration}')                    
-                    pass
-
-        assert self.cfg.policy_idx in checkpoints.keys()
-        return checkpoints
-
     def _maybe_save_best_policy(self, best_objective, best_policy_idx: int, best_policy_checkpoint):
         if self.distributed_args.rank != 0:
             return
 
         # make a directory containing best policy checkpoints using safe_filesystem_op
         best_policy_workspace_dir = os.path.join(os.path.join(self.root_dir, self.cfg.workspace), f'best{self.cfg.policy_idx}')
-        safe_filesystem_op(os.makedirs, best_policy_workspace_dir, exist_ok=True)
+        pbt_utils.safe_filesystem_op(os.makedirs, best_policy_workspace_dir, exist_ok=True)
 
         best_objective_so_far = _UNINITIALIZED_VALUE
 
@@ -263,7 +191,7 @@ class PbtAlgoObserver(AlgoObserver):
         best_policy_checkpoint_files.sort(reverse=True)
         if best_policy_checkpoint_files:
             with open(os.path.join(best_policy_workspace_dir, best_policy_checkpoint_files[0]), 'r') as fobj:
-                best_policy_checkpoint_so_far = safe_filesystem_op(yaml.load, fobj, Loader=yaml.FullLoader)
+                best_policy_checkpoint_so_far = pbt_utils.safe_filesystem_op(yaml.load, fobj, Loader=yaml.FullLoader)
                 best_objective_so_far = best_policy_checkpoint_so_far['true_objective']
 
         if best_objective_so_far >= best_objective:
@@ -300,76 +228,6 @@ class PbtAlgoObserver(AlgoObserver):
             self.algo.writer.add_scalar('zz_pbt/00_best_objective', best_objective, self.algo.frame)
             self.algo.writer.flush()
 
-    def _cleanup(self, checkpoints: Dict[int, dict], keep_back: int = 20, max_yaml: int = 50) -> None:
-        if self.distributed_args.rank == 0:
-            oldest = min((ckpt['iteration'] if ckpt else 0) for ckpt in checkpoints.values())
-            threshold = max(0, oldest - keep_back)
-            root = Path(self.curr_policy_workspace_dir)
-
-            # group files by numeric iteration (only *.yaml / *.pth)
-            groups: Dict[int, List[Path]] = {}
-            for p in root.iterdir():
-                if p.suffix not in ('.yaml', '.pth'):
-                    continue
-                if p.stem.isdigit():
-                    groups.setdefault(int(p.stem), []).append(p)
-
-            removed = 0
-
-            # 1) drop anything older than threshold
-            for it in [i for i in groups if i <= threshold]:
-                for p in groups[it]:
-                    p.unlink(missing_ok=True)
-                    removed += 1
-                groups.pop(it, None)
-
-            # 2) cap total YAML checkpoints: keep newest `max_yaml` iters
-            yaml_iters = sorted((i for i, ps in groups.items() if any(p.suffix == '.yaml' for p in ps)), reverse=True)
-            for it in yaml_iters[max_yaml:]:
-                for p in groups.get(it, []):
-                    p.unlink(missing_ok=True)
-                    removed += 1
-                groups.pop(it, None)
-
-    def _delete_old_checkpoint(self, pbt_checkpoint_files: List[str]) -> bool:
-        if self.distributed_args.rank != 0:
-            return False
-
-        """
-        Delete the checkpoint that results in the smallest max gap between the remaining checkpoints.
-        Do not delete any of the last N checkpoints.
-        """
-        pbt_checkpoint_files.sort()
-        n_latest_to_keep = 20
-        candidates = pbt_checkpoint_files[:-n_latest_to_keep]
-        num_candidates = len(candidates)
-        if num_candidates < 3:
-            return False
-
-        def _iter(f):
-            return int(f.split('.')[0])
-
-        best_gap = 1e9
-        best_candidate = 1
-        for i in range(1, num_candidates - 1):
-            prev_iteration = _iter(candidates[i - 1])
-            next_iteration = _iter(candidates[i + 1])
-
-            # gap is we delete the ith candidate
-            gap = next_iteration - prev_iteration
-            if gap < best_gap:
-                best_gap = gap
-                best_candidate = i
-
-        # delete the best candidate
-        best_candidate_file = candidates[best_candidate]
-        files_to_remove = [best_candidate_file, f'{_iter(best_candidate_file):06d}.pth']
-        for file_to_remove in files_to_remove:
-            print(f'Policy {self.cfg.policy_idx}: PBT cleanup old checkpoints, removing checkpoint {file_to_remove} (best gap {best_gap})')
-            os.remove(os.path.join(self.curr_policy_workspace_dir, file_to_remove))
-
-        return True
-
     def _restart_with_new_params(self, new_params, restart_from_checkpoint):
 
         cli_args = sys.argv
@@ -405,7 +263,7 @@ class PbtAlgoObserver(AlgoObserver):
 
         # Get the directory of the current file
         thisfile_dir = os.path.dirname(os.path.abspath(__file__))
-        isaac_sim_path = os.path.abspath(os.path.join(thisfile_dir, "../../../../_isaac_sim"))
+        isaac_sim_path = os.path.abspath(os.path.join(thisfile_dir, "../../../../../_isaac_sim"))
         # ---------------------------------------------------------------------
         # Build the torch.distributed command
         # ---------------------------------------------------------------------

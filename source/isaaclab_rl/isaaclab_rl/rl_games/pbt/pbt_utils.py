@@ -1,6 +1,11 @@
 import os
 import random
+import datetime
+import yaml
+from pathlib import Path
+from typing import Dict, List
 from isaaclab.utils import configclass
+from rl_games.algos_torch.torch_ext import safe_save, safe_filesystem_op
 from collections import OrderedDict
 
 
@@ -141,3 +146,98 @@ def filter_params(params, params_to_mutate):
                     pass
             filtered_params[key] = value
     return filtered_params
+
+
+def save_pbt_checkpoint(workspace_dir, curr_policy_score, curr_iter, algo, params):
+    """Save PBT-specific information including iteration number, policy index and hyperparameters."""
+    if int(os.environ.get("RANK", "0")) == 0:
+        checkpoint_file = os.path.join(workspace_dir, f'{curr_iter:06d}.pth')
+        algo_state = algo.get_full_state_weights()
+        safe_save(algo_state, checkpoint_file)
+
+        pbt_checkpoint_file = os.path.join(workspace_dir, f'{curr_iter:06d}.yaml')
+
+        pbt_checkpoint = {
+            'iteration': curr_iter,
+            'true_objective': curr_policy_score,
+            'frame': algo.frame,
+            'params': params,
+            'checkpoint': os.path.abspath(checkpoint_file),
+            'pbt_checkpoint': os.path.abspath(pbt_checkpoint_file),
+            'experiment_name': algo.experiment_name,
+        }
+
+        with open(pbt_checkpoint_file, 'w') as fobj:
+            yaml.dump(pbt_checkpoint, fobj)
+
+
+def load_population_checkpoints(policy_dir, cur_policy_id, num_policies, pbt_iteration):
+    """
+    Load checkpoints for other policies in the population.
+    Pick the newest checkpoint, but not newer than our current iteration.
+    """
+    if int(os.environ.get("RANK", "0")) != 0:
+        return
+    checkpoints = dict()
+    for policy_idx in range(num_policies):
+        checkpoints[policy_idx] = None
+        policy_dir = os.path.join(policy_dir, f'{policy_idx:03d}')
+
+        if not os.path.isdir(policy_dir):
+            continue
+
+        pbt_checkpoint_files = [f for f in os.listdir(policy_dir) if f.endswith('.yaml')]
+        pbt_checkpoint_files.sort(reverse=True)
+
+        for pbt_checkpoint_file in pbt_checkpoint_files:
+            iteration_str = pbt_checkpoint_file.split('.')[0]
+            iteration = int(iteration_str)
+
+            # current local time
+            now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            ctime_ts = os.path.getctime(os.path.join(policy_dir, pbt_checkpoint_file))
+            created_str = datetime.datetime.fromtimestamp(ctime_ts).strftime("%Y-%m-%d %H:%M:%S")   
+
+            if iteration <= pbt_iteration:
+                with open(os.path.join(policy_dir, pbt_checkpoint_file), 'r') as fobj:
+                    print(f'Policy {cur_policy_id} [{now_str}]: Loading policy-{policy_idx} {pbt_checkpoint_file} (created at {created_str})')
+                    checkpoints[policy_idx] = safe_filesystem_op(yaml.load, fobj, Loader=yaml.FullLoader)
+                    break
+            else:
+                print(f'Policy {cur_policy_id}: Not loading {pbt_checkpoint_file} \
+                    because current {iteration} < {pbt_iteration}')
+                pass
+
+    return checkpoints
+
+
+def cleanup(checkpoints: Dict[int, dict], policy_dir, keep_back: int = 20, max_yaml: int = 50) -> None:
+    if int(os.environ.get("RANK", "0")) == 0:
+        oldest = min((ckpt['iteration'] if ckpt else 0) for ckpt in checkpoints.values())
+        threshold = max(0, oldest - keep_back)
+        root = Path(policy_dir)
+
+        # group files by numeric iteration (only *.yaml / *.pth)
+        groups: Dict[int, List[Path]] = {}
+        for p in root.iterdir():
+            if p.suffix not in ('.yaml', '.pth'):
+                continue
+            if p.stem.isdigit():
+                groups.setdefault(int(p.stem), []).append(p)
+
+        removed = 0
+
+        # 1) drop anything older than threshold
+        for it in [i for i in groups if i <= threshold]:
+            for p in groups[it]:
+                p.unlink(missing_ok=True)
+                removed += 1
+            groups.pop(it, None)
+
+        # 2) cap total YAML checkpoints: keep newest `max_yaml` iters
+        yaml_iters = sorted((i for i, ps in groups.items() if any(p.suffix == '.yaml' for p in ps)), reverse=True)
+        for it in yaml_iters[max_yaml:]:
+            for p in groups.get(it, []):
+                p.unlink(missing_ok=True)
+                removed += 1
+            groups.pop(it, None)
