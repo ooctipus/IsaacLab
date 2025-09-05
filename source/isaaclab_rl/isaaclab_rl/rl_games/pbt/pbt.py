@@ -235,19 +235,12 @@ class PbtAlgoObserver(AlgoObserver):
         cli_args = sys.argv
         print(f'previous command line args: {cli_args}')
 
-        SKIP_KEYS = ['checkpoint']
+        SKIP = ['checkpoint']
+        modified_args = [cli_args[0]] + [
+            arg for arg in cli_args[1:]
+            if '=' not in arg or ((name := arg.split('=', 1)[0]) not in new_params and not any(k in name for k in SKIP))
+        ]
 
-        modified_args = [cli_args[0]]  # initialize with path to the Python script        
-        for arg in cli_args[1:]:
-            if '=' not in arg:
-                modified_args.append(arg)
-            else:
-                assert '=' in arg
-                arg_name, arg_value = arg.split('=')
-                if arg_name in new_params or any(k in arg_name for k in SKIP_KEYS):
-                    continue
-
-                modified_args.append(f'{arg_name}={arg_value}')
         modified_args.append(f'--checkpoint={restart_from_checkpoint}')
         modified_args.extend(self.wandb_args.get_args_list())
         modified_args.extend(self.rendering_args.get_args_list())
@@ -266,9 +259,6 @@ class PbtAlgoObserver(AlgoObserver):
         # Get the directory of the current file
         thisfile_dir = os.path.dirname(os.path.abspath(__file__))
         isaac_sim_path = os.path.abspath(os.path.join(thisfile_dir, "../../../../../_isaac_sim"))
-        # ---------------------------------------------------------------------
-        # Build the torch.distributed command
-        # ---------------------------------------------------------------------
         command = [f'{isaac_sim_path}/python.sh']
 
         if self.distributed_args.distributed:
