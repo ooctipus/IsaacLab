@@ -202,14 +202,27 @@ def depth_image(
     env: ManagerBasedRLEnv,
     sensor_cfg: SceneEntityCfg = SceneEntityCfg("tiled_camera"),
     normalize: bool = True,
+    std: int = 2
 ) -> torch.Tensor:
+    """Return the depth image from a camera sensor, optionally normalized.
+
+    Args:
+        env: The manager-based RL environment containing sensors.
+        sensor_cfg: SceneEntityCfg specifying which camera to use (default: "tiled_camera").
+        normalize: If True, apply tanh-based scaling and mean-centering.
+
+    Returns:
+        torch.Tensor: Depth image of shape (H, W) or (N, H, W) depending on sensor.
+    """
     # extract the used quantities (to enable type-hinting)
     sensor: TiledCamera | Camera = env.scene.sensors[sensor_cfg.name]
     # obtain the input image
     images = sensor.data.output["depth"]
     # depth image normalization
     if normalize:
-        images = torch.tanh(images / 2) * 2
+        # caution: apply tanh kernel with std = 2m means object further than 2m will be less granular, creating myopia
+        # effect this number will be different for different task but for dexsuite 2m is good.
+        images = torch.tanh(images / std) * std
         images -= torch.mean(images, dim=(1, 2), keepdim=True)
 
     return images

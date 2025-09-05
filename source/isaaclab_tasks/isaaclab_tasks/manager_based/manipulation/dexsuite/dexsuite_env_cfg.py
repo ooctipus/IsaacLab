@@ -289,6 +289,11 @@ class EventCfg:
         },
     )
 
+    # Note (Octi): This is a deliberate trick in Remake to accelerate learning.
+    # By scheduling gravity as a curriculum — starting with no gravity (easy)
+    # and gradually introducing full gravity (hard) — the agent learns more smoothly.
+    # This removes the need for a special "Lift" reward (often required to push the
+    # agent to counter gravity), which has bonus effect of simplifying reward composition overall.
     variable_gravity = EventTerm(
         func=mdp.randomize_physics_scene_gravity,
         mode="reset",
@@ -370,7 +375,7 @@ class TerminationsCfg:
 
 @configclass
 class DexsuiteReorientEnvCfg(ManagerBasedEnvCfg):
-
+    """Dexsuite reorientation task definition, also the base definition for derivative Lift task and evaluation task"""
     # Scene settings
     viewer: ViewerCfg = ViewerCfg(eye=(-2.25, 0.0, 0.75), lookat=(0.0, 0.0, 0.45), origin_type="env")
     scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=3, replicate_physics=False)
@@ -416,7 +421,7 @@ class DexsuiteReorientEnvCfg(ManagerBasedEnvCfg):
 
 
 class DexsuiteLiftEnvCfg(DexsuiteReorientEnvCfg):
-
+    """Dexsuite lift task definition"""
     def __post_init__(self):
         super().__post_init__()
         self.rewards.orientation_tracking = None  # no orientation reward
@@ -427,7 +432,7 @@ class DexsuiteLiftEnvCfg(DexsuiteReorientEnvCfg):
 
 
 class DexsuiteReorientEnvCfg_PLAY(DexsuiteReorientEnvCfg):
-
+    """Dexsuite reorientation task evaluation environment definition"""
     def __post_init__(self):
         super().__post_init__()
         self.commands.object_pose.resampling_time_range = (2.0, 3.0)
@@ -436,7 +441,7 @@ class DexsuiteReorientEnvCfg_PLAY(DexsuiteReorientEnvCfg):
 
 
 class DexsuiteLiftEnvCfg_PLAY(DexsuiteLiftEnvCfg):
-
+    """Dexsuite lift task evaluation environment definition"""
     def __post_init__(self):
         super().__post_init__()
         self.commands.object_pose.resampling_time_range = (2.0, 3.0)

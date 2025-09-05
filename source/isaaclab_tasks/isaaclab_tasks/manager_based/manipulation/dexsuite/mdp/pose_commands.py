@@ -24,22 +24,28 @@ if TYPE_CHECKING:
 
 
 class ObjectUniformPoseCommand(CommandTerm):
-    """Command generator for generating pose commands uniformly.
+    """Uniform pose command generator for an object (in the robot base frame).
 
-    The command generator generates poses by sampling positions uniformly within specified
-    regions in cartesian space. For orientation, it samples uniformly the euler angles
-    (roll-pitch-yaw) and converts them into quaternion representation (w, x, y, z).
+    This command term samples target object poses by:
+      • Drawing (x, y, z) uniformly within configured Cartesian bounds, and  
+      • Drawing roll-pitch-yaw uniformly within configured ranges, then converting
+        to a quaternion (w, x, y, z). Optionally makes quaternions unique by enforcing
+        a positive real part.
 
-    The position and orientation commands are generated in the base frame of the robot, and not the
-    simulation world frame. This means that users need to handle the transformation from the
-    base frame to the simulation world frame themselves.
+    Frames:
+        Targets are defined in the robot's *base frame*. For metrics/visualization,
+        targets are transformed into the *world frame* using the robot root pose.
 
-    .. caution::
+    Outputs:
+        The command buffer has shape (num_envs, 7): `(x, y, z, qw, qx, qy, qz)`.
 
-        Sampling orientations uniformly is not strictly the same as sampling euler angles uniformly.
-        This is because rotations are defined by 3D non-Euclidean space, and the mapping
-        from euler angles to rotations is not one-to-one.
+    Metrics:
+        `position_error` and `orientation_error` are computed between the commanded
+        world-frame pose and the object's current world-frame pose.
 
+    Config:
+        `cfg` must provide the sampling ranges, whether to enforce quaternion uniqueness,
+        and optional visualization settings.
     """
 
     cfg: dex_cmd_cfgs.ObjectUniformPoseCommandCfg

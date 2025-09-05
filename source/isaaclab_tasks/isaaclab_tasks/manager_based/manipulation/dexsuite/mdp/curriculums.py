@@ -3,12 +3,6 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Common functions that can be used to create curriculum for the learning environment.
-
-The functions can be passed to the :class:`isaaclab.managers.CurriculumTermCfg` object to enable
-the curriculum introduced by the function.
-"""
-
 from __future__ import annotations
 
 import torch
@@ -58,7 +52,18 @@ def recurse(iv_elem, fv_elem, data_elem, frac):
 
 
 class DifficultyScheduler(ManagerTermBase):
+    """Adaptive difficulty scheduler for curriculum learning.
 
+    Tracks per-environment difficulty levels and adjusts them based on task performance. Difficulty increases when
+    position/orientation errors fall below given tolerances, and decreases otherwise (unless `promotion_only` is set).
+    The normalized average difficulty across environments is exposed as `difficulty_frac` for use in curriculum
+    interpolation.
+
+    Args:
+        cfg: Configuration object specifying scheduler parameters.
+        env: The manager-based RL environment.
+
+    """
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
         init_difficulty = self.cfg.params.get("init_difficulty", 0)

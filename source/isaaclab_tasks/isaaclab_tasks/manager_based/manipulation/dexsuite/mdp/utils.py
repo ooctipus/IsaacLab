@@ -168,6 +168,7 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str, de
 
 
 def _triangulate_faces(prim) -> np.ndarray:
+    """Convert a USD Mesh prim into triangulated face indices (N, 3)."""
     mesh = UsdGeom.Mesh(prim)
     counts = mesh.GetFaceVertexCountsAttr().Get()
     indices = mesh.GetFaceVertexIndicesAttr().Get()
@@ -181,6 +182,7 @@ def _triangulate_faces(prim) -> np.ndarray:
 
 
 def create_primitive_mesh(prim) -> trimesh.Trimesh:
+    """Create a trimesh mesh from a USD primitive (Cube, Sphere, Cylinder, etc.)."""
     prim_type = prim.GetTypeName()
     if prim_type == "Cube":
         size = UsdGeom.Cube(prim).GetSizeAttr().Get()
@@ -202,6 +204,21 @@ def create_primitive_mesh(prim) -> trimesh.Trimesh:
 
 
 def fps(points: torch.Tensor, n_samples: int, memory_threashold=2 * 1024**3) -> torch.Tensor:  # 2 GiB
+    """
+    Farthest Point Sampling (FPS) for point sets.
+
+    Selects `n_samples` points such that each new point is farthest from the
+    already chosen ones. Uses a full pairwise distance matrix if memory allows,
+    otherwise falls back to an iterative version.
+
+    Args:
+        points (torch.Tensor): Input points of shape (N, D).
+        n_samples (int): Number of samples to select.
+        memory_threashold (int): Max allowed bytes for distance matrix. Default 2 GiB.
+
+    Returns:
+        torch.Tensor: Indices of sampled points (n_samples,).
+    """
     device = points.device
     N = points.shape[0]
     elem_size = points.element_size()
