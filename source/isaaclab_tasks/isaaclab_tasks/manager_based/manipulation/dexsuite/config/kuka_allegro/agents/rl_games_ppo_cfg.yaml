@@ -95,8 +95,8 @@ pbt:
 
   # PBT hyperparams
   interval_steps: 5000000
-  replace_threshold_frac_std: 0.1
-  replace_threshold_frac_absolute: 0.025
+  threshold_std: 0.1
+  threshold_abs: 0.025
   mutation_rate: 0.25
   change_min: 1.1
   change_max: 2.0
