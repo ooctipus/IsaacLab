@@ -85,20 +85,20 @@ params:
     seq_len: 4
     bounds_loss_coef: 0.0001
 
-hydra:
-  output_subdir: null
-  run:
-    dir: .
 
 pbt: 
   enabled: False
 
   policy_idx: 0  # policy index in a population: should always be specified explicitly! Each run in a population should have a unique idx from [0..N-1]
+  
   num_policies: 8  # total number of policies in the population, the total number of learners. Override through CLI!
+  
+  directory: .
+  
   workspace: "pbt_workspace"  # suffix of the workspace dir name inside train_dir, used to distinguish different PBT runs with the same experiment name. Recommended to specify a unique name
 
   # PBT hyperparams
-  interval_steps: 10000000  # Interval in env steps between PBT iterations (checkpointing, mutation, etc.)
+  interval_steps: 100  # Interval in env steps between PBT iterations (checkpointing, mutation, etc.)
   # Fraction of the underperforming policies whose weights are to be replaced by better performing policies
   # This is rounded up, i.e. for 8 policies and fraction 0.3 we replace ceil(0.3*8)=3 worst policies
   replace_fraction: 0.4

@@ -217,27 +217,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print("*" * 50)
         print("*" * 50)
 
-    
-
-    agent_cfg["args_cli"] = {}
-    agent_cfg["args_cli"]["task"] = args_cli.task
-    agent_cfg["args_cli"]["num_envs"] = args_cli.num_envs
-    agent_cfg["args_cli"]["distributed"] = args_cli.distributed
-    agent_cfg["args_cli"]["num_gpus"] = os.environ.get("WORLD_SIZE", 1)
-    agent_cfg["args_cli"]["global_rank"] = int(os.environ.get("RANK", 0))
-    agent_cfg["args_cli"]["enable_cameras"] = (
-        "rendering" in simulation_app.DEFAULT_LAUNCHER_CONFIG["experience"].split("/")[-1]
-    )
-    agent_cfg["args_cli"]["video"] = args_cli.video
-    agent_cfg["args_cli"]["video_interval"] = args_cli.video_interval
-    agent_cfg["args_cli"]["video_length"] = args_cli.video_length
-    agent_cfg["wandb_activate"] = args_cli.track
-    global_rank = int(os.environ.get("RANK", 0))
-
     if "pbt" in agent_cfg and agent_cfg["pbt"]["enabled"]:
         from isaaclab_rl.rl_games.pbt.pbt import PbtAlgoObserver
         from isaaclab_rl.rl_games.pbt.pbt import MultiObserver
-        observers = MultiObserver([IsaacAlgoObserver(), PbtAlgoObserver(agent_cfg)])
+        observers = MultiObserver([IsaacAlgoObserver(), PbtAlgoObserver(agent_cfg, args_cli)])
         runner = Runner(observers)
     else:
         runner = Runner(IsaacAlgoObserver())
