@@ -11,8 +11,8 @@ params:
     clip_observations: 100.0
     clip_actions: 100.0
     obs_groups:
-      obs: ["policy", "base_image", "wrist_image"]
-      states: ["policy", "perception"]
+      obs: ["policy", "proprio", "base_image", "wrist_image"]
+      states: ["policy", "proprio", "perception"]
     concate_obs_groups: False
 
   algo:
@@ -42,10 +42,10 @@ params:
           encoding_group: base_image
         network_class: CNN
         network_args:
-          channels: [16, 32, 64]
-          kernel_sizes: [6, 4, 4]
-          strides: [2, 2, 2]
-          paddings: [0, 0, 0]
+          channels: [16, 32]
+          kernel_sizes: [6, 4]
+          strides: [2, 2]
+          paddings: [2, 1]
           activation: relu
           norm: batch
           use_maxpool: True
@@ -59,10 +59,10 @@ params:
           encoding_group: wrist_image
         network_class: CNN
         network_args:
-          channels: [16, 32, 64]
-          kernel_sizes: [6, 4, 4]
-          strides: [2, 2, 2]
-          paddings: [2, 1, 1]
+          channels: [16, 32]
+          kernel_sizes: [6, 4]
+          strides: [2, 2]
+          paddings: [2, 1]
           activation: relu
           norm: batch
           use_maxpool: False
