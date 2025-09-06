@@ -34,20 +34,43 @@ params:
           name: const_initializer
           val: 0
         fixed_sigma: True
+
     encoders:
-      depth_encoder:
-        encoder_class: CNN
-        encoding_group: ["base_image", "wrist_image"]
-        normalize: False
-        transpose: True
-        channels: [16, 32, 64, 128]
-        kernel_sizes: [6, 4, 4, 4]
-        strides: [2, 2, 2, 2]
-        paddings: [0, 0, 0, 0]
-        activation: relu
-        norm: batch
-        gap: True
-        feature_size: null
+      base_depth_encoder:
+        type_class: encoder
+        type_args:
+          encoding_group: base_image
+        network_class: CNN
+        network_args:
+          channels: [16, 32, 64]
+          kernel_sizes: [6, 4, 4]
+          strides: [2, 2, 2]
+          paddings: [0, 0, 0]
+          activation: relu
+          norm: batch
+          use_maxpool: True
+          pool_size: 2
+          gap: True
+          feature_size: null
+          permute: True
+      wrist_depth_encoder:
+        type_class: encoder
+        type_args:
+          encoding_group: wrist_image
+        network_class: CNN
+        network_args:
+          channels: [16, 32, 64]
+          kernel_sizes: [6, 4, 4]
+          strides: [2, 2, 2]
+          paddings: [2, 1, 1]
+          activation: relu
+          norm: batch
+          use_maxpool: False
+          pool_size: 2
+          gap: True
+          feature_size: null
+          permute: True
+
     mlp:
       units: [512, 256, 128]
       activation: elu

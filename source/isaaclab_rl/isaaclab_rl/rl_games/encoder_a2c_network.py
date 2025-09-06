@@ -10,10 +10,8 @@ from rl_games.algos_torch.d2rl import D2RLNet
 from rl_games.common.layers.recurrent import GRUWithDones, LSTMWithDones
 from rl_games.common.layers.value import TwoHotEncodedValue, DefaultValue
 # Edit Begins
-from rl_games.algos_torch.running_mean_std import RunningMeanStd
-from .aux_networks import AuxInit
-from .encoder_networks import Permute
-from . import encoder_networks as encoders
+import torch.nn.functional as F
+from . import encoder_network_cfg as NetworkCfgs
 # Edit Ends
 
 def _create_initializer(func, **kwargs):
@@ -73,6 +71,8 @@ class NetworkBuilder:
             return None
 
         def get_aux_loss(self):
+            if hasattr(self, "aux_loss"):
+                return self.aux_loss
             return None
 
         def _calc_input_size(self, input_shape,cnn_layers=None):
@@ -217,40 +217,38 @@ class A2CBuilder(NetworkBuilder):
             # rl-games reuses the memory space of input, we can't directly change the input_shape's value and
             # have to make copy, otherwise the input_shape for other task is corrupted and will cause severe bug....
             input_shape_cp = input_shape.copy()
-            self.is_aux = 'aux_outputs' in params
             self.encoders = None
             if "encoders" in params:
                 self.encoders = nn.ModuleDict()
+                self.decoders = nn.ModuleDict()
                 self.encoder_group = {}
-                for encoder_name, encoder_cfg in params["encoders"].items():
-                    ops = []
-                    encoder_input = input_shape_cp[encoder_cfg["encoding_group"][0]]
-                    if encoder_cfg["transpose"]:
-                        ops.append(Permute(0, 3, 1, 2))
-                        h, w, c = encoder_input
-                        dummy = torch.zeros(1, h, w, c)
-                    else:
-                        c, h, w = encoder_input
-                        dummy = torch.zeros(1, c, h, w)
+                self.decoder_group = {}
+                self.decoder_prd_group = {}
+                self.aux_loss = {}
+                feature_size_dict = {}
+                for network_name, network_cfg in params["encoders"].items():
+                    nn_cfg_cls = getattr(NetworkCfgs, f"{network_cfg['network_class']}Cfg")
+                    nn_cfg = nn_cfg_cls(**network_cfg["network_args"])
+                    nn_args = network_cfg["type_args"]
 
-                    if encoder_cfg["normalize"]:
-                        ops.append(RunningMeanStd((c, h, w)))  # expects BCHW
-                    encoder_cls = getattr(encoders, encoder_cfg["encoder_class"])
-                    ops.append(encoder_cls((c, h, w), **encoder_cfg))
+                    if network_cfg["type_class"] == "encoder":
+                        encoder_input = input_shape_cp[nn_args["encoding_group"]]
+                        dummy = torch.randn(1, *encoder_input)
+                        self.encoders[network_name] = nn_cfg.class_type(encoder_input, nn_cfg)
+                        self.encoder_group[network_name] = nn_args["encoding_group"]
+                        with torch.no_grad():
+                            out = self.encoders[network_name](dummy)
+                            feature_dim = out.size(1)
+                        feature_size_dict[nn_args["encoding_group"]] = (feature_dim,)
 
-                    self.encoders[encoder_name] = nn.Sequential(*ops)
-                    self.encoder_group[encoder_name] = encoder_cfg["encoding_group"]
-                    with torch.no_grad():
-                        out = self.encoders[encoder_name](dummy)
-                        feature_dim = out.size(1)
-
-                    for grp in encoder_cfg["encoding_group"]:
-                        input_shape_cp[grp] = (feature_dim,)
-
-                self.is_aux = 'aux_outputs' in params
-                if self.is_aux:
-                    self.aux_network = params['aux_network']
-                    self.aux_modules = AuxInit(in_dim=input_shape_cp[0], aux_params=self.aux_network)
+                    if network_cfg["type_class"] == "decoder":
+                        decoder_input = (feature_size_dict[nn_args["feature_group"][0]][0] * len(nn_args["feature_group"]),)
+                        decoder_output = input_shape_cp[nn_args["predicting_group"]]
+                        nn_cfg.feature_size = decoder_output
+                        self.decoders[network_name] = nn_cfg.class_type(decoder_input, nn_cfg)
+                        self.decoder_group[network_name] = nn_args["feature_group"]
+                        self.decoder_prd_group[network_name] = nn_args["predicting_group"]
+                input_shape_cp.update(feature_size_dict)
             input_shape = (sum([shape[0] for shape in input_shape_cp.values()]), )
             # Edit Ends
 
@@ -370,13 +368,17 @@ class A2CBuilder(NetworkBuilder):
         def forward(self, obs_dict):
             # Edit Begins
             if self.encoders is not None:
+                reconstruction = {}
                 for encoder_name, encoder in self.encoders.items():
-                    for obs_key in self.encoder_group[encoder_name]:
-                        encoder.to(obs_dict['obs'][obs_key].device)
-                        obs_dict['obs'][obs_key] = encoder(obs_dict['obs'][obs_key])
+                    obs_key = self.encoder_group[encoder_name]
+                    obs_dict['obs'][obs_key] = encoder(obs_dict['obs'][obs_key])
+                for decoder_name, decoder in self.decoders.items():
+                    in_feature = torch.cat([obs_dict['obs'][key] for key in self.decoder_group[decoder_name]], dim=1)
+                    reconstruction[self.decoder_prd_group[decoder_name]] = decoder(in_feature)
+                    prediction_target = torch.cat([obs_dict['obs'][self.decoder_prd_group[decoder_name]]], dim=1)
+                    reconstruction = reconstruction[self.decoder_prd_group[decoder_name]]
+                    self.aux_loss[decoder_name] = F.mse_loss(reconstruction, prediction_target, reduction="mean")
                 obs_dict['obs'] = torch.cat(list(obs_dict['obs'].values()), dim=1)
-                # TODO: fix this and allow for normalization!
-                # obs = obs_dict["observations"]
             # Edit Ends
             obs = obs_dict['obs']
             states = obs_dict.get('rnn_states', None)
@@ -397,13 +399,6 @@ class A2CBuilder(NetworkBuilder):
 
                 c_out = self.critic_cnn(c_out)
                 c_out = c_out.contiguous().view(c_out.size(0), -1)
-                # Edit Begins
-                if self.is_aux:
-                    self.last_aux_out = {}
-                    aux_input = self.aux_modules.aux_mlp(a_out)
-                    for output_name in self.aux_modules.aux_outputs:
-                        self.last_aux_out[output_name] = self.aux_modules.aux_heads[output_name](aux_input)
-                # Edit Ends
 
                 if self.has_rnn:
                     seq_length = obs_dict.get('seq_length', 1)
@@ -485,13 +480,6 @@ class A2CBuilder(NetworkBuilder):
                 out = obs
                 out = self.actor_cnn(out)
                 out = out.flatten(1)
-                # Edit Begins
-                if self.is_aux:
-                    self.last_aux_out = {}
-                    aux_input = self.aux_modules.aux_mlp(out)
-                    for output_name in self.aux_modules.aux_outputs:
-                        self.last_aux_out[output_name] = self.aux_modules.aux_heads[output_name](aux_input)
-                # Edit Ends
 
                 if self.has_rnn:
                     seq_length = obs_dict.get('seq_length', 1)
