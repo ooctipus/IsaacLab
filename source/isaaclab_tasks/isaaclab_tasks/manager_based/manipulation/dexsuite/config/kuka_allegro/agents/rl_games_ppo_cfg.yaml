@@ -11,8 +11,8 @@ params:
     clip_observations: 100.0
     clip_actions: 100.0
     obs_groups:
-      obs: ["policy", "perception"]
-      states: ["policy", "perception"]
+      obs: ["policy", "proprio", "perception"]
+      states: ["policy", "proprio", "perception"]
     concate_obs_groups: True
 
   algo:

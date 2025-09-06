@@ -11,7 +11,7 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, R
 @configclass
 class DexsuiteKukaAllegroPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 32
-    obs_groups = {"policy": ["policy", "perception"], "critic": ["policy", "perception"]}
+    obs_groups = {"policy": ["policy", "proprio", "perception"], "critic": ["policy", "proprio", "perception"]}
     max_iterations = 15000
     save_interval = 250
     experiment_name = "dexsuite_kuka_allegro"
