@@ -20,7 +20,7 @@ class CurriculumCfg:
     joint_pos_unoise_min_adr = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
-            "address": "observations.policy.joint_pos.noise.n_min",
+            "address": "observations.proprio.joint_pos.noise.n_min",
             "modify_fn": mdp.initial_final_interpolate_fn,
             "modify_params": {"iv": 0.0, "fv": -0.1, "difficulty_term_str": "adr"},
         },
@@ -29,7 +29,7 @@ class CurriculumCfg:
     joint_pos_unoise_max_adr = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
-            "address": "observations.policy.joint_pos.noise.n_max",
+            "address": "observations.proprio.joint_pos.noise.n_max",
             "modify_fn": mdp.initial_final_interpolate_fn,
             "modify_params": {"iv": 0.0, "fv": 0.1, "difficulty_term_str": "adr"},
         },
@@ -38,7 +38,7 @@ class CurriculumCfg:
     joint_vel_unoise_min_adr = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
-            "address": "observations.policy.joint_vel.noise.n_min",
+            "address": "observations.proprio.joint_vel.noise.n_min",
             "modify_fn": mdp.initial_final_interpolate_fn,
             "modify_params": {"iv": 0.0, "fv": -0.2, "difficulty_term_str": "adr"},
         },
@@ -47,7 +47,7 @@ class CurriculumCfg:
     joint_vel_unoise_max_adr = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
-            "address": "observations.policy.joint_vel.noise.n_max",
+            "address": "observations.proprio.joint_vel.noise.n_max",
             "modify_fn": mdp.initial_final_interpolate_fn,
             "modify_params": {"iv": 0.0, "fv": 0.2, "difficulty_term_str": "adr"},
         },
@@ -56,7 +56,7 @@ class CurriculumCfg:
     hand_tips_pos_unoise_min_adr = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
-            "address": "observations.policy.hand_tips_state_b.noise.n_min",
+            "address": "observations.proprio.hand_tips_state_b.noise.n_min",
             "modify_fn": mdp.initial_final_interpolate_fn,
             "modify_params": {"iv": 0.0, "fv": -0.01, "difficulty_term_str": "adr"},
         },
@@ -65,7 +65,7 @@ class CurriculumCfg:
     hand_tips_pos_unoise_max_adr = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
-            "address": "observations.policy.hand_tips_state_b.noise.n_max",
+            "address": "observations.proprio.hand_tips_state_b.noise.n_max",
             "modify_fn": mdp.initial_final_interpolate_fn,
             "modify_params": {"iv": 0.0, "fv": 0.01, "difficulty_term_str": "adr"},
         },

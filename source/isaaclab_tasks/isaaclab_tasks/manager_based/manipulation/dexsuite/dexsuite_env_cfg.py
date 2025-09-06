@@ -121,6 +121,18 @@ class ObservationsCfg:
     @configclass
     class PolicyCfg(ObsGroup):
         """Observations for policy group."""
+        object_quat_b = ObsTerm(func=mdp.object_quat_b, noise=Unoise(n_min=-0.0, n_max=0.0))
+        target_object_pose_b = ObsTerm(func=mdp.generated_commands, params={"command_name": "object_pose"})
+        actions = ObsTerm(func=mdp.last_action)
+
+        def __post_init__(self):
+            self.enable_corruption = True
+            self.concatenate_terms = True
+            self.history_length = 5
+
+    @configclass
+    class ProprioObsCfg(ObsGroup):
+        """Observations for proprioception group."""
 
         joint_pos = ObsTerm(func=mdp.joint_pos, noise=Unoise(n_min=-0.0, n_max=0.0))
         joint_vel = ObsTerm(func=mdp.joint_vel, noise=Unoise(n_min=-0.0, n_max=0.0))
@@ -135,9 +147,6 @@ class ObservationsCfg:
                 "base_asset_cfg": SceneEntityCfg("robot"),
             },
         )
-        object_quat_b = ObsTerm(func=mdp.object_quat_b, noise=Unoise(n_min=-0.0, n_max=0.0))
-        target_object_pose_b = ObsTerm(func=mdp.generated_commands, params={"command_name": "object_pose"})
-        actions = ObsTerm(func=mdp.last_action)
         contact: ObsTerm = MISSING
 
         def __post_init__(self):
@@ -164,6 +173,7 @@ class ObservationsCfg:
 
     # observation groups
     policy: PolicyCfg = PolicyCfg()
+    proprio: ProprioObsCfg = ProprioObsCfg()
     perception: PerceptionObsCfg = PerceptionObsCfg()
 
 

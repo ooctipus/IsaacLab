@@ -579,12 +579,6 @@ class A2CBuilder(NetworkBuilder):
             self.central_value = params.get('central_value', False)
             self.joint_obs_actions_config = params.get('joint_obs_actions', None)
 
-            # Edit Begins
-            self.is_aux = 'aux_outputs' in params
-            if self.is_aux:
-                self.aux_network = params['aux_network']
-            # Edit Ends
-
             if self.has_space:
                 self.is_multi_discrete = 'multi_discrete' in params['space']
                 self.is_discrete = 'discrete' in params['space']

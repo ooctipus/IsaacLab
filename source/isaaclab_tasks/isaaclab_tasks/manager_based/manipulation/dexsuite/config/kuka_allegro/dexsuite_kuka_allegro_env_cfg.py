@@ -139,12 +139,12 @@ class KukaAllegroMixinCfg:
                     prim_path="{ENV_REGEX_NS}/Robot/" + link_name, filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"]
                 ),
             )
-        self.observations.policy.contact = ObsTerm(
+        self.observations.proprio.contact = ObsTerm(
             func=mdp.fingers_contact_force_w,
             params={"contact_sensor_names": [f"{link}_object_s" for link in finger_tip_body_list]},
             clip=(-20.0, 20.0),  # contact force in finger tips is under 20N normally
         )
-        self.observations.policy.hand_tips_state_b.params["body_asset_cfg"].body_names = ["palm_link", ".*_tip"]
+        self.observations.proprio.hand_tips_state_b.params["body_asset_cfg"].body_names = ["palm_link", ".*_tip"]
         self.rewards.fingers_to_object.params["asset_cfg"] = SceneEntityCfg("robot", body_names=["palm_link", ".*_tip"])
 
 
