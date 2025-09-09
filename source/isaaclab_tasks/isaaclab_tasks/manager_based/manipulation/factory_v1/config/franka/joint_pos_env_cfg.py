@@ -56,7 +56,7 @@ class FrankaFactoryEnvMixIn:
 
         setattr(
             self.rewards, "good_finger_contact", RewTerm(
-                func=mdp.gripper_symetric_contact, weight=0.5, params={"threshold": 10.0},
+                func=mdp.gripper_firm_contact, weight=0.5, params={"threshold": 10.0},
             )
         )
 
