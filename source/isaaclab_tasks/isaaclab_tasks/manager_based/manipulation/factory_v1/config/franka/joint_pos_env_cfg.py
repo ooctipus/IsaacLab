@@ -5,13 +5,15 @@
 
 from isaaclab.utils import configclass
 
-import isaaclab_tasks.manager_based.manipulation.factory.mdp as mdp
+from isaaclab.sensors import ContactSensorCfg
+from isaaclab.managers import RewardTermCfg as RewTerm
 
 from ...factory_assets_cfg import FRANKA_PANDA_CFG
 from ...factory_env_base import FactoryBaseEnvCfg
 from ...gearmesh_env_cfg import GearMeshEnvCfg
 from ...nutthread_env_cfg import NutThreadEnvCfg
 from ...peginsert_env_cfg import PegInsertEnvCfg
+from ... import mdp
 
 
 @configclass
@@ -46,17 +48,42 @@ class FrankaFactoryEnvMixIn:
         self.scene.robot.actuators["panda_arm2"].stiffness = 80.0
         self.scene.robot.actuators["panda_arm2"].damping = 4.0
 
+        finger_tip_body_list = ["panda_leftfinger", "panda_rightfinger"]
+        for link_name in finger_tip_body_list:
+            setattr(
+                self.scene,
+                f"{link_name}_object_s",
+                ContactSensorCfg(
+                    prim_path="{ENV_REGEX_NS}/Robot/" + link_name,
+                    filter_prim_paths_expr=["{ENV_REGEX_NS}/HeldAsset"],
+                ),
+            )
+        setattr(
+            self.rewards, "bad_finger_contact", RewTerm(
+                func=mdp.gripper_asymetric_contact_penalty, weight=-1.0, params={"threshold": 1.0},
+            )
+        )
+
 
 @configclass
 class FrankaNutThreadEnvCfg(FrankaFactoryEnvMixIn, NutThreadEnvCfg):
-    pass
+    def __post_init__(self: FactoryBaseEnvCfg):
+        super().__post_init__()
+        self.scene.panda_leftfinger_object_s.filter_prim_paths_expr = ["{ENV_REGEX_NS}/NutAsset"]
+        self.scene.panda_rightfinger_object_s.filter_prim_paths_expr = ["{ENV_REGEX_NS}/NutAsset"]
 
 
 @configclass
 class FrankaGearMeshEnvCfg(FrankaFactoryEnvMixIn, GearMeshEnvCfg):
-    pass
+    def __post_init__(self: FactoryBaseEnvCfg):
+        super().__post_init__()
+        self.scene.panda_leftfinger_object_s.filter_prim_paths_expr = ["{ENV_REGEX_NS}/MediumGearAsset"]
+        self.scene.panda_rightfinger_object_s.filter_prim_paths_expr = ["{ENV_REGEX_NS}/MediumGearAsset"]
 
 
 @configclass
 class FrankaPegInsertEnvCfg(FrankaFactoryEnvMixIn, PegInsertEnvCfg):
-    pass
+    def __post_init__(self: FactoryBaseEnvCfg):
+        super().__post_init__()
+        self.scene.panda_leftfinger_object_s.filter_prim_paths_expr = ["{ENV_REGEX_NS}/PegAsset"]
+        self.scene.panda_rightfinger_object_s.filter_prim_paths_expr = ["{ENV_REGEX_NS}/PegAsset"]

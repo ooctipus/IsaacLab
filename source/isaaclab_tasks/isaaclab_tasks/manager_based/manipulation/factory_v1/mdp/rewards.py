@@ -16,7 +16,7 @@ from ..assembly_keypoints import Offset
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
-
+    from isaaclab.sensors import ContactSensor
 
 # viz for debug, remove when done debugging
 # from isaaclab.markers import FRAME_MARKER_CFG, VisualizationMarkers
@@ -120,3 +120,17 @@ def action_rate_l2_clamped(env: ManagerBasedRLEnv) -> torch.Tensor:
 def action_l2_clamped(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Penalize the actions using L2 squared kernel."""
     return torch.sum(torch.square(env.action_manager.action), dim=1).clamp(-5000, 5000)
+
+
+def gripper_asymetric_contact_penalty(env: ManagerBasedRLEnv, threshold: float = 1.0) -> torch.Tensor:
+    left_finger_contact_sensor: ContactSensor = env.scene.sensors["panda_leftfinger_object_s"]
+    right_finger_contact_sensor: ContactSensor = env.scene.sensors["panda_rightfinger_object_s"]
+
+    # check if contact force is above threshold
+    left_finger_contact = left_finger_contact_sensor.data.net_forces_w.view(env.num_envs, 3)
+    right_finger_contact = right_finger_contact_sensor.data.net_forces_w.view(env.num_envs, 3)
+
+    left_finger_in_contact = torch.norm(left_finger_contact, dim=-1) > threshold
+    right_finger_in_contact = torch.norm(right_finger_contact, dim=-1) > threshold
+    print((left_finger_in_contact != right_finger_in_contact))
+    return (left_finger_in_contact != right_finger_in_contact).float()
