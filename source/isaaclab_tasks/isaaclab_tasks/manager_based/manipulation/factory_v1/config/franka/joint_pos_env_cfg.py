@@ -51,12 +51,7 @@ class FrankaFactoryEnvMixIn:
         finger_tip_body_list = ["panda_leftfinger", "panda_rightfinger"]
         for link_name in finger_tip_body_list:
             setattr(
-                self.scene,
-                f"{link_name}_object_s",
-                ContactSensorCfg(
-                    prim_path="{ENV_REGEX_NS}/Robot/" + link_name,
-                    filter_prim_paths_expr=["{ENV_REGEX_NS}/HeldAsset"],
-                ),
+                self.scene, f"{link_name}_object_s", ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/" + link_name)
             )
         setattr(
             self.rewards, "bad_finger_contact", RewTerm(
@@ -67,23 +62,14 @@ class FrankaFactoryEnvMixIn:
 
 @configclass
 class FrankaNutThreadEnvCfg(FrankaFactoryEnvMixIn, NutThreadEnvCfg):
-    def __post_init__(self: FactoryBaseEnvCfg):
-        super().__post_init__()
-        self.scene.panda_leftfinger_object_s.filter_prim_paths_expr = ["{ENV_REGEX_NS}/NutAsset"]
-        self.scene.panda_rightfinger_object_s.filter_prim_paths_expr = ["{ENV_REGEX_NS}/NutAsset"]
+    pass
 
 
 @configclass
 class FrankaGearMeshEnvCfg(FrankaFactoryEnvMixIn, GearMeshEnvCfg):
-    def __post_init__(self: FactoryBaseEnvCfg):
-        super().__post_init__()
-        self.scene.panda_leftfinger_object_s.filter_prim_paths_expr = ["{ENV_REGEX_NS}/MediumGearAsset"]
-        self.scene.panda_rightfinger_object_s.filter_prim_paths_expr = ["{ENV_REGEX_NS}/MediumGearAsset"]
+    pass
 
 
 @configclass
 class FrankaPegInsertEnvCfg(FrankaFactoryEnvMixIn, PegInsertEnvCfg):
-    def __post_init__(self: FactoryBaseEnvCfg):
-        super().__post_init__()
-        self.scene.panda_leftfinger_object_s.filter_prim_paths_expr = ["{ENV_REGEX_NS}/PegAsset"]
-        self.scene.panda_rightfinger_object_s.filter_prim_paths_expr = ["{ENV_REGEX_NS}/PegAsset"]
+    pass
