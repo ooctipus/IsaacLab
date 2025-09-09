@@ -53,9 +53,10 @@ class FrankaFactoryEnvMixIn:
             setattr(
                 self.scene, f"{link_name}_object_s", ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/" + link_name)
             )
+
         setattr(
-            self.rewards, "bad_finger_contact", RewTerm(
-                func=mdp.gripper_asymetric_contact_penalty, weight=-1.0, params={"threshold": 1.0},
+            self.rewards, "good_finger_contact", RewTerm(
+                func=mdp.gripper_symetric_contact, weight=0.5, params={"threshold": 10.0},
             )
         )
 

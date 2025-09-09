@@ -132,5 +132,18 @@ def gripper_asymetric_contact_penalty(env: ManagerBasedRLEnv, threshold: float =
 
     left_finger_in_contact = torch.norm(left_finger_contact, dim=-1) > threshold
     right_finger_in_contact = torch.norm(right_finger_contact, dim=-1) > threshold
-    print((left_finger_in_contact != right_finger_in_contact))
     return (left_finger_in_contact != right_finger_in_contact).float()
+
+
+def gripper_symetric_contact(env: ManagerBasedRLEnv, threshold: float = 1.0) -> torch.Tensor:
+    left_finger_contact_sensor: ContactSensor = env.scene.sensors["panda_leftfinger_object_s"]
+    right_finger_contact_sensor: ContactSensor = env.scene.sensors["panda_rightfinger_object_s"]
+
+    # check if contact force is above threshold
+    left_finger_contact = left_finger_contact_sensor.data.net_forces_w.view(env.num_envs, 3)
+    right_finger_contact = right_finger_contact_sensor.data.net_forces_w.view(env.num_envs, 3)
+
+    left_finger_in_contact = torch.norm(left_finger_contact, dim=-1) > threshold
+    right_finger_in_contact = torch.norm(right_finger_contact, dim=-1) > threshold
+
+    return (left_finger_in_contact & right_finger_in_contact).float()
