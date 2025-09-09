@@ -60,6 +60,12 @@ class FrankaFactoryEnvMixIn:
             )
         )
 
+        setattr(
+            self.rewards, "bad_finger_contact", RewTerm(
+                func=mdp.gripper_asymetric_contact_penalty, weight=-0.5, params={"threshold": 1.0},
+            )
+        )
+
 
 @configclass
 class FrankaNutThreadEnvCfg(FrankaFactoryEnvMixIn, NutThreadEnvCfg):
