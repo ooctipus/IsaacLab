@@ -141,12 +141,16 @@ if [[ "$mode" == "pbt" ]]; then
 
   declare -A kv
   declare -a cli_flags=()
+  declare -a hydra_dels=()
   pool_explicit=""
   platform_explicit=""
 
   for arg in "${args[@]}"; do
     if [[ $arg == --* ]]; then
       handle_cli_flag "$arg"
+    elif [[ $arg == "~"* ]]; then
+      # bare Hydra delete operator (must be quoted by caller to avoid shell tilde expansion)
+      hydra_dels+=( "$arg" )
     elif [[ $arg == *=* ]]; then
       key=${arg%%=*}; val=${arg#*=}
       if [[ "$key" == "pool" ]]; then
@@ -193,9 +197,9 @@ if [[ "$mode" == "pbt" ]]; then
       "agent.pbt.num_policies=${kv[num_populations]}"
       "agent.pbt.policy_idx=${idx}"
       "agent.pbt.workspace=${kv[num_populations]}agents_${date_time}"
-      "agent.hydra.run.dir=/mnt/amlfs/shared/workspace/octi"
-      # "agent.pbt.interval_steps=10000000"
+      "agent.pbt.directory=/mnt/amlfs-05/shared/workspace/octi"
       "--wandb-name=${idx}_${kv[num_populations]}"
+      "--seed=-1"
     )
     # forward any other user overrides (e.g. agent.params.config.*)
     for k in "${!kv[@]}"; do
@@ -205,7 +209,7 @@ if [[ "$mode" == "pbt" ]]; then
       set_pairs+=( "$k=${kv[$k]}" )
     done
 
-    all_set="args=${set_pairs[*]} ${cli_flags[*]}"
+    all_set="args=${set_pairs[*]} ${hydra_dels[*]} ${cli_flags[*]}"
     cmd=( osmo workflow submit "$spec" --pool "$resolved_pool" --set script="$script" $cluster_str "$all_set" )
     echo "+ ${cmd[@]}"
     "${cmd[@]}"
@@ -222,6 +226,7 @@ if [[ "$mode" == "submit" ]]; then
 
   declare -A fixed sweep_map
   declare -a cli_flags=()
+  declare -a hydra_dels=()
   pool_explicit=""
   platform_explicit=""
 
@@ -229,6 +234,12 @@ if [[ "$mode" == "submit" ]]; then
     # keep special bool flags normalized
     if [[ $arg == --video || $arg == --enable_cameras || $arg == --video=* || $arg == --enable_cameras=* ]]; then
       handle_cli_flag "$arg"
+      continue
+    fi
+
+    # Hydra delete operator (bare "~path.to.key")
+    if [[ $arg == "~"* ]]; then
+      hydra_dels+=( "$arg" )
       continue
     fi
 
@@ -300,7 +311,7 @@ if [[ "$mode" == "submit" ]]; then
 
   # submit each combo
   for combo in "${combos[@]}"; do
-    all_set="args=$fixed_str $combo ${cli_flags[*]}"
+    all_set="args=$fixed_str $combo ${hydra_dels[*]} ${cli_flags[*]}"
     cmd=( osmo workflow submit "$spec" --pool "$resolved_pool" --set script="$script" $cluster_str "$all_set" )
     echo "+ ${cmd[@]}"
     "${cmd[@]}"
