@@ -7,6 +7,7 @@ from isaaclab.utils import configclass
 
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.managers import RewardTermCfg as RewTerm
+from isaaclab.managers import SceneEntityCfg
 
 from ...factory_assets_cfg import FRANKA_PANDA_CFG
 from ...factory_env_base import FactoryBaseEnvCfg
@@ -53,16 +54,12 @@ class FrankaFactoryEnvMixIn:
             setattr(
                 self.scene, f"{link_name}_object_s", ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/" + link_name)
             )
-
-        setattr(
-            self.rewards, "good_finger_contact", RewTerm(
-                func=mdp.gripper_firm_contact, weight=0.5, params={"threshold": 10.0},
-            )
-        )
+        self.rewards.unstable_manipulation_penalty.params["ee_cfg"] = SceneEntityCfg("robot", body_names="panda_fingertip_centered")
+        self.rewards.reach_reward.params["ee_cfg"] = SceneEntityCfg("robot", body_names="panda_fingertip_centered")
 
         setattr(
             self.rewards, "bad_finger_contact", RewTerm(
-                func=mdp.gripper_asymetric_contact_penalty, weight=-0.5, params={"threshold": 1.0},
+                func=mdp.gripper_asymetric_contact_penalty, weight=-0.1, params={"threshold": 1.0},
             )
         )
 

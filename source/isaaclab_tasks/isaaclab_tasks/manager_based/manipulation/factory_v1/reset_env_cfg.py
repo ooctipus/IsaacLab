@@ -65,7 +65,7 @@ FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
                     "fixed_asset_offset": MISSING,
                     "pose_range_b": MISSING,
                     "robot_ik_cfg": SceneEntityCfg("robot"),
-                    "ik_iterations": (10, 25),
+                    "ik_iterations": (15, 25),
                 }
             ),
             "grasp_held_asset": EventTerm(

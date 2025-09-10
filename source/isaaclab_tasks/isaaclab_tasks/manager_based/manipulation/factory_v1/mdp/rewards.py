@@ -147,3 +147,29 @@ def gripper_firm_contact(env: ManagerBasedRLEnv, threshold: float = 1.0) -> torc
     right_finger_in_contact = torch.norm(right_finger_contact, dim=-1) > threshold
 
     return (left_finger_in_contact & right_finger_in_contact).float()
+
+
+class unstable_manipulation(ManagerTermBase):
+
+    def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
+        # initialize the base class
+        super().__init__(cfg, env)
+        # find and store the termination terms
+        self.held_asset: RigidObject = env.scene[cfg.params.get("held_asset_cfg").name]
+        self.robot: Articulation = env.scene[cfg.params.get("ee_cfg").name]
+        self.last_relative_position = torch.zeros((env.num_envs, 6), device=env.device)
+
+    def __call__(self, env: ManagerBasedRLEnv, ee_cfg: SceneEntityCfg, held_asset_cfg: SceneEntityCfg) -> torch.Tensor:
+        # Return the unweighted reward for the termination terms
+        asset_vel_w = self.held_asset.data.root_state_w[:, 7:13]
+        asset_pose = self.held_asset.data.root_pose_w
+        ee_pose = self.robot.data.body_link_pose_w[:, ee_cfg.body_ids, :7].view(-1, 7)
+
+        pos_e, rot_e = math_utils.compute_pose_error(asset_pose[:, :3], asset_pose[:, 3:], ee_pose[:, :3], ee_pose[:, 3:])
+        # scale 0.25 to rotation part because radian error can be a lot more amplified compared to position....
+        current_relative_pose = torch.cat((pos_e, math_utils.wrap_to_pi(rot_e) * 0.25), dim=1)
+        delta_pose = current_relative_pose - self.last_relative_position
+        stable_manip = (delta_pose.abs().sum(dim=1) < 0.1) | (asset_vel_w.abs().sum(dim=1) < 0.1)
+        self.last_relative_position[:] = current_relative_pose
+        asset_initialized = (env.episode_length_buf > 10)
+        return ((~stable_manip) & asset_initialized).float()

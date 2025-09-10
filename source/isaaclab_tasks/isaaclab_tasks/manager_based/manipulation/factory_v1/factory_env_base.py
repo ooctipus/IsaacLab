@@ -196,9 +196,11 @@ class FactoryRewardsCfg:
     """Reward terms for Factory"""
 
     # penalties
-    action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-1e-3)
+    action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-1e-4)
 
-    action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-1e-3)
+    action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-1e-4)
+
+    unstable_manipulation_penalty = RewTerm(func=mdp.unstable_manipulation, weight=-0.25)
 
     early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-0.5)
 
@@ -252,9 +254,6 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     viewer: ViewerCfg = ViewerCfg(
         eye=(0.0, 0.25, 0.1), origin_type="asset_body", asset_name="robot", body_name="panda_fingertip_centered"
     )
-    # viewer: ViewerCfg = ViewerCfg(
-    #     eye=(0.3, 1.2, 0.4), lookat=(0.3, 0.0, 0.0)
-    # )
     actions = MISSING
 
     # Post initialization
@@ -262,7 +261,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
         """Post initialization."""
         # general settings
         self.decimation = 12
-        self.episode_length_s = 10.0
+        self.episode_length_s = 8.0
         # simulation settings
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
