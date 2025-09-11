@@ -280,15 +280,14 @@ class TermChoice(ManagerTermBase):
             return  # return immediately if there is no terms
         success_rate = self.success_monitor.get_success_rate()
         log = {f"Metrics/SuccessRate/{name}": success_rate[i].item() for i, name in enumerate(self.term_partitions.keys())}
-        
 
-        context_term: ManagerTermBase = env.reward_manager.get_term_cfg("progress_context").func  # type: ignore
+        context_term: ManagerTermBase = env.termination_manager.get_term_cfg("progress_context").func  # type: ignore
         orientation_aligned: torch.Tensor = getattr(context_term, "orientation_aligned")[env_ids]
         position_centered: torch.Tensor = getattr(context_term, "position_centered")[env_ids]
         z_distance_reached: torch.Tensor = getattr(context_term, "z_distance_reached")[env_ids]
         term_successes = torch.where(orientation_aligned & position_centered & z_distance_reached, 1.0, 0.0)
         self.success_monitor.success_update(self.term_samples[env_ids], term_successes)
-        
+
         if sampling_strategy == "uniform":
             self.term_samples[env_ids] = torch.randint(0, self.num_partitions, (env_ids.size(0),), device=env_ids.device, dtype=self.term_samples.dtype)
         else:

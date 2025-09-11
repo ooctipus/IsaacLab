@@ -7,7 +7,7 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
 from .assembly_keypoints import KEYPOINTS_HOLE8MM, KEYPOINTS_PEG8MM
-from .factory_env_base import FactoryBaseEnvCfg, FactoryEventCfg, FactoryObservationsCfg, FactoryRewardsCfg
+from .factory_env_base import FactoryBaseEnvCfg, FactoryEventCfg, FactoryObservationsCfg, FactoryTerminationsCfg
 
 
 @configclass
@@ -128,13 +128,13 @@ class PegInsertEventCfg(FactoryEventCfg):
                 "roll": (3.141, 3.141),
                 "yaw": (-0.785, 0.785),
             }
-            
+
             reset_s4["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
             reset_s4["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
             reset_s4["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_PEG8MM.grasp_diameter
 
 @configclass
-class PegInsertRewardsCfg(FactoryRewardsCfg):
+class PegInsertTerminationsCfg(FactoryTerminationsCfg):
     def __post_init__(self):
         # For progress_context
         self.progress_context.params["fixed_asset_cfg"] = SceneEntityCfg("hole_8mm")
@@ -149,7 +149,7 @@ class PegInsertEnvCfg(FactoryBaseEnvCfg):
 
     observations: PegInsertObservationsCfg = PegInsertObservationsCfg()
     events: PegInsertEventCfg = PegInsertEventCfg()
-    rewards: PegInsertRewardsCfg = PegInsertRewardsCfg()
+    terminations: PegInsertTerminationsCfg = PegInsertTerminationsCfg()
 
     def __post_init__(self):
         super().__post_init__()

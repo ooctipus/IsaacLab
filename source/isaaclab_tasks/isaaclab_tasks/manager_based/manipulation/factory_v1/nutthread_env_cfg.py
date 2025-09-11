@@ -8,7 +8,7 @@ from isaaclab.utils import configclass
 
 from .assembly_keypoints import KEYPOINTS_BOLTHALFM16 as KEYPOINTS_BOLTM16
 from .assembly_keypoints import KEYPOINTS_NUTM16
-from .factory_env_base import FactoryBaseEnvCfg, FactoryEventCfg, FactoryObservationsCfg, FactoryRewardsCfg
+from .factory_env_base import FactoryBaseEnvCfg, FactoryEventCfg, FactoryObservationsCfg, FactoryTerminationsCfg
 
 
 @configclass
@@ -146,7 +146,7 @@ class NutThreadEventCfg(FactoryEventCfg):
             reset_s4["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_NUTM16.grasp_diameter
 
 @configclass
-class NutThreadRewardsCfg(FactoryRewardsCfg):
+class NutThreadTerminationsCfg(FactoryTerminationsCfg):
     def __post_init__(self):
         # For progress_context
         self.progress_context.params["fixed_asset_cfg"] = SceneEntityCfg("bolt_m16")
@@ -161,12 +161,11 @@ class NutThreadEnvCfg(FactoryBaseEnvCfg):
 
     observations: NutThreadObservationsCfg = NutThreadObservationsCfg()
     events: NutThreadEventCfg = NutThreadEventCfg()
-    rewards: NutThreadRewardsCfg = NutThreadRewardsCfg()
+    terminations: NutThreadTerminationsCfg = NutThreadTerminationsCfg()
 
     def __post_init__(self):
         super().__post_init__()
         self.rewards.reach_reward.params["held_asset_cfg"] = SceneEntityCfg("nut_m16")
-        self.rewards.unstable_manipulation_penalty.params["held_asset_cfg"] = SceneEntityCfg("nut_m16")
         self.terminations.oob.params["asset_cfg"] = SceneEntityCfg("nut_m16")
         for asset in ["gear_base", "hole_8mm", "small_gear", "large_gear", "medium_gear", "peg_8mm"]:
             delattr(self.scene, asset)

@@ -54,12 +54,13 @@ class FrankaFactoryEnvMixIn:
             setattr(
                 self.scene, f"{link_name}_object_s", ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/" + link_name)
             )
-        self.rewards.unstable_manipulation_penalty.params["ee_cfg"] = SceneEntityCfg("robot", body_names="panda_fingertip_centered")
+
         self.rewards.reach_reward.params["ee_cfg"] = SceneEntityCfg("robot", body_names="panda_fingertip_centered")
+        self.rewards.joint_effort.params["asset_cfg"] = SceneEntityCfg("robot", joint_names="(?!panda_joint7$|panda_finger_.*$).*")
 
         setattr(
             self.rewards, "bad_finger_contact", RewTerm(
-                func=mdp.gripper_asymetric_contact_penalty, weight=-0.1, params={"threshold": 1.0},
+                func=mdp.gripper_asymetric_contact_penalty, weight=-0.02, params={"threshold": 1.0},
             )
         )
 

@@ -7,7 +7,7 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
 from .assembly_keypoints import KEYPOINTS_GEARBASE, KEYPOINTS_MEDIUMGEAR
-from .factory_env_base import FactoryBaseEnvCfg, FactoryEventCfg, FactoryObservationsCfg, FactoryRewardsCfg
+from .factory_env_base import FactoryBaseEnvCfg, FactoryEventCfg, FactoryObservationsCfg, FactoryTerminationsCfg
 
 
 @configclass
@@ -142,7 +142,7 @@ class GearMeshEventCfg(FactoryEventCfg):
 
 
 @configclass
-class GearMeshRewardsCfg(FactoryRewardsCfg):
+class GearMeshTerminationsCfg(FactoryTerminationsCfg):
     def __post_init__(self):
         # For progress_context
         self.progress_context.params["fixed_asset_cfg"] = SceneEntityCfg("gear_base")
@@ -157,7 +157,7 @@ class GearMeshEnvCfg(FactoryBaseEnvCfg):
 
     observations: GearMeshObservationsCfg = GearMeshObservationsCfg()
     events: GearMeshEventCfg = GearMeshEventCfg()
-    rewards: GearMeshRewardsCfg = GearMeshRewardsCfg()
+    terminations: GearMeshTerminationsCfg = GearMeshTerminationsCfg()
 
     def __post_init__(self):
         super().__post_init__()

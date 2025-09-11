@@ -200,28 +200,15 @@ class FactoryRewardsCfg:
 
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-1e-4)
 
-    unstable_manipulation_penalty = RewTerm(func=mdp.unstable_manipulation, weight=-0.25)
+    joint_effort = RewTerm(func=mdp.joint_torques_l2, params={"asset_cfg": SceneEntityCfg("robot")}, weight=-1e-4)
 
     early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-0.5)
-
-    # progress rewards
-    progress_context = RewTerm(
-        func=mdp.ProgressContext,  # type: ignore
-        weight=0.01,
-        params={
-            "success_threshold": 0.001,
-            "held_asset_cfg": SceneEntityCfg("held_asset"),
-            "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
-            "held_asset_offset": MISSING,
-            "fixed_asset_offset": MISSING,
-        },
-    )
 
     reach_reward = RewTerm(func=mdp.reach_reward, weight=0.1, params={"std": 1.0})
 
     progress_reward_fine = RewTerm(func=mdp.progress_reward, weight=0.1, params={"std": 0.005})
 
-    success_reward = RewTerm(func=mdp.success_reward, weight=1.0)
+    success_reward = RewTerm(func=mdp.success_reward, weight=100.0)
 
 
 @configclass
@@ -238,6 +225,19 @@ class FactoryTerminationsCfg:
         "in_bound_range" : {"x": (-0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)}
     })
 
+    progress_context = DoneTerm(
+        func=mdp.progress_context,
+        params={
+            "success_threshold": 0.001,
+            "held_asset_cfg": SceneEntityCfg("held_asset"),
+            "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
+            "held_asset_offset": MISSING,
+            "fixed_asset_offset": MISSING,
+        }
+    )
+
+    success = DoneTerm(func=mdp.success_termination)
+
 ##
 # Environment configuration
 ##
@@ -251,9 +251,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     events: FactoryEventCfg = FactoryEventCfg()
     terminations: FactoryTerminationsCfg = FactoryTerminationsCfg()
     rewards: FactoryRewardsCfg = FactoryRewardsCfg()
-    viewer: ViewerCfg = ViewerCfg(
-        eye=(0.0, 0.25, 0.1), origin_type="asset_body", asset_name="robot", body_name="panda_fingertip_centered"
-    )
+    viewer: ViewerCfg = ViewerCfg(eye=(0.0, 0.25, 0.1), origin_type="asset_body", asset_name="robot", body_name="panda_fingertip_centered")
     actions = MISSING
 
     # Post initialization
