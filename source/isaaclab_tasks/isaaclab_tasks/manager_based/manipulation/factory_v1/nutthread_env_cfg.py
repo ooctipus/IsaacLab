@@ -82,7 +82,7 @@ class NutThreadEventCfg(FactoryEventCfg):
             reset_s2["reset_end_effector_around_fixed_asset"].params["pose_range_b"] = {
                 "x": (-0.005, 0.005),
                 "y": (-0.005, 0.005),
-                "z": (-0.015, 0.025),
+                "z": (0.01, 0.035),
                 "roll": (3.141, 3.141),
                 "pitch": (-0.5, 0.5),
                 "yaw": (-2.09, 2.09),
