@@ -214,7 +214,7 @@ class FactoryRewardsCfg:
 
     joint_effort = RewTerm(func=mdp.joint_torques_l2, params={"asset_cfg": SceneEntityCfg("robot")}, weight=-1e-4)
 
-    early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-1)
+    early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-0.5)
 
     reach_reward = RewTerm(func=mdp.reach_reward, weight=0.1, params={"std": 1.0})
 
