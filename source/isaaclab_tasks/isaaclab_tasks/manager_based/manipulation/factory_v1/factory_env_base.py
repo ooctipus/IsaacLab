@@ -193,9 +193,9 @@ class FactoryEventCfg:
         mode="reset",
         params={
             "terms" : {
-                # "grasp_asset_in_air": staging_cfg.GRIPPER_GRASP_ASSET_IN_AIR,
-                # "start_fully_assembled": staging_cfg.FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
-                # "start_assembled": staging_cfg.ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
+                "grasp_asset_in_air": staging_cfg.GRIPPER_GRASP_ASSET_IN_AIR,
+                "start_fully_assembled": staging_cfg.FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
+                "start_assembled": staging_cfg.ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
                 "start_grasped_then_assembled": staging_cfg.GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
             },
             "sampling_strategy": "failure_rate"
@@ -214,7 +214,7 @@ class FactoryRewardsCfg:
 
     joint_effort = RewTerm(func=mdp.joint_torques_l2, params={"asset_cfg": SceneEntityCfg("robot")}, weight=-1e-4)
 
-    early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-0.5)
+    early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-1)
 
     reach_reward = RewTerm(func=mdp.reach_reward, weight=0.1, params={"std": 1.0})
 
