@@ -117,6 +117,18 @@ class FactoryObservationsCfg:
 class FactoryEventCfg:
     """Events specifications for Factory"""
 
+    # when nut dropped right above the bolt, it sometime can immediately success due to high speed it falls
+    # down can can may training in early stage very finicky. we uses less aggressive gravity for training
+    # and can make more aggressive later in the stage...
+    variable_gravity = EventTerm(
+        func=mdp.randomize_physics_scene_gravity,
+        mode="startup",
+        params={
+            "operation": "abs",
+            "gravity_distribution_params": ((0.0, 0.0, -5.0), (0.0, 0.0, -5.0))
+        },
+    )
+
     # mode: startup
     held_asset_material = EventTerm(
         func=mdp.randomize_rigid_body_material,  # type: ignore
@@ -181,9 +193,9 @@ class FactoryEventCfg:
         mode="reset",
         params={
             "terms" : {
-                "grasp_asset_in_air": staging_cfg.GRIPPER_GRASP_ASSET_IN_AIR,
-                "start_fully_assembled": staging_cfg.FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
-                "start_assembled": staging_cfg.ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
+                # "grasp_asset_in_air": staging_cfg.GRIPPER_GRASP_ASSET_IN_AIR,
+                # "start_fully_assembled": staging_cfg.FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
+                # "start_assembled": staging_cfg.ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
                 "start_grasped_then_assembled": staging_cfg.GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
             },
             "sampling_strategy": "failure_rate"
@@ -259,7 +271,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
         """Post initialization."""
         # general settings
         self.decimation = 12
-        self.episode_length_s = 14.0
+        self.episode_length_s = 3.0
         # simulation settings
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation

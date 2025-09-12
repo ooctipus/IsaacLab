@@ -132,6 +132,7 @@ BOLT_M16_CFG = RigidObjectCfg(
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False, solver_position_iteration_count=192, solver_velocity_iteration_count=0, kinematic_enabled=True
         ),
+        collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.0025),
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
     ),
     init_state=RigidObjectCfg.InitialStateCfg(pos=(0.55, 0.0, 0.05), rot=(1.0, 0.0, 0.0, 0.0)),
@@ -141,10 +142,10 @@ NUT_M16_CFG = RigidObjectCfg(
     prim_path="/World/envs/env_.*/NutAsset",
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST/nut_m16_low_poly.usd",
-        activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False, solver_position_iteration_count=192, solver_velocity_iteration_count=0,
         ),
+        collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.0025),
         mass_props=sim_utils.MassPropertiesCfg(mass=0.03),
     ),
     init_state=RigidObjectCfg.InitialStateCfg(pos=(0.4, 0.0, 0.0), rot=(1.0, 0.0, 0.0, 0.0)),

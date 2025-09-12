@@ -119,12 +119,16 @@ def grasp_held_asset(
     env_ids: torch.Tensor,
     robot_cfg: SceneEntityCfg,
     held_asset_diameter: float,
+    flexible_angle: bool = True,
 ) -> None:
     robot: Articulation = env.scene[robot_cfg.name]
     joint_pos = robot.data.joint_pos[:, robot_cfg.joint_ids][env_ids].clone()
     min_angle = held_asset_diameter / 2 * 1.05
-    max_angle = robot.data.joint_pos_limits[0, robot_cfg.joint_ids[0], 1]
-    joint_pos[:] = (torch.rand((len(env_ids),), device=env.device) * (max_angle - min_angle) + min_angle).unsqueeze(1)
+    if flexible_angle:
+        max_angle = robot.data.joint_pos_limits[0, robot_cfg.joint_ids[0], 1]
+        joint_pos[:] = (torch.rand((len(env_ids),), device=env.device) * (max_angle - min_angle) + min_angle).unsqueeze(1)
+    else:
+        joint_pos[:] = min_angle
     
     robot.write_joint_position_to_sim(joint_pos, robot_cfg.joint_ids, env_ids)  # type: ignore
 
