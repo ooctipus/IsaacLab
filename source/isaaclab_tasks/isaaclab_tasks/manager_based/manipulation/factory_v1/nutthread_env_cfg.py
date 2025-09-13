@@ -6,57 +6,62 @@
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
-from .assembly_keypoints import KEYPOINTS_BOLTHALFM16 as KEYPOINTS_BOLTM16
-from .assembly_keypoints import KEYPOINTS_NUTM16
-from .factory_env_base import FactoryBaseEnvCfg, FactoryEventCfg, FactoryObservationsCfg, FactoryTerminationsCfg
+from .assembly_keypoints import KEYPOINTS_BOLTHALFM16 as KP_BOLTM16
+from .assembly_keypoints import KEYPOINTS_NUTM16 as KP_NUTM16
+from .factory_env_base import FactoryBaseEnvCfg, FactoryBaseEnvSuccessTerminateCfg
 
 
 @configclass
-class NutThreadObservationsCfg(FactoryObservationsCfg):
-    def __post_init__(self):
+class NutThreadObservationsMixinCfg:
+    def __post_init__(self: FactoryBaseEnvCfg):
+        super().__post_init__()
         # policy
-        self.policy.end_effector_vel_lin_ang_b.params["target_asset_cfg"].body_names = "panda_fingertip_centered"
-        self.policy.end_effector_pose.params["target_asset_cfg"].body_names = "panda_fingertip_centered"
-        self.policy.fixed_asset_in_end_effector_frame.params["target_asset_cfg"] = SceneEntityCfg("bolt_m16")
-        self.policy.fixed_asset_in_end_effector_frame.params["root_asset_cfg"].body_names = "panda_fingertip_centered"
-        self.policy.fixed_asset_in_end_effector_frame.params["target_asset_offset"] = KEYPOINTS_BOLTM16.bolt_tip_offset
-        self.policy.held_asset_in_fixed_asset_frame.params["target_asset_cfg"] = SceneEntityCfg("nut_m16")
-        self.policy.held_asset_in_fixed_asset_frame.params["root_asset_cfg"] = SceneEntityCfg("bolt_m16")
-        self.policy.held_asset_in_fixed_asset_frame.params["root_asset_offset"] = KEYPOINTS_BOLTM16.bolt_tip_offset
+        policy = self.observations.policy
+        policy.end_effector_vel_lin_ang_b.params["target_asset_cfg"].body_names = "panda_fingertip_centered"
+        policy.end_effector_pose.params["target_asset_cfg"].body_names = "panda_fingertip_centered"
+        policy.fixed_asset_in_end_effector_frame.params["target_asset_cfg"] = SceneEntityCfg("bolt_m16")
+        policy.fixed_asset_in_end_effector_frame.params["root_asset_cfg"].body_names = "panda_fingertip_centered"
+        policy.fixed_asset_in_end_effector_frame.params["target_asset_offset"] = KP_BOLTM16.bolt_tip_offset
+        policy.held_asset_in_fixed_asset_frame.params["target_asset_cfg"] = SceneEntityCfg("nut_m16")
+        policy.held_asset_in_fixed_asset_frame.params["root_asset_cfg"] = SceneEntityCfg("bolt_m16")
+        policy.held_asset_in_fixed_asset_frame.params["root_asset_offset"] = KP_BOLTM16.bolt_tip_offset
 
-        self.critic.end_effector_vel_lin_ang_b.params["target_asset_cfg"].body_names = "panda_fingertip_centered"
-        self.critic.end_effector_pose.params["target_asset_cfg"].body_names = "panda_fingertip_centered"
-        self.critic.fixed_asset_in_end_effector_frame.params["target_asset_cfg"] = SceneEntityCfg("bolt_m16")
-        self.critic.fixed_asset_in_end_effector_frame.params["root_asset_cfg"].body_names = "panda_fingertip_centered"
-        self.critic.fixed_asset_in_end_effector_frame.params["target_asset_offset"] = KEYPOINTS_BOLTM16.bolt_tip_offset
-        self.critic.held_asset_in_fixed_asset_frame.params["target_asset_cfg"] = SceneEntityCfg("nut_m16")
-        self.critic.held_asset_in_fixed_asset_frame.params["root_asset_cfg"] = SceneEntityCfg("bolt_m16")
-        self.critic.held_asset_in_fixed_asset_frame.params["root_asset_offset"] = KEYPOINTS_BOLTM16.bolt_tip_offset
+        critic = self.observations.critic
+        critic.end_effector_vel_lin_ang_b.params["target_asset_cfg"].body_names = "panda_fingertip_centered"
+        critic.end_effector_pose.params["target_asset_cfg"].body_names = "panda_fingertip_centered"
+        critic.fixed_asset_in_end_effector_frame.params["target_asset_cfg"] = SceneEntityCfg("bolt_m16")
+        critic.fixed_asset_in_end_effector_frame.params["root_asset_cfg"].body_names = "panda_fingertip_centered"
+        critic.fixed_asset_in_end_effector_frame.params["target_asset_offset"] = KP_BOLTM16.bolt_tip_offset
+        critic.held_asset_in_fixed_asset_frame.params["target_asset_cfg"] = SceneEntityCfg("nut_m16")
+        critic.held_asset_in_fixed_asset_frame.params["root_asset_cfg"] = SceneEntityCfg("bolt_m16")
+        critic.held_asset_in_fixed_asset_frame.params["root_asset_offset"] = KP_BOLTM16.bolt_tip_offset
 
 
 @configclass
-class NutThreadEventCfg(FactoryEventCfg):
-    def __post_init__(self):
+class NutThreadEventMixinCfg:
+    def __post_init__(self: FactoryBaseEnvCfg):
+        super().__post_init__()
         # For asset_material
-        self.held_asset_material.params["asset_cfg"] = SceneEntityCfg("nut_m16")
-        self.fixed_asset_material.params["asset_cfg"] = SceneEntityCfg("bolt_m16")
+        events = self.events
+        events.held_asset_material.params["asset_cfg"] = SceneEntityCfg("nut_m16")
+        events.fixed_asset_material.params["asset_cfg"] = SceneEntityCfg("bolt_m16")
 
         # For reset_fixed_asset
-        self.reset_fixed_asset.params["asset_list"] = ["bolt_m16"]
+        events.reset_fixed_asset.params["asset_list"] = ["bolt_m16"]
 
-        if "start_assembled" in self.reset_strategies.params["terms"]:
-            reset_s1: dict = self.reset_strategies.params["terms"]["start_assembled"].params["terms"]
+        if "start_assembled" in events.reset_strategies.params["terms"]:
+            reset_s1: dict = events.reset_strategies.params["terms"]["start_assembled"].params["terms"]
             # For reset held_asset on fixed_asset
             reset_s1["reset_held_asset_on_fixed_asset"].params["held_asset_cfg"] = SceneEntityCfg("nut_m16")
             reset_s1["reset_held_asset_on_fixed_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("bolt_m16")
-            reset_s1["reset_held_asset_on_fixed_asset"].params["assembled_offset"] = KEYPOINTS_BOLTM16.fully_screwed_nut_offset
-            reset_s1["reset_held_asset_on_fixed_asset"].params["entry_offset"] = KEYPOINTS_BOLTM16.bolt_tip_offset
-            reset_s1["reset_held_asset_on_fixed_asset"].params["held_asset_align_offset"] = KEYPOINTS_NUTM16.center_axis_bottom
+            reset_s1["reset_held_asset_on_fixed_asset"].params["assembled_offset"] = KP_BOLTM16.fully_screwed_nut_offset
+            reset_s1["reset_held_asset_on_fixed_asset"].params["entry_offset"] = KP_BOLTM16.bolt_tip_offset
+            reset_s1["reset_held_asset_on_fixed_asset"].params["held_asset_align_offset"] = KP_NUTM16.center_axis_bottom
             reset_s1["reset_held_asset_on_fixed_asset"].params["assembly_fraction_range"] = (0.4, 1.0)
             reset_s1["reset_held_asset_on_fixed_asset"].params["assembly_ratio"] = (0., 0., 0.002 / 6.2832)
 
             reset_s1["reset_end_effector_around_held_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("nut_m16")
-            reset_s1["reset_end_effector_around_held_asset"].params["fixed_asset_offset"] = KEYPOINTS_NUTM16.center_axis_middle
+            reset_s1["reset_end_effector_around_held_asset"].params["fixed_asset_offset"] = KP_NUTM16.center_axis_middle
             reset_s1["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
             reset_s1["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
             reset_s1["reset_end_effector_around_held_asset"].params["pose_range_b"] = {
@@ -67,16 +72,16 @@ class NutThreadEventCfg(FactoryEventCfg):
                 "pitch": (-0.5, 0.5),
                 "yaw": (-2.09, 2.09),
             }
-
+            
             reset_s1["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
             reset_s1["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
-            reset_s1["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_NUTM16.grasp_diameter
+            reset_s1["grasp_held_asset"].params["held_asset_diameter"] = KP_NUTM16.grasp_diameter
 
-        if "start_grasped_then_assembled" in self.reset_strategies.params["terms"]:
-            reset_s2: dict = self.reset_strategies.params["terms"]["start_grasped_then_assembled"].params["terms"]
+        if "start_grasped_then_assembled" in events.reset_strategies.params["terms"]:
+            reset_s2: dict = events.reset_strategies.params["terms"]["start_grasped_then_assembled"].params["terms"]
             # For reset_hand
             reset_s2["reset_end_effector_around_fixed_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("bolt_m16")
-            reset_s2["reset_end_effector_around_fixed_asset"].params["fixed_asset_offset"] = KEYPOINTS_BOLTM16.bolt_tip_offset
+            reset_s2["reset_end_effector_around_fixed_asset"].params["fixed_asset_offset"] = KP_BOLTM16.bolt_tip_offset
             reset_s2["reset_end_effector_around_fixed_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
             reset_s2["reset_end_effector_around_fixed_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
             reset_s2["reset_end_effector_around_fixed_asset"].params["pose_range_b"] = {
@@ -91,18 +96,18 @@ class NutThreadEventCfg(FactoryEventCfg):
             # For reset_held_asset
             reset_s2["reset_held_asset_in_hand"].params["holding_body_cfg"].body_names = "panda_fingertip_centered"
             reset_s2["reset_held_asset_in_hand"].params["held_asset_cfg"] = SceneEntityCfg("nut_m16")
-            reset_s2["reset_held_asset_in_hand"].params["held_asset_graspable_offset"] = KEYPOINTS_NUTM16.grasp_point
+            reset_s2["reset_held_asset_in_hand"].params["held_asset_graspable_offset"] = KP_NUTM16.grasp_point
 
             # For grasp_held_assset
             reset_s2["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
             reset_s2["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
-            reset_s2["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_NUTM16.grasp_diameter
-        
-        if "grasp_asset_in_air" in self.reset_strategies.params["terms"]:
-            reset_s3: dict = self.reset_strategies.params["terms"]["grasp_asset_in_air"].params["terms"]
+            reset_s2["grasp_held_asset"].params["held_asset_diameter"] = KP_NUTM16.grasp_diameter
+
+        if "grasp_asset_in_air" in events.reset_strategies.params["terms"]:
+            reset_s3: dict = events.reset_strategies.params["terms"]["grasp_asset_in_air"].params["terms"]
             reset_s3["reset_asset_in_air"].params["asset_cfg"] = SceneEntityCfg("nut_m16")
             reset_s3["reset_end_effector_around_held_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("nut_m16")
-            reset_s3["reset_end_effector_around_held_asset"].params["fixed_asset_offset"] = KEYPOINTS_NUTM16.center_axis_middle
+            reset_s3["reset_end_effector_around_held_asset"].params["fixed_asset_offset"] = KP_NUTM16.center_axis_middle
             reset_s3["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
             reset_s3["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
             reset_s3["reset_end_effector_around_held_asset"].params["pose_range_b"] = {
@@ -116,20 +121,20 @@ class NutThreadEventCfg(FactoryEventCfg):
 
             reset_s3["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
             reset_s3["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
-            reset_s3["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_NUTM16.grasp_diameter
+            reset_s3["grasp_held_asset"].params["held_asset_diameter"] = KP_NUTM16.grasp_diameter
 
-        if "start_fully_assembled" in self.reset_strategies.params["terms"]:
-            reset_s4: dict = self.reset_strategies.params["terms"]["start_fully_assembled"].params["terms"]
+        if "start_fully_assembled" in events.reset_strategies.params["terms"]:
+            reset_s4: dict = events.reset_strategies.params["terms"]["start_fully_assembled"].params["terms"]
             reset_s4["reset_held_asset_on_fixed_asset"].params["held_asset_cfg"] = SceneEntityCfg("nut_m16")
             reset_s4["reset_held_asset_on_fixed_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("bolt_m16")
-            reset_s4["reset_held_asset_on_fixed_asset"].params["assembled_offset"] = KEYPOINTS_BOLTM16.fully_screwed_nut_offset
-            reset_s4["reset_held_asset_on_fixed_asset"].params["entry_offset"] = KEYPOINTS_BOLTM16.bolt_tip_offset
-            reset_s4["reset_held_asset_on_fixed_asset"].params["held_asset_align_offset"] = KEYPOINTS_NUTM16.center_axis_bottom
+            reset_s4["reset_held_asset_on_fixed_asset"].params["assembled_offset"] = KP_BOLTM16.fully_screwed_nut_offset
+            reset_s4["reset_held_asset_on_fixed_asset"].params["entry_offset"] = KP_BOLTM16.bolt_tip_offset
+            reset_s4["reset_held_asset_on_fixed_asset"].params["held_asset_align_offset"] = KP_NUTM16.center_axis_bottom
             reset_s4["reset_held_asset_on_fixed_asset"].params["assembly_fraction_range"] = (0.05, 0.5)
             reset_s4["reset_held_asset_on_fixed_asset"].params["assembly_ratio"] = (0., 0., 0.002 / 6.2832)
 
             reset_s4["reset_end_effector_around_held_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("nut_m16")
-            reset_s4["reset_end_effector_around_held_asset"].params["fixed_asset_offset"] = KEYPOINTS_NUTM16.center_axis_middle
+            reset_s4["reset_end_effector_around_held_asset"].params["fixed_asset_offset"] = KP_NUTM16.center_axis_middle
             reset_s4["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
             reset_s4["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
             reset_s4["reset_end_effector_around_held_asset"].params["pose_range_b"] = {
@@ -143,29 +148,47 @@ class NutThreadEventCfg(FactoryEventCfg):
 
             reset_s4["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
             reset_s4["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
-            reset_s4["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_NUTM16.grasp_diameter
+            reset_s4["grasp_held_asset"].params["held_asset_diameter"] = KP_NUTM16.grasp_diameter
+
 
 @configclass
-class NutThreadTerminationsCfg(FactoryTerminationsCfg):
-    def __post_init__(self):
+class NutThreadTerminationsMixinCfg:
+    def __post_init__(self: FactoryBaseEnvCfg):
+        super().__post_init__()
         # For progress_context
-        self.progress_context.params["fixed_asset_cfg"] = SceneEntityCfg("bolt_m16")
-        self.progress_context.params["held_asset_cfg"] = SceneEntityCfg("nut_m16")
-        self.progress_context.params["held_asset_offset"] = KEYPOINTS_NUTM16.center_axis_bottom
-        self.progress_context.params["fixed_asset_offset"] = KEYPOINTS_BOLTM16.fully_screwed_nut_offset
+        terminations = self.terminations
+        terminations.progress_context.params["fixed_asset_cfg"] = SceneEntityCfg("bolt_m16")
+        terminations.progress_context.params["held_asset_cfg"] = SceneEntityCfg("nut_m16")
+        terminations.progress_context.params["held_asset_offset"] = KP_NUTM16.center_axis_bottom
+        terminations.progress_context.params["fixed_asset_offset"] = KP_BOLTM16.fully_screwed_nut_offset
 
 
 @configclass
-class NutThreadEnvCfg(FactoryBaseEnvCfg):
+class NutThreadEnvCfg(
+    NutThreadObservationsMixinCfg,
+    NutThreadEventMixinCfg,
+    NutThreadTerminationsMixinCfg,
+    FactoryBaseEnvCfg
+):
     """Configuration for the NutThread environment."""
-
-    observations: NutThreadObservationsCfg = NutThreadObservationsCfg()
-    events: NutThreadEventCfg = NutThreadEventCfg()
-    terminations: NutThreadTerminationsCfg = NutThreadTerminationsCfg()
-
     def __post_init__(self):
         super().__post_init__()
-        # self.rewards.reach_reward.params["held_asset_cfg"] = SceneEntityCfg("nut_m16")
+        self.rewards.reach_reward.params["held_asset_cfg"] = SceneEntityCfg("nut_m16")
+        self.terminations.oob.params["asset_cfg"] = SceneEntityCfg("nut_m16")
+        for asset in ["gear_base", "hole_8mm", "small_gear", "large_gear", "medium_gear", "peg_8mm"]:
+            delattr(self.scene, asset)
+
+
+@configclass
+class NutThreadEnvSuccessTerminateCfg(
+    NutThreadObservationsMixinCfg,
+    NutThreadEventMixinCfg,
+    NutThreadTerminationsMixinCfg,
+    FactoryBaseEnvSuccessTerminateCfg
+):
+    """Configuration for the NutThread environment."""
+    def __post_init__(self):
+        super().__post_init__()
         self.terminations.oob.params["asset_cfg"] = SceneEntityCfg("nut_m16")
         for asset in ["gear_base", "hole_8mm", "small_gear", "large_gear", "medium_gear", "peg_8mm"]:
             delattr(self.scene, asset)

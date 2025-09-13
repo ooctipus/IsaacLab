@@ -6,152 +6,189 @@
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
-from .assembly_keypoints import KEYPOINTS_HOLE8MM, KEYPOINTS_PEG8MM
-from .factory_env_base import FactoryBaseEnvCfg, FactoryEventCfg, FactoryObservationsCfg, FactoryTerminationsCfg
+from .assembly_keypoints import KEYPOINTS_HOLE8MM as KP_HOLE8MM
+from .assembly_keypoints import KEYPOINTS_PEG8MM as KP_PEG8MM
+from .factory_env_base import FactoryBaseEnvCfg, FactoryBaseEnvSuccessTerminateCfg
 
 
 @configclass
-class PegInsertObservationsCfg(FactoryObservationsCfg):
-    def __post_init__(self):
+class PegInsertObservationsMixinCfg:
+    def __post_init__(self: FactoryBaseEnvCfg):
+        super().__post_init__()
         # policy
-        self.policy.end_effector_vel_lin_ang_b.params["target_asset_cfg"].body_names = "panda_fingertip_centered"
-        self.policy.end_effector_pose.params["target_asset_cfg"].body_names = "panda_fingertip_centered"
-        self.policy.fixed_asset_in_end_effector_frame.params["target_asset_cfg"] = SceneEntityCfg("hole_8mm")
-        self.policy.fixed_asset_in_end_effector_frame.params["root_asset_cfg"].body_names = "panda_fingertip_centered"
-        self.policy.fixed_asset_in_end_effector_frame.params["target_asset_offset"] = KEYPOINTS_HOLE8MM.hole_tip_offset
-        self.policy.held_asset_in_fixed_asset_frame.params["target_asset_cfg"] = SceneEntityCfg("peg_8mm")
-        self.policy.held_asset_in_fixed_asset_frame.params["root_asset_cfg"] = SceneEntityCfg("hole_8mm")
-        self.policy.held_asset_in_fixed_asset_frame.params["root_asset_offset"] = KEYPOINTS_HOLE8MM.hole_tip_offset
-        
-        self.critic.end_effector_vel_lin_ang_b.params["target_asset_cfg"].body_names = "panda_fingertip_centered"
-        self.critic.end_effector_pose.params["target_asset_cfg"].body_names = "panda_fingertip_centered"
-        self.critic.fixed_asset_in_end_effector_frame.params["target_asset_cfg"] = SceneEntityCfg("hole_8mm")
-        self.critic.fixed_asset_in_end_effector_frame.params["root_asset_cfg"].body_names = "panda_fingertip_centered"
-        self.critic.fixed_asset_in_end_effector_frame.params["target_asset_offset"] = KEYPOINTS_HOLE8MM.hole_tip_offset
-        self.critic.held_asset_in_fixed_asset_frame.params["target_asset_cfg"] = SceneEntityCfg("peg_8mm")
-        self.critic.held_asset_in_fixed_asset_frame.params["root_asset_cfg"] = SceneEntityCfg("hole_8mm")
-        self.critic.held_asset_in_fixed_asset_frame.params["root_asset_offset"] = KEYPOINTS_HOLE8MM.hole_tip_offset
+        policy = self.observations.policy
+        policy.end_effector_vel_lin_ang_b.params["target_asset_cfg"].body_names = "panda_fingertip_centered"
+        policy.end_effector_pose.params["target_asset_cfg"].body_names = "panda_fingertip_centered"
+        policy.fixed_asset_in_end_effector_frame.params["target_asset_cfg"] = SceneEntityCfg("hole_8mm")
+        policy.fixed_asset_in_end_effector_frame.params["root_asset_cfg"].body_names = "panda_fingertip_centered"
+        policy.fixed_asset_in_end_effector_frame.params["target_asset_offset"] = KP_HOLE8MM.hole_tip_offset
+        policy.held_asset_in_fixed_asset_frame.params["target_asset_cfg"] = SceneEntityCfg("peg_8mm")
+        policy.held_asset_in_fixed_asset_frame.params["root_asset_cfg"] = SceneEntityCfg("hole_8mm")
+        policy.held_asset_in_fixed_asset_frame.params["root_asset_offset"] = KP_HOLE8MM.hole_tip_offset
+
+        critic = self.observations.critic
+        critic.end_effector_vel_lin_ang_b.params["target_asset_cfg"].body_names = "panda_fingertip_centered"
+        critic.end_effector_pose.params["target_asset_cfg"].body_names = "panda_fingertip_centered"
+        critic.fixed_asset_in_end_effector_frame.params["target_asset_cfg"] = SceneEntityCfg("hole_8mm")
+        critic.fixed_asset_in_end_effector_frame.params["root_asset_cfg"].body_names = "panda_fingertip_centered"
+        critic.fixed_asset_in_end_effector_frame.params["target_asset_offset"] = KP_HOLE8MM.hole_tip_offset
+        critic.held_asset_in_fixed_asset_frame.params["target_asset_cfg"] = SceneEntityCfg("peg_8mm")
+        critic.held_asset_in_fixed_asset_frame.params["root_asset_cfg"] = SceneEntityCfg("hole_8mm")
+        critic.held_asset_in_fixed_asset_frame.params["root_asset_offset"] = KP_HOLE8MM.hole_tip_offset
 
 
 @configclass
-class PegInsertEventCfg(FactoryEventCfg):
-    def __post_init__(self):
+class PegInsertEventMixinCfg:
+    def __post_init__(self: FactoryBaseEnvCfg):
+        super().__post_init__()
         # For asset_material
-        self.held_asset_material.params["asset_cfg"] = SceneEntityCfg("peg_8mm")
-        self.fixed_asset_material.params["asset_cfg"] = SceneEntityCfg("hole_8mm")
+        events = self.events
+        events.held_asset_material.params["asset_cfg"] = SceneEntityCfg("peg_8mm")
+        events.fixed_asset_material.params["asset_cfg"] = SceneEntityCfg("hole_8mm")
 
         # For reset_fixed_asset
-        self.reset_fixed_asset.params["asset_list"] = ["hole_8mm"]
-        
-        if "start_assembled" in self.reset_strategies.params["terms"]:
-            reset_s1: dict = self.reset_strategies.params["terms"]["start_assembled"].params["terms"]
+        events.reset_fixed_asset.params["asset_list"] = ["hole_8mm"]
+
+        if "start_assembled" in events.reset_strategies.params["terms"]:
+            reset_s1: dict = events.reset_strategies.params["terms"]["start_assembled"].params["terms"]
             # For reset held_asset on fixed_asset
             reset_s1["reset_held_asset_on_fixed_asset"].params["held_asset_cfg"] = SceneEntityCfg("peg_8mm")
             reset_s1["reset_held_asset_on_fixed_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("hole_8mm")
-            reset_s1["reset_held_asset_on_fixed_asset"].params["assembled_offset"] = KEYPOINTS_HOLE8MM.inserted_peg_base_offset
-            reset_s1["reset_held_asset_on_fixed_asset"].params["entry_offset"] = KEYPOINTS_HOLE8MM.hole_tip_offset
+            reset_s1["reset_held_asset_on_fixed_asset"].params["assembled_offset"] = KP_HOLE8MM.inserted_peg_base_offset
+            reset_s1["reset_held_asset_on_fixed_asset"].params["entry_offset"] = KP_HOLE8MM.hole_tip_offset
+            reset_s1["reset_held_asset_on_fixed_asset"].params["held_asset_align_offset"] = KP_PEG8MM.center_axis_bottom
             reset_s1["reset_held_asset_on_fixed_asset"].params["assembly_fraction_range"] = (0.0, 1.0)
             reset_s1["reset_held_asset_on_fixed_asset"].params["assembly_ratio"] = (0., 0., 0.)
 
             reset_s1["reset_end_effector_around_held_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("peg_8mm")
-            reset_s1["reset_end_effector_around_held_asset"].params["fixed_asset_offset"] = KEYPOINTS_PEG8MM.grasp_point
+            reset_s1["reset_end_effector_around_held_asset"].params["fixed_asset_offset"] = KP_PEG8MM.grasp_point
             reset_s1["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
             reset_s1["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
             reset_s1["reset_end_effector_around_held_asset"].params["pose_range_b"] = {
-                "z": (0.0, 0.0),
-                "roll": (3.141, 3.141),
-                "yaw": (-0.785, 0.785),
+                "x": (-0.005, 0.005),
+                "y": (-0.005, 0.005),
+                "z": (-0.015, 0.025),
+                "roll": (3.141 - 0.1, 3.141 + 0.1),
+                "pitch": (-0.5, 0.5),
+                "yaw": (-2.09, 2.09),
             }
             
             reset_s1["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
             reset_s1["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
-            reset_s1["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_PEG8MM.grasp_diameter
+            reset_s1["grasp_held_asset"].params["held_asset_diameter"] = KP_PEG8MM.grasp_diameter
 
-        # # For reset_end_effector_around_asset
-        if "start_grasped_not_assembled" in self.reset_strategies.params["terms"]:
-            reset_s2: dict = self.reset_strategies.params["terms"]["start_grasped_not_assembled"].params["terms"]
+        if "start_grasped_not_assembled" in events.reset_strategies.params["terms"]:
+            reset_s2: dict = events.reset_strategies.params["terms"]["start_grasped_not_assembled"].params["terms"]
             # For reset_hand
             reset_s2["reset_end_effector_around_fixed_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("hole_8mm")
-            reset_s2["reset_end_effector_around_fixed_asset"].params["fixed_asset_offset"] = KEYPOINTS_HOLE8MM.hole_tip_offset
+            reset_s2["reset_end_effector_around_fixed_asset"].params["fixed_asset_offset"] = KP_HOLE8MM.hole_tip_offset
             reset_s2["reset_end_effector_around_fixed_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
             reset_s2["reset_end_effector_around_fixed_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
             reset_s2["reset_end_effector_around_fixed_asset"].params["pose_range_b"] = {
-                "x": (-0.02, 0.02),
-                "y": (-0.02, 0.02),
+                "x": (-0.005, 0.005),
+                "y": (-0.005, 0.005),
                 "z": (0.047, 0.057),
                 "roll": (3.141, 3.141),
-                "yaw": (-0.785, 0.785),
+                "pitch": (-0.5, 0.5),
+                "yaw": (-2.09, 2.09),
             }
 
             # For reset_held_asset
             reset_s2["reset_held_asset_in_hand"].params["holding_body_cfg"].body_names = "panda_fingertip_centered"
             reset_s2["reset_held_asset_in_hand"].params["held_asset_cfg"] = SceneEntityCfg("peg_8mm")
-            reset_s2["reset_held_asset_in_hand"].params["held_asset_graspable_offset"] = KEYPOINTS_PEG8MM.grasp_point
+            reset_s2["reset_held_asset_in_hand"].params["held_asset_graspable_offset"] = KP_PEG8MM.grasp_point
 
             # For grasp_held_assset
             reset_s2["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
             reset_s2["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
-            reset_s2["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_PEG8MM.grasp_diameter
+            reset_s2["grasp_held_asset"].params["held_asset_diameter"] = KP_PEG8MM.grasp_diameter
 
-        if "grasp_asset_in_air" in self.reset_strategies.params["terms"]:
-            reset_s3: dict = self.reset_strategies.params["terms"]["grasp_asset_in_air"].params["terms"]
+        if "grasp_asset_in_air" in events.reset_strategies.params["terms"]:
+            reset_s3: dict = events.reset_strategies.params["terms"]["grasp_asset_in_air"].params["terms"]
             reset_s3["reset_asset_in_air"].params["asset_cfg"] = SceneEntityCfg("peg_8mm")
             reset_s3["reset_end_effector_around_held_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("peg_8mm")
-            reset_s3["reset_end_effector_around_held_asset"].params["fixed_asset_offset"] = KEYPOINTS_PEG8MM.grasp_point
+            reset_s3["reset_end_effector_around_held_asset"].params["fixed_asset_offset"] = KP_PEG8MM.grasp_point
             reset_s3["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
             reset_s3["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
             reset_s3["reset_end_effector_around_held_asset"].params["pose_range_b"] = {
-                "z": (0.0, 0.0),
-                "roll": (3.141, 3.141),
-                "yaw": (-0.785, 0.785),
+                "x": (-0.005, 0.005),
+                "y": (-0.005, 0.005),
+                "z": (-0.015, 0.025),
+                "roll": (3.141 - 0.1, 3.141 + 0.1),
+                "pitch": (-0.5, 0.5),
+                "yaw": (-2.09, 2.09),
             }
-            
+
             reset_s3["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
             reset_s3["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
-            reset_s3["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_PEG8MM.grasp_diameter
+            reset_s3["grasp_held_asset"].params["held_asset_diameter"] = KP_PEG8MM.grasp_diameter
 
-        if "start_fully_assembled" in self.reset_strategies.params["terms"]:
-            reset_s4: dict = self.reset_strategies.params["terms"]["start_fully_assembled"].params["terms"]
+        if "start_fully_assembled" in events.reset_strategies.params["terms"]:
+            reset_s4: dict = events.reset_strategies.params["terms"]["start_fully_assembled"].params["terms"]
             reset_s4["reset_held_asset_on_fixed_asset"].params["held_asset_cfg"] = SceneEntityCfg("peg_8mm")
             reset_s4["reset_held_asset_on_fixed_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("hole_8mm")
-            reset_s4["reset_held_asset_on_fixed_asset"].params["assembled_offset"] = KEYPOINTS_HOLE8MM.inserted_peg_base_offset
-            reset_s4["reset_held_asset_on_fixed_asset"].params["entry_offset"] = KEYPOINTS_HOLE8MM.hole_tip_offset
+            reset_s4["reset_held_asset_on_fixed_asset"].params["assembled_offset"] = KP_HOLE8MM.inserted_peg_base_offset
+            reset_s4["reset_held_asset_on_fixed_asset"].params["entry_offset"] = KP_HOLE8MM.hole_tip_offset
+            reset_s4["reset_held_asset_on_fixed_asset"].params["held_asset_align_offset"] = KP_PEG8MM.center_axis_bottom
             reset_s4["reset_held_asset_on_fixed_asset"].params["assembly_fraction_range"] = (0.0, 0.5)
             reset_s4["reset_held_asset_on_fixed_asset"].params["assembly_ratio"] = (0., 0., 0.)
 
             reset_s4["reset_end_effector_around_held_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("peg_8mm")
-            reset_s4["reset_end_effector_around_held_asset"].params["fixed_asset_offset"] = KEYPOINTS_PEG8MM.grasp_point
+            reset_s4["reset_end_effector_around_held_asset"].params["fixed_asset_offset"] = KP_PEG8MM.grasp_point
             reset_s4["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].joint_names = ["panda_joint.*"]
             reset_s4["reset_end_effector_around_held_asset"].params["robot_ik_cfg"].body_names = "panda_fingertip_centered"
             reset_s4["reset_end_effector_around_held_asset"].params["pose_range_b"] = {
-                "z": (0.0, 0.0),
-                "roll": (3.141, 3.141),
-                "yaw": (-0.785, 0.785),
+                "x": (-0.005, 0.005),
+                "y": (-0.005, 0.005),
+                "z": (-0.015, 0.025),
+                "roll": (3.141 - 0.1, 3.141 + 0.1),
+                "pitch": (-0.5, 0.5),
+                "yaw": (-2.09, 2.09),
             }
 
             reset_s4["grasp_held_asset"].params["robot_cfg"].body_names = "panda_fingertip_centered"
             reset_s4["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
-            reset_s4["grasp_held_asset"].params["held_asset_diameter"] = KEYPOINTS_PEG8MM.grasp_diameter
+            reset_s4["grasp_held_asset"].params["held_asset_diameter"] = KP_PEG8MM.grasp_diameter
+
 
 @configclass
-class PegInsertTerminationsCfg(FactoryTerminationsCfg):
-    def __post_init__(self):
+class PegInsertTerminationsMixinCfg:
+    def __post_init__(self: FactoryBaseEnvCfg):
+        super().__post_init__()
         # For progress_context
-        self.progress_context.params["fixed_asset_cfg"] = SceneEntityCfg("hole_8mm")
-        self.progress_context.params["held_asset_cfg"] = SceneEntityCfg("peg_8mm")
-        self.progress_context.params["held_asset_offset"] = KEYPOINTS_PEG8MM.center_axis_bottom
-        self.progress_context.params["fixed_asset_offset"] = KEYPOINTS_HOLE8MM.inserted_peg_base_offset
+        terminations = self.terminations
+        terminations.progress_context.params["fixed_asset_cfg"] = SceneEntityCfg("hole_8mm")
+        terminations.progress_context.params["held_asset_cfg"] = SceneEntityCfg("peg_8mm")
+        terminations.progress_context.params["held_asset_offset"] = KP_PEG8MM.center_axis_bottom
+        terminations.progress_context.params["fixed_asset_offset"] = KP_HOLE8MM.inserted_peg_base_offset
 
 
 @configclass
-class PegInsertEnvCfg(FactoryBaseEnvCfg):
+class PegInsertEnvCfg(
+    PegInsertObservationsMixinCfg,
+    PegInsertEventMixinCfg,
+    PegInsertTerminationsMixinCfg,
+    FactoryBaseEnvCfg
+):
     """Configuration for the PegInsert environment."""
-
-    observations: PegInsertObservationsCfg = PegInsertObservationsCfg()
-    events: PegInsertEventCfg = PegInsertEventCfg()
-    terminations: PegInsertTerminationsCfg = PegInsertTerminationsCfg()
-
     def __post_init__(self):
         super().__post_init__()
-        for asset in ["hole_8mm", "gear_base", "small_gear", "large_gear", "medium_gear", "peg_8mm"]:
+        self.rewards.reach_reward.params["held_asset_cfg"] = SceneEntityCfg("peg_8mm")
+        self.terminations.oob.params["asset_cfg"] = SceneEntityCfg("peg_m8")
+        for asset in ["bolt_m16", "gear_base", "small_gear", "large_gear", "medium_gear", "nut_m16"]:
+            delattr(self.scene, asset)
+
+
+@configclass
+class PegInsertEnvSuccessTerminateCfg(
+    PegInsertObservationsMixinCfg,
+    PegInsertEventMixinCfg,
+    PegInsertTerminationsMixinCfg,
+    FactoryBaseEnvSuccessTerminateCfg
+):
+    """Configuration for the PegInsert environment."""
+    def __post_init__(self):
+        super().__post_init__()
+        self.terminations.oob.params["asset_cfg"] = SceneEntityCfg("peg_8mm")
+        for asset in ["bolt_m16", "gear_base", "small_gear", "large_gear", "medium_gear", "nut_m16"]:
             delattr(self.scene, asset)

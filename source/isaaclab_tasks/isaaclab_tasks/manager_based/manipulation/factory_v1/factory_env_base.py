@@ -108,7 +108,6 @@ class FactoryObservationsCfg:
             self.concatenate_terms = True
             self.history_length = 5
 
-
     policy: PolicyCfg = PolicyCfg()
     critic: PolicyCfg = PolicyCfg()
 
@@ -214,13 +213,13 @@ class FactoryRewardsCfg:
 
     joint_effort = RewTerm(func=mdp.joint_torques_l2, params={"asset_cfg": SceneEntityCfg("robot")}, weight=-1e-4)
 
-    early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-0.5)
+    early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-0.01)
 
     reach_reward = RewTerm(func=mdp.reach_reward, weight=0.1, params={"std": 1.0})
 
     progress_reward_fine = RewTerm(func=mdp.progress_reward, weight=0.1, params={"std": 0.005})
 
-    success_reward = RewTerm(func=mdp.success_reward, weight=100.0)
+    success_reward = RewTerm(func=mdp.success_reward, weight=1.0)
 
 
 @configclass
@@ -248,11 +247,11 @@ class FactoryTerminationsCfg:
         }
     )
 
-    success = DoneTerm(func=mdp.success_termination)
 
 ##
 # Environment configuration
 ##
+
 
 @configclass
 class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
@@ -292,3 +291,15 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
 
         self.sim.render.enable_ambient_occlusion = True
         self.sim.render.enable_dlssg = True
+
+
+@configclass
+class FactoryBaseEnvSuccessTerminateCfg(FactoryBaseEnvCfg):
+    """Configuration for the base Factory environment."""
+    # Post initialization
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.rewards.success_reward.weight = 100.0
+        delattr(self.rewards, "reach_reward")
+        delattr(self.rewards, "progress_reward_fine")
+        setattr(self.terminations, "success", DoneTerm(func=mdp.success_termination))
