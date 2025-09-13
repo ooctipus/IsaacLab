@@ -119,14 +119,6 @@ class FactoryEventCfg:
     # when nut dropped right above the bolt, it sometime can immediately success due to high speed it falls
     # down can can may training in early stage very finicky. we uses less aggressive gravity for training
     # and can make more aggressive later in the stage...
-    variable_gravity = EventTerm(
-        func=mdp.randomize_physics_scene_gravity,
-        mode="startup",
-        params={
-            "operation": "abs",
-            "gravity_distribution_params": ((0.0, 0.0, -5.0), (0.0, 0.0, -5.0))
-        },
-    )
 
     # mode: startup
     held_asset_material = EventTerm(
@@ -199,6 +191,15 @@ class FactoryEventCfg:
             },
             "sampling_strategy": "failure_rate"
         }
+    )
+
+    variable_gravity = EventTerm(
+        func=mdp.randomize_physics_scene_gravity,
+        mode="startup",
+        params={
+            "operation": "abs",
+            "gravity_distribution_params": ((0.0, 0.0, -5.0), (0.0, 0.0, -5.0))
+        },
     )
 
 
