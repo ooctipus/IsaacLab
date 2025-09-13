@@ -57,7 +57,7 @@ class NutThreadEventMixinCfg:
             reset_s1["reset_held_asset_on_fixed_asset"].params["assembled_offset"] = KP_BOLTM16.fully_screwed_nut_offset
             reset_s1["reset_held_asset_on_fixed_asset"].params["entry_offset"] = KP_BOLTM16.bolt_tip_offset
             reset_s1["reset_held_asset_on_fixed_asset"].params["held_asset_align_offset"] = KP_NUTM16.center_axis_bottom
-            reset_s1["reset_held_asset_on_fixed_asset"].params["assembly_fraction_range"] = (0.4, 1.0)
+            reset_s1["reset_held_asset_on_fixed_asset"].params["assembly_fraction_range"] = (0.4, 1.1)
             reset_s1["reset_held_asset_on_fixed_asset"].params["assembly_ratio"] = (0., 0., 0.002 / 6.2832)
 
             reset_s1["reset_end_effector_around_held_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("nut_m16")
@@ -87,7 +87,7 @@ class NutThreadEventMixinCfg:
             reset_s2["reset_end_effector_around_fixed_asset"].params["pose_range_b"] = {
                 "x": (-0.005, 0.005),
                 "y": (-0.005, 0.005),
-                "z": (0.01, 0.035),
+                "z": (0.00, 0.035),
                 "roll": (3.141, 3.141),
                 "pitch": (-0.5, 0.5),
                 "yaw": (-2.09, 2.09),

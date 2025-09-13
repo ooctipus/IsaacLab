@@ -131,6 +131,7 @@ GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER = EventTerm(
                     "fixed_asset_offset": MISSING,
                     "pose_range_b": MISSING,
                     "robot_ik_cfg": SceneEntityCfg("robot"),
+                    "ik_iterations": (10, 20)
                 }
             ),
             "reset_held_asset_in_hand": EventTerm(
@@ -147,7 +148,9 @@ GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER = EventTerm(
                 func=mdp.grasp_held_asset,
                 mode="reset",
                 params={
-                    "robot_cfg": SceneEntityCfg("robot", body_names="end_effector"), "held_asset_diameter": MISSING
+                    "robot_cfg": SceneEntityCfg("robot", body_names="end_effector"),
+                    "held_asset_diameter": MISSING,
+                    "flexible_angle": False
                 }
             ),
         }
