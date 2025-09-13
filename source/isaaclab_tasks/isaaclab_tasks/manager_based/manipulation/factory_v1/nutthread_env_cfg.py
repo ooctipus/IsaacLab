@@ -8,7 +8,7 @@ from isaaclab.utils import configclass
 
 from .assembly_keypoints import KEYPOINTS_BOLTHALFM16 as KP_BOLTM16
 from .assembly_keypoints import KEYPOINTS_NUTM16 as KP_NUTM16
-from .factory_env_base import FactoryBaseEnvCfg, FactoryBaseEnvSuccessTerminateCfg
+from .factory_env_base import FactoryBaseEnvCfg, FactoryBaseSuccessTerminateEnvCfg
 
 
 @configclass
@@ -180,11 +180,11 @@ class NutThreadEnvCfg(
 
 
 @configclass
-class NutThreadEnvSuccessTerminateCfg(
+class NutThreadSuccessTerminateEnvCfg(
     NutThreadObservationsMixinCfg,
     NutThreadEventMixinCfg,
     NutThreadTerminationsMixinCfg,
-    FactoryBaseEnvSuccessTerminateCfg
+    FactoryBaseSuccessTerminateEnvCfg
 ):
     """Configuration for the NutThread environment."""
     def __post_init__(self):

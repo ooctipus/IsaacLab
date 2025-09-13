@@ -8,7 +8,7 @@ from isaaclab.utils import configclass
 
 from .assembly_keypoints import KEYPOINTS_GEARBASE as KP_GEARBASE
 from .assembly_keypoints import KEYPOINTS_MEDIUMGEAR as KP_MEDIUMGEAR
-from .factory_env_base import FactoryBaseEnvCfg, FactoryBaseEnvSuccessTerminateCfg
+from .factory_env_base import FactoryBaseEnvCfg, FactoryBaseSuccessTerminateEnvCfg
 
 
 @configclass
@@ -77,8 +77,8 @@ class GearMeshEventMixinCfg:
             reset_s1["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
             reset_s1["grasp_held_asset"].params["held_asset_diameter"] = KP_MEDIUMGEAR.grasp_diameter
 
-        if "start_grasped_not_assembled" in events.reset_strategies.params["terms"]:
-            reset_s2: dict = events.reset_strategies.params["terms"]["start_grasped_not_assembled"].params["terms"]
+        if "start_grasped_then_assembled" in events.reset_strategies.params["terms"]:
+            reset_s2: dict = events.reset_strategies.params["terms"]["start_grasped_then_assembled"].params["terms"]
             # For reset_hand
             reset_s2["reset_end_effector_around_fixed_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("gear_base")
             reset_s2["reset_end_effector_around_fixed_asset"].params["fixed_asset_offset"] = KP_GEARBASE.medium_gear_tip_offset
@@ -180,11 +180,11 @@ class GearMeshEnvCfg(
 
 
 @configclass
-class GearMeshEnvSuccessTerminateCfg(
+class GearMeshSuccessTerminateEnvCfg(
     GearMeshObservationsMixinCfg,
     GearMeshEventMixinCfg,
     GearMeshTerminationsMixinCfg,
-    FactoryBaseEnvSuccessTerminateCfg
+    FactoryBaseSuccessTerminateEnvCfg
 ):
     """Configuration for the GearMesh environment."""
     def __post_init__(self):

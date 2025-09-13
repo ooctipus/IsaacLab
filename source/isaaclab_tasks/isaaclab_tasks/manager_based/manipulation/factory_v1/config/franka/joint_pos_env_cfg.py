@@ -11,9 +11,9 @@ from isaaclab.managers import SceneEntityCfg
 
 from ...factory_assets_cfg import FRANKA_PANDA_CFG
 from ...factory_env_base import FactoryBaseEnvCfg
-from ...gearmesh_env_cfg import GearMeshEnvCfg, GearMeshEnvSuccessTerminateCfg
-from ...nutthread_env_cfg import NutThreadEnvCfg, NutThreadEnvSuccessTerminateCfg
-from ...peginsert_env_cfg import PegInsertEnvCfg, PegInsertEnvSuccessTerminateCfg
+from ...gearmesh_env_cfg import GearMeshEnvCfg, GearMeshSuccessTerminateEnvCfg
+from ...nutthread_env_cfg import NutThreadEnvCfg, NutThreadSuccessTerminateEnvCfg
+from ...peginsert_env_cfg import PegInsertEnvCfg, PegInsertSuccessTerminateEnvCfg
 from ... import mdp
 
 
@@ -76,15 +76,15 @@ class FrankaPegInsertEnvCfg(FrankaFactoryEnvMixIn, PegInsertEnvCfg):
 
 
 @configclass
-class FrankaNutThreadSuccessTerminateEnvCfg(FrankaFactoryEnvMixIn, NutThreadEnvSuccessTerminateCfg):
+class FrankaNutThreadSuccessTerminateEnvCfg(FrankaFactoryEnvMixIn, NutThreadSuccessTerminateEnvCfg):
     pass
 
 
 @configclass
-class GearMeshEnvSuccessTerminateEnvCfg(FrankaFactoryEnvMixIn, GearMeshEnvSuccessTerminateCfg):
+class FrankaGearMeshSuccessTerminateEnvCfg(FrankaFactoryEnvMixIn, GearMeshSuccessTerminateEnvCfg):
     pass
 
 
 @configclass
-class PegInsertEnvSuccessTerminateEnvCfg(FrankaFactoryEnvMixIn, PegInsertEnvSuccessTerminateCfg):
+class FrankaPegInsertSuccessTerminateEnvCfg(FrankaFactoryEnvMixIn, PegInsertSuccessTerminateEnvCfg):
     pass

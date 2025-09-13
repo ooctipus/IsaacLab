@@ -294,7 +294,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
 
 
 @configclass
-class FactoryBaseEnvSuccessTerminateCfg(FactoryBaseEnvCfg):
+class FactoryBaseSuccessTerminateEnvCfg(FactoryBaseEnvCfg):
     """Configuration for the base Factory environment."""
     # Post initialization
     def __post_init__(self) -> None:

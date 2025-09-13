@@ -8,7 +8,7 @@ from isaaclab.utils import configclass
 
 from .assembly_keypoints import KEYPOINTS_HOLE8MM as KP_HOLE8MM
 from .assembly_keypoints import KEYPOINTS_PEG8MM as KP_PEG8MM
-from .factory_env_base import FactoryBaseEnvCfg, FactoryBaseEnvSuccessTerminateCfg
+from .factory_env_base import FactoryBaseEnvCfg, FactoryBaseSuccessTerminateEnvCfg
 
 
 @configclass
@@ -77,8 +77,8 @@ class PegInsertEventMixinCfg:
             reset_s1["grasp_held_asset"].params["robot_cfg"].joint_names = "panda_finger_joint[1-2]"
             reset_s1["grasp_held_asset"].params["held_asset_diameter"] = KP_PEG8MM.grasp_diameter
 
-        if "start_grasped_not_assembled" in events.reset_strategies.params["terms"]:
-            reset_s2: dict = events.reset_strategies.params["terms"]["start_grasped_not_assembled"].params["terms"]
+        if "start_grasped_then_assembled" in events.reset_strategies.params["terms"]:
+            reset_s2: dict = events.reset_strategies.params["terms"]["start_grasped_then_assembled"].params["terms"]
             # For reset_hand
             reset_s2["reset_end_effector_around_fixed_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("hole_8mm")
             reset_s2["reset_end_effector_around_fixed_asset"].params["fixed_asset_offset"] = KP_HOLE8MM.hole_tip_offset
@@ -180,11 +180,11 @@ class PegInsertEnvCfg(
 
 
 @configclass
-class PegInsertEnvSuccessTerminateCfg(
+class PegInsertSuccessTerminateEnvCfg(
     PegInsertObservationsMixinCfg,
     PegInsertEventMixinCfg,
     PegInsertTerminationsMixinCfg,
-    FactoryBaseEnvSuccessTerminateCfg
+    FactoryBaseSuccessTerminateEnvCfg
 ):
     """Configuration for the PegInsert environment."""
     def __post_init__(self):
