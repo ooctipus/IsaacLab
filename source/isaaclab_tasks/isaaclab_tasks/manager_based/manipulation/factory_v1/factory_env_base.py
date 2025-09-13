@@ -13,6 +13,7 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
+from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
 
@@ -195,10 +196,10 @@ class FactoryEventCfg:
 
     variable_gravity = EventTerm(
         func=mdp.randomize_physics_scene_gravity,
-        mode="startup",
+        mode="reset",
         params={
             "operation": "abs",
-            "gravity_distribution_params": ((0.0, 0.0, -5.0), (0.0, 0.0, -5.0))
+            "gravity_distribution_params": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
         },
     )
 
@@ -249,6 +250,24 @@ class FactoryTerminationsCfg:
     )
 
 
+@configclass
+class FactoryCurriculumsCfg:
+
+    difficulty_scheduler = CurrTerm(func=mdp.DifficultyScheduler, params={"max_difficulty": 10})
+
+    gravity_adr = CurrTerm(
+        func=mdp.modify_term_cfg,
+        params={
+            "address": "events.variable_gravity.params.gravity_distribution_params",
+            "modify_fn": mdp.initial_final_interpolate_fn,
+            "modify_params": {
+                "initial_value": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+                "final_value": ((0.0, 0.0, -9.81), (0.0, 0.0, -9.81)),
+                "difficulty_term_str": "difficulty_scheduler",
+            },
+        },
+    )
+
 ##
 # Environment configuration
 ##
@@ -263,6 +282,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     events: FactoryEventCfg = FactoryEventCfg()
     terminations: FactoryTerminationsCfg = FactoryTerminationsCfg()
     rewards: FactoryRewardsCfg = FactoryRewardsCfg()
+    curriculum: FactoryCurriculumsCfg = FactoryCurriculumsCfg()
     viewer: ViewerCfg = ViewerCfg(eye=(0.0, 0.25, 0.1), origin_type="asset_body", asset_name="robot", body_name="panda_fingertip_centered")
     actions = MISSING
 
