@@ -125,7 +125,7 @@ class NutThreadEventCfg(FactoryEventCfg):
             reset_s4["reset_held_asset_on_fixed_asset"].params["assembled_offset"] = KEYPOINTS_BOLTM16.fully_screwed_nut_offset
             reset_s4["reset_held_asset_on_fixed_asset"].params["entry_offset"] = KEYPOINTS_BOLTM16.bolt_tip_offset
             reset_s4["reset_held_asset_on_fixed_asset"].params["held_asset_align_offset"] = KEYPOINTS_NUTM16.center_axis_bottom
-            reset_s4["reset_held_asset_on_fixed_asset"].params["assembly_fraction_range"] = (0.1, 0.5)
+            reset_s4["reset_held_asset_on_fixed_asset"].params["assembly_fraction_range"] = (0.05, 0.5)
             reset_s4["reset_held_asset_on_fixed_asset"].params["assembly_ratio"] = (0., 0., 0.002 / 6.2832)
 
             reset_s4["reset_end_effector_around_held_asset"].params["fixed_asset_cfg"] = SceneEntityCfg("nut_m16")
@@ -165,7 +165,7 @@ class NutThreadEnvCfg(FactoryBaseEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
-        self.rewards.reach_reward.params["held_asset_cfg"] = SceneEntityCfg("nut_m16")
+        # self.rewards.reach_reward.params["held_asset_cfg"] = SceneEntityCfg("nut_m16")
         self.terminations.oob.params["asset_cfg"] = SceneEntityCfg("nut_m16")
         for asset in ["gear_base", "hole_8mm", "small_gear", "large_gear", "medium_gear", "peg_8mm"]:
             delattr(self.scene, asset)

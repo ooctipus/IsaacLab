@@ -79,7 +79,7 @@ class KeyPointsBoltHalfM16:
     bolt_base_offset: Offset = Offset(pos=(0, 0, 0.01))
     first_thread_screwed_nut_offset: Offset = Offset(pos=(0, 0, 0.032))
     second_thread_screwed_nut_offset: Offset = Offset(pos=(0, 0, 0.030))
-    fully_screwed_nut_offset: Offset = Offset(pos=(0, 0, 0.024))
+    fully_screwed_nut_offset: Offset = Offset(pos=(0, 0, 0.022))
 
 
 @configclass
