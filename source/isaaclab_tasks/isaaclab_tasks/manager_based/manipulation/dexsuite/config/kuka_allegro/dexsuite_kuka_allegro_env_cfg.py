@@ -12,6 +12,7 @@ from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils import configclass
 
 from ... import dexsuite_env_cfg as dexsuite
+from ... import dexsuite_shelf_env_cfg as dexsuite_shelf
 from ... import mdp
 
 
@@ -76,4 +77,14 @@ class DexsuiteKukaAllegroLiftEnvCfg(KukaAllegroMixinCfg, dexsuite.DexsuiteLiftEn
 
 @configclass
 class DexsuiteKukaAllegroLiftEnvCfg_PLAY(KukaAllegroMixinCfg, dexsuite.DexsuiteLiftEnvCfg_PLAY):
+    pass
+
+
+@configclass
+class DexsuiteKukaAllegroShelvesReorientEnvCfg(KukaAllegroMixinCfg, dexsuite_shelf.DexSuiteShelvesReorientEnvCfg):
+    pass
+
+
+@configclass
+class DexsuiteKukaAllegroShelvesPlaceEnvCfg(KukaAllegroMixinCfg, dexsuite_shelf.DexSuiteShelvesPlaceEnvCfg):
     pass

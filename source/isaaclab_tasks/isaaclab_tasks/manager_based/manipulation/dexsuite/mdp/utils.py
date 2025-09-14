@@ -1,174 +1,121 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
-# All rights reserved.
-#
-# SPDX-License-Identifier: BSD-3-Clause
-
-import hashlib
-import logging
+import omni
 import numpy as np
 import torch
+from functools import lru_cache
 import trimesh
-from trimesh.sample import sample_surface
-
-import isaacsim.core.utils.prims as prim_utils
+import io
+import warp as wp
+from trimesh.transformations import rotation_matrix
 from pxr import UsdGeom
+import isaacsim.core.utils.torch as torch_utils
+import isaaclab.utils.math as math_utils
+import random
+from isaaclab.utils.warp import convert_to_warp_mesh
+from .rigid_object_hasher import RigidObjectHasher
+from contextlib import contextmanager, redirect_stdout, redirect_stderr
+try:
+    import pytorch3d  # noqa: F401
+    HAVE_P3D = True
+except Exception:
+    HAVE_P3D = False
+from pytorch3d.structures import Meshes
+from pytorch3d.ops import sample_points_from_meshes, sample_farthest_points
 
-from isaaclab.sim.utils import get_all_matching_child_prims
 
-# ---- module-scope caches ----
-_PRIM_SAMPLE_CACHE: dict[tuple[str, int], np.ndarray] = {}  # (prim_hash, num_points) -> (N,3) in root frame
-_FINAL_SAMPLE_CACHE: dict[str, np.ndarray] = {}  # env_hash -> (num_points,3) in root frame
+@lru_cache(maxsize=None)
+def _load_mesh_tensors(prim):
+    tm  = prim_to_trimesh(prim)
+    verts = torch.from_numpy(tm.vertices.astype("float32"))
+    faces = torch.from_numpy(tm.faces.astype("int64"))
+    return verts, faces
 
+def sample_object_point_cloud(
+    num_envs: int,
+    num_points: int,
+    prim_path_pattern: str,
+    device: str = "cuda",  # assume GPU
+    rigid_object_hasher: RigidObjectHasher | None = None,
+    seed: int = 42,
+) -> torch.Tensor | None:
+    """Generating point cloud given the path regex expression. This methood samples point cloud on ALL colliders
+    falls under the prim path pattern. It is robust even if there are different numbers of colliders under the same
+    regex expression. e.g. envs_0/object has 2 colliders, while envs_1/object has 4 colliders. This method will ensure
+    each object has exactly num_points pointcloud regardless of number of colliders. If detected 0 collider, this method
+    will return None, indicating no pointcloud can be sampled.
+    
+    To save memory and time, this method utilize RigidObjectHasher to make sure collider that hash to the same key will
+    only be sampled once. It worths noting there are two kinds of hash:
+    
+    collider hash, and root hash. As name suggest, collider hash describes the uniqueness of collider from the view of root,
+    collider hash is generated at atomic level and can not be representing aggregated. The root hash describes the 
+    uniqueness of aggregate of root, and can be hash that represent aggregate of multiple components that composes root.
+    
+    Be mindful that root's transform: translation, quaternion, scale, do no account for root's hash
 
-def clear_pointcloud_caches():
-    _PRIM_SAMPLE_CACHE.clear()
-    _FINAL_SAMPLE_CACHE.clear()
-
-
-def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str, device: str = "cpu") -> torch.Tensor:
-    """
-    Samples point clouds for each environment instance by collecting points
-    from all matching USD prims under `prim_path`, then downsamples to
-    exactly `num_points` per env using farthest-point sampling.
-
-    Caching is in-memory within this module:
-      - per-prim raw samples:   _PRIM_SAMPLE_CACHE[(prim_hash, num_points)]
-      - final downsampled env:  _FINAL_SAMPLE_CACHE[env_hash]
+    Args:
+        num_envs (int): _description_
+        num_points (int): _description_
+        prim_path_pattern (str): _description_
+        device (str, optional): _description_. Defaults to "cuda".
 
     Returns:
-        torch.Tensor: Shape (num_envs, num_points, 3) on `device`.
+        torch.Tensor | None: _description_
     """
-    points = torch.zeros((num_envs, num_points, 3), dtype=torch.float32, device=device)
-    xform_cache = UsdGeom.XformCache()
+    hasher = (
+        rigid_object_hasher
+        if rigid_object_hasher is not None
+        else RigidObjectHasher(num_envs, prim_path_pattern, device=device)
+    )
 
-    for i in range(num_envs):
-        # Resolve prim path
-        obj_path = prim_path.replace(".*", str(i))
-
-        # Gather prims
-        prims = get_all_matching_child_prims(
-            obj_path, predicate=lambda p: p.GetTypeName() in ("Mesh", "Cube", "Sphere", "Cylinder", "Capsule", "Cone")
-        )
-        if not prims:
-            raise KeyError(f"No valid prims under {obj_path}")
-
-        object_prim = prim_utils.get_prim_at_path(obj_path)
-        world_root = xform_cache.GetLocalToWorldTransform(object_prim)
-
-        # hash each child prim by its rel transform + geometry
-        prim_hashes = []
-        for prim in prims:
-            prim_type = prim.GetTypeName()
-            hasher = hashlib.sha256()
-
-            rel = world_root.GetInverse() * xform_cache.GetLocalToWorldTransform(prim)  # prim -> root
-            mat_np = np.array([[rel[r][c] for c in range(4)] for r in range(4)], dtype=np.float32)
-            hasher.update(mat_np.tobytes())
-
-            if prim_type == "Mesh":
-                mesh = UsdGeom.Mesh(prim)
-                verts = np.asarray(mesh.GetPointsAttr().Get(), dtype=np.float32)
-                hasher.update(verts.tobytes())
-            else:
-                if prim_type == "Cube":
-                    size = UsdGeom.Cube(prim).GetSizeAttr().Get()
-                    hasher.update(np.float32(size).tobytes())
-                elif prim_type == "Sphere":
-                    r = UsdGeom.Sphere(prim).GetRadiusAttr().Get()
-                    hasher.update(np.float32(r).tobytes())
-                elif prim_type == "Cylinder":
-                    c = UsdGeom.Cylinder(prim)
-                    hasher.update(np.float32(c.GetRadiusAttr().Get()).tobytes())
-                    hasher.update(np.float32(c.GetHeightAttr().Get()).tobytes())
-                elif prim_type == "Capsule":
-                    c = UsdGeom.Capsule(prim)
-                    hasher.update(np.float32(c.GetRadiusAttr().Get()).tobytes())
-                    hasher.update(np.float32(c.GetHeightAttr().Get()).tobytes())
-                elif prim_type == "Cone":
-                    c = UsdGeom.Cone(prim)
-                    hasher.update(np.float32(c.GetRadiusAttr().Get()).tobytes())
-                    hasher.update(np.float32(c.GetHeightAttr().Get()).tobytes())
-
-            prim_hashes.append(hasher.hexdigest())
-
-        # scale on root (default to 1 if missing)
-        attr = object_prim.GetAttribute("xformOp:scale")
-        scale_val = attr.Get() if attr else None
-        if scale_val is None:
-            base_scale = torch.ones(3, dtype=torch.float32, device=device)
+    if hasher.num_root == 0:
+        return None
+    
+    replicated_env = torch.all(hasher.root_prim_hashes == hasher.root_prim_hashes[0])
+    if replicated_env:
+        # Pick env 0’s colliders
+        mask_env0 = (hasher.collider_prim_env_ids == 0)
+        verts_list, faces_list = zip(*[_load_mesh_tensors(p) for p, m in zip(hasher.collider_prims, mask_env0) if m])
+        meshes = Meshes(verts=[v.to(device) for v in verts_list], faces=[f.to(device) for f in faces_list])
+        rel_tf = hasher.collider_prim_relative_transforms[mask_env0]
+    else:
+        # Build all envs's colliders
+        verts_list, faces_list = zip(*[_load_mesh_tensors(p) for p in hasher.collider_prims])
+        meshes = Meshes(verts=[v.to(device) for v in verts_list], faces=[f.to(device) for f in faces_list])
+        rel_tf = hasher.collider_prim_relative_transforms
+    with temporary_seed(seed):
+        # Uniform‐surface sample then scale to root
+        samp  = sample_points_from_meshes(meshes, num_points * 2)
+        local, _ = sample_farthest_points(samp, K=num_points)
+        t_rel, q_rel, s_rel = rel_tf[:, :3].unsqueeze(1), rel_tf[:, 3:7].unsqueeze(1), rel_tf[:, 7:].unsqueeze(1)
+        # here is apply_forward not apply_inverse, because when mesh loaded, it is unscaled. But inorder to view it from
+        # root, you need to apply forward transformation of root->child, which is exactly tqs_root_child.
+        root = math_utils.quat_apply(q_rel.expand(-1, num_points, -1), local * s_rel) + t_rel
+        
+        # Merge Colliders
+        if replicated_env:
+            buf = root.reshape(1, -1, 3)
+            merged, _ = sample_farthest_points(buf, K=num_points)
+            result = merged.view(1, num_points, 3).expand(num_envs, -1, -1) * hasher.root_prim_scales.unsqueeze(1)
         else:
-            base_scale = torch.tensor(scale_val, dtype=torch.float32, device=device)
+            # 4) Scatter each collider into a padded per‐root buffer
+            env_ids = hasher.collider_prim_env_ids.to(device)  # (M,)
+            counts = torch.bincount(env_ids, minlength=hasher.num_root)   # (num_root,)
+            max_c = int(counts.max().item())
+            buf = torch.zeros((hasher.num_root, max_c * num_points, 3), device=device, dtype=root.dtype)
+            # track how many placed in each root
+            placed = torch.zeros_like(counts)
+            for i in range(len(hasher.collider_prims)):
+                r = int(env_ids[i].item())
+                start = placed[r].item() * num_points
+                buf[r, start:start+num_points] = root[i]
+                placed[r] += 1
+            # 5) One batch‐FPS to merge per‐root
+            merged, _ = sample_farthest_points(buf, K=num_points)
+            result = merged * hasher.root_prim_scales.unsqueeze(1)
 
-        # env-level cache key (includes num_points)
-        env_key = "_".join(sorted(prim_hashes)) + f"_{num_points}"
-        env_hash = hashlib.sha256(env_key.encode()).hexdigest()
-
-        # load from env-level in-memory cache
-        if env_hash in _FINAL_SAMPLE_CACHE:
-            arr = _FINAL_SAMPLE_CACHE[env_hash]  # (num_points,3) in root frame
-            points[i] = torch.from_numpy(arr).to(device) * base_scale.unsqueeze(0)
-            continue
-
-        # otherwise build per-prim samples (with per-prim cache)
-        all_samples_np: list[np.ndarray] = []
-        for prim, ph in zip(prims, prim_hashes):
-            key = (ph, num_points)
-            if key in _PRIM_SAMPLE_CACHE:
-                samples = _PRIM_SAMPLE_CACHE[key]
-            else:
-                prim_type = prim.GetTypeName()
-                if prim_type == "Mesh":
-                    mesh = UsdGeom.Mesh(prim)
-                    verts = np.asarray(mesh.GetPointsAttr().Get(), dtype=np.float32)
-                    faces = _triangulate_faces(prim)
-                    mesh_tm = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
-                else:
-                    mesh_tm = create_primitive_mesh(prim)
-
-                face_weights = mesh_tm.area_faces
-                samples_np, _ = sample_surface(mesh_tm, num_points * 2, face_weight=face_weights)
-
-                # FPS to num_points on chosen device
-                tensor_pts = torch.from_numpy(samples_np.astype(np.float32)).to(device)
-                prim_idxs = farthest_point_sampling(tensor_pts, num_points)
-                local_pts = tensor_pts[prim_idxs]
-
-                # prim -> root transform
-                rel = xform_cache.GetLocalToWorldTransform(prim) * world_root.GetInverse()
-                mat_np = np.array([[rel[r][c] for c in range(4)] for r in range(4)], dtype=np.float32)
-                mat_t = torch.from_numpy(mat_np).to(device)
-
-                ones = torch.ones((num_points, 1), device=device)
-                pts_h = torch.cat([local_pts, ones], dim=1)
-                root_h = pts_h @ mat_t
-                samples = root_h[:, :3].detach().cpu().numpy()
-
-                if prim_type == "Cone":
-                    samples[:, 2] -= UsdGeom.Cone(prim).GetHeightAttr().Get() / 2
-
-                _PRIM_SAMPLE_CACHE[key] = samples  # cache in root frame @ num_points
-
-            all_samples_np.append(samples)
-
-        # combine & env-level FPS (if needed)
-        if len(all_samples_np) == 1:
-            samples_final = torch.from_numpy(all_samples_np[0]).to(device)
-        else:
-            combined = torch.from_numpy(np.concatenate(all_samples_np, axis=0)).to(device)
-            idxs = farthest_point_sampling(combined, num_points)
-            samples_final = combined[idxs]
-
-        # store env-level cache in root frame (CPU)
-        _FINAL_SAMPLE_CACHE[env_hash] = samples_final.detach().cpu().numpy()
-
-        # apply root scale and write out
-        points[i] = samples_final * base_scale.unsqueeze(0)
-
-    return points
-
+    return result
 
 def _triangulate_faces(prim) -> np.ndarray:
-    """Convert a USD Mesh prim into triangulated face indices (N, 3)."""
     mesh = UsdGeom.Mesh(prim)
     counts = mesh.GetFaceVertexCountsAttr().Get()
     indices = mesh.GetFaceVertexIndicesAttr().Get()
@@ -176,13 +123,12 @@ def _triangulate_faces(prim) -> np.ndarray:
     it = iter(indices)
     for cnt in counts:
         poly = [next(it) for _ in range(cnt)]
-        for k in range(1, cnt - 1):
-            faces.append([poly[0], poly[k], poly[k + 1]])
+        for k in range(1, cnt-1):
+            faces.append([poly[0], poly[k], poly[k+1]])
     return np.asarray(faces, dtype=np.int64)
 
 
 def create_primitive_mesh(prim) -> trimesh.Trimesh:
-    """Create a trimesh mesh from a USD primitive (Cube, Sphere, Cylinder, etc.)."""
     prim_type = prim.GetTypeName()
     if prim_type == "Cube":
         size = UsdGeom.Cube(prim).GetSizeAttr().Get()
@@ -192,56 +138,184 @@ def create_primitive_mesh(prim) -> trimesh.Trimesh:
         return trimesh.creation.icosphere(subdivisions=3, radius=r)
     elif prim_type == "Cylinder":
         c = UsdGeom.Cylinder(prim)
-        return trimesh.creation.cylinder(radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get())
+        return trimesh.creation.cylinder(
+            radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get()
+        )
     elif prim_type == "Capsule":
         c = UsdGeom.Capsule(prim)
-        return trimesh.creation.capsule(radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get())
-    elif prim_type == "Cone":  # Cone
+        tri_mesh = trimesh.creation.capsule(
+            radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get()
+        )
+        if c.GetAxisAttr().Get() == "X":
+            # rotate −90° about Y to point the length along +X
+            R = rotation_matrix(np.radians(-90), [0, 1, 0])
+            tri_mesh.apply_transform(R)
+        elif c.GetAxisAttr().Get() == "Y":
+            # rotate +90° about X to point the length along +Y
+            R = rotation_matrix(np.radians(90), [1, 0, 0])
+            tri_mesh.apply_transform(R)
+        return tri_mesh
+        
+    elif prim_type == "Cone":
         c = UsdGeom.Cone(prim)
-        return trimesh.creation.cone(radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get())
+        radius = c.GetRadiusAttr().Get()
+        height = c.GetHeightAttr().Get()
+        mesh = trimesh.creation.cone(radius=radius, height=height)
+        # shift all vertices down by height/2 for usd / trimesh cone primitive definiton discrepancy
+        mesh.apply_translation((0.0, 0.0, -height/2.0))
+        return mesh
     else:
         raise KeyError(f"{prim_type} is not a valid primitive mesh type")
 
 
-def farthest_point_sampling(
-    points: torch.Tensor, n_samples: int, memory_threashold=2 * 1024**3
-) -> torch.Tensor:  # 2 GiB
-    """
-    Farthest Point Sampling (FPS) for point sets.
+def prim_to_trimesh(prim, relative_to_world=False) -> trimesh.Trimesh:
+    if prim.GetTypeName() == "Mesh":
+        mesh = UsdGeom.Mesh(prim)
+        verts = np.asarray(mesh.GetPointsAttr().Get(), dtype=np.float32)
+        faces = _triangulate_faces(prim)
+        mesh_tm = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+    else:
+        mesh_tm = create_primitive_mesh(prim)
 
-    Selects `n_samples` points such that each new point is farthest from the
-    already chosen ones. Uses a full pairwise distance matrix if memory allows,
-    otherwise falls back to an iterative version.
+    if relative_to_world:
+        tf = np.array(omni.usd.get_world_transform_matrix(prim)).T  # shape (4,4)
+        mesh_tm.apply_transform(tf)
 
-    Args:
-        points (torch.Tensor): Input points of shape (N, D).
-        n_samples (int): Number of samples to select.
-        memory_threashold (int): Max allowed bytes for distance matrix. Default 2 GiB.
+    return mesh_tm
 
-    Returns:
-        torch.Tensor: Indices of sampled points (n_samples,).
-    """
-    device = points.device
-    N = points.shape[0]
-    elem_size = points.element_size()
-    bytes_needed = N * N * elem_size
-    if bytes_needed <= memory_threashold:
-        dist_mat = torch.cdist(points, points)
-        sampled_idx = torch.zeros(n_samples, dtype=torch.long, device=device)
-        min_dists = torch.full((N,), float("inf"), device=device)
-        farthest = torch.randint(0, N, (1,), device=device)
-        for j in range(n_samples):
-            sampled_idx[j] = farthest
-            min_dists = torch.minimum(min_dists, dist_mat[farthest].view(-1))
-            farthest = torch.argmax(min_dists)
-        return sampled_idx
-    logging.warning(f"FPS fallback to iterative (needed {bytes_needed} > {memory_threashold})")
-    sampled_idx = torch.zeros(n_samples, dtype=torch.long, device=device)
-    distances = torch.full((N,), float("inf"), device=device)
-    farthest = torch.randint(0, N, (1,), device=device)
-    for j in range(n_samples):
-        sampled_idx[j] = farthest
-        dist = torch.norm(points - points[farthest], dim=1)
-        distances = torch.minimum(distances, dist)
-        farthest = torch.argmax(distances)
-    return sampled_idx
+
+def prim_to_warp_mesh(prim, device, relative_to_world=False) -> wp.Mesh:
+    if prim.GetTypeName() == "Mesh":
+        mesh_prim = UsdGeom.Mesh(prim)
+        points = np.asarray(mesh_prim.GetPointsAttr().Get(), dtype=np.float32)
+        indices = np.asarray(mesh_prim.GetFaceVertexIndicesAttr().Get(), dtype=np.int32)
+    else:
+        mesh = create_primitive_mesh(prim)
+        points = mesh.vertices.astype(np.float32)
+        indices = mesh.faces.astype(np.int32)
+
+    if relative_to_world:
+        tf = np.array(omni.usd.get_world_transform_matrix(prim)).T  # (4,4)
+        points = (points @ tf[:3, :3].T) + tf[:3, 3]
+
+    wp_mesh = convert_to_warp_mesh(points, indices, device=device)
+    return wp_mesh
+
+
+def set_reset_state(env, states: torch.Tensor, env_ids: torch.Tensor, keys: list[str], is_relative: bool = False):
+    idx = 0
+    for name, articulation in env.scene._articulations.items():
+        if name in keys:
+            root_state = states[:, idx : idx + 13].clone()
+            if is_relative:
+                root_state[:, :3] += env.scene.env_origins[env_ids]
+            articulation.write_root_state_to_sim(root_state, env_ids=env_ids)
+            # joint state
+            n_j = articulation.num_joints
+            joint_position = states[:, idx + 13 : idx + 13 + n_j].clone()
+            joint_velocity = states[:, idx + 13 + n_j : idx + 13 + 2 * n_j].clone()
+            articulation.write_joint_state_to_sim(joint_position, joint_velocity, env_ids=env_ids)
+            idx += (13 + 2 * n_j)
+    # rigid objects
+    for name, rigid_object in env.scene._rigid_objects.items():
+        if name in keys:
+            root_state = states[:, idx : idx + 13].clone()
+            if is_relative:
+                root_state[:, :3] += env.scene.env_origins[env_ids]
+            rigid_object.write_root_state_to_sim(root_state, env_ids)
+            idx += 13
+
+
+def get_reset_state(env, env_id: torch.Tensor, keys: list[str], is_relative=False):
+    states = []
+    # articulations
+    for name, articulation in env.scene._articulations.items():
+        if name in keys:
+            state = articulation.data.root_state_w[env_id].clone()
+            if is_relative:
+                state[:, :3] -= env.scene.env_origins[env_id]
+            states.append(state)
+            states.append(articulation.data.joint_pos[env_id].clone())
+            states.append(articulation.data.joint_vel[env_id].clone())
+    # rigid objects
+    for name, rigid_object in env.scene._rigid_objects.items():
+        if name in keys:
+            state = rigid_object.data.root_state_w[env_id].clone()
+            if is_relative:
+                state[:, :3] -= env.scene.env_origins[env_id]
+            states.append(state)
+    return torch.cat(states, dim=-1)
+
+
+@wp.kernel
+def get_signed_distance(
+    queries: wp.array(dtype=wp.vec3),   # [n_obstacles * E_bad * n_points, 3]
+    mesh_handles: wp.array(dtype=wp.uint64), # [n_obstacles * E_bad * max_prims]
+    prim_counts: wp.array(dtype=wp.int32),  # [n_obstacles * E_bad]
+    coll_rel_pos: wp.array(dtype=wp.vec3),  # [n_obstacles * E_bad * max_prims, 3]
+    coll_rel_quat: wp.array(dtype=wp.quat),  # [n_obstacles * E_bad * max_prims, 4]
+    coll_rel_scale: wp.array(dtype=wp.vec3),  # [n_obstacles * E_bad * max_prims, 3]
+    max_dist: float,
+    check_dist: bool,
+    num_envs: int,
+    num_points: int,
+    max_prims: int,
+    signs: wp.array(dtype=float),     # [E_bad * n_points]
+):
+    tid = wp.tid()
+    per_obstacle_stride = num_envs * num_points
+    obstacle_idx = tid // per_obstacle_stride
+    rem = tid - obstacle_idx * per_obstacle_stride
+    env_id = rem // num_points  # this env_id is index of arange(0, len(env_id)), its sequence, not selective indexing
+    q = queries[tid]
+    # accumulator for the lowest‐sign (start large)
+    best_signed_dist = max_dist
+    obstacle_env_base = obstacle_idx * num_envs * max_prims + env_id * max_prims
+    prim_id = obstacle_idx * num_envs + env_id
+
+    for p in range(prim_counts[prim_id]):
+        index = obstacle_env_base + p
+        mid = mesh_handles[index]
+        if mid != 0:
+            q1 = q - coll_rel_pos[index]
+            q2 = wp.quat_rotate_inv(coll_rel_quat[index], q1)
+            crs = coll_rel_scale[index]
+            q3 = wp.vec3(q2.x / crs.x, q2.y / crs.y, q2.z / crs.z)
+            mp = wp.mesh_query_point(mid, q3, max_dist)
+            if mp.result:
+                if check_dist:
+                    closest = wp.mesh_eval_position(mid, mp.face, mp.u, mp.v)
+                    local_dist = (q3 - closest)
+                    unscaled_local_dist = wp.vec3(local_dist.x * crs.x, local_dist.y * crs.y, local_dist.z * crs.z)
+                    delta_root = wp.quat_rotate(coll_rel_quat[index], unscaled_local_dist)
+                    dist = wp.length(delta_root)
+                    signed_dist = dist * mp.sign
+                else:
+                    signed_dist = mp.sign
+                if signed_dist < best_signed_dist:
+                    best_signed_dist = signed_dist
+    signs[tid] = best_signed_dist
+
+
+@contextmanager
+def temporary_seed(seed: int, restore_numpy: bool = True, restore_python: bool = True):
+    # snapshot states
+    cpu_state = torch.get_rng_state()
+    cuda_states = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+    np_state = np.random.get_state() if restore_numpy else None
+    py_state = random.getstate()     if restore_python else None
+
+    try:
+        sink = io.StringIO()
+        with redirect_stdout(sink), redirect_stderr(sink):
+            torch_utils.set_seed(seed)
+        yield
+    finally:
+        # restore everything
+        torch.set_rng_state(cpu_state)
+        if cuda_states is not None:
+            torch.cuda.set_rng_state_all(cuda_states)
+        if np_state is not None:
+            np.random.set_state(np_state)
+        if py_state is not None:
+            random.setstate(py_state)

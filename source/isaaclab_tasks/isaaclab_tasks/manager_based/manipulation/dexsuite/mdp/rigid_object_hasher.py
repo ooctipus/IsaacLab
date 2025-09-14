@@ -5,8 +5,7 @@ import warp as wp
 from pxr import UsdPhysics
 from pxr import UsdGeom, Gf, Usd
 import isaacsim.core.utils.prims as prim_utils
-import isaaclab.utils.math as math_utils
-
+from isaaclab.sim import get_all_matching_child_prims
 HASH_STORE = {
     "warp_mesh_store":{}
 }
@@ -42,10 +41,10 @@ class RigidObjectHasher:
         root_prim_scales = []
         for i in range(num_roots):
             # 1: Get all child prims that are colliders, count them, and store their belonging env id
-            coll_prims = prim_utils.get_all_matching_child_prims(
-                prim_paths[i], predicate=lambda p: prim_utils.get_prim_at_path(p).GetTypeName() in (
-                    "Mesh","Cube","Sphere","Cylinder","Capsule","Cone"
-                ) and prim_utils.get_prim_at_path(p).HasAPI(UsdPhysics.CollisionAPI)
+            coll_prims = get_all_matching_child_prims(
+                prim_paths[i], predicate=lambda p: p.GetTypeName() in \
+                    ("Mesh","Cube","Sphere","Cylinder","Capsule","Cone") and p.HasAPI(UsdPhysics.CollisionAPI),
+                traverse_instance_prims=True
             )
             if len(coll_prims) == 0:
                 return

@@ -6,16 +6,18 @@
 from __future__ import annotations
 
 import torch
+from pxr import UsdPhysics
 from typing import TYPE_CHECKING
-
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.managers import ManagerTermBase, SceneEntityCfg
+from isaaclab.sim import get_first_matching_child_prim
 from isaaclab.utils.math import quat_apply, quat_apply_inverse, quat_inv, quat_mul, subtract_frame_transforms
 
 from .utils import sample_object_point_cloud
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
+    from isaaclab.sensors import TiledCamera, Camera, RayCasterCamera
 
 
 def object_pos_b(
@@ -94,6 +96,128 @@ def body_state_b(
     # concate and return
     out = torch.cat((body_pos_b, body_quat_b, body_lin_vel_b, body_ang_vel_b), dim=1)
     return out.view(env.num_envs, -1)
+
+
+
+def body_pos_b(
+    env: ManagerBasedRLEnv,
+    body_asset_cfg: SceneEntityCfg,
+    base_asset_cfg: SceneEntityCfg,
+    flatten: bool = False,
+) -> torch.Tensor:
+    body_asset: Articulation = env.scene[body_asset_cfg.name]
+    base_asset: Articulation = env.scene[base_asset_cfg.name]
+    # get world pose of bodies
+    body_pos_w = body_asset.data.body_pos_w[:, body_asset_cfg.body_ids].clone().view(-1, 3)
+    num_bodies = int(body_pos_w.shape[0] / env.num_envs)
+    # get world pose of base frame
+    root_pos_w = base_asset.data.root_link_pos_w.unsqueeze(1).repeat_interleave(num_bodies, dim=1).view(-1, 3)
+    root_quat_w = base_asset.data.root_link_quat_w.unsqueeze(1).repeat_interleave(num_bodies, dim=1).view(-1, 4)
+    body_pos_b, _ = subtract_frame_transforms(root_pos_w, root_quat_w, body_pos_w)
+    # concate and return
+    return body_pos_b.view(env.num_envs, -1) if flatten else body_pos_b.view(env.num_envs, -1, 3)
+
+class objects_point_cloud_b(ManagerTermBase):
+
+    def __init__(self, cfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+
+        object_cfgs: list[SceneEntityCfg] = cfg.params.get("object_cfgs", [SceneEntityCfg('object')])
+        self.num_points: list[int] = cfg.params.get("num_points", [10])
+        self.visualize = cfg.params.get("visualize", True)
+        self.ref_asset_cfg: SceneEntityCfg = cfg.params.get("ref_asset_cfg", SceneEntityCfg("robot"))
+        self.statics: list[bool] = cfg.params.get("statics", [False])
+        self.objects: list[RigidObject] = [env.scene[object_cfg.name] for object_cfg in object_cfgs]
+        self.body_ids = []
+        self.body_names: list = [object.data.body_names if isinstance(cfg.body_ids, slice) else cfg.body_names for object, cfg in zip(self.objects, object_cfgs)]
+        self.ref_asset: Articulation = env.scene[self.ref_asset_cfg.name]
+
+        if self.visualize:
+            from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
+            from isaaclab.markers import VisualizationMarkers
+            ray_cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/ObservationPointCloud")
+            ray_cfg.markers["hit"].radius = 0.0055
+            self.visualizer = VisualizationMarkers(ray_cfg)
+
+        points = []
+        for object, n_point, body_name in zip(self.objects, self.num_points, self.body_names):
+            if len(body_name) == 1:
+                local_pts = sample_object_point_cloud(env.num_envs, n_point, object.cfg.prim_path, device=env.device)
+                if local_pts is not None:
+                    points.append(local_pts)
+                    self.body_ids.append([0])
+                else:
+                    raise(f"Found no Collider to sample point cloud in {object.cfg.prim_path}")
+            else:
+                body_ids = []
+                for bn in body_name:
+                    prim = get_first_matching_child_prim(
+                        object.cfg.prim_path.replace(".*", "0", 1),
+                        predicate=lambda p: p.GetName() == bn,
+                        traverse_instance_prims=True
+                    )
+                    expression = str(prim.GetPrimPath()).replace("/env_0/", "/env_.*/", 1)
+                    local_pts = sample_object_point_cloud(env.num_envs, n_point, expression, device=env.device)
+                    if local_pts is not None:
+                        points.append(local_pts)
+                        body_ids.append(object.body_names.index(bn))
+                self.body_ids.append(body_ids)
+        self.points_b = torch.cat(points, dim=1)
+        self.points_w = torch.zeros_like(self.points_b)
+    
+    def reset(self, env_ids = slice(None)):
+        idx = 0
+        for i, object in enumerate(self.objects):
+            if self.statics[i]:
+                object_pos_w = object.data.root_pos_w[env_ids].unsqueeze(1).repeat(1, self.num_points[i], 1)
+                object_quat_w = object.data.root_quat_w[env_ids].unsqueeze(1).repeat(1, self.num_points[i], 1)
+                self.points_w[env_ids, idx : idx + self.num_points[i]] = (quat_apply(object_quat_w, self.points_b[env_ids, idx : idx + self.num_points[i]]) + object_pos_w)
+            idx += self.num_points[i]
+            
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        ref_asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+        object_cfgs: list[SceneEntityCfg] = [SceneEntityCfg("object")],
+        num_points: list[int] = [10],
+        statics: list[bool] = [False],
+        visualize: bool = True,
+        normalize: bool = False,
+        flatten: bool = False,
+    ):
+        idx = 0
+        ref_pos_w = self.ref_asset.data.root_pos_w.unsqueeze(1).repeat(1, self.points_w.shape[1], 1)
+        ref_quat_w = self.ref_asset.data.root_quat_w.unsqueeze(1).repeat(1, self.points_w.shape[1], 1)
+        for object, body_id, static, n_pts in zip(self.objects, self.body_ids, statics, num_points):
+            if not static:
+                pos_w = object.data.body_link_pos_w[:, body_id].unsqueeze(2).expand(-1, -1, n_pts, 3).reshape(env.num_envs, -1, 3)
+                quat_w = object.data.body_link_quat_w[:, body_id].unsqueeze(2).expand(-1, -1, n_pts, 4).reshape(env.num_envs, -1, 4)
+                self.points_w[:, idx : idx + n_pts * len(body_id)] = quat_apply(quat_w, self.points_b[:, idx : idx + n_pts * len(body_id)]) + pos_w
+            idx += n_pts
+
+        if visualize:
+            self.visualizer.visualize(translations=self.points_w.view(-1, 3))
+        object_point_cloud_pos_b, _ = subtract_frame_transforms(ref_pos_w, ref_quat_w, self.points_w, None)
+        object_point_cloud_pos_b.clamp_(-5.0, 5.0)
+        if normalize:
+            object_point_cloud_pos_b = object_point_cloud_pos_b - object_point_cloud_pos_b.mean(dim=1, keepdim=True)
+            d = torch.norm(object_point_cloud_pos_b, dim=-1)
+            m = d.max(dim=1, keepdim=True)[0]
+            object_point_cloud_pos_b = object_point_cloud_pos_b / (m.unsqueeze(-1) + 1e-6)
+        return object_point_cloud_pos_b.view(self.num_envs, -1) if flatten else object_point_cloud_pos_b
+
+
+def task_pose_error(
+    env: ManagerBasedRLEnv,
+    command_name: str = "object_pose",
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+) -> torch.Tensor:
+    """The pose error between the object and the target object in the world frame."""
+    asset: RigidObject = env.scene[object_cfg.name]
+    command_pose_b = env.command_manager.get_command(command_name)
+    des_pos_w, des_quat_w = combine_frame_transforms(asset.data.root_pos_w, asset.data.root_quat_w, command_pose_b[:, :3], command_pose_b[:, 3:7])
+    pos_error, quat_error = compute_pose_error(des_pos_w, des_quat_w, asset.data.root_pos_w, asset.data.root_quat_w)
+    return torch.cat((pos_error, quat_error), dim=1)
 
 
 class object_point_cloud_b(ManagerTermBase):
@@ -194,4 +318,21 @@ def fingers_contact_force_b(
     force_w = torch.stack(force_w, dim=1)
     robot: Articulation = env.scene[asset_cfg.name]
     forces_b = quat_apply_inverse(robot.data.root_link_quat_w.unsqueeze(1).repeat(1, force_w.shape[1], 1), force_w)
-    return forces_b
+    return forces_b.view(env.num_envs, -1)
+
+
+def depth_image(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("tiled_camera"),
+    normalize: bool = True,
+) -> torch.Tensor:
+    # extract the used quantities (to enable type-hinting)
+    sensor: TiledCamera | Camera | RayCasterCamera = env.scene.sensors[sensor_cfg.name]
+    # obtain the input image
+    images = sensor.data.output["depth"]
+    # depth image normalization
+    if normalize:
+        images = torch.tanh(images / 2) * 2
+        images -= torch.mean(images, dim=(1, 2), keepdim=True)
+
+    return images

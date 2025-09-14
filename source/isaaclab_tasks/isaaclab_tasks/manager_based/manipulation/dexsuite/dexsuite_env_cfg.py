@@ -161,10 +161,16 @@ class ObservationsCfg:
     class PerceptionObsCfg(ObsGroup):
 
         object_point_cloud = ObsTerm(
-            func=mdp.object_point_cloud_b,
+            func=mdp.objects_point_cloud_b,
             noise=Unoise(n_min=-0.0, n_max=0.0),
             clip=(-2.0, 2.0),  # clamp between -2 m to 2 m
-            params={"num_points": 64, "flatten": True},
+            params={
+                "object_cfgs": [SceneEntityCfg("object"), SceneEntityCfg("table"), SceneEntityCfg("robot")],
+                "statics": [False, True, False],
+                "num_points": [64, 256, 8],
+                "flatten": True,
+                "normalize": True
+            },
         )
 
         def __post_init__(self):

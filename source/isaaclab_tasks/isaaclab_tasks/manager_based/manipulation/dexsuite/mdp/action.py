@@ -18,7 +18,7 @@ class PCAAction(ActionTerm):
 
     cfg: action_cfg.PCAHandActionCfg
 
-    def __init__(self, cfg:action_cfg.PCAHandActionCfg, env: ManagerBasedEnv):
+    def __init__(self, cfg: action_cfg.PCAHandActionCfg, env: ManagerBasedEnv):
         # initialize the action term
         super().__init__(cfg, env)
         cfg.arm_joints_cfg.resolve(env.scene)

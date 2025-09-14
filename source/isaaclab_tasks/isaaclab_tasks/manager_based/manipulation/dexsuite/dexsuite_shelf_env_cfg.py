@@ -9,7 +9,7 @@ from isaaclab.utils import configclass
 from isaaclab.envs import ViewerCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
-from .dexsuite_env_cfg import DexSuiteReorientEnvCfg, EventCfg
+from .dexsuite_env_cfg import DexsuiteReorientEnvCfg, EventCfg
 from .rigid_object_generator.rigid_object_generator_usd import build_shelf_usd
 from . import mdp
 
@@ -42,18 +42,20 @@ class ShevlesCommandsCfg:
         object_name="object",
         debug_vis=False,
         terms={
-            # "uniform": mdp.ObjectUniformPoseCommandCfg(
-            #     asset_name="robot",
-            #     object_name="object",
-            #     ranges=mdp.ObjectUniformPoseCommandCfg.Ranges(
-            #         pos_x=(-0.925, -0.275), pos_y=(-0.4, 0.4), pos_z=(0.1, 0.75),
-            #         roll=(-3.14, 3.14), pitch=(-3.14, 3.14), yaw=(0., 0.)
-            #     ),
-            # ),
+            "uniform": mdp.ObjectUniformPoseCommandCfg(
+                asset_name="robot",
+                object_name="object",
+                success_vis_asset_name="table",
+                ranges=mdp.ObjectUniformPoseCommandCfg.Ranges(
+                    pos_x=(-0.925, -0.275), pos_y=(-0.4, 0.4), pos_z=(0.1, 0.75),
+                    roll=(-3.14, 3.14), pitch=(-3.14, 3.14), yaw=(0., 0.)
+                ),
+            ),
             # "table_top_rest_pose": mdp.ObjectUniformTableTopRestPoseCommandCfg(
             #     asset_name="robot",
             #     object_name="object",
             #     table_name="table",
+            #     success_vis_asset_name="table",
             #     ranges=mdp.ObjectUniformTableTopRestPoseCommandCfg.Ranges(
             #         pos_x=(LENGTH_RANGE[1] * 0.2, LENGTH_RANGE[1] * 0.8),
             #         pos_y=(DEPTH_RANGE[1] * 0.25, DEPTH_RANGE[1] * 0.75),
@@ -68,6 +70,7 @@ class ShevlesCommandsCfg:
                 asset_name="robot",
                 object_name="object",
                 table_name="table",
+                success_vis_asset_name="table",
                 ranges=mdp.ObjectUniformTableTopCollisionFreePoseCommandCfg.Ranges(
                     pos_x=(LENGTH_RANGE[1] * 0.2, LENGTH_RANGE[1] * 0.8),
                     pos_y=(DEPTH_RANGE[1] * 0.25, DEPTH_RANGE[1] * 0.75),
@@ -76,7 +79,7 @@ class ShevlesCommandsCfg:
                     pitch=(-3.14, 3.14),
                     yaw=(0., 0.)
                 ),
-                num_samples=30
+                num_samples=30,
             )
         }
     )
@@ -179,7 +182,7 @@ class ShelvesEventCfg(EventCfg):
 
 
 @configclass
-class DexSuiteShelvesReorientEnvCfg(DexSuiteReorientEnvCfg):
+class DexSuiteShelvesReorientEnvCfg(DexsuiteReorientEnvCfg):
     events: ShelvesEventCfg = ShelvesEventCfg()
     commands: ShevlesCommandsCfg = ShevlesCommandsCfg()
 

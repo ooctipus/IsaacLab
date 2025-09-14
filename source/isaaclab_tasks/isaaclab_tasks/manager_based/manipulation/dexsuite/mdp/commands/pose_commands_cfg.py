@@ -7,7 +7,7 @@ from dataclasses import MISSING
 
 import isaaclab.sim as sim_utils
 from isaaclab.managers import CommandTermCfg
-from isaaclab.markers import VisualizationMarkersCfg
+from isaaclab.markers import VisualizationMarkersCfg, FRAME_MARKER_CFG
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
@@ -90,3 +90,48 @@ class ObjectUniformPoseCommandCfg(CommandTermCfg):
     # success markers
     success_visualizer_cfg = VisualizationMarkersCfg(prim_path="/Visuals/SuccessMarkers", markers={})
     """The configuration for the success visualization marker. User needs to add the markers"""
+
+
+@configclass
+class PoseAlignmentCommandChoiceCfg(CommandTermCfg):
+    
+    class_type: type = dex_cmd.PoseAlignmentCommandChoice
+    
+    terms: dict[str, CommandTermCfg] = {}
+    
+    sampling_strategy: str = "uniform"
+
+    asset_name: str = MISSING
+
+    object_name: str = MISSING
+
+    goal_pose_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(prim_path="/Visuals/Command/align_goal_pose")
+    """The configuration for the goal pose visualization marker. Defaults to FRAME_MARKER_CFG."""
+
+    current_pose_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(
+        prim_path="/Visuals/Command/align_body_pose"
+    )
+
+    # HACK: success markers
+    success_visualizer_cfg = VisualizationMarkersCfg(prim_path="/Visuals/SuccessMarkers", markers={})
+
+    goal_pose_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+    current_pose_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+
+
+@configclass
+class ObjectUniformTableTopRestPoseCommandCfg(ObjectUniformPoseCommandCfg):
+    """Configuration for uniform pose command generator."""
+
+    class_type: type = dex_cmd.ObjectUniformTableTopRestPoseCommand
+    
+    table_name: str = "table"
+    
+    num_samples: int = 25
+
+
+@configclass
+class ObjectUniformTableTopCollisionFreePoseCommandCfg(ObjectUniformTableTopRestPoseCommandCfg):
+    """Configuration for uniform pose command generator."""
+
+    class_type: type = dex_cmd.ObjectUniformTableTopCollisionFreePoseCommand
