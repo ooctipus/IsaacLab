@@ -5,16 +5,16 @@
 
 import os
 import random
+
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
-from isaaclab.sim import CuboidCfg, SphereCfg, CapsuleCfg, ConeCfg, RigidBodyMaterialCfg
+from isaaclab.sim import CapsuleCfg, ConeCfg, CuboidCfg, RigidBodyMaterialCfg, SphereCfg
 from isaaclab.utils import configclass
-from ... import mdp
-
 from isaaclab.utils.assets import LOCAL_ASSET_PATH_DIR, retrieve_file_path
 
-UNIDEX_DIR = f"{LOCAL_ASSET_PATH_DIR}/Props/Unidex"
+from ... import mdp
 
+UNIDEX_DIR = f"{LOCAL_ASSET_PATH_DIR}/Props/Unidex"
 
 
 @configclass
@@ -29,10 +29,10 @@ class KukaAllegroFabricActionCfg:
 
 def _unidex_object_cfg(num_objects: int) -> RigidObjectCfg:
     # pick `num_objects` *random* entries from your full list
-    with open(retrieve_file_path(f"{UNIDEX_DIR}/unidex.txt"), 'r') as f:
-        objs = [line.rstrip('\n') for line in f]
+    with open(retrieve_file_path(f"{UNIDEX_DIR}/unidex.txt")) as f:
+        objs = [line.rstrip("\n") for line in f]
     chosen = random.sample(objs, num_objects)
-    usd_cfgs = [sim_utils.UsdFileCfg(usd_path=os.path.join(UNIDEX_DIR, "RawUSD", fname))for fname in chosen]
+    usd_cfgs = [sim_utils.UsdFileCfg(usd_path=os.path.join(UNIDEX_DIR, "RawUSD", fname)) for fname in chosen]
 
     return RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Object",
@@ -57,18 +57,16 @@ def _unidex_object_cfg(num_objects: int) -> RigidObjectCfg:
         init_state=RigidObjectCfg.InitialStateCfg(pos=(-0.55, 0.1, 0.35)),
     )
 
+
 @configclass
 class EnvConfigurables:
     env: dict[str, any] = {
-        "actions": {
-            "geometry_fabric": KukaAllegroFabricActionCfg(),
-            "pca": KukaAllegroPCAActionCfg()
-        },
+        "actions": {"geometry_fabric": KukaAllegroFabricActionCfg(), "pca": KukaAllegroPCAActionCfg()},
         "scene.object": {
             "unidex100": _unidex_object_cfg(100),
             "unidex500": _unidex_object_cfg(500),
             "cube": RigidObjectCfg(
-                prim_path="{ENV_REGEX_NS}/Object",  
+                prim_path="{ENV_REGEX_NS}/Object",
                 spawn=sim_utils.MultiAssetSpawnerCfg(
                     assets_cfg=[
                         CuboidCfg(size=(0.1, 0.1, 0.1), physics_material=RigidBodyMaterialCfg(static_friction=0.5)),

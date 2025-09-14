@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Copyright (c) 2022-2025, The Isaac Lab Project Developers.
 # All rights reserved.
 #
@@ -5,16 +10,14 @@
 
 from isaaclab.utils import configclass
 
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
 from isaaclab_rl.ext.actor_critic_vision_cfg import ActorCriticVisionAdapterCfg, CNNEncoderCfg, MLPEncoderCfg
+from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
+
 
 @configclass
 class DexsuiteKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 36
-    obs_groups = {
-        "policy": ["policy", "base_image", "wrist_image"],
-        "critic": ["policy", "privileged"]
-    }
+    obs_groups = {"policy": ["policy", "base_image", "wrist_image"], "critic": ["policy", "privileged"]}
     max_iterations = 15000
     save_interval = 250
     experiment_name = "dexsuite_kuka_allegro"
@@ -27,7 +30,7 @@ class DexsuiteKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
         activation="elu",
         encoders=ActorCriticVisionAdapterCfg(
             encoder_cfgs={
-                "depth_image" : CNNEncoderCfg(
+                "depth_image": CNNEncoderCfg(
                     encoding_groups=["base_image", "wrist_image"],
                     channels=[32, 64, 128],
                     kernel_sizes=[3, 3, 3],
@@ -35,15 +38,11 @@ class DexsuiteKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
                     paddings=[1, 1, 1],
                     use_maxpool=True,
                     pool_size=2,
-                    activation='elu'
+                    activation="elu",
                 ),
-                "point_cloud" : MLPEncoderCfg(
-                    encoding_groups=["privileged"],
-                    layers=[512, 256, 128],
-                    activation='elu'
-                )
+                "point_cloud": MLPEncoderCfg(encoding_groups=["privileged"], layers=[512, 256, 128], activation="elu"),
             }
-        )
+        ),
     )
     algorithm = RslRlPpoAlgorithmCfg(
         value_loss_coef=1.0,

@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Copyright (c) 2024-2025, The Isaac Lab Project Developers.
 # All Rights Reserved.
 #
@@ -5,21 +10,25 @@
 
 from __future__ import annotations
 
-import torch
 import inspect
+import torch
 from typing import TYPE_CHECKING
+
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.controllers import DifferentialIKControllerCfg
+from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 from isaaclab.envs.mdp.actions.task_space_actions import DifferentialInverseKinematicsAction
 from isaaclab.managers import EventTermCfg, ManagerTermBase, SceneEntityCfg
 from isaaclab.utils import math as math_utils
-from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
+
 from . import utils as dexsuite_utils
+
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
-    
-from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
+
 from isaaclab.markers import VisualizationMarkers
+from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
+
 ray_cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/ObservationPointCloudDebug")
 ray_cfg.markers["hit"].radius = 0.005
 visualizer = VisualizationMarkers(ray_cfg)
@@ -34,20 +43,22 @@ class reset_accumulator(ManagerTermBase):
                 self.acceptance_conditions[key] = val.class_type(val, env)
 
         asset_keys = cfg.params.get("reset_assets")
-        total_state_dim = dexsuite_utils.get_reset_state(self._env, torch.tensor([0], device=env.device), asset_keys).shape[-1]
+        total_state_dim = dexsuite_utils.get_reset_state(
+            self._env, torch.tensor([0], device=env.device), asset_keys
+        ).shape[-1]
         self.max_size = 32
         self.valid_tensor = torch.zeros((env.num_envs, self.max_size, total_state_dim), device=env.device)
         self.valid_state_tensor_size = torch.zeros((env.num_envs,), device=env.device, dtype=torch.int)
         self.valid_ptr = torch.zeros((env.num_envs,), device=env.device, dtype=torch.int)
         self.precollecting_phase = True
-        
+
         reset_term: EventTermCfg = cfg.params.get("reset_term")
         if inspect.isclass(reset_term.func):
             reset_term.func = reset_term.func(reset_term, env)
         while (self.valid_state_tensor_size < self.max_size).any():
             env_ids = torch.arange(env.num_envs, device=env.device)[self.valid_state_tensor_size < self.max_size]
             self.__call__(env, env_ids, **self.cfg.params)
-            
+
         self.precollecting_phase = False
 
     def __call__(
@@ -70,7 +81,9 @@ class reset_accumulator(ManagerTermBase):
         idx = self.valid_ptr[valid_env_ids]
         self.valid_tensor[valid_env_ids, idx] = states
         self.valid_ptr[valid_env_ids] = (idx + 1) % self.max_size
-        self.valid_state_tensor_size[valid_env_ids] = torch.clamp(self.valid_state_tensor_size[valid_env_ids] + 1, max=self.max_size)
+        self.valid_state_tensor_size[valid_env_ids] = torch.clamp(
+            self.valid_state_tensor_size[valid_env_ids] + 1, max=self.max_size
+        )
         if not self.precollecting_phase:
             rand_idx = torch.randint(0, self.max_size, (len(invalid_env_ids),), device=env.device)
             sampled_states = self.valid_tensor[invalid_env_ids, rand_idx]
@@ -119,7 +132,7 @@ class reset_end_effector_around_asset(ManagerTermBase):
         )
         self.solver.process_actions(torch.cat([pos_b, quat_b], dim=1))
         n_joints: int = self.robot.num_joints if isinstance(self.joint_ids, slice) else len(self.joint_ids)
-        
+
         # Error Rate 75% ^ 10 = 0.05 (final error)
         for i in range(ik_iterations):
             env.sim.render()

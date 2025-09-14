@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 params:
   seed: 42
 
@@ -89,7 +94,7 @@ params:
     zero_rnn_on_done: True
 
     central_value_config:
-      minibatch_size: 16384 
+      minibatch_size: 16384
       mini_epochs: 4
       learning_rate: 5e-5
       kl_threshold: 0.016
@@ -101,7 +106,7 @@ params:
         name: actor_critic
         central_value: True
         mlp:
-          units: [1024, 512] 
+          units: [1024, 512]
           activation: elu
           d2rl: False
           initializer:
@@ -128,7 +133,7 @@ hydra:
   run:
     dir: .
 
-pbt: 
+pbt:
   enabled: False
 
   policy_idx: 0  # policy index in a population: should always be specified explicitly! Each run in a population should have a unique idx from [0..N-1]

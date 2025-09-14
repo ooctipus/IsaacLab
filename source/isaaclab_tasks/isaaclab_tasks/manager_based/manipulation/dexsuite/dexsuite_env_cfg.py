@@ -169,7 +169,7 @@ class ObservationsCfg:
                 "statics": [False, True, False],
                 "num_points": [64, 256, 8],
                 "flatten": True,
-                "normalize": True
+                "normalize": True,
             },
         )
 

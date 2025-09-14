@@ -1,14 +1,20 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 import hashlib
 import numpy as np
 import torch
-import warp as wp
-from pxr import UsdPhysics
-from pxr import UsdGeom, Gf, Usd
+
 import isaacsim.core.utils.prims as prim_utils
+import warp as wp
+from pxr import Gf, Usd, UsdGeom, UsdPhysics
+
 from isaaclab.sim import get_all_matching_child_prims
-HASH_STORE = {
-    "warp_mesh_store":{}
-}
+
+HASH_STORE = {"warp_mesh_store": {}}
+
 
 class RigidObjectHasher:
     """Compute per-root and per-collider 64-bit hashes of transform+geometry."""
@@ -42,15 +48,16 @@ class RigidObjectHasher:
         for i in range(num_roots):
             # 1: Get all child prims that are colliders, count them, and store their belonging env id
             coll_prims = get_all_matching_child_prims(
-                prim_paths[i], predicate=lambda p: p.GetTypeName() in \
-                    ("Mesh","Cube","Sphere","Cylinder","Capsule","Cone") and p.HasAPI(UsdPhysics.CollisionAPI),
-                traverse_instance_prims=True
+                prim_paths[i],
+                predicate=lambda p: p.GetTypeName() in ("Mesh", "Cube", "Sphere", "Cylinder", "Capsule", "Cone")
+                and p.HasAPI(UsdPhysics.CollisionAPI),
+                traverse_instance_prims=True,
             )
             if len(coll_prims) == 0:
                 return
             collider_prims.extend(coll_prims)
             collider_prim_env_ids.extend([i] * len(coll_prims))
-            
+
             # 2: Get relative transforms of all collider prims
             root_xf = xform_cache.GetLocalToWorldTransform(prim_utils.get_prim_at_path(prim_paths[i]))
             root_tf = Gf.Transform(root_xf)
@@ -71,7 +78,9 @@ class RigidObjectHasher:
             root_hash = hashlib.sha256()
             for prim, prim_rel_tf in zip(coll_prims, rel_tfs.numpy()):
                 h = hashlib.sha256()
-                h.update(np.round(prim_rel_tf * 50).astype(np.int64)) # round so small, +-2cm tol, difference won't cause issue
+                h.update(
+                    np.round(prim_rel_tf * 50).astype(np.int64)
+                )  # round so small, +-2cm tol, difference won't cause issue
                 prim_type = prim.GetTypeName()
                 h.update(prim_type.encode("utf-8"))
                 if prim_type == "Mesh":
@@ -118,32 +127,32 @@ class RigidObjectHasher:
     @property
     def root_prim_hashes(self) -> torch.Tensor:
         return self.get_val("root_prim_hashes").to(self.device)
-    
+
     @property
     def root_prim_scales(self) -> torch.Tensor:
         """Get the root prim transforms."""
         return self.get_val("root_prim_scales").to(self.device)
-    
+
     @property
     def collider_prim_relative_transforms(self) -> torch.Tensor:
         return self.get_val("collider_prim_relative_transforms").to(self.device)
-    
+
     @property
     def collider_prim_hashes(self) -> torch.Tensor:
         return self.get_val("collider_prim_hashes").to(self.device)
-    
+
     @property
     def collider_prims(self) -> list[Usd.Prim]:
         return self.get_val("collider_prims")
-    
+
     @property
     def collider_prim_env_ids(self) -> torch.Tensor:
         return self.get_val("collider_prim_env_ids").to(self.device)
-    
+
     def get_val(self, key: str):
         """Get the hash store for the hasher."""
         return HASH_STORE.get(self.prim_path_pattern, {}).get(key, None)
-    
+
     def set_val(self, key: str, val: any):
         if isinstance(val, torch.Tensor):
             val = val.to("cpu")

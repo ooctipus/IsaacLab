@@ -1,22 +1,23 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers.
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
-from isaaclab.utils import configclass
 from isaaclab.envs import ViewerCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.utils import configclass
+
+from . import mdp
 from .dexsuite_env_cfg import DexsuiteReorientEnvCfg, EventCfg
 from .rigid_object_generator.rigid_object_generator_usd import build_shelf_usd
-from . import mdp
-
 
 LENGTH_RANGE = (1.4, 1.4)
 DEPTH_RANGE = (0.4, 0.4)
 HEIGHT_RANGE = (1.1, 1.1)
+
 
 def generate_shelf_usds(num_shelfs) -> list[sim_utils.SpawnerCfg]:
     for i in range(num_shelfs):
@@ -28,7 +29,7 @@ def generate_shelf_usds(num_shelfs) -> list[sim_utils.SpawnerCfg]:
             thickness_range=(0.02, 0.03),
             row_range=(3, 4),
             col_range=(2, 4),
-            seed=i
+            seed=i,
         )
     return [sim_utils.UsdFileCfg(usd_path=f"/tmp/generated_shelves/shelf{j}.usd") for j in range(num_shelfs)]
 
@@ -36,6 +37,7 @@ def generate_shelf_usds(num_shelfs) -> list[sim_utils.SpawnerCfg]:
 @configclass
 class ShevlesCommandsCfg:
     """Command terms for the MDP."""
+
     object_pose = mdp.PoseAlignmentCommandChoiceCfg(
         resampling_time_range=(3.0, 5.0),
         asset_name="robot",
@@ -47,8 +49,12 @@ class ShevlesCommandsCfg:
                 object_name="object",
                 success_vis_asset_name="table",
                 ranges=mdp.ObjectUniformPoseCommandCfg.Ranges(
-                    pos_x=(-0.925, -0.275), pos_y=(-0.4, 0.4), pos_z=(0.1, 0.75),
-                    roll=(-3.14, 3.14), pitch=(-3.14, 3.14), yaw=(0., 0.)
+                    pos_x=(-0.925, -0.275),
+                    pos_y=(-0.4, 0.4),
+                    pos_z=(0.1, 0.75),
+                    roll=(-3.14, 3.14),
+                    pitch=(-3.14, 3.14),
+                    yaw=(0.0, 0.0),
                 ),
             ),
             # "table_top_rest_pose": mdp.ObjectUniformTableTopRestPoseCommandCfg(
@@ -77,22 +83,23 @@ class ShevlesCommandsCfg:
                     pos_z=(0.1, HEIGHT_RANGE[1]),
                     roll=(-3.14, 3.14),
                     pitch=(-3.14, 3.14),
-                    yaw=(0., 0.)
+                    yaw=(0.0, 0.0),
                 ),
                 num_samples=30,
-            )
-        }
+            ),
+        },
     )
-    
+
     def __post_init__(self):
         if hasattr(self.object_pose, "terms"):
             for name, term in self.object_pose.terms.items():
                 term.resampling_time_range = self.object_pose.resampling_time_range
                 term.debug_vis = False
 
+
 @configclass
 class ShelvesEventCfg(EventCfg):
-    
+
     reset_scene = EventTerm(
         func=mdp.reset_accumulator,
         mode="reset",
@@ -103,21 +110,29 @@ class ShelvesEventCfg(EventCfg):
                     num_points=32,
                     max_dist=0.5,
                     asset_cfg=SceneEntityCfg("object"),
-                    obstacle_cfgs=[SceneEntityCfg("table")]
+                    obstacle_cfgs=[SceneEntityCfg("table")],
                 ),
                 "collision_robot_free": mdp.CollisionAnalyzerCfg(
                     num_points=32,
                     max_dist=0.5,
                     min_dist=0.01,
-                    asset_cfg=SceneEntityCfg("robot", body_names=["iiwa7_link_(5|6|7|ee)", "allegro_mount", "palm_link", "(index|middle|ring|thumb).*"]),
-                    obstacle_cfgs=[SceneEntityCfg("table"), SceneEntityCfg("object")]
-                )
+                    asset_cfg=SceneEntityCfg(
+                        "robot",
+                        body_names=[
+                            "iiwa7_link_(5|6|7|ee)",
+                            "allegro_mount",
+                            "palm_link",
+                            "(index|middle|ring|thumb).*",
+                        ],
+                    ),
+                    obstacle_cfgs=[SceneEntityCfg("table"), SceneEntityCfg("object")],
+                ),
             },
             "reset_term": EventTerm(
                 func=mdp.chained_reset_terms,
                 mode="reset",
                 params={
-                    "terms":{
+                    "terms": {
                         "reset_table": EventTerm(
                             func=mdp.reset_root_state_uniform,
                             mode="reset",
@@ -132,10 +147,14 @@ class ShelvesEventCfg(EventCfg):
                             mode="reset",
                             params={
                                 "pose_range": {
-                                    "x": [-0.2, 0.2], "y": [-0.2, 0.2], "z": [0.0, 0.4],
-                                    "roll":[-3.14, 3.14], "pitch":[-3.14, 3.14], "yaw": [-3.14, 3.14]
+                                    "x": [-0.2, 0.2],
+                                    "y": [-0.2, 0.2],
+                                    "z": [0.0, 0.4],
+                                    "roll": [-3.14, 3.14],
+                                    "pitch": [-3.14, 3.14],
+                                    "yaw": [-3.14, 3.14],
                                 },
-                                "velocity_range": {"x": [-0., 0.], "y": [-0., 0.], "z": [-0., 0.]},
+                                "velocity_range": {"x": [-0.0, 0.0], "y": [-0.0, 0.0], "z": [-0.0, 0.0]},
                                 "asset_cfg": SceneEntityCfg("object"),
                             },
                         ),
@@ -143,8 +162,8 @@ class ShelvesEventCfg(EventCfg):
                             func=mdp.reset_root_state_uniform,
                             mode="reset",
                             params={
-                                "pose_range": {"x": [-0., 0.], "y": [-0., 0.], "yaw": [-0., 0.]},
-                                "velocity_range": {"x": [-0., 0.], "y": [-0., 0.], "z": [-0., 0.]},
+                                "pose_range": {"x": [-0.0, 0.0], "y": [-0.0, 0.0], "yaw": [-0.0, 0.0]},
+                                "velocity_range": {"x": [-0.0, 0.0], "y": [-0.0, 0.0], "z": [-0.0, 0.0]},
                                 "asset_cfg": SceneEntityCfg("robot"),
                             },
                         ),
@@ -153,7 +172,7 @@ class ShelvesEventCfg(EventCfg):
                             mode="reset",
                             params={
                                 "position_range": [-0.60, 0.60],
-                                "velocity_range": [0., 0.],
+                                "velocity_range": [0.0, 0.0],
                             },
                         ),
                         "reset_robot_shoulder_joints": EventTerm(
@@ -162,7 +181,7 @@ class ShelvesEventCfg(EventCfg):
                             params={
                                 "asset_cfg": SceneEntityCfg("robot", joint_names="iiwa7_joint_4"),
                                 "position_range": [0.2, 0.55],
-                                "velocity_range": [0., 0.],
+                                "velocity_range": [0.0, 0.0],
                             },
                         ),
                         "reset_robot_wrist_joint": EventTerm(
@@ -171,9 +190,9 @@ class ShelvesEventCfg(EventCfg):
                             params={
                                 "asset_cfg": SceneEntityCfg("robot", joint_names="iiwa7_joint_7"),
                                 "position_range": [-3, 3],
-                                "velocity_range": [0., 0.],
+                                "velocity_range": [0.0, 0.0],
                             },
-                        )
+                        ),
                     }
                 },
             ),
@@ -203,7 +222,8 @@ class DexSuiteShelvesReorientEnvCfg(DexsuiteReorientEnvCfg):
 
 
 class DexSuiteShelvesPlaceEnvCfg(DexSuiteShelvesReorientEnvCfg):
-    viewer: ViewerCfg = ViewerCfg(eye=(0.75, -2.25, 0.75), lookat=(-0.5, 0.0, 0.50), origin_type='env')
+    viewer: ViewerCfg = ViewerCfg(eye=(0.75, -2.25, 0.75), lookat=(-0.5, 0.0, 0.50), origin_type="env")
+
     def __post_init__(self):
         super().__post_init__()
         self.rewards.orientation_tracking = None  # no orientation reward

@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 params:
   seed: 42
 
@@ -98,7 +103,7 @@ hydra:
   run:
     dir: .
 
-pbt: 
+pbt:
   enabled: False
 
   policy_idx: 0  # policy index in a population: should always be specified explicitly! Each run in a population should have a unique idx from [0..N-1]

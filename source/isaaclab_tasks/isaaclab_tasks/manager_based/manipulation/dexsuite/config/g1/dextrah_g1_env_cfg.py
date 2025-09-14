@@ -1,11 +1,18 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 from isaaclab.utils import configclass
-from ...dextrah_env_cfg import DextrahEnvCfg
+
 from ... import mdp
+from ...dextrah_env_cfg import DextrahEnvCfg
 
 from isaaclab_assets import G1_MINIMAL_CFG  # isort: skip
 
 HAND_BODY_REGEX = ".*_(palm|zero|one|two|three|four|five|six)_link"
 HAND_JOINT_REGEX = ".*_(zero|one|two|three|four|five|six)_joint"
+
 
 @configclass
 class G1RelJointPosActionCfg:
@@ -22,7 +29,6 @@ class G1FabricActionCfg:
     actions = mdp.FabricActionCfg(asset_name="robot")
 
 
-
 @configclass
 class DextrahG1EnvCfg(DextrahEnvCfg):
 
@@ -36,8 +42,7 @@ class DextrahG1EnvCfg(DextrahEnvCfg):
         self.observations.critic.measured_body_forces.params["asset_cfg"].body_names = HAND_BODY_REGEX
         self.rewards.fingers_to_object.params["asset_cfg"].body_names = HAND_BODY_REGEX
         self.rewards.finger_curl_reg.params["asset_cfg"].joint_names = HAND_JOINT_REGEX
-        self.events.reset_robot.params['pose_range']['yaw'] = [3.1415, 3.1415]
-        
+        self.events.reset_robot.params["pose_range"]["yaw"] = [3.1415, 3.1415]
 
 
 @configclass
