@@ -61,6 +61,16 @@ class SceneCfg(InteractiveSceneCfg):
             collision_props=sim_utils.CollisionPropertiesCfg(),
             mass_props=sim_utils.MassPropertiesCfg(mass=0.2),
         ),
+        # spawn=sim_utils.CuboidCfg(
+        #     size=(0.05, 0.1, 0.1),
+        #     rigid_props=sim_utils.RigidBodyPropertiesCfg(
+        #         solver_position_iteration_count=16,
+        #         solver_velocity_iteration_count=0,
+        #         disable_gravity=False,
+        #     ),
+        #     collision_props=sim_utils.CollisionPropertiesCfg(),
+        #     mass_props=sim_utils.MassPropertiesCfg(mass=0.2),
+        #     physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(-0.55, 0.1, 0.35)),
     )
 

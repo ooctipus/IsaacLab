@@ -73,7 +73,7 @@ from isaaclab.utils.dict import print_dict
 from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
-from isaaclab_rl.rsl_rl.ext.modules.actor_critic_vision import ActorCriticVisionExtensionPatcher
+from isaaclab_rl.rsl_rl.ext.rsl_rl_vision_encoder_patcher import ActorCriticVisionExtensionPatcher
 from isaaclab_rl.rsl_rl.ext.modules.obs_dep_std import StateDependendNoiseDistributionPatcher
 from isaaclab.utils.wandb_upload_info import InfoWandbUploadPatcher
 

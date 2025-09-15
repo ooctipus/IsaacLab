@@ -43,7 +43,7 @@ class DexsuiteKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
                 "point_cloud": MLPEncoderCfg(encoding_groups=["perception"], layers=[512, 256, 128], activation="elu"),
             },
             projectors_cfg={
-                "state": ProjectorCfg(
+                "object_pos_reconstruction": ProjectorCfg(
                     features=["base_image"],
                     predictions=["privileged_perception"],
                     layers=[256, 256],

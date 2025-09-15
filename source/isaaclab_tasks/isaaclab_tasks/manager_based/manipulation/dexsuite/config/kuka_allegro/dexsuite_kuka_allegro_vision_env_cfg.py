@@ -8,7 +8,8 @@ from isaaclab.assets import RigidObjectCfg
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.sensors.ray_caster import MultiMeshRayCasterCfg, patterns
+from isaaclab.sensors.ray_caster import MultiMeshRayCasterCfg, patterns, MultiMeshRayCasterCameraCfg
+from isaaclab.sensors import TiledCameraCfg
 from isaaclab.markers.config import VisualizationMarkersCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
@@ -31,36 +32,62 @@ RAY_CASTER_MARKER_CFG = VisualizationMarkersCfg(
 class KukaAllegroCameraSceneCfg(dexsuite_state_impl.SceneCfg):
     """Dexsuite scene for multi-objects Lifting/Reorientation"""
 
-    # base_camera = TiledCameraCfg(
-    #     prim_path="/World/envs/env_.*/Camera",
-    #     offset=TiledCameraCfg.OffsetCfg(
-    #         pos=(0.57, -0.8, 0.5),
-    #         rot=(0.61237, 0.61237, 0.35355, 0.35355),  # (x: 90 degree, y: 60 degree, z: 0 degree)
-    #         convention="opengl",
-    #     ),
-    #     data_types=["depth"],
-    #     spawn=sim_utils.PinholeCameraCfg(
-    #         focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
-    #     ),
-    #     width=64,
-    #     height=64,
+    base_camera = TiledCameraCfg(
+        prim_path="/World/envs/env_.*/Camera",
+        offset=TiledCameraCfg.OffsetCfg(
+            pos=(0.57, -0.8, 0.5),
+            rot=(0.61237, 0.61237, 0.35355, 0.35355),  # (x: 90 degree, y: 60 degree, z: 0 degree)
+            convention="opengl",
+        ),
+        data_types=["depth"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
+        ),
+        width=64,
+        height=64,
+    )
+
+    # base_camera = MultiMeshRayCasterCfg(
+    #     prim_path="{ENV_REGEX_NS}/Robot",
+    #     offset=MultiMeshRayCasterCfg.OffsetCfg(pos=(-0.75, -0.0, 1.5)),
+    #     mesh_prim_paths=[
+    #         "/World/GroundPlane",
+    #         MultiMeshRayCasterCfg.RaycastTargetCfg(is_shared=True, target_prim_expr="{ENV_REGEX_NS}/Object"),
+    #         MultiMeshRayCasterCfg.RaycastTargetCfg(is_shared=True, target_prim_expr="{ENV_REGEX_NS}/Robot/ee_link/.*_link.*"),
+    #         MultiMeshRayCasterCfg.RaycastTargetCfg(is_shared=True, target_prim_expr="{ENV_REGEX_NS}/Robot/.*_link_.*"),
+    #         MultiMeshRayCasterCfg.RaycastTargetCfg(is_shared=True, target_prim_expr="{ENV_REGEX_NS}/table"),
+    #         MultiMeshRayCasterCfg.RaycastTargetCfg(target_prim_expr="{ENV_REGEX_NS}/wall")
+    #     ],
+    #     ray_alignment="base",
+    #     pattern_cfg=patterns.GridPatternCfg(resolution=0.02, size=(1.19, 1.19), direction=(0.0, 0.0, -0.1)),
+    #     debug_vis=True,
+    #     visualizer_cfg=RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/RayCaster"),
     # )
 
-    base_camera = MultiMeshRayCasterCfg(
+    base_camera = MultiMeshRayCasterCameraCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
-        update_period=1 / 60,
-        offset=MultiMeshRayCasterCfg.OffsetCfg(pos=(-0.75, -0.0, 1.5)),
         mesh_prim_paths=[
             "/World/GroundPlane",
-            # MultiMeshRayCasterCfg.RaycastTargetCfg(target_prim_expr="{ENV_REGEX_NS}/Object"),
-            MultiMeshRayCasterCfg.RaycastTargetCfg(target_prim_expr="{ENV_REGEX_NS}/Robot"),
-            MultiMeshRayCasterCfg.RaycastTargetCfg(target_prim_expr="{ENV_REGEX_NS}/table"),
-            MultiMeshRayCasterCfg.RaycastTargetCfg(target_prim_expr="{ENV_REGEX_NS}/wall")
+            MultiMeshRayCasterCfg.RaycastTargetCfg(is_shared=True, target_prim_expr="{ENV_REGEX_NS}/Object"),
+            MultiMeshRayCasterCfg.RaycastTargetCfg(is_shared=True, target_prim_expr="{ENV_REGEX_NS}/Robot/ee_link/.*_link.*"),
+            MultiMeshRayCasterCfg.RaycastTargetCfg(is_shared=True, target_prim_expr="{ENV_REGEX_NS}/Robot/.*_link_.*"),
+            MultiMeshRayCasterCfg.RaycastTargetCfg(is_shared=True, target_prim_expr="{ENV_REGEX_NS}/table"),
+            # MultiMeshRayCasterCfg.RaycastTargetCfg(is_shared=True, target_prim_expr="{ENV_REGEX_NS}/wall")
         ],
-        ray_alignment="base",
-        pattern_cfg=patterns.GridPatternCfg(resolution=0.02, size=(1.5, 1.5), direction=(0.0, 0.0, -0.1)),
-        debug_vis=True,
-        visualizer_cfg=RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/RayCaster"),
+        update_period=0.0,
+        offset=MultiMeshRayCasterCameraCfg.OffsetCfg(
+            pos=(0.57, -0.8, 0.5),
+            rot=(0.61237, 0.61237, 0.35355, 0.35355),  # (x: 90 degree, y: 60 degree, z: 0 degree)
+            convention="opengl",
+        ),
+        debug_vis=False,
+        pattern_cfg=patterns.PinholeCameraPatternCfg(
+            focal_length=24.0,
+            horizontal_aperture=20.955,
+            height=64,
+            width=64,
+        ),
+        data_types=["distance_to_image_plane"],
     )
 
     # wrist_camera = TiledCameraCfg(
@@ -121,6 +148,10 @@ class KukaAllegroCameraObservationsCfg(dexsuite_state_impl.ObservationsCfg):
 class KukaAllegroDepthCameraMixinCfg(KukaAllegroMixinCfg):
     scene: KukaAllegroCameraSceneCfg = KukaAllegroCameraSceneCfg(num_envs=4096, env_spacing=3, replicate_physics=False)
     observations: KukaAllegroCameraObservationsCfg = KukaAllegroCameraObservationsCfg()
+
+    # def __post_init__(self: dexsuite_state_impl.DexsuiteReorientEnvCfg):
+        # super().__post_init__()
+        # self.scene.base_camera.update_period = self.sim.dt * self.decimation
 
 
 @configclass

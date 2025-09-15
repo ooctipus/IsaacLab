@@ -17,7 +17,7 @@ from .utils import sample_object_point_cloud
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
-    from isaaclab.sensors import Camera, RayCasterCamera, TiledCamera
+    from isaaclab.sensors import Camera, RayCasterCamera, TiledCamera, MultiMeshRayCasterCamera, MultiMeshRayCaster
 
 
 def object_pos_b(
@@ -329,23 +329,6 @@ def fingers_contact_force_b(
     return forces_b.view(env.num_envs, -1)
 
 
-# def depth_image(
-#     env: ManagerBasedRLEnv,
-#     sensor_cfg: SceneEntityCfg = SceneEntityCfg("tiled_camera"),
-#     normalize: bool = True,
-# ) -> torch.Tensor:
-#     # extract the used quantities (to enable type-hinting)
-#     sensor: TiledCamera | Camera | RayCasterCamera = env.scene.sensors[sensor_cfg.name]
-#     # obtain the input image
-#     images = sensor.data.output["depth"]
-#     # depth image normalization
-#     if normalize:
-#         images = torch.tanh(images / 2) * 2
-#         images -= torch.mean(images, dim=(1, 2), keepdim=True)
-
-#     return images
-
-
 def depth_image(
     env: ManagerBasedRLEnv,
     sensor_cfg: SceneEntityCfg = SceneEntityCfg("tiled_camera"),
@@ -354,5 +337,43 @@ def depth_image(
     # extract the used quantities (to enable type-hinting)
     sensor: TiledCamera | Camera | RayCasterCamera = env.scene.sensors[sensor_cfg.name]
     # obtain the input image
+    images = sensor.data.output["depth"]
+    # depth image normalization
+    if normalize:
+        images = torch.tanh(images / 2) * 2
+        images -= torch.mean(images, dim=(1, 2), keepdim=True)
+
+    return images
+
+
+def depth_image_ray_caster_camera(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("tiled_camera"),
+    normalize: bool = True,
+) -> torch.Tensor:
+    # extract the used quantities (to enable type-hinting)
+    sensor: TiledCamera | Camera | RayCasterCamera | MultiMeshRayCasterCamera = env.scene.sensors[sensor_cfg.name]
+    # obtain the input image
+    images = sensor.data.output["distance_to_image_plane"]
+    images = torch.nan_to_num(images, nan=10.0)
+    # depth image normalization
+    if normalize:
+        images = torch.tanh(images / 2) * 2
+        images -= torch.mean(images, dim=(1, 2), keepdim=True)
+
+    return images
+
+
+def depth_image_ray_caster(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("tiled_camera"),
+    normalize: bool = True,
+) -> torch.Tensor:
+    # extract the used quantities (to enable type-hinting)
+    sensor: MultiMeshRayCaster = env.scene.sensors[sensor_cfg.name]
+    # obtain the input image
     point_clouds_w = sensor.data.ray_hits_w
-    return point_clouds_w.view(env.num_envs, 76, 76, 3)[..., 0].unsqueeze(-1)
+    width, height = sensor.cfg.pattern_cfg.size
+    resolution = sensor.cfg.pattern_cfg.resolution
+    # torch.norm(point_clouds_w - sensor.data.pos_w, dim=1)
+    return point_clouds_w.view(env.num_envs, int(width / resolution) + 1, int(height / resolution) + 1, 3)[..., 0].unsqueeze(-1)
