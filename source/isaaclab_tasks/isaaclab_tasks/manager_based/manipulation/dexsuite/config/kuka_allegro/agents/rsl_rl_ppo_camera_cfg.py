@@ -10,14 +10,14 @@
 
 from isaaclab.utils import configclass
 
-from isaaclab_rl.ext.actor_critic_vision_cfg import ActorCriticVisionAdapterCfg, CNNEncoderCfg, MLPEncoderCfg
+from isaaclab_rl.ext.actor_critic_vision_cfg import ActorCriticVisionAdapterCfg, CNNEncoderCfg, MLPEncoderCfg, ProjectorCfg
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
 
 
 @configclass
 class DexsuiteKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 36
-    obs_groups = {"policy": ["policy", "base_image", "wrist_image"], "critic": ["policy", "privileged"]}
+    obs_groups = {"policy": ["policy", "base_image"], "critic": ["policy", "perception"]}
     max_iterations = 15000
     save_interval = 250
     experiment_name = "dexsuite_kuka_allegro"
@@ -31,7 +31,7 @@ class DexsuiteKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
         encoders=ActorCriticVisionAdapterCfg(
             encoder_cfgs={
                 "depth_image": CNNEncoderCfg(
-                    encoding_groups=["base_image", "wrist_image"],
+                    encoding_groups=["base_image"],
                     channels=[32, 64, 128],
                     kernel_sizes=[3, 3, 3],
                     strides=[2, 2, 2],
@@ -40,7 +40,15 @@ class DexsuiteKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
                     pool_size=2,
                     activation="elu",
                 ),
-                "point_cloud": MLPEncoderCfg(encoding_groups=["privileged"], layers=[512, 256, 128], activation="elu"),
+                "point_cloud": MLPEncoderCfg(encoding_groups=["perception"], layers=[512, 256, 128], activation="elu"),
+            },
+            projectors_cfg={
+                "state": ProjectorCfg(
+                    features=["base_image"],
+                    predictions=["privileged_perception"],
+                    layers=[256, 256],
+                    activation='elu'
+                ),
             }
         ),
     )

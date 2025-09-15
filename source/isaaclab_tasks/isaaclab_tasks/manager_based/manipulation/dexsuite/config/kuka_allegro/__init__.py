@@ -71,6 +71,7 @@ gym.register(
         "env_cfg_entry_point": (
             f"{__name__}.dexsuite_kuka_allegro_vision_env_cfg:DexsuiteKukaAllegroLiftDepthCameraEnvCfg"
         ),
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_camera_cfg:DexsuiteKukaAllegroPPORunnerCameraCfg",
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cnn_cfg.yaml",
     },
 )
@@ -85,6 +86,7 @@ gym.register(
             f"{__name__}.dexsuite_kuka_allegro_vision_env_cfg:DexsuiteKukaAllegroLiftDepthCameraEnvCfg_PLAY"
         ),
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cnn_cfg.yaml",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_camera_cfg:DexsuiteKukaAllegroPPORunnerCameraCfg"
     },
 )
 
@@ -116,7 +118,7 @@ gym.register(
 )
 
 gym.register(
-    id="Dexsuite-Kuka-Allegro-Shelves-Place-State-v0",
+    id="Isaac-Dexsuite-Kuka-Allegro-Shelves-Place-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -128,7 +130,7 @@ gym.register(
 )
 
 gym.register(
-    id="Dexsuite-Kuka-Allegro-Shelves-Place-State-Play-v0",
+    id="Isaac-Dexsuite-Kuka-Allegro-Shelves-Place-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={

@@ -121,6 +121,15 @@ class ObservationsCfg:
     """Observation specifications for the MDP."""
 
     @configclass
+    class PrivilegedPerceptionCfg(ObsGroup):
+
+        object_pos = ObsTerm(func=mdp.object_pos_b, clip=(-5.0, 5.0))
+
+        def __post_init__(self):
+            self.concatenate_terms = True
+            self.history_length = 5
+
+    @configclass
     class PolicyCfg(ObsGroup):
         """Observations for policy group."""
 
@@ -168,7 +177,7 @@ class ObservationsCfg:
                 "object_cfgs": [SceneEntityCfg("object"), SceneEntityCfg("table"), SceneEntityCfg("robot")],
                 "statics": [False, True, False],
                 "num_points": [64, 256, 8],
-                "flatten": True,
+                "flatten": False,
                 "normalize": True,
             },
         )
@@ -184,6 +193,7 @@ class ObservationsCfg:
     policy: PolicyCfg = PolicyCfg()
     proprio: ProprioObsCfg = ProprioObsCfg()
     perception: PerceptionObsCfg = PerceptionObsCfg()
+    privileged_perception: PrivilegedPerceptionCfg = PrivilegedPerceptionCfg()
 
 
 @configclass

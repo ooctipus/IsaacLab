@@ -228,8 +228,8 @@ class ActorCriticVisionExtensionPatcher:
                     if has_reconstruction_loss:
                         encoded_obs = ppo_self.policy.vision_forward(obs_batch, self.vision.group2encoder, obs_batch.batch_size, obs_batch.device)
                         reconstruction_loss = ppo_self.policy.projector_forward(obs_batch, encoded_obs, self.vision.projector_feature_sources, self.vision.projector_prediction_targets)
-                        reconstruct_loss = torch.sum(torch.stack(list(reconstruction_loss.values())))
-                        # loss += torch.sum(torch.stack(list(reconstruction_loss.values())))
+                        # reconstruct_loss = torch.sum(torch.stack(list(reconstruction_loss.values())))
+                        loss += torch.sum(torch.stack(list(reconstruction_loss.values())))
                     # Symmetry loss
                     if ppo_self.symmetry:
                         # obtain the symmetric actions
@@ -291,10 +291,10 @@ class ActorCriticVisionExtensionPatcher:
                     if ppo_self.is_multi_gpu:
                         ppo_self.reduce_parameters()
 
-                    if has_reconstruction_loss:
-                        for projector_key in self.vision.projectors.keys():
-                            self.vision.projector_optimizers[projector_key].zero_grad()
-                        reconstruct_loss.backward()
+                    # if has_reconstruction_loss:
+                    #     for projector_key in self.vision.projectors.keys():
+                    #         self.vision.projector_optimizers[projector_key].zero_grad()
+                    #     reconstruct_loss.backward()
                     # Apply the gradients
                     # -- For PPO
                     nn.utils.clip_grad_norm_(ppo_self.policy.parameters(), ppo_self.max_grad_norm)

@@ -88,7 +88,7 @@ class ActorCriticVision:
         self.projector_feature_normalizers = nn.ModuleDict()
         self.projector_ground_truth_normalizers = nn.ModuleDict()
         self.projectors = nn.ModuleDict()
-        self.projector_optimizers = {}
+        # self.projector_optimizers = {}
 
     def encoder_init(self, obs: ObsSpaceLike):
         # process gym.space input so encoder only worries about dict input
@@ -129,7 +129,7 @@ class ActorCriticVision:
                     prev = h
                 layers += [nn.Linear(prev, prediction_dim)]  # final linear, no activation
                 self.projectors[project_key] = nn.Sequential(*layers)
-                self.projector_optimizers[project_key] = optim.Adam(self.projectors[project_key].parameters(), lr=1e-4)
+                # self.projector_optimizers[project_key] = optim.Adam(self.projectors[project_key].parameters(), lr=1e-4)
 
     def print_vision_encoders(self):
         print("Vision Encoder initialized with the following modules:")
