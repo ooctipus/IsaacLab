@@ -16,7 +16,7 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, R
 
 @configclass
 class DexsuiteKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
-    num_steps_per_env = 36
+    num_steps_per_env = 32
     obs_groups = {"policy": ["policy", "base_image"], "critic": ["policy", "perception"]}
     max_iterations = 15000
     save_interval = 250

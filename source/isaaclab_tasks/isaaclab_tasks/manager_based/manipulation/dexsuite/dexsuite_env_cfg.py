@@ -179,6 +179,7 @@ class ObservationsCfg:
                 "num_points": [64, 256, 8],
                 "flatten": False,
                 "normalize": True,
+                "visualize": False
             },
         )
 

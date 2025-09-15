@@ -8,7 +8,8 @@ from isaaclab.assets import RigidObjectCfg
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.sensors import TiledCameraCfg
+from isaaclab.sensors.ray_caster import MultiMeshRayCasterCfg, patterns
+from isaaclab.markers.config import VisualizationMarkersCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 
@@ -17,23 +18,49 @@ from ... import mdp
 from .dexsuite_kuka_allegro_env_cfg import KukaAllegroMixinCfg
 
 
+RAY_CASTER_MARKER_CFG = VisualizationMarkersCfg(
+    markers={
+        "hit": sim_utils.SphereCfg(
+            radius=0.01,
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+        ),
+    },
+)
+
 @configclass
 class KukaAllegroCameraSceneCfg(dexsuite_state_impl.SceneCfg):
     """Dexsuite scene for multi-objects Lifting/Reorientation"""
 
-    base_camera = TiledCameraCfg(
-        prim_path="/World/envs/env_.*/Camera",
-        offset=TiledCameraCfg.OffsetCfg(
-            pos=(0.57, -0.8, 0.5),
-            rot=(0.61237, 0.61237, 0.35355, 0.35355),  # (x: 90 degree, y: 60 degree, z: 0 degree)
-            convention="opengl",
-        ),
-        data_types=["depth"],
-        spawn=sim_utils.PinholeCameraCfg(
-            focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
-        ),
-        width=64,
-        height=64,
+    # base_camera = TiledCameraCfg(
+    #     prim_path="/World/envs/env_.*/Camera",
+    #     offset=TiledCameraCfg.OffsetCfg(
+    #         pos=(0.57, -0.8, 0.5),
+    #         rot=(0.61237, 0.61237, 0.35355, 0.35355),  # (x: 90 degree, y: 60 degree, z: 0 degree)
+    #         convention="opengl",
+    #     ),
+    #     data_types=["depth"],
+    #     spawn=sim_utils.PinholeCameraCfg(
+    #         focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
+    #     ),
+    #     width=64,
+    #     height=64,
+    # )
+
+    base_camera = MultiMeshRayCasterCfg(
+        prim_path="{ENV_REGEX_NS}/Robot",
+        update_period=1 / 60,
+        offset=MultiMeshRayCasterCfg.OffsetCfg(pos=(-0.75, -0.0, 1.5)),
+        mesh_prim_paths=[
+            "/World/GroundPlane",
+            # MultiMeshRayCasterCfg.RaycastTargetCfg(target_prim_expr="{ENV_REGEX_NS}/Object"),
+            MultiMeshRayCasterCfg.RaycastTargetCfg(target_prim_expr="{ENV_REGEX_NS}/Robot"),
+            MultiMeshRayCasterCfg.RaycastTargetCfg(target_prim_expr="{ENV_REGEX_NS}/table"),
+            MultiMeshRayCasterCfg.RaycastTargetCfg(target_prim_expr="{ENV_REGEX_NS}/wall")
+        ],
+        ray_alignment="base",
+        pattern_cfg=patterns.GridPatternCfg(resolution=0.02, size=(1.5, 1.5), direction=(0.0, 0.0, -0.1)),
+        debug_vis=True,
+        visualizer_cfg=RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/RayCaster"),
     )
 
     # wrist_camera = TiledCameraCfg(

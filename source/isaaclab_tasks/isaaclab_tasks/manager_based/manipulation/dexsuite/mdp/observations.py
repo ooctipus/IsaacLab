@@ -329,6 +329,23 @@ def fingers_contact_force_b(
     return forces_b.view(env.num_envs, -1)
 
 
+# def depth_image(
+#     env: ManagerBasedRLEnv,
+#     sensor_cfg: SceneEntityCfg = SceneEntityCfg("tiled_camera"),
+#     normalize: bool = True,
+# ) -> torch.Tensor:
+#     # extract the used quantities (to enable type-hinting)
+#     sensor: TiledCamera | Camera | RayCasterCamera = env.scene.sensors[sensor_cfg.name]
+#     # obtain the input image
+#     images = sensor.data.output["depth"]
+#     # depth image normalization
+#     if normalize:
+#         images = torch.tanh(images / 2) * 2
+#         images -= torch.mean(images, dim=(1, 2), keepdim=True)
+
+#     return images
+
+
 def depth_image(
     env: ManagerBasedRLEnv,
     sensor_cfg: SceneEntityCfg = SceneEntityCfg("tiled_camera"),
@@ -337,10 +354,5 @@ def depth_image(
     # extract the used quantities (to enable type-hinting)
     sensor: TiledCamera | Camera | RayCasterCamera = env.scene.sensors[sensor_cfg.name]
     # obtain the input image
-    images = sensor.data.output["depth"]
-    # depth image normalization
-    if normalize:
-        images = torch.tanh(images / 2) * 2
-        images -= torch.mean(images, dim=(1, 2), keepdim=True)
-
-    return images
+    point_clouds_w = sensor.data.ray_hits_w
+    return point_clouds_w.view(env.num_envs, 76, 76, 3)[..., 0].unsqueeze(-1)
