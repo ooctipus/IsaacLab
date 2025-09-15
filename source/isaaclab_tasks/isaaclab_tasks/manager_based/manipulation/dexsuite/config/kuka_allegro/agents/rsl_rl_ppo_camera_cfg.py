@@ -10,14 +10,14 @@
 
 from isaaclab.utils import configclass
 
-from isaaclab_rl.ext.actor_critic_vision_cfg import ActorCriticVisionAdapterCfg, CNNEncoderCfg, MLPEncoderCfg, ProjectorCfg
+from isaaclab_rl.ext.actor_critic_vision_cfg import ActorCriticVisionAdapterCfg, CNNEncoderCfg, MLPEncoderCfg
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
 
 
 @configclass
 class DexsuiteKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 32
-    obs_groups = {"policy": ["policy", "base_image"], "critic": ["policy", "perception"]}
+    obs_groups = {"policy": ["policy", "proprio", "base_image", "wrist_image"], "critic": ["policy", "proprio", "perception"]}
     max_iterations = 15000
     save_interval = 250
     experiment_name = "dexsuite_kuka_allegro"
@@ -30,8 +30,18 @@ class DexsuiteKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
         activation="elu",
         encoders=ActorCriticVisionAdapterCfg(
             encoder_cfgs={
-                "depth_image": CNNEncoderCfg(
+                "depth_image1": CNNEncoderCfg(
                     encoding_groups=["base_image"],
+                    channels=[32, 64, 128],
+                    kernel_sizes=[3, 3, 3],
+                    strides=[2, 2, 2],
+                    paddings=[1, 1, 1],
+                    use_maxpool=True,
+                    pool_size=2,
+                    activation="elu",
+                ),
+                "depth_image2": CNNEncoderCfg(
+                    encoding_groups=["wrist_image"],
                     channels=[32, 64, 128],
                     kernel_sizes=[3, 3, 3],
                     strides=[2, 2, 2],
@@ -42,14 +52,14 @@ class DexsuiteKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
                 ),
                 "point_cloud": MLPEncoderCfg(encoding_groups=["perception"], layers=[512, 256, 128], activation="elu"),
             },
-            projectors_cfg={
-                "object_pos_reconstruction": ProjectorCfg(
-                    features=["base_image"],
-                    predictions=["privileged_perception"],
-                    layers=[256, 256],
-                    activation='elu'
-                ),
-            }
+            # projectors_cfg={
+            #     "object_pos_reconstruction": ProjectorCfg(
+            #         features=["base_image", "wrist_image"],
+            #         predictions=["privileged_perception", "proprio"],
+            #         layers=[256, 256],
+            #         activation='elu'
+            #     ),
+            # }
         ),
     )
     algorithm = RslRlPpoAlgorithmCfg(
