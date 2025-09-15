@@ -125,7 +125,7 @@ class KukaAllegroCameraObservationsCfg(dexsuite_state_impl.ObservationsCfg):
         """Camera observations for policy group."""
 
         object_observation_b = ObsTerm(
-            func=mdp.depth_image,
+            func=mdp.depth_image_ray_caster_camera,
             noise=Unoise(n_min=-0.0, n_max=0.0),
             clip=(-1.0, 1.0),
             params={"sensor_cfg": SceneEntityCfg("base_camera")},
