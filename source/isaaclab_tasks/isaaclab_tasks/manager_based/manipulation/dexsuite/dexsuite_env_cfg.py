@@ -38,7 +38,7 @@ class SceneCfg(InteractiveSceneCfg):
         prim_path="/World/envs/env_.*/object",
         spawn=sim_utils.UsdFileCfg(
             usd_path="/home/zhengyuz/Projects/isaaclab/source/isaaclab_assets/data/Props/Cube/CuboidArticulation.usd",
-            mass_props=sim_utils.MassPropertiesCfg(mass=0.2),
+            mass_props=sim_utils.MassPropertiesCfg(density=400),
             scale=(0.1, 0.1, 0.1),
         ),
         init_state=ArticulationCfg.InitialStateCfg(pos=(-0.55, 0.1, 0.35), rot=(1.0, 0.0, 0.0, 0.0)),
@@ -216,15 +216,15 @@ class EventCfg:
         },
     )
 
-    # object_scale_mass = EventTerm(
-    #     func=mdp.randomize_rigid_body_mass,
-    #     mode="startup",
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("object"),
-    #         "mass_distribution_params": [0.5, 0.5],
-    #         "operation": "scale",
-    #     },
-    # )
+    object_scale_mass = EventTerm(
+        func=mdp.randomize_rigid_body_mass,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("object"),
+            "mass_distribution_params": [0.5, 0.5],
+            "operation": "scale",
+        },
+    )
 
     # reset_table = EventTerm(
     #     func=mdp.reset_root_state_uniform,
@@ -427,7 +427,7 @@ class DexsuiteReorientEnvCfg(ManagerBasedEnvCfg):
                 debug_mode=False,
             ),
             dt=1 / 120,
-            # gravity=(0.0, 0.0, 0.0)
+            gravity=(0.0, 0.0, 0.0)
         )
         self.sim.render_interval = self.decimation
 
