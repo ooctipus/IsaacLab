@@ -83,15 +83,21 @@ def spawn_multi_asset(
                 asset_cfg.semantic_tags += cfg.semantic_tags
         # override settings for properties
         attr_names = ["mass_props", "rigid_props", "collision_props", "activate_contact_sensors", "deformable_props"]
+        asset_cfg_resolution = asset_cfg.copy()
+        # 1. set common value
         for attr_name in attr_names:
             attr_value = getattr(cfg, attr_name)
             if hasattr(asset_cfg, attr_name) and attr_value is not None:
-                setattr(asset_cfg, attr_name, attr_value)
+                setattr(asset_cfg_resolution, attr_name, attr_value)
+        # 2. set local value, overriding global value if such local value existis
+        for attr_name in attr_names:
+            if hasattr(asset_cfg, attr_name):
+                setattr(asset_cfg_resolution, attr_name, getattr(asset_cfg, attr_name))
         # spawn single instance
         proto_prim_path = f"{template_prim_path}/Asset_{index:04d}"
-        asset_cfg.func(
+        asset_cfg_resolution.func(
             proto_prim_path,
-            asset_cfg,
+            asset_cfg_resolution,
             translation=translation,
             orientation=orientation,
             clone_in_fabric=clone_in_fabric,

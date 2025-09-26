@@ -2,6 +2,16 @@ Changelog
 ---------
 
 
+0.46.3 (2025-09-26)
+~~~~~~~~~~~~~~~~~~~
+
+Changed
+^^^^^^^
+
+* Fixed the overriding behavior in :meth:`~isaaclab.sim.spawners.wrappers.spawn_multi_asset`, such that local authorize
+  stronger opinion than global values
+
+
 0.46.2 (2025-09-13)
 ~~~~~~~~~~~~~~~~~~~
 
