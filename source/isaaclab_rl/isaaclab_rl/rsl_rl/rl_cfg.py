@@ -10,8 +10,6 @@ from typing import Literal
 
 from isaaclab.utils import configclass
 
-from .distillation_cfg import RslRlDistillationAlgorithmCfg, RslRlDistillationStudentTeacherCfg
-from ..ext.actor_critic_vision_cfg import ActorCriticVisionAdapterCfg
 from .rnd_cfg import RslRlRndCfg
 from .symmetry_cfg import RslRlSymmetryCfg
 
@@ -47,7 +45,7 @@ class RslRlPpoActorCriticCfg:
 
     activation: str = MISSING
     """The activation function for the actor and critic networks."""
-    
+
     encoders: ActorCriticVisionAdapterCfg | None = None
     """The encoder for actor critic network"""
 

@@ -399,18 +399,14 @@ class RlGamesGpuEnv(IVecEnv):
         return self.env.reset()
 
     def get_env_state(self):
-        if 'true_objective' in self.env.unwrapped.extras:
-            state = {
-                'curriculum': self.env.unwrapped.extras['true_objective']
-            }
+        if "true_objective" in self.env.unwrapped.extras:
+            state = {"curriculum": self.env.unwrapped.extras["true_objective"]}
         elif hasattr(self.env.unwrapped, "curriculum_manager"):
-            state = {
-                "curriculum": self.env.unwrapped.curriculum_manager._term_cfgs[0].func.get_state()
-            }
+            state = {"curriculum": self.env.unwrapped.curriculum_manager._term_cfgs[0].func.get_state()}
         return state
 
     def set_env_state(self, env_state: dict[str, dict[str, dict[str, torch.Tensor]]]):
-        curriculum = env_state['curriculum'][:self.env.num_envs]
+        curriculum = env_state["curriculum"][: self.env.num_envs]
 
         if hasattr(self.env.unwrapped, "curriculum_manager"):
             self.env.unwrapped.curriculum_manager._term_cfgs[0].func.set_state(curriculum)

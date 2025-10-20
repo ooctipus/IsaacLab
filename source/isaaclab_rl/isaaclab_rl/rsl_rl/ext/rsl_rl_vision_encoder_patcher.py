@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Copyright (c) 2021-2025, ETH Zurich and NVIDIA CORPORATION
 # All rights reserved.
 #
@@ -5,20 +10,25 @@
 
 from __future__ import annotations
 
+import gymnasium
+import logging
+import math
+import numpy as np
 import torch
 import torch.nn as nn
-import gymnasium
-import numpy as np
-import logging
 from collections.abc import Mapping
 from tensordict import TensorDict
 from types import MethodType
 
-from isaaclab.envs import ManagerBasedRLEnv, DirectRLEnv
-from isaaclab.managers import ObservationManager
-from rsl_rl.modules.actor_critic import ActorCritic
 from rsl_rl.algorithms.ppo import PPO
-from ...ext.actor_critic_vision_ext import ActorCriticVision, vision_forward
+from rsl_rl.modules.actor_critic import ActorCritic
+from rsl_rl.modules.actor_critic_recurrent import ActorCriticRecurrent
+
+from isaaclab.envs import DirectRLEnv, ManagerBasedRLEnv
+from isaaclab.managers import ObservationManager
+
+from ...ext.actor_critic_vision_ext import ActorCriticVision, projector_forward, vision_forward
+
 
 def single_observation_space_from_obs(obs_dict: TensorDict | dict[str, torch.Tensor]):
     new_gym_space_dict = gymnasium.spaces.Dict()
@@ -26,6 +36,7 @@ def single_observation_space_from_obs(obs_dict: TensorDict | dict[str, torch.Ten
         new_gym_space_dict[key] = gymnasium.spaces.Box(low=-np.inf, high=np.inf, shape=(*obs.shape[1:],))
         new_gym_space_dict[key] = gymnasium.spaces.Box(low=-np.inf, high=np.inf, shape=(*obs.shape[1:],))
     return new_gym_space_dict
+
 
 class ActorCriticVisionExtensionPatcher:
     def __init__(self, a2c_cfg):
@@ -40,33 +51,122 @@ class ActorCriticVisionExtensionPatcher:
             self._orig_get_actor_obs = ActorCritic.get_actor_obs
             self._orig_get_critic_obs = ActorCritic.get_critic_obs
             self._orig_actor_critic_init = ActorCritic.__init__
+            self._orig_get_rnn_actor_obs = ActorCriticRecurrent.get_actor_obs
+            self._orig_get_rnn_critic_obs = ActorCriticRecurrent.get_critic_obs
+            self._orig_rnn_actor_critic_init = ActorCriticRecurrent.__init__
             self._orig_ppo_update = PPO.update
-            
-            def vision_encoder_creation_init(actor_critic_self, *args, **kwargs) -> None:
+            self._orig_ppo_process_env_step = PPO.process_env_step
+
+            def vision_encoder_creation_init(actor_critic_self: ActorCritic, *args, **kwargs) -> None:
                 obs_arg, *rest = args
                 self.vision.encoder_init(obs_arg)
-                # when adapter is not freeze, it is a part of the nn.module, and its device is the same as 
+                # when adapter is not freeze, it is a part of the nn.module, and its device is the same as
                 # the ActorCritic Module
-                actor_obs = vision_forward(self.vision, obs_arg.to('cpu'), self.vision.group2encoder, obs_arg.batch_size, "cpu")
+                actor_obs = vision_forward(
+                    self.vision, obs_arg.to("cpu"), self.vision.group2encoder, obs_arg.batch_size, "cpu"
+                )
                 new_args = (actor_obs, *rest)
+
                 self._orig_actor_critic_init(actor_critic_self, *new_args, **kwargs)
                 actor_critic_self.add_module("encoders", self.vision.encoders)
                 actor_critic_self.add_module("projectors", self.vision.projectors)
+                actor_critic_self.add_module("projector_feature_normalizers", self.vision.projector_feature_normalizers)
+                actor_critic_self.add_module(
+                    "projector_ground_truth_normalizers", self.vision.projector_ground_truth_normalizers
+                )
                 actor_critic_self.vision_forward = MethodType(vision_forward, actor_critic_self)
+                actor_critic_self.projector_forward = MethodType(projector_forward, actor_critic_self)
                 self.vision.print_vision_encoders()
 
-            def vision_encoded_get_actor_obs(actor_critic_self, obs: TensorDict) -> torch.Tensor:
-                encoded_obs = actor_critic_self.vision_forward(obs, self.vision.group2encoder, obs.batch_size, obs.device)
+            def vision_encoded_get_actor_obs(actor_critic_self: ActorCritic, obs: TensorDict) -> torch.Tensor:
+                encoded_obs = actor_critic_self.vision_forward(
+                    obs, self.vision.group2encoder, obs.batch_size, obs.device
+                )
                 return self._orig_get_actor_obs(actor_critic_self, encoded_obs)
 
-            def vision_encoded_get_critic_obs_patched(actor_critic_self, obs: TensorDict) -> torch.Tensor:
-                encoded_obs = actor_critic_self.vision_forward(obs, self.vision.group2encoder, obs.batch_size, obs.device)
+            def vision_encoded_get_critic_obs_patched(actor_critic_self: ActorCritic, obs: TensorDict) -> torch.Tensor:
+                encoded_obs = actor_critic_self.vision_forward(
+                    obs, self.vision.group2encoder, obs.batch_size, obs.device
+                )
                 return self._orig_get_critic_obs(actor_critic_self, encoded_obs)
-            
+
+            def vision_encoder_creation_rnn_init(rnn_actor_critic_self: ActorCriticRecurrent, *args, **kwargs) -> None:
+                obs_arg, *rest = args
+                self.vision.encoder_init(obs_arg)
+                # when adapter is not freeze, it is a part of the nn.module, and its device is the same as
+                # the ActorCritic Module
+                actor_obs = vision_forward(
+                    self.vision, obs_arg.to("cpu"), self.vision.group2encoder, obs_arg.batch_size, "cpu"
+                )
+                new_args = (actor_obs, *rest)
+
+                self._orig_rnn_actor_critic_init(rnn_actor_critic_self, *new_args, **kwargs)
+                rnn_actor_critic_self.add_module("encoders", self.vision.encoders)
+                rnn_actor_critic_self.add_module("projectors", self.vision.projectors)
+                rnn_actor_critic_self.add_module(
+                    "projector_feature_normalizers", self.vision.projector_feature_normalizers
+                )
+                rnn_actor_critic_self.add_module(
+                    "projector_ground_truth_normalizers", self.vision.projector_ground_truth_normalizers
+                )
+                rnn_actor_critic_self.vision_forward = MethodType(vision_forward, rnn_actor_critic_self)
+                rnn_actor_critic_self.projector_forward = MethodType(projector_forward, rnn_actor_critic_self)
+                self.vision.print_vision_encoders()
+
+            def vision_encoded_get_rnn_actor_obs(
+                rnn_actor_critic_self: ActorCriticRecurrent, obs: TensorDict
+            ) -> torch.Tensor:
+                in_batch_size = obs.batch_size
+                n = math.prod(in_batch_size)
+                encoded_obs = rnn_actor_critic_self.vision_forward(
+                    obs.reshape(n), self.vision.group2encoder, n, obs.device
+                )
+                return self._orig_get_rnn_actor_obs(rnn_actor_critic_self, encoded_obs.reshape(in_batch_size))
+
+            def vision_encoded_get_rnn_critic_obs_patched(
+                rnn_actor_critic_self: ActorCriticRecurrent, obs: TensorDict
+            ) -> torch.Tensor:
+                in_batch_size = obs.batch_size
+                n = math.prod(in_batch_size)
+                encoded_obs = rnn_actor_critic_self.vision_forward(
+                    obs.reshape(n), self.vision.group2encoder, n, obs.device
+                )
+                return self._orig_get_rnn_critic_obs(rnn_actor_critic_self, encoded_obs.reshape(in_batch_size))
+
+            def sol_process_env_step(ppo_self: PPO, obs, rewards, dones, infos):
+                # update projector normalizers
+                projector_keys = ppo_self.policy.projectors.keys()
+                if len(projector_keys) > 0:
+                    projector_ground_truth_normalizers = ppo_self.policy.projector_ground_truth_normalizers
+                    projector_feature_normalizers = ppo_self.policy.projector_feature_normalizers
+                    encoded_obs = ppo_self.policy.vision_forward(
+                        obs, self.vision.group2encoder, obs.batch_size, obs.device
+                    )
+                    for projector_key in projector_keys:
+                        in_feature_batch = torch.cat(
+                            [
+                                encoded_obs[feat_key]
+                                for feat_key in self.vision.projector_feature_sources[projector_key]
+                            ],
+                            dim=1,
+                        )
+                        projector_feature_normalizers[projector_key].update(in_feature_batch)
+
+                        prediction_targets = torch.cat(
+                            [obs[tgt_key] for tgt_key in self.vision.projector_prediction_targets[projector_key]], dim=1
+                        )
+                        projector_ground_truth_normalizers[projector_key].update(prediction_targets)
+                self._orig_ppo_process_env_step(ppo_self, obs, rewards, dones, infos)
+
             def sol_update(ppo_self: PPO):
                 mean_value_loss = 0
                 mean_surrogate_loss = 0
                 mean_entropy = 0
+                # -- Reconstruction loss
+                has_reconstruction_loss = False
+                if len(ppo_self.policy.projectors.keys()) > 0:
+                    has_reconstruction_loss = True
+                    mean_reconstruction_loss = {projector_key: 0 for projector_key in self.vision.projectors.keys()}
                 # -- RND loss
                 if ppo_self.rnd:
                     mean_rnd_loss = 0
@@ -80,9 +180,13 @@ class ActorCriticVisionExtensionPatcher:
 
                 # generator for mini batches
                 if ppo_self.policy.is_recurrent:
-                    generator = ppo_self.storage.recurrent_mini_batch_generator(ppo_self.num_mini_batches, ppo_self.num_learning_epochs)
+                    generator = ppo_self.storage.recurrent_mini_batch_generator(
+                        ppo_self.num_mini_batches, ppo_self.num_learning_epochs
+                    )
                 else:
-                    generator = ppo_self.storage.mini_batch_generator(ppo_self.num_mini_batches, ppo_self.num_learning_epochs)
+                    generator = ppo_self.storage.mini_batch_generator(
+                        ppo_self.num_mini_batches, ppo_self.num_learning_epochs
+                    )
 
                 # iterate over batches
                 for (
@@ -103,12 +207,14 @@ class ActorCriticVisionExtensionPatcher:
                     num_aug = 1
                     # original batch size
                     # we assume policy group is always there and needs augmentation
-                    original_batch_size = obs_batch["policy"].shape[0]
+                    original_batch_size = ppo_self.policy.get_actor_obs(obs_batch).shape[0]
 
                     # check if we should normalize advantages per mini batch
                     if ppo_self.normalize_advantage_per_mini_batch:
                         with torch.no_grad():
-                            advantages_batch = (advantages_batch - advantages_batch.mean()) / (advantages_batch.std() + 1e-8)
+                            advantages_batch = (advantages_batch - advantages_batch.mean()) / (
+                                advantages_batch.std() + 1e-8
+                            )
 
                     # Perform symmetric augmentation
                     if ppo_self.symmetry and ppo_self.symmetry["use_data_augmentation"]:
@@ -137,7 +243,9 @@ class ActorCriticVisionExtensionPatcher:
                     ppo_self.policy.act(obs_batch, masks=masks_batch, hidden_states=hid_states_batch[0])
                     actions_log_prob_batch = ppo_self.policy.get_actions_log_prob(actions_batch)
                     # -- critic
-                    value_batch = ppo_self.policy.evaluate(obs_batch, masks=masks_batch, hidden_states=hid_states_batch[1])
+                    value_batch = ppo_self.policy.evaluate(
+                        obs_batch, masks=masks_batch, hidden_states=hid_states_batch[1]
+                    )
                     # -- entropy
                     # we only keep the entropy of the first augmentation (the original one)
                     mu_batch = ppo_self.policy.action_mean[:original_batch_size]
@@ -200,17 +308,32 @@ class ActorCriticVisionExtensionPatcher:
                     else:
                         value_loss = (returns_batch - value_batch).pow(2).mean()
 
-                    loss = surrogate_loss + ppo_self.value_loss_coef * value_loss - ppo_self.entropy_coef * entropy_batch.mean()
-                    # Begin Octi Edit
-                    loss += getattr(self, "sol", torch.tensor(0.0, device=obs_batch.device))
-                    # End Octi Edit
+                    loss = (
+                        surrogate_loss
+                        + ppo_self.value_loss_coef * value_loss
+                        - ppo_self.entropy_coef * entropy_batch.mean()
+                    )
+                    if has_reconstruction_loss:
+                        encoded_obs = ppo_self.policy.vision_forward(
+                            obs_batch, self.vision.group2encoder, obs_batch.batch_size, obs_batch.device
+                        )
+                        reconstruction_loss = ppo_self.policy.projector_forward(
+                            obs_batch,
+                            encoded_obs,
+                            self.vision.projector_feature_sources,
+                            self.vision.projector_prediction_targets,
+                        )
+                        # reconstruct_loss = torch.sum(torch.stack(list(reconstruction_loss.values())))
+                        loss += torch.sum(torch.stack(list(reconstruction_loss.values())))
                     # Symmetry loss
                     if ppo_self.symmetry:
                         # obtain the symmetric actions
                         # if we did augmentation before then we don't need to augment again
                         if not ppo_self.symmetry["use_data_augmentation"]:
                             data_augmentation_func = ppo_self.symmetry["data_augmentation_func"]
-                            obs_batch, _ = data_augmentation_func(obs=obs_batch, actions=None, env=ppo_self.symmetry["_env"])
+                            obs_batch, _ = data_augmentation_func(
+                                obs=obs_batch, actions=None, env=ppo_self.symmetry["_env"]
+                            )
                             # compute number of augmentations per sample
                             num_aug = int(obs_batch.shape[0] / original_batch_size)
 
@@ -229,7 +352,8 @@ class ActorCriticVisionExtensionPatcher:
                         # compute the loss (we skip the first augmentation as it is the original one)
                         mse_loss = torch.nn.MSELoss()
                         symmetry_loss = mse_loss(
-                            mean_actions_batch[original_batch_size:], actions_mean_symm_batch.detach()[original_batch_size:]
+                            mean_actions_batch[original_batch_size:],
+                            actions_mean_symm_batch.detach()[original_batch_size:],
                         )
                         # add the loss to the total loss
                         if ppo_self.symmetry["use_mirror_loss"]:
@@ -265,6 +389,10 @@ class ActorCriticVisionExtensionPatcher:
                     if ppo_self.is_multi_gpu:
                         ppo_self.reduce_parameters()
 
+                    # if has_reconstruction_loss:
+                    #     for projector_key in self.vision.projectors.keys():
+                    #         self.vision.projector_optimizers[projector_key].zero_grad()
+                    #     reconstruct_loss.backward()
                     # Apply the gradients
                     # -- For PPO
                     nn.utils.clip_grad_norm_(ppo_self.policy.parameters(), ppo_self.max_grad_norm)
@@ -283,7 +411,10 @@ class ActorCriticVisionExtensionPatcher:
                     # -- Symmetry loss
                     if mean_symmetry_loss is not None:
                         mean_symmetry_loss += symmetry_loss.item()
-
+                    # -- Reconstruction loss
+                    if has_reconstruction_loss:
+                        for key in mean_reconstruction_loss.keys():
+                            mean_reconstruction_loss[key] += reconstruction_loss[key].item()
                 # -- For PPO
                 num_updates = ppo_self.num_learning_epochs * ppo_self.num_mini_batches
                 mean_value_loss /= num_updates
@@ -295,6 +426,10 @@ class ActorCriticVisionExtensionPatcher:
                 # -- For Symmetry
                 if mean_symmetry_loss is not None:
                     mean_symmetry_loss /= num_updates
+                # -- For Reconstruction loss
+                if has_reconstruction_loss:
+                    for key in mean_reconstruction_loss.keys():
+                        mean_reconstruction_loss[key] /= num_updates
                 # -- Clear the storage
                 ppo_self.storage.clear()
 
@@ -308,13 +443,18 @@ class ActorCriticVisionExtensionPatcher:
                     loss_dict["rnd"] = mean_rnd_loss
                 if ppo_self.symmetry:
                     loss_dict["symmetry"] = mean_symmetry_loss
-
+                if has_reconstruction_loss:
+                    loss_dict.update({f"reconstruction_{key}": val for key, val in mean_reconstruction_loss.items()})
                 return loss_dict
 
             PPO.update = sol_update
+            PPO.process_env_step = sol_process_env_step
             ActorCritic.__init__ = vision_encoder_creation_init
             ActorCritic.get_actor_obs = vision_encoded_get_actor_obs
             ActorCritic.get_critic_obs = vision_encoded_get_critic_obs_patched
+            ActorCriticRecurrent.__init__ = vision_encoder_creation_rnn_init
+            ActorCriticRecurrent.get_actor_obs = vision_encoded_get_rnn_actor_obs
+            ActorCriticRecurrent.get_critic_obs = vision_encoded_get_rnn_critic_obs_patched
 
             logging.warning("Applied vision patch to ActorCritic; encoders now part of state_dict.")
         else:
@@ -322,16 +462,15 @@ class ActorCriticVisionExtensionPatcher:
             self.original_direct_configure_gym_env_spaces = DirectRLEnv._configure_gym_env_spaces
             self.original_observaiton_manager_compute = ObservationManager.compute
             self.original_direct_get_observation = DirectRLEnv._get_observations
-            
+
             def adapted_observation_manager_compute(observation_manager_self, update_history=False):
                 obs_buf = self.original_observaiton_manager_compute(observation_manager_self, update_history)
                 return self._vision_forward(obs_buf, observation_manager_self.num_envs, observation_manager_self.device)
-            
-            def adapted_direct_get_obseravtion(lab_env_self:DirectRLEnv):
+
+            def adapted_direct_get_obseravtion(lab_env_self: DirectRLEnv):
                 obs_buf = self.original_direct_get_observation(lab_env_self)
                 return self._vision_forward(obs_buf, lab_env_self.num_envs, lab_env_self.device)
-        
-            
+
             def configure_group_obs_to_actor_ctiric_obs_gym_spaces(lab_env_self):
                 # When the freeze is True, encode is NOT apart of module, don't have to store raw observation but store
                 # the feature in rollout buffer instead
@@ -342,22 +481,35 @@ class ActorCriticVisionExtensionPatcher:
                     self.vision.feature_projectors.to(lab_env_self.device)
                     encoded_obs = lab_env_self.observation_manager.compute()
                     lab_env_self.single_observation_space = single_observation_space_from_obs(encoded_obs)
-                    lab_env_self.observation_space = gymnasium.vector.utils.batch_space(lab_env_self.single_observation_space, lab_env_self.num_envs)
+                    lab_env_self.observation_space = gymnasium.vector.utils.batch_space(
+                        lab_env_self.single_observation_space, lab_env_self.num_envs
+                    )
                 else:
                     self.vision.encoder_init(lab_env_self.observation_space, self.vision.adapter_cfg.activation)
-                    encoded_obs = vision_forward(self.vision, self.original_observaiton_manager_compute(), lab_env_self.num_envs, lab_env_self.device)
-                    lab_env_self.single_observation_space = adapt_gym_single_space(self.obs_groups, lab_env_self.single_observation_space)
-                    lab_env_self.observation_space = gymnasium.vector.utils.batch_space(lab_env_self.single_observation_space, lab_env_self.num_envs)
+                    encoded_obs = vision_forward(
+                        self.vision,
+                        self.original_observaiton_manager_compute(),
+                        lab_env_self.num_envs,
+                        lab_env_self.device,
+                    )
+                    lab_env_self.single_observation_space = adapt_gym_single_space(
+                        self.obs_groups, lab_env_self.single_observation_space
+                    )
+                    lab_env_self.observation_space = gymnasium.vector.utils.batch_space(
+                        lab_env_self.single_observation_space, lab_env_self.num_envs
+                    )
                     if lab_env_self.state_space is not None:
-                        lab_env_self.state_space = gymnasium.vector.utils.batch_space(lab_env_self.single_observation_space["critic"], lab_env_self.num_envs)
+                        lab_env_self.state_space = gymnasium.vector.utils.batch_space(
+                            lab_env_self.single_observation_space["critic"], lab_env_self.num_envs
+                        )
                 self.vision.print_vision_encoders()
-            
+
             ObservationManager.compute = adapted_observation_manager_compute
             ManagerBasedRLEnv._configure_gym_env_spaces = configure_group_obs_to_actor_ctiric_obs_gym_spaces
 
             DirectRLEnv._configure_gym_env_spaces = configure_group_obs_to_actor_ctiric_obs_gym_spaces
             DirectRLEnv._get_observations = adapted_direct_get_obseravtion
-    
+
     def remove_patch(self) -> None:
         if not self.adapter_cfg.freeze:
             """Restore original methods on policy."""
@@ -371,4 +523,3 @@ class ActorCriticVisionExtensionPatcher:
             ObservationManager.compute = self.original_observaiton_manager_compute
             DirectRLEnv._configure_gym_env_spaces = self.original_direct_configure_gym_env_spaces
             DirectRLEnv._get_observations = self.original_direct_get_observation
-    
