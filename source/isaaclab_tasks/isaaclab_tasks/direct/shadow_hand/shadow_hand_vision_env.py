@@ -42,10 +42,101 @@ class ShadowHandVisionEnvCfg(ShadowHandEnvCfg):
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
         ),
-        width=120,
-        height=120,
+        width=240,
+        height=240,
     )
-    feature_extractor = FeatureExtractorCfg()
+    feature_extractor = FeatureExtractorCfg(num_channel=7)
+
+    # env
+    observation_space = 164 + 27  # state observation + vision CNN embedding
+    state_space = 187 + 27  # asymettric states + vision CNN embedding
+
+
+@configclass
+class ShadowHandVisionRGBEnvCfg(ShadowHandEnvCfg):
+    # scene
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=1225, env_spacing=2.0, replicate_physics=True)
+
+    # camera
+    tiled_camera: TiledCameraCfg = TiledCameraCfg(
+        prim_path="/World/envs/env_.*/Camera",
+        offset=TiledCameraCfg.OffsetCfg(pos=(0, -0.35, 1.0), rot=(0.7071, 0.0, 0.7071, 0.0), convention="world"),
+        data_types=["rgb"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
+        ),
+        width=240,
+        height=240,
+    )
+    feature_extractor = FeatureExtractorCfg(num_channel=3)
+
+    # env
+    observation_space = 164 + 27  # state observation + vision CNN embedding
+    state_space = 187 + 27  # asymettric states + vision CNN embedding
+
+@configclass
+class ShadowHandVisionDiffuseAlbedoEnvCfg(ShadowHandEnvCfg):
+    # scene
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=1225, env_spacing=2.0, replicate_physics=True)
+
+    # camera
+    tiled_camera: TiledCameraCfg = TiledCameraCfg(
+        prim_path="/World/envs/env_.*/Camera",
+        offset=TiledCameraCfg.OffsetCfg(pos=(0, -0.35, 1.0), rot=(0.7071, 0.0, 0.7071, 0.0), convention="world"),
+        data_types=["diffuse_albedo"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
+        ),
+        width=240,
+        height=240,
+    )
+    feature_extractor = FeatureExtractorCfg(num_channel=3)
+
+    # env
+    observation_space = 164 + 27  # state observation + vision CNN embedding
+    state_space = 187 + 27  # asymettric states + vision CNN embedding
+
+
+@configclass
+class ShadowHandVisionDepthEnvCfg(ShadowHandEnvCfg):
+    # scene
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=1225, env_spacing=2.0, replicate_physics=True)
+
+    # camera
+    tiled_camera: TiledCameraCfg = TiledCameraCfg(
+        prim_path="/World/envs/env_.*/Camera",
+        offset=TiledCameraCfg.OffsetCfg(pos=(0, -0.35, 1.0), rot=(0.7071, 0.0, 0.7071, 0.0), convention="world"),
+        data_types=["depth"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
+        ),
+        width=240,
+        height=240,
+    )
+    feature_extractor = FeatureExtractorCfg(num_channel=1)
+
+    # env
+    observation_space = 164 + 27  # state observation + vision CNN embedding
+    state_space = 187 + 27  # asymettric states + vision CNN embedding
+
+
+@configclass
+class ShadowHandVisionSegmentationEnvCfg(ShadowHandEnvCfg):
+    # scene
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=1225, env_spacing=2.0, replicate_physics=True)
+
+    # camera
+    tiled_camera: TiledCameraCfg = TiledCameraCfg(
+        prim_path="/World/envs/env_.*/Camera",
+        offset=TiledCameraCfg.OffsetCfg(pos=(0, -0.35, 1.0), rot=(0.7071, 0.0, 0.7071, 0.0), convention="world"),
+        data_types=["semantic_segmentation"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
+        ),
+        width=240,
+        height=240,
+    )
+    feature_extractor = FeatureExtractorCfg(num_channel=3)
 
     # env
     observation_space = 164 + 27  # state observation + vision CNN embedding
@@ -104,31 +195,52 @@ class ShadowHandVisionEnv(InHandManipulationEnv):
         object_pose = torch.cat([self.object_pos, self.gt_keypoints.view(-1, 24)], dim=-1)
 
         # train CNN to regress on keypoint positions
-        pose_loss, embeddings = self.feature_extractor.step(
-            self._tiled_camera.data.output["rgb"],
-            self._tiled_camera.data.output["depth"],
-            self._tiled_camera.data.output["semantic_segmentation"][..., :3],
-            object_pose,
-        )
+        # if (
+        #     "rgb" in self.cfg.tiled_camera.data_types
+        #     and "depth" in self.cfg.tiled_camera.data_types
+        #     and "semantic_segmentation" in self.cfg.tiled_camera.data_types
+        # ):
+        #     pose_loss, embeddings = self.feature_extractor.step(
+        #         self._tiled_camera.data.output["rgb"],
+        #         self._tiled_camera.data.output["depth"],
+        #         self._tiled_camera.data.output["semantic_segmentation"][..., :3],
+        #         object_pose,
+        #     )
+        # elif "rgb" in self.cfg.tiled_camera.data_types:
+        #     pose_loss, embeddings = self.feature_extractor.step(
+        #         rgb_img=self._tiled_camera.data.output["rgb"], gt_pose=object_pose
+        #     )
+        # elif "depth" in self.cfg.tiled_camera.data_types:
+        #     pose_loss, embeddings = self.feature_extractor.step(
+        #         depth_img=self._tiled_camera.data.output["depth"], gt_pose=object_pose
+        #     )
+        # elif "semantic_segmentation" in self.cfg.tiled_camera.data_types:
+        #     pose_loss, embeddings = self.feature_extractor.step(
+        #         segmentation_img=self._tiled_camera.data.output["semantic_segmentation"][..., :3], gt_pose=object_pose
+        #     )
+        # elif "diffuse_albedo" in self.cfg.tiled_camera.data_types:
+        #     pose_loss, embeddings = self.feature_extractor.step(
+        #         albedo_img=self._tiled_camera.data.output["diffuse_albedo"], gt_pose=object_pose
+        #     )
 
-        self.embeddings = embeddings.clone().detach()
-        # compute keypoints for goal cube
-        compute_keypoints(
-            pose=torch.cat((torch.zeros_like(self.goal_pos), self.goal_rot), dim=-1), out=self.goal_keypoints
-        )
+        # self.embeddings = embeddings.clone().detach()
+        # # compute keypoints for goal cube
+        # compute_keypoints(
+        #     pose=torch.cat((torch.zeros_like(self.goal_pos), self.goal_rot), dim=-1), out=self.goal_keypoints
+        # )
 
         obs = torch.cat(
             (
-                self.embeddings,
+                # self.embeddings,
+                object_pose,
                 self.goal_keypoints.view(-1, 24),
             ),
             dim=-1,
         )
-
         # log pose loss from CNN training
-        if "log" not in self.extras:
-            self.extras["log"] = dict()
-        self.extras["log"]["pose_loss"] = pose_loss
+        # if "log" not in self.extras:
+        #     self.extras["log"] = dict()
+        # self.extras["log"]["pose_loss"] = pose_loss
 
         return obs
 
@@ -156,7 +268,8 @@ class ShadowHandVisionEnv(InHandManipulationEnv):
     def _compute_states(self):
         """Asymmetric states for the critic."""
         sim_states = self.compute_full_state()
-        state = torch.cat((sim_states, self.embeddings), dim=-1)
+        # state = torch.cat((sim_states, self.embeddings), dim=-1)
+        state = sim_states
         return state
 
     def _get_observations(self) -> dict:
