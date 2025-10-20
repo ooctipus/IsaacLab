@@ -94,11 +94,12 @@ from isaaclab.envs import (
 )
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
-from isaaclab.utils.io import dump_pickle, dump_yaml
+from isaaclab.utils.io import dump_yaml
 from isaaclab.utils.wandb_upload_record_video import patch_record_video_with_wandb_upload
-from isaaclab_rl.rsl_rl.ext.modules.actor_critic_vision import ActorCriticVisionExtensionPatcher
-from isaaclab_rl.rsl_rl.ext.modules.obs_dep_std import StateDependendNoiseDistributionPatcher
+
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper
+from isaaclab_rl.rsl_rl.ext.modules.obs_dep_std import StateDependendNoiseDistributionPatcher
+from isaaclab_rl.rsl_rl.ext.rsl_rl_vision_encoder_patcher import ActorCriticVisionExtensionPatcher
 
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
@@ -176,7 +177,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # apply encoder patch
     actor_critic_vision_patcher = ActorCriticVisionExtensionPatcher(agent_cfg.policy)
     actor_critic_vision_patcher.apply_patch()
-    
     StateDependendNoiseDistributionPatcher(agent_cfg.policy)
 
     # create isaac environment
