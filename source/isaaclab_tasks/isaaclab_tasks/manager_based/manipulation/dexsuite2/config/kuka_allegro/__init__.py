@@ -17,7 +17,7 @@ from . import agents
 
 # State Observation Environments
 gym.register(
-    id="Isaac-Dexsuite-Kuka-Allegro-Reorient-v0",
+    id="Dexsuite-Kuka-Allegro-Reorient-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -28,7 +28,7 @@ gym.register(
 )
 
 gym.register(
-    id="Isaac-Dexsuite-Kuka-Allegro-Reorient-Play-v0",
+    id="Dexsuite-Kuka-Allegro-Reorient-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -40,7 +40,7 @@ gym.register(
 
 # Dexsuite Lift Environments
 gym.register(
-    id="Isaac-Dexsuite-Kuka-Allegro-Lift-v0",
+    id="Dexsuite-Kuka-Allegro-Lift-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -52,7 +52,7 @@ gym.register(
 
 
 gym.register(
-    id="Isaac-Dexsuite-Kuka-Allegro-Lift-Play-v0",
+    id="Dexsuite-Kuka-Allegro-Lift-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -63,7 +63,7 @@ gym.register(
 )
 
 gym.register(
-    id="Isaac-Dexsuite-Kuka-Allegro-Fabric-Lift-v0",
+    id="Dexsuite-Kuka-Allegro-Fabric-Lift-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -75,7 +75,7 @@ gym.register(
 
 
 gym.register(
-    id="Isaac-Dexsuite-Kuka-Allegro-Fabric-Lift-Play-v0",
+    id="Dexsuite-Kuka-Allegro-Fabric-Lift-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -87,7 +87,7 @@ gym.register(
 
 
 gym.register(
-    id="Isaac-Dexsuite-Kuka-Allegro-Shelves-Reorient-v0",
+    id="Dexsuite-Kuka-Allegro-Shelves-Reorient-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -98,7 +98,7 @@ gym.register(
 )
 
 gym.register(
-    id="Isaac-Dexsuite-Kuka-Allegro-Shelves-Reorient-Play-v0",
+    id="Dexsuite-Kuka-Allegro-Shelves-Reorient-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -111,7 +111,7 @@ gym.register(
 )
 
 gym.register(
-    id="Isaac-Dexsuite-Kuka-Allegro-Shelves-Place-v0",
+    id="Dexsuite-Kuka-Allegro-Shelves-Place-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -122,7 +122,7 @@ gym.register(
 )
 
 gym.register(
-    id="Isaac-Dexsuite-Kuka-Allegro-Shelves-Place-Play-v0",
+    id="Dexsuite-Kuka-Allegro-Shelves-Place-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -134,7 +134,7 @@ gym.register(
 
 # Vision-Based Environments
 gym.register(
-    id="Isaac-Dexsuite-Kuka-Allegro-Lift-Single-Camera-v0",
+    id="Dexsuite-Kuka-Allegro-Lift-Single-Camera-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -148,7 +148,7 @@ gym.register(
 
 
 gym.register(
-    id="Isaac-Dexsuite-Kuka-Allegro-Lift-Single-Camera-Play-v0",
+    id="Dexsuite-Kuka-Allegro-Lift-Single-Camera-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -162,7 +162,7 @@ gym.register(
 
 
 gym.register(
-    id="Isaac-Dexsuite-Kuka-Allegro-Lift-Duo-Camera-v0",
+    id="Dexsuite-Kuka-Allegro-Lift-Duo-Camera-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -176,7 +176,7 @@ gym.register(
 
 
 gym.register(
-    id="Isaac-Dexsuite-Kuka-Allegro-Lift-Duo-Camera-Play-v0",
+    id="Dexsuite-Kuka-Allegro-Lift-Duo-Camera-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
