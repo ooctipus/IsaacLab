@@ -172,12 +172,15 @@ class KukaAllegroSingleCameraMixinCfg(kuka_allegro_dexsuite.KukaAllegroMixinCfg)
         self.variants.setdefault("scene", {}).update({
             "64x64tiled_depth": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 64, "height": 64}),
             "64x64tiled_rgb": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 64, "height": 64}),
+            "64x64tiled_albedo": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 64, "height": 64}),
             "64x64raycaster": KukaAllegroSingleRayCasterCameraSceneCfg(**{**sa, "width": 64, "height": 64}),
             "128x128tiled_depth": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 128, "height": 128}),
             "128x128tiled_rgb": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 128, "height": 128}),
+            "128x128tiled_albedo": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 128, "height": 128}),
             "128x128raycaster": KukaAllegroSingleRayCasterCameraSceneCfg(**{**sa, "width": 128, "height": 128}),
             "256x256tiled_depth": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 256, "height": 256}),
             "256x256tiled_rgb": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 256, "height": 256}),
+            "256x256tiled_albedo": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 256, "height": 256}),
             "256x256raycaster": KukaAllegroSingleRayCasterCameraSceneCfg(**{**sa, "width": 256, "height": 256}),
         })
 
@@ -192,12 +195,15 @@ class KukaAllegroDuoCameraMixinCfg(kuka_allegro_dexsuite.KukaAllegroMixinCfg):
         self.variants.setdefault("scene", {}).update({
             "64x64tiled_depth": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 64, "height": 64}),
             "64x64tiled_rgb": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 64, "height": 64}),
+            "64x64tiled_albedo": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 64, "height": 64}),
             "64x64raycaster": KukaAllegroDuoRayCasterCameraSceneCfg(**{**sa, "width": 64, "height": 64}),
             "128x128tiled_depth": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 128, "height": 128}),
             "128x128tiled_rgb": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 128, "height": 128}),
+            "128x128tiled_albedo": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 128, "height": 128}),
             "128x128raycaster": KukaAllegroDuoRayCasterCameraSceneCfg(**{**sa, "width": 128, "height": 128}),
             "256x256tiled_depth": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 256, "height": 256}),
             "256x256tiled_rgb": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 256, "height": 256}),
+            "256x256tiled_albedo": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 256, "height": 256}),
             "256x256raycaster": KukaAllegroDuoRayCasterCameraSceneCfg(**{**sa, "width": 256, "height": 256}),
         })
 
