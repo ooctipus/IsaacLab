@@ -10,6 +10,7 @@ from typing import Literal
 
 from isaaclab.utils import configclass
 
+from .actor_critic_vision_cfg import ActorCriticVisionAdapterCfg
 from .rnd_cfg import RslRlRndCfg
 from .symmetry_cfg import RslRlSymmetryCfg
 

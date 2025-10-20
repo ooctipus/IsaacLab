@@ -64,7 +64,7 @@ def main():
     # reset environment at start
     sim_env.reset()
     sm.reset()
-    timestep = 0
+    # timestep = 0
     while simulation_app.is_running():
         # run everything in inference mode
         with torch.inference_mode():

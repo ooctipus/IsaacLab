@@ -292,11 +292,11 @@ validate_bool "$LAB_RECREATE"    "--lab-recreate"
 
 # allow auto/true/false for custom linkage flags
 case "${USE_CUSTOM_KIT,,}" in
-  auto|true|false|1|0|yes|no|on|off) ;; 
+  auto|true|false|1|0|yes|no|on|off) ;;
   *) die "Invalid value for --use-custom-kit: '$USE_CUSTOM_KIT' (use auto|true|false)";;
 esac
 case "${USE_CUSTOM_PHYSX,,}" in
-  auto|true|false|1|0|yes|no|on|off) ;; 
+  auto|true|false|1|0|yes|no|on|off) ;;
   *) die "Invalid value for --use-custom-physx: '$USE_CUSTOM_PHYSX' (use auto|true|false)";;
 esac
 
@@ -339,8 +339,8 @@ clone_or_prepare() {
         info "Switching origin to '$repo_ssh'."
         run "git -C \"$dest\" remote set-url origin \"$repo_ssh\""
       else
-        read -r -p "Switch origin to '$repo_ssh'? [y/N]: " ans
-        case "${ans,,}" in
+        read -r -p "Switch origin to '$repo_ssh'? [y/N]: " answer
+        case "${answer,,}" in
           y|yes) run "git -C \"$dest\" remote set-url origin \"$repo_ssh\"" ;;
           *) die "Remote mismatch. Move '$dest' away or re-run with -y to retarget automatically." ;;
         esac
@@ -661,8 +661,8 @@ confirm_and_go() {
     return 0
   fi
   if [[ -t 0 ]]; then
-    read -r -p "Proceed with these actions? [y/N]: " ans
-    case "${ans,,}" in
+    read -r -p "Proceed with these actions? [y/N]: " answer
+    case "${answer,,}" in
       y|yes) ok "Proceeding";;
       *) warn "Cancelled"; exit 1;;
     esac

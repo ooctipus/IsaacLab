@@ -17,7 +17,7 @@ import textwrap
 import torch
 import torch.nn as nn
 from tensordict import TensorDict
-from typing import Dict, Union
+from typing import Union
 
 from rsl_rl.networks import EmpiricalNormalization
 

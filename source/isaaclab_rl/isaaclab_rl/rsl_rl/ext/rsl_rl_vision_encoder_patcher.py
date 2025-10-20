@@ -40,10 +40,10 @@ def single_observation_space_from_obs(obs_dict: TensorDict | dict[str, torch.Ten
 
 class ActorCriticVisionExtensionPatcher:
     def __init__(self, a2c_cfg):
-        enc = a2c_cfg.get("encoders", None) if isinstance(a2c_cfg, Mapping) else getattr(a2c_cfg, "encoders", None)
+        enc = a2c_cfg.get("encoders") if isinstance(a2c_cfg, Mapping) else getattr(a2c_cfg, "encoders", None)
         self.vision = ActorCriticVision(enc)
 
-    def apply_patch(self) -> None:
+    def apply_patch(self) -> None:  # noqa: C901
         """Attach encoders to policy instance and patch its observation methods."""
         encoders = self.vision.adapter_cfg.encoder_cfgs
         first_encoder = list(encoders.values())[0]
@@ -471,7 +471,7 @@ class ActorCriticVisionExtensionPatcher:
                 obs_buf = self.original_direct_get_observation(lab_env_self)
                 return self._vision_forward(obs_buf, lab_env_self.num_envs, lab_env_self.device)
 
-            def configure_group_obs_to_actor_ctiric_obs_gym_spaces(lab_env_self):
+            def configure_group_obs_to_actor_critic_obs_gym_spaces(lab_env_self):
                 # When the freeze is True, encode is NOT apart of module, don't have to store raw observation but store
                 # the feature in rollout buffer instead
                 if isinstance(lab_env_self, ManagerBasedRLEnv):
@@ -492,9 +492,9 @@ class ActorCriticVisionExtensionPatcher:
                         lab_env_self.num_envs,
                         lab_env_self.device,
                     )
-                    lab_env_self.single_observation_space = adapt_gym_single_space(
-                        self.obs_groups, lab_env_self.single_observation_space
-                    )
+                    # lab_env_self.single_observation_space = adapt_gym_single_space(
+                    #     self.obs_groups, lab_env_self.single_observation_space
+                    # )
                     lab_env_self.observation_space = gymnasium.vector.utils.batch_space(
                         lab_env_self.single_observation_space, lab_env_self.num_envs
                     )
@@ -505,9 +505,9 @@ class ActorCriticVisionExtensionPatcher:
                 self.vision.print_vision_encoders()
 
             ObservationManager.compute = adapted_observation_manager_compute
-            ManagerBasedRLEnv._configure_gym_env_spaces = configure_group_obs_to_actor_ctiric_obs_gym_spaces
+            ManagerBasedRLEnv._configure_gym_env_spaces = configure_group_obs_to_actor_critic_obs_gym_spaces
 
-            DirectRLEnv._configure_gym_env_spaces = configure_group_obs_to_actor_ctiric_obs_gym_spaces
+            DirectRLEnv._configure_gym_env_spaces = configure_group_obs_to_actor_critic_obs_gym_spaces
             DirectRLEnv._get_observations = adapted_direct_get_obseravtion
 
     def remove_patch(self) -> None:

@@ -28,7 +28,7 @@ class CNN(nn.Module):
         use_maxpool = kwargs.get("use_maxpool", False)
         pool_size = kwargs.get("pool_size", 2)
         gap = kwargs.get("gap", True)
-        feature_size = kwargs.get("feature_size", None)
+        feature_size = kwargs.get("feature_size")
         assert len(channels) == len(kernel_sizes) == len(strides) == len(paddings), "lists must match length"
         act_cls = {
             "relu": nn.ReLU,
@@ -76,10 +76,10 @@ class MLP(nn.Module):
         super().__init__()
         layers = kwargs["layers"]  # e.g., [512, 256, 128]
         activation = kwargs.get("activation", "relu")
-        norm = kwargs.get("norm", None)  # None | "batch" | "layer"
+        norm = kwargs.get("norm")  # None | "batch" | "layer"
         dropout = kwargs.get("dropout", 0.0)  # float or List[float]
         bias = kwargs.get("bias", True)
-        feature_size = kwargs.get("feature_size", None)  # optionally project to this size
+        feature_size = kwargs.get("feature_size")  # optionally project to this size
 
         act_cls = {
             "relu": nn.ReLU,
