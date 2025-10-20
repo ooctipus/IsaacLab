@@ -68,7 +68,7 @@ class InfoWandbUploadPatcher:
                 ep_infos.append(extras["log"])
 
             # -- Episode info
-            
+
             if ep_infos:
                 for key in ep_infos[0]:
                     infotensor = torch.tensor([], device=info_self.device)

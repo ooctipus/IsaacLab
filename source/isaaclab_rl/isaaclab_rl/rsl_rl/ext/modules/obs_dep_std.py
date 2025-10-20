@@ -14,7 +14,6 @@ import torch
 import torch.nn as nn
 from torch.distributions import Distribution, Normal, constraints
 from torch.types import _size
-from typing import Optional
 
 from rsl_rl.algorithms import PPO
 from rsl_rl.modules import ActorCritic
