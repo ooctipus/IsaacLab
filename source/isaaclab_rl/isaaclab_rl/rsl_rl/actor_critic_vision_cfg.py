@@ -3,17 +3,14 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-# Copyright (c) 2021-2025, ETH Zurich and NVIDIA CORPORATION
-# All rights reserved.
-#
-# SPDX-License-Identifier: BSD-3-Clause
+
 from __future__ import annotations
 
 from dataclasses import MISSING
 
 from isaaclab.utils import configclass
 
-from .ext.modules import vision_encoder as encoders
+from ..ext import vision_encoder as encoders
 
 
 @configclass
