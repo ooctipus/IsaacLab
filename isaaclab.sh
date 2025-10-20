@@ -284,6 +284,70 @@ if [ -v _IL_PREV_LD_PRELOAD ]; then
   unset _IL_PREV_LD_PRELOAD
 fi
 EOS
+
+}
+
+# install geometric fabrics (fabrics-sim) and apply urdfpy patch
+install_fabrics_sim() {
+    local fabrics_dir="${ISAACLAB_PATH}/fabrics-sim"
+    local repo_url="https://gitlab-master.nvidia.com/srl/fabrics-sim"
+    local pip_cmd
+
+    # clone if missing
+    if [[ ! -d "${fabrics_dir}" ]]; then
+        echo "[INFO] Cloning fabrics-sim → ${fabrics_dir}"
+        git clone "${repo_url}" "${fabrics_dir}"
+        (cd "${fabrics_dir}" && git checkout develop)
+    fi
+
+    # install in editable mode
+    pip_cmd=$(extract_pip_command)
+    (cd "${fabrics_dir}" && ${pip_cmd} -e .)
+
+    # Inline patch:
+    local py_exe=$(extract_python_exe)
+
+    get_module_dir() {
+        local mod="$1"
+        "$py_exe" - <<PY 2>/dev/null
+import importlib, os
+m = importlib.import_module("$mod")
+print(os.path.dirname(m.__file__))
+PY
+    }
+
+    nx_dir=$(get_module_dir networkx || true)
+    urdf_dir=$(get_module_dir urdfpy || true)
+
+    if [[ -n "$nx_dir" ]] && [[ -d "$nx_dir" ]]; then
+        # networkx/classes
+        f="$nx_dir/classes/graph.py";        [[ -f "$f" ]] && sed -i 's|from collections import Mapping|from collections.abc import Mapping|g' "$f"
+        f="$nx_dir/classes/coreviews.py";    [[ -f "$f" ]] && sed -i 's|from collections import Mapping|from collections.abc import Mapping|g' "$f"
+        f="$nx_dir/classes/reportviews.py";  [[ -f "$f" ]] && sed -i 's|from collections import Mapping, Set, Iterable|from collections.abc import Mapping, Set, Iterable|g' "$f"
+        # networkx/algorithms
+        f="$nx_dir/algorithms/dag.py";       [[ -f "$f" ]] && sed -i 's|from fractions import gcd|from math import gcd|g' "$f"
+        f="$nx_dir/algorithms/lowest_common_ancestors.py"; if [[ -f "$f" ]]; then
+            # Replace combined import with Python 3.10+ compatible split using Python for safe newline handling
+            "$py_exe" - "$f" <<'PY'
+import io, sys
+p = sys.argv[1]
+with io.open(p, 'r', encoding='utf-8') as fh:
+    s = fh.read()
+s = s.replace(
+    'from collections import defaultdict, Mapping, Set',
+    'from collections.abc import Mapping, Set\nfrom collections import defaultdict'
+)
+with io.open(p, 'w', encoding='utf-8') as fh:
+    fh.write(s)
+PY
+        fi
+        # networkx/readwrite
+        f="$nx_dir/readwrite/graphml.py";    [[ -f "$f" ]] && sed -i 's|(np.int, "int"), (np.int8, "int"),|(int, "int"), (np.int8, "int"),|g' "$f"
+    fi
+
+    if [[ -n "$urdf_dir" ]] && [[ -d "$urdf_dir" ]]; then
+        f="$urdf_dir/urdf.py"; [[ -f "$f" ]] && sed -i 's|astype(np.float)|astype(float)|g' "$f"
+    fi
 }
 
 # setup anaconda environment for Isaac Lab
@@ -554,7 +618,7 @@ while [[ $# -gt 0 ]]; do
             # install the learning frameworks specified
             ${pip_command} -e "${ISAACLAB_PATH}/source/isaaclab_rl[${framework_name}]"
             ${pip_command} -e "${ISAACLAB_PATH}/source/isaaclab_mimic[${framework_name}]"
-
+            install_fabrics_sim
             # in some rare cases, torch might not be installed properly by setup.py, add one more check here
             # can prevent that from happening
             ensure_cuda_torch
