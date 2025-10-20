@@ -132,132 +132,157 @@ Here, when modifying ``env.decimation`` or ``env.sim.dt``, the user needs to giv
 Group Override
 --------------
 Group override lets you swap out entire groups of environment- or agent-level settings in one go.
-Instead of overriding individual fields, you select a named preset defined in your code.
+Instead of overriding individual fields, you select a named preset defined under a ``variants`` mapping
+directly inside your config classes.
 
 
-Group Presets
-^^^^^^^^^^^^^
-First define the available group override options
+Defining Variants
+^^^^^^^^^^^^^^^^^
+Declare alternatives under ``self.variants`` in your environment and agent configs. Each top-level key under
+``variants`` becomes a Hydra group (``env.<key>`` or ``agent.<key>``), and each nested key is a selectable option.
 
+Environment variants example:
 
 .. code-block:: python
 
     @configclass
-    class StateNoNoiseObservationsCfg:
-        """Observation specifications for the MDP."""
-
-        @configclass
-        class PolicyCfg(ObsGroup):
-            """Observations for policy group."""
-
-            # observation terms (order preserved)
-            joint_pos = ObsTerm(func=mdp.joint_pos_rel)
-            # other terms .......
-
-            def __post_init__(self):
-                self.enable_corruption = False
-                self.concatenate_terms = True
-
-        # observation groups
-        policy: PolicyCfg = PolicyCfg()
-
+    class ReachEnvCfg(ManagerBasedRLEnvCfg):
+        def __post_init__(self):
+            super().__post_init__()
+            # Share across all derived envs
+            self.variants = {
+                "observations": {
+                    "noise_less": NoiselessObservationsCfg(),
+                }
+            }
 
     @configclass
-    class EnvConfigurables:
-        env: dict[str, any] = {
-            "observations": {
-                "state_obs_no_noise": StateNoNoiseObservationsCfg(),
-                "state_obs_noisy": # other option,
-            },
-            "actions.arm_action": {
-                "joint_pos_arm_action": mdp.JointPositionActionCfg(
-                    asset_name="robot", joint_names=["panda_joint.*"], scale=0.5, use_default_offset=True
-                ),
-                "osc_arm_action": mdp.OperationalSpaceControllerActionCfg(
-                    asset_name="robot",
-                    # rest of fields
-                ),
-            },
-            "events": {
-                "rand_joint_pos_friction": JointRandPositionFrictionEventCfg(),
-                "rand_joint_pos_friction_amarture": JointRandPositionFrictionAmartureEventCfg(),
-            },
-            "events.reset_robot_joints": {
-                "aggressive": EventTerm(
-                    func=mdp.reset_joints_by_scale,
-                    mode="reset",
-                    params={
-                        "position_range": (0.0, 2.0),
-                        "velocity_range": (0.0, 1.0),
-                    },
-                ),
-                "easy": # easy EventTerm with narrower ranges
-            },
-        }
+    class FrankaReachEnvCfg(ReachEnvCfg):
+        def __post_init__(self):
+            super().__post_init__()
+            variants = {
+                "actions.arm_action": {
+                    "joint_position_to_limit": mdp.JointPositionToLimitsActionCfg(
+                        asset_name="robot", joint_names=["panda_joint.*"]
+                    ),
+                    "relative_joint_position": mdp.RelativeJointPositionActionCfg(
+                        asset_name="robot", joint_names=["panda_joint.*"], scale=0.2
+                    ),
+                }
+            }
+            self.variants.update(variants)
 
+RSL-RL agent variants example:
 
+.. code-block:: python
 
     @configclass
-    class AgentConfigurables(EnvConfigurables):
-        agent: dict[str, any] = {
+    class FrankaReachPPORunnerCfg(RslRlOnPolicyRunnerCfg):
+        num_steps_per_env = 24
+        ...
+        policy = RslRlPpoActorCriticCfg(
+            ...
+        )
+        algorithm = RslRlPpoAlgorithmCfg(
+            ...
+        )
+        variants = {
             "policy": {
                 "large_network": RslRlPpoActorCriticCfg(
-                    init_noise_std=1.0,
-                    actor_hidden_dims=[512, 256, 128, 64],
-                    critic_hidden_dims=[512, 256, 128, 64],
-                    activation="elu",
+                    actor_hidden_dims=[512, 256, 128, 64], critic_hidden_dims=[512, 256, 128, 64], ...
                 ),
                 "medium_network": RslRlPpoActorCriticCfg(
-                    init_noise_std=1.0,
-                    actor_hidden_dims=[256, 128, 64],
-                    critic_hidden_dims=[256, 128, 64],
-                    activation="elu",
-                ),
-                "small_network": RslRlPpoActorCriticCfg(
-                    init_noise_std=1.0,
-                    actor_hidden_dims=[128, 64],
-                    critic_hidden_dims=[128, 64],
-                    activation="elu",
+                    actor_hidden_dims=[256, 128, 64], critic_hidden_dims=[256, 128, 64], ...
                 ),
             },
-            # algorithm cfg.....
+            "algorithm": {
+                "small_batch_lr": RslRlPpoAlgorithmCfg(num_mini_batches=16, learning_rate=1.0e-4, ...),
+            },
         }
 
 
-Group Registration
-^^^^^^^^^^^^^^^^^^
-When you register your Gym environment, provide the ``configurable_entry_point`` pointing to your ``@configclass``:
+RL Games agent variants example:
 
-.. code-block:: python
+.. code-block:: yaml
 
-    gym.register(
-        id="Isaac-Reach-Franka-v0",
-        entry_point="isaaclab.envs:ManagerBasedRLEnv",
-        disable_env_checker=True,
-        kwargs={
-            # … other cfg entry points …
-            "configurable_entry_point": f"{agents.__name__}.configurables:AgentConfigurables"
-        },
-    )
+   params:
+     env: ...
+     config: ...
+     network:
+       ...
+       mlp:
+         units: [64, 64]
+         activation: elu
+         d2rl: False
+
+   variants:
+     params.network.mlp:
+       large_network:
+         units: [256, 128, 64]
+         activation: elu
+         d2rl: False
+
+The above defines a selectable group at ``agent.params.network.mlp`` with option ``large_network``.
+
+
+
 
 
 Override Syntax
 ^^^^^^^^^^^^^^^
-Select one preset per group via Hydra-style CLI flags. For example::
+Select one preset per group via Hydra-style CLI flags.
 
-    python scripts/reinforcement_learning/rsl_rl/train.py \
-      --task=Isaac-Reach-Franka-v0 \
-      --headless \
-      env.events=rand_joint_pos_friction_amarture \
-      env.observations=state_obs_no_noise  \
-      env.actions.arm_action=osc_arm_action    \
-      agent.policy=large_network
+.. tab-set::
+   :sync-group: rl-override
 
-Under the hood, Hydra will replace:
+   .. tab-item:: rsl_rl
+      :sync: rsl_rl
 
-- ``env.events``             with ``EnvConfigurables.env["rand_joint_pos_friction_amarture"]``
-- ``env.observations``       with ``EnvConfigurables.env["state_obs_no_noise"]``
-- ``env.actions.arm_action`` with ``EnvConfigurables.env["actions.arm_action"]["osc_arm_action"]``
-- ``agent.policy``           with ``AgentConfigurables.agent["large_network"]``
+      .. code-block:: bash
 
-allowing you to switch qualitative modes of your experiments with a single flag.
+         python scripts/reinforcement_learning/rsl_rl/train.py \
+           --task=Isaac-Reach-Franka-v0 \
+           --headless \
+           env.observations=noise_less \
+           env.actions.arm_action=relative_joint_position \
+           agent.policy=large_network
+
+      Hydra replaces:
+
+      .. list-table::
+         :widths: 30 70
+         :header-rows: 1
+
+         * - CLI key
+           - Resolved variant node
+         * - ``env.observations``
+           - ``ReachEnvCfg.variants["observations"]["noise_less"]``
+         * - ``env.actions.arm_action``
+           - ``FrankaReachEnvCfg.variants["actions.arm_action"]["relative_joint_position"]``
+         * - ``agent.policy``
+           - ``FrankaReachPPORunnerCfg.variants["policy"]["large_network"]``
+
+   .. tab-item:: rl_games
+      :sync: rl_games
+
+      .. code-block:: bash
+
+         python scripts/reinforcement_learning/rl_games/train.py \
+           --task=Isaac-Reach-Franka-v0 \
+           --headless \
+           env.observations=noise_less \
+           env.actions.arm_action=relative_joint_position \
+           agent.params.network.mlp=large_network
+
+      Hydra replaces:
+
+      .. list-table::
+         :widths: 35 65
+         :header-rows: 1
+
+         * - CLI key
+           - Resolved variant node
+         * - ``agent.params.network.mlp``
+           - ``variants["params.network.mlp"]["large_network"]`` (from RL Games YAML)
+
+These flags let you switch qualitative modes of your experiments with a single option per group.
