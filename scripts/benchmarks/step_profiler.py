@@ -4,8 +4,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import time
-from prettytable import PrettyTable
 from collections import defaultdict
+from prettytable import PrettyTable
 
 
 class EnvStepProfiler:
@@ -105,7 +105,7 @@ class EnvStepProfiler:
         steps = max(num_steps, 1)
         avg_ms_per_step = {k: v / steps for k, v in sums_ms.items()}
         total = sums_ms.get("env.step_total", sum(sums_ms.values())) or 1.0
-        pct_of_total = {k: (sums_ms[k] / total * 100.0) for k in sums_ms}
+        pct_of_total = {k: sums_ms[k] / total * 100.0 for k in sums_ms}
         return avg_ms_per_step, pct_of_total
 
     def summarize(self, num_steps):
@@ -116,7 +116,8 @@ class EnvStepProfiler:
     def render_table(self, num_steps, title="env.step() breakdown"):
         avg_ms, pct, _ = self.summarize(num_steps)
         # We compute unaccounted once at the end; ignore any precomputed entries
-        avg_ms.pop("(unaccounted)", None); pct.pop("(unaccounted)", None)
+        avg_ms.pop("(unaccounted)", None)
+        pct.pop("(unaccounted)", None)
 
         # Build parent→children mapping for known manager sections
         parent_children_prefix = {
@@ -211,13 +212,17 @@ class EnvStepProfiler:
                 # Add manager overhead row = parent − sum(children)
                 overhead_ms = max(0.0, avg_ms[parent] - children_total_ms)
                 pct_parent_overhead = (overhead_ms / avg_ms[parent] * 100.0) if avg_ms[parent] else 0.0
-                table.add_row(["  └─ (manager_overhead)", "  └─ " + f"{overhead_ms:,.3f}", "  └─ " + f"{pct_parent_overhead:,.1f}%"])
+                table.add_row([
+                    "  └─ (manager_overhead)",
+                    "  └─ " + f"{overhead_ms:,.3f}",
+                    "  └─ " + f"{pct_parent_overhead:,.1f}%",
+                ])
 
         # Add unaccounted row from top-level parents only (avoid double-counting children)
         total_ms = avg_ms.get("env.step_total", 0.0)
         if total_ms:
             un_ms = max(0.0, total_ms - accounted_ms)
-            un_pct = (un_ms / total_ms * 100.0)
+            un_pct = un_ms / total_ms * 100.0
             table.add_row(["(unaccounted)", f"{un_ms:,.3f}", f"{un_pct:,.1f}%"])
 
         return table.get_string()

@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import logging
 import torch
 from collections.abc import Mapping
 from types import MethodType
@@ -25,7 +24,7 @@ except Exception as e:
 
 class RLGamesVisionPatch:
     def __init__(self, a2c_cfg: Any):
-        enc = a2c_cfg.get("encoders", None) if isinstance(a2c_cfg, Mapping) else getattr(a2c_cfg, "encoders", None)
+        enc = a2c_cfg.get("encoders") if isinstance(a2c_cfg, Mapping) else getattr(a2c_cfg, "encoders", None)
         self.vision = ActorCriticVision(enc)
         self.encoder_initialized = False
 
@@ -54,7 +53,7 @@ class RLGamesVisionPatch:
 
             ContinuousA2CBase.__init__ = _noop
             self._orig_a2c_agent_init(model_self, base_name, params)
-            ContinuousA2CBase.__init__ = _orig_base_init  # restor original vision_encoder_creation_init
+            ContinuousA2CBase.__init__ = _orig_base_init  # restore original vision_encoder_creation_init
             model_self.model.add_module("encoders", self.vision.encoders)
             model_self.model.add_module("projectors", self.vision.projectors)
             setattr(model_self.model, "key_order", [k for k in model_self.observation_space.keys()])
