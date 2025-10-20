@@ -64,6 +64,7 @@ from isaacsim.benchmark.services import BaseIsaacBenchmark
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
 from isaaclab.utils.timer import Timer
+from scripts.benchmarks.step_profiler import install_env_profiler
 from scripts.benchmarks.utils import (
     log_app_start_time,
     log_python_imports_time,
@@ -73,7 +74,6 @@ from scripts.benchmarks.utils import (
     log_task_start_time,
     log_total_start_time,
 )
-from scripts.benchmarks.step_profiler import install_env_profiler
 
 imports_time_begin = time.perf_counter_ns()
 

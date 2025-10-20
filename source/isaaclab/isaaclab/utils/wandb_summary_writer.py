@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import io
 import os
-import tempfile
 
 try:
     import wandb
@@ -60,11 +59,12 @@ class WandbSummaryWriter:
         return self.kwargs.get("group")
 
     def dump_logger(self, file_name: str) -> None:
-        logger_detail = {
-            "project": self.wandb_project,
-            "name": self.wandb_name,
-            "id": self.wandb_id,
-        }
+        pass
+        # logger_detail = {
+        #     "project": self.wandb_project,
+        #     "name": self.wandb_name,
+        #     "id": self.wandb_id,
+        # }
         # dump_yaml(self.storage_mgr, os.path.join(self.log_dir, file_name), logger_detail)
 
     def add_scalar(self, tag, scalar_value, global_step=None, walltime=None, new_style=False):
@@ -84,7 +84,7 @@ class WandbSummaryWriter:
         df_evaluation.to_csv(csv_buffer, index=False)
         csv_buffer.seek(0)
         # Define the remote path where the CSV will be stored
-        remote_path = os.path.join(self.log_dir, file_name)
+        # remote_path = os.path.join(self.log_dir, file_name)
         # # Write the CSV to remote storage using the storage handler
         # self.storage_mgr.write_file(remote_path, csv_buffer.read())
 
