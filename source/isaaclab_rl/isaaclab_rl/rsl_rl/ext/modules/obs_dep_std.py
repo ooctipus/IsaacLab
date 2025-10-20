@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Copyright (c) 2021-2025, ETH Zurich and NVIDIA CORPORATION
 # All rights reserved.
 #
@@ -7,25 +12,24 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-from torch.distributions import Normal, Distribution, constraints
-from typing import Optional
+from torch.distributions import Distribution, Normal, constraints
 from torch.types import _size
+from typing import Optional
 
-from rsl_rl.modules import ActorCritic
 from rsl_rl.algorithms import PPO
+from rsl_rl.modules import ActorCritic
+
 from ...rl_cfg import RslRlPpoActorCriticCfg
+
 
 class StateDependentNoiseDistribution(Distribution):
     """
     Distribution class for using generalized State Dependent Exploration (gSDE).
     Paper: https://arxiv.org/abs/2005.05719
     """
+
     has_rsample = True
-    arg_constraints = {
-        'mean_actions': constraints.real,
-        'log_std': constraints.real,
-        'latent_sde': constraints.real
-    }
+    arg_constraints = {"mean_actions": constraints.real, "log_std": constraints.real, "latent_sde": constraints.real}
 
     def __init__(
         self,
@@ -33,7 +37,7 @@ class StateDependentNoiseDistribution(Distribution):
         epsilon: float = 1e-6,
         batch_shape: torch.Size = torch.Size(),
         event_shape: torch.Size = torch.Size(),
-        validate_args: Optional[bool] = None,
+        validate_args: bool | None = None,
     ):
         self.action_dim = action_dim
         self.epsilon = epsilon
@@ -54,11 +58,8 @@ class StateDependentNoiseDistribution(Distribution):
         self.exploration_matrices = self.weights_dist.rsample((batch_size,))
 
     def proba_distribution(
-        self,
-        mean_actions: torch.Tensor,
-        log_std: torch.Tensor,
-        latent_sde: torch.Tensor
-    ) -> 'StateDependentNoiseDistribution':
+        self, mean_actions: torch.Tensor, log_std: torch.Tensor, latent_sde: torch.Tensor
+    ) -> StateDependentNoiseDistribution:
         # cache for sampling path
         self._latent_sde = latent_sde
         self._mean_actions = mean_actions
@@ -121,7 +122,7 @@ class StateDependentNoiseDistribution(Distribution):
     def support(self) -> constraints.Constraint:
         return constraints.real
 
-    def expand(self, batch_shape: _size, _instance=None) -> 'StateDependentNoiseDistribution':
+    def expand(self, batch_shape: _size, _instance=None) -> StateDependentNoiseDistribution:
         new = self._get_checked_instance(StateDependentNoiseDistribution, _instance)
         new.action_dim = self.action_dim
         new.epsilon = self.epsilon
@@ -134,7 +135,11 @@ class StateDependentNoiseDistribution(Distribution):
         return new
 
     def get_noise(self, latent_sde: torch.Tensor) -> torch.Tensor:
-        if self.exploration_matrices is None or len(latent_sde) == 1 or len(latent_sde) != len(self.exploration_matrices):
+        if (
+            self.exploration_matrices is None
+            or len(latent_sde) == 1
+            or len(latent_sde) != len(self.exploration_matrices)
+        ):
             return torch.mm(latent_sde, self.exploration_mat)
         latent_sde = latent_sde.unsqueeze(dim=1)
         noise = torch.bmm(latent_sde, self.exploration_matrices)
@@ -142,17 +147,17 @@ class StateDependentNoiseDistribution(Distribution):
 
 
 class StateDependendNoiseDistributionPatcher:
-    
+
     def __init__(self, policy_cfg: RslRlPpoActorCriticCfg):
         if policy_cfg.noise_std_type == "gsde":
             self.apply_patch()
 
     def apply_patch(self):
-        
+
         self._orignal_actor_critic_init = ActorCritic.__init__
         self._original_update_distribution = ActorCritic.update_distribution
         self._original_ppo_update = PPO.update
-        
+
         def state_dependent_std_init(actor_critic_self, *args, **kwargs):
             # init base with a supported type
             kwargs["noise_std_type"] = "scalar"
@@ -162,13 +167,15 @@ class StateDependendNoiseDistributionPatcher:
             num_actions = args[2]
             init_noise_std = kwargs.get("init_noise_std", 1.0)
             actor_hidden_dims = kwargs.get("actor_hidden_dims")
-            
+
             # split actor into body/head without using seq slicing
             layers = list(actor_critic_self.actor.children())
             actor_critic_self._gsde_body = nn.Sequential(*layers[:-1])
             actor_critic_self._gsde_head = layers[-1]  # last Linear
             actor_critic_self.distribution = StateDependentNoiseDistribution(action_dim=num_actions)
-            actor_critic_self.log_std = nn.Parameter(torch.ones(actor_hidden_dims[-1], num_actions) * torch.log(torch.tensor(init_noise_std)))
+            actor_critic_self.log_std = nn.Parameter(
+                torch.ones(actor_hidden_dims[-1], num_actions) * torch.log(torch.tensor(init_noise_std))
+            )
             actor_critic_self.distribution.sample_weights(actor_critic_self.log_std)
 
         def state_dependent_dist_resampled_update(ppo_self: PPO):
@@ -184,7 +191,7 @@ class StateDependendNoiseDistributionPatcher:
         ActorCritic.__init__ = state_dependent_std_init
         ActorCritic.update_distribution = state_dependent_update_distribution
         PPO.update = state_dependent_dist_resampled_update
-    
+
     def remove_patch(self):
         ActorCritic.__init__ = self._orignal_actor_critic_init
         ActorCritic.update_distribution = self._original_update_distribution

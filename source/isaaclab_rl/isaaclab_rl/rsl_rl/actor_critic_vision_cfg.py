@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Copyright (c) 2021-2025, ETH Zurich and NVIDIA CORPORATION
 # All rights reserved.
 #
@@ -5,8 +10,11 @@
 from __future__ import annotations
 
 from dataclasses import MISSING
+
 from isaaclab.utils import configclass
-from .ext.modules import vision_encoder as encoders 
+
+from .ext.modules import vision_encoder as encoders
+
 
 @configclass
 class ActorCriticVisionAdapterCfg:
@@ -14,13 +22,13 @@ class ActorCriticVisionAdapterCfg:
     encoder_cfg: CNNEncoderCfg | PretrainedEncoderCfg | PointNetEncoderCfg | MLPEncoderCfg = MISSING
 
     feature_dim: int | None = 128
-    
-    activation: str | None  = None
-    
+
+    activation: str | None = None
+
     normalize: bool = False
-    
+
     normalize_style: str = "normal"
-    
+
     freeze: bool = False
 
 
@@ -31,45 +39,43 @@ class PointNetEncoderCfg:
     class_type: type[encoders.PointNetEncoder] = encoders.PointNetEncoder
 
     channels: list[int] = [64, 128, 256]
-    
+
     strides: list[int] = [2, 2, 2]
 
     use_global_feat: bool = True
-    
+
     feature_dim: int | None = None
 
 
 @configclass
 class CNNEncoderCfg:
-    
+
     class_type: type[encoders.CNNEncoder] = encoders.CNNEncoder
-    
+
     channels: list[int] = [32, 64, 128]
-    
+
     kernel_sizes: list[int] = [3, 3, 3]
-    
+
     strides: list[int] = [2, 2, 2]
-    
+
     paddings: list[int] = [1, 1, 1]
-    
+
     use_maxpool: bool = True
-    
+
     pool_size: int = 2
 
 
 @configclass
 class MLPEncoderCfg:
-    
+
     class_type: type[encoders.MLPEncoder] = encoders.MLPEncoder
-    
+
     layers: list[int] = [512, 256, 128]
-    
+
     feature_dim: int | None = None
 
 
 @configclass
 class PretrainedEncoderCfg:
-    
-    model_name: str = 'resnet18'
-    
-    
+
+    model_name: str = "resnet18"
