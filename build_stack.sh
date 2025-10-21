@@ -52,12 +52,18 @@ PHYSX_BUILD="false"   # opt-in
 
 KIT_NAME="kit";       KIT_DIR=""
 KIT_SSH="ssh://git@gitlab-master.nvidia.com:12051/omniverse/rtxdev/kit.git"
-KIT_BRANCH="master";  KIT_COMMIT="021092213040248918852c687bf0a8120a6e48d0"
+KIT_BRANCH="master";
+# Default pin for Kit commit (used only if user doesn't specify a branch)
+KIT_COMMIT_DEFAULT="021092213040248918852c687bf0a8120a6e48d0"
+KIT_COMMIT="$KIT_COMMIT_DEFAULT"
 KIT_BUILD="false"     # opt-in
 
 SIM_NAME="sim";       SIM_DIR=""
 SIM_SSH="ssh://git@gitlab-master.nvidia.com:12051/omniverse/isaac/omni_isaac_sim.git"
-SIM_BRANCH="release/5.0_oss"; SIM_COMMIT="9fd50328d0e0ebfa79eb591e872eed0ebb68eaf5"
+SIM_BRANCH="release/5.0_oss";
+# Default pin for Sim commit (used only if user doesn't specify a branch)
+SIM_COMMIT_DEFAULT="9fd50328d0e0ebfa79eb591e872eed0ebb68eaf5"
+SIM_COMMIT="$SIM_COMMIT_DEFAULT"
 SIM_BUILD="true"
 
 LAB_NAME="lab";       LAB_DIR=""
@@ -68,7 +74,8 @@ LAB_BUILD="true"
 LAB_RECREATE="false"
 
 # Custom link flags (Sim -> custom Kit/PhysX; Lab -> custom PhysX exts)
-USE_CUSTOM_KIT="auto"     # auto|true|false (auto => true iff KIT_BUILD=true)
+# USE_CUSTOM_KIT auto => true if Kit step/ref/build requested
+USE_CUSTOM_KIT="auto"     # auto|true|false
 USE_CUSTOM_PHYSX="auto"   # auto|true|false (auto => true iff PHYSX_BUILD=true)
 LAB_USE_PHYSX_EXTS="false"
 
@@ -86,6 +93,9 @@ ASSUME_NO="false"
 # Track user overrides (auto-enable build if a ref is supplied)
 PHYSX_REF_USERSET="false"
 KIT_REF_USERSET="false"
+# Track whether user explicitly set commit refs (so branch won't clear them)
+KIT_COMMIT_USERSET="false"
+SIM_COMMIT_USERSET="false"
 PHYSX_BUILD_USERSET=""
 KIT_BUILD_USERSET=""
 
@@ -189,13 +199,29 @@ set_kv() {
     physx.build|--physx-build)   PHYSX_BUILD="$v";  PHYSX_BUILD_USERSET="true" ;;
 
     kit.ssh|--kit-ssh) KIT_SSH="$v" ;;
-    kit.branch|--kit-branch)     KIT_BRANCH="$v";   KIT_REF_USERSET="true" ;;
-    kit.commit|--kit-commit)     KIT_COMMIT="$v";   KIT_REF_USERSET="true" ;;
+    kit.branch|--kit-branch)
+      KIT_BRANCH="$v"; KIT_REF_USERSET="true"
+      # If user sets a branch and commit is still the default pin (not explicitly set), clear it
+      if [[ "$KIT_COMMIT_USERSET" != "true" && "$KIT_COMMIT" == "$KIT_COMMIT_DEFAULT" ]]; then
+        KIT_COMMIT=""
+      fi
+      ;;
+    kit.commit|--kit-commit)
+      KIT_COMMIT="$v"; KIT_REF_USERSET="true"; KIT_COMMIT_USERSET="true"
+      ;;
     kit.build|--kit-build)       KIT_BUILD="$v";    KIT_BUILD_USERSET="true" ;;
 
     sim.ssh|--sim-ssh) SIM_SSH="$v" ;;
-    sim.branch|--sim-branch) SIM_BRANCH="$v" ;;
-    sim.commit|--sim-commit) SIM_COMMIT="$v" ;;
+    sim.branch|--sim-branch)
+      SIM_BRANCH="$v"
+      # If user sets a branch and commit is still the default pin (not explicitly set), clear it
+      if [[ "$SIM_COMMIT_USERSET" != "true" && "$SIM_COMMIT" == "$SIM_COMMIT_DEFAULT" ]]; then
+        SIM_COMMIT=""
+      fi
+      ;;
+    sim.commit|--sim-commit)
+      SIM_COMMIT="$v"; SIM_COMMIT_USERSET="true"
+      ;;
     sim.build|--sim-build)   SIM_BUILD="$v" ;;
 
     lab.ssh|--lab-ssh) LAB_SSH="$v" ;;
@@ -323,7 +349,14 @@ if [[ "$PHYSX_REF_USERSET" == "true" && "$PHYSX_BUILD_USERSET" != "true" ]]; the
 if [[ "$KIT_REF_USERSET"   == "true" && "$KIT_BUILD_USERSET"   != "true" ]]; then KIT_BUILD="true";   fi
 
 # Auto flags (linkage)
-if [[ "$USE_CUSTOM_KIT" == "auto" ]]; then   USE_CUSTOM_KIT="$KIT_BUILD"; fi
+# For Kit: enable custom link when user selected kit step, provided kit ref, or enabled kit build
+if [[ "$USE_CUSTOM_KIT" == "auto" ]]; then
+  if in_steps kit || [[ "$KIT_REF_USERSET" == "true" ]] || [[ "$KIT_BUILD" == "true" ]]; then
+    USE_CUSTOM_KIT="true"
+  else
+    USE_CUSTOM_KIT="false"
+  fi
+fi
 if [[ "$USE_CUSTOM_PHYSX" == "auto" ]]; then USE_CUSTOM_PHYSX="$PHYSX_BUILD"; fi
 
 # ---------- git helpers ----------
