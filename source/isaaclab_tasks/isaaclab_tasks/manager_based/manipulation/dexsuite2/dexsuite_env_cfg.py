@@ -390,7 +390,7 @@ class TerminationsCfg:
 
 dexsuite_env_variants = {
     "scene.object": {
-        # "unidex100": variants.UNIDEX_OBJECT_100,
+        "unidex100": variants.UNIDEX_OBJECT_100,
         # "unidex500": variants.UNIDEX_OBJECT_500,
         "cube": variants.CUBE_SHAPE,
         "geometry": variants.PRIMITIVE_SHAPE,

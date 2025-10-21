@@ -144,6 +144,13 @@ class KukaAllegroSingleCameraObservationsCfg(kuka_allegro_dexsuite.KukaAllegroOb
 
     base_image: BaseImageObsCfg = BaseImageObsCfg()
 
+    def __post_init__(self):
+        super().__post_init__()
+        for group in self.__dataclass_fields__.values():
+            obs_group = getattr(self, group.name)
+            obs_group.history_length = None
+
+
 
 @configclass
 class KukaAllegroDuoCameraObservationsCfg(KukaAllegroSingleCameraObservationsCfg):
