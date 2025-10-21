@@ -9,9 +9,18 @@ from prettytable import PrettyTable
 
 
 class EnvStepProfiler:
-    def __init__(self):
+    def __init__(self, profile_terms: bool = True, merge_runner_step: bool = False):
         self._in_step = False
+        # env-step scoped timings
         self.hist_ns = defaultdict(list)
+        # runner timings: step-scoped (e.g., act/process_env_step)
+        self.runner_step_hist_ns = defaultdict(list)
+        # runner timings: epoch/iteration scoped (e.g., update/compute_returns)
+        self.runner_epoch_hist_ns = defaultdict(list)
+        # whether to wrap and profile each individual term under managers
+        self.profile_terms = profile_terms
+        # whether to merge runner per-step metrics into the env table
+        self.merge_runner_step = merge_runner_step
         self._wrapped = []
 
     def start_step(self):
@@ -33,6 +42,39 @@ class EnvStepProfiler:
             finally:
                 if self._in_step:
                     self.hist_ns[label or method_name].append(time.perf_counter_ns() - t0)
+
+        setattr(obj, method_name, wrapped)
+        self._wrapped.append((obj, method_name, orig))
+
+    # --- Runner wrappers -------------------------------------------------
+    def wrap_runner_step(self, obj, method_name, label=None):
+        """Wrap per-step runner methods (e.g., act/process_env_step)."""
+        assert hasattr(obj, method_name), f"{obj} does not has method {method_name}"
+        assert callable(getattr(obj, method_name)), f"{obj}'s method {method_name} is not callable"
+        orig = getattr(obj, method_name)
+
+        def wrapped(*a, **kw):
+            t0 = time.perf_counter_ns()
+            try:
+                return orig(*a, **kw)
+            finally:
+                self.runner_step_hist_ns[label or method_name].append(time.perf_counter_ns() - t0)
+
+        setattr(obj, method_name, wrapped)
+        self._wrapped.append((obj, method_name, orig))
+
+    def wrap_runner_epoch(self, obj, method_name, label=None):
+        """Wrap non-per-step runner methods (e.g., update/compute_returns)."""
+        assert hasattr(obj, method_name), f"{obj} does not has method {method_name}"
+        assert callable(getattr(obj, method_name)), f"{obj}'s method {method_name} is not callable"
+        orig = getattr(obj, method_name)
+
+        def wrapped(*a, **kw):
+            t0 = time.perf_counter_ns()
+            try:
+                return orig(*a, **kw)
+            finally:
+                self.runner_epoch_hist_ns[label or method_name].append(time.perf_counter_ns() - t0)
 
         setattr(obj, method_name, wrapped)
         self._wrapped.append((obj, method_name, orig))
@@ -99,32 +141,58 @@ class EnvStepProfiler:
                 for name, cfg in zip(names, cfg_list):
                     self._wrap_term_callable(cfg, f"observation.term[{group}]:{name}")
 
-    def summary_ms_per_step(self, num_steps):
+    def env_step_count(self) -> int:
+        return len(self.hist_ns.get("env.step_total", []))
+
+    def summary_ms_per_step(self, num_steps=None):
         """Return average ms/step per label and % of total (env.step_total)."""
         sums_ms = {k: sum(v) / 1e6 for k, v in self.hist_ns.items()}
-        steps = max(num_steps, 1)
+        steps = self.env_step_count() if (num_steps is None) else max(num_steps, 1)
+        steps = max(steps, 1)
         avg_ms_per_step = {k: v / steps for k, v in sums_ms.items()}
         total = sums_ms.get("env.step_total", sum(sums_ms.values())) or 1.0
         pct_of_total = {k: sums_ms[k] / total * 100.0 for k in sums_ms}
         return avg_ms_per_step, pct_of_total
 
-    def summarize(self, num_steps):
+    def summarize(self, num_steps=None):
         avg_ms, pct = self.summary_ms_per_step(num_steps)
         total_ms_series = [ns / 1e6 for ns in self.hist_ns["env.step_total"]]
         return avg_ms, pct, total_ms_series
 
-    def render_table(self, num_steps, title="env.step() breakdown"):
+    def render_table(self, num_steps=None, title="env.step"):
+        """Render env.step() breakdown. If num_steps is None, infers from env.step_total.
+
+        When `self.profile_terms` is False, per-term details and reset sub-steps are hidden,
+        leaving only manager-level rows (e.g., reward.compute) and aggregate reset time
+        (env._reset_idx).
+        """
         avg_ms, pct, _ = self.summarize(num_steps)
+        combined_total = None
+        # If merging runner per-step metrics, recompute percentages on combined step total
+        if self.merge_runner_step:
+            r_avg_ms, _r_pct, _r_steps = self.runner_step_summary()
+            # merge runner per-step averages into env dict
+            for k, v in r_avg_ms.items():
+                avg_ms[k] = v
+            # Title: whole step breakdown (runner + env)
+            title = "step"
+            # combined total: env.step_total + runner per-step categories
+            env_total = avg_ms.get("env.step_total", 0.0)
+            combined_total = env_total + sum(r_avg_ms.values())
+            if combined_total <= 0:
+                combined_total = 1.0
+            pct = {k: (avg_ms.get(k, 0.0) / combined_total * 100.0) for k in avg_ms}
         # We compute unaccounted once at the end; ignore any precomputed entries
         avg_ms.pop("(unaccounted)", None)
         pct.pop("(unaccounted)", None)
 
         # Build parent→children mapping for known manager sections
         parent_children_prefix = {
-            "reward.compute": ("reward.term:",),
-            "termination.compute": ("termination.term:",),
-            "event.apply": ("event.term[",),
-            "observation.compute": ("observation.term[",),
+            "reward.compute": ("reward.term:",) if self.profile_terms else tuple(),
+            "termination.compute": ("termination.term:",) if self.profile_terms else tuple(),
+            "event.apply": ("event.term[",) if self.profile_terms else tuple(),
+            "observation.compute": ("observation.term[",) if self.profile_terms else tuple(),
+            # expose reset sub-steps only when profiling terms
             "env._reset_idx": (
                 "action.reset",
                 "reward.reset",
@@ -138,7 +206,7 @@ class EnvStepProfiler:
                 "scene.reset",
                 "recorder.pre_reset",
                 "recorder.post_reset",
-            ),
+            ) if self.profile_terms else tuple(),
         }
 
         children_map: dict[str, list[str]] = {p: [] for p in parent_children_prefix}
@@ -187,7 +255,7 @@ class EnvStepProfiler:
         parents_sorted = [
             k
             for k, _ in sorted(avg_ms.items(), key=lambda kv: (-kv[1], kv[0]))
-            if k not in child_keys and k != "(unaccounted)"
+            if k not in child_keys and k not in ("(unaccounted)", "env.step_total")
         ]
 
         # Compute accounted total using only top-level parents (excluding env.step_total itself)
@@ -218,19 +286,93 @@ class EnvStepProfiler:
                     "  └─ " + f"{pct_parent_overhead:,.1f}%",
                 ])
 
-        # Add unaccounted row from top-level parents only (avoid double-counting children)
-        total_ms = avg_ms.get("env.step_total", 0.0)
-        if total_ms:
-            un_ms = max(0.0, total_ms - accounted_ms)
-            un_pct = un_ms / total_ms * 100.0
-            table.add_row(["(unaccounted)", f"{un_ms:,.3f}", f"{un_pct:,.1f}%"])
+        # Add final total row
+        if self.merge_runner_step:
+            # Use combined_total computed earlier (env_total + runner per-step)
+            table.add_row(["total", f"{combined_total:,.3f}", "100.0%"])
+        else:
+            total_ms = avg_ms.get("env.step_total", None)
+            if total_ms is None:
+                # Fallback to sum of parents (avoid double-counting children)
+                total_ms = sum(avg_ms[p] for p in parents_sorted)
+            table.add_row(["total", f"{total_ms:,.3f}", "100.0%"])
 
         return table.get_string()
 
+    # --- Runner summaries/tables ----------------------------------------
+    def runner_step_count(self) -> int:
+        if not self.runner_step_hist_ns:
+            return 0
+        return max((len(v) for v in self.runner_step_hist_ns.values()), default=0)
 
-def install_env_profiler(env):
-    """Install wrappers to profile env.step and key manager/scene/sim calls."""
-    p = EnvStepProfiler()
+    def runner_step_summary(self):
+        steps = max(self.runner_step_count(), 1)
+        sums_ms = {k: sum(v) / 1e6 for k, v in self.runner_step_hist_ns.items()}
+        avg_ms_per_step = {k: v / steps for k, v in sums_ms.items()}
+        total = sum(sums_ms.values()) or 1.0
+        pct_of_total = {k: (sums_ms[k] / total * 100.0) for k in sums_ms}
+        return avg_ms_per_step, pct_of_total, steps
+
+    def render_runner_step_table(self, title="runner step"):
+        avg_ms, pct, steps = self.runner_step_summary()
+        table = PrettyTable()
+        table.title = f"{title} (steps={steps})"
+        table.field_names = ["Section", "Avg ms/step", "% of step"]
+        table.align["Section"] = "l"
+        table.align["Avg ms/step"] = "l"
+        table.align["% of step"] = "l"
+
+        items_sorted = sorted(avg_ms.items(), key=lambda kv: (-kv[1], kv[0]))
+        for k, v in items_sorted:
+            table.add_row([k, f"{v:,.3f}", f"{pct.get(k, 0.0):,.1f}%"])
+        # Add total row
+        total = sum(v for _, v in items_sorted)
+        table.add_row(["total", f"{total:,.3f}", "100.0%"])
+        return table.get_string()
+
+    def runner_epoch_summary(self):
+        counts = {k: len(v) for k, v in self.runner_epoch_hist_ns.items()}
+        sums_ms = {k: sum(v) / 1e6 for k, v in self.runner_epoch_hist_ns.items()}
+        avg_ms_per_call = {k: (sums_ms[k] / max(counts[k], 1)) for k in sums_ms}
+        return counts, sums_ms, avg_ms_per_call
+
+    def render_runner_epoch_table(self, title="Epoch"):
+        counts, sums_ms, avg_ms = self.runner_epoch_summary()
+        table = PrettyTable()
+        table.title = title
+        table.field_names = ["Section", "Avg ms/call", "Calls", "Total ms"]
+        table.align["Section"] = "l"
+        table.align["Avg ms/call"] = "l"
+        table.align["Calls"] = "r"
+        table.align["Total ms"] = "l"
+
+        sorted_keys = sorted(sums_ms.keys(), key=lambda kk: (-sums_ms[kk], kk))
+        for k in sorted_keys:
+            table.add_row([k, f"{avg_ms[k]:,.3f}", f"{counts[k]}", f"{sums_ms[k]:,.3f}"])
+        # Add total row
+        total_ms = sum(sums_ms.values())
+        table.add_row(["total", "—", "—", f"{total_ms:,.3f}"])
+        return table.get_string()
+
+
+def install_env_profiler(env, runner=None, profile_terms: bool = True, merge_runner_step: bool = False):
+    """Install wrappers to profile env.step and key manager/scene/sim calls.
+
+    If `runner` is provided (e.g., RSL-RL OnPolicyRunner/DistillationRunner), additionally wraps
+    `runner.alg` methods:
+      - per-step: `act`, `process_env_step` (reported as ms/step)
+      - epoch-level: `update`, `compute_returns` (reported as ms/call)
+    Args:
+        env: The unwrapped environment instance.
+        runner: Optional RSL-RL runner to profile its `alg` methods.
+        profile_terms: When True, wraps individual manager terms and reset sub-steps; when False,
+            only high-level manager timings are collected and reset timing is aggregated under
+            `env._reset_idx`.
+        merge_runner_step: When True, runner per-step metrics (e.g., act/process_env_step) are
+            merged into the main step table and percentage is taken against the combined step time.
+
+    """
+    p = EnvStepProfiler(profile_terms=profile_terms, merge_runner_step=merge_runner_step)
     p.wrap_env_step(env)
 
     # Common wrappers (obj, method, label)
@@ -247,33 +389,44 @@ def install_env_profiler(env):
         (env.reward_manager, "compute", "reward.compute"),
         (env.command_manager, "compute", "command.compute"),
         (env.observation_manager, "compute", "observation.compute"),
-        # resets (grouped under env._reset_idx)
-        (env.action_manager, "reset", "action.reset"),
-        (env.reward_manager, "reset", "reward.reset"),
-        (env.termination_manager, "reset", "termination.reset"),
-        (env.event_manager, "reset", "event.reset"),
-        (env.observation_manager, "reset", "observation.reset"),
-        (env.command_manager, "reset", "command.reset"),
-        (env.scene, "reset", "scene.reset"),
-        # event & recorder
+        # event application (not a reset)
         (env.event_manager, "apply", "event.apply"),
     ]
 
+    # Reset wrappers added only when profiling terms to avoid clutter and overhead
+    if p.profile_terms:
+        wraps += [
+            (env.action_manager, "reset", "action.reset"),
+            (env.reward_manager, "reset", "reward.reset"),
+            (env.termination_manager, "reset", "termination.reset"),
+            (env.event_manager, "reset", "event.reset"),
+            (env.observation_manager, "reset", "observation.reset"),
+            (env.command_manager, "reset", "command.reset"),
+            (env.scene, "reset", "scene.reset"),
+        ]
+
     # Optional managers
     if hasattr(env, "curriculum_manager"):
+        # always include compute; add reset only when profiling terms
         wraps += [
-            (env.curriculum_manager, "reset", "curriculum.reset"),
             (env.curriculum_manager, "compute", "curriculum.compute"),
         ]
+        if p.profile_terms:
+            wraps += [
+                (env.curriculum_manager, "reset", "curriculum.reset"),
+            ]
     if hasattr(env, "recorder_manager"):
         wraps += [
-            (env.recorder_manager, "reset", "recorder.reset"),
             (env.recorder_manager, "record_pre_step", "recorder.pre_step"),
             (env.recorder_manager, "record_post_step", "recorder.post_step"),
-            (env.recorder_manager, "record_pre_reset", "recorder.pre_reset"),
-            (env.recorder_manager, "record_post_reset", "recorder.post_reset"),
             (env.recorder_manager, "record_post_physics_decimation_step", "recorder.post_decimation_step"),
         ]
+        if p.profile_terms:
+            wraps += [
+                (env.recorder_manager, "reset", "recorder.reset"),
+                (env.recorder_manager, "record_pre_reset", "recorder.pre_reset"),
+                (env.recorder_manager, "record_post_reset", "recorder.post_reset"),
+            ]
 
     for obj, meth, label in wraps:
         if hasattr(obj, meth):
@@ -284,7 +437,23 @@ def install_env_profiler(env):
     p.wrap(env, "_reset_idx", "env._reset_idx")
 
     env._profiler = p
-    p.wrap_manager_terms(env)
+    if p.profile_terms:
+        p.wrap_manager_terms(env)
+
+    # Optionally wrap runner algorithm methods
+    if runner is not None and hasattr(runner, "alg"):
+        alg = getattr(runner, "alg")
+        # per-step calls
+        if hasattr(alg, "act"):
+            p.wrap_runner_step(alg, "act", "runner.alg.act")
+        if hasattr(alg, "process_env_step"):
+            p.wrap_runner_step(alg, "process_env_step", "runner.alg.process_env_step")
+        # epoch-level calls
+        if hasattr(alg, "update"):
+            p.wrap_runner_epoch(alg, "update", "runner.alg.update")
+        if hasattr(alg, "compute_returns"):
+            p.wrap_runner_epoch(alg, "compute_returns", "runner.alg.compute_returns")
+
     return p
 
 
