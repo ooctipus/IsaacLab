@@ -90,7 +90,7 @@ class KukaAllegroSingleTiledCameraSceneCfg(kuka_allegro_dexsuite.KukaAllegroScen
             pos=(0.57, -0.8, 0.5), rot=(0.6124, 0.6124, 0.3536, 0.3536), convention="opengl",
         ),
         data_types=MISSING,
-        spawn=sim_utils.PinholeCameraCfg(),
+        spawn=sim_utils.PinholeCameraCfg(clipping_range=(0.01, 2.5)),
         width=MISSING,
         height=MISSING,
     )
@@ -115,7 +115,7 @@ class KukaAllegroDuoTiledCameraSceneCfg(KukaAllegroSingleTiledCameraSceneCfg):
             pos=(0.038, -0.38, -0.18), rot=(0.299, 0.641, 0.641, -0.299), convention="opengl",
         ),
         data_types=MISSING,
-        spawn=sim_utils.PinholeCameraCfg(),
+        spawn=sim_utils.PinholeCameraCfg(clipping_range=(0.01, 2.5)),
         width=MISSING,
         height=MISSING,
     )
