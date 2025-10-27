@@ -204,7 +204,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         log_runtime_step_times(benchmark, environment_step_times, compute_stats=True)
 
         benchmark.stop()
-        print(prof.render_table(len(step_times)))
+        print(prof.render_table())
 
     # close the simulator
     env.close()

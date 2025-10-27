@@ -31,6 +31,13 @@ parser.add_argument("--num_envs", type=int, default=4096, help="Number of enviro
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--seed", type=int, default=42, help="Seed used for the environment")
 parser.add_argument("--max_iterations", type=int, default=10, help="RL Policy training iterations.")
+parser.add_argument("--record_term", action="store_true", default=False, help="record detailed term cost or not")
+parser.add_argument(
+    "--merge_runner_step",
+    action="store_true",
+    default=False,
+    help="Merge runner per-step timings into env step breakdown (shared %).",
+)
 parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
@@ -78,7 +85,7 @@ from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_yaml
 
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
-
+from isaaclab_rl.rsl_rl.ext.rsl_rl_vision_encoder_patcher import ActorCriticVisionExtensionPatcher
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
@@ -91,6 +98,7 @@ enable_extension("isaacsim.benchmark.services")
 from isaacsim.benchmark.services import BaseIsaacBenchmark
 
 from isaaclab.utils.timer import Timer
+from scripts.benchmarks.step_profiler import install_env_profiler
 from scripts.benchmarks.utils import (
     log_app_start_time,
     log_python_imports_time,
@@ -176,7 +184,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         agent_cfg.max_iterations = args_cli.max_iterations
 
     task_startup_time_begin = time.perf_counter_ns()
-
+    actor_critic_vision_patcher = ActorCriticVisionExtensionPatcher(agent_cfg.policy)
+    actor_critic_vision_patcher.apply_patch()
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
     # wrap for video recording
@@ -217,6 +226,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     benchmark.set_phase("sim_runtime")
 
     # run training
+    prof = install_env_profiler(
+        env.unwrapped,
+        runner,
+        profile_terms=args_cli.record_term,
+        merge_runner_step=args_cli.merge_runner_step,
+    )
     runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
 
     if world_rank == 0:
@@ -252,7 +267,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         log_rl_policy_episode_lengths(benchmark, log_data["Train/mean_episode_length"])
 
         benchmark.stop()
-
+    # Print profiling tables. If runner per-step is merged into env table,
+    # skip the separate runner per-step table.
+    print(prof.render_table())
+    if not getattr(prof, "merge_runner_step", False):
+        print(prof.render_runner_step_table())
+    print(prof.render_runner_epoch_table())
     # close the simulator
     env.close()
 
