@@ -310,9 +310,17 @@ install_fabrics_sim() {
     get_module_dir() {
         local mod="$1"
         "$py_exe" - <<PY 2>/dev/null
-import importlib, os
-m = importlib.import_module("$mod")
-print(os.path.dirname(m.__file__))
+import importlib.util, os
+spec = importlib.util.find_spec("$mod")
+if spec is None:
+    pass
+else:
+    if getattr(spec, 'submodule_search_locations', None):
+        locs = list(spec.submodule_search_locations)
+        if locs:
+            print(locs[0])
+    elif spec.origin:
+        print(os.path.dirname(spec.origin))
 PY
     }
 
@@ -746,6 +754,13 @@ while [[ $# -gt 0 ]]; do
         -v|--vscode)
             # update the vscode settings
             update_vscode_settings
+            shift # past argument
+            # exit neatly
+            break
+            ;;
+        -g|--geometry-fabric)
+            # update the vscode settings
+            install_fabrics_sim
             shift # past argument
             # exit neatly
             break
