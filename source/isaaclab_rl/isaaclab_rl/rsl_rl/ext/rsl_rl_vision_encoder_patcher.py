@@ -41,10 +41,16 @@ def single_observation_space_from_obs(obs_dict: TensorDict | dict[str, torch.Ten
 class ActorCriticVisionExtensionPatcher:
     def __init__(self, a2c_cfg):
         enc = a2c_cfg.get("encoders") if isinstance(a2c_cfg, Mapping) else getattr(a2c_cfg, "encoders", None)
-        self.vision = ActorCriticVision(enc)
+        if enc:
+            self.has_encoder = True
+            self.vision = ActorCriticVision(enc)
+        else:
+            self.has_encoder = False
 
     def apply_patch(self) -> None:  # noqa: C901
         """Attach encoders to policy instance and patch its observation methods."""
+        if not self.has_encoder:
+            return
         encoders = self.vision.adapter_cfg.encoder_cfgs
         first_encoder = list(encoders.values())[0]
         if not first_encoder.freeze:
