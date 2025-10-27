@@ -148,6 +148,20 @@ gym.register(
 
 
 gym.register(
+    id="Dexsuite-Kuka-Allegro-Lift-Single-Camera-Fabric-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.dexsuite_kuka_allegro_vision_env_cfg:DexsuiteKukaAllegroLiftSingleCameraFabricEnvCfg"
+        ),
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_camera_cfg:DexsuiteKukaAllegroPPORunnerCameraCfg",
+        "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cnn_cfg.yaml",
+    },
+)
+
+
+gym.register(
     id="Dexsuite-Kuka-Allegro-Lift-Single-Camera-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
@@ -168,6 +182,20 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": (
             f"{__name__}.dexsuite_kuka_allegro_vision_env_cfg:DexsuiteKukaAllegroLiftDuoCameraEnvCfg"
+        ),
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_duo_camera_cfg:DexsuiteKukaAllegroPPORunnerDuoCameraCfg",
+        "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cnn_cfg.yaml",
+    },
+)
+
+
+gym.register(
+    id="Dexsuite-Kuka-Allegro-Lift-Duo-Camera-Fabric-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.dexsuite_kuka_allegro_vision_env_cfg:DexsuiteKukaAllegroLiftDuoCameraFabricEnvCfg"
         ),
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_duo_camera_cfg:DexsuiteKukaAllegroPPORunnerDuoCameraCfg",
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cnn_cfg.yaml",

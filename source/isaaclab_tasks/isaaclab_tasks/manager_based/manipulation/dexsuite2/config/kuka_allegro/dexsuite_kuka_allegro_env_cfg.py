@@ -16,6 +16,24 @@ from ... import dexsuite_shelf_env_cfg as dexsuite_shelf
 from ... import mdp
 
 
+FABRIC_DEFAULT_JOINT_POS = {
+    'iiwa7_joint_1': -0.85,
+    'iiwa7_joint_2': 0.0,
+    'iiwa7_joint_3': 0.76,
+    'iiwa7_joint_4': 1.25,
+    'iiwa7_joint_5': -1.76,
+    'iiwa7_joint_6': 0.90,
+    'iiwa7_joint_7': 0.64,
+    '(index|middle|ring)_joint_0': 0.0,
+    '(index|middle|ring)_joint_1': 0.3,
+    '(index|middle|ring)_joint_2': 0.3,
+    '(index|middle|ring)_joint_3': 0.3,
+    'thumb_joint_0': 1.5,
+    'thumb_joint_1': 0.60147215,
+    'thumb_joint_2': 0.33795027,
+    'thumb_joint_3': 0.60845138
+}
+
 @configclass
 class KukaAllegroSceneCfg(dexsuite.SceneCfg):
     """Kuka Allegro participant scene for Dexsuite Lifting/Reorientation"""
@@ -37,23 +55,7 @@ class KukaAllegroFabricSceneCfg(KukaAllegroSceneCfg):
 
     def __post_init__(self: KukaAllegroSceneCfg):
         super().__post_init__()
-        self.robot.init_state.joint_pos = {
-            'iiwa7_joint_1': -0.85,
-            'iiwa7_joint_2': 0.0,
-            'iiwa7_joint_3': 0.76,
-            'iiwa7_joint_4': 1.25,
-            'iiwa7_joint_5': -1.76,
-            'iiwa7_joint_6': 0.90,
-            'iiwa7_joint_7': 0.64,
-            '(index|middle|ring)_joint_0': 0.0,
-            '(index|middle|ring)_joint_1': 0.3,
-            '(index|middle|ring)_joint_2': 0.3,
-            '(index|middle|ring)_joint_3': 0.3,
-            'thumb_joint_0': 1.5,
-            'thumb_joint_1': 0.60147215,
-            'thumb_joint_2': 0.33795027,
-            'thumb_joint_3': 0.60845138
-        }
+        self.robot.init_state.joint_pos = FABRIC_DEFAULT_JOINT_POS
 
 
 @configclass

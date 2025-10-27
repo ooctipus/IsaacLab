@@ -151,7 +151,6 @@ class KukaAllegroSingleCameraObservationsCfg(kuka_allegro_dexsuite.KukaAllegroOb
             obs_group.history_length = None
 
 
-
 @configclass
 class KukaAllegroDuoCameraObservationsCfg(KukaAllegroSingleCameraObservationsCfg):
     """Observation specifications for the MDP."""
@@ -169,55 +168,106 @@ class KukaAllegroDuoCameraObservationsCfg(KukaAllegroSingleCameraObservationsCfg
 
 
 @configclass
+class KukaAllegroSingleTiledCameraFabricSceneCfg(KukaAllegroSingleTiledCameraSceneCfg):
+    """Kuka Allegro participant scene for Dexsuite Lifting/Reorientation"""
+
+    def __post_init__(self: KukaAllegroSingleTiledCameraSceneCfg):
+        super().__post_init__()
+        self.robot.init_state.joint_pos = kuka_allegro_dexsuite.FABRIC_DEFAULT_JOINT_POS
+
+
+@configclass
+class KukaAllegroDuoTiledCameraFabricSceneCfg(KukaAllegroDuoTiledCameraSceneCfg):
+    """Kuka Allegro participant scene for Dexsuite Lifting/Reorientation"""
+
+    def __post_init__(self: KukaAllegroDuoTiledCameraSceneCfg):
+        super().__post_init__()
+        self.robot.init_state.joint_pos = kuka_allegro_dexsuite.FABRIC_DEFAULT_JOINT_POS
+
+
+sa = {"num_envs": 4096, "env_spacing": 3, "replicate_physics": False}
+singe_camera_variants = {
+    "64x64tiled_depth": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 64, "height": 64}),
+    "64x64tiled_rgb": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 64, "height": 64}),
+    "64x64tiled_albedo": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 64, "height": 64}),
+    "64x64raycaster": KukaAllegroSingleRayCasterCameraSceneCfg(**{**sa, "width": 64, "height": 64}),
+    "128x128tiled_depth": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 128, "height": 128}),
+    "128x128tiled_rgb": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 128, "height": 128}),
+    "128x128tiled_albedo": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 128, "height": 128}),
+    "128x128raycaster": KukaAllegroSingleRayCasterCameraSceneCfg(**{**sa, "width": 128, "height": 128}),
+    "256x256tiled_depth": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 256, "height": 256}),
+    "256x256tiled_rgb": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 256, "height": 256}),
+    "256x256tiled_albedo": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 256, "height": 256}),
+    "256x256raycaster": KukaAllegroSingleRayCasterCameraSceneCfg(**{**sa, "width": 256, "height": 256}),
+}
+duo_camera_variants = {
+    "64x64tiled_depth": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 64, "height": 64}),
+    "64x64tiled_rgb": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 64, "height": 64}),
+    "64x64tiled_albedo": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 64, "height": 64}),
+    "64x64raycaster": KukaAllegroDuoRayCasterCameraSceneCfg(**{**sa, "width": 64, "height": 64}),
+    "128x128tiled_depth": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 128, "height": 128}),
+    "128x128tiled_rgb": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 128, "height": 128}),
+    "128x128tiled_albedo": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 128, "height": 128}),
+    "128x128raycaster": KukaAllegroDuoRayCasterCameraSceneCfg(**{**sa, "width": 128, "height": 128}),
+    "256x256tiled_depth": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 256, "height": 256}),
+    "256x256tiled_rgb": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 256, "height": 256}),
+    "256x256tiled_albedo": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 256, "height": 256}),
+    "256x256raycaster": KukaAllegroDuoRayCasterCameraSceneCfg(**{**sa, "width": 256, "height": 256}),
+}
+
+
+@configclass
 class KukaAllegroSingleCameraMixinCfg(kuka_allegro_dexsuite.KukaAllegroMixinCfg):
     scene = KukaAllegroSingleTiledCameraSceneCfg(num_envs=4096, env_spacing=3, replicate_physics=False)
     observations: KukaAllegroSingleCameraObservationsCfg = KukaAllegroSingleCameraObservationsCfg()
 
-    def __post_init__(self):
+    def __post_init__(self: kuka_allegro_dexsuite.DexsuiteKukaAllegroLiftEnvCfg):
         super().__post_init__()
-        sa = {"num_envs": 4096, "env_spacing": 3, "replicate_physics": False}
-        self.variants.setdefault("scene", {}).update({
-            "64x64tiled_depth": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 64, "height": 64}),
-            "64x64tiled_rgb": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 64, "height": 64}),
-            "64x64tiled_albedo": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 64, "height": 64}),
-            "64x64raycaster": KukaAllegroSingleRayCasterCameraSceneCfg(**{**sa, "width": 64, "height": 64}),
-            "128x128tiled_depth": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 128, "height": 128}),
-            "128x128tiled_rgb": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 128, "height": 128}),
-            "128x128tiled_albedo": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 128, "height": 128}),
-            "128x128raycaster": KukaAllegroSingleRayCasterCameraSceneCfg(**{**sa, "width": 128, "height": 128}),
-            "256x256tiled_depth": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 256, "height": 256}),
-            "256x256tiled_rgb": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 256, "height": 256}),
-            "256x256tiled_albedo": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 256, "height": 256}),
-            "256x256raycaster": KukaAllegroSingleRayCasterCameraSceneCfg(**{**sa, "width": 256, "height": 256}),
-        })
+        self.variants.setdefault("scene", {}).update(singe_camera_variants)
+
 
 @configclass
 class KukaAllegroDuoCameraMixinCfg(kuka_allegro_dexsuite.KukaAllegroMixinCfg):
     scene = KukaAllegroDuoTiledCameraSceneCfg(num_envs=4096, env_spacing=3, replicate_physics=False)
     observations: KukaAllegroDuoCameraObservationsCfg = KukaAllegroDuoCameraObservationsCfg()
 
+    def __post_init__(self: kuka_allegro_dexsuite.DexsuiteKukaAllegroLiftEnvCfg):
+        super().__post_init__()
+        self.variants.setdefault("scene", {}).update(duo_camera_variants)
+
+
+@configclass
+class KukaAllegroSingleCameraFabricMixinCfg(kuka_allegro_dexsuite.KukaAllegroFabricMixinCfg):
+    scene: KukaAllegroSingleTiledCameraFabricSceneCfg = KukaAllegroSingleTiledCameraFabricSceneCfg(num_envs=4096, env_spacing=3, replicate_physics=False)
+    observations: KukaAllegroSingleCameraObservationsCfg = KukaAllegroSingleCameraObservationsCfg()
+
     def __post_init__(self):
         super().__post_init__()
-        sa = {"num_envs": 4096, "env_spacing": 3, "replicate_physics": False}
-        self.variants.setdefault("scene", {}).update({
-            "64x64tiled_depth": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 64, "height": 64}),
-            "64x64tiled_rgb": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 64, "height": 64}),
-            "64x64tiled_albedo": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 64, "height": 64}),
-            "64x64raycaster": KukaAllegroDuoRayCasterCameraSceneCfg(**{**sa, "width": 64, "height": 64}),
-            "128x128tiled_depth": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 128, "height": 128}),
-            "128x128tiled_rgb": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 128, "height": 128}),
-            "128x128tiled_albedo": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 128, "height": 128}),
-            "128x128raycaster": KukaAllegroDuoRayCasterCameraSceneCfg(**{**sa, "width": 128, "height": 128}),
-            "256x256tiled_depth": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 256, "height": 256}),
-            "256x256tiled_rgb": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 256, "height": 256}),
-            "256x256tiled_albedo": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 256, "height": 256}),
-            "256x256raycaster": KukaAllegroDuoRayCasterCameraSceneCfg(**{**sa, "width": 256, "height": 256}),
-        })
+        self.variants.setdefault("scene", {}).update(singe_camera_variants)
+
+
+@configclass
+class KukaAllegroDuoCameraFabricMixinCfg(kuka_allegro_dexsuite.KukaAllegroFabricMixinCfg):
+    scene: KukaAllegroDuoTiledCameraFabricSceneCfg = KukaAllegroDuoTiledCameraFabricSceneCfg(num_envs=4096, env_spacing=3, replicate_physics=False)
+    observations: KukaAllegroDuoCameraObservationsCfg = KukaAllegroDuoCameraObservationsCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.variants.setdefault("scene", {}).update(duo_camera_variants)
+
 
 # SingleCamera
 @configclass
 class DexsuiteKukaAllegroLiftSingleCameraEnvCfg(
     KukaAllegroSingleCameraMixinCfg,
+    dexsuite_state_impl.DexsuiteLiftEnvCfg
+):
+    pass
+
+
+@configclass
+class DexsuiteKukaAllegroLiftSingleCameraFabricEnvCfg(
+    KukaAllegroSingleCameraFabricMixinCfg,
     dexsuite_state_impl.DexsuiteLiftEnvCfg
 ):
     pass
@@ -235,6 +285,14 @@ class DexsuiteKukaAllegroLiftSingleCameraEnvCfg_PLAY(
 @configclass
 class DexsuiteKukaAllegroLiftDuoCameraEnvCfg(
     KukaAllegroDuoCameraMixinCfg,
+    dexsuite_state_impl.DexsuiteLiftEnvCfg
+):
+    pass
+
+
+@configclass
+class DexsuiteKukaAllegroLiftDuoCameraFabricEnvCfg(
+    KukaAllegroDuoCameraFabricMixinCfg,
     dexsuite_state_impl.DexsuiteLiftEnvCfg
 ):
     pass

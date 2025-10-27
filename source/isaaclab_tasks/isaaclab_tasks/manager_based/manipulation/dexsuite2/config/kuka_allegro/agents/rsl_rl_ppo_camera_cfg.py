@@ -3,15 +3,28 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers.
-# All rights reserved.
-#
-# SPDX-License-Identifier: BSD-3-Clause
 
 from isaaclab.utils import configclass
 
 from isaaclab_rl.ext.actor_critic_vision_cfg import ActorCriticVisionAdapterCfg, CNNEncoderCfg, MLPEncoderCfg
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
+from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg, RslRlPpoActorCriticRecurrentCfg
+
+
+ENCODERS = ActorCriticVisionAdapterCfg(
+    encoder_cfgs={
+        "depth_image1": CNNEncoderCfg(
+            encoding_groups=["base_image"],
+            channels=[16, 32, 64],
+            kernel_sizes=[3, 3, 3],
+            strides=[2, 2, 2],
+            paddings=[1, 1, 1],
+            use_maxpool=True,
+            pool_size=2,
+            activation="elu",
+        ),
+        "point_cloud": MLPEncoderCfg(encoding_groups=["perception"], layers=[512, 256, 128], activation="elu"),
+    },
+)
 
 
 @configclass
@@ -58,3 +71,31 @@ class DexsuiteKukaAllegroPPORunnerCameraCfg(RslRlOnPolicyRunnerCfg):
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
+    variants = {
+        "policy": {
+            "gru": RslRlPpoActorCriticRecurrentCfg(
+                init_noise_std=1.0,
+                actor_obs_normalization=True,
+                critic_obs_normalization=True,
+                actor_hidden_dims=[512, 256, 128],
+                critic_hidden_dims=[512, 256, 128],
+                activation="elu",
+                rnn_type="gru",
+                rnn_hidden_dim=256,
+                rnn_num_layers=1,
+                encoders=ENCODERS
+            ),
+            "lstm": RslRlPpoActorCriticRecurrentCfg(
+                init_noise_std=1.0,
+                actor_obs_normalization=True,
+                critic_obs_normalization=True,
+                actor_hidden_dims=[512, 256, 128],
+                critic_hidden_dims=[512, 256, 128],
+                activation="elu",
+                rnn_type="lstm",
+                rnn_hidden_dim=256,
+                rnn_num_layers=1,
+                encoders=ENCODERS
+            ),
+        }
+    }
