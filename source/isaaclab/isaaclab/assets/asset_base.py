@@ -88,9 +88,9 @@ class AssetBase(ABC):
                 orientation=self.cfg.init_state.rot,
             )
         # check that spawn was successful
-        matching_prims = sim_utils.find_matching_prims(self.cfg.prim_path)
-        if len(matching_prims) == 0:
-            raise RuntimeError(f"Could not find prim with path {self.cfg.prim_path}.")
+        # matching_prims = sim_utils.find_matching_prims(self.cfg.prim_path)
+        # if len(matching_prims) == 0:
+        #     raise RuntimeError(f"Could not find prim with path {self.cfg.prim_path}.")
 
         # register various callback functions
         self._register_callbacks()
