@@ -11,6 +11,7 @@ import contextlib
 import functools
 import inspect
 import re
+import torch
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -291,25 +292,11 @@ def clone(func: Callable) -> Callable:
             schemas.activate_contact_sensors(prim_paths[0], cfg.activate_contact_sensors)
         # clone asset using cloner API
         if len(prim_paths) > 1:
-            cloner = Cloner(stage=stage)
-            # check version of Isaac Sim to determine whether clone_in_fabric is valid
-            isaac_sim_version = float(".".join(get_version()[2]))
-            if isaac_sim_version < 5:
-                # clone the prim
-                cloner.clone(
-                    prim_paths[0], prim_paths[1:], replicate_physics=False, copy_from_source=cfg.copy_from_source
-                )
-            else:
-                # clone the prim
-                clone_in_fabric = kwargs.get("clone_in_fabric", False)
-                replicate_physics = kwargs.get("replicate_physics", False)
-                cloner.clone(
-                    prim_paths[0],
-                    prim_paths[1:],
-                    replicate_physics=replicate_physics,
-                    copy_from_source=cfg.copy_from_source,
-                    clone_in_fabric=clone_in_fabric,
-                )
+            from isaaclab.scene.cloner import CLONE
+            CLONE['source'].append(prim_paths[0])
+            CLONE['destination'].append(f"{root_path.replace('.*', '')}{{}}/{prim_paths[0].split('/')[-1]}")
+            mapping = torch.ones((1, len(prim_paths)), dtype=torch.bool)
+            CLONE["mapping"] = torch.cat((CLONE["mapping"].reshape(-1, mapping.size(1)), mapping), dim=0)
         # return the source prim
         return prim
 
