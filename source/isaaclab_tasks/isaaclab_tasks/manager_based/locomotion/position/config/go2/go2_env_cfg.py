@@ -97,6 +97,7 @@ class Go2EnvMixin:
         # Ensure parent classes run their setup first
         super().__post_init__()  # type: ignore
         self.scene.robot = UNITREE_GO2_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")  # type: ignore
+        self.scene.robot.spawn.usd_path="https://uwlab-assets.s3.us-west-004.backblazeb2.com/Robots/Unitree/Go2/go2.usd"
         self.rewards.undesired_contact.params["sensor_cfg"].body_names = [".*thigh"]
         self.rewards.feet_lin_acc_l2.params["robot_cfg"].body_names = ".*_foot"
         self.rewards.feet_rot_acc_l2.params["robot_cfg"].body_names = ".*_foot"
