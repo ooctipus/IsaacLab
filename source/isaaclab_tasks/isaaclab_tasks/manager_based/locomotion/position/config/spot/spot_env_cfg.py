@@ -7,7 +7,7 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
-from isaaclab_assets.robots import SPOT_JOINT_POSITION, SPOT_CFG
+from isaaclab_assets.robots.spot import SPOT_JOINT_POSITION, SPOT_CFG
 
 from ... import mdp
 from ... import position_env_cfg
