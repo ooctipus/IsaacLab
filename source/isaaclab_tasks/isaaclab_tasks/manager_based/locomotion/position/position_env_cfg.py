@@ -353,10 +353,10 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
-        self.sim.physx.gpu_total_aggregate_pairs_capacity = 2**24
-        self.sim.physx.gpu_found_lost_pairs_capacity = 2**24
-        self.sim.physx.gpu_collision_stack_size = 2**28
-        self.sim.physx.gpu_max_rigid_patch_count = 5 * 2**19
+        self.sim.physx.gpu_total_aggregate_pairs_capacity = 2**25
+        self.sim.physx.gpu_found_lost_pairs_capacity = 2**25
+        self.sim.physx.gpu_collision_stack_size = 2**30
+        self.sim.physx.gpu_max_rigid_patch_count = 5 * 2**20
 
         # update sensor update periods
         # we tick all the sensors based on the smallest update period (physics update period)

@@ -11,14 +11,15 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, R
 class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 48
     max_iterations = 2000
-    save_interval = 100
+    save_interval = 500
     resume = False
     experiment_name = "position_command"
-    empirical_normalization = False
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
+        actor_obs_normalization=True,
+        critic_obs_normalization=True,
         activation="elu",
     )
     algorithm = RslRlPpoAlgorithmCfg(
