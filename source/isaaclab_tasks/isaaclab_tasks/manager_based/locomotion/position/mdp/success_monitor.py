@@ -18,7 +18,8 @@ class SuccessMonitor:
         # uniform success buff
         self.monitored_history_len = cfg.monitored_history_len
         self.device = cfg.device
-        self.success_buf = torch.zeros((cfg.num_monitored_data, self.monitored_history_len), device=self.device)
+        # Store success/failure as boolean to reduce memory (0/1)
+        self.success_buf = torch.zeros((cfg.num_monitored_data, self.monitored_history_len), dtype=torch.bool, device=self.device)
         self.success_rate = torch.zeros((cfg.num_monitored_data), device=self.device)
         self.success_pointer = torch.zeros((cfg.num_monitored_data), device=self.device, dtype=torch.int32)
         self.success_size = torch.zeros((cfg.num_monitored_data), device=self.device, dtype=torch.int32)
@@ -44,7 +45,8 @@ class SuccessMonitor:
 
         self.success_size.index_add_(0, unique_indices, counts_clamped)
         self.success_size = self.success_size.clamp(max=self.monitored_history_len)
-        self.success_rate[:] = self.success_buf.sum(dim=1) / self.success_size.clamp(min=1)
+        # Sum boolean buffer as float to compute mean success rates
+        self.success_rate[:] = self.success_buf.float().sum(dim=1) / self.success_size.clamp(min=1).float()
 
     def get_success_rate(self):
         return self.success_rate.clone()

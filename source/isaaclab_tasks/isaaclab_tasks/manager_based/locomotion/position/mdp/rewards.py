@@ -20,41 +20,15 @@ if TYPE_CHECKING:
     from isaaclab.managers import RewardTermCfg
 
 
-def task_reward(env: ManagerBasedRLEnv, reward_window: float = 1.0):  # Represents Tr, the length of the reward window
-    #
-    # See section II.B (page 3) Exploration Reward for details.
-    # Calculate the time step at which the reward window starts
-    reward_start_step = env.max_episode_length * (1 - reward_window / env.max_episode_length_s)
-
-    # Calculate the distance to the goal (‖xb − x∗b‖^2), squared L2 norm of the difference
-    distance_to_goal = env.command_manager.get_command("goal_point")[:, :3].norm(2, -1).pow(2)
-
-    # Calculate task reward as per the equation:
-    # If within the reward window, r_task is non-zero
-    task_reward = (1 / (1 + distance_to_goal)) * (env.episode_length_buf > reward_start_step).float()
-    residue_task_reward = (1 / reward_window) * task_reward
-
-    # TODO: Try no to change exploration weight here.
-    # "The following line removes the exploration reward (r_bias) once the task reward (r_task)
-    #  reaches 50% of its maximum value, as described in the paper." [II.B (page 3)]
-    if task_reward.mean() > 0.5 and (env.reward_manager.get_term_cfg("exploration").weight > 0.0):
-        env.reward_manager.get_term_cfg("exploration").weight = 0.0
-
-    return residue_task_reward
+def task_reward(env: ManagerBasedRLEnv, std: float = 0.5):
+    distance_to_goal = env.command_manager.get_command("goal_point")[:, :3].norm(2, -1)
+    return 1 - torch.tanh(distance_to_goal / std)
 
 
-def heading_tracking(env: ManagerBasedRLEnv, distance_threshold: float = 2.0, reward_window: float = 2.0):
+def heading_tracking(env: ManagerBasedRLEnv, std: float = 0.5):
+    distance_to_goal = env.command_manager.get_command("goal_point")[:, :3].norm(2, -1)
     desired_heading = env.command_manager.get_command("goal_point")[:, 3]
-    reward_start_step = env.max_episode_length * (1 - reward_window / env.max_episode_length_s)
-    current_dist = env.command_manager.get_command("goal_point")[:, :2].norm(2, -1)
-    r_heading_tracking = (
-        1
-        / reward_window
-        * (1 / (1 + desired_heading.pow(2)))
-        * (current_dist < distance_threshold).float()
-        * (env.episode_length_buf > reward_start_step).float()
-    )
-    return r_heading_tracking
+    return (1 - torch.tanh(desired_heading / std)) * (distance_to_goal < 0.4).float()
 
 
 def exploration_reward(env: ManagerBasedRLEnv, robot_cfg: SceneEntityCfg = SceneEntityCfg("robot")):

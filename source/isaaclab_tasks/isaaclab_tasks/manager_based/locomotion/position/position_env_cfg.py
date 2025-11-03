@@ -76,7 +76,7 @@ class SceneCfg(InteractiveSceneCfg):
     # sensors
     height_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base",
-        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
+        offset=RayCasterCfg.OffsetCfg(pos=(0.5, 0.0, 20.0)),
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=(1.6, 1.0)),
         debug_vis=False,
@@ -212,10 +212,8 @@ class EventsCfg:
 class RewardsCfg:
 
     # task rewards, eq. 1
-    task_reward = RewTerm(func=mdp.task_reward, weight=10.0, params={"reward_window": 1.0})
-    heading_reward = RewTerm(
-        func=mdp.heading_tracking, weight=10.0, params={"distance_threshold": 0.5, "reward_window": 1.0}
-    )
+    task_reward = RewTerm(func=mdp.task_reward, weight=2.0, params={"std": 0.4})
+    # heading_reward = RewTerm(func=mdp.heading_tracking, weight=0.5, params={"std": 0.5})
 
     # penalties, eq. 2
     joint_accel_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
@@ -244,37 +242,27 @@ class RewardsCfg:
     )
 
     # exploration eq. 3
-    exploration = RewTerm(func=mdp.exploration_reward, weight=1.0)
+    # exploration = RewTerm(func=mdp.exploration_reward, weight=1.0)
 
     # stalling penalty eq. 4
-    stalling = RewTerm(func=mdp.stall_penalty, weight=-1.5, params={"distance_threshold": 0.2})
+    # stalling = RewTerm(func=mdp.stall_penalty, weight=-1.5, params={"distance_threshold": 0.2})
 
 
 @configclass
 class TerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
-    robot_drop = DoneTerm(
-        func=mdp.root_height_below_minimum,
-        params={
-            "minimum_height": -20,
-        },
-    )
+    robot_drop = DoneTerm(func=mdp.root_height_below_minimum, params={"minimum_height": -20})
 
     base_contact = DoneTerm(
         func=mdp.illegal_contact,
-        params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names="base"),
-            "threshold": 1.0,
-        },
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base"), "threshold": 1.0},
     )
 
 
 @configclass
 class CurriculumCfg:
     terrain_levels = CurrTerm(func=mdp.terrain_levels_vel)  # type: ignore
-
-    remove_exploration = CurrTerm(func=mdp.modify_reward, params={"reward_term": "exploration"})
 
 
 def make_terrain(terrain_dict):
@@ -286,7 +274,7 @@ def make_terrain(terrain_dict):
             size=(10.0, 10.0),
             border_width=20.0,
             num_rows=10,
-            num_cols=10,
+            num_cols=20,
             horizontal_scale=0.1,
             vertical_scale=0.005,
             slope_threshold=0.75,
@@ -321,6 +309,14 @@ variants = {
             "stepping_stone": terrains.STEPPING_STONE,
             "radiating_beam": terrains.RADIATING_BEAM,
         }),
+        "eval_all": make_terrain({
+            "gap": terrains.GAP_PLAY,
+            "pit": terrains.PIT_PLAY,
+            "extreme_stair": terrains.EXTREME_STAIR_PLAY,
+            "slope_inv": terrains.SLOPE_INV_PLAY,
+            "stepping_stone": terrains.STEPPING_STONE_PLAY,
+            "radiating_beam": terrains.RADIATING_BEAM_PLAY,
+        }),
         "gap": make_terrain({"gap": terrains.GAP}),
         "pit": make_terrain({"pit": terrains.PIT}),
         "extreme_stair": make_terrain({"extreme_stair": terrains.EXTREME_STAIR}),
@@ -329,7 +325,10 @@ variants = {
         "stepping_stone": make_terrain({"stepping_stone": terrains.STEPPING_STONE}),
         "radiating_beam": make_terrain({"radiating_beam": terrains.RADIATING_BEAM}),
     },
-    "curriculum.terrain_levels": {"success_rate": CurrTerm(func=mdp.terrain_success_rate_levels)},
+    "curriculum.terrain_levels": {
+        "success_rate": CurrTerm(func=mdp.terrain_success_rate_levels),
+        "success_rate_fine_grained": CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels)
+    },
 }
 
 
@@ -344,7 +343,6 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
     events: EventsCfg = EventsCfg()
     curriculum: CurriculumCfg = CurriculumCfg()
     viewer: ViewerCfg = ViewerCfg(eye=(3.0, 6.0, 6.0), origin_type="asset_body", asset_name="robot", body_name="base")
-    # viewer: ViewerCfg = ViewerCfg(eye=(0.0, 0.0, 150.0))
     variants = variants
 
     def __post_init__(self):

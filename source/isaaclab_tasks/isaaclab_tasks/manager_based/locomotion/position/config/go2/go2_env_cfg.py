@@ -19,7 +19,7 @@ from ... import mdp
 @configclass
 class Go2ActionsCfg:
     actions: JointPositionActionCfg = JointPositionActionCfg(
-        asset_name="robot", joint_names=[".*"], scale=0.5, use_default_offset=True
+        asset_name="robot", joint_names=[".*"], scale=0.2, use_default_offset=True
     )
 
 
@@ -29,26 +29,12 @@ class Go2RewardsCfg(position_env_cfg.RewardsCfg):
     move_forward = RewTerm(
         func=mdp.forward_velocity,
         weight=0.3,
-        params={
-            "std": 1,
-            "max_iter": 200,
-        },
-    )
-
-    air_time = RewTerm(
-        func=mdp.air_time_reward,
-        weight=1.0,
-        params={
-            "mode_time": 0.3,
-            "velocity_threshold": 0.5,
-            "asset_cfg": SceneEntityCfg("robot"),
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
-        },
+        params={"std": 1, "max_iter": 200},
     )
 
     gait = RewTerm(
         func=mdp.GaitReward,
-        weight=2.0,
+        weight=0.5,
         params={
             "std": 0.1,
             "max_err": 0.2,
@@ -56,37 +42,9 @@ class Go2RewardsCfg(position_env_cfg.RewardsCfg):
             "synced_feet_pair_names": (("FL_foot", "RR_foot"), ("FR_foot", "RL_foot")),
             "asset_cfg": SceneEntityCfg("robot"),
             "sensor_cfg": SceneEntityCfg("contact_forces"),
-            "max_iterations": 400.0,
+            "max_iterations": 1000.0,
         },
     )
-
-    # -- penalties
-    air_time_variance = RewTerm(
-        func=mdp.air_time_variance_penalty,
-        weight=-1.0,
-        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot")},
-    )
-
-    foot_slip = RewTerm(
-        func=mdp.foot_slip_penalty,
-        weight=-0.2,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
-            "threshold": 1.0,
-        },
-    )
-
-    joint_pos = RewTerm(
-        func=mdp.joint_position_penalty,
-        weight=-0.4,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
-            "stand_still_scale": 5.0,
-            "velocity_threshold": 0.5,
-        },
-    )
-
 
 @configclass
 class Go2EnvMixin:
@@ -101,12 +59,6 @@ class Go2EnvMixin:
         self.rewards.undesired_contact.params["sensor_cfg"].body_names = [".*thigh"]
         self.rewards.feet_lin_acc_l2.params["robot_cfg"].body_names = ".*_foot"
         self.rewards.feet_rot_acc_l2.params["robot_cfg"].body_names = ".*_foot"
-        self.rewards.stalling.weight *= 10
-        self.rewards.feet_lin_acc_l2.weight *= 2
-        self.rewards.joint_torque_l2.weight *= 2
-        self.rewards.action_rate_l2.weight *= 2
-        self.sim.dt = 0.0025
-        self.decimation = 8
 
 
 @configclass

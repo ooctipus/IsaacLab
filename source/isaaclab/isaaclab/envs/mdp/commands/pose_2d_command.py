@@ -158,6 +158,22 @@ class TerrainBasedPose2dCommand(UniformPose2dCommand):
     def __init__(self, cfg: TerrainBasedPose2dCommandCfg, env: ManagerBasedEnv):
         # initialize the base class
         super().__init__(cfg, env)
+        import isaaclab.sim as sim_utils
+        from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
+
+        SPHERE_MARKER_CFG = VisualizationMarkersCfg(
+            markers={
+                "target": sim_utils.SphereCfg(
+                    radius=0.05,
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+                ),
+                "spawn": sim_utils.SphereCfg(
+                    radius=0.05,
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+                ),
+            }
+        )
+        self.sphere_visualizer = VisualizationMarkers(SPHERE_MARKER_CFG.replace(prim_path="/Visuals/Command/valid_goal_positions"))
 
         # obtain the terrain asset
         self.terrain: TerrainImporter = env.scene["terrain"]
@@ -170,6 +186,11 @@ class TerrainBasedPose2dCommand(UniformPose2dCommand):
             )
         # valid targets: (terrain_level, terrain_type, num_patches, 3)
         self.valid_targets: torch.Tensor = self.terrain.flat_patches["target"]
+        self.valid_spawn: torch.Tensor = self.terrain.flat_patches["spawn"]
+        self.marker_indices = torch.cat((
+            torch.zeros(self.valid_targets.view(-1, 3).shape[0], dtype=torch.long, device=self.device),
+            torch.ones(self.valid_spawn.view(-1, 3).shape[0], dtype=torch.long, device=self.device)
+        ), dim=0)
 
     def _resample_command(self, env_ids: Sequence[int]):
         # sample new position targets from the terrain
@@ -201,3 +222,17 @@ class TerrainBasedPose2dCommand(UniformPose2dCommand):
             # random heading command
             r = torch.empty(len(env_ids), device=self.device)
             self.heading_command_w[env_ids] = r.uniform_(*self.cfg.ranges.heading)
+
+    def _debug_vis_callback(self, event):
+        # update the box marker
+        self.goal_pose_visualizer.visualize(
+            translations=self.pos_command_w,
+            orientations=quat_from_euler_xyz(
+                torch.zeros_like(self.heading_command_w),
+                torch.zeros_like(self.heading_command_w),
+                self.heading_command_w,
+            ),
+        )
+        # visualize valid target and spawn patches with proper marker indices
+        spawn_target_pos = torch.cat((self.valid_targets.view(-1, 3), self.valid_spawn.view(-1, 3)), dim=0)
+        self.sphere_visualizer.visualize(translations=spawn_target_pos, marker_indices=self.marker_indices)

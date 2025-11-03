@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from isaaclab.utils import configclass
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
+from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg, RslRlPpoActorCriticRecurrentCfg
 
 
 @configclass
@@ -36,3 +36,18 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
+    variants = {
+        "policy": {
+            "lstm": RslRlPpoActorCriticRecurrentCfg(
+                init_noise_std=1.0,
+                actor_hidden_dims=[512, 256, 128],
+                critic_hidden_dims=[512, 256, 128],
+                actor_obs_normalization=True,
+                critic_obs_normalization=True,
+                activation="elu",
+                rnn_num_layers=1,
+                rnn_hidden_dim=128,
+                rnn_type="lstm",
+            )
+        }
+    }
