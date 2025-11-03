@@ -430,7 +430,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.success_monitor.success_update(self.term_samples[env_ids], distance < 0.5)
 
         # 2) Sample next (level, type, spawn, target) aiming for balanced success
-        choices = self.success_monitor.sample_by_target_rate(env_ids, target=0.5, kappa=2)
+        choices = self.success_monitor.sample_by_target_rate(env_ids, target=0.33, kappa=2)
         self.term_samples[env_ids] = choices.to(self.term_samples.dtype)
 
         # 3) Decode flattened indices -> (level, type, spawn_id, target_id)
