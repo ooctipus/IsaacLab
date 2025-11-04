@@ -42,7 +42,7 @@ class Go2RewardsCfg(position_env_cfg.RewardsCfg):
             "synced_feet_pair_names": (("FL_foot", "RR_foot"), ("FR_foot", "RL_foot")),
             "asset_cfg": SceneEntityCfg("robot"),
             "sensor_cfg": SceneEntityCfg("contact_forces"),
-            "max_iterations": 5000.0,
+            "max_iterations": 500.0,
         },
     )
 
