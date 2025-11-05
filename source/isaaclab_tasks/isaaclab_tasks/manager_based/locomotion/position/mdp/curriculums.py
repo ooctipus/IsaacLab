@@ -401,9 +401,6 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         for name in self._type_names:
             self._result[f"{name}_success"] = torch.zeros((), dtype=torch.float, device=env.device)
             self._result[f"{name}_goal_dist"] = torch.zeros((), dtype=torch.float, device=env.device)
-        # per-level goal distance logs
-        for lvl in range(self._num_levels):
-            self._result[f"level_{lvl}_goal_dist"] = torch.zeros((), dtype=torch.float, device=env.device)
 
     def _init_type_mapping(self, terrain: TerrainImporter) -> None:
         gen_cfg = terrain.cfg.terrain_generator
@@ -482,14 +479,6 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
                 self._result[key_gd].copy_(d_all[mask].mean())
             else:
                 self._result[key_gd].zero_()
-        # per-level
-        for lvl in range(self._num_levels):
-            key_lvl = f"level_{lvl}_goal_dist"
-            mask = terrain.terrain_levels == lvl
-            if torch.any(mask):
-                self._result[key_lvl].copy_(d_all[mask].mean())
-            else:
-                self._result[key_lvl].zero_()
 
         return self._result
 
