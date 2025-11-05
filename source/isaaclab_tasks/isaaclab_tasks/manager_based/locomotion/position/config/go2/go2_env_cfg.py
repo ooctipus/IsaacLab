@@ -28,13 +28,13 @@ class Go2RewardsCfg(position_env_cfg.RewardsCfg):
 
     move_forward = RewTerm(
         func=mdp.forward_velocity,
-        weight=0.3,
+        weight=0.1,
         params={"std": 1, "max_iter": 200},
     )
 
     gait = RewTerm(
         func=mdp.GaitReward,
-        weight=0.5,
+        weight=0.2,
         params={
             "std": 0.1,
             "max_err": 0.2,
@@ -42,7 +42,7 @@ class Go2RewardsCfg(position_env_cfg.RewardsCfg):
             "synced_feet_pair_names": (("FL_foot", "RR_foot"), ("FR_foot", "RL_foot")),
             "asset_cfg": SceneEntityCfg("robot"),
             "sensor_cfg": SceneEntityCfg("contact_forces"),
-            "max_iterations": 200.0,
+            "max_iterations": 500.0,
         },
     )
 

@@ -212,8 +212,8 @@ class EventsCfg:
 class RewardsCfg:
 
     # task rewards, eq. 1
-    task_reward = RewTerm(func=mdp.task_reward, weight=2.0, params={"std": 0.4})
-    # heading_reward = RewTerm(func=mdp.heading_tracking, weight=0.5, params={"std": 0.5})
+    task_reward = RewTerm(func=mdp.task_reward, weight=0.2, params={"std": 0.4})
+    heading_reward = RewTerm(func=mdp.heading_tracking, weight=0.1, params={"std": 0.5})
 
     # penalties, eq. 2
     joint_accel_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
@@ -240,12 +240,6 @@ class RewardsCfg:
         weight=-3,
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base"), "threshold": 1.0},
     )
-
-    # exploration eq. 3
-    # exploration = RewTerm(func=mdp.exploration_reward, weight=1.0)
-
-    # stalling penalty eq. 4
-    # stalling = RewTerm(func=mdp.stall_penalty, weight=-1.5, params={"distance_threshold": 0.2})
 
 
 @configclass
