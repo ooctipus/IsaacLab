@@ -212,8 +212,8 @@ class EventsCfg:
 class RewardsCfg:
 
     # task rewards, eq. 1
-    task_reward = RewTerm(func=mdp.task_reward, weight=0.2, params={"std": 0.4})
-    heading_reward = RewTerm(func=mdp.heading_tracking, weight=0.1, params={"std": 0.5})
+    task_reward = RewTerm(func=mdp.task_reward, weight=0.4, params={"std": 0.4})
+    heading_reward = RewTerm(func=mdp.heading_tracking, weight=0.2, params={"std": 0.5})
 
     # penalties, eq. 2
     joint_accel_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
