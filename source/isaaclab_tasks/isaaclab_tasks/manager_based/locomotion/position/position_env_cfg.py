@@ -220,7 +220,7 @@ class RewardsCfg:
     joint_torque_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-1.0e-5)
     undesired_contact = RewTerm(
         func=mdp.undesired_contacts,
-        weight=-1.0,
+        weight=-0.25,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*THIGH"),
             "threshold": 1.0,
@@ -237,7 +237,7 @@ class RewardsCfg:
 
     illegal_contact_penalty = RewTerm(
         func=mdp.illegal_contact_penalty,
-        weight=-3,
+        weight=-0.5,
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base"), "threshold": 1.0},
     )
 
