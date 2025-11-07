@@ -203,8 +203,9 @@ class EventsCfg:
 class RewardsCfg:
 
     # task rewards
-    task_reward = RewTerm(func=mdp.task_reward, weight=0.4, params={"std": 0.4})
-    heading_reward = RewTerm(func=mdp.heading_tracking, weight=0.2, params={"std": 0.5})
+    # task_reward = RewTerm(func=mdp.task_reward, weight=0.4, params={"std": 0.4})
+    # heading_reward = RewTerm(func=mdp.heading_tracking, weight=0.2, params={"std": 0.5})
+    success_reward = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=500)
 
     # penalties
     joint_accel_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
@@ -228,12 +229,16 @@ class RewardsCfg:
         weight=-0.5,
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base"), "threshold": 1.0},
     )
+    cost_of_living = RewTerm(func=mdp.is_alive, weight=-1e-5)
+
 
 @configclass
 class TerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
     robot_drop = DoneTerm(func=mdp.root_height_below_minimum, params={"minimum_height": -20})
+
+    success = DoneTerm(func=mdp.success, params={"std": (0.2, 0.4)})
 
 
 @configclass
