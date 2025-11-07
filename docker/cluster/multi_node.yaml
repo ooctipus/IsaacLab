@@ -1,0 +1,91 @@
+workflow:
+  name: isaac-lab-multinode
+  resources:
+    default:
+      gpu: {{ num_gpu }}
+      cpu: {{ num_cpu }}
+      memory: {{ memory }}Gi
+      storage: {{ storage }}Gi
+      platform: {{ platform }}
+
+  groups:
+  - name: training
+    tasks:
+    {% for item in range(num_node) %}
+    {% if item == 0 %}
+    - name: master
+      lead: true
+      outputs:
+      - dataset:
+          name: {{ dataset }}
+          path: model
+    {% else %}
+    - name: worker_{{item}}
+    {% endif %}
+      image: nvcr.io/nvidian/octi-isaac-lab:{{ image }}
+      command: ["bash"]
+      args: ["/tmp/run.sh"]
+      environment:
+        ACCEPT_EULA: Y
+        NO_NUCLEUS: Y
+        NCCL_DEBUG: WARN
+        # If your cluster needs an explicit NIC for NCCL, uncomment and set:
+        # NCCL_SOCKET_IFNAME: eth0
+        # NCCL_IB_HCA: mlx5_0
+      credentials:
+        wandb:
+          WANDB_USERNAME: wandb_username
+          WANDB_API_KEY: wandb_api_key
+      files:
+      - path: /tmp/run.sh
+        contents: |
+          set -euo pipefail
+          mkdir -p {{output}}/model
+
+          # Optional: avoid Vulkan conflicts in Isaac containers
+          if [ -e "/usr/share/vulkan" ] && [ -e "/etc/vulkan" ]; then
+            mv /usr/share/vulkan /usr/share/vulkan_hidden
+          fi
+
+          # WANDB envs (provided via credentials above)
+          export WANDB_API_KEY="${WANDB_API_KEY}"
+          export WANDB_USERNAME=nvidia
+
+          # Launch distributed training with torch.distributed.run (torchrun)
+          /workspace/isaaclab/_isaac_sim/python.sh -m torch.distributed.run \
+            --nnodes {{ num_node }} \
+            --nproc_per_node {{ num_gpu }} \
+            --node_rank {{ item }} \
+            --master_addr {{host:master}} \
+            --master_port {{ master_port }} \
+            /workspace/isaaclab/{{ script }} \
+              --distributed \
+              --headless \
+              {{ args }}
+
+          # Collect logs/checkpoints into the dataset output dir
+          shopt -s nullglob
+          mv logs/* {{output}}/model/ 2>/dev/null || true
+
+      - path: /tmp/config.json
+        contents: |
+          {
+            "launch_config": {
+              "headless": true
+            }
+          }
+    {% endfor %}
+
+default-values:
+  # Keep your original knobs, but now multi-node
+  image: dextrah
+  num_node: 2
+  num_gpu: 4
+  master_port: 29400
+  num_cpu: 16
+  memory: 64
+  storage: 256
+  platform: dgx-h100
+  dataset: isaac-lab-ppo-model
+  script: scripts/reinforcement_learning/rsl_rl/train.py
+  args:
