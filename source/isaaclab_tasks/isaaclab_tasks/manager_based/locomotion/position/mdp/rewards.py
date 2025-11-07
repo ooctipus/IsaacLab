@@ -27,7 +27,7 @@ def task_reward(env: ManagerBasedRLEnv, std: float = 0.5):
 
 def heading_tracking(env: ManagerBasedRLEnv, std: float = 0.5):
     distance_to_goal = env.command_manager.get_command("goal_point")[:, :3].norm(2, -1)
-    desired_heading = env.command_manager.get_command("goal_point")[:, 3]
+    desired_heading = env.command_manager.get_command("goal_point")[:, 3].abs()
     return (1 - torch.tanh(desired_heading / std)) * (distance_to_goal < 0.4).float()
 
 

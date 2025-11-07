@@ -442,7 +442,6 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
 
         # 4) Update env origins (set to spawn location) and terrain indicators
         spawn_w = goal_term.valid_spawn[chosen_level, chosen_type, spawn_id]
-        spawn_w[:, 2] += 0.2  # add 20 cm
         terrain.env_origins[env_ids] = spawn_w
         terrain.terrain_levels[env_ids] = chosen_level
         terrain.terrain_types[env_ids] = chosen_type
