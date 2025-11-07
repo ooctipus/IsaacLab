@@ -58,6 +58,10 @@ class terrain_levels_vel(ManagerTermBase):
         cols = torch.arange(num_types, device=self.device, dtype=torch.float)
         pos = cols / float(num_types) + 1e-3
         self._col_to_type_idx = torch.searchsorted(cum, pos, right=True).to(torch.long)
+        self._type_counts = torch.bincount(self._col_to_type_idx, minlength=len(self._type_names))
+        self._type_counts = torch.bincount(self._col_to_type_idx, minlength=len(self._type_names))
+        # Precompute counts per aggregated terrain type (used for fast reductions)
+        self._type_counts = torch.bincount(self._col_to_type_idx, minlength=len(self._type_names))
 
     def __call__(self, env: ManagerBasedRLEnv, env_ids: Sequence[int], demotion_fraction: float = 0.05):
         """Distance-based terrain curriculum with logging aligned to success-rate term.
@@ -176,9 +180,11 @@ class terrain_success_rate_levels(ManagerTermBase):
         goal_term = env.command_manager.get_term("goal_point")
 
         # 1) Log success for current assignments (distance to goal in base frame)
+        # Convert indices to tensor on device once for all subsequent indexing ops
+        env_ids_t = torch.as_tensor(env_ids, device=self.device, dtype=torch.long)
         command = env.command_manager.get_command("goal_point")
-        distance = command[env_ids, :3].norm(2, dim=1)
-        self.success_monitor.success_update(self.term_samples[env_ids], distance < 0.5)
+        distance = command.index_select(0, env_ids_t)[:, :3].norm(2, dim=1)
+        self.success_monitor.success_update(self.term_samples.index_select(0, env_ids_t), distance < 0.5)
 
         # 2) Sample next (level, type, patch) assignments targeting balanced success
         choices = self.success_monitor.sample_by_target_rate(env_ids, target=0.5, kappa=1)
@@ -293,9 +299,11 @@ class terrain_spawn_goal_success_rate_levels(ManagerTermBase):
         goal_term = env.command_manager.get_term("goal_point")
 
         # 1) Log success for current assignments (distance to goal in base frame)
+        # Convert indices to tensor on device once for all subsequent indexing ops
+        env_ids_t = torch.as_tensor(env_ids, device=self.device, dtype=torch.long)
         command = env.command_manager.get_command("goal_point")
-        distance = command[env_ids, :3].norm(2, dim=1)
-        self.success_monitor.success_update(self.term_samples[env_ids], distance < 0.5)
+        distance = command.index_select(0, env_ids_t)[:, :3].norm(2, dim=1)
+        self.success_monitor.success_update(self.term_samples.index_select(0, env_ids_t), distance < 0.5)
 
         # 2) Sample next (level, type, patch) assignments targeting balanced success
         choices = self.success_monitor.sample_by_target_rate(env_ids, target=0.5, kappa=1)
@@ -367,15 +375,15 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         terrain: TerrainImporter = env.scene.terrain
 
         # disable resampling in the command term; curriculum will set commands directly
-        goal_term = env.command_manager.get_term("goal_point")
-        goal_term._resample_command = lambda env_ids: None  # type: ignore[attr-defined]
+        self.goal_term = env.command_manager.get_term("goal_point")
+        self.goal_term._resample_command = lambda env_ids: None  # type: ignore[attr-defined]
 
         # cache terrain layout
         self._num_levels = int(terrain.terrain_origins.shape[0])
         self._num_types = int(terrain.terrain_origins.shape[1])
 
-        self.num_patches_spawn = int(goal_term.valid_spawn.shape[2])
-        self.num_patches_target = int(goal_term.valid_targets.shape[2])
+        self.num_patches_spawn = int(self.goal_term.valid_spawn.shape[2])
+        self.num_patches_target = int(self.goal_term.valid_targets.shape[2])
 
         # success monitor tracks each (level, type, spawn_id, target_id)
         success_monitor_cfg = SuccessMonitorCfg(
@@ -395,12 +403,25 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self._result: dict[str, torch.Tensor] = {
             "all": torch.zeros((), dtype=torch.float, device=env.device),
             "all_success": torch.zeros((), dtype=torch.float, device=env.device),
-            # average world-distance from spawn to goal
-            "avg_goal_distance": torch.zeros((), dtype=torch.float, device=env.device),
         }
         for name in self._type_names:
             self._result[f"{name}_success"] = torch.zeros((), dtype=torch.float, device=env.device)
-            self._result[f"{name}_goal_dist"] = torch.zeros((), dtype=torch.float, device=env.device)
+            # per-type sampling probability mass (sum of probabilities over all (levels, spawns, targets) columns)
+            self._result[f"{name}_sample_prob"] = torch.zeros((), dtype=torch.float, device=env.device)
+
+        # Precompute flattened views for fast gathers
+        L, T = self._num_levels, self._num_types
+        Ps, Pt = self.num_patches_spawn, self.num_patches_target
+        self._valid_spawn_flat = self.goal_term.valid_spawn.reshape(L * T * Ps, -1)
+        self._valid_targets_flat = self.goal_term.valid_targets.reshape(L * T * Pt, -1)
+
+        # Preallocate reusable buffers to avoid per-step allocations
+        n_types = len(self._type_names)
+        self._buf_type_sums = torch.zeros(n_types, device=env.device, dtype=torch.float)
+        self._buf_type_prob = torch.zeros(n_types, device=env.device, dtype=torch.float)
+        self._buf_type_means = torch.zeros(n_types, device=env.device, dtype=torch.float)
+        # Random heading buffer reused each call
+        self._rand_heading = torch.empty(env.num_envs, device=env.device)
 
     def _init_type_mapping(self, terrain: TerrainImporter) -> None:
         gen_cfg = terrain.cfg.terrain_generator
@@ -416,41 +437,47 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         cols = torch.arange(num_types, device=self.device, dtype=torch.float)
         pos = cols / float(num_types) + 1e-3
         self._col_to_type_idx = torch.searchsorted(cum, pos, right=True).to(torch.long)
+        # Cache counts per terrain type for grouped reductions
+        self._type_counts = torch.bincount(self._col_to_type_idx, minlength=len(self._type_names))
 
-    def __call__(self, env: ManagerBasedRLEnv, env_ids: Sequence[int]):
+    def __call__(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor):
         terrain: TerrainImporter = env.scene.terrain
-        goal_term = env.command_manager.get_term("goal_point")
+        goal_term = self.goal_term
 
-        # 1) Log success for current assignments (distance to goal in base frame)
         command = env.command_manager.get_command("goal_point")
-        distance = command[env_ids, :3].norm(2, dim=1)
-        self.success_monitor.success_update(self.term_samples[env_ids], distance < 0.5)
+        distance = command.index_select(0, env_ids)[:, :3].norm(2, dim=1)
+        self.success_monitor.success_update(self.term_samples.index_select(0, env_ids), distance < 0.5)
 
         # 2) Sample next (level, type, spawn, target) aiming for balanced success
-        choices = self.success_monitor.sample_by_target_rate(env_ids, target=0.33, kappa=2)
-        self.term_samples[env_ids] = choices.to(self.term_samples.dtype)
+        choices, prob = self.success_monitor.sample_by_target_rate(env_ids, target=0.33, kappa=2, return_probs=True)
+        # In-place index copy to avoid temporary tensors
+        self.term_samples.index_copy_(0, env_ids, choices.to(self.term_samples.dtype))
 
         # 3) Decode flattened indices -> (level, type, spawn_id, target_id)
         L, T, Ps, Pt = self._num_levels, self._num_types, self.num_patches_spawn, self.num_patches_target
-        flat = self.term_samples[env_ids]
-        target_id = flat % Pt
-        rem = flat // Pt
-        spawn_id = rem % Ps
-        rem = rem // Ps
-        chosen_type = rem % T
-        chosen_level = rem // T
+        # Decode flattened indices -> level, type, spawn_id, target_id (vectorized)
+        flat = choices.to(torch.long)
+        rem, target_id = torch.div(flat, Pt, rounding_mode='floor'), torch.remainder(flat, Pt)
+        rem, spawn_id = torch.div(rem, Ps, rounding_mode='floor'), torch.remainder(rem, Ps)
+        chosen_level, chosen_type = torch.div(rem, T, rounding_mode='floor'), torch.remainder(rem, T)
 
         # 4) Update env origins (set to spawn location) and terrain indicators
-        spawn_w = goal_term.valid_spawn[chosen_level, chosen_type, spawn_id]
-        terrain.env_origins[env_ids] = spawn_w
-        terrain.terrain_levels[env_ids] = chosen_level
-        terrain.terrain_types[env_ids] = chosen_type
+        # Use flattened gather to reduce advanced-indexing overhead
+        spawn_lin = (chosen_level * (T * Ps) + chosen_type * Ps + spawn_id).to(torch.long)
+        spawn_w = self._valid_spawn_flat.index_select(0, spawn_lin)
+        terrain.env_origins.index_copy_(0, env_ids, spawn_w)
+        terrain.terrain_levels.index_copy_(0, env_ids, chosen_level)
+        terrain.terrain_types.index_copy_(0, env_ids, chosen_type)
 
         # 5) Set goal target directly from valid targets and adjust height
-        goal_term.pos_command_w[env_ids] = goal_term.valid_targets[chosen_level, chosen_type, target_id]
+        target_lin = (chosen_level * (T * Pt) + chosen_type * Pt + target_id).to(torch.long)
+        pos_cmd = self._valid_targets_flat.index_select(0, target_lin)
+        goal_term.pos_command_w.index_copy_(0, env_ids, pos_cmd)
+        # Adjust height directly (add z offset)
         goal_term.pos_command_w[env_ids, 2] += goal_term.robot.data.default_root_state[env_ids, 2]
-        r = torch.empty(len(env_ids), device=self.device)
-        goal_term.heading_command_w[env_ids] = r.uniform_(*goal_term.cfg.ranges.heading)
+        # Sample heading for the selected envs
+        r = torch.empty(env_ids.numel(), device=self.device)
+        goal_term.heading_command_w.index_copy_(0, env_ids, r.uniform_(*goal_term.cfg.ranges.heading))
 
         # aggregate reporting: overall mean terrain level (kept for compatibility)
         self._result["all"].copy_(terrain.terrain_levels.float().mean())
@@ -458,35 +485,38 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         # success rates: mean across all, and per type (avg over levels and pairs)
         success = self.success_monitor.get_success_rate()  # [L*T*Ps*Pt]
         self._result["all_success"].copy_(success.mean())
+        # Per-type success via grouped reduction (avoid Python looped masking in reduction)
         per_col_success = success.view(L, T, Ps, Pt).mean(dim=(0, 2, 3))  # [T]
+        self._buf_type_sums.zero_()
+        self._buf_type_sums.index_add_(0, self._col_to_type_idx, per_col_success)
+        means = self._buf_type_sums / self._type_counts.clamp_min(1).to(self._buf_type_sums.dtype)
         for i, name in enumerate(self._type_names):
-            key_succ = f"{name}_success"
-            col_mask = self._col_to_type_idx == i
-            if torch.any(col_mask):
-                self._result[key_succ].copy_(per_col_success[col_mask].mean())
-            else:
-                self._result[key_succ].zero_()
+            self._result[f"{name}_success"].copy_(means[i])
 
-        # goal distance logs (world frame): distance from spawn to target
-        d_all = (goal_term.pos_command_w[:, :2] - env.scene.env_origins[:, :2]).norm(2, dim=1)
-        self._result["avg_goal_distance"].copy_(d_all.mean())
-        # per-type
+        # sampling probability logs: mass per terrain type (sum over levels, spawn/target pairs)
+        # prob is a distribution over all (L, T, Ps, Pt) partitions and sums to 1.
+        per_col_prob_mass = prob.view(L, T, Ps, Pt).sum(dim=(0, 2, 3))  # [T] columns
+        self._buf_type_prob.zero_()
+        self._buf_type_prob.index_add_(0, self._col_to_type_idx, per_col_prob_mass)
         for i, name in enumerate(self._type_names):
-            key_gd = f"{name}_goal_dist"
-            mask = self._col_to_type_idx[terrain.terrain_types] == i
-            if torch.any(mask):
-                self._result[key_gd].copy_(d_all[mask].mean())
-            else:
-                self._result[key_gd].zero_()
+            self._result[f"{name}_sample_prob"].copy_(self._buf_type_prob[i])
 
         return self._result
 
 
-def modify_reward(env: ManagerBasedRLEnv, env_ids: Sequence[int], reward_term: str):
-    reward_term = env.reward_manager.get_term_cfg(reward_term)
-    if reward_term.weight == 0.0:
+def skip_reward_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], reward_term: str):
+    term_cfg = env.reward_manager.get_term_cfg(reward_term)
+    if term_cfg.weight == 0.0:
         return
     success_monitor = getattr(env.curriculum_manager.cfg, "terrain_levels").func.success_monitor
     success_rate = success_monitor.get_success_rate().mean()
-    if success_rate > 0.4 and env.common_step_counter > 100:
-        reward_term.weight = 0.0
+    if success_rate > 0.1 and env.common_step_counter > 100:
+        # Set weight to zero so manager skips computing it
+        term_cfg.weight = 0.0
+        # Additionally, replace the callable with a zero-return stub
+        if hasattr(term_cfg.func, "reset"):
+            # keep simple lambda style, but make signatures flexible to avoid TypeErrors
+            term_cfg.func.reset = lambda *args, **kwargs: None
+            term_cfg.func.__call__ = lambda *args, **kwargs: torch.zeros(env.num_envs, device=env.device)
+        else:
+            term_cfg.func = lambda env, **kwargs: torch.zeros(env.num_envs, device=env.device)

@@ -137,7 +137,6 @@ class GaitReward(ManagerTermBase):
         synced_feet_pair_names,
         asset_cfg: SceneEntityCfg,
         sensor_cfg: SceneEntityCfg,
-        max_iterations: int = 500,
     ) -> torch.Tensor:
         """Compute the reward.
 
@@ -149,9 +148,6 @@ class GaitReward(ManagerTermBase):
         Returns:
             The reward value.
         """
-        current_iter = int(env.common_step_counter / 48)
-        if current_iter > max_iterations:
-            return torch.zeros(self.num_envs, device=self.device)
         # for synchronous feet, the contact (air) times of two feet should match
         sync_reward_0 = self._sync_reward_func(self.synced_feet_pairs[0][0], self.synced_feet_pairs[0][1])
         sync_reward_1 = self._sync_reward_func(self.synced_feet_pairs[1][0], self.synced_feet_pairs[1][1])
@@ -196,7 +192,6 @@ class GaitReward(ManagerTermBase):
 def forward_velocity(
     env: ManagerBasedRLEnv,
     std: float,
-    max_iter: int = 150,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Reward tracking of linear velocity commands (xy axes) using exponential kernel."""
@@ -204,9 +199,8 @@ def forward_velocity(
     asset: Articulation = env.scene[asset_cfg.name]
     root_lin_vel_b = asset.data.root_lin_vel_b
     forward_velocity = root_lin_vel_b[:, 0]
-    current_iter = int(env.common_step_counter / 48)
     distance = torch.norm(env.command_manager.get_command("goal_point")[:, :2], dim=1)
-    return torch.where(distance > 0.4, torch.tanh(forward_velocity.clamp(-1, 1) / std) * (current_iter < max_iter), 0)
+    return torch.where(distance > 0.4, torch.tanh(forward_velocity.clamp(-1, 1) / std), 0)
 
 
 def air_time_reward(
