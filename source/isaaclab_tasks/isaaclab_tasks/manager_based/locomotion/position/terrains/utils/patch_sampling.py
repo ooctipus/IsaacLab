@@ -411,79 +411,92 @@ def find_flat_patches_by_radius(
     z_range_shifted = (cfg.z_range[0] + origin[2].item(), cfg.z_range[1] + origin[2].item())
 
     # -- create ring (circle) of points around (0, 0) to test patch "flatness"
-    # We'll sample 10 angles around the circle for each candidate patch radius
-    angle = torch.linspace(0, 2 * np.pi, 10, device=device)  # shape: (10,)
+    # Number of azimuth samples per radius is configurable (default=10)
+    num_angles = getattr(cfg, "ring_azimuth_samples", 10)
+    angle = torch.linspace(0, 2 * np.pi, num_angles, device=device)  # shape: (num_angles,)
     ring_x = []
     ring_y = []
     for radius in patch_radius:
         ring_x.append(radius * torch.cos(angle))  # shape: (10,)
         ring_y.append(radius * torch.sin(angle))  # shape: (10,)
 
-    ring_x = torch.cat(ring_x).unsqueeze(1)  # shape: (num_radii * 10, 1)
-    ring_y = torch.cat(ring_y).unsqueeze(1)  # shape: (num_radii * 10, 1)
+    ring_x = torch.cat(ring_x).unsqueeze(1)  # shape: (num_radii * num_angles, 1)
+    ring_y = torch.cat(ring_y).unsqueeze(1)  # shape: (num_radii * num_angles, 1)
     # final ring of shape: (num_radii * 10, 3)
     ring_points = torch.cat([ring_x, ring_y, torch.zeros_like(ring_x)], dim=-1)
 
     # -- Prepare arrays for sampling
-    # We'll keep track of which patch indices are "still invalid" and require more sampling
-    patch_ids = torch.arange(cfg.num_patches, device=device)
+    # We'll fill results as we accept valid candidates from a larger pool each iteration.
     flat_patches = torch.zeros((cfg.num_patches, 3), device=device)
+    remaining_ids = torch.arange(cfg.num_patches, device=device)
 
-    # -- Rejection sampling
+    # Oversampling and batch size controls
+    oversample_factor = float(getattr(cfg, "oversample_factor", 2.0))
+    max_batch_size = getattr(cfg, "max_batch_size", None)
+    max_batch_size = int(max_batch_size) if max_batch_size is not None else None
+
+    # -- Batched rejection sampling with pooling
     iteration = 0
-    while len(patch_ids) > 0 and iteration < cfg.max_iterations:
+    while len(remaining_ids) > 0 and iteration < cfg.max_iterations:
+        # How many patches left to place
+        n_remaining = len(remaining_ids)
+        # Choose candidate pool size (oversample to accept many in one shot)
+        pool = max(int(np.ceil(n_remaining * oversample_factor)), n_remaining)
+        if max_batch_size is not None:
+            pool = min(pool, max_batch_size)
+
         # (1) Sample radius in [r_min, r_max]
         r_min, r_max = cfg.radius_range
-        cur_radius = torch.empty(len(patch_ids), device=device).uniform_(r_min, r_max)
+        cand_radius = torch.empty(pool, device=device).uniform_(r_min, r_max)
         # (2) Sample angle in [0, 2*pi]
-        cur_angle = torch.empty(len(patch_ids), device=device).uniform_(0, 2 * np.pi)
+        cand_angle = torch.empty(pool, device=device).uniform_(0, 2 * np.pi)
 
-        # Convert polar -> cartesian
-        pos_x = cur_radius * torch.cos(cur_angle)
-        pos_y = cur_radius * torch.sin(cur_angle)
+        # Convert polar -> cartesian and add origin
+        cand_x = cand_radius * torch.cos(cand_angle) + origin[0]
+        cand_y = cand_radius * torch.sin(cand_angle) + origin[1]
+        cand_xy = torch.stack([cand_x, cand_y], dim=-1)  # (pool, 2)
 
-        # Store new (x, y) in our patch buffer
-        flat_patches[patch_ids, 0] = pos_x + origin[0]
-        flat_patches[patch_ids, 1] = pos_y + origin[1]
-
-        # Raycast ring points from "far above" in Z
-        # shape for ring offset: (len(patch_ids), num_radii * 10, 3)
-        ring_in_world = flat_patches[patch_ids].unsqueeze(1) + ring_points
-        ring_in_world[..., 2] = 100.0  # set starting Z for the ray
-        # directions: straight down
+        # Raycast ring points from above (Z=100)
+        # shape: (pool, num_radii * num_angles, 3)
+        ring_in_world = torch.zeros((pool, ring_points.shape[0], 3), device=device, dtype=torch.float32)
+        ring_in_world[..., :2] = cand_xy.unsqueeze(1) + ring_points[..., :2]
+        ring_in_world[..., 2] = 100.0
         dirs = torch.zeros_like(ring_in_world)
         dirs[..., 2] = -1.0
 
-        # Flatten for raycasting
-        ray_hits = raycast_mesh(ring_in_world.view(-1, 3), dirs.view(-1, 3), wp_mesh)[0]  # shape: (N, 3)
-
-        # Reshape back to (len(patch_ids), num_radii * 10, 3)
+        # Flatten for raycasting, then reshape back
+        ray_hits = raycast_mesh(ring_in_world.view(-1, 3), dirs.view(-1, 3), wp_mesh)[0]
         ring_hits_3d = ray_hits.view(ring_in_world.shape)
-        # We'll define the patch center's final Z from the last ring point's Z
-        flat_patches[patch_ids, 2] = ring_hits_3d[..., -1, 2]
 
-        # (3) Check validity:
-        #  -- all ring points must lie fully in the z_range
-        heights = ring_hits_3d[..., 2]  # shape: (len(patch_ids), num_radii*10)
+        # Heights on the ring
+        heights = ring_hits_3d[..., 2]  # (pool, num_radii * num_angles)
         out_of_range = (heights < z_range_shifted[0]) | (heights > z_range_shifted[1])
-        #  -- height difference must be within max_height_diff
         height_diff = heights.max(dim=1)[0] - heights.min(dim=1)[0]
-        # "not valid" if out of range or if height diff is too large
-        not_valid = out_of_range.any(dim=1) | (height_diff > cfg.max_height_diff)
+        valid = (~out_of_range.any(dim=1)) & (height_diff <= cfg.max_height_diff)
 
-        # Keep only the patches that are invalid for another iteration
-        patch_ids = patch_ids[not_valid]
+        # If we found any valid candidates, place as many as needed
+        if valid.any():
+            valid_idx = torch.nonzero(valid, as_tuple=False).squeeze(-1)
+            take = min(valid_idx.shape[0], n_remaining)
+            sel = valid_idx[:take]
+            target = remaining_ids[:take]
+
+            # Set XY; set Z from the last ring sample's Z (consistent with prior behavior)
+            flat_patches[target, 0] = cand_xy[sel, 0]
+            flat_patches[target, 1] = cand_xy[sel, 1]
+            flat_patches[target, 2] = heights[sel, -1]
+
+            # Drop filled ids
+            remaining_ids = remaining_ids[take:]
+
         iteration += 1
 
-    if len(patch_ids) > 0:
-        # We ran out of iterations but still have invalid patches
+    if len(remaining_ids) > 0:
         raise RuntimeError(
             f"Failed to find valid patches within {cfg.max_iterations} iterations.\n"
-            f"Still invalid patches: {len(patch_ids)}.\n"
-            "Consider relaxing your constraints or increasing max_iterations."
+            f"Still invalid patches: {len(remaining_ids)}.\n"
+            "Consider relaxing your constraints, increasing oversample_factor, or increasing max_iterations."
         )
 
-    # Return patch centers in the "mesh frame minus origin"
-    # (i.e., subtract origin so that final returned coords are consistent
-    #  with the original code's behavior)
+    # Return patch centers in the "mesh frame minus origin" (consistency with other functions)
     return flat_patches - origin
