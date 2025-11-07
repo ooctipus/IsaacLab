@@ -116,17 +116,17 @@ class ObservationsCfg:
     @configclass
     class PolicyCfg(ObsGroup):
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.2, n_max=0.2))
+        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
         proj_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))
         goal_point_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "goal_point"})
         time_left = ObsTerm(func=mdp.time_left)
-        joint_pos = ObsTerm(func=mdp.joint_pos, noise=Unoise(n_min=-0.01, n_max=0.01))
-        joint_vel = ObsTerm(func=mdp.joint_vel, noise=Unoise(n_min=-1.5, n_max=1.5))
+        joint_pos = ObsTerm(func=mdp.joint_pos)
+        joint_vel = ObsTerm(func=mdp.joint_vel)
         last_actions = ObsTerm(func=mdp.last_action)
         height_scan = ObsTerm(
             func=mdp.height_scan,
             params={"sensor_cfg": SceneEntityCfg("height_scanner")},
-            noise=Unoise(n_min=-0.1, n_max=0.1),
+            noise=Unoise(n_min=-0.05, n_max=0.05),
             clip=(-1.0, 1.0),
         )
 
@@ -198,33 +198,21 @@ class EventsCfg:
         },
     )
 
-    # interval
-    # comment for pit and gap
-    push_robot = EventTerm(
-        func=mdp.push_by_setting_velocity,
-        mode="interval",
-        interval_range_s=(3.0, 4.5),
-        params={"velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5)}},
-    )
-
 
 @configclass
 class RewardsCfg:
 
-    # task rewards, eq. 1
+    # task rewards
     task_reward = RewTerm(func=mdp.task_reward, weight=0.4, params={"std": 0.4})
     heading_reward = RewTerm(func=mdp.heading_tracking, weight=0.2, params={"std": 0.5})
 
-    # penalties, eq. 2
+    # penalties
     joint_accel_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
     joint_torque_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-1.0e-5)
     undesired_contact = RewTerm(
         func=mdp.undesired_contacts,
         weight=-0.25,
-        params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*THIGH"),
-            "threshold": 1.0,
-        },
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*THIGH"), "threshold": 1.0},
     )
 
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
