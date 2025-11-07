@@ -31,7 +31,7 @@ class Go2RewardsCfg(position_env_cfg.RewardsCfg):
 
     gait = RewTerm(
         func=mdp.GaitReward,
-        weight=0.2,
+        weight=0.4,
         params={
             "std": 0.1,
             "max_err": 0.2,

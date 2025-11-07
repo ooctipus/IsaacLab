@@ -310,7 +310,7 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
     terminations: TerminationsCfg = TerminationsCfg()
     events: EventsCfg = EventsCfg()
     curriculum: CurriculumCfg = CurriculumCfg()
-    viewer: ViewerCfg = ViewerCfg(eye=(3.0, 6.0, 6.0), origin_type="asset_body", asset_name="robot", body_name="base")
+    viewer: ViewerCfg = ViewerCfg(eye=(4.0, 7.0, 7.0), origin_type="asset_body", asset_name="robot", body_name="base")
     variants = variants
 
     def __post_init__(self):

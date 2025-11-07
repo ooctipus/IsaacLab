@@ -151,14 +151,16 @@ def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
             target_quat = frame_transformer.data.target_quat_w[:, frame_index]
             # draw the frames
             transform_visualizer.visualize(
-                torch.cat([source_pos, target_pos], dim=0), torch.cat([source_quat, target_quat], dim=0)
+                torch.cat([source_pos, target_pos], dim=0),
+                torch.cat([source_quat, target_quat], dim=0),
+                scales=torch.cat((torch.ones(frames_pos.size(0), 3, device=frames_pos.device), lines_scale), dim=0),
             )
             # draw the line connecting the frames
-            draw_interface.clear_lines()
-            # plain color for lines
-            lines_colors = [[1.0, 1.0, 0.0, 1.0]] * source_pos.shape[0]
-            line_thicknesses = [5.0] * source_pos.shape[0]
-            draw_interface.draw_lines(source_pos.tolist(), target_pos.tolist(), lines_colors, line_thicknesses)
+            # draw_interface.clear_lines()
+            # # plain color for lines
+            # lines_colors = [[1.0, 1.0, 0.0, 1.0]] * source_pos.shape[0]
+            # line_thicknesses = [5.0] * source_pos.shape[0]
+            # draw_interface.draw_lines(source_pos.tolist(), target_pos.tolist(), lines_colors, line_thicknesses)
 
 
 def main():

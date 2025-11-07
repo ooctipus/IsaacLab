@@ -158,23 +158,6 @@ class TerrainBasedPose2dCommand(UniformPose2dCommand):
     def __init__(self, cfg: TerrainBasedPose2dCommandCfg, env: ManagerBasedEnv):
         # initialize the base class
         super().__init__(cfg, env)
-        import isaaclab.sim as sim_utils
-        from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
-
-        SPHERE_MARKER_CFG = VisualizationMarkersCfg(
-            markers={
-                "target": sim_utils.SphereCfg(
-                    radius=0.05,
-                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
-                ),
-                "spawn": sim_utils.SphereCfg(
-                    radius=0.05,
-                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
-                ),
-            }
-        )
-        self.sphere_visualizer = VisualizationMarkers(SPHERE_MARKER_CFG.replace(prim_path="/Visuals/Command/valid_goal_positions"))
-
         # obtain the terrain asset
         self.terrain: TerrainImporter = env.scene["terrain"]
 
@@ -233,6 +216,3 @@ class TerrainBasedPose2dCommand(UniformPose2dCommand):
                 self.heading_command_w,
             ),
         )
-        # visualize valid target and spawn patches with proper marker indices
-        spawn_target_pos = torch.cat((self.valid_targets.view(-1, 3), self.valid_spawn.view(-1, 3)), dim=0)
-        self.sphere_visualizer.visualize(translations=spawn_target_pos, marker_indices=self.marker_indices)
