@@ -34,7 +34,7 @@ parser.add_argument(
     help="Use the pre-trained checkpoint from Nucleus.",
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
-parser.add_argument("--info", action="store_true", default=False, help="run task and log info in wandb.")
+parser.add_argument("--log_info", action="store_true", default=False, help="run task and log info in wandb.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -101,7 +101,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env_cfg.seed = agent_cfg.seed
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
 
-    if args_cli.logger == "wandb" and args_cli.info:
+    if args_cli.logger == "wandb" and args_cli.log_info:
         info_upload_patcher = InfoWandbUploadPatcher(
             wandb_project=task_name, wandb_group="info", wandb_runid=datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         )
