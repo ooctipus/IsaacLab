@@ -26,7 +26,6 @@ class Go2ActionsCfg:
 
 @configclass
 class Go2RewardsCfg(position_env_cfg.RewardsCfg):
-
     move_forward = RewTerm(func=mdp.forward_velocity, weight=0.2, params={"std": 1})
 
     gait = RewTerm(
@@ -45,7 +44,6 @@ class Go2RewardsCfg(position_env_cfg.RewardsCfg):
 
 @configclass
 class G2Curriculum(position_env_cfg.CurriculumCfg):
-
     remove_gait_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "gait"})
 
     remove_forward_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "move_forward"})
@@ -62,10 +60,6 @@ class Go2EnvMixin:
         super().__post_init__()  # type: ignore
         self.scene.robot = UNITREE_GO2_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")  # type: ignore
         self.scene.robot.spawn.usd_path="https://uwlab-assets.s3.us-west-004.backblazeb2.com/Robots/Unitree/Go2/go2.usd"
-        self.rewards.undesired_contact.params["sensor_cfg"].body_names = [".*thigh"]
-        self.rewards.feet_lin_acc_l2.params["robot_cfg"].body_names = ".*_foot"
-        self.rewards.feet_rot_acc_l2.params["robot_cfg"].body_names = ".*_foot"
-
 
 @configclass
 class Go2LocomotionPositionCommandEnvCfg(Go2EnvMixin, position_env_cfg.LocomotionPositionCommandEnvCfg):

@@ -146,7 +146,7 @@ class EventsCfg:
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
             "static_friction_range": (0.8, 0.8),
-            "dynamic_friction_range": (0.6, 0.6),
+            "dynamic_friction_range": (0.8, 0.8),
             "restitution_range": (0.0, 0.0),
             "num_buckets": 64,
         },
@@ -159,17 +159,6 @@ class EventsCfg:
             "asset_cfg": SceneEntityCfg("robot", body_names="base"),
             "mass_distribution_params": (-5.0, 5.0),
             "operation": "add",
-        },
-    )
-
-    # reset
-    base_external_force_torque = EventTerm(
-        func=mdp.apply_external_force_torque,
-        mode="reset",
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="base"),
-            "force_range": (0.0, 0.0),
-            "torque_range": (-0.0, 0.0),
         },
     )
 
@@ -203,33 +192,18 @@ class EventsCfg:
 class RewardsCfg:
 
     # task rewards
-    # task_reward = RewTerm(func=mdp.task_reward, weight=0.4, params={"std": 0.4})
-    # heading_reward = RewTerm(func=mdp.heading_tracking, weight=0.2, params={"std": 0.5})
-    success_reward = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=500)
+    success_reward = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=250)
 
     # penalties
-    joint_accel_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
-    joint_torque_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-1.0e-5)
-    undesired_contact = RewTerm(
-        func=mdp.undesired_contacts,
-        weight=-0.25,
-        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*THIGH"), "threshold": 1.0},
-    )
-
+    joint_torque_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-0.0001)
+    action_l2 = RewTerm(func=mdp.action_l2, weight=-0.005)
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
-    feet_lin_acc_l2 = RewTerm(
-        func=mdp.feet_lin_acc_l2, weight=-4e-6, params={"robot_cfg": SceneEntityCfg("robot", body_names=".*FOOT")}
-    )
-    feet_rot_acc_l2 = RewTerm(
-        func=mdp.feet_rot_acc_l2, weight=-2e-7, params={"robot_cfg": SceneEntityCfg("robot", body_names=".*FOOT")}
-    )
 
     illegal_contact_penalty = RewTerm(
         func=mdp.illegal_contact_penalty,
         weight=-0.5,
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base"), "threshold": 1.0},
     )
-    cost_of_living = RewTerm(func=mdp.is_alive, weight=-1e-5)
 
 
 @configclass
@@ -238,7 +212,15 @@ class TerminationsCfg:
 
     robot_drop = DoneTerm(func=mdp.root_height_below_minimum, params={"minimum_height": -20})
 
-    success = DoneTerm(func=mdp.success, params={"std": (0.2, 0.4)})
+    base_contact = DoneTerm(
+        func=mdp.illegal_contact,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names="base"),
+            "threshold": 1.0,
+        },
+    )
+
+    success = DoneTerm(func=mdp.success, params={"std": (0.4, 0.5)})
 
 
 @configclass
