@@ -7,10 +7,13 @@
 # Pre-defined configs
 ##
 import isaaclab_assets.robots.anymal as anymal
+from isaaclab.managers import RewardTermCfg as RewTerm
+from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.envs.mdp.actions.actions_cfg import JointPositionActionCfg
 from isaaclab.utils import configclass
 
 from ... import position_env_cfg
+from ... import mdp
 
 
 @configclass
@@ -21,14 +24,25 @@ class AnymalCActionsCfg:
 
 
 @configclass
+class AnymalCRewardCfg(position_env_cfg.RewardsCfg):
+    explore = RewTerm(func=mdp.exploration_reward, weight=1.0)
+
+
+@configclass
+class AnymalCCurriculum(position_env_cfg.CurriculumCfg):
+    remove_gait_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
+
+
+@configclass
 class AnymalCEnvMixin:
     actions: AnymalCActionsCfg = AnymalCActionsCfg()
+    rewards: AnymalCRewardCfg = AnymalCRewardCfg()
 
     def __post_init__(self: position_env_cfg.LocomotionPositionCommandEnvCfg):
         # Ensure parent classes run their setup first
         super().__post_init__()  # type: ignore
         self.scene.robot = anymal.ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")  # type: ignore
-
+        self.rewards.joint_torque_l2.weight /= 25
 
 @configclass
 class AnymalCSpotLocomotionPositionCommandEnvCfg(AnymalCEnvMixin, position_env_cfg.LocomotionPositionCommandEnvCfg):

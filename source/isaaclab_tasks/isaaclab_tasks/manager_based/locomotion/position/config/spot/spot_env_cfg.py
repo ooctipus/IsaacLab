@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from isaaclab.managers import RewardTermCfg as RewTerm
+from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
@@ -21,28 +22,12 @@ class SpotActionsCfg:
 @configclass
 class SportRewardsCfg(position_env_cfg.RewardsCfg):
     move_forward = RewTerm(
-        func=mdp.forward_velocity,
-        weight=0.3,
-        params={
-            "std": 1,
-            "max_iter": 200,
-        },
-    )
-
-    air_time = RewTerm(
-        func=mdp.air_time_reward,
-        weight=1.0,
-        params={
-            "mode_time": 0.3,
-            "velocity_threshold": 0.5,
-            "asset_cfg": SceneEntityCfg("robot"),
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
-        },
+        func=mdp.forward_velocity, weight=0.2, params={"std": 1},
     )
 
     gait = RewTerm(
         func=mdp.GaitReward,
-        weight=2.0,
+        weight=0.4,
         params={
             "std": 0.1,
             "max_err": 0.2,
@@ -50,36 +35,15 @@ class SportRewardsCfg(position_env_cfg.RewardsCfg):
             "synced_feet_pair_names": (("fl_foot", "hr_foot"), ("fr_foot", "hl_foot")),
             "asset_cfg": SceneEntityCfg("robot"),
             "sensor_cfg": SceneEntityCfg("contact_forces"),
-            "max_iterations": 400.0,
         },
     )
 
-    # -- penalties
-    air_time_variance = RewTerm(
-        func=mdp.air_time_variance_penalty,
-        weight=-1.0,
-        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot")},
-    )
+@configclass
+class G2Curriculum(position_env_cfg.CurriculumCfg):
+    remove_gait_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "gait"})
 
-    foot_slip = RewTerm(
-        func=mdp.foot_slip_penalty,
-        weight=-0.2,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
-            "threshold": 1.0,
-        },
-    )
+    remove_forward_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "move_forward"})
 
-    joint_pos = RewTerm(
-        func=mdp.joint_position_penalty,
-        weight=-0.4,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
-            "stand_still_scale": 5.0,
-            "velocity_threshold": 0.5,
-        },
-    )
 
 
 @configclass
@@ -93,18 +57,10 @@ class SpotEnvMixin:
         # overwrite as spot's body names for sensors
         self.scene.robot = SPOT_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
         self.scene.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/body"
-        self.scene.height_scanner.pattern_cfg.resolution = 0.15
-        self.scene.height_scanner.pattern_cfg.size = (3.5, 1.5)
 
         # overwrite as spot's body names for events
         self.events.add_base_mass.params["asset_cfg"].body_names = "body"
-        self.events.base_external_force_torque.params["asset_cfg"].body_names = "body"
-
-        self.rewards.undesired_contact.params["sensor_cfg"].body_names = ["body", ".*leg"]
-        self.rewards.feet_lin_acc_l2.params["robot_cfg"].body_names = ".*_foot"
-        self.rewards.feet_rot_acc_l2.params["robot_cfg"].body_names = ".*_foot"
         self.rewards.illegal_contact_penalty.params["sensor_cfg"].body_names = "body"
-
         self.terminations.base_contact.params["sensor_cfg"].body_names = "body"
         self.viewer.body_name = "body"
 
