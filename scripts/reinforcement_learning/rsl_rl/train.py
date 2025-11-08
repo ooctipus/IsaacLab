@@ -32,6 +32,7 @@ parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
 parser.add_argument("--export_io_descriptors", action="store_true", default=False, help="Export IO descriptors.")
+parser.add_argument("--experiment_id", type=str, default="", help="experiment_id to log.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -155,6 +156,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     print(f"Exact experiment name requested from command line: {log_dir}")
     if agent_cfg.run_name:
         log_dir += f"_{agent_cfg.run_name}"
+    if args_cli.experiment_id:
+        log_dir = f"{args_cli.experiment_id}_{log_dir}"
     log_dir = os.path.join(log_root_path, log_dir)
 
     # set the IO descriptors export flag if requested

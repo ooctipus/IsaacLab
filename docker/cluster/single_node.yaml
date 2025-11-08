@@ -30,6 +30,7 @@ workflow:
           /workspace/isaaclab/{{script}} \
           --distributed \
           --headless \
+          --experiment_id={{workflow_id}} \
           {{args}} \
 
         # Move checkpoints to the output folder used to upload
