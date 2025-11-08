@@ -12,8 +12,8 @@ EOF
 }
 
 # Prefer these spec paths; we’ll select one based on num_node
-SPEC_SINGLE="/home/zhengyuz/workflow_specs/single_node.yaml"
-SPEC_MULTI="/home/zhengyuz/workflow_specs/multi_node.yaml"
+SPEC_SINGLE="docker/cluster/single_node.yaml"
+SPEC_MULTI="docker/cluster/multi_node.yaml"
 
 truthy() { case "${1,,}" in 1|true|yes|on) return 0;; *) return 1;; esac; }
 falsy() { case "${1,,}" in 0|false|no|off) return 0;; *) return 1;; esac; }
