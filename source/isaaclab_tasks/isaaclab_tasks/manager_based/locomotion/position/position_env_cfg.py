@@ -195,7 +195,7 @@ class RewardsCfg:
     success_reward = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=250)
 
     # penalties
-    action_l2 = RewTerm(func=mdp.action_l2, weight=-0.005)
+    action_l2 = RewTerm(func=mdp.action_l2, weight=-0.05)
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.05)
 
     failure_terminal = RewTerm(
