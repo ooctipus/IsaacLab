@@ -579,7 +579,7 @@ def skip_reward_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], reward_term
         return
     success_monitor = getattr(env.curriculum_manager.cfg, "terrain_levels").func.success_monitor
     success_rate = success_monitor.get_success_rate().mean()
-    if (success_rate > 0.1 and env.common_step_counter > 100) or env.common_step_counter > 15000:
+    if (success_rate > 0.2 and env.common_step_counter > 100) or env.common_step_counter > 20000:
         # Set weight to zero so manager skips computing it
         term_cfg.weight = 0.0
         # Additionally, replace the callable with a zero-return stub

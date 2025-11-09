@@ -34,7 +34,7 @@ class Go2RewardsCfg(position_env_cfg.RewardsCfg):
         params={
             "std": 0.1,
             "max_err": 0.2,
-            "velocity_threshold": 0.5,
+            "velocity_threshold": 0.2,
             "synced_feet_pair_names": (("FL_foot", "RR_foot"), ("FR_foot", "RL_foot")),
             "asset_cfg": SceneEntityCfg("robot"),
             "sensor_cfg": SceneEntityCfg("contact_forces"),

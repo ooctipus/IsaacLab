@@ -195,14 +195,12 @@ class RewardsCfg:
     success_reward = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=250)
 
     # penalties
-    joint_torque_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-0.0001)
     action_l2 = RewTerm(func=mdp.action_l2, weight=-0.005)
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.05)
 
     failure_terminal = RewTerm(
         func=mdp.is_terminated_term, params={"term_keys": ["robot_drop", "base_contact"]}, weight=-25.0
     )
-
 
 
 @configclass
