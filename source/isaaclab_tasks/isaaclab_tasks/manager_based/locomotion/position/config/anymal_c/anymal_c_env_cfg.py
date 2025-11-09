@@ -43,7 +43,7 @@ class AnymalCEnvMixin:
         # Ensure parent classes run their setup first
         super().__post_init__()  # type: ignore
         self.scene.robot = anymal.ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")  # type: ignore
-        self.rewards.joint_torque_l2.weight /= 25
+
 
 @configclass
 class AnymalCSpotLocomotionPositionCommandEnvCfg(AnymalCEnvMixin, position_env_cfg.LocomotionPositionCommandEnvCfg):

@@ -64,7 +64,6 @@ class SpotEnvMixin:
         self.events.add_base_mass.params["asset_cfg"].body_names = "body"
         self.terminations.base_contact.params["sensor_cfg"].body_names = "body"
         self.viewer.body_name = "body"
-        self.rewards.joint_torque_l2.weight /= 10
 
         self.sim.dt = 0.002
         self.decimation = 10
