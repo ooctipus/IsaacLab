@@ -38,8 +38,9 @@ class SportRewardsCfg(position_env_cfg.RewardsCfg):
         },
     )
 
+
 @configclass
-class G2Curriculum(position_env_cfg.CurriculumCfg):
+class G2CurriculumCfg(position_env_cfg.CurriculumCfg):
     remove_gait_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "gait"})
 
     remove_forward_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "move_forward"})
@@ -50,6 +51,7 @@ class G2Curriculum(position_env_cfg.CurriculumCfg):
 class SpotEnvMixin:
     actions: SpotActionsCfg = SpotActionsCfg()
     rewards: SportRewardsCfg = SportRewardsCfg()
+    curriculum: G2CurriculumCfg = G2CurriculumCfg()
 
     def __post_init__(self: position_env_cfg.LocomotionPositionCommandEnvCfg):
         # Ensure parent classes run their setup first
@@ -60,9 +62,9 @@ class SpotEnvMixin:
 
         # overwrite as spot's body names for events
         self.events.add_base_mass.params["asset_cfg"].body_names = "body"
-        self.rewards.illegal_contact_penalty.params["sensor_cfg"].body_names = "body"
         self.terminations.base_contact.params["sensor_cfg"].body_names = "body"
         self.viewer.body_name = "body"
+        self.rewards.joint_torque_l2.weight /= 10
 
         self.sim.dt = 0.002
         self.decimation = 10

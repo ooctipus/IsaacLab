@@ -197,13 +197,12 @@ class RewardsCfg:
     # penalties
     joint_torque_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-0.0001)
     action_l2 = RewTerm(func=mdp.action_l2, weight=-0.005)
-    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
+    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.05)
 
-    illegal_contact_penalty = RewTerm(
-        func=mdp.illegal_contact_penalty,
-        weight=-0.5,
-        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base"), "threshold": 1.0},
+    failure_terminal = RewTerm(
+        func=mdp.is_terminated_term, params={"term_keys": ["robot_drop", "base_contact"]}, weight=-25.0
     )
+
 
 
 @configclass

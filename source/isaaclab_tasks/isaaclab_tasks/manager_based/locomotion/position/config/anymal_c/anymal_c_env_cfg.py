@@ -29,7 +29,7 @@ class AnymalCRewardCfg(position_env_cfg.RewardsCfg):
 
 
 @configclass
-class AnymalCCurriculum(position_env_cfg.CurriculumCfg):
+class AnymalCCurriculumCfg(position_env_cfg.CurriculumCfg):
     remove_gait_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
 
 
@@ -37,6 +37,7 @@ class AnymalCCurriculum(position_env_cfg.CurriculumCfg):
 class AnymalCEnvMixin:
     actions: AnymalCActionsCfg = AnymalCActionsCfg()
     rewards: AnymalCRewardCfg = AnymalCRewardCfg()
+    curriculum: AnymalCCurriculumCfg = AnymalCCurriculumCfg()
 
     def __post_init__(self: position_env_cfg.LocomotionPositionCommandEnvCfg):
         # Ensure parent classes run their setup first

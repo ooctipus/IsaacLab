@@ -26,11 +26,11 @@ class Go2ActionsCfg:
 
 @configclass
 class Go2RewardsCfg(position_env_cfg.RewardsCfg):
-    move_forward = RewTerm(func=mdp.forward_velocity, weight=0.2, params={"std": 1})
+    move_forward = RewTerm(func=mdp.forward_velocity, weight=0.4, params={"std": 1})
 
     gait = RewTerm(
         func=mdp.GaitReward,
-        weight=0.4,
+        weight=0.8,
         params={
             "std": 0.1,
             "max_err": 0.2,
