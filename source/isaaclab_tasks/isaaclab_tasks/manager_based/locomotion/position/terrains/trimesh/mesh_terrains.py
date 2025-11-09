@@ -635,7 +635,8 @@ def beam_terrain(
     """
     # resolve the terrain configuration
     bar_height = cfg.bar_height_range[0] + difficulty * (cfg.bar_height_range[1] - cfg.bar_height_range[0])
-    bar_width = cfg.bar_width_range[1] - difficulty * (cfg.bar_width_range[1] - cfg.bar_width_range[0])
+    bar_width = cfg.bar_width_range[0] - difficulty * (cfg.bar_width_range[0] - cfg.bar_width_range[1])
+    num_bars = int(cfg.num_bars[0] - difficulty * (cfg.num_bars[0] - cfg.num_bars[1]))
 
     # initialize list of meshes
     meshes_list = list()
@@ -646,11 +647,57 @@ def beam_terrain(
     platform = trimesh.creation.cylinder(cfg.platform_width * 0.5, bar_height, sections=6, transform=platform_transform)
 
     meshes_list.append(platform)
+
+    # compute yaw angles based on distribution type
+    if cfg.beam_distribution == "uniform":
+        # Precompute uniform yaw angles
+        yaw_angles = [i * (2 * np.pi) / num_bars for i in range(num_bars)]
+
+    elif cfg.beam_distribution == "random":
+        # generate random non-overlapping yaw angles for beams
+        platform_radius = cfg.platform_width * 0.5
+        min_angular_separation = bar_width / platform_radius  # in radians
+        min_angular_separation *= 1.2
+        yaw_angles = []
+        max_attempts = 1000
+
+        for i in range(num_bars):
+            attempts = 0
+
+            # sample and validate non-overlapping yaw angle 
+            while attempts < max_attempts:
+                candidate_yaw = random.uniform(0, 2 * np.pi)
+
+                is_valid = True
+                for existing_yaw in yaw_angles:
+                    angular_diff = abs(candidate_yaw - existing_yaw)
+                    angular_diff = min(angular_diff, 2 * np.pi - angular_diff)
+
+                    if angular_diff < min_angular_separation:
+                        is_valid = False
+                        break
+
+                if is_valid:
+                    yaw_angles.append(candidate_yaw)
+                    break
+
+                attempts += 1
+
+            # use uniform sampling if exceed max attempts
+            if attempts >= max_attempts:
+                yaw_angles.append(i * (2 * np.pi) / num_bars)
+        yaw_angles.sort()
+    else:
+        raise ValueError(
+            f"Invalid beam_distribution '{cfg.beam_distribution}'. "
+            f"Expected 'uniform' or 'random'."
+        )
+
     # Generate bars to connect the platform to the terrain
     transform = np.eye(4)
     platform_center_np = np.asarray(platform_center)
-    yaw = 0.0
-    for _ in range(cfg.num_bars):
+
+    for yaw in yaw_angles:
         # compute the length of the bar based on the yaw
         bar_length = cfg.size[0] // 2
 
@@ -659,6 +706,7 @@ def beam_terrain(
             bar_length /= np.math.cos(quad_yaw)
         else:
             bar_length /= np.math.sin(quad_yaw)
+        
         transform[0:3, 0:3] = tf.Rotation.from_euler("z", yaw).as_matrix()
         bar_center_offset_w = transform[0:3, 0:3] @ np.array([bar_length / 2, 0, 0])
         transform[:3, -1] = platform_center_np + bar_center_offset_w
@@ -667,8 +715,6 @@ def beam_terrain(
         dim = [bar_length - bar_width, bar_width, bar_height]
         bar = trimesh.creation.box(dim, transform.copy())
         meshes_list.append(bar)
-        # increment the yaw
-        yaw += (2 * np.pi) / cfg.num_bars
 
     # Generate the exterior border
     meshes_list += make_border(cfg.size, cfg.border_size, bar_height, platform_center)

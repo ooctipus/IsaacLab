@@ -186,3 +186,9 @@ class MeshRadiatingBeamTerrainCfg(terrains.MeshStarTerrainCfg):
 
     # The inner length (x) and width (y) defining the inner square area enclosed by the border (in m).
     border_size: tuple[float, float] = MISSING
+
+    # The range of number of beams.
+    num_bars: tuple[int, int] = MISSING
+
+    # The distribution pattern of sampling beams.
+    beam_distribution: Literal["uniform", "random"] = MISSING

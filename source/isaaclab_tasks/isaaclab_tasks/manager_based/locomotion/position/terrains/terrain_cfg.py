@@ -6,7 +6,7 @@
 import isaaclab.terrains.terrain_generator as terrain_generator
 from isaaclab import terrains as terrain_cfg
 
-from . import trimesh as octilab_terrain
+from . import trimesh as isaaclab_terrain
 from .utils import FlatPatchSamplingByRadiusCfg, PatchSamplingCfg
 
 
@@ -56,22 +56,6 @@ PIT = terrain_cfg.MeshPitTerrainCfg(
             patch_radius=0.5,
             max_height_diff=0.2,
             radius_range=(0.5, 7.0),
-        )
-    },
-)
-
-RADIATING_BEAM = octilab_terrain.MeshRadiatingBeamTerrainCfg(
-    platform_width=3.0,
-    num_bars=12,
-    border_size=(6.5, 6.5),
-    bar_width_range=(0.7, 0.3),
-    bar_height_range=(1.5, 1.5),
-    flat_patch_sampling={
-        "spawn": FlatPatchSamplingByRadiusCfg(
-            num_patches=20, patch_radius=0.4, radius_range=(0.2, 10.0), max_height_diff=0.2, z_range=(-1, 1)
-        ),
-        "target": FlatPatchSamplingByRadiusCfg(
-            num_patches=20, patch_radius=0.05, radius_range=(0.2, 10.0), max_height_diff=0.2, z_range=(-1, 1)
         )
     },
 )
@@ -166,7 +150,7 @@ EXTREME_STAIR = terrain_cfg.HfPyramidStairsTerrainCfg(
 )
 
 
-STEPPING_STONE = octilab_terrain.MeshStonesEverywhereTerrainCfg(
+STEPPING_STONE = isaaclab_terrain.MeshStonesEverywhereTerrainCfg(
     w_gap=(0.04, 0.26),
     w_stone=(0.96, 0.2),
     s_max=(0.018, 0.118),
@@ -189,7 +173,7 @@ STEPPING_STONE = octilab_terrain.MeshStonesEverywhereTerrainCfg(
     },
 )
 
-BALANCING_BEAM = octilab_terrain.MeshBalanceBeamsTerrainCfg(
+BALANCING_BEAM = isaaclab_terrain.MeshBalanceBeamsTerrainCfg(
     platform_width=2.0,
     h_offset=(0.01, 0.1),
     w_stone=(0.25, 0.25),
@@ -206,7 +190,7 @@ BALANCING_BEAM = octilab_terrain.MeshBalanceBeamsTerrainCfg(
     },
 )
 
-NARROW_BEAM = octilab_terrain.MeshSteppingBeamsTerrainCfg(
+NARROW_BEAM = isaaclab_terrain.MeshSteppingBeamsTerrainCfg(
     platform_width=2.0,
     h_offset=(0.01, 0.1),
     w_stone=(0.5, 0.2),
@@ -221,6 +205,23 @@ NARROW_BEAM = octilab_terrain.MeshSteppingBeamsTerrainCfg(
             y_range=(-1, 1),
             z_range=(-0.05, 0.05),
             max_height_diff=0.05,
+        )
+    },
+)
+
+RADIATING_BEAM = isaaclab_terrain.MeshRadiatingBeamTerrainCfg(
+    platform_width=3.0,
+    num_bars=(15, 1),
+    beam_distribution="random",
+    border_size=(6.5, 6.5),
+    bar_width_range=(0.7, 0.7),
+    bar_height_range=(1.5, 1.5),
+    flat_patch_sampling={
+        "spawn": FlatPatchSamplingByRadiusCfg(
+            num_patches=20, patch_radius=0.4, radius_range=(0.2, 10.0), max_height_diff=0.2, z_range=(-1, 1)
+        ),
+        "target": FlatPatchSamplingByRadiusCfg(
+            num_patches=20, patch_radius=0.05, radius_range=(0.2, 10.0), max_height_diff=0.2, z_range=(-1, 1)
         )
     },
 )

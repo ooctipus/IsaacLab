@@ -385,8 +385,8 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self._num_levels = int(terrain.terrain_origins.shape[0])
         self._num_types = int(terrain.terrain_origins.shape[1])
 
-        self.num_patches_spawn = int(self.goal_term.valid_spawn.shape[2])
-        self.num_patches_target = int(self.goal_term.valid_targets.shape[2])
+        self.num_patches_spawn = int(env.scene.terrain.flat_patches["spawn"].shape[2])
+        self.num_patches_target = int(env.scene.terrain.flat_patches["target"].shape[2])
 
         # success monitor tracks each (level, type, spawn_id, target_id)
         success_monitor_cfg = SuccessMonitorCfg(
@@ -415,8 +415,8 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         # Precompute flattened views for fast gathers
         L, T = self._num_levels, self._num_types
         Ps, Pt = self.num_patches_spawn, self.num_patches_target
-        self._valid_spawn_flat = self.goal_term.valid_spawn.reshape(L * T * Ps, -1)
-        self._valid_targets_flat = self.goal_term.valid_targets.reshape(L * T * Pt, -1)
+        self._valid_spawn_flat = env.scene.terrain.flat_patches["spawn"].reshape(L * T * Ps, -1)
+        self._valid_targets_flat = env.scene.terrain.flat_patches["target"].reshape(L * T * Pt, -1)
 
         # Preallocate reusable buffers to avoid per-step allocations
         n_types = len(self._type_names)
@@ -552,8 +552,10 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
 
         L, T, Ps, Pt = self._num_levels, self._num_types, self.num_patches_spawn, self.num_patches_target
         G = L * T
-        Sg = self.goal_term.valid_spawn.reshape(G, Ps, 3).clone(); Eg = self.goal_term.valid_targets.reshape(G, Pt, 3).clone()
-        Sg[..., 2] += 0.2; Eg[..., 2] += 0.2
+        Sg = self._env.scene.terrain.flat_patches["spawn"].reshape(G, Ps, 3).clone()
+        Eg = self._env.scene.terrain.flat_patches["target"].reshape(G, Pt, 3).clone()
+        Sg[..., 2] += 0.2
+        Eg[..., 2] += 0.2
         start = Sg[:, :, None, :].expand(G, Ps, Pt, 3).reshape(-1, 3); end = Eg[:, None, :, :].expand(G, Ps, Pt, 3).reshape(-1, 3)
         Lp, Lq, Ll = self._get_connecting_lines(start, end)
         self._n_spawn, self._n_target, self._n_lines = G * Ps, G * Pt, Lp.size(0)
