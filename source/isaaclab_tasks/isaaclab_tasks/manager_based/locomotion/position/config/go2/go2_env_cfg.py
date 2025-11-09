@@ -48,6 +48,8 @@ class G2Curriculum(position_env_cfg.CurriculumCfg):
 
     remove_forward_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "move_forward"})
 
+    dormant_success_reward = CurrTerm(func=mdp.activate_reward_term, params={"reward_term": "success_reward"})
+
 
 @configclass
 class Go2EnvMixin:

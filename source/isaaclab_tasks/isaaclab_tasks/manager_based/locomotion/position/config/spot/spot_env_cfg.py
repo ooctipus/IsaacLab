@@ -22,12 +22,12 @@ class SpotActionsCfg:
 @configclass
 class SportRewardsCfg(position_env_cfg.RewardsCfg):
     move_forward = RewTerm(
-        func=mdp.forward_velocity, weight=0.2, params={"std": 1},
+        func=mdp.forward_velocity, weight=0.4, params={"std": 1},
     )
 
     gait = RewTerm(
         func=mdp.GaitReward,
-        weight=0.4,
+        weight=0.8,
         params={
             "std": 0.1,
             "max_err": 0.2,
@@ -44,7 +44,6 @@ class G2CurriculumCfg(position_env_cfg.CurriculumCfg):
     remove_gait_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "gait"})
 
     remove_forward_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "move_forward"})
-
 
 
 @configclass

@@ -589,3 +589,11 @@ def skip_reward_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], reward_term
             term_cfg.func.__call__ = lambda *args, **kwargs: torch.zeros(env.num_envs, device=env.device)
         else:
             term_cfg.func = lambda env, **kwargs: torch.zeros(env.num_envs, device=env.device)
+
+
+def activate_reward_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], reward_term: str):
+    term_cfg = env.reward_manager.get_term_cfg(reward_term)
+    if env.common_step_counter < 5000 and term_cfg.weight != 0.0:
+        term_cfg.weight = 0.0
+    if env.common_step_counter > 5000 and term_cfg.weight == 0.0:
+        term_cfg.weight = 250.0
