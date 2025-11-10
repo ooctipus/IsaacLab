@@ -54,7 +54,7 @@ def get_model_checkpoint(
         model = models[-1]
     else:
         for remote_model in models:
-            if int(remote_model.name.split("_")[-1].split(".")[0]) == checkpoint:
+            if remote_model.name.split("_")[-1].split(".")[0] == checkpoint:
                 model = remote_model
                 break
     if model is None:
