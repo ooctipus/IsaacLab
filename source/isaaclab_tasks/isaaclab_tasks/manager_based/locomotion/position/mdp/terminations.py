@@ -34,4 +34,6 @@ def success(
     dist = cmd[:, :3].norm(2, -1)
     head = cmd[:, 3].abs()
     speed = asset.data.body_lin_vel_w.norm(2, dim=-1).amax(dim=1)
-    return ((dist < std[0]) & (head < std[1]) & (speed < 0.5))
+    joint_pos = asset.data.joint_pos - asset.data.default_joint_pos
+    joint_pos_diff = torch.sum(torch.abs(joint_pos), dim=1)
+    return ((dist < std[0]) & (head < std[1]) & (speed < 0.5)) & (joint_pos_diff < 1.0)
