@@ -22,12 +22,12 @@ class SpotActionsCfg:
 @configclass
 class SportRewardsCfg(position_env_cfg.RewardsCfg):
     move_forward = RewTerm(
-        func=mdp.forward_velocity, weight=0.1, params={"std": 1},
+        func=mdp.forward_velocity, weight=0.4, params={"std": 1},
     )
 
     gait = RewTerm(
         func=mdp.GaitReward,
-        weight=0.2,
+        weight=0.8,
         params={
             "std": 0.1,
             "max_err": 0.2,
@@ -35,17 +35,6 @@ class SportRewardsCfg(position_env_cfg.RewardsCfg):
             "synced_feet_pair_names": (("fl_foot", "hr_foot"), ("fr_foot", "hl_foot")),
             "asset_cfg": SceneEntityCfg("robot"),
             "sensor_cfg": SceneEntityCfg("contact_forces"),
-        },
-    )
-
-    air_time = RewTerm(
-        func=mdp.air_time_reward,
-        weight=0.2,
-        params={
-            "mode_time": 0.3,
-            "velocity_threshold": 0.2,
-            "asset_cfg": SceneEntityCfg("robot"),
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
         },
     )
 
@@ -61,7 +50,7 @@ class G2CurriculumCfg(position_env_cfg.CurriculumCfg):
 class SpotEnvMixin:
     actions: SpotActionsCfg = SpotActionsCfg()
     rewards: SportRewardsCfg = SportRewardsCfg()
-    # curriculum: G2CurriculumCfg = G2CurriculumCfg()
+    curriculum: G2CurriculumCfg = G2CurriculumCfg()
 
     def __post_init__(self: position_env_cfg.LocomotionPositionCommandEnvCfg):
         # Ensure parent classes run their setup first

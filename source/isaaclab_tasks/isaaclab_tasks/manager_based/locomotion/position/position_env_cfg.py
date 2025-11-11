@@ -269,6 +269,19 @@ variants = {
             "stepping_stone": terrains.STEPPING_STONE,
             "radiating_beam": terrains.RADIATING_BEAM,
         }),
+        "eval": make_terrain({
+            "gap": terrains.GAP.replace(gap_width_range=(1.0, 1.5)),
+            "pit": terrains.PIT.replace(pit_depth_range=(0.8, 1.2)),
+            "extreme_stair": terrains.EXTREME_STAIR.replace(step_height_range=(0.12, 0.2)),
+            "slope_inv": terrains.SLOPE_INV.replace(slope_range=(0.6, 0.9)),
+            "stepping_stone": terrains.STEPPING_STONE.replace(
+                w_gap=(0.15, 0.26),
+                w_stone=(0.4, 0.2),
+                s_max=(0.080, 0.118),
+                h_max=(0.075, 0.1)
+            ),
+            "radiating_beam": terrains.RADIATING_BEAM.replace(num_bars=(5, 1)),
+        }),
         "gap": make_terrain({"gap": terrains.GAP}),
         "pit": make_terrain({"pit": terrains.PIT}),
         "extreme_stair": make_terrain({"extreme_stair": terrains.EXTREME_STAIR}),

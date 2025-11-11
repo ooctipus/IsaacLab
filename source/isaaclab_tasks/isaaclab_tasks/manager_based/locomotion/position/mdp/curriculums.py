@@ -376,7 +376,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
     def __init__(self, cfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
         terrain: TerrainImporter = env.scene.terrain
-
+        debug_vis = cfg.params.get("debug_vis", True)
         # disable resampling in the command term; curriculum will set commands directly
         self.goal_term = env.command_manager.get_term("goal_point")
         self.goal_term._resample_command = lambda env_ids: None  # type: ignore[attr-defined]
@@ -427,7 +427,8 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self._rand_heading = torch.empty(env.num_envs, device=env.device)
 
         # Spawn all possible spawn→target paths upfront (L*T*Ps*Pt lines + unique spawns + unique targets)
-        self._init_path_visuals()
+        if debug_vis:
+            self._init_path_visuals()
 
     def _init_type_mapping(self, terrain: TerrainImporter) -> None:
         gen_cfg = terrain.cfg.terrain_generator
@@ -446,7 +447,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         # Cache counts per terrain type for grouped reductions
         self._type_counts = torch.bincount(self._col_to_type_idx, minlength=len(self._type_names))
 
-    def __call__(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor):
+    def __call__(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor, debug_vis=False):
         terrain: TerrainImporter = env.scene.terrain
         goal_term = self.goal_term
 
@@ -492,7 +493,8 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         success = self.success_monitor.get_success_rate()  # [L*T*Ps*Pt]
         self._result["all_success"].copy_(success.mean())
         # Recolor lines per current success rate (no extra smoothing)
-        self._recolor_lines(success)
+        if debug_vis:
+            self._recolor_lines(success)
         # Per-type success via grouped reduction (avoid Python looped masking in reduction)
         per_col_success = success.view(L, T, Ps, Pt).mean(dim=(0, 2, 3))  # [T]
         self._buf_type_sums.zero_()

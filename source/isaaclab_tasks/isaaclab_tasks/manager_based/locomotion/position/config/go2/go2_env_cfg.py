@@ -26,11 +26,11 @@ class Go2ActionsCfg:
 
 @configclass
 class Go2RewardsCfg(position_env_cfg.RewardsCfg):
-    move_forward = RewTerm(func=mdp.forward_velocity, weight=0.1, params={"std": 1})
+    move_forward = RewTerm(func=mdp.forward_velocity, weight=0.4, params={"std": 1})
 
     gait = RewTerm(
         func=mdp.GaitReward,
-        weight=0.2,
+        weight=0.8,
         params={
             "std": 0.1,
             "max_err": 0.2,
@@ -41,17 +41,6 @@ class Go2RewardsCfg(position_env_cfg.RewardsCfg):
         },
     )
 
-    air_time = RewTerm(
-        func=mdp.air_time_reward,
-        weight=0.2,
-        params={
-            "mode_time": 0.3,
-            "velocity_threshold": 0.2,
-            "asset_cfg": SceneEntityCfg("robot"),
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
-        },
-    )
-
 
 @configclass
 class G2Curriculum(position_env_cfg.CurriculumCfg):
@@ -59,14 +48,12 @@ class G2Curriculum(position_env_cfg.CurriculumCfg):
 
     remove_forward_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "move_forward"})
 
-    # dormant_success_reward = CurrTerm(func=mdp.activate_reward_term, params={"reward_term": "success_reward"})
-
 
 @configclass
 class Go2EnvMixin:
     actions: Go2ActionsCfg = Go2ActionsCfg()
     rewards: Go2RewardsCfg = Go2RewardsCfg()
-    # curriculum: G2Curriculum = G2Curriculum()
+    curriculum: G2Curriculum = G2Curriculum()
 
     def __post_init__(self: position_env_cfg.LocomotionPositionCommandEnvCfg):
         # Ensure parent classes run their setup first

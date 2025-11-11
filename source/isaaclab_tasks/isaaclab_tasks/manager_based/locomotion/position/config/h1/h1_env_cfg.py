@@ -25,15 +25,13 @@ class H1RewardsCfg(position_env_cfg.RewardsCfg):
 
 @configclass
 class H1CurriculumCfg(position_env_cfg.CurriculumCfg):
-    remove_gait_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "gait"})
-
     remove_forward_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "move_forward"})
 
 
 @configclass
 class H1EnvMixin:
     rewards: H1RewardsCfg = H1RewardsCfg()
-    # curriculum: H1CurriculumCfg = H1CurriculumCfg()
+    curriculum: H1CurriculumCfg = H1CurriculumCfg()
 
     def __post_init__(self: position_env_cfg.LocomotionPositionCommandEnvCfg):
         # Ensure parent classes run their setup first
