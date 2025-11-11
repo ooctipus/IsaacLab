@@ -28,23 +28,23 @@ class Go2ActionsCfg:
 class Go2RewardsCfg(position_env_cfg.RewardsCfg):
     move_forward = RewTerm(func=mdp.forward_velocity, weight=0.4, params={"std": 1})
 
-    gait = RewTerm(
-        func=mdp.GaitReward,
-        weight=0.8,
-        params={
-            "std": 0.1,
-            "max_err": 0.2,
-            "velocity_threshold": 0.2,
-            "synced_feet_pair_names": (("FL_foot", "RR_foot"), ("FR_foot", "RL_foot")),
-            "asset_cfg": SceneEntityCfg("robot"),
-            "sensor_cfg": SceneEntityCfg("contact_forces"),
-        },
-    )
+    # gait = RewTerm(
+    #     func=mdp.GaitReward,
+    #     weight=0.8,
+    #     params={
+    #         "std": 0.1,
+    #         "max_err": 0.2,
+    #         "velocity_threshold": 0.2,
+    #         "synced_feet_pair_names": (("FL_foot", "RR_foot"), ("FR_foot", "RL_foot")),
+    #         "asset_cfg": SceneEntityCfg("robot"),
+    #         "sensor_cfg": SceneEntityCfg("contact_forces"),
+    #     },
+    # )
 
 
 @configclass
 class G2Curriculum(position_env_cfg.CurriculumCfg):
-    remove_gait_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "gait"})
+    # remove_gait_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "gait"})
 
     remove_forward_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "move_forward"})
 
