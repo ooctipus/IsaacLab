@@ -207,12 +207,15 @@ class TerminationsCfg:
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*foot).*$"), "threshold": 1.0},
     )
 
-    success = DoneTerm(func=mdp.success, params={"std": (0.4, 0.5)})
+    # pos, heading, vel, joint_pos thresholds
+    success = DoneTerm(func=mdp.success, params={"thresh": [0.4, 0.5, 1.0, 2.0]})
 
 
 @configclass
 class CurriculumCfg:
     terrain_levels = CurrTerm(func=mdp.terrain_levels_vel)  # type: ignore
+
+    stricten_success = CurrTerm(func=mdp.stricten_success_term, params={"term": "success"})
 
 
 def make_terrain(terrain_dict):

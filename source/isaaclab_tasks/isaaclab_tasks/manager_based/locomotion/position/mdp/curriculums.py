@@ -595,6 +595,15 @@ def skip_reward_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], reward_term
             term_cfg.func = lambda env, **kwargs: torch.zeros(env.num_envs, device=env.device)
 
 
+def stricten_success_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], term: str):
+    term_cfg = env.termination_manager.get_term_cfg(term)
+    success_monitor = getattr(env.curriculum_manager.cfg, "terrain_levels").func.success_monitor
+    success_rate = success_monitor.get_success_rate().mean()
+    if (success_rate > 0.1 and env.common_step_counter > 100):
+        term_cfg.params["thresh"][2] = 0.5
+        term_cfg.params["thresh"][3] = 1.0
+
+
 def activate_reward_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], reward_term: str):
     term_cfg = env.reward_manager.get_term_cfg(reward_term)
     if env.common_step_counter < 5000 and term_cfg.weight != 0.0:
