@@ -43,6 +43,7 @@ class AnymalCEnvMixin:
         # Ensure parent classes run their setup first
         super().__post_init__()  # type: ignore
         self.scene.robot = anymal.ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")  # type: ignore
+        self.terminations.base_contact.params["sensor_cfg"].body_names = "^(?!.*(?:FOOT|THIGH)).*$"
 
 
 @configclass

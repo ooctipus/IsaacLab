@@ -192,7 +192,7 @@ class EventsCfg:
 class RewardsCfg:
     # task rewards
     success = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=250)
-    mech_work = RewTerm(func=mdp.mechanical_work, weight=-0.05)
+    mech_work = RewTerm(func=mdp.mechanical_work, weight=-0.025)
     fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-25.0)
 
 
@@ -204,10 +204,7 @@ class TerminationsCfg:
 
     base_contact = DoneTerm(
         func=mdp.illegal_contact,
-        params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names="base"),
-            "threshold": 1.0,
-        },
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*foot).*$"), "threshold": 1.0},
     )
 
     success = DoneTerm(func=mdp.success, params={"std": (0.4, 0.5)})

@@ -43,7 +43,7 @@ class H1EnvMixin:
 
         # overwrite as H1's body names for events
         self.events.add_base_mass.params["asset_cfg"].body_names = "torso_link"
-        self.terminations.base_contact.params["sensor_cfg"].body_names = "torso_link"
+        self.terminations.base_contact.params["sensor_cfg"].body_names = "^(?!.*ankle_link).*$"
         self.viewer.body_name = "torso_link"
 
 
