@@ -190,26 +190,17 @@ class EventsCfg:
 
 @configclass
 class RewardsCfg:
-
     # task rewards
-    success_reward = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=250)
-
-    # penalties
-    # action_l2 = RewTerm(func=mdp.action_l2, weight=-0.01)
-    # action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.1)
-
-    energy = RewTerm(func=mdp.work, weight=-0.5)
-
-    failure_terminal = RewTerm(
-        func=mdp.is_terminated_term, params={"term_keys": ["robot_drop", "base_contact"]}, weight=-25.0
-    )
+    success = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=250)
+    mech_work = RewTerm(func=mdp.mechanical_work, weight=-0.1)
+    fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-25.0)
 
 
 @configclass
 class TerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
-    robot_drop = DoneTerm(func=mdp.root_height_below_minimum, params={"minimum_height": -20})
+    drop = DoneTerm(func=mdp.root_height_below_minimum, params={"minimum_height": -20})
 
     base_contact = DoneTerm(
         func=mdp.illegal_contact,
@@ -294,7 +285,7 @@ variants = {
     },
     "curriculum.terrain_levels": {
         "success_rate": CurrTerm(func=mdp.terrain_success_rate_levels),
-        "success_rate_fine_grained": CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels)
+        "success_rate_fine_grained": CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels, params={"debug_vis": False})
     },
 }
 

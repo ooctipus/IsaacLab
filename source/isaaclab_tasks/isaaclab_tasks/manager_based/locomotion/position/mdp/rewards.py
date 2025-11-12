@@ -50,7 +50,7 @@ def exploration_reward(env: ManagerBasedRLEnv, robot_cfg: SceneEntityCfg = Scene
     return exploration_reward
 
 
-def work(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot")) -> torch.Tensor:
+def mechanical_work(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot")) -> torch.Tensor:
     robot: Articulation = env.scene[robot_cfg.name]
     work = torch.sum((robot.data.applied_torque * robot.data.joint_vel).abs(), dim=1) * env.step_dt
     return work

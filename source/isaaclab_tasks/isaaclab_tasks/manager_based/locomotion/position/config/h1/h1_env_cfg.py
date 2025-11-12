@@ -19,6 +19,7 @@ from ... import position_env_cfg
 @configclass
 class H1RewardsCfg(position_env_cfg.RewardsCfg):
     move_forward = RewTerm(
+        # h1 need a maller forward velocity reward for success reward being not over dominating
         func=mdp.forward_velocity, weight=0.1, params={"std": 1},
     )
 

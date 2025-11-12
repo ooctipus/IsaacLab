@@ -5,7 +5,6 @@
 
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
-from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
 from isaaclab_assets.robots.spot import SPOT_JOINT_POSITION, SPOT_CFG
@@ -25,23 +24,8 @@ class SportRewardsCfg(position_env_cfg.RewardsCfg):
         func=mdp.forward_velocity, weight=0.4, params={"std": 1},
     )
 
-    gait = RewTerm(
-        func=mdp.GaitReward,
-        weight=0.8,
-        params={
-            "std": 0.1,
-            "max_err": 0.2,
-            "velocity_threshold": 0.5,
-            "synced_feet_pair_names": (("fl_foot", "hr_foot"), ("fr_foot", "hl_foot")),
-            "asset_cfg": SceneEntityCfg("robot"),
-            "sensor_cfg": SceneEntityCfg("contact_forces"),
-        },
-    )
-
-
 @configclass
 class G2CurriculumCfg(position_env_cfg.CurriculumCfg):
-    remove_gait_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "gait"})
 
     remove_forward_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "move_forward"})
 
