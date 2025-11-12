@@ -25,13 +25,12 @@ class Go2ActionsCfg:
 
 @configclass
 class Go2RewardsCfg(position_env_cfg.RewardsCfg):
-    move_forward = RewTerm(func=mdp.forward_velocity, weight=0.4, params={"std": 1})
+    explore = RewTerm(func=mdp.exploration_reward, weight=0.4, params={"forward_only": True})
 
 
 @configclass
 class G2Curriculum(position_env_cfg.CurriculumCfg):
-
-    remove_forward_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "move_forward"})
+    remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
 
 
 @configclass

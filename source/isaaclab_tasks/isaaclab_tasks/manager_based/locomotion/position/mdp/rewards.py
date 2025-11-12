@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import torch
+from torch.nn import functional as F
 from typing import TYPE_CHECKING
 
 from isaaclab.assets import Articulation
@@ -31,22 +32,23 @@ def heading_tracking(env: ManagerBasedRLEnv, std: float = 0.5):
     return (1 - torch.tanh(desired_heading / std)) * (distance_to_goal < 0.4).float()
 
 
-def exploration_reward(env: ManagerBasedRLEnv, robot_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
+def exploration_reward(
+    env: ManagerBasedRLEnv,
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    forward_only: bool = False
+):
     # Retrieve the robot and target data
     robot: Articulation = env.scene[robot_cfg.name]
     base_velocity = robot.data.root_lin_vel_b  # Robot's current base velocity vector
     target_position = env.command_manager.get_command("goal_point")[:, :3]  # Target position relative to robot base
 
-    # Compute the dot product of the robot's base velocity and target position vectors
-    velocity_alignment = (base_velocity[:, :3] * target_position).sum(-1)
+    # If requested, ignore negative x-axis velocity by clamping it to zero
+    vel = base_velocity if not forward_only else base_velocity.clone()
+    if forward_only:
+        vel[:, 0].clamp_min_(0)
 
-    # Calculate the norms (magnitudes) of the velocity and target position vectors
-    velocity_magnitude = torch.norm(base_velocity, p=2, dim=-1)
-    target_magnitude = torch.norm(target_position, p=2, dim=-1)
-
-    # Calculate the exploration reward by normalizing the dot product (cosine similarity)
-    # Small epsilon added in denominator to prevent division by zero
-    exploration_reward = velocity_alignment / (velocity_magnitude * target_magnitude + 1e-6)
+    # Cosine similarity between (optionally clamped) velocity and target vector
+    exploration_reward = F.cosine_similarity(vel[:, :3], target_position, dim=-1, eps=1e-6)
     return exploration_reward
 
 

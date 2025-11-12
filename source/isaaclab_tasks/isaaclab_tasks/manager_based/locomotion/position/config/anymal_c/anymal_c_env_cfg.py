@@ -30,7 +30,7 @@ class AnymalCRewardCfg(position_env_cfg.RewardsCfg):
 
 @configclass
 class AnymalCCurriculumCfg(position_env_cfg.CurriculumCfg):
-    remove_gait_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
+    remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
 
 
 @configclass
