@@ -3,37 +3,14 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab.managers import RewardTermCfg as RewTerm
-from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.utils import configclass
+from isaaclab_assets.robots.spot import SPOT_CFG
 
-from isaaclab_assets.robots.spot import SPOT_JOINT_POSITION, SPOT_CFG
-
-from ... import mdp
 from ... import position_env_cfg
 
 
 @configclass
-class SpotActionsCfg:
-    actions = SPOT_JOINT_POSITION
-
-
-@configclass
-class SportRewardsCfg(position_env_cfg.RewardsCfg):
-    explore = RewTerm(func=mdp.exploration_reward, weight=0.4, params={"forward_only": True})
-
-
-@configclass
-class G2CurriculumCfg(position_env_cfg.CurriculumCfg):
-    remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
-
-
-@configclass
 class SpotEnvMixin:
-    actions: SpotActionsCfg = SpotActionsCfg()
-    rewards: SportRewardsCfg = SportRewardsCfg()
-    curriculum: G2CurriculumCfg = G2CurriculumCfg()
-
     def __post_init__(self: position_env_cfg.LocomotionPositionCommandEnvCfg):
         # Ensure parent classes run their setup first
         super().__post_init__()
@@ -43,8 +20,8 @@ class SpotEnvMixin:
 
         # overwrite as spot's body names for events
         self.events.add_base_mass.params["asset_cfg"].body_names = "body"
+        self.rewards.explore.params["forward_only"] = True
         self.viewer.body_name = "body"
-
         self.sim.dt = 0.002
         self.decimation = 10
 
