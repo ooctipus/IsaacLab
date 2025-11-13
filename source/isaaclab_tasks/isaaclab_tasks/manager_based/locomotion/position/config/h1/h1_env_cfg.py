@@ -8,7 +8,7 @@ from isaaclab.utils import configclass
 ##
 # Pre-defined configs
 ##
-from isaaclab_assets import H1_MINIMAL_CFG  # isort: skip
+from isaaclab_assets import H1_CFG  # isort: skip
 
 from ... import position_env_cfg
 
@@ -20,7 +20,10 @@ class H1EnvMixin:
         # Ensure parent classes run their setup first
         super().__post_init__()
         # overwrite as H1's body names for sensors
-        self.scene.robot = H1_MINIMAL_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        self.scene.robot = H1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        self.scene.robot.spawn.usd_path = "https://uwlab-assets.s3.us-west-004.backblazeb2.com/Robots/Unitree/H1/h1.usd"
+        self.scene.robot.spawn.articulation_props.enabled_self_collisions = True
+
         self.scene.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/torso_link"
         self.rewards.explore.params["forward_only"] = True
         # overwrite as H1's body names for events

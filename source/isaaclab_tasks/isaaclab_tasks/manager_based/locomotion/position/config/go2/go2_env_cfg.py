@@ -19,6 +19,7 @@ class Go2EnvMixin:
         super().__post_init__()  # type: ignore
         self.scene.robot = UNITREE_GO2_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")  # type: ignore
         self.scene.robot.spawn.usd_path="https://uwlab-assets.s3.us-west-004.backblazeb2.com/Robots/Unitree/Go2/go2.usd"
+        self.scene.robot.spawn.articulation_props.enabled_self_collisions = True
 
         self.rewards.explore.params["forward_only"] = True
 
