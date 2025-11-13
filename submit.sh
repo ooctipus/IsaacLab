@@ -229,6 +229,7 @@ if [[ "$mode" == "submit" ]]; then
   declare -a hydra_dels=()
   pool_explicit=""
   platform_explicit=""
+  user_run_name=""
 
   for arg in "${args[@]}"; do
     # keep special bool flags normalized
@@ -246,6 +247,12 @@ if [[ "$mode" == "submit" ]]; then
     # parse key=val (this now also catches --key=val like --task=...)
     if [[ $arg == *=* ]]; then
       key=${arg%%=*}; val=${arg#*=}
+      # capture a base run name without passing it through directly
+      key_nodash="${key#--}"
+      if [[ "$key_nodash" == "run_name" ]]; then
+        user_run_name="$val"
+        continue
+      fi
       if [[ "$key" == "pool" ]]; then
         pool_explicit="$val"; continue
       elif [[ "$key" == "platform" ]]; then
@@ -311,9 +318,41 @@ if [[ "$mode" == "submit" ]]; then
 
   # submit each combo
   for combo in "${combos[@]}"; do
-    all_set="args=$fixed_str $combo ${hydra_dels[*]} ${cli_flags[*]}"
+    # Derive a base name and append sweep values for clarity
+    # If user didn't provide a base, don't default to script name to avoid noise.
+    base_name="$user_run_name"
+    suffix=""
+    if [[ -n "$combo" ]]; then
+      # extract only values from k=v pairs and join with '+'
+      read -r -a combo_parts <<< "$combo"
+      vals=()
+      for kv in "${combo_parts[@]}"; do
+        v="${kv#*=}"
+        vals+=("$v")
+      done
+      if (( ${#vals[@]} > 0 )); then
+        # join values with '|' to avoid confusion with negatives
+        suffix=$( IFS=','; echo "${vals[*]}" )
+      fi
+    fi
+    # Build final run_name
+    run_name=""
+    if [[ -n "$base_name" && -n "$suffix" ]]; then
+      run_name="$base_name|$suffix"
+    elif [[ -n "$base_name" ]]; then
+      run_name="$base_name"
+    else
+      run_name="$suffix"
+    fi
+
+    # Append --run_name only when non-empty
+    if [[ -n "$run_name" ]]; then
+      all_set="args=$fixed_str $combo --run_name=$run_name ${hydra_dels[*]} ${cli_flags[*]}"
+    else
+      all_set="args=$fixed_str $combo ${hydra_dels[*]} ${cli_flags[*]}"
+    fi
     cmd=( osmo workflow submit "$spec" --pool "$resolved_pool" --set script="$script" $cluster_str "$all_set" )
-    echo "+ ${cmd[@]}"
+    echo "LAUNCHING: ${cmd[@]}"
     "${cmd[@]}"
   done
   exit
