@@ -42,14 +42,18 @@ def exploration_reward(
     base_velocity = robot.data.root_lin_vel_b  # Robot's current base velocity vector
     target_position = env.command_manager.get_command("goal_point")[:, :3]  # Target position relative to robot base
 
-    # If requested, ignore negative x-axis velocity by clamping it to zero
-    vel = base_velocity if not forward_only else base_velocity.clone()
-    if forward_only:
-        vel[:, 0].clamp_min_(0)
+    # Base directional alignment (cosine similarity)
+    cos_align = F.cosine_similarity(base_velocity[:, :3], target_position, dim=-1, eps=1e-6)
 
-    # Cosine similarity between (optionally clamped) velocity and target vector
-    exploration_reward = F.cosine_similarity(vel[:, :3], target_position, dim=-1, eps=1e-6)
-    return exploration_reward
+    if not forward_only:
+        return cos_align
+
+    # Forward preference weight: positive forward component relative to speed
+    speed = torch.linalg.vector_norm(base_velocity, ord=2, dim=-1)
+    forward_comp = base_velocity[:, 0].clamp_min(0)
+    forward_weight = forward_comp / (speed + 1e-6)
+
+    return cos_align * forward_weight
 
 
 def mechanical_work(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot")) -> torch.Tensor:
