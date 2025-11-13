@@ -447,7 +447,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         # Cache counts per terrain type for grouped reductions
         self._type_counts = torch.bincount(self._col_to_type_idx, minlength=len(self._type_names))
 
-    def __call__(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor, debug_vis=False):
+    def __call__(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor, debug_vis=False, kappa: float = 2.0):
         terrain: TerrainImporter = env.scene.terrain
         goal_term = self.goal_term
 
@@ -456,7 +456,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.success_monitor.success_update(self.term_samples.index_select(0, env_ids), distance < 0.5)
 
         # 2) Sample next (level, type, spawn, target) aiming for balanced success
-        choices, prob = self.success_monitor.sample_by_target_rate(env_ids, target=0.33, kappa=2, return_probs=True)
+        choices, prob = self.success_monitor.sample_by_target_rate(env_ids, target=0.33, kappa=kappa, return_probs=True)
         # In-place index copy to avoid temporary tensors
         self.term_samples.index_copy_(0, env_ids, choices.to(self.term_samples.dtype))
 
