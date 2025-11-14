@@ -78,7 +78,7 @@ class SceneCfg(InteractiveSceneCfg):
         prim_path="{ENV_REGEX_NS}/Robot/base",
         offset=RayCasterCfg.OffsetCfg(pos=(0.5, 0.0, 20.0)),
         ray_alignment="yaw",
-        pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=(1.6, 1.0)),
+        pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=(2.5, 1.5)),
         debug_vis=False,
         mesh_prim_paths=["/World/ground"],
     )
@@ -150,7 +150,7 @@ class EventsCfg:
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
             "static_friction_range": (0.8, 0.8),
-            "dynamic_friction_range": (0.8, 0.8),
+            "dynamic_friction_range": (0.6, 0.8),
             "restitution_range": (0.0, 0.0),
             "num_buckets": 64,
         },
