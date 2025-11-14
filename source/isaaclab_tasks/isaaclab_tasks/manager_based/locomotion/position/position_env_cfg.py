@@ -218,7 +218,7 @@ class TerminationsCfg:
 
 @configclass
 class CurriculumCfg:
-    terrain_levels = CurrTerm(func=mdp.terrain_levels_vel)  # type: ignore
+    terrain_levels = CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels, params={"debug_vis": False, "kappa": 2.0})  # type: ignore
     remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
     stricten_success = CurrTerm(func=mdp.stricten_success_term, params={"term": "success"})
 
@@ -290,7 +290,7 @@ variants = {
     },
     "curriculum.terrain_levels": {
         "success_rate": CurrTerm(func=mdp.terrain_success_rate_levels),
-        "success_rate_fine_grained": CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels, params={"debug_vis": False})
+        "linear": CurrTerm(func=mdp.terrain_levels_vel),
     },
 }
 
