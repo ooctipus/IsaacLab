@@ -95,7 +95,7 @@ class SceneCfg(InteractiveSceneCfg):
 class ActionsCfg:
     """Actions for the MDP."""
 
-    joint_pos = mdp.JointPositionActionCfg(asset_name="robot", joint_names=[".*"], scale=0.5, use_default_offset=True)
+    joint_pos = mdp.JointPositionActionCfg(asset_name="robot", joint_names=[".*"], scale=0.2, use_default_offset=True)
 
 
 @configclass
@@ -196,9 +196,9 @@ class EventsCfg:
 class RewardsCfg:
     # task rewards
     success = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=250)
-    mech_work = RewTerm(func=mdp.mechanical_work, weight=-0.05)
+    mech_work = RewTerm(func=mdp.mechanical_work, weight=-0.075)
     fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-25.0)
-    explore = RewTerm(func=mdp.exploration_reward, weight=0.4, params={"forward_only": False})
+    explore = RewTerm(func=mdp.exploration_reward, weight=0.4, params={"forward_only": True})
 
 
 @configclass

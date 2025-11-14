@@ -25,7 +25,6 @@ class H1EnvMixin:
         self.scene.robot.spawn.articulation_props.enabled_self_collisions = True
 
         self.scene.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/torso_link"
-        self.rewards.explore.params["forward_only"] = True
         # overwrite as H1's body names for events
         self.events.add_base_mass.params["asset_cfg"].body_names = "torso_link"
         self.terminations.base_contact.params["sensor_cfg"].body_names = "^(?!.*ankle_link).*$"

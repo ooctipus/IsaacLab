@@ -21,8 +21,6 @@ class Go2EnvMixin:
         self.scene.robot.spawn.usd_path="https://uwlab-assets.s3.us-west-004.backblazeb2.com/Robots/Unitree/Go2/go2.usd"
         self.scene.robot.spawn.articulation_props.enabled_self_collisions = True
 
-        self.rewards.explore.params["forward_only"] = True
-
 
 @configclass
 class Go2LocomotionPositionCommandEnvCfg(Go2EnvMixin, position_env_cfg.LocomotionPositionCommandEnvCfg):

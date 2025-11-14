@@ -20,10 +20,7 @@ class SpotEnvMixin:
 
         # overwrite as spot's body names for events
         self.events.add_base_mass.params["asset_cfg"].body_names = "body"
-        self.rewards.explore.params["forward_only"] = True
         self.viewer.body_name = "body"
-        self.sim.dt = 0.002
-        self.decimation = 10
 
 
 @configclass
