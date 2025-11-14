@@ -448,7 +448,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
 
     def __call__(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor, debug_vis=False, kappa: float = 2.0, success_term: str = "success"):
         terrain: TerrainImporter = env.scene.terrain
-        success_mask = env.termination_manager.get_term(success_term)
+        success_mask = env.termination_manager.get_term(success_term)[env_ids]
         self.success_monitor.success_update(self.term_samples.index_select(0, env_ids), success_mask)
 
         # 2) Sample next (level, type, spawn, target) aiming for balanced success
