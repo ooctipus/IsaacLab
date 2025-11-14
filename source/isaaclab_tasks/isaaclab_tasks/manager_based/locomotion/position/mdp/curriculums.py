@@ -142,7 +142,7 @@ class terrain_success_rate_levels(ManagerTermBase):
             device=env.device,
         )
         self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
-
+        self.success_term = env.termination_manager.get_term(cfg.params.get("success_term"))
         # store sampled (level, type, patch) as a flattened index in [0, L*T*P)
         self.term_samples = torch.zeros((env.num_envs,), dtype=torch.long, device=env.device)
 
@@ -187,7 +187,7 @@ class terrain_success_rate_levels(ManagerTermBase):
         env_ids_t = torch.as_tensor(env_ids, device=self.device, dtype=torch.long)
         command = env.command_manager.get_command("goal_point")
         distance = command.index_select(0, env_ids_t)[:, :3].norm(2, dim=1)
-        self.success_monitor.success_update(self.term_samples.index_select(0, env_ids_t), distance < 0.5)
+        self.success_monitor.success_update(self.term_samples.index_select(0, env_ids_t), self.func())
 
         # 2) Sample next (level, type, patch) assignments targeting balanced success
         choices = self.success_monitor.sample_by_target_rate(env_ids, target=0.5, kappa=1)
@@ -395,7 +395,6 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
             device=env.device,
         )
         self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
-
         # store sampled (level, type, spawn_id, target_id) as a flattened index in [0, L*T*Ps*Pt)
         self.term_samples = torch.zeros((env.num_envs,), dtype=torch.long, device=env.device)
 
@@ -447,13 +446,10 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         # Cache counts per terrain type for grouped reductions
         self._type_counts = torch.bincount(self._col_to_type_idx, minlength=len(self._type_names))
 
-    def __call__(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor, debug_vis=False, kappa: float = 2.0):
+    def __call__(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor, debug_vis=False, kappa: float = 2.0, success_term: str = "success"):
         terrain: TerrainImporter = env.scene.terrain
-        goal_term = self.goal_term
-
-        command = env.command_manager.get_command("goal_point")
-        distance = command.index_select(0, env_ids)[:, :3].norm(2, dim=1)
-        self.success_monitor.success_update(self.term_samples.index_select(0, env_ids), distance < 0.5)
+        success_mask = env.termination_manager.get_term(success_term)
+        self.success_monitor.success_update(self.term_samples.index_select(0, env_ids), success_mask)
 
         # 2) Sample next (level, type, spawn, target) aiming for balanced success
         choices, prob = self.success_monitor.sample_by_target_rate(env_ids, target=0.33, kappa=kappa, return_probs=True)
@@ -479,12 +475,12 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         # 5) Set goal target directly from valid targets and adjust height
         target_lin = (chosen_level * (T * Pt) + chosen_type * Pt + target_id).to(torch.long)
         pos_cmd = self._valid_targets_flat.index_select(0, target_lin)
-        goal_term.pos_command_w.index_copy_(0, env_ids, pos_cmd)
+        self.goal_term.pos_command_w.index_copy_(0, env_ids, pos_cmd)
         # Adjust height directly (add z offset)
-        goal_term.pos_command_w[env_ids, 2] += goal_term.robot.data.default_root_state[env_ids, 2]
+        self.goal_term.pos_command_w[env_ids, 2] += self.goal_term.robot.data.default_root_state[env_ids, 2]
         # Sample heading for the selected envs
         r = torch.empty(env_ids.numel(), device=self.device)
-        goal_term.heading_command_w.index_copy_(0, env_ids, r.uniform_(*goal_term.cfg.ranges.heading))
+        self.goal_term.heading_command_w.index_copy_(0, env_ids, r.uniform_(*self.goal_term.cfg.ranges.heading))
 
         # aggregate reporting: overall mean terrain level (kept for compatibility)
         self._result["all"].copy_(terrain.terrain_levels.float().mean())
