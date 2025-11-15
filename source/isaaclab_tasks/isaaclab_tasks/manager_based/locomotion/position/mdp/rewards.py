@@ -62,6 +62,12 @@ def mechanical_work(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot")) -
     return work
 
 
+def incoming_wrench(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot")) -> torch.Tensor:
+    robot: Articulation = env.scene[robot_cfg.name]
+    incoming_wrench = torch.norm(robot.data.body_incoming_joint_wrench_b, dim=-1)  # (B, num_bodies)
+    return incoming_wrench.sum(dim=1)  # (B,)
+
+
 def stall_penalty(
     env: ManagerBasedRLEnv,
     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
