@@ -324,3 +324,195 @@ class FactoryBaseSuccessTerminateEnvCfg(FactoryBaseEnvCfg):
         delattr(self.rewards, "reach_reward")
         delattr(self.rewards, "progress_reward_fine")
         setattr(self.terminations, "success", DoneTerm(func=mdp.success_termination))
+
+
+'''
+
+add below code to InteractiveScene.py after filter_collsion to be a bit more efficient
+from pxr import PhysxSchema, Usd, UsdPhysics, Sdf, UsdGeom
+
+    self.setup_env_nut_bolt_filters(
+        self.stage,
+        physicsscene_path="/physicsScene",
+        collision_root_path="/World/collisions",
+        envs_root_path="/World/envs",
+        ground_collision_prim_path="/World/ground/GroundPlane/CollisionPlane",
+    )
+
+    def setup_env_nut_bolt_filters(
+        self,
+        stage: Usd.Stage,
+        physicsscene_path: str = "/physicsScene",
+        collision_root_path: str = "/World/collisions",
+        envs_root_path: str = "/World/envs",
+        ground_collision_prim_path: str = "/World/ground/GroundPlane/CollisionPlane",
+    ) -> None:
+        """Setup general, per-env collision groups for nut/bolt + robot.
+
+        Conceptual mapping:
+
+        - G_ground                 -> 'ground_group'
+        - G_robot_convex_i         -> '{env_name}_robot_convex'
+        - G_static_convex_i        -> '{env_name}_static_convex'
+        - G_nut_convex_i           -> '{env_name}_nut_convex'
+        - G_bolt_convex_i          -> '{env_name}_bolt_convex'
+        - G_nut_sdf_i              -> '{env_name}_nut_sdf'
+        - G_bolt_sdf_i             -> '{env_name}_bolt_sdf'
+        """
+
+        # ------------------------------------------------------------------
+        # Enable inverted collision-group filtering (general requirement)
+        # ------------------------------------------------------------------
+        physx_scene_prim = stage.GetPrimAtPath(physicsscene_path)
+        if not physx_scene_prim:
+            raise RuntimeError(f"PhysX scene '{physicsscene_path}' not found")
+        physx_scene = PhysxSchema.PhysxSceneAPI.Apply(physx_scene_prim)
+        physx_scene.CreateInvertCollisionGroupFilterAttr().Set(True)
+
+        with Usd.EditContext(stage, Usd.EditTarget(stage.GetRootLayer())):
+            coll_root_path_sdf = Sdf.Path(collision_root_path)
+            UsdGeom.Scope.Define(stage, coll_root_path_sdf)
+
+            # ------------------------------------------------------------------
+            # G_ground  (global ground group)
+            # ------------------------------------------------------------------
+            ground_group_path = coll_root_path_sdf.AppendChild("ground_group")
+            ground_group = UsdPhysics.CollisionGroup.Define(stage, ground_group_path)
+            coll_api = Usd.CollectionAPI.Apply(ground_group.GetPrim(), "colliders")
+            ground_inc = coll_api.CreateIncludesRel()
+            if stage.GetPrimAtPath(ground_collision_prim_path):
+                ground_inc.AddTarget(ground_collision_prim_path)
+            ground_filtered = ground_group.CreateFilteredGroupsRel()
+
+            # ------------------------------------------------------------------
+            # Per-env groups
+            # ------------------------------------------------------------------
+            envs_root = stage.GetPrimAtPath(envs_root_path)
+            if not envs_root:
+                raise RuntimeError(f"Env root '{envs_root_path}' not found")
+
+            for env_prim in envs_root.GetChildren():
+                env_name = env_prim.GetName()
+                if not env_name.startswith("env_"):
+                    continue
+                env_path = env_prim.GetPath()
+
+                # -------------------------------
+                # Shape paths in this env (data)
+                # -------------------------------
+                bolt_convex = env_path.AppendChild("BoltAsset").AppendPath("factory_bolt_loose/Thread_convex")
+                bolt_sdf    = env_path.AppendChild("BoltAsset").AppendPath("factory_bolt_loose/Thread_sdf")
+                nut_convex  = env_path.AppendChild("NutAsset").AppendPath("factory_nut_loose/convex")
+                nut_sdf     = env_path.AppendChild("NutAsset").AppendPath("factory_nut_loose/sdf")
+                robot       = env_path.AppendChild("Robot")
+                table       = env_path.AppendChild("Table")
+                nist        = env_path.AppendChild("NistBoard")
+
+                # ==============================================================
+                # 1) CONVEX GROUPS  (role × convex) – one per logical role
+                # ==============================================================
+
+                # G_robot_convex_i -> '{env_name}_robot_convex'
+                robot_group_path = coll_root_path_sdf.AppendChild(f"{env_name}_robot_convex")
+                robot_group = UsdPhysics.CollisionGroup.Define(stage, robot_group_path)
+                r_api = Usd.CollectionAPI.Apply(robot_group.GetPrim(), "colliders")
+                r_inc = r_api.CreateIncludesRel()
+                if stage.GetPrimAtPath(robot):
+                    r_inc.AddTarget(robot)
+
+                # G_static_convex_i -> '{env_name}_static_convex'
+                static_group_path = coll_root_path_sdf.AppendChild(f"{env_name}_static_convex")
+                static_group = UsdPhysics.CollisionGroup.Define(stage, static_group_path)
+                s_api = Usd.CollectionAPI.Apply(static_group.GetPrim(), "colliders")
+                s_inc = s_api.CreateIncludesRel()
+                for p in (table, nist):
+                    if stage.GetPrimAtPath(p):
+                        s_inc.AddTarget(p)
+
+                # G_nut_convex_i -> '{env_name}_nut_convex'
+                nut_cvx_group_path = coll_root_path_sdf.AppendChild(f"{env_name}_nut_convex")
+                nut_cvx_group = UsdPhysics.CollisionGroup.Define(stage, nut_cvx_group_path)
+                ncvx_api = Usd.CollectionAPI.Apply(nut_cvx_group.GetPrim(), "colliders")
+                ncvx_inc = ncvx_api.CreateIncludesRel()
+                if stage.GetPrimAtPath(nut_convex):
+                    ncvx_inc.AddTarget(nut_convex)
+
+                # G_bolt_convex_i -> '{env_name}_bolt_convex'
+                bolt_cvx_group_path = coll_root_path_sdf.AppendChild(f"{env_name}_bolt_convex")
+                bolt_cvx_group = UsdPhysics.CollisionGroup.Define(stage, bolt_cvx_group_path)
+                bcvx_api = Usd.CollectionAPI.Apply(bolt_cvx_group.GetPrim(), "colliders")
+                bcvx_inc = bcvx_api.CreateIncludesRel()
+                if stage.GetPrimAtPath(bolt_convex):
+                    bcvx_inc.AddTarget(bolt_convex)
+
+                # --------------------------------------------------------------
+                # Convex filteredGroups wiring (this is the group↔group table)
+                # --------------------------------------------------------------
+                # Remember: with inverted filtering, collisions happen only if
+                # BOTH groups whitelist each other.
+
+                # G_robot_convex_i collides with: itself, static, nut_convex, bolt_convex, ground
+                r_f = robot_group.CreateFilteredGroupsRel()
+                r_f.AddTarget(robot_group_path)
+                r_f.AddTarget(static_group_path)
+                r_f.AddTarget(nut_cvx_group_path)
+                r_f.AddTarget(bolt_cvx_group_path)
+                r_f.AddTarget(ground_group_path)
+
+                # G_static_convex_i collides with: itself, robot, nut_convex, bolt_convex, ground
+                s_f = static_group.CreateFilteredGroupsRel()
+                s_f.AddTarget(static_group_path)
+                s_f.AddTarget(robot_group_path)
+                s_f.AddTarget(nut_cvx_group_path)
+                s_f.AddTarget(bolt_cvx_group_path)
+                s_f.AddTarget(ground_group_path)
+
+                # G_nut_convex_i collides with: itself, robot, static, ground
+                # (NO bolt_convex here -> no convex nut–bolt)
+                ncvx_f = nut_cvx_group.CreateFilteredGroupsRel()
+                ncvx_f.AddTarget(nut_cvx_group_path)
+                ncvx_f.AddTarget(robot_group_path)
+                ncvx_f.AddTarget(static_group_path)
+                ncvx_f.AddTarget(ground_group_path)
+
+                # G_bolt_convex_i collides with: itself, robot, static, ground
+                # (NO nut_convex here -> no convex nut–bolt)
+                bcvx_f = bolt_cvx_group.CreateFilteredGroupsRel()
+                bcvx_f.AddTarget(bolt_cvx_group_path)
+                bcvx_f.AddTarget(robot_group_path)
+                bcvx_f.AddTarget(static_group_path)
+                bcvx_f.AddTarget(ground_group_path)
+
+                # G_ground collides with all convex groups (all envs)
+                ground_filtered.AddTarget(robot_group_path)
+                ground_filtered.AddTarget(static_group_path)
+                ground_filtered.AddTarget(nut_cvx_group_path)
+                ground_filtered.AddTarget(bolt_cvx_group_path)
+
+                # ==============================================================
+                # 2) SDF GROUPS (nut/bolt threading only)
+                # ==============================================================
+
+                # G_nut_sdf_i -> '{env_name}_nut_sdf'
+                nut_sdf_group_path = coll_root_path_sdf.AppendChild(f"{env_name}_nut_sdf")
+                nut_sdf_group = UsdPhysics.CollisionGroup.Define(stage, nut_sdf_group_path)
+                n_api = Usd.CollectionAPI.Apply(nut_sdf_group.GetPrim(), "colliders")
+                n_inc = n_api.CreateIncludesRel()
+                if stage.GetPrimAtPath(nut_sdf):
+                    n_inc.AddTarget(nut_sdf)
+                n_filtered = nut_sdf_group.CreateFilteredGroupsRel()
+
+                # G_bolt_sdf_i -> '{env_name}_bolt_sdf'
+                bolt_sdf_group_path = coll_root_path_sdf.AppendChild(f"{env_name}_bolt_sdf")
+                bolt_sdf_group = UsdPhysics.CollisionGroup.Define(stage, bolt_sdf_group_path)
+                b_api = Usd.CollectionAPI.Apply(bolt_sdf_group.GetPrim(), "colliders")
+                b_inc = b_api.CreateIncludesRel()
+                if stage.GetPrimAtPath(bolt_sdf):
+                    b_inc.AddTarget(bolt_sdf)
+                b_filtered = bolt_sdf_group.CreateFilteredGroupsRel()
+
+                # SDF nut <-> SDF bolt only (threading)
+                # No SDF vs convex or SDF vs ground unless you add it on purpose.
+                n_filtered.AddTarget(bolt_sdf_group_path)
+                b_filtered.AddTarget(nut_sdf_group_path)
+'''
