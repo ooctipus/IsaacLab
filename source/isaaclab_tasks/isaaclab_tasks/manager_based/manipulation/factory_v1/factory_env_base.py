@@ -1,0 +1,326 @@
+# Copyright (c) 2024-2025, The Isaac Lab Project Developers.
+# All Rights Reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+from dataclasses import MISSING
+
+from isaaclab.assets import ArticulationCfg, RigidObjectCfg
+from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
+from isaaclab.managers import EventTermCfg as EventTerm
+from isaaclab.managers import ObservationGroupCfg as ObsGroup
+from isaaclab.managers import ObservationTermCfg as ObsTerm
+from isaaclab.managers import RewardTermCfg as RewTerm
+from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import TerminationTermCfg as DoneTerm
+from isaaclab.managers import CurriculumTermCfg as CurrTerm
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.utils import configclass
+
+from . import mdp
+from .assembly_keypoints import KEYPOINTS_NISTBOARD
+from . import reset_env_cfg as staging_cfg
+
+from . import factory_assets_cfg as assets
+
+"""
+Base scene definition for Factory Tasks
+"""
+
+
+@configclass
+class FactorySceneCfg(InteractiveSceneCfg):
+    """Configuration for a factory task scene."""
+
+    # Ground plane
+    ground = assets.GROUND_CFG
+
+    # Table
+    table = assets.TABLE_CFG
+
+    # NIST Board
+    nistboard = assets.NISTBOARD_CFG
+
+    # "FIXED ASSETS"
+    bolt_m16: RigidObjectCfg = assets.BOLT_M16_CFG
+    gear_base: ArticulationCfg = assets.GEAR_BASE_CFG
+    hole_8mm: ArticulationCfg = assets.HOLE_8MM_CFG
+
+    # "Moving Gears"
+    small_gear: ArticulationCfg = assets.SMALL_GEAR_CFG
+    large_gear: ArticulationCfg = assets.LARGE_GEAR_CFG
+
+    # "HELD ASSETS"
+    nut_m16: RigidObjectCfg = assets.NUT_M16_CFG
+    medium_gear: ArticulationCfg = assets.MEDIUM_GEAR_CFG
+    peg_8mm: ArticulationCfg = assets.PEG_8MM_CFG
+
+    # Robot Override
+    robot: ArticulationCfg = MISSING  # type: ignore
+
+    # Lights
+    dome_light = assets.DOMELIGHT_CFG
+
+
+@configclass
+class FactoryObservationsCfg:
+    """Observation specifications for Factory."""
+
+    @configclass
+    class PolicyCfg(ObsGroup):
+        end_effector_vel_lin_ang_b = ObsTerm(
+            func=mdp.asset_link_velocity_in_root_asset_frame,
+            params={
+                "target_asset_cfg": SceneEntityCfg("robot", body_names="end_effector"),
+                "root_asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+
+        end_effector_pose = ObsTerm(
+            func=mdp.target_asset_pose_in_root_asset_frame,
+            params={
+                "target_asset_cfg": SceneEntityCfg("robot", body_names="end_effector"),
+                "root_asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+
+        held_asset_in_fixed_asset_frame: ObsTerm = ObsTerm(
+            func=mdp.target_asset_pose_in_root_asset_frame,
+            params={
+                "target_asset_cfg": SceneEntityCfg("held_asset"),
+                "root_asset_cfg": SceneEntityCfg("fixed_asset"),
+            },
+        )
+
+        fixed_asset_in_end_effector_frame: ObsTerm = ObsTerm(
+            func=mdp.target_asset_pose_in_root_asset_frame,
+            params={
+                "target_asset_cfg": SceneEntityCfg("fixed_asset"),
+                "root_asset_cfg": SceneEntityCfg("robot", body_names="end_effector"),
+            },
+        )
+
+        joint_pos = ObsTerm(func=mdp.joint_pos)
+
+        prev_action = ObsTerm(func=mdp.last_action)
+
+        def __post_init__(self) -> None:
+            self.enable_corruption = False
+            self.concatenate_terms = True
+            self.history_length = 5
+
+    policy: PolicyCfg = PolicyCfg()
+    critic: PolicyCfg = PolicyCfg()
+
+
+@configclass
+class FactoryEventCfg:
+    """Events specifications for Factory"""
+
+    # when nut dropped right above the bolt, it sometime can immediately success due to high speed it falls
+    # down can can may training in early stage very finicky. we uses less aggressive gravity for training
+    # and can make more aggressive later in the stage...
+
+    # mode: startup
+    held_asset_material = EventTerm(
+        func=mdp.randomize_rigid_body_material,  # type: ignore
+        mode="startup",
+        params={
+            "static_friction_range": (0.4, 1.0),
+            "dynamic_friction_range": (0.4, 1.0),
+            "restitution_range": (0.0, 0.0),
+            "num_buckets": 64,
+            "asset_cfg": SceneEntityCfg("held_asset"),
+        },
+    )
+
+    fixed_asset_material = EventTerm(
+        func=mdp.randomize_rigid_body_material,  # type: ignore
+        mode="startup",
+        params={
+            "static_friction_range": (0.4, 1.0),
+            "dynamic_friction_range": (0.4, 1.0),
+            "restitution_range": (0.0, 0.0),
+            "num_buckets": 64,
+            "asset_cfg": SceneEntityCfg("fixed_asset"),
+        },
+    )
+
+    robot_material = EventTerm(
+        func=mdp.randomize_rigid_body_material,  # type: ignore
+        mode="startup",
+        params={
+            "static_friction_range": (0.75, 0.75),
+            "dynamic_friction_range": (0.75, 0.75),
+            "restitution_range": (0.0, 0.0),
+            "num_buckets": 64,
+            "asset_cfg": SceneEntityCfg("robot"),
+        },
+    )
+
+    # mode: reset
+    reset_env = EventTerm(func=mdp.reset_scene_to_default, mode="reset")
+
+    reset_board = EventTerm(
+        func=mdp.reset_root_state_uniform_on_offset,
+        mode="reset",
+        params={
+            "offset": KEYPOINTS_NISTBOARD.nist_board_center,
+            "pose_range": {"x": (-0.00, 0.00), "y": (-0.05, 0.05), "yaw": (-3.14, 3.14)},
+            "velocity_range": {},
+            "asset_cfg": SceneEntityCfg("nistboard"),
+        },
+    )
+
+    reset_fixed_asset = EventTerm(
+        func=mdp.reset_fixed_assets,
+        mode="reset",
+        params={
+            "asset_list": ["fixed_asset"],
+        },
+    )
+
+    reset_strategies = EventTerm(
+        func=mdp.TermChoice,
+        mode="reset",
+        params={
+            "terms" : {
+                "grasp_asset_in_air": staging_cfg.GRIPPER_GRASP_ASSET_IN_AIR,
+                "start_fully_assembled": staging_cfg.FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
+                "start_assembled": staging_cfg.ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
+                "start_grasped_then_assembled": staging_cfg.GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
+            },
+            "sampling_strategy": "failure_rate"
+        }
+    )
+
+    variable_gravity = EventTerm(
+        func=mdp.randomize_physics_scene_gravity,
+        mode="reset",
+        params={
+            "operation": "abs",
+            "gravity_distribution_params": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+        },
+    )
+
+
+@configclass
+class FactoryRewardsCfg:
+    """Reward terms for Factory"""
+
+    # penalties
+    action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-1e-4)
+
+    action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-1e-4)
+
+    joint_effort = RewTerm(func=mdp.joint_torques_l2, params={"asset_cfg": SceneEntityCfg("robot")}, weight=-1e-4)
+
+    early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-0.01)
+
+    reach_reward = RewTerm(func=mdp.reach_reward, weight=0.1, params={"std": 1.0})
+
+    progress_reward_fine = RewTerm(func=mdp.progress_reward, weight=0.1, params={"std": 0.005})
+
+    success_reward = RewTerm(func=mdp.success_reward, weight=1.0)
+
+
+@configclass
+class FactoryTerminationsCfg:
+    """Termination terms for Factory."""
+
+    # (1) Time out
+    time_out = DoneTerm(func=mdp.time_out, time_out=True)
+
+    abnormal = DoneTerm(func=mdp.abnormal_robot_state)
+
+    oob = DoneTerm(func=mdp.out_of_bound, params={
+        "asset_cfg": SceneEntityCfg("held_asset"),
+        "in_bound_range" : {"x": (-0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)}
+    })
+
+    progress_context = DoneTerm(
+        func=mdp.progress_context,
+        params={
+            "success_threshold": 0.001,
+            "held_asset_cfg": SceneEntityCfg("held_asset"),
+            "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
+            "held_asset_offset": MISSING,
+            "fixed_asset_offset": MISSING,
+        }
+    )
+
+
+@configclass
+class FactoryCurriculumsCfg:
+
+    difficulty_scheduler = CurrTerm(func=mdp.DifficultyScheduler, params={"max_difficulty": 10})
+
+    gravity_adr = CurrTerm(
+        func=mdp.modify_term_cfg,
+        params={
+            "address": "events.variable_gravity.params.gravity_distribution_params",
+            "modify_fn": mdp.initial_final_interpolate_fn,
+            "modify_params": {
+                "initial_value": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+                "final_value": ((0.0, 0.0, -9.81), (0.0, 0.0, -9.81)),
+                "difficulty_term_str": "difficulty_scheduler",
+            },
+        },
+    )
+
+##
+# Environment configuration
+##
+
+
+@configclass
+class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
+    """Configuration for the base Factory environment."""
+
+    scene: FactorySceneCfg = FactorySceneCfg(num_envs=2, env_spacing=2.0)
+    observations: FactoryObservationsCfg = FactoryObservationsCfg()
+    events: FactoryEventCfg = FactoryEventCfg()
+    terminations: FactoryTerminationsCfg = FactoryTerminationsCfg()
+    rewards: FactoryRewardsCfg = FactoryRewardsCfg()
+    curriculum: FactoryCurriculumsCfg = FactoryCurriculumsCfg()
+    viewer: ViewerCfg = ViewerCfg(eye=(0.0, 0.25, 0.1), origin_type="asset_body", asset_name="robot", body_name="panda_fingertip_centered")
+    actions = MISSING
+
+    # Post initialization
+    def __post_init__(self) -> None:
+        """Post initialization."""
+        # general settings
+        self.decimation = 12
+        self.episode_length_s = 14.0
+        # simulation settings
+        self.sim.dt = 0.005
+        self.sim.render_interval = self.decimation
+
+        self.sim.physx.solver_type = 1
+        self.sim.physx.max_position_iteration_count = 192  # Important to avoid interpenetration.
+        self.sim.physx.max_velocity_iteration_count = 1
+        self.sim.physx.bounce_threshold_velocity = 0.2
+        self.sim.physx.friction_offset_threshold = 0.01
+        self.sim.physx.friction_correlation_distance = 0.00625
+        self.sim.physx.gpu_max_rigid_contact_count = 2**23
+        self.sim.physx.gpu_max_rigid_patch_count = 2**23
+        self.sim.physx.gpu_collision_stack_size = 2**32 - 1
+        self.sim.physx.gpu_max_num_partitions = 1
+
+        self.sim.physics_material.static_friction = 0.5
+        self.sim.physics_material.dynamic_friction = 0.5
+
+        self.sim.render.enable_ambient_occlusion = True
+        self.sim.render.enable_dlssg = True
+
+
+@configclass
+class FactoryBaseSuccessTerminateEnvCfg(FactoryBaseEnvCfg):
+    """Configuration for the base Factory environment."""
+    # Post initialization
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.rewards.success_reward.weight = 100.0
+        delattr(self.rewards, "reach_reward")
+        delattr(self.rewards, "progress_reward_fine")
+        setattr(self.terminations, "success", DoneTerm(func=mdp.success_termination))
