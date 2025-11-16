@@ -22,6 +22,9 @@ class SpotEnvMixin:
         self.events.add_base_mass.params["asset_cfg"].body_names = "body"
         self.viewer.body_name = "body"
 
+        self.terminations.log_gait.params["async_pairs"] = ("fl_foot", "fr_foot"), ("hr_foot", "hl_foot"), ("fl_foot", "hl_foot"), ("fr_foot", "hr_foot")
+        self.terminations.log_gait.params["sync_pairs"] = (("fl_foot", "hr_foot"), ("fr_foot", "hl_foot"))
+
 
 @configclass
 class SpotLocomotionPositionCommandEnvCfg(SpotEnvMixin, position_env_cfg.LocomotionPositionCommandEnvCfg):

@@ -30,6 +30,9 @@ class H1EnvMixin:
         self.terminations.base_contact.params["sensor_cfg"].body_names = "^(?!.*ankle_link).*$"
         self.viewer.body_name = "torso_link"
 
+        self.terminations.log_gait.params["async_pairs"] = (("left_ankle_link", "right_ankle_link"),)
+        self.terminations.log_gait.params["sync_pairs"] = ()
+
 
 @configclass
 class H1LocomotionPositionCommandEnvCfg(H1EnvMixin, position_env_cfg.LocomotionPositionCommandEnvCfg):

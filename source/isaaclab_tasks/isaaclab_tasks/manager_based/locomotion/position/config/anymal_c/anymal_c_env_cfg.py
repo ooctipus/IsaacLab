@@ -20,6 +20,9 @@ class AnymalCEnvMixin:
         self.scene.robot = anymal.ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")  # type: ignore
         self.terminations.base_contact.params["sensor_cfg"].body_names = "^(?!.*(?:FOOT|THIGH)).*$"
 
+        self.terminations.log_gait.params["async_pairs"] = ("LF_FOOT", "RF_FOOT"), ("RH_FOOT", "LH_FOOT"), ("LF_FOOT", "LH_FOOT"), ("RF_FOOT", "RH_FOOT")
+        self.terminations.log_gait.params["sync_pairs"] = (("LF_FOOT", "RH_FOOT"), ("RF_FOOT", "LH_FOOT"))
+
 
 @configclass
 class AnymalCSpotLocomotionPositionCommandEnvCfg(AnymalCEnvMixin, position_env_cfg.LocomotionPositionCommandEnvCfg):
