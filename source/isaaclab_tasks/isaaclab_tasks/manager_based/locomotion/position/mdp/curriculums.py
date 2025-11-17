@@ -597,7 +597,7 @@ def stricten_success_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], term: 
     success_rate = success_monitor.get_success_rate().mean()
     if (success_rate > 0.1 and env.common_step_counter > 100):
         term_cfg.params["thresh"][2] = 0.5
-        term_cfg.params["thresh"][3] = 1.0
+        term_cfg.params["thresh"][3] = 0.5
 
 
 def activate_reward_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], reward_term: str):

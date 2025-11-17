@@ -197,9 +197,8 @@ class RewardsCfg:
     # task rewards
     success = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=100)
     mech_work = RewTerm(func=mdp.mechanical_work, weight=-0.005)
-    shock = RewTerm(func=mdp.incoming_wrench, weight=-0.0001)
     fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-10.0)
-    explore = RewTerm(func=mdp.exploration_reward, weight=0.15, params={"forward_only": True})
+    explore = RewTerm(func=mdp.exploration_reward, weight=0.30, params={"forward_only": True})
 
 
 @configclass
@@ -213,55 +212,55 @@ class TerminationsCfg:
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*foot).*$"), "threshold": 1.0},
     )
 
-    # pos, heading, vel, joint_pos thresholds
-    success = DoneTerm(func=mdp.success, params={"thresh": [0.4, 0.5, 1.0, 2.0]})
+    # pos, heading, vel_max, joint_pos_max thresholds
+    success = DoneTerm(func=mdp.success, params={"thresh": [0.4, 0.5, 1.0, 1.0], "robot_cfg": SceneEntityCfg("robot")})
 
     # logging purpose terms
-    log_mech = DoneTerm(
-        func=mdp.log,
-        params={
-            "func": mdp.mean_mech_energy_per_joint,
-            "log_key": "eval:env.scene['robot'].data.joint_names",
-            "category": "mechanical_energy",
-            "asset_cfg": SceneEntityCfg("robot")
-        })
+    # log_mech = DoneTerm(
+    #     func=mdp.log,
+    #     params={
+    #         "func": mdp.mean_mech_energy_per_joint,
+    #         "log_key": "eval:env.scene['robot'].data.joint_names",
+    #         "category": "mechanical_energy",
+    #         "asset_cfg": SceneEntityCfg("robot")
+    #     })
 
-    log_total_mech = DoneTerm(
-        func=mdp.log,
-        params={
-            "func": mdp.total_average_mech_energy_per_joint,
-            "log_key": "total_mechanical_energy",
-            "asset_cfg": SceneEntityCfg("robot")
-        })
+    # log_total_mech = DoneTerm(
+    #     func=mdp.log,
+    #     params={
+    #         "func": mdp.total_average_mech_energy_per_joint,
+    #         "log_key": "total_mechanical_energy",
+    #         "asset_cfg": SceneEntityCfg("robot")
+    #     })
 
-    log_per_body_shock = DoneTerm(
-        func=mdp.log,
-        params={
-            "func": mdp.mean_per_body_shock,
-            "log_key": "eval:env.scene['robot'].data.body_names",
-            "category": "shock",
-            "asset_cfg": SceneEntityCfg("robot")
-        })
+    # log_per_body_shock = DoneTerm(
+    #     func=mdp.log,
+    #     params={
+    #         "func": mdp.mean_per_body_shock,
+    #         "log_key": "eval:env.scene['robot'].data.body_names",
+    #         "category": "shock",
+    #         "asset_cfg": SceneEntityCfg("robot")
+    #     })
 
-    log_total_body_shock = DoneTerm(
-        func=mdp.log,
-        params={
-            "func": mdp.total_body_shock,
-            "log_key": "total_body_shock",
-            "asset_cfg": SceneEntityCfg("robot")
-        })
+    # log_total_body_shock = DoneTerm(
+    #     func=mdp.log,
+    #     params={
+    #         "func": mdp.total_body_shock,
+    #         "log_key": "total_body_shock",
+    #         "asset_cfg": SceneEntityCfg("robot")
+    #     })
 
-    log_gait = DoneTerm(
-        func=mdp.log,
-        params={
-            "func": mdp.gait,
-            "log_key": "gait_score",
-            "max_err": 0.2,
-            "sync_pairs": (("FL_foot", "RR_foot"), ("FR_foot", "RL_foot")),
-            "async_pairs": (("FL_foot", "FR_foot"), ("RR_foot", "RL_foot"), ("FL_foot", "RL_foot"), ("FR_foot", "RR_foot")),
-            "sensor_cfg": SceneEntityCfg("contact_forces"),
-        },
-    )
+    # log_gait = DoneTerm(
+    #     func=mdp.log,
+    #     params={
+    #         "func": mdp.gait,
+    #         "log_key": "gait_score",
+    #         "max_err": 0.2,
+    #         "sync_pairs": (("FL_foot", "RR_foot"), ("FR_foot", "RL_foot")),
+    #         "async_pairs": (("FL_foot", "FR_foot"), ("RR_foot", "RL_foot"), ("FL_foot", "RL_foot"), ("FR_foot", "RR_foot")),
+    #         "sensor_cfg": SceneEntityCfg("contact_forces"),
+    #     },
+    # )
 
 
 @configclass

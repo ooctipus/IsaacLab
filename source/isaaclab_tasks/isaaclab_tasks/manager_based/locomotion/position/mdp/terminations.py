@@ -41,10 +41,10 @@ def success(
     cmd: torch.Tensor = env.command_manager.get_command(command)
     dist = cmd[:, :3].norm(2, -1)
     head = cmd[:, 3].abs()
-    speed = asset.data.body_lin_vel_w.norm(2, dim=-1).amax(dim=1)
-    joint_pos = asset.data.joint_pos - asset.data.default_joint_pos
-    joint_pos_diff = torch.sum(torch.abs(joint_pos), dim=1)
-    return ((dist < thresh[0]) & (head < thresh[1]) & (speed < thresh[2])) & (joint_pos_diff < thresh[3])
+    speed = asset.data.body_lin_vel_w[:, robot_cfg.body_ids].norm(2, dim=-1).amax(dim=1)
+    joint_pos = asset.data.joint_pos[:, robot_cfg.joint_ids] - asset.data.default_joint_pos[:, robot_cfg.joint_ids]
+    joint_pos_diff = torch.abs(joint_pos).amax(dim=1)
+    return ((dist < thresh[0]) & (head < thresh[1])) & (speed < thresh[2]) & (joint_pos_diff < thresh[3])
 
 
 class log(ManagerTermBase):
