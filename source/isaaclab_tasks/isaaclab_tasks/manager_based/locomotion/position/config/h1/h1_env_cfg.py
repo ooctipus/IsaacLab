@@ -29,9 +29,9 @@ class H1EnvMixin:
         self.events.add_base_mass.params["asset_cfg"].body_names = "torso_link"
         self.terminations.base_contact.params["sensor_cfg"].body_names = "^(?!.*ankle_link).*$"
         self.viewer.body_name = "torso_link"
-
-        self.terminations.log_gait.params["async_pairs"] = (("left_ankle_link", "right_ankle_link"),)
-        self.terminations.log_gait.params["sync_pairs"] = ()
+        if hasattr(self.terminations, "log_gait"):
+            self.terminations.log_gait.params["async_pairs"] = (("left_ankle_link", "right_ankle_link"),)
+            self.terminations.log_gait.params["sync_pairs"] = ()
 
 
 @configclass

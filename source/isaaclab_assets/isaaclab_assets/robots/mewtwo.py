@@ -3,25 +3,20 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Configuration for the Mewtwo robots.
+"""Configuration for the Mewtwo robots."""
 
-"""
+import os
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
+from isaaclab_assets import ISAACLAB_ASSETS_DATA_DIR
 
 ##
 # Configuration - Actuators.
 ##
 
-MEWTWO_IMPLICIT_ACTUATOR_CFG = ImplicitActuatorCfg(
-    joint_names_expr=[".*"],
-    effort_limit=80.0,
-    velocity_limit=7.5,
-    stiffness={".*": 150.0},
-    damping={".*": 5.0},
-)
+
 
 
 MEWTWO_LEG_IMPLICIT_ACTUATOR_CFG = ImplicitActuatorCfg(
@@ -78,7 +73,7 @@ MEWTWO_TAIL_IMPLICIT_ACTUATOR_CFG = ImplicitActuatorCfg(
 
 MEWTWO_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path="/home/zhengyuz/Downloads/Mewtwo/mewtwo.usd",
+        usd_path=os.path.join(ISAACLAB_ASSETS_DATA_DIR, "Robots", "Mewtwo", "mewtwo.usd"),
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
