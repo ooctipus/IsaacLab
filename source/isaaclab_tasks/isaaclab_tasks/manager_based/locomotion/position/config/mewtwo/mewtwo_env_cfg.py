@@ -8,7 +8,7 @@
 ##
 import isaaclab_assets.robots.mewtwo as mewtwo
 from isaaclab.utils import configclass
-
+from ...mdp import negative_y_exploration_reward
 from ... import position_env_cfg
 
 
@@ -24,9 +24,11 @@ class MewtwoEnvMixin:
         self.viewer.body_name = "Torso"
         self.terminations.base_contact.params["sensor_cfg"].body_names = "^(?!.*(?:Toe|Thumb|Index|Pinky)).*$"
         self.terminations.success.params["robot_cfg"].joint_names = "^(?!.*(?:Toe*|Thumb*|Index*|Pinky*|Coccyx.*)).*$"
-
-        self.terminations.log_gait.params["async_pairs"] = (("RightToe", "LeftToe"),)
-        self.terminations.log_gait.params["sync_pairs"] = ()
+        self.terminations.success.params["robot_cfg"].body_names = "^(?!.*(?:Toe*|Thumb*|Index*|Pinky*|Coccyx.*)).*$"
+        self.rewards.explore.func = negative_y_exploration_reward
+        if hasattr(self.terminations, "log_gait"):
+            self.terminations.log_gait.params["async_pairs"] = (("RightToe", "LeftToe"),)
+            self.terminations.log_gait.params["sync_pairs"] = ()
 
 
 @configclass

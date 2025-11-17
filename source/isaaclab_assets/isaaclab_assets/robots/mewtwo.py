@@ -8,9 +8,8 @@
 """
 
 import isaaclab.sim as sim_utils
-from isaaclab.actuators import ActuatorNetLSTMCfg, DCMotorCfg, ImplicitActuatorCfg
+from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
-from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
 
 ##
 # Configuration - Actuators.
@@ -24,25 +23,53 @@ MEWTWO_IMPLICIT_ACTUATOR_CFG = ImplicitActuatorCfg(
     damping={".*": 5.0},
 )
 
-MEWTWO_SIMPLE_ACTUATOR_CFG = DCMotorCfg(
-    joint_names_expr=[".*HAA", ".*HFE", ".*KFE"],
-    saturation_effort=120.0,
-    effort_limit=80.0,
-    velocity_limit=7.5,
-    stiffness={".*": 40.0},
-    damping={".*": 5.0},
+
+MEWTWO_LEG_IMPLICIT_ACTUATOR_CFG = ImplicitActuatorCfg(
+    joint_names_expr=[r".*(Torso|Waist|Coccyx_col1|Thigh|Calf|Heel).*"],
+    effort_limit_sim=300,
+    stiffness={
+        r".*(Torso|Waist|Calf|Heel).*": 150,
+        r".*(Thigh|Coccyx_col1).*": 200.0,
+    },
+    damping={r".*(Torso|Waist|Thigh|Coccyx_col1|Calf|Heel).*": 5.0},
 )
-"""Configuration for ANYdrive 3.x with DC actuator model."""
+
+MEWTWO_ARM_IMPLICIT_ACTUATOR_CFG = ImplicitActuatorCfg(
+    joint_names_expr=[r".*(Brachium|Forearm).*"],
+    effort_limit_sim=120,
+    stiffness={r".*(Brachium|Forearm).*": 40},
+    damping={r".*(Brachium|Forearm|Palm).*": 5.0},
+)
 
 
-MEWTWO_LSTM_ACTUATOR_CFG = ActuatorNetLSTMCfg(
-    joint_names_expr=[".*HAA", ".*HFE", ".*KFE"],
-    network_file=f"{ISAACLAB_NUCLEUS_DIR}/ActuatorNets/ANYbotics/anydrive_3_lstm_jit.pt",
-    saturation_effort=120.0,
-    effort_limit=80.0,
-    velocity_limit=7.5,
+MEWTWO_FEET_IMPLICIT_ACTUATOR_CFG = ImplicitActuatorCfg(
+    joint_names_expr=[r".*Toe.*"],
+    effort_limit_sim=100,
+    stiffness={r".*Toe.*": 20},
+    damping={r".*Toe.*": 4.0},
 )
-"""Configuration for ANYdrive 3.0 (used on ANYmal-C) with LSTM actuator model."""
+
+
+MEWTWO_HAND_IMPLICIT_ACTUATOR_CFG = ImplicitActuatorCfg(
+    joint_names_expr=[r".*(Palm|Distal|Proximal).*"],
+    effort_limit_sim=30,
+    stiffness={r".*(Palm|Distal|Proximal).*": 40.0},
+    damping={r".*(Palm|Distal|Proximal).*": 1.0},
+)
+
+MEWTWO_HEAD_IMPLICIT_ACTUATOR_CFG = ImplicitActuatorCfg(
+    joint_names_expr=[r".*(Neck|Head).*"],
+    effort_limit_sim=100,
+    stiffness={r".*(Neck|Head).*": 40.0},
+    damping={r".*(Neck|Head).*": 5.0},
+)
+
+MEWTWO_TAIL_IMPLICIT_ACTUATOR_CFG = ImplicitActuatorCfg(
+    joint_names_expr=[r".*Coccyx_(col2|col3|col4|col5).*"],
+    effort_limit_sim=100,
+    stiffness={r".*Coccyx_(col2|col3|col4|col5).*": 40.0},
+    damping={r".*Coccyx_(col2|col3|col4|col5).*": 5.0},
+)
 
 
 ##
@@ -73,13 +100,10 @@ MEWTWO_CFG = ArticulationCfg(
             # 6-DOF / multi-DOF with explicit values
             "WaistJoint:0": 0.0,
             "WaistJoint:1": 0.0,
-
             "TorsoJoint:0": -0.22689280275926285,  # -13 deg
             "TorsoJoint:1": 0.0,
-
             "NeckJoint:0": 0.0,
             "NeckJoint:1": 0.0,
-
             "Coccyx_col1Joint:0": 0.0,
             "Coccyx_col1Joint:1": 0.2984513,
             "Coccyx_col2Joint:0": 0.436332,
@@ -90,16 +114,18 @@ MEWTWO_CFG = ArticulationCfg(
             "Coccyx_col4Joint:1": -0.349066,
             "Coccyx_col5Joint:0": 0.19198621771937624,
             "Coccyx_col5Joint:1": 0.0,
-
             "HeadJoint": 0.0,
-
-            # Catch-all zeroing patterns (NO overlapping explicit names!)
-            # Zero all limbs/feet/forearms/brachiums etc.
             r"(Left|Right)(Palm|Thigh|Calf|Heel|Toe|Forearm|Brachium).*": 0.0,
-            # Zero all proximal/distal finger joints
             r"(Left|Right)(Distal|Proximal).*": 0.0,
         },
     ),
-    actuators={"legs": MEWTWO_IMPLICIT_ACTUATOR_CFG},
+    actuators={
+        "head": MEWTWO_HEAD_IMPLICIT_ACTUATOR_CFG,
+        "leg": MEWTWO_LEG_IMPLICIT_ACTUATOR_CFG,
+        "feet": MEWTWO_FEET_IMPLICIT_ACTUATOR_CFG,
+        "arm": MEWTWO_ARM_IMPLICIT_ACTUATOR_CFG,
+        "hand": MEWTWO_HAND_IMPLICIT_ACTUATOR_CFG,
+        "tail": MEWTWO_TAIL_IMPLICIT_ACTUATOR_CFG
+    },
     soft_joint_pos_limit_factor=0.95,
 )

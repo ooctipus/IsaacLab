@@ -56,6 +56,30 @@ def exploration_reward(
     return cos_align * forward_weight
 
 
+def negative_y_exploration_reward(
+    env: ManagerBasedRLEnv,
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    forward_only: bool = False,
+):
+    # Retrieve the robot and target data
+    robot: Articulation = env.scene[robot_cfg.name]
+    base_velocity = robot.data.root_lin_vel_b  # Robot's current base velocity vector
+    target_position = env.command_manager.get_command("goal_point")[:, :3]  # Target position relative to robot base
+
+    # Base directional alignment (cosine similarity)
+    cos_align = F.cosine_similarity(base_velocity[:, :3], target_position, dim=-1, eps=1e-6)
+
+    if not forward_only:
+        return cos_align
+
+    # Forward preference weight: positive forward component relative to speed
+    speed = torch.linalg.vector_norm(base_velocity, ord=2, dim=-1)
+    forward_comp = (-base_velocity[:, 1]).clamp_min(0)
+    forward_weight = forward_comp / (speed + 1e-6)
+
+    return cos_align * forward_weight
+
+
 def mechanical_work(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot")) -> torch.Tensor:
     robot: Articulation = env.scene[robot_cfg.name]
     work = torch.sum((robot.data.applied_torque * robot.data.joint_vel).abs(), dim=1) * env.step_dt
