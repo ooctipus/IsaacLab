@@ -17,8 +17,6 @@ from isaaclab_assets import ISAACLAB_ASSETS_DATA_DIR
 ##
 
 
-
-
 MEWTWO_LEG_IMPLICIT_ACTUATOR_CFG = ImplicitActuatorCfg(
     joint_names_expr=[r".*(Torso|Waist|Coccyx_col1|Thigh|Calf|Heel).*"],
     effort_limit_sim=300,

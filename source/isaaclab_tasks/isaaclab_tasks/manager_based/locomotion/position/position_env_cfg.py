@@ -208,6 +208,8 @@ class TerminationsCfg:
 
     drop = DoneTerm(func=mdp.root_height_below_minimum, params={"minimum_height": -20})
 
+    abnormal_robot = DoneTerm(func=mdp.abnormal_robot_state)
+
     base_contact = DoneTerm(
         func=mdp.illegal_contact,
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*foot).*$"), "threshold": 1.0},

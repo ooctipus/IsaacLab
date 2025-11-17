@@ -47,6 +47,13 @@ def success(
     return ((dist < thresh[0]) & (head < thresh[1])) & (speed < thresh[2]) & (joint_pos_diff < thresh[3])
 
 
+def abnormal_robot_state(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Terminating environment when violation of velocity limits detects, this usually indicates unstable physics caused
+    by very bad, or aggressive action"""
+    robot: Articulation = env.scene[asset_cfg.name]
+    return (robot.data.joint_vel.abs() > (robot.data.joint_vel_limits * 2)).any(dim=1)
+
+
 class log(ManagerTermBase):
 
     def __init__(self, cfg: DoneTermCfg, env: ManagerBasedRLEnv):
