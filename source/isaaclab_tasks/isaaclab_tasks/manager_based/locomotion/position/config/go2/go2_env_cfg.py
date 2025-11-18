@@ -20,6 +20,14 @@ class Go2EnvMixin:
         self.scene.robot = UNITREE_GO2_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")  # type: ignore
         self.scene.robot.spawn.usd_path="https://uwlab-assets.s3.us-west-004.backblazeb2.com/Robots/Unitree/Go2/go2.usd"
         self.scene.robot.spawn.articulation_props.enabled_self_collisions = True
+        # original joint position felt a more squatted stand, whereas this stands higher and seemed more elegant.
+        self.scene.robot.init_state.joint_pos = {
+            ".*L_hip_joint": 0.0,
+            ".*R_hip_joint": 0.0,
+            "F[L,R]_thigh_joint": 0.35,
+            "R[L,R]_thigh_joint": 0.35,
+            ".*_calf_joint": -0.873,
+        }
 
 
 @configclass
