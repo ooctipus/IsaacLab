@@ -11,7 +11,7 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, R
 class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 48
     max_iterations = 20000
-    save_interval = 500
+    save_interval = 200
     resume = False
     experiment_name = "position_command"
     policy = RslRlPpoActorCriticCfg(

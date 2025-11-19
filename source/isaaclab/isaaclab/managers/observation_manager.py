@@ -400,6 +400,12 @@ class ObservationManager(ManagerBase):
                 obs = obs.clip_(min=term_cfg.clip[0], max=term_cfg.clip[1])
             if term_cfg.scale is not None:
                 obs = obs.mul_(term_cfg.scale)
+            if not torch.isfinite(obs).all():
+                print(
+                    f"[ObservationManager] NaN/Inf detected in observation term '{term_name}' "
+                    f"for group '{group_name}'"
+                )
+                torch.where(torch.isfinite(obs), obs, torch.zeros_like(obs))
             # Update the history buffer if observation term has history enabled
             if term_cfg.history_length > 0:
                 circular_buffer = self._group_obs_term_history_buffer[group_name][term_name]

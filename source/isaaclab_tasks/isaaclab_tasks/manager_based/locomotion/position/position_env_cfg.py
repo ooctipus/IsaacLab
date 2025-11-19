@@ -186,7 +186,7 @@ class EventsCfg:
         func=mdp.reset_joints_by_scale,
         mode="reset",
         params={
-            "position_range": (0.5, 1.5),
+            "position_range": (-1.0, 1.0),
             "velocity_range": (0.0, 0.0),
         },
     )
@@ -199,7 +199,7 @@ class RewardsCfg:
     mech_work = RewTerm(func=mdp.mechanical_work, weight=-0.01)
     # shock = RewTerm(func=mdp.incoming_wrench, weight=-0.00005)
     fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-10.0)
-    explore = RewTerm(func=mdp.exploration_reward, weight=0.30, params={"forward_only": True})
+    explore = RewTerm(func=mdp.exploration_reward, weight=2.0, params={"forward_only": True})
 
 
 @configclass
@@ -355,7 +355,7 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
     terminations: TerminationsCfg = TerminationsCfg()
     events: EventsCfg = EventsCfg()
     curriculum: CurriculumCfg = CurriculumCfg()
-    viewer: ViewerCfg = ViewerCfg(eye=(4.0, 7.0, 7.0), origin_type="asset_body", asset_name="robot", body_name="base")
+    viewer: ViewerCfg = ViewerCfg(eye=(4.0/4, 7.0/4, 7.0/4), origin_type="asset_body", asset_name="robot", body_name="base")
     variants = variants
 
     def __post_init__(self):

@@ -16,10 +16,10 @@ from ... import position_env_cfg
 @configclass
 class MewtwoActionsCfg:
     joint_pos = mdp.JointPositionActionCfg(
-        asset_name="robot", joint_names=["^(?!.*Toe.* ).*$"], scale=0.2, use_default_offset=True
+        asset_name="robot", joint_names=["^(?!.*(Toe|Heel).* ).*$"], scale=0.2, use_default_offset=True
     )
     arm_pos = mdp.DefaultJointPositionStaticActionCfg(
-        asset_name="robot", joint_names=[".*Toe.*"], scale=1, use_default_offset=True
+        asset_name="robot", joint_names=[".*(Toe|Heel).*"], scale=1, use_default_offset=True
     )
 
 
@@ -35,7 +35,7 @@ class MewtwoEnvMixin:
         # self.events.add_base_mass.params["asset_cfg"].body_names = "Torso"
         del self.events.add_base_mass
         self.viewer.body_name = "Torso"
-        self.terminations.base_contact.params["sensor_cfg"].body_names = "^(?!.*(?:Toe|Thumb|Index|Pinky)).*$"
+        self.terminations.base_contact.params["sensor_cfg"].body_names = "^(?!.*(?:Toe|Thumb|Index|Pinky|Coccyx.*)).*$"
         self.terminations.success.params["robot_cfg"].joint_names = "^(?!.*(?:Toe*|Thumb*|Index*|Pinky*|Coccyx.*)).*$"
         self.terminations.success.params["robot_cfg"].body_names = "^(?!.*(?:Toe*|Thumb*|Index*|Pinky*|Coccyx.*)).*$"
         self.rewards.explore.func = negative_y_exploration_reward
