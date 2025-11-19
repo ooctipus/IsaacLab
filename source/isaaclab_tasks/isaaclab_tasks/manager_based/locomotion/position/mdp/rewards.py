@@ -83,6 +83,7 @@ def negative_y_exploration_reward(
 def mechanical_work(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot")) -> torch.Tensor:
     robot: Articulation = env.scene[robot_cfg.name]
     work = torch.sum((robot.data.applied_torque * robot.data.joint_vel).abs(), dim=1) * env.step_dt
+    work = torch.where(torch.isfinite(work), work, torch.zeros_like(work))
     return work
 
 
