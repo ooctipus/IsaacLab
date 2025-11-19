@@ -197,7 +197,7 @@ class RewardsCfg:
     # task rewards
     success = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=100)
     mech_work = RewTerm(func=mdp.mechanical_work, weight=-0.01)
-    shock = RewTerm(func=mdp.incoming_wrench, weight=-0.00005)
+    # shock = RewTerm(func=mdp.incoming_wrench, weight=-0.00005)
     fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-10.0)
     explore = RewTerm(func=mdp.exploration_reward, weight=0.30, params={"forward_only": True})
 
