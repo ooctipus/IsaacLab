@@ -18,13 +18,13 @@ from isaaclab_assets import ISAACLAB_ASSETS_DATA_DIR
 
 
 MEWTWO_LEG_IMPLICIT_ACTUATOR_CFG = ImplicitActuatorCfg(
-    joint_names_expr=[r".*(Torso|Waist|Coccyx_col1|Thigh|Calf|Heel).*"],
+    joint_names_expr=[r".*(Torso|Waist|Coccyx_col1|Thigh|Calf).*"],
     effort_limit_sim=300,
     stiffness={
         r".*(Torso|Waist|Calf|Heel).*": 150,
         r".*(Thigh|Coccyx_col1).*": 200.0,
     },
-    damping={r".*(Torso|Waist|Thigh|Coccyx_col1|Calf|Heel).*": 5.0},
+    damping={r".*(Torso|Waist|Thigh|Coccyx_col1|Calf).*": 5.0},
 )
 
 MEWTWO_ARM_IMPLICIT_ACTUATOR_CFG = ImplicitActuatorCfg(
@@ -36,10 +36,10 @@ MEWTWO_ARM_IMPLICIT_ACTUATOR_CFG = ImplicitActuatorCfg(
 
 
 MEWTWO_FEET_IMPLICIT_ACTUATOR_CFG = ImplicitActuatorCfg(
-    joint_names_expr=[r".*Toe.*"],
-    effort_limit_sim=100,
-    stiffness={r".*Toe.*": 20},
-    damping={r".*Toe.*": 4.0},
+    joint_names_expr=[r".*(Toe|Heel).*"],
+    effort_limit_sim=50,
+    stiffness={r".*(Toe|Heel).*": 20},
+    damping={r".*(Toe|Heel).*": 4.0},
 )
 
 
