@@ -54,6 +54,12 @@ def abnormal_robot_state(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = Sce
     return (robot.data.joint_vel.abs() > (robot.data.joint_vel_limits * 2)).any(dim=1)
 
 
+def speed_terminate(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot"), speed_limit=2.0) -> torch.Tensor:
+    robot: Articulation = env.scene[robot_cfg.name]
+    speeding = (torch.norm(robot.data.root_vel_w, dim=-1) > speed_limit) & (env.episode_length_buf * env.step_dt > 0.5)
+    return speeding
+
+
 class log(ManagerTermBase):
 
     def __init__(self, cfg: DoneTermCfg, env: ManagerBasedRLEnv):

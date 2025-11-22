@@ -8,7 +8,6 @@
 ##
 import isaaclab_assets.robots.mewtwo as mewtwo
 from isaaclab.utils import configclass
-from ...mdp import negative_y_exploration_reward
 from ... import mdp as mdp
 from ... import position_env_cfg
 
@@ -21,7 +20,7 @@ class MewtwoActionsCfg:
     # arm_pos = mdp.DefaultJointPositionStaticActionCfg(
     #     asset_name="robot", joint_names=[".*(Toe|Heel).*"], scale=1, use_default_offset=True
     # )
-    
+
     joint_pos = mdp.JointPositionActionCfg(
         asset_name="robot", joint_names=[".*"], scale=0.2, use_default_offset=True
     )
