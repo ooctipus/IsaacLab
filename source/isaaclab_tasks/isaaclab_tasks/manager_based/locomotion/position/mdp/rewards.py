@@ -56,12 +56,53 @@ def exploration_reward(
     return cos_align * forward_weight
 
 
-def mechanical_work(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot")) -> torch.Tensor:
+def mechanical_power(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot")) -> torch.Tensor:
     robot: Articulation = env.scene[robot_cfg.name]
-    work = torch.sum((robot.data.applied_torque * robot.data.joint_vel).abs(), dim=1) * env.step_dt
+    work = torch.sum((robot.data.applied_torque * robot.data.joint_vel).abs(), dim=1)
     work = torch.where(torch.isfinite(work), work, torch.zeros_like(work))
     return work
 
+
+# class total(ManagerTermBase):
+
+#     def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
+#         """Initialize the term.
+
+#         Args:
+#             cfg: The configuration of the reward.
+#             env: The RL environment instance.
+#         """
+#         super().__init__(cfg, env)
+#         self.reward = torch.zeros(env.num_envs, device=env.device)
+#         self.current_work = torch.zeros(env.num_envs, device=env.device)
+#         self.accumulated_work = torch.zeros(env.num_envs, device=env.device)
+#         self.distance_traveled = torch.zeros(env.num_envs, device=env.device)
+
+#     def reset(self, env_ids: Sequence[int] | None = None):
+#         if env_ids is None:
+#             env_ids = slice(None)
+
+#         self.accumulated_work[env_ids] = 0.0
+#         self.distance_traveled[env_ids] = 0.0
+
+#     def __call__(self, env: ManagerBasedRLEnv, asset_cfg=SceneEntityCfg("robot")) -> torch.Tensor:
+#         robot: Articulation = env.scene[asset_cfg.name]
+#         self.current_work[:] = torch.sum((robot.data.applied_torque * robot.data.joint_vel).abs(), dim=1) * env.step_dt
+#         self.current_work[~torch.isfinite(self.current_work)] = 0.0
+#         self.accumulated_work += self.current_work
+
+#         success_mask = env.termination_manager.get_term("success")
+#         self.distance_traveled[success_mask] = robot.data.root_pos_w[success_mask] - env.scene.env_origins[success_mask]
+
+#         self.accumulated_work / self.distance_traveled
+
+#         success_mask = env.termination_manager.get_term("success")
+#         self.reward[success_mask] = self.accumulated_work[success_mask]
+#         self.reward[~env.termination_manager.get_term("success")] = 0.0
+        
+#         distance_traveled = robot.data.root_pos_w[success_mask] - env.scene.env_origins[success_mask]
+#         distance_traveled
+#         return self.reward
 
 def speeding(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot"), speed_limit=1.5) -> torch.Tensor:
     robot: Articulation = env.scene[robot_cfg.name]

@@ -195,10 +195,10 @@ class EventsCfg:
 @configclass
 class RewardsCfg:
     # task rewards
-    success = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=100)
-    mech_work = RewTerm(func=mdp.mechanical_work, weight=-0.01)
-    fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact", "speed"]}, weight=-10.0)
-    explore = RewTerm(func=mdp.exploration_reward, weight=0.3, params={"forward_only": True})
+    success = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=50.0)
+    mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.05)
+    fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-5.0)
+    explore = RewTerm(func=mdp.exploration_reward, weight=0.03, params={"forward_only": True})
 
 
 @configclass
@@ -214,7 +214,7 @@ class TerminationsCfg:
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*foot).*$"), "threshold": 1.0},
     )
 
-    speed = DoneTerm(func=mdp.speed_terminate, params={"speed_limit": 2.5})  # human running average speed
+    speed = DoneTerm(func=mdp.speed_terminate, params={"speed_limit": 3.5})  # human running average speed
 
     # pos, heading, vel_max, joint_pos_max thresholds
     success = DoneTerm(func=mdp.success, params={"thresh": [0.4, 0.5, 1.0, 1.0], "robot_cfg": SceneEntityCfg("robot")})
@@ -322,6 +322,11 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.physx.gpu_found_lost_pairs_capacity = 2**25
         self.sim.physx.gpu_collision_stack_size = 2**31
         self.sim.physx.gpu_max_rigid_patch_count = 5 * 2**20
+
+        unscaling_factor = 1 / (self.sim.dt * self.decimation)
+        self.rewards.mech_work.weight *= unscaling_factor
+        self.rewards.fail.weight *= unscaling_factor
+        self.rewards.success.weight *= unscaling_factor
 
         # update sensor update periods
         # we tick all the sensors based on the smallest update period (physics update period)
