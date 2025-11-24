@@ -23,11 +23,13 @@ class RelativeStateCommandCfg(CommandTermCfg):
     asset_name: str = MISSING
     """Name of the asset in the environment for which the commands are generated."""
 
-    simple_heading: bool = MISSING
-    """Whether to use simple heading or not.
+    pos_std: float = 0.5
 
-    If True, the heading is in the direction of the target position.
-    """
+    rot_std: float = 0.5
+
+    lin_vel_std: float = 0.5
+
+    ang_vel_std: float = 0.5
 
     @configclass
     class Commands:
@@ -79,7 +81,6 @@ class RelativeStateCommandCfg(CommandTermCfg):
 
         pos_z: tuple[float, float] | None = MISSING
         """Range for the y position (in m)."""
-
 
     @configclass
     class PoseCommands(Commands):

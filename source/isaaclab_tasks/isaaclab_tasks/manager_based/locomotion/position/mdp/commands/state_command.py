@@ -15,7 +15,7 @@ from isaaclab.assets import Articulation
 from isaaclab.managers import CommandTerm
 from isaaclab.utils import configclass
 from isaaclab.markers import VisualizationMarkers
-from isaaclab.utils.math import euler_xyz_from_quat, quat_from_euler_xyz, quat_inv, quat_mul
+from isaaclab.utils.math import euler_xyz_from_quat, quat_from_euler_xyz, quat_inv, quat_mul, subtract_frame_transforms, quat_apply_inverse
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
@@ -61,7 +61,8 @@ class RelativeStateCommand(CommandTerm):
         self.rand = torch.empty(self.num_envs, 12, device=self.device)
         self.reward = torch.zeros(self.num_envs, device=self.device)
         # --- pre-allocated / constant tensors to avoid per-step allocations ---
-        self._reward_scales = torch.tensor([0.5, 0.4, 0.25, 0.25], device=self.device)  # (pos, rot, linvel, angvel)
+        reward_scale = [self.cfg.pos_std, self.cfg.rot_std, self.cfg.lin_vel_std, self.cfg.ang_vel_std]
+        self._reward_scales = torch.tensor(reward_scale, device=self.device)  # (pos, rot, linvel, angvel)
         self._identity_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
         self._active_counts = torch.zeros(self.num_envs, device=self.device)
 
@@ -149,7 +150,7 @@ class RelativeStateCommand(CommandTerm):
         # --- relative position ---
         rel_pos = self.cmd_buf[:, 0, :3] - self.cmd_buf[:, 2, :3]
         rel_pos *= self.cmd_mask[:, :3]
-        self.cmd_buf[:, 1, :3] = rel_pos
+        self.cmd_buf[:, 1, :3] = quat_apply_inverse(self.robot.data.root_quat_w, rel_pos)
 
         # --- relative orientation---
         quat_des = quat_from_euler_xyz(self.cmd_buf[:, 0, 3], self.cmd_buf[:, 0, 4], self.cmd_buf[:, 0, 5])
@@ -158,9 +159,20 @@ class RelativeStateCommand(CommandTerm):
         self.cmd_buf[:, 1, 3:6] = euler_diff
 
         # --- relative velocities ---
-        rel_vel = self.cmd_buf[:, 0, 6:12] - self.cmd_buf[:, 2, 6:12]
-        rel_vel *= self.cmd_mask[:, 6:12]
-        self.cmd_buf[:, 1, 6:12] = rel_vel
+        # split lin / ang, compute error in world frame
+        rel_lin = self.cmd_buf[:, 0, 6:9] - self.cmd_buf[:, 2, 6:9]   # (N,3)
+        rel_ang = self.cmd_buf[:, 0, 9:12] - self.cmd_buf[:, 2, 9:12] # (N,3)
+
+        # rotate into body frame
+        root_quat_w = self.robot.data.root_quat_w
+        rel_lin_b = quat_apply_inverse(root_quat_w, rel_lin)
+        rel_ang_b = quat_apply_inverse(root_quat_w, rel_ang)
+
+        rel_lin_b *= self.cmd_mask[:, 6:9]
+        rel_ang_b *= self.cmd_mask[:, 9:12]
+
+        self.cmd_buf[:, 1, 6:9] = rel_lin_b
+        self.cmd_buf[:, 1, 9:12] = rel_ang_b
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         if debug_vis:

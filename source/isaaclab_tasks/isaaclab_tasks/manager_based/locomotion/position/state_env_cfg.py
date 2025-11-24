@@ -105,7 +105,10 @@ class CommandsCfg:
     goal_point = mdp.RelativeStateCommandCfg(
         asset_name="robot",
         resampling_time_range=(10.0, 10.0),
-        simple_heading=False,
+        pos_std=0.4,
+        rot_std=0.5,
+        lin_vel_std=0.5,
+        ang_vel_std=0.5,
         debug_vis=True,
         commands={
             "pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(
@@ -217,7 +220,7 @@ class RewardsCfg:
     # task rewards
     # success = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=50.0)
     task_reward = RewTerm(func=mdp.command_reward, weight=1.0)
-    # mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0002)
+    mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0002)
     fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-5.0)
     # explore = RewTerm(func=mdp.exploration_reward, weight=0.3, params={"forward_only": True})
 
