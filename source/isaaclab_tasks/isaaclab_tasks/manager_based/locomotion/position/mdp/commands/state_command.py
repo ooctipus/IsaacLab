@@ -288,8 +288,8 @@ class RelativeStateCommand(CommandTerm):
         self._err.sqrt_()
 
         # vectorized scaling + nonlinearity
-        group_r = 1.0 - torch.tanh(self._err / self._reward_scales)  # (N, 4) / (1, 4) → (N, 4)
-        self.reward = group_r.mean(dim=1)
+        group_r = 1.0 - torch.tanh(self._err / self._reward_scales)
+        self.reward = group_r.prod(dim=1)
         return self.reward
 
 # class TerrainBasedRelativeStateCommand(RelativeStateCommand):
