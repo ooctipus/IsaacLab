@@ -105,10 +105,10 @@ class CommandsCfg:
     goal_point = mdp.RelativeStateCommandCfg(
         asset_name="robot",
         resampling_time_range=(10.0, 10.0),
-        pos_std=0.4,
-        rot_std=0.5,
-        lin_vel_std=0.5,
-        ang_vel_std=0.5,
+        pos_std=0.2,
+        rot_std=0.3,
+        lin_vel_std=0.2,
+        ang_vel_std=0.2,
         debug_vis=True,
         commands={
             "pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(
@@ -235,6 +235,7 @@ class TerminationsCfg:
         func=mdp.illegal_contact,
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*foot).*$"), "threshold": 1.0},
     )
+
 
 @configclass
 class CurriculumCfg:
