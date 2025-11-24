@@ -64,7 +64,6 @@ class RelativeStateCommand(CommandTerm):
         reward_scale = [self.cfg.pos_std, self.cfg.rot_std, self.cfg.lin_vel_std, self.cfg.ang_vel_std]
         self._reward_scales = torch.tensor(reward_scale, device=self.device).view(1, 4)
         self._identity_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
-        self._active_counts = torch.zeros(self.num_envs, device=self.device)
 
         # --- scratch buffers (avoid per-step allocations) ---
         self._rel = torch.empty(self.num_envs, 12, device=self.device)  # rel pos, euler (rot), lin vel, ang vel
