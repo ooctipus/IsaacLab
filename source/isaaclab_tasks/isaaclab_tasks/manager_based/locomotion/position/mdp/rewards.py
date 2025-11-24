@@ -19,6 +19,7 @@ from isaaclab.sensors import ContactSensor
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
     from isaaclab.managers import RewardTermCfg
+    from .commands import RelativeStateCommand
 
 
 def task_reward(env: ManagerBasedRLEnv, std: float = 0.5):
@@ -63,9 +64,53 @@ def mechanical_power(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot")) 
     return work
 
 
-def command_reward(env: ManagerBasedRLEnv):
-    command_term = env.command_manager.get_term("goal_point")
-    return command_term.get_task_reward()
+class efficiency_weigh_success(ManagerTermBase):
+    def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.robot: Articulation = env.scene[cfg.params["asset_cfg"].name]
+        self.episode_reward = torch.zeros(env.num_envs, device=env.device)
+        self.episode_power = torch.zeros(env.num_envs, device=env.device)
+
+    def __call__(self, env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+        command_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
+        power = torch.sum((self.robot.data.applied_torque * self.robot.data.joint_vel).abs(), dim=1)
+
+        self.episode_reward += command_term.get_task_reward()
+        self.episode_power += power
+
+        timeout_mask = env.termination_manager.get_term("time_out")
+        avg_pwr = self.episode_power / env.episode_length_buf.clamp_min(1.0)
+        reward = torch.where(timeout_mask, self.episode_reward * (300 / avg_pwr), torch.zeros_like(self.episode_reward))
+
+        self.episode_reward[env.termination_manager.dones] = 0.0
+        self.episode_power[env.termination_manager.dones] = 0.0
+        env.extras["log"]["Metrics/average_power"] = avg_pwr.mean()
+        return reward
+
+
+def position_tracking(env: ManagerBasedRLEnv, std: float):
+    command_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
+    position_error = command_term.get_state_error()[:, 0]
+    return 1 - torch.tanh(position_error / std)
+
+
+def rotation_tracking(env: ManagerBasedRLEnv, std: float):
+    command_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
+    rotation_error = command_term.get_state_error()[:, 1]
+    return 1 - torch.tanh(rotation_error / std)
+
+
+def lin_vel_tracking(env: ManagerBasedRLEnv, std: float):
+    command_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
+    lin_vel_error = command_term.get_state_error()[:, 2]
+    return 1 - torch.tanh(lin_vel_error / std)
+
+
+def ang_vel_tracking(env: ManagerBasedRLEnv, std: float):
+    command_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
+    ang_vel_error = command_term.get_state_error()[:, 3]
+    return 1 - torch.tanh(ang_vel_error / std)
+
 
 # class total(ManagerTermBase):
 

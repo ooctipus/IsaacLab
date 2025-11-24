@@ -105,10 +105,10 @@ class CommandsCfg:
     goal_point = mdp.RelativeStateCommandCfg(
         asset_name="robot",
         resampling_time_range=(10.0, 10.0),
-        pos_std=0.2,
-        rot_std=0.3,
-        lin_vel_std=0.2,
-        ang_vel_std=0.2,
+        pos_std=0.5,
+        rot_std=0.5,
+        lin_vel_std=0.3,
+        ang_vel_std=0.3,
         debug_vis=True,
         commands={
             "pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(
@@ -218,9 +218,9 @@ class EventsCfg:
 @configclass
 class RewardsCfg:
     # task rewards
-    task_reward = RewTerm(func=mdp.command_reward, weight=0.4)
-    mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0002)
-    fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-5.0)
+    task_reward = RewTerm(func=mdp.efficiency_weigh_success, weight=0.4, params={"asset_cfg": SceneEntityCfg("robot")})
+    # mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0002)
+    fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact", "abnormal_robot"]}, weight=-10.0)
 
 
 @configclass

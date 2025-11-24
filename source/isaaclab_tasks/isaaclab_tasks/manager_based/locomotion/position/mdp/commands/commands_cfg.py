@@ -122,6 +122,23 @@ class RelativeStateCommandCfg(CommandTermCfg):
         ang_vel_z: tuple[float, float] | None = MISSING
         """Range for the angular-z velocity command (in rad/s)."""
 
+    @configclass
+    class TerrainCommands(Commands):
+        """Uniform distribution ranges for the position commands."""
+
+        spawn_key: str = "spawn"
+
+        target_key: str = "target"
+
+        roll: tuple[float, float] | None = MISSING
+        """Range for the base roll orientation (in radian)."""
+
+        pitch: tuple[float, float] | None = MISSING
+        """Range for the base pitch orientation (in radian)."""
+
+        yaw: tuple[float, float] | None = MISSING
+        """Range for the base yaw orientation (in radian)."""
+
     commands: dict[str, Commands] = {}
     """Distribution ranges for the position commands."""
 
@@ -151,44 +168,3 @@ class RelativeStateCommandCfg(CommandTermCfg):
     """The configuration for the current velocity visualization marker. Defaults to BLUE_ARROW_X_MARKER_CFG."""
 
     current_vel_visualizer_cfg.markers["arrow"].scale = (0.5, 0.5, 0.5)
-
-
-# @configclass
-# class TerrainBasedRelativeStateCommandCfg(RelativeStateCommandCfg):
-#     """Configuration for the terrain-based position command generator."""
-
-#     class_type = TerrainBasedRelativeStateCommand
-
-#     @configclass
-#     class Ranges:
-#         """Uniform distribution ranges for the position commands."""
-
-#         roll: tuple[float, float] | None = None
-#         """Range for the base roll orientation (in radian)."""
-
-#         pitch: tuple[float, float] | None = None
-#         """Range for the base pitch orientation (in radian)."""
-
-#         yaw: tuple[float, float] | None = None
-#         """Range for the base yaw orientation (in radian)."""
-
-#         lin_vel_x: tuple[float, float] | None = None
-#         """Range for the linear-x velocity command (in m/s)."""
-
-#         lin_vel_y: tuple[float, float] | None = None
-#         """Range for the linear-y velocity command (in m/s)."""
-
-#         lin_vel_z: tuple[float, float] | None = None
-#         """Range for the linear-z velocity command (in m/s)."""
-
-#         ang_vel_x: tuple[float, float] | None = None
-#         """Range for the angular-x velocity command (in rad/s)."""
-
-#         ang_vel_y: tuple[float, float] | None = None
-#         """Range for the angular-y velocity command (in rad/s)."""
-
-#         ang_vel_z: tuple[float, float] | None = None
-#         """Range for the angular-z velocity command (in rad/s)."""
-
-#     ranges: Ranges = MISSING
-#     """Distribution ranges for the sampled commands."""

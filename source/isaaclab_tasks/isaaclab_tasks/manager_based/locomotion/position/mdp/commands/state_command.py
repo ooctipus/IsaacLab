@@ -19,7 +19,7 @@ from isaaclab.utils.math import euler_xyz_from_quat, quat_from_euler_xyz, quat_i
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
-
+    from isaaclab.terrains import TerrainImporter
     from .commands_cfg import RelativeStateCommandCfg
 
 
@@ -75,16 +75,27 @@ class RelativeStateCommand(CommandTerm):
         self.metrics["error_angvel"] = torch.zeros(self.num_envs, device=self.device)
 
     def _build_spec(self, commands: dict[str, RelativeStateCommandCfg.Commands]) -> CommandSpec:
+        from .commands_cfg import RelativeStateCommandCfg
         num_cmd = len(commands)
         ranges = torch.zeros((len(commands), 12, 2), device=self.device)
         mask = torch.zeros((num_cmd, 12,), device=self.device, dtype=torch.bool)
 
         for cmd_id, val in enumerate(commands.values()):
             for data_id, data in enumerate(val.__dict__.values()):
-                if data is not None:
+                if data is not None and isinstance(data, tuple):
                     mask[cmd_id, data_id] = True
                     ranges[cmd_id, data_id, 0] = data[0]
                     ranges[cmd_id, data_id, 1] = data[1]
+
+            if isinstance(val, RelativeStateCommandCfg.TerrainCommands):
+                self.terrains: TerrainImporter = self._env.scene["terrain"]
+                if "target" not in self.terrains.flat_patches or "spawn" not in self.terrains.flat_patches:
+                    raise RuntimeError(
+                        "The terrain-based command generator requires a valid flat patch under 'target' and 'spawn'"
+                        f"in the terrain. Found: {list(self.terrains.flat_patches.keys())}"
+                    )
+                self.valid_targets: torch.Tensor = self.terrains.flat_patches[val.target_key]
+                self.valid_spawn: torch.Tensor = self.terrains.flat_patches[val.spawn_key]
 
         spec = self.CommandSpec(
             cardinal=len(commands),
@@ -279,7 +290,7 @@ class RelativeStateCommand(CommandTerm):
 
         return arrow_scale, arrow_quat
 
-    def get_task_reward(self):
+    def get_state_error(self):
         """Reward that minimizes position, rotation, lin/ang velocities with group scales."""
         # squared norms (no in-place on rel!)
         rel = self.cmd_buf[:, 1]  # (N, 12), maybe non-contiguous
@@ -287,63 +298,68 @@ class RelativeStateCommand(CommandTerm):
         torch.sum(rel_grouped * rel_grouped, dim=2, out=self._err)
         self._err.sqrt_()
 
+        return self._err
+
+    def get_task_reward(self):
+        self.get_state_error()
         # vectorized scaling + nonlinearity
         group_r = 1.0 - torch.tanh(self._err / self._reward_scales)
         self.reward = group_r.prod(dim=1)
         return self.reward
 
-# class TerrainBasedRelativeStateCommand(RelativeStateCommand):
-#     """Command generator that generates pose commands based on the terrain.
 
-#     This command generator samples the position commands from the valid patches of the terrain.
-#     The heading commands are either set to point towards the target or are sampled uniformly.
+class TerrainBasedRelativeStateCommand(RelativeStateCommand):
+    """Command generator that generates pose commands based on the terrain.
 
-#     It expects the terrain to have a valid flat patches under the key 'target'.
-#     """
+    This command generator samples the position commands from the valid patches of the terrain.
+    The heading commands are either set to point towards the target or are sampled uniformly.
 
-#     cfg: TerrainBasedRelativeStateCommandCfg
-#     """Configuration for the command generator."""
+    It expects the terrain to have a valid flat patches under the key 'target'.
+    """
 
-#     def __init__(self, cfg: TerrainBasedRelativeStateCommandCfg, env: ManagerBasedEnv):
-#         # initialize the base class
-#         super().__init__(cfg, env)
-#         # obtain the terrain asset
-#         self.terrain: TerrainImporter = env.scene["terrain"]
+    cfg: TerrainBasedRelativeStateCommandCfg
+    """Configuration for the command generator."""
 
-#         # obtain the valid targets from the terrain
-#         if "target" not in self.terrain.flat_patches:
-#             raise RuntimeError(
-#                 "The terrain-based command generator requires a valid flat patch under 'target' in the terrain."
-#                 f" Found: {list(self.terrain.flat_patches.keys())}"
-#             )
-#         # valid targets: (terrain_level, terrain_type, num_patches, 3)
-#         self.valid_targets: torch.Tensor = self.terrain.flat_patches["target"]
-#         self.valid_spawn: torch.Tensor = self.terrain.flat_patches["spawn"]
-#         self.marker_indices = torch.cat((
-#             torch.zeros(self.valid_targets.view(-1, 3).shape[0], dtype=torch.long, device=self.device),
-#             torch.ones(self.valid_spawn.view(-1, 3).shape[0], dtype=torch.long, device=self.device)
-#         ), dim=0)
+    def __init__(self, cfg: TerrainBasedRelativeStateCommandCfg, env: ManagerBasedEnv):
+        # initialize the base class
+        super().__init__(cfg, env)
+        # obtain the terrain asset
+        self.terrain: TerrainImporter = env.scene["terrain"]
 
-#     def _resample_command(self, env_ids: Sequence[int]):
-#         # obtain env origins for the environments
-#         self.cmd_buf[env_ids] = 0.0
-#         cmd_mode = torch.randint(0, 3, size=(len(env_ids), ), device=self.device)
-#         self.cmd_mode[env_ids] = cmd_mode
-#         r = self.rand[env_ids].uniform_().mul_(self.span).add_(self.min)
+        # obtain the valid targets from the terrain
+        if "target" not in self.terrain.flat_patches:
+            raise RuntimeError(
+                "The terrain-based command generator requires a valid flat patch under 'target' in the terrain."
+                f" Found: {list(self.terrain.flat_patches.keys())}"
+            )
+        # valid targets: (terrain_level, terrain_type, num_patches, 3)
+        self.valid_targets: torch.Tensor = self.terrain.flat_patches["target"]
+        self.valid_spawn: torch.Tensor = self.terrain.flat_patches["spawn"]
+        self.marker_indices = torch.cat((
+            torch.zeros(self.valid_targets.view(-1, 3).shape[0], dtype=torch.long, device=self.device),
+            torch.ones(self.valid_spawn.view(-1, 3).shape[0], dtype=torch.long, device=self.device)
+        ), dim=0)
 
-#         # position_cmd
-#         cmd_ids = env_ids[(cmd_mode == 0) | (cmd_mode == 1)]
-#         # self.cmd_buf[cmd_ids, 0, :3] = self._env.scene.env_origins[cmd_ids] + r[cmd_ids, 0, :3]
-#         # self.cmd_buf[cmd_ids, 0, 2] += self.robot.data.default_root_state[cmd_ids, 2]
-#         ids = torch.randint(0, self.valid_targets.shape[2], size=(len(env_ids),), device=self.device)
-#         self.cmd_buf[cmd_ids, 0, :3] = self.valid_targets[
-#             self.terrain.terrain_levels[env_ids], self.terrain.terrain_types[env_ids], ids
-#         ]
+    def _resample_command(self, env_ids: Sequence[int]):
+        # obtain env origins for the environments
+        self.cmd_buf[env_ids] = 0.0
+        cmd_mode = torch.randint(0, 3, size=(len(env_ids), ), device=self.device)
+        self.cmd_mode[env_ids] = cmd_mode
+        r = self.rand[env_ids].uniform_().mul_(self.span).add_(self.min)
 
-#         # pose_cmd
-#         cmd_ids = env_ids[cmd_mode == 1]
-#         self.cmd_buf[cmd_ids, 0, 3:6] = r[cmd_ids, 3:6]
+        # position_cmd
+        cmd_ids = env_ids[(cmd_mode == 0) | (cmd_mode == 1)]
+        # self.cmd_buf[cmd_ids, 0, :3] = self._env.scene.env_origins[cmd_ids] + r[cmd_ids, 0, :3]
+        # self.cmd_buf[cmd_ids, 0, 2] += self.robot.data.default_root_state[cmd_ids, 2]
+        ids = torch.randint(0, self.valid_targets.shape[2], size=(len(env_ids),), device=self.device)
+        self.cmd_buf[cmd_ids, 0, :3] = self.valid_targets[
+            self.terrain.terrain_levels[env_ids], self.terrain.terrain_types[env_ids], ids
+        ]
 
-#         # vel_cmd
-#         cmd_ids = env_ids[cmd_mode == 2]
-#         self.cmd_buf[cmd_ids, 1, 6 : 13] = r[:, 6 : 12]
+        # pose_cmd
+        cmd_ids = env_ids[cmd_mode == 1]
+        self.cmd_buf[cmd_ids, 0, 3:6] = r[cmd_ids, 3:6]
+
+        # vel_cmd
+        cmd_ids = env_ids[cmd_mode == 2]
+        self.cmd_buf[cmd_ids, 1, 6 : 13] = r[:, 6 : 12]
