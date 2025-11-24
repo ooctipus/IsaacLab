@@ -218,7 +218,7 @@ class EventsCfg:
 @configclass
 class RewardsCfg:
     # task rewards
-    task_reward = RewTerm(func=mdp.command_reward, weight=0.5)
+    task_reward = RewTerm(func=mdp.command_reward, weight=0.4)
     mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0002)
     fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-5.0)
 
