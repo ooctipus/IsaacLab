@@ -40,8 +40,8 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         "policy": {
             "lstm": RslRlPpoActorCriticRecurrentCfg(
                 init_noise_std=1.0,
-                actor_hidden_dims=[512, 256, 128],
-                critic_hidden_dims=[512, 256, 128],
+                actor_hidden_dims=[512, 256, 256, 128],
+                critic_hidden_dims=[512, 256, 256, 128],
                 actor_obs_normalization=True,
                 critic_obs_normalization=True,
                 activation="elu",

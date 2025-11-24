@@ -9,7 +9,7 @@
 import isaaclab_assets.robots.anymal as anymal
 from isaaclab.utils import configclass
 
-from ... import position_env_cfg
+from ... import position_env_cfg, state_env_cfg
 
 
 @configclass
@@ -27,4 +27,9 @@ class AnymalCEnvMixin:
 
 @configclass
 class AnymalCSpotLocomotionPositionCommandEnvCfg(AnymalCEnvMixin, position_env_cfg.LocomotionPositionCommandEnvCfg):
+    pass
+
+
+@configclass
+class AnymalCSpotLocomotionStateCommandEnvCfg(AnymalCEnvMixin, state_env_cfg.LocomotionStateCommandEnvCfg):
     pass

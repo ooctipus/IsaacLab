@@ -63,6 +63,10 @@ def mechanical_power(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot")) 
     return work
 
 
+def command_reward(env: ManagerBasedRLEnv):
+    command_term = env.command_manager.get_term("goal_point")
+    return command_term.get_task_reward()
+
 # class total(ManagerTermBase):
 
 #     def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):

@@ -21,6 +21,24 @@ def patched_find_flat_patches(*args, **kwargs) -> None:
 
 terrain_generator.find_flat_patches = patched_find_flat_patches
 
+FLAT = terrain_cfg.MeshPlaneTerrainCfg(
+    flat_patch_sampling={
+        "spawn": FlatPatchSamplingByRadiusCfg(
+            num_patches=20,
+            patch_radius=0.5,
+            radius_range=(0.5, 7.0),
+            max_height_diff=0.2,
+        ),
+        "target": FlatPatchSamplingByRadiusCfg(
+            num_patches=20,
+            patch_radius=0.5,
+            radius_range=(0.5, 7.0),
+            max_height_diff=0.2,
+        )
+    },
+)
+
+
 
 GAP = terrain_cfg.MeshGapTerrainCfg(
     platform_width=3.0,
