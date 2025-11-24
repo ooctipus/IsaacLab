@@ -15,7 +15,7 @@ from isaaclab.assets import Articulation
 from isaaclab.managers import CommandTerm
 from isaaclab.utils import configclass
 from isaaclab.markers import VisualizationMarkers
-from isaaclab.utils.math import euler_xyz_from_quat, quat_from_euler_xyz, quat_inv, quat_mul, subtract_frame_transforms, quat_apply_inverse
+from isaaclab.utils.math import euler_xyz_from_quat, quat_from_euler_xyz, quat_inv, quat_mul, quat_apply_inverse
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
@@ -62,10 +62,13 @@ class RelativeStateCommand(CommandTerm):
         self.reward = torch.zeros(self.num_envs, device=self.device)
         # --- pre-allocated / constant tensors to avoid per-step allocations ---
         reward_scale = [self.cfg.pos_std, self.cfg.rot_std, self.cfg.lin_vel_std, self.cfg.ang_vel_std]
-        self._reward_scales = torch.tensor(reward_scale, device=self.device)  # (pos, rot, linvel, angvel)
+        self._reward_scales = torch.tensor(reward_scale, device=self.device).view(1, 4)
         self._identity_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
         self._active_counts = torch.zeros(self.num_envs, device=self.device)
 
+        # --- scratch buffers (avoid per-step allocations) ---
+        self._rel = torch.empty(self.num_envs, 12, device=self.device)  # rel pos, euler (rot), lin vel, ang vel
+        self._err = torch.empty(self.num_envs, 4, device=self.device)  # error norm: pos, rot, lin_vel, ang_vel
         # -- metrics
         self.metrics["error_pos"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["error_rot"] = torch.zeros(self.num_envs, device=self.device)
@@ -113,10 +116,11 @@ class RelativeStateCommand(CommandTerm):
     """
 
     def _update_metrics(self):
-        self.metrics["error_pos"] = torch.norm(self.cmd_buf[:, 1, :3], dim=1)
-        self.metrics["error_rot"] = torch.norm(self.cmd_buf[:, 1, 3:6], dim=1)
-        self.metrics["error_linvel"] = torch.norm(self.cmd_buf[:, 1, 6:9], dim=1)
-        self.metrics["error_angvel"] = torch.norm(self.cmd_buf[:, 1, 9:12], dim=1)
+        # assumes _compute_group_errors() was called this step
+        self.metrics["error_pos"] = self._err[:, 0]
+        self.metrics["error_rot"] = self._err[:, 1]
+        self.metrics["error_linvel"] = self._err[:, 2]
+        self.metrics["error_angvel"] = self._err[:, 3]
 
     def _resample_command(self, env_ids: torch.Tensor):
         # pick a command type for each env
@@ -131,48 +135,36 @@ class RelativeStateCommand(CommandTerm):
         # desired position (world)
         default_position = self._env.scene.env_origins[env_ids].clone()
         default_position[:, 2] += self.robot.data.default_root_state[env_ids, 2]
-        default_position[~cmd_mask[:, :3]] = 0.0
+        default_position *= cmd_mask[:, :3].to(default_position.dtype)
 
         self.cmd_buf[env_ids, 0, :3] = default_position + r[:, :3]
-        self.cmd_buf[env_ids, 0, 3:6] = torch.stack((r[:, 3], r[:, 4], r[:, 5]), dim=-1)
-        self.cmd_buf[env_ids, 0, 6:12] = r[:, 6:12]
+        self.cmd_buf[env_ids, 0, 3:12] = r[:, 3:12]
 
     def _update_command(self):
         """Re-target the position command to the current root state."""
-        current_quat = self.robot.data.root_state_w[:, 3:7]
+        root_state_w = self.robot.data.root_state_w
+        root_quat = self.robot.data.root_quat_w  # (N, 4)
 
-        # current state
-        self.cmd_buf[:, 2, :3] = self.robot.data.root_state_w[:, :3]
-        self.cmd_buf[:, 2, 3:6] = torch.stack(euler_xyz_from_quat(current_quat), dim=-1)
-        self.cmd_buf[:, 2, 6:12] = self.robot.data.root_state_w[:, 7:13]
-        # self.cmd_buf[:, 2][~self.cmd_mask] = 0.0
+        # update correct state
+        self.cmd_buf[:, 2, :3] = root_state_w[:, :3]
+        torch.stack(euler_xyz_from_quat(root_quat), dim=-1, out=self.cmd_buf[:, 2, 3:6])
+        self.cmd_buf[:, 2, 6:12] = root_state_w[:, 7:13]
 
-        # --- relative position ---
-        rel_pos = self.cmd_buf[:, 0, :3] - self.cmd_buf[:, 2, :3]
-        rel_pos *= self.cmd_mask[:, :3]
-        self.cmd_buf[:, 1, :3] = quat_apply_inverse(self.robot.data.root_quat_w, rel_pos)
+        # relative position (world → body)
+        torch.sub(self.cmd_buf[:, 0, :3], self.cmd_buf[:, 2, :3], out=self._rel[:, 0:3])
+        self.cmd_buf[:, 1, :3] = quat_apply_inverse(root_quat, self._rel[:, 0:3] * self.cmd_mask[:, :3])
 
-        # --- relative orientation---
-        quat_des = quat_from_euler_xyz(self.cmd_buf[:, 0, 3], self.cmd_buf[:, 0, 4], self.cmd_buf[:, 0, 5])
-        euler_diff = torch.stack(euler_xyz_from_quat(quat_mul(quat_inv(current_quat), quat_des), wrap_to_2pi=True), dim=-1)
-        euler_diff *= self.cmd_mask[:, 3:6]
-        self.cmd_buf[:, 1, 3:6] = euler_diff
+        # relative orientation (euler diff in body)
+        quat_des = quat_from_euler_xyz(self.cmd_buf[:, 0, 3], self.cmd_buf[:, 0, 4], self.cmd_buf[:, 0, 5],)
+        quat_err = quat_mul(quat_inv(root_quat), quat_des)
+        torch.stack(euler_xyz_from_quat(quat_err, wrap_to_2pi=True), dim=-1, out=self._rel[:, 3:6])
+        self.cmd_buf[:, 1, 3:6] = self._rel[:, 3:6] * self.cmd_mask[:, 3:6]
 
-        # --- relative velocities ---
-        # split lin / ang, compute error in world frame
-        rel_lin = self.cmd_buf[:, 0, 6:9] - self.cmd_buf[:, 2, 6:9]   # (N,3)
-        rel_ang = self.cmd_buf[:, 0, 9:12] - self.cmd_buf[:, 2, 9:12] # (N,3)
-
-        # rotate into body frame
-        root_quat_w = self.robot.data.root_quat_w
-        rel_lin_b = quat_apply_inverse(root_quat_w, rel_lin)
-        rel_ang_b = quat_apply_inverse(root_quat_w, rel_ang)
-
-        rel_lin_b *= self.cmd_mask[:, 6:9]
-        rel_ang_b *= self.cmd_mask[:, 9:12]
-
-        self.cmd_buf[:, 1, 6:9] = rel_lin_b
-        self.cmd_buf[:, 1, 9:12] = rel_ang_b
+        # relative velocities (world → body)
+        torch.sub(self.cmd_buf[:, 0, 6:12], self.cmd_buf[:, 2, 6:12], out=self._rel[:, 6:12])
+        self._rel[:, 6:9] = quat_apply_inverse(root_quat, self._rel[:, 6:9])
+        self._rel[:, 9:12] = quat_apply_inverse(root_quat, self._rel[:, 9:12])
+        self.cmd_buf[:, 1, 6:12] = self._rel[:, 6:12] * self.cmd_mask[:, 6:12]
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         if debug_vis:
@@ -290,22 +282,16 @@ class RelativeStateCommand(CommandTerm):
 
     def get_task_reward(self):
         """Reward that minimizes position, rotation, lin/ang velocities with group scales."""
-        rel = self.cmd_buf[:, 1]  # (N, 12)
+        # squared norms (no in-place on rel!)
+        rel = self.cmd_buf[:, 1]  # (N, 12), maybe non-contiguous
+        rel_grouped = rel.contiguous().view(rel.shape[0], 4, 3)
+        torch.sum(rel_grouped * rel_grouped, dim=2, out=self._err)
+        self._err.sqrt_()
 
-        pos_err = torch.norm(rel[:, 0:3], dim=1)  # (N,)
-        rot_err = torch.norm(rel[:, 3:6], dim=1)
-        lin_err = torch.norm(rel[:, 6:9], dim=1)
-        ang_err = torch.norm(rel[:, 9:12], dim=1)
-
-        pos_r = 1.0 - torch.tanh(pos_err / self._reward_scales[0])
-        rot_r = 1.0 - torch.tanh(rot_err / self._reward_scales[1])
-        lin_r = 1.0 - torch.tanh(lin_err / self._reward_scales[2])
-        ang_r = 1.0 - torch.tanh(ang_err / self._reward_scales[3])
-
-        # simple mean over 4 groups
-        self.reward = (pos_r + rot_r + lin_r + ang_r) * 0.25
+        # vectorized scaling + nonlinearity
+        group_r = 1.0 - torch.tanh(self._err / self._reward_scales)  # (N, 4) / (1, 4) → (N, 4)
+        self.reward = group_r.mean(dim=1)
         return self.reward
-
 
 # class TerrainBasedRelativeStateCommand(RelativeStateCommand):
 #     """Command generator that generates pose commands based on the terrain.

@@ -218,11 +218,9 @@ class EventsCfg:
 @configclass
 class RewardsCfg:
     # task rewards
-    # success = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=50.0)
-    task_reward = RewTerm(func=mdp.command_reward, weight=1.0)
+    task_reward = RewTerm(func=mdp.command_reward, weight=0.5)
     mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0002)
     fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-5.0)
-    # explore = RewTerm(func=mdp.exploration_reward, weight=0.3, params={"forward_only": True})
 
 
 @configclass
@@ -237,10 +235,6 @@ class TerminationsCfg:
         func=mdp.illegal_contact,
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*foot).*$"), "threshold": 1.0},
     )
-    
-    # pos, heading, vel_max, joint_pos_max thresholds
-    # success = DoneTerm(func=mdp.success, params={"thresh": [0.4, 0.5, 1.0, 1.0], "robot_cfg": SceneEntityCfg("robot")})
-
 
 @configclass
 class CurriculumCfg:
