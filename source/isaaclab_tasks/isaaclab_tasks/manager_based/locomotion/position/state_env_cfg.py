@@ -218,8 +218,9 @@ class EventsCfg:
 @configclass
 class RewardsCfg:
     # task rewards
-    task_reward = RewTerm(func=mdp.efficiency_weigh_success, weight=0.4, params={"asset_cfg": SceneEntityCfg("robot")})
-    # mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0002)
+    task_reward = RewTerm(func=mdp.command_success, weight=0.5)
+    mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0002)
+    joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.01)
     fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact", "abnormal_robot"]}, weight=-10.0)
 
 
