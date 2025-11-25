@@ -16,7 +16,7 @@ from isaaclab.assets import Articulation
 from isaaclab.managers import CommandTerm
 from isaaclab.utils import configclass
 from isaaclab.markers import VisualizationMarkers
-from isaaclab.utils.math import euler_xyz_from_quat, quat_from_euler_xyz, quat_inv, quat_mul, quat_apply_inverse
+from isaaclab.utils.math import euler_xyz_from_quat, quat_from_euler_xyz, quat_mul
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
@@ -90,9 +90,10 @@ class RelativeStateCommand(CommandTerm):
         self._default_root_z = self.robot.data.default_root_state[:, 2].contiguous()
         self._wp_default_root_z = wp.from_torch(self._default_root_z, requires_grad=False)
 
-        self._wp_cmd_buf = wp.from_torch(self.cmd_buf.contiguous(), requires_grad=False)        
+        self._wp_cmd_buf = wp.from_torch(self.cmd_buf.contiguous(), requires_grad=False)
         self._wp_cmd_ids = wp.from_torch(self.cmd_ids, requires_grad=False)
         self._wp_cmd_mask_2d = wp.from_torch(self.cmd_mask, requires_grad=False)
+        self._wp_rel = wp.from_torch(self._rel, requires_grad=False)
 
     def _build_spec(self, commands: dict[str, RelativeStateCommandCfg.Commands]) -> CommandSpec:
         from .commands_cfg import RelativeStateCommandCfg
@@ -101,12 +102,6 @@ class RelativeStateCommand(CommandTerm):
         mask = torch.zeros((num_cmd, 12,), device=self.device, dtype=torch.bool)
 
         for cmd_id, val in enumerate(commands.values()):
-            for data_id, data in enumerate(val.__dict__.values()):
-                if data is not None and isinstance(data, tuple):
-                    mask[cmd_id, data_id] = True
-                    ranges[cmd_id, data_id, 0] = data[0]
-                    ranges[cmd_id, data_id, 1] = data[1]
-
             if isinstance(val, RelativeStateCommandCfg.TerrainCommands):
                 self.terrains: TerrainImporter = self._env.scene["terrain"]
                 if "target" not in self.terrains.flat_patches or "spawn" not in self.terrains.flat_patches:
@@ -116,6 +111,15 @@ class RelativeStateCommand(CommandTerm):
                     )
                 self.valid_targets: torch.Tensor = self.terrains.flat_patches[val.target_key]
                 self.valid_spawn: torch.Tensor = self.terrains.flat_patches[val.spawn_key]
+                val.pos_x = None
+                val.pos_y = None
+                val.pos_z = None
+
+            for data_id, data in enumerate(val.__dict__.values()):
+                if data is not None and isinstance(data, tuple):
+                    mask[cmd_id, data_id] = True
+                    ranges[cmd_id, data_id, 0] = data[0]
+                    ranges[cmd_id, data_id, 1] = data[1]
 
         spec = self.CommandSpec(
             cardinal=len(commands),
@@ -181,30 +185,27 @@ class RelativeStateCommand(CommandTerm):
         )
 
     def _update_command(self):
-        """Re-target the position command to the current root state."""
         root_state_w = self.robot.data.root_state_w
-        root_quat = self.robot.data.root_quat_w  # (N, 4)
+        root_quat = self.robot.data.root_quat_w  # still use in Torch
 
-        # update correct state
+        # world state row
         self.cmd_buf[:, 2, :3] = root_state_w[:, :3]
         torch.stack(euler_xyz_from_quat(root_quat), dim=-1, out=self.cmd_buf[:, 2, 3:6])
         self.cmd_buf[:, 2, 6:12] = root_state_w[:, 7:13]
-
-        # relative position (world → body)
-        torch.sub(self.cmd_buf[:, 0, :3], self.cmd_buf[:, 2, :3], out=self._rel[:, 0:3])
-        self.cmd_buf[:, 1, :3] = quat_apply_inverse(root_quat, self._rel[:, 0:3] * self.cmd_mask[:, :3])
-
-        # relative orientation (euler diff in body)
-        quat_des = quat_from_euler_xyz(self.cmd_buf[:, 0, 3], self.cmd_buf[:, 0, 4], self.cmd_buf[:, 0, 5],)
-        quat_err = quat_mul(quat_inv(root_quat), quat_des)
-        torch.stack(euler_xyz_from_quat(quat_err, wrap_to_2pi=True), dim=-1, out=self._rel[:, 3:6])
-        self.cmd_buf[:, 1, 3:6] = self._rel[:, 3:6] * self.cmd_mask[:, 3:6]
-
-        # relative velocities (world → body)
-        torch.sub(self.cmd_buf[:, 0, 6:12], self.cmd_buf[:, 2, 6:12], out=self._rel[:, 6:12])
-        self._rel[:, 6:9] = quat_apply_inverse(root_quat, self._rel[:, 6:9])
-        self._rel[:, 9:12] = quat_apply_inverse(root_quat, self._rel[:, 9:12])
-        self.cmd_buf[:, 1, 6:12] = self._rel[:, 6:12] * self.cmd_mask[:, 6:12]
+        wp_root_quat = wp.from_torch(root_quat, requires_grad=False)
+        # Warp uses the pre-wrapped view
+        wp.launch(
+            update_command_rel_kernel,
+            dim=self.num_envs,
+            inputs=[
+                wp_root_quat,
+                self._wp_cmd_buf,
+                self._wp_cmd_mask_2d,
+                self._wp_rel,
+                self.num_envs,
+            ],
+            device=self._wp_device,
+        )
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         if debug_vis:
@@ -393,3 +394,174 @@ def resample_commands_kernel(
             cmd_buf[env, 0, 2] = base_z + val if m else 0.0
         else:
             cmd_buf[env, 0, d] = val
+
+
+@wp.kernel
+def update_command_rel_kernel(
+    root_quat_w: wp.array(dtype=wp.float32, ndim=2),  # [N, 4] in wxyz
+    cmd_buf: wp.array(dtype=wp.float32, ndim=3),      # [N, 3, 12]
+    cmd_mask: wp.array(dtype=wp.bool, ndim=2),        # [N, 12]
+    rel: wp.array(dtype=wp.float32, ndim=2),          # [N, 12]
+    num_envs: int,
+):
+    tid = wp.tid()
+    if tid >= num_envs:
+        return
+
+    i = tid
+
+    # ------------------------------------------------------------------
+    # 0. load root quaternion (Isaac wxyz -> Warp xyzw)
+    # ------------------------------------------------------------------
+    qw = root_quat_w[i, 0]
+    qx = root_quat_w[i, 1]
+    qy = root_quat_w[i, 2]
+    qz = root_quat_w[i, 3]
+
+    q_root = wp.quat(qx, qy, qz, qw)
+    q_root_inv = wp.quat_inverse(q_root)
+
+    # ------------------------------------------------------------------
+    # 1. orientation error (axis-angle in body frame)
+    # ------------------------------------------------------------------
+    # desired euler (roll, pitch, yaw) from command row
+    roll = cmd_buf[i, 0, 3]
+    pitch = cmd_buf[i, 0, 4]
+    yaw = cmd_buf[i, 0, 5]
+
+    # Warp's RPY matches IsaacLab convention as you stated
+    q_des = wp.quat_rpy(roll, pitch, yaw)  # xyzw
+
+    # q_err = q_root_inv * q_des (body frame error)
+    q_err = quat_mul_wp(q_root_inv, q_des)
+
+    axis, angle = wp.quat_to_axis_angle(q_err)
+    rot_err = axis * angle  # vec3
+
+    ex = rot_err[0]
+    ey = rot_err[1]
+    ez = rot_err[2]
+
+    if not cmd_mask[i, 3]:
+        ex = 0.0
+    if not cmd_mask[i, 4]:
+        ey = 0.0
+    if not cmd_mask[i, 5]:
+        ez = 0.0
+
+    rel[i, 3] = ex
+    rel[i, 4] = ey
+    rel[i, 5] = ez
+
+    cmd_buf[i, 1, 3] = ex
+    cmd_buf[i, 1, 4] = ey
+    cmd_buf[i, 1, 5] = ez
+
+    # ------------------------------------------------------------------
+    # 2. relative position (world -> body)
+    # ------------------------------------------------------------------
+    # world pose row (cmd_buf row 2) and desired pose row (row 0)
+    px = cmd_buf[i, 2, 0]
+    py = cmd_buf[i, 2, 1]
+    pz = cmd_buf[i, 2, 2]
+
+    dx = cmd_buf[i, 0, 0]
+    dy = cmd_buf[i, 0, 1]
+    dz = cmd_buf[i, 0, 2]
+
+    rx = dx - px
+    ry = dy - py
+    rz = dz - pz
+
+    v_w = wp.vec3(rx, ry, rz)
+
+    if not cmd_mask[i, 0]:
+        v_w[0] = 0.0
+    if not cmd_mask[i, 1]:
+        v_w[1] = 0.0
+    if not cmd_mask[i, 2]:
+        v_w[2] = 0.0
+
+    v_b = wp.quat_rotate(q_root_inv, v_w)
+
+    rel[i, 0] = v_b[0]
+    rel[i, 1] = v_b[1]
+    rel[i, 2] = v_b[2]
+
+    cmd_buf[i, 1, 0] = v_b[0]
+    cmd_buf[i, 1, 1] = v_b[1]
+    cmd_buf[i, 1, 2] = v_b[2]
+
+    # ------------------------------------------------------------------
+    # 3. relative velocities (world -> body)
+    # ------------------------------------------------------------------
+    # desired/world vel slices are already written by Torch:
+    #   cmd_buf[i, 0, 6:9] (lin), 0,9:12 (ang)
+    #   cmd_buf[i, 2, 6:9],      2,9:12
+
+    # linear vel diff
+    lvx = cmd_buf[i, 0, 6] - cmd_buf[i, 2, 6]
+    lvy = cmd_buf[i, 0, 7] - cmd_buf[i, 2, 7]
+    lvz = cmd_buf[i, 0, 8] - cmd_buf[i, 2, 8]
+    lv_w = wp.vec3(lvx, lvy, lvz)
+
+    # angular vel diff
+    avx = cmd_buf[i, 0, 9] - cmd_buf[i, 2, 9]
+    avy = cmd_buf[i, 0, 10] - cmd_buf[i, 2, 10]
+    avz = cmd_buf[i, 0, 11] - cmd_buf[i, 2, 11]
+    av_w = wp.vec3(avx, avy, avz)
+
+    # rotate into body
+    lv_b = wp.quat_rotate(q_root_inv, lv_w)
+    av_b = wp.quat_rotate(q_root_inv, av_w)
+
+    # apply masks
+    if not cmd_mask[i, 6]:
+        lv_b[0] = 0.0
+    if not cmd_mask[i, 7]:
+        lv_b[1] = 0.0
+    if not cmd_mask[i, 8]:
+        lv_b[2] = 0.0
+
+    if not cmd_mask[i, 9]:
+        av_b[0] = 0.0
+    if not cmd_mask[i, 10]:
+        av_b[1] = 0.0
+    if not cmd_mask[i, 11]:
+        av_b[2] = 0.0
+
+    rel[i, 6] = lv_b[0]
+    rel[i, 7] = lv_b[1]
+    rel[i, 8] = lv_b[2]
+    rel[i, 9] = av_b[0]
+    rel[i, 10] = av_b[1]
+    rel[i, 11] = av_b[2]
+
+    cmd_buf[i, 1, 6] = lv_b[0]
+    cmd_buf[i, 1, 7] = lv_b[1]
+    cmd_buf[i, 1, 8] = lv_b[2]
+    cmd_buf[i, 1, 9] = av_b[0]
+    cmd_buf[i, 1, 10] = av_b[1]
+    cmd_buf[i, 1, 11] = av_b[2]
+
+
+@wp.func
+def quat_mul_wp(a: wp.quat, b: wp.quat) -> wp.quat:
+    # a, b in xyzw
+    ax = a[0]
+    ay = a[1]
+    az = a[2]
+    aw = a[3]
+
+    bx = b[0]
+    by = b[1]
+    bz = b[2]
+    bw = b[3]
+
+    w = aw * bw - ax * bx - ay * by - az * bz
+    x = aw * bx + ax * bw + ay * bz - az * by
+    y = aw * by - ax * bz + ay * bw + az * bx
+    z = aw * bz + ax * by - ay * bx + az * bw
+
+    # Return in xyzw
+    return wp.quat(x, y, z, w)
