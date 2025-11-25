@@ -40,6 +40,8 @@ class RelativeStateCommand(CommandTerm):
 
         span: torch.Tensor = MISSING
 
+        kind: torch.Tensor = MISSING
+
     def __init__(self, cfg: RelativeStateCommandCfg, env: ManagerBasedEnv):
         """Initialize the command generator class.
 
@@ -100,8 +102,17 @@ class RelativeStateCommand(CommandTerm):
         num_cmd = len(commands)
         ranges = torch.zeros((len(commands), 12, 2), device=self.device)
         mask = torch.zeros((num_cmd, 12,), device=self.device, dtype=torch.bool)
+        kind = torch.zeros(num_cmd, dtype=torch.int32, device=self.device)
 
         for cmd_id, val in enumerate(commands.values()):
+            # tag kind
+            if isinstance(val, RelativeStateCommandCfg.PositionCommands):
+                kind[cmd_id] = 0
+            elif isinstance(val, RelativeStateCommandCfg.PoseCommands):
+                kind[cmd_id] = 1
+            elif isinstance(val, RelativeStateCommandCfg.VelocityCommands):
+                kind[cmd_id] = 2
+
             if isinstance(val, RelativeStateCommandCfg.TerrainCommands):
                 self.terrains: TerrainImporter = self._env.scene["terrain"]
                 if "target" not in self.terrains.flat_patches or "spawn" not in self.terrains.flat_patches:
@@ -126,6 +137,7 @@ class RelativeStateCommand(CommandTerm):
             mask=mask,
             min=ranges[..., 0],
             span=ranges[..., 1] - ranges[..., 0],
+            kind=kind,
         )
 
         return spec

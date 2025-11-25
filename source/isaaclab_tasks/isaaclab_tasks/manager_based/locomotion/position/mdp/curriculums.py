@@ -12,13 +12,13 @@ import isaaclab.sim as sim_utils
 
 from isaaclab.managers import ManagerTermBase
 from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
-from isaaclab.utils.math import normalize, quat_from_angle_axis
 from isaaclab.terrains import TerrainImporter
 
 from .success_monitor_cfg import SuccessMonitorCfg
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
+    from .commands import RelativeStateCommand
 
 
 class terrain_levels_vel(ManagerTermBase):
@@ -257,8 +257,12 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         terrain: TerrainImporter = env.scene.terrain
         debug_vis = cfg.params.get("debug_vis", True)
         # disable resampling in the command term; curriculum will set commands directly
-        self.goal_term = env.command_manager.get_term("goal_point")
-        self.goal_term._resample_command = lambda env_ids: None  # type: ignore[attr-defined]
+        self.goal_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
+        # Save original resample if you want to call it manually
+        self._orig_resample = self.goal_term._resample_command
+
+        # Option 1: disable automatic resampling in the manager, curriculum owns it:
+        self.goal_term._resample_command = lambda env_ids: None
 
         # cache terrain layout
         self._num_levels = int(terrain.terrain_origins.shape[0])
@@ -327,8 +331,14 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
 
     def __call__(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor, debug_vis=False, kappa: float = 2.0, success_term: str = "success"):
         terrain: TerrainImporter = env.scene.terrain
-        success_mask = env.termination_manager.get_term(success_term)[env_ids]
-        self.success_monitor.success_update(self.term_samples.index_select(0, env_ids), success_mask)
+        cmd_ids = self.goal_term.cmd_ids[env_ids]
+        kinds = self.goal_term.spec.kind[cmd_ids.long()]
+        env_ids_pos = env_ids[(kinds != 2)]  # 0=Position, 1=Pose, 2=Velocity
+
+        if len(env_ids_pos) > 0:
+            time_out_mask = env.termination_manager.get_term("time_out")[env_ids_pos]
+            dist = self.goal_term.cmd_buf[env_ids_pos, 1, 0:3].norm(dim=-1)  # [n_pos]
+            self.success_monitor.success_update(self.term_samples.index_select(0, env_ids_pos), time_out_mask & (dist < 0.4))
 
         # 2) Sample next (level, type, spawn, target) aiming for balanced success
         choices, prob = self.success_monitor.sample_by_target_rate(env_ids, target=0.33, kappa=kappa, return_probs=True)
@@ -354,12 +364,26 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         # 5) Set goal target directly from valid targets and adjust height
         target_lin = (chosen_level * (T * Pt) + chosen_type * Pt + target_id).to(torch.long)
         pos_cmd = self._valid_targets_flat.index_select(0, target_lin)
-        self.goal_term.pos_command_w.index_copy_(0, env_ids, pos_cmd)
-        # Adjust height directly (add z offset)
-        self.goal_term.pos_command_w[env_ids, 2] += self.goal_term.robot.data.default_root_state[env_ids, 2]
-        # Sample heading for the selected envs
-        r = torch.empty(env_ids.numel(), device=self.device)
-        self.goal_term.heading_command_w.index_copy_(0, env_ids, r.uniform_(*self.goal_term.cfg.ranges.heading))
+
+        # optionally, first let the term resample its velocities/orientations
+        # so we don't have to invent them here:
+        self._orig_resample(env_ids)
+
+        # figure out active command kind per env
+        cmd_ids = self.goal_term.cmd_ids[env_ids]                 # [len(env_ids)] int32
+        kinds = self.goal_term.spec.kind[cmd_ids.long()]               # [len(env_ids)] {0,1,2}
+
+        # position-like commands: Position or Pose
+        poslike_mask = (kinds != 2)  # 2 = VelocityCommands
+        if poslike_mask.any():
+            env_ids_pos = env_ids[poslike_mask]
+            pos_cmd_pos = pos_cmd[poslike_mask]       # world pos for those envs
+
+            # write desired world position into cmd_buf row 0
+            self.goal_term.cmd_buf[env_ids_pos, 0, 0:3] = pos_cmd_pos
+
+            # add root height (same as before)
+            self.goal_term.cmd_buf[env_ids_pos, 0, 2] += self.goal_term.robot.data.default_root_state[env_ids_pos, 2]
 
         # aggregate reporting: overall mean terrain level (kept for compatibility)
         self._result["all"].copy_(terrain.terrain_levels.float().mean())

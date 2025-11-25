@@ -240,8 +240,7 @@ class TerminationsCfg:
 
 @configclass
 class CurriculumCfg:
-    remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
-    stricten_success = CurrTerm(func=mdp.stricten_success_term, params={"term": "success"})
+    terrain_levels = CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels, params={"debug_vis": False, "kappa": 2.0, "success_term": "success"})
 
 
 def make_terrain(terrain_dict):
@@ -326,7 +325,7 @@ class LocomotionStateCommandEnvCfg(ManagerBasedRLEnvCfg):
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
     events: EventsCfg = EventsCfg()
-    # curriculum: CurriculumCfg = CurriculumCfg()
+    curriculum: CurriculumCfg = CurriculumCfg()
     viewer: ViewerCfg = ViewerCfg(eye=(4.0 / 4, 7.0 / 4, 7.0 / 4), origin_type="asset_body", asset_name="robot", body_name="base")
     variants = variants
 
