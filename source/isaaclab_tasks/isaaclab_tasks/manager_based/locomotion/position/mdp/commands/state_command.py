@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import torch
+import warp as wp
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 from dataclasses import MISSING
@@ -56,7 +57,7 @@ class RelativeStateCommand(CommandTerm):
 
         # desired, error, current
         self.cmd_buf = torch.zeros(self.num_envs, 3, 12, device=self.device)
-        self.cmd_ids = torch.randint(0, self.spec.cardinal, size=(self.num_envs,), device=self.device)
+        self.cmd_ids = torch.randint(0, self.spec.cardinal, size=(self.num_envs,), device=self.device, dtype=torch.int32)
         self.cmd_mask = torch.zeros(self.num_envs, 12, device=self.device, dtype=torch.bool)
         self.rand = torch.empty(self.num_envs, 12, device=self.device)
         self.reward = torch.zeros(self.num_envs, device=self.device)
@@ -73,6 +74,25 @@ class RelativeStateCommand(CommandTerm):
         self.metrics["error_rot"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["error_linvel"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["error_angvel"] = torch.zeros(self.num_envs, device=self.device)
+        self._init_warp()
+        self._warp_seed = 1
+
+    def _init_warp(self):
+        self._num_cmd = self.spec.cardinal
+        self._wp_device = wp.device_from_torch(self.device)
+
+        # no flattening needed anymore
+        self._wp_spec_min = wp.from_torch(self.spec.min.contiguous(), requires_grad=False)
+        self._wp_spec_span = wp.from_torch(self.spec.span.contiguous(), requires_grad=False)
+        self._wp_spec_mask = wp.from_torch(self.spec.mask.contiguous(), requires_grad=False)
+
+        self._wp_env_origins = wp.from_torch(self._env.scene.env_origins.contiguous(), requires_grad=False)
+        self._default_root_z = self.robot.data.default_root_state[:, 2].contiguous()
+        self._wp_default_root_z = wp.from_torch(self._default_root_z, requires_grad=False)
+
+        self._wp_cmd_buf = wp.from_torch(self.cmd_buf.contiguous(), requires_grad=False)        
+        self._wp_cmd_ids = wp.from_torch(self.cmd_ids, requires_grad=False)
+        self._wp_cmd_mask_2d = wp.from_torch(self.cmd_mask, requires_grad=False)
 
     def _build_spec(self, commands: dict[str, RelativeStateCommandCfg.Commands]) -> CommandSpec:
         from .commands_cfg import RelativeStateCommandCfg
@@ -133,22 +153,32 @@ class RelativeStateCommand(CommandTerm):
         self.metrics["error_angvel"] = self._err[:, 3]
 
     def _resample_command(self, env_ids: torch.Tensor):
-        # pick a command type for each env
-        cmd_ids = torch.randint(0, self.spec.cardinal, size=(len(env_ids),), device=self.device)
-        cmd_mask = self.spec.mask[cmd_ids]
-        self.cmd_ids[env_ids] = cmd_ids
-        self.cmd_mask[env_ids] = cmd_mask
+        if env_ids.numel() == 0:
+            return
 
-        # random in [0,1)
-        r = (self.rand[env_ids].uniform_() * self.spec.span[cmd_ids] + self.spec.min[cmd_ids])
+        # no cast
+        wp_env_ids = wp.from_torch(env_ids, requires_grad=False)
+        self._warp_seed += 1
 
-        # desired position (world)
-        default_position = self._env.scene.env_origins[env_ids].clone()
-        default_position[:, 2] += self.robot.data.default_root_state[env_ids, 2]
-        default_position *= cmd_mask[:, :3].to(default_position.dtype)
-
-        self.cmd_buf[env_ids, 0, :3] = default_position + r[:, :3]
-        self.cmd_buf[env_ids, 0, 3:12] = r[:, 3:12]
+        wp.launch(
+            resample_commands_kernel,
+            dim=env_ids.shape[0],
+            inputs=[
+                wp_env_ids,
+                self._wp_cmd_ids,
+                self._wp_cmd_mask_2d,
+                self._wp_spec_mask,
+                self._wp_spec_min,
+                self._wp_spec_span,
+                self._wp_env_origins,
+                self._wp_default_root_z,
+                self._wp_cmd_buf,
+                self._num_cmd,
+                self.num_envs,
+                self._warp_seed,
+            ],
+            device=self._wp_device,
+        )
 
     def _update_command(self):
         """Re-target the position command to the current root state."""
@@ -308,58 +338,58 @@ class RelativeStateCommand(CommandTerm):
         return self.reward
 
 
-class TerrainBasedRelativeStateCommand(RelativeStateCommand):
-    """Command generator that generates pose commands based on the terrain.
+@wp.kernel
+def resample_commands_kernel(
+    env_ids: wp.array(dtype=wp.int64),
+    cmd_ids_out: wp.array(dtype=wp.int32),
+    cmd_mask_out: wp.array(dtype=wp.bool, ndim=2),
+    spec_mask: wp.array(dtype=wp.bool, ndim=2),
+    spec_min: wp.array(dtype=wp.float32, ndim=2),
+    spec_span: wp.array(dtype=wp.float32, ndim=2),
+    env_origins: wp.array(dtype=wp.float32, ndim=2),
+    default_root_z: wp.array(dtype=wp.float32),
+    cmd_buf: wp.array(dtype=wp.float32, ndim=3),
+    num_cmd: int,
+    num_envs: int,
+    seed: int,
+):
+    tid = wp.tid()
+    if tid >= env_ids.shape[0]:
+        return
 
-    This command generator samples the position commands from the valid patches of the terrain.
-    The heading commands are either set to point towards the target or are sampled uniformly.
+    env64 = env_ids[tid]
+    if env64 < 0 or env64 >= num_envs:
+        return
 
-    It expects the terrain to have a valid flat patches under the key 'target'.
-    """
+    # cast to int32 for rand_init
+    env = wp.int32(env64)
 
-    cfg: TerrainBasedRelativeStateCommandCfg
-    """Configuration for the command generator."""
+    state = wp.rand_init(seed, env)
+    cmd_type = wp.randi(state, 0, num_cmd)
 
-    def __init__(self, cfg: TerrainBasedRelativeStateCommandCfg, env: ManagerBasedEnv):
-        # initialize the base class
-        super().__init__(cfg, env)
-        # obtain the terrain asset
-        self.terrain: TerrainImporter = env.scene["terrain"]
+    cmd_ids_out[env] = cmd_type
 
-        # obtain the valid targets from the terrain
-        if "target" not in self.terrain.flat_patches:
-            raise RuntimeError(
-                "The terrain-based command generator requires a valid flat patch under 'target' in the terrain."
-                f" Found: {list(self.terrain.flat_patches.keys())}"
-            )
-        # valid targets: (terrain_level, terrain_type, num_patches, 3)
-        self.valid_targets: torch.Tensor = self.terrain.flat_patches["target"]
-        self.valid_spawn: torch.Tensor = self.terrain.flat_patches["spawn"]
-        self.marker_indices = torch.cat((
-            torch.zeros(self.valid_targets.view(-1, 3).shape[0], dtype=torch.long, device=self.device),
-            torch.ones(self.valid_spawn.view(-1, 3).shape[0], dtype=torch.long, device=self.device)
-        ), dim=0)
+    # base position = env origin + default root z
+    base_x = env_origins[env, 0]
+    base_y = env_origins[env, 1]
+    base_z = env_origins[env, 2] + default_root_z[env]
 
-    def _resample_command(self, env_ids: Sequence[int]):
-        # obtain env origins for the environments
-        self.cmd_buf[env_ids] = 0.0
-        cmd_mode = torch.randint(0, 3, size=(len(env_ids), ), device=self.device)
-        self.cmd_mode[env_ids] = cmd_mode
-        r = self.rand[env_ids].uniform_().mul_(self.span).add_(self.min)
+    for d in range(12):
+        m = spec_mask[cmd_type, d]
+        cmd_mask_out[env, d] = m
 
-        # position_cmd
-        cmd_ids = env_ids[(cmd_mode == 0) | (cmd_mode == 1)]
-        # self.cmd_buf[cmd_ids, 0, :3] = self._env.scene.env_origins[cmd_ids] + r[cmd_ids, 0, :3]
-        # self.cmd_buf[cmd_ids, 0, 2] += self.robot.data.default_root_state[cmd_ids, 2]
-        ids = torch.randint(0, self.valid_targets.shape[2], size=(len(env_ids),), device=self.device)
-        self.cmd_buf[cmd_ids, 0, :3] = self.valid_targets[
-            self.terrain.terrain_levels[env_ids], self.terrain.terrain_types[env_ids], ids
-        ]
+        val = 0.0
+        if m:
+            lo = spec_min[cmd_type, d]
+            span = spec_span[cmd_type, d]
+            u = wp.randf(state)
+            val = lo + span * u
 
-        # pose_cmd
-        cmd_ids = env_ids[cmd_mode == 1]
-        self.cmd_buf[cmd_ids, 0, 3:6] = r[cmd_ids, 3:6]
-
-        # vel_cmd
-        cmd_ids = env_ids[cmd_mode == 2]
-        self.cmd_buf[cmd_ids, 1, 6 : 13] = r[:, 6 : 12]
+        if d == 0:
+            cmd_buf[env, 0, 0] = base_x + val if m else 0.0
+        elif d == 1:
+            cmd_buf[env, 0, 1] = base_y + val if m else 0.0
+        elif d == 2:
+            cmd_buf[env, 0, 2] = base_z + val if m else 0.0
+        else:
+            cmd_buf[env, 0, d] = val
