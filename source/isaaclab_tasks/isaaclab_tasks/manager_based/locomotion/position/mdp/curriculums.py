@@ -337,9 +337,14 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
 
         if len(env_ids_pos) > 0:
             time_out_mask = env.termination_manager.get_term("time_out")[env_ids_pos]
-            dist = self.goal_term.cmd_buf[env_ids_pos, 1, 0:3].norm(dim=-1)  # [n_pos]
-            self.success_monitor.success_update(self.term_samples.index_select(0, env_ids_pos), time_out_mask & (dist < 0.4))
-
+            timed_out_ids = time_out_mask.nonzero(as_tuple=False).squeeze(-1)
+            if timed_out_ids.numel() > 0:
+                dist = self.goal_term.cmd_buf[env_ids_pos, 1, 0:3].norm(dim=-1)  # [n_pos]
+                env_ids_timeout = env_ids_pos.index_select(0, timed_out_ids)
+                dist_timeout = dist.index_select(0, timed_out_ids)
+                self.success_monitor.success_update(
+                    self.term_samples.index_select(0, env_ids_timeout), dist_timeout < 0.4
+                )
         # 2) Sample next (level, type, spawn, target) aiming for balanced success
         choices, prob = self.success_monitor.sample_by_target_rate(env_ids, target=0.33, kappa=kappa, return_probs=True)
         # In-place index copy to avoid temporary tensors
