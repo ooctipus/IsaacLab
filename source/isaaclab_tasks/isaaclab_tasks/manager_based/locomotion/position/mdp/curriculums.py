@@ -163,36 +163,36 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self._marker_idx[:] = bins
         self.frame_visualizer.visualize(marker_indices=self._marker_idx)
 
-# def skip_reward_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], reward_term: str):
-#     term_cfg = env.reward_manager.get_term_cfg(reward_term)
-#     if term_cfg.weight == 0.0:
-#         return
-#     success_monitor = getattr(env.curriculum_manager.cfg, "terrain_levels").func.success_monitor
-#     success_rate = success_monitor.get_success_rate().mean()
-#     if (success_rate > 0.2 and env.common_step_counter > 100) or env.common_step_counter > 20000:
-#         # Set weight to zero so manager skips computing it
-#         term_cfg.weight = 0.0
-#         # Additionally, replace the callable with a zero-return stub
-#         if hasattr(term_cfg.func, "reset"):
-#             # keep simple lambda style, but make signatures flexible to avoid TypeErrors
-#             term_cfg.func.reset = lambda *args, **kwargs: None
-#             term_cfg.func.__call__ = lambda *args, **kwargs: torch.zeros(env.num_envs, device=env.device)
-#         else:
-#             term_cfg.func = lambda env, **kwargs: torch.zeros(env.num_envs, device=env.device)
+def skip_reward_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], reward_term: str):
+    term_cfg = env.reward_manager.get_term_cfg(reward_term)
+    if term_cfg.weight == 0.0:
+        return
+    success_monitor = getattr(env.curriculum_manager.cfg, "terrain_levels").func.success_monitor
+    success_rate = success_monitor.get_success_rate().mean()
+    if (success_rate > 0.2 and env.common_step_counter > 100) or env.common_step_counter > 20000:
+        # Set weight to zero so manager skips computing it
+        term_cfg.weight = 0.0
+        # Additionally, replace the callable with a zero-return stub
+        if hasattr(term_cfg.func, "reset"):
+            # keep simple lambda style, but make signatures flexible to avoid TypeErrors
+            term_cfg.func.reset = lambda *args, **kwargs: None
+            term_cfg.func.__call__ = lambda *args, **kwargs: torch.zeros(env.num_envs, device=env.device)
+        else:
+            term_cfg.func = lambda env, **kwargs: torch.zeros(env.num_envs, device=env.device)
 
 
-# def stricten_success_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], term: str):
-#     term_cfg = env.termination_manager.get_term_cfg(term)
-#     success_monitor = getattr(env.curriculum_manager.cfg, "terrain_levels").func.success_monitor
-#     success_rate = success_monitor.get_success_rate().mean()
-#     if (success_rate > 0.1 and env.common_step_counter > 100):
-#         term_cfg.params["thresh"][2] = 0.5
-#         term_cfg.params["thresh"][3] = 0.5
+def stricten_success_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], term: str):
+    term_cfg = env.termination_manager.get_term_cfg(term)
+    success_monitor = getattr(env.curriculum_manager.cfg, "terrain_levels").func.success_monitor
+    success_rate = success_monitor.get_success_rate().mean()
+    if (success_rate > 0.1 and env.common_step_counter > 100):
+        term_cfg.params["thresh"][2] = 0.5
+        term_cfg.params["thresh"][3] = 0.5
 
 
-# def activate_reward_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], reward_term: str):
-#     term_cfg = env.reward_manager.get_term_cfg(reward_term)
-#     if env.common_step_counter < 5000 and term_cfg.weight != 0.0:
-#         term_cfg.weight = 0.0
-#     if env.common_step_counter > 5000 and term_cfg.weight == 0.0:
-#         term_cfg.weight = 250.0
+def activate_reward_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], reward_term: str):
+    term_cfg = env.reward_manager.get_term_cfg(reward_term)
+    if env.common_step_counter < 5000 and term_cfg.weight != 0.0:
+        term_cfg.weight = 0.0
+    if env.common_step_counter > 5000 and term_cfg.weight == 0.0:
+        term_cfg.weight = 250.0

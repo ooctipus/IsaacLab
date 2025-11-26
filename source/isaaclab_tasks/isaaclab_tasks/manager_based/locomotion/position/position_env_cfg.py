@@ -289,11 +289,7 @@ variants = {
         "square_pillar_obstacle": make_terrain({"square_pillar_obstacle": terrains.SQUARE_PILLAR_OBSTACLE}),
         "stepping_stone": make_terrain({"stepping_stone": terrains.STEPPING_STONE}),
         "radiating_beam": make_terrain({"radiating_beam": terrains.RADIATING_BEAM}),
-    },
-    "curriculum.terrain_levels": {
-        "success_rate": CurrTerm(func=mdp.terrain_success_rate_levels),
-        "linear": CurrTerm(func=mdp.terrain_levels_vel),
-    },
+    }
 }
 
 
