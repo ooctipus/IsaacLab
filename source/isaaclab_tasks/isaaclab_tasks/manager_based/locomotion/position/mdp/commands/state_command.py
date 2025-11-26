@@ -16,7 +16,7 @@ from isaaclab.assets import Articulation
 from isaaclab.managers import CommandTerm
 from isaaclab.utils import configclass
 from isaaclab.markers import VisualizationMarkers
-from isaaclab.utils.math import euler_xyz_from_quat, quat_from_euler_xyz, quat_mul
+from isaaclab.utils.math import quat_apply_inverse, euler_xyz_from_quat, quat_from_euler_xyz, quat_mul, quat_inv, axis_angle_from_quat
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
@@ -56,7 +56,7 @@ class RelativeStateCommand(CommandTerm):
         # -- robot
         self.robot: Articulation = env.scene[cfg.asset_name]
         self.spec = self._build_spec(self.cfg.commands)
-
+        self.is_torch_backend = True
         # desired, error, current
         self.cmd_buf = torch.zeros(self.num_envs, 3, 12, device=self.device)
         self.cmd_ids = torch.randint(0, self.spec.cardinal, size=(self.num_envs,), device=self.device, dtype=torch.int32)
@@ -172,29 +172,46 @@ class RelativeStateCommand(CommandTerm):
         if env_ids.numel() == 0:
             return
 
-        # no cast
-        wp_env_ids = wp.from_torch(env_ids, requires_grad=False)
-        self._warp_seed += 1
+        if self.is_torch_backend:
+            cmd_ids = torch.randint(0, self.spec.cardinal, size=(len(env_ids),), device=self.device)
+            cmd_mask = self.spec.mask[cmd_ids]
+            self.cmd_ids[env_ids] = cmd_ids
+            self.cmd_mask[env_ids] = cmd_mask
 
-        wp.launch(
-            resample_commands_kernel,
-            dim=env_ids.shape[0],
-            inputs=[
-                wp_env_ids,
-                self._wp_cmd_ids,
-                self._wp_cmd_mask_2d,
-                self._wp_spec_mask,
-                self._wp_spec_min,
-                self._wp_spec_span,
-                self._wp_env_origins,
-                self._wp_default_root_z,
-                self._wp_cmd_buf,
-                self._num_cmd,
-                self.num_envs,
-                self._warp_seed,
-            ],
-            device=self._wp_device,
-        )
+            # random in [0,1)
+            r = (self.rand[env_ids].uniform_() * self.spec.span[cmd_ids] + self.spec.min[cmd_ids])
+
+            # desired position (world)
+            default_position = self._env.scene.env_origins[env_ids].clone()
+            default_position[:, 2] += self.robot.data.default_root_state[env_ids, 2]
+            default_position *= cmd_mask[:, :3].to(default_position.dtype)
+
+            self.cmd_buf[env_ids, 0, :3] = default_position + r[:, :3]
+            self.cmd_buf[env_ids, 0, 3:12] = r[:, 3:12]
+
+        else:
+            wp_env_ids = wp.from_torch(env_ids, requires_grad=False)
+            self._warp_seed += 1
+
+            wp.launch(
+                resample_commands_kernel,
+                dim=env_ids.shape[0],
+                inputs=[
+                    wp_env_ids,
+                    self._wp_cmd_ids,
+                    self._wp_cmd_mask_2d,
+                    self._wp_spec_mask,
+                    self._wp_spec_min,
+                    self._wp_spec_span,
+                    self._wp_env_origins,
+                    self._wp_default_root_z,
+                    self._wp_cmd_buf,
+                    self._num_cmd,
+                    self.num_envs,
+                    self._warp_seed,
+                ],
+                device=self._wp_device,
+            )
 
     def _update_command(self):
         root_state_w = self.robot.data.root_state_w
@@ -205,19 +222,48 @@ class RelativeStateCommand(CommandTerm):
         torch.stack(euler_xyz_from_quat(root_quat), dim=-1, out=self.cmd_buf[:, 2, 3:6])
         self.cmd_buf[:, 2, 6:12] = root_state_w[:, 7:13]
         wp_root_quat = wp.from_torch(root_quat, requires_grad=False)
-        # Warp uses the pre-wrapped view
-        wp.launch(
-            update_command_rel_kernel,
-            dim=self.num_envs,
-            inputs=[
-                wp_root_quat,
-                self._wp_cmd_buf,
-                self._wp_cmd_mask_2d,
-                self._wp_rel,
-                self.num_envs,
-            ],
-            device=self._wp_device,
-        )
+
+        if self.is_torch_backend:
+            """Re-target the position command to the current root state."""
+            root_state_w = self.robot.data.root_state_w
+            root_quat = self.robot.data.root_quat_w  # (N, 4)
+
+            # update correct state
+            self.cmd_buf[:, 2, :3] = root_state_w[:, :3]
+            torch.stack(euler_xyz_from_quat(root_quat), dim=-1, out=self.cmd_buf[:, 2, 3:6])
+            self.cmd_buf[:, 2, 6:12] = root_state_w[:, 7:13]
+
+            # relative position (world → body)
+            torch.sub(self.cmd_buf[:, 0, :3], self.cmd_buf[:, 2, :3], out=self._rel[:, 0:3])
+            self.cmd_buf[:, 1, :3] = quat_apply_inverse(root_quat, self._rel[:, 0:3] * self.cmd_mask[:, :3])
+
+            # relative orientation (euler diff in body)
+            quat_des = quat_from_euler_xyz(self.cmd_buf[:, 0, 3], self.cmd_buf[:, 0, 4], self.cmd_buf[:, 0, 5],)
+            quat_err = quat_mul(quat_inv(root_quat), quat_des)
+
+            # axis-angle rotation vector in body frame: (N, 3)
+            torch.stack(euler_xyz_from_quat(quat_err, wrap_to_2pi=True), dim=-1, out=self._rel[:, 3:6])
+            self.cmd_buf[:, 1, 3:6] = axis_angle_from_quat(quat_err) * self.cmd_mask[:, 3:6]
+
+            # relative velocities (world → body)
+            torch.sub(self.cmd_buf[:, 0, 6:12], self.cmd_buf[:, 2, 6:12], out=self._rel[:, 6:12])
+            self._rel[:, 6:9] = quat_apply_inverse(root_quat, self._rel[:, 6:9])
+            self._rel[:, 9:12] = quat_apply_inverse(root_quat, self._rel[:, 9:12])
+            self.cmd_buf[:, 1, 6:12] = self._rel[:, 6:12] * self.cmd_mask[:, 6:12]
+        else:
+            # Warp uses the pre-wrapped view
+            wp.launch(
+                update_command_rel_kernel,
+                dim=self.num_envs,
+                inputs=[
+                    wp_root_quat,
+                    self._wp_cmd_buf,
+                    self._wp_cmd_mask_2d,
+                    self._wp_rel,
+                    self.num_envs,
+                ],
+                device=self._wp_device,
+            )
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         if debug_vis:
@@ -242,15 +288,10 @@ class RelativeStateCommand(CommandTerm):
             return
 
         # current per-env command mask (already set in _resample_command)
-        cmd_mask = self.cmd_mask  # (num_envs, 12)
-
-        has_velocity = torch.any(cmd_mask[:, 6:], dim=1)   # any lin/ang vel dim
-        has_orientation = torch.any(cmd_mask[:, 3:6], dim=1)
-        has_position = torch.any(cmd_mask[:, :3], dim=1)
-
-        vel_task_ids = self._env.scene._ALL_INDICES[has_velocity]
-        pose_task_ids = self._env.scene._ALL_INDICES[~has_velocity & has_orientation]
-        pos_task_ids = self._env.scene._ALL_INDICES[~has_velocity & ~has_orientation & has_position]
+        kinds = self.spec.kind[self.cmd_ids.long()]
+        pos_task_ids = self._env.scene._ALL_INDICES[kinds == 0]
+        pose_task_ids = self._env.scene._ALL_INDICES[kinds == 1]
+        vel_task_ids = self._env.scene._ALL_INDICES[kinds == 2]
 
         goal_translations = []
         goal_orientations = []
