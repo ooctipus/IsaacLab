@@ -21,7 +21,6 @@ This term supports different "command kinds" via cfg:
 from __future__ import annotations
 
 import torch
-import warp as wp
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 from dataclasses import MISSING
@@ -48,7 +47,7 @@ if TYPE_CHECKING:
 class RelativeStateCommand(CommandTerm):
     """Command term that generates and tracks a full relative state target.
 
-    The command has 12 DOFs grouped into 4×3:
+    The command has 12 DOFs grouped into 4x3:
 
     - group 0: position      (x, y, z)
     - group 1: orientation   (roll, pitch, yaw) or axis-angle error in base frame
@@ -82,6 +81,9 @@ class RelativeStateCommand(CommandTerm):
         min: torch.Tensor = MISSING
         span: torch.Tensor = MISSING
         kind: torch.Tensor = MISSING
+        num_descretized_cmd: int = MISSING
+        descretized_cmd: torch.Tensor = MISSING
+        descretized_mask: torch.Tensor = MISSING
 
     def __init__(self, cfg: RelativeStateCommandCfg, env: ManagerBasedEnv):
         """Initialize the relative state command generator.
@@ -106,8 +108,10 @@ class RelativeStateCommand(CommandTerm):
         # cmd_buf[:, 1, :] → desired state in base frame (relative state)
         # cmd_buf[:, 2, :] → current state in world frame
         self.cmd_buf = torch.zeros(self.num_envs, 3, 12, device=self.device)
+        self.cmd_buf[:, 1, :] = 1  # initialize relative error to 1, all failing.
         self.cmd_ids = torch.randint(0, self.spec.cardinal, size=(self.num_envs,), device=self.device, dtype=torch.int32)
         self.cmd_mask = torch.zeros(self.num_envs, 12, device=self.device, dtype=torch.bool)
+        self.cmd_indices = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self.rand = torch.empty(self.num_envs, 12, device=self.device)
         self.reward = torch.zeros(self.num_envs, device=self.device)
 
@@ -126,72 +130,104 @@ class RelativeStateCommand(CommandTerm):
         self.metrics["error_linvel"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["error_angvel"] = torch.zeros(self.num_envs, device=self.device)
 
-        self._init_warp()
         self._warp_seed = 1
-
-    def _init_warp(self):
-        """Create Warp views over Torch tensors for the Warp backend."""
-        self._num_cmd = self.spec.cardinal
-        self._wp_device = wp.device_from_torch(self.device)
-
-        self._wp_spec_min = wp.from_torch(self.spec.min.contiguous(), requires_grad=False)
-        self._wp_spec_span = wp.from_torch(self.spec.span.contiguous(), requires_grad=False)
-        self._wp_spec_mask = wp.from_torch(self.spec.mask.contiguous(), requires_grad=False)
-
-        self._wp_env_origins = wp.from_torch(self._env.scene.env_origins.contiguous(), requires_grad=False)
-        self._default_root_z = self.robot.data.default_root_state[:, 2].contiguous()
-        self._wp_default_root_z = wp.from_torch(self._default_root_z, requires_grad=False)
-
-        self._wp_cmd_buf = wp.from_torch(self.cmd_buf.contiguous(), requires_grad=False)
-        self._wp_cmd_ids = wp.from_torch(self.cmd_ids, requires_grad=False)
-        self._wp_cmd_mask_2d = wp.from_torch(self.cmd_mask, requires_grad=False)
-        self._wp_rel = wp.from_torch(self._rel, requires_grad=False)
 
     def _build_spec(self, commands: dict[str, RelativeStateCommandCfg.Commands]) -> CommandSpec:
         """Compile cfg.commands into a CommandSpec used for fast sampling."""
         from .commands_cfg import RelativeStateCommandCfg
 
-        num_cmd = len(commands)
-        ranges = torch.zeros((num_cmd, 12, 2), device=self.device)
-        mask = torch.zeros((num_cmd, 12), device=self.device, dtype=torch.bool)
-        kind = torch.zeros(num_cmd, dtype=torch.int32, device=self.device)
+        self.terrains: TerrainImporter = self._env.scene["terrain"]
+        has_spawn = "spawn" in self.terrains.flat_patches
+        spawn_src = self.terrains.flat_patches["spawn"] if has_spawn else self._env.scene.terrain.terrain_origins
+        if spawn_src.dim() == 3:
+            spawn_src = spawn_src.unsqueeze(2)  # [row, col, 1, 3]
+
+        num_row, num_col, num_spawn_per_terrain, _ = spawn_src.shape
+        n_subterrains = num_row * num_col
+        spawn_flat = spawn_src.clone().reshape(n_subterrains, num_spawn_per_terrain, 3)
+        ranges = torch.zeros((len(commands), 12, 2), device=self.device)
+        mask = torch.zeros((len(commands), 12), device=self.device, dtype=torch.bool)
+        kind = torch.zeros(len(commands), dtype=torch.int32, device=self.device)
+
+        blocks = []
+        mask_blocks = []
+        n_samples = 20  # bins per spawn
 
         for cmd_id, val in enumerate(commands.values()):
-            # tag kind
-            if isinstance(val, RelativeStateCommandCfg.PositionCommands):
-                kind[cmd_id] = 0
-            elif isinstance(val, RelativeStateCommandCfg.PoseCommands):
-                kind[cmd_id] = 1
-            elif isinstance(val, RelativeStateCommandCfg.VelocityCommands):
-                kind[cmd_id] = 2
-
-            # optional: terrain-connected commands may override position sampling
-            if isinstance(val, RelativeStateCommandCfg.TerrainCommands):
-                self.terrains: TerrainImporter = self._env.scene["terrain"]
-                if "target" not in self.terrains.flat_patches or "spawn" not in self.terrains.flat_patches:
-                    raise RuntimeError(
-                        "The terrain-based command generator requires a valid flat patch under 'target' and 'spawn'"
-                        f"in the terrain. Found: {list(self.terrains.flat_patches.keys())}"
-                    )
-                self.valid_targets: torch.Tensor = self.terrains.flat_patches[val.target_key]
-                self.valid_spawn: torch.Tensor = self.terrains.flat_patches[val.spawn_key]
-                val.pos_x = None
-                val.pos_y = None
-                val.pos_z = None
-
-            # collect tuple ranges for active DOFs
+            # --- collect tuple ranges for this cfg FIRST ---
             for data_id, data in enumerate(val.__dict__.values()):
                 if data is not None and isinstance(data, tuple):
                     mask[cmd_id, data_id] = True
                     ranges[cmd_id, data_id, 0] = data[0]
                     ranges[cmd_id, data_id, 1] = data[1]
 
+            # --- TerrainCommands: per-tile Cartesian(spawn, target) ---
+            if isinstance(val, RelativeStateCommandCfg.TerrainCommands):
+                if "target" not in self.terrains.flat_patches:
+                    raise RuntimeError(
+                        "The terrain-based command generator requires a valid flat patch under 'target'"
+                        f"in the terrain. Found: {list(self.terrains.flat_patches.keys())}"
+                    )
+
+                targets = self.terrains.flat_patches[val.target_key]  # [R,C,Pt,3] or compatible
+                _, _, num_targets_per_terrain, _ = targets.shape
+                targets_flat = targets.reshape(n_subterrains, num_targets_per_terrain, 3)
+                val.pos_x = val.pos_y = val.pos_z = None  # TerrainCommands do not use pos_* ranges
+                kind[cmd_id] = 1 if (val.roll or val.pitch or val.yaw) else 0
+
+                spawn_exp = spawn_flat[:, :, None, :]
+                target_exp = targets_flat[:, None, :, :]
+
+                spawn_all = spawn_exp.expand(-1, num_spawn_per_terrain, num_targets_per_terrain, -1).reshape(-1, 3)
+                target_all = target_exp.expand(-1, num_spawn_per_terrain, num_targets_per_terrain, -1).reshape(-1, 3)
+
+                block = torch.zeros(spawn_all.shape[0], 15, device=self.device)
+                # 0:3 spawn, 3:6 target, 6:15 unused (0)
+                block[:, 0:3] = spawn_all
+                block[:, 3:6] = target_all
+                blocks.append(block)
+
+                # mask for this block: spawn position is always "active"; plus any DOFs that had ranges
+                block_mask = torch.zeros(block.shape[0], 12, device=self.device, dtype=torch.bool)
+                block_mask[:, 0:3] = True  # we always care about pos error for terrain command
+                block_mask |= mask[cmd_id].view(1, 12)  # keep any non-pos DOFs that have ranges in the original cfg
+                mask_blocks.append(block_mask)
+
+            # --- Non-terrain commands: num bins * num_spawn per tile ---
+            else:
+                if isinstance(val, RelativeStateCommandCfg.PositionCommands):
+                    kind[cmd_id] = 0
+                elif isinstance(val, RelativeStateCommandCfg.PoseCommands):
+                    kind[cmd_id] = 1
+                elif isinstance(val, RelativeStateCommandCfg.VelocityCommands):
+                    kind[cmd_id] = 2
+
+                _min = ranges[cmd_id, :, 0]
+                span = ranges[cmd_id, :, 1] - _min
+
+                count = n_subterrains * num_spawn_per_terrain * n_samples
+                block = torch.zeros(count, 15, device=self.device)
+                block[:, 3:15] = torch.rand(count, 12, device=self.device) * span.view(1, 12) + _min.view(1, 12)
+                spawn_exp = spawn_flat[:, :, None, :].expand(n_subterrains, num_spawn_per_terrain, n_samples, 3)
+                block[:, 0:3] = spawn_exp.reshape(-1, 3)        # [count,3]
+                block[:, 3:6] += spawn_exp.reshape(-1, 3)
+                blocks.append(block)
+
+                block_mask = mask[cmd_id].view(1, 12).expand(count, 12)
+                mask_blocks.append(block_mask)
+        # stack all discrete commands
+        descretized_cmd = torch.cat(blocks, dim=0)
+        descretized_mask = torch.cat(mask_blocks, dim=0)
+
         spec = self.CommandSpec(
-            cardinal=num_cmd,
+            cardinal=len(commands),
             mask=mask,
             min=ranges[..., 0],
             span=ranges[..., 1] - ranges[..., 0],
             kind=kind,
+            num_descretized_cmd=descretized_cmd.shape[0],
+            descretized_cmd=descretized_cmd,
+            descretized_mask=descretized_mask
         )
         return spec
 
@@ -217,60 +253,15 @@ class RelativeStateCommand(CommandTerm):
         self.metrics["error_linvel"] = self._err[:, 2]
         self.metrics["error_angvel"] = self._err[:, 3]
 
+    def resample_indices(self, env_ids: torch.Tensor):
+        indices = torch.randint(0, self.spec.num_descretized_cmd, (env_ids.numel(),), device=self.device)
+        self.cmd_indices[env_ids] = indices
+
     def _resample_command(self, env_ids: torch.Tensor):
-        """Sample new desired world commands for the given env_ids.
-
-        Torch backend:
-            - Randomly picks a command index per env.
-            - Samples each active DOF uniformly from its (min, max) range.
-            - Anchors position around env_origins + default root height.
-
-        Warp backend:
-            - Uses resample_commands_kernel with equivalent logic.
-        """
-        if env_ids.numel() == 0:
-            return
-
-        if self.is_torch_backend:
-            cmd_ids = torch.randint(0, self.spec.cardinal, size=(len(env_ids),), device=self.device)
-            cmd_mask = self.spec.mask[cmd_ids]
-            self.cmd_ids[env_ids] = cmd_ids
-            self.cmd_mask[env_ids] = cmd_mask
-
-            # r in [min, max)
-            r = self.rand[env_ids].uniform_() * self.spec.span[cmd_ids] + self.spec.min[cmd_ids]
-
-            # desired position (world); anchor at env origin + base height
-            default_position = self._env.scene.env_origins[env_ids].clone()
-            default_position[:, 2] += self.robot.data.default_root_state[env_ids, 2]
-            default_position *= cmd_mask[:, :3].to(default_position.dtype)
-
-            self.cmd_buf[env_ids, 0, :3] = default_position + r[:, :3]
-            self.cmd_buf[env_ids, 0, 3:12] = r[:, 3:12]
-
-        else:
-            wp_env_ids = wp.from_torch(env_ids, requires_grad=False)
-            self._warp_seed += 1
-
-            wp.launch(
-                resample_commands_kernel,
-                dim=env_ids.shape[0],
-                inputs=[
-                    wp_env_ids,
-                    self._wp_cmd_ids,
-                    self._wp_cmd_mask_2d,
-                    self._wp_spec_mask,
-                    self._wp_spec_min,
-                    self._wp_spec_span,
-                    self._wp_env_origins,
-                    self._wp_default_root_z,
-                    self._wp_cmd_buf,
-                    self._num_cmd,
-                    self.num_envs,
-                    self._warp_seed,
-                ],
-                device=self._wp_device,
-            )
+        self.resample_indices(env_ids)
+        idx = self.cmd_indices[env_ids]
+        self.cmd_buf[env_ids, 0, :] = self.spec.descretized_cmd[idx , 3:15]
+        self.cmd_mask[env_ids] = self.spec.descretized_mask[idx]
 
     def _update_command(self):
         """Update world-state row and recompute relative state for all envs.
@@ -286,7 +277,6 @@ class RelativeStateCommand(CommandTerm):
         self.cmd_buf[:, 2, :3] = root_state_w[:, :3]
         torch.stack(euler_xyz_from_quat(root_quat), dim=-1, out=self.cmd_buf[:, 2, 3:6])
         self.cmd_buf[:, 2, 6:12] = root_state_w[:, 7:13]
-        wp_root_quat = wp.from_torch(root_quat, requires_grad=False)
 
         if self.is_torch_backend:
             # relative position (world → body)
@@ -314,20 +304,6 @@ class RelativeStateCommand(CommandTerm):
             vel_rel = torch.cat([lin_b, ang_b], dim=-1) * self.cmd_mask[:, 6:12]
             self._rel[:, 6:12] = vel_rel
             self.cmd_buf[:, 1, 6:12] = vel_rel
-
-        else:
-            # Warp uses the pre-wrapped view
-            wp.launch(
-                update_command_rel_kernel,
-                dim=self.num_envs,
-                inputs=[
-                    wp_root_quat,
-                    self._wp_cmd_buf,
-                    self._wp_cmd_mask_2d,
-                    self.num_envs,
-                ],
-                device=self._wp_device,
-            )
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         """Create / toggle visualization markers for the command targets."""
@@ -460,214 +436,3 @@ class RelativeStateCommand(CommandTerm):
         group_r = 1.0 - torch.tanh(self._err / self._reward_scales)
         self.reward = group_r.prod(dim=1)
         return self.reward
-
-
-@wp.kernel
-def resample_commands_kernel(
-    env_ids: wp.array(dtype=wp.int64),
-    cmd_ids_out: wp.array(dtype=wp.int32),
-    cmd_mask_out: wp.array(dtype=wp.bool, ndim=2),
-    spec_mask: wp.array(dtype=wp.bool, ndim=2),
-    spec_min: wp.array(dtype=wp.float32, ndim=2),
-    spec_span: wp.array(dtype=wp.float32, ndim=2),
-    env_origins: wp.array(dtype=wp.float32, ndim=2),
-    default_root_z: wp.array(dtype=wp.float32),
-    cmd_buf: wp.array(dtype=wp.float32, ndim=3),
-    num_cmd: int,
-    num_envs: int,
-    seed: int,
-):
-    """Warp kernel to resample desired world commands for a subset of envs.
-
-    For each env in env_ids:
-        - pick a random command id in [0, num_cmd)
-        - sample each active DOF uniformly from its range
-        - anchor position at env_origin + default_root_z
-        - write result into cmd_buf[env, 0, :]
-    """
-    tid = wp.tid()
-    if tid >= env_ids.shape[0]:
-        return
-
-    env64 = env_ids[tid]
-    if env64 < 0 or env64 >= num_envs:
-        return
-
-    env = wp.int32(env64)
-
-    state = wp.rand_init(seed, env)
-    cmd_type = wp.randi(state, 0, num_cmd)
-
-    cmd_ids_out[env] = cmd_type
-
-    base_x = env_origins[env, 0]
-    base_y = env_origins[env, 1]
-    base_z = env_origins[env, 2] + default_root_z[env]
-
-    for d in range(12):
-        m = spec_mask[cmd_type, d]
-        cmd_mask_out[env, d] = m
-
-        val = 0.0
-        if m:
-            lo = spec_min[cmd_type, d]
-            span = spec_span[cmd_type, d]
-            u = wp.randf(state)
-            val = lo + span * u
-
-        if d == 0:
-            cmd_buf[env, 0, 0] = base_x + val if m else 0.0
-        elif d == 1:
-            cmd_buf[env, 0, 1] = base_y + val if m else 0.0
-        elif d == 2:
-            cmd_buf[env, 0, 2] = base_z + val if m else 0.0
-        else:
-            cmd_buf[env, 0, d] = val
-
-
-@wp.kernel
-def update_command_rel_kernel(
-    root_quat_w: wp.array(dtype=wp.float32, ndim=2),  # [N, 4] in wxyz
-    cmd_buf: wp.array(dtype=wp.float32, ndim=3),      # [N, 3, 12]
-    cmd_mask: wp.array(dtype=wp.bool, ndim=2),        # [N, 12]
-    num_envs: int,
-):
-    """Warp kernel to update relative state from world-state rows.
-
-    Reads:
-        - root_quat_w: root orientation in wxyz
-        - cmd_buf[:,0,:]: desired world state
-        - cmd_buf[:,2,:]: current world state
-
-    Writes:
-        - cmd_buf[:,1,:]: desired state in base frame
-    """
-    tid = wp.tid()
-    if tid >= num_envs:
-        return
-
-    i = tid
-
-    # root quaternion: wxyz -> Warp xyzw
-    qw = root_quat_w[i, 0]
-    qx = root_quat_w[i, 1]
-    qy = root_quat_w[i, 2]
-    qz = root_quat_w[i, 3]
-
-    q_root = wp.quat(qx, qy, qz, qw)
-    q_root_inv = wp.quat_inverse(q_root)
-
-    # orientation error (axis-angle in body)
-    roll = cmd_buf[i, 0, 3]
-    pitch = cmd_buf[i, 0, 4]
-    yaw = cmd_buf[i, 0, 5]
-    q_des = wp.quat_rpy(roll, pitch, yaw)
-    q_err = quat_mul_wp(q_root_inv, q_des)
-
-    axis, angle = wp.quat_to_axis_angle(q_err)
-    rot_err = axis * angle
-
-    ex = rot_err[0]
-    ey = rot_err[1]
-    ez = rot_err[2]
-
-    if not cmd_mask[i, 3]:
-        ex = 0.0
-    if not cmd_mask[i, 4]:
-        ey = 0.0
-    if not cmd_mask[i, 5]:
-        ez = 0.0
-
-    cmd_buf[i, 1, 3] = ex
-    cmd_buf[i, 1, 4] = ey
-    cmd_buf[i, 1, 5] = ez
-
-    # relative position (world → body)
-    px = cmd_buf[i, 2, 0]
-    py = cmd_buf[i, 2, 1]
-    pz = cmd_buf[i, 2, 2]
-
-    dx = cmd_buf[i, 0, 0]
-    dy = cmd_buf[i, 0, 1]
-    dz = cmd_buf[i, 0, 2]
-
-    rx = dx - px
-    ry = dy - py
-    rz = dz - pz
-
-    v_w = wp.vec3(rx, ry, rz)
-    if not cmd_mask[i, 0]:
-        v_w[0] = 0.0
-    if not cmd_mask[i, 1]:
-        v_w[1] = 0.0
-    if not cmd_mask[i, 2]:
-        v_w[2] = 0.0
-
-    v_b = wp.quat_rotate(q_root_inv, v_w)
-    cmd_buf[i, 1, 0] = v_b[0]
-    cmd_buf[i, 1, 1] = v_b[1]
-    cmd_buf[i, 1, 2] = v_b[2]
-
-    # relative velocities (world → body)
-    lvx = cmd_buf[i, 0, 6] - cmd_buf[i, 2, 6]
-    lvy = cmd_buf[i, 0, 7] - cmd_buf[i, 2, 7]
-    lvz = cmd_buf[i, 0, 8] - cmd_buf[i, 2, 8]
-    lv_w = wp.vec3(lvx, lvy, lvz)
-
-    avx = cmd_buf[i, 0, 9] - cmd_buf[i, 2, 9]
-    avy = cmd_buf[i, 0, 10] - cmd_buf[i, 2, 10]
-    avz = cmd_buf[i, 0, 11] - cmd_buf[i, 2, 11]
-    av_w = wp.vec3(avx, avy, avz)
-
-    lv_b = wp.quat_rotate(q_root_inv, lv_w)
-    av_b = wp.quat_rotate(q_root_inv, av_w)
-
-    if not cmd_mask[i, 6]:
-        lv_b[0] = 0.0
-    if not cmd_mask[i, 7]:
-        lv_b[1] = 0.0
-    if not cmd_mask[i, 8]:
-        lv_b[2] = 0.0
-
-    if not cmd_mask[i, 9]:
-        av_b[0] = 0.0
-    if not cmd_mask[i, 10]:
-        av_b[1] = 0.0
-    if not cmd_mask[i, 11]:
-        av_b[2] = 0.0
-
-    cmd_buf[i, 1, 6] = lv_b[0]
-    cmd_buf[i, 1, 7] = lv_b[1]
-    cmd_buf[i, 1, 8] = lv_b[2]
-    cmd_buf[i, 1, 9] = av_b[0]
-    cmd_buf[i, 1, 10] = av_b[1]
-    cmd_buf[i, 1, 11] = av_b[2]
-
-
-@wp.func
-def quat_mul_wp(a: wp.quat, b: wp.quat) -> wp.quat:
-    """Multiply two Warp quaternions in xyzw convention.
-
-    Args:
-        a: First quaternion (x, y, z, w).
-        b: Second quaternion (x, y, z, w).
-
-    Returns:
-        The product q = a * b as a wp.quat in xyzw.
-    """
-    ax = a[0]
-    ay = a[1]
-    az = a[2]
-    aw = a[3]
-
-    bx = b[0]
-    by = b[1]
-    bz = b[2]
-    bw = b[3]
-
-    w = aw * bw - ax * bx - ay * by - az * bz
-    x = aw * bx + ax * bw + ay * bz - az * by
-    y = aw * by - ax * bz + ay * bw + az * bx
-    z = aw * bz + ax * by - ay * bx + az * bw
-
-    return wp.quat(x, y, z, w)

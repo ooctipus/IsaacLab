@@ -125,12 +125,18 @@ class CommandsCfg:
                 lin_vel_z=None,
                 ang_vel_x=None,
                 ang_vel_y=None,
-                ang_vel_z=None,
+                ang_vel_z=(-1.0, 1.0),
             ),
             "pos_cmd": mdp.RelativeStateCommandCfg.PositionCommands(
                 pos_x=(-3.0, 3.0),
                 pos_y=(-3.0, 3.0),
                 pos_z=None,
+            ),
+            "terrain_cmd": mdp.RelativeStateCommandCfg.PositionCommands(
+                pos_x=None,
+                pos_y=None,
+                pos_z=None,
+                yaw=(-3.14, 3.14),
             ),
         }
     )
@@ -240,7 +246,7 @@ class TerminationsCfg:
 
 @configclass
 class CurriculumCfg:
-    terrain_levels = CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels, params={"debug_vis": False, "kappa": 2.0, "success_term": "success"})
+    terrain_levels = CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels, params={"debug_vis": True, "kappa": 2.0})
 
 
 def make_terrain(terrain_dict):
@@ -252,7 +258,7 @@ def make_terrain(terrain_dict):
             size=(10.0, 10.0),
             border_width=20.0,
             num_rows=10,
-            num_cols=20,
+            num_cols=10,
             horizontal_scale=0.1,
             vertical_scale=0.005,
             slope_threshold=0.75,
@@ -308,11 +314,7 @@ variants = {
         "square_pillar_obstacle": make_terrain({"square_pillar_obstacle": terrains.SQUARE_PILLAR_OBSTACLE}),
         "stepping_stone": make_terrain({"stepping_stone": terrains.STEPPING_STONE}),
         "radiating_beam": make_terrain({"radiating_beam": terrains.RADIATING_BEAM}),
-    },
-    # "curriculum.terrain_levels": {
-    #     "success_rate": CurrTerm(func=mdp.terrain_success_rate_levels),
-    #     "linear": CurrTerm(func=mdp.terrain_levels_vel),
-    # },
+    }
 }
 
 
