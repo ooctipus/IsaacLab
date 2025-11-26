@@ -283,6 +283,19 @@ def make_terrain(terrain_dict):
     )
 
 
+def make_commands(commands_dict):
+    return mdp.RelativeStateCommandCfg(
+        asset_name="robot",
+        resampling_time_range=(10.0, 10.0),
+        pos_std=0.5,
+        rot_std=0.5,
+        lin_vel_std=0.3,
+        ang_vel_std=0.3,
+        debug_vis=True,
+        commands=commands_dict
+    )
+
+
 variants = {
     "scene.terrain": {
         "all": make_terrain({
@@ -314,6 +327,17 @@ variants = {
         "square_pillar_obstacle": make_terrain({"square_pillar_obstacle": terrains.SQUARE_PILLAR_OBSTACLE}),
         "stepping_stone": make_terrain({"stepping_stone": terrains.STEPPING_STONE}),
         "radiating_beam": make_terrain({"radiating_beam": terrains.RADIATING_BEAM}),
+    },
+    "commands.goal_point": {
+        "terrain": make_commands({"terrain_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
+            roll=None, pitch=None, yaw=(-3.14, 3.14),
+        )}),
+        "pose": make_commands({"pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(
+            pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None, roll=None, pitch=None, yaw=(-3.14, 3.14),
+        )}),
+        "vel": make_commands({"vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
+            lin_vel_x=(-1.5, 1.5), lin_vel_y=(-1.5, 1.5), lin_vel_z=None, ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-1.0, 1.0),
+        )})
     }
 }
 

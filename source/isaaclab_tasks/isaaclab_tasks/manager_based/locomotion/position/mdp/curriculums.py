@@ -145,12 +145,8 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         Sc = torch.ones(self._n_lines, 3, device=self.device)
         Sc[:, 2] = Ll
 
-        base = torch.full((self._n_lines,), 5, dtype=torch.int32, device=self.device)
-        self._marker_idx = base
-
-        self.frame_visualizer.visualize(
-            translations=Lp, orientations=Lq, scales=Sc, marker_indices=base
-        )
+        self._marker_idx = torch.full((self._n_lines,), 5, dtype=torch.int32, device=self.device)
+        self.frame_visualizer.visualize(translations=Lp, orientations=Lq, scales=Sc, marker_indices=self._marker_idx)
 
     def _recolor_lines(self, success: torch.Tensor) -> None:
         """Recolor lines according to success per discrete command index."""
