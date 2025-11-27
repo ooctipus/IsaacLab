@@ -107,35 +107,20 @@ class CommandsCfg:
         resampling_time_range=(10.0, 10.0),
         pos_std=0.5,
         rot_std=0.5,
-        lin_vel_std=0.3,
-        ang_vel_std=0.3,
+        lin_vel_std=0.6,
+        ang_vel_std=0.6,
         debug_vis=True,
         commands={
-            "pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(
-                pos_x=(-3.0, 3.0),
-                pos_y=(-3.0, 3.0),
-                pos_z=None,
-                roll=None,
-                pitch=None,
-                yaw=(-3.14, 3.14),
-                duration=(0.05, 2.0)
-            ),
             "vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
-                lin_vel_x=(-1.5, 1.5),
-                lin_vel_y=(-1.5, 1.5),
+                lin_vel_x=(-0.5, 2.0),
+                lin_vel_y=(-1.0, 1.0),
                 lin_vel_z=None,
                 ang_vel_x=None,
                 ang_vel_y=None,
                 ang_vel_z=(-1.0, 1.0),
                 duration=(0.05, 4.0)
             ),
-            "pos_cmd": mdp.RelativeStateCommandCfg.PositionCommands(
-                pos_x=(-3.0, 3.0),
-                pos_y=(-3.0, 3.0),
-                pos_z=None,
-                duration=(0.05, 2.0)
-            ),
-            "terrain_cmd": mdp.RelativeStateCommandCfg.PositionCommands(
+            "terrain_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
                 pos_x=None,
                 pos_y=None,
                 pos_z=None,
