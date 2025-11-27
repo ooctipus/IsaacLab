@@ -127,7 +127,7 @@ class CommandsCfg:
                 ang_vel_x=None,
                 ang_vel_y=None,
                 ang_vel_z=(-1.0, 1.0),
-                duration=(0.5, 6.0)
+                duration=(0.05, 4.0)
             ),
             "pos_cmd": mdp.RelativeStateCommandCfg.PositionCommands(
                 pos_x=(-3.0, 3.0),
@@ -140,7 +140,7 @@ class CommandsCfg:
                 pos_y=None,
                 pos_z=None,
                 yaw=(-3.14, 3.14),
-                duration=(0.05, 4.0)
+                duration=(0.05, 2.0)
             ),
         }
     )
@@ -230,7 +230,7 @@ class RewardsCfg:
     # task rewards
     success = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=100.0)
     mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0001)
-    joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.005)
+    joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.01)
     fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact", "abnormal_robot"]}, weight=-10.0)
 
 
