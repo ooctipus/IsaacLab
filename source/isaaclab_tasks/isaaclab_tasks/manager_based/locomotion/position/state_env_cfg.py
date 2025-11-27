@@ -121,9 +121,8 @@ class CommandsCfg:
                 duration=(0.05, 4.0)
             ),
             "terrain_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
-                pos_x=None,
-                pos_y=None,
-                pos_z=None,
+                roll=None,
+                pitch=None,
                 yaw=(-3.14, 3.14),
                 duration=(0.05, 2.0)
             ),
