@@ -25,6 +25,18 @@ from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 from . import mdp, terrains
 
 
+def make_commands(commands_dict):
+    return mdp.RelativeStateCommandCfg(
+        asset_name="robot",
+        resampling_time_range=(10.0, 10.0),
+        pos_std=0.5,
+        rot_std=0.5,
+        lin_vel_std=0.6,
+        ang_vel_std=0.6,
+        debug_vis=True,
+        commands=commands_dict
+    )
+
 @configclass
 class SceneCfg(InteractiveSceneCfg):
     """ "Configuration for the terrain scene with a legged robot."""
@@ -102,32 +114,23 @@ class ActionsCfg:
 class CommandsCfg:
     "Command specifications for the MDP."
 
-    goal_point = mdp.RelativeStateCommandCfg(
-        asset_name="robot",
-        resampling_time_range=(10.0, 10.0),
-        pos_std=0.5,
-        rot_std=0.5,
-        lin_vel_std=0.6,
-        ang_vel_std=0.6,
-        debug_vis=True,
-        commands={
-            "vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
-                lin_vel_x=(-2.0, 2.0),
-                lin_vel_y=(-2.0, 2.0),
-                lin_vel_z=None,
-                ang_vel_x=None,
-                ang_vel_y=None,
-                ang_vel_z=(-1.0, 1.0),
-                duration=(0.05, 4.0)
-            ),
-            "terrain_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
-                roll=None,
-                pitch=None,
-                yaw=(-3.14, 3.14),
-                duration=(0.05, 2.0)
-            ),
-        }
-    )
+    goal_point = make_commands({
+        "vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
+            lin_vel_x=(-2.0, 2.0),
+            lin_vel_y=(-2.0, 2.0),
+            lin_vel_z=None,
+            ang_vel_x=None,
+            ang_vel_y=None,
+            ang_vel_z=(-1.0, 1.0),
+            duration=(0.05, 4.0)
+        ),
+        "terrain_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
+            roll=None,
+            pitch=None,
+            yaw=(-3.14, 3.14),
+            duration=(0.05, 2.0)
+        ),
+    })
 
 
 @configclass
@@ -270,19 +273,6 @@ def make_terrain(terrain_dict):
             texture_scale=(0.25, 0.25),
         ),
         debug_vis=False,
-    )
-
-
-def make_commands(commands_dict):
-    return mdp.RelativeStateCommandCfg(
-        asset_name="robot",
-        resampling_time_range=(10.0, 10.0),
-        pos_std=0.5,
-        rot_std=0.5,
-        lin_vel_std=0.3,
-        ang_vel_std=0.3,
-        debug_vis=True,
-        commands=commands_dict
     )
 
 
