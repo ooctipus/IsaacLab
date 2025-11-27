@@ -98,22 +98,15 @@ class RelativeStateCommand(CommandTerm):
         self.robot: Articulation = env.scene[cfg.asset_name]
         self.spec = self._build_spec(self.cfg.commands)
 
-        # Backend flag:
-        # - True  → pure Torch implementation (sampling + relative update)
-        # - False → Warp kernels for sampling and relative update
-        self.is_torch_backend = True
-
         # desired, error, current
         # cmd_buf[:, 0, :] → desired world state
         # cmd_buf[:, 1, :] → desired state in base frame (relative state)
         # cmd_buf[:, 2, :] → current state in world frame
-        self.cmd_buf = torch.zeros(self.num_envs, 3, 12, device=self.device)
-        self.cmd_buf[:, 1, :] = 1  # initialize relative error to 1, all failing.
+        self.cmd_buf = torch.zeros(self.num_envs, 3, 13, device=self.device).contiguous()
+        self.cmd_buf[:, 1, :12] = 1  # initialize relative error to 1, all failing.
         self.cmd_ids = torch.randint(0, self.spec.cardinal, size=(self.num_envs,), device=self.device, dtype=torch.int32)
         self.cmd_mask = torch.zeros(self.num_envs, 12, device=self.device, dtype=torch.bool)
         self.cmd_indices = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
-        self.rand = torch.empty(self.num_envs, 12, device=self.device)
-        self.reward = torch.zeros(self.num_envs, device=self.device)
 
         # reward scales used by get_task_reward() (group-wise scaling)
         reward_scale = [self.cfg.pos_std, self.cfg.rot_std, self.cfg.lin_vel_std, self.cfg.ang_vel_std]
@@ -145,7 +138,7 @@ class RelativeStateCommand(CommandTerm):
         num_row, num_col, num_spawn_per_terrain, _ = spawn_src.shape
         n_subterrains = num_row * num_col
         spawn_flat = spawn_src.clone().reshape(n_subterrains, num_spawn_per_terrain, 3)
-        ranges = torch.zeros((len(commands), 12, 2), device=self.device)
+        ranges = torch.zeros((len(commands), 13, 2), device=self.device)  # 0-12 pos,rot,lin_vel,ang_vel. 12 hold time
         mask = torch.zeros((len(commands), 12), device=self.device, dtype=torch.bool)
         kind = torch.zeros(len(commands), dtype=torch.int32, device=self.device)
 
@@ -157,7 +150,8 @@ class RelativeStateCommand(CommandTerm):
             # --- collect tuple ranges for this cfg FIRST ---
             for data_id, data in enumerate(val.__dict__.values()):
                 if data is not None and isinstance(data, tuple):
-                    mask[cmd_id, data_id] = True
+                    if data_id < 12:
+                        mask[cmd_id, data_id] = True
                     ranges[cmd_id, data_id, 0] = data[0]
                     ranges[cmd_id, data_id, 1] = data[1]
 
@@ -181,10 +175,12 @@ class RelativeStateCommand(CommandTerm):
                 spawn_all = spawn_exp.expand(-1, num_spawn_per_terrain, num_targets_per_terrain, -1).reshape(-1, 3)
                 target_all = target_exp.expand(-1, num_spawn_per_terrain, num_targets_per_terrain, -1).reshape(-1, 3)
 
-                block = torch.zeros(spawn_all.shape[0], 15, device=self.device)
-                # 0:3 spawn, 3:6 target, 6:15 unused (0)
+                block = torch.zeros(spawn_all.shape[0], 16, device=self.device)
+                # 0:3 spawn, 3:6 target, 6:15 unused, 15 hold time
                 block[:, 0:3] = spawn_all
                 block[:, 3:6] = target_all
+                rand = torch.rand(spawn_all.shape[0], device=self.device)
+                block[:, 15] = ranges[cmd_id, 12, 0] + rand * (ranges[cmd_id, 12, 1] - ranges[cmd_id, 12, 0])
                 blocks.append(block)
 
                 # mask for this block: spawn position is always "active"; plus any DOFs that had ranges
@@ -206,11 +202,12 @@ class RelativeStateCommand(CommandTerm):
                 span = ranges[cmd_id, :, 1] - _min
 
                 count = n_subterrains * num_spawn_per_terrain * n_samples
-                block = torch.zeros(count, 15, device=self.device)
-                block[:, 3:15] = torch.rand(count, 12, device=self.device) * span.view(1, 12) + _min.view(1, 12)
+                block = torch.zeros(count, 16, device=self.device)
+                # 3-6: target position, 6-9 target rotation, 9-12 target lin_vel, 12-15 target ang_vel, 15 hold time
+                block[:, 3:16] = torch.rand(count, 13, device=self.device) * span[:,].view(1, 13) + _min.view(1, 13)
                 spawn_exp = spawn_flat[:, :, None, :].expand(n_subterrains, num_spawn_per_terrain, n_samples, 3)
-                block[:, 0:3] = spawn_exp.reshape(-1, 3)        # [count,3]
-                block[:, 3:6] += spawn_exp.reshape(-1, 3)
+                block[:, 0:3] = spawn_exp.reshape(-1, 3)  # add spawn
+                block[:, 3:6] += spawn_exp.reshape(-1, 3)  # add target relative to spawn
                 blocks.append(block)
 
                 block_mask = mask[cmd_id].view(1, 12).expand(count, 12)
@@ -242,7 +239,7 @@ class RelativeStateCommand(CommandTerm):
         """Return the current relative state target in base frame.
 
         Returns:
-            Tensor of shape [num_envs, 12] corresponding to cmd_buf[:, 1, :].
+            Tensor of shape [num_envs, 13] corresponding to cmd_buf[:, 1, :].
         """
         return self.cmd_buf[:, 1]
 
@@ -260,7 +257,8 @@ class RelativeStateCommand(CommandTerm):
     def _resample_command(self, env_ids: torch.Tensor):
         self.resample_indices(env_ids)
         idx = self.cmd_indices[env_ids]
-        self.cmd_buf[env_ids, 0, :] = self.spec.descretized_cmd[idx , 3:15]
+        self.cmd_buf[env_ids, 0, :] = self.spec.descretized_cmd[idx , 3:]
+        self.cmd_buf[env_ids, 2, 12] = 0.0
         self.cmd_mask[env_ids] = self.spec.descretized_mask[idx]
 
     def _update_command(self):
@@ -278,32 +276,40 @@ class RelativeStateCommand(CommandTerm):
         torch.stack(euler_xyz_from_quat(root_quat), dim=-1, out=self.cmd_buf[:, 2, 3:6])
         self.cmd_buf[:, 2, 6:12] = root_state_w[:, 7:13]
 
-        if self.is_torch_backend:
-            # relative position (world → body)
-            torch.sub(self.cmd_buf[:, 0, :3], self.cmd_buf[:, 2, :3], out=self._rel[:, 0:3])
-            pos_w = self._rel[:, 0:3] * self.cmd_mask[:, :3]
-            self.cmd_buf[:, 1, :3] = quat_apply_inverse(root_quat, pos_w)
+        # relative position (world → body)
+        torch.sub(self.cmd_buf[:, 0, :3], self.cmd_buf[:, 2, :3], out=self._rel[:, 0:3])
+        pos_w = self._rel[:, 0:3] * self.cmd_mask[:, :3]
+        self.cmd_buf[:, 1, :3] = quat_apply_inverse(root_quat, pos_w)
 
-            # relative orientation (axis-angle in body)
-            quat_des = quat_from_euler_xyz(
-                self.cmd_buf[:, 0, 3],
-                self.cmd_buf[:, 0, 4],
-                self.cmd_buf[:, 0, 5],
-            )
-            quat_err = quat_mul(quat_inv(root_quat), quat_des)
-            rot_vec = axis_angle_from_quat(quat_err) * self.cmd_mask[:, 3:6]
-            self._rel[:, 3:6] = rot_vec
-            self.cmd_buf[:, 1, 3:6] = rot_vec
+        # relative orientation (axis-angle in body)
+        quat_des = quat_from_euler_xyz(
+            self.cmd_buf[:, 0, 3],
+            self.cmd_buf[:, 0, 4],
+            self.cmd_buf[:, 0, 5],
+        )
+        quat_err = quat_mul(quat_inv(root_quat), quat_des)
+        rot_vec = axis_angle_from_quat(quat_err) * self.cmd_mask[:, 3:6]
+        self._rel[:, 3:6] = rot_vec
+        self.cmd_buf[:, 1, 3:6] = rot_vec
 
-            # relative velocities (world → body)
-            torch.sub(self.cmd_buf[:, 0, 6:12], self.cmd_buf[:, 2, 6:12], out=self._rel[:, 6:12])
-            lin_w = self._rel[:, 6:9]
-            ang_w = self._rel[:, 9:12]
-            lin_b = quat_apply_inverse(root_quat, lin_w)
-            ang_b = quat_apply_inverse(root_quat, ang_w)
-            vel_rel = torch.cat([lin_b, ang_b], dim=-1) * self.cmd_mask[:, 6:12]
-            self._rel[:, 6:12] = vel_rel
-            self.cmd_buf[:, 1, 6:12] = vel_rel
+        # relative velocities (world → body)
+        torch.sub(self.cmd_buf[:, 0, 6:12], self.cmd_buf[:, 2, 6:12], out=self._rel[:, 6:12])
+        lin_w = self._rel[:, 6:9]
+        ang_w = self._rel[:, 9:12]
+        lin_b = quat_apply_inverse(root_quat, lin_w)
+        ang_b = quat_apply_inverse(root_quat, ang_w)
+        vel_rel = torch.cat([lin_b, ang_b], dim=-1) * self.cmd_mask[:, 6:12]
+        self._rel[:, 6:12] = vel_rel
+        self.cmd_buf[:, 1, 6:12] = vel_rel
+
+        self.compute_state_error()
+        success = torch.all(self._err < self._reward_scales, dim=1)
+        success_time = self.cmd_buf[:, 2, 12]
+        success_time[success] += self._env.step_dt
+        success_time[~success] = 0.0
+        self.cmd_buf[:, 2, 12] = success_time
+        # remaining time until success: target_hold - success_time
+        torch.sub(self.cmd_buf[:, 0, 12], self.cmd_buf[:, 2, 12], out=self.cmd_buf[:, 1, 12])
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         """Create / toggle visualization markers for the command targets."""
@@ -405,7 +411,7 @@ class RelativeStateCommand(CommandTerm):
         arrow_quat = quat_mul(base_quat_w, arrow_quat)
         return arrow_scale, arrow_quat
 
-    def get_state_error(self):
+    def compute_state_error(self):
         """Compute grouped norms of the relative state error.
 
         Groups:
@@ -414,15 +420,16 @@ class RelativeStateCommand(CommandTerm):
             2: linear vel    (vx,vy,vz)
             3: angular vel   (wx,wy,wz)
         """
-        rel = self.cmd_buf[:, 1]  # (N, 12), maybe non-contiguous
-        rel_grouped = rel.contiguous().view(rel.shape[0], 4, 3)
+        rel = self.cmd_buf[:, 1, :12]
+        rel_grouped = rel.view(rel.shape[0], 4, 3)
         torch.sum(rel_grouped * rel_grouped, dim=2, out=self._err)
         self._err.sqrt_()
+
+    def get_state_error(self):
         return self._err
 
-    def get_task_error_reward(self):
-        """Return grouped error tensor (backward-compat alias for get_state_error)."""
-        return self.get_state_error()
+    def get_task_success(self):
+        return self.cmd_buf[:, 1, 12] <= 0.0
 
     def get_task_reward(self):
         """Compute a multiplicative reward from grouped errors.
@@ -432,7 +439,5 @@ class RelativeStateCommand(CommandTerm):
 
         where std_group comes from cfg.{pos_std, rot_std, lin_vel_std, ang_vel_std}.
         """
-        self.get_state_error()
         group_r = 1.0 - torch.tanh(self._err / self._reward_scales)
-        self.reward = group_r.prod(dim=1)
-        return self.reward
+        return group_r.prod(dim=1)

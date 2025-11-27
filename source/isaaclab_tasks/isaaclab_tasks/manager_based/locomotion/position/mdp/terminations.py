@@ -25,26 +25,16 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
     from isaaclab.assets import Articulation
     from isaaclab.sensors import ContactSensor
+    from .commands import RelativeStateCommand
 
 """
 MDP terminations.
 """
 
 
-def success(
-    env: ManagerBasedRLEnv,
-    thresh: list[float, float, float, float],
-    command: str = "goal_point",
-    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-) -> torch.Tensor:
-    asset: Articulation = env.scene[robot_cfg.name]
-    cmd: torch.Tensor = env.command_manager.get_command(command)
-    dist = cmd[:, :3].norm(2, -1)
-    head = cmd[:, 3].abs()
-    speed = asset.data.body_lin_vel_w[:, robot_cfg.body_ids].norm(2, dim=-1).amax(dim=1)
-    joint_pos = asset.data.joint_pos[:, robot_cfg.joint_ids] - asset.data.default_joint_pos[:, robot_cfg.joint_ids]
-    joint_pos_diff = torch.abs(joint_pos).amax(dim=1)
-    return ((dist < thresh[0]) & (head < thresh[1])) & (speed < thresh[2]) & (joint_pos_diff < thresh[3])
+def success_terminate(env: ManagerBasedRLEnv, command_name: str = "goal_point"):
+    command_term: RelativeStateCommand = env.command_manager.get_term(command_name)
+    return command_term.get_task_success()
 
 
 def abnormal_robot_state(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:

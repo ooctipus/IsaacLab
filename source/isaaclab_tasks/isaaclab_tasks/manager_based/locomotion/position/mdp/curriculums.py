@@ -55,7 +55,20 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         # simple result dict
         self._result: dict[str, torch.Tensor] = {
             "all_success": torch.zeros((), dtype=torch.float, device=env.device),
+            # fraction of discrete commands in each success bin
+            "bin_0_20_frac": torch.zeros((), dtype=torch.float, device=env.device),
+            "bin_20_40_frac": torch.zeros((), dtype=torch.float, device=env.device),
+            "bin_40_60_frac": torch.zeros((), dtype=torch.float, device=env.device),
+            "bin_60_80_frac": torch.zeros((), dtype=torch.float, device=env.device),
+            "bin_80_100_frac": torch.zeros((), dtype=torch.float, device=env.device),
+            # probability mass (under sampling distribution) in each bin
+            "bin_0_20_prob": torch.zeros((), dtype=torch.float, device=env.device),
+            "bin_20_40_prob": torch.zeros((), dtype=torch.float, device=env.device),
+            "bin_40_60_prob": torch.zeros((), dtype=torch.float, device=env.device),
+            "bin_60_80_prob": torch.zeros((), dtype=torch.float, device=env.device),
+            "bin_80_100_prob": torch.zeros((), dtype=torch.float, device=env.device),
         }
+        self.prob_mass_per_bin = torch.zeros(5, dtype=torch.float32, device=self.env.device)
 
         # Visualization: we can still build spawn→target lines from descretized_cmd[0:terrain_count]
         if debug_vis:
@@ -73,15 +86,11 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
 
         # 1) SUCCESS UPDATE — use cmd_indices *before* overwriting them
         prev_idx = self.goal_term.cmd_indices[env_ids]
-        time_out_mask = env.termination_manager.get_term("time_out")[env_ids]  # [len]
-
-        # group_err: [N_env, 4]  (pos, rot, lin_vel, ang_vel)
-        success = self.goal_term.get_state_error()[env_ids] < self.goal_term._reward_scales
-        success_mask = time_out_mask & success.all(dim=1)
-        self.success_monitor.success_update(prev_idx, success_mask)
+        success = self.goal_term.get_task_success()[env_ids]
+        self.success_monitor.success_update(prev_idx, success)
 
         # 2) SAMPLE NEXT DISCRETE COMMANDS
-        choices = self.success_monitor.sample_by_target_rate(env_ids, target=0.33, kappa=kappa)
+        choices, probs = self.success_monitor.sample_by_target_rate(env_ids, target=0.33, kappa=kappa, return_probs=True)
         self.goal_term.cmd_indices[env_ids] = choices.to(self.goal_term.cmd_indices.dtype)
 
         # 3) APPLY DISCRETE COMMAND ROWS TO cmd_buf[0] AND cmd_mask
@@ -91,6 +100,18 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         # 4) LOGGING / VISUALIZATION
         success_rates = self.success_monitor.get_success_rate()  # [num_discrete_cmd]
         self._result["all_success"].copy_(success_rates.mean())
+
+        # Vectorized bin stats
+        bin_ids = (success_rates * 5.0).floor().to(torch.long).clamp_(min=0, max=4)
+        counts = torch.bincount(bin_ids, minlength=5).to(torch.float32)
+        frac_per_bin = counts / float(success_rates.numel())
+        self.prob_mass_per_bin.zero_()
+        self.prob_mass_per_bin.scatter_add_(0, bin_ids, probs)
+
+        bin_names = ["bin_0_20", "bin_20_40", "bin_40_60", "bin_60_80", "bin_80_100",]
+        for i, name in enumerate(bin_names):
+            self._result[f"{name}_frac"].copy_(frac_per_bin[i])
+            self._result[f"{name}_prob"].copy_(self.prob_mass_per_bin[i])
 
         if debug_vis and hasattr(self, "frame_visualizer"):
             self._recolor_lines(success_rates)
@@ -158,6 +179,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         bins = torch.clamp((line_success * 9.0).round().to(torch.int32), 0, 9)
         self._marker_idx[:] = bins
         self.frame_visualizer.visualize(marker_indices=self._marker_idx)
+
 
 def skip_reward_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], reward_term: str):
     term_cfg = env.reward_manager.get_term_cfg(reward_term)

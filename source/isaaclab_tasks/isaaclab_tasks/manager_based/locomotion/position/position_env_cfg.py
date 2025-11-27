@@ -215,7 +215,7 @@ class TerminationsCfg:
     )
 
     # pos, heading, vel_max, joint_pos_max thresholds
-    success = DoneTerm(func=mdp.success, params={"thresh": [0.4, 0.5, 1.0, 1.0], "robot_cfg": SceneEntityCfg("robot")})
+    success = DoneTerm(func=mdp.success_terminate)
 
 
 @configclass

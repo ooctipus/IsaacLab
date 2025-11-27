@@ -69,6 +69,9 @@ class RelativeStateCommandCfg(CommandTermCfg):
         ang_vel_z: tuple[float, float] | None = None
         """Range for the angular-z velocity command (in rad/s)."""
 
+        duration: tuple[float, float] = (1.0, 1.0)
+        """time required to be considered as success."""
+
     @configclass
     class PositionCommands(Commands):
         """Uniform distribution ranges for the position commands."""

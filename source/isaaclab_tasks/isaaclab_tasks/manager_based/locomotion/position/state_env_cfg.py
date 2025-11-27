@@ -118,6 +118,7 @@ class CommandsCfg:
                 roll=None,
                 pitch=None,
                 yaw=(-3.14, 3.14),
+                duration=(0.05, 2.0)
             ),
             "vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
                 lin_vel_x=(-1.5, 1.5),
@@ -126,17 +127,20 @@ class CommandsCfg:
                 ang_vel_x=None,
                 ang_vel_y=None,
                 ang_vel_z=(-1.0, 1.0),
+                duration=(0.5, 6.0)
             ),
             "pos_cmd": mdp.RelativeStateCommandCfg.PositionCommands(
                 pos_x=(-3.0, 3.0),
                 pos_y=(-3.0, 3.0),
                 pos_z=None,
+                duration=(0.05, 2.0)
             ),
             "terrain_cmd": mdp.RelativeStateCommandCfg.PositionCommands(
                 pos_x=None,
                 pos_y=None,
                 pos_z=None,
                 yaw=(-3.14, 3.14),
+                duration=(0.05, 2.0)
             ),
         }
     )
@@ -224,7 +228,7 @@ class EventsCfg:
 @configclass
 class RewardsCfg:
     # task rewards
-    task_reward = RewTerm(func=mdp.command_success, weight=0.5)
+    success = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=50.0)
     mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0002)
     joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.01)
     fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact", "abnormal_robot"]}, weight=-10.0)
@@ -242,6 +246,8 @@ class TerminationsCfg:
         func=mdp.illegal_contact,
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*foot).*$"), "threshold": 1.0},
     )
+
+    success = DoneTerm(func=mdp.success_terminate)
 
 
 @configclass
@@ -330,13 +336,13 @@ variants = {
     },
     "commands.goal_point": {
         "terrain": make_commands({"terrain_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
-            roll=None, pitch=None, yaw=(-3.14, 3.14),
+            roll=None, pitch=None, yaw=(-3.14, 3.14), duration=(0.05, 2.0)
         )}),
         "pose": make_commands({"pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(
-            pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None, roll=None, pitch=None, yaw=(-3.14, 3.14),
+            pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None, roll=None, pitch=None, yaw=(-3.14, 3.14), duration=(0.05, 2.0)
         )}),
         "vel": make_commands({"vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
-            lin_vel_x=(-1.5, 1.5), lin_vel_y=(-1.5, 1.5), lin_vel_z=None, ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-1.0, 1.0),
+            lin_vel_x=(-1.5, 1.5), lin_vel_y=(-1.5, 1.5), lin_vel_z=None, ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-1.0, 1.0), duration=(0.5, 6.0)
         )})
     }
 }
@@ -357,7 +363,7 @@ class LocomotionStateCommandEnvCfg(ManagerBasedRLEnvCfg):
 
     def __post_init__(self):
         self.decimation = 4
-        self.episode_length_s = 6.0
+        self.episode_length_s = 10.0
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
