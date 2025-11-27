@@ -112,8 +112,8 @@ class CommandsCfg:
         debug_vis=True,
         commands={
             "vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
-                lin_vel_x=(-0.5, 2.0),
-                lin_vel_y=(-1.0, 1.0),
+                lin_vel_x=(-2.0, 2.0),
+                lin_vel_y=(-2.0, 2.0),
                 lin_vel_z=None,
                 ang_vel_x=None,
                 ang_vel_y=None,
