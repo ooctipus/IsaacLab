@@ -90,7 +90,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.success_monitor.success_update(prev_idx, success)
 
         # 2) SAMPLE NEXT DISCRETE COMMANDS
-        choices, probs = self.success_monitor.sample_by_target_rate(env_ids, target=0.33, kappa=kappa, return_probs=True)
+        choices, probs = self.success_monitor.sample_by_target_rate(env_ids, target=0.5, kappa=kappa, return_probs=True)
         self.goal_term.cmd_indices[env_ids] = choices.to(self.goal_term.cmd_indices.dtype)
 
         # 3) APPLY DISCRETE COMMAND ROWS TO cmd_buf[0] AND cmd_mask

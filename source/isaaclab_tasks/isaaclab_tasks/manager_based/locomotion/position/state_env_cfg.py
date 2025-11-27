@@ -140,7 +140,7 @@ class CommandsCfg:
                 pos_y=None,
                 pos_z=None,
                 yaw=(-3.14, 3.14),
-                duration=(0.05, 2.0)
+                duration=(0.05, 4.0)
             ),
         }
     )
@@ -228,9 +228,9 @@ class EventsCfg:
 @configclass
 class RewardsCfg:
     # task rewards
-    success = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=50.0)
-    mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0002)
-    joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.01)
+    success = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=100.0)
+    mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0001)
+    joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.005)
     fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact", "abnormal_robot"]}, weight=-10.0)
 
 
@@ -342,7 +342,7 @@ variants = {
             pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None, roll=None, pitch=None, yaw=(-3.14, 3.14), duration=(0.05, 2.0)
         )}),
         "vel": make_commands({"vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
-            lin_vel_x=(-1.5, 1.5), lin_vel_y=(-1.5, 1.5), lin_vel_z=None, ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-1.0, 1.0), duration=(0.5, 6.0)
+            lin_vel_x=(-1.5, 1.5), lin_vel_y=(-1.5, 1.5), lin_vel_z=None, ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-1.0, 1.0), duration=(0.05, 2.0)
         )})
     }
 }
