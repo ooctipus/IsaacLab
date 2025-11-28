@@ -103,7 +103,7 @@ class RelativeStateCommand(CommandTerm):
         # cmd_buf[:, 1, :] → desired state in base frame (relative state)
         # cmd_buf[:, 2, :] → current state in world frame
         self.cmd_buf = torch.zeros(self.num_envs, 3, 13, device=self.device).contiguous()
-        self.cmd_buf[:, 1, :12] = 1  # initialize relative error to 1, all failing.
+        self.cmd_buf[:, 1] = 1  # important: initialize relative error and time to 1, nothing will trigger success.
         self.cmd_ids = torch.randint(0, self.spec.cardinal, size=(self.num_envs,), device=self.device, dtype=torch.int32)
         self.cmd_mask = torch.zeros(self.num_envs, 12, device=self.device, dtype=torch.bool)
         self.cmd_indices = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
@@ -241,7 +241,7 @@ class RelativeStateCommand(CommandTerm):
         Returns:
             Tensor of shape [num_envs, 13] corresponding to cmd_buf[:, 1, :].
         """
-        return self.cmd_buf[:, 1]
+        return self.cmd_buf[:, 1, :12]
 
     def _update_metrics(self):
         """Update error metrics based on the last computed _err buffer."""
