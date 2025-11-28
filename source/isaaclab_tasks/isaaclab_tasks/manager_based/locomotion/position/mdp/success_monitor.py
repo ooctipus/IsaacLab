@@ -57,7 +57,7 @@ class SuccessMonitor:
         target: float = 0.5,
         kappa: float = 2.0,
         return_probs: bool = False,
-        temperature: float = 2.0,
+        temperature: float = 1.0,
     ):
         """
         Sample partitions preferring success rates near `target` in [0, 1].
