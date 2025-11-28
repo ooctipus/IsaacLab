@@ -218,18 +218,24 @@ class terrain_spawn_goal_pair_success_rate_levels_old(ManagerTermBase):
         # store sampled (level, type, spawn_id, target_id) as a flattened index in [0, L*T*Ps*Pt)
         self.term_samples = torch.zeros((env.num_envs,), dtype=torch.long, device=env.device)
 
-        # initialize mapping that relates terrain columns to sub-terrain keys (for logging)
-        self._init_type_mapping(terrain)
-
-        # pre-allocate result dictionary to avoid per-step allocations
+        # --- NEW: simple bin-based logging like the new class ---
         self._result: dict[str, torch.Tensor] = {
-            "all": torch.zeros((), dtype=torch.float, device=env.device),
             "all_success": torch.zeros((), dtype=torch.float, device=env.device),
+            # fraction of discrete commands in each success bin
+            "bin_0_20_frac": torch.zeros((), dtype=torch.float, device=env.device),
+            "bin_20_40_frac": torch.zeros((), dtype=torch.float, device=env.device),
+            "bin_40_60_frac": torch.zeros((), dtype=torch.float, device=env.device),
+            "bin_60_80_frac": torch.zeros((), dtype=torch.float, device=env.device),
+            "bin_80_100_frac": torch.zeros((), dtype=torch.float, device=env.device),
+            # probability mass (under sampling distribution) in each bin
+            "bin_0_20_prob": torch.zeros((), dtype=torch.float, device=env.device),
+            "bin_20_40_prob": torch.zeros((), dtype=torch.float, device=env.device),
+            "bin_40_60_prob": torch.zeros((), dtype=torch.float, device=env.device),
+            "bin_60_80_prob": torch.zeros((), dtype=torch.float, device=env.device),
+            "bin_80_100_prob": torch.zeros((), dtype=torch.float, device=env.device),
         }
-        for name in self._type_names:
-            self._result[f"{name}_success"] = torch.zeros((), dtype=torch.float, device=env.device)
-            # per-type sampling probability mass (sum of probabilities over all (levels, spawns, targets) columns)
-            self._result[f"{name}_sample_prob"] = torch.zeros((), dtype=torch.float, device=env.device)
+        self.prob_mass_per_bin = torch.zeros(5, dtype=torch.float32, device=env.device)
+        # --- END NEW ---
 
         # Precompute flattened views for fast gathers
         L, T = self._num_levels, self._num_types
@@ -237,11 +243,6 @@ class terrain_spawn_goal_pair_success_rate_levels_old(ManagerTermBase):
         self._valid_spawn_flat = env.scene.terrain.flat_patches["spawn"].reshape(L * T * Ps, -1)
         self._valid_targets_flat = env.scene.terrain.flat_patches["target"].reshape(L * T * Pt, -1)
 
-        # Preallocate reusable buffers to avoid per-step allocations
-        n_types = len(self._type_names)
-        self._buf_type_sums = torch.zeros(n_types, device=env.device, dtype=torch.float)
-        self._buf_type_prob = torch.zeros(n_types, device=env.device, dtype=torch.float)
-        self._buf_type_means = torch.zeros(n_types, device=env.device, dtype=torch.float)
         # Random heading buffer reused each call
         self._rand_heading = torch.empty(env.num_envs, device=env.device)
 
@@ -249,43 +250,39 @@ class terrain_spawn_goal_pair_success_rate_levels_old(ManagerTermBase):
         if debug_vis:
             self._init_path_visuals()
 
-    def _init_type_mapping(self, terrain: TerrainImporter) -> None:
-        gen_cfg = terrain.cfg.terrain_generator
-        self._type_names = list(gen_cfg.sub_terrains.keys())
-        props = torch.tensor(
-            [sub_cfg.proportion for sub_cfg in gen_cfg.sub_terrains.values()], dtype=torch.float, device=self.device
-        )
-        if props.numel() == 0 or not torch.isfinite(props).all() or props.sum() <= 0:
-            props = torch.ones((len(self._type_names),), device=self.device)
-        props = props / props.sum()
-        cum = torch.cumsum(props, dim=0)
-        num_types = int(terrain.terrain_origins.shape[1])
-        cols = torch.arange(num_types, device=self.device, dtype=torch.float)
-        pos = cols / float(num_types) + 1e-3
-        self._col_to_type_idx = torch.searchsorted(cum, pos, right=True).to(torch.long)
-        # Cache counts per terrain type for grouped reductions
-        self._type_counts = torch.bincount(self._col_to_type_idx, minlength=len(self._type_names))
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        env_ids: torch.Tensor,
+        debug_vis: bool = False,
+        kappa: float = 2.0,
+        success_term: str = "success",
+    ):
+        if env_ids.numel() == 0:
+            return self._result
 
-    def __call__(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor, debug_vis=False, kappa: float = 2.0, success_term: str = "success"):
         terrain: TerrainImporter = env.scene.terrain
+
+        # 1) SUCCESS UPDATE
         success_mask = env.termination_manager.get_term(success_term)[env_ids]
         self.success_monitor.success_update(self.term_samples.index_select(0, env_ids), success_mask)
 
         # 2) Sample next (level, type, spawn, target) aiming for balanced success
-        choices, prob = self.success_monitor.sample_by_target_rate(env_ids, target=0.33, kappa=kappa, return_probs=True)
+        #    prob is the global sampling distribution over all (L,T,Ps,Pt) indices
+        choices, prob = self.success_monitor.sample_by_target_rate(
+            env_ids, target=0.33, kappa=kappa, return_probs=True
+        )
         # In-place index copy to avoid temporary tensors
         self.term_samples.index_copy_(0, env_ids, choices.to(self.term_samples.dtype))
 
         # 3) Decode flattened indices -> (level, type, spawn_id, target_id)
         L, T, Ps, Pt = self._num_levels, self._num_types, self.num_patches_spawn, self.num_patches_target
-        # Decode flattened indices -> level, type, spawn_id, target_id (vectorized)
         flat = choices.to(torch.long)
-        rem, target_id = torch.div(flat, Pt, rounding_mode='floor'), torch.remainder(flat, Pt)
-        rem, spawn_id = torch.div(rem, Ps, rounding_mode='floor'), torch.remainder(rem, Ps)
-        chosen_level, chosen_type = torch.div(rem, T, rounding_mode='floor'), torch.remainder(rem, T)
+        rem, target_id = torch.div(flat, Pt, rounding_mode="floor"), torch.remainder(flat, Pt)
+        rem, spawn_id = torch.div(rem, Ps, rounding_mode="floor"), torch.remainder(rem, Ps)
+        chosen_level, chosen_type = torch.div(rem, T, rounding_mode="floor"), torch.remainder(rem, T)
 
         # 4) Update env origins (set to spawn location) and terrain indicators
-        # Use flattened gather to reduce advanced-indexing overhead
         spawn_lin = (chosen_level * (T * Ps) + chosen_type * Ps + spawn_id).to(torch.long)
         spawn_w = self._valid_spawn_flat.index_select(0, spawn_lin)
         terrain.env_origins.index_copy_(0, env_ids, spawn_w)
@@ -302,33 +299,36 @@ class terrain_spawn_goal_pair_success_rate_levels_old(ManagerTermBase):
         r = torch.empty(env_ids.numel(), device=self.device)
         self.goal_term.heading_command_w.index_copy_(0, env_ids, r.uniform_(*self.goal_term.cfg.ranges.heading))
 
-        # aggregate reporting: overall mean terrain level (kept for compatibility)
-        self._result["all"].copy_(terrain.terrain_levels.float().mean())
-
-        # success rates: mean across all, and per type (avg over levels and pairs)
+        # --- NEW: bin-style logging over success rates & sampling distribution ---
         success = self.success_monitor.get_success_rate()  # [L*T*Ps*Pt]
         self._result["all_success"].copy_(success.mean())
+
+        # success bins (0–20, 20–40, ..., 80–100)
+        bin_ids = (success * 5.0).floor().to(torch.long).clamp_(min=0, max=4)  # 5 bins
+        counts = torch.bincount(bin_ids, minlength=5).to(torch.float32)
+        frac_per_bin = counts / float(success.numel())
+
+        # probability mass per bin, under the sampling distribution "prob"
+        self.prob_mass_per_bin.zero_()
+        self.prob_mass_per_bin.scatter_add_(0, bin_ids, prob)
+
+        bin_names = [
+            "bin_0_20",
+            "bin_20_40",
+            "bin_40_60",
+            "bin_60_80",
+            "bin_80_100",
+        ]
+        for i, name in enumerate(bin_names):
+            self._result[f"{name}_frac"].copy_(frac_per_bin[i])
+            self._result[f"{name}_prob"].copy_(self.prob_mass_per_bin[i])
+        # --- END NEW ---
+
         # Recolor lines per current success rate (no extra smoothing)
         if debug_vis:
             self._recolor_lines(success)
-        # Per-type success via grouped reduction (avoid Python looped masking in reduction)
-        per_col_success = success.view(L, T, Ps, Pt).mean(dim=(0, 2, 3))  # [T]
-        self._buf_type_sums.zero_()
-        self._buf_type_sums.index_add_(0, self._col_to_type_idx, per_col_success)
-        means = self._buf_type_sums / self._type_counts.clamp_min(1).to(self._buf_type_sums.dtype)
-        for i, name in enumerate(self._type_names):
-            self._result[f"{name}_success"].copy_(means[i])
-
-        # sampling probability logs: mass per terrain type (sum over levels, spawn/target pairs)
-        # prob is a distribution over all (L, T, Ps, Pt) partitions and sums to 1.
-        per_col_prob_mass = prob.view(L, T, Ps, Pt).sum(dim=(0, 2, 3))  # [T] columns
-        self._buf_type_prob.zero_()
-        self._buf_type_prob.index_add_(0, self._col_to_type_idx, per_col_prob_mass)
-        for i, name in enumerate(self._type_names):
-            self._result[f"{name}_sample_prob"].copy_(self._buf_type_prob[i])
 
         return self._result
-
     def _get_connecting_lines(self, start_pos: torch.Tensor, end_pos: torch.Tensor):
         v = end_pos - start_pos
         l = v.norm(2, dim=-1).clamp_min(1e-12)
