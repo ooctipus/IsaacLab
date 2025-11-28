@@ -124,7 +124,13 @@ class CommandsCfg:
             ang_vel_z=(-1.0, 1.0),
             duration=(0.05, 4.0)
         ),
-        "terrain_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
+        "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
+            roll=None,
+            pitch=None,
+            yaw=None,
+            duration=(0.05, 2.0)
+        ),
+        "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             roll=None,
             pitch=None,
             yaw=(-3.14, 3.14),
@@ -190,7 +196,7 @@ class EventsCfg:
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-3.14, 3.14)},
+            "pose_range": {"x": (-0.25, 0.25), "y": (-0.25, 0.25), "yaw": (-3.14, 3.14)},
             "velocity_range": {
                 "x": (-0.25, 0.25),
                 "y": (-0.25, 0.25),
@@ -217,7 +223,6 @@ class RewardsCfg:
     # task rewards
     success = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=100.0)
     mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0001)
-    joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.005)
     fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact", "abnormal_robot"]}, weight=-10.0)
 
 
@@ -309,9 +314,14 @@ variants = {
         "radiating_beam": make_terrain({"radiating_beam": terrains.RADIATING_BEAM}),
     },
     "commands.goal_point": {
-        "terrain": make_commands({"terrain_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
-            roll=None, pitch=None, yaw=(-3.14, 3.14), duration=(0.05, 2.0)
-        )}),
+        "terrain": make_commands({
+            "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
+                roll=None, pitch=None, yaw=None, duration=(0.05, 2.0)
+            ),
+            "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
+                roll=None, pitch=None, yaw=(-3.14, 3.14), duration=(0.05, 2.0)
+            ),
+        }),
         "pose": make_commands({"pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(
             pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None, roll=None, pitch=None, yaw=(-3.14, 3.14), duration=(0.05, 2.0)
         )}),
