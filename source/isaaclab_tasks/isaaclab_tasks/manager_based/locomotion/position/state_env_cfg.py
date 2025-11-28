@@ -224,6 +224,7 @@ class RewardsCfg:
     success = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=100.0)
     mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0001)
     fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact", "abnormal_robot"]}, weight=-10.0)
+    explore = RewTerm(func=mdp.exploration_reward, weight=0.3, params={"forward_only": True})
 
 
 @configclass
@@ -245,6 +246,8 @@ class TerminationsCfg:
 @configclass
 class CurriculumCfg:
     terrain_levels = CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels, params={"debug_vis": True, "kappa": 2.0})
+
+    remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
 
 
 def make_terrain(terrain_dict):
