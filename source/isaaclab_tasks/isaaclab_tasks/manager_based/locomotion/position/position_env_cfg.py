@@ -215,12 +215,12 @@ class TerminationsCfg:
     )
 
     # pos, heading, vel_max, joint_pos_max thresholds
-    success = DoneTerm(func=mdp.success_terminate)
+    success = DoneTerm(func=mdp.success, params={"thresh": [0.4, 0.5, 1.0, 1.0], "robot_cfg": SceneEntityCfg("robot")})
 
 
 @configclass
 class CurriculumCfg:
-    terrain_levels = CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels, params={"debug_vis": False, "kappa": 2.0, "success_term": "success"})  # type: ignore
+    terrain_levels = CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels_old, params={"debug_vis": False, "kappa": 2.0, "success_term": "success"})  # type: ignore
     remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
     stricten_success = CurrTerm(func=mdp.stricten_success_term, params={"term": "success"})
 
