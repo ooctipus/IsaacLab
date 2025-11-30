@@ -37,6 +37,7 @@ def make_commands(commands_dict):
         commands=commands_dict
     )
 
+
 @configclass
 class SceneCfg(InteractiveSceneCfg):
     """ "Configuration for the terrain scene with a legged robot."""
@@ -124,6 +125,12 @@ class CommandsCfg:
             ang_vel_z=(-1.0, 1.0),
             duration=(0.05, 4.0)
         ),
+        "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
+            roll=None,
+            pitch=None,
+            yaw=None,
+            duration=(0.05, 2.0)
+        ),
         "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             roll=None,
             pitch=None,
@@ -143,7 +150,6 @@ class ObservationsCfg:
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
         proj_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))
         goal_point_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "goal_point"})
-        time_left = ObsTerm(func=mdp.time_left)
         joint_pos = ObsTerm(func=mdp.joint_pos)
         joint_vel = ObsTerm(func=mdp.joint_vel)
         last_actions = ObsTerm(func=mdp.last_action)
@@ -219,7 +225,7 @@ class RewardsCfg:
     mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0002)
     joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.005)
     fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact", "abnormal_robot"]}, weight=-10.0)
-    explore = RewTerm(func=mdp.exploration_reward, weight=0.3, params={"forward_only": True})
+    explore = RewTerm(func=mdp.exploration_reward, weight=0.01)
 
 
 @configclass
@@ -240,9 +246,7 @@ class TerminationsCfg:
 
 @configclass
 class CurriculumCfg:
-    terrain_levels = CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels, params={"debug_vis": True, "kappa": 2.0})
-
-    remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
+    terrain_levels = CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels, params={"debug_vis": True, "kappa": 2.0, "temperature": 2.0, "target": 0.5})
 
 
 def make_terrain(terrain_dict):
@@ -315,6 +319,9 @@ variants = {
         "terrain": make_commands({
             "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
                 roll=None, pitch=None, yaw=(-3.14, 3.14), duration=(0.05, 2.0)
+            ),
+            "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
+                roll=None, pitch=None, yaw=None, duration=(0.05, 2.0)
             ),
         }),
         "pose": make_commands({"pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(

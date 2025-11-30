@@ -186,7 +186,7 @@ STEPPING_STONE = isaaclab_terrain.MeshStonesEverywhereTerrainCfg(
             num_patches=20,
             patch_radius=0.05,
             max_height_diff=0.2,
-            radius_range=(2.5, 6.5),
+            radius_range=(0.2, 6.5),
         )
     },
 )

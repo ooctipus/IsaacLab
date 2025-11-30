@@ -57,6 +57,17 @@ def exploration_reward(
     return cos_align * forward_weight
 
 
+def forward_direction_reward(env: ManagerBasedRLEnv, robot_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
+    robot: Articulation = env.scene[robot_cfg.name]
+    base_velocity = robot.data.root_lin_vel_b  # [N, 3], in body frame
+
+    speed = torch.linalg.vector_norm(base_velocity, dim=-1)  # ||v||
+    cos_forward = base_velocity[:, 0] / (speed + 1e-6)       # alignment with +x
+
+    # Only reward motion that has a forward component; backward/sideways → 0
+    return cos_forward.clamp(min=0.0)
+
+
 def mechanical_power(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot")) -> torch.Tensor:
     robot: Articulation = env.scene[robot_cfg.name]
     work = torch.sum((robot.data.applied_torque * robot.data.joint_vel).abs(), dim=1)
