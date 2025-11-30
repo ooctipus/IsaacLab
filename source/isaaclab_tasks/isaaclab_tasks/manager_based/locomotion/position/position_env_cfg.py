@@ -149,7 +149,7 @@ class ObservationsCfg:
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
         proj_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))
         goal_point_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "goal_point"})
-        time_left = ObsTerm(func=mdp.time_left)
+        # time_left = ObsTerm(func=mdp.time_left)
         joint_pos = ObsTerm(func=mdp.joint_pos)
         joint_vel = ObsTerm(func=mdp.joint_vel)
         last_actions = ObsTerm(func=mdp.last_action)
@@ -249,7 +249,6 @@ class TerminationsCfg:
 class CurriculumCfg:
     terrain_levels = CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels_old, params={"debug_vis": False, "kappa": 2.0, "success_term": "success", "target": 0.33})  # type: ignore
     remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
-    stricten_success = CurrTerm(func=mdp.stricten_success_term, params={"term": "success"})
 
 
 def make_terrain(terrain_dict):
