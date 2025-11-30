@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import ManagerTermBase
 from isaaclab.managers import TerminationTermCfg as DoneTermCfg
+from isaaclab.utils.math import (quat_from_euler_xyz, quat_inv, quat_mul, euler_xyz_from_quat)
 from . import states
 
 if TYPE_CHECKING:
@@ -35,13 +36,12 @@ def success(
     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     asset: Articulation = env.scene[robot_cfg.name]
-    cmd: torch.Tensor = env.command_manager.get_command(command)
-    dist = cmd[:, :3].norm(2, -1)
-    head = cmd[:, 5].abs()
+    term: RelativeStateCommand = env.command_manager.get_term(command)
+    err = term.get_state_error()
     speed = asset.data.body_lin_vel_w[:, robot_cfg.body_ids].norm(2, dim=-1).amax(dim=1)
     joint_pos = asset.data.joint_pos[:, robot_cfg.joint_ids] - asset.data.default_joint_pos[:, robot_cfg.joint_ids]
     joint_pos_diff = torch.abs(joint_pos).amax(dim=1)
-    return ((dist < thresh[0]) & (head < thresh[1])) & (speed < thresh[2]) & (joint_pos_diff < thresh[3])
+    return ((err[:, 0] < thresh[0]) & (err[:, 1] < thresh[1])) & (speed < thresh[2]) & (joint_pos_diff < thresh[3])
 
 
 def success_terminate(env: ManagerBasedRLEnv, command_name: str = "goal_point"):

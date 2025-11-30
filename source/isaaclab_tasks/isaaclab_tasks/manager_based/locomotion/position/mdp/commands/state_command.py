@@ -259,7 +259,6 @@ class RelativeStateCommand(CommandTerm):
         self.resample_indices(env_ids)
         idx = self.cmd_indices[env_ids]
         self.cmd_buf[env_ids, 0, :] = self.spec.descretized_cmd[idx , 3:]
-        self.cmd_buf[env_ids, 0, 5] = self.cmd_buf[env_ids, 0, 5].uniform_(-3.14, 3.14)
         self.cmd_buf[env_ids, 2, 12] = 0.0
         self.cmd_mask[env_ids] = self.spec.descretized_mask[idx]
 
