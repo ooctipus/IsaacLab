@@ -338,7 +338,7 @@ if [[ "$mode" == "submit" ]]; then
     # Build final run_name
     run_name=""
     if [[ -n "$base_name" && -n "$suffix" ]]; then
-      run_name="$base_name|$suffix"
+      run_name="$base_name,$suffix"
     elif [[ -n "$base_name" ]]; then
       run_name="$base_name"
     else
