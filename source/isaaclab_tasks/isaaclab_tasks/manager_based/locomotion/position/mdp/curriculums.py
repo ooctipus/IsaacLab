@@ -78,8 +78,10 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self,
         env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
+        target: float = 0.33,
         debug_vis: bool = False,
         kappa: float = 2.0,
+        temperature: float = 2.0,
     ):
         if env_ids.numel() == 0:
             return self._result
@@ -90,13 +92,10 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.success_monitor.success_update(prev_idx, success)
 
         # 2) SAMPLE NEXT DISCRETE COMMANDS
-        choices, probs = self.success_monitor.sample_by_target_rate(env_ids, target=0.33, kappa=kappa, return_probs=True)
+        choices, probs = self.success_monitor.sample_by_target_rate(
+            env_ids, target=target, kappa=kappa, temperature=temperature, return_probs=True
+        )
         self.goal_term.cmd_indices[env_ids] = choices.to(self.goal_term.cmd_indices.dtype)
-
-        # 3) APPLY DISCRETE COMMAND ROWS TO cmd_buf[0] AND cmd_mask
-        rows = self.goal_term.spec.descretized_cmd[choices]        # [len(env_ids), 15]
-        env.scene.terrain.env_origins.index_copy_(0, env_ids, rows[:, 0:3])
-
         # 4) LOGGING / VISUALIZATION
         success_rates = self.success_monitor.get_success_rate()  # [num_discrete_cmd]
         self._result["all_success"].copy_(success_rates.mean())
@@ -195,28 +194,22 @@ class terrain_spawn_goal_pair_success_rate_levels_old(ManagerTermBase):
 
     def __init__(self, cfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
-        terrain: TerrainImporter = env.scene.terrain
         debug_vis = cfg.params.get("debug_vis", True)
-        # disable resampling in the command term; curriculum will set commands directly
-        self.goal_term = env.command_manager.get_term("goal_point")
-        self.goal_term._resample_command = lambda env_ids: None  # type: ignore[attr-defined]
+
+        self.goal_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
+        self.goal_term.resample_indices = lambda env_ids: None  # type: ignore[attr-defined]
 
         # cache terrain layout
-        self._num_levels = int(terrain.terrain_origins.shape[0])
-        self._num_types = int(terrain.terrain_origins.shape[1])
-
-        self.num_patches_spawn = int(env.scene.terrain.flat_patches["spawn"].shape[2])
-        self.num_patches_target = int(env.scene.terrain.flat_patches["target"].shape[2])
+        self.num_discrete_cmd = int(self.goal_term.spec.num_descretized_cmd)
 
         # success monitor tracks each (level, type, spawn_id, target_id)
         success_monitor_cfg = SuccessMonitorCfg(
             monitored_history_len=100,
-            num_monitored_data=self._num_levels * self._num_types * self.num_patches_spawn * self.num_patches_target,
+            num_monitored_data=self.num_discrete_cmd,
             device=env.device,
         )
         self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
         # store sampled (level, type, spawn_id, target_id) as a flattened index in [0, L*T*Ps*Pt)
-        self.term_samples = torch.zeros((env.num_envs,), dtype=torch.long, device=env.device)
 
         # --- NEW: simple bin-based logging like the new class ---
         self._result: dict[str, torch.Tensor] = {
@@ -236,68 +229,37 @@ class terrain_spawn_goal_pair_success_rate_levels_old(ManagerTermBase):
         }
         self.prob_mass_per_bin = torch.zeros(5, dtype=torch.float32, device=env.device)
         # --- END NEW ---
-
-        # Precompute flattened views for fast gathers
-        L, T = self._num_levels, self._num_types
-        Ps, Pt = self.num_patches_spawn, self.num_patches_target
-        self._valid_spawn_flat = env.scene.terrain.flat_patches["spawn"].reshape(L * T * Ps, -1)
-        self._valid_targets_flat = env.scene.terrain.flat_patches["target"].reshape(L * T * Pt, -1)
-
-        # Random heading buffer reused each call
-        self._rand_heading = torch.empty(env.num_envs, device=env.device)
-
         # Spawn all possible spawn→target paths upfront (L*T*Ps*Pt lines + unique spawns + unique targets)
         if debug_vis:
-            self._init_path_visuals()
+            self._init_path_visuals_from_discrete()
 
     def __call__(
         self,
         env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
         debug_vis: bool = False,
+        target: float = 0.33,
         kappa: float = 2.0,
+        temperature: float = 2.0,
         success_term: str = "success",
     ):
         if env_ids.numel() == 0:
             return self._result
 
-        terrain: TerrainImporter = env.scene.terrain
-
         # 1) SUCCESS UPDATE
+        prev_idx = self.goal_term.cmd_indices[env_ids]
         success_mask = env.termination_manager.get_term(success_term)[env_ids]
-        self.success_monitor.success_update(self.term_samples.index_select(0, env_ids), success_mask)
+        self.success_monitor.success_update(prev_idx, success_mask)
 
         # 2) Sample next (level, type, spawn, target) aiming for balanced success
         #    prob is the global sampling distribution over all (L,T,Ps,Pt) indices
-        choices, prob = self.success_monitor.sample_by_target_rate(
-            env_ids, target=0.33, kappa=kappa, return_probs=True
+        choices, probs = self.success_monitor.sample_by_target_rate(
+            env_ids, target=target, kappa=kappa, temperature=temperature, return_probs=True
         )
+        self.goal_term.cmd_indices[env_ids] = choices.to(self.goal_term.cmd_indices.dtype)
         # In-place index copy to avoid temporary tensors
-        self.term_samples.index_copy_(0, env_ids, choices.to(self.term_samples.dtype))
-
-        # 3) Decode flattened indices -> (level, type, spawn_id, target_id)
-        L, T, Ps, Pt = self._num_levels, self._num_types, self.num_patches_spawn, self.num_patches_target
-        flat = choices.to(torch.long)
-        rem, target_id = torch.div(flat, Pt, rounding_mode="floor"), torch.remainder(flat, Pt)
-        rem, spawn_id = torch.div(rem, Ps, rounding_mode="floor"), torch.remainder(rem, Ps)
-        chosen_level, chosen_type = torch.div(rem, T, rounding_mode="floor"), torch.remainder(rem, T)
-
-        # 4) Update env origins (set to spawn location) and terrain indicators
-        spawn_lin = (chosen_level * (T * Ps) + chosen_type * Ps + spawn_id).to(torch.long)
-        spawn_w = self._valid_spawn_flat.index_select(0, spawn_lin)
-        terrain.env_origins.index_copy_(0, env_ids, spawn_w)
-        terrain.terrain_levels.index_copy_(0, env_ids, chosen_level)
-        terrain.terrain_types.index_copy_(0, env_ids, chosen_type)
-
-        # 5) Set goal target directly from valid targets and adjust height
-        target_lin = (chosen_level * (T * Pt) + chosen_type * Pt + target_id).to(torch.long)
-        pos_cmd = self._valid_targets_flat.index_select(0, target_lin)
-        self.goal_term.pos_command_w.index_copy_(0, env_ids, pos_cmd)
-        # Adjust height directly (add z offset)
-        self.goal_term.pos_command_w[env_ids, 2] += self.goal_term.robot.data.default_root_state[env_ids, 2]
-        # Sample heading for the selected envs
-        r = torch.empty(env_ids.numel(), device=self.device)
-        self.goal_term.heading_command_w.index_copy_(0, env_ids, r.uniform_(*self.goal_term.cfg.ranges.heading))
+        rows = self.goal_term.spec.descretized_cmd[choices]        # [len(env_ids), 15]
+        env.scene.terrain.env_origins.index_copy_(0, env_ids, rows[:, 0:3])
 
         # --- NEW: bin-style logging over success rates & sampling distribution ---
         success = self.success_monitor.get_success_rate()  # [L*T*Ps*Pt]
@@ -307,18 +269,10 @@ class terrain_spawn_goal_pair_success_rate_levels_old(ManagerTermBase):
         bin_ids = (success * 5.0).floor().to(torch.long).clamp_(min=0, max=4)  # 5 bins
         counts = torch.bincount(bin_ids, minlength=5).to(torch.float32)
         frac_per_bin = counts / float(success.numel())
-
-        # probability mass per bin, under the sampling distribution "prob"
         self.prob_mass_per_bin.zero_()
-        self.prob_mass_per_bin.scatter_add_(0, bin_ids, prob)
+        self.prob_mass_per_bin.scatter_add_(0, bin_ids, probs)
 
-        bin_names = [
-            "bin_0_20",
-            "bin_20_40",
-            "bin_40_60",
-            "bin_60_80",
-            "bin_80_100",
-        ]
+        bin_names = ["bin_0_20", "bin_20_40", "bin_40_60", "bin_60_80", "bin_80_100"]
         for i, name in enumerate(bin_names):
             self._result[f"{name}_frac"].copy_(frac_per_bin[i])
             self._result[f"{name}_prob"].copy_(self.prob_mass_per_bin[i])
@@ -329,6 +283,7 @@ class terrain_spawn_goal_pair_success_rate_levels_old(ManagerTermBase):
             self._recolor_lines(success)
 
         return self._result
+
     def _get_connecting_lines(self, start_pos: torch.Tensor, end_pos: torch.Tensor):
         v = end_pos - start_pos
         l = v.norm(2, dim=-1).clamp_min(1e-12)
@@ -341,56 +296,54 @@ class terrain_spawn_goal_pair_success_rate_levels_old(ManagerTermBase):
         q = q / q.norm(dim=-1, keepdim=True).clamp_min(1e-12)
         return p, q, l
 
-    def _init_path_visuals(self) -> None:
-        # Visualization markers: target, spawn, and 10 line color bins (red->green)
-        FRAME_MARKER_CFG = VisualizationMarkersCfg(
+    def _init_path_visuals_from_discrete(self) -> None:
+        rows = self.goal_term.spec.descretized_cmd           # [N,15]
+        mask_pos = self.goal_term.spec.descretized_mask[:, 0:3].any(dim=-1)  # [N] bool
+
+        # Only visualize position-like discrete commands
+        line_indices = torch.arange(self.num_discrete_cmd, device=self.device)[mask_pos]  # [N_pos]
+        rows_pos = rows[mask_pos]                                                     # [N_pos,15]
+
+        start = rows_pos[:, 0:3].clone()  # spawn
+        end = rows_pos[:, 3:6].clone()  # target
+
+        Lp, Lq, Ll = self._get_connecting_lines(start, end)
+        self._n_lines = Lp.size(0)
+
+        # Remember which discrete command index corresponds to each line
+        self._line_indices = line_indices  # [N_pos]
+
+        MARKER_CFG = VisualizationMarkersCfg(
             markers={
-                "target": sim_utils.SphereCfg(
-                    radius=0.1,
-                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
-                ),
-                "spawn": sim_utils.CuboidCfg(
-                    size=(0.09, 0.09, 0.09),
-                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
-                ),
-                # line color bins (indices 2..11)
                 "line_0": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0))),
-                "line_1": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8889, 0.1111, 0.0))),
-                "line_2": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.7778, 0.2222, 0.0))),
-                "line_3": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.6667, 0.3333, 0.0))),
-                "line_4": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.5556, 0.4444, 0.0))),
-                "line_5": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.4444, 0.5556, 0.0))),
-                "line_6": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.3333, 0.6667, 0.0))),
-                "line_7": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.2222, 0.7778, 0.0))),
-                "line_8": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.1111, 0.8889, 0.0))),
+                "line_1": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.9, 0.1, 0.0))),
+                "line_2": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.2, 0.0))),
+                "line_3": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.7, 0.3, 0.0))),
+                "line_4": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.6, 0.4, 0.0))),
+                "line_5": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.5, 0.5, 0.0))),
+                "line_6": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.4, 0.6, 0.0))),
+                "line_7": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.3, 0.7, 0.0))),
+                "line_8": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.2, 0.8, 0.0))),
                 "line_9": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0))),
             }
         )
-        self.frame_visualizer = VisualizationMarkers(FRAME_MARKER_CFG.replace(prim_path="/World/Visuals/CurriculumPaths"))
+        self.frame_visualizer = VisualizationMarkers(MARKER_CFG.replace(prim_path="/World/Visuals/CurriculumPaths"))
 
-        L, T, Ps, Pt = self._num_levels, self._num_types, self.num_patches_spawn, self.num_patches_target
-        G = L * T
-        Sg = self._env.scene.terrain.flat_patches["spawn"].reshape(G, Ps, 3).clone()
-        Eg = self._env.scene.terrain.flat_patches["target"].reshape(G, Pt, 3).clone()
-        Sg[..., 2] += 0.2
-        Eg[..., 2] += 0.2
-        start = Sg[:, :, None, :].expand(G, Ps, Pt, 3).reshape(-1, 3); end = Eg[:, None, :, :].expand(G, Ps, Pt, 3).reshape(-1, 3)
-        Lp, Lq, Ll = self._get_connecting_lines(start, end)
-        self._n_spawn, self._n_target, self._n_lines = G * Ps, G * Pt, Lp.size(0)
-        Tr = torch.cat([Sg.reshape(-1, 3), Eg.reshape(-1, 3), Lp], 0)
-        Or = torch.cat([torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(self._n_spawn + self._n_target, 1), Lq], 0)
-        Sc = torch.ones(self._n_spawn + self._n_target + self._n_lines, 3, device=self.device); Sc[-self._n_lines:, 2] = Ll
-        base = torch.empty(self._n_spawn + self._n_target + self._n_lines, dtype=torch.int32, device=self.device)
-        base[:self._n_spawn] = 1; base[self._n_spawn:self._n_spawn + self._n_target] = 0; base[self._n_spawn + self._n_target:] = 2
-        self._marker_indices_base = base
-        self.frame_visualizer.visualize(translations=Tr, orientations=Or, scales=Sc, marker_indices=base)
+        Sc = torch.ones(self._n_lines, 3, device=self.device)
+        Sc[:, 2] = Ll
+
+        self._marker_idx = torch.full((self._n_lines,), 5, dtype=torch.int32, device=self.device)
+        self.frame_visualizer.visualize(translations=Lp, orientations=Lq, scales=Sc, marker_indices=self._marker_idx)
 
     def _recolor_lines(self, success: torch.Tensor) -> None:
+        """Recolor lines according to success per discrete command index."""
         if not hasattr(self, "frame_visualizer"):
             return
-        bins = torch.clamp((success * 9.0).round().to(torch.int32), 0, 9)
-        self._marker_indices_base[self._n_spawn + self._n_target :] = 2 + bins
-        self.frame_visualizer.visualize(marker_indices=self._marker_indices_base)
+        # success is [num_discrete_cmd], but we only have lines for a subset:
+        line_success = success[self._line_indices]  # [N_pos]
+        bins = torch.clamp((line_success * 9.0).round().to(torch.int32), 0, 9)
+        self._marker_idx[:] = bins
+        self.frame_visualizer.visualize(marker_indices=self._marker_idx)
 
 
 def skip_reward_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], reward_term: str):

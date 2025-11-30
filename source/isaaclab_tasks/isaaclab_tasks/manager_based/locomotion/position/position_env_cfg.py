@@ -25,6 +25,18 @@ from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 from . import mdp, terrains
 
 
+def make_commands(commands_dict):
+    return mdp.RelativeStateCommandCfg(
+        asset_name="robot",
+        resampling_time_range=(10.0, 10.0),
+        pos_std=0.5,
+        rot_std=0.5,
+        lin_vel_std=0.6,
+        ang_vel_std=0.6,
+        debug_vis=True,
+        commands=commands_dict
+    )
+
 @configclass
 class SceneCfg(InteractiveSceneCfg):
     """ "Configuration for the terrain scene with a legged robot."""
@@ -102,15 +114,29 @@ class ActionsCfg:
 class CommandsCfg:
     "Command specifications for the MDP."
 
-    goal_point = mdp.TerrainBasedPose2dCommandCfg(
-        asset_name="robot",
-        resampling_time_range=(10.0, 10.0),
-        simple_heading=False,
-        debug_vis=True,
-        ranges=mdp.TerrainBasedPose2dCommandCfg.Ranges(
-            heading=(-3.14, 3.14),
+    goal_point = make_commands({
+        "vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
+            lin_vel_x=(-2.0, 2.0),
+            lin_vel_y=(-2.0, 2.0),
+            lin_vel_z=None,
+            ang_vel_x=None,
+            ang_vel_y=None,
+            ang_vel_z=(-1.0, 1.0),
+            duration=(0.05, 4.0)
         ),
-    )
+        "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
+            roll=None,
+            pitch=None,
+            yaw=None,
+            duration=(0.05, 2.0)
+        ),
+        "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
+            roll=None,
+            pitch=None,
+            yaw=(-3.14, 3.14),
+            duration=(0.05, 2.0)
+        ),
+    })
 
 
 @configclass
@@ -197,6 +223,7 @@ class RewardsCfg:
     # task rewards
     success = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "success"}, weight=50.0)
     mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0002)
+    # joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.005)
     fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-5.0)
     explore = RewTerm(func=mdp.exploration_reward, weight=0.3, params={"forward_only": True})
 
@@ -220,7 +247,7 @@ class TerminationsCfg:
 
 @configclass
 class CurriculumCfg:
-    terrain_levels = CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels_old, params={"debug_vis": False, "kappa": 2.0, "success_term": "success"})  # type: ignore
+    terrain_levels = CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels_old, params={"debug_vis": False, "kappa": 2.0, "success_term": "success", "target": 0.33})  # type: ignore
     remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
     stricten_success = CurrTerm(func=mdp.stricten_success_term, params={"term": "success"})
 
@@ -289,6 +316,20 @@ variants = {
         "square_pillar_obstacle": make_terrain({"square_pillar_obstacle": terrains.SQUARE_PILLAR_OBSTACLE}),
         "stepping_stone": make_terrain({"stepping_stone": terrains.STEPPING_STONE}),
         "radiating_beam": make_terrain({"radiating_beam": terrains.RADIATING_BEAM}),
+    },
+    "commands.goal_point": {
+        "terrain": make_commands({
+            "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(roll=None, pitch=None, yaw=(-3.14, 3.14), duration=(0.05, 2.0)),
+            "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(roll=None, pitch=None, yaw=None, duration=(0.05, 2.0)),
+        }),
+        "terrain_pos": make_commands({
+            "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(roll=None, pitch=None, yaw=None, duration=(0.05, 2.0)),
+        }),
+        "terrain_pose": make_commands({
+            "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(roll=None, pitch=None, yaw=(-3.14, 3.14), duration=(0.05, 2.0)),
+        }),
+        "pose": make_commands({"pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None, roll=None, pitch=None, yaw=(-3.14, 3.14), duration=(0.05, 2.0))}),
+        "vel": make_commands({"vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(lin_vel_x=(-1.5, 1.5), lin_vel_y=(-1.5, 1.5), lin_vel_z=None, ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-1.0, 1.0), duration=(0.05, 2.0))})
     }
 }
 

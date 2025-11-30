@@ -179,8 +179,9 @@ class RelativeStateCommand(CommandTerm):
                 # 0:3 spawn, 3:6 target, 6:15 unused, 15 hold time
                 block[:, 0:3] = spawn_all
                 block[:, 3:6] = target_all
-                rand = torch.rand(spawn_all.shape[0], device=self.device)
-                block[:, 15] = ranges[cmd_id, 12, 0] + rand * (ranges[cmd_id, 12, 1] - ranges[cmd_id, 12, 0])
+                mi = ranges[cmd_id, 3:13, 0]
+                rand = torch.rand(spawn_all.shape[0], 10, device=self.device)
+                block[:, 6:16] = rand * (ranges[cmd_id, 3:13, 1] - mi).view(1, 10) + mi.view(1, 10)
                 blocks.append(block)
 
                 # mask for this block: spawn position is always "active"; plus any DOFs that had ranges
@@ -258,8 +259,12 @@ class RelativeStateCommand(CommandTerm):
         self.resample_indices(env_ids)
         idx = self.cmd_indices[env_ids]
         self.cmd_buf[env_ids, 0, :] = self.spec.descretized_cmd[idx , 3:]
+        self.cmd_buf[env_ids, 0, 5] = self.cmd_buf[env_ids, 0, 5].uniform_(-3.14, 3.14)
         self.cmd_buf[env_ids, 2, 12] = 0.0
         self.cmd_mask[env_ids] = self.spec.descretized_mask[idx]
+
+        spawns_locations = self.spec.descretized_cmd[idx, :3]
+        self._env.scene.terrain.env_origins.index_copy_(0, env_ids, spawns_locations)
 
     def _update_command(self):
         """Update world-state row and recompute relative state for all envs.

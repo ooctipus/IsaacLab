@@ -37,7 +37,7 @@ def success(
     asset: Articulation = env.scene[robot_cfg.name]
     cmd: torch.Tensor = env.command_manager.get_command(command)
     dist = cmd[:, :3].norm(2, -1)
-    head = cmd[:, 3].abs()
+    head = cmd[:, 5].abs()
     speed = asset.data.body_lin_vel_w[:, robot_cfg.body_ids].norm(2, dim=-1).amax(dim=1)
     joint_pos = asset.data.joint_pos[:, robot_cfg.joint_ids] - asset.data.default_joint_pos[:, robot_cfg.joint_ids]
     joint_pos_diff = torch.abs(joint_pos).amax(dim=1)
