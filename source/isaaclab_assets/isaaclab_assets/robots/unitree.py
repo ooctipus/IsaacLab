@@ -260,9 +260,9 @@ H1_CFG = ArticulationCfg(
 )
 """Configuration for the Unitree H1 Humanoid robot."""
 
-UNITREE_B2_CFG = ArticulationCfg(
+B2_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Robots/Unitree/B2/b2.usd",
+        usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Robots/RSL-ETHZ/B2W/b2w_rsl.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -278,46 +278,70 @@ UNITREE_B2_CFG = ArticulationCfg(
         ),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.9),
+        pos=(0.0, 0.0, 0.7),
         joint_pos={
             ".*_calf_joint": -0.430,
             "F[L,R]_thigh_joint": 0.174533,
             "R[L,R]_thigh_joint": 0.174533,
         },
-        joint_vel={".*": 0.0},
     ),
-    soft_joint_pos_limit_factor=0.9,
     actuators={
-        "hip_joint": DCMotorCfg(
-            joint_names_expr=[".*_hip_joint"],
-            effort_limit=200,
-            saturation_effort=200,
-            velocity_limit=30.0,
-            stiffness=850,
-            damping=0.34,
-            friction=0.0,
+        "legs": ImplicitActuatorCfg(
+            joint_names_expr=[".*hip_joint", ".*thigh_joint", ".*calf_joint"],
+            effort_limit=200.0,  # 32 legged gym
+            velocity_limit=50.0,  # 50 legged gym
+            stiffness={".*": 40.0},
+            damping={".*": 5.0},
         ),
-        "thigh_joint": DCMotorCfg(
-            joint_names_expr=[".*_thigh_joint"],
-            effort_limit=200,
-            saturation_effort=200,
-            velocity_limit=30.0,
-            stiffness=234,
-            damping=0.09,
-            friction=0.0,
-        ),
-        ".*_calf_joint": DCMotorCfg(
-            joint_names_expr=[".*_calf_joint"],
-            effort_limit=320,
-            saturation_effort=320,
-            velocity_limit=30.0,
-            stiffness=144.8,
-            damping=0.058,
-            friction=0.0,
-        )
     },
+    soft_joint_pos_limit_factor=0.95,
 )
 
+
+B2W_CFG = ArticulationCfg(
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Robots/RSL-ETHZ/B2W/b2w_rsl.usd",
+        activate_contact_sensors=True,
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            disable_gravity=False,
+            retain_accelerations=False,
+            linear_damping=0.0,
+            angular_damping=0.0,
+            max_linear_velocity=1000.0,
+            max_angular_velocity=1000.0,
+            max_depenetration_velocity=1.0,
+        ),
+        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+            enabled_self_collisions=True, solver_position_iteration_count=4, solver_velocity_iteration_count=0
+        ),
+    ),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.0, 0.7),
+        joint_pos={
+            ".*hip_joint": 0.0,
+            ".*thigh_joint": 0.0,
+            ".*foot_joint": 0.0,
+            ".*calf_joint": -1.0,
+        },
+    ),
+    actuators={
+        "legs": ImplicitActuatorCfg(
+            joint_names_expr=[".*hip_joint", ".*thigh_joint", ".*calf_joint"],
+            effort_limit=200.0,  # 32 legged gym
+            velocity_limit=50.0,  # 50 legged gym
+            stiffness={".*": 40.0},
+            damping={".*": 5.0},
+        ),
+        "wheels": ImplicitActuatorCfg(
+            joint_names_expr=[".*foot_joint"],
+            effort_limit=32.0,  # 32 legged gym
+            velocity_limit=50.0,  # 50 legged gym
+            stiffness={".*": 0.0},
+            damping={".*": 5.0},
+        ),
+    },
+    soft_joint_pos_limit_factor=0.95,
+)
 
 H1_MINIMAL_CFG = H1_CFG.copy()
 H1_MINIMAL_CFG.spawn.usd_path = f"{ISAACLAB_NUCLEUS_DIR}/Robots/Unitree/H1/h1_minimal.usd"
