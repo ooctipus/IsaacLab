@@ -116,9 +116,9 @@ class CommandsCfg:
 
     goal_point = make_commands({
         "vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
-            pos_x=(-2.0, 2.0),
-            pos_y=(-2.0, 2.0),
-            pos_z=None,
+            lin_vel_x=(-2.0, 2.0),
+            lin_vel_y=(-2.0, 2.0),
+            lin_vel_z=None,
             ang_vel_x=None,
             ang_vel_y=None,
             ang_vel_z=(-1.0, 1.0),
