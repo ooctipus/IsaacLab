@@ -149,7 +149,7 @@ class CommandsCfg:
             roll=None,
             pitch=None,
             yaw=None,
-            duration=(1.0, 3.0)
+            duration=(0.05, 4.0)
         ),
     })
 
