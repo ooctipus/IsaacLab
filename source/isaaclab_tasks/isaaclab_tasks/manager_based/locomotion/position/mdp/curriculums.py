@@ -199,18 +199,6 @@ class terrain_spawn_goal_pair_success_rate_levels_old(ManagerTermBase):
         self.goal_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
         self.goal_term.resample_indices = lambda env_ids: None  # type: ignore[attr-defined]
 
-        # cache terrain layout
-        self.num_discrete_cmd = int(self.goal_term.spec.num_descretized_cmd)
-
-        # success monitor tracks each (level, type, spawn_id, target_id)
-        success_monitor_cfg = SuccessMonitorCfg(
-            monitored_history_len=100,
-            num_monitored_data=self.num_discrete_cmd,
-            device=env.device,
-        )
-        self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
-        # store sampled (level, type, spawn_id, target_id) as a flattened index in [0, L*T*Ps*Pt)
-
         # --- NEW: simple bin-based logging like the new class ---
         self._result: dict[str, torch.Tensor] = {
             "all_success": torch.zeros((), dtype=torch.float, device=env.device),
@@ -249,11 +237,11 @@ class terrain_spawn_goal_pair_success_rate_levels_old(ManagerTermBase):
         # 1) SUCCESS UPDATE
         prev_idx = self.goal_term.cmd_indices[env_ids]
         success_mask = env.termination_manager.get_term(success_term)[env_ids]
-        self.success_monitor.success_update(prev_idx, success_mask)
+        self.goal_term.success_monitor.success_update(prev_idx, success_mask)
 
         # 2) Sample next (level, type, spawn, target) aiming for balanced success
         #    prob is the global sampling distribution over all (L,T,Ps,Pt) indices
-        choices, probs = self.success_monitor.sample_by_target_rate(
+        choices, probs = self.goal_term.success_monitor.sample_by_target_rate(
             env_ids, target=target, kappa=kappa, temperature=temperature, return_probs=True
         )
         self.goal_term.cmd_indices[env_ids] = choices.to(self.goal_term.cmd_indices.dtype)
@@ -262,7 +250,7 @@ class terrain_spawn_goal_pair_success_rate_levels_old(ManagerTermBase):
         env.scene.terrain.env_origins.index_copy_(0, env_ids, rows[:, 0:3])
 
         # --- NEW: bin-style logging over success rates & sampling distribution ---
-        success = self.success_monitor.get_success_rate()  # [L*T*Ps*Pt]
+        success = self.goal_term.success_monitor.get_success_rate()
         self._result["all_success"].copy_(success.mean())
 
         # success bins (0–20, 20–40, ..., 80–100)
@@ -301,8 +289,8 @@ class terrain_spawn_goal_pair_success_rate_levels_old(ManagerTermBase):
         mask_pos = self.goal_term.spec.descretized_mask[:, 0:3].any(dim=-1)  # [N] bool
 
         # Only visualize position-like discrete commands
-        line_indices = torch.arange(self.num_discrete_cmd, device=self.device)[mask_pos]  # [N_pos]
-        rows_pos = rows[mask_pos]                                                     # [N_pos,15]
+        line_indices = torch.arange(self.goal_term.spec.num_descretized_cmd, device=self.device)[mask_pos]
+        rows_pos = rows[mask_pos]
 
         start = rows_pos[:, 0:3].clone()  # spawn
         end = rows_pos[:, 3:6].clone()  # target
@@ -350,7 +338,7 @@ def skip_reward_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], reward_term
     term_cfg = env.reward_manager.get_term_cfg(reward_term)
     if term_cfg.weight == 0.0:
         return
-    success_monitor = getattr(env.curriculum_manager.cfg, "terrain_levels").func.success_monitor
+    success_monitor = env.command_manager.get_term("goal_point").success_monitor
     success_rate = success_monitor.get_success_rate().mean()
     if (success_rate > 0.2 and env.common_step_counter > 100) or env.common_step_counter > 20000:
         # Set weight to zero so manager skips computing it

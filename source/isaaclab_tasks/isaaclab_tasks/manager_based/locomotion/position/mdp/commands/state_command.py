@@ -27,6 +27,7 @@ from dataclasses import MISSING
 
 from isaaclab.assets import Articulation
 from isaaclab.managers import CommandTerm
+from ..success_monitor_cfg import SuccessMonitorCfg
 from isaaclab.utils import configclass
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.utils.math import (
@@ -77,13 +78,12 @@ class RelativeStateCommand(CommandTerm):
         """
 
         cardinal: int = 1
-        mask: torch.Tensor = MISSING
-        min: torch.Tensor = MISSING
-        span: torch.Tensor = MISSING
         kind: torch.Tensor = MISSING
         num_descretized_cmd: int = MISSING
         descretized_cmd: torch.Tensor = MISSING
         descretized_mask: torch.Tensor = MISSING
+        # row ranges for each command: rows for cmd i are [offsets[i] : offsets[i+1]]
+        descretized_cmd_offsets: torch.Tensor = MISSING  # [cardinal + 1], long
 
     def __init__(self, cfg: RelativeStateCommandCfg, env: ManagerBasedEnv):
         """Initialize the relative state command generator.
@@ -97,6 +97,20 @@ class RelativeStateCommand(CommandTerm):
         # obtain the robot and terrain assets
         self.robot: Articulation = env.scene[cfg.asset_name]
         self.spec = self._build_spec(self.cfg.commands)
+        success_monitor_cfg = SuccessMonitorCfg(
+            monitored_history_len=100, num_monitored_data=self.spec.num_descretized_cmd, device=env.device,
+        )
+        self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
+
+        # command names in the same order as commands.values() used in _build_spec
+        # (Python dict preserves insertion order)
+        self._command_names = list(self.cfg.commands.keys())
+
+        # buffers for aggregating success per command type
+        self._success_per_discrete = torch.zeros(self.spec.num_descretized_cmd, device=self.device)
+        self._success_per_cmd = torch.zeros(self.spec.cardinal, device=self.device)
+        offsets = self.spec.descretized_cmd_offsets
+        self._disc_count_per_cmd = (offsets[1:] - offsets[:-1]).to(torch.float32)
 
         # desired, error, current
         # cmd_buf[:, 0, :] → desired world state
@@ -130,8 +144,8 @@ class RelativeStateCommand(CommandTerm):
         from .commands_cfg import RelativeStateCommandCfg
 
         self.terrains: TerrainImporter = self._env.scene["terrain"]
-        has_spawn = "spawn" in self.terrains.flat_patches
-        spawn_src = self.terrains.flat_patches["spawn"] if has_spawn else self._env.scene.terrain.terrain_origins
+        has_spawn = "target" in self.terrains.flat_patches
+        spawn_src = self.terrains.flat_patches["target"] if has_spawn else self._env.scene.terrain.terrain_origins
         if spawn_src.dim() == 3:
             spawn_src = spawn_src.unsqueeze(2)  # [row, col, 1, 3]
 
@@ -144,6 +158,7 @@ class RelativeStateCommand(CommandTerm):
 
         blocks = []
         mask_blocks = []
+        row_counts = []  # number of rows per command
         n_samples = 20  # bins per spawn
 
         for cmd_id, val in enumerate(commands.values()):
@@ -174,21 +189,18 @@ class RelativeStateCommand(CommandTerm):
 
                 spawn_all = spawn_exp.expand(-1, num_spawn_per_terrain, num_targets_per_terrain, -1).reshape(-1, 3)
                 target_all = target_exp.expand(-1, num_spawn_per_terrain, num_targets_per_terrain, -1).reshape(-1, 3)
+                mi = ranges[cmd_id, :, 0].view(1, 13)
+                rand_range = torch.rand(spawn_all.shape[0], 13, device=self.device) * (ranges[cmd_id, :, 1] - mi) + mi
 
                 block = torch.zeros(spawn_all.shape[0], 16, device=self.device)
                 # 0:3 spawn, 3:6 target, 6:15 unused, 15 hold time
                 block[:, 0:3] = spawn_all
-                block[:, 3:6] = target_all
-                mi = ranges[cmd_id, 3:13, 0]
-                rand = torch.rand(spawn_all.shape[0], 10, device=self.device)
-                block[:, 6:16] = rand * (ranges[cmd_id, 3:13, 1] - mi).view(1, 10) + mi.view(1, 10)
+                block[:, 2] += self.robot.data.default_root_state[0, 2]
+                block[:, 3:6] = target_all + rand_range[:, :3]
+                block[:, 6:16] = rand_range[:, 3:]
                 blocks.append(block)
-
-                # mask for this block: spawn position is always "active"; plus any DOFs that had ranges
-                block_mask = torch.zeros(block.shape[0], 12, device=self.device, dtype=torch.bool)
-                block_mask[:, 0:3] = True  # we always care about pos error for terrain command
-                block_mask |= mask[cmd_id].view(1, 12)  # keep any non-pos DOFs that have ranges in the original cfg
-                mask_blocks.append(block_mask)
+                mask_blocks.append(mask[cmd_id].view(1, 12).expand(block.shape[0], 12))
+                row_counts.append(block.shape[0])
 
             # --- Non-terrain commands: num bins * num_spawn per tile ---
             else:
@@ -213,19 +225,24 @@ class RelativeStateCommand(CommandTerm):
 
                 block_mask = mask[cmd_id].view(1, 12).expand(count, 12)
                 mask_blocks.append(block_mask)
+                row_counts.append(block.shape[0])
+
         # stack all discrete commands
         descretized_cmd = torch.cat(blocks, dim=0)
         descretized_mask = torch.cat(mask_blocks, dim=0)
 
+        # build offsets so rows for cmd i are [offsets[i] : offsets[i+1]]
+        counts = torch.tensor(row_counts, device=self.device, dtype=torch.long)
+        descretized_cmd_offsets = torch.zeros(len(commands) + 1, device=self.device, dtype=torch.long)
+        descretized_cmd_offsets[1:] = torch.cumsum(counts, dim=0)
+
         spec = self.CommandSpec(
             cardinal=len(commands),
-            mask=mask,
-            min=ranges[..., 0],
-            span=ranges[..., 1] - ranges[..., 0],
             kind=kind,
             num_descretized_cmd=descretized_cmd.shape[0],
             descretized_cmd=descretized_cmd,
-            descretized_mask=descretized_mask
+            descretized_mask=descretized_mask,
+            descretized_cmd_offsets=descretized_cmd_offsets,
         )
         return spec
 
@@ -242,7 +259,7 @@ class RelativeStateCommand(CommandTerm):
         Returns:
             Tensor of shape [num_envs, 13] corresponding to cmd_buf[:, 1, :].
         """
-        return self.cmd_buf[:, 1, :12]
+        return self.cmd_buf[:, 1]
 
     def _update_metrics(self):
         """Update error metrics based on the last computed _err buffer."""
@@ -250,6 +267,21 @@ class RelativeStateCommand(CommandTerm):
         self.metrics["error_rot"] = self._err[:, 1]
         self.metrics["error_linvel"] = self._err[:, 2]
         self.metrics["error_angvel"] = self._err[:, 3]
+
+        # find the indices and report average success rate per tasks
+        success = self.success_monitor.get_success_rate()  # [num_descretized_cmd]
+        self._success_per_discrete.copy_(success)
+
+        offsets = self.spec.descretized_cmd_offsets
+        for cmd_id, name in enumerate(self._command_names):
+            start = int(offsets[cmd_id].item())
+            end = int(offsets[cmd_id + 1].item())
+            if end > start:
+                self._success_per_cmd[cmd_id] = success[start:end].mean()
+            else:
+                self._success_per_cmd[cmd_id] = 0.0
+            # scalar metric per command, named by actual command key
+            self._env.extras["log"]["Metrics/goal_point/success_rate_" + name] = self._success_per_cmd[cmd_id].item()
 
     def resample_indices(self, env_ids: torch.Tensor):
         indices = torch.randint(0, self.spec.num_descretized_cmd, (env_ids.numel(),), device=self.device)
@@ -310,7 +342,6 @@ class RelativeStateCommand(CommandTerm):
         success = torch.all(self._err < self._reward_scales, dim=1)
         success_time = self.cmd_buf[:, 2, 12]
         success_time[success] += self._env.step_dt
-        success_time[~success] = 0.0
         self.cmd_buf[:, 2, 12] = success_time
         # remaining time until success: target_hold - success_time
         torch.sub(self.cmd_buf[:, 0, 12], self.cmd_buf[:, 2, 12], out=self.cmd_buf[:, 1, 12])
@@ -432,16 +463,8 @@ class RelativeStateCommand(CommandTerm):
     def get_state_error(self):
         return self._err
 
-    def get_task_success(self):
+    def get_task_done(self) -> torch.Tensor:
         return self.cmd_buf[:, 1, 12] <= 0.0
 
-    def get_task_reward(self):
-        """Compute a multiplicative reward from grouped errors.
-
-        Reward per env:
-            r = prod_{groups} (1 - tanh(err_group / std_group))
-
-        where std_group comes from cfg.{pos_std, rot_std, lin_vel_std, ang_vel_std}.
-        """
-        group_r = 1.0 - torch.tanh(self._err / self._reward_scales)
-        return group_r.prod(dim=1)
+    def get_task_reward(self) -> torch.Tensor:
+        return torch.all(self._err < self._reward_scales, dim=1).float() / (self.cmd_buf[:, 0, 12] / self._env.step_dt)
