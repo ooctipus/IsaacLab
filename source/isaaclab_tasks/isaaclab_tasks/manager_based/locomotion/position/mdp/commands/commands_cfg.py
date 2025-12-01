@@ -133,6 +133,15 @@ class RelativeStateCommandCfg(CommandTermCfg):
 
         target_key: str = "target"
 
+        pos_x: tuple[float, float] | None = MISSING
+        """Range for the x position (in m)."""
+
+        pos_y: tuple[float, float] | None = MISSING
+        """Range for the y position (in m)."""
+
+        pos_z: tuple[float, float] | None = MISSING
+        """Range for the y position (in m)."""
+
         roll: tuple[float, float] | None = MISSING
         """Range for the base roll orientation (in radian)."""
 

@@ -26,10 +26,10 @@ class AnymalCEnvMixin:
 
 
 @configclass
-class AnymalCSpotLocomotionPositionCommandEnvCfg(AnymalCEnvMixin, position_env_cfg.LocomotionPositionCommandEnvCfg):
+class AnymalCLocomotionPositionCommandEnvCfg(AnymalCEnvMixin, position_env_cfg.LocomotionPositionCommandEnvCfg):
     pass
 
 
 @configclass
-class AnymalCSpotLocomotionStateCommandEnvCfg(AnymalCEnvMixin, state_env_cfg.LocomotionStateCommandEnvCfg):
+class AnymalCLocomotionStateCommandEnvCfg(AnymalCEnvMixin, state_env_cfg.LocomotionStateCommandEnvCfg):
     pass

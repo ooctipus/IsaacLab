@@ -52,7 +52,7 @@ GAP = terrain_cfg.MeshGapTerrainCfg(
         ),
         "target": FlatPatchSamplingByRadiusCfg(
             num_patches=20,
-            patch_radius=0.5,
+            patch_radius=0.3,
             radius_range=(0.5, 7.0),
             max_height_diff=0.2,
         )
@@ -71,7 +71,7 @@ PIT = terrain_cfg.MeshPitTerrainCfg(
         ),
         "target": FlatPatchSamplingByRadiusCfg(
             num_patches=20,
-            patch_radius=0.5,
+            patch_radius=0.3,
             max_height_diff=0.2,
             radius_range=(0.5, 7.0),
         )
@@ -138,7 +138,7 @@ SLOPE_INV = terrain_cfg.HfInvertedPyramidSlopedTerrainCfg(
         ),
         "target": FlatPatchSamplingByRadiusCfg(
             num_patches=20,
-            patch_radius=0.5,
+            patch_radius=0.05,
             max_height_diff=0.2,
             radius_range=(0.2, 7.0),
         )
@@ -160,7 +160,7 @@ EXTREME_STAIR = terrain_cfg.HfPyramidStairsTerrainCfg(
         ),
         "target": FlatPatchSamplingByRadiusCfg(
             num_patches=20,
-            patch_radius=0.4,
+            patch_radius=0.05,
             max_height_diff=0.2,
             radius_range=(0.0, 7.0),
         )

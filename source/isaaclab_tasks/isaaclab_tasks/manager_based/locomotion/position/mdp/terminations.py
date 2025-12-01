@@ -46,7 +46,7 @@ def success(
 
 def success_terminate(env: ManagerBasedRLEnv, command_name: str = "goal_point"):
     command_term: RelativeStateCommand = env.command_manager.get_term(command_name)
-    return command_term.get_task_success()
+    return command_term.get_task_done()
 
 
 def abnormal_robot_state(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
