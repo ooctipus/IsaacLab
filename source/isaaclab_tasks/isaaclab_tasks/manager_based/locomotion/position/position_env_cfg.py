@@ -238,7 +238,7 @@ class RewardsCfg:
     # task rewards
     success = RewTerm(func=mdp.command_success, weight=50.0)
     mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0002)
-    joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.005)
+    joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.05)
     fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-10.0)
     undesired_contact = RewTerm(
         func=mdp.undesired_contacts,
