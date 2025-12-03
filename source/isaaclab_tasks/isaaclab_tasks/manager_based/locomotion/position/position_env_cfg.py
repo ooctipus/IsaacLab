@@ -136,17 +136,17 @@ class CommandsCfg:
             roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=(-3.14, 3.14),
             duration=(0.05, 2.0)
         ),
-        "terrain_stand_up": mdp.RelativeStateCommandCfg.TerrainCommands(
+        "terrain_stand_up_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             pos_x=None, pos_y=None, pos_z=None,
             roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None,
             duration=(0.05, 4.0)
         ),
-        "position": mdp.RelativeStateCommandCfg.TerrainCommands(
+        "position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None,
             roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None,
             duration=(0.05, 2.0)
         ),
-        "pose": mdp.RelativeStateCommandCfg.TerrainCommands(
+        "pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None,
             roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None,
             duration=(0.05, 2.0)
@@ -354,7 +354,7 @@ variants = {
         }),
         "pose": make_commands({"pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None, roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=(-3.14, 3.14), duration=(0.05, 2.0))}),
         "pos": make_commands({"position_cmd": mdp.RelativeStateCommandCfg.PositionCommands(pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None, roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None, duration=(0.05, 2.0))}),
-        "vel": make_commands({"vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(lin_vel_x=(-2.0, 2.0), lin_vel_y=(-2.0, 2.0), lin_vel_z=None, ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-0.2, 0.2), duration=(0.05, 2.0))})
+        "vel": make_commands({"lin_vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(lin_vel_x=(-2.0, 2.0), lin_vel_y=(-2.0, 2.0), lin_vel_z=None, ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-0.2, 0.2), duration=(0.05, 2.0))})
     }
 }
 
