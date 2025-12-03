@@ -144,8 +144,8 @@ class RelativeStateCommand(CommandTerm):
         from .commands_cfg import RelativeStateCommandCfg
 
         self.terrains: TerrainImporter = self._env.scene["terrain"]
-        has_spawn = "target" in self.terrains.flat_patches
-        spawn_src = self.terrains.flat_patches["target"] if has_spawn else self._env.scene.terrain.terrain_origins
+        has_spawn = "spawn" in self.terrains.flat_patches
+        spawn_src = self.terrains.flat_patches["spawn"] if has_spawn else self._env.scene.terrain.terrain_origins
         if spawn_src.dim() == 3:
             spawn_src = spawn_src.unsqueeze(2)  # [row, col, 1, 3]
 
@@ -195,7 +195,6 @@ class RelativeStateCommand(CommandTerm):
                 block = torch.zeros(spawn_all.shape[0], 16, device=self.device)
                 # 0:3 spawn, 3:6 target, 6:15 unused, 15 hold time
                 block[:, 0:3] = spawn_all
-                block[:, 2] += self.robot.data.default_root_state[0, 2]
                 block[:, 3:6] = target_all + rand_range[:, :3]
                 block[:, 6:16] = rand_range[:, 3:]
                 blocks.append(block)

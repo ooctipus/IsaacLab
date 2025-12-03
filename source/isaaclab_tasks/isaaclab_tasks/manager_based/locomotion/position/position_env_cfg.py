@@ -115,41 +115,41 @@ class CommandsCfg:
     "Command specifications for the MDP."
 
     goal_point = make_commands({
-        "vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
-            lin_vel_x=(-2.0, 2.0),
-            lin_vel_y=(-2.0, 2.0),
-            lin_vel_z=None,
-            ang_vel_x=None,
-            ang_vel_y=None,
-            ang_vel_z=(-1.0, 1.0),
+        "lin_vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
+            roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None,
+            lin_vel_x=(-2.0, 2.0), lin_vel_y=(-2.0, 2.0), lin_vel_z=None,
+            ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-0.2, 0.2),
             duration=(0.05, 4.0)
         ),
+        "ang_vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
+            roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None,
+            lin_vel_x=(-0.0, 0.0), lin_vel_y=(-0.0, 0.0), lin_vel_z=None,
+            ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-1.0, 1.0), duration=(0.05, 4.0)
+        ),
         "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
-            pos_x=(-0.0, 0.0),
-            pos_y=(-0.0, 0.0),
-            pos_z=(-0.0, 0.0),
-            roll=None,
-            pitch=None,
-            yaw=None,
+            pos_x=(-0.0, 0.0), pos_y=(-0.0, 0.0), pos_z=(-0.0, 0.0),
+            roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None,
             duration=(0.05, 2.0)
         ),
         "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
-            pos_x=(-0.0, 0.0),
-            pos_y=(-0.0, 0.0),
-            pos_z=(-0.0, 0.0),
-            roll=None,
-            pitch=None,
-            yaw=(-3.14, 3.14),
+            pos_x=(-0.0, 0.0), pos_y=(-0.0, 0.0), pos_z=(-0.0, 0.0),
+            roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=(-3.14, 3.14),
             duration=(0.05, 2.0)
         ),
         "terrain_stand_up": mdp.RelativeStateCommandCfg.TerrainCommands(
-            pos_x=None,
-            pos_y=None,
-            pos_z=None,
-            roll=None,
-            pitch=None,
-            yaw=None,
+            pos_x=None, pos_y=None, pos_z=None,
+            roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None,
             duration=(0.05, 4.0)
+        ),
+        "position": mdp.RelativeStateCommandCfg.TerrainCommands(
+            pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None,
+            roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None,
+            duration=(0.05, 2.0)
+        ),
+        "pose": mdp.RelativeStateCommandCfg.TerrainCommands(
+            pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None,
+            roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None,
+            duration=(0.05, 2.0)
         ),
     })
 
@@ -211,7 +211,7 @@ class EventsCfg:
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-3.14, 3.14)},
+            "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "z": (0.0, 0.5), "yaw": (-3.14, 3.14)},
             "velocity_range": {
                 "x": (-0.5, 0.5),
                 "y": (-0.5, 0.5),
@@ -239,7 +239,12 @@ class RewardsCfg:
     success = RewTerm(func=mdp.command_success, weight=50.0)
     mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0002)
     joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.005)
-    fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-5.0)
+    fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-10.0)
+    undesired_contact = RewTerm(
+        func=mdp.undesired_contacts,
+        weight=-0.5,
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*(?:(FOOT))).*$"), "threshold": 1.0},
+    )
     explore = RewTerm(func=mdp.exploration_reward, weight=0.3, params={"forward_only": True})
 
 
@@ -332,21 +337,24 @@ variants = {
     },
     "commands.goal_point": {
         "terrain": make_commands({
-            "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(pos_x=(-0.0, 0.0), pos_y=(-0.0, 0.0), pos_z=(-0.0, 0.0), roll=None, pitch=None, yaw=(-3.14, 3.14), duration=(0.05, 2.0)),
-            "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(pos_x=(-0.0, 0.0), pos_y=(-0.0, 0.0), pos_z=(-0.0, 0.0), roll=None, pitch=None, yaw=None, duration=(0.05, 2.0)),
-            "terrain_stand_up_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(pos_x=None, pos_y=None, pos_z=None, roll=None, pitch=None, yaw=None, duration=(0.05, 4.0)),
+            "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(pos_x=(-0.0, 0.0), pos_y=(-0.0, 0.0), pos_z=(-0.0, 0.0), roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=(-3.14, 3.14), duration=(0.05, 2.0)),
+            "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(pos_x=(-0.0, 0.0), pos_y=(-0.0, 0.0), pos_z=(-0.0, 0.0), roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None, duration=(0.05, 2.0)),
+            "terrain_stand_up_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(pos_x=None, pos_y=None, pos_z=None, roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None, duration=(0.05, 4.0)),
+            "position_cmd": mdp.RelativeStateCommandCfg.PositionCommands(pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None, roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None, duration=(0.05, 2.0)),
+            "pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None, roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=(-3.14, 3.14), duration=(0.05, 2.0)),
         }),
         "terrain_pos": make_commands({
-            "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(pos_x=(-0.0, 0.0), pos_y=(-0.0, 0.0), pos_z=(-0.0, 0.0), roll=None, pitch=None, yaw=None, duration=(0.05, 2.0)),
+            "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(pos_x=(-0.0, 0.0), pos_y=(-0.0, 0.0), pos_z=(-0.0, 0.0), roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None, duration=(0.05, 2.0)),
         }),
         "terrain_pose": make_commands({
-            "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(pos_x=(-0.0, 0.0), pos_y=(-0.0, 0.0), pos_z=(-0.0, 0.0), roll=None, pitch=None, yaw=(-3.14, 3.14), duration=(0.05, 2.0)),
+            "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(pos_x=(-0.0, 0.0), pos_y=(-0.0, 0.0), pos_z=(-0.0, 0.0), roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=(-3.14, 3.14), duration=(0.05, 2.0)),
         }),
         "terrain_stand_up": make_commands({
-            "terrain_stand_up_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(pos_x=None, pos_y=None, pos_z=None, roll=None, pitch=None, yaw=None, duration=(0.05, 4.0)),
+            "terrain_stand_up_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(pos_x=None, pos_y=None, pos_z=None, roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None, duration=(0.05, 4.0)),
         }),
-        "pose": make_commands({"pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None, roll=None, pitch=None, yaw=(-3.14, 3.14), duration=(0.05, 2.0))}),
-        "vel": make_commands({"vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(lin_vel_x=(-1.5, 1.5), lin_vel_y=(-1.5, 1.5), lin_vel_z=None, ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-1.0, 1.0), duration=(0.05, 2.0))})
+        "pose": make_commands({"pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None, roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=(-3.14, 3.14), duration=(0.05, 2.0))}),
+        "pos": make_commands({"position_cmd": mdp.RelativeStateCommandCfg.PositionCommands(pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None, roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None, duration=(0.05, 2.0))}),
+        "vel": make_commands({"vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(lin_vel_x=(-2.0, 2.0), lin_vel_y=(-2.0, 2.0), lin_vel_z=None, ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-0.2, 0.2), duration=(0.05, 2.0))})
     }
 }
 
