@@ -75,33 +75,10 @@ def mechanical_power(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot")) 
     return work
 
 
+
 def command_success(env: ManagerBasedRLEnv):
     command_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
     return command_term.get_task_reward()
-
-
-# class efficiency_weigh_success(ManagerTermBase):
-#     def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
-#         super().__init__(cfg, env)
-#         self.robot: Articulation = env.scene[cfg.params["asset_cfg"].name]
-#         self.episode_reward = torch.zeros(env.num_envs, device=env.device)
-#         self.episode_power = torch.zeros(env.num_envs, device=env.device)
-
-#     def __call__(self, env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
-#         command_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
-#         power = torch.sum((self.robot.data.applied_torque * self.robot.data.joint_vel).abs(), dim=1)
-
-#         self.episode_reward += command_term.get_task_reward()
-#         self.episode_power += power
-
-#         timeout_mask = env.termination_manager.get_term("time_out")
-#         avg_pwr = self.episode_power / env.episode_length_buf.clamp_min(1.0)
-#         reward = torch.where(timeout_mask, self.episode_reward * (600 / avg_pwr), torch.zeros_like(self.episode_reward))
-
-#         self.episode_reward[env.termination_manager.dones] = 0.0
-#         self.episode_power[env.termination_manager.dones] = 0.0
-#         env.extras["log"]["Metrics/average_power"] = avg_pwr.mean()
-#         return reward
 
 
 def position_tracking(env: ManagerBasedRLEnv, std: float):
@@ -183,6 +160,52 @@ def stand_penalty(
     base_height = robot.data.root_link_pos_w[:, 2]  # z-coordinate of the base
     penalty = (base_height < height_threshold).float() * -1.0
     return penalty
+
+
+class foot_touchdown_impact(ManagerTermBase):
+
+    def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.history_length: int = cfg.params.get("history_length", 3)
+
+        # Use the sensor_cfg to decide how many feet we care about
+        sensor_cfg: SceneEntityCfg = cfg.params["sensor_cfg"]
+        num_feet = len(sensor_cfg.body_ids)
+
+        self.foot_speed_history = torch.zeros((env.num_envs, num_feet, self.history_length), device=env.device)
+        self._hist_idx: int = 0
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        asset_cfg: SceneEntityCfg,
+        sensor_cfg: SceneEntityCfg,
+        history_length: int,   # not actually needed, but harmless if passed from cfg
+    ) -> torch.Tensor:
+        asset: Articulation = env.scene[asset_cfg.name]
+        contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+
+        # Current foot speeds: [N, B_feet]
+        foot_vel = asset.data.body_com_lin_vel_w[:, asset_cfg.body_ids, :]
+        foot_speed = torch.linalg.vector_norm(foot_vel, dim=-1)
+
+        # Ring buffer over the last `history_length` steps
+        idx = self._hist_idx % self.history_length
+        self.foot_speed_history[:, :, idx] = foot_speed
+        self._hist_idx += 1
+
+        # Touchdown detection via contact time
+        contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+        is_touchdown = (contact_time > 0.0) & (contact_time <= env.step_dt)
+
+        # Max speed over history for each foot, store as per-foot impact at touchdown, zero otherwise
+        max_hist_speed, _ = self.foot_speed_history.max(dim=-1)
+        per_foot_impact = torch.where(is_touchdown, max_hist_speed, torch.zeros_like(max_hist_speed))
+
+        # Sum over feet → per-env impact scalar
+        impact = per_foot_impact.sum(dim=-1)  # [N]
+
+        return impact
 
 
 class GaitReward(ManagerTermBase):

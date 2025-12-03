@@ -237,14 +237,26 @@ class EventsCfg:
 class RewardsCfg:
     # task rewards
     success = RewTerm(func=mdp.command_success, weight=50.0)
+
     mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0002)
-    joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.05)
-    fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-10.0)
+
+    foot_touchdown = RewTerm(
+        func=mdp.foot_touchdown_impact,
+        weight=-0.25,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*FOOT.*"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*FOOT.*"),
+            "history_length": 3,
+        },
+    )
     undesired_contact = RewTerm(
         func=mdp.undesired_contacts,
         weight=-0.5,
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*(?:(FOOT))).*$"), "threshold": 1.0},
     )
+
+    fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-10.0)
+
     explore = RewTerm(func=mdp.exploration_reward, weight=0.3, params={"forward_only": True})
 
 
