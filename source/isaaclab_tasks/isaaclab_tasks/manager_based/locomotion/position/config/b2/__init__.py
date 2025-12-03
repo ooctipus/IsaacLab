@@ -16,14 +16,3 @@ gym.register(
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:B2PositionLocomotionPPORunnerCfg",
     },
 )
-
-
-gym.register(
-    id="Isaac-State-B2-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.b2_env_cfg:B2LocomotionStateCommandEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:B2PositionLocomotionPPORunnerCfg",
-    },
-)
