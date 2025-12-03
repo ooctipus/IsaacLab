@@ -31,8 +31,8 @@ def make_commands(commands_dict):
         resampling_time_range=(10.0, 10.0),
         pos_std=0.5,
         rot_std=0.5,
-        lin_vel_std=0.6,
-        ang_vel_std=0.6,
+        lin_vel_std=0.3,
+        ang_vel_std=0.3,
         debug_vis=True,
         commands=commands_dict
     )
