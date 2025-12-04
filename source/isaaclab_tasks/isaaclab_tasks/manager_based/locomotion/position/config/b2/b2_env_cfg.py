@@ -21,6 +21,8 @@ class B2EnvMixin:
         self.scene.robot = unitree.B2_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")  # type: ignore
         self.scene.robot.spawn.usd_path = os.path.join(ISAACLAB_ASSETS_DATA_DIR, "Robots", "Unitree", "B2", "b2.usd")
         self.rewards.undesired_contact.params["sensor_cfg"].body_names = "^(?!.*(?:foot)).*$"
+        self.rewards.foot_touchdown.params["sensor_cfg"].body_names = ".*foot"
+        self.rewards.foot_touchdown.params["asset_cfg"].body_names = ".*foot"
         self.terminations.base_contact.params["sensor_cfg"].body_names = "base_link"
         self.events.add_base_mass.params["asset_cfg"].body_names = "base_link"
         self.scene.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/base_link"
