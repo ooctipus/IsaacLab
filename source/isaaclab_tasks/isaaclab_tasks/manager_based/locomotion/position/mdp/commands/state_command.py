@@ -463,7 +463,14 @@ class RelativeStateCommand(CommandTerm):
         return self._err
 
     def get_task_done(self) -> torch.Tensor:
-        return self.cmd_buf[:, 1, 12] <= 0.0
+        joint_pos = self.robot.data.joint_pos - self.robot.data.default_joint_pos
+        joint_pos_diff = torch.abs(joint_pos).amax(dim=1)
+        return (self.cmd_buf[:, 1, 12] <= 0.0) & (joint_pos_diff < 1.0)
+
+    # def get_task_reward(self) -> torch.Tensor:
+    #     return torch.all(self._err < self._reward_scales, dim=1).float() / (self.cmd_buf[:, 0, 12] / self._env.step_dt)
 
     def get_task_reward(self) -> torch.Tensor:
-        return torch.all(self._err < self._reward_scales, dim=1).float() / (self.cmd_buf[:, 0, 12] / self._env.step_dt)
+        joint_pos = self.robot.data.joint_pos - self.robot.data.default_joint_pos
+        joint_pos_diff = torch.abs(joint_pos).amax(dim=1)
+        return ((self.cmd_buf[:, 1, 12] <= 0.0) & (joint_pos_diff < 1.0)).float()

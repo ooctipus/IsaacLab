@@ -124,7 +124,7 @@ class CommandsCfg:
         "ang_vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
             roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None,
             lin_vel_x=(-0.0, 0.0), lin_vel_y=(-0.0, 0.0), lin_vel_z=None,
-            ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-1.0, 1.0), duration=(0.05, 4.0)
+            ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-2.0, 2.0), duration=(0.05, 4.0)
         ),
         "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             pos_x=(-0.0, 0.0), pos_y=(-0.0, 0.0), pos_z=(-0.0, 0.0),
@@ -240,11 +240,11 @@ class RewardsCfg:
 
     mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0002)
 
-    joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.04)
+    joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.01)
 
     foot_touchdown = RewTerm(
         func=mdp.foot_touchdown_impact,
-        weight=-0.2,
+        weight=-0.05,
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=".*FOOT.*"),
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*FOOT.*"),
@@ -254,7 +254,7 @@ class RewardsCfg:
 
     undesired_contact = RewTerm(
         func=mdp.undesired_contacts,
-        weight=-0.25,
+        weight=-0.1,
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*(?:(FOOT))).*$"), "threshold": 1.0},
     )
 
