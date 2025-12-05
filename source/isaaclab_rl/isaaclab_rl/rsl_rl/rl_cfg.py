@@ -67,6 +67,25 @@ class RslRlPpoActorCriticRecurrentCfg(RslRlPpoActorCriticCfg):
     rnn_num_layers: int = MISSING
     """The number of RNN layers."""
 
+@configclass
+class RslRlPpoCommanderActorCriticCfg(RslRlPpoActorCriticCfg):
+    """Configuration for the PPO actor-critic networks with recurrent layers."""
+
+    class_name: str = "CommanderActorCritic"
+    """The policy class name. Default is CommanderActorCritic."""
+
+    commander_obs_normalization: bool = MISSING
+    """Whether to normalize the observation for the commander network."""
+
+    commander_hidden_dims: list[int] = MISSING
+    """The hidden dimensions of the commander network."""
+
+    get_command_target_fn: callable = MISSING
+    """The function that return the state of result which regularizes commander network"""
+
+    kinematic_reward_weight: float = MISSING
+    """The weight for the kinematic reward"""
+
 
 ############################
 # Algorithm configurations #

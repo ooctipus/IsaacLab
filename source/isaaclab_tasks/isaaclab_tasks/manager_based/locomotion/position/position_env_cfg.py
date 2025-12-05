@@ -163,7 +163,6 @@ class ObservationsCfg:
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
         proj_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))
-        goal_point_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "goal_point"})
         # time_left = ObsTerm(func=mdp.time_left)
         joint_pos = ObsTerm(func=mdp.joint_pos)
         joint_vel = ObsTerm(func=mdp.joint_vel)
@@ -180,6 +179,17 @@ class ObservationsCfg:
             self.concatenate_terms = True
 
     policy: PolicyCfg = PolicyCfg()
+
+    @configclass
+    class TaskCfg(ObsGroup):
+        goal_point_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "goal_point"})
+
+        def __post_init__(self):
+            self.enable_corruption = True
+            self.concatenate_terms = True
+
+    policy: PolicyCfg = PolicyCfg()
+    task: TaskCfg = TaskCfg()
 
 
 @configclass
