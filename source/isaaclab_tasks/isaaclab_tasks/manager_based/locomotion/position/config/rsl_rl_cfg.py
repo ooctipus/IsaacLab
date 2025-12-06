@@ -11,34 +11,53 @@ from isaaclab.utils.math import quat_apply_inverse, quat_mul, quat_inv
 
 def get_base_state(env):
     robot = env.unwrapped.scene["robot"]
-    if "last_root_state" in env.unwrapped.extras:
-        last_state_w = env.unwrapped.extras["last_root_state"]
-        last_diff = env.unwrapped.extras["last_diff"]
-        last_time_stamp = env.unwrapped.extras["last_time_stamp"]
-    else:
-        last_state_w = robot.data.root_state_w.clone()
-        last_time_stamp = -1
-        last_diff = torch.zeros_like(last_state_w)
-        env.unwrapped.extras["last_root_state"] = last_state_w
-        env.unwrapped.extras["last_time_stamp"] = last_time_stamp
-        env.unwrapped.extras["last_diff"] = last_diff
-
-    current_time_stamp = env.unwrapped.common_step_counter
-    if current_time_stamp <= last_time_stamp:
-        return last_diff
+    extras = env.unwrapped.extras
 
     current_state_w = robot.data.root_state_w.clone()
+    current_time_stamp = env.unwrapped.common_step_counter
+    episode_starts = (env.unwrapped.episode_length_buf == 0).unsqueeze(-1)  # [N, 1] for broadcasting
 
+    # First call: initialize buffers
+    if "last_root_state" not in extras:
+        last_state_w = current_state_w
+        last_diff = torch.zeros_like(current_state_w)
+        extras["last_root_state"] = last_state_w
+        extras["last_diff"] = last_diff
+        extras["last_time_stamp"] = current_time_stamp
+        return last_diff
+
+    # Load previous state
+    last_state_w = extras["last_root_state"]
+    last_diff = extras["last_diff"]
+    last_time_stamp = extras["last_time_stamp"]
+
+    # Handle per-env new episodes: reset baseline and diff to zero for those envs
+    last_state_w = torch.where(episode_starts, current_state_w, last_state_w)
+    last_diff = torch.where(episode_starts, torch.zeros_like(last_diff), last_diff)
+
+    # If we've already computed diff for this global step, just reuse it
+    if current_time_stamp <= last_time_stamp:
+        # Keep extras consistent with the masked versions
+        extras["last_root_state"] = last_state_w
+        extras["last_diff"] = last_diff
+        return last_diff
+
+    # Normal case: compute diff in body frame
     state_diff_b = (current_state_w - last_state_w)
     last_root_quat_w = last_state_w[:, 3:7]
+
+    # position
     state_diff_b[:, :3] = quat_apply_inverse(last_root_quat_w, state_diff_b[:, :3])
+    # rotation
     state_diff_b[:, 3:7] = quat_mul(quat_inv(last_root_quat_w), current_state_w[:, 3:7])
+    # lin vel
     state_diff_b[:, 7:10] = quat_apply_inverse(last_root_quat_w, state_diff_b[:, 7:10])
+    # ang vel
     state_diff_b[:, 10:13] = quat_apply_inverse(last_root_quat_w, state_diff_b[:, 10:13])
 
-    env.unwrapped.extras["last_root_state"] = current_state_w
-    env.unwrapped.extras["last_time_stamp"] = current_time_stamp
-    env.unwrapped.extras["last_diff"] = state_diff_b
+    extras["last_root_state"] = current_state_w
+    extras["last_time_stamp"] = current_time_stamp
+    extras["last_diff"] = state_diff_b
     return state_diff_b
 
 
@@ -95,7 +114,8 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
                 critic_obs_normalization=True,
                 get_command_target_fn=get_base_state,
                 activation="elu",
-                kinematic_reward_weight=0.001
+                kinematic_reward_weight=0.001,
+                commander_loss_coef=0.1
             )
         }
     }

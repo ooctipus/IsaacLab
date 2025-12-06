@@ -86,6 +86,9 @@ class RslRlPpoCommanderActorCriticCfg(RslRlPpoActorCriticCfg):
     kinematic_reward_weight: float = MISSING
     """The weight for the kinematic reward"""
 
+    commander_loss_coef: float = MISSING
+    """The loss coefficient for commander prediction magnitude"""
+
 
 ############################
 # Algorithm configurations #
