@@ -69,13 +69,18 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     resume = False
     experiment_name = "position_command"
     obs_groups = {"policy": ["policy", "task"], "critic": ["policy", "task"]}
-    policy = RslRlPpoActorCriticCfg(
+    policy = RslRlPpoCommanderActorCriticCfg(
         init_noise_std=1.0,
         actor_hidden_dims=[512, 256, 256, 128],
         critic_hidden_dims=[512, 256, 256, 128],
+        commander_hidden_dims=[256, 256, 256],
+        commander_obs_normalization=True,
         actor_obs_normalization=True,
         critic_obs_normalization=True,
+        get_command_target_fn=get_base_state,
         activation="elu",
+        kinematic_reward_weight=0.001,
+        commander_loss_coef=1.0
     )
     algorithm = RslRlPpoAlgorithmCfg(
         value_loss_coef=1.0,
@@ -114,8 +119,8 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
                 critic_obs_normalization=True,
                 get_command_target_fn=get_base_state,
                 activation="elu",
-                kinematic_reward_weight=0.001,
-                commander_loss_coef=0.1
+                kinematic_reward_weight=0.01,
+                commander_loss_coef=5.0
             )
         }
     }
