@@ -83,6 +83,9 @@ class RslRlPpoCommanderActorCriticCfg(RslRlPpoActorCriticCfg):
     get_command_target_fn: callable = MISSING
     """The function that return the state of result which regularizes commander network"""
 
+    log_error_fn: callable = MISSING
+    """The function which logs the error between command proposed and actual state to tensorboard in meaning for metric"""
+
     kinematic_reward_weight: float = MISSING
     """The weight for the kinematic reward"""
 

@@ -83,6 +83,11 @@ from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 # PLACEHOLDER: Extension template (do not remove this comment)
+from isaaclab.utils.math import normalize, quat_mul
+from isaaclab.markers import FRAME_MARKER_CFG, VisualizationMarkers
+frame_marker_cfg = FRAME_MARKER_CFG.copy()  # type: ignore
+frame_marker_cfg.markers["frame"].scale = (0.25, 0.25, 0.25)
+pose_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/debug_transform"))
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -201,10 +206,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         with torch.inference_mode():
             # agent stepping
             actions = policy(obs)
+            pose_marker.visualize(
+                translations=(env.unwrapped.scene['robot'].data.root_pose_w[:, :3] + policy_nn.cmd_feat_cache[:, :3] * 10),
+                orientations=quat_mul(normalize(policy_nn.cmd_feat_cache[:, 3:7]), env.unwrapped.scene['robot'].data.root_pose_w[:, 3:7])
+            )
             # env stepping
             obs, _, dones, _ = env.step(actions)
             # reset recurrent states for episodes that have terminated
             policy_nn.reset(dones)
+            policy_nn.log_error_fn(policy_nn.cmd_feat_cache, policy_nn.get_command_target_fn())
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video

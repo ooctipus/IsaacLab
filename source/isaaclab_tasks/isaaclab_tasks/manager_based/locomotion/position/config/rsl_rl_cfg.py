@@ -5,8 +5,17 @@
 
 import torch
 from isaaclab.utils import configclass
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg, RslRlPpoActorCriticRecurrentCfg, RslRlPpoCommanderActorCriticCfg
+from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg, RslRlPpoActorCriticRecurrentCfg, RslRlPpoCommanderActorCriticCfg
 from isaaclab.utils.math import quat_apply_inverse, quat_mul, quat_inv
+
+
+def get_error(env, cmd_proposed: torch.Tensor, cmd_target: torch.Tensor):
+    err = cmd_proposed - cmd_target
+    log = env.env.unwrapped.extras["log"]
+    log["Kinematic/pos_error"] = torch.linalg.vector_norm(err[:3], dim=-1)
+    log["Kinematic/quat_error"] = torch.linalg.vector_norm(err[3:7], dim=-1)
+    log["Kinematic/lin_vel_error"] = torch.linalg.vector_norm(err[7:10], dim=-1)
+    log["Kinematic/ang_vel_error"] = torch.linalg.vector_norm(err[10:13], dim=-1)
 
 
 def get_base_state(env):
@@ -78,6 +87,7 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         actor_obs_normalization=True,
         critic_obs_normalization=True,
         get_command_target_fn=get_base_state,
+        log_error_fn=get_error,
         activation="elu",
         kinematic_reward_weight=0.001,
         commander_loss_coef=1.0
@@ -118,6 +128,7 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
                 actor_obs_normalization=True,
                 critic_obs_normalization=True,
                 get_command_target_fn=get_base_state,
+                log_error_fn=get_error,
                 activation="elu",
                 kinematic_reward_weight=0.01,
                 commander_loss_coef=5.0
