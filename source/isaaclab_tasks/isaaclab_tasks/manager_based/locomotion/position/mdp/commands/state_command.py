@@ -473,4 +473,4 @@ class RelativeStateCommand(CommandTerm):
     def get_task_reward(self) -> torch.Tensor:
         joint_pos = self.robot.data.joint_pos - self.robot.data.default_joint_pos
         joint_pos_diff = torch.abs(joint_pos).amax(dim=1)
-        return ((self.cmd_buf[:, 1, 12] <= 0.0) & (joint_pos_diff < 1.0)).float()
+        return ((self.cmd_buf[:, 1, 12] <= 0.0) & (joint_pos_diff < 0.5)).float()

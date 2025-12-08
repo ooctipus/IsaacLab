@@ -6,16 +6,18 @@
 import torch
 from isaaclab.utils import configclass
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg, RslRlPpoActorCriticRecurrentCfg, RslRlPpoCommanderActorCriticCfg, RslRlPpoTaskEasingActorCriticCfg, RslRlPpoActorCriticCfg
-from isaaclab.utils.math import quat_apply_inverse, quat_mul, quat_inv
+from isaaclab.utils.math import quat_apply_inverse
 
 
 def get_error(env, cmd_proposed: torch.Tensor, cmd_target: torch.Tensor):
     err = cmd_proposed - cmd_target
     log = env.env.unwrapped.extras["log"]
-    log["Kinematic/pos_error"] = torch.linalg.vector_norm(err[:3], dim=-1)
-    log["Kinematic/quat_error"] = torch.linalg.vector_norm(err[3:7], dim=-1)
-    log["Kinematic/lin_vel_error"] = torch.linalg.vector_norm(err[7:10], dim=-1)
-    log["Kinematic/ang_vel_error"] = torch.linalg.vector_norm(err[10:13], dim=-1)
+    # log["Kinematic/pos_error"] = torch.linalg.vector_norm(err[:3], dim=-1)
+    # log["Kinematic/quat_error"] = torch.linalg.vector_norm(err[3:7], dim=-1)
+    # log["Kinematic/lin_vel_error"] = torch.linalg.vector_norm(err[7:10], dim=-1)
+    # log["Kinematic/ang_vel_error"] = torch.linalg.vector_norm(err[10:13], dim=-1)
+    log["Kinematic/lin_vel_error"] = torch.linalg.vector_norm(err[0:3], dim=-1)
+    log["Kinematic/ang_vel_error"] = torch.linalg.vector_norm(err[3:6], dim=-1)
 
 
 def get_base_state(env):
@@ -33,7 +35,7 @@ def get_base_state(env):
         extras["last_root_state"] = last_state_w
         extras["last_diff"] = last_diff
         extras["last_time_stamp"] = current_time_stamp
-        return last_diff
+        return last_diff[:, 7:]
 
     # Load previous state
     last_state_w = extras["last_root_state"]
@@ -49,16 +51,16 @@ def get_base_state(env):
         # Keep extras consistent with the masked versions
         extras["last_root_state"] = last_state_w
         extras["last_diff"] = last_diff
-        return last_diff
+        return last_diff[:, 7:]
 
     # Normal case: compute diff in body frame
     state_diff_b = (current_state_w - last_state_w)
     last_root_quat_w = last_state_w[:, 3:7]
 
-    # position
-    state_diff_b[:, :3] = quat_apply_inverse(last_root_quat_w, state_diff_b[:, :3])
-    # rotation
-    state_diff_b[:, 3:7] = quat_mul(quat_inv(last_root_quat_w), current_state_w[:, 3:7])
+    # # position
+    # state_diff_b[:, :3] = quat_apply_inverse(last_root_quat_w, state_diff_b[:, :3])
+    # # rotation
+    # state_diff_b[:, 3:7] = quat_mul(quat_inv(last_root_quat_w), current_state_w[:, 3:7])
     # lin vel
     state_diff_b[:, 7:10] = quat_apply_inverse(last_root_quat_w, state_diff_b[:, 7:10])
     # ang vel
@@ -67,7 +69,7 @@ def get_base_state(env):
     extras["last_root_state"] = current_state_w
     extras["last_time_stamp"] = current_time_stamp
     extras["last_diff"] = state_diff_b
-    return state_diff_b
+    return state_diff_b[:, 7:]
 
 
 @configclass
@@ -117,15 +119,15 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
                 init_noise_std=1.0,
                 actor_hidden_dims=[512, 256, 256, 128],
                 critic_hidden_dims=[512, 256, 256, 128],
-                commander_hidden_dims=[256, 256, 256],
+                commander_hidden_dims=[256, 256],
                 commander_obs_normalization=True,
                 actor_obs_normalization=True,
                 critic_obs_normalization=True,
                 get_command_target_fn=get_base_state,
                 log_error_fn=get_error,
                 activation="elu",
-                kinematic_reward_weight=0.001,
-                commander_loss_coef=0.1
+                kinematic_reward_weight=0.005,
+                commander_loss_coef=0.001
             ),
             "task_easing": RslRlPpoTaskEasingActorCriticCfg(
                 init_noise_std=1.0,

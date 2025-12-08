@@ -206,15 +206,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         with torch.inference_mode():
             # agent stepping
             actions = policy(obs)
-            pose_marker.visualize(
-                translations=(env.unwrapped.scene['robot'].data.root_pose_w[:, :3] + policy_nn.cmd_feat_cache[:, :3] * 10),
-                orientations=quat_mul(normalize(policy_nn.cmd_feat_cache[:, 3:7]), env.unwrapped.scene['robot'].data.root_pose_w[:, 3:7])
-            )
+            # pose_marker.visualize(
+            #     translations=(env.unwrapped.scene['robot'].data.root_pose_w[:, :3] + policy_nn.cmd_feat_cache[:, :3] * 10),
+            #     orientations=quat_mul(normalize(policy_nn.cmd_feat_cache[:, 3:7]), env.unwrapped.scene['robot'].data.root_pose_w[:, 3:7])
+            # )
             # env stepping
             obs, _, dones, _ = env.step(actions)
             # reset recurrent states for episodes that have terminated
             policy_nn.reset(dones)
-            policy_nn.log_error_fn(policy_nn.cmd_feat_cache, policy_nn.get_command_target_fn())
+            # policy_nn.log_error_fn(policy_nn.cmd_feat_cache, policy_nn.get_command_target_fn())
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video
