@@ -93,6 +93,43 @@ class RslRlPpoCommanderActorCriticCfg(RslRlPpoActorCriticCfg):
     """The loss coefficient for commander prediction magnitude"""
 
 
+@configclass
+class RslRlPpoTaskEasingActorCriticCfg(RslRlPpoActorCriticCfg):
+    """Configuration for the PPO actor-critic networks with recurrent layers."""
+
+    class_name: str = "TaskEasingActorCritic"
+    """The policy class name. Default is TaskEasingActorCritic."""
+
+    task_easing_constraint_fn: str = "relu"
+    """Nonlinearity used to turn violations of the monotonic value constraint
+    into a loss. Typically ``"relu"`` (hinge) or ``"softplus"`` (smooth hinge),
+    applied to ``margin - (V_{k+1} - V_k)``.
+    """
+
+    task_easing_loss_coef: float = MISSING
+    """Weight of the task-easing monotonic value loss added to the PPO objective.
+    Set to 0.0 to disable the auxiliary constraint loss.
+    """
+
+    task_easing_margin: float = MISSING
+    """Required minimum value improvement between consecutive refined goals.
+    Enforces ``V(g_{k+1}) >= V(g_k) + task_easing_margin`` in expectation.
+    """
+
+    task_easing_network: str = MISSING
+    """mlp or residual"""
+
+    num_goal_refinements: int = MISSING
+    """Number of refinement steps applied to the input task/goal.
+    The total length of the goal chain is ``num_goal_refinements + 1``
+    (original goal + refinements).
+    """
+
+    goal_hidden_dims: tuple[int] | list[int] = MISSING
+    """Hidden layer sizes for each goal refinement MLP block. These layers map
+    from ``[goal, context]`` to the next refined goal representation.
+    """
+
 ############################
 # Algorithm configurations #
 ############################

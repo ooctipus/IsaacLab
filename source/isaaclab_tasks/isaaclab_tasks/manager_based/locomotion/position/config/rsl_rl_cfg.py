@@ -5,7 +5,7 @@
 
 import torch
 from isaaclab.utils import configclass
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg, RslRlPpoActorCriticRecurrentCfg, RslRlPpoCommanderActorCriticCfg
+from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg, RslRlPpoActorCriticRecurrentCfg, RslRlPpoCommanderActorCriticCfg, RslRlPpoTaskEasingActorCriticCfg, RslRlPpoActorCriticCfg
 from isaaclab.utils.math import quat_apply_inverse, quat_mul, quat_inv
 
 
@@ -78,19 +78,13 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     resume = False
     experiment_name = "position_command"
     obs_groups = {"policy": ["policy", "task"], "critic": ["policy", "task"]}
-    policy = RslRlPpoCommanderActorCriticCfg(
+    policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
         actor_hidden_dims=[512, 256, 256, 128],
         critic_hidden_dims=[512, 256, 256, 128],
-        commander_hidden_dims=[256, 256, 256],
-        commander_obs_normalization=True,
         actor_obs_normalization=True,
         critic_obs_normalization=True,
-        get_command_target_fn=get_base_state,
-        log_error_fn=get_error,
         activation="elu",
-        kinematic_reward_weight=0.001,
-        commander_loss_coef=1.0
     )
     algorithm = RslRlPpoAlgorithmCfg(
         value_loss_coef=1.0,
@@ -130,8 +124,22 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
                 get_command_target_fn=get_base_state,
                 log_error_fn=get_error,
                 activation="elu",
-                kinematic_reward_weight=0.01,
-                commander_loss_coef=5.0
+                kinematic_reward_weight=0.001,
+                commander_loss_coef=0.1
+            ),
+            "task_easing": RslRlPpoTaskEasingActorCriticCfg(
+                init_noise_std=1.0,
+                actor_hidden_dims=[512, 256, 256, 128],
+                critic_hidden_dims=[512, 256, 256, 128],
+                actor_obs_normalization=True,
+                critic_obs_normalization=True,
+                activation="elu",
+                task_easing_constraint_fn="relu",
+                task_easing_loss_coef=0.0,
+                task_easing_margin=0.0,
+                task_easing_network="mlp",
+                num_goal_refinements=2,
+                goal_hidden_dims=[256, 256]
             )
         }
     }
