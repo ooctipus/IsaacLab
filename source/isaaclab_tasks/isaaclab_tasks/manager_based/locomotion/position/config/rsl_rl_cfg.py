@@ -10,14 +10,14 @@ from isaaclab.utils.math import quat_apply_inverse
 
 
 def get_error(env, cmd_proposed: torch.Tensor, cmd_target: torch.Tensor):
-    err = cmd_proposed - cmd_target
+    err = (cmd_proposed - cmd_target).clip(max=0.2)
     log = env.env.unwrapped.extras["log"]
     # log["Kinematic/pos_error"] = torch.linalg.vector_norm(err[:3], dim=-1)
     # log["Kinematic/quat_error"] = torch.linalg.vector_norm(err[3:7], dim=-1)
     # log["Kinematic/lin_vel_error"] = torch.linalg.vector_norm(err[7:10], dim=-1)
     # log["Kinematic/ang_vel_error"] = torch.linalg.vector_norm(err[10:13], dim=-1)
-    log["Kinematic/lin_vel_error"] = torch.linalg.vector_norm(err[0:3], dim=-1)
-    log["Kinematic/ang_vel_error"] = torch.linalg.vector_norm(err[3:6], dim=-1)
+    log["Kinematic/lin_vel_error"] = torch.linalg.vector_norm(err[:, 0:3], dim=-1)
+    log["Kinematic/ang_vel_error"] = torch.linalg.vector_norm(err[:, 3:6], dim=-1)
 
 
 def get_base_state(env):
@@ -71,7 +71,6 @@ def get_base_state(env):
     extras["last_diff"] = state_diff_b
     return state_diff_b[:, 7:]
 
-
 @configclass
 class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 32
@@ -80,13 +79,19 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     resume = False
     experiment_name = "position_command"
     obs_groups = {"policy": ["policy", "task"], "critic": ["policy", "task"]}
-    policy = RslRlPpoActorCriticCfg(
+    policy = RslRlPpoCommanderActorCriticCfg(
         init_noise_std=1.0,
         actor_hidden_dims=[512, 256, 256, 128],
         critic_hidden_dims=[512, 256, 256, 128],
+        commander_hidden_dims=[256, 256],
+        commander_obs_normalization=True,
         actor_obs_normalization=True,
         critic_obs_normalization=True,
+        get_command_target_fn=get_base_state,
+        log_error_fn=get_error,
         activation="elu",
+        kinematic_reward_weight=0.001,
+        commander_loss_coef=0.1
     )
     algorithm = RslRlPpoAlgorithmCfg(
         value_loss_coef=1.0,
@@ -127,7 +132,7 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
                 log_error_fn=get_error,
                 activation="elu",
                 kinematic_reward_weight=0.005,
-                commander_loss_coef=0.001
+                commander_loss_coef=0.1
             ),
             "task_easing": RslRlPpoTaskEasingActorCriticCfg(
                 init_noise_std=1.0,

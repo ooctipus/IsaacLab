@@ -359,6 +359,7 @@ variants = {
         "square_pillar_obstacle": make_terrain({"square_pillar_obstacle": terrains.SQUARE_PILLAR_OBSTACLE}),
         "stepping_stone": make_terrain({"stepping_stone": terrains.STEPPING_STONE}),
         "radiating_beam": make_terrain({"radiating_beam": terrains.RADIATING_BEAM}),
+        "flat": make_terrain({"flat": terrains.FLAT}),
     },
     "commands.goal_point": {
         "terrain": make_commands({
