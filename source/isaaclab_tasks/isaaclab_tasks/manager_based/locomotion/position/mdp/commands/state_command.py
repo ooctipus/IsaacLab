@@ -258,7 +258,7 @@ class RelativeStateCommand(CommandTerm):
         Returns:
             Tensor of shape [num_envs, 13] corresponding to cmd_buf[:, 1, :].
         """
-        return self.cmd_buf[:, 1]
+        return self.cmd_buf[:, 1, :12]
 
     def _update_metrics(self):
         """Update error metrics based on the last computed _err buffer."""
