@@ -19,7 +19,7 @@ from isaaclab.sensors import ContactSensor
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
     from isaaclab.managers import RewardTermCfg
-    from .commands import RelativeStateCommand
+    from .commands import MultiTaskCommand
 
 
 def task_reward(env: ManagerBasedRLEnv, std: float = 0.5):
@@ -75,34 +75,9 @@ def mechanical_power(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot")) 
     return work
 
 
-
 def command_success(env: ManagerBasedRLEnv):
-    command_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
-    return command_term.get_task_reward()
-
-
-def position_tracking(env: ManagerBasedRLEnv, std: float):
-    command_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
-    position_error = command_term.get_state_error()[:, 0]
-    return 1 - torch.tanh(position_error / std)
-
-
-def rotation_tracking(env: ManagerBasedRLEnv, std: float):
-    command_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
-    rotation_error = command_term.get_state_error()[:, 1]
-    return 1 - torch.tanh(rotation_error / std)
-
-
-def lin_vel_tracking(env: ManagerBasedRLEnv, std: float):
-    command_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
-    lin_vel_error = command_term.get_state_error()[:, 2]
-    return 1 - torch.tanh(lin_vel_error / std)
-
-
-def ang_vel_tracking(env: ManagerBasedRLEnv, std: float):
-    command_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
-    ang_vel_error = command_term.get_state_error()[:, 3]
-    return 1 - torch.tanh(ang_vel_error / std)
+    command_term: MultiTaskCommand = env.command_manager.get_term("goal_point")
+    return command_term.task_reward
 
 
 def speeding(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot"), speed_limit=1.5) -> torch.Tensor:

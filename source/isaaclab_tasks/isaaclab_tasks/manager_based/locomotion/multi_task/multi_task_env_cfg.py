@@ -105,7 +105,7 @@ class CommandsCfg:
     goal_point = mdp.MultiTaskCfg(
         resampling_time_range=(10, 10),
         tasks={
-            "task1": [
+            "velocity_task": [
                 mdp.MultiTaskCfg.TrackingTaskCfg(
                     asset_cfg=SceneEntityCfg("robot", body_names="base"),
                     activation_kernel=mdp.ACTIVATION_KERNEL_ID.TANH,
@@ -117,30 +117,18 @@ class CommandsCfg:
                         maximum=[2.0, 2.0, 0.0]
                     ),
                     activation_kernel_param=0.3
-                ),
-                mdp.MultiTaskCfg.TrackingTaskCfg(
-                    asset_cfg=SceneEntityCfg("robot", body_names="base"),
-                    activation_kernel=mdp.ACTIVATION_KERNEL_ID.GREATER,
-                    state_kernel=mdp.STATE_KERNEL_ID.BODY_POS,
-                    metric_kernel=mdp.METRIC_KERNEL_ID.GEOMETRIC,
-                    sampler=mdp.MinMaxSampler(
-                        kernel=mdp.SAMPLER_KERNEL_ID.UNIFORM,
-                        minimum=[-1.0, -1.0, 0.0],
-                        maximum=[1.0, 1.0, 0.0]
-                    ),
-                    activation_kernel_param=0.2
-                ),
+                )
             ],
-            "task2": [
-                mdp.MultiTaskCfg.TrackingTaskCfg(
+            "position_task": [
+                mdp.MultiTaskCfg.InstantaneousTaskCfg(
                     asset_cfg=SceneEntityCfg("robot", body_names="base"),
                     activation_kernel=mdp.ACTIVATION_KERNEL_ID.LESS,
                     state_kernel=mdp.STATE_KERNEL_ID.BODY_POS,
                     metric_kernel=mdp.METRIC_KERNEL_ID.GEOMETRIC,
                     sampler=mdp.MinMaxSampler(
                         kernel=mdp.SAMPLER_KERNEL_ID.UNIFORM,
-                        minimum=[-0.5, -0.5, 0.0],
-                        maximum=[0.5, 0.5, 0.0]
+                        minimum=[-5.0, -5.0, 0.0],
+                        maximum=[5.0, 5.0, 0.0]
                     ),
                     activation_kernel_param=0.2
                 ),

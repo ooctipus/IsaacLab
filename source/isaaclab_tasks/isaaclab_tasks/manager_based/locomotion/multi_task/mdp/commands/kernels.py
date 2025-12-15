@@ -3,7 +3,7 @@ import torch
 from typing import TYPE_CHECKING
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.envs import ManagerBasedRLEnv
-from isaaclab.utils.math import quat_error_magnitude
+from isaaclab.utils.math import axis_angle_from_quat, quat_inv, quat_mul
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation
@@ -50,15 +50,30 @@ ACTIVATION_KERNELS = (tanh_kernel, less_kernel, greater_kernel)
 
 
 # --- metric kernels (x_cur, x_target -> scalar error) ---
-def geometric_error(x_cur: torch.Tensor, x_target: torch.Tensor) -> torch.Tensor:
-    return torch.linalg.vector_norm(x_cur - x_target, dim=-1)
+def geometric_error(x: torch.Tensor) -> torch.Tensor:
+    return torch.linalg.vector_norm(x, dim=-1)
 
 
-def quaternion_error(q_cur: torch.Tensor, q_target: torch.Tensor) -> torch.Tensor:
-    return quat_error_magnitude(q_cur, q_target)
+def quaternion_error(quat: torch.Tensor) -> torch.Tensor:
+    assert quat.shape[-1] == 4
+    angle_axis = axis_angle_from_quat(quat)
+    return torch.linalg.vector_norm(angle_axis, dim=-1)
 
 
 METRIC_KERNELS = (geometric_error, quaternion_error)
+
+
+# --- delta kernels (order: that - this)---
+def geometric_subtract(x_cur: torch.Tensor, x_tgt: torch.Tensor) -> torch.Tensor:
+    return x_tgt - x_cur
+
+
+def quaternion_subtract(quat_cur: torch.Tensor, quat_tgt: torch.Tensor) -> torch.Tensor:
+    assert quat_cur.shape[-1] == 4 and quat_tgt.shape[-1] == 4
+    return quat_mul(quat_inv(quat_cur), quat_tgt)
+
+
+DELTA_KERNELS = (geometric_subtract, quaternion_subtract)
 
 
 # --- state kernels (env -> x_cur) ---
@@ -108,17 +123,9 @@ STATE_KERNELS = (
 
 # --- sampler kernels (params -> target) ---
 def uniform(params: torch.Tensor) -> torch.Tensor:
-    """Uniform sampler for padded interleaved [min, range] pairs.
-
-    params: [..., 2*Dmax], padded with zeros at the end.
-      pair i: [min_i, range_i]
-    returns: [..., Dmax]
-    """
-    last = params.shape[-1]
-    Dmax = last // 2
-    pairs = params.view(*params.shape[:-1], Dmax, 2)
-    mn = pairs[..., 0]
-    rg = pairs[..., 1]
+    # params: [..., 2*Dmax]
+    mn = params[..., 0::2]  # [..., Dmax]
+    rg = params[..., 1::2]  # [..., Dmax]
     return mn + torch.rand_like(mn) * rg
 
 

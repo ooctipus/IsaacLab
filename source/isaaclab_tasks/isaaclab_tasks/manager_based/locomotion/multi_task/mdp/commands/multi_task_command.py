@@ -2,18 +2,39 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+from typing import Callable, Sequence
 
+import math
 import torch
-from isaaclab.envs import ManagerBasedEnv
+from isaaclab.envs import ManagerBasedRLEnv
 from isaaclab.managers import CommandTerm, SceneEntityCfg
+from isaaclab.utils.buffers import TimestampedBuffer
 
-from .kernels import ACTIVATION_KERNELS, METRIC_KERNELS, STATE_KERNELS, SAMPLER_KERNELS
+from .kernels import ACTIVATION_KERNELS, METRIC_KERNELS, STATE_KERNELS, DELTA_KERNELS, SAMPLER_KERNELS
 
 if TYPE_CHECKING:
     from .commands_cfg import MultiTaskCfg
 
 
-def pad_index_rows(index_rows: list[list[int]], device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+def kernel_apply(
+    kernels: Sequence[Callable],
+    kernel_ids: torch.Tensor,
+    valid: torch.Tensor | None = None,
+    *,
+    out: torch.Tensor,
+    out_indexer: Callable[[torch.Tensor], tuple],
+    kernel_args: Callable[[torch.Tensor], tuple],
+) -> None:
+    for kid, kernel_fn in enumerate(kernels):
+        mask = (kernel_ids == kid) if valid is None else (valid & (kernel_ids == kid))
+        if not mask.any():
+            continue
+        args = kernel_args(mask)
+        assert isinstance(args, tuple), "kernel_args(mask) must return a tuple, e.g. (x,) not x"
+        out[out_indexer(mask)] = kernel_fn(*args).to(out.dtype)
+
+
+def pad_index_rows(index_rows: list[list[int]], device: torch.device | str) -> tuple[torch.Tensor, torch.Tensor]:
     max_len = max((len(row) for row in index_rows), default=0)
     if max_len == 0:
         index_table = torch.full((len(index_rows), 1), -1, dtype=torch.long, device=device)
@@ -54,21 +75,19 @@ class TaskSpec:
     state_kernel_id: torch.Tensor
     metric_kernel_id: torch.Tensor
     sampler_kernel_id: torch.Tensor
-    sampler_kernel_param: torch.Tensor          # [S, Pmax] padded
-    sampler_kernel_param_len: torch.Tensor      # [S] original unpadded length
+    sampler_kernel_param: torch.Tensor
     activation_kernel_id: torch.Tensor
     activation_kernel_param: torch.Tensor
 
     is_tracking: torch.Tensor
     is_instant: torch.Tensor
 
-    # scene bindings
     subtask_asset_cfgs: list[SceneEntityCfg]
-    subtask_entity_id: torch.Tensor             # [S], groups identical (asset_cfg.name + ids)
+    subtask_entity_id: torch.Tensor
 
 
 class MultiTaskCommand(CommandTerm):
-    def __init__(self, cfg: MultiTaskCfg, env: ManagerBasedEnv):
+    def __init__(self, cfg: MultiTaskCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
         self.gamma = 0.99
         self.max_episode_length = float(env.max_episode_length)
@@ -81,33 +100,39 @@ class MultiTaskCommand(CommandTerm):
         self.task_samples = torch.randint(0, self.num_tasks, (self.num_envs,), device=self.device)
 
         # work buffers
+        self._buf_error = TimestampedBuffer()
+        self._buf_delta = TimestampedBuffer()
+        self._buf_reward = TimestampedBuffer()
+        self._buf_done = TimestampedBuffer()
+
         max_subtasks = self.spec.task_subtask_ids.shape[1]
         self._buf_safe_ids = torch.empty((self.num_envs, max_subtasks), dtype=torch.long, device=self.device)
         self._buf_selected_value = torch.empty((self.num_envs, max_subtasks), dtype=torch.float32, device=self.device)
         self._buf_is_tracking = torch.empty((self.num_envs, max_subtasks), dtype=torch.bool, device=self.device)
         self._buf_is_instant = torch.empty((self.num_envs, max_subtasks), dtype=torch.bool, device=self.device)
         self._buf_instant_factor = torch.empty((self.num_envs, max_subtasks), dtype=torch.float32, device=self.device)
-        self._buf_reward = torch.empty((self.num_envs,), dtype=torch.float32, device=self.device)
+        self._buf_activated = torch.empty((self.num_envs, self.num_subtasks), device=self.device)
+        self._buf_reward.data = torch.empty((self.num_envs,), dtype=torch.float32, device=self.device)
+        self._buf_done.data = torch.empty((self.num_envs,), dtype=torch.bool, device=self.device)
+        self._buf_error.data = torch.empty((self.num_envs, self.num_subtasks), device=self.device)
 
-        # targets buffer (Dmax inferred from padded sampler params)
         Pmax = int(self.spec.sampler_kernel_param.shape[1])
         assert Pmax % 2 == 0, "sampler_kernel_param must be padded to even length"
         self._target_dim_max = Pmax // 2
+        self._buf_delta.data = torch.empty((self.num_envs, self.num_subtasks, self._target_dim_max), device=self.device)
+        self._targets = torch.zeros((self.num_envs, self.num_subtasks, self._target_dim_max), device=self.device)
 
-        self._targets = torch.zeros(
-            (self.num_envs, self.num_subtasks, self._target_dim_max),
-            dtype=torch.float32,
-            device=self.device,
-        )
+        self._validate()
+        self._resample_command(torch.arange(self.num_envs, device=self.device, dtype=torch.long))
 
-        # initialize targets once
-        self._resample_targets(torch.arange(self.num_envs, device=self.device, dtype=torch.long))
+    def _validate(self):
+        assert len(DELTA_KERNELS) == len(METRIC_KERNELS), "DELTA_KERNELS and METRIC_KERNELS must align by id"
+        assert int(self.spec.metric_kernel_id.max().item()) < len(METRIC_KERNELS)
+        assert int(self.spec.state_kernel_id.max().item()) < len(STATE_KERNELS)
+        assert int(self.spec.activation_kernel_id.max().item()) < len(ACTIVATION_KERNELS)
+        assert int(self.spec.sampler_kernel_id.max().item()) < len(SAMPLER_KERNELS)
 
-    # --------------------------------------------------------------------- #
-    # Spec building
-    # --------------------------------------------------------------------- #
-
-    def _subtask_signature(self, subtask_cfg) -> tuple:
+    def _subtask_signature(self, subtask_cfg: MultiTaskCfg.BaseTaskCfg) -> tuple:
         """Dedup signature: MUST include everything that changes behavior."""
         # resolve first so ids are available even if user specified names
         subtask_cfg.asset_cfg.resolve(self._env.scene)
@@ -148,18 +173,16 @@ class MultiTaskCommand(CommandTerm):
         metric_kernel_id: list[int] = []
         sampler_kernel_id: list[int] = []
         sampler_kernel_param_rows: list[torch.Tensor] = []
-        sampler_kernel_param_len: list[int] = []
         activation_kernel_id: list[int] = []
         activation_kernel_param: list[float] = []
         is_tracking: list[bool] = []
         is_instant: list[bool] = []
         subtask_asset_cfgs: list[SceneEntityCfg] = []
 
-        # for correctness: group by resolved entity signature (name + ids)
         entity_sig_to_id: dict[tuple, int] = {}
         subtask_entity_id: list[int] = []
         task_to_subtask_ids: list[list[int]] = []
-
+        Pmax = 0
         for task_name in task_names:
             row: list[int] = []
             for subtask_cfg in cfg.tasks[task_name]:
@@ -187,7 +210,7 @@ class MultiTaskCommand(CommandTerm):
                     sampler_kernel_id.append(int(subtask_cfg.sampler.kernel))
                     prow = subtask_cfg.sampler.get_kernel_input(device=device)  # 1D tensor
                     sampler_kernel_param_rows.append(prow)
-                    sampler_kernel_param_len.append(int(prow.numel()))
+                    Pmax = max(Pmax, int(prow.numel()))
 
                     activation_kernel_id.append(int(subtask_cfg.activation_kernel))
                     activation_kernel_param.append(float(subtask_cfg.activation_kernel_param))
@@ -204,10 +227,9 @@ class MultiTaskCommand(CommandTerm):
         # pad task->subtask table
         task_subtask_ids, task_subtask_valid = pad_index_rows(task_to_subtask_ids, device=device)
 
-        # pad sampler params to rectangular [S, Pmax]
-        Pmax = max(sampler_kernel_param_len) if sampler_kernel_param_len else 0
+        # pad sampler params to rectangular [S, Pmax] TODO: this is still a hack, need to figure out a better way
         if Pmax % 2 == 1:
-            Pmax += 1  # keep even so sampler can reshape into pairs
+            Pmax += 1
 
         sampler_param_t = torch.zeros((len(sampler_kernel_param_rows), Pmax), dtype=torch.float32, device=device)
         for j, prow in enumerate(sampler_kernel_param_rows):
@@ -221,7 +243,6 @@ class MultiTaskCommand(CommandTerm):
             metric_kernel_id=torch.tensor(metric_kernel_id, dtype=torch.long, device=device),
             sampler_kernel_id=torch.tensor(sampler_kernel_id, dtype=torch.long, device=device),
             sampler_kernel_param=sampler_param_t,
-            sampler_kernel_param_len=torch.tensor(sampler_kernel_param_len, dtype=torch.long, device=device),
             activation_kernel_id=torch.tensor(activation_kernel_id, dtype=torch.long, device=device),
             activation_kernel_param=torch.tensor(activation_kernel_param, dtype=torch.float32, device=device),
             is_tracking=torch.tensor(is_tracking, dtype=torch.bool, device=device),
@@ -230,16 +251,100 @@ class MultiTaskCommand(CommandTerm):
             subtask_entity_id=torch.tensor(subtask_entity_id, dtype=torch.long, device=device),
         )
 
-    # --------------------------------------------------------------------- #
-    # Resampling
-    # --------------------------------------------------------------------- #
-
     @property
     def command(self) -> torch.Tensor:
         return self._command
 
+    @property
+    def task_done(self) -> torch.Tensor:
+        if self._buf_done.timestamp < self.timestamp:
+            self._update_reward_done()
+
+        return self._buf_done.data
+
+    @property
+    def task_reward(self) -> torch.Tensor:
+        if self._buf_reward.timestamp < self.timestamp:
+            self._update_reward_done()
+
+        return self._buf_reward.data
+
+    @property
+    def buf_delta(self) -> torch.Tensor:
+        if self._buf_delta.timestamp < self.timestamp:
+            self._update()
+
+        return self._buf_delta.data
+
+    @property
+    def buf_error(self) -> torch.Tensor:
+        if self._buf_error.timestamp < self.timestamp:
+            self._update()
+
+        return self._buf_error.data
+
+    @property
+    def timestamp(self):
+        return self._env.common_step_counter  # type: ignore
+
     def _update_command(self):
-        pass
+        self.buf_error
+
+    def _update(self):
+        if self._buf_error.timestamp < self.timestamp or self._buf_delta.timestamp < self.timestamp:
+            self._buf_error.data.fill_(float("nan"))
+            for state_index, state_fn in enumerate(STATE_KERNELS):
+                mask_state = (self.spec.state_kernel_id == state_index)
+                if not mask_state.any():
+                    continue
+
+                entity_ids = self.spec.subtask_entity_id[mask_state].unique()
+                for ent_id in entity_ids.tolist():
+                    mask_ent = mask_state & (self.spec.subtask_entity_id == ent_id)
+                    if not mask_ent.any():
+                        continue
+
+                    j0 = int(mask_ent.nonzero(as_tuple=False)[0])
+                    asset_cfg = self.spec.subtask_asset_cfgs[j0]
+
+                    x_cur = state_fn(self._env, slice(None), asset_cfg)  # [env, ...]
+                    tail = x_cur.shape[1:]
+                    dim_x_cur = math.prod(tail) if len(tail) else 1
+
+                    if dim_x_cur > self._target_dim_max:
+                        raise ValueError(
+                            f"x_cur dim {dim_x_cur} exceeds target dim max {self._target_dim_max}. "
+                            "Fix sampler padding/config."
+                        )
+
+                    # Flatten current state to [env, 1, D]
+                    x_cur_flat = x_cur.reshape(self.num_envs, dim_x_cur).unsqueeze(1)
+
+                    # ---- (A) compute delta into _buf_delta ----
+                    kernel_apply(
+                        kernels=DELTA_KERNELS,
+                        kernel_ids=self.spec.metric_kernel_id,   # or spec.delta_kernel_id if you add it
+                        valid=mask_ent,
+                        out=self._buf_delta.data,
+                        out_indexer=lambda mask: (slice(None), mask, slice(0, dim_x_cur)),
+                        kernel_args=lambda mask: (
+                            x_cur_flat.expand(self.num_envs, self._targets[:, mask, :dim_x_cur].shape[1], dim_x_cur),
+                            self._targets[:, mask, :dim_x_cur],
+                        ),
+                    )
+
+                    # ---- (B) reduce delta -> scalar metric into _buf_error ----
+                    kernel_apply(
+                        kernels=METRIC_KERNELS,
+                        kernel_ids=self.spec.metric_kernel_id,
+                        valid=mask_ent,
+                        out=self._buf_error.data,
+                        out_indexer=lambda mask: (slice(None), mask),
+                        kernel_args=lambda mask: (self._buf_delta.data[:, mask, :dim_x_cur],),
+                    )
+            assert not torch.isnan(self._buf_error.data).any(), "Bug some error buffer is not updated."
+            self._buf_delta.timestamp = self.timestamp
+            self._buf_error.timestamp = self.timestamp
 
     def _update_metrics(self):
         pass
@@ -251,93 +356,24 @@ class MultiTaskCommand(CommandTerm):
         if env_ids.numel() == 0:
             return
         self.resample_indices(env_ids)
-        self._resample_targets(env_ids)
+        task_idx = self.task_samples[env_ids]
+        subtask_ids = self.spec.task_subtask_ids[task_idx].clamp_min(0)
+        params = self.spec.sampler_kernel_param[subtask_ids]
+        env_grid = env_ids[:, None].expand_as(subtask_ids)
 
-    def _resample_targets(self, env_ids: torch.Tensor) -> None:
-        spec = self.spec
-        env_ids = env_ids.to(device=self.device, dtype=torch.long)
-        if env_ids.numel() == 0:
-            return
+        kernel_apply(
+            kernels=SAMPLER_KERNELS,
+            kernel_ids=self.spec.sampler_kernel_id[subtask_ids],
+            valid=self.spec.task_subtask_valid[task_idx],
+            out=self._targets,
+            out_indexer=lambda ker_mask: (env_grid[ker_mask], subtask_ids[ker_mask], slice(0, self._target_dim_max)),
+            kernel_args=lambda ker_mask: (params[ker_mask],)
+        )
 
-        task_idx = self.task_samples[env_ids]                 # [num_envs]
-        subtask_ids = spec.task_subtask_ids[task_idx]         # [num_envs, num_subtasks]
-        valid = spec.task_subtask_valid[task_idx]             # [num_envs, num_subtasks]
-
-        safe = subtask_ids.clamp_min(0)                       # [num_envs, num_subtasks]
-        sampler_id = spec.sampler_kernel_id[safe]             # [num_envs, num_subtasks]
-        params = spec.sampler_kernel_param[safe]              # [num_envs, num_subtasks, input_max]
-
-        env_grid = env_ids[:, None].expand_as(safe)           # [num_envs, num_subtasks]
-
-        for sid, sampler_fn in enumerate(SAMPLER_KERNELS):
-            mask = valid & (sampler_id == sid)
-            if not mask.any():
-                continue
-
-            env_flat = env_grid[mask]                         # [K]
-            subtask_flat = safe[mask]                         # [K]
-            params_flat = params[mask]                        # [K, Pmax]
-
-            target_flat = sampler_fn(params_flat)
-            self._targets[env_flat, subtask_flat, :self._target_dim_max] = target_flat
-
-    # --------------------------------------------------------------------- #
-    # Error + reward
-    # --------------------------------------------------------------------- #
-
-    def _compute_error(self) -> torch.Tensor:
-        error = torch.zeros((self.num_envs, self.num_subtasks), device=self.device)
-
-        for state_index, state_fn in enumerate(STATE_KERNELS):
-            mask_state = (self.spec.state_kernel_id == state_index)
-            if not mask_state.any():
-                continue
-
-            entity_ids = self.spec.subtask_entity_id[mask_state].unique()
-            for ent_id in entity_ids.tolist():  # this for loop can be fixed by newton where asset can be batch selected through indices
-                mask_ent = mask_state & (self.spec.subtask_entity_id == ent_id)
-                if not mask_ent.any():
-                    continue
-
-                j0 = int(mask_ent.nonzero(as_tuple=False)[0])
-                asset_cfg = self.spec.subtask_asset_cfgs[j0]
-
-                x_cur = state_fn(self._env, slice(None), asset_cfg)     # [N, ...]
-                tail = x_cur.shape[1:]
-                dim_x_current = int(torch.tensor(tail).prod().item()) if len(tail) else 1
-                if dim_x_current > self._target_dim_max:
-                    raise ValueError(f"x_cur dim {dim_x_current} exceeds target dim max {self._target_dim_max}. Fix sampler padding/config.")
-
-                for metric_index, metric_fn in enumerate(METRIC_KERNELS):
-                    mask_group = mask_ent & (self.spec.metric_kernel_id == metric_index)
-                    if not mask_group.any():
-                        continue
-
-                    kernel_shared_subtask_indices = mask_group.nonzero(as_tuple=False).squeeze(-1)
-                    num_subtasks_sharing_kernel = kernel_shared_subtask_indices.numel()
-
-                    x_cur_group = x_cur.unsqueeze(1).expand(self.num_envs, num_subtasks_sharing_kernel, *tail)
-                    x_tgt_flat = self._targets[:, kernel_shared_subtask_indices, :dim_x_current]
-                    x_tgt_group = x_tgt_flat.view(self.num_envs, num_subtasks_sharing_kernel, *tail)
-
-                    err = metric_fn(x_cur_group, x_tgt_group)
-                    while err.dim() > 2:
-                        err = err.mean(dim=-1)
-
-                    error[:, kernel_shared_subtask_indices] = err
-
-        return error
-
-    def _apply_activation_kernels(self, error: torch.Tensor) -> torch.Tensor:
-        activated = torch.empty_like(error)
-        for kid, kfn in enumerate(ACTIVATION_KERNELS):
-            mask = self.spec.activation_kernel_id == kid
-            if not mask.any():
-                continue
-            param = self.spec.activation_kernel_param[mask]
-            out = kfn(error[:, mask], param)
-            activated[:, mask] = out.to(error.dtype)
-        return activated
+        self._buf_error.timestamp = -1
+        self._buf_delta.timestamp = -1
+        self._buf_done.timestamp = -1
+        self._buf_reward.timestamp = -1
 
     def _select_subtasks(self) -> tuple[torch.Tensor, torch.Tensor]:
         max_subtasks = self.spec.task_subtask_ids.shape[1]
@@ -360,45 +396,63 @@ class MultiTaskCommand(CommandTerm):
         inst[~is_instant] = 1.0
         return inst.prod(dim=1)
 
-    def get_task_reward(self) -> torch.Tensor:
-        spec = self.spec
-        N = self.num_envs
-        M = spec.task_subtask_ids.shape[1]
+    def _update_reward_done(self) -> None:
+        if self._buf_reward.timestamp >= self.timestamp and self._buf_done.timestamp >= self.timestamp:
+            return
 
-        error = self._compute_error()
-        activated = self._apply_activation_kernels(error)
+        max_num_subtask = self.spec.task_subtask_ids.shape[1]
+        _ = self.buf_error  # ensure error is fresh (lazy)
 
+        # 1) activated[subtask] for all envs
+        kernel_apply(
+            ACTIVATION_KERNELS,
+            self.spec.activation_kernel_id,
+            out=self._buf_activated,
+            out_indexer=lambda mask: (slice(None), mask),
+            kernel_args=lambda mask: (self.buf_error[:, mask], self.spec.activation_kernel_param[mask]),
+        )
+
+        # 2) pick subtasks for each env’s sampled task
         safe_ids, selected_valid = self._select_subtasks()
 
-        selected_value = self._buf_selected_value[:N, :M]
-        selected_value.copy_(activated.gather(1, safe_ids))
+        selected_value = self._buf_selected_value[:self.num_envs, :max_num_subtask]
+        selected_value.copy_(self._buf_activated.gather(1, safe_ids))
         selected_value.masked_fill_(~selected_valid, 0.0)
 
-        is_tracking = self._buf_is_tracking[:N, :M]
-        is_instant = self._buf_is_instant[:N, :M]
-        is_tracking.copy_(spec.is_tracking[safe_ids])
-        is_instant.copy_(spec.is_instant[safe_ids])
+        is_tracking = self._buf_is_tracking[:self.num_envs, :max_num_subtask]
+        is_instant = self._buf_is_instant[:self.num_envs, :max_num_subtask]
+        is_tracking.copy_(self.spec.is_tracking[safe_ids])
+        is_instant.copy_(self.spec.is_instant[safe_ids])
         is_tracking &= selected_valid
         is_instant &= selected_valid
 
         has_tracking = is_tracking.any(dim=1)
         has_instant = is_instant.any(dim=1)
 
+        # DONE
+        instant_ok = selected_value > 0.5  # [env, M] bool
+        instant_ok |= ~is_instant  # treat non-instant as "don't care"
+        reach_success_bool = instant_ok.all(dim=1)  # [env]
+        done = has_instant & reach_success_bool  # [env]
+        self._buf_done.data[:self.num_envs] = done
+
+        # REWARD
         tracking_mean = self._compute_tracking_mean(selected_value, is_tracking)
         tracking_reward = ((1.0 - self.gamma) / self.max_episode_length) * tracking_mean
 
-        reach_success = self._compute_reach_success(selected_value, is_instant)
+        reach_success = self._compute_reach_success(selected_value, is_instant)  # float 0/1 for boolean kernels
 
         episode_step = self._env.episode_length_buf.to(torch.float32)
         ramp = 1.0 - episode_step / self.max_episode_length
         mixed_reward = (1.0 / self.max_episode_length) * tracking_mean + reach_success * (1.0 + ramp * tracking_mean)
 
-        reward = self._buf_reward[:N]
-        reward.zero_()
+        reward = self._buf_reward.data[:self.num_envs]
+        reward.fill_(float("nan"))
         reward[has_tracking & ~has_instant] = tracking_reward[has_tracking & ~has_instant]
         reward[~has_tracking & has_instant] = reach_success[~has_tracking & has_instant]
         reward[has_tracking & has_instant] = mixed_reward[has_tracking & has_instant]
-        return reward
+        assert not torch.isnan(reward).any(), "Bug: reward buffer not fully assigned."
 
-    def get_task_done(self) -> torch.Tensor:
-        return torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+        # stamp both
+        self._buf_reward.timestamp = self.timestamp
+        self._buf_done.timestamp = self.timestamp
