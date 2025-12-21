@@ -1275,10 +1275,25 @@ class RigidObjectData(BaseRigidObjectData):
         # Initialize history for finite differencing. If the articulation is fixed, the root com velocity is not
         # available, so we use zeros.
         try:
-            self._previous_root_com_vel = wp.clone(self._root_view.get_root_velocities(NewtonManager.get_state_0()))
+            _root_vel = self._root_view.get_root_velocities(NewtonManager.get_state_0())
+            if len(_root_vel.shape) == 1:
+                self._previous_root_com_vel = wp.clone(_root_vel)
+            elif len(_root_vel.shape) == 2:
+                if _root_vel.shape[1] < 1:
+                    raise RuntimeError(f"Unexpected root velocities shape {_root_vel.shape}")
+                _root_vel_view = wp.array(
+                    ptr=_root_vel.ptr,
+                    dtype=wp.spatial_vectorf,
+                    shape=(_root_vel.shape[0],),
+                    strides=(_root_vel.strides[0],),
+                    device=self.device,
+                )
+                self._previous_root_com_vel = wp.clone(_root_vel_view)
+            else:
+                raise RuntimeError(f"Unexpected root velocities shape {_root_vel.shape}")
         except Exception as e:
             logger.error(f"Error getting root com velocity: {e}. If the rigid object is fixed, this is expected.")
-            self._previous_root_com_vel = wp.zeros((n_view, n_link), dtype=wp.spatial_vectorf, device=self.device)
+            self._previous_root_com_vel = wp.zeros((n_view,), dtype=wp.spatial_vectorf, device=self.device)
         # -- default root pose and velocity
         self._default_root_pose = wp.zeros((n_view,), dtype=wp.transformf, device=self.device)
         self._default_root_vel = wp.zeros((n_view,), dtype=wp.spatial_vectorf, device=self.device)

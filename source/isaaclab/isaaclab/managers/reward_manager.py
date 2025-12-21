@@ -147,6 +147,9 @@ class RewardManager(ManagerBase):
                 continue
             # compute term's value
             value = term_cfg.func(self._env, **term_cfg.params) * term_cfg.weight * dt
+
+            if torch.any(~torch.isfinite(value)):
+                raise ValueError(f"Non-finite reward value detected in term '{name}': {value}")
             # update total reward
             self._reward_buf += value
             # update episodic sum

@@ -429,7 +429,7 @@ class NewtonManager:
             counterpart_shapes=contact_partners_shape_expr,
             match_fn=flipped_match,
             include_total=True,
-            prune_noncolliding=prune_noncolliding,
+            prune_noncolliding=True,
             verbose=verbose,
         )
         NewtonManager._report_contacts = True

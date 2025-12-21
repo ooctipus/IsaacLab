@@ -158,7 +158,7 @@ def create_prim(
     # Apply the transformations using pure USD implementation
     # XFormPrim handles conversion of position/translation/orientation/scale automatically
     if position is not None or translation is not None or orientation is not None or scale is not None:
-        XFormPrim(prim_path, positions=position, translations=translation, orientations=orientation, scales=scale)
+        XFormPrim(prim_path, positions=position, translations=translation, orientations=orientation, scales=scale, reset_xform_properties=False)
 
     return prim
 
