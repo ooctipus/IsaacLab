@@ -216,15 +216,6 @@ class vision_camera(ManagerTermBase):
     def __call__(self, env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg, normalize: bool = True) -> torch.Tensor:        # obtain the input image
         images = self.sensor.data.output[self.sensor_type]
         torch.nan_to_num_(images, nan=1e6)
-        # if env.common_step_counter == 0:
-            # offset = self.sensor.data.pos_w - env.scene.env_origins
-            # offset[:, :2] *= 2
-            # offset = env.scene.env_origins + offset
-
-            # target = env.scene.env_origins.clone()
-            # target[:, 2] = 0.5
-
-            # self.sensor.set_world_poses_from_view(offset, target, env.scene._ALL_INDICES)
         if normalize:
             images = self.norm_fn(images).reshape(env.num_envs, -1)
         return images

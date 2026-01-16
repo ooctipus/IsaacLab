@@ -153,6 +153,7 @@ class ObservationsCfg:
         object_quat_b = ObsTerm(func=mdp.object_quat_b, noise=Unoise(n_min=-0.0, n_max=0.0))
         target_object_pose_b = ObsTerm(func=mdp.generated_commands, params={"command_name": "object_pose"})
         actions = ObsTerm(func=mdp.last_action)
+        time_left = ObsTerm(func=mdp.time_left)
 
         def __post_init__(self):
             self.enable_corruption = True
