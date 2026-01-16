@@ -36,7 +36,7 @@ class XFormPrim:
         name: Optional name for this view. Defaults to "xform_prim_view".
         positions: Optional initial world positions (N, 3) or (3,).
         translations: Optional initial local translations (N, 3) or (3,).
-        orientations: Optional initial orientations as quaternions (N, 4) or (4,), in (w,x,y,z) format.
+        orientations: Optional initial orientations as quaternions (N, 4) or (4,), in (x,y,z,w) format.
         scales: Optional initial scales (N, 3) or (3,).
         reset_xform_properties: If True, resets transform properties to canonical set. Defaults to True.
         stage: The USD stage. If None, will get the current stage.
@@ -258,7 +258,7 @@ class XFormPrim:
 
         Args:
             positions: World positions (N, 3) or (3,). If None, positions are not changed.
-            orientations: World orientations as quaternions (N, 4) or (4,), in (w,x,y,z) format.
+            orientations: World orientations as quaternions (N, 4) or (4,), in (x,y,z,w) format.
                 If None, orientations are not changed.
             indices: Indices of prims to update. If None, all prims are updated.
         """
@@ -311,10 +311,10 @@ class XFormPrim:
                     world_t = current_world.ExtractTranslation()
 
                 if orient_np is not None:
-                    w = float(orient_np[idx, 0])
-                    x = float(orient_np[idx, 1])
-                    y = float(orient_np[idx, 2])
-                    z = float(orient_np[idx, 3])
+                    w = float(orient_np[idx, 3])
+                    x = float(orient_np[idx, 0])
+                    y = float(orient_np[idx, 1])
+                    z = float(orient_np[idx, 2])
                     world_q = Gf.Quatd(w, Gf.Vec3d(x, y, z))
                 else:
                     world_q = current_world.ExtractRotation().GetQuat()
@@ -333,7 +333,7 @@ class XFormPrim:
 
         Args:
             translations: Local translations (N, 3) or (3,).
-            orientations: Local orientations as quaternions (N, 4) or (4,), in (w,x,y,z) format.
+            orientations: Local orientations as quaternions (N, 4) or (4,), in (x,y,z,w) format.
             indices: Indices of prims to update. If None, all prims are updated.
         """
         # For local poses, we use the same method since USD xform ops are inherently local
@@ -384,10 +384,10 @@ class XFormPrim:
             # Set orientation
             if orient_np is not None:
                 # Convert numpy values to Python floats for USD
-                w = float(orient_np[idx, 0])
-                x = float(orient_np[idx, 1])
-                y = float(orient_np[idx, 2])
-                z = float(orient_np[idx, 3])
+                w = float(orient_np[idx, 3])
+                x = float(orient_np[idx, 0])
+                y = float(orient_np[idx, 1])
+                z = float(orient_np[idx, 2])
                 quat = Gf.Quatd(w, Gf.Vec3d(x, y, z))
                 orient_op.Set(quat)
 
@@ -435,7 +435,7 @@ class XFormPrim:
         Returns:
             A tuple of (positions, orientations) where:
             - positions is a (N, 3) numpy array
-            - orientations is a (N, 4) numpy array in (w,x,y,z) format
+            - orientations is a (N, 4) numpy array in (x,y,z,w) format
         """
         indices_np = self._to_numpy(indices)
 
@@ -462,7 +462,7 @@ class XFormPrim:
             # Extract rotation as quaternion
             rotation = xform_matrix.ExtractRotation()
             quat = rotation.GetQuat()
-            # USD uses (real, i, j, k) which is (x, y, z, w)
+            # USD uses (real, i, j, k) which we return as (x, y, z, w)
             orientations.append(
                 [quat.GetImaginary()[0], quat.GetImaginary()[1], quat.GetImaginary()[2], quat.GetReal()]
             )
@@ -481,7 +481,7 @@ class XFormPrim:
         Returns:
             A tuple of (translations, orientations) where:
             - translations is a (N, 3) numpy array
-            - orientations is a (N, 4) numpy array in (w,x,y,z) format
+            - orientations is a (N, 4) numpy array in (x,y,z,w) format
         """
         indices_np = self._to_numpy(indices)
 
@@ -511,12 +511,12 @@ class XFormPrim:
             # Get orientation
             if orient_attr:
                 quat = orient_attr.Get()
-                # USD quaternion is (real, i, j, k) which is (w, x, y, z)
+                # USD quaternion is (real, i, j, k); return (x, y, z, w)
                 orientations.append(
-                    [quat.GetReal(), quat.GetImaginary()[0], quat.GetImaginary()[1], quat.GetImaginary()[2]]
+                    [quat.GetImaginary()[0], quat.GetImaginary()[1], quat.GetImaginary()[2], quat.GetReal()]
                 )
             else:
-                orientations.append([1.0, 0.0, 0.0, 0.0])
+                orientations.append([0.0, 0.0, 0.0, 1.0])
 
         return np.array(translations, dtype=np.float32), np.array(orientations, dtype=np.float32)
 
