@@ -17,6 +17,7 @@ from .utils import sample_object_point_cloud
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
+    from isaaclab.sensors import TiledCamera
 
 
 def object_pos_b(
@@ -200,4 +201,68 @@ def fingers_contact_force_b(
     forces_b = quat_apply_inverse(
         wp.to_torch(robot.data.root_link_quat_w).unsqueeze(1).repeat(1, force_w.shape[1], 1), force_w
     )
-    return forces_b
+    return forces_b.view(env.num_envs, -1)
+
+
+class vision_camera(ManagerTermBase):
+
+    def __init__(self, cfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        sensor_cfg: SceneEntityCfg = cfg.params.get("sensor_cfg", SceneEntityCfg("tiled_camera"))
+        self.sensor: TiledCamera = env.scene.sensors[sensor_cfg.name]
+        self.sensor_type = self.sensor.cfg.data_types[0]
+        self.norm_fn = self._depth_norm if self.sensor_type == "distance_to_image_plane" else self._rgb_norm
+
+    def __call__(self, env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg, normalize: bool = True) -> torch.Tensor:        # obtain the input image
+        images = self.sensor.data.output[self.sensor_type]
+        torch.nan_to_num_(images, nan=1e6)
+        # if env.common_step_counter == 0:
+            # offset = self.sensor.data.pos_w - env.scene.env_origins
+            # offset[:, :2] *= 2
+            # offset = env.scene.env_origins + offset
+
+            # target = env.scene.env_origins.clone()
+            # target[:, 2] = 0.5
+
+            # self.sensor.set_world_poses_from_view(offset, target, env.scene._ALL_INDICES)
+        if normalize:
+            images = self.norm_fn(images).reshape(env.num_envs, -1)
+        return images
+
+    def _rgb_norm(self, images: torch.Tensor) -> torch.Tensor:
+        images = images.float() / 255.0
+        mean_tensor = torch.mean(images, dim=(1, 2), keepdim=True)
+        images -= mean_tensor
+        return images
+
+    def _depth_norm(self, images: torch.Tensor) -> torch.Tensor:
+        images = torch.tanh(images / 2) * 2
+        images -= torch.mean(images, dim=(1, 2), keepdim=True)
+        return images
+
+    def show_collage(self, images: torch.Tensor, save_path: str = "collage.png"):
+        import numpy as np
+        from PIL import Image
+        from matplotlib import cm
+        a = images.detach().cpu().numpy()
+        n, h, w, c = a.shape
+        s = int(np.ceil(np.sqrt(n)))
+        canvas = np.full((s * h, s * w, 3), 255, np.uint8)
+        turbo = cm.get_cmap("turbo")
+        for i in range(n):
+            r, col = divmod(i, s)
+            img = a[i]
+            if c == 1:
+                d = img[..., 0]
+                d = (d - d.min()) / (np.ptp(d) + 1e-8)
+                rgb = (turbo(d)[..., :3] * 255).astype(np.uint8)
+            else:
+                x = img if img.max() > 1 else img * 255
+                rgb = np.clip(x, 0, 255).astype(np.uint8)
+            canvas[r * h:(r + 1) * h, col * w:(col + 1) * w] = rgb
+        Image.fromarray(canvas).save(save_path)
+
+
+def time_left(env: ManagerBasedRLEnv):
+    time_left_frac = (1 - env.episode_length_buf / env.max_episode_length)
+    return time_left_frac.view(env.num_envs, -1)

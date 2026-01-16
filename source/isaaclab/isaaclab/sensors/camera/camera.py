@@ -19,7 +19,7 @@ import isaaclab.sim as sim_utils
 import isaaclab.sim.utils.stage as stage_utils
 import isaaclab.utils.sensors as sensor_utils
 from isaaclab.app.settings_manager import get_settings_manager
-from isaaclab.sim.prims import XFormPrim
+from isaaclab.sim.views import XformPrimView
 from isaaclab.utils import to_camel_case
 from isaaclab.utils.array import convert_to_torch
 from isaaclab.utils.math import (
@@ -99,13 +99,13 @@ class Camera(SensorBase):
         # check if sensor path is valid
         # note: currently we do not handle environment indices if there is a regex pattern in the leaf
         #   For example, if the prim path is "/World/Sensor_[1,2]".
-        sensor_path = cfg.prim_path.split("/")[-1]
-        sensor_path_is_regex = re.match(r"^[a-zA-Z0-9/_]+$", sensor_path) is None
-        if sensor_path_is_regex:
-            raise RuntimeError(
-                f"Invalid prim path for the camera sensor: {self.cfg.prim_path}."
-                "\n\tHint: Please ensure that the prim path does not contain any regex patterns in the leaf."
-            )
+        # sensor_path = cfg.prim_path.split("/")[-1]
+        # sensor_path_is_regex = re.match(r"^[a-zA-Z0-9/_]+$", sensor_path) is None
+        # if sensor_path_is_regex:
+        #     raise RuntimeError(
+        #         f"Invalid prim path for the camera sensor: {self.cfg.prim_path}."
+        #         "\n\tHint: Please ensure that the prim path does not contain any regex patterns in the leaf."
+        #     )
         # perform check on supported data types
         self._check_supported_data_types(cfg)
         # initialize base class
@@ -340,7 +340,7 @@ class Camera(SensorBase):
         up_axis = stage_utils.get_stage_up_axis()
         # set camera poses using the view
         orientations = quat_from_matrix(create_rotation_matrix_from_view(eyes, targets, up_axis, device=self._device))
-        self._view.set_world_poses(eyes, orientations, env_ids)
+        self._view.set_world_poses(eyes, orientations[:, [3, 0, 1, 2]], env_ids)
 
     """
     Operations
@@ -393,8 +393,8 @@ class Camera(SensorBase):
         # Initialize parent class
         super()._initialize_impl()
         # Create a view for the sensor
-        self._view = XFormPrim(self.cfg.prim_path, reset_xform_properties=False)
-        self._view.initialize()
+        self._view = XformPrimView(self.cfg.prim_path, device=self._device)
+        # self._view.initialize()
         # Check that sizes are correct
         if self._view.count != self._num_envs:
             raise RuntimeError(
@@ -608,9 +608,9 @@ class Camera(SensorBase):
 
         # get the poses from the view
         poses, quat = self._view.get_world_poses(env_ids)
-        self._data.pos_w[env_ids] = torch.from_numpy(poses).to(device=self._device)
+        self._data.pos_w[env_ids] = poses.to(device=self._device)
         self._data.quat_w_world[env_ids] = convert_camera_frame_orientation_convention(
-            torch.from_numpy(quat).to(device=self._device), origin="opengl", target="world"
+            quat.to(device=self._device), origin="opengl", target="world"
         )
 
     def _create_annotator_data(self):

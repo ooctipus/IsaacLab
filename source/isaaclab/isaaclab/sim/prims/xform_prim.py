@@ -50,6 +50,7 @@ class XFormPrim:
         self,
         prim_paths_expr: str | list[str],
         name: str = "xform_prim_view",
+        device: str = "cpu",
         positions: torch.Tensor | np.ndarray | Sequence[float] | None = None,
         translations: torch.Tensor | np.ndarray | Sequence[float] | None = None,
         orientations: torch.Tensor | np.ndarray | Sequence[float] | None = None,
@@ -60,6 +61,7 @@ class XFormPrim:
         """Initialize the XFormPrim wrapper."""
         self._name = name
         self._stage = stage if stage is not None else get_current_stage()
+        self._device = device
 
         # Convert to list if single string
         if not isinstance(prim_paths_expr, list):
@@ -424,7 +426,7 @@ class XFormPrim:
     def get_world_poses(
         self,
         indices: np.ndarray | list | torch.Tensor | None = None,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Get world poses of the prims.
 
         Args:
@@ -460,12 +462,12 @@ class XFormPrim:
             # Extract rotation as quaternion
             rotation = xform_matrix.ExtractRotation()
             quat = rotation.GetQuat()
-            # USD uses (real, i, j, k) which is (w, x, y, z)
+            # USD uses (real, i, j, k) which is (x, y, z, w)
             orientations.append(
-                [quat.GetReal(), quat.GetImaginary()[0], quat.GetImaginary()[1], quat.GetImaginary()[2]]
+                [quat.GetImaginary()[0], quat.GetImaginary()[1], quat.GetImaginary()[2], quat.GetReal()]
             )
 
-        return np.array(positions, dtype=np.float32), np.array(orientations, dtype=np.float32)
+        return torch.tensor(positions, device=self._device), torch.tensor(orientations, device=self._device)
 
     def get_local_poses(
         self,
