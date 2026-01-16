@@ -217,7 +217,8 @@ class vision_camera(ManagerTermBase):
         images = self.sensor.data.output[self.sensor_type]
         torch.nan_to_num_(images, nan=1e6)
         if normalize:
-            images = self.norm_fn(images).reshape(env.num_envs, -1)
+            images = self.norm_fn(images)
+            images = images.permute(0, 3, 1, 2).contiguous()
         return images
 
     def _rgb_norm(self, images: torch.Tensor) -> torch.Tensor:

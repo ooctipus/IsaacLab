@@ -21,8 +21,8 @@ class KukaAllegroSingleTiledCameraSceneCfg(kuka_allegro_dexsuite.KukaAllegroScen
     """Dexsuite scene for multi-objects Lifting/Reorientation"""
 
     camera_type: str = "rgb"
-    width: int = 256
-    height: int = 256
+    width: int = 64
+    height: int = 64
 
     base_camera = TiledCameraCfg(
         prim_path="/World/envs/env_.*/Camera",

@@ -62,6 +62,7 @@ class KukaAllegroObservationCfg(dexsuite.ObservationsCfg):
 class KukaAllegroMixinCfg:
     scene: KukaAllegroSceneCfg = KukaAllegroSceneCfg(num_envs=4096, env_spacing=3, replicate_physics=True)
     rewards: KukaAllegroReorientRewardCfg = KukaAllegroReorientRewardCfg()
+    observations: KukaAllegroObservationCfg = KukaAllegroObservationCfg()
     actions: KukaAllegroRelJointPosActionCfg = KukaAllegroRelJointPosActionCfg()
 
     def __post_init__(self: dexsuite.DexsuiteReorientEnvCfg):
