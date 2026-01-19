@@ -244,7 +244,8 @@ class XFormPrim:
         world_m.SetRotate(world_q)
         world_m.SetTranslateOnly(world_t)
 
-        local_m = parent_w.GetInverse() * world_m
+        # Match XformPrimView convention: local = world * parent^-1
+        local_m = world_m * parent_w.GetInverse()
         local_tf = Gf.Transform(local_m)
         return local_tf.GetTranslation(), local_tf.GetRotation().GetQuat()
 

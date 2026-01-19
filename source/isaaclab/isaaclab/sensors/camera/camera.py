@@ -18,7 +18,7 @@ import isaaclab.sim as sim_utils
 import isaaclab.sim.utils.stage as stage_utils
 import isaaclab.utils.sensors as sensor_utils
 from isaaclab.app.settings_manager import get_settings_manager
-from isaaclab.sim.views import XformPrimView
+from isaaclab.sim.prims import XFormPrim
 from isaaclab.utils import to_camel_case
 from isaaclab.utils.array import convert_to_torch
 from isaaclab.utils.math import (
@@ -392,7 +392,7 @@ class Camera(SensorBase):
         # Initialize parent class
         super()._initialize_impl()
         # Create a view for the sensor
-        self._view = XformPrimView(self.cfg.prim_path, device=self._device)
+        self._view = XFormPrim(self.cfg.prim_path, device=self._device)
         # self._view.initialize()
         # Check that sizes are correct
         if self._view.count != self._num_envs:
