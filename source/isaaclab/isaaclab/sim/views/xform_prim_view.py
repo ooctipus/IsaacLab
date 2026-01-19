@@ -196,7 +196,7 @@ class XformPrimView:
             positions: World-space positions as a tensor of shape (M, 3) where M is the number of prims
                 to set (either all prims if indices is None, or the number of indices provided).
                 Defaults to None, in which case positions are not modified.
-            orientations: World-space orientations as quaternions (w, x, y, z) with shape (M, 4).
+            orientations: World-space orientations as quaternions (x, y, z, w) with shape (M, 4).
                 Defaults to None, in which case orientations are not modified.
             indices: Indices of prims to set poses for. Defaults to None, in which case poses are set
                 for all prims in the view.
@@ -228,8 +228,8 @@ class XformPrimView:
                     f"Expected orientations shape ({len(indices_list)}, 4), got {orientations.shape}. "
                     "Number of orientations must match the number of prims in the view."
                 )
-            # Vt expects quaternions in xyzw order
-            orientations_array = Vt.QuatdArray.FromNumpy(math_utils.convert_quat(orientations, to="xyzw").cpu().numpy())
+            # USD/Vt stores quaternions as (w, x, y, z); convert from input (x, y, z, w)
+            orientations_array = Vt.QuatdArray.FromNumpy(math_utils.convert_quat(orientations, to="wxyz").cpu().numpy())
         else:
             orientations_array = None
 
@@ -306,7 +306,7 @@ class XformPrimView:
             translations: Local-space translations as a tensor of shape (M, 3) where M is the number of prims
                 to set (either all prims if indices is None, or the number of indices provided).
                 Defaults to None, in which case translations are not modified.
-            orientations: Local-space orientations as quaternions (w, x, y, z) with shape (M, 4).
+            orientations: Local-space orientations as quaternions (x, y, z, w) with shape (M, 4).
                 Defaults to None, in which case orientations are not modified.
             indices: Indices of prims to set poses for. Defaults to None, in which case poses are set
                 for all prims in the view.
@@ -338,8 +338,8 @@ class XformPrimView:
                     f"Expected orientations shape ({len(indices_list)}, 4), got {orientations.shape}. "
                     "Number of orientations must match the number of prims in the view."
                 )
-            # Vt expects quaternions in xyzw order
-            orientations_array = Vt.QuatdArray.FromNumpy(math_utils.convert_quat(orientations, to="xyzw").cpu().numpy())
+            # USD/Vt stores quaternions as (w, x, y, z); convert from input (x, y, z, w)
+            orientations_array = Vt.QuatdArray.FromNumpy(math_utils.convert_quat(orientations, to="wxyz").cpu().numpy())
         else:
             orientations_array = None
         # Set local poses for each prim
@@ -446,7 +446,7 @@ class XformPrimView:
 
             - positions: Torch tensor of shape (M, 3) containing world-space positions (x, y, z),
               where M is the number of prims queried.
-            - orientations: Torch tensor of shape (M, 4) containing world-space quaternions (w, x, y, z)
+            - orientations: Torch tensor of shape (M, 4) containing world-space quaternions (x, y, z, w)
         """
         # Resolve indices
         if indices is None or indices == slice(None):
@@ -478,9 +478,7 @@ class XformPrimView:
         # move to torch tensors
         positions = torch.tensor(np.array(positions), dtype=torch.float32, device=self._device)
         orientations = torch.tensor(np.array(orientations), dtype=torch.float32, device=self._device)
-        # underlying data is in xyzw order, convert to wxyz order
-        # orientations = math_utils.convert_quat(orientations, to="wxyz")
-
+        orientations = math_utils.convert_quat(orientations, to="xyzw")
         return positions, orientations  # type: ignore
 
     def get_local_poses(self, indices: Sequence[int] | None = None) -> tuple[torch.Tensor, torch.Tensor]:
@@ -501,7 +499,7 @@ class XformPrimView:
 
             - translations: Torch tensor of shape (M, 3) containing local-space translations (x, y, z),
               where M is the number of prims queried.
-            - orientations: Torch tensor of shape (M, 4) containing local-space quaternions (w, x, y, z)
+            - orientations: Torch tensor of shape (M, 4) containing local-space quaternions (x, y, z, w)
         """
         # Resolve indices
         if indices is None or indices == slice(None):
@@ -533,9 +531,7 @@ class XformPrimView:
         # move to torch tensors
         translations = torch.tensor(np.array(translations), dtype=torch.float32, device=self._device)
         orientations = torch.tensor(np.array(orientations), dtype=torch.float32, device=self._device)
-        # underlying data is in xyzw order, convert to wxyz order
-        # orientations = math_utils.convert_quat(orientations, to="wxyz")
-
+        orientations = math_utils.convert_quat(orientations, to="xyzw")
         return translations, orientations  # type: ignore
 
     def get_scales(self, indices: Sequence[int] | None = None) -> torch.Tensor:
