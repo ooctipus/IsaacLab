@@ -74,12 +74,11 @@ class AssetBase(ABC):
 
         # spawn the asset
         if self.cfg.spawn is not None:
-            # convert quaternion from xyzw (config) to wxyz (spawner expects)
             self.cfg.spawn.func(
                 self.cfg.prim_path,
                 self.cfg.spawn,
                 translation=self.cfg.init_state.pos,
-                orientation=self.cfg.init_state.rot,
+                orientation=self.cfg.init_state.rot,  # xyzw format
             )
         # check that spawn was successful
         matching_prims = sim_utils.find_matching_prims(self.cfg.prim_path)

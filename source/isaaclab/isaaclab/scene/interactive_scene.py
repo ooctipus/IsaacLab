@@ -610,12 +610,11 @@ class InteractiveScene:
             elif isinstance(asset_cfg, AssetBaseCfg):
                 # manually spawn asset
                 if asset_cfg.spawn is not None:
-                    # convert quaternion from xyzw (config) to wxyz (spawner expects)
                     asset_cfg.spawn.func(
                         asset_cfg.prim_path,
                         asset_cfg.spawn,
                         translation=asset_cfg.init_state.pos,
-                        orientation=asset_cfg.init_state.rot,
+                        orientation=asset_cfg.init_state.rot,  # xyzw format
                     )
                 # store xform prim view corresponding to this asset
                 # all prims in the scene are Xform prims (i.e. have a transform component)

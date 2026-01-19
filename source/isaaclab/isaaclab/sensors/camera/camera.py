@@ -123,14 +123,14 @@ class Camera(SensorBase):
                 rot, origin=self.cfg.offset.convention, target="opengl"
             )
             rot_offset = rot_offset.squeeze(0).cpu().numpy()
-            # convert from xyzw to wxyz for spawner
-            rot_offset_wxyz = (rot_offset[3], rot_offset[0], rot_offset[1], rot_offset[2])
+            # keep xyzw to match XFormPrim conventions
+            rot_offset_xyzw = (rot_offset[0], rot_offset[1], rot_offset[2], rot_offset[3])
             # ensure vertical aperture is set, otherwise replace with default for squared pixels
             if self.cfg.spawn.vertical_aperture is None:
                 self.cfg.spawn.vertical_aperture = self.cfg.spawn.horizontal_aperture * self.cfg.height / self.cfg.width
             # spawn the asset
             self.cfg.spawn.func(
-                self.cfg.prim_path, self.cfg.spawn, translation=self.cfg.offset.pos, orientation=rot_offset_wxyz
+                self.cfg.prim_path, self.cfg.spawn, translation=self.cfg.offset.pos, orientation=rot_offset_xyzw
             )
         # check that spawn was successful
         matching_prims = sim_utils.find_matching_prims(self.cfg.prim_path)
