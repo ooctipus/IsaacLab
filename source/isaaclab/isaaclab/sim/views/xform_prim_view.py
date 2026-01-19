@@ -477,8 +477,8 @@ class XformPrimView:
 
         # move to torch tensors
         positions = torch.tensor(np.array(positions), dtype=torch.float32, device=self._device)
+        # Vt.QuatdArray -> numpy already yields (x, y, z, w) order
         orientations = torch.tensor(np.array(orientations), dtype=torch.float32, device=self._device)
-        orientations = math_utils.convert_quat(orientations, to="xyzw")
         return positions, orientations  # type: ignore
 
     def get_local_poses(self, indices: Sequence[int] | None = None) -> tuple[torch.Tensor, torch.Tensor]:
@@ -530,8 +530,8 @@ class XformPrimView:
 
         # move to torch tensors
         translations = torch.tensor(np.array(translations), dtype=torch.float32, device=self._device)
+        # Vt.QuatdArray -> numpy already yields (x, y, z, w) order
         orientations = torch.tensor(np.array(orientations), dtype=torch.float32, device=self._device)
-        orientations = math_utils.convert_quat(orientations, to="xyzw")
         return translations, orientations  # type: ignore
 
     def get_scales(self, indices: Sequence[int] | None = None) -> torch.Tensor:
