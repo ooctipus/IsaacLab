@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
@@ -15,10 +15,7 @@ class DexsuiteKukaAllegroPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     save_interval = 250
     empirical_normalization = True
     experiment_name = "dexsuite_kuka_allegro"
-    obs_groups = {
-        "policy": ["policy", "proprio", "perception"],
-        "critic": ["policy", "proprio", "perception"]
-    }
+    obs_groups = {"policy": ["policy", "proprio", "perception"], "critic": ["policy", "proprio", "perception"]}
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,

@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
@@ -10,9 +10,9 @@ import torch
 import trimesh
 from trimesh.sample import sample_surface
 
-import isaaclab.sim.utils.prims as prim_utils
 from pxr import UsdGeom
 
+import isaaclab.sim.utils.prims as prim_utils
 from isaaclab.sim.utils import get_all_matching_child_prims
 
 # ---- module-scope caches ----

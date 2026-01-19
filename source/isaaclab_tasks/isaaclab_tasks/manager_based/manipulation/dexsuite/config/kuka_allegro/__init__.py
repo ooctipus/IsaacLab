@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
@@ -83,7 +83,7 @@ gym.register(
             f"{__name__}.dexsuite_kuka_allegro_vision_env_cfg:DexsuiteKukaAllegroLiftSingleCameraEnvCfg_PLAY"
         ),
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cnn_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cnn_cfg:DexsuiteKukaAllegroPPOCNNRunnerCfg"
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cnn_cfg:DexsuiteKukaAllegroPPOCNNRunnerCfg",
     },
 )
 

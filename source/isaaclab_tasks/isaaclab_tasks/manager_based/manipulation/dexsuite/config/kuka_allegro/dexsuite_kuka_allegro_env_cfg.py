@@ -1,9 +1,10 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
 from isaaclab_assets.robots import KUKA_ALLEGRO_CFG
+
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
@@ -24,10 +25,14 @@ class KukaAllegroSceneCfg(dexsuite.SceneCfg):
         super().__post_init__()
         self.robot = KUKA_ALLEGRO_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
         for link_name in FINGERTIP_LIST:
-            setattr(self, f"{link_name}_object_s", ContactSensorCfg(
-                prim_path="{ENV_REGEX_NS}/Robot/ee_link/" + link_name,
-                filter_prim_paths_expr=["{ENV_REGEX_NS}/object"],
-            ))
+            setattr(
+                self,
+                f"{link_name}_object_s",
+                ContactSensorCfg(
+                    prim_path="{ENV_REGEX_NS}/Robot/ee_link/" + link_name,
+                    filter_prim_paths_expr=["{ENV_REGEX_NS}/object"],
+                ),
+            )
 
 
 @configclass
@@ -43,6 +48,7 @@ class KukaAllegroReorientRewardCfg(dexsuite.RewardsCfg):
         weight=0.5,
         params={"threshold": 0.1},
     )
+
 
 @configclass
 class KukaAllegroObservationCfg(dexsuite.ObservationsCfg):

@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
@@ -6,8 +6,9 @@
 from __future__ import annotations
 
 import torch
-import warp as wp
 from typing import TYPE_CHECKING
+
+import warp as wp
 
 from isaaclab.assets import Articulation
 from isaaclab.managers import ManagerTermBase, SceneEntityCfg
@@ -90,8 +91,12 @@ def body_state_b(
     body_ang_vel_w = wp.to_torch(body_asset.data.body_ang_vel_w)[:, body_asset_cfg.body_ids].view(-1, 3)
     num_bodies = int(body_pos_w.shape[0] / env.num_envs)
     # get world pose of base frame
-    root_pos_w = wp.to_torch(base_asset.data.root_link_pos_w).unsqueeze(1).repeat_interleave(num_bodies, dim=1).view(-1, 3)
-    root_quat_w = wp.to_torch(base_asset.data.root_link_quat_w).unsqueeze(1).repeat_interleave(num_bodies, dim=1).view(-1, 4)
+    root_pos_w = (
+        wp.to_torch(base_asset.data.root_link_pos_w).unsqueeze(1).repeat_interleave(num_bodies, dim=1).view(-1, 3)
+    )
+    root_quat_w = (
+        wp.to_torch(base_asset.data.root_link_quat_w).unsqueeze(1).repeat_interleave(num_bodies, dim=1).view(-1, 4)
+    )
     # transform from world body pose to local body pose
     body_pos_b, body_quat_b = subtract_frame_transforms(root_pos_w, root_quat_w, body_pos_w, body_quat_w)
     body_lin_vel_b = quat_apply_inverse(root_quat_w, body_lin_vel_w)
@@ -213,7 +218,9 @@ class vision_camera(ManagerTermBase):
         self.sensor_type = self.sensor.cfg.data_types[0]
         self.norm_fn = self._depth_norm if self.sensor_type == "distance_to_image_plane" else self._rgb_norm
 
-    def __call__(self, env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg, normalize: bool = True) -> torch.Tensor:        # obtain the input image
+    def __call__(
+        self, env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg, normalize: bool = True
+    ) -> torch.Tensor:  # obtain the input image
         images = self.sensor.data.output[self.sensor_type]
         torch.nan_to_num_(images, nan=1e6)
         if normalize:
@@ -234,8 +241,10 @@ class vision_camera(ManagerTermBase):
 
     def show_collage(self, images: torch.Tensor, save_path: str = "collage.png"):
         import numpy as np
-        from PIL import Image
         from matplotlib import cm
+
+        from PIL import Image
+
         a = images.detach().cpu().numpy()
         n, h, w, c = a.shape
         s = int(np.ceil(np.sqrt(n)))
@@ -251,10 +260,10 @@ class vision_camera(ManagerTermBase):
             else:
                 x = img if img.max() > 1 else img * 255
                 rgb = np.clip(x, 0, 255).astype(np.uint8)
-            canvas[r * h:(r + 1) * h, col * w:(col + 1) * w] = rgb
+            canvas[r * h : (r + 1) * h, col * w : (col + 1) * w] = rgb
         Image.fromarray(canvas).save(save_path)
 
 
 def time_left(env: ManagerBasedRLEnv):
-    time_left_frac = (1 - env.episode_length_buf / env.max_episode_length)
+    time_left_frac = 1 - env.episode_length_buf / env.max_episode_length
     return time_left_frac.view(env.num_envs, -1)

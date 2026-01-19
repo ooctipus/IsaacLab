@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
@@ -6,9 +6,6 @@
 from dataclasses import MISSING
 
 import isaaclab.sim as sim_utils
-from isaaclab.sim import SimulationCfg
-from isaaclab.sim._impl.newton_manager_cfg import NewtonCfg
-from isaaclab.sim._impl.solvers_cfg import MJWarpSolverCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import ManagerBasedEnvCfg, ViewerCfg
 from isaaclab.managers import EventTermCfg as EventTerm
@@ -17,8 +14,10 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.sim import CuboidCfg, RigidBodyMaterialCfg
 from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sim import CuboidCfg, RigidBodyMaterialCfg, SimulationCfg
+from isaaclab.sim._impl.newton_manager_cfg import NewtonCfg
+from isaaclab.sim._impl.solvers_cfg import MJWarpSolverCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
@@ -70,8 +69,7 @@ class SceneCfg(InteractiveSceneCfg):
                 disable_gravity=False,
             ),
             collision_props=sim_utils.CollisionPropertiesCfg(
-                collision_enabled=True,
-                mesh_collision_property=sim_utils.BoundingCubePropertiesCfg()
+                collision_enabled=True, mesh_collision_property=sim_utils.BoundingCubePropertiesCfg()
             ),
             mass_props=sim_utils.MassPropertiesCfg(mass=0.2),
         ),
@@ -125,6 +123,7 @@ class SceneCfg(InteractiveSceneCfg):
 @configclass
 class CommandsCfg:
     """Command terms for the MDP."""
+
     object_pose = mdp.ObjectUniformPoseCommandCfg(
         asset_name="robot",
         object_name="object",
@@ -476,7 +475,7 @@ class DexsuiteReorientEnvCfg(ManagerBasedEnvCfg):
                 debug_mode=False,
             ),
             dt=1 / 120,
-            gravity=(0.0, 0.0, 0.0)
+            gravity=(0.0, 0.0, 0.0),
         )
         self.sim.render_interval = self.decimation
 

@@ -1,10 +1,11 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-import isaaclab.sim as sim_utils
 from dataclasses import MISSING
+
+import isaaclab.sim as sim_utils
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
@@ -15,6 +16,7 @@ from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 from ... import dexsuite_env_cfg as dexsuite_state_impl
 from ... import mdp
 from . import dexsuite_kuka_allegro_env_cfg as kuka_allegro_dexsuite
+
 
 @configclass
 class KukaAllegroSingleTiledCameraSceneCfg(kuka_allegro_dexsuite.KukaAllegroSceneCfg):
@@ -27,7 +29,9 @@ class KukaAllegroSingleTiledCameraSceneCfg(kuka_allegro_dexsuite.KukaAllegroScen
     base_camera = TiledCameraCfg(
         prim_path="/World/envs/env_.*/Camera",
         offset=TiledCameraCfg.OffsetCfg(
-            pos=(0.57, -0.8, 0.5), rot=(0.6124, 0.3536, 0.3536, 0.6124), convention="opengl",
+            pos=(0.57, -0.8, 0.5),
+            rot=(0.6124, 0.3536, 0.3536, 0.6124),
+            convention="opengl",
         ),
         data_types=MISSING,
         spawn=sim_utils.PinholeCameraCfg(clipping_range=(0.01, 2.5)),
@@ -54,7 +58,9 @@ class KukaAllegroDuoTiledCameraSceneCfg(KukaAllegroSingleTiledCameraSceneCfg):
     wrist_camera = TiledCameraCfg(
         prim_path="/World/envs/env_.*/Robot/ee_link/palm_link/Camera",
         offset=TiledCameraCfg.OffsetCfg(
-            pos=(0.038, -0.38, -0.18), rot=(0.641, 0.641, -0.299, 0.299), convention="opengl",
+            pos=(0.038, -0.38, -0.18),
+            rot=(0.641, 0.641, -0.299, 0.299),
+            convention="opengl",
         ),
         data_types=MISSING,
         spawn=sim_utils.PinholeCameraCfg(clipping_range=(0.01, 2.5)),
@@ -113,26 +119,54 @@ class KukaAllegroDuoCameraObservationsCfg(KukaAllegroSingleCameraObservationsCfg
 
 sa = {"num_envs": 4096, "env_spacing": 3, "replicate_physics": False}
 singe_camera_variants = {
-    "64x64tiled_depth": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 64, "height": 64}),
+    "64x64tiled_depth": KukaAllegroSingleTiledCameraSceneCfg(
+        **{**sa, "camera_type": "distance_to_image_plane", "width": 64, "height": 64}
+    ),
     "64x64tiled_rgb": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 64, "height": 64}),
-    "64x64tiled_albedo": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 64, "height": 64}),
-    "128x128tiled_depth": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 128, "height": 128}),
-    "128x128tiled_rgb": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 128, "height": 128}),
-    "128x128tiled_albedo": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 128, "height": 128}),
-    "256x256tiled_depth": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 256, "height": 256}),
-    "256x256tiled_rgb": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 256, "height": 256}),
-    "256x256tiled_albedo": KukaAllegroSingleTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 256, "height": 256}),
+    "64x64tiled_albedo": KukaAllegroSingleTiledCameraSceneCfg(
+        **{**sa, "camera_type": "diffuse_albedo", "width": 64, "height": 64}
+    ),
+    "128x128tiled_depth": KukaAllegroSingleTiledCameraSceneCfg(
+        **{**sa, "camera_type": "distance_to_image_plane", "width": 128, "height": 128}
+    ),
+    "128x128tiled_rgb": KukaAllegroSingleTiledCameraSceneCfg(
+        **{**sa, "camera_type": "rgb", "width": 128, "height": 128}
+    ),
+    "128x128tiled_albedo": KukaAllegroSingleTiledCameraSceneCfg(
+        **{**sa, "camera_type": "diffuse_albedo", "width": 128, "height": 128}
+    ),
+    "256x256tiled_depth": KukaAllegroSingleTiledCameraSceneCfg(
+        **{**sa, "camera_type": "distance_to_image_plane", "width": 256, "height": 256}
+    ),
+    "256x256tiled_rgb": KukaAllegroSingleTiledCameraSceneCfg(
+        **{**sa, "camera_type": "rgb", "width": 256, "height": 256}
+    ),
+    "256x256tiled_albedo": KukaAllegroSingleTiledCameraSceneCfg(
+        **{**sa, "camera_type": "diffuse_albedo", "width": 256, "height": 256}
+    ),
 }
 duo_camera_variants = {
-    "64x64tiled_depth": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 64, "height": 64}),
+    "64x64tiled_depth": KukaAllegroDuoTiledCameraSceneCfg(
+        **{**sa, "camera_type": "distance_to_image_plane", "width": 64, "height": 64}
+    ),
     "64x64tiled_rgb": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 64, "height": 64}),
-    "64x64tiled_albedo": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 64, "height": 64}),
-    "128x128tiled_depth": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 128, "height": 128}),
+    "64x64tiled_albedo": KukaAllegroDuoTiledCameraSceneCfg(
+        **{**sa, "camera_type": "diffuse_albedo", "width": 64, "height": 64}
+    ),
+    "128x128tiled_depth": KukaAllegroDuoTiledCameraSceneCfg(
+        **{**sa, "camera_type": "distance_to_image_plane", "width": 128, "height": 128}
+    ),
     "128x128tiled_rgb": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 128, "height": 128}),
-    "128x128tiled_albedo": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 128, "height": 128}),
-    "256x256tiled_depth": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "distance_to_image_plane", "width": 256, "height": 256}),
+    "128x128tiled_albedo": KukaAllegroDuoTiledCameraSceneCfg(
+        **{**sa, "camera_type": "diffuse_albedo", "width": 128, "height": 128}
+    ),
+    "256x256tiled_depth": KukaAllegroDuoTiledCameraSceneCfg(
+        **{**sa, "camera_type": "distance_to_image_plane", "width": 256, "height": 256}
+    ),
     "256x256tiled_rgb": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "rgb", "width": 256, "height": 256}),
-    "256x256tiled_albedo": KukaAllegroDuoTiledCameraSceneCfg(**{**sa, "camera_type": "diffuse_albedo", "width": 256, "height": 256}),
+    "256x256tiled_albedo": KukaAllegroDuoTiledCameraSceneCfg(
+        **{**sa, "camera_type": "diffuse_albedo", "width": 256, "height": 256}
+    ),
 }
 
 
@@ -159,8 +193,7 @@ class KukaAllegroDuoCameraMixinCfg(kuka_allegro_dexsuite.KukaAllegroMixinCfg):
 # SingleCamera
 @configclass
 class DexsuiteKukaAllegroLiftSingleCameraEnvCfg(
-    KukaAllegroSingleCameraMixinCfg,
-    dexsuite_state_impl.DexsuiteLiftEnvCfg
+    KukaAllegroSingleCameraMixinCfg, dexsuite_state_impl.DexsuiteLiftEnvCfg
 ):
     pass
 
@@ -175,10 +208,7 @@ class DexsuiteKukaAllegroLiftSingleCameraEnvCfg(
 
 # DuoCamera
 @configclass
-class DexsuiteKukaAllegroLiftDuoCameraEnvCfg(
-    KukaAllegroDuoCameraMixinCfg,
-    dexsuite_state_impl.DexsuiteLiftEnvCfg
-):
+class DexsuiteKukaAllegroLiftDuoCameraEnvCfg(KukaAllegroDuoCameraMixinCfg, dexsuite_state_impl.DexsuiteLiftEnvCfg):
     pass
 
 
