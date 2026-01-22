@@ -232,6 +232,9 @@ class SimulationCfg:
     a different config (e.g., NewtonManagerCfg) to use a different physics backend.
     """
 
+    physics_backend: Literal["omni", "newton"] = "omni"
+    """Physics backend to use for scene data providers and visualizers."""
+
     render: RenderCfg = RenderCfg()
     """Render settings. Default is RenderCfg()."""
 
@@ -255,7 +258,16 @@ class SimulationCfg:
     """
 
     visualizer_cfgs: list[VisualizerCfg] | VisualizerCfg | None = None
-    """The list of visualizer configurations. Default is None."""
+    """Visualizer settings. Default is no visualizer.
+
+    Visualizers are separate from Renderers and intended for light-weight monitoring and debugging.
+
+    This field can support multiple visualizer backends. It accepts:
+
+    * A single VisualizerCfg: One visualizer will be created
+    * A list of VisualizerCfg: Multiple visualizers will be created
+    * None or empty list: No visualizers will be created
+    """
 
     # Deprecated fields - accepted in constructor for backward compatibility
     dt: float | None = None

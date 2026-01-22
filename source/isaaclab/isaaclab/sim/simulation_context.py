@@ -21,8 +21,9 @@ import isaaclab.sim as sim_utils
 import isaaclab.sim.utils.stage as stage_utils
 from isaaclab.physics import PhysicsManager
 from isaaclab.sim.utils import create_new_stage_in_memory
-from isaaclab.visualizers import Visualizer
+from isaaclab.visualizers import NewtonVisualizerCfg, OVVisualizerCfg, RerunVisualizerCfg, Visualizer
 
+from .scene_data_providers import SceneDataProvider
 from .simulation_cfg import SimulationCfg
 from .spawners import DomeLightCfg, GroundPlaneCfg
 
@@ -122,7 +123,8 @@ class SimulationContext:
         self.physics_manager: type[PhysicsManager] = self._physics.class_type
         self.physics_manager.initialize(self)
 
-        # Initialize visualizers
+        # Initialize visualizers and scene data provider
+        self._scene_data_provider: SceneDataProvider | None = None
         self._init_visualizers()
 
         # Cache commonly-used settings (these don't change during runtime)
@@ -202,40 +204,87 @@ class SimulationContext:
         return self.physics_manager.get_physics_dt()
 
     # VISUALIZER MANAGEMENT
+    def set_scene_info(self, scene: Any) -> None:
+        """Set scene info (num_envs, env_origins) from an InteractiveScene-like object."""
+        if scene is None:
+            return
+
+        num_envs = getattr(scene, "num_envs", None)
+        if num_envs is not None:
+            self._num_envs = num_envs
+            if self._scene_data_provider is not None:
+                set_num_envs = getattr(self._scene_data_provider, "set_num_envs", None)
+                if callable(set_num_envs):
+                    set_num_envs(num_envs)
+
+        env_origins = getattr(scene, "env_origins", None)
+        if env_origins is not None:
+            self._env_origins = env_origins
+            if self._scene_data_provider is not None:
+                set_env_origins = getattr(self._scene_data_provider, "set_env_origins", None)
+                if callable(set_env_origins):
+                    set_env_origins(env_origins)
+
+    def _create_default_visualizer_configs(self, requested_visualizers: list[str]) -> list:
+        """Create default visualizer configs for requested types."""
+        default_configs = []
+        for viz_type in requested_visualizers:
+            try:
+                if viz_type == "newton":
+                    default_configs.append(NewtonVisualizerCfg())
+                elif viz_type == "rerun":
+                    default_configs.append(RerunVisualizerCfg())
+                elif viz_type == "omniverse":
+                    default_configs.append(OVVisualizerCfg())
+                else:
+                    logger.warning(
+                        f"[SimulationContext] Unknown visualizer type '{viz_type}' requested. "
+                        "Valid types: 'newton', 'rerun', 'omniverse'. Skipping."
+                    )
+            except Exception as exc:
+                logger.error(f"[SimulationContext] Failed to create default config for visualizer '{viz_type}': {exc}")
+        return default_configs
+
     def _init_visualizers(self) -> None:
         """Initialize visualizers based on config and settings."""
         self._visualizers: list[Visualizer] = []
         self._viz_dt = self.cfg.physics.dt * self.cfg.render_interval
 
-        # Determine which visualizers to create
-        viz_str = "omniverse"  # Default
-        requested = [v.strip() for v in viz_str.split(",") if v.strip()]
+        visualizer_cfgs: list = []
+        if self.cfg.visualizer_cfgs is not None:
+            visualizer_cfgs = self.cfg.visualizer_cfgs if isinstance(self.cfg.visualizer_cfgs, list) else [
+                self.cfg.visualizer_cfgs
+            ]
 
-        if len(requested) > 0:
-            # Get or create visualizer configs
-            cfg_list = self.cfg.visualizer_cfgs
-            from isaaclab_physx.visualizers import OVVisualizerCfg
-
-            type_map = {"omniverse": OVVisualizerCfg}
-            viz_cfgs = []
-            if cfg_list is None:
-                for viz_type in requested:
-                    viz_cfgs.append(type_map[viz_type]())
+        if len(visualizer_cfgs) == 0:
+            requested_visualizers_str = self.get_setting("/isaaclab/visualizer")
+            if requested_visualizers_str:
+                requested_visualizers = [v.strip() for v in requested_visualizers_str.split(",") if v.strip()]
+                visualizer_cfgs = self._create_default_visualizer_configs(requested_visualizers)
             else:
-                viz_cfgs = cfg_list if isinstance(cfg_list, list) else [cfg_list]
+                return
 
-            # Create and initialize each visualizer
-            for cfg in viz_cfgs:
-                self._visualizers.append(cfg.create_visualizer())
-                # build scene data for visualizer initialization
-                if cfg.visualizer_type in ("newton", "rerun"):
-                    scene_data = {"scene_data_provider": None}
-                elif cfg.visualizer_type == "omniverse":
-                    scene_data = {"usd_stage": self.stage, "simulation_context": self}
-                else:
-                    scene_data = {}
-                self._visualizers[-1].initialize(scene_data)
-                logger.info(f"Initialized visualizer: {type(self._visualizers[-1]).__name__}")
+        self._scene_data_provider = SceneDataProvider(
+            backend=self.cfg.physics_backend,
+            visualizer_cfgs=visualizer_cfgs,
+            stage=self.stage,
+            simulation_context=self,
+        )
+
+        # Create and initialize each visualizer
+        for cfg in visualizer_cfgs:
+            try:
+                visualizer = cfg.create_visualizer()
+                scene_data: dict[str, Any] = {"scene_data_provider": self._scene_data_provider}
+                if cfg.visualizer_type == "omniverse":
+                    scene_data["usd_stage"] = self.stage
+                    scene_data["simulation_context"] = self
+
+                visualizer.initialize(scene_data)
+                self._visualizers.append(visualizer)
+                logger.info(f"Initialized visualizer: {type(visualizer).__name__} (type: {cfg.visualizer_type})")
+            except Exception as exc:
+                logger.error(f"Failed to initialize visualizer '{cfg.visualizer_type}' ({type(cfg).__name__}): {exc}")
 
     @property
     def visualizers(self) -> list[Visualizer]:
@@ -282,6 +331,8 @@ class SimulationContext:
     def render(self, mode: int | None = None) -> None:
         """Render the scene via all active visualizers."""
         self.physics_manager.forward()
+        if self._scene_data_provider:
+            self._scene_data_provider.update()
         for viz in self._visualizers:
             if not viz.is_rendering_paused() and viz.is_running():
                 viz.step(self.get_rendering_dt(), state=None)
@@ -344,6 +395,11 @@ class SimulationContext:
             for viz in cls._instance._visualizers:
                 viz.close()
             cls._instance._visualizers.clear()
+            if cls._instance._scene_data_provider is not None:
+                close_provider = getattr(cls._instance._scene_data_provider, "close", None)
+                if callable(close_provider):
+                    close_provider()
+                cls._instance._scene_data_provider = None
 
             # Remove stage from cache
             stage_cache = UsdUtils.StageCache.Get()
