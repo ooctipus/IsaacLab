@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import itertools
 import math
+import numpy as np
 import torch
 from typing import TYPE_CHECKING
 
@@ -283,9 +284,80 @@ def newton_replicate(
     simplify_meshes: bool = True,
 ):
     """Replicate prims into a Newton ``ModelBuilder`` using a per-source mapping."""
-    from newton import ModelBuilder, solvers
+    from newton import Mesh, ModelBuilder, solvers
 
     from isaaclab.sim._impl.newton_manager import NewtonManager
+
+    def _infer_object_shape_kind(stage: Usd.Stage, root_path: str) -> str:
+        root_prim = stage.GetPrimAtPath(f"{root_path}/geometry/mesh")
+        if root_prim:
+            stack = [root_prim]
+            while stack:
+                prim = stack.pop()
+                type_name = prim.GetTypeName().lower()
+                if type_name.endswith("sphere"):
+                    return "sphere"
+                if type_name.endswith("cube"):
+                    return "cube"
+                stack.extend(list(prim.GetChildren()))
+        return "cube"
+
+    def _create_cube_mesh(half_extent: float):
+        hx = hy = hz = half_extent
+        vertices = np.array(
+            [
+                [-hx, -hy, -hz],
+                [hx, -hy, -hz],
+                [hx, hy, -hz],
+                [-hx, hy, -hz],
+                [-hx, -hy, hz],
+                [hx, -hy, hz],
+                [hx, hy, hz],
+                [-hx, hy, hz],
+            ],
+            dtype=np.float32,
+        )
+        indices = np.array(
+            [
+                0, 2, 1,
+                0, 3, 2,
+                4, 5, 6,
+                4, 6, 7,
+                0, 4, 7,
+                0, 7, 3,
+                1, 2, 6,
+                1, 6, 5,
+                0, 1, 5,
+                0, 5, 4,
+                3, 7, 6,
+                3, 6, 2,
+            ],
+            dtype=np.int32,
+        )
+        return Mesh(vertices, indices)
+
+    def _create_uv_sphere_mesh(radius: float, lat_segments: int = 16, lon_segments: int = 32):
+        vertices = []
+        indices = []
+        for lat in range(lat_segments + 1):
+            theta = math.pi * lat / lat_segments
+            sin_t = math.sin(theta)
+            cos_t = math.cos(theta)
+            for lon in range(lon_segments + 1):
+                phi = 2.0 * math.pi * lon / lon_segments
+                x = radius * sin_t * math.cos(phi)
+                y = radius * sin_t * math.sin(phi)
+                z = radius * cos_t
+                vertices.append([x, y, z])
+        for lat in range(lat_segments):
+            for lon in range(lon_segments):
+                i0 = lat * (lon_segments + 1) + lon
+                i1 = i0 + 1
+                i2 = i0 + (lon_segments + 1)
+                i3 = i2 + 1
+                indices.extend([i0, i2, i1])
+                indices.extend([i1, i2, i3])
+        return Mesh(np.array(vertices, dtype=np.float32), np.array(indices, dtype=np.int32))
 
     if positions is None:
         positions = torch.zeros((mapping.size(1), 3), device=mapping.device, dtype=torch.float32)
@@ -302,9 +374,27 @@ def newton_replicate(
     for src_path in sources:
         p = ModelBuilder(up_axis=up_axis)
         solvers.SolverMuJoCo.register_custom_attributes(p)
-        p.add_usd(stage, root_path=src_path, load_visual_shapes=True, skip_mesh_approximation=True)
-        if simplify_meshes:
-            p.approximate_meshes("convex_hull")
+        if src_path.endswith("/object"):
+            shape_kind = _infer_object_shape_kind(stage, src_path)
+            body = p.add_link(key=src_path)
+            shape_cfg = ModelBuilder.ShapeConfig(
+                mu=0.5,
+                sdf_max_resolution=64,
+                sdf_narrow_band_range=(-0.02, 0.02),
+                contact_margin=0.01,
+                density=1000.0,
+            )
+            if shape_kind == "sphere":
+                mesh = _create_uv_sphere_mesh(radius=0.05)
+            else:
+                mesh = _create_cube_mesh(half_extent=0.0375)
+            p.add_shape_mesh(body, mesh=mesh, cfg=shape_cfg, key=f"{src_path}/geometry/mesh")
+            free_joint = p.add_joint_free(child=body, key=f"{src_path}/root_joint")
+            p.add_articulation([free_joint], key=src_path)
+        else:
+            p.add_usd(stage, root_path=src_path, load_visual_shapes=False, skip_mesh_approximation=True)
+            if simplify_meshes:
+                p.approximate_meshes("convex_hull")
         protos[src_path] = p
 
     # create a separate world for each environment (heterogeneous spawning)
