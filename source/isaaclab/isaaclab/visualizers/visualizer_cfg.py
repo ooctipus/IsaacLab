@@ -27,9 +27,6 @@ class VisualizerCfg:
     visualizer_type: str | None = None
     """Type identifier (e.g., 'newton', 'rerun', 'omniverse'). Must be overridden by subclasses."""
 
-    # Note: Partial environment visualization will come later
-    # env_ids: list[Integer] = []
-
     enable_markers: bool = True
     """Enable visualization markers (debug drawing)."""
 
@@ -74,6 +71,11 @@ class VisualizerCfg:
 
         visualizer_class = get_visualizer_class(self.visualizer_type)
         if visualizer_class is None:
+            if self.visualizer_type in ("newton", "rerun"):
+                raise ImportError(
+                    f"Visualizer '{self.visualizer_type}' requires the Newton Python module and its dependencies. "
+                    "Install the Newton backend (e.g., newton package/isaaclab_newton) and retry."
+                )
             raise ValueError(
                 f"Visualizer type '{self.visualizer_type}' is not registered. "
                 "Valid types: 'newton', 'rerun', 'omniverse'."

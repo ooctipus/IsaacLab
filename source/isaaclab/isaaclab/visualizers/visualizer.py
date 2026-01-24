@@ -29,7 +29,7 @@ class Visualizer(ABC):
     @abstractmethod
     def initialize(self, scene_data: dict[str, Any] | None = None) -> None:
         """Initialize visualizer with scene data (model, state, usd_stage, etc.)."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def step(self, dt: float, state: Any | None = None) -> None:
@@ -39,22 +39,17 @@ class Visualizer(ABC):
             dt: Time step in seconds.
             state: Updated physics state (e.g., newton.State).
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def close(self) -> None:
         """Clean up resources."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def is_running(self) -> bool:
         """Check if visualizer is still running (e.g., window not closed)."""
-        pass
-
-    @abstractmethod
-    def is_stopped(self) -> bool:
-        """Check if visualizer is stopped (e.g., window closed)."""
-        pass
+        raise NotImplementedError
 
     def is_training_paused(self) -> bool:
         """Check if training is paused by visualizer controls."""
