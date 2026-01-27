@@ -107,7 +107,6 @@ def spawn_preview_surface(prim_path: str, cfg: visual_materials_cfg.PreviewSurfa
     del cfg["func"]
     for attr_name, attr_value in cfg.items():
         safe_set_attribute_on_usd_prim(prim, f"inputs:{attr_name}", attr_value, camel_case=True)
-
     return prim
 
 
