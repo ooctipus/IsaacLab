@@ -245,6 +245,21 @@ class SimulationContext:
                 logger.error(f"[SimulationContext] Failed to create default config for visualizer '{viz_type}': {exc}")
         return default_configs
 
+    def resolve_visualizer_types(self) -> list[str]:
+        """Resolve visualizer types from config or CLI settings."""
+        visualizer_cfgs = self.cfg.visualizer_cfgs
+        if visualizer_cfgs is None:
+            requested = self.get_setting("/isaaclab/visualizer")
+            return [v.strip() for v in requested.split(",") if v.strip()] if requested else []
+
+        if not isinstance(visualizer_cfgs, list):
+            visualizer_cfgs = [visualizer_cfgs]
+        return [cfg.visualizer_type for cfg in visualizer_cfgs if getattr(cfg, "visualizer_type", None)]
+
+    def initialize_visualizers(self) -> None:
+        """Initialize visualizers from SimulationCfg.visualizer_cfgs."""
+        self._init_visualizers()
+
     def _init_visualizers(self) -> None:
         """Initialize visualizers based on config and settings."""
         self._visualizers: list[Visualizer] = []
@@ -257,12 +272,10 @@ class SimulationContext:
             ]
 
         if len(visualizer_cfgs) == 0:
-            requested_visualizers_str = self.get_setting("/isaaclab/visualizer")
-            if requested_visualizers_str:
-                requested_visualizers = [v.strip() for v in requested_visualizers_str.split(",") if v.strip()]
-                visualizer_cfgs = self._create_default_visualizer_configs(requested_visualizers)
-            else:
+            requested_visualizers = self.resolve_visualizer_types()
+            if not requested_visualizers:
                 return
+            visualizer_cfgs = self._create_default_visualizer_configs(requested_visualizers)
 
         self._scene_data_provider = SceneDataProvider(
             backend=self.cfg.physics_backend,
