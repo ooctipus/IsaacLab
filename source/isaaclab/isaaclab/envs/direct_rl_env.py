@@ -11,6 +11,7 @@ import inspect
 import logging
 import math
 import numpy as np
+import time
 import torch
 import weakref
 from abc import abstractmethod
@@ -185,6 +186,9 @@ class DirectRLEnv(gym.Env):
 
         # allocate dictionary to store metrics
         self.extras = {}
+        # running totals for performance metrics (ms)
+        self._sim_time_ms_total = 0.0
+        self._render_time_ms_total = 0.0
 
         # initialize data and constants
         # -- counter for simulation steps
@@ -301,6 +305,9 @@ class DirectRLEnv(gym.Env):
         # reset state of scene
         indices = torch.arange(self.num_envs, dtype=torch.int64, device=self.device)
         self._reset_idx(indices)
+        # reset running totals on full reset
+        self._sim_time_ms_total = 0.0
+        self._render_time_ms_total = 0.0
 
         # update articulation kinematics
         self.scene.write_data_to_sim()
@@ -353,6 +360,8 @@ class DirectRLEnv(gym.Env):
         # check if we need to do rendering within the physics loop
         # note: checked here once to avoid multiple checks within the loop
         is_rendering = self.sim.has_gui() or self.sim.has_rtx_sensors()
+        sim_time_ms = 0.0
+        render_time_ms = 0.0
 
         # perform physics stepping
         for _ in range(self.cfg.decimation):
@@ -364,12 +373,16 @@ class DirectRLEnv(gym.Env):
                 self.scene.write_data_to_sim()
             # simulate
             with Timer(name="simulate", msg="Newton simulation step took:", enable=True, format="us"):
+                start_time = time.perf_counter()
                 self.sim.step(render=False)
+                sim_time_ms += (time.perf_counter() - start_time) * 1000.0
             # render between steps only if the GUI or an RTX sensor needs it
             # note: we assume the render interval to be the shortest accepted rendering interval.
             #    If a camera needs rendering at a faster frequency, this will lead to unexpected behavior.
             if self._sim_step_counter % self.cfg.sim.render_interval == 0 and is_rendering:
+                start_time = time.perf_counter()
                 self.sim.render()
+                render_time_ms += (time.perf_counter() - start_time) * 1000.0
             # update buffers at sim dt
             self.scene.update(dt=self.physics_dt)
 
@@ -406,7 +419,20 @@ class DirectRLEnv(gym.Env):
             if self.cfg.observation_noise_model:
                 self.obs_buf["policy"] = self._observation_noise_model(self.obs_buf["policy"])
 
-            # return observations, rewards, resets and extras
+        # update running totals and log per-step + totals
+        self._sim_time_ms_total += sim_time_ms
+        self._render_time_ms_total += render_time_ms
+        log = self.extras.setdefault("log", {})
+        log.update(
+            {
+                "Metrics/sim_time_ms": sim_time_ms,
+                "Metrics/render_time_ms": render_time_ms,
+                "Metrics/sim_time_ms_total": self._sim_time_ms_total,
+                "Metrics/render_time_ms_total": self._render_time_ms_total,
+            }
+        )
+
+        # return observations, rewards, resets and extras
         return self.obs_buf, self.reward_buf, self.reset_terminated, self.reset_time_outs, self.extras
 
     @staticmethod
