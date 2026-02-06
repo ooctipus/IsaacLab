@@ -9,6 +9,7 @@ from __future__ import annotations
 import gymnasium as gym
 import math
 import numpy as np
+import time
 import torch
 from collections.abc import Sequence
 from typing import Any, ClassVar
@@ -80,6 +81,9 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         super().__init__(cfg=cfg)
         # store the render mode
         self.render_mode = render_mode
+        # running totals for performance metrics (ms)
+        self._sim_time_ms_total = 0.0
+        self._render_time_ms_total = 0.0
 
         # initialize data and constants
         # -- set the framerate of the gym video recorder wrapper so that the playback speed of the produced video matches the simulation
@@ -176,6 +180,8 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         # check if we need to do rendering within the physics loop
         # note: checked here once to avoid multiple checks within the loop
         is_rendering = self.sim.has_gui() or self.sim.has_rtx_sensors()
+        sim_time_ms = 0.0
+        render_time_ms = 0.0
 
         # perform physics stepping
         for _ in range(self.cfg.decimation):
@@ -185,13 +191,17 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
             # set actions into simulator
             self.scene.write_data_to_sim()
             # simulate
+            start_time = time.perf_counter()
             self.sim.step(render=False)
+            sim_time_ms += (time.perf_counter() - start_time) * 1000.0
             self.recorder_manager.record_post_physics_decimation_step()
             # render between steps only if the GUI or an RTX sensor needs it
             # note: we assume the render interval to be the shortest accepted rendering interval.
             #    If a camera needs rendering at a faster frequency, this will lead to unexpected behavior.
             if self._sim_step_counter % self.cfg.sim.render_interval == 0 and is_rendering:
+                start_time = time.perf_counter()
                 self.sim.render()
+                render_time_ms += (time.perf_counter() - start_time) * 1000.0
             # update buffers at sim dt
             self.scene.update(dt=self.physics_dt)
 
@@ -235,6 +245,19 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         # -- compute observations
         # note: done after reset to get the correct observations for reset envs
         self.obs_buf = self.observation_manager.compute(update_history=True)
+
+        # update running totals and log per-step + totals
+        self._sim_time_ms_total += sim_time_ms
+        self._render_time_ms_total += render_time_ms
+        log = self.extras.setdefault("log", {})
+        log.update(
+            {
+                "Metrics/sim_time_ms": sim_time_ms,
+                "Metrics/render_time_ms": render_time_ms,
+                "Metrics/sim_time_ms_total": self._sim_time_ms_total,
+                "Metrics/render_time_ms_total": self._render_time_ms_total,
+            }
+        )
 
         # return observations, rewards, resets and extras
         return self.obs_buf, self.reward_buf, self.reset_terminated, self.reset_time_outs, self.extras
@@ -351,6 +374,14 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         Args:
             env_ids: List of environment ids which must be reset
         """
+        # reset running totals only on full reset (all envs)
+        if isinstance(env_ids, torch.Tensor):
+            is_full_reset = env_ids.numel() == self.num_envs
+        else:
+            is_full_reset = len(env_ids) == self.num_envs
+        if is_full_reset:
+            self._sim_time_ms_total = 0.0
+            self._render_time_ms_total = 0.0
         # update the curriculum for environments that need a reset
         self.curriculum_manager.compute(env_ids=env_ids)
         # reset the internal buffers of the scene elements
