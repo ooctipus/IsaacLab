@@ -308,14 +308,24 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg, agent_cfg: RslRlOnPolic
         time_scale = _detect_perf_time_scale(collection_time, total_fps, steps_per_iter)
         if collection_time is not None:
             collection_time_ms = collection_time * time_scale
+            env_step_time_ms = collection_time_ms / steps_per_iter
             with np.errstate(divide="ignore", invalid="ignore"):
                 collection_fps = (1.0 / (collection_time_ms / 1000.0)) * steps_per_iter
+            rl_training_times["Environment only step time"] = env_step_time_ms.tolist()
             rl_training_times["Collection Time"] = collection_time_ms.tolist()
             rl_training_times["Collection FPS"] = collection_fps.tolist()
         if learning_time is not None:
             rl_training_times["Learning Time"] = (learning_time * time_scale).tolist()
         if total_fps is not None:
             rl_training_times["Total FPS"] = total_fps.tolist()
+
+        steps_processed = None
+        if collection_time is not None:
+            steps_processed = int(steps_per_iter * len(collection_time))
+        elif agent_cfg.max_iterations:
+            steps_processed = int(steps_per_iter * agent_cfg.max_iterations)
+        if steps_processed is not None and hasattr(benchmark, "store_metadata_item"):
+            benchmark.store_metadata_item("num_frames", steps_processed)
 
         # log additional metrics to benchmark services
         log_app_start_time(benchmark, (app_start_time_end - app_start_time_begin) / 1e6)

@@ -153,10 +153,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg, agent_cfg: dict):
 
     # process distributed
     world_rank = 0
+    world_size = int(os.getenv("WORLD_SIZE", 1))
     if args_cli.distributed:
         env_cfg.sim.device = f"cuda:{app_launcher.local_rank}"
         agent_cfg["params"]["config"]["device"] = f"cuda:{app_launcher.local_rank}"
         world_rank = app_launcher.global_rank
+        world_size = int(os.getenv("WORLD_SIZE", 1))
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rl_games", agent_cfg["params"]["config"]["name"])
@@ -284,6 +286,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg, agent_cfg: dict):
             "Environment + Inference FPS": log_data["performance/step_inference_fps"],
             "Environment + Inference + Policy update FPS": log_data["performance/step_inference_rl_update_fps"],
         }
+
+        horizon_length = agent_cfg.get("params", {}).get("config", {}).get("horizon_length")
+        steps_processed = None
+        if horizon_length is not None:
+            steps_per_iter = env.unwrapped.num_envs * int(horizon_length) * world_size
+            steps_processed = steps_per_iter * len(log_data["performance/step_time"])
+        if steps_processed is not None and hasattr(benchmark, "store_metadata_item"):
+            benchmark.store_metadata_item("num_frames", int(steps_processed))
 
         # log additional metrics to benchmark services
         log_app_start_time(benchmark, (app_start_time_end - app_start_time_begin) / 1e6)
