@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
+import textwrap
 import contextlib
 import json
 import os
@@ -74,6 +75,16 @@ class KitlessBenchmark:
             "type": measurement.__class__.__name__,
         }
         self._phases[phase][measurement.name] = entry
+
+    def store_metadata_item(self, name: str, data: Any) -> None:
+        items = self.workflow_metadata.setdefault("metadata", [])
+        if not isinstance(items, list):
+            return
+        for item in items:
+            if isinstance(item, dict) and item.get("name") == name:
+                item["data"] = data
+                return
+        items.append({"name": name, "data": data})
 
     def store_measurements(self) -> None:
         # no-op for kitless; summary collected on stop()
@@ -172,6 +183,7 @@ class KitlessBenchmark:
     def _pick_throughput_value(self) -> float | None:
         preferred = [
             "Mean Environment step effective FPS",
+            "Mean Environment only FPS",
             "Mean Collection FPS",
             "Mean Total FPS",
             "Mean Environment step FPS",
@@ -190,6 +202,7 @@ class KitlessBenchmark:
 
     def _pick_avg_time_ms(self, throughput_value: float | None) -> float | None:
         preferred = [
+            "Mean Environment only step time",
             "Mean Environment step times",
             "Mean Env Step Time",
             "Mean Simulate Time",
@@ -220,43 +233,127 @@ class KitlessBenchmark:
 
     def _print_summary(self, payload: dict[str, Any]) -> None:
         width = 78
+        metadata = payload.get("metadata", {})
         header = [
             ("workflow_name", payload.get("benchmark_name")),
             ("run_id", payload.get("run_id")),
             ("task", payload.get("canonical", {}).get("task")),
+            ("seed", metadata.get("seed")),
             ("num_envs", payload.get("canonical", {}).get("num_envs")),
+            ("max_iterations", metadata.get("max_iterations")),
             ("commit", payload.get("canonical", {}).get("commit")),
             ("branch", payload.get("canonical", {}).get("branch")),
             ("gpu_device_name", payload.get("system", {}).get("gpu_device_name")),
         ]
 
-        print("\n" + "-" * width)
-        print("Summary Report (kitless mode)".center(width))
-        print("-" * width)
+        print()
+        self._print_box_separator(width)
+        self._print_box_line("Summary Report (kitless mode)".center(width - 4), width)
+        self._print_box_separator(width)
         for key, value in header:
             if value is not None:
-                print(f"{key}: {value}")
-        print("-" * width)
+                self._print_box_line(f"{key}: {value}", width)
+        self._print_box_separator(width)
+
+        notes: list[str] = []
+        runtime_metrics = self._phases.get("runtime") or self._phases.get("sim_runtime") or {}
+        if runtime_metrics:
+            mean_fps = self._get_scalar_metric(
+                runtime_metrics,
+                [
+                    "Mean Total FPS",
+                    "Mean Collection FPS",
+                    "Mean Environment step effective FPS",
+                    "Mean Environment step FPS",
+                ],
+            )
+            rendering_fps = self._get_scalar_metric(runtime_metrics, ["Mean Rendering FPS"])
+            frametime_available = any(
+                key in runtime_metrics for key in ("App_Update", "Physics", "Render")
+            )
+            mean_fps_label = self._format_value(mean_fps, unit="FPS")
+            rendering_fps_label = self._format_value(rendering_fps, unit="FPS", fallback="n/a")
+            self._print_box_line("Phase: sim_runtime", width)
+            self._print_box_line(f"Mean FPS: {mean_fps_label}", width)
+            self._print_box_line(f"Rendering FPS: {rendering_fps_label}", width)
+            frametime_label = "Frametimes (ms): n/a" if not frametime_available else "Frametimes (ms): available"
+            if not frametime_available or rendering_fps is None:
+                frametime_label = f"{frametime_label} (see Notes)"
+            self._print_box_line(frametime_label, width)
+            self._print_box_separator(width)
+            if not frametime_available or rendering_fps is None:
+                notes.append(
+                    "Kitless runs do not provide App_Update/Physics/Render breakdowns or Rendering FPS yet."
+                )
+
+        startup_metrics = self._phases.get("startup") or {}
+        if startup_metrics:
+            app_launch = self._get_scalar_metric(startup_metrics, ["App Launch Time"])
+            python_imports = self._get_scalar_metric(startup_metrics, ["Python Imports Time"])
+            total_start = self._get_scalar_metric(startup_metrics, ["Total Start Time (Launch to Train)"])
+            app_launch_label = self._format_value(app_launch, unit="ms")
+            python_imports_label = self._format_value(python_imports, unit="ms")
+            total_start_label = self._format_value(total_start, unit="ms")
+            self._print_box_line("Phase: startup", width)
+            self._print_box_line(f"App Launch Time: {app_launch_label}", width)
+            self._print_box_line(f"Python Imports Time: {python_imports_label}", width)
+            self._print_box_line(f"Total Start Time (Launch to Train): {total_start_label}", width)
+            self._print_box_separator(width)
 
         for phase, metrics in self._phases.items():
             if not metrics:
                 continue
-            print(f"Phase: {phase}")
-            for name, entry in sorted(metrics.items()):
+            if phase in {"sim_runtime", "startup"}:
+                continue
+            if phase == "train":
+                max_rewards = self._get_scalar_metric(metrics, ["Max Rewards"])
+                max_episode_len = self._get_scalar_metric(metrics, ["Max Episode Lengths"])
+                self._print_box_line("Phase: train", width)
+                if max_rewards is not None:
+                    self._print_box_line(f"Max Rewards: {self._format_scalar(max_rewards)} float", width)
+                if max_episode_len is not None:
+                    self._print_box_line(
+                        f"Max Episode Lengths: {self._format_scalar(max_episode_len)} float", width
+                    )
+                self._print_box_separator(width)
+                continue
+            self._print_box_line(f"Phase: {phase}", width)
+            if phase == "runtime":
+                runtime_rows = self._summarize_runtime_metrics(metrics)
+                for row in runtime_rows:
+                    self._print_box_line(row, width)
+                self._print_box_separator(width)
+                notes.append(
+                    "Runtime section summarizes min/mean/max from training logs; kit output may show a shorter subset."
+                )
+                continue
+            metric_items = list(metrics.items())
+            metric_items.sort(key=lambda item: item[0])
+            for name, entry in metric_items:
                 value = entry.get("value")
                 unit = self._format_unit(name, entry.get("unit"))
                 if isinstance(value, (int, float, str)):
+                    if isinstance(value, (int, float)):
+                        value = self._format_scalar(value)
                     suffix = f" {unit}" if unit else ""
-                    print(f"{name}: {value}{suffix}")
-            print("-" * width)
+                    self._print_box_line(f"{name}: {value}{suffix}", width)
+            self._print_box_separator(width)
 
         system = payload.get("system", {})
         if system:
-            print("System:")
+            self._print_box_line("System:", width)
             for key, value in system.items():
                 if value is not None:
-                    print(f"{key}: {value}")
-            print("-" * width)
+                    if isinstance(value, (int, float)):
+                        value = self._format_scalar(value)
+                    self._print_box_line(f"{key}: {value}", width)
+            self._print_box_separator(width)
+
+        if notes:
+            self._print_box_line("Notes:", width)
+            for note in notes:
+                self._print_box_wrapped_list_item(note, width)
+            self._print_box_separator(width)
 
     def _format_unit(self, name: str, unit: str | None) -> str | None:
         if unit is None:
@@ -268,6 +365,110 @@ class KitlessBenchmark:
         if unit == "ms" and "FPS" in name:
             return "FPS"
         return unit
+
+    def _get_scalar_metric(self, metrics: dict[str, dict[str, Any]], keys: list[str]) -> float | None:
+        for key in keys:
+            entry = metrics.get(key)
+            if entry and isinstance(entry.get("value"), (int, float)):
+                return entry["value"]
+        return None
+
+    def _format_value(self, value: float | None, unit: str, fallback: str | None = None) -> str:
+        if value is None:
+            return fallback or "n/a"
+        return f"{self._format_scalar(value)} {unit}"
+
+    def _format_scalar(self, value: float | int) -> str:
+        if isinstance(value, float):
+            return f"{value:.2f}"
+        return str(value)
+
+    def _runtime_metric_sort_key(self, item: tuple[str, dict[str, Any]]) -> tuple[int, str]:
+        name = item[0]
+        if name.startswith("Min "):
+            return (0, name)
+        if name.startswith("Max "):
+            return (1, name)
+        if name.startswith("Mean "):
+            return (2, name)
+        return (3, name)
+
+    def _summarize_runtime_metrics(self, metrics: dict[str, dict[str, Any]]) -> list[str]:
+        series: dict[str, dict[str, float]] = {}
+        units: dict[str, str | None] = {}
+        for name, entry in metrics.items():
+            if not isinstance(entry, dict):
+                continue
+            value = entry.get("value")
+            if not isinstance(value, (int, float)):
+                continue
+            unit = self._format_unit(name, entry.get("unit"))
+            if name.startswith("Min "):
+                base = name[len("Min ") :]
+                series.setdefault(base, {})["min"] = float(value)
+                units.setdefault(base, unit)
+            elif name.startswith("Max "):
+                base = name[len("Max ") :]
+                series.setdefault(base, {})["max"] = float(value)
+                units.setdefault(base, unit)
+            elif name.startswith("Mean "):
+                base = name[len("Mean ") :]
+                series.setdefault(base, {})["mean"] = float(value)
+                units.setdefault(base, unit)
+
+        category_order = ["Collection", "Learning", "Step Times", "Throughput", "Other"]
+        categorized: dict[str, list[str]] = {key: [] for key in category_order}
+        for base, stats in series.items():
+            label = base
+            unit = units.get(base)
+            unit_suffix = f" {unit}" if unit else ""
+            min_val = self._format_scalar(stats.get("min", 0.0))
+            mean_val = self._format_scalar(stats.get("mean", 0.0))
+            max_val = self._format_scalar(stats.get("max", 0.0))
+            row = f"{label} (min/mean/max): {min_val} / {mean_val} / {max_val}{unit_suffix}"
+
+            if "Collection" in base:
+                categorized["Collection"].append(row)
+            elif "Learning" in base:
+                categorized["Learning"].append(row)
+            elif "step time" in base:
+                categorized["Step Times"].append(row)
+            elif "FPS" in base or "Throughput" in base:
+                categorized["Throughput"].append(row)
+            else:
+                categorized["Other"].append(row)
+
+        rows: list[str] = []
+        for category in category_order:
+            if not categorized[category]:
+                continue
+            rows.append(f"{category}:")
+            rows.extend(f"  {entry}" for entry in categorized[category])
+        if not rows:
+            rows.append("No runtime metrics available.")
+        return rows
+
+    def _print_box_separator(self, width: int) -> None:
+        print("|" + "-" * (width - 2) + "|")
+
+    def _print_box_line(self, text: str, width: int) -> None:
+        inner_width = width - 4
+        if not text:
+            print(f"| {' ' * inner_width} |")
+            return
+        for line in textwrap.wrap(text, width=inner_width, break_long_words=False, break_on_hyphens=False):
+            print(f"| {line.ljust(inner_width)} |")
+
+    def _print_box_wrapped_list_item(self, text: str, width: int, bullet: str = "- ") -> None:
+        inner_width = width - 4
+        wrap_width = max(inner_width - len(bullet), 1)
+        lines = textwrap.wrap(text, width=wrap_width, break_long_words=False, break_on_hyphens=False)
+        if not lines:
+            self._print_box_line(bullet.strip(), width)
+            return
+        self._print_box_line(f"{bullet}{lines[0]}", width)
+        for line in lines[1:]:
+            self._print_box_line(" " * len(bullet) + line, width)
 
     def _write_json(self, payload: dict[str, Any]) -> None:
         if not self.output_dir:
