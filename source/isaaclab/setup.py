@@ -38,7 +38,7 @@ INSTALL_REQUIRES = [
     "mujoco>=3.4.0.dev839962392",
     "mujoco-warp>=0.0.1",
     "cbor2>=5.7.0",
-    "newton>=0.2.1",
+    "newton @ git+https://github.com/newton-physics/newton.git@d435c418b6510f628fbb613736e2cfa4ad7968f3",
     "imgui-bundle>=1.92.0",
     "PyOpenGL-accelerate==3.1.10",
     "matplotlib>=3.10.3",  # minimum version for Python 3.12 support
