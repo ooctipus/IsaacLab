@@ -9,8 +9,16 @@ import importlib
 import os
 import subprocess
 
-from isaacsim.benchmark.services import BaseIsaacBenchmark
-from isaacsim.benchmark.services.metrics.measurements import DictMeasurement, ListMeasurement, SingleMeasurement
+try:
+    from isaacsim.benchmark.services import BaseIsaacBenchmark
+    from isaacsim.benchmark.services.metrics.measurements import DictMeasurement, ListMeasurement, SingleMeasurement
+except ModuleNotFoundError:
+    from scripts.benchmarks.kitless_reporter import (
+        DictMeasurement,
+        KitlessBenchmark as BaseIsaacBenchmark,
+        ListMeasurement,
+        SingleMeasurement,
+    )
 from tensorboard.backend.event_processing import event_accumulator
 
 
@@ -228,7 +236,11 @@ def get_git_commit_from_module(module_name):
     module_path = spec.origin
     repo_path = os.path.abspath(os.path.join(module_path, ".."))
     try:
-        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_path).decode().strip()
+        commit = (
+            subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_path, stderr=subprocess.DEVNULL)
+            .decode()
+            .strip()
+        )
         return commit
     except Exception:
         return None
@@ -241,7 +253,13 @@ def get_git_branch_from_module(module_name):
     module_path = spec.origin
     repo_path = os.path.abspath(os.path.join(module_path, ".."))
     try:
-        branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_path).decode().strip()
+        branch = (
+            subprocess.check_output(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_path, stderr=subprocess.DEVNULL
+            )
+            .decode()
+            .strip()
+        )
         return branch
     except Exception:
         return None
