@@ -56,19 +56,28 @@ app_start_time_end = time.perf_counter_ns()
 
 """Rest everything follows."""
 
-# enable benchmarking extension
-from isaacsim.core.utils.extensions import enable_extension
+try:
+    # enable benchmarking extension (Isaac Sim)
+    from isaacsim.core.utils.extensions import enable_extension
+    import carb
+    from isaacsim.benchmark.services import BaseIsaacBenchmark as _IsaacBenchmark
 
-enable_extension("isaacsim.benchmark.services")
+    _ISAACSIM_BENCHMARK_AVAILABLE = True
+except ModuleNotFoundError:
+    _ISAACSIM_BENCHMARK_AVAILABLE = False
 
-# Set the benchmark settings according to the inputs
-import carb
+if _ISAACSIM_BENCHMARK_AVAILABLE and simulation_app is not None:
+    BaseIsaacBenchmark = _IsaacBenchmark
+    _BENCHMARK_SERVICES_AVAILABLE = True
+    enable_extension("isaacsim.benchmark.services")
+    # Set the benchmark settings according to the inputs
+    settings = carb.settings.get_settings()
+    settings.set("/exts/isaacsim.benchmark.services/metrics/metrics_output_folder", args_cli.output_folder)
+    settings.set("/exts/isaacsim.benchmark.services/metrics/randomize_filename_prefix", True)
+else:
+    from scripts.benchmarks.kitless_reporter import KitlessBenchmark as BaseIsaacBenchmark
 
-settings = carb.settings.get_settings()
-settings.set("/exts/isaacsim.benchmark.services/metrics/metrics_output_folder", args_cli.output_folder)
-settings.set("/exts/isaacsim.benchmark.services/metrics/randomize_filename_prefix", True)
-
-from isaacsim.benchmark.services import BaseIsaacBenchmark
+    _BENCHMARK_SERVICES_AVAILABLE = False
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
@@ -104,9 +113,10 @@ imports_time_end = time.perf_counter_ns()
 
 
 # Create the benchmark
-benchmark = BaseIsaacBenchmark(
-    benchmark_name="benchmark_non_rl",
-    workflow_metadata={
+benchmark_backend = args_cli.benchmark_backend if _BENCHMARK_SERVICES_AVAILABLE else "kitless"
+benchmark_kwargs = {
+    "benchmark_name": "benchmark_non_rl",
+    "workflow_metadata": {
         "metadata": [
             {"name": "task", "data": args_cli.task},
             {"name": "seed", "data": args_cli.seed},
@@ -117,8 +127,11 @@ benchmark = BaseIsaacBenchmark(
             {"name": "Newton Info", "data": get_newton_version()},
         ]
     },
-    backend_type=args_cli.benchmark_backend,
-)
+    "backend_type": benchmark_backend,
+}
+if not _BENCHMARK_SERVICES_AVAILABLE:
+    benchmark_kwargs["output_dir"] = args_cli.output_folder
+benchmark = BaseIsaacBenchmark(**benchmark_kwargs)
 
 
 @hydra_task_config(args_cli.task, None)
@@ -165,7 +178,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg, agent_cfg: dict):
     num_frames = 0
     # log frame times
     step_times = []
-    while simulation_app.is_running():
+    if simulation_app is None:
+        app_running = True
+    else:
+        app_running = simulation_app.is_running()
+    while app_running:
         while num_frames < args_cli.num_frames:
             # get upper and lower bounds of action space, sample actions randomly on this interval
             action_high = 1
@@ -218,4 +235,5 @@ if __name__ == "__main__":
     # run the main function
     main()
     # close sim app
-    simulation_app.close()
+    if simulation_app is not None:
+        simulation_app.close()

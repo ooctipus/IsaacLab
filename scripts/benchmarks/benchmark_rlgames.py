@@ -32,6 +32,7 @@ parser.add_argument(
     choices=["LocalLogMetrics", "JSONFileMetrics", "OsmoKPIFile", "OmniPerfKPIFile"],
     help="Benchmarking backend options, defaults OmniPerfKPIFile",
 )
+parser.add_argument("--output_folder", type=str, default=None, help="Output folder for the benchmark.")
 
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
@@ -54,11 +55,23 @@ app_start_time_end = time.perf_counter_ns()
 
 """Rest everything follows."""
 
-# enable benchmarking extension
-from isaacsim.core.utils.extensions import enable_extension
+try:
+    # enable benchmarking extension (Isaac Sim)
+    from isaacsim.core.utils.extensions import enable_extension
+    from isaacsim.benchmark.services import BaseIsaacBenchmark as _IsaacBenchmark
 
-enable_extension("isaacsim.benchmark.services")
-from isaacsim.benchmark.services import BaseIsaacBenchmark
+    _ISAACSIM_BENCHMARK_AVAILABLE = True
+except ModuleNotFoundError:
+    _ISAACSIM_BENCHMARK_AVAILABLE = False
+
+if _ISAACSIM_BENCHMARK_AVAILABLE and simulation_app is not None:
+    BaseIsaacBenchmark = _IsaacBenchmark
+    _BENCHMARK_SERVICES_AVAILABLE = True
+    enable_extension("isaacsim.benchmark.services")
+else:
+    from scripts.benchmarks.kitless_reporter import KitlessBenchmark as BaseIsaacBenchmark
+
+    _BENCHMARK_SERVICES_AVAILABLE = False
 
 imports_time_begin = time.perf_counter_ns()
 
@@ -107,9 +120,10 @@ torch.backends.cudnn.benchmark = False
 
 
 # Create the benchmark
-benchmark = BaseIsaacBenchmark(
-    benchmark_name="benchmark_rlgames_train",
-    workflow_metadata={
+benchmark_backend = args_cli.benchmark_backend if _BENCHMARK_SERVICES_AVAILABLE else "kitless"
+benchmark_kwargs = {
+    "benchmark_name": "benchmark_rlgames_train",
+    "workflow_metadata": {
         "metadata": [
             {"name": "task", "data": args_cli.task},
             {"name": "seed", "data": args_cli.seed},
@@ -117,8 +131,11 @@ benchmark = BaseIsaacBenchmark(
             {"name": "max_iterations", "data": args_cli.max_iterations},
         ]
     },
-    backend_type=args_cli.benchmark_backend,
-)
+    "backend_type": benchmark_backend,
+}
+if not _BENCHMARK_SERVICES_AVAILABLE:
+    benchmark_kwargs["output_dir"] = args_cli.output_folder
+benchmark = BaseIsaacBenchmark(**benchmark_kwargs)
 
 
 @hydra_task_config(args_cli.task, "rl_games_cfg_entry_point")
@@ -227,11 +244,42 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg, agent_cfg: dict):
         tensorboard_log_dir = os.path.join(log_root_path, log_dir, "summaries")
         log_data = parse_tf_logs(tensorboard_log_dir)
 
+        def _detect_step_time_scale(step_time: list | np.ndarray, step_fps: list | np.ndarray):
+            """Detect whether step times are in seconds or milliseconds.
+
+            Returns a scale factor to convert raw values to milliseconds.
+            """
+            override = os.getenv("RL_GAMES_STEP_TIME_UNIT", "").strip().lower()
+            if override in {"ms", "millis", "milliseconds"}:
+                return 1.0
+            if override in {"s", "sec", "secs", "seconds"}:
+                return 1000.0
+            times = np.array(step_time, dtype=float)
+            fps = np.array(step_fps, dtype=float)
+            valid = (times > 0) & np.isfinite(times) & (fps > 0) & np.isfinite(fps)
+            if not np.any(valid):
+                return 1000.0
+            median_time = float(np.median(times[valid]))
+            median_fps = float(np.median(fps[valid]))
+            if median_fps <= 0:
+                return 1000.0
+            diff_seconds = abs((1.0 / median_time) - median_fps)
+            diff_ms = abs((1000.0 / median_time) - median_fps)
+            if diff_ms < diff_seconds:
+                return 1.0
+            return 1000.0
+
+        time_scale = _detect_step_time_scale(log_data["performance/step_time"], log_data["performance/step_fps"])
+
         # prepare RL timing dict
         rl_training_times = {
-            "Environment only step time": log_data["performance/step_time"],
-            "Environment + Inference step time": log_data["performance/step_inference_time"],
-            "Environment + Inference + Policy update time": log_data["performance/rl_update_time"],
+            "Environment only step time": (np.array(log_data["performance/step_time"]) * time_scale).tolist(),
+            "Environment + Inference step time": (
+                np.array(log_data["performance/step_inference_time"]) * time_scale
+            ).tolist(),
+            "Environment + Inference + Policy update time": (
+                np.array(log_data["performance/rl_update_time"]) * time_scale
+            ).tolist(),
             "Environment only FPS": log_data["performance/step_fps"],
             "Environment + Inference FPS": log_data["performance/step_inference_fps"],
             "Environment + Inference + Policy update FPS": log_data["performance/step_inference_rl_update_fps"],
@@ -258,4 +306,5 @@ if __name__ == "__main__":
     # run the main function
     main()
     # close sim app
-    simulation_app.close()
+    if simulation_app is not None:
+        simulation_app.close()

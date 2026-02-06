@@ -97,19 +97,28 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 
 imports_time_end = time.perf_counter_ns()
 
-from isaacsim.core.utils.extensions import enable_extension
+try:
+    # enable benchmarking extension (Isaac Sim)
+    from isaacsim.core.utils.extensions import enable_extension
+    import carb
+    from isaacsim.benchmark.services import BaseIsaacBenchmark as _IsaacBenchmark
 
-enable_extension("isaacsim.benchmark.services")
+    _ISAACSIM_BENCHMARK_AVAILABLE = True
+except ModuleNotFoundError:
+    _ISAACSIM_BENCHMARK_AVAILABLE = False
 
-# Set the benchmark settings according to the inputs
-import carb
+if _ISAACSIM_BENCHMARK_AVAILABLE and simulation_app is not None:
+    BaseIsaacBenchmark = _IsaacBenchmark
+    _BENCHMARK_SERVICES_AVAILABLE = True
+    enable_extension("isaacsim.benchmark.services")
+    # Set the benchmark settings according to the inputs
+    settings = carb.settings.get_settings()
+    settings.set("/exts/isaacsim.benchmark.services/metrics/metrics_output_folder", args_cli.output_folder)
+    settings.set("/exts/isaacsim.benchmark.services/metrics/randomize_filename_prefix", True)
+else:
+    from scripts.benchmarks.kitless_reporter import KitlessBenchmark as BaseIsaacBenchmark
 
-settings = carb.settings.get_settings()
-settings.set("/exts/isaacsim.benchmark.services/metrics/metrics_output_folder", args_cli.output_folder)
-settings.set("/exts/isaacsim.benchmark.services/metrics/randomize_filename_prefix", True)
-
-
-from isaacsim.benchmark.services import BaseIsaacBenchmark
+    _BENCHMARK_SERVICES_AVAILABLE = False
 
 from scripts.benchmarks.utils import (
     get_isaaclab_version,
@@ -135,9 +144,10 @@ torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
 
 # Create the benchmark
-benchmark = BaseIsaacBenchmark(
-    benchmark_name="benchmark_rsl_rl_train",
-    workflow_metadata={
+benchmark_backend = args_cli.benchmark_backend if _BENCHMARK_SERVICES_AVAILABLE else "kitless"
+benchmark_kwargs = {
+    "benchmark_name": "benchmark_rsl_rl_train",
+    "workflow_metadata": {
         "metadata": [
             {"name": "task", "data": args_cli.task},
             {"name": "seed", "data": args_cli.seed},
@@ -148,8 +158,11 @@ benchmark = BaseIsaacBenchmark(
             {"name": "Newton Info", "data": get_newton_version()},
         ],
     },
-    backend_type=args_cli.benchmark_backend,
-)
+    "backend_type": benchmark_backend,
+}
+if not _BENCHMARK_SERVICES_AVAILABLE:
+    benchmark_kwargs["output_dir"] = args_cli.output_folder
+benchmark = BaseIsaacBenchmark(**benchmark_kwargs)
 
 
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
@@ -249,20 +262,60 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg, agent_cfg: RslRlOnPolic
         # parse tensorboard file stats
         log_data = parse_tf_logs(log_dir)
 
-        # prepare RL timing dict
-        collection_fps = (
-            1
-            / (np.array(log_data["Perf/collection time"]))
-            * env.unwrapped.num_envs
-            * agent_cfg.num_steps_per_env
-            * world_size
-        )
-        rl_training_times = {
-            "Collection Time": (np.array(log_data["Perf/collection time"]) / 1000).tolist(),
-            "Learning Time": (np.array(log_data["Perf/learning_time"]) / 1000).tolist(),
-            "Collection FPS": collection_fps.tolist(),
-            "Total FPS": log_data["Perf/total_fps"] * world_size,
-        }
+        def _get_series(keys: list[str]):
+            for key in keys:
+                if key in log_data:
+                    return np.array(log_data[key])
+            return None
+
+        def _detect_perf_time_scale(raw_times: np.ndarray | None, total_fps: np.ndarray | None, steps_per_iter: int):
+            """Detect whether perf times are in seconds or milliseconds.
+
+            Returns a scale factor to convert raw values to milliseconds.
+            """
+            override = os.getenv("RSL_RL_PERF_TIME_UNIT", "").strip().lower()
+            if override in {"ms", "millis", "milliseconds"}:
+                return 1.0
+            if override in {"s", "sec", "secs", "seconds"}:
+                return 1000.0
+            if raw_times is None or total_fps is None:
+                return 1000.0
+            raw = raw_times
+            total = total_fps
+            valid = (raw > 0) & np.isfinite(raw) & (total > 0) & np.isfinite(total)
+            if not np.any(valid):
+                return 1000.0
+            with np.errstate(divide="ignore", invalid="ignore"):
+                fps_from_raw = (1.0 / raw) * steps_per_iter
+            median_fps = float(np.median(fps_from_raw[valid]))
+            median_total = float(np.median(total[valid]))
+            if median_total <= 0:
+                return 1000.0
+            diff_seconds = abs(median_fps - median_total)
+            diff_ms = abs(median_fps / 1000.0 - median_total)
+            if diff_ms < diff_seconds:
+                return 1.0
+            return 1000.0
+
+        collection_time = _get_series(["Perf/collection time", "Perf/collection_time"])
+        learning_time = _get_series(["Perf/learning_time", "Perf/learning time"])
+        total_fps = _get_series(["Perf/total_fps", "Perf/total fps"])
+        if total_fps is not None:
+            total_fps = total_fps * world_size
+
+        rl_training_times = {}
+        steps_per_iter = env.unwrapped.num_envs * agent_cfg.num_steps_per_env * world_size
+        time_scale = _detect_perf_time_scale(collection_time, total_fps, steps_per_iter)
+        if collection_time is not None:
+            collection_time_ms = collection_time * time_scale
+            with np.errstate(divide="ignore", invalid="ignore"):
+                collection_fps = (1.0 / (collection_time_ms / 1000.0)) * steps_per_iter
+            rl_training_times["Collection Time"] = collection_time_ms.tolist()
+            rl_training_times["Collection FPS"] = collection_fps.tolist()
+        if learning_time is not None:
+            rl_training_times["Learning Time"] = (learning_time * time_scale).tolist()
+        if total_fps is not None:
+            rl_training_times["Total FPS"] = total_fps.tolist()
 
         # log additional metrics to benchmark services
         log_app_start_time(benchmark, (app_start_time_end - app_start_time_begin) / 1e6)
@@ -273,9 +326,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg, agent_cfg: RslRlOnPolic
         log_newton_finalize_builder_time(benchmark, Timer.get_timer_info("newton_finalize_builder") * 1000)
         log_newton_initialize_solver_time(benchmark, Timer.get_timer_info("newton_initialize_solver") * 1000)
         log_total_start_time(benchmark, (task_startup_time_end - app_start_time_begin) / 1e6)
-        log_runtime_step_times(benchmark, rl_training_times, compute_stats=True)
-        log_rl_policy_rewards(benchmark, log_data["Train/mean_reward"])
-        log_rl_policy_episode_lengths(benchmark, log_data["Train/mean_episode_length"])
+        if rl_training_times:
+            log_runtime_step_times(benchmark, rl_training_times, compute_stats=True)
+        if "Train/mean_reward" in log_data:
+            log_rl_policy_rewards(benchmark, log_data["Train/mean_reward"])
+        if "Train/mean_episode_length" in log_data:
+            log_rl_policy_episode_lengths(benchmark, log_data["Train/mean_episode_length"])
 
         benchmark.stop()
 
@@ -287,4 +343,5 @@ if __name__ == "__main__":
     # run the main function
     main()
     # close sim app
-    simulation_app.close()
+    if simulation_app is not None:
+        simulation_app.close()
