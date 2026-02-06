@@ -277,12 +277,17 @@ class SimulationContext:
                 return
             visualizer_cfgs = self._create_default_visualizer_configs(requested_visualizers)
 
-        self._scene_data_provider = SceneDataProvider(
-            backend=self.cfg.physics_backend,
-            visualizer_cfgs=visualizer_cfgs,
-            stage=self.stage,
-            simulation_context=self,
-        )
+        if self.cfg.physics_backend == "newton":
+            from .scene_data_providers import NewtonSceneDataProvider
+
+            self._scene_data_provider = NewtonSceneDataProvider(visualizer_cfgs)
+        elif self.cfg.physics_backend == "omni":
+            from .scene_data_providers import OVSceneDataProvider
+
+            self._scene_data_provider = OVSceneDataProvider(visualizer_cfgs, self.stage, self)
+        else:
+            logger.warning(f"Unknown physics backend '{self.cfg.physics_backend}'. Visualizers disabled.")
+            return
 
         # Create and initialize each visualizer
         for cfg in visualizer_cfgs:
