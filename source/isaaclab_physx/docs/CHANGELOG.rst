@@ -1,8 +1,7 @@
 Changelog
 ---------
 
-
-0.1.5 (2026-02-06)
+0.3.0 (2026-02-06)
 ~~~~~~~~~~~~~~~~~~
 
 Changed
@@ -22,6 +21,19 @@ Added
 * Added :class:`~isaaclab_physx.physics.IsaacEvents` enum for PhysX-specific simulation events.
 * Added monkey-patching of ``isaacsim.core.simulation_manager.SimulationManager`` in package init
   to ensure Isaac Sim uses :class:`~isaaclab_physx.physics.PhysxManager` for callback handling.
+
+
+0.2.0 (2026-02-05)
+~~~~~~~~~~~~~~~~~~
+
+Changed
+^^^^^^^
+
+* Updated all PhysX benchmarks in :mod:`isaaclab_physx.benchmark` to use the new
+  :class:`~isaaclab.test.benchmark.BaseIsaacLabBenchmark` framework from ``isaaclab.test.benchmark``.
+
+* Added support for configurable output backends via ``--benchmark_backend`` argument.
+  Supported backends: ``json``, ``osmo``, ``omniperf``.
 
 
 0.1.4 (2026-02-05)
