@@ -1,4 +1,5 @@
-﻿isaaclab_physx.assets
+isaaclab_physx.assets
+=====================
 
 .. automodule:: isaaclab_physx.assets
   :noindex:
