@@ -123,9 +123,12 @@ class SimulationContext:
         self.physics_manager: type[PhysicsManager] = self._physics.class_type
         self.physics_manager.initialize(self)
 
-        # Initialize visualizers and scene data provider
+        # Initialize visualizer state (created after scene info is available)
         self._scene_data_provider: SceneDataProvider | None = None
-        self._init_visualizers()
+        self._visualizers: list[Visualizer] = []
+        self._visualizer_step_counter = 0
+        self._num_envs: int | None = None
+        self._env_origins: Any = None
 
         # Cache commonly-used settings (these don't change during runtime)
         self._has_gui = bool(self.get_setting("/isaaclab/has_gui"))
@@ -225,6 +228,9 @@ class SimulationContext:
                 if callable(set_env_origins):
                     set_env_origins(env_origins)
 
+        if not self._visualizers:
+            self.initialize_visualizers()
+
     def _create_default_visualizer_configs(self, requested_visualizers: list[str]) -> list:
         """Create default visualizer configs for requested types."""
         default_configs = []
@@ -258,6 +264,8 @@ class SimulationContext:
 
     def initialize_visualizers(self) -> None:
         """Initialize visualizers from SimulationCfg.visualizer_cfgs."""
+        if self._visualizers:
+            return
         self._init_visualizers()
 
     def _init_visualizers(self) -> None:
@@ -267,9 +275,9 @@ class SimulationContext:
 
         visualizer_cfgs: list = []
         if self.cfg.visualizer_cfgs is not None:
-            visualizer_cfgs = self.cfg.visualizer_cfgs if isinstance(self.cfg.visualizer_cfgs, list) else [
-                self.cfg.visualizer_cfgs
-            ]
+            visualizer_cfgs = (
+                self.cfg.visualizer_cfgs if isinstance(self.cfg.visualizer_cfgs, list) else [self.cfg.visualizer_cfgs]
+            )
 
         if len(visualizer_cfgs) == 0:
             requested_visualizers = self.resolve_visualizer_types()
@@ -289,21 +297,27 @@ class SimulationContext:
             logger.warning(f"Unknown physics backend '{self.cfg.physics_backend}'. Visualizers disabled.")
             return
 
+        if self._num_envs is not None and self._scene_data_provider is not None:
+            set_num_envs = getattr(self._scene_data_provider, "set_num_envs", None)
+            if callable(set_num_envs):
+                set_num_envs(self._num_envs)
+        if self._env_origins is not None and self._scene_data_provider is not None:
+            set_env_origins = getattr(self._scene_data_provider, "set_env_origins", None)
+            if callable(set_env_origins):
+                set_env_origins(self._env_origins)
+
+        if self._num_envs is None or self._num_envs <= 0:
+            logger.warning(
+                "[SimulationContext] Visualizers initialized before scene info is set; "
+                "num_envs/env_origins are unavailable. Call set_scene_info(...) before "
+                "initialize_visualizers for correct partial visualization."
+            )
+
         # Create and initialize each visualizer
         for cfg in visualizer_cfgs:
             try:
                 visualizer = cfg.create_visualizer()
-                scene_data: dict[str, Any] = {"scene_data_provider": self._scene_data_provider}
-
-                # OV visualizer gets USD stage and simulation context.
-                if cfg.visualizer_type == "omniverse":
-                    if self._scene_data_provider:
-                        scene_data["usd_stage"] = self._scene_data_provider.get_usd_stage()
-                    else:
-                        scene_data["usd_stage"] = self.stage
-                    scene_data["simulation_context"] = self
-
-                visualizer.initialize(scene_data)
+                visualizer.initialize(self._scene_data_provider)
                 self._visualizers.append(visualizer)
                 logger.info(f"Initialized visualizer: {type(visualizer).__name__} (type: {cfg.visualizer_type})")
             except Exception as exc:
@@ -353,16 +367,53 @@ class SimulationContext:
 
     def render(self, mode: int | None = None) -> None:
         """Render the scene via all active visualizers."""
-        self.physics_manager.forward()
-        if self._scene_data_provider:
-            self._scene_data_provider.update()
-        for viz in self._visualizers:
-            if not viz.is_rendering_paused() and viz.is_running():
-                viz.step(self.get_rendering_dt(), state=None)
+        self.update_visualizers(self.get_rendering_dt())
         # Call render callbacks
         if hasattr(self, "_render_callbacks"):
             for callback in self._render_callbacks.values():
                 callback(None)  # Pass None as event data
+
+    def update_visualizers(self, dt: float) -> None:
+        """Update visualizers without triggering renderer/GUI."""
+        if not self._visualizers:
+            return
+
+        self.physics_manager.forward()
+        self._visualizer_step_counter += 1
+        if self._scene_data_provider:
+            env_ids_union: list[int] = []
+            for viz in self._visualizers:
+                ids = getattr(viz, "get_visualized_env_ids", lambda: None)()
+                if ids is not None:
+                    env_ids_union.extend(ids)
+            env_ids = list(dict.fromkeys(env_ids_union)) if env_ids_union else None
+            self._scene_data_provider.update(env_ids)
+
+        visualizers_to_remove = []
+        for viz in self._visualizers:
+            try:
+                if viz.is_rendering_paused():
+                    continue
+                if getattr(viz, "is_closed", False):
+                    visualizers_to_remove.append(viz)
+                    continue
+                if not viz.is_running():
+                    visualizers_to_remove.append(viz)
+                    continue
+                while viz.is_training_paused() and viz.is_running():
+                    viz.step(0.0, state=None)
+                viz.step(dt, state=None)
+            except Exception as exc:
+                logger.error(f"Error stepping visualizer '{type(viz).__name__}': {exc}")
+                visualizers_to_remove.append(viz)
+
+        for viz in visualizers_to_remove:
+            try:
+                viz.close()
+                self._visualizers.remove(viz)
+                logger.info(f"Removed visualizer: {type(viz).__name__}")
+            except Exception as exc:
+                logger.error(f"Error closing visualizer: {exc}")
 
     def play(self) -> None:
         """Start or resume the simulation."""

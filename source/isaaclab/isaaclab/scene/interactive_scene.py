@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Sequence
 from typing import Any
@@ -140,10 +141,8 @@ class InteractiveScene:
         self.stage = get_current_stage()
         self.stage_id = get_current_stage_id()
         # publish num_envs for consumers outside the scene
-        try:
+        with contextlib.suppress(Exception):
             self.sim.set_setting("/isaaclab/scene/num_envs", int(self.cfg.num_envs))
-        except Exception:
-            pass
         # physics scene path
         self._physics_scene_path = None
         # prepare cloner for environment replication

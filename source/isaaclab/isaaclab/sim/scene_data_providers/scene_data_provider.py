@@ -15,7 +15,7 @@ class SceneDataProvider(ABC):
     """Backend-agnostic scene data provider interface."""
 
     @abstractmethod
-    def update(self) -> None:
+    def update(self, env_ids: list[int] | None = None) -> None:
         """Refresh any cached scene data."""
         raise NotImplementedError
 

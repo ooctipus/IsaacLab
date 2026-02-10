@@ -176,6 +176,9 @@ class RerunVisualizer(Visualizer):
             raise
 
     def step(self, dt: float, state: Any | None = None) -> None:
+        if not self._is_initialized or self._viewer is None or self._scene_data_provider is None:
+            return
+
         self._state = self._scene_data_provider.get_newton_state(self._env_ids)
         self._sim_time += dt
 

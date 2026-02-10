@@ -47,7 +47,7 @@ class VisualizerCfg:
     camera_target: tuple[float, float, float] = (0.0, 0.0, 0.0)
     """Initial camera target/look-at point (x, y, z) in world coordinates."""
 
-    env_ids: list[int] | None = [0]
+    env_ids: list[int] | None = None
     """If set, only these env indices are shown; all other envs are filtered from visualization.
 
     This improves performance, particularly for large-scale training, by limiting which
