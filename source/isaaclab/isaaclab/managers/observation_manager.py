@@ -396,6 +396,10 @@ class ObservationManager(ManagerBase):
                 obs = term_cfg.noise.func(obs, term_cfg.noise)
             elif isinstance(term_cfg.noise, noise.NoiseModelCfg) and term_cfg.noise.func is not None:
                 obs = term_cfg.noise.func(obs)
+            if torch.isnan(obs).any():
+                print(f"NaN detected in observation term '{term_name}' in group '{group_name}'")
+                raise ValueError(f"NaN detected in observation term '{term_name}' in group '{group_name}'")
+            obs = torch.where(~torch.isfinite(obs), torch.zeros_like(obs), obs)
             if term_cfg.clip:
                 obs = obs.clip_(min=term_cfg.clip[0], max=term_cfg.clip[1])
             if term_cfg.scale is not None:

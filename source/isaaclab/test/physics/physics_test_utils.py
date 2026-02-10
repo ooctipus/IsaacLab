@@ -40,13 +40,13 @@ def make_sim_cfg(
         SimulationCfg configured for the specified collision pipeline.
     """
     solver_cfg = MJWarpSolverCfg(
-        njmax=100,
-        nconmax=100,
+        njmax=300,
+        nconmax=300,  # Increased for articulated hand tests with many contacts
         ls_iterations=20,
         cone="elliptic",
         impratio=100,
         ls_parallel=True,
-        integrator="implicit",
+        integrator="euler",  # Use euler integrator (implicit not supported by mujoco_warp)
         use_mujoco_contacts=use_mujoco_contacts,
     )
 
@@ -58,7 +58,7 @@ def make_sim_cfg(
     )
 
     return SimulationCfg(
-        dt=1.0 / 120.0,
+        dt=1.0 / 240.0,
         device=device,
         gravity=gravity,
         create_stage_in_memory=False,
@@ -316,3 +316,83 @@ def perform_sim_step(sim, scene, dt: float):
     scene.write_data_to_sim()
     sim.step(render=False)
     scene.update(dt=dt)
+
+
+##
+# Visualizer Utility
+##
+
+SIM_DT = 1.0 / 240.0  # Default simulation timestep
+
+
+class TestVisualizer:
+    """Helper class for managing Newton visualizer in tests.
+
+    Usage:
+        viz = TestVisualizer(request)  # request from pytest fixture
+        # ... after sim.reset() ...
+        viz.step(state)  # Call each simulation step (auto-initializes on first call)
+        viz.wait_for_close()  # Keep window open at end of test
+    """
+
+    def __init__(self, request, camera_position=(1.0, -1.0, 1.0), camera_target=(0.0, 0.0, 0.5)):
+        """Create visualizer config if --visualize flag is passed.
+
+        Note: Actual initialization is deferred until first step() call,
+        since Newton physics must be initialized first (after sim.reset()).
+
+        Args:
+            request: pytest request fixture
+            camera_position: Camera position tuple (x, y, z)
+            camera_target: Camera target tuple (x, y, z)
+        """
+        self._visualizer = None
+        self._initialized = False
+        self._enabled = request.config.getoption("--visualize", default=False)
+        self._camera_position = camera_position
+        self._camera_target = camera_target
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    def _ensure_initialized(self):
+        """Initialize visualizer on first use (after Newton physics is ready)."""
+        if self._initialized or not self._enabled:
+            return
+        from isaaclab.visualizers import NewtonVisualizerCfg
+        from isaaclab.visualizers.newton_visualizer import NewtonVisualizer
+
+        viz_cfg = NewtonVisualizerCfg(
+            window_width=1280,
+            window_height=720,
+            update_frequency=1,
+            show_joints=True,
+            show_contacts=True,
+            camera_position=self._camera_position,
+            camera_target=self._camera_target,
+        )
+        self._visualizer = NewtonVisualizer(viz_cfg)
+        self._visualizer.initialize()
+        self._initialized = True
+
+    def step(self, state, dt: float = SIM_DT):
+        """Step the visualizer if enabled."""
+        if self._enabled:
+            self._ensure_initialized()
+            self._visualizer.step(dt, state=state)
+
+    def wait_for_close(self, sim=None, state_getter=None):
+        """Close visualizer immediately.
+
+        Args:
+            sim: Unused, kept for backward compatibility
+            state_getter: Unused, kept for backward compatibility
+        """
+        self.close()
+
+    def close(self):
+        """Close visualizer if open."""
+        if self._visualizer:
+            self._visualizer.close()
+            self._visualizer = None

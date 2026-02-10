@@ -6,7 +6,7 @@
 from dataclasses import MISSING
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import ManagerBasedEnvCfg, ViewerCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
@@ -15,7 +15,7 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sim import CuboidCfg, RigidBodyMaterialCfg, SimulationCfg
+from isaaclab.sim import MeshCuboidCfg, MeshSphereCfg, MeshCapsuleCfg, MeshConeCfg, RigidBodyMaterialCfg, SimulationCfg
 from isaaclab.sim._impl.newton_manager_cfg import NewtonCfg
 from isaaclab.sim._impl.solvers_cfg import MJWarpSolverCfg
 from isaaclab.utils import configclass
@@ -43,22 +43,22 @@ class SceneCfg(InteractiveSceneCfg):
                 #     mass_props=sim_utils.MassPropertiesCfg(density=400),
                 #     scale=(1.2, 1.2, 1.2),
                 # ),
-                CuboidCfg(size=(0.075, 0.075, 0.075), physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
-                # CuboidCfg(size=(0.05, 0.05, 0.1), physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
-                # CuboidCfg(size=(0.025, 0.1, 0.1), physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
-                # CuboidCfg(size=(0.025, 0.05, 0.1), physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
-                # CuboidCfg(size=(0.025, 0.025, 0.1), physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
-                # CuboidCfg(size=(0.01, 0.1, 0.1), physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
-                # SphereCfg(radius=0.05, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
-                # SphereCfg(radius=0.025, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
-                # CapsuleCfg(radius=0.04, height=0.025, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
-                # CapsuleCfg(radius=0.04, height=0.01, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
-                # CapsuleCfg(radius=0.04, height=0.1, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
-                # CapsuleCfg(radius=0.025, height=0.1, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
-                # CapsuleCfg(radius=0.025, height=0.2, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
-                # CapsuleCfg(radius=0.01, height=0.2, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
-                # ConeCfg(radius=0.05, height=0.1, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
-                # ConeCfg(radius=0.025, height=0.1, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
+                MeshCuboidCfg(size=(0.075, 0.075, 0.075), physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
+                MeshCuboidCfg(size=(0.05, 0.05, 0.1), physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
+                MeshCuboidCfg(size=(0.025, 0.1, 0.1), physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
+                MeshCuboidCfg(size=(0.025, 0.05, 0.1), physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
+                MeshCuboidCfg(size=(0.025, 0.025, 0.1), physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
+                MeshCuboidCfg(size=(0.01, 0.1, 0.1), physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
+                # MeshSphereCfg(radius=0.05, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
+                # MeshSphereCfg(radius=0.025, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
+                # MeshCapsuleCfg(radius=0.04, height=0.025, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
+                # MeshCapsuleCfg(radius=0.04, height=0.01, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
+                # MeshCapsuleCfg(radius=0.04, height=0.1, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
+                # MeshCapsuleCfg(radius=0.025, height=0.1, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
+                # MeshCapsuleCfg(radius=0.025, height=0.2, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
+                # MeshCapsuleCfg(radius=0.01, height=0.2, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
+                # MeshConeCfg(radius=0.05, height=0.1, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
+                # MeshConeCfg(radius=0.025, height=0.1, physics_material=RigidBodyMaterialCfg(static_friction=0.5)),
             ],
             activate_contact_sensors=True,
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(articulation_enabled=True),
@@ -69,7 +69,7 @@ class SceneCfg(InteractiveSceneCfg):
                 disable_gravity=False,
             ),
             collision_props=sim_utils.CollisionPropertiesCfg(
-                collision_enabled=True, mesh_collision_property=sim_utils.BoundingCubePropertiesCfg()
+                collision_enabled=True,
             ),
             mass_props=sim_utils.MassPropertiesCfg(mass=0.2),
         ),
@@ -401,6 +401,13 @@ class TerminationsCfg:
 
     abnormal_robot = DoneTerm(func=mdp.abnormal_robot_state)
 
+    # Terminate if object is spinning too fast (precedes NaN crash)
+    # Threshold of 100 rad/s catches instability ~40 steps before crash
+    # object_spinning = DoneTerm(
+    #     func=mdp.object_spinning_too_fast,
+    #     params={"max_ang_speed": 50.0},
+    # )
+
 
 @configclass
 class DexsuiteReorientEnvCfg(ManagerBasedEnvCfg):
@@ -417,7 +424,7 @@ class DexsuiteReorientEnvCfg(ManagerBasedEnvCfg):
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
     events: EventCfg = EventCfg()
-    curriculum: CurriculumCfg | None = CurriculumCfg()
+    curriculum: CurriculumCfg | None = None
 
     def __post_init__(self):
         """Post initialization."""
@@ -449,20 +456,21 @@ class DexsuiteReorientEnvCfg(ManagerBasedEnvCfg):
             newton_cfg=NewtonCfg(
                 solver_cfg=MJWarpSolverCfg(
                     solver="newton",
-                    integrator="implicit",
+                    integrator="euler",  # Note: "implicit" is not supported by mujoco_warp
                     njmax=600,
-                    nconmax=70,
-                    impratio=10.0,
+                    nconmax=300,
+                    impratio=100.0,
                     cone="elliptic",
                     update_data_interval=2,
                     iterations=100,
-                    ls_iterations=15,
+                    ls_iterations=20,
                     ls_parallel=True,
+                    use_mujoco_contacts=False,
                 ),
                 num_substeps=2,
-                debug_mode=False,
+                debug_mode=True,
             ),
-            dt=1 / 120,
+            dt=1 / 240,
             gravity=(0.0, 0.0, 0.0),
         )
         self.sim.render_interval = self.decimation

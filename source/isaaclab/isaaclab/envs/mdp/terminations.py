@@ -164,3 +164,36 @@ def illegal_contact(env: ManagerBasedRLEnv, threshold: float, sensor_cfg: SceneE
     return torch.any(
         torch.max(torch.norm(net_contact_forces[:, :, sensor_cfg.body_ids], dim=-1), dim=1)[0] > threshold, dim=1
     )
+
+
+"""
+Solver stability.
+"""
+
+
+def solver_non_convergence(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Terminate when the physics solver fails to converge for an environment.
+    
+    This is useful for handling instabilities that can occur with heterogeneous objects
+    or difficult contact configurations. When the solver doesn't converge within its
+    maximum iterations, the simulation state may be unstable, leading to NaN values.
+    
+    Note: This termination function only works with Newton physics backend and MuJoCo solver.
+    For other backends, it returns all False (no termination).
+    
+    Returns:
+        Boolean tensor of shape (num_envs,) indicating which environments should be terminated.
+    """
+    from isaaclab.sim._impl.newton_manager import NewtonManager
+    
+    # Get non-converged environment IDs
+    non_converged_ids = NewtonManager.get_non_converged_env_ids()
+    
+    # Create result tensor (default: all converged = no termination)
+    result = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    
+    if non_converged_ids is not None and len(non_converged_ids) > 0:
+        # Mark non-converged environments for termination
+        result[non_converged_ids] = True
+    
+    return result

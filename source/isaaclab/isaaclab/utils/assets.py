@@ -117,7 +117,7 @@ def retrieve_file_path(path: str, download_dir: str | None = None, force_downloa
 
             if not os.path.isfile(target_path) or force_download:
                 result = omni.client.copy(
-                    cur_url.replace("collisions_convex_hull", "collisions"),
+                    cur_url.replace("collisions_primitive_hull", "collisions").replace("collisions_convex_hull", "collisions"),
                     target_path,
                     omni.client.CopyBehavior.OVERWRITE,
                 )  # HACK for kuka allegro....... definitely remove before merge

@@ -41,8 +41,8 @@ ALLEGRO_HAND_CFG = ArticulationCfg(
         "fingers": ImplicitActuatorCfg(
             joint_names_expr=[".*"],
             effort_limit_sim=0.5,
-            stiffness=1.0,
-            damping=0.1,
+            stiffness=0.5,
+            damping=0.02,
             friction=1e-4,
             armature=1e-4,
         ),

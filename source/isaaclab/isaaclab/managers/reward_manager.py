@@ -147,6 +147,9 @@ class RewardManager(ManagerBase):
                 continue
             # compute term's value
             value = term_cfg.func(self._env, **term_cfg.params) * term_cfg.weight * dt
+            if torch.isnan(value).any():
+                print(f"NaN detected in reward term '{name}'")
+            value = torch.where(~torch.isfinite(value), torch.zeros_like(value), value)
             # update total reward
             self._reward_buf += value
             # update episodic sum

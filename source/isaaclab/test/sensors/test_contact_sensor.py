@@ -797,7 +797,6 @@ ALLEGRO_FINGER_LINKS = {
 @pytest.mark.parametrize("use_mujoco_contacts", COLLISION_PIPELINES)
 @pytest.mark.parametrize("target_finger", ["index", "middle", "ring", "thumb"])
 @pytest.mark.parametrize("drop_shape", [ShapeType.SPHERE, ShapeType.MESH_SPHERE, ShapeType.BOX, ShapeType.MESH_BOX])
-@pytest.mark.xfail(reason="Newton contact sensor isolation bug: Contact forces leak to adjacent fingers in articulated systems")
 def test_finger_contact_sensor_isolation(
     device: str, use_mujoco_contacts: bool, target_finger: str, drop_shape: ShapeType
 ):
@@ -819,7 +818,6 @@ def test_finger_contact_sensor_isolation(
     Note: Uses zero global gravity with initial object velocity, similar to
     test_finger_collision_isolation in test_collision_behavior.py
     """
-    import warp as wp
 
     drop_steps = 480  # 2 seconds for drop and settle
 

@@ -10,9 +10,8 @@ import numpy as np
 import re
 
 import warp as wp
-from newton import Axis, BroadPhaseMode, CollisionPipelineUnified, Contacts, Control, Model, ModelBuilder, State, eval_fk
+from newton import Axis, BroadPhaseMode, CollisionPipeline, Contacts, Control, Model, ModelBuilder, State, eval_fk
 from newton.sensors import SensorContact as NewtonContactSensor
-from newton.sensors import populate_contacts
 from newton.solvers import SolverBase, SolverFeatherstone, SolverMuJoCo, SolverNotifyFlags, SolverXPBD
 
 from isaaclab.sim._impl.newton_manager_cfg import NewtonCfg
@@ -20,6 +19,89 @@ from isaaclab.sim.utils.stage import get_current_stage
 from isaaclab.utils.timer import Timer
 
 logger = logging.getLogger(__name__)
+
+
+# Debug functions disabled to avoid CUDA graph capture issues
+# Use with use_cuda_graph=False for debugging
+def _check_contacts_for_nan(contacts: Contacts, step_label: str = "") -> bool:
+    """Debug function to check contacts for NaN or invalid values.
+    
+    NOTE: This function does GPU-to-CPU transfers which break CUDA graph capture.
+    Only use with use_cuda_graph=False.
+    
+    Returns True if any issues found.
+    """
+    return False  # Disabled - uncomment below for debugging with use_cuda_graph=False
+    # if contacts is None:
+    #     return False
+    # 
+    # count = contacts.rigid_contact_count.numpy()[0]
+    # if count == 0:
+    #     return False
+    # 
+    # issues = []
+    # 
+    # # Check contact normals for zero vectors or NaN
+    # normals = contacts.rigid_contact_normal.numpy()[:count]
+    # norms = np.linalg.norm(normals, axis=1)
+    # nan_normals = np.isnan(norms).sum()
+    # zero_normals = (norms < 1e-10).sum()
+    # if nan_normals > 0:
+    #     issues.append(f"NaN normals: {nan_normals}")
+    # if zero_normals > 0:
+    #     issues.append(f"Zero normals: {zero_normals}")
+    # 
+    # # Check contact points for NaN
+    # point0 = contacts.rigid_contact_point0.numpy()[:count]
+    # point1 = contacts.rigid_contact_point1.numpy()[:count]
+    # nan_points = np.isnan(point0).sum() + np.isnan(point1).sum()
+    # if nan_points > 0:
+    #     issues.append(f"NaN contact points: {nan_points}")
+    # 
+    # # Check for very large values (potential instability)
+    # large_vals = (np.abs(point0) > 1000).sum() + (np.abs(point1) > 1000).sum()
+    # if large_vals > 0:
+    #     issues.append(f"Large contact positions (>1000): {large_vals}")
+    # 
+    # if issues:
+    #     print(f"[CONTACT DEBUG {step_label}] Issues found in {count} contacts: {', '.join(issues)}")
+    #     return True
+    # return False
+
+
+def _check_state_for_nan(state: State, step_label: str = "") -> bool:
+    """Debug function to check state for NaN values.
+    
+    NOTE: This function does GPU-to-CPU transfers which break CUDA graph capture.
+    Only use with use_cuda_graph=False.
+    
+    Returns True if any issues found.
+    """
+    return False  # Disabled - uncomment below for debugging with use_cuda_graph=False
+    # issues = []
+    # 
+    # if state.joint_q is not None:
+    #     q = state.joint_q.numpy()
+    #     nan_q = np.isnan(q).sum()
+    #     if nan_q > 0:
+    #         issues.append(f"NaN joint_q: {nan_q}")
+    # 
+    # if state.joint_qd is not None:
+    #     qd = state.joint_qd.numpy()
+    #     nan_qd = np.isnan(qd).sum()
+    #     if nan_qd > 0:
+    #         issues.append(f"NaN joint_qd: {nan_qd}")
+    # 
+    # if state.body_q is not None:
+    #     body_q = state.body_q.numpy()
+    #     nan_body = np.isnan(body_q).sum()
+    #     if nan_body > 0:
+    #         issues.append(f"NaN body_q: {nan_body}")
+    # 
+    # if issues:
+    #     print(f"[STATE DEBUG {step_label}] Issues found: {', '.join(issues)}")
+    #     return True
+    # return False
 
 
 def flipped_match(x: str, y: str) -> re.Match | None:
@@ -119,6 +201,8 @@ class NewtonManager:
         """Starts the simulation.
 
         This function finalizes the model and initializes the simulation state.
+        Note: Collision pipeline is initialized later in initialize_solver() after
+        we determine whether the solver needs external collision detection.
         """
 
         print(f"[INFO] Builder: {NewtonManager._builder}")
@@ -129,6 +213,8 @@ class NewtonManager:
             callback()
         print(f"[INFO] Finalizing model on device: {NewtonManager._device}")
         NewtonManager._builder.up_axis = Axis.from_string(NewtonManager._up_axis)
+        # Set smaller contact margin for manipulation examples (default 10cm is too large)
+        NewtonManager._builder.default_shape_cfg.contact_margin = 0.01
         with Timer(name="newton_finalize_builder", msg="Finalize builder took:", enable=True, format="ms"):
             NewtonManager._model = NewtonManager._builder.finalize(device=NewtonManager._device)
             NewtonManager._model.set_gravity(NewtonManager._gravity_vector)
@@ -138,16 +224,8 @@ class NewtonManager:
         NewtonManager._state_temp = NewtonManager._model.state()
         NewtonManager._control = NewtonManager._model.control()
         NewtonManager.forward_kinematics()
-        if NewtonManager._needs_collision_pipeline:
-            # NewtonManager._collision_pipeline = create_collision_pipeline(NewtonManager._model)
-            NewtonManager._collision_pipeline = CollisionPipelineUnified.from_model(
-                NewtonManager._model, broad_phase_mode=BroadPhaseMode.SAP
-            )
-            NewtonManager._contacts = NewtonManager._model.collide(
-                NewtonManager._state_0, collision_pipeline=NewtonManager._collision_pipeline
-            )
-        else:
-            NewtonManager._contacts = Contacts(0, 0)
+        # Initialize empty contacts - will be replaced in initialize_solver() if collision pipeline is needed
+        NewtonManager._contacts = Contacts(0, 0)
         print("[INFO] Running on start callbacks")
         for callback in NewtonManager._on_start_callbacks:
             callback()
@@ -178,11 +256,47 @@ class NewtonManager:
         NewtonManager._cfg = NewtonCfg(**newton_params)
 
     @classmethod
+    def _create_collision_pipeline(cls) -> None:
+        """Creates the unified collision pipeline and initial contacts.
+
+        Uses EXPLICIT broadphase mode which properly honors excluded shape pairs
+        (parent-child filtering). SAP/NXN modes don't correctly filter these pairs,
+        causing instability in articulated systems.
+        """
+        NewtonManager._collision_pipeline = CollisionPipeline.from_model(
+            NewtonManager._model, broad_phase_mode=BroadPhaseMode.EXPLICIT
+        )
+        NewtonManager._contacts = NewtonManager._model.collide(
+            NewtonManager._state_0, collision_pipeline=NewtonManager._collision_pipeline
+        )
+
+    @classmethod
+    def _create_mujoco_contacts(cls) -> None:
+        """Creates a Contacts object for MuJoCo contact mode.
+
+        When using MuJoCo's internal collision detection (use_mujoco_contacts=True),
+        we still need a properly sized Contacts object for sensor evaluation.
+        The solver's update_contacts() will populate this from MuJoCo data.
+        """
+        # Get the maximum contact capacity from the MuJoCo solver
+        naconmax = NewtonManager._solver.mjw_data.naconmax
+        # Create contacts with sufficient capacity and force attribute for sensors
+        NewtonManager._contacts = Contacts(
+            rigid_contact_max=naconmax,
+            soft_contact_max=0,
+            device=NewtonManager._device,
+            requested_attributes={"force"},
+        )
+
+    @classmethod
     def initialize_solver(cls):
-        """Initializes the solver.
+        """Initializes the solver and collision pipeline.
 
         This function initializes the solver based on the specified solver type. Currently, only XPBD and MuJoCoWarp
-        are supported. The graphing of the simulation is performed in this function if the simulation is ran using
+        are supported. If the solver requires external collision detection (i.e., not using MuJoCo's internal
+        contacts), a unified collision pipeline is created.
+
+        The graphing of the simulation is performed in this function if the simulation is ran using
         a CUDA enabled device.
 
         .. warning::
@@ -194,19 +308,23 @@ class NewtonManager:
             NewtonManager._num_substeps = NewtonManager._cfg.num_substeps
             NewtonManager._solver_dt = NewtonManager._dt / NewtonManager._num_substeps
             NewtonManager._solver = NewtonManager._get_solver(NewtonManager._model, NewtonManager._cfg.solver_cfg)
+
+            # Determine if we need external collision detection
+            # - SolverMuJoCo with use_mujoco_contacts=True: uses internal MuJoCo collision detection
+            # - SolverMuJoCo with use_mujoco_contacts=False: needs Newton's unified collision pipeline
+            # - Other solvers (XPBD, Featherstone): always need Newton's unified collision pipeline
             if isinstance(NewtonManager._solver, SolverMuJoCo):
-                NewtonManager._needs_collision_pipeline = not NewtonManager._cfg.solver_cfg.get(
-                    "use_mujoco_contacts", False
-                )
+                use_mujoco_contacts = NewtonManager._cfg.solver_cfg.get("use_mujoco_contacts", False)
+                NewtonManager._needs_collision_pipeline = not use_mujoco_contacts
             else:
                 NewtonManager._needs_collision_pipeline = True
-            if NewtonManager._needs_collision_pipeline and NewtonManager._collision_pipeline is None:
-                NewtonManager._collision_pipeline = CollisionPipelineUnified.from_model(
-                    NewtonManager._model, broad_phase_mode=BroadPhaseMode.SAP
-                )
-                NewtonManager._contacts = NewtonManager._model.collide(
-                    NewtonManager._state_0, collision_pipeline=NewtonManager._collision_pipeline
-                )
+
+            # Create collision pipeline or MuJoCo contacts based on mode
+            if NewtonManager._needs_collision_pipeline:
+                NewtonManager._create_collision_pipeline()
+            elif NewtonManager._report_contacts:
+                # MuJoCo contacts mode with sensors registered: create proper Contacts object
+                NewtonManager._create_mujoco_contacts()
 
         # Capture the graph if CUDA is enabled
         with Timer(name="newton_cuda_graph", msg="CUDA graph took:", enable=True, format="ms"):
@@ -236,6 +354,13 @@ class NewtonManager:
             contacts = NewtonManager._model.collide(
                 NewtonManager._state_0, collision_pipeline=NewtonManager._collision_pipeline
             )
+            # Update class-level contacts for sensor evaluation
+            NewtonManager._contacts = contacts
+            
+            # Debug: Check for invalid contacts
+            if NewtonManager._cfg.debug_mode:
+                _check_contacts_for_nan(contacts, "after_collide")
+                _check_state_for_nan(NewtonManager._state_0, "before_step")
 
         if NewtonManager._num_substeps % 2 == 0:
             for i in range(NewtonManager._num_substeps):
@@ -248,6 +373,12 @@ class NewtonManager:
                 )
                 NewtonManager._state_0, NewtonManager._state_1 = NewtonManager._state_1, NewtonManager._state_0
                 NewtonManager._state_0.clear_forces()
+                
+                # Debug: Check state after each substep
+                if NewtonManager._cfg.debug_mode:
+                    if _check_state_for_nan(NewtonManager._state_0, f"substep_{i}"):
+                        print(f"[DEBUG] NaN appeared after substep {i}")
+                        break
         else:
             for i in range(NewtonManager._num_substeps):
                 NewtonManager._solver.step(
@@ -273,10 +404,14 @@ class NewtonManager:
                             state_1_dict[key].assign(state_temp_dict[key])
                 NewtonManager._state_0.clear_forces()
 
+        # Transfer contact forces from solver to Newton contacts for sensor evaluation
         if NewtonManager._report_contacts:
-            populate_contacts(NewtonManager._contacts, NewtonManager._solver)
+            # For newton_contacts (unified pipeline): use locally computed contacts
+            # For mujoco_contacts: use class-level _contacts, solver populates it from MuJoCo data
+            eval_contacts = contacts if contacts is not None else NewtonManager._contacts
+            NewtonManager._solver.update_contacts(eval_contacts, NewtonManager._state_0)
             for sensor in NewtonManager._newton_contact_sensors.values():
-                sensor.eval(NewtonManager._contacts)
+                sensor.eval(eval_contacts)
 
     @classmethod
     def set_device(cls, device: str) -> None:
@@ -319,6 +454,29 @@ class NewtonManager:
         min_niter = np.min(niter)
         std_niter = np.std(niter)
         return {"max": max_niter, "mean": mean_niter, "min": min_niter, "std": std_niter}
+
+    @classmethod
+    def get_non_converged_env_ids(cls) -> np.ndarray | None:
+        """Returns the environment IDs where the solver did not converge.
+        
+        This is useful for detecting simulation instability and taking corrective action
+        (e.g., resetting those environments or terminating them early).
+        
+        Returns:
+            numpy array of environment IDs where solver hit max iterations, or None if all converged.
+        """
+        if NewtonManager._solver is None or not hasattr(NewtonManager._solver, 'mjw_data'):
+            return None
+            
+        niter = NewtonManager._solver.mjw_data.solver_niter.numpy()
+        max_iter = NewtonManager._solver.mjw_model.opt.iterations
+        
+        # Find environments where solver hit max iterations
+        non_converged = np.where(niter >= max_iter)[0]
+        
+        if len(non_converged) == 0:
+            return None
+        return non_converged
 
     @classmethod
     def set_simulation_dt(cls, dt: float) -> None:
@@ -437,6 +595,7 @@ class NewtonManager:
         sensor_key = (body_names_expr, shape_names_expr, contact_partners_body_expr, contact_partners_shape_expr)
 
         # Create and store the sensor
+        # Note: SensorContact constructor requests 'force' attribute from the model
         newton_sensor = NewtonContactSensor(
             NewtonManager._model,
             sensing_obj_bodies=body_names_expr,
@@ -450,5 +609,17 @@ class NewtonManager:
         )
         NewtonManager._newton_contact_sensors[sensor_key] = newton_sensor
         NewtonManager._report_contacts = True
+
+        # Regenerate contacts to include force allocation requested by the sensor
+        # The sensor requests 'force' attribute, so Contacts must be recreated
+        if NewtonManager._collision_pipeline is not None:
+            # Newton collision pipeline: regenerate contacts with force attribute
+            NewtonManager._contacts = NewtonManager._model.collide(
+                NewtonManager._state_0, collision_pipeline=NewtonManager._collision_pipeline
+            )
+        elif NewtonManager._solver is not None and isinstance(NewtonManager._solver, SolverMuJoCo):
+            # MuJoCo contacts: create a properly sized Contacts object
+            # Note: if solver not yet initialized, this will be done in initialize_solver()
+            NewtonManager._create_mujoco_contacts()
 
         return sensor_key

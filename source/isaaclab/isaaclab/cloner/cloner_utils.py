@@ -63,13 +63,11 @@ def clone_from_template(stage: Usd.Stage, num_clones: int, template_clone_cfg: T
         proto_mask.scatter_(1, proto_idx.view(-1, 1).to(torch.long), clone_masking.any(dim=1, keepdim=True))
         usd_replicate(stage, src_paths, dest_paths, world_indices, proto_mask)
         stage.GetPrimAtPath(cfg.template_root).SetActive(False)
-
+        replicate_args = [clone_path_fmt.format(0)], [clone_path_fmt], world_indices, clone_masking[0].unsqueeze(0)
+        get_pos = lambda path: stage.GetPrimAtPath(path).GetAttribute("xformOp:translate").Get()  # noqa: E731
+        positions = torch.tensor([get_pos(clone_path_fmt.format(i)) for i in world_indices])
         # If all prototypes map to env_0, clone whole env_0 to all envs; else clone per-object
         if torch.all(proto_idx == 0):
-            # args: src_paths, dest_paths, env_ids, mask
-            replicate_args = [clone_path_fmt.format(0)], [clone_path_fmt], world_indices, clone_masking[0].unsqueeze(0)
-            get_pos = lambda path: stage.GetPrimAtPath(path).GetAttribute("xformOp:translate").Get()  # noqa: E731
-            positions = torch.tensor([get_pos(clone_path_fmt.format(i)) for i in world_indices])
             if cfg.clone_physics:
                 template_clone_cfg.physics_clone_fn(stage, *replicate_args, positions=positions)
             if cfg.clone_usd:
@@ -80,7 +78,7 @@ def clone_from_template(stage: Usd.Stage, num_clones: int, template_clone_cfg: T
             selected_src = [tpl.format(int(idx)) for tpl, idx in zip(dest_paths, proto_idx.tolist())]
             replicate_args = selected_src, dest_paths, world_indices, clone_masking
             if cfg.clone_physics:
-                template_clone_cfg.physics_clone_fn(stage, *replicate_args)
+                template_clone_cfg.physics_clone_fn(stage, *replicate_args, positions=positions)
             if cfg.clone_usd:
                 usd_replicate(stage, *replicate_args)
 
@@ -302,7 +300,8 @@ def newton_replicate(
     for src_path in sources:
         p = ModelBuilder(up_axis=up_axis)
         solvers.SolverMuJoCo.register_custom_attributes(p)
-        p.add_usd(stage, root_path=src_path, load_visual_shapes=True, skip_mesh_approximation=True)
+        inverse_env_xform = get_inverse_env_xform(stage, src_path)
+        p.add_usd(stage, root_path=src_path, load_visual_shapes=True, skip_mesh_approximation=True, xform=inverse_env_xform,)
         if simplify_meshes:
             p.approximate_meshes("convex_hull")
         protos[src_path] = p
@@ -491,3 +490,28 @@ def grid_transforms(N: int, spacing: float = 1.0, up_axis: str = "z", device="cp
     ori = torch.zeros((N, 4), device=device)
     ori[:, 0] = 1.0
     return pos, ori
+
+
+def get_inverse_env_xform(stage, src_path: str):
+    """Get the inverse transform of the source env to convert world→local."""
+    # Extract env path: /World/envs/env_N
+    parts = src_path.split("/")
+    env_path = "/".join(parts[:4])  # "/World/envs/env_X"
+
+    env_prim = stage.GetPrimAtPath(env_path)
+    if not env_prim or not env_prim.IsValid():
+        return None
+
+    xform_cache = UsdGeom.XformCache()
+    world_xform = xform_cache.GetLocalToWorldTransform(env_prim)
+
+    # Extract translation and rotation
+    translation = world_xform.ExtractTranslation()
+    rotation = world_xform.ExtractRotationQuat()
+
+    # Create inverse transform (negate translation, invert rotation)
+    inv_pos = (-translation[0], -translation[1], -translation[2])
+    # For identity rotation, just use identity quat
+    inv_quat = (0.0, 0.0, 0.0, 1.0)  # Assuming no rotation on envs
+
+    return wp.transform(inv_pos, inv_quat)
