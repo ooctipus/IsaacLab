@@ -116,7 +116,7 @@ def main():
             if max_lin_speed > 5 or max_ang_speed > 20 or max_niter > 10 or step % 200 == 0:
                 lin_sp = np.array2string(obj_lin_speed.cpu().numpy(), precision=1, suppress_small=True, max_line_width=200)
                 ang_sp = np.array2string(obj_ang_speed.cpu().numpy(), precision=1, suppress_small=True, max_line_width=200)
-                print(f"Step {step}: niter={niter}, lin_sp={lin_sp}, ang_sp={ang_sp}")
+                print(f"Step {step}: niter={niter}, ang_sp={ang_sp}")
             
             if has_nan:
                 # Find which env crashed
