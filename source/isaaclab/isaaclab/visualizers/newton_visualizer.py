@@ -273,6 +273,11 @@ class NewtonVisualizer(Visualizer):
         self._viewer.renderer.sky_lower = self.cfg.sky_lower_color
         self._viewer.renderer._light_color = self.cfg.light_color
 
+        logger.info(
+            "[NewtonVisualizer] Initialized (camera: pos=%s, target=%s)",
+            self.cfg.camera_position,
+            self.cfg.camera_target,
+        )
         self._is_initialized = True
 
     def step(self, dt: float, state: Any | None = None) -> None:

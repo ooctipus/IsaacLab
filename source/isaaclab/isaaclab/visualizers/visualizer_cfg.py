@@ -50,9 +50,8 @@ class VisualizerCfg:
     env_ids: list[int] | None = None
     """If set, only these env indices are shown; all other envs are filtered from visualization.
 
-    This improves performance, particularly for large-scale training, by limiting which
-    environments are sent to visualizers. Backend support varies (e.g., OV ignores
-    this for now).
+    This improves performance, particularly for large-scale training, by reducing scene updates sent to visualizers.
+    Note, OV visualizer doesn't not currently support this.
     """
 
     def get_visualizer_type(self) -> str | None:

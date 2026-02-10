@@ -228,9 +228,6 @@ class SimulationContext:
                 if callable(set_env_origins):
                     set_env_origins(env_origins)
 
-        if not self._visualizers:
-            self.initialize_visualizers()
-
     def _create_default_visualizer_configs(self, requested_visualizers: list[str]) -> list:
         """Create default visualizer configs for requested types."""
         default_configs = []
@@ -352,6 +349,9 @@ class SimulationContext:
             viz.reset(soft)
         # Start the timeline so the play button is pressed
         self.physics_manager.play()
+        if not self._visualizers:
+            # Initialize visualizers after PhysX sim view is ready.
+            self.initialize_visualizers()
         self._is_playing = True
         self._is_stopped = False
 
@@ -378,7 +378,8 @@ class SimulationContext:
         if not self._visualizers:
             return
 
-        self.physics_manager.forward()
+        if any(type(v).__name__ == "OVVisualizer" for v in self._visualizers):
+            self.physics_manager.forward()
         self._visualizer_step_counter += 1
         if self._scene_data_provider:
             env_ids_union: list[int] = []
@@ -395,9 +396,11 @@ class SimulationContext:
                 if viz.is_rendering_paused():
                     continue
                 if getattr(viz, "is_closed", False):
+                    print(f"[SimulationContext] Visualizer closed: {type(viz).__name__}")
                     visualizers_to_remove.append(viz)
                     continue
                 if not viz.is_running():
+                    print(f"[SimulationContext] Visualizer not running: {type(viz).__name__}")
                     visualizers_to_remove.append(viz)
                     continue
                 while viz.is_training_paused() and viz.is_running():
@@ -405,6 +408,7 @@ class SimulationContext:
                 viz.step(dt, state=None)
             except Exception as exc:
                 logger.error(f"Error stepping visualizer '{type(viz).__name__}': {exc}")
+                print(f"[SimulationContext] Visualizer step error: {type(viz).__name__}: {exc}")
                 visualizers_to_remove.append(viz)
 
         for viz in visualizers_to_remove:

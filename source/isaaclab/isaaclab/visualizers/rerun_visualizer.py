@@ -101,9 +101,6 @@ class RerunVisualizer(Visualizer):
         self._state = scene_data_provider.get_newton_state(self._env_ids)
 
         try:
-            if self.cfg.record_to_rrd:
-                logger.info(f"[RerunVisualizer] Recording enabled to: {self.cfg.record_to_rrd}")
-
             address = None
             if self.cfg.bind_address:
                 import shutil
@@ -126,6 +123,12 @@ class RerunVisualizer(Visualizer):
                     if self.cfg.open_browser:
                         cmd.append("--web-viewer")
                     self._rerun_server_process = subprocess.Popen(cmd)
+                    logger.info(
+                        "[RerunVisualizer] Server bind %s:%s, web %s",
+                        self.cfg.bind_address,
+                        self.cfg.grpc_port,
+                        self.cfg.web_port,
+                    )
                     address = f"rerun+http://127.0.0.1:{self.cfg.grpc_port}/proxy"
 
             self._viewer = NewtonViewerRerun(
@@ -142,10 +145,9 @@ class RerunVisualizer(Visualizer):
             self._viewer.set_model(self._model)
             self._viewer.set_world_offsets((0.0, 0.0, 0.0))
 
+            cam_pos = self.cfg.camera_position
+            cam_target = self.cfg.camera_target
             try:
-                cam_pos = self.cfg.camera_position
-                cam_target = self.cfg.camera_target
-
                 blueprint = rrb.Blueprint(
                     rrb.Spatial3DView(
                         name="3D View",
@@ -158,17 +160,10 @@ class RerunVisualizer(Visualizer):
                     collapse_panels=True,
                 )
                 rr.send_blueprint(blueprint)
-
-                logger.info(f"[RerunVisualizer] Set initial camera view: position={cam_pos}, target={cam_target}")
             except Exception as exc:
                 logger.warning(f"[RerunVisualizer] Could not set initial camera view: {exc}")
 
-            num_envs = metadata.get("num_envs", 0)
-            physics_backend = metadata.get("physics_backend", "unknown")
-            msg = f"[RerunVisualizer] Initialized with {num_envs} environments (physics: {physics_backend})"
-            if self._env_ids is not None:
-                msg += f", showing {len(self._env_ids)} envs"
-            logger.info(msg)
+            logger.info("[RerunVisualizer] Initialized (camera: pos=%s, target=%s)", cam_pos, cam_target)
 
             self._is_initialized = True
         except Exception as exc:
@@ -191,10 +186,7 @@ class RerunVisualizer(Visualizer):
             return
 
         try:
-            if self.cfg.record_to_rrd:
-                logger.info(f"[RerunVisualizer] Finalizing recording to: {self.cfg.record_to_rrd}")
             self._viewer.close()
-            logger.info("[RerunVisualizer] Closed successfully.")
             if self.cfg.record_to_rrd:
                 import os
 

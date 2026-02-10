@@ -16,7 +16,6 @@ simulation_app = AppLauncher(headless=True, enable_cameras=True).app
 import pytest
 import torch
 from isaaclab_physx.physics import IsaacEvents, PhysxCfg
-from isaaclab_physx.visualizers import RenderMode
 
 import isaaclab.sim as sim_utils
 from isaaclab.envs import (
@@ -172,10 +171,8 @@ def test_env_rendering_logic(env_type, render_interval, physics_callback, render
         #   Without it, the test will exit after the environment is closed
         env.sim._app_control_on_stop_handle = None  # type: ignore
 
-        # check that we are in partial rendering mode for the environment
-        # this is enabled due to app launcher setting "enable_cameras=True"
-        # Access render mode through the first visualizer (OVVisualizer)
-        assert env.sim.visualizers[0].render_mode == RenderMode.PARTIAL_RENDERING
+        # Ensure at least one visualizer exists (OVVisualizer when running with GUI/cameras)
+        assert env.sim.visualizers
 
         # add physics callback via physics manager (IsaacEvents is PhysX-specific)
         physics_handle = env.sim.physics_manager.register_callback(

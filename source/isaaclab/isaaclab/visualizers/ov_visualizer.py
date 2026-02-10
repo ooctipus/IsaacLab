@@ -56,12 +56,9 @@ class OVVisualizer(Visualizer):
         if self._env_ids:
             logger.warning("[OVVisualizer] env_ids filtering is not supported yet. All environments will be shown.")
             self._env_ids = None
-        num_envs = metadata.get("num_envs", 0)
-        physics_backend = metadata.get("physics_backend", "unknown")
-        logger.info(
-            f"[OVVisualizer] Initialized ({num_envs} envs, {physics_backend} physics)"
-            + (f", showing {len(self._env_ids)} envs" if self._env_ids is not None else "")
-        )
+        cam_pos = self.cfg.camera_position
+        cam_target = self.cfg.camera_target
+        logger.info(f"[OVVisualizer] Initialized (camera: pos={cam_pos}, target={cam_target})")
 
         self._is_initialized = True
 
@@ -70,6 +67,14 @@ class OVVisualizer(Visualizer):
             return
         self._sim_time += dt
         self._step_counter += 1
+        try:
+            import omni.kit.app
+
+            app = omni.kit.app.get_app()
+            if app is not None and app.is_running():
+                app.update()
+        except Exception:
+            pass
 
     def close(self) -> None:
         if not self._is_initialized:
@@ -80,9 +85,15 @@ class OVVisualizer(Visualizer):
         self._is_initialized = False
 
     def is_running(self) -> bool:
-        if self._simulation_app is None:
+        if self._simulation_app is not None:
+            return self._simulation_app.is_running()
+        try:
+            import omni.kit.app
+
+            app = omni.kit.app.get_app()
+            return app is not None and app.is_running()
+        except Exception:
             return False
-        return self._simulation_app.is_running()
 
     def is_training_paused(self) -> bool:
         return False
@@ -147,7 +158,6 @@ class OVVisualizer(Visualizer):
                 docked=True,
             )
 
-            logger.info(f"[OVVisualizer] Created viewport '{self.cfg.viewport_name}'")
             asyncio.ensure_future(self._dock_viewport_async(self.cfg.viewport_name, dock_pos))
             self._create_and_assign_camera(usd_stage)
         else:

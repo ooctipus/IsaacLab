@@ -532,7 +532,7 @@ def randomize_physics_scene_gravity(
         This function uses CPU tensors to assign gravity.
     """
     # get the current gravity
-    gravity = torch.tensor(env.sim.cfg.gravity, device="cpu").unsqueeze(0)
+    gravity = torch.tensor(env.sim.cfg.physics.gravity, device="cpu").unsqueeze(0)
     dist_param_0 = torch.tensor(gravity_distribution_params[0], device="cpu")
     dist_param_1 = torch.tensor(gravity_distribution_params[1], device="cpu")
     gravity = _randomize_prop_by_op(

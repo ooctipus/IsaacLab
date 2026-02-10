@@ -72,6 +72,7 @@ class OVSceneDataProvider:
         self._rigid_body_view = None
         self._articulation_view = None
         self._xform_views: dict[str, Any] = {}
+        self._xform_view_failures: set[str] = set()
         self._view_body_index_map: dict[str, list[int]] = {}
 
         # Scene info: set via set_num_envs/set_env_origins after creation (by sim, from env).
@@ -84,7 +85,7 @@ class OVSceneDataProvider:
         # Metadata: only fixed backend info. num_envs/env_origins come from get_num_envs()/self._env_origins.
         self._metadata = {
             "physics_backend": "omni",
-            "gravity_vector": tuple(self._simulation_context.cfg.gravity),
+            "gravity_vector": tuple(self._simulation_context.cfg.physics.gravity),
             "clone_physics_only": False,
         }
         self._up_axis = UsdGeom.GetStageUpAxis(self._stage)
@@ -238,6 +239,8 @@ class OVSceneDataProvider:
         Uses body paths extracted from Newton model to create PhysX tensor API view
         for reading rigid body transforms.
         """
+        if self._physics_sim_view is None:
+            return
         if not self._rigid_body_paths:
             return
         try:
@@ -250,6 +253,8 @@ class OVSceneDataProvider:
 
     def _setup_articulation_view(self) -> None:
         """Create PhysX ArticulationView from Newton's articulation paths."""
+        if self._physics_sim_view is None:
+            return
         if not self._articulation_paths:
             return
         try:
@@ -402,6 +407,8 @@ class OVSceneDataProvider:
         count = 0
         for idx in uncovered:
             path = self._rigid_body_paths[idx]
+            if path in self._xform_view_failures:
+                continue
             try:
                 if path not in self._xform_views:
                     self._xform_views[path] = XformPrimView(
@@ -416,6 +423,7 @@ class OVSceneDataProvider:
                     xform_mask[idx] = True
                     count += 1
             except Exception:
+                self._xform_view_failures.add(path)
                 continue
 
         return count
@@ -538,7 +546,6 @@ class OVSceneDataProvider:
             return
 
         self._refresh_newton_model_if_needed()
-
         try:
             import warp as wp
 
