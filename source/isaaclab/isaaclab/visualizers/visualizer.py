@@ -7,11 +7,17 @@
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from isaaclab.sim.scene_data_providers import SceneDataProvider
+
     from .visualizer_cfg import VisualizerCfg
+
+
+logger = logging.getLogger(__name__)
 
 
 class Visualizer(ABC):
@@ -23,13 +29,14 @@ class Visualizer(ABC):
     def __init__(self, cfg: VisualizerCfg):
         """Initialize visualizer with config."""
         self.cfg = cfg
+        self._scene_data_provider = None
         self._is_initialized = False
         self._is_closed = False
 
     @abstractmethod
-    def initialize(self, scene_data: dict[str, Any] | None = None) -> None:
-        """Initialize visualizer with scene data (model, state, usd_stage, etc.)."""
-        pass
+    def initialize(self, scene_data_provider: SceneDataProvider) -> None:
+        """Initialize visualizer resources."""
+        raise NotImplementedError
 
     @abstractmethod
     def step(self, dt: float, state: Any | None = None) -> None:
@@ -39,22 +46,17 @@ class Visualizer(ABC):
             dt: Time step in seconds.
             state: Updated physics state (e.g., newton.State).
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def close(self) -> None:
         """Clean up resources."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def is_running(self) -> bool:
         """Check if visualizer is still running (e.g., window not closed)."""
-        pass
-
-    @abstractmethod
-    def is_stopped(self) -> bool:
-        """Check if visualizer is stopped (e.g., window closed)."""
-        pass
+        raise NotImplementedError
 
     def is_training_paused(self) -> bool:
         """Check if training is paused by visualizer controls."""
@@ -81,6 +83,25 @@ class Visualizer(ABC):
     def supports_live_plots(self) -> bool:
         """Check if visualizer supports LivePlots."""
         return False
+
+    def get_visualized_env_ids(self) -> list[int] | None:
+        """Return env IDs this visualizer is displaying, if any."""
+        return getattr(self, "_env_ids", None)
+
+    def _compute_visualized_env_ids(self) -> list[int] | None:
+        """Compute which env indices to show from config."""
+        if self._scene_data_provider is None:
+            return None
+        num_envs = self._scene_data_provider.get_metadata().get("num_envs", 0)
+        if num_envs <= 0:
+            logger.warning(
+                "[Visualizer] num_envs is 0 or missing from provider metadata; partial visualization disabled."
+            )
+            return None
+        env_ids_cfg = getattr(self.cfg, "env_ids", None)
+        if env_ids_cfg is not None and len(env_ids_cfg) > 0:
+            return [i for i in env_ids_cfg if 0 <= i < num_envs]
+        return None
 
     def get_rendering_dt(self) -> float | None:
         """Get rendering time step. Returns None to use interface default."""

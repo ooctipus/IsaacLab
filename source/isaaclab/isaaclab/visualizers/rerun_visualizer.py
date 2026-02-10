@@ -1,0 +1,220 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""Rerun-based visualizer using rerun-sdk."""
+
+from __future__ import annotations
+
+import contextlib
+import logging
+from typing import TYPE_CHECKING, Any
+
+import rerun as rr
+import rerun.blueprint as rrb
+from newton.viewer import ViewerRerun
+
+from .rerun_visualizer_cfg import RerunVisualizerCfg
+from .visualizer import Visualizer
+
+logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from isaaclab.sim.scene_data_providers import SceneDataProvider
+
+
+class NewtonViewerRerun(ViewerRerun):
+    """Isaac Lab wrapper for Newton's ViewerRerun."""
+
+    def __init__(
+        self,
+        app_id: str | None = None,
+        address: str | None = None,
+        web_port: int | None = None,
+        grpc_port: int | None = None,
+        keep_historical_data: bool = False,
+        keep_scalar_history: bool = True,
+        record_to_rrd: str | None = None,
+        metadata: dict | None = None,
+    ):
+        super().__init__(
+            app_id=app_id,
+            address=address,
+            web_port=web_port,
+            grpc_port=grpc_port or 9876,
+            serve_web_viewer=True,
+            keep_historical_data=keep_historical_data,
+            keep_scalar_history=keep_scalar_history,
+            record_to_rrd=record_to_rrd,
+        )
+
+        self._metadata = metadata or {}
+        self._log_metadata()
+
+    def _log_metadata(self) -> None:
+        metadata_text = "# Isaac Lab Scene Metadata\n\n"
+        physics_backend = self._metadata.get("physics_backend", "unknown")
+        metadata_text += f"**Physics Backend:** {physics_backend}\n"
+        num_envs = self._metadata.get("num_envs", 0)
+        metadata_text += f"**Total Environments:** {num_envs}\n"
+
+        for key, value in self._metadata.items():
+            if key not in ["physics_backend", "num_envs"]:
+                metadata_text += f"**{key}:** {value}\n"
+
+        rr.log("metadata", rr.TextDocument(metadata_text, media_type=rr.MediaType.MARKDOWN))
+
+
+class RerunVisualizer(Visualizer):
+    """Rerun web-based visualizer with time scrubbing, recording, and data inspection."""
+
+    def __init__(self, cfg: RerunVisualizerCfg):
+        super().__init__(cfg)
+        self.cfg: RerunVisualizerCfg = cfg
+        self._viewer: NewtonViewerRerun | None = None
+        self._model = None
+        self._state = None
+        self._is_initialized = False
+        self._sim_time = 0.0
+        self._scene_data_provider = None
+        self._rerun_server_process = None
+
+    def initialize(self, scene_data_provider: SceneDataProvider) -> None:
+        if self._is_initialized:
+            logger.warning("[RerunVisualizer] Already initialized.")
+            return
+        if scene_data_provider is None:
+            raise RuntimeError("Rerun visualizer requires a scene_data_provider.")
+
+        self._scene_data_provider = scene_data_provider
+        metadata = scene_data_provider.get_metadata()
+        self._env_ids = self._compute_visualized_env_ids()
+        if self._env_ids:
+            get_filtered_model = getattr(scene_data_provider, "get_newton_model_for_env_ids", None)
+            if callable(get_filtered_model):
+                self._model = get_filtered_model(self._env_ids)
+            else:
+                self._model = scene_data_provider.get_newton_model()
+        else:
+            self._model = scene_data_provider.get_newton_model()
+        self._state = scene_data_provider.get_newton_state(self._env_ids)
+
+        try:
+            address = None
+            if self.cfg.bind_address:
+                import shutil
+                import subprocess
+
+                rerun_bin = shutil.which("rerun")
+                if rerun_bin is None:
+                    logger.warning("[RerunVisualizer] 'rerun' binary not found in PATH. Skipping external bind.")
+                else:
+                    cmd = [
+                        rerun_bin,
+                        "--serve-web",
+                        "--bind",
+                        self.cfg.bind_address,
+                        "--port",
+                        str(self.cfg.grpc_port),
+                        "--web-viewer-port",
+                        str(self.cfg.web_port),
+                    ]
+                    if self.cfg.open_browser:
+                        cmd.append("--web-viewer")
+                    self._rerun_server_process = subprocess.Popen(cmd)
+                    logger.info(
+                        "[RerunVisualizer] Server bind %s:%s, web %s",
+                        self.cfg.bind_address,
+                        self.cfg.grpc_port,
+                        self.cfg.web_port,
+                    )
+                    address = f"rerun+http://127.0.0.1:{self.cfg.grpc_port}/proxy"
+
+            self._viewer = NewtonViewerRerun(
+                app_id=self.cfg.app_id,
+                address=address,
+                web_port=self.cfg.web_port,
+                grpc_port=self.cfg.grpc_port,
+                keep_historical_data=self.cfg.keep_historical_data,
+                keep_scalar_history=self.cfg.keep_scalar_history,
+                record_to_rrd=self.cfg.record_to_rrd,
+                metadata=metadata,
+            )
+
+            self._viewer.set_model(self._model)
+            self._viewer.set_world_offsets((0.0, 0.0, 0.0))
+
+            cam_pos = self.cfg.camera_position
+            cam_target = self.cfg.camera_target
+            try:
+                blueprint = rrb.Blueprint(
+                    rrb.Spatial3DView(
+                        name="3D View",
+                        origin="/",
+                        eye_controls=rrb.EyeControls3D(
+                            position=cam_pos,
+                            look_target=cam_target,
+                        ),
+                    ),
+                    collapse_panels=True,
+                )
+                rr.send_blueprint(blueprint)
+            except Exception as exc:
+                logger.warning(f"[RerunVisualizer] Could not set initial camera view: {exc}")
+
+            logger.info("[RerunVisualizer] Initialized (camera: pos=%s, target=%s)", cam_pos, cam_target)
+
+            self._is_initialized = True
+        except Exception as exc:
+            logger.error(f"[RerunVisualizer] Failed to initialize viewer: {exc}")
+            raise
+
+    def step(self, dt: float, state: Any | None = None) -> None:
+        if not self._is_initialized or self._viewer is None or self._scene_data_provider is None:
+            return
+
+        self._state = self._scene_data_provider.get_newton_state(self._env_ids)
+        self._sim_time += dt
+
+        self._viewer.begin_frame(self._sim_time)
+        self._viewer.log_state(self._state)
+        self._viewer.end_frame()
+
+    def close(self) -> None:
+        if not self._is_initialized or self._viewer is None:
+            return
+
+        try:
+            self._viewer.close()
+            if self.cfg.record_to_rrd:
+                import os
+
+                if os.path.exists(self.cfg.record_to_rrd):
+                    size = os.path.getsize(self.cfg.record_to_rrd)
+                    logger.info(f"[RerunVisualizer] Recording saved: {self.cfg.record_to_rrd} ({size} bytes)")
+                else:
+                    logger.warning(f"[RerunVisualizer] Recording file not found: {self.cfg.record_to_rrd}")
+        except Exception as exc:
+            logger.warning(f"[RerunVisualizer] Error during close: {exc}")
+
+        self._viewer = None
+        self._is_initialized = False
+        if self._rerun_server_process is not None:
+            with contextlib.suppress(Exception):
+                self._rerun_server_process.terminate()
+            self._rerun_server_process = None
+
+    def is_running(self) -> bool:
+        if self._viewer is None:
+            return False
+        return self._viewer.is_running()
+
+    def is_training_paused(self) -> bool:
+        return False
+
+    def supports_markers(self) -> bool:
+        return False
+
+    def supports_live_plots(self) -> bool:
+        return False

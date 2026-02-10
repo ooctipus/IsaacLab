@@ -139,6 +139,7 @@ class ManagerBasedEnv:
             with use_stage(self.sim.stage):
                 self.scene = InteractiveScene(self.cfg.scene)
                 attach_stage_to_usd_context()
+        self.sim.set_scene_info(self.scene)
         print("[INFO]: Scene manager: ", self.scene)
 
         # set up camera viewport controller
@@ -485,8 +486,11 @@ class ManagerBasedEnv:
             # render between steps only if the GUI or an RTX sensor needs it
             # note: we assume the render interval to be the shortest accepted rendering interval.
             #    If a camera needs rendering at a faster frequency, this will lead to unexpected behavior.
-            if self._sim_step_counter % self.cfg.sim.render_interval == 0 and is_rendering:
-                self.sim.render()
+            if self._sim_step_counter % self.cfg.sim.render_interval == 0:
+                if is_rendering:
+                    self.sim.render()
+                else:
+                    self.sim.update_visualizers(self.sim.get_rendering_dt())
             # update buffers at sim dt
             self.scene.update(dt=self.physics_dt)
 
