@@ -488,6 +488,10 @@ class OVVisualizer(Visualizer):
         if rendermode is not None and rendermode.lower() == "raytracedlighting":
             self._sim.set_setting("/rtx/rendermode", "RaytracedLighting")
 
+        # Apply interactive pathtracing-specific settings when PathTracing mode is active
+        if self.carb_settings.get("/rtx/rendermode").lower() == "pathtracing":
+            self.set_setting("/rtx/pathtracing/lightcache/cached/alwaysReuse", True)
+
     def close(self) -> None:
         """Clean up visualizer resources."""
         self._sim = None
