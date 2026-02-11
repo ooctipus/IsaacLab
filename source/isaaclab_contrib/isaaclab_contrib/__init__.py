@@ -22,3 +22,13 @@ ISAACLAB_CONTRIB_METADATA = toml.load(os.path.join(ISAACLAB_CONTRIB_EXT_DIR, "co
 
 # Configure the module-level variables
 __version__ = ISAACLAB_CONTRIB_METADATA["package"]["version"]
+
+# Import all manipulation tasks to register gym environments
+# This follows the pattern from isaaclab_tasks and isaaclab_contrib
+from isaaclab_tasks.utils import import_packages
+
+# Blacklist: prevent importing internal utilities and MDP modules
+_BLACKLIST_PKGS = ["mixin_utils", ".mdp"]
+
+# Import all task configs in this package
+import_packages(__name__, _BLACKLIST_PKGS)

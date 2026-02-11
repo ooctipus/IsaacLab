@@ -388,9 +388,18 @@ class ActionManager(ManagerBase):
         # split the actions and apply to each tensor
         idx = 0
         for term in self._terms.values():
-            term_actions = action[:, idx : idx + term.action_dim]
-            term.process_actions(term_actions)
-            idx += term.action_dim
+            term_assigned_envs = getattr(term.cfg, "assigned_envs", None)
+            if term_assigned_envs is None:
+                term_actions = action[:, idx : idx + term.action_dim]
+                term.process_actions(term_actions)
+                idx += term.action_dim
+
+            else:
+                term_actions = action[term_assigned_envs, idx : idx + term.action_dim]
+                term.process_actions(term_actions)
+                idx += term.action_dim
+                if idx >= self.total_action_dim:
+                    idx -= self.total_action_dim
 
     def apply_action(self) -> None:
         """Applies the actions to the environment/simulation.
