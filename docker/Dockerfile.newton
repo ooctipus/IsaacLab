@@ -1,0 +1,120 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers.
+# SPDX-License-Identifier: BSD-3-Clause
+
+# Dockerfile for Isaac Lab with Newton (no Isaac Sim dependency)
+
+# Platform is selected via buildx --platform flag (e.g., linux/arm64)
+FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
+
+# Set default RUN shell to bash
+SHELL ["/bin/bash", "-c"]
+
+LABEL version="1.0.0"
+LABEL description="Dockerfile for Isaac Lab with Newton physics (no Isaac Sim)"
+
+# Arguments
+ARG ISAACLAB_PATH_ARG=/workspace/isaaclab
+ENV ISAACLAB_PATH=${ISAACLAB_PATH_ARG}
+
+# Set environment variables
+ENV LANG=C.UTF-8
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHON_VERSION=3.11
+# Add NVIDIA PyPI as extra index for omniverseclient and other NVIDIA packages
+ENV PIP_EXTRA_INDEX_URL=https://pypi.nvidia.com
+# Add MuJoCo dev wheels for Newton
+ENV PIP_FIND_LINKS=https://py.mujoco.org/
+
+USER root
+
+# Install system dependencies
+RUN --mount=type=cache,target=/var/cache/apt \
+    apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    curl \
+    wget \
+    libglib2.0-0 \
+    libgl1-mesa-glx \
+    libgl1-mesa-dev \
+    libglu1-mesa-dev \
+    libegl1 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libxrandr-dev \
+    libxinerama-dev \
+    libxcursor-dev \
+    libxi-dev \
+    libxxf86vm-dev \
+    libhidapi-dev \
+    ncurses-term \
+    software-properties-common && \
+    apt -y autoremove && apt clean autoclean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Python 3.11
+RUN add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    python${PYTHON_VERSION} \
+    python${PYTHON_VERSION}-dev \
+    python${PYTHON_VERSION}-venv \
+    python${PYTHON_VERSION}-distutils && \
+    apt -y autoremove && apt clean autoclean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set Python 3.11 as default
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1 && \
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1
+
+# Install pip
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION}
+
+# Upgrade pip and install build dependencies
+# hatchling is required for building newton from git
+# scikit-build-core is required for imgui-bundle on ARM64 (only install if needed)
+RUN python -m pip install --upgrade pip wheel toml hatchling cmake ninja cython && \
+    python -m pip install setuptools
+
+# Install PyTorch with CUDA support (cache this layer separately)
+# This rarely changes, so it can be cached independently
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -U torch==2.9.0 torchvision==0.24.0 --index-url https://download.pytorch.org/whl/cu130
+
+# Install heavy dependencies that don't depend on source code
+# Pre-install imgui-bundle here so it's cached and doesn't rebuild on source changes
+# scikit-build-core is only needed for imgui-bundle on ARM64
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install scikit-build-core && \
+    pip install imgui-bundle==1.92.0 && \
+    pip install --no-build-isolation flatdict==4.0.1 && \
+    pip install rsl-rl-lib==3.3
+
+# Copy the Isaac Lab directory
+# This is done AFTER dependency installation so source changes don't invalidate dependency layers
+COPY ../ ${ISAACLAB_PATH}
+
+# Ensure isaaclab.sh has execute permissions
+RUN chmod +x ${ISAACLAB_PATH}/isaaclab.sh
+
+# Install Isaac Lab packages (no Isaac Sim)
+# This layer will only rebuild when source code changes
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -e ${ISAACLAB_PATH}/source/isaaclab && \
+    pip install -e ${ISAACLAB_PATH}/source/isaaclab_assets && \
+    pip install -e ${ISAACLAB_PATH}/source/isaaclab_tasks && \
+    pip install -e ${ISAACLAB_PATH}/source/isaaclab_newton && \
+    pip install -e ${ISAACLAB_PATH}/source/isaaclab_rl && \
+    pip install -e ${ISAACLAB_PATH}/source/isaaclab_experimental && \
+    pip install -e ${ISAACLAB_PATH}/source/isaaclab_tasks_experimental
+
+# Aliases for convenience
+RUN echo "export ISAACLAB_PATH=${ISAACLAB_PATH}" >> ${HOME}/.bashrc && \
+    echo "alias isaaclab=${ISAACLAB_PATH}/isaaclab.sh" >> ${HOME}/.bashrc && \
+    echo "export TZ=$(date +%Z)" >> ${HOME}/.bashrc
+
+# Set working directory
+WORKDIR ${ISAACLAB_PATH}
+
+CMD ["/bin/bash"]

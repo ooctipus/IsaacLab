@@ -304,7 +304,7 @@ def newton_replicate(
         p.add_usd(
             stage,
             root_path=src_path,
-            load_visual_shapes=True,
+            load_visual_shapes=False,
             skip_mesh_approximation=True,
             xform=inverse_env_xform,
         )

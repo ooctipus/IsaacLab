@@ -40,14 +40,14 @@ INSTALL_REQUIRES = [
 EXTRAS_REQUIRE = {
     "sb3": ["stable-baselines3>=2.6", "tqdm", "rich"],  # tqdm/rich for progress bar
     "skrl": ["skrl>=1.4.2"],
-    "rl-games": [
-        "rl-games @ git+https://github.com/isaac-sim/rl_games.git@python3.11",
-        "gym",
-    ],  # rl-games still needs gym :(
+    # "rl-games": [
+    #     "rl-games @ git+https://github.com/isaac-sim/rl_games.git@python3.11",
+    #     "gym",
+    # ],  # rl-games still needs gym :(
     "rsl-rl": ["rsl-rl-lib==3.3.0", "onnxscript>=0.5"],  # linux aarch 64 requires manual onnxscript installation
 }
 # Add the names with hyphens as aliases for convenience
-EXTRAS_REQUIRE["rl_games"] = EXTRAS_REQUIRE["rl-games"]
+# EXTRAS_REQUIRE["rl_games"] = EXTRAS_REQUIRE["rl-games"]
 EXTRAS_REQUIRE["rsl_rl"] = EXTRAS_REQUIRE["rsl-rl"]
 
 # Cumulation of all extra-requires

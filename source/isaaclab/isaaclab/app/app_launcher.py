@@ -893,8 +893,10 @@ class AppLauncher:
             # set environment variables to limit CPU threads
             os.environ["PXR_WORK_THREAD_LIMIT"] = str(num_threads_per_process)
             os.environ["OPENBLAS_NUM_THREADS"] = str(num_threads_per_process)
-            # pass command line variable to kit
-            sys.argv.append(f"--/plugins/carb.tasking.plugin/threadCount={num_threads_per_process}")
+            # Check if Omniverse is required by calling the method directly
+            # Note: This is called before self._omniverse_required is set, so we call the method here
+            if self._check_if_omniverse_required():
+                sys.argv.append(f"--/plugins/carb.tasking.plugin/threadCount={num_threads_per_process}")
 
         # set rendering device. We do not need to set physics_gpu because it will automatically pick the same one
         # as the active_gpu device. Setting physics_gpu explicitly may result in a different device to be used.

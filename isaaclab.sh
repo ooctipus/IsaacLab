@@ -269,7 +269,8 @@ install_isaaclab_extension() {
     # if the directory contains setup.py then install the python module
     if [ -f "$1/setup.py" ]; then
         echo -e "\t module: $1"
-        $pip_command --editable "$1"
+        # use --no-build-isolation to avoid pkg_resources errors in isolated build environments
+        $pip_command --no-build-isolation --editable "$1"
     fi
 }
 
@@ -578,6 +579,10 @@ while [[ $# -gt 0 ]]; do
             # remove any Isaac Sim bundled numpy 1.X as we need numpy 2.X
             ${pip_uninstall_command} -y numpy >/dev/null 2>&1 || true
 
+            # ensure build dependencies are installed (needed for setup.py when using --no-build-isolation)
+            echo "[INFO] Ensuring build dependencies are installed..."
+            ${pip_command} setuptools toml
+
             # install pytorch (version based on arch)
             ensure_cuda_torch
 
@@ -605,7 +610,8 @@ while [[ $# -gt 0 ]]; do
                 shift # past argument
             fi
             # install the learning frameworks specified
-            ${pip_command} -e "${ISAACLAB_PATH}/source/isaaclab_rl[${framework_name}]"
+            # use --no-build-isolation to avoid pkg_resources errors in isolated build environments
+            ${pip_command} --no-build-isolation -e "${ISAACLAB_PATH}/source/isaaclab_rl[${framework_name}]"
             # ${pip_command} -e "${ISAACLAB_PATH}/source/isaaclab_mimic[${framework_name}]"
 
             # in some rare cases, torch might not be installed properly by setup.py, add one more check here
