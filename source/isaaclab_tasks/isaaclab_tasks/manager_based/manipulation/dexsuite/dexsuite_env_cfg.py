@@ -127,6 +127,7 @@ class ObservationsCfg:
         object_quat_b = ObsTerm(func=mdp.object_quat_b, noise=Unoise(n_min=-0.0, n_max=0.0))
         target_object_pose_b = ObsTerm(func=mdp.generated_commands, params={"command_name": "object_pose"})
         actions = ObsTerm(func=mdp.last_action)
+        timout = ObsTerm(func=mdp.time_left)
 
         def __post_init__(self):
             self.enable_corruption = True
@@ -379,7 +380,7 @@ class TerminationsCfg:
     object_out_of_bound = DoneTerm(
         func=mdp.out_of_bound,
         params={
-            "in_bound_range": {"x": (-1.5, 0.5), "y": (-2.0, 2.0), "z": (0.0, 2.0)},
+            "in_bound_range": {"x": (-1.5, 0.5), "y": (-2.0, 2.0), "z": (0.3, 2.0)},
             "asset_cfg": SceneEntityCfg("object"),
         },
     )
@@ -453,7 +454,9 @@ class DexsuiteReorientEnvCfg_PLAY(DexsuiteReorientEnvCfg):
         super().__post_init__()
         self.commands.object_pose.resampling_time_range = (2.0, 3.0)
         self.commands.object_pose.debug_vis = True
+        self.events.variable_gravity = None
         self.curriculum.adr.params["init_difficulty"] = self.curriculum.adr.params["max_difficulty"]
+        self.curriculum.gravity_adr = None
 
 
 class DexsuiteLiftEnvCfg_PLAY(DexsuiteLiftEnvCfg):
@@ -461,7 +464,9 @@ class DexsuiteLiftEnvCfg_PLAY(DexsuiteLiftEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
-        self.commands.object_pose.resampling_time_range = (2.0, 3.0)
+        self.commands.object_pose.resampling_time_range = (1.0, 2.0)
         self.commands.object_pose.debug_vis = True
         self.commands.object_pose.position_only = True
+        self.events.variable_gravity = None
         self.curriculum.adr.params["init_difficulty"] = self.curriculum.adr.params["max_difficulty"]
+        self.curriculum.gravity_adr = None

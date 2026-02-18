@@ -227,10 +227,36 @@ class modify_env_param(ManagerTermBase):
 
         # save the container and the last part of the path
         self._container = container
-        self._last_path = path_parts[-1]  # for "a.b[2].c", this is "c", while for "a.b[2]" it is 2
+        self._last_path = path_parts[-1]  # for "a.b[2].c", this is "c", while for "a.b[2]" it is ("b", 2)
 
         # build the getter and setter
-        if isinstance(self._container, tuple):
+        # Handle case where _last_path is a tuple (name, index) like ("z", 0) from "z[0]"
+        if isinstance(self._last_path, tuple):
+            attr_name, idx = self._last_path
+
+            if isinstance(self._container, dict):
+                # container["z"][0]
+                def get_value():
+                    return self._container[attr_name][idx]
+
+                def set_value(val):
+                    seq = self._container[attr_name]
+                    seq_list = list(seq)
+                    seq_list[idx] = val
+                    self._container[attr_name] = type(seq)(seq_list)
+
+            else:
+                # container.z[0]
+                def get_value():
+                    return getattr(self._container, attr_name)[idx]
+
+                def set_value(val):
+                    seq = getattr(self._container, attr_name)
+                    seq_list = list(seq)
+                    seq_list[idx] = val
+                    setattr(self._container, attr_name, type(seq)(seq_list))
+
+        elif isinstance(self._container, tuple):
             get_value = lambda: self._container[self._last_path]  # noqa: E731
 
             def set_value(val):
