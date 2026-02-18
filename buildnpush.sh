@@ -209,6 +209,19 @@ compute_deps_hash() {
 }
 
 # =============================================================================
+# Compute hash of source code files
+# =============================================================================
+compute_source_hash() {
+  # Hash all Python source files that would trigger reinstall
+  find source -type f \( -name "*.py" -o -name "*.pyx" -o -name "*.pxd" \) ! -path "*/__pycache__/*" ! -path "*/.git/*" 2>/dev/null | \
+    sort | \
+    xargs md5sum 2>/dev/null | \
+    md5sum | \
+    cut -d' ' -f1 | \
+    head -c 12
+}
+
+# =============================================================================
 # Parse Arguments
 # =============================================================================
 FORCE_REBUILD=0
@@ -271,17 +284,21 @@ fi
 # Configuration
 # =============================================================================
 DEPS_HASH=$(compute_deps_hash)
+SOURCE_HASH=$(compute_source_hash)
 DEPS_IMAGE="isaac-lab-deps:${DEPS_HASH}"
+SOURCE_IMAGE="isaac-lab-source:${SOURCE_HASH}"
 BASE_IMAGE="isaac-lab-base"
 FINAL_IMAGE="nvcr.io/nvidian/octi-isaac-lab:${TAG}"
 
 echo "🔍 Dependency Analysis..."
-echo "   Hash: ${DEPS_HASH}"
+echo "   Deps Hash:  ${DEPS_HASH}"
+echo "   Source Hash: ${SOURCE_HASH}"
 
 # =============================================================================
 # Determine Build Strategy
 # =============================================================================
 SKIP_DEPS=0
+SKIP_SOURCE=0
 USE_CACHE=1
 REASON=""
 
@@ -292,30 +309,43 @@ any_deps_image_exists() {
 
 if [ "$FORCE_REBUILD" -eq 1 ]; then
   SKIP_DEPS=0
+  SKIP_SOURCE=0
   USE_CACHE=0
   REASON="forced full rebuild (--force)"
 elif [ "$FORCE_DEPS" -eq 1 ]; then
   SKIP_DEPS=0
+  SKIP_SOURCE=0
   USE_CACHE=1
   REASON="forced deps rebuild (--force-deps)"
-elif image_exists "$DEPS_IMAGE"; then
-  # Exact hash match - use cached deps
+elif image_exists "$SOURCE_IMAGE"; then
+  # Both deps and source are cached - can use source image directly
   SKIP_DEPS=1
+  SKIP_SOURCE=1
   USE_CACHE=1
-  REASON="deps cached (${DEPS_IMAGE})"
+  REASON="fully cached (deps:${DEPS_HASH}, source:${SOURCE_HASH})"
+  echo "   ✓ Cached source image found: ${SOURCE_IMAGE}"
+elif image_exists "$DEPS_IMAGE"; then
+  # Exact deps hash match - use cached deps, but need to rebuild source
+  SKIP_DEPS=1
+  SKIP_SOURCE=0
+  USE_CACHE=1
+  REASON="deps cached, source changed (${DEPS_IMAGE})"
   echo "   ✓ Cached deps image found: ${DEPS_IMAGE}"
+  echo "   ⚠ Source changed - will rebuild source layer"
 elif ! any_deps_image_exists && image_exists "$BASE_IMAGE"; then
   # ONE-TIME MIGRATION: No deps images exist yet, but isaac-lab-base exists
   # This means we're migrating from old system to new system
   echo "   ⚡ One-time migration: tagging existing ${BASE_IMAGE} as deps cache..."
   docker tag "${BASE_IMAGE}" "${DEPS_IMAGE}"
   SKIP_DEPS=1
+  SKIP_SOURCE=0
   USE_CACHE=1
   REASON="migrated existing image (one-time)"
   echo "   ✓ Tagged as ${DEPS_IMAGE}"
 else
   # Deps changed (hash doesn't match any existing deps image)
   SKIP_DEPS=0
+  SKIP_SOURCE=0
   USE_CACHE=1
   if any_deps_image_exists; then
     REASON="deps changed, full rebuild required"
@@ -330,8 +360,10 @@ echo ""
 echo "📋 Build Configuration:"
 echo "   Tag:           ${TAG}"
 echo "   Deps Hash:     ${DEPS_HASH}"
+echo "   Source Hash:   ${SOURCE_HASH}"
 echo "   Strategy:      ${REASON}"
-echo "   Pip Install:   $([ "$SKIP_DEPS" -eq 0 ] && echo "YES" || echo "SKIP (cached)")"
+echo "   Build Deps:    $([ "$SKIP_DEPS" -eq 0 ] && echo "YES" || echo "SKIP (cached)")"
+echo "   Build Source:  $([ "$SKIP_SOURCE" -eq 0 ] && echo "YES" || echo "SKIP (cached)")"
 echo "   Docker Cache:  $([ "$USE_CACHE" -eq 1 ] && echo "YES" || echo "NO")"
 echo "   Push to NGC:   $([ "$SKIP_PUSH" -eq 0 ] && echo "YES" || echo "SKIP")"
 echo ""
@@ -396,6 +428,16 @@ if [ "$SKIP_DEPS" -eq 0 ]; then
   # Tag as deps image for future cache hits
   echo "🏷  Caching deps image as ${DEPS_IMAGE}"
   docker tag "${BASE_IMAGE}" "${DEPS_IMAGE}"
+  
+  # If source is also cached, tag as source image
+  if [ "$SKIP_SOURCE" -eq 1 ]; then
+    echo "🏷  Caching source image as ${SOURCE_IMAGE}"
+    docker tag "${BASE_IMAGE}" "${SOURCE_IMAGE}"
+  fi
+elif [ "$SKIP_SOURCE" -eq 1 ]; then
+  echo "▶️  Using fully cached image (deps + source)..."
+  # Both deps and source are cached - just tag the source image as base
+  docker tag "${SOURCE_IMAGE}" "${BASE_IMAGE}"
 else
   echo "▶️  Using cached dependencies, copying source only..."
   
@@ -449,6 +491,10 @@ EOF
     --build-arg ISAACLAB_PATH_ARG="${ISAACLAB_PATH:-/workspace/isaaclab}" \
     -t "${BASE_IMAGE}" \
     .
+  
+  # Cache the source image for future builds
+  echo "🏷  Caching source image as ${SOURCE_IMAGE}"
+  docker tag "${BASE_IMAGE}" "${SOURCE_IMAGE}"
 fi
 
 # =============================================================================
@@ -492,21 +538,27 @@ now_epoch=$(date +%s)
 
 # Read state file, remove old entries, collect hashes to keep
 > "${STATE_FILE}.tmp"
-while IFS='|' read -r tag hash timestamp; do
-  [ -z "$tag" ] && continue
-  
-  age_days=$(( (now_epoch - timestamp) / 86400 ))
-  
-  if [ "$age_days" -le "$MAX_AGE_DAYS" ]; then
-    # Keep this mapping
-    echo "${tag}|${hash}|${timestamp}" >> "${STATE_FILE}.tmp"
-    keep_hashes="${keep_hashes} isaac-lab-deps:${hash}"
-    echo "   ✓ Tag '${tag}' → deps:${hash} (${age_days}d old)"
-  else
-    echo "   ⏰ Tag '${tag}' mapping expired (${age_days}d old)"
-  fi
-done < "$STATE_FILE"
-mv "${STATE_FILE}.tmp" "$STATE_FILE"
+if [ -f "$STATE_FILE" ] && [ -s "$STATE_FILE" ]; then
+  while IFS='|' read -r tag hash timestamp; do
+    [ -z "$tag" ] && continue
+    [ -z "$hash" ] && continue
+    [ -z "$timestamp" ] && continue
+    
+    age_days=$(( (now_epoch - timestamp) / 86400 ))
+    
+    if [ "$age_days" -le "$MAX_AGE_DAYS" ]; then
+      # Keep this mapping
+      echo "${tag}|${hash}|${timestamp}" >> "${STATE_FILE}.tmp"
+      keep_hashes="${keep_hashes} isaac-lab-deps:${hash}"
+      echo "   ✓ Tag '${tag}' → deps:${hash} (${age_days}d old)"
+    else
+      echo "   ⏰ Tag '${tag}' mapping expired (${age_days}d old)"
+    fi
+  done < "$STATE_FILE"
+fi
+if [ -f "${STATE_FILE}.tmp" ]; then
+  mv "${STATE_FILE}.tmp" "$STATE_FILE"
+fi
 
 # Remove deps images not in keep list
 deps_images=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "^isaac-lab-deps:" || true)
