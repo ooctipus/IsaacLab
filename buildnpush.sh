@@ -209,11 +209,52 @@ compute_deps_hash() {
 }
 
 # =============================================================================
-# Compute hash of source code files
+# Compute hash of ALL source code files (for COPY step)
+# Any source file change requires copying new files into container
 # =============================================================================
 compute_source_hash() {
-  # Hash all Python source files that would trigger reinstall
-  find source -type f \( -name "*.py" -o -name "*.pyx" -o -name "*.pxd" \) ! -path "*/__pycache__/*" ! -path "*/.git/*" 2>/dev/null | \
+  # Hash all source files that need to be copied into container
+  # This includes Python files, config files, etc.
+  find source -type f \( \
+    -name "*.py" -o \
+    -name "*.pyx" -o \
+    -name "*.pxd" -o \
+    -name "*.toml" -o \
+    -name "*.yaml" -o \
+    -name "*.yml" -o \
+    -name "*.json" -o \
+    -name "*.sh" -o \
+    -name "*.txt" -o \
+    -name "*.md" \
+  \) ! -path "*/__pycache__/*" ! -path "*/.git/*" ! -path "*/build/*" ! -path "*/dist/*" ! -path "*/*.egg-info/*" 2>/dev/null | \
+    sort | \
+    xargs md5sum 2>/dev/null | \
+    md5sum | \
+    cut -d' ' -f1 | \
+    head -c 12
+}
+
+# =============================================================================
+# Compute hash of files that require pip reinstall
+# Only hash files that actually require pip reinstall (setup.py, C extensions)
+# Regular Python files don't need reinstall with editable installs
+# =============================================================================
+compute_install_hash() {
+  # Hash only files that would require pip reinstall
+  # This includes: setup.py, pyproject.toml, extension.toml, C/C++ sources, etc.
+  find source -type f \( \
+    -name "setup.py" -o \
+    -name "pyproject.toml" -o \
+    -name "extension.toml" -o \
+    -name "*.c" -o \
+    -name "*.cpp" -o \
+    -name "*.h" -o \
+    -name "*.hpp" -o \
+    -name "*.pyx" -o \
+    -name "*.pxd" -o \
+    -name "CMakeLists.txt" -o \
+    -name "*.cmake" \
+  \) ! -path "*/__pycache__/*" ! -path "*/.git/*" 2>/dev/null | \
     sort | \
     xargs md5sum 2>/dev/null | \
     md5sum | \
@@ -285,14 +326,16 @@ fi
 # =============================================================================
 DEPS_HASH=$(compute_deps_hash)
 SOURCE_HASH=$(compute_source_hash)
+INSTALL_HASH=$(compute_install_hash)
 DEPS_IMAGE="isaac-lab-deps:${DEPS_HASH}"
 SOURCE_IMAGE="isaac-lab-source:${SOURCE_HASH}"
 BASE_IMAGE="isaac-lab-base"
 FINAL_IMAGE="nvcr.io/nvidian/octi-isaac-lab:${TAG}"
 
 echo "🔍 Dependency Analysis..."
-echo "   Deps Hash:  ${DEPS_HASH}"
-echo "   Source Hash: ${SOURCE_HASH}"
+echo "   Deps Hash:    ${DEPS_HASH}"
+echo "   Source Hash:  ${SOURCE_HASH} (all source files for COPY)"
+echo "   Install Hash: ${INSTALL_HASH} (files requiring pip reinstall)"
 
 # =============================================================================
 # Determine Build Strategy
@@ -318,12 +361,28 @@ elif [ "$FORCE_DEPS" -eq 1 ]; then
   USE_CACHE=1
   REASON="forced deps rebuild (--force-deps)"
 elif image_exists "$SOURCE_IMAGE"; then
-  # Both deps and source are cached - can use source image directly
+  # Source image exists - check if source hash still matches
   SKIP_DEPS=1
-  SKIP_SOURCE=1
-  USE_CACHE=1
-  REASON="fully cached (deps:${DEPS_HASH}, source:${SOURCE_HASH})"
-  echo "   ✓ Cached source image found: ${SOURCE_IMAGE}"
+  cached_source_hash=$(docker image inspect "$SOURCE_IMAGE" --format '{{index .Config.Labels "source_hash"}}' 2>/dev/null || echo "")
+  if [ "$SOURCE_HASH" = "$cached_source_hash" ]; then
+    # Source hash matches - fully cached
+    SKIP_SOURCE=1
+    USE_CACHE=1
+    REASON="fully cached (deps:${DEPS_HASH}, source:${SOURCE_HASH})"
+    echo "   ✓ Cached source image found: ${SOURCE_IMAGE}"
+  else
+    # Source files changed - need to rebuild COPY layer
+    SKIP_SOURCE=0
+    USE_CACHE=1
+    cached_install_hash=$(docker image inspect "$SOURCE_IMAGE" --format '{{index .Config.Labels "install_hash"}}' 2>/dev/null || echo "")
+    if [ "$INSTALL_HASH" = "$cached_install_hash" ]; then
+      REASON="source changed (.py only), rebuild COPY, skip pip install (deps:${DEPS_HASH})"
+      echo "   ⚠ Source files changed (.py only) - will rebuild COPY layer, skip pip install"
+    else
+      REASON="source changed (install files), rebuild COPY + pip install (deps:${DEPS_HASH})"
+      echo "   ⚠ Source files changed (install files) - will rebuild COPY layer + pip install"
+    fi
+  fi
 elif image_exists "$DEPS_IMAGE"; then
   # Exact deps hash match - use cached deps, but need to rebuild source
   SKIP_DEPS=1
@@ -361,6 +420,7 @@ echo "📋 Build Configuration:"
 echo "   Tag:           ${TAG}"
 echo "   Deps Hash:     ${DEPS_HASH}"
 echo "   Source Hash:   ${SOURCE_HASH}"
+echo "   Install Hash:  ${INSTALL_HASH}"
 echo "   Strategy:      ${REASON}"
 echo "   Build Deps:    $([ "$SKIP_DEPS" -eq 0 ] && echo "YES" || echo "SKIP (cached)")"
 echo "   Build Source:  $([ "$SKIP_SOURCE" -eq 0 ] && echo "YES" || echo "SKIP (cached)")"
@@ -428,12 +488,10 @@ if [ "$SKIP_DEPS" -eq 0 ]; then
   # Tag as deps image for future cache hits
   echo "🏷  Caching deps image as ${DEPS_IMAGE}"
   docker tag "${BASE_IMAGE}" "${DEPS_IMAGE}"
-  
-  # If source is also cached, tag as source image
-  if [ "$SKIP_SOURCE" -eq 1 ]; then
-    echo "🏷  Caching source image as ${SOURCE_IMAGE}"
-    docker tag "${BASE_IMAGE}" "${SOURCE_IMAGE}"
-  fi
+  # Label the deps image with install hash for future comparison
+  docker image inspect "${DEPS_IMAGE}" --format '{{.Id}}' | xargs -I {} docker tag {} "${DEPS_IMAGE}"
+  # Note: Labels are set during build, so we need to rebuild with labels or use a different approach
+  # For now, we'll set labels in the source-only build
 elif [ "$SKIP_SOURCE" -eq 1 ]; then
   echo "▶️  Using fully cached image (deps + source)..."
   # Both deps and source are cached - just tag the source image as base
@@ -464,15 +522,19 @@ COPY ../ ${ISAACLAB_PATH}
 RUN chmod +x ${ISAACLAB_PATH}/isaaclab.sh
 
 # Install Isaac Lab packages (no Isaac Sim)
-# This layer will only rebuild when source code changes
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -e ${ISAACLAB_PATH}/source/isaaclab && \
-    pip install -e ${ISAACLAB_PATH}/source/isaaclab_assets && \
-    pip install -e ${ISAACLAB_PATH}/source/isaaclab_tasks && \
-    pip install -e ${ISAACLAB_PATH}/source/isaaclab_newton && \
-    pip install -e ${ISAACLAB_PATH}/source/isaaclab_rl && \
-    pip install -e ${ISAACLAB_PATH}/source/isaaclab_experimental && \
-    pip install -e ${ISAACLAB_PATH}/source/isaaclab_tasks_experimental
+# Skip pip install if SKIP_PIP_INSTALL=1 (only .py files changed, editable installs pick up changes)
+ARG SKIP_PIP_INSTALL=0
+RUN if [ "${SKIP_PIP_INSTALL}" != "1" ]; then \
+      pip install -e ${ISAACLAB_PATH}/source/isaaclab && \
+      pip install -e ${ISAACLAB_PATH}/source/isaaclab_assets && \
+      pip install -e ${ISAACLAB_PATH}/source/isaaclab_tasks && \
+      pip install -e ${ISAACLAB_PATH}/source/isaaclab_newton && \
+      pip install -e ${ISAACLAB_PATH}/source/isaaclab_rl && \
+      pip install -e ${ISAACLAB_PATH}/source/isaaclab_experimental && \
+      pip install -e ${ISAACLAB_PATH}/source/isaaclab_tasks_experimental; \
+    else \
+      echo "Skipping pip install (editable installs will pick up .py changes)"; \
+    fi
 
 # Set working directory
 WORKDIR ${ISAACLAB_PATH}
@@ -484,11 +546,23 @@ EOF
     source docker/.env.base
   fi
   
+  # Check if we need to run pip install
+  # Compare install hash with the deps image (which has the last install hash)
+  SKIP_PIP_INSTALL=0
+  cached_install_hash=$(docker image inspect "${DEPS_IMAGE}" --format '{{index .Config.Labels "install_hash"}}' 2>/dev/null || echo "")
+  if [ "$INSTALL_HASH" = "$cached_install_hash" ] && [ -n "$cached_install_hash" ]; then
+    SKIP_PIP_INSTALL=1
+    echo "   ⚡ Install hash unchanged - will skip pip install (editable installs pick up .py changes)"
+  fi
+  
   # Build using lightweight source-only Dockerfile
   docker build \
     -f docker/Dockerfile.source-only.newton \
     --build-arg DEPS_BASE_IMAGE="${DEPS_IMAGE}" \
     --build-arg ISAACLAB_PATH_ARG="${ISAACLAB_PATH:-/workspace/isaaclab}" \
+    --build-arg SKIP_PIP_INSTALL="${SKIP_PIP_INSTALL}" \
+    --label "source_hash=${SOURCE_HASH}" \
+    --label "install_hash=${INSTALL_HASH}" \
     -t "${BASE_IMAGE}" \
     .
   
