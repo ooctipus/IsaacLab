@@ -19,6 +19,7 @@ finger_bodies = ["index_link_3", "middle_link_3", "ring_link_3"]
 thumb_body = "thumb_link_3"
 
 
+
 @configclass
 class KukaAllegroSceneCfg(dexsuite.SceneCfg):
     """Kuka Allegro participant scene for Dexsuite Lifting/Reorientation"""

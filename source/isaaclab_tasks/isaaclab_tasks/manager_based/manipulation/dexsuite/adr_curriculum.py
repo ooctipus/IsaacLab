@@ -121,6 +121,19 @@ class CurriculumCfg:
         },
     )
 
+    tracking_goal_transitioning = CurrTerm(
+        func=mdp.modify_term_cfg,
+        params={
+            "address": "rewards.position_tracking.params.std",
+            "modify_fn": mdp.initial_final_interpolate_fn,
+            "modify_params": {
+                "initial_value": 10,
+                "final_value": 0.2,
+                "difficulty_term_str": "adr",
+            },
+        },
+    )
+
     gravity_adr = CurrTerm(
         func=mdp.modify_term_cfg,
         params={

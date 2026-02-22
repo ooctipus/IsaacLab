@@ -14,6 +14,7 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import ContactSensor
 from isaaclab.utils import math as math_utils
 from isaaclab.utils.math import combine_frame_transforms, compute_pose_error
+from isaaclab.managers import ManagerTermBase
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -119,51 +120,62 @@ def contact_count(
     return contact_count / len(sensor_names)
 
 
-def success_reward(
-    env: ManagerBasedRLEnv,
-    command_name: str,
-    asset_cfg: SceneEntityCfg,
-    align_asset_cfg: SceneEntityCfg,
-    pos_std: float,
-    thumb_name: str,
-    finger_names: list[str],
-    contact_threshold: float = 0.01,
-    rot_std: float | None = None,
-) -> torch.Tensor:
+class success_reward(ManagerTermBase):
     """Reward success by comparing commanded pose to the object pose using tanh kernels on error.
 
     The reward is gated by contact: only given when thumb + at least one finger are in contact.
 
-    Args:
-        env: The environment instance.
-        command_name: Name of the command to track.
-        asset_cfg: Configuration for the robot asset.
-        align_asset_cfg: Configuration for the object asset.
-        pos_std: Standard deviation for position error tanh kernel.
-        thumb_name: Name of the thumb contact sensor.
-        finger_names: Names of the finger contact sensors.
-        contact_threshold: Contact force magnitude threshold.
-        rot_std: Standard deviation for rotation error tanh kernel. If None, only position is used.
+    Maintains a sticky ``succeeded`` boolean tensor per environment that flips to ``True`` once
+    the success condition is met during an episode and resets to ``False`` on environment reset.
 
-    Returns:
-        Reward tensor of shape (num_envs,).
+    Args:
+        cfg: Configuration object specifying term parameters.
+        env: The manager-based RL environment.
     """
-    asset: RigidObject = env.scene[asset_cfg.name]
-    object: RigidObject = env.scene[align_asset_cfg.name]
-    command = env.command_manager.get_command(command_name)
-    des_pos_w, des_quat_w = combine_frame_transforms(
-        asset.data.root_pos_w, asset.data.root_quat_w, command[:, :3], command[:, 3:7]
-    )
-    pos_err, rot_err = compute_pose_error(
-        des_pos_w, des_quat_w, object.data.root_pos_w, object.data.root_quat_w
-    )
-    pos_dist = torch.linalg.norm(pos_err, dim=1)
-    contact_mask = contacts(env, contact_threshold, thumb_name, finger_names).float()
-    if not rot_std:
-        # square is not necessary but this help to keep the final value between having rot_std or not roughly the same
-        return ((1 - torch.tanh(pos_dist / pos_std)) ** 2) * contact_mask
-    rot_dist = torch.linalg.norm(rot_err, dim=1)
-    return (1 - torch.tanh(pos_dist / pos_std)) * (1 - torch.tanh(rot_dist / rot_std)) * contact_mask
+
+    def __init__(self, cfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.succeeded = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+
+    def reset(self, env_ids: Sequence[int] | None = None):
+        if env_ids is None:
+            self.succeeded[:] = False
+        else:
+            self.succeeded[env_ids] = False
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        command_name: str,
+        asset_cfg: SceneEntityCfg,
+        align_asset_cfg: SceneEntityCfg,
+        pos_std: float,
+        thumb_name: str,
+        finger_names: list[str],
+        contact_threshold: float = 0.01,
+        rot_std: float | None = None,
+    ) -> torch.Tensor:
+        asset: RigidObject = env.scene[asset_cfg.name]
+        object: RigidObject = env.scene[align_asset_cfg.name]
+        command = env.command_manager.get_command(command_name)
+        des_pos_w, des_quat_w = combine_frame_transforms(
+            asset.data.root_pos_w, asset.data.root_quat_w, command[:, :3], command[:, 3:7]
+        )
+        pos_err, rot_err = compute_pose_error(
+            des_pos_w, des_quat_w, object.data.root_pos_w, object.data.root_quat_w
+        )
+        pos_dist = torch.linalg.norm(pos_err, dim=1)
+        contact_mask = contacts(env, contact_threshold, thumb_name, finger_names)
+
+        if rot_std:
+            rot_dist = torch.linalg.norm(rot_err, dim=1)
+            reward = (1 - torch.tanh(pos_dist / pos_std)) * (1 - torch.tanh(rot_dist / rot_std)) * contact_mask.float()
+            self.succeeded |= contact_mask & (pos_dist < pos_std) & (rot_dist < rot_std)
+        else:
+            reward = ((1 - torch.tanh(pos_dist / pos_std)) ** 2) * contact_mask.float()
+            self.succeeded |= contact_mask & (pos_dist < pos_std)
+
+        return reward
 
 
 def position_command_error_tanh(

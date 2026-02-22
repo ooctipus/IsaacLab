@@ -9,23 +9,22 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils import configclass
 
-from isaaclab_assets.robots import KUKA_INSPIRE_CFG
+from isaaclab_assets.robots import KUKA_SHARPA_CFG
 
 from ... import dexsuite_env_cfg as dexsuite
 from ... import mdp
 
-
-finger_bodies = ["right_index_2", "right_middle_2", "right_ring_2", "right_little_2"]
-thumb_body = "right_thumb_4"
+thumb_body = "left_thumb_elastomer"
+finger_names = ["left_index_elastomer", "left_middle_elastomer", "left_ring_elastomer", "left_pinky_elastomer"]
 
 
 @configclass
-class KukaInspireRelJointPosActionCfg:
+class KukaSharpaRelJointPosActionCfg:
     action = mdp.RelativeJointPositionActionCfg(asset_name="robot", joint_names=[".*"], scale=0.1)
 
 
 @configclass
-class KukaInspireReorientRewardCfg(dexsuite.RewardsCfg):
+class KukaSharpaReorientRewardCfg(dexsuite.RewardsCfg):
     # bool awarding term if 2 finger tips are in contact with object, one of the contacting fingers has to be thumb.
     good_finger_contact = RewTerm(
         func=mdp.contacts,
@@ -33,7 +32,7 @@ class KukaInspireReorientRewardCfg(dexsuite.RewardsCfg):
         params={
             "threshold": 0.01,
             "thumb_name": f"{thumb_body}_object_s",
-            "finger_names": [f"{body}_object_s" for body in finger_bodies]
+            "finger_names": [f"{body}_object_s" for body in finger_names]
         },
     )
 
@@ -42,29 +41,27 @@ class KukaInspireReorientRewardCfg(dexsuite.RewardsCfg):
         weight=1.0,
         params={
             "threshold": 0.01,
-            "sensor_names": [f"{body}_object_s" for body in finger_bodies] + [f"{thumb_body}_object_s"]
+            "sensor_names": [f"{body}_object_s" for body in finger_names] + [f"{thumb_body}_object_s"]
         },
     )
 
+
 @configclass
-class KukaInspireMixinCfg:
-    rewards: KukaInspireReorientRewardCfg = KukaInspireReorientRewardCfg()
-    actions: KukaInspireRelJointPosActionCfg = KukaInspireRelJointPosActionCfg()
+class KukaSharpaMixinCfg:
+    rewards: KukaSharpaReorientRewardCfg = KukaSharpaReorientRewardCfg()
+    actions: KukaSharpaRelJointPosActionCfg = KukaSharpaRelJointPosActionCfg()
 
     def __post_init__(self: dexsuite.DexsuiteReorientEnvCfg):
         super().__post_init__()
         self.commands.object_pose.body_name = "mount"
-        self.scene.robot = KUKA_INSPIRE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-
-        # Body names (used in prim_path)
-        all_bodies = finger_bodies + [thumb_body]
+        self.scene.robot = KUKA_SHARPA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
         # Sensor names (body name + _object_s suffix)
-        finger_sensors = [f"{body}_object_s" for body in finger_bodies]
+        finger_sensors = [f"{body}_object_s" for body in finger_names]
         thumb_sensor = f"{thumb_body}_object_s"
 
         # Create contact sensors for each finger tip body
-        for body_name in all_bodies:
+        for body_name in finger_names + [thumb_body]:
             sensor_name = f"{body_name}_object_s"
             setattr(
                 self.scene,
@@ -80,8 +77,8 @@ class KukaInspireMixinCfg:
             params={"contact_sensor_names": finger_sensors + [thumb_sensor]},
             clip=(-20.0, 20.0),  # contact force in finger tips is under 20N normally
         )
-        self.observations.proprio.hand_tips_state_b.params["body_asset_cfg"].body_names = ["mount", ".*(index|middle|ring|little)_2", "right_thumb_4"]
-        self.rewards.fingers_to_object.params["asset_cfg"] = SceneEntityCfg("robot", body_names=["mount", ".*(index|middle|ring|little)_2", "right_thumb_4"])
+        self.observations.proprio.hand_tips_state_b.params["body_asset_cfg"].body_names = ["mount", ".*_elastomer"]
+        self.rewards.fingers_to_object.params["asset_cfg"] = SceneEntityCfg("robot", body_names=["mount", ".*_elastomer"])
 
         # Add contact sensor params for rewards that need them
         # fingers_to_object (object_ee_distance)
@@ -98,21 +95,22 @@ class KukaInspireMixinCfg:
         self.rewards.success.params["thumb_name"] = thumb_sensor
         self.rewards.success.params["finger_names"] = finger_sensors
 
+
 @configclass
-class DexsuiteKukaInspireReorientEnvCfg(KukaInspireMixinCfg, dexsuite.DexsuiteReorientEnvCfg):
+class DexsuiteKukaSharpaReorientEnvCfg(KukaSharpaMixinCfg, dexsuite.DexsuiteReorientEnvCfg):
     pass
 
 
 @configclass
-class DexsuiteKukaInspireReorientEnvCfg_PLAY(KukaInspireMixinCfg, dexsuite.DexsuiteReorientEnvCfg_PLAY):
+class DexsuiteKukaSharpaReorientEnvCfg_PLAY(KukaSharpaMixinCfg, dexsuite.DexsuiteReorientEnvCfg_PLAY):
     pass
 
 
 @configclass
-class DexsuiteKukaInspireLiftEnvCfg(KukaInspireMixinCfg, dexsuite.DexsuiteLiftEnvCfg):
+class DexsuiteKukaSharpaLiftEnvCfg(KukaSharpaMixinCfg, dexsuite.DexsuiteLiftEnvCfg):
     pass
 
 
 @configclass
-class DexsuiteKukaInspireLiftEnvCfg_PLAY(KukaInspireMixinCfg, dexsuite.DexsuiteLiftEnvCfg_PLAY):
+class DexsuiteKukaSharpaLiftEnvCfg_PLAY(KukaSharpaMixinCfg, dexsuite.DexsuiteLiftEnvCfg_PLAY):
     pass

@@ -6,10 +6,12 @@
 # Nvidia Dockerfiles: https://github.com/NVIDIA-Omniverse/IsaacSim-dockerfiles
 # Please check above link for license information.
 
-# Base image
+# Base image - can be overridden with DEPS_BASE_IMAGE for cached deps builds
 ARG ISAACSIM_BASE_IMAGE_ARG
 ARG ISAACSIM_VERSION_ARG
-FROM ${ISAACSIM_BASE_IMAGE_ARG}:${ISAACSIM_VERSION_ARG} AS base
+ARG DEPS_BASE_IMAGE_ARG=""
+# Use deps image if provided, otherwise use Isaac Sim base
+FROM ${DEPS_BASE_IMAGE_ARG:-${ISAACSIM_BASE_IMAGE_ARG}:${ISAACSIM_VERSION_ARG}} AS base
 ENV ISAACSIM_VERSION=${ISAACSIM_VERSION_ARG}
 
 # Set default RUN shell to bash
@@ -29,6 +31,8 @@ ENV ISAACLAB_PATH=${ISAACLAB_PATH_ARG}
 # Home dir of docker user, typically '/root'
 ARG DOCKER_USER_HOME_ARG
 ENV DOCKER_USER_HOME=${DOCKER_USER_HOME_ARG}
+# Build arg to skip pip install (for source-only updates)
+ARG SKIP_PIP_INSTALL=0
 
 # Set environment variables
 ENV LANG=C.UTF-8
@@ -86,13 +90,16 @@ RUN touch /bin/nvidia-smi && \
     mkdir -p /var/run/nvidia-persistenced && \
     touch /var/run/nvidia-persistenced/socket
 
-# installing Isaac Lab dependencies
-# use pip caching to avoid reinstalling large packages
+# Installing Isaac Lab dependencies (skip if SKIP_PIP_INSTALL=1)
+# Use pip caching to avoid reinstalling large packages
 RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/pip \
-    ${ISAACLAB_PATH}/isaaclab.sh --install
-
-# HACK: Remove install of quadprog dependency
-RUN ${ISAACLAB_PATH}/isaaclab.sh -p -m pip uninstall -y quadprog
+    if [ "$SKIP_PIP_INSTALL" != "1" ]; then \
+        echo "📦 Installing pip dependencies..." && \
+        ${ISAACLAB_PATH}/isaaclab.sh --install && \
+        ${ISAACLAB_PATH}/isaaclab.sh -p -m pip uninstall -y quadprog; \
+    else \
+        echo "⏭️  Skipping pip install (SKIP_PIP_INSTALL=1)"; \
+    fi
 
 # aliasing isaaclab.sh and python for convenience
 RUN echo "export ISAACLAB_PATH=${ISAACLAB_PATH}" >> ${HOME}/.bashrc && \

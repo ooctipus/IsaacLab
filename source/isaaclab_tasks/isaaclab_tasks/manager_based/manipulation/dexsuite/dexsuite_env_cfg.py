@@ -339,7 +339,7 @@ class RewardsCfg:
         weight=2.0,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
-            "std": 0.2,
+            "std": 10.0,
             "command_name": "object_pose",
             "align_asset_cfg": SceneEntityCfg("object"),
         },
@@ -394,7 +394,7 @@ class DexsuiteReorientEnvCfg(ManagerBasedEnvCfg):
 
     # Scene settings
     viewer: ViewerCfg = ViewerCfg(eye=(-2.25, 0.0, 0.75), lookat=(0.0, 0.0, 0.45), origin_type="env")
-    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=3, replicate_physics=False)
+    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=2.0, replicate_physics=False)
     # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
@@ -430,10 +430,6 @@ class DexsuiteReorientEnvCfg(ManagerBasedEnvCfg):
         self.sim.physx.bounce_threshold_velocity = 0.01
         self.sim.physx.gpu_max_rigid_patch_count = 4 * 5 * 2**15
 
-        if self.curriculum is not None:
-            self.curriculum.adr.params["pos_tol"] = self.rewards.success.params["pos_std"] / 2
-            self.curriculum.adr.params["rot_tol"] = self.rewards.success.params["rot_std"] / 2
-
 
 class DexsuiteLiftEnvCfg(DexsuiteReorientEnvCfg):
     """Dexsuite lift task definition"""
@@ -442,10 +438,6 @@ class DexsuiteLiftEnvCfg(DexsuiteReorientEnvCfg):
         super().__post_init__()
         self.rewards.orientation_tracking = None  # no orientation reward
         self.commands.object_pose.position_only = True
-        if self.curriculum is not None:
-            self.rewards.success.params["rot_std"] = None  # make success reward not consider orientation
-            self.curriculum.adr.params["rot_tol"] = None  # make adr not tracking orientation
-
 
 class DexsuiteReorientEnvCfg_PLAY(DexsuiteReorientEnvCfg):
     """Dexsuite reorientation task evaluation environment definition"""

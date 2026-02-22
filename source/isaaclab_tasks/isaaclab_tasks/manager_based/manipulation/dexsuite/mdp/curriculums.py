@@ -10,10 +10,8 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from isaaclab.assets import Articulation, RigidObject
 from isaaclab.envs import mdp
-from isaaclab.managers import ManagerTermBase, SceneEntityCfg
-from isaaclab.utils.math import combine_frame_transforms, compute_pose_error
+from isaaclab.managers import ManagerTermBase
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -83,27 +81,13 @@ class DifficultyScheduler(ManagerTermBase):
         self,
         env: ManagerBasedRLEnv,
         env_ids: Sequence[int],
-        asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-        object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
-        pos_tol: float = 0.1,
-        rot_tol: float | None = None,
+        success_term_name: str = "success",
         init_difficulty: int = 0,
         min_difficulty: int = 0,
         max_difficulty: int = 50,
         promotion_only: bool = False,
     ):
-        asset: Articulation = env.scene[asset_cfg.name]
-        object: RigidObject = env.scene[object_cfg.name]
-        command = env.command_manager.get_command("object_pose")
-        des_pos_w, des_quat_w = combine_frame_transforms(
-            asset.data.root_pos_w[env_ids], asset.data.root_quat_w[env_ids], command[env_ids, :3], command[env_ids, 3:7]
-        )
-        pos_err, rot_err = compute_pose_error(
-            des_pos_w, des_quat_w, object.data.root_pos_w[env_ids], object.data.root_quat_w[env_ids]
-        )
-        pos_dist = torch.norm(pos_err, dim=1)
-        rot_dist = torch.norm(rot_err, dim=1)
-        move_up = (pos_dist < pos_tol) & (rot_dist < rot_tol) if rot_tol else pos_dist < pos_tol
+        move_up = env.reward_manager.get_term_cfg(success_term_name).func.succeeded[env_ids]
         demot = self.current_adr_difficulties[env_ids] if promotion_only else self.current_adr_difficulties[env_ids] - 1
         self.current_adr_difficulties[env_ids] = torch.where(
             move_up,
@@ -111,4 +95,5 @@ class DifficultyScheduler(ManagerTermBase):
             demot,
         ).clamp(min=min_difficulty, max=max_difficulty)
         self.difficulty_frac = torch.mean(self.current_adr_difficulties) / max(max_difficulty, 1)
+        print(f"difficulty_frac: {self.difficulty_frac}")
         return self.difficulty_frac

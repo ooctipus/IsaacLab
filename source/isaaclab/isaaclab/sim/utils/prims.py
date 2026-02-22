@@ -1060,7 +1060,7 @@ def select_usd_variants(prim_path: str, variants: object | dict[str, str], stage
     for variant_set_name, variant_selection in variants.items():  # type: ignore
         # Check if the variant set exists on the prim.
         if not existing_variant_sets.HasVariantSet(variant_set_name):
-            logger.warning(f"Variant set '{variant_set_name}' does not exist on prim '{prim_path}'.")
+            logger.warning(f"Variant set '{ variant_set_name}' does not exist on prim '{prim_path}'.")
             continue
 
         variant_set = existing_variant_sets.GetVariantSet(variant_set_name)
