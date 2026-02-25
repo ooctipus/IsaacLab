@@ -7,14 +7,16 @@
 """Franka multi-task runtime composition package.
 
 This package provides utilities for creating multi-task environments where different
-tasks run in different environment groups, sharing the same robots and actions.
+tasks run in different environment groups.
 
 Available configurations:
     - FrankaMultiTaskEnvCfg: Multi-task env with shared Franka robots
-    - MultiRobotMultiTaskEnvCfg: Multi-task env with heterogeneous robots per group
+    - MultiRobotMultiTaskManipulationEnvCfg: Multi-task env with heterogeneous robots per task group
 """
 
 # Import all sub-packages
-from .config.franka import *
+from .config.demo import *
 from .mdp import *
 from .mixin_utils import *
+from .multitask_env_cfg import *
+from .multitask_utils import *

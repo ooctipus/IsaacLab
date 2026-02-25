@@ -8,8 +8,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
-from dataclasses import MISSING, field, is_dataclass
-from dataclasses import replace as dc_replace
+from dataclasses import MISSING, field
 from typing import Any
 
 from isaaclab.envs import ManagerBasedEnvCfg, ManagerBasedRLEnvCfg
@@ -81,11 +80,10 @@ class MultiTaskRegistryConfig:
     @staticmethod
     def clone_cfg(cfg: Any, **kwargs: Any) -> Any:
         """Clone a configuration object with updated parameters."""
-        if hasattr(cfg, "replace") and callable(cfg.replace):
+        if hasattr(cfg, "replace") and callable(getattr(cfg, "replace")):
             return cfg.replace(**kwargs)
-        if is_dataclass(cfg):
-            return dc_replace(cfg, **kwargs)
-        raise TypeError(f"Unsupported config type for cloning: {type(cfg)}")
+        else:
+            raise TypeError(f"Unsupported config type for cloning: {type(cfg)}")
 
     @staticmethod
     def group_prim_from_template(env_ids: Iterable[int], prim_path: str) -> str:

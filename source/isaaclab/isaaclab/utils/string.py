@@ -393,6 +393,63 @@ def find_unique_string_name(initial_name: str, is_unique_fn: Callable[[str], boo
     return result
 
 
+def extract_env_ids_from_prim_path(prim_path: Any) -> tuple[int, ...] | None:
+    """Extract environment indices from a prim path.
+    Supports:
+    - Explicit ``env_<id>`` segments (e.g. ``env_0``, ``env_12``).
+    - Alternation ``env_(a|b|c)`` (e.g. ``env_(0|1|2)``).
+
+    Returns ``None`` when the path uses a generic env pattern (``env_.*`` or
+    ``{ENV_REGEX_NS}``), meaning "all envs" / no per-env filtering.
+
+    Args:
+        prim_path: The prim path string to parse (e.g. from cfg.prim_path or cfg.spawn.prim_path).
+
+    Returns:
+        Sorted tuple of unique environment indices, or None if path is generic (all envs).
+        Empty tuple if no env pattern found.
+    """
+    prim_path = str(prim_path)
+    if "env_.*" in prim_path or "{ENV_REGEX_NS}" in prim_path:
+        return None
+    env_ids: set[int] = set()
+
+    # match explicit env_<id>
+    for match in re.findall(r"env_(\d+)", prim_path):
+        env_ids.add(int(match))
+
+    # match env_(a|b|c) format
+    for group in re.findall(r"env_\(([^)]+)\)", prim_path):
+        for part in re.split(r"[|,]", group):
+            part = part.strip()
+            if part.isdigit():
+                env_ids.add(int(part))
+    return tuple(sorted(env_ids)) if env_ids else ()
+
+
+def resolve_assigned_env_ids_from_cfg(cfg: Any) -> tuple[int, ...]:
+    """Resolve assigned environment indices from a config object.
+
+    Uses explicit ``assigned_envs`` if present, otherwise infers from
+    ``prim_path`` or ``spawn.prim_path`` via :func:`extract_env_ids_from_prim_path`.
+
+    Args:
+        cfg: config class instance with optional ``assigned_envs``, ``prim_path``, or ``spawn.prim_path``.
+
+    Returns:
+        Sorted tuple of global environment indices. Empty tuple if none resolved.
+    """
+    explicit = getattr(cfg, "assigned_envs", None)
+    if explicit:
+        return tuple(int(x) for x in explicit)
+    prim_path = getattr(cfg, "prim_path", None) or getattr(getattr(cfg, "spawn", None), "prim_path", None)
+    if prim_path is None:
+        raise ValueError(f"No prim path found for config: {cfg}. Please provide a valid prim path.")
+
+    result = extract_env_ids_from_prim_path(prim_path)
+    return () if result is None else result
+
+
 def find_root_prim_path_from_regex(prim_path_regex: str) -> tuple[str, int]:
     """Find the first prim above the regex pattern prim and its position.
     Args:

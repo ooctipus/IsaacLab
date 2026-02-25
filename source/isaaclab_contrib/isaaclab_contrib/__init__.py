@@ -28,7 +28,7 @@ __version__ = ISAACLAB_CONTRIB_METADATA["package"]["version"]
 from isaaclab_tasks.utils import import_packages
 
 # Blacklist: prevent importing internal utilities and MDP modules
-_BLACKLIST_PKGS = ["mixin_utils", ".mdp"]
+_BLACKLIST_PKGS = [".mdp"]
 
 # Import all task configs in this package
 import_packages(__name__, _BLACKLIST_PKGS)

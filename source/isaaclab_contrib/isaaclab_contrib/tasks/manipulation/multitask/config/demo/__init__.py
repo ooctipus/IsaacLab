@@ -13,7 +13,7 @@ gym.register(
     id="Isaac-Franka-Multi-Task-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.franka_multitask_env_cfg:FrankaStackReachLiftCabinetMultiTaskEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.demo_multitask_env_cfg:FrankaMultiTaskEnvCfg",
     },
     disable_env_checker=True,
 )
@@ -22,7 +22,7 @@ gym.register(
     id="Isaac-MultiRobot-Multi-Task-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.multirobot_multitask_env_cfg:MultiRobotMultiTaskManipulationEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.demo_multitask_env_cfg:MultiRobotMultiTaskManipulationEnvCfg",
     },
     disable_env_checker=True,
 )
