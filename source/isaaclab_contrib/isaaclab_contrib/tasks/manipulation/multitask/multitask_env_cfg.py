@@ -24,9 +24,6 @@ from isaaclab.utils import configclass
 
 from isaaclab_contrib.tasks.manipulation.multitask import mdp
 from isaaclab_contrib.tasks.manipulation.multitask.mixin_utils import (
-    PerEnvArticulation,
-    PerEnvRigidObject,
-    PerEnvSurfaceGripper,
     get_per_env_action_class,
 )
 from isaaclab_contrib.tasks.manipulation.multitask.multitask_utils import MultiTaskRegistryConfig
@@ -194,7 +191,7 @@ class SingleRobotMultiTaskEnvCfg(ManagerBasedRLEnvCfg):
 
     def _apply_ground_offset_to_init_state(self, init_state, offset_z: float):
         """Return init_state with pos z shifted by offset_z to align with shared ground plane."""
-        if init_state is None or offset_z == 0.0:
+        if init_state is None or offset_z == 0.0:  # SurfaceGripperCfg does not have init_state
             return init_state
         pos = getattr(init_state, "pos", None)
         if pos is None:
@@ -227,25 +224,11 @@ class SingleRobotMultiTaskEnvCfg(ManagerBasedRLEnvCfg):
                 prim_path = self.tasks.group_prim_from_template(env_tuple, asset_cfg.prim_path)
                 adj_init = self._apply_ground_offset_to_init_state(asset_cfg.init_state, offset_z)
 
-                # Per-env Articulations and Rigid Objects, Fixtures only revise path/init_state.
-                if isinstance(asset_cfg, ArticulationCfg):
-                    ClassType = PerEnvArticulation
-                elif isinstance(asset_cfg, RigidObjectCfg):
-                    ClassType = PerEnvRigidObject
-                elif isinstance(asset_cfg, SurfaceGripperCfg):
-                    ClassType = PerEnvSurfaceGripper
-                elif isinstance(asset_cfg, AssetBaseCfg):
-                    ClassType = None  # Fixtures don't change class type
-                else:
-                    raise ValueError(f"Unsupported asset type for PerEnvClass: {type(asset_cfg)}")
-
+                # Per-env Articulations, Rigid Objects, SurfaceGrippers, and Fixtures: only revise prim_path/init_state.
                 cloned = self.tasks.clone_cfg(
                     asset_cfg,
                     prim_path=prim_path,
-                    init_state=adj_init
-                    if ClassType != PerEnvSurfaceGripper
-                    else asset_cfg.init_state,  # SurfaceGripperCfg does not have init_state
-                    class_type=ClassType,
+                    init_state=adj_init,
                 )
 
                 cloned.assigned_envs = env_tuple
@@ -355,7 +338,7 @@ class MultiRobotMultiTaskEnvCfg(SingleRobotMultiTaskEnvCfg):
                 robot_cfg,
                 prim_path=prim_path,
                 init_state=adj_init,
-                class_type=PerEnvArticulation,
+                # class_type=PerEnvArticulation,
             )
             cloned.assigned_envs = env_tuple
             setattr(self.scene, f"robot_group_{group_idx}", cloned)

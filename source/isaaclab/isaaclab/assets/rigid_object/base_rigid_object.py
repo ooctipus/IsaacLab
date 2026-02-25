@@ -5,12 +5,15 @@
 
 from __future__ import annotations
 
+import inspect
 from abc import abstractmethod
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import torch
 
+from isaaclab.utils.decorators import filter_env_ids_arg
+from isaaclab.utils.string import resolve_assigned_env_ids_from_cfg
 from isaaclab.utils.wrench_composer import WrenchComposer
 
 from ..asset_base import AssetBase
@@ -54,6 +57,22 @@ class BaseRigidObject(AssetBase):
             cfg: A configuration instance.
         """
         super().__init__(cfg)
+        # resolve the assigned environment indices from the configuration in case of heterogeneous environments
+        self._assigned_envs = resolve_assigned_env_ids_from_cfg(cfg)
+        self._assigned_envs_to_local_indices = {
+            global_idx: local_idx for local_idx, global_idx in enumerate(self._assigned_envs)
+        }
+
+    def __init_subclass__(cls, **kwargs):
+        """Auto-wrap subclass methods that take ``env_ids`` with :func:`filter_env_ids_arg`."""
+        super().__init_subclass__(**kwargs)
+        for name, obj in list(vars(cls).items()):
+            if not callable(obj):
+                continue
+            sig = inspect.signature(obj)
+            if "env_ids" not in sig.parameters:
+                continue
+            setattr(cls, name, filter_env_ids_arg(obj))
 
     """
     Properties
@@ -105,6 +124,44 @@ class BaseRigidObject(AssetBase):
     def permanent_wrench_composer(self) -> WrenchComposer:
         """Permanent wrench composer for the rigid object."""
         raise NotImplementedError()
+
+    @property
+    def assigned_envs(self) -> tuple[int, ...]:
+        """Global environment indices handled by this rigid object instance."""
+        return self._assigned_envs
+
+    @property
+    def assigned_envs_to_local_indices(self) -> dict[int, int]:
+        """Map of global environment indices to local indices."""
+        return self._assigned_envs_to_local_indices
+
+    @property
+    def is_heterogeneous(self) -> bool:
+        """
+        Check if the rigid object is heterogeneous.
+        Returns:
+            bool: True if global_to_local filtering is needed, in case of heterogeneous environments.
+            False if no filtering is needed, fallback to homogeneous environments.
+        """
+        return self._assigned_envs is not None and len(self._assigned_envs) > 0
+
+    def _filter_env_ids(self, env_ids: Sequence[int] | torch.Tensor | None = None) -> torch.Tensor:
+        """Filter global env indices to the managed subset.
+        Args:
+            env_ids: global env indices (tensor or sequence of int).
+            If None, returns all local indices (shape (len(assigned_envs),)).
+        Returns: 1D long tensor (local indices)
+        """
+        if env_ids is None:
+            return torch.arange(len(self._assigned_envs), dtype=torch.long, device=self.device)
+
+        env_ids = env_ids.cpu().tolist()
+        local_list = [
+            self._assigned_envs_to_local_indices[env_id]
+            for env_id in env_ids
+            if env_id in self._assigned_envs_to_local_indices
+        ]
+        return torch.tensor(local_list, dtype=torch.long, device=self.device)
 
     """
     Operations.

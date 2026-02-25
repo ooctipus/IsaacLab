@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import warnings
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import torch
@@ -15,6 +16,7 @@ from isaacsim.core.utils.extensions import enable_extension
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBase
+from isaaclab.utils.string import resolve_assigned_env_ids_from_cfg
 from isaaclab.utils.version import get_isaac_sim_version
 
 if TYPE_CHECKING:
@@ -70,6 +72,12 @@ class SurfaceGripper(AssetBase):
         self._is_initialized = False
         self._debug_vis_handle = None
 
+        # resolve the assigned environment indices from the configuration in case of heterogeneous environments
+        self._assigned_envs = resolve_assigned_env_ids_from_cfg(self._cfg)
+        self._assigned_envs_to_local_indices = {
+            global_idx: local_idx for local_idx, global_idx in enumerate(self._assigned_envs)
+        }
+
         # register various callback functions
         self._register_callbacks()
 
@@ -116,6 +124,39 @@ class SurfaceGripper(AssetBase):
         """Returns the gripper view object."""
         return self._gripper_view
 
+    @property
+    def assigned_envs(self) -> tuple[int, ...]:
+        """Global environment indices handled by this surface gripper instance."""
+        return self._assigned_envs
+
+    @property
+    def is_heterogeneous(self) -> bool:
+        """
+        Check if the surface gripper is heterogeneous.
+        Returns:
+            bool: True if global_to_local filtering is needed, in case of heterogeneous environments.
+            False if no filtering is needed, fallback to homogeneous environments.
+        """
+        return self._assigned_envs is not None and len(self._assigned_envs) > 0
+
+    def _filter_env_ids(self, env_ids: Sequence[int] | torch.Tensor | None = None) -> torch.Tensor:
+        """Filter global env indices to the managed subset.
+        Args:
+            env_ids: global env indices (tensor or sequence of int).
+            If None, returns all local indices (shape (len(assigned_envs),)).
+        Returns: 1D long tensor (local indices)
+        """
+        if env_ids is None:
+            return torch.arange(len(self._assigned_envs), dtype=torch.long, device=self.device)
+
+        env_ids = env_ids.cpu().tolist()
+        local_list = [
+            self._assigned_envs_to_local_indices[env_id]
+            for env_id in env_ids
+            if env_id in self._assigned_envs_to_local_indices
+        ]
+        return torch.tensor(local_list, dtype=torch.long, device=self.device)
+
     """
     Operations
     """
@@ -137,6 +178,8 @@ class SurfaceGripper(AssetBase):
             retry_interval: The retry interval of the gripper. Should be a tensor of shape (num_envs,).
             indices: The indices of the grippers to update the properties for. Can be a tensor of any shape.
         """
+        if self.is_heterogeneous:
+            indices = self._filter_env_ids(indices)
 
         if indices is None:
             indices = self._ALL_INDICES
@@ -216,6 +259,9 @@ class SurfaceGripper(AssetBase):
             indices: A tensor of integers representing the indices of the grippers to set the command for. Defaults
                      to None, in which case all grippers are set.
         """
+        if self.is_heterogeneous:
+            indices = self._filter_env_ids(indices)
+
         if indices is None:
             indices = self._ALL_INDICES
 
@@ -228,6 +274,9 @@ class SurfaceGripper(AssetBase):
             indices: A tensor of integers representing the indices of the grippers to reset the command for. Defaults
                      to None, in which case all grippers are reset.
         """
+        if self.is_heterogeneous:
+            indices = self._filter_env_ids(indices)
+
         # Would normally set the buffer to 0, for now we won't do that
         if indices is None:
             indices = self._ALL_INDICES

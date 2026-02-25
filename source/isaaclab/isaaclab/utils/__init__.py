@@ -8,6 +8,7 @@
 from .array import *
 from .buffers import *
 from .configclass import configclass
+from .decorators import filter_env_ids_arg
 from .dict import *
 from .interpolation import *
 from .logger import *
