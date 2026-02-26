@@ -204,6 +204,14 @@ class ResolvableString(str):
     def __getattr__(self, item: str):
         return getattr(self._resolve(), item)
 
+    def __copy__(self):
+        """Return self because strings are immutable."""
+        return self
+
+    def __deepcopy__(self, memo):
+        """Return self so deepcopy doesn't trigger lazy resolution."""
+        return self
+
 
 """
 Regex operations.
