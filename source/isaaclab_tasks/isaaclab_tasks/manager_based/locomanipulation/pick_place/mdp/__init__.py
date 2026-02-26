@@ -9,6 +9,6 @@ from isaaclab.utils.module import attach_cascading
 
 __getattr__, __dir__ = attach_cascading(
     __name__,
-    submodules=["actions", "observations"],
+    submodules=["actions", "observations", "terminations"],
     packages=["isaaclab.envs.mdp"],
 )

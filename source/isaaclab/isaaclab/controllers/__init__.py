@@ -11,7 +11,24 @@ or inverse kinematics control. The controller is responsible for generating the 
 commands to be sent to the robot.
 """
 
-from .differential_ik import DifferentialIKController
-from .differential_ik_cfg import DifferentialIKControllerCfg
-from .operational_space import OperationalSpaceController
-from .operational_space_cfg import OperationalSpaceControllerCfg
+from isaaclab.utils.module import attach_cascading
+
+__getattr__, __dir__ = attach_cascading(
+    __name__,
+    submodules=[
+        "differential_ik",
+        "differential_ik_cfg",
+        "joint_impedance",
+        "joint_impedance_cfg",
+        "operational_space",
+        "operational_space_cfg",
+        "pink_ik",
+    ],
+)
+
+__all__ = [
+    "DifferentialIKController",
+    "DifferentialIKControllerCfg",
+    "OperationalSpaceController",
+    "OperationalSpaceControllerCfg",
+]

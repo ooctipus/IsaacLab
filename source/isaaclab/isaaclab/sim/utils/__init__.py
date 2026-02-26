@@ -9,5 +9,6 @@ from isaaclab.utils.module import attach_cascading
 
 __getattr__, __dir__ = attach_cascading(
     __name__,
-    submodules=["legacy", "prims", "queries", "semantics", "stage", "transforms"],
+    # Octi: Legacy Last :).
+    submodules=["stage", "queries", "semantics", "transforms", "prims", "legacy"],
 )

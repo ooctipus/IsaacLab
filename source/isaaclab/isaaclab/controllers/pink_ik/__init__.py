@@ -12,8 +12,17 @@ from isaaclab.utils.module import attach_cascading
 
 __getattr__, __dir__ = attach_cascading(
     __name__,
-    submodules=["null_space_posture_task", "pink_ik", "pink_ik_cfg"],
+    submodules=["pink_task_cfg", "pink_ik_cfg", "pink_ik", "pink_tasks", "null_space_posture_task"],
 )
 
 
-__all__ = ["NullSpacePostureTask", "PinkIKController", "PinkIKControllerCfg", "PinkIKTaskCfg"]
+__all__ = [
+    "NullSpacePostureTask",
+    "PinkIKController",
+    "PinkIKControllerCfg",
+    "PinkIKTaskCfg",
+    "FrameTaskCfg",
+    "DampingTaskCfg",
+    "LocalFrameTaskCfg",
+    "NullSpacePostureTaskCfg",
+]
