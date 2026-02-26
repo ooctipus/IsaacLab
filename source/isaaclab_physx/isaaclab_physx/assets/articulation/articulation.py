@@ -598,7 +598,7 @@ class Articulation(BaseArticulation):
         if env_ids != slice(None) and joint_ids != slice(None):
             env_ids = env_ids[:, None]
         # set into internal buffers
-        self.data.joint_pos[env_ids, joint_ids] = position
+        self.data.joint_pos[env_ids, joint_ids] = position.clone()
         # Need to invalidate the buffer to trigger the update with the new root pose.
         self.data._body_com_vel_w.timestamp = -1.0
         self.data._body_link_vel_w.timestamp = -1.0
@@ -639,7 +639,7 @@ class Articulation(BaseArticulation):
         if env_ids != slice(None) and joint_ids != slice(None):
             env_ids = env_ids[:, None]
         # set into internal buffers
-        self.data.joint_vel[env_ids, joint_ids] = velocity
+        self.data.joint_vel[env_ids, joint_ids] = velocity.clone()
         self.data._previous_joint_vel[env_ids, joint_ids] = velocity
         self.data.joint_acc[env_ids, joint_ids] = 0.0
         # set into simulation
@@ -678,6 +678,8 @@ class Articulation(BaseArticulation):
         # broadcast env_ids if needed to allow double indexing
         if env_ids != slice(None) and joint_ids != slice(None):
             env_ids = env_ids[:, None]
+        # clone to avoid in-place write when RHS shares memory with internal buffer
+        stiffness = stiffness.to(self.device).clone() if isinstance(stiffness, torch.Tensor) else stiffness
         # set into internal buffers
         self.data.joint_stiffness[env_ids, joint_ids] = stiffness
         # set into simulation
@@ -712,6 +714,8 @@ class Articulation(BaseArticulation):
         # broadcast env_ids if needed to allow double indexing
         if env_ids != slice(None) and joint_ids != slice(None):
             env_ids = env_ids[:, None]
+        # clone to avoid in-place write when RHS shares memory with internal buffer
+        damping = damping.to(self.device).clone() if isinstance(damping, torch.Tensor) else damping
         # set into internal buffers
         self.data.joint_damping[env_ids, joint_ids] = damping
         # set into simulation
@@ -749,6 +753,8 @@ class Articulation(BaseArticulation):
         # broadcast env_ids if needed to allow double indexing
         if env_ids != slice(None) and joint_ids != slice(None):
             env_ids = env_ids[:, None]
+        # clone to avoid in-place write when limits shares memory with internal buffer
+        limits = limits.to(self.device).clone() if isinstance(limits, torch.Tensor) else limits
         # set into internal buffers
         self.data.joint_pos_limits[env_ids, joint_ids] = limits
         # update default joint pos to stay within the new limits
@@ -814,9 +820,8 @@ class Articulation(BaseArticulation):
         # broadcast env_ids if needed to allow double indexing
         if env_ids != slice(None) and joint_ids != slice(None):
             env_ids = env_ids[:, None]
-        # move tensor to cpu if needed
-        if isinstance(limits, torch.Tensor):
-            limits = limits.to(self.device)
+        # clone to avoid in-place write when RHS shares memory with LHS
+        limits = limits.to(self.device).clone() if isinstance(limits, torch.Tensor) else limits
         # set into internal buffers
         self.data.joint_vel_limits[env_ids, joint_ids] = limits
         # set into simulation
@@ -854,9 +859,8 @@ class Articulation(BaseArticulation):
         # broadcast env_ids if needed to allow double indexing
         if env_ids != slice(None) and joint_ids != slice(None):
             env_ids = env_ids[:, None]
-        # move tensor to cpu if needed
-        if isinstance(limits, torch.Tensor):
-            limits = limits.to(self.device)
+        # clone to avoid in-place write when RHS shares memory with LHS
+        limits = limits.to(self.device).clone() if isinstance(limits, torch.Tensor) else limits
         # set into internal buffers
         self.data.joint_effort_limits[env_ids, joint_ids] = limits
         # set into simulation
@@ -893,6 +897,8 @@ class Articulation(BaseArticulation):
         # broadcast env_ids if needed to allow double indexing
         if env_ids != slice(None) and joint_ids != slice(None):
             env_ids = env_ids[:, None]
+        # clone to avoid in-place write when armature shares memory with internal buffer
+        armature = armature.to(self.device).clone() if isinstance(armature, torch.Tensor) else armature
         # set into internal buffers
         self.data.joint_armature[env_ids, joint_ids] = armature
         # set into simulation
@@ -944,6 +950,13 @@ class Articulation(BaseArticulation):
         # broadcast env_ids if needed to allow double indexing
         if env_ids != slice(None) and joint_ids != slice(None):
             env_ids = env_ids[:, None]
+        # clone to avoid in-place write when RHS shares memory with internal buffer
+        if isinstance(joint_friction_coeff, torch.Tensor):
+            joint_friction_coeff = joint_friction_coeff.to(self.device).clone()
+        if isinstance(joint_dynamic_friction_coeff, torch.Tensor):
+            joint_dynamic_friction_coeff = joint_dynamic_friction_coeff.to(self.device).clone()
+        if isinstance(joint_viscous_friction_coeff, torch.Tensor):
+            joint_viscous_friction_coeff = joint_viscous_friction_coeff.to(self.device).clone()
         # set into internal buffers
         self.data.joint_friction_coeff[env_ids, joint_ids] = joint_friction_coeff
 
@@ -1011,6 +1024,12 @@ class Articulation(BaseArticulation):
         # broadcast env_ids if needed to allow double indexing
         if env_ids != slice(None) and joint_ids != slice(None):
             env_ids = env_ids[:, None]
+        # clone to avoid in-place write when RHS shares memory with internal buffer
+        joint_dynamic_friction_coeff = (
+            joint_dynamic_friction_coeff.to(self.device).clone()
+            if isinstance(joint_dynamic_friction_coeff, torch.Tensor)
+            else joint_dynamic_friction_coeff
+        )
         # set into internal buffers
         self.data.joint_dynamic_friction_coeff[env_ids, joint_ids] = joint_dynamic_friction_coeff
         # set into simulation
@@ -1050,6 +1069,12 @@ class Articulation(BaseArticulation):
         # broadcast env_ids if needed to allow double indexing
         if env_ids != slice(None) and joint_ids != slice(None):
             env_ids = env_ids[:, None]
+        # clone to avoid in-place write when RHS shares memory with internal buffer
+        joint_viscous_friction_coeff = (
+            joint_viscous_friction_coeff.to(self.device).clone()
+            if isinstance(joint_viscous_friction_coeff, torch.Tensor)
+            else joint_viscous_friction_coeff
+        )
         # set into internal buffers
         self.data.joint_viscous_friction_coeff[env_ids, joint_ids] = joint_viscous_friction_coeff
         # set into simulation

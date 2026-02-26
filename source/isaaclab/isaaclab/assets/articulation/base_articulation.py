@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from isaaclab.utils.decorators import filter_env_ids_arg
+from isaaclab.utils.decorators import FilterEnvIdsSkipMethodNames, filter_env_ids_arg
 from isaaclab.utils.string import resolve_assigned_env_ids_from_cfg
 
 from ..asset_base import AssetBase
@@ -107,8 +107,12 @@ class BaseArticulation(AssetBase):
     def __init_subclass__(cls, **kwargs):
         """Auto-wrap subclass methods that take ``env_ids`` with :func:`filter_env_ids_arg`."""
         super().__init_subclass__(**kwargs)
+        skip = FilterEnvIdsSkipMethodNames.skip_set()
+
         for name, obj in list(vars(cls).items()):
             if not callable(obj):
+                continue
+            if name in skip:
                 continue
             sig = inspect.signature(obj)
             if "env_ids" not in sig.parameters:
