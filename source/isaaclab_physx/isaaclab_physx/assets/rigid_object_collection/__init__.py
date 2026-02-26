@@ -5,10 +5,12 @@
 
 """Sub-module for rigid object collection."""
 
-from .rigid_object_collection import RigidObjectCollection
-from .rigid_object_collection_data import RigidObjectCollectionData
+import lazy_loader as lazy
 
-__all__ = [
-    "RigidObjectCollection",
-    "RigidObjectCollectionData",
-]
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "rigid_object_collection": ["RigidObjectCollection"],
+        "rigid_object_collection_data": ["RigidObjectCollectionData"],
+    },
+)

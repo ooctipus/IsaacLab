@@ -16,6 +16,13 @@
     :mod:`isaaclab_teleop.xr_anchor_utils`.
 """
 
-from .manus_vive import ManusVive, ManusViveCfg
-from .openxr_device import OpenXRDevice, OpenXRDeviceCfg
-from .xr_cfg import XrAnchorRotationMode, XrCfg, remove_camera_configs
+import lazy_loader as lazy
+
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "manus_vive": ["ManusVive", "ManusViveCfg"],
+        "openxr_device": ["OpenXRDevice", "OpenXRDeviceCfg"],
+        "xr_cfg": ["XrAnchorRotationMode", "XrCfg", "remove_camera_configs"],
+    },
+)

@@ -5,10 +5,10 @@
 
 """This sub-module contains the functions that are specific to the in-hand manipulation environments."""
 
-from isaaclab.envs.mdp import *  # noqa: F401, F403
+from isaaclab.utils.module import attach_cascading
 
-from .commands import *  # noqa: F401, F403
-from .events import *  # noqa: F401, F403
-from .observations import *  # noqa: F401, F403
-from .rewards import *  # noqa: F401, F403
-from .terminations import *  # noqa: F401, F403
+__getattr__, __dir__ = attach_cascading(
+    __name__,
+    submodules=["commands", "events", "observations", "rewards", "terminations"],
+    packages=["isaaclab.envs.mdp"],
+)

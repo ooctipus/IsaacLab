@@ -25,5 +25,12 @@ actions to the scene. All these are handled by different "managers" in the frame
 :mod:`isaaclab.managers` sub-package for more details.
 """
 
-from .interactive_scene import InteractiveScene
-from .interactive_scene_cfg import InteractiveSceneCfg
+import lazy_loader as lazy
+
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "interactive_scene": ["InteractiveScene"],
+        "interactive_scene_cfg": ["InteractiveSceneCfg"],
+    },
+)

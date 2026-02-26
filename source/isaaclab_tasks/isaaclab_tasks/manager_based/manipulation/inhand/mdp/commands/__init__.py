@@ -5,5 +5,12 @@
 
 """Sub-module containing command terms for 3D orientation goals."""
 
-from .commands_cfg import InHandReOrientationCommandCfg  # noqa: F401
-from .orientation_command import InHandReOrientationCommand  # noqa: F401
+import lazy_loader as lazy
+
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "commands_cfg": ["InHandReOrientationCommandCfg"],
+        "orientation_command": ["InHandReOrientationCommand"],
+    },
+)

@@ -3,9 +3,14 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-##
-# Configuration for different assets.
-##
+"""Configuration for different assets."""
 
-from .gelsight import *
-from .velodyne import *
+import lazy_loader as lazy
+
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "gelsight": ["GELSIGHT_R15_CFG", "GELSIGHT_MINI_CFG"],
+        "velodyne": ["VELODYNE_VLP_16_RAYCASTER_CFG"],
+    },
+)

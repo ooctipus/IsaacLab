@@ -25,14 +25,31 @@ the corresponding x and y coordinates.
 
 """
 
-from .hf_terrains_cfg import (
-    HfDiscreteObstaclesTerrainCfg,
-    HfInvertedPyramidSlopedTerrainCfg,
-    HfInvertedPyramidStairsTerrainCfg,
-    HfPyramidSlopedTerrainCfg,
-    HfPyramidStairsTerrainCfg,
-    HfRandomUniformTerrainCfg,
-    HfSteppingStonesTerrainCfg,
-    HfTerrainBaseCfg,
-    HfWaveTerrainCfg,
+import lazy_loader as lazy
+
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "hf_terrains_cfg": [
+            "HfDiscreteObstaclesTerrainCfg",
+            "HfInvertedPyramidSlopedTerrainCfg",
+            "HfInvertedPyramidStairsTerrainCfg",
+            "HfPyramidSlopedTerrainCfg",
+            "HfPyramidStairsTerrainCfg",
+            "HfRandomUniformTerrainCfg",
+            "HfSteppingStonesTerrainCfg",
+            "HfTerrainBaseCfg",
+            "HfWaveTerrainCfg",
+        ],
+        "hf_terrains": [
+            "hf_discrete_obstacles_terrain",
+            "hf_inverted_pyramid_sloped_terrain",
+            "hf_inverted_pyramid_stairs_terrain",
+            "hf_pyramid_sloped_terrain",
+            "hf_pyramid_stairs_terrain",
+            "hf_random_uniform_terrain",
+            "hf_stepping_stones_terrain",
+            "hf_wave_terrain",
+        ],
+    },
 )

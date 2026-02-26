@@ -12,18 +12,38 @@ tri-mesh primitive. Thus, this representation is more computationally and memory
 efficient than the height-field representation, but it is not as flexible.
 """
 
-from .mesh_terrains_cfg import (
-    MeshBoxTerrainCfg,
-    MeshFloatingRingTerrainCfg,
-    MeshGapTerrainCfg,
-    MeshInvertedPyramidStairsTerrainCfg,
-    MeshPitTerrainCfg,
-    MeshPlaneTerrainCfg,
-    MeshPyramidStairsTerrainCfg,
-    MeshRailsTerrainCfg,
-    MeshRandomGridTerrainCfg,
-    MeshRepeatedBoxesTerrainCfg,
-    MeshRepeatedCylindersTerrainCfg,
-    MeshRepeatedPyramidsTerrainCfg,
-    MeshStarTerrainCfg,
+import lazy_loader as lazy
+
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "mesh_terrains_cfg": [
+            "MeshBoxTerrainCfg",
+            "MeshFloatingRingTerrainCfg",
+            "MeshGapTerrainCfg",
+            "MeshInvertedPyramidStairsTerrainCfg",
+            "MeshPitTerrainCfg",
+            "MeshPlaneTerrainCfg",
+            "MeshPyramidStairsTerrainCfg",
+            "MeshRailsTerrainCfg",
+            "MeshRandomGridTerrainCfg",
+            "MeshRepeatedBoxesTerrainCfg",
+            "MeshRepeatedCylindersTerrainCfg",
+            "MeshRepeatedPyramidsTerrainCfg",
+            "MeshStarTerrainCfg",
+        ],
+        "mesh_terrains": [
+            "flat_terrain",
+            "pyramid_stairs_terrain",
+            "inverted_pyramid_stairs_terrain",
+            "random_grid_terrain",
+            "rails_terrain",
+            "pit_terrain",
+            "box_terrain",
+            "gap_terrain",
+            "floating_ring_terrain",
+            "star_terrain",
+            "repeated_objects_terrain",
+        ],
+    },
 )

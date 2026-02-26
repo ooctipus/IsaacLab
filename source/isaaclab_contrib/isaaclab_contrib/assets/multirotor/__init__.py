@@ -41,6 +41,13 @@ Example:
     - :mod:`isaaclab_contrib.mdp.actions`: Thrust action terms for RL
 """
 
-from .multirotor import Multirotor
-from .multirotor_cfg import MultirotorCfg
-from .multirotor_data import MultirotorData
+import lazy_loader as lazy
+
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "multirotor": ["Multirotor"],
+        "multirotor_cfg": ["MultirotorCfg"],
+        "multirotor_data": ["MultirotorData"],
+    },
+)

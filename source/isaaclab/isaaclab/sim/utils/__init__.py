@@ -5,9 +5,9 @@
 
 """Utilities built around USD operations."""
 
-from .legacy import *  # noqa: F401, F403
-from .prims import *  # noqa: F401, F403
-from .queries import *  # noqa: F401, F403
-from .semantics import *  # noqa: F401, F403
-from .stage import *  # noqa: F401, F403
-from .transforms import *  # noqa: F401, F403
+from isaaclab.utils.module import attach_cascading
+
+__getattr__, __dir__ = attach_cascading(
+    __name__,
+    submodules=["legacy", "prims", "queries", "semantics", "stage", "transforms"],
+)

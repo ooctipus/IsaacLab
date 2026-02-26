@@ -3,10 +3,12 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab.envs.mdp import *  # noqa: F401, F403
+"""This sub-module contains the functions that are specific to the dexsuite environments."""
 
-from .commands import *  # noqa: F401, F403
-from .curriculums import *  # noqa: F401, F403
-from .observations import *  # noqa: F401, F403
-from .rewards import *  # noqa: F401, F403
-from .terminations import *  # noqa: F401, F403
+from isaaclab.utils.module import attach_cascading
+
+__getattr__, __dir__ = attach_cascading(
+    __name__,
+    submodules=["commands", "curriculums", "observations", "rewards", "terminations"],
+    packages=["isaaclab.envs.mdp"],
+)

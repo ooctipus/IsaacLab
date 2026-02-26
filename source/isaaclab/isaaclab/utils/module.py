@@ -48,39 +48,29 @@ def attach_cascading(
 
     def __getattr__(name: str):
         for mod_name in submodules:
-            try:
-                mod = importlib.import_module(f"{package_name}.{mod_name}")
-                if hasattr(mod, name):
-                    val = getattr(mod, name)
-                    sys.modules[package_name].__dict__[name] = val
-                    return val
-            except ImportError:
-                pass
+            full_mod_name = f"{package_name}.{mod_name}"
+            mod = importlib.import_module(full_mod_name)
+            if hasattr(mod, name):
+                val = getattr(mod, name)
+                sys.modules[package_name].__dict__[name] = val
+                return val
         for pkg in packages:
-            try:
-                mod = importlib.import_module(pkg)
-                if hasattr(mod, name):
-                    val = getattr(mod, name)
-                    sys.modules[package_name].__dict__[name] = val
-                    return val
-            except ImportError:
-                pass
+            mod = importlib.import_module(pkg)
+            if hasattr(mod, name):
+                val = getattr(mod, name)
+                sys.modules[package_name].__dict__[name] = val
+                return val
         raise AttributeError(f"module {package_name!r} has no attribute {name!r}")
 
     def __dir__():
         names: list[str] = []
         for mod_name in submodules:
-            try:
-                mod = importlib.import_module(f"{package_name}.{mod_name}")
-                names.extend(n for n in dir(mod) if not n.startswith("_"))
-            except ImportError:
-                pass
+            full_mod_name = f"{package_name}.{mod_name}"
+            mod = importlib.import_module(full_mod_name)
+            names.extend(n for n in dir(mod) if not n.startswith("_"))
         for pkg in packages:
-            try:
-                mod = importlib.import_module(pkg)
-                names.extend(n for n in dir(mod) if not n.startswith("_"))
-            except ImportError:
-                pass
+            mod = importlib.import_module(pkg)
+            names.extend(n for n in dir(mod) if not n.startswith("_"))
         return sorted(set(names))
 
     return __getattr__, __dir__

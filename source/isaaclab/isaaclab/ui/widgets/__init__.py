@@ -3,7 +3,14 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from .image_plot import ImagePlot
-from .line_plot import LiveLinePlot
-from .manager_live_visualizer import ManagerLiveVisualizer
-from .ui_visualizer_base import UiVisualizerBase
+import lazy_loader as lazy
+
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "image_plot": ["ImagePlot"],
+        "line_plot": ["LiveLinePlot"],
+        "manager_live_visualizer": ["ManagerLiveVisualizer"],
+        "ui_visualizer_base": ["UiVisualizerBase"],
+    },
+)

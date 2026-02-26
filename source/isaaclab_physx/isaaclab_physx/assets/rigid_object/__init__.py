@@ -5,10 +5,12 @@
 
 """Sub-module for rigid object assets."""
 
-from .rigid_object import RigidObject
-from .rigid_object_data import RigidObjectData
+import lazy_loader as lazy
 
-__all__ = [
-    "RigidObject",
-    "RigidObjectData",
-]
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "rigid_object": ["RigidObject"],
+        "rigid_object_data": ["RigidObjectData"],
+    },
+)

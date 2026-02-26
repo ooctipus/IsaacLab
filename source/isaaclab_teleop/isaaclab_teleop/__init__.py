@@ -19,7 +19,14 @@ ISAACLAB_TELEOP_METADATA = toml.load(os.path.join(ISAACLAB_TELEOP_EXT_DIR, "conf
 # Configure the module-level variables
 __version__ = ISAACLAB_TELEOP_METADATA["package"]["version"]
 
-from .isaac_teleop_cfg import IsaacTeleopCfg
-from .isaac_teleop_device import IsaacTeleopDevice, create_isaac_teleop_device
-from .xr_anchor_utils import XrAnchorSynchronizer
-from .xr_cfg import XrAnchorRotationMode, XrCfg, remove_camera_configs
+import lazy_loader as lazy
+
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "isaac_teleop_cfg": ["IsaacTeleopCfg"],
+        "isaac_teleop_device": ["IsaacTeleopDevice", "create_isaac_teleop_device"],
+        "xr_anchor_utils": ["XrAnchorSynchronizer"],
+        "xr_cfg": ["XrAnchorRotationMode", "XrCfg", "remove_camera_configs"],
+    },
+)

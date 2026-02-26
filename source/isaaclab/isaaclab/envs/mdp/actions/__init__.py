@@ -5,9 +5,32 @@
 
 """Various action terms that can be used in the environment."""
 
-from .actions_cfg import *
-from .binary_joint_actions import *
-from .joint_actions import *
-from .joint_actions_to_limits import *
-from .non_holonomic_actions import *
-from .surface_gripper_actions import *
+import lazy_loader as lazy
+
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "actions_cfg": [
+            "JointActionCfg",
+            "JointPositionActionCfg",
+            "RelativeJointPositionActionCfg",
+            "JointVelocityActionCfg",
+            "JointEffortActionCfg",
+            "JointPositionToLimitsActionCfg",
+            "EMAJointPositionToLimitsActionCfg",
+            "BinaryJointActionCfg",
+            "BinaryJointPositionActionCfg",
+            "BinaryJointVelocityActionCfg",
+            "AbsBinaryJointPositionActionCfg",
+            "NonHolonomicActionCfg",
+            "DifferentialInverseKinematicsActionCfg",
+            "OperationalSpaceControllerActionCfg",
+            "SurfaceGripperBinaryActionCfg",
+        ],
+        "binary_joint_actions": ["BinaryJointAction", "BinaryJointPositionAction", "BinaryJointVelocityAction", "AbsBinaryJointPositionAction"],
+        "joint_actions": ["JointAction", "JointPositionAction", "RelativeJointPositionAction", "JointVelocityAction", "JointEffortAction"],
+        "joint_actions_to_limits": ["JointPositionToLimitsAction", "EMAJointPositionToLimitsAction"],
+        "non_holonomic_actions": ["NonHolonomicAction"],
+        "surface_gripper_actions": ["SurfaceGripperBinaryAction"],
+    },
+)

@@ -5,8 +5,10 @@
 
 """This sub-module contains the functions that are specific to the locomotion environments."""
 
-from isaaclab.envs.mdp import *  # noqa: F401, F403
+from isaaclab.utils.module import attach_cascading
 
-from .curriculums import *  # noqa: F401, F403
-from .rewards import *  # noqa: F401, F403
-from .terminations import *  # noqa: F401, F403
+__getattr__, __dir__ = attach_cascading(
+    __name__,
+    submodules=["curriculums", "rewards", "terminations"],
+    packages=["isaaclab.envs.mdp"],
+)

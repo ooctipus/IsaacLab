@@ -15,9 +15,27 @@ The following example shows how to wrap an environment for RSL-RL:
 
 """
 
-from .distillation_cfg import *
-from .exporter import export_policy_as_jit, export_policy_as_onnx
-from .rl_cfg import *
-from .rnd_cfg import RslRlRndCfg
-from .symmetry_cfg import RslRlSymmetryCfg
-from .vecenv_wrapper import RslRlVecEnvWrapper
+import lazy_loader as lazy
+
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "rl_cfg": [
+            "RslRlPpoActorCriticCfg",
+            "RslRlPpoActorCriticRecurrentCfg",
+            "RslRlPpoAlgorithmCfg",
+            "RslRlBaseRunnerCfg",
+            "RslRlOnPolicyRunnerCfg",
+        ],
+        "distillation_cfg": [
+            "RslRlDistillationStudentTeacherCfg",
+            "RslRlDistillationStudentTeacherRecurrentCfg",
+            "RslRlDistillationAlgorithmCfg",
+            "RslRlDistillationRunnerCfg",
+        ],
+        "rnd_cfg": ["RslRlRndCfg"],
+        "symmetry_cfg": ["RslRlSymmetryCfg"],
+        "exporter": ["export_policy_as_jit", "export_policy_as_onnx"],
+        "vecenv_wrapper": ["RslRlVecEnvWrapper"],
+    },
+)

@@ -5,6 +5,10 @@
 
 """This sub-module contains the functions that are specific to the cartpole environments."""
 
-from isaaclab.envs.mdp import *  # noqa: F401, F403
+from isaaclab.utils.module import attach_cascading
 
-from .rewards import *  # noqa: F401, F403
+__getattr__, __dir__ = attach_cascading(
+    __name__,
+    submodules=["rewards"],
+    packages=["isaaclab.envs.mdp"],
+)

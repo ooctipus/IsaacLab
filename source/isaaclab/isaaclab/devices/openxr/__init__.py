@@ -15,17 +15,31 @@
     :class:`DeprecationWarning` at instantiation time.
 """
 
-try:
+_OPENXR_ATTRS = {
+    "ManusVive", "ManusViveCfg",
+    "OpenXRDevice", "OpenXRDeviceCfg",
+    "XrAnchorRotationMode", "XrCfg", "remove_camera_configs",
+}
 
-    from isaaclab_teleop.deprecated.openxr import (  # noqa: F401
-        ManusVive,
-        ManusViveCfg,
-        OpenXRDevice,
-        OpenXRDeviceCfg,
-        XrAnchorRotationMode,
-        XrCfg,
-        remove_camera_configs,
-    )
-except ImportError:
-    print("isaaclab_teleop is not installed. OpenXR teleoperation features will not be available.")
-    pass
+
+def __getattr__(name: str):
+    if name in _OPENXR_ATTRS:
+        try:
+            import isaaclab_teleop.deprecated.openxr as _openxr
+
+            return getattr(_openxr, name)
+        except ImportError:
+            raise AttributeError(
+                f"module {__name__!r} has no attribute {name!r}. "
+                "isaaclab_teleop is not installed."
+            )
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    try:
+        import isaaclab_teleop.deprecated.openxr as _openxr
+
+        return list(_OPENXR_ATTRS) + dir(_openxr)
+    except ImportError:
+        return list(_OPENXR_ATTRS)

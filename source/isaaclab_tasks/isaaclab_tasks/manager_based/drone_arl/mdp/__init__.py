@@ -5,10 +5,10 @@
 
 """This sub-module contains the functions that are specific to the drone ARL environments."""
 
-from isaaclab.envs.mdp import *  # noqa: F401, F403
+from isaaclab.utils.module import attach_cascading
 
-from isaaclab_contrib.mdp import *  # noqa: F401, F403
-
-from .commands import *  # noqa: F401, F403
-from .observations import *  # noqa: F401, F403
-from .rewards import *  # noqa: F401, F403
+__getattr__, __dir__ = attach_cascading(
+    __name__,
+    submodules=["commands", "observations", "rewards"],
+    packages=["isaaclab.envs.mdp", "isaaclab_contrib.mdp"],
+)

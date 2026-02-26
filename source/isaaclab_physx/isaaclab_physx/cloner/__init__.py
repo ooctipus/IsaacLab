@@ -3,6 +3,13 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from .physx_replicate import physx_replicate
+"""PhysX cloner utilities."""
 
-__all__ = ["physx_replicate"]
+import lazy_loader as lazy
+
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "physx_replicate": ["physx_replicate"],
+    },
+)

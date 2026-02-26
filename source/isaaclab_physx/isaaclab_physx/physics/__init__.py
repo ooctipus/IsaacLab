@@ -5,12 +5,12 @@
 
 """Implementation backends for simulation interfaces."""
 
-from .physx_manager import PhysxManager, IsaacEvents
-from .physx_manager_cfg import PhysxCfg
+import lazy_loader as lazy
 
-
-__all__ = [
-    "PhysxManager",
-    "IsaacEvents",
-    "PhysxCfg",
-]
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "physx_manager": ["PhysxManager", "IsaacEvents"],
+        "physx_manager_cfg": ["PhysxCfg"],
+    },
+)

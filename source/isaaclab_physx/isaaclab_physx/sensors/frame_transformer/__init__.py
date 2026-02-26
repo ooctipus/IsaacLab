@@ -5,7 +5,12 @@
 
 """Sub-module for PhysX frame transformer sensor."""
 
-from .frame_transformer import FrameTransformer
-from .frame_transformer_data import FrameTransformerData
+import lazy_loader as lazy
 
-__all__ = ["FrameTransformer", "FrameTransformerData"]
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "frame_transformer": ["FrameTransformer"],
+        "frame_transformer_data": ["FrameTransformerData"],
+    },
+)

@@ -8,6 +8,12 @@
 This package provides integration between Pink inverse kinematics solver and IsaacLab.
 """
 
-from .null_space_posture_task import NullSpacePostureTask
-from .pink_ik import PinkIKController
-from .pink_ik_cfg import PinkIKControllerCfg
+from isaaclab.utils.module import attach_cascading
+
+__getattr__, __dir__ = attach_cascading(
+    __name__,
+    submodules=["null_space_posture_task", "pink_ik", "pink_ik_cfg"],
+)
+
+
+__all__ = ["NullSpacePostureTask", "PinkIKController", "PinkIKControllerCfg", "PinkIKTaskCfg"]

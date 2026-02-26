@@ -35,10 +35,67 @@ interpretation of the prim paths for different sensor types:
 
 """
 
-from .camera import *  # noqa: F401, F403
-from .contact_sensor import *  # noqa: F401, F403
-from .frame_transformer import *  # noqa: F401
-from .imu import *  # noqa: F401, F403
-from .ray_caster import *  # noqa: F401, F403
-from .sensor_base import SensorBase  # noqa: F401
-from .sensor_base_cfg import SensorBaseCfg  # noqa: F401
+import lazy_loader as lazy
+
+_lazy_getattr, _lazy_dir, __all__ = lazy.attach(
+    __name__,
+    submodules=["ray_caster"],
+    submod_attrs={
+        "camera": [
+            "Camera",
+            "CameraCfg",
+            "CameraData",
+            "TiledCamera",
+            "TiledCameraCfg",
+            "create_pointcloud_from_depth",
+            "create_pointcloud_from_rgbd",
+            "save_images_to_file",
+            "transform_points",
+        ],
+        "contact_sensor": [
+            "BaseContactSensor",
+            "BaseContactSensorData",
+            "ContactSensor",
+            "ContactSensorCfg",
+            "ContactSensorData",
+        ],
+        "frame_transformer": [
+            "BaseFrameTransformer",
+            "BaseFrameTransformerData",
+            "FrameTransformer",
+            "FrameTransformerCfg",
+            "FrameTransformerData",
+            "OffsetCfg",
+        ],
+        "imu": ["BaseImu", "BaseImuData", "Imu", "ImuCfg", "ImuData"],
+        "ray_caster": [
+            "MultiMeshRayCaster",
+            "MultiMeshRayCasterCamera",
+            "MultiMeshRayCasterCameraCfg",
+            "MultiMeshRayCasterCameraData",
+            "MultiMeshRayCasterCfg",
+            "MultiMeshRayCasterData",
+            "RayCaster",
+            "RayCasterCamera",
+            "RayCasterCameraCfg",
+            "RayCasterCfg",
+            "RayCasterData",
+        ],
+        "sensor_base": ["SensorBase"],
+        "sensor_base_cfg": ["SensorBaseCfg"],
+    },
+)
+
+
+def __getattr__(name: str):
+    # ``patterns`` lives at isaaclab.sensors.ray_caster.patterns but many
+    # callers do ``from isaaclab.sensors import patterns`` for brevity.
+    if name == "patterns":
+        from isaaclab.sensors import ray_caster as _rc
+
+        return _rc.patterns
+    return _lazy_getattr(name)
+
+
+def __dir__():
+    return _lazy_dir() + ["patterns"]

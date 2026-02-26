@@ -1,14 +1,14 @@
-# Copyright (c) 2025-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
 """This sub-module contains the functions that are specific to the locomotion environments."""
 
-from isaaclab.envs.mdp import *  # noqa: F401, F403
+from isaaclab.utils.module import attach_cascading
 
-from .events import *  # noqa: F401, F403
-from .noise_models import *  # noqa: F401, F403
-from .observations import *  # noqa: F401, F403
-from .rewards import *  # noqa: F401, F403
-from .terminations import *  # noqa: F401, F403
+__getattr__, __dir__ = attach_cascading(
+    __name__,
+    submodules=["events", "noise_models", "observations", "rewards", "terminations"],
+    packages=["isaaclab.envs.mdp"],
+)

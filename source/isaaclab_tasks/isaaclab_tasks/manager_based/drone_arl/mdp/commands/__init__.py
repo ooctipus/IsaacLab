@@ -5,5 +5,12 @@
 
 """Various command terms that can be used in the environment."""
 
-from .commands_cfg import DroneUniformPoseCommandCfg
-from .drone_pose_command import DroneUniformPoseCommand
+import lazy_loader as lazy
+
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "commands_cfg": ["DroneUniformPoseCommandCfg"],
+        "drone_pose_command": ["DroneUniformPoseCommand"],
+    },
+)

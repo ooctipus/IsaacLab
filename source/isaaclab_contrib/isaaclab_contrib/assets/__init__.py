@@ -11,4 +11,11 @@ Isaac Lab framework yet, but are planned to be added in the future. They are
 contributed by the community to extend the capabilities of Isaac Lab.
 """
 
-from .multirotor import Multirotor, MultirotorCfg, MultirotorData
+import lazy_loader as lazy
+
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "multirotor": ["Multirotor", "MultirotorCfg", "MultirotorData"],
+    },
+)

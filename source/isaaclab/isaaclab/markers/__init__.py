@@ -21,5 +21,13 @@ Currently, the sub-package provides the following classes:
 
 """
 
-from .config import *  # noqa: F401, F403
-from .visualization_markers import VisualizationMarkers, VisualizationMarkersCfg
+import lazy_loader as lazy
+
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submodules=["config"],
+    submod_attrs={
+        "visualization_markers": ["VisualizationMarkers"],
+        "visualization_markers_cfg": ["VisualizationMarkersCfg"],
+    },
+)

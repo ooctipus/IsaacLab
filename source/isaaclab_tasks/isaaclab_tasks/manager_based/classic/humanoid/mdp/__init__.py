@@ -5,7 +5,10 @@
 
 """This sub-module contains the functions that are specific to the humanoid environment."""
 
-from isaaclab.envs.mdp import *  # noqa: F401, F403
+from isaaclab.utils.module import attach_cascading
 
-from .observations import *
-from .rewards import *
+__getattr__, __dir__ = attach_cascading(
+    __name__,
+    submodules=["observations", "rewards"],
+    packages=["isaaclab.envs.mdp"],
+)

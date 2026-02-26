@@ -5,7 +5,12 @@
 
 """Sub-module for PhysX IMU sensor."""
 
-from .imu import Imu
-from .imu_data import ImuData
+import lazy_loader as lazy
 
-__all__ = ["Imu", "ImuData"]
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "imu": ["Imu"],
+        "imu_data": ["ImuData"],
+    },
+)
