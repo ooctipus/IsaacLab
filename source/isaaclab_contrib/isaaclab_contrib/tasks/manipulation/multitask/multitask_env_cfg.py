@@ -23,9 +23,6 @@ from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg
 from isaaclab.utils import configclass
 
 from isaaclab_contrib.tasks.manipulation.multitask import mdp
-from isaaclab_contrib.tasks.manipulation.multitask.mixin_utils import (
-    get_per_env_action_class,
-)
 from isaaclab_contrib.tasks.manipulation.multitask.multitask_utils import MultiTaskRegistryConfig
 
 
@@ -34,12 +31,11 @@ from isaaclab_contrib.tasks.manipulation.multitask.multitask_utils import MultiT
 ##
 @configclass
 class ObjectTableSceneCfg(InteractiveSceneCfg):
-    """Configuration for the lift scene with a robot and a object.
+    """Configuration for the scene with heterogeneous assets.
     This is the abstract base implementation, the exact scene is defined in the derived classes
     which need to set the target object, robot and end-effector frames
     """
 
-    # Table is added per-group in _setup_group_assets() so tasks without a table (e.g. Open-Drawer) do not get one.
     # Shared ground plane: height is set from the first task in _setup_shared_ground_plane_and_offsets();
     # other tasks with different plane height have their assets' init_state shifted so they align with this plane.
     plane = AssetBaseCfg(
@@ -57,7 +53,7 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
 
 @configclass
 class ProxyObservationsCfg:
-    """Minimal observations for debugging asset loading."""
+    """Minimal observations for debugging."""
 
     @configclass
     class PolicyCfg(ObsGroup):
@@ -72,29 +68,28 @@ class ProxyObservationsCfg:
 
 @configclass
 class ProxyActionsCfg:
-    """Minimal actions for debugging asset loading."""
+    """Minimal actions for debugging."""
 
-    arm_action: mdp.JointPositionActionCfg | None = None
-    gripper_action: mdp.BinaryJointPositionActionCfg | None = None
+    pass
 
 
 @configclass
 class ProxyRewardsCfg:
-    """Minimal rewards for debugging asset loading."""
+    """Minimal rewards for debugging."""
 
     alive = RewTerm(func=mdp.is_alive, weight=1.0)
 
 
 @configclass
 class ProxyTerminationsCfg:
-    """Minimal terminations for debugging asset loading."""
+    """Minimal terminations for debugging."""
 
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
 
 @configclass
 class ProxyEventsCfg:
-    """Minimal events for debugging asset loading."""
+    """Minimal events to reset multitask scene to default."""
 
     reset_scene_to_default = EventTerm(func=mdp.reset_multitask_scene_to_default, mode="reset")
 
@@ -143,28 +138,30 @@ class SingleRobotMultiTaskEnvCfg(ManagerBasedRLEnvCfg):
     def _setup_shared_ground_plane_and_offsets(self):
         """Use the first task that has a plane to define shared plane pose and ref_plane_z.
         ref_robot_z from the first task that has a robot.
-        Per-group offset_z: if task has plane, use ref_plane_z - task_plane_z; else use ref_robot_z - task_robot_z.
+        Per-group offset_z: if task has plane, use (ref_plane_z - task_plane_z) as offset,
+        else use (ref_robot_z - task_robot_z) as offset to align with shared ground plane.
         """
         first_plane_cfg = None
-        ref_plane_z: float = 0.0
-        ref_robot_z: float = 0.0
+        ref_plane_z: float | None = None
+        ref_robot_z: float | None = None
         for group_idx in range(self.tasks.total_groups):
             task_name = self.tasks.get_task_name_for_group(group_idx)
             task_cfg = self.tasks.get_task_cfg(task_name)
-            plane_cfg = getattr(task_cfg.scene, "plane", None)
-            if plane_cfg is not None and isinstance(plane_cfg, AssetBaseCfg):
-                first_plane_cfg = plane_cfg
-                pos = getattr(plane_cfg.init_state, "pos", (0.0, 0.0, 0.0))
-                ref_plane_z = float(pos[2]) if len(pos) >= 3 else 0.0
-                break
-        for group_idx in range(self.tasks.total_groups):
-            task_name = self.tasks.get_task_name_for_group(group_idx)
-            task_cfg = self.tasks.get_task_cfg(task_name)
-            robot_cfg = getattr(task_cfg.scene, "robot", None)
-            if robot_cfg is not None and isinstance(robot_cfg, ArticulationCfg):
-                pos = getattr(robot_cfg.init_state, "pos", (0.0, 0.0, 0.0))
-                ref_robot_z = float(pos[2]) if len(pos) >= 3 else 0.0
-                break
+            if ref_plane_z is None:
+                plane_cfg = getattr(task_cfg.scene, "plane", None)
+                if plane_cfg is not None and isinstance(plane_cfg, AssetBaseCfg):
+                    first_plane_cfg = plane_cfg
+                    pos = getattr(plane_cfg.init_state, "pos", (0.0, 0.0, 0.0))
+                    ref_plane_z = float(pos[2])
+            if ref_robot_z is None:
+                robot_cfg = getattr(task_cfg.scene, "robot", None)
+                if robot_cfg is not None and isinstance(robot_cfg, ArticulationCfg):
+                    pos = getattr(robot_cfg.init_state, "pos", (0.0, 0.0, 0.0))
+                    ref_robot_z = float(pos[2])
+
+        if ref_plane_z is None or ref_robot_z is None:
+            raise ValueError("No plane or robot found in any task's env cfg.")
+        # use the first plane cfg as the shared plane cfg
         if first_plane_cfg is not None:
             self.scene.plane = self.tasks.clone_cfg(
                 self.scene.plane,
@@ -177,13 +174,13 @@ class SingleRobotMultiTaskEnvCfg(ManagerBasedRLEnvCfg):
             plane_cfg = getattr(task_cfg.scene, "plane", None)
             if plane_cfg is not None and isinstance(plane_cfg, AssetBaseCfg):
                 pos = getattr(plane_cfg.init_state, "pos", (0.0, 0.0, 0.0))
-                task_z = float(pos[2]) if len(pos) >= 3 else 0.0
+                task_z = float(pos[2])
                 offset_z = ref_plane_z - task_z
             else:
                 robot_cfg = getattr(task_cfg.scene, "robot", None)
                 if robot_cfg is not None and isinstance(robot_cfg, ArticulationCfg):
                     pos = getattr(robot_cfg.init_state, "pos", (0.0, 0.0, 0.0))
-                    task_z = float(pos[2]) if len(pos) >= 3 else 0.0
+                    task_z = float(pos[2])
                 else:
                     task_z = 0.0
                 offset_z = ref_robot_z - task_z
@@ -193,10 +190,7 @@ class SingleRobotMultiTaskEnvCfg(ManagerBasedRLEnvCfg):
         """Return init_state with pos z shifted by offset_z to align with shared ground plane."""
         if init_state is None or offset_z == 0.0:  # SurfaceGripperCfg does not have init_state
             return init_state
-        pos = getattr(init_state, "pos", None)
-        if pos is None:
-            return init_state
-        pos = (pos[0], pos[1], pos[2]) if len(pos) >= 3 else (0.0, 0.0, 0.0)
+        pos = getattr(init_state, "pos", (0.0, 0.0, 0.0))
         new_pos = (pos[0], pos[1], pos[2] + offset_z)
         return self.tasks.clone_cfg(init_state, pos=new_pos)
 
@@ -221,17 +215,16 @@ class SingleRobotMultiTaskEnvCfg(ManagerBasedRLEnvCfg):
                 if not self.tasks.should_group_cfg(asset_cfg):
                     continue
 
-                prim_path = self.tasks.group_prim_from_template(env_tuple, asset_cfg.prim_path)
-                adj_init = self._apply_ground_offset_to_init_state(asset_cfg.init_state, offset_z)
+                group_prim_path = self.tasks.group_prim_from_template(env_tuple, asset_cfg.prim_path)
+                group_init_state = self._apply_ground_offset_to_init_state(asset_cfg.init_state, offset_z)
 
                 # Per-env Articulations, Rigid Objects, SurfaceGrippers, and Fixtures: only revise prim_path/init_state.
                 cloned = self.tasks.clone_cfg(
                     asset_cfg,
-                    prim_path=prim_path,
-                    init_state=adj_init,
+                    prim_path=group_prim_path,
+                    init_state=group_init_state,
                 )
 
-                cloned.assigned_envs = env_tuple
                 setattr(self.scene, f"{asset_name}_group_{group_idx}", cloned)
 
     def _setup_group_robots(self):
@@ -258,18 +251,16 @@ class SingleRobotMultiTaskEnvCfg(ManagerBasedRLEnvCfg):
                 base_robot_cfg = robot_cfg
 
             # Build per-env init_state tensor from original task cfg
-            adj_init = self._apply_ground_offset_to_init_state(robot_cfg.init_state, offset_z)
-            pos = getattr(adj_init, "pos", (0.0, 0.0, 0.0))
-            rot = getattr(adj_init, "rot", (0.0, 0.0, 0.0, 1.0))  # XYZW quaternion format (IsaacLab 3.0)
-            lin_vel = getattr(adj_init, "lin_vel", (0.0, 0.0, 0.0))
-            ang_vel = getattr(adj_init, "ang_vel", (0.0, 0.0, 0.0))
+            group_init_state = self._apply_ground_offset_to_init_state(robot_cfg.init_state, offset_z)
+            pos = getattr(group_init_state, "pos", (0.0, 0.0, 0.0))
+            rot = getattr(group_init_state, "rot", (0.0, 0.0, 0.0, 1.0))  # XYZW quaternion format (IsaacLab 3.0)
+            lin_vel = getattr(group_init_state, "lin_vel", (0.0, 0.0, 0.0))
+            ang_vel = getattr(group_init_state, "ang_vel", (0.0, 0.0, 0.0))
             root_state = torch.tensor(tuple(pos) + tuple(rot) + tuple(lin_vel) + tuple(ang_vel), dtype=torch.float32)
             init_state_tensor[list(env_tuple)] = root_state.unsqueeze(0).repeat(len(env_tuple), 1)
 
-        if base_robot_cfg is None:
-            return
-
         setattr(self.scene, "robot", base_robot_cfg)
+        # same robot view with heterogeneous init_state can only be reset by event callback
         self._robot_init_state_tensor = init_state_tensor
 
     def _setup_group_actions(self):
@@ -286,13 +277,13 @@ class SingleRobotMultiTaskEnvCfg(ManagerBasedRLEnvCfg):
 
     def _setup_group_events(self):
         """Prepare per-task events for grouped envs."""
-        # TODO: wire per-task events/terminations with env_ids filtered by group
+        # TODO: wire per-task events with env_ids filtered by group
 
         self.events.reset_robot_init_state = EventTerm(func=mdp.reset_multitask_robot_init_state, mode="reset")
 
     def _setup_group_terminations(self):
         """Prepare per-task terminations for grouped envs."""
-        # TODO: wire per-task events/terminations with env_ids filtered by group
+        # TODO: wire per-task terminations with env_ids filtered by group
 
         pass
 
@@ -316,6 +307,12 @@ class MultiRobotMultiTaskEnvCfg(SingleRobotMultiTaskEnvCfg):
     def __post_init__(self):
         super().__post_init__()
 
+    def _clear_group_attrs(self):
+        super()._clear_group_attrs()
+        for name in list(vars(self.actions)):
+            if "_group_" in name:
+                delattr(self.actions, name)
+
     def _setup_group_robots(self):
         """Setup group robots if tasks have heterogeneous robot configs.
         Robot init_state is shifted by _group_ground_offset_z to align with shared ground plane.
@@ -332,15 +329,13 @@ class MultiRobotMultiTaskEnvCfg(SingleRobotMultiTaskEnvCfg):
                 continue
             if not isinstance(robot_cfg, ArticulationCfg):
                 continue
-            prim_path = self.tasks.group_prim_from_template(env_tuple, robot_cfg.prim_path)
-            adj_init = self._apply_ground_offset_to_init_state(robot_cfg.init_state, offset_z)
+            group_prim_path = self.tasks.group_prim_from_template(env_tuple, robot_cfg.prim_path)
+            group_init_state = self._apply_ground_offset_to_init_state(robot_cfg.init_state, offset_z)
             cloned = self.tasks.clone_cfg(
                 robot_cfg,
-                prim_path=prim_path,
-                init_state=adj_init,
-                # class_type=PerEnvArticulation,
+                prim_path=group_prim_path,
+                init_state=group_init_state,
             )
-            cloned.assigned_envs = env_tuple
             setattr(self.scene, f"robot_group_{group_idx}", cloned)
 
     def _setup_group_actions(self):
@@ -360,7 +355,6 @@ class MultiRobotMultiTaskEnvCfg(SingleRobotMultiTaskEnvCfg):
                 if action_name.startswith("_") or action_src is None:
                     continue
 
-                per_env_class = get_per_env_action_class(action_src)
                 # SurfaceGripperBinaryAction uses the SurfaceGripper asset in the scene, not the robot
                 if isinstance(action_src, mdp.SurfaceGripperBinaryActionCfg):
                     action_asset_name = None
@@ -376,20 +370,16 @@ class MultiRobotMultiTaskEnvCfg(SingleRobotMultiTaskEnvCfg):
                     action_asset_name = robot_asset_name
 
                 kw = {"asset_name": action_asset_name}
-                if per_env_class is not None:
-                    kw["class_type"] = per_env_class
                 cloned = self.tasks.clone_cfg(action_src, **kw)
-                if per_env_class is not None:
-                    cloned.assigned_envs = env_tuple
                 setattr(self.actions, f"{action_name}_group_{group_idx}", cloned)
 
     def _setup_group_events(self):
         """Prepare per-task events for grouped envs."""
-        self.events.reset_robot_init_state = EventTerm(func=mdp.reset_multitask_robot_init_state, mode="reset")
+        pass
 
     def _setup_group_terminations(self):
         """Prepare per-task terminations for grouped envs."""
-        # TODO: wire per-task events/terminations with env_ids filtered by group
+        # TODO: wire per-task events with env_ids filtered by group
 
         pass
 

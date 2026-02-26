@@ -14,7 +14,7 @@ from isaaclab_contrib.tasks.manipulation.multitask.multitask_utils import MultiT
 
 @configclass
 class FrankaMultiTaskEnvCfg(SingleRobotMultiTaskEnvCfg):
-    """Example single robot multi-task config using Stack/Reach/Lift/Cabinet Franka tasks."""
+    """Example single robot(Franka) multi-task (Stack/Reach/Lift/Cabinet) config."""
 
     def __post_init__(self):
         self.tasks = MultiTaskRegistryConfig(
@@ -33,7 +33,7 @@ class FrankaMultiTaskEnvCfg(SingleRobotMultiTaskEnvCfg):
 
 @configclass
 class MultiRobotMultiTaskManipulationEnvCfg(MultiRobotMultiTaskEnvCfg):
-    """Example multi-task config using Stack/Reach/Lift/Cabinet Franka tasks."""
+    """Example multi-robot multi-task manipulation config."""
 
     def __post_init__(self):
         self.tasks = MultiTaskRegistryConfig(

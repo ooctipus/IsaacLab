@@ -215,6 +215,9 @@ class DifferentialInverseKinematicsAction(ActionTerm):
         self._asset.set_joint_position_target(joint_pos_des, self._joint_ids)
 
     def reset(self, env_ids: Sequence[int] | None = None) -> None:
+        # filter the environment ids if the action term is heterogeneous
+        if self.is_heterogeneous:
+            env_ids = self._filter_env_ids(env_ids)
         self._raw_actions[env_ids] = 0.0
 
     """
@@ -544,6 +547,9 @@ class OperationalSpaceControllerAction(ActionTerm):
         Args:
             env_ids (Sequence[int] | None): The environment indices to reset. If ``None``, all environments are reset.
         """
+        # filter the environment ids if the action term is heterogeneous
+        if self.is_heterogeneous:
+            env_ids = self._filter_env_ids(env_ids)
         self._raw_actions[env_ids] = 0.0
         if self._contact_sensor is not None:
             self._contact_sensor.reset(env_ids)

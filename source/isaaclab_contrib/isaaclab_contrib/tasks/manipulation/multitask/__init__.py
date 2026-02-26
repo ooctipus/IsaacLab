@@ -17,6 +17,5 @@ Available configurations:
 # Import all sub-packages
 from .config.demo import *
 from .mdp import *
-from .mixin_utils import *
 from .multitask_env_cfg import *
 from .multitask_utils import *

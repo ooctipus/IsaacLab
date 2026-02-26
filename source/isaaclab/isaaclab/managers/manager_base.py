@@ -13,6 +13,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+import torch
+
 import omni.timeline
 
 import isaaclab.utils.string as string_utils
@@ -68,6 +70,9 @@ class ManagerTermBase(ABC):
         # store the inputs
         self.cfg = cfg
         self._env = env
+        # by default, assigned environments are empty, which means the term manages all environments
+        self._assigned_envs: tuple[int, ...] = ()
+        self._assigned_envs_to_local_indices: dict[int, int] = {}
 
     """
     Properties.
@@ -76,7 +81,7 @@ class ManagerTermBase(ABC):
     @property
     def num_envs(self) -> int:
         """Number of environments."""
-        return self._env.num_envs
+        return self._env.num_envs if len(self._assigned_envs) == 0 else len(self._assigned_envs)
 
     @property
     def device(self) -> str:
@@ -126,6 +131,44 @@ class ManagerTermBase(ABC):
             The value of the term.
         """
         raise NotImplementedError("The method '__call__' should be implemented by the subclass.")
+
+    @property
+    def assigned_envs(self) -> tuple[int, ...]:
+        """Global environment indices handled by this rigid object instance."""
+        return self._assigned_envs
+
+    @property
+    def assigned_envs_to_local_indices(self) -> dict[int, int]:
+        """Map of global environment indices to local indices."""
+        return self._assigned_envs_to_local_indices
+
+    @property
+    def is_heterogeneous(self) -> bool:
+        """
+        Check if the rigid object is heterogeneous.
+        Returns:
+            bool: True if global_to_local filtering is needed, in case of heterogeneous environments.
+            False if no filtering is needed, fallback to homogeneous environments.
+        """
+        return self._assigned_envs is not None and len(self._assigned_envs) > 0
+
+    def _filter_env_ids(self, env_ids: Sequence[int] | torch.Tensor | None = None) -> torch.Tensor:
+        """Filter global env indices to the managed subset.
+        Args:
+            env_ids: global env indices (tensor or sequence of int).
+            If None, returns all local indices (shape (len(assigned_envs),)).
+        Returns: 1D long tensor (local indices)
+        """
+        if env_ids is None:
+            return torch.arange(len(self._assigned_envs), dtype=torch.long, device=self.device)
+
+        env_ids = env_ids.cpu().tolist()
+        local_list = [
+            self._assigned_envs_to_local_indices[env_id]
+            for env_id in env_ids
+            if env_id in self._assigned_envs_to_local_indices
+        ]
+        return torch.tensor(local_list, dtype=torch.long, device=self.device)
 
 
 class ManagerBase(ABC):

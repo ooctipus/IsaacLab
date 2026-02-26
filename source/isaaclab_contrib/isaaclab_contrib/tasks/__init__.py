@@ -3,4 +3,4 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Package containing task implementations for Isaac Lab."""
+"""Package containing contributed task implementations for Isaac Lab."""

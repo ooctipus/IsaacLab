@@ -363,4 +363,7 @@ class PinkInverseKinematicsAction(ActionTerm):
         Args:
             env_ids: A list of environment IDs to reset. If None, all environments are reset.
         """
+        # filter the environment ids if the action term is heterogeneous
+        if self.is_heterogeneous:
+            env_ids = self._filter_env_ids(env_ids)
         self._raw_actions[env_ids] = torch.zeros(self.action_dim, device=self.device)

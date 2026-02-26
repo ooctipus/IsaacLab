@@ -188,6 +188,9 @@ class RMPFlowAction(ActionTerm):
         self._asset.set_joint_velocity_target(joint_vel_des, self._joint_ids)
 
     def reset(self, env_ids: Sequence[int] | None = None) -> None:
+        # filter the environment ids if the action term is heterogeneous
+        if self.is_heterogeneous:
+            env_ids = self._filter_env_ids(env_ids)
         self._raw_actions[env_ids] = 0.0
         self._rmpflow_controller.initialize(self.cfg.articulation_prim_expr)
 

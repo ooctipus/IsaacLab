@@ -25,6 +25,7 @@ def setup_environment(
     include_play: bool = False,
     factory_envs: bool | None = None,
     multi_agent: bool | None = None,
+    exclude_multitask: bool = True,
 ) -> list[str]:
     """
     Acquire all registered Isaac environment task IDs with optional filters.
@@ -39,6 +40,7 @@ def setup_environment(
             - True: include only multi-agent environments
             - False: include only single-agent environments
             - None: include all environments regardless of agent type
+        exclude_multitask: If True, exclude multi-task environments.
 
     Returns:
         A sorted list of task IDs matching the selected filters.
@@ -75,6 +77,10 @@ def setup_environment(
             ):
                 continue
         # if None: no filter
+
+        # exclude multi-task envs when requested
+        if exclude_multitask and task_spec.id in ["Isaac-Franka-Multi-Task-v0", "Isaac-MultiRobot-Multi-Task-v0"]:
+            continue
 
         registered_tasks.append(task_spec.id)
 

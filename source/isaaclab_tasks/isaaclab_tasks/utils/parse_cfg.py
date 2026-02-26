@@ -154,6 +154,10 @@ def parse_env_cfg(
     if num_envs is not None:
         cfg.scene.num_envs = num_envs
 
+    # Multitask: use default num_envs, user cannot override num_envs if tasks are provided
+    if hasattr(cfg, "tasks") and hasattr(cfg.tasks, "group_size") and hasattr(cfg.tasks, "total_groups"):
+        cfg.scene.num_envs = cfg.tasks.group_size * cfg.tasks.total_groups
+
     return cfg
 
 

@@ -103,7 +103,7 @@ class SurfaceGripperBinaryAction(ActionTerm):
         self._asset.write_data_to_sim()
 
     def reset(self, env_ids: Sequence[int] | None = None) -> None:
-        if env_ids is None:
-            self._raw_actions[:] = 0.0
-        else:
-            self._raw_actions[env_ids] = 0.0
+        # filter the environment ids if the action term is heterogeneous
+        if self.is_heterogeneous:
+            env_ids = self._filter_env_ids(env_ids)
+        self._raw_actions[env_ids] = 0.0

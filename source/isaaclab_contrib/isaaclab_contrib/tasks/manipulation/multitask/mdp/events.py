@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import torch
 
+from isaaclab.assets import AssetBase
 from isaaclab.envs import ManagerBasedEnv
 
 
@@ -19,26 +20,26 @@ def reset_multitask_scene_to_default(env: ManagerBasedEnv, env_ids: torch.Tensor
     targets to default values, especially when the targets should be handled by action terms and not event terms.
     """
 
-    def _asset_env_mapping(asset, requested_envs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        assigned_envs = getattr(asset, "_assigned_envs", None)
-        if assigned_envs:
-            mapping = getattr(asset, "_assigned_env_to_local", {})
-            filtered_globals: list[int] = []
-            for env_idx in requested_envs.tolist():
-                if env_idx in mapping:
-                    filtered_globals.append(env_idx)
-            if not filtered_globals:
-                return (
-                    torch.empty(0, device=asset.device, dtype=torch.long),
-                    torch.empty(0, device=asset.device, dtype=torch.long),
-                )
-            local_indices = torch.tensor(
-                [mapping[idx] for idx in filtered_globals], device=asset.device, dtype=torch.long
+    def _asset_env_mapping(asset: AssetBase, requested_envs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Map global environment indices to local indices for the asset.
+        Args:
+            asset: The asset to map the environment indices for.
+            requested_envs: The global environment indices to filter.
+        Returns:
+            A tuple of the local environment indices and the global environment indices.
+        """
+        assigned_envs = getattr(asset, "assigned_envs", ())
+        if len(assigned_envs) > 0:
+            local_indices = asset._filter_env_ids(requested_envs)
+            requested_list = requested_envs.cpu().tolist()
+            global_indices = torch.tensor(
+                [e for e in requested_list if e in assigned_envs],
+                dtype=torch.long,
+                device=requested_envs.device,
             )
-            global_indices = torch.tensor(filtered_globals, device=asset.device, dtype=torch.long)
             return local_indices, global_indices
-        requested_envs = requested_envs.to(device=asset.device, dtype=torch.long)
-        return requested_envs, requested_envs.clone()
+        return requested_envs, requested_envs
 
     # rigid bodies
     for rigid_object in env.scene.rigid_objects.values():
