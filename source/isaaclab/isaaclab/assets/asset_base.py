@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 
 import isaaclab.sim as sim_utils
-from isaaclab.physics import PhysicsEvent, PhysicsManager
+from isaaclab.physics import PhysicsEvent
 from isaaclab.sim.simulation_context import SimulationContext
 from isaaclab.sim.utils.stage import get_current_stage
 
@@ -310,8 +310,8 @@ class AssetBase(ABC):
             :attr:`PhysicsEvent.PHYSICS_READY` is dispatched by the current backend.
         """
         if not self._is_initialized:
-            self._backend = PhysicsManager.get_backend()
-            self._device = PhysicsManager.get_device()
+            self._backend = SimulationContext.instance().physics_manager.get_backend()
+            self._device = SimulationContext.instance().physics_manager.get_device()
             try:
                 self._initialize_impl()
             except Exception as e:

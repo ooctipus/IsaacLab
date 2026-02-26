@@ -170,6 +170,41 @@ def string_to_callable(name: str) -> Callable:
         raise ValueError(msg)
 
 
+class ResolvableString(str):
+    """String subtype that lazily resolves ``module.path:Callable`` values.
+
+    The object stays string-compatible for serialization and display, while also allowing callable
+    use and attribute access on the resolved callable/class.
+    """
+
+    __slots__ = ("_resolved_callable", "_resolve_error")
+
+    def __new__(cls, value: str):
+        obj = super().__new__(cls, value)
+        obj._resolved_callable = None
+        obj._resolve_error = None
+        return obj
+
+    def _resolve(self) -> Callable:
+        if self._resolved_callable is not None:
+            return self._resolved_callable
+        if self._resolve_error is not None:
+            raise self._resolve_error
+        try:
+            resolved = string_to_callable(str(self))
+        except (ImportError, AttributeError, ValueError) as error:
+            self._resolve_error = error
+            raise
+        self._resolved_callable = resolved
+        return resolved
+
+    def __call__(self, *args, **kwargs):
+        return self._resolve()(*args, **kwargs)
+
+    def __getattr__(self, item: str):
+        return getattr(self._resolve(), item)
+
+
 """
 Regex operations.
 """

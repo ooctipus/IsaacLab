@@ -12,13 +12,14 @@ import weakref
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import newton
 import torch
 import warp as wp
 
 from isaaclab.sim import SimulationContext
 from isaaclab.utils.math import convert_camera_frame_orientation_convention
 from isaaclab.visualizers import VisualizerCfg
+
+import newton
 
 from .newton_warp_renderer_cfg import NewtonWarpRendererCfg
 

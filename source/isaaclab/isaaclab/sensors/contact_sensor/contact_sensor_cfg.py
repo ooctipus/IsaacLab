@@ -3,19 +3,23 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+from typing import TYPE_CHECKING
+
 from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.markers.config import CONTACT_SENSOR_MARKER_CFG
 from isaaclab.utils import configclass
 
 from ..sensor_base_cfg import SensorBaseCfg
-from .contact_sensor import ContactSensor
+
+if TYPE_CHECKING:
+    from .contact_sensor import ContactSensor
 
 
 @configclass
 class ContactSensorCfg(SensorBaseCfg):
     """Configuration for the contact sensor."""
 
-    class_type: type = ContactSensor
+    class_type: type["ContactSensor"] | str = "{DIR}.contact_sensor:ContactSensor"
 
     track_pose: bool = False
     """Whether to track the pose of the sensor's origin. Defaults to False."""
