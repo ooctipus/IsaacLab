@@ -52,9 +52,9 @@ import isaaclab_tasks  # noqa: F401 -- triggers task registration
 # libraries that should never be needed to construct pure-data config objects.
 _FORBIDDEN_PREFIXES = (
     # Backend / simulator runtime (require SimulationApp / Kit)
-    "pxr",       # USD Python bindings
-    "omni",      # Omniverse runtime
-    "carb",      # Carbonite framework
+    "pxr",  # USD Python bindings
+    "omni",  # Omniverse runtime
+    "carb",  # Carbonite framework
     "isaacsim",  # Isaac Sim modules
     # SciPy loads OpenBLAS which crashes Kit's fork()
     "scipy",
@@ -66,6 +66,7 @@ _ALL_ISAAC_TASKS = sorted(name for name in gymnasium.registry if name.startswith
 # Batch subprocess: run all checks in one Python process so we only pay the
 # `import isaaclab_tasks` cost once (~1.6 s) instead of once per test.
 # ---------------------------------------------------------------------------
+
 
 def _build_batch_script(task_names: list[str]) -> str:
     return textwrap.dedent(f"""\
@@ -131,7 +132,7 @@ def all_cfg_check_results() -> dict:
     json_line = None
     for line in result.stdout.splitlines():
         if line.startswith("__RESULTS__"):
-            json_line = line[len("__RESULTS__"):]
+            json_line = line[len("__RESULTS__") :]
             break
 
     if json_line is None:
