@@ -5,19 +5,16 @@
 
 """Sub-package for environment cloning utilities."""
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "cloner_cfg": ["TemplateCloneCfg"],
-        "cloner_strategies": ["random", "sequential"],
-        "cloner_utils": [
-            "clone_from_template",
-            "make_clone_plan",
-            "usd_replicate",
-            "filter_collisions",
-            "grid_transforms",
-        ],
-    },
+lazy_export(
+    ("cloner_cfg", "TemplateCloneCfg"),
+    ("cloner_strategies", ["random", "sequential"]),
+    ("cloner_utils", [
+        "clone_from_template",
+        "make_clone_plan",
+        "usd_replicate",
+        "filter_collisions",
+        "grid_transforms",
+    ]),
 )

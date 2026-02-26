@@ -5,12 +5,9 @@
 
 """Sub-module for PhysX IMU sensor."""
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "imu": ["Imu"],
-        "imu_data": ["ImuData"],
-    },
+lazy_export(
+    ("imu", "Imu"),
+    ("imu_data", "ImuData"),
 )

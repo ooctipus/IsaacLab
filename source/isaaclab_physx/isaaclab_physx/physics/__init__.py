@@ -5,12 +5,9 @@
 
 """Implementation backends for simulation interfaces."""
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "physx_manager": ["PhysxManager", "IsaacEvents"],
-        "physx_manager_cfg": ["PhysxCfg"],
-    },
+lazy_export(
+    ("physx_manager", ["PhysxManager", "IsaacEvents"]),
+    ("physx_manager_cfg", "PhysxCfg"),
 )

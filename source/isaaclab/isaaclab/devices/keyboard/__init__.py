@@ -5,14 +5,11 @@
 
 """Keyboard device for SE(2) and SE(3) control."""
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "se2_keyboard": ["Se2Keyboard"],
-        "se2_keyboard_cfg": ["Se2KeyboardCfg"],
-        "se3_keyboard": ["Se3Keyboard"],
-        "se3_keyboard_cfg": ["Se3KeyboardCfg"],
-    },
+lazy_export(
+    ("se2_keyboard", "Se2Keyboard"),
+    ("se2_keyboard_cfg", "Se2KeyboardCfg"),
+    ("se3_keyboard", "Se3Keyboard"),
+    ("se3_keyboard_cfg", "Se3KeyboardCfg"),
 )

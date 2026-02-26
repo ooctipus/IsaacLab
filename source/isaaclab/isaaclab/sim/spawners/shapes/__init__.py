@@ -14,12 +14,9 @@ on the configuration, the spawned prim can be:
 
 """
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "shapes": ["spawn_capsule", "spawn_cone", "spawn_cuboid", "spawn_cylinder", "spawn_sphere"],
-        "shapes_cfg": ["CapsuleCfg", "ConeCfg", "CuboidCfg", "CylinderCfg", "ShapeCfg", "SphereCfg"],
-    },
+lazy_export(
+    ("shapes", ["spawn_capsule", "spawn_cone", "spawn_cuboid", "spawn_cylinder", "spawn_sphere"]),
+    ("shapes_cfg", ["CapsuleCfg", "ConeCfg", "CuboidCfg", "CylinderCfg", "ShapeCfg", "SphereCfg"]),
 )

@@ -25,12 +25,12 @@ the corresponding x and y coordinates.
 
 """
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "hf_terrains_cfg": [
+lazy_export(
+    (
+        "hf_terrains_cfg",
+        [
             "HfDiscreteObstaclesTerrainCfg",
             "HfInvertedPyramidSlopedTerrainCfg",
             "HfInvertedPyramidStairsTerrainCfg",
@@ -41,7 +41,10 @@ __getattr__, __dir__, __all__ = lazy.attach(
             "HfTerrainBaseCfg",
             "HfWaveTerrainCfg",
         ],
-        "hf_terrains": [
+    ),
+    (
+        "hf_terrains",
+        [
             "hf_discrete_obstacles_terrain",
             "hf_inverted_pyramid_sloped_terrain",
             "hf_inverted_pyramid_stairs_terrain",
@@ -51,5 +54,5 @@ __getattr__, __dir__, __all__ = lazy.attach(
             "hf_stepping_stones_terrain",
             "hf_wave_terrain",
         ],
-    },
+    ),
 )

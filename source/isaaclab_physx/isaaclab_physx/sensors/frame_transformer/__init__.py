@@ -5,12 +5,9 @@
 
 """Sub-module for PhysX frame transformer sensor."""
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "frame_transformer": ["FrameTransformer"],
-        "frame_transformer_data": ["FrameTransformerData"],
-    },
+lazy_export(
+    ("frame_transformer", "FrameTransformer"),
+    ("frame_transformer_data", "FrameTransformerData"),
 )

@@ -52,14 +52,11 @@ Usage:
 .. _Physics Scene: https://openusd.org/dev/api/usd_physics_page_front.html
 """
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "physics_materials": ["spawn_deformable_body_material", "spawn_rigid_body_material"],
-        "physics_materials_cfg": ["DeformableBodyMaterialCfg", "PhysicsMaterialCfg", "RigidBodyMaterialCfg"],
-        "visual_materials": ["spawn_from_mdl_file", "spawn_preview_surface"],
-        "visual_materials_cfg": ["GlassMdlCfg", "MdlFileCfg", "PreviewSurfaceCfg", "VisualMaterialCfg"],
-    },
+lazy_export(
+    ("physics_materials", ["spawn_deformable_body_material", "spawn_rigid_body_material"]),
+    ("physics_materials_cfg", ["DeformableBodyMaterialCfg", "PhysicsMaterialCfg", "RigidBodyMaterialCfg"]),
+    ("visual_materials", ["spawn_from_mdl_file", "spawn_preview_surface"]),
+    ("visual_materials_cfg", ["GlassMdlCfg", "MdlFileCfg", "PreviewSurfaceCfg", "VisualMaterialCfg"]),
 )

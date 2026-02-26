@@ -16,18 +16,15 @@ The following converters are currently supported:
 
 """
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "asset_converter_base": ["AssetConverterBase"],
-        "asset_converter_base_cfg": ["AssetConverterBaseCfg"],
-        "mesh_converter": ["MeshConverter"],
-        "mesh_converter_cfg": ["MeshConverterCfg"],
-        "mjcf_converter": ["MjcfConverter"],
-        "mjcf_converter_cfg": ["MjcfConverterCfg"],
-        "urdf_converter": ["UrdfConverter"],
-        "urdf_converter_cfg": ["UrdfConverterCfg"],
-    },
+lazy_export(
+    ("asset_converter_base", "AssetConverterBase"),
+    ("asset_converter_base_cfg", "AssetConverterBaseCfg"),
+    ("mesh_converter", "MeshConverter"),
+    ("mesh_converter_cfg", "MeshConverterCfg"),
+    ("mjcf_converter", "MjcfConverter"),
+    ("mjcf_converter_cfg", "MjcfConverterCfg"),
+    ("urdf_converter", "UrdfConverter"),
+    ("urdf_converter_cfg", "UrdfConverterCfg"),
 )

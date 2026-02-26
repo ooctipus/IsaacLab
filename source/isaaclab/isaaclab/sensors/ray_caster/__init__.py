@@ -15,22 +15,19 @@ Corresponding camera implementations are also provided for each of the sensor im
 the same ray-casting operations as the sensor implementations, but return the results as images.
 """
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
+lazy_export(
+    ("multi_mesh_ray_caster", "MultiMeshRayCaster"),
+    ("multi_mesh_ray_caster_camera", "MultiMeshRayCasterCamera"),
+    ("multi_mesh_ray_caster_camera_cfg", "MultiMeshRayCasterCameraCfg"),
+    ("multi_mesh_ray_caster_camera_data", "MultiMeshRayCasterCameraData"),
+    ("multi_mesh_ray_caster_cfg", "MultiMeshRayCasterCfg"),
+    ("multi_mesh_ray_caster_data", "MultiMeshRayCasterData"),
+    ("ray_caster", "RayCaster"),
+    ("ray_caster_camera", "RayCasterCamera"),
+    ("ray_caster_camera_cfg", "RayCasterCameraCfg"),
+    ("ray_caster_cfg", "RayCasterCfg"),
+    ("ray_caster_data", "RayCasterData"),
     submodules=["patterns"],
-    submod_attrs={
-        "multi_mesh_ray_caster": ["MultiMeshRayCaster"],
-        "multi_mesh_ray_caster_camera": ["MultiMeshRayCasterCamera"],
-        "multi_mesh_ray_caster_camera_cfg": ["MultiMeshRayCasterCameraCfg"],
-        "multi_mesh_ray_caster_camera_data": ["MultiMeshRayCasterCameraData"],
-        "multi_mesh_ray_caster_cfg": ["MultiMeshRayCasterCfg"],
-        "multi_mesh_ray_caster_data": ["MultiMeshRayCasterData"],
-        "ray_caster": ["RayCaster"],
-        "ray_caster_camera": ["RayCasterCamera"],
-        "ray_caster_camera_cfg": ["RayCasterCameraCfg"],
-        "ray_caster_cfg": ["RayCasterCfg"],
-        "ray_caster_data": ["RayCasterData"],
-    },
 )

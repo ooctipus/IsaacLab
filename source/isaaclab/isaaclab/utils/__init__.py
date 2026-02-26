@@ -91,5 +91,8 @@ __getattr__, __dir__, __all__ = lazy.attach(
         "module": [
             "attach_cascading",
         ],
+        "lazy_imports": [
+            "lazy_export",
+        ],
     },
 )

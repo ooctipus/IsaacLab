@@ -5,14 +5,11 @@
 
 """Gamepad device for SE(2) and SE(3) control."""
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "se2_gamepad": ["Se2Gamepad"],
-        "se2_gamepad_cfg": ["Se2GamepadCfg"],
-        "se3_gamepad": ["Se3Gamepad"],
-        "se3_gamepad_cfg": ["Se3GamepadCfg"],
-    },
+lazy_export(
+    ("se2_gamepad", "Se2Gamepad"),
+    ("se2_gamepad_cfg", "Se2GamepadCfg"),
+    ("se3_gamepad", "Se3Gamepad"),
+    ("se3_gamepad_cfg", "Se3GamepadCfg"),
 )

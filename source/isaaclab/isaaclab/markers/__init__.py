@@ -21,13 +21,10 @@ Currently, the sub-package provides the following classes:
 
 """
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
+lazy_export(
+    ("visualization_markers", "VisualizationMarkers"),
+    ("visualization_markers_cfg", "VisualizationMarkersCfg"),
     submodules=["config"],
-    submod_attrs={
-        "visualization_markers": ["VisualizationMarkers"],
-        "visualization_markers_cfg": ["VisualizationMarkersCfg"],
-    },
 )

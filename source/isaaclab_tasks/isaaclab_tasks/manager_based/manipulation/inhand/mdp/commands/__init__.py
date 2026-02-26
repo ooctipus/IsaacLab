@@ -5,12 +5,9 @@
 
 """Sub-module containing command terms for 3D orientation goals."""
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "commands_cfg": ["InHandReOrientationCommandCfg"],
-        "orientation_command": ["InHandReOrientationCommand"],
-    },
+lazy_export(
+    ("commands_cfg", "InHandReOrientationCommandCfg"),
+    ("orientation_command", "InHandReOrientationCommand"),
 )

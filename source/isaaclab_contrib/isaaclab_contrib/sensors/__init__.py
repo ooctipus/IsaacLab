@@ -22,11 +22,8 @@ The following table summarizes the interpretation of the prim paths for differen
 
 """
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "tacsl_sensor": ["VisuoTactileSensor", "GelSightRenderCfg", "VisuoTactileSensorCfg", "VisuoTactileSensorData"],
-    },
+lazy_export(
+    ("tacsl_sensor", ["VisuoTactileSensor", "GelSightRenderCfg", "VisuoTactileSensorCfg", "VisuoTactileSensorData"]),
 )

@@ -12,12 +12,12 @@ tri-mesh primitive. Thus, this representation is more computationally and memory
 efficient than the height-field representation, but it is not as flexible.
 """
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "mesh_terrains_cfg": [
+lazy_export(
+    (
+        "mesh_terrains_cfg",
+        [
             "MeshBoxTerrainCfg",
             "MeshFloatingRingTerrainCfg",
             "MeshGapTerrainCfg",
@@ -32,7 +32,10 @@ __getattr__, __dir__, __all__ = lazy.attach(
             "MeshRepeatedPyramidsTerrainCfg",
             "MeshStarTerrainCfg",
         ],
-        "mesh_terrains": [
+    ),
+    (
+        "mesh_terrains",
+        [
             "flat_terrain",
             "pyramid_stairs_terrain",
             "inverted_pyramid_stairs_terrain",
@@ -45,5 +48,5 @@ __getattr__, __dir__, __all__ = lazy.attach(
             "star_terrain",
             "repeated_objects_terrain",
         ],
-    },
+    ),
 )

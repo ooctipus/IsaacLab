@@ -13,24 +13,21 @@ Currently, the following spawners are supported:
 
 """
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "from_files": [
-            "spawn_from_mjcf",
-            "spawn_from_urdf",
-            "spawn_from_usd",
-            "spawn_from_usd_with_compliant_contact_material",
-            "spawn_ground_plane",
-        ],
-        "from_files_cfg": [
-            "GroundPlaneCfg",
-            "MjcfFileCfg",
-            "UrdfFileCfg",
-            "UsdFileCfg",
-            "UsdFileWithCompliantContactCfg",
-        ],
-    },
+lazy_export(
+    ("from_files", [
+        "spawn_from_mjcf",
+        "spawn_from_urdf",
+        "spawn_from_usd",
+        "spawn_from_usd_with_compliant_contact_material",
+        "spawn_ground_plane",
+    ]),
+    ("from_files_cfg", [
+        "GroundPlaneCfg",
+        "MjcfFileCfg",
+        "UrdfFileCfg",
+        "UsdFileCfg",
+        "UsdFileWithCompliantContactCfg",
+    ]),
 )

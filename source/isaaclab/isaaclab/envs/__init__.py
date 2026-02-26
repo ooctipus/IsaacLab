@@ -42,27 +42,24 @@ For more information about the workflow design patterns, see the `Task Design Wo
 .. _`Task Design Workflows`: https://docs.isaacsim.omniverse.nvidia.com/latest/introduction/workflows.html
 """
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
+lazy_export(
+    # Pure data types
+    ("common", ["VecEnvObs", "VecEnvStepReturn", "ViewerCfg"]),
+    # Cfg classes — clean after Phase 3/4
+    ("direct_rl_env_cfg", "DirectRLEnvCfg"),
+    ("direct_marl_env_cfg", "DirectMARLEnvCfg"),
+    ("manager_based_env_cfg", "ManagerBasedEnvCfg"),
+    ("manager_based_rl_env_cfg", "ManagerBasedRLEnvCfg"),
+    ("mimic_env_cfg", ["MimicEnvCfg", "MimicObservationGroupCfg", "MimicObservationTermCfg"]),
+    # Impl classes — deferred until needed
+    ("direct_rl_env", "DirectRLEnv"),
+    ("direct_marl_env", "DirectMARLEnv"),
+    ("manager_based_env", "ManagerBasedEnv"),
+    ("manager_based_rl_env", "ManagerBasedRLEnv"),
+    ("manager_based_rl_mimic_env", "ManagerBasedRLMimicEnv"),
+    # MARL utilities
+    ("utils.marl", ["multi_agent_to_single_agent", "multi_agent_with_one_agent"]),
     submodules=["mdp", "ui"],
-    submod_attrs={
-        # Pure data types
-        "common": ["VecEnvObs", "VecEnvStepReturn", "ViewerCfg"],
-        # Cfg classes — clean after Phase 3/4
-        "direct_rl_env_cfg": ["DirectRLEnvCfg"],
-        "direct_marl_env_cfg": ["DirectMARLEnvCfg"],
-        "manager_based_env_cfg": ["ManagerBasedEnvCfg"],
-        "manager_based_rl_env_cfg": ["ManagerBasedRLEnvCfg"],
-        "mimic_env_cfg": ["MimicEnvCfg", "MimicObservationGroupCfg", "MimicObservationTermCfg"],
-        # Impl classes — deferred until needed
-        "direct_rl_env": ["DirectRLEnv"],
-        "direct_marl_env": ["DirectMARLEnv"],
-        "manager_based_env": ["ManagerBasedEnv"],
-        "manager_based_rl_env": ["ManagerBasedRLEnv"],
-        "manager_based_rl_mimic_env": ["ManagerBasedRLMimicEnv"],
-        # MARL utilities
-        "utils.marl": ["multi_agent_to_single_agent", "multi_agent_with_one_agent"],
-    },
 )

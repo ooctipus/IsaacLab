@@ -5,11 +5,8 @@
 
 """Views for manipulating USD prims."""
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "xform_prim_view": ["XformPrimView"],
-    },
+lazy_export(
+    ("xform_prim_view", "XformPrimView"),
 )

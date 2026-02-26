@@ -20,19 +20,16 @@ to add user-defined callback functions to be called when a particular input is p
 the peripheral device.
 """
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
+lazy_export(
+    ("device_base", ["DeviceBase", "DeviceCfg", "DevicesCfg"]),
+    ("gamepad", ["Se2Gamepad", "Se2GamepadCfg", "Se3Gamepad", "Se3GamepadCfg"]),
+    ("haply", ["HaplyDevice", "HaplyDeviceCfg"]),
+    ("keyboard", ["Se2Keyboard", "Se2KeyboardCfg", "Se3Keyboard", "Se3KeyboardCfg"]),
+    ("openxr", ["ManusVive", "ManusViveCfg", "OpenXRDevice", "OpenXRDeviceCfg"]),
+    ("retargeter_base", ["RetargeterBase", "RetargeterCfg"]),
+    ("spacemouse", ["Se2SpaceMouse", "Se2SpaceMouseCfg", "Se3SpaceMouse", "Se3SpaceMouseCfg"]),
+    ("teleop_device_factory", "create_teleop_device"),
     submodules=["openxr"],
-    submod_attrs={
-        "device_base": ["DeviceBase", "DeviceCfg", "DevicesCfg"],
-        "gamepad": ["Se2Gamepad", "Se2GamepadCfg", "Se3Gamepad", "Se3GamepadCfg"],
-        "haply": ["HaplyDevice", "HaplyDeviceCfg"],
-        "keyboard": ["Se2Keyboard", "Se2KeyboardCfg", "Se3Keyboard", "Se3KeyboardCfg"],
-        "openxr": ["ManusVive", "ManusViveCfg", "OpenXRDevice", "OpenXRDeviceCfg"],
-        "retargeter_base": ["RetargeterBase", "RetargeterCfg"],
-        "spacemouse": ["Se2SpaceMouse", "Se2SpaceMouseCfg", "Se3SpaceMouse", "Se3SpaceMouseCfg"],
-        "teleop_device_factory": ["create_teleop_device"],
-    },
 )

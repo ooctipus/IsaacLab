@@ -5,12 +5,9 @@
 
 """Configuration for different assets."""
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "gelsight": ["GELSIGHT_R15_CFG", "GELSIGHT_MINI_CFG"],
-        "velodyne": ["VELODYNE_VLP_16_RAYCASTER_CFG"],
-    },
+lazy_export(
+    ("gelsight", ["GELSIGHT_R15_CFG", "GELSIGHT_MINI_CFG"]),
+    ("velodyne", "VELODYNE_VLP_16_RAYCASTER_CFG"),
 )

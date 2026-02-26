@@ -11,12 +11,9 @@ Currently, the following sensors are supported:
 
 """
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "sensors": ["spawn_camera"],
-        "sensors_cfg": ["FisheyeCameraCfg", "PinholeCameraCfg"],
-    },
+lazy_export(
+    ("sensors", "spawn_camera"),
+    ("sensors_cfg", ["FisheyeCameraCfg", "PinholeCameraCfg"]),
 )

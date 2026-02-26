@@ -54,81 +54,78 @@ For example:
 
 """
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        # spawner base cfg classes
-        "spawner_cfg": ["SpawnerCfg", "RigidObjectSpawnerCfg", "DeformableObjectSpawnerCfg"],
-        # from_files
-        "from_files": [
-            "spawn_from_mjcf",
-            "spawn_from_urdf",
-            "spawn_from_usd",
-            "spawn_from_usd_with_compliant_contact_material",
-            "spawn_ground_plane",
-            "GroundPlaneCfg",
-            "MjcfFileCfg",
-            "UrdfFileCfg",
-            "UsdFileCfg",
-            "UsdFileWithCompliantContactCfg",
-        ],
-        # lights
-        "lights": [
-            "spawn_light",
-            "CylinderLightCfg",
-            "DiskLightCfg",
-            "DistantLightCfg",
-            "DomeLightCfg",
-            "LightCfg",
-            "SphereLightCfg",
-        ],
-        # materials
-        "materials": [
-            "spawn_deformable_body_material",
-            "spawn_rigid_body_material",
-            "DeformableBodyMaterialCfg",
-            "PhysicsMaterialCfg",
-            "RigidBodyMaterialCfg",
-            "spawn_from_mdl_file",
-            "spawn_preview_surface",
-            "GlassMdlCfg",
-            "MdlFileCfg",
-            "PreviewSurfaceCfg",
-            "VisualMaterialCfg",
-        ],
-        # meshes
-        "meshes": [
-            "spawn_mesh_capsule",
-            "spawn_mesh_cone",
-            "spawn_mesh_cuboid",
-            "spawn_mesh_cylinder",
-            "spawn_mesh_sphere",
-            "MeshCapsuleCfg",
-            "MeshCfg",
-            "MeshConeCfg",
-            "MeshCuboidCfg",
-            "MeshCylinderCfg",
-            "MeshSphereCfg",
-        ],
-        # sensors
-        "sensors": ["spawn_camera", "FisheyeCameraCfg", "PinholeCameraCfg"],
-        # shapes
-        "shapes": [
-            "spawn_capsule",
-            "spawn_cone",
-            "spawn_cuboid",
-            "spawn_cylinder",
-            "spawn_sphere",
-            "CapsuleCfg",
-            "ConeCfg",
-            "CuboidCfg",
-            "CylinderCfg",
-            "ShapeCfg",
-            "SphereCfg",
-        ],
-        # wrappers
-        "wrappers": ["spawn_multi_asset", "spawn_multi_usd_file", "MultiAssetSpawnerCfg", "MultiUsdFileCfg"],
-    },
+lazy_export(
+    # spawner base cfg classes
+    ("spawner_cfg", ["SpawnerCfg", "RigidObjectSpawnerCfg", "DeformableObjectSpawnerCfg"]),
+    # from_files
+    ("from_files", [
+        "spawn_from_mjcf",
+        "spawn_from_urdf",
+        "spawn_from_usd",
+        "spawn_from_usd_with_compliant_contact_material",
+        "spawn_ground_plane",
+        "GroundPlaneCfg",
+        "MjcfFileCfg",
+        "UrdfFileCfg",
+        "UsdFileCfg",
+        "UsdFileWithCompliantContactCfg",
+    ]),
+    # lights
+    ("lights", [
+        "spawn_light",
+        "CylinderLightCfg",
+        "DiskLightCfg",
+        "DistantLightCfg",
+        "DomeLightCfg",
+        "LightCfg",
+        "SphereLightCfg",
+    ]),
+    # materials
+    ("materials", [
+        "spawn_deformable_body_material",
+        "spawn_rigid_body_material",
+        "DeformableBodyMaterialCfg",
+        "PhysicsMaterialCfg",
+        "RigidBodyMaterialCfg",
+        "spawn_from_mdl_file",
+        "spawn_preview_surface",
+        "GlassMdlCfg",
+        "MdlFileCfg",
+        "PreviewSurfaceCfg",
+        "VisualMaterialCfg",
+    ]),
+    # meshes
+    ("meshes", [
+        "spawn_mesh_capsule",
+        "spawn_mesh_cone",
+        "spawn_mesh_cuboid",
+        "spawn_mesh_cylinder",
+        "spawn_mesh_sphere",
+        "MeshCapsuleCfg",
+        "MeshCfg",
+        "MeshConeCfg",
+        "MeshCuboidCfg",
+        "MeshCylinderCfg",
+        "MeshSphereCfg",
+    ]),
+    # sensors
+    ("sensors", ["spawn_camera", "FisheyeCameraCfg", "PinholeCameraCfg"]),
+    # shapes
+    ("shapes", [
+        "spawn_capsule",
+        "spawn_cone",
+        "spawn_cuboid",
+        "spawn_cylinder",
+        "spawn_sphere",
+        "CapsuleCfg",
+        "ConeCfg",
+        "CuboidCfg",
+        "CylinderCfg",
+        "ShapeCfg",
+        "SphereCfg",
+    ]),
+    # wrappers
+    ("wrappers", ["spawn_multi_asset", "spawn_multi_usd_file", "MultiAssetSpawnerCfg", "MultiUsdFileCfg"]),
 )

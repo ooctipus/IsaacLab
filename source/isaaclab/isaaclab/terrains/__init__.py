@@ -20,17 +20,17 @@ There are two main components in this package:
 
 """
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        # cfg classes
-        "sub_terrain_cfg": ["FlatPatchSamplingCfg", "SubTerrainBaseCfg"],
-        "terrain_generator_cfg": ["TerrainGeneratorCfg"],
-        "terrain_importer_cfg": ["TerrainImporterCfg"],
-        # height field cfg classes (re-exported from sub-package)
-        "height_field": [
+lazy_export(
+    # cfg classes
+    ("sub_terrain_cfg", ["FlatPatchSamplingCfg", "SubTerrainBaseCfg"]),
+    ("terrain_generator_cfg", "TerrainGeneratorCfg"),
+    ("terrain_importer_cfg", "TerrainImporterCfg"),
+    # height field cfg classes (re-exported from sub-package)
+    (
+        "height_field",
+        [
             "HfDiscreteObstaclesTerrainCfg",
             "HfInvertedPyramidSlopedTerrainCfg",
             "HfInvertedPyramidStairsTerrainCfg",
@@ -41,8 +41,11 @@ __getattr__, __dir__, __all__ = lazy.attach(
             "HfTerrainBaseCfg",
             "HfWaveTerrainCfg",
         ],
-        # trimesh cfg classes (re-exported from sub-package)
-        "trimesh": [
+    ),
+    # trimesh cfg classes (re-exported from sub-package)
+    (
+        "trimesh",
+        [
             "MeshBoxTerrainCfg",
             "MeshFloatingRingTerrainCfg",
             "MeshGapTerrainCfg",
@@ -57,9 +60,9 @@ __getattr__, __dir__, __all__ = lazy.attach(
             "MeshRepeatedPyramidsTerrainCfg",
             "MeshStarTerrainCfg",
         ],
-        # impl classes — deferred
-        "terrain_generator": ["TerrainGenerator"],
-        "terrain_importer": ["TerrainImporter"],
-        "utils": ["color_meshes_by_height", "create_prim_from_mesh", "find_flat_patches"],
-    },
+    ),
+    # impl classes — deferred
+    ("terrain_generator", "TerrainGenerator"),
+    ("terrain_importer", "TerrainImporter"),
+    ("utils", ["color_meshes_by_height", "create_prim_from_mesh", "find_flat_patches"]),
 )

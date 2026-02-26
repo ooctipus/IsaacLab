@@ -5,15 +5,12 @@
 
 """Sub-module for rigid articulated assets."""
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "base_articulation": ["BaseArticulation"],
-        "base_articulation_data": ["BaseArticulationData"],
-        "articulation": ["Articulation"],
-        "articulation_cfg": ["ArticulationCfg"],
-        "articulation_data": ["ArticulationData"],
-    },
+lazy_export(
+    ("base_articulation", "BaseArticulation"),
+    ("base_articulation_data", "BaseArticulationData"),
+    ("articulation", "Articulation"),
+    ("articulation_cfg", "ArticulationCfg"),
+    ("articulation_data", "ArticulationData"),
 )

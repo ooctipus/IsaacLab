@@ -10,34 +10,31 @@ and observations. Each manager implements a specific functionality for the envir
 designed to be modular and can be easily extended to support new functionality.
 """
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        # Term cfg classes — pure dataclasses, no heavy imports
-        "manager_term_cfg": [
-            "ActionTermCfg",
-            "CommandTermCfg",
-            "CurriculumTermCfg",
-            "EventTermCfg",
-            "ManagerTermBaseCfg",
-            "ObservationGroupCfg",
-            "ObservationTermCfg",
-            "RecorderTermCfg",
-            "RewardTermCfg",
-            "TerminationTermCfg",
-        ],
-        # Manager implementations — deferred
-        "manager_base": ["ManagerBase", "ManagerTermBase"],
-        "action_manager": ["ActionManager", "ActionTerm"],
-        "command_manager": ["CommandManager", "CommandTerm"],
-        "curriculum_manager": ["CurriculumManager"],
-        "event_manager": ["EventManager"],
-        "observation_manager": ["ObservationManager"],
-        "recorder_manager": ["DatasetExportMode", "RecorderManager", "RecorderManagerBaseCfg", "RecorderTerm"],
-        "reward_manager": ["RewardManager"],
-        "scene_entity_cfg": ["SceneEntityCfg"],
-        "termination_manager": ["TerminationManager"],
-    },
+lazy_export(
+    # Term cfg classes — pure dataclasses, no heavy imports
+    ("manager_term_cfg", [
+        "ActionTermCfg",
+        "CommandTermCfg",
+        "CurriculumTermCfg",
+        "EventTermCfg",
+        "ManagerTermBaseCfg",
+        "ObservationGroupCfg",
+        "ObservationTermCfg",
+        "RecorderTermCfg",
+        "RewardTermCfg",
+        "TerminationTermCfg",
+    ]),
+    # Manager implementations — deferred
+    ("manager_base", ["ManagerBase", "ManagerTermBase"]),
+    ("action_manager", ["ActionManager", "ActionTerm"]),
+    ("command_manager", ["CommandManager", "CommandTerm"]),
+    ("curriculum_manager", "CurriculumManager"),
+    ("event_manager", "EventManager"),
+    ("observation_manager", "ObservationManager"),
+    ("recorder_manager", ["DatasetExportMode", "RecorderManager", "RecorderManagerBaseCfg", "RecorderTerm"]),
+    ("reward_manager", "RewardManager"),
+    ("scene_entity_cfg", "SceneEntityCfg"),
+    ("termination_manager", "TerminationManager"),
 )

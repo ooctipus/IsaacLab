@@ -5,15 +5,12 @@
 
 """Sub-module for rigid contact sensor."""
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "base_contact_sensor": ["BaseContactSensor"],
-        "base_contact_sensor_data": ["BaseContactSensorData"],
-        "contact_sensor": ["ContactSensor"],
-        "contact_sensor_cfg": ["ContactSensorCfg"],
-        "contact_sensor_data": ["ContactSensorData"],
-    },
+lazy_export(
+    ("base_contact_sensor", "BaseContactSensor"),
+    ("base_contact_sensor_data", "BaseContactSensorData"),
+    ("contact_sensor", "ContactSensor"),
+    ("contact_sensor_cfg", "ContactSensorCfg"),
+    ("contact_sensor_data", "ContactSensorData"),
 )

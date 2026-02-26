@@ -7,15 +7,12 @@
 Imu Sensor
 """
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "base_imu": ["BaseImu"],
-        "base_imu_data": ["BaseImuData"],
-        "imu": ["Imu"],
-        "imu_cfg": ["ImuCfg"],
-        "imu_data": ["ImuData"],
-    },
+lazy_export(
+    ("base_imu", "BaseImu"),
+    ("base_imu_data", "BaseImuData"),
+    ("imu", "Imu"),
+    ("imu_cfg", "ImuCfg"),
+    ("imu_data", "ImuData"),
 )

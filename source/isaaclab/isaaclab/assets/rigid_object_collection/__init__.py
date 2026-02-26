@@ -5,15 +5,12 @@
 
 """Sub-module for rigid object collection."""
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "base_rigid_object_collection": ["BaseRigidObjectCollection"],
-        "base_rigid_object_collection_data": ["BaseRigidObjectCollectionData"],
-        "rigid_object_collection": ["RigidObjectCollection"],
-        "rigid_object_collection_cfg": ["RigidObjectCollectionCfg"],
-        "rigid_object_collection_data": ["RigidObjectCollectionData"],
-    },
+lazy_export(
+    ("base_rigid_object_collection", "BaseRigidObjectCollection"),
+    ("base_rigid_object_collection_data", "BaseRigidObjectCollectionData"),
+    ("rigid_object_collection", "RigidObjectCollection"),
+    ("rigid_object_collection_cfg", "RigidObjectCollectionCfg"),
+    ("rigid_object_collection_data", "RigidObjectCollectionData"),
 )

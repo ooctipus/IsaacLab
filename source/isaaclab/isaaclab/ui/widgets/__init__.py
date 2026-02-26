@@ -3,14 +3,11 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "image_plot": ["ImagePlot"],
-        "line_plot": ["LiveLinePlot"],
-        "manager_live_visualizer": ["ManagerLiveVisualizer"],
-        "ui_visualizer_base": ["UiVisualizerBase"],
-    },
+lazy_export(
+    ("image_plot", "ImagePlot"),
+    ("line_plot", "LiveLinePlot"),
+    ("manager_live_visualizer", "ManagerLiveVisualizer"),
+    ("ui_visualizer_base", "UiVisualizerBase"),
 )

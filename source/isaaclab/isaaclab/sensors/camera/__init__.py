@@ -5,21 +5,13 @@
 
 """Sub-module for camera wrapper around USD camera prim."""
 
-import lazy_loader as lazy
+from isaaclab.utils.lazy_imports import lazy_export
 
-__getattr__, __dir__, __all__ = lazy.attach(
-    __name__,
-    submod_attrs={
-        "camera": ["Camera"],
-        "camera_cfg": ["CameraCfg"],
-        "camera_data": ["CameraData"],
-        "tiled_camera": ["TiledCamera"],
-        "tiled_camera_cfg": ["TiledCameraCfg"],
-        "utils": [
-            "create_pointcloud_from_depth",
-            "create_pointcloud_from_rgbd",
-            "save_images_to_file",
-            "transform_points",
-        ],
-    },
+lazy_export(
+    ("camera", "Camera"),
+    ("camera_cfg", "CameraCfg"),
+    ("camera_data", "CameraData"),
+    ("tiled_camera", "TiledCamera"),
+    ("tiled_camera_cfg", "TiledCameraCfg"),
+    ("utils", ["create_pointcloud_from_depth", "create_pointcloud_from_rgbd", "save_images_to_file", "transform_points"]),
 )
