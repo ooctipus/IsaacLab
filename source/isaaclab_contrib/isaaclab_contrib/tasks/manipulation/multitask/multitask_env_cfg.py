@@ -23,7 +23,10 @@ from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg
 from isaaclab.utils import configclass
 
 from isaaclab_contrib.tasks.manipulation.multitask import mdp
-from isaaclab_contrib.tasks.manipulation.multitask.multitask_utils import MultiTaskRegistryConfig
+from isaaclab_contrib.tasks.manipulation.multitask.multitask_utils import (
+    MultiTaskRegistryConfig,
+    SimParamsSource,
+)
 
 
 ##
@@ -101,7 +104,11 @@ class SingleRobotMultiTaskEnvCfg(ManagerBasedRLEnvCfg):
     """
 
     scene: ObjectTableSceneCfg = ObjectTableSceneCfg(num_envs=4096, env_spacing=2.0, replicate_physics=False)
+    # How to derive sim params from task configs
     tasks: MultiTaskRegistryConfig = MISSING
+    # How to derive sim params from task configs: conservative = max episode_length_s, min sim dt.
+    sim_params_source: SimParamsSource = SimParamsSource.CONSERVATIVE
+
     actions: ProxyActionsCfg = ProxyActionsCfg()
     observations: ProxyObservationsCfg = ProxyObservationsCfg()
     rewards: ProxyRewardsCfg = ProxyRewardsCfg()
@@ -110,15 +117,12 @@ class SingleRobotMultiTaskEnvCfg(ManagerBasedRLEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
-        # setup the simulation parameters
-        self.decimation = 3
-        self.episode_length_s = 26.0
-        self.sim.dt = 1 / 60
-        self.sim.render_interval = 3
-
-        # setup the tasks
+        # setup the tasks first so we can derive sim params from them
         if self.tasks is MISSING:
             raise ValueError("tasks must be set to TaskRegistryMultiTaskConfig.")
+
+        # Setup simulation parameters from task configs
+        self._setup_group_sim_params()
 
         # Shared ground plane uses first task's height; record per-group z offset for other tasks
         self._setup_shared_ground_plane_and_offsets()
@@ -134,6 +138,20 @@ class SingleRobotMultiTaskEnvCfg(ManagerBasedRLEnvCfg):
         self._setup_group_terminations()
         self._setup_group_observations()
         self._setup_group_rewards()
+
+    def _setup_group_sim_params(self):
+        """Set decimation, episode_length_s, sim.dt, sim.render_interval from task configs.
+
+        Strategy is controlled by :attr:`sim_params_source`:
+        - first: use the first task's values.
+        - conservative: episode_length_s = max(tasks), sim.dt = min(tasks)
+          decimation and render_interval from default values.
+        """
+        decimation, episode_length_s, dt, render_interval = self.tasks.get_sim_params(self.sim_params_source)
+        self.decimation = decimation
+        self.episode_length_s = episode_length_s
+        self.sim.dt = dt
+        self.sim.render_interval = render_interval
 
     def _setup_shared_ground_plane_and_offsets(self):
         """Use the first task that has a plane to define shared plane pose and ref_plane_z.
@@ -277,26 +295,22 @@ class SingleRobotMultiTaskEnvCfg(ManagerBasedRLEnvCfg):
 
     def _setup_group_events(self):
         """Prepare per-task events for grouped envs."""
-        # TODO: wire per-task events with env_ids filtered by group
-
+        # TODO: wire per-task events
         self.events.reset_robot_init_state = EventTerm(func=mdp.reset_multitask_robot_init_state, mode="reset")
 
     def _setup_group_terminations(self):
         """Prepare per-task terminations for grouped envs."""
-        # TODO: wire per-task terminations with env_ids filtered by group
-
+        # TODO: wire per-task terminations
         pass
 
     def _setup_group_observations(self):
         """Prepare per-task observations for grouped envs."""
-        # TODO: wire per-task observations with env_ids filtered by group
-
+        # TODO: wire per-task observations
         pass
 
     def _setup_group_rewards(self):
         """Prepare per-task rewards for grouped envs."""
-        # TODO: wire per-task rewards with env_ids filtered by group
-
+        # TODO: wire per-task rewards
         pass
 
 
@@ -375,22 +389,20 @@ class MultiRobotMultiTaskEnvCfg(SingleRobotMultiTaskEnvCfg):
 
     def _setup_group_events(self):
         """Prepare per-task events for grouped envs."""
+        # TODO: wire per-task events
         pass
 
     def _setup_group_terminations(self):
         """Prepare per-task terminations for grouped envs."""
-        # TODO: wire per-task events with env_ids filtered by group
-
+        # TODO: wire per-task terminations
         pass
 
     def _setup_group_observations(self):
         """Prepare per-task observations for grouped envs."""
-        # TODO: wire per-task observations with env_ids filtered by group
-
+        # TODO: wire per-task observations
         pass
 
     def _setup_group_rewards(self):
         """Prepare per-task rewards for grouped envs."""
-        # TODO: wire per-task rewards with env_ids filtered by group
-
+        # TODO: wire per-task rewards
         pass

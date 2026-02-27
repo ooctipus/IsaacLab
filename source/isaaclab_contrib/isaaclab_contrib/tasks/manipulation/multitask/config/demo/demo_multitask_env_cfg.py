@@ -32,13 +32,31 @@ class FrankaMultiTaskEnvCfg(SingleRobotMultiTaskEnvCfg):
 
 
 @configclass
-class MultiRobotMultiTaskManipulationEnvCfg(MultiRobotMultiTaskEnvCfg):
-    """Example multi-robot multi-task manipulation config."""
+class MultiRobotMultiTaskJointPositionEnvCfg(MultiRobotMultiTaskEnvCfg):
+    """Example multi-robot multi-task joint position manipulation config."""
 
     def __post_init__(self):
         self.tasks = MultiTaskRegistryConfig(
             task_names_by_group=[
-                "Isaac-Stack-Cube-Franka-IK-Rel-v0",
+                "Isaac-Lift-Cube-OpenArm-v0",
+                "Isaac-Lift-Cube-Franka-v0",
+                "Isaac-Open-Drawer-Franka-v0",
+                "Isaac-Reach-Franka-v0",
+            ],
+            group_size=10,
+            device=self.sim.device,
+        )
+        super().__post_init__()
+
+
+@configclass
+class MultiRobotMultiTaskIKRelEnvCfg(MultiRobotMultiTaskEnvCfg):
+    """Example multi-robot multi-task IK relative manipulation config."""
+
+    def __post_init__(self):
+        self.tasks = MultiTaskRegistryConfig(
+            task_names_by_group=[
+                "Isaac-Reach-Franka-IK-Rel-v0",
                 "Isaac-Stack-Cube-UR10-Long-Suction-IK-Rel-v0",
                 "Isaac-Lift-Cube-Franka-IK-Rel-v0",
                 "Isaac-Open-Drawer-Franka-IK-Rel-v0",

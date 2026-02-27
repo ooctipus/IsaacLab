@@ -19,10 +19,19 @@ gym.register(
 )
 
 gym.register(
-    id="Isaac-MultiRobot-Multi-Task-v0",
+    id="Isaac-MultiRobot-Multi-Task-Joint-Position-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.demo_multitask_env_cfg:MultiRobotMultiTaskManipulationEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.demo_multitask_env_cfg:MultiRobotMultiTaskJointPositionEnvCfg",
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Isaac-MultiRobot-Multi-Task-IK-Rel-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.demo_multitask_env_cfg:MultiRobotMultiTaskIKRelEnvCfg",
     },
     disable_env_checker=True,
 )

@@ -79,7 +79,11 @@ def setup_environment(
         # if None: no filter
 
         # exclude multi-task envs when requested
-        if exclude_multitask and task_spec.id in ["Isaac-Franka-Multi-Task-v0", "Isaac-MultiRobot-Multi-Task-v0"]:
+        if exclude_multitask and task_spec.id in [
+            "Isaac-Franka-Multi-Task-v0",
+            "Isaac-MultiRobot-Multi-Task-Joint-Position-v0",
+            "Isaac-MultiRobot-Multi-Task-IK-Rel-v0",
+        ]:
             continue
 
         registered_tasks.append(task_spec.id)
