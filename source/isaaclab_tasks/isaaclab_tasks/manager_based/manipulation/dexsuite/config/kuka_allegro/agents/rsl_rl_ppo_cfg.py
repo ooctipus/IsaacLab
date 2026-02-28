@@ -43,6 +43,22 @@ CNN_POLICY_CFG = RslRlActorCriticCNNCfg(
 )
 
 
+ALGO_CFG = RslRlPpoAlgorithmCfg(
+    value_loss_coef=1.0,
+    use_clipped_value_loss=True,
+    clip_param=0.2,
+    entropy_coef=0.005,
+    num_learning_epochs=5,
+    num_mini_batches=4,
+    learning_rate=1.0e-3,
+    schedule="adaptive",
+    gamma=0.99,
+    lam=0.95,
+    desired_kl=0.01,
+    max_grad_norm=1.0,
+)
+
+
 @configclass
 class DexsuiteKukaAllegroPPOBaseRunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 32
@@ -52,20 +68,7 @@ class DexsuiteKukaAllegroPPOBaseRunnerCfg(RslRlOnPolicyRunnerCfg):
     experiment_name = (MISSING,)  # type: ignore
     obs_groups = (MISSING,)  # type: ignore
     policy = (MISSING,)  # type: ignore
-    algorithm = RslRlPpoAlgorithmCfg(
-        value_loss_coef=1.0,
-        use_clipped_value_loss=True,
-        clip_param=0.2,
-        entropy_coef=0.005,
-        num_learning_epochs=5,
-        num_mini_batches=4,
-        learning_rate=1.0e-3,
-        schedule="adaptive",
-        gamma=0.99,
-        lam=0.95,
-        desired_kl=0.01,
-        max_grad_norm=1.0,
-    )
+    algorithm = MISSING  # type: ignore
 
 
 @configclass
@@ -74,12 +77,14 @@ class DexsuiteKukaAllegroPPORunnerCfg(PresetCfg):
         experiment_name="dexsuite_kuka_allegro",
         obs_groups={"policy": ["policy", "proprio", "perception"], "critic": ["policy", "proprio", "perception"]},
         policy=STATE_POLICY_CFG,
+        algorithm=ALGO_CFG,
     )
 
     single_camera = DexsuiteKukaAllegroPPOBaseRunnerCfg().replace(
         experiment_name="dexsuite_kuka_allegro_single_camera",
         obs_groups={"policy": ["policy", "proprio", "base_image"], "critic": ["policy", "proprio", "perception"]},
         policy=CNN_POLICY_CFG,
+        algorithm=ALGO_CFG.replace(num_mini_batches=16),
     )
 
     duo_camera = DexsuiteKukaAllegroPPOBaseRunnerCfg().replace(
@@ -89,4 +94,5 @@ class DexsuiteKukaAllegroPPORunnerCfg(PresetCfg):
             "critic": ["policy", "proprio", "perception"],
         },
         policy=CNN_POLICY_CFG,
+        algorithm=ALGO_CFG.replace(num_mini_batches=16),
     )

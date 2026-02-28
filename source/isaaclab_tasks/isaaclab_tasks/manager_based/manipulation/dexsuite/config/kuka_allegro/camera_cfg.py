@@ -58,6 +58,10 @@ class BaseTiledCameraCfg(PresetCfg):
     depth64 = BASE_CAMERA_CFG.replace(data_types=["distance_to_image_plane"], width=64, height=64)
     depth128 = BASE_CAMERA_CFG.replace(data_types=["distance_to_image_plane"], width=128, height=128)
     depth256 = BASE_CAMERA_CFG.replace(data_types=["distance_to_image_plane"], width=256, height=256)
+    albedo64 = BASE_CAMERA_CFG.replace(data_types=["albedo"], width=64, height=64)
+    albedo128 = BASE_CAMERA_CFG.replace(data_types=["albedo"], width=128, height=128)
+    albedo256 = BASE_CAMERA_CFG.replace(data_types=["albedo"], width=256, height=256)
+    default = rgb64
 
 
 @configclass
@@ -70,6 +74,10 @@ class WristTiledCameraCfg(PresetCfg):
     depth64 = WRIST_CAMERA_CFG.replace(data_types=["distance_to_image_plane"], width=64, height=64)
     depth128 = WRIST_CAMERA_CFG.replace(data_types=["distance_to_image_plane"], width=128, height=128)
     depth256 = WRIST_CAMERA_CFG.replace(data_types=["distance_to_image_plane"], width=256, height=256)
+    albedo64 = WRIST_CAMERA_CFG.replace(data_types=["albedo"], width=64, height=64)
+    albedo128 = WRIST_CAMERA_CFG.replace(data_types=["albedo"], width=128, height=128)
+    albedo256 = WRIST_CAMERA_CFG.replace(data_types=["albedo"], width=256, height=256)
+    default = rgb64
 
 
 ############################
