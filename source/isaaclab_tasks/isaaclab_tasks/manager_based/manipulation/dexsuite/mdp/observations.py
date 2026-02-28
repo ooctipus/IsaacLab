@@ -205,7 +205,7 @@ def fingers_contact_force_b(
     robot: Articulation = env.scene[asset_cfg.name]
     root_link_quat_w = wp.to_torch(robot.data.root_link_quat_w)
     forces_b = quat_apply_inverse(root_link_quat_w.unsqueeze(1).repeat(1, force_w.shape[1], 1), force_w)
-    return forces_b
+    return forces_b.view(env.num_envs, -1)
 
 class vision_camera(ManagerTermBase):
 
