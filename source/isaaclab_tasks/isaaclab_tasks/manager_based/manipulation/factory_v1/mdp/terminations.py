@@ -1,11 +1,22 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+from __future__ import annotations
+
 import torch
 import warp as wp
+from typing import TYPE_CHECKING
+
 from isaaclab.managers.manager_base import ManagerTermBase
 from isaaclab.managers import TerminationTermCfg as DoneTermCfg
 import isaaclab.utils.math as math_utils
-from isaaclab.envs import ManagerBasedRLEnv
-from isaaclab.assets import RigidObject, Articulation
 from isaaclab.managers import SceneEntityCfg
+
+if TYPE_CHECKING:
+    from isaaclab.assets import RigidObject, Articulation
+    from isaaclab.envs import ManagerBasedRLEnv
 
 from ..assembly_keypoints import Offset
 

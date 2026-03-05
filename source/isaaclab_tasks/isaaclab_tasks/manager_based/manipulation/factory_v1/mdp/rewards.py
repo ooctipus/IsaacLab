@@ -1,5 +1,5 @@
-# Copyright (c) 2024-2025, The Isaac Lab Project Developers.
-# All Rights Reserved.
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
@@ -11,18 +11,12 @@ from typing import TYPE_CHECKING
 import warp as wp
 
 import isaaclab.utils.math as math_utils
-from isaaclab.assets import Articulation, RigidObject
 from isaaclab.managers import ManagerTermBase, RewardTermCfg, SceneEntityCfg
 
 if TYPE_CHECKING:
+    from isaaclab.assets import Articulation, RigidObject
     from isaaclab.envs import ManagerBasedRLEnv
     from isaaclab.sensors import ContactSensor
-
-# viz for debug, remove when done debugging
-# from isaaclab.markers import FRAME_MARKER_CFG, VisualizationMarkers
-# frame_marker_cfg = FRAME_MARKER_CFG.copy()  # type: ignore
-# frame_marker_cfg.markers["frame"].scale = (0.025, 0.025, 0.025)
-# pose_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/debug_transform"))
 
 
 def reach_reward(env: ManagerBasedRLEnv, held_asset_cfg: SceneEntityCfg, ee_cfg: SceneEntityCfg, std: float = 0.1):

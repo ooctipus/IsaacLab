@@ -1,5 +1,5 @@
-# Copyright (c) 2024-2025, The Isaac Lab Project Developers.
-# All Rights Reserved.
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
@@ -16,7 +16,7 @@ from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
-
+from isaaclab_physx.physics import PhysxCfg
 from . import mdp
 from .assembly_keypoints import KEYPOINTS_NISTBOARD
 from . import reset_env_cfg as staging_cfg
@@ -295,17 +295,18 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
         # simulation settings
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
-
-        self.sim.physx.solver_type = 1
-        self.sim.physx.max_position_iteration_count = 192  # Important to avoid interpenetration.
-        self.sim.physx.max_velocity_iteration_count = 1
-        self.sim.physx.bounce_threshold_velocity = 0.2
-        self.sim.physx.friction_offset_threshold = 0.01
-        self.sim.physx.friction_correlation_distance = 0.00625
-        self.sim.physx.gpu_max_rigid_contact_count = 2**23
-        self.sim.physx.gpu_max_rigid_patch_count = 2**23
-        self.sim.physx.gpu_collision_stack_size = 2**32 - 1
-        self.sim.physx.gpu_max_num_partitions = 1
+        self.sim.physics = PhysxCfg(
+            solver_type=1,
+            max_position_iteration_count=192,
+            max_velocity_iteration_count=1,
+            bounce_threshold_velocity=0.2,
+            friction_offset_threshold=0.01,
+            friction_correlation_distance=0.00625,
+            gpu_max_rigid_contact_count=2**23,
+            gpu_max_rigid_patch_count=2**23,
+            gpu_collision_stack_size=2**32 - 1,
+            gpu_max_num_partitions=1,
+        )
 
         self.sim.physics_material.static_friction = 0.5
         self.sim.physics_material.dynamic_friction = 0.5

@@ -1,5 +1,5 @@
-# Copyright (c) 2024-2025, The Isaac Lab Project Developers.
-# All Rights Reserved.
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
@@ -11,26 +11,20 @@ from typing import TYPE_CHECKING, Literal
 
 import warp as wp
 
-from isaaclab.assets import Articulation, RigidObject
 from isaaclab.controllers import DifferentialIKControllerCfg
-from isaaclab.envs.mdp.actions.task_space_actions import DifferentialInverseKinematicsAction
 from isaaclab.managers import EventTermCfg, ManagerTermBase, SceneEntityCfg
 from isaaclab.utils import math as math_utils
-from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 
 from ..assembly_keypoints import KEYPOINTS_NISTBOARD
 from .success_monitor_cfg import SuccessMonitorCfg
 
 if TYPE_CHECKING:
+    from isaaclab.assets import Articulation, RigidObject
     from isaaclab.envs import ManagerBasedRLEnv
+    from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
+    from isaaclab.envs.mdp.actions.task_space_actions import DifferentialInverseKinematicsAction
 
     from ..assembly_keypoints import Offset
-
-# viz for debug, remove when done debugging
-from isaaclab.markers import FRAME_MARKER_CFG, VisualizationMarkers
-frame_marker_cfg = FRAME_MARKER_CFG.copy()  # type: ignore
-frame_marker_cfg.markers["frame"].scale = (0.025, 0.025, 0.025)
-pose_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/debug_transform"))
 
 
 def reset_fixed_assets(env: ManagerBasedRLEnv, env_ids: torch.tensor, asset_list: list[str]):
@@ -149,6 +143,7 @@ class reset_end_effector_around_asset(ManagerTermBase):
         self.fixed_asset_offset: Offset = fixed_asset_offset
         self.robot: Articulation = env.scene[robot_ik_cfg.name]
         self.joint_ids: list[int] | slice = robot_ik_cfg.joint_ids
+
         self.robot_ik_solver_cfg = DifferentialInverseKinematicsActionCfg(
             asset_name=robot_ik_cfg.name,
             joint_names=robot_ik_cfg.joint_names,  # type: ignore

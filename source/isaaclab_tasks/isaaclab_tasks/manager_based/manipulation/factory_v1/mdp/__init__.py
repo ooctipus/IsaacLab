@@ -1,14 +1,8 @@
-# Copyright (c) 2024-2025, The Isaac Lab Project Developers.
-# All Rights Reserved.
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""This sub-module contains the functions that are specific to the Factory environments."""
+from isaaclab.utils.module import lazy_export
 
-from isaaclab.envs.mdp import *  # noqa: F401, F403
-
-from .events import *
-from .observations import *
-from .rewards import *  # noqa: F401, F403
-from .terminations import *  # noqa: F401, F403
-from .curriculum import *  # noqa: F401, F403
+lazy_export(packages=["isaaclab.envs.mdp"])
