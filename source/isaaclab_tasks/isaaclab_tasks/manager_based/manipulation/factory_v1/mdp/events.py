@@ -6,13 +6,13 @@
 from __future__ import annotations
 
 import torch
-import inspect
 from typing import TYPE_CHECKING, Literal
 
 import warp as wp
 
 from isaaclab.controllers import DifferentialIKControllerCfg
 from isaaclab.managers import EventTermCfg, ManagerTermBase, SceneEntityCfg
+from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 from isaaclab.utils import math as math_utils
 
 from ..assembly_keypoints import KEYPOINTS_NISTBOARD
@@ -21,7 +21,6 @@ from .success_monitor_cfg import SuccessMonitorCfg
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject
     from isaaclab.envs import ManagerBasedRLEnv
-    from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
     from isaaclab.envs.mdp.actions.task_space_actions import DifferentialInverseKinematicsAction
 
     from ..assembly_keypoints import Offset
@@ -253,15 +252,6 @@ class TermChoice(ManagerTermBase):
         super().__init__(cfg, env)
         self.term_partitions: dict[str, EventTermCfg] = cfg.params["terms"]  # type: ignore
         self.num_partitions = len(self.term_partitions)
-        for term_name, term_cfg in self.term_partitions.items():
-            for key, val in term_cfg.params.items():
-                if isinstance(val, SceneEntityCfg):
-                    val.resolve(env.scene)
-
-        for term_name, term_cfg in self.term_partitions.items():
-            if inspect.isclass(term_cfg.func):
-                term_cfg.func = term_cfg.func(term_cfg, env)  # type: ignore
-        
         self.term_samples = torch.zeros((env.num_envs,), dtype=torch.int, device=env.device)
         success_monitor_cfg = SuccessMonitorCfg(
             monitored_history_len=100,
@@ -315,14 +305,6 @@ class ChainedResetTerms(ManagerTermBase):
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
         self.terms: dict[str, EventTermCfg] = cfg.params["terms"]  # type: ignore
-        for term_name, term_cfg in self.terms.items():
-            for key, val in term_cfg.params.items():
-                if isinstance(val, SceneEntityCfg):
-                    val.resolve(env.scene)
-
-        for term_name, term_cfg in self.terms.items():
-            if inspect.isclass(term_cfg.func):
-                term_cfg.func = term_cfg.func(term_cfg, env)  # type: ignore
 
     def __call__(
         self,
