@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import omni.log
+import warp as wp
 
 import isaaclab.utils.math as math_utils
 import isaaclab.utils.string as string_utils
@@ -146,7 +147,7 @@ class TaskSpaceBoundedDifferentialInverseKinematicsAction(ActionTerm):
     @property
     def jacobian_b(self) -> torch.Tensor:
         jacobian = self.jacobian_w
-        base_rot = self._asset.data.root_link_quat_w
+        base_rot = wp.to_torch(self._asset.data.root_link_quat_w)
         base_rot_matrix = math_utils.matrix_from_quat(math_utils.quat_inv(base_rot))
         jacobian[:, :3, :] = torch.bmm(base_rot_matrix, jacobian[:, :3, :])
         jacobian[:, 3:, :] = torch.bmm(base_rot_matrix, jacobian[:, 3:, :])
@@ -201,11 +202,10 @@ class TaskSpaceBoundedDifferentialInverseKinematicsAction(ActionTerm):
         # set some useful reference to environment assets states
 
         fixed_asset: Articulation = self._env.scene["fixed_asset"]
-        fixed_pos = fixed_asset.data.root_link_pos_w - self._env.scene.env_origins
-        fixed_quat = fixed_asset.data.root_link_quat_w
+        fixed_pos = wp.to_torch(fixed_asset.data.root_link_pos_w) - self._env.scene.env_origins
+        fixed_quat = wp.to_torch(fixed_asset.data.root_link_quat_w)
         fixed_tip_pos_local = torch.zeros_like(fixed_pos)
 
-        # here we want to be able to get the
         fixed_tip_pos_local[:, 2] += self.cfg.fixed_asset_cfg.height
         fixed_tip_pos_local[:, 2] += self.cfg.fixed_asset_cfg.base_height
         fixed_tip_pos, _ = math_utils.combine_frame_transforms(fixed_pos, fixed_quat, fixed_tip_pos_local)
@@ -220,8 +220,8 @@ class TaskSpaceBoundedDifferentialInverseKinematicsAction(ActionTerm):
         pos_actions = self._processed_actions[:, 0:3]
         rot_actions = self._processed_actions[:, 3:6]
 
-        self.fingertip_midpoint_quat = self._asset.data.body_link_quat_w[:, self._body_idx]
-        self.fingertip_midpoint_pos = self._asset.data.body_link_pos_w[:, self._body_idx] - self._env.scene.env_origins
+        self.fingertip_midpoint_quat = wp.to_torch(self._asset.data.body_link_quat_w)[:, self._body_idx]
+        self.fingertip_midpoint_pos = wp.to_torch(self._asset.data.body_link_pos_w)[:, self._body_idx] - self._env.scene.env_origins
 
         self.ctrl_target_fingertip_midpoint_pos = self.fingertip_midpoint_pos + pos_actions
 
@@ -238,7 +238,7 @@ class TaskSpaceBoundedDifferentialInverseKinematicsAction(ActionTerm):
         rot_actions_quat = torch.where(
             angle.unsqueeze(-1).repeat(1, 4) > 1e-6,
             rot_actions_quat,
-            torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1),
+            torch.tensor([0.0, 0.0, 0.0, 1.0], device=self.device).repeat(self.num_envs, 1),
         )
         self.ctrl_target_fingertip_midpoint_quat = math_utils.quat_mul(rot_actions_quat, self.fingertip_midpoint_quat)
 
@@ -292,13 +292,13 @@ class TaskSpaceBoundedDifferentialInverseKinematicsAction(ActionTerm):
             task_deriv_gains = 2 * torch.sqrt(default_gains)
 
             task_wrench[:, 0:3] = default_gains[:, 0:3] * lin_error + task_deriv_gains[:, 0:3] * (
-                0.0 - self._asset.data.body_lin_vel_w[..., self._body_idx, :]
+                0.0 - wp.to_torch(self._asset.data.body_lin_vel_w)[..., self._body_idx, :]
             )
 
             # Apply gains to rot error components
             rot_error = delta_fingertip_pose[:, 3:6]
             task_wrench[:, 3:6] = default_gains[:, 3:6] * rot_error + task_deriv_gains[:, 3:6] * (
-                0.0 - self._asset.data.body_ang_vel_w[..., self._body_idx, :]
+                0.0 - wp.to_torch(self._asset.data.body_ang_vel_w)[..., self._body_idx, :]
             )
             return task_wrench
 
@@ -325,13 +325,13 @@ class TaskSpaceBoundedDifferentialInverseKinematicsAction(ActionTerm):
             (self.num_envs, 1)
         )
         # nullspace computation
-        distance_to_default_dof_pos = default_dof_pos_tensor - self._asset.data.joint_pos[:, :7]
+        distance_to_default_dof_pos = default_dof_pos_tensor - wp.to_torch(self._asset.data.joint_pos)[:, :7]
         distance_to_default_dof_pos = (distance_to_default_dof_pos + torch.pi) % (
             2 * torch.pi
         ) - torch.pi  # normalize to [-pi, pi]
 
         # null space control
-        u_null = CtrlCfg.kd_null * -self._asset.data.joint_vel[:, :7] + CtrlCfg.kp_null * distance_to_default_dof_pos
+        u_null = CtrlCfg.kd_null * -wp.to_torch(self._asset.data.joint_vel)[:, :7] + CtrlCfg.kp_null * distance_to_default_dof_pos
         u_null = arm_mass_matrix @ u_null.unsqueeze(-1)
         torque_null = (
             torch.eye(7, device=self.device).unsqueeze(0) - torch.transpose(jacobian, 1, 2) @ j_eef_inv
@@ -358,8 +358,8 @@ class TaskSpaceBoundedDifferentialInverseKinematicsAction(ActionTerm):
         # Custom part from NIST assembly - reset
         fixed_asset: Articulation = self._env.scene["fixed_asset"]
         robot: Articulation = self._env.scene["robot"]
-        fixed_pos = fixed_asset.data.root_link_pos_w - self._env.scene.env_origins
-        fixed_quat = fixed_asset.data.root_link_quat_w
+        fixed_pos = wp.to_torch(fixed_asset.data.root_link_pos_w) - self._env.scene.env_origins
+        fixed_quat = wp.to_torch(fixed_asset.data.root_link_quat_w)
 
         fixed_tip_pos_local = torch.zeros_like(fixed_pos)
         fixed_tip_pos_local[:, 2] += self.cfg.fixed_asset_cfg.height + self.cfg.fixed_asset_cfg.base_height
@@ -370,9 +370,9 @@ class TaskSpaceBoundedDifferentialInverseKinematicsAction(ActionTerm):
         fixed_asset_pos_noise = fixed_asset_pos_noise @ torch.diag(fixed_asset_pos_rand)
         self.init_fixed_pos_obs_noise = fixed_asset_pos_noise
         fixed_pos_action_frame = fixed_tip_pos + self.init_fixed_pos_obs_noise
-        fingertip_midpoint_quat = robot.data.body_link_quat_w[:, self._body_idx]
+        fingertip_midpoint_quat = wp.to_torch(robot.data.body_link_quat_w)[:, self._body_idx]
 
-        fingertip_midpoint_pos = robot.data.body_link_pos_w[:, self._body_idx] - self._env.scene.env_origins
+        fingertip_midpoint_pos = wp.to_torch(robot.data.body_link_pos_w)[:, self._body_idx] - self._env.scene.env_origins
 
         pos_actions = fingertip_midpoint_pos - fixed_pos_action_frame
         pos_action_bounds = torch.tensor(CtrlCfg.pos_action_bounds, device=self.device)
@@ -399,7 +399,7 @@ class TaskSpaceBoundedDifferentialInverseKinematicsAction(ActionTerm):
         yaw_action = (fingertip_yaw_fixed_asset + np.deg2rad(180.0)) / np.deg2rad(270.0) * 2.0 - 1.0
         self._raw_actions[:, 5] = yaw_action
 
-        self._target_joint_pos_at_reset = robot.data.joint_pos_target.clone()
+        self._target_joint_pos_at_reset = wp.to_torch(robot.data.joint_pos_target).clone()
 
     """
     Helper functions.
@@ -412,10 +412,10 @@ class TaskSpaceBoundedDifferentialInverseKinematicsAction(ActionTerm):
             A tuple of the body's position and orientation in the root frame.
         """
         # obtain quantities from simulation
-        ee_pos_w = self._asset.data.body_link_pos_w[:, self._body_idx]
-        ee_quat_w = self._asset.data.body_link_quat_w[:, self._body_idx]
-        root_pos_w = self._asset.data.root_link_pos_w
-        root_quat_w = self._asset.data.root_link_quat_w
+        ee_pos_w = wp.to_torch(self._asset.data.body_link_pos_w)[:, self._body_idx]
+        ee_quat_w = wp.to_torch(self._asset.data.body_link_quat_w)[:, self._body_idx]
+        root_pos_w = wp.to_torch(self._asset.data.root_link_pos_w)
+        root_quat_w = wp.to_torch(self._asset.data.root_link_quat_w)
         # compute the pose of the body in the root frame
         ee_pose_b, ee_quat_b = math_utils.subtract_frame_transforms(root_pos_w, root_quat_w, ee_pos_w, ee_quat_w)
         # account for the offset
