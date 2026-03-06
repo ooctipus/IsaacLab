@@ -7,6 +7,7 @@ __all__ = [
     "KitVisualizerCfg",
     "NewtonVisualizerCfg",
     "RerunVisualizerCfg",
+    "UsdVisualizerCfg",
     "ViserVisualizerCfg",
     "VisualizerCfg",
 ]
@@ -14,5 +15,6 @@ __all__ = [
 from .kit_visualizer_cfg import KitVisualizerCfg
 from .newton_visualizer_cfg import NewtonVisualizerCfg
 from .rerun_visualizer_cfg import RerunVisualizerCfg
+from .usd_visualizer_cfg import UsdVisualizerCfg
 from .viser_visualizer_cfg import ViserVisualizerCfg
 from .visualizer_cfg import VisualizerCfg

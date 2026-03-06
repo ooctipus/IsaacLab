@@ -48,6 +48,9 @@ parser.add_argument(
     help="Use the pre-trained checkpoint from Nucleus.",
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
+parser.add_argument(
+    "--num-steps", type=int, default=None, help="Exit after this many steps (default: run indefinitely)."
+)
 cli_args.add_rsl_rl_args(parser)
 add_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
@@ -151,6 +154,9 @@ def main():
         # reset environment
         obs = env.get_observations()
         timestep = 0
+        max_steps = args_cli.num_steps
+        if max_steps is None and args_cli.video:
+            max_steps = args_cli.video_length
         # simulate environment
         while True:
             start_time = time.time()
@@ -158,10 +164,9 @@ def main():
                 actions = policy(obs)
                 obs, _, dones, _ = env.step(actions)
                 policy_nn.reset(dones)
-            if args_cli.video:
-                timestep += 1
-                if timestep == args_cli.video_length:
-                    break
+            timestep += 1
+            if max_steps is not None and timestep >= max_steps:
+                break
 
             sleep_time = dt - (time.time() - start_time)
             if args_cli.real_time and sleep_time > 0:

@@ -46,6 +46,11 @@ def get_visualizer_class(name: str) -> type[Visualizer] | None:
 
             _VISUALIZER_REGISTRY["rerun"] = RerunVisualizer
             return RerunVisualizer
+        if name == "usd":
+            from .usd_visualizer import UsdVisualizer
+
+            _VISUALIZER_REGISTRY["usd"] = UsdVisualizer
+            return UsdVisualizer
         return None
     except ImportError as exc:
         import warnings

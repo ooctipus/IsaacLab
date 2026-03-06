@@ -167,6 +167,15 @@ def launch_simulation(
 
         get_settings_manager().set_string("/isaaclab/visualizer", " ".join(sorted(visualizer_types)))
 
+        if isinstance(launcher_args, argparse.Namespace):
+            output_path = getattr(launcher_args, "output_path", None)
+        elif isinstance(launcher_args, dict):
+            output_path = launcher_args.get("output_path")
+        else:
+            output_path = None
+        if output_path:
+            get_settings_manager().set_string("/isaaclab/usd_output_path", output_path)
+
     try:
         yield
     except Exception:

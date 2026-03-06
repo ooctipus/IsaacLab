@@ -28,6 +28,7 @@ from isaaclab.visualizers import (
     KitVisualizerCfg,
     NewtonVisualizerCfg,
     RerunVisualizerCfg,
+    UsdVisualizerCfg,
     ViserVisualizerCfg,
     Visualizer,
 )
@@ -39,7 +40,7 @@ from .spawners import DomeLightCfg, GroundPlaneCfg
 logger = logging.getLogger(__name__)
 
 # Visualizer type names (CLI and config). App launcher stores --visualizer a b c as space-separated.
-_VISUALIZER_TYPES = ("newton", "rerun", "viser", "kit")
+_VISUALIZER_TYPES = ("newton", "rerun", "viser", "kit", "usd")
 
 
 class SettingsHelper:
@@ -354,6 +355,12 @@ class SimulationContext:
                     default_configs.append(ViserVisualizerCfg())
                 elif viz_type == "kit":
                     default_configs.append(KitVisualizerCfg())
+                elif viz_type == "usd":
+                    cfg = UsdVisualizerCfg()
+                    output_path = self.get_setting("/isaaclab/usd_output_path")
+                    if isinstance(output_path, str) and output_path:
+                        cfg.output_path = output_path
+                    default_configs.append(cfg)
                 else:
                     logger.warning(
                         f"[SimulationContext] Unknown visualizer type '{viz_type}' requested. "

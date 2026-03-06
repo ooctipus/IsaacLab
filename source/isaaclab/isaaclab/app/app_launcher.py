@@ -407,6 +407,13 @@ class AppLauncher:
                 "Set to 0 to render all worlds."
             ),
         )
+        arg_group.add_argument(
+            "--output-path",
+            type=str,
+            default=None,
+            dest="output_path",
+            help="Output file path for the USD visualizer (e.g., output.usd).",
+        )
         # special flag for backwards compatibility
 
         # Corresponding to the beginning of the function,
@@ -428,6 +435,7 @@ class AppLauncher:
         "experience": ([str], ""),
         "rendering_mode": ([str], "balanced"),
         "visualizer_max_worlds": ([int, type(None)], None),
+        "output_path": ([str, type(None)], None),
     }
     """A dictionary of arguments added manually by the :meth:`AppLauncher.add_app_launcher_args` method.
 
@@ -971,6 +979,7 @@ class AppLauncher:
         """Store visualizer selection and max-worlds override in settings."""
         visualizers = launcher_args.get("visualizer")
         visualizer_max_worlds = launcher_args.get("visualizer_max_worlds")
+        output_path = launcher_args.get("output_path")
 
         if visualizer_max_worlds is not None and visualizer_max_worlds < 0:
             raise ValueError(
@@ -985,6 +994,8 @@ class AppLauncher:
                 get_settings_manager().set_int("/isaaclab/visualizer/max_worlds", -1)
             else:
                 get_settings_manager().set_int("/isaaclab/visualizer/max_worlds", int(visualizer_max_worlds))
+            if output_path:
+                get_settings_manager().set_string("/isaaclab/usd_output_path", output_path)
 
     def _interrupt_signal_handle_callback(self, signal, frame):
         """Handle the interrupt signal from the keyboard."""
