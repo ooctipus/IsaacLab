@@ -1,0 +1,23 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Lightweight Dockerfile for source-only updates when dependencies are cached.
+# This simply copies source files over an existing isaac-lab-deps image.
+
+# syntax=docker/dockerfile:1
+ARG DEPS_BASE_IMAGE=isaac-lab-deps:latest
+FROM ${DEPS_BASE_IMAGE}
+
+# Path to the Isaac Lab directory
+ARG ISAACLAB_PATH_ARG
+ENV ISAACLAB_PATH=${ISAACLAB_PATH_ARG}
+
+# Copy only source files (deps already installed in base)
+COPY ../source ${ISAACLAB_PATH}/source
+COPY ../scripts ${ISAACLAB_PATH}/scripts
+COPY ../tools ${ISAACLAB_PATH}/tools
+
+# Fix line endings (Windows git may add \r)
+RUN find ${ISAACLAB_PATH}/source -type f -name "*.sh" -exec sed -i 's/\r$//' {} +
+
+WORKDIR ${ISAACLAB_PATH}
