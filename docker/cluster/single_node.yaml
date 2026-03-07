@@ -1,0 +1,69 @@
+workflow:
+  name: isaac-lab
+  tasks:
+  - name: train-ppo
+    image: nvcr.io/nvidian/octi-isaac-lab:{{image}}
+    command: ["bash"]
+    args: ["/tmp/entry.sh"]
+    environment:
+      ACCEPT_EULA: Y
+      NO_NUCLEUS: Y
+    credentials:
+      wandb:
+        WANDB_USERNAME: wandb_username
+        WANDB_API_KEY: wandb_api_key
+    files:
+    - contents: |
+        # Set up environment
+        apt update
+
+        set -e
+        # Hide conflicting Vulkan files, if needed
+        if [ -e "/usr/share/vulkan" ] && [ -e "/etc/vulkan" ]; then
+          mv /usr/share/vulkan /usr/share/vulkan_hidden
+        fi
+        echo ***********************************************************
+        export WANDB_API_KEY=$WANDB_API_KEY
+        export WANDB_USERNAME=nvidia
+        # Run training for agent
+        /workspace/isaaclab/_isaac_sim/python.sh -m torch.distributed.run --nnodes={{num_node}} --nproc_per_node={{num_gpu}} \
+          /workspace/isaaclab/{{script}} \
+          --distributed \
+          --headless \
+          {{args}} \
+
+        # Move checkpoints to the output folder used to upload
+        MODEL_STORE_DIR="{{output}}/model/"
+        mv ./logs/* $MODEL_STORE_DIR
+
+      path: /tmp/entry.sh
+    - contents: |
+        {
+            "launch_config": {
+                "headless": true
+            }
+        }
+      path: /tmp/config.json
+    outputs:
+    - dataset:
+        name: {{ dataset }}
+        path: model
+  resources:
+    default:
+      cpu: {{num_cpu}}
+      gpu:  {{num_gpu}}
+      memory: {{memory}}Gi
+      storage: {{storage}}Gi
+      platform: {{ platform }}
+
+default-values:
+  image: dextrah
+  num_node: 1
+  num_gpu: 1
+  num_cpu: 2
+  memory: 64
+  platform: dgx-h100
+  dataset: isaac-lab-ppo-model
+  script: scripts/reinforcement_learning/rsl_rl/train.py
+  storage: 256
+  args:
