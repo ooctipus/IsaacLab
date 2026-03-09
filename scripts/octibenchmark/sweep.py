@@ -175,11 +175,15 @@ def log_to_wandb(
     # Each NVTX range becomes a line on the chart
     sorted_envs = sorted(all_results.keys())
 
-    # Collect all NVTX range names across all runs
-    all_nvtx_names = set()
-    for result in all_results.values():
-        for r in result.get("nvtx_ranges", []):
-            all_nvtx_names.add(r["name"])
+    # Set num_envs as x-axis for all line chart metrics
+    wandb.define_metric("num_envs")
+    wandb.define_metric("avg_ms/*", step_metric="num_envs")
+    wandb.define_metric("pct_of_step/*", step_metric="num_envs")
+    wandb.define_metric("total_ms/*", step_metric="num_envs")
+    wandb.define_metric("effective_fps", step_metric="num_envs")
+    wandb.define_metric("step_fps", step_metric="num_envs")
+    wandb.define_metric("kernel_pattern_ms/*", step_metric="num_envs")
+    wandb.define_metric("kernel_pattern_calls/*", step_metric="num_envs")
 
     # Log NVTX range data: one chart per metric (avg_ms, pct_of_step)
     for num_envs in sorted_envs:

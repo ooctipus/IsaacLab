@@ -87,16 +87,45 @@ def install_nvtx_hooks(env):
         _wrap_nvtx(env, "_get_dones", "direct.get_dones")
         _wrap_nvtx(env, "_get_observations", "direct.get_observations")
 
-    # -- Vision-specific (Shadow Hand, etc.) -----------------------------------
-    if hasattr(env, "_compute_image_observations"):
-        _wrap_nvtx(env, "_compute_image_observations", "vision.compute_image_obs")
-    if hasattr(env, "_compute_proprio_observations"):
-        _wrap_nvtx(env, "_compute_proprio_observations", "vision.compute_proprio_obs")
-    if hasattr(env, "feature_extractor") and hasattr(env.feature_extractor, "step"):
-        _wrap_nvtx(env.feature_extractor, "step", "vision.feature_extractor.step")
-
     # -- Per-term NVTX for manager-based envs ----------------------------------
     _install_manager_term_hooks(env)
+
+
+def install_extra_nvtx_hooks(env, hooks: list[tuple[str, str]]):
+    """Install user-defined NVTX hooks on the environment.
+
+    Allows benchmark matrices to annotate task-specific methods without
+    hardcoding them in this module.
+
+    Args:
+        env: The **unwrapped** environment instance.
+        hooks: List of ``(attr_path, label)`` tuples. The *attr_path* is
+            resolved relative to *env* using dot-separated traversal.
+            The last segment is the method name to wrap.
+            For example, ``("feature_extractor.step", "vision.feature_extractor")``
+            wraps ``env.feature_extractor.step``.
+            A single-segment path like ``("_compute_image_observations", "vision.image_obs")``
+            wraps ``env._compute_image_observations``.
+    """
+    for attr_path, label in hooks:
+        parts = attr_path.rsplit(".", 1)
+        if len(parts) == 2:
+            obj_path, method_name = parts
+            obj = env
+            for attr in obj_path.split("."):
+                obj = getattr(obj, attr, None)
+                if obj is None:
+                    break
+            if obj is None:
+                continue
+        else:
+            obj = env
+            method_name = parts[0]
+
+        if not hasattr(obj, method_name):
+            continue
+
+        _wrap_nvtx(obj, method_name, label)
 
 
 def _install_manager_term_hooks(env):

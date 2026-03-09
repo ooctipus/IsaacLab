@@ -10,12 +10,19 @@ Run directly for a quick sanity check (no nsys needed)::
     ./isaaclab.sh -p scripts/octibenchmark/benchmark.py \\
         --task Isaac-Repose-Cube-Shadow-Vision-Direct-v0 --num_envs 64 --num_frames 50
 
-Run under nsys for full profiling::
+Run under nsys for full profiling (step phase)::
 
     nsys profile -t cuda,nvtx --capture-range=cudaProfilerApi --capture-range-end=stop \\
         -o /tmp/bench_shadow \\
         ./isaaclab.sh -p scripts/octibenchmark/benchmark.py \\
         --task Isaac-Repose-Cube-Shadow-Vision-Direct-v0 --num_envs 64 --num_frames 50
+
+Profile startup time only::
+
+    nsys profile -t cuda,nvtx --capture-range=cudaProfilerApi --capture-range-end=stop \\
+        -o /tmp/bench_startup \\
+        ./isaaclab.sh -p scripts/octibenchmark/benchmark.py \\
+        --task Isaac-Repose-Cube-Shadow-Vision-Direct-v0 --num_envs 64 --phase startup
 
 Then analyze::
 
@@ -40,7 +47,7 @@ import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import add_launcher_args, launch_simulation
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
-from octibenchmark.nvtx_hooks import install_nvtx_hooks
+from octibenchmark.nvtx_hooks import install_extra_nvtx_hooks, install_nvtx_hooks
 
 parser = argparse.ArgumentParser(description="Benchmark an IsaacLab environment with NVTX instrumentation.")
 parser.add_argument("--task", type=str, required=True, help="Registered task name.")
@@ -48,6 +55,14 @@ parser.add_argument("--num_envs", type=int, default=None, help="Number of enviro
 parser.add_argument("--num_frames", type=int, default=100, help="Number of env steps to benchmark.")
 parser.add_argument("--warmup_frames", type=int, default=10, help="Warmup steps (not profiled by nsys).")
 parser.add_argument("--seed", type=int, default=42, help="Random seed.")
+parser.add_argument(
+    "--phase", type=str, default="step", choices=["step", "startup"],
+    help="What to profile: 'step' = stepping loop only, 'startup' = env creation + first reset only.",
+)
+parser.add_argument(
+    "--extra_nvtx_hooks", type=str, default=None,
+    help="JSON list of [attr_path, label] pairs for extra NVTX hooks.",
+)
 add_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
 
@@ -66,38 +81,69 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             env_cfg.sim.device = args_cli.device
         env_cfg.seed = args_cli.seed
 
-        env = gym.make(args_cli.task, cfg=env_cfg)
-        unwrapped = env.unwrapped
+        if args_cli.phase == "startup":
+            _run_startup(env_cfg)
+        else:
+            _run_step(env_cfg)
 
-        # Install NVTX hooks
-        install_nvtx_hooks(unwrapped)
 
-        env.reset()
+def _run_startup(env_cfg):
+    """Profile env creation + first reset only."""
+    # Start capture BEFORE gym.make — this is the expensive part
+    torch.cuda.cudart().cudaProfilerStart()
 
-        action_dim = unwrapped.single_action_space.shape[0]
-        device = unwrapped.device
+    env = gym.make(args_cli.task, cfg=env_cfg)
+    env.reset()
 
-        # Warmup (outside nsys capture range)
-        for _ in range(args_cli.warmup_frames):
-            actions = 2.0 * torch.rand(unwrapped.num_envs, action_dim, device=device) - 1.0
-            env.step(actions)
+    torch.cuda.cudart().cudaProfilerStop()
 
-        # Signal nsys to start capture (only matters with --capture-range=cudaProfilerApi)
-        torch.cuda.cudart().cudaProfilerStart()
-
-        # Benchmark loop
-        for _ in range(args_cli.num_frames):
-            actions = 2.0 * torch.rand(unwrapped.num_envs, action_dim, device=device) - 1.0
-            env.step(actions)
-
-        # Signal nsys to stop capture
-        torch.cuda.cudart().cudaProfilerStop()
-
-        num_envs = unwrapped.num_envs
-        env.close()
+    num_envs = env.unwrapped.num_envs
+    env.close()
 
     print(
-        f"[octibenchmark] Done: {args_cli.num_frames} frames, "
+        f"[octibenchmark] Startup done: "
+        f"{num_envs} envs, task={args_cli.task}"
+    )
+
+
+def _run_step(env_cfg):
+    """Profile the stepping loop only."""
+    # Create env and warmup WITHOUT nvtx hooks — no overhead during startup
+    env = gym.make(args_cli.task, cfg=env_cfg)
+    unwrapped = env.unwrapped
+    env.reset()
+
+    action_dim = unwrapped.single_action_space.shape[0]
+    device = unwrapped.device
+    num_envs = unwrapped.num_envs
+
+    # Warmup (no hooks, outside nsys capture)
+    for _ in range(args_cli.warmup_frames):
+        actions = 2.0 * torch.rand(num_envs, action_dim, device=device) - 1.0
+        env.step(actions)
+
+    # Install NVTX hooks AFTER warmup, right before capture
+    install_nvtx_hooks(unwrapped)
+    if args_cli.extra_nvtx_hooks:
+        import json
+        hooks = json.loads(args_cli.extra_nvtx_hooks)
+        install_extra_nvtx_hooks(unwrapped, hooks)
+
+    # Signal nsys to start capture
+    torch.cuda.cudart().cudaProfilerStart()
+
+    # Benchmark loop
+    for _ in range(args_cli.num_frames):
+        actions = 2.0 * torch.rand(num_envs, action_dim, device=device) - 1.0
+        env.step(actions)
+
+    # Signal nsys to stop capture
+    torch.cuda.cudart().cudaProfilerStop()
+
+    env.close()
+
+    print(
+        f"[octibenchmark] Step done: {args_cli.num_frames} frames, "
         f"{num_envs} envs, task={args_cli.task}"
     )
 
