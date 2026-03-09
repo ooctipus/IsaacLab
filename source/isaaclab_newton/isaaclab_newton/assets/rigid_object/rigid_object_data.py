@@ -720,9 +720,17 @@ class RigidObjectData(BaseRigidObjectData):
         self._sim_bind_body_com_vel_w = self._root_view.get_link_velocities(SimulationManager.get_state_0())[:, 0]
         self._sim_bind_body_mass = self._root_view.get_attribute("body_mass", SimulationManager.get_model())[:, 0]
         _inertia_mat33 = self._root_view.get_attribute("body_inertia", SimulationManager.get_model())[:, 0]
-        self._sim_bind_body_inertia = _inertia_mat33.view(wp.float32).reshape(
-            (self._num_instances, self._num_bodies, 9)
-        )
+        if _inertia_mat33.ptr is not None and _inertia_mat33.ndim == 4:
+            self._sim_bind_body_inertia = wp.array(
+                ptr=_inertia_mat33.ptr,
+                dtype=wp.float32,
+                shape=(_inertia_mat33.shape[0], _inertia_mat33.shape[1], 9),
+                strides=(_inertia_mat33.strides[0], _inertia_mat33.strides[1], _inertia_mat33.strides[3]),
+                device=_inertia_mat33.device,
+                copy=False,
+            )
+        else:
+            self._sim_bind_body_inertia = _inertia_mat33
         self._sim_bind_body_external_wrench = self._root_view.get_attribute("body_f", SimulationManager.get_state_0())[
             :, 0
         ]
