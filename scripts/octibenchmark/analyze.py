@@ -37,7 +37,6 @@ import re
 import sqlite3
 import subprocess
 import sys
-from pathlib import Path
 
 
 def export_to_sqlite(nsys_rep_path: str) -> str:
@@ -135,12 +134,14 @@ def query_nvtx_ranges(db_path: str) -> list[dict]:
 
         try:
             for row in cursor.execute(query):
-                results.append({
-                    "name": row["name"],
-                    "count": row["count"],
-                    "total_ns": row["total_ns"],
-                    "avg_ns": row["avg_ns"],
-                })
+                results.append(
+                    {
+                        "name": row["name"],
+                        "count": row["count"],
+                        "total_ns": row["total_ns"],
+                        "avg_ns": row["avg_ns"],
+                    }
+                )
         except sqlite3.OperationalError as e:
             print(f"[WARNING] Failed to query NVTX_EVENTS: {e}", file=sys.stderr)
 
@@ -216,12 +217,14 @@ def query_gpu_kernels(db_path: str) -> list[dict]:
 
     try:
         for row in cursor.execute(query):
-            results.append({
-                "name": row["name"],
-                "count": row["count"],
-                "total_ns": row["total_ns"],
-                "avg_ns": row["avg_ns"],
-            })
+            results.append(
+                {
+                    "name": row["name"],
+                    "count": row["count"],
+                    "total_ns": row["total_ns"],
+                    "avg_ns": row["avg_ns"],
+                }
+            )
     except sqlite3.OperationalError as e:
         print(f"[WARNING] Failed to query kernel table: {e}", file=sys.stderr)
 
@@ -229,9 +232,7 @@ def query_gpu_kernels(db_path: str) -> list[dict]:
     return results
 
 
-def aggregate_by_patterns(
-    kernels: list[dict], patterns: list[str]
-) -> dict[str, dict]:
+def aggregate_by_patterns(kernels: list[dict], patterns: list[str]) -> dict[str, dict]:
     """Aggregate kernel times by regex patterns.
 
     Useful for comparing categories like "indexed writes" vs "masked writes".
@@ -292,9 +293,7 @@ def format_nvtx_table(nvtx_ranges: list[dict]) -> str:
         total_ms = r["total_ns"] / 1e6
         avg_ms = r["avg_ns"] / 1e6
         pct = (r["total_ns"] / step_total_ns * 100) if step_total_ns else 0
-        lines.append(
-            f"{r['name']:<45} {r['count']:>8} {total_ms:>12.3f} {avg_ms:>12.3f} {pct:>9.1f}%"
-        )
+        lines.append(f"{r['name']:<45} {r['count']:>8} {total_ms:>12.3f} {avg_ms:>12.3f} {pct:>9.1f}%")
     return "\n".join(lines)
 
 
@@ -347,9 +346,7 @@ def _query_single_step_anatomy(db_path: str, cursor, step_start: int, step_end: 
         and wall_ns contains the NVTX range wall time.
     """
     # Detect which API dispatch tables are available
-    tables = {r[0] for r in cursor.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    ).fetchall()}
+    tables = {r[0] for r in cursor.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
 
     api_tables = []
     if "CUPTI_ACTIVITY_KIND_RUNTIME" in tables:
@@ -433,8 +430,7 @@ def _query_single_step_anatomy(db_path: str, cursor, step_start: int, step_end: 
     rows = cursor.execute(query, params).fetchall()
 
     return [
-        {"nvtx_range": nvtx_name, "kernel_name": kernel_name,
-         "kernel_ns": kernel_ns, "wall_ns": wall_ns}
+        {"nvtx_range": nvtx_name, "kernel_name": kernel_name, "kernel_ns": kernel_ns, "wall_ns": wall_ns}
         for nvtx_name, kernel_name, kernel_ns, wall_ns in rows
     ]
 
@@ -445,17 +441,13 @@ def _check_anatomy_tables(cursor) -> bool:
     Requires NVTX_EVENTS, CUPTI_ACTIVITY_KIND_KERNEL, StringIds, and at
     least one of CUPTI_ACTIVITY_KIND_RUNTIME or CUPTI_ACTIVITY_KIND_DRIVER.
     """
-    tables = {r[0] for r in cursor.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    ).fetchall()}
+    tables = {r[0] for r in cursor.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
     if not {"NVTX_EVENTS", "CUPTI_ACTIVITY_KIND_KERNEL", "StringIds"}.issubset(tables):
         return False
     return "CUPTI_ACTIVITY_KIND_RUNTIME" in tables or "CUPTI_ACTIVITY_KIND_DRIVER" in tables
 
 
-def query_step_anatomy(
-    db_path: str, step_index: int = 0
-) -> tuple[list[dict], dict[str, int]]:
+def query_step_anatomy(db_path: str, step_index: int = 0) -> tuple[list[dict], dict[str, int]]:
     """Dissect a single env.step and map every GPU kernel to its NVTX range.
 
     Uses the CUDA correlation chain (NVTX range -> RUNTIME/DRIVER API
@@ -479,11 +471,14 @@ def query_step_anatomy(
         conn.close()
         return [], {}
 
-    step = cursor.execute("""
+    step = cursor.execute(
+        """
         SELECT start, end FROM NVTX_EVENTS
         WHERE eventType = 59 AND text = 'env.step'
         ORDER BY start LIMIT 1 OFFSET ?
-    """, (step_index,)).fetchone()
+    """,
+        (step_index,),
+    ).fetchone()
 
     if step is None:
         conn.close()
@@ -509,14 +504,17 @@ def _query_range_wall_times(cursor, step_start: int, step_end: int) -> dict[str,
     Returns:
         Dict mapping range name to total wall time in nanoseconds.
     """
-    rows = cursor.execute("""
+    rows = cursor.execute(
+        """
         SELECT text, SUM(end - start) AS total_wall_ns
         FROM NVTX_EVENTS
         WHERE eventType = 59 AND text IS NOT NULL
           AND start >= ? AND end <= ?
           AND text != 'env.step'
         GROUP BY text
-    """, (step_start, step_end)).fetchall()
+    """,
+        (step_start, step_end),
+    ).fetchall()
     return {name: wall_ns for name, wall_ns in rows}
 
 
@@ -618,14 +616,14 @@ def query_step_anatomy_averaged(db_path: str) -> tuple[list[dict], int]:
     # Find the most common range structure (sequence of NVTX names)
     # and average only steps that match it
     from collections import Counter
+
     structures = Counter()
     for collapsed in all_collapsed:
         key = tuple(r["nvtx_range"] for r in collapsed)
         structures[key] += 1
 
     dominant_structure = structures.most_common(1)[0][0]
-    matching = [c for c in all_collapsed
-                if tuple(r["nvtx_range"] for r in c) == dominant_structure]
+    matching = [c for c in all_collapsed if tuple(r["nvtx_range"] for r in c) == dominant_structure]
 
     num_steps = len(matching)
     num_ranges = len(dominant_structure)
@@ -635,12 +633,14 @@ def query_step_anatomy_averaged(db_path: str) -> tuple[list[dict], int]:
         total_ns_sum = sum(m[i]["total_ns"] for m in matching)
         kernel_count_sum = sum(m[i]["kernel_count"] for m in matching)
         wall_ns_sum = sum(m[i].get("wall_ns", 0) for m in matching)
-        averaged.append({
-            "nvtx_range": dominant_structure[i],
-            "avg_ns": total_ns_sum / num_steps,
-            "avg_kernel_count": kernel_count_sum / num_steps,
-            "avg_wall_ns": wall_ns_sum / num_steps,
-        })
+        averaged.append(
+            {
+                "nvtx_range": dominant_structure[i],
+                "avg_ns": total_ns_sum / num_steps,
+                "avg_kernel_count": kernel_count_sum / num_steps,
+                "avg_wall_ns": wall_ns_sum / num_steps,
+            }
+        )
 
     return averaged, num_steps
 
@@ -674,8 +674,7 @@ def format_step_anatomy(
         # Collapsed mode: show only NVTX range summaries
         collapsed = _collapse_to_ranges(anatomy, range_wall_times)
         n_kernels = len([e for e in anatomy if e["kernel_name"]])
-        lines = [f"Step #{step_index} anatomy — {n_kernels} "
-                 f"kernel launches, {total_ns / 1e6:.3f} ms total GPU time"]
+        lines = [f"Step #{step_index} anatomy — {n_kernels} kernel launches, {total_ns / 1e6:.3f} ms total GPU time"]
         lines.append("")
         lines.append(f"  {'NVTX Range':<45} {'Wall ms':>10} {'GPU ms':>10} {'Kernels':>10} {'%GPU':>8}")
         lines.append(f"  {'─' * 45} {'─' * 10} {'─' * 10} {'─' * 10} {'─' * 8}")
@@ -683,28 +682,23 @@ def format_step_anatomy(
             display = r["nvtx_range"] if r["nvtx_range"] else "UNATTRIBUTED"
             wall_ms = r["wall_ns"] / 1e6
             if r["kernel_count"] == 0:
-                lines.append(
-                    f"  {display:<45} {wall_ms:>10.3f} {'—':>10} {'(cpu)':>10} {'':>8}"
-                )
+                lines.append(f"  {display:<45} {wall_ms:>10.3f} {'—':>10} {'(cpu)':>10} {'':>8}")
             else:
                 gpu_ms = r["total_ns"] / 1e6
                 pct = (r["total_ns"] / total_ns * 100) if total_ns else 0
                 if wall_ms > 0:
                     lines.append(
-                        f"  {display:<45} {wall_ms:>10.3f} {gpu_ms:>10.3f} "
-                        f"{r['kernel_count']:>10} {pct:>7.1f}%"
+                        f"  {display:<45} {wall_ms:>10.3f} {gpu_ms:>10.3f} {r['kernel_count']:>10} {pct:>7.1f}%"
                     )
                 else:
-                    lines.append(
-                        f"  {display:<45} {'—':>10} {gpu_ms:>10.3f} "
-                        f"{r['kernel_count']:>10} {pct:>7.1f}%"
-                    )
+                    lines.append(f"  {display:<45} {'—':>10} {gpu_ms:>10.3f} {r['kernel_count']:>10} {pct:>7.1f}%")
         return "\n".join(lines)
 
     # Verbose mode: show individual kernels
     kernel_entries = [e for e in anatomy if e["kernel_name"]]
-    lines = [f"Step #{step_index} anatomy — {len(kernel_entries)} kernel launches, "
-             f"{total_ns / 1e6:.3f} ms total GPU time"]
+    lines = [
+        f"Step #{step_index} anatomy — {len(kernel_entries)} kernel launches, {total_ns / 1e6:.3f} ms total GPU time"
+    ]
     lines.append("")
 
     current_range = object()  # sentinel
@@ -718,8 +712,7 @@ def format_step_anatomy(
             if range_wall_times and current_range in range_wall_times:
                 wall_ms = range_wall_times[current_range] / 1e6
                 wall_info = f", wall {wall_ms:.3f} ms"
-            lines.append(f"  {'':60} ────────── {range_total_ns / 1e6:>8.3f} ms "
-                         f"({range_count} kernels{wall_info})")
+            lines.append(f"  {'':60} ────────── {range_total_ns / 1e6:>8.3f} ms ({range_count} kernels{wall_info})")
         range_total_ns = 0
         range_count = 0
 
@@ -765,8 +758,10 @@ def format_step_anatomy_averaged(averaged: list[dict], num_steps: int) -> str:
 
     total_ns = sum(r["avg_ns"] for r in averaged)
     total_kernels = sum(r["avg_kernel_count"] for r in averaged)
-    lines = [f"Step anatomy (averaged over {num_steps} steps) — "
-             f"{total_kernels:.0f} kernel launches, {total_ns / 1e6:.3f} ms avg GPU time"]
+    lines = [
+        f"Step anatomy (averaged over {num_steps} steps) — "
+        f"{total_kernels:.0f} kernel launches, {total_ns / 1e6:.3f} ms avg GPU time"
+    ]
     lines.append("")
 
     # Header
@@ -777,22 +772,16 @@ def format_step_anatomy_averaged(averaged: list[dict], num_steps: int) -> str:
         display = r["nvtx_range"] if r["nvtx_range"] else "UNATTRIBUTED"
         wall_ms = r.get("avg_wall_ns", 0) / 1e6
         if r["avg_kernel_count"] == 0:
-            lines.append(
-                f"  {display:<45} {wall_ms:>10.3f} {'—':>10} {'(cpu)':>10} {'':>8}"
-            )
+            lines.append(f"  {display:<45} {wall_ms:>10.3f} {'—':>10} {'(cpu)':>10} {'':>8}")
         else:
             avg_ms = r["avg_ns"] / 1e6
             pct = (r["avg_ns"] / total_ns * 100) if total_ns else 0
             if wall_ms > 0:
                 lines.append(
-                    f"  {display:<45} {wall_ms:>10.3f} {avg_ms:>10.3f} "
-                    f"{r['avg_kernel_count']:>10.0f} {pct:>7.1f}%"
+                    f"  {display:<45} {wall_ms:>10.3f} {avg_ms:>10.3f} {r['avg_kernel_count']:>10.0f} {pct:>7.1f}%"
                 )
             else:
-                lines.append(
-                    f"  {display:<45} {'—':>10} {avg_ms:>10.3f} "
-                    f"{r['avg_kernel_count']:>10.0f} {pct:>7.1f}%"
-                )
+                lines.append(f"  {display:<45} {'—':>10} {avg_ms:>10.3f} {r['avg_kernel_count']:>10.0f} {pct:>7.1f}%")
 
     return "\n".join(lines)
 
@@ -834,17 +823,19 @@ def main():
     parser.add_argument("--top_kernels", type=int, default=20, help="Number of top kernels to display.")
     parser.add_argument("--json", action="store_true", help="Output as JSON instead of tables.")
     parser.add_argument(
-        "--anatomy", action="store_true",
-        help="Show step anatomy: map every GPU kernel to its NVTX code section. "
-             "Averages across all steps by default.",
+        "--anatomy",
+        action="store_true",
+        help="Show step anatomy: map every GPU kernel to its NVTX code section. Averages across all steps by default.",
     )
     parser.add_argument(
-        "--step_index", type=int, default=None,
-        help="Dissect a specific env.step (0-based). Without this flag, "
-             "--anatomy averages across all steps.",
+        "--step_index",
+        type=int,
+        default=None,
+        help="Dissect a specific env.step (0-based). Without this flag, --anatomy averages across all steps.",
     )
     parser.add_argument(
-        "--verbose", action="store_true",
+        "--verbose",
+        action="store_true",
         help="Show individual kernels in anatomy (default: collapsed summary).",
     )
     args = parser.parse_args()
@@ -863,15 +854,16 @@ def main():
             if args.json:
                 print(json.dumps(anatomy, indent=2, default=str))
             else:
-                print(format_step_anatomy(anatomy, step_index=args.step_index,
-                                          verbose=args.verbose,
-                                          range_wall_times=wall_times))
+                print(
+                    format_step_anatomy(
+                        anatomy, step_index=args.step_index, verbose=args.verbose, range_wall_times=wall_times
+                    )
+                )
         else:
             # Averaged across all steps
             averaged, num_steps = query_step_anatomy_averaged(sqlite_path)
             if args.json:
-                print(json.dumps({"averaged": averaged, "num_steps": num_steps},
-                                 indent=2, default=str))
+                print(json.dumps({"averaged": averaged, "num_steps": num_steps}, indent=2, default=str))
             else:
                 print(format_step_anatomy_averaged(averaged, num_steps))
                 if args.verbose:
@@ -879,8 +871,7 @@ def main():
                     mid = num_steps // 2
                     anatomy, wall_times = query_step_anatomy(sqlite_path, step_index=mid)
                     print()
-                    print(format_step_anatomy(anatomy, step_index=mid, verbose=True,
-                                              range_wall_times=wall_times))
+                    print(format_step_anatomy(anatomy, step_index=mid, verbose=True, range_wall_times=wall_times))
         return
 
     if args.json:

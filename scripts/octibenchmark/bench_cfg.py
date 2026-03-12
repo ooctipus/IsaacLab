@@ -154,16 +154,23 @@ class BenchmarkRun:
         """Build the full nsys + python command for this run."""
         script = str(self.script_path)
         cmd = [
-            "nsys", "profile",
-            "-t", "cuda,nvtx",
+            "nsys",
+            "profile",
+            "-t",
+            "cuda,nvtx",
             "--capture-range=cudaProfilerApi",
             "--capture-range-end=stop",
-            "-o", output_path,
+            "-o",
+            output_path,
             "--force-overwrite=true",
-            sys.executable, script,
-            "--task", self.task,
-            "--num_envs", str(self.num_envs),
-            "--phase", self.phase.value,
+            sys.executable,
+            script,
+            "--task",
+            self.task,
+            "--num_envs",
+            str(self.num_envs),
+            "--phase",
+            self.phase.value,
             "--headless",
         ]
         if self.launcher == Launcher.NON_RL:
@@ -310,7 +317,7 @@ class BenchmarkMatrix:
             # Cut at the last separator to avoid partial words
             cut = max(prefix.rfind("-"), prefix.rfind("_"), 0)
             if cut > 0:
-                task_labels = {t: t[cut + 1:] for t in set(tasks)}
+                task_labels = {t: t[cut + 1 :] for t in set(tasks)}
             else:
                 task_labels = {t: t for t in set(tasks)}
 
@@ -342,21 +349,17 @@ class BenchmarkMatrix:
                 col_widths[c] = max(col_widths[c], len(row[c]))
 
         # Print table
-        header = "  ".join(
-            f"{c:>{col_widths[c]}}" if c == "#" else f"{c:<{col_widths[c]}}"
-            for c in columns
-        )
+        header = "  ".join(f"{c:>{col_widths[c]}}" if c == "#" else f"{c:<{col_widths[c]}}" for c in columns)
         print(f"\n{header}")
         print("─" * len(header))
         for row in rows:
             line = "  ".join(
-                f"{row[c]:>{col_widths[c]}}" if c == "#" else f"{row[c]:<{col_widths[c]}}"
-                for c in columns
+                f"{row[c]:>{col_widths[c]}}" if c == "#" else f"{row[c]:<{col_widths[c]}}" for c in columns
             )
             print(line)
 
         if verbose:
-            print(f"\nFull commands:\n")
+            print("\nFull commands:\n")
             for i, run in enumerate(runs, 1):
                 out_path = os.path.join(output_dir, run.tag)
                 cmd = run.nsys_command(out_path)
@@ -413,7 +416,7 @@ class BenchmarkMatrix:
             out_path = os.path.join(output_dir, run.tag)
             cmd = run.nsys_command(out_path)
 
-            print(f"  [{i+1}/{len(valid_runs)}] {run.tag} ... ", end="", flush=True)
+            print(f"  [{i + 1}/{len(valid_runs)}] {run.tag} ... ", end="", flush=True)
 
             result = subprocess.run(cmd, capture_output=True, text=True)
             nsys_rep = out_path + ".nsys-rep"
@@ -437,6 +440,7 @@ class BenchmarkMatrix:
                 continue
 
             from octibenchmark.analyze import analyze
+
             analysis = analyze(nsys_rep, kernel_patterns)
 
             # Attach run metadata to the analysis for wandb grouping
@@ -458,7 +462,11 @@ class BenchmarkMatrix:
         # Log to wandb
         if not no_wandb and all_results:
             _log_matrix_to_wandb(
-                all_results, wandb_project, wandb_entity, kernel_patterns, tag,
+                all_results,
+                wandb_project,
+                wandb_entity,
+                kernel_patterns,
+                tag,
             )
 
         return all_results
@@ -476,7 +484,7 @@ def _shorten_task(task: str) -> str:
     s = task
     for prefix in ("Isaac-", "Repose-Cube-"):
         if s.startswith(prefix):
-            s = s[len(prefix):]
+            s = s[len(prefix) :]
     for suffix in ("-v0", "-v1", "-Direct"):
         if s.endswith(suffix):
             s = s[: -len(suffix)]
@@ -554,6 +562,7 @@ def _log_matrix_to_wandb(
 
     # Group by (task, hydra_overrides, launcher) → sweep num_envs
     from collections import defaultdict
+
     groups = defaultdict(list)
     for run_tag, result in all_results.items():
         meta = result["_meta"]
@@ -619,11 +628,17 @@ def _log_matrix_to_wandb(
                     row = [meta["task"], meta["num_envs"]]
                     for axis_name in sweep_axis_names:
                         row.append(ovr.get(axis_name, ""))
-                    row.extend([
-                        meta["launcher"], meta.get("phase", "step"),
-                        nvtx["name"], nvtx["count"],
-                        nvtx["total_ns"] / 1e6, nvtx["avg_ns"] / 1e6, pct,
-                    ])
+                    row.extend(
+                        [
+                            meta["launcher"],
+                            meta.get("phase", "step"),
+                            nvtx["name"],
+                            nvtx["count"],
+                            nvtx["total_ns"] / 1e6,
+                            nvtx["avg_ns"] / 1e6,
+                            pct,
+                        ]
+                    )
                     table_rows.append(row)
             table = wandb.Table(columns=base_columns + metric_columns, data=table_rows)
             wandb.log({"benchmark_matrix": table})

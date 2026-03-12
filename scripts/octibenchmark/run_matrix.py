@@ -62,16 +62,21 @@ def main():
         description="Run benchmark matrices from example modules.",
     )
     parser.add_argument(
-        "--list", action="store_true",
+        "--list",
+        action="store_true",
         help="List available examples and their matrices, then exit.",
     )
     parser.add_argument(
-        "--example", type=str, default=None,
+        "--example",
+        type=str,
+        default=None,
         choices=list(examples.keys()) if examples else None,
         help="Which example module to use.",
     )
     parser.add_argument(
-        "--matrices", nargs="+", default=None,
+        "--matrices",
+        nargs="+",
+        default=None,
         help="Which matrices to run from the example. Default: all.",
     )
     parser.add_argument("--output_dir", type=str, default=None, help="Output directory for nsys files.")
@@ -80,10 +85,12 @@ def main():
     parser.add_argument("--kernel_patterns", nargs="*", default=None)
     parser.add_argument("--no_wandb", action="store_true")
     parser.add_argument(
-        "--tag", type=str, default=None,
+        "--tag",
+        type=str,
+        default=None,
         help="Custom tag for wandb (e.g. GPU name: 'RTX4090', 'GB200'). "
-             "Appears in wandb group/run names to distinguish identical "
-             "experiments run on different hardware.",
+        "Appears in wandb group/run names to distinguish identical "
+        "experiments run on different hardware.",
     )
     parser.add_argument("--dry_run", action="store_true", help="Print run summary without executing.")
     parser.add_argument("--verbose", action="store_true", help="Show full nsys commands in dry run.")

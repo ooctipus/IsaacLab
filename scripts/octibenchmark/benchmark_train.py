@@ -44,7 +44,7 @@ import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import add_launcher_args, launch_simulation
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
-from octibenchmark.nvtx_hooks import install_extra_nvtx_hooks, install_nvtx_hooks, _wrap_nvtx
+from octibenchmark.nvtx_hooks import _wrap_nvtx, install_extra_nvtx_hooks, install_nvtx_hooks
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -57,15 +57,18 @@ parser.add_argument("--num_envs", type=int, default=None, help="Number of enviro
 parser.add_argument("--max_iterations", type=int, default=10, help="RL training iterations.")
 parser.add_argument("--warmup_frames", type=int, default=0, help="Warmup iterations before nsys capture.")
 parser.add_argument("--seed", type=int, default=42, help="Random seed.")
+parser.add_argument("--agent", type=str, default="rsl_rl_cfg_entry_point", help="Agent config entry point.")
 parser.add_argument(
-    "--agent", type=str, default="rsl_rl_cfg_entry_point", help="Agent config entry point."
-)
-parser.add_argument(
-    "--phase", type=str, default="step", choices=["step", "startup"],
+    "--phase",
+    type=str,
+    default="step",
+    choices=["step", "startup"],
     help="What to profile: 'step' = training loop only, 'startup' = env + runner creation only.",
 )
 parser.add_argument(
-    "--extra_nvtx_hooks", type=str, default=None,
+    "--extra_nvtx_hooks",
+    type=str,
+    default=None,
     help="JSON list of [attr_path, label] pairs for extra NVTX hooks.",
 )
 add_launcher_args(parser)
@@ -106,15 +109,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env_cfg.seed = args_cli.seed
 
         if args_cli.phase == "startup":
-            _run_startup(env_cfg, agent_cfg, OnPolicyRunner, RslRlVecEnvWrapper,
-                         handle_deprecated_rsl_rl_cfg, metadata)
+            _run_startup(env_cfg, agent_cfg, OnPolicyRunner, RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg, metadata)
         else:
-            _run_step(env_cfg, agent_cfg, OnPolicyRunner, RslRlVecEnvWrapper,
-                      handle_deprecated_rsl_rl_cfg, metadata)
+            _run_step(env_cfg, agent_cfg, OnPolicyRunner, RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg, metadata)
 
 
-def _run_startup(env_cfg, agent_cfg, OnPolicyRunner, RslRlVecEnvWrapper,
-                 handle_deprecated_rsl_rl_cfg, metadata):
+def _run_startup(env_cfg, agent_cfg, OnPolicyRunner, RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg, metadata):
     """Profile env creation + runner creation only."""
     torch.cuda.cudart().cudaProfilerStart()
 
@@ -132,14 +132,10 @@ def _run_startup(env_cfg, agent_cfg, OnPolicyRunner, RslRlVecEnvWrapper,
     num_envs = env.unwrapped.num_envs
     env.close()
 
-    print(
-        f"[octibenchmark] Startup done: "
-        f"{num_envs} envs, task={args_cli.task}"
-    )
+    print(f"[octibenchmark] Startup done: {num_envs} envs, task={args_cli.task}")
 
 
-def _run_step(env_cfg, agent_cfg, OnPolicyRunner, RslRlVecEnvWrapper,
-              handle_deprecated_rsl_rl_cfg, metadata):
+def _run_step(env_cfg, agent_cfg, OnPolicyRunner, RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg, metadata):
     """Profile the training loop only."""
     # Create env and runner WITHOUT hooks — no overhead during startup
     env = gym.make(args_cli.task, cfg=env_cfg)
@@ -162,6 +158,7 @@ def _run_step(env_cfg, agent_cfg, OnPolicyRunner, RslRlVecEnvWrapper,
     install_nvtx_hooks(unwrapped)
     if args_cli.extra_nvtx_hooks:
         import json
+
         hooks = json.loads(args_cli.extra_nvtx_hooks)
         install_extra_nvtx_hooks(unwrapped, hooks)
     _install_runner_nvtx(runner)
@@ -177,10 +174,7 @@ def _run_step(env_cfg, agent_cfg, OnPolicyRunner, RslRlVecEnvWrapper,
 
     env.close()
 
-    print(
-        f"[octibenchmark] Training done: {args_cli.max_iterations} iterations, "
-        f"{num_envs} envs, task={args_cli.task}"
-    )
+    print(f"[octibenchmark] Training done: {args_cli.max_iterations} iterations, {num_envs} envs, task={args_cli.task}")
 
 
 if __name__ == "__main__":

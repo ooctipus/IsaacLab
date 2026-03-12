@@ -56,11 +56,16 @@ parser.add_argument("--num_frames", type=int, default=100, help="Number of env s
 parser.add_argument("--warmup_frames", type=int, default=10, help="Warmup steps (not profiled by nsys).")
 parser.add_argument("--seed", type=int, default=42, help="Random seed.")
 parser.add_argument(
-    "--phase", type=str, default="step", choices=["step", "startup"],
+    "--phase",
+    type=str,
+    default="step",
+    choices=["step", "startup"],
     help="What to profile: 'step' = stepping loop only, 'startup' = env creation + first reset only.",
 )
 parser.add_argument(
-    "--extra_nvtx_hooks", type=str, default=None,
+    "--extra_nvtx_hooks",
+    type=str,
+    default=None,
     help="JSON list of [attr_path, label] pairs for extra NVTX hooks.",
 )
 add_launcher_args(parser)
@@ -100,10 +105,7 @@ def _run_startup(env_cfg):
     num_envs = env.unwrapped.num_envs
     env.close()
 
-    print(
-        f"[octibenchmark] Startup done: "
-        f"{num_envs} envs, task={args_cli.task}"
-    )
+    print(f"[octibenchmark] Startup done: {num_envs} envs, task={args_cli.task}")
 
 
 def _run_step(env_cfg):
@@ -126,6 +128,7 @@ def _run_step(env_cfg):
     install_nvtx_hooks(unwrapped)
     if args_cli.extra_nvtx_hooks:
         import json
+
         hooks = json.loads(args_cli.extra_nvtx_hooks)
         install_extra_nvtx_hooks(unwrapped, hooks)
 
@@ -142,10 +145,7 @@ def _run_step(env_cfg):
 
     env.close()
 
-    print(
-        f"[octibenchmark] Step done: {args_cli.num_frames} frames, "
-        f"{num_envs} envs, task={args_cli.task}"
-    )
+    print(f"[octibenchmark] Step done: {args_cli.num_frames} frames, {num_envs} envs, task={args_cli.task}")
 
 
 if __name__ == "__main__":

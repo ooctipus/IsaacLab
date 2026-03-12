@@ -78,18 +78,26 @@ def run_single_benchmark(
     output_path = os.path.join(output_dir, output_name)
 
     nsys_cmd = [
-        "nsys", "profile",
-        "-t", "cuda,nvtx",
+        "nsys",
+        "profile",
+        "-t",
+        "cuda,nvtx",
         "--capture-range=cudaProfilerApi",
         "--capture-range-end=stop",
-        "-o", output_path,
+        "-o",
+        output_path,
         "--force-overwrite=true",
-        str(_ISAACLAB_SH), "-p",
+        str(_ISAACLAB_SH),
+        "-p",
         str(_BENCHMARK_SCRIPT),
-        "--task", task,
-        "--num_envs", str(num_envs),
-        "--num_frames", str(num_frames),
-        "--warmup_frames", str(warmup_frames),
+        "--task",
+        task,
+        "--num_envs",
+        str(num_envs),
+        "--num_frames",
+        str(num_frames),
+        "--warmup_frames",
+        str(warmup_frames),
         "--headless",
     ]
 
@@ -98,10 +106,10 @@ def run_single_benchmark(
 
     nsys_cmd.extend(extra_args)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"[sweep] Running: num_envs={num_envs}")
     print(f"[sweep] Command: {' '.join(nsys_cmd)}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     result = subprocess.run(nsys_cmd, capture_output=False)
     if result.returncode != 0:
@@ -230,13 +238,15 @@ def log_to_wandb(
     for num_envs in sorted_envs:
         result = all_results[num_envs]
         for r in result.get("nvtx_ranges", []):
-            table_data.append([
-                num_envs,
-                r["name"],
-                r["count"],
-                r["total_ns"] / 1e6,
-                r["avg_ns"] / 1e6,
-            ])
+            table_data.append(
+                [
+                    num_envs,
+                    r["name"],
+                    r["count"],
+                    r["total_ns"] / 1e6,
+                    r["avg_ns"] / 1e6,
+                ]
+            )
     table = wandb.Table(
         columns=["num_envs", "nvtx_range", "calls", "total_ms", "avg_ms"],
         data=table_data,
@@ -258,18 +268,16 @@ def print_summary(all_results: dict[int, dict]):
     sorted_envs = sorted(all_results.keys())
     for num_envs in sorted_envs:
         result = all_results[num_envs]
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"  num_envs = {num_envs}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(format_nvtx_table(result.get("nvtx_ranges", [])))
 
 
 def main():
     parser = argparse.ArgumentParser(description="Sweep num_envs and profile with nsys.")
     parser.add_argument("--task", type=str, required=True, help="Registered task name.")
-    parser.add_argument(
-        "--num_envs", type=int, nargs="+", required=True, help="List of num_envs values to sweep."
-    )
+    parser.add_argument("--num_envs", type=int, nargs="+", required=True, help="List of num_envs values to sweep.")
     parser.add_argument("--num_frames", type=int, default=100, help="Env steps to profile per run.")
     parser.add_argument("--warmup_frames", type=int, default=10, help="Warmup steps before profiling.")
     parser.add_argument("--output_dir", type=str, default=None, help="Directory for nsys outputs.")
@@ -286,7 +294,9 @@ def main():
     parser.add_argument("--no_wandb", action="store_true", help="Skip wandb logging, print only.")
     # Extra args passed to benchmark.py (e.g. hydra presets like "presets=newton,rgb")
     parser.add_argument(
-        "extra_args", nargs="*", default=[],
+        "extra_args",
+        nargs="*",
+        default=[],
         help="Extra args for benchmark.py, including Hydra presets (e.g. 'presets=newton,rgb').",
     )
 

@@ -335,28 +335,40 @@ def anatomy_db():
     # Correlation chain for step 0:
     # corr 1: rt in sim.step -> kernel_physics (100us GPU)
     c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_RUNTIME (start, end, correlationId) VALUES (1500000, 1600000, 1)")
-    c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (2000000, 2100000, 1, 1)")
+    c.execute(
+        "INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (2000000, 2100000, 1, 1)"
+    )
 
     # corr 2: rt in sim.step -> kernel_physics2 (200us GPU)
     c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_RUNTIME (start, end, correlationId) VALUES (2500000, 2600000, 2)")
-    c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (3000000, 3200000, 2, 2)")
+    c.execute(
+        "INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (3000000, 3200000, 2, 2)"
+    )
 
     # corr 3: rt in reward.compute -> kernel_reward (150us GPU)
     c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_RUNTIME (start, end, correlationId) VALUES (5500000, 5600000, 3)")
-    c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (6000000, 6150000, 3, 3)")
+    c.execute(
+        "INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (6000000, 6150000, 3, 3)"
+    )
 
     # corr 4: rt in obs.compute -> kernel_obs (80us GPU)
     c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_RUNTIME (start, end, correlationId) VALUES (7500000, 7600000, 4)")
-    c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (8000000, 8080000, 4, 4)")
+    c.execute(
+        "INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (8000000, 8080000, 4, 4)"
+    )
 
     # corr 5: rt between ranges (4.5ms, inside env.step but outside sub-ranges) -> kernel_mystery
     c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_RUNTIME (start, end, correlationId) VALUES (4500000, 4600000, 5)")
-    c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (4800000, 4850000, 5, 5)")
+    c.execute(
+        "INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (4800000, 4850000, 5, 5)"
+    )
 
     # Correlation chain for step 1:
     # corr 6: rt in sim.step of step 1 -> kernel_physics
     c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_RUNTIME (start, end, correlationId) VALUES (21500000, 21600000, 6)")
-    c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (22000000, 22100000, 1, 6)")
+    c.execute(
+        "INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (22000000, 22100000, 1, 6)"
+    )
 
     conn.commit()
     conn.close()
@@ -586,14 +598,20 @@ def driver_api_db():
 
     # Physics kernels dispatched via DRIVER API (not Runtime)
     c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_DRIVER (start, end, correlationId) VALUES (1500000, 1600000, 101)")
-    c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (2000000, 2100000, 1, 101)")
+    c.execute(
+        "INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (2000000, 2100000, 1, 101)"
+    )
 
     c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_DRIVER (start, end, correlationId) VALUES (2500000, 2600000, 102)")
-    c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (3000000, 3200000, 2, 102)")
+    c.execute(
+        "INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (3000000, 3200000, 2, 102)"
+    )
 
     # Reward kernel via RUNTIME API
     c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_RUNTIME (start, end, correlationId) VALUES (5500000, 5600000, 3)")
-    c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (6000000, 6150000, 3, 3)")
+    c.execute(
+        "INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (6000000, 6150000, 3, 3)"
+    )
 
     conn.commit()
     conn.close()
@@ -650,7 +668,9 @@ class TestDriverApiAnatomy:
             dynamicSharedMemory INTEGER, localMemoryPerThread INTEGER,
             localMemoryTotal INTEGER)""")
         c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_DRIVER (start, end, correlationId) VALUES (1500000, 1600000, 1)")
-        c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (2000000, 2100000, 1, 1)")
+        c.execute(
+            "INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (2000000, 2100000, 1, 1)"
+        )
         conn.commit()
         conn.close()
 
