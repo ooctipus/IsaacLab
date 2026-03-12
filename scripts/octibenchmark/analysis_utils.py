@@ -426,6 +426,35 @@ _OP_DETECT_PATTERNS = [
 ]
 
 
+def _find_term_cfg(cfg_obj, term_name: str, max_depth: int = 4):
+    """Recursively search a config tree for a term with the given name.
+
+    Observations nest terms multiple levels deep (variant → group → term),
+    while rewards/terminations are flat. This walks up to ``max_depth`` levels.
+    """
+    # Direct attribute check
+    candidate = getattr(cfg_obj, term_name, None)
+    if candidate is not None and hasattr(candidate, "func"):
+        return candidate
+
+    if max_depth <= 0:
+        return None
+
+    # Recurse into sub-configs (groups, variants)
+    for attr_name in dir(cfg_obj):
+        if attr_name.startswith("_"):
+            continue
+        child = getattr(cfg_obj, attr_name, None)
+        if child is None or isinstance(child, (str, int, float, bool, list, dict, type)):
+            continue
+        if callable(child) and not hasattr(child, "__dict__"):
+            continue
+        result = _find_term_cfg(child, term_name, max_depth - 1)
+        if result is not None:
+            return result
+    return None
+
+
 def resolve_term_source(task_id: str, term_name: str, manager: str = "reward") -> TermSource:
     """Resolve an NVTX term name to its Python source code.
 
@@ -472,20 +501,10 @@ def resolve_term_source(task_id: str, term_name: str, manager: str = "reward") -
     if manager_cfg is None:
         raise ValueError(f"Config has no {manager}s attribute")
 
-    # Find the term — check direct attribute first, then search observation groups
-    term_cfg = getattr(manager_cfg, term_name, None)
-    if term_cfg is None and hasattr(manager_cfg, "__dict__"):
-        # For observations, terms are nested under groups (policy, proprio, etc.)
-        for attr_name in dir(manager_cfg):
-            if attr_name.startswith("_"):
-                continue
-            group = getattr(manager_cfg, attr_name, None)
-            if group is None:
-                continue
-            term_cfg = getattr(group, term_name, None)
-            if term_cfg is not None and hasattr(term_cfg, "func"):
-                break
-            term_cfg = None
+    # Find the term — search recursively through the config tree.
+    # Observations are nested: observations → variant (state) → group (proprio) → term.
+    # Rewards/terminations are flat: rewards → term.
+    term_cfg = _find_term_cfg(manager_cfg, term_name)
     if term_cfg is None:
         raise ValueError(
             f"Term {term_name!r} not found in {manager}s config. "
