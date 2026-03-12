@@ -8,9 +8,13 @@
 import argparse
 import contextlib
 import importlib.metadata as metadata
+import logging
 import os
 import sys
 import time
+
+logging.getLogger("onnxscript").setLevel(logging.WARNING)
+logging.getLogger("onnx_ir").setLevel(logging.WARNING)
 
 import gymnasium as gym
 import torch
@@ -21,6 +25,8 @@ from isaaclab.envs import DirectMARLEnvCfg, DirectRLEnvCfg, ManagerBasedRLEnvCfg
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.string import list_intersection, string_to_callable
+
+import isaaclab_contrib.tasks  # noqa: F401
 
 from isaaclab_rl.rsl_rl import (
     RslRlBaseRunnerCfg,
