@@ -143,9 +143,21 @@ def _run_step(env_cfg):
     # Signal nsys to stop capture
     torch.cuda.cudart().cudaProfilerStop()
 
+    # Report GPU memory usage
+    mem_allocated_mb = torch.cuda.memory_allocated() / 1024**2
+    mem_reserved_mb = torch.cuda.memory_reserved() / 1024**2
+    peak_mem_mb = torch.cuda.max_memory_allocated() / 1024**2
+
     env.close()
 
     print(f"[octibenchmark] Step done: {args_cli.num_frames} frames, {num_envs} envs, task={args_cli.task}")
+    print(
+        f"[octibenchmark:memory] {{"
+        f'"allocated_mb": {mem_allocated_mb:.1f}, '
+        f'"reserved_mb": {mem_reserved_mb:.1f}, '
+        f'"peak_mb": {peak_mem_mb:.1f}'
+        f"}}"
+    )
 
 
 if __name__ == "__main__":

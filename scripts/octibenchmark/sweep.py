@@ -59,7 +59,7 @@ def run_single_benchmark(
     output_dir: str,
     extra_args: list[str],
     enable_cameras: bool = False,
-) -> str:
+) -> tuple[str, dict | None]:
     """Run a single benchmark under nsys profile.
 
     Args:
@@ -72,7 +72,7 @@ def run_single_benchmark(
         enable_cameras: Whether to pass --enable_cameras.
 
     Returns:
-        Path to the generated ``.nsys-rep`` file.
+        Tuple of (path to ``.nsys-rep`` file, memory stats dict or None).
     """
     output_name = f"{task}_envs{num_envs}"
     output_path = os.path.join(output_dir, output_name)
@@ -111,7 +111,12 @@ def run_single_benchmark(
     print(f"[sweep] Command: {' '.join(nsys_cmd)}")
     print(f"{'=' * 60}\n")
 
-    result = subprocess.run(nsys_cmd, capture_output=False)
+    result = subprocess.run(nsys_cmd, capture_output=True, text=True)
+    # Print stdout/stderr so user sees benchmark output
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
     if result.returncode != 0:
         print(f"[WARNING] nsys exited with code {result.returncode} for num_envs={num_envs}")
 
@@ -119,7 +124,25 @@ def run_single_benchmark(
     if not os.path.exists(nsys_rep_path):
         raise FileNotFoundError(f"Expected nsys output not found: {nsys_rep_path}")
 
-    return nsys_rep_path
+    # Parse memory stats from benchmark output
+    memory_stats = _parse_memory_stats(result.stdout or "")
+
+    return nsys_rep_path, memory_stats
+
+
+def _parse_memory_stats(stdout: str) -> dict | None:
+    """Extract memory stats from benchmark.py stdout.
+
+    Looks for the ``[octibenchmark:memory]`` JSON line.
+    """
+    for line in stdout.splitlines():
+        if "[octibenchmark:memory]" in line:
+            json_str = line.split("[octibenchmark:memory]", 1)[1].strip()
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                pass
+    return None
 
 
 def collect_results(
@@ -148,9 +171,15 @@ def log_to_wandb(
     wandb_entity: str | None,
     kernel_patterns: list[str] | None = None,
 ):
-    """Upload sweep results to wandb.
+    """Upload sweep results to wandb with organized sections.
 
-    Creates charts with x-axis = num_envs and y-axis = time per component.
+    Creates three chart sections:
+
+    1. **Overall scaling** — ``env.step`` wall time, effective FPS, step FPS
+    2. **Term breakdown** — per-NVTX-range avg time and % of step
+    3. **GPU memory** — allocated, reserved, and peak memory vs num_envs
+
+    Plus kernel pattern charts if ``kernel_patterns`` is provided.
 
     Args:
         all_results: Mapping from num_envs to analysis results.
@@ -179,26 +208,35 @@ def log_to_wandb(
         },
     )
 
-    # Build per-component tables for wandb
-    # Each NVTX range becomes a line on the chart
     sorted_envs = sorted(all_results.keys())
 
-    # Set num_envs as x-axis for all line chart metrics
+    # ── Define metric axes ──
     wandb.define_metric("num_envs")
-    wandb.define_metric("avg_ms/*", step_metric="num_envs")
-    wandb.define_metric("pct_of_step/*", step_metric="num_envs")
-    wandb.define_metric("total_ms/*", step_metric="num_envs")
-    wandb.define_metric("effective_fps", step_metric="num_envs")
-    wandb.define_metric("step_fps", step_metric="num_envs")
+
+    # Section 1: Overall scaling
+    wandb.define_metric("overall/step_avg_ms", step_metric="num_envs")
+    wandb.define_metric("overall/effective_fps", step_metric="num_envs")
+    wandb.define_metric("overall/step_fps", step_metric="num_envs")
+
+    # Section 2: Term breakdown
+    wandb.define_metric("term_avg_ms/*", step_metric="num_envs")
+    wandb.define_metric("term_pct/*", step_metric="num_envs")
+
+    # Section 3: GPU memory
+    wandb.define_metric("memory/allocated_mb", step_metric="num_envs")
+    wandb.define_metric("memory/reserved_mb", step_metric="num_envs")
+    wandb.define_metric("memory/peak_mb", step_metric="num_envs")
+
+    # Section 4: Kernel patterns (optional)
     wandb.define_metric("kernel_pattern_ms/*", step_metric="num_envs")
     wandb.define_metric("kernel_pattern_calls/*", step_metric="num_envs")
 
-    # Log NVTX range data: one chart per metric (avg_ms, pct_of_step)
+    # ── Log per-num_envs data ──
     for num_envs in sorted_envs:
         result = all_results[num_envs]
         nvtx_ranges = result.get("nvtx_ranges", [])
 
-        # Find env.step total for percentage
+        # Find env.step total for percentage calculation
         step_total_ns = 0
         for r in nvtx_ranges:
             if r["name"] == "env.step":
@@ -207,25 +245,33 @@ def log_to_wandb(
 
         log_data = {"num_envs": num_envs}
 
+        # Section 1: Overall scaling — env.step timing and FPS
+        for r in nvtx_ranges:
+            if r["name"] == "env.step":
+                avg_step_ms = r["avg_ns"] / 1e6
+                avg_step_s = r["avg_ns"] / 1e9
+                log_data["overall/step_avg_ms"] = avg_step_ms
+                if avg_step_s > 0:
+                    log_data["overall/effective_fps"] = num_envs / avg_step_s
+                    log_data["overall/step_fps"] = 1.0 / avg_step_s
+                break
+
+        # Section 2: Term breakdown — per-range timing
         for r in nvtx_ranges:
             name = r["name"]
             avg_ms = r["avg_ns"] / 1e6
             pct = (r["total_ns"] / step_total_ns * 100) if step_total_ns else 0
+            log_data[f"term_avg_ms/{name}"] = avg_ms
+            log_data[f"term_pct/{name}"] = pct
 
-            log_data[f"avg_ms/{name}"] = avg_ms
-            log_data[f"pct_of_step/{name}"] = pct
-            log_data[f"total_ms/{name}"] = r["total_ns"] / 1e6
+        # Section 3: GPU memory
+        mem = result.get("memory")
+        if mem:
+            log_data["memory/allocated_mb"] = mem["allocated_mb"]
+            log_data["memory/reserved_mb"] = mem["reserved_mb"]
+            log_data["memory/peak_mb"] = mem["peak_mb"]
 
-        # Effective FPS: num_envs / avg_step_time_s
-        for r in nvtx_ranges:
-            if r["name"] == "env.step":
-                avg_step_s = r["avg_ns"] / 1e9
-                if avg_step_s > 0:
-                    log_data["effective_fps"] = num_envs / avg_step_s
-                    log_data["step_fps"] = 1.0 / avg_step_s
-                break
-
-        # Kernel pattern aggregations
+        # Section 4: Kernel patterns (optional)
         if result.get("kernel_aggregations"):
             for pattern, stats in result["kernel_aggregations"].items():
                 log_data[f"kernel_pattern_ms/{pattern}"] = stats["total_ms"]
@@ -233,7 +279,9 @@ def log_to_wandb(
 
         wandb.log(log_data)
 
-    # Also log a summary table
+    # ── Summary tables ──
+
+    # NVTX breakdown table
     table_data = []
     for num_envs in sorted_envs:
         result = all_results[num_envs]
@@ -247,11 +295,31 @@ def log_to_wandb(
                     r["avg_ns"] / 1e6,
                 ]
             )
-    table = wandb.Table(
+    nvtx_table = wandb.Table(
         columns=["num_envs", "nvtx_range", "calls", "total_ms", "avg_ms"],
         data=table_data,
     )
-    wandb.log({"nvtx_breakdown": table})
+    wandb.log({"summary/nvtx_breakdown": nvtx_table})
+
+    # Memory table
+    mem_data = []
+    for num_envs in sorted_envs:
+        mem = all_results[num_envs].get("memory")
+        if mem:
+            mem_data.append(
+                [
+                    num_envs,
+                    mem["allocated_mb"],
+                    mem["reserved_mb"],
+                    mem["peak_mb"],
+                ]
+            )
+    if mem_data:
+        mem_table = wandb.Table(
+            columns=["num_envs", "allocated_mb", "reserved_mb", "peak_mb"],
+            data=mem_data,
+        )
+        wandb.log({"summary/memory": mem_table})
 
     run.finish()
     print(f"\n[sweep] wandb run finished: {run.url}")
@@ -272,6 +340,14 @@ def print_summary(all_results: dict[int, dict]):
         print(f"  num_envs = {num_envs}")
         print(f"{'=' * 60}")
         print(format_nvtx_table(result.get("nvtx_ranges", [])))
+
+        mem = result.get("memory")
+        if mem:
+            print(
+                f"\n  GPU Memory: allocated={mem['allocated_mb']:.0f} MB, "
+                f"reserved={mem['reserved_mb']:.0f} MB, "
+                f"peak={mem['peak_mb']:.0f} MB"
+            )
 
 
 def main():
@@ -312,7 +388,7 @@ def main():
     all_results = {}
     for num_envs in args.num_envs:
         try:
-            nsys_rep_path = run_single_benchmark(
+            nsys_rep_path, memory_stats = run_single_benchmark(
                 task=args.task,
                 num_envs=num_envs,
                 num_frames=args.num_frames,
@@ -322,6 +398,8 @@ def main():
                 enable_cameras=args.enable_cameras,
             )
             result = collect_results(nsys_rep_path, args.kernel_patterns)
+            if memory_stats:
+                result["memory"] = memory_stats
             all_results[num_envs] = result
         except Exception as e:
             print(f"[ERROR] Failed for num_envs={num_envs}: {e}")

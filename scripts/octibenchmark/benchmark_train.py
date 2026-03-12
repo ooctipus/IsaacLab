@@ -125,7 +125,7 @@ def _run_startup(env_cfg, agent_cfg, OnPolicyRunner, RslRlVecEnvWrapper, handle_
     agent_cfg.max_iterations = args_cli.max_iterations
 
     log_dir = os.path.join("/tmp", "octibench_train_logs")
-    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+    OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
 
     torch.cuda.cudart().cudaProfilerStop()
 

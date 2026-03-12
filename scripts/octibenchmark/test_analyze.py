@@ -367,7 +367,8 @@ def anatomy_db():
     # corr 6: rt in sim.step of step 1 -> kernel_physics
     c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_RUNTIME (start, end, correlationId) VALUES (21500000, 21600000, 6)")
     c.execute(
-        "INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (22000000, 22100000, 1, 6)"
+        "INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL"
+        " (start, end, shortName, correlationId) VALUES (22000000, 22100000, 1, 6)"
     )
 
     conn.commit()
@@ -599,12 +600,14 @@ def driver_api_db():
     # Physics kernels dispatched via DRIVER API (not Runtime)
     c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_DRIVER (start, end, correlationId) VALUES (1500000, 1600000, 101)")
     c.execute(
-        "INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (2000000, 2100000, 1, 101)"
+        "INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL"
+        " (start, end, shortName, correlationId) VALUES (2000000, 2100000, 1, 101)"
     )
 
     c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_DRIVER (start, end, correlationId) VALUES (2500000, 2600000, 102)")
     c.execute(
-        "INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (3000000, 3200000, 2, 102)"
+        "INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL"
+        " (start, end, shortName, correlationId) VALUES (3000000, 3200000, 2, 102)"
     )
 
     # Reward kernel via RUNTIME API
@@ -669,7 +672,8 @@ class TestDriverApiAnatomy:
             localMemoryTotal INTEGER)""")
         c.execute("INSERT INTO CUPTI_ACTIVITY_KIND_DRIVER (start, end, correlationId) VALUES (1500000, 1600000, 1)")
         c.execute(
-            "INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL (start, end, shortName, correlationId) VALUES (2000000, 2100000, 1, 1)"
+            "INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL"
+            " (start, end, shortName, correlationId) VALUES (2000000, 2100000, 1, 1)"
         )
         conn.commit()
         conn.close()

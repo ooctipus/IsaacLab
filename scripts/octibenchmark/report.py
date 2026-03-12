@@ -663,10 +663,10 @@ def _plot_parent_timeline(db_path: str, step_index: int, parent_name: str, out_d
             col = CATEGORY_COLORS.get(cat, "gray")
             w = max((api_e - api_s) / 1000, 0.3)
             ax.barh(y, w, left=api_s / 1000, height=0.56, color=col, edgecolor="none", alpha=0.85)
-        nd = len(child_disps.get(cname, []))
+        n_disps = len(child_disps.get(cname, []))
         gpu_us = sum(g for _, _, g, _ in child_disps.get(cname, [])) / 1000
         short = cname if len(cname) <= 40 else cname[:37] + "..."
-        ylabels.append(f"{short}\n{cw:.0f}μs | {nd} ops | {gpu_us:.1f}μs GPU")
+        ylabels.append(f"{short}\n{cw:.0f}μs | {n_disps} ops | {gpu_us:.1f}μs GPU")
 
     # Gaps row
     ri = len(visible)
@@ -994,9 +994,7 @@ def level6_source_map(
             continue
 
         # Phase 2: Get dispatches
-        decomp = query_term_decomposition(
-            db_path, step_index=step_index, range_name=term_name, include_dispatches=True
-        )
+        decomp = query_term_decomposition(db_path, step_index=step_index, range_name=term_name, include_dispatches=True)
         if decomp is None or not decomp.dispatches:
             print(f"  SKIP {term_name}: no dispatches")
             continue
@@ -1009,12 +1007,12 @@ def level6_source_map(
         alignment = align_dispatches_to_source(template, decomp.dispatches)
 
         # Plot
-        _plot_source_map(
-            decomp, alignment, draft, src, out_dir, label, num_envs, step_index
+        _plot_source_map(decomp, alignment, draft, src, out_dir, label, num_envs, step_index)
+        print(
+            f"  {term_name}: {alignment.match_pct:.0f}% aligned "
+            f"({alignment.matched}/{alignment.total} dispatches, "
+            f"{len(template)} predicted)"
         )
-        print(f"  {term_name}: {alignment.match_pct:.0f}% aligned "
-              f"({alignment.matched}/{alignment.total} dispatches, "
-              f"{len(template)} predicted)")
 
 
 def _plot_source_map(
@@ -1032,7 +1030,9 @@ def _plot_source_map(
     wall_us = decomp.wall_ns / 1000
 
     fig, (ax_timeline, ax_source) = plt.subplots(
-        1, 2, figsize=(24, max(8, len(draft) * 0.35)),
+        1,
+        2,
+        figsize=(24, max(8, len(draft) * 0.35)),
         gridspec_kw={"width_ratios": [2.5, 1]},
     )
 
@@ -1096,19 +1096,27 @@ def _plot_source_map(
         fontweight = "bold" if n_ops > 0 else "normal"
         color = "black" if n_ops > 0 else "#888888"
         ax_source.text(
-            0.02, y, text,
+            0.02,
+            y,
+            text,
             transform=ax_source.get_yaxis_transform(),
-            fontsize=7, fontfamily="monospace",
-            fontweight=fontweight, color=color,
+            fontsize=7,
+            fontfamily="monospace",
+            fontweight=fontweight,
+            color=color,
             verticalalignment="center",
         )
         if n_ops > 0:
             ops_text = f"  ← {n_ops} dispatch(es)"
             ax_source.text(
-                0.95, y, ops_text,
+                0.95,
+                y,
+                ops_text,
                 transform=ax_source.get_yaxis_transform(),
-                fontsize=6.5, color="#E91E63",
-                verticalalignment="center", horizontalalignment="right",
+                fontsize=6.5,
+                color="#E91E63",
+                verticalalignment="center",
+                horizontalalignment="right",
             )
         y -= 1
 
@@ -1127,16 +1135,21 @@ def _plot_source_map(
     # Summary at bottom
     total_predicted = sum(len(dtl.predicted_ops) for dtl in draft)
     fig.text(
-        0.5, -0.02,
+        0.5,
+        -0.02,
         f"Auto-draft: {total_predicted} predicted vs {len(disps)} actual dispatches "
         f"| {alignment.match_pct:.0f}% aligned | "
         f"Unmatched dispatches likely from function calls needing expansion",
-        ha="center", fontsize=9, style="italic", color="gray",
+        ha="center",
+        fontsize=9,
+        style="italic",
+        color="gray",
     )
 
     fig.suptitle(
         f"{label} — Source Map ({num_envs} envs, step {step_index})",
-        fontsize=13, y=1.02,
+        fontsize=13,
+        y=1.02,
     )
     fig.tight_layout()
     safe = decomp.name.replace(":", "_").replace("[", "_").replace("]", "_").replace(".", "_")
@@ -1243,8 +1256,13 @@ def generate_report(bench_dir: str, step_index: int = 5, top_terms: int = 5):
             import isaaclab_tasks  # noqa: F401 — registers gym envs
 
             level6_source_map(
-                db_largest, step_index, interesting, tid,
-                os.path.join(plot_dir, "6_source_map"), label, max_envs,
+                db_largest,
+                step_index,
+                interesting,
+                tid,
+                os.path.join(plot_dir, "6_source_map"),
+                label,
+                max_envs,
             )
         except ImportError:
             print("  (skipped — isaaclab_tasks not importable, can't resolve source)")
