@@ -64,10 +64,10 @@ def object_ee_distance(
     return (1 - torch.tanh(distance / std)) * contact_bonus
 
 
-def _contact_force_mag(sensor: ContactSensor, num_envs: int) -> torch.Tensor:
-    """Extract per-environment contact force magnitude from a sensor's force_matrix_w."""
-    force = wp.to_torch(sensor.data.force_matrix_w).view(num_envs, 3)
-    return torch.linalg.norm(force, dim=-1)
+# Step-level cache for contact computation.  Avoids recomputing (and re-syncing the Warp→PyTorch
+# CUDA stream) for the same sensor set across multiple reward terms within a single env step.
+# Key: (env object id, step counter, threshold, sensor names). Cleared on each new step.
+_contacts_cache: dict = {}
 
 
 def contacts(env: ManagerBasedRLEnv, threshold: float, thumb_name: str, finger_names: list[str]) -> torch.Tensor:
@@ -82,14 +82,22 @@ def contacts(env: ManagerBasedRLEnv, threshold: float, thumb_name: str, finger_n
     Returns:
         Boolean tensor indicating good contact condition per environment.
     """
-    thumb_mag = _contact_force_mag(env.scene.sensors[thumb_name], env.num_envs)
+    cache_key = (id(env), env.common_step_counter, threshold, thumb_name, tuple(finger_names))
+    cached = _contacts_cache.get(cache_key)
+    if cached is not None:
+        return cached
 
-    any_finger_contact = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
-    for finger_name in finger_names:
-        finger_mag = _contact_force_mag(env.scene.sensors[finger_name], env.num_envs)
-        any_finger_contact = any_finger_contact | (finger_mag > threshold)
+    # Batch all sensor reads in one shot: (N_sensors, num_envs, 3) → (N_sensors, num_envs)
+    all_names = [thumb_name, *finger_names]
+    forces = torch.stack(
+        [wp.to_torch(env.scene.sensors[name].data.force_matrix_w).view(env.num_envs, 3) for name in all_names]
+    )
+    mags = torch.linalg.norm(forces, dim=-1)  # (N_sensors, num_envs)
+    result = mags[0].gt(threshold) & mags[1:].gt(threshold).any(dim=0)
 
-    return (thumb_mag > threshold) & any_finger_contact
+    _contacts_cache.clear()
+    _contacts_cache[cache_key] = result
+    return result
 
 
 def contact_count(env: ManagerBasedRLEnv, threshold: float, sensor_names: list[str]) -> torch.Tensor:
@@ -106,12 +114,11 @@ def contact_count(env: ManagerBasedRLEnv, threshold: float, sensor_names: list[s
     Returns:
         Tensor of shape (num_envs,) with the count of sensors in contact per environment.
     """
-    count = torch.zeros(env.num_envs, dtype=torch.float32, device=env.device)
-
-    for sensor_name in sensor_names:
-        mag = _contact_force_mag(env.scene.sensors[sensor_name], env.num_envs)
-        count += (mag > threshold).float()
-    return count / len(sensor_names)
+    forces = torch.stack(
+        [wp.to_torch(env.scene.sensors[name].data.force_matrix_w).view(env.num_envs, 3) for name in sensor_names]
+    )
+    mags = torch.linalg.norm(forces, dim=-1)  # (N_sensors, num_envs)
+    return mags.gt(threshold).float().sum(dim=0) / len(sensor_names)
 
 
 class success_reward(ManagerTermBase):

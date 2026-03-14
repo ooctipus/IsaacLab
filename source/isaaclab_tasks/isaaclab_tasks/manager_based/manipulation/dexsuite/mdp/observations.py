@@ -225,6 +225,9 @@ class vision_camera(ManagerTermBase):
         self, env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg, normalize: bool = True
     ) -> torch.Tensor:  # obtain the input image
         images = self.sensor.data.output[self.sensor_type]
+        # Synchronize the Warp render stream so the GPU render cost is attributed here
+        # (where the render was dispatched) rather than at the next sync point downstream.
+        wp.synchronize()
         torch.nan_to_num_(images, nan=1e6)
         if normalize:
             images = self.norm_fn(images)
