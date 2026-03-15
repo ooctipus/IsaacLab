@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 
 # Add scripts/ to path so octibenchmark is importable
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -166,15 +167,33 @@ def _run_step(env_cfg, agent_cfg, OnPolicyRunner, RslRlVecEnvWrapper, handle_dep
     # Signal nsys to start capture
     torch.cuda.cudart().cudaProfilerStart()
 
-    # Profiled training
+    torch.cuda.synchronize()
+    t0 = time.perf_counter()
     runner.learn(num_learning_iterations=args_cli.max_iterations, init_at_random_ep_len=True)
+    torch.cuda.synchronize()
+    elapsed_s = time.perf_counter() - t0
 
     # Signal nsys to stop capture
     torch.cuda.cudart().cudaProfilerStop()
 
+    gpu_mem_used_mb = torch.cuda.max_memory_allocated() / (1024 * 1024)
+    gpu_mem_total_mb = torch.cuda.get_device_properties(0).total_mem / (1024 * 1024)
+
     env.close()
 
+    steps_per_iter = num_envs * agent_cfg.num_steps_per_env
+    total_steps = args_cli.max_iterations * steps_per_iter
+    effective_fps = total_steps / elapsed_s if elapsed_s > 0 else 0.0
+    step_ms = (elapsed_s / args_cli.max_iterations) * 1000.0 if args_cli.max_iterations > 0 else 0.0
     print(f"[octibenchmark] Training done: {args_cli.max_iterations} iterations, {num_envs} envs, task={args_cli.task}")
+    print(
+        f'[octibenchmark:memory] {{"gpu_used_mb": {gpu_mem_used_mb:.1f}, "gpu_total_mb": {gpu_mem_total_mb:.1f}}}',
+        flush=True,
+    )
+    print(
+        f'[octibenchmark:timing] {{"effective_fps": {effective_fps:.1f}, "step_ms": {step_ms:.3f}}}',
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

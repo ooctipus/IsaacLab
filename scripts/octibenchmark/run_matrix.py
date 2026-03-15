@@ -104,8 +104,9 @@ def main():
         "--profile_level",
         type=str,
         default=None,
-        choices=["light", "full"],
-        help="nsys capture richness: 'light' (default) for minimal overhead, "
+        choices=["plain", "light", "full"],
+        help="Profiling level: 'plain' for no nsys (FPS + memory only), "
+        "'light' (default) for minimal nsys overhead, "
         "'full' for GPU metrics, CUDA memory, OS runtime, and Kit profiler.",
     )
     args = parser.parse_args()

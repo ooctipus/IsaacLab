@@ -128,6 +128,10 @@ class ProfileLevel(enum.Enum):
     increased overhead and larger output files.
     """
 
+    PLAIN = "plain"
+    """No nsys profiling.  Runs the benchmark script directly and captures
+    only FPS and GPU memory from stdout.  Zero profiling overhead."""
+
     LIGHT = "light"
     """Minimal capture: CUDA + NVTX traces only (default).  Low overhead,
     suitable for quick scaling sweeps."""
@@ -542,7 +546,19 @@ class BenchmarkMatrix:
                 prev_group_key = cur_group_key
 
             out_path = os.path.join(output_dir, run.tag)
-            cmd = run.nsys_command(out_path)
+            is_plain = run.profile_level == ProfileLevel.PLAIN
+            cmd = run.nsys_command(out_path) if not is_plain else run.nsys_command(out_path)
+
+            # PLAIN mode: run the script directly without nsys
+            if is_plain:
+                script = str(run.script_path)
+                cmd = [sys.executable, script, "--task", run.task, "--num_envs", str(run.num_envs),
+                       "--phase", run.phase.value, "--headless"]
+                if run.launcher == Launcher.NON_RL:
+                    cmd.extend(["--num_frames", str(run.num_frames), "--warmup_frames", str(run.warmup_frames)])
+                elif run.launcher == Launcher.RSL_RL:
+                    cmd.extend(["--max_iterations", str(run.max_iterations), "--warmup_frames", str(run.warmup_frames)])
+                cmd.extend(run.all_hydra_args)
 
             if verbose:
                 print(f"  [{i + 1}/{len(valid_runs)}] {run.tag}")
@@ -559,44 +575,74 @@ class BenchmarkMatrix:
                 result = subprocess.run(cmd, capture_output=True, text=True)
                 stderr = result.stderr or ""
                 stdout = result.stdout or ""
-            nsys_rep = out_path + ".nsys-rep"
 
-            if result.returncode != 0 or not os.path.exists(nsys_rep):
-                combined = (stderr + "\n" + stdout).strip()
-
-                if "OutOfMemoryError" in combined or "out of memory" in combined.lower():
-                    reason = "OOM"
-                elif "HYDRA_FULL_ERROR" in combined:
-                    reason = "config error"
-                else:
-                    reason = f"exit code {result.returncode}"
-                log_path = out_path + ".error.log"
-                with open(log_path, "w") as f:
-                    f.write(f"=== COMMAND ===\n{' '.join(cmd)}\n\n")
-                    f.write(f"=== RETURN CODE ===\n{result.returncode}\n\n")
-                    f.write(f"=== STDERR ===\n{stderr}\n\n")
-                    f.write(f"=== STDOUT ===\n{stdout}\n")
-                if verbose:
-                    print(f"    FAILED ({reason}) → {log_path}")
-                else:
-                    print(f"FAILED ({reason}) → {log_path}")
-                failed_runs.append((run.tag, reason))
-
-                continue
-
-            from octibenchmark.analyze import analyze
-
-            analysis = analyze(nsys_rep, kernel_patterns)
-
-            # Parse memory stats printed by benchmark.py (check both
-            # stdout and stderr since Isaac Sim may redirect stdout)
             combined_out = stdout + "\n" + stderr
-            mem_match = re.search(r"\[octibenchmark:memory\]\s*(\{.*\})", combined_out)
-            if mem_match:
-                try:
-                    analysis["memory"] = json.loads(mem_match.group(1))
-                except json.JSONDecodeError:
-                    pass
+
+            if is_plain:
+                # PLAIN: only check exit code, build analysis from stdout
+                if result.returncode != 0:
+                    if "OutOfMemoryError" in combined_out or "out of memory" in combined_out.lower():
+                        reason = "OOM"
+                    else:
+                        reason = f"exit code {result.returncode}"
+                    if verbose:
+                        print(f"    FAILED ({reason})")
+                    else:
+                        print(f"FAILED ({reason})")
+                    failed_runs.append((run.tag, reason))
+                    continue
+
+                analysis: dict = {}
+                mem_match = re.search(r"\[octibenchmark:memory\]\s*(\{.*\})", combined_out)
+                if mem_match:
+                    try:
+                        analysis["memory"] = json.loads(mem_match.group(1))
+                    except json.JSONDecodeError:
+                        pass
+                timing_match = re.search(r"\[octibenchmark:timing\]\s*(\{.*\})", combined_out)
+                if timing_match:
+                    try:
+                        analysis["timing"] = json.loads(timing_match.group(1))
+                    except json.JSONDecodeError:
+                        pass
+            else:
+                # LIGHT / FULL: expect .nsys-rep
+                nsys_rep = out_path + ".nsys-rep"
+
+                if result.returncode != 0 or not os.path.exists(nsys_rep):
+                    combined = (stderr + "\n" + stdout).strip()
+
+                    if "OutOfMemoryError" in combined or "out of memory" in combined.lower():
+                        reason = "OOM"
+                    elif "HYDRA_FULL_ERROR" in combined:
+                        reason = "config error"
+                    else:
+                        reason = f"exit code {result.returncode}"
+                    log_path = out_path + ".error.log"
+                    with open(log_path, "w") as f:
+                        f.write(f"=== COMMAND ===\n{' '.join(cmd)}\n\n")
+                        f.write(f"=== RETURN CODE ===\n{result.returncode}\n\n")
+                        f.write(f"=== STDERR ===\n{stderr}\n\n")
+                        f.write(f"=== STDOUT ===\n{stdout}\n")
+                    if verbose:
+                        print(f"    FAILED ({reason}) → {log_path}")
+                    else:
+                        print(f"FAILED ({reason}) → {log_path}")
+                    failed_runs.append((run.tag, reason))
+
+                    continue
+
+                from octibenchmark.analyze import analyze
+
+                analysis = analyze(nsys_rep, kernel_patterns)
+
+                # Parse memory stats printed by benchmark.py
+                mem_match = re.search(r"\[octibenchmark:memory\]\s*(\{.*\})", combined_out)
+                if mem_match:
+                    try:
+                        analysis["memory"] = json.loads(mem_match.group(1))
+                    except json.JSONDecodeError:
+                        pass
 
             # Attach run metadata to the analysis for wandb grouping
             analysis["_meta"] = dataclasses.asdict(run)
@@ -828,6 +874,14 @@ def _log_single_result(
     env_step = nvtx_by_name.get("env.step")
     if env_step and env_step["avg_ns"] > 0:
         log_data["effective_fps"] = num_envs / (env_step["avg_ns"] / 1e9)
+
+    # Fall back to wall-clock timing (primary source in PLAIN mode)
+    timing = analysis.get("timing")
+    if timing:
+        if "effective_fps" not in log_data and "effective_fps" in timing:
+            log_data["effective_fps"] = timing["effective_fps"]
+        if "step_ms" in timing:
+            log_data["wall/step_ms"] = timing["step_ms"]
 
     mem = analysis.get("memory")
     if mem and "gpu_used_mb" in mem:

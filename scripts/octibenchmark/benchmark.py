@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 
 # Add scripts/ to path so octibenchmark is importable
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -153,7 +154,9 @@ def _run_step(env_cfg):
     # Signal nsys to start capture
     torch.cuda.cudart().cudaProfilerStart()
 
-    # Benchmark loop — track peak GPU memory across all steps
+    # Benchmark loop — track peak GPU memory and wall-clock time
+    torch.cuda.synchronize()
+    t0 = time.perf_counter()
     peak_used_mb, gpu_total_mb = 0.0, 0.0
     for _ in range(args_cli.num_frames):
         actions = 2.0 * torch.rand(num_envs, action_dim, device=device) - 1.0
@@ -161,15 +164,21 @@ def _run_step(env_cfg):
         used, total = _query_gpu_memory()
         if used > peak_used_mb:
             peak_used_mb, gpu_total_mb = used, total
+    torch.cuda.synchronize()
+    elapsed_s = time.perf_counter() - t0
 
     # Signal nsys to stop capture
     torch.cuda.cudart().cudaProfilerStop()
 
-    gpu_mem_used_mb = peak_used_mb
-    gpu_mem_total_mb = gpu_total_mb
+    effective_fps = (args_cli.num_frames * num_envs) / elapsed_s if elapsed_s > 0 else 0.0
+    step_ms = (elapsed_s / args_cli.num_frames) * 1000.0 if args_cli.num_frames > 0 else 0.0
     print(f"[octibenchmark] Step done: {args_cli.num_frames} frames, {num_envs} envs, task={args_cli.task}", flush=True)
     print(
-        f'[octibenchmark:memory] {{"gpu_used_mb": {gpu_mem_used_mb:.1f}, "gpu_total_mb": {gpu_mem_total_mb:.1f}}}',
+        f'[octibenchmark:memory] {{"gpu_used_mb": {peak_used_mb:.1f}, "gpu_total_mb": {gpu_total_mb:.1f}}}',
+        flush=True,
+    )
+    print(
+        f'[octibenchmark:timing] {{"effective_fps": {effective_fps:.1f}, "step_ms": {step_ms:.3f}}}',
         flush=True,
     )
 
