@@ -5,10 +5,59 @@
 
 from __future__ import annotations
 
+import logging
+
 import torch
 
 from omni.physx import get_physx_replicator_interface
-from pxr import Usd, UsdUtils
+from pxr import Sdf, Usd, UsdUtils
+
+logger = logging.getLogger(__name__)
+
+
+def _set_scene_partitions(
+    stage: Usd.Stage,
+    env_prim_paths: list[str],
+    use_fabric: bool = False,
+) -> None:
+    """Set ``primvars:omni:scenePartition`` on each environment prim.
+
+    The PhysX replicator uses this primvar to discover environment IDs
+    implicitly, enabling GPU-accelerated per-environment collision isolation
+    without requiring explicit collision groups.
+
+    For env_0 the primvar is always written via USD (the source prim lives in
+    USD even when Fabric cloning is active).  For env_1+ the primvar is written
+    via Fabric/USDRT when ``use_fabric`` is True, since those prims may only
+    exist in Fabric after replication.
+
+    Args:
+        stage: USD stage containing the environment prims.
+        env_prim_paths: Ordered list of environment prim paths
+            (e.g. ``["/World/envs/env_0", ..., "/World/envs/env_N"]``).
+        use_fabric: Whether Fabric cloning was used for env_1+.
+    """
+    attr_name = "primvars:omni:scenePartition"
+
+    if env_prim_paths:
+        prim = stage.GetPrimAtPath(env_prim_paths[0])
+        if prim.IsValid():
+            prim.CreateAttribute(attr_name, Sdf.ValueTypeNames.Token).Set("env_partition_0")
+
+    if use_fabric and len(env_prim_paths) > 1:
+        import omni.usdrt
+
+        usdrt_stage = omni.usdrt.Usd.Stage.Attach(UsdUtils.StageCache.Get().Insert(stage).ToLongInt())
+        for i, path in enumerate(env_prim_paths[1:], start=1):
+            usdrt_prim = usdrt_stage.GetPrimAtPath(path)
+            if usdrt_prim.IsValid():
+                attr = usdrt_prim.CreateAttribute(attr_name, omni.usdrt.Sdf.ValueTypeNames.Token)
+                attr.Set(f"env_partition_{i}")
+    else:
+        for i, path in enumerate(env_prim_paths[1:], start=1):
+            prim = stage.GetPrimAtPath(path)
+            if prim.IsValid():
+                prim.CreateAttribute(attr_name, Sdf.ValueTypeNames.Token).Set(f"env_partition_{i}")
 
 
 def physx_replicate(
@@ -26,7 +75,14 @@ def physx_replicate(
     """Replicate prims via PhysX replicator with per-row mapping.
 
     Builds per-source destination lists from ``mapping`` and calls PhysX ``replicate``.
-    Rows covering all environments use ``useEnvIds=True``; partial rows use ``False``.
+
+    On GPU (``device != "cpu"``), scene partitions
+    (``primvars:omni:scenePartition``) are authored on each env prim and
+    ``useEnvIds`` is enabled for GPU-accelerated per-environment collision
+    isolation.  This works for both homogeneous and heterogeneous setups — the
+    PhysX replicator discovers env boundaries from the primvar regardless of
+    which sources map to which environments.
+
     The replicator is registered for the call and then unregistered.
 
     ``attach_fn`` excludes ``/World/template`` and ``/World/envs`` so that PhysX does
@@ -58,8 +114,6 @@ def physx_replicate(
     Returns:
         None
     """
-    # Note: positions and quaternions are unused by PhysX replicator
-    # They are included for API compatibility with other backends (e.g., Newton)
     del positions, quaternions
 
     stage_id = UsdUtils.StageCache.Get().Insert(stage).ToLongInt()
@@ -68,11 +122,20 @@ def physx_replicate(
     num_envs = mapping.size(1)
 
     if num_envs > 1:
-        # Pre-compute effective world lists after self-exclusion.
-        # Self is only removed when the source also maps to other environments;
-        # if it is the sole destination we must keep it so that rep.replicate()
-        # is still called (the source gets its physics body from that call).
-        effective_worlds: list[list[int]] = []
+        env_id_list = env_ids.tolist()
+        env_prim_paths = [f"/World/envs/env_{i}" for i in env_id_list]
+
+        # Lift replication to env-root level.  The replicator discovers
+        # env IDs from ``primvars:omni:scenePartition`` on the replicated
+        # prim itself — so the source passed to ``replicate()`` must be the
+        # env root (e.g. ``/World/envs/env_0``), not a child prim.
+        #
+        # For each (source, destination) pair we extract the env-root
+        # source and the env-root template, then merge world lists from
+        # all sub-prim sources that share the same env-root source.
+        env_root_worlds: dict[str, set[int]] = {}
+        env_root_template = f"/World/envs/env_{{}}"
+
         for i, src in enumerate(sources):
             worlds = env_ids[mapping[i]].tolist()
             if exclude_self_replication:
@@ -81,7 +144,22 @@ def physx_replicate(
                 if self_id.isdigit():
                     filtered = [w for w in worlds if w != int(self_id)]
                     worlds = filtered if filtered else worlds
-            effective_worlds.append(worlds)
+
+            # Derive env-root source path from the sub-prim source.
+            # e.g. "/World/envs/env_0/Object" → "/World/envs/env_0"
+            parts = src.split("/")
+            # /World/envs/env_X is always depth 3 (indices 0="", 1="World", 2="envs", 3="env_X")
+            root_src = "/".join(parts[:4]) if len(parts) > 4 else src
+            env_root_worlds.setdefault(root_src, set()).update(worlds)
+
+        # Sort worlds for deterministic ordering
+        effective_env_roots: list[tuple[str, list[int]]] = [
+            (root, sorted(wset)) for root, wset in env_root_worlds.items()
+        ]
+
+        # Set partitions BEFORE replicate so the replicator can discover
+        # env IDs from the primvar during physics body creation.
+        _set_scene_partitions(stage, env_prim_paths, use_fabric=use_fabric)
 
         def attach_fn(_stage_id: int):
             return ["/World/template", "/World/envs"]
@@ -92,20 +170,24 @@ def physx_replicate(
         def attach_end_fn(_stage_id: int):
             nonlocal current_template
             rep = get_physx_replicator_interface()
-            for i, src in enumerate(sources):
-                current_template = destinations[i]
-                current_worlds[:] = effective_worlds[i]
+
+            for root_src, worlds in effective_env_roots:
+                current_template = env_root_template
+                current_worlds[:] = worlds
                 if not current_worlds:
                     continue
                 rep.replicate(
                     _stage_id,
-                    src,
+                    root_src,
                     len(current_worlds),
-                    # TODO: envIds needs to support heterogeneous setup. for now, we rely on USD collision filtering
-                    useEnvIds=False,  # (len(current_worlds) == num_envs - 1) and device != "cpu",
+                    useEnvIds=False,
                     useFabricForReplication=use_fabric,
                 )
-            # unregister only AFTER all replicate() calls completed
+
+            # Re-set partitions AFTER replicate so that homogeneous cloning
+            # (which copies env_0 including its primvar) gets corrected.
+            _set_scene_partitions(stage, env_prim_paths, use_fabric=use_fabric)
+
             rep.unregister_replicator(_stage_id)
 
         get_physx_replicator_interface().register_replicator(stage_id, attach_fn, attach_end_fn, rename_fn)
