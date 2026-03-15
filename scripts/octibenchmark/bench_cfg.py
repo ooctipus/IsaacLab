@@ -366,8 +366,8 @@ class BenchmarkMatrix:
             hydra_combos = [()]
 
         all_runs = []
-        for task, n_envs, *_ in itertools.product(self.tasks, self.num_envs, [None]):
-            for combo in hydra_combos:
+        for task, combo in itertools.product(self.tasks, hydra_combos):
+            for n_envs in self.num_envs:
                 overrides = dict(zip(axis_names, combo))
                 run = BenchmarkRun(
                     task=task,
@@ -514,18 +514,33 @@ class BenchmarkMatrix:
         from collections import defaultdict
 
         pending_groups: dict[tuple, list] = defaultdict(list)
-        group_run_counts: dict[tuple, int] = defaultdict(int)
-        for r in valid_runs:
-            overrides = r.hydra_overrides
-            override_key = tuple(overrides.get(a, "") for a in sweep_axis_names) if use_wandb else ()
-            gk = (r.task, override_key, r.launcher.value)
-            group_run_counts[gk] += 1
 
         all_results = {}
         failed_runs = []
         wandb_run_count = 0
         wandb_group: str | None = None
+        prev_group_key: tuple | None = None
         for i, run in enumerate(valid_runs):
+            # Flush the previous group when we transition to a new one
+            if use_wandb:
+                overrides = run.hydra_overrides
+                override_key = tuple(overrides.get(a, "") for a in sweep_axis_names)
+                cur_group_key = (run.task, override_key, run.launcher.value)
+                if prev_group_key is not None and cur_group_key != prev_group_key and pending_groups[prev_group_key]:
+                    wandb_group = _flush_wandb_group(
+                        prev_group_key,
+                        pending_groups.pop(prev_group_key),
+                        sweep_axis_names,
+                        wandb_project,
+                        wandb_entity,
+                        wandb_group,
+                        tag,
+                        output_dir,
+                        valid_runs,
+                    )
+                    wandb_run_count += 1
+                prev_group_key = cur_group_key
+
             out_path = os.path.join(output_dir, run.tag)
             cmd = run.nsys_command(out_path)
 
@@ -567,11 +582,6 @@ class BenchmarkMatrix:
                     print(f"FAILED ({reason}) → {log_path}")
                 failed_runs.append((run.tag, reason))
 
-                if use_wandb:
-                    overrides = run.hydra_overrides
-                    override_key = tuple(overrides.get(a, "") for a in sweep_axis_names)
-                    group_key = (run.task, override_key, run.launcher.value)
-                    group_run_counts[group_key] -= 1
                 continue
 
             from octibenchmark.analyze import analyze
@@ -598,35 +608,21 @@ class BenchmarkMatrix:
             with open(json_path, "w") as f:
                 json.dump(all_results, f, indent=2, default=str)
 
-            # Accumulate results per config group; upload to wandb when complete
+            # Accumulate results for the current group
             if use_wandb:
                 overrides = run.hydra_overrides
                 override_key = tuple(overrides.get(a, "") for a in sweep_axis_names)
                 group_key = (run.task, override_key, run.launcher.value)
                 pending_groups[group_key].append((run.num_envs, analysis, run.tag))
 
-                if len(pending_groups[group_key]) >= group_run_counts[group_key]:
-                    wandb_group = _flush_wandb_group(
-                        group_key,
-                        pending_groups[group_key],
-                        sweep_axis_names,
-                        wandb_project,
-                        wandb_entity,
-                        wandb_group,
-                        tag,
-                        output_dir,
-                        valid_runs,
-                    )
-                    wandb_run_count += 1
-
         if failed_runs:
             print(f"\n[BenchmarkMatrix] {len(failed_runs)} run(s) failed:")
             for failed_tag, reason in failed_runs:
                 print(f"  {failed_tag}: {reason}")
 
-        # Flush any remaining partial groups (from failed runs reducing count)
+        # Flush the last group (group transition only triggers for previous groups)
         if use_wandb:
-            for group_key, pending in pending_groups.items():
+            for group_key, pending in list(pending_groups.items()):
                 if pending:
                     wandb_group = _flush_wandb_group(
                         group_key,

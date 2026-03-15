@@ -15,15 +15,15 @@ from octibenchmark.bench_cfg import BenchmarkMatrix, Launcher, ProfileLevel
 
 KUKA_SCALING = BenchmarkMatrix(
     tasks=["Isaac-Dexsuite-Kuka-Allegro-Lift-v0"],
-    num_envs=[256, 512, 1024],
+    num_envs=[256, 512, 1024, 2048, 4096, 8192],
     hydra_sweeps={
         "preset": [
-            "presets=cube",
+            # "presets=cube",
             # "presets=newton,cube",
-            # "presets=cube,single_camera,newton_renderer",
-            # "presets=newton,cube,single_camera,newton_renderer",
-            # "presets=cube,single_camera,newton_renderer,depth64",
-            # "presets=newton,cube,single_camera,newton_renderer,depth64",
+            "presets=cube,single_camera,newton_renderer,rgb256",
+            "presets=newton,cube,single_camera,newton_renderer,rgb256",
+            "presets=cube,single_camera,newton_renderer,depth256",
+            "presets=newton,cube,single_camera,newton_renderer,depth256",
         ],
     },
     launcher=Launcher.NON_RL,
