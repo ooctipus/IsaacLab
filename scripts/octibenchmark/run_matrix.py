@@ -39,6 +39,7 @@ import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 import octibenchmark.examples as _examples_pkg
+from octibenchmark.bench_cfg import ProfileLevel
 
 
 def _discover_examples() -> dict[str, dict]:
@@ -93,7 +94,20 @@ def main():
         "experiments run on different hardware.",
     )
     parser.add_argument("--dry_run", action="store_true", help="Print run summary without executing.")
-    parser.add_argument("--verbose", action="store_true", help="Show full nsys commands in dry run.")
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Stream subprocess output to terminal (live). In dry-run mode, show full nsys commands.",
+    )
+    parser.add_argument(
+        "--profile_level",
+        type=str,
+        default=None,
+        choices=["light", "full"],
+        help="nsys capture richness: 'light' (default) for minimal overhead, "
+        "'full' for GPU metrics, CUDA memory, OS runtime, and Kit profiler.",
+    )
     args = parser.parse_args()
 
     if args.list:
@@ -133,6 +147,7 @@ def main():
         print(f"# Matrix: {name}")
         print(f"{'#' * 60}")
 
+        pl = ProfileLevel(args.profile_level) if args.profile_level else None
         matrix.execute(
             output_dir=output_dir,
             wandb_project=args.wandb_project,
@@ -142,6 +157,7 @@ def main():
             tag=args.tag,
             dry_run=args.dry_run,
             verbose=args.verbose,
+            profile_level=pl,
         )
         total_runs += len(matrix.runs())
 

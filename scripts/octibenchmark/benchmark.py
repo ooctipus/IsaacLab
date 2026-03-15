@@ -49,6 +49,24 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 
 from octibenchmark.nvtx_hooks import install_extra_nvtx_hooks, install_nvtx_hooks
 
+
+def _query_gpu_memory() -> tuple[float, float]:
+    """Query GPU memory usage in MB for the current CUDA device.
+
+    Uses :func:`torch.cuda.mem_get_info` which reports memory across all
+    CUDA contexts within this process (PyTorch, Warp, PhysX, Isaac Sim).
+
+    Returns:
+        ``(used_mb, total_mb)`` tuple. Returns ``(0.0, 0.0)`` on failure.
+    """
+    try:
+        free, total = torch.cuda.mem_get_info()
+        used = total - free
+        return used / (1024 * 1024), total / (1024 * 1024)
+    except Exception:
+        return 0.0, 0.0
+
+
 parser = argparse.ArgumentParser(description="Benchmark an IsaacLab environment with NVTX instrumentation.")
 parser.add_argument("--task", type=str, required=True, help="Registered task name.")
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments.")
@@ -135,29 +153,27 @@ def _run_step(env_cfg):
     # Signal nsys to start capture
     torch.cuda.cudart().cudaProfilerStart()
 
-    # Benchmark loop
+    # Benchmark loop — track peak GPU memory across all steps
+    peak_used_mb, gpu_total_mb = 0.0, 0.0
     for _ in range(args_cli.num_frames):
         actions = 2.0 * torch.rand(num_envs, action_dim, device=device) - 1.0
         env.step(actions)
+        used, total = _query_gpu_memory()
+        if used > peak_used_mb:
+            peak_used_mb, gpu_total_mb = used, total
 
     # Signal nsys to stop capture
     torch.cuda.cudart().cudaProfilerStop()
 
-    # Report GPU memory usage
-    mem_allocated_mb = torch.cuda.memory_allocated() / 1024**2
-    mem_reserved_mb = torch.cuda.memory_reserved() / 1024**2
-    peak_mem_mb = torch.cuda.max_memory_allocated() / 1024**2
+    gpu_mem_used_mb = peak_used_mb
+    gpu_mem_total_mb = gpu_total_mb
+    print(f"[octibenchmark] Step done: {args_cli.num_frames} frames, {num_envs} envs, task={args_cli.task}", flush=True)
+    print(
+        f'[octibenchmark:memory] {{"gpu_used_mb": {gpu_mem_used_mb:.1f}, "gpu_total_mb": {gpu_mem_total_mb:.1f}}}',
+        flush=True,
+    )
 
     env.close()
-
-    print(f"[octibenchmark] Step done: {args_cli.num_frames} frames, {num_envs} envs, task={args_cli.task}")
-    print(
-        f"[octibenchmark:memory] {{"
-        f'"allocated_mb": {mem_allocated_mb:.1f}, '
-        f'"reserved_mb": {mem_reserved_mb:.1f}, '
-        f'"peak_mb": {peak_mem_mb:.1f}'
-        f"}}"
-    )
 
 
 if __name__ == "__main__":

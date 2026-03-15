@@ -58,6 +58,7 @@ import enum
 import itertools
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -67,6 +68,33 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _SCRIPT_DIR.parent.parent
 _BENCHMARK_SCRIPT = _SCRIPT_DIR / "benchmark.py"
 _BENCHMARK_TRAIN_SCRIPT = _SCRIPT_DIR / "benchmark_train.py"
+
+_gpu_metrics_cache: bool | None = None
+
+
+def _gpu_metrics_supported() -> bool:
+    """Check whether ``nsys --gpu-metrics-devices=all`` is usable.
+
+    Runs a lightweight ``nsys`` dry-run once and caches the result.
+    Returns False when the installed GPUs lack privilege or driver
+    support for hardware metric collection.
+    """
+    global _gpu_metrics_cache
+    if _gpu_metrics_cache is not None:
+        return _gpu_metrics_cache
+    try:
+        probe = subprocess.run(
+            ["nsys", "profile", "--gpu-metrics-devices=all", "-o", "/dev/null", "--force-overwrite=true", "sleep", "0"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        _gpu_metrics_cache = probe.returncode == 0
+    except Exception:
+        _gpu_metrics_cache = False
+    if not _gpu_metrics_cache:
+        print("[INFO] GPU hardware metrics not available (privilege or driver). Skipping --gpu-metrics-devices.")
+    return _gpu_metrics_cache
 
 
 class Launcher(enum.Enum):
@@ -93,6 +121,23 @@ class Phase(enum.Enum):
     RSL_RL). No stepping loop is executed."""
 
 
+class ProfileLevel(enum.Enum):
+    """How much detail nsys captures.
+
+    Higher levels produce richer ``.nsys-rep`` files at the cost of
+    increased overhead and larger output files.
+    """
+
+    LIGHT = "light"
+    """Minimal capture: CUDA + NVTX traces only (default).  Low overhead,
+    suitable for quick scaling sweeps."""
+
+    FULL = "full"
+    """Rich capture: adds GPU hardware metrics, CUDA memory tracking,
+    OS runtime traces, GPU context switches, CUDA graph detail, and
+    (when Kit/IsaacSim is in use) Kit-internal NVTX annotations."""
+
+
 @dataclasses.dataclass
 class BenchmarkRun:
     """A single benchmark invocation with all parameters resolved."""
@@ -113,6 +158,8 @@ class BenchmarkRun:
     extra_nvtx_hooks: list[tuple[str, str]] = dataclasses.field(default_factory=list)
     """Extra NVTX hooks as ``(attr_path, label)`` tuples. See
     :func:`~octibenchmark.nvtx_hooks.install_extra_nvtx_hooks`."""
+    profile_level: ProfileLevel = ProfileLevel.LIGHT
+    """Controls nsys capture richness. See :class:`ProfileLevel`."""
 
     @property
     def tag(self) -> str:
@@ -153,26 +200,47 @@ class BenchmarkRun:
     def nsys_command(self, output_path: str) -> list[str]:
         """Build the full nsys + python command for this run."""
         script = str(self.script_path)
+
+        trace_apis = "cuda,nvtx"
+        if self.profile_level == ProfileLevel.FULL:
+            trace_apis = "cuda,nvtx,osrt"
+
         cmd = [
             "nsys",
             "profile",
             "-t",
-            "cuda,nvtx",
+            trace_apis,
             "--capture-range=cudaProfilerApi",
             "--capture-range-end=stop",
             "-o",
             output_path,
             "--force-overwrite=true",
-            sys.executable,
-            script,
-            "--task",
-            self.task,
-            "--num_envs",
-            str(self.num_envs),
-            "--phase",
-            self.phase.value,
-            "--headless",
         ]
+
+        if self.profile_level == ProfileLevel.FULL:
+            if _gpu_metrics_supported():
+                cmd.append("--gpu-metrics-devices=all")
+            cmd.extend(
+                [
+                    "--cuda-memory-usage=true",
+                    "--gpuctxsw=true",
+                    "--cuda-graph-trace=graph:host-and-device",
+                ]
+            )
+
+        cmd.extend(
+            [
+                sys.executable,
+                script,
+                "--task",
+                self.task,
+                "--num_envs",
+                str(self.num_envs),
+                "--phase",
+                self.phase.value,
+                "--headless",
+            ]
+        )
         if self.launcher == Launcher.NON_RL:
             cmd.extend(["--num_frames", str(self.num_frames)])
             cmd.extend(["--warmup_frames", str(self.warmup_frames)])
@@ -181,6 +249,21 @@ class BenchmarkRun:
             cmd.extend(["--warmup_frames", str(self.warmup_frames)])
         if self.extra_nvtx_hooks:
             cmd.extend(["--extra_nvtx_hooks", json.dumps(self.extra_nvtx_hooks)])
+
+        if self.profile_level == ProfileLevel.FULL:
+            cmd.extend(
+                [
+                    "--kit_args",
+                    "--/app/profileFromStart=true"
+                    " --/profiler/enabled=true"
+                    " --/app/profilerBackend=nvtx"
+                    " --/app/profilerMask=1"
+                    " --/plugins/carb.profiler-tracy.plugin/fibersAsThreads=false"
+                    " --/profiler/channels/carb.events/enabled=false"
+                    " --/profiler/channels/carb.tasking/enabled=false",
+                ]
+            )
+
         cmd.extend(self.all_hydra_args)
         return cmd
 
@@ -262,6 +345,10 @@ class BenchmarkMatrix:
         ]
     """
 
+    profile_level: ProfileLevel = ProfileLevel.LIGHT
+    """Controls nsys capture richness for all runs in this matrix.
+    See :class:`ProfileLevel`."""
+
     def runs(self) -> list[BenchmarkRun]:
         """Generate all benchmark runs from the matrix axes.
 
@@ -293,6 +380,7 @@ class BenchmarkMatrix:
                     max_iterations=self.max_iterations,
                     hydra_args=list(self.hydra_args),
                     extra_nvtx_hooks=list(self.extra_nvtx_hooks),
+                    profile_level=self.profile_level,
                 )
                 all_runs.append(run)
 
@@ -375,6 +463,7 @@ class BenchmarkMatrix:
         tag: str | None = None,
         dry_run: bool = False,
         verbose: bool = False,
+        profile_level: ProfileLevel | None = None,
     ) -> dict[str, dict]:
         """Execute all runs and optionally log to wandb.
 
@@ -389,10 +478,16 @@ class BenchmarkMatrix:
                 the same experiment run on different hardware.
             dry_run: Print summary table without executing.
             verbose: Show full nsys commands in dry run.
+            profile_level: Override the matrix's :attr:`profile_level`
+                for this execution.  When ``None``, uses the value set
+                on the matrix itself.
 
         Returns:
             Dict mapping run tags to analysis results.
         """
+        if profile_level is not None:
+            self.profile_level = profile_level
+
         valid_runs = self.runs()
         if not valid_runs:
             print("[BenchmarkMatrix] No runs to execute.")
@@ -410,66 +505,228 @@ class BenchmarkMatrix:
         print(f"[BenchmarkMatrix] {len(valid_runs)} runs to execute.")
         print(f"[BenchmarkMatrix] Output directory: {output_dir}")
 
+        use_wandb = not no_wandb
+        if use_wandb:
+            os.environ["WANDB_SILENT"] = "true"
+            sweep_axis_names = sorted({k for r in valid_runs for k in r.hydra_overrides})
+
+        # Group runs by config so we know when a group is complete.
+        from collections import defaultdict
+
+        pending_groups: dict[tuple, list] = defaultdict(list)
+        group_run_counts: dict[tuple, int] = defaultdict(int)
+        for r in valid_runs:
+            overrides = r.hydra_overrides
+            override_key = tuple(overrides.get(a, "") for a in sweep_axis_names) if use_wandb else ()
+            gk = (r.task, override_key, r.launcher.value)
+            group_run_counts[gk] += 1
+
         all_results = {}
         failed_runs = []
+        wandb_run_count = 0
+        wandb_group: str | None = None
         for i, run in enumerate(valid_runs):
             out_path = os.path.join(output_dir, run.tag)
             cmd = run.nsys_command(out_path)
 
-            print(f"  [{i + 1}/{len(valid_runs)}] {run.tag} ... ", end="", flush=True)
-
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            if verbose:
+                print(f"  [{i + 1}/{len(valid_runs)}] {run.tag}")
+                print(f"    $ {' '.join(cmd)}")
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                stderr = result.stderr or ""
+                stdout = result.stdout or ""
+                if stderr:
+                    sys.stderr.write(stderr)
+                if stdout:
+                    sys.stdout.write(stdout)
+            else:
+                print(f"  [{i + 1}/{len(valid_runs)}] {run.tag} ... ", end="", flush=True)
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                stderr = result.stderr or ""
+                stdout = result.stdout or ""
             nsys_rep = out_path + ".nsys-rep"
 
             if result.returncode != 0 or not os.path.exists(nsys_rep):
-                # Detect common failure reasons from stderr
-                stderr = result.stderr or ""
-                if "OutOfMemoryError" in stderr or "out of memory" in stderr.lower():
+                combined = (stderr + "\n" + stdout).strip()
+
+                if "OutOfMemoryError" in combined or "out of memory" in combined.lower():
                     reason = "OOM"
-                elif "HYDRA_FULL_ERROR" in stderr:
+                elif "HYDRA_FULL_ERROR" in combined:
                     reason = "config error"
                 else:
                     reason = f"exit code {result.returncode}"
-                print(f"FAILED ({reason})")
-                failed_runs.append((run.tag, reason))
+                log_path = out_path + ".error.log"
+                with open(log_path, "w") as f:
+                    f.write(f"=== COMMAND ===\n{' '.join(cmd)}\n\n")
+                    f.write(f"=== RETURN CODE ===\n{result.returncode}\n\n")
+                    f.write(f"=== STDERR ===\n{stderr}\n\n")
+                    f.write(f"=== STDOUT ===\n{stdout}\n")
                 if verbose:
-                    # Show last few lines of stderr for debugging
-                    tail = stderr.strip().split("\n")[-5:]
-                    for line in tail:
-                        print(f"    {line}")
+                    print(f"    FAILED ({reason}) → {log_path}")
+                else:
+                    print(f"FAILED ({reason}) → {log_path}")
+                failed_runs.append((run.tag, reason))
+
+                if use_wandb:
+                    overrides = run.hydra_overrides
+                    override_key = tuple(overrides.get(a, "") for a in sweep_axis_names)
+                    group_key = (run.task, override_key, run.launcher.value)
+                    group_run_counts[group_key] -= 1
                 continue
 
             from octibenchmark.analyze import analyze
 
             analysis = analyze(nsys_rep, kernel_patterns)
 
+            # Parse memory stats printed by benchmark.py (check both
+            # stdout and stderr since Isaac Sim may redirect stdout)
+            combined_out = stdout + "\n" + stderr
+            mem_match = re.search(r"\[octibenchmark:memory\]\s*(\{.*\})", combined_out)
+            if mem_match:
+                try:
+                    analysis["memory"] = json.loads(mem_match.group(1))
+                except json.JSONDecodeError:
+                    pass
+
             # Attach run metadata to the analysis for wandb grouping
             analysis["_meta"] = dataclasses.asdict(run)
             all_results[run.tag] = analysis
             print("OK")
 
+            # Incrementally save results
+            json_path = os.path.join(output_dir, "matrix_results.json")
+            with open(json_path, "w") as f:
+                json.dump(all_results, f, indent=2, default=str)
+
+            # Accumulate results per config group; upload to wandb when complete
+            if use_wandb:
+                overrides = run.hydra_overrides
+                override_key = tuple(overrides.get(a, "") for a in sweep_axis_names)
+                group_key = (run.task, override_key, run.launcher.value)
+                pending_groups[group_key].append((run.num_envs, analysis, run.tag))
+
+                if len(pending_groups[group_key]) >= group_run_counts[group_key]:
+                    wandb_group = _flush_wandb_group(
+                        group_key,
+                        pending_groups[group_key],
+                        sweep_axis_names,
+                        wandb_project,
+                        wandb_entity,
+                        wandb_group,
+                        tag,
+                        output_dir,
+                        valid_runs,
+                    )
+                    wandb_run_count += 1
+
         if failed_runs:
             print(f"\n[BenchmarkMatrix] {len(failed_runs)} run(s) failed:")
-            for tag, reason in failed_runs:
-                print(f"  {tag}: {reason}")
+            for failed_tag, reason in failed_runs:
+                print(f"  {failed_tag}: {reason}")
 
-        # Save raw results
+        # Flush any remaining partial groups (from failed runs reducing count)
+        if use_wandb:
+            for group_key, pending in pending_groups.items():
+                if pending:
+                    wandb_group = _flush_wandb_group(
+                        group_key,
+                        pending,
+                        sweep_axis_names,
+                        wandb_project,
+                        wandb_entity,
+                        wandb_group,
+                        tag,
+                        output_dir,
+                        valid_runs,
+                    )
+                    wandb_run_count += 1
+            if wandb_run_count:
+                print(f"\n[BenchmarkMatrix] wandb group: {wandb_group}")
+                print(f"[BenchmarkMatrix] {wandb_run_count} wandb runs created")
+
         json_path = os.path.join(output_dir, "matrix_results.json")
-        with open(json_path, "w") as f:
-            json.dump(all_results, f, indent=2, default=str)
-        print(f"\n[BenchmarkMatrix] Results saved to: {json_path}")
-
-        # Log to wandb
-        if not no_wandb and all_results:
-            _log_matrix_to_wandb(
-                all_results,
-                wandb_project,
-                wandb_entity,
-                kernel_patterns,
-                tag,
-            )
-
+        if all_results:
+            with open(json_path, "w") as f:
+                json.dump(all_results, f, indent=2, default=str)
+            print(f"[BenchmarkMatrix] Results saved to: {json_path}")
         return all_results
+
+
+def _flush_wandb_group(
+    group_key: tuple,
+    env_results: list[tuple[int, dict, str]],
+    sweep_axis_names: list[str],
+    wandb_project: str,
+    wandb_entity: str | None,
+    wandb_group: str | None,
+    tag: str | None,
+    output_dir: str | None,
+    all_runs: list,
+) -> str:
+    """Create one wandb run for a config group and log all its data points.
+
+    Returns the wandb group name (computed on first call).
+    """
+    import wandb
+
+    task, override_key, launcher = group_key
+
+    if wandb_group is None:
+        tasks = sorted({r.task for r in all_runs})
+        short_tasks = "_".join(_shorten_task(t) for t in tasks)
+        wandb_group = f"matrix_{short_tasks}" if len(tasks) <= 3 else f"matrix_{len(tasks)}_tasks"
+        if tag:
+            wandb_group = f"{wandb_group}_{tag}"
+
+    config_parts = [_shorten_override(v) for v in override_key if v]
+    config_label = "/".join(config_parts) if config_parts else "default"
+    short_task = _shorten_task(task)
+    run_name = f"{short_task}/{config_label}/{launcher}"
+    if tag:
+        run_name = f"{run_name} [{tag}]"
+
+    run_config = {
+        "task": task,
+        "launcher": launcher,
+        "overrides": {k: v for k, v in zip(sweep_axis_names, override_key)},
+    }
+    if tag:
+        run_config["tag"] = tag
+
+    wandb.init(
+        project=wandb_project,
+        entity=wandb_entity,
+        group=wandb_group,
+        name=run_name,
+        tags=[tag] if tag else None,
+        config=run_config,
+        reinit=True,
+    )
+    wandb.define_metric("num_envs", hidden=True)
+    wandb.define_metric("*", step_metric="num_envs")
+
+    for num_envs, analysis, _run_tag in sorted(env_results, key=lambda x: x[0]):
+        _log_single_result(analysis, num_envs, output_dir, _run_tag)
+
+    # Upload .nsys-rep profiles as artifact
+    if output_dir:
+        artifact = wandb.Artifact(
+            name=f"nsys-profiles-{run_name.replace('/', '-').replace(' ', '_')}",
+            type="nsys-profile",
+            description=f"Nsight Systems profiles for {run_name}",
+        )
+        files_added = 0
+        for _num_envs, _analysis, run_tag in env_results:
+            nsys_path = os.path.join(output_dir, f"{run_tag}.nsys-rep")
+            if os.path.isfile(nsys_path):
+                artifact.add_file(nsys_path, name=f"{run_tag}.nsys-rep")
+                files_added += 1
+        if files_added:
+            wandb.log_artifact(artifact)
+
+    wandb.finish()
+    env_results.clear()
+    return wandb_group
 
 
 def _shorten_task(task: str) -> str:
@@ -524,143 +781,94 @@ def _shorten_override(value: str) -> str:
     return "_".join(vals) if vals else value
 
 
-def _log_matrix_to_wandb(
-    all_results: dict[str, dict],
-    wandb_project: str,
-    wandb_entity: str | None,
-    kernel_patterns: list[str] | None,
-    tag: str | None = None,
+_TERM_PATTERN = re.compile(r"^(\w+)\.term(?:\[([^\]]+)\])?:(.+)$")
+
+
+_TOP_RANGES = {
+    "env.step",
+    "sim.step",
+    "action.process",
+    "observation.compute",
+    "reward.compute",
+    "termination.compute",
+    "event.compute",
+    "scene.write_data_to_sim",
+    "scene.update",
+}
+
+
+def _log_single_result(
+    analysis: dict,
+    num_envs: int,
+    output_dir: str | None,
+    run_tag: str,
 ):
-    """Log benchmark matrix results to wandb.
-
-    Creates one wandb run per config group (task + overrides + launcher),
-    all within the same wandb group. This makes wandb overlay different
-    configs as separate lines on the same chart panel.
-
-    Each chart panel = one NVTX range (e.g. ``env.step``).
-    Each line = one config (e.g. ``newton_rgb/128x128``).
-    X-axis = ``num_envs``.
+    """Log one benchmark result to the currently active wandb run.
 
     Args:
-        all_results: Dict mapping run tags to analysis results.
-        wandb_project: wandb project name.
-        wandb_entity: wandb entity (team/user).
-        kernel_patterns: Kernel patterns used (for labeling).
-        tag: Custom tag (e.g. GPU name) appended to wandb group and
-            run names to distinguish the same experiment across hardware.
+        analysis: Analysis dict from :func:`octibenchmark.analyze.analyze`.
+        num_envs: Number of environments for this run.
+        output_dir: Directory containing ``.nsys-rep`` files.
+        run_tag: Tag identifying this run (for artifact naming).
     """
     import wandb
 
-    # Collect all unique tasks for naming
-    tasks = sorted({r["_meta"]["task"] for r in all_results.values()})
+    log_data: dict = {"num_envs": num_envs}
+    gpu_timing = analysis.get("gpu_timing", {})
+    has_gpu = bool(gpu_timing)
 
-    # Discover all hydra sweep axis names from the metadata
-    sweep_axis_names = set()
-    for result in all_results.values():
-        sweep_axis_names.update(result["_meta"].get("hydra_overrides", {}).keys())
-    sweep_axis_names = sorted(sweep_axis_names)
+    # Line charts: log both GPU kernel time and CPU wall time for top ranges
+    nvtx_by_name = {n["name"]: n for n in analysis.get("nvtx_ranges", [])}
+    for name in _TOP_RANGES:
+        nvtx_entry = nvtx_by_name.get(name)
+        if nvtx_entry is None:
+            continue
+        log_data[f"wall/{name} (ms)"] = nvtx_entry["avg_ns"] / 1e6
+        if has_gpu:
+            gpu_entry = gpu_timing.get(name)
+            if gpu_entry is not None:
+                log_data[f"gpu/{name} (ms)"] = gpu_entry["gpu_ns"] / 1e6
 
-    # Group by (task, hydra_overrides, launcher) → sweep num_envs
-    from collections import defaultdict
+    env_step = nvtx_by_name.get("env.step")
+    if env_step and env_step["avg_ns"] > 0:
+        log_data["effective_fps"] = num_envs / (env_step["avg_ns"] / 1e9)
 
-    groups = defaultdict(list)
-    for run_tag, result in all_results.items():
-        meta = result["_meta"]
-        overrides = meta.get("hydra_overrides", {})
-        override_key = tuple(overrides.get(a, "") for a in sweep_axis_names)
-        group_key = (meta["task"], override_key, meta["launcher"])
-        groups[group_key].append((meta["num_envs"], result))
+    mem = analysis.get("memory")
+    if mem and "gpu_used_mb" in mem:
+        log_data["gpu_memory_used_mb"] = mem["gpu_used_mb"]
 
-    # wandb group name — shared across all runs so they overlay
-    short_tasks = "_".join(_shorten_task(t) for t in tasks)
-    wandb_group = f"matrix_{short_tasks}" if len(tasks) <= 3 else f"matrix_{len(tasks)}_tasks"
-    if tag:
-        wandb_group = f"{wandb_group}_{tag}"
+    # Per-term breakdown: one bar chart for GPU time, one for CPU wall time
+    gpu_bar_data = []
+    wall_bar_data = []
+    for nvtx in analysis.get("nvtx_ranges", []):
+        m = _TERM_PATTERN.match(nvtx["name"])
+        if not m:
+            continue
+        category, group, term = m.group(1).capitalize(), m.group(2), m.group(3)
+        label = f"{category}/{group}/{term}" if group else f"{category}/{term}"
+        wall_bar_data.append([label, nvtx["avg_ns"] / 1e6])
+        if has_gpu:
+            gpu_entry = gpu_timing.get(nvtx["name"])
+            if gpu_entry is not None:
+                gpu_bar_data.append([label, gpu_entry["gpu_ns"] / 1e6])
 
-    run_urls = []
-    for group_idx, (group_key, env_results) in enumerate(groups.items()):
-        task, override_key, launcher = group_key
-        config_parts = [_shorten_override(v) for v in override_key if v]
-        config_label = "/".join(config_parts) if config_parts else "default"
-        short_task = _shorten_task(task)
-        run_name = f"{short_task}/{config_label}/{launcher}"
-        if tag:
-            run_name = f"{run_name} [{tag}]"
-
-        run_config = {
-            "task": task,
-            "launcher": launcher,
-            "overrides": {k: v for k, v in zip(sweep_axis_names, override_key)},
-        }
-        if tag:
-            run_config["tag"] = tag
-
-        run = wandb.init(
-            project=wandb_project,
-            entity=wandb_entity,
-            group=wandb_group,
-            name=run_name,
-            tags=[tag] if tag else None,
-            config=run_config,
-            reinit=True,
+    if gpu_bar_data:
+        gpu_bar_data.sort(key=lambda r: r[1], reverse=True)
+        gpu_table = wandb.Table(data=gpu_bar_data, columns=["term", "gpu_ms"])
+        log_data[f"gpu_breakdown/{num_envs}_envs"] = wandb.plot.bar(
+            gpu_table,
+            "term",
+            "gpu_ms",
+            title=f"Per-term GPU Kernel Time ({num_envs} envs)",
+        )
+    if wall_bar_data:
+        wall_bar_data.sort(key=lambda r: r[1], reverse=True)
+        wall_table = wandb.Table(data=wall_bar_data, columns=["term", "wall_ms"])
+        log_data[f"wall_breakdown/{num_envs}_envs"] = wandb.plot.bar(
+            wall_table,
+            "term",
+            "wall_ms",
+            title=f"Per-term CPU Wall Time ({num_envs} envs)",
         )
 
-        # Set num_envs as x-axis for all metrics
-        wandb.define_metric("num_envs")
-        wandb.define_metric("*", step_metric="num_envs")
-
-        # Log the summary table only in the first run
-        if group_idx == 0:
-            table_rows = []
-            base_columns = ["task", "num_envs"] + sweep_axis_names + ["launcher", "phase"]
-            metric_columns = ["nvtx_range", "calls", "total_ms", "avg_ms", "pct_of_step"]
-
-            for run_tag, result in all_results.items():
-                meta = result["_meta"]
-                ovr = meta.get("hydra_overrides", {})
-                for nvtx in result.get("nvtx_ranges", []):
-                    step_total_ns = 0
-                    for r in result.get("nvtx_ranges", []):
-                        if r["name"] == "env.step":
-                            step_total_ns = r["total_ns"]
-                            break
-                    pct = (nvtx["total_ns"] / step_total_ns * 100) if step_total_ns else 0
-                    row = [meta["task"], meta["num_envs"]]
-                    for axis_name in sweep_axis_names:
-                        row.append(ovr.get(axis_name, ""))
-                    row.extend(
-                        [
-                            meta["launcher"],
-                            meta.get("phase", "step"),
-                            nvtx["name"],
-                            nvtx["count"],
-                            nvtx["total_ns"] / 1e6,
-                            nvtx["avg_ns"] / 1e6,
-                            pct,
-                        ]
-                    )
-                    table_rows.append(row)
-            table = wandb.Table(columns=base_columns + metric_columns, data=table_rows)
-            wandb.log({"benchmark_matrix": table})
-
-        # Log line chart data — simple metric names so all runs share panels
-        for num_envs, result in sorted(env_results, key=lambda x: x[0]):
-            log_data = {"num_envs": num_envs}
-
-            for nvtx in result.get("nvtx_ranges", []):
-                log_data[f"{nvtx['name']} (ms)"] = nvtx["avg_ns"] / 1e6
-
-                if nvtx["name"] == "env.step" and nvtx["avg_ns"] > 0:
-                    log_data["effective_fps"] = num_envs / (nvtx["avg_ns"] / 1e9)
-
-            if result.get("kernel_aggregations"):
-                for pattern, stats in result["kernel_aggregations"].items():
-                    log_data[f"kernel:{pattern} (ms)"] = stats["total_ms"]
-
-            wandb.log(log_data)
-
-        run_urls.append(run.url)
-        run.finish()
-
-    print(f"\n[BenchmarkMatrix] wandb group: {wandb_group}")
-    print(f"[BenchmarkMatrix] {len(run_urls)} wandb runs created")
+    wandb.log(log_data)

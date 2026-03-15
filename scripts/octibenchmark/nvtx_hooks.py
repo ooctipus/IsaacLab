@@ -15,11 +15,16 @@ NVTX push/pop calls themselves (~100 ns each).
 
 from __future__ import annotations
 
+import torch
 import torch.cuda.nvtx as nvtx
 
 
 def _wrap_nvtx(obj: object, method_name: str, label: str):
     """Replace ``obj.method_name`` with a wrapper that emits an NVTX range.
+
+    Includes a ``torch.cuda.synchronize()`` before popping the range so
+    that CPU wall time accurately reflects the GPU work launched within
+    the range, rather than just kernel launch overhead.
 
     Args:
         obj: The object whose method to wrap.
@@ -33,6 +38,7 @@ def _wrap_nvtx(obj: object, method_name: str, label: str):
         try:
             return orig(*args, **kwargs)
         finally:
+            torch.cuda.synchronize()
             nvtx.range_pop()
 
     setattr(obj, method_name, wrapped)
@@ -214,6 +220,7 @@ class _NvtxCallableProxy:
         try:
             return self._orig(*args, **kwargs)
         finally:
+            torch.cuda.synchronize()
             nvtx.range_pop()
 
     def __getattr__(self, name):

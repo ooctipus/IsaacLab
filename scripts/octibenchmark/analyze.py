@@ -232,6 +232,151 @@ def query_gpu_kernels(db_path: str) -> list[dict]:
     return results
 
 
+def query_cuda_memory(db_path: str) -> dict:
+    """Extract CUDA memory allocation statistics from the sqlite database.
+
+    Queries ``CUPTI_ACTIVITY_KIND_MEMORY2`` (or ``CUPTI_ACTIVITY_KIND_MEMORY``)
+    for allocation/free events.  Returns an empty dict when the table is
+    absent (e.g. when captured with ``--profile_level light``).
+
+    Args:
+        db_path: Path to the nsys sqlite database.
+
+    Returns:
+        Dict with keys ``peak_allocated_bytes``, ``total_allocations``,
+        ``total_frees``, or empty dict if no data.
+    """
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    tables = {r[0] for r in cursor.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+
+    mem_table = None
+    for candidate in ["CUPTI_ACTIVITY_KIND_MEMORY2", "CUPTI_ACTIVITY_KIND_MEMORY"]:
+        if candidate in tables:
+            mem_table = candidate
+            break
+
+    if mem_table is None:
+        conn.close()
+        return {}
+
+    col_info = cursor.execute(f"PRAGMA table_info({mem_table})").fetchall()
+    col_names = {row[1] for row in col_info}
+
+    result: dict = {}
+    try:
+        if "bytes" in col_names and "memoryOperationType" in col_names:
+            # memoryOperationType: 1 = allocate, 2 = free (CUPTI convention)
+            row = cursor.execute(
+                f"SELECT MAX(bytes) AS peak, "
+                f"SUM(CASE WHEN memoryOperationType = 1 THEN 1 ELSE 0 END) AS allocs, "
+                f"SUM(CASE WHEN memoryOperationType = 2 THEN 1 ELSE 0 END) AS frees "
+                f"FROM {mem_table}"
+            ).fetchone()
+            if row and row[0] is not None:
+                result = {
+                    "peak_allocated_bytes": row[0],
+                    "total_allocations": row[1] or 0,
+                    "total_frees": row[2] or 0,
+                }
+        elif "bytes" in col_names:
+            row = cursor.execute(f"SELECT MAX(bytes) AS peak, COUNT(*) AS cnt FROM {mem_table}").fetchone()
+            if row and row[0] is not None:
+                result = {
+                    "peak_allocated_bytes": row[0],
+                    "total_allocations": row[1] or 0,
+                    "total_frees": 0,
+                }
+    except sqlite3.OperationalError as e:
+        print(f"[WARNING] Failed to query CUDA memory table: {e}", file=sys.stderr)
+
+    conn.close()
+    return result
+
+
+def query_gpu_metrics(db_path: str) -> list[dict]:
+    """Extract GPU hardware metric statistics from the sqlite database.
+
+    Queries ``GPU_METRIC_EVENTS`` for counters like SM occupancy and
+    DRAM throughput.  Returns an empty list when the table is absent
+    (e.g. when captured with ``--profile_level light``).
+
+    Args:
+        db_path: Path to the nsys sqlite database.
+
+    Returns:
+        List of dicts with keys ``metric_name``, ``min_value``,
+        ``avg_value``, ``max_value``, ``sample_count``.
+    """
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    tables = {r[0] for r in cursor.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+
+    if "GPU_METRIC_EVENTS" not in tables:
+        conn.close()
+        return []
+
+    col_info = cursor.execute("PRAGMA table_info(GPU_METRIC_EVENTS)").fetchall()
+    col_names = {row[1] for row in col_info}
+
+    results: list[dict] = []
+
+    # Determine name column — varies across nsys versions
+    if "metricName" in col_names:
+        name_col = "metricName"
+    elif "typeId" in col_names and "StringIds" in tables:
+        name_col = None  # join needed
+    else:
+        conn.close()
+        return []
+
+    value_col = "value" if "value" in col_names else None
+    if value_col is None:
+        conn.close()
+        return []
+
+    try:
+        if name_col:
+            query = f"""
+                SELECT {name_col} AS metric_name,
+                       MIN({value_col}) AS min_value,
+                       AVG({value_col}) AS avg_value,
+                       MAX({value_col}) AS max_value,
+                       COUNT(*) AS sample_count
+                FROM GPU_METRIC_EVENTS
+                GROUP BY {name_col}
+                ORDER BY metric_name
+            """
+        else:
+            query = f"""
+                SELECT s.value AS metric_name,
+                       MIN(g.{value_col}) AS min_value,
+                       AVG(g.{value_col}) AS avg_value,
+                       MAX(g.{value_col}) AS max_value,
+                       COUNT(*) AS sample_count
+                FROM GPU_METRIC_EVENTS g
+                JOIN StringIds s ON g.typeId = s.id
+                GROUP BY s.value
+                ORDER BY s.value
+            """
+        for row in cursor.execute(query):
+            results.append(
+                {
+                    "metric_name": row["metric_name"],
+                    "min_value": row["min_value"],
+                    "avg_value": row["avg_value"],
+                    "max_value": row["max_value"],
+                    "sample_count": row["sample_count"],
+                }
+            )
+    except sqlite3.OperationalError as e:
+        print(f"[WARNING] Failed to query GPU_METRIC_EVENTS: {e}", file=sys.stderr)
+
+    conn.close()
+    return results
+
+
 def aggregate_by_patterns(kernels: list[dict], patterns: list[str]) -> dict[str, dict]:
     """Aggregate kernel times by regex patterns.
 
@@ -789,12 +934,18 @@ def format_step_anatomy_averaged(averaged: list[dict], num_steps: int) -> str:
 def analyze(nsys_rep_path: str, kernel_patterns: list[str] | None = None) -> dict:
     """Run full analysis on an nsys-rep file.
 
+    Automatically extracts CUDA memory and GPU metric data when the
+    corresponding tables are present (i.e. captured with
+    ``--profile_level full``).
+
     Args:
         nsys_rep_path: Path to the ``.nsys-rep`` file.
         kernel_patterns: Optional regex patterns for kernel aggregation.
 
     Returns:
-        Dict with keys: nvtx_ranges, gpu_kernels, kernel_aggregations.
+        Dict with keys: nvtx_ranges, gpu_kernels, and optionally
+        kernel_aggregations, cuda_memory, gpu_metrics, gpu_timing,
+        anatomy_steps.
     """
     sqlite_path = export_to_sqlite(nsys_rep_path)
     nvtx_ranges = query_nvtx_ranges(sqlite_path)
@@ -807,6 +958,31 @@ def analyze(nsys_rep_path: str, kernel_patterns: list[str] | None = None) -> dic
 
     if kernel_patterns:
         result["kernel_aggregations"] = aggregate_by_patterns(gpu_kernels, kernel_patterns)
+
+    cuda_mem = query_cuda_memory(sqlite_path)
+    if cuda_mem:
+        result["cuda_memory"] = cuda_mem
+
+    gpu_met = query_gpu_metrics(sqlite_path)
+    if gpu_met:
+        result["gpu_metrics"] = gpu_met
+
+    # GPU-attributed timing via step anatomy correlation.
+    # Aggregates the sequential per-range anatomy (where ranges like
+    # sim.step may appear multiple times due to decimation) into
+    # per-name totals: {range_name: {gpu_ns, wall_ns, kernel_count}}.
+    anatomy_avg, num_steps = query_step_anatomy_averaged(sqlite_path)
+    if anatomy_avg and num_steps > 0:
+        gpu_timing: dict[str, dict[str, float]] = {}
+        for entry in anatomy_avg:
+            name = entry["nvtx_range"]
+            if name not in gpu_timing:
+                gpu_timing[name] = {"gpu_ns": 0.0, "wall_ns": 0.0, "kernel_count": 0.0}
+            gpu_timing[name]["gpu_ns"] += entry["avg_ns"]
+            gpu_timing[name]["wall_ns"] += entry.get("avg_wall_ns", 0.0)
+            gpu_timing[name]["kernel_count"] += entry["avg_kernel_count"]
+        result["gpu_timing"] = gpu_timing
+        result["anatomy_steps"] = num_steps
 
     return result
 
