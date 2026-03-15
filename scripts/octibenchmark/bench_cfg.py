@@ -506,6 +506,14 @@ class BenchmarkMatrix:
             output_dir = tempfile.mkdtemp(prefix="octibench_")
         os.makedirs(output_dir, exist_ok=True)
 
+        # Protect the parent process from the OOM killer — lower our OOM
+        # score so Linux strongly prefers killing child subprocesses.
+        try:
+            with open("/proc/self/oom_score_adj", "w") as f:
+                f.write("-500")
+        except (PermissionError, FileNotFoundError):
+            pass
+
         print(f"[BenchmarkMatrix] {len(valid_runs)} runs to execute.")
         print(f"[BenchmarkMatrix] Output directory: {output_dir}")
 
@@ -524,13 +532,20 @@ class BenchmarkMatrix:
         wandb_run_count = 0
         wandb_group: str | None = None
         prev_group_key: tuple | None = None
+        skip_group: tuple | None = None
         for i, run in enumerate(valid_runs):
-            # Flush the previous group when we transition to a new one
+            # Compute group key for this run
             if use_wandb:
                 overrides = run.hydra_overrides
                 override_key = tuple(overrides.get(a, "") for a in sweep_axis_names)
                 cur_group_key = (run.task, override_key, run.launcher.value)
-                if prev_group_key is not None and cur_group_key != prev_group_key and pending_groups[prev_group_key]:
+            else:
+                overrides = run.hydra_overrides
+                cur_group_key = (run.task, tuple(sorted(overrides.items())), run.launcher.value)
+
+            # Flush the previous group when we transition to a new one
+            if prev_group_key is not None and cur_group_key != prev_group_key:
+                if use_wandb and pending_groups[prev_group_key]:
                     wandb_group = _flush_wandb_group(
                         prev_group_key,
                         pending_groups.pop(prev_group_key),
@@ -543,7 +558,21 @@ class BenchmarkMatrix:
                         valid_runs,
                     )
                     wandb_run_count += 1
-                prev_group_key = cur_group_key
+                if skip_group == prev_group_key:
+                    skip_group = None
+            prev_group_key = cur_group_key
+
+            # If a previous run in this group OOM'd/crashed, skip remaining
+            # (larger num_envs will only make it worse)
+            if skip_group == cur_group_key:
+                reason = "skipped (earlier run in group failed)"
+                if verbose:
+                    print(f"  [{i + 1}/{len(valid_runs)}] {run.tag}")
+                    print(f"    SKIPPED (earlier failure in group)")
+                else:
+                    print(f"  [{i + 1}/{len(valid_runs)}] {run.tag} ... SKIPPED")
+                failed_runs.append((run.tag, reason))
+                continue
 
             out_path = os.path.join(output_dir, run.tag)
             is_plain = run.profile_level == ProfileLevel.PLAIN
@@ -576,6 +605,38 @@ class BenchmarkMatrix:
                 stderr = result.stderr or ""
                 stdout = result.stdout or ""
 
+            if result.returncode != 0 or not os.path.exists(nsys_rep):
+                combined = (stderr + "\n" + stdout).strip()
+
+                is_oom = "OutOfMemoryError" in combined or "out of memory" in combined.lower()
+                is_killed = result.returncode in (-9, 137)
+                if is_oom or is_killed:
+                    reason = "OOM" if is_oom else "killed (likely OOM)"
+                    skip_group = cur_group_key
+                elif "HYDRA_FULL_ERROR" in combined:
+                    reason = "config error"
+                else:
+                    reason = f"exit code {result.returncode}"
+                log_path = out_path + ".error.log"
+                with open(log_path, "w") as f:
+                    f.write(f"=== COMMAND ===\n{' '.join(cmd)}\n\n")
+                    f.write(f"=== RETURN CODE ===\n{result.returncode}\n\n")
+                    f.write(f"=== STDERR ===\n{stderr}\n\n")
+                    f.write(f"=== STDOUT ===\n{stdout}\n")
+                if verbose:
+                    print(f"    FAILED ({reason}) → {log_path}")
+                else:
+                    print(f"FAILED ({reason}) → {log_path}")
+                failed_runs.append((run.tag, reason))
+
+                continue
+
+            from octibenchmark.analyze import analyze
+
+            analysis = analyze(nsys_rep, kernel_patterns)
+
+            # Parse memory stats printed by benchmark.py (check both
+            # stdout and stderr since Isaac Sim may redirect stdout)
             combined_out = stdout + "\n" + stderr
 
             if is_plain:
