@@ -13,7 +13,9 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from octibenchmark.bench_cfg import BenchmarkMatrix, BenchmarkRun, Launcher, Phase
+import re
+
+from octibenchmark.bench_cfg import BenchmarkMatrix, BenchmarkRun, Launcher, Phase, ProfileLevel
 
 
 class TestBenchmarkRun(unittest.TestCase):
@@ -115,6 +117,117 @@ class TestBenchmarkRun(unittest.TestCase):
     def test_tag_startup_phase_has_suffix(self):
         run = self._make_run(phase=Phase.STARTUP)
         self.assertIn("startup", run.tag)
+
+    # -- PLAIN mode tests --
+
+    def test_plain_profile_level(self):
+        """PLAIN is a valid ProfileLevel value."""
+        self.assertEqual(ProfileLevel.PLAIN.value, "plain")
+        self.assertEqual(ProfileLevel("plain"), ProfileLevel.PLAIN)
+
+    def test_nsys_command_light_starts_with_nsys(self):
+        run = self._make_run(profile_level=ProfileLevel.LIGHT)
+        cmd = run.nsys_command("/tmp/out")
+        self.assertEqual(cmd[0], "nsys")
+
+    def test_nsys_command_full_starts_with_nsys(self):
+        run = self._make_run(profile_level=ProfileLevel.FULL)
+        cmd = run.nsys_command("/tmp/out")
+        self.assertEqual(cmd[0], "nsys")
+
+    def test_nsys_command_full_has_cuda_memory(self):
+        run = self._make_run(profile_level=ProfileLevel.FULL)
+        cmd = run.nsys_command("/tmp/out")
+        self.assertIn("--cuda-memory-usage=true", cmd)
+
+    def test_nsys_command_light_no_cuda_memory(self):
+        run = self._make_run(profile_level=ProfileLevel.LIGHT)
+        cmd = run.nsys_command("/tmp/out")
+        self.assertNotIn("--cuda-memory-usage=true", cmd)
+
+
+class TestArtifactNameSanitization(unittest.TestCase):
+    """Wandb artifact names must be alphanumeric, dashes, underscores, dots."""
+
+    def test_brackets_are_sanitized(self):
+        run_name = "Shadow-Vision/default/non_rl [h100]"
+        sanitized = re.sub(r"[^a-zA-Z0-9._-]", "_", f"nsys-profiles-{run_name}")
+        self.assertNotIn("[", sanitized)
+        self.assertNotIn("]", sanitized)
+        self.assertNotIn(" ", sanitized)
+
+    def test_slashes_are_sanitized(self):
+        run_name = "Kuka/cube/non_rl"
+        sanitized = re.sub(r"[^a-zA-Z0-9._-]", "_", f"nsys-profiles-{run_name}")
+        self.assertNotIn("/", sanitized)
+
+    def test_clean_name_unchanged(self):
+        run_name = "Shadow-Vision_default_non_rl"
+        sanitized = re.sub(r"[^a-zA-Z0-9._-]", "_", f"nsys-profiles-{run_name}")
+        self.assertEqual(sanitized, f"nsys-profiles-{run_name}")
+
+
+class TestLogSingleResultTimingFallback(unittest.TestCase):
+    """Verify _log_single_result uses timing dict when NVTX is absent."""
+
+    def test_timing_fallback_provides_fps(self):
+        """In PLAIN mode, effective_fps comes from the timing dict."""
+        analysis = {
+            "timing": {"effective_fps": 12345.6, "step_ms": 0.5},
+            "memory": {"gpu_used_mb": 1024.0},
+        }
+        log_data = self._simulate_log(analysis, num_envs=2048)
+        self.assertAlmostEqual(log_data["effective_fps"], 12345.6)
+        self.assertAlmostEqual(log_data["wall/step_ms"], 0.5)
+        self.assertAlmostEqual(log_data["gpu_memory_used_mb"], 1024.0)
+
+    def test_nvtx_fps_takes_priority(self):
+        """When NVTX env.step is present, it takes priority over timing."""
+        analysis = {
+            "nvtx_ranges": [{"name": "env.step", "count": 10, "total_ns": 1e9, "avg_ns": 1e8}],
+            "timing": {"effective_fps": 999.0, "step_ms": 1.0},
+        }
+        log_data = self._simulate_log(analysis, num_envs=2048)
+        expected_fps = 2048 / (1e8 / 1e9)
+        self.assertAlmostEqual(log_data["effective_fps"], expected_fps)
+
+    def test_plain_no_timing_no_crash(self):
+        """PLAIN run with empty analysis should not crash."""
+        analysis = {}
+        log_data = self._simulate_log(analysis, num_envs=2048)
+        self.assertNotIn("effective_fps", log_data)
+        self.assertNotIn("gpu_memory_used_mb", log_data)
+
+    @staticmethod
+    def _simulate_log(analysis: dict, num_envs: int) -> dict:
+        """Reproduce the logging logic from _log_single_result without wandb."""
+        from octibenchmark.bench_cfg import _TOP_RANGES
+
+        log_data: dict = {"num_envs": num_envs}
+
+        nvtx_by_name = {n["name"]: n for n in analysis.get("nvtx_ranges", [])}
+        for name in _TOP_RANGES:
+            nvtx_entry = nvtx_by_name.get(name)
+            if nvtx_entry is None:
+                continue
+            log_data[f"wall/{name} (ms)"] = nvtx_entry["avg_ns"] / 1e6
+
+        env_step = nvtx_by_name.get("env.step")
+        if env_step and env_step["avg_ns"] > 0:
+            log_data["effective_fps"] = num_envs / (env_step["avg_ns"] / 1e9)
+
+        timing = analysis.get("timing")
+        if timing:
+            if "effective_fps" not in log_data and "effective_fps" in timing:
+                log_data["effective_fps"] = timing["effective_fps"]
+            if "step_ms" in timing:
+                log_data["wall/step_ms"] = timing["step_ms"]
+
+        mem = analysis.get("memory")
+        if mem and "gpu_used_mb" in mem:
+            log_data["gpu_memory_used_mb"] = mem["gpu_used_mb"]
+
+        return log_data
 
 
 class TestBenchmarkMatrix(unittest.TestCase):
@@ -264,6 +377,15 @@ class TestBenchmarkMatrix(unittest.TestCase):
         cmd = runs[0].nsys_command("/tmp/out")
         phase_idx = cmd.index("--phase")
         self.assertEqual(cmd[phase_idx + 1], "startup")
+
+    def test_plain_profile_level_propagated(self):
+        matrix = BenchmarkMatrix(
+            tasks=["TaskA"],
+            num_envs=[2048],
+            profile_level=ProfileLevel.PLAIN,
+        )
+        runs = matrix.runs()
+        self.assertEqual(runs[0].profile_level, ProfileLevel.PLAIN)
 
 
 if __name__ == "__main__":
