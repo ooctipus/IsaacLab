@@ -117,6 +117,7 @@ declare -A pool_to_platform=(
   [isaac-dex-l40s-02]="ovx-l40s"
   [isaac-dex-l40s-03]="ovx-l40s"
   [isaac-dev-l40s-04]="ovx-l40s"
+  [groot-gb200-02]="gb200"
 )
 
 # default cluster settings

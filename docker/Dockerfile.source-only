@@ -12,6 +12,10 @@ FROM ${DEPS_BASE_IMAGE}
 ARG ISAACLAB_PATH_ARG
 ENV ISAACLAB_PATH=${ISAACLAB_PATH_ARG}
 
+# Re-create the Isaac Sim symlink (may have been lost if deps image was migrated)
+ARG ISAACSIM_ROOT_PATH_ARG=/isaac-sim
+RUN ln -sf ${ISAACSIM_ROOT_PATH_ARG} ${ISAACLAB_PATH}/_isaac_sim
+
 # Copy only source files (deps already installed in base)
 COPY ../source ${ISAACLAB_PATH}/source
 COPY ../scripts ${ISAACLAB_PATH}/scripts

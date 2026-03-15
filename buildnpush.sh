@@ -409,6 +409,7 @@ else
     -f docker/Dockerfile.source-only \
     --build-arg DEPS_BASE_IMAGE="${DEPS_IMAGE}" \
     --build-arg ISAACLAB_PATH_ARG="${DOCKER_ISAACLAB_PATH}" \
+    --build-arg ISAACSIM_ROOT_PATH_ARG="${DOCKER_ISAACSIM_ROOT_PATH}" \
     -t "${BASE_IMAGE}" \
     .
 fi
