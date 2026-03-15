@@ -576,9 +576,6 @@ class BenchmarkMatrix:
 
             out_path = os.path.join(output_dir, run.tag)
             is_plain = run.profile_level == ProfileLevel.PLAIN
-            cmd = run.nsys_command(out_path) if not is_plain else run.nsys_command(out_path)
-
-            # PLAIN mode: run the script directly without nsys
             if is_plain:
                 script = str(run.script_path)
                 cmd = [sys.executable, script, "--task", run.task, "--num_envs", str(run.num_envs),
@@ -588,6 +585,8 @@ class BenchmarkMatrix:
                 elif run.launcher == Launcher.RSL_RL:
                     cmd.extend(["--max_iterations", str(run.max_iterations), "--warmup_frames", str(run.warmup_frames)])
                 cmd.extend(run.all_hydra_args)
+            else:
+                cmd = run.nsys_command(out_path)
 
             if verbose:
                 print(f"  [{i + 1}/{len(valid_runs)}] {run.tag}")
@@ -605,51 +604,31 @@ class BenchmarkMatrix:
                 stderr = result.stderr or ""
                 stdout = result.stdout or ""
 
-            if result.returncode != 0 or not os.path.exists(nsys_rep):
-                combined = (stderr + "\n" + stdout).strip()
-
-                is_oom = "OutOfMemoryError" in combined or "out of memory" in combined.lower()
-                is_killed = result.returncode in (-9, 137)
-                if is_oom or is_killed:
-                    reason = "OOM" if is_oom else "killed (likely OOM)"
-                    skip_group = cur_group_key
-                elif "HYDRA_FULL_ERROR" in combined:
-                    reason = "config error"
-                else:
-                    reason = f"exit code {result.returncode}"
-                log_path = out_path + ".error.log"
-                with open(log_path, "w") as f:
-                    f.write(f"=== COMMAND ===\n{' '.join(cmd)}\n\n")
-                    f.write(f"=== RETURN CODE ===\n{result.returncode}\n\n")
-                    f.write(f"=== STDERR ===\n{stderr}\n\n")
-                    f.write(f"=== STDOUT ===\n{stdout}\n")
-                if verbose:
-                    print(f"    FAILED ({reason}) → {log_path}")
-                else:
-                    print(f"FAILED ({reason}) → {log_path}")
-                failed_runs.append((run.tag, reason))
-
-                continue
-
-            from octibenchmark.analyze import analyze
-
-            analysis = analyze(nsys_rep, kernel_patterns)
-
-            # Parse memory stats printed by benchmark.py (check both
-            # stdout and stderr since Isaac Sim may redirect stdout)
             combined_out = stdout + "\n" + stderr
 
             if is_plain:
                 # PLAIN: only check exit code, build analysis from stdout
                 if result.returncode != 0:
-                    if "OutOfMemoryError" in combined_out or "out of memory" in combined_out.lower():
-                        reason = "OOM"
+                    is_oom = "OutOfMemoryError" in combined_out or "out of memory" in combined_out.lower()
+                    is_killed = result.returncode in (-9, 137)
+                    if is_oom or is_killed:
+                        reason = "OOM" if is_oom else "killed (likely OOM)"
+                        skip_group = cur_group_key
+                    elif "HYDRA_FULL_ERROR" in combined_out:
+                        reason = "config error"
+                        skip_group = cur_group_key
                     else:
                         reason = f"exit code {result.returncode}"
+                    log_path = out_path + ".error.log"
+                    with open(log_path, "w") as f:
+                        f.write(f"=== COMMAND ===\n{' '.join(cmd)}\n\n")
+                        f.write(f"=== RETURN CODE ===\n{result.returncode}\n\n")
+                        f.write(f"=== STDERR ===\n{stderr}\n\n")
+                        f.write(f"=== STDOUT ===\n{stdout}\n")
                     if verbose:
-                        print(f"    FAILED ({reason})")
+                        print(f"    FAILED ({reason}) → {log_path}")
                     else:
-                        print(f"FAILED ({reason})")
+                        print(f"FAILED ({reason}) → {log_path}")
                     failed_runs.append((run.tag, reason))
                     continue
 
@@ -673,10 +652,14 @@ class BenchmarkMatrix:
                 if result.returncode != 0 or not os.path.exists(nsys_rep):
                     combined = (stderr + "\n" + stdout).strip()
 
-                    if "OutOfMemoryError" in combined or "out of memory" in combined.lower():
-                        reason = "OOM"
+                    is_oom = "OutOfMemoryError" in combined or "out of memory" in combined.lower()
+                    is_killed = result.returncode in (-9, 137)
+                    if is_oom or is_killed:
+                        reason = "OOM" if is_oom else "killed (likely OOM)"
+                        skip_group = cur_group_key
                     elif "HYDRA_FULL_ERROR" in combined:
                         reason = "config error"
+                        skip_group = cur_group_key
                     else:
                         reason = f"exit code {result.returncode}"
                     log_path = out_path + ".error.log"
@@ -814,7 +797,7 @@ def _flush_wandb_group(
     # Upload .nsys-rep profiles as artifact
     if output_dir:
         artifact = wandb.Artifact(
-            name=f"nsys-profiles-{run_name.replace('/', '-').replace(' ', '_')}",
+            name=re.sub(r"[^a-zA-Z0-9._-]", "_", f"nsys-profiles-{run_name}"),
             type="nsys-profile",
             description=f"Nsight Systems profiles for {run_name}",
         )
