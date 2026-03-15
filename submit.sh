@@ -11,9 +11,8 @@ EOF
   exit 1
 }
 
-# Prefer these spec paths; we’ll select one based on num_node
-SPEC_SINGLE="docker/cluster/single_node.yaml"
-SPEC_MULTI="docker/cluster/multi_node.yaml"
+# Unified spec handles both single-node and multi-node via Jinja conditionals
+SPEC="docker/cluster/multi_node.yaml"
 
 truthy() { case "${1,,}" in 1|true|yes|on) return 0;; *) return 1;; esac; }
 falsy() { case "${1,,}" in 0|false|no|off) return 0;; *) return 1;; esac; }
@@ -53,10 +52,8 @@ function build_cluster_str() {
   echo "${str# }"
 }
 
-# Decide which spec to use based on num_node (1 => single, >1 => multi)
-function choose_spec_by_nodes() {
-  local nodes="${cluster[num_node]:-1}"
-  if (( nodes > 1 )); then spec="$SPEC_MULTI"; else spec="$SPEC_SINGLE"; fi
+function choose_spec() {
+  spec="$SPEC"
   [[ -f "$spec" ]] || { echo "Spec file not found: $spec" >&2; exit 1; }
 }
 
@@ -187,7 +184,7 @@ if [[ "$mode" == "pbt" ]]; then
 
   date_time=$(date +'%Y-%m-%dT%H:%M:%S')
   # Pick the right spec now that cluster overrides are parsed
-  choose_spec_by_nodes
+  choose_spec
   cluster_str=$(build_cluster_str)
 
   echo "⏳ Submitting PBT: populations=${kv[num_populations]}"
@@ -292,7 +289,7 @@ if [[ "$mode" == "submit" ]]; then
   fi
 
   # Pick the right spec now that cluster overrides are parsed
-  choose_spec_by_nodes
+  choose_spec
   cluster_str=$(build_cluster_str)
 
   # fixed args

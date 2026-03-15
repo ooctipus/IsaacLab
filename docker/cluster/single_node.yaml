@@ -29,7 +29,6 @@ workflow:
         /workspace/isaaclab/_isaac_sim/python.sh -m torch.distributed.run --nnodes={{num_node}} --nproc_per_node={{num_gpu}} \
           /workspace/isaaclab/{{script}} \
           --distributed \
-          --headless \
           {{args}} \
 
         # Move checkpoints to the output folder used to upload
