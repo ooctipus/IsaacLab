@@ -51,16 +51,6 @@ workflow:
           export WANDB_API_KEY="${WANDB_API_KEY}"
           export WANDB_USERNAME=nvidia
 
-          {% if "benchmark" in script %}
-          # Ensure Nsight Systems is available for profiling benchmark scripts.
-          # Prefer the version already bundled in the container (driver-matched);
-          # only install via apt as a last resort.
-          if ! command -v nsys &>/dev/null; then
-            apt-get update -qq && apt-get install -y -qq nsight-systems
-          fi
-          echo "nsys: $(nsys --version 2>&1 | head -1)"
-          {% endif %}
-
           {% if num_node > 1 or num_gpu > 1 %}
           # Distributed training via torchrun
           /workspace/isaaclab/_isaac_sim/python.sh -m torch.distributed.run \
