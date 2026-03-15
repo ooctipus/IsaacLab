@@ -3,10 +3,25 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from dataclasses import MISSING
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
 from . import mdp
+from .factory_presets import (
+    AssembledOffsetCfg,
+    AssemblyFractionFullCfg,
+    AssemblyFractionPartialCfg,
+    AssemblyRatioCfg,
+    EndEffectorBodyCfg,
+    EntryOffsetCfg,
+    FixedAssetTipCfg,
+    GraspedPoseRangeCfg,
+    GripperJointNamesCfg,
+    HeldAssetAlignOffsetCfg,
+    HeldAssetGraspDiameterCfg,
+    HeldAssetGraspMiddleCfg,
+    HeldAssetGraspPointCfg,
+    IKJointNamesCfg,
+)
 
 
 GRIPPER_GRASP_ASSET_IN_AIR = EventTerm(
@@ -27,10 +42,17 @@ GRIPPER_GRASP_ASSET_IN_AIR = EventTerm(
                 func=mdp.reset_end_effector_around_asset,
                 mode="reset",
                 params={
-                    "fixed_asset_cfg": MISSING,
-                    "fixed_asset_offset": MISSING,
-                    "pose_range_b": MISSING,
-                    "robot_ik_cfg": SceneEntityCfg("robot"),
+                    "fixed_asset_cfg": SceneEntityCfg("held_asset"),
+                    "fixed_asset_offset": HeldAssetGraspMiddleCfg(),
+                    "pose_range_b": {
+                        "x": (-0.005, 0.005),
+                        "y": (-0.005, 0.005),
+                        "z": (-0.015, 0.025),
+                        "roll": (3.141 - 0.1, 3.141 + 0.1),
+                        "pitch": (-0.5, 0.5),
+                        "yaw": (-2.09, 2.09),
+                    },
+                    "robot_ik_cfg": SceneEntityCfg("robot", joint_names=IKJointNamesCfg(), body_names=EndEffectorBodyCfg()),
                     "ik_iterations": (5, 30),
                 }
             ),
@@ -38,7 +60,8 @@ GRIPPER_GRASP_ASSET_IN_AIR = EventTerm(
                 func=mdp.grasp_held_asset,
                 mode="reset",
                 params={
-                    "robot_cfg": SceneEntityCfg("robot", body_names="end_effector"), "held_asset_diameter": MISSING
+                    "robot_cfg": SceneEntityCfg("robot", joint_names=GripperJointNamesCfg(), body_names=EndEffectorBodyCfg()),
+                    "held_asset_diameter": HeldAssetGraspDiameterCfg(),
                 }
             ),
         }
@@ -54,10 +77,11 @@ FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
                 func=mdp.reset_held_asset_on_fixed_asset,
                 mode="reset",
                 params={
-                    "assembled_offset": MISSING,
-                    "entry_offset": MISSING,
-                    "assembly_fraction_range": (0., 1.),
-                    "assembly_ratio": (0., 0., 0.),
+                    "assembled_offset": AssembledOffsetCfg(),
+                    "entry_offset": EntryOffsetCfg(),
+                    "held_asset_align_offset": HeldAssetAlignOffsetCfg(),
+                    "assembly_fraction_range": AssemblyFractionFullCfg(),
+                    "assembly_ratio": AssemblyRatioCfg(),
                     "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
                     "held_asset_cfg": SceneEntityCfg("held_asset"),
                 }
@@ -66,10 +90,17 @@ FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
                 func=mdp.reset_end_effector_around_asset,
                 mode="reset",
                 params={
-                    "fixed_asset_cfg": MISSING,
-                    "fixed_asset_offset": MISSING,
-                    "pose_range_b": MISSING,
-                    "robot_ik_cfg": SceneEntityCfg("robot"),
+                    "fixed_asset_cfg": SceneEntityCfg("held_asset"),
+                    "fixed_asset_offset": HeldAssetGraspMiddleCfg(),
+                    "pose_range_b": {
+                        "x": (-0.005, 0.005),
+                        "y": (-0.005, 0.005),
+                        "z": (-0.015, 0.025),
+                        "roll": (3.141 - 0.1, 3.141 + 0.1),
+                        "pitch": (-0.5, 0.5),
+                        "yaw": (-2.09, 2.09),
+                    },
+                    "robot_ik_cfg": SceneEntityCfg("robot", joint_names=IKJointNamesCfg(), body_names=EndEffectorBodyCfg()),
                     "ik_iterations": (15, 25),
                 }
             ),
@@ -77,7 +108,8 @@ FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
                 func=mdp.grasp_held_asset,
                 mode="reset",
                 params={
-                    "robot_cfg": SceneEntityCfg("robot", body_names="end_effector"), "held_asset_diameter": MISSING
+                    "robot_cfg": SceneEntityCfg("robot", joint_names=GripperJointNamesCfg(), body_names=EndEffectorBodyCfg()),
+                    "held_asset_diameter": HeldAssetGraspDiameterCfg(),
                 }
             ),
         }
@@ -93,10 +125,11 @@ ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
                 func=mdp.reset_held_asset_on_fixed_asset,
                 mode="reset",
                 params={
-                    "assembled_offset": MISSING,
-                    "entry_offset": MISSING,
-                    "assembly_fraction_range": (0., 1.),
-                    "assembly_ratio": (0., 0., 0.),
+                    "assembled_offset": AssembledOffsetCfg(),
+                    "entry_offset": EntryOffsetCfg(),
+                    "held_asset_align_offset": HeldAssetAlignOffsetCfg(),
+                    "assembly_fraction_range": AssemblyFractionPartialCfg(),
+                    "assembly_ratio": AssemblyRatioCfg(),
                     "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
                     "held_asset_cfg": SceneEntityCfg("held_asset"),
                 }
@@ -105,10 +138,17 @@ ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
                 func=mdp.reset_end_effector_around_asset,
                 mode="reset",
                 params={
-                    "fixed_asset_cfg": MISSING,
-                    "fixed_asset_offset": MISSING,
-                    "pose_range_b": MISSING,
-                    "robot_ik_cfg": SceneEntityCfg("robot"),
+                    "fixed_asset_cfg": SceneEntityCfg("held_asset"),
+                    "fixed_asset_offset": HeldAssetGraspMiddleCfg(),
+                    "pose_range_b": {
+                        "x": (-0.005, 0.005),
+                        "y": (-0.005, 0.005),
+                        "z": (-0.015, 0.025),
+                        "roll": (3.141 - 0.1, 3.141 + 0.1),
+                        "pitch": (-0.5, 0.5),
+                        "yaw": (-2.09, 2.09),
+                    },
+                    "robot_ik_cfg": SceneEntityCfg("robot", joint_names=IKJointNamesCfg(), body_names=EndEffectorBodyCfg()),
                     "ik_iterations": (15, 25),
                 }
             ),
@@ -116,7 +156,8 @@ ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
                 func=mdp.grasp_held_asset,
                 mode="reset",
                 params={
-                    "robot_cfg": SceneEntityCfg("robot", body_names="end_effector"), "held_asset_diameter": MISSING
+                    "robot_cfg": SceneEntityCfg("robot", joint_names=GripperJointNamesCfg(), body_names=EndEffectorBodyCfg()),
+                    "held_asset_diameter": HeldAssetGraspDiameterCfg(),
                 }
             ),
         }
@@ -132,10 +173,10 @@ GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER = EventTerm(
                 func=mdp.reset_end_effector_around_asset,
                 mode="reset",
                 params={
-                    "fixed_asset_cfg": MISSING,
-                    "fixed_asset_offset": MISSING,
-                    "pose_range_b": MISSING,
-                    "robot_ik_cfg": SceneEntityCfg("robot"),
+                    "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
+                    "fixed_asset_offset": FixedAssetTipCfg(),
+                    "pose_range_b": GraspedPoseRangeCfg(),
+                    "robot_ik_cfg": SceneEntityCfg("robot", joint_names=IKJointNamesCfg(), body_names=EndEffectorBodyCfg()),
                     "ik_iterations": (10, 20)
                 }
             ),
@@ -143,9 +184,9 @@ GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER = EventTerm(
                 func=mdp.reset_held_asset_in_gripper,
                 mode="reset",
                 params={
-                    "holding_body_cfg": SceneEntityCfg("robot", body_names="end_effector"),
+                    "holding_body_cfg": SceneEntityCfg("robot", body_names=EndEffectorBodyCfg()),
                     "held_asset_cfg": SceneEntityCfg("held_asset"),
-                    "held_asset_graspable_offset": MISSING,
+                    "held_asset_graspable_offset": HeldAssetGraspPointCfg(),
                     "held_asset_inhand_range": {},
                 }
             ),
@@ -153,8 +194,8 @@ GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER = EventTerm(
                 func=mdp.grasp_held_asset,
                 mode="reset",
                 params={
-                    "robot_cfg": SceneEntityCfg("robot", body_names="end_effector"),
-                    "held_asset_diameter": MISSING,
+                    "robot_cfg": SceneEntityCfg("robot", joint_names=GripperJointNamesCfg(), body_names=EndEffectorBodyCfg()),
+                    "held_asset_diameter": HeldAssetGraspDiameterCfg(),
                     "flexible_angle": False
                 }
             ),

@@ -7,14 +7,24 @@ from isaaclab.utils import configclass
 
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.managers import RewardTermCfg as RewTerm
-from isaaclab.managers import SceneEntityCfg
 
 from ...factory_assets_cfg import FRANKA_PANDA_CFG
 from ...factory_env_base import FactoryBaseEnvCfg
-from ...gearmesh_env_cfg import GearMeshEnvCfg, GearMeshSuccessTerminateEnvCfg
-from ...nutthread_env_cfg import NutThreadEnvCfg, NutThreadSuccessTerminateEnvCfg
-from ...peginsert_env_cfg import PegInsertEnvCfg, PegInsertSuccessTerminateEnvCfg
+from ...factory_presets import EndEffectorBodyCfg, GripperJointNamesCfg, IKJointNamesCfg, JointEffortNamesCfg
 from ... import mdp
+
+# Register Franka-specific robot presets
+EndEffectorBodyCfg.franka = "panda_fingertip_centered"
+EndEffectorBodyCfg.default = EndEffectorBodyCfg.franka
+
+GripperJointNamesCfg.franka = ["panda_finger.*"]
+GripperJointNamesCfg.default = GripperJointNamesCfg.franka
+
+IKJointNamesCfg.franka = ["panda_joint.*"]
+IKJointNamesCfg.default = IKJointNamesCfg.franka
+
+JointEffortNamesCfg.franka = "(?!panda_joint7$|panda_finger_.*$).*"
+JointEffortNamesCfg.default = JointEffortNamesCfg.franka
 
 
 @configclass
@@ -52,39 +62,11 @@ class FrankaFactoryEnvMixIn:
         for link in ["panda_leftfinger", "panda_rightfinger"]:
             setattr(self.scene, f"{link}_object_s", ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/" + link))
 
-        self.rewards.joint_effort.params["asset_cfg"] = SceneEntityCfg("robot", joint_names="(?!panda_joint7$|panda_finger_.*$).*")
-        if hasattr(self.rewards, "reach_reward"):
-            self.rewards.reach_reward.params["ee_cfg"] = SceneEntityCfg("robot", body_names="panda_fingertip_centered")
-
         gripper_penality = RewTerm(func=mdp.gripper_asymetric_contact_penalty, weight=-0.02, params={"threshold": 1.0})
         setattr(self.rewards, "bad_finger_contact", gripper_penality)
 
 
 @configclass
-class FrankaNutThreadEnvCfg(FrankaFactoryEnvMixIn, NutThreadEnvCfg):
+class FrankaFactoryTaskEnvCfg(FrankaFactoryEnvMixIn, FactoryBaseEnvCfg):
     pass
 
-
-@configclass
-class FrankaGearMeshEnvCfg(FrankaFactoryEnvMixIn, GearMeshEnvCfg):
-    pass
-
-
-@configclass
-class FrankaPegInsertEnvCfg(FrankaFactoryEnvMixIn, PegInsertEnvCfg):
-    pass
-
-
-@configclass
-class FrankaNutThreadSuccessTerminateEnvCfg(FrankaFactoryEnvMixIn, NutThreadSuccessTerminateEnvCfg):
-    pass
-
-
-@configclass
-class FrankaGearMeshSuccessTerminateEnvCfg(FrankaFactoryEnvMixIn, GearMeshSuccessTerminateEnvCfg):
-    pass
-
-
-@configclass
-class FrankaPegInsertSuccessTerminateEnvCfg(FrankaFactoryEnvMixIn, PegInsertSuccessTerminateEnvCfg):
-    pass

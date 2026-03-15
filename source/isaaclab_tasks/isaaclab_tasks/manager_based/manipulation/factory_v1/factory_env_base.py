@@ -17,11 +17,20 @@ from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
 from isaaclab_physx.physics import PhysxCfg
+from isaaclab_tasks.utils import PresetCfg
 from . import mdp
 from .assembly_keypoints import KEYPOINTS_NISTBOARD
 from . import reset_env_cfg as staging_cfg
-
 from . import factory_assets_cfg as assets
+from .factory_presets import (
+    AssembledOffsetCfg,
+    EndEffectorBodyCfg,
+    FixedAssetMapCfg,
+    FixedAssetTipCfg,
+    HeldAssetAlignOffsetCfg,
+    HeldAssetTipCfg,
+    JointEffortNamesCfg,
+)
 
 """
 Base scene definition for Factory Tasks
@@ -30,7 +39,36 @@ Base scene definition for Factory Tasks
 
 @configclass
 class FactorySceneCfg(InteractiveSceneCfg):
-    """Configuration for a factory task scene."""
+    """Configuration for a factory task scene.
+
+    Shared assets are declared directly. Task-specific assets use presets
+    that resolve to the correct config per task variant, or ``None`` when
+    not needed (``InteractiveScene`` skips ``None`` fields).
+    """
+
+    @configclass
+    class FixedAssetCfg(PresetCfg):
+        nut_thread: RigidObjectCfg = assets.BOLT_M16_CFG
+        gear_mesh: ArticulationCfg = assets.GEAR_BASE_CFG
+        peg_insert: ArticulationCfg = assets.HOLE_8MM_CFG
+        default: RigidObjectCfg = nut_thread
+
+    @configclass
+    class HeldAssetCfg(PresetCfg):
+        nut_thread: RigidObjectCfg = assets.NUT_M16_CFG
+        gear_mesh: ArticulationCfg = assets.MEDIUM_GEAR_CFG
+        peg_insert: ArticulationCfg = assets.PEG_8MM_CFG
+        default: RigidObjectCfg = nut_thread
+
+    @configclass
+    class SmallGearCfg(PresetCfg):
+        gear_mesh: ArticulationCfg = assets.SMALL_GEAR_CFG
+        default: ArticulationCfg | None = None
+
+    @configclass
+    class LargeGearCfg(PresetCfg):
+        gear_mesh: ArticulationCfg = assets.LARGE_GEAR_CFG
+        default: ArticulationCfg | None = None
 
     # Ground plane
     ground = assets.GROUND_CFG
@@ -41,19 +79,11 @@ class FactorySceneCfg(InteractiveSceneCfg):
     # NIST Board
     nistboard = assets.NISTBOARD_CFG
 
-    # "FIXED ASSETS"
-    bolt_m16: RigidObjectCfg = assets.BOLT_M16_CFG
-    gear_base: ArticulationCfg = assets.GEAR_BASE_CFG
-    hole_8mm: ArticulationCfg = assets.HOLE_8MM_CFG
-
-    # "Moving Gears"
-    small_gear: ArticulationCfg = assets.SMALL_GEAR_CFG
-    large_gear: ArticulationCfg = assets.LARGE_GEAR_CFG
-
-    # "HELD ASSETS"
-    nut_m16: RigidObjectCfg = assets.NUT_M16_CFG
-    medium_gear: ArticulationCfg = assets.MEDIUM_GEAR_CFG
-    peg_8mm: ArticulationCfg = assets.PEG_8MM_CFG
+    # Task-specific assets (resolved via presets)
+    fixed_asset: FixedAssetCfg = FixedAssetCfg()
+    held_asset: HeldAssetCfg = HeldAssetCfg()
+    small_gear: SmallGearCfg = SmallGearCfg()
+    large_gear: LargeGearCfg = LargeGearCfg()
 
     # Robot Override
     robot: ArticulationCfg = MISSING  # type: ignore
@@ -65,13 +95,12 @@ class FactorySceneCfg(InteractiveSceneCfg):
 @configclass
 class FactoryObservationsCfg:
     """Observation specifications for Factory."""
-
     @configclass
     class PolicyCfg(ObsGroup):
         end_effector_vel_lin_ang_b = ObsTerm(
             func=mdp.asset_link_velocity_in_root_asset_frame,
             params={
-                "target_asset_cfg": SceneEntityCfg("robot", body_names="end_effector"),
+                "target_asset_cfg": SceneEntityCfg("robot", body_names=EndEffectorBodyCfg()),  # type:ignore
                 "root_asset_cfg": SceneEntityCfg("robot"),
             },
         )
@@ -79,8 +108,9 @@ class FactoryObservationsCfg:
         end_effector_pose = ObsTerm(
             func=mdp.target_asset_pose_in_root_asset_frame,
             params={
-                "target_asset_cfg": SceneEntityCfg("robot", body_names="end_effector"),
+                "target_asset_cfg": SceneEntityCfg("robot", body_names=EndEffectorBodyCfg()),  # type:ignore
                 "root_asset_cfg": SceneEntityCfg("robot"),
+                "target_asset_offset": HeldAssetTipCfg()
             },
         )
 
@@ -89,6 +119,7 @@ class FactoryObservationsCfg:
             params={
                 "target_asset_cfg": SceneEntityCfg("held_asset"),
                 "root_asset_cfg": SceneEntityCfg("fixed_asset"),
+                "root_asset_offset": FixedAssetTipCfg()
             },
         )
 
@@ -96,7 +127,8 @@ class FactoryObservationsCfg:
             func=mdp.target_asset_pose_in_root_asset_frame,
             params={
                 "target_asset_cfg": SceneEntityCfg("fixed_asset"),
-                "root_asset_cfg": SceneEntityCfg("robot", body_names="end_effector"),
+                "root_asset_cfg": SceneEntityCfg("robot", body_names=EndEffectorBodyCfg()),  # type:ignore
+                "target_asset_offset": FixedAssetTipCfg()
             },
         )
 
@@ -176,7 +208,7 @@ class FactoryEventCfg:
         func=mdp.reset_fixed_assets,
         mode="reset",
         params={
-            "asset_list": ["fixed_asset"],
+            "asset_map": FixedAssetMapCfg(),
         },
     )
 
@@ -205,49 +237,99 @@ class FactoryEventCfg:
 
 
 @configclass
-class FactoryRewardsCfg:
-    """Reward terms for Factory"""
+class TimeoutRewardsCfg:
+    """Reward terms for the timeout-terminate formulation (success is not terminal)."""
 
-    # penalties
     action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-1e-4)
-
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-1e-4)
-
-    joint_effort = RewTerm(func=mdp.joint_torques_l2, params={"asset_cfg": SceneEntityCfg("robot")}, weight=-1e-4)
-
+    joint_effort = RewTerm(
+        func=mdp.joint_torques_l2,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=JointEffortNamesCfg())},  # type:ignore
+        weight=-1e-4,
+    )
     early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-0.01)
-
-    reach_reward = RewTerm(func=mdp.reach_reward, weight=0.1, params={"std": 1.0})
-
+    reach_reward = RewTerm(
+        func=mdp.reach_reward,
+        weight=0.1,
+        params={
+            "std": 1.0,
+            "held_asset_cfg": SceneEntityCfg("held_asset"),
+            "ee_cfg": SceneEntityCfg("robot", body_names=EndEffectorBodyCfg()),  # type:ignore
+        },
+    )
     progress_reward_fine = RewTerm(func=mdp.progress_reward, weight=0.1, params={"std": 0.005})
-
     success_reward = RewTerm(func=mdp.success_reward, weight=1.0)
 
 
 @configclass
-class FactoryTerminationsCfg:
-    """Termination terms for Factory."""
+class SuccessRewardsCfg:
+    """Reward terms for the success-terminate formulation (success is terminal)."""
 
-    # (1) Time out
-    time_out = DoneTerm(func=mdp.time_out, time_out=True)
-
-    abnormal = DoneTerm(func=mdp.abnormal_robot_state)
-
-    oob = DoneTerm(func=mdp.out_of_bound, params={
-        "asset_cfg": SceneEntityCfg("held_asset"),
-        "in_bound_range" : {"x": (-0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)}
-    })
-
-    progress_context = DoneTerm(
-        func=mdp.progress_context,
-        params={
-            "success_threshold": 0.001,
-            "held_asset_cfg": SceneEntityCfg("held_asset"),
-            "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
-            "held_asset_offset": MISSING,
-            "fixed_asset_offset": MISSING,
-        }
+    action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-1e-4)
+    action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-1e-4)
+    joint_effort = RewTerm(
+        func=mdp.joint_torques_l2,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=JointEffortNamesCfg())},  # type:ignore
+        weight=-1e-4,
     )
+    early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-0.01)
+    success_reward = RewTerm(func=mdp.success_reward, weight=100.0)
+
+
+@configclass
+class FactoryRewardsCfg(PresetCfg):
+    """Reward configuration preset for Factory tasks."""
+
+    timeout_terminate: TimeoutRewardsCfg = TimeoutRewardsCfg()
+    success_terminate: SuccessRewardsCfg = SuccessRewardsCfg()
+    default: TimeoutRewardsCfg = timeout_terminate
+
+
+_PROGRESS_CONTEXT = DoneTerm(
+    func=mdp.progress_context,
+    params={
+        "success_threshold": 0.001,
+        "held_asset_cfg": SceneEntityCfg("held_asset"),
+        "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
+        "held_asset_offset": HeldAssetAlignOffsetCfg(),
+        "fixed_asset_offset": AssembledOffsetCfg(),
+    }
+)
+
+_OOB = DoneTerm(func=mdp.out_of_bound, params={
+    "asset_cfg": SceneEntityCfg("held_asset"),
+    "in_bound_range": {"x": (-0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)}
+})
+
+
+@configclass
+class TimeoutTerminationsCfg:
+    """Termination terms for the timeout-terminate formulation."""
+
+    time_out = DoneTerm(func=mdp.time_out, time_out=True)
+    abnormal = DoneTerm(func=mdp.abnormal_robot_state)
+    oob = _OOB
+    progress_context = _PROGRESS_CONTEXT
+
+
+@configclass
+class SuccessTerminationsCfg:
+    """Termination terms for the success-terminate formulation."""
+
+    time_out = DoneTerm(func=mdp.time_out, time_out=True)
+    abnormal = DoneTerm(func=mdp.abnormal_robot_state)
+    oob = _OOB
+    progress_context = _PROGRESS_CONTEXT
+    success = DoneTerm(func=mdp.success_termination)
+
+
+@configclass
+class FactoryTerminationsCfg(PresetCfg):
+    """Termination configuration preset for Factory tasks."""
+
+    timeout_terminate: TimeoutTerminationsCfg = TimeoutTerminationsCfg()
+    success_terminate: SuccessTerminationsCfg = SuccessTerminationsCfg()
+    default: TimeoutTerminationsCfg = timeout_terminate
 
 
 @configclass
@@ -313,15 +395,3 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
 
         self.sim.render.enable_ambient_occlusion = True
         self.sim.render.enable_dlssg = True
-
-
-@configclass
-class FactoryBaseSuccessTerminateEnvCfg(FactoryBaseEnvCfg):
-    """Configuration for the base Factory environment."""
-    # Post initialization
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        self.rewards.success_reward.weight = 100.0
-        delattr(self.rewards, "reach_reward")
-        delattr(self.rewards, "progress_reward_fine")
-        setattr(self.terminations, "success", DoneTerm(func=mdp.success_termination))

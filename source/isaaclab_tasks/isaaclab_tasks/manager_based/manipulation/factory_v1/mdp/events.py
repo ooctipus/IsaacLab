@@ -26,11 +26,18 @@ if TYPE_CHECKING:
     from ..assembly_keypoints import Offset
 
 
-def reset_fixed_assets(env: ManagerBasedRLEnv, env_ids: torch.tensor, asset_list: list[str]):
+def reset_fixed_assets(env: ManagerBasedRLEnv, env_ids: torch.tensor, asset_map: dict[str, str]):
+    """Reset fixed assets to their positions on the NIST board.
+
+    Args:
+        env: The environment instance.
+        env_ids: Environment indices to reset.
+        asset_map: Mapping from scene entity key to :class:`KeyPointsNistBoard` attribute name.
+    """
     nistboard: RigidObject = env.scene["nistboard"]
-    for asset_str in asset_list:
-        asset: Articulation | RigidObject = env.scene[asset_str]
-        asset_offset_on_nist_board: Offset = getattr(KEYPOINTS_NISTBOARD, asset_str)
+    for scene_key, keypoint_attr in asset_map.items():
+        asset: Articulation | RigidObject = env.scene[scene_key]
+        asset_offset_on_nist_board: Offset = getattr(KEYPOINTS_NISTBOARD, keypoint_attr)
         asset_on_board_pos, asset_on_board_quat = asset_offset_on_nist_board.apply(nistboard)
         root_pose = torch.cat((asset_on_board_pos, asset_on_board_quat), dim=1)[env_ids]
         asset.write_root_pose_to_sim(root_pose, env_ids=env_ids)

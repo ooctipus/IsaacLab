@@ -8,62 +8,11 @@ import gymnasium as gym
 from . import agents
 
 gym.register(
-    id="Isaac-NutThread-Franka-JointPos-v1",
+    id="Isaac-Factory-Franka-JointPos-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.joint_pos_env_cfg:FrankaNutThreadEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FactoryPPORunnerCfg",
-    },
-)
-
-
-gym.register(
-    id="Isaac-PegInsert-Franka-JointPos-v1",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.joint_pos_env_cfg:FrankaPegInsertEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FactoryPPORunnerCfg",
-    },
-)
-
-gym.register(
-    id="Isaac-GearMesh-Franka-JointPos-v1",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.joint_pos_env_cfg:FrankaGearMeshEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FactoryPPORunnerCfg",
-    },
-)
-
-gym.register(
-    id="Isaac-NutThread-Franka-JointPos-v2",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.joint_pos_env_cfg:FrankaNutThreadSuccessTerminateEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FactoryPPORunnerCfg",
-    },
-)
-
-gym.register(
-    id="Isaac-PegInsert-Franka-JointPos-v2",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.joint_pos_env_cfg:FrankaPegInsertSuccessTerminateEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FactoryPPORunnerCfg",
-    },
-)
-
-gym.register(
-    id="Isaac-GearMesh-Franka-JointPos-v2",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.joint_pos_env_cfg:FrankaGearMeshSuccessTerminateEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.joint_pos_env_cfg:FrankaFactoryTaskEnvCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FactoryPPORunnerCfg",
     },
 )

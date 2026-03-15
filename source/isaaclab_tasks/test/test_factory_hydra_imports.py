@@ -21,9 +21,7 @@ import pytest
 _FORBIDDEN_PREFIXES = ("pxr", "omni", "carb", "isaacsim", "scipy")
 
 _FACTORY_TASKS = [
-    "Isaac-NutThread-Franka-JointPos-v1",
-    "Isaac-PegInsert-Franka-JointPos-v1",
-    "Isaac-GearMesh-Franka-JointPos-v1",
+    "Isaac-Factory-Franka-JointPos-v1",
 ]
 
 
