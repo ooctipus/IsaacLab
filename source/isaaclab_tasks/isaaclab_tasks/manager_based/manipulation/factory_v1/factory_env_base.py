@@ -38,58 +38,41 @@ Base scene definition for Factory Tasks
 
 
 @configclass
-class FactorySceneCfg(InteractiveSceneCfg):
-    """Configuration for a factory task scene.
+class FactorySceneBase(InteractiveSceneCfg):
+    """Shared scene assets for all Factory tasks."""
 
-    Shared assets are declared directly. Task-specific assets use presets
-    that resolve to the correct config per task variant, or ``None`` when
-    not needed (``InteractiveScene`` skips ``None`` fields).
-    """
-
-    @configclass
-    class FixedAssetCfg(PresetCfg):
-        nut_thread: RigidObjectCfg = assets.BOLT_M16_CFG
-        gear_mesh: ArticulationCfg = assets.GEAR_BASE_CFG
-        peg_insert: ArticulationCfg = assets.HOLE_8MM_CFG
-        default: RigidObjectCfg = nut_thread
-
-    @configclass
-    class HeldAssetCfg(PresetCfg):
-        nut_thread: RigidObjectCfg = assets.NUT_M16_CFG
-        gear_mesh: ArticulationCfg = assets.MEDIUM_GEAR_CFG
-        peg_insert: ArticulationCfg = assets.PEG_8MM_CFG
-        default: RigidObjectCfg = nut_thread
-
-    @configclass
-    class SmallGearCfg(PresetCfg):
-        gear_mesh: ArticulationCfg = assets.SMALL_GEAR_CFG
-        default: ArticulationCfg | None = None
-
-    @configclass
-    class LargeGearCfg(PresetCfg):
-        gear_mesh: ArticulationCfg = assets.LARGE_GEAR_CFG
-        default: ArticulationCfg | None = None
-
-    # Ground plane
     ground = assets.GROUND_CFG
-
-    # Table
     table = assets.TABLE_CFG
-
-    # NIST Board
     nistboard = assets.NISTBOARD_CFG
-
-    # Task-specific assets (resolved via presets)
-    fixed_asset: FixedAssetCfg = FixedAssetCfg()
-    held_asset: HeldAssetCfg = HeldAssetCfg()
-    small_gear: SmallGearCfg = SmallGearCfg()
-    large_gear: LargeGearCfg = LargeGearCfg()
-
-    # Robot Override
     robot: ArticulationCfg = MISSING  # type: ignore
-
-    # Lights
     dome_light = assets.DOMELIGHT_CFG
+
+@configclass
+class FactorySceneCfg(PresetCfg):
+    """Task scene preset — resolves to the complete scene for the active task."""
+    @configclass
+    class NutThreadSceneCfg(FactorySceneBase):
+        fixed_asset: RigidObjectCfg = assets.BOLT_M16_CFG
+        held_asset: RigidObjectCfg = assets.NUT_M16_CFG
+
+
+    @configclass
+    class GearMeshSceneCfg(FactorySceneBase):
+        fixed_asset: ArticulationCfg = assets.GEAR_BASE_CFG
+        held_asset: ArticulationCfg = assets.MEDIUM_GEAR_CFG
+        small_gear: ArticulationCfg = assets.SMALL_GEAR_CFG
+        large_gear: ArticulationCfg = assets.LARGE_GEAR_CFG
+
+
+    @configclass
+    class PegInsertSceneCfg(FactorySceneBase):
+        fixed_asset: ArticulationCfg = assets.HOLE_8MM_CFG
+        held_asset: ArticulationCfg = assets.PEG_8MM_CFG
+
+    nut_thread: NutThreadSceneCfg = NutThreadSceneCfg(num_envs=2, env_spacing=2.0)
+    gear_mesh: GearMeshSceneCfg = GearMeshSceneCfg(num_envs=2, env_spacing=2.0)
+    peg_insert: PegInsertSceneCfg = PegInsertSceneCfg(num_envs=2, env_spacing=2.0)
+    default: NutThreadSceneCfg = nut_thread
 
 
 @configclass
@@ -359,7 +342,7 @@ class FactoryCurriculumsCfg:
 class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the base Factory environment."""
 
-    scene: FactorySceneCfg = FactorySceneCfg(num_envs=2, env_spacing=2.0)
+    scene: FactorySceneCfg = FactorySceneCfg()
     observations: FactoryObservationsCfg = FactoryObservationsCfg()
     events: FactoryEventCfg = FactoryEventCfg()
     terminations: FactoryTerminationsCfg = FactoryTerminationsCfg()
