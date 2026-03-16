@@ -47,12 +47,21 @@ workflow:
           export WANDB_API_KEY="${WANDB_API_KEY}"
           export WANDB_USERNAME=nvidia
 
-          {% if num_node > 1 or num_gpu > 1 %}
+          {% if num_node > 1 %}
           /workspace/isaaclab/_isaac_sim/python.sh -m torch.distributed.run \
             --nnodes {{ num_node }} \
             --nproc_per_node {{ num_gpu }} \
             --node_rank {{ item }} \
             --master_addr {{host:master}} \
+            --master_port {{ master_port }} \
+            /workspace/isaaclab/{{ script }} \
+              --distributed \
+              {{ args }}
+          {% elif num_gpu > 1 %}
+          /workspace/isaaclab/_isaac_sim/python.sh -m torch.distributed.run \
+            --nnodes 1 \
+            --nproc_per_node {{ num_gpu }} \
+            --master_addr localhost \
             --master_port {{ master_port }} \
             /workspace/isaaclab/{{ script }} \
               --distributed \
