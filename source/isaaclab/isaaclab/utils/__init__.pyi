@@ -64,6 +64,7 @@ __all__ = [
     "replace",
     "validate",
     "checked_apply",
+    "get_model_checkpoint",
 ]
 
 from .timer import Timer
@@ -118,3 +119,4 @@ from .string import (
 from .types import ArticulationActions
 from .version import has_kit, get_isaac_sim_version, compare_versions
 from .configclass import checked_apply, clone, configclass, instantiate, replace, validate
+from .wandb import get_model_checkpoint
