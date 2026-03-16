@@ -69,8 +69,8 @@ FRANKA_PANDA_CFG = ArticulationCfg(
     actuators={
         "panda_arm1": ImplicitActuatorCfg(
             joint_names_expr=["panda_joint[1-4]"],
-            stiffness=0.0,
-            damping=0.0,
+            stiffness=80.0,
+            damping=4.0,
             friction=0.0,
             armature=0.0,
             effort_limit_sim=87.0,
@@ -78,8 +78,8 @@ FRANKA_PANDA_CFG = ArticulationCfg(
         ),
         "panda_arm2": ImplicitActuatorCfg(
             joint_names_expr=["panda_joint[5-7]"],
-            stiffness=0.0,
-            damping=0.0,
+            stiffness=80.0,
+            damping=4.0,
             friction=0.0,
             armature=0.0,
             effort_limit_sim=12.0,

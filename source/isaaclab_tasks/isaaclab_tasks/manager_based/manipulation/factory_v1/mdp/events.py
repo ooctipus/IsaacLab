@@ -96,10 +96,10 @@ def reset_held_asset_in_gripper(
     held_graspable_pos_b = torch.tensor(held_asset_graspable_offset.pos, device=env.device).repeat(len(env_ids), 1)
     held_graspable_quat_b = torch.tensor(held_asset_graspable_offset.quat, device=env.device).repeat(len(env_ids), 1)
 
-    flip_z_quat = torch.tensor([[0.0, 0.0, 1.0, 0.0]], device=env.device).repeat(len(env_ids), 1)
+    flip_y_quat = torch.tensor([[0.0, 1.0, 0.0, 0.0]], device=env.device).repeat(len(env_ids), 1)
     translated_held_asset_pos, translated_held_asset_quat = _pose_a_when_frame_ba_aligns_pose_c(
         pos_c=end_effector_pos_w,
-        quat_c=math_utils.quat_mul(end_effector_quat_w, flip_z_quat),
+        quat_c=math_utils.quat_mul(end_effector_quat_w, flip_y_quat),
         pos_ba=held_graspable_pos_b,
         quat_ba=held_graspable_quat_b,
     )

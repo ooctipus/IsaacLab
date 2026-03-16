@@ -62,7 +62,7 @@ class FixedAssetMapCfg(PresetCfg):
     """Mapping from scene entity key to :class:`KeyPointsNistBoard` attribute name."""
 
     nut_thread: dict = dict(fixed_asset="bolt_m16")
-    gear_mesh: dict = dict(gear_base="gear_base", large_gear="large_gear", small_gear="small_gear")
+    gear_mesh: dict = dict(fixed_asset="gear_base", large_gear="large_gear", small_gear="small_gear")
     peg_insert: dict = dict(fixed_asset="hole_8mm")
     default: dict = nut_thread
 

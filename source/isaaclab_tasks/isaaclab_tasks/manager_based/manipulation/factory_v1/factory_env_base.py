@@ -48,27 +48,27 @@ class FactorySceneBase(InteractiveSceneCfg):
     dome_light = assets.DOMELIGHT_CFG
 
 @configclass
+class NutThreadSceneCfg(FactorySceneBase):
+    fixed_asset: RigidObjectCfg = assets.BOLT_M16_CFG
+    held_asset: RigidObjectCfg = assets.NUT_M16_CFG
+
+
+@configclass
+class GearMeshSceneCfg(FactorySceneBase):
+    fixed_asset: ArticulationCfg = assets.GEAR_BASE_CFG
+    held_asset: ArticulationCfg = assets.MEDIUM_GEAR_CFG
+    small_gear: ArticulationCfg = assets.SMALL_GEAR_CFG
+    large_gear: ArticulationCfg = assets.LARGE_GEAR_CFG
+
+
+@configclass
+class PegInsertSceneCfg(FactorySceneBase):
+    fixed_asset: ArticulationCfg = assets.HOLE_8MM_CFG
+    held_asset: ArticulationCfg = assets.PEG_8MM_CFG
+
+@configclass
 class FactorySceneCfg(PresetCfg):
     """Task scene preset — resolves to the complete scene for the active task."""
-    @configclass
-    class NutThreadSceneCfg(FactorySceneBase):
-        fixed_asset: RigidObjectCfg = assets.BOLT_M16_CFG
-        held_asset: RigidObjectCfg = assets.NUT_M16_CFG
-
-
-    @configclass
-    class GearMeshSceneCfg(FactorySceneBase):
-        fixed_asset: ArticulationCfg = assets.GEAR_BASE_CFG
-        held_asset: ArticulationCfg = assets.MEDIUM_GEAR_CFG
-        small_gear: ArticulationCfg = assets.SMALL_GEAR_CFG
-        large_gear: ArticulationCfg = assets.LARGE_GEAR_CFG
-
-
-    @configclass
-    class PegInsertSceneCfg(FactorySceneBase):
-        fixed_asset: ArticulationCfg = assets.HOLE_8MM_CFG
-        held_asset: ArticulationCfg = assets.PEG_8MM_CFG
-
     nut_thread: NutThreadSceneCfg = NutThreadSceneCfg(num_envs=2, env_spacing=2.0)
     gear_mesh: GearMeshSceneCfg = GearMeshSceneCfg(num_envs=2, env_spacing=2.0)
     peg_insert: PegInsertSceneCfg = PegInsertSceneCfg(num_envs=2, env_spacing=2.0)

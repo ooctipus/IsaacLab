@@ -9,8 +9,9 @@ from isaaclab.sensors import ContactSensorCfg
 from isaaclab.managers import RewardTermCfg as RewTerm
 
 from ...factory_assets_cfg import FRANKA_PANDA_CFG
-from ...factory_env_base import FactoryBaseEnvCfg
+from ...factory_env_base import FactoryBaseEnvCfg, NutThreadSceneCfg, GearMeshSceneCfg, PegInsertSceneCfg
 from ...factory_presets import EndEffectorBodyCfg, GripperJointNamesCfg, IKJointNamesCfg, JointEffortNamesCfg
+from isaaclab_tasks.utils import PresetCfg
 from ... import mdp
 
 # Register Franka-specific robot presets
@@ -25,7 +26,6 @@ IKJointNamesCfg.default = IKJointNamesCfg.franka
 
 JointEffortNamesCfg.franka = "(?!panda_joint7$|panda_finger_.*$).*"
 JointEffortNamesCfg.default = JointEffortNamesCfg.franka
-
 
 @configclass
 class ActionCfg:
@@ -48,20 +48,37 @@ class ActionCfg:
 
 
 @configclass
+class FrankaSensorSceneCfg:
+    panda_leftfinger_object_s = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/panda_leftfinger")
+    panda_rightfinger_object_s = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/panda_rightfinger")
+
+@configclass
+class FrankaFactoryNutThreadSceneCfg(NutThreadSceneCfg, FrankaSensorSceneCfg):
+    robot = FRANKA_PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
+@configclass
+class FrankaFactoryGearMeshSceneCfg(GearMeshSceneCfg, FrankaSensorSceneCfg):
+    robot = FRANKA_PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
+@configclass
+class FrankaFactoryPegInsertSceneCfg(PegInsertSceneCfg, FrankaSensorSceneCfg):
+    robot = FRANKA_PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
+@configclass
+class FrankaFactorySceneCfg(PresetCfg):
+    nut_thread = FrankaFactoryNutThreadSceneCfg(num_envs=2, env_spacing=2.0)
+    gear_mesh = FrankaFactoryGearMeshSceneCfg(num_envs=2, env_spacing=2.0)
+    peg_insert = FrankaFactoryPegInsertSceneCfg(num_envs=2, env_spacing=2.0)
+    default = nut_thread
+
+
+@configclass
 class FrankaFactoryEnvMixIn:
+    scene: FrankaFactorySceneCfg = FrankaFactorySceneCfg()
     actions: ActionCfg = ActionCfg()
 
     def __post_init__(self: FactoryBaseEnvCfg):
         super().__post_init__()
-        self.scene.robot = FRANKA_PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-        self.scene.robot.actuators["panda_arm1"].stiffness = 80.0
-        self.scene.robot.actuators["panda_arm1"].damping = 4.0
-        self.scene.robot.actuators["panda_arm2"].stiffness = 80.0
-        self.scene.robot.actuators["panda_arm2"].damping = 4.0
-
-        for link in ["panda_leftfinger", "panda_rightfinger"]:
-            setattr(self.scene, f"{link}_object_s", ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/" + link))
-
         gripper_penality = RewTerm(func=mdp.gripper_asymetric_contact_penalty, weight=-0.02, params={"threshold": 1.0})
         setattr(self.rewards, "bad_finger_contact", gripper_penality)
 
