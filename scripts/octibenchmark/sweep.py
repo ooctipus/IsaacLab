@@ -215,7 +215,7 @@ def log_to_wandb(
 
     # Section 1: Overall scaling
     wandb.define_metric("overall/step_avg_ms", step_metric="num_envs")
-    wandb.define_metric("overall/effective_fps", step_metric="num_envs")
+    wandb.define_metric("overall/collection_fps", step_metric="num_envs")
     wandb.define_metric("overall/step_fps", step_metric="num_envs")
 
     # Section 2: Term breakdown
@@ -252,7 +252,7 @@ def log_to_wandb(
                 avg_step_s = r["avg_ns"] / 1e9
                 log_data["overall/step_avg_ms"] = avg_step_ms
                 if avg_step_s > 0:
-                    log_data["overall/effective_fps"] = num_envs / avg_step_s
+                    log_data["overall/collection_fps"] = num_envs / avg_step_s
                     log_data["overall/step_fps"] = 1.0 / avg_step_s
                 break
 

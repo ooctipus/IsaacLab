@@ -917,13 +917,15 @@ def _log_single_result(
 
     env_step = nvtx_by_name.get("env.step")
     if env_step and env_step["avg_ns"] > 0:
-        log_data["effective_fps"] = num_envs / (env_step["avg_ns"] / 1e9)
+        log_data["collection_fps"] = num_envs / (env_step["avg_ns"] / 1e9)
 
     # Fall back to wall-clock timing (primary source in PLAIN mode)
     timing = analysis.get("timing")
     if timing:
-        if "effective_fps" not in log_data and "effective_fps" in timing:
-            log_data["effective_fps"] = timing["effective_fps"]
+        if "collection_fps" not in log_data and "collection_fps" in timing:
+            log_data["collection_fps"] = timing["collection_fps"]
+        if "iteration_fps" in timing:
+            log_data["iteration_fps"] = timing["iteration_fps"]
         if "step_ms" in timing:
             log_data["wall/step_ms"] = timing["step_ms"]
 

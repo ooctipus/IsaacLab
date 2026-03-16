@@ -171,31 +171,40 @@ class TestLogSingleResultTimingFallback(unittest.TestCase):
     """Verify _log_single_result uses timing dict when NVTX is absent."""
 
     def test_timing_fallback_provides_fps(self):
-        """In PLAIN mode, effective_fps comes from the timing dict."""
+        """In PLAIN mode, collection_fps comes from the timing dict."""
         analysis = {
-            "timing": {"effective_fps": 12345.6, "step_ms": 0.5},
+            "timing": {"collection_fps": 12345.6, "step_ms": 0.5},
             "memory": {"gpu_used_mb": 1024.0},
         }
         log_data = self._simulate_log(analysis, num_envs=2048)
-        self.assertAlmostEqual(log_data["effective_fps"], 12345.6)
+        self.assertAlmostEqual(log_data["collection_fps"], 12345.6)
         self.assertAlmostEqual(log_data["wall/step_ms"], 0.5)
         self.assertAlmostEqual(log_data["gpu_memory_used_mb"], 1024.0)
+
+    def test_timing_fallback_iteration_fps(self):
+        """In PLAIN RSL_RL mode, iteration_fps is logged from the timing dict."""
+        analysis = {
+            "timing": {"collection_fps": 12345.6, "iteration_fps": 50.0, "step_ms": 20.0},
+        }
+        log_data = self._simulate_log(analysis, num_envs=2048)
+        self.assertAlmostEqual(log_data["collection_fps"], 12345.6)
+        self.assertAlmostEqual(log_data["iteration_fps"], 50.0)
 
     def test_nvtx_fps_takes_priority(self):
         """When NVTX env.step is present, it takes priority over timing."""
         analysis = {
             "nvtx_ranges": [{"name": "env.step", "count": 10, "total_ns": 1e9, "avg_ns": 1e8}],
-            "timing": {"effective_fps": 999.0, "step_ms": 1.0},
+            "timing": {"collection_fps": 999.0, "step_ms": 1.0},
         }
         log_data = self._simulate_log(analysis, num_envs=2048)
         expected_fps = 2048 / (1e8 / 1e9)
-        self.assertAlmostEqual(log_data["effective_fps"], expected_fps)
+        self.assertAlmostEqual(log_data["collection_fps"], expected_fps)
 
     def test_plain_no_timing_no_crash(self):
         """PLAIN run with empty analysis should not crash."""
         analysis = {}
         log_data = self._simulate_log(analysis, num_envs=2048)
-        self.assertNotIn("effective_fps", log_data)
+        self.assertNotIn("collection_fps", log_data)
         self.assertNotIn("gpu_memory_used_mb", log_data)
 
     @staticmethod
@@ -214,12 +223,14 @@ class TestLogSingleResultTimingFallback(unittest.TestCase):
 
         env_step = nvtx_by_name.get("env.step")
         if env_step and env_step["avg_ns"] > 0:
-            log_data["effective_fps"] = num_envs / (env_step["avg_ns"] / 1e9)
+            log_data["collection_fps"] = num_envs / (env_step["avg_ns"] / 1e9)
 
         timing = analysis.get("timing")
         if timing:
-            if "effective_fps" not in log_data and "effective_fps" in timing:
-                log_data["effective_fps"] = timing["effective_fps"]
+            if "collection_fps" not in log_data and "collection_fps" in timing:
+                log_data["collection_fps"] = timing["collection_fps"]
+            if "iteration_fps" in timing:
+                log_data["iteration_fps"] = timing["iteration_fps"]
             if "step_ms" in timing:
                 log_data["wall/step_ms"] = timing["step_ms"]
 

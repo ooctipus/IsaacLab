@@ -170,7 +170,7 @@ def _run_step(env_cfg):
     # Signal nsys to stop capture
     torch.cuda.cudart().cudaProfilerStop()
 
-    effective_fps = (args_cli.num_frames * num_envs) / elapsed_s if elapsed_s > 0 else 0.0
+    collection_fps = (args_cli.num_frames * num_envs) / elapsed_s if elapsed_s > 0 else 0.0
     step_ms = (elapsed_s / args_cli.num_frames) * 1000.0 if args_cli.num_frames > 0 else 0.0
     print(f"[octibenchmark] Step done: {args_cli.num_frames} frames, {num_envs} envs, task={args_cli.task}", flush=True)
     print(
@@ -178,7 +178,7 @@ def _run_step(env_cfg):
         flush=True,
     )
     print(
-        f'[octibenchmark:timing] {{"effective_fps": {effective_fps:.1f}, "step_ms": {step_ms:.3f}}}',
+        f'[octibenchmark:timing] {{"collection_fps": {collection_fps:.1f}, "step_ms": {step_ms:.3f}}}',
         flush=True,
     )
 
