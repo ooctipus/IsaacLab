@@ -29,9 +29,6 @@ workflow:
         ACCEPT_EULA: Y
         NO_NUCLEUS: Y
         NCCL_DEBUG: WARN
-        # If your cluster needs an explicit NIC for NCCL, uncomment and set:
-        # NCCL_SOCKET_IFNAME: eth0
-        # NCCL_IB_HCA: mlx5_0
       credentials:
         wandb:
           WANDB_USERNAME: wandb_username
@@ -42,17 +39,15 @@ workflow:
           set -euo pipefail
           mkdir -p {{output}}/model
 
-          # Optional: avoid Vulkan conflicts in Isaac containers
+          # Avoid Vulkan conflicts in Isaac containers
           if [ -e "/usr/share/vulkan" ] && [ -e "/etc/vulkan" ]; then
             mv /usr/share/vulkan /usr/share/vulkan_hidden
           fi
 
-          # WANDB envs (provided via credentials above)
           export WANDB_API_KEY="${WANDB_API_KEY}"
           export WANDB_USERNAME=nvidia
 
           {% if num_node > 1 or num_gpu > 1 %}
-          # Distributed training via torchrun
           /workspace/isaaclab/_isaac_sim/python.sh -m torch.distributed.run \
             --nnodes {{ num_node }} \
             --nproc_per_node {{ num_gpu }} \
@@ -63,7 +58,6 @@ workflow:
               --distributed \
               {{ args }}
           {% else %}
-          # Single-GPU training
           /workspace/isaaclab/_isaac_sim/python.sh \
             /workspace/isaaclab/{{ script }} \
               {{ args }}
@@ -83,10 +77,9 @@ workflow:
     {% endfor %}
 
 default-values:
-  # Keep your original knobs, but now multi-node
-  image: dextrah
-  num_node: 2
-  num_gpu: 4
+  image: factory
+  num_node: 1
+  num_gpu: 1
   master_port: 29400
   num_cpu: 16
   memory: 64
