@@ -260,7 +260,10 @@ if [[ "$mode" == "submit" ]]; then
       fi
 
       first="${val:0:1}"; last="${val: -1}"
-      if [[ "$val" == *,* ]] && ! { [[ "$first" == "[" && "$last" == "]" ]] \
+      key_nodash2="${key#--}"
+      if [[ "$key_nodash2" == "presets" ]]; then
+        fixed["$key"]="$val"
+      elif [[ "$val" == *,* ]] && ! { [[ "$first" == "[" && "$last" == "]" ]] \
                                 || [[ "$first" == "(" && "$last" == ")" ]] \
                                 || [[ "$first" == "{" && "$last" == "}" ]]; }; then
         sweep_map["$key"]="$val"
