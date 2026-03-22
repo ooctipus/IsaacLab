@@ -17,7 +17,7 @@ from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
 from isaaclab_physx.physics import PhysxCfg
-from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils import PresetCfg, preset
 from . import mdp
 from .assembly_keypoints import KEYPOINTS_NISTBOARD
 from . import reset_env_cfg as staging_cfg
@@ -209,13 +209,16 @@ class FactoryEventCfg:
         }
     )
 
-    variable_gravity = EventTerm(
-        func=mdp.randomize_physics_scene_gravity,
-        mode="reset",
-        params={
-            "operation": "abs",
-            "gravity_distribution_params": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
-        },
+    variable_gravity = preset(
+        default=EventTerm(
+            func=mdp.randomize_physics_scene_gravity,
+            mode="reset",
+            params={
+                "operation": "abs",
+                "gravity_distribution_params": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+            },
+        ),
+        eval=None
     )
 
 
@@ -320,17 +323,20 @@ class FactoryCurriculumsCfg:
 
     difficulty_scheduler = CurrTerm(func=mdp.DifficultyScheduler, params={"max_difficulty": 10})
 
-    gravity_adr = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "events.variable_gravity.params.gravity_distribution_params",
-            "modify_fn": mdp.initial_final_interpolate_fn,
-            "modify_params": {
-                "initial_value": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-                "final_value": ((0.0, 0.0, -9.81), (0.0, 0.0, -9.81)),
-                "difficulty_term_str": "difficulty_scheduler",
+    gravity_adr = preset(
+        default=CurrTerm(
+            func=mdp.modify_term_cfg,
+            params={
+                "address": "events.variable_gravity.params.gravity_distribution_params",
+                "modify_fn": mdp.initial_final_interpolate_fn,
+                "modify_params": {
+                    "initial_value": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+                    "final_value": ((0.0, 0.0, -9.81), (0.0, 0.0, -9.81)),
+                    "difficulty_term_str": "difficulty_scheduler",
+                },
             },
-        },
+        ),
+        eval=None
     )
 
 ##
@@ -348,7 +354,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     terminations: FactoryTerminationsCfg = FactoryTerminationsCfg()
     rewards: FactoryRewardsCfg = FactoryRewardsCfg()
     curriculum: FactoryCurriculumsCfg = FactoryCurriculumsCfg()
-    viewer: ViewerCfg = ViewerCfg(eye=(0.0, 0.25, 0.1), origin_type="asset_body", asset_name="robot", body_name="panda_fingertip_centered")
+    viewer: ViewerCfg = ViewerCfg(eye=(0.0, 0.5, 0.2), origin_type="asset_body", asset_name="robot", body_name="panda_fingertip_centered")
     actions = MISSING
 
     # Post initialization

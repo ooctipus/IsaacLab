@@ -33,7 +33,10 @@ GRIPPER_GRASP_ASSET_IN_AIR = EventTerm(
                 func=mdp.reset_root_state_uniform,
                 mode="reset",
                 params={
-                    "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "z": (0.015, 0.2)},
+                    "pose_range": {
+                        "x": (-0.5, 0.5), "y": (-0.5, 0.5), "z": (0.015, 0.2),
+                        "roll": (-1.57, 1.57), "pitch": (-1.57, 1.57), "yaw": (-3.14, 3.14)
+                    },
                     "velocity_range": {},
                     "asset_cfg": SceneEntityCfg("held_asset")
                 }
