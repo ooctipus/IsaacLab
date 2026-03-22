@@ -361,7 +361,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     def __post_init__(self) -> None:
         """Post initialization."""
         # general settings
-        self.decimation = 12
+        self.decimation = 6
         self.episode_length_s = 14.0
         # simulation settings
         self.sim.dt = 0.005
