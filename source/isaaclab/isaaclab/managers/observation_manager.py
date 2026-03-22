@@ -392,13 +392,7 @@ class ObservationManager(ManagerBase):
         # evaluate terms: compute, add noise, clip, scale, custom modifiers
         for term_name, term_cfg in obs_terms:
             # compute term's value
-            full_name = f"{group_name}/{term_name}"
-            obs = self._call_term(
-                full_name,
-                term_cfg,
-                self._term_group_keys.get(full_name),
-                clone=True,
-            )
+            obs: torch.Tensor = term_cfg.func(self._env, **term_cfg.params).clone()
             # apply post-processing
             if term_cfg.modifiers is not None:
                 for modifier in term_cfg.modifiers:
@@ -548,11 +542,7 @@ class ObservationManager(ManagerBase):
                         f" Received: '{type(term_cfg)}'."
                     )
                 # resolve common terms in the config
-                full_name = f"{group_name}/{term_name}"
-                self._resolve_common_term_cfg(full_name, term_cfg, min_argc=1)
-                # register task-group mapping and build scoped env proxy
-                if term_cfg.task_group is not None:
-                    self._register_task_group(full_name, term_cfg.task_group)
+                self._resolve_common_term_cfg(f"{group_name}/{term_name}", term_cfg, min_argc=1)
 
                 # check noise settings
                 if not group_cfg.enable_corruption:
