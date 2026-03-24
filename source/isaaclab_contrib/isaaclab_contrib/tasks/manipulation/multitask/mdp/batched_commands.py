@@ -93,6 +93,9 @@ class BatchedPoseCommand(CommandTerm):
         self.pose_command_b[:, 3] = 1.0
         self.pose_command_w = torch.zeros_like(self.pose_command_b)
 
+        self._ee_pose_w = torch.zeros(N, 7, device=dev)
+        self._ee_pose_w[:, 3] = 1.0
+
         self.metrics["position_error"] = torch.zeros(N, device=dev)
         self.metrics["orientation_error"] = torch.zeros(N, device=dev)
 
@@ -121,11 +124,12 @@ class BatchedPoseCommand(CommandTerm):
                 self.pose_command_b[w, :3],
                 self.pose_command_b[w, 3:],
             )
+            ee_pos = wp.to_torch(g.asset.data.body_pos_w)[r, g.body_idx]
+            ee_quat = wp.to_torch(g.asset.data.body_quat_w)[r, g.body_idx]
+            self._ee_pose_w[w, :3] = ee_pos
+            self._ee_pose_w[w, 3:] = ee_quat
             pos_error, rot_error = compute_pose_error(
-                self.pose_command_w[w, :3],
-                self.pose_command_w[w, 3:],
-                wp.to_torch(g.asset.data.body_pos_w)[r, g.body_idx],
-                wp.to_torch(g.asset.data.body_quat_w)[r, g.body_idx],
+                self.pose_command_w[w, :3], self.pose_command_w[w, 3:], ee_pos, ee_quat
             )
             self.metrics["position_error"][w] = torch.linalg.norm(pos_error, dim=-1)
             self.metrics["orientation_error"][w] = torch.linalg.norm(rot_error, dim=-1)
@@ -159,17 +163,25 @@ class BatchedPoseCommand(CommandTerm):
                 from isaaclab.markers import VisualizationMarkers
                 from isaaclab.markers.config import FRAME_MARKER_CFG
 
-                marker_cfg = FRAME_MARKER_CFG.copy()
-                marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-                marker_cfg.prim_path = "/Visuals/BatchedPoseCommand/goal"
-                self.goal_pose_visualizer = VisualizationMarkers(marker_cfg)
+                goal_cfg = FRAME_MARKER_CFG.copy()
+                goal_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+                goal_cfg.prim_path = "/Visuals/BatchedPoseCommand/goal"
+                self.goal_pose_visualizer = VisualizationMarkers(goal_cfg)
+
+                ee_cfg = FRAME_MARKER_CFG.copy()
+                ee_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+                ee_cfg.prim_path = "/Visuals/BatchedPoseCommand/ee"
+                self.current_pose_visualizer = VisualizationMarkers(ee_cfg)
             self.goal_pose_visualizer.set_visibility(True)
+            self.current_pose_visualizer.set_visibility(True)
         else:
             if hasattr(self, "goal_pose_visualizer"):
                 self.goal_pose_visualizer.set_visibility(False)
+                self.current_pose_visualizer.set_visibility(False)
 
     def _debug_vis_callback(self, event):
         for g in self._groups:
             if not g.asset.is_initialized:
                 return
         self.goal_pose_visualizer.visualize(self.pose_command_w[:, :3], self.pose_command_w[:, 3:])
+        self.current_pose_visualizer.visualize(self._ee_pose_w[:, :3], self._ee_pose_w[:, 3:])

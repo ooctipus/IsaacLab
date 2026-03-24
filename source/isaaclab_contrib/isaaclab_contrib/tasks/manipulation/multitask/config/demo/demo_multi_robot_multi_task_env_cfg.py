@@ -360,7 +360,7 @@ class MultiRobotMultiTaskCommandsCfg:
 
     ee_pose = mdp.BatchedPoseCommandCfg(
         resampling_time_range=(5.0, 5.0),
-        debug_vis=False,
+        debug_vis=True,
         robot_meta=ROBOT_META,
     )
 
