@@ -26,15 +26,13 @@ from typing import TYPE_CHECKING
 import torch
 import warp as wp
 
-from isaaclab.managers import ManagerTermBase
 from isaaclab.utils import math as math_utils
 
-from .utils import RobotGroupCfg
+from .utils import BatchedTermBase, RobotGroupCfg
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject
     from isaaclab.envs import ManagerBasedEnv
-    from isaaclab.managers import ManagerTermBaseCfg
 
 
 def _iter_groups(
@@ -68,12 +66,8 @@ def _iter_groups(
         yield group_key, meta, global_ids, local_ids, asset
 
 
-class batched_reset_to_default(ManagerTermBase):
+class batched_reset_to_default(BatchedTermBase):
     """Reset robots and objects to default state."""
-
-    def __init__(self, cfg: ManagerTermBaseCfg, env: ManagerBasedEnv):
-        super().__init__(cfg, env)
-        self._robot_meta = cfg.params.get("robot_meta") or {}
 
     def __call__(
         self,
@@ -114,12 +108,8 @@ class batched_reset_to_default(ManagerTermBase):
                 obj.write_root_velocity_to_sim_index(root_velocity=obj_vel, env_ids=obj_local_ids)
 
 
-class batched_reset_joints(ManagerTermBase):
+class batched_reset_joints(BatchedTermBase):
     """Reset robot joints by scaling default positions."""
-
-    def __init__(self, cfg: ManagerTermBaseCfg, env: ManagerBasedEnv):
-        super().__init__(cfg, env)
-        self._robot_meta = cfg.params.get("robot_meta") or {}
 
     def __call__(
         self,
@@ -145,12 +135,8 @@ class batched_reset_joints(ManagerTermBase):
             art.write_joint_velocity_to_sim_index(velocity=jvel, joint_ids=jids, env_ids=local_ids)
 
 
-class batched_reset_object_uniform(ManagerTermBase):
+class batched_reset_object_uniform(BatchedTermBase):
     """Reset objects with random position/velocity offsets."""
-
-    def __init__(self, cfg: ManagerTermBaseCfg, env: ManagerBasedEnv):
-        super().__init__(cfg, env)
-        self._robot_meta = cfg.params.get("robot_meta") or {}
 
     def __call__(
         self,
@@ -197,12 +183,8 @@ class batched_reset_object_uniform(ManagerTermBase):
             obj.write_root_velocity_to_sim_index(root_velocity=vel, env_ids=local_ids)
 
 
-class batched_reset_cabinet(ManagerTermBase):
+class batched_reset_cabinet(BatchedTermBase):
     """Reset cabinet articulation to default state."""
-
-    def __init__(self, cfg: ManagerTermBaseCfg, env: ManagerBasedEnv):
-        super().__init__(cfg, env)
-        self._robot_meta = cfg.params.get("robot_meta") or {}
 
     def __call__(self, env: ManagerBasedEnv, env_ids: torch.Tensor, robot_meta: dict | None = None):
         layout = env.scene.layout

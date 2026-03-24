@@ -28,17 +28,17 @@ class batched_object_height_below_minimum(BatchedTermBase):
         super().__init__(cfg, env)
         self._entries: list[tuple[str, LiftGroupCfg, GroupView]] = []
         for group_key, meta in self._iter_groups(LiftGroupCfg):
-            self._entries.append((group_key, meta, self._layout[group_key]))
-        self._buf = torch.zeros(self._num_envs, device=self._device, dtype=torch.bool)
+            self._entries.append((group_key, meta, self._view(group_key, meta.object_cfg)))
+        self._buf = self._zeros(dtype=torch.bool)
 
     def __call__(
         self, env: ManagerBasedRLEnv, minimum_height: float = -0.05, robot_meta: dict | None = None
     ) -> torch.Tensor:
         self._buf.zero_()
-        for _, meta, group_view in self._entries:
+        for _, meta, object_view in self._entries:
             obj: RigidObject = env.scene[meta.object_cfg.name]
-            height = wp.to_torch(obj.data.root_pos_w)[:, 2]
-            self._buf[group_view.write] = height < minimum_height
+            height = wp.to_torch(obj.data.root_pos_w)[object_view.read, 2]
+            self._buf[object_view.write] = height < minimum_height
         return self._buf
 
 
@@ -49,13 +49,14 @@ class batched_cabinet_drawer_opened(BatchedTermBase):
         super().__init__(cfg, env)
         self._entries: list[tuple[str, CabinetGroupCfg, GroupView]] = []
         for group_key, meta in self._iter_groups(CabinetGroupCfg):
-            self._entries.append((group_key, meta, self._layout[group_key]))
-        self._buf = torch.zeros(self._num_envs, device=self._device, dtype=torch.bool)
+            self._entries.append((group_key, meta, self._view(group_key, meta.cabinet_asset_cfg)))
+        self._buf = self._zeros(dtype=torch.bool)
 
     def __call__(self, env: ManagerBasedRLEnv, threshold: float = 0.39, robot_meta: dict | None = None) -> torch.Tensor:
         self._buf.zero_()
-        for _, meta, group_view in self._entries:
+        for _, meta, cabinet_view in self._entries:
             cabinet: Articulation = env.scene[meta.cabinet_asset_cfg.name]
-            drawer_pos = wp.to_torch(cabinet.data.joint_pos)[:, meta.cabinet_asset_cfg.joint_ids].squeeze(-1)
-            self._buf[group_view.write] = drawer_pos > threshold
+            drawer_pos = wp.to_torch(cabinet.data.joint_pos)[cabinet_view.read, meta.cabinet_asset_cfg.joint_ids]
+            drawer_pos = drawer_pos.squeeze(-1)
+            self._buf[cabinet_view.write] = drawer_pos > threshold
         return self._buf

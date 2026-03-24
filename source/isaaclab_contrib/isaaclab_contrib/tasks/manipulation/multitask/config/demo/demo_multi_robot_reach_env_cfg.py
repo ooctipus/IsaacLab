@@ -266,11 +266,11 @@ class MultiRobotReachObsCfg:
 
     @configclass
     class PolicyCfg(ObsGroup):
-        joint_pos = ObsTerm(func=mdp.batched_joint_pos_rel)
-        joint_vel = ObsTerm(func=mdp.batched_joint_vel)
-        ee_pose = ObsTerm(func=mdp.batched_ee_pose)
-        ee_command = ObsTerm(func=mdp.batched_generated_commands)
-        ee_pos_error = ObsTerm(func=mdp.batched_ee_pos_error)
+        joint_pos = ObsTerm(func=mdp.batched_joint_pos_rel, params={"robot_meta": ROBOT_META})
+        joint_vel = ObsTerm(func=mdp.batched_joint_vel, params={"robot_meta": ROBOT_META})
+        ee_pose = ObsTerm(func=mdp.batched_ee_pose, params={"robot_meta": ROBOT_META})
+        ee_command = ObsTerm(func=mdp.batched_generated_commands, params={"robot_meta": ROBOT_META})
+        ee_pos_error = ObsTerm(func=mdp.batched_ee_pos_error, params={"robot_meta": ROBOT_META})
         actions = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):
@@ -297,20 +297,23 @@ class MultiRobotReachRewardsCfg:
     ee_pos_tracking = RewTerm(
         func=mdp.batched_position_command_error,
         weight=-0.2,
+        params={"robot_meta": ROBOT_META},
     )
     ee_pos_tracking_fine = RewTerm(
         func=mdp.batched_position_command_error_tanh,
         weight=0.1,
-        params={"std": 0.1},
+        params={"std": 0.1, "robot_meta": ROBOT_META},
     )
     ee_ori_tracking = RewTerm(
         func=mdp.batched_orientation_command_error,
         weight=-0.1,
+        params={"robot_meta": ROBOT_META},
     )
     action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.0001)
     joint_vel = RewTerm(
         func=mdp.batched_joint_vel_l2,
         weight=-0.0001,
+        params={"robot_meta": ROBOT_META},
     )
 
 
@@ -333,12 +336,13 @@ class MultiRobotReachEventsCfg:
     reset_to_default = EventTerm(
         func=mdp.batched_reset_to_default,
         mode="reset",
-        params={"reset_joint_targets": True},
+        params={"robot_meta": ROBOT_META, "reset_joint_targets": True},
     )
     reset_joints = EventTerm(
         func=mdp.batched_reset_joints,
         mode="reset",
         params={
+            "robot_meta": ROBOT_META,
             "position_range": (0.5, 1.25),
             "velocity_range": (0.0, 0.0),
         },
