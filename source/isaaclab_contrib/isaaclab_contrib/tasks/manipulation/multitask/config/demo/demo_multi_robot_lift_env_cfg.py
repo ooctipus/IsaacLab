@@ -3,17 +3,15 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Multi-robot lift env: OpenArm + Franka, each lifting its own cube.
+"""Multi-robot lift env: OpenArm + Franka, lifting a shared cube type.
 
 Each robot type occupies its own env-id group.  The
 :class:`ActionManager` automatically shares action columns
 across disjoint groups.
 
-Lift-specific batched MDP classes iterate ``robot_meta`` at init
-time to discover ``robot_cfg``, ``object_cfg``, ``ee_frame_cfg``,
-and ``command_name`` for each robot group and use the
-gather-first-compute-once pattern for efficient multi-robot
-computation.
+The ``lift_object`` :class:`RigidObjectCfg` is listed in both groups'
+:class:`InclusionSet`, so each env gets its own cube instance but
+they share a single :class:`RigidObject` view.
 
 Layout (2 groups, evenly split):
     Group 0:  OpenArm  -- Lift cube
@@ -26,6 +24,7 @@ import math
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
+from isaaclab.cloner import sequential
 from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.envs.mdp.actions.actions_cfg import (
@@ -53,7 +52,7 @@ from isaaclab_contrib.tasks.manipulation.multitask.mdp.utils import LiftGroupCfg
 
 from isaaclab_assets.robots.franka import FRANKA_PANDA_HIGH_PD_CFG
 from isaaclab_assets.robots.openarm import OPENARM_UNI_HIGH_PD_CFG
-from isaaclab.cloner import sequential
+
 from .demo_multi_robot_reach_env_cfg import MultitaskPhysicsCfg
 
 # -----------------------------------------------------------
@@ -71,7 +70,7 @@ ROBOT_META = {
             joint_names=["openarm_joint.*", "openarm_finger_joint.*"],
         ),
         robot_cfg=SceneEntityCfg("openarm_robot"),
-        object_cfg=SceneEntityCfg("openarm_object"),
+        object_cfg=SceneEntityCfg("lift_object"),
         ee_frame_cfg=SceneEntityCfg("openarm_ee_frame"),
         command_name="ee_pose",
         command_ranges=PoseCommandRanges(
@@ -90,7 +89,7 @@ ROBOT_META = {
             joint_names=["panda_joint.*", "panda_finger.*"],
         ),
         robot_cfg=SceneEntityCfg("franka_robot"),
-        object_cfg=SceneEntityCfg("franka_object"),
+        object_cfg=SceneEntityCfg("lift_object"),
         ee_frame_cfg=SceneEntityCfg("franka_ee_frame"),
         command_name="ee_pose",
         command_ranges=PoseCommandRanges(
@@ -133,14 +132,14 @@ _MARKER_CFG.prim_path = "/Visuals/FrameTransformer"
 
 @configclass
 class MultiRobotLiftSceneCfg(InteractiveSceneCfg):
-    """Two robot types, each lifting its own cube."""
+    """Two robot types lifting a shared cube type (one view, two groups)."""
 
     clone_cfg = CloneCfg(
         clone_strategy=sequential,
         clone_groups={
-            TASK_OPENARM: InclusionSet(assets=["openarm_robot", "openarm_object", "openarm_ee_frame"], weight=1),
-            TASK_FRANKA: InclusionSet(assets=["franka_robot", "franka_object", "franka_ee_frame"], weight=1),
-        }
+            TASK_OPENARM: InclusionSet(assets=["openarm_robot", "lift_object", "openarm_ee_frame"], weight=1),
+            TASK_FRANKA: InclusionSet(assets=["franka_robot", "lift_object", "franka_ee_frame"], weight=1),
+        },
     )
 
     plane = AssetBaseCfg(
@@ -158,15 +157,16 @@ class MultiRobotLiftSceneCfg(InteractiveSceneCfg):
         spawn=_TABLE_SPAWN,
     )
 
+    # ── Shared lift object (one view across both groups) ─────
+    lift_object = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/LiftObject",
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.45, 0.0, 0.055), rot=(0.0, 0.0, 0.0, 1.0)),
+        spawn=_CUBE_SPAWN,
+    )
+
     # ── OpenArm ──────────────────────────────────────────────
     openarm_robot = OPENARM_UNI_HIGH_PD_CFG.replace(
         prim_path="{ENV_REGEX_NS}/OpenArm_Robot",
-    )
-
-    openarm_object = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/OpenArm_Object",
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.4, 0.0, 0.055), rot=(0.0, 0.0, 0.0, 1.0)),
-        spawn=_CUBE_SPAWN,
     )
     openarm_ee_frame = FrameTransformerCfg(
         prim_path="{ENV_REGEX_NS}/OpenArm_Robot/openarm_link0",
@@ -183,11 +183,6 @@ class MultiRobotLiftSceneCfg(InteractiveSceneCfg):
     # ── Franka ───────────────────────────────────────────────
     franka_robot = FRANKA_PANDA_HIGH_PD_CFG.replace(
         prim_path="{ENV_REGEX_NS}/Franka_Robot",
-    )
-    franka_object = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/Franka_Object",
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.5, 0.0, 0.055), rot=(0.0, 0.0, 0.0, 1.0)),
-        spawn=_CUBE_SPAWN,
     )
     franka_ee_frame = FrameTransformerCfg(
         prim_path="{ENV_REGEX_NS}/Franka_Robot/panda_link0",
@@ -279,11 +274,11 @@ class MultiRobotLiftObsCfg:
 
     @configclass
     class PolicyCfg(ObsGroup):
-        ee_pose = ObsTerm(func=mdp.batched_ee_pose)
-        object_pos = ObsTerm(func=mdp.batched_object_pos_in_robot_frame)
-        target_object_pos = ObsTerm(func=mdp.batched_generated_commands)
-        ee_object_pos_error = ObsTerm(func=mdp.batched_ee_object_pos_error)
-        object_target_pos_error = ObsTerm(func=mdp.batched_object_target_pos_error)
+        ee_pose = ObsTerm(func=mdp.batched_ee_pose, params={"robot_meta": ROBOT_META})
+        object_pos = ObsTerm(func=mdp.batched_object_pos_in_robot_frame, params={"robot_meta": ROBOT_META})
+        target_object_pos = ObsTerm(func=mdp.batched_generated_commands, params={"robot_meta": ROBOT_META})
+        ee_object_pos_error = ObsTerm(func=mdp.batched_ee_object_pos_error, params={"robot_meta": ROBOT_META})
+        object_target_pos_error = ObsTerm(func=mdp.batched_object_target_pos_error, params={"robot_meta": ROBOT_META})
         actions = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):
@@ -310,28 +305,29 @@ class MultiRobotLiftRewardsCfg:
     reaching_object = RewTerm(
         func=mdp.batched_object_ee_distance,
         weight=1.0,
-        params={"std": 0.1},
+        params={"std": 0.1, "robot_meta": ROBOT_META},
     )
     lifting_object = RewTerm(
         func=mdp.batched_object_is_lifted,
         weight=15.0,
-        params={"minimal_height": 0.04},
+        params={"minimal_height": 0.04, "robot_meta": ROBOT_META},
     )
     object_goal_tracking = RewTerm(
         func=mdp.batched_object_goal_distance,
         weight=16.0,
-        params={"std": 0.3, "minimal_height": 0.04},
+        params={"std": 0.3, "minimal_height": 0.04, "robot_meta": ROBOT_META},
     )
     object_goal_tracking_fine = RewTerm(
         func=mdp.batched_object_goal_distance,
         weight=5.0,
-        params={"std": 0.05, "minimal_height": 0.04},
+        params={"std": 0.05, "minimal_height": 0.04, "robot_meta": ROBOT_META},
     )
 
     action_rate = RewTerm(func=mdp.action_rate_l2, weight=-1e-4)
     joint_vel = RewTerm(
         func=mdp.batched_joint_vel_l2,
         weight=-1e-4,
+        params={"robot_meta": ROBOT_META},
     )
 
 
@@ -346,7 +342,7 @@ class MultiRobotLiftTerminationsCfg:
 
     object_dropping = DoneTerm(
         func=mdp.batched_object_height_below_minimum,
-        params={"minimum_height": -0.05},
+        params={"minimum_height": -0.05, "robot_meta": ROBOT_META},
     )
 
 
@@ -366,12 +362,13 @@ class MultiRobotLiftEventsCfg:
     reset_to_default = EventTerm(
         func=mdp.batched_reset_to_default,
         mode="reset",
-        params={"reset_joint_targets": True},
+        params={"robot_meta": ROBOT_META, "reset_joint_targets": True},
     )
     reset_joints = EventTerm(
         func=mdp.batched_reset_joints,
         mode="reset",
         params={
+            "robot_meta": ROBOT_META,
             "position_range": (0.5, 1.25),
             "velocity_range": (0.0, 0.0),
         },
@@ -380,6 +377,7 @@ class MultiRobotLiftEventsCfg:
         func=mdp.batched_reset_object_uniform,
         mode="reset",
         params={
+            "robot_meta": ROBOT_META,
             "pose_range": {"x": (-0.1, 0.1), "y": (-0.25, 0.25), "z": (0.0, 0.0)},
             "velocity_range": {},
         },
@@ -410,7 +408,7 @@ class MultiRobotLiftCurriculumCfg:
 
 @configclass
 class MultiRobotLiftEnvCfg(ManagerBasedRLEnvCfg):
-    """Multi-robot lift: OpenArm + Franka, each lifting its own cube.
+    """Multi-robot lift: OpenArm + Franka, shared ``lift_object`` view.
 
     Group 0: OpenArm (7 arm DoF + 2 finger DoF)
     Group 1: Franka  (7 arm DoF + 2 finger DoF)
@@ -418,9 +416,8 @@ class MultiRobotLiftEnvCfg(ManagerBasedRLEnvCfg):
     Action dim: max(7, 7) = 6 (IK shared) + 1 (gripper shared) = 7
     (IK dim=6, gripper dim=1, columns shared across disjoint groups)
 
-    The ``robot_meta`` dict declares ``asset_cfg``, ``command_name``,
-    ``robot_cfg``, ``object_cfg``, and ``ee_frame_cfg`` — used by
-    batched MDP term classes.
+    The ``lift_object`` is included in both groups' :class:`InclusionSet`,
+    so a single :class:`RigidObject` view spans all envs.
     """
 
     scene: MultiRobotLiftSceneCfg = MultiRobotLiftSceneCfg(

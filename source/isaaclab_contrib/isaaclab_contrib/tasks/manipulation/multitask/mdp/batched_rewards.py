@@ -53,9 +53,9 @@ class batched_joint_vel_l2(BatchedTermBase):
             jids = meta.asset_cfg.joint_ids
             nj = len(jids) if isinstance(jids, list) else wp.to_torch(art.data.joint_vel).shape[1]
             max_j = max(max_j, nj)
-            group_view = self._layout[group_key, meta.asset_cfg.name]
-            self._entries.append((group_key, meta, group_view, jids, nj))
-        self._s_vel = torch.zeros(self._num_envs, max(max_j, 1), device=self._device)
+            gv = self._view(group_key, meta.asset_cfg)
+            self._entries.append((group_key, meta, gv, jids, nj))
+        self._s_vel = self._zeros(max(max_j, 1))
 
     def __call__(self, env: ManagerBasedRLEnv, robot_meta: dict | None = None) -> torch.Tensor:
         self._s_vel.zero_()
@@ -77,14 +77,14 @@ class batched_position_command_error(BatchedTermBase):
         super().__init__(cfg, env)
         self._entries: list[tuple[str, ReachGroupCfg | LiftGroupCfg, GroupView, int]] = []
         for group_key, meta in self._iter_groups(ReachGroupCfg, LiftGroupCfg):
-            group_view = self._layout[group_key, meta.asset_cfg.name]
+            gv = self._view(group_key, meta.asset_cfg)
             body_ids = meta.asset_cfg.body_ids
             body_idx = body_ids[0] if isinstance(body_ids, list) else 0
-            self._entries.append((group_key, meta, group_view, body_idx))
-        self._s_root_pos = torch.zeros(self._num_envs, 3, device=self._device)
-        self._s_root_quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device=self._device).expand(self._num_envs, -1).clone()
-        self._s_body_pos = torch.zeros(self._num_envs, 3, device=self._device)
-        self._s_cmd_pos = torch.zeros(self._num_envs, 3, device=self._device)
+            self._entries.append((group_key, meta, gv, body_idx))
+        self._s_root_pos = self._zeros(3)
+        self._s_root_quat = self._quat_identity()
+        self._s_body_pos = self._zeros(3)
+        self._s_cmd_pos = self._zeros(3)
 
     def __call__(self, env: ManagerBasedRLEnv, robot_meta: dict | None = None) -> torch.Tensor:
         for _, meta, group_view, body_idx in self._entries:
@@ -104,14 +104,14 @@ class batched_position_command_error_tanh(BatchedTermBase):
         super().__init__(cfg, env)
         self._entries: list[tuple[str, ReachGroupCfg | LiftGroupCfg, GroupView, int]] = []
         for group_key, meta in self._iter_groups(ReachGroupCfg, LiftGroupCfg):
-            group_view = self._layout[group_key, meta.asset_cfg.name]
+            gv = self._view(group_key, meta.asset_cfg)
             body_ids = meta.asset_cfg.body_ids
             body_idx = body_ids[0] if isinstance(body_ids, list) else 0
-            self._entries.append((group_key, meta, group_view, body_idx))
-        self._s_root_pos = torch.zeros(self._num_envs, 3, device=self._device)
-        self._s_root_quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device=self._device).expand(self._num_envs, -1).clone()
-        self._s_body_pos = torch.zeros(self._num_envs, 3, device=self._device)
-        self._s_cmd_pos = torch.zeros(self._num_envs, 3, device=self._device)
+            self._entries.append((group_key, meta, gv, body_idx))
+        self._s_root_pos = self._zeros(3)
+        self._s_root_quat = self._quat_identity()
+        self._s_body_pos = self._zeros(3)
+        self._s_cmd_pos = self._zeros(3)
 
     def __call__(self, env: ManagerBasedRLEnv, std: float = 0.1, robot_meta: dict | None = None) -> torch.Tensor:
         for group_key, meta, group_view, body_idx in self._entries:
@@ -137,13 +137,13 @@ class batched_orientation_command_error(BatchedTermBase):
         super().__init__(cfg, env)
         self._entries: list[tuple[str, ReachGroupCfg | LiftGroupCfg, GroupView, int]] = []
         for group_key, meta in self._iter_groups(ReachGroupCfg, LiftGroupCfg):
-            group_view = self._layout[group_key, meta.asset_cfg.name]
+            gv = self._view(group_key, meta.asset_cfg)
             body_ids = meta.asset_cfg.body_ids
             body_idx = body_ids[0] if isinstance(body_ids, list) else 0
-            self._entries.append((group_key, meta, group_view, body_idx))
-        self._s_root_quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device=self._device).expand(self._num_envs, -1).clone()
-        self._s_body_quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device=self._device).expand(self._num_envs, -1).clone()
-        self._s_cmd_quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device=self._device).expand(self._num_envs, -1).clone()
+            self._entries.append((group_key, meta, gv, body_idx))
+        self._s_root_quat = self._quat_identity()
+        self._s_body_quat = self._quat_identity()
+        self._s_cmd_quat = self._quat_identity()
 
     def __call__(self, env: ManagerBasedRLEnv, robot_meta: dict | None = None) -> torch.Tensor:
         for group_key, meta, group_view, body_idx in self._entries:
@@ -164,13 +164,13 @@ class batched_orientation_command_error_tanh(BatchedTermBase):
         super().__init__(cfg, env)
         self._entries: list[tuple[str, ReachGroupCfg | LiftGroupCfg, GroupView, int]] = []
         for group_key, meta in self._iter_groups(ReachGroupCfg, LiftGroupCfg):
-            group_view = self._layout[group_key, meta.asset_cfg.name]
+            gv = self._view(group_key, meta.asset_cfg)
             body_ids = meta.asset_cfg.body_ids
             body_idx = body_ids[0] if isinstance(body_ids, list) else 0
-            self._entries.append((group_key, meta, group_view, body_idx))
-        self._s_root_quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device=self._device).expand(self._num_envs, -1).clone()
-        self._s_body_quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device=self._device).expand(self._num_envs, -1).clone()
-        self._s_cmd_quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device=self._device).expand(self._num_envs, -1).clone()
+            self._entries.append((group_key, meta, gv, body_idx))
+        self._s_root_quat = self._quat_identity()
+        self._s_body_quat = self._quat_identity()
+        self._s_cmd_quat = self._quat_identity()
 
     def __call__(self, env: ManagerBasedRLEnv, std: float = 0.1, robot_meta: dict | None = None) -> torch.Tensor:
         for _, meta, group_view, body_idx in self._entries:
@@ -197,11 +197,11 @@ class batched_object_ee_distance(BatchedTermBase):
         super().__init__(cfg, env)
         self._entries: list[tuple[str, LiftGroupCfg, GroupView, GroupView]] = []
         for group_key, meta in self._iter_groups(LiftGroupCfg):
-            object_view = self._layout[group_key, meta.object_cfg.name]
-            ee_view = self._layout[group_key, meta.ee_frame_cfg.name]
+            object_view = self._view(group_key, meta.object_cfg)
+            ee_view = self._view(group_key, meta.ee_frame_cfg)
             self._entries.append((group_key, meta, object_view, ee_view))
-        self._s_obj_pos = torch.zeros(self._num_envs, 3, device=self._device)
-        self._s_ee_pos = torch.zeros(self._num_envs, 3, device=self._device)
+        self._s_obj_pos = self._zeros(3)
+        self._s_ee_pos = self._zeros(3)
 
     def __call__(self, env: ManagerBasedRLEnv, std: float = 0.1, robot_meta: dict | None = None) -> torch.Tensor:
         for _, meta, object_view, ee_view in self._entries:
@@ -222,9 +222,9 @@ class batched_object_is_lifted(BatchedTermBase):
         super().__init__(cfg, env)
         self._entries: list[tuple[str, LiftGroupCfg, GroupView]] = []
         for group_key, meta in self._iter_groups(LiftGroupCfg):
-            object_view = self._layout[group_key, meta.object_cfg.name]
+            object_view = self._view(group_key, meta.object_cfg)
             self._entries.append((group_key, meta, object_view))
-        self._s_height = torch.zeros(self._num_envs, device=self._device)
+        self._s_height = self._zeros()
 
     def __call__(
         self, env: ManagerBasedRLEnv, minimal_height: float = 0.04, robot_meta: dict | None = None
@@ -243,13 +243,13 @@ class batched_object_goal_distance(BatchedTermBase):
         super().__init__(cfg, env)
         self._entries: list[tuple[str, LiftGroupCfg, GroupView, GroupView]] = []
         for group_key, meta in self._iter_groups(LiftGroupCfg):
-            robot_view = self._layout[group_key, meta.robot_cfg.name]
-            object_view = self._layout[group_key, meta.object_cfg.name]
+            robot_view = self._view(group_key, meta.robot_cfg)
+            object_view = self._view(group_key, meta.object_cfg)
             self._entries.append((group_key, meta, robot_view, object_view))
-        self._s_root_pos = torch.zeros(self._num_envs, 3, device=self._device)
-        self._s_root_quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device=self._device).expand(self._num_envs, -1).clone()
-        self._s_obj_pos = torch.zeros(self._num_envs, 3, device=self._device)
-        self._s_cmd_pos = torch.zeros(self._num_envs, 3, device=self._device)
+        self._s_root_pos = self._zeros(3)
+        self._s_root_quat = self._quat_identity()
+        self._s_obj_pos = self._zeros(3)
+        self._s_cmd_pos = self._zeros(3)
 
     def __call__(
         self, env: ManagerBasedRLEnv, std: float = 0.3, minimal_height: float = 0.04, robot_meta: dict | None = None
@@ -278,11 +278,11 @@ class batched_cabinet_approach_ee_handle(BatchedTermBase):
         super().__init__(cfg, env)
         self._entries: list[tuple[str, CabinetGroupCfg, GroupView, GroupView]] = []
         for group_key, meta in self._iter_groups(CabinetGroupCfg):
-            ee_view = self._layout[group_key, meta.ee_frame_cfg.name]
-            cabinet_view = self._layout[group_key, meta.cabinet_frame_cfg.name]
+            ee_view = self._view(group_key, meta.ee_frame_cfg)
+            cabinet_view = self._view(group_key, meta.cabinet_frame_cfg)
             self._entries.append((group_key, meta, ee_view, cabinet_view))
-        self._s_ee_pos = torch.zeros(self._num_envs, 3, device=self._device)
-        self._s_handle_pos = torch.zeros(self._num_envs, 3, device=self._device)
+        self._s_ee_pos = self._zeros(3)
+        self._s_handle_pos = self._zeros(3)
 
     def __call__(self, env: ManagerBasedRLEnv, threshold: float = 0.2, robot_meta: dict | None = None) -> torch.Tensor:
         for _, meta, ee_view, cabinet_view in self._entries:
@@ -302,11 +302,11 @@ class batched_cabinet_align_ee_handle(BatchedTermBase):
         super().__init__(cfg, env)
         self._entries: list[tuple[str, CabinetGroupCfg, GroupView, GroupView]] = []
         for group_key, meta in self._iter_groups(CabinetGroupCfg):
-            ee_view = self._layout[group_key, meta.ee_frame_cfg.name]
-            cabinet_view = self._layout[group_key, meta.cabinet_frame_cfg.name]
+            ee_view = self._view(group_key, meta.ee_frame_cfg)
+            cabinet_view = self._view(group_key, meta.cabinet_frame_cfg)
             self._entries.append((group_key, meta, ee_view, cabinet_view))
-        self._s_ee_quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device=self._device).expand(self._num_envs, -1).clone()
-        self._s_handle_quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device=self._device).expand(self._num_envs, -1).clone()
+        self._s_ee_quat = self._quat_identity()
+        self._s_handle_quat = self._quat_identity()
 
     def __call__(self, env: ManagerBasedRLEnv, robot_meta: dict | None = None) -> torch.Tensor:
         for _, meta, ee_view, cabinet_view in self._entries:
@@ -330,12 +330,12 @@ class batched_cabinet_align_grasp_around_handle(BatchedTermBase):
         super().__init__(cfg, env)
         self._entries: list[tuple[str, CabinetGroupCfg, GroupView, GroupView]] = []
         for group_key, meta in self._iter_groups(CabinetGroupCfg):
-            ee_view = self._layout[group_key, meta.ee_frame_cfg.name]
-            cabinet_view = self._layout[group_key, meta.cabinet_frame_cfg.name]
+            ee_view = self._view(group_key, meta.ee_frame_cfg)
+            cabinet_view = self._view(group_key, meta.cabinet_frame_cfg)
             self._entries.append((group_key, meta, ee_view, cabinet_view))
-        self._s_handle_pos = torch.zeros(self._num_envs, 3, device=self._device)
-        self._s_left = torch.zeros(self._num_envs, 3, device=self._device)
-        self._s_right = torch.zeros(self._num_envs, 3, device=self._device)
+        self._s_handle_pos = self._zeros(3)
+        self._s_left = self._zeros(3)
+        self._s_right = self._zeros(3)
 
     def __call__(self, env: ManagerBasedRLEnv, robot_meta: dict | None = None) -> torch.Tensor:
         for group_key, meta, ee_view, cabinet_view in self._entries:
@@ -356,12 +356,12 @@ class batched_cabinet_approach_gripper_handle(BatchedTermBase):
         super().__init__(cfg, env)
         self._entries: list[tuple[str, CabinetGroupCfg, GroupView, GroupView]] = []
         for group_key, meta in self._iter_groups(CabinetGroupCfg):
-            ee_view = self._layout[group_key, meta.ee_frame_cfg.name]
-            cabinet_view = self._layout[group_key, meta.cabinet_frame_cfg.name]
+            ee_view = self._view(group_key, meta.ee_frame_cfg)
+            cabinet_view = self._view(group_key, meta.cabinet_frame_cfg)
             self._entries.append((group_key, meta, ee_view, cabinet_view))
-        self._s_handle_pos = torch.zeros(self._num_envs, 3, device=self._device)
-        self._s_left = torch.zeros(self._num_envs, 3, device=self._device)
-        self._s_right = torch.zeros(self._num_envs, 3, device=self._device)
+        self._s_handle_pos = self._zeros(3)
+        self._s_left = self._zeros(3)
+        self._s_right = self._zeros(3)
 
     def __call__(self, env: ManagerBasedRLEnv, offset: float = 0.04, robot_meta: dict | None = None) -> torch.Tensor:
         for _, meta, ee_view, cabinet_view in self._entries:
@@ -386,13 +386,13 @@ class batched_cabinet_grasp_handle(BatchedTermBase):
         super().__init__(cfg, env)
         self._entries: list[tuple[str, CabinetGroupCfg, GroupView, GroupView, GroupView]] = []
         for group_key, meta in self._iter_groups(CabinetGroupCfg):
-            robot_view = self._layout[group_key, meta.asset_cfg.name]
-            ee_view = self._layout[group_key, meta.ee_frame_cfg.name]
-            cabinet_view = self._layout[group_key, meta.cabinet_frame_cfg.name]
+            robot_view = self._view(group_key, meta.asset_cfg)
+            ee_view = self._view(group_key, meta.ee_frame_cfg)
+            cabinet_view = self._view(group_key, meta.cabinet_frame_cfg)
             self._entries.append((group_key, meta, robot_view, ee_view, cabinet_view))
-        self._s_ee_pos = torch.zeros(self._num_envs, 3, device=self._device)
-        self._s_handle_pos = torch.zeros(self._num_envs, 3, device=self._device)
-        self._s_gripper = torch.zeros(self._num_envs, device=self._device)
+        self._s_ee_pos = self._zeros(3)
+        self._s_handle_pos = self._zeros(3)
+        self._s_gripper = self._zeros()
 
     def __call__(
         self,
@@ -423,14 +423,14 @@ class batched_cabinet_open_drawer_bonus(BatchedTermBase):
         super().__init__(cfg, env)
         self._entries: list[tuple[str, CabinetGroupCfg, GroupView, GroupView, GroupView]] = []
         for group_key, meta in self._iter_groups(CabinetGroupCfg):
-            cabinet_view = self._layout[group_key, meta.cabinet_asset_cfg.name]
-            ee_view = self._layout[group_key, meta.ee_frame_cfg.name]
-            frame_view = self._layout[group_key, meta.cabinet_frame_cfg.name]
+            cabinet_view = self._view(group_key, meta.cabinet_asset_cfg)
+            ee_view = self._view(group_key, meta.ee_frame_cfg)
+            frame_view = self._view(group_key, meta.cabinet_frame_cfg)
             self._entries.append((group_key, meta, cabinet_view, ee_view, frame_view))
-        self._s_drawer_pos = torch.zeros(self._num_envs, device=self._device)
-        self._s_handle_pos = torch.zeros(self._num_envs, 3, device=self._device)
-        self._s_left = torch.zeros(self._num_envs, 3, device=self._device)
-        self._s_right = torch.zeros(self._num_envs, 3, device=self._device)
+        self._s_drawer_pos = self._zeros()
+        self._s_handle_pos = self._zeros(3)
+        self._s_left = self._zeros(3)
+        self._s_right = self._zeros(3)
 
     def __call__(self, env: ManagerBasedRLEnv, robot_meta: dict | None = None) -> torch.Tensor:
         self._s_drawer_pos.zero_()
@@ -458,14 +458,14 @@ class batched_cabinet_multi_stage_open_drawer(BatchedTermBase):
         super().__init__(cfg, env)
         self._entries: list[tuple[str, CabinetGroupCfg, GroupView, GroupView, GroupView]] = []
         for group_key, meta in self._iter_groups(CabinetGroupCfg):
-            cabinet_view = self._layout[group_key, meta.cabinet_asset_cfg.name]
-            ee_view = self._layout[group_key, meta.ee_frame_cfg.name]
-            frame_view = self._layout[group_key, meta.cabinet_frame_cfg.name]
+            cabinet_view = self._view(group_key, meta.cabinet_asset_cfg)
+            ee_view = self._view(group_key, meta.ee_frame_cfg)
+            frame_view = self._view(group_key, meta.cabinet_frame_cfg)
             self._entries.append((group_key, meta, cabinet_view, ee_view, frame_view))
-        self._s_drawer_pos = torch.zeros(self._num_envs, device=self._device)
-        self._s_handle_pos = torch.zeros(self._num_envs, 3, device=self._device)
-        self._s_left = torch.zeros(self._num_envs, 3, device=self._device)
-        self._s_right = torch.zeros(self._num_envs, 3, device=self._device)
+        self._s_drawer_pos = self._zeros()
+        self._s_handle_pos = self._zeros(3)
+        self._s_left = self._zeros(3)
+        self._s_right = self._zeros(3)
 
     def __call__(self, env: ManagerBasedRLEnv, robot_meta: dict | None = None) -> torch.Tensor:
         self._s_drawer_pos.zero_()

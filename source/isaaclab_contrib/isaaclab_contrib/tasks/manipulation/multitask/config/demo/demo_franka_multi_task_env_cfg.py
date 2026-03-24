@@ -136,7 +136,7 @@ class FrankaMultiTaskSceneCfg(InteractiveSceneCfg):
     """Single Franka scene with clone groups for lift, cabinet, and reach."""
 
     clone_cfg = CloneCfg(
-        # sequential strategy creates slices of environments, it is more efficient with large number of environments 
+        # sequential strategy creates slices of environments, it is more efficient with large number of environments
         # despite visually looks cluttered.
         clone_strategy=cloner_strategies.sequential,
         clone_groups={
@@ -292,8 +292,8 @@ class FrankaMultiTaskObservationsCfg:
     class PolicyCfg(ObsGroup):
         # ── shared proprioception ─────────────────────────
         task_onehot = ObsTerm(func=mdp.multi_task_onehot, params={"robot_meta": ROBOT_META})
-        joint_pos_rel = ObsTerm(func=mdp.batched_joint_pos_rel, params={"robot_meta": ROBOT_META})
-        joint_vel = ObsTerm(func=mdp.batched_joint_vel, params={"robot_meta": ROBOT_META})
+        # joint_pos_rel = ObsTerm(func=mdp.batched_joint_pos_rel, params={"robot_meta": ROBOT_META})
+        # joint_vel = ObsTerm(func=mdp.batched_joint_vel, params={"robot_meta": ROBOT_META})
         ee_pose = ObsTerm(func=mdp.batched_ee_pose, params={"robot_meta": ROBOT_META})
         actions = ObsTerm(func=mdp.last_action)
 

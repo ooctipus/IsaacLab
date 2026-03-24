@@ -148,10 +148,16 @@ def compute_read_index(
 
 
 def build_layout(env_ids: list[int], device: str) -> GroupLayout:
-    """Build a GroupLayout from env_ids list."""
+    """Build a GroupLayout from env_ids list.
+
+    Args:
+        env_ids: Environment indices (need not be sorted; sorted internally).
+        device: Device for tensor operations.
+    """
     if len(env_ids) == 0:
         return GroupLayout(offset=0, count=0, slice=slice(0, 0), indices=None, device=device)
-    elif is_contiguous_slice(env_ids):
+    env_ids = sorted(env_ids)
+    if is_contiguous_slice(env_ids):
         return GroupLayout(
             offset=env_ids[0],
             count=len(env_ids),
@@ -176,7 +182,9 @@ def resolve_asset_env_ids(
 ) -> torch.Tensor | None:
     """Map global env_ids to local asset indices for heterogeneous layouts.
 
-    Pure function: composes from layout's raw data.
+    For assets exclusive to a single group, returns 0-based local indices
+    within that group. For assets spanning multiple groups, returns indices
+    into the asset's combined data buffer (sorted union of all group env_ids).
 
     Args:
         layout: The EnvLayout instance.
@@ -189,26 +197,32 @@ def resolve_asset_env_ids(
     asset_groups = layout.assets.get(asset_name)
 
     # Homogeneous or unregistered asset: spans all envs
-    if not asset_groups and not layout.group_names:
-        return env_ids
-
-    # No groups registered for this asset but layout is heterogeneous
     if not asset_groups:
         return env_ids
 
-    # Heterogeneous: filter to asset's groups and collect local indices
+    # Single group owns this asset: use fast group-local indices
+    if len(asset_groups) == 1:
+        if env_ids is None:
+            env_ids = torch.arange(layout.num_envs, dtype=torch.long, device=layout._device)
+        local, _ = layout[asset_groups[0]].filter(env_ids)
+        return local if local.numel() > 0 else None
+
+    # Multi-group asset: find matching global ids, then map to buffer rows
     if env_ids is None:
         env_ids = torch.arange(layout.num_envs, dtype=torch.long, device=layout._device)
 
-    local_ids = []
+    matched_global = []
     for group_name in asset_groups:
-        local, _ = layout[group_name].filter(env_ids)
-        if local.numel() > 0:
-            local_ids.append(local)
+        _, matched = layout[group_name].filter(env_ids)
+        if matched.numel() > 0:
+            matched_global.append(matched)
 
-    if not local_ids:
+    if not matched_global:
         return None
-    return torch.cat(local_ids) if len(local_ids) > 1 else local_ids[0]
+
+    all_matched = torch.cat(matched_global) if len(matched_global) > 1 else matched_global[0]
+    asset_env_ids = layout._get_asset_env_ids(asset_name)
+    return torch.searchsorted(asset_env_ids, all_matched)
 
 
 # ============================================================================
@@ -261,9 +275,6 @@ class GroupView:
 # ============================================================================
 
 
-_HOMOGENEOUS_LAYOUT = GroupLayout(offset=0, count=0, slice=slice(None), indices=None, device="cpu")
-
-
 class EnvLayout:
     """Centralized environment partitioning for heterogeneous multi-task scenes.
 
@@ -286,6 +297,7 @@ class EnvLayout:
     def __init__(self, num_envs: int, device: str = "cuda:0"):
         self._num_envs = num_envs
         self._device = device
+        self._homogeneous_layout = GroupLayout(offset=0, count=num_envs, slice=slice(None), indices=None, device=device)
         self._layouts: dict[str, GroupLayout] = {}
         self._group_names: tuple[str, ...] = ()
         self._assets: dict[str, tuple[str, ...]] = {}
@@ -394,7 +406,7 @@ class EnvLayout:
 
     def _make_view(self, group_key: str | None, asset_name: str | None) -> GroupView:
         if group_key is None:
-            return GroupView(write=slice(None), read=slice(None), layout=_HOMOGENEOUS_LAYOUT)
+            return GroupView(write=slice(None), read=slice(None), layout=self._homogeneous_layout)
 
         layout = self._layouts.get(group_key)
         if layout is None:

@@ -383,25 +383,27 @@ class MultiRobotMultiTaskObsCfg:
     @configclass
     class PolicyCfg(ObsGroup):
         # ── shared proprioception ─────────────────────────
-        task_onehot = ObsTerm(func=mdp.multi_task_onehot)
-        joint_pos_rel = ObsTerm(func=mdp.batched_joint_pos_rel)
-        joint_vel = ObsTerm(func=mdp.batched_joint_vel)
-        ee_pose = ObsTerm(func=mdp.batched_ee_pose)
+        task_onehot = ObsTerm(func=mdp.multi_task_onehot, params={"robot_meta": ROBOT_META})
+        # joint_pos_rel = ObsTerm(func=mdp.batched_joint_pos_rel, params={"robot_meta": ROBOT_META})
+        # joint_vel = ObsTerm(func=mdp.batched_joint_vel, params={"robot_meta": ROBOT_META})
+        ee_pose = ObsTerm(func=mdp.batched_ee_pose, params={"robot_meta": ROBOT_META})
         actions = ObsTerm(func=mdp.last_action)
 
         # ── lift observations (zero-padded for non-lift) ──
-        object_pos = ObsTerm(func=mdp.batched_object_pos_in_robot_frame)
-        object_target_pos_error = ObsTerm(func=mdp.batched_object_target_pos_error)
-        ee_object_pos_error = ObsTerm(func=mdp.batched_ee_object_pos_error)
+        object_pos = ObsTerm(func=mdp.batched_object_pos_in_robot_frame, params={"robot_meta": ROBOT_META})
+        object_target_pos_error = ObsTerm(func=mdp.batched_object_target_pos_error, params={"robot_meta": ROBOT_META})
+        ee_object_pos_error = ObsTerm(func=mdp.batched_ee_object_pos_error, params={"robot_meta": ROBOT_META})
 
         # ── cabinet observations (zero-padded for non-cab) ─
-        cabinet_joint_pos = ObsTerm(func=mdp.batched_cabinet_joint_pos)
-        cabinet_joint_vel = ObsTerm(func=mdp.batched_cabinet_joint_vel)
-        cabinet_handle_error = ObsTerm(func=mdp.batched_cabinet_rel_ee_drawer_distance)
+        cabinet_joint_pos = ObsTerm(func=mdp.batched_cabinet_joint_pos, params={"robot_meta": ROBOT_META})
+        cabinet_joint_vel = ObsTerm(func=mdp.batched_cabinet_joint_vel, params={"robot_meta": ROBOT_META})
+        cabinet_handle_error = ObsTerm(
+            func=mdp.batched_cabinet_rel_ee_drawer_distance, params={"robot_meta": ROBOT_META}
+        )
 
         # ── reach + lift commands (zero-padded for cabinet) ─
-        commands = ObsTerm(func=mdp.batched_generated_commands)
-        ee_pos_error = ObsTerm(func=mdp.batched_ee_pos_error)
+        commands = ObsTerm(func=mdp.batched_generated_commands, params={"robot_meta": ROBOT_META})
+        ee_pos_error = ObsTerm(func=mdp.batched_ee_pos_error, params={"robot_meta": ROBOT_META})
 
         def __post_init__(self):
             self.enable_corruption = True
@@ -427,80 +429,86 @@ class MultiRobotMultiTaskRewardsCfg:
     lift_reaching_object = RewTerm(
         func=mdp.batched_object_ee_distance,
         weight=1.0,
-        params={"std": 0.1},
+        params={"std": 0.1, "robot_meta": ROBOT_META},
     )
     lift_lifting_object = RewTerm(
         func=mdp.batched_object_is_lifted,
         weight=15.0,
-        params={"minimal_height": 0.04},
+        params={"minimal_height": 0.04, "robot_meta": ROBOT_META},
     )
     lift_object_goal_tracking = RewTerm(
         func=mdp.batched_object_goal_distance,
         weight=16.0,
-        params={"std": 0.3, "minimal_height": 0.04},
+        params={"std": 0.3, "minimal_height": 0.04, "robot_meta": ROBOT_META},
     )
     lift_object_goal_tracking_fine = RewTerm(
         func=mdp.batched_object_goal_distance,
         weight=5.0,
-        params={"std": 0.05, "minimal_height": 0.04},
+        params={"std": 0.05, "minimal_height": 0.04, "robot_meta": ROBOT_META},
     )
 
     # ── Franka Cabinet ───────────────────────────────
     cabinet_approach_ee_handle = RewTerm(
         func=mdp.batched_cabinet_approach_ee_handle,
         weight=2.0,
-        params={"threshold": 0.2},
+        params={"threshold": 0.2, "robot_meta": ROBOT_META},
     )
     cabinet_align_ee_handle = RewTerm(
         func=mdp.batched_cabinet_align_ee_handle,
         weight=0.5,
+        params={"robot_meta": ROBOT_META},
     )
     cabinet_approach_gripper_handle = RewTerm(
         func=mdp.batched_cabinet_approach_gripper_handle,
         weight=5.0,
-        params={"offset": 0.04},
+        params={"offset": 0.04, "robot_meta": ROBOT_META},
     )
     cabinet_align_grasp_around_handle = RewTerm(
         func=mdp.batched_cabinet_align_grasp_around_handle,
         weight=0.125,
+        params={"robot_meta": ROBOT_META},
     )
     cabinet_grasp_handle = RewTerm(
         func=mdp.batched_cabinet_grasp_handle,
         weight=0.5,
-        params={"threshold": 0.03, "open_joint_pos": 0.04},
+        params={"threshold": 0.03, "open_joint_pos": 0.04, "robot_meta": ROBOT_META},
     )
     cabinet_open_drawer_bonus = RewTerm(
         func=mdp.batched_cabinet_open_drawer_bonus,
         weight=7.5,
+        params={"robot_meta": ROBOT_META},
     )
     cabinet_multi_stage_open_drawer = RewTerm(
         func=mdp.batched_cabinet_multi_stage_open_drawer,
         weight=1.0,
+        params={"robot_meta": ROBOT_META},
     )
 
     # ── UR10 Reach ───────────────────────────────────
     reach_ee_pos_tracking = RewTerm(
         func=mdp.batched_position_command_error,
         weight=-0.2,
+        params={"robot_meta": ROBOT_META},
     )
     reach_ee_pos_tracking_fine = RewTerm(
         func=mdp.batched_position_command_error_tanh,
         weight=0.1,
-        params={"std": 0.1},
+        params={"std": 0.1, "robot_meta": ROBOT_META},
     )
     reach_ee_ori_tracking = RewTerm(
         func=mdp.batched_orientation_command_error,
         weight=-0.2,
+        params={"robot_meta": ROBOT_META},
     )
     reach_ee_ori_tracking_fine = RewTerm(
         func=mdp.batched_orientation_command_error_tanh,
         weight=0.1,
-        params={"std": 0.1},
+        params={"std": 0.1, "robot_meta": ROBOT_META},
     )
 
     # ── Global penalties ─────────────────────────────
     action_rate = RewTerm(func=mdp.action_rate_l2, weight=-1e-4)
-    joint_vel = RewTerm(func=mdp.batched_joint_vel_l2, weight=-1e-4)
+    joint_vel = RewTerm(func=mdp.batched_joint_vel_l2, weight=-1e-4, params={"robot_meta": ROBOT_META})
 
 
 # ===========================================================
@@ -515,11 +523,11 @@ class MultiRobotMultiTaskTerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     lift_object_dropping = DoneTerm(
         func=mdp.batched_object_height_below_minimum,
-        params={"minimum_height": -0.05},
+        params={"minimum_height": -0.05, "robot_meta": ROBOT_META},
     )
     cabinet_success = DoneTerm(
         func=mdp.batched_cabinet_drawer_opened,
-        params={"threshold": 0.39},
+        params={"threshold": 0.39, "robot_meta": ROBOT_META},
     )
 
 
