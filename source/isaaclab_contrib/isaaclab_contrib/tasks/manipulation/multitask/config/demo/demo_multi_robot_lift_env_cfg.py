@@ -5,9 +5,10 @@
 
 """Multi-robot lift env: OpenArm + Franka, lifting a shared cube type.
 
-Each robot type occupies its own env-id group.  The
-:class:`ActionManager` automatically shares action columns
-across disjoint groups.
+Each robot type occupies its own env-id group.  A single
+:class:`BatchedDiffIKAction` + :class:`BatchedBinaryGripperAction`
+pair handles all groups.
+``action_dim = 6 (IK) + 1 (gripper) = 7``.
 
 The ``lift_object`` :class:`RigidObjectCfg` is listed in both groups'
 :class:`InclusionSet`, so each env gets its own cube instance but
@@ -27,10 +28,7 @@ from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
 from isaaclab.cloner import sequential
 from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
-from isaaclab.envs.mdp.actions.actions_cfg import (
-    BinaryJointPositionActionCfg,
-    DifferentialInverseKinematicsActionCfg,
-)
+from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
@@ -48,6 +46,12 @@ from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from isaaclab_contrib.tasks.manipulation.multitask import mdp
+from isaaclab_contrib.tasks.manipulation.multitask.mdp.batched_actions_cfg import (
+    BatchedBinaryGripperActionCfg,
+    BatchedDiffIKActionCfg,
+    DiffIKGroupCfg,
+    GripperGroupCfg,
+)
 from isaaclab_contrib.tasks.manipulation.multitask.mdp.utils import LiftGroupCfg, PoseCommandRanges
 
 from isaaclab_assets.robots.franka import FRANKA_PANDA_HIGH_PD_CFG
@@ -211,35 +215,40 @@ _IK_CTRL = DifferentialIKControllerCfg(
 
 @configclass
 class MultiRobotLiftActionsCfg:
-    """Per-robot arm IK + gripper actions."""
+    """DiffIK + gripper actions shared across robot groups.
 
-    openarm_arm = DifferentialInverseKinematicsActionCfg(
-        asset_name="openarm_robot",
-        joint_names=["openarm_joint.*"],
-        body_name="openarm_hand",
+    action_dim = 6 (IK) + 1 (gripper) = 7.
+    """
+
+    # task-space action and gripper action can be shared across groups
+    arm_action = BatchedDiffIKActionCfg(
+        robot_meta=ROBOT_META,
         controller=_IK_CTRL,
         scale=0.5,
+        groups={
+            TASK_OPENARM: DiffIKGroupCfg(joint_names=["openarm_joint.*"]),
+            TASK_FRANKA: DiffIKGroupCfg(
+                joint_names=["panda_joint.*"],
+                body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(
+                    pos=(0.0, 0.0, 0.107),
+                ),
+            ),
+        },
     )
-    openarm_gripper = BinaryJointPositionActionCfg(
-        asset_name="openarm_robot",
-        joint_names=["openarm_finger_joint.*"],
-        open_command_expr={"openarm_finger_joint.*": 0.044},
-        close_command_expr={"openarm_finger_joint.*": 0.0},
-    )
-
-    franka_arm = DifferentialInverseKinematicsActionCfg(
-        asset_name="franka_robot",
-        joint_names=["panda_joint.*"],
-        body_name="panda_hand",
-        controller=_IK_CTRL,
-        scale=0.5,
-        body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(pos=(0.0, 0.0, 0.107)),
-    )
-    franka_gripper = BinaryJointPositionActionCfg(
-        asset_name="franka_robot",
-        joint_names=["panda_finger.*"],
-        open_command_expr={"panda_finger_.*": 0.04},
-        close_command_expr={"panda_finger_.*": 0.0},
+    gripper_action = BatchedBinaryGripperActionCfg(
+        robot_meta=ROBOT_META,
+        groups={
+            TASK_OPENARM: GripperGroupCfg(
+                joint_names=["openarm_finger_joint.*"],
+                open_command_expr={"openarm_finger_joint.*": 0.044},
+                close_command_expr={"openarm_finger_joint.*": 0.0},
+            ),
+            TASK_FRANKA: GripperGroupCfg(
+                joint_names=["panda_finger.*"],
+                open_command_expr={"panda_finger_.*": 0.04},
+                close_command_expr={"panda_finger_.*": 0.0},
+            ),
+        },
     )
 
 
@@ -413,8 +422,8 @@ class MultiRobotLiftEnvCfg(ManagerBasedRLEnvCfg):
     Group 0: OpenArm (7 arm DoF + 2 finger DoF)
     Group 1: Franka  (7 arm DoF + 2 finger DoF)
 
-    Action dim: max(7, 7) = 6 (IK shared) + 1 (gripper shared) = 7
-    (IK dim=6, gripper dim=1, columns shared across disjoint groups)
+    Action dim: 6 (IK) + 1 (gripper) = 7.
+    Columns shared across disjoint groups.
 
     The ``lift_object`` is included in both groups' :class:`InclusionSet`,
     so a single :class:`RigidObject` view spans all envs.

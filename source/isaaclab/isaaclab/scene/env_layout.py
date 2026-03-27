@@ -351,7 +351,10 @@ class EnvLayout:
         assignment = assignment.to(device=self._device, dtype=torch.long)
 
         if group_assets is None and self._clone_cfg is not None:
-            group_assets = {name: inc.assets for name, inc in self._clone_cfg.clone_groups.items()}
+            group_assets = {
+                name: group.resolve_assets(list(self._assets.keys()))
+                for name, group in self._clone_cfg.clone_groups.items()
+            }
 
         self._group_names = group_names
         self._layouts = {}
