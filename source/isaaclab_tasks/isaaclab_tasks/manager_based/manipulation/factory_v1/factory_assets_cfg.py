@@ -5,7 +5,7 @@
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators.actuator_cfg import ImplicitActuatorCfg
-from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
+from isaaclab.assets import RigidObjectCfg, AssetBaseCfg, ArticulationCfg
 
 # This is where we will get the Robot that we want to use
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR, LOCAL_ASSET_PATH_DIR
@@ -152,11 +152,10 @@ NUT_M16_CFG = RigidObjectCfg(
 )
 
 
-HOLE_8MM_CFG: ArticulationCfg = ArticulationCfg(
+HOLE_8MM_CFG: RigidObjectCfg = RigidObjectCfg(
     prim_path="/World/envs/env_.*/HoleAsset",
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{ASSET_DIR}/factory_hole_8mm.usd",
-        activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
             max_depenetration_velocity=5.0,
@@ -171,19 +170,16 @@ HOLE_8MM_CFG: ArticulationCfg = ArticulationCfg(
         ),
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
+        articulation_props=sim_utils.ArticulationRootPropertiesCfg(articulation_enabled=False),
     ),
-    init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.6, 0.0, 0.05), rot=(0.0, 0.0, 0.0, 1.0), joint_pos={}, joint_vel={}
-    ),
-    actuators={},
+    init_state=RigidObjectCfg.InitialStateCfg(pos=(0.6, 0.0, 0.05), rot=(0.0, 0.0, 0.0, 1.0))
 )
 
 
-PEG_8MM_CFG: ArticulationCfg = ArticulationCfg(
+PEG_8MM_CFG: RigidObjectCfg = RigidObjectCfg(
     prim_path="/World/envs/env_.*/PegAsset",
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{ASSET_DIR}/factory_peg_8mm.usd",
-        activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
             max_depenetration_velocity=5.0,
@@ -198,18 +194,15 @@ PEG_8MM_CFG: ArticulationCfg = ArticulationCfg(
         ),
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
+        articulation_props=sim_utils.ArticulationRootPropertiesCfg(articulation_enabled=False),
     ),
-    init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.4, 0.0, 0.0), rot=(0.0, 0.0, 0.0, 1.0), joint_pos={}, joint_vel={}
-    ),
-    actuators={},
+    init_state=RigidObjectCfg.InitialStateCfg(pos=(0.4, 0.0, 0.0), rot=(0.0, 0.0, 0.0, 1.0)),
 )
 
-SMALL_GEAR_CFG: ArticulationCfg = ArticulationCfg(
+SMALL_GEAR_CFG: RigidObjectCfg = RigidObjectCfg(
     prim_path="/World/envs/env_.*/SmallGearAsset",
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{ASSET_DIR}/factory_gear_small.usd",
-        activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
             max_depenetration_velocity=5.0,
@@ -224,19 +217,16 @@ SMALL_GEAR_CFG: ArticulationCfg = ArticulationCfg(
         ),
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
+        articulation_props=sim_utils.ArticulationRootPropertiesCfg(articulation_enabled=False),
     ),
-    init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.1), rot=(0.0, 0.0, 0.0, 1.0), joint_pos={}, joint_vel={}
-    ),
-    actuators={},
+    init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.1), rot=(0.0, 0.0, 0.0, 1.0)),
 )
 
 
-LARGE_GEAR_CFG: ArticulationCfg = ArticulationCfg(
+LARGE_GEAR_CFG: RigidObjectCfg = RigidObjectCfg(
     prim_path="/World/envs/env_.*/LargeGearAsset",
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{ASSET_DIR}/factory_gear_large.usd",
-        activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
             max_depenetration_velocity=5.0,
@@ -251,19 +241,16 @@ LARGE_GEAR_CFG: ArticulationCfg = ArticulationCfg(
         ),
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
+        articulation_props=sim_utils.ArticulationRootPropertiesCfg(articulation_enabled=False),
     ),
-    init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.1), rot=(0.0, 0.0, 0.0, 1.0), joint_pos={}, joint_vel={}
-    ),
-    actuators={},
+    init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.1), rot=(0.0, 0.0, 0.0, 1.0)),
 )
 
 
-GEAR_BASE_CFG: ArticulationCfg = ArticulationCfg(
+GEAR_BASE_CFG: RigidObjectCfg = RigidObjectCfg(
     prim_path="/World/envs/env_.*/GearBaseAsset",
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{ASSET_DIR}/factory_gear_base.usd",
-        activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
             max_depenetration_velocity=5.0,
@@ -278,19 +265,16 @@ GEAR_BASE_CFG: ArticulationCfg = ArticulationCfg(
         ),
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
+        articulation_props=sim_utils.ArticulationRootPropertiesCfg(articulation_enabled=False),
     ),
-    init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.65, 0.0, 0.05), rot=(0.0, 0.0, 0.0, 1.0), joint_pos={}, joint_vel={}
-    ),
-    actuators={},
+    init_state=RigidObjectCfg.InitialStateCfg(pos=(0.65, 0.0, 0.05), rot=(0.0, 0.0, 0.0, 1.0)),
 )
 
 
-MEDIUM_GEAR_CFG: ArticulationCfg = ArticulationCfg(
+MEDIUM_GEAR_CFG: RigidObjectCfg = RigidObjectCfg(
     prim_path="/World/envs/env_.*/MediumGearAsset",
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{ASSET_DIR}/factory_gear_medium.usd",
-        activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
             max_depenetration_velocity=5.0,
@@ -305,9 +289,7 @@ MEDIUM_GEAR_CFG: ArticulationCfg = ArticulationCfg(
         ),
         mass_props=sim_utils.MassPropertiesCfg(mass=0.012),
         collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
+        articulation_props=sim_utils.ArticulationRootPropertiesCfg(articulation_enabled=False),
     ),
-    init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.4, 0.0, 0.0), rot=(0.0, 0.0, 0.0, 1.0), joint_pos={}, joint_vel={}
-    ),
-    actuators={},
+    init_state=RigidObjectCfg.InitialStateCfg(pos=(0.4, 0.0, 0.0), rot=(0.0, 0.0, 0.0, 1.0)),
 )

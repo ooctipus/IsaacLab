@@ -377,6 +377,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
             gpu_max_rigid_patch_count=2**23,
             gpu_collision_stack_size=2**32 - 1,
             gpu_max_num_partitions=1,
+            gpu_found_lost_pairs_capacity=2 ** 22
         )
 
         self.sim.physics_material.static_friction = 0.5
