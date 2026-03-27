@@ -7,18 +7,18 @@
 """Multi-robot multi-task env: OpenArm-lift, Franka-cabinet, UR10-reach.
 
 Three robot types, each performing a different manipulation task.
-Each robot-task pair occupies its own env-id group.  The
-:class:`ActionManager` automatically shares action columns across
-disjoint groups.
+Each robot-task pair occupies its own env-id group.  Separate batched
+action terms handle DiffIK, relative joint-pos, and grippers:
+``action_dim = 6 (IK) + 7 (Franka joints) + 6 (UR10 joints) + 1 (gripper) = 20``.
 
 All MDP terms use **explicit batched classes** that iterate
 ``robot_meta`` (keyed by task-group name) and fill their output
 tensors via ``layout.env_slice(group_key)``.
 
 Layout (3 groups, evenly split):
-    Group 0:  OpenArm  -- Lift cube
-    Group 1:  Franka   -- Open cabinet drawer
-    Group 2:  UR10     -- Track 6D pose command
+    Group 0:  OpenArm  -- Lift cube       (DiffIK + gripper)
+    Group 1:  Franka   -- Open cabinet    (rel joint-pos + gripper)
+    Group 2:  UR10     -- Track 6D pose   (rel joint-pos)
 """
 
 from __future__ import annotations
@@ -30,10 +30,6 @@ from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
-from isaaclab.envs.mdp.actions.actions_cfg import (
-    BinaryJointPositionActionCfg,
-    DifferentialInverseKinematicsActionCfg,
-)
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
@@ -51,6 +47,13 @@ from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from isaaclab_contrib.tasks.manipulation.multitask import mdp
+from isaaclab_contrib.tasks.manipulation.multitask.mdp.batched_actions_cfg import (
+    BatchedBinaryGripperActionCfg,
+    BatchedDiffIKActionCfg,
+    BatchedRelJointPosActionCfg,
+    DiffIKGroupCfg,
+    GripperGroupCfg,
+)
 from isaaclab_contrib.tasks.manipulation.multitask.mdp.utils import (
     CabinetGroupCfg,
     LiftGroupCfg,
@@ -296,52 +299,57 @@ class MultiRobotMultiTaskSceneCfg(InteractiveSceneCfg):
 
 
 # ===========================================================
-# Actions  (IK + gripper per robot, columns shared)
+# Actions  (OpenArm: DiffIK, Franka/UR10: relative joint pos, concatenated)
 # ===========================================================
 
 
 @configclass
 class MultiRobotMultiTaskActionsCfg:
-    """Per-robot actions shared through disjoint task groups.
+    """Mixed action types with independent columns per robot.
 
-    Action dim: max(6+1, 6+1, 6) = 7 (IK + gripper columns shared).
+    OpenArm uses DiffIK (dim=6) + gripper (dim=1).
+    Franka uses relative joint-pos (dim=7) + gripper (dim=1).
+    UR10 uses relative joint-pos (dim=6), no gripper.
+    action_dim = 6 (IK) + 7 (Franka joints) + 6 (UR10 joints) + 1 (gripper) = 20.
     """
 
-    openarm_arm = DifferentialInverseKinematicsActionCfg(
-        asset_name="openarm_robot",
-        joint_names=["openarm_joint.*"],
-        body_name="openarm_hand",
+    # task-space action can be shared across groups
+    ik_action = BatchedDiffIKActionCfg(
+        robot_meta=ROBOT_META,
         controller=_IK_CTRL,
         scale=0.5,
+        groups={
+            TASK_OPENARM_LIFT: DiffIKGroupCfg(joint_names=["openarm_joint.*"]),
+        },
     )
-    openarm_gripper = BinaryJointPositionActionCfg(
-        asset_name="openarm_robot",
-        joint_names=["openarm_finger_joint.*"],
-        open_command_expr={"openarm_finger_joint.*": 0.044},
-        close_command_expr={"openarm_finger_joint.*": 0.0},
-    )
-
-    franka_arm = DifferentialInverseKinematicsActionCfg(
-        asset_name="franka_robot",
+    # joint-space action cannot be shared across groups
+    franka_joints = BatchedRelJointPosActionCfg(
+        robot_meta=ROBOT_META,
+        group_name=TASK_FRANKA_CABINET,
         joint_names=["panda_joint.*"],
-        body_name="panda_hand",
-        controller=_IK_CTRL,
-        scale=0.5,
-        body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(pos=(0.0, 0.0, 0.107)),
+        scale=0.1,
     )
-    franka_gripper = BinaryJointPositionActionCfg(
-        asset_name="franka_robot",
-        joint_names=["panda_finger.*"],
-        open_command_expr={"panda_finger_.*": 0.04},
-        close_command_expr={"panda_finger_.*": 0.0},
-    )
-
-    ur10_arm = DifferentialInverseKinematicsActionCfg(
-        asset_name="ur10_robot",
+    ur10_joints = BatchedRelJointPosActionCfg(
+        robot_meta=ROBOT_META,
+        group_name=TASK_UR10_REACH,
         joint_names=[".*"],
-        body_name="ee_link",
-        controller=_IK_CTRL,
-        scale=0.5,
+        scale=0.1,
+    )
+    # gripper action can be shared across groups
+    gripper_action = BatchedBinaryGripperActionCfg(
+        robot_meta=ROBOT_META,
+        groups={
+            TASK_OPENARM_LIFT: GripperGroupCfg(
+                joint_names=["openarm_finger_joint.*"],
+                open_command_expr={"openarm_finger_joint.*": 0.044},
+                close_command_expr={"openarm_finger_joint.*": 0.0},
+            ),
+            TASK_FRANKA_CABINET: GripperGroupCfg(
+                joint_names=["panda_finger.*"],
+                open_command_expr={"panda_finger_.*": 0.04},
+                close_command_expr={"panda_finger_.*": 0.0},
+            ),
+        },
     )
 
 
@@ -602,7 +610,8 @@ class MultiRobotMultiTaskEnvCfg(ManagerBasedRLEnvCfg):
     Group 1: Franka  (7 arm DoF + 2 finger DoF) -- open a cabinet drawer
     Group 2: UR10    (6 arm DoF)                -- track a 6D pose command
 
-    Action dim: max(6+1, 6+1, 6) = 7 (IK + gripper columns shared).
+    Action dim: 6 (IK) + 7 (Franka joints) + 6 (UR10 joints) + 1 (gripper) = 20.
+    Joint-space actions use independent columns per robot.
 
     ``robot_meta`` maps task-group names to typed group configs.
     All batched MDP classes iterate these entries to fill their

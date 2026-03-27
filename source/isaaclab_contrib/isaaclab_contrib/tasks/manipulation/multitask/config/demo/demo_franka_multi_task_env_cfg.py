@@ -80,13 +80,13 @@ ROBOT_META = {
         ee_frame_cfg=SceneEntityCfg("ee_frame"),
     ),
     TASK_CABINET: CabinetGroupCfg(
-        asset_cfg=SceneEntityCfg("robot", body_names=["panda_hand"], joint_names=["panda_finger.*"]),
+        asset_cfg=SceneEntityCfg("robot", body_names=["panda_hand"], joint_names=["panda_joint.*", "panda_finger.*"]),
         ee_frame_cfg=SceneEntityCfg("ee_frame"),
         cabinet_frame_cfg=SceneEntityCfg("cabinet_frame"),
         cabinet_asset_cfg=SceneEntityCfg("cabinet", joint_names=["drawer_top_joint"]),
     ),
     TASK_REACH: ReachGroupCfg(
-        asset_cfg=SceneEntityCfg("robot", body_names=["panda_hand"], joint_names=["panda_joint.*"]),
+        asset_cfg=SceneEntityCfg("robot", body_names=["panda_hand"], joint_names=["panda_joint.*", "panda_finger.*"]),
         command_name="ee_pose",
         command_ranges=PoseCommandRanges(
             pos_x=(0.35, 0.65),

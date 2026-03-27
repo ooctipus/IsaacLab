@@ -129,7 +129,7 @@ class ClonePlanBuilder:
 
     def finalize(
         self, cloner_cfg: TemplateCloneCfg, clone_cfg: CloneCfg | None, num_envs: int
-    ) -> tuple[torch.Tensor, tuple[str, ...]]:
+    ) -> tuple[torch.Tensor, tuple[str, ...], dict[str, list[str]]]:
         """Finalize the clone plan and populate the cloner config.
 
         Args:
@@ -138,9 +138,10 @@ class ClonePlanBuilder:
             num_envs: Number of environments to clone.
 
         Returns:
-            Tuple of (group_assignment, group_names):
-            - group_assignment: Per-env group index tensor [num_envs]
-            - group_names: Ordered tuple of group names
+            Tuple of (group_assignment, group_names, group_assets):
+            - group_assignment: Per-env group index tensor [num_envs].
+            - group_names: Ordered tuple of group names.
+            - group_assets: Mapping from group name to resolved asset names.
         """
         n_protos, dev = self._counter, self._device
         pid = cloner_cfg.template_prototype_identifier
@@ -152,19 +153,23 @@ class ClonePlanBuilder:
             zeros = torch.zeros(num_envs, dtype=torch.long, device=dev)
             homogeneous_mask = torch.ones((1, n_protos), dtype=torch.bool, device=dev)
             cloner_cfg.clone_plan = TemplateClonePlan(proto_paths, dest_paths, zeros, homogeneous_mask)
-            return zeros, ()
+            return zeros, (), {}
 
-        # Build asset membership and max variants per group
+        # Resolve asset membership per group
         groups = clone_cfg.clone_groups
         group_names = tuple(groups.keys())
         n_groups, n_assets = len(group_names), len(self._asset_names)
         asset_idx = {name: i for i, name in enumerate(self._asset_names)}
         asset_in_groups = torch.zeros((n_assets, n_groups), dtype=torch.bool, device=dev)
+        all_names = list(self._asset_names)
+        resolved_assets: dict[str, list[str]] = {}
         max_vars, weights = [], []
-        for g, (name, inc) in enumerate(groups.items()):
-            weights.append(inc.weight)
+        for g, (name, group) in enumerate(groups.items()):
+            weights.append(group.weight)
             mv = 1
-            for a in inc.assets:
+            resolved = group.resolve_assets(all_names)
+            resolved_assets[name] = resolved
+            for a in resolved:
                 if a in asset_idx:
                     asset_in_groups[asset_idx[a], g] = True
                     mv = max(mv, self._asset_num_variants[asset_idx[a]])
@@ -188,7 +193,7 @@ class ClonePlanBuilder:
         mask = is_global | (grp_match & var_match)
 
         cloner_cfg.clone_plan = TemplateClonePlan(proto_paths, dest_paths, assignment, mask)
-        return part_group[assignment], group_names
+        return part_group[assignment], group_names, resolved_assets
 
 
 def clone_from_template(stage: Usd.Stage, num_clones: int, template_clone_cfg: TemplateCloneCfg) -> None:

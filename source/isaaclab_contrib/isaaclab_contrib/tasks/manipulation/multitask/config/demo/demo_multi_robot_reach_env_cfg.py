@@ -5,10 +5,10 @@
 
 """Multi-robot reach env: three robot types, all reach.
 
-Each robot type occupies its own env-id group.  The
-:class:`ActionManager` automatically shares action columns
-across disjoint groups, so three DiffIK terms (each dim=6)
-produce ``total_action_dim = 6`` instead of 18.
+Each robot type occupies its own env-id group.  A single
+:class:`BatchedDiffIKAction` term handles all groups, sharing
+action columns since env rows are disjoint.
+``action_dim = 6``.
 
 Observations are task-space-centric: EE pose, command target,
 and position error are the same dimension for all robots
@@ -32,7 +32,6 @@ import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
 from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
-from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
@@ -46,6 +45,10 @@ from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from isaaclab_contrib.tasks.manipulation.multitask import mdp
+from isaaclab_contrib.tasks.manipulation.multitask.mdp.batched_actions_cfg import (
+    BatchedDiffIKActionCfg,
+    DiffIKGroupCfg,
+)
 from isaaclab_contrib.tasks.manipulation.multitask.mdp.utils import PoseCommandRanges, ReachGroupCfg
 
 from isaaclab_tasks.utils import PresetCfg
@@ -188,7 +191,7 @@ class MultiRobotReachSceneCfg(InteractiveSceneCfg):
 
 
 # ===========================================================
-# Actions  (3 DiffIK terms, columns shared → action_dim=6)
+# Actions  (1 BatchedDiffIK term, columns shared → action_dim=6)
 # ===========================================================
 
 
@@ -201,32 +204,20 @@ _IK_CTRL = DifferentialIKControllerCfg(
 
 @configclass
 class MultiRobotReachActionsCfg:
-    """Three DiffIK terms (one per robot group).
+    """DiffIK action shared across all robot groups.
 
-    Because the ActionManager shares action columns across
-    disjoint groups, total_action_dim = max(6, 6, 6) = 6.
+    action_dim = 6 (columns shared across disjoint groups).
     """
 
-    openarm_arm = DifferentialInverseKinematicsActionCfg(
-        asset_name="openarm_robot",
-        joint_names=["openarm_joint.*"],
-        body_name="openarm_hand",
+    arm_action = BatchedDiffIKActionCfg(
+        robot_meta=ROBOT_META,
         controller=_IK_CTRL,
         scale=0.5,
-    )
-    franka_arm = DifferentialInverseKinematicsActionCfg(
-        asset_name="franka_robot",
-        joint_names=["panda_joint.*"],
-        body_name="panda_hand",
-        controller=_IK_CTRL,
-        scale=0.5,
-    )
-    ur10_arm = DifferentialInverseKinematicsActionCfg(
-        asset_name="ur10_robot",
-        joint_names=[".*"],
-        body_name="ee_link",
-        controller=_IK_CTRL,
-        scale=0.5,
+        groups={
+            TASK_OPENARM: DiffIKGroupCfg(joint_names=["openarm_joint.*"]),
+            TASK_FRANKA: DiffIKGroupCfg(joint_names=["panda_joint.*"]),
+            TASK_UR10: DiffIKGroupCfg(joint_names=[".*"]),
+        },
     )
 
 
@@ -375,13 +366,13 @@ class MultiRobotReachCurriculumCfg:
 
 @configclass
 class MultiRobotReachEnvCfg(ManagerBasedRLEnvCfg):
-    """Multi-robot reach: 3 groups, shared 6D action columns.
+    """Multi-robot reach: 3 groups, shared 6D IK action columns.
 
     Group 0: OpenArm (7 arm DoF)
     Group 1: Franka  (7 arm DoF)
     Group 2: UR10    (6 arm DoF)
 
-    Action dim: 6 (columns shared across disjoint groups).
+    Action dim: 6 (IK columns shared across disjoint groups).
     """
 
     scene: MultiRobotReachSceneCfg = MultiRobotReachSceneCfg(

@@ -827,8 +827,16 @@ class InteractiveScene:
                 self._global_prim_paths += asset_paths
 
         # Finalize clone plan and apply layout assignment
-        group_assignment, group_names = self._plan_builder.finalize(
+        group_assignment, group_names, group_assets = self._plan_builder.finalize(
             self.cloner_cfg, self.cfg.clone_cfg, self.cfg.num_envs
         )
         if self.cfg.clone_cfg is not None:
-            self._layout.apply_assignment(group_assignment, group_names)
+            self._layout.apply_assignment(group_assignment, group_names, group_assets)
+            # Sensors have no spawn so they are absent from ClonePlanBuilder.
+            # Re-resolve with the full entity list and register any sensors that
+            # belong to a clone group so EnvLayout._compute_read returns correct indices.
+            all_entity_names = list(self._plan_builder.proto_mapping.keys()) + list(self._sensors.keys())
+            for group_name, group_desc in self.cfg.clone_cfg.clone_groups.items():
+                for asset_name in group_desc.resolve_assets(all_entity_names):
+                    if asset_name in self._sensors:
+                        self._layout.register_asset(asset_name, group_name)
