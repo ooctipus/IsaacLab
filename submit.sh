@@ -228,6 +228,8 @@ if [[ "$mode" == "submit" ]]; then
   pool_explicit=""
   platform_explicit=""
   user_run_name=""
+  _preset_prefix=""
+  _preset_suffix=""
 
   for arg in "${args[@]}"; do
     # keep special bool flags normalized
@@ -261,7 +263,18 @@ if [[ "$mode" == "submit" ]]; then
 
       first="${val:0:1}"; last="${val: -1}"
       key_nodash2="${key#--}"
-      if [[ "$key_nodash2" == "presets" ]]; then
+      if [[ "$key_nodash2" == "presets" ]] && [[ "$val" == *"{"*"}"* ]]; then
+        # Sweep over brace-expanded preset variants:
+        #   presets={a,b,c},fixed_preset  →  sweep a/b/c, each gets ",fixed_preset" appended
+        brace_inner="${val#*\{}"
+        brace_inner="${brace_inner%%\}*}"
+        prefix="${val%%\{*}"
+        suffix="${val#*\}}"
+        sweep_map["$key"]="$brace_inner"
+        # Store prefix/suffix so we can reconstruct at submit time
+        _preset_prefix="$prefix"
+        _preset_suffix="$suffix"
+      elif [[ "$key_nodash2" == "presets" ]]; then
         fixed["$key"]="$val"
       elif [[ "$val" == *,* ]] && ! { [[ "$first" == "[" && "$last" == "]" ]] \
                                 || [[ "$first" == "(" && "$last" == ")" ]] \
@@ -309,6 +322,10 @@ if [[ "$mode" == "submit" ]]; then
     new=()
     for base in "${combos[@]}"; do
       for v in "${vals[@]}"; do
+        key_nodash="${key#--}"
+        if [[ "$key_nodash" == "presets" ]]; then
+          v="${_preset_prefix}${v}${_preset_suffix}"
+        fi
         [[ -z "$base" ]] \
           && new+=( "$key=$v" ) \
           || new+=( "$base $key=$v" )
