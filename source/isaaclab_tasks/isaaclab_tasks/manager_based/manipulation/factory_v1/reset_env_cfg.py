@@ -15,6 +15,7 @@ from .factory_presets import (
     EntryOffsetCfg,
     FixedAssetTipCfg,
     GraspedPoseRangeCfg,
+    GripperGraspOffsetCfg,
     GripperJointNamesCfg,
     HeldAssetAlignOffsetCfg,
     HeldAssetGraspDiameterCfg,
@@ -34,7 +35,7 @@ GRIPPER_GRASP_ASSET_IN_AIR = EventTerm(
                 mode="reset",
                 params={
                     "pose_range": {
-                        "x": (-0.5, 0.5), "y": (-0.5, 0.5), "z": (0.015, 0.2),
+                        "x": (-0.15, 0.5), "y": (-0.5, 0.5), "z": (0.015, 0.2),
                         "roll": (-1.57, 1.57), "pitch": (-1.57, 1.57), "yaw": (-3.14, 3.14)
                     },
                     "velocity_range": {},
@@ -191,6 +192,7 @@ GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER = EventTerm(
                     "held_asset_cfg": SceneEntityCfg("held_asset"),
                     "held_asset_graspable_offset": HeldAssetGraspPointCfg(),
                     "held_asset_inhand_range": {},
+                    "gripper_grasp_offset": GripperGraspOffsetCfg(),
                 }
             ),
             "grasp_held_asset": EventTerm(

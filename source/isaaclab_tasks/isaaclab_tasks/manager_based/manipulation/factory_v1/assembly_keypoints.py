@@ -39,6 +39,32 @@ class Offset:
     def pose(self) -> tuple[float, float, float, float, float, float, float]:
         return self.pos + self.quat
 
+    def __post_init__(self):
+        self._pos_t: torch.Tensor | None = None
+        self._quat_t: torch.Tensor | None = None
+        self._inv_pos_t: torch.Tensor | None = None
+        self._inv_quat_t: torch.Tensor | None = None
+
+    def _ensure_tensors(self, device: str | torch.device):
+        """Materialize and cache forward + inverse tensors on first use."""
+        if self._pos_t is None:
+            self._pos_t = torch.tensor([self.pos], device=device)
+            self._quat_t = torch.tensor([self.quat], device=device)
+            self._inv_quat_t = math_utils.quat_inv(self._quat_t)
+            self._inv_pos_t = -math_utils.quat_apply(self._inv_quat_t, self._pos_t)
+
+    def pos_t(self, device: str | torch.device) -> torch.Tensor:
+        """Cached position tensor, shape (1, 3)."""
+        self._ensure_tensors(device)
+        assert self._pos_t is not None
+        return self._pos_t
+
+    def quat_t(self, device: str | torch.device) -> torch.Tensor:
+        """Cached quaternion tensor, shape (1, 4)."""
+        self._ensure_tensors(device)
+        assert self._quat_t is not None
+        return self._quat_t
+
     def apply(self, root: RigidObject | Articulation) -> tuple[torch.Tensor, torch.Tensor]:
         """Transform this offset into world frame using the asset's current root pose.
 
@@ -51,13 +77,10 @@ class Offset:
         """
         root_pos = wp.to_torch(root.data.root_pos_w)
         root_quat = wp.to_torch(root.data.root_quat_w)
-        pos_w, quat_w = math_utils.combine_frame_transforms(
-            root_pos,
-            root_quat,
-            torch.tensor(self.pos, device=root_pos.device).repeat(root_pos.shape[0], 1),
-            torch.tensor(self.quat, device=root_pos.device).repeat(root_pos.shape[0], 1),
+        self._ensure_tensors(root_pos.device)
+        return math_utils.combine_frame_transforms(
+            root_pos, root_quat, self._pos_t.expand(root_pos.shape[0], -1), self._quat_t.expand(root_pos.shape[0], -1)
         )
-        return pos_w, quat_w
 
     def combine(self, pos: torch.Tensor, quat: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Compose this offset on top of an arbitrary parent frame.
@@ -72,13 +95,27 @@ class Offset:
         Returns:
             A tuple of (position, quaternion) tensors for the composed frame.
         """
-        num_data = pos.shape[0]
-        device = pos.device
+        self._ensure_tensors(pos.device)
         return math_utils.combine_frame_transforms(
-            pos,
-            quat,
-            torch.tensor(self.pos, device=device).repeat(num_data, 1),
-            torch.tensor(self.quat, device=device).repeat(num_data, 1),
+            pos, quat, self._pos_t.expand(pos.shape[0], -1), self._quat_t.expand(pos.shape[0], -1)
+        )
+
+    def subtract(self, pos: torch.Tensor, quat: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Right-multiply the given frame by this offset's inverse.
+
+        Solves for the root frame A such that ``A.combine(self) == (pos, quat)``.
+        Computes ``T_target * T_self^{-1}``.
+
+        Args:
+            pos: Target frame positions [m], shape (N, 3).
+            quat: Target frame quaternions (x, y, z, w), shape (N, 4).
+
+        Returns:
+            A tuple of (position, quaternion) tensors for the solved root frame.
+        """
+        self._ensure_tensors(pos.device)
+        return math_utils.combine_frame_transforms(
+            pos, quat, self._inv_pos_t.expand(pos.shape[0], -1), self._inv_quat_t.expand(pos.shape[0], -1)
         )
 
 
@@ -530,17 +567,17 @@ class RJ45SocketKeyPointsCfg:
 class PandaHandKeyPointsCfg:
     """Grasp keypoints on the Franka Panda hand, relative to the ``panda_hand`` link.
 
-    The 180-degree rotation around z flips the gripper so it faces downward
+    The 180-degree rotation around y flips the gripper so it faces downward
     for top-down grasps.
     """
 
-    gripper_center_grasp_point: Offset = Offset(pos=(0.0, 0.0, 0.107), quat=(0.0, 0.0, 1.0, 0.0))
-    gripper_tip_grasp_point: Offset = Offset(pos=(0.0, 0.0, 0.112), quat=(0.0, 0.0, 1.0, 0.0))
+    gripper_center_grasp_point: Offset = Offset(pos=(0.0, 0.0, 0.107), quat=(0.0, 1.0, 0.0, 0.0))
+    gripper_tip_grasp_point: Offset = Offset(pos=(0.0, 0.0, 0.112), quat=(0.0, 1.0, 0.0, 0.0))
 
 
 @configclass
 class RobotRootKeyPointsCfg:
-    base: Offset = Offset(pos=(0.0, 0.0, 0.0), quat=(0.0, 0.0, 1.0, 0.0))
+    base: Offset = Offset(pos=(0.0, 0.0, 0.0), quat=(0.0, 1.0, 0.0, 0.0))
 
 
 # =============================================================================

@@ -61,8 +61,9 @@ def reset_held_asset_on_fixed_asset(
     assembly_fraction = math_utils.sample_uniform(
         assembly_fraction_range[0], assembly_fraction_range[1], (len(env_ids), 1), device=env.device
     )
-    pos_delta = torch.tensor(entry_offset.pos, device=env.device) - torch.tensor(assembled_offset.pos, device=env.device)
-    pos_delta = pos_delta.repeat(len(env_ids), 1) * assembly_fraction
+    entry_pos = entry_offset.pos_t(env.device)
+    assembled_pos = assembled_offset.pos_t(env.device)
+    pos_delta = (entry_pos - assembled_pos).expand(len(env_ids), -1) * assembly_fraction
     ratio = torch.tensor(assembly_ratio, device=env.device)
     rot_delta = math_utils.wrap_to_pi(torch.where(ratio != 0, 1 / ratio * pos_delta, 0.0))
     quat_delta = math_utils.quat_from_euler_xyz(rot_delta[:, 0], rot_delta[:, 1], rot_delta[:, 2])
@@ -71,12 +72,9 @@ def reset_held_asset_on_fixed_asset(
         fixed_assembled_pos_w[env_ids], fixed_assembled_quat_w[env_ids],
         pos_delta, quat_delta
     )
-    held_align_pos_b = torch.tensor(held_asset_align_offset.pos, device=env.device).repeat(len(env_ids), 1)
-    held_align_quat_b = torch.tensor(held_asset_align_offset.quat, device=env.device).repeat(len(env_ids), 1)
-    
-    held_asset_on_fixed_asset_pose = torch.cat(_pose_a_when_frame_ba_aligns_pose_c(
-        held_asset_on_fixed_asset_pos, held_asset_on_fixed_asset_quat, held_align_pos_b, held_align_quat_b
-    ), dim=1)
+    held_asset_on_fixed_asset_pose = torch.cat(
+        held_asset_align_offset.subtract(held_asset_on_fixed_asset_pos, held_asset_on_fixed_asset_quat), dim=1
+    )
     held_asset.write_root_pose_to_sim(held_asset_on_fixed_asset_pose, env_ids=env_ids)
 
 
@@ -87,21 +85,17 @@ def reset_held_asset_in_gripper(
     held_asset_cfg: SceneEntityCfg,
     held_asset_graspable_offset: Offset,
     held_asset_inhand_range: dict[str, tuple[float, float]],
+    gripper_grasp_offset: Offset,
 ):
     robot: Articulation = env.scene[holding_body_cfg.name]
     held_asset: Articulation = env.scene[held_asset_cfg.name]
 
     end_effector_quat_w = wp.to_torch(robot.data.body_link_quat_w)[env_ids, holding_body_cfg.body_ids].view(-1, 4)
     end_effector_pos_w = wp.to_torch(robot.data.body_link_pos_w)[env_ids, holding_body_cfg.body_ids].view(-1, 3)
-    held_graspable_pos_b = torch.tensor(held_asset_graspable_offset.pos, device=env.device).repeat(len(env_ids), 1)
-    held_graspable_quat_b = torch.tensor(held_asset_graspable_offset.quat, device=env.device).repeat(len(env_ids), 1)
-
-    flip_y_quat = torch.tensor([[0.0, 1.0, 0.0, 0.0]], device=env.device).repeat(len(env_ids), 1)
-    translated_held_asset_pos, translated_held_asset_quat = _pose_a_when_frame_ba_aligns_pose_c(
-        pos_c=end_effector_pos_w,
-        quat_c=math_utils.quat_mul(end_effector_quat_w, flip_y_quat),
-        pos_ba=held_graspable_pos_b,
-        quat_ba=held_graspable_quat_b,
+    grasp_quat = gripper_grasp_offset.quat_t(env.device).expand(len(env_ids), -1)
+    translated_held_asset_pos, translated_held_asset_quat = held_asset_graspable_offset.subtract(
+        end_effector_pos_w,
+        math_utils.quat_mul(end_effector_quat_w, grasp_quat),
     )
 
     # Add randomization
@@ -244,10 +238,7 @@ def reset_root_state_uniform_on_offset(
     rand_samples = math_utils.sample_uniform(ranges[:, 0], ranges[:, 1], (len(env_ids), 6), device=asset.device)
 
     velocities = root_states[:, 7:13] + rand_samples
-    offset_pose = torch.tensor(offset.pose, device=env.device).repeat(len(env_ids), 1)
-    positions, orientations = _pose_a_when_frame_ba_aligns_pose_c(
-        positions.view(-1, 3), orientations.view(-1, 4), offset_pose[:, :3], offset_pose[:,3:]
-    )
+    positions, orientations = offset.subtract(positions.view(-1, 3), orientations.view(-1, 4))
 
     # set into the physics simulation
     asset.write_root_pose_to_sim(torch.cat([positions, orientations], dim=-1), env_ids=env_ids)
@@ -326,14 +317,6 @@ class ChainedResetTerms(ManagerTermBase):
         env_ids_to_reset = env_ids[keep]
         for func_name, term in terms.items():
             term.func(env, env_ids_to_reset, **term.params)  # type: ignore
-
-def _pose_a_when_frame_ba_aligns_pose_c(
-    pos_c: torch.Tensor, quat_c: torch.Tensor, pos_ba: torch.Tensor, quat_ba: torch.Tensor
-) -> tuple[torch.Tensor, torch.Tensor]:
-    # TA←W ​= {TB←A}-1 ​∘ TC←W​   where  ​combine_transform(a,b): b∘a
-    inv_pos_ba = -math_utils.quat_apply(math_utils.quat_inv(quat_ba), pos_ba)
-    inv_quat_ba = math_utils.quat_inv(quat_ba)
-    return math_utils.combine_frame_transforms(pos_c, quat_c, inv_pos_ba, inv_quat_ba)
 
 
 # @torch.jit.script

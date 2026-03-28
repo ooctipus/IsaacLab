@@ -10,7 +10,8 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 
 from ...factory_assets_cfg import FRANKA_PANDA_CFG
 from ...factory_env_base import FactoryBaseEnvCfg
-from ...factory_presets import EndEffectorBodyCfg, GripperJointNamesCfg, IKJointNamesCfg, JointEffortNamesCfg
+from ...assembly_keypoints import KEY_POINTS_PANDA_HAND
+from ...factory_presets import EndEffectorBodyCfg, GripperGraspOffsetCfg, GripperJointNamesCfg, IKJointNamesCfg, JointEffortNamesCfg
 from ... import factory_scenes_cfg as scenes
 from isaaclab_tasks.utils import PresetCfg
 from ... import mdp
@@ -23,6 +24,9 @@ GripperJointNamesCfg.default = GripperJointNamesCfg.franka
 
 IKJointNamesCfg.franka = ["panda_joint.*"]
 IKJointNamesCfg.default = IKJointNamesCfg.franka
+
+GripperGraspOffsetCfg.franka = KEY_POINTS_PANDA_HAND.gripper_center_grasp_point
+GripperGraspOffsetCfg.default = GripperGraspOffsetCfg.franka
 
 JointEffortNamesCfg.franka = "(?!panda_joint7$|panda_finger_.*$).*"
 JointEffortNamesCfg.default = JointEffortNamesCfg.franka

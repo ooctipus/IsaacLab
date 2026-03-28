@@ -52,6 +52,13 @@ class IKJointNamesCfg(PresetCfg):
 
 
 @configclass
+class GripperGraspOffsetCfg(PresetCfg):
+    """Gripper grasp frame offset relative to the end-effector link per robot variant."""
+
+    default: kpts.Offset = kpts.Offset()
+
+
+@configclass
 class JointEffortNamesCfg(PresetCfg):
     """Joint name regex for the effort penalty per robot variant."""
 
