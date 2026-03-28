@@ -15,7 +15,7 @@ from isaaclab.managers import EventTermCfg, ManagerTermBase, SceneEntityCfg
 from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 from isaaclab.utils import math as math_utils
 
-from ..assembly_keypoints import KEYPOINTS_NISTBOARD
+from ..assembly_keypoints import NIST_BOARD_KEY_POINTS_CFG
 from .success_monitor_cfg import SuccessMonitorCfg
 
 if TYPE_CHECKING:
@@ -37,7 +37,7 @@ def reset_fixed_assets(env: ManagerBasedRLEnv, env_ids: torch.tensor, asset_map:
     nistboard: RigidObject = env.scene["nistboard"]
     for scene_key, keypoint_attr in asset_map.items():
         asset: Articulation | RigidObject = env.scene[scene_key]
-        asset_offset_on_nist_board: Offset = getattr(KEYPOINTS_NISTBOARD, keypoint_attr)
+        asset_offset_on_nist_board: Offset = getattr(NIST_BOARD_KEY_POINTS_CFG, keypoint_attr)
         asset_on_board_pos, asset_on_board_quat = asset_offset_on_nist_board.apply(nistboard)
         root_pose = torch.cat((asset_on_board_pos, asset_on_board_quat), dim=1)[env_ids]
         asset.write_root_pose_to_sim(root_pose, env_ids=env_ids)

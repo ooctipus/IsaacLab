@@ -5,7 +5,6 @@
 
 from dataclasses import MISSING
 
-from isaaclab.assets import ArticulationCfg, RigidObjectCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
@@ -14,14 +13,12 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
 from isaaclab_physx.physics import PhysxCfg
 from isaaclab_tasks.utils import PresetCfg, preset
 from . import mdp
-from .assembly_keypoints import KEYPOINTS_NISTBOARD
+from .assembly_keypoints import NIST_BOARD_KEY_POINTS_CFG
 from . import reset_env_cfg as staging_cfg
-from . import factory_assets_cfg as assets
 from .factory_presets import (
     AssembledOffsetCfg,
     EndEffectorBodyCfg,
@@ -31,48 +28,7 @@ from .factory_presets import (
     HeldAssetTipCfg,
     JointEffortNamesCfg,
 )
-
-"""
-Base scene definition for Factory Tasks
-"""
-
-
-@configclass
-class FactorySceneBase(InteractiveSceneCfg):
-    """Shared scene assets for all Factory tasks."""
-
-    ground = assets.GROUND_CFG
-    table = assets.TABLE_CFG
-    nistboard = assets.NISTBOARD_CFG
-    robot: ArticulationCfg = MISSING  # type: ignore
-    dome_light = assets.DOMELIGHT_CFG
-
-@configclass
-class NutThreadSceneCfg(FactorySceneBase):
-    fixed_asset: RigidObjectCfg = assets.BOLT_M16_CFG
-    held_asset: RigidObjectCfg = assets.NUT_M16_CFG
-
-
-@configclass
-class GearMeshSceneCfg(FactorySceneBase):
-    fixed_asset: ArticulationCfg = assets.GEAR_BASE_CFG
-    held_asset: ArticulationCfg = assets.MEDIUM_GEAR_CFG
-    small_gear: ArticulationCfg = assets.SMALL_GEAR_CFG
-    large_gear: ArticulationCfg = assets.LARGE_GEAR_CFG
-
-
-@configclass
-class PegInsertSceneCfg(FactorySceneBase):
-    fixed_asset: ArticulationCfg = assets.HOLE_8MM_CFG
-    held_asset: ArticulationCfg = assets.PEG_8MM_CFG
-
-@configclass
-class FactorySceneCfg(PresetCfg):
-    """Task scene preset — resolves to the complete scene for the active task."""
-    nut_thread: NutThreadSceneCfg = NutThreadSceneCfg(num_envs=2, env_spacing=2.0)
-    gear_mesh: GearMeshSceneCfg = GearMeshSceneCfg(num_envs=2, env_spacing=2.0)
-    peg_insert: PegInsertSceneCfg = PegInsertSceneCfg(num_envs=2, env_spacing=2.0)
-    default: NutThreadSceneCfg = nut_thread
+from .factory_scenes_cfg import FactorySceneCfg
 
 
 @configclass
@@ -180,7 +136,7 @@ class FactoryEventCfg:
         func=mdp.reset_root_state_uniform_on_offset,
         mode="reset",
         params={
-            "offset": KEYPOINTS_NISTBOARD.nist_board_center,
+            "offset": NIST_BOARD_KEY_POINTS_CFG.nist_board_center,
             "pose_range": {"x": (-0.00, 0.00), "y": (-0.05, 0.05), "yaw": (-3.14, 3.14)},
             "velocity_range": {},
             "asset_cfg": SceneEntityCfg("nistboard"),

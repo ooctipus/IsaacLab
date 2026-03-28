@@ -9,12 +9,12 @@ from isaaclab.sensors import ContactSensorCfg
 from isaaclab.managers import RewardTermCfg as RewTerm
 
 from ...factory_assets_cfg import FRANKA_PANDA_CFG
-from ...factory_env_base import FactoryBaseEnvCfg, NutThreadSceneCfg, GearMeshSceneCfg, PegInsertSceneCfg
+from ...factory_env_base import FactoryBaseEnvCfg
 from ...factory_presets import EndEffectorBodyCfg, GripperJointNamesCfg, IKJointNamesCfg, JointEffortNamesCfg
+from ... import factory_scenes_cfg as scenes
 from isaaclab_tasks.utils import PresetCfg
 from ... import mdp
 
-# Register Franka-specific robot presets
 EndEffectorBodyCfg.franka = "panda_fingertip_centered"
 EndEffectorBodyCfg.default = EndEffectorBodyCfg.franka
 
@@ -26,6 +26,9 @@ IKJointNamesCfg.default = IKJointNamesCfg.franka
 
 JointEffortNamesCfg.franka = "(?!panda_joint7$|panda_finger_.*$).*"
 JointEffortNamesCfg.default = JointEffortNamesCfg.franka
+
+_FRANKA_ROBOT = FRANKA_PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
 
 @configclass
 class ActionCfg:
@@ -52,24 +55,49 @@ class FrankaSensorSceneCfg:
     panda_leftfinger_object_s = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/panda_leftfinger")
     panda_rightfinger_object_s = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/panda_rightfinger")
 
-@configclass
-class FrankaFactoryNutThreadSceneCfg(NutThreadSceneCfg, FrankaSensorSceneCfg):
-    robot = FRANKA_PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
-@configclass
-class FrankaFactoryGearMeshSceneCfg(GearMeshSceneCfg, FrankaSensorSceneCfg):
-    robot = FRANKA_PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+def _franka_scene(base: type) -> type:
+    """Create a Franka scene class from a base scene class, adding robot + contact sensors."""
+    return configclass(type(f"Franka{base.__name__}", (base, FrankaSensorSceneCfg), {"robot": _FRANKA_ROBOT}))
 
-@configclass
-class FrankaFactoryPegInsertSceneCfg(PegInsertSceneCfg, FrankaSensorSceneCfg):
-    robot = FRANKA_PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
+_NUM_ENVS = 2
+_ENV_SPACING = 2.0
+
 
 @configclass
 class FrankaFactorySceneCfg(PresetCfg):
-    nut_thread = FrankaFactoryNutThreadSceneCfg(num_envs=2, env_spacing=2.0)
-    gear_mesh = FrankaFactoryGearMeshSceneCfg(num_envs=2, env_spacing=2.0)
-    peg_insert = FrankaFactoryPegInsertSceneCfg(num_envs=2, env_spacing=2.0)
-    default = nut_thread
+    # Nut threading
+    nut_thread_m4 = _franka_scene(scenes.NutThreadM4SceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+    nut_thread_m8 = _franka_scene(scenes.NutThreadM8SceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+    nut_thread_m12 = _franka_scene(scenes.NutThreadM12SceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+    nut_thread_m16 = _franka_scene(scenes.NutThreadM16SceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+
+    # Gear mesh
+    gear_mesh_small = _franka_scene(scenes.GearMeshSmallSceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+    gear_mesh_medium = _franka_scene(scenes.GearMeshMediumSceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+    gear_mesh_large = _franka_scene(scenes.GearMeshLargeSceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+
+    # Rod insert (round)
+    rod_insert_4mm = _franka_scene(scenes.RodInsert4MMSceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+    rod_insert_8mm = _franka_scene(scenes.RodInsert8MMSceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+    rod_insert_12mm = _franka_scene(scenes.RodInsert12MMSceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+    rod_insert_16mm = _franka_scene(scenes.RodInsert16MMSceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+
+    # Peg insert (rectangular)
+    peg_insert_4mm = _franka_scene(scenes.PegInsert4MMSceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+    peg_insert_8mm = _franka_scene(scenes.PegInsert8MMSceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+    peg_insert_12mm = _franka_scene(scenes.PegInsert12MMSceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+    peg_insert_16mm = _franka_scene(scenes.PegInsert16MMSceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+
+    # Connector insert
+    usba = _franka_scene(scenes.ConnectorUSBASceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+    waterproof = _franka_scene(scenes.ConnectorWaterproofSceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+    bnc = _franka_scene(scenes.ConnectorBNCSceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+    dsub = _franka_scene(scenes.ConnectorDSUBSceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+    rj45 = _franka_scene(scenes.ConnectorRJ45SceneCfg)(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
+
+    default = nut_thread_m16
 
 
 @configclass
@@ -86,4 +114,3 @@ class FrankaFactoryEnvMixIn:
 @configclass
 class FrankaFactoryTaskEnvCfg(FrankaFactoryEnvMixIn, FactoryBaseEnvCfg):
     pass
-
