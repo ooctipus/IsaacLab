@@ -16,6 +16,7 @@ from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsA
 from isaaclab.utils import math as math_utils
 
 from ..assembly_keypoints import NIST_BOARD_KEY_POINTS_CFG
+from ..utils import AssemblyProfile, AssemblyProfileCfg
 from .success_monitor_cfg import SuccessMonitorCfg
 
 if TYPE_CHECKING:
@@ -44,33 +45,32 @@ def reset_fixed_assets(env: ManagerBasedRLEnv, env_ids: torch.tensor, asset_map:
         asset.write_root_velocity_to_sim(torch.zeros_like(wp.to_torch(asset.data.root_vel_w)[env_ids]), env_ids=env_ids)
 
 
+_PROFILE_CACHE: dict[int, AssemblyProfile] = {}
+
+
 def reset_held_asset_on_fixed_asset(
     env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
-    assembled_offset: Offset,
-    entry_offset: Offset,
+    assembly_profile: AssemblyProfileCfg,
     held_asset_align_offset: Offset,
     assembly_fraction_range: tuple[float, float],
-    assembly_ratio: tuple[float, float, float], # m / radian
     fixed_asset_cfg: SceneEntityCfg,
     held_asset_cfg: SceneEntityCfg,
 ):
+    profile = _PROFILE_CACHE.get(id(assembly_profile))
+    if profile is None:
+        profile = assembly_profile.class_type(assembly_profile)
+        _PROFILE_CACHE[id(assembly_profile)] = profile
+
     fixed_asset: RigidObject = env.scene[fixed_asset_cfg.name]
     held_asset: Articulation = env.scene[held_asset_cfg.name]
-    
-    assembly_fraction = math_utils.sample_uniform(
-        assembly_fraction_range[0], assembly_fraction_range[1], (len(env_ids), 1), device=env.device
-    )
-    entry_pos = entry_offset.pos_t(env.device)
-    assembled_pos = assembled_offset.pos_t(env.device)
-    pos_delta = (entry_pos - assembled_pos).expand(len(env_ids), -1) * assembly_fraction
-    ratio = torch.tensor(assembly_ratio, device=env.device)
-    rot_delta = math_utils.wrap_to_pi(torch.where(ratio != 0, 1 / ratio * pos_delta, 0.0))
-    quat_delta = math_utils.quat_from_euler_xyz(rot_delta[:, 0], rot_delta[:, 1], rot_delta[:, 2])
-    fixed_assembled_pos_w, fixed_assembled_quat_w = assembled_offset.apply(fixed_asset)
+
+    pos_offset, quat_offset = profile.sample(assembly_fraction_range, len(env_ids), env.device)
+
+    fixed_root_pos_w = wp.to_torch(fixed_asset.data.root_pos_w)
+    fixed_root_quat_w = wp.to_torch(fixed_asset.data.root_quat_w)
     held_asset_on_fixed_asset_pos, held_asset_on_fixed_asset_quat = math_utils.combine_frame_transforms(
-        fixed_assembled_pos_w[env_ids], fixed_assembled_quat_w[env_ids],
-        pos_delta, quat_delta
+        fixed_root_pos_w[env_ids], fixed_root_quat_w[env_ids], pos_offset, quat_offset
     )
     held_asset_on_fixed_asset_pose = torch.cat(
         held_asset_align_offset.subtract(held_asset_on_fixed_asset_pos, held_asset_on_fixed_asset_quat), dim=1

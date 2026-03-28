@@ -20,7 +20,7 @@ from . import mdp
 from .assembly_keypoints import NIST_BOARD_KEY_POINTS_CFG
 from . import reset_env_cfg as staging_cfg
 from .factory_presets import (
-    AssembledOffsetCfg,
+    FactoryAssemblyProfileCfg,
     EndEffectorBodyCfg,
     FixedAssetMapCfg,
     FixedAssetTipCfg,
@@ -234,7 +234,7 @@ _PROGRESS_CONTEXT = DoneTerm(
         "held_asset_cfg": SceneEntityCfg("held_asset"),
         "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
         "held_asset_offset": HeldAssetAlignOffsetCfg(),
-        "fixed_asset_offset": AssembledOffsetCfg(),
+        "assembly_profile": FactoryAssemblyProfileCfg(),
     }
 )
 
@@ -310,14 +310,14 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     terminations: FactoryTerminationsCfg = FactoryTerminationsCfg()
     rewards: FactoryRewardsCfg = FactoryRewardsCfg()
     curriculum: FactoryCurriculumsCfg = FactoryCurriculumsCfg()
-    viewer: ViewerCfg = ViewerCfg(eye=(0.0, 0.5, 0.2), origin_type="asset_body", asset_name="robot", body_name="panda_fingertip_centered")
+    viewer: ViewerCfg = ViewerCfg(eye=(0.0, 0.05, 0.005), origin_type="asset_root", asset_name="held_asset")
     actions = MISSING
 
     # Post initialization
     def __post_init__(self) -> None:
         """Post initialization."""
         # general settings
-        self.decimation = 6
+        self.decimation = 8
         self.episode_length_s = 14.0
         # simulation settings
         self.sim.dt = 0.005

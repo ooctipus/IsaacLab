@@ -30,11 +30,11 @@ def target_asset_pose_in_root_asset_frame(
     target_asset: RigidObject | Articulation = env.scene[target_asset_cfg.name]
     root_asset: RigidObject | Articulation = env.scene[root_asset_cfg.name]
 
-    taget_body_idx = 0 if isinstance(target_asset_cfg.body_ids, slice) else target_asset_cfg.body_ids
+    target_body_idx = 0 if isinstance(target_asset_cfg.body_ids, slice) else target_asset_cfg.body_ids
     root_body_idx = 0 if isinstance(root_asset_cfg.body_ids, slice) else root_asset_cfg.body_ids
 
-    target_pos = wp.to_torch(target_asset.data.body_link_pos_w)[:, taget_body_idx].view(-1, 3)
-    target_quat = wp.to_torch(target_asset.data.body_link_quat_w)[:, taget_body_idx].view(-1, 4)
+    target_pos = wp.to_torch(target_asset.data.body_link_pos_w)[:, target_body_idx].view(-1, 3)
+    target_quat = wp.to_torch(target_asset.data.body_link_quat_w)[:, target_body_idx].view(-1, 4)
     root_pos = wp.to_torch(root_asset.data.body_link_pos_w)[:, root_body_idx].view(-1, 3)
     root_quat = wp.to_torch(root_asset.data.body_link_quat_w)[:, root_body_idx].view(-1, 4)
 
@@ -55,17 +55,13 @@ def asset_link_velocity_in_root_asset_frame(
     target_asset: RigidObject | Articulation = env.scene[target_asset_cfg.name]
     root_asset: RigidObject | Articulation = env.scene[root_asset_cfg.name]
 
-    taget_body_idx = 0 if isinstance(target_asset_cfg.body_ids, slice) else target_asset_cfg.body_ids
+    target_body_idx = 0 if isinstance(target_asset_cfg.body_ids, slice) else target_asset_cfg.body_ids
 
-    asset_lin_vel_b, _ = math_utils.subtract_frame_transforms(
-        wp.to_torch(root_asset.data.root_pos_w),
-        wp.to_torch(root_asset.data.root_quat_w),
-        wp.to_torch(target_asset.data.body_lin_vel_w)[:, taget_body_idx].view(-1, 3),
-    )
-    asset_ang_vel_b, _ = math_utils.subtract_frame_transforms(
-        wp.to_torch(root_asset.data.root_pos_w),
-        wp.to_torch(root_asset.data.root_quat_w),
-        wp.to_torch(target_asset.data.body_lin_vel_w)[:, taget_body_idx].view(-1, 3),
-    )
+    root_quat = wp.to_torch(root_asset.data.root_quat_w)
+    lin_vel_w = wp.to_torch(target_asset.data.body_lin_vel_w)[:, target_body_idx].view(-1, 3)
+    ang_vel_w = wp.to_torch(target_asset.data.body_ang_vel_w)[:, target_body_idx].view(-1, 3)
 
-    return torch.cat([asset_lin_vel_b, asset_ang_vel_b], dim=1)
+    lin_vel_b = math_utils.quat_apply_inverse(root_quat, lin_vel_w)
+    ang_vel_b = math_utils.quat_apply_inverse(root_quat, ang_vel_w)
+
+    return torch.cat([lin_vel_b, ang_vel_b], dim=1)

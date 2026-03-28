@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 from ..assembly_keypoints import Offset
+from ..utils import AssemblyProfile, AssemblyProfileCfg
 
 
 def out_of_bound(
@@ -53,7 +54,8 @@ class progress_context(ManagerTermBase):
         self.held_asset: Articulation | RigidObject = env.scene[cfg.params.get("held_asset_cfg").name]  # type: ignore
         self.fixed_asset: Articulation | RigidObject = env.scene[cfg.params.get("fixed_asset_cfg").name]  # type: ignore
         self.held_asset_offset: Offset = cfg.params.get("held_asset_offset")  # type: ignore
-        self.fixed_asset_offset: Offset = cfg.params.get("fixed_asset_offset")  # type: ignore
+        profile_cfg: AssemblyProfileCfg = cfg.params.get("assembly_profile")  # type: ignore
+        self.profile: AssemblyProfile = profile_cfg.class_type(profile_cfg)
         self.success_threshold: float = cfg.params.get("success_threshold")  # type: ignore
 
         self.orientation_aligned = torch.zeros((env.num_envs), dtype=torch.bool, device=env.device)
@@ -70,10 +72,10 @@ class progress_context(ManagerTermBase):
         held_asset_cfg: SceneEntityCfg,
         fixed_asset_cfg: SceneEntityCfg,
         held_asset_offset: Offset,
-        fixed_asset_offset: Offset,
+        assembly_profile: AssemblyProfileCfg,
     ) -> torch.Tensor:
         held_asset_alignment_pos_w, held_asset_alignment_quat_w = self.held_asset_offset.apply(self.held_asset)
-        fixed_asset_alignment_pos_w, fixed_asset_alignment_quat_w = self.fixed_asset_offset.apply(self.fixed_asset)
+        fixed_asset_alignment_pos_w, fixed_asset_alignment_quat_w = self.profile.assembled_offset.apply(self.fixed_asset)
         held_asset_in_fixed_asset_frame_pos, held_asset_in_fixed_asset_frame_quat = (
             math_utils.subtract_frame_transforms(
                 fixed_asset_alignment_pos_w,

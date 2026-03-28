@@ -19,10 +19,19 @@ Robot-specific presets (``EndEffectorBodyCfg``, ``JointEffortNamesCfg``) map rob
 variant names (``franka``) to body/joint name strings.
 """
 
+import math
+
 from isaaclab.utils import configclass
 from isaaclab_tasks.utils import PresetCfg
 
 from . import assembly_keypoints as kpts
+from .utils import (
+    AssemblyProfileCfg,
+    DiscreteYawCfg,
+    EndPointsSegmentCfg,
+    IncrementalSegmentCfg,
+    UniformYawCfg,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +144,7 @@ class HeldAssetTipCfg(PresetCfg):
     # Connector insert
     usba: kpts.Offset = kpts.KEY_POINTS_USB_A_SOCKET.entry
     waterproof: kpts.Offset = kpts.KEY_POINTS_WATERPROOF_SOCKET.entry
-    bnc: kpts.Offset = kpts.KEY_POINTS_BNC_SOCKET.plug_assembled
+    bnc: kpts.Offset = kpts.KEY_POINTS_BNC_SOCKET.entry
     dsub: kpts.Offset = kpts.KEY_POINTS_D_SUB_SOCKET.entry
     rj45: kpts.Offset = kpts.KEY_POINTS_RJ45_SOCKET.entry
 
@@ -177,74 +186,151 @@ class FixedAssetTipCfg(PresetCfg):
     default: kpts.Offset = nut_thread_m16
 
 
+def _nut_profile(
+    bolt_kpts: kpts.BoltM16KeyPointsCfg
+    | kpts.BoltM12KeyPointsCfg
+    | kpts.BoltM8KeyPointsCfg
+    | kpts.BoltM4KeyPointsCfg,
+    nut_kpts: kpts.NutM16KeyPointsCfg
+    | kpts.NutM12KeyPointsCfg
+    | kpts.NutM8KeyPointsCfg
+    | kpts.NutM4KeyPointsCfg,
+) -> AssemblyProfileCfg:
+    """Build an IncrementalSegment profile for a nut-threading variant.
+
+    Args:
+        bolt_kpts: Bolt keypoints (provides ``fully_screwed_nut_offset``, ``bolt_tip_offset``).
+        nut_kpts: Nut keypoints (provides ``screw_ratio`` — pitch in m/revolution [m]).
+    """
+    dist_z = bolt_kpts.bolt_tip_offset.pos[2] - bolt_kpts.fully_screwed_nut_offset.pos[2]
+    pitch_m_per_rad = nut_kpts.screw_ratio / (2.0 * math.pi)
+    return AssemblyProfileCfg(segments=[
+        IncrementalSegmentCfg(
+            start_pose=bolt_kpts.fully_screwed_nut_offset,
+            distance=(0.0, 0.0, dist_z),
+            ratio=(0.0, 0.0, pitch_m_per_rad),
+        ),
+    ])
+
+
+def _linear_profile(
+    assembled: kpts.Offset,
+    entry: kpts.Offset,
+    sampler: UniformYawCfg | DiscreteYawCfg | None = None,
+) -> AssemblyProfileCfg:
+    """Build an EndPointsSegment profile for a pure-linear insertion.
+
+    Args:
+        assembled: Offset at the assembled end.
+        entry: Offset at the disassembled end.
+        sampler: Start-sampler config. ``None`` means no noise.
+    """
+    return AssemblyProfileCfg(segments=[
+        EndPointsSegmentCfg(
+            start_sampler=sampler,
+            start_pose=assembled,
+            end_pose=entry,
+        ),
+    ])
+
+
 @configclass
-class AssembledOffsetCfg(PresetCfg):
-    # Nut threading — where the nut rests when fully screwed
-    nut_thread_m4: kpts.Offset = kpts.BOLT_M4_KEY_POINTS.fully_screwed_nut_offset
-    nut_thread_m8: kpts.Offset = kpts.BOLT_M8_KEY_POINTS.fully_screwed_nut_offset
-    nut_thread_m12: kpts.Offset = kpts.BOLT_M12_KEY_POINTS.fully_screwed_nut_offset
-    nut_thread_m16: kpts.Offset = kpts.BOLT_M16_KEY_POINTS.fully_screwed_nut_offset
+class FactoryAssemblyProfileCfg(PresetCfg):
+    """Assembly profile per task variant.
 
-    # Gear mesh — bottom of the gear shaft where gear rests when assembled
-    gear_mesh_small: kpts.Offset = kpts.KEY_POINTS_GEAR_BASE.small_gear_assembled_bottom_offset
-    gear_mesh_medium: kpts.Offset = kpts.KEY_POINTS_GEAR_BASE.medium_gear_assembled_bottom_offset
-    gear_mesh_large: kpts.Offset = kpts.KEY_POINTS_GEAR_BASE.large_gear_assembled_bottom_offset
+    Each field is an :class:`AssemblyProfileCfg` describing the full assembly
+    path geometry (segment endpoints, screw ratios, start noise).
+    """
 
-    # Rod insert (round)
-    rod_insert_4mm: kpts.Offset = kpts.KEY_POINTS_HOLE_4MM.inserted_peg_base_offset
-    rod_insert_8mm: kpts.Offset = kpts.KEY_POINTS_HOLE_8MM.inserted_peg_base_offset
-    rod_insert_12mm: kpts.Offset = kpts.KEY_POINTS_HOLE_12MM.inserted_peg_base_offset
-    rod_insert_16mm: kpts.Offset = kpts.KEY_POINTS_HOLE_16MM.inserted_peg_base_offset
+    # Nut threading — IncrementalSegment with screw pitch
+    nut_thread_m4: AssemblyProfileCfg = _nut_profile(kpts.BOLT_M4_KEY_POINTS, kpts.NUT_M4_KEY_POINTS)
+    nut_thread_m8: AssemblyProfileCfg = _nut_profile(kpts.BOLT_M8_KEY_POINTS, kpts.NUT_M8_KEY_POINTS)
+    nut_thread_m12: AssemblyProfileCfg = _nut_profile(kpts.BOLT_M12_KEY_POINTS, kpts.NUT_M12_KEY_POINTS)
+    nut_thread_m16: AssemblyProfileCfg = _nut_profile(kpts.BOLT_M16_KEY_POINTS, kpts.NUT_M16_KEY_POINTS)
 
-    # Peg insert (rectangular)
-    peg_insert_4mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_HOLE_4MM.inserted_peg_base_offset
-    peg_insert_8mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_HOLE_8MM.inserted_peg_base_offset
-    peg_insert_12mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_HOLE_12MM.inserted_peg_base_offset
-    peg_insert_16mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_HOLE_16MM.inserted_peg_base_offset
+    # Gear mesh — round, any yaw is valid
+    gear_mesh_small: AssemblyProfileCfg = _linear_profile(
+        kpts.KEY_POINTS_GEAR_BASE.small_gear_assembled_bottom_offset,
+        kpts.KEY_POINTS_GEAR_BASE.small_gear_tip_offset,
+        UniformYawCfg(),
+    )
+    gear_mesh_medium: AssemblyProfileCfg = _linear_profile(
+        kpts.KEY_POINTS_GEAR_BASE.medium_gear_assembled_bottom_offset,
+        kpts.KEY_POINTS_GEAR_BASE.medium_gear_tip_offset,
+        UniformYawCfg(),
+    )
+    gear_mesh_large: AssemblyProfileCfg = _linear_profile(
+        kpts.KEY_POINTS_GEAR_BASE.large_gear_assembled_bottom_offset,
+        kpts.KEY_POINTS_GEAR_BASE.large_gear_tip_offset,
+        UniformYawCfg(),
+    )
 
-    # Connector insert
-    usba: kpts.Offset = kpts.KEY_POINTS_USB_A_SOCKET.plug_assembled
-    waterproof: kpts.Offset = kpts.KEY_POINTS_WATERPROOF_SOCKET.plug_assembled
-    bnc: kpts.Offset = kpts.KEY_POINTS_BNC_SOCKET.plug_assembled
-    dsub: kpts.Offset = kpts.KEY_POINTS_D_SUB_SOCKET.plug_assembled
-    rj45: kpts.Offset = kpts.KEY_POINTS_RJ45_SOCKET.plug_assembled
+    # Rod insert (round) — any yaw is valid
+    rod_insert_4mm: AssemblyProfileCfg = _linear_profile(
+        kpts.KEY_POINTS_HOLE_4MM.inserted_peg_base_offset, kpts.KEY_POINTS_HOLE_4MM.hole_tip_offset, UniformYawCfg(),
+    )
+    rod_insert_8mm: AssemblyProfileCfg = _linear_profile(
+        kpts.KEY_POINTS_HOLE_8MM.inserted_peg_base_offset, kpts.KEY_POINTS_HOLE_8MM.hole_tip_offset, UniformYawCfg(),
+    )
+    rod_insert_12mm: AssemblyProfileCfg = _linear_profile(
+        kpts.KEY_POINTS_HOLE_12MM.inserted_peg_base_offset, kpts.KEY_POINTS_HOLE_12MM.hole_tip_offset, UniformYawCfg(),
+    )
+    rod_insert_16mm: AssemblyProfileCfg = _linear_profile(
+        kpts.KEY_POINTS_HOLE_16MM.inserted_peg_base_offset, kpts.KEY_POINTS_HOLE_16MM.hole_tip_offset, UniformYawCfg(),
+    )
 
-    default: kpts.Offset = nut_thread_m16
+    # Peg insert (rectangular) — linear with discrete 180-deg yaw symmetry
+    peg_insert_4mm: AssemblyProfileCfg = _linear_profile(
+        kpts.KEY_POINTS_RECTANGULAR_HOLE_4MM.inserted_peg_base_offset,
+        kpts.KEY_POINTS_RECTANGULAR_HOLE_4MM.hole_tip_offset,
+        DiscreteYawCfg(yaws=[0.0, math.pi]),
+    )
+    peg_insert_8mm: AssemblyProfileCfg = _linear_profile(
+        kpts.KEY_POINTS_RECTANGULAR_HOLE_8MM.inserted_peg_base_offset,
+        kpts.KEY_POINTS_RECTANGULAR_HOLE_8MM.hole_tip_offset,
+        DiscreteYawCfg(yaws=[0.0, math.pi]),
+    )
+    peg_insert_12mm: AssemblyProfileCfg = _linear_profile(
+        kpts.KEY_POINTS_RECTANGULAR_HOLE_12MM.inserted_peg_base_offset,
+        kpts.KEY_POINTS_RECTANGULAR_HOLE_12MM.hole_tip_offset,
+        DiscreteYawCfg(yaws=[0.0, math.pi]),
+    )
+    peg_insert_16mm: AssemblyProfileCfg = _linear_profile(
+        kpts.KEY_POINTS_RECTANGULAR_HOLE_16MM.inserted_peg_base_offset,
+        kpts.KEY_POINTS_RECTANGULAR_HOLE_16MM.hole_tip_offset,
+        DiscreteYawCfg(yaws=[0.0, math.pi]),
+    )
 
+    # Connector insert — pure linear
+    usba: AssemblyProfileCfg = _linear_profile(
+        kpts.KEY_POINTS_USB_A_SOCKET.plug_assembled, kpts.KEY_POINTS_USB_A_SOCKET.entry, None,
+    )
+    waterproof: AssemblyProfileCfg = _linear_profile(
+        kpts.KEY_POINTS_WATERPROOF_SOCKET.plug_assembled, kpts.KEY_POINTS_WATERPROOF_SOCKET.entry, None,
+    )
+    dsub: AssemblyProfileCfg = _linear_profile(
+        kpts.KEY_POINTS_D_SUB_SOCKET.plug_assembled, kpts.KEY_POINTS_D_SUB_SOCKET.entry, None,
+    )
+    rj45: AssemblyProfileCfg = _linear_profile(
+        kpts.KEY_POINTS_RJ45_SOCKET.plug_assembled, kpts.KEY_POINTS_RJ45_SOCKET.entry, None,
+    )
 
-@configclass
-class EntryOffsetCfg(PresetCfg):
-    # Nut threading
-    nut_thread_m4: kpts.Offset = kpts.BOLT_M4_KEY_POINTS.bolt_tip_offset
-    nut_thread_m8: kpts.Offset = kpts.BOLT_M8_KEY_POINTS.bolt_tip_offset
-    nut_thread_m12: kpts.Offset = kpts.BOLT_M12_KEY_POINTS.bolt_tip_offset
-    nut_thread_m16: kpts.Offset = kpts.BOLT_M16_KEY_POINTS.bolt_tip_offset
+    # BNC — two-segment: linear insertion then 90-deg bayonet twist
+    bnc: AssemblyProfileCfg = AssemblyProfileCfg(segments=[
+        EndPointsSegmentCfg(
+            fraction=(0.0, 0.4),
+            start_pose=kpts.KEY_POINTS_BNC_SOCKET.plug_assembled,
+            end_pose=kpts.KEY_POINTS_BNC_SOCKET.insert_start,
+            revolutions=(0.0, 0.0, 0.25),
+        ),
+        EndPointsSegmentCfg(
+            fraction=(0.4, 1.0),
+            start_pose=kpts.KEY_POINTS_BNC_SOCKET.insert_start,
+            end_pose=kpts.KEY_POINTS_BNC_SOCKET.entry,
+        ),
+    ])
 
-    # Gear mesh
-    gear_mesh_small: kpts.Offset = kpts.KEY_POINTS_GEAR_BASE.small_gear_tip_offset
-    gear_mesh_medium: kpts.Offset = kpts.KEY_POINTS_GEAR_BASE.medium_gear_tip_offset
-    gear_mesh_large: kpts.Offset = kpts.KEY_POINTS_GEAR_BASE.large_gear_tip_offset
-
-    # Rod insert (round)
-    rod_insert_4mm: kpts.Offset = kpts.KEY_POINTS_HOLE_4MM.hole_tip_offset
-    rod_insert_8mm: kpts.Offset = kpts.KEY_POINTS_HOLE_8MM.hole_tip_offset
-    rod_insert_12mm: kpts.Offset = kpts.KEY_POINTS_HOLE_12MM.hole_tip_offset
-    rod_insert_16mm: kpts.Offset = kpts.KEY_POINTS_HOLE_16MM.hole_tip_offset
-
-    # Peg insert (rectangular)
-    peg_insert_4mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_HOLE_4MM.hole_tip_offset
-    peg_insert_8mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_HOLE_8MM.hole_tip_offset
-    peg_insert_12mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_HOLE_12MM.hole_tip_offset
-    peg_insert_16mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_HOLE_16MM.hole_tip_offset
-
-    # Connector insert
-    usba: kpts.Offset = kpts.KEY_POINTS_USB_A_SOCKET.entry
-    waterproof: kpts.Offset = kpts.KEY_POINTS_WATERPROOF_SOCKET.entry
-    bnc: kpts.Offset = kpts.KEY_POINTS_BNC_SOCKET.plug_assembled
-    dsub: kpts.Offset = kpts.KEY_POINTS_D_SUB_SOCKET.entry
-    rj45: kpts.Offset = kpts.KEY_POINTS_RJ45_SOCKET.entry
-
-    default: kpts.Offset = nut_thread_m16
+    default: AssemblyProfileCfg = nut_thread_m16
 
 
 @configclass
@@ -443,112 +529,3 @@ class GraspedPoseRangeCfg(PresetCfg):
     rj45: dict = _INSERT_GRASPED_RANGE
 
     default: dict = nut_thread_m16
-
-
-_NUT_PARTIAL = (0.4, 1.1)
-_GEAR_PARTIAL = (0.3, 1.0)
-_INSERT_PARTIAL = (0.0, 1.0)
-
-
-@configclass
-class AssemblyFractionPartialCfg(PresetCfg):
-    """Assembly fraction range for the ``start_assembled`` strategy."""
-
-    nut_thread_m4: tuple = _NUT_PARTIAL
-    nut_thread_m8: tuple = _NUT_PARTIAL
-    nut_thread_m12: tuple = _NUT_PARTIAL
-    nut_thread_m16: tuple = _NUT_PARTIAL
-
-    gear_mesh_small: tuple = _GEAR_PARTIAL
-    gear_mesh_medium: tuple = _GEAR_PARTIAL
-    gear_mesh_large: tuple = _GEAR_PARTIAL
-
-    rod_insert_4mm: tuple = _INSERT_PARTIAL
-    rod_insert_8mm: tuple = _INSERT_PARTIAL
-    rod_insert_12mm: tuple = _INSERT_PARTIAL
-    rod_insert_16mm: tuple = _INSERT_PARTIAL
-
-    peg_insert_4mm: tuple = _INSERT_PARTIAL
-    peg_insert_8mm: tuple = _INSERT_PARTIAL
-    peg_insert_12mm: tuple = _INSERT_PARTIAL
-    peg_insert_16mm: tuple = _INSERT_PARTIAL
-
-    usba: tuple = _INSERT_PARTIAL
-    waterproof: tuple = _INSERT_PARTIAL
-    bnc: tuple = _INSERT_PARTIAL
-    dsub: tuple = _INSERT_PARTIAL
-    rj45: tuple = _INSERT_PARTIAL
-
-    default: tuple = nut_thread_m16
-
-
-_NUT_FULL = (0.05, 0.5)
-_GEAR_FULL = (0.1, 0.5)
-_INSERT_FULL = (0.0, 0.5)
-
-
-@configclass
-class AssemblyFractionFullCfg(PresetCfg):
-    """Assembly fraction range for the ``start_fully_assembled`` strategy."""
-
-    nut_thread_m4: tuple = _NUT_FULL
-    nut_thread_m8: tuple = _NUT_FULL
-    nut_thread_m12: tuple = _NUT_FULL
-    nut_thread_m16: tuple = _NUT_FULL
-
-    gear_mesh_small: tuple = _GEAR_FULL
-    gear_mesh_medium: tuple = _GEAR_FULL
-    gear_mesh_large: tuple = _GEAR_FULL
-
-    rod_insert_4mm: tuple = _INSERT_FULL
-    rod_insert_8mm: tuple = _INSERT_FULL
-    rod_insert_12mm: tuple = _INSERT_FULL
-    rod_insert_16mm: tuple = _INSERT_FULL
-
-    peg_insert_4mm: tuple = _INSERT_FULL
-    peg_insert_8mm: tuple = _INSERT_FULL
-    peg_insert_12mm: tuple = _INSERT_FULL
-    peg_insert_16mm: tuple = _INSERT_FULL
-
-    usba: tuple = _INSERT_FULL
-    waterproof: tuple = _INSERT_FULL
-    bnc: tuple = _INSERT_FULL
-    dsub: tuple = _INSERT_FULL
-    rj45: tuple = _INSERT_FULL
-
-    default: tuple = nut_thread_m16
-
-
-_ZERO_RATIO = (0.0, 0.0, 0.0)
-
-
-@configclass
-class AssemblyRatioCfg(PresetCfg):
-    """Assembly ratio (linear displacement per radian of rotation) [m/rad]."""
-
-    nut_thread_m4: tuple = (0.0, 0.0, kpts.NUT_M4_KEY_POINTS.screw_ratio / 6.2832)
-    nut_thread_m8: tuple = (0.0, 0.0, kpts.NUT_M8_KEY_POINTS.screw_ratio / 6.2832)
-    nut_thread_m12: tuple = (0.0, 0.0, kpts.NUT_M12_KEY_POINTS.screw_ratio / 6.2832)
-    nut_thread_m16: tuple = (0.0, 0.0, kpts.NUT_M16_KEY_POINTS.screw_ratio / 6.2832)
-
-    gear_mesh_small: tuple = _ZERO_RATIO
-    gear_mesh_medium: tuple = _ZERO_RATIO
-    gear_mesh_large: tuple = _ZERO_RATIO
-
-    rod_insert_4mm: tuple = _ZERO_RATIO
-    rod_insert_8mm: tuple = _ZERO_RATIO
-    rod_insert_12mm: tuple = _ZERO_RATIO
-    rod_insert_16mm: tuple = _ZERO_RATIO
-
-    peg_insert_4mm: tuple = _ZERO_RATIO
-    peg_insert_8mm: tuple = _ZERO_RATIO
-    peg_insert_12mm: tuple = _ZERO_RATIO
-    peg_insert_16mm: tuple = _ZERO_RATIO
-
-    usba: tuple = _ZERO_RATIO
-    waterproof: tuple = _ZERO_RATIO
-    bnc: tuple = _ZERO_RATIO
-    dsub: tuple = _ZERO_RATIO
-    rj45: tuple = _ZERO_RATIO
-
-    default: tuple = nut_thread_m16

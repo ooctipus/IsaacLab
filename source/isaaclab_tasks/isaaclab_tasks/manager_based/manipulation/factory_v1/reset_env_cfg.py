@@ -7,12 +7,8 @@ from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
 from . import mdp
 from .factory_presets import (
-    AssembledOffsetCfg,
-    AssemblyFractionFullCfg,
-    AssemblyFractionPartialCfg,
-    AssemblyRatioCfg,
+    FactoryAssemblyProfileCfg,
     EndEffectorBodyCfg,
-    EntryOffsetCfg,
     FixedAssetTipCfg,
     GraspedPoseRangeCfg,
     GripperGraspOffsetCfg,
@@ -81,11 +77,9 @@ FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
                 func=mdp.reset_held_asset_on_fixed_asset,
                 mode="reset",
                 params={
-                    "assembled_offset": AssembledOffsetCfg(),
-                    "entry_offset": EntryOffsetCfg(),
+                    "assembly_profile": FactoryAssemblyProfileCfg(),
                     "held_asset_align_offset": HeldAssetAlignOffsetCfg(),
-                    "assembly_fraction_range": AssemblyFractionFullCfg(),
-                    "assembly_ratio": AssemblyRatioCfg(),
+                    "assembly_fraction_range": (0.0, 0.4),
                     "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
                     "held_asset_cfg": SceneEntityCfg("held_asset"),
                 }
@@ -129,11 +123,9 @@ ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
                 func=mdp.reset_held_asset_on_fixed_asset,
                 mode="reset",
                 params={
-                    "assembled_offset": AssembledOffsetCfg(),
-                    "entry_offset": EntryOffsetCfg(),
+                    "assembly_profile": FactoryAssemblyProfileCfg(),
                     "held_asset_align_offset": HeldAssetAlignOffsetCfg(),
-                    "assembly_fraction_range": AssemblyFractionPartialCfg(),
-                    "assembly_ratio": AssemblyRatioCfg(),
+                    "assembly_fraction_range": (0.4, 1.0),
                     "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
                     "held_asset_cfg": SceneEntityCfg("held_asset"),
                 }

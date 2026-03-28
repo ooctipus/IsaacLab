@@ -240,7 +240,7 @@ class BoltM16KeyPointsCfg:
 class BoltM12KeyPointsCfg:
     bolt_tip_offset: Offset = Offset(pos=(0.0, 0.0, 0.035))
     second_thread: Offset = Offset(pos=(0.0, 0.0, 0.0285))
-    fully_screwed_nut_offset: Offset = Offset(pos=(0.0, 0.0, 0.022))
+    fully_screwed_nut_offset: Offset = Offset(pos=(0.0, 0.0, 0.0218))
     seventh_thread: Offset = Offset(pos=(0.0, 0.0, 0.0215))
     head: Offset = Offset(pos=(0.0, 0.0, 0.0))
 
@@ -259,7 +259,7 @@ class BoltM8KeyPointsCfg:
 class BoltM4KeyPointsCfg:
     bolt_tip_offset: Offset = Offset(pos=(0.0, 0.0, 0.02))
     second_thread: Offset = Offset(pos=(0.0, 0.0, 0.0189))
-    fully_screwed_nut_offset: Offset = Offset(pos=(0.0, 0.0, 0.014))
+    fully_screwed_nut_offset: Offset = Offset(pos=(0.0, 0.0, 0.01318))
     tenth_thread: Offset = Offset(pos=(0.0, 0.0, 0.0134))
     full_thread: Offset = Offset(pos=(0.0, 0.0, 0.0044))
     head: Offset = Offset(pos=(0.0, 0.0, 0.0))
@@ -311,7 +311,7 @@ class NutM8KeyPointsCfg:
 class NutM4KeyPointsCfg:
     grasp_point: Offset = Offset(pos=(0.0, 0.0, 0.0046), quat=(0.0, 0.0, -0.7071, 0.7071))
     grasp_diameter: float = 0.007
-    center_axis_bottom: Offset = Offset(pos=(0.0, 0.0, 0.0046))
+    center_axis_bottom: Offset = Offset(pos=(0.0, 0.0, 0.0048))
     center_axis_middle: Offset = Offset(pos=(0.0, 0.0, 0.0064))
     center_axis_top: Offset = Offset(pos=(0.0, 0.0, 0.0082))
     screw_ratio: float = 0.0007
@@ -520,15 +520,17 @@ class WaterproofSocketKeyPointsCfg:
 
 @configclass
 class BNCPlugKeyPointsCfg:
-    insertion_tip: Offset = Offset(pos=(0.0, 0.0, 0.0212))
+    insertion_tip: Offset = Offset(pos=(0.0, 0.0, 0.0107))
     grasp_point: Offset = Offset(pos=(0.0, 0.0, 0.0197))
-    plug_entry: Offset = Offset(pos=(0.0, 0.0, 0.0109), quat=(0.0, 0.0, 0.7071, 0.7071))
     grasp_diameter: float = 0.0143
+    screw_ratio: float = 0.0066
 
 
 @configclass
 class BNCSocketKeyPointsCfg:
-    plug_assembled: Offset = Offset(pos=(0.0, 0.0, 0.0212))
+    entry: Offset = Offset(pos=(0.0, 0.0, 0.0212), quat=(0.0, 0.0, 0.70711, 0.7071))
+    insert_start: Offset = Offset(pos=(0.0, 0.0, 0.01235), quat=(0.0, 0.0, 0.70711, 0.7071))
+    plug_assembled: Offset = Offset(pos=(0.0, 0.0, 0.0107))
 
 
 @configclass
