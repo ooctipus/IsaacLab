@@ -182,46 +182,38 @@ class ConnectorRJ45SceneCfg(FactorySceneBase):
     held_asset: RigidObjectCfg = assets.RJ45_PLUG_CFG
 
 
-# ---------------------------------------------------------------------------
-# Scene preset — all 20 variants
-# ---------------------------------------------------------------------------
-
-_DEFAULT_NUM_ENVS = 2
-_DEFAULT_ENV_SPACING = 2.0
-
-
 @configclass
 class FactorySceneCfg(PresetCfg):
     """Task scene preset — resolves to the complete scene for the active task."""
 
     # Nut threading
-    nut_thread_m4: NutThreadM4SceneCfg = NutThreadM4SceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
-    nut_thread_m8: NutThreadM8SceneCfg = NutThreadM8SceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
-    nut_thread_m12: NutThreadM12SceneCfg = NutThreadM12SceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
-    nut_thread_m16: NutThreadM16SceneCfg = NutThreadM16SceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
+    nut_thread_m4: NutThreadM4SceneCfg = NutThreadM4SceneCfg(num_envs=2, env_spacing=2.0)
+    nut_thread_m8: NutThreadM8SceneCfg = NutThreadM8SceneCfg(num_envs=2, env_spacing=2.0)
+    nut_thread_m12: NutThreadM12SceneCfg = NutThreadM12SceneCfg(num_envs=2, env_spacing=2.0)
+    nut_thread_m16: NutThreadM16SceneCfg = NutThreadM16SceneCfg(num_envs=2, env_spacing=2.0)
 
     # Gear mesh
-    gear_mesh_small: GearMeshSmallSceneCfg = GearMeshSmallSceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
-    gear_mesh_medium: GearMeshMediumSceneCfg = GearMeshMediumSceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
-    gear_mesh_large: GearMeshLargeSceneCfg = GearMeshLargeSceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
+    gear_mesh_small: GearMeshSmallSceneCfg = GearMeshSmallSceneCfg(num_envs=2, env_spacing=2.0)
+    gear_mesh_medium: GearMeshMediumSceneCfg = GearMeshMediumSceneCfg(num_envs=2, env_spacing=2.0)
+    gear_mesh_large: GearMeshLargeSceneCfg = GearMeshLargeSceneCfg(num_envs=2, env_spacing=2.0)
 
     # Rod insert (round)
-    rod_insert_4mm: RodInsert4MMSceneCfg = RodInsert4MMSceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
-    rod_insert_8mm: RodInsert8MMSceneCfg = RodInsert8MMSceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
-    rod_insert_12mm: RodInsert12MMSceneCfg = RodInsert12MMSceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
-    rod_insert_16mm: RodInsert16MMSceneCfg = RodInsert16MMSceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
+    rod_insert_4mm: RodInsert4MMSceneCfg = RodInsert4MMSceneCfg(num_envs=2, env_spacing=2.0)
+    rod_insert_8mm: RodInsert8MMSceneCfg = RodInsert8MMSceneCfg(num_envs=2, env_spacing=2.0)
+    rod_insert_12mm: RodInsert12MMSceneCfg = RodInsert12MMSceneCfg(num_envs=2, env_spacing=2.0)
+    rod_insert_16mm: RodInsert16MMSceneCfg = RodInsert16MMSceneCfg(num_envs=2, env_spacing=2.0)
 
     # Peg insert (rectangular)
-    peg_insert_4mm: PegInsert4MMSceneCfg = PegInsert4MMSceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
-    peg_insert_8mm: PegInsert8MMSceneCfg = PegInsert8MMSceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
-    peg_insert_12mm: PegInsert12MMSceneCfg = PegInsert12MMSceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
-    peg_insert_16mm: PegInsert16MMSceneCfg = PegInsert16MMSceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
+    peg_insert_4mm: PegInsert4MMSceneCfg = PegInsert4MMSceneCfg(num_envs=2, env_spacing=2.0)
+    peg_insert_8mm: PegInsert8MMSceneCfg = PegInsert8MMSceneCfg(num_envs=2, env_spacing=2.0)
+    peg_insert_12mm: PegInsert12MMSceneCfg = PegInsert12MMSceneCfg(num_envs=2, env_spacing=2.0)
+    peg_insert_16mm: PegInsert16MMSceneCfg = PegInsert16MMSceneCfg(num_envs=2, env_spacing=2.0)
 
     # Connector insert
-    usba: ConnectorUSBASceneCfg = ConnectorUSBASceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
-    waterproof: ConnectorWaterproofSceneCfg = ConnectorWaterproofSceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
-    bnc: ConnectorBNCSceneCfg = ConnectorBNCSceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
-    dsub: ConnectorDSUBSceneCfg = ConnectorDSUBSceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
-    rj45: ConnectorRJ45SceneCfg = ConnectorRJ45SceneCfg(num_envs=_DEFAULT_NUM_ENVS, env_spacing=_DEFAULT_ENV_SPACING)
+    usba: ConnectorUSBASceneCfg = ConnectorUSBASceneCfg(num_envs=2, env_spacing=2.0)
+    waterproof: ConnectorWaterproofSceneCfg = ConnectorWaterproofSceneCfg(num_envs=2, env_spacing=2.0)
+    bnc: ConnectorBNCSceneCfg = ConnectorBNCSceneCfg(num_envs=2, env_spacing=2.0)
+    dsub: ConnectorDSUBSceneCfg = ConnectorDSUBSceneCfg(num_envs=2, env_spacing=2.0)
+    rj45: ConnectorRJ45SceneCfg = ConnectorRJ45SceneCfg(num_envs=2, env_spacing=2.0)
 
     default: NutThreadM16SceneCfg = nut_thread_m16
