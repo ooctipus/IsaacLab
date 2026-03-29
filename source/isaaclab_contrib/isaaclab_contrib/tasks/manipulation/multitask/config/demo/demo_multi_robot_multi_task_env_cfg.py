@@ -7,13 +7,13 @@
 """Multi-robot multi-task env: OpenArm-lift, Franka-cabinet, UR10-reach.
 
 Three robot types, each performing a different manipulation task.
-Each robot-task pair occupies its own env-id group.  Separate batched
+Each robot-task pair occupies its own env-id group.  Separate
 action terms handle DiffIK, relative joint-pos, and grippers:
-``action_dim = 6 (IK) + 7 (Franka joints) + 6 (UR10 joints) + 1 (gripper) = 20``.
+``action_dim = 6 + 7 + 6 + 1 + 1 = 21`` (OpenArm IK + Franka joints + UR10 joints
++ OpenArm gripper + Franka gripper).
 
-All MDP terms use **explicit batched classes** that iterate
-``robot_meta`` (keyed by task-group name) and fill their output
-tensors via ``layout.env_slice(group_key)``.
+MDP terms use :class:`~isaaclab.managers.SceneEntityCfg` ``groups`` so each
+term applies only to the clone groups that own the relevant assets.
 
 Layout (3 groups, evenly split):
     Group 0:  OpenArm  -- Lift cube       (DiffIK + gripper)
@@ -30,8 +30,14 @@ from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
+from isaaclab.envs.mdp.actions.actions_cfg import (
+    BinaryJointPositionActionCfg,
+    DifferentialInverseKinematicsActionCfg,
+    RelativeJointPositionActionCfg,
+)
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
+from isaaclab.managers import ManagerTermBaseCfg as TermCfg
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
@@ -47,79 +53,13 @@ from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from isaaclab_contrib.tasks.manipulation.multitask import mdp
-from isaaclab_contrib.tasks.manipulation.multitask.mdp.batched_actions_cfg import (
-    BatchedBinaryGripperActionCfg,
-    BatchedDiffIKActionCfg,
-    BatchedRelJointPosActionCfg,
-    DiffIKGroupCfg,
-    GripperGroupCfg,
-)
-from isaaclab_contrib.tasks.manipulation.multitask.mdp.utils import (
-    CabinetGroupCfg,
-    LiftGroupCfg,
-    PoseCommandRanges,
-    ReachGroupCfg,
-)
+from isaaclab_contrib.tasks.manipulation.multitask.mdp.utils import PoseCommandRanges
 
 from isaaclab_assets.robots.franka import FRANKA_PANDA_HIGH_PD_CFG
 from isaaclab_assets.robots.openarm import OPENARM_UNI_HIGH_PD_CFG
 from isaaclab_assets.robots.universal_robots import UR10_CFG
 
 from .demo_multi_robot_reach_env_cfg import MultitaskPhysicsCfg
-
-# -----------------------------------------------------------
-# Constants
-# -----------------------------------------------------------
-
-TASK_OPENARM_LIFT = "openarm_lift"
-TASK_FRANKA_CABINET = "franka_cabinet"
-TASK_UR10_REACH = "ur10_reach"
-
-# Robot metadata - defined at module level so term configs can reference it.
-# SceneEntityCfg instances are auto-resolved when passed via term params.
-ROBOT_META = {
-    TASK_OPENARM_LIFT: LiftGroupCfg(
-        asset_cfg=SceneEntityCfg(
-            "openarm_robot",
-            body_names=["openarm_hand"],
-            joint_names=["openarm_joint.*", "openarm_finger_joint.*"],
-        ),
-        command_name="ee_pose",
-        command_ranges=PoseCommandRanges(
-            pos_x=(0.2, 0.4),
-            pos_y=(-0.2, 0.2),
-            pos_z=(0.15, 0.4),
-            roll=(-math.pi / 6, math.pi / 6),
-            pitch=(math.pi / 2, math.pi / 2),
-            yaw=(-math.pi / 9, math.pi / 9),
-        ),
-        robot_cfg=SceneEntityCfg("openarm_robot"),
-        object_cfg=SceneEntityCfg("openarm_object"),
-        ee_frame_cfg=SceneEntityCfg("openarm_ee_frame"),
-    ),
-    TASK_FRANKA_CABINET: CabinetGroupCfg(
-        asset_cfg=SceneEntityCfg(
-            "franka_robot",
-            body_names=["panda_hand"],
-            joint_names=["panda_joint.*", "panda_finger.*"],
-        ),
-        ee_frame_cfg=SceneEntityCfg("franka_ee_frame"),
-        cabinet_frame_cfg=SceneEntityCfg("cabinet_frame"),
-        cabinet_asset_cfg=SceneEntityCfg("cabinet", joint_names=["drawer_top_joint"]),
-    ),
-    TASK_UR10_REACH: ReachGroupCfg(
-        asset_cfg=SceneEntityCfg("ur10_robot", body_names=["ee_link"], joint_names=[".*"]),
-        command_name="ee_pose",
-        command_ranges=PoseCommandRanges(
-            pos_x=(0.35, 0.65),
-            pos_y=(-0.2, 0.2),
-            pos_z=(0.15, 0.5),
-            roll=(0.0, 0.0),
-            pitch=(math.pi / 2, math.pi / 2),
-            yaw=(-3.14, 3.14),
-        ),
-    ),
-}
 
 _TABLE_SPAWN = UsdFileCfg(
     usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/SeattleLabTable/table_instanceable.usd",
@@ -168,13 +108,13 @@ class MultiRobotMultiTaskSceneCfg(InteractiveSceneCfg):
 
     clone_cfg = CloneCfg(
         clone_groups={
-            TASK_OPENARM_LIFT: InclusionSet(
+            "openarm_lift": InclusionSet(
                 assets=["openarm_table", "openarm_robot", "openarm_object", "openarm_ee_frame"], weight=1
             ),
-            TASK_FRANKA_CABINET: InclusionSet(
+            "franka_cabinet": InclusionSet(
                 assets=["franka_robot", "cabinet", "franka_ee_frame", "cabinet_frame"], weight=1
             ),
-            TASK_UR10_REACH: InclusionSet(assets=["ur10_table", "ur10_robot"], weight=1),
+            "ur10_reach": InclusionSet(assets=["ur10_table", "ur10_robot"], weight=1),
         }
     )
 
@@ -305,51 +245,42 @@ class MultiRobotMultiTaskSceneCfg(InteractiveSceneCfg):
 
 @configclass
 class MultiRobotMultiTaskActionsCfg:
-    """Mixed action types with independent columns per robot.
+    """Per-robot actions with independent columns.
 
     OpenArm uses DiffIK (dim=6) + gripper (dim=1).
     Franka uses relative joint-pos (dim=7) + gripper (dim=1).
     UR10 uses relative joint-pos (dim=6), no gripper.
-    action_dim = 6 (IK) + 7 (Franka joints) + 6 (UR10 joints) + 1 (gripper) = 20.
+    action_dim = 6 + 7 + 6 + 1 + 1 = 21.
     """
 
-    # task-space action can be shared across groups
-    ik_action = BatchedDiffIKActionCfg(
-        robot_meta=ROBOT_META,
+    openarm_arm = DifferentialInverseKinematicsActionCfg(
+        asset_name="openarm_robot",
+        joint_names=["openarm_joint.*"],
+        body_name="openarm_hand",
         controller=_IK_CTRL,
         scale=0.5,
-        groups={
-            TASK_OPENARM_LIFT: DiffIKGroupCfg(joint_names=["openarm_joint.*"]),
-        },
     )
-    # joint-space action cannot be shared across groups
-    franka_joints = BatchedRelJointPosActionCfg(
-        robot_meta=ROBOT_META,
-        group_name=TASK_FRANKA_CABINET,
+    franka_joints = RelativeJointPositionActionCfg(
+        asset_name="franka_robot",
         joint_names=["panda_joint.*"],
         scale=0.1,
     )
-    ur10_joints = BatchedRelJointPosActionCfg(
-        robot_meta=ROBOT_META,
-        group_name=TASK_UR10_REACH,
+    ur10_joints = RelativeJointPositionActionCfg(
+        asset_name="ur10_robot",
         joint_names=[".*"],
         scale=0.1,
     )
-    # gripper action can be shared across groups
-    gripper_action = BatchedBinaryGripperActionCfg(
-        robot_meta=ROBOT_META,
-        groups={
-            TASK_OPENARM_LIFT: GripperGroupCfg(
-                joint_names=["openarm_finger_joint.*"],
-                open_command_expr={"openarm_finger_joint.*": 0.044},
-                close_command_expr={"openarm_finger_joint.*": 0.0},
-            ),
-            TASK_FRANKA_CABINET: GripperGroupCfg(
-                joint_names=["panda_finger.*"],
-                open_command_expr={"panda_finger_.*": 0.04},
-                close_command_expr={"panda_finger_.*": 0.0},
-            ),
-        },
+    openarm_gripper = BinaryJointPositionActionCfg(
+        asset_name="openarm_robot",
+        joint_names=["openarm_finger_joint.*"],
+        open_command_expr={"openarm_finger_joint.*": 0.044},
+        close_command_expr={"openarm_finger_joint.*": 0.0},
+    )
+    franka_gripper = BinaryJointPositionActionCfg(
+        asset_name="franka_robot",
+        joint_names=["panda_finger.*"],
+        open_command_expr={"panda_finger_.*": 0.04},
+        close_command_expr={"panda_finger_.*": 0.0},
     )
 
 
@@ -360,16 +291,33 @@ class MultiRobotMultiTaskActionsCfg:
 
 @configclass
 class MultiRobotMultiTaskCommandsCfg:
-    """Single batched pose command — per-group ranges live in ``robot_meta``.
+    """Pose commands for lift and reach; cabinet has no pose command."""
 
-    The cabinet task does not use a pose command — the goal is
-    defined by the drawer joint position.
-    """
-
-    ee_pose = mdp.BatchedPoseCommandCfg(
+    lift_goal = mdp.PoseCommandCfg(
+        asset_cfg=SceneEntityCfg("openarm_robot", body_names=["openarm_hand"], groups=["openarm_lift"]),
+        ranges=PoseCommandRanges(
+            pos_x=(0.2, 0.4),
+            pos_y=(-0.2, 0.2),
+            pos_z=(0.15, 0.4),
+            roll=(-math.pi / 6, math.pi / 6),
+            pitch=(math.pi / 2, math.pi / 2),
+            yaw=(-math.pi / 9, math.pi / 9),
+        ),
         resampling_time_range=(5.0, 5.0),
         debug_vis=True,
-        robot_meta=ROBOT_META,
+    )
+    reach_target = mdp.PoseCommandCfg(
+        asset_cfg=SceneEntityCfg("ur10_robot", body_names=["ee_link"], groups=["ur10_reach"]),
+        ranges=PoseCommandRanges(
+            pos_x=(0.35, 0.65),
+            pos_y=(-0.2, 0.2),
+            pos_z=(0.15, 0.5),
+            roll=(0.0, 0.0),
+            pitch=(math.pi / 2, math.pi / 2),
+            yaw=(-3.14, 3.14),
+        ),
+        resampling_time_range=(5.0, 5.0),
+        debug_vis=True,
     )
 
 
@@ -378,40 +326,68 @@ class MultiRobotMultiTaskCommandsCfg:
 # ===========================================================
 
 
+# fmt: off
 @configclass
 class MultiRobotMultiTaskObsCfg:
-    """Batched observation space for all robot-task groups.
-
-    Every term is a batched :class:`ManagerTermBase` that internally
-    iterates ``robot_meta`` entries and fills a single output tensor
-    covering all environments.  Task-specific terms are zero-padded
-    for groups where they do not apply.
-    """
+    """Per-group observation terms; inactive groups contribute zeros from each term."""
 
     @configclass
     class PolicyCfg(ObsGroup):
-        # ── shared proprioception ─────────────────────────
-        task_onehot = ObsTerm(func=mdp.multi_task_onehot, params={"robot_meta": ROBOT_META})
-        # joint_pos_rel = ObsTerm(func=mdp.batched_joint_pos_rel, params={"robot_meta": ROBOT_META})
-        # joint_vel = ObsTerm(func=mdp.batched_joint_vel, params={"robot_meta": ROBOT_META})
-        ee_pose = ObsTerm(func=mdp.batched_ee_pose, params={"robot_meta": ROBOT_META})
+        task_onehot = ObsTerm(func=mdp.multi_task_onehot)
+
+        ee_pose = ObsTerm(func=mdp.scatter_term, params={"terms": [
+            TermCfg(func=mdp.ee_pose, params={"asset_cfg": SceneEntityCfg("openarm_robot", body_names=["openarm_hand"], groups=["openarm_lift"])}),
+            TermCfg(func=mdp.ee_pose, params={"asset_cfg": SceneEntityCfg("franka_robot", body_names=["panda_hand"], groups=["franka_cabinet"])}),
+            TermCfg(func=mdp.ee_pose, params={"asset_cfg": SceneEntityCfg("ur10_robot", body_names=["ee_link"], groups=["ur10_reach"])}),
+        ]})
         actions = ObsTerm(func=mdp.last_action)
 
-        # ── lift observations (zero-padded for non-lift) ──
-        object_pos = ObsTerm(func=mdp.batched_object_pos_in_robot_frame, params={"robot_meta": ROBOT_META})
-        object_target_pos_error = ObsTerm(func=mdp.batched_object_target_pos_error, params={"robot_meta": ROBOT_META})
-        ee_object_pos_error = ObsTerm(func=mdp.batched_ee_object_pos_error, params={"robot_meta": ROBOT_META})
-
-        # ── cabinet observations (zero-padded for non-cab) ─
-        cabinet_joint_pos = ObsTerm(func=mdp.batched_cabinet_joint_pos, params={"robot_meta": ROBOT_META})
-        cabinet_joint_vel = ObsTerm(func=mdp.batched_cabinet_joint_vel, params={"robot_meta": ROBOT_META})
-        cabinet_handle_error = ObsTerm(
-            func=mdp.batched_cabinet_rel_ee_drawer_distance, params={"robot_meta": ROBOT_META}
+        openarm_object_pos = ObsTerm(
+            func=mdp.object_pos_in_robot_frame,
+            params={"robot_cfg": SceneEntityCfg("openarm_robot", groups=["openarm_lift"]), "object_cfg": SceneEntityCfg("openarm_object", groups=["openarm_lift"])},
+        )
+        openarm_object_target_pos_error = ObsTerm(
+            func=mdp.object_target_pos_error,
+            params={
+                "robot_cfg": SceneEntityCfg("openarm_robot", groups=["openarm_lift"]),
+                "object_cfg": SceneEntityCfg("openarm_object", groups=["openarm_lift"]),
+                "command_name": "lift_goal",
+            },
+        )
+        openarm_ee_object_pos_error = ObsTerm(
+            func=mdp.ee_object_pos_error,
+            params={
+                "robot_cfg": SceneEntityCfg("openarm_robot", groups=["openarm_lift"]),
+                "object_cfg": SceneEntityCfg("openarm_object", groups=["openarm_lift"]),
+                "ee_frame_cfg": SceneEntityCfg("openarm_ee_frame", groups=["openarm_lift"]),
+            },
         )
 
-        # ── reach + lift commands (zero-padded for cabinet) ─
-        commands = ObsTerm(func=mdp.batched_generated_commands, params={"robot_meta": ROBOT_META})
-        ee_pos_error = ObsTerm(func=mdp.batched_ee_pos_error, params={"robot_meta": ROBOT_META})
+        cabinet_joint_pos = ObsTerm(
+            func=mdp.cabinet_joint_pos,
+            params={"cabinet_asset_cfg": SceneEntityCfg("cabinet", joint_names=["drawer_top_joint"], groups=["franka_cabinet"])},
+        )
+        cabinet_joint_vel = ObsTerm(
+            func=mdp.cabinet_joint_vel,
+            params={"cabinet_asset_cfg": SceneEntityCfg("cabinet", joint_names=["drawer_top_joint"], groups=["franka_cabinet"])},
+        )
+        cabinet_handle_error = ObsTerm(
+            func=mdp.cabinet_rel_ee_drawer_distance,
+            params={"ee_frame_cfg": SceneEntityCfg("franka_ee_frame", groups=["franka_cabinet"]), "cabinet_frame_cfg": SceneEntityCfg("cabinet_frame", groups=["franka_cabinet"])},
+        )
+
+        commands = ObsTerm(func=mdp.scatter_term, params={"terms": [
+            TermCfg(func=mdp.generated_commands, params={"asset_cfg": SceneEntityCfg("openarm_robot", groups=["openarm_lift"]), "command_name": "lift_goal"}),
+            TermCfg(func=mdp.generated_commands, params={"asset_cfg": SceneEntityCfg("ur10_robot", groups=["ur10_reach"]), "command_name": "reach_target"}),
+        ]})
+        openarm_ee_pos_error = ObsTerm(
+            func=mdp.ee_pos_error,
+            params={"asset_cfg": SceneEntityCfg("openarm_robot", body_names=["openarm_hand"], groups=["openarm_lift"]), "command_name": "lift_goal"},
+        )
+        ur10_ee_pos_error = ObsTerm(
+            func=mdp.ee_pos_error,
+            params={"asset_cfg": SceneEntityCfg("ur10_robot", body_names=["ee_link"], groups=["ur10_reach"]), "command_name": "reach_target"},
+        )
 
         def __post_init__(self):
             self.enable_corruption = True
@@ -427,101 +403,112 @@ class MultiRobotMultiTaskObsCfg:
 
 @configclass
 class MultiRobotMultiTaskRewardsCfg:
-    """Task-specific rewards for OpenArm-lift, Franka-cabinet, and UR10-reach.
-
-    Each batched class internally selects groups via ``isinstance``
-    checks on the ``robot_meta`` entries.
-    """
+    """Task-specific rewards with per-group :class:`SceneEntityCfg` references."""
 
     # ── OpenArm Lift ─────────────────────────────────
     lift_reaching_object = RewTerm(
-        func=mdp.batched_object_ee_distance,
-        weight=1.0,
-        params={"std": 0.1, "robot_meta": ROBOT_META},
+        func=mdp.object_ee_distance, weight=1.0,
+        params={"std": 0.1, "object_cfg": SceneEntityCfg("openarm_object", groups=["openarm_lift"]), "ee_frame_cfg": SceneEntityCfg("openarm_ee_frame", groups=["openarm_lift"])},
     )
     lift_lifting_object = RewTerm(
-        func=mdp.batched_object_is_lifted,
-        weight=15.0,
-        params={"minimal_height": 0.04, "robot_meta": ROBOT_META},
+        func=mdp.object_is_lifted, weight=15.0,
+        params={"minimal_height": 0.04, "object_cfg": SceneEntityCfg("openarm_object", groups=["openarm_lift"])},
     )
     lift_object_goal_tracking = RewTerm(
-        func=mdp.batched_object_goal_distance,
-        weight=16.0,
-        params={"std": 0.3, "minimal_height": 0.04, "robot_meta": ROBOT_META},
+        func=mdp.object_goal_distance, weight=16.0,
+        params={
+            "std": 0.3, "minimal_height": 0.04, "command_name": "lift_goal",
+            "robot_cfg": SceneEntityCfg("openarm_robot", groups=["openarm_lift"]), "object_cfg": SceneEntityCfg("openarm_object", groups=["openarm_lift"]),
+        },
     )
     lift_object_goal_tracking_fine = RewTerm(
-        func=mdp.batched_object_goal_distance,
-        weight=5.0,
-        params={"std": 0.05, "minimal_height": 0.04, "robot_meta": ROBOT_META},
+        func=mdp.object_goal_distance, weight=5.0,
+        params={
+            "std": 0.05, "minimal_height": 0.04, "command_name": "lift_goal",
+            "robot_cfg": SceneEntityCfg("openarm_robot", groups=["openarm_lift"]), "object_cfg": SceneEntityCfg("openarm_object", groups=["openarm_lift"]),
+        },
     )
 
     # ── Franka Cabinet ───────────────────────────────
     cabinet_approach_ee_handle = RewTerm(
-        func=mdp.batched_cabinet_approach_ee_handle,
-        weight=2.0,
-        params={"threshold": 0.2, "robot_meta": ROBOT_META},
+        func=mdp.cabinet_approach_ee_handle, weight=2.0,
+        params={"threshold": 0.2, "ee_frame_cfg": SceneEntityCfg("franka_ee_frame", groups=["franka_cabinet"]), "cabinet_frame_cfg": SceneEntityCfg("cabinet_frame", groups=["franka_cabinet"])},
     )
     cabinet_align_ee_handle = RewTerm(
-        func=mdp.batched_cabinet_align_ee_handle,
-        weight=0.5,
-        params={"robot_meta": ROBOT_META},
+        func=mdp.cabinet_align_ee_handle, weight=0.5,
+        params={"ee_frame_cfg": SceneEntityCfg("franka_ee_frame", groups=["franka_cabinet"]), "cabinet_frame_cfg": SceneEntityCfg("cabinet_frame", groups=["franka_cabinet"])},
     )
     cabinet_approach_gripper_handle = RewTerm(
-        func=mdp.batched_cabinet_approach_gripper_handle,
-        weight=5.0,
-        params={"offset": 0.04, "robot_meta": ROBOT_META},
+        func=mdp.cabinet_approach_gripper_handle, weight=5.0,
+        params={"offset": 0.04, "ee_frame_cfg": SceneEntityCfg("franka_ee_frame", groups=["franka_cabinet"]), "cabinet_frame_cfg": SceneEntityCfg("cabinet_frame", groups=["franka_cabinet"])},
     )
     cabinet_align_grasp_around_handle = RewTerm(
-        func=mdp.batched_cabinet_align_grasp_around_handle,
-        weight=0.125,
-        params={"robot_meta": ROBOT_META},
+        func=mdp.cabinet_align_grasp_around_handle, weight=0.125,
+        params={"ee_frame_cfg": SceneEntityCfg("franka_ee_frame", groups=["franka_cabinet"]), "cabinet_frame_cfg": SceneEntityCfg("cabinet_frame", groups=["franka_cabinet"])},
     )
     cabinet_grasp_handle = RewTerm(
-        func=mdp.batched_cabinet_grasp_handle,
-        weight=0.5,
-        params={"threshold": 0.03, "open_joint_pos": 0.04, "robot_meta": ROBOT_META},
+        func=mdp.cabinet_grasp_handle, weight=0.5,
+        params={
+            "threshold": 0.03, "open_joint_pos": 0.04,
+            "asset_cfg": SceneEntityCfg("franka_robot", joint_names=["panda_finger.*"], groups=["franka_cabinet"]),
+            "ee_frame_cfg": SceneEntityCfg("franka_ee_frame", groups=["franka_cabinet"]), "cabinet_frame_cfg": SceneEntityCfg("cabinet_frame", groups=["franka_cabinet"]),
+        },
     )
     cabinet_open_drawer_bonus = RewTerm(
-        func=mdp.batched_cabinet_open_drawer_bonus,
-        weight=7.5,
-        params={"robot_meta": ROBOT_META},
+        func=mdp.cabinet_open_drawer_bonus, weight=7.5,
+        params={
+            "ee_frame_cfg": SceneEntityCfg("franka_ee_frame", groups=["franka_cabinet"]), "cabinet_frame_cfg": SceneEntityCfg("cabinet_frame", groups=["franka_cabinet"]),
+            "cabinet_asset_cfg": SceneEntityCfg("cabinet", joint_names=["drawer_top_joint"], groups=["franka_cabinet"]),
+        },
     )
     cabinet_multi_stage_open_drawer = RewTerm(
-        func=mdp.batched_cabinet_multi_stage_open_drawer,
-        weight=1.0,
-        params={"robot_meta": ROBOT_META},
+        func=mdp.cabinet_multi_stage_open_drawer, weight=1.0,
+        params={
+            "ee_frame_cfg": SceneEntityCfg("franka_ee_frame", groups=["franka_cabinet"]), "cabinet_frame_cfg": SceneEntityCfg("cabinet_frame", groups=["franka_cabinet"]),
+            "cabinet_asset_cfg": SceneEntityCfg("cabinet", joint_names=["drawer_top_joint"], groups=["franka_cabinet"]),
+        },
     )
 
     # ── UR10 Reach ───────────────────────────────────
     reach_ee_pos_tracking = RewTerm(
-        func=mdp.batched_position_command_error,
-        weight=-0.2,
-        params={"robot_meta": ROBOT_META},
+        func=mdp.position_command_error, weight=-0.2,
+        params={"asset_cfg": SceneEntityCfg("ur10_robot", body_names=["ee_link"], groups=["ur10_reach"]), "command_name": "reach_target"},
     )
     reach_ee_pos_tracking_fine = RewTerm(
-        func=mdp.batched_position_command_error_tanh,
-        weight=0.1,
-        params={"std": 0.1, "robot_meta": ROBOT_META},
+        func=mdp.position_command_error_tanh, weight=0.1,
+        params={"std": 0.1, "asset_cfg": SceneEntityCfg("ur10_robot", body_names=["ee_link"], groups=["ur10_reach"]), "command_name": "reach_target"},
     )
     reach_ee_ori_tracking = RewTerm(
-        func=mdp.batched_orientation_command_error,
-        weight=-0.2,
-        params={"robot_meta": ROBOT_META},
+        func=mdp.orientation_command_error, weight=-0.2,
+        params={"asset_cfg": SceneEntityCfg("ur10_robot", body_names=["ee_link"], groups=["ur10_reach"]), "command_name": "reach_target"},
     )
     reach_ee_ori_tracking_fine = RewTerm(
-        func=mdp.batched_orientation_command_error_tanh,
-        weight=0.1,
-        params={"std": 0.1, "robot_meta": ROBOT_META},
+        func=mdp.orientation_command_error_tanh, weight=0.1,
+        params={"std": 0.1, "asset_cfg": SceneEntityCfg("ur10_robot", body_names=["ee_link"], groups=["ur10_reach"]), "command_name": "reach_target"},
     )
 
     # ── Global penalties ─────────────────────────────
     action_rate = RewTerm(func=mdp.action_rate_l2, weight=-1e-4)
-    joint_vel = RewTerm(func=mdp.batched_joint_vel_l2, weight=-1e-4, params={"robot_meta": ROBOT_META})
+    joint_vel = RewTerm(
+        func=mdp.scatter_term, weight=-1e-4,
+        params={"terms": [
+            TermCfg(
+                func=mdp.joint_vel_l2,
+                params={"asset_cfg": SceneEntityCfg("openarm_robot", joint_names=["openarm_joint.*", "openarm_finger_joint.*"], groups=["openarm_lift"])},
+            ),
+            TermCfg(
+                func=mdp.joint_vel_l2,
+                params={"asset_cfg": SceneEntityCfg("franka_robot", joint_names=["panda_joint.*", "panda_finger.*"], groups=["franka_cabinet"])},
+            ),
+            TermCfg(func=mdp.joint_vel_l2, params={"asset_cfg": SceneEntityCfg("ur10_robot", joint_names=[".*"], groups=["ur10_reach"])}),
+        ]},
+    )
 
 
 # ===========================================================
 # Terminations
 # ===========================================================
+# fmt: on
 
 
 @configclass
@@ -530,12 +517,18 @@ class MultiRobotMultiTaskTerminationsCfg:
 
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     lift_object_dropping = DoneTerm(
-        func=mdp.batched_object_height_below_minimum,
-        params={"minimum_height": -0.05, "robot_meta": ROBOT_META},
+        func=mdp.object_height_below_minimum,
+        params={
+            "minimum_height": -0.05,
+            "object_cfg": SceneEntityCfg("openarm_object", groups=["openarm_lift"]),
+        },
     )
     cabinet_success = DoneTerm(
-        func=mdp.batched_cabinet_drawer_opened,
-        params={"threshold": 0.39, "robot_meta": ROBOT_META},
+        func=mdp.cabinet_drawer_opened,
+        params={
+            "threshold": 0.39,
+            "cabinet_asset_cfg": SceneEntityCfg("cabinet", joint_names=["drawer_top_joint"], groups=["franka_cabinet"]),
+        },
     )
 
 
@@ -546,35 +539,83 @@ class MultiRobotMultiTaskTerminationsCfg:
 
 @configclass
 class MultiRobotMultiTaskEventsCfg:
-    """Reset events for heterogeneous multi-robot layout.
+    """Per-robot reset events for heterogeneous layouts."""
 
-    Uses batched terms that handle dual-indexing (global for env_origins,
-    local for asset data).
-    """
-
-    reset_to_default = EventTerm(
-        func=mdp.batched_reset_to_default,
-        mode="reset",
-        params={"robot_meta": ROBOT_META, "reset_joint_targets": True},
-    )
-    reset_joints = EventTerm(
-        func=mdp.batched_reset_joints,
-        mode="reset",
-        params={"robot_meta": ROBOT_META, "position_range": (0.5, 1.25), "velocity_range": (0.0, 0.0)},
-    )
-    reset_object = EventTerm(
-        func=mdp.batched_reset_object_uniform,
+    openarm_reset_to_default = EventTerm(
+        func=mdp.reset_to_default,
         mode="reset",
         params={
-            "robot_meta": ROBOT_META,
+            "reset_joint_targets": True,
+            "asset_cfgs": [
+                SceneEntityCfg("openarm_robot", groups=["openarm_lift"]),
+                SceneEntityCfg("openarm_object", groups=["openarm_lift"]),
+            ],
+        },
+    )
+    franka_reset_to_default = EventTerm(
+        func=mdp.reset_to_default,
+        mode="reset",
+        params={
+            "reset_joint_targets": True,
+            "asset_cfgs": [SceneEntityCfg("franka_robot", groups=["franka_cabinet"])],
+        },
+    )
+    ur10_reset_to_default = EventTerm(
+        func=mdp.reset_to_default,
+        mode="reset",
+        params={
+            "reset_joint_targets": True,
+            "asset_cfgs": [SceneEntityCfg("ur10_robot", groups=["ur10_reach"])],
+        },
+    )
+    openarm_reset_joints = EventTerm(
+        func=mdp.reset_joints,
+        mode="reset",
+        params={
+            "position_range": (0.5, 1.25),
+            "velocity_range": (0.0, 0.0),
+            "asset_cfg": SceneEntityCfg(
+                "openarm_robot",
+                joint_names=["openarm_joint.*", "openarm_finger_joint.*"],
+                groups=["openarm_lift"],
+            ),
+        },
+    )
+    franka_reset_joints = EventTerm(
+        func=mdp.reset_joints,
+        mode="reset",
+        params={
+            "position_range": (0.5, 1.25),
+            "velocity_range": (0.0, 0.0),
+            "asset_cfg": SceneEntityCfg(
+                "franka_robot",
+                joint_names=["panda_joint.*", "panda_finger.*"],
+                groups=["franka_cabinet"],
+            ),
+        },
+    )
+    ur10_reset_joints = EventTerm(
+        func=mdp.reset_joints,
+        mode="reset",
+        params={
+            "position_range": (0.5, 1.25),
+            "velocity_range": (0.0, 0.0),
+            "asset_cfg": SceneEntityCfg("ur10_robot", joint_names=[".*"], groups=["ur10_reach"]),
+        },
+    )
+    reset_openarm_object = EventTerm(
+        func=mdp.reset_object_uniform,
+        mode="reset",
+        params={
             "pose_range": {"x": (-0.1, 0.1), "y": (-0.25, 0.25), "z": (0.0, 0.0)},
             "velocity_range": {},
+            "object_cfg": SceneEntityCfg("openarm_object", groups=["openarm_lift"]),
         },
     )
     reset_cabinet = EventTerm(
-        func=mdp.batched_reset_cabinet,
+        func=mdp.reset_to_default,
         mode="reset",
-        params={"robot_meta": ROBOT_META},
+        params={"asset_cfgs": [SceneEntityCfg("cabinet", groups=["franka_cabinet"])]},
     )
 
 
@@ -610,12 +651,11 @@ class MultiRobotMultiTaskEnvCfg(ManagerBasedRLEnvCfg):
     Group 1: Franka  (7 arm DoF + 2 finger DoF) -- open a cabinet drawer
     Group 2: UR10    (6 arm DoF)                -- track a 6D pose command
 
-    Action dim: 6 (IK) + 7 (Franka joints) + 6 (UR10 joints) + 1 (gripper) = 20.
+    Action dim: 6 (IK) + 7 (Franka joints) + 6 (UR10 joints) + 1 (OpenArm gripper)
+    + 1 (Franka gripper) = 21.
     Joint-space actions use independent columns per robot.
 
-    ``robot_meta`` maps task-group names to typed group configs.
-    All batched MDP classes iterate these entries to fill their
-    output tensors by group slice.
+    Observations, rewards, and events use ``groups`` on :class:`SceneEntityCfg`.
     """
 
     scene: MultiRobotMultiTaskSceneCfg = MultiRobotMultiTaskSceneCfg(

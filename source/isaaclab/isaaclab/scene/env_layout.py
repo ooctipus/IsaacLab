@@ -234,34 +234,33 @@ def resolve_asset_env_ids(
 class GroupView:
     """Ergonomic wrapper around GroupLayout - delegates to pure functions.
 
-    ``write`` indexes into a full-env output buffer (shape ``(num_envs, ...)``).
-    ``read`` indexes into the asset's data buffer.
+    ``env_ids`` indexes into a full-env output buffer (shape ``(num_envs, ...)``).
+    ``group_ids`` indexes into the asset's data buffer.
     """
 
-    write: slice | torch.Tensor
+    env_ids: slice | torch.Tensor
     """Index into a full-env ``(num_envs, ...)`` output buffer."""
 
-    read: slice | torch.Tensor
+    group_ids: slice | torch.Tensor
     """Index into the asset's data buffer."""
 
     layout: GroupLayout = field(repr=False)
     """The underlying GroupLayout - exposed for pure function composition."""
 
-    def filter(self, env_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def filter(self, global_env_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Filter env_ids to this group. Returns (local_ids, matched_global_ids)."""
-        return filter_to_group(self.layout, env_ids)
+        return filter_to_group(self.layout, global_env_ids)
 
-    def to_local(self, env_ids: torch.Tensor) -> torch.Tensor:
+    def to_local(self, global_env_ids: torch.Tensor) -> torch.Tensor:
         """Convert global env_ids to 0-based local indices."""
-        return to_local(self.layout, env_ids)
+        return to_local(self.layout, global_env_ids)
 
     def to_global(self, local_ids: torch.Tensor) -> torch.Tensor:
         """Convert local indices back to global env_ids."""
         return to_global(self.layout, local_ids)
 
-    @property
-    def env_ids(self) -> torch.Tensor:
-        """All env IDs in this group."""
+    def get_env_ids(self) -> torch.Tensor:
+        """All env IDs in this group as a tensor."""
         return get_env_ids(self.layout)
 
     @property
@@ -284,7 +283,7 @@ class EnvLayout:
 
         # Indexing
         gv = layout["lift", "robot"]
-        output[gv.write] = robot.data[gv.read]
+        output[gv.env_ids] = robot.data[gv.group_ids]
 
         # Composition from raw data
         if (g := layout.assets.get("robot")) and len(g) == 1:
@@ -303,6 +302,7 @@ class EnvLayout:
         self._assets: dict[str, tuple[str, ...]] = {}
         self._terms: dict[str, str] = {}
         self._clone_cfg: CloneCfg | None = None
+        self._view_cache: dict[tuple[frozenset[str], str | None], GroupView] = {}
 
     # ── fundamental properties ────────────────────────────────────────────
 
@@ -407,9 +407,109 @@ class EnvLayout:
         """Get GroupView for a group/asset pair. Alias for __getitem__."""
         return self._make_view(group_key, asset_name)
 
+    def get(self, groups: list[str], asset: str | None = None) -> GroupView:
+        """Get a combined :class:`GroupView` spanning multiple groups, with internal caching.
+
+        For homogeneous layouts (no registered groups), returns a view covering all envs.
+        When groups are provided, unions their env IDs and computes ``group_ids`` into
+        the asset's data buffer.
+
+        Args:
+            groups: Group names to combine.
+            asset: Optional asset name for computing ``group_ids``.
+
+        Returns:
+            A :class:`GroupView` whose ``env_ids`` covers the union of the requested
+            groups and whose ``group_ids`` indexes into the asset's data buffer.
+
+        Raises:
+            KeyError: If any group name is not registered.
+        """
+        if not self._group_names:
+            return GroupView(env_ids=slice(None), group_ids=slice(None), layout=self._homogeneous_layout)
+
+        cache_key = (frozenset(groups), asset)
+        cached = self._view_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        all_ids: list[torch.Tensor] = []
+        for name in groups:
+            layout = self._layouts.get(name)
+            if layout is None:
+                raise KeyError(f"unregistered group '{name}'. Available: {list(self._group_names)}")
+            all_ids.append(get_env_ids(layout))
+
+        union = torch.cat(all_ids).unique().sort().values if len(all_ids) > 1 else all_ids[0]
+
+        # Build env_ids: use a slice when contiguous, tensor otherwise
+        if union.numel() > 0 and is_contiguous_slice(union.tolist()):
+            env_ids: slice | torch.Tensor = slice(int(union[0].item()), int(union[-1].item()) + 1)
+        else:
+            env_ids = union
+
+        # Build group_ids into the asset's data buffer
+        if asset is None:
+            group_ids: slice | torch.Tensor = slice(None)
+        else:
+            asset_groups = self._assets.get(asset)
+            if asset_groups is None:
+                group_ids = env_ids
+            else:
+                asset_env_ids = self._get_asset_env_ids(asset)
+                if isinstance(env_ids, slice):
+                    start = torch.searchsorted(asset_env_ids, env_ids.start).item()
+                    count = env_ids.stop - env_ids.start
+                    group_ids = slice(start, start + count)
+                else:
+                    group_ids = torch.searchsorted(asset_env_ids, env_ids)
+
+        combined_layout = build_layout(union.tolist(), self._device)
+        view = GroupView(env_ids=env_ids, group_ids=group_ids, layout=combined_layout)
+        self._view_cache[cache_key] = view
+        return view
+
+    def filter_reset_ids(
+        self, asset_name: str, candidate_env_ids: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Intersect reset env IDs with the envs that own ``asset_name``.
+
+        Args:
+            asset_name: Name of the asset to filter for.
+            candidate_env_ids: Global env indices to filter (from the reset trigger).
+
+        Returns:
+            ``(env_ids, group_ids)`` where ``env_ids`` are the subset of
+            ``candidate_env_ids`` that contain the asset and ``group_ids``
+            are the corresponding indices into the asset's data buffer.
+            Both are empty tensors when no envs match.
+        """
+        asset_groups = self._assets.get(asset_name)
+
+        if not asset_groups:
+            return candidate_env_ids, candidate_env_ids
+
+        all_matched: list[torch.Tensor] = []
+        for group_name in asset_groups:
+            _, matched = self[group_name].filter(candidate_env_ids)
+            if matched.numel() > 0:
+                all_matched.append(matched)
+        if not all_matched:
+            empty = torch.tensor([], dtype=torch.long, device=self._device)
+            return empty, empty
+        env_ids = torch.cat(all_matched) if len(all_matched) > 1 else all_matched[0]
+
+        if len(asset_groups) == 1:
+            group_ids = self[asset_groups[0]].to_local(env_ids)
+        else:
+            asset_env_ids = self._get_asset_env_ids(asset_name)
+            group_ids = torch.searchsorted(asset_env_ids, env_ids)
+
+        return env_ids, group_ids
+
     def _make_view(self, group_key: str | None, asset_name: str | None) -> GroupView:
         if group_key is None:
-            return GroupView(write=slice(None), read=slice(None), layout=self._homogeneous_layout)
+            return GroupView(env_ids=slice(None), group_ids=slice(None), layout=self._homogeneous_layout)
 
         layout = self._layouts.get(group_key)
         if layout is None:
@@ -417,7 +517,7 @@ class EnvLayout:
 
         write = layout.slice if layout.slice is not None else layout.indices
         read = self._compute_read(group_key, asset_name, layout)
-        return GroupView(write=write, read=read, layout=layout)
+        return GroupView(env_ids=write, group_ids=read, layout=layout)
 
     def _compute_read(self, group_key: str, asset_name: str | None, layout: GroupLayout) -> slice | torch.Tensor:
         if asset_name is None:
