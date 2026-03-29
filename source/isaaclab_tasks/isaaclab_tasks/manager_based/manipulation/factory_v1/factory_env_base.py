@@ -310,7 +310,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     terminations: FactoryTerminationsCfg = FactoryTerminationsCfg()
     rewards: FactoryRewardsCfg = FactoryRewardsCfg()
     curriculum: FactoryCurriculumsCfg = FactoryCurriculumsCfg()
-    viewer: ViewerCfg = ViewerCfg(eye=(0.0, 0.05, 0.005), origin_type="asset_root", asset_name="held_asset")
+    viewer: ViewerCfg = ViewerCfg(eye=(0.0, 0.8, 0.4), origin_type="asset_root", asset_name="held_asset")
     actions = MISSING
 
     # Post initialization
