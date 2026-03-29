@@ -9,7 +9,7 @@ from isaaclab.assets import RigidObjectCfg, AssetBaseCfg, ArticulationCfg
 
 # This is where we will get the Robot that we want to use
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR, LOCAL_ASSET_PATH_DIR
-from .assembly_keypoints import NIST_BOARD_KEY_POINTS_CFG
+from .assembly_keypoints import NIST_BOARD_CFG
 
 ASSET_DIR = f"{ISAACLAB_NUCLEUS_DIR}/Factory"
 
@@ -117,7 +117,7 @@ TABLE_CFG = RigidObjectCfg(
     init_state=RigidObjectCfg.InitialStateCfg(pos=(0.4, 0.0, -0.868), rot=(0.0, 0.0, -0.70711, 0.70711)),
 )
 
-x, y, z = NIST_BOARD_KEY_POINTS_CFG.nist_board_center.pos
+x, y, z = NIST_BOARD_CFG.nist_board_center.pos
 # NIST Board
 NISTBOARD_CFG = RigidObjectCfg(
     prim_path="{ENV_REGEX_NS}/NistBoard",

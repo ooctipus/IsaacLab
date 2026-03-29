@@ -17,7 +17,7 @@ from isaaclab.utils import configclass
 from isaaclab_physx.physics import PhysxCfg
 from isaaclab_tasks.utils import PresetCfg, preset
 from . import mdp
-from .assembly_keypoints import NIST_BOARD_KEY_POINTS_CFG
+from .assembly_keypoints import NIST_BOARD_CFG
 from . import reset_env_cfg as staging_cfg
 from .factory_presets import (
     FactoryAssemblyProfileCfg,
@@ -136,7 +136,7 @@ class FactoryEventCfg:
         func=mdp.reset_root_state_uniform_on_offset,
         mode="reset",
         params={
-            "offset": NIST_BOARD_KEY_POINTS_CFG.nist_board_center,
+            "offset": NIST_BOARD_CFG.nist_board_center,
             "pose_range": {"x": (-0.00, 0.00), "y": (-0.05, 0.05), "yaw": (-3.14, 3.14)},
             "velocity_range": {},
             "asset_cfg": SceneEntityCfg("nistboard"),

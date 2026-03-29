@@ -119,34 +119,34 @@ class FixedAssetMapCfg(PresetCfg):
 @configclass
 class HeldAssetTipCfg(PresetCfg):
     # Nut threading — tip of the bolt shaft where the nut enters
-    nut_thread_m4: kpts.Offset = kpts.BOLT_M4_KEY_POINTS.bolt_tip_offset
-    nut_thread_m8: kpts.Offset = kpts.BOLT_M8_KEY_POINTS.bolt_tip_offset
-    nut_thread_m12: kpts.Offset = kpts.BOLT_M12_KEY_POINTS.bolt_tip_offset
-    nut_thread_m16: kpts.Offset = kpts.BOLT_M16_KEY_POINTS.bolt_tip_offset
+    nut_thread_m4: kpts.Offset = kpts.BOLT_M4.bolt_tip_offset
+    nut_thread_m8: kpts.Offset = kpts.BOLT_M8.bolt_tip_offset
+    nut_thread_m12: kpts.Offset = kpts.BOLT_M12.bolt_tip_offset
+    nut_thread_m16: kpts.Offset = kpts.BOLT_M16.bolt_tip_offset
 
     # Gear mesh — tip of the gear shaft on the base
-    gear_mesh_small: kpts.Offset = kpts.KEY_POINTS_GEAR_BASE.small_gear_tip_offset
-    gear_mesh_medium: kpts.Offset = kpts.KEY_POINTS_GEAR_BASE.medium_gear_tip_offset
-    gear_mesh_large: kpts.Offset = kpts.KEY_POINTS_GEAR_BASE.large_gear_tip_offset
+    gear_mesh_small: kpts.Offset = kpts.GEAR_BASE.small_gear_tip_offset
+    gear_mesh_medium: kpts.Offset = kpts.GEAR_BASE.medium_gear_tip_offset
+    gear_mesh_large: kpts.Offset = kpts.GEAR_BASE.large_gear_tip_offset
 
     # Rod insert (round)
-    rod_insert_4mm: kpts.Offset = kpts.KEY_POINTS_HOLE_4MM.hole_tip_offset
-    rod_insert_8mm: kpts.Offset = kpts.KEY_POINTS_HOLE_8MM.hole_tip_offset
-    rod_insert_12mm: kpts.Offset = kpts.KEY_POINTS_HOLE_12MM.hole_tip_offset
-    rod_insert_16mm: kpts.Offset = kpts.KEY_POINTS_HOLE_16MM.hole_tip_offset
+    rod_insert_4mm: kpts.Offset = kpts.HOLE_4MM.hole_tip_offset
+    rod_insert_8mm: kpts.Offset = kpts.HOLE_8MM.hole_tip_offset
+    rod_insert_12mm: kpts.Offset = kpts.HOLE_12MM.hole_tip_offset
+    rod_insert_16mm: kpts.Offset = kpts.HOLE_16MM.hole_tip_offset
 
     # Peg insert (rectangular)
-    peg_insert_4mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_HOLE_4MM.hole_tip_offset
-    peg_insert_8mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_HOLE_8MM.hole_tip_offset
-    peg_insert_12mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_HOLE_12MM.hole_tip_offset
-    peg_insert_16mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_HOLE_16MM.hole_tip_offset
+    peg_insert_4mm: kpts.Offset = kpts.RECTANGULAR_HOLE_4MM.hole_tip_offset
+    peg_insert_8mm: kpts.Offset = kpts.RECTANGULAR_HOLE_8MM.hole_tip_offset
+    peg_insert_12mm: kpts.Offset = kpts.RECTANGULAR_HOLE_12MM.hole_tip_offset
+    peg_insert_16mm: kpts.Offset = kpts.RECTANGULAR_HOLE_16MM.hole_tip_offset
 
     # Connector insert
-    usba: kpts.Offset = kpts.KEY_POINTS_USB_A_SOCKET.entry
-    waterproof: kpts.Offset = kpts.KEY_POINTS_WATERPROOF_SOCKET.entry
-    bnc: kpts.Offset = kpts.KEY_POINTS_BNC_SOCKET.entry
-    dsub: kpts.Offset = kpts.KEY_POINTS_D_SUB_SOCKET.entry
-    rj45: kpts.Offset = kpts.KEY_POINTS_RJ45_SOCKET.entry
+    usba: kpts.Offset = kpts.USB_A_SOCKET.entry
+    waterproof: kpts.Offset = kpts.WATERPROOF_SOCKET.entry
+    bnc: kpts.Offset = kpts.BNC_SOCKET.entry
+    dsub: kpts.Offset = kpts.D_SUB_SOCKET.entry
+    rj45: kpts.Offset = kpts.RJ45_SOCKET.entry
 
     default: kpts.Offset = nut_thread_m16
 
@@ -154,84 +154,41 @@ class HeldAssetTipCfg(PresetCfg):
 @configclass
 class FixedAssetTipCfg(PresetCfg):
     # Nut threading
-    nut_thread_m4: kpts.Offset = kpts.BOLT_M4_KEY_POINTS.bolt_tip_offset
-    nut_thread_m8: kpts.Offset = kpts.BOLT_M8_KEY_POINTS.bolt_tip_offset
-    nut_thread_m12: kpts.Offset = kpts.BOLT_M12_KEY_POINTS.bolt_tip_offset
-    nut_thread_m16: kpts.Offset = kpts.BOLT_M16_KEY_POINTS.bolt_tip_offset
+    nut_thread_m4: kpts.Offset = kpts.BOLT_M4.bolt_tip_offset
+    nut_thread_m8: kpts.Offset = kpts.BOLT_M8.bolt_tip_offset
+    nut_thread_m12: kpts.Offset = kpts.BOLT_M12.bolt_tip_offset
+    nut_thread_m16: kpts.Offset = kpts.BOLT_M16.bolt_tip_offset
 
     # Gear mesh
-    gear_mesh_small: kpts.Offset = kpts.KEY_POINTS_GEAR_BASE.small_gear_tip_offset
-    gear_mesh_medium: kpts.Offset = kpts.KEY_POINTS_GEAR_BASE.medium_gear_tip_offset
-    gear_mesh_large: kpts.Offset = kpts.KEY_POINTS_GEAR_BASE.large_gear_tip_offset
+    gear_mesh_small: kpts.Offset = kpts.GEAR_BASE.small_gear_tip_offset
+    gear_mesh_medium: kpts.Offset = kpts.GEAR_BASE.medium_gear_tip_offset
+    gear_mesh_large: kpts.Offset = kpts.GEAR_BASE.large_gear_tip_offset
 
     # Rod insert (round)
-    rod_insert_4mm: kpts.Offset = kpts.KEY_POINTS_HOLE_4MM.hole_tip_offset
-    rod_insert_8mm: kpts.Offset = kpts.KEY_POINTS_HOLE_8MM.hole_tip_offset
-    rod_insert_12mm: kpts.Offset = kpts.KEY_POINTS_HOLE_12MM.hole_tip_offset
-    rod_insert_16mm: kpts.Offset = kpts.KEY_POINTS_HOLE_16MM.hole_tip_offset
+    rod_insert_4mm: kpts.Offset = kpts.HOLE_4MM.hole_tip_offset
+    rod_insert_8mm: kpts.Offset = kpts.HOLE_8MM.hole_tip_offset
+    rod_insert_12mm: kpts.Offset = kpts.HOLE_12MM.hole_tip_offset
+    rod_insert_16mm: kpts.Offset = kpts.HOLE_16MM.hole_tip_offset
 
     # Peg insert (rectangular)
-    peg_insert_4mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_HOLE_4MM.hole_tip_offset
-    peg_insert_8mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_HOLE_8MM.hole_tip_offset
-    peg_insert_12mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_HOLE_12MM.hole_tip_offset
-    peg_insert_16mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_HOLE_16MM.hole_tip_offset
+    peg_insert_4mm: kpts.Offset = kpts.RECTANGULAR_HOLE_4MM.hole_tip_offset
+    peg_insert_8mm: kpts.Offset = kpts.RECTANGULAR_HOLE_8MM.hole_tip_offset
+    peg_insert_12mm: kpts.Offset = kpts.RECTANGULAR_HOLE_12MM.hole_tip_offset
+    peg_insert_16mm: kpts.Offset = kpts.RECTANGULAR_HOLE_16MM.hole_tip_offset
 
     # Connector insert
-    usba: kpts.Offset = kpts.KEY_POINTS_USB_A_SOCKET.entry
-    waterproof: kpts.Offset = kpts.KEY_POINTS_WATERPROOF_SOCKET.entry
-    bnc: kpts.Offset = kpts.KEY_POINTS_BNC_SOCKET.plug_assembled
-    dsub: kpts.Offset = kpts.KEY_POINTS_D_SUB_SOCKET.entry
-    rj45: kpts.Offset = kpts.KEY_POINTS_RJ45_SOCKET.entry
+    usba: kpts.Offset = kpts.USB_A_SOCKET.entry
+    waterproof: kpts.Offset = kpts.WATERPROOF_SOCKET.entry
+    bnc: kpts.Offset = kpts.BNC_SOCKET.plug_assembled
+    dsub: kpts.Offset = kpts.D_SUB_SOCKET.entry
+    rj45: kpts.Offset = kpts.RJ45_SOCKET.entry
 
     default: kpts.Offset = nut_thread_m16
 
 
-def _nut_profile(
-    bolt_kpts: kpts.BoltM16KeyPointsCfg
-    | kpts.BoltM12KeyPointsCfg
-    | kpts.BoltM8KeyPointsCfg
-    | kpts.BoltM4KeyPointsCfg,
-    nut_kpts: kpts.NutM16KeyPointsCfg
-    | kpts.NutM12KeyPointsCfg
-    | kpts.NutM8KeyPointsCfg
-    | kpts.NutM4KeyPointsCfg,
-) -> AssemblyProfileCfg:
-    """Build an IncrementalSegment profile for a nut-threading variant.
-
-    Args:
-        bolt_kpts: Bolt keypoints (provides ``fully_screwed_nut_offset``, ``bolt_tip_offset``).
-        nut_kpts: Nut keypoints (provides ``screw_ratio`` — pitch in m/revolution [m]).
-    """
-    dist_z = bolt_kpts.bolt_tip_offset.pos[2] - bolt_kpts.fully_screwed_nut_offset.pos[2]
-    pitch_m_per_rad = nut_kpts.screw_ratio / (2.0 * math.pi)
-    return AssemblyProfileCfg(segments=[
-        IncrementalSegmentCfg(
-            start_pose=bolt_kpts.fully_screwed_nut_offset,
-            distance=(0.0, 0.0, dist_z),
-            ratio=(0.0, 0.0, pitch_m_per_rad),
-        ),
-    ])
-
-
-def _linear_profile(
-    assembled: kpts.Offset,
-    entry: kpts.Offset,
-    sampler: UniformYawCfg | DiscreteYawCfg | None = None,
-) -> AssemblyProfileCfg:
-    """Build an EndPointsSegment profile for a pure-linear insertion.
-
-    Args:
-        assembled: Offset at the assembled end.
-        entry: Offset at the disassembled end.
-        sampler: Start-sampler config. ``None`` means no noise.
-    """
-    return AssemblyProfileCfg(segments=[
-        EndPointsSegmentCfg(
-            start_sampler=sampler,
-            start_pose=assembled,
-            end_pose=entry,
-        ),
-    ])
+def _dist(a: kpts.Offset, b: kpts.Offset) -> tuple[float, float, float]:
+    """Position delta from offset *a* to offset *b* [m]."""
+    return (b.pos[0] - a.pos[0], b.pos[1] - a.pos[1], b.pos[2] - a.pos[2])
 
 
 @configclass
@@ -243,90 +200,121 @@ class FactoryAssemblyProfileCfg(PresetCfg):
     """
 
     # Nut threading — IncrementalSegment with screw pitch
-    nut_thread_m4: AssemblyProfileCfg = _nut_profile(kpts.BOLT_M4_KEY_POINTS, kpts.NUT_M4_KEY_POINTS)
-    nut_thread_m8: AssemblyProfileCfg = _nut_profile(kpts.BOLT_M8_KEY_POINTS, kpts.NUT_M8_KEY_POINTS)
-    nut_thread_m12: AssemblyProfileCfg = _nut_profile(kpts.BOLT_M12_KEY_POINTS, kpts.NUT_M12_KEY_POINTS)
-    nut_thread_m16: AssemblyProfileCfg = _nut_profile(kpts.BOLT_M16_KEY_POINTS, kpts.NUT_M16_KEY_POINTS)
+    nut_thread_m4: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
+        start_pose=kpts.BOLT_M4.fully_screwed_nut_offset,
+        distance=_dist(kpts.BOLT_M4.fully_screwed_nut_offset, kpts.BOLT_M4.bolt_tip_offset),
+        ratio=(0.0, 0.0, kpts.NUT_M4.screw_ratio / (2.0 * math.pi)),
+    )])
+    nut_thread_m8: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
+        start_pose=kpts.BOLT_M8.fully_screwed_nut_offset,
+        distance=_dist(kpts.BOLT_M8.fully_screwed_nut_offset, kpts.BOLT_M8.bolt_tip_offset),
+        ratio=(0.0, 0.0, kpts.NUT_M8.screw_ratio / (2.0 * math.pi)),
+    )])
+    nut_thread_m12: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
+        start_pose=kpts.BOLT_M12.fully_screwed_nut_offset,
+        distance=_dist(kpts.BOLT_M12.fully_screwed_nut_offset, kpts.BOLT_M12.bolt_tip_offset),
+        ratio=(0.0, 0.0, kpts.NUT_M12.screw_ratio / (2.0 * math.pi)),
+    )])
+    nut_thread_m16: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
+        start_pose=kpts.BOLT_M16.fully_screwed_nut_offset,
+        distance=_dist(kpts.BOLT_M16.fully_screwed_nut_offset, kpts.BOLT_M16.bolt_tip_offset),
+        ratio=(0.0, 0.0, kpts.NUT_M16.screw_ratio / (2.0 * math.pi)),
+    )])
 
-    # Gear mesh — round, any yaw is valid
-    gear_mesh_small: AssemblyProfileCfg = _linear_profile(
-        kpts.KEY_POINTS_GEAR_BASE.small_gear_assembled_bottom_offset,
-        kpts.KEY_POINTS_GEAR_BASE.small_gear_tip_offset,
-        UniformYawCfg(),
-    )
-    gear_mesh_medium: AssemblyProfileCfg = _linear_profile(
-        kpts.KEY_POINTS_GEAR_BASE.medium_gear_assembled_bottom_offset,
-        kpts.KEY_POINTS_GEAR_BASE.medium_gear_tip_offset,
-        UniformYawCfg(),
-    )
-    gear_mesh_large: AssemblyProfileCfg = _linear_profile(
-        kpts.KEY_POINTS_GEAR_BASE.large_gear_assembled_bottom_offset,
-        kpts.KEY_POINTS_GEAR_BASE.large_gear_tip_offset,
-        UniformYawCfg(),
-    )
+    # Gear mesh — fraction starts at 0.1 so teeth are clear before yaw noise
+    gear_mesh_small: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
+        fraction=(0.1, 1.0), start_sampler=UniformYawCfg(),
+        start_pose=kpts.GEAR_BASE.small_gear_assembled_bottom_offset,
+        distance=_dist(kpts.GEAR_BASE.small_gear_assembled_bottom_offset,
+                       kpts.GEAR_BASE.small_gear_tip_offset),
+    )])
+    gear_mesh_medium: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
+        fraction=(0.1, 1.0), start_sampler=UniformYawCfg(),
+        start_pose=kpts.GEAR_BASE.medium_gear_assembled_bottom_offset,
+        distance=_dist(kpts.GEAR_BASE.medium_gear_assembled_bottom_offset,
+                       kpts.GEAR_BASE.medium_gear_tip_offset),
+    )])
+    gear_mesh_large: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
+        fraction=(0.1, 1.0), start_sampler=UniformYawCfg(),
+        start_pose=kpts.GEAR_BASE.large_gear_assembled_bottom_offset,
+        distance=_dist(kpts.GEAR_BASE.large_gear_assembled_bottom_offset,
+                       kpts.GEAR_BASE.large_gear_tip_offset),
+    )])
 
     # Rod insert (round) — any yaw is valid
-    rod_insert_4mm: AssemblyProfileCfg = _linear_profile(
-        kpts.KEY_POINTS_HOLE_4MM.inserted_peg_base_offset, kpts.KEY_POINTS_HOLE_4MM.hole_tip_offset, UniformYawCfg(),
-    )
-    rod_insert_8mm: AssemblyProfileCfg = _linear_profile(
-        kpts.KEY_POINTS_HOLE_8MM.inserted_peg_base_offset, kpts.KEY_POINTS_HOLE_8MM.hole_tip_offset, UniformYawCfg(),
-    )
-    rod_insert_12mm: AssemblyProfileCfg = _linear_profile(
-        kpts.KEY_POINTS_HOLE_12MM.inserted_peg_base_offset, kpts.KEY_POINTS_HOLE_12MM.hole_tip_offset, UniformYawCfg(),
-    )
-    rod_insert_16mm: AssemblyProfileCfg = _linear_profile(
-        kpts.KEY_POINTS_HOLE_16MM.inserted_peg_base_offset, kpts.KEY_POINTS_HOLE_16MM.hole_tip_offset, UniformYawCfg(),
-    )
+    rod_insert_4mm: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
+        start_sampler=UniformYawCfg(), start_pose=kpts.HOLE_4MM.inserted_peg_base_offset,
+        distance=_dist(kpts.HOLE_4MM.inserted_peg_base_offset, kpts.HOLE_4MM.hole_tip_offset),
+    )])
+    rod_insert_8mm: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
+        start_sampler=UniformYawCfg(), start_pose=kpts.HOLE_8MM.inserted_peg_base_offset,
+        distance=_dist(kpts.HOLE_8MM.inserted_peg_base_offset, kpts.HOLE_8MM.hole_tip_offset),
+    )])
+    rod_insert_12mm: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
+        start_sampler=UniformYawCfg(), start_pose=kpts.HOLE_12MM.inserted_peg_base_offset,
+        distance=_dist(kpts.HOLE_12MM.inserted_peg_base_offset, kpts.HOLE_12MM.hole_tip_offset),
+    )])
+    rod_insert_16mm: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
+        start_sampler=UniformYawCfg(), start_pose=kpts.HOLE_16MM.inserted_peg_base_offset,
+        distance=_dist(kpts.HOLE_16MM.inserted_peg_base_offset, kpts.HOLE_16MM.hole_tip_offset),
+    )])
 
-    # Peg insert (rectangular) — linear with discrete 180-deg yaw symmetry
-    peg_insert_4mm: AssemblyProfileCfg = _linear_profile(
-        kpts.KEY_POINTS_RECTANGULAR_HOLE_4MM.inserted_peg_base_offset,
-        kpts.KEY_POINTS_RECTANGULAR_HOLE_4MM.hole_tip_offset,
-        DiscreteYawCfg(yaws=[0.0, math.pi]),
-    )
-    peg_insert_8mm: AssemblyProfileCfg = _linear_profile(
-        kpts.KEY_POINTS_RECTANGULAR_HOLE_8MM.inserted_peg_base_offset,
-        kpts.KEY_POINTS_RECTANGULAR_HOLE_8MM.hole_tip_offset,
-        DiscreteYawCfg(yaws=[0.0, math.pi]),
-    )
-    peg_insert_12mm: AssemblyProfileCfg = _linear_profile(
-        kpts.KEY_POINTS_RECTANGULAR_HOLE_12MM.inserted_peg_base_offset,
-        kpts.KEY_POINTS_RECTANGULAR_HOLE_12MM.hole_tip_offset,
-        DiscreteYawCfg(yaws=[0.0, math.pi]),
-    )
-    peg_insert_16mm: AssemblyProfileCfg = _linear_profile(
-        kpts.KEY_POINTS_RECTANGULAR_HOLE_16MM.inserted_peg_base_offset,
-        kpts.KEY_POINTS_RECTANGULAR_HOLE_16MM.hole_tip_offset,
-        DiscreteYawCfg(yaws=[0.0, math.pi]),
-    )
+    # Peg insert (rectangular) — discrete yaw symmetry
+    peg_insert_4mm: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
+        start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi / 2, math.pi, 3 * math.pi / 2]),
+        start_pose=kpts.RECTANGULAR_HOLE_4MM.inserted_peg_base_offset,
+        distance=_dist(kpts.RECTANGULAR_HOLE_4MM.inserted_peg_base_offset,
+                       kpts.RECTANGULAR_HOLE_4MM.hole_tip_offset),
+    )])
+    peg_insert_8mm: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
+        start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi]),
+        start_pose=kpts.RECTANGULAR_HOLE_8MM.inserted_peg_base_offset,
+        distance=_dist(kpts.RECTANGULAR_HOLE_8MM.inserted_peg_base_offset,
+                       kpts.RECTANGULAR_HOLE_8MM.hole_tip_offset),
+    )])
+    peg_insert_12mm: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
+        start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi]),
+        start_pose=kpts.RECTANGULAR_HOLE_12MM.inserted_peg_base_offset,
+        distance=_dist(kpts.RECTANGULAR_HOLE_12MM.inserted_peg_base_offset,
+                       kpts.RECTANGULAR_HOLE_12MM.hole_tip_offset),
+    )])
+    peg_insert_16mm: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
+        start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi]),
+        start_pose=kpts.RECTANGULAR_HOLE_16MM.inserted_peg_base_offset,
+        distance=_dist(kpts.RECTANGULAR_HOLE_16MM.inserted_peg_base_offset,
+                       kpts.RECTANGULAR_HOLE_16MM.hole_tip_offset),
+    )])
 
-    # Connector insert — pure linear
-    usba: AssemblyProfileCfg = _linear_profile(
-        kpts.KEY_POINTS_USB_A_SOCKET.plug_assembled, kpts.KEY_POINTS_USB_A_SOCKET.entry, None,
-    )
-    waterproof: AssemblyProfileCfg = _linear_profile(
-        kpts.KEY_POINTS_WATERPROOF_SOCKET.plug_assembled, kpts.KEY_POINTS_WATERPROOF_SOCKET.entry, None,
-    )
-    dsub: AssemblyProfileCfg = _linear_profile(
-        kpts.KEY_POINTS_D_SUB_SOCKET.plug_assembled, kpts.KEY_POINTS_D_SUB_SOCKET.entry, None,
-    )
-    rj45: AssemblyProfileCfg = _linear_profile(
-        kpts.KEY_POINTS_RJ45_SOCKET.plug_assembled, kpts.KEY_POINTS_RJ45_SOCKET.entry, None,
-    )
+    # Connector insert — pure linear, no yaw noise (keyed)
+    usba: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
+        start_pose=kpts.USB_A_SOCKET.plug_assembled,
+        distance=_dist(kpts.USB_A_SOCKET.plug_assembled, kpts.USB_A_SOCKET.entry),
+    )])
+    waterproof: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
+        start_pose=kpts.WATERPROOF_SOCKET.plug_assembled,
+        distance=_dist(kpts.WATERPROOF_SOCKET.plug_assembled, kpts.WATERPROOF_SOCKET.entry),
+    )])
+    dsub: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
+        start_pose=kpts.D_SUB_SOCKET.plug_assembled,
+        distance=_dist(kpts.D_SUB_SOCKET.plug_assembled, kpts.D_SUB_SOCKET.entry),
+    )])
+    rj45: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
+        start_pose=kpts.RJ45_SOCKET.plug_assembled,
+        distance=_dist(kpts.RJ45_SOCKET.plug_assembled, kpts.RJ45_SOCKET.entry),
+    )])
 
     # BNC — two-segment: linear insertion then 90-deg bayonet twist
     bnc: AssemblyProfileCfg = AssemblyProfileCfg(segments=[
         EndPointsSegmentCfg(
             fraction=(0.0, 0.4),
-            start_pose=kpts.KEY_POINTS_BNC_SOCKET.plug_assembled,
-            end_pose=kpts.KEY_POINTS_BNC_SOCKET.insert_start,
+            start_pose=kpts.BNC_SOCKET.plug_assembled,
+            end_pose=kpts.BNC_SOCKET.insert_start,
             revolutions=(0.0, 0.0, 0.25),
         ),
         EndPointsSegmentCfg(
             fraction=(0.4, 1.0),
-            start_pose=kpts.KEY_POINTS_BNC_SOCKET.insert_start,
-            end_pose=kpts.KEY_POINTS_BNC_SOCKET.entry,
+            start_pose=kpts.BNC_SOCKET.insert_start,
+            end_pose=kpts.BNC_SOCKET.entry,
         ),
     ])
 
@@ -336,34 +324,34 @@ class FactoryAssemblyProfileCfg(PresetCfg):
 @configclass
 class HeldAssetAlignOffsetCfg(PresetCfg):
     # Nut threading — bottom of nut center axis for alignment
-    nut_thread_m4: kpts.Offset = kpts.NUT_M4_KEY_POINTS.center_axis_bottom
-    nut_thread_m8: kpts.Offset = kpts.NUT_M8_KEY_POINTS.center_axis_bottom
-    nut_thread_m12: kpts.Offset = kpts.NUT_M12_KEY_POINTS.center_axis_bottom
-    nut_thread_m16: kpts.Offset = kpts.NUT_M16_KEY_POINTS.center_axis_bottom
+    nut_thread_m4: kpts.Offset = kpts.NUT_M4.center_axis_bottom
+    nut_thread_m8: kpts.Offset = kpts.NUT_M8.center_axis_bottom
+    nut_thread_m12: kpts.Offset = kpts.NUT_M12.center_axis_bottom
+    nut_thread_m16: kpts.Offset = kpts.NUT_M16.center_axis_bottom
 
     # Gear mesh
-    gear_mesh_small: kpts.Offset = kpts.KEY_POINTS_SMALL_GEAR.center_axis_bottom
-    gear_mesh_medium: kpts.Offset = kpts.KEY_POINTS_MEDIUM_GEAR.center_axis_bottom
-    gear_mesh_large: kpts.Offset = kpts.KEY_POINTS_LARGE_GEAR.center_axis_bottom
+    gear_mesh_small: kpts.Offset = kpts.SMALL_GEAR.center_axis_bottom
+    gear_mesh_medium: kpts.Offset = kpts.MEDIUM_GEAR.center_axis_bottom
+    gear_mesh_large: kpts.Offset = kpts.LARGE_GEAR.center_axis_bottom
 
     # Rod insert (round)
-    rod_insert_4mm: kpts.Offset = kpts.KEY_POINTS_ROD_4MM.center_axis_bottom
-    rod_insert_8mm: kpts.Offset = kpts.KEY_POINTS_ROD_8MM.center_axis_bottom
-    rod_insert_12mm: kpts.Offset = kpts.KEY_POINTS_ROD_12MM.center_axis_bottom
-    rod_insert_16mm: kpts.Offset = kpts.KEY_POINTS_ROD_16MM.center_axis_bottom
+    rod_insert_4mm: kpts.Offset = kpts.ROD_4MM.center_axis_bottom
+    rod_insert_8mm: kpts.Offset = kpts.ROD_8MM.center_axis_bottom
+    rod_insert_12mm: kpts.Offset = kpts.ROD_12MM.center_axis_bottom
+    rod_insert_16mm: kpts.Offset = kpts.ROD_16MM.center_axis_bottom
 
     # Peg insert (rectangular) — peg tip is the alignment reference
-    peg_insert_4mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_PEG_4MM.peg_tip
-    peg_insert_8mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_PEG_8MM.peg_tip
-    peg_insert_12mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_PEG_12MM.peg_tip
-    peg_insert_16mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_PEG_16MM.peg_tip
+    peg_insert_4mm: kpts.Offset = kpts.RECTANGULAR_PEG_4MM.peg_tip
+    peg_insert_8mm: kpts.Offset = kpts.RECTANGULAR_PEG_8MM.peg_tip
+    peg_insert_12mm: kpts.Offset = kpts.RECTANGULAR_PEG_12MM.peg_tip
+    peg_insert_16mm: kpts.Offset = kpts.RECTANGULAR_PEG_16MM.peg_tip
 
     # Connector insert — insertion tip of the plug
-    usba: kpts.Offset = kpts.KEY_POINTS_USB_A_PLUG.insertion_tip
-    waterproof: kpts.Offset = kpts.KEY_POINTS_WATERPROOF_PLUG.insertion_tip
-    bnc: kpts.Offset = kpts.KEY_POINTS_BNC_PLUG.insertion_tip
-    dsub: kpts.Offset = kpts.KEY_POINTS_D_SUB_PLUG.insertion_tip
-    rj45: kpts.Offset = kpts.KEY_POINTS_RJ45_PLUG.insertion_tip
+    usba: kpts.Offset = kpts.USB_A_PLUG.insertion_tip
+    waterproof: kpts.Offset = kpts.WATERPROOF_PLUG.insertion_tip
+    bnc: kpts.Offset = kpts.BNC_PLUG.insertion_tip
+    dsub: kpts.Offset = kpts.D_SUB_PLUG.insertion_tip
+    rj45: kpts.Offset = kpts.RJ45_PLUG.insertion_tip
 
     default: kpts.Offset = nut_thread_m16
 
@@ -371,34 +359,34 @@ class HeldAssetAlignOffsetCfg(PresetCfg):
 @configclass
 class HeldAssetGraspPointCfg(PresetCfg):
     # Nut threading
-    nut_thread_m4: kpts.Offset = kpts.NUT_M4_KEY_POINTS.grasp_point
-    nut_thread_m8: kpts.Offset = kpts.NUT_M8_KEY_POINTS.grasp_point
-    nut_thread_m12: kpts.Offset = kpts.NUT_M12_KEY_POINTS.grasp_point
-    nut_thread_m16: kpts.Offset = kpts.NUT_M16_KEY_POINTS.grasp_point
+    nut_thread_m4: kpts.Offset = kpts.NUT_M4.grasp_point
+    nut_thread_m8: kpts.Offset = kpts.NUT_M8.grasp_point
+    nut_thread_m12: kpts.Offset = kpts.NUT_M12.grasp_point
+    nut_thread_m16: kpts.Offset = kpts.NUT_M16.grasp_point
 
     # Gear mesh
-    gear_mesh_small: kpts.Offset = kpts.KEY_POINTS_SMALL_GEAR.grasp_point
-    gear_mesh_medium: kpts.Offset = kpts.KEY_POINTS_MEDIUM_GEAR.grasp_point
-    gear_mesh_large: kpts.Offset = kpts.KEY_POINTS_LARGE_GEAR.grasp_point
+    gear_mesh_small: kpts.Offset = kpts.SMALL_GEAR.grasp_point
+    gear_mesh_medium: kpts.Offset = kpts.MEDIUM_GEAR.grasp_point
+    gear_mesh_large: kpts.Offset = kpts.LARGE_GEAR.grasp_point
 
     # Rod insert (round)
-    rod_insert_4mm: kpts.Offset = kpts.KEY_POINTS_ROD_4MM.grasp_point
-    rod_insert_8mm: kpts.Offset = kpts.KEY_POINTS_ROD_8MM.grasp_point
-    rod_insert_12mm: kpts.Offset = kpts.KEY_POINTS_ROD_12MM.grasp_point
-    rod_insert_16mm: kpts.Offset = kpts.KEY_POINTS_ROD_16MM.grasp_point
+    rod_insert_4mm: kpts.Offset = kpts.ROD_4MM.grasp_point
+    rod_insert_8mm: kpts.Offset = kpts.ROD_8MM.grasp_point
+    rod_insert_12mm: kpts.Offset = kpts.ROD_12MM.grasp_point
+    rod_insert_16mm: kpts.Offset = kpts.ROD_16MM.grasp_point
 
     # Peg insert (rectangular)
-    peg_insert_4mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_PEG_4MM.grasp_point
-    peg_insert_8mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_PEG_8MM.grasp_point
-    peg_insert_12mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_PEG_12MM.grasp_point
-    peg_insert_16mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_PEG_16MM.grasp_point
+    peg_insert_4mm: kpts.Offset = kpts.RECTANGULAR_PEG_4MM.grasp_point
+    peg_insert_8mm: kpts.Offset = kpts.RECTANGULAR_PEG_8MM.grasp_point
+    peg_insert_12mm: kpts.Offset = kpts.RECTANGULAR_PEG_12MM.grasp_point
+    peg_insert_16mm: kpts.Offset = kpts.RECTANGULAR_PEG_16MM.grasp_point
 
     # Connector insert
-    usba: kpts.Offset = kpts.KEY_POINTS_USB_A_PLUG.grasp_point
-    waterproof: kpts.Offset = kpts.KEY_POINTS_WATERPROOF_PLUG.grasp_point
-    bnc: kpts.Offset = kpts.KEY_POINTS_BNC_PLUG.grasp_point
-    dsub: kpts.Offset = kpts.KEY_POINTS_D_SUB_PLUG.grasp_point
-    rj45: kpts.Offset = kpts.KEY_POINTS_RJ45_PLUG.grasp_point
+    usba: kpts.Offset = kpts.USB_A_PLUG.grasp_point
+    waterproof: kpts.Offset = kpts.WATERPROOF_PLUG.grasp_point
+    bnc: kpts.Offset = kpts.BNC_PLUG.grasp_point
+    dsub: kpts.Offset = kpts.D_SUB_PLUG.grasp_point
+    rj45: kpts.Offset = kpts.RJ45_PLUG.grasp_point
 
     default: kpts.Offset = nut_thread_m16
 
@@ -406,34 +394,34 @@ class HeldAssetGraspPointCfg(PresetCfg):
 @configclass
 class HeldAssetGraspDiameterCfg(PresetCfg):
     # Nut threading
-    nut_thread_m4: float = kpts.NUT_M4_KEY_POINTS.grasp_diameter
-    nut_thread_m8: float = kpts.NUT_M8_KEY_POINTS.grasp_diameter
-    nut_thread_m12: float = kpts.NUT_M12_KEY_POINTS.grasp_diameter
-    nut_thread_m16: float = kpts.NUT_M16_KEY_POINTS.grasp_diameter
+    nut_thread_m4: float = kpts.NUT_M4.grasp_diameter
+    nut_thread_m8: float = kpts.NUT_M8.grasp_diameter
+    nut_thread_m12: float = kpts.NUT_M12.grasp_diameter
+    nut_thread_m16: float = kpts.NUT_M16.grasp_diameter
 
     # Gear mesh
-    gear_mesh_small: float = kpts.KEY_POINTS_SMALL_GEAR.grasp_diameter
-    gear_mesh_medium: float = kpts.KEY_POINTS_MEDIUM_GEAR.grasp_diameter
-    gear_mesh_large: float = kpts.KEY_POINTS_LARGE_GEAR.grasp_diameter
+    gear_mesh_small: float = kpts.SMALL_GEAR.grasp_diameter
+    gear_mesh_medium: float = kpts.MEDIUM_GEAR.grasp_diameter
+    gear_mesh_large: float = kpts.LARGE_GEAR.grasp_diameter
 
     # Rod insert (round)
-    rod_insert_4mm: float = kpts.KEY_POINTS_ROD_4MM.grasp_diameter
-    rod_insert_8mm: float = kpts.KEY_POINTS_ROD_8MM.grasp_diameter
-    rod_insert_12mm: float = kpts.KEY_POINTS_ROD_12MM.grasp_diameter
-    rod_insert_16mm: float = kpts.KEY_POINTS_ROD_16MM.grasp_diameter
+    rod_insert_4mm: float = kpts.ROD_4MM.grasp_diameter
+    rod_insert_8mm: float = kpts.ROD_8MM.grasp_diameter
+    rod_insert_12mm: float = kpts.ROD_12MM.grasp_diameter
+    rod_insert_16mm: float = kpts.ROD_16MM.grasp_diameter
 
     # Peg insert (rectangular)
-    peg_insert_4mm: float = kpts.KEY_POINTS_RECTANGULAR_PEG_4MM.grasp_diameter
-    peg_insert_8mm: float = kpts.KEY_POINTS_RECTANGULAR_PEG_8MM.grasp_diameter
-    peg_insert_12mm: float = kpts.KEY_POINTS_RECTANGULAR_PEG_12MM.grasp_diameter
-    peg_insert_16mm: float = kpts.KEY_POINTS_RECTANGULAR_PEG_16MM.grasp_diameter
+    peg_insert_4mm: float = kpts.RECTANGULAR_PEG_4MM.grasp_diameter
+    peg_insert_8mm: float = kpts.RECTANGULAR_PEG_8MM.grasp_diameter
+    peg_insert_12mm: float = kpts.RECTANGULAR_PEG_12MM.grasp_diameter
+    peg_insert_16mm: float = kpts.RECTANGULAR_PEG_16MM.grasp_diameter
 
     # Connector insert
-    usba: float = kpts.KEY_POINTS_USB_A_PLUG.grasp_diameter
-    waterproof: float = kpts.KEY_POINTS_WATERPROOF_PLUG.grasp_diameter
-    bnc: float = kpts.KEY_POINTS_BNC_PLUG.grasp_diameter
-    dsub: float = kpts.KEY_POINTS_D_SUB_PLUG.grasp_diameter
-    rj45: float = kpts.KEY_POINTS_RJ45_PLUG.grasp_diameter
+    usba: float = kpts.USB_A_PLUG.grasp_diameter
+    waterproof: float = kpts.WATERPROOF_PLUG.grasp_diameter
+    bnc: float = kpts.BNC_PLUG.grasp_diameter
+    dsub: float = kpts.D_SUB_PLUG.grasp_diameter
+    rj45: float = kpts.RJ45_PLUG.grasp_diameter
 
     default: float = nut_thread_m16
 
@@ -447,34 +435,34 @@ class HeldAssetGraspMiddleCfg(PresetCfg):
     """
 
     # Nut threading — center axis middle for threading approach
-    nut_thread_m4: kpts.Offset = kpts.NUT_M4_KEY_POINTS.center_axis_middle
-    nut_thread_m8: kpts.Offset = kpts.NUT_M8_KEY_POINTS.center_axis_middle
-    nut_thread_m12: kpts.Offset = kpts.NUT_M12_KEY_POINTS.center_axis_middle
-    nut_thread_m16: kpts.Offset = kpts.NUT_M16_KEY_POINTS.center_axis_middle
+    nut_thread_m4: kpts.Offset = kpts.NUT_M4.center_axis_middle
+    nut_thread_m8: kpts.Offset = kpts.NUT_M8.center_axis_middle
+    nut_thread_m12: kpts.Offset = kpts.NUT_M12.center_axis_middle
+    nut_thread_m16: kpts.Offset = kpts.NUT_M16.center_axis_middle
 
     # Gear mesh
-    gear_mesh_small: kpts.Offset = kpts.KEY_POINTS_SMALL_GEAR.grasp_point
-    gear_mesh_medium: kpts.Offset = kpts.KEY_POINTS_MEDIUM_GEAR.grasp_point
-    gear_mesh_large: kpts.Offset = kpts.KEY_POINTS_LARGE_GEAR.grasp_point
+    gear_mesh_small: kpts.Offset = kpts.SMALL_GEAR.grasp_point
+    gear_mesh_medium: kpts.Offset = kpts.MEDIUM_GEAR.grasp_point
+    gear_mesh_large: kpts.Offset = kpts.LARGE_GEAR.grasp_point
 
     # Rod insert (round)
-    rod_insert_4mm: kpts.Offset = kpts.KEY_POINTS_ROD_4MM.grasp_point
-    rod_insert_8mm: kpts.Offset = kpts.KEY_POINTS_ROD_8MM.grasp_point
-    rod_insert_12mm: kpts.Offset = kpts.KEY_POINTS_ROD_12MM.grasp_point
-    rod_insert_16mm: kpts.Offset = kpts.KEY_POINTS_ROD_16MM.grasp_point
+    rod_insert_4mm: kpts.Offset = kpts.ROD_4MM.grasp_point
+    rod_insert_8mm: kpts.Offset = kpts.ROD_8MM.grasp_point
+    rod_insert_12mm: kpts.Offset = kpts.ROD_12MM.grasp_point
+    rod_insert_16mm: kpts.Offset = kpts.ROD_16MM.grasp_point
 
     # Peg insert (rectangular)
-    peg_insert_4mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_PEG_4MM.grasp_point
-    peg_insert_8mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_PEG_8MM.grasp_point
-    peg_insert_12mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_PEG_12MM.grasp_point
-    peg_insert_16mm: kpts.Offset = kpts.KEY_POINTS_RECTANGULAR_PEG_16MM.grasp_point
+    peg_insert_4mm: kpts.Offset = kpts.RECTANGULAR_PEG_4MM.grasp_point
+    peg_insert_8mm: kpts.Offset = kpts.RECTANGULAR_PEG_8MM.grasp_point
+    peg_insert_12mm: kpts.Offset = kpts.RECTANGULAR_PEG_12MM.grasp_point
+    peg_insert_16mm: kpts.Offset = kpts.RECTANGULAR_PEG_16MM.grasp_point
 
     # Connector insert
-    usba: kpts.Offset = kpts.KEY_POINTS_USB_A_PLUG.grasp_point
-    waterproof: kpts.Offset = kpts.KEY_POINTS_WATERPROOF_PLUG.grasp_point
-    bnc: kpts.Offset = kpts.KEY_POINTS_BNC_PLUG.grasp_point
-    dsub: kpts.Offset = kpts.KEY_POINTS_D_SUB_PLUG.grasp_point
-    rj45: kpts.Offset = kpts.KEY_POINTS_RJ45_PLUG.grasp_point
+    usba: kpts.Offset = kpts.USB_A_PLUG.grasp_point
+    waterproof: kpts.Offset = kpts.WATERPROOF_PLUG.grasp_point
+    bnc: kpts.Offset = kpts.BNC_PLUG.grasp_point
+    dsub: kpts.Offset = kpts.D_SUB_PLUG.grasp_point
+    rj45: kpts.Offset = kpts.RJ45_PLUG.grasp_point
 
     default: kpts.Offset = nut_thread_m16
 

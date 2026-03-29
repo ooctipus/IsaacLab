@@ -125,7 +125,7 @@ ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
                 params={
                     "assembly_profile": FactoryAssemblyProfileCfg(),
                     "held_asset_align_offset": HeldAssetAlignOffsetCfg(),
-                    "assembly_fraction_range": (0.4, 1.0),
+                    "assembly_fraction_range": (0.4, 1.1),
                     "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
                     "held_asset_cfg": SceneEntityCfg("held_asset"),
                 }

@@ -183,21 +183,11 @@ class AssemblyProfile:
             [seg.cfg.fraction[1] - seg.cfg.fraction[0] for seg in self.segments],
             device=device,
         )
-        self._seg_pos_starts = torch.cat(
-            [seg._pos_start for seg in self.segments], dim=0  # type: ignore[arg-type]
-        )
-        self._seg_pos_deltas = torch.cat(
-            [seg._pos_end - seg._pos_start for seg in self.segments], dim=0  # type: ignore[operator]
-        )
-        self._seg_quat_starts = torch.cat(
-            [seg._quat_start for seg in self.segments], dim=0  # type: ignore[arg-type]
-        )
-        self._seg_aa_deltas = torch.cat(
-            [seg._aa_delta for seg in self.segments], dim=0  # type: ignore[arg-type]
-        )
-        self._seg_euler_totals = torch.cat(
-            [seg._euler_total for seg in self.segments], dim=0  # type: ignore[arg-type]
-        )
+        self._seg_pos_starts = torch.cat([seg._pos_start for seg in self.segments], dim=0)  # type:ignore
+        self._seg_pos_deltas = torch.cat([seg._pos_end - seg._pos_start for seg in self.segments], dim=0)  # type:ignore
+        self._seg_quat_starts = torch.cat([seg._quat_start for seg in self.segments], dim=0)  # type:ignore
+        self._seg_aa_deltas = torch.cat([seg._aa_delta for seg in self.segments], dim=0)  # type:ignore
+        self._seg_euler_totals = torch.cat([seg._euler_total for seg in self.segments], dim=0)  # type:ignore
 
     def sample(
         self,
@@ -224,13 +214,9 @@ class AssemblyProfile:
         assert self._seg_aa_deltas is not None
         assert self._seg_euler_totals is not None
 
-        fractions = math_utils.sample_uniform(
-            fraction_range[0], fraction_range[1], (num_envs, 1), device=device
-        ).clamp(self._boundaries[0], self._boundaries[-1])
+        fractions = math_utils.sample_uniform(fraction_range[0], fraction_range[1], (num_envs, 1), device=device)
 
-        seg_idx = torch.searchsorted(
-            self._boundaries[1:], fractions.squeeze(-1)
-        ).clamp(max=len(self.segments) - 1)
+        seg_idx = torch.searchsorted(self._boundaries[1:], fractions.squeeze(-1)).clamp(0, len(self.segments) - 1)
 
         seg_lo = self._boundaries[:-1][seg_idx]
         t = ((fractions.squeeze(-1) - seg_lo) / self._seg_widths[seg_idx]).unsqueeze(-1)
