@@ -224,7 +224,7 @@ class FactoryRewardsCfg(PresetCfg):
 
     timeout_terminate: TimeoutRewardsCfg = TimeoutRewardsCfg()
     success_terminate: SuccessRewardsCfg = SuccessRewardsCfg()
-    default: TimeoutRewardsCfg = timeout_terminate
+    default: SuccessRewardsCfg = success_terminate
 
 
 _PROGRESS_CONTEXT = DoneTerm(
