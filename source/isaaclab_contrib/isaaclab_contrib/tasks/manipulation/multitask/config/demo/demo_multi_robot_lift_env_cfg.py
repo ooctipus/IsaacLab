@@ -168,10 +168,10 @@ class MultiRobotLiftActionsCfg:
     """Shared-column actions for OpenArm + Franka, both doing DiffIK + gripper.
 
     action_dim = 6 (shared IK) + 1 (shared gripper) = 7.
-    Each GroupedActionTerm dispatches its shared columns to the right robot.
+    Each ScatteredActionTerm dispatches its shared columns to the right robot.
     """
 
-    arm = mdp.GroupedActionTermCfg(
+    arm = mdp.ScatteredActionTermCfg(
         terms=[
             DifferentialInverseKinematicsActionCfg(
                 asset_name="openarm_robot",
@@ -190,7 +190,7 @@ class MultiRobotLiftActionsCfg:
             ),
         ]
     )
-    gripper = mdp.GroupedActionTermCfg(
+    gripper = mdp.ScatteredActionTermCfg(
         terms=[
             BinaryJointPositionActionCfg(
                 asset_name="openarm_robot",

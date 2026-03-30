@@ -14,7 +14,7 @@ import torch
 from isaaclab.cloner.cloner_strategies import random as random_strategy
 from isaaclab.cloner.cloner_strategies import sequential as sequential_strategy
 from isaaclab.scene.clone_cfg import CloneCfg, InclusionSet
-from isaaclab.scene.env_layout import EnvLayout, filter_to_group, get_env_ids, to_global, to_local
+from isaaclab.scene.env_layout import EnvLayout, filter_to_group, get_env_ids
 
 # ===========================================================================
 # EnvLayout: registration & basic queries
@@ -34,7 +34,7 @@ class TestRegistration:
         assert layout.group_names  # non-empty
         assert "lift" in layout.group_names
         assert layout["lift"].count == 4
-        assert layout["lift"].global_ids.tolist() == [0, 1, 2, 3]
+        assert layout["lift"].env_ids.tolist() == [0, 1, 2, 3]
 
     def test_register_out_of_range_raises(self):
         layout = EnvLayout(10, "cpu")
@@ -55,42 +55,42 @@ class TestRegistration:
         layout = EnvLayout(10, "cpu")
         layout.register("g", torch.tensor([0, 1]))
         layout.register("g", torch.tensor([3, 4, 5]))
-        assert layout["g"].global_ids.tolist() == [3, 4, 5]
+        assert layout["g"].env_ids.tolist() == [3, 4, 5]
         assert layout["g"].count == 3
 
 
 # ===========================================================================
-# GroupView: env_ids and count
+# EnvToViewMap: env_ids and count
 # ===========================================================================
 
 
-class TestGroupViewBasics:
+class TestEnvToViewMapBasics:
     def test_env_ids_returns_long_tensor(self):
         layout = EnvLayout(8, "cpu")
         layout.register("g", torch.tensor([2, 5]))
-        t = layout["g"].global_ids
+        t = layout["g"].env_ids
         assert isinstance(t, torch.Tensor)
         assert t.dtype == torch.long
         assert t.tolist() == [2, 5]
 
-    def test_group_view_consistent(self):
+    def test_env_to_view_map_consistent(self):
         layout = EnvLayout(8, "cpu")
         layout.register("g", torch.tensor([2, 5]))
         v1 = layout["g"]
         v2 = layout["g"]
         # Views are equal (same indices), but not necessarily same object
-        assert v1.write.tolist() == v2.write.tolist()
+        assert v1.env_ids.tolist() == v2.env_ids.tolist()
         assert v1.count == v2.count
 
-    def test_homogeneous_group_view(self):
+    def test_homogeneous_env_to_view_map(self):
         layout = EnvLayout(4, "cpu")
-        view = layout.group_view(None)
-        assert view.write == slice(None)
-        assert view.read == slice(None)
+        view = layout[None]
+        assert view.env_ids == slice(None)
+        assert view.view_ids == slice(None)
 
 
 # ===========================================================================
-# GroupView: write index (replaces env_slice)
+# EnvToViewMap: write index (replaces env_slice)
 # ===========================================================================
 
 
@@ -98,27 +98,27 @@ class TestWriteIndex:
     def test_contiguous_returns_slice(self):
         layout = EnvLayout(24, "cpu")
         layout.register("stack", torch.arange(8, 16))
-        s = layout["stack"].write
+        s = layout["stack"].env_ids
         assert isinstance(s, slice)
         assert s == slice(8, 16)
 
     def test_sparse_returns_tensor(self):
         layout = EnvLayout(24, "cpu")
         layout.register("sparse", torch.tensor([0, 2, 5, 10]))
-        s = layout["sparse"].write
+        s = layout["sparse"].env_ids
         assert isinstance(s, torch.Tensor)
         assert s.tolist() == [0, 2, 5, 10]
 
     def test_single_element(self):
         layout = EnvLayout(8, "cpu")
         layout.register("one", torch.tensor([3]))
-        s = layout["one"].write
+        s = layout["one"].env_ids
         assert isinstance(s, slice)
         assert s == slice(3, 4)
 
 
 # ===========================================================================
-# GroupView: to_local (replaces global_to_local)
+# EnvToViewMap: filter view_ids (replaces global_to_local)
 # ===========================================================================
 
 
@@ -126,51 +126,51 @@ class TestToLocal:
     def test_exact_match(self):
         layout = EnvLayout(24, "cpu")
         layout.register("lift", torch.tensor([4, 7, 10]))
-        result = layout["lift"].to_local(torch.tensor([4, 7, 10]))
-        assert result.tolist() == [0, 1, 2]
+        view_ids, _ = layout["lift"].filter(torch.tensor([4, 7, 10]))
+        assert view_ids.tolist() == [0, 1, 2]
 
     def test_drops_non_matching(self):
         layout = EnvLayout(24, "cpu")
         layout.register("lift", torch.tensor([4, 7, 10]))
-        result = layout["lift"].to_local(torch.tensor([0, 4, 5, 7, 100]))
-        assert result.tolist() == [0, 1]
+        view_ids, _ = layout["lift"].filter(torch.tensor([0, 4, 5, 7, 100]))
+        assert view_ids.tolist() == [0, 1]
 
     def test_empty_when_no_match(self):
         layout = EnvLayout(24, "cpu")
         layout.register("lift", torch.tensor([4, 7, 10]))
-        result = layout["lift"].to_local(torch.tensor([0, 1, 2, 3]))
-        assert result.numel() == 0
+        view_ids, _ = layout["lift"].filter(torch.tensor([0, 1, 2, 3]))
+        assert view_ids.numel() == 0
 
     def test_preserves_order(self):
         layout = EnvLayout(24, "cpu")
         layout.register("g", torch.tensor([10, 20]))
-        result = layout["g"].to_local(torch.tensor([20, 10]))
-        assert result.tolist() == [1, 0]
+        view_ids, _ = layout["g"].filter(torch.tensor([20, 10]))
+        assert view_ids.tolist() == [1, 0]
 
 
 # ===========================================================================
-# GroupView: to_global (replaces local_to_global)
+# EnvToViewMap: filter roundtrip
 # ===========================================================================
 
 
-class TestToGlobal:
-    def test_maps_back_correctly(self):
+class TestFilterRoundtrip:
+    def test_filter_returns_matching_env_ids(self):
         layout = EnvLayout(24, "cpu")
         layout.register("g", torch.tensor([10, 15, 20]))
-        result = layout["g"].to_global(torch.tensor([0, 1, 2]))
-        assert result.tolist() == [10, 15, 20]
+        _, filtered_env_ids = layout["g"].filter(torch.tensor([10, 15, 20]))
+        assert filtered_env_ids.tolist() == [10, 15, 20]
 
-    def test_roundtrip_with_to_local(self):
+    def test_roundtrip_view_ids_to_env_ids(self):
         layout = EnvLayout(24, "cpu")
         layout.register("g", torch.tensor([4, 8, 12]))
         global_ids = torch.tensor([4, 12])
-        local = layout["g"].to_local(global_ids)
-        recovered = layout["g"].to_global(local)
-        assert recovered.tolist() == [4, 12]
+        view_ids, filtered = layout["g"].filter(global_ids)
+        assert filtered.tolist() == [4, 12]
+        assert view_ids.tolist() == [0, 2]
 
 
 # ===========================================================================
-# GroupView: filter (replaces filter_and_split)
+# EnvToViewMap: filter (replaces filter_and_split)
 # ===========================================================================
 
 
@@ -203,13 +203,6 @@ class TestEntityRegistry:
         layout.register_asset("robot_a", "lift")
         assert layout.assets.get("robot_a") == ("lift",)
         assert layout.assets.get("unknown") is None
-
-    def test_register_term_and_lookup(self):
-        layout = EnvLayout(12, "cpu")
-        layout.register("lift", torch.tensor([0, 1, 2]))
-        layout.register_term("joint_pos", "lift")
-        assert layout.terms.get("joint_pos") == "lift"
-        assert layout.terms.get("unknown") is None
 
     def test_asset_groups_shared(self):
         layout = EnvLayout(24, "cpu")
@@ -291,8 +284,8 @@ class TestStrategyAssignment:
         assignment = sequential_strategy(weights, 12, "cpu")
         layout.apply_assignment(assignment, group_names)
 
-        assert layout["a"].global_ids.tolist() == [0, 1, 2, 3, 4, 5]
-        assert layout["b"].global_ids.tolist() == [6, 7, 8, 9, 10, 11]
+        assert layout["a"].env_ids.tolist() == [0, 1, 2, 3, 4, 5]
+        assert layout["b"].env_ids.tolist() == [6, 7, 8, 9, 10, 11]
 
     def test_random_assignment_produces_interleaved_groups(self):
         layout = EnvLayout(24, "cpu")
@@ -399,96 +392,96 @@ class TestCloneCfgPartitioning:
         self._apply_full(layout, cfg)
         all_ids = set()
         for g in layout.group_names:
-            all_ids.update(layout[g].global_ids.tolist())
+            all_ids.update(layout[g].env_ids.tolist())
         assert all_ids == set(range(24))
 
 
 # ===========================================================================
-# GroupView: indexer correctness
+# EnvToViewMap: indexer correctness
 # ===========================================================================
 
 
-class TestGroupView:
-    """Tests for :meth:`EnvLayout.group_view`."""
+class TestEnvToViewMap:
+    """Tests for :meth:`EnvLayout.env_to_view_map`."""
 
-    def test_group_view_contiguous_exclusive(self):
+    def test_env_to_view_map_contiguous_exclusive(self):
         layout = EnvLayout(24, "cpu")
         layout.register("lift", torch.arange(0, 8))
         layout.register_asset("robot", "lift")
-        view = layout.group_view("lift", "robot")
-        assert view.write == slice(0, 8)
-        assert view.read == slice(None)
+        view = layout["lift", "robot"]
+        assert view.env_ids == slice(0, 8)
+        assert view.view_ids == slice(None)
 
-    def test_group_view_contiguous_full_asset(self):
+    def test_env_to_view_map_contiguous_full_asset(self):
         layout = EnvLayout(24, "cpu")
         layout.register("lift", torch.arange(8, 16))
-        view = layout.group_view("lift", "ground")
-        assert view.write == slice(8, 16)
-        assert view.read == slice(8, 16)
+        view = layout["lift", "ground"]
+        assert view.env_ids == slice(8, 16)
+        assert view.view_ids == slice(8, 16)
 
-    def test_group_view_shared_asset_contiguous(self):
+    def test_env_to_view_map_shared_asset_contiguous(self):
         layout = EnvLayout(24, "cpu")
         layout.register("lift", torch.arange(0, 8))
         layout.register("reach", torch.arange(16, 24))
         layout.register_asset("table", "lift")
         layout.register_asset("table", "reach")
 
-        lift_view = layout.group_view("lift", "table")
-        assert lift_view.write == slice(0, 8)
-        assert lift_view.read == slice(0, 8)
+        lift_view = layout["lift", "table"]
+        assert lift_view.env_ids == slice(0, 8)
+        assert lift_view.view_ids == slice(0, 8)
 
-        reach_view = layout.group_view("reach", "table")
-        assert reach_view.write == slice(16, 24)
-        assert reach_view.read == slice(8, 16)
+        reach_view = layout["reach", "table"]
+        assert reach_view.env_ids == slice(16, 24)
+        assert reach_view.view_ids == slice(8, 16)
 
-    def test_group_view_disjoint_returns_tensor(self):
+    def test_env_to_view_map_disjoint_returns_tensor(self):
         layout = EnvLayout(24, "cpu")
         layout.register("sparse", torch.tensor([0, 3, 7]))
         layout.register_asset("bot", "sparse")
-        view = layout.group_view("sparse", "bot")
-        assert isinstance(view.write, torch.Tensor)
-        assert view.write.tolist() == [0, 3, 7]
-        assert view.read == slice(None)
+        view = layout["sparse", "bot"]
+        assert isinstance(view.env_ids, torch.Tensor)
+        assert view.env_ids.tolist() == [0, 3, 7]
+        assert view.view_ids == slice(None)
 
-    def test_group_view_consistent(self):
+    def test_env_to_view_map_consistent(self):
         layout = EnvLayout(24, "cpu")
         layout.register("g", torch.arange(4))
         layout.register_asset("a", "g")
-        v1 = layout.group_view("g", "a")
-        v2 = layout.group_view("g", "a")
+        v1 = layout["g", "a"]
+        v2 = layout["g", "a"]
         # Views have same indices, but callers should cache at init
-        assert v1.write == v2.write
-        assert v1.read == v2.read
+        assert v1.env_ids == v2.env_ids
+        assert v1.view_ids == v2.view_ids
 
-    def test_group_view_homogeneous_identity(self):
+    def test_env_to_view_map_homogeneous_identity(self):
         layout = EnvLayout(24, "cpu")
-        view = layout.group_view(None, "any_asset")
-        assert view.write == slice(None)
-        assert view.read == slice(None)
+        view = layout[None, "any_asset"]
+        assert view.env_ids == slice(None)
+        assert view.view_ids == slice(None)
 
-    def test_group_view_before_registration_raises(self):
+    def test_env_to_view_map_before_registration_raises(self):
         layout = EnvLayout(24, "cpu")
         with pytest.raises(KeyError, match="unregistered group"):
-            layout.group_view("lift", "table")
+            layout["lift", "table"]
 
 
 # ===========================================================================
-# GroupView: functional data flow
+# EnvToViewMap: functional data flow
 # ===========================================================================
 
 
-class TestGroupViewFunctional:
-    """End-to-end scatter/gather with GroupView indexers."""
+class TestEnvToViewMapFunctional:
+    """End-to-end scatter/gather with EnvToViewMap indexers."""
 
     def test_scatter_gather_roundtrip(self):
         layout = EnvLayout(24, "cpu")
         layout.register("lift", torch.arange(0, 8))
         layout.register_asset("robot", "lift")
-        view = layout.group_view("lift", "robot")
+        view = layout["lift", "robot"]
 
         asset_data = torch.arange(8, dtype=torch.float)
         full = torch.zeros(24, dtype=torch.float)
-        full[view.write] = asset_data[view.read]
+        full[view.env_ids] = asset_data[view.view_ids]
         assert full[:8].tolist() == list(range(8))
         assert full[8:].sum().item() == 0.0
 
@@ -502,11 +495,11 @@ class TestGroupViewFunctional:
         asset_data = torch.arange(16, dtype=torch.float)
         full = torch.zeros(24, dtype=torch.float)
 
-        lv = layout.group_view("lift", "table")
-        full[lv.write] = asset_data[lv.read]
+        lv = layout["lift", "table"]
+        full[lv.env_ids] = asset_data[lv.view_ids]
 
-        rv = layout.group_view("reach", "table")
-        full[rv.write] = asset_data[rv.read]
+        rv = layout["reach", "table"]
+        full[rv.env_ids] = asset_data[rv.view_ids]
 
         assert full[:8].tolist() == list(range(8))
         assert full[8:16].tolist() == [0.0] * 8
@@ -530,23 +523,15 @@ class TestPureFunctions:
         assert local.tolist() == [0, 1]
         assert matched.tolist() == [4, 5]
 
-    def test_to_local_sparse(self):
+    def test_filter_to_group_sparse(self):
         from isaaclab.scene.env_layout import GroupLayout
 
         indices = torch.tensor([3, 7, 11])
         layout = GroupLayout(offset=3, count=3, slice=None, indices=indices, device="cpu")
         env_ids = torch.tensor([3, 11, 99])
-        result = to_local(layout, env_ids)
-        assert result.tolist() == [0, 2]
-
-    def test_to_global_sparse(self):
-        from isaaclab.scene.env_layout import GroupLayout
-
-        indices = torch.tensor([3, 7, 11])
-        layout = GroupLayout(offset=3, count=3, slice=None, indices=indices, device="cpu")
-        local_ids = torch.tensor([0, 2])
-        result = to_global(layout, local_ids)
-        assert result.tolist() == [3, 11]
+        view_ids, filtered_env_ids = filter_to_group(layout, env_ids)
+        assert view_ids.tolist() == [0, 2]
+        assert filtered_env_ids.tolist() == [3, 11]
 
     def test_get_env_ids_contiguous(self):
         from isaaclab.scene.env_layout import GroupLayout
@@ -565,21 +550,21 @@ class TestPureFunctions:
 
 
 # ===========================================================================
-# GroupView: graphability (CUDA)
+# EnvToViewMap: graphability (CUDA)
 # ===========================================================================
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
-class TestGroupViewGraphability:
-    """Verify GroupView indexers produce fixed-shape outputs (graph-safe)."""
+class TestEnvToViewMapGraphability:
+    """Verify EnvToViewMap indexers produce fixed-shape outputs (graph-safe)."""
 
     def test_write_index_fixed_size(self):
         layout = EnvLayout(24, "cuda:0")
         layout.register("g", torch.tensor([0, 3, 7], device="cuda:0"))
         layout.register_asset("a", "g")
-        view = layout.group_view("g", "a")
-        if isinstance(view.write, torch.Tensor):
-            assert view.write.shape[0] == 3
+        view = layout["g", "a"]
+        if isinstance(view.env_ids, torch.Tensor):
+            assert view.env_ids.shape[0] == 3
 
     def test_read_index_fixed_size(self):
         layout = EnvLayout(24, "cuda:0")
@@ -587,24 +572,24 @@ class TestGroupViewGraphability:
         layout.register("reach", torch.arange(16, 24, device="cuda:0"))
         layout.register_asset("table", "lift")
         layout.register_asset("table", "reach")
-        view = layout.group_view("lift", "table")
-        if isinstance(view.read, torch.Tensor):
-            assert view.read.shape[0] == 8
-        elif isinstance(view.read, slice):
+        view = layout["lift", "table"]
+        if isinstance(view.view_ids, torch.Tensor):
+            assert view.view_ids.shape[0] == 8
+        elif isinstance(view.view_ids, slice):
             data = torch.zeros(16, device="cuda:0")
-            assert data[view.read].shape[0] == 8
+            assert data[view.view_ids].shape[0] == 8
 
     def test_indexing_produces_fixed_shape(self):
         layout = EnvLayout(24, "cuda:0")
         layout.register("g", torch.tensor([0, 3, 7, 10], device="cuda:0"))
         layout.register_asset("a", "g")
-        view = layout.group_view("g", "a")
+        view = layout["g", "a"]
 
         full_buf = torch.randn(24, 4, device="cuda:0")
         asset_buf = torch.randn(4, 4, device="cuda:0")
 
-        written = full_buf[view.write]
+        written = full_buf[view.env_ids]
         assert written.shape == (4, 4)
 
-        read = asset_buf[view.read]
+        read = asset_buf[view.view_ids]
         assert read.shape == (4, 4)
