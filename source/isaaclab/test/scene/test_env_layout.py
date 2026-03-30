@@ -34,7 +34,7 @@ class TestRegistration:
         assert layout.group_names  # non-empty
         assert "lift" in layout.group_names
         assert layout["lift"].count == 4
-        assert layout["lift"].env_ids.tolist() == [0, 1, 2, 3]
+        assert layout["lift"].global_ids.tolist() == [0, 1, 2, 3]
 
     def test_register_out_of_range_raises(self):
         layout = EnvLayout(10, "cpu")
@@ -55,7 +55,7 @@ class TestRegistration:
         layout = EnvLayout(10, "cpu")
         layout.register("g", torch.tensor([0, 1]))
         layout.register("g", torch.tensor([3, 4, 5]))
-        assert layout["g"].env_ids.tolist() == [3, 4, 5]
+        assert layout["g"].global_ids.tolist() == [3, 4, 5]
         assert layout["g"].count == 3
 
 
@@ -68,7 +68,7 @@ class TestGroupViewBasics:
     def test_env_ids_returns_long_tensor(self):
         layout = EnvLayout(8, "cpu")
         layout.register("g", torch.tensor([2, 5]))
-        t = layout["g"].env_ids
+        t = layout["g"].global_ids
         assert isinstance(t, torch.Tensor)
         assert t.dtype == torch.long
         assert t.tolist() == [2, 5]
@@ -291,8 +291,8 @@ class TestStrategyAssignment:
         assignment = sequential_strategy(weights, 12, "cpu")
         layout.apply_assignment(assignment, group_names)
 
-        assert layout["a"].env_ids.tolist() == [0, 1, 2, 3, 4, 5]
-        assert layout["b"].env_ids.tolist() == [6, 7, 8, 9, 10, 11]
+        assert layout["a"].global_ids.tolist() == [0, 1, 2, 3, 4, 5]
+        assert layout["b"].global_ids.tolist() == [6, 7, 8, 9, 10, 11]
 
     def test_random_assignment_produces_interleaved_groups(self):
         layout = EnvLayout(24, "cpu")
@@ -399,7 +399,7 @@ class TestCloneCfgPartitioning:
         self._apply_full(layout, cfg)
         all_ids = set()
         for g in layout.group_names:
-            all_ids.update(layout[g].env_ids.tolist())
+            all_ids.update(layout[g].global_ids.tolist())
         assert all_ids == set(range(24))
 
 

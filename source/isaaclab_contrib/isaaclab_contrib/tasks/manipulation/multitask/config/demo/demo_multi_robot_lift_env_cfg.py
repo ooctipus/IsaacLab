@@ -165,37 +165,46 @@ _IK_CTRL = DifferentialIKControllerCfg(
 
 @configclass
 class MultiRobotLiftActionsCfg:
-    """Per-robot actions: DiffIK + gripper for each robot.
+    """Shared-column actions for OpenArm + Franka, both doing DiffIK + gripper.
 
-    action_dim = 6 (openarm IK) + 6 (franka IK) + 1 (openarm gripper) + 1 (franka gripper) = 14.
+    action_dim = 6 (shared IK) + 1 (shared gripper) = 7.
+    Each GroupedActionTerm dispatches its shared columns to the right robot.
     """
 
-    openarm_arm = DifferentialInverseKinematicsActionCfg(
-        asset_name="openarm_robot",
-        joint_names=["openarm_joint.*"],
-        body_name="openarm_hand",
-        controller=_IK_CTRL,
-        scale=0.5,
+    arm = mdp.GroupedActionTermCfg(
+        terms=[
+            DifferentialInverseKinematicsActionCfg(
+                asset_name="openarm_robot",
+                joint_names=["openarm_joint.*"],
+                body_name="openarm_hand",
+                controller=_IK_CTRL,
+                scale=0.5,
+            ),
+            DifferentialInverseKinematicsActionCfg(
+                asset_name="franka_robot",
+                joint_names=["panda_joint.*"],
+                body_name="panda_hand",
+                controller=_IK_CTRL,
+                scale=0.5,
+                body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(pos=(0.0, 0.0, 0.107)),
+            ),
+        ]
     )
-    franka_arm = DifferentialInverseKinematicsActionCfg(
-        asset_name="franka_robot",
-        joint_names=["panda_joint.*"],
-        body_name="panda_hand",
-        controller=_IK_CTRL,
-        scale=0.5,
-        body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(pos=(0.0, 0.0, 0.107)),
-    )
-    openarm_gripper = BinaryJointPositionActionCfg(
-        asset_name="openarm_robot",
-        joint_names=["openarm_finger_joint.*"],
-        open_command_expr={"openarm_finger_joint.*": 0.044},
-        close_command_expr={"openarm_finger_joint.*": 0.0},
-    )
-    franka_gripper = BinaryJointPositionActionCfg(
-        asset_name="franka_robot",
-        joint_names=["panda_finger.*"],
-        open_command_expr={"panda_finger_.*": 0.04},
-        close_command_expr={"panda_finger_.*": 0.0},
+    gripper = mdp.GroupedActionTermCfg(
+        terms=[
+            BinaryJointPositionActionCfg(
+                asset_name="openarm_robot",
+                joint_names=["openarm_finger_joint.*"],
+                open_command_expr={"openarm_finger_joint.*": 0.044},
+                close_command_expr={"openarm_finger_joint.*": 0.0},
+            ),
+            BinaryJointPositionActionCfg(
+                asset_name="franka_robot",
+                joint_names=["panda_finger.*"],
+                open_command_expr={"panda_finger_.*": 0.04},
+                close_command_expr={"panda_finger_.*": 0.0},
+            ),
+        ]
     )
 
 
@@ -248,10 +257,14 @@ class MultiRobotLiftObsCfg:
 
     @configclass
     class PolicyCfg(ObsGroup):
+        # ── shared across all groups ──────────────────────
         ee_pose = ObsTerm(func=mdp.scatter_term, params={"terms": [
             TermCfg(func=mdp.ee_pose, params={"asset_cfg": SceneEntityCfg("openarm_robot", body_names=["openarm_hand"], groups=["openarm_lift"])}),
             TermCfg(func=mdp.ee_pose, params={"asset_cfg": SceneEntityCfg("franka_robot", body_names=["panda_hand"], groups=["franka_lift"])}),
         ]})
+        actions = ObsTerm(func=mdp.last_action)
+
+        # ── openarm_lift + franka_lift: object manipulation
         object_pos = ObsTerm(func=mdp.scatter_term, params={"terms": [
             TermCfg(func=mdp.object_pos_in_robot_frame, params={"robot_cfg": SceneEntityCfg("openarm_robot", groups=["openarm_lift"]), "object_cfg": SceneEntityCfg("lift_object", groups=["openarm_lift"])}),
             TermCfg(func=mdp.object_pos_in_robot_frame, params={"robot_cfg": SceneEntityCfg("franka_robot", groups=["franka_lift"]), "object_cfg": SceneEntityCfg("lift_object", groups=["franka_lift"])}),
@@ -268,7 +281,6 @@ class MultiRobotLiftObsCfg:
             TermCfg(func=mdp.object_target_pos_error, params={"robot_cfg": SceneEntityCfg("openarm_robot", groups=["openarm_lift"]), "object_cfg": SceneEntityCfg("lift_object", groups=["openarm_lift"]), "command_name": "openarm_lift_goal"}),
             TermCfg(func=mdp.object_target_pos_error, params={"robot_cfg": SceneEntityCfg("franka_robot", groups=["franka_lift"]), "object_cfg": SceneEntityCfg("lift_object", groups=["franka_lift"]), "command_name": "franka_lift_goal"}),
         ]})
-        actions = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):
             self.enable_corruption = True

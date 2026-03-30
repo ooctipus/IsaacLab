@@ -121,7 +121,7 @@ class SceneEntityCfg:
     groups: str | list[str] | None = None
     """Regex pattern(s) matching task-group names from the :class:`EnvLayout`.
 
-    When set, :meth:`resolve` populates :attr:`env_ids` and :attr:`group_ids`
+    When set, :meth:`resolve` populates :attr:`global_ids` and :attr:`local_ids`
     with indices covering only the matched groups' environments.
     When ``None`` (default), both default to ``slice(None)`` (all envs).
 
@@ -129,13 +129,13 @@ class SceneEntityCfg:
     :func:`re.fullmatch`.
     """
 
-    env_ids: slice | torch.Tensor = slice(None)
+    global_ids: slice | torch.Tensor = slice(None)
     """Global env indices for indexing into ``(num_envs, ...)`` output buffers.
 
     Populated by :meth:`resolve`. Defaults to ``slice(None)`` (all envs).
     """
 
-    group_ids: slice | torch.Tensor = slice(None)
+    local_ids: slice | torch.Tensor = slice(None)
     """Indices into the asset's data buffer (the view).
 
     Populated by :meth:`resolve`. Defaults to ``slice(None)`` (all envs).
@@ -332,7 +332,7 @@ class SceneEntityCfg:
                 self.object_collection_names = [entity.object_names[i] for i in self.object_collection_ids]
 
     def _resolve_groups(self, scene: InteractiveScene):
-        """Resolve group patterns into env_ids and group_ids via the scene layout.
+        """Resolve group patterns into global_ids and local_ids via the scene layout.
 
         Args:
             scene: The interactive scene instance.
@@ -353,5 +353,5 @@ class SceneEntityCfg:
         if not matched:
             raise ValueError(f"No groups matched patterns {self.groups}. Available: {list(layout.group_names)}")
         group_view = layout.get(matched, asset=self.name)
-        self.env_ids = group_view.env_ids
-        self.group_ids = group_view.group_ids
+        self.global_ids = group_view.global_ids
+        self.local_ids = group_view.local_ids

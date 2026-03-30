@@ -245,42 +245,59 @@ class MultiRobotMultiTaskSceneCfg(InteractiveSceneCfg):
 
 @configclass
 class MultiRobotMultiTaskActionsCfg:
-    """Per-robot actions with independent columns.
+    """Actions for three robot types with heterogeneous arm control.
 
-    OpenArm uses DiffIK (dim=6) + gripper (dim=1).
-    Franka uses relative joint-pos (dim=7) + gripper (dim=1).
-    UR10 uses relative joint-pos (dim=6), no gripper.
-    action_dim = 6 + 7 + 6 + 1 + 1 = 21.
+    Arm dims differ across robots so each has its own column. All group-specific
+    terms are wrapped in GroupedActionTermCfg so each sub-term is initialised
+    with the correct group size rather than the global env count.
+    Grippers (OpenArm + Franka) share one column.
+    action_dim = 6 (OpenArm IK) + 7 (Franka joints) + 6 (UR10 joints) + 1 (gripper) = 20.
     """
 
-    openarm_arm = DifferentialInverseKinematicsActionCfg(
-        asset_name="openarm_robot",
-        joint_names=["openarm_joint.*"],
-        body_name="openarm_hand",
-        controller=_IK_CTRL,
-        scale=0.5,
+    openarm_arm = mdp.GroupedActionTermCfg(
+        terms=[
+            DifferentialInverseKinematicsActionCfg(
+                asset_name="openarm_robot",
+                joint_names=["openarm_joint.*"],
+                body_name="openarm_hand",
+                controller=_IK_CTRL,
+                scale=0.5,
+            ),
+        ]
     )
-    franka_joints = RelativeJointPositionActionCfg(
-        asset_name="franka_robot",
-        joint_names=["panda_joint.*"],
-        scale=0.1,
+    franka_joints = mdp.GroupedActionTermCfg(
+        terms=[
+            RelativeJointPositionActionCfg(
+                asset_name="franka_robot",
+                joint_names=["panda_joint.*"],
+                scale=0.1,
+            ),
+        ]
     )
-    ur10_joints = RelativeJointPositionActionCfg(
-        asset_name="ur10_robot",
-        joint_names=[".*"],
-        scale=0.1,
+    ur10_joints = mdp.GroupedActionTermCfg(
+        terms=[
+            RelativeJointPositionActionCfg(
+                asset_name="ur10_robot",
+                joint_names=[".*"],
+                scale=0.1,
+            ),
+        ]
     )
-    openarm_gripper = BinaryJointPositionActionCfg(
-        asset_name="openarm_robot",
-        joint_names=["openarm_finger_joint.*"],
-        open_command_expr={"openarm_finger_joint.*": 0.044},
-        close_command_expr={"openarm_finger_joint.*": 0.0},
-    )
-    franka_gripper = BinaryJointPositionActionCfg(
-        asset_name="franka_robot",
-        joint_names=["panda_finger.*"],
-        open_command_expr={"panda_finger_.*": 0.04},
-        close_command_expr={"panda_finger_.*": 0.0},
+    gripper = mdp.GroupedActionTermCfg(
+        terms=[
+            BinaryJointPositionActionCfg(
+                asset_name="openarm_robot",
+                joint_names=["openarm_finger_joint.*"],
+                open_command_expr={"openarm_finger_joint.*": 0.044},
+                close_command_expr={"openarm_finger_joint.*": 0.0},
+            ),
+            BinaryJointPositionActionCfg(
+                asset_name="franka_robot",
+                joint_names=["panda_finger.*"],
+                open_command_expr={"panda_finger_.*": 0.04},
+                close_command_expr={"panda_finger_.*": 0.0},
+            ),
+        ]
     )
 
 
@@ -333,8 +350,9 @@ class MultiRobotMultiTaskObsCfg:
 
     @configclass
     class PolicyCfg(ObsGroup):
-        task_onehot = ObsTerm(func=mdp.multi_task_onehot)
 
+        # ── shared across all groups ──────────────────────
+        task_onehot = ObsTerm(func=mdp.multi_task_onehot)
         ee_pose = ObsTerm(func=mdp.scatter_term, params={"terms": [
             TermCfg(func=mdp.ee_pose, params={"asset_cfg": SceneEntityCfg("openarm_robot", body_names=["openarm_hand"], groups=["openarm_lift"])}),
             TermCfg(func=mdp.ee_pose, params={"asset_cfg": SceneEntityCfg("franka_robot", body_names=["panda_hand"], groups=["franka_cabinet"])}),
@@ -342,6 +360,7 @@ class MultiRobotMultiTaskObsCfg:
         ]})
         actions = ObsTerm(func=mdp.last_action)
 
+        # ── openarm_lift: object manipulation ─────────────
         openarm_object_pos = ObsTerm(
             func=mdp.object_pos_in_robot_frame,
             params={"robot_cfg": SceneEntityCfg("openarm_robot", groups=["openarm_lift"]), "object_cfg": SceneEntityCfg("openarm_object", groups=["openarm_lift"])},
@@ -363,6 +382,7 @@ class MultiRobotMultiTaskObsCfg:
             },
         )
 
+        # ── franka_cabinet: drawer manipulation ───────────
         cabinet_joint_pos = ObsTerm(
             func=mdp.cabinet_joint_pos,
             params={"cabinet_asset_cfg": SceneEntityCfg("cabinet", joint_names=["drawer_top_joint"], groups=["franka_cabinet"])},
@@ -376,18 +396,15 @@ class MultiRobotMultiTaskObsCfg:
             params={"ee_frame_cfg": SceneEntityCfg("franka_ee_frame", groups=["franka_cabinet"]), "cabinet_frame_cfg": SceneEntityCfg("cabinet_frame", groups=["franka_cabinet"])},
         )
 
+        # ── openarm_lift + ur10_reach: pose tracking ──────
         commands = ObsTerm(func=mdp.scatter_term, params={"terms": [
             TermCfg(func=mdp.generated_commands, params={"asset_cfg": SceneEntityCfg("openarm_robot", groups=["openarm_lift"]), "command_name": "lift_goal"}),
             TermCfg(func=mdp.generated_commands, params={"asset_cfg": SceneEntityCfg("ur10_robot", groups=["ur10_reach"]), "command_name": "reach_target"}),
         ]})
-        openarm_ee_pos_error = ObsTerm(
-            func=mdp.ee_pos_error,
-            params={"asset_cfg": SceneEntityCfg("openarm_robot", body_names=["openarm_hand"], groups=["openarm_lift"]), "command_name": "lift_goal"},
-        )
-        ur10_ee_pos_error = ObsTerm(
-            func=mdp.ee_pos_error,
-            params={"asset_cfg": SceneEntityCfg("ur10_robot", body_names=["ee_link"], groups=["ur10_reach"]), "command_name": "reach_target"},
-        )
+        ee_pos_error = ObsTerm(func=mdp.scatter_term, params={"terms": [
+            TermCfg(func=mdp.ee_pos_error, params={"asset_cfg": SceneEntityCfg("openarm_robot", body_names=["openarm_hand"], groups=["openarm_lift"]), "command_name": "lift_goal"}),
+            TermCfg(func=mdp.ee_pos_error, params={"asset_cfg": SceneEntityCfg("ur10_robot", body_names=["ee_link"], groups=["ur10_reach"]), "command_name": "reach_target"}),
+        ]})
 
         def __post_init__(self):
             self.enable_corruption = True

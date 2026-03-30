@@ -8,6 +8,9 @@ __all__ = [
     "ScatterResult",
     "scatterable",
     "scatter_term",
+    # actions
+    "GroupedActionTermCfg",
+    "GroupedActionTerm",
     # commands
     "PoseCommandCfg",
     "PoseCommand",
@@ -91,6 +94,7 @@ from .rewards import (
     position_command_error,
     position_command_error_tanh,
 )
+from .actions import GroupedActionTerm, GroupedActionTermCfg
 from .commands import PoseCommand
 from .commands_cfg import PoseCommandCfg
 from .terminations import cabinet_drawer_opened, object_height_below_minimum
