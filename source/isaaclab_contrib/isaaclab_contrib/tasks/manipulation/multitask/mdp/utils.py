@@ -3,145 +3,24 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Config types and base class for batched MDP terms."""
+"""Shared config types and utilities for multitask MDP terms."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from typing import TYPE_CHECKING, TypeVar, overload
+import functools
+from typing import TYPE_CHECKING
 
 import torch
 
-from isaaclab.managers import ManagerTermBase, SceneEntityCfg
+from isaaclab.managers import ManagerTermBase
 from isaaclab.utils import configclass
-from isaaclab.utils.configclass import MISSING
 
 if TYPE_CHECKING:
-    from isaaclab.envs import ManagerBasedEnv
+    from isaaclab.envs import ManagerBasedRLEnv
     from isaaclab.managers import ManagerTermBaseCfg
-    from isaaclab.scene import EnvLayout, GroupView
 
-_GroupT = TypeVar("_GroupT", bound="RobotGroupCfg")
-
-
-class BatchedTermBase(ManagerTermBase):
-    """Base class for batched MDP terms that iterate over robot_meta groups.
-
-    Provides common setup and helper methods to reduce boilerplate in
-    batched observation, reward, termination, and event terms.
-
-    ``robot_meta`` is read from ``cfg.params["robot_meta"]``, where all
-    nested ``SceneEntityCfg`` instances are auto-resolved by the manager.
-
-    Subclasses should:
-
-    1. Call ``super().__init__(cfg, env)``
-    2. Use :meth:`_iter_groups` to iterate filtered groups
-    3. Use :meth:`_view` to get correctly-indexed :class:`GroupView` instances
-    4. Use :meth:`_zeros` / :meth:`_quat_identity` to create staging buffers
-    """
-
-    def __init__(self, cfg: ManagerTermBaseCfg, env: ManagerBasedEnv):
-        super().__init__(cfg, env)
-        self._layout: EnvLayout = env.scene.layout
-        self._robot_meta: dict = cfg.params.get("robot_meta") or {}
-        self._num_envs = env.num_envs
-        self._device = env.device
-
-    # ── group iteration ───────────────────────────────────────
-
-    @overload
-    def _iter_groups(self) -> Iterator[tuple[str, RobotGroupCfg]]: ...
-
-    @overload
-    def _iter_groups(self, group_type: type[_GroupT], /) -> Iterator[tuple[str, _GroupT]]: ...
-
-    @overload
-    def _iter_groups(
-        self, group_type1: type[RobotGroupCfg], group_type2: type[RobotGroupCfg], /, *more: type[RobotGroupCfg]
-    ) -> Iterator[tuple[str, RobotGroupCfg]]: ...
-
-    def _iter_groups(self, *group_types: type[RobotGroupCfg]) -> Iterator[tuple[str, RobotGroupCfg]]:
-        """Iterate robot_meta entries, optionally filtering by group type.
-
-        Args:
-            *group_types: If provided, only yield entries that are instances
-                of one of these types. If empty, yield all entries.
-
-        Yields:
-            (group_key, meta) tuples with proper typing for autocomplete.
-        """
-        for group_key, meta in self._robot_meta.items():
-            if group_types and not isinstance(meta, group_types):
-                continue
-            yield group_key, meta
-
-    # ── view / buffer helpers ─────────────────────────────────
-
-    def _view(self, group_key: str, cfg: SceneEntityCfg) -> GroupView:
-        """Get a :class:`GroupView` for a group/asset pair.
-
-        Centralizes the ``self._layout[group_key, cfg.name]`` pattern
-        so that subclasses always get correct ``read``/``write`` indices.
-
-        Args:
-            group_key: The task-group name.
-            cfg: A resolved :class:`SceneEntityCfg` from the group metadata
-                (e.g. ``meta.asset_cfg``, ``meta.object_cfg``).
-
-        Returns:
-            A :class:`GroupView` with ``write`` and ``read`` indices.
-        """
-        return self._layout[group_key, cfg.name]
-
-    def _zeros(self, *shape: int, dtype: torch.dtype = torch.float32) -> torch.Tensor:
-        """Create a zero-filled ``(num_envs, *shape)`` staging buffer.
-
-        Args:
-            *shape: Extra dimensions after the leading ``num_envs`` dim.
-                Pass no args for a 1-D ``(num_envs,)`` buffer.
-            dtype: Tensor dtype.
-
-        Returns:
-            A new zero tensor on ``self._device``.
-        """
-        return torch.zeros(self._num_envs, *shape, device=self._device, dtype=dtype)
-
-    def _quat_identity(self) -> torch.Tensor:
-        """Create an ``(num_envs, 4)`` identity-quaternion staging buffer [x, y, z, w]."""
-        return torch.tensor([0.0, 0.0, 0.0, 1.0], device=self._device).expand(self._num_envs, -1).clone()
-
-
-@configclass
-class RobotGroupCfg:
-    """Base metadata for a robot/task group in multi-robot environments.
-
-    Environment configs store a ``robot_meta`` dict mapping **task-group
-    names** to instances of this class (or its subclasses) so that
-    batched MDP term classes have typed, IDE-discoverable fields.
-
-    Subclass for specific task domains:
-
-    * :class:`ReachGroupCfg` -- reach tasks
-    * :class:`LiftGroupCfg` -- lift tasks
-    * :class:`CabinetGroupCfg` -- cabinet tasks
-
-    Example::
-
-        robot_meta = {
-            "franka_reach": ReachGroupCfg(
-                asset_cfg=SceneEntityCfg("franka_robot", body_names=["panda_hand"]),
-                command_name="franka_ee_pose",
-            ),
-        }
-    """
-
-    asset_cfg: SceneEntityCfg = MISSING
-    """SceneEntityCfg identifying the robot articulation.
-
-    Typically includes ``body_names`` for the end-effector and
-    ``joint_names`` for the arm (and optionally gripper) joints.
-    """
+ScatterResult = tuple[torch.Tensor | slice, torch.Tensor]
+"""Return type for ``@scatterable`` functions: ``(env_ids, group_local_result)``."""
 
 
 @configclass
@@ -162,57 +41,53 @@ class PoseCommandRanges:
     """Min/max for yaw angle [rad]."""
 
 
-@configclass
-class ReachGroupCfg(RobotGroupCfg):
-    """Metadata for a reach task group.
+def scatterable(func):
+    """Decorator for group-aware MDP terms that produce partial-env results.
 
-    Reach tasks require a command target but no object or cabinet.
+    The wrapped function returns ``(env_ids, result)`` where ``result``
+    is group-local with shape ``(group_size, ...)``.  The decorator
+    scatters into a full ``(num_envs, ...)`` buffer and returns a
+    :class:`torch.Tensor`.
+
+    Standalone calls reuse a persistent buffer (zero allocation after
+    first call).  When called by :class:`scatter_term` with
+    ``_out=buf``, the result is scattered into the provided buffer.
     """
 
-    command_name: str = MISSING
-    """Name of the command term that generates the reach target."""
+    @functools.wraps(func)
+    def wrapper(env, *args, _out=None, **kwargs):
+        env_ids, result = func(env, *args, **kwargs)
+        if _out is None:
+            if not hasattr(wrapper, "_buf"):
+                wrapper._buf = torch.zeros(env.num_envs, *result.shape[1:], dtype=result.dtype, device=env.device)
+            _out = wrapper._buf
+            _out.zero_()
+        _out[env_ids] = result
+        return _out
 
-    command_ranges: PoseCommandRanges = MISSING
-    """Sampling ranges for the pose command target."""
+    return wrapper
 
 
-@configclass
-class LiftGroupCfg(RobotGroupCfg):
-    """Metadata for a lift task group.
+class scatter_term(ManagerTermBase):
+    """Collects multiple ``@scatterable`` children into one output buffer.
 
-    Lift tasks require a command target, a robot root reference,
-    a manipulation object, and an EE frame sensor.
+    Pre-allocates a single ``(num_envs, D)`` buffer in ``__init__``.
+    Each step: zeros the buffer, calls each child with ``_out=buf``
+    so they scatter directly into it, returns the buffer.
+
+    Children are :class:`ManagerTermBaseCfg` instances (just ``func`` +
+    ``params``).  The outer term type (``ObsTerm``, ``RewTerm``, etc.)
+    carries weights, noise, and other manager-specific fields.
     """
 
-    command_name: str = MISSING
-    """Name of the command term that generates the object goal pose."""
+    def __init__(self, cfg: ManagerTermBaseCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self._terms: list[ManagerTermBaseCfg] = cfg.params["terms"]
+        sample = self._terms[0].func(env, **self._terms[0].params)
+        self._buf = torch.zeros_like(sample)
 
-    command_ranges: PoseCommandRanges = MISSING
-    """Sampling ranges for the pose command target."""
-
-    robot_cfg: SceneEntityCfg = MISSING
-    """SceneEntityCfg for the robot articulation root (used for frame transforms)."""
-
-    object_cfg: SceneEntityCfg = MISSING
-    """SceneEntityCfg for the rigid object to lift."""
-
-    ee_frame_cfg: SceneEntityCfg = MISSING
-    """SceneEntityCfg for the end-effector FrameTransformer sensor."""
-
-
-@configclass
-class CabinetGroupCfg(RobotGroupCfg):
-    """Metadata for a cabinet task group.
-
-    Cabinet tasks require an EE frame, a cabinet handle frame,
-    and the cabinet articulation for reading drawer joint state.
-    """
-
-    ee_frame_cfg: SceneEntityCfg = MISSING
-    """SceneEntityCfg for the end-effector FrameTransformer sensor."""
-
-    cabinet_frame_cfg: SceneEntityCfg = MISSING
-    """SceneEntityCfg for the cabinet handle FrameTransformer sensor."""
-
-    cabinet_asset_cfg: SceneEntityCfg = MISSING
-    """SceneEntityCfg for the cabinet articulation (joint names for the drawer)."""
+    def __call__(self, env: ManagerBasedRLEnv, terms: list | None = None) -> torch.Tensor:
+        self._buf.zero_()
+        for term_cfg in self._terms:
+            term_cfg.func(env, **term_cfg.params, _out=self._buf)
+        return self._buf

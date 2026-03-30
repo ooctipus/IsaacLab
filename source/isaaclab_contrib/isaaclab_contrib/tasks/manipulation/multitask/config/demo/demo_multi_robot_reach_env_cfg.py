@@ -5,15 +5,8 @@
 
 """Multi-robot reach env: three robot types, all reach.
 
-Each robot type occupies its own env-id group.  A single
-:class:`BatchedDiffIKAction` term handles all groups, sharing
-action columns since env rows are disjoint.
-``action_dim = 6``.
-
-Observations are task-space-centric: EE pose, command target,
-and position error are the same dimension for all robots
-(no padding).  Joint-space terms are auto-padded to the
-maximum arm DoF across all registered robots.
+Each robot type occupies its own env-id group. Three differential IK action
+terms (one per arm) apply to disjoint env rows.
 
 Layout (3 groups, evenly split):
     Group 0:  OpenArm -- Reach (7 arm DoF)
@@ -32,8 +25,10 @@ import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
 from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
+from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
+from isaaclab.managers import ManagerTermBaseCfg as TermCfg
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
@@ -45,11 +40,7 @@ from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from isaaclab_contrib.tasks.manipulation.multitask import mdp
-from isaaclab_contrib.tasks.manipulation.multitask.mdp.batched_actions_cfg import (
-    BatchedDiffIKActionCfg,
-    DiffIKGroupCfg,
-)
-from isaaclab_contrib.tasks.manipulation.multitask.mdp.utils import PoseCommandRanges, ReachGroupCfg
+from isaaclab_contrib.tasks.manipulation.multitask.mdp.utils import PoseCommandRanges
 
 from isaaclab_tasks.utils import PresetCfg
 
@@ -57,67 +48,13 @@ from isaaclab_assets.robots.franka import FRANKA_PANDA_HIGH_PD_CFG
 from isaaclab_assets.robots.openarm import OPENARM_UNI_HIGH_PD_CFG
 from isaaclab_assets.robots.universal_robots import UR10_CFG
 
-# -----------------------------------------------------------
-# Constants
-# -----------------------------------------------------------
-
-TASK_OPENARM = "openarm_reach"
-TASK_FRANKA = "franka_reach"
-TASK_UR10 = "ur10_reach"
-
-ROBOT_META = {
-    TASK_OPENARM: ReachGroupCfg(
-        asset_cfg=SceneEntityCfg("openarm_robot", body_names=["openarm_hand"], joint_names=["openarm_joint.*"]),
-        command_name="ee_pose",
-        command_ranges=PoseCommandRanges(
-            pos_x=(0.25, 0.35),
-            pos_y=(-0.2, 0.2),
-            pos_z=(0.3, 0.4),
-            roll=(-math.pi / 6, math.pi / 6),
-            pitch=(math.pi / 2, math.pi / 2),
-            yaw=(-math.pi / 9, math.pi / 9),
-        ),
-    ),
-    TASK_FRANKA: ReachGroupCfg(
-        asset_cfg=SceneEntityCfg("franka_robot", body_names=["panda_hand"], joint_names=["panda_joint.*"]),
-        command_name="ee_pose",
-        command_ranges=PoseCommandRanges(
-            pos_x=(0.35, 0.65),
-            pos_y=(-0.2, 0.2),
-            pos_z=(0.15, 0.5),
-            roll=(0.0, 0.0),
-            pitch=(math.pi, math.pi),
-            yaw=(-3.14, 3.14),
-        ),
-    ),
-    TASK_UR10: ReachGroupCfg(
-        asset_cfg=SceneEntityCfg("ur10_robot", body_names=["ee_link"], joint_names=[".*"]),
-        command_name="ee_pose",
-        command_ranges=PoseCommandRanges(
-            pos_x=(0.35, 0.65),
-            pos_y=(-0.2, 0.2),
-            pos_z=(0.15, 0.5),
-            roll=(0.0, 0.0),
-            pitch=(math.pi / 2, math.pi / 2),
-            yaw=(-3.14, 3.14),
-        ),
-    ),
-}
-
 _TABLE_SPAWN = UsdFileCfg(
     usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/SeattleLabTable/table_instanceable.usd",
 )
 
 
-# ===========================================================
-# Scene
-# ===========================================================
-
-
 @configclass
 class MultitaskPhysicsCfg(PresetCfg):
-    """Physics backend presets for the single-robot multitask environment."""
-
     default: PhysxCfg = PhysxCfg(
         bounce_threshold_velocity=0.01,
         gpu_found_lost_aggregate_pairs_capacity=1024 * 1024 * 4,
@@ -147,121 +84,147 @@ class MultitaskPhysicsCfg(PresetCfg):
 
 @configclass
 class MultiRobotReachSceneCfg(InteractiveSceneCfg):
-    """Three robot types, all doing reach (no objects)."""
-
     clone_cfg = CloneCfg(
         clone_groups={
-            TASK_OPENARM: InclusionSet(assets=["openarm_robot"], weight=1),
-            TASK_FRANKA: InclusionSet(assets=["franka_robot"], weight=1),
-            TASK_UR10: InclusionSet(assets=["ur10_robot"], weight=1),
+            "openarm_reach": InclusionSet(assets=["openarm_robot"], weight=1),
+            "franka_reach": InclusionSet(assets=["franka_robot"], weight=1),
+            "ur10_reach": InclusionSet(assets=["ur10_robot"], weight=1),
         }
     )
-
     plane = AssetBaseCfg(
         prim_path="/World/GroundPlane",
-        init_state=AssetBaseCfg.InitialStateCfg(
-            pos=(0.0, 0.0, -1.05),
-        ),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, -1.05)),
         spawn=GroundPlaneCfg(),
     )
     light = AssetBaseCfg(
         prim_path="/World/light",
-        spawn=sim_utils.DomeLightCfg(
-            color=(0.75, 0.75, 0.75),
-            intensity=3000.0,
-        ),
+        spawn=sim_utils.DomeLightCfg(color=(0.75, 0.75, 0.75), intensity=3000.0),
     )
     table = AssetBaseCfg(
         prim_path="{ENV_REGEX_NS}/Table",
-        init_state=AssetBaseCfg.InitialStateCfg(
-            pos=(0.5, 0.0, 0.0),
-            rot=(0.0, 0.0, 0.707, 0.707),
-        ),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.5, 0.0, 0.0), rot=(0.0, 0.0, 0.707, 0.707)),
         spawn=_TABLE_SPAWN,
     )
-    openarm_robot = OPENARM_UNI_HIGH_PD_CFG.replace(
-        prim_path="{ENV_REGEX_NS}/OpenArm_Robot",
-    )
-    franka_robot = FRANKA_PANDA_HIGH_PD_CFG.replace(
-        prim_path="{ENV_REGEX_NS}/Franka_Robot",
-    )
-    ur10_robot = UR10_CFG.replace(
-        prim_path="{ENV_REGEX_NS}/UR10_Robot",
-    )
+    openarm_robot = OPENARM_UNI_HIGH_PD_CFG.replace(prim_path="{ENV_REGEX_NS}/OpenArm_Robot")
+    franka_robot = FRANKA_PANDA_HIGH_PD_CFG.replace(prim_path="{ENV_REGEX_NS}/Franka_Robot")
+    ur10_robot = UR10_CFG.replace(prim_path="{ENV_REGEX_NS}/UR10_Robot")
 
 
-# ===========================================================
-# Actions  (1 BatchedDiffIK term, columns shared → action_dim=6)
-# ===========================================================
-
-
-_IK_CTRL = DifferentialIKControllerCfg(
-    command_type="pose",
-    use_relative_mode=True,
-    ik_method="dls",
-)
+_IK_CTRL = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=True, ik_method="dls")
 
 
 @configclass
 class MultiRobotReachActionsCfg:
-    """DiffIK action shared across all robot groups.
-
-    action_dim = 6 (columns shared across disjoint groups).
-    """
-
-    arm_action = BatchedDiffIKActionCfg(
-        robot_meta=ROBOT_META,
+    openarm_arm = DifferentialInverseKinematicsActionCfg(
+        asset_name="openarm_robot",
+        joint_names=["openarm_joint.*"],
+        body_name="openarm_hand",
         controller=_IK_CTRL,
         scale=0.5,
-        groups={
-            TASK_OPENARM: DiffIKGroupCfg(joint_names=["openarm_joint.*"]),
-            TASK_FRANKA: DiffIKGroupCfg(joint_names=["panda_joint.*"]),
-            TASK_UR10: DiffIKGroupCfg(joint_names=[".*"]),
-        },
     )
-
-
-# ===========================================================
-# Commands
-# ===========================================================
+    franka_arm = DifferentialInverseKinematicsActionCfg(
+        asset_name="franka_robot",
+        joint_names=["panda_joint.*"],
+        body_name="panda_hand",
+        controller=_IK_CTRL,
+        scale=0.5,
+    )
+    ur10_arm = DifferentialInverseKinematicsActionCfg(
+        asset_name="ur10_robot",
+        joint_names=[".*"],
+        body_name="ee_link",
+        controller=_IK_CTRL,
+        scale=0.5,
+    )
 
 
 @configclass
 class MultiRobotReachCommandsCfg:
-    """Single batched pose command — per-group ranges live in ``robot_meta``."""
-
-    ee_pose = mdp.BatchedPoseCommandCfg(
+    openarm_ee_pose = mdp.PoseCommandCfg(
         resampling_time_range=(3.0, 3.0),
         debug_vis=True,
-        robot_meta=ROBOT_META,
+        asset_cfg=SceneEntityCfg("openarm_robot", body_names=["openarm_hand"], groups=["openarm_reach"]),
+        ranges=PoseCommandRanges(
+            pos_x=(0.25, 0.35),
+            pos_y=(-0.2, 0.2),
+            pos_z=(0.3, 0.4),
+            roll=(-math.pi / 6, math.pi / 6),
+            pitch=(math.pi / 2, math.pi / 2),
+            yaw=(-math.pi / 9, math.pi / 9),
+        ),
+    )
+    franka_ee_pose = mdp.PoseCommandCfg(
+        resampling_time_range=(3.0, 3.0),
+        debug_vis=True,
+        asset_cfg=SceneEntityCfg("franka_robot", body_names=["panda_hand"], groups=["franka_reach"]),
+        ranges=PoseCommandRanges(
+            pos_x=(0.35, 0.65),
+            pos_y=(-0.2, 0.2),
+            pos_z=(0.15, 0.5),
+            roll=(0.0, 0.0),
+            pitch=(math.pi, math.pi),
+            yaw=(-3.14, 3.14),
+        ),
+    )
+    ur10_ee_pose = mdp.PoseCommandCfg(
+        resampling_time_range=(3.0, 3.0),
+        debug_vis=True,
+        asset_cfg=SceneEntityCfg("ur10_robot", body_names=["ee_link"], groups=["ur10_reach"]),
+        ranges=PoseCommandRanges(
+            pos_x=(0.35, 0.65),
+            pos_y=(-0.2, 0.2),
+            pos_z=(0.15, 0.5),
+            roll=(0.0, 0.0),
+            pitch=(math.pi / 2, math.pi / 2),
+            yaw=(-3.14, 3.14),
+        ),
     )
 
 
-# ===========================================================
-# Observations
-# ===========================================================
-
-
+# fmt: off
 @configclass
 class MultiRobotReachObsCfg:
-    """Task-space + proprioceptive observations.
-
-    Batched observation classes iterate ``robot_meta`` at init time
-    to discover robot groups and scatter per-group results (with
-    zero-padding) into a single ``(num_envs, max_feat)`` tensor.
-
-    Task-space terms (EE pose, command, error) have the same
-    dimension regardless of robot DoF.  Joint-space terms are
-    auto-padded to the maximum across robot groups.
-    """
-
     @configclass
     class PolicyCfg(ObsGroup):
-        joint_pos = ObsTerm(func=mdp.batched_joint_pos_rel, params={"robot_meta": ROBOT_META})
-        joint_vel = ObsTerm(func=mdp.batched_joint_vel, params={"robot_meta": ROBOT_META})
-        ee_pose = ObsTerm(func=mdp.batched_ee_pose, params={"robot_meta": ROBOT_META})
-        ee_command = ObsTerm(func=mdp.batched_generated_commands, params={"robot_meta": ROBOT_META})
-        ee_pos_error = ObsTerm(func=mdp.batched_ee_pos_error, params={"robot_meta": ROBOT_META})
+        openarm_joint_pos = ObsTerm(
+            func=mdp.joint_pos_rel,
+            params={"asset_cfg": SceneEntityCfg("openarm_robot", joint_names=["openarm_joint.*"], groups=["openarm_reach"])},
+        )
+        franka_joint_pos = ObsTerm(
+            func=mdp.joint_pos_rel,
+            params={"asset_cfg": SceneEntityCfg("franka_robot", joint_names=["panda_joint.*"], groups=["franka_reach"])},
+        )
+        ur10_joint_pos = ObsTerm(
+            func=mdp.joint_pos_rel,
+            params={"asset_cfg": SceneEntityCfg("ur10_robot", joint_names=[".*"], groups=["ur10_reach"])},
+        )
+        openarm_joint_vel = ObsTerm(
+            func=mdp.joint_vel,
+            params={"asset_cfg": SceneEntityCfg("openarm_robot", joint_names=["openarm_joint.*"], groups=["openarm_reach"])},
+        )
+        franka_joint_vel = ObsTerm(
+            func=mdp.joint_vel,
+            params={"asset_cfg": SceneEntityCfg("franka_robot", joint_names=["panda_joint.*"], groups=["franka_reach"])},
+        )
+        ur10_joint_vel = ObsTerm(
+            func=mdp.joint_vel,
+            params={"asset_cfg": SceneEntityCfg("ur10_robot", joint_names=[".*"], groups=["ur10_reach"])},
+        )
+        ee_pose = ObsTerm(func=mdp.scatter_term, params={"terms": [
+            TermCfg(func=mdp.ee_pose, params={"asset_cfg": SceneEntityCfg("openarm_robot", body_names=["openarm_hand"], groups=["openarm_reach"])}),
+            TermCfg(func=mdp.ee_pose, params={"asset_cfg": SceneEntityCfg("franka_robot", body_names=["panda_hand"], groups=["franka_reach"])}),
+            TermCfg(func=mdp.ee_pose, params={"asset_cfg": SceneEntityCfg("ur10_robot", body_names=["ee_link"], groups=["ur10_reach"])}),
+        ]})
+        ee_command = ObsTerm(func=mdp.scatter_term, params={"terms": [
+            TermCfg(func=mdp.generated_commands, params={"asset_cfg": SceneEntityCfg("openarm_robot", groups=["openarm_reach"]), "command_name": "openarm_ee_pose"}),
+            TermCfg(func=mdp.generated_commands, params={"asset_cfg": SceneEntityCfg("franka_robot", groups=["franka_reach"]), "command_name": "franka_ee_pose"}),
+            TermCfg(func=mdp.generated_commands, params={"asset_cfg": SceneEntityCfg("ur10_robot", groups=["ur10_reach"]), "command_name": "ur10_ee_pose"}),
+        ]})
+        ee_pos_error = ObsTerm(func=mdp.scatter_term, params={"terms": [
+            TermCfg(func=mdp.ee_pos_error, params={"asset_cfg": SceneEntityCfg("openarm_robot", body_names=["openarm_hand"], groups=["openarm_reach"]), "command_name": "openarm_ee_pose"}),
+            TermCfg(func=mdp.ee_pos_error, params={"asset_cfg": SceneEntityCfg("franka_robot", body_names=["panda_hand"], groups=["franka_reach"]), "command_name": "franka_ee_pose"}),
+            TermCfg(func=mdp.ee_pos_error, params={"asset_cfg": SceneEntityCfg("ur10_robot", body_names=["ee_link"], groups=["ur10_reach"]), "command_name": "ur10_ee_pose"}),
+        ]})
         actions = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):
@@ -271,110 +234,102 @@ class MultiRobotReachObsCfg:
     policy: PolicyCfg = PolicyCfg()
 
 
-# ===========================================================
-# Rewards / Terminations / Events
-# ===========================================================
-
-
 @configclass
 class MultiRobotReachRewardsCfg:
-    """Reach rewards batched across all robot groups.
-
-    Batched reward classes iterate ``robot_meta`` at init time and
-    use the gather-first-compute-once pattern to reduce CUDA
-    kernel launches.
-    """
-
-    ee_pos_tracking = RewTerm(
-        func=mdp.batched_position_command_error,
-        weight=-0.2,
-        params={"robot_meta": ROBOT_META},
-    )
-    ee_pos_tracking_fine = RewTerm(
-        func=mdp.batched_position_command_error_tanh,
-        weight=0.1,
-        params={"std": 0.1, "robot_meta": ROBOT_META},
-    )
-    ee_ori_tracking = RewTerm(
-        func=mdp.batched_orientation_command_error,
-        weight=-0.1,
-        params={"robot_meta": ROBOT_META},
-    )
+    ee_pos_tracking = RewTerm(func=mdp.scatter_term, weight=-0.2, params={"terms": [
+        TermCfg(func=mdp.position_command_error, params={"asset_cfg": SceneEntityCfg("openarm_robot", body_names=["openarm_hand"], groups=["openarm_reach"]), "command_name": "openarm_ee_pose"}),
+        TermCfg(func=mdp.position_command_error, params={"asset_cfg": SceneEntityCfg("franka_robot", body_names=["panda_hand"], groups=["franka_reach"]), "command_name": "franka_ee_pose"}),
+        TermCfg(func=mdp.position_command_error, params={"asset_cfg": SceneEntityCfg("ur10_robot", body_names=["ee_link"], groups=["ur10_reach"]), "command_name": "ur10_ee_pose"}),
+    ]})
+    ee_pos_tracking_fine = RewTerm(func=mdp.scatter_term, weight=0.1, params={"terms": [
+        TermCfg(func=mdp.position_command_error_tanh, params={"std": 0.1, "asset_cfg": SceneEntityCfg("openarm_robot", body_names=["openarm_hand"], groups=["openarm_reach"]), "command_name": "openarm_ee_pose"}),
+        TermCfg(func=mdp.position_command_error_tanh, params={"std": 0.1, "asset_cfg": SceneEntityCfg("franka_robot", body_names=["panda_hand"], groups=["franka_reach"]), "command_name": "franka_ee_pose"}),
+        TermCfg(func=mdp.position_command_error_tanh, params={"std": 0.1, "asset_cfg": SceneEntityCfg("ur10_robot", body_names=["ee_link"], groups=["ur10_reach"]), "command_name": "ur10_ee_pose"}),
+    ]})
+    ee_ori_tracking = RewTerm(func=mdp.scatter_term, weight=-0.1, params={"terms": [
+        TermCfg(func=mdp.orientation_command_error, params={"asset_cfg": SceneEntityCfg("openarm_robot", body_names=["openarm_hand"], groups=["openarm_reach"]), "command_name": "openarm_ee_pose"}),
+        TermCfg(func=mdp.orientation_command_error, params={"asset_cfg": SceneEntityCfg("franka_robot", body_names=["panda_hand"], groups=["franka_reach"]), "command_name": "franka_ee_pose"}),
+        TermCfg(func=mdp.orientation_command_error, params={"asset_cfg": SceneEntityCfg("ur10_robot", body_names=["ee_link"], groups=["ur10_reach"]), "command_name": "ur10_ee_pose"}),
+    ]})
     action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.0001)
-    joint_vel = RewTerm(
-        func=mdp.batched_joint_vel_l2,
-        weight=-0.0001,
-        params={"robot_meta": ROBOT_META},
-    )
+    joint_vel = RewTerm(func=mdp.scatter_term, weight=-0.0001, params={"terms": [
+        TermCfg(func=mdp.joint_vel_l2, params={"asset_cfg": SceneEntityCfg("openarm_robot", joint_names=["openarm_joint.*"], groups=["openarm_reach"])}),
+        TermCfg(func=mdp.joint_vel_l2, params={"asset_cfg": SceneEntityCfg("franka_robot", joint_names=["panda_joint.*"], groups=["franka_reach"])}),
+        TermCfg(func=mdp.joint_vel_l2, params={"asset_cfg": SceneEntityCfg("ur10_robot", joint_names=[".*"], groups=["ur10_reach"])}),
+    ]})
+# fmt: on
 
 
 @configclass
 class MultiRobotReachTerminationsCfg:
-    time_out = DoneTerm(
-        func=mdp.time_out,
-        time_out=True,
-    )
+    time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
 
 @configclass
 class MultiRobotReachEventsCfg:
-    """Reset events batched across all robot groups.
-
-    Batched event classes iterate ``robot_meta`` to discover robot
-    groups and dispatch reset logic per group with filtered ``env_ids``.
-    """
-
-    reset_to_default = EventTerm(
-        func=mdp.batched_reset_to_default,
-        mode="reset",
-        params={"robot_meta": ROBOT_META, "reset_joint_targets": True},
-    )
-    reset_joints = EventTerm(
-        func=mdp.batched_reset_joints,
+    openarm_reset_to_default = EventTerm(
+        func=mdp.reset_to_default,
         mode="reset",
         params={
-            "robot_meta": ROBOT_META,
+            "reset_joint_targets": True,
+            "asset_cfgs": [SceneEntityCfg("openarm_robot", groups=["openarm_reach"])],
+        },
+    )
+    franka_reset_to_default = EventTerm(
+        func=mdp.reset_to_default,
+        mode="reset",
+        params={
+            "reset_joint_targets": True,
+            "asset_cfgs": [SceneEntityCfg("franka_robot", groups=["franka_reach"])],
+        },
+    )
+    ur10_reset_to_default = EventTerm(
+        func=mdp.reset_to_default,
+        mode="reset",
+        params={
+            "reset_joint_targets": True,
+            "asset_cfgs": [SceneEntityCfg("ur10_robot", groups=["ur10_reach"])],
+        },
+    )
+    openarm_reset_joints = EventTerm(
+        func=mdp.reset_joints,
+        mode="reset",
+        params={
             "position_range": (0.5, 1.25),
             "velocity_range": (0.0, 0.0),
+            "asset_cfg": SceneEntityCfg("openarm_robot", joint_names=["openarm_joint.*"], groups=["openarm_reach"]),
+        },
+    )
+    franka_reset_joints = EventTerm(
+        func=mdp.reset_joints,
+        mode="reset",
+        params={
+            "position_range": (0.5, 1.25),
+            "velocity_range": (0.0, 0.0),
+            "asset_cfg": SceneEntityCfg("franka_robot", joint_names=["panda_joint.*"], groups=["franka_reach"]),
+        },
+    )
+    ur10_reset_joints = EventTerm(
+        func=mdp.reset_joints,
+        mode="reset",
+        params={
+            "position_range": (0.5, 1.25),
+            "velocity_range": (0.0, 0.0),
+            "asset_cfg": SceneEntityCfg("ur10_robot", joint_names=[".*"], groups=["ur10_reach"]),
         },
     )
 
 
-# ===========================================================
-# Curriculum
-# ===========================================================
-
-
 @configclass
 class MultiRobotReachCurriculumCfg:
-    """Gradually increase action-rate and joint-vel penalties to suppress jitter."""
-
     action_rate = CurrTerm(
         func=mdp.modify_reward_weight,
         params={"term_name": "action_rate", "weight": -0.005, "num_steps": 12000},
     )
-    joint_vel = CurrTerm(
-        func=mdp.modify_reward_weight,
-        params={"term_name": "joint_vel", "weight": -0.001, "num_steps": 12000},
-    )
-
-
-# ===========================================================
-# Top-level env config
-# ===========================================================
 
 
 @configclass
 class MultiRobotReachEnvCfg(ManagerBasedRLEnvCfg):
-    """Multi-robot reach: 3 groups, shared 6D IK action columns.
-
-    Group 0: OpenArm (7 arm DoF)
-    Group 1: Franka  (7 arm DoF)
-    Group 2: UR10    (6 arm DoF)
-
-    Action dim: 6 (IK columns shared across disjoint groups).
-    """
-
     scene: MultiRobotReachSceneCfg = MultiRobotReachSceneCfg(
         num_envs=4096,
         env_spacing=2.0,
