@@ -7,7 +7,7 @@ __all__ = [
     "CloneCfg",
     "CloneGroup",
     "EnvLayout",
-    "GroupView",
+    "EnvToViewMap",
     "InclusionSet",
     "InteractiveScene",
     "InteractiveSceneCfg",
@@ -18,6 +18,6 @@ from .clone_cfg import (
     CloneGroup,
     InclusionSet,
 )
-from .env_layout import EnvLayout, GroupView
+from .env_layout import EnvLayout, EnvToViewMap
 from .interactive_scene import InteractiveScene
 from .interactive_scene_cfg import InteractiveSceneCfg

@@ -58,6 +58,8 @@ __all__ = [
     "time_out",
 ]
 
+from .actions import ScatteredActionTerm
+from .actions_cfg import ScatteredActionTermCfg
 from .events import (
     reset_joints,
     reset_object_uniform,

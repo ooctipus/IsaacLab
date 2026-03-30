@@ -31,8 +31,8 @@ def object_height_below_minimum(
 ) -> ScatterResult:
     """Terminate when lift object falls below a minimum height."""
     rigid_object = env.scene[object_cfg.name]
-    height = wp.to_torch(rigid_object.data.root_pos_w)[object_cfg.local_ids, 2]
-    return object_cfg.global_ids, (height < minimum_height)
+    height = wp.to_torch(rigid_object.data.root_pos_w)[object_cfg.view_ids, 2]
+    return object_cfg.env_ids, (height < minimum_height)
 
 
 @scatterable
@@ -44,5 +44,5 @@ def cabinet_drawer_opened(
 ) -> ScatterResult:
     """Terminate cabinet episodes once the drawer is sufficiently open."""
     cabinet = env.scene[cabinet_asset_cfg.name]
-    drawer_pos = wp.to_torch(cabinet.data.joint_pos)[cabinet_asset_cfg.local_ids, cabinet_asset_cfg.joint_ids]
-    return cabinet_asset_cfg.global_ids, (drawer_pos.squeeze(-1) > threshold)
+    drawer_pos = wp.to_torch(cabinet.data.joint_pos)[cabinet_asset_cfg.view_ids, cabinet_asset_cfg.joint_ids]
+    return cabinet_asset_cfg.env_ids, (drawer_pos.squeeze(-1) > threshold)

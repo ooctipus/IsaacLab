@@ -248,13 +248,13 @@ class MultiRobotMultiTaskActionsCfg:
     """Actions for three robot types with heterogeneous arm control.
 
     Arm dims differ across robots so each has its own column. All group-specific
-    terms are wrapped in GroupedActionTermCfg so each sub-term is initialised
+    terms are wrapped in ScatteredActionTermCfg so each sub-term is initialised
     with the correct group size rather than the global env count.
     Grippers (OpenArm + Franka) share one column.
     action_dim = 6 (OpenArm IK) + 7 (Franka joints) + 6 (UR10 joints) + 1 (gripper) = 20.
     """
 
-    openarm_arm = mdp.GroupedActionTermCfg(
+    openarm_arm = mdp.ScatteredActionTermCfg(
         terms=[
             DifferentialInverseKinematicsActionCfg(
                 asset_name="openarm_robot",
@@ -265,7 +265,7 @@ class MultiRobotMultiTaskActionsCfg:
             ),
         ]
     )
-    franka_joints = mdp.GroupedActionTermCfg(
+    franka_joints = mdp.ScatteredActionTermCfg(
         terms=[
             RelativeJointPositionActionCfg(
                 asset_name="franka_robot",
@@ -274,7 +274,7 @@ class MultiRobotMultiTaskActionsCfg:
             ),
         ]
     )
-    ur10_joints = mdp.GroupedActionTermCfg(
+    ur10_joints = mdp.ScatteredActionTermCfg(
         terms=[
             RelativeJointPositionActionCfg(
                 asset_name="ur10_robot",
@@ -283,7 +283,7 @@ class MultiRobotMultiTaskActionsCfg:
             ),
         ]
     )
-    gripper = mdp.GroupedActionTermCfg(
+    gripper = mdp.ScatteredActionTermCfg(
         terms=[
             BinaryJointPositionActionCfg(
                 asset_name="openarm_robot",

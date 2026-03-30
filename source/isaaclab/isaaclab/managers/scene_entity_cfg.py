@@ -121,7 +121,7 @@ class SceneEntityCfg:
     groups: str | list[str] | None = None
     """Regex pattern(s) matching task-group names from the :class:`EnvLayout`.
 
-    When set, :meth:`resolve` populates :attr:`global_ids` and :attr:`local_ids`
+    When set, :meth:`resolve` populates :attr:`env_ids` and :attr:`view_ids`
     with indices covering only the matched groups' environments.
     When ``None`` (default), both default to ``slice(None)`` (all envs).
 
@@ -129,13 +129,13 @@ class SceneEntityCfg:
     :func:`re.fullmatch`.
     """
 
-    global_ids: slice | torch.Tensor = slice(None)
+    env_ids: slice | torch.Tensor = slice(None)
     """Global env indices for indexing into ``(num_envs, ...)`` output buffers.
 
     Populated by :meth:`resolve`. Defaults to ``slice(None)`` (all envs).
     """
 
-    local_ids: slice | torch.Tensor = slice(None)
+    view_ids: slice | torch.Tensor = slice(None)
     """Indices into the asset's data buffer (the view).
 
     Populated by :meth:`resolve`. Defaults to ``slice(None)`` (all envs).
@@ -183,8 +183,8 @@ class SceneEntityCfg:
         # convert object collection names to indices based on regex
         self._resolve_object_collection_names(scene)
 
-        # resolve group patterns into env_ids and group_ids
-        self._resolve_groups(scene)
+        # resolve group patterns into env_ids and view_ids
+        self._resolve_views(scene)
 
     def _resolve_joint_names(self, scene: InteractiveScene):
         # convert joint names to indices based on regex
@@ -331,8 +331,8 @@ class SceneEntityCfg:
                     self.object_collection_ids = [self.object_collection_ids]
                 self.object_collection_names = [entity.object_names[i] for i in self.object_collection_ids]
 
-    def _resolve_groups(self, scene: InteractiveScene):
-        """Resolve group patterns into global_ids and local_ids via the scene layout.
+    def _resolve_views(self, scene: InteractiveScene):
+        """Resolve group patterns into env_ids and view_ids via the scene layout.
 
         Args:
             scene: The interactive scene instance.
@@ -352,6 +352,6 @@ class SceneEntityCfg:
                     matched.append(name)
         if not matched:
             raise ValueError(f"No groups matched patterns {self.groups}. Available: {list(layout.group_names)}")
-        group_view = layout.get(matched, asset=self.name)
-        self.global_ids = group_view.global_ids
-        self.local_ids = group_view.local_ids
+        env_to_view_map = layout.get(matched, asset=self.name)
+        self.env_ids = env_to_view_map.env_ids
+        self.view_ids = env_to_view_map.view_ids

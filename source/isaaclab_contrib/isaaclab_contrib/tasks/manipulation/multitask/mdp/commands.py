@@ -43,12 +43,12 @@ class PoseCommand(CommandTerm):
         cfg.asset_cfg.resolve(env.scene)
         self.robot = env.scene[cfg.asset_cfg.name]
         self.body_idx = cfg.asset_cfg.body_ids[0]
-        self._global_ids = cfg.asset_cfg.global_ids
-        self._local_ids = cfg.asset_cfg.local_ids
+        self._env_ids = cfg.asset_cfg.env_ids
+        self._view_ids = cfg.asset_cfg.view_ids
 
         layout = env.scene.layout
-        group_view = layout.get(cfg.asset_cfg.groups, asset=cfg.asset_cfg.name)
-        self._group_layout = group_view.layout
+        env_to_view_map = layout.get(cfg.asset_cfg.groups, asset=cfg.asset_cfg.name)
+        self._group_layout = env_to_view_map.layout
 
         self.pose_command_b = torch.zeros(self.num_envs, 7, device=self.device)
         self.pose_command_b[:, 3] = 1.0
@@ -73,27 +73,29 @@ class PoseCommand(CommandTerm):
         return self.pose_command_b
 
     def _update_metrics(self):
-        root_pos = wp.to_torch(self.robot.data.root_pos_w)[self._local_ids]
-        root_quat = wp.to_torch(self.robot.data.root_quat_w)[self._local_ids]
+        root_pos = wp.to_torch(self.robot.data.root_pos_w)[self._view_ids]
+        root_quat = wp.to_torch(self.robot.data.root_quat_w)[self._view_ids]
 
-        self.pose_command_w[self._global_ids, :3], self.pose_command_w[self._global_ids, 3:] = combine_frame_transforms(
-            root_pos,
-            root_quat,
-            self.pose_command_b[self._global_ids, :3],
-            self.pose_command_b[self._global_ids, 3:],
+        self.pose_command_w[self._env_ids, :3], self.pose_command_w[self._env_ids, 3:] = (
+            combine_frame_transforms(
+                root_pos,
+                root_quat,
+                self.pose_command_b[self._env_ids, :3],
+                self.pose_command_b[self._env_ids, 3:],
+            )
         )
-        ee_pos = wp.to_torch(self.robot.data.body_pos_w)[self._local_ids, self.body_idx]
-        ee_quat = wp.to_torch(self.robot.data.body_quat_w)[self._local_ids, self.body_idx]
-        self._ee_pose_w[self._global_ids, :3] = ee_pos
-        self._ee_pose_w[self._global_ids, 3:] = ee_quat
+        ee_pos = wp.to_torch(self.robot.data.body_pos_w)[self._view_ids, self.body_idx]
+        ee_quat = wp.to_torch(self.robot.data.body_quat_w)[self._view_ids, self.body_idx]
+        self._ee_pose_w[self._env_ids, :3] = ee_pos
+        self._ee_pose_w[self._env_ids, 3:] = ee_quat
         pos_error, rot_error = compute_pose_error(
-            self.pose_command_w[self._global_ids, :3],
-            self.pose_command_w[self._global_ids, 3:],
+            self.pose_command_w[self._env_ids, :3],
+            self.pose_command_w[self._env_ids, 3:],
             ee_pos,
             ee_quat,
         )
-        self.metrics["position_error"][self._global_ids] = torch.linalg.norm(pos_error, dim=-1)
-        self.metrics["orientation_error"][self._global_ids] = torch.linalg.norm(rot_error, dim=-1)
+        self.metrics["position_error"][self._env_ids] = torch.linalg.norm(pos_error, dim=-1)
+        self.metrics["orientation_error"][self._env_ids] = torch.linalg.norm(rot_error, dim=-1)
 
     def _resample_command(self, env_ids: torch.Tensor):
         _, matched = filter_to_group(self._group_layout, env_ids)

@@ -117,11 +117,11 @@ _IK_CTRL = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=Tr
 class MultiRobotReachActionsCfg:
     """Shared-column IK actions for three robots all doing reach.
 
-    All three use DiffIK (dim=6), so one GroupedActionTermCfg covers all groups.
+    All three use DiffIK (dim=6), so one ScatteredActionTermCfg covers all groups.
     action_dim = 6.
     """
 
-    arm = mdp.GroupedActionTermCfg(
+    arm = mdp.ScatteredActionTermCfg(
         terms=[
             DifferentialInverseKinematicsActionCfg(
                 asset_name="openarm_robot",
