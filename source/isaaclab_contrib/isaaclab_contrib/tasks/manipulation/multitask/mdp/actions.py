@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Grouped action terms for multi-task environments."""
+"""Scattered action terms for multi-task environments."""
 
 from __future__ import annotations
 
@@ -24,10 +24,10 @@ if TYPE_CHECKING:
 
 
 class ScatteredActionTerm(ActionTerm):
-    """Groups multiple action terms that share the same action dimension.
+    """Scattters multiple action terms that share the same action dimension.
 
     The policy outputs a single set of actions (e.g. 6 IK dims or 1 gripper
-    dim) and the grouped term broadcasts them to every sub-term.  Each
+    dim) and the scattered term broadcasts them to every sub-term.  Each
     sub-term applies to its own asset/group independently.
 
     All terms must have the same ``action_dim``; unequal dimensions raise
