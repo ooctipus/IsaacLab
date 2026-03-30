@@ -115,26 +115,36 @@ _IK_CTRL = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=Tr
 
 @configclass
 class MultiRobotReachActionsCfg:
-    openarm_arm = DifferentialInverseKinematicsActionCfg(
-        asset_name="openarm_robot",
-        joint_names=["openarm_joint.*"],
-        body_name="openarm_hand",
-        controller=_IK_CTRL,
-        scale=0.5,
-    )
-    franka_arm = DifferentialInverseKinematicsActionCfg(
-        asset_name="franka_robot",
-        joint_names=["panda_joint.*"],
-        body_name="panda_hand",
-        controller=_IK_CTRL,
-        scale=0.5,
-    )
-    ur10_arm = DifferentialInverseKinematicsActionCfg(
-        asset_name="ur10_robot",
-        joint_names=[".*"],
-        body_name="ee_link",
-        controller=_IK_CTRL,
-        scale=0.5,
+    """Shared-column IK actions for three robots all doing reach.
+
+    All three use DiffIK (dim=6), so one GroupedActionTermCfg covers all groups.
+    action_dim = 6.
+    """
+
+    arm = mdp.GroupedActionTermCfg(
+        terms=[
+            DifferentialInverseKinematicsActionCfg(
+                asset_name="openarm_robot",
+                joint_names=["openarm_joint.*"],
+                body_name="openarm_hand",
+                controller=_IK_CTRL,
+                scale=0.5,
+            ),
+            DifferentialInverseKinematicsActionCfg(
+                asset_name="franka_robot",
+                joint_names=["panda_joint.*"],
+                body_name="panda_hand",
+                controller=_IK_CTRL,
+                scale=0.5,
+            ),
+            DifferentialInverseKinematicsActionCfg(
+                asset_name="ur10_robot",
+                joint_names=[".*"],
+                body_name="ee_link",
+                controller=_IK_CTRL,
+                scale=0.5,
+            ),
+        ]
     )
 
 
@@ -186,30 +196,8 @@ class MultiRobotReachCommandsCfg:
 class MultiRobotReachObsCfg:
     @configclass
     class PolicyCfg(ObsGroup):
-        openarm_joint_pos = ObsTerm(
-            func=mdp.joint_pos_rel,
-            params={"asset_cfg": SceneEntityCfg("openarm_robot", joint_names=["openarm_joint.*"], groups=["openarm_reach"])},
-        )
-        franka_joint_pos = ObsTerm(
-            func=mdp.joint_pos_rel,
-            params={"asset_cfg": SceneEntityCfg("franka_robot", joint_names=["panda_joint.*"], groups=["franka_reach"])},
-        )
-        ur10_joint_pos = ObsTerm(
-            func=mdp.joint_pos_rel,
-            params={"asset_cfg": SceneEntityCfg("ur10_robot", joint_names=[".*"], groups=["ur10_reach"])},
-        )
-        openarm_joint_vel = ObsTerm(
-            func=mdp.joint_vel,
-            params={"asset_cfg": SceneEntityCfg("openarm_robot", joint_names=["openarm_joint.*"], groups=["openarm_reach"])},
-        )
-        franka_joint_vel = ObsTerm(
-            func=mdp.joint_vel,
-            params={"asset_cfg": SceneEntityCfg("franka_robot", joint_names=["panda_joint.*"], groups=["franka_reach"])},
-        )
-        ur10_joint_vel = ObsTerm(
-            func=mdp.joint_vel,
-            params={"asset_cfg": SceneEntityCfg("ur10_robot", joint_names=[".*"], groups=["ur10_reach"])},
-        )
+
+        # ── shared across all groups: EE + command ────────
         ee_pose = ObsTerm(func=mdp.scatter_term, params={"terms": [
             TermCfg(func=mdp.ee_pose, params={"asset_cfg": SceneEntityCfg("openarm_robot", body_names=["openarm_hand"], groups=["openarm_reach"])}),
             TermCfg(func=mdp.ee_pose, params={"asset_cfg": SceneEntityCfg("franka_robot", body_names=["panda_hand"], groups=["franka_reach"])}),

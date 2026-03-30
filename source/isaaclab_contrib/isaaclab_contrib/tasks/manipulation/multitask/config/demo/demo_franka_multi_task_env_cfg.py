@@ -261,6 +261,7 @@ class FrankaMultiTaskObservationsCfg:
 
     @configclass
     class PolicyCfg(ObsGroup):
+        # ── shared across all groups ──────────────────────
         task_onehot = ObsTerm(func=mdp.multi_task_onehot)
         ee_pose = ObsTerm(
             func=mdp.ee_pose,
@@ -270,6 +271,7 @@ class FrankaMultiTaskObservationsCfg:
         )
         actions = ObsTerm(func=mdp.last_action)
 
+        # ── lift: object manipulation ─────────────────────
         object_pos = ObsTerm(
             func=mdp.object_pos_in_robot_frame,
             params={
@@ -294,6 +296,7 @@ class FrankaMultiTaskObservationsCfg:
             },
         )
 
+        # ── cabinet: drawer manipulation ──────────────────
         cabinet_joint_pos = ObsTerm(
             func=mdp.cabinet_joint_pos,
             params={
@@ -314,14 +317,26 @@ class FrankaMultiTaskObservationsCfg:
             },
         )
 
+        # ── lift + reach: pose tracking ───────────────────
         commands = ObsTerm(func=mdp.scatter_term, params={"terms": [
-            TermCfg(func=mdp.generated_commands, params={"asset_cfg": SceneEntityCfg("robot", groups=["lift"]), "command_name": "lift_goal"}),
-            TermCfg(func=mdp.generated_commands, params={"asset_cfg": SceneEntityCfg("robot", groups=["reach"]), "command_name": "reach_target"}),
+            TermCfg(func=mdp.generated_commands, params={
+                "asset_cfg": SceneEntityCfg("robot", groups=["lift"]),
+                "command_name": "lift_goal",
+            }),
+            TermCfg(func=mdp.generated_commands, params={
+                "asset_cfg": SceneEntityCfg("robot", groups=["reach"]),
+                "command_name": "reach_target",
+            }),
         ]})
-
         ee_pos_error = ObsTerm(func=mdp.scatter_term, params={"terms": [
-            TermCfg(func=mdp.ee_pos_error, params={"asset_cfg": SceneEntityCfg("robot", body_names=["panda_hand"], groups=["lift"]), "command_name": "lift_goal"}),
-            TermCfg(func=mdp.ee_pos_error, params={"asset_cfg": SceneEntityCfg("robot", body_names=["panda_hand"], groups=["reach"]), "command_name": "reach_target"}),
+            TermCfg(func=mdp.ee_pos_error, params={
+                "asset_cfg": SceneEntityCfg("robot", body_names=["panda_hand"], groups=["lift"]),
+                "command_name": "lift_goal",
+            }),
+            TermCfg(func=mdp.ee_pos_error, params={
+                "asset_cfg": SceneEntityCfg("robot", body_names=["panda_hand"], groups=["reach"]),
+                "command_name": "reach_target",
+            }),
         ]})
 
         def __post_init__(self):
