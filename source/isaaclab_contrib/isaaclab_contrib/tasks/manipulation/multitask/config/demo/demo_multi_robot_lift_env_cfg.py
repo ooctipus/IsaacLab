@@ -257,12 +257,11 @@ class MultiRobotLiftObsCfg:
 
     @configclass
     class PolicyCfg(ObsGroup):
-        # ── shared across all groups ──────────────────────
+        # ── ee pose ──────────────────────
         ee_pose = ObsTerm(func=mdp.scatter_term, params={"terms": [
             TermCfg(func=mdp.ee_pose, params={"asset_cfg": SceneEntityCfg("openarm_robot", body_names=["openarm_hand"], groups=["openarm_lift"])}),
             TermCfg(func=mdp.ee_pose, params={"asset_cfg": SceneEntityCfg("franka_robot", body_names=["panda_hand"], groups=["franka_lift"])}),
         ]})
-        actions = ObsTerm(func=mdp.last_action)
 
         # ── openarm_lift + franka_lift: object manipulation
         object_pos = ObsTerm(func=mdp.scatter_term, params={"terms": [
@@ -281,6 +280,9 @@ class MultiRobotLiftObsCfg:
             TermCfg(func=mdp.object_target_pos_error, params={"robot_cfg": SceneEntityCfg("openarm_robot", groups=["openarm_lift"]), "object_cfg": SceneEntityCfg("lift_object", groups=["openarm_lift"]), "command_name": "openarm_lift_goal"}),
             TermCfg(func=mdp.object_target_pos_error, params={"robot_cfg": SceneEntityCfg("franka_robot", groups=["franka_lift"]), "object_cfg": SceneEntityCfg("lift_object", groups=["franka_lift"]), "command_name": "franka_lift_goal"}),
         ]})
+
+        # ── last actions ──────────────────────
+        actions = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):
             self.enable_corruption = True
