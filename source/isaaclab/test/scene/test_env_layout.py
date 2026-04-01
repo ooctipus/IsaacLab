@@ -16,6 +16,12 @@ from isaaclab.cloner.cloner_strategies import sequential as sequential_strategy
 from isaaclab.scene.clone_cfg import CloneCfg, InclusionSet
 from isaaclab.scene.env_layout import EnvLayout, filter_to_group, get_env_ids
 
+
+def _env_ids_list(view) -> list[int]:
+    """Convert EnvToViewMap.env_ids (slice or Tensor) to a plain list."""
+    return get_env_ids(view.layout).tolist()
+
+
 # ===========================================================================
 # EnvLayout: registration & basic queries
 # ===========================================================================
@@ -34,7 +40,7 @@ class TestRegistration:
         assert layout.group_names  # non-empty
         assert "lift" in layout.group_names
         assert layout["lift"].count == 4
-        assert layout["lift"].env_ids.tolist() == [0, 1, 2, 3]
+        assert _env_ids_list(layout["lift"]) == [0, 1, 2, 3]
 
     def test_register_out_of_range_raises(self):
         layout = EnvLayout(10, "cpu")
@@ -55,7 +61,7 @@ class TestRegistration:
         layout = EnvLayout(10, "cpu")
         layout.register("g", torch.tensor([0, 1]))
         layout.register("g", torch.tensor([3, 4, 5]))
-        assert layout["g"].env_ids.tolist() == [3, 4, 5]
+        assert _env_ids_list(layout["g"]) == [3, 4, 5]
         assert layout["g"].count == 3
 
 
@@ -79,7 +85,7 @@ class TestEnvToViewMapBasics:
         v1 = layout["g"]
         v2 = layout["g"]
         # Views are equal (same indices), but not necessarily same object
-        assert v1.env_ids.tolist() == v2.env_ids.tolist()
+        assert _env_ids_list(v1) == _env_ids_list(v2)
         assert v1.count == v2.count
 
     def test_homogeneous_env_to_view_map(self):
@@ -284,8 +290,8 @@ class TestStrategyAssignment:
         assignment = sequential_strategy(weights, 12, "cpu")
         layout.apply_assignment(assignment, group_names)
 
-        assert layout["a"].env_ids.tolist() == [0, 1, 2, 3, 4, 5]
-        assert layout["b"].env_ids.tolist() == [6, 7, 8, 9, 10, 11]
+        assert _env_ids_list(layout["a"]) == [0, 1, 2, 3, 4, 5]
+        assert _env_ids_list(layout["b"]) == [6, 7, 8, 9, 10, 11]
 
     def test_random_assignment_produces_interleaved_groups(self):
         layout = EnvLayout(24, "cpu")
@@ -392,7 +398,7 @@ class TestCloneCfgPartitioning:
         self._apply_full(layout, cfg)
         all_ids = set()
         for g in layout.group_names:
-            all_ids.update(layout[g].env_ids.tolist())
+            all_ids.update(get_env_ids(layout[g].layout).tolist())
         assert all_ids == set(range(24))
 
 

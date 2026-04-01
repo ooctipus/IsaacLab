@@ -295,9 +295,11 @@ class EnvLayout:
         assignment = assignment.to(device=self._device, dtype=torch.long)
 
         if group_assets is None and self._clone_cfg is not None:
+            all_asset_names = list(
+                {a for g in self._clone_cfg.clone_groups.values() for a in g.assets if hasattr(g, "assets")}
+            )
             group_assets = {
-                name: group.resolve_assets(list(self._assets.keys()))
-                for name, group in self._clone_cfg.clone_groups.items()
+                name: group.resolve_assets(all_asset_names) for name, group in self._clone_cfg.clone_groups.items()
             }
 
         self._group_names = group_names
@@ -404,9 +406,7 @@ class EnvLayout:
         self._view_cache[cache_key] = view
         return view
 
-    def filter_reset_ids(
-        self, asset_name: str, candidate_env_ids: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def filter_reset_ids(self, asset_name: str, candidate_env_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Intersect reset env IDs with the envs that own ``asset_name``.
 
         Args:

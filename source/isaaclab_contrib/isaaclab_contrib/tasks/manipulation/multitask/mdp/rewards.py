@@ -181,9 +181,7 @@ def cabinet_approach_ee_handle(
 ) -> ScatterResult:
     """Reward for reaching the cabinet handle."""
     ee_pos = wp.to_torch(env.scene[ee_frame_cfg.name].data.target_pos_w)[ee_frame_cfg.view_ids, 0, :]
-    handle_pos = wp.to_torch(env.scene[cabinet_frame_cfg.name].data.target_pos_w)[
-        cabinet_frame_cfg.view_ids, 0, :
-    ]
+    handle_pos = wp.to_torch(env.scene[cabinet_frame_cfg.name].data.target_pos_w)[cabinet_frame_cfg.view_ids, 0, :]
     distance = torch.linalg.norm(handle_pos - ee_pos, dim=-1, ord=2)
     reward = torch.pow(1.0 / (1.0 + distance**2), 2)
     reward = torch.where(distance <= threshold, 2 * reward, reward)
@@ -198,9 +196,7 @@ def cabinet_align_ee_handle(
 ) -> ScatterResult:
     """Reward for aligning with the cabinet handle."""
     ee_quat = wp.to_torch(env.scene[ee_frame_cfg.name].data.target_quat_w)[ee_frame_cfg.view_ids, 0, :]
-    handle_quat = wp.to_torch(env.scene[cabinet_frame_cfg.name].data.target_quat_w)[
-        cabinet_frame_cfg.view_ids, 0, :
-    ]
+    handle_quat = wp.to_torch(env.scene[cabinet_frame_cfg.name].data.target_quat_w)[cabinet_frame_cfg.view_ids, 0, :]
     ee_rot = math_utils.matrix_from_quat(ee_quat)
     handle_rot = math_utils.matrix_from_quat(handle_quat)
     handle_x, handle_y = handle_rot[..., 0], handle_rot[..., 1]
@@ -217,9 +213,7 @@ def cabinet_align_grasp_around_handle(
     cabinet_frame_cfg: SceneEntityCfg,
 ) -> ScatterResult:
     """Bonus when fingers straddle the drawer handle."""
-    handle_pos = wp.to_torch(env.scene[cabinet_frame_cfg.name].data.target_pos_w)[
-        cabinet_frame_cfg.view_ids, 0, :
-    ]
+    handle_pos = wp.to_torch(env.scene[cabinet_frame_cfg.name].data.target_pos_w)[cabinet_frame_cfg.view_ids, 0, :]
     fingertips = wp.to_torch(env.scene[ee_frame_cfg.name].data.target_pos_w)[ee_frame_cfg.view_ids, 1:, :]
     left = fingertips[:, 0, :]
     right = fingertips[:, 1, :]
@@ -236,9 +230,7 @@ def cabinet_approach_gripper_handle(
     cabinet_frame_cfg: SceneEntityCfg,
 ) -> ScatterResult:
     """Reward for finger placement around the handle."""
-    handle_pos = wp.to_torch(env.scene[cabinet_frame_cfg.name].data.target_pos_w)[
-        cabinet_frame_cfg.view_ids, 0, :
-    ]
+    handle_pos = wp.to_torch(env.scene[cabinet_frame_cfg.name].data.target_pos_w)[cabinet_frame_cfg.view_ids, 0, :]
     fingertips = wp.to_torch(env.scene[ee_frame_cfg.name].data.target_pos_w)[ee_frame_cfg.view_ids, 1:, :]
     left = fingertips[:, 0, :]
     right = fingertips[:, 1, :]
@@ -260,9 +252,7 @@ def cabinet_grasp_handle(
 ) -> ScatterResult:
     """Reward for closing fingers near the handle."""
     ee_pos = wp.to_torch(env.scene[ee_frame_cfg.name].data.target_pos_w)[ee_frame_cfg.view_ids, 0, :]
-    handle_pos = wp.to_torch(env.scene[cabinet_frame_cfg.name].data.target_pos_w)[
-        cabinet_frame_cfg.view_ids, 0, :
-    ]
+    handle_pos = wp.to_torch(env.scene[cabinet_frame_cfg.name].data.target_pos_w)[cabinet_frame_cfg.view_ids, 0, :]
     robot = env.scene[asset_cfg.name]
     joint_ids = asset_cfg.joint_ids
     joint_pos_g = wp.to_torch(robot.data.joint_pos)[asset_cfg.view_ids, :]
@@ -283,9 +273,7 @@ def cabinet_open_drawer_bonus(
     drawer_pos = wp.to_torch(cabinet.data.joint_pos)[cabinet_asset_cfg.view_ids, cabinet_asset_cfg.joint_ids].squeeze(
         -1
     )
-    handle_pos = wp.to_torch(env.scene[cabinet_frame_cfg.name].data.target_pos_w)[
-        cabinet_frame_cfg.view_ids, 0, :
-    ]
+    handle_pos = wp.to_torch(env.scene[cabinet_frame_cfg.name].data.target_pos_w)[cabinet_frame_cfg.view_ids, 0, :]
     fingertips = wp.to_torch(env.scene[ee_frame_cfg.name].data.target_pos_w)[ee_frame_cfg.view_ids, 1:, :]
     left = fingertips[:, 0, :]
     right = fingertips[:, 1, :]
@@ -305,9 +293,7 @@ def cabinet_multi_stage_open_drawer(
     drawer_pos = wp.to_torch(cabinet.data.joint_pos)[cabinet_asset_cfg.view_ids, cabinet_asset_cfg.joint_ids].squeeze(
         -1
     )
-    handle_pos = wp.to_torch(env.scene[cabinet_frame_cfg.name].data.target_pos_w)[
-        cabinet_frame_cfg.view_ids, 0, :
-    ]
+    handle_pos = wp.to_torch(env.scene[cabinet_frame_cfg.name].data.target_pos_w)[cabinet_frame_cfg.view_ids, 0, :]
     fingertips = wp.to_torch(env.scene[ee_frame_cfg.name].data.target_pos_w)[ee_frame_cfg.view_ids, 1:, :]
     left = fingertips[:, 0, :]
     right = fingertips[:, 1, :]
