@@ -53,7 +53,7 @@ from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from isaaclab_contrib.tasks.manipulation.multitask import mdp
-from isaaclab_contrib.tasks.manipulation.multitask.mdp.utils import PoseCommandRanges
+from isaaclab_contrib.tasks.manipulation.multitask.mdp.commands_cfg import PoseCommandRanges
 
 from isaaclab_assets.robots.franka import FRANKA_PANDA_HIGH_PD_CFG
 from isaaclab_assets.robots.openarm import OPENARM_UNI_HIGH_PD_CFG
@@ -255,6 +255,7 @@ class MultiRobotMultiTaskActionsCfg:
     """
 
     openarm_arm = mdp.ScatteredActionTermCfg(
+        dim=6,
         terms=[
             DifferentialInverseKinematicsActionCfg(
                 asset_name="openarm_robot",
@@ -263,27 +264,30 @@ class MultiRobotMultiTaskActionsCfg:
                 controller=_IK_CTRL,
                 scale=0.5,
             ),
-        ]
+        ],
     )
     franka_joints = mdp.ScatteredActionTermCfg(
+        dim=7,
         terms=[
             RelativeJointPositionActionCfg(
                 asset_name="franka_robot",
                 joint_names=["panda_joint.*"],
                 scale=0.1,
             ),
-        ]
+        ],
     )
     ur10_joints = mdp.ScatteredActionTermCfg(
+        dim=6,
         terms=[
             RelativeJointPositionActionCfg(
                 asset_name="ur10_robot",
                 joint_names=[".*"],
                 scale=0.1,
             ),
-        ]
+        ],
     )
     gripper = mdp.ScatteredActionTermCfg(
+        dim=1,
         terms=[
             BinaryJointPositionActionCfg(
                 asset_name="openarm_robot",
@@ -297,7 +301,7 @@ class MultiRobotMultiTaskActionsCfg:
                 open_command_expr={"panda_finger_.*": 0.04},
                 close_command_expr={"panda_finger_.*": 0.0},
             ),
-        ]
+        ],
     )
 
 
@@ -383,12 +387,12 @@ class MultiRobotMultiTaskObsCfg:
         )
 
         # ── franka_cabinet: drawer manipulation ───────────
-        cabinet_joint_pos = ObsTerm(
-            func=mdp.cabinet_joint_pos,
+        cabinet_joint_pos = mdp.MultiTaskObsTerm(
+            dim=1, func=mdp.cabinet_joint_pos,
             params={"cabinet_asset_cfg": SceneEntityCfg("cabinet", joint_names=["drawer_top_joint"], groups=["franka_cabinet"])},
         )
-        cabinet_joint_vel = ObsTerm(
-            func=mdp.cabinet_joint_vel,
+        cabinet_joint_vel = mdp.MultiTaskObsTerm(
+            dim=1, func=mdp.cabinet_joint_vel,
             params={"cabinet_asset_cfg": SceneEntityCfg("cabinet", joint_names=["drawer_top_joint"], groups=["franka_cabinet"])},
         )
         cabinet_handle_error = ObsTerm(
@@ -397,11 +401,11 @@ class MultiRobotMultiTaskObsCfg:
         )
 
         # ── openarm_lift + ur10_reach: pose tracking ──────
-        commands = ObsTerm(func=mdp.scatter_term, params={"terms": [
+        commands = ObsTerm(func=mdp.scatter_term, params={"output_dim": 7, "terms": [
             TermCfg(func=mdp.generated_commands, params={"asset_cfg": SceneEntityCfg("openarm_robot", groups=["openarm_lift"]), "command_name": "lift_goal"}),
             TermCfg(func=mdp.generated_commands, params={"asset_cfg": SceneEntityCfg("ur10_robot", groups=["ur10_reach"]), "command_name": "reach_target"}),
         ]})
-        ee_pos_error = ObsTerm(func=mdp.scatter_term, params={"terms": [
+        ee_pos_error = ObsTerm(func=mdp.scatter_term, params={"output_dim": 3, "terms": [
             TermCfg(func=mdp.ee_pos_error, params={"asset_cfg": SceneEntityCfg("openarm_robot", body_names=["openarm_hand"], groups=["openarm_lift"]), "command_name": "lift_goal"}),
             TermCfg(func=mdp.ee_pos_error, params={"asset_cfg": SceneEntityCfg("ur10_robot", body_names=["ee_link"], groups=["ur10_reach"]), "command_name": "reach_target"}),
         ]})
@@ -508,7 +512,7 @@ class MultiRobotMultiTaskRewardsCfg:
     action_rate = RewTerm(func=mdp.action_rate_l2, weight=-1e-4)
     joint_vel = RewTerm(
         func=mdp.scatter_term, weight=-1e-4,
-        params={"terms": [
+        params={"output_dim": 0, "terms": [
             TermCfg(
                 func=mdp.joint_vel_l2,
                 params={"asset_cfg": SceneEntityCfg("openarm_robot", joint_names=["openarm_joint.*", "openarm_finger_joint.*"], groups=["openarm_lift"])},
@@ -700,9 +704,20 @@ class MultiRobotMultiTaskEnvCfg(ManagerBasedRLEnvCfg):
 
 @configclass
 class MultiRobotMultiTaskEnvCfg_PLAY(MultiRobotMultiTaskEnvCfg):
-    """Play config with fewer environments and no observation corruption."""
+    """Play config that selectively disables task groups.
+
+    Disabled groups keep ``weight=0`` (preserving
+    :func:`~...mdp.obs.multi_task_onehot` dimensionality) but receive
+    zero environments and no spawned assets.  See :func:`mdp.apply_task_filter`
+    for the full disabling logic.
+    """
+
+    disabled_tasks: tuple[str, ...] = ()
+    """Clone-group names to disable.  Choices: ``"openarm_lift"``, ``"franka_cabinet"``, ``"ur10_reach"``.
+    Set to ``()`` to keep all tasks."""
 
     def __post_init__(self):
         super().__post_init__()
         self.scene.num_envs = 64
         self.observations.policy.enable_corruption = False
+        mdp.apply_task_filter(self, set(self.disabled_tasks))

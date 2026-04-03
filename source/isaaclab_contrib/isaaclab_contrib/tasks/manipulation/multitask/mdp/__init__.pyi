@@ -8,6 +8,7 @@ __all__ = [
     "ScatterResult",
     "scatterable",
     "scatter_term",
+    "apply_task_filter",
     # actions
     "GroupedActionTermCfg",
     "GroupedActionTerm",
@@ -26,6 +27,8 @@ __all__ = [
     "cabinet_joint_pos",
     "cabinet_joint_vel",
     "cabinet_rel_ee_drawer_distance",
+    "zero_obs",
+    "MultiTaskObsTerm",
     "multi_task_onehot",
     # rewards
     "joint_vel_l2",
@@ -77,6 +80,8 @@ from .obs import (
     joint_vel,
     multi_task_onehot,
     object_pos_in_robot_frame,
+    zero_obs,
+    MultiTaskObsTerm,
     object_target_pos_error,
 )
 from .rewards import (
@@ -100,7 +105,8 @@ from .actions import GroupedActionTerm, GroupedActionTermCfg
 from .commands import PoseCommand
 from .commands_cfg import PoseCommandCfg
 from .terminations import cabinet_drawer_opened, object_height_below_minimum
-from .utils import PoseCommandRanges, ScatterResult, scatterable, scatter_term
+from .commands_cfg import PoseCommandRanges
+from .utils import ScatterResult, scatterable, scatter_term, apply_task_filter
 
 from isaaclab.envs.mdp import (
     UniformPoseCommandCfg,

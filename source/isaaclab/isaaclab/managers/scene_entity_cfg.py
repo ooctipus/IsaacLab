@@ -169,6 +169,12 @@ class SceneEntityCfg:
 
         # check if the entity is valid
         if self.name not in scene.keys():
+            if self.groups is not None:
+                # Asset belongs to a weight=0 group that was not spawned; resolve to empty
+                # indices so @scatterable terms fast-path silently rather than crash.
+                self.env_ids = torch.tensor([], dtype=torch.long, device=scene.device)
+                self.view_ids = torch.tensor([], dtype=torch.long, device=scene.device)
+                return
             raise ValueError(f"The scene entity '{self.name}' does not exist. Available entities: {scene.keys()}.")
 
         # convert joint names to indices based on regex

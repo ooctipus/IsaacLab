@@ -50,7 +50,7 @@ from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from isaaclab_contrib.tasks.manipulation.multitask import mdp
-from isaaclab_contrib.tasks.manipulation.multitask.mdp.utils import PoseCommandRanges
+from isaaclab_contrib.tasks.manipulation.multitask.mdp.commands_cfg import PoseCommandRanges
 
 from isaaclab_assets.robots.franka import FRANKA_PANDA_HIGH_PD_CFG
 
@@ -318,7 +318,7 @@ class FrankaMultiTaskObservationsCfg:
         )
 
         # ── lift + reach: pose tracking ───────────────────
-        commands = ObsTerm(func=mdp.scatter_term, params={"terms": [
+        commands = ObsTerm(func=mdp.scatter_term, params={"output_dim": 7, "terms": [
             TermCfg(func=mdp.generated_commands, params={
                 "asset_cfg": SceneEntityCfg("robot", groups=["lift"]),
                 "command_name": "lift_goal",
@@ -610,9 +610,19 @@ class FrankaMultiTaskEnvCfg(ManagerBasedRLEnvCfg):
 
 @configclass
 class FrankaMultiTaskEnvCfg_PLAY(FrankaMultiTaskEnvCfg):
-    """Play config with fewer environments and no observation corruption."""
+    """Play config that selectively disables task groups.
+
+    Disabled groups keep ``weight=0`` (preserving observation dimensionality)
+    but receive zero environments and no spawned assets.
+    See :func:`mdp.apply_task_filter` for the full disabling logic.
+    """
+
+    disabled_tasks: tuple[str, ...] = ()
+    """Clone-group names to disable.  Choices: ``"lift"``, ``"cabinet"``, ``"reach"``.
+    Set to ``()`` to keep all tasks active."""
 
     def __post_init__(self):
         super().__post_init__()
         self.scene.num_envs = 64
         self.observations.policy.enable_corruption = False
+        mdp.apply_task_filter(self, set(self.disabled_tasks))

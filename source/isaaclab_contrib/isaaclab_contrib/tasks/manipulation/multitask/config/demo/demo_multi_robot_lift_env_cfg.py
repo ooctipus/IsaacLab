@@ -50,7 +50,7 @@ from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from isaaclab_contrib.tasks.manipulation.multitask import mdp
-from isaaclab_contrib.tasks.manipulation.multitask.mdp.utils import PoseCommandRanges
+from isaaclab_contrib.tasks.manipulation.multitask.mdp.commands_cfg import PoseCommandRanges
 
 from isaaclab_assets.robots.franka import FRANKA_PANDA_HIGH_PD_CFG
 from isaaclab_assets.robots.openarm import OPENARM_UNI_HIGH_PD_CFG
@@ -268,7 +268,7 @@ class MultiRobotLiftObsCfg:
             TermCfg(func=mdp.object_pos_in_robot_frame, params={"robot_cfg": SceneEntityCfg("openarm_robot", groups=["openarm_lift"]), "object_cfg": SceneEntityCfg("lift_object", groups=["openarm_lift"])}),
             TermCfg(func=mdp.object_pos_in_robot_frame, params={"robot_cfg": SceneEntityCfg("franka_robot", groups=["franka_lift"]), "object_cfg": SceneEntityCfg("lift_object", groups=["franka_lift"])}),
         ]})
-        target_object_pos = ObsTerm(func=mdp.scatter_term, params={"terms": [
+        target_object_pos = ObsTerm(func=mdp.scatter_term, params={"output_dim": 7, "terms": [
             TermCfg(func=mdp.generated_commands, params={"asset_cfg": SceneEntityCfg("openarm_robot", groups=["openarm_lift"]), "command_name": "openarm_lift_goal"}),
             TermCfg(func=mdp.generated_commands, params={"asset_cfg": SceneEntityCfg("franka_robot", groups=["franka_lift"]), "command_name": "franka_lift_goal"}),
         ]})
@@ -478,7 +478,19 @@ class MultiRobotLiftEnvCfg(ManagerBasedRLEnvCfg):
 
 @configclass
 class MultiRobotLiftEnvCfg_PLAY(MultiRobotLiftEnvCfg):
+    """Play config that selectively disables task groups.
+
+    Disabled groups keep ``weight=0`` (preserving observation dimensionality)
+    but receive zero environments and no spawned assets.
+    See :func:`mdp.apply_task_filter` for the full disabling logic.
+    """
+
+    disabled_tasks: tuple[str, ...] = ()
+    """Clone-group names to disable.  Choices: ``"openarm_lift"``, ``"franka_lift"``.
+    Set to ``()`` to keep all tasks active."""
+
     def __post_init__(self):
         super().__post_init__()
         self.scene.num_envs = 64
         self.observations.policy.enable_corruption = False
+        mdp.apply_task_filter(self, set(self.disabled_tasks))

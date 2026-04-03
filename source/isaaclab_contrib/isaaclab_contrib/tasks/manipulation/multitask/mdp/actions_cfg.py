@@ -34,3 +34,12 @@ class ScatteredActionTermCfg(ActionTermCfg):
 
     terms: list[ActionTermCfg] = MISSING
     """Action term configs that share a dimension.  Each term carries its own ``asset_name``."""
+
+    dim: int | None = None
+    """Fallback action dimension when all sub-terms are disabled.
+
+    When set and ``terms`` is empty (or every sub-term's asset is
+    unregistered), the term still reports this many action dimensions
+    but acts as a no-op.  Leave ``None`` to require at least one active
+    sub-term.
+    """

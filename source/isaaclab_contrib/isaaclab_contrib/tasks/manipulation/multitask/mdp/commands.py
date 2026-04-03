@@ -40,7 +40,25 @@ class PoseCommand(CommandTerm):
     def __init__(self, cfg: PoseCommandCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
 
+        # Allocate command buffers unconditionally — the command tensor must
+        # always exist so that callers (e.g. obs terms) can read from it safely.
+        self.pose_command_b = torch.zeros(self.num_envs, 7, device=self.device)
+        self.pose_command_b[:, 3] = 1.0
+        self.pose_command_w = torch.zeros_like(self.pose_command_b)
+        self._ee_pose_w = torch.zeros(self.num_envs, 7, device=self.device)
+        self._ee_pose_w[:, 3] = 1.0
+        self.metrics["position_error"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["orientation_error"] = torch.zeros(self.num_envs, device=self.device)
+
         cfg.asset_cfg.resolve(env.scene)
+
+        # If the group was disabled (weight=0), SceneEntityCfg.resolve() returns an
+        # empty env_ids tensor instead of raising.  Enter no-op mode: skip all asset
+        # access so this term acts as an inert zero-command buffer.
+        self._disabled = isinstance(cfg.asset_cfg.env_ids, torch.Tensor) and cfg.asset_cfg.env_ids.numel() == 0
+        if self._disabled:
+            return
+
         self.robot = env.scene[cfg.asset_cfg.name]
         self.body_idx = cfg.asset_cfg.body_ids[0]
         self._env_ids = cfg.asset_cfg.env_ids
@@ -49,16 +67,6 @@ class PoseCommand(CommandTerm):
         layout = env.scene.layout
         env_to_view_map = layout.get(cfg.asset_cfg.groups, asset=cfg.asset_cfg.name)
         self._group_layout = env_to_view_map.layout
-
-        self.pose_command_b = torch.zeros(self.num_envs, 7, device=self.device)
-        self.pose_command_b[:, 3] = 1.0
-        self.pose_command_w = torch.zeros_like(self.pose_command_b)
-
-        self._ee_pose_w = torch.zeros(self.num_envs, 7, device=self.device)
-        self._ee_pose_w[:, 3] = 1.0
-
-        self.metrics["position_error"] = torch.zeros(self.num_envs, device=self.device)
-        self.metrics["orientation_error"] = torch.zeros(self.num_envs, device=self.device)
 
     def __str__(self) -> str:
         msg = "PoseCommand:\n"
@@ -73,16 +81,16 @@ class PoseCommand(CommandTerm):
         return self.pose_command_b
 
     def _update_metrics(self):
+        if self._disabled:
+            return
         root_pos = wp.to_torch(self.robot.data.root_pos_w)[self._view_ids]
         root_quat = wp.to_torch(self.robot.data.root_quat_w)[self._view_ids]
 
-        self.pose_command_w[self._env_ids, :3], self.pose_command_w[self._env_ids, 3:] = (
-            combine_frame_transforms(
-                root_pos,
-                root_quat,
-                self.pose_command_b[self._env_ids, :3],
-                self.pose_command_b[self._env_ids, 3:],
-            )
+        self.pose_command_w[self._env_ids, :3], self.pose_command_w[self._env_ids, 3:] = combine_frame_transforms(
+            root_pos,
+            root_quat,
+            self.pose_command_b[self._env_ids, :3],
+            self.pose_command_b[self._env_ids, 3:],
         )
         ee_pos = wp.to_torch(self.robot.data.body_pos_w)[self._view_ids, self.body_idx]
         ee_quat = wp.to_torch(self.robot.data.body_quat_w)[self._view_ids, self.body_idx]
@@ -98,6 +106,8 @@ class PoseCommand(CommandTerm):
         self.metrics["orientation_error"][self._env_ids] = torch.linalg.norm(rot_error, dim=-1)
 
     def _resample_command(self, env_ids: torch.Tensor):
+        if self._disabled:
+            return
         _, matched = filter_to_group(self._group_layout, env_ids)
         if matched.numel() == 0:
             return
@@ -141,6 +151,8 @@ class PoseCommand(CommandTerm):
                 self.current_pose_visualizer.set_visibility(False)
 
     def _debug_vis_callback(self, event):
+        if self._disabled:
+            return
         if not self.robot.is_initialized:
             return
         self.goal_pose_visualizer.visualize(self.pose_command_w[:, :3], self.pose_command_w[:, 3:])

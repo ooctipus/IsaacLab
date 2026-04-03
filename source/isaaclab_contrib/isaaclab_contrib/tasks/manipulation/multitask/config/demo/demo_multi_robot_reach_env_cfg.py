@@ -40,7 +40,7 @@ from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from isaaclab_contrib.tasks.manipulation.multitask import mdp
-from isaaclab_contrib.tasks.manipulation.multitask.mdp.utils import PoseCommandRanges
+from isaaclab_contrib.tasks.manipulation.multitask.mdp.commands_cfg import PoseCommandRanges
 
 from isaaclab_tasks.utils import PresetCfg
 
@@ -203,7 +203,7 @@ class MultiRobotReachObsCfg:
             TermCfg(func=mdp.ee_pose, params={"asset_cfg": SceneEntityCfg("franka_robot", body_names=["panda_hand"], groups=["franka_reach"])}),
             TermCfg(func=mdp.ee_pose, params={"asset_cfg": SceneEntityCfg("ur10_robot", body_names=["ee_link"], groups=["ur10_reach"])}),
         ]})
-        ee_command = ObsTerm(func=mdp.scatter_term, params={"terms": [
+        ee_command = ObsTerm(func=mdp.scatter_term, params={"output_dim": 7, "terms": [
             TermCfg(func=mdp.generated_commands, params={"asset_cfg": SceneEntityCfg("openarm_robot", groups=["openarm_reach"]), "command_name": "openarm_ee_pose"}),
             TermCfg(func=mdp.generated_commands, params={"asset_cfg": SceneEntityCfg("franka_robot", groups=["franka_reach"]), "command_name": "franka_ee_pose"}),
             TermCfg(func=mdp.generated_commands, params={"asset_cfg": SceneEntityCfg("ur10_robot", groups=["ur10_reach"]), "command_name": "ur10_ee_pose"}),
@@ -342,7 +342,19 @@ class MultiRobotReachEnvCfg(ManagerBasedRLEnvCfg):
 
 @configclass
 class MultiRobotReachEnvCfg_PLAY(MultiRobotReachEnvCfg):
+    """Play config that selectively disables task groups.
+
+    Disabled groups keep ``weight=0`` (preserving observation dimensionality)
+    but receive zero environments and no spawned assets.
+    See :func:`mdp.apply_task_filter` for the full disabling logic.
+    """
+
+    disabled_tasks: tuple[str, ...] = ()
+    """Clone-group names to disable.  Choices: ``"openarm_reach"``, ``"franka_reach"``, ``"ur10_reach"``.
+    Set to ``()`` to keep all tasks active."""
+
     def __post_init__(self):
         super().__post_init__()
         self.scene.num_envs = 64
         self.observations.policy.enable_corruption = False
+        mdp.apply_task_filter(self, set(self.disabled_tasks))

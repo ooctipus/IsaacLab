@@ -45,16 +45,27 @@ class ScatteredActionTerm(ActionTerm):
         layout = env.scene.layout
         self._sub_terms: list[tuple[EnvToViewMap, ActionTerm]] = []
         for term_cfg in cfg.terms:
-            term = term_cfg.class_type(term_cfg, env)
             asset_groups = layout.assets.get(term_cfg.asset_name)
             if not asset_groups:
-                raise ValueError(f"Asset '{term_cfg.asset_name}' is not registered in any group.")
-            self._sub_terms.append((layout.get(list(asset_groups), asset=term_cfg.asset_name), term))
+                continue
+            env_to_view_map = layout.get(list(asset_groups), asset=term_cfg.asset_name)
+            # Skip disabled groups (weight=0): asset is registered in layout but has no active envs.
+            # env_ids may be a slice (contiguous active groups) or Tensor; only empty Tensor = disabled.
+            if isinstance(env_to_view_map.env_ids, torch.Tensor) and env_to_view_map.env_ids.numel() == 0:
+                continue
+            term = term_cfg.class_type(term_cfg, env)
+            self._sub_terms.append((env_to_view_map, term))
 
         dims = {t.action_dim for _, t in self._sub_terms}
-        if len(dims) != 1:
+        if len(dims) == 0:
+            if cfg.dim is not None:
+                self._child_action_dim = cfg.dim
+            else:
+                raise ValueError("No active sub-terms and no fallback 'dim' on cfg.")
+        elif len(dims) != 1:
             raise ValueError(f"All terms must have the same action_dim. Got: {sorted(dims)}")
-        self._child_action_dim = next(iter(dims))
+        else:
+            self._child_action_dim = next(iter(dims))
 
         self._raw_buf = torch.zeros(env.num_envs, self._child_action_dim, device=self.device)
         self._proc_buf = torch.zeros_like(self._raw_buf)

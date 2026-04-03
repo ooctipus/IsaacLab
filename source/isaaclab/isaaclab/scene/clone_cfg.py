@@ -120,3 +120,25 @@ class CloneCfg:
 
     clone_strategy: callable = random_strategy
     """Strategy for env-to-group assignment. Default is :func:`random` (shuffled)."""
+
+    def disabled_asset_names(self, all_asset_names: list[str]) -> set[str]:
+        """Return asset names that belong exclusively to weight-zero groups.
+
+        Assets shared with at least one enabled group (weight > 0) are not
+        returned even if they also appear in a disabled group.
+
+        Args:
+            all_asset_names: All asset names defined in the scene config.
+
+        Returns:
+            Names that should not be spawned because every group that claims
+            them has ``weight == 0``.
+        """
+        all_claimed: set[str] = set()
+        enabled_assets: set[str] = set()
+        for group in self.clone_groups.values():
+            assets = set(group.resolve_assets(all_asset_names))
+            all_claimed |= assets
+            if group.weight > 0:
+                enabled_assets |= assets
+        return all_claimed - enabled_assets

@@ -17,6 +17,7 @@ own full-env buffer.
 
 from __future__ import annotations
 
+import functools
 from typing import TYPE_CHECKING
 
 import torch
@@ -24,15 +25,17 @@ import warp as wp
 
 import isaaclab.utils.math as math_utils
 from isaaclab.managers import ManagerTermBase
+from isaaclab.managers import ObservationTermCfg as ObsTerm
+from isaaclab.utils import configclass
 
-from .utils import ScatterResult, scatterable
+from .utils import ScatterResult, _any_group_disabled, scatterable
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
     from isaaclab.managers import ManagerTermBaseCfg, SceneEntityCfg
 
 
-@scatterable
+@scatterable(output_dim=7)
 def ee_pose(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> ScatterResult:
     """EE pose in robot root frame [m, -]. Returns shape ``(num_envs, 7)``."""
     robot = env.scene[asset_cfg.name]
@@ -45,7 +48,7 @@ def ee_pose(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> ScatterResult:
     return asset_cfg.env_ids, torch.cat([pos_b, quat_b], dim=-1)
 
 
-@scatterable
+@scatterable(output_dim=3)
 def ee_pos_error(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg, command_name: str = "ee_pose") -> ScatterResult:
     """EE position error ``(target - current)`` in root frame [m]. Returns shape ``(num_envs, 3)``."""
     robot = env.scene[asset_cfg.name]
@@ -58,7 +61,7 @@ def ee_pos_error(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg, command_name
     return asset_cfg.env_ids, cmd_pos - cur_b
 
 
-@scatterable
+@scatterable(output_dim=3)
 def object_pos_in_robot_frame(
     env: ManagerBasedRLEnv, robot_cfg: SceneEntityCfg, object_cfg: SceneEntityCfg
 ) -> ScatterResult:
@@ -72,7 +75,7 @@ def object_pos_in_robot_frame(
     return robot_cfg.env_ids, obj_b
 
 
-@scatterable
+@scatterable(output_dim=3)
 def ee_object_pos_error(
     env: ManagerBasedRLEnv, robot_cfg: SceneEntityCfg, object_cfg: SceneEntityCfg, ee_frame_cfg: SceneEntityCfg
 ) -> ScatterResult:
@@ -89,7 +92,7 @@ def ee_object_pos_error(
     return robot_cfg.env_ids, obj_b - ee_b
 
 
-@scatterable
+@scatterable(output_dim=3)
 def object_target_pos_error(
     env: ManagerBasedRLEnv, robot_cfg: SceneEntityCfg, object_cfg: SceneEntityCfg, command_name: str = "ee_pose"
 ) -> ScatterResult:
@@ -157,16 +160,70 @@ def cabinet_joint_vel(env: ManagerBasedRLEnv, cabinet_asset_cfg: SceneEntityCfg)
     return cabinet_asset_cfg.env_ids, vel_data
 
 
-@scatterable
+@scatterable(output_dim=3)
 def cabinet_rel_ee_drawer_distance(
     env: ManagerBasedRLEnv, ee_frame_cfg: SceneEntityCfg, cabinet_frame_cfg: SceneEntityCfg
 ) -> ScatterResult:
     """Drawer-handle minus EE TCP position [m]. Returns shape ``(num_envs, 3)``."""
     ee_pos = wp.to_torch(env.scene[ee_frame_cfg.name].data.target_pos_w)[ee_frame_cfg.view_ids, 0, :]
-    handle_pos = wp.to_torch(env.scene[cabinet_frame_cfg.name].data.target_pos_w)[
-        cabinet_frame_cfg.view_ids, 0, :
-    ]
+    handle_pos = wp.to_torch(env.scene[cabinet_frame_cfg.name].data.target_pos_w)[cabinet_frame_cfg.view_ids, 0, :]
     return ee_frame_cfg.env_ids, handle_pos - ee_pos
+
+
+def zero_obs(env: ManagerBasedRLEnv, dim: int = 1) -> torch.Tensor:
+    """Zero-filled observation placeholder [--]. Returns shape ``(num_envs, dim)``."""
+    return torch.zeros(env.num_envs, dim, device=env.device)
+
+
+def _with_fallback_dim(func, dim: int):
+    """Wrap a :func:`~.utils.scatterable` function with an explicit disabled-group shape.
+
+    When any :class:`~isaaclab.managers.SceneEntityCfg` kwarg has an empty
+    ``env_ids`` tensor (i.e. the group is disabled), the wrapper returns a
+    ``(num_envs, dim)`` zero buffer without calling *func*.  This gives
+    variable-dim scatterable functions a known output shape even when their
+    group is weight-zero, without needing :func:`apply_task_filter` to replace
+    the term at config time.
+
+    Args:
+        func: A ``@scatterable``-decorated callable.
+        dim: The trailing output dimension to use for the zero buffer.
+
+    Returns:
+        A wrapped callable with ``output_dim`` set to *dim*.
+    """
+
+    @functools.wraps(func)
+    def wrapper(env, *args, _out=None, **kwargs):
+        if _any_group_disabled(*args, **kwargs):
+            if _out is not None:
+                return _out
+            if not hasattr(wrapper, "_buf"):
+                wrapper._buf = torch.zeros(env.num_envs, dim, device=env.device)
+            wrapper._buf.zero_()
+            return wrapper._buf
+        return func(env, *args, _out=_out, **kwargs)
+
+    wrapper.output_dim = dim
+    return wrapper
+
+
+@configclass
+class MultiTaskObsTerm(ObsTerm):
+    """ObsTerm that declares its output dimension for variable-dim group obs.
+
+    Use this instead of plain :class:`ObsTerm` for group-specific observation
+    terms whose output size depends on asset configuration (e.g. joint count).
+    Setting ``dim`` causes :meth:`__post_init__` to wrap :attr:`func` so that
+    a ``(num_envs, dim)`` zero buffer is returned automatically when the group
+    is disabled — no call to :func:`apply_task_filter` needed.
+    """
+
+    dim: int | None = None
+
+    def __post_init__(self):
+        if self.dim is not None and callable(self.func):
+            self.func = _with_fallback_dim(self.func, self.dim)
 
 
 class multi_task_onehot(ManagerTermBase):

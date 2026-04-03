@@ -11,7 +11,23 @@ from isaaclab.managers import CommandTermCfg, SceneEntityCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.configclass import MISSING
 
-from .utils import PoseCommandRanges
+
+@configclass
+class PoseCommandRanges:
+    """Uniform sampling ranges for a pose command [m, rad]."""
+
+    pos_x: tuple[float, float] = (0.0, 0.0)
+    """Min/max for X position [m]."""
+    pos_y: tuple[float, float] = (0.0, 0.0)
+    """Min/max for Y position [m]."""
+    pos_z: tuple[float, float] = (0.0, 0.0)
+    """Min/max for Z position [m]."""
+    roll: tuple[float, float] = (0.0, 0.0)
+    """Min/max for roll angle [rad]."""
+    pitch: tuple[float, float] = (0.0, 0.0)
+    """Min/max for pitch angle [rad]."""
+    yaw: tuple[float, float] = (0.0, 0.0)
+    """Min/max for yaw angle [rad]."""
 
 
 @configclass

@@ -736,11 +736,25 @@ class InteractiveScene:
             cfg.spawn.spawn_path = spawn_path_pattern
             cfg.spawn.spawn_idx_offset = register_fn(name, dest_path, num_variants)
 
+        # Skip assets claimed exclusively by weight=0 groups (disabled tasks).
+        # This check happens here, not in InteractiveSceneCfg.__post_init__, because
+        # apply_task_filter() sets weight=0 *after* the scene config is constructed.
+        all_cfg_names = [
+            k
+            for k, v in self.cfg.__dict__.items()
+            if k not in InteractiveSceneCfg.__dataclass_fields__ and v is not None
+        ]
+        _skip: set[str] = (
+            self.cfg.clone_cfg.disabled_asset_names(all_cfg_names)
+            if getattr(self.cfg, "clone_cfg", None) is not None
+            else set()
+        )
+
         # All entities are processed uniformly - sensors and assets both get flat prototype slots
         all_items = [
             (k, v)
             for k, v in self.cfg.__dict__.items()
-            if k not in InteractiveSceneCfg.__dataclass_fields__ and v is not None
+            if k not in InteractiveSceneCfg.__dataclass_fields__ and v is not None and k not in _skip
         ]
 
         for asset_name, asset_cfg in all_items:
@@ -840,6 +854,7 @@ class InteractiveScene:
         )
         if self.cfg.clone_cfg is not None:
             self._layout.apply_assignment(group_assignment, group_names, group_assets)
+
             # Sensors have no spawn so they are absent from ClonePlanBuilder.
             # Re-resolve with the full entity list and register any sensors that
             # belong to a clone group so EnvLayout._compute_read returns correct indices.
@@ -847,4 +862,15 @@ class InteractiveScene:
             for group_name, group_desc in self.cfg.clone_cfg.clone_groups.items():
                 for asset_name in group_desc.resolve_assets(all_entity_names):
                     if asset_name in self._sensors:
+                        self._layout.register_asset(asset_name, group_name)
+
+            # Register disabled assets (weight=0 groups) under their group in the layout.
+            # Without this, EnvLayout.filter_reset_ids treats them as homogeneous assets
+            # (not in any group → returns all candidate env_ids), causing event functions
+            # to attempt env.scene[asset_name] on an asset that was never spawned.
+            # With this registration, filter_reset_ids finds asset_groups non-empty, but
+            # the weight=0 group has count=0, so the intersection is always empty.
+            for asset_name in _skip:
+                for group_name, group_desc in self.cfg.clone_cfg.clone_groups.items():
+                    if group_desc.weight == 0 and asset_name in group_desc.resolve_assets(all_cfg_names):
                         self._layout.register_asset(asset_name, group_name)

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import torch
 import warp as wp
 
 from .utils import ScatterResult, scatterable
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
     from isaaclab.managers import SceneEntityCfg
 
 
-@scatterable
+@scatterable(output_dim=0, dtype=torch.bool)
 def object_height_below_minimum(
     env: ManagerBasedRLEnv,
     minimum_height: float = -0.05,
@@ -35,7 +36,7 @@ def object_height_below_minimum(
     return object_cfg.env_ids, (height < minimum_height)
 
 
-@scatterable
+@scatterable(output_dim=0, dtype=torch.bool)
 def cabinet_drawer_opened(
     env: ManagerBasedRLEnv,
     threshold: float = 0.39,
