@@ -151,18 +151,21 @@ class FactoryEventCfg:
         },
     )
 
-    reset_strategies = EventTerm(
-        func=mdp.TermChoice,
-        mode="reset",
-        params={
-            "terms" : {
-                "grasp_asset_in_air": staging_cfg.GRIPPER_GRASP_ASSET_IN_AIR,
-                "start_fully_assembled": staging_cfg.FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
-                "start_assembled": staging_cfg.ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
-                "start_grasped_then_assembled": staging_cfg.GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
-            },
-            "sampling_strategy": "failure_rate"
-        }
+    reset_strategies = preset(
+        default=EventTerm(
+            func=mdp.TermChoice,
+            mode="reset",
+            params={
+                "terms" : {
+                    "grasp_asset_in_air": staging_cfg.GRIPPER_GRASP_ASSET_IN_AIR,
+                    "start_fully_assembled": staging_cfg.FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
+                    "start_assembled": staging_cfg.ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
+                    "start_grasped_then_assembled": staging_cfg.GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
+                },
+                "sampling_strategy": "failure_rate"
+            }
+        ),
+        eval=EventTerm(func=mdp.TermChoice, mode="reset", params={"terms" : {"grasp_asset_in_air": staging_cfg.GRIPPER_GRASP_ASSET_IN_AIR}})
     )
 
     variable_gravity = preset(
@@ -271,7 +274,7 @@ class FactoryTerminationsCfg(PresetCfg):
 
     timeout_terminate: TimeoutTerminationsCfg = TimeoutTerminationsCfg()
     success_terminate: SuccessTerminationsCfg = SuccessTerminationsCfg()
-    default: TimeoutTerminationsCfg = timeout_terminate
+    default: SuccessTerminationsCfg = success_terminate
 
 
 @configclass
