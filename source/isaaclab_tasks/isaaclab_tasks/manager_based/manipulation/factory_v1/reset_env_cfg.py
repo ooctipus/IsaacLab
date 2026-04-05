@@ -6,6 +6,7 @@
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
 from . import mdp
+from .assembly_keypoints import NIST_BOARD_CFG
 from .factory_presets import (
     FactoryAssemblyProfileCfg,
     EndEffectorBodyCfg,
@@ -17,8 +18,10 @@ from .factory_presets import (
     HeldAssetGraspDiameterCfg,
     HeldAssetGraspMiddleCfg,
     HeldAssetGraspPointCfg,
+    FixedAssetMapCfg,
     IKJointNamesCfg,
 )
+from isaaclab_tasks.utils import preset
 
 
 GRIPPER_GRASP_ASSET_IN_AIR = EventTerm(
@@ -198,4 +201,66 @@ GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER = EventTerm(
             ),
         }
     }
+)
+
+
+SCENE_RESET = EventTerm(
+    func=mdp.ChainedResetTerms,
+    mode="reset",
+    params={
+        "terms" : {
+            "reset_board" : EventTerm(
+                func=mdp.reset_root_state_uniform_on_offset,
+                mode="reset",
+                params={
+                    "offset": NIST_BOARD_CFG.nist_board_center,
+                    "pose_range": {"x": (-0.00, 0.00), "y": (-0.05, 0.05), "yaw": (-3.14, 3.14)},
+                    "velocity_range": {},
+                    "asset_cfg": SceneEntityCfg("nistboard"),
+                },
+            ),
+            "reset_fixed_asset" : EventTerm(
+                func=mdp.reset_fixed_assets,
+                mode="reset",
+                params={
+                    "asset_map": FixedAssetMapCfg(),
+                },
+            ),
+            "reset_strategies": preset(
+                default=EventTerm(
+                    func=mdp.TermChoice,
+                    mode="reset",
+                    params={"terms" : {
+                        "grasp_asset_in_air": GRIPPER_GRASP_ASSET_IN_AIR,
+                        "start_fully_assembled": FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
+                        "start_assembled": ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
+                        "start_grasped_then_assembled": GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
+                    }}
+                ),
+                eval=EventTerm(func=mdp.TermChoice, mode="reset", params={
+                    "terms" : {"grasp_asset_in_air": GRIPPER_GRASP_ASSET_IN_AIR}
+                })
+            )
+        }
+    }
+)
+
+
+RESET_SCENE_EVENT = EventTerm(
+    func=mdp.reset_accumulator,
+    mode="reset",
+    params={
+        "reset_assets": ["nistboard", "fixed_asset", "held_asset", "robot"],
+        "acceptance_conditions": {
+            "object_collision_free": mdp.CollisionAnalyzerCfg(
+                num_points=32,
+                max_dist=0.5,
+                asset_cfg=SceneEntityCfg("held_asset"),
+                obstacle_cfgs=[SceneEntityCfg("fixed_asset"), SceneEntityCfg("robot")],
+            ),
+        },
+        "reset_term": SCENE_RESET,
+        "sampling_strategy": "failure_rate",
+        "report": True
+    },
 )

@@ -17,12 +17,10 @@ from isaaclab.utils import configclass
 from isaaclab_physx.physics import PhysxCfg
 from isaaclab_tasks.utils import PresetCfg, preset
 from . import mdp
-from .assembly_keypoints import NIST_BOARD_CFG
-from . import reset_env_cfg as staging_cfg
+from .reset_env_cfg import RESET_SCENE_EVENT
 from .factory_presets import (
     FactoryAssemblyProfileCfg,
     EndEffectorBodyCfg,
-    FixedAssetMapCfg,
     FixedAssetTipCfg,
     HeldAssetAlignOffsetCfg,
     HeldAssetTipCfg,
@@ -129,44 +127,7 @@ class FactoryEventCfg:
         },
     )
 
-    # mode: reset
-    reset_env = EventTerm(func=mdp.reset_scene_to_default, mode="reset")
-
-    reset_board = EventTerm(
-        func=mdp.reset_root_state_uniform_on_offset,
-        mode="reset",
-        params={
-            "offset": NIST_BOARD_CFG.nist_board_center,
-            "pose_range": {"x": (-0.00, 0.00), "y": (-0.05, 0.05), "yaw": (-3.14, 3.14)},
-            "velocity_range": {},
-            "asset_cfg": SceneEntityCfg("nistboard"),
-        },
-    )
-
-    reset_fixed_asset = EventTerm(
-        func=mdp.reset_fixed_assets,
-        mode="reset",
-        params={
-            "asset_map": FixedAssetMapCfg(),
-        },
-    )
-
-    reset_strategies = preset(
-        default=EventTerm(
-            func=mdp.TermChoice,
-            mode="reset",
-            params={
-                "terms" : {
-                    "grasp_asset_in_air": staging_cfg.GRIPPER_GRASP_ASSET_IN_AIR,
-                    "start_fully_assembled": staging_cfg.FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
-                    "start_assembled": staging_cfg.ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
-                    "start_grasped_then_assembled": staging_cfg.GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
-                },
-                "sampling_strategy": "failure_rate"
-            }
-        ),
-        eval=EventTerm(func=mdp.TermChoice, mode="reset", params={"terms" : {"grasp_asset_in_air": staging_cfg.GRIPPER_GRASP_ASSET_IN_AIR}})
-    )
+    reset_strategies = RESET_SCENE_EVENT
 
     variable_gravity = preset(
         default=EventTerm(

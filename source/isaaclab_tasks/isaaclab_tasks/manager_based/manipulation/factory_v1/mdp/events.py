@@ -18,6 +18,7 @@ from isaaclab.utils import math as math_utils
 from ..assembly_keypoints import NIST_BOARD_CFG
 from ..utils import AssemblyProfile, AssemblyProfileCfg
 from .success_monitor_cfg import SuccessMonitorCfg
+from . import utils as factory_utils
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject
@@ -245,18 +246,106 @@ def reset_root_state_uniform_on_offset(
     asset.write_root_velocity_to_sim(velocities, env_ids=env_ids)
 
 
+
+class reset_accumulator(ManagerTermBase):
+    def __init__(self, cfg, env):
+        super().__init__(cfg, env)
+        self.acceptance_conditions = cfg.params.get("acceptance_conditions")
+        for key, val in self.acceptance_conditions.items():
+            if hasattr(val, "class_type"):
+                self.acceptance_conditions[key] = val.class_type(val, env)
+
+        asset_keys = cfg.params.get("reset_assets")
+        total_state_dim = factory_utils.get_reset_state(
+            self._env, torch.tensor([0], device=env.device), asset_keys
+        ).shape[-1]
+        self.max_size = 32
+        self.valid_tensor = torch.zeros((env.num_envs, self.max_size, total_state_dim), device=env.device)
+        self.valid_state_tensor_size = torch.zeros((env.num_envs,), device=env.device, dtype=torch.int)
+        self.valid_ptr = torch.zeros((env.num_envs,), device=env.device, dtype=torch.int)
+        self.sampled_slots = torch.zeros((env.num_envs,), device=env.device, dtype=torch.int)
+        self.precollecting_phase = True
+
+        success_monitor_cfg = SuccessMonitorCfg(
+            monitored_history_len=100,
+            num_monitored_data=self.max_size,
+            device=env.device,
+        )
+        self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
+
+
+    def _accumulate(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor, reset_term: EventTermCfg, reset_assets: list[str]):
+        """Run a single reset attempt and store valid states in the buffer."""
+        reset_term.func(env, env_ids, **reset_term.params)
+        valid_mask = torch.ones(len(env_ids), dtype=torch.bool, device=env.device)
+        for _, val in self.acceptance_conditions.items():
+            valid_mask &= val(env, env_ids)
+
+        valid_env_ids = env_ids[valid_mask]
+        if valid_env_ids.numel() > 0:
+            states = factory_utils.get_reset_state(self._env, valid_env_ids, reset_assets)
+            idx = self.valid_ptr[valid_env_ids]
+            self.valid_tensor[valid_env_ids, idx] = states
+            self.valid_ptr[valid_env_ids] = (idx + 1) % self.max_size
+            self.valid_state_tensor_size[valid_env_ids] = torch.clamp(
+                self.valid_state_tensor_size[valid_env_ids] + 1, max=self.max_size
+            )
+        return env_ids[~valid_mask]
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        env_ids: torch.Tensor,
+        reset_term: EventTermCfg,
+        reset_assets: list[str],
+        acceptance_conditions: dict,
+        sampling_strategy: Literal["uniform", "failure_rate"] = "uniform",
+        keep_accumulating: bool = False,
+        report: bool = False,
+    ):
+        if self.precollecting_phase:
+            while (self.valid_state_tensor_size < self.max_size).any():
+                unfilled = torch.arange(env.num_envs, device=env.device)[self.valid_state_tensor_size < self.max_size]
+                self._accumulate(env, unfilled, reset_term, reset_assets)
+            self.precollecting_phase = False
+
+        success = env.termination_manager.get_term_cfg("progress_context").func.is_success
+        self.success_monitor.success_update(self.sampled_slots[env_ids], success[env_ids].float())
+        if report:
+            log = {f"Metrics/SuccessRate": self.success_monitor.get_success_rate().mean().item()}
+
+        if keep_accumulating:
+            env_ids = self._accumulate(env, env_ids, reset_term, reset_assets)
+
+        if env_ids.numel() > 0:
+            if sampling_strategy == "uniform":
+                slot_idx = torch.randint(0, self.max_size, (len(env_ids),), device=env.device, dtype=self.sampled_slots.dtype)
+            else:
+                slot_idx = self.success_monitor.sample_by_target_rate(env_ids, target=0.5, kappa=1)
+            self.sampled_slots[env_ids] = slot_idx.to(self.sampled_slots.dtype)
+            sampled_states = self.valid_tensor[env_ids, slot_idx]
+            factory_utils.set_reset_state(self._env, sampled_states, env_ids, reset_assets)
+
+        if report:
+            if "log" not in env.extras:
+                env.extras["log"] = {}
+            env.extras["log"].update(log)  # type: ignore
+
 class TermChoice(ManagerTermBase):
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
         self.term_partitions: dict[str, EventTermCfg] = cfg.params["terms"]  # type: ignore
         self.num_partitions = len(self.term_partitions)
         self.term_samples = torch.zeros((env.num_envs,), dtype=torch.int, device=env.device)
-        success_monitor_cfg = SuccessMonitorCfg(
-            monitored_history_len=100,
-            num_monitored_data=self.num_partitions,
-            device=env.device,
-        )
-        self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
+        if cfg.params.get("report", False) or cfg.params.get("sampling_strategy", "uniform") == "failure_rate":
+            success_monitor_cfg = SuccessMonitorCfg(
+                monitored_history_len=100,
+                num_monitored_data=self.num_partitions,
+                device=env.device,
+            )
+            self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
+        else:
+            self.success_monitor = None
 
     def __call__(
         self,
@@ -264,37 +353,39 @@ class TermChoice(ManagerTermBase):
         env_ids: torch.Tensor,
         terms: dict[str, ManagerTermBase],
         sampling_strategy: Literal["uniform", "failure_rate"] = "uniform",
+        report: bool = False,
     ) -> None:
         if self.num_partitions == 0:
             return  # return immediately if there is no terms
-        success_rate = self.success_monitor.get_success_rate()
-        log = {f"Metrics/SuccessRate/{name}": success_rate[i].item() for i, name in enumerate(self.term_partitions.keys())}
+        if report:
+            success_rate = self.success_monitor.get_success_rate()
+            log = {f"Metrics/SuccessRate/{name}": success_rate[i].item() for i, name in enumerate(self.term_partitions.keys())}
 
-        context_term: ManagerTermBase = env.termination_manager.get_term_cfg("progress_context").func  # type: ignore
-        orientation_aligned: torch.Tensor = getattr(context_term, "orientation_aligned")[env_ids]
-        position_centered: torch.Tensor = getattr(context_term, "position_centered")[env_ids]
-        z_distance_reached: torch.Tensor = getattr(context_term, "z_distance_reached")[env_ids]
-        term_successes = torch.where(orientation_aligned & position_centered & z_distance_reached, 1.0, 0.0)
-        self.success_monitor.success_update(self.term_samples[env_ids], term_successes)
+        if self.success_monitor:
+            success = env.termination_manager.get_term_cfg("progress_context").func.is_success
+            self.success_monitor.success_update(self.term_samples[env_ids], success[env_ids].float())
 
         if sampling_strategy == "uniform":
             self.term_samples[env_ids] = torch.randint(0, self.num_partitions, (env_ids.size(0),), device=env_ids.device, dtype=self.term_samples.dtype)
         else:
             # self.term_samples[env_ids] = self.success_monitor.failure_rate_sampling(env_ids)
             choices, probs = self.success_monitor.sample_by_target_rate(env_ids, target=0.5, kappa=1, return_probs=True)
-            log.update({f"Metrics/SampleProb/{name}": probs[i].item() for i, name in enumerate(self.term_partitions.keys())})
             self.term_samples[env_ids] = choices
+            if report:
+                log.update({f"Metrics/SampleProb/{name}": probs[i].item() for i, name in enumerate(self.term_partitions.keys())})
 
         i = 0
-        for term_name, term_cfg in self.term_partitions.items():
+        for _, term_cfg in self.term_partitions.items():
             # get the env_ids that belong to the current term
             term_ids = env_ids[self.term_samples[env_ids] == i]
             if term_ids.numel() > 0:
                 term_cfg.func(env, term_ids, **term_cfg.params)
             i += 1
-        if "log" not in env.extras:
-            env.extras["log"] = {}
-        env.extras["log"].update(log)  # type: ignore
+
+        if report:
+            if "log" not in env.extras:
+                env.extras["log"] = {}
+            env.extras["log"].update(log)  # type: ignore
         
 
 

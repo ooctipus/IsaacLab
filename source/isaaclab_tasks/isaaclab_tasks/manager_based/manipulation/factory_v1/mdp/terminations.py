@@ -61,9 +61,11 @@ class progress_context(ManagerTermBase):
         self.orientation_aligned = torch.zeros((env.num_envs), dtype=torch.bool, device=env.device)
         self.position_centered = torch.zeros((env.num_envs), dtype=torch.bool, device=env.device)
         self.z_distance_reached = torch.zeros((env.num_envs), dtype=torch.bool, device=env.device)
+        self.is_success = torch.zeros((env.num_envs), dtype=torch.bool, device=env.device)
         self.euler_xy_diff = torch.zeros((env.num_envs), device=env.device)
         self.xy_distance = torch.zeros((env.num_envs), device=env.device)
         self.z_distance = torch.zeros((env.num_envs), device=env.device)
+        self.dummy_false_tensor = torch.zeros((env.num_envs), dtype=torch.bool, device=env.device)
 
     def __call__(
         self,
@@ -93,13 +95,10 @@ class progress_context(ManagerTermBase):
         self.orientation_aligned[:] = self.euler_xy_diff < 0.025
         self.position_centered[:] = self.xy_distance < 0.0025
         self.z_distance_reached[:] = self.z_distance < self.success_threshold
+        self.is_success[:] = self.orientation_aligned & self.position_centered & self.z_distance_reached
 
-        return torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        return self.dummy_false_tensor
 
 
 def success_termination(env: ManagerBasedRLEnv, context: str = "progress_context") -> torch.Tensor:
-    context_term: ManagerTermBase = env.termination_manager.get_term_cfg(context).func  # type: ignore
-    orientation_aligned: torch.Tensor = getattr(context_term, "orientation_aligned")
-    position_centered: torch.Tensor = getattr(context_term, "position_centered")
-    z_distance_reached: torch.Tensor = getattr(context_term, "z_distance_reached")
-    return (orientation_aligned & position_centered & z_distance_reached)
+    return env.termination_manager.get_term_cfg(context).func.is_success
