@@ -266,7 +266,7 @@ ACCUMULATOR_RESET = EventTerm(
             "object_collision_free": mdp.CollisionAnalyzerCfg(
                 num_points=32,
                 max_dist=0.5,
-                min_dist=0.0,
+                min_dist=-0.0025,
                 asset_cfg=SceneEntityCfg("held_asset"),
                 obstacle_cfgs=[SceneEntityCfg("fixed_asset"), SceneEntityCfg("robot")],
             ),
