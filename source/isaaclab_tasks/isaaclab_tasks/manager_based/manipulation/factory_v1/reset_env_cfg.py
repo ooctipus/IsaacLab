@@ -209,6 +209,15 @@ SCENE_RESET = EventTerm(
     mode="reset",
     params={
         "terms" : {
+            "reset_robot" : EventTerm(
+                func=mdp.reset_joints_by_offset,
+                mode="reset",
+                params={
+                    "position_range": (-0.0, 0.0),
+                    "velocity_range": (-0.0, 0.0),
+                    "asset_cfg": SceneEntityCfg("robot"),
+                },
+            ),
             "reset_board" : EventTerm(
                 func=mdp.reset_root_state_uniform_on_offset,
                 mode="reset",

@@ -77,6 +77,7 @@ def reset_held_asset_on_fixed_asset(
         held_asset_align_offset.subtract(held_asset_on_fixed_asset_pos, held_asset_on_fixed_asset_quat), dim=1
     )
     held_asset.write_root_pose_to_sim(held_asset_on_fixed_asset_pose, env_ids=env_ids)
+    held_asset.write_root_com_velocity_to_sim(wp.to_torch(held_asset.data.default_root_state)[env_ids, 7:], env_ids=env_ids)  # type: ignore
 
 
 def reset_held_asset_in_gripper(
