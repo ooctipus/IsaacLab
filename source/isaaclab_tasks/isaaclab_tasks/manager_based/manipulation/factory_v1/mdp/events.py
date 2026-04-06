@@ -9,7 +9,7 @@ import torch
 from typing import TYPE_CHECKING, Literal
 
 import warp as wp
-
+from tqdm import tqdm
 from isaaclab.controllers import DifferentialIKControllerCfg
 from isaaclab.managers import EventTermCfg, ManagerTermBase, SceneEntityCfg
 from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
@@ -248,6 +248,17 @@ def reset_root_state_uniform_on_offset(
 
 
 class reset_accumulator(ManagerTermBase):
+    """Accumulate validated reset states into a shared buffer and sample from it.
+
+    During the pre-collection phase, reset states are generated and validated
+    against acceptance conditions until the buffer is full. After that, every
+    call samples from the buffer. Optionally keeps accumulating new valid states
+    at runtime (``keep_accumulating=True``).
+
+    All envs share a single ring buffer of validated states stored in
+    env-origin-relative coordinates, so any env can be reset to any stored state.
+    """
+
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
         self.acceptance_conditions = cfg.params.get("acceptance_conditions")
@@ -259,11 +270,12 @@ class reset_accumulator(ManagerTermBase):
         total_state_dim = factory_utils.get_reset_state(
             self._env, torch.tensor([0], device=env.device), asset_keys
         ).shape[-1]
-        self.max_size = 32
-        self.valid_tensor = torch.zeros((env.num_envs, self.max_size, total_state_dim), device=env.device)
-        self.valid_state_tensor_size = torch.zeros((env.num_envs,), device=env.device, dtype=torch.int)
-        self.valid_ptr = torch.zeros((env.num_envs,), device=env.device, dtype=torch.int)
-        self.sampled_slots = torch.zeros((env.num_envs,), device=env.device, dtype=torch.int)
+        self.max_size = cfg.params.get("size", 128)
+
+        self.buffer = torch.zeros((self.max_size, total_state_dim), device=env.device)
+        self.buffer_size = 0
+        self.buffer_ptr = 0
+        self.sampled_slots = torch.zeros(env.num_envs, device=env.device, dtype=torch.int)
         self.precollecting_phase = True
 
         success_monitor_cfg = SuccessMonitorCfg(
@@ -272,7 +284,6 @@ class reset_accumulator(ManagerTermBase):
             device=env.device,
         )
         self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
-
 
     def _accumulate(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor, reset_term: EventTermCfg, reset_assets: list[str]):
         """Run a single reset attempt and store valid states in the buffer."""
@@ -283,13 +294,16 @@ class reset_accumulator(ManagerTermBase):
 
         valid_env_ids = env_ids[valid_mask]
         if valid_env_ids.numel() > 0:
-            states = factory_utils.get_reset_state(self._env, valid_env_ids, reset_assets)
-            idx = self.valid_ptr[valid_env_ids]
-            self.valid_tensor[valid_env_ids, idx] = states
-            self.valid_ptr[valid_env_ids] = (idx + 1) % self.max_size
-            self.valid_state_tensor_size[valid_env_ids] = torch.clamp(
-                self.valid_state_tensor_size[valid_env_ids] + 1, max=self.max_size
-            )
+            states = factory_utils.get_reset_state(self._env, valid_env_ids, reset_assets, is_relative=True)
+            end = self.buffer_ptr + states.shape[0]
+            if end <= self.max_size:
+                self.buffer[self.buffer_ptr:end] = states
+            else:
+                first = self.max_size - self.buffer_ptr
+                self.buffer[self.buffer_ptr:] = states[:first]
+                self.buffer[:end % self.max_size] = states[first:]
+            self.buffer_ptr = end % self.max_size
+            self.buffer_size = min(self.buffer_size + states.shape[0], self.max_size)
         return env_ids[~valid_mask]
 
     def __call__(
@@ -297,34 +311,39 @@ class reset_accumulator(ManagerTermBase):
         env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
         reset_term: EventTermCfg,
-        reset_assets: list[str],
-        acceptance_conditions: dict,
+        size: int = 2048,
+        reset_assets: list[str] = [],
+        acceptance_conditions: dict = {},
         sampling_strategy: Literal["uniform", "failure_rate"] = "uniform",
         keep_accumulating: bool = False,
         report: bool = False,
     ):
         if self.precollecting_phase:
-            while (self.valid_state_tensor_size < self.max_size).any():
-                unfilled = torch.arange(env.num_envs, device=env.device)[self.valid_state_tensor_size < self.max_size]
-                self._accumulate(env, unfilled, reset_term, reset_assets)
+            all_env_ids = torch.arange(env.num_envs, device=env.device)
+            pbar = tqdm(total=self.max_size, desc="reset_accumulator")
+            while self.buffer_size < self.max_size:
+                prev = self.buffer_size
+                self._accumulate(env, all_env_ids, reset_term, reset_assets)
+                pbar.update(self.buffer_size - prev)
+            pbar.close()
             self.precollecting_phase = False
 
         success = env.termination_manager.get_term_cfg("progress_context").func.is_success
         self.success_monitor.success_update(self.sampled_slots[env_ids], success[env_ids].float())
         if report:
-            log = {f"Metrics/SuccessRate": self.success_monitor.get_success_rate().mean().item()}
+            log = {"Metrics/SuccessRate": self.success_monitor.get_success_rate().mean().item()}
 
         if keep_accumulating:
             env_ids = self._accumulate(env, env_ids, reset_term, reset_assets)
 
         if env_ids.numel() > 0:
             if sampling_strategy == "uniform":
-                slot_idx = torch.randint(0, self.max_size, (len(env_ids),), device=env.device, dtype=self.sampled_slots.dtype)
+                slot_idx = torch.randint(0, self.max_size, (len(env_ids),), device=env.device)
             else:
                 slot_idx = self.success_monitor.sample_by_target_rate(env_ids, target=0.5, kappa=1)
             self.sampled_slots[env_ids] = slot_idx.to(self.sampled_slots.dtype)
-            sampled_states = self.valid_tensor[env_ids, slot_idx]
-            factory_utils.set_reset_state(self._env, sampled_states, env_ids, reset_assets)
+            sampled_states = self.buffer[slot_idx]
+            factory_utils.set_reset_state(self._env, sampled_states, env_ids, reset_assets, is_relative=True)
 
         if report:
             if "log" not in env.extras:
@@ -360,7 +379,7 @@ class TermChoice(ManagerTermBase):
         if report:
             success_rate = self.success_monitor.get_success_rate()
             log = {f"Metrics/SuccessRate/{name}": success_rate[i].item() for i, name in enumerate(self.term_partitions.keys())}
-
+            log.update({f"Metrics/SuccessRate": self.success_monitor.get_success_rate().mean().item()})
         if self.success_monitor:
             success = env.termination_manager.get_term_cfg("progress_context").func.is_success
             self.success_monitor.success_update(self.term_samples[env_ids], success[env_ids].float())
@@ -406,7 +425,7 @@ class ChainedResetTerms(ManagerTermBase):
         if not keep.any():
             return
         env_ids_to_reset = env_ids[keep]
-        for func_name, term in terms.items():
+        for _, term in terms.items():
             term.func(env, env_ids_to_reset, **term.params)  # type: ignore
 
 

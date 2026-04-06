@@ -81,6 +81,7 @@ class DifficultyScheduler(ManagerTermBase):
         self,
         env: ManagerBasedRLEnv,
         env_ids: Sequence[int],
+        success_rate_callback: str,
         asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
         object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
         pos_tol: float = 0.1,
@@ -89,9 +90,9 @@ class DifficultyScheduler(ManagerTermBase):
         min_difficulty: int = 0,
         max_difficulty: int = 50,
         promotion_only: bool = False,
+        
     ):
-        success_monitor: SuccessMonitor = env.event_manager.get_term_cfg("reset_strategies").func.success_monitor
-        success_rate = success_monitor.get_success_rate().mean()
+        success_rate = eval(success_rate_callback)
         move_up = success_rate > 0.8
         demot = self.current_adr_difficulties[env_ids] if promotion_only else self.current_adr_difficulties[env_ids] - 1
         self.current_adr_difficulties[env_ids] = torch.where(

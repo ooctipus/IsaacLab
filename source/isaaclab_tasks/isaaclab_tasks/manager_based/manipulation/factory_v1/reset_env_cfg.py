@@ -246,7 +246,7 @@ SCENE_RESET = EventTerm(
 )
 
 
-RESET_SCENE_EVENT = EventTerm(
+ACCUMULATOR_RESET = EventTerm(
     func=mdp.reset_accumulator,
     mode="reset",
     params={
@@ -255,12 +255,20 @@ RESET_SCENE_EVENT = EventTerm(
             "object_collision_free": mdp.CollisionAnalyzerCfg(
                 num_points=32,
                 max_dist=0.5,
+                min_dist=0.0,
                 asset_cfg=SceneEntityCfg("held_asset"),
                 obstacle_cfgs=[SceneEntityCfg("fixed_asset"), SceneEntityCfg("robot")],
             ),
         },
+        "size": preset(default=32768, eval=512),
         "reset_term": SCENE_RESET,
         "sampling_strategy": "failure_rate",
         "report": True
     },
+)
+
+RESET_STRATEGIES = preset(
+    accumulator = ACCUMULATOR_RESET,
+    choice = SCENE_RESET,
+    default = ACCUMULATOR_RESET
 )

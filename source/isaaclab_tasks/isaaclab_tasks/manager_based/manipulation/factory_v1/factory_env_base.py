@@ -17,7 +17,7 @@ from isaaclab.utils import configclass
 from isaaclab_physx.physics import PhysxCfg
 from isaaclab_tasks.utils import PresetCfg, preset
 from . import mdp
-from .reset_env_cfg import RESET_SCENE_EVENT
+from .reset_env_cfg import RESET_STRATEGIES
 from .factory_presets import (
     FactoryAssemblyProfileCfg,
     EndEffectorBodyCfg,
@@ -127,7 +127,7 @@ class FactoryEventCfg:
         },
     )
 
-    reset_strategies = RESET_SCENE_EVENT
+    reset_strategies = RESET_STRATEGIES
 
     variable_gravity = preset(
         default=EventTerm(
@@ -241,8 +241,17 @@ class FactoryTerminationsCfg(PresetCfg):
 @configclass
 class FactoryCurriculumsCfg:
 
-    difficulty_scheduler = CurrTerm(func=mdp.DifficultyScheduler, params={"max_difficulty": 10})
-
+    difficulty_scheduler = CurrTerm(
+        func=mdp.DifficultyScheduler,
+        params={
+            "max_difficulty": 10,
+            "success_rate_callback": preset(
+                default="env.event_manager.get_term_cfg('reset_strategies').func.success_monitor.get_success_rate().mean()",
+                accumulator="env.event_manager.get_term_cfg('reset_strategies').func.success_monitor.get_success_rate().mean()",
+                choice="env.event_manager.get_term_cfg('reset_strategies').func.terms['reset_strategies'].func.success_monitor.get_success_rate().mean()"
+            )}
+        )
+        
     gravity_adr = preset(
         default=CurrTerm(
             func=mdp.modify_term_cfg,
