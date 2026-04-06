@@ -15,13 +15,23 @@ if TYPE_CHECKING:
 class SuccessMonitor:
     def __init__(self, cfg: SuccessMonitorCfg):
 
-        # uniform success buff
         self.monitored_history_len = cfg.monitored_history_len
         self.device = cfg.device
-        self.success_buf = torch.zeros((cfg.num_monitored_data, self.monitored_history_len), device=self.device)
-        self.success_rate = torch.zeros((cfg.num_monitored_data), device=self.device)
-        self.success_pointer = torch.zeros((cfg.num_monitored_data), device=self.device, dtype=torch.int32)
-        self.success_size = torch.zeros((cfg.num_monitored_data), device=self.device, dtype=torch.int32)
+        n = cfg.num_monitored_data
+        self.success_buf = torch.zeros((n, self.monitored_history_len), device=self.device)
+        self.success_rate = torch.zeros(n, device=self.device)
+        self.success_pointer = torch.zeros(n, device=self.device, dtype=torch.int32)
+        self.success_size = torch.zeros(n, device=self.device, dtype=torch.int32)
+
+        self.tag_names: list[str] | None = cfg.tag_names
+        self.tags = torch.full((n,), -1, device=self.device, dtype=torch.int64)
+        self._tag_counts_dirty = True
+        self._tag_counts: torch.Tensor | None = None
+        self._tag_has_data: torch.Tensor | None = None
+        self._tag_valid: torch.Tensor | None = None
+        self._tag_valid_idx: torch.Tensor | None = None
+        num_tags = len(self.tag_names) if self.tag_names else 0
+        self._tag_sums = torch.zeros(num_tags, device=self.device)
 
     def success_update(self, ids_all, success_mask):
         unique_indices, inv, counts = torch.unique(ids_all, return_inverse=True, return_counts=True)
@@ -40,14 +50,37 @@ class SuccessMonitor:
         self.success_buf.index_put_((state_indices, buf_indices), clamped_values)
 
         self.success_pointer.index_add_(0, unique_indices, counts_clamped)
-        self.success_pointer = self.success_pointer % self.monitored_history_len
+        self.success_pointer.remainder_(self.monitored_history_len)
 
         self.success_size.index_add_(0, unique_indices, counts_clamped)
-        self.success_size = self.success_size.clamp(max=self.monitored_history_len)
+        self.success_size.clamp_(max=self.monitored_history_len)
         self.success_rate[:] = self.success_buf.sum(dim=1) / self.success_size.clamp(min=1)
+
+    def set_tag_names(self, tag_names: list[str]):
+        self.tag_names = tag_names
+        self._tag_sums = torch.zeros(len(tag_names), device=self.device)
+
+    def set_tags(self, indices: torch.Tensor, tag_ids: torch.Tensor):
+        self.tags[indices] = tag_ids.long()
+        self._tag_counts_dirty = True
 
     def get_success_rate(self):
         return self.success_rate.clone()
+
+    def get_tagged_success_rate(self) -> dict[str, float]:
+        if self.tag_names is None:
+            return {}
+        num_tags = len(self.tag_names)
+        if self._tag_counts_dirty:
+            self._tag_valid = self.tags >= 0
+            self._tag_valid_idx = self.tags[self._tag_valid]
+            self._tag_counts = torch.bincount(self._tag_valid_idx, minlength=num_tags).float()
+            self._tag_has_data = self._tag_counts > 0
+            self._tag_counts_dirty = False
+        self._tag_sums.zero_()
+        self._tag_sums.scatter_add_(0, self._tag_valid_idx, self.success_rate[self._tag_valid])
+        means = self._tag_sums / self._tag_counts.clamp(min=1)
+        return {name: means[i].item() for i, name in enumerate(self.tag_names) if self._tag_has_data[i]}
 
     def sample_by_target_rate(
         self,
@@ -57,41 +90,26 @@ class SuccessMonitor:
         return_probs: bool = False,
         temperature: float = 2.0,
     ):
-        """
-        Sample partitions preferring success rates near `target` in [0, 1].
-
-        Weight ~ Beta(a, b) shape on p, with:
-            a = 1 + kappa * target
-            b = 1 + kappa * (1 - target)
-
-        Special cases:
-          - target=0, kappa=1  => w ∝ (1 - p) (failure-focused, like before)
-          - target=1, kappa=1  => w ∝ p       (success-focused)
-          - target=0.5, kappa=2 => w ∝ p(1 - p) (balanced around 0.5)
+        """Sample partitions preferring success rates near ``target``.
 
         Args:
-            env_ids: environments to draw assignments for (length = batch size)
-            target: desired success rate peak in [0, 1]
-            kappa: concentration (sharpness). Larger -> tighter around `target`.
-            return_probs: also return the normalized probs used for sampling.
+            env_ids: Environments to draw assignments for.
+            target: Desired success rate peak in [0, 1].
+            kappa: Concentration around target.
+            return_probs: Also return the sampling probabilities.
+            temperature: Softmax temperature.
 
         Returns:
-            choices (int32 indices) [len(env_ids)]
-            (optionally) probs [num_partitions]
+            Indices tensor ``(len(env_ids),)`` and optionally probabilities.
         """
-        p = self.success_rate  # [num_partitions], float
+        p = self.success_rate
         t = float(max(0.0, min(1.0, target)))
         k = float(max(0.0, kappa))
-
-        # Beta-like shape on p with mode near `t`
-        # a,b >= 1 ensures nonnegative exponents even at edges; interior mode if a,b>1.
         a = 1.0 + k * t
         b = 1.0 + k * (1.0 - t)
 
-        eps = 1e-8  # avoids 0^0 and zero-sum
+        eps = 1e-8
         w = ((p + eps).pow(a - 1.0) * (1.0 - p + eps).pow(b - 1.0)).clamp_min(eps)
-
-        logits = torch.log(w + eps)
-        probs = torch.softmax(logits / max(1.0, float(temperature)), dim=0)
+        probs = torch.softmax(torch.log(w + eps) / max(1.0, float(temperature)), dim=0)
         choices = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
         return (choices, probs) if return_probs else choices

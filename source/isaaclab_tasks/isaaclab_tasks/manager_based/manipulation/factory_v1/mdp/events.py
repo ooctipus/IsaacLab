@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject
     from isaaclab.envs import ManagerBasedRLEnv
     from isaaclab.envs.mdp.actions.task_space_actions import DifferentialInverseKinematicsAction
-
+    from .success_monitor import SuccessMonitor
     from ..assembly_keypoints import Offset
 
 
@@ -267,19 +267,19 @@ class reset_accumulator(ManagerTermBase):
                 self.acceptance_conditions[key] = val.class_type(val, env)
 
         asset_keys = cfg.params.get("reset_assets")
-        total_state_dim = factory_utils.get_reset_state(
-            self._env, torch.tensor([0], device=env.device), asset_keys
-        ).shape[-1]
+        total_state_dim = factory_utils.get_reset_state(self._env, torch.tensor([0], device=env.device), asset_keys)
         self.max_size = cfg.params.get("size", 128)
 
-        self.buffer = torch.zeros((self.max_size, total_state_dim), device=env.device)
+        self.buffer = torch.zeros((self.max_size, total_state_dim.shape[-1]), device=env.device)
         self.buffer_size = 0
         self.buffer_ptr = 0
         self.sampled_slots = torch.zeros(env.num_envs, device=env.device, dtype=torch.int)
         self.precollecting_phase = True
+        self._tag_indices_expr: str | None = cfg.params.get("tag_indices_expr")
+        self._tag_names_resolved = False
 
         success_monitor_cfg = SuccessMonitorCfg(
-            monitored_history_len=100,
+            monitored_history_len=50,
             num_monitored_data=self.max_size,
             device=env.device,
         )
@@ -287,6 +287,11 @@ class reset_accumulator(ManagerTermBase):
 
     def _accumulate(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor, reset_term: EventTermCfg, reset_assets: list[str]):
         """Run a single reset attempt and store valid states in the buffer."""
+        if not self._tag_names_resolved:
+            tag_names_expr = self.cfg.params.get("tag_names_expr")
+            if tag_names_expr is not None:
+                self.success_monitor.set_tag_names(eval(tag_names_expr))  # noqa: S307
+            self._tag_names_resolved = True
         reset_term.func(env, env_ids, **reset_term.params)
         valid_mask = torch.ones(len(env_ids), dtype=torch.bool, device=env.device)
         for _, val in self.acceptance_conditions.items():
@@ -295,15 +300,22 @@ class reset_accumulator(ManagerTermBase):
         valid_env_ids = env_ids[valid_mask]
         if valid_env_ids.numel() > 0:
             states = factory_utils.get_reset_state(self._env, valid_env_ids, reset_assets, is_relative=True)
-            end = self.buffer_ptr + states.shape[0]
+            n = states.shape[0]
+            end = self.buffer_ptr + n
             if end <= self.max_size:
                 self.buffer[self.buffer_ptr:end] = states
             else:
                 first = self.max_size - self.buffer_ptr
                 self.buffer[self.buffer_ptr:] = states[:first]
                 self.buffer[:end % self.max_size] = states[first:]
+
+            if self._tag_indices_expr is not None:
+                all_tags = eval(self._tag_indices_expr)  # noqa: S307
+                slot_indices = torch.arange(self.buffer_ptr, self.buffer_ptr + n, device=env.device) % self.max_size
+                self.success_monitor.set_tags(slot_indices, all_tags[env_ids][valid_mask])
+
             self.buffer_ptr = end % self.max_size
-            self.buffer_size = min(self.buffer_size + states.shape[0], self.max_size)
+            self.buffer_size = min(self.buffer_size + n, self.max_size)
         return env_ids[~valid_mask]
 
     def __call__(
@@ -317,6 +329,8 @@ class reset_accumulator(ManagerTermBase):
         sampling_strategy: Literal["uniform", "failure_rate"] = "uniform",
         keep_accumulating: bool = False,
         report: bool = False,
+        tag_names_expr: str | None = None,
+        tag_indices_expr: str | None = None,
     ):
         if self.precollecting_phase:
             all_env_ids = torch.arange(env.num_envs, device=env.device)
@@ -332,6 +346,9 @@ class reset_accumulator(ManagerTermBase):
         self.success_monitor.success_update(self.sampled_slots[env_ids], success[env_ids].float())
         if report:
             log = {"Metrics/SuccessRate": self.success_monitor.get_success_rate().mean().item()}
+            if tag_names_expr is not None:
+                for name, rate in self.success_monitor.get_tagged_success_rate().items():
+                    log[f"Metrics/SuccessRate/{name}"] = rate
 
         if keep_accumulating:
             env_ids = self._accumulate(env, env_ids, reset_term, reset_assets)
@@ -349,6 +366,7 @@ class reset_accumulator(ManagerTermBase):
             if "log" not in env.extras:
                 env.extras["log"] = {}
             env.extras["log"].update(log)  # type: ignore
+
 
 class TermChoice(ManagerTermBase):
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedRLEnv):

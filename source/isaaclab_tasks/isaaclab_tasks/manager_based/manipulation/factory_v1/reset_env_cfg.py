@@ -265,7 +265,9 @@ ACCUMULATOR_RESET = EventTerm(
         "size": preset(default=32768, eval=512),
         "reset_term": SCENE_RESET,
         "sampling_strategy": "failure_rate",
-        "report": True
+        "report": True,
+        "tag_names_expr": "list(reset_term.func.terms['reset_strategies'].func.term_partitions.keys())",
+        "tag_indices_expr": "reset_term.func.terms['reset_strategies'].func.term_samples",
     },
 )
 
