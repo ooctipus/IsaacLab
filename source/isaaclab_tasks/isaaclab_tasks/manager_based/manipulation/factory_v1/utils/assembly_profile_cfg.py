@@ -28,6 +28,7 @@ from .assembly_profile import (
     DiscreteYaw,
     EndPointsSegment,
     IncrementalSegment,
+    UniformPoseNoise,
     UniformYaw,
 )
 
@@ -55,6 +56,32 @@ class DiscreteYawCfg:
     """Yaw angles [rad] to sample from."""
 
 
+@configclass
+class UniformPoseNoiseCfg:
+    """Uniform noise over user-defined position [m] and euler-angle [rad] ranges."""
+
+    class_type: type = UniformPoseNoise
+    """Class of the sampler implementation."""
+
+    x: tuple[float, float] = (0.0, 0.0)
+    """Position noise range along x [m]."""
+
+    y: tuple[float, float] = (0.0, 0.0)
+    """Position noise range along y [m]."""
+
+    z: tuple[float, float] = (0.0, 0.0)
+    """Position noise range along z [m]."""
+
+    roll: tuple[float, float] = (0.0, 0.0)
+    """Roll noise range [rad]."""
+
+    pitch: tuple[float, float] = (0.0, 0.0)
+    """Pitch noise range [rad]."""
+
+    yaw: tuple[float, float] = (0.0, 0.0)
+    """Yaw noise range [rad]."""
+
+
 # ---------------------------------------------------------------------------
 # Segment and profile Cfg classes
 # ---------------------------------------------------------------------------
@@ -73,7 +100,7 @@ class EndPointsSegmentCfg:
     fraction: tuple[float, float] = (0.0, 1.0)
     """Fraction range ``(lo, hi)`` this segment covers. ``0`` is assembled."""
 
-    start_sampler: UniformYawCfg | DiscreteYawCfg | None = None
+    start_sampler: UniformYawCfg | DiscreteYawCfg | UniformPoseNoiseCfg | None = None
     """Noise config applied on top of the interpolated pose. ``None`` means no noise."""
 
     start_pose: Offset = Offset()
@@ -99,7 +126,7 @@ class IncrementalSegmentCfg:
     fraction: tuple[float, float] = (0.0, 1.0)
     """Fraction range ``(lo, hi)`` this segment covers. ``0`` is assembled."""
 
-    start_sampler: UniformYawCfg | DiscreteYawCfg | None = None
+    start_sampler: UniformYawCfg | DiscreteYawCfg | UniformPoseNoiseCfg | None = None
     """Noise config applied on top of the interpolated pose. ``None`` means no noise."""
 
     start_pose: Offset = Offset()

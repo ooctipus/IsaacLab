@@ -31,6 +31,7 @@ from .utils import (
     EndPointsSegmentCfg,
     IncrementalSegmentCfg,
     UniformYawCfg,
+    UniformPoseNoiseCfg,
 )
 
 
@@ -260,30 +261,80 @@ class FactoryAssemblyProfileCfg(PresetCfg):
     )])
 
     # Peg insert (rectangular) — discrete yaw symmetry
-    peg_insert_4mm: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
-        start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi / 2, math.pi, 3 * math.pi / 2]),
-        start_pose=kpts.RECTANGULAR_HOLE_4MM.inserted_peg_base_offset,
-        distance=_dist(kpts.RECTANGULAR_HOLE_4MM.inserted_peg_base_offset,
-                       kpts.RECTANGULAR_HOLE_4MM.hole_tip_offset),
-    )])
-    peg_insert_8mm: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
-        start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi]),
-        start_pose=kpts.RECTANGULAR_HOLE_8MM.inserted_peg_base_offset,
-        distance=_dist(kpts.RECTANGULAR_HOLE_8MM.inserted_peg_base_offset,
-                       kpts.RECTANGULAR_HOLE_8MM.hole_tip_offset),
-    )])
-    peg_insert_12mm: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
-        start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi]),
-        start_pose=kpts.RECTANGULAR_HOLE_12MM.inserted_peg_base_offset,
-        distance=_dist(kpts.RECTANGULAR_HOLE_12MM.inserted_peg_base_offset,
-                       kpts.RECTANGULAR_HOLE_12MM.hole_tip_offset),
-    )])
-    peg_insert_16mm: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
-        start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi]),
-        start_pose=kpts.RECTANGULAR_HOLE_16MM.inserted_peg_base_offset,
-        distance=_dist(kpts.RECTANGULAR_HOLE_16MM.inserted_peg_base_offset,
-                       kpts.RECTANGULAR_HOLE_16MM.hole_tip_offset),
-    )])
+    peg_insert_4mm: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                fraction=(0.0, 0.7),
+                start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi / 2, math.pi, 3 * math.pi / 2]),
+                start_pose=kpts.RECTANGULAR_HOLE_4MM.inserted_peg_base_offset,
+                distance=_dist(kpts.RECTANGULAR_HOLE_4MM.inserted_peg_base_offset,
+                            kpts.RECTANGULAR_HOLE_4MM.hole_tip_offset)),
+            IncrementalSegmentCfg(
+                fraction=(0.7, 1.5),
+                start_sampler=UniformPoseNoiseCfg(
+                    x=(-0.01, 0.01), y=(-0.01, 0.01), roll=(-0.3, 0.3), pitch=(-0.3, 0.3), yaw=(-3.14, 3.14)
+                ),
+                start_pose=kpts.RECTANGULAR_HOLE_4MM.one_mm_above_hole_tip_offset,
+                distance=_dist(kpts.RECTANGULAR_HOLE_4MM.one_mm_above_hole_tip_offset,
+                            kpts.RECTANGULAR_HOLE_4MM.above_hole_tip_offset))
+        ]
+    )
+    peg_insert_8mm: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                fraction=(0.0, 0.7),
+                start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi]),
+                start_pose=kpts.RECTANGULAR_HOLE_8MM.inserted_peg_base_offset,
+                distance=_dist(kpts.RECTANGULAR_HOLE_8MM.inserted_peg_base_offset,
+                            kpts.RECTANGULAR_HOLE_8MM.hole_tip_offset)),
+            IncrementalSegmentCfg(
+                fraction=(0.7, 1.5),
+                start_sampler=UniformPoseNoiseCfg(
+                    x=(-0.01, 0.01), y=(-0.01, 0.01), roll=(-0.3, 0.3), pitch=(-0.3, 0.3), yaw=(-3.14, 3.14)
+                ),
+                start_pose=kpts.RECTANGULAR_HOLE_8MM.one_mm_above_hole_tip_offset,
+                distance=_dist(kpts.RECTANGULAR_HOLE_8MM.one_mm_above_hole_tip_offset,
+                            kpts.RECTANGULAR_HOLE_8MM.above_hole_tip_offset))
+        ]
+    )
+    peg_insert_12mm: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                fraction=(0.0, 0.7),
+                start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi]),
+                start_pose=kpts.RECTANGULAR_HOLE_12MM.inserted_peg_base_offset,
+                distance=_dist(kpts.RECTANGULAR_HOLE_12MM.inserted_peg_base_offset,
+                            kpts.RECTANGULAR_HOLE_12MM.hole_tip_offset)),
+            IncrementalSegmentCfg(
+                fraction=(0.7, 1.5),
+                start_sampler=UniformPoseNoiseCfg(
+                    x=(-0.01, 0.01), y=(-0.01, 0.01), roll=(-0.3, 0.3), pitch=(-0.3, 0.3), yaw=(-3.14, 3.14)
+                ),
+                start_pose=kpts.RECTANGULAR_HOLE_12MM.one_mm_above_hole_tip_offset,
+                distance=_dist(kpts.RECTANGULAR_HOLE_12MM.one_mm_above_hole_tip_offset,
+                            kpts.RECTANGULAR_HOLE_12MM.above_hole_tip_offset))
+        ]
+    )
+    peg_insert_16mm: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                fraction=(0.0, 0.7),
+                start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi]),
+                start_pose=kpts.RECTANGULAR_HOLE_16MM.inserted_peg_base_offset,
+                distance=_dist(kpts.RECTANGULAR_HOLE_16MM.inserted_peg_base_offset,
+                            kpts.RECTANGULAR_HOLE_16MM.hole_tip_offset),
+            ),
+            IncrementalSegmentCfg(
+                fraction=(0.7, 1.5),
+                start_sampler=UniformPoseNoiseCfg(
+                    x=(-0.01, 0.01), y=(-0.01, 0.01), roll=(-0.3, 0.3), pitch=(-0.3, 0.3), yaw=(-3.14, 3.14)
+                ),
+                start_pose=kpts.RECTANGULAR_HOLE_16MM.one_mm_above_hole_tip_offset,
+                distance=_dist(kpts.RECTANGULAR_HOLE_16MM.one_mm_above_hole_tip_offset,
+                            kpts.RECTANGULAR_HOLE_16MM.above_hole_tip_offset),
+            ),
+        ]
+    )
 
     # Connector insert — pure linear, no yaw noise (keyed)
     usba: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(

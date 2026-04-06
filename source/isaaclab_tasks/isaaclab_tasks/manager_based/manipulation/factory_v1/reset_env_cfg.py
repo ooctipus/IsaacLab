@@ -71,51 +71,6 @@ GRIPPER_GRASP_ASSET_IN_AIR = EventTerm(
     }
 )
 
-FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
-    func=mdp.ChainedResetTerms,
-    mode="reset",
-    params={
-        "terms" : {
-            "reset_held_asset_on_fixed_asset": EventTerm(
-                func=mdp.reset_held_asset_on_fixed_asset,
-                mode="reset",
-                params={
-                    "assembly_profile": FactoryAssemblyProfileCfg(),
-                    "held_asset_align_offset": HeldAssetAlignOffsetCfg(),
-                    "assembly_fraction_range": (0.0, 0.4),
-                    "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
-                    "held_asset_cfg": SceneEntityCfg("held_asset"),
-                }
-            ),
-            "reset_end_effector_around_held_asset": EventTerm(
-                func=mdp.reset_end_effector_around_asset,
-                mode="reset",
-                params={
-                    "fixed_asset_cfg": SceneEntityCfg("held_asset"),
-                    "fixed_asset_offset": HeldAssetGraspMiddleCfg(),
-                    "pose_range_b": {
-                        "x": (-0.005, 0.005),
-                        "y": (-0.005, 0.005),
-                        "z": (-0.015, 0.025),
-                        "roll": (3.141 - 0.1, 3.141 + 0.1),
-                        "pitch": (-1.0, 1.0),
-                        "yaw": (-2.09, 2.09),
-                    },
-                    "robot_ik_cfg": SceneEntityCfg("robot", joint_names=IKJointNamesCfg(), body_names=EndEffectorBodyCfg()),
-                    "ik_iterations": (15, 25),
-                }
-            ),
-            "grasp_held_asset": EventTerm(
-                func=mdp.grasp_held_asset,
-                mode="reset",
-                params={
-                    "robot_cfg": SceneEntityCfg("robot", joint_names=GripperJointNamesCfg(), body_names=EndEffectorBodyCfg()),
-                    "held_asset_diameter": HeldAssetGraspDiameterCfg(),
-                }
-            ),
-        }
-    }
-)
 
 ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
     func=mdp.ChainedResetTerms,
@@ -128,7 +83,7 @@ ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
                 params={
                     "assembly_profile": FactoryAssemblyProfileCfg(),
                     "held_asset_align_offset": HeldAssetAlignOffsetCfg(),
-                    "assembly_fraction_range": (0.4, 1.1),
+                    "assembly_fraction_range": (0.0, 1.1),
                     "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
                     "held_asset_cfg": SceneEntityCfg("held_asset"),
                 }
@@ -242,7 +197,6 @@ SCENE_RESET = EventTerm(
                     "terms" : preset(
                         default={
                             "grasp_asset_in_air": GRIPPER_GRASP_ASSET_IN_AIR,
-                            "start_fully_assembled": FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
                             "start_assembled": ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
                             "start_grasped_then_assembled": GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
                         },

@@ -28,6 +28,7 @@ if TYPE_CHECKING:
         DiscreteYawCfg,
         EndPointsSegmentCfg,
         IncrementalSegmentCfg,
+        UniformPoseNoiseCfg,
         UniformYawCfg,
     )
 
@@ -81,6 +82,23 @@ class DiscreteYaw:
             torch.zeros(num_envs, device=device),
             yaw,
         )
+        return pos, quat
+
+
+class UniformPoseNoise:
+    """Uniform noise over user-defined position and euler-angle ranges."""
+
+    def __init__(self, cfg: UniformPoseNoiseCfg):
+        self.cfg = cfg
+
+    def __call__(self, num_envs: int, device: str | torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+        ranges = torch.tensor(
+            [self.cfg.x, self.cfg.y, self.cfg.z, self.cfg.roll, self.cfg.pitch, self.cfg.yaw],
+            device=device,
+        )
+        samples = math_utils.sample_uniform(ranges[:, 0], ranges[:, 1], (num_envs, 6), device=device)
+        pos = samples[:, :3]
+        quat = math_utils.quat_from_euler_xyz(samples[:, 3], samples[:, 4], samples[:, 5])
         return pos, quat
 
 

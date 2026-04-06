@@ -12,6 +12,7 @@ __all__ = [
     "AssemblyProfile",
     "UniformYawCfg",
     "DiscreteYawCfg",
+    "UniformPoseNoiseCfg",
     "EndPointsSegmentCfg",
     "IncrementalSegmentCfg",
     "AssemblyProfileCfg",
@@ -31,4 +32,5 @@ from .assembly_profile_cfg import (
     EndPointsSegmentCfg,
     IncrementalSegmentCfg,
     UniformYawCfg,
+    UniformPoseNoiseCfg,
 )

@@ -438,6 +438,8 @@ class RectangularPeg16MMKeyPointsCfg:
 
 @configclass
 class RectangularHole16MMKeyPointsCfg:
+    above_hole_tip_offset: Offset = Offset(pos=(0.0, 0.0, 0.015))
+    one_mm_above_hole_tip_offset: Offset = Offset(pos=(0.0, 0.0, 0.01))
     hole_tip_offset: Offset = Offset(pos=(0.0, 0.0, 0.009))
     inserted_peg_base_offset: Offset = Offset(pos=(0.0, 0.0, 0.0))
 
@@ -452,6 +454,8 @@ class RectangularPeg12MMKeyPointsCfg:
 
 @configclass
 class RectangularHole12MMKeyPointsCfg:
+    above_hole_tip_offset: Offset = Offset(pos=(0.0, 0.0, 0.015))
+    one_mm_above_hole_tip_offset: Offset = Offset(pos=(0.0, 0.0, 0.01))
     hole_tip_offset: Offset = Offset(pos=(0.0, 0.0, 0.009))
     inserted_peg_base_offset: Offset = Offset(pos=(0.0, 0.0, 0.0))
 
@@ -466,6 +470,8 @@ class RectangularPeg8MMKeyPointsCfg:
 
 @configclass
 class RectangularHole8MMKeyPointsCfg:
+    above_hole_tip_offset: Offset = Offset(pos=(0.0, 0.0, 0.015))
+    one_mm_above_hole_tip_offset: Offset = Offset(pos=(0.0, 0.0, 0.01))
     hole_tip_offset: Offset = Offset(pos=(0.0, 0.0, 0.009))
     inserted_peg_base_offset: Offset = Offset(pos=(0.0, 0.0, 0.0))
 
@@ -480,6 +486,8 @@ class RectangularPeg4MMKeyPointsCfg:
 
 @configclass
 class RectangularHole4MMKeyPointsCfg:
+    above_hole_tip_offset: Offset = Offset(pos=(0.0, 0.0, 0.015))
+    one_mm_above_hole_tip_offset: Offset = Offset(pos=(0.0, 0.0, 0.01))
     hole_tip_offset: Offset = Offset(pos=(0.0, 0.0, 0.009))
     inserted_peg_base_offset: Offset = Offset(pos=(0.0, 0.0, 0.0))
 
