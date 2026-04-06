@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import torch
+from collections.abc import Generator
 from typing import TYPE_CHECKING, Literal
 
 import warp as wp
@@ -49,6 +50,19 @@ def reset_fixed_assets(env: ManagerBasedRLEnv, env_ids: torch.tensor, asset_map:
 _PROFILE_CACHE: dict[int, AssemblyProfile] = {}
 
 
+def _sweep_assembly_fraction(
+    lo: float, hi: float, step: float = 0.001
+) -> Generator[tuple[float, float]]:
+    """Yield ``(frac, frac)`` pairs that bounce between *lo* and *hi*."""
+    frac = lo
+    increasing = True
+    while True:
+        frac += step if increasing else -step
+        if frac >= hi or frac <= lo:
+            increasing = not increasing
+        yield (frac, frac)
+
+
 def reset_held_asset_on_fixed_asset(
     env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
@@ -57,6 +71,7 @@ def reset_held_asset_on_fixed_asset(
     assembly_fraction_range: tuple[float, float],
     fixed_asset_cfg: SceneEntityCfg,
     held_asset_cfg: SceneEntityCfg,
+    debug_term: bool = False,
 ):
     profile = _PROFILE_CACHE.get(id(assembly_profile))
     if profile is None:
@@ -66,18 +81,20 @@ def reset_held_asset_on_fixed_asset(
     fixed_asset: RigidObject = env.scene[fixed_asset_cfg.name]
     held_asset: Articulation = env.scene[held_asset_cfg.name]
 
-    pos_offset, quat_offset = profile.sample(assembly_fraction_range, len(env_ids), env.device)
-
-    fixed_root_pos_w = wp.to_torch(fixed_asset.data.root_pos_w)
-    fixed_root_quat_w = wp.to_torch(fixed_asset.data.root_quat_w)
-    held_asset_on_fixed_asset_pos, held_asset_on_fixed_asset_quat = math_utils.combine_frame_transforms(
-        fixed_root_pos_w[env_ids], fixed_root_quat_w[env_ids], pos_offset, quat_offset
-    )
-    held_asset_on_fixed_asset_pose = torch.cat(
-        held_asset_align_offset.subtract(held_asset_on_fixed_asset_pos, held_asset_on_fixed_asset_quat), dim=1
-    )
-    held_asset.write_root_pose_to_sim(held_asset_on_fixed_asset_pose, env_ids=env_ids)
-    held_asset.write_root_com_velocity_to_sim(wp.to_torch(held_asset.data.default_root_state)[env_ids, 7:], env_ids=env_ids)  # type: ignore
+    fractions = _sweep_assembly_fraction(*assembly_fraction_range) if debug_term else iter([assembly_fraction_range])
+    for frac_range in fractions:
+        pos_offset, quat_offset = profile.sample(frac_range, len(env_ids), env.device)
+        fixed_root_pos_w = wp.to_torch(fixed_asset.data.root_pos_w)
+        fixed_root_quat_w = wp.to_torch(fixed_asset.data.root_quat_w)
+        pos, quat = math_utils.combine_frame_transforms(
+            fixed_root_pos_w[env_ids], fixed_root_quat_w[env_ids], pos_offset, quat_offset
+        )
+        pose = torch.cat(held_asset_align_offset.subtract(pos, quat), dim=1)
+        vel = wp.to_torch(held_asset.data.default_root_state)[env_ids, 7:]
+        held_asset.write_root_pose_to_sim(pose, env_ids=env_ids)
+        held_asset.write_root_com_velocity_to_sim(vel, env_ids=env_ids)
+        if debug_term:
+            env.sim.render()
 
 
 def reset_held_asset_in_gripper(
