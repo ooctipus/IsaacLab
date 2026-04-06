@@ -226,21 +226,23 @@ SCENE_RESET = EventTerm(
                     "asset_map": FixedAssetMapCfg(),
                 },
             ),
-            "reset_strategies": preset(
-                default=EventTerm(
-                    func=mdp.TermChoice,
-                    mode="reset",
-                    params={"terms" : {
-                        "grasp_asset_in_air": GRIPPER_GRASP_ASSET_IN_AIR,
-                        "start_fully_assembled": FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
-                        "start_assembled": ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
-                        "start_grasped_then_assembled": GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
-                    }}
-                ),
-                eval=EventTerm(func=mdp.TermChoice, mode="reset", params={
-                    "terms" : {"grasp_asset_in_air": GRIPPER_GRASP_ASSET_IN_AIR}
-                })
-            )
+            "reset_strategies": EventTerm(
+                func=mdp.TermChoice,
+                mode="reset",
+                params={
+                    "terms" : preset(
+                        default={
+                            "grasp_asset_in_air": GRIPPER_GRASP_ASSET_IN_AIR,
+                            "start_fully_assembled": FULL_ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
+                            "start_assembled": ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
+                            "start_grasped_then_assembled": GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
+                        },
+                        eval={"grasp_asset_in_air": GRIPPER_GRASP_ASSET_IN_AIR}
+                    ),
+                    "sampling_strategy": preset(accumulator="uniform", choice="failure_rate", default="uniform"),
+                    "report": preset(accumulator=False, choice=True, default=False),
+                }
+            ),
         }
     }
 )
