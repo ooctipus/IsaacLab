@@ -16,8 +16,9 @@ ENV ISAACLAB_PATH=${ISAACLAB_PATH_ARG}
 ARG ISAACSIM_ROOT_PATH_ARG=/isaac-sim
 RUN ln -sf ${ISAACSIM_ROOT_PATH_ARG} ${ISAACLAB_PATH}/_isaac_sim
 
-# Copy only source files (deps already installed in base)
+# Copy source files and local dependency overrides (deps already installed in base)
 COPY ../source ${ISAACLAB_PATH}/source
+COPY ../dep ${ISAACLAB_PATH}/dep
 COPY ../scripts ${ISAACLAB_PATH}/scripts
 COPY ../tools ${ISAACLAB_PATH}/tools
 

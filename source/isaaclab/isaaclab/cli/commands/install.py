@@ -884,6 +884,11 @@ def _install_extra_feature(feature_name: str, selector: str = "") -> None:
             f"Valid features: {', '.join(sorted(VALID_EXTRA_FEATURES))}. Skipping."
         )
 
+    # Override rsl-rl with local editable copy if present
+    local_rsl_rl = os.path.join(ISAACLAB_ROOT, "dep", "rsl_rl")
+    if os.path.isdir(local_rsl_rl):
+        run_command(pip_cmd + ["install", "-e", local_rsl_rl])
+
 
 _PREBUNDLE_REPOINT_PACKAGES: list[str] = [
     "torch",
