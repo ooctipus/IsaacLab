@@ -355,8 +355,12 @@ class reset_accumulator(ManagerTermBase):
             pbar.close()
             self.precollecting_phase = False
 
-        success = env.termination_manager.get_term_cfg("progress_context").func.is_success
-        self.success_monitor.success_update(self.sampled_slots[env_ids], success[env_ids].float())
+        progress = env.termination_manager.get_term_cfg("progress_context").func
+        n_trunc = env.termination_manager.get_term_cfg("predictor_truncation").func.n_truncatable
+        not_predictor_truncated = (env_ids >= n_trunc) | progress.is_success[env_ids]
+        success_id = env_ids[not_predictor_truncated]
+        if success_id.numel() > 0:
+            self.success_monitor.success_update(self.sampled_slots[success_id], progress.is_success[success_id].float())
         if report:
             log = {"Metrics/SuccessRate": self.success_monitor.get_success_rate().mean().item()}
             if tag_names_expr is not None:
