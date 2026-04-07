@@ -15,9 +15,14 @@ from isaaclab.managers import SceneEntityCfg
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject
-    from isaaclab.envs import ManagerBasedEnv
+    from isaaclab.envs import ManagerBasedEnv, ManagerBasedRLEnv
 
     from ..assembly_keypoints import Offset
+
+
+def time_left(env: ManagerBasedRLEnv):
+    time_left_frac = 1 - env.episode_length_buf / env.max_episode_length
+    return time_left_frac.view(env.num_envs, -1)
 
 
 def target_asset_pose_in_root_asset_frame(

@@ -32,6 +32,16 @@ from .factory_scenes_cfg import FactorySceneCfg
 @configclass
 class FactoryObservationsCfg:
     """Observation specifications for Factory."""
+    
+    @configclass
+    class TimeLeftCfg(ObsGroup):
+        time_left = ObsTerm(func=mdp.time_left)
+
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = True
+
+    
     @configclass
     class PolicyCfg(ObsGroup):
         end_effector_vel_lin_ang_b = ObsTerm(
@@ -80,6 +90,7 @@ class FactoryObservationsCfg:
 
     policy: PolicyCfg = PolicyCfg()
     critic: PolicyCfg = PolicyCfg()
+    time_left: TimeLeftCfg = TimeLeftCfg()
 
 
 @configclass
@@ -227,6 +238,7 @@ class SuccessTerminationsCfg:
     oob = _OOB
     progress_context = _PROGRESS_CONTEXT
     success = DoneTerm(func=mdp.success_termination)
+    predictor_truncation = DoneTerm(func=mdp.predictor_truncation, params={"threshold": 0.98, "truncation_ratio": 0.5})
 
 
 @configclass

@@ -12,10 +12,12 @@ __all__ = [
     "grasp_held_asset",
     "reset_end_effector_around_asset",
     "reset_root_state_uniform_on_offset",
+    "reset_accumulator",
     "TermChoice",
     "ChainedResetTerms",
     "interpolate_grasp_quat",
     "target_asset_pose_in_root_asset_frame",
+    "time_left",
     "asset_link_velocity_in_root_asset_frame",
     "reach_reward",
     "orientation_reward",
@@ -31,6 +33,7 @@ __all__ = [
     "abnormal_robot_state",
     "progress_context",
     "success_termination",
+    "predictor_truncation",
     "CollisionAnalyzerCfg",
     "RESET_STRATEGIES",
 ]
@@ -48,7 +51,7 @@ from .events import (
     reset_root_state_uniform_on_offset,
     reset_accumulator,
 )
-from .observations import asset_link_velocity_in_root_asset_frame, target_asset_pose_in_root_asset_frame
+from .observations import asset_link_velocity_in_root_asset_frame, target_asset_pose_in_root_asset_frame, time_left
 from .rewards import (
     action_l2_clamped,
     action_rate_l2_clamped,
@@ -61,6 +64,6 @@ from .rewards import (
     success_reward,
     unstable_manipulation,
 )
-from .terminations import abnormal_robot_state, out_of_bound, progress_context, success_termination
+from .terminations import abnormal_robot_state, out_of_bound, predictor_truncation, progress_context, success_termination
 from isaaclab.envs.mdp import *
 from .collision_analyzer_cfg import CollisionAnalyzerCfg

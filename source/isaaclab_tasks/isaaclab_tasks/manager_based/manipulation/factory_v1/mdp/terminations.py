@@ -96,9 +96,53 @@ class progress_context(ManagerTermBase):
         self.position_centered[:] = self.xy_distance < 0.0025
         self.z_distance_reached[:] = self.z_distance < self.success_threshold
         self.is_success[:] = self.orientation_aligned & self.position_centered & self.z_distance_reached
+        env.extras["successes"] = self.is_success
 
         return self.dummy_false_tensor
 
 
 def success_termination(env: ManagerBasedRLEnv, context: str = "progress_context") -> torch.Tensor:
     return env.termination_manager.get_term_cfg(context).func.is_success
+
+
+class predictor_truncation(ManagerTermBase):
+    """Terminate study-group envs when the success estimator predicts high success probability.
+
+    Envs are partitioned into a study group and an exam group based on
+    ``study_fraction``.  Only study-group envs can be truncated by the predictor;
+    exam-group envs always run to natural completion.
+
+    At setup, call :meth:`bind` with the algorithm's ``success_predictions`` tensor to
+    establish a zero-copy shared buffer.  The algorithm writes into that tensor every
+    step; this term reads it on the next ``env.step()``.
+
+    When this term fires it also writes ``extras["predictor_truncations"]`` so the
+    success estimator can bootstrap through the truncation.
+    """
+
+    def __init__(self, cfg: DoneTermCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.threshold: float = cfg.params.get("threshold", 0.98)  # type: ignore
+        truncation_ratio: float = cfg.params.get("truncation_ratio", 0.5)  # type: ignore
+
+        n_truncatable = int(env.num_envs * truncation_ratio)
+        self.truncatable_mask = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        self.truncatable_mask[:n_truncatable] = True
+
+        self._predictions: torch.Tensor | None = None
+
+    def bind(self, predictions: torch.Tensor) -> None:
+        """Bind a shared prediction tensor from the algorithm.
+
+        Args:
+            predictions: A ``(num_envs,)`` tensor the algorithm writes into each step.
+        """
+        self._predictions = predictions
+
+    def __call__(self, env: ManagerBasedRLEnv, threshold: float = 0.98, truncation_ratio: float = 0.5) -> torch.Tensor:
+        if self._predictions is None:
+            return torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        probs = torch.sigmoid(self._predictions)
+        should_truncate = (probs > self.threshold) & self.truncatable_mask
+        env.extras["predictor_truncations"] = should_truncate.float()
+        return should_truncate
