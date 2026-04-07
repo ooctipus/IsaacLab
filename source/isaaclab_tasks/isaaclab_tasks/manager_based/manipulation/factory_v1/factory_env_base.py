@@ -238,7 +238,7 @@ class SuccessTerminationsCfg:
     oob = _OOB
     progress_context = _PROGRESS_CONTEXT
     success = DoneTerm(func=mdp.success_termination)
-    predictor_truncation = DoneTerm(func=mdp.predictor_truncation, params={"threshold": 0.98, "truncation_ratio": 0.5})
+    predictor_truncation = DoneTerm(func=mdp.predictor_truncation, time_out=True, params={"threshold": 0.98, "truncation_ratio": 0.5})
 
 
 @configclass
