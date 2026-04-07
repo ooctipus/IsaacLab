@@ -25,7 +25,7 @@ class FactoryPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         hidden_dims=[512, 256, 128, 64],
         activation="elu",
     )
-    success_estimator_bind = 'env.unwrapped.termination_manager.get_term_cfg("predictor_truncation").func.bind(alg.success_predictions)'
+    success_estimator_bind = 'env.unwrapped.termination_manager.get_term_cfg("predictor_success_truncation").func.bind(alg.success_predictions)'
     success_estimator = RslRlMLPModelCfg(
         obs_normalization=True,
         hidden_dims=[512, 256, 128, 64],

@@ -105,41 +105,70 @@ def success_termination(env: ManagerBasedRLEnv, context: str = "progress_context
     return env.termination_manager.get_term_cfg(context).func.is_success
 
 
-class predictor_truncation(ManagerTermBase):
-    """Terminate study-group envs when the success estimator predicts high success probability.
+class _PredictorTruncationBase(ManagerTermBase):
+    """Shared base for predictor-driven truncation terms.
 
-    Envs are partitioned into a study group and an exam group based on
-    ``study_fraction``.  Only study-group envs can be truncated by the predictor;
-    exam-group envs always run to natural completion.
+    Subclasses share a single prediction tensor via :meth:`bind`. Each subclass
+    decides its own truncation condition.
+    """
 
-    At setup, call :meth:`bind` with the algorithm's ``success_predictions`` tensor to
-    establish a zero-copy shared buffer.  The algorithm writes into that tensor every
-    step; this term reads it on the next ``env.step()``.
+    _shared_predictions: torch.Tensor | None = None
 
-    When this term fires it also writes ``extras["predictor_truncations"]`` so the
-    success estimator can bootstrap through the truncation.
+    def __init__(self, cfg: DoneTermCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+
+    @classmethod
+    def bind(cls, predictions: torch.Tensor) -> None:
+        """Bind a shared prediction tensor from the algorithm.
+
+        Args:
+            predictions: A ``(num_envs,)`` tensor the algorithm writes into each step.
+        """
+        cls._shared_predictions = predictions
+
+
+class predictor_success_truncation(_PredictorTruncationBase):
+    """Truncate envs where the success estimator predicts high success probability.
+
+    Only applied to the first ``truncation_ratio`` fraction of envs (the truncatable
+    group). The remaining envs (exam group) always run to natural completion.
+
+    The success estimator bootstraps through these truncations via
+    ``extras["predictor_truncations"]``. The success monitor should **ignore**
+    these episodes (outcome unknown).
     """
 
     def __init__(self, cfg: DoneTermCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
         self.threshold: float = cfg.params.get("threshold", 0.98)  # type: ignore
         truncation_ratio: float = cfg.params.get("truncation_ratio", 0.5)  # type: ignore
-
         self.n_truncatable = int(env.num_envs * truncation_ratio)
-        self._predictions: torch.Tensor | None = None
-
-    def bind(self, predictions: torch.Tensor) -> None:
-        """Bind a shared prediction tensor from the algorithm.
-
-        Args:
-            predictions: A ``(num_envs,)`` tensor the algorithm writes into each step.
-        """
-        self._predictions = predictions
 
     def __call__(self, env: ManagerBasedRLEnv, threshold: float = 0.98, truncation_ratio: float = 0.5) -> torch.Tensor:
         result = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
-        if self._predictions is not None and self.n_truncatable > 0:
-            probs = torch.sigmoid(self._predictions[:self.n_truncatable])
+        if self._shared_predictions is not None and self.n_truncatable > 0:
+            probs = torch.sigmoid(self._shared_predictions[:self.n_truncatable])
             result[:self.n_truncatable] = probs > self.threshold
-        env.extras["predictor_truncations"] = result.float()
+        env.extras["predictor_truncations"] = env.extras.get("predictor_truncations", torch.zeros(env.num_envs, device=env.device))
+        env.extras["predictor_truncations"] += result.float()
+        return result
+
+
+class predictor_failure_truncation(_PredictorTruncationBase):
+    """Truncate envs where the success estimator predicts near-certain failure.
+
+    Applied to **all** envs. These are logged as failures by the success monitor.
+    """
+
+    def __init__(self, cfg: DoneTermCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.failure_threshold: float = cfg.params.get("failure_threshold", 0.02)  # type: ignore
+
+    def __call__(self, env: ManagerBasedRLEnv, failure_threshold: float = 0.02) -> torch.Tensor:
+        result = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        if self._shared_predictions is not None:
+            probs = torch.sigmoid(self._shared_predictions)
+            result[:] = probs < self.failure_threshold
+        env.extras["predictor_truncations"] = env.extras.get("predictor_truncations", torch.zeros(env.num_envs, device=env.device))
+        env.extras["predictor_truncations"] += result.float()
         return result
