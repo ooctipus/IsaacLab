@@ -318,21 +318,16 @@ class reset_accumulator(ManagerTermBase):
         valid_env_ids = env_ids[valid_mask]
         if valid_env_ids.numel() > 0:
             states = factory_utils.get_reset_state(self._env, valid_env_ids, reset_assets, is_relative=True)
-            n = states.shape[0]
-            end = self.buffer_ptr + n
-            if end <= self.max_size:
-                self.buffer[self.buffer_ptr:end] = states
-            else:
-                first = self.max_size - self.buffer_ptr
-                self.buffer[self.buffer_ptr:] = states[:first]
-                self.buffer[:end % self.max_size] = states[first:]
+            # Discard excess if the batch overflows the buffer
+            n = min(states.shape[0], self.max_size - self.buffer_ptr)
+            self.buffer[self.buffer_ptr : self.buffer_ptr + n] = states[:n]
 
             if self._tag_indices_expr is not None:
                 all_tags = eval(self._tag_indices_expr)  # noqa: S307
-                slot_indices = torch.arange(self.buffer_ptr, self.buffer_ptr + n, device=env.device) % self.max_size
-                self.success_monitor.set_tags(slot_indices, all_tags[env_ids][valid_mask])
+                slot_indices = torch.arange(self.buffer_ptr, self.buffer_ptr + n, device=env.device)
+                self.success_monitor.set_tags(slot_indices, all_tags[env_ids][valid_mask][:n])
 
-            self.buffer_ptr = end % self.max_size
+            self.buffer_ptr = (self.buffer_ptr + n) % self.max_size
             self.buffer_size = min(self.buffer_size + n, self.max_size)
         return env_ids[~valid_mask]
 
