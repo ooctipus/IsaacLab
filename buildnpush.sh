@@ -21,12 +21,14 @@ set -euo pipefail
 # Build Options:
 #   --force           Force full rebuild (ignore all caches)
 #   --force-deps      Force rebuild dependencies (but use Docker cache)
+#   --force-pip-only  Re-run pip install on cached deps (no isaacsim rebuild)
 #   --skip-push       Build only, don't push to NGC
 #   -h, --help        Show this help message
 #
 # Examples:
 #   ./buildnpush.sh v1.0              # Smart build (skip deps if unchanged)
 #   ./buildnpush.sh v1.0 --force      # Full rebuild
+#   ./buildnpush.sh v1.0 --force-pip-only  # Re-run pip install only
 #   ./buildnpush.sh enter v1.0        # Enter container for v1.0
 #   ./buildnpush.sh --status          # Check current images
 #   ./buildnpush.sh --clean           # Cleanup old deps caches
@@ -214,6 +216,7 @@ compute_deps_hash() {
 # =============================================================================
 FORCE_REBUILD=0
 FORCE_DEPS=0
+FORCE_PIP=0
 SKIP_PUSH=0
 TAG=""
 
@@ -238,6 +241,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --force-deps)
       FORCE_DEPS=1
+      shift
+      ;;
+    --force-pip-only)
+      FORCE_PIP=1
       shift
       ;;
     --skip-push)
@@ -299,6 +306,10 @@ elif [ "$FORCE_DEPS" -eq 1 ]; then
   SKIP_DEPS=0
   USE_CACHE=1
   REASON="forced deps rebuild (--force-deps)"
+elif [ "$FORCE_PIP" -eq 1 ]; then
+  SKIP_DEPS=1
+  USE_CACHE=1
+  REASON="pip-only rebuild on existing deps (--force-pip-only)"
 elif image_exists "$DEPS_IMAGE"; then
   # Exact hash match - use cached deps
   SKIP_DEPS=1
@@ -410,8 +421,15 @@ else
     --build-arg DEPS_BASE_IMAGE="${DEPS_IMAGE}" \
     --build-arg ISAACLAB_PATH_ARG="${DOCKER_ISAACLAB_PATH}" \
     --build-arg ISAACSIM_ROOT_PATH_ARG="${DOCKER_ISAACSIM_ROOT_PATH}" \
+    --build-arg RUN_PIP_INSTALL="${FORCE_PIP}" \
     -t "${BASE_IMAGE}" \
     .
+
+  # Update deps cache when pip was re-installed
+  if [ "$FORCE_PIP" -eq 1 ]; then
+    echo "🏷  Updating deps cache as ${DEPS_IMAGE}"
+    docker tag "${BASE_IMAGE}" "${DEPS_IMAGE}"
+  fi
 fi
 
 # =============================================================================
