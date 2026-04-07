@@ -3,6 +3,7 @@
 #
 # Lightweight Dockerfile for source-only updates when dependencies are cached.
 # This simply copies source files over an existing isaac-lab-deps image.
+# Pass RUN_PIP_INSTALL=1 to also re-run pip install (for --force-pip-only).
 
 # syntax=docker/dockerfile:1
 ARG DEPS_BASE_IMAGE=isaac-lab-deps:latest
@@ -24,5 +25,11 @@ COPY ../tools ${ISAACLAB_PATH}/tools
 
 # Fix line endings (Windows git may add \r)
 RUN find ${ISAACLAB_PATH}/source -type f -name "*.sh" -exec sed -i 's/\r$//' {} +
+
+# Optionally re-run pip install (skipped for source-only, enabled for --force-pip-only)
+ARG RUN_PIP_INSTALL=0
+RUN if [ "${RUN_PIP_INSTALL}" = "1" ]; then \
+      ${ISAACLAB_PATH}/isaaclab.sh -i rsl_rl; \
+    fi
 
 WORKDIR ${ISAACLAB_PATH}
