@@ -125,10 +125,7 @@ class predictor_truncation(ManagerTermBase):
         self.threshold: float = cfg.params.get("threshold", 0.98)  # type: ignore
         truncation_ratio: float = cfg.params.get("truncation_ratio", 0.5)  # type: ignore
 
-        n_truncatable = int(env.num_envs * truncation_ratio)
-        self.truncatable_mask = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
-        self.truncatable_mask[:n_truncatable] = True
-
+        self.n_truncatable = int(env.num_envs * truncation_ratio)
         self._predictions: torch.Tensor | None = None
 
     def bind(self, predictions: torch.Tensor) -> None:
@@ -140,9 +137,9 @@ class predictor_truncation(ManagerTermBase):
         self._predictions = predictions
 
     def __call__(self, env: ManagerBasedRLEnv, threshold: float = 0.98, truncation_ratio: float = 0.5) -> torch.Tensor:
-        if self._predictions is None:
-            return torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
-        probs = torch.sigmoid(self._predictions)
-        should_truncate = (probs > self.threshold) & self.truncatable_mask
-        env.extras["predictor_truncations"] = should_truncate.float()
-        return should_truncate
+        result = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        if self._predictions is not None and self.n_truncatable > 0:
+            probs = torch.sigmoid(self._predictions[:self.n_truncatable])
+            result[:self.n_truncatable] = probs > self.threshold
+        env.extras["predictor_truncations"] = result.float()
+        return result
