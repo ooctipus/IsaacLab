@@ -456,16 +456,16 @@ class reset_accumulator(ManagerTermBase):
             if self.success_monitor.tag_names:
                 tags = self.success_monitor.tags[:len(self.state_buffer)]
                 tag_names = self.success_monitor.tag_names
-                monitor_probs = beta_sampling_probs(self.success_monitor.success_rate, target=0.5, kappa=1)
-                for name, mass in tagged_report(monitor_probs, tags, tag_names, reduction="sum").items():
-                    log[f"Metrics/MonitorSampleProb/{name}"] = mass
+                monitor_means = tagged_report(self.success_monitor.success_rate, tags, tag_names, reduction="mean")
+                monitor_probs = beta_sampling_probs(torch.tensor(list(monitor_means.values()), device=env.device), target=0.5, kappa=1)
+                for i, name in enumerate(tag_names):
+                    log[f"Metrics/MonitorSampleProb/{name}"] = monitor_probs[i].item()
                 if self.state_buffer.success_rates is not None:
-                    rates = self.state_buffer.success_rates
-                    estimator_probs = beta_sampling_probs(rates, target=0.5, kappa=1)
-                    for name, mass in tagged_report(estimator_probs, tags, tag_names, reduction="sum").items():
-                        log[f"Metrics/EstimatorSampleProb/{name}"] = mass
-                    for name, mean in tagged_report(rates, tags, tag_names, reduction="mean").items():
-                        log[f"Metrics/EstimatedSuccessRate/{name}"] = mean
+                    estimator_means = tagged_report(self.state_buffer.success_rates, tags, tag_names, reduction="mean")
+                    estimator_probs = beta_sampling_probs(torch.tensor(list(estimator_means.values()), device=env.device), target=0.5, kappa=1)
+                    for i, name in enumerate(tag_names):
+                        log[f"Metrics/EstimatorSampleProb/{name}"] = estimator_probs[i].item()
+                        log[f"Metrics/EstimatedSuccessRate/{name}"] = estimator_means[name]
 
         # 3. Optionally accumulate more states
         if keep_accumulating:
