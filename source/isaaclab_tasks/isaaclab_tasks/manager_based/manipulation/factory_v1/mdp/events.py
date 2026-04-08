@@ -286,16 +286,29 @@ def beta_sampling_probs(
     return torch.softmax(torch.log(w + eps) / max(1.0, temperature), dim=0)
 
 
-def tagged_prob_report(
-    probs: torch.Tensor,
+def tagged_report(
+    values: torch.Tensor,
     tags: torch.Tensor,
     tag_names: list[str],
+    reduction: str = "sum",
 ) -> dict[str, float]:
-    """Sum sampling probability mass per tag."""
+    """Aggregate per-slot values by tag.
+
+    Args:
+        values: Per-slot tensor to aggregate.
+        tags: Per-slot tag IDs (int, -1 = untagged).
+        tag_names: Human-readable name for each tag ID.
+        reduction: ``"sum"`` for probability mass, ``"mean"`` for averages.
+    """
     out: dict[str, float] = {}
     for i, name in enumerate(tag_names):
         mask = tags == i
-        out[name] = probs[mask].sum().item() if mask.any() else 0.0
+        if not mask.any():
+            out[name] = 0.0
+        elif reduction == "mean":
+            out[name] = values[mask].mean().item()
+        else:
+            out[name] = values[mask].sum().item()
     return out
 
 
@@ -440,14 +453,19 @@ class reset_accumulator(ManagerTermBase):
             if tag_names_expr is not None:
                 for name, rate in self.success_monitor.get_tagged_success_rate().items():
                     log[f"Metrics/SuccessRate/{name}"] = rate
-            if self.state_buffer.success_rates is not None and self.success_monitor.tag_names:
-                probs = beta_sampling_probs(self.state_buffer.success_rates, target=0.5, kappa=1)
-                for name, mass in tagged_prob_report(
-                    probs,
-                    self.success_monitor.tags[:len(self.state_buffer)],
-                    self.success_monitor.tag_names,
-                ).items():
-                    log[f"Metrics/SampleProb/{name}"] = mass
+            if self.success_monitor.tag_names:
+                tags = self.success_monitor.tags[:len(self.state_buffer)]
+                tag_names = self.success_monitor.tag_names
+                monitor_probs = beta_sampling_probs(self.success_monitor.success_rate, target=0.5, kappa=1)
+                for name, mass in tagged_report(monitor_probs, tags, tag_names, reduction="sum").items():
+                    log[f"Metrics/MonitorSampleProb/{name}"] = mass
+                if self.state_buffer.success_rates is not None:
+                    rates = self.state_buffer.success_rates
+                    estimator_probs = beta_sampling_probs(rates, target=0.5, kappa=1)
+                    for name, mass in tagged_report(estimator_probs, tags, tag_names, reduction="sum").items():
+                        log[f"Metrics/EstimatorSampleProb/{name}"] = mass
+                    for name, mean in tagged_report(rates, tags, tag_names, reduction="mean").items():
+                        log[f"Metrics/EstimatedSuccessRate/{name}"] = mean
 
         # 3. Optionally accumulate more states
         if keep_accumulating:
