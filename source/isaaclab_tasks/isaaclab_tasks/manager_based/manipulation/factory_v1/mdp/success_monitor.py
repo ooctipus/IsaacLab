@@ -82,34 +82,3 @@ class SuccessMonitor:
         means = self._tag_sums / self._tag_counts.clamp(min=1)
         return {name: means[i].item() for i, name in enumerate(self.tag_names) if self._tag_has_data[i]}
 
-    def sample_by_target_rate(
-        self,
-        env_ids: torch.Tensor,
-        target: float = 0.5,
-        kappa: float = 2.0,
-        return_probs: bool = False,
-        temperature: float = 2.0,
-    ):
-        """Sample partitions preferring success rates near ``target``.
-
-        Args:
-            env_ids: Environments to draw assignments for.
-            target: Desired success rate peak in [0, 1].
-            kappa: Concentration around target.
-            return_probs: Also return the sampling probabilities.
-            temperature: Softmax temperature.
-
-        Returns:
-            Indices tensor ``(len(env_ids),)`` and optionally probabilities.
-        """
-        p = self.success_rate
-        t = float(max(0.0, min(1.0, target)))
-        k = float(max(0.0, kappa))
-        a = 1.0 + k * t
-        b = 1.0 + k * (1.0 - t)
-
-        eps = 1e-8
-        w = ((p + eps).pow(a - 1.0) * (1.0 - p + eps).pow(b - 1.0)).clamp_min(eps)
-        probs = torch.softmax(torch.log(w + eps) / max(1.0, float(temperature)), dim=0)
-        choices = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
-        return (choices, probs) if return_probs else choices

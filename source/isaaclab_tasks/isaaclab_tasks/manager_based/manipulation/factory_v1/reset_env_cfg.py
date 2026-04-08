@@ -202,7 +202,7 @@ SCENE_RESET = EventTerm(
                         },
                         eval={"grasp_asset_in_air": GRIPPER_GRASP_ASSET_IN_AIR}
                     ),
-                    "sampling_strategy": preset(accumulator="uniform", choice="failure_rate", default="uniform"),
+                    "sampling_strategy": preset(default="monitor", uniform="uniform", monitor="monitor"),
                     "report": preset(accumulator=False, choice=True, default=False),
                 }
             ),
@@ -227,7 +227,7 @@ ACCUMULATOR_RESET = EventTerm(
         },
         "size": preset(default=32768, eval=512),
         "reset_term": SCENE_RESET,
-        "sampling_strategy": "estimator",
+        "sampling_strategy": preset(default="monitor", uniform="uniform", estimator="estimator", monitor="monitor"),
         "report": True,
         "tag_names_expr": "list(reset_term.func.terms['reset_strategies'].func.term_partitions.keys())",
         "tag_indices_expr": "reset_term.func.terms['reset_strategies'].func.term_samples",

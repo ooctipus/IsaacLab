@@ -265,20 +265,49 @@ def reset_root_state_uniform_on_offset(
 
 
 
-class StateBuffer:
-    """Ring buffer of env-origin-relative reset states.
+def beta_sampling_probs(
+    success_rates: torch.Tensor,
+    target: float = 0.5,
+    kappa: float = 1.0,
+    temperature: float = 2.0,
+) -> torch.Tensor:
+    """Convert per-slot success rates into sampling probabilities peaked at ``target``.
 
-    Optionally caches per-slot sampling probabilities computed by an external
-    estimator. Call :meth:`update_sampling_probs` to refresh the cache and
-    :meth:`sample_by_probs` to draw slots from it.
+    Uses a Beta-distribution kernel: slots whose success rate is near ``target``
+    receive the highest weight. ``kappa`` controls concentration and
+    ``temperature`` controls the softmax sharpness.
     """
+    t = max(0.0, min(1.0, target))
+    k = max(0.0, kappa)
+    a = 1.0 + k * t
+    b = 1.0 + k * (1.0 - t)
+    eps = 1e-8
+    w = ((success_rates + eps).pow(a - 1.0) * (1.0 - success_rates + eps).pow(b - 1.0)).clamp_min(eps)
+    return torch.softmax(torch.log(w + eps) / max(1.0, temperature), dim=0)
+
+
+def tagged_prob_report(
+    probs: torch.Tensor,
+    tags: torch.Tensor,
+    tag_names: list[str],
+) -> dict[str, float]:
+    """Sum sampling probability mass per tag."""
+    out: dict[str, float] = {}
+    for i, name in enumerate(tag_names):
+        mask = tags == i
+        out[name] = probs[mask].sum().item() if mask.any() else 0.0
+    return out
+
+
+class StateBuffer:
+    """Ring buffer of env-origin-relative reset states."""
 
     def __init__(self, max_size: int, state_dim: int, device: torch.device):
         self.data = torch.zeros((max_size, state_dim), device=device)
         self.max_size = max_size
         self._size = 0
         self._ptr = 0
-        self.sampling_probs: torch.Tensor | None = None
+        self.success_rates: torch.Tensor | None = None
 
     def __len__(self) -> int:
         return self._size
@@ -303,14 +332,6 @@ class StateBuffer:
 
     def sample(self, indices: torch.Tensor) -> torch.Tensor:
         return self.data[indices]
-
-    def update_sampling_probs(self, probs: torch.Tensor) -> None:
-        """Cache precomputed sampling probabilities (one per slot)."""
-        self.sampling_probs = probs
-
-    def sample_by_probs(self, count: int) -> torch.Tensor:
-        """Draw ``count`` slot indices using the cached probabilities."""
-        return torch.multinomial(self.sampling_probs, count, replacement=True).to(torch.int32)
 
 
 class reset_accumulator(ManagerTermBase):
@@ -393,7 +414,7 @@ class reset_accumulator(ManagerTermBase):
         size: int = 2048,
         reset_assets: list[str] = [],
         acceptance_conditions: dict = {},
-        sampling_strategy: Literal["uniform", "failure_rate", "estimator"] = "uniform",
+        sampling_strategy: Literal["uniform", "monitor", "estimator"] = "uniform",
         keep_accumulating: bool = False,
         report: bool = False,
         tag_names_expr: str | None = None,
@@ -419,6 +440,14 @@ class reset_accumulator(ManagerTermBase):
             if tag_names_expr is not None:
                 for name, rate in self.success_monitor.get_tagged_success_rate().items():
                     log[f"Metrics/SuccessRate/{name}"] = rate
+            if self.state_buffer.success_rates is not None and self.success_monitor.tag_names:
+                probs = beta_sampling_probs(self.state_buffer.success_rates, target=0.5, kappa=1)
+                for name, mass in tagged_prob_report(
+                    probs,
+                    self.success_monitor.tags[:len(self.state_buffer)],
+                    self.success_monitor.tag_names,
+                ).items():
+                    log[f"Metrics/SampleProb/{name}"] = mass
 
         # 3. Optionally accumulate more states
         if keep_accumulating:
@@ -426,10 +455,15 @@ class reset_accumulator(ManagerTermBase):
 
         # 4. Sample a slot and apply the state
         if env_ids.numel() > 0:
-            if sampling_strategy == "estimator" and self.state_buffer.sampling_probs is not None:
-                slot_idx = self.state_buffer.sample_by_probs(len(env_ids))
-            elif sampling_strategy == "failure_rate":
-                slot_idx = self.success_monitor.sample_by_target_rate(env_ids, target=0.5, kappa=1)
+            rates = None
+            if sampling_strategy == "estimator" and self.state_buffer.success_rates is not None:
+                rates = self.state_buffer.success_rates
+            elif sampling_strategy == "monitor":
+                rates = self.success_monitor.success_rate
+
+            if rates is not None:
+                probs = beta_sampling_probs(rates, target=0.5, kappa=1)
+                slot_idx = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
             else:
                 slot_idx = torch.randint(0, self.state_buffer.max_size, (len(env_ids),), device=env.device)
             self.sampled_slots[env_ids] = slot_idx.to(self.sampled_slots.dtype)
@@ -448,7 +482,7 @@ class TermChoice(ManagerTermBase):
         self.term_partitions: dict[str, EventTermCfg] = cfg.params["terms"]  # type: ignore
         self.num_partitions = len(self.term_partitions)
         self.term_samples = torch.zeros((env.num_envs,), dtype=torch.int, device=env.device)
-        if cfg.params.get("report", False) or cfg.params.get("sampling_strategy", "uniform") == "failure_rate":
+        if cfg.params.get("report", False) or cfg.params.get("sampling_strategy", "uniform") == "monitor":
             success_monitor_cfg = SuccessMonitorCfg(
                 monitored_history_len=100,
                 num_monitored_data=self.num_partitions,
@@ -463,7 +497,7 @@ class TermChoice(ManagerTermBase):
         env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
         terms: dict[str, ManagerTermBase],
-        sampling_strategy: Literal["uniform", "failure_rate"] = "uniform",
+        sampling_strategy: Literal["uniform", "monitor"] = "uniform",
         report: bool = False,
     ) -> None:
         if self.num_partitions == 0:
@@ -479,9 +513,8 @@ class TermChoice(ManagerTermBase):
         if sampling_strategy == "uniform":
             self.term_samples[env_ids] = torch.randint(0, self.num_partitions, (env_ids.size(0),), device=env_ids.device, dtype=self.term_samples.dtype)
         else:
-            # self.term_samples[env_ids] = self.success_monitor.failure_rate_sampling(env_ids)
-            choices, probs = self.success_monitor.sample_by_target_rate(env_ids, target=0.5, kappa=1, return_probs=True)
-            self.term_samples[env_ids] = choices
+            probs = beta_sampling_probs(self.success_monitor.success_rate, target=0.5, kappa=1)
+            self.term_samples[env_ids] = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
             if report:
                 log.update({f"Metrics/SampleProb/{name}": probs[i].item() for i, name in enumerate(self.term_partitions.keys())})
 
