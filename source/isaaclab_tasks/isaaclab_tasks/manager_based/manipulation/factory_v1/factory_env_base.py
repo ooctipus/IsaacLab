@@ -34,7 +34,10 @@ class FactoryObservationsCfg:
     """Observation specifications for Factory."""
     
     @configclass
-    class TimeLeftCfg(ObsGroup):
+    class SuccessEstimatorInputCfg(ObsGroup):
+
+        state = ObsTerm(func=mdp.get_state, params={"reset_assets": ["nistboard", "fixed_asset", "held_asset", "robot"]})
+
         time_left = ObsTerm(func=mdp.time_left)
 
         def __post_init__(self):
@@ -90,7 +93,7 @@ class FactoryObservationsCfg:
 
     policy: PolicyCfg = PolicyCfg()
     critic: PolicyCfg = PolicyCfg()
-    time_left: TimeLeftCfg = TimeLeftCfg()
+    success: SuccessEstimatorInputCfg = SuccessEstimatorInputCfg()
 
 
 @configclass
@@ -238,12 +241,12 @@ class SuccessTerminationsCfg:
     oob = _OOB
     progress_context = _PROGRESS_CONTEXT
     success = DoneTerm(func=mdp.success_termination)
-    predictor_success_truncation = DoneTerm(
-        func=mdp.predictor_success_truncation, time_out=True, params={"threshold": 0.98, "truncation_ratio": 0.5}
-    )
-    predictor_failure_truncation = DoneTerm(
-        func=mdp.predictor_failure_truncation, time_out=True, params={"failure_threshold": 0.02}
-    )
+    # predictor_success_truncation = DoneTerm(
+    #     func=mdp.predictor_success_truncation, time_out=True, params={"threshold": 0.98, "truncation_ratio": 0.5}
+    # )
+    # predictor_failure_truncation = DoneTerm(
+    #     func=mdp.predictor_failure_truncation, time_out=True, params={"failure_threshold": 0.15}
+    # )
 
 
 @configclass
@@ -307,10 +310,10 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     def __post_init__(self) -> None:
         """Post initialization."""
         # general settings
-        self.decimation = 8
+        self.decimation = 4
         self.episode_length_s = 14.0
         # simulation settings
-        self.sim.dt = 0.005
+        self.sim.dt = 0.04 / self.decimation
         self.sim.render_interval = self.decimation
         self.sim.physics = PhysxCfg(
             solver_type=1,

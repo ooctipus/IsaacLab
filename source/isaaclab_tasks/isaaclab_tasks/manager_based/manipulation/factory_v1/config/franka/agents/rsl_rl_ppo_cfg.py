@@ -13,7 +13,7 @@ class FactoryPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     max_iterations = 15000
     save_interval = 200
     experiment_name = "factory"
-    obs_groups={"actor": ["policy"], "critic": ["policy"], "success_estimator": ["time_left", "policy"]}
+    obs_groups={"actor": ["policy"], "critic": ["policy"], "success_estimator": ["success"]}
     actor = RslRlMLPModelCfg(
         distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0),
         obs_normalization=True,
@@ -25,7 +25,7 @@ class FactoryPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         hidden_dims=[512, 256, 128, 64],
         activation="elu",
     )
-    success_estimator_bind = 'env.unwrapped.termination_manager.get_term_cfg("predictor_success_truncation").func.bind(alg.success_predictions)'
+    success_estimator_bind = 'setattr(alg, "_state_buffer", env.unwrapped.event_manager.get_term_cfg("reset_strategies").func._shared_buffer)'
     success_estimator = RslRlMLPModelCfg(
         obs_normalization=True,
         hidden_dims=[512, 256, 128, 64],

@@ -18,6 +18,7 @@ __all__ = [
     "interpolate_grasp_quat",
     "target_asset_pose_in_root_asset_frame",
     "time_left",
+    "get_state",
     "asset_link_velocity_in_root_asset_frame",
     "reach_reward",
     "orientation_reward",
@@ -52,7 +53,7 @@ from .events import (
     reset_root_state_uniform_on_offset,
     reset_accumulator,
 )
-from .observations import asset_link_velocity_in_root_asset_frame, target_asset_pose_in_root_asset_frame, time_left
+from .observations import asset_link_velocity_in_root_asset_frame, target_asset_pose_in_root_asset_frame, time_left, get_state
 from .rewards import (
     action_l2_clamped,
     action_rate_l2_clamped,

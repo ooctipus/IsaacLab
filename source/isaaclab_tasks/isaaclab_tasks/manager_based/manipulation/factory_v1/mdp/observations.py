@@ -12,12 +12,16 @@ import warp as wp
 
 import isaaclab.utils.math as math_utils
 from isaaclab.managers import SceneEntityCfg
+from .utils import get_reset_state
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject
     from isaaclab.envs import ManagerBasedEnv, ManagerBasedRLEnv
 
     from ..assembly_keypoints import Offset
+
+def get_state(env: ManagerBasedRLEnv, reset_assets: list[str]):
+    return get_reset_state(env, slice(None), reset_assets, is_relative=True)
 
 
 def time_left(env: ManagerBasedRLEnv):
