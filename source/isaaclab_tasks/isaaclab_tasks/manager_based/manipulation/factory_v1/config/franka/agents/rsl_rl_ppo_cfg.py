@@ -24,6 +24,7 @@ class PpoAlgorithmCfg(PresetCfg):
         lam=0.95,
         desired_kl=0.01,
         max_grad_norm=1.0,
+        returns_method="gae",
     )
     success_estimator = SuccessEstimatorPpoAlgorithmCfg(
         class_name="SuccessEstimatorPPO",
@@ -39,9 +40,10 @@ class PpoAlgorithmCfg(PresetCfg):
         lam=0.95,
         desired_kl=0.01,
         max_grad_norm=1.0,
+        returns_method="gae",
         success_estimator_learning_rate=1.0e-4,
         success_loss_coef=1.0,
-        success_returns_method="bootstrap",
+        success_returns_method="hindsight_mc",
     )
     default = actor_critic
 

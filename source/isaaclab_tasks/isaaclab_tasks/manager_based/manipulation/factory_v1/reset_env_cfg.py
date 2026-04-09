@@ -240,8 +240,8 @@ ACCUMULATOR_RESET = EventTerm(
         "sampling": preset(
             default=BetaSamplingCfg(success_rate_bind="self.success_rate"),
             uniform=UniformSamplingCfg(),
-            success_estimator=BetaSamplingCfg(success_rate_bind="self.state_buffer.success_rates"),
-            monitor=BetaSamplingCfg(success_rate_bind="self.success_rate"),
+            success_estimator=BetaSamplingCfg(success_rate_bind="self.state_buffer.success_rates", target=0.66),
+            monitor=BetaSamplingCfg(success_rate_bind="self.success_rate", target=0.66),
         ),
         "reset_term": SCENE_RESET,
         "report": True,
