@@ -27,7 +27,7 @@ class BetaSamplingCfg:
         temperature: Softmax temperature controlling sharpness.
     """
 
-    success_rate_bind: str = "self.monitor_success_rate"
+    success_rate_bind: str = "self.success_rate"
     target: float = 0.5
     kappa: float = 1.0
     temperature: float = 2.0

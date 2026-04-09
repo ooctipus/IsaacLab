@@ -41,6 +41,7 @@ class PpoAlgorithmCfg(PresetCfg):
         max_grad_norm=1.0,
         success_estimator_learning_rate=1.0e-4,
         success_loss_coef=1.0,
+        success_returns_method="bootstrap",
     )
     default = actor_critic
 
@@ -51,7 +52,7 @@ class FactoryPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     save_interval = 200
     experiment_name = "factory"
     obs_groups=preset(
-        default={"actor": ["policy"], "critic": ["policy"], "success_estimator": ["success"]},
+        default={"actor": ["policy"], "critic": ["policy"]},
         actor_critic={"actor": ["policy"], "critic": ["policy"]},
         success_estimator={"actor": ["policy"], "critic": ["policy"], "success_estimator": ["success"]},
     )  # type: ignore

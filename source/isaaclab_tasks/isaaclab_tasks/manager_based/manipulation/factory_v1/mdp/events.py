@@ -306,6 +306,11 @@ class reset_accumulator(ManagerTermBase):
         monitor_cfg.device = env.device
         self.success_monitor = monitor_cfg.class_type(monitor_cfg, self.monitor_success_rate)
 
+        self.success_rate = torch.zeros(max_size, device=env.device)
+        self._success_rate_source = "monitor"
+        if isinstance(self._sampling_cfg, BetaSamplingCfg) and "state_buffer" in self._sampling_cfg.success_rate_bind:
+            self._success_rate_source = "success_estimator"
+
     # ------------------------------------------------------------------
     # Buffer accumulation
     # ------------------------------------------------------------------
@@ -367,22 +372,31 @@ class reset_accumulator(ManagerTermBase):
         progress = env.termination_manager.get_term_cfg("progress_context").func
         if env_ids.numel() > 0:
             self.success_monitor.success_update(self.sampled_slots[env_ids], progress.is_success[env_ids].float())
+
+        # Sync the unified success_rate from the active source
+        if self._success_rate_source == "success_estimator" and self.state_buffer.success_rates is not None:
+            self.success_rate[:] = self.state_buffer.success_rates
+        else:
+            self.success_rate[:] = self.monitor_success_rate
+
         if report:
-            log = {"Metrics/SuccessRate": self.monitor_success_rate.mean().item()}
+            log: dict[str, float] = {}
             if self.state_buffer.tag_names:
                 tags = self.state_buffer.tags[:len(self.state_buffer)]
                 names = self.state_buffer.tag_names
                 monitor_means = tagged_report(self.monitor_success_rate, tags, names, reduction="mean")
                 monitor_probs = beta_sampling_probs(torch.tensor(list(monitor_means.values()), device=env.device), target=0.5, kappa=1)
+                log["Metrics/MonitorSuccessRate"] = self.monitor_success_rate.mean().item()
                 for i, name in enumerate(names):
-                    log[f"Metrics/SuccessRate/{name}"] = monitor_means[name]
+                    log[f"Metrics/MonitorSuccessRate/{name}"] = monitor_means[name]
                     log[f"Metrics/MonitorSampleProb/{name}"] = monitor_probs[i].item()
                 if self.state_buffer.success_rates is not None:
                     estimator_means = tagged_report(self.state_buffer.success_rates, tags, names, reduction="mean")
                     estimator_probs = beta_sampling_probs(torch.tensor(list(estimator_means.values()), device=env.device), target=0.5, kappa=1)
+                    log["Metrics/EstimatorSuccessRate"] = self.state_buffer.success_rates.mean().item()
                     for i, name in enumerate(names):
+                        log[f"Metrics/EstimatorSuccessRate/{name}"] = estimator_means[name]
                         log[f"Metrics/EstimatorSampleProb/{name}"] = estimator_probs[i].item()
-                        log[f"Metrics/EstimatedSuccessRate/{name}"] = estimator_means[name]
 
         # 3. Optionally accumulate more states
         if keep_accumulating:
@@ -391,12 +405,8 @@ class reset_accumulator(ManagerTermBase):
         # 4. Sample a slot and apply the state
         if env_ids.numel() > 0:
             if isinstance(self._sampling_cfg, BetaSamplingCfg):
-                rates = eval(self._sampling_cfg.success_rate_bind)  # noqa: S307
-                if rates is not None:
-                    probs = beta_sampling_probs(rates, self._sampling_cfg.target, self._sampling_cfg.kappa, self._sampling_cfg.temperature)
-                    slot_idx = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
-                else:
-                    slot_idx = torch.randint(0, self.state_buffer.max_size, (len(env_ids),), device=env.device)
+                probs = beta_sampling_probs(self.success_rate, self._sampling_cfg.target, self._sampling_cfg.kappa, self._sampling_cfg.temperature)
+                slot_idx = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
             else:
                 slot_idx = torch.randint(0, self.state_buffer.max_size, (len(env_ids),), device=env.device)
             self.sampled_slots[env_ids] = slot_idx.to(self.sampled_slots.dtype)

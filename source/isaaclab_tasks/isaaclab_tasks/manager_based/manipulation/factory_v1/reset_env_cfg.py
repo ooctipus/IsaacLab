@@ -197,9 +197,9 @@ SCENE_RESET = EventTerm(
                 params={
                     "terms" : preset(
                         default={
-                            # "grasp_asset_in_air": GRIPPER_GRASP_ASSET_IN_AIR,
+                            "grasp_asset_in_air": GRIPPER_GRASP_ASSET_IN_AIR,
                             "start_assembled": ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
-                            # "start_grasped_then_assembled": GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
+                            "start_grasped_then_assembled": GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
                         },
                         eval={"grasp_asset_in_air": GRIPPER_GRASP_ASSET_IN_AIR}
                     ),
@@ -238,10 +238,10 @@ ACCUMULATOR_RESET = EventTerm(
         ),
         "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=50),
         "sampling": preset(
-            default=BetaSamplingCfg(success_rate_bind="self.monitor_success_rate"),
+            default=BetaSamplingCfg(success_rate_bind="self.success_rate"),
             uniform=UniformSamplingCfg(),
-            estimator=BetaSamplingCfg(success_rate_bind="self.state_buffer.success_rates"),
-            monitor=BetaSamplingCfg(success_rate_bind="self.monitor_success_rate"),
+            success_estimator=BetaSamplingCfg(success_rate_bind="self.state_buffer.success_rates"),
+            monitor=BetaSamplingCfg(success_rate_bind="self.success_rate"),
         ),
         "reset_term": SCENE_RESET,
         "report": True,
