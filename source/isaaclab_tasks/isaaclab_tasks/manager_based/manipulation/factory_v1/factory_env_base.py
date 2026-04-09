@@ -250,7 +250,11 @@ class SuccessTerminationsCfg:
     # )
     split_time_out = DoneTerm(
         func=mdp.split_time_out, time_out=True,
-        params={"short_episode_length_s": 2.0, "split_ratio": 0.5},
+        params={
+            "short_episode_length_s": 2.0,
+            "split_ratio": 0.5,
+            "exclude_from_estimator": preset(default=False, success_estimator=True),
+        },
     )
 
 
