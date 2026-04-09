@@ -356,6 +356,7 @@ class reset_accumulator(ManagerTermBase):
         sampling: UniformSamplingCfg | BetaSamplingCfg = UniformSamplingCfg(),
         keep_accumulating: bool = False,
         report: bool = False,
+        monitor_exclude_terms: list[str] = [],
     ):
         # 1. Pre-collect until buffer is full
         if self.precollecting_phase:
@@ -368,10 +369,17 @@ class reset_accumulator(ManagerTermBase):
             pbar.close()
             self.precollecting_phase = False
 
-        # 2. Update success monitor with episode outcomes
+        # 2. Update success monitor with episode outcomes, excluding specified terms
         progress = env.termination_manager.get_term_cfg("progress_context").func
-        if env_ids.numel() > 0:
-            self.success_monitor.success_update(self.sampled_slots[env_ids], progress.is_success[env_ids].float())
+        monitor_ids = env_ids
+        if env_ids.numel() > 0 and monitor_exclude_terms:
+            exclude_mask = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+            for term_name in monitor_exclude_terms:
+                if term_name in env.termination_manager._term_names:
+                    exclude_mask |= env.termination_manager._last_episode_dones[:, env.termination_manager._term_name_to_term_idx[term_name]]
+            monitor_ids = env_ids[~exclude_mask[env_ids]]
+        if monitor_ids.numel() > 0:
+            self.success_monitor.success_update(self.sampled_slots[monitor_ids], progress.is_success[monitor_ids].float())
 
         # Sync the unified success_rate from the active source
         if self._success_rate_source == "success_estimator" and self.state_buffer.success_rates is not None:

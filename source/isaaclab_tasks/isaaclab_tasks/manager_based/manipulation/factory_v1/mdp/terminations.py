@@ -105,6 +105,38 @@ def success_termination(env: ManagerBasedRLEnv, context: str = "progress_context
     return env.termination_manager.get_term_cfg(context).func.is_success
 
 
+def split_time_out(
+    env: ManagerBasedRLEnv,
+    short_episode_length_s: float = 2.0,
+    split_ratio: float = 0.5,
+    exclude_from_estimator: bool = False,
+) -> torch.Tensor:
+    """Timeout with a shorter episode length for the first ``split_ratio`` fraction of envs.
+
+    The first ``split_ratio * num_envs`` envs use ``short_episode_length_s`` as their
+    timeout. The remaining envs use the environment's default ``max_episode_length``.
+    Short-horizon timeouts are treated as regular failures by the success estimator
+    (outcome=0), not bootstrapped.
+
+    Args:
+        short_episode_length_s: Episode length [s] for the short-horizon group.
+        split_ratio: Fraction of envs in the short-horizon group.
+        exclude_from_estimator: If True, write ``extras["success_train_mask"]``
+            to exclude short-horizon envs from success estimator training entirely.
+    """
+    n_short = int(env.num_envs * split_ratio)
+    short_max_length = int(short_episode_length_s / env.step_dt)
+    result = env.episode_length_buf >= env.max_episode_length
+    result[:n_short] = env.episode_length_buf[:n_short] >= short_max_length
+
+    if exclude_from_estimator:
+        mask = torch.ones(env.num_envs, device=env.device)
+        mask[:n_short] = 0.0
+        env.extras["success_train_mask"] = mask
+
+    return result
+
+
 class _PredictorTruncationBase(ManagerTermBase):
     """Shared base for predictor-driven truncation terms.
 
@@ -113,6 +145,7 @@ class _PredictorTruncationBase(ManagerTermBase):
     """
 
     _shared_predictions: torch.Tensor | None = None
+    _shared_loss: float = float("inf")
 
     def __init__(self, cfg: DoneTermCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
@@ -125,6 +158,15 @@ class _PredictorTruncationBase(ManagerTermBase):
             predictions: A ``(num_envs,)`` tensor the algorithm writes into each step.
         """
         cls._shared_predictions = predictions
+
+    @classmethod
+    def update_loss(cls, loss: float) -> None:
+        """Update the shared success estimator loss.
+
+        Args:
+            loss: The current mean success estimator loss from the latest update.
+        """
+        cls._shared_loss = loss
 
 
 class predictor_success_truncation(_PredictorTruncationBase):
@@ -155,20 +197,45 @@ class predictor_success_truncation(_PredictorTruncationBase):
 
 
 class predictor_failure_truncation(_PredictorTruncationBase):
-    """Truncate envs where the success estimator predicts near-certain failure.
+    """Truncate envs where the success estimator predicts sustained near-certain failure.
 
-    Applied to **all** envs. These are logged as failures by the success monitor.
+    Only applied to the first ``truncation_ratio`` fraction of envs (the truncatable
+    group). The remaining envs (exam group) always run to natural completion.
+
+    Requires ``consecutive_steps`` consecutive predictions below ``failure_threshold``
+    before truncating, preventing premature truncation from noisy single-step estimates.
     """
 
     def __init__(self, cfg: DoneTermCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
         self.failure_threshold: float = cfg.params.get("failure_threshold", 0.02)  # type: ignore
+        self.consecutive_steps: int = cfg.params.get("consecutive_steps", 10)  # type: ignore
+        self.min_loss: float = cfg.params.get("min_loss", 0.1)  # type: ignore
+        truncation_ratio: float = cfg.params.get("truncation_ratio", 0.5)  # type: ignore
+        self.n_truncatable = int(env.num_envs * truncation_ratio)
+        self._consecutive_count = torch.zeros(env.num_envs, dtype=torch.int32, device=env.device)
 
-    def __call__(self, env: ManagerBasedRLEnv, failure_threshold: float = 0.02) -> torch.Tensor:
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        failure_threshold: float = 0.02,
+        consecutive_steps: int = 10,
+        truncation_ratio: float = 0.5,
+        min_loss: float = 0.1,
+    ) -> torch.Tensor:
         result = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
-        if self._shared_predictions is not None:
-            probs = torch.sigmoid(self._shared_predictions)
-            result[:] = probs < self.failure_threshold
+        if self._shared_predictions is not None and self.n_truncatable > 0 and self._shared_loss < self.min_loss:
+            probs = torch.sigmoid(self._shared_predictions[:self.n_truncatable])
+            below = probs < self.failure_threshold
+            self._consecutive_count[:self.n_truncatable] = torch.where(
+                below, self._consecutive_count[:self.n_truncatable] + 1, 0
+            )
+            result[:self.n_truncatable] = self._consecutive_count[:self.n_truncatable] >= self.consecutive_steps
+
+        # Reset counter for envs starting a new episode or being truncated
+        new_episodes = env.episode_length_buf == 0
+        self._consecutive_count[new_episodes | result] = 0
+
         env.extras["predictor_truncations"] = env.extras.get("predictor_truncations", torch.zeros(env.num_envs, device=env.device))
         env.extras["predictor_truncations"] += result.float()
         return result

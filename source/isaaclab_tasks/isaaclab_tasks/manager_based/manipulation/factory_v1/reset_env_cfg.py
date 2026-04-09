@@ -245,6 +245,10 @@ ACCUMULATOR_RESET = EventTerm(
         ),
         "reset_term": SCENE_RESET,
         "report": True,
+        "monitor_exclude_terms": preset(
+            default=["split_time_out"],
+            success_estimator=["predictor_failure_truncation", "split_time_out"],
+        ),
     },
 )
 
