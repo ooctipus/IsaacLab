@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 from isaaclab.utils import configclass
-from dataclasses import MISSING
 
 from .success_monitor import SuccessMonitor
 
@@ -16,13 +15,12 @@ class SuccessMonitorCfg:
     class_type: type[SuccessMonitor] = SuccessMonitor
 
     monitored_history_len: int = 100
-    """The total length of success entry recorded, monitoring table size: (num_monitored_data, monitored_history_len)"""
+    """Sliding window length per slot."""
 
-    num_monitored_data: int = MISSING
-    """Number of success monitored. monitoring table size: (num_monitored_data, monitored_history_len)"""
-
-    tag_names: list[str] | None = None
-    """Optional tag names for grouping success rates."""
+    num_monitored_data: int = 0
+    """Number of slots to track. Set to 0 as placeholder; the consumer
+    (e.g. ``reset_accumulator`` or ``TermChoice``) overrides this at init
+    based on buffer size or partition count."""
 
     device: str = "cpu"
-    """The device used to maintain success table data structure"""
+    """Device for internal buffers."""

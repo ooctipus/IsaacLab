@@ -12,7 +12,7 @@ import warp as wp
 
 import isaaclab.utils.math as math_utils
 from isaaclab.managers import SceneEntityCfg
-from .utils import get_reset_state
+from .util import get_reset_state
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject

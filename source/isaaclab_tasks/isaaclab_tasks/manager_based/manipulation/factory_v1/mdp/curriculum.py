@@ -14,7 +14,7 @@ from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
-    from .success_monitor import SuccessMonitor
+    from .util import SuccessMonitor
 
 
 def initial_final_interpolate_fn(env: ManagerBasedRLEnv, env_id, data, initial_value, final_value, difficulty_term_str):

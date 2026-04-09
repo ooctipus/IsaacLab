@@ -266,9 +266,9 @@ class FactoryCurriculumsCfg:
         params={
             "max_difficulty": 10,
             "success_rate_callback": preset(
-                default="env.event_manager.get_term_cfg('reset_strategies').func.success_monitor.get_success_rate().mean()",
-                accumulator="env.event_manager.get_term_cfg('reset_strategies').func.success_monitor.get_success_rate().mean()",
-                choice="env.event_manager.get_term_cfg('reset_strategies').func.terms['reset_strategies'].func.success_monitor.get_success_rate().mean()"
+                default="env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate.mean()",
+                accumulator="env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate.mean()",
+                choice="env.event_manager.get_term_cfg('reset_strategies').func.terms['reset_strategies'].func.term_success_rate.mean()"
             )}
         )
         

@@ -6,6 +6,7 @@
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
 from . import mdp
+from .mdp.util import StateBufferCfg, SuccessMonitorCfg, BetaSamplingCfg, UniformSamplingCfg
 from .assembly_keypoints import NIST_BOARD_CFG
 from .factory_presets import (
     FactoryAssemblyProfileCfg,
@@ -196,13 +197,18 @@ SCENE_RESET = EventTerm(
                 params={
                     "terms" : preset(
                         default={
-                            "grasp_asset_in_air": GRIPPER_GRASP_ASSET_IN_AIR,
+                            # "grasp_asset_in_air": GRIPPER_GRASP_ASSET_IN_AIR,
                             "start_assembled": ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
-                            "start_grasped_then_assembled": GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
+                            # "start_grasped_then_assembled": GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER
                         },
                         eval={"grasp_asset_in_air": GRIPPER_GRASP_ASSET_IN_AIR}
                     ),
-                    "sampling_strategy": preset(default="monitor", uniform="uniform", monitor="monitor"),
+                    "sampling": preset(
+                        default=BetaSamplingCfg(success_rate_bind="self.term_success_rate"),
+                        uniform=UniformSamplingCfg(),
+                        monitor=BetaSamplingCfg(success_rate_bind="self.term_success_rate"),
+                    ),
+                    "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=100),
                     "report": preset(accumulator=False, choice=True, default=False),
                 }
             ),
@@ -220,17 +226,25 @@ ACCUMULATOR_RESET = EventTerm(
             "object_collision_free": mdp.CollisionAnalyzerCfg(
                 num_points=32,
                 max_dist=0.5,
-                min_dist=-0.0025,
+                min_dist=-0.0005,
                 asset_cfg=SceneEntityCfg("held_asset"),
                 obstacle_cfgs=[SceneEntityCfg("fixed_asset"), SceneEntityCfg("robot")],
             ),
         },
-        "size": preset(default=32768, eval=512),
+        "state_buffer_cfg": StateBufferCfg(
+            size=preset(default=32768, eval=512),
+            tag_names_bind="list(reset_term.func.terms['reset_strategies'].func.term_partitions.keys())",
+            tag_indices_bind="reset_term.func.terms['reset_strategies'].func.term_samples",
+        ),
+        "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=50),
+        "sampling": preset(
+            default=BetaSamplingCfg(success_rate_bind="self.monitor_success_rate"),
+            uniform=UniformSamplingCfg(),
+            estimator=BetaSamplingCfg(success_rate_bind="self.state_buffer.success_rates"),
+            monitor=BetaSamplingCfg(success_rate_bind="self.monitor_success_rate"),
+        ),
         "reset_term": SCENE_RESET,
-        "sampling_strategy": preset(default="monitor", uniform="uniform", estimator="estimator", monitor="monitor"),
         "report": True,
-        "tag_names_expr": "list(reset_term.func.terms['reset_strategies'].func.term_partitions.keys())",
-        "tag_indices_expr": "reset_term.func.terms['reset_strategies'].func.term_samples",
     },
 )
 

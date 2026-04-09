@@ -68,4 +68,4 @@ from .rewards import (
 )
 from .terminations import abnormal_robot_state, out_of_bound, predictor_failure_truncation, predictor_success_truncation, progress_context, success_termination
 from isaaclab.envs.mdp import *
-from .collision_analyzer_cfg import CollisionAnalyzerCfg
+from .util import CollisionAnalyzerCfg

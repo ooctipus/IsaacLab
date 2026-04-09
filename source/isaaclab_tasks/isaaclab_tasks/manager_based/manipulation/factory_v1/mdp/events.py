@@ -18,14 +18,15 @@ from isaaclab.utils import math as math_utils
 
 from ..assembly_keypoints import NIST_BOARD_CFG
 from ..utils import AssemblyProfile, AssemblyProfileCfg
-from .success_monitor_cfg import SuccessMonitorCfg
-from . import utils as factory_utils
+from .util import SuccessMonitorCfg, StateBuffer, StateBufferCfg, beta_sampling_probs, tagged_report
+from .util import state_ops as factory_utils
+from .util.sampling_cfg import UniformSamplingCfg, BetaSamplingCfg
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject
     from isaaclab.envs import ManagerBasedRLEnv
     from isaaclab.envs.mdp.actions.task_space_actions import DifferentialInverseKinematicsAction
-    from .success_monitor import SuccessMonitor
+    from .util import SuccessMonitor
     from ..assembly_keypoints import Offset
 
 
@@ -265,88 +266,6 @@ def reset_root_state_uniform_on_offset(
 
 
 
-def beta_sampling_probs(
-    success_rates: torch.Tensor,
-    target: float = 0.5,
-    kappa: float = 1.0,
-    temperature: float = 2.0,
-) -> torch.Tensor:
-    """Convert per-slot success rates into sampling probabilities peaked at ``target``.
-
-    Uses a Beta-distribution kernel: slots whose success rate is near ``target``
-    receive the highest weight. ``kappa`` controls concentration and
-    ``temperature`` controls the softmax sharpness.
-    """
-    t = max(0.0, min(1.0, target))
-    k = max(0.0, kappa)
-    a = 1.0 + k * t
-    b = 1.0 + k * (1.0 - t)
-    eps = 1e-8
-    w = ((success_rates + eps).pow(a - 1.0) * (1.0 - success_rates + eps).pow(b - 1.0)).clamp_min(eps)
-    return torch.softmax(torch.log(w + eps) / max(1.0, temperature), dim=0)
-
-
-def tagged_report(
-    values: torch.Tensor,
-    tags: torch.Tensor,
-    tag_names: list[str],
-    reduction: str = "sum",
-) -> dict[str, float]:
-    """Aggregate per-slot values by tag.
-
-    Args:
-        values: Per-slot tensor to aggregate.
-        tags: Per-slot tag IDs (int, -1 = untagged).
-        tag_names: Human-readable name for each tag ID.
-        reduction: ``"sum"`` for probability mass, ``"mean"`` for averages.
-    """
-    out: dict[str, float] = {}
-    for i, name in enumerate(tag_names):
-        mask = tags == i
-        if not mask.any():
-            out[name] = 0.0
-        elif reduction == "mean":
-            out[name] = values[mask].mean().item()
-        else:
-            out[name] = values[mask].sum().item()
-    return out
-
-
-class StateBuffer:
-    """Ring buffer of env-origin-relative reset states."""
-
-    def __init__(self, max_size: int, state_dim: int, device: torch.device):
-        self.data = torch.zeros((max_size, state_dim), device=device)
-        self.max_size = max_size
-        self._size = 0
-        self._ptr = 0
-        self.success_rates: torch.Tensor | None = None
-
-    def __len__(self) -> int:
-        return self._size
-
-    @property
-    def is_full(self) -> bool:
-        return self._size >= self.max_size
-
-    def add(self, states: torch.Tensor) -> tuple[int, int]:
-        """Append states to the ring buffer.
-
-        Returns:
-            ``(start, count)`` — the buffer offset where writing began and how
-            many states were actually written (capped to avoid wrapping mid-batch).
-        """
-        n = min(states.shape[0], self.max_size - self._ptr)
-        start = self._ptr
-        self.data[start : start + n] = states[:n]
-        self._ptr = (start + n) % self.max_size
-        self._size = min(self._size + n, self.max_size)
-        return start, n
-
-    def sample(self, indices: torch.Tensor) -> torch.Tensor:
-        return self.data[indices]
-
-
 class reset_accumulator(ManagerTermBase):
     """Accumulate validated reset states into a shared buffer and sample from it.
 
@@ -370,21 +289,22 @@ class reset_accumulator(ManagerTermBase):
 
         asset_keys = cfg.params.get("reset_assets")
         state_dim = factory_utils.get_reset_state(self._env, torch.tensor([0], device=env.device), asset_keys).shape[-1]
-        max_size = cfg.params.get("size", 128)
+        buf_cfg: StateBufferCfg = cfg.params.get("state_buffer_cfg", StateBufferCfg())
+        max_size = buf_cfg.size
 
         self.state_buffer = StateBuffer(max_size, state_dim, env.device)
         reset_accumulator._shared_buffer = self.state_buffer
         self.sampled_slots = torch.zeros(env.num_envs, device=env.device, dtype=torch.int)
         self.precollecting_phase = True
-        self._tag_indices_expr: str | None = cfg.params.get("tag_indices_expr")
+        self._tag_indices_bind: str | None = buf_cfg.tag_indices_bind
         self._tag_names_resolved = False
+        self._sampling_cfg = cfg.params.get("sampling", UniformSamplingCfg())
 
-        success_monitor_cfg = SuccessMonitorCfg(
-            monitored_history_len=50,
-            num_monitored_data=max_size,
-            device=env.device,
-        )
-        self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
+        self.monitor_success_rate = torch.zeros(max_size, device=env.device)
+        monitor_cfg: SuccessMonitorCfg = cfg.params.get("success_monitor_cfg", SuccessMonitorCfg(num_monitored_data=max_size, device=env.device))
+        monitor_cfg.num_monitored_data = max_size
+        monitor_cfg.device = env.device
+        self.success_monitor = monitor_cfg.class_type(monitor_cfg, self.monitor_success_rate)
 
     # ------------------------------------------------------------------
     # Buffer accumulation
@@ -393,9 +313,9 @@ class reset_accumulator(ManagerTermBase):
     def _accumulate(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor, reset_term: EventTermCfg, reset_assets: list[str]):
         """Run a single reset attempt and store valid states in the buffer."""
         if not self._tag_names_resolved:
-            tag_names_expr = self.cfg.params.get("tag_names_expr")
-            if tag_names_expr is not None:
-                self.success_monitor.set_tag_names(eval(tag_names_expr))  # noqa: S307
+            buf_cfg: StateBufferCfg = self.cfg.params.get("state_buffer_cfg", StateBufferCfg())
+            if buf_cfg.tag_names_bind is not None:
+                self.state_buffer.set_tag_names(eval(buf_cfg.tag_names_bind))  # noqa: S307
             self._tag_names_resolved = True
 
         reset_term.func(env, env_ids, **reset_term.params)
@@ -408,10 +328,10 @@ class reset_accumulator(ManagerTermBase):
             states = factory_utils.get_reset_state(self._env, valid_env_ids, reset_assets, is_relative=True)
             start, n = self.state_buffer.add(states)
 
-            if self._tag_indices_expr is not None:
-                all_tags = eval(self._tag_indices_expr)  # noqa: S307
+            if self._tag_indices_bind is not None:
+                all_tags = eval(self._tag_indices_bind)  # noqa: S307
                 slot_indices = torch.arange(start, start + n, device=env.device)
-                self.success_monitor.set_tags(slot_indices, all_tags[env_ids][valid_mask][:n])
+                self.state_buffer.set_tags(slot_indices, all_tags[env_ids][valid_mask][:n])
 
         return env_ids[~valid_mask]
 
@@ -424,14 +344,13 @@ class reset_accumulator(ManagerTermBase):
         env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
         reset_term: EventTermCfg,
-        size: int = 2048,
         reset_assets: list[str] = [],
         acceptance_conditions: dict = {},
-        sampling_strategy: Literal["uniform", "monitor", "estimator"] = "uniform",
+        state_buffer_cfg: StateBufferCfg = StateBufferCfg(),
+        success_monitor_cfg: SuccessMonitorCfg | None = None,
+        sampling: UniformSamplingCfg | BetaSamplingCfg = UniformSamplingCfg(),
         keep_accumulating: bool = False,
         report: bool = False,
-        tag_names_expr: str | None = None,
-        tag_indices_expr: str | None = None,
     ):
         # 1. Pre-collect until buffer is full
         if self.precollecting_phase:
@@ -449,21 +368,19 @@ class reset_accumulator(ManagerTermBase):
         if env_ids.numel() > 0:
             self.success_monitor.success_update(self.sampled_slots[env_ids], progress.is_success[env_ids].float())
         if report:
-            log = {"Metrics/SuccessRate": self.success_monitor.get_success_rate().mean().item()}
-            if tag_names_expr is not None:
-                for name, rate in self.success_monitor.get_tagged_success_rate().items():
-                    log[f"Metrics/SuccessRate/{name}"] = rate
-            if self.success_monitor.tag_names:
-                tags = self.success_monitor.tags[:len(self.state_buffer)]
-                tag_names = self.success_monitor.tag_names
-                monitor_means = tagged_report(self.success_monitor.success_rate, tags, tag_names, reduction="mean")
+            log = {"Metrics/SuccessRate": self.monitor_success_rate.mean().item()}
+            if self.state_buffer.tag_names:
+                tags = self.state_buffer.tags[:len(self.state_buffer)]
+                names = self.state_buffer.tag_names
+                monitor_means = tagged_report(self.monitor_success_rate, tags, names, reduction="mean")
                 monitor_probs = beta_sampling_probs(torch.tensor(list(monitor_means.values()), device=env.device), target=0.5, kappa=1)
-                for i, name in enumerate(tag_names):
+                for i, name in enumerate(names):
+                    log[f"Metrics/SuccessRate/{name}"] = monitor_means[name]
                     log[f"Metrics/MonitorSampleProb/{name}"] = monitor_probs[i].item()
                 if self.state_buffer.success_rates is not None:
-                    estimator_means = tagged_report(self.state_buffer.success_rates, tags, tag_names, reduction="mean")
+                    estimator_means = tagged_report(self.state_buffer.success_rates, tags, names, reduction="mean")
                     estimator_probs = beta_sampling_probs(torch.tensor(list(estimator_means.values()), device=env.device), target=0.5, kappa=1)
-                    for i, name in enumerate(tag_names):
+                    for i, name in enumerate(names):
                         log[f"Metrics/EstimatorSampleProb/{name}"] = estimator_probs[i].item()
                         log[f"Metrics/EstimatedSuccessRate/{name}"] = estimator_means[name]
 
@@ -473,15 +390,13 @@ class reset_accumulator(ManagerTermBase):
 
         # 4. Sample a slot and apply the state
         if env_ids.numel() > 0:
-            rates = None
-            if sampling_strategy == "estimator" and self.state_buffer.success_rates is not None:
-                rates = self.state_buffer.success_rates
-            elif sampling_strategy == "monitor":
-                rates = self.success_monitor.success_rate
-
-            if rates is not None:
-                probs = beta_sampling_probs(rates, target=0.5, kappa=1)
-                slot_idx = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
+            if isinstance(self._sampling_cfg, BetaSamplingCfg):
+                rates = eval(self._sampling_cfg.success_rate_bind)  # noqa: S307
+                if rates is not None:
+                    probs = beta_sampling_probs(rates, self._sampling_cfg.target, self._sampling_cfg.kappa, self._sampling_cfg.temperature)
+                    slot_idx = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
+                else:
+                    slot_idx = torch.randint(0, self.state_buffer.max_size, (len(env_ids),), device=env.device)
             else:
                 slot_idx = torch.randint(0, self.state_buffer.max_size, (len(env_ids),), device=env.device)
             self.sampled_slots[env_ids] = slot_idx.to(self.sampled_slots.dtype)
@@ -500,13 +415,17 @@ class TermChoice(ManagerTermBase):
         self.term_partitions: dict[str, EventTermCfg] = cfg.params["terms"]  # type: ignore
         self.num_partitions = len(self.term_partitions)
         self.term_samples = torch.zeros((env.num_envs,), dtype=torch.int, device=env.device)
-        if cfg.params.get("report", False) or cfg.params.get("sampling_strategy", "uniform") == "monitor":
-            success_monitor_cfg = SuccessMonitorCfg(
-                monitored_history_len=100,
-                num_monitored_data=self.num_partitions,
-                device=env.device,
-            )
-            self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
+        self.term_success_rate = torch.zeros(self.num_partitions, device=env.device)
+        self._sampling_cfg = cfg.params.get("sampling", UniformSamplingCfg())
+        needs_monitor = cfg.params.get("report", False) or isinstance(self._sampling_cfg, BetaSamplingCfg)
+        if needs_monitor:
+            monitor_cfg: SuccessMonitorCfg = cfg.params.get(
+                "success_monitor_cfg",
+                SuccessMonitorCfg(num_monitored_data=self.num_partitions, device=env.device),
+            )  # type: ignore
+            monitor_cfg.num_monitored_data = self.num_partitions
+            monitor_cfg.device = env.device
+            self.success_monitor = monitor_cfg.class_type(monitor_cfg, self.term_success_rate)
         else:
             self.success_monitor = None
 
@@ -515,30 +434,30 @@ class TermChoice(ManagerTermBase):
         env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
         terms: dict[str, ManagerTermBase],
-        sampling_strategy: Literal["uniform", "monitor"] = "uniform",
+        sampling: UniformSamplingCfg | BetaSamplingCfg = UniformSamplingCfg(),
+        success_monitor_cfg: SuccessMonitorCfg | None = None,
         report: bool = False,
     ) -> None:
         if self.num_partitions == 0:
-            return  # return immediately if there is no terms
+            return
         if report:
-            success_rate = self.success_monitor.get_success_rate()
-            log = {f"Metrics/SuccessRate/{name}": success_rate[i].item() for i, name in enumerate(self.term_partitions.keys())}
-            log.update({f"Metrics/SuccessRate": self.success_monitor.get_success_rate().mean().item()})
+            log = {f"Metrics/SuccessRate/{name}": self.term_success_rate[i].item() for i, name in enumerate(self.term_partitions.keys())}
+            log["Metrics/SuccessRate"] = self.term_success_rate.mean().item()
         if self.success_monitor:
             success = env.termination_manager.get_term_cfg("progress_context").func.is_success
             self.success_monitor.success_update(self.term_samples[env_ids], success[env_ids].float())
 
-        if sampling_strategy == "uniform":
-            self.term_samples[env_ids] = torch.randint(0, self.num_partitions, (env_ids.size(0),), device=env_ids.device, dtype=self.term_samples.dtype)
-        else:
-            probs = beta_sampling_probs(self.success_monitor.success_rate, target=0.5, kappa=1)
+        if isinstance(self._sampling_cfg, BetaSamplingCfg):
+            rates = eval(self._sampling_cfg.success_rate_bind)  # noqa: S307
+            probs = beta_sampling_probs(rates, self._sampling_cfg.target, self._sampling_cfg.kappa, self._sampling_cfg.temperature)
             self.term_samples[env_ids] = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
             if report:
                 log.update({f"Metrics/SampleProb/{name}": probs[i].item() for i, name in enumerate(self.term_partitions.keys())})
+        else:
+            self.term_samples[env_ids] = torch.randint(0, self.num_partitions, (env_ids.size(0),), device=env_ids.device, dtype=self.term_samples.dtype)
 
         i = 0
         for _, term_cfg in self.term_partitions.items():
-            # get the env_ids that belong to the current term
             term_ids = env_ids[self.term_samples[env_ids] == i]
             if term_ids.numel() > 0:
                 term_cfg.func(env, term_ids, **term_cfg.params)
