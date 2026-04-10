@@ -95,6 +95,19 @@ class RigidObject(BaseRigidObject):
         return self._root_view
 
     @property
+    def num_shapes_per_body(self) -> list[int]:
+        """Number of collision shapes per body in the rigid object.
+
+        Returns a list where each element is the number of shapes for
+        the corresponding body. Cached after first access.
+        """
+        if not hasattr(self, "_num_shapes_per_body"):
+            self._num_shapes_per_body = []
+            for shapes in self._root_view.body_shapes:
+                self._num_shapes_per_body.append(len(shapes))
+        return self._num_shapes_per_body
+
+    @property
     def instantaneous_wrench_composer(self) -> WrenchComposer:
         """Instantaneous wrench composer.
 
