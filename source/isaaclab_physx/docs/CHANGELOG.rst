@@ -1,23 +1,6 @@
 Changelog
 ---------
 
-0.5.14 (2026-04-09)
-~~~~~~~~~~~~~~~~~~~
-
-Added
-^^^^^
-
-* Added :meth:`~isaaclab_physx.assets.RigidObject.set_material_properties_index`,
-  :meth:`~isaaclab_physx.assets.RigidObject.set_material_properties_mask`,
-  :meth:`~isaaclab_physx.assets.Articulation.set_material_properties_index`,
-  :meth:`~isaaclab_physx.assets.Articulation.set_material_properties_mask`,
-  :meth:`~isaaclab_physx.assets.RigidObjectCollection.set_material_properties_index`, and
-  :meth:`~isaaclab_physx.assets.RigidObjectCollection.set_material_properties_mask`
-  methods for setting collision shape material properties (friction, restitution).
-  These methods follow the standard ``_index``/``_mask`` pattern, providing a unified
-  API across PhysX and Newton backends.
-
-
 0.5.13 (2026-03-25)
 ~~~~~~~~~~~~~~~~~~~
 

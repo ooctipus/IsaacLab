@@ -1,16 +1,6 @@
 Changelog
 ---------
 
-0.5.11 (2026-04-09)
-~~~~~~~~~~~~~~~~~~~
-
-Added
-^^^^^
-
-* Added ``set_friction_index/mask`` and ``set_restitution_index/mask`` methods to
-  Newton assets for native material property randomization.
-
-
 0.5.10 (2026-04-05)
 ~~~~~~~~~~~~~~~~~~~
 
