@@ -244,15 +244,13 @@ class SuccessTerminationsCfg:
     # predictor_success_truncation = DoneTerm(
     #     func=mdp.predictor_success_truncation, time_out=True, params={"threshold": 0.98, "truncation_ratio": 0.5}
     # )
-    # predictor_failure_truncation = DoneTerm(
-    #     func=mdp.predictor_failure_truncation, time_out=True,
-    #     params={"failure_threshold": 0.02, "consecutive_steps": 10, "truncation_ratio": 0.5, "min_loss": 0.15},
-    # )
-    split_time_out = DoneTerm(
-        func=mdp.split_time_out, time_out=True,
+    predictor_failure_truncation = DoneTerm(
+        func=mdp.predictor_failure_truncation, time_out=True,
         params={
-            "short_episode_length_s": 2.0,
-            "split_ratio": 0.5,
+            "failure_threshold": 0.02,
+            "consecutive_steps": 10,
+            "truncation_ratio": 0.5,
+            "min_loss": 0.3,
             "exclude_from_estimator": preset(default=False, success_estimator=True),
         },
     )

@@ -174,10 +174,6 @@ class predictor_success_truncation(_PredictorTruncationBase):
 
     Only applied to the first ``truncation_ratio`` fraction of envs (the truncatable
     group). The remaining envs (exam group) always run to natural completion.
-
-    The success estimator bootstraps through these truncations via
-    ``extras["predictor_truncations"]``. The success monitor should **ignore**
-    these episodes (outcome unknown).
     """
 
     def __init__(self, cfg: DoneTermCfg, env: ManagerBasedRLEnv):
@@ -191,8 +187,6 @@ class predictor_success_truncation(_PredictorTruncationBase):
         if self._shared_predictions is not None and self.n_truncatable > 0:
             probs = torch.sigmoid(self._shared_predictions[:self.n_truncatable])
             result[:self.n_truncatable] = probs > self.threshold
-        env.extras["predictor_truncations"] = env.extras.get("predictor_truncations", torch.zeros(env.num_envs, device=env.device))
-        env.extras["predictor_truncations"] += result.float()
         return result
 
 
@@ -204,6 +198,10 @@ class predictor_failure_truncation(_PredictorTruncationBase):
 
     Requires ``consecutive_steps`` consecutive predictions below ``failure_threshold``
     before truncating, preventing premature truncation from noisy single-step estimates.
+
+    When ``exclude_from_estimator`` is True, envs in the truncatable group are masked
+    out of success estimator training via ``extras["success_train_mask"]`` so the
+    estimator never trains on outcomes it influenced.
     """
 
     def __init__(self, cfg: DoneTermCfg, env: ManagerBasedRLEnv):
@@ -213,7 +211,11 @@ class predictor_failure_truncation(_PredictorTruncationBase):
         self.min_loss: float = cfg.params.get("min_loss", 0.1)  # type: ignore
         truncation_ratio: float = cfg.params.get("truncation_ratio", 0.5)  # type: ignore
         self.n_truncatable = int(env.num_envs * truncation_ratio)
+        self.exclude_from_estimator: bool = cfg.params.get("exclude_from_estimator", False)  # type: ignore
         self._consecutive_count = torch.zeros(env.num_envs, dtype=torch.int32, device=env.device)
+        if self.exclude_from_estimator:
+            self._estimator_mask = torch.ones(env.num_envs, device=env.device)
+            self._estimator_mask[:self.n_truncatable] = 0.0
 
     def __call__(
         self,
@@ -222,6 +224,7 @@ class predictor_failure_truncation(_PredictorTruncationBase):
         consecutive_steps: int = 10,
         truncation_ratio: float = 0.5,
         min_loss: float = 0.1,
+        exclude_from_estimator: bool = False,
     ) -> torch.Tensor:
         result = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
         if self._shared_predictions is not None and self.n_truncatable > 0 and self._shared_loss < self.min_loss:
@@ -232,10 +235,10 @@ class predictor_failure_truncation(_PredictorTruncationBase):
             )
             result[:self.n_truncatable] = self._consecutive_count[:self.n_truncatable] >= self.consecutive_steps
 
-        # Reset counter for envs starting a new episode or being truncated
         new_episodes = env.episode_length_buf == 0
         self._consecutive_count[new_episodes | result] = 0
 
-        env.extras["predictor_truncations"] = env.extras.get("predictor_truncations", torch.zeros(env.num_envs, device=env.device))
-        env.extras["predictor_truncations"] += result.float()
+        if self.exclude_from_estimator:
+            env.extras["success_train_mask"] = self._estimator_mask
+
         return result
