@@ -72,8 +72,8 @@ class FactoryPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     success_estimator_bind = preset(
         default=None,
         success_estimator=(
-            'env.unwrapped.termination_manager.get_term_cfg("predictor_failure_truncation").func.bind(alg.success_predictions)'
-            ' or alg._loss_callback.append(env.unwrapped.termination_manager.get_term_cfg("predictor_failure_truncation").func.update_loss)'
+            'env.unwrapped.termination_manager.get_term_cfg("predictor_truncation").func.bind(alg.success_predictions)'
+            ' or alg._loss_callback.append(env.unwrapped.termination_manager.get_term_cfg("predictor_truncation").func.update_loss)'
         ),
     )
     state_buffer_bind = 'setattr(alg, "_state_buffer", env.unwrapped.event_manager.get_term_cfg("reset_strategies").func._shared_buffer)'

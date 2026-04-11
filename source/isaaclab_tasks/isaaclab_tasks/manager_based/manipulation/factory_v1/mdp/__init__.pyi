@@ -35,7 +35,7 @@ __all__ = [
     "progress_context",
     "success_termination",
     "predictor_success_truncation",
-    "predictor_failure_truncation",
+    "predictor_truncation",
     "split_time_out",
     "CollisionAnalyzerCfg",
     "RESET_STRATEGIES",
@@ -67,6 +67,6 @@ from .rewards import (
     success_reward,
     unstable_manipulation,
 )
-from .terminations import abnormal_robot_state, out_of_bound, predictor_failure_truncation, predictor_success_truncation, progress_context, split_time_out, success_termination
+from .terminations import abnormal_robot_state, out_of_bound, predictor_truncation, predictor_success_truncation, progress_context, split_time_out, success_termination
 from isaaclab.envs.mdp import *
 from .util import CollisionAnalyzerCfg
