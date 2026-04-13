@@ -242,11 +242,11 @@ class SuccessTerminationsCfg:
     progress_context = _PROGRESS_CONTEXT
     success = DoneTerm(func=mdp.success_termination)
     predictor_truncation = DoneTerm(
-        func=mdp.predictor_truncation, time_out=True,
+        func=mdp.predictor_truncation,
         params={
             "success_threshold": 0.98,
             "failure_threshold": 0.02,
-            "consecutive_steps": 10,
+            "consecutive_steps": 20,
             "truncation_ratio": 0.5,
             "min_loss": 0.3,
             "truncate_on_success": False,

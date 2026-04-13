@@ -179,8 +179,8 @@ class predictor_truncation(_PredictorTruncationBase):
 
     - **Failure truncation** (``truncate_on_failure``): truncate after
       ``consecutive_steps`` consecutive predictions below ``failure_threshold``.
-    - **Success truncation** (``truncate_on_success``): truncate immediately when
-      the prediction exceeds ``success_threshold``.
+    - **Success truncation** (``truncate_on_success``): truncate after
+      ``consecutive_steps`` consecutive predictions above ``success_threshold``.
 
     Both modes require the estimator loss to drop below ``min_loss`` before activating.
 
@@ -200,7 +200,9 @@ class predictor_truncation(_PredictorTruncationBase):
         truncation_ratio: float = cfg.params.get("truncation_ratio", 0.5)  # type: ignore
         self.n_truncatable = int(env.num_envs * truncation_ratio)
         self.exclude_from_estimator: bool = cfg.params.get("exclude_from_estimator", False)  # type: ignore
-        self._consecutive_count = torch.zeros(env.num_envs, dtype=torch.int32, device=env.device)
+        self._failure_consecutive_count = torch.zeros(env.num_envs, dtype=torch.int32, device=env.device)
+        self._success_consecutive_count = torch.zeros(env.num_envs, dtype=torch.int32, device=env.device)
+        self._progress_context: progress_context | None = None
         if self.exclude_from_estimator:
             self._estimator_mask = torch.ones(env.num_envs, device=env.device)
             self._estimator_mask[:self.n_truncatable] = 0.0
@@ -217,24 +219,43 @@ class predictor_truncation(_PredictorTruncationBase):
         truncate_on_failure: bool = True,
         exclude_from_estimator: bool = False,
     ) -> torch.Tensor:
+        if self._progress_context is None:
+            self._progress_context = env.termination_manager.get_term_cfg("progress_context").func  # type: ignore[assignment]
+
         result = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        n_success_truncated = 0
+        n_failure_truncated = 0
         if self._shared_predictions is not None and self.n_truncatable > 0 and self._shared_loss < self.min_loss:
             probs = torch.sigmoid(self._shared_predictions[:self.n_truncatable])
 
             if self.truncate_on_failure:
                 below = probs < self.failure_threshold
-                self._consecutive_count[:self.n_truncatable] = torch.where(
-                    below, self._consecutive_count[:self.n_truncatable] + 1, 0
+                self._failure_consecutive_count[:self.n_truncatable] = torch.where(
+                    below, self._failure_consecutive_count[:self.n_truncatable] + 1, 0
                 )
-                result[:self.n_truncatable] = self._consecutive_count[:self.n_truncatable] >= self.consecutive_steps
+                failure_fired = self._failure_consecutive_count[:self.n_truncatable] >= self.consecutive_steps
+                result[:self.n_truncatable] = failure_fired
+                n_failure_truncated = failure_fired.sum().item()
 
             if self.truncate_on_success:
-                result[:self.n_truncatable] |= probs > self.success_threshold
+                above = probs > self.success_threshold
+                self._success_consecutive_count[:self.n_truncatable] = torch.where(
+                    above, self._success_consecutive_count[:self.n_truncatable] + 1, 0
+                )
+                success_fired = self._success_consecutive_count[:self.n_truncatable] >= self.consecutive_steps
+                result[:self.n_truncatable] |= success_fired
+                self._progress_context.is_success[:self.n_truncatable] |= success_fired
+                n_success_truncated = success_fired.sum().item()
 
-        new_episodes = env.episode_length_buf == 0
-        self._consecutive_count[new_episodes | result] = 0
+        reset = (env.episode_length_buf == 0) | result
+        self._failure_consecutive_count[reset] = 0
+        self._success_consecutive_count[reset] = 0
 
         if self.exclude_from_estimator:
             env.extras["success_train_mask"] = self._estimator_mask
+
+        n_total = n_success_truncated + n_failure_truncated
+        ratio = n_success_truncated / n_total if n_total > 0 else 0.0
+        env.extras.setdefault("log", {})["Episode_Termination/termination_ratio_success_over_failure"] = ratio
 
         return result
