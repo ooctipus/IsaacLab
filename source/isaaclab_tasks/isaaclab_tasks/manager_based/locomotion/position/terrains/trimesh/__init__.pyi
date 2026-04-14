@@ -4,7 +4,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 __all__ = [
+    "BoxBeamCfg",
+    "FlatBeamCfg",
     "MeshBalanceBeamsTerrainCfg",
+    "MeshContourTerrainCfg",
+    "MeshFloatingIslandTerrainCfg",
+    "MeshMazeTerrainCfg",
     "MeshRadiatingBeamTerrainCfg",
     "MeshDiversityBoxTerrainCfg",
     "MeshObjTerrainCfg",
@@ -16,7 +21,12 @@ __all__ = [
 ]
 
 from .mesh_terrains_cfg import (
+    BoxBeamCfg,
+    FlatBeamCfg,
     MeshBalanceBeamsTerrainCfg,
+    MeshContourTerrainCfg,
+    MeshFloatingIslandTerrainCfg,
+    MeshMazeTerrainCfg,
     MeshRadiatingBeamTerrainCfg,
     MeshDiversityBoxTerrainCfg,
     MeshObjTerrainCfg,

@@ -617,6 +617,361 @@ def structured_terrain(
     return mesh_list, origin
 
 
+def maze_terrain(
+    difficulty: float, cfg: mesh_terrains_cfg.MeshMazeTerrainCfg
+) -> tuple[list[trimesh.Trimesh], np.ndarray]:
+    """Generate a maze terrain on a 2D grid.
+
+    Uses iterative DFS (recursive backtracker) to carve passages, then
+    extrudes remaining wall segments into axis-aligned boxes.
+
+    Args:
+        difficulty: Difficulty parameter in [0, 1].
+        cfg: Terrain configuration.
+
+    Returns:
+        A list of trimesh meshes and the terrain origin [m].
+    """
+    from isaaclab.terrains.trimesh.utils import make_plane
+
+    cols = int(_resolve_range(cfg.grid_cols, difficulty))
+    rows = int(_resolve_range(cfg.grid_rows, difficulty))
+    cols = max(cols, 2)
+    rows = max(rows, 2)
+    wall_h = _resolve_range(cfg.wall_height, difficulty)
+    thick = cfg.wall_thickness
+
+    cell_w = cfg.size[0] / cols
+    cell_h = cfg.size[1] / rows
+
+    # walls stored as sets of (col, row, direction) where direction is 'h' or 'v'
+    # 'h' = horizontal wall on the SOUTH edge of cell (col, row): from (col, row+1) to (col+1, row+1)
+    # 'v' = vertical wall on the EAST edge of cell (col, row): from (col+1, row) to (col+1, row+1)
+    # plus boundary walls
+    h_walls: set[tuple[int, int]] = set()  # (col, row) means wall between row and row+1 at col
+    v_walls: set[tuple[int, int]] = set()  # (col, row) means wall between col and col+1 at row
+
+    # initialize all interior walls
+    for c in range(cols):
+        for r in range(rows - 1):
+            h_walls.add((c, r))  # horizontal wall below cell (c, r)
+    for c in range(cols - 1):
+        for r in range(rows):
+            v_walls.add((c, r))  # vertical wall right of cell (c, r)
+
+    # iterative DFS maze carver
+    visited = [[False] * rows for _ in range(cols)]
+    stack: list[tuple[int, int]] = []
+    start_c, start_r = cols // 2, rows // 2
+    visited[start_c][start_r] = True
+    stack.append((start_c, start_r))
+
+    while stack:
+        c, r = stack[-1]
+        neighbors = []
+        if c > 0 and not visited[c - 1][r]:
+            neighbors.append((c - 1, r, "v", c - 1, r))  # remove v_wall at (c-1, r)
+        if c < cols - 1 and not visited[c + 1][r]:
+            neighbors.append((c + 1, r, "v", c, r))  # remove v_wall at (c, r)
+        if r > 0 and not visited[c][r - 1]:
+            neighbors.append((c, r - 1, "h", c, r - 1))  # remove h_wall at (c, r-1)
+        if r < rows - 1 and not visited[c][r + 1]:
+            neighbors.append((c, r + 1, "h", c, r))  # remove h_wall at (c, r)
+
+        if neighbors:
+            nc, nr, wtype, wc, wr = random.choice(neighbors)
+            if wtype == "h":
+                h_walls.discard((wc, wr))
+            else:
+                v_walls.discard((wc, wr))
+            visited[nc][nr] = True
+            stack.append((nc, nr))
+        else:
+            stack.pop()
+
+    # optionally remove extra walls to open up the maze
+    if cfg.open_ratio > 0:
+        all_remaining = [(wc, wr, "h") for wc, wr in h_walls] + [(wc, wr, "v") for wc, wr in v_walls]
+        random.shuffle(all_remaining)
+        to_remove = int(len(all_remaining) * cfg.open_ratio)
+        for wc, wr, wtype in all_remaining[:to_remove]:
+            if wtype == "h":
+                h_walls.discard((wc, wr))
+            else:
+                v_walls.discard((wc, wr))
+
+    # build node grid with optional jitter
+    # nodes[c][r] = (x, y) position of grid node at column c, row r
+    # grid has (cols+1) x (rows+1) nodes
+    grid_noise = getattr(cfg, "grid_noise", 0.0)
+    nodes = [[None] * (rows + 1) for _ in range(cols + 1)]
+    for c in range(cols + 1):
+        for r in range(rows + 1):
+            x = c * cell_w
+            y = r * cell_h
+            if grid_noise > 0 and 0 < c < cols and 0 < r < rows:
+                x += random.uniform(-grid_noise, grid_noise) * cell_w
+                y += random.uniform(-grid_noise, grid_noise) * cell_h
+            nodes[c][r] = np.array([x, y])
+
+    # build wall segments as (p0, p1) pairs
+    segments: list[tuple[np.ndarray, np.ndarray]] = []
+
+    for c, r in h_walls:
+        segments.append((nodes[c][r + 1], nodes[c + 1][r + 1]))
+    for c, r in v_walls:
+        segments.append((nodes[c + 1][r], nodes[c + 1][r + 1]))
+
+    if getattr(cfg, "boundary_walls", False):
+        for c in range(cols):
+            for r_edge in [0, rows]:
+                segments.append((nodes[c][r_edge], nodes[c + 1][r_edge]))
+        for r in range(rows):
+            for c_edge in [0, cols]:
+                segments.append((nodes[c_edge][r], nodes[c_edge][r + 1]))
+
+    # create a single watertight mesh by unioning 2D wall rectangles then extruding
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+
+    half_t = thick / 2
+    polys = []
+    for p0, p1 in segments:
+        d = p1 - p0
+        length = np.linalg.norm(d)
+        if length < 1e-6:
+            continue
+        perp = np.array([-d[1], d[0]]) / length * half_t
+        corners = [
+            p0 - perp, p0 + perp,
+            p1 + perp, p1 - perp,
+        ]
+        polys.append(Polygon(corners))
+
+    meshes: list[trimesh.Trimesh] = []
+    if polys:
+        merged = unary_union(polys)
+        if merged.geom_type == "MultiPolygon":
+            parts = list(merged.geoms)
+        else:
+            parts = [merged]
+        for poly in parts:
+            wall_mesh = trimesh.creation.extrude_polygon(poly, wall_h)
+            meshes.append(wall_mesh)
+
+    # ground plane
+    meshes.append(make_plane(cfg.size, height=0.0, center_zero=False))
+
+    origin = np.array([0.5 * cfg.size[0], 0.5 * cfg.size[1], 0.0])
+    return meshes, origin
+
+
+# ======================================================================
+# Stone generator
+# ======================================================================
+
+
+def _generate_stone(radius: float, height_scale: float, roughness: float) -> trimesh.Trimesh:
+    """Generate a natural-looking stone mesh with irregular, oval shapes.
+
+    Uses random axis scaling for elongation, low-frequency smooth
+    deformation for organic shape, and per-vertex noise for surface detail.
+    """
+    stone = trimesh.creation.icosphere(subdivisions=2, radius=1.0)
+    verts = stone.vertices.copy()
+
+    # random axis scaling for oval/elongated shape
+    sx = random.uniform(0.6, 1.4)
+    sy = random.uniform(0.6, 1.4)
+    sz = height_scale * random.uniform(0.5, 1.0)
+    verts[:, 0] *= sx
+    verts[:, 1] *= sy
+    verts[:, 2] *= sz
+
+    # random yaw rotation
+    yaw = random.uniform(0, 2 * np.pi)
+    c, s = np.cos(yaw), np.sin(yaw)
+    x_rot = verts[:, 0] * c - verts[:, 1] * s
+    y_rot = verts[:, 0] * s + verts[:, 1] * c
+    verts[:, 0] = x_rot
+    verts[:, 1] = y_rot
+
+    # low-frequency smooth deformation (3 random lobes)
+    norms = verts / np.linalg.norm(verts, axis=1, keepdims=True)
+    angles = np.arctan2(verts[:, 1], verts[:, 0])
+    for _ in range(3):
+        freq = random.uniform(1.5, 3.5)
+        phase = random.uniform(0, 2 * np.pi)
+        amp = random.uniform(0.05, roughness * 0.7)
+        verts += norms * (amp * np.cos(freq * angles + phase))[:, None]
+
+    # fine surface noise
+    fine_noise = np.random.uniform(-roughness * 0.3, roughness * 0.3, size=len(verts))
+    norms = verts / np.linalg.norm(verts, axis=1, keepdims=True)
+    verts += norms * fine_noise[:, None]
+
+    # flatten bottom so stone sits on ground
+    verts[:, 2] = np.maximum(verts[:, 2], verts[:, 2].min() * 0.3)
+
+    verts *= radius
+    stone.vertices = verts
+    return stone
+
+
+# ======================================================================
+# Contour terrain
+# ======================================================================
+
+
+def _perlin_2d(shape: tuple[int, int], scale: float, octaves: int, seed: int) -> np.ndarray:
+    """Generate a 2D fractal noise field using value noise with smoothstep interpolation."""
+    rng = np.random.RandomState(seed)
+    rows, cols = shape
+    result = np.zeros(shape, dtype=np.float64)
+
+    for o in range(octaves):
+        freq = int(max(2, scale * (2 ** o)))
+        amp = 0.5 ** o
+
+        # random values at grid nodes
+        grid = rng.uniform(0, 1, (freq + 1, freq + 1))
+
+        # sample positions in grid space
+        gy = np.linspace(0, freq - 1e-9, rows)
+        gx = np.linspace(0, freq - 1e-9, cols)
+
+        # integer and fractional parts
+        iy = gy.astype(int)
+        ix = gx.astype(int)
+        fy = gy - iy
+        fx = gx - ix
+
+        # smoothstep
+        sy = fy * fy * (3 - 2 * fy)
+        sx = fx * fx * (3 - 2 * fx)
+
+        # vectorized bilinear interpolation with smoothstep
+        iy1 = np.minimum(iy + 1, freq)
+        ix1 = np.minimum(ix + 1, freq)
+        v00 = grid[np.ix_(iy, ix)]
+        v10 = grid[np.ix_(iy, ix1)]
+        v01 = grid[np.ix_(iy1, ix)]
+        v11 = grid[np.ix_(iy1, ix1)]
+        wx = sx[np.newaxis, :]
+        wy = sy[:, np.newaxis]
+        layer = (v00 * (1 - wx) + v10 * wx) * (1 - wy) + (v01 * (1 - wx) + v11 * wx) * wy
+
+        result += amp * layer
+
+    result -= result.min()
+    rng_val = result.max() - result.min()
+    if rng_val > 1e-9:
+        result /= rng_val
+    return result
+
+
+def contour_terrain(
+    difficulty: float, cfg: mesh_terrains_cfg.MeshContourTerrainCfg
+) -> tuple[list[trimesh.Trimesh], np.ndarray]:
+    """Generate stepped contour terrain from a noise heightfield.
+
+    Args:
+        difficulty: Difficulty parameter in [0, 1].
+        cfg: Terrain configuration.
+
+    Returns:
+        A list of trimesh meshes and the terrain origin [m].
+    """
+    from isaaclab.terrains.trimesh.utils import make_plane
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+
+    num_levels = int(_resolve_range(cfg.num_levels, difficulty))
+    level_h = _resolve_range(cfg.level_height, difficulty)
+    seed = cfg.noise_seed if cfg.noise_seed is not None else random.randint(0, 2**31)
+    smoothing = cfg.smoothing
+
+    res = 100
+    noise_field = _perlin_2d((res, res), cfg.noise_scale, cfg.noise_octaves, seed)
+
+    x_coords = np.linspace(0, cfg.size[0], res)
+    y_coords = np.linspace(0, cfg.size[1], res)
+
+    thresholds = np.linspace(0.1, 0.9, num_levels)
+
+    meshes: list[trimesh.Trimesh] = []
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    for level_idx, thresh in enumerate(thresholds):
+        fig, ax = plt.subplots()
+        cs = ax.contourf(x_coords, y_coords, noise_field, levels=[thresh, 1.1])
+        plt.close(fig)
+
+        polys = []
+        for level_segs in cs.allsegs:
+            for seg in level_segs:
+                if len(seg) < 3:
+                    continue
+                try:
+                    p = Polygon(seg)
+                    if smoothing > 0:
+                        p = p.simplify(smoothing, preserve_topology=True)
+                    if p.is_valid and p.area > 0.1:
+                        polys.append(p)
+                except Exception:
+                    continue
+
+        if not polys:
+            continue
+
+        merged = unary_union(polys)
+        if merged.geom_type == "MultiPolygon":
+            parts = list(merged.geoms)
+        else:
+            parts = [merged]
+
+        z_base = level_idx * level_h
+        for poly in parts:
+            if poly.is_empty or poly.area < 0.1:
+                continue
+            step_mesh = trimesh.creation.extrude_polygon(poly, level_h)
+            step_mesh.apply_translation([0, 0, z_base])
+            meshes.append(step_mesh)
+
+    # scatter stones on terraces
+    stones_cfg = getattr(cfg, "stones", None)
+    if stones_cfg is not None:
+        n_stones = int(_resolve_range(stones_cfg.num_stones, difficulty))
+        s_min, s_max = stones_cfg.size_range
+        total_h = num_levels * level_h
+
+        for _ in range(n_stones):
+            sx = random.uniform(0, cfg.size[0])
+            sy = random.uniform(0, cfg.size[1])
+            # find which terrace level this point sits on
+            gi = min(int(sx / cfg.size[0] * res), res - 1)
+            gj = min(int(sy / cfg.size[1] * res), res - 1)
+            nval = noise_field[gj, gi]
+            stone_level = 0
+            for thresh in thresholds:
+                if nval >= thresh:
+                    stone_level += 1
+            sz = stone_level * level_h
+
+            radius = random.uniform(s_min, s_max)
+            stone = _generate_stone(radius, stones_cfg.height_scale, stones_cfg.roughness)
+            stone.apply_translation([sx, sy, sz + radius * stones_cfg.height_scale * 0.5])
+            meshes.append(stone)
+
+    meshes.append(make_plane(cfg.size, height=0.0, center_zero=False))
+
+    origin = np.array([0.5 * cfg.size[0], 0.5 * cfg.size[1], 0.0])
+    return meshes, origin
+
+
 def _lerp(a: float, b: float, t: float) -> float:
     """Linear interpolation from *a* to *b* by factor *t*."""
     return a + t * (b - a)
@@ -675,6 +1030,146 @@ def _beam_reach(
     return min(half_x / cos_yaw, half_y / sin_yaw)
 
 
+def _bezier_point(p0: np.ndarray, p1: np.ndarray, ctrl: np.ndarray, t: float) -> np.ndarray:
+    """Evaluate a quadratic bezier curve at parameter *t* in [0, 1]."""
+    return (1 - t) ** 2 * p0 + 2 * (1 - t) * t * ctrl + t ** 2 * p1
+
+
+def _bezier_tangent(p0: np.ndarray, p1: np.ndarray, ctrl: np.ndarray, t: float) -> np.ndarray:
+    """Tangent direction of a quadratic bezier at parameter *t*."""
+    tang = 2 * (1 - t) * (ctrl - p0) + 2 * t * (p1 - ctrl)
+    norm = np.linalg.norm(tang)
+    return tang / norm if norm > 1e-9 else np.array([1.0, 0.0])
+
+
+def _generate_passway(
+    start_xy: np.ndarray,
+    end_xy: np.ndarray,
+    z_start: float,
+    z_end: float,
+    bar_width: float,
+    bar_height: float,
+    beam_style_cfg,
+    difficulty: float,
+    start_inset: float = 0.0,
+    curvature: float = 0.0,
+) -> list[trimesh.Trimesh]:
+    """Generate a passway (flat or box-segmented) between two 2D points.
+
+    Args:
+        start_xy: Start point ``(x, y)`` in world frame.
+        end_xy: End point ``(x, y)`` in world frame.
+        z_start: Box-center z at the start end.
+        z_end: Box-center z at the far end.
+        bar_width: Width of the passway [m].
+        bar_height: Thickness (z extent) of each box [m].
+        beam_style_cfg: A :class:`FlatBeamCfg` or :class:`BoxBeamCfg` instance.
+        difficulty: Difficulty in [0, 1] for resolving range fields.
+        start_inset: Distance to inset the first segment from the start point [m].
+        curvature: Maximum lateral offset of the bezier control point as a
+            fraction of the straight-line distance. 0 means straight.
+
+    Returns:
+        A list of trimesh meshes composing the passway.
+    """
+    delta = end_xy - start_xy
+    straight_length = float(np.linalg.norm(delta))
+    if straight_length < 1e-6:
+        return []
+
+    # build bezier control point
+    mid_xy = (start_xy + end_xy) / 2
+    if curvature > 0:
+        perp = np.array([-delta[1], delta[0]]) / straight_length
+        lateral = random.uniform(-curvature, curvature) * straight_length
+        ctrl_xy = mid_xy + perp * lateral
+    else:
+        ctrl_xy = mid_xy
+
+    is_box = type(beam_style_cfg).__name__ == "BoxBeamCfg"
+    meshes: list[trimesh.Trimesh] = []
+    transform = np.eye(4)
+
+    if not is_box and curvature == 0:
+        direction = delta / straight_length
+        yaw = float(np.arctan2(direction[1], direction[0]))
+        rot = tf.Rotation.from_euler("z", yaw).as_matrix()
+        mid_z = (z_start + z_end) / 2
+        z_drop = z_start - z_end
+        pitch = np.arctan2(z_drop, straight_length) if abs(z_drop) > 1e-6 else 0.0
+        beam_rot = rot @ tf.Rotation.from_euler("y", pitch).as_matrix()
+        transform[0:3, 0:3] = beam_rot
+        transform[:3, -1] = [mid_xy[0], mid_xy[1], mid_z]
+        meshes.append(trimesh.creation.box([straight_length, bar_width, bar_height], transform.copy()))
+    else:
+        if not is_box:
+            box_length = bar_width
+            box_gap_val = 0.0
+            pos_var = (0.0, 0.0, 0.0)
+            yaw_var = 0.0
+        else:
+            box_length = _resolve_range(beam_style_cfg.box_length, difficulty)
+            box_gap_val = _resolve_range(beam_style_cfg.box_gap, difficulty)
+            pos_var = beam_style_cfg.box_position_variation
+            yaw_var = beam_style_cfg.box_yaw_variation
+
+        stride = box_length + box_gap_val
+        n_across = max(1, int(bar_width / stride)) if bar_width >= box_length * 2 else 1
+        across_span = n_across * box_length + (n_across - 1) * box_gap_val
+        y_start_off = -across_span / 2 + box_length / 2
+
+        # walk along the bezier by arc-length approximation
+        arc_len = 0.0
+        prev_pt = start_xy.copy()
+        num_samples = max(int(straight_length / (box_length * 0.5)), 20)
+        arc_table: list[tuple[float, float]] = [(0.0, 0.0)]
+        for si in range(1, num_samples + 1):
+            t_s = si / num_samples
+            pt = _bezier_point(start_xy, end_xy, ctrl_xy, t_s)
+            arc_len += float(np.linalg.norm(pt - prev_pt))
+            arc_table.append((arc_len, t_s))
+            prev_pt = pt
+        total_arc = arc_len
+
+        def arc_to_t(s: float) -> float:
+            for k in range(1, len(arc_table)):
+                s0, t0 = arc_table[k - 1]
+                s1, t1 = arc_table[k]
+                if s <= s1:
+                    frac = (s - s0) / (s1 - s0) if s1 > s0 else 0.0
+                    return t0 + frac * (t1 - t0)
+            return 1.0
+
+        cursor = start_inset
+        while cursor + box_length <= total_arc:
+            s_center = cursor + box_length / 2
+            t_param = arc_to_t(s_center)
+            center_xy = _bezier_point(start_xy, end_xy, ctrl_xy, t_param)
+            tangent = _bezier_tangent(start_xy, end_xy, ctrl_xy, t_param)
+            seg_yaw = float(np.arctan2(tangent[1], tangent[0]))
+            seg_z = _lerp(z_start, z_end, t_param)
+
+            seg_rot_base = tf.Rotation.from_euler("z", seg_yaw).as_matrix()
+
+            for j in range(n_across):
+                dx = random.uniform(-pos_var[0], pos_var[0]) if pos_var[0] > 0 else 0.0
+                dy = random.uniform(-pos_var[1], pos_var[1]) if pos_var[1] > 0 else 0.0
+                dz = random.uniform(-pos_var[2], pos_var[2]) if pos_var[2] > 0 else 0.0
+                x_stagger = (stride * 0.5) * (j % 2) if n_across > 1 else 0.0
+
+                local_offset = seg_rot_base @ np.array([x_stagger + dx, y_start_off + j * stride + dy, 0.0])
+                world = np.array([center_xy[0] + local_offset[0], center_xy[1] + local_offset[1], seg_z + dz])
+
+                seg_rot = seg_rot_base @ tf.Rotation.from_euler("z", random.uniform(-yaw_var, yaw_var)).as_matrix() if yaw_var > 0 else seg_rot_base
+                transform[0:3, 0:3] = seg_rot
+                transform[:3, -1] = world
+                box_w = box_length if is_box else bar_width
+                meshes.append(trimesh.creation.box([box_length, box_w, bar_height], transform.copy()))
+            cursor += stride
+
+    return meshes
+
+
 def beam_terrain(
     difficulty: float, cfg: mesh_terrains_cfg.MeshRadiatingBeamTerrainCfg
 ) -> tuple[list[trimesh.Trimesh], np.ndarray]:
@@ -687,7 +1182,6 @@ def beam_terrain(
     Returns:
         A list of trimesh meshes and the terrain origin [m].
     """
-    # -- resolve difficulty-dependent parameters --
     bar_height = _resolve_range(cfg.bar_height_range, difficulty)
     bar_width = cfg.bar_width_range[0] - difficulty * (cfg.bar_width_range[0] - cfg.bar_width_range[1])
     num_bars = int(_resolve_range(cfg.num_bars, difficulty))
@@ -700,13 +1194,10 @@ def beam_terrain(
     platform_radius = cfg.platform_width * 0.5
     terrain_center = np.array([0.5 * cfg.size[0], 0.5 * cfg.size[1]])
 
-    # -- z reference levels --
-    # All z values are defined by top surfaces; box centers are offset by -bar_height/2.
-    # Border top is always at z = 0.  Platform top is at z = platform_elevation.
     plat_top = platform_elevation
     border_top = 0.0
-    z_inner = plat_top - bar_height / 2  # beam box center z at platform edge
-    z_outer = border_top - bar_height / 2  # beam box center z at border edge
+    z_inner = plat_top - bar_height / 2
+    z_outer = border_top - bar_height / 2
 
     # -- central platform --
     meshes: list[trimesh.Trimesh] = []
@@ -716,76 +1207,245 @@ def beam_terrain(
     plat_tf = trimesh.transformations.translation_matrix((*terrain_center, plat_center_z))
     meshes.append(trimesh.creation.cylinder(platform_radius, plat_total_h, sections=6, transform=plat_tf))
 
-    # -- yaw angles --
     yaw_angles = _sample_yaw_angles(num_bars, cfg.beam_distribution, bar_width, max(platform_radius, 0.1))
 
-    # -- precompute border reach --
-    border_half = np.array(cfg.border_size) * 0.5
+    border_cfg = getattr(cfg, "border", None)
+    if border_cfg is not None and hasattr(border_cfg, "inner_size"):
+        border_half = np.array(border_cfg.inner_size) * 0.5
+    else:
+        border_half = np.array(cfg.size) * 0.5
 
-    # -- beam style dispatch --
-    beam_style_cfg = getattr(cfg, "beam_style", None)
-    is_box = beam_style_cfg is not None and type(beam_style_cfg).__name__ == "BoxBeamCfg"
-    transform = np.eye(4)
+    beam_style_cfg = getattr(cfg, "beam_style", None) or mesh_terrains_cfg.FlatBeamCfg()
 
     for yaw in yaw_angles:
-        rot = tf.Rotation.from_euler("z", yaw).as_matrix()
         beam_length = _beam_reach(yaw, border_half[0], border_half[1])
-        usable = beam_length - bar_width
+        direction = np.array([np.cos(yaw), np.sin(yaw)])
+        start_xy = terrain_center + direction * platform_radius * 0.85
+        end_xy = terrain_center + direction * beam_length
+        meshes += _generate_passway(start_xy, end_xy, z_inner, z_outer, bar_width, bar_height, beam_style_cfg, difficulty)
 
-        if not is_box:
-            # --- flat beam (single tilted box) ---
-            mid_z = (z_inner + z_outer) / 2
-            z_drop = plat_top - border_top
-            pitch = np.arctan2(z_drop, usable) if z_drop != 0 else 0.0
-            beam_rot = rot @ tf.Rotation.from_euler("y", pitch).as_matrix()
-            offset = rot @ np.array([beam_length / 2, 0, 0])
+    # -- border geometry --
+    border_center_z = border_top - bar_height / 2
+    if border_cfg is not None:
+        border_type = type(border_cfg).__name__
+        if border_type == "SquareBorderCfg":
+            meshes += make_border(
+                cfg.size, border_cfg.inner_size, bar_height, (*terrain_center, border_center_z)
+            )
+        elif border_type == "PlatformBorderCfg":
+            for yaw in yaw_angles:
+                end_dist = _beam_reach(yaw, border_half[0], border_half[1]) + border_cfg.radius
+                end_xy = terrain_center + np.array([np.cos(yaw), np.sin(yaw)]) * end_dist
+                p_tf = trimesh.transformations.translation_matrix((*end_xy, border_center_z))
+                meshes.append(trimesh.creation.cylinder(border_cfg.radius, bar_height, sections=6, transform=p_tf))
 
-            transform[0:3, 0:3] = beam_rot
-            transform[:3, -1] = [terrain_center[0] + offset[0], terrain_center[1] + offset[1], mid_z]
-            meshes.append(trimesh.creation.box([usable, bar_width, bar_height], transform.copy()))
-        else:
-            # --- box beam (segmented) ---
-            box_length = _resolve_range(beam_style_cfg.box_length, difficulty)
-            box_gap = _resolve_range(beam_style_cfg.box_gap, difficulty)
-            pos_var = beam_style_cfg.box_position_variation
-            yaw_var = beam_style_cfg.box_yaw_variation
-
-            stride = box_length + box_gap
-            n_across = max(1, int(bar_width / stride)) if bar_width >= box_length * 2 else 1
-            across_span = n_across * box_length + (n_across - 1) * box_gap
-            y_start = -across_span / 2 + box_length / 2
-            beam_span = max(beam_length - platform_radius, 1e-6)
-
-            cursor = platform_radius * 0.85
-            while cursor + box_length <= beam_length:
-                t = np.clip((cursor - platform_radius) / beam_span, 0.0, 1.0)
-                seg_z = _lerp(z_inner, z_outer, t)
-
-                for j in range(n_across):
-                    dx = random.uniform(-pos_var[0], pos_var[0]) if pos_var[0] > 0 else 0.0
-                    dy = random.uniform(-pos_var[1], pos_var[1]) if pos_var[1] > 0 else 0.0
-                    dz = random.uniform(-pos_var[2], pos_var[2]) if pos_var[2] > 0 else 0.0
-                    x_stagger = (stride * 0.5) * (j % 2) if n_across > 1 else 0.0
-
-                    local = np.array([cursor + box_length / 2 + x_stagger + dx, y_start + j * stride + dy, 0.0])
-                    world = np.array([terrain_center[0], terrain_center[1], seg_z]) + rot @ local
-                    world[2] += dz
-
-                    seg_rot = rot @ tf.Rotation.from_euler("z", random.uniform(-yaw_var, yaw_var)).as_matrix() if yaw_var > 0 else rot
-                    transform[0:3, 0:3] = seg_rot
-                    transform[:3, -1] = world
-                    meshes.append(trimesh.creation.box([box_length, box_length, bar_height], transform.copy()))
-
-                cursor += stride
-
-    # -- border ring (top at z = 0) --
-    if getattr(cfg, "border_enabled", True):
-        border_center_z = border_top - bar_height / 2
-        meshes += make_border(cfg.size, cfg.border_size, bar_height, (*terrain_center, border_center_z))
-
-    # -- ground plane --
     ground_z = min(plat_bottom, border_top - bar_height)
     meshes.append(make_plane(cfg.size, ground_z, center_zero=False))
 
     origin = np.array([terrain_center[0], terrain_center[1], max(plat_top, border_top)])
+    return meshes, origin
+
+
+# ======================================================================
+# Floating island terrain
+# ======================================================================
+
+
+def _sample_island_positions(
+    num: int,
+    size: tuple[float, float],
+    bounding_radius: float,
+    margin: float,
+) -> np.ndarray:
+    """Rejection-sample *num* non-overlapping 2D positions within *size*."""
+    pad = bounding_radius + margin
+    positions: list[np.ndarray] = []
+    min_dist = 2 * bounding_radius + margin
+
+    for _ in range(num * 2000):
+        pt = np.array([
+            random.uniform(pad, size[0] - pad),
+            random.uniform(pad, size[1] - pad),
+        ])
+        if all(np.linalg.norm(pt - p) >= min_dist for p in positions):
+            positions.append(pt)
+            if len(positions) >= num:
+                break
+
+    return np.array(positions)
+
+
+def _build_graph(
+    positions: np.ndarray,
+    graph_cfg,
+) -> set[tuple[int, int]]:
+    """Build a set of undirected edges ``{(i, j), ...}`` over island positions."""
+    from scipy.spatial import Delaunay
+
+    n = len(positions)
+    if n < 2:
+        return set()
+
+    graph_type = type(graph_cfg).__name__
+
+    if graph_type == "DelaunayGraphCfg":
+        tri = Delaunay(positions)
+        edges: set[tuple[int, int]] = set()
+        for simplex in tri.simplices:
+            for a, b in [(0, 1), (1, 2), (0, 2)]:
+                edge = (min(simplex[a], simplex[b]), max(simplex[a], simplex[b]))
+                edges.add(edge)
+        return edges
+
+    dists = np.linalg.norm(positions[:, None] - positions[None, :], axis=-1)
+
+    if graph_type == "MSTGraphCfg":
+        visited = {0}
+        edges = set()
+        while len(visited) < n:
+            best_dist = float("inf")
+            best_edge = (0, 0)
+            for v in visited:
+                for u in range(n):
+                    if u not in visited and dists[v, u] < best_dist:
+                        best_dist = dists[v, u]
+                        best_edge = (min(v, u), max(v, u))
+            edges.add(best_edge)
+            visited.add(best_edge[0])
+            visited.add(best_edge[1])
+        return edges
+
+    if graph_type == "KNNGraphCfg":
+        k = min(getattr(graph_cfg, "k", 3), n - 1)
+        edges = set()
+        for i in range(n):
+            neighbors = np.argsort(dists[i])[1 : k + 1]
+            for j in neighbors:
+                edges.add((min(i, int(j)), max(i, int(j))))
+        return edges
+
+    raise ValueError(f"Unknown graph config type: {graph_type}")
+
+
+def _prune_edges_through_islands(
+    edges: set[tuple[int, int]],
+    positions: np.ndarray,
+    radii: np.ndarray,
+) -> set[tuple[int, int]]:
+    """Remove edges whose line segment passes through a third island."""
+    pruned: set[tuple[int, int]] = set()
+
+    for i, j in edges:
+        p0, p1 = positions[i], positions[j]
+        seg = p1 - p0
+        seg_len = np.linalg.norm(seg)
+        if seg_len < 1e-6:
+            continue
+        seg_dir = seg / seg_len
+
+        blocked = False
+        for k in range(len(positions)):
+            if k == i or k == j:
+                continue
+            # distance from island k center to the line segment
+            v = positions[k] - p0
+            proj = float(np.dot(v, seg_dir))
+            proj = max(radii[i], min(seg_len - radii[j], proj))
+            closest = p0 + seg_dir * proj
+            dist = float(np.linalg.norm(positions[k] - closest))
+            if dist < radii[k] * 1.1:
+                blocked = True
+                break
+
+        if not blocked:
+            pruned.add((i, j))
+
+    return pruned
+
+
+def floating_island_terrain(
+    difficulty: float, cfg: mesh_terrains_cfg.MeshFloatingIslandTerrainCfg
+) -> tuple[list[trimesh.Trimesh], np.ndarray]:
+    """Generate a terrain of floating islands connected by passways.
+
+    Args:
+        difficulty: Difficulty parameter in [0, 1].
+        cfg: Terrain configuration.
+
+    Returns:
+        A list of trimesh meshes and the terrain origin [m].
+    """
+    num_islands = int(_resolve_range(cfg.num_islands, difficulty))
+    island_height = cfg.island_height
+    passway_height = cfg.passway_height if cfg.passway_height is not None else island_height
+    passway_width = _resolve_range(cfg.passway_width, difficulty)
+    height_var = cfg.island_height_variation
+
+    island_cfg = cfg.island_style
+    is_cylinder = type(island_cfg).__name__ == "CylinderIslandCfg"
+
+    if is_cylinder:
+        island_radius = _resolve_range(island_cfg.radius, difficulty)
+        bounding_r = island_radius
+    else:
+        island_length = _resolve_range(island_cfg.length, difficulty)
+        island_width_val = _resolve_range(island_cfg.width, difficulty)
+        bounding_r = np.sqrt(island_length**2 + island_width_val**2) / 2
+
+    positions = _sample_island_positions(num_islands, cfg.size, bounding_r, cfg.island_margin)
+    actual_n = len(positions)
+
+    z_offsets = np.array([
+        random.uniform(-height_var, height_var) if height_var > 0 else 0.0
+        for _ in range(actual_n)
+    ])
+
+    # -- generate island meshes --
+    meshes: list[trimesh.Trimesh] = []
+    radii = np.full(actual_n, bounding_r)
+
+    for idx in range(actual_n):
+        center_z = z_offsets[idx] - island_height / 2
+        if is_cylinder:
+            island_tf = trimesh.transformations.translation_matrix((*positions[idx], center_z))
+            meshes.append(trimesh.creation.cylinder(island_radius, island_height, sections=8, transform=island_tf))
+        else:
+            yaw = random.uniform(0, 2 * np.pi)
+            rot = tf.Rotation.from_euler("z", yaw).as_matrix()
+            xf = np.eye(4)
+            xf[0:3, 0:3] = rot
+            xf[:3, -1] = [positions[idx][0], positions[idx][1], center_z]
+            meshes.append(trimesh.creation.box([island_length, island_width_val, island_height], xf.copy()))
+
+    # -- build and prune graph --
+    edges = _build_graph(positions, cfg.graph)
+    edges = _prune_edges_through_islands(edges, positions, radii)
+
+    # -- generate passways --
+    passway_style = cfg.passway_style
+    passway_curvature = getattr(cfg, "passway_curvature", 0.0)
+
+    for i, j in edges:
+        delta = positions[j] - positions[i]
+        dist = float(np.linalg.norm(delta))
+        if dist < 1e-6:
+            continue
+        direction = delta / dist
+
+        start_xy = positions[i] + direction * bounding_r
+        end_xy = positions[j] - direction * bounding_r
+
+        z_start = z_offsets[i] - passway_height / 2
+        z_end = z_offsets[j] - passway_height / 2
+
+        meshes += _generate_passway(
+            start_xy, end_xy, z_start, z_end, passway_width, passway_height,
+            passway_style, difficulty, curvature=passway_curvature,
+        )
+
+    # -- ground plane --
+    ground_z = float(z_offsets.min()) - island_height if actual_n > 0 else -island_height
+    meshes.append(make_plane(cfg.size, ground_z, center_zero=False))
+
+    origin = np.array([0.5 * cfg.size[0], 0.5 * cfg.size[1], 0.0])
     return meshes, origin
