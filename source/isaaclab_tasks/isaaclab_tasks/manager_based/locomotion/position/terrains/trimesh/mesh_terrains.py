@@ -617,113 +617,175 @@ def structured_terrain(
     return mesh_list, origin
 
 
-def beam_terrain(
-    difficulty: float, cfg: mesh_terrains_cfg.MeshBeamTerrainCfg
-) -> tuple[list[trimesh.Trimesh], np.ndarray]:
-    """Generate a terrain with beams connecting a central platform to the outer border.
+def _lerp(a: float, b: float, t: float) -> float:
+    """Linear interpolation from *a* to *b* by factor *t*."""
+    return a + t * (b - a)
 
-    The terrain consists of a cylindrical platform at the center connected to the border region
-    by multiple straight beams acting as bridges. The number, width, and height of the beams
-    are defined by the configuration, and the border is generated based on `inner_size`.
 
-    Args:
-        difficulty: The difficulty of the terrain, a value between 0 and 1.
-        cfg: The configuration for the beam terrain.
+def _resolve_range(value: float | tuple[float, float], difficulty: float) -> float:
+    """If *value* is a ``(start, end)`` tuple, interpolate by *difficulty*."""
+    if isinstance(value, tuple):
+        return _lerp(value[0], value[1], difficulty)
+    return float(value)
 
-    Returns:
-        A tuple containing the list of triangle meshes composing the terrain and the origin position (in meters).
-    """
-    # resolve the terrain configuration
-    bar_height = cfg.bar_height_range[0] + difficulty * (cfg.bar_height_range[1] - cfg.bar_height_range[0])
-    bar_width = cfg.bar_width_range[0] - difficulty * (cfg.bar_width_range[0] - cfg.bar_width_range[1])
-    num_bars = int(cfg.num_bars[0] - difficulty * (cfg.num_bars[0] - cfg.num_bars[1]))
 
-    # initialize list of meshes
-    meshes_list = list()
-    # Generate a platform in the middle
-    platform_center = (0.5 * cfg.size[0], 0.5 * cfg.size[1], -bar_height / 2)
-    platform_transform = trimesh.transformations.translation_matrix(platform_center)
+def _sample_yaw_angles(
+    num_bars: int,
+    distribution: str,
+    bar_width: float,
+    platform_radius: float,
+) -> list[float]:
+    """Return a sorted list of yaw angles for the beams."""
+    if distribution == "uniform":
+        return [i * (2 * np.pi) / num_bars for i in range(num_bars)]
 
-    platform = trimesh.creation.cylinder(cfg.platform_width * 0.5, bar_height, sections=6, transform=platform_transform)
-
-    meshes_list.append(platform)
-
-    # compute yaw angles based on distribution type
-    if cfg.beam_distribution == "uniform":
-        # Precompute uniform yaw angles
-        yaw_angles = [i * (2 * np.pi) / num_bars for i in range(num_bars)]
-
-    elif cfg.beam_distribution == "random":
-        # generate random non-overlapping yaw angles for beams
-        platform_radius = cfg.platform_width * 0.5
-        min_angular_separation = bar_width / platform_radius  # in radians
-        min_angular_separation *= 1.2
-        yaw_angles = []
-        max_attempts = 1000
+    if distribution == "random":
+        min_sep = 1.2 * bar_width / platform_radius
+        angles: list[float] = []
 
         for i in range(num_bars):
-            attempts = 0
-
-            # sample and validate non-overlapping yaw angle 
-            while attempts < max_attempts:
-                candidate_yaw = random.uniform(0, 2 * np.pi)
-
-                is_valid = True
-                for existing_yaw in yaw_angles:
-                    angular_diff = abs(candidate_yaw - existing_yaw)
-                    angular_diff = min(angular_diff, 2 * np.pi - angular_diff)
-
-                    if angular_diff < min_angular_separation:
-                        is_valid = False
-                        break
-
-                if is_valid:
-                    yaw_angles.append(candidate_yaw)
+            for _ in range(1000):
+                candidate = random.uniform(0, 2 * np.pi)
+                if all(
+                    min(abs(candidate - a), 2 * np.pi - abs(candidate - a)) >= min_sep
+                    for a in angles
+                ):
+                    angles.append(candidate)
                     break
+            else:
+                angles.append(i * (2 * np.pi) / num_bars)
+        angles.sort()
+        return angles
 
-                attempts += 1
+    raise ValueError(
+        f"Invalid beam_distribution '{distribution}'. Expected 'uniform' or 'random'."
+    )
 
-            # use uniform sampling if exceed max attempts
-            if attempts >= max_attempts:
-                yaw_angles.append(i * (2 * np.pi) / num_bars)
-        yaw_angles.sort()
-    else:
-        raise ValueError(
-            f"Invalid beam_distribution '{cfg.beam_distribution}'. "
-            f"Expected 'uniform' or 'random'."
-        )
 
-    # Generate bars to connect the platform to the terrain
+def _beam_reach(
+    yaw: float, half_x: float, half_y: float
+) -> float:
+    """Distance from center to a rectangle edge along direction *yaw*."""
+    cos_yaw = abs(np.cos(yaw))
+    sin_yaw = abs(np.sin(yaw))
+    if cos_yaw < 1e-9:
+        return half_y
+    if sin_yaw < 1e-9:
+        return half_x
+    return min(half_x / cos_yaw, half_y / sin_yaw)
+
+
+def beam_terrain(
+    difficulty: float, cfg: mesh_terrains_cfg.MeshRadiatingBeamTerrainCfg
+) -> tuple[list[trimesh.Trimesh], np.ndarray]:
+    """Generate a terrain with beams radiating from a central platform to an outer border.
+
+    Args:
+        difficulty: Difficulty parameter in [0, 1].
+        cfg: Terrain configuration.
+
+    Returns:
+        A list of trimesh meshes and the terrain origin [m].
+    """
+    # -- resolve difficulty-dependent parameters --
+    bar_height = _resolve_range(cfg.bar_height_range, difficulty)
+    bar_width = cfg.bar_width_range[0] - difficulty * (cfg.bar_width_range[0] - cfg.bar_width_range[1])
+    num_bars = int(_resolve_range(cfg.num_bars, difficulty))
+
+    platform_elevation = _resolve_range(cfg.platform_height, difficulty) if cfg.platform_height is not None else 0.0
+    noise = getattr(cfg, "platform_height_noise", 0.0)
+    if noise > 0:
+        platform_elevation += random.uniform(-noise, noise)
+
+    platform_radius = cfg.platform_width * 0.5
+    terrain_center = np.array([0.5 * cfg.size[0], 0.5 * cfg.size[1]])
+
+    # -- z reference levels --
+    # All z values are defined by top surfaces; box centers are offset by -bar_height/2.
+    # Border top is always at z = 0.  Platform top is at z = platform_elevation.
+    plat_top = platform_elevation
+    border_top = 0.0
+    z_inner = plat_top - bar_height / 2  # beam box center z at platform edge
+    z_outer = border_top - bar_height / 2  # beam box center z at border edge
+
+    # -- central platform --
+    meshes: list[trimesh.Trimesh] = []
+    plat_bottom = min(plat_top, border_top) - bar_height
+    plat_total_h = plat_top - plat_bottom
+    plat_center_z = (plat_top + plat_bottom) / 2
+    plat_tf = trimesh.transformations.translation_matrix((*terrain_center, plat_center_z))
+    meshes.append(trimesh.creation.cylinder(platform_radius, plat_total_h, sections=6, transform=plat_tf))
+
+    # -- yaw angles --
+    yaw_angles = _sample_yaw_angles(num_bars, cfg.beam_distribution, bar_width, max(platform_radius, 0.1))
+
+    # -- precompute border reach --
+    border_half = np.array(cfg.border_size) * 0.5
+
+    # -- beam style dispatch --
+    beam_style_cfg = getattr(cfg, "beam_style", None)
+    is_box = beam_style_cfg is not None and type(beam_style_cfg).__name__ == "BoxBeamCfg"
     transform = np.eye(4)
-    platform_center_np = np.asarray(platform_center)
 
     for yaw in yaw_angles:
-        # compute the length of the bar based on the yaw
-        bar_length = cfg.size[0] // 2
+        rot = tf.Rotation.from_euler("z", yaw).as_matrix()
+        beam_length = _beam_reach(yaw, border_half[0], border_half[1])
+        usable = beam_length - bar_width
 
-        quad_yaw = yaw % (np.pi / 2)  # Angle within current quadrant
-        if quad_yaw <= np.pi / 4:
-            bar_length /= np.math.cos(quad_yaw)
+        if not is_box:
+            # --- flat beam (single tilted box) ---
+            mid_z = (z_inner + z_outer) / 2
+            z_drop = plat_top - border_top
+            pitch = np.arctan2(z_drop, usable) if z_drop != 0 else 0.0
+            beam_rot = rot @ tf.Rotation.from_euler("y", pitch).as_matrix()
+            offset = rot @ np.array([beam_length / 2, 0, 0])
+
+            transform[0:3, 0:3] = beam_rot
+            transform[:3, -1] = [terrain_center[0] + offset[0], terrain_center[1] + offset[1], mid_z]
+            meshes.append(trimesh.creation.box([usable, bar_width, bar_height], transform.copy()))
         else:
-            bar_length /= np.math.sin(quad_yaw)
-        
-        transform[0:3, 0:3] = tf.Rotation.from_euler("z", yaw).as_matrix()
-        bar_center_offset_w = transform[0:3, 0:3] @ np.array([bar_length / 2, 0, 0])
-        transform[:3, -1] = platform_center_np + bar_center_offset_w
+            # --- box beam (segmented) ---
+            box_length = _resolve_range(beam_style_cfg.box_length, difficulty)
+            box_gap = _resolve_range(beam_style_cfg.box_gap, difficulty)
+            pos_var = beam_style_cfg.box_position_variation
+            yaw_var = beam_style_cfg.box_yaw_variation
 
-        # add the bar to the mesh
-        dim = [bar_length - bar_width, bar_width, bar_height]
-        bar = trimesh.creation.box(dim, transform.copy())
-        meshes_list.append(bar)
+            stride = box_length + box_gap
+            n_across = max(1, int(bar_width / stride)) if bar_width >= box_length * 2 else 1
+            across_span = n_across * box_length + (n_across - 1) * box_gap
+            y_start = -across_span / 2 + box_length / 2
+            beam_span = max(beam_length - platform_radius, 1e-6)
 
-    # Generate the exterior border
-    meshes_list += make_border(cfg.size, cfg.border_size, bar_height, platform_center)
+            cursor = platform_radius * 0.85
+            while cursor + box_length <= beam_length:
+                t = np.clip((cursor - platform_radius) / beam_span, 0.0, 1.0)
+                seg_z = _lerp(z_inner, z_outer, t)
 
-    # Generate the ground
-    ground = make_plane(cfg.size, -bar_height, center_zero=False)
-    meshes_list.append(ground)
+                for j in range(n_across):
+                    dx = random.uniform(-pos_var[0], pos_var[0]) if pos_var[0] > 0 else 0.0
+                    dy = random.uniform(-pos_var[1], pos_var[1]) if pos_var[1] > 0 else 0.0
+                    dz = random.uniform(-pos_var[2], pos_var[2]) if pos_var[2] > 0 else 0.0
+                    x_stagger = (stride * 0.5) * (j % 2) if n_across > 1 else 0.0
 
-    # specify the origin of the terrain
-    origin = np.asarray([0.5 * cfg.size[0], 0.5 * cfg.size[1], 0.0])
+                    local = np.array([cursor + box_length / 2 + x_stagger + dx, y_start + j * stride + dy, 0.0])
+                    world = np.array([terrain_center[0], terrain_center[1], seg_z]) + rot @ local
+                    world[2] += dz
 
-    return meshes_list, origin
+                    seg_rot = rot @ tf.Rotation.from_euler("z", random.uniform(-yaw_var, yaw_var)).as_matrix() if yaw_var > 0 else rot
+                    transform[0:3, 0:3] = seg_rot
+                    transform[:3, -1] = world
+                    meshes.append(trimesh.creation.box([box_length, box_length, bar_height], transform.copy()))
+
+                cursor += stride
+
+    # -- border ring (top at z = 0) --
+    if getattr(cfg, "border_enabled", True):
+        border_center_z = border_top - bar_height / 2
+        meshes += make_border(cfg.size, cfg.border_size, bar_height, (*terrain_center, border_center_z))
+
+    # -- ground plane --
+    ground_z = min(plat_bottom, border_top - bar_height)
+    meshes.append(make_plane(cfg.size, ground_z, center_zero=False))
+
+    origin = np.array([terrain_center[0], terrain_center[1], max(plat_top, border_top)])
+    return meshes, origin

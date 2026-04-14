@@ -163,20 +163,142 @@ class MeshStructuredTerrainCfg(terrains.SubTerrainBaseCfg):
 
 @configclass
 class MeshRadiatingBeamTerrainCfg(terrains.MeshStarTerrainCfg):
-    """A terrain that creates beam bridges connecting a central cylindrical platform to the outer border.
+    """A terrain with beams radiating from a central platform to an outer border.
 
-    Improved upon :class:`isaaclab.terrains.MeshStarTerrainCfg`:
-    1. Adds ``border_size`` parameter for user-specified terrain border.
-    2. Allows generating an odd number of beams.
+    The terrain consists of three layers:
+
+    1. **Central platform** — a cylinder at the terrain center whose diameter
+       is :attr:`platform_width` (inherited) and whose top surface can be
+       raised above the border by :attr:`platform_height`.
+    2. **Outer border** — a rectangular ring between :attr:`border_size` and
+       :attr:`~isaaclab.terrains.SubTerrainBaseCfg.size`.  Its top surface
+       is always at the base level (z = 0).
+    3. **Beams** — bridges connecting the platform edge to the inner rim of
+       the border.  The number and angular placement are controlled by
+       :attr:`num_bars` and :attr:`beam_distribution`.
+
+    Beams come in two styles selected via :attr:`beam_style`:
+
+    - :class:`FlatBeamCfg` — each beam is a single continuous box that
+      tilts when ``platform_height != 0``.
+    - :class:`BoxBeamCfg` — each beam is tiled with small box segments
+      whose size, gap, position jitter, and yaw jitter are individually
+      configurable.  When the beam width exceeds twice the segment size,
+      multiple columns are placed across the width in a staggered
+      (brick-wall) pattern.
+
+    Inherited fields from :class:`~isaaclab.terrains.MeshStarTerrainCfg`:
+
+    - :attr:`platform_width` — diameter of the central cylinder [m].
+    - :attr:`bar_width_range` — ``(easy, hard)`` beam width [m],
+      interpolated with difficulty.
+    - :attr:`bar_height_range` — ``(easy, hard)`` beam / border thickness
+      [m], interpolated with difficulty.
     """
+
+    # ------------------------------------------------------------------
+    # Nested beam-style configs
+    # ------------------------------------------------------------------
+
+    @configclass
+    class FlatBeamCfg:
+        """Flat beam style — one continuous tilted box per beam."""
+
+    @configclass
+    class BoxBeamCfg:
+        """Box beam style — segmented boxes tiled along (and across) each beam.
+
+        When the beam is wide enough (``bar_width >= 2 * box_length``),
+        boxes are tiled across the width too, with odd columns staggered
+        by half a stride for a brick-wall pattern.
+        """
+
+        box_length: float | tuple[float, float] = 0.3
+        """Side length of each square box segment [m].
+
+        A tuple ``(easy, hard)`` is interpolated linearly with difficulty.
+        """
+
+        box_gap: float | tuple[float, float] = 0.0
+        """Gap between consecutive segments along the beam axis [m].
+
+        A tuple ``(easy, hard)`` is interpolated linearly with difficulty.
+        0 means segments are placed flush.
+        """
+
+        box_position_variation: tuple[float, float, float] = (0.0, 0.0, 0.0)
+        """Per-segment random position jitter ``(dx, dy, dz)`` in beam-local
+        frame [m].
+
+        Each component is sampled from ``uniform(-val, +val)``.
+
+        - ``dx`` — along the beam axis.
+        - ``dy`` — across the beam width.
+        - ``dz`` — vertical.
+        """
+
+        box_yaw_variation: float = 0.0
+        """Per-segment random yaw rotation [rad].
+
+        Sampled from ``uniform(-val, +val)`` and applied about the
+        segment's own center.
+        """
+
+    # ------------------------------------------------------------------
+    # Fields
+    # ------------------------------------------------------------------
 
     function = "{DIR}.mesh_terrains:beam_terrain"
 
     border_size: tuple[float, float] = MISSING
-    """Inner length (x) and width (y) defining the inner square area enclosed by the border [m]."""
+    """Inner dimensions ``(x, y)`` of the rectangular area enclosed by the
+    border [m].
+
+    Beams extend from the platform edge to this boundary.  The border
+    ring occupies the space between ``border_size`` and
+    :attr:`~isaaclab.terrains.SubTerrainBaseCfg.size`.
+    """
+
+    border_enabled: bool = True
+    """Whether to generate the outer border ring. Defaults to ``True``.
+
+    When ``False``, the border mesh is omitted but ``border_size`` is
+    still used to determine where beams end.
+    """
 
     num_bars: tuple[int, int] = MISSING
-    """Range of number of beams."""
+    """Number of beams as ``(easy, hard)``.
+
+    Interpolated with difficulty and rounded to an integer.
+    """
 
     beam_distribution: Literal["uniform", "random"] = MISSING
-    """Distribution pattern of sampling beams."""
+    """Angular placement of beams.
+
+    - ``"uniform"`` — beams are evenly spaced at ``360° / num_bars``.
+    - ``"random"``  — beams are placed at random non-overlapping angles.
+    """
+
+    platform_height: float | tuple[float, float] | None = None
+    """Elevation of the central platform above the border [m].
+
+    A positive value raises the platform; beams ramp down from the
+    elevated platform to the border.  A negative value lowers the
+    platform; beams ramp upward.
+
+    A tuple ``(easy, hard)`` is interpolated linearly with difficulty.
+    ``None`` (default) means flush with the border (elevation = 0).
+    """
+
+    platform_height_noise: float = 0.0
+    """Random noise added to :attr:`platform_height` [m].
+
+    The final elevation is ``platform_height + uniform(-noise, +noise)``.
+    """
+
+    beam_style: FlatBeamCfg | BoxBeamCfg = FlatBeamCfg()
+    """Beam style configuration.
+
+    Assign a :class:`FlatBeamCfg` (default) for continuous beams or a
+    :class:`BoxBeamCfg` for segmented box beams.
+    """
