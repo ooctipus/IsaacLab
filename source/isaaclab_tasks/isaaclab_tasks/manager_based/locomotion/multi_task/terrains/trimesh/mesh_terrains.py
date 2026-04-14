@@ -16,18 +16,17 @@ import torch
 import yaml
 from typing import TYPE_CHECKING
 
-from isaaclab.terrains.trimesh.mesh_terrains_cfg import MeshInvertedPyramidStairsTerrainCfg, MeshPyramidStairsTerrainCfg
-
-
 if TYPE_CHECKING:
     from . import mesh_terrains_cfg
 
 
 def obj_terrain(
     difficulty: float, cfg: mesh_terrains_cfg.MeshObjTerrainCfg
-) -> tuple[list[trimesh.Trimesh], np.ndarray, np.ndarray] | tuple[list[trimesh.Trimesh], np.ndarray]:
-    mesh: trimesh.Trimesh = trimesh.load(cfg.obj_path)  # type: ignore
-    mesh: trimesh.Trimesh = trimesh.load(cfg.obj_path)  # type: ignore
+) -> tuple[list, np.ndarray, np.ndarray] | tuple[list, np.ndarray]:
+    import trimesh
+
+    mesh = trimesh.load(cfg.obj_path)
+    mesh = trimesh.load(cfg.obj_path)
     xy_scale = cfg.size / (mesh.bounds[1] - mesh.bounds[0])[:2]
     # set the height scale to the average between length and width scale to preserve as much original shap as possible
     height_scale = (xy_scale[0] + xy_scale[1]) / 2
@@ -98,8 +97,11 @@ def terrain_gen(
     return obj_terrain(difficulty, cfg)
 
 
-def load_mesh(terrain_mesh_path: str) -> trimesh.Trimesh:
+def load_mesh(terrain_mesh_path: str):
     """Load a mesh from a URL or a local file."""
+    import requests
+    import trimesh
+
     if terrain_mesh_path.startswith("http"):
         # Load from URL
         response = requests.get(terrain_mesh_path)
@@ -118,6 +120,8 @@ def load_mesh(terrain_mesh_path: str) -> trimesh.Trimesh:
 
 def load_numpy(spawnfile_path: str) -> np.ndarray:
     """Load a NumPy array from a URL or a local file."""
+    import requests
+
     if spawnfile_path.startswith("http"):
         # Load from URL
         response = requests.get(spawnfile_path)
@@ -133,7 +137,10 @@ def load_numpy(spawnfile_path: str) -> np.ndarray:
 
 def stones_everywhere_terrain(
     difficulty: float, cfg: mesh_terrains_cfg.MeshStonesEverywhereTerrainCfg
-) -> tuple[list[trimesh.Trimesh], np.ndarray]:
+) -> tuple[list, np.ndarray]:
+    import trimesh
+    from isaaclab.terrains.trimesh.utils import make_border
+
     # check to ensure square terrain
     assert cfg.size[0] == cfg.size[1], "The terrain should be square"
 
@@ -223,7 +230,10 @@ def stones_everywhere_terrain(
 
 def balance_beams_terrain(
     difficulty: float, cfg: mesh_terrains_cfg.MeshBalanceBeamsTerrainCfg
-) -> tuple[list[trimesh.Trimesh], np.ndarray]:
+) -> tuple[list, np.ndarray]:
+    import trimesh
+    from isaaclab.terrains.trimesh.utils import make_border
+
     # check to ensure square terrain
     assert cfg.size[0] == cfg.size[1], "The terrain should be square"
 
@@ -304,7 +314,11 @@ def balance_beams_terrain(
 
 def stepping_beams_terrain(
     difficulty: float, cfg: mesh_terrains_cfg.MeshSteppingBeamsTerrainCfg
-) -> tuple[list[trimesh.Trimesh], np.ndarray]:
+) -> tuple[list, np.ndarray]:
+    import trimesh
+    from isaaclab.terrains.trimesh.utils import make_border
+    from scipy.spatial.transform import Rotation as R
+
     stone_width = cfg.w_stone[0] - difficulty * (cfg.w_stone[0] - cfg.w_stone[1])
     h_offset = cfg.h_offset[0] + difficulty * (cfg.h_offset[1] - cfg.h_offset[0])
     gap_width = cfg.gap[0] + difficulty * (cfg.gap[1] - cfg.gap[0])
@@ -364,7 +378,9 @@ def stepping_beams_terrain(
 
 def box_terrain(
     difficulty: float, cfg: mesh_terrains_cfg.MeshDiversityBoxTerrainCfg
-) -> tuple[list[trimesh.Trimesh], np.ndarray]:
+) -> tuple[list, np.ndarray]:
+    import trimesh
+
     #
     box_width = cfg.box_width_range[1] - difficulty * (cfg.box_width_range[1] - cfg.box_width_range[0])
     box_length = cfg.box_length_range[1] - difficulty * (cfg.box_length_range[1] - cfg.box_length_range[0])
@@ -424,7 +440,9 @@ def box_terrain(
 
 def passage_terrain(
     difficulty: float, cfg: mesh_terrains_cfg.MeshPassageTerrainCfg
-) -> tuple[list[trimesh.Trimesh], np.ndarray]:
+) -> tuple[list, np.ndarray]:
+    import trimesh
+
     if isinstance(cfg.passage_width, tuple):
         width = cfg.passage_width[1] - difficulty * (cfg.passage_width[1] - cfg.passage_width[0])
     elif isinstance(cfg.passage_width, float):
@@ -480,7 +498,15 @@ def passage_terrain(
 
 def structured_terrain(
     difficulty: float, cfg: mesh_terrains_cfg.MeshStructuredTerrainCfg
-) -> tuple[list[trimesh.Trimesh], np.ndarray]:
+) -> tuple[list, np.ndarray]:
+    import trimesh
+    from isaaclab.terrains.trimesh.mesh_terrains import inverted_pyramid_stairs_terrain, pyramid_stairs_terrain
+    from isaaclab.terrains.trimesh.mesh_terrains_cfg import (
+        MeshInvertedPyramidStairsTerrainCfg,
+        MeshPyramidStairsTerrainCfg,
+    )
+    from isaaclab.terrains.trimesh.utils import make_border, make_plane
+
     mesh_list = []
     terrain = cfg.terrain_type
     # generate the terrain
@@ -613,7 +639,7 @@ def structured_terrain(
 
 def beam_terrain(
     difficulty: float, cfg: mesh_terrains_cfg.MeshBeamTerrainCfg
-) -> tuple[list[trimesh.Trimesh], np.ndarray]:
+) -> tuple[list, np.ndarray]:
     """Generate a terrain with beams connecting a central platform to the outer border.
 
     The terrain consists of a cylindrical platform at the center connected to the border region
@@ -627,6 +653,10 @@ def beam_terrain(
     Returns:
         A tuple containing the list of triangle meshes composing the terrain and the origin position (in meters).
     """
+    import scipy.spatial.transform as tf
+    import trimesh
+    from isaaclab.terrains.trimesh.utils import make_border, make_plane
+
     # resolve the terrain configuration
     bar_height = cfg.bar_height_range[0] + difficulty * (cfg.bar_height_range[1] - cfg.bar_height_range[0])
     bar_width = cfg.bar_width_range[0] - difficulty * (cfg.bar_width_range[0] - cfg.bar_width_range[1])

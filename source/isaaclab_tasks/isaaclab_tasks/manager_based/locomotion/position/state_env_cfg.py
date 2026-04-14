@@ -25,20 +25,46 @@ from isaaclab.utils.noise import UniformNoiseCfg as Unoise
 from isaaclab_physx.physics import PhysxCfg
 from isaaclab_tasks.utils import PresetCfg
 
-from . import mdp, terrains
+from . import mdp
+from .terrain_preset import SubTerrainPresetCfg
 
 
-def make_commands(commands_dict):
-    return mdp.RelativeStateCommandCfg(
-        asset_name="robot",
-        resampling_time_range=(10.0, 10.0),
-        pos_std=0.5,
-        rot_std=0.5,
-        lin_vel_std=0.6,
-        ang_vel_std=0.6,
-        debug_vis=True,
-        commands=commands_dict
-    )
+@configclass
+class StateCommandsPresetCfg(PresetCfg):
+    """Command presets for the state locomotion task."""
+
+    default = {
+        "vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
+            lin_vel_x=(-2.0, 2.0), lin_vel_y=(-2.0, 2.0), lin_vel_z=None,
+            ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-1.0, 1.0), duration=(0.05, 4.0),
+        ),
+        "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
+            roll=None, pitch=None, yaw=None, duration=(0.05, 2.0),
+        ),
+        "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
+            roll=None, pitch=None, yaw=(-3.14, 3.14), duration=(0.05, 2.0),
+        ),
+    }
+    terrain = {
+        "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
+            roll=None, pitch=None, yaw=(-3.14, 3.14), duration=(0.05, 2.0),
+        ),
+        "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
+            roll=None, pitch=None, yaw=None, duration=(0.05, 2.0),
+        ),
+    }
+    pose = {
+        "pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(
+            pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None,
+            roll=None, pitch=None, yaw=(-3.14, 3.14), duration=(0.05, 2.0),
+        ),
+    }
+    vel = {
+        "vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
+            lin_vel_x=(-1.5, 1.5), lin_vel_y=(-1.5, 1.5), lin_vel_z=None,
+            ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-1.0, 1.0), duration=(0.05, 2.0),
+        ),
+    }
 
 
 @configclass
@@ -53,13 +79,13 @@ class SceneCfg(InteractiveSceneCfg):
             size=(10.0, 10.0),
             border_width=20.0,
             num_rows=10,
-            num_cols=20,
+            num_cols=10,
             horizontal_scale=0.1,
             vertical_scale=0.005,
             slope_threshold=0.75,
             use_cache=False,
             curriculum=True,
-            sub_terrains={},
+            sub_terrains=SubTerrainPresetCfg(),
         ),
         max_init_terrain_level=5,
         collision_group=-1,
@@ -118,29 +144,16 @@ class ActionsCfg:
 class CommandsCfg:
     "Command specifications for the MDP."
 
-    goal_point = make_commands({
-        "vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
-            lin_vel_x=(-2.0, 2.0),
-            lin_vel_y=(-2.0, 2.0),
-            lin_vel_z=None,
-            ang_vel_x=None,
-            ang_vel_y=None,
-            ang_vel_z=(-1.0, 1.0),
-            duration=(0.05, 4.0)
-        ),
-        "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
-            roll=None,
-            pitch=None,
-            yaw=None,
-            duration=(0.05, 2.0)
-        ),
-        "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
-            roll=None,
-            pitch=None,
-            yaw=(-3.14, 3.14),
-            duration=(0.05, 2.0)
-        ),
-    })
+    goal_point = mdp.RelativeStateCommandCfg(
+        asset_name="robot",
+        resampling_time_range=(10.0, 10.0),
+        pos_std=0.5,
+        rot_std=0.5,
+        lin_vel_std=0.6,
+        ang_vel_std=0.6,
+        debug_vis=True,
+        commands=StateCommandsPresetCfg(),  # type: ignore
+    )
 
 
 @configclass
@@ -252,91 +265,6 @@ class CurriculumCfg:
     terrain_levels = CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels, params={"debug_vis": True, "kappa": 2.0, "temperature": 2.0, "target": 0.5})
 
 
-def make_terrain(terrain_dict):
-
-    return TerrainImporterCfg(
-        prim_path="/World/ground",
-        terrain_type="generator",
-        terrain_generator=TerrainGeneratorCfg(
-            size=(10.0, 10.0),
-            border_width=20.0,
-            num_rows=10,
-            num_cols=10,
-            horizontal_scale=0.1,
-            vertical_scale=0.005,
-            slope_threshold=0.75,
-            use_cache=False,
-            curriculum=True,
-            sub_terrains=terrain_dict,
-        ),
-        max_init_terrain_level=5,
-        collision_group=-1,
-        physics_material=sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="multiply",
-            restitution_combine_mode="multiply",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-        ),
-        visual_material=sim_utils.MdlFileCfg(
-            mdl_path=f"{ISAACLAB_NUCLEUS_DIR}/Materials/TilesMarbleSpiderWhiteBrickBondHoned/TilesMarbleSpiderWhiteBrickBondHoned.mdl",
-            project_uvw=True,
-            texture_scale=(0.25, 0.25),
-        ),
-        debug_vis=False,
-    )
-
-
-variants = {
-    "scene.terrain": {
-        "all": make_terrain({
-            "gap": terrains.GAP,
-            "pit": terrains.PIT,
-            "extreme_stair": terrains.EXTREME_STAIR,
-            "slope_inv": terrains.SLOPE_INV,
-            "stepping_stone": terrains.STEPPING_STONE,
-            "radiating_beam": terrains.RADIATING_BEAM,
-        }),
-        "eval": make_terrain({
-            "gap": terrains.GAP.replace(gap_width_range=(1.0, 1.5)),
-            "pit": terrains.PIT.replace(pit_depth_range=(0.8, 1.2)),
-            "extreme_stair": terrains.EXTREME_STAIR.replace(step_height_range=(0.12, 0.2)),
-            "slope_inv": terrains.SLOPE_INV.replace(slope_range=(0.6, 0.9)),
-            "stepping_stone": terrains.STEPPING_STONE.replace(
-                w_gap=(0.15, 0.26),
-                w_stone=(0.4, 0.2),
-                s_max=(0.080, 0.118),
-                h_max=(0.075, 0.1)
-            ),
-            "radiating_beam": terrains.RADIATING_BEAM.replace(num_bars=(5, 1)),
-        }),
-        "flat": make_terrain({"flat": terrains.FLAT}),
-        "gap": make_terrain({"gap": terrains.GAP}),
-        "pit": make_terrain({"pit": terrains.PIT}),
-        "extreme_stair": make_terrain({"extreme_stair": terrains.EXTREME_STAIR}),
-        "slope_inv": make_terrain({"slope_inv": terrains.SLOPE_INV}),
-        "square_pillar_obstacle": make_terrain({"square_pillar_obstacle": terrains.SQUARE_PILLAR_OBSTACLE}),
-        "stepping_stone": make_terrain({"stepping_stone": terrains.STEPPING_STONE}),
-        "radiating_beam": make_terrain({"radiating_beam": terrains.RADIATING_BEAM}),
-    },
-    "commands.goal_point": {
-        "terrain": make_commands({
-            "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
-                roll=None, pitch=None, yaw=(-3.14, 3.14), duration=(0.05, 2.0)
-            ),
-            "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
-                roll=None, pitch=None, yaw=None, duration=(0.05, 2.0)
-            ),
-        }),
-        "pose": make_commands({"pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(
-            pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None, roll=None, pitch=None, yaw=(-3.14, 3.14), duration=(0.05, 2.0)
-        )}),
-        "vel": make_commands({"vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
-            lin_vel_x=(-1.5, 1.5), lin_vel_y=(-1.5, 1.5), lin_vel_z=None, ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-1.0, 1.0), duration=(0.05, 2.0)
-        )})
-    }
-}
-
-
 @configclass
 class StatePhysicsCfg(PresetCfg):
     default = PhysxCfg(
@@ -360,7 +288,6 @@ class LocomotionStateCommandEnvCfg(ManagerBasedRLEnvCfg):
     events: EventsCfg = EventsCfg()
     curriculum: CurriculumCfg = CurriculumCfg()
     viewer: ViewerCfg = ViewerCfg(eye=(4.0 / 4, 7.0 / 4, 7.0 / 4), origin_type="asset_body", asset_name="robot", body_name="base")
-    variants = variants
 
     def __post_init__(self):
         self.decimation = 4
