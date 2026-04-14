@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
@@ -125,7 +125,7 @@ class RelativeStateCommand(CommandTerm):
         # reward scales used by get_task_reward() (group-wise scaling)
         reward_scale = [self.cfg.pos_std, self.cfg.rot_std, self.cfg.lin_vel_std, self.cfg.ang_vel_std]
         self._reward_scales = torch.tensor(reward_scale, device=self.device).view(1, 4)
-        self._identity_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
+        self._identity_quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device=self.device).repeat(self.num_envs, 1)
 
         # scratch buffers
         self._rel = torch.empty(self.num_envs, 12, device=self.device)  # rel pos, rot, lin vel, ang vel
@@ -304,7 +304,7 @@ class RelativeStateCommand(CommandTerm):
           position, axis-angle rotation, linear velocity, angular velocity.
         """
         root_state_w = self.robot.data.root_state_w
-        root_quat = self.robot.data.root_quat_w  # (N, 4) wxyz
+        root_quat = self.robot.data.root_quat_w  # (N, 4) xyzw
 
         # world state row
         self.cmd_buf[:, 2, :3] = root_state_w[:, :3]

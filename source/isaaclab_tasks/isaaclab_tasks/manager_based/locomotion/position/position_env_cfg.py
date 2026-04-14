@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
@@ -17,10 +17,13 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
+from isaaclab.sim import SimulationCfg
 from isaaclab.terrains import TerrainGeneratorCfg, TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
-from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
+from isaaclab.utils.noise import UniformNoiseCfg as Unoise
+from isaaclab_physx.physics import PhysxCfg
+from isaaclab_tasks.utils import PresetCfg
 
 from . import mdp, terrains
 
@@ -386,8 +389,20 @@ variants = {
 
 
 @configclass
+class PositionPhysicsCfg(PresetCfg):
+    default = PhysxCfg(
+        gpu_total_aggregate_pairs_capacity=2**25,
+        gpu_found_lost_pairs_capacity=2**25,
+        gpu_collision_stack_size=2**31,
+        gpu_max_rigid_patch_count=5 * 2**20,
+    )
+    physx = default
+
+
+@configclass
 class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
     scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=10)
+    sim: SimulationCfg = SimulationCfg(physics=PositionPhysicsCfg())
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
     commands: CommandsCfg = CommandsCfg()
@@ -404,10 +419,6 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
-        self.sim.physx.gpu_total_aggregate_pairs_capacity = 2**25
-        self.sim.physx.gpu_found_lost_pairs_capacity = 2**25
-        self.sim.physx.gpu_collision_stack_size = 2**31
-        self.sim.physx.gpu_max_rigid_patch_count = 5 * 2**20
 
         # update sensor update periods
         # we tick all the sensors based on the smallest update period (physics update period)
