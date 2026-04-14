@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING
 from dataclasses import MISSING
 
 from isaaclab.managers import CommandTerm
-from ..success_monitor_cfg import SuccessMonitorCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.math import (
     quat_apply_inverse,
@@ -97,17 +96,12 @@ class RelativeStateCommand(CommandTerm):
         # obtain the robot and terrain assets
         self.robot: Articulation = env.scene[cfg.asset_name]
         self.spec = self._build_spec(self.cfg.commands)
-        success_monitor_cfg = SuccessMonitorCfg(
-            monitored_history_len=100, num_monitored_data=self.spec.num_descretized_cmd, device=env.device,
-        )
-        self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
 
         # command names in the same order as commands.values() used in _build_spec
         # (Python dict preserves insertion order)
         self._command_names = list(self.cfg.commands.keys())
 
-        # buffers for aggregating success per command type
-        self._success_per_discrete = torch.zeros(self.spec.num_descretized_cmd, device=self.device)
+        self.success_rates: torch.Tensor | None = None
         self._success_per_cmd = torch.zeros(self.spec.cardinal, device=self.device)
         offsets = self.spec.descretized_cmd_offsets
         self._disc_count_per_cmd = (offsets[1:] - offsets[:-1]).to(torch.float32)
@@ -267,20 +261,16 @@ class RelativeStateCommand(CommandTerm):
         self.metrics["error_linvel"] = self._err[:, 2]
         self.metrics["error_angvel"] = self._err[:, 3]
 
-        # find the indices and report average success rate per tasks
-        success = self.success_monitor.get_success_rate()  # [num_descretized_cmd]
-        self._success_per_discrete.copy_(success)
-
-        offsets = self.spec.descretized_cmd_offsets
-        for cmd_id, name in enumerate(self._command_names):
-            start = int(offsets[cmd_id].item())
-            end = int(offsets[cmd_id + 1].item())
-            if end > start:
-                self._success_per_cmd[cmd_id] = success[start:end].mean()
-            else:
-                self._success_per_cmd[cmd_id] = 0.0
-            # scalar metric per command, named by actual command key
-            self._env.extras["log"]["Metrics/goal_point/success_rate_" + name] = self._success_per_cmd[cmd_id].item()
+        if self.success_rates is not None:
+            offsets = self.spec.descretized_cmd_offsets
+            for cmd_id, name in enumerate(self._command_names):
+                start = int(offsets[cmd_id].item())
+                end = int(offsets[cmd_id + 1].item())
+                if end > start:
+                    self._success_per_cmd[cmd_id] = self.success_rates[start:end].mean()
+                else:
+                    self._success_per_cmd[cmd_id] = 0.0
+                self._env.extras["log"]["Metrics/goal_point/success_rate_" + name] = self._success_per_cmd[cmd_id].item()
 
     def resample_indices(self, env_ids: torch.Tensor):
         indices = torch.randint(0, self.spec.num_descretized_cmd, (env_ids.numel(),), device=self.device)
@@ -295,6 +285,7 @@ class RelativeStateCommand(CommandTerm):
 
         spawns_locations = self.spec.descretized_cmd[idx, :3]
         self._env.scene.terrain.env_origins.index_copy_(0, env_ids.long(), spawns_locations)
+
 
     def _update_command(self):
         """Update world-state row and recompute relative state for all envs.

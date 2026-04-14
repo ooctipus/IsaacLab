@@ -17,7 +17,6 @@ __all__ = [
     "STATE_KERNELS",
     "SAMPLER_KERNELS",
     "terrain_spawn_goal_pair_success_rate_levels",
-    "terrain_spawn_goal_pair_success_rate_levels_old",
     "skip_reward_term",
     "stricten_success_term",
     "activate_reward_term",
@@ -72,7 +71,6 @@ from .commands import (
 )
 from .curriculums import (
     terrain_spawn_goal_pair_success_rate_levels,
-    terrain_spawn_goal_pair_success_rate_levels_old,
     skip_reward_term,
     stricten_success_term,
     activate_reward_term,

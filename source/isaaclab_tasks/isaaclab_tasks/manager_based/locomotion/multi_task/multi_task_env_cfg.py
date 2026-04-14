@@ -25,15 +25,44 @@ from isaaclab.utils.noise import UniformNoiseCfg as Unoise
 from isaaclab_physx.physics import PhysxCfg
 from isaaclab_tasks.utils import PresetCfg
 
-from . import mdp, terrains
+from . import mdp
+from isaaclab_tasks.manager_based.locomotion.position.terrain_preset import SubTerrainPresetCfg
 
 
 @configclass
 class SceneCfg(InteractiveSceneCfg):
     """ "Configuration for the terrain scene with a legged robot."""
 
-    # ground terrain (presets defined after make_terrain below)
-    terrain = None  # type: ignore  -- replaced after make_terrain is defined
+    terrain = TerrainImporterCfg(
+        prim_path="/World/ground",
+        terrain_type="generator",
+        terrain_generator=TerrainGeneratorCfg(
+            size=(10.0, 10.0),
+            border_width=20.0,
+            num_rows=10,
+            num_cols=20,
+            horizontal_scale=0.1,
+            vertical_scale=0.005,
+            slope_threshold=0.75,
+            use_cache=False,
+            curriculum=True,
+            sub_terrains=SubTerrainPresetCfg(),
+        ),
+        max_init_terrain_level=5,
+        collision_group=-1,
+        physics_material=sim_utils.RigidBodyMaterialCfg(
+            friction_combine_mode="multiply",
+            restitution_combine_mode="multiply",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+        ),
+        visual_material=sim_utils.MdlFileCfg(
+            mdl_path=f"{ISAACLAB_NUCLEUS_DIR}/Materials/TilesMarbleSpiderWhiteBrickBondHoned/TilesMarbleSpiderWhiteBrickBondHoned.mdl",
+            project_uvw=True,
+            texture_scale=(0.25, 0.25),
+        ),
+        debug_vis=False,
+    )
 
     # lights
     sky_light = AssetBaseCfg(
@@ -248,82 +277,11 @@ class TerminationsCfg:
 
 @configclass
 class CurriculumCfg:
-    terrain_levels = CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels_old, params={"debug_vis": False, "kappa": 2.0, "success_term": "success", "target": 0.33})  # type: ignore
-    remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
-
-
-def make_terrain(terrain_dict):
-
-    return TerrainImporterCfg(
-        prim_path="/World/ground",
-        terrain_type="generator",
-        terrain_generator=TerrainGeneratorCfg(
-            size=(10.0, 10.0),
-            border_width=20.0,
-            num_rows=10,
-            num_cols=20,
-            horizontal_scale=0.1,
-            vertical_scale=0.005,
-            slope_threshold=0.75,
-            use_cache=False,
-            curriculum=True,
-            sub_terrains=terrain_dict,
-        ),
-        max_init_terrain_level=5,
-        collision_group=-1,
-        physics_material=sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="multiply",
-            restitution_combine_mode="multiply",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-        ),
-        visual_material=sim_utils.MdlFileCfg(
-            mdl_path=f"{ISAACLAB_NUCLEUS_DIR}/Materials/TilesMarbleSpiderWhiteBrickBondHoned/TilesMarbleSpiderWhiteBrickBondHoned.mdl",
-            project_uvw=True,
-            texture_scale=(0.25, 0.25),
-        ),
-        debug_vis=False,
+    terrain_levels = CurrTerm(
+        func=mdp.terrain_spawn_goal_pair_success_rate_levels,
+        params={"debug_vis": False, "kappa": 2.0, "temperature": 2.0, "target": 0.33, "success_term": "success"}
     )
-
-
-@configclass
-class MultiTaskTerrainPresetCfg(PresetCfg):
-    """Terrain presets selectable via ``env.scene.terrain=<name>``."""
-
-    default = make_terrain({})
-    all = make_terrain({
-        "gap": terrains.GAP,
-        "pit": terrains.PIT,
-        "extreme_stair": terrains.EXTREME_STAIR,
-        "slope_inv": terrains.SLOPE_INV,
-        "stepping_stone": terrains.STEPPING_STONE,
-        "radiating_beam": terrains.RADIATING_BEAM,
-    })
-    eval = make_terrain({
-        "gap": terrains.GAP.replace(gap_width_range=(1.0, 1.5)),
-        "pit": terrains.PIT.replace(pit_depth_range=(0.8, 1.2)),
-        "extreme_stair": terrains.EXTREME_STAIR.replace(step_height_range=(0.12, 0.2)),
-        "slope_inv": terrains.SLOPE_INV.replace(slope_range=(0.6, 0.9)),
-        "stepping_stone": terrains.STEPPING_STONE.replace(
-            w_gap=(0.15, 0.26),
-            w_stone=(0.4, 0.2),
-            s_max=(0.080, 0.118),
-            h_max=(0.075, 0.1),
-        ),
-        "radiating_beam": terrains.RADIATING_BEAM.replace(num_bars=(5, 1)),
-    })
-    gap = make_terrain({"gap": terrains.GAP})
-    pit = make_terrain({"pit": terrains.PIT})
-    extreme_stair = make_terrain({"extreme_stair": terrains.EXTREME_STAIR})
-    slope_inv = make_terrain({"slope_inv": terrains.SLOPE_INV})
-    square_pillar_obstacle = make_terrain({"square_pillar_obstacle": terrains.SQUARE_PILLAR_OBSTACLE})
-    stepping_stone = make_terrain({"stepping_stone": terrains.STEPPING_STONE})
-    radiating_beam = make_terrain({"radiating_beam": terrains.RADIATING_BEAM})
-    flat = make_terrain({"flat": terrains.FLAT})
-
-
-# Now set the terrain preset on SceneCfg
-SceneCfg.terrain = MultiTaskTerrainPresetCfg()
+    remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
 
 
 @configclass
@@ -340,7 +298,7 @@ class MultiTaskPhysicsCfg(PresetCfg):
 @configclass
 class MultiTaskCommandEnvCfg(ManagerBasedRLEnvCfg):
     scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=10)
-    sim: SimulationCfg = SimulationCfg(physics=MultiTaskPhysicsCfg())
+    sim: SimulationCfg = SimulationCfg(physics=MultiTaskPhysicsCfg())  # type: ignore
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
     commands: CommandsCfg = CommandsCfg()
@@ -355,14 +313,16 @@ class MultiTaskCommandEnvCfg(ManagerBasedRLEnvCfg):
         self.episode_length_s = 6.0
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
-        self.sim.physics_material = sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="multiply",
-            restitution_combine_mode="multiply",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-        )
+        self.sim.physics_material = self.scene.terrain.physics_material
 
         if self.scene.height_scanner is not None:
             self.scene.height_scanner.update_period = self.decimation * self.sim.dt
         if self.scene.contact_forces is not None:
             self.scene.contact_forces.update_period = self.sim.dt
+
+        if getattr(self.curriculum, "terrain_levels", None) is not None:
+            if self.scene.terrain.terrain_generator is not None:
+                self.scene.terrain.terrain_generator.curriculum = True
+        else:
+            if self.scene.terrain.terrain_generator is not None:
+                self.scene.terrain.terrain_generator.curriculum = False
