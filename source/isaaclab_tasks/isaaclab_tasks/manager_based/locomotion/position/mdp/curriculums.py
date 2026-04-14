@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 import isaaclab.sim as sim_utils
 
 from isaaclab.managers import ManagerTermBase
-from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
 
 from .success_monitor_cfg import SuccessMonitorCfg
 
@@ -130,6 +129,8 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         return p, q, l
 
     def _init_path_visuals_from_discrete(self) -> None:
+        from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
+
         rows = self.goal_term.spec.descretized_cmd           # [N,15]
         mask_pos = self.goal_term.spec.descretized_mask[:, 0:3].any(dim=-1)  # [N] bool
 
@@ -247,7 +248,7 @@ class terrain_spawn_goal_pair_success_rate_levels_old(ManagerTermBase):
         self.goal_term.cmd_indices[env_ids] = choices.to(self.goal_term.cmd_indices.dtype)
         # In-place index copy to avoid temporary tensors
         rows = self.goal_term.spec.descretized_cmd[choices]        # [len(env_ids), 15]
-        env.scene.terrain.env_origins.index_copy_(0, env_ids, rows[:, 0:3])
+        env.scene.terrain.env_origins.index_copy_(0, env_ids.long(), rows[:, 0:3])
 
         # --- NEW: bin-style logging over success rates & sampling distribution ---
         success = self.goal_term.success_monitor.get_success_rate()
@@ -285,6 +286,8 @@ class terrain_spawn_goal_pair_success_rate_levels_old(ManagerTermBase):
         return p, q, l
 
     def _init_path_visuals_from_discrete(self) -> None:
+        from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
+
         rows = self.goal_term.spec.descretized_cmd           # [N,15]
         mask_pos = self.goal_term.spec.descretized_mask[:, 0:3].any(dim=-1)  # [N] bool
 

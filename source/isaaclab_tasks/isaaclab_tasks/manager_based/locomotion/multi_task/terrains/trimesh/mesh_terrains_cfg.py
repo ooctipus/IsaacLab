@@ -9,8 +9,6 @@ from typing import Literal
 from isaaclab import terrains
 from isaaclab.utils import configclass
 
-from . import mesh_terrains
-
 """
 Different trimesh terrain configurations.
 """
@@ -20,7 +18,7 @@ Different trimesh terrain configurations.
 class MeshObjTerrainCfg(terrains.SubTerrainBaseCfg):
     """Configuration for a plane mesh terrain."""
 
-    function = mesh_terrains.obj_terrain
+    function = "{DIR}.mesh_terrains:obj_terrain"
 
     obj_path: str = MISSING
 
@@ -31,7 +29,7 @@ class MeshObjTerrainCfg(terrains.SubTerrainBaseCfg):
 class TerrainGenCfg(MeshObjTerrainCfg):
     """Configuration for a plane mesh terrain."""
 
-    function = mesh_terrains.terrain_gen
+    function = "{DIR}.mesh_terrains:terrain_gen"
 
     height: float = MISSING
 
@@ -50,145 +48,135 @@ class TerrainGenCfg(MeshObjTerrainCfg):
 
 @configclass
 class MeshStonesEverywhereTerrainCfg(terrains.SubTerrainBaseCfg):
-    """
-    A terrain with stones everywhere
-    """
+    """A terrain with stones everywhere."""
 
-    function = mesh_terrains.stones_everywhere_terrain
+    function = "{DIR}.mesh_terrains:stones_everywhere_terrain"
 
-    # stone gap width
     w_gap: tuple[float, float] = MISSING
+    """Stone gap width."""
 
-    # grid square stone size (width)
     w_stone: tuple[float, float] = MISSING
+    """Grid square stone size (width)."""
 
-    # the maximum shift, both x and y shift is uniformly sample from [-s_max, s_max]
     s_max: tuple[float, float] = MISSING
+    """Maximum shift, both x and y shift is uniformly sampled from [-s_max, s_max]."""
 
-    # the maximum height, the height is uniformly sample from [-hmax, h_max], default height is 1.0 m
     h_max: tuple[float, float] = MISSING
+    """Maximum height, uniformly sampled from [-h_max, h_max], default height is 1.0 m."""
 
-    # holes depth
     holes_depth: float = MISSING
+    """Holes depth [m]."""
 
-    # the platform width
     platform_width: float = MISSING
+    """Platform width [m]."""
 
 
 @configclass
 class MeshBalanceBeamsTerrainCfg(terrains.SubTerrainBaseCfg):
-    """
-    A terrain with balance-beams
-    """
+    """A terrain with balance-beams."""
 
-    # balance beams terrain function
-    function = mesh_terrains.balance_beams_terrain
+    function = "{DIR}.mesh_terrains:balance_beams_terrain"
 
-    # the platform width
     platform_width: float = MISSING
+    """Platform width [m]."""
 
-    # the height offset
     h_offset: tuple[float, float] = MISSING
+    """Height offset [m]."""
 
-    # stone width
     w_stone: tuple[float, float] = MISSING
+    """Stone width [m]."""
 
-    # the gap between two beams
     mid_gap: tuple[float, float] = MISSING
+    """Gap between two beams [m]."""
 
 
 @configclass
 class MeshSteppingBeamsTerrainCfg(terrains.SubTerrainBaseCfg):
-    """
-    A terrain with stepping-beams
-    """
+    """A terrain with stepping-beams."""
 
-    # stepping beams terrain function
-    function = mesh_terrains.stepping_beams_terrain
+    function = "{DIR}.mesh_terrains:stepping_beams_terrain"
 
-    # the platform width
     platform_width: float = MISSING
+    """Platform width [m]."""
 
-    # the height offset
     h_offset: tuple[float, float] = MISSING
+    """Height offset [m]."""
 
-    # stone width
     w_stone: tuple[float, float] = MISSING
+    """Stone width [m]."""
 
-    # length of the stepping beams
     l_stone: tuple[float, float] = MISSING
+    """Length of the stepping beams [m]."""
 
-    #  the gap between two beams
     gap: tuple[float, float] = MISSING
+    """Gap between two beams [m]."""
 
-    # the yaw angle of the stepping beams
     yaw: tuple[float, float] = MISSING
+    """Yaw angle of the stepping beams [rad]."""
 
 
 @configclass
 class MeshDiversityBoxTerrainCfg(terrains.SubTerrainBaseCfg):
-    """
-    A terrain with boxes for anymal parkour
-    """
+    """A terrain with boxes for anymal parkour."""
 
-    function = mesh_terrains.box_terrain
+    function = "{DIR}.mesh_terrains:box_terrain"
 
-    # the box width range
     box_width_range: tuple[float, float] = MISSING
-    # the box length range
+    """Box width range [m]."""
+
     box_length_range: tuple[float, float] = MISSING
-    # the box height range
+    """Box length range [m]."""
+
     box_height_range: tuple[float, float] = MISSING
+    """Box height range [m]."""
 
-    # the gap between two boxes
     box_gap_range: tuple[float, float] = None  # type: ignore
+    """Gap between two boxes [m]."""
 
-    # flag for climbing up (box is set at the origin ) or climb down (box is set near the origin)
     up_or_down: str = None  # type: ignore
+    """Flag for climbing up (box at origin) or down (box near origin)."""
 
 
 @configclass
 class MeshPassageTerrainCfg(terrains.SubTerrainBaseCfg):
-    """
-    A terrain with passage
-    """
+    """A terrain with passage."""
 
-    function = mesh_terrains.passage_terrain
+    function = "{DIR}.mesh_terrains:passage_terrain"
 
-    # the passage width (y dir)
     passage_width: float | tuple[float, float] = MISSING
+    """Passage width (y direction) [m]."""
 
-    # the passage height
     passage_height: float | tuple[float, float] = MISSING
+    """Passage height [m]."""
 
-    # the passage length (x dir)
     passage_length: float | tuple[float, float] = MISSING
+    """Passage length (x direction) [m]."""
 
 
 @configclass
 class MeshStructuredTerrainCfg(terrains.SubTerrainBaseCfg):
     """Configuration for a structured terrain."""
 
-    function = mesh_terrains.structured_terrain
+    function = "{DIR}.mesh_terrains:structured_terrain"
     terrain_type: Literal["stairs", "inverted_stairs", "obstacles", "walls"] = MISSING
 
 
 @configclass
 class MeshRadiatingBeamTerrainCfg(terrains.MeshStarTerrainCfg):
-    """
-    A terrain that creates beam bridges connecting a central cylindrical platform to the outer border. Improved
-    upon the :class:`isaaclab.terrains.MeshStarTerrainCfg`:
-    1. Add parameter border_size to allow user specify the border of the terrain
-    2. Allow generating odd number of beams 
+    """A terrain that creates beam bridges connecting a central cylindrical platform to the outer border.
+
+    Improved upon :class:`isaaclab.terrains.MeshStarTerrainCfg`:
+    1. Adds ``border_size`` parameter for user-specified terrain border.
+    2. Allows generating an odd number of beams.
     """
 
-    function = mesh_terrains.beam_terrain
+    function = "{DIR}.mesh_terrains:beam_terrain"
 
-    # The inner length (x) and width (y) defining the inner square area enclosed by the border (in m).
     border_size: tuple[float, float] = MISSING
+    """Inner length (x) and width (y) defining the inner square area enclosed by the border [m]."""
 
-    # The range of number of beams.
     num_bars: tuple[int, int] = MISSING
+    """Range of number of beams."""
 
-    # The distribution pattern of sampling beams.
     beam_distribution: Literal["uniform", "random"] = MISSING
+    """Distribution pattern of sampling beams."""
