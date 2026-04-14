@@ -25,12 +25,17 @@ from isaaclab.utils.noise import UniformNoiseCfg as Unoise
 from isaaclab_physx.physics import PhysxCfg
 from isaaclab_tasks.utils import PresetCfg
 
-from . import mdp, terrains
+from . import mdp
+from .commands_preset import CommandsPresetCfg
+from .terrain_preset import SubTerrainPresetCfg
 
 
-def make_terrain(terrain_dict):
+@configclass
+class SceneCfg(InteractiveSceneCfg):
+    """ "Configuration for the terrain scene with a legged robot."""
 
-    return TerrainImporterCfg(
+    # ground terrain
+    terrain = TerrainImporterCfg(
         prim_path="/World/ground",
         terrain_type="generator",
         terrain_generator=TerrainGeneratorCfg(
@@ -43,7 +48,7 @@ def make_terrain(terrain_dict):
             slope_threshold=0.75,
             use_cache=False,
             curriculum=True,
-            sub_terrains=terrain_dict,
+            sub_terrains=SubTerrainPresetCfg(),  # type: ignore
         ),
         max_init_terrain_level=5,
         collision_group=-1,
@@ -60,63 +65,6 @@ def make_terrain(terrain_dict):
         ),
         debug_vis=False,
     )
-
-
-def make_commands(commands_dict):
-    return mdp.RelativeStateCommandCfg(
-        asset_name="robot",
-        resampling_time_range=(10.0, 10.0),
-        pos_std=0.5,
-        rot_std=0.5,
-        lin_vel_std=0.3,
-        ang_vel_std=0.3,
-        debug_vis=True,
-        commands=commands_dict
-    )
-
-
-@configclass
-class TerrainPresetCfg(PresetCfg):
-    """Terrain presets selectable via ``env.scene.terrain=<name>``."""
-
-    default = make_terrain({})
-    all = make_terrain({
-        "gap": terrains.GAP,
-        "pit": terrains.PIT,
-        "extreme_stair": terrains.EXTREME_STAIR,
-        "slope_inv": terrains.SLOPE_INV,
-        "stepping_stone": terrains.STEPPING_STONE,
-        "radiating_beam": terrains.RADIATING_BEAM,
-    })
-    eval = make_terrain({
-        "gap": terrains.GAP.replace(gap_width_range=(1.0, 1.5)),
-        "pit": terrains.PIT.replace(pit_depth_range=(0.8, 1.2)),
-        "extreme_stair": terrains.EXTREME_STAIR.replace(step_height_range=(0.12, 0.2)),
-        "slope_inv": terrains.SLOPE_INV.replace(slope_range=(0.6, 0.9)),
-        "stepping_stone": terrains.STEPPING_STONE.replace(
-            w_gap=(0.15, 0.26),
-            w_stone=(0.4, 0.2),
-            s_max=(0.080, 0.118),
-            h_max=(0.075, 0.1),
-        ),
-        "radiating_beam": terrains.RADIATING_BEAM.replace(num_bars=(5, 1)),
-    })
-    gap = make_terrain({"gap": terrains.GAP})
-    pit = make_terrain({"pit": terrains.PIT})
-    extreme_stair = make_terrain({"extreme_stair": terrains.EXTREME_STAIR})
-    slope_inv = make_terrain({"slope_inv": terrains.SLOPE_INV})
-    square_pillar_obstacle = make_terrain({"square_pillar_obstacle": terrains.SQUARE_PILLAR_OBSTACLE})
-    stepping_stone = make_terrain({"stepping_stone": terrains.STEPPING_STONE})
-    radiating_beam = make_terrain({"radiating_beam": terrains.RADIATING_BEAM})
-    flat = make_terrain({"flat": terrains.FLAT})
-
-
-@configclass
-class SceneCfg(InteractiveSceneCfg):
-    """ "Configuration for the terrain scene with a legged robot."""
-
-    # ground terrain
-    terrain = TerrainPresetCfg()
 
     # lights
     sky_light = AssetBaseCfg(
@@ -156,73 +104,19 @@ class ActionsCfg:
 
 
 @configclass
-class GoalPointPresetCfg(PresetCfg):
-    """Goal-point command presets selectable via ``env.commands.goal_point=<name>``."""
-
-    default = make_commands({
-        "lin_vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
-            roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None,
-            lin_vel_x=(-2.0, 2.0), lin_vel_y=(-2.0, 2.0), lin_vel_z=None,
-            ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-0.2, 0.2),
-            duration=(0.05, 4.0),
-        ),
-        "ang_vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
-            roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None,
-            lin_vel_x=(-0.0, 0.0), lin_vel_y=(-0.0, 0.0), lin_vel_z=None,
-            ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-2.0, 2.0), duration=(0.05, 4.0),
-        ),
-        "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
-            pos_x=(-0.0, 0.0), pos_y=(-0.0, 0.0), pos_z=(-0.0, 0.0),
-            roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None,
-            duration=(0.05, 2.0),
-        ),
-        "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
-            pos_x=(-0.0, 0.0), pos_y=(-0.0, 0.0), pos_z=(-0.0, 0.0),
-            roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=(-3.14, 3.14),
-            duration=(0.05, 2.0),
-        ),
-        "terrain_stand_up_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
-            pos_x=None, pos_y=None, pos_z=None,
-            roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None,
-            duration=(0.05, 4.0),
-        ),
-        "position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
-            pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None,
-            roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None,
-            duration=(0.05, 2.0),
-        ),
-        "pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
-            pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None,
-            roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None,
-            duration=(0.05, 2.0),
-        ),
-    })
-    terrain = make_commands({
-        "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(pos_x=(-0.0, 0.0), pos_y=(-0.0, 0.0), pos_z=(-0.0, 0.0), roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=(-3.14, 3.14), duration=(0.05, 2.0)),
-        "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(pos_x=(-0.0, 0.0), pos_y=(-0.0, 0.0), pos_z=(-0.0, 0.0), roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None, duration=(0.05, 2.0)),
-        "terrain_stand_up_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(pos_x=None, pos_y=None, pos_z=None, roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None, duration=(0.05, 4.0)),
-        "position_cmd": mdp.RelativeStateCommandCfg.PositionCommands(pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None, roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None, duration=(0.05, 2.0)),
-        "pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None, roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=(-3.14, 3.14), duration=(0.05, 2.0)),
-    })
-    terrain_pos = make_commands({
-        "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(pos_x=(-0.0, 0.0), pos_y=(-0.0, 0.0), pos_z=(-0.0, 0.0), roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None, duration=(0.05, 2.0)),
-    })
-    terrain_pose = make_commands({
-        "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(pos_x=(-0.0, 0.0), pos_y=(-0.0, 0.0), pos_z=(-0.0, 0.0), roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=(-3.14, 3.14), duration=(0.05, 2.0)),
-    })
-    terrain_stand_up = make_commands({
-        "terrain_stand_up_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(pos_x=None, pos_y=None, pos_z=None, roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None, duration=(0.05, 4.0)),
-    })
-    pose = make_commands({"pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None, roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=(-3.14, 3.14), duration=(0.05, 2.0))})
-    pos = make_commands({"position_cmd": mdp.RelativeStateCommandCfg.PositionCommands(pos_x=(-3.0, 3.0), pos_y=(-3.0, 3.0), pos_z=None, roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None, duration=(0.05, 2.0))})
-    vel = make_commands({"lin_vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(lin_vel_x=(-2.0, 2.0), lin_vel_y=(-2.0, 2.0), lin_vel_z=None, ang_vel_x=None, ang_vel_y=None, ang_vel_z=(-0.2, 0.2), duration=(0.05, 2.0))})
-
-
-@configclass
 class CommandsCfg:
     "Command specifications for the MDP."
 
-    goal_point = GoalPointPresetCfg()
+    goal_point = mdp.RelativeStateCommandCfg(
+        asset_name="robot",
+        resampling_time_range=(10.0, 10.0),
+        pos_std=0.5,
+        rot_std=0.5,
+        lin_vel_std=0.3,
+        ang_vel_std=0.3,
+        debug_vis=True,
+        commands=CommandsPresetCfg(),  # type: ignore
+    )
 
 
 @configclass
@@ -234,7 +128,6 @@ class ObservationsCfg:
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
         proj_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))
-        # time_left = ObsTerm(func=mdp.time_left)
         joint_pos = ObsTerm(func=mdp.joint_pos)
         joint_vel = ObsTerm(func=mdp.joint_vel)
         last_actions = ObsTerm(func=mdp.last_action)
@@ -248,8 +141,6 @@ class ObservationsCfg:
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True
-
-    policy: PolicyCfg = PolicyCfg()
 
     @configclass
     class TaskCfg(ObsGroup):
@@ -362,7 +253,7 @@ class TerminationsCfg:
 
 @configclass
 class CurriculumCfg:
-    terrain_levels = CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels_old, params={"debug_vis": True, "kappa": 2.0, "success_term": "success", "target": 0.33})  # type: ignore
+    terrain_levels = CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels, params={"debug_vis": True, "kappa": 2.0, "temperature": 2.0, "target": 0.33, "success_term": "success"})
     remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
 
 
@@ -380,7 +271,7 @@ class PositionPhysicsCfg(PresetCfg):
 @configclass
 class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
     scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=10)
-    sim: SimulationCfg = SimulationCfg(physics=PositionPhysicsCfg())
+    sim: SimulationCfg = SimulationCfg(physics=PositionPhysicsCfg())  # type: ignore
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
     commands: CommandsCfg = CommandsCfg()
@@ -395,12 +286,7 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
         self.episode_length_s = 6.0
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
-        self.sim.physics_material = sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="multiply",
-            restitution_combine_mode="multiply",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-        )
+        self.sim.physics_material = self.scene.terrain.physics_material
 
         if self.scene.height_scanner is not None:
             self.scene.height_scanner.update_period = self.decimation * self.sim.dt

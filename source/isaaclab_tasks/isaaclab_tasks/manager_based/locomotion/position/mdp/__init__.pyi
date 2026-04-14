@@ -7,7 +7,6 @@ __all__ = [
     "RelativeStateCommandCfg",
     "RelativeStateCommand",
     "terrain_spawn_goal_pair_success_rate_levels",
-    "terrain_spawn_goal_pair_success_rate_levels_old",
     "skip_reward_term",
     "stricten_success_term",
     "activate_reward_term",
@@ -53,7 +52,6 @@ __all__ = [
 from .commands import RelativeStateCommandCfg, RelativeStateCommand
 from .curriculums import (
     terrain_spawn_goal_pair_success_rate_levels,
-    terrain_spawn_goal_pair_success_rate_levels_old,
     skip_reward_term,
     stricten_success_term,
     activate_reward_term,
