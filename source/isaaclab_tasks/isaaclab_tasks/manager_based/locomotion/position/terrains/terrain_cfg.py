@@ -3,7 +3,6 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-import isaaclab.terrains.terrain_generator as terrain_generator
 from isaaclab import terrains as terrain_cfg
 
 from . import trimesh as isaaclab_terrain
@@ -19,7 +18,37 @@ def patched_find_flat_patches(*args, **kwargs) -> None:
     return patch_sampling_cfg.func(kwargs["wp_mesh"], kwargs["origin"], patch_sampling_cfg)
 
 
-terrain_generator.find_flat_patches = patched_find_flat_patches
+def apply_terrain_patches():
+    """Monkey-patch find_flat_patches on both utils and terrain_generator if loaded."""
+    import sys
+
+    for mod_name in ("isaaclab.terrains.utils", "isaaclab.terrains.terrain_generator"):
+        mod = sys.modules.get(mod_name)
+        if mod is not None and hasattr(mod, "find_flat_patches"):
+            mod.find_flat_patches = patched_find_flat_patches
+
+
+def _install_import_hook():
+    """Register an import hook that auto-applies the terrain patch when terrain_generator loads."""
+    import builtins
+    import sys
+
+    _original_import = builtins.__import__
+    _hooked = False
+
+    def _hook(name, *args, **kw):
+        nonlocal _hooked
+        result = _original_import(name, *args, **kw)
+        if not _hooked and "isaaclab.terrains.terrain_generator" in sys.modules:
+            _hooked = True
+            builtins.__import__ = _original_import
+            apply_terrain_patches()
+        return result
+
+    builtins.__import__ = _hook
+
+
+_install_import_hook()
 
 FLAT = terrain_cfg.MeshPlaneTerrainCfg(
     flat_patch_sampling={

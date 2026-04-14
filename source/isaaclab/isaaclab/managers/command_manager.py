@@ -24,10 +24,6 @@ from .manager_term_cfg import CommandTermCfg
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
-if has_kit():
-    import omni.kit.app
-
-
 class CommandTerm(ManagerTermBase):
     """The base class for implementing a command term.
 
@@ -109,6 +105,8 @@ class CommandTerm(ManagerTermBase):
         if debug_vis and has_kit():
             # create a subscriber for the post update event if it doesn't exist
             if self._debug_vis_handle is None:
+                import omni.kit.app
+
                 app_interface = omni.kit.app.get_app_interface()
                 self._debug_vis_handle = app_interface.get_post_update_event_stream().create_subscription_to_pop(
                     lambda event, obj=weakref.proxy(self): obj._debug_vis_callback(event)

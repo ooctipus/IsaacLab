@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+import warp as wp
 from typing import TYPE_CHECKING
 
 from isaaclab.envs.mdp.actions.joint_actions import JointAction
@@ -22,8 +23,8 @@ class DefaultJointPositionStaticAction(JointAction):
         super().__init__(cfg, env)
         # use default joint positions as offset
         if cfg.use_default_offset:
-            self._offset = self._asset.data.default_joint_pos[:, self._joint_ids].clone()
-        self._default_actions = self._asset.data.default_joint_pos[:, self._joint_ids].clone()
+            self._offset = wp.to_torch(self._asset.data.default_joint_pos)[:, self._joint_ids].clone()
+        self._default_actions = wp.to_torch(self._asset.data.default_joint_pos)[:, self._joint_ids].clone()
 
     @property
     def action_dim(self) -> int:

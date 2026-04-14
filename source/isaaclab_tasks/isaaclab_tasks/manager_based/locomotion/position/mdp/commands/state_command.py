@@ -21,15 +21,14 @@ This term supports different "command kinds" via cfg:
 from __future__ import annotations
 
 import torch
+import warp as wp
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 from dataclasses import MISSING
 
-from isaaclab.assets import Articulation
 from isaaclab.managers import CommandTerm
 from ..success_monitor_cfg import SuccessMonitorCfg
 from isaaclab.utils import configclass
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.utils.math import (
     quat_apply_inverse,
     euler_xyz_from_quat,
@@ -40,6 +39,7 @@ from isaaclab.utils.math import (
 )
 
 if TYPE_CHECKING:
+    from isaaclab.assets import Articulation
     from isaaclab.envs import ManagerBasedEnv
     from isaaclab.terrains import TerrainImporter
     from .commands_cfg import RelativeStateCommandCfg
@@ -294,7 +294,7 @@ class RelativeStateCommand(CommandTerm):
         self.cmd_mask[env_ids] = self.spec.descretized_mask[idx]
 
         spawns_locations = self.spec.descretized_cmd[idx, :3]
-        self._env.scene.terrain.env_origins.index_copy_(0, env_ids, spawns_locations)
+        self._env.scene.terrain.env_origins.index_copy_(0, env_ids.long(), spawns_locations)
 
     def _update_command(self):
         """Update world-state row and recompute relative state for all envs.
@@ -303,8 +303,8 @@ class RelativeStateCommand(CommandTerm):
         - Row 1 of cmd_buf is recomputed as the target expressed in base frame:
           position, axis-angle rotation, linear velocity, angular velocity.
         """
-        root_state_w = self.robot.data.root_state_w
-        root_quat = self.robot.data.root_quat_w  # (N, 4) xyzw
+        root_state_w = wp.to_torch(self.robot.data.root_state_w)
+        root_quat = wp.to_torch(self.robot.data.root_quat_w)  # (N, 4) xyzw
 
         # world state row
         self.cmd_buf[:, 2, :3] = root_state_w[:, :3]
@@ -348,6 +348,8 @@ class RelativeStateCommand(CommandTerm):
     def _set_debug_vis_impl(self, debug_vis: bool):
         """Create / toggle visualization markers for the command targets."""
         if debug_vis:
+            from isaaclab.markers import VisualizationMarkers
+
             if not hasattr(self, "goal_visualizer"):
                 self.goal_visualizer = VisualizationMarkers(self.cfg.goal_visualizer_cfg)
             if not hasattr(self, "current_vel_visualizer"):
@@ -398,7 +400,7 @@ class RelativeStateCommand(CommandTerm):
 
         # Velocity goals: visualize as arrows from base
         if len(vel_task_ids) > 0:
-            base_pos_w = self.robot.data.root_pos_w[vel_task_ids].clone()
+            base_pos_w = wp.to_torch(self.robot.data.root_pos_w)[vel_task_ids].clone()
             base_pos_w[:, 2] += 0.5
             xy_cmd = self.cmd_buf[vel_task_ids, 0, 6:8]
             scale, quat = self._resolve_xy_velocity_to_arrow(
@@ -419,11 +421,11 @@ class RelativeStateCommand(CommandTerm):
         )
 
         # current velocity arrows
-        base_pos_w = self.robot.data.root_pos_w.clone()
+        base_pos_w = wp.to_torch(self.robot.data.root_pos_w).clone()
         base_pos_w[:, 2] += 0.5
         s, q = self._resolve_xy_velocity_to_arrow(
-            self.robot.data.root_lin_vel_b[:, :2],
-            self.robot.data.root_quat_w,
+            wp.to_torch(self.robot.data.root_lin_vel_b)[:, :2],
+            wp.to_torch(self.robot.data.root_quat_w),
             self.cfg.current_vel_visualizer_cfg.markers["arrow"].scale,
         )
         self.current_vel_visualizer.visualize(base_pos_w, q, s)
@@ -463,7 +465,7 @@ class RelativeStateCommand(CommandTerm):
         return self._err
 
     def get_task_done(self) -> torch.Tensor:
-        joint_pos = self.robot.data.joint_pos - self.robot.data.default_joint_pos
+        joint_pos = wp.to_torch(self.robot.data.joint_pos) - wp.to_torch(self.robot.data.default_joint_pos)
         joint_pos_diff = torch.abs(joint_pos).amax(dim=1)
         return (self.cmd_buf[:, 1, 12] <= 0.0) & (joint_pos_diff < 1.0)
 
@@ -471,6 +473,6 @@ class RelativeStateCommand(CommandTerm):
     #     return torch.all(self._err < self._reward_scales, dim=1).float() / (self.cmd_buf[:, 0, 12] / self._env.step_dt)
 
     def get_task_reward(self) -> torch.Tensor:
-        joint_pos = self.robot.data.joint_pos - self.robot.data.default_joint_pos
+        joint_pos = wp.to_torch(self.robot.data.joint_pos) - wp.to_torch(self.robot.data.default_joint_pos)
         joint_pos_diff = torch.abs(joint_pos).amax(dim=1)
         return ((self.cmd_buf[:, 1, 12] <= 0.0) & (joint_pos_diff < 0.5)).float()
