@@ -1,5 +1,6 @@
 import enum
 import torch
+import warp as wp
 from typing import TYPE_CHECKING
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.envs import ManagerBasedRLEnv
@@ -79,17 +80,17 @@ DELTA_KERNELS = (geometric_subtract, quaternion_subtract)
 # --- state kernels (env -> x_cur) ---
 def joint_position(env: ManagerBasedRLEnv, env_ids: torch.Tensor | slice, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     articulation: Articulation = env.scene[asset_cfg.name]
-    return articulation.data.joint_pos[env_ids, asset_cfg.joint_ids]
+    return wp.to_torch(articulation.data.joint_pos)[env_ids, asset_cfg.joint_ids]
 
 
 def joint_velocity(env: ManagerBasedRLEnv, env_ids: torch.Tensor | slice, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     articulation: Articulation = env.scene[asset_cfg.name]
-    return articulation.data.joint_vel[env_ids, asset_cfg.joint_ids]
+    return wp.to_torch(articulation.data.joint_vel)[env_ids, asset_cfg.joint_ids]
 
 
 def body_position(env: ManagerBasedRLEnv, env_ids: torch.Tensor | slice, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     articulation: Articulation = env.scene[asset_cfg.name]
-    body_pos = articulation.data.body_pos_w[env_ids, asset_cfg.body_ids]
+    body_pos = wp.to_torch(articulation.data.body_pos_w)[env_ids, asset_cfg.body_ids]
     env_origins = env.scene.env_origins[env_ids]
     if env_origins.ndim == body_pos.ndim - 1:
         env_origins = env_origins.unsqueeze(-2)
@@ -98,17 +99,17 @@ def body_position(env: ManagerBasedRLEnv, env_ids: torch.Tensor | slice, asset_c
 
 def body_quaternion(env: ManagerBasedRLEnv, env_ids: torch.Tensor | slice, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     articulation: Articulation = env.scene[asset_cfg.name]
-    return articulation.data.body_quat_w[env_ids, asset_cfg.body_ids]
+    return wp.to_torch(articulation.data.body_quat_w)[env_ids, asset_cfg.body_ids]
 
 
 def body_lin_velocity(env: ManagerBasedRLEnv, env_ids: torch.Tensor | slice, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     articulation: Articulation = env.scene[asset_cfg.name]
-    return articulation.data.body_lin_vel_w[env_ids, asset_cfg.body_ids]
+    return wp.to_torch(articulation.data.body_lin_vel_w)[env_ids, asset_cfg.body_ids]
 
 
 def body_ang_velocity(env: ManagerBasedRLEnv, env_ids: torch.Tensor | slice, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     articulation: Articulation = env.scene[asset_cfg.name]
-    return articulation.data.body_ang_vel_w[env_ids, asset_cfg.body_ids]
+    return wp.to_torch(articulation.data.body_ang_vel_w)[env_ids, asset_cfg.body_ids]
 
 
 STATE_KERNELS = (

@@ -11,18 +11,12 @@ import io
 import numpy as np
 import os
 import random
-import scipy.spatial.transform as tf
 import subprocess
 import torch
-import trimesh
 import yaml
-from scipy.spatial.transform import Rotation as R
 from typing import TYPE_CHECKING
 
-import requests
-from isaaclab.terrains.trimesh.mesh_terrains import inverted_pyramid_stairs_terrain, pyramid_stairs_terrain
 from isaaclab.terrains.trimesh.mesh_terrains_cfg import MeshInvertedPyramidStairsTerrainCfg, MeshPyramidStairsTerrainCfg
-from isaaclab.terrains.trimesh.utils import make_border, make_plane
 
 
 if TYPE_CHECKING:

@@ -12,6 +12,7 @@ the termination introduced by the function.
 from __future__ import annotations
 
 import torch
+import warp as wp
 from typing import TYPE_CHECKING
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import ManagerTermBase
@@ -38,8 +39,8 @@ def success(
     asset: Articulation = env.scene[robot_cfg.name]
     term: RelativeStateCommand = env.command_manager.get_term(command)
     err = term.get_state_error()
-    speed = asset.data.body_lin_vel_w[:, robot_cfg.body_ids].norm(2, dim=-1).amax(dim=1)
-    joint_pos = asset.data.joint_pos[:, robot_cfg.joint_ids] - asset.data.default_joint_pos[:, robot_cfg.joint_ids]
+    speed = wp.to_torch(asset.data.body_lin_vel_w)[:, robot_cfg.body_ids].norm(2, dim=-1).amax(dim=1)
+    joint_pos = wp.to_torch(asset.data.joint_pos)[:, robot_cfg.joint_ids] - wp.to_torch(asset.data.default_joint_pos)[:, robot_cfg.joint_ids]
     joint_pos_diff = torch.abs(joint_pos).amax(dim=1)
     return ((err[:, 0] < thresh[0]) & (err[:, 1] < thresh[1])) & (speed < thresh[2]) & (joint_pos_diff < thresh[3])
 
@@ -53,12 +54,12 @@ def abnormal_robot_state(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = Sce
     """Terminating environment when violation of velocity limits detects, this usually indicates unstable physics caused
     by very bad, or aggressive action"""
     robot: Articulation = env.scene[asset_cfg.name]
-    return (robot.data.joint_vel.abs() > (robot.data.joint_vel_limits * 2)).any(dim=1)
+    return (wp.to_torch(robot.data.joint_vel).abs() > (wp.to_torch(robot.data.joint_vel_limits) * 2)).any(dim=1)
 
 
 def speed_terminate(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot"), speed_limit=2.0) -> torch.Tensor:
     robot: Articulation = env.scene[robot_cfg.name]
-    speeding = (torch.norm(robot.data.root_vel_w, dim=-1) > speed_limit) & (env.episode_length_buf * env.step_dt > 0.5)
+    speeding = (torch.norm(wp.to_torch(robot.data.root_vel_w), dim=-1) > speed_limit) & (env.episode_length_buf * env.step_dt > 0.5)
     return speeding
 
 
@@ -98,36 +99,36 @@ class log(ManagerTermBase):
 
 def mean_mech_energy_per_joint(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
     robot: Articulation = env.scene[asset_cfg.name]
-    applied_torque = robot.data.applied_torque[:, asset_cfg.joint_ids]
-    joint_vel = robot.data.joint_vel[:, asset_cfg.joint_ids]
+    applied_torque = wp.to_torch(robot.data.applied_torque)[:, asset_cfg.joint_ids]
+    joint_vel = wp.to_torch(robot.data.joint_vel)[:, asset_cfg.joint_ids]
     work_per_joint = states.mechanical_work_per_joint(applied_torque, joint_vel, env.step_dt)
     return work_per_joint.mean(dim=0)
 
 
 def total_average_mech_energy_per_joint(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
     robot: Articulation = env.scene[asset_cfg.name]
-    applied_torque = robot.data.applied_torque[:, asset_cfg.joint_ids]
-    joint_vel = robot.data.joint_vel[:, asset_cfg.joint_ids]
+    applied_torque = wp.to_torch(robot.data.applied_torque)[:, asset_cfg.joint_ids]
+    joint_vel = wp.to_torch(robot.data.joint_vel)[:, asset_cfg.joint_ids]
     work_per_joint = states.mechanical_work_per_joint(applied_torque, joint_vel, env.step_dt)
     return work_per_joint.mean(dim=0).sum()
 
 
 def mean_per_body_shock(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
     robot: Articulation = env.scene[asset_cfg.name]
-    per_body_incoming_wrench = torch.norm(robot.data.body_incoming_joint_wrench_b, dim=-1)
+    per_body_incoming_wrench = torch.norm(wp.to_torch(robot.data.body_incoming_joint_wrench_b), dim=-1)
     return per_body_incoming_wrench.mean(dim=0)
 
 
 def total_body_shock(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
     robot: Articulation = env.scene[asset_cfg.name]
-    per_body_incoming_wrench = torch.norm(robot.data.body_incoming_joint_wrench_b, dim=-1)
+    per_body_incoming_wrench = torch.norm(wp.to_torch(robot.data.body_incoming_joint_wrench_b), dim=-1)
     return per_body_incoming_wrench.mean(dim=0).sum()
 
 
 def forwardness(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
     # Retrieve the robot and target data
     robot: Articulation = env.scene[asset_cfg.name]
-    base_velocity = robot.data.root_lin_vel_b  # Robot's current base velocity vector
+    base_velocity = wp.to_torch(robot.data.root_lin_vel_b)  # Robot's current base velocity vector
     speed = torch.linalg.vector_norm(base_velocity, ord=2, dim=-1)
     forward_comp = base_velocity[:, 0]
     forward_weight = forward_comp / (speed + 1e-6)

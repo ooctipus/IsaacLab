@@ -32,37 +32,8 @@ from . import mdp, terrains
 class SceneCfg(InteractiveSceneCfg):
     """ "Configuration for the terrain scene with a legged robot."""
 
-    # ground terrain
-    terrain = TerrainImporterCfg(
-        prim_path="/World/ground",
-        terrain_type="generator",
-        terrain_generator=TerrainGeneratorCfg(
-            size=(10.0, 10.0),
-            border_width=20.0,
-            num_rows=10,
-            num_cols=20,
-            horizontal_scale=0.1,
-            vertical_scale=0.005,
-            slope_threshold=0.75,
-            use_cache=False,
-            curriculum=True,
-            sub_terrains={},
-        ),
-        max_init_terrain_level=5,
-        collision_group=-1,
-        physics_material=sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="multiply",
-            restitution_combine_mode="multiply",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-        ),
-        visual_material=sim_utils.MdlFileCfg(
-            mdl_path=f"{ISAACLAB_NUCLEUS_DIR}/Materials/TilesMarbleSpiderWhiteBrickBondHoned/TilesMarbleSpiderWhiteBrickBondHoned.mdl",
-            project_uvw=True,
-            texture_scale=(0.25, 0.25),
-        ),
-        debug_vis=False,
-    )
+    # ground terrain (presets defined after make_terrain below)
+    terrain = None  # type: ignore  -- replaced after make_terrain is defined
 
     # lights
     sky_light = AssetBaseCfg(
@@ -315,39 +286,44 @@ def make_terrain(terrain_dict):
     )
 
 
-variants = {
-    "scene.terrain": {
-        "all": make_terrain({
-            "gap": terrains.GAP,
-            "pit": terrains.PIT,
-            "extreme_stair": terrains.EXTREME_STAIR,
-            "slope_inv": terrains.SLOPE_INV,
-            "stepping_stone": terrains.STEPPING_STONE,
-            "radiating_beam": terrains.RADIATING_BEAM,
-        }),
-        "eval": make_terrain({
-            "gap": terrains.GAP.replace(gap_width_range=(1.0, 1.5)),
-            "pit": terrains.PIT.replace(pit_depth_range=(0.8, 1.2)),
-            "extreme_stair": terrains.EXTREME_STAIR.replace(step_height_range=(0.12, 0.2)),
-            "slope_inv": terrains.SLOPE_INV.replace(slope_range=(0.6, 0.9)),
-            "stepping_stone": terrains.STEPPING_STONE.replace(
-                w_gap=(0.15, 0.26),
-                w_stone=(0.4, 0.2),
-                s_max=(0.080, 0.118),
-                h_max=(0.075, 0.1)
-            ),
-            "radiating_beam": terrains.RADIATING_BEAM.replace(num_bars=(5, 1)),
-        }),
-        "gap": make_terrain({"gap": terrains.GAP}),
-        "pit": make_terrain({"pit": terrains.PIT}),
-        "extreme_stair": make_terrain({"extreme_stair": terrains.EXTREME_STAIR}),
-        "slope_inv": make_terrain({"slope_inv": terrains.SLOPE_INV}),
-        "square_pillar_obstacle": make_terrain({"square_pillar_obstacle": terrains.SQUARE_PILLAR_OBSTACLE}),
-        "stepping_stone": make_terrain({"stepping_stone": terrains.STEPPING_STONE}),
-        "radiating_beam": make_terrain({"radiating_beam": terrains.RADIATING_BEAM}),
-        "flat": make_terrain({"flat": terrains.FLAT}),
-    }
-}
+@configclass
+class MultiTaskTerrainPresetCfg(PresetCfg):
+    """Terrain presets selectable via ``env.scene.terrain=<name>``."""
+
+    default = make_terrain({})
+    all = make_terrain({
+        "gap": terrains.GAP,
+        "pit": terrains.PIT,
+        "extreme_stair": terrains.EXTREME_STAIR,
+        "slope_inv": terrains.SLOPE_INV,
+        "stepping_stone": terrains.STEPPING_STONE,
+        "radiating_beam": terrains.RADIATING_BEAM,
+    })
+    eval = make_terrain({
+        "gap": terrains.GAP.replace(gap_width_range=(1.0, 1.5)),
+        "pit": terrains.PIT.replace(pit_depth_range=(0.8, 1.2)),
+        "extreme_stair": terrains.EXTREME_STAIR.replace(step_height_range=(0.12, 0.2)),
+        "slope_inv": terrains.SLOPE_INV.replace(slope_range=(0.6, 0.9)),
+        "stepping_stone": terrains.STEPPING_STONE.replace(
+            w_gap=(0.15, 0.26),
+            w_stone=(0.4, 0.2),
+            s_max=(0.080, 0.118),
+            h_max=(0.075, 0.1),
+        ),
+        "radiating_beam": terrains.RADIATING_BEAM.replace(num_bars=(5, 1)),
+    })
+    gap = make_terrain({"gap": terrains.GAP})
+    pit = make_terrain({"pit": terrains.PIT})
+    extreme_stair = make_terrain({"extreme_stair": terrains.EXTREME_STAIR})
+    slope_inv = make_terrain({"slope_inv": terrains.SLOPE_INV})
+    square_pillar_obstacle = make_terrain({"square_pillar_obstacle": terrains.SQUARE_PILLAR_OBSTACLE})
+    stepping_stone = make_terrain({"stepping_stone": terrains.STEPPING_STONE})
+    radiating_beam = make_terrain({"radiating_beam": terrains.RADIATING_BEAM})
+    flat = make_terrain({"flat": terrains.FLAT})
+
+
+# Now set the terrain preset on SceneCfg
+SceneCfg.terrain = MultiTaskTerrainPresetCfg()
 
 
 @configclass
@@ -373,27 +349,20 @@ class MultiTaskCommandEnvCfg(ManagerBasedRLEnvCfg):
     events: EventsCfg = EventsCfg()
     curriculum: CurriculumCfg = None
     viewer: ViewerCfg = ViewerCfg(eye=(4.0/4, 7.0/4, 7.0/4), origin_type="asset_body", asset_name="robot", body_name="base")
-    variants = variants
 
     def __post_init__(self):
         self.decimation = 4
         self.episode_length_s = 6.0
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
-        self.sim.physics_material = self.scene.terrain.physics_material
+        self.sim.physics_material = sim_utils.RigidBodyMaterialCfg(
+            friction_combine_mode="multiply",
+            restitution_combine_mode="multiply",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+        )
 
-        # update sensor update periods
-        # we tick all the sensors based on the smallest update period (physics update period)
         if self.scene.height_scanner is not None:
             self.scene.height_scanner.update_period = self.decimation * self.sim.dt
         if self.scene.contact_forces is not None:
             self.scene.contact_forces.update_period = self.sim.dt
-
-        # check if terrain levels curriculum is enabled - if so, enable curriculum for terrain generator
-        # this generates terrains with increasing difficulty and is useful for training
-        if getattr(self.curriculum, "terrain_levels", None) is not None:
-            if self.scene.terrain.terrain_generator is not None:
-                self.scene.terrain.terrain_generator.curriculum = True
-        else:
-            if self.scene.terrain.terrain_generator is not None:
-                self.scene.terrain.terrain_generator.curriculum = False
