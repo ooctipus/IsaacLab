@@ -3,13 +3,20 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+import torch
+
 from isaaclab import terrains as terrain_cfg
 
 from . import trimesh as isaaclab_terrain
-from .utils import FlatPatchSamplingByRadiusCfg, PatchSamplingCfg, FlatPatchSamplingCfg
+from .utils import (
+    CircleFootprintCfg,
+    MorphologicalPatchSamplingCfg,
+    PatchSamplingCfg,
+    RectFootprintCfg,
+)
 
 
-def patched_find_flat_patches(*args, **kwargs) -> None:
+def patched_find_flat_patches(*args, **kwargs) -> torch.Tensor:
     patch_key = "patch_radius"
     kwargs[patch_key]["patched"] = True
     cfg_class = kwargs[patch_key]["cfg"]
@@ -50,41 +57,49 @@ def _install_import_hook():
 
 _install_import_hook()
 
+
+ROBOT_FOOTPRINT = RectFootprintCfg(length=0.8, width=0.5)
+"""Default robot footprint for spawn patches. Sized for Anymal C (~80 cm long x 50 cm wide).
+
+``length`` = nose-to-tail (+x forward), ``width`` = shoulder-to-shoulder (+y lateral).
+Override this in robot-specific terrain configs if using a different platform.
+"""
+
+
+def circle_patch(*, radius: float, num_patches: int = 20, max_height_diff: float = 0.2, **kw):
+    """Build a :class:`MorphologicalPatchSamplingCfg` with a circular footprint."""
+    return MorphologicalPatchSamplingCfg(
+        num_patches=num_patches,
+        footprint=CircleFootprintCfg(radius=radius),
+        max_height_diff=max_height_diff,
+        **kw,
+    )
+
+
+def spawn_patch(*, num_patches: int = 20, max_height_diff: float = 0.2, **kw):
+    """Build a :class:`MorphologicalPatchSamplingCfg` using :data:`ROBOT_FOOTPRINT`."""
+    return MorphologicalPatchSamplingCfg(
+        num_patches=num_patches,
+        footprint=ROBOT_FOOTPRINT,
+        max_height_diff=max_height_diff,
+        **kw,
+    )
+
+
 FLAT = terrain_cfg.MeshPlaneTerrainCfg(
     flat_patch_sampling={
-        "target": FlatPatchSamplingByRadiusCfg(
-            num_patches=20,
-            patch_radius=0.5,
-            radius_range=(0.5, 7.0),
-            max_height_diff=0.2,
-        ),
-        "spawn": FlatPatchSamplingByRadiusCfg(
-            num_patches=20,
-            patch_radius=0.5,
-            radius_range=(0.5, 7.0),
-            max_height_diff=0.2,
-        )
+        "target": circle_patch(radius=0.5),
+        "spawn": spawn_patch(),
     },
 )
-
 
 
 GAP = terrain_cfg.MeshGapTerrainCfg(
     platform_width=3.0,
     gap_width_range=(0.05, 1.5),
     flat_patch_sampling={
-        "target": FlatPatchSamplingByRadiusCfg(
-            num_patches=20,
-            patch_radius=0.5,
-            radius_range=(0.5, 7.0),
-            max_height_diff=0.2,
-        ),
-        "spawn": FlatPatchSamplingByRadiusCfg(
-            num_patches=20,
-            patch_radius=0.3,
-            radius_range=(0.5, 7.0),
-            max_height_diff=0.2,
-        )
+        "target": circle_patch(radius=0.5),
+        "spawn": spawn_patch(),
     },
 )
 
@@ -92,18 +107,8 @@ PIT = terrain_cfg.MeshPitTerrainCfg(
     platform_width=3.0,
     pit_depth_range=(0.05, 1.2),
     flat_patch_sampling={
-        "target": FlatPatchSamplingByRadiusCfg(
-            num_patches=20,
-            patch_radius=0.5,
-            max_height_diff=0.2,
-            radius_range=(0.5, 7.0),
-        ),
-        "spawn": FlatPatchSamplingByRadiusCfg(
-            num_patches=20,
-            patch_radius=0.3,
-            max_height_diff=0.2,
-            radius_range=(0.5, 7.0),
-        )
+        "target": circle_patch(radius=0.5),
+        "spawn": spawn_patch(),
     },
 )
 
@@ -114,18 +119,8 @@ SQUARE_PILLAR_OBSTACLE = terrain_cfg.HfDiscreteObstaclesTerrainCfg(
     obstacle_height_range=(1.0, 2.0),
     platform_width=0.5,
     flat_patch_sampling={
-        "target": FlatPatchSamplingByRadiusCfg(
-            num_patches=20,
-            patch_radius=0.2,
-            max_height_diff=0.2,
-            radius_range=(0.2, 7.0),
-        ),
-        "spawn": FlatPatchSamplingByRadiusCfg(
-            num_patches=20,
-            patch_radius=0.2,
-            max_height_diff=0.2,
-            radius_range=(0.2, 7.0),
-        )
+        "target": circle_patch(radius=0.2),
+        "spawn": spawn_patch(),
     },
 )
 
@@ -137,18 +132,8 @@ MAZE = isaaclab_terrain.MeshMazeTerrainCfg(
     open_ratio=0.3,
     grid_noise=0.3,
     flat_patch_sampling={
-        "target": FlatPatchSamplingByRadiusCfg(
-            num_patches=20,
-            patch_radius=0.5,
-            max_height_diff=0.2,
-            radius_range=(0.2, 7.0),
-        ),
-        "spawn": FlatPatchSamplingByRadiusCfg(
-            num_patches=20,
-            patch_radius=0.5,
-            max_height_diff=0.2,
-            radius_range=(0.2, 7.0),
-        )
+        "target": circle_patch(radius=0.5),
+        "spawn": spawn_patch(),
     },
 )
 
@@ -163,8 +148,8 @@ CONTOUR = isaaclab_terrain.MeshContourTerrainCfg(
         num_stones=(8, 20), size_range=(0.6, 1.2), height_scale=0.6, roughness=0.3,
     ),
     flat_patch_sampling={
-        "target": FlatPatchSamplingCfg(num_patches=20, patch_radius=0.1, max_height_diff=0.15),
-        "spawn": FlatPatchSamplingCfg(num_patches=20, patch_radius=0.5, max_height_diff=0.15)
+        "target": circle_patch(radius=0.1, max_height_diff=0.15),
+        "spawn": spawn_patch(max_height_diff=0.15),
     },
 )
 
@@ -173,18 +158,8 @@ SLOPE_INV = terrain_cfg.HfInvertedPyramidSlopedTerrainCfg(
     platform_width=2.0,
     border_width=1.5,
     flat_patch_sampling={
-        "target": FlatPatchSamplingByRadiusCfg(
-            num_patches=20,
-            patch_radius=0.5,
-            max_height_diff=0.2,
-            radius_range=(0.2, 7.0),
-        ),
-        "spawn": FlatPatchSamplingByRadiusCfg(
-            num_patches=20,
-            patch_radius=0.05,
-            max_height_diff=0.2,
-            radius_range=(0.2, 7.0),
-        )
+        "target": circle_patch(radius=0.5),
+        "spawn": spawn_patch(),
     },
 )
 
@@ -195,18 +170,8 @@ EXTREME_STAIR = terrain_cfg.HfPyramidStairsTerrainCfg(
     inverted=True,
     border_width=1.0,
     flat_patch_sampling={
-        "target": FlatPatchSamplingByRadiusCfg(
-            num_patches=20,
-            patch_radius=0.4,
-            max_height_diff=0.2,
-            radius_range=(0.0, 7.0),
-        ),
-        "spawn": FlatPatchSamplingByRadiusCfg(
-            num_patches=20,
-            patch_radius=0.05,
-            max_height_diff=0.2,
-            radius_range=(0.0, 7.0),
-        )
+        "target": circle_patch(radius=0.4),
+        "spawn": spawn_patch(),
     },
 )
 
@@ -219,18 +184,8 @@ STEPPING_STONE = isaaclab_terrain.MeshStonesEverywhereTerrainCfg(
     holes_depth=-10.0,
     platform_width=1.5,
     flat_patch_sampling={
-        "target": FlatPatchSamplingByRadiusCfg(
-            num_patches=20,
-            patch_radius=0.01,
-            max_height_diff=0.2,
-            radius_range=(0.0, 7.0),
-        ),
-        "spawn": FlatPatchSamplingByRadiusCfg(
-            num_patches=20,
-            patch_radius=0.2,
-            max_height_diff=0.2,
-            radius_range=(0.2, 6.5),
-        )
+        "target": circle_patch(radius=0.01),
+        "spawn": spawn_patch(),
     },
 )
 
@@ -240,14 +195,7 @@ BALANCING_BEAM = isaaclab_terrain.MeshBalanceBeamsTerrainCfg(
     w_stone=(0.25, 0.25),
     mid_gap=(0.25, 0.25),
     flat_patch_sampling={
-        "spawn": FlatPatchSamplingCfg(
-            patch_radius=0.4,
-            num_patches=20,
-            x_range=(4, 6),
-            y_range=(-1, 1),
-            z_range=(-0.05, 0.05),
-            max_height_diff=0.05,
-        )
+        "spawn": spawn_patch(max_height_diff=0.05, x_range=(4, 6), y_range=(-1, 1), z_range=(-0.05, 0.05)),
     },
 )
 
@@ -259,14 +207,7 @@ NARROW_BEAM = isaaclab_terrain.MeshSteppingBeamsTerrainCfg(
     gap=(0.15, 0.5),
     yaw=(0, 15),
     flat_patch_sampling={
-        "spawn": FlatPatchSamplingByRadiusCfg(
-            patch_radius=0.4,
-            num_patches=20,
-            x_range=(4, 6),
-            y_range=(-1, 1),
-            z_range=(-0.05, 0.05),
-            max_height_diff=0.05,
-        )
+        "spawn": spawn_patch(max_height_diff=0.05, x_range=(4, 6), y_range=(-1, 1), z_range=(-0.05, 0.05)),
     },
 )
 
@@ -280,8 +221,8 @@ RADIATING_BEAM = isaaclab_terrain.MeshRadiatingBeamTerrainCfg(
     bar_height_range=(1.5, 1.5),
     ground_plane=False,
     flat_patch_sampling={
-        "target": FlatPatchSamplingCfg(num_patches=20, patch_radius=0.25, max_height_diff=0.2),
-        "spawn": FlatPatchSamplingCfg(num_patches=20, patch_radius=0.75, max_height_diff=0.2)
+        "target": circle_patch(radius=0.25),
+        "spawn": spawn_patch(),
     },
 )
 
@@ -296,8 +237,8 @@ ELEVATING_BEAM = isaaclab_terrain.MeshRadiatingBeamTerrainCfg(
     bar_height_range=(1.5, 1.5),
     ground_plane=False,
     flat_patch_sampling={
-        "target": FlatPatchSamplingCfg(num_patches=20, patch_radius=0.25, max_height_diff=0.2),
-        "spawn": FlatPatchSamplingCfg(num_patches=20, patch_radius=0.75, max_height_diff=0.2)
+        "target": circle_patch(radius=0.25),
+        "spawn": spawn_patch(),
     },
 )
 
@@ -314,8 +255,8 @@ RADIATING_BEAM_BOX = isaaclab_terrain.MeshRadiatingBeamTerrainCfg(
         box_length=(0.35, 0.2), box_gap=0.02, box_position_variation=(0.05, 0.05, 0.03),
     ),
     flat_patch_sampling={
-        "target": FlatPatchSamplingCfg(num_patches=20, patch_radius=0.05, max_height_diff=0.2),
-        "spawn": FlatPatchSamplingCfg(num_patches=20, patch_radius=0.75, max_height_diff=0.2)
+        "target": circle_patch(radius=0.05),
+        "spawn": spawn_patch(),
     },
 )
 
@@ -333,8 +274,8 @@ RANDOM_JUMP_BOX = isaaclab_terrain.MeshRadiatingBeamTerrainCfg(
         box_length=(1.75, 1.75), box_gap=0.5, box_position_variation=(0.2, 0.2, 0.2), box_yaw_variation=1.57
     ),
     flat_patch_sampling={
-        "target": FlatPatchSamplingCfg(num_patches=20, patch_radius=0.1, max_height_diff=0.2),
-        "spawn": FlatPatchSamplingCfg(num_patches=20, patch_radius=0.55, max_height_diff=0.2)
+        "target": circle_patch(radius=0.1),
+        "spawn": spawn_patch(),
     },
 )
 
@@ -348,11 +289,11 @@ RANDOM_PARALLEL_BOX = isaaclab_terrain.MeshRadiatingBeamTerrainCfg(
     bar_height_range=(1.5, 1.5),
     ground_plane=False,
     beam_style=isaaclab_terrain.MeshRadiatingBeamTerrainCfg.BoxBeamCfg(
-        box_length=(1.1, 1.0), box_gap=0.4, box_position_variation=(0.4, 0.4, 0.2), box_yaw_variation=1.57
+        box_length=(1.1, 1.1), box_gap=0.4, box_position_variation=(0.4, 0.4, 0.2), box_yaw_variation=1.57
     ),
     flat_patch_sampling={
-        "target": FlatPatchSamplingCfg(num_patches=20, patch_radius=0.1, max_height_diff=0.2),
-        "spawn": FlatPatchSamplingCfg(num_patches=20, patch_radius=0.5, max_height_diff=0.2)
+        "target": circle_patch(radius=0.1),
+        "spawn": spawn_patch(),
     },
 )
 
@@ -371,8 +312,8 @@ CLIMBING_BOX = isaaclab_terrain.MeshRadiatingBeamTerrainCfg(
         box_length=(1.1, 1.1), box_gap=0.4, box_position_variation=(0.7, 0.7, 0.4), box_yaw_variation=1.57
     ),
     flat_patch_sampling={
-        "target": FlatPatchSamplingCfg(num_patches=20, patch_radius=0.15, max_height_diff=0.3),
-        "spawn": FlatPatchSamplingCfg(num_patches=20, patch_radius=0.55, max_height_diff=0.3)
+        "target": circle_patch(radius=0.15, max_height_diff=0.3),
+        "spawn": spawn_patch(max_height_diff=0.3),
     },
 )
 
@@ -390,7 +331,7 @@ FLOATING_ISLAND = isaaclab_terrain.MeshFloatingIslandTerrainCfg(
     passway_width=0.5,
     passway_curvature=0.3,
     flat_patch_sampling={
-        "target": FlatPatchSamplingCfg(num_patches=20, patch_radius=0.05, max_height_diff=0.3),
-        "spawn": FlatPatchSamplingCfg(num_patches=20, patch_radius=0.55, max_height_diff=0.3)
+        "target": circle_patch(radius=0.05, max_height_diff=0.3),
+        "spawn": spawn_patch(max_height_diff=0.3),
     },
 )

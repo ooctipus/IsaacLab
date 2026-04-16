@@ -22,7 +22,8 @@ INSTALL_REQUIRES = [
     "torch>=2.10",
     "torchvision>=0.25.0",  # ensure compatibility with torch 2.10.0
     "protobuf>=4.25.8,!=5.26.0",
-    # basic logger
+    # visualization & logging
+    "matplotlib",
     "tensorboard",
     "numba>=0.63.1",
 ]
