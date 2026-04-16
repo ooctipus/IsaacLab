@@ -99,9 +99,10 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         )
         self.goal_term.cmd_indices[env_ids] = choices.to(self.goal_term.cmd_indices.dtype)
 
-        # 3) UPDATE ENV ORIGINS — must happen before scene.reset() places the robot
+        # 3) UPDATE ENV ORIGINS + SPAWN ORIENTATION — must happen before scene.reset() places the robot
         rows = self.goal_term.spec.descretized_cmd[choices]
         env.scene.terrain.env_origins.index_copy_(0, env_ids.long(), rows[:, 0:3])
+        env.scene.terrain.env_spawn_quats.index_copy_(0, env_ids.long(), rows[:, 16:20])
 
         # 4) LOGGING / VISUALIZATION
         success_rates = self.success_monitor.get_success_rate()  # [num_discrete_cmd]
@@ -235,12 +236,12 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         import isaaclab.sim as sim_utils
         from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
 
-        rows = self.goal_term.spec.descretized_cmd           # [N,15]
+        rows = self.goal_term.spec.descretized_cmd           # [N,20]
         mask_pos = self.goal_term.spec.descretized_mask[:, 0:3].any(dim=-1)  # [N] bool
 
         # Only visualize position-like discrete commands
         line_indices = torch.arange(self.num_discrete_cmd, device=self.device)[mask_pos]  # [N_pos]
-        rows_pos = rows[mask_pos]                                                     # [N_pos,15]
+        rows_pos = rows[mask_pos]                                                     # [N_pos,20]
 
         start = rows_pos[:, 0:3].clone()  # spawn
         end = rows_pos[:, 3:6].clone()  # target

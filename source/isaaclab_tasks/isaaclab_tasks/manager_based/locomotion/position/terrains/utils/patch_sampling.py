@@ -5,15 +5,15 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import torch
-from typing import TYPE_CHECKING
-
+import torch.nn.functional as F
 import warp as wp  # Warp (https://github.com/NVIDIA/warp)
 from isaaclab.utils.warp import raycast_mesh
 
-if TYPE_CHECKING:
-    from . import patch_sampling_cfg as patch_cfg
+from . import patch_sampling_cfg as patch_cfg
 
 
 def uniform_sample_multiple_ranges(
@@ -343,11 +343,34 @@ def find_flat_patches(
 
     # check all patches are valid
     if len(points_ids) > 0:
+        # Diagnose why each remaining patch is invalid
+        diag_pos = flat_patches[points_ids]
+        diag_pts = diag_pos.unsqueeze(1) + query_points
+        diag_pts[..., 2] = 100.0
+        diag_dirs = torch.zeros_like(diag_pts)
+        diag_dirs[..., 2] = -1.0
+        diag_hits = raycast_mesh(diag_pts.view(-1, 3), diag_dirs.view(-1, 3), wp_mesh)[0]
+        diag_h = diag_hits.view(diag_pts.shape)[..., 2]
+        diag_lines = []
+        for i in range(len(points_ids)):
+            h = diag_h[i]
+            h_min, h_max = h.min().item(), h.max().item()
+            h_diff = h_max - h_min
+            out_z = torch.any(torch.logical_or(h < z_range[0], h > z_range[1])).item()
+            diag_lines.append(
+                f"  patch_id={points_ids[i].item()} pos=({diag_pos[i, 0]:.2f}, {diag_pos[i, 1]:.2f})"
+                f" h_min={h_min:.3f} h_max={h_max:.3f} h_diff={h_diff:.3f}"
+                f" z_out={out_z} heights={h.cpu().tolist()}"
+            )
         raise RuntimeError(
             "Failed to find valid patches! Please check the input parameters."
             f"\n\tMaximum number of iterations reached: {iter_count}"
             f"\n\tNumber of invalid patches: {len(points_ids)}"
             f"\n\tMaximum height difference: {cfg.max_height_diff}"
+            f"\n\tpatch_radius: {patch_radius}"
+            f"\n\torigin: ({origin[0].item():.2f}, {origin[1].item():.2f}, {origin[2].item():.2f})"
+            f"\n\tx_range: {x_range}, y_range: {y_range}, z_range: {z_range}"
+            f"\n\tInvalid patch details:\n" + "\n".join(diag_lines)
         )
 
     # return the flat patches (in the mesh frame)
@@ -500,3 +523,364 @@ def find_flat_patches_by_radius(
 
     # Return patch centers in the "mesh frame minus origin" (consistency with other functions)
     return flat_patches - origin
+
+
+# ---------------------------------------------------------------------------
+# Morphological (deterministic) flat patch sampling
+# ---------------------------------------------------------------------------
+
+
+def _resolve_footprint(cfg):
+    """Ensure *cfg* is a footprint configclass, not a plain dict.
+
+    The monkey-patching in ``terrain_cfg.py`` round-trips configs through
+    ``to_dict()`` / ``cfg_class(**dict)``, which turns nested configclasses
+    into plain dicts.  This helper reconstitutes the correct type.
+    """
+    if isinstance(cfg, (patch_cfg.CircleFootprintCfg, patch_cfg.RectFootprintCfg)):
+        return cfg
+    if isinstance(cfg, dict):
+        if "length" in cfg and "width" in cfg:
+            return patch_cfg.RectFootprintCfg(length=cfg["length"], width=cfg["width"])
+        return patch_cfg.CircleFootprintCfg(radius=cfg["radius"])
+    raise TypeError(f"Unknown footprint type: {type(cfg)}")
+
+
+def _build_footprint_mask(cfg: patch_cfg.CircleFootprintCfg | patch_cfg.RectFootprintCfg,
+                          scale: float, device: torch.device) -> torch.Tensor:
+    """Convert a footprint config into a 2D boolean kernel mask.
+
+    Args:
+        cfg: Footprint configuration (or a dict that will be auto-resolved).
+        scale: Grid cell size [m] (horizontal_scale).
+        device: Torch device for the output tensor.
+
+    Returns:
+        Boolean tensor of shape ``[K, K]`` where K is always odd.
+    """
+    cfg = _resolve_footprint(cfg)
+
+    if isinstance(cfg, patch_cfg.CircleFootprintCfg):
+        r_cells = math.ceil(cfg.radius / scale)
+        k = 2 * r_cells + 1
+        y, x = torch.meshgrid(
+            torch.arange(k, device=device) - r_cells,
+            torch.arange(k, device=device) - r_cells,
+            indexing="ij",
+        )
+        mask = (x.float() * scale) ** 2 + (y.float() * scale) ** 2 <= cfg.radius ** 2
+    elif isinstance(cfg, patch_cfg.RectFootprintCfg):
+        hl = math.ceil(cfg.length / (2.0 * scale))  # half-length along +x (forward)
+        hw = math.ceil(cfg.width / (2.0 * scale))    # half-width along +y (lateral)
+        k = 2 * max(hl, hw) + 1
+        y, x = torch.meshgrid(
+            torch.arange(k, device=device) - k // 2,
+            torch.arange(k, device=device) - k // 2,
+            indexing="ij",
+        )
+        mask = (x.float().abs() * scale <= cfg.length / 2.0) & (y.float().abs() * scale <= cfg.width / 2.0)
+    else:
+        raise TypeError(f"Unknown footprint type: {type(cfg)}")
+
+    if not mask.any():
+        mask[k // 2, k // 2] = True
+    return mask
+
+
+def _rasterize_mesh(wp_mesh: wp.Mesh, x_range: tuple[float, float],
+                    y_range: tuple[float, float], scale: float,
+                    device: torch.device) -> tuple[torch.Tensor, float, float]:
+    """Rasterize a warp mesh to a 2D heightmap via one batched ray-cast.
+
+    Args:
+        wp_mesh: The warp mesh.
+        x_range: World-space x bounds ``(min, max)`` [m].
+        y_range: World-space y bounds ``(min, max)`` [m].
+        scale: Grid cell size [m].
+        device: Torch device.
+
+    Returns:
+        Tuple of ``(heightmap, x_min, y_min)`` where heightmap is ``[H, W]``,
+        x_min/y_min are the world-space coordinates of cell ``[0, 0]``.
+    """
+    nx = max(int((x_range[1] - x_range[0]) / scale), 1)
+    ny = max(int((y_range[1] - y_range[0]) / scale), 1)
+    xs = torch.linspace(x_range[0] + scale * 0.5, x_range[1] - scale * 0.5, nx, device=device)
+    ys = torch.linspace(y_range[0] + scale * 0.5, y_range[1] - scale * 0.5, ny, device=device)
+    gx, gy = torch.meshgrid(xs, ys, indexing="ij")
+    origins = torch.stack([gx, gy, torch.full_like(gx, 100.0)], dim=-1)
+    dirs = torch.zeros_like(origins)
+    dirs[..., 2] = -1.0
+
+    hits = raycast_mesh(origins.reshape(-1, 3), dirs.reshape(-1, 3), wp_mesh)[0]
+    heightmap = hits[:, 2].reshape(nx, ny)
+    return heightmap, x_range[0], y_range[0]
+
+
+def _morphological_validity(heightmap: torch.Tensor, mask: torch.Tensor,
+                            max_height_diff: float,
+                            z_range: tuple[float, float]) -> torch.Tensor:
+    """Compute a boolean validity map using morphological max-min filtering.
+
+    Uses ``unfold`` to extract all footprint-sized patches, applies the
+    footprint mask, then checks height range and z bounds.
+
+    Args:
+        heightmap: ``[H, W]`` heightmap tensor (``inf`` for missed rays).
+        mask: ``[K, K]`` boolean footprint kernel.
+        max_height_diff: Maximum allowed height range within the footprint [m].
+        z_range: ``(z_min, z_max)`` world-space bounds for valid heights.
+
+    Returns:
+        Boolean tensor ``[H, W]`` where True = valid placement.
+    """
+    H, W = heightmap.shape
+    k = mask.shape[0]
+    pad = k // 2
+
+    miss = torch.isinf(heightmap)
+    safe_hmap = heightmap.clone()
+    safe_hmap[miss] = 0.0
+
+    # "inside" mask: 1.0 for real cells, 0.0 for padding introduced by unfold
+    inside = torch.ones_like(safe_hmap)
+
+    # unfold: extract every k x k patch -> [1, k*k, H*W]
+    patches = F.unfold(safe_hmap[None, None], kernel_size=k, padding=pad)
+    miss_patches = F.unfold(miss.float()[None, None], kernel_size=k, padding=pad)
+    inside_patches = F.unfold(inside[None, None], kernel_size=k, padding=pad)
+
+    mask_flat = mask.reshape(-1)  # [k*k]
+    mask_weight = mask_flat.float().unsqueeze(0).unsqueeze(-1)  # [1, k*k, 1]
+
+    # invalidate cells where the footprint extends beyond the heightmap
+    inside_count = (inside_patches * mask_weight).sum(dim=1).view(H, W)
+    expected_count = mask_flat.sum().float()
+    border_ok = inside_count >= expected_count  # all footprint cells inside the grid
+
+    # invalidate cells where any footprint cell had a missed ray
+    miss_count = (miss_patches * mask_weight).sum(dim=1).view(H, W)
+
+    # compute max and min only over footprint-masked positions
+    big = torch.finfo(torch.float32).max
+    p_for_max = patches.clone()
+    p_for_max[:, ~mask_flat, :] = -big
+    p_for_min = patches.clone()
+    p_for_min[:, ~mask_flat, :] = big
+
+    local_max = p_for_max.max(dim=1).values.view(H, W)
+    local_min = p_for_min.min(dim=1).values.view(H, W)
+
+    valid = (
+        border_ok
+        & (miss_count == 0)
+        & ((local_max - local_min) <= max_height_diff)
+        & (local_min >= z_range[0])
+        & (local_max <= z_range[1])
+    )
+    return valid
+
+
+def _farthest_point_sample(points: torch.Tensor, n: int) -> torch.Tensor:
+    """Select ``n`` points from ``points`` maximizing minimum pairwise distance.
+
+    Args:
+        points: Candidate positions, shape ``[M, D]``.
+        n: Number of points to select.
+
+    Returns:
+        Index tensor of shape ``[n]`` into ``points``.
+    """
+    M = points.shape[0]
+    if M <= n:
+        return torch.arange(M, device=points.device)
+
+    selected = [torch.randint(M, (1,), device=points.device).item()]
+    dists = torch.full((M,), float("inf"), device=points.device)
+    for _ in range(n - 1):
+        last = points[selected[-1]].unsqueeze(0)  # [1, D]
+        new_d = (points - last).pow(2).sum(dim=-1)  # [M]
+        dists = torch.min(dists, new_d)
+        selected.append(dists.argmax().item())
+    return torch.tensor(selected, device=points.device, dtype=torch.long)
+
+
+def _yaw_to_quat_xyzw(yaw: torch.Tensor) -> torch.Tensor:
+    """Convert yaw angles [rad] to quaternions in ``(x, y, z, w)`` convention.
+
+    Args:
+        yaw: Tensor of yaw angles, any shape.
+
+    Returns:
+        Quaternion tensor with shape ``(*yaw.shape, 4)``.
+    """
+    half = yaw * 0.5
+    zeros = torch.zeros_like(half)
+    return torch.stack([zeros, zeros, half.sin(), half.cos()], dim=-1)
+
+
+def _build_rotated_rect_masks(footprint, scale: float, yaw_angles: torch.Tensor,
+                              device: torch.device) -> list[torch.Tensor]:
+    """Build rotated rectangular footprint masks for each yaw angle.
+
+    Returns a list of ``[K, K]`` boolean masks, one per yaw.
+    """
+    hl = footprint.length / 2.0  # half-length along +x (forward)
+    hw = footprint.width / 2.0   # half-width along +y (lateral)
+    r_max = math.sqrt(hl ** 2 + hw ** 2)
+    r_cells = math.ceil(r_max / scale)
+    k = 2 * r_cells + 1
+    y, x = torch.meshgrid(
+        torch.arange(k, device=device, dtype=torch.float32) - r_cells,
+        torch.arange(k, device=device, dtype=torch.float32) - r_cells,
+        indexing="ij",
+    )
+    wx = x * scale  # world-space offsets
+    wy = y * scale
+
+    masks = []
+    for yaw in yaw_angles:
+        c, s = float(yaw.cos()), float(yaw.sin())
+        lx = wx * c + wy * s   # local x (forward)
+        ly = -wx * s + wy * c  # local y (lateral)
+        masks.append((lx.abs() <= hl) & (ly.abs() <= hw))
+    return masks
+
+
+def find_flat_patches_morphological(
+    wp_mesh: wp.Mesh,
+    origin: np.ndarray | torch.Tensor | tuple[float, float, float],
+    cfg: patch_cfg.MorphologicalPatchSamplingCfg,
+) -> torch.Tensor:
+    """Find flat patches using deterministic morphological heightmap filtering.
+
+    Instead of rejection sampling, this function:
+
+    1. Rasterizes the mesh to a 2D heightmap with one batched ray-cast.
+    2. Computes a validity mask via morphological max-min filtering using the
+       configured robot footprint kernel.
+    3. For rectangular footprints, tests multiple yaw angles and records which
+       yaw produces the smallest height range at each cell.
+    4. Samples ``num_patches`` from the valid region, optionally with
+       farthest-point refinement for spatial coverage.
+
+    Args:
+        wp_mesh: The warp mesh to find patches on.
+        origin: Sub-terrain origin in the mesh frame.
+        cfg: Morphological sampling configuration.
+
+    Returns:
+        Tensor of shape ``(num_patches, 7)`` — ``[x, y, z, qx, qy, qz, qw]``
+        in the mesh frame with origin subtracted (quaternion is absolute).
+    """
+    device = wp.device_to_torch(wp_mesh.device)
+    footprint = _resolve_footprint(cfg.footprint)
+
+    if isinstance(origin, np.ndarray):
+        origin_t = torch.from_numpy(origin).float().to(device)
+    elif isinstance(origin, torch.Tensor):
+        origin_t = origin.float().to(device)
+    else:
+        origin_t = torch.tensor(origin, dtype=torch.float32, device=device)
+
+    mesh_pts = wp_mesh.points.numpy()
+    mesh_xmin, mesh_xmax = float(mesh_pts[:, 0].min()), float(mesh_pts[:, 0].max())
+    mesh_ymin, mesh_ymax = float(mesh_pts[:, 1].min()), float(mesh_pts[:, 1].max())
+
+    x_range = (
+        max(cfg.x_range[0] + origin_t[0].item(), mesh_xmin),
+        min(cfg.x_range[1] + origin_t[0].item(), mesh_xmax),
+    )
+    y_range = (
+        max(cfg.y_range[0] + origin_t[1].item(), mesh_ymin),
+        min(cfg.y_range[1] + origin_t[1].item(), mesh_ymax),
+    )
+    z_range = (
+        cfg.z_range[0] + origin_t[2].item(),
+        cfg.z_range[1] + origin_t[2].item(),
+    )
+
+    scale = cfg.horizontal_scale
+
+    # Phase 1: rasterize mesh to heightmap
+    heightmap, hm_x0, hm_y0 = _rasterize_mesh(wp_mesh, x_range, y_range, scale, device)
+    H, W = heightmap.shape
+
+    # Phase 2: compute validity mask (and best yaw for rectangular footprints)
+    is_rect = isinstance(footprint, patch_cfg.RectFootprintCfg)
+
+    if is_rect:
+        # test 8 discrete yaw angles in [0, pi) — rectangle has 180-deg symmetry
+        num_yaw = 8
+        yaw_angles = torch.linspace(0, math.pi, num_yaw + 1, device=device)[:num_yaw]
+        rotated_masks = _build_rotated_rect_masks(footprint, scale, yaw_angles, device)
+
+        # compute height range for each yaw; track per-cell best
+        best_range = torch.full((H, W), float("inf"), device=device)
+        best_yaw_idx = torch.zeros((H, W), dtype=torch.long, device=device)
+        combined_valid = torch.zeros((H, W), dtype=torch.bool, device=device)
+
+        for yi, mask in enumerate(rotated_masks):
+            valid_yi = _morphological_validity(heightmap, mask, cfg.max_height_diff, z_range)
+            # compute the height range at this yaw for cells that are valid
+            k = mask.shape[0]
+            pad = k // 2
+            patches = F.unfold(heightmap[None, None], kernel_size=k, padding=pad)
+            mask_flat = mask.reshape(-1)
+            big = torch.finfo(torch.float32).max
+            p_max = patches.clone(); p_max[:, ~mask_flat, :] = -big
+            p_min = patches.clone(); p_min[:, ~mask_flat, :] = big
+            h_range = (p_max.max(dim=1).values - p_min.min(dim=1).values).view(H, W)
+
+            improved = valid_yi & (h_range < best_range)
+            best_range[improved] = h_range[improved]
+            best_yaw_idx[improved] = yi
+            combined_valid |= valid_yi
+
+        valid = combined_valid
+        yaw_map = yaw_angles[best_yaw_idx]  # [H, W] best yaw per cell
+    else:
+        footprint_mask = _build_footprint_mask(footprint, scale, device)
+        valid = _morphological_validity(heightmap, footprint_mask, cfg.max_height_diff, z_range)
+        yaw_map = torch.zeros((H, W), device=device)
+
+    valid_coords = valid.nonzero(as_tuple=False)  # [K, 2]
+    num_valid = valid_coords.shape[0]
+
+    if num_valid < cfg.num_patches:
+        total_cells = H * W
+        valid_frac = num_valid / total_cells if total_cells > 0 else 0.0
+        raise RuntimeError(
+            f"Morphological patch sampling found only {num_valid} valid cells but"
+            f" {cfg.num_patches} patches requested."
+            f"\n\tGrid size: {H}x{W} ({total_cells} cells)"
+            f"\n\tValid fraction: {valid_frac:.4f}"
+            f"\n\tmax_height_diff: {cfg.max_height_diff}"
+            f"\n\tfootprint: {footprint}"
+            f"\n\tx_range: {x_range}, y_range: {y_range}, z_range: {z_range}"
+        )
+
+    # Phase 3: sample patches with optional FPS
+    n_candidates = min(int(cfg.num_patches * cfg.oversample_ratio), num_valid)
+    perm = torch.randperm(num_valid, device=device)[:n_candidates]
+    candidates_rc = valid_coords[perm]  # [n_candidates, 2]
+
+    cand_x = hm_x0 + (candidates_rc[:, 0].float() + 0.5) * scale
+    cand_y = hm_y0 + (candidates_rc[:, 1].float() + 0.5) * scale
+    cand_z = heightmap[candidates_rc[:, 0], candidates_rc[:, 1]]
+    cand_yaw = yaw_map[candidates_rc[:, 0], candidates_rc[:, 1]]
+    cand_quat = _yaw_to_quat_xyzw(cand_yaw)  # [n_candidates, 4]
+
+    cand_pos = torch.stack([cand_x, cand_y, cand_z], dim=-1)
+
+    if cfg.oversample_ratio > 1.0 and n_candidates > cfg.num_patches:
+        fps_idx = _farthest_point_sample(cand_pos[:, :2], cfg.num_patches)
+        pos = cand_pos[fps_idx]
+        quat = cand_quat[fps_idx]
+    else:
+        pos = cand_pos[:cfg.num_patches]
+        quat = cand_quat[:cfg.num_patches]
+
+    # return [N, 7]: position (origin-subtracted) + quaternion (absolute)
+    result = torch.cat([pos - origin_t, quat], dim=-1)
+    return result

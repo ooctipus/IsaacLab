@@ -80,6 +80,8 @@ class RelativeStateCommand(CommandTerm):
         kind: torch.Tensor = MISSING
         num_descretized_cmd: int = MISSING
         descretized_cmd: torch.Tensor = MISSING
+        """Per-row layout: ``[0:3]`` spawn pos, ``[3:6]`` target pos,
+        ``[6:16]`` ranges (rot, vel, hold), ``[16:20]`` spawn quaternion (x,y,z,w)."""
         descretized_mask: torch.Tensor = MISSING
         # row ranges for each command: rows for cmd i are [offsets[i] : offsets[i+1]]
         descretized_cmd_offsets: torch.Tensor = MISSING  # [cardinal + 1], long
@@ -143,9 +145,14 @@ class RelativeStateCommand(CommandTerm):
         if spawn_src.dim() == 3:
             spawn_src = spawn_src.unsqueeze(2)  # [row, col, 1, 3]
 
-        num_row, num_col, num_spawn_per_terrain, _ = spawn_src.shape
+        num_row, num_col, num_spawn_per_terrain, D = spawn_src.shape
         n_subterrains = num_row * num_col
-        spawn_flat = spawn_src.clone().reshape(n_subterrains, num_spawn_per_terrain, 3)
+        spawn_flat = spawn_src[..., :3].clone().reshape(n_subterrains, num_spawn_per_terrain, 3)
+        if D >= 7:
+            spawn_quat_flat = spawn_src[..., 3:7].clone().reshape(n_subterrains, num_spawn_per_terrain, 4)
+        else:
+            spawn_quat_flat = torch.zeros(n_subterrains, num_spawn_per_terrain, 4, device=self.device)
+            spawn_quat_flat[..., 3] = 1.0  # identity quaternion (x,y,z,w) -> w=1
         ranges = torch.zeros((len(commands), 13, 2), device=self.device)  # 0-12 pos,rot,lin_vel,ang_vel. 12 hold time
         mask = torch.zeros((len(commands), 12), device=self.device, dtype=torch.bool)
         kind = torch.zeros(len(commands), dtype=torch.int32, device=self.device)
@@ -172,25 +179,36 @@ class RelativeStateCommand(CommandTerm):
                         f"in the terrain. Found: {list(self.terrains.flat_patches.keys())}"
                     )
 
-                targets = self.terrains.flat_patches[val.target_key]  # [R,C,Pt,3] or compatible
+                targets_full = self.terrains.flat_patches[val.target_key]  # [R,C,Pt,7] or [R,C,Pt,3]
+                targets = targets_full[..., :3]
                 _, _, num_targets_per_terrain, _ = targets.shape
                 targets_flat = targets.reshape(n_subterrains, num_targets_per_terrain, 3)
                 val.pos_x = val.pos_y = val.pos_z = None  # TerrainCommands do not use pos_* ranges
                 kind[cmd_id] = 1 if (val.roll or val.pitch or val.yaw) else 0
 
-                spawn_exp = spawn_flat[:, :, None, :]
-                target_exp = targets_flat[:, None, :, :]
+                spawn_pos_expanded = spawn_flat[:, :, None, :]
+                target_pos_expanded = targets_flat[:, None, :, :]
+                spawn_quat_expanded = spawn_quat_flat[:, :, None, :]
 
-                spawn_all = spawn_exp.expand(-1, num_spawn_per_terrain, num_targets_per_terrain, -1).reshape(-1, 3)
-                target_all = target_exp.expand(-1, num_spawn_per_terrain, num_targets_per_terrain, -1).reshape(-1, 3)
+                spawn_all = spawn_pos_expanded.expand(-1, num_spawn_per_terrain, num_targets_per_terrain, -1).reshape(-1, 3)
+                target_all = target_pos_expanded.expand(-1, num_spawn_per_terrain, num_targets_per_terrain, -1).reshape(-1, 3)
+                spawn_quat_all = spawn_quat_expanded.expand(-1, num_spawn_per_terrain, num_targets_per_terrain, -1).reshape(-1, 4)
                 mi = ranges[cmd_id, :, 0].view(1, 13)
                 rand_range = torch.rand(spawn_all.shape[0], 13, device=self.device) * (ranges[cmd_id, :, 1] - mi) + mi
 
-                block = torch.zeros(spawn_all.shape[0], 16, device=self.device)
-                # 0:3 spawn, 3:6 target, 6:15 unused, 15 hold time
+                # block layout (20 cols):
+                #   0:3   spawn position
+                #   3:6   target position
+                #   6:9   target rotation (roll, pitch, yaw)
+                #   9:12  target linear velocity
+                #   12:15 target angular velocity
+                #   15    hold time
+                #   16:20 spawn quaternion (x, y, z, w)
+                block = torch.zeros(spawn_all.shape[0], 20, device=self.device)
                 block[:, 0:3] = spawn_all
                 block[:, 3:6] = target_all + rand_range[:, :3]
                 block[:, 6:16] = rand_range[:, 3:]
+                block[:, 16:20] = spawn_quat_all
                 blocks.append(block)
                 mask_blocks.append(mask[cmd_id].view(1, 12).expand(block.shape[0], 12))
                 row_counts.append(block.shape[0])
@@ -207,13 +225,16 @@ class RelativeStateCommand(CommandTerm):
                 _min = ranges[cmd_id, :, 0]
                 span = ranges[cmd_id, :, 1] - _min
 
+                # same 20-col layout as TerrainCommands above
                 count = n_subterrains * num_spawn_per_terrain * n_samples
-                block = torch.zeros(count, 16, device=self.device)
-                # 3-6: target position, 6-9 target rotation, 9-12 target lin_vel, 12-15 target ang_vel, 15 hold time
+                block = torch.zeros(count, 20, device=self.device)
+                # 3:6 target pos, 6:9 target rot, 9:12 target lin_vel, 12:15 target ang_vel, 15 hold time
                 block[:, 3:16] = torch.rand(count, 13, device=self.device) * span[:,].view(1, 13) + _min.view(1, 13)
-                spawn_exp = spawn_flat[:, :, None, :].expand(n_subterrains, num_spawn_per_terrain, n_samples, 3)
-                block[:, 0:3] = spawn_exp.reshape(-1, 3)  # add spawn
-                block[:, 3:6] += spawn_exp.reshape(-1, 3)  # add target relative to spawn
+                spawn_pos_expanded = spawn_flat[:, :, None, :].expand(n_subterrains, num_spawn_per_terrain, n_samples, 3)
+                spawn_quat_expanded = spawn_quat_flat[:, :, None, :].expand(n_subterrains, num_spawn_per_terrain, n_samples, 4)
+                block[:, 0:3] = spawn_pos_expanded.reshape(-1, 3)       # spawn position
+                block[:, 3:6] += spawn_pos_expanded.reshape(-1, 3)      # target relative to spawn
+                block[:, 16:20] = spawn_quat_expanded.reshape(-1, 4)    # spawn quaternion
                 blocks.append(block)
 
                 block_mask = mask[cmd_id].view(1, 12).expand(count, 12)
@@ -279,12 +300,13 @@ class RelativeStateCommand(CommandTerm):
     def _resample_command(self, env_ids: torch.Tensor):
         self.resample_indices(env_ids)
         idx = self.cmd_indices[env_ids]
-        self.cmd_buf[env_ids, 0, :] = self.spec.descretized_cmd[idx , 3:]
+        self.cmd_buf[env_ids, 0, :] = self.spec.descretized_cmd[idx, 3:16]
         self.cmd_buf[env_ids, 2, 12] = 0.0
         self.cmd_mask[env_ids] = self.spec.descretized_mask[idx]
 
-        spawns_locations = self.spec.descretized_cmd[idx, :3]
-        self._env.scene.terrain.env_origins.index_copy_(0, env_ids.long(), spawns_locations)
+        rows = self.spec.descretized_cmd[idx]
+        self._env.scene.terrain.env_origins.index_copy_(0, env_ids.long(), rows[:, 0:3])
+        self._env.scene.terrain.env_spawn_quats.index_copy_(0, env_ids.long(), rows[:, 16:20])
 
 
     def _update_command(self):
