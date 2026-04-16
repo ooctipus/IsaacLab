@@ -772,43 +772,59 @@ def maze_terrain(
 
 
 def _generate_stone(radius: float, height_scale: float, roughness: float) -> trimesh.Trimesh:
-    """Generate a natural-looking stone mesh with irregular, oval shapes.
+    """Generate a natural-looking stone mesh with varied shapes.
 
-    Uses random axis scaling for elongation, low-frequency smooth
-    deformation for organic shape, and per-vertex noise for surface detail.
+    Randomly produces round boulders, elongated slabs, angular blocks,
+    and occasionally tilted/standing stones.
     """
-    stone = trimesh.creation.icosphere(subdivisions=2, radius=1.0)
-    verts = stone.vertices.copy()
+    # choose base shape: round (icosphere) or angular (box-ish)
+    angular = random.random() < 0.3
+    if angular:
+        stone = trimesh.creation.box(extents=[2.0, 2.0, 2.0])
+        # chamfer edges by subdividing and projecting partially toward sphere
+        stone = stone.subdivide()
+        verts = stone.vertices.copy()
+        norms_v = np.linalg.norm(verts, axis=1, keepdims=True)
+        sphere_verts = verts / np.maximum(norms_v, 1e-12)
+        blend = random.uniform(0.15, 0.5)
+        verts = verts * (1 - blend) + sphere_verts * blend * norms_v.max()
+    else:
+        stone = trimesh.creation.icosphere(subdivisions=2, radius=1.0)
+        verts = stone.vertices.copy()
 
-    # random axis scaling for oval/elongated shape
-    sx = random.uniform(0.6, 1.4)
-    sy = random.uniform(0.6, 1.4)
-    sz = height_scale * random.uniform(0.5, 1.0)
+    # random axis scaling — wider range for more variety
+    sx = random.uniform(0.4, 1.6)
+    sy = random.uniform(0.4, 1.6)
+    # occasionally tall/standing stones vs flat/squat
+    if random.random() < 0.2:
+        sz = height_scale * random.uniform(1.2, 2.5)
+    else:
+        sz = height_scale * random.uniform(0.3, 1.0)
     verts[:, 0] *= sx
     verts[:, 1] *= sy
     verts[:, 2] *= sz
 
-    # random yaw rotation
+    # random 3D rotation (yaw + optional pitch/roll tilt)
     yaw = random.uniform(0, 2 * np.pi)
-    c, s = np.cos(yaw), np.sin(yaw)
-    x_rot = verts[:, 0] * c - verts[:, 1] * s
-    y_rot = verts[:, 0] * s + verts[:, 1] * c
-    verts[:, 0] = x_rot
-    verts[:, 1] = y_rot
+    pitch = random.uniform(-0.4, 0.4) if random.random() < 0.4 else 0.0
+    roll = random.uniform(-0.4, 0.4) if random.random() < 0.4 else 0.0
+    rot = tf.Rotation.from_euler("zyx", [yaw, pitch, roll]).as_matrix()
+    verts = verts @ rot.T
 
     # low-frequency smooth deformation (3 random lobes)
-    norms = verts / np.linalg.norm(verts, axis=1, keepdims=True)
+    norms_v = np.linalg.norm(verts, axis=1, keepdims=True)
+    unit = verts / np.maximum(norms_v, 1e-12)
     angles = np.arctan2(verts[:, 1], verts[:, 0])
     for _ in range(3):
         freq = random.uniform(1.5, 3.5)
         phase = random.uniform(0, 2 * np.pi)
         amp = random.uniform(0.05, roughness * 0.7)
-        verts += norms * (amp * np.cos(freq * angles + phase))[:, None]
+        verts += unit * (amp * np.cos(freq * angles + phase))[:, None]
 
     # fine surface noise
     fine_noise = np.random.uniform(-roughness * 0.3, roughness * 0.3, size=len(verts))
-    norms = verts / np.linalg.norm(verts, axis=1, keepdims=True)
-    verts += norms * fine_noise[:, None]
+    unit = verts / np.maximum(np.linalg.norm(verts, axis=1, keepdims=True), 1e-12)
+    verts += unit * fine_noise[:, None]
 
     # flatten bottom so stone sits on ground
     verts[:, 2] = np.maximum(verts[:, 2], verts[:, 2].min() * 0.3)
@@ -963,7 +979,8 @@ def contour_terrain(
 
             radius = random.uniform(s_min, s_max)
             stone = _generate_stone(radius, stones_cfg.height_scale, stones_cfg.roughness)
-            stone.apply_translation([sx, sy, sz + radius * stones_cfg.height_scale * 0.5])
+            stone_bottom = stone.vertices[:, 2].min()
+            stone.apply_translation([sx, sy, sz - stone_bottom])
             meshes.append(stone)
 
     meshes.append(make_plane(cfg.size, height=0.0, center_zero=False))
@@ -1239,8 +1256,9 @@ def beam_terrain(
                 p_tf = trimesh.transformations.translation_matrix((*end_xy, border_center_z))
                 meshes.append(trimesh.creation.cylinder(border_cfg.radius, bar_height, sections=6, transform=p_tf))
 
-    ground_z = min(plat_bottom, border_top - bar_height)
-    meshes.append(make_plane(cfg.size, ground_z, center_zero=False))
+    if getattr(cfg, "ground_plane", True):
+        ground_z = min(plat_bottom, border_top - bar_height)
+        meshes.append(make_plane(cfg.size, ground_z, center_zero=False))
 
     origin = np.array([terrain_center[0], terrain_center[1], max(plat_top, border_top)])
     return meshes, origin
@@ -1442,10 +1460,6 @@ def floating_island_terrain(
             start_xy, end_xy, z_start, z_end, passway_width, passway_height,
             passway_style, difficulty, curvature=passway_curvature,
         )
-
-    # -- ground plane --
-    ground_z = float(z_offsets.min()) - island_height if actual_n > 0 else -island_height
-    meshes.append(make_plane(cfg.size, ground_z, center_zero=False))
 
     origin = np.array([0.5 * cfg.size[0], 0.5 * cfg.size[1], 0.0])
     return meshes, origin

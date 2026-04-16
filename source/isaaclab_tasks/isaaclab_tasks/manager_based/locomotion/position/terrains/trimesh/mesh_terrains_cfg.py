@@ -412,6 +412,13 @@ class MeshRadiatingBeamTerrainCfg(terrains.MeshStarTerrainCfg):
     beam_style: FlatBeamCfg | BoxBeamCfg = FlatBeamCfg()
     """Beam style: :class:`FlatBeamCfg` (default) or :class:`BoxBeamCfg`."""
 
+    ground_plane: bool = True
+    """Whether to generate a ground plane below the terrain. Defaults to ``True``.
+
+    Set to ``False`` for a floating beam terrain with no ground,
+    forcing the robot to stay on beams.
+    """
+
 
 # ======================================================================
 # MeshFloatingIslandTerrainCfg

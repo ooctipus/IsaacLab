@@ -22,6 +22,13 @@ class SubTerrainPresetCfg(PresetCfg):
         "slope_inv": terrains.SLOPE_INV,
         "stepping_stone": terrains.STEPPING_STONE,
         "radiating_beam": terrains.RADIATING_BEAM,
+        "contour": terrains.CONTOUR,
+        "climbing_box":terrains.CLIMBING_BOX,
+        "floating_island":terrains.FLOATING_ISLAND,
+        "maze": terrains.MAZE,
+        "random_jump_box": terrains.RANDOM_JUMP_BOX,
+        "random_parallel_box":terrains.RANDOM_PARALLEL_BOX,
+        "balancing_beam":terrains.BALANCING_BEAM
     }
     eval = {
         "gap": terrains.GAP.replace(gap_width_range=(1.0, 1.5)),
