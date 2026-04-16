@@ -309,6 +309,12 @@ elif [ "$FORCE_DEPS" -eq 1 ]; then
 elif [ "$FORCE_PIP" -eq 1 ]; then
   SKIP_DEPS=1
   USE_CACHE=1
+  # Use whatever deps image exists (hash may have changed due to setup.py edits)
+  if ! image_exists "$DEPS_IMAGE" && any_deps_image_exists; then
+    EXISTING_DEPS=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "^isaac-lab-deps:" | head -1)
+    echo "   ⚠ Deps hash changed but --force-pip-only: using ${EXISTING_DEPS}"
+    DEPS_IMAGE="$EXISTING_DEPS"
+  fi
   REASON="pip-only rebuild on existing deps (--force-pip-only)"
 elif image_exists "$DEPS_IMAGE"; then
   # Exact hash match - use cached deps
@@ -427,8 +433,9 @@ else
 
   # Update deps cache when pip was re-installed
   if [ "$FORCE_PIP" -eq 1 ]; then
-    echo "🏷  Updating deps cache as ${DEPS_IMAGE}"
-    docker tag "${BASE_IMAGE}" "${DEPS_IMAGE}"
+    NEW_DEPS_TAG="isaac-lab-deps:${DEPS_HASH}"
+    echo "🏷  Updating deps cache as ${NEW_DEPS_TAG}"
+    docker tag "${BASE_IMAGE}" "${NEW_DEPS_TAG}"
   fi
 fi
 
