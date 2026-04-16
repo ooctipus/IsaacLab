@@ -79,9 +79,9 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self,
         env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
-        target: float = 0.33,
+        target: float = 0.5,
         debug_vis: bool = False,
-        kappa: float = 2.0,
+        kappa: float = 5.0,
         temperature: float = 2.0,
         success_term: str = "success",
     ):
@@ -123,18 +123,112 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         if debug_vis and hasattr(self, "frame_visualizer"):
             self._recolor_lines(success_rates)
 
+        # Periodic heatmap logging
+        self._log_counter = getattr(self, "_log_counter", 0) + 1
+        if self._log_counter % 1000 == 0:
+            self._log_terrain_heatmap(success_rates)
+
         return self._result
 
+    def _log_terrain_heatmap(self, success_rates: torch.Tensor):
+        """Generate a terrain success-rate heatmap and pass it to the logger via extras."""
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        spec = self.goal_term.spec
+        offsets = spec.descretized_cmd_offsets
+        cmd_names = list(self.goal_term.cfg.commands.keys())
+        num_cmds = len(cmd_names)
+        terrain_cfg = self.env.scene.terrain.cfg.terrain_generator
+        num_rows = terrain_cfg.num_rows
+        num_cols = terrain_cfg.num_cols
+        n_tiles = num_rows * num_cols
+        sub_terrain_names = list(terrain_cfg.sub_terrains.keys())
+
+        # Column-to-terrain-type mapping (mirrors TerrainGenerator._generate_curriculum_terrains)
+        proportions = np.array([cfg.proportion for cfg in terrain_cfg.sub_terrains.values()])
+        proportions /= proportions.sum()
+        cum_props = np.cumsum(proportions)
+        col_to_type = [int(np.min(np.where(c / num_cols + 0.001 < cum_props)[0])) for c in range(num_cols)]
+
+        # Tick positions (center of each terrain-type column group) and boundary lines
+        tick_positions: list[float] = []
+        tick_labels: list[str] = []
+        boundaries: list[float] = []
+        group_start = 0
+        for col in range(1, num_cols + 1):
+            if col == num_cols or col_to_type[col] != col_to_type[group_start]:
+                tick_positions.append((group_start + col - 1) / 2.0)
+                tick_labels.append(sub_terrain_names[col_to_type[group_start]])
+                if col < num_cols:
+                    boundaries.append(col - 0.5)
+                group_start = col
+
+        # Compute per-tile per-command-type success rate
+        tile_rates = torch.zeros(num_cmds, num_rows, num_cols, device=self.device)
+        for cmd_id in range(num_cmds):
+            start = int(offsets[cmd_id])
+            end = int(offsets[cmd_id + 1])
+            block = success_rates[start:end]
+            entries_per_tile = block.numel() // n_tiles if n_tiles > 0 else 1
+            if entries_per_tile > 0 and block.numel() >= n_tiles:
+                reshaped = block[:n_tiles * entries_per_tile].view(n_tiles, entries_per_tile)
+                per_tile = reshaped.mean(dim=1).view(num_rows, num_cols)
+                tile_rates[cmd_id] = per_tile
+
+        agg = tile_rates.mean(dim=0)  # [num_rows, num_cols]
+
+        fig, axes = plt.subplots(
+            1, num_cmds + 1, figsize=(2.5 * (num_cmds + 1), 5), squeeze=False, layout="constrained",
+        )
+        axes = axes[0]
+
+        def _style_axis(ax, data, title, show_ylabel=False):
+            ax.imshow(data, vmin=0, vmax=1, cmap="RdYlGn", aspect="auto", origin="lower")
+            ax.set_title(title, fontsize=8)
+            ax.set_xticks(tick_positions)
+            ax.set_xticklabels(tick_labels, rotation=45, ha="right", fontsize=6)
+            for b in boundaries:
+                ax.axvline(b, color="white", linewidth=0.8, linestyle="--", alpha=0.7)
+            if show_ylabel:
+                ax.set_ylabel("Difficulty level")
+            else:
+                ax.set_yticks([])
+
+        im = axes[0].imshow(agg.cpu().numpy(), vmin=0, vmax=1, cmap="RdYlGn", aspect="auto", origin="lower")
+        _style_axis(axes[0], agg.cpu().numpy(), "All", show_ylabel=True)
+
+        for cmd_id in range(num_cmds):
+            short_name = cmd_names[cmd_id].replace("_cmd", "")
+            _style_axis(axes[cmd_id + 1], tile_rates[cmd_id].cpu().numpy(), short_name)
+
+        fig.colorbar(im, ax=axes.tolist(), shrink=0.6, label="Success Rate")
+        fig.suptitle(f"Terrain Success (step {self.env.common_step_counter})", fontsize=10)
+
+        # Render to numpy HWC array and pass through extras for synced logging
+        fig.canvas.draw()
+        w, h = fig.canvas.get_width_height()
+        img = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)[:, :, :3].copy()
+        plt.close(fig)
+
+        self.env.extras.setdefault("log_images", {})["Curriculum/terrain_heatmap"] = img
+
     def _get_connecting_lines(self, start_pos: torch.Tensor, end_pos: torch.Tensor):
+        """Compute position, orientation (XYZW), and length for cylinder markers connecting start to end."""
         v = end_pos - start_pos                    # [N,3]
         l = v.norm(2, dim=-1).clamp_min(1e-12)     # [N]
         p = (start_pos + end_pos) * 0.5            # [N,3]
-        z = torch.tensor([0.0, 0.0, 1.0], device=self.device).expand_as(v)
-        b = v / l.unsqueeze(-1)                    # normalized direction
-        c = torch.cross(z, b, dim=-1)
-        w = 1.0 + (z * b).sum(-1, keepdim=True)
-        q = torch.cat([w, c], dim=-1)              # [N,4] (w, x, y, z)
-        q = q / q.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+        # Cylinder default axis is Z. Rotate Z-axis onto beam direction.
+        z_axis = torch.tensor([0.0, 0.0, 1.0], device=self.device).expand_as(v)
+        b = v / l.unsqueeze(-1)
+        c = torch.cross(z_axis, b, dim=-1)
+        w = 1.0 + (z_axis * b).sum(-1, keepdim=True)
+        q_wxyz = torch.cat([w, c], dim=-1)
+        q_wxyz = q_wxyz / q_wxyz.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+        # Convert WXYZ → XYZW for Isaac Lab 3.0
+        q = torch.cat([q_wxyz[:, 1:], q_wxyz[:, :1]], dim=-1)
         return p, q, l
 
     def _init_path_visuals_from_discrete(self) -> None:

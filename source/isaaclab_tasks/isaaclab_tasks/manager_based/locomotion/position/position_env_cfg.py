@@ -183,14 +183,14 @@ class EventsCfg:
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "z": (0.0, 0.5), "yaw": (-3.14, 3.14)},
+            "pose_range": {"x": (-0.0, 0.0), "y": (-0.0, 0.0), "z": (0.0, 0.1), "yaw": (-3.14, 3.14)},
             "velocity_range": {
-                "x": (-0.5, 0.5),
-                "y": (-0.5, 0.5),
-                "z": (-0.5, 0.5),
-                "roll": (-0.5, 0.5),
-                "pitch": (-0.5, 0.5),
-                "yaw": (-0.5, 0.5),
+                "x": (-0.1, 0.1),
+                "y": (-0.1, 0.1),
+                "z": (-0.1, 0.1),
+                "roll": (-0.1, 0.1),
+                "pitch": (-0.1, 0.1),
+                "yaw": (-0.1, 0.1),
             },
         },
     )
@@ -253,7 +253,7 @@ class TerminationsCfg:
 
 @configclass
 class CurriculumCfg:
-    terrain_levels = CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels, params={"debug_vis": True, "kappa": 2.0, "temperature": 2.0, "target": 0.33, "success_term": "success"})
+    terrain_levels = CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels, params={"kappa": 5.0, "temperature": 2.0, "target": 0.66, "success_term": "success"})
     remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
 
 
