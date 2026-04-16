@@ -66,19 +66,6 @@ def get_base_state(env):
 class PositionActorPresetCfg(PresetCfg):
     """Actor presets selectable via ``agent.actor=<name>``."""
 
-    default = RslRlCommanderActorModelCfg(
-        hidden_dims=[512, 256, 256, 128],
-        activation="elu",
-        obs_normalization=True,
-        stochastic=True,
-        init_noise_std=1.0,
-        commander_hidden_dims=[256, 256],
-        commander_obs_normalization=True,
-        kinematic_reward_weight=0.001,
-        commander_loss_coef=0.1,
-        get_command_target_fn=get_base_state,
-        log_error_fn=get_error,
-    )
     commander = RslRlCommanderActorModelCfg(
         hidden_dims=[512, 256, 256, 128],
         activation="elu",
@@ -97,7 +84,7 @@ class PositionActorPresetCfg(PresetCfg):
         activation="elu",
         obs_normalization=True,
         stochastic=True,
-        init_noise_std=1.0,
+        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0, std_type="log"),
         task_easing_constraint_fn="relu",
         task_easing_loss_coef=0.0,
         task_easing_margin=0.0,
@@ -110,7 +97,7 @@ class PositionActorPresetCfg(PresetCfg):
         activation="elu",
         obs_normalization=True,
         stochastic=True,
-        init_noise_std=1.0,
+        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0, std_type="log"),
         rnn_num_layers=1,
         rnn_hidden_dim=128,
         rnn_type="lstm",
@@ -120,15 +107,16 @@ class PositionActorPresetCfg(PresetCfg):
         activation="elu",
         obs_normalization=True,
         stochastic=True,
-        init_noise_std=1.0,
+        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0, std_type="log"),
     )
+    default = mlp
 
 
 @configclass
 class PositionCriticPresetCfg(PresetCfg):
     """Critic presets selectable via ``agent.critic=<name>``."""
 
-    default = RslRlMLPModelCfg(
+    mlp = RslRlMLPModelCfg(
         hidden_dims=[512, 256, 256, 128],
         activation="elu",
         obs_normalization=True,
@@ -143,6 +131,7 @@ class PositionCriticPresetCfg(PresetCfg):
         rnn_hidden_dim=128,
         rnn_type="lstm",
     )
+    default = mlp
 
 
 @configclass
