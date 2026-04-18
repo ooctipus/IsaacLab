@@ -8,16 +8,14 @@
 from isaaclab.utils import configclass
 
 from isaaclab_tasks.utils import PresetCfg
-
-from .mdp.commands import RelativeStateCommandCfg
-
+from .. import mdp
 
 @configclass
 class CommandsPresetCfg(PresetCfg):
     """Named command configurations for the position locomotion task."""
 
     all_commands = {
-        "lin_vel_cmd": RelativeStateCommandCfg.VelocityCommands(
+        "lin_vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
             roll=(-0.0, 0.0),
             pitch=(-0.0, 0.0),
             yaw=None,
@@ -29,7 +27,7 @@ class CommandsPresetCfg(PresetCfg):
             ang_vel_z=(-0.2, 0.2),
             duration=(0.05, 4.0),
         ),
-        "ang_vel_cmd": RelativeStateCommandCfg.VelocityCommands(
+        "ang_vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
             roll=(-0.0, 0.0),
             pitch=(-0.0, 0.0),
             yaw=None,
@@ -41,7 +39,7 @@ class CommandsPresetCfg(PresetCfg):
             ang_vel_z=(-2.0, 2.0),
             duration=(0.05, 4.0),
         ),
-        "terrain_position_cmd": RelativeStateCommandCfg.TerrainCommands(
+        "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             pos_x=(-0.0, 0.0),
             pos_y=(-0.0, 0.0),
             pos_z=(-0.0, 0.0),
@@ -50,7 +48,7 @@ class CommandsPresetCfg(PresetCfg):
             yaw=None,
             duration=(0.05, 2.0),
         ),
-        "terrain_pose_cmd": RelativeStateCommandCfg.TerrainCommands(
+        "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             pos_x=(-0.0, 0.0),
             pos_y=(-0.0, 0.0),
             pos_z=(-0.0, 0.0),
@@ -59,7 +57,7 @@ class CommandsPresetCfg(PresetCfg):
             yaw=(-3.14, 3.14),
             duration=(0.05, 2.0),
         ),
-        "terrain_stand_up_cmd": RelativeStateCommandCfg.TerrainCommands(
+        "terrain_stand_up_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             pos_x=None,
             pos_y=None,
             pos_z=None,
@@ -68,7 +66,7 @@ class CommandsPresetCfg(PresetCfg):
             yaw=None,
             duration=(0.05, 4.0),
         ),
-        "position_cmd": RelativeStateCommandCfg.TerrainCommands(
+        "position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             pos_x=(-3.0, 3.0),
             pos_y=(-3.0, 3.0),
             pos_z=None,
@@ -77,7 +75,7 @@ class CommandsPresetCfg(PresetCfg):
             yaw=None,
             duration=(0.05, 2.0),
         ),
-        "pose_cmd": RelativeStateCommandCfg.TerrainCommands(
+        "pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             pos_x=(-3.0, 3.0),
             pos_y=(-3.0, 3.0),
             pos_z=None,
@@ -88,7 +86,7 @@ class CommandsPresetCfg(PresetCfg):
         ),
     }
     terrain = {
-        "terrain_pose_cmd": RelativeStateCommandCfg.TerrainCommands(
+        "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             pos_x=(-0.0, 0.0),
             pos_y=(-0.0, 0.0),
             pos_z=(-0.0, 0.0),
@@ -97,7 +95,7 @@ class CommandsPresetCfg(PresetCfg):
             yaw=(-3.14, 3.14),
             duration=(0.05, 2.0),
         ),
-        "terrain_position_cmd": RelativeStateCommandCfg.TerrainCommands(
+        "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             pos_x=(-0.0, 0.0),
             pos_y=(-0.0, 0.0),
             pos_z=(-0.0, 0.0),
@@ -106,10 +104,10 @@ class CommandsPresetCfg(PresetCfg):
             yaw=None,
             duration=(0.05, 2.0),
         ),
-        "terrain_stand_up_cmd": RelativeStateCommandCfg.TerrainCommands(
+        "terrain_stand_up_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             pos_x=None, pos_y=None, pos_z=None, roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None, duration=(0.05, 4.0)
         ),
-        "ang_vel_cmd": RelativeStateCommandCfg.VelocityCommands(
+        "ang_vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
             roll=(-0.0, 0.0),
             pitch=(-0.0, 0.0),
             yaw=None,
@@ -123,7 +121,7 @@ class CommandsPresetCfg(PresetCfg):
         ),
     }
     terrain_pos = {
-        "terrain_position_cmd": RelativeStateCommandCfg.TerrainCommands(
+        "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             pos_x=(-0.0, 0.0),
             pos_y=(-0.0, 0.0),
             pos_z=(-0.0, 0.0),
@@ -134,7 +132,7 @@ class CommandsPresetCfg(PresetCfg):
         ),
     }
     terrain_pose = {
-        "terrain_pose_cmd": RelativeStateCommandCfg.TerrainCommands(
+        "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             pos_x=(-0.0, 0.0),
             pos_y=(-0.0, 0.0),
             pos_z=(-0.0, 0.0),
@@ -145,12 +143,12 @@ class CommandsPresetCfg(PresetCfg):
         ),
     }
     terrain_stand_up = {
-        "terrain_stand_up_cmd": RelativeStateCommandCfg.TerrainCommands(
+        "terrain_stand_up_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             pos_x=None, pos_y=None, pos_z=None, roll=(-0.0, 0.0), pitch=(-0.0, 0.0), yaw=None, duration=(0.05, 4.0)
         ),
     }
     pose = {
-        "pose_cmd": RelativeStateCommandCfg.PoseCommands(
+        "pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(
             pos_x=(-3.0, 3.0),
             pos_y=(-3.0, 3.0),
             pos_z=None,
@@ -161,7 +159,7 @@ class CommandsPresetCfg(PresetCfg):
         ),
     }
     pos = {
-        "position_cmd": RelativeStateCommandCfg.PositionCommands(
+        "position_cmd": mdp.RelativeStateCommandCfg.PositionCommands(
             pos_x=(-3.0, 3.0),
             pos_y=(-3.0, 3.0),
             pos_z=None,
@@ -173,7 +171,7 @@ class CommandsPresetCfg(PresetCfg):
     }
     vel = (
         {
-            "lin_vel_cmd": RelativeStateCommandCfg.VelocityCommands(
+            "lin_vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
                 lin_vel_x=(-2.0, 2.0),
                 lin_vel_y=(-2.0, 2.0),
                 lin_vel_z=None,
@@ -185,3 +183,20 @@ class CommandsPresetCfg(PresetCfg):
         },
     )
     default = terrain
+    advanced_skills = pos
+
+
+@configclass
+class CommandsCfg:
+    "Command specifications for the MDP."
+
+    goal_point = mdp.RelativeStateCommandCfg(
+        asset_name="robot",
+        resampling_time_range=(10.0, 10.0),
+        pos_std=0.5,
+        rot_std=0.5,
+        lin_vel_std=0.3,
+        ang_vel_std=0.3,
+        debug_vis=True,
+        commands=CommandsPresetCfg(),  # type: ignore
+    )
