@@ -11,7 +11,12 @@ from isaaclab.assets import ArticulationCfg
 
 from isaaclab_assets.robots.unitree import UNITREE_GO2_CFG
 
-from .robot_presets import ExperimentNameCfg, RobotArticulationCfg
+from .robot_presets import (
+    ExperimentNameCfg,
+    FootBodyNamesCfg,
+    NonFootBodyNamesCfg,
+    RobotArticulationCfg,
+)
 
 _GO2_CFG: ArticulationCfg = UNITREE_GO2_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 _GO2_CFG.spawn.usd_path = (  # type: ignore[attr-defined]
@@ -28,4 +33,7 @@ _GO2_CFG.init_state.joint_pos = {
 }
 
 RobotArticulationCfg.go2 = _GO2_CFG
+# Unitree feet are lowercase ``*_foot`` rather than the default ``.*FOOT.*``.
+FootBodyNamesCfg.go2 = ".*_foot"
+NonFootBodyNamesCfg.go2 = "^(?!.*_foot).*$"
 ExperimentNameCfg.go2 = "go2_position_command"
