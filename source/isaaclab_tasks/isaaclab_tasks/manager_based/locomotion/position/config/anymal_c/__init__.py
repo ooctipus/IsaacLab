@@ -16,3 +16,12 @@ gym.register(
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:AnymalCPositionLocomotionPPORunnerCfg",
     },
 )
+
+gym.register(
+    id="Isaac-Position-CRL-Anymal-C-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.anymal_c_crl_env_cfg:AnymalCLocomotionPositionCRLEnvCfg",
+    },
+)

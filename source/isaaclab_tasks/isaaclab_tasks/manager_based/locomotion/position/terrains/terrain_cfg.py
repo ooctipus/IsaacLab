@@ -145,11 +145,14 @@ CONTOUR = isaaclab_terrain.MeshContourTerrainCfg(
     noise_octaves=10,
     smoothing=0.3,
     stones=isaaclab_terrain.MeshContourTerrainCfg.StoneCfg(
-        num_stones=(8, 20), size_range=(0.6, 1.2), height_scale=0.6, roughness=0.3,
+        num_stones=(8, 20),
+        size_range=(0.6, 1.2),
+        height_scale=0.6,
+        roughness=0.3,
     ),
     flat_patch_sampling={
-        "target": circle_patch(radius=0.1, max_height_diff=0.15),
-        "spawn": spawn_patch(max_height_diff=0.15),
+        "target": circle_patch(radius=0.15, max_height_diff=0.1),
+        "spawn": spawn_patch(max_height_diff=0.1),
     },
 )
 
@@ -252,7 +255,9 @@ RADIATING_BEAM_BOX = isaaclab_terrain.MeshRadiatingBeamTerrainCfg(
     bar_height_range=(1.5, 1.5),
     ground_plane=False,
     beam_style=isaaclab_terrain.MeshRadiatingBeamTerrainCfg.BoxBeamCfg(
-        box_length=(0.35, 0.2), box_gap=0.02, box_position_variation=(0.05, 0.05, 0.03),
+        box_length=(0.35, 0.2),
+        box_gap=0.02,
+        box_position_variation=(0.05, 0.05, 0.03),
     ),
     flat_patch_sampling={
         "target": circle_patch(radius=0.05),
@@ -326,7 +331,9 @@ FLOATING_ISLAND = isaaclab_terrain.MeshFloatingIslandTerrainCfg(
     island_margin=0.75,
     graph=isaaclab_terrain.MeshFloatingIslandTerrainCfg.DelaunayGraphCfg(),
     passway_style=isaaclab_terrain.MeshFloatingIslandTerrainCfg.BoxBeamCfg(
-        box_length=(0.4, 0.25), box_gap=0.0, box_position_variation=(0.05, 0.05, 0.05),
+        box_length=(0.4, 0.25),
+        box_gap=0.0,
+        box_position_variation=(0.05, 0.05, 0.05),
     ),
     passway_width=0.5,
     passway_curvature=0.3,

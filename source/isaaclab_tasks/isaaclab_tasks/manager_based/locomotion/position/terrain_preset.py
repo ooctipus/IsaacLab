@@ -15,6 +15,7 @@ from . import terrains
 @configclass
 class SubTerrainPresetCfg(PresetCfg):
     """Named sub-terrain configurations for the position locomotion task."""
+
     all = {
         # "gap": terrains.GAP,
         # "pit": terrains.PIT,
@@ -36,7 +37,10 @@ class SubTerrainPresetCfg(PresetCfg):
         "extreme_stair": terrains.EXTREME_STAIR.replace(step_height_range=(0.12, 0.2)),
         "slope_inv": terrains.SLOPE_INV.replace(slope_range=(0.6, 0.9)),
         "stepping_stone": terrains.STEPPING_STONE.replace(
-            w_gap=(0.15, 0.26), w_stone=(0.4, 0.2), s_max=(0.080, 0.118), h_max=(0.075, 0.1),
+            w_gap=(0.15, 0.26),
+            w_stone=(0.4, 0.2),
+            s_max=(0.080, 0.118),
+            h_max=(0.075, 0.1),
         ),
         "radiating_beam": terrains.RADIATING_BEAM.replace(num_bars=(5, 1)),
     }

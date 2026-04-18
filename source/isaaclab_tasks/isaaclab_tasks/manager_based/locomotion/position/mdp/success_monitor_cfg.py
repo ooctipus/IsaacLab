@@ -14,7 +14,6 @@ from .success_monitor import SuccessMonitor
 
 @configclass
 class SuccessMonitorCfg:
-
     class_type: type[SuccessMonitor] = SuccessMonitor
 
     monitored_history_len: int = 100

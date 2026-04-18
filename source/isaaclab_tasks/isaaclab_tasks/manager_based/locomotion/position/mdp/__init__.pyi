@@ -57,7 +57,11 @@ from .curriculums import (
     stricten_success_term,
     activate_reward_term,
 )
-from .observations import time_left
+from .observations import (
+    time_left,
+    target_pos_env,
+    achieved_pos_env,
+)
 from .rewards import (
     task_reward,
     heading_tracking,

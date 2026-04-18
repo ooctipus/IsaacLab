@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import warp as wp  # Warp (https://github.com/NVIDIA/warp)
+
 from isaaclab.utils.warp import raycast_mesh
 
 from . import patch_sampling_cfg as patch_cfg
@@ -546,8 +547,9 @@ def _resolve_footprint(cfg):
     raise TypeError(f"Unknown footprint type: {type(cfg)}")
 
 
-def _build_footprint_mask(cfg: patch_cfg.CircleFootprintCfg | patch_cfg.RectFootprintCfg,
-                          scale: float, device: torch.device) -> torch.Tensor:
+def _build_footprint_mask(
+    cfg: patch_cfg.CircleFootprintCfg | patch_cfg.RectFootprintCfg, scale: float, device: torch.device
+) -> torch.Tensor:
     """Convert a footprint config into a 2D boolean kernel mask.
 
     Args:
@@ -568,10 +570,10 @@ def _build_footprint_mask(cfg: patch_cfg.CircleFootprintCfg | patch_cfg.RectFoot
             torch.arange(k, device=device) - r_cells,
             indexing="ij",
         )
-        mask = (x.float() * scale) ** 2 + (y.float() * scale) ** 2 <= cfg.radius ** 2
+        mask = (x.float() * scale) ** 2 + (y.float() * scale) ** 2 <= cfg.radius**2
     elif isinstance(cfg, patch_cfg.RectFootprintCfg):
         hl = math.ceil(cfg.length / (2.0 * scale))  # half-length along +x (forward)
-        hw = math.ceil(cfg.width / (2.0 * scale))    # half-width along +y (lateral)
+        hw = math.ceil(cfg.width / (2.0 * scale))  # half-width along +y (lateral)
         k = 2 * max(hl, hw) + 1
         y, x = torch.meshgrid(
             torch.arange(k, device=device) - k // 2,
@@ -587,9 +589,9 @@ def _build_footprint_mask(cfg: patch_cfg.CircleFootprintCfg | patch_cfg.RectFoot
     return mask
 
 
-def _rasterize_mesh(wp_mesh: wp.Mesh, x_range: tuple[float, float],
-                    y_range: tuple[float, float], scale: float,
-                    device: torch.device) -> tuple[torch.Tensor, float, float]:
+def _rasterize_mesh(
+    wp_mesh: wp.Mesh, x_range: tuple[float, float], y_range: tuple[float, float], scale: float, device: torch.device
+) -> tuple[torch.Tensor, float, float]:
     """Rasterize a warp mesh to a 2D heightmap via one batched ray-cast.
 
     Args:
@@ -617,9 +619,9 @@ def _rasterize_mesh(wp_mesh: wp.Mesh, x_range: tuple[float, float],
     return heightmap, x_range[0], y_range[0]
 
 
-def _morphological_validity(heightmap: torch.Tensor, mask: torch.Tensor,
-                            max_height_diff: float,
-                            z_range: tuple[float, float]) -> torch.Tensor:
+def _morphological_validity(
+    heightmap: torch.Tensor, mask: torch.Tensor, max_height_diff: float, z_range: tuple[float, float]
+) -> torch.Tensor:
     """Compute a boolean validity map using morphological max-min filtering.
 
     Uses ``unfold`` to extract all footprint-sized patches, applies the
@@ -692,7 +694,7 @@ def _farthest_point_sample(points: torch.Tensor, n: int) -> torch.Tensor:
         Index tensor of shape ``[n]`` into ``points``.
     """
     M = points.shape[0]
-    if M <= n:
+    if n >= M:
         return torch.arange(M, device=points.device)
 
     selected = [torch.randint(M, (1,), device=points.device).item()]
@@ -719,15 +721,16 @@ def _yaw_to_quat_xyzw(yaw: torch.Tensor) -> torch.Tensor:
     return torch.stack([zeros, zeros, half.sin(), half.cos()], dim=-1)
 
 
-def _build_rotated_rect_masks(footprint, scale: float, yaw_angles: torch.Tensor,
-                              device: torch.device) -> list[torch.Tensor]:
+def _build_rotated_rect_masks(
+    footprint, scale: float, yaw_angles: torch.Tensor, device: torch.device
+) -> list[torch.Tensor]:
     """Build rotated rectangular footprint masks for each yaw angle.
 
     Returns a list of ``[K, K]`` boolean masks, one per yaw.
     """
     hl = footprint.length / 2.0  # half-length along +x (forward)
-    hw = footprint.width / 2.0   # half-width along +y (lateral)
-    r_max = math.sqrt(hl ** 2 + hw ** 2)
+    hw = footprint.width / 2.0  # half-width along +y (lateral)
+    r_max = math.sqrt(hl**2 + hw**2)
     r_cells = math.ceil(r_max / scale)
     k = 2 * r_cells + 1
     y, x = torch.meshgrid(
@@ -741,7 +744,7 @@ def _build_rotated_rect_masks(footprint, scale: float, yaw_angles: torch.Tensor,
     masks = []
     for yaw in yaw_angles:
         c, s = float(yaw.cos()), float(yaw.sin())
-        lx = wx * c + wy * s   # local x (forward)
+        lx = wx * c + wy * s  # local x (forward)
         ly = -wx * s + wy * c  # local y (lateral)
         masks.append((lx.abs() <= hl) & (ly.abs() <= hw))
     return masks
@@ -828,8 +831,10 @@ def find_flat_patches_morphological(
             patches = F.unfold(heightmap[None, None], kernel_size=k, padding=pad)
             mask_flat = mask.reshape(-1)
             big = torch.finfo(torch.float32).max
-            p_max = patches.clone(); p_max[:, ~mask_flat, :] = -big
-            p_min = patches.clone(); p_min[:, ~mask_flat, :] = big
+            p_max = patches.clone()
+            p_max[:, ~mask_flat, :] = -big
+            p_min = patches.clone()
+            p_min[:, ~mask_flat, :] = big
             h_range = (p_max.max(dim=1).values - p_min.min(dim=1).values).view(H, W)
 
             improved = valid_yi & (h_range < best_range)
@@ -878,8 +883,8 @@ def find_flat_patches_morphological(
         pos = cand_pos[fps_idx]
         quat = cand_quat[fps_idx]
     else:
-        pos = cand_pos[:cfg.num_patches]
-        quat = cand_quat[:cfg.num_patches]
+        pos = cand_pos[: cfg.num_patches]
+        quat = cand_quat[: cfg.num_patches]
 
     # return [N, 7]: position (origin-subtracted) + quaternion (absolute)
     result = torch.cat([pos - origin_t, quat], dim=-1)

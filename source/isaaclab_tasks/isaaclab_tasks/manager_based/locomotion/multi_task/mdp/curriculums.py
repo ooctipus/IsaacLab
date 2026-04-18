@@ -5,8 +5,9 @@
 
 from __future__ import annotations
 
-import torch
 from typing import TYPE_CHECKING
+
+import torch
 
 from isaaclab.managers import ManagerTermBase
 
@@ -14,6 +15,7 @@ from .success_monitor_cfg import SuccessMonitorCfg
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
+
     from .commands import MultiTaskCommand
 
 
@@ -106,7 +108,13 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.prob_mass_per_bin.zero_()
         self.prob_mass_per_bin.scatter_add_(0, bin_ids, probs)
 
-        bin_names = ["bin_0_20", "bin_20_40", "bin_40_60", "bin_60_80", "bin_80_100",]
+        bin_names = [
+            "bin_0_20",
+            "bin_20_40",
+            "bin_40_60",
+            "bin_60_80",
+            "bin_80_100",
+        ]
         for i, name in enumerate(bin_names):
             self._result[f"{name}_frac"].copy_(frac_per_bin[i])
             self._result[f"{name}_prob"].copy_(self.prob_mass_per_bin[i])
@@ -117,14 +125,14 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         return self._result
 
     def _get_connecting_lines(self, start_pos: torch.Tensor, end_pos: torch.Tensor):
-        v = end_pos - start_pos                    # [N,3]
-        l = v.norm(2, dim=-1).clamp_min(1e-12)     # [N]
-        p = (start_pos + end_pos) * 0.5            # [N,3]
+        v = end_pos - start_pos  # [N,3]
+        l = v.norm(2, dim=-1).clamp_min(1e-12)  # [N]
+        p = (start_pos + end_pos) * 0.5  # [N,3]
         z = torch.tensor([0.0, 0.0, 1.0], device=self.device).expand_as(v)
-        b = v / l.unsqueeze(-1)                    # normalized direction
+        b = v / l.unsqueeze(-1)  # normalized direction
         c = torch.cross(z, b, dim=-1)
         w = 1.0 + (z * b).sum(-1, keepdim=True)
-        q = torch.cat([w, c], dim=-1)              # [N,4] (w, x, y, z)
+        q = torch.cat([w, c], dim=-1)  # [N,4] (w, x, y, z)
         q = q / q.norm(dim=-1, keepdim=True).clamp_min(1e-12)
         return p, q, l
 
@@ -132,12 +140,12 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         import isaaclab.sim as sim_utils
         from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
 
-        rows = self.goal_term.spec.descretized_cmd           # [N,15]
+        rows = self.goal_term.spec.descretized_cmd  # [N,15]
         mask_pos = self.goal_term.spec.descretized_mask[:, 0:3].any(dim=-1)  # [N] bool
 
         # Only visualize position-like discrete commands
         line_indices = torch.arange(self.num_discrete_cmd, device=self.device)[mask_pos]  # [N_pos]
-        rows_pos = rows[mask_pos]                                                     # [N_pos,15]
+        rows_pos = rows[mask_pos]  # [N_pos,15]
 
         start = rows_pos[:, 0:3].clone()  # spawn
         end = rows_pos[:, 3:6].clone()  # target
@@ -150,16 +158,36 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
 
         MARKER_CFG = VisualizationMarkersCfg(
             markers={
-                "line_0": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0))),
-                "line_1": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.9, 0.1, 0.0))),
-                "line_2": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.2, 0.0))),
-                "line_3": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.7, 0.3, 0.0))),
-                "line_4": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.6, 0.4, 0.0))),
-                "line_5": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.5, 0.5, 0.0))),
-                "line_6": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.4, 0.6, 0.0))),
-                "line_7": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.3, 0.7, 0.0))),
-                "line_8": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.2, 0.8, 0.0))),
-                "line_9": sim_utils.CylinderCfg(radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0))),
+                "line_0": sim_utils.CylinderCfg(
+                    radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0))
+                ),
+                "line_1": sim_utils.CylinderCfg(
+                    radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.9, 0.1, 0.0))
+                ),
+                "line_2": sim_utils.CylinderCfg(
+                    radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.2, 0.0))
+                ),
+                "line_3": sim_utils.CylinderCfg(
+                    radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.7, 0.3, 0.0))
+                ),
+                "line_4": sim_utils.CylinderCfg(
+                    radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.6, 0.4, 0.0))
+                ),
+                "line_5": sim_utils.CylinderCfg(
+                    radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.5, 0.5, 0.0))
+                ),
+                "line_6": sim_utils.CylinderCfg(
+                    radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.4, 0.6, 0.0))
+                ),
+                "line_7": sim_utils.CylinderCfg(
+                    radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.3, 0.7, 0.0))
+                ),
+                "line_8": sim_utils.CylinderCfg(
+                    radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.2, 0.8, 0.0))
+                ),
+                "line_9": sim_utils.CylinderCfg(
+                    radius=0.01, height=1.0, visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0))
+                ),
             }
         )
         self.frame_visualizer = VisualizationMarkers(MARKER_CFG.replace(prim_path="/World/Visuals/CurriculumPaths"))
@@ -199,7 +227,7 @@ def skip_reward_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], reward_term
 def stricten_success_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], term: str):
     term_cfg = env.termination_manager.get_term_cfg(term)
     success_rate = env.command_manager.get_term("goal_point").success_rates.mean()
-    if (success_rate > 0.1 and env.common_step_counter > 100):
+    if success_rate > 0.1 and env.common_step_counter > 100:
         term_cfg.params["thresh"][2] = 0.5
         term_cfg.params["thresh"][3] = 0.5
 

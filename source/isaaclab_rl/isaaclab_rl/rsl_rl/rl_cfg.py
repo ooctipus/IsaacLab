@@ -153,6 +153,102 @@ class RslRlCNNModelCfg(RslRlMLPModelCfg):
     """The configuration for the CNN(s)."""
 
 
+@configclass
+class RslRlMLPEncoderModelCfg(RslRlMLPModelCfg):
+    """Configuration for an MLP model with per-obs-group MLP encoders.
+
+    Extends :class:`RslRlMLPModelCfg` with a mapping of observation group names to encoder
+    MLP configurations. The keys of :attr:`encoder_cfg` determine which observation groups
+    are routed through dedicated MLP encoders; all other groups in the active obs set are
+    concatenated directly with the encoder outputs and fed to the main MLP head.
+    """
+
+    class_name: str = "MLPEncoderModel"
+    """The model class name. Defaults to MLPEncoderModel."""
+
+    @configclass
+    class EncoderCfg:
+        """Per-obs-group encoder MLP configuration.
+
+        Forwarded as keyword arguments to :class:`rsl_rl.modules.MLP`, which determines the
+        encoder's hidden stack and output dimension. ``input_dim`` is inferred from the
+        observation group at model construction time and should not be set here.
+        """
+
+        output_dim: int = MISSING
+        """Output dimension of the encoder (the compact feature size fed to the main MLP head)."""
+
+        hidden_dims: list[int] = MISSING
+        """The hidden dimensions of the encoder MLP."""
+
+        activation: str = MISSING
+        """The activation function for the encoder MLP."""
+
+        last_activation: str | None = None
+        """Optional activation applied after the last linear layer of the encoder. Defaults to None (linear output)."""
+
+    encoder_cfg: dict[str, EncoderCfg] = MISSING
+    """Mapping from observation group name to a per-group encoder configuration.
+
+    Only observation groups present as keys in this mapping are routed through encoders.
+    All other groups in ``obs_groups[obs_set]`` pass through to the main MLP head directly.
+    """
+
+    encoder_normalization: bool = False
+    """Whether to apply running-statistic :class:`EmpiricalNormalization` to each encoded observation
+    group before it enters its per-group encoder MLP. Independent of :attr:`obs_normalization`, which
+    controls only the passthrough path. Defaults to False."""
+
+    head_layer_norm: bool = True
+    """Whether to apply :class:`torch.nn.LayerNorm` on the concatenated latent
+    ``[passthrough || encoder_features]`` before the main MLP head. Per-sample, no running stats, no
+    train/eval mismatch. Stabilizes the main MLP head against scale drift in encoder outputs during
+    training. Aligned with modern ML practice (transformers, multi-modal fusion, MLP-Mixer, SimBa-style
+    stable RL). Defaults to True."""
+
+
+@configclass
+class RslRlResidualMLPEncoderModelCfg(RslRlMLPEncoderModelCfg):
+    """Configuration for an MLP encoder model with a SimBa-style residual main head.
+
+    Inherits the encoder machinery from :class:`RslRlMLPEncoderModelCfg` but replaces the plain
+    :class:`~rsl_rl.modules.MLP` main head with :class:`~rsl_rl.modules.ResidualMLP`, a faithful
+    implementation of equations (5)-(7) in SimBa (Lee et al. 2024): input Linear projection,
+    ``num_blocks`` pre-norm residual feedforward blocks with 4x inverted bottlenecks, post-Layer
+    normalization, and a linear output head.
+    """
+
+    class_name: str = "ResidualMLPEncoderModel"
+    """The model class name. Defaults to ResidualMLPEncoderModel."""
+
+    hidden_dim: int = MISSING
+    """Width of the residual pathway (``d_h`` in the SimBa paper)."""
+
+    num_blocks: int = 2
+    """Number of pre-norm residual blocks. The paper uses 1 for actors and 2 for critics in its PPO
+    experiments. Defaults to 2."""
+
+    expand: int = 4
+    """Inverted-bottleneck expansion ratio inside each residual block. The paper uses 4. Defaults to 4."""
+
+    norm: bool = True
+    """Whether the residual blocks apply LayerNorm internally and whether a post-LayerNorm is applied
+    before the output linear. Defaults to True."""
+
+    last_activation: str | None = None
+    """Optional activation applied after the final linear layer of the residual main head."""
+
+    head_layer_norm: bool = False
+    """Whether to apply an additional :class:`torch.nn.LayerNorm` on the concatenated latent before
+    the residual head. Defaults to False because the residual head already contains an internal
+    pre-norm inside its first block; enable only if you want a second norm step."""
+
+    # The plain-MLP head fields from the parent are unused in this variant.
+    hidden_dims: list[int] = [0]  # type: ignore[assignment]
+    """Unused for :class:`RslRlResidualMLPEncoderModelCfg`; retained to satisfy the parent dataclass
+    signature. Use :attr:`hidden_dim` and :attr:`num_blocks` instead."""
+
+
 ############################
 # Algorithm configurations #
 ############################

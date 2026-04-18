@@ -5,11 +5,12 @@
 
 from __future__ import annotations
 
-import numpy as np
-import torch
 from typing import TYPE_CHECKING
 
+import numpy as np
+import torch
 import warp as wp  # Warp (https://github.com/NVIDIA/warp)
+
 from isaaclab.utils.warp import raycast_mesh
 
 if TYPE_CHECKING:
