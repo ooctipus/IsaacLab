@@ -183,6 +183,6 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.physics_material = self.scene.terrain.physics_material
 
         if self.scene.height_scanner is not None:
-            self.scene.height_scanner.update_period = self.decimation * self.sim.dt
-        if self.scene.contact_forces is not None:
-            self.scene.contact_forces.update_period = self.sim.dt
+            self.scene.height_scanner.update_period = preset(
+                default=(10 * self.episode_length_s), advanced_skills=(4 * self.episode_length_s)
+            )  # type: ignore

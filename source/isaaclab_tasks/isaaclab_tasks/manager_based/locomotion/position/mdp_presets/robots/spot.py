@@ -15,7 +15,9 @@ from .robot_presets import (
     AsyncFootPairsCfg,
     BaseBodyNameCfg,
     ExperimentNameCfg,
+    FootBodyNamesCfg,
     HeightScannerPrimPathCfg,
+    NonFootBodyNamesCfg,
     RobotArticulationCfg,
     SyncFootPairsCfg,
 )
@@ -25,6 +27,9 @@ _SPOT_CFG: ArticulationCfg = SPOT_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 RobotArticulationCfg.spot = _SPOT_CFG
 HeightScannerPrimPathCfg.spot = "{ENV_REGEX_NS}/Robot/body"
 BaseBodyNameCfg.spot = "body"
+# Spot feet are lowercase ``*_foot`` rather than the default ``.*FOOT.*``.
+FootBodyNamesCfg.spot = ".*_foot"
+NonFootBodyNamesCfg.spot = "^(?!.*_foot).*$"
 AsyncFootPairsCfg.spot = (
     ("fl_foot", "fr_foot"),
     ("hr_foot", "hl_foot"),
