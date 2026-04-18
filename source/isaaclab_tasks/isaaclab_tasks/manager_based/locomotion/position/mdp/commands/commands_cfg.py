@@ -6,10 +6,10 @@
 from dataclasses import MISSING
 
 import isaaclab.sim as sim_utils
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.managers import CommandTermCfg
-from isaaclab.markers import VisualizationMarkersCfg, BLUE_ARROW_X_MARKER_CFG
+from isaaclab.markers import BLUE_ARROW_X_MARKER_CFG, VisualizationMarkersCfg
 from isaaclab.utils import configclass
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from .state_command import RelativeStateCommand
 
@@ -171,7 +171,7 @@ class RelativeStateCommandCfg(CommandTermCfg):
                 scale=(0.5, 0.5, 0.5),
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
             ),
-        }
+        },
     )
 
     current_vel_visualizer_cfg: VisualizationMarkersCfg = BLUE_ARROW_X_MARKER_CFG.replace(

@@ -11,17 +11,20 @@ the termination introduced by the function.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch
 import warp as wp
-from typing import TYPE_CHECKING
-from isaaclab.managers import SceneEntityCfg
-from isaaclab.managers import ManagerTermBase
+
+from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTermCfg
+
 from . import states
 
 if TYPE_CHECKING:
-    from isaaclab.envs import ManagerBasedRLEnv
     from isaaclab.assets import Articulation
+    from isaaclab.envs import ManagerBasedRLEnv
+
     from .commands import MultiTaskCommand
 
 """
@@ -39,7 +42,10 @@ def success(
     term: MultiTaskCommand = env.command_manager.get_term(command)
     err = term.get_state_error()
     speed = wp.to_torch(asset.data.body_lin_vel_w)[:, robot_cfg.body_ids].norm(2, dim=-1).amax(dim=1)
-    joint_pos = wp.to_torch(asset.data.joint_pos)[:, robot_cfg.joint_ids] - wp.to_torch(asset.data.default_joint_pos)[:, robot_cfg.joint_ids]
+    joint_pos = (
+        wp.to_torch(asset.data.joint_pos)[:, robot_cfg.joint_ids]
+        - wp.to_torch(asset.data.default_joint_pos)[:, robot_cfg.joint_ids]
+    )
     joint_pos_diff = torch.abs(joint_pos).amax(dim=1)
     return ((err[:, 0] < thresh[0]) & (err[:, 1] < thresh[1])) & (speed < thresh[2]) & (joint_pos_diff < thresh[3])
 
@@ -58,12 +64,13 @@ def abnormal_robot_state(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = Sce
 
 def speed_terminate(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot"), speed_limit=2.0) -> torch.Tensor:
     robot: Articulation = env.scene[robot_cfg.name]
-    speeding = (torch.norm(wp.to_torch(robot.data.root_vel_w), dim=-1) > speed_limit) & (env.episode_length_buf * env.step_dt > 0.5)
+    speeding = (torch.norm(wp.to_torch(robot.data.root_vel_w), dim=-1) > speed_limit) & (
+        env.episode_length_buf * env.step_dt > 0.5
+    )
     return speeding
 
 
 class log(ManagerTermBase):
-
     def __init__(self, cfg: DoneTermCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
         log_key = cfg.params.get("log_key")

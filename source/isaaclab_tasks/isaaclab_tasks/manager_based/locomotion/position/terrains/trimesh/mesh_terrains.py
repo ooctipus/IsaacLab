@@ -8,22 +8,22 @@
 from __future__ import annotations
 
 import io
-import numpy as np
 import os
 import random
-import scipy.spatial.transform as tf
 import subprocess
+from typing import TYPE_CHECKING
+
+import numpy as np
+import requests
+import scipy.spatial.transform as tf
 import torch
 import trimesh
 import yaml
 from scipy.spatial.transform import Rotation as R
-from typing import TYPE_CHECKING
 
-import requests
 from isaaclab.terrains.trimesh.mesh_terrains import inverted_pyramid_stairs_terrain, pyramid_stairs_terrain
 from isaaclab.terrains.trimesh.mesh_terrains_cfg import MeshInvertedPyramidStairsTerrainCfg, MeshPyramidStairsTerrainCfg
 from isaaclab.terrains.trimesh.utils import make_border, make_plane
-
 
 if TYPE_CHECKING:
     from . import mesh_terrains_cfg
@@ -743,8 +743,10 @@ def maze_terrain(
             continue
         perp = np.array([-d[1], d[0]]) / length * half_t
         corners = [
-            p0 - perp, p0 + perp,
-            p1 + perp, p1 - perp,
+            p0 - perp,
+            p0 + perp,
+            p1 + perp,
+            p1 - perp,
         ]
         polys.append(Polygon(corners))
 
@@ -846,8 +848,8 @@ def _perlin_2d(shape: tuple[int, int], scale: float, octaves: int, seed: int) ->
     result = np.zeros(shape, dtype=np.float64)
 
     for o in range(octaves):
-        freq = int(max(2, scale * (2 ** o)))
-        amp = 0.5 ** o
+        freq = int(max(2, scale * (2**o)))
+        amp = 0.5**o
 
         # random values at grid nodes
         grid = rng.uniform(0, 1, (freq + 1, freq + 1))
@@ -898,9 +900,10 @@ def contour_terrain(
     Returns:
         A list of trimesh meshes and the terrain origin [m].
     """
-    from isaaclab.terrains.trimesh.utils import make_plane
     from shapely.geometry import Polygon
     from shapely.ops import unary_union
+
+    from isaaclab.terrains.trimesh.utils import make_plane
 
     num_levels = int(_resolve_range(cfg.num_levels, difficulty))
     level_h = _resolve_range(cfg.level_height, difficulty)
@@ -918,6 +921,7 @@ def contour_terrain(
     meshes: list[trimesh.Trimesh] = []
 
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
@@ -1018,10 +1022,7 @@ def _sample_yaw_angles(
         for i in range(num_bars):
             for _ in range(1000):
                 candidate = random.uniform(0, 2 * np.pi)
-                if all(
-                    min(abs(candidate - a), 2 * np.pi - abs(candidate - a)) >= min_sep
-                    for a in angles
-                ):
+                if all(min(abs(candidate - a), 2 * np.pi - abs(candidate - a)) >= min_sep for a in angles):
                     angles.append(candidate)
                     break
             else:
@@ -1029,14 +1030,10 @@ def _sample_yaw_angles(
         angles.sort()
         return angles
 
-    raise ValueError(
-        f"Invalid beam_distribution '{distribution}'. Expected 'uniform' or 'random'."
-    )
+    raise ValueError(f"Invalid beam_distribution '{distribution}'. Expected 'uniform' or 'random'.")
 
 
-def _beam_reach(
-    yaw: float, half_x: float, half_y: float
-) -> float:
+def _beam_reach(yaw: float, half_x: float, half_y: float) -> float:
     """Distance from center to a rectangle edge along direction *yaw*."""
     cos_yaw = abs(np.cos(yaw))
     sin_yaw = abs(np.sin(yaw))
@@ -1049,7 +1046,7 @@ def _beam_reach(
 
 def _bezier_point(p0: np.ndarray, p1: np.ndarray, ctrl: np.ndarray, t: float) -> np.ndarray:
     """Evaluate a quadratic bezier curve at parameter *t* in [0, 1]."""
-    return (1 - t) ** 2 * p0 + 2 * (1 - t) * t * ctrl + t ** 2 * p1
+    return (1 - t) ** 2 * p0 + 2 * (1 - t) * t * ctrl + t**2 * p1
 
 
 def _bezier_tangent(p0: np.ndarray, p1: np.ndarray, ctrl: np.ndarray, t: float) -> np.ndarray:
@@ -1177,7 +1174,11 @@ def _generate_passway(
                 local_offset = seg_rot_base @ np.array([x_stagger + dx, y_start_off + j * stride + dy, 0.0])
                 world = np.array([center_xy[0] + local_offset[0], center_xy[1] + local_offset[1], seg_z + dz])
 
-                seg_rot = seg_rot_base @ tf.Rotation.from_euler("z", random.uniform(-yaw_var, yaw_var)).as_matrix() if yaw_var > 0 else seg_rot_base
+                seg_rot = (
+                    seg_rot_base @ tf.Rotation.from_euler("z", random.uniform(-yaw_var, yaw_var)).as_matrix()
+                    if yaw_var > 0
+                    else seg_rot_base
+                )
                 transform[0:3, 0:3] = seg_rot
                 transform[:3, -1] = world
                 box_w = box_length if is_box else bar_width
@@ -1239,16 +1240,16 @@ def beam_terrain(
         direction = np.array([np.cos(yaw), np.sin(yaw)])
         start_xy = terrain_center + direction * platform_radius * 0.85
         end_xy = terrain_center + direction * beam_length
-        meshes += _generate_passway(start_xy, end_xy, z_inner, z_outer, bar_width, bar_height, beam_style_cfg, difficulty)
+        meshes += _generate_passway(
+            start_xy, end_xy, z_inner, z_outer, bar_width, bar_height, beam_style_cfg, difficulty
+        )
 
     # -- border geometry --
     border_center_z = border_top - bar_height / 2
     if border_cfg is not None:
         border_type = type(border_cfg).__name__
         if border_type == "SquareBorderCfg":
-            meshes += make_border(
-                cfg.size, border_cfg.inner_size, bar_height, (*terrain_center, border_center_z)
-            )
+            meshes += make_border(cfg.size, border_cfg.inner_size, bar_height, (*terrain_center, border_center_z))
         elif border_type == "PlatformBorderCfg":
             for yaw in yaw_angles:
                 end_dist = _beam_reach(yaw, border_half[0], border_half[1]) + border_cfg.radius
@@ -1281,10 +1282,12 @@ def _sample_island_positions(
     min_dist = 2 * bounding_radius + margin
 
     for _ in range(num * 2000):
-        pt = np.array([
-            random.uniform(pad, size[0] - pad),
-            random.uniform(pad, size[1] - pad),
-        ])
+        pt = np.array(
+            [
+                random.uniform(pad, size[0] - pad),
+                random.uniform(pad, size[1] - pad),
+            ]
+        )
         if all(np.linalg.norm(pt - p) >= min_dist for p in positions):
             positions.append(pt)
             if len(positions) >= num:
@@ -1413,10 +1416,7 @@ def floating_island_terrain(
     positions = _sample_island_positions(num_islands, cfg.size, bounding_r, cfg.island_margin)
     actual_n = len(positions)
 
-    z_offsets = np.array([
-        random.uniform(-height_var, height_var) if height_var > 0 else 0.0
-        for _ in range(actual_n)
-    ])
+    z_offsets = np.array([random.uniform(-height_var, height_var) if height_var > 0 else 0.0 for _ in range(actual_n)])
 
     # -- generate island meshes --
     meshes: list[trimesh.Trimesh] = []
@@ -1457,8 +1457,15 @@ def floating_island_terrain(
         z_end = z_offsets[j] - passway_height / 2
 
         meshes += _generate_passway(
-            start_xy, end_xy, z_start, z_end, passway_width, passway_height,
-            passway_style, difficulty, curvature=passway_curvature,
+            start_xy,
+            end_xy,
+            z_start,
+            z_end,
+            passway_width,
+            passway_height,
+            passway_style,
+            difficulty,
+            curvature=passway_curvature,
         )
 
     origin = np.array([0.5 * cfg.size[0], 0.5 * cfg.size[1], 0.0])

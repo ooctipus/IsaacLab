@@ -15,7 +15,6 @@ from ... import position_env_cfg
 
 @configclass
 class H1EnvMixin:
-
     def __post_init__(self: position_env_cfg.LocomotionPositionCommandEnvCfg):
         # Ensure parent classes run their setup first
         super().__post_init__()

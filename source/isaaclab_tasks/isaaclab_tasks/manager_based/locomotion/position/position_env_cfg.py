@@ -5,6 +5,8 @@
 
 from dataclasses import MISSING
 
+from isaaclab_physx.physics import PhysxCfg
+
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
@@ -22,7 +24,7 @@ from isaaclab.terrains import TerrainGeneratorCfg, TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.noise import UniformNoiseCfg as Unoise
-from isaaclab_physx.physics import PhysxCfg
+
 from isaaclab_tasks.utils import PresetCfg
 
 from . import mdp
@@ -92,7 +94,7 @@ class SceneCfg(InteractiveSceneCfg):
         history_length=3,
         track_air_time=True,
         debug_vis=True,
-        filter_prim_paths_expr=["/World/ground/terrain/mesh"]
+        filter_prim_paths_expr=["/World/ground/terrain/mesh"],
     )
 
 
@@ -121,7 +123,7 @@ class CommandsCfg:
 
 @configclass
 class ObservationsCfg:
-    """Observations for the MDP"""
+    """Observations for the MDP (flat variant: ``height_scan`` lives in ``policy``)."""
 
     @configclass
     class PolicyCfg(ObsGroup):
@@ -152,6 +154,60 @@ class ObservationsCfg:
 
     policy: PolicyCfg = PolicyCfg()
     task: TaskCfg = TaskCfg()
+
+
+@configclass
+class ObservationsEncoderCfg:
+    """Observations for the MDP (encoder variant: ``height_scan`` in its own 1D group).
+
+    Separates the flat ``height_scan`` into a dedicated group so it can be routed through a
+    per-group MLP encoder (e.g. :class:`rsl_rl.models.MLPEncoderModel`) before being fused
+    with the proprioceptive ``policy`` group at the main MLP head.
+    """
+
+    @configclass
+    class PolicyCfg(ObsGroup):
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
+        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
+        proj_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))
+        joint_pos = ObsTerm(func=mdp.joint_pos)
+        joint_vel = ObsTerm(func=mdp.joint_vel)
+        last_actions = ObsTerm(func=mdp.last_action)
+
+    @configclass
+    class TaskCfg(ObsGroup):
+        goal_point_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "goal_point"})
+
+    @configclass
+    class HeightScanCfg(ObsGroup):
+        height_scan = ObsTerm(
+            func=mdp.height_scan,
+            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
+            noise=Unoise(n_min=-0.05, n_max=0.05),
+            clip=(-1.0, 1.0),
+        )
+
+    policy: PolicyCfg = PolicyCfg()
+    task: TaskCfg = TaskCfg()
+    height_scan: HeightScanCfg = HeightScanCfg()
+
+
+@configclass
+class ObservationsPresetCfg(PresetCfg):
+    """Selectable observation layouts for the position task.
+
+    - ``flat`` (default): all proprioceptive observations and ``height_scan`` live in the
+      ``policy`` group as a single concatenated vector.
+    - ``encoder``: ``height_scan`` is moved to its own ``height_scan`` group, so an
+      encoder model can route it through a dedicated sub-network before the main MLP head.
+    """
+
+    flat: ObservationsCfg = ObservationsCfg()
+    encoder: ObservationsEncoderCfg = ObservationsEncoderCfg()
+    # SimBa variants consume the same observation layout as the plain encoder.
+    simba: ObservationsEncoderCfg = encoder
+    simba_big: ObservationsEncoderCfg = encoder
+    default: ObservationsEncoderCfg = encoder
 
 
 @configclass
@@ -253,7 +309,10 @@ class TerminationsCfg:
 
 @configclass
 class CurriculumCfg:
-    terrain_levels = CurrTerm(func=mdp.terrain_spawn_goal_pair_success_rate_levels, params={"kappa": 5.0, "temperature": 2.0, "target": 0.66, "success_term": "success"})
+    terrain_levels = CurrTerm(
+        func=mdp.terrain_spawn_goal_pair_success_rate_levels,
+        params={"kappa": 5.0, "temperature": 2.0, "target": 0.66, "success_term": "success"},
+    )
     remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
 
 
@@ -272,17 +331,19 @@ class PositionPhysicsCfg(PresetCfg):
 class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
     scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=10)
     sim: SimulationCfg = SimulationCfg(physics=PositionPhysicsCfg())  # type: ignore
-    observations: ObservationsCfg = ObservationsCfg()
+    observations: ObservationsPresetCfg = ObservationsPresetCfg()  # type: ignore
     actions: ActionsCfg = ActionsCfg()
     commands: CommandsCfg = CommandsCfg()
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
     events: EventsCfg = EventsCfg()
     curriculum: CurriculumCfg = CurriculumCfg()
-    viewer: ViewerCfg = ViewerCfg(eye=(4.0/4, 7.0/4, 7.0/4), origin_type="asset_body", asset_name="robot", body_name="base")
+    viewer: ViewerCfg = ViewerCfg(
+        eye=(4.0 / 4, 7.0 / 4, 7.0 / 4), origin_type="asset_body", asset_name="robot", body_name="base"
+    )
 
     def __post_init__(self):
-        self.decimation = 4
+        self.decimation = 10
         self.episode_length_s = 6.0
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
