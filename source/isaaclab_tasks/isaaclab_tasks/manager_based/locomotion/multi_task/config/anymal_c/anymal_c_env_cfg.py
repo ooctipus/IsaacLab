@@ -6,8 +6,9 @@
 ##
 # Pre-defined configs
 ##
-import isaaclab_assets.robots.anymal as anymal
 from isaaclab.utils import configclass
+
+import isaaclab_assets.robots.anymal as anymal
 
 from ... import multi_task_env_cfg
 
@@ -18,7 +19,9 @@ class AnymalCEnvMixin:
         # Ensure parent classes run their setup first
         super().__post_init__()  # type: ignore
         self.scene.robot = anymal.ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")  # type: ignore
-        self.scene.robot.spawn.usd_path = "https://uwlab-assets.s3.us-west-004.backblazeb2.com/Robots/ANYbotics/ANYmal-C/anymal_c.usd"
+        self.scene.robot.spawn.usd_path = (
+            "https://uwlab-assets.s3.us-west-004.backblazeb2.com/Robots/ANYbotics/ANYmal-C/anymal_c.usd"
+        )
         self.terminations.base_contact.params["sensor_cfg"].body_names = "base"
 
 

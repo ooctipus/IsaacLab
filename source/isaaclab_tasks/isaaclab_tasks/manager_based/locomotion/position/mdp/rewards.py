@@ -8,18 +8,20 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch
 import warp as wp
 from torch.nn import functional as F
-from typing import TYPE_CHECKING
 
-from isaaclab.managers import SceneEntityCfg, ManagerTermBase
+from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation
     from isaaclab.envs import ManagerBasedRLEnv
     from isaaclab.managers import RewardTermCfg
     from isaaclab.sensors import ContactSensor
+
     from .commands import RelativeStateCommand
 
 
@@ -35,9 +37,7 @@ def heading_tracking(env: ManagerBasedRLEnv, std: float = 0.5):
 
 
 def exploration_reward(
-    env: ManagerBasedRLEnv,
-    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    forward_only: bool = False
+    env: ManagerBasedRLEnv, robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"), forward_only: bool = False
 ):
     robot: Articulation = env.scene[robot_cfg.name]
     base_velocity = wp.to_torch(robot.data.root_lin_vel_b)
@@ -60,7 +60,7 @@ def forward_direction_reward(env: ManagerBasedRLEnv, robot_cfg: SceneEntityCfg =
     base_velocity = wp.to_torch(robot.data.root_lin_vel_b)  # [N, 3], in body frame
 
     speed = torch.linalg.vector_norm(base_velocity, dim=-1)  # ||v||
-    cos_forward = base_velocity[:, 0] / (speed + 1e-6)       # alignment with +x
+    cos_forward = base_velocity[:, 0] / (speed + 1e-6)  # alignment with +x
 
     # Only reward motion that has a forward component; backward/sideways → 0
     return cos_forward.clamp(min=0.0)
@@ -71,7 +71,6 @@ def mechanical_power(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot")) 
     work = torch.sum((wp.to_torch(robot.data.applied_torque) * wp.to_torch(robot.data.joint_vel)).abs(), dim=1)
     work = torch.where(torch.isfinite(work), work, torch.zeros_like(work))
     return work
-
 
 
 def command_success(env: ManagerBasedRLEnv):
@@ -161,7 +160,6 @@ def stand_penalty(
 
 
 class foot_touchdown_impact(ManagerTermBase):
-
     def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
         self.history_length: int = cfg.params.get("history_length", 3)
@@ -178,7 +176,7 @@ class foot_touchdown_impact(ManagerTermBase):
         env: ManagerBasedRLEnv,
         asset_cfg: SceneEntityCfg,
         sensor_cfg: SceneEntityCfg,
-        history_length: int,   # not actually needed, but harmless if passed from cfg
+        history_length: int,  # not actually needed, but harmless if passed from cfg
     ) -> torch.Tensor:
         asset: Articulation = env.scene[asset_cfg.name]
         contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
@@ -335,7 +333,9 @@ def air_time_reward(
     t_min = torch.clip(t_max, max=mode_time)
     stance_cmd_reward = torch.clip(current_contact_time - current_air_time, -mode_time, mode_time)
     distance = torch.norm(env.command_manager.get_command("goal_point")[:, :2], dim=1).unsqueeze(dim=1).expand(-1, 4)
-    body_vel = torch.linalg.norm(wp.to_torch(asset.data.root_com_lin_vel_b)[:, :2], dim=1).unsqueeze(dim=1).expand(-1, 4)
+    body_vel = (
+        torch.linalg.norm(wp.to_torch(asset.data.root_com_lin_vel_b)[:, :2], dim=1).unsqueeze(dim=1).expand(-1, 4)
+    )
     reward = torch.where(
         torch.logical_or(distance > 0.4, body_vel > velocity_threshold),
         torch.where(t_max < mode_time, t_min, 0),
@@ -369,7 +369,9 @@ def foot_slip_penalty(
     # check if contact force is above threshold
     net_contact_forces = wp.to_torch(contact_sensor.data.net_forces_w_history)
     is_contact = torch.max(torch.norm(net_contact_forces[:, :, sensor_cfg.body_ids], dim=-1), dim=1)[0] > threshold
-    foot_planar_velocity = torch.linalg.norm(wp.to_torch(asset.data.body_com_lin_vel_w)[:, asset_cfg.body_ids, :2], dim=2)
+    foot_planar_velocity = torch.linalg.norm(
+        wp.to_torch(asset.data.body_com_lin_vel_w)[:, asset_cfg.body_ids, :2], dim=2
+    )
 
     reward = is_contact * foot_planar_velocity
     return torch.sum(reward, dim=1)

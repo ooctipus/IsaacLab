@@ -5,14 +5,13 @@
 
 from __future__ import annotations
 
-import operator
 from functools import reduce
-
-import torch
 from typing import TYPE_CHECKING
 
-import isaaclab.utils.math as math_utils
+import torch
 import warp as wp
+
+import isaaclab.utils.math as math_utils
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject
@@ -56,6 +55,7 @@ def reset_root_state_from_terrain(
     """
     if asset_cfg is None:
         from isaaclab.managers import SceneEntityCfg
+
         asset_cfg = SceneEntityCfg("robot")
 
     asset: RigidObject | Articulation = env.scene[asset_cfg.name]
@@ -67,12 +67,8 @@ def reset_root_state_from_terrain(
 
     # position = default offset + spawn origin + noise
     pos_keys = ["x", "y", "z", "roll", "pitch", "yaw"]
-    noise_ranges = torch.tensor(
-        [pose_noise.get(k, (0.0, 0.0)) for k in pos_keys], device=asset.device
-    )
-    noise = math_utils.sample_uniform(
-        noise_ranges[:, 0], noise_ranges[:, 1], (len(env_ids), 6), device=asset.device
-    )
+    noise_ranges = torch.tensor([pose_noise.get(k, (0.0, 0.0)) for k in pos_keys], device=asset.device)
+    noise = math_utils.sample_uniform(noise_ranges[:, 0], noise_ranges[:, 1], (len(env_ids), 6), device=asset.device)
 
     positions = default_root_pose[:, 0:3] + spawn_pos + noise[:, 0:3]
 
@@ -81,14 +77,10 @@ def reset_root_state_from_terrain(
     orientations = math_utils.quat_mul(spawn_quat, noise_quat)
 
     # velocity
-    vel_ranges = torch.tensor(
-        [velocity_range.get(k, (0.0, 0.0)) for k in pos_keys], device=asset.device
-    )
+    vel_ranges = torch.tensor([velocity_range.get(k, (0.0, 0.0)) for k in pos_keys], device=asset.device)
     velocities = default_root_vel + math_utils.sample_uniform(
         vel_ranges[:, 0], vel_ranges[:, 1], (len(env_ids), 6), device=asset.device
     )
 
-    asset.write_root_pose_to_sim_index(
-        root_pose=torch.cat([positions, orientations], dim=-1), env_ids=env_ids
-    )
+    asset.write_root_pose_to_sim_index(root_pose=torch.cat([positions, orientations], dim=-1), env_ids=env_ids)
     asset.write_root_velocity_to_sim_index(root_velocity=velocities, env_ids=env_ids)

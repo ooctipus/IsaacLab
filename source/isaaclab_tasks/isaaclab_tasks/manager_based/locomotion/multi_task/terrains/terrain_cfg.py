@@ -63,10 +63,9 @@ FLAT = terrain_cfg.MeshPlaneTerrainCfg(
             patch_radius=0.5,
             radius_range=(0.5, 7.0),
             max_height_diff=0.2,
-        )
+        ),
     },
 )
-
 
 
 GAP = terrain_cfg.MeshGapTerrainCfg(
@@ -84,7 +83,7 @@ GAP = terrain_cfg.MeshGapTerrainCfg(
             patch_radius=0.3,
             radius_range=(0.5, 7.0),
             max_height_diff=0.2,
-        )
+        ),
     },
 )
 
@@ -103,7 +102,7 @@ PIT = terrain_cfg.MeshPitTerrainCfg(
             patch_radius=0.3,
             max_height_diff=0.2,
             radius_range=(0.5, 7.0),
-        )
+        ),
     },
 )
 
@@ -125,7 +124,7 @@ SQUARE_PILLAR_OBSTACLE = terrain_cfg.HfDiscreteObstaclesTerrainCfg(
             patch_radius=0.2,
             max_height_diff=0.2,
             radius_range=(0.2, 7.0),
-        )
+        ),
     },
 )
 
@@ -150,7 +149,7 @@ IRREGULAR_PILLAR_OBSTACLE = terrain_cfg.MeshRepeatedBoxesTerrainCfg(
             patch_radius=0.5,
             max_height_diff=0.2,
             radius_range=(0.2, 7.0),
-        )
+        ),
     },
 )
 
@@ -170,7 +169,7 @@ SLOPE_INV = terrain_cfg.HfInvertedPyramidSlopedTerrainCfg(
             patch_radius=0.05,
             max_height_diff=0.2,
             radius_range=(0.2, 7.0),
-        )
+        ),
     },
 )
 
@@ -192,7 +191,7 @@ EXTREME_STAIR = terrain_cfg.HfPyramidStairsTerrainCfg(
             patch_radius=0.05,
             max_height_diff=0.2,
             radius_range=(0.0, 7.0),
-        )
+        ),
     },
 )
 
@@ -216,7 +215,7 @@ STEPPING_STONE = isaaclab_terrain.MeshStonesEverywhereTerrainCfg(
             patch_radius=0.05,
             max_height_diff=0.2,
             radius_range=(0.2, 6.5),
-        )
+        ),
     },
 )
 
@@ -269,6 +268,6 @@ RADIATING_BEAM = isaaclab_terrain.MeshRadiatingBeamTerrainCfg(
         ),
         "spawn": FlatPatchSamplingByRadiusCfg(
             num_patches=20, patch_radius=0.05, radius_range=(0.2, 10.0), max_height_diff=0.2, z_range=(-1, 1)
-        )
+        ),
     },
 )

@@ -5,6 +5,8 @@
 
 from dataclasses import MISSING
 
+from isaaclab_physx.physics import PhysxCfg
+
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
@@ -22,11 +24,11 @@ from isaaclab.terrains import TerrainGeneratorCfg, TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.noise import UniformNoiseCfg as Unoise
-from isaaclab_physx.physics import PhysxCfg
+
+from isaaclab_tasks.manager_based.locomotion.position.terrain_preset import SubTerrainPresetCfg
 from isaaclab_tasks.utils import PresetCfg
 
 from . import mdp
-from isaaclab_tasks.manager_based.locomotion.position.terrain_preset import SubTerrainPresetCfg
 
 
 @configclass
@@ -90,7 +92,7 @@ class SceneCfg(InteractiveSceneCfg):
         history_length=3,
         track_air_time=True,
         debug_vis=True,
-        filter_prim_paths_expr=["/World/ground/terrain/mesh"]
+        filter_prim_paths_expr=["/World/ground/terrain/mesh"],
     )
 
 
@@ -115,11 +117,9 @@ class CommandsCfg:
                     state_kernel=mdp.STATE_KERNEL_ID.BODY_LIN_VEL,
                     metric_kernel=mdp.METRIC_KERNEL_ID.GEOMETRIC,
                     sampler=mdp.MinMaxSampler(
-                        kernel=mdp.SAMPLER_KERNEL_ID.UNIFORM,
-                        minimum=[-2.0, -2.0, 0.0],
-                        maximum=[2.0, 2.0, 0.0]
+                        kernel=mdp.SAMPLER_KERNEL_ID.UNIFORM, minimum=[-2.0, -2.0, 0.0], maximum=[2.0, 2.0, 0.0]
                     ),
-                    activation_kernel_param=0.3
+                    activation_kernel_param=0.3,
                 )
             ],
             "position_task": [
@@ -129,14 +129,12 @@ class CommandsCfg:
                     state_kernel=mdp.STATE_KERNEL_ID.BODY_POS,
                     metric_kernel=mdp.METRIC_KERNEL_ID.GEOMETRIC,
                     sampler=mdp.MinMaxSampler(
-                        kernel=mdp.SAMPLER_KERNEL_ID.UNIFORM,
-                        minimum=[-5.0, -5.0, 0.0],
-                        maximum=[5.0, 5.0, 0.0]
+                        kernel=mdp.SAMPLER_KERNEL_ID.UNIFORM, minimum=[-5.0, -5.0, 0.0], maximum=[5.0, 5.0, 0.0]
                     ),
-                    activation_kernel_param=0.2
+                    activation_kernel_param=0.2,
                 ),
-            ]
-        }
+            ],
+        },
     )
 
 
@@ -279,7 +277,7 @@ class TerminationsCfg:
 class CurriculumCfg:
     terrain_levels = CurrTerm(
         func=mdp.terrain_spawn_goal_pair_success_rate_levels,
-        params={"debug_vis": False, "kappa": 2.0, "temperature": 2.0, "target": 0.33, "success_term": "success"}
+        params={"debug_vis": False, "kappa": 2.0, "temperature": 2.0, "target": 0.33, "success_term": "success"},
     )
     remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
 
@@ -306,7 +304,9 @@ class MultiTaskCommandEnvCfg(ManagerBasedRLEnvCfg):
     terminations: TerminationsCfg = TerminationsCfg()
     events: EventsCfg = EventsCfg()
     curriculum: CurriculumCfg = None
-    viewer: ViewerCfg = ViewerCfg(eye=(4.0/4, 7.0/4, 7.0/4), origin_type="asset_body", asset_name="robot", body_name="base")
+    viewer: ViewerCfg = ViewerCfg(
+        eye=(4.0 / 4, 7.0 / 4, 7.0 / 4), origin_type="asset_body", asset_name="robot", body_name="base"
+    )
 
     def __post_init__(self):
         self.decimation = 4

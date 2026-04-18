@@ -7,9 +7,12 @@
 # Pre-defined configs
 ##
 import os
-import isaaclab_assets.robots.unitree as unitree
+
 from isaaclab.utils import configclass
+
+import isaaclab_assets.robots.unitree as unitree
 from isaaclab_assets import ISAACLAB_ASSETS_DATA_DIR
+
 from ... import position_env_cfg
 
 

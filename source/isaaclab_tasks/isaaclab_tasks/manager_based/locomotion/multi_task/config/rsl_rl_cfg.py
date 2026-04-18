@@ -8,6 +8,7 @@ import warp as wp
 
 from isaaclab.utils import configclass
 from isaaclab.utils.math import quat_apply_inverse
+
 from isaaclab_rl.rsl_rl import RslRlMLPModelCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg, RslRlRNNModelCfg
 
 from isaaclab_tasks.manager_based.locomotion.position.config.rl_cfg import (

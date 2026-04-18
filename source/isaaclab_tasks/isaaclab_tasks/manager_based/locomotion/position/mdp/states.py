@@ -1,12 +1,17 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 from __future__ import annotations
 
 import torch
 from torch.nn import functional as F
 
-
 # -----------------------------
 # Direction / exploration state
 # -----------------------------
+
 
 def directional_alignment(position_b: torch.Tensor, velocity_b: torch.Tensor) -> torch.Tensor:
     """Cosine similarity between velocity and target position."""
@@ -26,26 +31,24 @@ def forwardness(position_b: torch.Tensor, velocity_b: torch.Tensor) -> torch.Ten
 # Effort / energy-like state
 # -----------------------------
 
+
 def mechanical_work_per_joint(
-    applied_torque: torch.Tensor,
-    joint_vel: torch.Tensor,
-    dt: float | torch.Tensor
+    applied_torque: torch.Tensor, joint_vel: torch.Tensor, dt: float | torch.Tensor
 ) -> torch.Tensor:
     """Per-joint absolute mechanical work contribution."""
     return (applied_torque * joint_vel).abs() * dt
 
 
 def average_mechanical_work_per_joint(
-    applied_torque: torch.Tensor,
-    joint_vel: torch.Tensor,
-    dt: float | torch.Tensor
+    applied_torque: torch.Tensor, joint_vel: torch.Tensor, dt: float | torch.Tensor
 ) -> torch.Tensor:
     """Per-joint absolute mechanical work contribution."""
     return (applied_torque * joint_vel).abs() * dt
 
 
-def total_mechanical_work(applied_torque: torch.Tensor, joint_vel: torch.Tensor, dt: float | torch.Tensor
-                          ) -> torch.Tensor:
+def total_mechanical_work(
+    applied_torque: torch.Tensor, joint_vel: torch.Tensor, dt: float | torch.Tensor
+) -> torch.Tensor:
     """Sum of work over joints."""
     return mechanical_work_per_joint(applied_torque, joint_vel, dt).sum(dim=1)
 
@@ -64,6 +67,7 @@ def total_incoming_wrench(body_incoming_joint_wrench_b: torch.Tensor) -> torch.T
 # Stall / progress state
 # -----------------------------
 
+
 def base_speed(root_lin_vel_b: torch.Tensor) -> torch.Tensor:
     """Full 3D base speed."""
     return torch.linalg.vector_norm(root_lin_vel_b, ord=2, dim=-1)
@@ -72,6 +76,7 @@ def base_speed(root_lin_vel_b: torch.Tensor) -> torch.Tensor:
 # -----------------------------
 # Contact / impact / slip state
 # -----------------------------
+
 
 def feet_lin_acc_l2(body_lin_acc_w: torch.Tensor, body_ids: torch.Tensor) -> torch.Tensor:
     """
@@ -113,6 +118,7 @@ def joint_position_error(joint_pos: torch.Tensor, default_joint_pos: torch.Tenso
 # -----------------------------
 # Gait-related state (contact timing)
 # -----------------------------
+
 
 def gait_sync_se(
     air_time: torch.Tensor,

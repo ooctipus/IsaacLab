@@ -20,27 +20,29 @@ This term supports different "command kinds" via cfg:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import MISSING
+from typing import TYPE_CHECKING
+
 import torch
 import warp as wp
-from collections.abc import Sequence
-from typing import TYPE_CHECKING
-from dataclasses import MISSING
 
 from isaaclab.managers import CommandTerm
 from isaaclab.utils import configclass
 from isaaclab.utils.math import (
-    quat_apply_inverse,
-    euler_xyz_from_quat,
-    quat_from_euler_xyz,
-    quat_mul,
-    quat_inv,
     axis_angle_from_quat,
+    euler_xyz_from_quat,
+    quat_apply_inverse,
+    quat_from_euler_xyz,
+    quat_inv,
+    quat_mul,
 )
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation
     from isaaclab.envs import ManagerBasedEnv
     from isaaclab.terrains import TerrainImporter
+
     from .commands_cfg import RelativeStateCommandCfg
 
 
@@ -114,7 +116,9 @@ class RelativeStateCommand(CommandTerm):
         # cmd_buf[:, 2, :] → current state in world frame
         self.cmd_buf = torch.zeros(self.num_envs, 3, 13, device=self.device).contiguous()
         self.cmd_buf[:, 1] = 1  # important: initialize relative error and time to 1, nothing will trigger success.
-        self.cmd_ids = torch.randint(0, self.spec.cardinal, size=(self.num_envs,), device=self.device, dtype=torch.int32)
+        self.cmd_ids = torch.randint(
+            0, self.spec.cardinal, size=(self.num_envs,), device=self.device, dtype=torch.int32
+        )
         self.cmd_mask = torch.zeros(self.num_envs, 12, device=self.device, dtype=torch.bool)
         self.cmd_indices = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
 
@@ -190,9 +194,15 @@ class RelativeStateCommand(CommandTerm):
                 target_pos_expanded = targets_flat[:, None, :, :]
                 spawn_quat_expanded = spawn_quat_flat[:, :, None, :]
 
-                spawn_all = spawn_pos_expanded.expand(-1, num_spawn_per_terrain, num_targets_per_terrain, -1).reshape(-1, 3)
-                target_all = target_pos_expanded.expand(-1, num_spawn_per_terrain, num_targets_per_terrain, -1).reshape(-1, 3)
-                spawn_quat_all = spawn_quat_expanded.expand(-1, num_spawn_per_terrain, num_targets_per_terrain, -1).reshape(-1, 4)
+                spawn_all = spawn_pos_expanded.expand(-1, num_spawn_per_terrain, num_targets_per_terrain, -1).reshape(
+                    -1, 3
+                )
+                target_all = target_pos_expanded.expand(-1, num_spawn_per_terrain, num_targets_per_terrain, -1).reshape(
+                    -1, 3
+                )
+                spawn_quat_all = spawn_quat_expanded.expand(
+                    -1, num_spawn_per_terrain, num_targets_per_terrain, -1
+                ).reshape(-1, 4)
                 mi = ranges[cmd_id, :, 0].view(1, 13)
                 rand_range = torch.rand(spawn_all.shape[0], 13, device=self.device) * (ranges[cmd_id, :, 1] - mi) + mi
 
@@ -230,11 +240,15 @@ class RelativeStateCommand(CommandTerm):
                 block = torch.zeros(count, 20, device=self.device)
                 # 3:6 target pos, 6:9 target rot, 9:12 target lin_vel, 12:15 target ang_vel, 15 hold time
                 block[:, 3:16] = torch.rand(count, 13, device=self.device) * span[:,].view(1, 13) + _min.view(1, 13)
-                spawn_pos_expanded = spawn_flat[:, :, None, :].expand(n_subterrains, num_spawn_per_terrain, n_samples, 3)
-                spawn_quat_expanded = spawn_quat_flat[:, :, None, :].expand(n_subterrains, num_spawn_per_terrain, n_samples, 4)
-                block[:, 0:3] = spawn_pos_expanded.reshape(-1, 3)       # spawn position
-                block[:, 3:6] += spawn_pos_expanded.reshape(-1, 3)      # target relative to spawn
-                block[:, 16:20] = spawn_quat_expanded.reshape(-1, 4)    # spawn quaternion
+                spawn_pos_expanded = spawn_flat[:, :, None, :].expand(
+                    n_subterrains, num_spawn_per_terrain, n_samples, 3
+                )
+                spawn_quat_expanded = spawn_quat_flat[:, :, None, :].expand(
+                    n_subterrains, num_spawn_per_terrain, n_samples, 4
+                )
+                block[:, 0:3] = spawn_pos_expanded.reshape(-1, 3)  # spawn position
+                block[:, 3:6] += spawn_pos_expanded.reshape(-1, 3)  # target relative to spawn
+                block[:, 16:20] = spawn_quat_expanded.reshape(-1, 4)  # spawn quaternion
                 blocks.append(block)
 
                 block_mask = mask[cmd_id].view(1, 12).expand(count, 12)
@@ -291,7 +305,9 @@ class RelativeStateCommand(CommandTerm):
                     self._success_per_cmd[cmd_id] = self.success_rates[start:end].mean()
                 else:
                     self._success_per_cmd[cmd_id] = 0.0
-                self._env.extras["log"]["Metrics/goal_point/success_rate_" + name] = self._success_per_cmd[cmd_id].item()
+                self._env.extras["log"]["Metrics/goal_point/success_rate_" + name] = self._success_per_cmd[
+                    cmd_id
+                ].item()
 
     def resample_indices(self, env_ids: torch.Tensor):
         indices = torch.randint(0, self.spec.num_descretized_cmd, (env_ids.numel(),), device=self.device)
@@ -307,7 +323,6 @@ class RelativeStateCommand(CommandTerm):
         rows = self.spec.descretized_cmd[idx]
         self._env.scene.terrain.env_origins.index_copy_(0, env_ids.long(), rows[:, 0:3])
         self._env.scene.terrain.env_spawn_quats.index_copy_(0, env_ids.long(), rows[:, 16:20])
-
 
     def _update_command(self):
         """Update world-state row and recompute relative state for all envs.
@@ -396,7 +411,7 @@ class RelativeStateCommand(CommandTerm):
             goal_pos = self.cmd_buf[pos_task_ids, 0, :3].clone()
             goal_pos[:, 2] += 0.5
             goal_translations.append(goal_pos)
-            goal_orientations.append(self._identity_quat[:len(pos_task_ids)])
+            goal_orientations.append(self._identity_quat[: len(pos_task_ids)])
             goal_scales.append(torch.tensor((1.0, 1.0, 1.0), device=self.device).repeat(len(pos_task_ids), 1))
             goal_marker_indices.append(torch.full((len(pos_task_ids),), 1, device=self.device, dtype=torch.long))
 
@@ -418,7 +433,7 @@ class RelativeStateCommand(CommandTerm):
             xy_cmd = self.cmd_buf[vel_task_ids, 0, 6:8]
             scale, quat = self._resolve_xy_velocity_to_arrow(
                 xy_cmd,
-                self._identity_quat[:len(vel_task_ids)],
+                self._identity_quat[: len(vel_task_ids)],
                 self.cfg.goal_visualizer_cfg.markers["vel_arrow"].scale,
             )
             goal_translations.append(base_pos_w)

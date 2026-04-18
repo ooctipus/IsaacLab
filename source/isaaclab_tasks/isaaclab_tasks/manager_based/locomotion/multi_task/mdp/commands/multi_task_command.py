@@ -1,16 +1,22 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 from __future__ import annotations
 
+import math
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-from typing import Callable, Sequence
 
-import math
 import torch
+
 from isaaclab.envs import ManagerBasedRLEnv
 from isaaclab.managers import CommandTerm, SceneEntityCfg
 from isaaclab.utils.buffers import TimestampedBuffer
 
-from .kernels import ACTIVATION_KERNELS, METRIC_KERNELS, STATE_KERNELS, DELTA_KERNELS, SAMPLER_KERNELS
+from .kernels import ACTIVATION_KERNELS, DELTA_KERNELS, METRIC_KERNELS, SAMPLER_KERNELS, STATE_KERNELS
 
 if TYPE_CHECKING:
     from .commands_cfg import MultiTaskCfg
@@ -294,7 +300,7 @@ class MultiTaskCommand(CommandTerm):
         if self._buf_error.timestamp < self.timestamp or self._buf_delta.timestamp < self.timestamp:
             self._buf_error.data.fill_(float("nan"))
             for state_index, state_fn in enumerate(STATE_KERNELS):
-                mask_state = (self.spec.state_kernel_id == state_index)
+                mask_state = self.spec.state_kernel_id == state_index
                 if not mask_state.any():
                     continue
 
@@ -323,7 +329,7 @@ class MultiTaskCommand(CommandTerm):
                     # ---- (A) compute delta into _buf_delta ----
                     kernel_apply(
                         kernels=DELTA_KERNELS,
-                        kernel_ids=self.spec.metric_kernel_id,   # or spec.delta_kernel_id if you add it
+                        kernel_ids=self.spec.metric_kernel_id,  # or spec.delta_kernel_id if you add it
                         valid=mask_ent,
                         out=self._buf_delta.data,
                         out_indexer=lambda mask: (slice(None), mask, slice(0, dim_x_cur)),
@@ -367,7 +373,7 @@ class MultiTaskCommand(CommandTerm):
             valid=self.spec.task_subtask_valid[task_idx],
             out=self._targets,
             out_indexer=lambda ker_mask: (env_grid[ker_mask], subtask_ids[ker_mask], slice(0, self._target_dim_max)),
-            kernel_args=lambda ker_mask: (params[ker_mask],)
+            kernel_args=lambda ker_mask: (params[ker_mask],),
         )
 
         self._buf_error.timestamp = -1
@@ -415,12 +421,12 @@ class MultiTaskCommand(CommandTerm):
         # 2) pick subtasks for each env’s sampled task
         safe_ids, selected_valid = self._select_subtasks()
 
-        selected_value = self._buf_selected_value[:self.num_envs, :max_num_subtask]
+        selected_value = self._buf_selected_value[: self.num_envs, :max_num_subtask]
         selected_value.copy_(self._buf_activated.gather(1, safe_ids))
         selected_value.masked_fill_(~selected_valid, 0.0)
 
-        is_tracking = self._buf_is_tracking[:self.num_envs, :max_num_subtask]
-        is_instant = self._buf_is_instant[:self.num_envs, :max_num_subtask]
+        is_tracking = self._buf_is_tracking[: self.num_envs, :max_num_subtask]
+        is_instant = self._buf_is_instant[: self.num_envs, :max_num_subtask]
         is_tracking.copy_(self.spec.is_tracking[safe_ids])
         is_instant.copy_(self.spec.is_instant[safe_ids])
         is_tracking &= selected_valid
@@ -434,7 +440,7 @@ class MultiTaskCommand(CommandTerm):
         instant_ok |= ~is_instant  # treat non-instant as "don't care"
         reach_success_bool = instant_ok.all(dim=1)  # [env]
         done = has_instant & reach_success_bool  # [env]
-        self._buf_done.data[:self.num_envs] = done
+        self._buf_done.data[: self.num_envs] = done
 
         # REWARD
         tracking_mean = self._compute_tracking_mean(selected_value, is_tracking)
@@ -446,7 +452,7 @@ class MultiTaskCommand(CommandTerm):
         ramp = 1.0 - episode_step / self.max_episode_length
         mixed_reward = (1.0 / self.max_episode_length) * tracking_mean + reach_success * (1.0 + ramp * tracking_mean)
 
-        reward = self._buf_reward.data[:self.num_envs]
+        reward = self._buf_reward.data[: self.num_envs]
         reward.fill_(float("nan"))
         reward[has_tracking & ~has_instant] = tracking_reward[has_tracking & ~has_instant]
         reward[~has_tracking & has_instant] = reach_success[~has_tracking & has_instant]

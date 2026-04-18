@@ -5,8 +5,9 @@
 
 from __future__ import annotations
 
-import torch
 from typing import TYPE_CHECKING
+
+import torch
 
 if TYPE_CHECKING:
     from .success_monitor_cfg import SuccessMonitorCfg
@@ -14,12 +15,13 @@ if TYPE_CHECKING:
 
 class SuccessMonitor:
     def __init__(self, cfg: SuccessMonitorCfg):
-
         # uniform success buff
         self.monitored_history_len = cfg.monitored_history_len
         self.device = cfg.device
         # Store success/failure as boolean to reduce memory (0/1)
-        self.success_buf = torch.zeros((cfg.num_monitored_data, self.monitored_history_len), dtype=torch.bool, device=self.device)
+        self.success_buf = torch.zeros(
+            (cfg.num_monitored_data, self.monitored_history_len), dtype=torch.bool, device=self.device
+        )
         self.success_rate = torch.zeros((cfg.num_monitored_data), device=self.device)
         self.success_pointer = torch.zeros((cfg.num_monitored_data), device=self.device, dtype=torch.int32)
         self.success_size = torch.zeros((cfg.num_monitored_data), device=self.device, dtype=torch.int32)
@@ -33,10 +35,12 @@ class SuccessMonitor:
         values_splits = torch.split(values, counts.tolist())
         clamped_values = torch.cat([grp[-n:] for grp, n in zip(values_splits, counts_clamped.tolist())])
         state_indices = torch.repeat_interleave(unique_indices, counts_clamped)
-        buf_indices = torch.cat([
-            torch.arange(start, start + n, dtype=torch.int64, device=self.device) % self.monitored_history_len
-            for start, n in zip(ptrs.tolist(), counts_clamped.tolist())
-        ])
+        buf_indices = torch.cat(
+            [
+                torch.arange(start, start + n, dtype=torch.int64, device=self.device) % self.monitored_history_len
+                for start, n in zip(ptrs.tolist(), counts_clamped.tolist())
+            ]
+        )
 
         self.success_buf.index_put_((state_indices, buf_indices), clamped_values)
 

@@ -8,13 +8,14 @@
 from __future__ import annotations
 
 import io
-import numpy as np
 import os
 import random
 import subprocess
+from typing import TYPE_CHECKING
+
+import numpy as np
 import torch
 import yaml
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from . import mesh_terrains_cfg
@@ -139,6 +140,7 @@ def stones_everywhere_terrain(
     difficulty: float, cfg: mesh_terrains_cfg.MeshStonesEverywhereTerrainCfg
 ) -> tuple[list, np.ndarray]:
     import trimesh
+
     from isaaclab.terrains.trimesh.utils import make_border
 
     # check to ensure square terrain
@@ -232,6 +234,7 @@ def balance_beams_terrain(
     difficulty: float, cfg: mesh_terrains_cfg.MeshBalanceBeamsTerrainCfg
 ) -> tuple[list, np.ndarray]:
     import trimesh
+
     from isaaclab.terrains.trimesh.utils import make_border
 
     # check to ensure square terrain
@@ -316,8 +319,9 @@ def stepping_beams_terrain(
     difficulty: float, cfg: mesh_terrains_cfg.MeshSteppingBeamsTerrainCfg
 ) -> tuple[list, np.ndarray]:
     import trimesh
-    from isaaclab.terrains.trimesh.utils import make_border
     from scipy.spatial.transform import Rotation as R
+
+    from isaaclab.terrains.trimesh.utils import make_border
 
     stone_width = cfg.w_stone[0] - difficulty * (cfg.w_stone[0] - cfg.w_stone[1])
     h_offset = cfg.h_offset[0] + difficulty * (cfg.h_offset[1] - cfg.h_offset[0])
@@ -376,9 +380,7 @@ def stepping_beams_terrain(
     return meshes_list, origin
 
 
-def box_terrain(
-    difficulty: float, cfg: mesh_terrains_cfg.MeshDiversityBoxTerrainCfg
-) -> tuple[list, np.ndarray]:
+def box_terrain(difficulty: float, cfg: mesh_terrains_cfg.MeshDiversityBoxTerrainCfg) -> tuple[list, np.ndarray]:
     import trimesh
 
     #
@@ -438,9 +440,7 @@ def box_terrain(
     return meshes_list, origin
 
 
-def passage_terrain(
-    difficulty: float, cfg: mesh_terrains_cfg.MeshPassageTerrainCfg
-) -> tuple[list, np.ndarray]:
+def passage_terrain(difficulty: float, cfg: mesh_terrains_cfg.MeshPassageTerrainCfg) -> tuple[list, np.ndarray]:
     import trimesh
 
     if isinstance(cfg.passage_width, tuple):
@@ -496,16 +496,15 @@ def passage_terrain(
     return meshes_list, origin
 
 
-def structured_terrain(
-    difficulty: float, cfg: mesh_terrains_cfg.MeshStructuredTerrainCfg
-) -> tuple[list, np.ndarray]:
+def structured_terrain(difficulty: float, cfg: mesh_terrains_cfg.MeshStructuredTerrainCfg) -> tuple[list, np.ndarray]:
     import trimesh
+
     from isaaclab.terrains.trimesh.mesh_terrains import inverted_pyramid_stairs_terrain, pyramid_stairs_terrain
     from isaaclab.terrains.trimesh.mesh_terrains_cfg import (
         MeshInvertedPyramidStairsTerrainCfg,
         MeshPyramidStairsTerrainCfg,
     )
-    from isaaclab.terrains.trimesh.utils import make_border, make_plane
+    from isaaclab.terrains.trimesh.utils import make_plane
 
     mesh_list = []
     terrain = cfg.terrain_type
@@ -637,9 +636,7 @@ def structured_terrain(
     return mesh_list, origin
 
 
-def beam_terrain(
-    difficulty: float, cfg: mesh_terrains_cfg.MeshBeamTerrainCfg
-) -> tuple[list, np.ndarray]:
+def beam_terrain(difficulty: float, cfg: mesh_terrains_cfg.MeshBeamTerrainCfg) -> tuple[list, np.ndarray]:
     """Generate a terrain with beams connecting a central platform to the outer border.
 
     The terrain consists of a cylindrical platform at the center connected to the border region
@@ -655,6 +652,7 @@ def beam_terrain(
     """
     import scipy.spatial.transform as tf
     import trimesh
+
     from isaaclab.terrains.trimesh.utils import make_border, make_plane
 
     # resolve the terrain configuration
@@ -688,7 +686,7 @@ def beam_terrain(
         for i in range(num_bars):
             attempts = 0
 
-            # sample and validate non-overlapping yaw angle 
+            # sample and validate non-overlapping yaw angle
             while attempts < max_attempts:
                 candidate_yaw = random.uniform(0, 2 * np.pi)
 
@@ -712,10 +710,7 @@ def beam_terrain(
                 yaw_angles.append(i * (2 * np.pi) / num_bars)
         yaw_angles.sort()
     else:
-        raise ValueError(
-            f"Invalid beam_distribution '{cfg.beam_distribution}'. "
-            f"Expected 'uniform' or 'random'."
-        )
+        raise ValueError(f"Invalid beam_distribution '{cfg.beam_distribution}'. Expected 'uniform' or 'random'.")
 
     # Generate bars to connect the platform to the terrain
     transform = np.eye(4)
@@ -730,7 +725,7 @@ def beam_terrain(
             bar_length /= np.math.cos(quad_yaw)
         else:
             bar_length /= np.math.sin(quad_yaw)
-        
+
         transform[0:3, 0:3] = tf.Rotation.from_euler("z", yaw).as_matrix()
         bar_center_offset_w = transform[0:3, 0:3] @ np.array([bar_length / 2, 0, 0])
         transform[:3, -1] = platform_center_np + bar_center_offset_w

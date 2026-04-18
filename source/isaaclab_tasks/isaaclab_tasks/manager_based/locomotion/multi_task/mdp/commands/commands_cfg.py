@@ -1,9 +1,17 @@
-import torch
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 from dataclasses import MISSING
+
+import torch
+
 from isaaclab.managers import CommandTermCfg, SceneEntityCfg
 from isaaclab.utils import configclass
 
 from .multi_task_command import MultiTaskCommand
+
 
 @configclass
 class MinMaxSampler:

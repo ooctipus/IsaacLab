@@ -54,9 +54,7 @@ def _load_terrain_module():
 
     builtins._isaaclab_tasks_registered = True  # type: ignore[attr-defined]
 
-    pkg = importlib.import_module(
-        "isaaclab_tasks.manager_based.locomotion.position.terrains"
-    )
+    pkg = importlib.import_module("isaaclab_tasks.manager_based.locomotion.position.terrains")
     # lazy_export populates sys.modules with the real submodule
     return sys.modules.get(
         "isaaclab_tasks.manager_based.locomotion.position.terrains.terrain_cfg",
@@ -95,12 +93,11 @@ def _reconstruct_patch_cfg(mangled_cfg):
     return cfg_class(**params)
 
 
-def _sample_patches(
-    mesh: trimesh.Trimesh, origin: np.ndarray, flat_patch_sampling: dict
-) -> dict[str, np.ndarray]:
+def _sample_patches(mesh: trimesh.Trimesh, origin: np.ndarray, flat_patch_sampling: dict) -> dict[str, np.ndarray]:
     """Sample flat patches for each key in *flat_patch_sampling*."""
     import torch
     import warp as wp
+
     from isaaclab.utils.warp import convert_to_warp_mesh
 
     wp.init()
@@ -162,9 +159,7 @@ def _add_patch_markers(
 
     origin_marker = trimesh.creation.uv_sphere(radius=0.15, count=[8, 8])
     origin_marker.apply_translation(origin)
-    origin_marker.visual.vertex_colors = np.tile(
-        [255, 200, 0, 255], (len(origin_marker.vertices), 1)
-    )
+    origin_marker.visual.vertex_colors = np.tile([255, 200, 0, 255], (len(origin_marker.vertices), 1))
     scene.add_geometry(origin_marker, geom_name=f"origin{suffix}")
 
 
@@ -243,9 +238,7 @@ def _export_html(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Visualize terrain mesh + flat patches as an interactive HTML file."
-    )
+    parser = argparse.ArgumentParser(description="Visualize terrain mesh + flat patches as an interactive HTML file.")
     parser.add_argument(
         "--terrain",
         type=str,
@@ -253,7 +246,10 @@ def main():
         help="Name of a terrain preset (e.g. RADIATING_BEAM, GAP, PIT). Use --list to see all.",
     )
     parser.add_argument(
-        "--difficulty", type=float, nargs="+", default=[0.5],
+        "--difficulty",
+        type=float,
+        nargs="+",
+        default=[0.5],
         help="One or more difficulty values in [0, 1].  Multiple values are placed side-by-side.",
     )
     parser.add_argument("--size", type=float, nargs=2, default=None, help="Override terrain (x, y) size in meters.")
@@ -299,7 +295,9 @@ def main():
     for idx, diff in enumerate(difficulties):
         x_offset = (idx - (len(difficulties) - 1) / 2.0) * spacing
         mesh, origin = _generate_mesh(cfg, diff)
-        print(f"\n[d={diff:.2f}] {len(mesh.vertices):,} verts, {len(mesh.faces):,} faces  origin=({origin[0]:.2f}, {origin[1]:.2f}, {origin[2]:.2f})")
+        print(
+            f"\n[d={diff:.2f}] {len(mesh.vertices):,} verts, {len(mesh.faces):,} faces  origin=({origin[0]:.2f}, {origin[1]:.2f}, {origin[2]:.2f})"
+        )
 
         patches_dict: dict[str, np.ndarray] = {}
         if not args.no_patches and cfg.flat_patch_sampling:
@@ -327,9 +325,7 @@ def main():
 
     diff_str = "_".join(f"{d:.1f}" for d in difficulties)
     out_path = args.output or f"/tmp/terrain_{args.terrain.lower()}_{diff_str}.html"
-    _export_html(
-        scene, out_path, title=args.terrain, difficulty=difficulties, patches_dict=merged_patches
-    )
+    _export_html(scene, out_path, title=args.terrain, difficulty=difficulties, patches_dict=merged_patches)
     out_path = str(Path(out_path).resolve())
     print(f"\nWrote -> {out_path}")
 
