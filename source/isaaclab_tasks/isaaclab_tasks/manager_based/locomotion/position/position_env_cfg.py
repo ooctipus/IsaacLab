@@ -17,7 +17,7 @@ from isaaclab.terrains import TerrainGeneratorCfg, TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 
-from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils import PresetCfg, preset
 
 from . import mdp, mdp_presets
 
@@ -176,7 +176,7 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
     )
 
     def __post_init__(self):
-        self.decimation = 10
+        self.decimation = preset(default=10, advanced_skills=4)  # type: ignore
         self.episode_length_s = 6.0
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
