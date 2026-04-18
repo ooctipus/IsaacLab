@@ -24,6 +24,7 @@ Example usage::
     presets=newton env.backend.dt=0.001 env.decimation=10
 """
 
+import ast
 import functools
 import sys
 from collections.abc import Callable, Mapping
@@ -558,10 +559,22 @@ def _setattr(obj, path: str, val):
 
 
 def _parse_val(s: str):
-    """Parse string to Python value (bool, None, int, float, or str)."""
+    """Parse string to Python value (bool, None, int, float, list, tuple, dict, or str).
+
+    Collection literals are parsed with :func:`ast.literal_eval` so CLI overrides like
+    ``agent.actor.cnn_cfg.output_channels=[32,64]`` land as actual Python lists rather than
+    being silently passed through as strings.
+    """
     if s.lower() in _LITERAL_MAP:
         return _LITERAL_MAP[s.lower()]
     try:
         return float(s) if "." in s else int(s)
     except ValueError:
-        return s[1:-1] if len(s) >= 2 and s[0] in "\"'" and s[-1] in "\"'" else s
+        pass
+    stripped = s.strip()
+    if stripped and stripped[0] in "[({":
+        try:
+            return ast.literal_eval(stripped)
+        except (ValueError, SyntaxError):
+            pass
+    return s[1:-1] if len(s) >= 2 and s[0] in "\"'" and s[-1] in "\"'" else s
