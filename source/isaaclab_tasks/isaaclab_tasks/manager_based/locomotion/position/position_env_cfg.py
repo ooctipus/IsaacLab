@@ -3,33 +3,23 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from dataclasses import MISSING
-
 from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
-from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
-from isaaclab.managers import ObservationGroupCfg as ObsGroup
-from isaaclab.managers import ObservationTermCfg as ObsTerm
-from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
 from isaaclab.sim import SimulationCfg
 from isaaclab.terrains import TerrainGeneratorCfg, TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
-from isaaclab.utils.noise import UniformNoiseCfg as Unoise
 
 from isaaclab_tasks.utils import PresetCfg
 
-from . import mdp
-from .commands_preset import CommandsPresetCfg
-from .terrain_preset import SubTerrainPresetCfg
+from . import mdp, mdp_presets
 
 
 @configclass
@@ -50,7 +40,7 @@ class SceneCfg(InteractiveSceneCfg):
             slope_threshold=0.75,
             use_cache=False,
             curriculum=True,
-            sub_terrains=SubTerrainPresetCfg(),  # type: ignore
+            sub_terrains=mdp_presets.SubTerrainPresetCfg(),  # type: ignore
         ),
         max_init_terrain_level=5,
         collision_group=-1,
@@ -78,11 +68,11 @@ class SceneCfg(InteractiveSceneCfg):
     )
 
     # robots
-    robot: ArticulationCfg = MISSING  # type: ignore
+    robot: ArticulationCfg = mdp_presets.RobotArticulationCfg()  # type: ignore
 
     # sensors
     height_scanner = RayCasterCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/base",
+        prim_path=mdp_presets.HeightScannerPrimPathCfg(),  # type: ignore
         offset=RayCasterCfg.OffsetCfg(pos=(0.5, 0.0, 20.0)),
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=(2.5, 1.5)),
@@ -106,111 +96,6 @@ class ActionsCfg:
 
 
 @configclass
-class CommandsCfg:
-    "Command specifications for the MDP."
-
-    goal_point = mdp.RelativeStateCommandCfg(
-        asset_name="robot",
-        resampling_time_range=(10.0, 10.0),
-        pos_std=0.5,
-        rot_std=0.5,
-        lin_vel_std=0.3,
-        ang_vel_std=0.3,
-        debug_vis=True,
-        commands=CommandsPresetCfg(),  # type: ignore
-    )
-
-
-@configclass
-class ObservationsCfg:
-    """Observations for the MDP (flat variant: ``height_scan`` lives in ``policy``)."""
-
-    @configclass
-    class PolicyCfg(ObsGroup):
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
-        proj_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))
-        joint_pos = ObsTerm(func=mdp.joint_pos)
-        joint_vel = ObsTerm(func=mdp.joint_vel)
-        last_actions = ObsTerm(func=mdp.last_action)
-        height_scan = ObsTerm(
-            func=mdp.height_scan,
-            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
-            noise=Unoise(n_min=-0.05, n_max=0.05),
-            clip=(-1.0, 1.0),
-        )
-
-        def __post_init__(self):
-            self.enable_corruption = True
-            self.concatenate_terms = True
-
-    @configclass
-    class TaskCfg(ObsGroup):
-        goal_point_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "goal_point"})
-
-        def __post_init__(self):
-            self.enable_corruption = True
-            self.concatenate_terms = True
-
-    policy: PolicyCfg = PolicyCfg()
-    task: TaskCfg = TaskCfg()
-
-
-@configclass
-class ObservationsEncoderCfg:
-    """Observations for the MDP (encoder variant: ``height_scan`` in its own 1D group).
-
-    Separates the flat ``height_scan`` into a dedicated group so it can be routed through a
-    per-group MLP encoder (e.g. :class:`rsl_rl.models.MLPEncoderModel`) before being fused
-    with the proprioceptive ``policy`` group at the main MLP head.
-    """
-
-    @configclass
-    class PolicyCfg(ObsGroup):
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
-        proj_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))
-        joint_pos = ObsTerm(func=mdp.joint_pos)
-        joint_vel = ObsTerm(func=mdp.joint_vel)
-        last_actions = ObsTerm(func=mdp.last_action)
-
-    @configclass
-    class TaskCfg(ObsGroup):
-        goal_point_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "goal_point"})
-
-    @configclass
-    class HeightScanCfg(ObsGroup):
-        height_scan = ObsTerm(
-            func=mdp.height_scan,
-            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
-            noise=Unoise(n_min=-0.05, n_max=0.05),
-            clip=(-1.0, 1.0),
-        )
-
-    policy: PolicyCfg = PolicyCfg()
-    task: TaskCfg = TaskCfg()
-    height_scan: HeightScanCfg = HeightScanCfg()
-
-
-@configclass
-class ObservationsPresetCfg(PresetCfg):
-    """Selectable observation layouts for the position task.
-
-    - ``flat`` (default): all proprioceptive observations and ``height_scan`` live in the
-      ``policy`` group as a single concatenated vector.
-    - ``encoder``: ``height_scan`` is moved to its own ``height_scan`` group, so an
-      encoder model can route it through a dedicated sub-network before the main MLP head.
-    """
-
-    flat: ObservationsCfg = ObservationsCfg()
-    encoder: ObservationsEncoderCfg = ObservationsEncoderCfg()
-    # SimBa variants consume the same observation layout as the plain encoder.
-    simba: ObservationsEncoderCfg = encoder
-    simba_big: ObservationsEncoderCfg = encoder
-    default: ObservationsEncoderCfg = encoder
-
-
-@configclass
 class EventsCfg:
     # startup
     physical_material = EventTerm(
@@ -229,7 +114,7 @@ class EventsCfg:
         func=mdp.randomize_rigid_body_mass,
         mode="startup",
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="base"),
+            "asset_cfg": SceneEntityCfg("robot", body_names=mdp_presets.BaseBodyNameCfg()),  # type: ignore
             "mass_distribution_params": (-5.0, 5.0),
             "operation": "add",
         },
@@ -262,61 +147,6 @@ class EventsCfg:
 
 
 @configclass
-class RewardsCfg:
-    # task rewards
-    success = RewTerm(func=mdp.command_success, weight=50.0)
-
-    mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0001)
-
-    joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.005)
-
-    foot_touchdown = RewTerm(
-        func=mdp.foot_touchdown_impact,
-        weight=-0.025,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*FOOT.*"),
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*FOOT.*"),
-            "history_length": 3,
-        },
-    )
-
-    undesired_contact = RewTerm(
-        func=mdp.undesired_contacts,
-        weight=-0.05,
-        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*(?:(FOOT))).*$"), "threshold": 1.0},
-    )
-
-    fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-25.0)
-
-    explore = RewTerm(func=mdp.exploration_reward, weight=0.3, params={"forward_only": True})
-
-
-@configclass
-class TerminationsCfg:
-    time_out = DoneTerm(func=mdp.time_out, time_out=True)
-
-    drop = DoneTerm(func=mdp.root_height_below_minimum, params={"minimum_height": -20})
-
-    abnormal_robot = DoneTerm(func=mdp.abnormal_robot_state)
-
-    base_contact = DoneTerm(
-        func=mdp.illegal_contact,
-        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*foot).*$"), "threshold": 1.0},
-    )
-
-    success = DoneTerm(func=mdp.success_terminate, time_out=True)
-
-
-@configclass
-class CurriculumCfg:
-    terrain_levels = CurrTerm(
-        func=mdp.terrain_spawn_goal_pair_success_rate_levels,
-        params={"kappa": 5.0, "temperature": 2.0, "target": 0.66, "success_term": "success"},
-    )
-    remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
-
-
-@configclass
 class PositionPhysicsCfg(PresetCfg):
     default = PhysxCfg(
         gpu_total_aggregate_pairs_capacity=2**25,
@@ -331,15 +161,18 @@ class PositionPhysicsCfg(PresetCfg):
 class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
     scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=10)
     sim: SimulationCfg = SimulationCfg(physics=PositionPhysicsCfg())  # type: ignore
-    observations: ObservationsPresetCfg = ObservationsPresetCfg()  # type: ignore
+    observations: mdp_presets.ObservationsCfg = mdp_presets.ObservationsCfg()  # type: ignore
     actions: ActionsCfg = ActionsCfg()
-    commands: CommandsCfg = CommandsCfg()
-    rewards: RewardsCfg = RewardsCfg()
-    terminations: TerminationsCfg = TerminationsCfg()
+    commands: mdp_presets.CommandsCfg = mdp_presets.CommandsCfg()
+    rewards: mdp_presets.RewardsCfg = mdp_presets.RewardsCfg()
+    terminations: mdp_presets.TerminationsCfg = mdp_presets.TerminationsCfg()
     events: EventsCfg = EventsCfg()
-    curriculum: CurriculumCfg = CurriculumCfg()
+    curriculum: mdp_presets.CurriculumCfg = mdp_presets.CurriculumCfg()
     viewer: ViewerCfg = ViewerCfg(
-        eye=(4.0 / 4, 7.0 / 4, 7.0 / 4), origin_type="asset_body", asset_name="robot", body_name="base"
+        eye=(4.0 / 4, 7.0 / 4, 7.0 / 4),
+        origin_type="asset_body",
+        asset_name="robot",
+        body_name=mdp_presets.BaseBodyNameCfg(),  # type: ignore
     )
 
     def __post_init__(self):
