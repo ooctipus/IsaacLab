@@ -10,6 +10,8 @@ from isaaclab.utils import configclass
 from isaaclab.utils.math import quat_apply_inverse
 
 from isaaclab_rl.rsl_rl import (
+    RslRlCrlAlgorithmCfg,
+    RslRlHerCfg,
     RslRlMLPEncoderModelCfg,
     RslRlMLPModelCfg,
     RslRlOnPolicyRunnerCfg,
@@ -255,4 +257,43 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         lam=0.95,
         desired_kl=0.01,
         max_grad_norm=1.0,
+    )
+
+
+@configclass
+class PositionLocomotionCRLRunnerCfg(RslRlOnPolicyRunnerCfg):
+    """Runner configuration for CRL on the position task.
+
+    Uses :class:`RslRlOnPolicyRunnerCfg` with ``algorithm.class_name = "CRL"``
+    so ``OnPolicyRunner`` dispatches to :class:`~rsl_rl.algorithms.CRL` via
+    ``resolve_callable``. ``num_steps_per_env`` maps to CRL's ``unroll_length``.
+    """
+
+    num_steps_per_env = 62
+    max_iterations = 5000
+    save_interval = 500
+    resume = False
+    experiment_name = "position_crl"
+    obs_groups = {
+        "actor": ["achieved_goal", "height_scan", "policy", "task"],
+        "critic": ["achieved_goal", "height_scan", "policy", "task"],
+    }
+    algorithm: RslRlCrlAlgorithmCfg = RslRlCrlAlgorithmCfg(
+        actor_lr=2.4e-3,
+        critic_lr=2.4e-3,
+        alpha_lr=2.4e-3,
+        gamma=0.99,
+        batch_size=2048,
+        max_replay_size=10000,
+        min_replay_size=1000,
+        num_sgd_steps=800,
+        logsumexp_penalty_coeff=0.1,
+        entropy_param=0.5,
+        hidden_dim=256,
+        depth=64,
+        num_layers_per_block=4,
+        expand=1,
+        activation="swish",
+        repr_dim=64,
+        her_cfg=RslRlHerCfg(gamma=0.99),
     )
