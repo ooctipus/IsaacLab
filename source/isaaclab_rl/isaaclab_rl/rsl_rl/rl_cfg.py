@@ -443,6 +443,132 @@ class RslRlOnPolicyRunnerCfg(RslRlBaseRunnerCfg):
     """
 
 
+###########################
+# CRL (off-policy) config #
+###########################
+
+
+@configclass
+class RslRlHerCfg:
+    """Configuration for Hindsight Experience Replay.
+
+    ``goal_start_idx``, ``goal_end_idx``, and ``obs_dim`` are resolved at runtime
+    from the environment's observation groups via :func:`resolve_her_config`.
+    """
+
+    gamma: float = 0.99
+    """Geometric discount for future-timestep sampling in HER."""
+
+    goal_group: str = "task"
+    """Observation group containing the commanded goal."""
+
+    achieved_goal_group: str = "achieved_goal"
+    """Observation group containing the achieved goal (state-side, for HER slicing)."""
+
+    achieved_goal_slice_start: int | None = None
+    """Start index within the achieved-goal group. ``None`` means 0 (full group)."""
+
+    achieved_goal_slice_end: int | None = None
+    """End index (exclusive) within the achieved-goal group. ``None`` means full group."""
+
+
+@configclass
+class RslRlCrlAlgorithmCfg:
+    """Configuration for the CRL algorithm."""
+
+    class_name: str = "CRL"
+    """The algorithm class name. Defaults to CRL."""
+
+    actor_lr: float = 3e-4
+    """Learning rate for the actor optimizer."""
+
+    critic_lr: float = 3e-4
+    """Learning rate for the critic optimizer."""
+
+    alpha_lr: float = 3e-4
+    """Learning rate for the entropy coefficient optimizer."""
+
+    gamma: float = 0.99
+    """Discount factor for HER future sampling."""
+
+    batch_size: int = 256
+    """Minibatch size for each SGD step."""
+
+    max_replay_size: int = 10000
+    """Maximum capacity of the replay buffer [timesteps per env]."""
+
+    min_replay_size: int = 1000
+    """Minimum buffer fill before training starts [timesteps per env]."""
+
+    num_sgd_steps: int = 800
+    """Number of SGD steps per training update."""
+
+    logsumexp_penalty_coeff: float = 0.1
+    """Regularization coefficient for the logsumexp term in the InfoNCE loss."""
+
+    entropy_param: float = 0.5
+    """Entropy coefficient multiplied by action_dim to derive ``target_entropy``."""
+
+    fixed_alpha: float | None = None
+    """If set, use a fixed entropy weight instead of auto-tuning alpha.
+    Useful for debugging alpha collapse. Set to ``None`` for auto-tuning (default)."""
+
+    her_cfg: RslRlHerCfg | None = RslRlHerCfg()
+    """HER configuration. Default ON. Set to ``None`` to disable (for ablation)."""
+
+    hidden_dim: int = 256
+    """Width of the residual pathway in actor and critic networks [neurons]."""
+
+    depth: int = 4
+    """Total depth for both actor and critic (if ``actor_depth`` / ``critic_depth``
+    are not set). With ``num_layers_per_block=4``, this gives ``depth // 4`` blocks."""
+
+    actor_depth: int | None = None
+    """Actor depth override. If ``None``, uses ``depth``."""
+
+    critic_depth: int | None = None
+    """Critic depth override. If ``None``, uses ``depth``.
+    The scaling-crl paper shows deeper critics benefit more than deeper actors."""
+
+    num_layers_per_block: int = 4
+    """Dense layers per residual block. 4 = scaling-crl style, 2 = SimBa style."""
+
+    expand: int = 1
+    """Expansion ratio inside residual blocks. 1 = scaling-crl, 4 = SimBa."""
+
+    activation: str = "swish"
+    """Activation function name for actor/critic residual blocks."""
+
+    repr_dim: int = 64
+    """Dimensionality of the critic's bilinear representation space."""
+
+    sample_window_length: int | None = None
+    """Length of trajectory windows sampled from the replay buffer for HER
+    relabeling. Does NOT need to match the environment's episode length.
+    If ``None``, derived from ``env.max_episode_length`` at construction time.
+    Shorter windows use less memory (HER allocates ``[N, T, T]``) while
+    capturing most of the signal (with ``gamma=0.99``, 99%+ of HER signal
+    is within ~500 steps)."""
+
+    episode_length: int | None = None
+    """Deprecated alias for ``sample_window_length``. Kept for backward
+    compatibility with existing configs."""
+
+    use_cuda_graph: bool = True
+    """Enable CUDA graph capture for the SGD loop. Set ``False`` to force eager
+    execution (useful for debugging)."""
+
+    normalize_obs: bool = False
+    """Apply running observation normalization to the state portion of the
+    observation before passing to actor/critic. Goal portion is NOT normalized."""
+
+    rnd_cfg: None = None
+    """Unused by CRL. Present so ``OnPolicyRunner``'s Logger does not KeyError."""
+
+    symmetry_cfg: None = None
+    """Unused by CRL. Present so ``OnPolicyRunner``'s Logger does not KeyError."""
+
+
 #############################
 # Deprecated configurations #
 #############################
