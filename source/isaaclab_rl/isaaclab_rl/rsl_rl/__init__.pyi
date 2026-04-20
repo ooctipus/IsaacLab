@@ -5,6 +5,8 @@
 
 __all__ = [
     "RslRlCrlAlgorithmCfg",
+    "RslRlOffPolicyRunnerCfg",
+    "RslRlResidualMLPCfg",
     "RslRlDistillationAlgorithmCfg",
     "RslRlDistillationRunnerCfg",
     "RslRlDistillationStudentTeacherCfg",
@@ -39,6 +41,8 @@ from .rl_cfg import (
     RslRlBaseRunnerCfg,
     RslRlCNNModelCfg,
     RslRlCrlAlgorithmCfg,
+    RslRlOffPolicyRunnerCfg,
+    RslRlResidualMLPCfg,
     RslRlHerCfg,
     RslRlMLPEncoderModelCfg,
     RslRlMLPModelCfg,

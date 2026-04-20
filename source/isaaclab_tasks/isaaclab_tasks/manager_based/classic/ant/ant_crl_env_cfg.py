@@ -150,17 +150,24 @@ def _qvel_no_target(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEntit
 class CRLObservationsCfg:
     """CRL observations with 3D goal (XY position + Z height).
 
-    - ``policy(29)``: qpos(15) + qvel(14). Root XYZ is in qpos[0:3].
-    - ``task(3)``: commanded goal (goal_x, goal_y, target_z).
-
-    HER uses ``achieved_goal_group="policy"`` with ``slice [0:3]`` to extract
-    root XYZ as the achieved goal. This means the critic learns to match
-    both XY position AND Z height — the actor must stay upright to match.
+    - ``current_state(3)``: root XYZ position [m]. Used by HER for relabeling.
+    - ``policy(29)``: qpos(15) + qvel(14).
+    - ``target_state(3)``: commanded goal (goal_x, goal_y, target_z).
     """
 
     @configclass
+    class CurrentStateCfg(ObsGroup):
+        """Root XYZ position [m], shape ``[num_envs, 3]``."""
+
+        root_xyz = ObsTerm(func=_root_xyz_env_local)
+
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = True
+
+    @configclass
     class PolicyCfg(ObsGroup):
-        """qpos(15) + qvel(14) = 29 dims. Root XYZ is at [0:3]."""
+        """qpos(15) + qvel(14) = 29 dims."""
 
         qpos = ObsTerm(func=_qpos_no_target)
         qvel = ObsTerm(func=_qvel_no_target)
@@ -170,15 +177,16 @@ class CRLObservationsCfg:
             self.concatenate_terms = True
 
     @configclass
-    class TaskCfg(ObsGroup):
+    class TargetStateCfg(ObsGroup):
         goal_xyz = ObsTerm(func=mdp.generated_commands, params={"command_name": "goal_xyz"})
 
         def __post_init__(self):
             self.enable_corruption = False
             self.concatenate_terms = True
 
+    current_state: CurrentStateCfg = CurrentStateCfg()
     policy: PolicyCfg = PolicyCfg()
-    task: TaskCfg = TaskCfg()
+    target_state: TargetStateCfg = TargetStateCfg()
 
 
 @configclass

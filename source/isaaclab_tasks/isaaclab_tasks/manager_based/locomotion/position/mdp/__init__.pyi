@@ -61,6 +61,8 @@ from .observations import (
     time_left,
     target_pos_env,
     achieved_pos_env,
+    command_current_state,
+    command_target_state,
 )
 from .rewards import (
     task_reward,

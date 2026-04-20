@@ -51,6 +51,62 @@ class PositionObservationsCfg:
 
 
 @configclass
+class CRLObservationsCfg:
+    """CRL observations: current_state + policy + target_state.
+
+    ``current_state`` and ``target_state`` are 12D vectors
+    (pos, rot, lin_vel, ang_vel) from the command term's ``cmd_buf``.
+    Position is env-local (world minus env origin); orientation and
+    velocities are world-frame.  HER relabels ``target_state`` with
+    achieved ``current_state`` from future timesteps.
+    """
+
+    @configclass
+    class CurrentStateCfg(ObsGroup):
+        """12D current world state [m, rad, m/s, rad/s]."""
+
+        state = ObsTerm(func=mdp.command_current_state, params={"command_name": "goal_point"})
+
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = True
+
+    @configclass
+    class PolicyCfg(ObsGroup):
+        """Proprioceptive observations (same as PPO preset)."""
+
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
+        base_ang_vel = ObsTerm(func=mdp.base_ang_vel)
+        proj_gravity = ObsTerm(func=mdp.projected_gravity)
+        joint_pos = ObsTerm(func=mdp.joint_pos)
+        joint_vel = ObsTerm(func=mdp.joint_vel)
+        last_actions = ObsTerm(func=mdp.last_action)
+
+    @configclass
+    class TargetStateCfg(ObsGroup):
+        """12D target world state [m, rad, m/s, rad/s]."""
+
+        state = ObsTerm(func=mdp.command_target_state, params={"command_name": "goal_point"})
+
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = True
+
+    @configclass
+    class HeightScanCfg(ObsGroup):
+        height_scan = ObsTerm(
+            func=mdp.height_scan,
+            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
+            clip=(-1.0, 1.0),
+        )
+
+    current_state: CurrentStateCfg = CurrentStateCfg()
+    policy: PolicyCfg = PolicyCfg()
+    target_state: TargetStateCfg = TargetStateCfg()
+    height_scan: HeightScanCfg = HeightScanCfg()
+
+
+@configclass
 class AdvancedSkillsObservationsCfg:
     """Observations for the advanced skills MDP."""
     pass
@@ -60,5 +116,6 @@ class AdvancedSkillsObservationsCfg:
 @configclass
 class ObservationsCfg(PresetCfg):
     position = PositionObservationsCfg()
+    crl = CRLObservationsCfg()
     advanced_skills = AdvancedSkillsObservationsCfg()
     default = position

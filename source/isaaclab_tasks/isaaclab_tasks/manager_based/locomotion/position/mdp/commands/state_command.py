@@ -295,6 +295,7 @@ class RelativeStateCommand(CommandTerm):
         self.metrics["error_rot"] = self._err[:, 1]
         self.metrics["error_linvel"] = self._err[:, 2]
         self.metrics["error_angvel"] = self._err[:, 3]
+        self.metrics["instant_success"] = torch.all(self._err < self._reward_scales, dim=1).float()
 
         if self.success_rates is not None:
             offsets = self.spec.descretized_cmd_offsets

@@ -14,8 +14,10 @@ from isaaclab_rl.rsl_rl import (
     RslRlHerCfg,
     RslRlMLPEncoderModelCfg,
     RslRlMLPModelCfg,
+    RslRlOffPolicyRunnerCfg,
     RslRlOnPolicyRunnerCfg,
     RslRlPpoAlgorithmCfg,
+    RslRlResidualMLPCfg,
     RslRlResidualMLPEncoderModelCfg,
     RslRlRNNModelCfg,
 )
@@ -261,13 +263,8 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
 
 
 @configclass
-class PositionLocomotionCRLRunnerCfg(RslRlOnPolicyRunnerCfg):
-    """Runner configuration for CRL on the position task.
-
-    Uses :class:`RslRlOnPolicyRunnerCfg` with ``algorithm.class_name = "CRL"``
-    so ``OnPolicyRunner`` dispatches to :class:`~rsl_rl.algorithms.CRL` via
-    ``resolve_callable``. ``num_steps_per_env`` maps to CRL's ``unroll_length``.
-    """
+class PositionLocomotionCRLRunnerCfg(RslRlOffPolicyRunnerCfg):
+    """OffPolicyRunner configuration for CRL on the position locomotion task."""
 
     num_steps_per_env = 62
     max_iterations = 5000
@@ -275,25 +272,41 @@ class PositionLocomotionCRLRunnerCfg(RslRlOnPolicyRunnerCfg):
     resume = False
     experiment_name = "position_crl"
     obs_groups = {
-        "actor": ["achieved_goal", "height_scan", "policy", "task"],
-        "critic": ["achieved_goal", "height_scan", "policy", "task"],
+        "actor": ["current_state", "height_scan", "policy", "target_state"],
+        "critic": ["current_state", "height_scan", "policy", "target_state"],
     }
-    algorithm: RslRlCrlAlgorithmCfg = RslRlCrlAlgorithmCfg(
-        actor_lr=2.4e-3,
-        critic_lr=2.4e-3,
-        alpha_lr=2.4e-3,
-        gamma=0.99,
-        batch_size=2048,
-        max_replay_size=10000,
-        min_replay_size=1000,
-        num_sgd_steps=800,
-        logsumexp_penalty_coeff=0.1,
-        entropy_param=0.5,
+    actor: RslRlResidualMLPCfg = RslRlResidualMLPCfg(
         hidden_dim=256,
-        depth=64,
+        depth=8,
+        num_layers_per_block=4,
+        expand=1,
+        activation="swish",
+    )
+    critic: RslRlResidualMLPCfg = RslRlResidualMLPCfg(
+        hidden_dim=256,
+        depth=8,
         num_layers_per_block=4,
         expand=1,
         activation="swish",
         repr_dim=64,
+    )
+    algorithm: RslRlCrlAlgorithmCfg = RslRlCrlAlgorithmCfg(
+        actor_lr=8e-4,
+        critic_lr=8e-4,
+        alpha_lr=3e-4,
+        max_replay_size=1500,
+        min_replay_size=500,
+        replay_ratio=0.04,
+        num_sgd_steps=400,
+        logsumexp_penalty_coeff=0.1,
+        entropy_param=0.5,
         her_cfg=RslRlHerCfg(gamma=0.99),
     )
+
+
+@configclass
+class PositionRunnerCfg(PresetCfg):
+    """Runner presets: ``presets=crl`` selects CRL, default is PPO."""
+    position = PositionLocomotionPPORunnerCfg()
+    crl = PositionLocomotionCRLRunnerCfg()
+    default = position

@@ -20,6 +20,15 @@ class PositionCurriculumCfg:
 
 
 @configclass
+class CRLCurriculumCfg:
+    """Terrain curriculum without reward-dependent terms."""
+    terrain_levels = CurrTerm(
+        func=mdp.terrain_spawn_goal_pair_success_rate_levels,
+        params={"kappa": 5.0, "temperature": 2.0, "target": 0.66, "success_term": "success"},
+    )
+
+
+@configclass
 class AdvancedSkillsCurriculumCfg:
     pass
     # TODO(Mateo)
@@ -27,5 +36,6 @@ class AdvancedSkillsCurriculumCfg:
 @configclass
 class CurriculumCfg(PresetCfg):
     position = PositionCurriculumCfg()
+    crl = CRLCurriculumCfg()
     advanced_skills = AdvancedSkillsCurriculumCfg()
     default = position

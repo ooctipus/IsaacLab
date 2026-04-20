@@ -23,16 +23,6 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": "isaaclab_tasks.manager_based.locomotion.position.position_env_cfg:LocomotionPositionCommandEnvCfg",
-        "rsl_rl_cfg_entry_point": "isaaclab_tasks.manager_based.locomotion.position.config.rsl_rl_cfg:PositionLocomotionPPORunnerCfg",
-    },
-)
-
-gym.register(
-    id="Isaac-Position-CRL-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": "isaaclab_tasks.manager_based.locomotion.position.position_crl_env_cfg:LocomotionPositionCRLEnvCfg",
-        "rsl_rl_cfg_entry_point": "isaaclab_tasks.manager_based.locomotion.position.config.rsl_rl_cfg:PositionLocomotionCRLRunnerCfg",
+        "rsl_rl_cfg_entry_point": "isaaclab_tasks.manager_based.locomotion.position.config.rsl_rl_cfg:PositionRunnerCfg",
     },
 )

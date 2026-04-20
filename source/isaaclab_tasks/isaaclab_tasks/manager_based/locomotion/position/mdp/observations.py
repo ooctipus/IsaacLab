@@ -65,3 +65,51 @@ def achieved_pos_env(env: ManagerBasedRLEnv, command_name: str = "goal_point") -
     command_term = env.command_manager.get_term(command_name)
     env_origins = env.scene.terrain.env_origins  # [num_envs, 3]
     return command_term.cmd_buf[:, 2, :3] - env_origins
+
+
+def command_current_state(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> torch.Tensor:
+    """Current state: root pose/vel (12D, env-local position) + joint positions.
+
+    Layout: ``[x, y, z, roll, pitch, yaw, vx, vy, vz, wx, wy, wz, joint_pos...]``.
+
+    Including joint positions ensures CRL (via HER relabeling) learns to
+    match the full robot configuration, not just the root pose.
+
+    Args:
+        env: :class:`ManagerBasedRLEnv` instance.
+        command_name: Name of the :class:`RelativeStateCommand` term.
+
+    Returns:
+        Tensor of shape ``[num_envs, 12 + num_joints]``.
+    """
+    import warp as wp
+
+    cmd = env.command_manager.get_term(command_name)
+    buf = cmd.cmd_buf[:, 2]
+    pos_local = buf[:, :3] - env.scene.terrain.env_origins
+    joint_pos = wp.to_torch(cmd.robot.data.joint_pos)
+    return torch.cat([pos_local, buf[:, 3:12], joint_pos], dim=-1)
+
+
+def command_target_state(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> torch.Tensor:
+    """Target state: root pose/vel (12D, env-local position) + joint positions.
+
+    Layout matches :func:`command_current_state`. The joint portion uses
+    the robot's current joints as placeholder — HER replaces the entire
+    target with a future ``current_state``, so the placeholder values
+    are never used for training.
+
+    Args:
+        env: :class:`ManagerBasedRLEnv` instance.
+        command_name: Name of the :class:`RelativeStateCommand` term.
+
+    Returns:
+        Tensor of shape ``[num_envs, 12 + num_joints]``.
+    """
+    import warp as wp
+
+    cmd = env.command_manager.get_term(command_name)
+    buf = cmd.cmd_buf[:, 0]
+    pos_local = buf[:, :3] - env.scene.terrain.env_origins
+    joint_pos = wp.to_torch(cmd.robot.data.joint_pos)
+    return torch.cat([pos_local, buf[:, 3:12], joint_pos], dim=-1)

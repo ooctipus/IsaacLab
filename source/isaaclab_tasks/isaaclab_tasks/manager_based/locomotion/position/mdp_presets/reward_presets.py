@@ -48,6 +48,13 @@ class PositionRewardsCfg:
 
 
 @configclass
+class EmptyRewardsCfg:
+    """No rewards. Used by self-supervised algorithms (e.g. CRL) where
+    learning is driven by a contrastive loss, not a reward signal."""
+    pass
+
+
+@configclass
 class AdvancedSkillsRewardsCfg:
     pass
     # TODO(Mateo)
@@ -56,5 +63,6 @@ class AdvancedSkillsRewardsCfg:
 @configclass
 class RewardsCfg(PresetCfg):
     position = PositionRewardsCfg()
+    crl = EmptyRewardsCfg()
     advanced_skills = AdvancedSkillsRewardsCfg()
     default = position
