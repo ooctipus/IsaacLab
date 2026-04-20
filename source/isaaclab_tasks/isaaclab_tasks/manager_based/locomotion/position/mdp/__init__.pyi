@@ -48,6 +48,17 @@ __all__ = [
     "DefaultJointPositionStaticActionCfg",
     "DefaultJointPositionStaticAction",
     "reset_root_state_from_terrain",
+    "NewtonKinematics",
+    "TerrainConformingReset",
+    "RetargetBuffer",
+    "RetargetPipeline",
+    "RetargetPipelineCfg",
+    "SupportSamplingCfg",
+    "IKCfg",
+    "CriterionFn",
+    "ObjectivesFactory",
+    "sample_contacts",
+    "validate_results",
 ]
 
 from .commands import RelativeStateCommandCfg, RelativeStateCommand
@@ -104,4 +115,17 @@ from .terminations import (
 )
 from .actions import DefaultJointPositionStaticActionCfg, DefaultJointPositionStaticAction
 from .events import reset_root_state_from_terrain
+from .kinematics import NewtonKinematics
+from .terrain_conforming_reset import TerrainConformingReset
+from .retarget import (
+    RetargetBuffer,
+    RetargetPipeline,
+    RetargetPipelineCfg,
+    SupportSamplingCfg,
+    IKCfg,
+    CriterionFn,
+    ObjectivesFactory,
+    sample_contacts,
+    validate_results,
+)
 from isaaclab.envs.mdp import *
