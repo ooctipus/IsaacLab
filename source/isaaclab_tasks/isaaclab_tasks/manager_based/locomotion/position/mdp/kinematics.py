@@ -939,7 +939,7 @@ def _terrain_collision_residuals(
     start_idx: int,
     residuals: wp.array2d(dtype=wp.float32),
 ):
-    """Softplus penetration penalty for body surface points inside terrain."""
+    """Softplus penetration penalty per probe point."""
     row, probe_idx = wp.tid()
     body_idx = probe_body[probe_idx]
     tf = body_q[row, body_idx]
@@ -948,8 +948,6 @@ def _terrain_collision_residuals(
     query = wp.mesh_query_point(mesh_id, probe_pos, 2.0)
     if query.result:
         closest = wp.mesh_eval_position(mesh_id, query.face, query.u, query.v)
-        # Signed penetration: positive when probe is inside terrain
-        # query.sign < 0 means inside the mesh
         dist = wp.length(probe_pos - closest)
         penetration = -query.sign * dist
         pen = wp.log(1.0 + wp.exp(penetration / margin)) * margin

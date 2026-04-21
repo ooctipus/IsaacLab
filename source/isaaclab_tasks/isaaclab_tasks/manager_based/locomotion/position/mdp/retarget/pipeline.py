@@ -217,9 +217,26 @@ class RetargetPipeline:
 
         jq_in = wp.from_torch(self.buffer.joint_q_init_t[:N].contiguous())
         jq_out = wp.from_torch(self.buffer.joint_q_result_t[:N].contiguous())
-        solver.step(jq_in, jq_out, iterations=self.cfg.ik_iterations)
+
+        # Solve with early convergence stopping
+        max_iters = self.cfg.ik_iterations
+        threshold = self.cfg.ik_convergence_threshold
+        batch_size = max(1, min(10, max_iters))
+        prev_cost = float("inf")
+        total_iters = 0
+        for _ in range(0, max_iters, batch_size):
+            iters = min(batch_size, max_iters - total_iters)
+            solver.step(jq_in, jq_out, iterations=iters)
+            total_iters += iters
+            cur_cost = float(wp.to_torch(solver.costs)[:N].mean())
+            if abs(prev_cost - cur_cost) < threshold:
+                break
+            prev_cost = cur_cost
+            jq_in = jq_out
+
         self.buffer.joint_q_result_t[:N] = wp.to_torch(jq_out)
         self._solver_costs = wp.to_torch(solver.costs)[:N].clone()
+        self._ik_iterations_used = total_iters
 
         # Collapse rotation groups: keep only the lowest-cost candidate
         # per source polygon, using the IK solver's total residual.

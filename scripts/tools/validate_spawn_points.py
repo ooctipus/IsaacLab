@@ -271,7 +271,7 @@ def main():
             exclude_bodies=foot_ids,
             weight=3.0,
             margin=0.01,
-            n_samples=16,
+            n_samples=4,
         )
         # Stability: center CoM over active feet
         active_mask_wp = wp.from_torch(
@@ -308,7 +308,7 @@ def main():
         kin=kin,
         sampler=sampler,
         objectives_factory=objectives_factory,
-        cfg=RetargetPipelineCfg(device=device, ik_iterations=200),
+        cfg=RetargetPipelineCfg(device=device),
         contact_body_ids=foot_ids,
     )
 
@@ -329,10 +329,12 @@ def main():
         "base_z_err": BaseZError(),
     }
     if haa_pattern:
-        criteria["haa_limit"] = HaaLimit(kin=kin, joint_pattern=haa_pattern, max_angle=1.2)
+        criteria["haa_limit"] = HaaLimit(kin=kin, joint_pattern=haa_pattern, max_angle=0.95)
 
     buf = pipeline.run(wp_mesh, origin, n_desired=args.max_robots, criteria=criteria)
     t_total = time.time() - t0
+    if hasattr(pipeline, "_ik_iterations_used"):
+        print(f"  IK converged in {pipeline._ik_iterations_used} iterations")
 
     print(pipeline.rejection_summary)
     if hasattr(pipeline, "_reject_val"):

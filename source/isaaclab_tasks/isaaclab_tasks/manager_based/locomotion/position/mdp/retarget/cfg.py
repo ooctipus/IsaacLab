@@ -29,8 +29,11 @@ class RetargetPipelineCfg:
     max_candidates: int = 2000
     """Maximum number of candidates in the buffer."""
 
-    ik_iterations: int = 50
-    """Number of IK solver iterations."""
+    ik_iterations: int = 200
+    """Maximum number of IK solver iterations."""
+
+    ik_convergence_threshold: float = 0.01
+    """Stop IK early when mean cost change falls below this threshold."""
 
     device: str = "cuda:0"
     """Warp device."""
