@@ -52,21 +52,20 @@ def main():
     from isaaclab.utils.assets import check_file_path, retrieve_file_path
     from isaaclab.utils.warp import convert_to_warp_mesh
 
-    from isaaclab_tasks.manager_based.locomotion.position.mdp.kinematics import (
+    from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import (
         IKObjectiveGravityTorque,
-        NewtonKinematics,
+        NewtonKinematics, NewtonKinematicsCfg,
     )
     from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget import (
         RetargetPipeline,
         RetargetPipelineCfg,
     )
-    from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.criteria import (
+    from isaaclab_tasks.manager_based.locomotion.position.utils.criteria import (
         BaseZError,
         FootPositionError,
         HaaLimit,
     )
-    from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.sampling import (
-        SupportPolygonSampler,
+    from isaaclab_tasks.manager_based.locomotion.position.utils.sampling import (
         SupportPolygonSamplerCfg,
     )
 
@@ -122,82 +121,43 @@ def main():
     # Robot
     base_height = robot_cfg.init_state.pos[2]
     joint_pos = robot_cfg.init_state.joint_pos
-    kin = NewtonKinematics(robot_usd, device=device,
-                           default_pos=(0, 0, base_height), default_joint_pos=joint_pos)
-    foot_ids = [i for i, n in enumerate(kin.body_names) if "foot" in n.lower()]
-    base_pos = kin.default_body_q[0][:3]
-    foot_pos = np.array([kin.default_body_q[fid][:3] for fid in foot_ids])
-    foot_offsets = foot_pos - base_pos
-    foot_ground_offset = float(foot_pos[:, 2].mean())
-    standing_height = float(base_pos[2] - foot_pos[:, 2].mean())
-    foot_spread = np.linalg.norm(foot_offsets[:, :2].max(axis=0) - foot_offsets[:, :2].min(axis=0))
+    kin_cfg = NewtonKinematicsCfg(
+        usd_path=robot_usd, device=device,
+        default_pos=(0, 0, base_height), default_joint_pos=joint_pos,
+    )
+    kin = NewtonKinematics(kin_cfg)
+    foot_names = [n for n in kin.body_names if "foot" in n.lower()]
+    foot_ids = kin.find_body_indices(foot_names)
 
     print(f"Robot: {args.preset} | Terrain: {args.terrain}")
-    print(f"  Feet: {[kin.body_names[i] for i in foot_ids]}")
+    print(f"  Feet: {foot_names}")
 
-    sampler_cfg = SupportPolygonSamplerCfg(
-        search_radius=foot_spread * 0.8,
-        min_diagonal_length=foot_spread * 0.3,
-        min_longitudinal_spread=abs(foot_offsets[:, 0]).max() * 0.3,
-        min_lateral_spread=abs(foot_offsets[:, 1]).max() * 0.3,
-    )
-
-    def make_factory(use_gravity: bool):
-        def factory(n_problems):
-            co = [
-                ik.IKObjectivePosition(
-                    link_index=fid, link_offset=wp.vec3(0, 0, 0),
-                    target_positions=wp.zeros(n_problems, dtype=wp.vec3, device=device), weight=1.0,
-                ) for fid in foot_ids
-            ]
-            bpo = ik.IKObjectivePosition(
-                link_index=0, link_offset=wp.vec3(0, 0, 0),
-                target_positions=wp.zeros(n_problems, dtype=wp.vec3, device=device), weight=0.05,
-            )
-            bro = ik.IKObjectiveRotation(
-                link_index=0, link_offset_rotation=wp.quat_identity(),
-                target_rotations=wp.zeros(n_problems, dtype=wp.vec4, device=device), weight=0.5,
-            )
-            jlo = ik.IKObjectiveJointLimit(
-                joint_limit_lower=kin.model.joint_limit_lower,
-                joint_limit_upper=kin.model.joint_limit_upper, weight=10.0,
-            )
-            objs = [*co, bpo, bro, jlo]
-            if use_gravity:
-                objs.append(IKObjectiveGravityTorque(kin.model, weight=0.001))
-            return objs, co, bpo, bro
-        return factory
-
-    criteria = {
-        "foot_err": FootPositionError(kin=kin, foot_ids=foot_ids),
-        "base_z_err": BaseZError(),
-    }
-    if haa_pattern:
-        criteria["haa_limit"] = HaaLimit(kin=kin, joint_pattern=haa_pattern)
+    def gravity_extras(kin, foot_ids, n_problems, sampler, wp_mesh):
+        return [IKObjectiveGravityTorque(kin.model, weight=0.001)]
 
     import torch
 
+    criteria_base = {
+        "foot_err": FootPositionError(num_bodies=kin.model.body_count, foot_ids=foot_ids),
+        "base_z_err": BaseZError(),
+    }
+    if haa_pattern:
+        criteria_base["haa_limit"] = HaaLimit(kin=kin, joint_pattern=haa_pattern)
+
     results = {}
-    for label, use_grav in [("baseline", False), ("gravity_opt", True)]:
+    for label, extra_fn in [("baseline", None), ("gravity_opt", gravity_extras)]:
         print(f"\n--- {label} ---")
         torch.manual_seed(42)
         np.random.seed(42)
-        sampler = SupportPolygonSampler(
-            sampler_cfg,
-            foot_offsets=foot_offsets,
-            foot_ground_offset=foot_ground_offset,
-            standing_height=standing_height,
-            default_joint_q=kin.default_joint_q,
-        )
-        pipeline = RetargetPipeline(
-            kin=kin,
-            sampler=sampler,
-            objectives_factory=make_factory(use_grav),
-            cfg=RetargetPipelineCfg(device=device, ik_iterations=200),
-            contact_body_ids=foot_ids,
-        )
+        pipeline = RetargetPipeline(RetargetPipelineCfg(
+            kin=kin_cfg,
+            sampler=SupportPolygonSamplerCfg(),
+            foot_body_names=foot_names,
+            ik_iterations=200,
+            extra_objectives_factory=extra_fn,
+        ))
         t0 = time.time()
-        buf = pipeline.run(wp_mesh, origin, n_desired=args.max_robots, criteria=criteria)
+        buf = pipeline.run(wp_mesh, origin, n_desired=args.max_robots, criteria=criteria_base)
         dt = time.time() - t0
         print(pipeline.rejection_summary)
         if hasattr(pipeline, "_reject_val"):

@@ -136,23 +136,21 @@ def main():
     import newton
     from newton.viewer import ViewerViser
 
-    import newton.ik as ik
-
-    from isaaclab_tasks.manager_based.locomotion.position.mdp.kinematics import NewtonKinematics
-    from isaaclab_tasks.manager_based.locomotion.position.mdp.ik_objectives import (
+    from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import (
         IKObjectiveStabilityMargin,
         IKObjectiveTerrainCollision,
+        NewtonKinematicsCfg,
     )
     from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget import (
         RetargetPipeline,
         RetargetPipelineCfg,
     )
-    from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.criteria import (
+    from isaaclab_tasks.manager_based.locomotion.position.utils.criteria import (
         BaseZError,
+        CollisionCheck,
         HaaLimit,
     )
-    from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.sampling import (
-        SupportPolygonSampler,
+    from isaaclab_tasks.manager_based.locomotion.position.utils.sampling import (
         SupportPolygonSamplerCfg,
     )
 
@@ -218,99 +216,58 @@ def main():
         print(f"Preset  : {args.preset}")
 
     if args.default_joints:
-        default_jpos: np.ndarray | dict[str, float] | None = np.array(
-            [float(x) for x in args.default_joints.split(",")], dtype=np.float32,
-        )
+        default_jpos: dict[str, float] | None = {".*": float(args.default_joints.split(",")[0])}
     else:
         default_jpos = rp.get("joint_pos")
 
-    kin = NewtonKinematics(robot_usd, device=device,
-                           default_pos=(0.0, 0.0, base_height),
-                           default_joint_pos=default_jpos)
-    foot_ids = [i for i, n in enumerate(kin.body_names) if "foot" in n.lower()]
-    foot_names = [kin.body_names[i] for i in foot_ids]
-    print(f"  Bodies={kin.model.body_count} Joints={kin.model.joint_count}")
-    print(f"  Feet: {foot_names} -> ids {foot_ids}")
+    foot_names = [n for n in rp.get("foot_names", []) if n]
+    if not foot_names:
+        from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import NewtonKinematics
+        _tmp = NewtonKinematics(NewtonKinematicsCfg(usd_path=robot_usd, device=device,
+                                                     default_pos=(0.0, 0.0, base_height)))
+        foot_names = [n for n in _tmp.body_names if "foot" in n.lower()]
+        del _tmp
 
-    if len(foot_ids) < 4:
-        print(f"  WARNING: Found only {len(foot_ids)} feet. Support polygon sampler expects 4.")
+    kin_cfg = NewtonKinematicsCfg(
+        usd_path=robot_usd,
+        device=device,
+        default_pos=(0.0, 0.0, base_height),
+        default_joint_pos=default_jpos,
+    )
 
-    base_pos = kin.default_body_q[0][:3]
-    foot_pos_default = np.array([kin.default_body_q[fid][:3] for fid in foot_ids])
-    foot_offsets = foot_pos_default - base_pos
-    foot_ground_offset = 0.0
-    standing_height = float(base_pos[2] - foot_pos_default[:, 2].mean())
-    print(f"  standing_height={standing_height:.3f}m foot_ground_offset={foot_ground_offset:.3f}m")
-
-    # --- Pipeline ---
-    def objectives_factory(n_problems):
-        # Foot position targets
-        co = [
-            ik.IKObjectivePosition(
-                link_index=fid, link_offset=wp.vec3(0, 0, 0),
-                target_positions=wp.zeros(n_problems, dtype=wp.vec3, device=device), weight=1.0,
-            )
-            for fid in foot_ids
-        ]
-        bpo = ik.IKObjectivePosition(
-            link_index=0, link_offset=wp.vec3(0, 0, 0),
-            target_positions=wp.zeros(n_problems, dtype=wp.vec3, device=device), weight=0.05,
-        )
-        bro = ik.IKObjectiveRotation(
-            link_index=0, link_offset_rotation=wp.quat_identity(),
-            target_rotations=wp.zeros(n_problems, dtype=wp.vec4, device=device), weight=0.5,
-        )
-        jlo = ik.IKObjectiveJointLimit(
-            joint_limit_lower=kin.model.joint_limit_lower,
-            joint_limit_upper=kin.model.joint_limit_upper, weight=10.0,
-        )
-        # Terrain collision: probe points sampled from actual mesh surface
+    def extra_objectives(kin, foot_ids, n_problems, sampler, wp_mesh):
         col = IKObjectiveTerrainCollision(
-            mesh_id=wp_mesh.id,
-            builder=kin.builder,
-            exclude_bodies=foot_ids,
-            weight=3.0,
-            margin=0.01,
-            n_samples=4,
+            mesh_id=wp_mesh.id, builder=kin.builder,
+            exclude_bodies=foot_ids, weight=3.0, margin=0.01, n_samples=4,
         )
-        # Stability: center CoM over active feet
         active_mask_wp = wp.from_torch(
             sampler.active_mask[:n_problems].contiguous().to(device), dtype=wp.int32,
         )
         stab = IKObjectiveStabilityMargin(
-            model=kin.model,
-            foot_body_indices=foot_ids,
-            active_mask=active_mask_wp,
-            weight=1.0,
+            model=kin.model, foot_body_indices=foot_ids,
+            active_mask=active_mask_wp, weight=1.0,
         )
-        return [*co, bpo, bro, jlo, col, stab], co, bpo, bro
+        return [col, stab]
 
-    # Scale sampler config to robot geometry
-    foot_spread = np.linalg.norm(foot_offsets[:, :2].max(axis=0) - foot_offsets[:, :2].min(axis=0))
-    sampler_cfg = SupportPolygonSamplerCfg(
-        search_radius=foot_spread * 0.8,
-        min_diagonal_length=foot_spread * 0.3,
-        min_longitudinal_spread=abs(foot_offsets[:, 0]).max() * 0.3,
-        min_lateral_spread=abs(foot_offsets[:, 1]).max() * 0.3,
-        oversample_candidates=10,
+    pipeline_cfg = RetargetPipelineCfg(
+        kin=kin_cfg,
+        sampler=SupportPolygonSamplerCfg(oversample_candidates=10),
+        foot_body_names=foot_names,
+        extra_objectives_factory=extra_objectives,
     )
-    print(f"  foot_spread={foot_spread:.3f}m search_radius={sampler_cfg.search_radius:.3f}m")
 
     t0 = time.time()
-    sampler = SupportPolygonSampler(
-        sampler_cfg,
-        foot_offsets=foot_offsets,
-        foot_ground_offset=foot_ground_offset,
-        standing_height=standing_height,
-        default_joint_q=kin.default_joint_q,
-    )
-    pipeline = RetargetPipeline(
-        kin=kin,
-        sampler=sampler,
-        objectives_factory=objectives_factory,
-        cfg=RetargetPipelineCfg(device=device),
-        contact_body_ids=foot_ids,
-    )
+    pipeline = RetargetPipeline(pipeline_cfg)
+    kin = pipeline.kin
+    foot_ids = pipeline.foot_body_ids
+
+    geom = kin.foot_geometry(foot_ids)
+    foot_offsets = geom["foot_offsets"]
+    standing_height = geom["standing_height"]
+    print(f"  Bodies={kin.model.body_count} Joints={kin.model.joint_count}")
+    print(f"  Feet: {foot_names} -> ids {foot_ids}")
+    foot_spread = np.linalg.norm(foot_offsets[:, :2].max(axis=0) - foot_offsets[:, :2].min(axis=0))
+    print(f"  standing_height={standing_height:.3f}m foot_spread={foot_spread:.3f}m")
 
     print("\n--- Running retarget pipeline ---")
 
@@ -327,6 +284,9 @@ def main():
     criteria = {
         "cost": cost_filter,
         "base_z_err": BaseZError(),
+        "collision": CollisionCheck(
+            kin=kin, wp_mesh=wp_mesh, exclude_bodies=foot_ids, n_samples=16, max_pen=0.02,
+        ),
     }
     if haa_pattern:
         criteria["haa_limit"] = HaaLimit(kin=kin, joint_pattern=haa_pattern, max_angle=0.95)
@@ -430,7 +390,7 @@ def main():
         )
 
     # Visualize collision probe points on ALL robots
-    from isaaclab_tasks.manager_based.locomotion.position.mdp.kinematics import _build_collision_probes
+    from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import _build_collision_probes
 
     probe_bodies, probe_offsets = _build_collision_probes(kin.builder, foot_ids, n_samples=16)
     if solved_qs:

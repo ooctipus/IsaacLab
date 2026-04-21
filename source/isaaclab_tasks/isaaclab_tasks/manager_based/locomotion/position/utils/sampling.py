@@ -19,9 +19,12 @@ import warp as wp
 from isaaclab.utils import configclass
 from isaaclab.utils.math import quat_from_euler_xyz
 
+from .kinematic import NewtonKinematics
+
 from ..mdp.retarget.buffer import RetargetBuffer
 from ..mdp.retarget.cfg import SamplerBaseCfg
 from ..mdp.retarget.pipeline import SamplerBase
+from ..terrains.utils.patch_sampling_cfg import CircleFootprintCfg, MorphologicalPatchSamplingCfg
 
 N_ROTATIONS = 4
 """Number of cyclic rotations per support polygon (one per hull corner)."""
@@ -31,8 +34,8 @@ N_ROTATIONS = 4
 class SupportPolygonSamplerCfg(SamplerBaseCfg):
     """Configuration for support polygon terrain sampling."""
 
-    class_type: type = None  # type: ignore[assignment]
-    """Resolved after class definition below."""
+    class_type: type | str = "{DIR}.sampling:SupportPolygonSampler"
+    """Sampler implementation class."""
 
     num_candidates: int = 5000
     """Number of flat contact patches to sample on the terrain."""
@@ -77,8 +80,12 @@ class SupportPolygonSamplerCfg(SamplerBaseCfg):
     """Geometry candidates per desired output (for oversampling before IK)."""
 
 
+
 class SupportPolygonSampler(SamplerBase):
     """Terrain contact sampling via support polygon construction.
+
+    Derives robot geometry (foot offsets, standing height) from
+    :class:`NewtonKinematics` and ``foot_body_ids`` automatically.
 
     Generates candidate support polygons on a terrain mesh by:
 
@@ -93,34 +100,23 @@ class SupportPolygonSampler(SamplerBase):
 
     Args:
         cfg: Sampling configuration.
-        foot_offsets: Nominal contact offsets relative to base ``[num_contacts, 3]`` [m].
-        foot_ground_offset: Height of contact body frame above ground [m].
-        standing_height: Base height above contact centroid [m].
-        default_joint_q: Default joint coordinates ``[joint_coord_count]``.
-        reference_poses: **Not yet implemented** -- accepted but ignored.
+        kin: Newton kinematics model (provides default stance).
+        foot_body_ids: Newton body indices for the feet.
     """
 
-    def __init__(
-        self,
-        cfg: SupportPolygonSamplerCfg,
-        *,
-        foot_offsets: np.ndarray,
-        foot_ground_offset: float,
-        standing_height: float,
-        default_joint_q: np.ndarray,
-        reference_poses: np.ndarray | None = None,
-    ):
-        super().__init__(cfg)
-        self.foot_offsets = foot_offsets
-        self.foot_ground_offset = foot_ground_offset
-        self.standing_height = standing_height
-        self.default_joint_q = default_joint_q
-        self.reference_poses = reference_poses
+    def __init__(self, cfg: SupportPolygonSamplerCfg, kin: NewtonKinematics, foot_body_ids: list[int]):
+        super().__init__(cfg, kin, foot_body_ids)
 
-        angles = np.arctan2(foot_offsets[:, 1], foot_offsets[:, 0])
+        geom = kin.foot_geometry(foot_body_ids)
+        self.foot_offsets = geom["foot_offsets"]
+        self.foot_ground_offset = geom["foot_ground_offset"]
+        self.standing_height = geom["standing_height"]
+        self.default_joint_q = kin.default_joint_q
+
+        angles = np.arctan2(self.foot_offsets[:, 1], self.foot_offsets[:, 0])
         self._foot_ccw_order = np.argsort(angles).tolist()
 
-        x_sorted = np.argsort(foot_offsets[:, 0])
+        x_sorted = np.argsort(self.foot_offsets[:, 0])
         self._rear_pair = x_sorted[:2].tolist()
         self._front_pair = x_sorted[2:].tolist()
 
@@ -135,11 +131,6 @@ class SupportPolygonSampler(SamplerBase):
         buffer: RetargetBuffer,
         n_desired: int,
     ) -> tuple[int, dict[str, int]]:
-        from isaaclab_tasks.manager_based.locomotion.position.terrains.utils.patch_sampling_cfg import (
-            CircleFootprintCfg,
-            MorphologicalPatchSamplingCfg,
-        )
-
         cfg = self.cfg  # type: SupportPolygonSamplerCfg
         nc = buffer.num_contacts
         max_n = buffer.max_candidates
@@ -302,6 +293,3 @@ class SupportPolygonSampler(SamplerBase):
         buffer.num_geometry_valid = n_valid
 
         return n_valid, reject
-
-
-SupportPolygonSamplerCfg.class_type = SupportPolygonSampler

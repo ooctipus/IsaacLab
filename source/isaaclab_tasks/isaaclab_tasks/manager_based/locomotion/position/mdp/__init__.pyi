@@ -52,7 +52,6 @@ __all__ = [
     "IKObjectiveJointDefault",
     "IKObjectiveGravityTorque",
     "IKObjectiveTerrainContact",
-    "IKObjectiveFootSpread",
     "IKObjectiveStabilityMargin",
     "IKObjectiveTerrainCollision",
     "TerrainConformingReset",
@@ -119,9 +118,8 @@ from .terminations import (
 )
 from .actions import DefaultJointPositionStaticActionCfg, DefaultJointPositionStaticAction
 from .events import reset_root_state_from_terrain
-from .kinematics import NewtonKinematics
-from .ik_objectives import (
-    IKObjectiveFootSpread,
+from ..utils.kinematic import (
+    NewtonKinematics,
     IKObjectiveGravityTorque,
     IKObjectiveJointDefault,
     IKObjectiveStabilityMargin,

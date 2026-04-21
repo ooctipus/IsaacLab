@@ -23,10 +23,10 @@ import warp as wp
 
 from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 
-from .kinematics import NewtonKinematics
+from ..utils.kinematic import NewtonKinematicsCfg
 from .retarget import RetargetBuffer, RetargetPipeline, RetargetPipelineCfg
 
-from ..mdp_presets.sampling import SupportPolygonSampler, SupportPolygonSamplerCfg
+from ..utils.sampling import SupportPolygonSamplerCfg
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
@@ -37,9 +37,9 @@ class TerrainConformingReset(ManagerTermBase):
     """Reset robots into terrain-conforming stances from a pre-computed pool.
 
     On initialization:
-        1. Builds a :class:`NewtonKinematics` model from the robot USD.
-        2. Computes default stance geometry (foot offsets, standing height).
-        3. Creates a :class:`RetargetPipeline`.
+        1. Builds a :class:`RetargetPipeline` from a
+           :class:`RetargetPipelineCfg` (which nests the kinematics,
+           sampler, and foot specification).
 
     On first call (or when the pool is exhausted):
         Runs the pipeline against the terrain mesh to generate a pool of
@@ -76,73 +76,27 @@ class TerrainConformingReset(ManagerTermBase):
                 f"TerrainConformingReset requires a local USD path, got: {usd_path}"
             )
 
-        # Foot body names resolved by the framework from SceneEntityCfg
         foot_cfg: SceneEntityCfg = cfg.params["foot_cfg"]
         foot_body_names: list[str] = foot_cfg.body_names  # type: ignore[assignment]
-
         default_jpos = wp.to_torch(self.asset.data.default_joint_pos)[0].cpu().numpy()
 
-        kin = NewtonKinematics(
-            usd_path, device=self.device,
-            default_pos=self.asset.cfg.init_state.pos,
-            default_quat=self.asset.cfg.init_state.rot,
-            default_joint_pos=default_jpos,
-        )
-        newton_foot_ids = [kin.body_names.index(n) for n in foot_body_names]
-
-        base_pos = kin.default_body_q[0][:3]
-        foot_positions = np.array([kin.default_body_q[fid][:3] for fid in newton_foot_ids])
-        foot_offsets = foot_positions - base_pos
-        standing_height = float(base_pos[2] - foot_positions[:, 2].mean())
-        foot_ground_offset = float(foot_positions[:, 2].min())
-
-        # Pipeline config
-        pipeline_cfg = cfg.params.get("pipeline_cfg", RetargetPipelineCfg(device=self.device))
+        pipeline_cfg = cfg.params.get("pipeline_cfg", RetargetPipelineCfg(
+            kin=NewtonKinematicsCfg(
+                usd_path=usd_path,
+                device=self.device,
+                default_pos=self.asset.cfg.init_state.pos,
+                default_quat=self.asset.cfg.init_state.rot,
+                default_joint_pos={f".*": float(v) for v in default_jpos} if len(default_jpos) == 1
+                else None,
+            ),
+            sampler=SupportPolygonSamplerCfg(),
+            foot_body_names=foot_body_names,
+        ))
         if isinstance(pipeline_cfg, dict):
             pipeline_cfg = RetargetPipelineCfg(**pipeline_cfg)
 
-        sampler = SupportPolygonSampler(
-            SupportPolygonSamplerCfg(),
-            foot_offsets=foot_offsets,
-            foot_ground_offset=foot_ground_offset,
-            standing_height=standing_height,
-            default_joint_q=kin.default_joint_q,
-        )
+        self.pipeline = RetargetPipeline(pipeline_cfg)
 
-        import newton.ik as _ik
-
-        def _objectives_factory(n_problems):
-            device = kin.device
-            contact_objs = [
-                _ik.IKObjectivePosition(
-                    link_index=fid, link_offset=wp.vec3(0, 0, 0),
-                    target_positions=wp.zeros(n_problems, dtype=wp.vec3, device=device), weight=1.0,
-                )
-                for fid in newton_foot_ids
-            ]
-            base_pos_obj = _ik.IKObjectivePosition(
-                link_index=0, link_offset=wp.vec3(0, 0, 0),
-                target_positions=wp.zeros(n_problems, dtype=wp.vec3, device=device), weight=0.05,
-            )
-            base_rot_obj = _ik.IKObjectiveRotation(
-                link_index=0, link_offset_rotation=wp.quat_identity(),
-                target_rotations=wp.zeros(n_problems, dtype=wp.vec4, device=device), weight=0.5,
-            )
-            jl_obj = _ik.IKObjectiveJointLimit(
-                joint_limit_lower=kin.model.joint_limit_lower,
-                joint_limit_upper=kin.model.joint_limit_upper, weight=10.0,
-            )
-            return [*contact_objs, base_pos_obj, base_rot_obj, jl_obj], contact_objs, base_pos_obj, base_rot_obj
-
-        self.pipeline = RetargetPipeline(
-            kin=kin,
-            sampler=sampler,
-            objectives_factory=_objectives_factory,
-            cfg=pipeline_cfg,
-            contact_body_ids=newton_foot_ids,
-        )
-
-        # State pool
         self._pool_joint_q: torch.Tensor | None = None
         self._pool_base_pose: torch.Tensor | None = None
         self._pool_size: int = 0
@@ -151,7 +105,6 @@ class TerrainConformingReset(ManagerTermBase):
         self._pool_desired = int(cfg.params.get("pool_size", 200))
         self._velocity_range = cfg.params.get("velocity_range", None)
 
-        # Strip consumed params
         cfg.params = {}
 
     @property

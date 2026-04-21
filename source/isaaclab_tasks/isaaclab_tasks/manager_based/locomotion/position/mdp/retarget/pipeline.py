@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import TYPE_CHECKING
 
+import newton
 import newton.ik as ik
 import numpy as np
 import torch
@@ -20,8 +20,7 @@ from pytorch3d.ops import sample_farthest_points
 from .buffer import RetargetBuffer
 from .cfg import RetargetPipelineCfg, SamplerBaseCfg
 
-if TYPE_CHECKING:
-    from ..kinematics import NewtonKinematics
+from ...utils.kinematic import NewtonKinematics
 
 CriterionFn = Callable[[RetargetBuffer, int], torch.Tensor]
 """Signature for a validation criterion.
@@ -34,26 +33,20 @@ Returns:
     Boolean tensor of shape ``[n_active]`` -- ``True`` = passes this criterion.
 """
 
-ObjectivesFactory = Callable[
-    [int],
-    tuple[list, list[ik.IKObjectivePosition], ik.IKObjectivePosition, ik.IKObjectiveRotation],
-]
-"""Callable ``(n_problems) -> (all_objectives, contact_objectives,
-base_pos_objective, base_rot_objective)``.
-
-``all_objectives`` is the full list passed to :meth:`NewtonKinematics.create_ik_solver`.
-The contact/base objectives are returned separately so the pipeline can fill targets."""
-
 
 class SamplerBase(ABC):
     """Abstract base for pipeline sampling strategies.
 
-    Constructed from a :class:`SamplerBaseCfg` plus strategy-specific
-    runtime arguments (e.g. foot offsets, standing height).
+    Constructed from a cfg, a :class:`NewtonKinematics` instance, and
+    the foot body indices.  Subclasses derive any robot geometry they
+    need from ``kin`` and ``foot_body_ids`` instead of receiving it
+    as explicit constructor arguments.
     """
 
-    def __init__(self, cfg: SamplerBaseCfg):
+    def __init__(self, cfg: SamplerBaseCfg, kin: NewtonKinematics, foot_body_ids: list[int]):
         self.cfg = cfg
+        self.kin = kin
+        self.foot_body_ids = foot_body_ids
 
     @property
     def group_size(self) -> int:
@@ -134,46 +127,68 @@ def _validate_results(
 class RetargetPipeline:
     """Orchestrates the staged retargeting pipeline.
 
-    The pipeline:
-    1. Samples contact points on geometry via a user-provided
-       :class:`SamplerBase`.
-    2. Builds IK objectives via a user-provided factory, creates
-       solver via :meth:`NewtonKinematics.create_ik_solver`.
-    3. Validates results via user-provided criteria.
-    4. Selects final results (FPS for spatial uniformity).
+    Constructed from a single :class:`RetargetPipelineCfg` that nests
+    the kinematics, sampler, and foot specification.  The pipeline
+    builds the :class:`NewtonKinematics`, sampler, and standard IK
+    objectives internally.
+
+    Args:
+        cfg: Full pipeline configuration.
     """
 
-    def __init__(
-        self,
-        kin: NewtonKinematics,
-        sampler: SamplerBase,
-        objectives_factory: ObjectivesFactory,
-        cfg: RetargetPipelineCfg,
-        contact_body_ids: list[int],
-    ):
-        """Initialize the pipeline.
-
-        Args:
-            kin: Newton kinematics (owns the model).
-            sampler: Sampling strategy instance.
-            objectives_factory: Callable ``(n_problems) -> (all_objs,
-                contact_objs, base_pos_obj, base_rot_obj)``.
-            cfg: Pipeline configuration.
-            contact_body_ids: Newton body indices for contact bodies.
-        """
+    def __init__(self, cfg: RetargetPipelineCfg):
         self.cfg = cfg
-        self.kin = kin
-        self.sampler = sampler
-        self.objectives_factory = objectives_factory
-        self.contact_body_ids = contact_body_ids
+
+        self.kin = NewtonKinematics(cfg.kin)
+        self.foot_body_ids = self.kin.find_body_indices(cfg.foot_body_names)
+
+        self.sampler = cfg.sampler.class_type(cfg.sampler, self.kin, self.foot_body_ids)
 
         self.buffer = RetargetBuffer(
             max_candidates=cfg.max_candidates,
-            joint_coord_count=kin.model.joint_coord_count,
-            num_bodies=kin.model.body_count,
-            num_contacts=len(contact_body_ids),
-            device=kin.device,
+            joint_coord_count=self.kin.model.joint_coord_count,
+            num_bodies=self.kin.model.body_count,
+            num_contacts=len(self.foot_body_ids),
+            device=self.kin.device,
         )
+        self._fk_model: newton.Model | None = None
+        self._fk_capacity: int = 0
+
+    def _build_objectives(
+        self, N: int, wp_mesh: wp.Mesh,
+    ) -> tuple[list, list[ik.IKObjectivePosition], ik.IKObjectivePosition, ik.IKObjectiveRotation]:
+        """Build standard + extra IK objectives for ``N`` problems."""
+        device = self.kin.device
+
+        contact_objs = [
+            ik.IKObjectivePosition(
+                link_index=fid, link_offset=wp.vec3(0, 0, 0),
+                target_positions=wp.zeros(N, dtype=wp.vec3, device=device), weight=1.0,
+            )
+            for fid in self.foot_body_ids
+        ]
+        base_pos_obj = ik.IKObjectivePosition(
+            link_index=0, link_offset=wp.vec3(0, 0, 0),
+            target_positions=wp.zeros(N, dtype=wp.vec3, device=device), weight=0.05,
+        )
+        base_rot_obj = ik.IKObjectiveRotation(
+            link_index=0, link_offset_rotation=wp.quat_identity(),
+            target_rotations=wp.zeros(N, dtype=wp.vec4, device=device), weight=0.5,
+        )
+        jl_obj = ik.IKObjectiveJointLimit(
+            joint_limit_lower=self.kin.model.joint_limit_lower,
+            joint_limit_upper=self.kin.model.joint_limit_upper, weight=10.0,
+        )
+
+        all_objs = [*contact_objs, base_pos_obj, base_rot_obj, jl_obj]
+
+        if self.cfg.extra_objectives_factory is not None:
+            extras = self.cfg.extra_objectives_factory(
+                self.kin, self.foot_body_ids, N, self.sampler, wp_mesh,
+            )
+            all_objs.extend(extras)
+
+        return all_objs, contact_objs, base_pos_obj, base_rot_obj
 
     def run(
         self,
@@ -204,8 +219,7 @@ class RetargetPipeline:
             return self.buffer
 
         N = self.buffer.num_geometry_valid
-        factory_result = self.objectives_factory(N)
-        all_objs, contact_objs, base_pos_obj, base_rot_obj = factory_result
+        all_objs, contact_objs, base_pos_obj, base_rot_obj = self._build_objectives(N, wp_mesh)
         has_autodiff = any(not obj.supports_analytic() for obj in all_objs)
         jac_mode = ik.IKJacobianType.MIXED if has_autodiff else ik.IKJacobianType.ANALYTIC
         solver = self.kin.create_ik_solver(all_objs, N, jacobian_mode=jac_mode)
@@ -218,7 +232,6 @@ class RetargetPipeline:
         jq_in = wp.from_torch(self.buffer.joint_q_init_t[:N].contiguous())
         jq_out = wp.from_torch(self.buffer.joint_q_result_t[:N].contiguous())
 
-        # Solve with early convergence stopping
         max_iters = self.cfg.ik_iterations
         threshold = self.cfg.ik_convergence_threshold
         batch_size = max(1, min(10, max_iters))
@@ -236,20 +249,19 @@ class RetargetPipeline:
 
         self.buffer.joint_q_result_t[:N] = wp.to_torch(jq_out)
         self._solver_costs = wp.to_torch(solver.costs)[:N].clone()
+
+        self._eval_fk_batched(self.buffer.joint_q_result_t[:N], N)
         self._ik_iterations_used = total_iters
 
-        # Collapse rotation groups: keep only the lowest-cost candidate
-        # per source polygon, using the IK solver's total residual.
         gs = self.sampler.group_size
         if gs > 1 and N >= gs:
             costs_t = wp.to_torch(solver.costs)[:N]
             n_groups = N // gs
             cost_groups = costs_t[:n_groups * gs].view(n_groups, gs)
-            best_in_group = cost_groups.argmin(dim=1)  # [n_groups]
+            best_in_group = cost_groups.argmin(dim=1)
             keep_idx = best_in_group + torch.arange(n_groups, device=costs_t.device) * gs
 
             nc = self.buffer.num_contacts
-            jc = self.buffer.joint_coord_count
             self.buffer.joint_q_result_t[:n_groups] = self.buffer.joint_q_result_t[keep_idx]
             self.buffer.joint_q_init_t[:n_groups] = self.buffer.joint_q_init_t[keep_idx]
             self.buffer.contact_targets_t[:n_groups * nc] = (
@@ -285,6 +297,28 @@ class RetargetPipeline:
 
         self.buffer.num_selected = n_select
         return self.buffer
+
+    def _eval_fk_batched(self, jq_flat: torch.Tensor, N: int) -> None:
+        """Run FK on solved joint coordinates and store body_q in the buffer.
+
+        Args:
+            jq_flat: Solved joint coordinates ``[N, joint_coord_count]``.
+            N: Number of candidates.
+        """
+        if self._fk_model is None or self._fk_capacity < N:
+            self._fk_model = self.kin.build_batched_model(N)
+            self._fk_capacity = N
+
+        jq_wp = wp.from_torch(jq_flat.contiguous().view(-1))
+        self._fk_model.joint_q = jq_wp
+        st = self._fk_model.state()
+        newton.eval_fk(
+            self._fk_model, jq_wp,
+            wp.zeros(self._fk_model.joint_dof_count, dtype=float, device=self.kin.device), st,
+        )
+        bq_torch = wp.to_torch(st.body_q)
+        nb = self.kin.model.body_count
+        self.buffer.body_q_t[:N * nb] = bq_torch[:N * nb]
 
     @property
     def rejection_summary(self) -> str:

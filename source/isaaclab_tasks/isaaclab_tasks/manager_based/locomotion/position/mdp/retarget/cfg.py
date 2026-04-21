@@ -7,7 +7,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import MISSING
+
 from isaaclab.utils import configclass
+
+from ...utils.kinematic.newton_kinematics import NewtonKinematicsCfg
 
 
 @configclass
@@ -24,7 +29,20 @@ class SamplerBaseCfg:
 
 @configclass
 class RetargetPipelineCfg:
-    """General retarget pipeline configuration."""
+    """Full retarget pipeline configuration.
+
+    Nests the kinematics, sampler, and foot specification so the
+    pipeline can be constructed with ``RetargetPipeline(cfg)``.
+    """
+
+    kin: NewtonKinematicsCfg = MISSING  # type: ignore[assignment]
+    """Kinematics model configuration."""
+
+    sampler: SamplerBaseCfg = MISSING  # type: ignore[assignment]
+    """Sampler configuration (with ``class_type`` set)."""
+
+    foot_body_names: list[str] = MISSING  # type: ignore[assignment]
+    """Body names of the feet (exact match against Newton body names)."""
 
     max_candidates: int = 2000
     """Maximum number of candidates in the buffer."""
@@ -35,5 +53,10 @@ class RetargetPipelineCfg:
     ik_convergence_threshold: float = 0.01
     """Stop IK early when mean cost change falls below this threshold."""
 
-    device: str = "cuda:0"
-    """Warp device."""
+    extra_objectives_factory: Callable | None = None
+    """Optional callable ``(kin, foot_ids, n_problems, sampler, wp_mesh) -> list[IKObjective]``.
+
+    Returns additional IK objectives beyond the standard set (foot position,
+    base pose, joint limits).  The extra objectives are appended to the
+    solver's objective list.
+    """

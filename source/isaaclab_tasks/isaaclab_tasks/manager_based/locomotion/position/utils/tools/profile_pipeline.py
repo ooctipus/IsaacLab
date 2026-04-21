@@ -23,11 +23,12 @@ def main():
     from isaaclab.utils.warp import convert_to_warp_mesh
     from isaaclab.utils.assets import check_file_path, retrieve_file_path
 
-    from isaaclab_tasks.manager_based.locomotion.position.mdp.kinematics import (
-        IKObjectiveStabilityMargin, IKObjectiveTerrainCollision, NewtonKinematics,
+    from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import (
+        IKObjectiveStabilityMargin, IKObjectiveTerrainCollision,
+        NewtonKinematics, NewtonKinematicsCfg,
     )
     from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.buffer import RetargetBuffer
-    from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.sampling import (
+    from isaaclab_tasks.manager_based.locomotion.position.utils.sampling import (
         SupportPolygonSampler, SupportPolygonSamplerCfg,
     )
     from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.robots.robot_presets import RobotArticulationCfg
@@ -57,25 +58,15 @@ def main():
     if fs == 2:
         robot_usd = retrieve_file_path(robot_usd, force_download=False)
 
-    kin = NewtonKinematics(robot_usd, device=device, default_pos=(0, 0, 0.6),
-                           default_joint_pos=robot_cfg.init_state.joint_pos)
+    kin = NewtonKinematics(NewtonKinematicsCfg(
+        usd_path=robot_usd, device=device, default_pos=(0, 0, 0.6),
+        default_joint_pos=robot_cfg.init_state.joint_pos,
+    ))
     foot_ids = [i for i, n in enumerate(kin.body_names) if "foot" in n.lower()]
-    base_pos = kin.default_body_q[0][:3]
-    foot_pos = np.array([kin.default_body_q[fid][:3] for fid in foot_ids])
-    foot_offsets = foot_pos - base_pos
-    foot_spread = np.linalg.norm(foot_offsets[:, :2].max(axis=0) - foot_offsets[:, :2].min(axis=0))
-    standing_height = float(base_pos[2] - foot_pos[:, 2].mean())
 
-    sampler_cfg = SupportPolygonSamplerCfg(
-        search_radius=foot_spread * 0.8,
-        min_diagonal_length=foot_spread * 0.3,
-        min_longitudinal_spread=abs(foot_offsets[:, 0]).max() * 0.3,
-        min_lateral_spread=abs(foot_offsets[:, 1]).max() * 0.3,
-        oversample_candidates=10,
-    )
     sampler = SupportPolygonSampler(
-        sampler_cfg, foot_offsets=foot_offsets, foot_ground_offset=0.0,
-        standing_height=standing_height, default_joint_q=kin.default_joint_q,
+        SupportPolygonSamplerCfg(oversample_candidates=10),
+        kin=kin, foot_body_ids=foot_ids,
     )
 
     print("=== PROFILING RETARGET PIPELINE ===\n")
