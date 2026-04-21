@@ -204,10 +204,14 @@ class RetargetPipeline:
             return self.buffer
 
         N = self.buffer.num_geometry_valid
-        all_objs, contact_objs, base_pos_obj, base_rot_obj = self.objectives_factory(N)
-        solver = self.kin.create_ik_solver(all_objs, N)
+        factory_result = self.objectives_factory(N)
+        all_objs, contact_objs, base_pos_obj, base_rot_obj = factory_result
+        has_autodiff = any(not obj.supports_analytic() for obj in all_objs)
+        jac_mode = ik.IKJacobianType.MIXED if has_autodiff else ik.IKJacobianType.ANALYTIC
+        solver = self.kin.create_ik_solver(all_objs, N, jacobian_mode=jac_mode)
 
-        self.buffer.scatter_contact_targets(contact_objs, N)
+        if contact_objs:
+            self.buffer.scatter_contact_targets(contact_objs, N)
         wp.copy(base_pos_obj.target_positions, self.buffer.base_target_pos, count=N)
         wp.copy(base_rot_obj.target_rotations, self.buffer.base_target_rot, count=N)
 
@@ -215,6 +219,7 @@ class RetargetPipeline:
         jq_out = wp.from_torch(self.buffer.joint_q_result_t[:N].contiguous())
         solver.step(jq_in, jq_out, iterations=self.cfg.ik_iterations)
         self.buffer.joint_q_result_t[:N] = wp.to_torch(jq_out)
+        self._solver_costs = wp.to_torch(solver.costs)[:N].clone()
 
         # Collapse rotation groups: keep only the lowest-cost candidate
         # per source polygon, using the IK solver's total residual.

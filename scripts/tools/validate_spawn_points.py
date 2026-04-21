@@ -138,14 +138,17 @@ def main():
 
     import newton.ik as ik
 
-    from isaaclab_tasks.manager_based.locomotion.position.mdp.kinematics import NewtonKinematics
+    from isaaclab_tasks.manager_based.locomotion.position.mdp.kinematics import (
+        IKObjectiveStabilityMargin,
+        IKObjectiveTerrainCollision,
+        NewtonKinematics,
+    )
     from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget import (
         RetargetPipeline,
         RetargetPipelineCfg,
     )
     from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.criteria import (
         BaseZError,
-        FootPositionError,
         HaaLimit,
     )
     from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.sampling import (
@@ -235,12 +238,13 @@ def main():
     base_pos = kin.default_body_q[0][:3]
     foot_pos_default = np.array([kin.default_body_q[fid][:3] for fid in foot_ids])
     foot_offsets = foot_pos_default - base_pos
-    foot_ground_offset = float(foot_pos_default[:, 2].mean())
+    foot_ground_offset = 0.0
     standing_height = float(base_pos[2] - foot_pos_default[:, 2].mean())
     print(f"  standing_height={standing_height:.3f}m foot_ground_offset={foot_ground_offset:.3f}m")
 
     # --- Pipeline ---
     def objectives_factory(n_problems):
+        # Foot position targets
         co = [
             ik.IKObjectivePosition(
                 link_index=fid, link_offset=wp.vec3(0, 0, 0),
@@ -260,7 +264,26 @@ def main():
             joint_limit_lower=kin.model.joint_limit_lower,
             joint_limit_upper=kin.model.joint_limit_upper, weight=10.0,
         )
-        return [*co, bpo, bro, jlo], co, bpo, bro
+        # Terrain collision: probe points sampled from actual mesh surface
+        col = IKObjectiveTerrainCollision(
+            mesh_id=wp_mesh.id,
+            builder=kin.builder,
+            exclude_bodies=foot_ids,
+            weight=3.0,
+            margin=0.01,
+            n_samples=16,
+        )
+        # Stability: center CoM over active feet
+        active_mask_wp = wp.from_torch(
+            sampler.active_mask[:n_problems].contiguous().to(device), dtype=wp.int32,
+        )
+        stab = IKObjectiveStabilityMargin(
+            model=kin.model,
+            foot_body_indices=foot_ids,
+            active_mask=active_mask_wp,
+            weight=1.0,
+        )
+        return [*co, bpo, bro, jlo, col, stab], co, bpo, bro
 
     # Scale sampler config to robot geometry
     foot_spread = np.linalg.norm(foot_offsets[:, :2].max(axis=0) - foot_offsets[:, :2].min(axis=0))
@@ -269,6 +292,7 @@ def main():
         min_diagonal_length=foot_spread * 0.3,
         min_longitudinal_spread=abs(foot_offsets[:, 0]).max() * 0.3,
         min_lateral_spread=abs(foot_offsets[:, 1]).max() * 0.3,
+        oversample_candidates=10,
     )
     print(f"  foot_spread={foot_spread:.3f}m search_radius={sampler_cfg.search_radius:.3f}m")
 
@@ -290,12 +314,22 @@ def main():
 
     print("\n--- Running retarget pipeline ---")
 
+    import torch
+
+    def cost_filter(buffer, N):
+        """Reject candidates with solver cost > 3x median (unresolved collision)."""
+        if not hasattr(pipeline, "_solver_costs"):
+            return torch.ones(N, device=buffer.device, dtype=torch.bool)
+        costs = pipeline._solver_costs[:N]
+        median = costs.median()
+        return costs < median * 3.0
+
     criteria = {
-        "foot_err": FootPositionError(kin=kin, foot_ids=foot_ids),
+        "cost": cost_filter,
         "base_z_err": BaseZError(),
     }
     if haa_pattern:
-        criteria["haa_limit"] = HaaLimit(kin=kin, joint_pattern=haa_pattern)
+        criteria["haa_limit"] = HaaLimit(kin=kin, joint_pattern=haa_pattern, max_angle=1.2)
 
     buf = pipeline.run(wp_mesh, origin, n_desired=args.max_robots, criteria=criteria)
     t_total = time.time() - t0
@@ -393,6 +427,37 @@ def main():
             colors=(0, 1, 1),
         )
 
+    # Visualize collision probe points on ALL robots
+    from isaaclab_tasks.manager_based.locomotion.position.mdp.kinematics import _build_collision_probes
+
+    probe_bodies, probe_offsets = _build_collision_probes(kin.builder, foot_ids, n_samples=16)
+    if solved_qs:
+        from isaaclab.utils.math import quat_apply as _qa
+        import torch as _torch
+
+        all_probe_world = []
+        for sq in solved_qs:
+            fk_jq = wp.array(sq, dtype=float, device=device)
+            fk_state = kin.eval_fk(fk_jq)
+            bq_np = fk_state.body_q.numpy()
+            for i in range(len(probe_bodies)):
+                bid = probe_bodies[i]
+                off = np.array(probe_offsets[i], dtype=np.float32)
+                bq = bq_np[bid]
+                pos = bq[:3]
+                quat = bq[3:7]
+                q_t = _torch.tensor(quat, dtype=_torch.float32).unsqueeze(0)
+                o_t = _torch.tensor(off, dtype=_torch.float32).unsqueeze(0)
+                rotated = _qa(q_t, o_t).squeeze(0).numpy()
+                all_probe_world.append((pos + rotated).tolist())
+        viewer.log_points(
+            "collision_probes",
+            wp.array(all_probe_world, dtype=wp.vec3, device=device),
+            radii=0.005,
+            colors=(1.0, 0.2, 0.2),
+        )
+        print(f"  Collision probes: {len(all_probe_world)} points on {len(solved_qs)} robots (red)")
+
     viewer.begin_frame(0.0)
     viewer.log_state(vis_state)
     viewer.end_frame()
@@ -400,7 +465,7 @@ def main():
     hn = socket.gethostname()
     print(f"\n  http://localhost:{args.port}")
     print(f"  http://{hn}:{args.port}")
-    print("  Green=candidates, Cyan=selected feet")
+    print("  Green=candidates, Cyan=selected feet, Red=collision probes")
     print(f"\n  {len(solved_qs)} robots placed.")
     print("\nPress Ctrl+C to stop.\n")
 

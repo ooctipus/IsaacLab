@@ -88,10 +88,8 @@ class SupportPolygonSampler(SamplerBase):
        different hull corner to the front-left foot).
     4. Filtering by polygon quality and base height feasibility.
 
-    Each rotation is written to the buffer as an independent candidate.
-    The pipeline's IK solver evaluates all rotations in a single batched
-    solve, and the best rotation per polygon wins naturally through
-    validation and FPS selection.
+    All rotations go to IK individually. FPS handles spatial
+    deduplication at the end.
 
     Args:
         cfg: Sampling configuration.
@@ -99,15 +97,7 @@ class SupportPolygonSampler(SamplerBase):
         foot_ground_offset: Height of contact body frame above ground [m].
         standing_height: Base height above contact centroid [m].
         default_joint_q: Default joint coordinates ``[joint_coord_count]``.
-        reference_poses: Optional library of pre-computed joint configurations
-            ``[M, joint_coord_count]`` representing natural stances (walking,
-            crouching, turning, etc.).  When provided, each polygon candidate
-            is expanded to ``4 * M`` IK problems (4 rotations x M reference
-            inits), and the IK seed for each is set to the corresponding
-            reference pose.  The pipeline's existing IK + validation + FPS
-            selection picks the best (rotation, pose) combination, producing
-            more natural variation across placed robots.
-            **Not yet implemented** -- accepted but ignored.
+        reference_poses: **Not yet implemented** -- accepted but ignored.
     """
 
     def __init__(
@@ -127,20 +117,16 @@ class SupportPolygonSampler(SamplerBase):
         self.default_joint_q = default_joint_q
         self.reference_poses = reference_poses
 
-        # Pre-compute Counter Clock Wise winding order of the robot's feet from their
-        # default XY offsets.  This maps hull Counter Clock Wise vertex positions to
-        # the correct foot indices so the winding directions match.
         angles = np.arctan2(foot_offsets[:, 1], foot_offsets[:, 0])
         self._foot_ccw_order = np.argsort(angles).tolist()
 
-        # Front/rear foot index pairs from X offsets.
         x_sorted = np.argsort(foot_offsets[:, 0])
         self._rear_pair = x_sorted[:2].tolist()
         self._front_pair = x_sorted[2:].tolist()
 
     @property
     def group_size(self) -> int:
-        return N_ROTATIONS
+        return 1
 
     def __call__(
         self,
@@ -189,46 +175,37 @@ class SupportPolygonSampler(SamplerBase):
         pts = contact_pts[sel_idx]  # [K, nc, 3]
 
         # Step 2: Sort into convex hull winding order
-        xy = pts[:, :, :2]  # [K, nc, 2]
+        xy = pts[:, :, :2]
         centroid_xy = xy.mean(dim=1, keepdim=True)
         hull_angles = torch.atan2(
             xy[..., 1] - centroid_xy[..., 1],
             xy[..., 0] - centroid_xy[..., 0],
         )
-        hull_order = hull_angles.argsort(dim=1)  # [K, nc]
+        hull_order = hull_angles.argsort(dim=1)
         hull_pts = torch.gather(pts, 1, hull_order.unsqueeze(-1).expand(-1, -1, 3))
 
-        # Step 3: 4 cyclic rotations -- each assigns a different hull
-        # corner to the first foot in CCW winding order.  The CCW foot
-        # order (pre-computed from default foot offsets) ensures the
-        # hull winding matches the robot's body perimeter.
-        foot_ccw = self._foot_ccw_order  # e.g. [3,1,0,2] for Go2
-
-        # For each rotation r, hull CCW position j maps to foot foot_ccw[j]
-        # assigned[:, foot_ccw[j]] = hull_pts[:, (j+r) % nc]
+        # Step 3: 4 cyclic rotations
+        foot_ccw = self._foot_ccw_order
         assigned_rot = []
         for r in range(N_ROTATIONS):
-            a = torch.empty_like(pts)  # [K, nc, 3]
+            a = torch.empty_like(pts)
             for j in range(nc):
                 a[:, foot_ccw[j]] = hull_pts[:, (j + r) % nc]
             assigned_rot.append(a)
 
-        # Expand all 4 rotations as separate candidates [K*4, nc, 3].
-        # The pipeline runs IK on all of them, then collapses to the
-        # best per polygon using solver.costs.
         assigned = torch.stack(assigned_rot, dim=1).view(K * N_ROTATIONS, nc, 3)
         too_few = too_few.unsqueeze(1).expand(-1, N_ROTATIONS).reshape(K * N_ROTATIONS)
 
         # Step 4: Quality checks
-        fp, rp = self._front_pair, self._rear_pair
-        a_xy = assigned[:, :, :2]  # [K*4, nc, 2]
-        d1 = (a_xy[:, fp[0]] - a_xy[:, rp[1]]).norm(dim=-1)
-        d2 = (a_xy[:, fp[1]] - a_xy[:, rp[0]]).norm(dim=-1)
+        fp_pair, rp = self._front_pair, self._rear_pair
+        a_xy = assigned[:, :, :2]
+        d1 = (a_xy[:, fp_pair[0]] - a_xy[:, rp[1]]).norm(dim=-1)
+        d2 = (a_xy[:, fp_pair[1]] - a_xy[:, rp[0]]).norm(dim=-1)
         dr = torch.minimum(d1, d2) / (torch.maximum(d1, d2) + 1e-6)
-        front = (a_xy[:, fp[0]] + a_xy[:, fp[1]]) / 2
+        front = (a_xy[:, fp_pair[0]] + a_xy[:, fp_pair[1]]) / 2
         rear = (a_xy[:, rp[0]] + a_xy[:, rp[1]]) / 2
         lon = (front - rear).norm(dim=-1)
-        lat = ((a_xy[:, fp[0]] - a_xy[:, fp[1]]).norm(dim=-1)
+        lat = ((a_xy[:, fp_pair[0]] - a_xy[:, fp_pair[1]]).norm(dim=-1)
                + (a_xy[:, rp[0]] - a_xy[:, rp[1]]).norm(dim=-1)) / 2
         quality_ok = (
             (dr >= cfg.min_diagonal_ratio)
@@ -250,9 +227,19 @@ class SupportPolygonSampler(SamplerBase):
 
         # Step 6: Combine masks, compact, write
         valid = ~too_few & quality_ok & height_ok
-        valid_idx = valid.nonzero(as_tuple=False).squeeze(-1)
-        n_valid = min(valid_idx.shape[0], target_n, max_n)
-        valid_idx = valid_idx[:n_valid]
+        all_valid_idx = valid.nonzero(as_tuple=False).squeeze(-1)
+        n_all_valid = all_valid_idx.shape[0]
+        n_valid = min(n_all_valid, target_n, max_n)
+
+        if n_all_valid > n_valid:
+            # FPS to select the most spatially diverse candidates
+            from pytorch3d.ops import sample_farthest_points
+
+            base_xyz = base_target[all_valid_idx, :3]
+            _, fps_idx = sample_farthest_points(base_xyz.unsqueeze(0), K=n_valid)
+            valid_idx = all_valid_idx[fps_idx.squeeze(0)]
+        else:
+            valid_idx = all_valid_idx
 
         reject = {
             "too_few": int(too_few.sum()),
@@ -280,7 +267,6 @@ class SupportPolygonSampler(SamplerBase):
         roll = torch.where(flat, torch.zeros_like(z_range), torch.atan2(normals[:, 1], normals[:, 2]))
         pitch = torch.where(flat, torch.zeros_like(z_range), torch.atan2(-normals[:, 0], normals[:, 2]))
 
-        # Yaw from the assigned front-rear axis (per rotation)
         fwd = v_front - v_rear
         yaw_v = torch.atan2(fwd[:, 1], fwd[:, 0])
 
@@ -289,7 +275,21 @@ class SupportPolygonSampler(SamplerBase):
         ji[:, 0:3] = v_base
         ji[:, 3:7] = quat_from_euler_xyz(roll, pitch, yaw_v)
 
-        br = quat_from_euler_xyz(roll, pitch, yaw_v)
+        br = quat_from_euler_xyz(roll * 0.5, pitch, yaw_v)
+
+        # Reference polygon area (shoelace in CCW order)
+        ccw = self._foot_ccw_order
+        xy_ref = v_contact[:, :, :2]
+        area = torch.zeros(n_valid)
+        for i in range(nc):
+            j = (i + 1) % nc
+            pi = xy_ref[:, ccw[i]]
+            pj = xy_ref[:, ccw[j]]
+            area = area + (pi[:, 0] * pj[:, 1] - pj[:, 0] * pi[:, 1])
+        self.reference_area = (area.abs() * 0.5).to(buffer.device)
+
+        # Active mask (all feet active for quad)
+        self.active_mask = torch.ones(n_valid, nc, dtype=torch.int32, device=buffer.device)
 
         gpu = buffer.device
         buffer.contact_targets_t[:n_valid * nc] = v_contact.view(-1, 3).to(gpu)
