@@ -38,15 +38,27 @@ class FootPositionError:
     foot_ids: list[int] = field(default_factory=list)
     max_err: float = 0.02
 
+    def __post_init__(self):
+        self._tpl = newton.ModelBuilder()
+        self._tpl.add_usd(self.kin.usd_path, collapse_fixed_joints=False)
+        self._cached_n: int = 0
+        self._cached_model = None
+
+    def _get_batched_model(self, N: int, device: str):
+        """Return a batched model for N instances, cached for reuse."""
+        if self._cached_model is not None and self._cached_n >= N:
+            return self._cached_model
+        bldr = newton.ModelBuilder()
+        for _ in range(N):
+            bldr.add_world(self._tpl)
+        self._cached_model = bldr.finalize(device=device)
+        self._cached_n = N
+        return self._cached_model
+
     def __call__(self, buffer: RetargetBuffer, N: int) -> torch.Tensor:
         nc = len(self.foot_ids)
         nb = self.kin.model.body_count
-        tpl = newton.ModelBuilder()
-        tpl.add_usd(self.kin.usd_path, collapse_fixed_joints=False)
-        bldr = newton.ModelBuilder()
-        for _ in range(N):
-            bldr.add_world(tpl)
-        fk_m = bldr.finalize(device=buffer.device)
+        fk_m = self._get_batched_model(N, buffer.device)
         jq_t = buffer.joint_q_result_t[:N].contiguous().view(-1)
         fk_m.joint_q = wp.from_torch(jq_t)
         st = fk_m.state()

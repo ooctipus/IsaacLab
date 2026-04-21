@@ -49,6 +49,12 @@ __all__ = [
     "DefaultJointPositionStaticAction",
     "reset_root_state_from_terrain",
     "NewtonKinematics",
+    "IKObjectiveJointDefault",
+    "IKObjectiveGravityTorque",
+    "IKObjectiveTerrainContact",
+    "IKObjectiveFootSpread",
+    "IKObjectiveStabilityMargin",
+    "IKObjectiveTerrainCollision",
     "TerrainConformingReset",
     "RetargetBuffer",
     "RetargetPipeline",
@@ -114,6 +120,14 @@ from .terminations import (
 from .actions import DefaultJointPositionStaticActionCfg, DefaultJointPositionStaticAction
 from .events import reset_root_state_from_terrain
 from .kinematics import NewtonKinematics
+from .ik_objectives import (
+    IKObjectiveFootSpread,
+    IKObjectiveGravityTorque,
+    IKObjectiveJointDefault,
+    IKObjectiveStabilityMargin,
+    IKObjectiveTerrainCollision,
+    IKObjectiveTerrainContact,
+)
 from .terrain_conforming_reset import TerrainConformingReset
 from .retarget import (
     RetargetBuffer,

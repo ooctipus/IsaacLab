@@ -138,10 +138,10 @@ def main():
 
     import newton.ik as ik
 
-    from isaaclab_tasks.manager_based.locomotion.position.mdp.kinematics import (
+    from isaaclab_tasks.manager_based.locomotion.position.mdp.kinematics import NewtonKinematics
+    from isaaclab_tasks.manager_based.locomotion.position.mdp.ik_objectives import (
         IKObjectiveStabilityMargin,
         IKObjectiveTerrainCollision,
-        NewtonKinematics,
     )
     from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget import (
         RetargetPipeline,
