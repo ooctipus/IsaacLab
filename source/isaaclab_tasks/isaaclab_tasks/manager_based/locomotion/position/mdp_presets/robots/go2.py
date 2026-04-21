@@ -37,3 +37,11 @@ RobotArticulationCfg.go2 = _GO2_CFG
 FootBodyNamesCfg.go2 = ".*_foot"
 NonFootBodyNamesCfg.go2 = "^(?!.*_foot).*$"
 ExperimentNameCfg.go2 = "go2_position_command"
+
+
+# ---------------------------------------------------------------------------
+# Retarget constants for Go2
+# ---------------------------------------------------------------------------
+
+GO2_HAA_PATTERN = ".*hip_joint"
+"""Regex matching Go2 hip abduction/adduction joint names."""

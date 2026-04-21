@@ -38,3 +38,11 @@ AsyncFootPairsCfg.spot = (
 )
 SyncFootPairsCfg.spot = (("fl_foot", "hr_foot"), ("fr_foot", "hl_foot"))
 ExperimentNameCfg.spot = "spot_position_command"
+
+
+# ---------------------------------------------------------------------------
+# Retarget constants for Spot
+# ---------------------------------------------------------------------------
+
+SPOT_HAA_PATTERN = ".*hip_x"
+"""Regex matching Spot hip abduction/adduction joint names."""

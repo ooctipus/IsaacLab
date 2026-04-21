@@ -18,8 +18,10 @@ from scipy.spatial import ConvexHull
 from isaaclab.utils.warp import convert_to_warp_mesh
 
 from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.buffer import RetargetBuffer
-from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.cfg import SupportSamplingCfg
-from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.sample import sample_contacts
+from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.sampling import (
+    SupportPolygonSampler,
+    SupportPolygonSamplerCfg,
+)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -71,6 +73,15 @@ def _make_stair_mesh(
     return convert_to_warp_mesh(mesh.vertices.astype(np.float32), mesh.faces, device=device)
 
 
+def _make_sampler(cfg=None):
+    if cfg is None:
+        cfg = SupportPolygonSamplerCfg(num_candidates=500, oversample_candidates=2)
+    return SupportPolygonSampler(
+        cfg, foot_offsets=FOOT_OFFSETS, foot_ground_offset=0.06,
+        standing_height=0.54, default_joint_q=DEFAULT_JQ,
+    )
+
+
 class TestSampleContactsFlat:
     """On flat terrain, all contacts should be at z~0 and mostly geometry-valid."""
 
@@ -78,11 +89,8 @@ class TestSampleContactsFlat:
     def test_flat_terrain_contacts_at_z0(self):
         wp_mesh = _make_flat_mesh()
         buf = RetargetBuffer(200, 19, 17, 4, device=DEVICE)
-        cfg = SupportSamplingCfg(num_candidates=500, oversample_candidates=2)
-        n, reject = sample_contacts(
-            wp_mesh, np.zeros(3), buf, cfg,
-            FOOT_OFFSETS, 0.06, 0.54, DEFAULT_JQ, 50,
-        )
+        sampler = _make_sampler()
+        n, reject = sampler(wp_mesh, np.zeros(3), buf, 50)
         assert n > 0, f"Expected at least some candidates on flat terrain, got 0. Rejections: {reject}"
 
         ct = buf.contact_targets.numpy()[: n * 4]
@@ -97,11 +105,8 @@ class TestSampleContactsConvexHull:
     def test_all_valid_have_4_hull_verts(self):
         wp_mesh = _make_flat_mesh()
         buf = RetargetBuffer(200, 19, 17, 4, device=DEVICE)
-        cfg = SupportSamplingCfg(num_candidates=500, oversample_candidates=2)
-        n, reject = sample_contacts(
-            wp_mesh, np.zeros(3), buf, cfg,
-            FOOT_OFFSETS, 0.06, 0.54, DEFAULT_JQ, 50,
-        )
+        sampler = _make_sampler()
+        n, reject = sampler(wp_mesh, np.zeros(3), buf, 50)
         if n == 0:
             pytest.skip("No valid candidates on flat mesh")
 
@@ -127,11 +132,8 @@ class TestSampleContactsRejectionStats:
     def test_rejection_dict_keys(self):
         wp_mesh = _make_flat_mesh()
         buf = RetargetBuffer(200, 19, 17, 4, device=DEVICE)
-        cfg = SupportSamplingCfg(num_candidates=500, oversample_candidates=2)
-        _, reject = sample_contacts(
-            wp_mesh, np.zeros(3), buf, cfg,
-            FOOT_OFFSETS, 0.06, 0.54, DEFAULT_JQ, 50,
-        )
+        sampler = _make_sampler()
+        _, reject = sampler(wp_mesh, np.zeros(3), buf, 50)
         assert "too_few" in reject
         assert "hull<4" in reject
         assert "quality" in reject

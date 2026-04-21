@@ -8,16 +8,19 @@
 Thin CLI wrapper around :class:`RetargetPipeline`.  Generates terrain mesh,
 runs the pipeline, and visualises accepted/rejected candidates in viser.
 
-No Isaac Sim required.
-
 Usage::
 
+    # ANYmal-C -- USD resolved from preset config
     ./isaaclab.sh -p scripts/tools/validate_spawn_points.py \\
-        --terrain EXTREME_STAIR --robot /path/to/anymal_c.usd
+        --terrain EXTREME_STAIR --preset anymal_c
 
+    # Go2
     ./isaaclab.sh -p scripts/tools/validate_spawn_points.py \\
-        --terrain STEPPING_STONE --robot /path/to/anymal_c.usd \\
-        --difficulty 0.5 --max-robots 100 --port 8080
+        --terrain STEPPING_STONE --preset go2
+
+    # Custom robot USD (no preset)
+    ./isaaclab.sh -p scripts/tools/validate_spawn_points.py \\
+        --terrain FLAT --robot /path/to/robot.usd --base-height 0.5
 """
 
 from __future__ import annotations
@@ -73,6 +76,58 @@ def _generate_mesh(cfg, difficulty):
 
 
 # ---------------------------------------------------------------------------
+# Robot preset registry
+# ---------------------------------------------------------------------------
+
+_ROBOT_PRESETS: dict[str, dict] = {}
+
+
+def _make_preset(cfg, haa_pattern: str) -> dict:
+    """Build a preset dict from an :class:`ArticulationCfg` + HAA pattern.
+
+    All data comes from the cfg -- no redundant constants.
+    """
+    return {
+        "usd_path": cfg.spawn.usd_path,
+        "base_height": cfg.init_state.pos[2],
+        "joint_pos": cfg.init_state.joint_pos,
+        "haa_pattern": haa_pattern,
+    }
+
+
+def _register_presets():
+    """Lazily populate preset defaults from robot preset modules.
+
+    Each entry is built from the robot's :class:`ArticulationCfg` --
+    USD path, base height, and default joint positions are all drawn
+    from the same config the sim uses.
+    """
+    if _ROBOT_PRESETS:
+        return
+
+    from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.robots.anymal_c import (
+        ANYMAL_C_HAA_PATTERN,
+    )
+    from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.robots.robot_presets import (
+        RobotArticulationCfg,
+    )
+
+    _ROBOT_PRESETS["anymal_c"] = _make_preset(RobotArticulationCfg.anymal_c, ANYMAL_C_HAA_PATTERN)
+
+    from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.robots.go2 import (
+        GO2_HAA_PATTERN,
+    )
+
+    _ROBOT_PRESETS["go2"] = _make_preset(RobotArticulationCfg.go2, GO2_HAA_PATTERN)
+
+    from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.robots.spot import (
+        SPOT_HAA_PATTERN,
+    )
+
+    _ROBOT_PRESETS["spot"] = _make_preset(RobotArticulationCfg.spot, SPOT_HAA_PATTERN)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -88,13 +143,28 @@ def main():
         RetargetPipeline,
         RetargetPipelineCfg,
     )
+    from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.criteria import (
+        BaseZError,
+        FootPositionError,
+        HaaLimit,
+    )
+    from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.sampling import (
+        SupportPolygonSampler,
+        SupportPolygonSamplerCfg,
+    )
+
+    _register_presets()
 
     parser = argparse.ArgumentParser(description="Terrain-conforming spawn validation.")
     parser.add_argument("--terrain", type=str, default="EXTREME_STAIR")
     parser.add_argument("--difficulty", type=float, default=0.8)
-    parser.add_argument("--robot", type=str, required=True, help="Path to robot USD.")
+    parser.add_argument("--robot", type=str, default=None,
+                        help="Path to robot USD.  Optional when --preset is given.")
+    parser.add_argument("--preset", type=str, default=None,
+                        choices=list(_ROBOT_PRESETS.keys()),
+                        help="Robot preset (resolves USD, base height, joints, HAA indices).")
     parser.add_argument("--max-robots", type=int, default=300)
-    parser.add_argument("--base-height", type=float, default=0.6)
+    parser.add_argument("--base-height", type=float, default=None)
     parser.add_argument("--default-joints", type=str, default=None)
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--list", action="store_true")
@@ -104,14 +174,34 @@ def main():
     presets = _list_presets(tcfg)
 
     if args.list:
+        print("Terrain presets:")
         for n in presets:
             print(f"  {n}")
+        print(f"\nRobot presets: {', '.join(_ROBOT_PRESETS.keys())}")
         sys.exit(0)
     if args.terrain not in presets:
         print(f"Unknown terrain '{args.terrain}'. Use --list.")
         sys.exit(1)
 
     device = "cuda:0"
+
+    # Resolve robot preset
+    rp = _ROBOT_PRESETS.get(args.preset, {}) if args.preset else {}
+    base_height = args.base_height or rp.get("base_height", 0.6)
+    haa_pattern = rp.get("haa_pattern")
+
+    # Resolve USD path: --robot flag > preset usd_path
+    robot_usd = args.robot or rp.get("usd_path")
+    if robot_usd is None:
+        parser.error("Either --robot or --preset (with a known USD path) is required.")
+
+    from isaaclab.utils.assets import check_file_path, retrieve_file_path
+
+    file_status = check_file_path(robot_usd)
+    if file_status == 0:
+        raise FileNotFoundError(f"USD not found: {robot_usd}")
+    if file_status == 2:
+        robot_usd = retrieve_file_path(robot_usd, force_download=False)
 
     # --- Terrain ---
     print(f"Terrain : {args.terrain} (difficulty={args.difficulty})")
@@ -120,18 +210,27 @@ def main():
     print(f"  {len(mesh.vertices):,} verts, {len(mesh.faces):,} faces")
 
     # --- Robot ---
-    print(f"Robot   : {args.robot}")
-    if args.default_joints:
-        default_jpos = np.array([float(x) for x in args.default_joints.split(",")], dtype=np.float32)
-    else:
-        default_jpos = np.array([0, 0.4, -0.8, 0, -0.4, 0.8, 0, 0.4, -0.8, 0, -0.4, 0.8], dtype=np.float32)
+    print(f"Robot   : {robot_usd}")
+    if args.preset:
+        print(f"Preset  : {args.preset}")
 
-    kin = NewtonKinematics(args.robot, device=device,
-                           default_pos=(0.0, 0.0, args.base_height), default_joint_pos=default_jpos)
+    if args.default_joints:
+        default_jpos: np.ndarray | dict[str, float] | None = np.array(
+            [float(x) for x in args.default_joints.split(",")], dtype=np.float32,
+        )
+    else:
+        default_jpos = rp.get("joint_pos")
+
+    kin = NewtonKinematics(robot_usd, device=device,
+                           default_pos=(0.0, 0.0, base_height),
+                           default_joint_pos=default_jpos)
     foot_ids = [i for i, n in enumerate(kin.body_names) if "foot" in n.lower()]
     foot_names = [kin.body_names[i] for i in foot_ids]
     print(f"  Bodies={kin.model.body_count} Joints={kin.model.joint_count}")
     print(f"  Feet: {foot_names} -> ids {foot_ids}")
+
+    if len(foot_ids) < 4:
+        print(f"  WARNING: Found only {len(foot_ids)} feet. Support polygon sampler expects 4.")
 
     base_pos = kin.default_body_q[0][:3]
     foot_pos_default = np.array([kin.default_body_q[fid][:3] for fid in foot_ids])
@@ -163,35 +262,47 @@ def main():
         )
         return [*co, bpo, bro, jlo], co, bpo, bro
 
-    print("\n--- Running retarget pipeline ---")
+    # Scale sampler config to robot geometry
+    foot_spread = np.linalg.norm(foot_offsets[:, :2].max(axis=0) - foot_offsets[:, :2].min(axis=0))
+    sampler_cfg = SupportPolygonSamplerCfg(
+        search_radius=foot_spread * 0.8,
+        min_diagonal_length=foot_spread * 0.3,
+        min_longitudinal_spread=abs(foot_offsets[:, 0]).max() * 0.3,
+        min_lateral_spread=abs(foot_offsets[:, 1]).max() * 0.3,
+    )
+    print(f"  foot_spread={foot_spread:.3f}m search_radius={sampler_cfg.search_radius:.3f}m")
+
     t0 = time.time()
-    pipeline = RetargetPipeline(
-        kin=kin,
-        objectives_factory=objectives_factory,
-        cfg=RetargetPipelineCfg(device=device),
-        contact_body_ids=foot_ids,
+    sampler = SupportPolygonSampler(
+        sampler_cfg,
         foot_offsets=foot_offsets,
         foot_ground_offset=foot_ground_offset,
         standing_height=standing_height,
         default_joint_q=kin.default_joint_q,
     )
-    from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.robots.anymal_c import (
-        base_z_error,
-        foot_position_error,
-        haa_limit,
-        joint_margin,
+    pipeline = RetargetPipeline(
+        kin=kin,
+        sampler=sampler,
+        objectives_factory=objectives_factory,
+        cfg=RetargetPipelineCfg(device=device, ik_iterations=200),
+        contact_body_ids=foot_ids,
     )
 
+    print("\n--- Running retarget pipeline ---")
+
     criteria = {
-        "foot_err": foot_position_error(kin, foot_ids),
-        "joint_margin": joint_margin(kin),
-        "haa_limit": haa_limit(),
-        "base_z_err": base_z_error(),
+        "foot_err": FootPositionError(kin=kin, foot_ids=foot_ids),
+        "base_z_err": BaseZError(),
     }
+    if haa_pattern:
+        criteria["haa_limit"] = HaaLimit(kin=kin, joint_pattern=haa_pattern)
+
     buf = pipeline.run(wp_mesh, origin, n_desired=args.max_robots, criteria=criteria)
     t_total = time.time() - t0
 
     print(pipeline.rejection_summary)
+    if hasattr(pipeline, "_reject_val"):
+        print(f"  Validation: {pipeline._reject_val}")
     print(f"  Time: {t_total:.2f}s")
 
     if buf.num_selected == 0:
@@ -221,7 +332,7 @@ def main():
 
     if solved_qs:
         template = newton.ModelBuilder()
-        template.add_usd(str(args.robot), collapse_fixed_joints=False)
+        template.add_usd(robot_usd, collapse_fixed_joints=False)
         for _ in solved_qs:
             vis_builder.add_world(template)
 

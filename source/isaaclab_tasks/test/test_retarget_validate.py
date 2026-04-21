@@ -13,7 +13,7 @@ import warp as wp
 
 from isaaclab_tasks.manager_based.locomotion.position.mdp.kinematics import NewtonKinematics
 from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.buffer import RetargetBuffer
-from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.validate import validate_results
+from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.pipeline import _validate_results as validate_results
 
 
 @pytest.fixture(scope="module", autouse=True)

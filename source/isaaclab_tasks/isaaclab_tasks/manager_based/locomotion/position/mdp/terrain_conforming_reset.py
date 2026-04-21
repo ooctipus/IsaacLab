@@ -26,6 +26,8 @@ from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 from .kinematics import NewtonKinematics
 from .retarget import RetargetBuffer, RetargetPipeline, RetargetPipelineCfg
 
+from ..mdp_presets.sampling import SupportPolygonSampler, SupportPolygonSamplerCfg
+
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
     from isaaclab.managers import EventTermCfg
@@ -99,14 +101,45 @@ class TerrainConformingReset(ManagerTermBase):
         if isinstance(pipeline_cfg, dict):
             pipeline_cfg = RetargetPipelineCfg(**pipeline_cfg)
 
-        self.pipeline = RetargetPipeline(
-            kin=kin,
-            contact_body_ids=newton_foot_ids,
-            cfg=pipeline_cfg,
+        sampler = SupportPolygonSampler(
+            SupportPolygonSamplerCfg(),
             foot_offsets=foot_offsets,
             foot_ground_offset=foot_ground_offset,
             standing_height=standing_height,
             default_joint_q=kin.default_joint_q,
+        )
+
+        import newton.ik as _ik
+
+        def _objectives_factory(n_problems):
+            device = kin.device
+            contact_objs = [
+                _ik.IKObjectivePosition(
+                    link_index=fid, link_offset=wp.vec3(0, 0, 0),
+                    target_positions=wp.zeros(n_problems, dtype=wp.vec3, device=device), weight=1.0,
+                )
+                for fid in newton_foot_ids
+            ]
+            base_pos_obj = _ik.IKObjectivePosition(
+                link_index=0, link_offset=wp.vec3(0, 0, 0),
+                target_positions=wp.zeros(n_problems, dtype=wp.vec3, device=device), weight=0.05,
+            )
+            base_rot_obj = _ik.IKObjectiveRotation(
+                link_index=0, link_offset_rotation=wp.quat_identity(),
+                target_rotations=wp.zeros(n_problems, dtype=wp.vec4, device=device), weight=0.5,
+            )
+            jl_obj = _ik.IKObjectiveJointLimit(
+                joint_limit_lower=kin.model.joint_limit_lower,
+                joint_limit_upper=kin.model.joint_limit_upper, weight=10.0,
+            )
+            return [*contact_objs, base_pos_obj, base_rot_obj, jl_obj], contact_objs, base_pos_obj, base_rot_obj
+
+        self.pipeline = RetargetPipeline(
+            kin=kin,
+            sampler=sampler,
+            objectives_factory=_objectives_factory,
+            cfg=pipeline_cfg,
+            contact_body_ids=newton_foot_ids,
         )
 
         # State pool

@@ -25,6 +25,10 @@ from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget import (
     RetargetPipeline,
     RetargetPipelineCfg,
 )
+from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.sampling import (
+    SupportPolygonSampler,
+    SupportPolygonSamplerCfg,
+)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -93,15 +97,19 @@ def _make_flat_mesh(size: float = 10.0) -> wp.Mesh:
 
 
 def _make_pipeline(kin, foot_ids, jq, foot_offsets, standing_height, fgo, sf, max_cand=500):
-    return RetargetPipeline(
-        kin=kin,
-        objectives_factory=sf,
-        cfg=RetargetPipelineCfg(device=DEVICE, max_candidates=max_cand),
-        contact_body_ids=foot_ids,
+    sampler = SupportPolygonSampler(
+        SupportPolygonSamplerCfg(),
         foot_offsets=foot_offsets,
         foot_ground_offset=fgo,
         standing_height=standing_height,
         default_joint_q=jq,
+    )
+    return RetargetPipeline(
+        kin=kin,
+        sampler=sampler,
+        objectives_factory=sf,
+        cfg=RetargetPipelineCfg(device=DEVICE, max_candidates=max_cand),
+        contact_body_ids=foot_ids,
     )
 
 
