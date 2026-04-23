@@ -26,3 +26,12 @@ gym.register(
         "rsl_rl_cfg_entry_point": "isaaclab_tasks.manager_based.locomotion.position.config.rsl_rl_cfg:PositionRunnerCfg",
     },
 )
+
+gym.register(
+    id="Isaac-Position-MultiTask-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": "isaaclab_tasks.manager_based.locomotion.position.multi_task_env_cfg:MultiTaskEnvCfg",
+    },
+)
