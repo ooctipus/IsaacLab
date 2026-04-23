@@ -7,9 +7,7 @@
 
 from __future__ import annotations
 
-import dataclasses
 import time
-from abc import ABC, abstractmethod
 from collections.abc import Callable
 from contextlib import contextmanager
 
@@ -21,7 +19,19 @@ import warp as wp
 from ...terrains.utils.grid_downsample import grid_bucket_downsample
 from ...utils.kinematic import NewtonKinematics
 from .buffer import RetargetBuffer
-from .cfg import RetargetPipelineCfg, SamplerBaseCfg
+from .cfg import RetargetPipelineCfg
+from .sampler_base import SamplerBase, SamplerOutput, SamplerSizing, compute_sampler_sizing
+
+# Re-exports so existing ``from .pipeline import ...`` call sites keep
+# resolving the same names.
+__all__ = [
+    "CriterionFn",
+    "RetargetPipeline",
+    "SamplerBase",
+    "SamplerOutput",
+    "SamplerSizing",
+    "compute_sampler_sizing",
+]
 
 CriterionFn = Callable[[RetargetBuffer, int], torch.Tensor]
 """Signature for a validation criterion.
@@ -43,7 +53,7 @@ _TIMING_LABELS: dict[str, str] = {
     "fk_eval": "FK eval (post-solve)",
     "criteria": "criteria (acceptance checks)",
     "final_fps": "final FPS (spatial thin → target)",
-    # Sub-phases of :class:`SupportPolygonSampler`. Keys unmatched here
+    # Sub-phases of :class:`TerrainFirstSampler`. Keys unmatched here
     # fall back to their last dotted segment, so custom samplers still
     # render readably even without an entry.
     "sampler.morph": "morph-patch pool",
@@ -60,209 +70,30 @@ _TIMING_LABELS: dict[str, str] = {
 """Human-readable labels for timing keys in :attr:`RetargetPipeline._timings`."""
 
 
-@dataclasses.dataclass(frozen=True)
-class SamplerSizing:
-    """Back-derived stage sizes for a :class:`SamplerBase` implementation.
-
-    Returned by :meth:`SamplerBase.sizing` so the pipeline can size the
-    shared :class:`RetargetBuffer` before calling the sampler.
-    """
-
-    n_final: int
-    """Final placements returned to the caller."""
-
-    oversample_candidates: int
-    """Polygons sent to IK per final placement (``n_polygons_to_ik / n_final``)."""
-
-    max_neighborhoods: int
-    """Neighborhoods (e.g. 4-foot polygon centers) the sampler will assemble."""
-
-    n_morph_patches: int
-    """Morph-patch target for terrain contact sampling."""
-
-    max_polygons: int
-    """Upper bound on polygon candidates the sampler will emit.
-
-    Sizes the :class:`RetargetBuffer`. The sampler must guarantee that it
-    never writes more than this many rows into the buffer.
-    """
-
-
-def compute_sampler_sizing(
-    n_final: int,
-    *,
-    final_fps_oversample: float = 1.5,
-    criteria_yield: float = 0.5,
-    polygon_fps_oversample: float = 2.0,
-    polygon_assembly_yield: float = 0.8,
-    patches_per_polygon: int = 4,
-    morph_patch_oversample: float = 4.0,
-) -> SamplerSizing:
-    """Back-derive sampler stage sizes from the target final placement count.
-
-    Walks the pipeline backwards, applying an oversample multiplier at
-    every downsampling stage and an expected yield rate at every filter
-    stage. Produces a :class:`SamplerSizing` that scales with ``n_final``
-    rather than hitting any fixed cap.
-
-    The cascade (post → pre):
-
-    1. ``n_final`` placements after final FPS.
-    2. ``n_final × final_fps_oversample`` after criteria validation
-       (FPS needs a bigger pool to achieve good spatial spread).
-    3. ``(2) / criteria_yield`` polygons entering criteria
-       (accounts for cost/base-z/collision/HAA rejection).
-    4. ``(3) × polygon_fps_oversample`` polygons entering polygon-FPS
-       (grid-bucket FPS in the sampler needs a bigger pool too).
-    5. ``(4) / polygon_assembly_yield`` neighborhoods -- the polygon-
-       level yield captures the fraction passing base-height
-       feasibility. Samplers that expand each polygon into cyclic
-       rotation variants (``group_size > 1``) scale ``max_polygons``
-       by ``group_size`` themselves so the buffer can hold every
-       variant pre-collapse.
-    6. ``n_final × patches_per_polygon × morph_patch_oversample`` morph-
-       patches -- decoupled from K. The sampler reuses morph patches
-       across centers (a single patch can serve many neighborhoods via
-       different center/yaw combinations), so morph sizing only needs
-       to cover the terrain densely enough for each foot-sector query
-       to return at least one patch. Scaling with ``n_final`` (desired
-       final count, a proxy for terrain area) is sufficient.
-
-    Args:
-        n_final: Target final placement count (e.g. ``area / spacing**2``).
-        final_fps_oversample: Headroom multiplier into the final FPS.
-        criteria_yield: Expected fraction of IK solves surviving criteria.
-        polygon_fps_oversample: Headroom multiplier into the polygon FPS.
-        polygon_assembly_yield: Expected fraction of neighborhoods whose
-            assembled polygon passes base-height feasibility.
-        patches_per_polygon: Foot contacts per polygon.
-        morph_patch_oversample: Morph-patches per foot slot — ensures the
-            neighborhood's in-range ball has several valid patches.
-
-    Returns:
-        :class:`SamplerSizing` with the stage sizes.
-    """
-    n_post_criteria = int(np.ceil(n_final * final_fps_oversample))
-    n_polygons_pre_criteria = int(np.ceil(n_post_criteria / criteria_yield))
-    n_polygons_pre_fps = int(np.ceil(n_polygons_pre_criteria * polygon_fps_oversample))
-    K = int(np.ceil(n_polygons_pre_fps / polygon_assembly_yield))
-    n_morph_patches = int(np.ceil(n_final * patches_per_polygon * morph_patch_oversample))
-    oversample_candidates = max(1, int(np.ceil(n_polygons_pre_criteria / max(n_final, 1))))
-    return SamplerSizing(
-        n_final=n_final,
-        oversample_candidates=oversample_candidates,
-        max_neighborhoods=K,
-        n_morph_patches=n_morph_patches,
-        max_polygons=K,
-    )
-
-
-class SamplerBase(ABC):
-    """Abstract base for pipeline sampling strategies.
-
-    Constructed from a cfg, a :class:`NewtonKinematics` instance, and
-    the foot body indices.  Subclasses derive any robot geometry they
-    need from ``kin`` and ``foot_body_ids`` instead of receiving it
-    as explicit constructor arguments.
-    """
-
-    def __init__(self, cfg: SamplerBaseCfg, kin: NewtonKinematics, foot_body_ids: list[int]):
-        self.cfg = cfg
-        self.kin = kin
-        self.foot_body_ids = foot_body_ids
-        self.sub_timings: dict[str, float] = {}
-        """Per-subphase wall-time breakdown from the last :meth:`__call__`.
-
-        Keys are sub-phase names (dots indicate nesting); values are seconds.
-        The pipeline merges this into its own timings table under the
-        ``sampler.`` prefix.
-        """
-        self.init_info: str | None = None
-        """One-line summary of any one-time init work (e.g. reachability FK).
-
-        Surfaced in :attr:`RetargetPipeline.rejection_summary`. Sampler
-        subclasses may set this during ``__init__`` to report what was
-        precomputed.
-        """
-
-    @property
-    def group_size(self) -> int:
-        """Number of variant candidates per source polygon.
-
-        When greater than 1, the pipeline collapses each group to the
-        single best candidate (lowest IK cost) after solving.
-        """
-        return 1
-
-    @abstractmethod
-    def sizing(self, n_desired: int) -> SamplerSizing:
-        """Back-derive stage sizes from a target final-robot count.
-
-        The pipeline calls this before each :meth:`run` to size the shared
-        :class:`RetargetBuffer` — the sampler guarantees it will emit at
-        most :attr:`SamplerSizing.max_polygons` candidates into the buffer.
-        """
-        ...
-
-    @abstractmethod
-    def __call__(
-        self,
-        wp_mesh: wp.Mesh,
-        origin: np.ndarray,
-        buffer: RetargetBuffer,
-        n_desired: int,
-    ) -> tuple[int, dict[str, int]]:
-        """Sample keypoints on geometry and write results to *buffer*.
-
-        Args:
-            wp_mesh: Terrain warp mesh.
-            origin: Terrain origin offset ``[3]``.
-            buffer: Pre-allocated retarget buffer (written in-place).
-            n_desired: Number of valid candidates to aim for.
-
-        Returns:
-            ``(num_written, rejection_stats)`` where *rejection_stats*
-            maps reason strings to counts.
-        """
-        ...
-
-
 def _validate_results(
     buffer: RetargetBuffer,
     criteria: dict[str, CriterionFn],
-    group_size: int = 1,
 ) -> tuple[dict[str, int], torch.Tensor]:
-    """Run user-defined acceptance criteria with waterfall attribution.
+    """Run user-defined acceptance criteria with per-candidate waterfall.
 
     Each criterion is a callable ``(buffer, N) -> bool[N]``. Criteria
-    are evaluated in insertion order. Attribution semantics depend on
-    ``group_size``:
-
-    - ``group_size == 1``: per-candidate waterfall — each candidate is
-      attributed to its first failing criterion.
-    - ``group_size > 1``: group-level waterfall — candidates are
-      grouped in contiguous blocks of ``group_size`` siblings (e.g.
-      cyclic rotation variants). A group is attributed to the first
-      criterion that eliminates its last surviving sibling. Groups
-      whose ``N`` is not a multiple of ``group_size`` fall back to the
-      per-candidate waterfall.
+    are evaluated in insertion order; each candidate is attributed to
+    its first failing criterion.
 
     Side-effect free — the caller is responsible for updating
     ``buffer._ik_valid`` / ``num_ik_valid`` / ``num_final_valid`` from
-    the returned mask (which is per-candidate regardless of grouping).
+    the returned mask.
 
     Args:
         buffer: Retarget buffer with ``joint_q_result`` populated and
             FK already evaluated.
         criteria: Ordered mapping from criterion name to callable.
-        group_size: Candidates per source group (sampler's
-            :attr:`~.SamplerBase.group_size`).
 
     Returns:
         ``(reject, cum_pass)`` where ``reject`` maps criterion name to
-        the number of rejections (candidates or groups, per the rule
-        above) plus an ``"ok"`` key for survivors, and ``cum_pass`` is
-        the per-candidate ``bool[N]`` mask of all-criteria-passing rows.
+        the number of rejections plus an ``"ok"`` key for survivors,
+        and ``cum_pass`` is the per-candidate ``bool[N]`` mask of
+        all-criteria-passing rows.
     """
     N = buffer.num_geometry_valid
     device = buffer.device
@@ -275,23 +106,11 @@ def _validate_results(
 
     cum_pass = torch.ones(N, device=device, dtype=torch.bool)
     reject: dict[str, int] = {}
-
-    if group_size > 1 and N % group_size == 0:
-        n_groups = N // group_size
-        prev_survivor = torch.ones(n_groups, device=device, dtype=torch.bool)
-        for name, mask in masks.items():
-            cum_pass = cum_pass & mask
-            survivor = cum_pass.view(n_groups, group_size).any(dim=1)
-            killed_here = prev_survivor & ~survivor
-            reject[name] = int(killed_here.sum())
-            prev_survivor = survivor
-        reject["ok"] = int(prev_survivor.sum())
-    else:
-        for name, mask in masks.items():
-            failed_here = cum_pass & ~mask
-            reject[name] = int(failed_here.sum())
-            cum_pass = cum_pass & mask
-        reject["ok"] = int(cum_pass.sum())
+    for name, mask in masks.items():
+        failed_here = cum_pass & ~mask
+        reject[name] = int(failed_here.sum())
+        cum_pass = cum_pass & mask
+    reject["ok"] = int(cum_pass.sum())
 
     return reject, cum_pass
 
@@ -329,33 +148,30 @@ class RetargetPipeline:
         self._ik_iterations_used: int = 0
         self._solver_costs: torch.Tensor | None = None
         self._n_ik_problems: int = 0
-        """Pre-group-collapse IK problem count from the last run.
-
-        When ``sampler.group_size > 1``, the pipeline solves IK for
-        ``group_size × n_polygons`` problems, then keeps only the best
-        cost per group. This field preserves the pre-collapse count for
-        the rejection summary; ``buffer.num_written`` is overwritten to
-        the post-collapse count for downstream consumers.
-        """
+        """IK problem count from the last run — one problem per accepted
+        polygon."""
         self._n_desired: int = 0
         """Target placement count from the last :meth:`run`. Used by
         :attr:`rejection_summary` to explain the sizing cascade."""
         self._sizing: SamplerSizing | None = None
         """Back-cascaded sampler sizing from the last :meth:`run`. Used
         by :attr:`rejection_summary` to report the polygon budget."""
-        self._cyclic_all_pass: int = 0
-        """Groups where *every* cyclic sibling passed criteria (``gs > 1``).
+        self._run_time: float = 0.0
+        """Total wall time of the last :meth:`run` call (CUDA-synced at
+        entry/exit). Used by :attr:`rejection_summary` to attribute the
+        gap between tracked phases and overall run time."""
+        self._sampler_diagnostics: dict[str, object] = {}
+        """Per-call diagnostics dict from the last sampler invocation.
 
-        For these the rotation variants add no feasibility; collapse
-        picks the cheapest of :attr:`SamplerBase.group_size` solutions
-        purely as a cost improvement.
+        Opaque, sampler-specific. Consumed by offline metrics tools; not
+        part of the public pipeline API.
         """
-        self._cyclic_salvaged: int = 0
-        """Groups where only a subset of cyclic siblings passed criteria.
+        self._sampler_slot_assignment: torch.Tensor | None = None
+        """Per-placement slot permutation from the last sampler invocation."""
+        self._sampler_template_index: torch.Tensor | None = None
+        """Per-placement matched-template id from the last sampler invocation.
 
-        These groups survived *because* cyclic search found a passing
-        rotation when other rotations failed; a ``gs = 1`` run would
-        have had to get lucky with its single seed to keep them.
+        ``None`` for non-template-driven samplers.
         """
 
     def _ensure_buffer(self, n_desired: int) -> None:
@@ -405,13 +221,13 @@ class RetargetPipeline:
             link_index=0,
             link_offset=wp.vec3(0, 0, 0),
             target_positions=wp.zeros(N, dtype=wp.vec3, device=device),
-            weight=0.05,
+            weight=self.cfg.base_pos_weight,
         )
         base_rot_obj = ik.IKObjectiveRotation(
             link_index=0,
             link_offset_rotation=wp.quat_identity(),
             target_rotations=wp.zeros(N, dtype=wp.vec4, device=device),
-            weight=0.5,
+            weight=self.cfg.base_rot_weight,
         )
         jl_obj = ik.IKObjectiveJointLimit(
             joint_limit_lower=self.kin.model.joint_limit_lower,
@@ -422,7 +238,7 @@ class RetargetPipeline:
         all_objs = [*contact_objs, base_pos_obj, base_rot_obj, jl_obj]
 
         for obj_cfg in self.cfg.extra_objectives:
-            all_objs.append(obj_cfg.build(self, wp_mesh))
+            all_objs.append(obj_cfg.class_type(obj_cfg, self, wp_mesh))
 
         return all_objs, contact_objs, base_pos_obj, base_rot_obj
 
@@ -434,7 +250,7 @@ class RetargetPipeline:
         Preserves list order in the resulting dict so rejection buckets
         attribute failures to the first criterion a candidate violates.
         """
-        return {crit_cfg.name: crit_cfg.build(self, wp_mesh) for crit_cfg in self.cfg.criteria}
+        return {crit_cfg.name: crit_cfg.class_type(crit_cfg, self, wp_mesh) for crit_cfg in self.cfg.criteria}
 
     def run(
         self,
@@ -465,18 +281,37 @@ class RetargetPipeline:
         self._reject_val = {}
         self._ik_iterations_used = 0
         self._n_ik_problems = 0
-        self._cyclic_all_pass = 0
-        self._cyclic_salvaged = 0
         self._n_desired = n_desired
         self._sizing = self.sampler.sizing(n_desired)
+        if self.kin.device.startswith("cuda"):
+            torch.cuda.synchronize()
+        _run_t0 = time.perf_counter()
 
         with self._time("sampler"):
-            n_written, self._reject_geo = self.sampler(
+            sampler_out = self.sampler(
                 wp_mesh,
                 origin,
                 self.buffer,
                 n_desired,
             )
+            n_written = sampler_out.num_written
+            self._reject_geo = sampler_out.reject_stats
+            self._sampler_diagnostics = sampler_out.diagnostics
+            self._sampler_slot_assignment = sampler_out.slot_assignment
+            self._sampler_template_index = sampler_out.template_index
+
+            # Per-slot weights / contact flags: copy into buffer when the
+            # sampler supplies them. ``None`` means "accept buffer defaults"
+            # (uniform weight=1.0, all hard contacts), which ``buffer.reset``
+            # has already restored. Phase A plumbing -- no consumer yet.
+            if sampler_out.slot_weights is not None and n_written > 0:
+                nc = self.buffer.num_contacts
+                flat_w = sampler_out.slot_weights.reshape(-1)
+                self.buffer.slot_weights_t[: n_written * nc] = flat_w[: n_written * nc]
+            if sampler_out.is_contact is not None and n_written > 0:
+                nc = self.buffer.num_contacts
+                flat_ic = sampler_out.is_contact.reshape(-1)
+                self.buffer.is_contact_t[: n_written * nc] = flat_ic[: n_written * nc]
 
         for k, v in self.sampler.sub_timings.items():
             # Dots in the key indicate nested phases; indent proportionally.
@@ -484,6 +319,9 @@ class RetargetPipeline:
             self._timings[f"{'  ' * (depth + 1)}sampler.{k}"] = v
 
         if n_written == 0:
+            if self.kin.device.startswith("cuda"):
+                torch.cuda.synchronize()
+            self._run_time = time.perf_counter() - _run_t0
             return self.buffer
 
         N = self.buffer.num_geometry_valid
@@ -525,68 +363,19 @@ class RetargetPipeline:
             self._eval_fk_batched(N)
         self._ik_iterations_used = total_iters
 
-        # Apply criteria to the pre-collapse candidate set so group-select
-        # can prefer criteria-passing siblings over merely low-cost ones.
-        # When ``gs > 1`` the rejection waterfall is group-level — a group
-        # is only attributed to a criterion once *all* its siblings fail.
-        gs = self.sampler.group_size
+        # Apply criteria to the candidate set. Each candidate is one IK
+        # problem (samplers always emit explicit slot assignment, so there
+        # is no sibling/group structure to collapse).
         with self._time("criteria"):
             if criteria:
-                self._reject_val, cum_pass = _validate_results(self.buffer, criteria, group_size=gs)
+                self._reject_val, cum_pass = _validate_results(self.buffer, criteria)
             else:
                 cum_pass = torch.ones(N, device=self.buffer.device, dtype=torch.bool)
                 self._reject_val = {"ok": N}
 
-        if gs > 1 and gs <= N and N % gs == 0:
-            # Group-collapse: keep the min-cost *passing* sibling per group.
-            # Non-passing siblings are masked to +inf so argmin prefers any
-            # criteria-valid variant; groups with zero passing siblings still
-            # produce an index but land with ``ik_valid = False`` and drop at
-            # final-FPS.
-            n_groups = N // gs
-            costs_t = self._solver_costs[:N]
-            masked_costs = torch.where(cum_pass, costs_t, torch.full_like(costs_t, float("inf")))
-            cost_groups = masked_costs.view(n_groups, gs)
-            best_in_group = cost_groups.argmin(dim=1)
-            keep_idx = best_in_group + torch.arange(n_groups, device=costs_t.device) * gs
-            pass_groups = cum_pass.view(n_groups, gs)
-            group_survivor = pass_groups.any(dim=1)
-            # Split surviving groups by how much cyclic feasibility bought
-            # us: ``all_pass`` = every sibling passed (cyclic only helped
-            # cost), ``salvaged`` = only some passed (cyclic was essential
-            # for feasibility). The rest are already accounted for in the
-            # criteria waterfall.
-            group_all_pass = pass_groups.all(dim=1)
-            self._cyclic_all_pass = int(group_all_pass.sum())
-            self._cyclic_salvaged = int((group_survivor & ~group_all_pass).sum())
-
-            nc = self.buffer.num_contacts
-            nb = self.buffer.num_bodies
-            self.buffer.joint_q_result_t[:n_groups] = self.buffer.joint_q_result_t[keep_idx]
-            self.buffer.joint_q_init_t[:n_groups] = self.buffer.joint_q_init_t[keep_idx]
-            self.buffer.contact_targets_t[: n_groups * nc] = self.buffer.contact_targets_t.view(-1, nc, 3)[
-                keep_idx
-            ].view(-1, 3)
-            self.buffer.base_target_pos_t[:n_groups] = self.buffer.base_target_pos_t[keep_idx]
-            self.buffer.base_target_rot_t[:n_groups] = self.buffer.base_target_rot_t[keep_idx]
-            # body_q was FK'd from the pre-collapse joint_q layout; reshuffle
-            # it alongside joint_q_result so downstream consumers reading
-            # ``body_q[i]`` see the FK of the actual per-group winner.
-            self.buffer.body_q_t[: n_groups * nb] = self.buffer.body_q_t.view(-1, nb, 7)[keep_idx].view(-1, 7)
-            self.buffer._geom_valid[:n_groups] = True
-            self.buffer._geom_valid[n_groups:N] = False
-            self.buffer._ik_valid[:n_groups] = group_survivor
-            self.buffer._ik_valid[n_groups:] = False
-
-            N = n_groups
-            self.buffer.num_written = N
-            self.buffer.num_geometry_valid = N
-            self.buffer.num_ik_valid = int(group_survivor.sum())
-            self.buffer.num_final_valid = self.buffer.num_ik_valid
-        else:
-            self.buffer._ik_valid[:N] = cum_pass
-            self.buffer.num_ik_valid = int(cum_pass.sum())
-            self.buffer.num_final_valid = self.buffer.num_ik_valid
+        self.buffer._ik_valid[:N] = cum_pass
+        self.buffer.num_ik_valid = int(cum_pass.sum())
+        self.buffer.num_final_valid = self.buffer.num_ik_valid
 
         with self._time("final_fps"):
             valid_t = self.buffer._ik_valid[: self.buffer.num_written]
@@ -601,6 +390,9 @@ class RetargetPipeline:
                 self.buffer._selected[:n_select] = selected.to(torch.int32)
 
             self.buffer.num_selected = n_select
+        if self.kin.device.startswith("cuda"):
+            torch.cuda.synchronize()
+        self._run_time = time.perf_counter() - _run_t0
         return self.buffer
 
     def _eval_fk_batched(self, N: int) -> None:
@@ -637,32 +429,23 @@ class RetargetPipeline:
     def rejection_summary(self) -> str:
         """Human-readable summary of the last pipeline run.
 
-        Each stage reports its *unit* (polygons, IK candidates, groups,
-        or placements) so the funnel from one count to the next is
-        unambiguous. When ``sampler.group_size > 1``, criteria
-        attribution is **group-level**: a group is counted as rejected
-        only when all ``group_size`` rotation variants fail.
+        Each stage reports its *unit* (polygons, IK candidates, or
+        placements) so the funnel from one count to the next is
+        unambiguous.
 
-        Stages (conditionally emitted):
+        Stages:
 
         1. **Sampler** — morph-patch pool → per-foot reachability
            sampling (annulus ∩ sector) → polygon-FPS. Unit: polygons.
-        2. **Cyclic expansion** (``gs > 1``) — each polygon spawns
-           ``gs`` rotation variants. Polygons → IK candidates.
-        3. **IK solve** — per-candidate IK with the contact + base
+        2. **IK solve** — per-polygon IK with the contact + base
            pose + joint-limit objectives.
-        4. **Criteria** — acceptance predicates applied pre-collapse
-           (per-candidate when ``gs = 1``; group-level when ``gs > 1``).
-        5. **Group-select** (``gs > 1``) — keep the min-cost sibling
-           among criteria-passing siblings per group; drop groups
-           with no passing sibling.
-        6. **Final FPS** — farthest-point downsample to ``n_desired``.
+        3. **Criteria** — acceptance predicates applied per-candidate.
+        4. **Final FPS** — farthest-point downsample to ``n_desired``.
         """
         buf = self.buffer
         reject_geo = self._reject_geo
         reject_val = self._reject_val
-        gs = self.sampler.group_size
-        n_polys_valid = self._n_ik_problems // gs if gs > 0 else self._n_ik_problems
+        n_polys_valid = self._n_ik_problems
         n_polys_rejected = sum(reject_geo.get(k, 0) for k in ("out_of_reach", "shape_infeasible"))
         n_polys_attempted = n_polys_valid + n_polys_rejected
 
@@ -697,28 +480,19 @@ class RetargetPipeline:
             return f"{n:,}"
 
         header = "Retarget pipeline"
-        if gs > 1:
-            header += f"  ·  cyclic×{gs}"
         lines = [header]
         if self.sampler.init_info:
             lines.append(f"  init: {self.sampler.init_info}")
 
         # Sizing explainer: back-cascade from ``n_desired`` yields the
-        # pre-cyclic polygon budget ``max_neighborhoods``. The buffer is
-        # allocated for ``max_polygons = max_neighborhoods × group_size``
-        # so it can hold every cyclic rotation variant pre-collapse. The
-        # Sampler row below reports pre-cyclic polygons, so we show the
-        # pre-cyclic budget there; the buffer figure is a parenthetical.
+        # polygon budget ``max_neighborhoods``.
         polygon_budget = self._sizing.max_neighborhoods if self._sizing is not None else 0
-        buffer_budget = self._sizing.max_polygons if self._sizing is not None else 0
         if self._n_desired > 0 and polygon_budget > 0:
             over = polygon_budget / self._n_desired
             line = (
                 f"  sizing: target={self._n_desired} → budget={fmt(polygon_budget)} polygons"
                 f" ({over:.0f}× oversample for FPS diversity)"
             )
-            if gs > 1 and buffer_budget > polygon_budget:
-                line += f"; buffer={fmt(buffer_budget)} rows (×{gs} cyclic)"
             lines.append(line)
             # Cascade breakdown is cfg-specific; emit it if the sampler
             # carries a ``SamplerSizingCfg`` at ``cfg.sizing``.
@@ -747,9 +521,7 @@ class RetargetPipeline:
 
         # Sampler (polygon funnel).  Rejection rows render as "−N" so the
         # reader sees they subtract from ``attempted`` down to ``valid``.
-        # Header compares ``attempted`` against the pre-cyclic polygon
-        # budget (unit-match: this row counts pre-cyclic polygons). The
-        # ``valid`` row appends the geometric yield rate.
+        # The ``valid`` row appends the geometric yield rate.
         attempted_cell = (
             f"{fmt(n_polys_attempted)} / {fmt(polygon_budget)} budget" if polygon_budget > 0 else fmt(n_polys_attempted)
         )
@@ -761,47 +533,23 @@ class RetargetPipeline:
         sampler_rows.append(["  valid", "polygons", f"{fmt(n_polys_valid)} ({geo_yield:.1f}%)"])
         sections.append(sampler_rows)
 
-        # Cyclic expansion (unit switches polygons → candidates).
-        if gs > 1:
-            sections.append(
-                [
-                    [
-                        f"Cyclic expansion (×{gs})",
-                        "candidates",
-                        f"{fmt(n_polys_valid)} → {fmt(self._n_ik_problems)}",
-                    ]
-                ]
-            )
-
         # IK solve.
         sections.append([[f"IK solve ({self._ik_iterations_used} iters)", "candidates", fmt(self._n_ik_problems)]])
 
-        # Criteria.  Waterfall unit = polygon groups when gs > 1, else candidates.
+        # Criteria waterfall (per-candidate).
         if reject_val and any(k != "ok" for k in reject_val):
-            crit_unit = "polygon groups" if gs > 1 else "candidates"
-            crit_total_in = n_polys_valid if gs > 1 else self._n_ik_problems
-            crit_header = "Criteria (group waterfall)" if gs > 1 else "Criteria (per-candidate)"
-            crit_rows = [[crit_header, crit_unit, fmt(crit_total_in)]]
+            crit_total_in = self._n_ik_problems
+            crit_rows = [["Criteria (per-candidate)", "candidates", fmt(crit_total_in)]]
             for name, count in reject_val.items():
                 if name == "ok":
                     continue
                 crit_rows.append([f"  ─ {name}", "", f"−{fmt(count)}"])
             ok = reject_val.get("ok", 0)
             pct = 100.0 * ok / crit_total_in if crit_total_in > 0 else 0.0
-            crit_rows.append(["  survivors", crit_unit, f"{fmt(ok)} ({pct:.1f}%)"])
+            crit_rows.append(["  survivors", "candidates", f"{fmt(ok)} ({pct:.1f}%)"])
             sections.append(crit_rows)
         else:
             sections.append([["Criteria (none applied)", "—", fmt(buf.num_ik_valid)]])
-
-        # Group-select.  Two sub-rows break the placements by whether
-        # the rotation variants actually salvaged feasibility (only some
-        # rotations passed) or merely improved cost (all rotations passed).
-        if gs > 1:
-            group_rows = [["Group-select (min-cost passing)", "placements", fmt(buf.num_ik_valid)]]
-            if buf.num_ik_valid > 0:
-                group_rows.append([f"  ─ all {gs} rotations passed (cost win only)", "", fmt(self._cyclic_all_pass)])
-                group_rows.append(["  ─ cyclic-salvaged (subset passed)", "", fmt(self._cyclic_salvaged)])
-            sections.append(group_rows)
 
         # Final FPS downsample to target.
         sections.append([["Final FPS", "placements", f"{fmt(buf.num_ik_valid)} → {fmt(buf.num_selected)}"]])
@@ -813,7 +561,11 @@ class RetargetPipeline:
             # Sub-entries stored with a leading-space prefix so iteration
             # order keeps them grouped under their parent; exclude those
             # from the total to avoid double-counting.
-            total = sum(dt for name, dt in self._timings.items() if not name.startswith(" "))
+            tracked = sum(dt for name, dt in self._timings.items() if not name.startswith(" "))
+            run_total = self._run_time if self._run_time > 0.0 else tracked
+            # Denominator for the percent column: prefer the full run time
+            # so rows sum to ~100% and the untracked slice is visible.
+            denom = run_total if run_total > 0 else 1.0
             timing_rows: list[list[str]] = []
             for name, dt in self._timings.items():
                 stripped = name.lstrip(" ")
@@ -823,12 +575,21 @@ class RetargetPipeline:
                 # already conveys the hierarchy, so prefixes are redundant).
                 display = _TIMING_LABELS.get(stripped, stripped.rsplit(".", 1)[-1])
                 label = leading + display
-                pct = 100.0 * dt / total if total > 0 else 0.0
-                timing_rows.append([label, f"{dt:.3f}s", f"{pct:.1f}%"])
+                timing_rows.append([label, f"{dt:.3f}s", f"{100.0 * dt / denom:.1f}%"])
+            untracked = run_total - tracked
+            if untracked > 0.0005:
+                timing_rows.append(
+                    [
+                        "untracked (Python glue / buffer reset / CUDA sync gaps)",
+                        f"{untracked:.3f}s",
+                        f"{100.0 * untracked / denom:.1f}%",
+                    ]
+                )
             lines.append("")
             lines.append(
-                f"Timings  (total {total:.3f}s across tracked phases;"
-                " excludes one-time init, JIT/CUDA-graph compile, and host/device sync overhead)"
+                f"Timings  (run {run_total:.3f}s = {tracked:.3f}s tracked"
+                f" + {max(untracked, 0.0):.3f}s untracked; excludes pipeline constructor,"
+                " reachability precompute, and first-call JIT/CUDA-graph compile)"
             )
             lines.extend(_render_table(["Phase", "Time", "%"], ["l", "r", "r"], [timing_rows]))
 

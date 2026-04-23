@@ -12,7 +12,7 @@ joint limits), see the per-robot preset modules.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -24,10 +24,16 @@ from .kinematic.ik_objectives.terrain_collision import _build_collision_probes
 if TYPE_CHECKING:
     from ..mdp.retarget.buffer import RetargetBuffer
     from ..mdp.retarget.pipeline import RetargetPipeline
+    from .criteria_cfg import (
+        CollisionCheckCfg,
+        FootPositionErrorCfg,
+        HaaLimitCfg,
+        SolverCostOutlierCfg,
+        SupportPolygonStabilityCfg,
+    )
     from .kinematic import NewtonKinematics
 
 
-@dataclass
 class FootPositionError:
     """Criterion: FK foot positions must match contact targets within tolerance [m].
 
@@ -37,16 +43,18 @@ class FootPositionError:
     worst foot, ``"sum"`` bounds the total drift across the polygon.
 
     Args:
-        num_bodies: Number of bodies per robot in the Newton model.
-        foot_ids: Newton body indices for the feet.
-        max_err: Error threshold [m] applied to the aggregated value.
-        aggregate: ``"max"`` or ``"sum"`` across feet.
+        cfg: :class:`~.criteria_cfg.FootPositionErrorCfg` with ``max_err``
+            and ``aggregate`` fields.
+        pipeline: Live :class:`RetargetPipeline` — read for
+            ``kin.model.body_count`` and ``foot_body_ids``.
+        wp_mesh: Unused (kept for uniform construction signature).
     """
 
-    num_bodies: int = 0
-    foot_ids: list[int] = field(default_factory=list)
-    max_err: float = 0.02
-    aggregate: str = "max"
+    def __init__(self, cfg: FootPositionErrorCfg, pipeline: RetargetPipeline, wp_mesh: object = None) -> None:
+        self.num_bodies = pipeline.kin.model.body_count
+        self.foot_ids = list(pipeline.foot_body_ids)
+        self.max_err = cfg.max_err
+        self.aggregate = cfg.aggregate
 
     def __call__(self, buffer: RetargetBuffer, N: int) -> torch.Tensor:
         nc = len(self.foot_ids)
@@ -54,10 +62,22 @@ class FootPositionError:
         ct = buffer.contact_targets_t[: N * nc].view(N, nc, 3)
         idx = torch.tensor(self.foot_ids, device=buffer.device, dtype=torch.long)
         per_foot = (body_q[:, idx, :3] - ct).norm(dim=-1)  # [N, nc]
+        # Mask air slots (``is_contact == False``) out of the foot-error
+        # reduction -- their target is a kinematic reference, not a
+        # ground-truth ground contact, so foot drift there isn't a
+        # physical-stability violation. Sum-aggregate zeros masked slots;
+        # max-aggregate pushes them to ``-inf`` so they never dominate.
+        is_contact = buffer.is_contact_t[: N * nc].view(N, nc)
         if self.aggregate == "sum":
+            per_foot = torch.where(is_contact, per_foot, torch.zeros_like(per_foot))
             err = per_foot.sum(dim=-1)
         elif self.aggregate == "max":
-            err = per_foot.max(dim=-1).values
+            neg_inf = torch.full_like(per_foot, float("-inf"))
+            masked = torch.where(is_contact, per_foot, neg_inf)
+            err = masked.max(dim=-1).values
+            # If no slot is in contact, ``err = -inf`` trivially passes;
+            # that's the right behavior (no ground contact → no foot-error
+            # criterion to enforce).
         else:
             raise ValueError(f"FootPositionError.aggregate must be 'max' or 'sum', got {self.aggregate!r}")
         return err <= self.max_err
@@ -87,25 +107,31 @@ class JointMargin:
         return violation <= 0
 
 
-@dataclass
 class HaaLimit:
     """Criterion: HAA (hip abduction) joint angles must not exceed ``max_angle`` [rad].
 
     Resolves DOF indices at construction time from a joint name regex
-    via :meth:`NewtonKinematics.find_joint_dof_indices`.
+    via :meth:`NewtonKinematics.find_joint_dof_indices`. The regex comes
+    from ``cfg.joint_pattern`` if set, else from the pipeline's
+    ``haa_joint_pattern`` (resolved per robot preset).
 
     Args:
-        kin: :class:`NewtonKinematics` instance for joint name resolution.
-        joint_pattern: Regex matching HAA joint names (e.g. ``".*hip_joint"``).
-        max_angle: Maximum absolute HAA angle [rad].
+        cfg: :class:`~.criteria_cfg.HaaLimitCfg` with ``joint_pattern``
+            and ``max_angle`` fields.
+        pipeline: Live :class:`RetargetPipeline` — used for joint-name
+            resolution and the fallback regex.
+        wp_mesh: Unused (kept for uniform construction signature).
     """
 
-    kin: NewtonKinematics
-    joint_pattern: str = ".*hip.*"
-    max_angle: float = 0.87
-
-    def __post_init__(self):
-        self._haa_indices = self.kin.find_joint_dof_indices(self.joint_pattern)
+    def __init__(self, cfg: HaaLimitCfg, pipeline: RetargetPipeline, wp_mesh: object = None) -> None:
+        pattern = cfg.joint_pattern if cfg.joint_pattern is not None else pipeline.cfg.haa_joint_pattern
+        if pattern is None:
+            raise ValueError(
+                "HaaLimit requires a joint_pattern. Either set HaaLimitCfg.joint_pattern or "
+                "RetargetPipelineCfg.haa_joint_pattern (typically resolved per robot preset)."
+            )
+        self.max_angle = cfg.max_angle
+        self._haa_indices = pipeline.kin.find_joint_dof_indices(pattern)
 
     def __call__(self, buffer: RetargetBuffer, N: int) -> torch.Tensor:
         if not self._haa_indices:
@@ -138,44 +164,104 @@ class BaseZError:
         return (base_z - target_z).abs() <= self.max_err
 
 
-@dataclass
 class SupportPolygonStability:
-    """Criterion: base (CoM proxy) must project inside the support polygon.
+    """Criterion: base (CoM proxy) must project inside the support region.
 
     Physically-grounded quasi-static stability check: under constant
-    gravity, the CoM's vertical projection must lie within the convex
-    hull of the ground-contact points (world-frame XY). Uses the
-    base-link origin as a cheap CoM proxy -- for quadrupeds the base
-    is near the CoM, so the approximation is tight.
+    gravity, the CoM's vertical projection must lie within the support
+    region in world-frame XY. Uses the base-link origin as a cheap CoM
+    proxy -- for quadrupeds the base is near the CoM, so the
+    approximation is tight.
 
-    Implementation: sort contacts CCW around their centroid so edges
-    are adjacent, then for each edge ``(v_i, v_{i+1})`` check the sign
-    of the 2D cross product ``(v_{i+1} - v_i) × (p - v_i)``. All
-    non-negative iff ``p`` is inside the convex hull.
+    The support region depends on the number of contacts ``nc``:
+
+    * ``nc == 1``: support collapses to a point, which is a measure-zero
+      statically stable region -- always rejected.
+    * ``nc == 2``: support collapses to the segment between the two
+      contacts. The base must project onto the closed segment with
+      axial parameter :math:`t \\in [0, 1]`, and perpendicular distance
+      bounded by ``segment_tol_frac × segment_length``. Scaling the
+      lateral margin with the segment length (rather than an absolute
+      threshold) captures the finite foot-contact-footprint regularization
+      of the otherwise measure-zero balance condition.
+    * ``nc >= 3``: the support region is the convex hull of the contacts.
+      Sort CCW around the centroid, then for each edge check the sign of
+      the 2D cross product ``(v_{i+1} - v_i) × (p - v_i)``. All non-
+      negative iff ``p`` is inside the hull.
+
+    Args:
+        cfg: :class:`~.criteria_cfg.SupportPolygonStabilityCfg` with
+            ``segment_tol_frac``.
+        pipeline: Unused (kept for uniform construction signature).
+        wp_mesh: Unused (kept for uniform construction signature).
     """
+
+    def __init__(
+        self,
+        cfg: SupportPolygonStabilityCfg | None = None,
+        pipeline: RetargetPipeline | None = None,
+        wp_mesh: object = None,
+    ) -> None:
+        self.segment_tol_frac = 0.05 if cfg is None else cfg.segment_tol_frac
 
     def __call__(self, buffer: RetargetBuffer, N: int) -> torch.Tensor:
         nc = buffer.num_contacts
         ct_xy = buffer.contact_targets_t[: N * nc].view(N, nc, 3)[..., :2]
         base_xy = buffer.joint_q_result_t[:N, 0:2]
+        is_contact = buffer.is_contact_t[: N * nc].view(N, nc)
+        n_active = is_contact.sum(dim=-1)  # [N]
 
-        centroid = ct_xy.mean(dim=1, keepdim=True)
-        angles = torch.atan2(
-            ct_xy[..., 1] - centroid[..., 1],
-            ct_xy[..., 0] - centroid[..., 0],
-        )
-        order = angles.argsort(dim=1)
-        poly = torch.gather(ct_xy, 1, order.unsqueeze(-1).expand(-1, -1, 2))
+        result = torch.zeros(N, device=buffer.device, dtype=torch.bool)
+        if N == 0:
+            return result
 
-        v0 = poly
-        v1 = torch.roll(poly, -1, dims=1)
-        edge = v1 - v0
-        to_p = base_xy.unsqueeze(1) - v0
-        cross = edge[..., 0] * to_p[..., 1] - edge[..., 1] * to_p[..., 0]
-        return (cross >= 0).all(dim=1)
+        # Group candidates by their per-candidate active-contact count and
+        # dispatch to the right support-region test. ``nc`` is small
+        # (typically <= 4) so this loop is constant-cost.
+        for k in range(2, nc + 1):
+            mask_k = n_active == k
+            if not bool(mask_k.any()):
+                continue
+            idx_k = mask_k.nonzero(as_tuple=False).squeeze(-1)
+            ct_k = ct_xy[idx_k]  # [Nk, nc, 2]
+            base_k = base_xy[idx_k]  # [Nk, 2]
+            is_k = is_contact[idx_k]  # [Nk, nc]
+            # Sort active slots to the front; contiguous ``[:, :k]`` slice
+            # then gives only the active contacts in a stable order.
+            sort_idx = is_k.to(torch.int32).argsort(dim=-1, descending=True, stable=True)
+            active = torch.gather(ct_k, 1, sort_idx.unsqueeze(-1).expand(-1, -1, 2))[:, :k]
+
+            if k == 2:
+                a = active[:, 0]
+                b = active[:, 1]
+                seg = b - a
+                to_p = base_k - a
+                seg_len_sq = (seg * seg).sum(dim=-1).clamp_min(1.0e-12)
+                t = (to_p * seg).sum(dim=-1) / seg_len_sq
+                perp = seg[..., 0] * to_p[..., 1] - seg[..., 1] * to_p[..., 0]
+                seg_len = seg_len_sq.sqrt()
+                perp_abs = perp.abs() / seg_len
+                ok = (t >= 0.0) & (t <= 1.0) & (perp_abs <= self.segment_tol_frac * seg_len)
+            else:
+                centroid = active.mean(dim=1, keepdim=True)
+                angles = torch.atan2(
+                    active[..., 1] - centroid[..., 1],
+                    active[..., 0] - centroid[..., 0],
+                )
+                order = angles.argsort(dim=1)
+                poly = torch.gather(active, 1, order.unsqueeze(-1).expand(-1, -1, 2))
+                v0 = poly
+                v1 = torch.roll(poly, -1, dims=1)
+                edge = v1 - v0
+                to_p = base_k.unsqueeze(1) - v0
+                cross = edge[..., 0] * to_p[..., 1] - edge[..., 1] * to_p[..., 0]
+                ok = (cross >= 0).all(dim=1)
+
+            result[idx_k] = ok
+
+        return result
 
 
-@dataclass
 class SolverCostOutlier:
     """Criterion: reject candidates whose final solver cost is an outlier.
 
@@ -184,14 +270,16 @@ class SolverCostOutlier:
     whose cost exceeds ``threshold_multiplier * median(costs)``.
 
     Args:
-        pipeline: The :class:`RetargetPipeline` whose per-run solver
-            costs this criterion should read.
-        threshold_multiplier: Multiplier on the batch median cost above
-            which a candidate is rejected [unitless].
+        cfg: :class:`~.criteria_cfg.SolverCostOutlierCfg` with
+            ``threshold_multiplier``.
+        pipeline: Live :class:`RetargetPipeline` — read for
+            ``_solver_costs``.
+        wp_mesh: Unused (kept for uniform construction signature).
     """
 
-    pipeline: RetargetPipeline
-    threshold_multiplier: float = 3.0
+    def __init__(self, cfg: SolverCostOutlierCfg, pipeline: RetargetPipeline, wp_mesh: object = None) -> None:
+        self.pipeline = pipeline
+        self.threshold_multiplier = cfg.threshold_multiplier
 
     def __call__(self, buffer: RetargetBuffer, N: int) -> torch.Tensor:
         costs = self.pipeline._solver_costs[:N]
@@ -199,33 +287,28 @@ class SolverCostOutlier:
         return costs < median * self.threshold_multiplier
 
 
-@dataclass
 class CollisionCheck:
     """Criterion: reject candidates where body probes penetrate terrain.
 
     Reads ``body_q`` from the buffer (populated by the pipeline after
     IK), transforms collision probe offsets into world space via a Warp
-    kernel, and queries the terrain mesh for penetration.
-
-    No separate FK pass -- uses the body transforms already stored in
-    the buffer.
+    kernel, and queries the terrain mesh for penetration. No separate
+    FK pass -- uses the body transforms already stored in the buffer.
 
     Args:
-        kin: :class:`NewtonKinematics` instance.
-        wp_mesh: Warp mesh for terrain queries.
-        exclude_bodies: Body indices to skip (e.g. feet).
-        n_samples: Surface probe points per body.
-        max_pen: Maximum allowed penetration depth [m].
+        cfg: :class:`~.criteria_cfg.CollisionCheckCfg` with ``n_samples``
+            and ``max_pen``.
+        pipeline: Live :class:`RetargetPipeline` — read for
+            ``kin.builder`` (probe generation) and ``foot_body_ids``
+            (exclusion).
+        wp_mesh: Terrain Warp mesh to query for penetration depth.
     """
 
-    kin: NewtonKinematics
-    wp_mesh: object
-    exclude_bodies: list[int] = field(default_factory=list)
-    n_samples: int = 16
-    max_pen: float = 0.02
-
-    def __post_init__(self):
-        bodies, offsets = _build_collision_probes(self.kin.builder, self.exclude_bodies, self.n_samples)
+    def __init__(self, cfg: CollisionCheckCfg, pipeline: RetargetPipeline, wp_mesh: object) -> None:
+        self.kin = pipeline.kin
+        self.wp_mesh = wp_mesh
+        self.max_pen = cfg.max_pen
+        bodies, offsets = _build_collision_probes(self.kin.builder, pipeline.foot_body_ids, cfg.n_samples)
         self._n_probes = len(bodies)
         self._probe_body_np = np.array(bodies, dtype=np.int32)
         self._probe_offset_np = np.array(offsets, dtype=np.float32)

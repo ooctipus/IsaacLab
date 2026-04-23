@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import TYPE_CHECKING
 
 import newton
 import newton.ik as ik
@@ -15,6 +16,10 @@ import numpy as np
 import warp as wp
 
 from ._kernels import jac_fill_row
+
+if TYPE_CHECKING:
+    from ...mdp.retarget.pipeline import RetargetPipeline
+    from .cfg import IKObjectiveTerrainCollisionCfg
 
 
 @wp.kernel
@@ -205,28 +210,25 @@ class IKObjectiveTerrainCollision(ik.IKObjective):
     """Penalize robot body surface points penetrating the terrain mesh.
 
     Args:
-        mesh_id: Warp mesh identifier.
-        builder: Newton model builder (for mesh vertex access).
-        exclude_bodies: Body indices to skip (e.g. foot bodies).
-        weight: Residual weight.
-        margin: Softplus temperature [m].
-        n_samples: Surface sample points per body.
+        cfg: :class:`~.cfg.IKObjectiveTerrainCollisionCfg` with
+            ``weight``, ``margin``, ``n_samples``.
+        pipeline: Live :class:`RetargetPipeline` — read for
+            ``kin.builder`` (probe generation) and ``foot_body_ids``
+            (excluded from probing).
+        wp_mesh: Terrain Warp mesh; ``mesh_id`` is stored for GPU queries.
     """
 
     def __init__(
         self,
-        mesh_id: int,
-        builder: newton.ModelBuilder,
-        exclude_bodies: list[int],
-        weight: float = 3.0,
-        margin: float = 0.05,
-        n_samples: int = 16,
+        cfg: IKObjectiveTerrainCollisionCfg,
+        pipeline: RetargetPipeline,
+        wp_mesh: object,
     ) -> None:
         super().__init__()
-        self.mesh_id = mesh_id
-        self.weight = weight
-        self.margin = margin
-        bodies, offsets = _build_collision_probes(builder, exclude_bodies, n_samples)
+        self.mesh_id = wp_mesh.id
+        self.weight = cfg.weight
+        self.margin = cfg.margin
+        bodies, offsets = _build_collision_probes(pipeline.kin.builder, pipeline.foot_body_ids, cfg.n_samples)
         self.n_probes = len(bodies)
         self._probe_body_np = np.array(bodies, dtype=np.int32)
         self._probe_offset_np = np.array(offsets, dtype=np.float32)

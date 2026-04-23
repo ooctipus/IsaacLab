@@ -59,6 +59,9 @@ _HAA_PATTERNS: dict[str, str | None] = {
     "anymal_c": ".*HAA",
     "go2": ".*hip_joint",
     "spot": ".*hip_x",
+    # Bipeds have no HAA analogue (no hip-abduction joint that can splay feet
+    # out laterally in the way a quadruped's HAA can), so disable the gate.
+    "h1": None,
 }
 
 
@@ -159,6 +162,30 @@ def _terrain_preset_mesh(preset_dict: dict, device: str):
     )
 
 
+def _resolve_foot_names(robot: str, body_names: list[str]) -> list[str]:
+    """Resolve the foot body names for ``robot``.
+
+    Prefers the explicit preset list on
+    :class:`RetargetFootBodyNamesCfg` (required for robots whose foot
+    bodies don't contain ``"foot"`` in the name, e.g. H1's
+    ``*_ankle_link``). Falls back to a case-insensitive substring
+    filter so robots without a preset still work.
+    """
+    from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.robots.robot_presets import (
+        RetargetFootBodyNamesCfg,
+    )
+
+    preset_foot_names = getattr(RetargetFootBodyNamesCfg, robot, None)
+    if preset_foot_names is None:
+        return [n for n in body_names if "foot" in n.lower()]
+    missing = [n for n in preset_foot_names if n not in body_names]
+    if missing:
+        raise ValueError(
+            f"RetargetFootBodyNamesCfg.{robot} names not found in robot USD: missing={missing}, available={body_names}"
+        )
+    return list(preset_foot_names)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -174,7 +201,8 @@ def main():
     )
     from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.cfg import (
         PatchSamplingCfg,
-        SupportPolygonSamplerCfg,
+        TemplateMatchedSamplerCfg,
+        TerrainFirstSamplerCfg,
     )
     from isaaclab_tasks.manager_based.locomotion.position.utils.criteria_cfg import (
         CollisionCheckCfg,
@@ -185,6 +213,7 @@ def main():
     )
     from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import NewtonKinematicsCfg
     from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic.ik_objectives.cfg import (
+        IKObjectiveGravityTorqueCfg,
         IKObjectiveJointRegularizeCfg,
         IKObjectiveStabilityMarginCfg,
         IKObjectiveTerrainCollisionCfg,
@@ -193,9 +222,16 @@ def main():
     _register_position_task()
 
     from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.robots.robot_presets import (
+        RetargetBasePosWeightCfg,
+        RetargetBaseRotWeightCfg,
+        RetargetGravityWeightCfg,
         RetargetJointRegularizeTargetsCfg,
         RobotArticulationCfg,
     )
+
+    def _preset_for(preset_cls: type, robot: str) -> object:
+        """Read a robot's field on a :class:`PresetCfg` subclass, or fall back to default."""
+        return getattr(preset_cls, robot, preset_cls().default)
 
     sub_terrains = _sub_terrain_lookup()
     terrain_presets = _terrain_preset_lookup()
@@ -239,8 +275,35 @@ def main():
             "``max_robots = sampling_area / (3 * spacing**2)`` so the grid-bucket "
             "downsample has enough candidates to actually enforce the spacing "
             "(pure ``area/spacing**2`` is a square-grid upper bound and leaves "
-            "the downsample a no-op when criteria yield <~33% -- the empirical "
+            "the downsample a no-op when criteria yield <~33%% -- the empirical "
             "rate on typical sub-terrains)."
+        ),
+    )
+    parser.add_argument(
+        "--sampler",
+        type=str,
+        default="template_matched",
+        choices=["terrain_first", "template_matched"],
+        help=(
+            "Sampler implementation. ``template_matched`` (default) is the Phase 2"
+            " hybrid -- NN against an FPS-thinned template library that returns a"
+            " matched index carrying per-placement slot assignment. ``terrain_first``"
+            " is the legacy pass/fail NN against a 25k-sample FK distribution."
+        ),
+    )
+    parser.add_argument(
+        "--min_contacts",
+        type=int,
+        default=-1,
+        help=(
+            "Minimum contact slots a candidate must fill to be accepted (see"
+            " :attr:`TerrainFirstSamplerCfg.min_contacts`). ``-1`` (default)"
+            " preserves the hard-polygon behavior where every slot must find"
+            " a patch. A positive ``m`` enables the soft polygon path: slots"
+            " without an in-reach patch are marked ``is_contact = False`` and"
+            " get a template-projected target. ``m = 2`` lets mixed-geometry"
+            " terrain emit nc=2/3/4 stances on a single robot without"
+            " rebuilding the robot's contact-body set."
         ),
     )
     parser.add_argument(
@@ -318,7 +381,7 @@ def main():
     from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import NewtonKinematics
 
     _tmp = NewtonKinematics(kin_cfg)
-    foot_names = [n for n in _tmp.body_names if "foot" in n.lower()]
+    foot_names = _resolve_foot_names(args.robot, _tmp.body_names)
     del _tmp
 
     # Waterfall order: hard physical constraints first (collision, haa_limit,
@@ -340,16 +403,32 @@ def main():
     # Per-robot joint-regularize targets pulled from the robot preset class.
     joint_regularize_targets = getattr(RetargetJointRegularizeTargetsCfg, args.robot, {})
 
+    # Per-robot IK weights pulled from preset classes — no CLI overrides.
+    # Each robot tunes its own stance-specific values alongside foot names /
+    # regularize targets; ablations live in the preset module, not the tool.
+    base_rot_weight = _preset_for(RetargetBaseRotWeightCfg, args.robot)
+    base_pos_weight = _preset_for(RetargetBasePosWeightCfg, args.robot)
+    gravity_weight = _preset_for(RetargetGravityWeightCfg, args.robot)
+    print(f"IK wts  : base_rot={base_rot_weight}, base_pos={base_pos_weight}, gravity={gravity_weight}")
+
+    patch_cfg = PatchSamplingCfg(x_range=sampler_x_range, y_range=sampler_y_range)
+    if args.sampler == "terrain_first":
+        sampler_cfg = TerrainFirstSamplerCfg(patch=patch_cfg, min_contacts=args.min_contacts)
+    else:
+        sampler_cfg = TemplateMatchedSamplerCfg(patch=patch_cfg, min_contacts=args.min_contacts)
+    print(f"Sampler : {args.sampler} min_contacts={args.min_contacts}")
+
     pipeline_cfg = RetargetPipelineCfg(
         kin=kin_cfg,
-        sampler=SupportPolygonSamplerCfg(
-            patch=PatchSamplingCfg(x_range=sampler_x_range, y_range=sampler_y_range),
-        ),
+        sampler=sampler_cfg,
         foot_body_names=foot_names,
         joint_regularize_targets=joint_regularize_targets,
+        base_pos_weight=base_pos_weight,
+        base_rot_weight=base_rot_weight,
         extra_objectives=[
             IKObjectiveTerrainCollisionCfg(weight=3.0, margin=0.05, n_samples=4),
             IKObjectiveStabilityMarginCfg(weight=1.0),
+            *([IKObjectiveGravityTorqueCfg(weight=gravity_weight)] if gravity_weight > 0.0 else []),
             IKObjectiveJointRegularizeCfg(weight=0.02),
         ],
         criteria=criteria_list,

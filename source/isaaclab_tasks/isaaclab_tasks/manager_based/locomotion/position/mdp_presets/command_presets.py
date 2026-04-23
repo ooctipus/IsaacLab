@@ -8,7 +8,30 @@
 from isaaclab.utils import configclass
 
 from isaaclab_tasks.utils import PresetCfg
+
 from .. import mdp
+from ..mdp.retarget import RetargetPipelineCfg
+from ..mdp.retarget.cfg import PatchSamplingCfg, SamplerSizingCfg, TerrainFirstSamplerCfg
+from ..utils.criteria_cfg import (
+    CollisionCheckCfg,
+    FootPositionErrorCfg,
+    HaaLimitCfg,
+    SolverCostOutlierCfg,
+    SupportPolygonStabilityCfg,
+)
+from ..utils.kinematic import NewtonKinematicsCfg
+from ..utils.kinematic.ik_objectives.cfg import (
+    IKObjectiveGravityTorqueCfg,
+    IKObjectiveJointRegularizeCfg,
+    IKObjectiveStabilityMarginCfg,
+    IKObjectiveTerrainCollisionCfg,
+)
+from .robots.robot_presets import (
+    RetargetFootBodyNamesCfg,
+    RetargetHaaJointPatternCfg,
+    RetargetJointRegularizeTargetsCfg,
+)
+
 
 @configclass
 class CommandsPresetCfg(PresetCfg):
@@ -199,4 +222,62 @@ class CommandsCfg:
         ang_vel_std=0.3,
         debug_vis=True,
         commands=CommandsPresetCfg(),  # type: ignore
+        # Retarget pipeline: terrain-conforming IK spawn pool feeding the
+        # per-cell task table. The kinematics section below is populated
+        # from ``env.scene.robot`` at command-term init (the ArticulationCfg
+        # is the single source of truth for USD / base height / default
+        # stance); everything else is set explicitly here so the pipeline
+        # configuration is visible at the call site rather than hidden
+        # behind an opaque preset object.
+        pipeline_cfg=RetargetPipelineCfg(
+            kin=NewtonKinematicsCfg(),
+            sampler=TerrainFirstSamplerCfg(
+                patch=PatchSamplingCfg(
+                    contact_radius=0.04,
+                    max_height_diff=0.03,
+                    horizontal_scale=0.03,
+                    oversample_ratio=5.0,
+                    min_center_dist=0.05,
+                ),
+                sizing=SamplerSizingCfg(
+                    final_fps_oversample=3.0,
+                    criteria_yield=0.25,
+                    polygon_fps_oversample=5.0,
+                    polygon_assembly_yield=0.8,
+                    morph_patch_oversample=4.0,
+                ),
+            ),
+            foot_body_names=RetargetFootBodyNamesCfg(),  # type: ignore[arg-type]
+            haa_joint_pattern=RetargetHaaJointPatternCfg(),  # type: ignore[arg-type]
+            # Per-robot joint-regularize targets (HAA -> 0, knees -> init pose,
+            # HFE left free). Resolved from the active robot preset and
+            # consumed by :class:`IKObjectiveJointRegularizeCfg` below.
+            joint_regularize_targets=RetargetJointRegularizeTargetsCfg(),  # type: ignore[arg-type]
+            # Extra IK objectives (appended to the standard foot-contact /
+            # base-pose / joint-limit set).
+            extra_objectives=[
+                IKObjectiveTerrainCollisionCfg(weight=3.0, margin=0.05, n_samples=4),
+                IKObjectiveStabilityMarginCfg(weight=1.0),
+                # Small gravity-torque penalty pulls unconstrained DOFs toward
+                # natural hanging postures (e.g. raised legs on nc<4 stances).
+                IKObjectiveGravityTorqueCfg(weight=0.02),
+                # Joint-regularize targets come from the pipeline cfg's
+                # ``joint_regularize_targets`` (robot preset); leaving
+                # ``joint_targets`` empty here falls back to that.
+                IKObjectiveJointRegularizeCfg(weight=3.0),
+            ],
+            # Acceptance criteria applied in order: hard physical constraints
+            # first so their rejection buckets report true physical invalidity,
+            # residual IK-quality checks last on the physically valid subset.
+            # HaaLimitCfg reads its regex from ``haa_joint_pattern`` above.
+            criteria=[
+                CollisionCheckCfg(n_samples=16, max_pen=0.02),
+                HaaLimitCfg(max_angle=1.05),
+                SupportPolygonStabilityCfg(),
+                FootPositionErrorCfg(max_err=0.1, aggregate="sum"),
+                SolverCostOutlierCfg(threshold_multiplier=3.0),
+            ],
+            ik_iterations=200,
+            ik_convergence_threshold=0.01,
+        ),
     )

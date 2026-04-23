@@ -21,9 +21,10 @@ from scipy.spatial import ConvexHull
 from isaaclab.utils.warp import convert_to_warp_mesh
 
 from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.buffer import RetargetBuffer
-from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.cfg import SupportPolygonSamplerCfg
+from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.cfg import TerrainFirstSamplerCfg
 from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import NewtonKinematics, NewtonKinematicsCfg
-from isaaclab_tasks.manager_based.locomotion.position.utils.sampling import SupportPolygonSampler
+from isaaclab_tasks.manager_based.locomotion.position.utils.sampling import TerrainFirstSampler
+from isaaclab_tasks.manager_based.locomotion.position.utils.shape_canonical import canonicalize_shape
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -88,8 +89,8 @@ def _make_stair_mesh(
 
 def _make_sampler(kin, foot_ids, cfg=None):
     if cfg is None:
-        cfg = SupportPolygonSamplerCfg()
-    return SupportPolygonSampler(cfg, kin=kin, foot_body_ids=foot_ids)
+        cfg = TerrainFirstSamplerCfg()
+    return TerrainFirstSampler(cfg, kin=kin, foot_body_ids=foot_ids)
 
 
 class TestSampleContactsFlat:
@@ -101,7 +102,8 @@ class TestSampleContactsFlat:
         wp_mesh = _make_flat_mesh()
         buf = RetargetBuffer(200, kin.model.joint_coord_count, kin.model.body_count, len(foot_ids), device=DEVICE)
         sampler = _make_sampler(kin, foot_ids)
-        n, reject = sampler(wp_mesh, np.zeros(3), buf, 50)
+        out = sampler(wp_mesh, np.zeros(3), buf, 50)
+        n, reject = out.num_written, out.reject_stats
         assert n > 0, f"Expected at least some candidates on flat terrain, got 0. Rejections: {reject}"
 
         ct = buf.contact_targets.numpy()[: n * 4]
@@ -118,7 +120,8 @@ class TestSampleContactsConvexHull:
         wp_mesh = _make_flat_mesh()
         buf = RetargetBuffer(200, kin.model.joint_coord_count, kin.model.body_count, len(foot_ids), device=DEVICE)
         sampler = _make_sampler(kin, foot_ids)
-        n, reject = sampler(wp_mesh, np.zeros(3), buf, 50)
+        out = sampler(wp_mesh, np.zeros(3), buf, 50)
+        n = out.num_written
         if n == 0:
             pytest.skip("No valid candidates on flat mesh")
 
@@ -144,7 +147,8 @@ class TestSampleContactsRejectionStats:
         wp_mesh = _make_flat_mesh()
         buf = RetargetBuffer(200, kin.model.joint_coord_count, kin.model.body_count, len(foot_ids), device=DEVICE)
         sampler = _make_sampler(kin, foot_ids)
-        _, reject = sampler(wp_mesh, np.zeros(3), buf, 50)
+        out = sampler(wp_mesh, np.zeros(3), buf, 50)
+        reject = out.reject_stats
         assert "out_of_reach" in reject
         assert "shape_infeasible" in reject
 
@@ -201,20 +205,16 @@ def _build_sampler_for_robot(robot_name: str):
     kin = NewtonKinematics(kin_cfg)
     foot_names = getattr(RetargetFootBodyNamesCfg, robot_name)
     foot_ids = kin.find_body_indices(foot_names)
-    sampler = SupportPolygonSampler(SupportPolygonSamplerCfg(), kin=kin, foot_body_ids=foot_ids)
+    sampler = TerrainFirstSampler(TerrainFirstSamplerCfg(), kin=kin, foot_body_ids=foot_ids)
     return kin, foot_ids, sampler
 
 
-def _assert_feet_in_reach_envelope(buf: RetargetBuffer, sampler: SupportPolygonSampler, n: int, robot_name: str):
-    """At least one rotation per group has a canonical shape near the FK manifold.
+def _assert_feet_in_reach_envelope(buf: RetargetBuffer, sampler: TerrainFirstSampler, n: int, robot_name: str):
+    """Every accepted polygon has a canonical shape near the FK manifold.
 
-    The sampler emits ``gs`` cyclic rotations per polygon and the pipeline's
-    group-collapse picks the lowest-cost rotation post-IK. The shape filter
-    runs on the original (r = 0) assignment of each group, so the guarantee
-    is that every group contains at least one polygon for which every foot
-    has *some* FK sample within :attr:`SupportPolygonSampler._fk_shape_tol`
-    (per-foot marginal NN -- the continuous analog of the old per-foot
-    voxel-union grid).
+    The shape filter accepts a polygon iff every foot has *some* FK sample
+    within :attr:`TerrainFirstSampler._fk_shape_tol` (per-foot marginal
+    NN -- the continuous analog of the old per-foot voxel-union grid).
 
     ``contact_targets`` already includes :attr:`foot_ground_offset` (it is
     the foot-body target, not the raw terrain contact). Canonicalisation
@@ -222,10 +222,8 @@ def _assert_feet_in_reach_envelope(buf: RetargetBuffer, sampler: SupportPolygonS
     out of the polygon, so NN in this space is a pure shape-match.
     """
     nc = buf.num_contacts
-    gs = sampler.group_size
-    assert n % gs == 0, f"[{robot_name}] n={n} not divisible by group_size={gs}"
     ct = buf.contact_targets_t[: n * nc].view(n, nc, 3).detach()
-    query_shape = sampler._canonicalize_shape(ct)
+    query_shape = canonicalize_shape(ct, sampler._nominal_angle_t)
     fk_samples = sampler._fk_shape_samples
 
     chunk = 64
@@ -235,11 +233,8 @@ def _assert_feet_in_reach_envelope(buf: RetargetBuffer, sampler: SupportPolygonS
         diff = query_shape[k0:k1].unsqueeze(1) - fk_samples.unsqueeze(0)
         foot_dist = diff.norm(dim=-1)  # [chunk, N, nc]
         max_foot_nn[k0:k1] = foot_dist.amin(dim=1).amax(dim=-1)
-    shape_ok = (max_foot_nn < sampler._fk_shape_tol).view(n // gs, gs)
-    group_has_valid_rotation = shape_ok.any(dim=-1)
-    assert group_has_valid_rotation.all(), (
-        f"[{robot_name}] {int((~group_has_valid_rotation).sum())}/{n // gs} groups had no shape-feasible rotation"
-    )
+    shape_ok = max_foot_nn < sampler._fk_shape_tol
+    assert shape_ok.all(), f"[{robot_name}] {int((~shape_ok).sum())}/{n} polygons failed the shape-feasibility check"
 
 
 class TestMultiRobotReachablePatches:
@@ -252,7 +247,8 @@ class TestMultiRobotReachablePatches:
         wp_mesh = _make_flat_mesh()
         buf = RetargetBuffer(400, kin.model.joint_coord_count, kin.model.body_count, len(foot_ids), device=DEVICE)
         n_desired = 100
-        n, reject = sampler(wp_mesh, np.zeros(3), buf, n_desired)
+        out = sampler(wp_mesh, np.zeros(3), buf, n_desired)
+        n, reject = out.num_written, out.reject_stats
         assert n >= n_desired // 2, (
             f"[{robot_name}] flat terrain yielded only {n}/{n_desired} polygons. Rejections: {reject}"
         )
@@ -268,7 +264,8 @@ class TestMultiRobotReachablePatches:
         # unreachable for that robot).
         wp_mesh = _make_stair_mesh(n_steps=6, step_height=0.08, step_depth=0.35, width=4.0)
         buf = RetargetBuffer(400, kin.model.joint_coord_count, kin.model.body_count, len(foot_ids), device=DEVICE)
-        n, reject = sampler(wp_mesh, np.zeros(3), buf, 100)
+        out = sampler(wp_mesh, np.zeros(3), buf, 100)
+        n, reject = out.num_written, out.reject_stats
         # Stair terrain can be tight for some robots; require only that at
         # least a handful of reachable polygons were produced (not zero).
         assert n > 0, f"[{robot_name}] stair terrain produced zero polygons. Rejections: {reject}"
@@ -304,7 +301,8 @@ class TestStairSlopeDiversity:
         # deterministic across pytest orderings.
         torch.manual_seed(0)
         torch.cuda.manual_seed_all(0)
-        n, reject = sampler(wp_mesh, np.zeros(3), buf, 400)
+        out = sampler(wp_mesh, np.zeros(3), buf, 400)
+        n, reject = out.num_written, out.reject_stats
         assert n >= 20, f"[{robot_name}] stair terrain produced only {n} polygons. Rejections: {reject}"
 
         nc = buf.num_contacts

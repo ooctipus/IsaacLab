@@ -7,12 +7,18 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import newton
 import newton.ik as ik
 import numpy as np
 import warp as wp
 
 from ._kernels import jac_fill_row
+
+if TYPE_CHECKING:
+    from ...mdp.retarget.pipeline import RetargetPipeline
+    from .cfg import IKObjectiveGravityTorqueCfg
 
 
 def _build_subtree_info(model: newton.Model) -> dict:
@@ -94,26 +100,71 @@ def _gravity_torque_residuals(
     start_idx: int,
     residuals: wp.array2d(dtype=wp.float32),
 ):
+    """Per-joint "excess PE above hang-down" residual.
+
+    Project the joint-to-subtree-COM vector ``r`` and the gravity vector
+    onto the plane perpendicular to the joint axis, giving ``r_perp``
+    and ``g_perp``. The stable hang configuration has ``r_perp`` aligned
+    with ``g_perp`` (COM on the gravity side of the joint axis). Using
+    the Cauchy-Schwarz slack
+
+        residual = sqrt(m) * (|r_perp|*|g_perp| - r_perp.g_perp)
+
+    gives a strictly non-negative residual that is zero iff ``r_perp``
+    is parallel to ``g_perp`` with the same sign -- a unique minimum.
+    The naive signed-torque residual ``axis.(r x m g)`` has the same
+    magnitude at the pointing-up equilibrium and, when squared for
+    least-squares, creates a spurious second minimum that can attract
+    unconstrained limbs away from the hang pose.
+
+    Residual is also automatically zero when the joint axis is parallel
+    to gravity (``g_perp = 0``, e.g. yaw-like joints), which correctly
+    reports no hang-direction preference for such joints.
+    """
     row, jidx = wp.tid()
     parent_tf = body_q[row, joint_body[jidx]]
-    axis_world = wp.transform_vector(parent_tf, joint_axis_local[jidx])
+    axis = wp.transform_vector(parent_tf, joint_axis_local[jidx])
     joint_pos = wp.transform_get_translation(parent_tf)
     r = subtree_com[row, jidx] - joint_pos
-    f = subtree_mass[jidx] * gravity
-    residuals[row, start_idx + jidx] = weight * wp.dot(axis_world, wp.cross(r, f))
+
+    r_perp = r - wp.dot(r, axis) * axis
+    g_perp = gravity - wp.dot(gravity, axis) * axis
+
+    # Smoothed magnitudes: guard the jacobian at |r_perp|=0 / |g_perp|=0.
+    r_perp_mag = wp.sqrt(wp.dot(r_perp, r_perp) + 1.0e-12)
+    g_perp_mag = wp.sqrt(wp.dot(g_perp, g_perp) + 1.0e-12)
+
+    excess_pe = r_perp_mag * g_perp_mag - wp.dot(r_perp, g_perp)
+    mass_sqrt = wp.sqrt(subtree_mass[jidx])
+    residuals[row, start_idx + jidx] = weight * mass_sqrt * excess_pe
 
 
 class IKObjectiveGravityTorque(ik.IKObjective):
-    """Minimize static gravity compensation torques for natural poses.
+    """Minimize subtree gravitational excess PE for natural hanging poses.
+
+    For each revolute joint, penalises a Cauchy-Schwarz slack that is
+    zero iff the joint-to-subtree-COM vector, projected onto the plane
+    perpendicular to the joint axis, is parallel to the in-plane gravity
+    component (the hang-down direction). See
+    :func:`_gravity_torque_residuals` for the residual form.
+
+    Unlike a naive signed-torque residual, the squared cost has a unique
+    global minimum (no pointing-up spurious equilibrium) and is smooth
+    everywhere. This makes the objective safe to enable alongside
+    foot-contact and joint-regularize objectives without risking
+    runaway toward the unstable inverted pose under finite weight.
 
     Args:
-        model: Newton model (used to extract kinematic tree).
-        weight: Scalar multiplier for the torque residual.
+        cfg: :class:`~.cfg.IKObjectiveGravityTorqueCfg` with ``weight``.
+        pipeline: Live :class:`RetargetPipeline` — read for
+            ``kin.model`` (kinematic tree, body masses, gravity).
+        wp_mesh: Unused (kept for uniform construction signature).
     """
 
-    def __init__(self, model: newton.Model, weight: float = 0.01) -> None:
+    def __init__(self, cfg: IKObjectiveGravityTorqueCfg, pipeline: RetargetPipeline, wp_mesh: object = None) -> None:
         super().__init__()
-        self.weight = weight
+        self.weight = cfg.weight
+        model = pipeline.kin.model
         info = _build_subtree_info(model)
         self.n_rev = info["n_rev"]
         self._parent_bodies_np = info["parent_bodies"]

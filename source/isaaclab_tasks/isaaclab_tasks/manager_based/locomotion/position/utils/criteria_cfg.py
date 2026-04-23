@@ -5,30 +5,18 @@
 
 """Configuration dataclasses for retarget acceptance criteria.
 
-Mirrors :mod:`.criteria`: each :class:`CriterionBaseCfg` subclass
-declares the static parameters of a criterion and knows how to
-instantiate it against the live :class:`RetargetPipeline` (which
-provides the kinematics model, foot indices, and per-run solver
-costs the criterion needs at build time).
+Each :class:`CriterionBaseCfg` subclass declares the static parameters of
+a criterion and sets :attr:`class_type` to the criterion implementation.
+The pipeline instantiates criteria via ``cfg.class_type(cfg, pipeline,
+wp_mesh)``; the criterion's ``__init__`` pulls any runtime state it
+needs (kinematics, foot indices, solver costs) from ``pipeline``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import MISSING
-from typing import TYPE_CHECKING
-
-import torch
 
 from isaaclab.utils import configclass
-
-if TYPE_CHECKING:
-    import warp as wp
-
-    from ..mdp.retarget.buffer import RetargetBuffer
-    from ..mdp.retarget.pipeline import RetargetPipeline
-
-    CriterionFn = Callable[[RetargetBuffer, int], torch.Tensor]
 
 
 @configclass
@@ -36,31 +24,15 @@ class CriterionBaseCfg:
     """Base configuration for a retarget acceptance criterion.
 
     Subclasses set :attr:`class_type` to the criterion implementation
-    (resolvable ``"{DIR}.module:ClassName"`` string) and implement
-    :meth:`build` to plumb runtime state from the pipeline into the
-    criterion's constructor. :attr:`name` becomes the key in the
-    pipeline's rejection summary.
+    (resolvable ``"{DIR}.module:ClassName"`` string). :attr:`name`
+    becomes the key in the pipeline's rejection summary.
     """
 
     name: str = MISSING  # type: ignore[assignment]
     """Key under which this criterion's rejections are reported."""
 
     class_type: type | str = MISSING  # type: ignore[assignment]
-    """Criterion implementation class (resolvable string or direct type)."""
-
-    def build(self, pipeline: RetargetPipeline, wp_mesh: wp.Mesh) -> CriterionFn:
-        """Instantiate the criterion against a live pipeline.
-
-        Args:
-            pipeline: The initialized :class:`RetargetPipeline`
-                (provides ``kin``, ``foot_body_ids``, ``_solver_costs``).
-            wp_mesh: Terrain warp mesh for the current ``run`` call.
-
-        Returns:
-            A callable ``(buffer, N) -> bool[N]`` ready to append to
-            :meth:`RetargetPipeline.run`'s criteria dict.
-        """
-        raise NotImplementedError
+    """Criterion implementation class. Called as ``class_type(cfg, pipeline, wp_mesh)``."""
 
 
 @configclass
@@ -80,23 +52,12 @@ class CollisionCheckCfg(CriterionBaseCfg):
     max_pen: float = 0.02
     """Maximum allowed probe penetration depth [m]."""
 
-    def build(self, pipeline: RetargetPipeline, wp_mesh: wp.Mesh) -> CriterionFn:
-        from .criteria import CollisionCheck
-
-        return CollisionCheck(
-            kin=pipeline.kin,
-            wp_mesh=wp_mesh,
-            exclude_bodies=pipeline.foot_body_ids,
-            n_samples=self.n_samples,
-            max_pen=self.max_pen,
-        )
-
 
 @configclass
 class HaaLimitCfg(CriterionBaseCfg):
     """Config for :class:`HaaLimit`.
 
-    :attr:`joint_pattern` is resolved on the pipeline side: when ``None``,
+    :attr:`joint_pattern` is resolved on the criterion side: when ``None``,
     falls back to :attr:`RetargetPipelineCfg.haa_joint_pattern` (the
     robot-preset regex). Skip the criterion entirely by omitting it
     from the pipeline config's ``criteria`` list.
@@ -111,37 +72,35 @@ class HaaLimitCfg(CriterionBaseCfg):
     max_angle: float = 1.05
     """Maximum absolute HAA angle [rad]."""
 
-    def build(self, pipeline: RetargetPipeline, wp_mesh: wp.Mesh) -> CriterionFn:
-        from .criteria import HaaLimit
-
-        pattern = self.joint_pattern if self.joint_pattern is not None else pipeline.cfg.haa_joint_pattern
-        if pattern is None:
-            raise ValueError(
-                "HaaLimitCfg requires a joint_pattern. Either set HaaLimitCfg.joint_pattern or "
-                "RetargetPipelineCfg.haa_joint_pattern (typically resolved per robot preset)."
-            )
-        return HaaLimit(kin=pipeline.kin, joint_pattern=pattern, max_angle=self.max_angle)
-
 
 @configclass
 class SupportPolygonStabilityCfg(CriterionBaseCfg):
-    """Config for :class:`SupportPolygonStability` (no parameters)."""
+    """Config for :class:`SupportPolygonStability`.
+
+    The lateral tolerance only applies when the number of contacts is
+    exactly two (support collapses to a segment). For ``nc >= 3`` the
+    criterion is parameter-free (strict hull inclusion).
+    """
 
     name: str = "stability"
     class_type: type | str = "{DIR}.criteria:SupportPolygonStability"
 
-    def build(self, pipeline: RetargetPipeline, wp_mesh: wp.Mesh) -> CriterionFn:
-        from .criteria import SupportPolygonStability
+    segment_tol_frac: float = 0.05
+    """``nc == 2`` lateral tolerance fraction [unitless].
 
-        return SupportPolygonStability()
+    Effective tolerance is ``segment_tol_frac × segment_length``;
+    segment-length scaling is a finite-foot-footprint regularization of
+    the otherwise measure-zero segment-support balance condition. Unused
+    when ``nc != 2``.
+    """
 
 
 @configclass
 class FootPositionErrorCfg(CriterionBaseCfg):
     """Config for :class:`FootPositionError`.
 
-    Number-of-bodies and foot-indices are pulled from the pipeline's
-    :class:`NewtonKinematics` at :meth:`build` time.
+    ``num_bodies`` and ``foot_ids`` are pulled from the pipeline's
+    :class:`NewtonKinematics` at construction time by the criterion.
     """
 
     name: str = "foot_err"
@@ -153,16 +112,6 @@ class FootPositionErrorCfg(CriterionBaseCfg):
     aggregate: str = "sum"
     """``"max"`` to bound the worst foot, ``"sum"`` to bound total drift."""
 
-    def build(self, pipeline: RetargetPipeline, wp_mesh: wp.Mesh) -> CriterionFn:
-        from .criteria import FootPositionError
-
-        return FootPositionError(
-            num_bodies=pipeline.kin.model.body_count,
-            foot_ids=pipeline.foot_body_ids,
-            max_err=self.max_err,
-            aggregate=self.aggregate,
-        )
-
 
 @configclass
 class SolverCostOutlierCfg(CriterionBaseCfg):
@@ -173,8 +122,3 @@ class SolverCostOutlierCfg(CriterionBaseCfg):
 
     threshold_multiplier: float = 3.0
     """Multiplier on batch-median cost above which a candidate is rejected."""
-
-    def build(self, pipeline: RetargetPipeline, wp_mesh: wp.Mesh) -> CriterionFn:
-        from .criteria import SolverCostOutlier
-
-        return SolverCostOutlier(pipeline=pipeline, threshold_multiplier=self.threshold_multiplier)

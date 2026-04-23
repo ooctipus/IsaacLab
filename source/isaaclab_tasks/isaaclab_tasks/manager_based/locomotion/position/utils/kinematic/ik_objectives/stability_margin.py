@@ -13,12 +13,18 @@ does not bias the solve toward the polygon centroid.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import newton
 import newton.ik as ik
 import numpy as np
 import warp as wp
 
 from ._kernels import jac_fill_row
+
+if TYPE_CHECKING:
+    from ...mdp.retarget.pipeline import RetargetPipeline
+    from .cfg import IKObjectiveStabilityMarginCfg
 
 
 @wp.kernel
@@ -79,23 +85,25 @@ class IKObjectiveStabilityMargin(ik.IKObjective):
     toward the polygon centroid.
 
     Args:
-        model: Newton model (for body masses).
-        foot_body_indices: Newton body indices for the feet, pre-sorted
-            counter-clockwise by nominal base-frame angle so consecutive
-            pairs form oriented polygon edges.
-        weight: Residual weight.
+        cfg: :class:`~.cfg.IKObjectiveStabilityMarginCfg` with ``weight``.
+        pipeline: Live :class:`RetargetPipeline` — read for
+            ``kin.model`` (body masses), ``foot_body_ids``, and
+            ``sampler._foot_ccw_order`` (CCW re-ordering).
+        wp_mesh: Unused (kept for uniform construction signature).
     """
 
     def __init__(
         self,
-        model: newton.Model,
-        foot_body_indices: list[int],
-        weight: float = 1.0,
+        cfg: IKObjectiveStabilityMarginCfg,
+        pipeline: RetargetPipeline,
+        wp_mesh: object = None,
     ) -> None:
         super().__init__()
-        self.weight = weight
+        self.weight = cfg.weight
+        foot_body_indices = [int(pipeline.foot_body_ids[j]) for j in pipeline.sampler._foot_ccw_order]
         self._foot_body_indices_np = np.array(foot_body_indices, dtype=np.int32)
         self.n_feet = len(foot_body_indices)
+        model = pipeline.kin.model
         self.n_bodies = model.body_count
         bm = model.body_mass.numpy()
         self._total_mass_inv = float(1.0 / (bm.sum() + 1e-10))

@@ -8,12 +8,11 @@
 Per-foot reachability envelopes are derived once at init via random joint
 FK sampling; at runtime each foot draws from its own annulus-and-sector
 of the terrain, so the ``nc``-contact polygon sits within the robot's
-actual workspace. Each selected polygon is then cyclically enumerated
-over all ``nc`` CCW rotations of the foot-to-point assignment; the
-pipeline's :attr:`group_size` collapse keeps the lowest-cost rotation
-per polygon so IK can pick the orientation that best matches the
-terrain patch even if the reachability-pinned assignment was
-sub-optimal.
+actual workspace. Each accepted polygon becomes one IK problem; the
+matcher (see :meth:`TerrainFirstSampler._match_candidates` /
+:meth:`TemplateMatchedSampler._match_candidates`) emits an explicit
+per-placement slot permutation that reorders the query polygon into
+matched-template order before IK.
 """
 
 from __future__ import annotations
@@ -26,12 +25,18 @@ import torch
 import warp as wp
 
 from ..mdp.retarget.buffer import RetargetBuffer
-from ..mdp.retarget.cfg import PatchSamplingCfg, SamplerSizingCfg, SupportPolygonSamplerCfg
-from ..mdp.retarget.pipeline import SamplerBase, SamplerSizing, compute_sampler_sizing
+from ..mdp.retarget.cfg import (
+    PatchSamplingCfg,
+    SamplerSizingCfg,
+    TemplateMatchedSamplerCfg,
+    TerrainFirstSamplerCfg,
+)
+from ..mdp.retarget.sampler_base import SamplerBase, SamplerOutput, SamplerSizing, compute_sampler_sizing
 from ..terrains.utils.grid_downsample import grid_bucket_downsample
 from ..terrains.utils.patch_sampling_cfg import CircleFootprintCfg, MorphologicalPatchSamplingCfg
 from ..terrains.utils.patch_sampling_morph import MORPH_TIMINGS
 from .kinematic import NewtonKinematics
+from .shape_canonical import canonicalize_shape, yaw_from_foot_xy
 
 
 @wp.kernel
@@ -48,7 +53,7 @@ def _per_foot_reachability_sample(
     nc: int,
     seed: int,
     sel_idx: wp.array2d(dtype=wp.int64),
-    out_of_reach: wp.array(dtype=wp.int32),
+    slot_found: wp.array2d(dtype=wp.int32),
 ):
     """Reservoir-sample one contact point per (center, foot) from its annulus-sector.
 
@@ -60,6 +65,14 @@ def _per_foot_reachability_sample(
     cells per chunk, so even 500MB-chunked torch allocations bottleneck
     on HBM bandwidth. A streaming kernel fuses the whole scan into
     registers and a single ``contact_xy`` L2-shared read stream.
+
+    Outputs per ``(candidate, foot)``:
+
+    * ``sel_idx`` — reservoir pick into ``contact_xy`` (or ``0`` if the
+      sector was empty; callers consult ``slot_found`` to distinguish).
+    * ``slot_found`` — ``1`` iff at least one in-envelope point was
+      seen, else ``0``. Enables soft polygon builders that accept
+      partial assemblies when the caller sets ``min_contacts < nc``.
     """
     tid = wp.tid()
     k = tid // nc
@@ -93,143 +106,110 @@ def _per_foot_reachability_sample(
 
     foot_idx = foot_ccw_order[j]
     sel_idx[k, foot_idx] = wp.int64(selected)
-    if count == 0:
-        wp.atomic_max(out_of_reach, k, 1)
+    if count > 0:
+        slot_found[k, foot_idx] = 1
 
 
-@wp.kernel
-def _prepare_ik_kernel(
-    v_contact: wp.array2d(dtype=wp.vec3),
-    v_base: wp.array(dtype=wp.vec3),
-    v_yaw: wp.array(dtype=wp.float32),
-    default_joint_q: wp.array(dtype=wp.float32),
-    contact_targets: wp.array(dtype=wp.vec3),
-    joint_q_init: wp.array2d(dtype=wp.float32),
-    base_target_pos: wp.array(dtype=wp.vec3),
-    base_target_rot: wp.array(dtype=wp.vec4),
-    nc: int,
-    jc: int,
-):
-    """Plane-fit + Euler-to-quat + buffer scatter, fused per-problem.
+def _prepare_ik_batched(
+    v_contact: torch.Tensor,
+    v_base: torch.Tensor,
+    v_yaw: torch.Tensor,
+    default_joint_q: torch.Tensor,
+    buffer: RetargetBuffer,
+) -> None:
+    """Plane-fit foot polygon → base pitch/roll → per-problem IK seed.
 
-    Replaces the ~60-torch-kernel tensor chain in ``prepare_ik`` with a
-    single launch. Plane fit uses closed-form 2x2 normal equations on
-    mean-centered foot positions; base target orientation uses half
-    roll (milder roll on inclined terrain).
+    Writes ``contact_targets``, ``joint_q_init``, ``base_target_pos`` and
+    ``base_target_rot`` into ``buffer`` for the first ``v_contact.shape[0]``
+    rows.
+
+    Plane-fit is a closed-form least-squares solve on the foot polygon's
+    mean-centered ``(x, y, z)`` covariance. The 2×2 system can be
+    ill-conditioned when the foot xy layout is near-collinear (nc=2 biped
+    or degenerate polygon), so we only take the fit when
+    ``det > 1e-6 * xx * yy`` — a relative rank check that matches the
+    degeneracy guard in :func:`~.shape_canonical.canonicalize_shape` so
+    shape-match and IK seed agree.
+
+    The base-target quaternion uses **half** of the plane-fit roll
+    (``roll * 0.25`` after half-angle), keeping the base more upright on
+    sloped terrain; full roll pulled the base near joint limits and
+    spiked foot-error.
+
+    Args:
+        v_contact: Per-placement foot target positions [m],
+            shape ``[n_ik, nc, 3]``.
+        v_base: Per-placement base target position [m],
+            shape ``[n_ik, 3]``.
+        v_yaw: Per-placement base target yaw [rad], shape ``[n_ik]``.
+        default_joint_q: Robot's default-stance joint coordinates [m or rad,
+            depending on joint type] (used to seed revolute joints),
+            shape ``[jc]``.
+        buffer: Retarget buffer to scatter the prepared IK problem into.
     """
-    i = wp.tid()
+    n_ik, nc, _ = v_contact.shape
+    jc = default_joint_q.shape[0]
 
-    # Centroid of foot positions.
-    cx = float(0.0)
-    cy = float(0.0)
-    cz = float(0.0)
-    for f in range(nc):
-        p = v_contact[i, f]
-        cx = cx + p[0]
-        cy = cy + p[1]
-        cz = cz + p[2]
-    inv_nc = 1.0 / float(nc)
-    cx = cx * inv_nc
-    cy = cy * inv_nc
-    cz = cz * inv_nc
+    centroid = v_contact.mean(dim=-2, keepdim=True)  # [n_ik, 1, 3]
+    delta = v_contact - centroid  # [n_ik, nc, 3]
+    dx = delta[..., 0]
+    dy = delta[..., 1]
+    dz = delta[..., 2]
 
-    # Covariance elements on mean-centered (x, y, z) + z range.
-    xx = float(0.0)
-    yy = float(0.0)
-    xym = float(0.0)
-    xz = float(0.0)
-    yz = float(0.0)
-    z_min = float(1.0e9)
-    z_max = float(-1.0e9)
-    for f in range(nc):
-        p = v_contact[i, f]
-        dx = p[0] - cx
-        dy = p[1] - cy
-        dz = p[2] - cz
-        xx = xx + dx * dx
-        yy = yy + dy * dy
-        xym = xym + dx * dy
-        xz = xz + dx * dz
-        yz = yz + dy * dz
-        if dz > z_max:
-            z_max = dz
-        if dz < z_min:
-            z_min = dz
+    xx = (dx * dx).sum(dim=-1)
+    yy = (dy * dy).sum(dim=-1)
+    xym = (dx * dy).sum(dim=-1)
+    xz = (dx * dz).sum(dim=-1)
+    yz = (dy * dz).sum(dim=-1)
 
     det = xx * yy - xym * xym
-    if det < 1.0e-12:
-        det = 1.0e-12
-    a = (yy * xz - xym * yz) / det
-    b = (xx * yz - xym * xz) / det
+    plane_rank_ok = det > 1.0e-6 * xx * yy
+    det_safe = det.clamp_min(1.0e-12)
+    a_raw = (yy * xz - xym * yz) / det_safe
+    b_raw = (xx * yz - xym * xz) / det_safe
 
-    yaw = v_yaw[i]
+    # Gate on both rank and z range: flat or degenerate → zero tilt.
+    z_range = dz.amax(dim=-1) - dz.amin(dim=-1)
+    use_fit = plane_rank_ok & (z_range >= 1.0e-4)
+    zero = torch.zeros_like(a_raw)
+    a = torch.where(use_fit, a_raw, zero)
+    b = torch.where(use_fit, b_raw, zero)
 
-    # Flat-terrain short-circuit so pure-flat samples get zero roll/pitch.
-    # Sign convention: ``a = dz/dx``, ``b = dz/dy`` are WORLD-frame plane
-    # slopes. In ZYX composition ``R = Rz(yaw)*Ry(pitch)*Rx(roll)``, pitch
-    # and roll are body-frame Euler angles, so we must rotate the plane
-    # slopes into base frame by ``-yaw`` before taking atan. Otherwise the
-    # base tilt is correct only at ``yaw = 0`` -- the cyclic-rotation
-    # expansion draws variants with ``yaw`` offset by ``2*pi/nc``, and a
-    # yaw-unaware kernel tilts the base into the wrong direction, sending
-    # feet outside the reach envelope. Derivation: require body-z (=
-    # column-2 of ``R``) align with plane normal ``(-a, -b, 1)``; solving
-    # the small-angle linearisation gives ``pitch = -a_b`` and ``roll =
-    # b_b`` where ``(a_b, b_b) = R_yaw^T @ (a, b)``.
-    z_range_val = z_max - z_min
-    roll = float(0.0)
-    pitch = float(0.0)
-    if z_range_val >= 1.0e-4:
-        cy = wp.cos(yaw)
-        sy = wp.sin(yaw)
-        a_b = a * cy + b * sy
-        b_b = -a * sy + b * cy
-        roll = wp.atan(b_b)
-        pitch = -wp.atan(a_b)
+    # Rotate plane slopes ``(a, b) = (dz/dx, dz/dy)_world`` into base frame
+    # by ``-yaw``; atan then gives body-frame pitch/roll.
+    cy = torch.cos(v_yaw)
+    sy = torch.sin(v_yaw)
+    pitch = -torch.atan(a * cy + b * sy)
+    roll = torch.atan(-a * sy + b * cy)
 
-    # Joint-q-init base quaternion from (roll, pitch, yaw).
-    cy2 = wp.cos(yaw * 0.5)
-    sy2 = wp.sin(yaw * 0.5)
-    cp2 = wp.cos(pitch * 0.5)
-    sp2 = wp.sin(pitch * 0.5)
-    cr2 = wp.cos(roll * 0.5)
-    sr2 = wp.sin(roll * 0.5)
-    ji_qw = cy2 * cr2 * cp2 + sy2 * sr2 * sp2
-    ji_qx = cy2 * sr2 * cp2 - sy2 * cr2 * sp2
-    ji_qy = cy2 * cr2 * sp2 + sy2 * sr2 * cp2
-    ji_qz = sy2 * cr2 * cp2 - cy2 * sr2 * sp2
+    # Two quaternions from (yaw, pitch, roll): joint_q_init uses full roll
+    # (matches the foot-plane exactly), base_target_rot uses half roll.
+    def _euler_to_quat(y: torch.Tensor, p: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
+        cy2 = torch.cos(y * 0.5)
+        sy2 = torch.sin(y * 0.5)
+        cp2 = torch.cos(p * 0.5)
+        sp2 = torch.sin(p * 0.5)
+        cr2 = torch.cos(r * 0.5)
+        sr2 = torch.sin(r * 0.5)
+        qw = cy2 * cr2 * cp2 + sy2 * sr2 * sp2
+        qx = cy2 * sr2 * cp2 - sy2 * cr2 * sp2
+        qy = cy2 * cr2 * sp2 + sy2 * sr2 * cp2
+        qz = sy2 * cr2 * cp2 - cy2 * sr2 * sp2
+        return torch.stack([qx, qy, qz, qw], dim=-1)
 
-    # Base-target quaternion: half roll keeps the base more upright over
-    # sloped terrain so IK has slack for the tilted leg placements; full
-    # roll pulled the base too close to the joint-limit envelope and
-    # spiked foot_err.
-    cr3 = wp.cos(roll * 0.25)
-    sr3 = wp.sin(roll * 0.25)
-    br_qw = cy2 * cr3 * cp2 + sy2 * sr3 * sp2
-    br_qx = cy2 * sr3 * cp2 - sy2 * cr3 * sp2
-    br_qy = cy2 * cr3 * sp2 + sy2 * sr3 * cp2
-    br_qz = sy2 * cr3 * cp2 - cy2 * sr3 * sp2
+    quat_full = _euler_to_quat(v_yaw, pitch, roll)
+    quat_half = _euler_to_quat(v_yaw, pitch, roll * 0.5)
 
-    base = v_base[i]
-    base_target_pos[i] = base
-    base_target_rot[i] = wp.vec4(br_qx, br_qy, br_qz, br_qw)
-
-    for f in range(nc):
-        contact_targets[i * nc + f] = v_contact[i, f]
-
-    joint_q_init[i, 0] = base[0]
-    joint_q_init[i, 1] = base[1]
-    joint_q_init[i, 2] = base[2]
-    joint_q_init[i, 3] = ji_qx
-    joint_q_init[i, 4] = ji_qy
-    joint_q_init[i, 5] = ji_qz
-    joint_q_init[i, 6] = ji_qw
-    for j in range(7, jc):
-        joint_q_init[i, j] = default_joint_q[j]
+    buffer.contact_targets_t[: n_ik * nc] = v_contact.reshape(-1, 3)
+    buffer.base_target_pos_t[:n_ik] = v_base
+    buffer.base_target_rot_t[:n_ik] = quat_half
+    buffer.joint_q_init_t[:n_ik, :3] = v_base
+    buffer.joint_q_init_t[:n_ik, 3:7] = quat_full
+    buffer.joint_q_init_t[:n_ik, 7:jc] = default_joint_q[7:jc].unsqueeze(0).expand(n_ik, -1)
 
 
-class SupportPolygonSampler(SamplerBase):
-    """Terrain contact sampling via per-foot reachability envelopes.
+class TerrainFirstSampler(SamplerBase):
+    """Terrain-first contact sampling via per-foot reachability envelopes.
 
     Each foot's ``(r_min, r_max, theta_lo, theta_hi)`` envelope is
     measured at init by running batched FK on random joint configs
@@ -239,12 +219,10 @@ class SupportPolygonSampler(SamplerBase):
     point from its own annulus-sector intersection; sectors are
     clipped to inter-foot midpoints so they tile without overlap.
 
-    Per-foot reachability pins a plausible assignment at sample time,
-    but the sector bounds are empirical (p5/p95 over random-joint FK)
-    and slightly overlap between adjacent feet. To let IK pick the
-    best match, each accepted polygon is expanded into ``nc`` CCW-
-    rotated assignments and the pipeline's :attr:`group_size` collapse
-    keeps the lowest-cost rotation.
+    Each accepted polygon is one IK problem with identity slot
+    assignment. Subclasses that maintain a template library can
+    override :meth:`_match_candidates` to return a non-trivial slot
+    permutation (see :class:`TemplateMatchedSampler`).
 
     Args:
         cfg: Sampling configuration.
@@ -252,48 +230,34 @@ class SupportPolygonSampler(SamplerBase):
         foot_body_ids: Newton body indices for the feet.
     """
 
-    def __init__(self, cfg: SupportPolygonSamplerCfg, kin: NewtonKinematics, foot_body_ids: list[int]):
+    def __init__(self, cfg: TerrainFirstSamplerCfg, kin: NewtonKinematics, foot_body_ids: list[int]):
         super().__init__(cfg, kin, foot_body_ids)
 
+        # ``foot_ground_offset`` is the only remaining URDF-default-base-derived
+        # scalar; it's the foot-body-to-sole z offset and cannot be recovered
+        # from FK without foot collision geometry. Assumes the URDF default
+        # stance places soles at z = 0 (standard practice).
         geom = kin.foot_geometry(foot_body_ids)
-        self.foot_offsets = geom["foot_offsets"]
         self.foot_ground_offset = geom["foot_ground_offset"]
-        self.standing_height = geom["standing_height"]
         self.default_joint_q = kin.default_joint_q
-        # Pre-stage default stance on the GPU so prepare_ik doesn't re-copy
-        # every sampler call (small tensor but the sync is not free). The
-        # wp view is cached alongside it for use by :func:`_prepare_ik_kernel`.
+        # Pre-stage default stance on GPU so prepare_ik doesn't re-copy
+        # every sampler call (small tensor but the sync is not free).
         self._default_joint_q_t = torch.from_numpy(kin.default_joint_q).float().to(kin.device)
-        self._default_joint_q_wp = wp.from_torch(self._default_joint_q_t, dtype=wp.float32)
 
-        # Feet sorted CCW by their nominal angle in base frame -- used to
-        # map "sector j" (CCW index) to a specific foot body.
-        nominal_np = np.arctan2(self.foot_offsets[:, 1], self.foot_offsets[:, 0])
-        self._foot_ccw_order = np.argsort(nominal_np).tolist()
-
-        # Cached torch tensors for cyclic-rotation expansion (hot path).
-        nc = len(self.foot_body_ids)
-        foot_ccw_t = torch.tensor(self._foot_ccw_order, dtype=torch.long, device=kin.device)
-        inv_ccw_t = torch.empty(nc, dtype=torch.long, device=kin.device)
-        inv_ccw_t[foot_ccw_t] = torch.arange(nc, device=kin.device)
-        rr = torch.arange(nc, device=kin.device).view(nc, 1)
-        ff = torch.arange(nc, device=kin.device).view(1, nc)
-        # ``_cyclic_perm[r, f]`` = the foot whose reachability-sampled point
-        # is reassigned to foot ``f`` under rotation ``r``.
-        self._cyclic_perm = foot_ccw_t[(inv_ccw_t[ff] + rr) % nc].contiguous()
-        self._nominal_angle_t = torch.from_numpy(nominal_np.astype(np.float32)).to(kin.device)
-
+        # Per-foot nominal angle, CCW ordering, reach envelope, shape
+        # library, and standing height are all derived from the FK
+        # distribution inside :meth:`_compute_foot_reachability`. The
+        # derivation is invariant to the URDF default base pose (translation
+        # + yaw): base held fixed during FK sampling cancels out when every
+        # quantity is measured in the polygon-centroid frame.
         self._compute_foot_reachability()
 
-    @property
-    def group_size(self) -> int:
-        return len(self.foot_body_ids)
-
-    def _compute_foot_reachability(self, n_samples: int = 100000, seed: int = 0) -> None:
+    def _compute_foot_reachability(self, seed: int = 0) -> None:
         """Derive per-foot reachability via random-joint FK.
 
-        Samples ``n_samples`` random revolute joint configurations (base
-        held at default pose), runs batched FK, and derives two artifacts:
+        Samples ``cfg.fk_num_samples`` random revolute joint configurations
+        (base held at default pose), runs batched FK, and derives two
+        artifacts:
 
         1. **2D (annulus, sector) proposal bounds** per foot -- p5/p95
            radial/angular quantiles, clipped to CCW inter-foot midpoints
@@ -326,12 +290,12 @@ class SupportPolygonSampler(SamplerBase):
         the reachability envelope was built from and how long that took.
 
         Args:
-            n_samples: FK batch size.
             seed: RNG seed for reproducibility.
         """
         kin = self.kin
         device = kin.device
         nc = len(self.foot_body_ids)
+        n_samples = int(self.cfg.fk_num_samples)
 
         if device.startswith("cuda"):
             torch.cuda.synchronize()
@@ -342,45 +306,45 @@ class SupportPolygonSampler(SamplerBase):
         rev_lo, rev_hi = jl_lo[6:], jl_hi[6:]
         n_rev = rev_lo.shape[0]
 
-        # Mix uniform-random joint sampling with perturbations around the
-        # default stance. Uniform sampling alone under-populates the
-        # "near-default stance" region of the workspace (rel_z close to
-        # ``-standing_height`` requires a specific hip+knee combo), so
-        # the voxels where runtime feet land on flat terrain are sparsely
-        # covered and the grid lookup over-rejects. Three bands:
-        #   - 1/3 uniform:  explore the full workspace.
-        #   - 1/3 broad perturb (1/3 joint range): realistic gait poses.
-        #   - 1/3 tight perturb (1/8 joint range): dense default cluster.
-        # The tight band guarantees the default-stance voxel and its
-        # immediate neighbours are firmly occupied, and the broader
-        # bands extend the envelope into typical gait territory.
+        # Uniform random joint sampling across the absolute joint limits.
+        # An earlier 3-band scheme (1/3 uniform + 2/3 Gaussian around
+        # URDF default) was dropped after an A/B showed identical
+        # canonical-shape distributions: clustering in joint space around
+        # URDF default doesn't translate into density at any particular
+        # canonical shape (the canonicalization averages base-frame bias out).
         gen = torch.Generator(device=device).manual_seed(seed)
         jq = torch.from_numpy(kin.default_joint_q).float().to(device)
-        default_rev = jq[7 : 7 + n_rev].clone()
         jq = jq.unsqueeze(0).expand(n_samples, -1).contiguous()
-        n_third = n_samples // 3
-        rand_u = torch.rand(n_third, n_rev, device=device, generator=gen)
-        jq[:n_third, 7 : 7 + n_rev] = rand_u * (rev_hi - rev_lo) + rev_lo
-        broad_scale = (rev_hi - rev_lo) / 3.0
-        rand_b = torch.randn(n_third, n_rev, device=device, generator=gen)
-        jq_b = default_rev.unsqueeze(0) + rand_b * broad_scale
-        jq[n_third : 2 * n_third, 7 : 7 + n_rev] = torch.clamp(jq_b, rev_lo, rev_hi)
-        n_tight = n_samples - 2 * n_third
-        tight_scale = (rev_hi - rev_lo) / 8.0
-        rand_t = torch.randn(n_tight, n_rev, device=device, generator=gen)
-        jq_t = default_rev.unsqueeze(0) + rand_t * tight_scale
-        jq[2 * n_third :, 7 : 7 + n_rev] = torch.clamp(jq_t, rev_lo, rev_hi)
+        rand_u = torch.rand(n_samples, n_rev, device=device, generator=gen)
+        jq[:, 7 : 7 + n_rev] = rand_u * (rev_hi - rev_lo) + rev_lo
 
         body_q_wp, _ = kin.eval_fk_batched(wp.from_torch(jq))
         body_q_t = wp.to_torch(body_q_wp).view(n_samples, -1, 7)  # type: ignore[arg-type]
-        base_xy = body_q_t[:, 0, :2]
         foot_ids_t = torch.tensor(self.foot_body_ids, device=device, dtype=torch.long)
-        rel = body_q_t[:, foot_ids_t, :2] - base_xy.unsqueeze(1)  # [n_samples, nc, 2]
+        foot_xy = body_q_t[:, foot_ids_t, :2]  # [n_samples, nc, 2]
+        # Measure each foot's (r, theta) relative to the per-sample polygon
+        # centroid, not the base. This makes every derived quantity invariant
+        # to the URDF default base pose (translation: cancels; yaw: rotates
+        # all angles by a constant, which drops out of the CCW ordering).
+        centroid_xy = foot_xy.mean(dim=1, keepdim=True)  # [n_samples, 1, 2]
+        rel = foot_xy - centroid_xy  # [n_samples, nc, 2]
         r = rel.norm(dim=-1)
         theta = torch.atan2(rel[..., 1], rel[..., 0])
 
-        nominal_np = np.arctan2(self.foot_offsets[:, 1], self.foot_offsets[:, 0])
-        nominal = torch.from_numpy(nominal_np).float().to(device)
+        # Per-foot nominal angle from the FK distribution itself: circular
+        # mean of ``theta`` across samples. Robust to ±π wraparound and
+        # independent of URDF-declared ``foot_offsets``. Each foot's random-
+        # joint-induced xy distribution is unimodal around its hip-outward
+        # direction, so the circular mean recovers that direction.
+        nominal = torch.atan2(torch.sin(theta).mean(dim=0), torch.cos(theta).mean(dim=0))  # [nc]
+        self._nominal_angle_t = nominal.float().contiguous()
+        nominal_np = nominal.detach().cpu().numpy().astype(np.float64)
+
+        # Feet sorted CCW by their FK-derived nominal angle. The relative
+        # ordering is invariant to any constant rotation of all nominals
+        # (i.e., base yaw at FK time).
+        self._foot_ccw_order = np.argsort(nominal_np).tolist()
+
         # Wrap theta relative to nominal so quantile doesn't straddle +/-pi.
         delta = torch.remainder(theta - nominal + np.pi, 2 * np.pi) - np.pi
 
@@ -410,29 +374,35 @@ class SupportPolygonSampler(SamplerBase):
         self._foot_theta_lo = torch.maximum(theta_lo_emp, clip_lo)
         self._foot_theta_hi = torch.minimum(theta_hi_emp, clip_hi)
 
-        # FK polygon shape samples. Canonicalise each FK-produced polygon
-        # the same way query time will: centroid-center, derive yaw from
-        # foot layout, plane-fit pitch/roll, rotate into body frame, and
-        # per-foot de-nominal-yaw. Two polygons with nearby canonical
-        # shapes differ by rigid-body motion only, so NN in this space
-        # is pure shape-match. Retain a stride-4 subsample (~25k of the
-        # 100k FK configs) as the empirical support of
+        # Standing-height IK seed prior from the FK distribution. Using
+        # p95 of ``base_z - min_foot_z`` across random joint configs gives
+        # the robot's typical fully-extended stance height; this is
+        # invariant to the URDF default base z because ``base_z`` is held
+        # fixed during FK sampling and every foot position shifts rigidly
+        # with the base (so the difference ``base_z - foot_z`` depends
+        # only on joint angles, not base pose).
+        foot_z_min = body_q_t[:, foot_ids_t, 2].amin(dim=-1)  # [n_samples]
+        base_z = body_q_t[:, 0, 2]  # [n_samples]
+        self.standing_height = float(torch.quantile(base_z - foot_z_min, 0.95).item())
+
+        # FK polygon shape samples. Canonicalize each FK-produced polygon
+        # the same way query time will (centroid-center + yaw + plane-fit
+        # pitch/roll + per-foot de-nominal); NN in this space is a pure
+        # shape match. Retain a uniform subsample of size
+        # ``cfg.fk_num_retained`` as the empirical support of
         # ``p_robot(polygon_shape)``; query-time NN against this set
-        # witnesses a joint configuration that realises the accepted
-        # polygon up to the tolerance below.
+        # witnesses a joint configuration that realizes the accepted
+        # polygon up to the :attr:`cfg.fk_shape_tol` tolerance.
         foot_xyz = body_q_t[:, foot_ids_t, :3]  # [n_samples, nc, 3]
-        canon_all = self._canonicalize_shape(foot_xyz)
-        fk_stride = 4
-        self._fk_shape_samples = canon_all[::fk_stride].contiguous()
-        # Worst-foot L2 acceptance radius. The prior voxel-grid used a
-        # 4 cm per-foot marginal tolerance, but that was checked
-        # independently per foot; the joint NN here is the max over
-        # feet, which is strictly tighter under the same per-foot
-        # budget. 8 cm gives comparable acceptance semantics for
-        # near-default polygons (inter-foot radius spread after
-        # centroid-referencing is typically 3-6 cm) while still
-        # rejecting shapes no FK configuration can realise.
-        self._fk_shape_tol = 0.08
+        canon_all = canonicalize_shape(foot_xyz, self._nominal_angle_t)
+        n_retained = int(self.cfg.fk_num_retained)
+        stride = max(1, n_samples // n_retained)
+        self._fk_shape_samples = canon_all[::stride][:n_retained].contiguous()
+        # Cache stride-matched WORLD-frame foot positions so symmetry-
+        # augmented template libraries (:class:`TemplateMatchedSampler`) can
+        # apply slot permutations pre-canonicalization and re-canonicalize.
+        self._fk_foot_xyz_world = foot_xyz[::stride][:n_retained].contiguous()
+        self._fk_shape_tol = float(self.cfg.fk_shape_tol)
 
         # CCW-reordered envelope buffers keyed by sector index -- fed into
         # :func:`_per_foot_reachability_sample` each sampler call. Built
@@ -450,6 +420,21 @@ class SupportPolygonSampler(SamplerBase):
             np.asarray(self._foot_ccw_order, dtype=np.int32), dtype=wp.int32, device=device
         )
 
+        # Body-frame sector midpoint per foot -- drives the air-slot
+        # target fallback when the soft polygon builder accepts a
+        # candidate with fewer than ``nc`` found slots. Using the
+        # sector midpoint (rather than a raw FK mean) keeps the
+        # fallback consistent with the reachability envelope's
+        # acceptance region: an air target at the sector's "middle"
+        # is always within the foot's reach envelope regardless of
+        # base yaw, so IK has a feasible pose to aim for.
+        r_mid = (self._foot_r_min + self._foot_r_max) * 0.5  # [nc]
+        theta_mid = (self._foot_theta_lo + self._foot_theta_hi) * 0.5  # [nc]
+        self._sector_mid_body = torch.stack(
+            [r_mid * torch.cos(theta_mid), r_mid * torch.sin(theta_mid)],
+            dim=-1,
+        ).contiguous()  # [nc, 2]
+
         if device.startswith("cuda"):
             torch.cuda.synchronize()
         dt = time.perf_counter() - t0
@@ -462,13 +447,10 @@ class SupportPolygonSampler(SamplerBase):
         """Back-derive stage sizes for a given final-robot target.
 
         Uses yield-rate knobs from :class:`SamplerSizingCfg` so a single
-        ``n_desired`` determines every internal stage size. The buffer
-        must hold :attr:`group_size` rotational variants per polygon,
-        so ``max_polygons`` is scaled by ``gs`` on top of the base
-        cascade.
+        ``n_desired`` determines every internal stage size.
         """
         sz: SamplerSizingCfg = self.cfg.sizing
-        base = compute_sampler_sizing(
+        return compute_sampler_sizing(
             n_desired,
             final_fps_oversample=sz.final_fps_oversample,
             criteria_yield=sz.criteria_yield,
@@ -477,156 +459,60 @@ class SupportPolygonSampler(SamplerBase):
             morph_patch_oversample=sz.morph_patch_oversample,
             patches_per_polygon=len(self.foot_body_ids),
         )
-        gs = self.group_size
-        return SamplerSizing(
-            n_final=base.n_final,
-            oversample_candidates=base.oversample_candidates,
-            max_neighborhoods=base.max_neighborhoods,
-            n_morph_patches=base.n_morph_patches,
-            max_polygons=base.max_polygons * gs,
-        )
 
-    def _canonicalize_shape(self, feet_xyz: torch.Tensor) -> torch.Tensor:
-        """Rigid-body-invariant polygon shape descriptor.
+    def _match_candidates(self, query_shape: torch.Tensor) -> tuple[torch.Tensor, dict[str, object], torch.Tensor]:
+        """Accept/reject query polygons against the FK-reachable shape support.
 
-        Transforms foot world positions into a per-foot canonical frame:
-        polygon centroid at origin, base yaw from
-        :meth:`_yaw_from_foot_xy` (centroid-referenced symmetric best-fit),
-        pitch and roll from least-squares plane-fit (half-roll, full-pitch
-        -- matches the IK ``base_target_rot`` convention used in
-        :func:`_prepare_ik_kernel`), and per-foot ``(x, y)`` rotated by
-        ``-nominal_angle[f]`` so the foot lies in its own hip-outward
-        frame. Polygons differing by rigid body motion produce the same
-        canonical shape, so nearest-neighbour in this space is a pure
-        shape-match query.
+        Default implementation: each foot must have *some* FK sample
+        within tolerance in canonical shape space — independent per-foot
+        NN, then worst-foot max. Polygon passes iff the worst foot's
+        distance to its own nearest FK sample is under
+        :attr:`_fk_shape_tol`. Returns identity slot assignment because
+        this matcher has no template library to pick a permutation from.
 
-        Used at build time on FK-sampled polygons to populate
-        :attr:`_fk_shape_samples`, and at sample time on terrain-
-        proposed polygons to check whether a kinematically feasible
-        witness exists.
+        Subclasses can override this to swap in a
+        nearest-template-with-index match that populates per-placement
+        slot assignment (see :class:`TemplateMatchedSampler`).
 
         Args:
-            feet_xyz: Foot positions, shape ``[..., nc, 3]`` [m].
+            query_shape: Canonicalised polygon shapes, ``[K, nc, 3]``.
 
         Returns:
-            Per-foot canonical coordinates, shape ``[..., nc, 3]`` [m].
+            Tuple ``(accept_mask, diagnostics, matched_perm)``:
+
+            * ``accept_mask`` — ``bool[K]``, ``True`` where the polygon
+              matches some FK shape within tolerance.
+            * ``diagnostics`` — per-call metrics for the offline
+              sampler-metrics harness.
+            * ``matched_perm`` — ``int64[K, nc]`` identity slot
+              assignment (the matcher has no template library to pick a
+              non-trivial permutation from).
         """
-        centroid = feet_xyz.mean(dim=-2, keepdim=True)
-        delta = feet_xyz - centroid
-        yaw = self._yaw_from_foot_xy(feet_xyz, ref_xy=None)
-        dxp, dyp, dzp = delta[..., 0], delta[..., 1], delta[..., 2]
-        xx = (dxp * dxp).sum(dim=-1)
-        yy = (dyp * dyp).sum(dim=-1)
-        xym = (dxp * dyp).sum(dim=-1)
-        xzm = (dxp * dzp).sum(dim=-1)
-        yzm = (dyp * dzp).sum(dim=-1)
-        det = (xx * yy - xym * xym).clamp_min(1.0e-12)
-        a = (yy * xzm - xym * yzm) / det
-        b = (xx * yzm - xym * xzm) / det
-        flat = (dzp.amax(dim=-1) - dzp.amin(dim=-1)) < 1.0e-4
-        a = torch.where(flat, torch.zeros_like(a), a)
-        b = torch.where(flat, torch.zeros_like(b), b)
-        cos_y = torch.cos(yaw)
-        sin_y = torch.sin(yaw)
-        a_b = a * cos_y + b * sin_y
-        b_b = -a * sin_y + b * cos_y
-        pitch_t = -torch.atan(a_b)
-        roll_t = 0.5 * torch.atan(b_b)
-        cos_y2 = cos_y.unsqueeze(-1)
-        sin_y2 = sin_y.unsqueeze(-1)
-        dx_by = cos_y2 * dxp + sin_y2 * dyp
-        dy_by = -sin_y2 * dxp + cos_y2 * dyp
-        cos_p = torch.cos(pitch_t).unsqueeze(-1)
-        sin_p = torch.sin(pitch_t).unsqueeze(-1)
-        cos_r = torch.cos(roll_t).unsqueeze(-1)
-        sin_r = torch.sin(roll_t).unsqueeze(-1)
-        rel_x = cos_p * dx_by - sin_p * dzp
-        v2y = sin_p * dx_by + cos_p * dzp
-        rel_y = cos_r * dy_by + sin_r * v2y
-        rel_z = -sin_r * dy_by + cos_r * v2y
-        cos_n = torch.cos(self._nominal_angle_t)
-        sin_n = torch.sin(self._nominal_angle_t)
-        canon_x = cos_n * rel_x + sin_n * rel_y
-        canon_y = -sin_n * rel_x + cos_n * rel_y
-        return torch.stack([canon_x, canon_y, rel_z], dim=-1).contiguous()
-
-    def _yaw_from_foot_xy(self, foot_xyz: torch.Tensor, ref_xy: torch.Tensor | None = None) -> torch.Tensor:
-        """Derive a best-fit base yaw from per-foot world positions.
-
-        Each foot ``f`` sits at world direction ``yaw + nominal[f]`` from
-        the base origin. Rotating ``(foot_xy - base_xy)`` by
-        ``-nominal[f]`` gives a vector at angle ``yaw``; summing across
-        feet and taking ``atan2`` yields a robust weighted estimate that
-        averages out per-foot reachability-sampling noise.
-
-        Args:
-            foot_xyz: Foot positions ``[..., nc, 3]``. Only the ``xy``
-                columns are consulted.
-            ref_xy: Base reference position ``[..., 2]`` (broadcastable
-                to ``foot_xyz[..., :2]`` after unsqueezing the foot dim).
-                If ``None``, uses the polygon centroid.
-
-        Returns:
-            Best-fit yaw, shape ``foot_xyz.shape[:-2]``.
-        """
-        nc = len(self.foot_body_ids)
-        if ref_xy is None:
-            ref_xy = foot_xyz[..., :2].mean(dim=-2)
-        v_xy = foot_xyz[..., :2] - ref_xy.unsqueeze(-2)
-        cos_n = torch.cos(self._nominal_angle_t).view(*([1] * (v_xy.dim() - 2)), nc)
-        sin_n = torch.sin(self._nominal_angle_t).view(*([1] * (v_xy.dim() - 2)), nc)
-        rot_vx = cos_n * v_xy[..., 0] + sin_n * v_xy[..., 1]
-        rot_vy = -sin_n * v_xy[..., 0] + cos_n * v_xy[..., 1]
-        return torch.atan2(rot_vy.sum(dim=-1), rot_vx.sum(dim=-1))
-
-    def _expand_cyclic(
-        self, v_contact_sel: torch.Tensor, v_base_sel: torch.Tensor, device: torch.device
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Expand each polygon into ``gs`` cyclic-rotated foot assignments.
-
-        For rotation ``r`` the point originally sampled for ``foot_ccw[(j+r) % nc]``
-        is reassigned to ``foot_ccw[j]`` (shape ``[n_valid, gs, nc, 3]``),
-        flattened to ``[n_valid * gs, nc, 3]`` with the ``(k, r)`` pair
-        laid out contiguously so the pipeline's group-collapse indexing
-        (``view(n_groups, gs)``) picks the lowest-cost rotation per polygon.
-
-        The base target is broadcast from the caller (polygon-centroid
-        based), not re-derived from the rotated foot layout. Since the
-        centroid is invariant under foot reassignment, every cyclic
-        variant of a polygon shares the same base position. Yaw is
-        derived from the rotated feet so cyclic variants pose the base
-        at different yaw angles (IK's group-collapse picks the best
-        rotation post-solve).
-
-        Args:
-            v_contact_sel: Selected polygon foot positions (already shifted
-                by :attr:`foot_ground_offset`), shape ``[n_valid, nc, 3]``.
-            v_base_sel: Per-polygon base target position (polygon centroid
-                lifted by :attr:`standing_height`), shape ``[n_valid, 3]``.
-            device: Torch device for the returned tensors.
-
-        Returns:
-            Tuple ``(v_contact, v_base, v_yaw)``:
-
-            * ``v_contact``: ``[n_valid * gs, nc, 3]`` rotated foot positions.
-            * ``v_base``: ``[n_valid * gs, 3]`` base target position.
-            * ``v_yaw``: ``[n_valid * gs]`` base target yaw [rad].
-        """
-        nc = len(self.foot_body_ids)
-        gs = nc
-        # [n_valid, nc, 3] -> [n_valid, gs, nc, 3] -> [n_valid * gs, nc, 3]
-        v_contact = v_contact_sel[:, self._cyclic_perm, :].reshape(-1, nc, 3).contiguous()
-        # Base is the same for every cyclic variant of a polygon.
-        v_base = v_base_sel.unsqueeze(1).expand(-1, gs, -1).reshape(-1, 3).contiguous()
-        # Yaw derivation uses the polygon centroid (``ref_xy=None``) --
-        # consistent with the shape filter in :meth:`__call__`, which
-        # canonicalises polygons using the centroid-referenced yaw. For
-        # cyclic variants the derived yaw differs because the
-        # foot-to-hip assignment changes, so variants pose the base at
-        # different orientations and the pipeline's group-collapse
-        # picks the lowest-cost one post-IK.
-        v_yaw = self._yaw_from_foot_xy(v_contact, ref_xy=None).contiguous()
-        return v_contact, v_base, v_yaw
+        K = query_shape.shape[0]
+        nc = query_shape.shape[1]
+        device = query_shape.device
+        fk_samples = self._fk_shape_samples
+        # Chunk over K so peak working-memory is
+        # ``K_CHUNK * n_samples * nc * 3 * 4B`` rather than the full
+        # ``K * N`` product (K~500, N~25k blows past HBM if materialised
+        # in one shot).
+        K_CHUNK = 32
+        max_foot_nn = torch.empty(K, device=device)
+        for k0 in range(0, K, K_CHUNK):
+            k1 = min(k0 + K_CHUNK, K)
+            diff = query_shape[k0:k1].unsqueeze(1) - fk_samples.unsqueeze(0)
+            foot_dist = diff.norm(dim=-1)  # [chunk, N, nc]
+            # Per-foot nearest-neighbour distance, then worst foot.
+            # A polygon passes iff every foot has *some* FK sample
+            # within tolerance (need not be the same sample).
+            max_foot_nn[k0:k1] = foot_dist.amin(dim=1).amax(dim=-1)
+        accept = max_foot_nn < self._fk_shape_tol
+        diagnostics: dict[str, object] = {
+            "nn_distance_all": max_foot_nn.detach().clone(),
+            "nn_distance_accepted": max_foot_nn[accept].detach().clone(),
+        }
+        identity_perm = torch.arange(nc, dtype=torch.long, device=device).expand(K, nc).contiguous()
+        return accept, diagnostics, identity_perm
 
     @contextmanager
     def _time(self, name: str):
@@ -648,7 +534,7 @@ class SupportPolygonSampler(SamplerBase):
         origin: np.ndarray,
         buffer: RetargetBuffer,
         n_desired: int,
-    ) -> tuple[int, dict[str, int]]:
+    ) -> SamplerOutput:
         self.sub_timings.clear()
         patch: PatchSamplingCfg = self.cfg.patch
         nc = buffer.num_contacts
@@ -681,13 +567,9 @@ class SupportPolygonSampler(SamplerBase):
             key = f"morph.{_sub_name}"
             self.sub_timings[key] = self.sub_timings.get(key, 0.0) + _sub_dt
 
-        # Buffer holds ``gs`` cyclic-rotation variants per polygon after the
-        # expansion below, so polygon-stage caps divide ``max_n`` by ``gs``
-        # and the expansion fits by construction.
-        gs = self.group_size
-        max_polys = max(1, max_n // gs)
-        K = min(sizing.max_neighborhoods, max_polys)
-        target_n = min(n_desired * sizing.oversample_candidates, max_polys)
+        # One IK problem per accepted polygon.
+        K = min(sizing.max_neighborhoods, max_n)
+        target_n = min(n_desired * sizing.oversample_candidates, max_n)
 
         torch.manual_seed(42)
         if device.type == "cuda":
@@ -697,11 +579,9 @@ class SupportPolygonSampler(SamplerBase):
             # Per-foot reachability sampling. For each random center +
             # random base yaw, every foot draws one contact from its own
             # (annulus-sector) intersection where the bounds come from
-            # :meth:`_compute_foot_reachability`. The sampled assignment
-            # is a plausible starting point; each accepted polygon is
-            # cyclically enumerated into ``gs`` rotations in
-            # :func:`_expand_cyclic`, and the pipeline's group-collapse
-            # keeps the lowest-cost rotation per polygon.
+            # :meth:`_compute_foot_reachability`. The matcher (see
+            # :meth:`_match_candidates`) returns an explicit per-placement
+            # slot permutation that reorders the query polygon before IK.
             #
             # Sample centers with replacement from the morph-patch pool so
             # ``K`` is driven by the sizing cascade rather than the
@@ -716,8 +596,12 @@ class SupportPolygonSampler(SamplerBase):
             contact_xy_t = contact_pts[:, :2].contiguous()
 
             # ``sel_idx[k, foot_idx]`` = contact-point index for that foot.
+            # ``slot_found[k, foot_idx]`` = ``1`` iff the reservoir hit
+            # at least one in-envelope patch for that slot. A candidate
+            # is out-of-reach when *no* slot was found; the soft polygon
+            # path downgrades this to a per-slot air classification.
             sel_idx = torch.empty(K, nc, dtype=torch.long, device=device)
-            out_of_reach_int = torch.zeros(K, dtype=torch.int32, device=device)
+            slot_found_int = torch.zeros(K, nc, dtype=torch.int32, device=device)
 
             wp.launch(
                 _per_foot_reachability_sample,
@@ -737,49 +621,56 @@ class SupportPolygonSampler(SamplerBase):
                 ],
                 outputs=[
                     wp.from_torch(sel_idx, dtype=wp.int64),
-                    wp.from_torch(out_of_reach_int, dtype=wp.int32),
+                    wp.from_torch(slot_found_int, dtype=wp.int32),
                 ],
                 device=self.kin.device,
             )
-            out_of_reach = out_of_reach_int != 0
+            slot_found = slot_found_int.to(torch.bool)  # [K, nc]
+            n_found = slot_found.sum(dim=-1)  # [K]
+            # ``cfg.min_contacts < 0`` (the default) disables the soft
+            # polygon path: every slot must find a patch. Positive values
+            # are clamped to ``[1, nc]`` so we never accept a fully-air
+            # polygon.
+            raw = int(self.cfg.min_contacts)
+            min_contacts = nc if (raw < 0 or raw > nc) else max(1, raw)
+            out_of_reach = n_found < min_contacts  # [K]
 
             pts = contact_pts[sel_idx]  # [K, nc, 3], indexed by foot_idx
 
         with self._time("polygon_build"):
-            contact_ik = pts.clone()
-            contact_ik[:, :, 2] += self.foot_ground_offset
+            # Per-slot patch target: reservoir pick + per-foot ground
+            # offset. Valid only where ``slot_found`` is ``True``; the
+            # classifier ignores entries where it's ``False`` and swaps
+            # in the template-projected fallback computed below.
+            patch_pos = pts.clone()
+            patch_pos[..., 2] += self.foot_ground_offset  # [K, nc, 3]
 
-            # Per-foot shape-space NN against the FK empirical
-            # workspace. The base target is *not* committed here --
-            # it's a soft IK prior derived from the polygon centroid
-            # post-filter. Canonicalisation folds translation / yaw /
-            # plane-fit pitch+roll / per-foot hip azimuth out of the
-            # polygon, so each foot's canonical ``(x, y, z)`` is a
-            # rigid-body-invariant descriptor. ``_fk_shape_samples``
-            # is the empirical support of the FK-reachable workspace;
-            # the per-foot nearest-FK distance is the same
-            # "is each foot in the feasible set" test the prior voxel
-            # grid performed, but in continuous centroid-referenced
-            # space (no voxel quantisation, and the centroid reference
-            # avoids the off-centroid over-rejection that came from
-            # pinning the query to ``sampled_center``).
-            query_shape = self._canonicalize_shape(contact_ik)
-            fk_samples = self._fk_shape_samples
-            # Chunk over K so peak working-memory is
-            # ``K_CHUNK * n_samples * nc * 3 * 4B`` rather than the
-            # full ``K * N`` product (K~500, N~25k blows past HBM if
-            # materialised in one shot).
-            K_CHUNK = 32
-            max_foot_nn = torch.empty(K, device=device)
-            for k0 in range(0, K, K_CHUNK):
-                k1 = min(k0 + K_CHUNK, K)
-                diff = query_shape[k0:k1].unsqueeze(1) - fk_samples.unsqueeze(0)
-                foot_dist = diff.norm(dim=-1)  # [chunk, N, nc]
-                # Per-foot nearest-neighbour distance, then worst foot.
-                # A polygon passes iff every foot has *some* FK sample
-                # within tolerance (need not be the same sample).
-                max_foot_nn[k0:k1] = foot_dist.amin(dim=1).amax(dim=-1)
-            shape_ok = max_foot_nn < self._fk_shape_tol
+            # Air-slot fallback target: body-frame sector midpoint rotated
+            # by yaw into world, then placed at the candidate's terrain
+            # center z. Only used for slots marked air (patch not found in
+            # sector); IK treats these as soft targets, so the exact z is
+            # not critical as long as it sits at the local terrain height.
+            cos_y = torch.cos(yaws).unsqueeze(-1)
+            sin_y = torch.sin(yaws).unsqueeze(-1)
+            off_x = self._sector_mid_body[:, 0]  # [nc]
+            off_y = self._sector_mid_body[:, 1]
+            air_x = centers_xy_t[:, 0:1] + cos_y * off_x - sin_y * off_y  # [K, nc]
+            air_y = centers_xy_t[:, 1:2] + sin_y * off_x + cos_y * off_y  # [K, nc]
+            air_z = centers[:, 2:3].expand(-1, nc)  # [K, nc]
+            template_targets_world = torch.stack([air_x, air_y, air_z], dim=-1)
+
+            # Binary per-slot contact/air decision keyed on terrain
+            # reachability: slot is contact iff its reach sector yielded
+            # a patch. Criteria consume ``is_contact_full`` to ignore
+            # air slots.
+            is_contact_full = slot_found
+            contact_ik = torch.where(is_contact_full.unsqueeze(-1), patch_pos, template_targets_world)
+
+            # Shape-space feasibility. Canonicalization folds translation,
+            # yaw, plane-fit pitch+roll, and per-foot hip azimuth out of
+            # the polygon so NN in this space is a pure shape match.
+            query_shape = canonicalize_shape(contact_ik, self._nominal_angle_t)
+            shape_ok, match_diag, matched_perm = self._match_candidates(query_shape)
 
             valid = ~out_of_reach & shape_ok
             all_valid_idx = valid.nonzero(as_tuple=False).squeeze(-1)
@@ -800,14 +691,16 @@ class SupportPolygonSampler(SamplerBase):
             "out_of_reach": int(out_of_reach.sum()),
             "shape_infeasible": int((~out_of_reach & ~shape_ok).sum()),
         }
+        diagnostics: dict[str, object] = dict(match_diag)
 
         if n_valid == 0:
             buffer.num_written = 0
             buffer.num_geometry_valid = 0
-            return 0, reject
+            return SamplerOutput(num_written=0, reject_stats=reject, diagnostics=diagnostics)
 
         with self._time("prepare_ik"):
             v_contact_sel = contact_ik[valid_idx]  # [n_valid, nc, 3]
+            is_contact_sel = is_contact_full[valid_idx]  # [n_valid, nc]
             # Base target is a soft IK prior (pipeline weights it 0.05),
             # not a feasibility gate -- derive it from the polygon
             # centroid with a ``standing_height`` lift. IK is free to
@@ -818,36 +711,204 @@ class SupportPolygonSampler(SamplerBase):
                 dim=-1,
             )
 
-            # Cyclic-nc expansion. For each polygon, emit ``gs`` variants
-            # where rotation ``r`` reassigns foot ``foot_ccw[j]`` to the
-            # point that was originally sampled for ``foot_ccw[(j+r) % nc]``.
-            # Laid out contiguously as ``(k=0,r=0), (k=0,r=1), ...,
-            # (k=0,r=gs-1), (k=1,r=0), ...`` so the pipeline's
-            # ``group_size`` collapse (``view(n_groups, gs)``) picks the
-            # lowest-cost rotation per polygon.
-            v_contact, v_base, v_yaw = self._expand_cyclic(v_contact_sel, v_base_sel, device)
-            n_ik = v_contact.shape[0]
+            # Gather per-placement slot permutation from the matcher.
+            # ``matched_perm[t, f]`` tells us "foot ``f`` should receive the
+            # query polygon's slot-``matched_perm[t, f]`` point", so we
+            # reorder the query polygon before IK sees it. The subclass
+            # template-matched sampler emits a non-trivial permutation; the
+            # default FK-sample matcher emits identity.
+            tpl_for_valid = matched_perm[valid_idx]  # [n_valid, nc]
+            gather_idx = tpl_for_valid.unsqueeze(-1).expand(-1, -1, 3)
+            v_contact = torch.gather(v_contact_sel, dim=1, index=gather_idx).contiguous()
+            is_contact_ik = torch.gather(is_contact_sel, dim=1, index=tpl_for_valid).contiguous()
+            slot_assignment = tpl_for_valid.to(torch.int32).contiguous()
+            v_base = v_base_sel
+            v_yaw = yaw_from_foot_xy(v_contact, self._nominal_angle_t, ref_xy=None).contiguous()
 
-            wp.launch(
-                _prepare_ik_kernel,
-                dim=n_ik,
-                inputs=[
-                    wp.from_torch(v_contact, dtype=wp.vec3),
-                    wp.from_torch(v_base, dtype=wp.vec3),
-                    wp.from_torch(v_yaw, dtype=wp.float32),
-                    self._default_joint_q_wp,
-                    buffer.contact_targets,
-                    buffer.joint_q_init,
-                    buffer.base_target_pos,
-                    buffer.base_target_rot,
-                    nc,
-                    self.kin.model.joint_coord_count,
-                ],
-                device=self.kin.device,
-            )
+            n_ik = v_contact.shape[0]
+            _prepare_ik_batched(v_contact, v_base, v_yaw, self._default_joint_q_t, buffer)
             buffer._geom_valid[:n_ik] = True
 
             buffer.num_written = n_ik
             buffer.num_geometry_valid = n_ik
 
-        return n_ik, reject
+        return SamplerOutput(
+            num_written=n_ik,
+            reject_stats=reject,
+            slot_assignment=slot_assignment,
+            is_contact=is_contact_ik,
+            diagnostics=diagnostics,
+        )
+
+
+class TemplateMatchedSampler(TerrainFirstSampler):
+    """Hybrid sampler: terrain-first polygon + NN-to-templates match.
+
+    Inherits the terrain-first polygon-assembly machinery from
+    :class:`TerrainFirstSampler` (per-foot reach-envelope sampling,
+    morphological-patch pool, plane-fit IK seeding) and replaces the
+    pass/fail NN against the dense 25k-sample FK shape distribution
+    with a NN match against a smaller FPS-thinned template library
+    whose entries carry per-slot permutations. Build-time symmetry
+    augmentation provides permutation coverage for symmetric robots:
+    each matched template id directly determines the slot assignment
+    for IK.
+
+    Two stored tensors drive the match:
+
+    * :attr:`_templates` — ``[N_tpl_aug, nc, 3]`` canonicalised template
+      shapes.
+    * :attr:`_template_perms` — ``[N_tpl_aug, nc]`` ``int64`` gather
+      indices. For template ``t``, ``_template_perms[t, f] = s`` means
+      foot ``f`` receives the query polygon's slot-``s`` point when
+      that template is matched. Identity row for every unpermuted
+      template; non-identity rows for symmetry-augmented copies.
+    """
+
+    def __init__(
+        self,
+        cfg: TemplateMatchedSamplerCfg,
+        kin: NewtonKinematics,
+        foot_body_ids: list[int],
+    ):
+        super().__init__(cfg, kin, foot_body_ids)
+        self._build_templates()
+
+    def _build_templates(self) -> None:
+        """Build the FPS-thinned + symmetry-augmented template library.
+
+        Starts from the stride-matched FK world foot positions cached
+        by :meth:`_compute_foot_reachability` (as
+        :attr:`_fk_foot_xyz_world`). Applies FPS thinning over
+        canonical-shape flattened representations for spatial diversity,
+        then for each retained sample, produces one template per
+        configured symmetry permutation (identity + :attr:`cfg.symmetry_permutations`).
+        Each permuted template is constructed by applying the permutation
+        to the FK *world* foot positions and re-canonicalising, and it
+        stores the permutation as its slot-to-query gather index.
+
+        Stored attributes (all on ``kin.device``):
+
+        * ``_templates`` — canonicalised shapes, ``float32 [N_aug, nc, 3]``.
+        * ``_template_perms`` — slot-to-query gather indices,
+          ``int64 [N_aug, nc]``.
+
+        Validates :attr:`cfg.symmetry_permutations` entries are valid
+        permutations of ``[0, nc-1]``; raises :class:`ValueError` otherwise.
+        """
+        cfg: TemplateMatchedSamplerCfg = self.cfg  # type: ignore[assignment]
+        device = self.kin.device
+        nc = len(self.foot_body_ids)
+
+        if self._fk_foot_xyz_world is None:
+            raise RuntimeError("parent did not cache _fk_foot_xyz_world; template build cannot proceed")
+
+        # FPS-thin via grid-bucket downsample on flattened canonical
+        # shapes. Bucket FPS in the canonical space promotes diversity
+        # in the matching geometry rather than in world pose.
+        base_canon = self._fk_shape_samples  # [N_fk, nc, 3]
+        base_world = self._fk_foot_xyz_world  # [N_fk, nc, 3]
+        n_fk = base_canon.shape[0]
+        n_tpl = int(min(cfg.n_templates, n_fk))
+        if n_tpl < n_fk:
+            flat = base_canon.reshape(n_fk, nc * 3)
+            keep_idx = grid_bucket_downsample(flat, n_tpl)
+            base_canon = base_canon[keep_idx].contiguous()
+            base_world = base_world[keep_idx].contiguous()
+
+        # Validate and collect symmetry permutations (always prepend identity).
+        perms: list[list[int]] = [list(range(nc))]
+        for p in cfg.symmetry_permutations:
+            if len(p) != nc or sorted(p) != list(range(nc)):
+                raise ValueError(f"symmetry_permutations entry {p} is not a permutation of [0, {nc - 1}]")
+            perms.append(list(p))
+
+        # Apply each permutation to the WORLD foot positions, re-canonicalise,
+        # and record the permutation with the resulting shape. Concatenation
+        # gives ``[N_aug, nc, 3]`` with ``N_aug = len(perms) * n_tpl``.
+        shapes_per_perm: list[torch.Tensor] = []
+        perm_idx_per_perm: list[torch.Tensor] = []
+        for perm in perms:
+            perm_t = torch.tensor(perm, dtype=torch.long, device=device)
+            rotated_world = base_world[:, perm_t, :]  # [n_tpl, nc, 3]
+            rotated_canon = canonicalize_shape(rotated_world, self._nominal_angle_t).contiguous()
+            shapes_per_perm.append(rotated_canon)
+            perm_idx_per_perm.append(perm_t.unsqueeze(0).expand(rotated_canon.shape[0], nc).contiguous())
+
+        self._templates = torch.cat(shapes_per_perm, dim=0).contiguous()
+        self._template_perms = torch.cat(perm_idx_per_perm, dim=0).contiguous()
+
+        self.init_info = (
+            self.init_info or ""
+        ) + f"; template lib: {self._templates.shape[0]} ({n_tpl} FPS-thinned × {len(perms)} perms)"
+
+    def _match_candidates(
+        self, query_shape: torch.Tensor
+    ) -> tuple[torch.Tensor, dict[str, object], torch.Tensor | None]:
+        """NN-match each query against the augmented template library.
+
+        Two quantities are computed jointly from the ``[K, N_aug, nc]``
+        foot-distance tensor to avoid a second scan:
+
+        * **Acceptance gate** — per-foot *independent* NN: for each foot
+          slot, the nearest template distance regardless of which
+          template the other feet matched. The worst foot's distance
+          governs acceptance. Matches :class:`TerrainFirstSampler`'s
+          semantics so acceptance yield is comparable (the tolerance
+          may need bumping when the template library is small, since
+          per-slot neighbours are sparser than in a 25k-sample FK
+          distribution).
+        * **Slot-assignment lookup** — per-template *joint* worst-foot
+          distance; argmin over templates gives the single template
+          that explains *all* feet together. That template's
+          permutation is gathered as the foot-to-query slot index.
+          With ``|G| = 1`` every template has identity permutation, so
+          the lookup is a no-op; with symmetry augmentation, the joint
+          match selects the right rotation.
+
+        Args:
+            query_shape: Canonicalised polygon shapes, ``[K, nc, 3]``.
+
+        Returns:
+            Tuple ``(accept_mask, diagnostics, matched_perm)``:
+
+            * ``accept_mask`` — ``bool[K]``.
+            * ``diagnostics`` — ``nn_distance_{all,accepted}`` tensors
+              (per-foot-indep worst-foot distance) and the matched
+              template id per placement (from the joint match).
+            * ``matched_perm`` — ``int64[K, nc]`` foot-to-query gather.
+        """
+        cfg: TemplateMatchedSamplerCfg = self.cfg  # type: ignore[assignment]
+        K = query_shape.shape[0]
+        device = query_shape.device
+        templates = self._templates  # [N_aug, nc, 3]
+
+        # Chunked over K; per-chunk peak memory is
+        # ``K_CHUNK * N_aug * nc * 3 * 4B``. With N_aug ~= 2k this is
+        # small enough that a larger K_CHUNK is safe vs. the parent's
+        # 25k-sample library, keeping wall-time close to the parent.
+        K_CHUNK = 64
+        per_foot_worst = torch.empty(K, device=device)
+        matched_tpl_id = torch.empty(K, dtype=torch.long, device=device)
+        for k0 in range(0, K, K_CHUNK):
+            k1 = min(k0 + K_CHUNK, K)
+            diff = query_shape[k0:k1].unsqueeze(1) - templates.unsqueeze(0)
+            foot_dist = diff.norm(dim=-1)  # [chunk, N_aug, nc]
+            # Acceptance: per-foot-independent NN across templates, worst foot.
+            per_foot_worst[k0:k1] = foot_dist.amin(dim=1).amax(dim=-1)
+            # Slot-assignment lookup: joint worst-foot, best template.
+            tpl_score = foot_dist.amax(dim=-1)  # [chunk, N_aug]
+            matched_tpl_id[k0:k1] = tpl_score.argmin(dim=1)
+
+        accept = per_foot_worst < cfg.template_shape_tol
+        # Gather per-placement slot permutation. For rejected polygons
+        # the permutation is meaningless but still harmless (caller
+        # masks on ``accept`` before using it).
+        matched_perm = self._template_perms[matched_tpl_id].contiguous()  # [K, nc]
+
+        diagnostics: dict[str, object] = {
+            "nn_distance_all": per_foot_worst.detach().clone(),
+            "nn_distance_accepted": per_foot_worst[accept].detach().clone(),
+            "matched_template_id": matched_tpl_id.detach().clone(),
+        }
+        return accept, diagnostics, matched_perm

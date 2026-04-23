@@ -3,7 +3,41 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""IK objective: terrain surface contact."""
+"""IK objective: terrain surface contact.
+
+Newton upstream opportunity
+---------------------------
+
+Every ``newton.ik.IKObjective`` kernel in this package — terrain_contact,
+terrain_collision, joint_regularize, joint_default, gravity_torque,
+stability_margin — currently takes ``weight: float`` as a scalar kernel
+argument. The rest of the objective state (targets, indices, offsets,
+probe sets) is already ``wp.array``. Weight is the only leftover scalar.
+
+Generalizing the Newton-side objective API to
+``weight: wp.array(dtype=wp.float32, shape=[n_problems] | [n_problems, n_residuals])``
+(scalar handled as a shape-broadcast special case) would unlock:
+
+* heterogeneous batching — K problems in one dispatch, each with its own
+  weight (different terrains, different robots, different task phases);
+* weight annealing across solver iterations (curriculum / schedules)
+  without rebuilding objectives;
+* differentiable IK with learned per-problem weights;
+* per-element adaptive weighting — the first motivating case is
+  contact-vs-air slot classification for the retarget sampler (see
+  ``utils/sampling.py`` unified per-slot classifier), where some slots
+  are terrain-snapped hard contacts and others are air targets with
+  lower precision priority. Others: per-DOF joint-regularize, per-probe
+  terrain-collision, per-foot stance/swing scheduling.
+
+Change surface is one-line per objective (kernel residual + Jacobian
+row assembly), backward-compatible via scalar-broadcast. When we land
+the per-slot classifier locally, prototype the array-weight path in
+this kernel first, then file a Newton issue with concrete numbers.
+Not blocking the per-slot classifier work — we unroll weights into a
+flat ``[K*N_max]`` tensor and dispatch per-weight-class today; the
+upstream change is a cleanup, not a prerequisite.
+"""
 
 from __future__ import annotations
 

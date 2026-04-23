@@ -6,26 +6,18 @@
 """Configuration dataclasses for custom Newton IK objectives.
 
 Each :class:`IKObjectiveBaseCfg` subclass declares the static parameters
-of an IK objective and knows how to instantiate it against the live
-:class:`RetargetPipeline` (which provides the kinematics model, foot
-body indices, and sampler state that the objective needs at build
-time). This keeps the pipeline config declarative: the preset lists
-which objectives to attach and their knobs, without a
-caller-provided factory callable.
+of an IK objective and sets :attr:`class_type` to the objective
+implementation. The pipeline instantiates objectives via
+``cfg.class_type(cfg, pipeline, wp_mesh)``; the objective's ``__init__``
+pulls any runtime state it needs (kinematics, foot indices, sampler
+state) from ``pipeline``.
 """
 
 from __future__ import annotations
 
 from dataclasses import MISSING, field
-from typing import TYPE_CHECKING
 
 from isaaclab.utils import configclass
-
-if TYPE_CHECKING:
-    import newton.ik as ik
-    import warp as wp
-
-    from ...mdp.retarget.pipeline import RetargetPipeline
 
 
 @configclass
@@ -33,27 +25,12 @@ class IKObjectiveBaseCfg:
     """Base configuration for a retarget IK objective.
 
     Subclasses set :attr:`class_type` to the objective implementation
-    (resolvable ``"{DIR}.module:ClassName"`` string) and implement
-    :meth:`build` to plumb runtime state from the pipeline into the
-    objective's constructor.
+    (resolvable ``"{DIR}.module:ClassName"`` string). Called as
+    ``class_type(cfg, pipeline, wp_mesh)``.
     """
 
     class_type: type | str = MISSING  # type: ignore[assignment]
-    """Objective implementation class (resolvable string or direct type)."""
-
-    def build(self, pipeline: RetargetPipeline, wp_mesh: wp.Mesh) -> ik.IKObjective:
-        """Instantiate the IK objective against a live pipeline.
-
-        Args:
-            pipeline: The initialized :class:`RetargetPipeline`
-                (provides ``kin``, ``foot_body_ids``, ``sampler``).
-            wp_mesh: Terrain warp mesh for the current ``run`` call.
-
-        Returns:
-            A Newton IK objective ready to append to the solver's
-            objective list.
-        """
-        raise NotImplementedError
+    """Objective implementation class."""
 
 
 @configclass
@@ -76,18 +53,6 @@ class IKObjectiveTerrainCollisionCfg(IKObjectiveBaseCfg):
     n_samples: int = 4
     """Surface probe points per body."""
 
-    def build(self, pipeline: RetargetPipeline, wp_mesh: wp.Mesh) -> ik.IKObjective:
-        from .terrain_collision import IKObjectiveTerrainCollision
-
-        return IKObjectiveTerrainCollision(
-            mesh_id=wp_mesh.id,
-            builder=pipeline.kin.builder,
-            exclude_bodies=pipeline.foot_body_ids,
-            weight=self.weight,
-            margin=self.margin,
-            n_samples=self.n_samples,
-        )
-
 
 @configclass
 class IKObjectiveStabilityMarginCfg(IKObjectiveBaseCfg):
@@ -103,15 +68,31 @@ class IKObjectiveStabilityMarginCfg(IKObjectiveBaseCfg):
     weight: float = 1.0
     """Residual weight [unitless]."""
 
-    def build(self, pipeline: RetargetPipeline, wp_mesh: wp.Mesh) -> ik.IKObjective:
-        from .stability_margin import IKObjectiveStabilityMargin
 
-        foot_ids_ccw = [int(pipeline.foot_body_ids[j]) for j in pipeline.sampler._foot_ccw_order]
-        return IKObjectiveStabilityMargin(
-            model=pipeline.kin.model,
-            foot_body_indices=foot_ids_ccw,
-            weight=self.weight,
-        )
+@configclass
+class IKObjectiveGravityTorqueCfg(IKObjectiveBaseCfg):
+    """Config for :class:`IKObjectiveGravityTorque`.
+
+    Penalizes the per-revolute static gravity-compensation torque
+    :math:`\\tau_j = \\hat{a}_j \\cdot (r_j \\times m_j\\, g)` where
+    :math:`\\hat{a}_j` is the joint axis, :math:`r_j` the vector from
+    the joint to the subtree COM, and :math:`m_j` the subtree mass.
+    The zero-torque configuration is the subtree COM directly below the
+    joint axis (a "hanging" pose), so this term pulls free DOFs --
+    e.g. a raised foot's leg in an nc<4 stance -- toward a
+    gravitationally natural posture without fighting the constrained
+    DOFs required to hit the contact targets.
+
+    Weight should be small enough that the foot-contact, base-pose, and
+    joint-regularize objectives dominate: empirically ``0.01``--``0.05``
+    gives natural hanging/folded postures for unconstrained limbs
+    without biasing the stance legs away from their contact solutions.
+    """
+
+    class_type: type | str = "{DIR}.gravity_torque:IKObjectiveGravityTorque"
+
+    weight: float = 0.02
+    """Residual weight [unitless] applied uniformly across revolute joints."""
 
 
 @configclass
@@ -151,28 +132,3 @@ class IKObjectiveJointRegularizeCfg(IKObjectiveBaseCfg):
 
     weight: float = 1.0
     """Uniform residual weight [unitless] applied to every matched DOF."""
-
-    def build(self, pipeline: RetargetPipeline, wp_mesh: wp.Mesh) -> ik.IKObjective:
-        from .joint_regularize import IKObjectiveJointRegularize
-
-        targets_map = self.joint_targets if self.joint_targets else pipeline.cfg.joint_regularize_targets
-        if not targets_map:
-            raise ValueError(
-                "IKObjectiveJointRegularizeCfg requires at least one entry in joint_targets "
-                "or RetargetPipelineCfg.joint_regularize_targets (typically resolved per robot preset)."
-            )
-        dof_to_target: dict[int, float] = {}
-        for pattern, target in targets_map.items():
-            for idx in pipeline.kin.find_joint_dof_indices(pattern):
-                dof_to_target[idx] = float(target)
-        if not dof_to_target:
-            raise ValueError(
-                f"IKObjectiveJointRegularizeCfg: none of the patterns {list(targets_map)} matched any revolute joint."
-            )
-        indices = sorted(dof_to_target.keys())
-        targets = [dof_to_target[i] for i in indices]
-        return IKObjectiveJointRegularize(
-            joint_dof_indices=indices,
-            joint_dof_targets=targets,
-            weight=self.weight,
-        )

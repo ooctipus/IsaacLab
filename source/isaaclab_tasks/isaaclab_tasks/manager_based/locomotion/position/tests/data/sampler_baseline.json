@@ -1,0 +1,83 @@
+{
+  "results": [
+    {
+      "centroid_xy_var": 15.389139175415039,
+      "criteria_yield": 0.8330555555555555,
+      "difficulty": 0.5,
+      "final_yield": 1.0,
+      "ik_yield": 0.8330555555555555,
+      "min_contacts": -1,
+      "n_desired": 300,
+      "n_final": 300,
+      "n_ik_passed": 2999,
+      "n_ik_problems": 3600,
+      "n_proposed": 4979,
+      "n_sampler_accepted": 3600,
+      "nc_histogram": {
+        "4": 300
+      },
+      "reject_geo": {
+        "out_of_reach": 1032,
+        "shape_infeasible": 347
+      },
+      "reject_val": {
+        "collision": 0,
+        "cost": 544,
+        "foot_err": 1,
+        "haa_limit": 0,
+        "ok": 2999,
+        "stability": 56
+      },
+      "robot": "anymal_c",
+      "sampler": "terrain_first",
+      "sampler_wall_time_s": 0.18084546294994652,
+      "sampler_yield": 0.723036754368347,
+      "shape_pairwise_mean": 1.5451666116714478,
+      "shape_pairwise_p50": 1.5915203094482422,
+      "shape_pairwise_p95": 2.397185802459717,
+      "sub_terrain": "FLAT",
+      "total_wall_time_s": 0.43854315392673016,
+      "yaw_entropy": 2.7685742378234863
+    },
+    {
+      "centroid_xy_var": 15.222380638122559,
+      "criteria_yield": 0.9716666666666667,
+      "difficulty": 0.5,
+      "final_yield": 1.0,
+      "ik_yield": 0.9716666666666667,
+      "min_contacts": -1,
+      "n_desired": 300,
+      "n_final": 300,
+      "n_ik_passed": 3498,
+      "n_ik_problems": 3600,
+      "n_proposed": 4585,
+      "n_sampler_accepted": 3600,
+      "nc_histogram": {
+        "4": 300
+      },
+      "reject_geo": {
+        "out_of_reach": 984,
+        "shape_infeasible": 1
+      },
+      "reject_val": {
+        "collision": 0,
+        "cost": 0,
+        "foot_err": 25,
+        "haa_limit": 0,
+        "ok": 3498,
+        "stability": 77
+      },
+      "robot": "go2",
+      "sampler": "terrain_first",
+      "sampler_wall_time_s": 0.06534325296524912,
+      "sampler_yield": 0.7851690294438386,
+      "shape_pairwise_mean": 0.9179375767707825,
+      "shape_pairwise_p50": 0.9477936029434204,
+      "shape_pairwise_p95": 1.432608962059021,
+      "sub_terrain": "FLAT",
+      "total_wall_time_s": 0.5035557859810069,
+      "yaw_entropy": 2.7706050872802734
+    }
+  ],
+  "version": 1
+}

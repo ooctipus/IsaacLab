@@ -30,7 +30,7 @@ class SamplerBaseCfg:
 
 @configclass
 class PatchSamplingCfg:
-    """Terrain patch-detection parameters for :class:`SupportPolygonSampler`.
+    """Terrain patch-detection parameters for :class:`TerrainFirstSampler`.
 
     Drives the morphological flatness filter that finds candidate foot
     contact patches on the terrain heightmap. All values are terrain
@@ -139,8 +139,8 @@ class SamplerSizingCfg:
 
 
 @configclass
-class SupportPolygonSamplerCfg(SamplerBaseCfg):
-    """Configuration for support polygon terrain sampling.
+class TerrainFirstSamplerCfg(SamplerBaseCfg):
+    """Configuration for terrain-first support-polygon sampling.
 
     Splits into two sub-configs for clarity:
 
@@ -151,10 +151,10 @@ class SupportPolygonSamplerCfg(SamplerBaseCfg):
 
     Geometry-dependent thresholds (reachability envelopes, base-height
     bounds) are derived automatically from the robot's default stance
-    in :class:`SupportPolygonSampler`.
+    in :class:`~isaaclab_tasks.manager_based.locomotion.position.utils.sampling.TerrainFirstSampler`.
     """
 
-    class_type: type | str = "isaaclab_tasks.manager_based.locomotion.position.utils.sampling:SupportPolygonSampler"
+    class_type: type | str = "isaaclab_tasks.manager_based.locomotion.position.utils.sampling:TerrainFirstSampler"
     """Sampler implementation class."""
 
     patch: PatchSamplingCfg = PatchSamplingCfg()
@@ -162,6 +162,109 @@ class SupportPolygonSamplerCfg(SamplerBaseCfg):
 
     sizing: SamplerSizingCfg = SamplerSizingCfg()
     """Yield-rate cascade that back-derives stage sizes from ``n_desired``."""
+
+    min_contacts: int = -1
+    """Minimum contact slots a candidate must fill to be accepted.
+
+    ``-1`` (the default) preserves the original hard-polygon behavior:
+    every slot must find an in-envelope terrain patch, otherwise the
+    candidate is rejected and every accepted candidate has
+    ``is_contact = True`` for all slots.
+
+    A positive integer ``m`` (``1 <= m <= nc``) enables the soft polygon
+    builder: a candidate is accepted when at least ``m`` slots found a
+    patch; the remaining slots are classified as *air* (``is_contact =
+    False``) with a template-projected target position. Downstream
+    criteria (stability, foot-position error) consume ``is_contact`` to
+    ignore air slots. Use ``m = 2`` to let mixed-geometry terrain
+    (stepping-stone-with-gap, narrow ledges) emit nc=2/3/4 stances.
+    """
+
+    fk_num_samples: int = 100000
+    """Number of random-joint FK samples used to estimate the per-foot
+    reach envelope and the canonical-shape NN library."""
+
+    fk_num_retained: int = 25000
+    """Number of FK samples kept as the canonical-shape NN library.
+
+    ``fk_num_samples`` is used for robust quantile estimation of the
+    reach envelope; a uniform subset of size ``fk_num_retained`` is
+    retained as the NN library consulted at query time. Larger values
+    give tighter NN coverage at linear memory + match-time cost.
+    """
+
+    fk_shape_tol: float = 0.08
+    """NN acceptance radius in canonical shape space [m].
+
+    A polygon passes the shape gate iff every foot has some FK sample
+    within this distance (per-foot L2, worst foot). Tighter values
+    reject more polygons; looser values accept more including near-
+    degenerate shapes. ``0.08`` matches empirical inter-foot spread
+    of ~3-6 cm around default stance on typical quadrupeds.
+    """
+
+
+@configclass
+class TemplateMatchedSamplerCfg(TerrainFirstSamplerCfg):
+    """Configuration for hybrid template-matched support-polygon sampling.
+
+    Keeps :class:`~isaaclab_tasks.manager_based.locomotion.position.utils.sampling.TerrainFirstSampler`'s
+    polygon-assembly machinery (per-foot reach-envelope sampling,
+    morphological-patch pool, plane-fit IK seeding) but replaces the
+    pass/fail NN against the full FK shape distribution with a NN match
+    against an FPS-thinned template library (~500-1000 templates) that
+    returns the matched template id. The id carries per-placement slot
+    assignment, which lets the sampler generalise beyond homogeneous
+    quadrupeds.
+
+    Build-time symmetry augmentation (:attr:`symmetry_permutations`)
+    provides permutation coverage for symmetric robots: for each base
+    template, each non-identity permutation is applied to the FK world
+    foot positions and re-canonicalised, producing additional templates
+    with their permutation stored as the slot-assignment gather index.
+
+    Inherits :attr:`patch`, :attr:`sizing`, :attr:`min_contacts`,
+    :attr:`fk_num_samples`, :attr:`fk_num_retained`, and :attr:`fk_shape_tol`
+    from :class:`TerrainFirstSamplerCfg`.
+    """
+
+    class_type: type | str = "isaaclab_tasks.manager_based.locomotion.position.utils.sampling:TemplateMatchedSampler"
+    """Sampler implementation class."""
+
+    n_templates: int = 1000
+    """Target size of the FPS-thinned template library (pre-symmetry-aug).
+
+    Smaller than :attr:`fk_num_retained` — FPS thinning picks diverse
+    canonical-shape representatives so NN coverage stays broad.
+    Empirically, 1000 × 4 symmetry elements (homogeneous quadruped)
+    gives ~70-80% per-foot-independent NN coverage on flat anymal_c at
+    :attr:`template_shape_tol` = 0.10m; bump to 2000-4000 to close the
+    coverage gap with the FK-sample library.
+    """
+
+    template_shape_tol: float = 0.10
+    """Accept-match tolerance in canonical shape space [m].
+
+    Per-foot-independent worst-foot L2 distance threshold. Slightly
+    looser than :attr:`fk_shape_tol` to compensate for the sparser
+    :attr:`n_templates` pool.
+    """
+
+    symmetry_permutations: list[list[int]] = field(default_factory=list)
+    """Body-plan symmetry permutations for build-time template augmentation.
+
+    Each inner list is a permutation of ``[0, 1, ..., nc-1]`` describing
+    how slot indices map under one symmetry element. The identity
+    permutation is always included -- this list adds *non-identity*
+    elements only. Empty list (the default) means no augmentation
+    (``|G|=1``), appropriate for robots whose FK sample distribution
+    already covers symmetric variants densely or for fully asymmetric
+    body plans.
+
+    For homogeneous quadrupeds, pass the three non-identity cyclic
+    rotations to opt into 4-fold symmetry (``|G|=4``): e.g.
+    ``[[1, 2, 3, 0], [2, 3, 0, 1], [3, 0, 1, 2]]`` in nominal CCW order.
+    """
 
 
 @configclass
@@ -196,10 +299,10 @@ class RetargetPipelineCfg:
     joint_regularize_targets: dict[str, float] = field(default_factory=dict)
     """Optional joint-name regex -> target-angle mapping for IK regularization.
 
-    Consumed by :class:`~isaaclab_tasks.manager_based.locomotion.position.utils.kinematic.ik_objectives.cfg.IKObjectiveJointRegularizeCfg`
-    when its own :attr:`joint_targets` is empty -- a robot preset can set
-    this once at the pipeline level and every regularize objective inherits
-    it. Empty dict disables the regularizer.
+    Consumed by :class:`IKObjectiveJointRegularizeCfg` when its own
+    :attr:`joint_targets` is empty -- a robot preset can set this once
+    at the pipeline level and every regularize objective inherits it.
+    Empty dict disables the regularizer.
     """
 
     ik_iterations: int = 200
@@ -207,6 +310,26 @@ class RetargetPipelineCfg:
 
     ik_convergence_threshold: float = 0.01
     """Stop IK early when mean cost change falls below this threshold."""
+
+    base_pos_weight: float = 0.05
+    """Weight of the base-position IK objective [unitless].
+
+    Keeps the IK near the sampler's plane-fit base position. Small by
+    default so the foot-contact targets (weight 1.0) dominate -- the
+    base is a soft anchor, not a hard target.
+    """
+
+    base_rot_weight: float = 0.5
+    """Weight of the base-orientation IK objective [unitless].
+
+    Pulls the base quaternion toward the sampler's plane-fit target.
+    For nc<4 stances (raised legs) the default 0.5 can be overpowered
+    by the stability-margin objective at weight 1.0, producing poses
+    that tilt the base to project the COM onto a 2-foot segment.
+    Raise to 2.0-5.0 when running sub-4-contact IK to hold the base
+    upright; leave at 0.5 for full-contact quadruped stances where the
+    plane-fit already agrees with stability.
+    """
 
     extra_objectives: list[IKObjectiveBaseCfg] = field(default_factory=list)
     """IK objectives appended to the standard pipeline set.

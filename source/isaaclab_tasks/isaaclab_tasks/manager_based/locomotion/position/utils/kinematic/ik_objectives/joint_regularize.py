@@ -7,10 +7,16 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import newton
 import newton.ik as ik
 import numpy as np
 import warp as wp
+
+if TYPE_CHECKING:
+    from ...mdp.retarget.pipeline import RetargetPipeline
+    from .cfg import IKObjectiveJointRegularizeCfg
 
 
 @wp.kernel
@@ -54,38 +60,40 @@ class IKObjectiveJointRegularize(ik.IKObjective):
     groups.
 
     Args:
-        joint_dof_indices: Revolute-joint DOF indices as returned by
-            :meth:`NewtonKinematics.find_joint_dof_indices` -- i.e.
-            indices into ``joint_q[7:]`` (after the 7 free-root
-            coordinates).
-        joint_dof_targets: Per-DOF target angles [rad]. Must match the
-            length of ``joint_dof_indices``. Pass a scalar to use the
-            same target for every listed DOF.
-        weight: Uniform residual weight [unitless].
+        cfg: :class:`~.cfg.IKObjectiveJointRegularizeCfg` with
+            ``joint_targets`` (regex → target-angle map) and ``weight``.
+            Falls back to ``pipeline.cfg.joint_regularize_targets`` if
+            ``cfg.joint_targets`` is empty.
+        pipeline: Live :class:`RetargetPipeline` — read for
+            ``kin.find_joint_dof_indices`` and the fallback regex map.
+        wp_mesh: Unused (kept for uniform construction signature).
     """
 
     def __init__(
         self,
-        joint_dof_indices: list[int],
-        joint_dof_targets: float | list[float] = 0.0,
-        weight: float = 1.0,
+        cfg: IKObjectiveJointRegularizeCfg,
+        pipeline: RetargetPipeline,
+        wp_mesh: object = None,
     ) -> None:
         super().__init__()
-        if not joint_dof_indices:
-            raise ValueError("IKObjectiveJointRegularize requires at least one DOF index.")
-        self._dof_rev_indices = list(joint_dof_indices)
-        n = len(self._dof_rev_indices)
-        if isinstance(joint_dof_targets, (int, float)):
-            targets = [float(joint_dof_targets)] * n
-        else:
-            if len(joint_dof_targets) != n:
-                raise ValueError(
-                    f"IKObjectiveJointRegularize: joint_dof_targets has length {len(joint_dof_targets)}"
-                    f" but joint_dof_indices has length {n}."
-                )
-            targets = [float(t) for t in joint_dof_targets]
-        self._dof_targets = targets
-        self.weight = float(weight)
+        targets_map = cfg.joint_targets if cfg.joint_targets else pipeline.cfg.joint_regularize_targets
+        if not targets_map:
+            raise ValueError(
+                "IKObjectiveJointRegularize requires at least one entry in "
+                "cfg.joint_targets or pipeline.cfg.joint_regularize_targets."
+            )
+        dof_to_target: dict[int, float] = {}
+        for pattern, target in targets_map.items():
+            for idx in pipeline.kin.find_joint_dof_indices(pattern):
+                dof_to_target[idx] = float(target)
+        if not dof_to_target:
+            raise ValueError(
+                f"IKObjectiveJointRegularize: none of the patterns {list(targets_map)} matched any revolute joint."
+            )
+        indices = sorted(dof_to_target.keys())
+        self._dof_rev_indices = indices
+        self._dof_targets = [dof_to_target[i] for i in indices]
+        self.weight = float(cfg.weight)
         self.coord_indices: wp.array | None = None
         self.dof_indices: wp.array | None = None
         self.targets: wp.array | None = None
