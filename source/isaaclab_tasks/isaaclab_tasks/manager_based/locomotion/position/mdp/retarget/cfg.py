@@ -7,11 +7,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import MISSING
+from dataclasses import MISSING, field
 
 from isaaclab.utils import configclass
 
+from ...utils.criteria_cfg import CriterionBaseCfg
+from ...utils.kinematic.ik_objectives.cfg import IKObjectiveBaseCfg
 from ...utils.kinematic.newton_kinematics import NewtonKinematicsCfg
 
 
@@ -28,12 +29,151 @@ class SamplerBaseCfg:
 
 
 @configclass
+class PatchSamplingCfg:
+    """Terrain patch-detection parameters for :class:`SupportPolygonSampler`.
+
+    Drives the morphological flatness filter that finds candidate foot
+    contact patches on the terrain heightmap. All values are terrain
+    properties -- robot geometry is derived from :class:`NewtonKinematics`.
+    """
+
+    contact_radius: float = 0.04
+    """Contact patch radius for morphological flatness check [m]."""
+
+    max_height_diff: float = 0.03
+    """Maximum height variation within a contact patch [m]."""
+
+    horizontal_scale: float = 0.03
+    """Heightmap rasterization grid spacing [m]."""
+
+    oversample_ratio: float = 5.0
+    """Oversample factor for farthest-point refinement of morphological patches.
+
+    Values above ``1.0`` instruct the morphological filter to first extract
+    ``oversample_ratio * num_patches`` candidates and then thin them to
+    ``num_patches`` via farthest-point sampling, giving spatially uniform
+    coverage instead of density-proportional sampling.
+
+    FPS matters on heterogeneous tiles: e.g. ``HfPyramidStairsTerrainCfg``
+    with ``border_width=1.0`` puts ~40% of the rasterized heightmap in a
+    single flat z-band, so uniform-random cell sampling
+    (``oversample_ratio=1.0``) over-represents the flat border at the
+    expense of stairs. The default ``5.0`` roughly halves the top-flat
+    bias on such tiles while staying cheap on GPU.
+    """
+
+    min_center_dist: float = 0.05
+    """Minimum distance from center to candidate (avoid overlapping) [m]."""
+
+    x_range: tuple[float, float] | None = None
+    """Optional X sampling bounds [m], relative to the sub-terrain origin.
+
+    When ``None`` (default), the morphological sampler uses the full mesh
+    XY extent -- which on grid-style arenas includes the flat border padding
+    added by :class:`isaaclab.terrains.TerrainGeneratorCfg`. Set this to the
+    inner non-border extent (e.g. ``(-num_rows * size_x / 2, +num_rows *
+    size_x / 2)``) to keep patches on the actual terrain tiles.
+    """
+
+    y_range: tuple[float, float] | None = None
+    """Optional Y sampling bounds [m], relative to the sub-terrain origin.
+
+    See :attr:`x_range` for semantics.
+    """
+
+
+@configclass
+class SamplerSizingCfg:
+    """Yield-rate cascade that back-derives sampler stage sizes from ``n_desired``.
+
+    Every knob is either an **oversample** multiplier at a downsampling
+    stage (pool gets bigger so the downstream thinning has room to
+    select a spatially diverse subset) or a **yield** fraction at a
+    filter stage (what fraction survives). The cascade runs from the
+    final output backwards -- see :func:`compute_sampler_sizing` for
+    the full walk.
+    """
+
+    final_fps_oversample: float = 3.0
+    """Headroom multiplier into the final FPS (robots post-criteria / robots desired).
+
+    ``1.5`` keeps the final FPS pool 50% larger than the desired robot
+    count so spatial spread is achievable rather than degenerate.
+    """
+
+    criteria_yield: float = 0.25
+    """Expected fraction of IK solves surviving acceptance criteria.
+
+    Empirically ~0.45-0.55 on rough terrains with collision + HAA +
+    stability filters; raise toward ``0.75`` on flat terrain or when
+    most criteria are disabled.
+    """
+
+    polygon_fps_oversample: float = 5.0
+    """Headroom multiplier into the polygon grid-bucket FPS stage.
+
+    Polygon assembly is cheap (centers are reused across yaws via
+    per-foot reachability sampling), so a generous pool gives bucket-FPS
+    meaningful spatial diversity to thin from. IK cost is unaffected
+    since the post-FPS target-n is what feeds the solver.
+    """
+
+    polygon_assembly_yield: float = 0.8
+    """Expected fraction of neighborhoods whose assembled polygon passes base-height.
+
+    Each neighborhood emits exactly one polygon (foot assignment is
+    pinned at sample time via per-foot reachability envelopes), so this
+    is a per-polygon yield. Typically ~0.8 on well-formed sub-terrains --
+    lower on heavily cluttered meshes where many sectors lack valid
+    contact patches.
+    """
+
+    morph_patch_oversample: float = 4.0
+    """Morph-patches per foot slot per final robot.
+
+    Decoupled from K since centers are reused across yaws. Only needs
+    to be large enough that each foot-sector query within a
+    neighborhood's reachability ball returns at least one patch. Scales
+    with ``n_final`` (a proxy for terrain area), not K.
+    """
+
+
+@configclass
+class SupportPolygonSamplerCfg(SamplerBaseCfg):
+    """Configuration for support polygon terrain sampling.
+
+    Splits into two sub-configs for clarity:
+
+    * :attr:`patch` -- terrain patch detection (flatness filter, sampling
+      extent).
+    * :attr:`sizing` -- yield-rate cascade that back-derives stage sizes
+      from the caller's ``n_desired``.
+
+    Geometry-dependent thresholds (reachability envelopes, base-height
+    bounds) are derived automatically from the robot's default stance
+    in :class:`SupportPolygonSampler`.
+    """
+
+    class_type: type | str = "isaaclab_tasks.manager_based.locomotion.position.utils.sampling:SupportPolygonSampler"
+    """Sampler implementation class."""
+
+    patch: PatchSamplingCfg = PatchSamplingCfg()
+    """Terrain patch-detection parameters (flatness filter, sampling extent)."""
+
+    sizing: SamplerSizingCfg = SamplerSizingCfg()
+    """Yield-rate cascade that back-derives stage sizes from ``n_desired``."""
+
+
+@configclass
 class RetargetPipelineCfg:
     """Full retarget pipeline configuration.
 
     Nests the kinematics, sampler, and foot specification so the
-    pipeline can be constructed with ``RetargetPipeline(cfg)``.
+    pipeline can be constructed with ``cfg.class_type(cfg)``.
     """
+
+    class_type: type | str = "{DIR}.pipeline:RetargetPipeline"
+    """Pipeline implementation class."""
 
     kin: NewtonKinematicsCfg = MISSING  # type: ignore[assignment]
     """Kinematics model configuration."""
@@ -44,8 +184,23 @@ class RetargetPipelineCfg:
     foot_body_names: list[str] = MISSING  # type: ignore[assignment]
     """Body names of the feet (exact match against Newton body names)."""
 
-    max_candidates: int = 2000
-    """Maximum number of candidates in the buffer."""
+    haa_joint_pattern: str | None = None
+    """Optional regex matching hip-abduction/adduction joint names.
+
+    Consumed by the default criteria factory to build a
+    :class:`~isaaclab_tasks.manager_based.locomotion.position.utils.criteria.HaaLimit`
+    criterion. ``None`` disables the HAA check (appropriate for robots that
+    have no abduction joints or where over-splay is not a concern).
+    """
+
+    joint_regularize_targets: dict[str, float] = field(default_factory=dict)
+    """Optional joint-name regex -> target-angle mapping for IK regularization.
+
+    Consumed by :class:`~isaaclab_tasks.manager_based.locomotion.position.utils.kinematic.ik_objectives.cfg.IKObjectiveJointRegularizeCfg`
+    when its own :attr:`joint_targets` is empty -- a robot preset can set
+    this once at the pipeline level and every regularize objective inherits
+    it. Empty dict disables the regularizer.
+    """
 
     ik_iterations: int = 200
     """Maximum number of IK solver iterations."""
@@ -53,10 +208,22 @@ class RetargetPipelineCfg:
     ik_convergence_threshold: float = 0.01
     """Stop IK early when mean cost change falls below this threshold."""
 
-    extra_objectives_factory: Callable | None = None
-    """Optional callable ``(kin, foot_ids, n_problems, sampler, wp_mesh) -> list[IKObjective]``.
+    extra_objectives: list[IKObjectiveBaseCfg] = field(default_factory=list)
+    """IK objectives appended to the standard pipeline set.
 
-    Returns additional IK objectives beyond the standard set (foot position,
-    base pose, joint limits).  The extra objectives are appended to the
-    solver's objective list.
+    Each entry declares the objective class and its static parameters;
+    runtime state (``kin``, ``foot_body_ids``, ``wp_mesh.id``,
+    ``sampler``) is injected by :meth:`IKObjectiveBaseCfg.build`.
+    Empty list runs the pipeline with only the standard objectives
+    (foot-position contact, base pose, joint limits).
+    """
+
+    criteria: list[CriterionBaseCfg] = field(default_factory=list)
+    """Acceptance criteria applied in list order to post-IK candidates.
+
+    Each entry declares the criterion class, its :attr:`CriterionBaseCfg.name`
+    (which keys the rejection summary), and its static parameters;
+    runtime state (``kin``, ``foot_body_ids``, ``_solver_costs``) is
+    injected by :meth:`CriterionBaseCfg.build`. Empty list keeps every
+    geometry-valid IK solve.
     """

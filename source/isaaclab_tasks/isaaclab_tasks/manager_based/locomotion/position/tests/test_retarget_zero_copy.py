@@ -6,7 +6,6 @@
 """Tests for zero-copy / single-allocation behaviour of the retarget buffer."""
 
 import pytest
-import torch
 import warp as wp
 
 from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.buffer import RetargetBuffer
@@ -21,7 +20,6 @@ DEVICE = "cpu"
 
 
 class TestSingleAllocation:
-
     def test_all_views_share_backing(self):
         buf = RetargetBuffer(100, 19, 17, 4, device=DEVICE)
         base = buf._data.data_ptr()
@@ -43,7 +41,6 @@ class TestSingleAllocation:
 
 
 class TestMemoryBound:
-
     def test_proportional_to_capacity(self):
         small = RetargetBuffer(100, 19, 17, 4, device=DEVICE)
         large = RetargetBuffer(1000, 19, 17, 4, device=DEVICE)

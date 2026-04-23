@@ -22,6 +22,9 @@ from .robot_presets import (
     FootBodyNamesCfg,
     HeightScannerPrimPathCfg,
     NonFootBodyNamesCfg,
+    RetargetFootBodyNamesCfg,
+    RetargetHaaJointPatternCfg,
+    RetargetJointRegularizeTargetsCfg,
     RobotArticulationCfg,
     SyncFootPairsCfg,
 )
@@ -53,6 +56,17 @@ ExperimentNameCfg.anymal_c = "anymal_c_position_command"
 
 ANYMAL_C_HAA_PATTERN = ".*HAA"
 """Regex matching ANYmal-C hip abduction/adduction joint names."""
+
+RetargetFootBodyNamesCfg.anymal_c = ["LF_FOOT", "RF_FOOT", "LH_FOOT", "RH_FOOT"]
+RetargetHaaJointPatternCfg.anymal_c = ANYMAL_C_HAA_PATTERN
+# Pull HAA toward 0 (base near support-polygon centroid) and knees toward their
+# init-pose flexion (front knees tuck forward, hind knees back). HFE is left
+# free so IK can adjust stride.
+RetargetJointRegularizeTargetsCfg.anymal_c = {
+    ".*HAA": 0.0,
+    ".*F_KFE": -0.8,
+    ".*H_KFE": 0.8,
+}
 
 # Re-export generic criteria for backward compatibility
 __all__ += ["FootPositionError", "JointMargin", "HaaLimit", "BaseZError"]

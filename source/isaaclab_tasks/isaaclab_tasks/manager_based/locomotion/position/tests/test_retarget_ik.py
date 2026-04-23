@@ -9,15 +9,14 @@ FK round-trip: IK result -> FK -> foot positions match targets.
 Requires Newton + Warp (no IsaacSim).
 """
 
+import newton.ik as ik
 import numpy as np
 import pytest
 import torch
 import warp as wp
 
-import newton.ik as ik
-
-from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import NewtonKinematics, NewtonKinematicsCfg
 from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.buffer import RetargetBuffer
+from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import NewtonKinematics, NewtonKinematicsCfg
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -29,34 +28,49 @@ ANYMAL_USD = "/home/zhengyuz/Downloads/ANYmal-C/anymal_c.usd"
 DEVICE = "cuda:0"
 FOOT_ERR_TOL = 0.02
 
-DEFAULT_JPOS = np.array([0, 0.4, -0.8, 0, -0.4, 0.8, 0, 0.4, -0.8, 0, -0.4, 0.8], dtype=np.float32)
+DEFAULT_JPOS = {
+    ".*HAA": 0.0,
+    ".*F_HFE": 0.4,
+    ".*H_HFE": -0.4,
+    ".*F_KFE": -0.8,
+    ".*H_KFE": 0.8,
+}
 
 
 def _make_solver(model, foot_ids, base_body_id, n_problems):
     device = str(model.device)
     contact_objs = [
         ik.IKObjectivePosition(
-            link_index=cid, link_offset=wp.vec3(0, 0, 0),
-            target_positions=wp.zeros(n_problems, dtype=wp.vec3, device=device), weight=1.0,
+            link_index=cid,
+            link_offset=wp.vec3(0, 0, 0),
+            target_positions=wp.zeros(n_problems, dtype=wp.vec3, device=device),
+            weight=1.0,
         )
         for cid in foot_ids
     ]
     base_pos_obj = ik.IKObjectivePosition(
-        link_index=base_body_id, link_offset=wp.vec3(0, 0, 0),
-        target_positions=wp.zeros(n_problems, dtype=wp.vec3, device=device), weight=0.05,
+        link_index=base_body_id,
+        link_offset=wp.vec3(0, 0, 0),
+        target_positions=wp.zeros(n_problems, dtype=wp.vec3, device=device),
+        weight=0.05,
     )
     base_rot_obj = ik.IKObjectiveRotation(
-        link_index=base_body_id, link_offset_rotation=wp.quat_identity(),
-        target_rotations=wp.zeros(n_problems, dtype=wp.vec4, device=device), weight=0.5,
+        link_index=base_body_id,
+        link_offset_rotation=wp.quat_identity(),
+        target_rotations=wp.zeros(n_problems, dtype=wp.vec4, device=device),
+        weight=0.5,
     )
     jl_obj = ik.IKObjectiveJointLimit(
         joint_limit_lower=model.joint_limit_lower,
-        joint_limit_upper=model.joint_limit_upper, weight=10.0,
+        joint_limit_upper=model.joint_limit_upper,
+        weight=10.0,
     )
     solver = ik.IKSolver(
-        model=model, n_problems=n_problems,
+        model=model,
+        n_problems=n_problems,
         objectives=[*contact_objs, base_pos_obj, base_rot_obj, jl_obj],
-        optimizer=ik.IKOptimizer.LM, jacobian_mode=ik.IKJacobianType.ANALYTIC,
+        optimizer=ik.IKOptimizer.LM,
+        jacobian_mode=ik.IKJacobianType.ANALYTIC,
     )
     return solver, contact_objs, base_pos_obj, base_rot_obj
 
@@ -79,7 +93,7 @@ def _fill_buf(buf, foot_pos, jq, N, nc):
     jq_t = torch.from_numpy(jq).to(td)
 
     for i in range(N):
-        buf.contact_targets_t[i * nc:(i + 1) * nc] = fp_t if fp_t.ndim == 2 else fp_t[i]
+        buf.contact_targets_t[i * nc : (i + 1) * nc] = fp_t if fp_t.ndim == 2 else fp_t[i]
     buf.base_target_pos_t[:N] = torch.tensor([[0, 0, 0.6]], device=td).expand(N, -1)
     buf.base_target_rot_t[:N] = torch.tensor([[0, 0, 0, 1]], device=td).expand(N, -1)
     buf.joint_q_init_t[:N] = jq_t.unsqueeze(0).expand(N, -1)
@@ -88,17 +102,20 @@ def _fill_buf(buf, foot_pos, jq, N, nc):
 
 @pytest.fixture(scope="module")
 def robot_setup():
-    kin = NewtonKinematics(NewtonKinematicsCfg(
-        usd_path=ANYMAL_USD, device=DEVICE,
-        default_pos=(0, 0, 0.6), default_joint_pos=DEFAULT_JPOS,
-    ))
+    kin = NewtonKinematics(
+        NewtonKinematicsCfg(
+            usd_path=ANYMAL_USD,
+            device=DEVICE,
+            default_pos=(0, 0, 0.6),
+            default_joint_pos=DEFAULT_JPOS,
+        )
+    )
     foot_ids = [i for i, n in enumerate(kin.body_names) if "FOOT" in n.upper()]
     foot_pos = np.array([kin.default_body_q[fid][:3] for fid in foot_ids])
     return kin, foot_ids, kin.default_joint_q, foot_pos
 
 
 class TestIKIdentity:
-
     @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
     def test_identity(self, robot_setup):
         kin, foot_ids, jq, foot_pos = robot_setup
@@ -120,7 +137,6 @@ class TestIKIdentity:
 
 
 class TestIKPerturbation:
-
     @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
     def test_perturbation(self, robot_setup):
         kin, foot_ids, jq, foot_pos = robot_setup
@@ -152,7 +168,6 @@ class TestIKPerturbation:
 
 
 class TestIKBatched:
-
     @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
     def test_batched_consistency(self, robot_setup):
         kin, foot_ids, jq, foot_pos = robot_setup
@@ -168,7 +183,7 @@ class TestIKBatched:
 
         for i in range(N):
             dz = 0.01 * i
-            buf.contact_targets_t[i * nc:(i + 1) * nc] = fp_t + torch.tensor([0, 0, dz], device=td)
+            buf.contact_targets_t[i * nc : (i + 1) * nc] = fp_t + torch.tensor([0, 0, dz], device=td)
             buf.base_target_pos_t[i] = torch.tensor([0, 0, 0.6 + dz], device=td)
             buf.base_target_rot_t[i] = torch.tensor([0, 0, 0, 1], device=td)
             buf.joint_q_init_t[i] = jq_t

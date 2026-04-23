@@ -67,16 +67,24 @@ class IKObjectiveTerrainContact(ik.IKObjective):
             self._e_arrays.append(wp.array(e.flatten(), dtype=wp.float32, device=d))
 
     def compute_residuals(self, body_q, joint_q, model, residuals, start_idx, problem_idx) -> None:
-        wp.launch(_terrain_contact_residuals, dim=[body_q.shape[0], self.n_feet],
-                  inputs=[body_q, self.mesh_id, self._foot_body_indices, self.weight, start_idx],
-                  outputs=[residuals], device=self.device)
+        wp.launch(
+            _terrain_contact_residuals,
+            dim=[body_q.shape[0], self.n_feet],
+            inputs=[body_q, self.mesh_id, self._foot_body_indices, self.weight, start_idx],
+            outputs=[residuals],
+            device=self.device,
+        )
 
     def compute_jacobian_autodiff(self, tape, model, jacobian, start_idx, dq_dof) -> None:
         self._require_batch_layout()
         n_dofs = dq_dof.shape[1]
         for r in range(self.n_feet):
             tape.backward(grads={tape.outputs[0]: self._e_arrays[r]})
-            wp.launch(jac_fill_row, dim=self.n_batch,
-                      inputs=[tape.gradients[dq_dof], n_dofs, start_idx + r],
-                      outputs=[jacobian], device=self.device)
+            wp.launch(
+                jac_fill_row,
+                dim=self.n_batch,
+                inputs=[tape.gradients[dq_dof], n_dofs, start_idx + r],
+                outputs=[jacobian],
+                device=self.device,
+            )
             tape.zero()

@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import MISSING
-from pathlib import Path
 
 import newton
 import newton.ik as ik
 import numpy as np
 import warp as wp
+from newton._src.sim.ik.ik_common import eval_fk_batched as _newton_eval_fk_batched
 
 from isaaclab.utils import configclass
 
@@ -83,9 +83,6 @@ class NewtonKinematics:
         result = self.builder.add_usd(self.usd_path, collapse_fixed_joints=cfg.collapse_fixed_joints)
         self.model = self.builder.finalize(device=cfg.device)
 
-        self._tpl = newton.ModelBuilder()
-        self._tpl.add_usd(self.usd_path, collapse_fixed_joints=cfg.collapse_fixed_joints)
-
         path_body_map: dict[str, int] = result.get("path_body_map", {})
         names = [""] * self.model.body_count
         for path, idx in path_body_map.items():
@@ -104,7 +101,7 @@ class NewtonKinematics:
         if cfg.default_joint_pos is not None:
             resolved = self._resolve_joint_pos_map(cfg.default_joint_pos)
             n = min(len(resolved), len(jq) - 7)
-            jq[7:7 + n] = resolved[:n]
+            jq[7 : 7 + n] = resolved[:n]
         state = self.eval_fk(wp.array(jq, dtype=float, device=cfg.device))
         self._default_joint_q = jq
         self._default_body_q = state.body_q.numpy()
@@ -234,24 +231,8 @@ class NewtonKinematics:
             jacobian_mode=jacobian_mode,
         )
 
-    def build_batched_model(self, n: int) -> newton.Model:
-        """Build a batched Newton model with ``n`` robot instances.
-
-        Uses the cached USD template so the file is not re-parsed.
-
-        Args:
-            n: Number of robot copies.
-
-        Returns:
-            Finalized Newton model with ``n`` articulations.
-        """
-        bldr = newton.ModelBuilder()
-        for _ in range(n):
-            bldr.add_world(self._tpl)
-        return bldr.finalize(device=self.device)
-
     def eval_fk(self, joint_q: wp.array, joint_qd: wp.array | None = None) -> newton.State:
-        """Run forward kinematics.
+        """Run forward kinematics for a single articulation.
 
         Args:
             joint_q: Joint coordinates [m or rad].
@@ -265,3 +246,40 @@ class NewtonKinematics:
             joint_qd = wp.zeros(self.model.joint_dof_count, dtype=float, device=self.device)
         newton.eval_fk(self.model, joint_q, joint_qd, state)
         return state
+
+    def eval_fk_batched(
+        self,
+        joint_q: wp.array,
+        joint_qd: wp.array | None = None,
+        body_q: wp.array | None = None,
+        body_qd: wp.array | None = None,
+    ) -> tuple[wp.array, wp.array]:
+        """Run batched forward kinematics across ``N`` problems on the shared model.
+
+        Wraps Newton's internal batched-FK kernel. All array arguments
+        use a leading-``N`` batch dimension over the ``N`` parallel
+        problems; all share the same kinematic model. Output arrays are
+        allocated lazily when ``None``.
+
+        Args:
+            joint_q: Joint coordinates per problem, shape
+                ``[N, joint_coord_count]`` [m or rad].
+            joint_qd: Joint velocities per problem, shape
+                ``[N, joint_dof_count]`` [m/s or rad/s]. Zero-filled if ``None``.
+            body_q: Optional pre-allocated output for body transforms,
+                shape ``[N, body_count]`` of :class:`warp.transformf`. Allocated if ``None``.
+            body_qd: Optional pre-allocated output for body spatial velocities,
+                shape ``[N, body_count]`` of :class:`warp.spatial_vectorf`. Allocated if ``None``.
+
+        Returns:
+            Tuple ``(body_q, body_qd)`` -- the (possibly freshly allocated) output arrays.
+        """
+        n = joint_q.shape[0]
+        if joint_qd is None:
+            joint_qd = wp.zeros((n, self.model.joint_dof_count), dtype=wp.float32, device=self.device)
+        if body_q is None:
+            body_q = wp.zeros((n, self.model.body_count), dtype=wp.transformf, device=self.device)
+        if body_qd is None:
+            body_qd = wp.zeros((n, self.model.body_count), dtype=wp.spatial_vectorf, device=self.device)
+        _newton_eval_fk_batched(self.model, joint_q, joint_qd, body_q, body_qd)
+        return body_q, body_qd

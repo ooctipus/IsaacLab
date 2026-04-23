@@ -5,12 +5,11 @@
 
 """Tests for Newton-based forward kinematics via NewtonKinematics."""
 
+import newton
+import newton.ik as ik
 import numpy as np
 import pytest
 import warp as wp
-
-import newton
-import newton.ik as ik
 
 from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import NewtonKinematics, NewtonKinematicsCfg
 
@@ -36,10 +35,14 @@ class TestNewtonKinematics:
 
     @pytest.fixture(scope="class")
     def kin(self):
-        return NewtonKinematics(NewtonKinematicsCfg(
-            usd_path=ANYMAL_USD, device=DEVICE,
-            default_pos=(0, 0, 0.6), default_joint_pos=DEFAULT_JPOS,
-        ))
+        return NewtonKinematics(
+            NewtonKinematicsCfg(
+                usd_path=ANYMAL_USD,
+                device=DEVICE,
+                default_pos=(0, 0, 0.6),
+                default_joint_pos=DEFAULT_JPOS,
+            )
+        )
 
     @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
     def test_model_loaded(self, kin):
@@ -75,7 +78,9 @@ class TestNewtonKinematics:
         newton.eval_ik(kin.model, state, recovered_q, recovered_qd)
 
         np.testing.assert_allclose(
-            jq.numpy(), recovered_q.numpy(), atol=1e-4,
+            jq.numpy(),
+            recovered_q.numpy(),
+            atol=1e-4,
             err_msg="FK->IK round-trip failed",
         )
 
@@ -96,14 +101,17 @@ class TestNewtonKinematics:
         foot_ids = [i for i, n in enumerate(kin.body_names) if "FOOT" in n.upper()]
         co = [
             ik.IKObjectivePosition(
-                link_index=fid, link_offset=wp.vec3(0, 0, 0),
-                target_positions=wp.zeros(1, dtype=wp.vec3, device=DEVICE), weight=1.0,
+                link_index=fid,
+                link_offset=wp.vec3(0, 0, 0),
+                target_positions=wp.zeros(1, dtype=wp.vec3, device=DEVICE),
+                weight=1.0,
             )
             for fid in foot_ids
         ]
         jlo = ik.IKObjectiveJointLimit(
             joint_limit_lower=kin.model.joint_limit_lower,
-            joint_limit_upper=kin.model.joint_limit_upper, weight=1.0,
+            joint_limit_upper=kin.model.joint_limit_upper,
+            weight=1.0,
         )
         solver = kin.create_ik_solver([*co, jlo], n_problems=1)
         assert solver is not None

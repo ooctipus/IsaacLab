@@ -28,7 +28,7 @@ so the task still loads without a robot picked (except for
 loudly if resolution happens with no robot selected).
 """
 
-from dataclasses import MISSING
+from dataclasses import MISSING, field
 
 from isaaclab.assets import ArticulationCfg
 from isaaclab.utils import configclass
@@ -114,3 +114,46 @@ class ExperimentNameCfg(PresetCfg):
     """rsl_rl experiment name, picked up by ``PositionLocomotionPPORunnerCfg``."""
 
     default: str = "position_command"
+
+
+@configclass
+class RetargetFootBodyNamesCfg(PresetCfg):
+    """Exact foot body names used by the retarget pipeline.
+
+    Consumed by :attr:`RetargetPipelineCfg.foot_body_names` to resolve
+    Newton body indices for the feet. Must match the body names produced
+    by :class:`NewtonKinematics` when loading the robot's USD (case-
+    sensitive, no regex).
+
+    Required -- no sensible default exists, so resolving without picking a
+    robot preset (or for a robot without a retarget preset) leaves the
+    field as :data:`MISSING` and fails loudly at pipeline construction.
+    """
+
+    default: list[str] = MISSING  # type: ignore[assignment]
+
+
+@configclass
+class RetargetHaaJointPatternCfg(PresetCfg):
+    """Regex matching hip-abduction/adduction joint names for retarget.
+
+    Consumed by :attr:`RetargetPipelineCfg.haa_joint_pattern`. ``None``
+    disables the :class:`HaaLimit` criterion -- appropriate for robots
+    with no abduction joints or where over-splay is not a concern.
+    """
+
+    default: str | None = None
+
+
+@configclass
+class RetargetJointRegularizeTargetsCfg(PresetCfg):
+    """Per-robot joint-name regex -> target-angle dict for retarget IK.
+
+    Consumed by :attr:`RetargetPipelineCfg.joint_regularize_targets`.
+    Each entry pulls its matched DOFs toward the listed angle during
+    IK; unmatched DOFs are left free. Empty dict disables the
+    regularizer entirely -- appropriate for robots where no joint-
+    space prior is needed.
+    """
+
+    default: dict[str, float] = field(default_factory=dict)

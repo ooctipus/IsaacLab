@@ -21,7 +21,6 @@ DEVICE = "cpu"
 
 
 class TestRetargetBufferAllocation:
-
     def test_views_shapes(self):
         buf = RetargetBuffer(100, 19, 17, 4, device=DEVICE)
         assert buf.contact_targets_t.shape == (400, 3)
@@ -50,7 +49,6 @@ class TestRetargetBufferAllocation:
 
 
 class TestRetargetBufferMasks:
-
     def test_set_geometry_valid(self):
         buf = RetargetBuffer(100, 19, 17, 4, device=DEVICE)
         buf._geom_valid[0] = True
@@ -79,7 +77,6 @@ class TestRetargetBufferMasks:
 
 
 class TestRetargetBufferZeroCopy:
-
     def test_torch_view_writes_through(self):
         buf = RetargetBuffer(10, 19, 17, 4, device=DEVICE)
         buf.joint_q_result_t[3, 5] = 42.0
@@ -96,7 +93,6 @@ class TestRetargetBufferZeroCopy:
 
 
 class TestRetargetBufferReuse:
-
     def test_reset_preserves_capacity(self):
         buf = RetargetBuffer(100, 19, 17, 4, device=DEVICE)
         buf.num_written = 50

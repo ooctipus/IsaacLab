@@ -10,6 +10,7 @@ from .newton_kinematics import NewtonKinematics, NewtonKinematicsCfg
 from .ik_objectives import (
     IKObjectiveGravityTorque,
     IKObjectiveJointDefault,
+    IKObjectiveJointRegularize,
     IKObjectiveStabilityMargin,
     IKObjectiveTerrainCollision,
     IKObjectiveTerrainContact,
@@ -21,6 +22,7 @@ __all__ = [
     "NewtonKinematicsCfg",
     "IKObjectiveGravityTorque",
     "IKObjectiveJointDefault",
+    "IKObjectiveJointRegularize",
     "IKObjectiveStabilityMargin",
     "IKObjectiveTerrainCollision",
     "IKObjectiveTerrainContact",

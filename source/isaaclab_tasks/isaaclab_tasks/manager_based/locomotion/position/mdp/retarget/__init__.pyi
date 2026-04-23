@@ -7,7 +7,6 @@ from .buffer import RetargetBuffer as RetargetBuffer
 from .cfg import RetargetPipelineCfg as RetargetPipelineCfg, SamplerBaseCfg as SamplerBaseCfg
 from .pipeline import (
     CriterionFn as CriterionFn,
-    ObjectivesFactory as ObjectivesFactory,
     RetargetPipeline as RetargetPipeline,
     SamplerBase as SamplerBase,
 )

@@ -18,6 +18,9 @@ from .robot_presets import (
     FootBodyNamesCfg,
     HeightScannerPrimPathCfg,
     NonFootBodyNamesCfg,
+    RetargetFootBodyNamesCfg,
+    RetargetHaaJointPatternCfg,
+    RetargetJointRegularizeTargetsCfg,
     RobotArticulationCfg,
     SyncFootPairsCfg,
 )
@@ -46,3 +49,12 @@ ExperimentNameCfg.spot = "spot_position_command"
 
 SPOT_HAA_PATTERN = ".*hip_x"
 """Regex matching Spot hip abduction/adduction joint names."""
+
+RetargetFootBodyNamesCfg.spot = ["fl_foot", "fr_foot", "hl_foot", "hr_foot"]
+RetargetHaaJointPatternCfg.spot = SPOT_HAA_PATTERN
+# Pull HAA toward 0 and knees toward Spot's crouched init-pose angle; hip-swing
+# is left free.
+RetargetJointRegularizeTargetsCfg.spot = {
+    ".*hip_x": 0.0,
+    ".*_kn": -1.5,
+}

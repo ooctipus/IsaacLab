@@ -85,11 +85,19 @@ class IKObjectiveJointDefault(ik.IKObjective):
         return self.n_dofs
 
     def compute_residuals(self, body_q, joint_q, model, residuals, start_idx, problem_idx) -> None:
-        wp.launch(_default_residuals, dim=[joint_q.shape[0], self.n_dofs],
-                  inputs=[joint_q, self.target_joint_q, self.dof_to_coord, self.weight, start_idx],
-                  outputs=[residuals], device=self.device)
+        wp.launch(
+            _default_residuals,
+            dim=[joint_q.shape[0], self.n_dofs],
+            inputs=[joint_q, self.target_joint_q, self.dof_to_coord, self.weight, start_idx],
+            outputs=[residuals],
+            device=self.device,
+        )
 
     def compute_jacobian_analytic(self, body_q, joint_q, model, jacobian, joint_S_s, start_idx) -> None:
-        wp.launch(_default_jac_analytic, dim=[joint_q.shape[0], self.n_dofs],
-                  inputs=[self.dof_to_coord, self.weight, start_idx],
-                  outputs=[jacobian], device=self.device)
+        wp.launch(
+            _default_jac_analytic,
+            dim=[joint_q.shape[0], self.n_dofs],
+            inputs=[self.dof_to_coord, self.weight, start_idx],
+            outputs=[jacobian],
+            device=self.device,
+        )

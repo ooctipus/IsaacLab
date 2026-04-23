@@ -77,6 +77,8 @@ class TerrainImporter:
         self.terrain_prim_paths = list()
         self.terrain_origins = None
         self.env_origins = None  # assigned later when `configure_env_origins` is called
+        self.terrain_mesh: trimesh.Trimesh | None = None
+        """Combined trimesh for the full terrain (if generated)."""
         # private variables
         self._terrain_flat_patches = dict()
 
@@ -89,7 +91,8 @@ class TerrainImporter:
             terrain_generator = self.cfg.terrain_generator.class_type(
                 cfg=self.cfg.terrain_generator, device=self.device
             )
-            self.import_mesh("terrain", terrain_generator.terrain_mesh)
+            self.terrain_mesh = terrain_generator.terrain_mesh
+            self.import_mesh("terrain", self.terrain_mesh)
             if self.cfg.use_terrain_origins:
                 # configure the terrain origins based on the terrain generator
                 self.configure_env_origins(terrain_generator.terrain_origins)

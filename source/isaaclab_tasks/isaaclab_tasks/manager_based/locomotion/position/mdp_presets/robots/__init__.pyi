@@ -11,6 +11,9 @@ __all__ = [
     "FootBodyNamesCfg",
     "HeightScannerPrimPathCfg",
     "NonFootBodyNamesCfg",
+    "RetargetFootBodyNamesCfg",
+    "RetargetHaaJointPatternCfg",
+    "RetargetJointRegularizeTargetsCfg",
     "RobotArticulationCfg",
     "SyncFootPairsCfg",
 ]
@@ -23,6 +26,9 @@ from .robot_presets import (
     FootBodyNamesCfg,
     HeightScannerPrimPathCfg,
     NonFootBodyNamesCfg,
+    RetargetFootBodyNamesCfg,
+    RetargetHaaJointPatternCfg,
+    RetargetJointRegularizeTargetsCfg,
     RobotArticulationCfg,
     SyncFootPairsCfg,
 )

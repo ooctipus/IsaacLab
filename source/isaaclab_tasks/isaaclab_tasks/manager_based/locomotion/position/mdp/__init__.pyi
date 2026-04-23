@@ -50,18 +50,17 @@ __all__ = [
     "reset_root_state_from_terrain",
     "NewtonKinematics",
     "IKObjectiveJointDefault",
+    "IKObjectiveJointRegularize",
     "IKObjectiveGravityTorque",
     "IKObjectiveTerrainContact",
     "IKObjectiveStabilityMargin",
     "IKObjectiveTerrainCollision",
-    "TerrainConformingReset",
     "RetargetBuffer",
     "RetargetPipeline",
     "RetargetPipelineCfg",
     "SamplerBaseCfg",
     "SamplerBase",
     "CriterionFn",
-    "ObjectivesFactory",
 ]
 
 from .commands import RelativeStateCommandCfg, RelativeStateCommand
@@ -122,11 +121,11 @@ from ..utils.kinematic import (
     NewtonKinematics,
     IKObjectiveGravityTorque,
     IKObjectiveJointDefault,
+    IKObjectiveJointRegularize,
     IKObjectiveStabilityMargin,
     IKObjectiveTerrainCollision,
     IKObjectiveTerrainContact,
 )
-from .terrain_conforming_reset import TerrainConformingReset
 from .retarget import (
     RetargetBuffer,
     RetargetPipeline,
@@ -134,6 +133,5 @@ from .retarget import (
     SamplerBaseCfg,
     SamplerBase,
     CriterionFn,
-    ObjectivesFactory,
 )
 from isaaclab.envs.mdp import *

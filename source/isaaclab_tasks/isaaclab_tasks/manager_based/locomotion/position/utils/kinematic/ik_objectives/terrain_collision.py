@@ -18,6 +18,18 @@ from ._kernels import jac_fill_row
 
 
 @wp.kernel
+def _write_basis_column(
+    total_residuals: int,
+    col: int,
+    value: float,
+    out: wp.array1d(dtype=wp.float32),
+):
+    """Write ``value`` at column ``col`` of every batch row in a flat ``(n_batch * total_residuals)`` buffer."""
+    b = wp.tid()
+    out[b * total_residuals + col] = value
+
+
+@wp.kernel
 def _terrain_collision_residuals(
     body_q: wp.array2d(dtype=wp.transform),
     mesh_id: wp.uint64,
@@ -40,6 +52,77 @@ def _terrain_collision_residuals(
         depth = wp.max(sign_pen, z_pen)
         pen = wp.log(1.0 + wp.exp(depth / margin)) * margin
         residuals[row, start_idx + probe_idx] = weight * pen
+
+
+@wp.kernel
+def _terrain_collision_jac_analytic(
+    mesh_id: wp.uint64,
+    probe_body: wp.array1d(dtype=wp.int32),
+    probe_offset: wp.array1d(dtype=wp.vec3),
+    weight: float,
+    margin: float,
+    affects_dof: wp.array2d(dtype=wp.uint8),  # (n_probes, n_dofs)
+    body_q: wp.array2d(dtype=wp.transform),
+    joint_S_s: wp.array2d(dtype=wp.spatial_vector),  # (n_batch, n_dofs)
+    start_idx: int,
+    # output
+    jacobian: wp.array3d(dtype=wp.float32),
+):
+    """One thread per (problem, probe, dof). Writes a single Jacobian entry.
+
+    Assumes ``jacobian`` has been zeroed upstream. Threads that find the
+    probe outside the mesh search radius, on the softplus tail with
+    negligible gradient, or on a DoF that cannot move the probe body
+    simply return without writing.
+    """
+    problem_idx, probe_idx, dof_idx = wp.tid()
+
+    if affects_dof[probe_idx, dof_idx] == 0:
+        return
+
+    body_idx = probe_body[probe_idx]
+    tf = body_q[problem_idx, body_idx]
+    probe_pos = wp.transform_point(tf, probe_offset[probe_idx])
+    query = wp.mesh_query_point(mesh_id, probe_pos, 2.0)
+    if not query.result:
+        return
+
+    surface_pt = wp.mesh_eval_position(mesh_id, query.face, query.u, query.v)
+    delta = probe_pos - surface_pt
+    dist = wp.length(delta)
+    sign_pen = -query.sign * dist
+    z_pen = surface_pt[2] - probe_pos[2]
+    depth = wp.max(sign_pen, z_pen)
+
+    # d(depth)/d(probe_pos), matching the wp.max subgradient (takes the
+    # sign_pen branch at equality to mirror autodiff's >= behaviour).
+    grad_depth = wp.vec3(0.0, 0.0, 0.0)
+    if sign_pen >= z_pen:
+        if dist > 1.0e-8:
+            inv_dist = 1.0 / dist
+            s = -query.sign * inv_dist
+            grad_depth = wp.vec3(s * delta[0], s * delta[1], s * delta[2])
+    else:
+        grad_depth = wp.vec3(0.0, 0.0, -1.0)
+
+    # Numerically stable softplus derivative: sigmoid(depth / margin).
+    x = depth / margin
+    sig = float(0.0)
+    if x >= 0.0:
+        sig = 1.0 / (1.0 + wp.exp(-x))
+    else:
+        e = wp.exp(x)
+        sig = e / (1.0 + e)
+
+    # Spatial velocity of the probe point for a unit rate along this DoF.
+    S = joint_S_s[problem_idx, dof_idx]
+    v_orig = wp.vec3(S[0], S[1], S[2])
+    omega = wp.vec3(S[3], S[4], S[5])
+    v_probe = v_orig + wp.cross(omega, probe_pos)
+
+    jacobian[problem_idx, start_idx + probe_idx, dof_idx] = (
+        weight * sig * (grad_depth[0] * v_probe[0] + grad_depth[1] * v_probe[1] + grad_depth[2] * v_probe[2])
+    )
 
 
 def _build_collision_probes(
@@ -81,6 +164,43 @@ def _build_collision_probes(
     return probe_bodies, probe_offsets
 
 
+def _build_affects_dof_per_body(model: newton.Model) -> np.ndarray:
+    """Return a ``(n_bodies, n_dofs)`` mask of whether a DoF can move a body.
+
+    Walks the Newton joint tree once to mark every ancestor joint of each
+    body, then expands joint indices to DoF indices via ``joint_qd_start``.
+    """
+    n_bodies = model.body_count
+    n_dofs = model.joint_dof_count
+
+    joint_qd_start = model.joint_qd_start.numpy()
+    joint_parent = model.joint_parent.numpy()
+    joint_child = model.joint_child.numpy()
+
+    dof_to_joint = np.empty(n_dofs, dtype=np.int32)
+    for j in range(len(joint_qd_start) - 1):
+        dof_to_joint[joint_qd_start[j] : joint_qd_start[j + 1]] = j
+
+    body_to_joint = np.full(n_bodies, -1, dtype=np.int32)
+    for j in range(model.joint_count):
+        c = int(joint_child[j])
+        if c != -1:
+            body_to_joint[c] = j
+
+    mask = np.zeros((n_bodies, n_dofs), dtype=np.uint8)
+    for b in range(n_bodies):
+        ancestors = np.zeros(model.joint_count, dtype=bool)
+        body = b
+        while body != -1:
+            j = int(body_to_joint[body])
+            if j == -1:
+                break
+            ancestors[j] = True
+            body = int(joint_parent[j])
+        mask[b] = ancestors[dof_to_joint].astype(np.uint8)
+    return mask
+
+
 class IKObjectiveTerrainCollision(ik.IKObjective):
     """Penalize robot body surface points penetrating the terrain mesh.
 
@@ -93,8 +213,15 @@ class IKObjectiveTerrainCollision(ik.IKObjective):
         n_samples: Surface sample points per body.
     """
 
-    def __init__(self, mesh_id: int, builder: newton.ModelBuilder, exclude_bodies: list[int],
-                 weight: float = 3.0, margin: float = 0.05, n_samples: int = 16) -> None:
+    def __init__(
+        self,
+        mesh_id: int,
+        builder: newton.ModelBuilder,
+        exclude_bodies: list[int],
+        weight: float = 3.0,
+        margin: float = 0.05,
+        n_samples: int = 16,
+    ) -> None:
         super().__init__()
         self.mesh_id = mesh_id
         self.weight = weight
@@ -105,7 +232,7 @@ class IKObjectiveTerrainCollision(ik.IKObjective):
         self._probe_offset_np = np.array(offsets, dtype=np.float32)
 
     def supports_analytic(self) -> bool:
-        return False
+        return True
 
     def residual_dim(self) -> int:
         return self.n_probes
@@ -115,25 +242,84 @@ class IKObjectiveTerrainCollision(ik.IKObjective):
         d = self.device
         self._probe_body = wp.array(self._probe_body_np, dtype=wp.int32, device=d)
         self._probe_offset = wp.from_numpy(self._probe_offset_np, dtype=wp.vec3, device=d)
-        self._e_arrays = []
-        for r in range(self.n_probes):
-            e = np.zeros((self.n_batch, self.total_residuals), dtype=np.float32)
-            for b in range(self.n_batch):
-                e[b, self.residual_offset + r] = 1.0
-            self._e_arrays.append(wp.array(e.flatten(), dtype=wp.float32, device=d))
+
+        if jacobian_mode in (ik.IKJacobianType.ANALYTIC, ik.IKJacobianType.MIXED):
+            # Ancestor mask per probe: (n_probes, n_dofs) uint8.
+            body_mask = _build_affects_dof_per_body(model)
+            probe_mask = body_mask[self._probe_body_np]
+            self._affects_dof = wp.array(probe_mask, dtype=wp.uint8, device=d)
+
+        if jacobian_mode in (ik.IKJacobianType.AUTODIFF, ik.IKJacobianType.MIXED):
+            # Shared scratch basis vector reused for every probe backward pass.
+            # Each probe's basis is ``1`` at ``residual_offset + r`` and ``0``
+            # elsewhere in every batch row — materialising all ``n_probes``
+            # copies would cost ``n_probes * n_batch * total_residuals * 4`` B
+            # (>1 GB at high batch counts); we instead fill column ``r`` before
+            # each backward and clear it after.
+            self._e_scratch = wp.zeros(self.n_batch * self.total_residuals, dtype=wp.float32, device=d)
 
     def compute_residuals(self, body_q, joint_q, model, residuals, start_idx, problem_idx) -> None:
-        wp.launch(_terrain_collision_residuals, dim=[body_q.shape[0], self.n_probes],
-                  inputs=[body_q, self.mesh_id, self._probe_body, self._probe_offset,
-                          self.weight, self.margin, start_idx],
-                  outputs=[residuals], device=self.device)
+        wp.launch(
+            _terrain_collision_residuals,
+            dim=[body_q.shape[0], self.n_probes],
+            inputs=[body_q, self.mesh_id, self._probe_body, self._probe_offset, self.weight, self.margin, start_idx],
+            outputs=[residuals],
+            device=self.device,
+        )
 
     def compute_jacobian_autodiff(self, tape, model, jacobian, start_idx, dq_dof) -> None:
         self._require_batch_layout()
         n_dofs = dq_dof.shape[1]
         for r in range(self.n_probes):
-            tape.backward(grads={tape.outputs[0]: self._e_arrays[r]})
-            wp.launch(jac_fill_row, dim=self.n_batch,
-                      inputs=[tape.gradients[dq_dof], n_dofs, start_idx + r],
-                      outputs=[jacobian], device=self.device)
+            col = self.residual_offset + r
+            wp.launch(
+                _write_basis_column,
+                dim=self.n_batch,
+                inputs=[self.total_residuals, col, 1.0],
+                outputs=[self._e_scratch],
+                device=self.device,
+            )
+            tape.backward(grads={tape.outputs[0]: self._e_scratch})
+            wp.launch(
+                jac_fill_row,
+                dim=self.n_batch,
+                inputs=[tape.gradients[dq_dof], n_dofs, start_idx + r],
+                outputs=[jacobian],
+                device=self.device,
+            )
+            wp.launch(
+                _write_basis_column,
+                dim=self.n_batch,
+                inputs=[self.total_residuals, col, 0.0],
+                outputs=[self._e_scratch],
+                device=self.device,
+            )
             tape.zero()
+
+    def compute_jacobian_analytic(self, body_q, joint_q, model, jacobian, joint_S_s, start_idx) -> None:
+        """Fuse all ``n_probes * n_dofs`` Jacobian entries into a single kernel launch.
+
+        The softplus-smoothed collision residual depends on ``probe_pos``
+        through a ``max``-selected depth measure; we differentiate that
+        analytically and compose with Newton's spatial motion subspace
+        (:paramref:`joint_S_s`) to get the velocity of each probe point
+        per DoF.
+        """
+        n_dofs = model.joint_dof_count
+        wp.launch(
+            _terrain_collision_jac_analytic,
+            dim=[body_q.shape[0], self.n_probes, n_dofs],
+            inputs=[
+                self.mesh_id,
+                self._probe_body,
+                self._probe_offset,
+                self.weight,
+                self.margin,
+                self._affects_dof,
+                body_q,
+                joint_S_s,
+                start_idx,
+            ],
+            outputs=[jacobian],
+            device=self.device,
+        )

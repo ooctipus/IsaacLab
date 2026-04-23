@@ -154,21 +154,47 @@ class IKObjectiveGravityTorque(ik.IKObjective):
 
     def compute_residuals(self, body_q, joint_q, model, residuals, start_idx, problem_idx) -> None:
         n = body_q.shape[0]
-        wp.launch(_compute_subtree_com, dim=[n, self.n_rev],
-                  inputs=[body_q, self._body_com, self._body_mass_dev, self._downstream_bodies,
-                          self._downstream_offsets, self._subtree_inv_mass],
-                  outputs=[self._subtree_com_buf], device=self.device)
-        wp.launch(_gravity_torque_residuals, dim=[n, self.n_rev],
-                  inputs=[body_q, self._subtree_com_buf, self._subtree_mass, self._joint_body,
-                          self._joint_axis_local, self._gravity_vec, self.weight, start_idx],
-                  outputs=[residuals], device=self.device)
+        wp.launch(
+            _compute_subtree_com,
+            dim=[n, self.n_rev],
+            inputs=[
+                body_q,
+                self._body_com,
+                self._body_mass_dev,
+                self._downstream_bodies,
+                self._downstream_offsets,
+                self._subtree_inv_mass,
+            ],
+            outputs=[self._subtree_com_buf],
+            device=self.device,
+        )
+        wp.launch(
+            _gravity_torque_residuals,
+            dim=[n, self.n_rev],
+            inputs=[
+                body_q,
+                self._subtree_com_buf,
+                self._subtree_mass,
+                self._joint_body,
+                self._joint_axis_local,
+                self._gravity_vec,
+                self.weight,
+                start_idx,
+            ],
+            outputs=[residuals],
+            device=self.device,
+        )
 
     def compute_jacobian_autodiff(self, tape, model, jacobian, start_idx, dq_dof) -> None:
         self._require_batch_layout()
         n_dofs = dq_dof.shape[1]
         for r in range(self.n_rev):
             tape.backward(grads={tape.outputs[0]: self._e_arrays[r]})
-            wp.launch(jac_fill_row, dim=self.n_batch,
-                      inputs=[tape.gradients[dq_dof], n_dofs, start_idx + r],
-                      outputs=[jacobian], device=self.device)
+            wp.launch(
+                jac_fill_row,
+                dim=self.n_batch,
+                inputs=[tape.gradients[dq_dof], n_dofs, start_idx + r],
+                outputs=[jacobian],
+                device=self.device,
+            )
             tape.zero()

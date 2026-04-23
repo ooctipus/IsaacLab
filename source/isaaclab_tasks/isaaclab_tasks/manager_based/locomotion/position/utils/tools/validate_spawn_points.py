@@ -5,22 +5,30 @@
 
 """Terrain-conforming spawn validation with batched IK and viser visualization.
 
-Thin CLI wrapper around :class:`RetargetPipeline`.  Generates terrain mesh,
-runs the pipeline, and visualises accepted/rejected candidates in viser.
+Thin CLI wrapper around :class:`RetargetPipeline`.  Generates a terrain mesh
+(either a full terrain grid from a :class:`SubTerrainPresetCfg` preset, or a
+single sub-terrain), runs the pipeline, and visualises accepted/rejected
+candidates in viser.
 
-Usage::
+Invoke as ``./isaaclab.sh -p <this_file>.py`` with any of the arg combos below.
+Setting ``$SCRIPT`` first keeps the commands readable::
 
-    # ANYmal-C -- USD resolved from preset config
-    ./isaaclab.sh -p scripts/tools/validate_spawn_points.py \\
-        --terrain EXTREME_STAIR --preset anymal_c
+    SCRIPT=source/isaaclab_tasks/isaaclab_tasks/manager_based/locomotion/position/utils/tools/validate_spawn_points.py
 
-    # Go2
-    ./isaaclab.sh -p scripts/tools/validate_spawn_points.py \\
-        --terrain STEPPING_STONE --preset go2
+    # Default: whole ``all`` terrain grid with ANYmal-C
+    ./isaaclab.sh -p $SCRIPT
 
-    # Custom robot USD (no preset)
-    ./isaaclab.sh -p scripts/tools/validate_spawn_points.py \\
-        --terrain FLAT --robot /path/to/robot.usd --base-height 0.5
+    # Whole terrain grid from a named ``SubTerrainPresetCfg`` preset
+    ./isaaclab.sh -p $SCRIPT --terrain eval --robot go2
+
+    # Evaluation mix with Spot, more placements
+    ./isaaclab.sh -p $SCRIPT --terrain eval --robot spot --max_robots 500
+
+    # Single sub-terrain (overrides ``--terrain``)
+    ./isaaclab.sh -p $SCRIPT --sub_terrain EXTREME_STAIR --robot anymal_c --difficulty 0.9
+
+    # Stepping-stone sub-terrain with Go2 at an easier difficulty
+    ./isaaclab.sh -p $SCRIPT --sub_terrain STEPPING_STONE --robot go2 --difficulty 0.5
 """
 
 from __future__ import annotations
@@ -31,16 +39,27 @@ sys.path[:] = [p for p in sys.path if "pip_prebundle" not in p and "pip_archive"
 
 import argparse
 import builtins
-import importlib
+import dataclasses
 import socket
 import time
 
 import numpy as np
+import torch
 import trimesh
 import warp as wp
 
 from isaaclab.terrains.sub_terrain_cfg import SubTerrainBaseCfg
 from isaaclab.utils.warp import convert_to_warp_mesh
+
+VISER_PORT = 8765
+
+# Hip-abduction/adduction joint patterns per robot preset. ``None`` skips the
+# HAA-limit criterion for robots where it does not apply.
+_HAA_PATTERNS: dict[str, str | None] = {
+    "anymal_c": ".*HAA",
+    "go2": ".*hip_joint",
+    "spot": ".*hip_x",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -48,23 +67,55 @@ from isaaclab.utils.warp import convert_to_warp_mesh
 # ---------------------------------------------------------------------------
 
 
-def _load_terrain_module():
+def _register_position_task() -> None:
+    """Prevent re-registration of gym envs and eagerly import preset modules."""
     builtins._isaaclab_tasks_registered = True  # type: ignore[attr-defined]
-    pkg = importlib.import_module("isaaclab_tasks.manager_based.locomotion.position.terrains")
-    return sys.modules.get(
-        "isaaclab_tasks.manager_based.locomotion.position.terrains.terrain_cfg", pkg
-    )
+    import importlib
+
+    importlib.import_module("isaaclab_tasks.manager_based.locomotion.position.terrains")
+    importlib.import_module("isaaclab_tasks.manager_based.locomotion.position.mdp_presets.robots")
 
 
-def _list_presets(module) -> dict[str, SubTerrainBaseCfg]:
+def _sub_terrain_lookup() -> dict[str, SubTerrainBaseCfg]:
+    """Return the uppercase ``SubTerrainBaseCfg`` constants defined in terrain_cfg.
+
+    Imports the ``terrain_cfg`` submodule directly (rather than going through the
+    ``terrains`` package, which uses :func:`lazy_export` and so does not expose
+    names via :func:`dir`).
+    """
+    import importlib
+
+    tcfg = importlib.import_module("isaaclab_tasks.manager_based.locomotion.position.terrains.terrain_cfg")
     return {
-        n: getattr(module, n) for n in sorted(dir(module))
-        if n.isupper() and isinstance(getattr(module, n), SubTerrainBaseCfg)
+        n: getattr(tcfg, n)
+        for n in sorted(dir(tcfg))
+        if n.isupper() and isinstance(getattr(tcfg, n), SubTerrainBaseCfg)
     }
 
 
-def _generate_mesh(cfg, difficulty):
-    cfg = cfg.copy()
+def _terrain_preset_lookup() -> dict[str, dict]:
+    """Return all sub-terrain-dict fields on :class:`SubTerrainPresetCfg`.
+
+    ``SubTerrainPresetCfg`` is a dataclass whose preset fields are set at
+    instance level, so we enumerate via :func:`dataclasses.fields` rather than
+    :func:`dir` on the class.
+    """
+    from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.terrain_presets import (
+        SubTerrainPresetCfg,
+    )
+
+    inst = SubTerrainPresetCfg()
+    presets: dict[str, dict] = {}
+    for f in dataclasses.fields(inst):
+        v = getattr(inst, f.name)
+        if isinstance(v, dict):
+            presets[f.name] = v
+    return presets
+
+
+def _sub_terrain_mesh(sub_cfg: SubTerrainBaseCfg, difficulty: float):
+    """Build mesh and origin for a single sub-terrain."""
+    cfg = sub_cfg.copy()
     cfg.difficulty = difficulty
     meshes, origin = cfg.function(difficulty, cfg)
     mesh = trimesh.util.concatenate(meshes)
@@ -75,56 +126,37 @@ def _generate_mesh(cfg, difficulty):
     return mesh, origin
 
 
-# ---------------------------------------------------------------------------
-# Robot preset registry
-# ---------------------------------------------------------------------------
+def _terrain_preset_mesh(preset_dict: dict, device: str):
+    """Build a full terrain-grid mesh from a :class:`SubTerrainPresetCfg` preset dict.
 
-_ROBOT_PRESETS: dict[str, dict] = {}
-
-
-def _make_preset(cfg, haa_pattern: str) -> dict:
-    """Build a preset dict from an :class:`ArticulationCfg` + HAA pattern.
-
-    All data comes from the cfg -- no redundant constants.
+    Returns the mesh, the origin (always at ``[0, 0, 0]``), and the inner
+    non-border sampling extents ``(x_range, y_range)`` in the mesh frame.
     """
-    return {
-        "usd_path": cfg.spawn.usd_path,
-        "base_height": cfg.init_state.pos[2],
-        "joint_pos": cfg.init_state.joint_pos,
-        "haa_pattern": haa_pattern,
-    }
+    from isaaclab.terrains import TerrainGeneratorCfg
+    from isaaclab.terrains.terrain_generator import TerrainGenerator
 
-
-def _register_presets():
-    """Lazily populate preset defaults from robot preset modules.
-
-    Each entry is built from the robot's :class:`ArticulationCfg` --
-    USD path, base height, and default joint positions are all drawn
-    from the same config the sim uses.
-    """
-    if _ROBOT_PRESETS:
-        return
-
-    from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.robots.anymal_c import (
-        ANYMAL_C_HAA_PATTERN,
+    cfg = TerrainGeneratorCfg(
+        size=(10.0, 10.0),
+        num_rows=10,
+        num_cols=20,
+        border_width=20.0,
+        horizontal_scale=0.1,
+        vertical_scale=0.005,
+        slope_threshold=0.75,
+        use_cache=False,
+        seed=42,
+        curriculum=True,
+        sub_terrains=preset_dict,
     )
-    from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.robots.robot_presets import (
-        RobotArticulationCfg,
+    gen = TerrainGenerator(cfg=cfg, device=device)
+    inner_x = cfg.num_rows * cfg.size[0] / 2.0
+    inner_y = cfg.num_cols * cfg.size[1] / 2.0
+    return (
+        gen.terrain_mesh,
+        np.zeros(3, dtype=np.float32),
+        (-inner_x, inner_x),
+        (-inner_y, inner_y),
     )
-
-    _ROBOT_PRESETS["anymal_c"] = _make_preset(RobotArticulationCfg.anymal_c, ANYMAL_C_HAA_PATTERN)
-
-    from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.robots.go2 import (
-        GO2_HAA_PATTERN,
-    )
-
-    _ROBOT_PRESETS["go2"] = _make_preset(RobotArticulationCfg.go2, GO2_HAA_PATTERN)
-
-    from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.robots.spot import (
-        SPOT_HAA_PATTERN,
-    )
-
-    _ROBOT_PRESETS["spot"] = _make_preset(RobotArticulationCfg.spot, SPOT_HAA_PATTERN)
 
 
 # ---------------------------------------------------------------------------
@@ -136,65 +168,98 @@ def main():
     import newton
     from newton.viewer import ViewerViser
 
-    from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import (
-        IKObjectiveStabilityMargin,
-        IKObjectiveTerrainCollision,
-        NewtonKinematicsCfg,
-    )
     from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget import (
         RetargetPipeline,
         RetargetPipelineCfg,
     )
-    from isaaclab_tasks.manager_based.locomotion.position.utils.criteria import (
-        BaseZError,
-        CollisionCheck,
-        HaaLimit,
-    )
-    from isaaclab_tasks.manager_based.locomotion.position.utils.sampling import (
+    from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.cfg import (
+        PatchSamplingCfg,
         SupportPolygonSamplerCfg,
     )
+    from isaaclab_tasks.manager_based.locomotion.position.utils.criteria_cfg import (
+        CollisionCheckCfg,
+        FootPositionErrorCfg,
+        HaaLimitCfg,
+        SolverCostOutlierCfg,
+        SupportPolygonStabilityCfg,
+    )
+    from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import NewtonKinematicsCfg
+    from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic.ik_objectives.cfg import (
+        IKObjectiveJointRegularizeCfg,
+        IKObjectiveStabilityMarginCfg,
+        IKObjectiveTerrainCollisionCfg,
+    )
 
-    _register_presets()
+    _register_position_task()
+
+    from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.robots.robot_presets import (
+        RetargetJointRegularizeTargetsCfg,
+        RobotArticulationCfg,
+    )
+
+    sub_terrains = _sub_terrain_lookup()
+    terrain_presets = _terrain_preset_lookup()
 
     parser = argparse.ArgumentParser(description="Terrain-conforming spawn validation.")
-    parser.add_argument("--terrain", type=str, default="EXTREME_STAIR")
+    parser.add_argument(
+        "--terrain",
+        type=str,
+        default="all",
+        choices=sorted(terrain_presets.keys()),
+        help="Terrain preset key (builds a whole terrain grid).",
+    )
+    parser.add_argument(
+        "--sub_terrain",
+        type=str,
+        default=None,
+        choices=sorted(sub_terrains.keys()),
+        help="Single sub-terrain name. If set, overrides ``--terrain``.",
+    )
     parser.add_argument("--difficulty", type=float, default=0.8)
-    parser.add_argument("--robot", type=str, default=None,
-                        help="Path to robot USD.  Optional when --preset is given.")
-    parser.add_argument("--preset", type=str, default=None,
-                        choices=list(_ROBOT_PRESETS.keys()),
-                        help="Robot preset (resolves USD, base height, joints, HAA indices).")
-    parser.add_argument("--max-robots", type=int, default=300)
-    parser.add_argument("--base-height", type=float, default=None)
-    parser.add_argument("--default-joints", type=str, default=None)
-    parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--list", action="store_true")
+    parser.add_argument(
+        "--robot",
+        type=str,
+        default="anymal_c",
+        choices=sorted(_HAA_PATTERNS.keys()),
+        help="Robot preset (resolves USD, base height, joints, HAA pattern).",
+    )
+    density_group = parser.add_mutually_exclusive_group()
+    density_group.add_argument(
+        "--max_robots",
+        type=int,
+        default=None,
+        help="Number of final placements. Mutually exclusive with ``--spacing``.",
+    )
+    density_group.add_argument(
+        "--spacing",
+        type=float,
+        default=None,
+        help=(
+            "Target minimum distance [m] between final placements. Auto-picks "
+            "``max_robots = sampling_area / (3 * spacing**2)`` so the grid-bucket "
+            "downsample has enough candidates to actually enforce the spacing "
+            "(pure ``area/spacing**2`` is a square-grid upper bound and leaves "
+            "the downsample a no-op when criteria yield <~33% -- the empirical "
+            "rate on typical sub-terrains)."
+        ),
+    )
+    parser.add_argument(
+        "--no_viewer",
+        action="store_true",
+        help="Skip the viser viewer; print diagnostics and exit.",
+    )
     args = parser.parse_args()
-
-    tcfg = _load_terrain_module()
-    presets = _list_presets(tcfg)
-
-    if args.list:
-        print("Terrain presets:")
-        for n in presets:
-            print(f"  {n}")
-        print(f"\nRobot presets: {', '.join(_ROBOT_PRESETS.keys())}")
-        sys.exit(0)
-    if args.terrain not in presets:
-        print(f"Unknown terrain '{args.terrain}'. Use --list.")
-        sys.exit(1)
+    if args.max_robots is None and args.spacing is None:
+        args.max_robots = 300
 
     device = "cuda:0"
 
-    # Resolve robot preset
-    rp = _ROBOT_PRESETS.get(args.preset, {}) if args.preset else {}
-    base_height = args.base_height or rp.get("base_height", 0.6)
-    haa_pattern = rp.get("haa_pattern")
-
-    # Resolve USD path: --robot flag > preset usd_path
-    robot_usd = args.robot or rp.get("usd_path")
-    if robot_usd is None:
-        parser.error("Either --robot or --preset (with a known USD path) is required.")
+    # --- Robot preset ---
+    robot_cfg = getattr(RobotArticulationCfg, args.robot)
+    robot_usd = robot_cfg.spawn.usd_path
+    base_height = robot_cfg.init_state.pos[2]
+    default_jpos = robot_cfg.init_state.joint_pos
+    haa_pattern = _HAA_PATTERNS[args.robot]
 
     from isaaclab.utils.assets import check_file_path, retrieve_file_path
 
@@ -205,28 +270,43 @@ def main():
         robot_usd = retrieve_file_path(robot_usd, force_download=False)
 
     # --- Terrain ---
-    print(f"Terrain : {args.terrain} (difficulty={args.difficulty})")
-    mesh, origin = _generate_mesh(presets[args.terrain], args.difficulty)
+    sampler_x_range: tuple[float, float] | None = None
+    sampler_y_range: tuple[float, float] | None = None
+    if args.sub_terrain:
+        print(f"Terrain : sub_terrain={args.sub_terrain} (difficulty={args.difficulty})")
+        mesh, origin = _sub_terrain_mesh(sub_terrains[args.sub_terrain], args.difficulty)
+    else:
+        print(f"Terrain : preset={args.terrain}")
+        mesh, origin, sampler_x_range, sampler_y_range = _terrain_preset_mesh(terrain_presets[args.terrain], device)
     wp_mesh = convert_to_warp_mesh(mesh.vertices, mesh.faces, device=device)
     print(f"  {len(mesh.vertices):,} verts, {len(mesh.faces):,} faces")
 
+    # --- Density derivation ---
+    # When the user passes ``--spacing``, derive the final robot count from
+    # the sampling area. All sampler stage sizes (morph-patches, 4-foot
+    # neighborhoods, IK oversample, buffer capacity) are auto-derived inside
+    # the sampler from ``n_desired`` via the yield-rate cascade, so we don't
+    # have to touch any cfg knobs here.
+    if args.spacing is not None:
+        if sampler_x_range is not None and sampler_y_range is not None:
+            x_lo, x_hi = sampler_x_range
+            y_lo, y_hi = sampler_y_range
+        else:
+            v = np.asarray(mesh.vertices)
+            x_lo, x_hi = float(v[:, 0].min()), float(v[:, 0].max())
+            y_lo, y_hi = float(v[:, 1].min()), float(v[:, 1].max())
+        area = max((x_hi - x_lo) * (y_hi - y_lo), 0.0)
+        # Yield factor accounts for (a) criteria rejections (empirically ~33%
+        # pass rate on typical sub-terrains) and (b) the grid-bucket
+        # downsample's effective cell_side ~= sqrt(area/(1.5*k)) needing to
+        # exceed ``spacing`` for the thinning to bite. Factor 1/3 gives a
+        # non-cluttered result on meshes where candidates concentrate on easy
+        # patches.
+        args.max_robots = max(1, int(area / (3.0 * args.spacing**2)))
+        print(f"  Spacing mode: area={area:.1f} m^2, spacing={args.spacing:.3f} m -> max_robots={args.max_robots}")
+
     # --- Robot ---
-    print(f"Robot   : {robot_usd}")
-    if args.preset:
-        print(f"Preset  : {args.preset}")
-
-    if args.default_joints:
-        default_jpos: dict[str, float] | None = {".*": float(args.default_joints.split(",")[0])}
-    else:
-        default_jpos = rp.get("joint_pos")
-
-    foot_names = [n for n in rp.get("foot_names", []) if n]
-    if not foot_names:
-        from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import NewtonKinematics
-        _tmp = NewtonKinematics(NewtonKinematicsCfg(usd_path=robot_usd, device=device,
-                                                     default_pos=(0.0, 0.0, base_height)))
-        foot_names = [n for n in _tmp.body_names if "foot" in n.lower()]
-        del _tmp
+    print(f"Robot   : {args.robot} ({robot_usd})")
 
     kin_cfg = NewtonKinematicsCfg(
         usd_path=robot_usd,
@@ -235,25 +315,44 @@ def main():
         default_joint_pos=default_jpos,
     )
 
-    def extra_objectives(kin, foot_ids, n_problems, sampler, wp_mesh):
-        col = IKObjectiveTerrainCollision(
-            mesh_id=wp_mesh.id, builder=kin.builder,
-            exclude_bodies=foot_ids, weight=3.0, margin=0.01, n_samples=4,
-        )
-        active_mask_wp = wp.from_torch(
-            sampler.active_mask[:n_problems].contiguous().to(device), dtype=wp.int32,
-        )
-        stab = IKObjectiveStabilityMargin(
-            model=kin.model, foot_body_indices=foot_ids,
-            active_mask=active_mask_wp, weight=1.0,
-        )
-        return [col, stab]
+    from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import NewtonKinematics
+
+    _tmp = NewtonKinematics(kin_cfg)
+    foot_names = [n for n in _tmp.body_names if "foot" in n.lower()]
+    del _tmp
+
+    # Waterfall order: hard physical constraints first (collision, haa_limit,
+    # support-polygon stability) so their buckets report the true rate of
+    # physical invalidity. Cost is a residual IK-divergence catch on the
+    # physically valid subset. HaaLimitCfg is omitted when haa_pattern is
+    # falsy (e.g. bipeds) so the criterion never reaches its validation.
+    criteria_list = [
+        CollisionCheckCfg(n_samples=16, max_pen=0.02),
+    ]
+    if haa_pattern:
+        criteria_list.append(HaaLimitCfg(joint_pattern=haa_pattern, max_angle=1.05))
+    criteria_list += [
+        SupportPolygonStabilityCfg(),
+        FootPositionErrorCfg(max_err=0.25, aggregate="sum"),
+        SolverCostOutlierCfg(threshold_multiplier=3.0),
+    ]
+
+    # Per-robot joint-regularize targets pulled from the robot preset class.
+    joint_regularize_targets = getattr(RetargetJointRegularizeTargetsCfg, args.robot, {})
 
     pipeline_cfg = RetargetPipelineCfg(
         kin=kin_cfg,
-        sampler=SupportPolygonSamplerCfg(oversample_candidates=10),
+        sampler=SupportPolygonSamplerCfg(
+            patch=PatchSamplingCfg(x_range=sampler_x_range, y_range=sampler_y_range),
+        ),
         foot_body_names=foot_names,
-        extra_objectives_factory=extra_objectives,
+        joint_regularize_targets=joint_regularize_targets,
+        extra_objectives=[
+            IKObjectiveTerrainCollisionCfg(weight=3.0, margin=0.05, n_samples=4),
+            IKObjectiveStabilityMarginCfg(weight=1.0),
+            IKObjectiveJointRegularizeCfg(weight=0.02),
+        ],
+        criteria=criteria_list,
     )
 
     t0 = time.time()
@@ -271,50 +370,31 @@ def main():
 
     print("\n--- Running retarget pipeline ---")
 
-    import torch
-
-    def cost_filter(buffer, N):
-        """Reject candidates with solver cost > 3x median (unresolved collision)."""
-        if not hasattr(pipeline, "_solver_costs"):
-            return torch.ones(N, device=buffer.device, dtype=torch.bool)
-        costs = pipeline._solver_costs[:N]
-        median = costs.median()
-        return costs < median * 3.0
-
-    criteria = {
-        "cost": cost_filter,
-        "base_z_err": BaseZError(),
-        "collision": CollisionCheck(
-            kin=kin, wp_mesh=wp_mesh, exclude_bodies=foot_ids, n_samples=16, max_pen=0.02,
-        ),
-    }
-    if haa_pattern:
-        criteria["haa_limit"] = HaaLimit(kin=kin, joint_pattern=haa_pattern, max_angle=0.95)
-
-    buf = pipeline.run(wp_mesh, origin, n_desired=args.max_robots, criteria=criteria)
+    buf = pipeline.run(wp_mesh, origin, n_desired=args.max_robots)
     t_total = time.time() - t0
-    if hasattr(pipeline, "_ik_iterations_used"):
-        print(f"  IK converged in {pipeline._ik_iterations_used} iterations")
 
+    # Rejection summary already includes per-criterion counts and timings.
     print(pipeline.rejection_summary)
-    if hasattr(pipeline, "_reject_val"):
-        print(f"  Validation: {pipeline._reject_val}")
-    print(f"  Time: {t_total:.2f}s")
+    print(f"  Wall time: {t_total:.2f}s")
 
     if buf.num_selected == 0:
         print("No valid candidates. Exiting.")
         sys.exit(1)
 
+    if args.no_viewer:
+        print("\n--no_viewer: exiting without visualization.")
+        return
+
     # --- Visualization ---
-    print(f"\n--- Visualization ---")
-    sel = buf._selected[:buf.num_selected].cpu().numpy()
+    print("\n--- Visualization ---")
+    sel = buf._selected[: buf.num_selected].cpu().numpy()
     jq_results = buf.joint_q_result_t.cpu().numpy()
     ct_np = buf.contact_targets_t.cpu().numpy()
     nc = len(foot_ids)
     cpc = kin.model.joint_coord_count
 
     solved_qs = [jq_results[idx] for idx in sel]
-    selected_feet = [ct_np[idx * nc:(idx + 1) * nc] for idx in sel]
+    selected_feet = [ct_np[idx * nc : (idx + 1) * nc] for idx in sel]
 
     vis_builder = newton.ModelBuilder()
     vis_builder.add_shape_mesh(
@@ -336,17 +416,18 @@ def main():
     if solved_qs:
         vis_jq = vis_model.joint_q.numpy().copy()
         for i, sq in enumerate(solved_qs):
-            vis_jq[i * cpc:(i + 1) * cpc] = sq
+            vis_jq[i * cpc : (i + 1) * cpc] = sq
         vis_model.joint_q = wp.array(vis_jq, dtype=float, device=device)
 
     vis_state = vis_model.state()
     newton.eval_fk(
-        vis_model, vis_model.joint_q,
+        vis_model,
+        vis_model.joint_q,
         wp.zeros(vis_model.joint_dof_count, dtype=float, device=device),
         vis_state,
     )
 
-    viewer = ViewerViser(port=args.port)
+    viewer = ViewerViser(port=VISER_PORT)
     viewer.set_model(vis_model)
     viewer.set_world_offsets((0.0, 0.0, 0.0))
 
@@ -354,19 +435,30 @@ def main():
         CircleFootprintCfg,
         MorphologicalPatchSamplingCfg,
     )
-    import torch
+
+    # Conservative candidate density (~10 patches/m^2) so even low-valid-fraction
+    # terrains (e.g. FLOATING_ISLAND at ~26% valid cells) comfortably satisfy
+    # the request and no fallback is needed.
+    if sampler_x_range is not None and sampler_y_range is not None:
+        vis_area = (sampler_x_range[1] - sampler_x_range[0]) * (sampler_y_range[1] - sampler_y_range[0])
+    else:
+        v_xy = np.asarray(mesh.vertices)
+        vis_area = float((v_xy[:, 0].max() - v_xy[:, 0].min()) * (v_xy[:, 1].max() - v_xy[:, 1].min()))
+    vis_num_patches = max(100, min(10000, int(vis_area * 10)))
 
     fc_cfg = MorphologicalPatchSamplingCfg(
-        num_patches=5000,
+        num_patches=vis_num_patches,
         footprint=CircleFootprintCfg(radius=0.04),
         max_height_diff=0.03,
         horizontal_scale=0.03,
         oversample_ratio=3.0,
+        x_range=sampler_x_range if sampler_x_range is not None else (-1e6, 1e6),
+        y_range=sampler_y_range if sampler_y_range is not None else (-1e6, 1e6),
     )
 
     fp = fc_cfg.func(wp_mesh, origin, fc_cfg)
-    ot = torch.tensor(origin, dtype=torch.float, device=fp.device)
-    fp[:, :3] += ot
+    origin_t = torch.tensor(origin, dtype=torch.float, device=fp.device)
+    fp[:, :3] += origin_t
     foot_pts = fp[:, :3].cpu().numpy()
     fl = foot_pts.copy()
     fl[:, 2] += 0.02
@@ -389,13 +481,65 @@ def main():
             colors=(0, 1, 1),
         )
 
+    # Support-polygon edges, colored by pipeline outcome (sampler out_of_reach
+    # rejections never reach this stage, so they aren't drawn):
+    #   red    -- passed sampler, failed IK criteria (collision / haa_limit / stability / cost)
+    #   orange -- passed criteria but dropped by final FPS downsample
+    #   green  -- selected (kept)
+    n_written = buf.num_written
+    if n_written > 0:
+        geom_valid_np = buf._geom_valid[:n_written].cpu().numpy()
+        ik_valid_np = buf._ik_valid[:n_written].cpu().numpy()
+        selected_mask = np.zeros(n_written, dtype=bool)
+        selected_mask[sel] = True
+        rejected_idx = np.nonzero(geom_valid_np & ~ik_valid_np)[0]
+        filtered_idx = np.nonzero(ik_valid_np & ~selected_mask)[0]
+        passed_idx = sel
+
+        feet_all = ct_np.reshape(-1, nc, 3)  # [max_candidates, nc, 3]
+
+        def _polygon_edges(indices: np.ndarray, lift_z: float = 0.015):
+            """Order each polygon's feet by angle around its centroid and emit edges."""
+            if indices.size == 0:
+                return None, None
+            feet = feet_all[indices].copy()  # [M, nc, 3]
+            feet[..., 2] += lift_z
+            centroid_xy = feet[:, :, :2].mean(axis=1, keepdims=True)
+            delta = feet[:, :, :2] - centroid_xy
+            angles = np.arctan2(delta[..., 1], delta[..., 0])
+            order = np.argsort(angles, axis=1)
+            ordered = np.take_along_axis(feet, order[:, :, None].repeat(3, axis=2), axis=1)
+            starts = ordered.reshape(-1, 3)
+            ends = np.roll(ordered, -1, axis=1).reshape(-1, 3)
+            return starts, ends
+
+        for indices, color, name, lift in [
+            (rejected_idx, (1.0, 0.15, 0.15), "polygons_rejected", 0.01),
+            (filtered_idx, (1.0, 0.55, 0.0), "polygons_bucket_filtered", 0.015),
+            (passed_idx, (0.1, 0.9, 0.2), "polygons_selected", 0.02),
+        ]:
+            starts, ends = _polygon_edges(indices, lift_z=lift)
+            if starts is None:
+                continue
+            viewer.log_lines(
+                name,
+                wp.array(starts.tolist(), dtype=wp.vec3, device=device),
+                wp.array(ends.tolist(), dtype=wp.vec3, device=device),
+                colors=color,
+                width=0.004,
+            )
+        print(
+            f"  Support polygons: {len(rejected_idx)} criteria-rejected (red),"
+            f" {len(filtered_idx)} bucket-filtered (orange),"
+            f" {len(passed_idx)} selected (green)"
+        )
+
     # Visualize collision probe points on ALL robots
     from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import _build_collision_probes
 
     probe_bodies, probe_offsets = _build_collision_probes(kin.builder, foot_ids, n_samples=16)
     if solved_qs:
         from isaaclab.utils.math import quat_apply as _qa
-        import torch as _torch
 
         all_probe_world = []
         for sq in solved_qs:
@@ -408,8 +552,8 @@ def main():
                 bq = bq_np[bid]
                 pos = bq[:3]
                 quat = bq[3:7]
-                q_t = _torch.tensor(quat, dtype=_torch.float32).unsqueeze(0)
-                o_t = _torch.tensor(off, dtype=_torch.float32).unsqueeze(0)
+                q_t = torch.tensor(quat, dtype=torch.float32).unsqueeze(0)
+                o_t = torch.tensor(off, dtype=torch.float32).unsqueeze(0)
                 rotated = _qa(q_t, o_t).squeeze(0).numpy()
                 all_probe_world.append((pos + rotated).tolist())
         viewer.log_points(
@@ -425,9 +569,10 @@ def main():
     viewer.end_frame()
 
     hn = socket.gethostname()
-    print(f"\n  http://localhost:{args.port}")
-    print(f"  http://{hn}:{args.port}")
-    print("  Green=candidates, Cyan=selected feet, Red=collision probes")
+    print(f"\n  http://localhost:{VISER_PORT}")
+    print(f"  http://{hn}:{VISER_PORT}")
+    print("  Dots: Green=candidates, Cyan=selected feet, Red=collision probes")
+    print("  Polygons: Red=criteria-rejected, Orange=bucket-filtered, Green=selected")
     print(f"\n  {len(solved_qs)} robots placed.")
     print("\nPress Ctrl+C to stop.\n")
 

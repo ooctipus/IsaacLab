@@ -59,12 +59,12 @@ class RetargetBuffer:
         nc, jc, nb = num_contacts, joint_coord_count, num_bodies
 
         # Field sizes in floats
-        sz_ct = n * nc * 3       # contact_targets
-        sz_ji = n * jc           # joint_q_init
-        sz_jr = n * jc           # joint_q_result
-        sz_bq = n * nb * 7       # body_q
-        sz_bp = n * 3            # base_target_pos
-        sz_br = n * 4            # base_target_rot
+        sz_ct = n * nc * 3  # contact_targets
+        sz_ji = n * jc  # joint_q_init
+        sz_jr = n * jc  # joint_q_result
+        sz_bq = n * nb * 7  # body_q
+        sz_bp = n * 3  # base_target_pos
+        sz_br = n * 4  # base_target_rot
 
         # Cumulative offsets
         self._o_ct = 0
@@ -96,41 +96,43 @@ class RetargetBuffer:
     def contact_targets_t(self) -> torch.Tensor:
         """``[max_candidates * num_contacts, 3]``."""
         s = self._o_ct
-        return self._data[s:s + self.max_candidates * self.num_contacts * 3].view(-1, 3)
+        return self._data[s : s + self.max_candidates * self.num_contacts * 3].view(-1, 3)
 
     @property
     def joint_q_init_t(self) -> torch.Tensor:
         """``[max_candidates, joint_coord_count]``."""
         s = self._o_ji
-        return self._data[s:s + self.max_candidates * self.joint_coord_count].view(
-            self.max_candidates, self.joint_coord_count,
+        return self._data[s : s + self.max_candidates * self.joint_coord_count].view(
+            self.max_candidates,
+            self.joint_coord_count,
         )
 
     @property
     def joint_q_result_t(self) -> torch.Tensor:
         """``[max_candidates, joint_coord_count]``."""
         s = self._o_jr
-        return self._data[s:s + self.max_candidates * self.joint_coord_count].view(
-            self.max_candidates, self.joint_coord_count,
+        return self._data[s : s + self.max_candidates * self.joint_coord_count].view(
+            self.max_candidates,
+            self.joint_coord_count,
         )
 
     @property
     def body_q_t(self) -> torch.Tensor:
         """``[max_candidates * num_bodies, 7]``."""
         s = self._o_bq
-        return self._data[s:s + self.max_candidates * self.num_bodies * 7].view(-1, 7)
+        return self._data[s : s + self.max_candidates * self.num_bodies * 7].view(-1, 7)
 
     @property
     def base_target_pos_t(self) -> torch.Tensor:
         """``[max_candidates, 3]``."""
         s = self._o_bp
-        return self._data[s:s + self.max_candidates * 3].view(-1, 3)
+        return self._data[s : s + self.max_candidates * 3].view(-1, 3)
 
     @property
     def base_target_rot_t(self) -> torch.Tensor:
         """``[max_candidates, 4]``."""
         s = self._o_br
-        return self._data[s:s + self.max_candidates * 4].view(-1, 4)
+        return self._data[s : s + self.max_candidates * 4].view(-1, 4)
 
     # -- Warp views (zero-copy, contiguous) --
 
@@ -196,7 +198,8 @@ class RetargetBuffer:
         ct = self.contact_targets
         flat_dst = wp.zeros(nc * n_active, dtype=wp.vec3, device=self.device)
         wp.launch(
-            _scatter_contacts, dim=nc * n_active,
+            _scatter_contacts,
+            dim=nc * n_active,
             inputs=[ct, flat_dst, n_active, nc],
             device=self.device,
         )

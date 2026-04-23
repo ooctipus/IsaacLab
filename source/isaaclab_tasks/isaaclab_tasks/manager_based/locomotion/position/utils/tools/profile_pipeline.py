@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Copyright (c) 2022-2026, The Isaac Lab Project Developers.
 # SPDX-License-Identifier: BSD-3-Clause
 
@@ -6,6 +11,7 @@
 from __future__ import annotations
 
 import sys
+
 sys.path[:] = [p for p in sys.path if "pip_prebundle" not in p and "pip_archive" not in p]
 
 import builtins
@@ -20,27 +26,26 @@ import warp as wp
 def main():
     import newton.ik as ik
 
-    from isaaclab.utils.warp import convert_to_warp_mesh
     from isaaclab.utils.assets import check_file_path, retrieve_file_path
+    from isaaclab.utils.warp import convert_to_warp_mesh
 
-    from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import (
-        IKObjectiveStabilityMargin, IKObjectiveTerrainCollision,
-        NewtonKinematics, NewtonKinematicsCfg,
-    )
     from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.buffer import RetargetBuffer
-    from isaaclab_tasks.manager_based.locomotion.position.utils.sampling import (
-        SupportPolygonSampler, SupportPolygonSamplerCfg,
-    )
+    from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.cfg import SupportPolygonSamplerCfg
     from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.robots.robot_presets import RobotArticulationCfg
+    from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import (
+        IKObjectiveStabilityMargin,
+        IKObjectiveTerrainCollision,
+        NewtonKinematics,
+        NewtonKinematicsCfg,
+    )
+    from isaaclab_tasks.manager_based.locomotion.position.utils.sampling import SupportPolygonSampler
 
     device = "cuda:0"
 
     # Terrain
     builtins._isaaclab_tasks_registered = True
     tcfg = importlib.import_module("isaaclab_tasks.manager_based.locomotion.position.terrains")
-    terrain_mod = sys.modules.get(
-        "isaaclab_tasks.manager_based.locomotion.position.terrains.terrain_cfg", tcfg
-    )
+    terrain_mod = sys.modules.get("isaaclab_tasks.manager_based.locomotion.position.terrains.terrain_cfg", tcfg)
     cfg = getattr(terrain_mod, "EXTREME_STAIR").copy()
     cfg.difficulty = 0.8
     meshes, origin = cfg.function(0.8, cfg)
@@ -58,15 +63,20 @@ def main():
     if fs == 2:
         robot_usd = retrieve_file_path(robot_usd, force_download=False)
 
-    kin = NewtonKinematics(NewtonKinematicsCfg(
-        usd_path=robot_usd, device=device, default_pos=(0, 0, 0.6),
-        default_joint_pos=robot_cfg.init_state.joint_pos,
-    ))
+    kin = NewtonKinematics(
+        NewtonKinematicsCfg(
+            usd_path=robot_usd,
+            device=device,
+            default_pos=(0, 0, 0.6),
+            default_joint_pos=robot_cfg.init_state.joint_pos,
+        )
+    )
     foot_ids = [i for i, n in enumerate(kin.body_names) if "foot" in n.lower()]
 
     sampler = SupportPolygonSampler(
-        SupportPolygonSamplerCfg(oversample_candidates=10),
-        kin=kin, foot_body_ids=foot_ids,
+        SupportPolygonSamplerCfg(),
+        kin=kin,
+        foot_body_ids=foot_ids,
     )
 
     print("=== PROFILING RETARGET PIPELINE ===\n")
@@ -81,19 +91,35 @@ def main():
     # Stage 2: Objective construction
     N = buf.num_geometry_valid
     t0 = time.time()
-    co = [ik.IKObjectivePosition(link_index=fid, link_offset=wp.vec3(0, 0, 0),
-          target_positions=wp.zeros(N, dtype=wp.vec3, device=device), weight=1.0) for fid in foot_ids]
-    bpo = ik.IKObjectivePosition(link_index=0, link_offset=wp.vec3(0, 0, 0),
-          target_positions=wp.zeros(N, dtype=wp.vec3, device=device), weight=0.05)
-    bro = ik.IKObjectiveRotation(link_index=0, link_offset_rotation=wp.quat_identity(),
-          target_rotations=wp.zeros(N, dtype=wp.vec4, device=device), weight=0.5)
-    jlo = ik.IKObjectiveJointLimit(joint_limit_lower=kin.model.joint_limit_lower,
-          joint_limit_upper=kin.model.joint_limit_upper, weight=10.0)
-    col = IKObjectiveTerrainCollision(mesh_id=wp_mesh.id, builder=kin.builder,
-          exclude_bodies=foot_ids, weight=3.0, margin=0.01, n_samples=4)
-    active_mask_wp = wp.from_torch(sampler.active_mask[:N].contiguous().to(device), dtype=wp.int32)
-    stab = IKObjectiveStabilityMargin(model=kin.model, foot_body_indices=foot_ids,
-          active_mask=active_mask_wp, weight=1.0)
+    co = [
+        ik.IKObjectivePosition(
+            link_index=fid,
+            link_offset=wp.vec3(0, 0, 0),
+            target_positions=wp.zeros(N, dtype=wp.vec3, device=device),
+            weight=1.0,
+        )
+        for fid in foot_ids
+    ]
+    bpo = ik.IKObjectivePosition(
+        link_index=0,
+        link_offset=wp.vec3(0, 0, 0),
+        target_positions=wp.zeros(N, dtype=wp.vec3, device=device),
+        weight=0.05,
+    )
+    bro = ik.IKObjectiveRotation(
+        link_index=0,
+        link_offset_rotation=wp.quat_identity(),
+        target_rotations=wp.zeros(N, dtype=wp.vec4, device=device),
+        weight=0.5,
+    )
+    jlo = ik.IKObjectiveJointLimit(
+        joint_limit_lower=kin.model.joint_limit_lower, joint_limit_upper=kin.model.joint_limit_upper, weight=10.0
+    )
+    col = IKObjectiveTerrainCollision(
+        mesh_id=wp_mesh.id, builder=kin.builder, exclude_bodies=foot_ids, weight=3.0, margin=0.01, n_samples=4
+    )
+    foot_ids_ccw = [int(foot_ids[j]) for j in sampler._foot_ccw_order]
+    stab = IKObjectiveStabilityMargin(model=kin.model, foot_body_indices=foot_ids_ccw, weight=1.0)
     all_objs = [*co, bpo, bro, jlo, col, stab]
     t_obj = time.time() - t0
     n_residuals = sum(o.residual_dim() for o in all_objs)

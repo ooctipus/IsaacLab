@@ -15,6 +15,9 @@ from .robot_presets import (
     ExperimentNameCfg,
     FootBodyNamesCfg,
     NonFootBodyNamesCfg,
+    RetargetFootBodyNamesCfg,
+    RetargetHaaJointPatternCfg,
+    RetargetJointRegularizeTargetsCfg,
     RobotArticulationCfg,
 )
 
@@ -45,3 +48,12 @@ ExperimentNameCfg.go2 = "go2_position_command"
 
 GO2_HAA_PATTERN = ".*hip_joint"
 """Regex matching Go2 hip abduction/adduction joint names."""
+
+RetargetFootBodyNamesCfg.go2 = ["FL_foot", "FR_foot", "RL_foot", "RR_foot"]
+RetargetHaaJointPatternCfg.go2 = GO2_HAA_PATTERN
+# Pull HAA toward 0 and knees toward their init-pose flexion; hip-swing is
+# left free so IK can adjust stride.
+RetargetJointRegularizeTargetsCfg.go2 = {
+    ".*hip_joint": 0.0,
+    ".*_calf_joint": -0.873,
+}
