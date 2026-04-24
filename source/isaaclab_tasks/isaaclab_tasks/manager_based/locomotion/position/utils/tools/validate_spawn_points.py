@@ -186,6 +186,54 @@ def _resolve_foot_names(robot: str, body_names: list[str]) -> list[str]:
     return list(preset_foot_names)
 
 
+def _draw_active_support_overlay(viewer, buf, feet_all, passed_idx, nc, device) -> None:
+    """Draw a thick polygon of only the contact feet per selected placement.
+
+    Distinct from the green reach polygon (which shows all ``nc`` sampled
+    positions). The overlay traces the actual support region used by the
+    stability criterion: a triangle for tripod placements, a segment for
+    biped, a quad for 4-contact.
+    """
+    is_contact_np = buf.is_contact_t.cpu().numpy().reshape(-1, nc)
+    s_list: list[np.ndarray] = []
+    e_list: list[np.ndarray] = []
+    n_quad = n_tri = n_bi = 0
+    for idx in passed_idx:
+        feet = feet_all[idx]
+        mask = is_contact_np[idx].astype(bool)
+        active = feet[mask].copy()
+        if len(active) < 2:
+            continue
+        active[..., 2] += 0.03
+        if len(active) == 2:
+            s_list.append(active[0:1])
+            e_list.append(active[1:2])
+            n_bi += 1
+            continue
+        centroid = active[..., :2].mean(axis=0, keepdims=True)
+        delta = active[..., :2] - centroid
+        order = np.argsort(np.arctan2(delta[..., 1], delta[..., 0]))
+        ordered = active[order]
+        s_list.append(ordered)
+        e_list.append(np.roll(ordered, -1, axis=0))
+        if len(active) == 3:
+            n_tri += 1
+        else:
+            n_quad += 1
+    if not s_list:
+        return
+    s_arr = np.concatenate(s_list, axis=0)
+    e_arr = np.concatenate(e_list, axis=0)
+    viewer.log_lines(
+        "polygons_support_active",
+        wp.array(s_arr.tolist(), dtype=wp.vec3, device=device),
+        wp.array(e_arr.tolist(), dtype=wp.vec3, device=device),
+        colors=(1.0, 0.95, 0.2),
+        width=0.012,
+    )
+    print(f"  Active-contact support polygons (yellow, thick): quad={n_quad} tri={n_tri} biped={n_bi}")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -652,6 +700,13 @@ def main():
             f" {len(filtered_idx)} bucket-filtered (orange),"
             f" {len(passed_idx)} selected (green)"
         )
+
+        # Active-support polygon overlay: only the *contact* feet per
+        # selected placement. For 4-contact this overlaps green; for
+        # tripod it's a triangle inside the quad; for biped it's a
+        # segment. This is the polygon SupportPolygonStability tests
+        # CoM against.
+        _draw_active_support_overlay(viewer, buf, feet_all, passed_idx, nc, device)
 
     # Visualize collision probe points on ALL robots
     from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import _build_collision_probes
