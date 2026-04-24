@@ -418,20 +418,6 @@ class TerrainFirstSampler(SamplerBase):
             self._fk_shape_samples = self._fk_shape_samples[keep_mask].contiguous()
             self._fk_foot_xyz_world = self._fk_foot_xyz_world[keep_mask].contiguous()
             self._fk_is_on_plane = self._fk_is_on_plane[keep_mask].contiguous()
-        # Sanity check: a template-projection run with min_contacts > template_min_on_plane
-        # means roughly (1 - frac_pool_with_all_k_on_plane) of the pool cannot satisfy
-        # the min_contacts gate no matter what the terrain looks like. Not an error
-        # (user might be probing), but worth flagging.
-        mc = int(self.cfg.min_contacts)
-        if bool(self.cfg.use_template_projection) and 0 < min_on_plane < mc <= nc:
-            pool_caps = self._fk_is_on_plane.sum(dim=-1)
-            usable_frac = float((pool_caps >= mc).float().mean().item())
-            print(
-                f"WARNING[TerrainFirstSampler]: template_min_on_plane={min_on_plane} <"
-                f" min_contacts={mc}; only {usable_frac * 100:.1f}% of the filtered"
-                f" pool can satisfy the min_contacts gate. Set template_min_on_plane >="
-                f" min_contacts for full-pool utilization."
-            )
 
         # CCW-reordered envelope buffers keyed by sector index -- fed into
         # :func:`_per_foot_reachability_sample` each sampler call. Built
@@ -831,7 +817,6 @@ class TerrainFirstSampler(SamplerBase):
             n_tpl = self._fk_shape_samples.shape[0]
             tpl_idx = torch.randint(0, n_tpl, (K,), device=dev_str)
             tpl_canon = self._fk_shape_samples[tpl_idx]  # [K, nc, 3]
-            tpl_on_plane = self._fk_is_on_plane[tpl_idx]  # [K, nc]
 
             # Un-canonicalize: undo per-foot de-nominal, then apply candidate yaw,
             # then translate by candidate center. Canonical z is already polygon-
@@ -860,10 +845,14 @@ class TerrainFirstSampler(SamplerBase):
             nearest_idx = nearest_idx.view(K, nc)
             patch_near = nearest_dist < float(self.cfg.terrain_presence_radius)  # [K, nc]
 
-            # Template says this slot is on the stance plane AND terrain has a
-            # patch near the projected position → contact at that patch.
-            # Otherwise → air at the projected world position.
-            is_contact_full = tpl_on_plane & patch_near  # [K, nc]
+            # Contact purely by terrain: if a morph patch is within
+            # ``terrain_presence_radius`` of a foot's projected xy, that
+            # foot contacts the patch. The template's per-slot
+            # ``is_on_plane`` flag is NOT used here — a foot at a
+            # different world z (e.g. one step higher on stairs) is
+            # still a valid contact. Template contributes only the xy
+            # *layout*; terrain decides z and contact/air per foot.
+            is_contact_full = patch_near  # [K, nc]
             patch_gather = patch_pts[nearest_idx.view(-1)].view(K, nc, 3)
             patch_gather[..., 2] = patch_gather[..., 2] + self.foot_ground_offset
             contact_ik = torch.where(is_contact_full.unsqueeze(-1), patch_gather, projected_world)

@@ -251,18 +251,22 @@ class TerrainFirstSamplerCfg(SamplerBaseCfg):
     """
 
     template_min_on_plane: int = -1
-    """Keep templates with at least this many feet on the stance plane.
+    """Optional stance-quality filter for the template pool.
 
     FK uniform joint sampling spans the full reachable foot workspace,
-    including configurations where legs stick out in arbitrary
-    directions. Only a small fraction (~7% of 25k on anymal_c at
-    :attr:`foot_contact_radius` = 0.05) have all 4 feet coplanar;
-    this filter keeps the ``{4, 3, 2, ...}``-on-plane subset that
-    represents stance-like configurations suitable for projection
-    onto terrain. ``-1`` (default) disables the filter (keep all
-    templates). The legacy shape-match path does not need the filter;
-    set this to ``3`` or ``4`` together with
-    :attr:`use_template_projection`.
+    including extreme joint configurations (fully folded / fully
+    extended) that would be unusual as static stances. Setting this to
+    ``k > 0`` drops FK samples where fewer than ``k`` feet lie close
+    to the template's plane-fit stance plane (canonical ``|z|`` <
+    :attr:`on_plane_tol`) -- a cheap proxy for "this FK pose looks
+    like a plausible quadruped stance". ``-1`` (default) disables the
+    filter.
+
+    This is **not** a contact-decision input. In the template-
+    projection path, contact is decided purely by terrain
+    (``patch_near``): a foot at a different world z (e.g. one step
+    higher on stairs) is still a valid contact. The filter only
+    shapes which *xy layouts* the pool samples from.
     """
 
 
