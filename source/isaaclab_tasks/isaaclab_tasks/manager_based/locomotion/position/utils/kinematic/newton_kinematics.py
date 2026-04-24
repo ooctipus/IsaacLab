@@ -21,6 +21,7 @@ import newton
 import newton.ik as ik
 import numpy as np
 import warp as wp
+from newton import GeoType
 from newton._src.sim.ik.ik_common import eval_fk_batched as _newton_eval_fk_batched
 
 from isaaclab.utils import configclass
@@ -187,22 +188,92 @@ class NewtonKinematics:
         return sorted(indices)
 
     def foot_geometry(self, foot_body_ids: list[int]) -> dict[str, np.ndarray | float]:
-        """Derive foot geometry from the default stance.
+        """Derive foot geometry from the default stance + collision shapes.
+
+        ``foot_ground_offset`` is the z offset from the foot body's origin
+        to the lowest point of its collision geometry — a pure-geometric
+        quantity independent of the URDF default pose. Pipeline uses it
+        to lift contact targets by this offset so IK places the foot's
+        *sole* (not body origin) on the terrain surface.
 
         Args:
             foot_body_ids: Newton body indices for the feet.
 
         Returns:
-            Dict with ``foot_offsets``, ``standing_height``,
-            ``foot_ground_offset`` derived from default FK.
+            Dict with ``foot_offsets`` (body-to-base xyz at default),
+            ``standing_height`` (default base-z minus default foot-mean-z),
+            ``foot_ground_offset`` (negated min local-z of foot collision
+            geometry, fallback to default foot-z if no shapes attached).
         """
         base_pos = self._default_body_q[0][:3]
         foot_pos = np.array([self._default_body_q[fid][:3] for fid in foot_body_ids])
+
+        # Per-foot local-z-min from attached collision shapes. For each
+        # shape type, compute the lowest-z offset the shape reaches in the
+        # body frame (rotation assumed identity -- matches every foot
+        # geometry we've seen in practice).
+        builder = self.builder
+        foot_ids_set = set(int(f) for f in foot_body_ids)
+        z_min_local: float | None = None
+        for si in range(len(builder.shape_body)):
+            bid = int(builder.shape_body[si])
+            if bid not in foot_ids_set:
+                continue
+            zmin = self._shape_local_z_min(
+                int(builder.shape_type[si]),
+                builder.shape_scale[si],
+                builder.shape_transform[si],
+                builder.shape_source[si],
+            )
+            if zmin is None:
+                continue
+            if z_min_local is None or zmin < z_min_local:
+                z_min_local = zmin
+
+        if z_min_local is not None:
+            # foot_body_z + (-z_min_local) = terrain_z  →  sole on terrain.
+            foot_ground_offset = float(-z_min_local)
+        else:
+            # Fallback: URDF default pose (assumes default places soles at z = 0).
+            foot_ground_offset = float(foot_pos[:, 2].min())
+
         return {
             "foot_offsets": foot_pos - base_pos,
             "standing_height": float(base_pos[2] - foot_pos[:, 2].mean()),
-            "foot_ground_offset": float(foot_pos[:, 2].min()),
+            "foot_ground_offset": foot_ground_offset,
         }
+
+    @staticmethod
+    def _shape_local_z_min(
+        shape_type: int,
+        shape_scale,
+        shape_transform,
+        shape_source,
+    ) -> float | None:
+        """Lowest body-frame z coordinate reachable by a shape's surface.
+
+        Handles the geometry primitives we encounter in practice (mesh,
+        sphere, box, capsule, cylinder, plane). Returns ``None`` for
+        unsupported types so the caller can fall back or skip.
+        """
+        pos_z = float(shape_transform[2])
+        if shape_type == int(GeoType.MESH) or shape_type == int(GeoType.CONVEX_MESH):
+            if shape_source is None or not hasattr(shape_source, "vertices"):
+                return None
+            verts = np.asarray(shape_source.vertices).reshape(-1, 3)
+            if verts.size == 0:
+                return None
+            scale_z = float(shape_scale[2])
+            return pos_z + float(verts[:, 2].min()) * scale_z
+        if shape_type == int(GeoType.SPHERE):
+            return pos_z - float(shape_scale[0])
+        if shape_type == int(GeoType.BOX):
+            return pos_z - 0.5 * float(shape_scale[2])
+        if shape_type == int(GeoType.CAPSULE):
+            return pos_z - float(shape_scale[1]) - float(shape_scale[0])
+        if shape_type == int(GeoType.CYLINDER):
+            return pos_z - float(shape_scale[1])
+        return None
 
     def create_ik_solver(
         self,
