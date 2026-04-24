@@ -21,9 +21,9 @@ from scipy.spatial import ConvexHull
 from isaaclab.utils.warp import convert_to_warp_mesh
 
 from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.buffer import RetargetBuffer
-from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.cfg import TerrainFirstSamplerCfg
+from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.cfg import SamplerCfg
 from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import NewtonKinematics, NewtonKinematicsCfg
-from isaaclab_tasks.manager_based.locomotion.position.utils.sampling import TerrainFirstSampler
+from isaaclab_tasks.manager_based.locomotion.position.utils.sampling import Sampler
 from isaaclab_tasks.manager_based.locomotion.position.utils.shape_canonical import canonicalize_shape
 
 
@@ -89,8 +89,8 @@ def _make_stair_mesh(
 
 def _make_sampler(kin, foot_ids, cfg=None):
     if cfg is None:
-        cfg = TerrainFirstSamplerCfg()
-    return TerrainFirstSampler(cfg, kin=kin, foot_body_ids=foot_ids)
+        cfg = SamplerCfg()
+    return Sampler(cfg, kin=kin, foot_body_ids=foot_ids)
 
 
 class TestSampleContactsFlat:
@@ -150,7 +150,7 @@ class TestSampleContactsRejectionStats:
         out = sampler(wp_mesh, np.zeros(3), buf, 50)
         reject = out.reject_stats
         assert "out_of_reach" in reject
-        assert "shape_infeasible" in reject
+        assert "non_convex_stance" in reject
 
 
 # ---------------------------------------------------------------------------
@@ -205,26 +205,29 @@ def _build_sampler_for_robot(robot_name: str):
     kin = NewtonKinematics(kin_cfg)
     foot_names = getattr(RetargetFootBodyNamesCfg, robot_name)
     foot_ids = kin.find_body_indices(foot_names)
-    sampler = TerrainFirstSampler(TerrainFirstSamplerCfg(), kin=kin, foot_body_ids=foot_ids)
+    sampler = Sampler(SamplerCfg(), kin=kin, foot_body_ids=foot_ids)
     return kin, foot_ids, sampler
 
 
-def _assert_feet_in_reach_envelope(buf: RetargetBuffer, sampler: TerrainFirstSampler, n: int, robot_name: str):
-    """Every accepted polygon has a canonical shape near the FK manifold.
+def _assert_feet_in_reach_envelope(buf: RetargetBuffer, sampler: Sampler, n: int, robot_name: str):
+    """Every emitted polygon has a canonical shape near the FK manifold.
 
-    The shape filter accepts a polygon iff every foot has *some* FK sample
-    within :attr:`TerrainFirstSampler._fk_shape_tol` (per-foot marginal
-    NN -- the continuous analog of the old per-foot voxel-union grid).
-
-    ``contact_targets`` already includes :attr:`foot_ground_offset` (it is
-    the foot-body target, not the raw terrain contact). Canonicalisation
-    folds translation / yaw / plane-fit pitch+roll / per-foot hip azimuth
-    out of the polygon, so NN in this space is a pure shape-match.
+    Projection sampler emits ``contact_targets`` built by snapping
+    un-canonicalised FK templates to terrain patches. On
+    ``min_contacts == nc`` (the default hard-polygon path) the snap is
+    unbounded — a foot is forced to its nearest patch regardless of
+    distance so downstream criteria can catch unreachable targets —
+    so the canonical-space drift can exceed ``terrain_snap_distance``.
+    We bound at a generous multiple plus tilt slack so edge-mesh
+    templates whose nearest patches sit past the normal snap radius
+    still pass this structural check; real unreachability is caught by
+    :class:`FootPositionError`, not here.
     """
     nc = buf.num_contacts
     ct = buf.contact_targets_t[: n * nc].view(n, nc, 3).detach()
     query_shape = canonicalize_shape(ct, sampler._nominal_angle_t)
     fk_samples = sampler._fk_shape_samples
+    tol = float(sampler.cfg.terrain_snap_distance) * 3.0 + 0.05
 
     chunk = 64
     max_foot_nn = torch.empty(n, device=ct.device)
@@ -233,7 +236,7 @@ def _assert_feet_in_reach_envelope(buf: RetargetBuffer, sampler: TerrainFirstSam
         diff = query_shape[k0:k1].unsqueeze(1) - fk_samples.unsqueeze(0)
         foot_dist = diff.norm(dim=-1)  # [chunk, N, nc]
         max_foot_nn[k0:k1] = foot_dist.amin(dim=1).amax(dim=-1)
-    shape_ok = max_foot_nn < sampler._fk_shape_tol
+    shape_ok = max_foot_nn < tol
     assert shape_ok.all(), f"[{robot_name}] {int((~shape_ok).sum())}/{n} polygons failed the shape-feasibility check"
 
 

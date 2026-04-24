@@ -7,14 +7,14 @@
 
 Runs a small fixed grid and asserts the yields and shape-diversity metrics
 match the committed baseline within tolerance. This pins
-:class:`TerrainFirstSampler` behavior so the Phase 1 abstraction refactor
+:class:`Sampler` behavior so the Phase 1 abstraction refactor
 (typed :class:`SamplerOutput`, class rename) can be verified as non-breaking.
 
 The baseline is regenerated via the CLI in ``sampler_metrics.py``:
 
     ``./isaaclab.sh -p <utils/tools/sampler_metrics.py> --output <tests/data/sampler_baseline.json>``
 
-and should only change when :class:`TerrainFirstSampler` behavior
+and should only change when :class:`Sampler` behavior
 intentionally changes.
 """
 

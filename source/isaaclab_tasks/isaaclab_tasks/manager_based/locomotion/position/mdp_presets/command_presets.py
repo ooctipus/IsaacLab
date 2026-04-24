@@ -11,7 +11,7 @@ from isaaclab_tasks.utils import PresetCfg
 
 from .. import mdp
 from ..mdp.retarget import RetargetPipelineCfg
-from ..mdp.retarget.cfg import PatchSamplingCfg, SamplerSizingCfg, TerrainFirstSamplerCfg
+from ..mdp.retarget.cfg import PatchSamplingCfg, SamplerCfg, SamplerSizingCfg
 from ..utils.criteria_cfg import (
     CollisionCheckCfg,
     FootPositionErrorCfg,
@@ -231,7 +231,7 @@ class CommandsCfg:
         # behind an opaque preset object.
         pipeline_cfg=RetargetPipelineCfg(
             kin=NewtonKinematicsCfg(),
-            sampler=TerrainFirstSamplerCfg(
+            sampler=SamplerCfg(
                 patch=PatchSamplingCfg(
                     contact_radius=0.04,
                     max_height_diff=0.03,

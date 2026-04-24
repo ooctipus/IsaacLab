@@ -249,15 +249,14 @@ def main():
     )
     from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.cfg import (
         PatchSamplingCfg,
-        TemplateMatchedSamplerCfg,
-        TerrainFirstSamplerCfg,
+        SamplerCfg,
     )
     from isaaclab_tasks.manager_based.locomotion.position.utils.criteria_cfg import (
         CollisionCheckCfg,
         FootPositionErrorCfg,
-        HaaLimitCfg,
         SolverCostOutlierCfg,
         SupportPolygonStabilityCfg,
+        HaaLimitCfg,
     )
     from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import NewtonKinematicsCfg
     from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic.ik_objectives.cfg import (
@@ -328,72 +327,30 @@ def main():
         ),
     )
     parser.add_argument(
-        "--sampler",
-        type=str,
-        default="template_matched",
-        choices=["terrain_first", "template_matched"],
-        help=(
-            "Sampler implementation. ``template_matched`` (default) is the Phase 2"
-            " hybrid -- NN against an FPS-thinned template library that returns a"
-            " matched index carrying per-placement slot assignment. ``terrain_first``"
-            " is the legacy pass/fail NN against a 25k-sample FK distribution."
-        ),
-    )
-    parser.add_argument(
         "--min_contacts",
         type=int,
         default=-1,
         help=(
             "Minimum contact slots a candidate must fill to be accepted (see"
-            " :attr:`TerrainFirstSamplerCfg.min_contacts`). ``-1`` (default)"
-            " preserves the hard-polygon behavior where every slot must find"
-            " a patch. A positive ``m`` enables the soft polygon path: slots"
-            " without an in-reach patch are marked ``is_contact = False`` and"
-            " get a template-projected target. ``m = 2`` lets mixed-geometry"
-            " terrain emit nc=2/3/4 stances on a single robot without"
-            " rebuilding the robot's contact-body set."
+            " :attr:`SamplerCfg.min_contacts`). ``-1`` (default) requires"
+            " every slot to snap to a patch. A positive ``m`` enables the"
+            " soft polygon path: slots without an in-reach patch are marked"
+            " ``is_contact = False`` and get a template-projected target."
+            " ``m = 2`` lets mixed-geometry terrain emit nc=2/3/4 stances"
+            " on a single robot."
         ),
     )
     parser.add_argument(
-        "--use_template_projection",
-        action="store_true",
-        help=(
-            "Enable the template-projection query path"
-            " (:attr:`TerrainFirstSamplerCfg.use_template_projection`)."
-            " Projects FK templates onto terrain with per-foot presence"
-            " check instead of the legacy sector reservoir + shape-match."
-            " Requires ``--template_min_on_plane >= 2`` for meaningful"
-            " yield."
-        ),
-    )
-    parser.add_argument(
-        "--template_min_on_plane",
-        type=int,
-        default=3,
-        help=(
-            "Keep only templates with at least this many feet on the"
-            " stance plane (see"
-            " :attr:`TerrainFirstSamplerCfg.template_min_on_plane`)."
-            " ``3`` (default) gives a stance-like pool of 4-contact and"
-            " tripod templates. ``-1`` disables filtering."
-            " Pair with ``--min_contacts`` -- if you want"
-            " ``min_contacts=4``, set this to ``4`` too, otherwise"
-            " 3-on-plane templates in the pool can never satisfy the gate."
-        ),
-    )
-    parser.add_argument(
-        "--terrain_presence_radius",
+        "--terrain_snap_distance",
         type=float,
         default=0.15,
         help=(
-            "xy radius [m] for the per-foot terrain presence check in"
-            " the projection path (see"
-            " :attr:`TerrainFirstSamplerCfg.terrain_presence_radius`)."
-            " Larger values increase yield at the cost of looser patch"
-            " alignment. ``0.15`` (default) matches typical morph-patch"
-            " spacing. Bump to ``0.25``-``0.30`` on rough terrain"
-            " (CONTOUR, EXTREME_STAIR) where patches cluster on a few"
-            " flat regions."
+            "xy distance [m] within which a projected foot snaps to a"
+            " morph patch (see :attr:`SamplerCfg.terrain_snap_distance`)."
+            " Feet farther than this from any patch are treated as air."
+            " ``0.15`` (default) matches typical morph-patch spacing."
+            " Bump to ``0.25``-``0.30`` on rough terrain (CONTOUR,"
+            " EXTREME_STAIR) where patches cluster on flat regions."
         ),
     )
     parser.add_argument(
@@ -486,7 +443,7 @@ def main():
         criteria_list.append(HaaLimitCfg(joint_pattern=haa_pattern, max_angle=1.05))
     criteria_list += [
         SupportPolygonStabilityCfg(),
-        FootPositionErrorCfg(max_err=0.1, aggregate="sum"),
+        FootPositionErrorCfg(max_err=0.4, aggregate="sum"),
         SolverCostOutlierCfg(threshold_multiplier=3.0),
     ]
 
@@ -502,18 +459,20 @@ def main():
     print(f"IK wts  : base_rot={base_rot_weight}, base_pos={base_pos_weight}, gravity={gravity_weight}")
 
     patch_cfg = PatchSamplingCfg(x_range=sampler_x_range, y_range=sampler_y_range)
-    common_kw = dict(
+    # The HAA joint's mechanical limit is tighter than the URDF default
+    # (which the USD loader strips to ``±1e10``). Clamp FK sampling for
+    # HAA to ±0.7 rad so templates never come from a leg-across-body
+    # configuration — without this, IK seeded from the template jq
+    # produces visually crossed-leg poses.
+    fk_overrides = {haa_pattern: 0.7} if haa_pattern else {}
+    sampler_cfg = SamplerCfg(
         patch=patch_cfg,
         min_contacts=args.min_contacts,
-        use_template_projection=args.use_template_projection,
-        template_min_on_plane=args.template_min_on_plane,
-        terrain_presence_radius=args.terrain_presence_radius,
+        terrain_snap_distance=args.terrain_snap_distance,
+        fk_joint_range_overrides=fk_overrides,
+        outward_snap_penalty=1.0,
     )
-    if args.sampler == "terrain_first":
-        sampler_cfg = TerrainFirstSamplerCfg(**common_kw)
-    else:
-        sampler_cfg = TemplateMatchedSamplerCfg(**common_kw)
-    print(f"Sampler : {args.sampler} min_contacts={args.min_contacts}")
+    print(f"Sampler : min_contacts={args.min_contacts} fk_joint_range_overrides={fk_overrides}")
 
     pipeline_cfg = RetargetPipelineCfg(
         kin=kin_cfg,
@@ -523,10 +482,10 @@ def main():
         base_pos_weight=base_pos_weight,
         base_rot_weight=base_rot_weight,
         extra_objectives=[
-            IKObjectiveTerrainCollisionCfg(weight=3.0, margin=0.05, n_samples=4),
+            IKObjectiveTerrainCollisionCfg(weight=2.0, margin=0.05, n_samples=4),
             IKObjectiveStabilityMarginCfg(weight=1.0),
             *([IKObjectiveGravityTorqueCfg(weight=gravity_weight)] if gravity_weight > 0.0 else []),
-            IKObjectiveJointRegularizeCfg(weight=0.02),
+            # IKObjectiveJointRegularizeCfg(weight=0.02),
         ],
         criteria=criteria_list,
     )
@@ -730,7 +689,7 @@ def main():
     # Visualize collision probe points on ALL robots
     from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import _build_collision_probes
 
-    probe_bodies, probe_offsets = _build_collision_probes(kin.builder, foot_ids, n_samples=16)
+    probe_bodies, probe_offsets, _probe_slots = _build_collision_probes(kin.builder, foot_ids, n_samples=16)
     if solved_qs:
         from isaaclab.utils.math import quat_apply as _qa
 

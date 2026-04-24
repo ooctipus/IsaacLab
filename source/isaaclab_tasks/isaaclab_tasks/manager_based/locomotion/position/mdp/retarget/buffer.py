@@ -60,7 +60,6 @@ class RetargetBuffer:
 
         # Field sizes in floats
         sz_ct = n * nc * 3  # contact_targets
-        sz_sw = n * nc  # slot_weights (per-slot, per-candidate)
         sz_ji = n * jc  # joint_q_init
         sz_jr = n * jc  # joint_q_result
         sz_bq = n * nb * 7  # body_q
@@ -69,13 +68,12 @@ class RetargetBuffer:
 
         # Cumulative offsets
         self._o_ct = 0
-        self._o_sw = sz_ct
-        self._o_ji = sz_ct + sz_sw
-        self._o_jr = sz_ct + sz_sw + sz_ji
-        self._o_bq = sz_ct + sz_sw + sz_ji + sz_jr
-        self._o_bp = sz_ct + sz_sw + sz_ji + sz_jr + sz_bq
-        self._o_br = sz_ct + sz_sw + sz_ji + sz_jr + sz_bq + sz_bp
-        total = sz_ct + sz_sw + sz_ji + sz_jr + sz_bq + sz_bp + sz_br
+        self._o_ji = sz_ct
+        self._o_jr = sz_ct + sz_ji
+        self._o_bq = sz_ct + sz_ji + sz_jr
+        self._o_bp = sz_ct + sz_ji + sz_jr + sz_bq
+        self._o_br = sz_ct + sz_ji + sz_jr + sz_bq + sz_bp
+        total = sz_ct + sz_ji + sz_jr + sz_bq + sz_bp + sz_br
 
         torch_dev = torch.device(device)
         self._data = torch.zeros(total, dtype=torch.float32, device=torch_dev)
@@ -85,8 +83,8 @@ class RetargetBuffer:
         self._ik_valid = torch.zeros(n, dtype=torch.bool, device=torch_dev)
         self._selected = torch.zeros(n, dtype=torch.int32, device=torch_dev)
         # Per-slot contact flag (flat, matching contact_targets_t layout).
-        # Default ``True`` preserves current behavior where every slot is a
-        # hard contact; the Phase B classifier will flip air slots to False.
+        # Default ``True`` is the hard-contact fallback; the sampler
+        # overwrites it per slot to mark air targets.
         self._is_contact = torch.ones(n * nc, dtype=torch.bool, device=torch_dev)
 
         # Bookkeeping
@@ -103,18 +101,6 @@ class RetargetBuffer:
         """``[max_candidates * num_contacts, 3]``."""
         s = self._o_ct
         return self._data[s : s + self.max_candidates * self.num_contacts * 3].view(-1, 3)
-
-    @property
-    def slot_weights_t(self) -> torch.Tensor:
-        """Per-slot IK residual weight [unitless], shape ``[max_candidates * num_contacts]``, float.
-
-        Flat layout matches :attr:`contact_targets_t`: entry
-        ``[k * num_contacts + s]`` is the weight for candidate ``k`` slot
-        ``s``. Initialized to ``1.0`` and reset each call so samplers that
-        don't populate it inherit the current uniform-weight behavior.
-        """
-        s = self._o_sw
-        return self._data[s : s + self.max_candidates * self.num_contacts]
 
     @property
     def is_contact_t(self) -> torch.Tensor:
@@ -240,9 +226,8 @@ class RetargetBuffer:
         self._geom_valid.zero_()
         self._ik_valid.zero_()
         self._selected.zero_()
-        # Restore default per-slot weight/contact state so samplers that
-        # don't populate these inherit uniform hard-contact behavior.
-        self.slot_weights_t.fill_(1.0)
+        # Default every slot to hard-contact; the sampler overwrites per
+        # slot to mark air targets.
         self._is_contact.fill_(True)
         self.num_selected = 0
         self.num_written = 0

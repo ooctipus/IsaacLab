@@ -23,7 +23,7 @@ from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget import (
     RetargetPipeline,
     RetargetPipelineCfg,
 )
-from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.cfg import TerrainFirstSamplerCfg
+from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.cfg import SamplerCfg
 from isaaclab_tasks.manager_based.locomotion.position.utils.kinematic import NewtonKinematics, NewtonKinematicsCfg
 
 
@@ -78,7 +78,7 @@ def _make_pipeline(foot_names):
     return RetargetPipeline(
         RetargetPipelineCfg(
             kin=KIN_CFG,
-            sampler=TerrainFirstSamplerCfg(),
+            sampler=SamplerCfg(),
             foot_body_names=foot_names,
         )
     )

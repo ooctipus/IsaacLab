@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Sampler metrics harness for A/B comparison across sampler implementations.
+"""Sampler metrics harness for regression tracking.
 
 Runs a :class:`RetargetPipeline` against a fixed robot x sub-terrain grid
 and emits structured metrics covering:
@@ -16,12 +16,8 @@ and emits structured metrics covering:
   terrain (centroid xy variance, yaw entropy).
 * **Cost** -- wall time.
 
-Used by:
-
-* The Phase 1 regression test that pins :class:`TerrainFirstSampler`
-  behavior while the abstraction is refactored.
-* The Phase 3 A/B study comparing ``TerrainFirstSampler`` to the hybrid
-  template-matched sampler on homogeneous quadrupeds.
+Backs a committed JSON baseline that the regression test compares against
+to catch accidental behavior drift in :class:`Sampler`.
 
 Invoke as a CLI to regenerate the baseline JSON fixture (paths relative
 to the repository root)::
@@ -106,7 +102,6 @@ class SamplerMetrics:
     sub_terrain: str
     difficulty: float
     n_desired: int
-    sampler: str
     n_proposed: int
     n_sampler_accepted: int
     n_ik_problems: int
@@ -182,10 +177,7 @@ def _sub_terrain_mesh(sub_terrain_name: str, difficulty: float):
     return mesh, origin
 
 
-_SAMPLER_CHOICES = ("terrain_first", "template_matched")
-
-
-def _build_pipeline_cfg(robot_name: str, sampler_kind: str = "terrain_first", min_contacts: int = -1):
+def _build_pipeline_cfg(robot_name: str, min_contacts: int = -1):
     """Build a minimal ``RetargetPipelineCfg`` for ``robot_name``.
 
     Uses the same objectives/criteria as :mod:`validate_spawn_points` so
@@ -193,17 +185,14 @@ def _build_pipeline_cfg(robot_name: str, sampler_kind: str = "terrain_first", mi
 
     Args:
         robot_name: Robot preset name.
-        sampler_kind: One of :data:`_SAMPLER_CHOICES` -- selects which
-            :class:`SamplerBase` implementation the pipeline uses.
         min_contacts: Sampler ``min_contacts`` knob. ``-1`` (default)
-            preserves legacy hard-polygon behavior; positive values
-            enable the soft polygon path (mixed-nc placements).
+            preserves hard-polygon behavior; positive values enable the
+            soft polygon path (mixed-nc placements).
     """
     from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget import RetargetPipelineCfg
     from isaaclab_tasks.manager_based.locomotion.position.mdp.retarget.cfg import (
         PatchSamplingCfg,
-        TemplateMatchedSamplerCfg,
-        TerrainFirstSamplerCfg,
+        SamplerCfg,
     )
     from isaaclab_tasks.manager_based.locomotion.position.mdp_presets.robots.robot_presets import (
         RetargetJointRegularizeTargetsCfg,
@@ -254,12 +243,7 @@ def _build_pipeline_cfg(robot_name: str, sampler_kind: str = "terrain_first", mi
 
     joint_regularize_targets = getattr(RetargetJointRegularizeTargetsCfg, robot_name, {})
 
-    if sampler_kind == "terrain_first":
-        sampler_cfg = TerrainFirstSamplerCfg(patch=PatchSamplingCfg(), min_contacts=min_contacts)
-    elif sampler_kind == "template_matched":
-        sampler_cfg = TemplateMatchedSamplerCfg(patch=PatchSamplingCfg(), min_contacts=min_contacts)
-    else:
-        raise ValueError(f"unknown sampler_kind {sampler_kind!r}; choices: {_SAMPLER_CHOICES}")
+    sampler_cfg = SamplerCfg(patch=PatchSamplingCfg(), min_contacts=min_contacts)
 
     return RetargetPipelineCfg(
         kin=kin_cfg,
@@ -361,7 +345,6 @@ def _run_single(
     difficulty: float,
     n_desired: int,
     seed: int,
-    sampler_kind: str = "terrain_first",
     min_contacts: int = -1,
 ) -> SamplerMetrics:
     """Run the pipeline once and collect metrics."""
@@ -374,7 +357,7 @@ def _run_single(
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
 
-    pipeline_cfg = _build_pipeline_cfg(robot_name, sampler_kind, min_contacts)
+    pipeline_cfg = _build_pipeline_cfg(robot_name, min_contacts)
     pipeline = RetargetPipeline(pipeline_cfg)
 
     mesh, origin = _sub_terrain_mesh(sub_terrain, difficulty)
@@ -427,7 +410,6 @@ def _run_single(
         sub_terrain=sub_terrain,
         difficulty=difficulty,
         n_desired=n_desired,
-        sampler=sampler_kind,
         n_proposed=n_proposed,
         n_sampler_accepted=n_sampler_accepted,
         n_ik_problems=n_ik_problems,
@@ -462,7 +444,6 @@ def run_metrics_grid(
     difficulties: list[float],
     n_desired: int = 300,
     seed: int = 0,
-    sampler_kind: str = "terrain_first",
     min_contacts: int = -1,
 ) -> list[SamplerMetrics]:
     """Run the sampler metrics harness across a robot x terrain x difficulty grid.
@@ -476,12 +457,10 @@ def run_metrics_grid(
         n_desired: Target placement count per cell.
         seed: RNG seed applied before each cell runs; harness is
             deterministic when the underlying ops are.
-        sampler_kind: Sampler implementation -- ``"terrain_first"`` (legacy
-            baseline) or ``"template_matched"`` (Phase 2 hybrid).
         min_contacts: Sampler ``min_contacts`` knob. ``-1`` (default)
-            preserves the legacy hard-polygon path; positive values
-            exercise the soft polygon path on every cell and populate
-            each :class:`SamplerMetrics` with a mixed-nc histogram.
+            preserves the hard-polygon path; positive values exercise the
+            soft polygon path on every cell and populate each
+            :class:`SamplerMetrics` with a mixed-nc histogram.
 
     Returns:
         List of :class:`SamplerMetrics`, one per grid cell, in row-major
@@ -492,13 +471,13 @@ def run_metrics_grid(
     for r in robots:
         for t in sub_terrains:
             for d in difficulties:
-                m = _run_single(r, t, d, n_desired, seed, sampler_kind, min_contacts)
+                m = _run_single(r, t, d, n_desired, seed, min_contacts)
                 results.append(m)
                 hist_str = ""
                 if m.nc_histogram:
                     hist_str = " nc=" + ",".join(f"{k}:{v}" for k, v in sorted(m.nc_histogram.items()))
                 print(
-                    f"[{sampler_kind} | {r} / {t} / diff={d}] "
+                    f"[{r} / {t} / diff={d}] "
                     f"yields sampler={m.sampler_yield:.2f} ik={m.ik_yield:.2f} "
                     f"final={m.n_final}/{m.n_desired}  "
                     f"shape_p50={m.shape_pairwise_p50:.3f}  wall={m.total_wall_time_s:.2f}s"
@@ -537,12 +516,6 @@ def _cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--n_desired", type=int, default=300)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
-        "--sampler",
-        choices=list(_SAMPLER_CHOICES),
-        default="terrain_first",
-        help="Sampler implementation to benchmark (default: terrain_first).",
-    )
-    parser.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -567,7 +540,6 @@ def _cli(argv: list[str] | None = None) -> int:
         difficulties=args.difficulties,
         n_desired=args.n_desired,
         seed=args.seed,
-        sampler_kind=args.sampler,
         min_contacts=args.min_contacts,
     )
     if args.output is not None:

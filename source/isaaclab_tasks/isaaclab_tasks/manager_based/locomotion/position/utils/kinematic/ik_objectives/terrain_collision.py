@@ -40,12 +40,21 @@ def _terrain_collision_residuals(
     mesh_id: wp.uint64,
     probe_body: wp.array1d(dtype=wp.int32),
     probe_offset: wp.array1d(dtype=wp.vec3),
+    probe_foot_slot: wp.array1d(dtype=wp.int32),
+    is_contact: wp.array2d(dtype=wp.uint8),
     weight: float,
     margin: float,
     start_idx: int,
     residuals: wp.array2d(dtype=wp.float32),
 ):
     row, probe_idx = wp.tid()
+    slot = probe_foot_slot[probe_idx]
+    # Foot-body probes are gated by per-problem contact state: a contact
+    # foot is meant to touch terrain, so its probes should not push the
+    # foot away. Air-foot probes and all non-foot probes (slot < 0) are
+    # always active.
+    if slot >= 0 and is_contact[row, slot] != wp.uint8(0):
+        return
     tf = body_q[row, probe_body[probe_idx]]
     probe_pos = wp.transform_point(tf, probe_offset[probe_idx])
     query = wp.mesh_query_point(mesh_id, probe_pos, 2.0)
@@ -64,6 +73,8 @@ def _terrain_collision_jac_analytic(
     mesh_id: wp.uint64,
     probe_body: wp.array1d(dtype=wp.int32),
     probe_offset: wp.array1d(dtype=wp.vec3),
+    probe_foot_slot: wp.array1d(dtype=wp.int32),
+    is_contact: wp.array2d(dtype=wp.uint8),
     weight: float,
     margin: float,
     affects_dof: wp.array2d(dtype=wp.uint8),  # (n_probes, n_dofs)
@@ -83,6 +94,10 @@ def _terrain_collision_jac_analytic(
     problem_idx, probe_idx, dof_idx = wp.tid()
 
     if affects_dof[probe_idx, dof_idx] == 0:
+        return
+
+    slot = probe_foot_slot[probe_idx]
+    if slot >= 0 and is_contact[problem_idx, slot] != wp.uint8(0):
         return
 
     body_idx = probe_body[probe_idx]
@@ -130,43 +145,131 @@ def _terrain_collision_jac_analytic(
     )
 
 
+def _fibonacci_sphere(n: int) -> np.ndarray:
+    """``n`` approximately-uniform unit-sphere direction vectors."""
+    if n <= 1:
+        return np.array([[0.0, 0.0, -1.0]], dtype=np.float32)
+    phi = np.pi * (3.0 - np.sqrt(5.0))
+    pts = np.empty((n, 3), dtype=np.float32)
+    for i in range(n):
+        y = 1.0 - (i / float(n - 1)) * 2.0
+        r = np.sqrt(max(0.0, 1.0 - y * y))
+        theta = phi * i
+        pts[i] = (np.cos(theta) * r, y, np.sin(theta) * r)
+    return pts
+
+
+def _primitive_surface_probes(
+    shape_type: int,
+    shape_scale,
+    shape_transform,
+    n_samples: int,
+) -> list[tuple[float, float, float]]:
+    """Surface-probe points in body-local frame for a primitive shape.
+
+    Returns empty list for unsupported types so the caller can skip.
+    """
+    from newton import GeoType
+
+    tx, ty, tz = float(shape_transform[0]), float(shape_transform[1]), float(shape_transform[2])
+    if shape_type == int(GeoType.SPHERE):
+        r = float(shape_scale[0])
+        dirs = _fibonacci_sphere(n_samples)
+        return [(tx + float(d[0]) * r, ty + float(d[1]) * r, tz + float(d[2]) * r) for d in dirs]
+    if shape_type == int(GeoType.BOX):
+        hx, hy, hz = 0.5 * float(shape_scale[0]), 0.5 * float(shape_scale[1]), 0.5 * float(shape_scale[2])
+        signs = [(-1, -1, -1), (1, -1, -1), (-1, 1, -1), (1, 1, -1), (-1, -1, 1), (1, -1, 1), (-1, 1, 1), (1, 1, 1)]
+        return [(tx + sx * hx, ty + sy * hy, tz + sz * hz) for sx, sy, sz in signs]
+    if shape_type == int(GeoType.CAPSULE):
+        r = float(shape_scale[0])
+        half_len = float(shape_scale[1])
+        # ``n_samples/2`` each on top and bottom hemispheres; axis along body z.
+        n_cap = max(1, n_samples // 2)
+        top = _fibonacci_sphere(n_cap)
+        bot = _fibonacci_sphere(n_cap)
+        pts: list[tuple[float, float, float]] = []
+        for d in top:
+            pts.append((tx + float(d[0]) * r, ty + float(d[1]) * r, tz + half_len + float(d[2]) * r))
+        for d in bot:
+            pts.append((tx + float(d[0]) * r, ty + float(d[1]) * r, tz - half_len + float(d[2]) * r))
+        return pts
+    if shape_type == int(GeoType.CYLINDER):
+        r = float(shape_scale[0])
+        half_len = float(shape_scale[1])
+        ring = max(4, n_samples // 2)
+        pts = []
+        for i in range(ring):
+            a = 2.0 * np.pi * i / ring
+            pts.append((tx + r * float(np.cos(a)), ty + r * float(np.sin(a)), tz - half_len))
+            pts.append((tx + r * float(np.cos(a)), ty + r * float(np.sin(a)), tz + half_len))
+        return pts
+    return []
+
+
 def _build_collision_probes(
     builder: newton.ModelBuilder,
-    exclude_bodies: list[int],
+    foot_body_ids: list[int],
     n_samples: int = 16,
-) -> tuple[list[int], list[tuple[float, float, float]]]:
-    """Sample probe points on each body's actual mesh surface."""
-    body_verts: dict[int, list[np.ndarray]] = defaultdict(list)
+) -> tuple[list[int], list[tuple[float, float, float]], list[int]]:
+    """Sample probe points on each body's collision surface.
+
+    Foot bodies are probed alongside non-foot bodies, tagged with a slot
+    index (``0..nc-1``) so the residual kernel can gate their contribution
+    on the per-problem ``is_contact`` flag — contact feet are meant to
+    touch terrain and must not be pushed away, but air feet should be
+    penalized for penetrating terrain. Non-foot probes carry slot ``-1``
+    and are always active.
+
+    Handles mesh shapes via vertex FPS and primitive shapes (sphere, box,
+    capsule, cylinder) via canonical surface samples so foot bodies with
+    primitive collision geometry (e.g. ANYmal-C foot spheres) get probed.
+    """
+    foot_slot = {bid: i for i, bid in enumerate(foot_body_ids)}
+    body_shapes: dict[int, list[int]] = defaultdict(list)
     for si in range(len(builder.shape_body)):
-        bid = int(builder.shape_body[si])
-        if bid in exclude_bodies:
-            continue
-        src = builder.shape_source[si]
-        if src is not None and hasattr(src, "vertices") and len(src.vertices) > 0:
-            verts = np.array(src.vertices, dtype=np.float32)
-            if len(verts.shape) == 1:
-                verts = verts.reshape(-1, 3)
-            body_verts[bid].append(verts)
+        body_shapes[int(builder.shape_body[si])].append(si)
 
     probe_bodies: list[int] = []
     probe_offsets: list[tuple[float, float, float]] = []
-    for bid in sorted(body_verts.keys()):
-        all_v = np.concatenate(body_verts[bid], axis=0)
-        if len(all_v) == 0:
+    probe_slots: list[int] = []
+    for bid in sorted(body_shapes.keys()):
+        slot = foot_slot.get(bid, -1)
+        # Pool candidate points from every shape attached to this body
+        # (visual mesh vertices + primitive surface samples), then FPS-
+        # thin the pool to ``n_samples`` so bodies with multiple shapes
+        # don't inflate probe count.
+        pool: list[tuple[float, float, float]] = []
+        for si in body_shapes[bid]:
+            src = builder.shape_source[si]
+            if src is not None and hasattr(src, "vertices") and len(src.vertices) > 0:
+                verts = np.asarray(src.vertices, dtype=np.float32).reshape(-1, 3)
+                pool.extend(tuple(float(x) for x in v) for v in verts)
+            else:
+                pool.extend(
+                    _primitive_surface_probes(
+                        int(builder.shape_type[si]),
+                        builder.shape_scale[si],
+                        builder.shape_transform[si],
+                        n_samples,
+                    )
+                )
+        if not pool:
             continue
-        n = min(n_samples, len(all_v))
+        pool_arr = np.asarray(pool, dtype=np.float32)
+        n = min(n_samples, len(pool_arr))
         if n <= 0:
             continue
         selected = [0]
-        min_dists = np.full(len(all_v), np.inf)
+        min_dists = np.full(len(pool_arr), np.inf)
         for _ in range(n - 1):
-            d = np.linalg.norm(all_v - all_v[selected[-1]], axis=1)
+            d = np.linalg.norm(pool_arr - pool_arr[selected[-1]], axis=1)
             min_dists = np.minimum(min_dists, d)
             selected.append(int(np.argmax(min_dists)))
         for idx in selected:
             probe_bodies.append(bid)
-            probe_offsets.append(tuple(float(x) for x in all_v[idx]))
-    return probe_bodies, probe_offsets
+            probe_offsets.append(tuple(float(x) for x in pool_arr[idx]))
+            probe_slots.append(slot)
+    return probe_bodies, probe_offsets, probe_slots
 
 
 def _build_affects_dof_per_body(model: newton.Model) -> np.ndarray:
@@ -228,10 +331,13 @@ class IKObjectiveTerrainCollision(ik.IKObjective):
         self.mesh_id = wp_mesh.id
         self.weight = cfg.weight
         self.margin = cfg.margin
-        bodies, offsets = _build_collision_probes(pipeline.kin.builder, pipeline.foot_body_ids, cfg.n_samples)
+        bodies, offsets, slots = _build_collision_probes(pipeline.kin.builder, pipeline.foot_body_ids, cfg.n_samples)
         self.n_probes = len(bodies)
+        self.n_feet = len(pipeline.foot_body_ids)
         self._probe_body_np = np.array(bodies, dtype=np.int32)
         self._probe_offset_np = np.array(offsets, dtype=np.float32)
+        self._probe_foot_slot_np = np.array(slots, dtype=np.int32)
+        self._pipeline = pipeline
 
     def supports_analytic(self) -> bool:
         return True
@@ -244,6 +350,19 @@ class IKObjectiveTerrainCollision(ik.IKObjective):
         d = self.device
         self._probe_body = wp.array(self._probe_body_np, dtype=wp.int32, device=d)
         self._probe_offset = wp.from_numpy(self._probe_offset_np, dtype=wp.vec3, device=d)
+        self._probe_foot_slot = wp.array(self._probe_foot_slot_np, dtype=wp.int32, device=d)
+
+        # Snapshot per-problem ``is_contact`` so contact-foot probes can be
+        # gated off: a foot in contact is meant to touch terrain. The
+        # sampler ran before IK objectives were built, so buffer contents
+        # are stable. Slot order matches ``foot_body_ids``.
+        import torch  # local import to avoid top-level torch dep
+
+        buf = self._pipeline.buffer
+        n = self.n_batch
+        is_c_u8 = buf.is_contact_t[: n * self.n_feet].view(n, self.n_feet).to(torch.uint8).contiguous()
+        self._is_contact_t = is_c_u8  # keep torch reference alive for Warp view
+        self._is_contact = wp.from_torch(is_c_u8, dtype=wp.uint8)
 
         if jacobian_mode in (ik.IKJacobianType.ANALYTIC, ik.IKJacobianType.MIXED):
             # Ancestor mask per probe: (n_probes, n_dofs) uint8.
@@ -264,7 +383,17 @@ class IKObjectiveTerrainCollision(ik.IKObjective):
         wp.launch(
             _terrain_collision_residuals,
             dim=[body_q.shape[0], self.n_probes],
-            inputs=[body_q, self.mesh_id, self._probe_body, self._probe_offset, self.weight, self.margin, start_idx],
+            inputs=[
+                body_q,
+                self.mesh_id,
+                self._probe_body,
+                self._probe_offset,
+                self._probe_foot_slot,
+                self._is_contact,
+                self.weight,
+                self.margin,
+                start_idx,
+            ],
             outputs=[residuals],
             device=self.device,
         )
@@ -315,6 +444,8 @@ class IKObjectiveTerrainCollision(ik.IKObjective):
                 self.mesh_id,
                 self._probe_body,
                 self._probe_offset,
+                self._probe_foot_slot,
+                self._is_contact,
                 self.weight,
                 self.margin,
                 self._affects_dof,

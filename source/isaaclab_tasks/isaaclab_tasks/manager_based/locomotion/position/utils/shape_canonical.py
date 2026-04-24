@@ -10,13 +10,13 @@ translation-invariant descriptor of a contact tuple. Given ``nc`` world-
 frame contact positions and the robot's per-slot nominal angles (the
 circular mean of each slot's angle relative to the polygon centroid
 across the FK sample distribution — a base-pose-invariant quantity
-derived in :meth:`TerrainFirstSampler._compute_foot_reachability`),
+derived in :meth:`Sampler._compute_foot_reachability`),
 :func:`canonicalize_shape` returns per-contact coordinates in a frame
 that cancels all rigid-body motion, so two tuples differing only by
 base translation/yaw/pitch/roll produce identical canonical shapes.
 
-The module has no sampler-specific state: both :class:`TerrainFirstSampler`
-and :class:`TemplateMatchedSampler` import it.
+The module has no sampler-specific state -- it is imported by
+:class:`Sampler`.
 """
 
 from __future__ import annotations

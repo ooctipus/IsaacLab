@@ -53,7 +53,7 @@ _TIMING_LABELS: dict[str, str] = {
     "fk_eval": "FK eval (post-solve)",
     "criteria": "criteria (acceptance checks)",
     "final_fps": "final FPS (spatial thin → target)",
-    # Sub-phases of :class:`TerrainFirstSampler`. Keys unmatched here
+    # Sub-phases of :class:`Sampler`. Keys unmatched here
     # fall back to their last dotted segment, so custom samplers still
     # render readably even without an entry.
     "sampler.morph": "morph-patch pool",
@@ -165,13 +165,6 @@ class RetargetPipeline:
 
         Opaque, sampler-specific. Consumed by offline metrics tools; not
         part of the public pipeline API.
-        """
-        self._sampler_slot_assignment: torch.Tensor | None = None
-        """Per-placement slot permutation from the last sampler invocation."""
-        self._sampler_template_index: torch.Tensor | None = None
-        """Per-placement matched-template id from the last sampler invocation.
-
-        ``None`` for non-template-driven samplers.
         """
 
     def _ensure_buffer(self, n_desired: int) -> None:
@@ -297,17 +290,10 @@ class RetargetPipeline:
             n_written = sampler_out.num_written
             self._reject_geo = sampler_out.reject_stats
             self._sampler_diagnostics = sampler_out.diagnostics
-            self._sampler_slot_assignment = sampler_out.slot_assignment
-            self._sampler_template_index = sampler_out.template_index
 
-            # Per-slot weights / contact flags: copy into buffer when the
-            # sampler supplies them. ``None`` means "accept buffer defaults"
-            # (uniform weight=1.0, all hard contacts), which ``buffer.reset``
-            # has already restored. Phase A plumbing -- no consumer yet.
-            if sampler_out.slot_weights is not None and n_written > 0:
-                nc = self.buffer.num_contacts
-                flat_w = sampler_out.slot_weights.reshape(-1)
-                self.buffer.slot_weights_t[: n_written * nc] = flat_w[: n_written * nc]
+            # Per-slot contact flags: copy into buffer when the sampler
+            # supplies them. ``None`` means "accept buffer defaults"
+            # (all hard contacts), which ``buffer.reset`` already restored.
             if sampler_out.is_contact is not None and n_written > 0:
                 nc = self.buffer.num_contacts
                 flat_ic = sampler_out.is_contact.reshape(-1)
@@ -446,7 +432,7 @@ class RetargetPipeline:
         reject_geo = self._reject_geo
         reject_val = self._reject_val
         n_polys_valid = self._n_ik_problems
-        n_polys_rejected = sum(reject_geo.get(k, 0) for k in ("out_of_reach", "shape_infeasible"))
+        n_polys_rejected = sum(reject_geo.values())
         n_polys_attempted = n_polys_valid + n_polys_rejected
 
         def _render_table(headers: list[str], aligns: list[str], sections: list[list[list[str]]]) -> list[str]:
@@ -526,9 +512,8 @@ class RetargetPipeline:
             f"{fmt(n_polys_attempted)} / {fmt(polygon_budget)} budget" if polygon_budget > 0 else fmt(n_polys_attempted)
         )
         sampler_rows = [["Sampler", "polygons", attempted_cell]]
-        for reason in ("out_of_reach", "shape_infeasible"):
-            if reason in reject_geo:
-                sampler_rows.append([f"  ─ {reason}", "", f"−{fmt(reject_geo[reason])}"])
+        for reason, count in reject_geo.items():
+            sampler_rows.append([f"  ─ {reason}", "", f"−{fmt(count)}"])
         geo_yield = 100.0 * n_polys_valid / n_polys_attempted if n_polys_attempted > 0 else 0.0
         sampler_rows.append(["  valid", "polygons", f"{fmt(n_polys_valid)} ({geo_yield:.1f}%)"])
         sections.append(sampler_rows)

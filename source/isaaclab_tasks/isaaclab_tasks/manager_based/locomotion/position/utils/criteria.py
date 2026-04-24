@@ -19,8 +19,6 @@ import numpy as np
 import torch
 import warp as wp
 
-from .kinematic.ik_objectives.terrain_collision import _build_collision_probes
-
 if TYPE_CHECKING:
     from ..mdp.retarget.buffer import RetargetBuffer
     from ..mdp.retarget.pipeline import RetargetPipeline
@@ -305,21 +303,26 @@ class CollisionCheck:
     """
 
     def __init__(self, cfg: CollisionCheckCfg, pipeline: RetargetPipeline, wp_mesh: object) -> None:
+        from .kinematic.ik_objectives.terrain_collision import _build_collision_probes  # noqa: PLC0415
+
         self.kin = pipeline.kin
         self.wp_mesh = wp_mesh
         self.max_pen = cfg.max_pen
-        bodies, offsets = _build_collision_probes(self.kin.builder, pipeline.foot_body_ids, cfg.n_samples)
+        bodies, offsets, slots = _build_collision_probes(self.kin.builder, pipeline.foot_body_ids, cfg.n_samples)
         self._n_probes = len(bodies)
+        self._n_feet = len(pipeline.foot_body_ids)
         self._probe_body_np = np.array(bodies, dtype=np.int32)
         self._probe_offset_np = np.array(offsets, dtype=np.float32)
-        self._wp_bufs: dict[str, wp.array] = {}
+        self._probe_foot_slot_np = np.array(slots, dtype=np.int32)
+        self._wp_bufs: dict[str, tuple[wp.array, wp.array, wp.array]] = {}
 
-    def _get_wp_bufs(self, device: str) -> tuple[wp.array, wp.array]:
+    def _get_wp_bufs(self, device: str) -> tuple[wp.array, wp.array, wp.array]:
         """Lazily allocate device buffers for probe data."""
         if device not in self._wp_bufs:
             self._wp_bufs[device] = (
                 wp.array(self._probe_body_np, dtype=wp.int32, device=device),
                 wp.from_numpy(self._probe_offset_np, dtype=wp.vec3, device=device),
+                wp.array(self._probe_foot_slot_np, dtype=wp.int32, device=device),
             )
         return self._wp_bufs[device]
 
@@ -329,14 +332,28 @@ class CollisionCheck:
             buffer.body_q_t[: N * nb].contiguous(),
             dtype=wp.transformf,
         )
-        probe_body, probe_offset = self._get_wp_bufs(buffer.device)
+        probe_body, probe_offset, probe_foot_slot = self._get_wp_bufs(buffer.device)
+        # Slot-ordered per-problem contact flag; contact feet shouldn't be
+        # flagged for "penetrating" terrain since they're meant to touch.
+        is_contact_u8 = buffer.is_contact_t[: N * self._n_feet].view(N, self._n_feet).to(torch.uint8).contiguous()
+        is_contact_wp = wp.from_torch(is_contact_u8, dtype=wp.uint8)
 
         pen_out = torch.zeros(N * self._n_probes, device=buffer.device, dtype=torch.float32)
         wp_pen = wp.from_torch(pen_out)
         wp.launch(
             _collision_check_kernel,
             dim=[N, self._n_probes],
-            inputs=[body_q_wp, nb, self.wp_mesh.id, probe_body, probe_offset, 2.0, self._n_probes],
+            inputs=[
+                body_q_wp,
+                nb,
+                self.wp_mesh.id,
+                probe_body,
+                probe_offset,
+                probe_foot_slot,
+                is_contact_wp,
+                2.0,
+                self._n_probes,
+            ],
             outputs=[wp_pen],
             device=buffer.device,
         )
@@ -351,6 +368,8 @@ def _collision_check_kernel(
     mesh_id: wp.uint64,
     probe_body: wp.array1d(dtype=wp.int32),
     probe_offset: wp.array1d(dtype=wp.vec3),
+    probe_foot_slot: wp.array1d(dtype=wp.int32),
+    is_contact: wp.array2d(dtype=wp.uint8),
     max_dist: float,
     n_probes: int,
     penetration: wp.array1d(dtype=wp.float32),
@@ -365,11 +384,19 @@ def _collision_check_kernel(
       where ``sign`` is always +1.
 
     The max of both is used so penetration is detected either way.
+
+    Probes on a foot body (``probe_foot_slot >= 0``) are zeroed when that
+    foot is in contact: a contact foot is meant to touch terrain, so the
+    criterion should not flag it as penetrating.
     """
     row, probe_idx = wp.tid()
+    out_idx = row * n_probes + probe_idx
+    slot = probe_foot_slot[probe_idx]
+    if slot >= 0 and is_contact[row, slot] != wp.uint8(0):
+        penetration[out_idx] = 0.0
+        return
     tf = body_q[row * n_bodies + probe_body[probe_idx]]
     world_pos = wp.transform_point(tf, probe_offset[probe_idx])
-    out_idx = row * n_probes + probe_idx
     query = wp.mesh_query_point(mesh_id, world_pos, max_dist)
     if query.result:
         surface_pt = wp.mesh_eval_position(mesh_id, query.face, query.u, query.v)

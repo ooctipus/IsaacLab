@@ -64,37 +64,19 @@ class SamplerOutput:
     """Typed return value from :meth:`SamplerBase.__call__`.
 
     A sampler writes candidate placements into the shared
-    :class:`RetargetBuffer` in-place and returns this summary object. The
-    pipeline uses it to drive its own stats reporting and (for future
-    samplers) to carry explicit per-placement metadata — slot assignment,
-    matched template id — that today is implicit in the ordering of
-    buffer rows.
+    :class:`RetargetBuffer` in-place and returns this summary object.
 
     Fields:
         num_written: Number of rows written to the buffer.
         reject_stats: Ordered waterfall of rejection counts. Keys are
             sampler-specific (e.g. ``"out_of_reach"``,
-            ``"shape_infeasible"``). Values are per-candidate counts that
-            sum to ``(total_proposed - num_written)``.
-        slot_assignment: Optional per-placement slot permutation, shape
-            ``[num_written, num_contacts]`` with int dtype. Entry ``[k, s]``
-            is the foot-body index (into :attr:`~.RetargetPipeline.foot_body_ids`)
-            that receives placement ``k``'s slot ``s``. ``None`` means the
-            identity permutation.
-        slot_weights: Optional per-slot IK residual weight [unitless],
-            shape ``[num_written, num_contacts]``, float. ``None`` means
-            uniform ``weight = 1.0`` across all slots (current behavior).
-            First consumer is the per-slot contact classifier (Phase B
-            of task #46) which will vary this per ``(placement, slot)``
-            to encode soft/hard classification.
+            ``"non_convex_stance"``). Values are per-candidate counts
+            that sum to ``(total_proposed - num_written)``.
         is_contact: Optional per-slot contact flag, shape
             ``[num_written, num_contacts]`` with bool dtype. ``None``
-            means every slot is a hard contact (current behavior).
-            Stability / collision / foot-error criteria consume this
-            mask when it is non-``None`` to ignore air-targeted slots.
-        template_index: Optional matched-template id per placement, shape
-            ``[num_written]``. ``None`` when the sampler is not
-            template-driven.
+            means every slot is a hard contact. Stability / collision /
+            foot-error criteria consume this mask when non-``None``
+            to ignore air-targeted slots.
         diagnostics: Opaque per-call metrics for offline analysis and
             regression testing. Contents are sampler-specific and may
             include tensors, arrays, scalars, or further dicts.
@@ -102,10 +84,7 @@ class SamplerOutput:
 
     num_written: int
     reject_stats: dict[str, int]
-    slot_assignment: torch.Tensor | None = None
-    slot_weights: torch.Tensor | None = None
     is_contact: torch.Tensor | None = None
-    template_index: torch.Tensor | None = None
     diagnostics: dict[str, object] = dataclasses.field(default_factory=dict)
 
 

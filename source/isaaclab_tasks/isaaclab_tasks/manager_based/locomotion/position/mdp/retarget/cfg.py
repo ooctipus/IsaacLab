@@ -13,7 +13,7 @@ from isaaclab.utils import configclass
 
 from ...utils.criteria_cfg import CriterionBaseCfg
 from ...utils.kinematic.ik_objectives.cfg import IKObjectiveBaseCfg
-from ...utils.kinematic.newton_kinematics import NewtonKinematicsCfg
+from ...utils.kinematic.newton_kinematics_cfg import NewtonKinematicsCfg
 
 
 @configclass
@@ -30,7 +30,7 @@ class SamplerBaseCfg:
 
 @configclass
 class PatchSamplingCfg:
-    """Terrain patch-detection parameters for :class:`TerrainFirstSampler`.
+    """Terrain patch-detection parameters for :class:`Sampler`.
 
     Drives the morphological flatness filter that finds candidate foot
     contact patches on the terrain heightmap. All values are terrain
@@ -139,8 +139,8 @@ class SamplerSizingCfg:
 
 
 @configclass
-class TerrainFirstSamplerCfg(SamplerBaseCfg):
-    """Configuration for terrain-first support-polygon sampling.
+class SamplerCfg(SamplerBaseCfg):
+    """Configuration for template-projection support-polygon sampling.
 
     Splits into two sub-configs for clarity:
 
@@ -149,12 +149,12 @@ class TerrainFirstSamplerCfg(SamplerBaseCfg):
     * :attr:`sizing` -- yield-rate cascade that back-derives stage sizes
       from the caller's ``n_desired``.
 
-    Geometry-dependent thresholds (reachability envelopes, base-height
-    bounds) are derived automatically from the robot's default stance
-    in :class:`~isaaclab_tasks.manager_based.locomotion.position.utils.sampling.TerrainFirstSampler`.
+    Geometry-dependent thresholds (nominal foot angle, standing height)
+    are derived automatically from the robot's random-joint FK
+    distribution in :class:`~isaaclab_tasks.manager_based.locomotion.position.utils.sampling.Sampler`.
     """
 
-    class_type: type | str = "isaaclab_tasks.manager_based.locomotion.position.utils.sampling:TerrainFirstSampler"
+    class_type: type | str = "isaaclab_tasks.manager_based.locomotion.position.utils.sampling:Sampler"
     """Sampler implementation class."""
 
     patch: PatchSamplingCfg = PatchSamplingCfg()
@@ -166,170 +166,103 @@ class TerrainFirstSamplerCfg(SamplerBaseCfg):
     min_contacts: int = -1
     """Minimum contact slots a candidate must fill to be accepted.
 
-    ``-1`` (the default) preserves the original hard-polygon behavior:
-    every slot must find an in-envelope terrain patch, otherwise the
-    candidate is rejected and every accepted candidate has
+    ``-1`` (the default) requires every slot to find a morph patch
+    within :attr:`terrain_snap_distance`: every accepted candidate has
     ``is_contact = True`` for all slots.
 
-    A positive integer ``m`` (``1 <= m <= nc``) enables the soft polygon
-    builder: a candidate is accepted when at least ``m`` slots found a
-    patch; the remaining slots are classified as *air* (``is_contact =
-    False``) with a template-projected target position. Downstream
-    criteria (stability, foot-position error) consume ``is_contact`` to
-    ignore air slots. Use ``m = 2`` to let mixed-geometry terrain
-    (stepping-stone-with-gap, narrow ledges) emit nc=2/3/4 stances.
+    A positive integer ``m`` (``1 <= m <= nc``) enables soft polygons:
+    a candidate is accepted when at least ``m`` slots snap to a patch;
+    remaining slots become *air* (``is_contact = False``) with a
+    template-projected target. Downstream criteria (stability,
+    foot-position error) consume ``is_contact`` to ignore air slots.
+    Use ``m = 2`` to let mixed-geometry terrain (stepping-stone-with-gap,
+    narrow ledges) emit nc=2/3/4 stances.
     """
 
     fk_num_samples: int = 100000
-    """Number of random-joint FK samples used to estimate the per-foot
-    reach envelope and the canonical-shape NN library."""
+    """Number of random-joint FK samples used to build the canonical-shape
+    library and estimate per-foot nominal angles / standing height."""
 
-    fk_num_retained: int = 25000
-    """Number of FK samples kept as the canonical-shape NN library.
+    fk_joint_range: float = 1.57
+    """Default clamp [rad] for random-joint FK sampling around the URDF default.
+
+    Each revolute joint is sampled uniformly in ``default ± fk_joint_range``,
+    intersected with the URDF joint limits and with any more-specific
+    :attr:`fk_joint_range_overrides` entry. Needed because quadruped
+    URDFs often specify HFE/KFE as ``±9.42`` rad (placeholder) that the
+    USD loader promotes to ``±1e10``; uniform sampling over that range
+    yields wrap-around jq whose foot positions look fine as a convex
+    quad but whose leg paths route across the chassis (visually crossed
+    legs).
+
+    ``1.57`` rad (π/2) covers a quarter rotation per joint — fine for
+    HFE/KFE. Override :attr:`fk_joint_range_overrides` for joints (e.g.
+    HAA) whose mechanical limit is tighter than the URDF claims.
+    """
+
+    fk_joint_range_overrides: dict[str, float] = field(default_factory=dict)
+    """Per-joint-name-regex clamps that override :attr:`fk_joint_range`.
+
+    Keys are regex patterns matched against full joint names with
+    :func:`re.fullmatch`; values are the clamp [rad] applied to those
+    joints. Use this to express mechanical limits that the URDF ↔ USD
+    pipeline stripped. Example for ANYmal-C whose HAA mechanical range
+    is roughly ``±0.7`` rad::
+
+        fk_joint_range_overrides={".*HAA": 0.7}
+
+    Without this, HAA gets the default ``1.57`` clamp and FK samples
+    can swing the leg 90° across the chassis, producing visually
+    crossed-leg IK poses even though the foot targets are valid.
+    """
+
+    fk_num_retained: int = 5000
+    """Number of canonical-shape templates kept via FPS thinning.
 
     ``fk_num_samples`` is used for robust quantile estimation of the
-    reach envelope; a uniform subset of size ``fk_num_retained`` is
-    retained as the NN library consulted at query time. Larger values
-    give tighter NN coverage at linear memory + match-time cost.
+    nominal angle / standing height; of the hull-valid remainder a
+    farthest-point subset of this size becomes the template library
+    from which each candidate draws at query time. FPS (via
+    ``grid_bucket_downsample`` on the flattened canonical shape)
+    guarantees each retained template represents a geometrically
+    distinct stance, so random ``tpl_idx`` draws cover the FK
+    manifold evenly. Bump if you want acrobatic stance diversity.
     """
 
-    fk_shape_tol: float = 0.08
-    """NN acceptance radius in canonical shape space [m].
+    outward_snap_penalty: float = 0.0
+    """LSA cost multiplier for radially-outward foot snaps [unitless].
 
-    A polygon passes the shape gate iff every foot has some FK sample
-    within this distance (per-foot L2, worst foot). Tighter values
-    reject more polygons; looser values accept more including near-
-    degenerate shapes. ``0.08`` matches empirical inter-foot spread
-    of ~3-6 cm around default stance on typical quadrupeds.
-
-    Unused when :attr:`use_template_projection` is ``True``.
+    Added to each contact-foot's LSA cost as
+    ``penalty × max(0, r_patch − r_template)`` where ``r`` is distance
+    to the stance centroid. Motivation: nearest-patch snapping is
+    biased outward in practice — each foot's nearest patch is on
+    average slightly farther from centroid than the template
+    predicted, and a 4-foot stance that each inflates by a few cm
+    balloons past the leg's reach envelope and IK fails (foot_err
+    rejects dominate). Set ``1.0``–``2.0`` on rough / sloped terrain
+    where the outward-snap failure mode dominates criteria yield.
+    Default ``0`` keeps plain nearest-patch snapping for sparse /
+    small-mesh cases where any reachable patch beats air.
     """
 
-    use_template_projection: bool = False
-    """Project FK templates onto terrain instead of matching.
+    terrain_snap_distance: float = 0.15
+    """Snap distance [m] for per-foot contact decision.
 
-    When ``True``, the query-time path switches from
-    "sample-polygon-then-NN-match" to "pick-template-then-project":
+    After the constrained bipartite assignment picks a morph patch for
+    each foot (minimising total template-projected-to-patch distance
+    with one-patch-per-foot, convex-stance, and winding-preservation
+    constraints), each foot is classified:
 
-    1. Sample a random FK template per candidate (no library FPS, no
-       symmetry augmentation needed -- all FK samples are realizable
-       polygons by construction).
-    2. Un-canonicalize the template at the candidate's ``(center, yaw)``
-       to get world-frame per-foot positions.
-    3. For each foot, ``torch.cdist`` against morphological patches; if
-       the nearest patch is within :attr:`foot_contact_radius`, the
-       foot contacts that patch. Otherwise the foot is air.
-    4. Templates whose canonical ``|z|`` exceeds
-       :attr:`foot_contact_radius` for some slot mark that slot as
-       air-in-FK-pose regardless of terrain.
+    * distance to assigned patch ``<= terrain_snap_distance`` → **contact**,
+      target = patch xyz + ``foot_ground_offset``.
+    * distance ``> terrain_snap_distance`` → **air**, target = template-
+      predicted world xyz (z clamped above local terrain surface).
 
-    Contact count emerges from template+terrain geometry: no
-    reachability sectors, no shape match, no ``matched_perm``. This
-    makes 2-contact/3-contact stances first-class rather than
-    fallbacks. Dropped when ``False`` (legacy behavior).
-    """
-
-    on_plane_tol: float = 0.03
-    """Canonical |z| [m] within which a foot is on the stance plane.
-
-    Build-time classifier: a template slot is on-plane iff its
-    canonical ``|z|`` is below this threshold. Physical — a foot
-    sole within ~3 cm of the stance plane is touching / near-touching.
-    Unused when :attr:`use_template_projection` is ``False``.
-    """
-
-    terrain_presence_radius: float = 0.15
-    """xy radius [m] for "is there a morph patch near this foot's projected xy?".
-
-    Query-time presence check: ``torch.cdist`` between projected foot
-    xy and morph-patch xy; foot is contact iff nearest patch is within
-    this radius AND template slot is on-plane. Tuned to morph-patch
-    density: morph sampling yields ~15 cm grid on typical n_desired,
-    so 15 cm catches the nearest patch reliably without requiring the
-    foot to land exactly on a grid point. Unused when
-    :attr:`use_template_projection` is ``False``.
-    """
-
-    template_min_on_plane: int = -1
-    """Optional stance-quality filter for the template pool.
-
-    FK uniform joint sampling spans the full reachable foot workspace,
-    including extreme joint configurations (fully folded / fully
-    extended) that would be unusual as static stances. Setting this to
-    ``k > 0`` drops FK samples where fewer than ``k`` feet lie close
-    to the template's plane-fit stance plane (canonical ``|z|`` <
-    :attr:`on_plane_tol`) -- a cheap proxy for "this FK pose looks
-    like a plausible quadruped stance". ``-1`` (default) disables the
-    filter.
-
-    This is **not** a contact-decision input. In the template-
-    projection path, contact is decided purely by terrain
-    (``patch_near``): a foot at a different world z (e.g. one step
-    higher on stairs) is still a valid contact. The filter only
-    shapes which *xy layouts* the pool samples from.
-    """
-
-
-@configclass
-class TemplateMatchedSamplerCfg(TerrainFirstSamplerCfg):
-    """Configuration for hybrid template-matched support-polygon sampling.
-
-    Keeps :class:`~isaaclab_tasks.manager_based.locomotion.position.utils.sampling.TerrainFirstSampler`'s
-    polygon-assembly machinery (per-foot reach-envelope sampling,
-    morphological-patch pool, plane-fit IK seeding) but replaces the
-    pass/fail NN against the full FK shape distribution with a NN match
-    against an FPS-thinned template library (~500-1000 templates) that
-    returns the matched template id. The id carries per-placement slot
-    assignment, which lets the sampler generalise beyond homogeneous
-    quadrupeds.
-
-    Build-time symmetry augmentation (:attr:`symmetry_permutations`)
-    provides permutation coverage for symmetric robots: for each base
-    template, each non-identity permutation is applied to the FK world
-    foot positions and re-canonicalised, producing additional templates
-    with their permutation stored as the slot-assignment gather index.
-
-    Inherits :attr:`patch`, :attr:`sizing`, :attr:`min_contacts`,
-    :attr:`fk_num_samples`, :attr:`fk_num_retained`, and :attr:`fk_shape_tol`
-    from :class:`TerrainFirstSamplerCfg`.
-    """
-
-    class_type: type | str = "isaaclab_tasks.manager_based.locomotion.position.utils.sampling:TemplateMatchedSampler"
-    """Sampler implementation class."""
-
-    n_templates: int = 1000
-    """Target size of the FPS-thinned template library (pre-symmetry-aug).
-
-    Smaller than :attr:`fk_num_retained` — FPS thinning picks diverse
-    canonical-shape representatives so NN coverage stays broad.
-    Empirically, 1000 × 4 symmetry elements (homogeneous quadruped)
-    gives ~70-80% per-foot-independent NN coverage on flat anymal_c at
-    :attr:`template_shape_tol` = 0.10m; bump to 2000-4000 to close the
-    coverage gap with the FK-sample library.
-    """
-
-    template_shape_tol: float = 0.10
-    """Accept-match tolerance in canonical shape space [m].
-
-    Per-foot-independent worst-foot L2 distance threshold. Slightly
-    looser than :attr:`fk_shape_tol` to compensate for the sparser
-    :attr:`n_templates` pool.
-    """
-
-    symmetry_permutations: list[list[int]] = field(default_factory=list)
-    """Body-plan symmetry permutations for build-time template augmentation.
-
-    Each inner list is a permutation of ``[0, 1, ..., nc-1]`` describing
-    how slot indices map under one symmetry element. The identity
-    permutation is always included -- this list adds *non-identity*
-    elements only. Empty list (the default) means no augmentation
-    (``|G|=1``), appropriate for robots whose FK sample distribution
-    already covers symmetric variants densely or for fully asymmetric
-    body plans.
-
-    For homogeneous quadrupeds, pass the three non-identity cyclic
-    rotations to opt into 4-fold symmetry (``|G|=4``): e.g.
-    ``[[1, 2, 3, 0], [2, 3, 0, 1], [3, 0, 1, 2]]`` in nominal CCW order.
+    Tuned to morph-patch density: morph sampling yields ~15 cm grid on
+    typical ``n_desired``, so 15 cm catches the nearest patch reliably
+    without requiring the foot to land exactly on a grid point. Bump
+    to 0.25-0.30 for sparse / rough terrain (CONTOUR, EXTREME_STAIR at
+    high difficulty).
     """
 
 
