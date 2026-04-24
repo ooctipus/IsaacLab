@@ -835,45 +835,64 @@ class TerrainFirstSampler(SamplerBase):
             world_z = cz + centers[:, 2:3]
             projected_world = torch.stack([world_x, world_y, world_z], dim=-1)  # [K, nc, 3]
 
-            # Per-foot nearest morph patch (brute-force cdist — K*nc queries
-            # against N_pts patches; GPU-trivial up to ~10k patches).
-            projected_xy = projected_world[..., :2].reshape(-1, 2)  # [K*nc, 2]
-            patch_xy = patch_pts[:, :2].contiguous()
-            dists = torch.cdist(projected_xy, patch_xy)  # [K*nc, N_p]
-            nearest_dist, nearest_idx = dists.min(dim=-1)
-            nearest_dist = nearest_dist.view(K, nc)
-            nearest_idx = nearest_idx.view(K, nc)
-            patch_near = nearest_dist < float(self.cfg.terrain_presence_radius)  # [K, nc]
-
-            # Contact purely by terrain: if a morph patch is within
-            # ``terrain_presence_radius`` of a foot's projected xy, that
-            # foot contacts the patch. The template's per-slot
-            # ``is_on_plane`` flag is NOT used here — a foot at a
-            # different world z (e.g. one step higher on stairs) is
-            # still a valid contact. Template contributes only the xy
+            # Optimal one-patch-per-foot assignment (brute-force bipartite).
+            #
+            # Contact is purely terrain-determined: if a morph patch is within
+            # ``terrain_presence_radius`` of a foot's projected xy, that foot
+            # contacts the patch. The template's per-slot ``is_on_plane`` flag
+            # is NOT used — a foot at a different world z (one step higher on
+            # stairs) is still a valid contact. Template provides the xy
             # *layout*; terrain decides z and contact/air per foot.
             #
-            # Unique-patch dedup: two feet whose projected xys both land
-            # near the same morph patch would otherwise snap to identical
-            # world positions, producing a degenerate point support. For
-            # each patch claimed by multiple contact feet, keep only the
-            # closest (by projected-to-patch distance); demote the others
-            # to air. Ties broken by slot index (pure determinism).
-            contact_claim = patch_near.clone()
-            for i in range(nc):
-                for j in range(nc):
-                    if i == j:
-                        continue
-                    j_wins = (
-                        (nearest_idx[..., j] == nearest_idx[..., i])
-                        & patch_near[..., j]
-                        & (
-                            (nearest_dist[..., j] < nearest_dist[..., i])
-                            | ((nearest_dist[..., j] == nearest_dist[..., i]) & (j < i))
-                        )
-                    )
-                    contact_claim[..., i] = contact_claim[..., i] & ~j_wins
-            is_contact_full = contact_claim  # [K, nc]
+            # Each patch can be claimed by at most one foot per candidate.
+            # Greedy "closest-foot-wins" isn't optimal: if foot 0's nearest is
+            # 1 cm away from patch A and foot 1's nearest is 2 cm from A, a
+            # greedy assignment gives A to foot 0 even when foot 1 has no good
+            # 2nd choice — leaving foot 1 as air when swapping would keep
+            # both as contact. We solve the proper linear-sum-assignment: for
+            # each of ``nc^nc`` combinations of "each foot picks one of its
+            # nc-nearest patches", score total distance (contact cost = dist;
+            # air cost = radius) with a distinctness penalty, and pick the
+            # combo with min total cost. For nc=4 this is 256 combinations
+            # per candidate; fully vectorized over K.
+            projected_xy = projected_world[..., :2].reshape(-1, 2)  # [K*nc, 2]
+            patch_xy = patch_pts[:, :2].contiguous()
+            dists = torch.cdist(projected_xy, patch_xy).view(K, nc, -1)  # [K, nc, N_p]
+            radius = float(self.cfg.terrain_presence_radius)
+
+            # Each foot's nc-nearest patches (the only ones worth considering).
+            topk_dists, topk_idx = dists.topk(nc, dim=-1, largest=False)  # [K, nc, nc]
+
+            # Enumerate nc^nc combinations: ``combo[c, i]`` = rank (0..nc-1)
+            # that foot ``i`` picks under combination ``c``.
+            rank_axes = [torch.arange(nc, device=device)] * nc
+            combo = torch.cartesian_prod(*rank_axes).view(-1, nc)  # [nc^nc, nc]
+            C = combo.shape[0]
+            gather_rank = combo.view(1, C, nc, 1).expand(K, C, nc, 1)
+            chosen_idx = torch.gather(topk_idx.unsqueeze(1).expand(-1, C, -1, -1), 3, gather_rank).squeeze(-1)
+            chosen_dist = torch.gather(topk_dists.unsqueeze(1).expand(-1, C, -1, -1), 3, gather_rank).squeeze(-1)
+
+            # Score: per-foot cost = dist if contact, else radius (air penalty).
+            # Sum over feet; min-total combination wins.
+            contact_mask_c = chosen_dist < radius  # [K, C, nc]
+            cost_per_foot = torch.where(contact_mask_c, chosen_dist, torch.full_like(chosen_dist, radius))
+            total_cost = cost_per_foot.sum(dim=-1)  # [K, C]
+
+            # Distinctness penalty: contact feet must pick distinct patches.
+            # Air feet don't conflict (they don't actually land on a patch) —
+            # encode them with unique negative sentinels per slot so the
+            # pairwise-equal check only sees real contact conflicts.
+            neg_sentinel = -torch.arange(1, nc + 1, device=device).view(1, 1, nc)
+            eff_idx = torch.where(contact_mask_c, chosen_idx, neg_sentinel)
+            sorted_eff = eff_idx.sort(dim=-1).values
+            has_dup = (sorted_eff[..., 1:] == sorted_eff[..., :-1]).any(dim=-1)  # [K, C]
+            total_cost = torch.where(has_dup, torch.full_like(total_cost, float("inf")), total_cost)
+
+            best_c = total_cost.argmin(dim=-1)  # [K]
+            row_idx = torch.arange(K, device=device)
+            nearest_idx = chosen_idx[row_idx, best_c]  # [K, nc]
+            nearest_dist = chosen_dist[row_idx, best_c]
+            is_contact_full = nearest_dist < radius  # [K, nc]
             patch_gather = patch_pts[nearest_idx.view(-1)].view(K, nc, 3)
             patch_gather[..., 2] = patch_gather[..., 2] + self.foot_ground_offset
             contact_ik = torch.where(is_contact_full.unsqueeze(-1), patch_gather, projected_world)
