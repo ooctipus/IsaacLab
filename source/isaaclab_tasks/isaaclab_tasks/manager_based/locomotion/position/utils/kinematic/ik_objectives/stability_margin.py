@@ -33,6 +33,7 @@ def _stability_margin_residuals(
     body_mass: wp.array1d(dtype=wp.float32),
     n_bodies: int,
     foot_body_indices_ccw: wp.array1d(dtype=wp.int32),
+    is_contact_ccw: wp.array2d(dtype=wp.uint8),
     n_feet: int,
     total_mass_inv: float,
     weight: float,
@@ -40,14 +41,29 @@ def _stability_margin_residuals(
     residuals: wp.array2d(dtype=wp.float32),
 ):
     """Residual = ``max(0, -margin)`` where margin is the signed distance
-    from the CoM (XY projection) to the nearest edge of the support
-    polygon. Positive margin → inside with room; negative → outside by
-    ``|margin|``. Foot indices are passed pre-sorted CCW so that each
-    consecutive pair ``(i, i+1)`` forms an oriented edge.
+    from the CoM (XY projection) to the nearest edge of the *active*
+    support polygon. Only feet with ``is_contact_ccw[row, i] != 0`` form
+    polygon vertices; lifted feet are skipped so tripod/biped placements
+    compute the CoM constraint against their actual contact set. Support
+    polygon edges connect consecutive active contacts in CCW order.
+
+    Returns zero residual when fewer than 3 feet are in contact (support
+    collapses to a point or segment -- measure-zero stability, left to
+    the :class:`SupportPolygonStability` criterion to gate rigorously).
     """
     row = wp.tid()
 
-    # Mass-weighted CoM in XY.
+    # Count active contacts; disable objective for <3-contact problems.
+    n_active = int(0)
+    for i in range(n_feet):
+        if is_contact_ccw[row, i] != wp.uint8(0):
+            n_active = n_active + 1
+    if n_active < 3:
+        residuals[row, start_idx] = 0.0
+        return
+
+    # Mass-weighted CoM in XY (over the whole body, not just active feet
+    # -- physical CoM doesn't care about contact state).
     com_x, com_y = float(0.0), float(0.0)
     for b in range(n_bodies):
         pos = wp.transform_get_translation(body_q[row, b])
@@ -56,10 +72,18 @@ def _stability_margin_residuals(
     com_x = com_x * total_mass_inv
     com_y = com_y * total_mass_inv
 
-    # Minimum signed distance to any edge. CCW ordering → positive inside.
+    # Minimum signed distance to any active edge. For each active foot i
+    # find the next active foot j (wrapping CCW). The resulting polygon
+    # traverses the n_active contacts in order.
     min_signed = float(1.0e9)
     for i in range(n_feet):
+        if is_contact_ccw[row, i] == wp.uint8(0):
+            continue
         j = (i + 1) % n_feet
+        for _ in range(n_feet):
+            if is_contact_ccw[row, j] != wp.uint8(0):
+                break
+            j = (j + 1) % n_feet
         vi = wp.transform_get_translation(body_q[row, foot_body_indices_ccw[i]])
         vj = wp.transform_get_translation(body_q[row, foot_body_indices_ccw[j]])
         ex = vj[0] - vi[0]
@@ -108,6 +132,10 @@ class IKObjectiveStabilityMargin(ik.IKObjective):
         bm = model.body_mass.numpy()
         self._total_mass_inv = float(1.0 / (bm.sum() + 1e-10))
         self._body_mass_np = bm.astype(np.float32)
+        # Stash pipeline for is_contact read-out in init_buffers (called
+        # by the solver after the sampler has populated the buffer).
+        self._pipeline = pipeline
+        self._foot_ccw_order_np = np.asarray(pipeline.sampler._foot_ccw_order, dtype=np.int64)
 
     def supports_analytic(self) -> bool:
         return False
@@ -116,6 +144,8 @@ class IKObjectiveStabilityMargin(ik.IKObjective):
         return 1
 
     def init_buffers(self, model: newton.Model, jacobian_mode: ik.IKJacobianType) -> None:
+        import torch
+
         self._require_batch_layout()
         d = self.device
         self._foot_body_indices = wp.array(self._foot_body_indices_np, dtype=wp.int32, device=d)
@@ -124,6 +154,20 @@ class IKObjectiveStabilityMargin(ik.IKObjective):
         for b in range(self.n_batch):
             e[b, self.residual_offset] = 1.0
         self._e_array = wp.array(e.flatten(), dtype=wp.float32, device=d)
+
+        # Snapshot ``is_contact`` per problem from the populated buffer,
+        # reindex from sampler-slot order into CCW order so the kernel
+        # can correlate ``foot_body_indices_ccw[i]`` with
+        # ``is_contact_ccw[row, i]``. The sampler ran before the IK
+        # objectives were built, so the buffer contents are stable.
+        buf = self._pipeline.buffer
+        n = self.n_batch
+        is_c_slot = buf.is_contact_t[: n * self.n_feet].view(n, self.n_feet)
+        ccw_t = torch.from_numpy(self._foot_ccw_order_np).to(is_c_slot.device)
+        is_c_ccw = is_c_slot.index_select(dim=1, index=ccw_t).to(torch.uint8).contiguous()
+        # Keep a torch reference alive so the Warp view stays valid.
+        self._is_contact_ccw_t = is_c_ccw
+        self._is_contact_ccw = wp.from_torch(is_c_ccw, dtype=wp.uint8)
 
     def compute_residuals(self, body_q, joint_q, model, residuals, start_idx, problem_idx) -> None:
         wp.launch(
@@ -134,6 +178,7 @@ class IKObjectiveStabilityMargin(ik.IKObjective):
                 self._body_mass_dev,
                 self.n_bodies,
                 self._foot_body_indices,
+                self._is_contact_ccw,
                 self.n_feet,
                 self._total_mass_inv,
                 self.weight,

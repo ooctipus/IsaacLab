@@ -307,6 +307,30 @@ def main():
         ),
     )
     parser.add_argument(
+        "--use_template_projection",
+        action="store_true",
+        help=(
+            "Enable the template-projection query path"
+            " (:attr:`TerrainFirstSamplerCfg.use_template_projection`)."
+            " Projects FK templates onto terrain with per-foot presence"
+            " check instead of the legacy sector reservoir + shape-match."
+            " Requires ``--template_min_on_plane >= 2`` for meaningful"
+            " yield."
+        ),
+    )
+    parser.add_argument(
+        "--template_min_on_plane",
+        type=int,
+        default=3,
+        help=(
+            "Keep only templates with at least this many feet on the"
+            " stance plane (see"
+            " :attr:`TerrainFirstSamplerCfg.template_min_on_plane`)."
+            " ``3`` (default) gives a stance-like pool of 4-contact and"
+            " tripod templates. ``-1`` disables filtering."
+        ),
+    )
+    parser.add_argument(
         "--no_viewer",
         action="store_true",
         help="Skip the viser viewer; print diagnostics and exit.",
@@ -412,10 +436,16 @@ def main():
     print(f"IK wts  : base_rot={base_rot_weight}, base_pos={base_pos_weight}, gravity={gravity_weight}")
 
     patch_cfg = PatchSamplingCfg(x_range=sampler_x_range, y_range=sampler_y_range)
+    common_kw = dict(
+        patch=patch_cfg,
+        min_contacts=args.min_contacts,
+        use_template_projection=args.use_template_projection,
+        template_min_on_plane=args.template_min_on_plane,
+    )
     if args.sampler == "terrain_first":
-        sampler_cfg = TerrainFirstSamplerCfg(patch=patch_cfg, min_contacts=args.min_contacts)
+        sampler_cfg = TerrainFirstSamplerCfg(**common_kw)
     else:
-        sampler_cfg = TemplateMatchedSamplerCfg(patch=patch_cfg, min_contacts=args.min_contacts)
+        sampler_cfg = TemplateMatchedSamplerCfg(**common_kw)
     print(f"Sampler : {args.sampler} min_contacts={args.min_contacts}")
 
     pipeline_cfg = RetargetPipelineCfg(
@@ -459,6 +489,16 @@ def main():
     if buf.num_selected == 0:
         print("No valid candidates. Exiting.")
         sys.exit(1)
+
+    # Selected placements' contact-count histogram.
+    sel_idx = buf._selected[: buf.num_selected].to(torch.long)
+    nc = len(foot_ids)
+    is_c_sel = buf.is_contact_t.view(-1, nc)[sel_idx]
+    n_active_sel = is_c_sel.to(torch.int32).sum(dim=-1).cpu().tolist()
+    nc_hist = {}
+    for k in n_active_sel:
+        nc_hist[int(k)] = nc_hist.get(int(k), 0) + 1
+    print(f"  Selected placement contact-count histogram: {dict(sorted(nc_hist.items()))}")
 
     if args.no_viewer:
         print("\n--no_viewer: exiting without visualization.")

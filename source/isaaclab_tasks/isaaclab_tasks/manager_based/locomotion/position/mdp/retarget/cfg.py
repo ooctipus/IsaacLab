@@ -201,6 +201,68 @@ class TerrainFirstSamplerCfg(SamplerBaseCfg):
     reject more polygons; looser values accept more including near-
     degenerate shapes. ``0.08`` matches empirical inter-foot spread
     of ~3-6 cm around default stance on typical quadrupeds.
+
+    Unused when :attr:`use_template_projection` is ``True``.
+    """
+
+    use_template_projection: bool = False
+    """Project FK templates onto terrain instead of matching.
+
+    When ``True``, the query-time path switches from
+    "sample-polygon-then-NN-match" to "pick-template-then-project":
+
+    1. Sample a random FK template per candidate (no library FPS, no
+       symmetry augmentation needed -- all FK samples are realizable
+       polygons by construction).
+    2. Un-canonicalize the template at the candidate's ``(center, yaw)``
+       to get world-frame per-foot positions.
+    3. For each foot, ``torch.cdist`` against morphological patches; if
+       the nearest patch is within :attr:`foot_contact_radius`, the
+       foot contacts that patch. Otherwise the foot is air.
+    4. Templates whose canonical ``|z|`` exceeds
+       :attr:`foot_contact_radius` for some slot mark that slot as
+       air-in-FK-pose regardless of terrain.
+
+    Contact count emerges from template+terrain geometry: no
+    reachability sectors, no shape match, no ``matched_perm``. This
+    makes 2-contact/3-contact stances first-class rather than
+    fallbacks. Dropped when ``False`` (legacy behavior).
+    """
+
+    on_plane_tol: float = 0.03
+    """Canonical |z| [m] within which a foot is on the stance plane.
+
+    Build-time classifier: a template slot is on-plane iff its
+    canonical ``|z|`` is below this threshold. Physical — a foot
+    sole within ~3 cm of the stance plane is touching / near-touching.
+    Unused when :attr:`use_template_projection` is ``False``.
+    """
+
+    terrain_presence_radius: float = 0.15
+    """xy radius [m] for "is there a morph patch near this foot's projected xy?".
+
+    Query-time presence check: ``torch.cdist`` between projected foot
+    xy and morph-patch xy; foot is contact iff nearest patch is within
+    this radius AND template slot is on-plane. Tuned to morph-patch
+    density: morph sampling yields ~15 cm grid on typical n_desired,
+    so 15 cm catches the nearest patch reliably without requiring the
+    foot to land exactly on a grid point. Unused when
+    :attr:`use_template_projection` is ``False``.
+    """
+
+    template_min_on_plane: int = -1
+    """Keep templates with at least this many feet on the stance plane.
+
+    FK uniform joint sampling spans the full reachable foot workspace,
+    including configurations where legs stick out in arbitrary
+    directions. Only a small fraction (~7% of 25k on anymal_c at
+    :attr:`foot_contact_radius` = 0.05) have all 4 feet coplanar;
+    this filter keeps the ``{4, 3, 2, ...}``-on-plane subset that
+    represents stance-like configurations suitable for projection
+    onto terrain. ``-1`` (default) disables the filter (keep all
+    templates). The legacy shape-match path does not need the filter;
+    set this to ``3`` or ``4`` together with
+    :attr:`use_template_projection`.
     """
 
 

@@ -403,6 +403,21 @@ class TerrainFirstSampler(SamplerBase):
         # apply slot permutations pre-canonicalization and re-canonicalize.
         self._fk_foot_xyz_world = foot_xyz[::stride][:n_retained].contiguous()
         self._fk_shape_tol = float(self.cfg.fk_shape_tol)
+        # Template-intrinsic on-plane flag: canonical |z| within on_plane_tol
+        # → slot is on the stance plane for this FK pose. Used by the
+        # template-projection path (cfg.use_template_projection).
+        self._fk_is_on_plane = (self._fk_shape_samples[..., 2].abs() < float(self.cfg.on_plane_tol)).contiguous()
+        # Filter templates to stance-like (at least ``template_min_on_plane``
+        # feet coplanar). FK joint-uniform sampling spans the reachable
+        # foot workspace, but most joint configs produce legs sticking out
+        # in directions unrelated to stance. Only the coplanar subset makes
+        # sense to stamp onto a terrain's morph-patch cloud.
+        min_on_plane = int(self.cfg.template_min_on_plane)
+        if min_on_plane > 0:
+            keep_mask = self._fk_is_on_plane.sum(dim=-1) >= min_on_plane
+            self._fk_shape_samples = self._fk_shape_samples[keep_mask].contiguous()
+            self._fk_foot_xyz_world = self._fk_foot_xyz_world[keep_mask].contiguous()
+            self._fk_is_on_plane = self._fk_is_on_plane[keep_mask].contiguous()
 
         # CCW-reordered envelope buffers keyed by sector index -- fed into
         # :func:`_per_foot_reachability_sample` each sampler call. Built
@@ -535,6 +550,8 @@ class TerrainFirstSampler(SamplerBase):
         buffer: RetargetBuffer,
         n_desired: int,
     ) -> SamplerOutput:
+        if self.cfg.use_template_projection:
+            return self._project_call(wp_mesh, origin, buffer, n_desired)
         self.sub_timings.clear()
         patch: PatchSamplingCfg = self.cfg.patch
         nc = buffer.num_contacts
@@ -729,6 +746,159 @@ class TerrainFirstSampler(SamplerBase):
             _prepare_ik_batched(v_contact, v_base, v_yaw, self._default_joint_q_t, buffer)
             buffer._geom_valid[:n_ik] = True
 
+            buffer.num_written = n_ik
+            buffer.num_geometry_valid = n_ik
+
+        return SamplerOutput(
+            num_written=n_ik,
+            reject_stats=reject,
+            slot_assignment=slot_assignment,
+            is_contact=is_contact_ik,
+            diagnostics=diagnostics,
+        )
+
+    def _project_call(
+        self,
+        wp_mesh: wp.Mesh,
+        origin: np.ndarray,
+        buffer: RetargetBuffer,
+        n_desired: int,
+    ) -> SamplerOutput:
+        """Template-projection query path.
+
+        Active when :attr:`TerrainFirstSamplerCfg.use_template_projection`
+        is ``True``. Samples one FK template per candidate, un-canonicalizes
+        it at a random ``(center, yaw)``, and classifies each foot as
+        contact iff the template slot is on-plane AND a morphological
+        patch is within :attr:`foot_contact_radius` of its projected xy.
+        No reach envelope, no shape NN match, no cyclic expansion --
+        contact count emerges from template + terrain geometry.
+        """
+        self.sub_timings.clear()
+        patch: PatchSamplingCfg = self.cfg.patch
+        nc = buffer.num_contacts
+        max_n = buffer.max_candidates
+        device = self.kin.device
+
+        sizing = self.sizing(n_desired)
+        num_patches = max(200, sizing.n_morph_patches)
+
+        with self._time("morph"):
+            fc_cfg = MorphologicalPatchSamplingCfg(
+                num_patches=num_patches,
+                footprint=CircleFootprintCfg(radius=patch.contact_radius),
+                max_height_diff=patch.max_height_diff,
+                horizontal_scale=patch.horizontal_scale,
+                oversample_ratio=patch.oversample_ratio,
+                x_range=patch.x_range if patch.x_range is not None else (-1e6, 1e6),
+                y_range=patch.y_range if patch.y_range is not None else (-1e6, 1e6),
+            )
+            fp = fc_cfg.func(wp_mesh, origin, fc_cfg)
+            dev_str = fp.device
+            origin_t = torch.tensor(origin, dtype=torch.float, device=dev_str)
+            fp[:, :3] += origin_t
+            patch_pts = fp[:, :3].contiguous()  # [N_p, 3]
+            n_pts = patch_pts.shape[0]
+        for _sub_name, _sub_dt in MORPH_TIMINGS.items():
+            key = f"morph.{_sub_name}"
+            self.sub_timings[key] = self.sub_timings.get(key, 0.0) + _sub_dt
+
+        K = min(sizing.max_neighborhoods, max_n)
+        target_n = min(n_desired * sizing.oversample_candidates, max_n)
+
+        torch.manual_seed(42)
+        if torch.device(dev_str).type == "cuda":
+            torch.cuda.manual_seed_all(42)
+
+        with self._time("project"):
+            # Per-candidate (center, yaw, template_idx).
+            centers = patch_pts[torch.randint(0, n_pts, (K,), device=dev_str)]  # [K, 3]
+            yaws = torch.rand(K, device=dev_str) * (2.0 * np.pi)
+            n_tpl = self._fk_shape_samples.shape[0]
+            tpl_idx = torch.randint(0, n_tpl, (K,), device=dev_str)
+            tpl_canon = self._fk_shape_samples[tpl_idx]  # [K, nc, 3]
+            tpl_on_plane = self._fk_is_on_plane[tpl_idx]  # [K, nc]
+
+            # Un-canonicalize: undo per-foot de-nominal, then apply candidate yaw,
+            # then translate by candidate center. Canonical z is already polygon-
+            # centroid-relative; sum with candidate terrain z for world z.
+            cos_n = torch.cos(self._nominal_angle_t)  # [nc]
+            sin_n = torch.sin(self._nominal_angle_t)
+            cx = tpl_canon[..., 0]  # [K, nc]
+            cy = tpl_canon[..., 1]
+            cz = tpl_canon[..., 2]
+            mid_x = cos_n * cx - sin_n * cy  # [K, nc]
+            mid_y = sin_n * cx + cos_n * cy
+            cos_y = torch.cos(yaws).unsqueeze(-1)  # [K, 1]
+            sin_y = torch.sin(yaws).unsqueeze(-1)
+            world_x = cos_y * mid_x - sin_y * mid_y + centers[:, 0:1]  # [K, nc]
+            world_y = sin_y * mid_x + cos_y * mid_y + centers[:, 1:2]
+            world_z = cz + centers[:, 2:3]
+            projected_world = torch.stack([world_x, world_y, world_z], dim=-1)  # [K, nc, 3]
+
+            # Per-foot nearest morph patch (brute-force cdist — K*nc queries
+            # against N_pts patches; GPU-trivial up to ~10k patches).
+            projected_xy = projected_world[..., :2].reshape(-1, 2)  # [K*nc, 2]
+            patch_xy = patch_pts[:, :2].contiguous()
+            dists = torch.cdist(projected_xy, patch_xy)  # [K*nc, N_p]
+            nearest_dist, nearest_idx = dists.min(dim=-1)
+            nearest_dist = nearest_dist.view(K, nc)
+            nearest_idx = nearest_idx.view(K, nc)
+            patch_near = nearest_dist < float(self.cfg.terrain_presence_radius)  # [K, nc]
+
+            # Template says this slot is on the stance plane AND terrain has a
+            # patch near the projected position → contact at that patch.
+            # Otherwise → air at the projected world position.
+            is_contact_full = tpl_on_plane & patch_near  # [K, nc]
+            patch_gather = patch_pts[nearest_idx.view(-1)].view(K, nc, 3)
+            patch_gather[..., 2] = patch_gather[..., 2] + self.foot_ground_offset
+            contact_ik = torch.where(is_contact_full.unsqueeze(-1), patch_gather, projected_world)
+
+            n_found = is_contact_full.sum(dim=-1)
+            raw = int(self.cfg.min_contacts)
+            min_contacts = nc if (raw < 0 or raw > nc) else max(1, raw)
+            out_of_reach = n_found < min_contacts
+
+            valid = ~out_of_reach
+            all_valid_idx = valid.nonzero(as_tuple=False).squeeze(-1)
+            n_all_valid = all_valid_idx.shape[0]
+            n_valid = min(n_all_valid, target_n, max_n)
+
+        with self._time("sampler_fps"):
+            if n_all_valid > n_valid:
+                centroid_xyz = contact_ik[all_valid_idx].mean(dim=-2)
+                local_idx = grid_bucket_downsample(centroid_xyz, n_valid)
+                valid_idx = all_valid_idx[local_idx]
+            else:
+                valid_idx = all_valid_idx
+
+        reject = {"out_of_reach": int(out_of_reach.sum())}
+        diagnostics: dict[str, object] = {
+            "n_contact_histogram": torch.bincount(n_found[valid_idx], minlength=nc + 1).detach().clone(),
+        }
+
+        if n_valid == 0:
+            buffer.num_written = 0
+            buffer.num_geometry_valid = 0
+            return SamplerOutput(num_written=0, reject_stats=reject, diagnostics=diagnostics)
+
+        with self._time("prepare_ik"):
+            v_contact = contact_ik[valid_idx].contiguous()  # [n_valid, nc, 3]
+            is_contact_ik = is_contact_full[valid_idx].contiguous()
+            # Identity slot assignment: template positions are already slot-ordered.
+            slot_assignment = (
+                torch.arange(nc, dtype=torch.int32, device=device).expand(v_contact.shape[0], nc).contiguous()
+            )
+            centroid_sel = v_contact.mean(dim=-2)
+            v_base = torch.stack(
+                [centroid_sel[..., 0], centroid_sel[..., 1], centroid_sel[..., 2] + self.standing_height],
+                dim=-1,
+            )
+            v_yaw = yaws[valid_idx].contiguous()
+
+            n_ik = v_contact.shape[0]
+            _prepare_ik_batched(v_contact, v_base, v_yaw, self._default_joint_q_t, buffer)
+            buffer._geom_valid[:n_ik] = True
             buffer.num_written = n_ik
             buffer.num_geometry_valid = n_ik
 
