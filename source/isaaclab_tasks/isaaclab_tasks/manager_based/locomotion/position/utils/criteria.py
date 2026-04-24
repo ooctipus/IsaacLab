@@ -203,6 +203,7 @@ class SupportPolygonStability:
         wp_mesh: object = None,
     ) -> None:
         self.segment_tol_frac = 0.05 if cfg is None else cfg.segment_tol_frac
+        self.min_support_extent = 0.1 if cfg is None else cfg.min_support_extent
 
     def __call__(self, buffer: RetargetBuffer, N: int) -> torch.Tensor:
         nc = buffer.num_contacts
@@ -231,6 +232,19 @@ class SupportPolygonStability:
             sort_idx = is_k.to(torch.int32).argsort(dim=-1, descending=True, stable=True)
             active = torch.gather(ct_k, 1, sort_idx.unsqueeze(-1).expand(-1, -1, 2))[:, :k]
 
+            # Degenerate polygon guard: active contacts must be physically
+            # spread apart (max pairwise xy distance ≥ ``min_support_extent``).
+            # Without this, multiple contact feet snapped to the same terrain
+            # patch produce a zero-length segment / zero-area triangle whose
+            # cross-product tests pass trivially -- a "polygon" that's really
+            # a point.
+            if self.min_support_extent > 0:
+                diff = active.unsqueeze(2) - active.unsqueeze(1)  # [Nk, k, k, 2]
+                max_pair = diff.norm(dim=-1).amax(dim=(1, 2))  # [Nk]
+                extent_ok = max_pair >= self.min_support_extent
+            else:
+                extent_ok = torch.ones(idx_k.shape[0], device=buffer.device, dtype=torch.bool)
+
             if k == 2:
                 a = active[:, 0]
                 b = active[:, 1]
@@ -257,7 +271,7 @@ class SupportPolygonStability:
                 cross = edge[..., 0] * to_p[..., 1] - edge[..., 1] * to_p[..., 0]
                 ok = (cross >= 0).all(dim=1)
 
-            result[idx_k] = ok
+            result[idx_k] = ok & extent_ok
 
         return result
 
