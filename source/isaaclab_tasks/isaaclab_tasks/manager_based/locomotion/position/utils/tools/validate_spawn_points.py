@@ -376,6 +376,24 @@ def main():
             " :attr:`TerrainFirstSamplerCfg.template_min_on_plane`)."
             " ``3`` (default) gives a stance-like pool of 4-contact and"
             " tripod templates. ``-1`` disables filtering."
+            " Pair with ``--min_contacts`` -- if you want"
+            " ``min_contacts=4``, set this to ``4`` too, otherwise"
+            " 3-on-plane templates in the pool can never satisfy the gate."
+        ),
+    )
+    parser.add_argument(
+        "--terrain_presence_radius",
+        type=float,
+        default=0.15,
+        help=(
+            "xy radius [m] for the per-foot terrain presence check in"
+            " the projection path (see"
+            " :attr:`TerrainFirstSamplerCfg.terrain_presence_radius`)."
+            " Larger values increase yield at the cost of looser patch"
+            " alignment. ``0.15`` (default) matches typical morph-patch"
+            " spacing. Bump to ``0.25``-``0.30`` on rough terrain"
+            " (CONTOUR, EXTREME_STAIR) where patches cluster on a few"
+            " flat regions."
         ),
     )
     parser.add_argument(
@@ -468,7 +486,7 @@ def main():
         criteria_list.append(HaaLimitCfg(joint_pattern=haa_pattern, max_angle=1.05))
     criteria_list += [
         SupportPolygonStabilityCfg(),
-        FootPositionErrorCfg(max_err=0.25, aggregate="sum"),
+        FootPositionErrorCfg(max_err=0.1, aggregate="sum"),
         SolverCostOutlierCfg(threshold_multiplier=3.0),
     ]
 
@@ -489,6 +507,7 @@ def main():
         min_contacts=args.min_contacts,
         use_template_projection=args.use_template_projection,
         template_min_on_plane=args.template_min_on_plane,
+        terrain_presence_radius=args.terrain_presence_radius,
     )
     if args.sampler == "terrain_first":
         sampler_cfg = TerrainFirstSamplerCfg(**common_kw)
