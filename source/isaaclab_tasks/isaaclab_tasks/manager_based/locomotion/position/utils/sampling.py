@@ -852,7 +852,28 @@ class TerrainFirstSampler(SamplerBase):
             # different world z (e.g. one step higher on stairs) is
             # still a valid contact. Template contributes only the xy
             # *layout*; terrain decides z and contact/air per foot.
-            is_contact_full = patch_near  # [K, nc]
+            #
+            # Unique-patch dedup: two feet whose projected xys both land
+            # near the same morph patch would otherwise snap to identical
+            # world positions, producing a degenerate point support. For
+            # each patch claimed by multiple contact feet, keep only the
+            # closest (by projected-to-patch distance); demote the others
+            # to air. Ties broken by slot index (pure determinism).
+            contact_claim = patch_near.clone()
+            for i in range(nc):
+                for j in range(nc):
+                    if i == j:
+                        continue
+                    j_wins = (
+                        (nearest_idx[..., j] == nearest_idx[..., i])
+                        & patch_near[..., j]
+                        & (
+                            (nearest_dist[..., j] < nearest_dist[..., i])
+                            | ((nearest_dist[..., j] == nearest_dist[..., i]) & (j < i))
+                        )
+                    )
+                    contact_claim[..., i] = contact_claim[..., i] & ~j_wins
+            is_contact_full = contact_claim  # [K, nc]
             patch_gather = patch_pts[nearest_idx.view(-1)].view(K, nc, 3)
             patch_gather[..., 2] = patch_gather[..., 2] + self.foot_ground_offset
             contact_ik = torch.where(is_contact_full.unsqueeze(-1), patch_gather, projected_world)

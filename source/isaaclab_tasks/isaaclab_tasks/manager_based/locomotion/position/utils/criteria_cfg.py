@@ -94,17 +94,6 @@ class SupportPolygonStabilityCfg(CriterionBaseCfg):
     when ``nc != 2``.
     """
 
-    min_support_extent: float = 0.1
-    """Minimum support polygon size [m].
-
-    Max pairwise distance among active contact feet must be at least
-    this value. Guards against degenerate polygons where two or more
-    contact feet have snapped to the same terrain patch (or nearly-
-    same xy), producing a "polygon" whose cross-product tests pass
-    trivially but whose physical support is effectively a point.
-    Set to ``0`` to disable.
-    """
-
 
 @configclass
 class FootPositionErrorCfg(CriterionBaseCfg):
