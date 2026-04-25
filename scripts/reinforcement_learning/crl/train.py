@@ -51,7 +51,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -98,23 +98,32 @@ parser.add_argument(
 )
 parser.add_argument("--jax_mem_fraction", type=float, default=0.3, help="JAX GPU memory fraction.")
 parser.add_argument("--log_dir", type=str, default="logs/crl")
-parser.add_argument("--track", dest="track", action="store_true", default=False,
-                    help="Enable wandb logging. Requires --wandb_project.")
+parser.add_argument(
+    "--track", dest="track", action="store_true", default=False, help="Enable wandb logging. Requires --wandb_project."
+)
 parser.add_argument("--no-track", dest="track", action="store_false")
-parser.add_argument("--wandb_project", type=str, default=None,
-                    help='E.g. "crl-repro" — used for the reproduction overlay chart.')
-parser.add_argument("--wandb_group", type=str, default=None,
-                    help='E.g. "stage_a_ant_depth4" — groups ours + scaling-crl native under one chart.')
+parser.add_argument(
+    "--wandb_project", type=str, default=None, help='E.g. "crl-repro" — used for the reproduction overlay chart.'
+)
+parser.add_argument(
+    "--wandb_group",
+    type=str,
+    default=None,
+    help='E.g. "stage_a_ant_depth4" — groups ours + scaling-crl native under one chart.',
+)
 parser.add_argument("--wandb_entity", type=str, default=None)
 parser.add_argument("--wandb_tags", type=str, nargs="*", default=None)
-parser.add_argument("--wandb_mode", type=str, default="online",
-                    choices=["online", "offline", "disabled"])
-parser.add_argument("--eval_every", type=int, default=5,
-                    help="Run deterministic eval rollouts every N epochs; 0 disables.")
-parser.add_argument("--num_eval_envs", type=int, default=128,
-                    help="Parallel eval envs per eval pass.")
-parser.add_argument("--goal_success_threshold", type=float, default=0.5,
-                    help="Distance threshold for success on native Brax envs (m for Ant).")
+parser.add_argument("--wandb_mode", type=str, default="online", choices=["online", "offline", "disabled"])
+parser.add_argument(
+    "--eval_every", type=int, default=5, help="Run deterministic eval rollouts every N epochs; 0 disables."
+)
+parser.add_argument("--num_eval_envs", type=int, default=128, help="Parallel eval envs per eval pass.")
+parser.add_argument(
+    "--goal_success_threshold",
+    type=float,
+    default=0.5,
+    help="Distance threshold for success on native Brax envs (m for Ant).",
+)
 args_cli, remaining_args = parser.parse_known_args()
 sys.argv = [sys.argv[0]] + remaining_args
 
@@ -167,15 +176,14 @@ sys.path.insert(0, str(SCALING_CRL_DIR))
 
 import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
-import flax.linen as nn  # noqa: E402
 import optax  # noqa: E402
-from flax.training.train_state import TrainState  # noqa: E402
 
 # Import just the model classes from scaling-crl's train.py. The ``if __name__ ==
 # "__main__":`` block there means bare ``import train`` does not kick off training.
 # We rename to avoid collision with our own train.py.
 import train as _scaling_crl_train  # noqa: E402
 from buffer import TrajectoryUniformSamplingQueue  # noqa: E402
+from flax.training.train_state import TrainState  # noqa: E402
 
 SA_encoder = _scaling_crl_train.SA_encoder
 G_encoder = _scaling_crl_train.G_encoder
@@ -183,8 +191,8 @@ Actor = _scaling_crl_train.Actor
 TrainingState = _scaling_crl_train.TrainingState
 Transition = _scaling_crl_train.Transition
 
-from isaaclab_brax_adapter import BraxLikeState  # noqa: E402, F401
 from crl_core import CRLCoreConfig, eager_actor_step, make_sgd_scan_fn, make_update_fns  # noqa: E402
+from isaaclab_brax_adapter import BraxLikeState  # noqa: E402, F401
 from metric_logger import MetricLogger  # noqa: E402
 
 if not _NATIVE_BRAX_MODE:
@@ -387,8 +395,7 @@ def _build_deterministic_eval(adapter, actor, episode_length: int, num_eval_envs
     obs_dim, goal_start, goal_end = cfg.obs_dim, cfg.goal_start_idx, cfg.goal_end_idx
 
     assert isinstance(adapter, NativeBraxEnv), (
-        "Deterministic eval currently only supported on NativeBraxEnv. "
-        "Pass --eval_every 0 for IsaacLab env runs."
+        "Deterministic eval currently only supported on NativeBraxEnv. Pass --eval_every 0 for IsaacLab env runs."
     )
 
     success_threshold = getattr(cfg, "goal_success_threshold", 0.5)
@@ -495,9 +502,12 @@ def main() -> None:
 
     adapter = _build_env()
     cfg = _resolve_config(adapter)
-    print(f"[CRL] obs_dim={cfg.obs_dim} goal_dim={cfg.goal_dim} "
-          f"goal_slice=[{cfg.goal_start_idx}:{cfg.goal_end_idx}] "
-          f"action_size={cfg.action_size} num_envs={cfg.num_envs}", flush=True)
+    print(
+        f"[CRL] obs_dim={cfg.obs_dim} goal_dim={cfg.goal_dim} "
+        f"goal_slice=[{cfg.goal_start_idx}:{cfg.goal_end_idx}] "
+        f"action_size={cfg.action_size} num_envs={cfg.num_envs}",
+        flush=True,
+    )
 
     # Snapshot the full CLI config for reproducibility.
     wandb_name = f"ours_{args_cli.task.replace(':', '_')}_depth{args_cli.critic_depth}_seed{args_cli.seed}"
@@ -515,9 +525,7 @@ def main() -> None:
 
     rng = jax.random.PRNGKey(args_cli.seed)
     rng, agent_rng = jax.random.split(rng)
-    actor, sa_encoder, g_encoder, training_state, replay_buffer, buffer_state = _build_agents(
-        cfg, agent_rng
-    )
+    actor, sa_encoder, g_encoder, training_state, replay_buffer, buffer_state = _build_agents(cfg, agent_rng)
 
     core_cfg = CRLCoreConfig(
         obs_dim=cfg.obs_dim,
@@ -530,9 +538,7 @@ def main() -> None:
         target_entropy=cfg.target_entropy,
         disable_entropy=cfg.disable_entropy,
     )
-    update_actor_and_alpha, update_critic, relabel_and_batch = make_update_fns(
-        actor, sa_encoder, g_encoder, core_cfg
-    )
+    update_actor_and_alpha, update_critic, relabel_and_batch = make_update_fns(actor, sa_encoder, g_encoder, core_cfg)
     sgd_scan_fn = make_sgd_scan_fn(update_actor_and_alpha, update_critic) if args_cli.scan_sgd else None
     actor_step_fn = jax.jit(lambda params, obs, key: eager_actor_step(actor, params, obs, key))
 
@@ -541,14 +547,17 @@ def main() -> None:
     eval_fn = None
     if args_cli.eval_every > 0 and _NATIVE_BRAX_MODE:
         eval_fn = _build_deterministic_eval(
-            adapter, actor,
+            adapter,
+            actor,
             episode_length=cfg.episode_length,
             num_eval_envs=args_cli.num_eval_envs,
             cfg=cfg,
         )
-        print(f"[CRL] deterministic eval: every {args_cli.eval_every} epochs, "
-              f"num_eval_envs={args_cli.num_eval_envs}, thresh={cfg.goal_success_threshold}",
-              flush=True)
+        print(
+            f"[CRL] deterministic eval: every {args_cli.eval_every} epochs, "
+            f"num_eval_envs={args_cli.num_eval_envs}, thresh={cfg.goal_success_threshold}",
+            flush=True,
+        )
     rng, eval_key = jax.random.split(rng)
 
     env_state = adapter.reset()
@@ -558,9 +567,7 @@ def main() -> None:
     for _ in range(cfg.num_prefill_actor_steps):
         env_state, tr, rng = _eager_rollout(adapter, env_state, actor_step_fn, training_state, rng, cfg)
         buffer_state = replay_buffer.insert(buffer_state, tr)
-        training_state = training_state.replace(
-            env_steps=training_state.env_steps + cfg.env_steps_per_actor_step
-        )
+        training_state = training_state.replace(env_steps=training_state.env_steps + cfg.env_steps_per_actor_step)
 
     # Training loop ------------------------------------------------------
     try:
@@ -572,9 +579,7 @@ def main() -> None:
 
             for _ in range(cfg.num_training_steps_per_epoch):
                 # collect
-                env_state, tr, rng = _eager_rollout(
-                    adapter, env_state, actor_step_fn, training_state, rng, cfg
-                )
+                env_state, tr, rng = _eager_rollout(adapter, env_state, actor_step_fn, training_state, rng, cfg)
                 rollout_rewards.append(float(tr.reward.mean()))
                 rollout_dones.append(float((1.0 - tr.discount).mean()))
                 buffer_state = replay_buffer.insert(buffer_state, tr)
@@ -631,9 +636,7 @@ def main() -> None:
             }
 
             # Deterministic eval pass (every N epochs, including epoch 0 and last).
-            if eval_fn is not None and (
-                epoch % args_cli.eval_every == 0 or epoch == args_cli.num_epochs - 1
-            ):
+            if eval_fn is not None and (epoch % args_cli.eval_every == 0 or epoch == args_cli.num_epochs - 1):
                 eval_key, eval_subkey = jax.random.split(eval_key)
                 eval_metrics = eval_fn(training_state.actor_state.params, eval_subkey)
                 for k, v in eval_metrics.items():

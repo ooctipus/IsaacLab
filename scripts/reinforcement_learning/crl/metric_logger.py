@@ -24,8 +24,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
 class MetricLogger:
@@ -35,12 +34,10 @@ class MetricLogger:
 
     .. code-block:: python
 
-        logger = MetricLogger(log_dir="logs/crl/my_run",
-                               config={"depth": 4, "seed": 1000})
+        logger = MetricLogger(log_dir="logs/crl/my_run", config={"depth": 4, "seed": 1000})
         for epoch in range(num_epochs):
             ...
-            logger.log(step=epoch * 1000, epoch=epoch,
-                       actor_loss=al, critic_loss=cl)
+            logger.log(step=epoch * 1000, epoch=epoch, actor_loss=al, critic_loss=cl)
         logger.close()
 
     The JSONL file format is one record per line:
@@ -77,7 +74,7 @@ class MetricLogger:
                 json.dump(_json_safe(config), f, indent=2, sort_keys=True)
 
         # TensorBoard sink (optional)
-        self._tb_writer: Optional[Any] = None
+        self._tb_writer: Any | None = None
         if enable_tensorboard:
             try:
                 from tensorboardX import SummaryWriter
@@ -87,8 +84,7 @@ class MetricLogger:
                 print(f"[MetricLogger] TensorBoard events -> {tb_dir}", flush=True)
             except ImportError:
                 print(
-                    "[MetricLogger] tensorboardX not installed — JSONL only. "
-                    "Install with: pip install tensorboardX",
+                    "[MetricLogger] tensorboardX not installed — JSONL only. Install with: pip install tensorboardX",
                     flush=True,
                 )
 

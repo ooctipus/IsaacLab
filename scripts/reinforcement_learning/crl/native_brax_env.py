@@ -25,13 +25,12 @@ Key differences from :class:`IsaacLabBraxEnv`:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import jax
+    pass
 
 from isaaclab_brax_adapter import BraxLikeState  # type: ignore[import-not-found]
-
 
 # Registry of (env_id → (obs_dim, goal_start_idx, goal_end_idx)) mirroring the
 # constants in scaling-crl/train.py's ``make_env``. Only envs used by the
@@ -74,7 +73,6 @@ def make_native_brax_env(
         ``(adapter, spec)`` — the adapter is the wrapped env with BraxLike
         interface, the spec carries the obs/goal dims the caller needs.
     """
-    import jax
     from brax import envs as brax_envs
 
     if env_id not in _BRAX_ENV_REGISTRY:
@@ -101,7 +99,9 @@ def make_native_brax_env(
     elif env_id == "humanoid":
         from envs.humanoid import Humanoid  # type: ignore[import-not-found]
 
-        raw_env = Humanoid(backend="spring", exclude_current_positions_from_observation=False, terminate_when_unhealthy=True)
+        raw_env = Humanoid(
+            backend="spring", exclude_current_positions_from_observation=False, terminate_when_unhealthy=True
+        )
     else:
         raise NotImplementedError(env_id)
 
@@ -142,7 +142,7 @@ class NativeBraxEnv:
         self.observation_size = int(brax_env.observation_size)
         assert self.observation_size == spec.obs_dim + spec.goal_dim, (
             f"Brax env {spec.env_id!r} exposes observation_size={self.observation_size} but the "
-            f"registry expects state+goal = {spec.obs_dim}+{spec.goal_dim} = {spec.obs_dim+spec.goal_dim}."
+            f"registry expects state+goal = {spec.obs_dim}+{spec.goal_dim} = {spec.obs_dim + spec.goal_dim}."
             " Update _BRAX_ENV_REGISTRY if upstream obs layout changed."
         )
 

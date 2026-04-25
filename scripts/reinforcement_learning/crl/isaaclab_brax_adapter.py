@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import jax
-    import torch
+
     from isaaclab.envs import ManagerBasedRLEnv
 
 
@@ -64,13 +64,13 @@ class BraxLikeState:
               so scaling-crl's ``actor_step`` can find them in ``extra_fields``.
     """
 
-    obs: "jax.Array"
-    reward: "jax.Array"
-    done: "jax.Array"
-    metrics: dict[str, "jax.Array"] = field(default_factory=dict)
+    obs: jax.Array
+    reward: jax.Array
+    done: jax.Array
+    metrics: dict[str, jax.Array] = field(default_factory=dict)
     info: dict[str, Any] = field(default_factory=dict)
 
-    def replace(self, **updates) -> "BraxLikeState":
+    def replace(self, **updates) -> BraxLikeState:
         """Flax-style functional update helper."""
         from dataclasses import replace as _replace
 
@@ -121,7 +121,7 @@ class IsaacLabBraxEnv:
 
     def __init__(
         self,
-        env: "ManagerBasedRLEnv",
+        env: ManagerBasedRLEnv,
         *,
         goal_group_key: str = "task",
         goal_term_name: str = "target_pos_env",
@@ -137,8 +137,12 @@ class IsaacLabBraxEnv:
         self._layout = self._build_layout()
 
         self.observation_size: int = self._layout.total_dim
-        self.action_size: int = int(env.action_space.shape[-1]) if hasattr(env, "action_space") else int(
-            env.num_actions  # type: ignore[attr-defined]
+        self.action_size: int = (
+            int(env.action_space.shape[-1])
+            if hasattr(env, "action_space")
+            else int(
+                env.num_actions  # type: ignore[attr-defined]
+            )
         )
         self.num_envs: int = int(env.num_envs)  # type: ignore[attr-defined]
 
@@ -181,7 +185,7 @@ class IsaacLabBraxEnv:
         return self._layout
 
     @property
-    def unwrapped(self) -> "ManagerBasedRLEnv":
+    def unwrapped(self) -> ManagerBasedRLEnv:
         return self._env
 
     @property
@@ -205,7 +209,6 @@ class IsaacLabBraxEnv:
             ``[num_envs, observation_size]`` and zero-initialized reward/done/info.
         """
         import jax.numpy as jnp
-
         from dlpack_bridge import torch_to_jax  # type: ignore[import-not-found]
 
         obs_dict, _ = self._env.reset()
@@ -236,7 +239,6 @@ class IsaacLabBraxEnv:
         Returns:
             Next :class:`BraxLikeState`.
         """
-        import jax.numpy as jnp
 
         from dlpack_bridge import jax_to_torch, torch_to_jax  # type: ignore[import-not-found]
 
@@ -246,7 +248,7 @@ class IsaacLabBraxEnv:
         flat = self._flatten_obs(obs_dict)
         obs_j = torch_to_jax(flat.float())
         rew_j = torch_to_jax(rew_t.float().view(-1))
-        done_bool = (terminated_t | truncated_t)
+        done_bool = terminated_t | truncated_t
         done_j = torch_to_jax(done_bool.to(rew_t.dtype).view(-1))
         truncation_j = torch_to_jax(truncated_t.to(rew_t.dtype).view(-1))
 
@@ -286,12 +288,10 @@ class IsaacLabBraxEnv:
             obs_dict = obs_mgr.get_observations()  # type: ignore[attr-defined]
 
         assert isinstance(obs_dict, dict), (
-            "IsaacLabBraxEnv currently supports dict observations only; got "
-            f"{type(obs_dict)}"
+            f"IsaacLabBraxEnv currently supports dict observations only; got {type(obs_dict)}"
         )
         assert self._goal_group_key in obs_dict, (
-            f"goal_group_key={self._goal_group_key!r} not found in obs_dict "
-            f"keys={list(obs_dict.keys())}"
+            f"goal_group_key={self._goal_group_key!r} not found in obs_dict keys={list(obs_dict.keys())}"
         )
 
         # Determine the goal-slice size inside the goal group.
@@ -327,8 +327,7 @@ class IsaacLabBraxEnv:
         else:
             if achieved_group not in group_slices:
                 raise ValueError(
-                    f"achieved_goal_group={achieved_group!r} not in obs groups "
-                    f"{list(group_slices.keys())}"
+                    f"achieved_goal_group={achieved_group!r} not in obs groups {list(group_slices.keys())}"
                 )
             group_start, group_end = group_slices[achieved_group]
             if achieved_slice is None:

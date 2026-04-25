@@ -149,6 +149,9 @@ class RslRlCNNModelCfg(RslRlMLPModelCfg):
         flatten: bool = True
         """Whether to flatten the output of the CNN. Defaults to True."""
 
+        channels_last: bool = False
+        """Pin conv weights and forward inputs to ``torch.channels_last`` on CUDA. Defaults to False."""
+
     cnn_cfg: CNNCfg = MISSING
     """The configuration for the CNN(s)."""
 

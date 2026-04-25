@@ -30,7 +30,6 @@ Everything else in the wandb UI is noise. Feel free to ignore it.
 from __future__ import annotations
 
 import argparse
-import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -80,9 +79,14 @@ def fetch_history(run, metric, x_candidates=("training/envsteps", "env_steps", "
             xs = df[x_key].tolist()
         ys = df[metric].tolist()
         # drop NaNs (wandb leaves NaN when a metric wasn't logged on that step)
-        pairs = [(x, y) for x, y in zip(xs, ys) if x is not None and y is not None
-                 and not (isinstance(x, float) and x != x)
-                 and not (isinstance(y, float) and y != y)]
+        pairs = [
+            (x, y)
+            for x, y in zip(xs, ys)
+            if x is not None
+            and y is not None
+            and not (isinstance(x, float) and x != x)
+            and not (isinstance(y, float) and y != y)
+        ]
         if pairs:
             return [p[0] for p in pairs], [p[1] for p in pairs]
     return [], []
@@ -165,9 +169,11 @@ def main() -> None:
         g = classify_run(r)
         runs_by_group[g].append(r)
 
-    print(f"[fig] found {len(runs_by_group.get('ours', []))} ours, "
-          f"{len(runs_by_group.get('native', []))} native runs "
-          f"in {args.wandb_project}, group={args.wandb_group}")
+    print(
+        f"[fig] found {len(runs_by_group.get('ours', []))} ours, "
+        f"{len(runs_by_group.get('native', []))} native runs "
+        f"in {args.wandb_project}, group={args.wandb_group}"
+    )
     if not runs_by_group:
         raise SystemExit("No runs match the filter. Did you pass the right group name?")
 

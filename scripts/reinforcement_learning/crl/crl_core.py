@@ -18,9 +18,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import flax.linen as nn
 import jax
 import jax.numpy as jnp
-import flax.linen as nn
 
 
 @dataclass(frozen=True)
@@ -132,12 +132,10 @@ def make_update_fns(actor, sa_encoder, g_encoder, cfg: CRLCoreConfig):
         from buffer import TrajectoryUniformSamplingQueue  # type: ignore[import-not-found]
 
         batch_keys = jax.random.split(key, transitions.observation.shape[0])
-        transitions = jax.vmap(
-            TrajectoryUniformSamplingQueue.flatten_crl_fn, in_axes=(None, 0, 0)
-        )((cfg.gamma, cfg.obs_dim, cfg.goal_start_idx, cfg.goal_end_idx), transitions, batch_keys)
-        transitions = jax.tree_util.tree_map(
-            lambda x: jnp.reshape(x, (-1,) + x.shape[2:], order="F"), transitions
+        transitions = jax.vmap(TrajectoryUniformSamplingQueue.flatten_crl_fn, in_axes=(None, 0, 0))(
+            (cfg.gamma, cfg.obs_dim, cfg.goal_start_idx, cfg.goal_end_idx), transitions, batch_keys
         )
+        transitions = jax.tree_util.tree_map(lambda x: jnp.reshape(x, (-1,) + x.shape[2:], order="F"), transitions)
         perm = jax.random.permutation(key, transitions.observation.shape[0])
         transitions = jax.tree_util.tree_map(lambda x: x[perm], transitions)
         num_full = transitions.observation.shape[0] // cfg.batch_size

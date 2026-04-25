@@ -22,9 +22,9 @@ Usage:
     import jax
 
     x = torch.randn(1024, 32, device="cuda")
-    xj = torch_to_jax(x)        # zero-copy; xj lives on the same CUDA device
-    yj = xj * 2.0               # JAX op
-    yt = jax_to_torch(yj)       # zero-copy back
+    xj = torch_to_jax(x)  # zero-copy; xj lives on the same CUDA device
+    yj = xj * 2.0  # JAX op
+    yt = jax_to_torch(yj)  # zero-copy back
     assert yt.device == x.device
 
 Notes:

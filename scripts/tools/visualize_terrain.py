@@ -54,10 +54,10 @@ def _load_terrain_module():
 
     builtins._isaaclab_tasks_registered = True  # type: ignore[attr-defined]
 
-    pkg = importlib.import_module("isaaclab_tasks.manager_based.locomotion.position.terrains")
+    pkg = importlib.import_module("isaaclab_tasks.manager_based.multi_task.terrain.terrains")
     # lazy_export populates sys.modules with the real submodule
     return sys.modules.get(
-        "isaaclab_tasks.manager_based.locomotion.position.terrains.terrain_cfg",
+        "isaaclab_tasks.manager_based.multi_task.terrain.terrains.terrain_cfg",
         pkg,
     )
 

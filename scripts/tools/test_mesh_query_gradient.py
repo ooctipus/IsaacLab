@@ -57,32 +57,41 @@ def main():
     # Build a simple stair: two steps
     # Step 1: z=0, from x=-1 to x=0
     # Step 2: z=0.2, from x=0 to x=1
-    verts = np.array([
-        # Step 1 (tread at z=0)
-        [-1.0, -0.5, 0.0],
-        [0.0, -0.5, 0.0],
-        [0.0, 0.5, 0.0],
-        [-1.0, 0.5, 0.0],
-        # Step 2 (tread at z=0.2)
-        [0.0, -0.5, 0.2],
-        [1.0, -0.5, 0.2],
-        [1.0, 0.5, 0.2],
-        [0.0, 0.5, 0.2],
-        # Riser (vertical face at x=0, from z=0 to z=0.2)
-        [0.0, -0.5, 0.0],
-        [0.0, 0.5, 0.0],
-        [0.0, -0.5, 0.2],
-        [0.0, 0.5, 0.2],
-    ], dtype=np.float32)
+    verts = np.array(
+        [
+            # Step 1 (tread at z=0)
+            [-1.0, -0.5, 0.0],
+            [0.0, -0.5, 0.0],
+            [0.0, 0.5, 0.0],
+            [-1.0, 0.5, 0.0],
+            # Step 2 (tread at z=0.2)
+            [0.0, -0.5, 0.2],
+            [1.0, -0.5, 0.2],
+            [1.0, 0.5, 0.2],
+            [0.0, 0.5, 0.2],
+            # Riser (vertical face at x=0, from z=0 to z=0.2)
+            [0.0, -0.5, 0.0],
+            [0.0, 0.5, 0.0],
+            [0.0, -0.5, 0.2],
+            [0.0, 0.5, 0.2],
+        ],
+        dtype=np.float32,
+    )
 
-    faces = np.array([
-        # Step 1
-        [0, 1, 2], [0, 2, 3],
-        # Step 2
-        [4, 5, 6], [4, 6, 7],
-        # Riser
-        [8, 10, 11], [8, 11, 9],
-    ], dtype=np.int32)
+    faces = np.array(
+        [
+            # Step 1
+            [0, 1, 2],
+            [0, 2, 3],
+            # Step 2
+            [4, 5, 6],
+            [4, 6, 7],
+            # Riser
+            [8, 10, 11],
+            [8, 11, 9],
+        ],
+        dtype=np.int32,
+    )
 
     mesh = wp.Mesh(
         points=wp.array(verts, dtype=wp.vec3),
@@ -107,7 +116,7 @@ def main():
 
     print("=== Closest point sweep across stair edge ===")
     print(f"Query: x in [{x_vals[0]:.2f}, {x_vals[-1]:.2f}], y=0, z=0.3")
-    print(f"Step 1: z=0 (x<0), Step 2: z=0.2 (x>0), Riser at x=0")
+    print("Step 1: z=0 (x<0), Step 2: z=0.2 (x>0), Riser at x=0")
     print()
     print(f"{'x':>6s}  {'closest_x':>9s}  {'closest_z':>9s}  {'dist':>6s}")
     for i in range(0, N, 5):

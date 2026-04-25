@@ -21,20 +21,17 @@ HER's ``goal_start_idx:goal_end_idx`` resolves to the ``achieved_goal`` group
 
 from __future__ import annotations
 
-import torch
 from typing import TYPE_CHECKING
 
-import isaaclab.sim as sim_utils
-from isaaclab.managers import CommandTerm, CommandTermCfg
+import torch
+
+import isaaclab.envs.mdp as mdp
+from isaaclab.managers import CommandTerm, CommandTermCfg, SceneEntityCfg
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
-from isaaclab.managers import RewardTermCfg as RewTerm
-from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.utils import configclass
 
-import isaaclab.envs.mdp as mdp
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
 from .ant_env_cfg import AntEnvCfg
 
 if TYPE_CHECKING:
