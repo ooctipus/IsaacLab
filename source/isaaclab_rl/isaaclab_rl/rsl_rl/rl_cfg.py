@@ -338,6 +338,18 @@ class RslRlPpoAlgorithmCfg:
     Otherwise, the advantage is normalized over the entire collected trajectories.
     """
 
+    returns_method: Literal["gae", "hindsight_mc"] = "gae"
+    """Method for computing critic return targets.
+
+    - ``"gae"``: Generalized Advantage Estimation (standard). Blends TD and MC
+      returns via the lambda parameter. Good default for dense reward settings.
+    - ``"hindsight_mc"``: Hindsight Monte Carlo. Computes exact discounted returns
+      for completed episodes; bootstraps with V(s) only at the horizon cutoff
+      (end of the rollout buffer). Equivalent to GAE with lambda=1. Best suited
+      for sparse/binary reward tasks where bootstrap bias is more harmful than
+      MC variance.
+    """
+
     share_cnn_encoders: bool = False
     """Whether to share the CNN networks between actor and critic, in case CNNModels are used. Defaults to False."""
 
@@ -421,6 +433,8 @@ class RslRlBaseRunnerCfg:
     then it is appended to the run directory's name, i.e. the logging directory's name will become
     ``{time-stamp}_{run_name}``.
     """
+    run_id: str | None = None  
+    """The run ID (e.g. for Weights & Biases). This is the unique identifier for the run as set by the logger."""
 
     logger: Literal["tensorboard", "neptune", "wandb"] = "tensorboard"
     """The logger to use. Defaults to tensorboard."""

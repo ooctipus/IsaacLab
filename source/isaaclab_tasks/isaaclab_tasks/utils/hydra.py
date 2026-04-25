@@ -504,16 +504,12 @@ def _format_unknown_presets_error(unknown: set[str], name_to_paths: dict[str, li
         names = sorted(fingerprint_to_names[paths_tuple])
         if len(names) <= 30:
             lines.append(f"  {', '.join(names)}")
-        else:
             lines.append(f"  {', '.join(names[:25])}, ... ({len(names)} total)")
         shown = list(paths_tuple[:max_paths])
         for p in shown:
             lines.append(f"    -> {p}")
         remaining = len(paths_tuple) - len(shown)
         if remaining > 0:
-            lines.append(f"    ... ({remaining} more)")
-        lines.append("")
-    return "\n".join(lines)
 
 
 def register_task(task_name: str, agent_entry: str) -> tuple:
