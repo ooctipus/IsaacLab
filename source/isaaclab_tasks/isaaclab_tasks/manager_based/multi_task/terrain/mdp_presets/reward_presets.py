@@ -22,18 +22,18 @@ class PositionRewardsCfg:
     mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0001)
 
     undesired_contact = RewTerm(
-        func=mdp.undesired_non_foot_contacts,
+        func=mdp.contact_penalty,
         weight=-0.05,
         params={
-            "sensor_cfg": SceneEntityCfg("contact_forces"),
-            "foot_sensor_cfg": SceneEntityCfg("contact_forces", body_names=FootBodyNamesCfg()),  # type: ignore
+            "exclude_contact_sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=FootBodyNamesCfg(),  # type: ignore
+            ),
             "threshold": 1.0,
         },
     )
 
     fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["oob", "base_contact"]}, weight=-25.0)
-
-    # explore = RewTerm(func=mdp.exploration_reward, weight=0.3, params={"forward_only": True})
 
 
 @configclass

@@ -32,8 +32,7 @@ __all__ = [
     "speeding",
     "incoming_wrench",
     "stall_penalty",
-    "illegal_contact_penalty",
-    "undesired_non_foot_contacts",
+    "contact_penalty",
     "feet_lin_acc_l2",
     "feet_rot_acc_l2",
     "stand_penalty",
@@ -93,7 +92,7 @@ from .observations import (
     command_current_state,
     command_target_state,
 )
-from isaaclab_tasks.manager_based.multi_task.mdp.rewards import command_task_reward, mechanical_power
+from isaaclab_tasks.manager_based.multi_task.mdp.rewards import command_task_reward, contact_penalty, mechanical_power
 from .rewards import (
     task_reward,
     heading_tracking,
@@ -107,8 +106,6 @@ from .rewards import (
     speeding,
     incoming_wrench,
     stall_penalty,
-    illegal_contact_penalty,
-    undesired_non_foot_contacts,
     feet_lin_acc_l2,
     feet_rot_acc_l2,
     stand_penalty,

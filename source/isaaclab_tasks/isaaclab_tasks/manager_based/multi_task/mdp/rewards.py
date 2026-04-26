@@ -21,11 +21,13 @@ from typing import TYPE_CHECKING
 import torch
 import warp as wp
 
-from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation
     from isaaclab.envs import ManagerBasedRLEnv
+    from isaaclab.managers import RewardTermCfg
+    from isaaclab.sensors import ContactSensor
 
 
 def command_task_reward(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> torch.Tensor:
@@ -56,3 +58,38 @@ def mechanical_power(env: ManagerBasedRLEnv, robot_cfg: SceneEntityCfg = SceneEn
     robot: Articulation = env.scene[robot_cfg.name]
     work = torch.sum((wp.to_torch(robot.data.applied_torque) * wp.to_torch(robot.data.joint_vel)).abs(), dim=1)
     return torch.where(torch.isfinite(work), work, torch.zeros_like(work))
+
+
+class contact_penalty(ManagerTermBase):
+    """Penalize contacts on selected sensor bodies."""
+
+    def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        contact_sensor_cfg: SceneEntityCfg | None = cfg.params.get("contact_sensor_cfg")
+        exclude_contact_sensor_cfg: SceneEntityCfg | None = cfg.params.get("exclude_contact_sensor_cfg")
+        if (contact_sensor_cfg is None) == (exclude_contact_sensor_cfg is None):
+            raise ValueError("contact_penalty expects exactly one of contact_sensor_cfg or exclude_contact_sensor_cfg.")
+
+        if contact_sensor_cfg is not None:
+            self.contact_sensor: ContactSensor = env.scene.sensors[contact_sensor_cfg.name]
+            self.body_ids = contact_sensor_cfg.body_ids
+        else:
+            self.contact_sensor: ContactSensor = env.scene.sensors[exclude_contact_sensor_cfg.name]
+            if exclude_contact_sensor_cfg.body_ids == slice(None):
+                self.body_ids = []
+            else:
+                exclude_body_ids = set(exclude_contact_sensor_cfg.body_ids)
+                self.body_ids = [
+                    body_id for body_id in range(self.contact_sensor.num_sensors) if body_id not in exclude_body_ids
+                ]
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        threshold: float,
+        contact_sensor_cfg: SceneEntityCfg | None = None,
+        exclude_contact_sensor_cfg: SceneEntityCfg | None = None,
+    ) -> torch.Tensor:
+        net_contact_forces = wp.to_torch(self.contact_sensor.data.net_forces_w_history)
+        is_contact = torch.max(torch.linalg.norm(net_contact_forces[:, :, self.body_ids], dim=-1), dim=1)[0] > threshold
+        return torch.sum(is_contact, dim=1)
