@@ -55,37 +55,6 @@ def success_terminate(env: ManagerBasedRLEnv, command_name: str = "goal_point"):
     return command_term.get_task_done()
 
 
-def illegal_contact_force_ratio(
-    env: ManagerBasedRLEnv,
-    threshold_ratio: float,
-    sensor_cfg: SceneEntityCfg,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-) -> torch.Tensor:
-    """Terminate when contact force exceeds ``threshold_ratio * total_weight``.
-
-    Threshold is resolved at runtime from the articulation's per-body mass
-    so it scales naturally across robots of different sizes — no per-robot
-    force-threshold preset needed. ``threshold_ratio = 3`` is a reasonable
-    default: routine static contact (lying, kneeling, climbing) tops out
-    around 1× bodyweight, while shock impacts easily exceed 5-10×, so the
-    middle band cleanly separates them.
-
-    Args:
-        threshold_ratio: Multiple of total bodyweight that constitutes an
-            impact.
-        sensor_cfg: Contact sensor + body subset to check.
-        asset_cfg: Articulation whose total mass defines bodyweight.
-    """
-    asset = env.scene[asset_cfg.name]
-    contact_sensor = env.scene.sensors[sensor_cfg.name]
-    # Per-env total weight in N; broadcast against per-env / per-body force.
-    total_mass = wp.to_torch(asset.data.body_mass).sum(dim=-1)  # [num_envs]
-    threshold = threshold_ratio * total_mass * 9.81  # [num_envs]
-    net_contact_forces = wp.to_torch(contact_sensor.data.net_forces_w_history)
-    max_force = torch.max(torch.linalg.norm(net_contact_forces[:, :, sensor_cfg.body_ids], dim=-1), dim=1)[0]
-    return torch.any(max_force > threshold.unsqueeze(-1), dim=1)
-
-
 def speed_terminate(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot"), speed_limit=2.0) -> torch.Tensor:
     robot: Articulation = env.scene[robot_cfg.name]
     speeding = (torch.norm(wp.to_torch(robot.data.root_vel_w), dim=-1) > speed_limit) & (

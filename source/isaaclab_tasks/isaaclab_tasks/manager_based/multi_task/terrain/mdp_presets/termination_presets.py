@@ -42,7 +42,7 @@ class PositionTerminationsCfg(BaseTerminationsCfg):
     )
 
     base_contact = DoneTerm(
-        func=mdp.illegal_contact_force_ratio,
+        func=mdp.illegal_contact_ratio,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=NonFootContactBodyNamesCfg()),  # type: ignore
             "threshold_ratio": 3.0,

@@ -117,7 +117,11 @@ from .rewards import (
     foot_slip_penalty,
     joint_position_penalty,
 )
-from isaaclab_tasks.manager_based.multi_task.mdp.terminations import abnormal_robot_state, out_of_bound
+from isaaclab_tasks.manager_based.multi_task.mdp.terminations import (
+    abnormal_robot_state,
+    illegal_contact_ratio,
+    out_of_bound,
+)
 from .terminations import (
     command_task_done,
     time_out_reach_truncate,
@@ -125,7 +129,6 @@ from .terminations import (
     success,
     success_terminate,
     speed_terminate,
-    illegal_contact_force_ratio,
     log,
     mean_mech_energy_per_joint,
     total_average_mech_energy_per_joint,
