@@ -35,6 +35,8 @@ import importlib.util
 import pytest
 import torch
 
+from ..helpers.multi_task_sim_envs import make_heterogeneous_multi_task_env_cfg, make_minimal_multi_task_env_cfg
+
 # Skip the entire module if the IsaacLab app launcher isn't importable. We probe
 # ``isaaclab.app`` rather than the raw ``isaacsim`` package because some installs
 # expose the app via ``omni.*`` namespace packages without a top-level
@@ -75,132 +77,6 @@ def simulation_app():
     app.close()
 
 
-def _build_minimal_env_cfg():
-    """Smallest possible env cfg exercising the MultiTaskCommand end-to-end."""
-    import isaaclab.sim as sim_utils
-    from isaaclab.assets import AssetBaseCfg
-    from isaaclab.envs import ManagerBasedRLEnvCfg
-    from isaaclab.managers import EventTermCfg as EventTerm
-    from isaaclab.managers import ObservationGroupCfg as ObsGroup
-    from isaaclab.managers import ObservationTermCfg as ObsTerm
-    from isaaclab.managers import RewardTermCfg as RewTerm
-    from isaaclab.managers import SceneEntityCfg
-    from isaaclab.managers import TerminationTermCfg as DoneTerm
-    from isaaclab.scene import InteractiveSceneCfg
-    from isaaclab.sim import SimulationCfg
-    from isaaclab.utils import configclass
-
-    from isaaclab_tasks.manager_based.multi_task.terrain import mdp
-    from isaaclab_tasks.manager_based.multi_task.mdp.commands.multitask.kernels_torch import (
-        ACTIVATION_KERNEL_ID,
-        METRIC_KERNEL_ID,
-        SAMPLER_KERNEL_ID,
-        STATE_KERNEL_ID,
-    )
-    from isaaclab_tasks.manager_based.multi_task.mdp.commands.multitask.multi_task_cfg import (
-        MinMaxSampler,
-        MultiTaskCfg,
-    )
-
-    import isaaclab_assets.robots.anymal as anymal
-
-    def _task_reward(env, command_name="goal_point"):
-        return env.command_manager.get_term(command_name).task_reward
-
-    def _success_done(env, command_name="goal_point"):
-        return env.command_manager.get_term(command_name).task_done
-
-    @configclass
-    class _Scene(InteractiveSceneCfg):
-        terrain = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
-        sky_light = AssetBaseCfg(
-            prim_path="/World/skyLight",
-            spawn=sim_utils.DomeLightCfg(intensity=500.0, color=(0.75, 0.75, 0.75)),
-        )
-        robot = anymal.ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-        robot.spawn.usd_path = (
-            "https://uwlab-assets.s3.us-west-004.backblazeb2.com/Robots/ANYbotics/ANYmal-C/anymal_c.usd"
-        )
-
-    @configclass
-    class _Actions:
-        joint_pos = mdp.JointPositionActionCfg(
-            asset_name="robot", joint_names=[".*"], scale=0.2, use_default_offset=True
-        )
-
-    @configclass
-    class _Commands:
-        goal_point = MultiTaskCfg(
-            resampling_time_range=(10.0, 10.0),
-            debug_vis=False,
-            tasks={
-                "lin_vel": [
-                    MultiTaskCfg.TrackingTaskCfg(
-                        asset_cfg=SceneEntityCfg("robot", body_names="base"),
-                        state_kernel=int(STATE_KERNEL_ID.BODY_LIN_VEL),
-                        metric_kernel=int(METRIC_KERNEL_ID.GEOMETRIC),
-                        activation_kernel=int(ACTIVATION_KERNEL_ID.TANH),
-                        activation_kernel_param=0.3,
-                        sampler=MinMaxSampler(
-                            kernel=int(SAMPLER_KERNEL_ID.UNIFORM),
-                            minimum=[-1.0, -1.0, 0.0],
-                            maximum=[1.0, 1.0, 0.0],
-                        ),
-                    ),
-                ],
-            },
-        )
-
-    @configclass
-    class _Observations:
-        @configclass
-        class PolicyCfg(ObsGroup):
-            base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
-            joint_pos = ObsTerm(func=mdp.joint_pos)
-            goal = ObsTerm(func=mdp.generated_commands, params={"command_name": "goal_point"})
-
-            def __post_init__(self):
-                self.concatenate_terms = True
-
-        policy: PolicyCfg = PolicyCfg()
-
-    @configclass
-    class _Events:
-        reset_joints = EventTerm(
-            func=mdp.reset_joints_by_scale,
-            mode="reset",
-            params={"position_range": (-0.3, 0.3), "velocity_range": (0.0, 0.0)},
-        )
-
-    @configclass
-    class _Rewards:
-        task = RewTerm(func=_task_reward, weight=1.0, params={"command_name": "goal_point"})
-
-    @configclass
-    class _Terminations:
-        time_out = DoneTerm(func=mdp.time_out, time_out=False)
-        success = DoneTerm(func=_success_done, time_out=False, params={"command_name": "goal_point"})
-
-    @configclass
-    class _EnvCfg(ManagerBasedRLEnvCfg):
-        scene: _Scene = _Scene(num_envs=4, env_spacing=2.5)
-        sim: SimulationCfg = SimulationCfg()
-        observations: _Observations = _Observations()
-        actions: _Actions = _Actions()
-        commands: _Commands = _Commands()
-        rewards: _Rewards = _Rewards()
-        terminations: _Terminations = _Terminations()
-        events: _Events = _Events()
-
-        def __post_init__(self):
-            self.decimation = 4
-            self.episode_length_s = 2.0
-            self.sim.dt = 0.005
-            self.sim.render_interval = self.decimation
-
-    return _EnvCfg()
-
-
 def test_multi_task_command_runs_10_steps_in_live_env(simulation_app):
     """Drive the engine through 10 physics steps with random actions; assert core invariants.
 
@@ -219,7 +95,7 @@ def test_multi_task_command_runs_10_steps_in_live_env(simulation_app):
     from isaaclab.envs import ManagerBasedRLEnv
 
     torch.manual_seed(0)
-    env_cfg = _build_minimal_env_cfg()
+    env_cfg = make_minimal_multi_task_env_cfg()
     env = ManagerBasedRLEnv(cfg=env_cfg)
     try:
         env.reset()
@@ -254,207 +130,6 @@ def test_multi_task_command_runs_10_steps_in_live_env(simulation_app):
 # -----------------------------------------------------------------------------
 
 
-def _build_stress_env_cfg(use_warp_dispatch: bool = False):
-    """Four-envs, four-tasks cfg — each env pinned to a distinct task shape.
-
-    Samplers are collapsed (``minimum == maximum``) so every target is
-    deterministic; the test then pins each env's ``task_samples`` and writes a
-    known robot state, which makes the expected terminal reward computable
-    in closed form.
-    """
-    import isaaclab.sim as sim_utils
-    from isaaclab.assets import AssetBaseCfg
-    from isaaclab.envs import ManagerBasedRLEnvCfg
-    from isaaclab.managers import ObservationGroupCfg as ObsGroup
-    from isaaclab.managers import ObservationTermCfg as ObsTerm
-    from isaaclab.managers import RewardTermCfg as RewTerm
-    from isaaclab.managers import SceneEntityCfg
-    from isaaclab.managers import TerminationTermCfg as DoneTerm
-    from isaaclab.scene import InteractiveSceneCfg
-    from isaaclab.sim import SimulationCfg
-    from isaaclab.utils import configclass
-
-    from isaaclab_tasks.manager_based.multi_task.terrain import mdp
-    from isaaclab_tasks.manager_based.multi_task.mdp.commands.multitask.kernels_torch import (
-        ACTIVATION_KERNEL_ID,
-        METRIC_KERNEL_ID,
-        SAMPLER_KERNEL_ID,
-        STATE_KERNEL_ID,
-    )
-    from isaaclab_tasks.manager_based.multi_task.mdp.commands.multitask.multi_task_cfg import (
-        MinMaxSampler,
-        MultiTaskCfg,
-    )
-
-    import isaaclab_assets.robots.anymal as anymal
-
-    def _task_reward(env, command_name="goal_point"):
-        return env.command_manager.get_term(command_name).task_reward
-
-    def _success_done(env, command_name="goal_point"):
-        return env.command_manager.get_term(command_name).task_done
-
-    base_entity = SceneEntityCfg("robot", body_names="base")
-    STANDING_Z = 0.55
-
-    @configclass
-    class _Scene(InteractiveSceneCfg):
-        terrain = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
-        sky_light = AssetBaseCfg(
-            prim_path="/World/skyLight",
-            spawn=sim_utils.DomeLightCfg(intensity=500.0, color=(0.75, 0.75, 0.75)),
-        )
-        robot = anymal.ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-        robot.spawn.usd_path = (
-            "https://uwlab-assets.s3.us-west-004.backblazeb2.com/Robots/ANYbotics/ANYmal-C/anymal_c.usd"
-        )
-
-    @configclass
-    class _Actions:
-        joint_pos = mdp.JointPositionActionCfg(
-            asset_name="robot", joint_names=[".*"], scale=0.2, use_default_offset=True
-        )
-
-    @configclass
-    class _Commands:
-        goal_point = MultiTaskCfg(
-            resampling_time_range=(100.0, 100.0),  # longer than episode — no mid-episode swap.
-            debug_vis=False,
-            use_warp_dispatch=use_warp_dispatch,
-            tasks={
-                # Env 0 — pure-tracking, target v=0 (matches held-rest dynamics), reward→1.
-                "pure_track_zero_vel": [
-                    MultiTaskCfg.TrackingTaskCfg(
-                        asset_cfg=base_entity,
-                        state_kernel=int(STATE_KERNEL_ID.BODY_LIN_VEL),
-                        metric_kernel=int(METRIC_KERNEL_ID.GEOMETRIC),
-                        activation_kernel=int(ACTIVATION_KERNEL_ID.TANH),
-                        activation_kernel_param=0.3,
-                        sampler=MinMaxSampler(
-                            kernel=int(SAMPLER_KERNEL_ID.UNIFORM),
-                            minimum=[0.0, 0.0, 0.0],
-                            maximum=[0.0, 0.0, 0.0],
-                        ),
-                    ),
-                ],
-                # Env 1 — pure-instant body_pos at spawn, LESS w/ loose threshold.
-                "pure_instant_at_spawn": [
-                    MultiTaskCfg.InstantaneousTaskCfg(
-                        asset_cfg=base_entity,
-                        state_kernel=int(STATE_KERNEL_ID.BODY_POS),
-                        metric_kernel=int(METRIC_KERNEL_ID.GEOMETRIC),
-                        activation_kernel=int(ACTIVATION_KERNEL_ID.LESS),
-                        activation_kernel_param=0.1,  # within 10 cm ⇒ achieved
-                        sampler=MinMaxSampler(
-                            kernel=int(SAMPLER_KERNEL_ID.UNIFORM),
-                            minimum=[0.0, 0.0, STANDING_Z],
-                            maximum=[0.0, 0.0, STANDING_Z],
-                        ),
-                    ),
-                ],
-                # Env 2 — mixed instant+tracking, both trivially satisfied.
-                "mixed_reach_and_hold": [
-                    MultiTaskCfg.InstantaneousTaskCfg(
-                        asset_cfg=base_entity,
-                        state_kernel=int(STATE_KERNEL_ID.BODY_POS),
-                        metric_kernel=int(METRIC_KERNEL_ID.GEOMETRIC),
-                        activation_kernel=int(ACTIVATION_KERNEL_ID.LESS),
-                        activation_kernel_param=0.1,
-                        sampler=MinMaxSampler(
-                            kernel=int(SAMPLER_KERNEL_ID.UNIFORM),
-                            minimum=[0.0, 0.0, STANDING_Z],
-                            maximum=[0.0, 0.0, STANDING_Z],
-                        ),
-                    ),
-                    MultiTaskCfg.TrackingTaskCfg(
-                        asset_cfg=base_entity,
-                        state_kernel=int(STATE_KERNEL_ID.BODY_LIN_VEL),
-                        metric_kernel=int(METRIC_KERNEL_ID.GEOMETRIC),
-                        activation_kernel=int(ACTIVATION_KERNEL_ID.TANH),
-                        activation_kernel_param=0.3,
-                        sampler=MinMaxSampler(
-                            kernel=int(SAMPLER_KERNEL_ID.UNIFORM),
-                            minimum=[0.0, 0.0, 0.0],
-                            maximum=[0.0, 0.0, 0.0],
-                        ),
-                    ),
-                ],
-                # Env 3 — pure-tracking unreachable velocity (10 m/s), reward→0.
-                "pure_track_unreachable": [
-                    MultiTaskCfg.TrackingTaskCfg(
-                        asset_cfg=base_entity,
-                        state_kernel=int(STATE_KERNEL_ID.BODY_LIN_VEL),
-                        metric_kernel=int(METRIC_KERNEL_ID.GEOMETRIC),
-                        activation_kernel=int(ACTIVATION_KERNEL_ID.TANH),
-                        activation_kernel_param=0.3,
-                        sampler=MinMaxSampler(
-                            kernel=int(SAMPLER_KERNEL_ID.UNIFORM),
-                            minimum=[10.0, 0.0, 0.0],
-                            maximum=[10.0, 0.0, 0.0],
-                        ),
-                    ),
-                ],
-            },
-        )
-
-    @configclass
-    class _Observations:
-        @configclass
-        class PolicyCfg(ObsGroup):
-            # Exercise the full command obs pipeline — reach delta, track delta,
-            # active mask, progress. Catches obs-wiring bugs that the command-term
-            # unit tests can't see.
-            goal_reach = ObsTerm(func=mdp.command_reach, params={"command_name": "goal_point"})
-            goal_track = ObsTerm(func=mdp.command_track, params={"command_name": "goal_point"})
-            goal_active = ObsTerm(func=mdp.command_active, params={"command_name": "goal_point"})
-            goal_progress = ObsTerm(func=mdp.command_progress, params={"command_name": "goal_point"})
-
-            def __post_init__(self):
-                self.concatenate_terms = True
-
-        policy: PolicyCfg = PolicyCfg()
-
-    @configclass
-    class _Events:
-        pass  # No reset events — we pin robot state manually after env.reset().
-
-    @configclass
-    class _Rewards:
-        # ``reward_manager.compute`` scales every term by step_dt. The composer
-        # emits a terminal ``_task_reward ∈ [0, 1]`` meant to be delivered as an
-        # atomic event, not a per-unit-time rate. Setting ``weight = 1/step_dt``
-        # cancels the manager's dt multiplication so the delivered reward
-        # matches the composer's intended range.
-        task = RewTerm(func=_task_reward, weight=1.0, params={"command_name": "goal_point"})
-
-    @configclass
-    class _Terminations:
-        time_out = DoneTerm(func=mdp.time_out, time_out=False)
-        success = DoneTerm(func=_success_done, time_out=False, params={"command_name": "goal_point"})
-
-    @configclass
-    class _EnvCfg(ManagerBasedRLEnvCfg):
-        scene: _Scene = _Scene(num_envs=4, env_spacing=2.5)
-        sim: SimulationCfg = SimulationCfg()
-        observations: _Observations = _Observations()
-        actions: _Actions = _Actions()
-        commands: _Commands = _Commands()
-        rewards: _Rewards = _Rewards()
-        terminations: _Terminations = _Terminations()
-        events: _Events = _Events()
-
-        def __post_init__(self):
-            self.decimation = 4
-            self.episode_length_s = 0.5  # 12 policy steps — bounds wall cost.
-            self.sim.dt = 0.005
-            self.sim.render_interval = self.decimation
-            # Undo reward_manager's dt scaling so terminal reward ∈ [0, 1] is
-            # delivered as intended by the composer.
-            self.rewards.task.weight = 1.0 / (self.sim.dt * self.decimation)
-
-    return _EnvCfg()
-
-
 @pytest.mark.parametrize("use_warp_dispatch", [False, True], ids=["ref", "warp"])
 def test_heterogeneous_multi_task_pinned_state_ground_truth(simulation_app, use_warp_dispatch):
     """Four envs, four pinned tasks, pinned initial state → per-env exact terminal reward.
@@ -481,7 +156,7 @@ def test_heterogeneous_multi_task_pinned_state_ground_truth(simulation_app, use_
     from isaaclab.envs import ManagerBasedRLEnv
 
     torch.manual_seed(0)
-    env_cfg = _build_stress_env_cfg(use_warp_dispatch=use_warp_dispatch)
+    env_cfg = make_heterogeneous_multi_task_env_cfg(use_warp_dispatch=use_warp_dispatch)
     env = ManagerBasedRLEnv(cfg=env_cfg)
     try:
         cmd = env.command_manager.get_term("goal_point")
