@@ -35,7 +35,12 @@ import importlib.util
 import pytest
 import torch
 
-from ..helpers.multi_task_sim_envs import make_heterogeneous_multi_task_env_cfg, make_minimal_multi_task_env_cfg
+from ..helpers.multi_task_sim_envs import (
+    make_heterogeneous_multi_task_env_cfg,
+    make_minimal_multi_task_env_cfg,
+    pin_command_task_samples,
+    write_robot_standing_state,
+)
 
 # Skip the entire module if the IsaacLab app launcher isn't importable. We probe
 # ``isaaclab.app`` rather than the raw ``isaacsim`` package because some installs
@@ -43,6 +48,8 @@ from ..helpers.multi_task_sim_envs import make_heterogeneous_multi_task_env_cfg,
 # ``isaacsim`` module.
 if importlib.util.find_spec("isaaclab.app") is None:
     pytest.skip("IsaacLab app launcher not available — skipping sim-integration test.", allow_module_level=True)
+
+pytestmark = pytest.mark.isaacsim_ci
 
 
 @pytest.fixture(scope="module")
@@ -161,24 +168,15 @@ def test_heterogeneous_multi_task_pinned_state_ground_truth(simulation_app, use_
     try:
         cmd = env.command_manager.get_term("goal_point")
 
-        # Pin resample: every env always gets its designated task id. This
-        # survives success/timeout resets so the test's assumptions hold even
-        # if an env respawns mid-loop.
-        pinned_ids = torch.tensor(
+        pinned_ids = pin_command_task_samples(
+            cmd,
             [
-                cmd.spec.task_names.index("pure_track_zero_vel"),
-                cmd.spec.task_names.index("pure_instant_at_spawn"),
-                cmd.spec.task_names.index("mixed_reach_and_hold"),
-                cmd.spec.task_names.index("pure_track_unreachable"),
+                "pure_track_zero_vel",
+                "pure_instant_at_spawn",
+                "mixed_reach_and_hold",
+                "pure_track_unreachable",
             ],
-            device=env.device,
-            dtype=cmd.task_samples.dtype,
         )
-
-        def _pinned_resample(env_ids: torch.Tensor) -> None:
-            cmd.task_samples[env_ids] = pinned_ids[env_ids]
-
-        cmd.resample_indices = _pinned_resample
 
         obs_dict, _ = env.reset()
 
@@ -236,30 +234,9 @@ def test_heterogeneous_multi_task_pinned_state_ground_truth(simulation_app, use_
             "not produce different canonical channels"
         )
 
-        # Pin initial robot state: standing pose at env origin, joints at default,
-        # velocities zero. Use the backend-consistent *_to_sim_index API.
-        robot = env.scene["robot"]
-        all_env_ids = torch.arange(env.num_envs, device=env.device, dtype=torch.long)
-
-        rest_pose = torch.zeros(env.num_envs, 7, device=env.device)
-        rest_pose[:, :3] = env.scene.env_origins  # (num_envs, 3)
-        rest_pose[:, 2] += 0.55  # Anymal-C nominal standing z (above terrain).
-        rest_pose[:, 6] = 1.0  # xyzw identity → w=1
-
-        robot.write_root_pose_to_sim_index(root_pose=rest_pose, env_ids=all_env_ids)
-        robot.write_root_velocity_to_sim_index(
-            root_velocity=torch.zeros(env.num_envs, 6, device=env.device),
-            env_ids=all_env_ids,
-        )
         import warp as wp
 
-        default_joint_pos = wp.to_torch(robot.data.default_joint_pos).clone()
-        default_joint_vel = wp.to_torch(robot.data.default_joint_vel)
-        robot.write_joint_position_to_sim_index(position=default_joint_pos, env_ids=all_env_ids)
-        robot.write_joint_velocity_to_sim_index(
-            velocity=torch.zeros_like(default_joint_vel),
-            env_ids=all_env_ids,
-        )
+        robot = write_robot_standing_state(env)
 
         max_steps = int(env.max_episode_length)
         zero_actions = torch.zeros(env.action_space.shape, device=env.device)

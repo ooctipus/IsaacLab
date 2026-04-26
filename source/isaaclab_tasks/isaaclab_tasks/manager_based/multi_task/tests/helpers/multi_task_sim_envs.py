@@ -7,6 +7,69 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import torch
+
+
+def pin_command_task_samples(cmd, task_names: list[str]) -> torch.Tensor:
+    """Pin each environment to the corresponding command task name.
+
+    Args:
+        cmd: Command term with ``spec.task_names`` and ``task_samples``.
+        task_names: Task name for each environment, ordered by environment id.
+
+    Returns:
+        Tensor of pinned task ids on the command device.
+    """
+    import torch
+
+    pinned_ids = torch.tensor(
+        [cmd.spec.task_names.index(task_name) for task_name in task_names],
+        device=cmd.task_samples.device,
+        dtype=cmd.task_samples.dtype,
+    )
+
+    def _pinned_resample(env_ids: torch.Tensor) -> None:
+        cmd.task_samples[env_ids] = pinned_ids[env_ids]
+
+    cmd.resample_indices = _pinned_resample
+    return pinned_ids
+
+
+def write_robot_standing_state(env, height: float = 0.55):
+    """Write a nominal standing robot state at each environment origin.
+
+    Args:
+        env: Live manager-based environment.
+        height: Base height above each environment origin [m].
+
+    Returns:
+        The robot articulation from ``env.scene``.
+    """
+    import torch
+    import warp as wp
+
+    robot = env.scene["robot"]
+    env_ids = torch.arange(env.num_envs, device=env.device, dtype=torch.long)
+
+    rest_pose = torch.zeros(env.num_envs, 7, device=env.device)
+    rest_pose[:, :3] = env.scene.env_origins
+    rest_pose[:, 2] += height
+    rest_pose[:, 6] = 1.0
+
+    robot.write_root_pose_to_sim_index(root_pose=rest_pose, env_ids=env_ids)
+    robot.write_root_velocity_to_sim_index(
+        root_velocity=torch.zeros(env.num_envs, 6, device=env.device),
+        env_ids=env_ids,
+    )
+    default_joint_pos = wp.to_torch(robot.data.default_joint_pos).clone()
+    default_joint_vel = wp.to_torch(robot.data.default_joint_vel)
+    robot.write_joint_position_to_sim_index(position=default_joint_pos, env_ids=env_ids)
+    robot.write_joint_velocity_to_sim_index(velocity=torch.zeros_like(default_joint_vel), env_ids=env_ids)
+    return robot
+
 
 def make_minimal_multi_task_env_cfg():
     """Build the smallest live env cfg that exercises :class:`MultiTaskCommand` end-to-end."""
