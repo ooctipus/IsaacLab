@@ -41,6 +41,14 @@ class StateBuffer:
         self._size = min(self._size + n, self.max_size)
         return start, n
 
+    def add_with_tags(self, states: torch.Tensor, tags: torch.Tensor) -> tuple[int, int]:
+        """Append states and write matching per-state tags."""
+        start, n = self.add(states)
+        if n > 0:
+            indices = torch.arange(start, start + n, device=self.tags.device)
+            self.set_tags(indices, tags[:n])
+        return start, n
+
     def sample(self, indices: torch.Tensor) -> torch.Tensor:
         return self.data[indices]
 

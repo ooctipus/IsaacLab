@@ -64,8 +64,13 @@ class reset_accumulator(ManagerTermBase):
             if hasattr(val, "class_type"):
                 self.acceptance_conditions[key] = val.class_type(val, env)
 
-        asset_keys = cfg.params.get("reset_assets")
-        state_dim = reset_state.get_reset_state(self._env, torch.tensor([0], device=env.device), asset_keys).shape[-1]
+        self.reset_assets = list(cfg.params.get("reset_assets", []))
+        self.reset_state_adapters = reset_state.make_reset_state_adapters(env, self.reset_assets)
+        state_dim = reset_state.get_reset_state(
+            self._env,
+            torch.tensor([0], device=env.device),
+            self.reset_state_adapters,
+        ).shape[-1]
         buf_cfg: StateBufferCfg = cfg.params.get("state_buffer_cfg", StateBufferCfg())
         max_size = buf_cfg.size
 
@@ -94,9 +99,7 @@ class reset_accumulator(ManagerTermBase):
     # Buffer accumulation
     # ------------------------------------------------------------------
 
-    def _accumulate(
-        self, env: ManagerBasedRLEnv, env_ids: torch.Tensor, reset_term: EventTermCfg, reset_assets: list[str]
-    ):
+    def _accumulate(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor, reset_term: EventTermCfg):
         """Run a single reset attempt and store valid states in the buffer."""
         if not self._tag_names_resolved:
             buf_cfg: StateBufferCfg = self.cfg.params.get("state_buffer_cfg", StateBufferCfg())
@@ -111,13 +114,12 @@ class reset_accumulator(ManagerTermBase):
 
         valid_env_ids = env_ids[valid_mask]
         if valid_env_ids.numel() > 0:
-            states = reset_state.get_reset_state(self._env, valid_env_ids, reset_assets, is_relative=True)
-            start, n = self.state_buffer.add(states)
-
+            states = reset_state.get_reset_state(self._env, valid_env_ids, self.reset_state_adapters, is_relative=True)
             if self._tag_indices_bind is not None:
                 all_tags = eval(self._tag_indices_bind)  # noqa: S307
-                slot_indices = torch.arange(start, start + n, device=env.device)
-                self.state_buffer.set_tags(slot_indices, all_tags[env_ids][valid_mask][:n])
+                self.state_buffer.add_with_tags(states, all_tags[env_ids][valid_mask])
+            else:
+                self.state_buffer.add(states)
 
         return env_ids[~valid_mask]
 
@@ -140,12 +142,17 @@ class reset_accumulator(ManagerTermBase):
         monitor_exclude_terms: list[str] = [],
     ):
         # 1. Pre-collect until buffer is full
+        if reset_assets and list(reset_assets) != self.reset_assets:
+            raise ValueError(
+                "reset_accumulator reset_assets changed after initialization. "
+                f"Expected {self.reset_assets}, got {list(reset_assets)}."
+            )
         if self.precollecting_phase:
             all_env_ids = torch.arange(env.num_envs, device=env.device)
             pbar = tqdm(total=self.state_buffer.max_size, desc="reset_accumulator")
             while not self.state_buffer.is_full:
                 prev = len(self.state_buffer)
-                self._accumulate(env, all_env_ids, reset_term, reset_assets)
+                self._accumulate(env, all_env_ids, reset_term)
                 pbar.update(len(self.state_buffer) - prev)
             pbar.close()
             self.precollecting_phase = False
@@ -197,7 +204,7 @@ class reset_accumulator(ManagerTermBase):
 
         # 3. Optionally accumulate more states
         if keep_accumulating:
-            env_ids = self._accumulate(env, env_ids, reset_term, reset_assets)
+            env_ids = self._accumulate(env, env_ids, reset_term)
 
         # 4. Sample a slot and apply the state
         if env_ids.numel() > 0:
@@ -213,7 +220,11 @@ class reset_accumulator(ManagerTermBase):
                 slot_idx = torch.randint(0, self.state_buffer.max_size, (len(env_ids),), device=env.device)
             self.sampled_slots[env_ids] = slot_idx.to(self.sampled_slots.dtype)
             reset_state.set_reset_state(
-                self._env, self.state_buffer.sample(slot_idx), env_ids, reset_assets, is_relative=True
+                self._env,
+                self.state_buffer.sample(slot_idx),
+                env_ids,
+                self.reset_state_adapters,
+                is_relative=True,
             )
 
         # 5. Log metrics
