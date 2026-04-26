@@ -17,15 +17,6 @@ from isaaclab.utils.warp import convert_to_warp_mesh
 from .reset_state import temporary_seed
 from .rigid_object_hasher import RigidObjectHasher
 
-try:
-    import pytorch3d  # noqa: F401
-
-    HAVE_P3D = True
-except Exception:
-    HAVE_P3D = False
-from pytorch3d.ops import sample_farthest_points, sample_points_from_meshes
-from pytorch3d.structures import Meshes
-
 if TYPE_CHECKING:
     import trimesh
 
@@ -51,6 +42,12 @@ def sample_object_point_cloud(
     Robust to heterogeneous collider counts across envs. Uses
     ``RigidObjectHasher`` to deduplicate identical colliders.
     """
+    try:
+        from pytorch3d.ops import sample_farthest_points, sample_points_from_meshes
+        from pytorch3d.structures import Meshes
+    except ImportError as err:
+        raise ImportError("sample_object_point_cloud requires the optional dependency 'pytorch3d'.") from err
+
     hasher = (
         rigid_object_hasher
         if rigid_object_hasher is not None
