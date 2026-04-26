@@ -9,6 +9,7 @@ Currently, the following spawners are supported:
 
 * :class:`UsdFileCfg`: Spawn an asset from a USD file.
 * :class:`UrdfFileCfg`: Spawn an asset from a URDF file.
+* :class:`MeshFileCfg`: Spawn an in-memory triangle mesh.
 * :class:`GroundPlaneCfg`: Spawn a ground plane using the grid-world USD file.
 
 """

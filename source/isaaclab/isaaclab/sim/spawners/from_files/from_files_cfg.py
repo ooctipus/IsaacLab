@@ -229,3 +229,25 @@ class GroundPlaneCfg(SpawnerCfg):
 
     physics_material: materials.RigidBodyMaterialCfg = materials.RigidBodyMaterialCfg()
     """Physics material properties. Defaults to the default rigid body material."""
+
+
+@configclass
+class MeshFileCfg(SpawnerCfg):
+    """Create an in-memory triangle mesh prim."""
+
+    func: Callable | str = "{DIR}.from_files:spawn_from_mesh"
+
+    collision_props: schemas.CollisionPropertiesCfg | None = schemas.CollisionPropertiesCfg(collision_enabled=True)
+    """Collision properties to apply to the mesh prim."""
+
+    visual_material_path: str = "visualMaterial"
+    """Path to the visual material to use for the mesh prim."""
+
+    visual_material: materials.VisualMaterialCfg | None = None
+    """Visual material properties."""
+
+    physics_material_path: str = "physicsMaterial"
+    """Path to the physics material to use for the mesh prim."""
+
+    physics_material: materials.PhysicsMaterialCfg | None = None
+    """Physics material properties."""

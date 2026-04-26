@@ -28,13 +28,13 @@ class SceneCfg(InteractiveSceneCfg):
 
     # ground terrain
     terrain = TerrainImporterCfg(
-        prim_path="/World/ground",
+        prim_path="{ENV_REGEX_NS}/ground",
         terrain_type="generator",
         terrain_generator=TerrainGeneratorCfg(
             size=(10.0, 10.0),
             border_width=20.0,
-            num_rows=10,
-            num_cols=20,
+            num_rows=preset(default=10, flat=1),
+            num_cols=preset(default=20, flat=1),
             horizontal_scale=0.1,
             vertical_scale=0.005,
             slope_threshold=0.75,
@@ -43,7 +43,7 @@ class SceneCfg(InteractiveSceneCfg):
             sub_terrains=mdp_presets.SubTerrainPresetCfg(),  # type: ignore
         ),
         max_init_terrain_level=5,
-        collision_group=-1,
+        collision_group=0,
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",
             restitution_combine_mode="multiply",
@@ -77,14 +77,13 @@ class SceneCfg(InteractiveSceneCfg):
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=(2.5, 1.5)),
         debug_vis=False,
-        mesh_prim_paths=["/World/ground"],
+        mesh_prim_paths=["/World/envs/env_0/ground"],
     )
     contact_forces = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/.*",
         history_length=3,
         track_air_time=True,
         debug_vis=True,
-        filter_prim_paths_expr=["/World/ground/terrain/mesh"],
     )
 
 
@@ -134,7 +133,7 @@ class PositionPhysicsCfg(PresetCfg):
 
 @configclass
 class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
-    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=10)
+    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=0)
     sim: SimulationCfg = SimulationCfg(physics=PositionPhysicsCfg())  # type: ignore
     observations: mdp_presets.ObservationsCfg = mdp_presets.ObservationsCfg()  # type: ignore
     actions: ActionsCfg = ActionsCfg()
