@@ -246,10 +246,9 @@ def main() -> None:
             app_launch_end = recorder.timestamp_ns()
             recorder.record_duration_ns("app_launch", app_launch_start, app_launch_end)
             _run_traced_env(env_cfg, recorder)
+            _print_outputs(recorder)
     finally:
         reset_trace_recorder(token)
-
-    _print_outputs(recorder)
 
 
 if __name__ == "__main__":
