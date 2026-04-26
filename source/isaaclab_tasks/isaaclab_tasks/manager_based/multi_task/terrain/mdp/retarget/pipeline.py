@@ -329,7 +329,7 @@ class RetargetPipeline:
         with self._time("ik_solve"):
             max_iters = self.cfg.ik_iterations
             threshold = self.cfg.ik_convergence_threshold
-            batch_size = max(1, min(10, max_iters))
+            batch_size = max(1, min(3, max_iters))
             prev_cost = float("inf")
             total_iters = 0
             for _ in range(0, max_iters, batch_size):
