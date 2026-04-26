@@ -23,6 +23,7 @@ from isaaclab.terrains.trimesh.mesh_terrains_cfg import MeshPlaneTerrainCfg
 
 from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics import NewtonKinematicsCfg
 from isaaclab_tasks.manager_based.multi_task.terrain.mdp.commands.task_table_builder import (
+    _centered_sampling_bounds,
     _joint_order_from_names,
     _pipeline_with_inner_sampling_bounds,
     _state_count_from_spacing,
@@ -104,6 +105,19 @@ class TestTaskTableSizingHelpers:
         assert y_range == pytest.approx((-25.0, 25.0))
         assert _state_count_from_spacing(x_range, y_range, spacing=1.0, area_divisor=3.0) == 833
 
+    def test_centered_sampling_bounds_clip_inner_grid_area(self):
+        x_range, y_range = _centered_sampling_bounds((-50.0, 50.0), (-100.0, 100.0), (10.0, 10.0))
+
+        assert x_range == pytest.approx((-5.0, 5.0))
+        assert y_range == pytest.approx((-5.0, 5.0))
+        assert _state_count_from_spacing(x_range, y_range, spacing=0.1, area_divisor=3.0) == 3333
+
+    def test_centered_sampling_bounds_clamp_to_grid(self):
+        x_range, y_range = _centered_sampling_bounds((-4.0, 6.0), (-3.0, 3.0), (100.0, 4.0))
+
+        assert x_range == pytest.approx((-4.0, 6.0))
+        assert y_range == pytest.approx((-2.0, 2.0))
+
     def test_inner_sampling_bounds_do_not_mutate_input_cfg(self):
         cfg = RetargetPipelineCfg(
             kin=NewtonKinematicsCfg(),
@@ -135,8 +149,9 @@ class TestTaskTableSizingHelpers:
         goal_cfg = cfg.goal_point
 
         assert goal_cfg.pipeline_cfg.kin.usd_path == ""
-        assert goal_cfg.pool_spacing == pytest.approx(1.0)
+        assert goal_cfg.pool_spacing == pytest.approx(0.2)
         assert goal_cfg.pool_spacing_area_divisor == pytest.approx(3.0)
+        assert goal_cfg.pool_sampling_size == pytest.approx((10.0, 10.0))
         assert goal_cfg.pipeline_cfg.sampler.min_contacts == 3
         assert goal_cfg.pipeline_cfg.sampler.terrain_snap_distance == pytest.approx(0.2)
         assert goal_cfg.pipeline_cfg.sampler.fk_joint_range_overrides == {}

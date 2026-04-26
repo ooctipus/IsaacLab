@@ -35,12 +35,20 @@ class RelativeStateCommandCfg(CommandTermCfg):
     pool_spacing: float = 1.0
     """Target spacing between final IK-solved terrain states [m].
 
-    The command derives per-cell pool size from terrain cell area, so sample
-    density scales with terrain area instead of a fixed global state count.
+    The command derives pool size from sampling area, so sample density scales
+    with the full terrain grid or :attr:`pool_sampling_size`.
     """
 
     pool_spacing_area_divisor: float = 3.0
     """Area divisor used to derive spacing-mode pool size [unitless]."""
+
+    pool_sampling_size: tuple[float, float] | None = None
+    """Optional centered terrain-state sampling window size ``(x, y)`` [m].
+
+    ``None`` samples over the full terrain grid. When set, the command still
+    bins states against the full terrain grid, but the IK retarget sampler is
+    clipped to this centered window before pool sizing and sampling.
+    """
 
     pos_std: float = 0.5
     rot_std: float = 0.5

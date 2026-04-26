@@ -174,12 +174,14 @@ class CommandsCfg:
     goal_point = mdp.RelativeStateCommandCfg(
         asset_name="robot",
         resampling_time_range=(10.0, 10.0),
-        pos_std=0.5,
-        rot_std=0.5,
+        pos_std=0.7,
+        rot_std=0.7,
         lin_vel_std=0.3,
         ang_vel_std=0.3,
-        foot_pos_std=0.2,
+        foot_pos_std=0.5,
         debug_vis=True,
+        pool_spacing=0.2,
+        pool_sampling_size=(10.0, 10.0),
         commands=CommandsPresetCfg(),  # type: ignore
         pipeline_cfg=RetargetPipelineCfg(
             kin=NewtonKinematicsCfg(usd_path=""),

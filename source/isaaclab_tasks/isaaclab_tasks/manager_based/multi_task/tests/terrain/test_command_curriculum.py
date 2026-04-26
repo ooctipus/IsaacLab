@@ -272,14 +272,18 @@ def _make_command_term(
     term._target_row_scratch = torch.empty(env.num_envs, term.state_dim, device=device)
     term._foot_body_ids = [1, 2, 3, 4]
     term.num_feet = len(term._foot_body_ids)
+    term.command_dim = 12 + 3 * term.num_feet
     term._target_foot_pos_w = torch.zeros(env.num_envs, term.num_feet, 3, device=device)
     term._target_foot_pos_resample_scratch = torch.empty_like(term._target_foot_pos_w)
+    term._target_foot_offset_w = torch.empty_like(term._target_foot_pos_w)
+    term._target_foot_pos_b = torch.zeros_like(term._target_foot_pos_w)
     term._current_foot_pos_w = torch.zeros_like(term._target_foot_pos_w)
     term._foot_delta_w = torch.empty_like(term._target_foot_pos_w)
     term._foot_delta_b = torch.zeros_like(term._target_foot_pos_w)
     term._foot_cross = torch.empty_like(term._target_foot_pos_w)
     term._foot_cross2 = torch.empty_like(term._target_foot_pos_w)
     term._foot_success_mask = torch.zeros(env.num_envs, device=device, dtype=torch.bool)
+    term._command_obs = torch.zeros(env.num_envs, term.command_dim, device=device)
 
     def _compute_target_foot_pos_w(target_state: torch.Tensor, out: torch.Tensor) -> None:
         out.zero_()
@@ -549,6 +553,38 @@ class TestCommandTerm:
         # env 1 never ticked
         assert term.cmd_buf[1, 2, term.time_idx].item() == pytest.approx(0.0)
         assert term.cmd_buf[1, 1, term.time_idx].item() == pytest.approx(hold_init)
+
+    def test_command_observation_exposes_target_feet_not_joint_delta(self):
+        """Policy command is root delta plus target foot positions in base frame."""
+        table = _make_task_table()
+        env = _make_env(num_envs=2, device=DEVICE)
+        term = _make_command_term(env, table)
+
+        root_pos = torch.tensor([[1.0, 2.0, 0.5], [-1.0, 0.5, 0.25]], device=DEVICE)
+        target_feet = torch.tensor(
+            [
+                [[1.3, 2.0, 0.1], [1.0, 2.2, 0.1], [0.8, 1.9, 0.1], [1.2, 1.7, 0.1]],
+                [[-0.7, 0.5, 0.0], [-1.0, 0.7, 0.0], [-1.2, 0.4, 0.0], [-0.8, 0.2, 0.0]],
+            ],
+            device=DEVICE,
+        )
+        term.robot._root_state_w[:, :3] = root_pos
+        term.robot._root_state_w[:, 3:6] = 0.0
+        term.robot._root_state_w[:, 6] = 1.0
+        term.robot._root_quat_w[:, :3] = 0.0
+        term.robot._root_quat_w[:, 3] = 1.0
+        term._target_foot_pos_w.copy_(target_feet)
+        term._foot_success_mask[:] = torch.tensor([True, False], device=DEVICE)
+
+        term._update_command()
+
+        assert term.command.shape == (env.num_envs, 12 + 3 * term.num_feet)
+        torch.testing.assert_close(term.command[0, 12:].view(term.num_feet, 3), target_feet[0] - root_pos[0])
+        torch.testing.assert_close(term.command[1, 12:], torch.zeros(3 * term.num_feet, device=DEVICE))
+        torch.testing.assert_close(
+            term.cmd_buf[:, 1, 12 : 12 + term.num_joints],
+            torch.zeros_like(term.robot._joint_pos),
+        )
 
     def test_get_task_done_triggers_when_delta_nonpositive(self):
         """``get_task_done`` is true exactly when the hold delta has drained to 0."""

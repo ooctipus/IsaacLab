@@ -87,6 +87,28 @@ def _state_count_from_spacing(
     return max(1, int(area / (area_divisor * spacing**2)))
 
 
+def _centered_sampling_bounds(
+    grid_x_range: tuple[float, float],
+    grid_y_range: tuple[float, float],
+    sampling_size: tuple[float, float] | None,
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    """Return full-grid or centered clipped sampling bounds [m]."""
+    if sampling_size is None:
+        return grid_x_range, grid_y_range
+
+    size_x, size_y = sampling_size
+    if size_x <= 0.0 or size_y <= 0.0:
+        raise ValueError(f"pool_sampling_size must be positive, got {sampling_size}.")
+
+    center_x = 0.5 * (grid_x_range[0] + grid_x_range[1])
+    center_y = 0.5 * (grid_y_range[0] + grid_y_range[1])
+    half_x = 0.5 * size_x
+    half_y = 0.5 * size_y
+    x_range = (max(grid_x_range[0], center_x - half_x), min(grid_x_range[1], center_x + half_x))
+    y_range = (max(grid_y_range[0], center_y - half_y), min(grid_y_range[1], center_y + half_y))
+    return x_range, y_range
+
+
 def _pipeline_with_inner_sampling_bounds(
     pipeline_cfg: RetargetPipelineCfg,
     x_range: tuple[float, float],
@@ -94,7 +116,7 @@ def _pipeline_with_inner_sampling_bounds(
     *,
     override: bool = False,
 ) -> RetargetPipelineCfg:
-    """Return a pipeline cfg whose sampler patch is bounded to the terrain grid."""
+    """Return a pipeline cfg whose sampler patch is bounded to the requested range."""
     sampler_cfg = pipeline_cfg.sampler
     patch_cfg = getattr(sampler_cfg, "patch", None)
     if patch_cfg is None:
@@ -191,6 +213,7 @@ def build_task_table(
     device: str,
     pool_spacing: float,
     pool_spacing_area_divisor: float = 3.0,
+    pool_sampling_size: tuple[float, float] | None = None,
     robot_joint_names: Sequence[str] | None = None,
 ) -> dict:
     """Run the IK pipeline, bin states by terrain cell, build task table.
@@ -207,6 +230,8 @@ def build_task_table(
             [m].
         pool_spacing_area_divisor: Area divisor used for spacing-mode pool
             sizing.
+        pool_sampling_size: Optional centered XY sampling window size [m].
+            ``None`` samples over the full terrain grid.
         robot_joint_names: Isaac articulation joint names in simulation order.
             When provided, retargeted Newton joint columns are reordered to
             this order before the states are stored in the table.
@@ -226,26 +251,47 @@ def build_task_table(
     num_subterrains = num_rows * num_cols
     cell_size_t = torch.tensor(cell_size, device=device)
     grid_x_range, grid_y_range = _terrain_grid_bounds(terrain_origins, cell_size)
+    sampling_x_range, sampling_y_range = _centered_sampling_bounds(
+        grid_x_range,
+        grid_y_range,
+        pool_sampling_size,
+    )
 
     # --- Step 1: Run IK pipeline on terrain mesh ---
     wp_mesh = convert_to_warp_mesh(terrain_mesh.vertices, terrain_mesh.faces, device=device)
-    cell_x_range = (-0.5 * cell_size[0], 0.5 * cell_size[0])
-    cell_y_range = (-0.5 * cell_size[1], 0.5 * cell_size[1])
-    states_per_cell = _state_count_from_spacing(cell_x_range, cell_y_range, pool_spacing, pool_spacing_area_divisor)
-    total_area = (grid_x_range[1] - grid_x_range[0]) * (grid_y_range[1] - grid_y_range[0])
-    print(
-        f"  Spacing mode: area={total_area:.1f} m^2, spacing={pool_spacing:.3f} m "
-        f"-> states_per_cell={states_per_cell}, total_states={states_per_cell * num_subterrains}",
-        flush=True,
+    terrain_area = (grid_x_range[1] - grid_x_range[0]) * (grid_y_range[1] - grid_y_range[0])
+    sampling_area = (sampling_x_range[1] - sampling_x_range[0]) * (sampling_y_range[1] - sampling_y_range[0])
+    total_states = _state_count_from_spacing(
+        sampling_x_range,
+        sampling_y_range,
+        pool_spacing,
+        pool_spacing_area_divisor,
     )
+    if pool_sampling_size is None:
+        print(
+            f"  Spacing mode: area={sampling_area:.1f} m^2, spacing={pool_spacing:.3f} m "
+            f"-> total_states={total_states}",
+            flush=True,
+        )
+    else:
+        print(
+            f"  Spacing mode: sample_area={sampling_area:.1f} m^2 "
+            f"(terrain_area={terrain_area:.1f} m^2), spacing={pool_spacing:.3f} m "
+            f"-> total_states={total_states}",
+            flush=True,
+        )
 
     # Single global pipeline.run over the entire terrain. Per-cell binning
     # happens after FK so we get the same CSR layout, but without the
     # 200-cell-loop fixed overhead (solver build + criteria setup amortized
     # across one big batch instead of 200 small ones).
-    grid_pipeline_cfg = _pipeline_with_inner_sampling_bounds(pipeline_cfg, grid_x_range, grid_y_range, override=True)
+    grid_pipeline_cfg = _pipeline_with_inner_sampling_bounds(
+        pipeline_cfg,
+        sampling_x_range,
+        sampling_y_range,
+        override=True,
+    )
     pipeline = grid_pipeline_cfg.class_type(grid_pipeline_cfg)
-    total_states = states_per_cell * num_subterrains
     grid_origin = np.zeros(3, dtype=np.float32)
     buffer = pipeline.run(wp_mesh, grid_origin, total_states)
     last_rejection_summary = pipeline.rejection_summary

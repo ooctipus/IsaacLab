@@ -20,6 +20,11 @@ State columns::
     [12:12+nj]      joint positions
     [12+nj]         hold / success / remaining time
 
+The public ``command`` observation is a separate policy-facing tensor:
+root delta ``[0:12]`` followed by target foot positions in the current
+base frame ``[12:12+3*num_feet]``. Joint targets stay in ``cmd_buf`` for
+reset and debug state bookkeeping, but are not exposed as command deltas.
+
 Error groups: ``pos, rot, lin_vel, ang_vel, foot_pos`` -- each reduced
 to a scalar norm. Success = all active group errors below threshold.
 """
@@ -63,7 +68,8 @@ class RelativeStateCommand(CommandTerm):
 
     Computes per-group error norms for 5 groups:
     ``pos(3), rot(3), lin_vel(3), ang_vel(3), foot_pos(3 * num_feet)``.
-    Inactive groups (per ``cmd_mask``) contribute zero delta.
+    Inactive groups (per ``cmd_mask`` and terrain-foot mask) contribute
+    zero error.
     """
 
     cfg: RelativeStateCommandCfg
@@ -149,6 +155,7 @@ class RelativeStateCommand(CommandTerm):
             device=self.device,
             pool_spacing=cfg.pool_spacing,
             pool_spacing_area_divisor=cfg.pool_spacing_area_divisor,
+            pool_sampling_size=cfg.pool_sampling_size,
             robot_joint_names=self.robot.joint_names,
         )
         self._target_fk_kin = table_data.pop("kin")
@@ -167,6 +174,7 @@ class RelativeStateCommand(CommandTerm):
                 f"physx={foot_body_names}, newton={self._foot_body_names}."
             )
         self.num_feet = len(self._foot_body_ids)
+        self.command_dim = 12 + 3 * self.num_feet
         self.table = self.TaskTable(**table_data)
 
         self._command_names = list(cfg.commands.keys())
@@ -193,12 +201,15 @@ class RelativeStateCommand(CommandTerm):
         self._target_row_scratch = torch.empty(self.num_envs, self.state_dim, device=self.device)
         self._target_foot_pos_w = torch.zeros(self.num_envs, self.num_feet, 3, device=self.device)
         self._target_foot_pos_resample_scratch = torch.empty_like(self._target_foot_pos_w)
+        self._target_foot_offset_w = torch.empty_like(self._target_foot_pos_w)
+        self._target_foot_pos_b = torch.zeros_like(self._target_foot_pos_w)
         self._current_foot_pos_w = torch.zeros_like(self._target_foot_pos_w)
         self._foot_delta_w = torch.empty_like(self._target_foot_pos_w)
         self._foot_delta_b = torch.zeros_like(self._target_foot_pos_w)
         self._foot_cross = torch.empty_like(self._target_foot_pos_w)
         self._foot_cross2 = torch.empty_like(self._target_foot_pos_w)
         self._foot_success_mask = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+        self._command_obs = torch.zeros(self.num_envs, self.command_dim, device=self.device)
         self._target_fk_capacity = 0
         self._target_fk_joint_q = torch.empty(0, device=self.device)
         self._target_fk_body_q_t = torch.empty(0, device=self.device)
@@ -229,8 +240,8 @@ class RelativeStateCommand(CommandTerm):
 
     @property
     def command(self) -> torch.Tensor:
-        """Delta state in base frame ``[num_envs, 12 + num_joints]`` (excludes hold time)."""
-        return self.cmd_buf[:, 1, : 12 + self.num_joints]
+        """Policy command: root delta + target foot positions in base frame."""
+        return self._command_obs
 
     @property
     def cmd_ids(self) -> torch.Tensor:
@@ -414,13 +425,14 @@ class RelativeStateCommand(CommandTerm):
         delta[:, 9:12] = quat_apply_inverse(root_quat, delta[:, 9:12])
         delta[:, 6:12] *= self.cmd_mask[:, 6:12]
 
-        # Delta joints (masked, in-place)
-        torch.sub(target[:, 12 : 12 + nj], joint_pos, out=delta[:, 12 : 12 + nj])
-        delta[:, 12 : 12 + nj] *= self.cmd_mask[:, 12:]
+        # Joint targets stay in cmd_buf for reset/debug bookkeeping, but the
+        # policy command and success criteria are foot-position based.
+        delta[:, 12 : 12 + nj].zero_()
 
         for foot_id, body_id in enumerate(self._foot_body_ids):
             self._current_foot_pos_w[:, foot_id].copy_(body_link_pos_w[:, body_id])
         torch.sub(self._target_foot_pos_w, self._current_foot_pos_w, out=self._foot_delta_w)
+        torch.sub(self._target_foot_pos_w, root_state_w[:, None, :3], out=self._target_foot_offset_w)
         quat_xyz = root_quat[:, :3]
         quat_w = root_quat[:, 3:4]
         for foot_id in range(self.num_feet):
@@ -431,6 +443,19 @@ class RelativeStateCommand(CommandTerm):
             self._foot_delta_b[:, foot_id].add_(self._foot_delta_w[:, foot_id])
             torch.cross(quat_xyz, self._foot_cross[:, foot_id], dim=-1, out=self._foot_cross2[:, foot_id])
             self._foot_delta_b[:, foot_id].add_(self._foot_cross2[:, foot_id])
+
+            target_foot_pos_b = self._target_foot_pos_b[:, foot_id]
+            torch.cross(quat_xyz, self._target_foot_offset_w[:, foot_id], dim=-1, out=self._foot_cross[:, foot_id])
+            self._foot_cross[:, foot_id].mul_(2.0)
+            torch.mul(quat_w, self._foot_cross[:, foot_id], out=target_foot_pos_b)
+            target_foot_pos_b.neg_()
+            target_foot_pos_b.add_(self._target_foot_offset_w[:, foot_id])
+            torch.cross(quat_xyz, self._foot_cross[:, foot_id], dim=-1, out=self._foot_cross2[:, foot_id])
+            target_foot_pos_b.add_(self._foot_cross2[:, foot_id])
+
+        self._target_foot_pos_b *= self._foot_success_mask.view(-1, 1, 1)
+        self._command_obs[:, :12].copy_(delta[:, :12])
+        self._command_obs[:, 12:].copy_(self._target_foot_pos_b.flatten(1))
 
         # Success tracking: hold time is trailing scalar at time_idx
         self.compute_state_error()
