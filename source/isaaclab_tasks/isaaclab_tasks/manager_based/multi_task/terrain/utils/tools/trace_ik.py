@@ -47,7 +47,7 @@ from isaaclab.utils.warp import convert_to_warp_mesh
 
 # Reuse terrain helpers from validate_spawn_points (same directory).
 from isaaclab_tasks.manager_based.multi_task.terrain.utils.tools.validate_spawn_points import (
-    _HAA_PATTERNS,
+    _ROBOT_NAMES,
     _sub_terrain_lookup,
     _sub_terrain_mesh,
     _terrain_preset_lookup,
@@ -116,6 +116,7 @@ def main():
     from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget import (
         RetargetPipeline,
         RetargetPipelineCfg,
+        resolve_foot_body_names,
     )
     from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget.cfg import (
         PatchSamplingCfg,
@@ -124,7 +125,7 @@ def main():
     from isaaclab_tasks.manager_based.multi_task.terrain.utils.criteria_cfg import (
         CollisionCheckCfg,
         FootPositionErrorCfg,
-        HaaLimitCfg,
+        LateralHipLimitCfg,
         SolverCostOutlierCfg,
         SupportPolygonStabilityCfg,
     )
@@ -132,11 +133,9 @@ def main():
     _register_position_task()
 
     from isaaclab_tasks.manager_based.multi_task.terrain.mdp_presets.robots.robot_presets import (
-        RetargetBasePosWeightCfg,
-        RetargetBaseRotWeightCfg,
-        RetargetFootBodyNamesCfg,
-        RetargetGravityWeightCfg,
+        FootBodyNamesCfg,
         RetargetJointRegularizeTargetsCfg,
+        RetargetLateralHipJointPatternCfg,
         RobotArticulationCfg,
     )
 
@@ -147,7 +146,7 @@ def main():
     parser.add_argument("--terrain", type=str, default="all", choices=sorted(terrain_presets.keys()))
     parser.add_argument("--sub_terrain", type=str, default=None, choices=sorted(sub_terrains.keys()))
     parser.add_argument("--difficulty", type=float, default=0.8)
-    parser.add_argument("--robot", type=str, default="anymal_c", choices=sorted(_HAA_PATTERNS.keys()))
+    parser.add_argument("--robot", type=str, default="anymal_c", choices=sorted(_ROBOT_NAMES))
     parser.add_argument("--exclude_feet", type=str, default=None)
     parser.add_argument("--trace_samples", type=int, default=1, help="Number of geometry-valid candidates to trace.")
     parser.add_argument("--max_iters", type=int, default=100, help="IK iterations to step (one at a time).")
@@ -192,7 +191,9 @@ def main():
     robot_usd = robot_cfg.spawn.usd_path
     base_height = robot_cfg.init_state.pos[2]
     default_jpos = robot_cfg.init_state.joint_pos
-    haa_pattern = _HAA_PATTERNS[args.robot]
+    lateral_hip_pattern = getattr(
+        RetargetLateralHipJointPatternCfg, args.robot, RetargetLateralHipJointPatternCfg().default
+    )
 
     from isaaclab.utils.assets import check_file_path, retrieve_file_path
 
@@ -220,17 +221,8 @@ def main():
         default_joint_pos=default_jpos,
     )
     _tmp = NewtonKinematics(kin_cfg)
-    preset_foot_names = getattr(RetargetFootBodyNamesCfg, args.robot, None)
-    if preset_foot_names is not None:
-        missing = [n for n in preset_foot_names if n not in _tmp.body_names]
-        if missing:
-            raise ValueError(
-                f"RetargetFootBodyNamesCfg.{args.robot} names not found in robot USD:"
-                f" missing={missing}, available={_tmp.body_names}"
-            )
-        foot_names = list(preset_foot_names)
-    else:
-        foot_names = [n for n in _tmp.body_names if "foot" in n.lower()]
+    foot_spec = getattr(FootBodyNamesCfg, args.robot, ".*foot")
+    foot_names = resolve_foot_body_names(foot_spec, _tmp.body_names)
     del _tmp
     if args.exclude_feet:
         pat = re.compile(args.exclude_feet, re.IGNORECASE)
@@ -239,8 +231,8 @@ def main():
 
     # --- Pipeline cfg (mirrors validate_spawn_points) ---
     criteria_list = [CollisionCheckCfg(n_samples=16, max_pen=0.02)]
-    if haa_pattern:
-        criteria_list.append(HaaLimitCfg(joint_pattern=haa_pattern, max_angle=1.05))
+    if lateral_hip_pattern:
+        criteria_list.append(LateralHipLimitCfg(joint_pattern=lateral_hip_pattern, max_angle=1.05))
     criteria_list += [
         SupportPolygonStabilityCfg(),
         FootPositionErrorCfg(max_err=0.25, aggregate="sum"),
@@ -248,12 +240,9 @@ def main():
     ]
     joint_regularize_targets = getattr(RetargetJointRegularizeTargetsCfg, args.robot, {})
 
-    def _preset_for(preset_cls: type) -> object:
-        return getattr(preset_cls, args.robot, preset_cls().default)
-
-    base_rot_weight = _preset_for(RetargetBaseRotWeightCfg)
-    base_pos_weight = _preset_for(RetargetBasePosWeightCfg)
-    gravity_weight = _preset_for(RetargetGravityWeightCfg)
+    base_rot_weight = 0.5
+    base_pos_weight = 0.05
+    gravity_weight = 0.02
     print(f"IK wts  : base_rot={base_rot_weight}, base_pos={base_pos_weight}, gravity={gravity_weight}")
 
     patch_cfg = PatchSamplingCfg(x_range=sampler_x_range, y_range=sampler_y_range)
@@ -263,13 +252,14 @@ def main():
         kin=kin_cfg,
         sampler=sampler_cfg,
         foot_body_names=foot_names,
+        lateral_hip_joint_pattern=lateral_hip_pattern,
         joint_regularize_targets=joint_regularize_targets,
         base_pos_weight=base_pos_weight,
         base_rot_weight=base_rot_weight,
         extra_objectives=[
             IKObjectiveTerrainCollisionCfg(weight=3.0, margin=0.05, n_samples=4),
             IKObjectiveStabilityMarginCfg(weight=1.0),
-            *([IKObjectiveGravityTorqueCfg(weight=gravity_weight)] if gravity_weight > 0.0 else []),
+            IKObjectiveGravityTorqueCfg(weight=gravity_weight),
             IKObjectiveJointRegularizeCfg(weight=0.02),
         ],
         criteria=criteria_list,

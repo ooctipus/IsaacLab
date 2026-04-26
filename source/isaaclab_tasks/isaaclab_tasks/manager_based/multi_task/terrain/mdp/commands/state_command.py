@@ -20,8 +20,8 @@ State columns::
     [12:12+nj]      joint positions
     [12+nj]         hold / success / remaining time
 
-Error groups: ``pos, rot, lin_vel, ang_vel, joints`` -- each reduced
-to a scalar norm.  Success = all active group errors below threshold.
+Error groups: ``pos, rot, lin_vel, ang_vel, foot_pos`` -- each reduced
+to a scalar norm. Success = all active group errors below threshold.
 """
 
 from __future__ import annotations
@@ -44,7 +44,12 @@ from isaaclab.utils.math import (
     quat_mul,
 )
 
-from .task_table_builder import build_task_table
+from isaaclab_tasks.manager_based.multi_task.mdp.util import (
+    ArticulationResetStateAdapter,
+    set_reset_state,
+)
+
+from .task_table_builder import _joint_order_from_names, build_task_table
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation
@@ -57,7 +62,7 @@ class RelativeStateCommand(CommandTerm):
     """Track the delta between a target and current robot state.
 
     Computes per-group error norms for 5 groups:
-    ``pos(3), rot(3), lin_vel(3), ang_vel(3), joints(num_joints)``.
+    ``pos(3), rot(3), lin_vel(3), ang_vel(3), foot_pos(3 * num_feet)``.
     Inactive groups (per ``cmd_mask``) contribute zero delta.
     """
 
@@ -79,20 +84,26 @@ class RelativeStateCommand(CommandTerm):
         ``[0:3]`` pos offset, ``[3:6]`` rot, ``[6:9]`` lin_vel,
         ``[9:12]`` ang_vel, ``[12]`` hold_time."""
         task_mask: torch.Tensor = MISSING
-        """Active DOF mask ``[num_tasks, 12 + num_joints]``."""
+        """Active command mask ``[num_tasks, 12 + num_joints]``."""
+        task_is_terrain: torch.Tensor = MISSING
+        """Whether each task uses terrain-conforming target state data ``[num_tasks]``."""
+        task_uses_feet: torch.Tensor = MISSING
+        """Whether each task activates target-foot-position success ``[num_tasks]``."""
         offsets: torch.Tensor = MISSING
         """CSR offsets ``[num_cmd_types + 1]`` into the task table."""
         kind: torch.Tensor = MISSING
         """Command type tag ``[num_cmd_types]``: 0=pos, 1=pose, 2=vel."""
         spawn_states: torch.Tensor = MISSING
         """Zero-copy reference to the reset event's state buffer
-        ``[num_states, 7 + num_joints]``."""
+        ``[num_states, 13 + 2 * num_joints]``."""
 
     def __init__(self, cfg: RelativeStateCommandCfg, env: ManagerBasedEnv):
         super().__init__(cfg, env)
 
         self.robot: Articulation = env.scene[cfg.asset_name]
         self.num_joints = self.robot.num_joints
+        self._joint_pos_slice = slice(13, 13 + self.num_joints)
+        self._reset_state_adapters = [ArticulationResetStateAdapter(cfg.asset_name)]
         # pos(3) + rot(3) + lin_vel(3) + ang_vel(3) + joint_q(num_joints) + hold(1)
         self.state_dim = 12 + self.num_joints + 1
         self.time_idx = 12 + self.num_joints  # column index for hold/success/remaining time
@@ -109,7 +120,8 @@ class RelativeStateCommand(CommandTerm):
         # Auto-fill kinematics fields from the robot ArticulationCfg so the
         # retarget pipeline stays consistent with the scene asset (single
         # source of truth). Command_presets.py leaves these blank on
-        # purpose; overriding here would desync the pipeline's USD /
+        # purpose except for validation placeholders; overriding here would
+        # desync the pipeline's USD /
         # default stance from the one the physics sim actually loads.
         from isaaclab.utils.assets import check_file_path, retrieve_file_path
 
@@ -120,7 +132,8 @@ class RelativeStateCommand(CommandTerm):
         if check_file_path(usd_path) == 2:
             usd_path = retrieve_file_path(usd_path, force_download=False)
 
-        kin_cfg = cfg.pipeline_cfg.kin
+        pipeline_cfg = cfg.pipeline_cfg.replace(kin=cfg.pipeline_cfg.kin.copy())
+        kin_cfg = pipeline_cfg.kin
         kin_cfg.usd_path = usd_path
         kin_cfg.default_pos = (0.0, 0.0, robot_articulation_cfg.init_state.pos[2])
         kin_cfg.default_joint_pos = robot_articulation_cfg.init_state.joint_pos
@@ -130,12 +143,30 @@ class RelativeStateCommand(CommandTerm):
             terrain_mesh=terrain.terrain_mesh,
             terrain_origins=terrain.terrain_origins,
             cell_size=terrain_gen.size,
-            pipeline_cfg=cfg.pipeline_cfg,
+            pipeline_cfg=pipeline_cfg,
             commands=cfg.commands,
             num_joints=self.num_joints,
-            pool_size=cfg.pool_size,
             device=self.device,
+            pool_spacing=cfg.pool_spacing,
+            pool_spacing_area_divisor=cfg.pool_spacing_area_divisor,
+            robot_joint_names=self.robot.joint_names,
         )
+        self._target_fk_kin = table_data.pop("kin")
+        self._newton_joint_names = table_data.pop("newton_joint_names")
+        self._foot_body_names = table_data.pop("foot_body_names")
+        self._newton_foot_body_ids = table_data.pop("foot_body_ids")
+        self._isaac_to_newton_joint_order = torch.tensor(
+            _joint_order_from_names(self.robot.joint_names, self._newton_joint_names),
+            device=self.device,
+            dtype=torch.long,
+        )
+        self._foot_body_ids, foot_body_names = self.robot.find_bodies(self._foot_body_names, preserve_order=True)
+        if foot_body_names != self._foot_body_names:
+            raise RuntimeError(
+                "PhysX foot body order does not match Newton foot body order: "
+                f"physx={foot_body_names}, newton={self._foot_body_names}."
+            )
+        self.num_feet = len(self._foot_body_ids)
         self.table = self.TaskTable(**table_data)
 
         self._command_names = list(cfg.commands.keys())
@@ -145,21 +176,46 @@ class RelativeStateCommand(CommandTerm):
         # [num_envs, {target=0, delta=1, current=2}, state_dim]
         self.cmd_buf = torch.zeros(self.num_envs, 3, self.state_dim, device=self.device).contiguous()
         self.cmd_buf[:, 1] = 1  # init delta to nonzero so nothing triggers success at t=0
-        self.cmd_ids = torch.zeros(self.num_envs, device=self.device, dtype=torch.int32)  # command type per env
         # which state columns are active: 12 root DOFs (pos/rot/lin_vel/ang_vel) + num_joints
         self.cmd_mask = torch.zeros(self.num_envs, 12 + self.num_joints, device=self.device, dtype=torch.bool)
         self.cmd_indices = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)  # task table row per env
+        self._command_indices_bound = False
+        reset_state_dim = self.table.spawn_states.shape[1]
+        self._task_idx_scratch = torch.empty(self.num_envs, device=self.device, dtype=torch.long)
+        self._target_state_idx_scratch = torch.empty_like(self._task_idx_scratch)
+        self._spawn_state_idx_scratch = torch.empty_like(self._task_idx_scratch)
+        self._target_reset_state_scratch = torch.empty(self.num_envs, reset_state_dim, device=self.device)
+        self._spawn_reset_state_scratch = torch.empty_like(self._target_reset_state_scratch)
+        self._task_params_scratch = torch.empty(self.num_envs, 13, device=self.device)
+        self._task_mask_scratch = torch.empty_like(self.cmd_mask)
+        self._terrain_task_scratch = torch.empty(self.num_envs, device=self.device, dtype=torch.bool)
+        self._foot_task_scratch = torch.empty_like(self._terrain_task_scratch)
+        self._target_row_scratch = torch.empty(self.num_envs, self.state_dim, device=self.device)
+        self._target_foot_pos_w = torch.zeros(self.num_envs, self.num_feet, 3, device=self.device)
+        self._target_foot_pos_resample_scratch = torch.empty_like(self._target_foot_pos_w)
+        self._current_foot_pos_w = torch.zeros_like(self._target_foot_pos_w)
+        self._foot_delta_w = torch.empty_like(self._target_foot_pos_w)
+        self._foot_delta_b = torch.zeros_like(self._target_foot_pos_w)
+        self._foot_cross = torch.empty_like(self._target_foot_pos_w)
+        self._foot_cross2 = torch.empty_like(self._target_foot_pos_w)
+        self._foot_success_mask = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+        self._target_fk_capacity = 0
+        self._target_fk_joint_q = torch.empty(0, device=self.device)
+        self._target_fk_body_q_t = torch.empty(0, device=self.device)
+        self._target_fk_joint_qd: wp.array | None = None
+        self._target_fk_body_q: wp.array | None = None
+        self._target_fk_body_qd: wp.array | None = None
 
-        # success threshold per error group: pos, rot, lin_vel, ang_vel, joints
+        # success threshold per error group: pos, rot, lin_vel, ang_vel, foot_pos
         self.num_error_groups = 5
-        reward_scale = [cfg.pos_std, cfg.rot_std, cfg.lin_vel_std, cfg.ang_vel_std, cfg.joint_std]
+        reward_scale = [cfg.pos_std, cfg.rot_std, cfg.lin_vel_std, cfg.ang_vel_std, cfg.foot_pos_std]
         self._reward_scales = torch.tensor(reward_scale, device=self.device).view(1, self.num_error_groups)
         self._identity_quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device=self.device).repeat(self.num_envs, 1)
 
-        # per-group error norms: [num_envs, 5] for pos/rot/lin_vel/ang_vel/joints
+        # per-group error norms: [num_envs, 5] for pos/rot/lin_vel/ang_vel/foot_pos
         self._err = torch.empty(self.num_envs, self.num_error_groups, device=self.device)
 
-        self._error_group_names = ["error_pos", "error_rot", "error_linvel", "error_angvel", "error_joints"]
+        self._error_group_names = ["error_pos", "error_rot", "error_linvel", "error_angvel", "error_foot_pos"]
         for name in self._error_group_names:
             self.metrics[name] = torch.zeros(self.num_envs, device=self.device)
 
@@ -175,6 +231,11 @@ class RelativeStateCommand(CommandTerm):
     def command(self) -> torch.Tensor:
         """Delta state in base frame ``[num_envs, 12 + num_joints]`` (excludes hold time)."""
         return self.cmd_buf[:, 1, : 12 + self.num_joints]
+
+    @property
+    def cmd_ids(self) -> torch.Tensor:
+        """Command-type ids derived from the currently selected task rows."""
+        return torch.bucketize(self.cmd_indices, self.table.offsets[1:-1], right=True)
 
     def _update_metrics(self):
         for group_idx, name in enumerate(self._error_group_names):
@@ -194,47 +255,135 @@ class RelativeStateCommand(CommandTerm):
                     cmd_id
                 ].item()
 
+    def bind_command_indices(self, command_indices: torch.Tensor) -> None:
+        """Bind selected task-table rows to an externally-owned tensor.
+
+        Args:
+            command_indices: Per-env task-table row indices.
+        """
+        expected_shape = (self.num_envs,)
+        if tuple(command_indices.shape) != expected_shape:
+            raise ValueError(f"command_indices must have shape {expected_shape}, got {tuple(command_indices.shape)}.")
+        if command_indices.device != self.cmd_indices.device:
+            raise ValueError(
+                f"command_indices must be on device {self.cmd_indices.device}, got {command_indices.device}."
+            )
+        if command_indices.dtype != self.cmd_indices.dtype:
+            raise ValueError(f"command_indices must have dtype {self.cmd_indices.dtype}, got {command_indices.dtype}.")
+        self.cmd_indices = command_indices
+        self._command_indices_bound = True
+
     def resample_indices(self, env_ids: torch.Tensor):
-        indices = torch.randint(0, self.table.num_tasks, (env_ids.numel(),), device=self.device)
-        self.cmd_indices[env_ids] = indices
-        offsets = self.table.offsets
-        for cmd_id in range(self.table.kind.shape[0]):
-            in_range = (indices >= offsets[cmd_id]) & (indices < offsets[cmd_id + 1])
-            self.cmd_ids[env_ids[in_range]] = cmd_id
+        if self._command_indices_bound:
+            return
+        indices = self._task_idx_scratch[: env_ids.numel()]
+        torch.randint(0, self.table.num_tasks, (env_ids.numel(),), device=self.device, out=indices)
+        self.cmd_indices.index_copy_(0, env_ids, indices)
+
+    def _ensure_target_fk_scratch(self, num_states: int) -> None:
+        """Ensure Newton FK scratch buffers can evaluate ``num_states`` targets."""
+        if num_states <= self._target_fk_capacity:
+            return
+
+        coord_count = int(self._target_fk_kin.model.joint_coord_count)
+        dof_count = int(self._target_fk_kin.model.joint_dof_count)
+        body_count = int(self._target_fk_kin.model.body_count)
+        self._target_fk_capacity = num_states
+        self._target_fk_joint_q = torch.empty(num_states, coord_count, device=self.device)
+        self._target_fk_body_q_t = torch.empty(num_states, body_count, 7, device=self.device)
+        self._target_fk_joint_qd = wp.zeros((num_states, dof_count), dtype=wp.float32, device=self.device)
+        self._target_fk_body_q = wp.from_torch(self._target_fk_body_q_t, dtype=wp.transformf)
+        self._target_fk_body_qd = wp.zeros((num_states, body_count), dtype=wp.spatial_vectorf, device=self.device)
+
+    def _compute_target_foot_pos_w(self, target_state: torch.Tensor, out: torch.Tensor) -> None:
+        """Write target foot origins [m] from packed reset states via Newton FK."""
+        num_states = target_state.shape[0]
+        self._ensure_target_fk_scratch(num_states)
+
+        joint_q = self._target_fk_joint_q[:num_states]
+        joint_q[:, :7] = target_state[:, :7]
+        torch.index_select(
+            target_state[:, self._joint_pos_slice],
+            1,
+            self._isaac_to_newton_joint_order,
+            out=joint_q[:, 7:],
+        )
+
+        self._target_fk_kin.eval_fk_batched(
+            wp.from_torch(joint_q),
+            self._target_fk_joint_qd[:num_states],
+            self._target_fk_body_q[:num_states],
+            self._target_fk_body_qd[:num_states],
+        )
+        body_q_t = self._target_fk_body_q_t[:num_states]
+        for foot_id, body_id in enumerate(self._newton_foot_body_ids):
+            out[:num_states, foot_id].copy_(body_q_t[:, body_id, :3])
 
     def _resample_command(self, env_ids: torch.Tensor):
+        if env_ids.numel() == 0:
+            return
+
+        num_resets = env_ids.numel()
         self.resample_indices(env_ids)
-        task_idx = self.cmd_indices[env_ids]
-        target_state_idx = self.table.target_index[task_idx]
-        spawn_state_idx = self.table.spawn_index[task_idx]
+
+        task_idx = self._task_idx_scratch[:num_resets]
+        target_state_idx = self._target_state_idx_scratch[:num_resets]
+        spawn_state_idx = self._spawn_state_idx_scratch[:num_resets]
+        target_state = self._target_reset_state_scratch[:num_resets]
+        spawn_state = self._spawn_reset_state_scratch[:num_resets]
+        task_params = self._task_params_scratch[:num_resets]
+        task_mask = self._task_mask_scratch[:num_resets]
+        terrain_task = self._terrain_task_scratch[:num_resets]
+        foot_task = self._foot_task_scratch[:num_resets]
+
+        torch.index_select(self.cmd_indices, 0, env_ids, out=task_idx)
+        torch.index_select(self.table.target_index, 0, task_idx, out=target_state_idx)
+        torch.index_select(self.table.spawn_index, 0, task_idx, out=spawn_state_idx)
+        torch.index_select(self.table.spawn_states, 0, target_state_idx, out=target_state)
+        torch.index_select(self.table.spawn_states, 0, spawn_state_idx, out=spawn_state)
+        torch.index_select(self.table.params, 0, task_idx, out=task_params)
+        torch.index_select(self.table.task_mask, 0, task_idx, out=task_mask)
+        torch.index_select(self.table.task_is_terrain, 0, task_idx, out=terrain_task)
+        torch.index_select(self.table.task_uses_feet, 0, task_idx, out=foot_task)
 
         # Build the target row in a local tensor then write it back with a single
-        # __setitem__; ``cmd_buf[env_ids, 0]`` is advanced indexing and would copy.
-        target = torch.zeros(env_ids.numel(), self.state_dim, device=self.device)
-        target[:, :3] = self.table.spawn_states[target_state_idx, :3] + self.table.params[task_idx, :3]
-        target[:, 3:12] = self.table.params[task_idx, 3:12]
-        target[:, 12 : 12 + self.num_joints] = self.table.spawn_states[target_state_idx, 7:]
-        target[:, self.time_idx] = self.table.params[task_idx, 12]
-        self.cmd_buf[env_ids, 0] = target
+        # index_copy_; ``cmd_buf[env_ids, 0]`` is advanced indexing and would copy.
+        target = self._target_row_scratch[:num_resets]
+        target.zero_()
+        target[:, :3].copy_(target_state[:, :3])
+        target[:, :3].add_(task_params[:, :3])
+        target[:, 3:12].copy_(task_params[:, 3:12])
+        target[:, 12 : 12 + self.num_joints].copy_(target_state[:, self._joint_pos_slice])
+        if bool(terrain_task.any()):
+            if bool(terrain_task.all()):
+                target[:, :3].copy_(target_state[:, :3])
+                target[:, 3], target[:, 4], target[:, 5] = euler_xyz_from_quat(target_state[:, 3:7])
+            else:
+                terrain_local_ids = terrain_task.nonzero(as_tuple=False).squeeze(-1)
+                terrain_target_state = target_state[terrain_local_ids]
+                target[terrain_local_ids, :3] = terrain_target_state[:, :3]
+                target[terrain_local_ids, 3], target[terrain_local_ids, 4], target[terrain_local_ids, 5] = (
+                    euler_xyz_from_quat(terrain_target_state[:, 3:7])
+                )
+        target[:, self.time_idx].copy_(task_params[:, 12])
+        self.cmd_buf[:, 0].index_copy_(0, env_ids, target)
 
-        self.cmd_buf[env_ids, 2, self.time_idx] = 0.0
-        self.cmd_mask[env_ids] = self.table.task_mask[task_idx]
+        self.cmd_buf[:, 2, self.time_idx].index_fill_(0, env_ids, 0.0)
+        self.cmd_mask.index_copy_(0, env_ids, task_mask)
+        target_foot_pos_w = self._target_foot_pos_resample_scratch[:num_resets]
+        self._compute_target_foot_pos_w(target_state, target_foot_pos_w)
+        self._target_foot_pos_w.index_copy_(0, env_ids, target_foot_pos_w)
+        self._foot_success_mask.index_copy_(0, env_ids, foot_task)
 
-        # Teleport robot to the spawn pose associated with this task.
-        spawn_state = self.table.spawn_states[spawn_state_idx]
-        num_envs = env_ids.shape[0]
-        zero_root_vel = torch.zeros(num_envs, 6, device=self.device)
-        zero_joint_vel = torch.zeros(num_envs, self.num_joints, device=self.device)
-        self.robot.write_root_pose_to_sim_index(root_pose=spawn_state[:, :7], env_ids=env_ids)
-        self.robot.write_root_velocity_to_sim_index(root_velocity=zero_root_vel, env_ids=env_ids)
-        self.robot.write_joint_position_to_sim_index(position=spawn_state[:, 7:], env_ids=env_ids)
-        self.robot.write_joint_velocity_to_sim_index(velocity=zero_joint_vel, env_ids=env_ids)
+        # Teleport robot to the spawn reset state associated with this task.
+        set_reset_state(self._env, spawn_state, env_ids, self._reset_state_adapters)
 
     def _update_command(self):
         """Recompute delta state from current robot state. Minimizes temporaries."""
         root_state_w = wp.to_torch(self.robot.data.root_state_w)
         root_quat = wp.to_torch(self.robot.data.root_quat_w)
         joint_pos = wp.to_torch(self.robot.data.joint_pos)
+        body_link_pos_w = wp.to_torch(self.robot.data.body_link_pos_w)
 
         current = self.cmd_buf[:, 2]
         target = self.cmd_buf[:, 0]
@@ -269,6 +418,20 @@ class RelativeStateCommand(CommandTerm):
         torch.sub(target[:, 12 : 12 + nj], joint_pos, out=delta[:, 12 : 12 + nj])
         delta[:, 12 : 12 + nj] *= self.cmd_mask[:, 12:]
 
+        for foot_id, body_id in enumerate(self._foot_body_ids):
+            self._current_foot_pos_w[:, foot_id].copy_(body_link_pos_w[:, body_id])
+        torch.sub(self._target_foot_pos_w, self._current_foot_pos_w, out=self._foot_delta_w)
+        quat_xyz = root_quat[:, :3]
+        quat_w = root_quat[:, 3:4]
+        for foot_id in range(self.num_feet):
+            torch.cross(quat_xyz, self._foot_delta_w[:, foot_id], dim=-1, out=self._foot_cross[:, foot_id])
+            self._foot_cross[:, foot_id].mul_(2.0)
+            torch.mul(quat_w, self._foot_cross[:, foot_id], out=self._foot_delta_b[:, foot_id])
+            self._foot_delta_b[:, foot_id].neg_()
+            self._foot_delta_b[:, foot_id].add_(self._foot_delta_w[:, foot_id])
+            torch.cross(quat_xyz, self._foot_cross[:, foot_id], dim=-1, out=self._foot_cross2[:, foot_id])
+            self._foot_delta_b[:, foot_id].add_(self._foot_cross2[:, foot_id])
+
         # Success tracking: hold time is trailing scalar at time_idx
         self.compute_state_error()
         current[:, ti] += self._env.step_dt * torch.all(self._err < self._reward_scales, dim=1)
@@ -277,14 +440,15 @@ class RelativeStateCommand(CommandTerm):
     def compute_state_error(self):
         """Compute per-group error norms.
 
-        Groups: pos(3), rot(3), lin_vel(3), ang_vel(3), joints(num_joints).
+        Groups: pos(3), rot(3), lin_vel(3), ang_vel(3), foot positions(3 * num_feet).
         """
         delta = self.cmd_buf[:, 1]
         self._err[:, 0] = delta[:, 0:3].norm(dim=-1)
         self._err[:, 1] = delta[:, 3:6].norm(dim=-1)
         self._err[:, 2] = delta[:, 6:9].norm(dim=-1)
         self._err[:, 3] = delta[:, 9:12].norm(dim=-1)
-        self._err[:, 4] = delta[:, 12 : 12 + self.num_joints].norm(dim=-1)
+        foot_err = self._foot_delta_b.norm(dim=-1).amax(dim=1)
+        self._err[:, 4] = torch.where(self._foot_success_mask, foot_err, torch.zeros_like(foot_err))
 
     def get_state_error(self):
         return self._err
@@ -312,7 +476,7 @@ class RelativeStateCommand(CommandTerm):
                 self.current_vel_visualizer.set_visibility(False)
 
     def _debug_vis_callback(self, event):
-        if not self.robot.is_initialized:
+        if not self.robot.is_initialized or not hasattr(self, "table"):
             return
 
         kinds = self.table.kind[self.cmd_ids.long()]

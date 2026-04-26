@@ -25,12 +25,13 @@ from .robot_presets import (
     ExperimentNameCfg,
     FootBodyNamesCfg,
     HeightScannerPrimPathCfg,
-    NonFootBodyNamesCfg,
-    RetargetFootBodyNamesCfg,
-    RetargetHaaJointPatternCfg,
     RetargetJointRegularizeTargetsCfg,
+    RetargetLateralHipJointPatternCfg,
     RobotArticulationCfg,
 )
+
+B2_LATERAL_HIP_PATTERN = ".*hip_joint"
+"""Regex matching B2 lateral hip joint names."""
 
 if hasattr(unitree, "B2_CFG"):
     _B2_CFG: ArticulationCfg = unitree.B2_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
@@ -43,12 +44,10 @@ if hasattr(unitree, "B2_CFG"):
     BaseBodyNameCfg.b2 = "base_link"
     BaseContactBodyNamesCfg.b2 = "base_link"
     FootBodyNamesCfg.b2 = ".*foot"
-    NonFootBodyNamesCfg.b2 = "^(?!.*(?:foot)).*$"
     ExperimentNameCfg.b2 = "b2_position_command"
-    RetargetFootBodyNamesCfg.b2 = ["FL_foot", "FR_foot", "RL_foot", "RR_foot"]
-    RetargetHaaJointPatternCfg.b2 = ".*hip_joint"
-    # Same HAA/knee naming convention as Go2.
+    RetargetLateralHipJointPatternCfg.b2 = B2_LATERAL_HIP_PATTERN
+    # Same lateral-hip/knee naming convention as Go2.
     RetargetJointRegularizeTargetsCfg.b2 = {
-        ".*hip_joint": 0.0,
+        B2_LATERAL_HIP_PATTERN: 0.0,
         ".*_calf_joint": -0.873,
     }

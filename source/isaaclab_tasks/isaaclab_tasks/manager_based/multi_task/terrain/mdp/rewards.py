@@ -129,6 +129,29 @@ def illegal_contact_penalty(env: ManagerBasedRLEnv, threshold: float, sensor_cfg
     ).float()
 
 
+class undesired_non_foot_contacts(ManagerTermBase):
+    """Penalize contact bodies except the resolved feet."""
+
+    def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        sensor_cfg: SceneEntityCfg = cfg.params["sensor_cfg"]
+        foot_sensor_cfg: SceneEntityCfg = cfg.params["foot_sensor_cfg"]
+        self.contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+        foot_body_ids = set(foot_sensor_cfg.body_ids)
+        self.body_ids = [body_id for body_id in range(self.contact_sensor.num_sensors) if body_id not in foot_body_ids]
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        threshold: float,
+        sensor_cfg: SceneEntityCfg,
+        foot_sensor_cfg: SceneEntityCfg,
+    ) -> torch.Tensor:
+        net_contact_forces = wp.to_torch(self.contact_sensor.data.net_forces_w_history)
+        is_contact = torch.max(torch.linalg.norm(net_contact_forces[:, :, self.body_ids], dim=-1), dim=1)[0] > threshold
+        return torch.sum(is_contact, dim=1)
+
+
 def feet_lin_acc_l2(env: ManagerBasedRLEnv, robot_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
     robot: Articulation = env.scene[robot_cfg.name]
     feet_acc = torch.sum(torch.square(wp.to_torch(robot.data.body_lin_acc_w)[..., robot_cfg.body_ids, :]), dim=(1, 2))

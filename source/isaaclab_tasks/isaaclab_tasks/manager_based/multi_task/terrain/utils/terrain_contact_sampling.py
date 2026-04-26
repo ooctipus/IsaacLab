@@ -222,7 +222,7 @@ class Sampler(SamplerBase):
         jl_hi = wp.to_torch(kin.model.joint_limit_upper)  # type: ignore[arg-type]
         # Clamp to ``default ± fk_joint_range`` (with per-pattern overrides)
         # so continuous joints (URDF limits ``±1e10`` after USD conversion)
-        # don't produce wrap-around jq where e.g. HAA is swung 90° and the
+        # don't produce wrap-around jq where e.g. a lateral hip is swung 90° and the
         # leg routes across the chassis. The foot positions of such samples
         # look fine as a convex quad, but the underlying jq makes IK land
         # on a physically crossed-leg pose.

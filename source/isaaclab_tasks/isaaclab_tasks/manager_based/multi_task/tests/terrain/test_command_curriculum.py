@@ -130,6 +130,7 @@ def _make_task_table(
         params=params,
         task_mask=task_mask,
         task_is_terrain=torch.zeros(num_tasks, dtype=torch.bool, device=device),
+        task_uses_feet=torch.zeros(num_tasks, dtype=torch.bool, device=device),
         offsets=offsets,
         kind=kind,
         spawn_states=spawn_states,
@@ -267,6 +268,7 @@ def _make_command_term(
     term._task_params_scratch = torch.empty(env.num_envs, 13, device=device)
     term._task_mask_scratch = torch.empty_like(term.cmd_mask)
     term._terrain_task_scratch = torch.empty(env.num_envs, device=device, dtype=torch.bool)
+    term._foot_task_scratch = torch.empty_like(term._terrain_task_scratch)
     term._target_row_scratch = torch.empty(env.num_envs, term.state_dim, device=device)
     term._foot_body_ids = [1, 2, 3, 4]
     term.num_feet = len(term._foot_body_ids)
@@ -483,6 +485,7 @@ class TestCommandTerm:
         target_state = table.spawn_states[target_state_id]
 
         table.task_is_terrain[task_id] = True
+        table.task_uses_feet[task_id] = True
         table.task_mask[task_id, :6] = True
         table.task_mask[task_id, 12:] = True
         table.params[task_id, :6] = torch.tensor([[9.0, 9.0, 9.0, 0.3, 0.4, 0.5]], device=DEVICE)
@@ -499,6 +502,7 @@ class TestCommandTerm:
             target_state[13 : 13 + term.num_joints],
         )
         assert term.cmd_buf[0, 0, term.time_idx].item() == pytest.approx(0.75)
+        assert bool(term._foot_success_mask[0])
 
     def test_hold_time_drains_only_when_all_groups_pass(self):
         """``current[ti]`` advances by ``step_dt`` iff all 5 error groups are below threshold.

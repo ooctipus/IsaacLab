@@ -39,8 +39,11 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.env = env
         self.goal_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
 
-        # Disable term's own resampling: curriculum owns cmd_indices AND cmd_buf writes
-        self.goal_term.resample_indices = lambda env_ids: None
+        # Curriculum owns selected task rows; the command term reads this
+        # tensor directly and skips its internal random resampler while bound.
+        self.command_indices = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+        self.command_indices.copy_(self.goal_term.cmd_indices)
+        self.goal_term.bind_command_indices(self.command_indices)
 
         # Discrete command table size
         self.num_discrete_cmd = int(self.goal_term.table.num_tasks)
@@ -94,7 +97,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
             return self._result
 
         # 1) SUCCESS UPDATE — use cmd_indices *before* overwriting them
-        prev_idx = self.goal_term.cmd_indices[env_ids]
+        prev_idx = self.command_indices[env_ids]
         success = env.termination_manager.get_term(success_term)[env_ids]
         self.success_monitor.success_update(prev_idx, success)
 
@@ -102,8 +105,8 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         probs = beta_sampling_probs(
             self.success_monitor.success_rate, target=target, kappa=kappa, temperature=temperature
         )
-        choices = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
-        self.goal_term.cmd_indices[env_ids] = choices.to(self.goal_term.cmd_indices.dtype)
+        choices = torch.multinomial(probs, len(env_ids), replacement=True)
+        self.command_indices[env_ids] = choices
 
         # 3) LOGGING / VISUALIZATION
         success_rates = self.success_monitor.success_rate.clone()  # [num_discrete_cmd]

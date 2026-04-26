@@ -186,7 +186,7 @@ def build_task_table(
     terrain_origins: torch.Tensor,
     cell_size: tuple[float, float],
     pipeline_cfg: RetargetPipelineCfg,
-    commands: dict[str, RelativeStateCommandCfg.Commands],
+    commands: dict[str, RelativeStateCommandCfg.Commands | RelativeStateCommandCfg.TerrainCommands],
     num_joints: int,
     device: str,
     pool_spacing: float,
@@ -215,7 +215,7 @@ def build_task_table(
         Dict with keys matching :class:`TaskTable` fields plus FK metadata:
         ``spawn_states``, ``spawn_index``, ``target_index``,
         ``params``, ``task_mask``, ``offsets``, ``kind``,
-        ``task_is_terrain``, ``num_tasks``, ``kin``,
+        ``task_is_terrain``, ``task_uses_feet``, ``num_tasks``, ``kin``,
         ``newton_joint_names``, ``foot_body_names``, ``foot_body_ids``.
     """
     from .commands_cfg import RelativeStateCommandCfg
@@ -349,26 +349,33 @@ def build_task_table(
     params_list = []
     mask_list = []
     task_is_terrain_list = []
+    task_uses_feet_list = []
     row_counts = []
 
     for cmd_id, val in enumerate(commands.values()):
         is_terrain_command = isinstance(val, RelativeStateCommandCfg.TerrainCommands)
-        for data_id, name in enumerate(_COMMAND_PARAM_NAMES):
-            data = getattr(val, name)
-            if data is not None and isinstance(data, tuple):
-                if data_id < 12:
-                    mask[cmd_id, data_id] = True
-                ranges[cmd_id, data_id, 0] = data[0]
-                ranges[cmd_id, data_id, 1] = data[1]
-
         if is_terrain_command:
-            kind[cmd_id] = 1 if (val.roll or val.pitch or val.yaw) else 0
-        elif isinstance(val, RelativeStateCommandCfg.PositionCommands):
-            kind[cmd_id] = 0
-        elif isinstance(val, RelativeStateCommandCfg.PoseCommands):
-            kind[cmd_id] = 1
-        elif isinstance(val, RelativeStateCommandCfg.VelocityCommands):
-            kind[cmd_id] = 2
+            if val.match_base_pos:
+                mask[cmd_id, :3] = True
+            if val.match_base_rot:
+                mask[cmd_id, 3:6] = True
+            ranges[cmd_id, 12, 0] = val.duration[0]
+            ranges[cmd_id, 12, 1] = val.duration[1]
+            kind[cmd_id] = 1 if val.match_base_rot else 0
+        else:
+            for data_id, name in enumerate(_COMMAND_PARAM_NAMES):
+                data = getattr(val, name)
+                if data is not None and isinstance(data, tuple):
+                    if data_id < 12:
+                        mask[cmd_id, data_id] = True
+                    ranges[cmd_id, data_id, 0] = data[0]
+                    ranges[cmd_id, data_id, 1] = data[1]
+            if isinstance(val, RelativeStateCommandCfg.PositionCommands):
+                kind[cmd_id] = 0
+            elif isinstance(val, RelativeStateCommandCfg.PoseCommands):
+                kind[cmd_id] = 1
+            elif isinstance(val, RelativeStateCommandCfg.VelocityCommands):
+                kind[cmd_id] = 2
 
         range_min = ranges[cmd_id, :, 0].view(1, 13)
         range_span = ranges[cmd_id, :, 1] - ranges[cmd_id, :, 0]
@@ -387,6 +394,14 @@ def build_task_table(
         task_is_terrain_list.append(
             torch.full((num_pairs_per_type,), is_terrain_command, device=device, dtype=torch.bool)
         )
+        task_uses_feet_list.append(
+            torch.full(
+                (num_pairs_per_type,),
+                is_terrain_command and val.match_feet,
+                device=device,
+                dtype=torch.bool,
+            )
+        )
         row_counts.append(num_pairs_per_type)
 
     all_spawn = torch.cat(spawn_indices_list, dim=0)
@@ -395,6 +410,7 @@ def build_task_table(
     all_params = torch.cat(params_list, dim=0)
     all_masks = torch.cat(mask_list, dim=0)
     all_task_is_terrain = torch.cat(task_is_terrain_list, dim=0)
+    all_task_uses_feet = torch.cat(task_uses_feet_list, dim=0)
 
     counts_t = torch.tensor(row_counts, device=device, dtype=torch.long)
     offsets = torch.zeros(len(commands) + 1, device=device, dtype=torch.long)
@@ -411,6 +427,7 @@ def build_task_table(
         "params": all_params,
         "task_mask": all_masks,
         "task_is_terrain": all_task_is_terrain,
+        "task_uses_feet": all_task_uses_feet,
         "offsets": offsets,
         "kind": kind,
         "spawn_states": spawn_states,

@@ -54,23 +54,23 @@ class CollisionCheckCfg(CriterionBaseCfg):
 
 
 @configclass
-class HaaLimitCfg(CriterionBaseCfg):
-    """Config for :class:`HaaLimit`.
+class LateralHipLimitCfg(CriterionBaseCfg):
+    """Config for :class:`LateralHipLimit`.
 
     :attr:`joint_pattern` is resolved on the criterion side: when ``None``,
-    falls back to :attr:`RetargetPipelineCfg.haa_joint_pattern` (the
-    robot-preset regex). Skip the criterion entirely by omitting it
+    falls back to :attr:`RetargetPipelineCfg.lateral_hip_joint_pattern`
+    (the robot-preset regex). Skip the criterion entirely by omitting it
     from the pipeline config's ``criteria`` list.
     """
 
-    name: str = "haa_limit"
-    class_type: type | str = "{DIR}.criteria:HaaLimit"
+    name: str = "lateral_hip_limit"
+    class_type: type | str = "{DIR}.criteria:LateralHipLimit"
 
     joint_pattern: str | None = None
-    """Override regex for HAA joint names. ``None`` uses the pipeline cfg's pattern."""
+    """Override regex for lateral hip joint names. ``None`` uses the pipeline cfg's pattern."""
 
     max_angle: float = 1.05
-    """Maximum absolute HAA angle [rad]."""
+    """Maximum absolute lateral hip angle [rad]."""
 
 
 @configclass

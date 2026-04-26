@@ -151,13 +151,13 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
     )
 
     def __post_init__(self):
-        self.decimation = preset(default=10, advanced_skills=4)  # type: ignore
+        self.decimation = preset(default=8, advanced_skills=4)  # type: ignore
         self.episode_length_s = 6.0
-        self.sim.dt = 0.005
+        self.sim.dt = 0.01
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
 
         if self.scene.height_scanner is not None:
             self.scene.height_scanner.update_period = preset(
-                default=(10 * self.episode_length_s), advanced_skills=(4 * self.episode_length_s)
+                default=(8 * self.episode_length_s), advanced_skills=(4 * self.episode_length_s)
             )  # type: ignore

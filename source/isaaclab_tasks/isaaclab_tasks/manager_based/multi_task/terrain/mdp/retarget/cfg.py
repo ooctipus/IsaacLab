@@ -104,9 +104,9 @@ class SamplerSizingCfg:
     criteria_yield: float = 0.25
     """Expected fraction of IK solves surviving acceptance criteria.
 
-    Empirically ~0.45-0.55 on rough terrains with collision + HAA +
-    stability filters; raise toward ``0.75`` on flat terrain or when
-    most criteria are disabled.
+    Empirically ~0.45-0.55 on rough terrains with collision,
+    lateral-hip, and stability filters; raise toward ``0.75`` on flat
+    terrain or when most criteria are disabled.
     """
 
     polygon_fps_oversample: float = 5.0
@@ -195,9 +195,10 @@ class SamplerCfg(SamplerBaseCfg):
     quad but whose leg paths route across the chassis (visually crossed
     legs).
 
-    ``1.57`` rad (π/2) covers a quarter rotation per joint — fine for
-    HFE/KFE. Override :attr:`fk_joint_range_overrides` for joints (e.g.
-    HAA) whose mechanical limit is tighter than the URDF claims.
+    ``1.57`` rad (π/2) covers a quarter rotation per joint, which is
+    usually enough for broad FK coverage. Override
+    :attr:`fk_joint_range_overrides` only for joints whose mechanical
+    range is known to be tighter than the URDF claims.
     """
 
     fk_joint_range_overrides: dict[str, float] = field(default_factory=dict)
@@ -206,14 +207,13 @@ class SamplerCfg(SamplerBaseCfg):
     Keys are regex patterns matched against full joint names with
     :func:`re.fullmatch`; values are the clamp [rad] applied to those
     joints. Use this to express mechanical limits that the URDF ↔ USD
-    pipeline stripped. Example for ANYmal-C whose HAA mechanical range
-    is roughly ``±0.7`` rad::
+    pipeline stripped, for example::
 
-        fk_joint_range_overrides={".*HAA": 0.7}
+        fk_joint_range_overrides={"<joint_regex>": 0.7}
 
-    Without this, HAA gets the default ``1.57`` clamp and FK samples
-    can swing the leg 90° across the chassis, producing visually
-    crossed-leg IK poses even though the foot targets are valid.
+    Without this, affected joints get the default ``1.57`` clamp and FK
+    samples can produce visually crossed-leg IK poses even though the
+    foot targets are valid.
     """
 
     fk_num_retained: int = 5000
@@ -283,16 +283,15 @@ class RetargetPipelineCfg:
     sampler: SamplerBaseCfg = MISSING  # type: ignore[assignment]
     """Sampler configuration (with ``class_type`` set)."""
 
-    foot_body_names: list[str] = MISSING  # type: ignore[assignment]
-    """Body names of the feet (exact match against Newton body names)."""
+    foot_body_names: list[str] | str = MISSING  # type: ignore[assignment]
+    """Body names of the feet, either exact names or a regex matched against Newton body names."""
 
-    haa_joint_pattern: str | None = None
-    """Optional regex matching hip-abduction/adduction joint names.
+    lateral_hip_joint_pattern: str | None = None
+    """Optional regex matching lateral hip joint names.
 
-    Consumed by the default criteria factory to build a
-    :class:`~isaaclab_tasks.manager_based.multi_task.terrain.utils.criteria.HaaLimit`
-    criterion. ``None`` disables the HAA check (appropriate for robots that
-    have no abduction joints or where over-splay is not a concern).
+    Consumed by lateral-hip angle validation criteria. ``None`` disables
+    the check, appropriate for robots that have no lateral hip joints or
+    where over-splay is not a concern.
     """
 
     joint_regularize_targets: dict[str, float] = field(default_factory=dict)

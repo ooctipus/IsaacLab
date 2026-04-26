@@ -6,6 +6,7 @@
 from .buffer import RetargetBuffer as RetargetBuffer
 from .cfg import RetargetPipelineCfg as RetargetPipelineCfg, SamplerBaseCfg as SamplerBaseCfg
 from .pipeline import CriterionFn as CriterionFn, RetargetPipeline as RetargetPipeline
+from .pipeline import resolve_foot_body_names as resolve_foot_body_names
 from .sampler_base import (
     SamplerBase as SamplerBase,
     SamplerOutput as SamplerOutput,

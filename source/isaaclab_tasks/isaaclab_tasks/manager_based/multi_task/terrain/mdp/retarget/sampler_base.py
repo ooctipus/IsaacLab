@@ -111,7 +111,7 @@ def compute_sampler_sizing(
     2. ``n_final × final_fps_oversample`` after criteria validation
        (FPS needs a bigger pool to achieve good spatial spread).
     3. ``(2) / criteria_yield`` polygons entering criteria
-       (accounts for cost/base-z/collision/HAA rejection).
+       (accounts for cost/base-z/collision/lateral-hip rejection).
     4. ``(3) × polygon_fps_oversample`` polygons entering polygon-FPS
        (grid-bucket FPS in the sampler needs a bigger pool too).
     5. ``(4) / polygon_assembly_yield`` neighborhoods -- the polygon-

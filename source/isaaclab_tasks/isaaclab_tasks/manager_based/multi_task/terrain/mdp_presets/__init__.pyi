@@ -18,10 +18,8 @@ __all__ = [
     "ExperimentNameCfg",
     "FootBodyNamesCfg",
     "HeightScannerPrimPathCfg",
-    "NonFootBodyNamesCfg",
-    "RetargetFootBodyNamesCfg",
-    "RetargetHaaJointPatternCfg",
     "RobotArticulationCfg",
+    "RetargetLateralHipJointPatternCfg",
     "SyncFootPairsCfg",
 ]
 
@@ -37,9 +35,7 @@ from .robots import (
     ExperimentNameCfg,
     FootBodyNamesCfg,
     HeightScannerPrimPathCfg,
-    NonFootBodyNamesCfg,
-    RetargetFootBodyNamesCfg,
-    RetargetHaaJointPatternCfg,
+    RetargetLateralHipJointPatternCfg,
     RobotArticulationCfg,
     SyncFootPairsCfg,
 )

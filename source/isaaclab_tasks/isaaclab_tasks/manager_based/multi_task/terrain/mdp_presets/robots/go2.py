@@ -14,10 +14,8 @@ from isaaclab_assets.robots.unitree import UNITREE_GO2_CFG
 from .robot_presets import (
     ExperimentNameCfg,
     FootBodyNamesCfg,
-    NonFootBodyNamesCfg,
-    RetargetFootBodyNamesCfg,
-    RetargetHaaJointPatternCfg,
     RetargetJointRegularizeTargetsCfg,
+    RetargetLateralHipJointPatternCfg,
     RobotArticulationCfg,
 )
 
@@ -38,7 +36,6 @@ _GO2_CFG.init_state.joint_pos = {
 RobotArticulationCfg.go2 = _GO2_CFG
 # Unitree feet are lowercase ``*_foot`` rather than the default ``.*FOOT.*``.
 FootBodyNamesCfg.go2 = ".*_foot"
-NonFootBodyNamesCfg.go2 = "^(?!.*_foot).*$"
 ExperimentNameCfg.go2 = "go2_position_command"
 
 
@@ -46,14 +43,13 @@ ExperimentNameCfg.go2 = "go2_position_command"
 # Retarget constants for Go2
 # ---------------------------------------------------------------------------
 
-GO2_HAA_PATTERN = ".*hip_joint"
-"""Regex matching Go2 hip abduction/adduction joint names."""
+GO2_LATERAL_HIP_PATTERN = ".*hip_joint"
+"""Regex matching Go2 lateral hip joint names."""
 
-RetargetFootBodyNamesCfg.go2 = ["FL_foot", "FR_foot", "RL_foot", "RR_foot"]
-RetargetHaaJointPatternCfg.go2 = GO2_HAA_PATTERN
-# Pull HAA toward 0 and knees toward their init-pose flexion; hip-swing is
-# left free so IK can adjust stride.
+RetargetLateralHipJointPatternCfg.go2 = GO2_LATERAL_HIP_PATTERN
+# Pull lateral hips toward 0 and knees toward their init-pose flexion; hip
+# flexion/extension is left free so IK can adjust stride.
 RetargetJointRegularizeTargetsCfg.go2 = {
-    ".*hip_joint": 0.0,
+    GO2_LATERAL_HIP_PATTERN: 0.0,
     ".*_calf_joint": -0.873,
 }

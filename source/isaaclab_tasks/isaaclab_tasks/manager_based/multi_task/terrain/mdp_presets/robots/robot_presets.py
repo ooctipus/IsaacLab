@@ -79,20 +79,11 @@ class BaseContactBodyNamesCfg(PresetCfg):
 class FootBodyNamesCfg(PresetCfg):
     """Body-name regex matching the robot's feet.
 
-    Drives reward terms that index foot bodies (e.g. ``foot_touchdown``).
+    Drives reward terms that index foot bodies and the retarget pipeline's
+    terrain-contact bodies.
     """
 
     default: str = ".*FOOT.*"
-
-
-@configclass
-class NonFootBodyNamesCfg(PresetCfg):
-    """Body-name regex matching every body **except** the feet.
-
-    Drives the ``undesired_contact`` reward's ``sensor_cfg.body_names``.
-    """
-
-    default: str = "^(?!.*(?:(FOOT))).*$"
 
 
 @configclass
@@ -117,29 +108,12 @@ class ExperimentNameCfg(PresetCfg):
 
 
 @configclass
-class RetargetFootBodyNamesCfg(PresetCfg):
-    """Exact foot body names used by the retarget pipeline.
+class RetargetLateralHipJointPatternCfg(PresetCfg):
+    """Regex matching lateral hip joints for retarget validation.
 
-    Consumed by :attr:`RetargetPipelineCfg.foot_body_names` to resolve
-    Newton body indices for the feet. Must match the body names produced
-    by :class:`NewtonKinematics` when loading the robot's USD (case-
-    sensitive, no regex).
-
-    Required -- no sensible default exists, so resolving without picking a
-    robot preset (or for a robot without a retarget preset) leaves the
-    field as :data:`MISSING` and fails loudly at pipeline construction.
-    """
-
-    default: list[str] = MISSING  # type: ignore[assignment]
-
-
-@configclass
-class RetargetHaaJointPatternCfg(PresetCfg):
-    """Regex matching hip-abduction/adduction joint names for retarget.
-
-    Consumed by :attr:`RetargetPipelineCfg.haa_joint_pattern`. ``None``
-    disables the :class:`HaaLimit` criterion -- appropriate for robots
-    with no abduction joints or where over-splay is not a concern.
+    Consumed by :attr:`RetargetPipelineCfg.lateral_hip_joint_pattern`.
+    ``None`` disables lateral-hip angle validation -- appropriate for
+    robots with no lateral hip joints or where over-splay is not a concern.
     """
 
     default: str | None = None
@@ -157,60 +131,3 @@ class RetargetJointRegularizeTargetsCfg(PresetCfg):
     """
 
     default: dict[str, float] = field(default_factory=dict)
-
-
-@configclass
-class RetargetBasePosWeightCfg(PresetCfg):
-    """Per-robot weight for the base-position IK objective [unitless].
-
-    Consumed by :attr:`RetargetPipelineCfg.base_pos_weight`. Keeps the
-    IK near the sampler's plane-fit base position. Small by default so
-    the foot-contact targets (weight ``1.0``) dominate -- the base is a
-    soft anchor, not a hard target. Raise for robots where base-xy
-    placement is critical (e.g. narrow support polygon bipeds).
-    """
-
-    default: float = 0.05
-
-
-@configclass
-class RetargetBaseRotWeightCfg(PresetCfg):
-    """Per-robot weight for the base-orientation IK objective [unitless].
-
-    Consumed by :attr:`RetargetPipelineCfg.base_rot_weight`. Pulls the
-    base quaternion toward the sampler's plane-fit target. The correct
-    value is **body-plan-specific**:
-
-    * **Quadruped, full 4-contact stance**: ``0.5`` (default). The
-      sampler's plane fit is informative; this weight agrees with the
-      stability-margin objective and keeps the base aligned with the
-      terrain-fit plane.
-    * **Quadruped, nc < 4 stance** (rearing, handstand): prefer
-      ``0.0``. The plane fit degenerates to identity (rank-deficient
-      cross-covariance at 2-3 contacts), which actively fights a
-      natural forward/backward tilt. Set per-call via CLI override,
-      not per-robot.
-    * **Biped**: ``2.0``. The identity base target *is* upright
-      (correct posture), but the stability-margin objective (weight
-      ``1.0``) is strong enough at the default ``0.5`` to tilt the
-      torso to project the COM onto the narrow 2-foot segment. A
-      stronger weight holds the torso upright; if the base were
-      allowed to fall, downstream policy training would inherit
-      non-standing seed poses.
-    """
-
-    default: float = 0.5
-
-
-@configclass
-class RetargetGravityWeightCfg(PresetCfg):
-    """Per-robot weight for the gravity-torque IK objective [unitless].
-
-    Consumed by the :class:`IKObjectiveGravityTorque` built for the
-    retarget pipeline's extra-objective list. Pulls unconstrained
-    revolute DOFs toward their gravity-stable hang-down pose (e.g.
-    raised legs in nc<4 stances, arms on bipeds). ``0.0`` disables the
-    objective entirely.
-    """
-
-    default: float = 0.02

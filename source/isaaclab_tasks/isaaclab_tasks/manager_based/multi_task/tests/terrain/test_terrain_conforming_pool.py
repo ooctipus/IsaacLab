@@ -81,9 +81,9 @@ def simple_commands():
 
     return {
         "walk": RelativeStateCommandCfg.TerrainCommands(
-            pos_x=(0.0, 0.0),
-            pos_y=(0.0, 0.0),
-            pos_z=(0.0, 0.0),
+            match_base_pos=True,
+            match_base_rot=False,
+            match_feet=True,
             duration=(2.0, 2.0),
         )
     }

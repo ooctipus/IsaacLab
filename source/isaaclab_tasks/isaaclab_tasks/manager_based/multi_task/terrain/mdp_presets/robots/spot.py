@@ -17,10 +17,8 @@ from .robot_presets import (
     ExperimentNameCfg,
     FootBodyNamesCfg,
     HeightScannerPrimPathCfg,
-    NonFootBodyNamesCfg,
-    RetargetFootBodyNamesCfg,
-    RetargetHaaJointPatternCfg,
     RetargetJointRegularizeTargetsCfg,
+    RetargetLateralHipJointPatternCfg,
     RobotArticulationCfg,
     SyncFootPairsCfg,
 )
@@ -32,7 +30,6 @@ HeightScannerPrimPathCfg.spot = "{ENV_REGEX_NS}/Robot/body"
 BaseBodyNameCfg.spot = "body"
 # Spot feet are lowercase ``*_foot`` rather than the default ``.*FOOT.*``.
 FootBodyNamesCfg.spot = ".*_foot"
-NonFootBodyNamesCfg.spot = "^(?!.*_foot).*$"
 AsyncFootPairsCfg.spot = (
     ("fl_foot", "fr_foot"),
     ("hr_foot", "hl_foot"),
@@ -47,14 +44,13 @@ ExperimentNameCfg.spot = "spot_position_command"
 # Retarget constants for Spot
 # ---------------------------------------------------------------------------
 
-SPOT_HAA_PATTERN = ".*hip_x"
-"""Regex matching Spot hip abduction/adduction joint names."""
+SPOT_LATERAL_HIP_PATTERN = ".*hip_x"
+"""Regex matching Spot lateral hip joint names."""
 
-RetargetFootBodyNamesCfg.spot = ["fl_foot", "fr_foot", "hl_foot", "hr_foot"]
-RetargetHaaJointPatternCfg.spot = SPOT_HAA_PATTERN
-# Pull HAA toward 0 and knees toward Spot's crouched init-pose angle; hip-swing
-# is left free.
+RetargetLateralHipJointPatternCfg.spot = SPOT_LATERAL_HIP_PATTERN
+# Pull lateral hips toward 0 and knees toward Spot's crouched init-pose angle;
+# hip flexion/extension is left free.
 RetargetJointRegularizeTargetsCfg.spot = {
-    ".*hip_x": 0.0,
+    SPOT_LATERAL_HIP_PATTERN: 0.0,
     ".*_kn": -1.5,
 }

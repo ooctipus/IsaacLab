@@ -11,7 +11,7 @@ from isaaclab.utils import configclass
 from isaaclab_tasks.utils import PresetCfg
 
 from .. import mdp
-from .robots.robot_presets import FootBodyNamesCfg, NonFootBodyNamesCfg
+from .robots.robot_presets import FootBodyNamesCfg
 
 
 @configclass
@@ -21,30 +21,19 @@ class PositionRewardsCfg:
 
     mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0001)
 
-    joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.005)
-
-    foot_touchdown = RewTerm(
-        func=mdp.foot_touchdown_impact,
-        weight=-0.025,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=FootBodyNamesCfg()),  # type: ignore
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FootBodyNamesCfg()),  # type: ignore
-            "history_length": 3,
-        },
-    )
-
     undesired_contact = RewTerm(
-        func=mdp.undesired_contacts,
+        func=mdp.undesired_non_foot_contacts,
         weight=-0.05,
         params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=NonFootBodyNamesCfg()),  # type: ignore
+            "sensor_cfg": SceneEntityCfg("contact_forces"),
+            "foot_sensor_cfg": SceneEntityCfg("contact_forces", body_names=FootBodyNamesCfg()),  # type: ignore
             "threshold": 1.0,
         },
     )
 
-    fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-25.0)
+    fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["oob", "base_contact"]}, weight=-25.0)
 
-    explore = RewTerm(func=mdp.exploration_reward, weight=0.3, params={"forward_only": True})
+    # explore = RewTerm(func=mdp.exploration_reward, weight=0.3, params={"forward_only": True})
 
 
 @configclass

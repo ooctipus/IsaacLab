@@ -132,13 +132,6 @@ class SamplerMetrics:
 # ---------------------------------------------------------------------------
 
 
-_HAA_PATTERNS: dict[str, str | None] = {
-    "anymal_c": ".*HAA",
-    "go2": ".*hip_joint",
-    "spot": ".*hip_x",
-}
-
-
 def _register_presets() -> None:
     import builtins
     import importlib
@@ -198,19 +191,24 @@ def _build_pipeline_cfg(robot_name: str, min_contacts: int = -1):
         IKObjectiveStabilityMarginCfg,
         IKObjectiveTerrainCollisionCfg,
     )
-    from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget import RetargetPipelineCfg
+    from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget import (
+        RetargetPipelineCfg,
+        resolve_foot_body_names,
+    )
     from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget.cfg import (
         PatchSamplingCfg,
         SamplerCfg,
     )
     from isaaclab_tasks.manager_based.multi_task.terrain.mdp_presets.robots.robot_presets import (
+        FootBodyNamesCfg,
         RetargetJointRegularizeTargetsCfg,
+        RetargetLateralHipJointPatternCfg,
         RobotArticulationCfg,
     )
     from isaaclab_tasks.manager_based.multi_task.terrain.utils.criteria_cfg import (
         CollisionCheckCfg,
         FootPositionErrorCfg,
-        HaaLimitCfg,
+        LateralHipLimitCfg,
         SolverCostOutlierCfg,
         SupportPolygonStabilityCfg,
     )
@@ -224,17 +222,17 @@ def _build_pipeline_cfg(robot_name: str, min_contacts: int = -1):
         default_pos=(0.0, 0.0, robot_cfg.init_state.pos[2]),
         default_joint_pos=robot_cfg.init_state.joint_pos,
     )
-    # Foot discovery uses the same "contains 'foot'" heuristic as
-    # validate_spawn_points, kept in lockstep so metric baselines match what
-    # the validation tool would produce for the same robot/terrain.
     _tmp = NewtonKinematics(kin_cfg)
-    foot_names = [n for n in _tmp.body_names if "foot" in n.lower()]
+    foot_spec = getattr(FootBodyNamesCfg, robot_name, ".*foot")
+    foot_names = resolve_foot_body_names(foot_spec, _tmp.body_names)
     del _tmp
 
-    haa_pattern = _HAA_PATTERNS.get(robot_name)
+    lateral_hip_pattern = getattr(
+        RetargetLateralHipJointPatternCfg, robot_name, RetargetLateralHipJointPatternCfg().default
+    )
     criteria_list: list[Any] = [CollisionCheckCfg(n_samples=16, max_pen=0.02)]
-    if haa_pattern:
-        criteria_list.append(HaaLimitCfg(joint_pattern=haa_pattern, max_angle=1.05))
+    if lateral_hip_pattern:
+        criteria_list.append(LateralHipLimitCfg(joint_pattern=lateral_hip_pattern, max_angle=1.05))
     criteria_list += [
         SupportPolygonStabilityCfg(),
         FootPositionErrorCfg(max_err=0.25, aggregate="sum"),
@@ -243,12 +241,16 @@ def _build_pipeline_cfg(robot_name: str, min_contacts: int = -1):
 
     joint_regularize_targets = getattr(RetargetJointRegularizeTargetsCfg, robot_name, {})
 
-    sampler_cfg = SamplerCfg(patch=PatchSamplingCfg(), min_contacts=min_contacts)
+    sampler_cfg = SamplerCfg(
+        patch=PatchSamplingCfg(),
+        min_contacts=min_contacts,
+    )
 
     return RetargetPipelineCfg(
         kin=kin_cfg,
         sampler=sampler_cfg,
         foot_body_names=foot_names,
+        lateral_hip_joint_pattern=lateral_hip_pattern,
         joint_regularize_targets=joint_regularize_targets,
         extra_objectives=[
             IKObjectiveTerrainCollisionCfg(weight=3.0, margin=0.05, n_samples=4),

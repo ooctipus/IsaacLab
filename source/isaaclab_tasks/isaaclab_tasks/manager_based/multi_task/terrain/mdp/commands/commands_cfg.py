@@ -32,14 +32,22 @@ class RelativeStateCommandCfg(CommandTermCfg):
     pipeline_cfg: RetargetPipelineCfg = MISSING  # type: ignore[assignment]
     """Retarget pipeline configuration for generating IK-solved spawn states."""
 
-    pool_size: int = 5000
-    """Number of IK-solved states to generate across the terrain."""
+    pool_spacing: float = 1.0
+    """Target spacing between final IK-solved terrain states [m].
+
+    The command derives per-cell pool size from terrain cell area, so sample
+    density scales with terrain area instead of a fixed global state count.
+    """
+
+    pool_spacing_area_divisor: float = 3.0
+    """Area divisor used to derive spacing-mode pool size [unitless]."""
 
     pos_std: float = 0.5
     rot_std: float = 0.5
     lin_vel_std: float = 0.5
     ang_vel_std: float = 0.5
-    joint_std: float = 0.5
+    foot_pos_std: float = 0.1
+    """Maximum per-foot target error for terrain-state success [m]."""
 
     @configclass
     class Commands:
@@ -136,32 +144,28 @@ class RelativeStateCommandCfg(CommandTermCfg):
         """Range for the angular-z velocity command (in rad/s)."""
 
     @configclass
-    class TerrainCommands(Commands):
-        """Uniform distribution ranges for the position commands."""
+    class TerrainCommands:
+        """Terrain-state command backed by sampled spawn/target states."""
 
         spawn_key: str = "spawn"
+        """State-buffer key used for reset spawn states."""
 
         target_key: str = "target"
+        """State-buffer key used for command target states."""
 
-        pos_x: tuple[float, float] | None = MISSING
-        """Range for the x position (in m)."""
+        match_base_pos: bool = True
+        """Whether to command the target state's base position [m]."""
 
-        pos_y: tuple[float, float] | None = MISSING
-        """Range for the y position (in m)."""
+        match_base_rot: bool = False
+        """Whether to command the target state's base orientation [rad]."""
 
-        pos_z: tuple[float, float] | None = MISSING
-        """Range for the y position (in m)."""
+        match_feet: bool = True
+        """Whether success requires matching target foot positions [m]."""
 
-        roll: tuple[float, float] | None = MISSING
-        """Range for the base roll orientation (in radian)."""
+        duration: tuple[float, float] = (1.0, 1.0)
+        """Time required to be considered successful [s]."""
 
-        pitch: tuple[float, float] | None = MISSING
-        """Range for the base pitch orientation (in radian)."""
-
-        yaw: tuple[float, float] | None = MISSING
-        """Range for the base yaw orientation (in radian)."""
-
-    commands: dict[str, Commands] = {}
+    commands: dict[str, Commands | TerrainCommands] = {}
     """Distribution ranges for the position commands."""
 
     goal_visualizer_cfg: VisualizationMarkersCfg = VisualizationMarkersCfg(

@@ -13,7 +13,7 @@ from isaaclab.assets import ArticulationCfg
 
 import isaaclab_assets.robots.anymal as anymal
 
-from ...utils.criteria import BaseZError, FootPositionError, HaaLimit, JointMargin
+from ...utils.criteria import BaseZError, FootPositionError, JointMargin
 from .robot_presets import (
     AsyncFootPairsCfg,
     BaseBodyNameCfg,
@@ -21,10 +21,8 @@ from .robot_presets import (
     ExperimentNameCfg,
     FootBodyNamesCfg,
     HeightScannerPrimPathCfg,
-    NonFootBodyNamesCfg,
-    RetargetFootBodyNamesCfg,
-    RetargetHaaJointPatternCfg,
     RetargetJointRegularizeTargetsCfg,
+    RetargetLateralHipJointPatternCfg,
     RobotArticulationCfg,
     SyncFootPairsCfg,
 )
@@ -39,7 +37,6 @@ HeightScannerPrimPathCfg.anymal_c = "{ENV_REGEX_NS}/Robot/base"
 BaseBodyNameCfg.anymal_c = "base"
 BaseContactBodyNamesCfg.anymal_c = "base"
 FootBodyNamesCfg.anymal_c = ".*FOOT.*"
-NonFootBodyNamesCfg.anymal_c = "^(?!.*(?:(FOOT))).*$"
 AsyncFootPairsCfg.anymal_c = (
     ("LF_FOOT", "RF_FOOT"),
     ("RH_FOOT", "LH_FOOT"),
@@ -54,19 +51,18 @@ ExperimentNameCfg.anymal_c = "anymal_c_position_command"
 # Retarget validation criteria for ANYmal-C
 # ---------------------------------------------------------------------------
 
-ANYMAL_C_HAA_PATTERN = ".*HAA"
-"""Regex matching ANYmal-C hip abduction/adduction joint names."""
+ANYMAL_C_LATERAL_HIP_PATTERN = ".*HAA"
+"""Regex matching ANYmal-C lateral hip joint names."""
 
-RetargetFootBodyNamesCfg.anymal_c = ["LF_FOOT", "RF_FOOT", "LH_FOOT", "RH_FOOT"]
-RetargetHaaJointPatternCfg.anymal_c = ANYMAL_C_HAA_PATTERN
-# Pull HAA toward 0 (base near support-polygon centroid) and knees toward their
-# init-pose flexion (front knees tuck forward, hind knees back). HFE is left
-# free so IK can adjust stride.
+RetargetLateralHipJointPatternCfg.anymal_c = ANYMAL_C_LATERAL_HIP_PATTERN
+# Pull lateral hips toward 0 (base near support-polygon centroid) and knees
+# toward their init-pose flexion (front knees tuck forward, hind knees back).
+# Hip flexion/extension is left free so IK can adjust stride.
 RetargetJointRegularizeTargetsCfg.anymal_c = {
-    ".*HAA": 0.0,
+    ANYMAL_C_LATERAL_HIP_PATTERN: 0.0,
     ".*F_KFE": -0.8,
     ".*H_KFE": 0.8,
 }
 
-# Re-export generic criteria for backward compatibility
-__all__ += ["FootPositionError", "JointMargin", "HaaLimit", "BaseZError"]
+# Re-export generic criteria used by existing terrain tuning scripts.
+__all__ += ["FootPositionError", "JointMargin", "BaseZError"]

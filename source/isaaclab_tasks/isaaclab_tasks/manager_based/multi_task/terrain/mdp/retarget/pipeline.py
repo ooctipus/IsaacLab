@@ -7,8 +7,9 @@
 
 from __future__ import annotations
 
+import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 
 import newton.ik as ik
@@ -31,6 +32,7 @@ __all__ = [
     "SamplerOutput",
     "SamplerSizing",
     "compute_sampler_sizing",
+    "resolve_foot_body_names",
 ]
 
 CriterionFn = Callable[[RetargetBuffer, int], torch.Tensor]
@@ -115,6 +117,34 @@ def _validate_results(
     return reject, cum_pass
 
 
+def resolve_foot_body_names(foot_body_names: Sequence[str] | str, body_names: Sequence[str]) -> list[str]:
+    """Resolve a foot-body spec against available body names.
+
+    Args:
+        foot_body_names: Either exact body names or a regex matched with
+            :func:`re.fullmatch`.
+        body_names: Available body names.
+
+    Returns:
+        Exact body names in model order.
+
+    Raises:
+        ValueError: If the spec resolves to no body names or references
+            missing exact names.
+    """
+    if isinstance(foot_body_names, str):
+        regex = re.compile(foot_body_names)
+        resolved = [name for name in body_names if regex.fullmatch(name)]
+        if not resolved:
+            raise ValueError(f"Foot body regex '{foot_body_names}' matched no bodies. Available: {list(body_names)}")
+        return resolved
+
+    missing = [name for name in foot_body_names if name not in body_names]
+    if missing:
+        raise ValueError(f"Foot body names not found: missing={missing}, available={list(body_names)}")
+    return list(foot_body_names)
+
+
 class RetargetPipeline:
     """Orchestrates the staged retargeting pipeline.
 
@@ -131,7 +161,8 @@ class RetargetPipeline:
         self.cfg = cfg
 
         self.kin = NewtonKinematics(cfg.kin)
-        self.foot_body_ids = self.kin.find_body_indices(cfg.foot_body_names)
+        self.foot_body_names = resolve_foot_body_names(cfg.foot_body_names, self.kin.body_names)
+        self.foot_body_ids = self.kin.find_body_indices(self.foot_body_names)
 
         self.sampler = cfg.sampler.class_type(cfg.sampler, self.kin, self.foot_body_ids)
 

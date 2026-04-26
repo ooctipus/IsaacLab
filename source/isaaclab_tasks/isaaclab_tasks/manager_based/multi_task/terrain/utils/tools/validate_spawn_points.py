@@ -53,16 +53,7 @@ from isaaclab.utils.warp import convert_to_warp_mesh
 
 VISER_PORT = 8765
 
-# Hip-abduction/adduction joint patterns per robot preset. ``None`` skips the
-# HAA-limit criterion for robots where it does not apply.
-_HAA_PATTERNS: dict[str, str | None] = {
-    "anymal_c": ".*HAA",
-    "go2": ".*hip_joint",
-    "spot": ".*hip_x",
-    # Bipeds have no HAA analogue (no hip-abduction joint that can splay feet
-    # out laterally in the way a quadruped's HAA can), so disable the gate.
-    "h1": None,
-}
+_ROBOT_NAMES = ("anymal_c", "go2", "spot", "h1")
 
 
 # ---------------------------------------------------------------------------
@@ -165,25 +156,15 @@ def _terrain_preset_mesh(preset_dict: dict, device: str):
 def _resolve_foot_names(robot: str, body_names: list[str]) -> list[str]:
     """Resolve the foot body names for ``robot``.
 
-    Prefers the explicit preset list on
-    :class:`RetargetFootBodyNamesCfg` (required for robots whose foot
-    bodies don't contain ``"foot"`` in the name, e.g. H1's
-    ``*_ankle_link``). Falls back to a case-insensitive substring
-    filter so robots without a preset still work.
+    Uses the robot preset foot spec, which may be an exact list or regex.
     """
+    from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget import resolve_foot_body_names
     from isaaclab_tasks.manager_based.multi_task.terrain.mdp_presets.robots.robot_presets import (
-        RetargetFootBodyNamesCfg,
+        FootBodyNamesCfg,
     )
 
-    preset_foot_names = getattr(RetargetFootBodyNamesCfg, robot, None)
-    if preset_foot_names is None:
-        return [n for n in body_names if "foot" in n.lower()]
-    missing = [n for n in preset_foot_names if n not in body_names]
-    if missing:
-        raise ValueError(
-            f"RetargetFootBodyNamesCfg.{robot} names not found in robot USD: missing={missing}, available={body_names}"
-        )
-    return list(preset_foot_names)
+    foot_spec = getattr(FootBodyNamesCfg, robot, ".*foot")
+    return resolve_foot_body_names(foot_spec, body_names)
 
 
 def _draw_active_support_overlay(viewer, buf, feet_all, passed_idx, nc, device) -> None:
@@ -260,7 +241,7 @@ def main():
     from isaaclab_tasks.manager_based.multi_task.terrain.utils.criteria_cfg import (
         CollisionCheckCfg,
         FootPositionErrorCfg,
-        HaaLimitCfg,
+        LateralHipLimitCfg,
         SolverCostOutlierCfg,
         SupportPolygonStabilityCfg,
     )
@@ -268,10 +249,8 @@ def main():
     _register_position_task()
 
     from isaaclab_tasks.manager_based.multi_task.terrain.mdp_presets.robots.robot_presets import (
-        RetargetBasePosWeightCfg,
-        RetargetBaseRotWeightCfg,
-        RetargetGravityWeightCfg,
         RetargetJointRegularizeTargetsCfg,
+        RetargetLateralHipJointPatternCfg,
         RobotArticulationCfg,
     )
 
@@ -302,8 +281,8 @@ def main():
         "--robot",
         type=str,
         default="anymal_c",
-        choices=sorted(_HAA_PATTERNS.keys()),
-        help="Robot preset (resolves USD, base height, joints, HAA pattern).",
+        choices=sorted(_ROBOT_NAMES),
+        help="Robot preset (resolves USD, base height, joints, foot names, and lateral-hip pattern).",
     )
     density_group = parser.add_mutually_exclusive_group()
     density_group.add_argument(
@@ -368,7 +347,7 @@ def main():
     robot_usd = robot_cfg.spawn.usd_path
     base_height = robot_cfg.init_state.pos[2]
     default_jpos = robot_cfg.init_state.joint_pos
-    haa_pattern = _HAA_PATTERNS[args.robot]
+    lateral_hip_pattern = _preset_for(RetargetLateralHipJointPatternCfg, args.robot)
 
     from isaaclab.utils.assets import check_file_path, retrieve_file_path
 
@@ -430,16 +409,16 @@ def main():
     foot_names = _resolve_foot_names(args.robot, _tmp.body_names)
     del _tmp
 
-    # Waterfall order: hard physical constraints first (collision, haa_limit,
+    # Waterfall order: hard physical constraints first (collision, lateral hip,
     # support-polygon stability) so their buckets report the true rate of
     # physical invalidity. Cost is a residual IK-divergence catch on the
-    # physically valid subset. HaaLimitCfg is omitted when haa_pattern is
-    # falsy (e.g. bipeds) so the criterion never reaches its validation.
+    # physically valid subset. LateralHipLimitCfg is omitted when the pattern
+    # is falsy (e.g. bipeds) so the criterion never reaches its validation.
     criteria_list = [
         CollisionCheckCfg(n_samples=16, max_pen=0.02),
     ]
-    if haa_pattern:
-        criteria_list.append(HaaLimitCfg(joint_pattern=haa_pattern, max_angle=1.05))
+    if lateral_hip_pattern:
+        criteria_list.append(LateralHipLimitCfg(joint_pattern=lateral_hip_pattern, max_angle=1.05))
     criteria_list += [
         SupportPolygonStabilityCfg(),
         FootPositionErrorCfg(max_err=0.4, aggregate="sum"),
@@ -449,41 +428,32 @@ def main():
     # Per-robot joint-regularize targets pulled from the robot preset class.
     joint_regularize_targets = getattr(RetargetJointRegularizeTargetsCfg, args.robot, {})
 
-    # Per-robot IK weights pulled from preset classes — no CLI overrides.
-    # Each robot tunes its own stance-specific values alongside foot names /
-    # regularize targets; ablations live in the preset module, not the tool.
-    base_rot_weight = _preset_for(RetargetBaseRotWeightCfg, args.robot)
-    base_pos_weight = _preset_for(RetargetBasePosWeightCfg, args.robot)
-    gravity_weight = _preset_for(RetargetGravityWeightCfg, args.robot)
+    base_rot_weight = 0.5
+    base_pos_weight = 0.05
+    gravity_weight = 0.02
     print(f"IK wts  : base_rot={base_rot_weight}, base_pos={base_pos_weight}, gravity={gravity_weight}")
 
     patch_cfg = PatchSamplingCfg(x_range=sampler_x_range, y_range=sampler_y_range)
-    # The HAA joint's mechanical limit is tighter than the URDF default
-    # (which the USD loader strips to ``±1e10``). Clamp FK sampling for
-    # HAA to ±0.7 rad so templates never come from a leg-across-body
-    # configuration — without this, IK seeded from the template jq
-    # produces visually crossed-leg poses.
-    fk_overrides = {haa_pattern: 0.7} if haa_pattern else {}
     sampler_cfg = SamplerCfg(
         patch=patch_cfg,
         min_contacts=args.min_contacts,
         terrain_snap_distance=args.terrain_snap_distance,
-        fk_joint_range_overrides=fk_overrides,
         outward_snap_penalty=1.0,
     )
-    print(f"Sampler : min_contacts={args.min_contacts} fk_joint_range_overrides={fk_overrides}")
+    print(f"Sampler : min_contacts={args.min_contacts}")
 
     pipeline_cfg = RetargetPipelineCfg(
         kin=kin_cfg,
         sampler=sampler_cfg,
         foot_body_names=foot_names,
+        lateral_hip_joint_pattern=lateral_hip_pattern,
         joint_regularize_targets=joint_regularize_targets,
         base_pos_weight=base_pos_weight,
         base_rot_weight=base_rot_weight,
         extra_objectives=[
             IKObjectiveTerrainCollisionCfg(weight=2.0, margin=0.05, n_samples=4),
             IKObjectiveStabilityMarginCfg(weight=1.0),
-            *([IKObjectiveGravityTorqueCfg(weight=gravity_weight)] if gravity_weight > 0.0 else []),
+            IKObjectiveGravityTorqueCfg(weight=gravity_weight),
             # IKObjectiveJointRegularizeCfg(weight=0.02),
         ],
         criteria=criteria_list,
@@ -627,7 +597,7 @@ def main():
 
     # Support-polygon edges, colored by pipeline outcome (sampler out_of_reach
     # rejections never reach this stage, so they aren't drawn):
-    #   red    -- passed sampler, failed IK criteria (collision / haa_limit / stability / cost)
+    #   red    -- passed sampler, failed IK criteria (collision / lateral_hip_limit / stability / cost)
     #   orange -- passed criteria but dropped by final FPS downsample
     #   green  -- selected (kept)
     n_written = buf.num_written

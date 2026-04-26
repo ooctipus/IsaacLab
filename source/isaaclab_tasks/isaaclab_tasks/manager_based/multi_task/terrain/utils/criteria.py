@@ -6,7 +6,7 @@
 """Robot-agnostic retarget validation criteria.
 
 These criteria work with any articulated robot without requiring
-robot-specific constants. For robot-specific criteria (e.g. HAA
+robot-specific constants. For robot-specific criteria (e.g. lateral hip
 joint limits), see the per-robot preset modules.
 """
 
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from .criteria_cfg import (
         CollisionCheckCfg,
         FootPositionErrorCfg,
-        HaaLimitCfg,
+        LateralHipLimitCfg,
         SolverCostOutlierCfg,
         SupportPolygonStabilityCfg,
     )
@@ -105,45 +105,47 @@ class JointMargin:
         return violation <= 0
 
 
-class HaaLimit:
-    """Criterion: HAA (hip abduction) joint angles must not exceed ``max_angle`` [rad].
+class LateralHipLimit:
+    """Criterion: lateral hip joint angles must not exceed ``max_angle`` [rad].
 
     Resolves DOF indices at construction time from a joint name regex
     via :meth:`NewtonKinematics.find_joint_dof_indices`. The regex comes
     from ``cfg.joint_pattern`` if set, else from the pipeline's
-    ``haa_joint_pattern`` (resolved per robot preset).
+    ``lateral_hip_joint_pattern`` (resolved per robot preset).
 
     Args:
-        cfg: :class:`~.criteria_cfg.HaaLimitCfg` with ``joint_pattern``
-            and ``max_angle`` fields.
+        cfg: :class:`~.criteria_cfg.LateralHipLimitCfg` with
+            ``joint_pattern`` and ``max_angle`` fields.
         pipeline: Live :class:`RetargetPipeline` — used for joint-name
             resolution and the fallback regex.
         wp_mesh: Unused (kept for uniform construction signature).
     """
 
-    def __init__(self, cfg: HaaLimitCfg, pipeline: RetargetPipeline, wp_mesh: object = None) -> None:
-        pattern = cfg.joint_pattern if cfg.joint_pattern is not None else pipeline.cfg.haa_joint_pattern
+    def __init__(self, cfg: LateralHipLimitCfg, pipeline: RetargetPipeline, wp_mesh: object = None) -> None:
+        pattern = cfg.joint_pattern
+        if pattern is None:
+            pattern = pipeline.cfg.lateral_hip_joint_pattern
         if pattern is None:
             raise ValueError(
-                "HaaLimit requires a joint_pattern. Either set HaaLimitCfg.joint_pattern or "
-                "RetargetPipelineCfg.haa_joint_pattern (typically resolved per robot preset)."
+                "LateralHipLimit requires a joint_pattern. Either set LateralHipLimitCfg.joint_pattern or "
+                "RetargetPipelineCfg.lateral_hip_joint_pattern (typically resolved per robot preset)."
             )
         self.max_angle = cfg.max_angle
-        self._haa_indices = pipeline.kin.find_joint_dof_indices(pattern)
+        self._joint_indices = pipeline.kin.find_joint_dof_indices(pattern)
 
     def __call__(self, buffer: RetargetBuffer, N: int) -> torch.Tensor:
-        if not self._haa_indices:
+        if not self._joint_indices:
             return torch.ones(N, device=buffer.device, dtype=torch.bool)
         n_rev = buffer.joint_q_result_t.shape[1] - 7
-        haa_idx = torch.tensor(
-            [i for i in self._haa_indices if i < n_rev],
+        joint_idx = torch.tensor(
+            [i for i in self._joint_indices if i < n_rev],
             device=buffer.device,
             dtype=torch.long,
         )
-        if haa_idx.numel() == 0:
+        if joint_idx.numel() == 0:
             return torch.ones(N, device=buffer.device, dtype=torch.bool)
         jq_rev = buffer.joint_q_result_t[:N, 7:]
-        return jq_rev[:, haa_idx].abs().max(dim=-1).values <= self.max_angle
+        return jq_rev[:, joint_idx].abs().max(dim=-1).values <= self.max_angle
 
 
 @dataclass
