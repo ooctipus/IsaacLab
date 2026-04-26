@@ -125,6 +125,7 @@ from .terminations import (
     success,
     success_terminate,
     speed_terminate,
+    illegal_contact_force_ratio,
     log,
     mean_mech_energy_per_joint,
     total_average_mech_energy_per_joint,

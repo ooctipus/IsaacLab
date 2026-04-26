@@ -17,10 +17,10 @@ from ...utils.criteria import BaseZError, FootPositionError, JointMargin
 from .robot_presets import (
     AsyncFootPairsCfg,
     BaseBodyNameCfg,
-    BaseContactBodyNamesCfg,
     ExperimentNameCfg,
     FootBodyNamesCfg,
     HeightScannerPrimPathCfg,
+    NonFootContactBodyNamesCfg,
     RetargetJointRegularizeTargetsCfg,
     RetargetLateralHipJointPatternCfg,
     RobotArticulationCfg,
@@ -35,7 +35,7 @@ _ANYMAL_C_CFG.spawn.usd_path = (  # type: ignore[attr-defined]
 RobotArticulationCfg.anymal_c = _ANYMAL_C_CFG
 HeightScannerPrimPathCfg.anymal_c = "{ENV_REGEX_NS}/Robot/base"
 BaseBodyNameCfg.anymal_c = "base"
-BaseContactBodyNamesCfg.anymal_c = "base"
+NonFootContactBodyNamesCfg.anymal_c = "^(?!.*FOOT).*$"
 FootBodyNamesCfg.anymal_c = ".*FOOT.*"
 AsyncFootPairsCfg.anymal_c = (
     ("LF_FOOT", "RF_FOOT"),

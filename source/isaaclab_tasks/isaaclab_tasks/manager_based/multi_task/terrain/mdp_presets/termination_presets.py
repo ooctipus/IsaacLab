@@ -12,7 +12,7 @@ from isaaclab_tasks.utils import PresetCfg
 
 from ...mdp.terminations import BaseTerminationsCfg
 from .. import mdp
-from .robots.robot_presets import BaseContactBodyNamesCfg
+from .robots.robot_presets import NonFootContactBodyNamesCfg
 
 
 @configclass
@@ -27,7 +27,9 @@ class PositionTerminationsCfg(BaseTerminationsCfg):
       (replaces the older ``mdp.root_height_below_minimum``-based ``drop``,
       which compared against absolute world z and broke for terrains with
       non-zero spawn heights).
-    - ``base_contact`` — fires on illegal contact with the chassis.
+    - ``base_contact`` — fires on impact contact (force above 3× bodyweight)
+      against any non-foot body. Allows routine soft contact (kneeling,
+      climbing, leaning) while terminating on shock impacts.
     - ``success`` — episode-success termination from the goal-tracking command.
     """
 
@@ -40,10 +42,10 @@ class PositionTerminationsCfg(BaseTerminationsCfg):
     )
 
     base_contact = DoneTerm(
-        func=mdp.illegal_contact,
+        func=mdp.illegal_contact_force_ratio,
         params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=BaseContactBodyNamesCfg()),  # type: ignore
-            "threshold": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=NonFootContactBodyNamesCfg()),  # type: ignore
+            "threshold_ratio": 3.0,
         },
     )
 

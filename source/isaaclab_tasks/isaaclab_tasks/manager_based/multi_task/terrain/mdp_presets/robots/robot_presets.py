@@ -66,10 +66,14 @@ class BaseBodyNameCfg(PresetCfg):
 
 
 @configclass
-class BaseContactBodyNamesCfg(PresetCfg):
-    """Body-name regex for bodies that must not contact the terrain.
+class NonFootContactBodyNamesCfg(PresetCfg):
+    """Body-name regex for non-foot bodies (everything except the feet).
 
     Drives the ``base_contact`` termination's ``sensor_cfg.body_names``.
+    The intent is to detect impact on any non-foot body (knees, body,
+    head, etc.), gated by an impact-force threshold so routine soft
+    contact (kneeling, climbing, leaning) is allowed while shock impacts
+    terminate the episode.
     """
 
     default: str = "^(?!.*foot).*$"

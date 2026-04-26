@@ -14,7 +14,7 @@ __all__ = [
     "TerminationsCfg",
     "AsyncFootPairsCfg",
     "BaseBodyNameCfg",
-    "BaseContactBodyNamesCfg",
+    "NonFootContactBodyNamesCfg",
     "ExperimentNameCfg",
     "FootBodyNamesCfg",
     "HeightScannerPrimPathCfg",
@@ -31,7 +31,7 @@ from .reward_presets import RewardsCfg
 from .robots import (
     AsyncFootPairsCfg,
     BaseBodyNameCfg,
-    BaseContactBodyNamesCfg,
+    NonFootContactBodyNamesCfg,
     ExperimentNameCfg,
     FootBodyNamesCfg,
     HeightScannerPrimPathCfg,

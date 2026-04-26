@@ -6,10 +6,10 @@
 __all__ = [
     "AsyncFootPairsCfg",
     "BaseBodyNameCfg",
-    "BaseContactBodyNamesCfg",
     "ExperimentNameCfg",
     "FootBodyNamesCfg",
     "HeightScannerPrimPathCfg",
+    "NonFootContactBodyNamesCfg",
     "RetargetJointRegularizeTargetsCfg",
     "RetargetLateralHipJointPatternCfg",
     "RobotArticulationCfg",
@@ -19,10 +19,10 @@ __all__ = [
 from .robot_presets import (
     AsyncFootPairsCfg,
     BaseBodyNameCfg,
-    BaseContactBodyNamesCfg,
     ExperimentNameCfg,
     FootBodyNamesCfg,
     HeightScannerPrimPathCfg,
+    NonFootContactBodyNamesCfg,
     RetargetJointRegularizeTargetsCfg,
     RetargetLateralHipJointPatternCfg,
     RobotArticulationCfg,

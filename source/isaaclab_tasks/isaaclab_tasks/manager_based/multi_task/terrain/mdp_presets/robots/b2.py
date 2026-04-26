@@ -21,10 +21,10 @@ from isaaclab_assets import ISAACLAB_ASSETS_DATA_DIR
 
 from .robot_presets import (
     BaseBodyNameCfg,
-    BaseContactBodyNamesCfg,
     ExperimentNameCfg,
     FootBodyNamesCfg,
     HeightScannerPrimPathCfg,
+    NonFootContactBodyNamesCfg,
     RetargetJointRegularizeTargetsCfg,
     RetargetLateralHipJointPatternCfg,
     RobotArticulationCfg,
@@ -42,7 +42,7 @@ if hasattr(unitree, "B2_CFG"):
     RobotArticulationCfg.b2 = _B2_CFG
     HeightScannerPrimPathCfg.b2 = "{ENV_REGEX_NS}/Robot/base_link"
     BaseBodyNameCfg.b2 = "base_link"
-    BaseContactBodyNamesCfg.b2 = "base_link"
+    NonFootContactBodyNamesCfg.b2 = "^(?!.*foot$).*$"
     FootBodyNamesCfg.b2 = ".*foot"
     ExperimentNameCfg.b2 = "b2_position_command"
     RetargetLateralHipJointPatternCfg.b2 = B2_LATERAL_HIP_PATTERN

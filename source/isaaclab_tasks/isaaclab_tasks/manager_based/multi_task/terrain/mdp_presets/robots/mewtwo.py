@@ -21,9 +21,9 @@ from isaaclab.assets import ArticulationCfg
 from .robot_presets import (
     AsyncFootPairsCfg,
     BaseBodyNameCfg,
-    BaseContactBodyNamesCfg,
     ExperimentNameCfg,
     HeightScannerPrimPathCfg,
+    NonFootContactBodyNamesCfg,
     RobotArticulationCfg,
     SyncFootPairsCfg,
 )
@@ -39,7 +39,7 @@ if mewtwo is not None and hasattr(mewtwo, "MEWTWO_CFG"):
     RobotArticulationCfg.mewtwo = _MEWTWO_CFG
     HeightScannerPrimPathCfg.mewtwo = "{ENV_REGEX_NS}/Robot/Pelvis"
     BaseBodyNameCfg.mewtwo = "Pelvis"
-    BaseContactBodyNamesCfg.mewtwo = "^(?!.*(?:Toe|Thumb|Index|Pinky|Coccyx.*)).*$"
+    NonFootContactBodyNamesCfg.mewtwo = "^(?!.*(?:Toe|Thumb|Index|Pinky|Coccyx.*)).*$"
     AsyncFootPairsCfg.mewtwo = (("RightToe", "LeftToe"),)
     SyncFootPairsCfg.mewtwo = ()
     ExperimentNameCfg.mewtwo = "mewtwo_position_command"

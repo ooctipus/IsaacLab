@@ -14,10 +14,10 @@ from isaaclab_assets.robots.unitree import H1_CFG
 from .robot_presets import (
     AsyncFootPairsCfg,
     BaseBodyNameCfg,
-    BaseContactBodyNamesCfg,
     ExperimentNameCfg,
     FootBodyNamesCfg,
     HeightScannerPrimPathCfg,
+    NonFootContactBodyNamesCfg,
     RetargetJointRegularizeTargetsCfg,
     RobotArticulationCfg,
     SyncFootPairsCfg,
@@ -33,7 +33,7 @@ RobotArticulationCfg.h1 = _H1_CFG
 HeightScannerPrimPathCfg.h1 = "{ENV_REGEX_NS}/Robot/torso_link"
 BaseBodyNameCfg.h1 = "torso_link"
 FootBodyNamesCfg.h1 = ".*ankle_link"
-BaseContactBodyNamesCfg.h1 = "^(?!.*ankle_link).*$"
+NonFootContactBodyNamesCfg.h1 = "^(?!.*ankle_link).*$"
 AsyncFootPairsCfg.h1 = (("left_ankle_link", "right_ankle_link"),)
 SyncFootPairsCfg.h1 = ()
 ExperimentNameCfg.h1 = "h1_position_command"
