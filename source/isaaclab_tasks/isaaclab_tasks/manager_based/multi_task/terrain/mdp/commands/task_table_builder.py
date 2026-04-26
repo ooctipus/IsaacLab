@@ -21,6 +21,7 @@ import torch
 from isaaclab.utils.warp import convert_to_warp_mesh
 
 from isaaclab_tasks.manager_based.multi_task.mdp.util import pack_articulation_reset_state
+from isaaclab_tasks.manager_based.multi_task.mdp.util.trace import trace_span
 
 if TYPE_CHECKING:
     import trimesh
@@ -258,7 +259,6 @@ def build_task_table(
     )
 
     # --- Step 1: Run IK pipeline on terrain mesh ---
-    wp_mesh = convert_to_warp_mesh(terrain_mesh.vertices, terrain_mesh.faces, device=device)
     terrain_area = (grid_x_range[1] - grid_x_range[0]) * (grid_y_range[1] - grid_y_range[0])
     sampling_area = (sampling_x_range[1] - sampling_x_range[0]) * (sampling_y_range[1] - sampling_y_range[0])
     total_states = _state_count_from_spacing(
@@ -281,6 +281,13 @@ def build_task_table(
             flush=True,
         )
 
+    with trace_span(
+        "task_table.convert_mesh",
+        vertices=len(terrain_mesh.vertices),
+        faces=len(terrain_mesh.faces),
+    ):
+        wp_mesh = convert_to_warp_mesh(terrain_mesh.vertices, terrain_mesh.faces, device=device)
+
     # Single global pipeline.run over the entire terrain. Per-cell binning
     # happens after FK so we get the same CSR layout, but without the
     # 200-cell-loop fixed overhead (solver build + criteria setup amortized
@@ -291,29 +298,36 @@ def build_task_table(
         sampling_y_range,
         override=True,
     )
-    pipeline = grid_pipeline_cfg.class_type(grid_pipeline_cfg)
-    grid_origin = np.zeros(3, dtype=np.float32)
-    buffer = pipeline.run(wp_mesh, grid_origin, total_states)
-    last_rejection_summary = pipeline.rejection_summary
+    with trace_span(
+        "task_table.retarget_pipeline",
+        requested_states=total_states,
+        sampling_area=sampling_area,
+        pool_spacing=pool_spacing,
+    ):
+        pipeline = grid_pipeline_cfg.class_type(grid_pipeline_cfg)
+        grid_origin = np.zeros(3, dtype=np.float32)
+        buffer = pipeline.run(wp_mesh, grid_origin, total_states)
+        last_rejection_summary = pipeline.rejection_summary
     if buffer.num_selected == 0:
         raise RuntimeError(
             f"Retarget pipeline produced no valid terrain states for RelativeStateCommand.\n{last_rejection_summary}"
         )
-    selected = buffer._selected[: buffer.num_selected].long()
-    spawn_states = buffer.joint_q_result_t[selected].clone()
     print(
         f"  Global retargeting: requested {total_states}, selected {buffer.num_selected} "
         f"({100.0 * buffer.num_selected / max(1, total_states):.1f}%)",
         flush=True,
     )
 
-    newton_joint_names = _newton_revolute_joint_names(pipeline.kin)
-    spawn_states = _reorder_spawn_state_joints(
-        spawn_states,
-        newton_joint_names,
-        robot_joint_names,
-    )
-    spawn_states = pack_articulation_reset_state(spawn_states[:, :7], spawn_states[:, 7:])
+    with trace_span("task_table.pack_spawn_states", selected_states=int(buffer.num_selected)):
+        selected = buffer._selected[: buffer.num_selected].long()
+        spawn_states = buffer.joint_q_result_t[selected].clone()
+        newton_joint_names = _newton_revolute_joint_names(pipeline.kin)
+        spawn_states = _reorder_spawn_state_joints(
+            spawn_states,
+            newton_joint_names,
+            robot_joint_names,
+        )
+        spawn_states = pack_articulation_reset_state(spawn_states[:, :7], spawn_states[:, 7:])
 
     print(f"  Task table: {spawn_states.shape[0]} IK-solved states", flush=True)
 
@@ -322,32 +336,33 @@ def build_task_table(
     # around the terrain). The IK sampler feeds on the full mesh and has no
     # notion of sub-terrain boundaries, so a raw ``.clamp`` would silently
     # push border states into edge cells and break geometric isolation.
-    grid_origin = terrain_origins[0, 0, :2].to(device) - cell_size_t * 0.5
+    with trace_span("task_table.bin_states", states=int(spawn_states.shape[0]), cells=num_subterrains):
+        grid_origin = terrain_origins[0, 0, :2].to(device) - cell_size_t * 0.5
 
-    base_xy = spawn_states[:, :2]
-    cell_xy = (base_xy - grid_origin.unsqueeze(0)) / cell_size_t.unsqueeze(0)
-    row_idx = torch.floor(cell_xy[:, 0]).long()
-    col_idx = torch.floor(cell_xy[:, 1]).long()
-    in_grid = (row_idx >= 0) & (row_idx < num_rows) & (col_idx >= 0) & (col_idx < num_cols)
-    dropped = int((~in_grid).sum().item())
+        base_xy = spawn_states[:, :2]
+        cell_xy = (base_xy - grid_origin.unsqueeze(0)) / cell_size_t.unsqueeze(0)
+        row_idx = torch.floor(cell_xy[:, 0]).long()
+        col_idx = torch.floor(cell_xy[:, 1]).long()
+        in_grid = (row_idx >= 0) & (row_idx < num_rows) & (col_idx >= 0) & (col_idx < num_cols)
+        dropped = int((~in_grid).sum().item())
 
-    kept_state_idx = in_grid.nonzero(as_tuple=False).squeeze(-1)
-    flat_cell_kept = row_idx[in_grid] * num_cols + col_idx[in_grid]
+        kept_state_idx = in_grid.nonzero(as_tuple=False).squeeze(-1)
+        flat_cell_kept = row_idx[in_grid] * num_cols + col_idx[in_grid]
 
-    # CSR layout: cell_values[cell_offsets[c]:cell_offsets[c+1]] -> global spawn_states indices in cell c.
-    sort_order = flat_cell_kept.argsort()
-    cell_values = kept_state_idx[sort_order]
+        # CSR layout: cell_values[cell_offsets[c]:cell_offsets[c+1]] -> global spawn_states indices in cell c.
+        sort_order = flat_cell_kept.argsort()
+        cell_values = kept_state_idx[sort_order]
 
-    counts_per_cell = torch.bincount(flat_cell_kept, minlength=num_subterrains)
-    cell_offsets = torch.zeros(num_subterrains + 1, device=device, dtype=torch.long)
-    cell_offsets[1:] = counts_per_cell.cumsum(0)
+        counts_per_cell = torch.bincount(flat_cell_kept, minlength=num_subterrains)
+        cell_offsets = torch.zeros(num_subterrains + 1, device=device, dtype=torch.long)
+        cell_offsets[1:] = counts_per_cell.cumsum(0)
 
-    non_empty = int((counts_per_cell > 0).sum())
+        non_empty = int((counts_per_cell > 0).sum())
+        cmin = int(counts_per_cell.min().item())
+        cmax = int(counts_per_cell.max().item())
+        cmean = float(counts_per_cell.float().mean().item())
     if dropped > 0:
         print(f"  Dropped {dropped} border/out-of-grid states", flush=True)
-    cmin = int(counts_per_cell.min().item())
-    cmax = int(counts_per_cell.max().item())
-    cmean = float(counts_per_cell.float().mean().item())
     print(
         f"  Binned into {num_rows}x{num_cols} grid: {non_empty}/{num_subterrains} non-empty cells, "
         f"counts min={cmin} mean={cmean:.1f} max={cmax}",
@@ -361,106 +376,112 @@ def build_task_table(
     pair_target_parts: list[torch.Tensor] = []
     pair_tile_parts: list[torch.Tensor] = []
     offsets_cpu = cell_offsets.cpu().tolist()
-    for cell in range(num_subterrains):
-        start = offsets_cpu[cell]
-        end = offsets_cpu[cell + 1]
-        n_c = end - start
-        if n_c == 0:
-            continue
-        ids = cell_values[start:end]
-        pair_spawn_parts.append(ids.repeat_interleave(n_c))
-        pair_target_parts.append(ids.repeat(n_c))
-        pair_tile_parts.append(torch.full((n_c * n_c,), cell, device=device, dtype=torch.long))
+    with trace_span("task_table.build_pairs", non_empty_cells=non_empty):
+        for cell in range(num_subterrains):
+            start = offsets_cpu[cell]
+            end = offsets_cpu[cell + 1]
+            n_c = end - start
+            if n_c == 0:
+                continue
+            ids = cell_values[start:end]
+            pair_spawn_parts.append(ids.repeat_interleave(n_c))
+            pair_target_parts.append(ids.repeat(n_c))
+            pair_tile_parts.append(torch.full((n_c * n_c,), cell, device=device, dtype=torch.long))
 
-    if pair_spawn_parts:
-        pair_spawn = torch.cat(pair_spawn_parts)
-        pair_target = torch.cat(pair_target_parts)
-        pair_tile = torch.cat(pair_tile_parts)
-    else:
-        pair_spawn = torch.zeros(0, device=device, dtype=torch.long)
-        pair_target = torch.zeros(0, device=device, dtype=torch.long)
-        pair_tile = torch.zeros(0, device=device, dtype=torch.long)
-    num_pairs_per_type = int(pair_spawn.shape[0])
+        if pair_spawn_parts:
+            pair_spawn = torch.cat(pair_spawn_parts)
+            pair_target = torch.cat(pair_target_parts)
+            pair_tile = torch.cat(pair_tile_parts)
+        else:
+            pair_spawn = torch.zeros(0, device=device, dtype=torch.long)
+            pair_target = torch.zeros(0, device=device, dtype=torch.long)
+            pair_tile = torch.zeros(0, device=device, dtype=torch.long)
+        num_pairs_per_type = int(pair_spawn.shape[0])
     if num_pairs_per_type == 0:
         raise RuntimeError("No terrain cells contained valid retargeted states; cannot build a task table.")
 
     # --- Step 4: Replicate pair layout per command type; sample per-type params ---
-    ranges = torch.zeros((len(commands), 13, 2), device=device)
-    mask = torch.zeros((len(commands), 12), device=device, dtype=torch.bool)
-    kind = torch.zeros(len(commands), dtype=torch.int32, device=device)
+    with trace_span(
+        "task_table.sample_command_params",
+        command_types=len(commands),
+        pairs_per_type=num_pairs_per_type,
+    ):
+        ranges = torch.zeros((len(commands), 13, 2), device=device)
+        mask = torch.zeros((len(commands), 12), device=device, dtype=torch.bool)
+        kind = torch.zeros(len(commands), dtype=torch.int32, device=device)
 
-    spawn_indices_list = []
-    target_indices_list = []
-    tile_indices_list = []
-    params_list = []
-    mask_list = []
-    task_is_terrain_list = []
-    task_uses_feet_list = []
-    row_counts = []
+        spawn_indices_list = []
+        target_indices_list = []
+        tile_indices_list = []
+        params_list = []
+        mask_list = []
+        task_is_terrain_list = []
+        task_uses_feet_list = []
+        row_counts = []
 
-    for cmd_id, val in enumerate(commands.values()):
-        is_terrain_command = isinstance(val, RelativeStateCommandCfg.TerrainCommands)
-        if is_terrain_command:
-            if val.match_base_pos:
-                mask[cmd_id, :3] = True
-            if val.match_base_rot:
-                mask[cmd_id, 3:6] = True
-            ranges[cmd_id, 12, 0] = val.duration[0]
-            ranges[cmd_id, 12, 1] = val.duration[1]
-            kind[cmd_id] = 1 if val.match_base_rot else 0
-        else:
-            for data_id, name in enumerate(_COMMAND_PARAM_NAMES):
-                data = getattr(val, name)
-                if data is not None and isinstance(data, tuple):
-                    if data_id < 12:
-                        mask[cmd_id, data_id] = True
-                    ranges[cmd_id, data_id, 0] = data[0]
-                    ranges[cmd_id, data_id, 1] = data[1]
-            if isinstance(val, RelativeStateCommandCfg.PositionCommands):
-                kind[cmd_id] = 0
-            elif isinstance(val, RelativeStateCommandCfg.PoseCommands):
-                kind[cmd_id] = 1
-            elif isinstance(val, RelativeStateCommandCfg.VelocityCommands):
-                kind[cmd_id] = 2
+        for cmd_id, val in enumerate(commands.values()):
+            is_terrain_command = isinstance(val, RelativeStateCommandCfg.TerrainCommands)
+            if is_terrain_command:
+                if val.match_base_pos:
+                    mask[cmd_id, :3] = True
+                if val.match_base_rot:
+                    mask[cmd_id, 3:6] = True
+                ranges[cmd_id, 12, 0] = val.duration[0]
+                ranges[cmd_id, 12, 1] = val.duration[1]
+                kind[cmd_id] = 1 if val.match_base_rot else 0
+            else:
+                for data_id, name in enumerate(_COMMAND_PARAM_NAMES):
+                    data = getattr(val, name)
+                    if data is not None and isinstance(data, tuple):
+                        if data_id < 12:
+                            mask[cmd_id, data_id] = True
+                        ranges[cmd_id, data_id, 0] = data[0]
+                        ranges[cmd_id, data_id, 1] = data[1]
+                if isinstance(val, RelativeStateCommandCfg.PositionCommands):
+                    kind[cmd_id] = 0
+                elif isinstance(val, RelativeStateCommandCfg.PoseCommands):
+                    kind[cmd_id] = 1
+                elif isinstance(val, RelativeStateCommandCfg.VelocityCommands):
+                    kind[cmd_id] = 2
 
-        range_min = ranges[cmd_id, :, 0].view(1, 13)
-        range_span = ranges[cmd_id, :, 1] - ranges[cmd_id, :, 0]
-        task_params = torch.rand(num_pairs_per_type, 13, device=device) * range_span.view(1, 13) + range_min
+            range_min = ranges[cmd_id, :, 0].view(1, 13)
+            range_span = ranges[cmd_id, :, 1] - ranges[cmd_id, :, 0]
+            task_params = torch.rand(num_pairs_per_type, 13, device=device) * range_span.view(1, 13) + range_min
 
-        full_mask = torch.zeros(num_pairs_per_type, 12 + num_joints, device=device, dtype=torch.bool)
-        full_mask[:, :12] = mask[cmd_id].view(1, 12)
-        if is_terrain_command:
-            full_mask[:, 12:] = True
+            full_mask = torch.zeros(num_pairs_per_type, 12 + num_joints, device=device, dtype=torch.bool)
+            full_mask[:, :12] = mask[cmd_id].view(1, 12)
+            if is_terrain_command:
+                full_mask[:, 12:] = True
 
-        spawn_indices_list.append(pair_spawn)
-        target_indices_list.append(pair_target)
-        tile_indices_list.append(pair_tile)
-        params_list.append(task_params)
-        mask_list.append(full_mask)
-        task_is_terrain_list.append(
-            torch.full((num_pairs_per_type,), is_terrain_command, device=device, dtype=torch.bool)
-        )
-        task_uses_feet_list.append(
-            torch.full(
-                (num_pairs_per_type,),
-                is_terrain_command and val.match_feet,
-                device=device,
-                dtype=torch.bool,
+            spawn_indices_list.append(pair_spawn)
+            target_indices_list.append(pair_target)
+            tile_indices_list.append(pair_tile)
+            params_list.append(task_params)
+            mask_list.append(full_mask)
+            task_is_terrain_list.append(
+                torch.full((num_pairs_per_type,), is_terrain_command, device=device, dtype=torch.bool)
             )
-        )
-        row_counts.append(num_pairs_per_type)
+            task_uses_feet_list.append(
+                torch.full(
+                    (num_pairs_per_type,),
+                    is_terrain_command and val.match_feet,
+                    device=device,
+                    dtype=torch.bool,
+                )
+            )
+            row_counts.append(num_pairs_per_type)
 
-    all_spawn = torch.cat(spawn_indices_list, dim=0)
-    all_target = torch.cat(target_indices_list, dim=0)
-    all_tile = torch.cat(tile_indices_list, dim=0)
-    all_params = torch.cat(params_list, dim=0)
-    all_masks = torch.cat(mask_list, dim=0)
-    all_task_is_terrain = torch.cat(task_is_terrain_list, dim=0)
-    all_task_uses_feet = torch.cat(task_uses_feet_list, dim=0)
+        all_spawn = torch.cat(spawn_indices_list, dim=0)
+        all_target = torch.cat(target_indices_list, dim=0)
+        all_tile = torch.cat(tile_indices_list, dim=0)
+        all_params = torch.cat(params_list, dim=0)
+        all_masks = torch.cat(mask_list, dim=0)
+        all_task_is_terrain = torch.cat(task_is_terrain_list, dim=0)
+        all_task_uses_feet = torch.cat(task_uses_feet_list, dim=0)
 
-    counts_t = torch.tensor(row_counts, device=device, dtype=torch.long)
-    offsets = torch.zeros(len(commands) + 1, device=device, dtype=torch.long)
-    offsets[1:] = torch.cumsum(counts_t, dim=0)
+        counts_t = torch.tensor(row_counts, device=device, dtype=torch.long)
+        offsets = torch.zeros(len(commands) + 1, device=device, dtype=torch.long)
+        offsets[1:] = torch.cumsum(counts_t, dim=0)
 
     print(f"  {int(all_spawn.shape[0])} tasks ({len(commands)} command types)", flush=True)
     print(f"  Task table built in {_timing_checkpoint(device) - timing_start:.3f} s", flush=True)
