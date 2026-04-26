@@ -20,6 +20,7 @@ import torch
 import warp as wp
 
 if TYPE_CHECKING:
+    from ...mdp.util.kinematics import NewtonKinematics
     from ..mdp.retarget.buffer import RetargetBuffer
     from ..mdp.retarget.pipeline import RetargetPipeline
     from .criteria_cfg import (
@@ -29,7 +30,6 @@ if TYPE_CHECKING:
         SolverCostOutlierCfg,
         SupportPolygonStabilityCfg,
     )
-    from .kinematic import NewtonKinematics
 
 
 class FootPositionError:
@@ -303,7 +303,7 @@ class CollisionCheck:
     """
 
     def __init__(self, cfg: CollisionCheckCfg, pipeline: RetargetPipeline, wp_mesh: object) -> None:
-        from .kinematic.ik_objectives.terrain_collision import _build_collision_probes  # noqa: PLC0415
+        from ...mdp.util.kinematics.ik_objectives.terrain_collision import _build_collision_probes  # noqa: PLC0415
 
         self.kin = pipeline.kin
         self.wp_mesh = wp_mesh

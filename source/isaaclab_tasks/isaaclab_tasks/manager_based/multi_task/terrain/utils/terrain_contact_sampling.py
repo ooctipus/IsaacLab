@@ -37,6 +37,7 @@ import warp as wp
 from ...mdp.util.canonical_shape import canonicalize_shape
 from ...mdp.util.grid_downsample import grid_bucket_downsample
 from ...mdp.util.kinematics import NewtonKinematics
+from ...mdp.util.spatial_topk import spatial_topk_xy
 from ..mdp.retarget.buffer import RetargetBuffer
 from ..mdp.retarget.cfg import PatchSamplingCfg, SamplerCfg, SamplerSizingCfg
 from ..mdp.retarget.sampler_base import SamplerBase, SamplerOutput, SamplerSizing, compute_sampler_sizing
@@ -328,6 +329,14 @@ class Sampler(SamplerBase):
             self._fk_shape_samples = canon_all.contiguous()
             self._fk_joint_q_rev = jq_rev.contiguous()
 
+        # Cache the maximum per-foot distance from template centroid:
+        # this bounds how far a projected foot can sit from the candidate
+        # centre, and (plus snap_distance with a margin) becomes the
+        # ``spatial_topk_xy`` query radius. Using the FK-derived bound
+        # keeps the hash-grid search tight for small robots and elastic
+        # for larger ones without hard-coded heuristics.
+        self._fk_max_foot_reach = float(self._fk_shape_samples[..., :2].norm(dim=-1).max().item())
+
         if device.startswith("cuda"):
             torch.cuda.synchronize()
         dt = time.perf_counter() - t0
@@ -459,129 +468,140 @@ class Sampler(SamplerBase):
             # distinctness, convexity, and winding-preservation constraints;
             # pick the combo with min total cost. For nc=4 this is 256
             # combinations per candidate; fully vectorized over K.
-            projected_xy = projected_world[..., :2].reshape(-1, 2)  # [K*nc, 2]
             patch_xy = patch_pts[:, :2].contiguous()
-            dists = torch.cdist(projected_xy, patch_xy).view(K, nc, -1)  # [K, nc, N_p]
             radius = float(self.cfg.terrain_snap_distance)
-
-            # Each foot's nc-nearest patches (the only ones worth considering).
-            topk_dists, topk_idx = dists.topk(nc, dim=-1, largest=False)  # [K, nc, nc]
-
-            # Enumerate nc^nc combinations: ``combo[c, i]`` = rank (0..nc-1)
-            # that foot ``i`` picks under combination ``c``.
-            rank_axes = [torch.arange(nc, device=device)] * nc
-            combo = torch.cartesian_prod(*rank_axes).view(-1, nc)  # [nc^nc, nc]
-            C = combo.shape[0]
-            gather_rank = combo.view(1, C, nc, 1).expand(K, C, nc, 1)
-            chosen_idx = torch.gather(topk_idx.unsqueeze(1).expand(-1, C, -1, -1), 3, gather_rank).squeeze(-1)
-            chosen_dist = torch.gather(topk_dists.unsqueeze(1).expand(-1, C, -1, -1), 3, gather_rank).squeeze(-1)
-
-            # Contact vs. air is driven by ``min_contacts``:
-            #   - ``min_contacts == nc``: every foot snaps to its nearest
-            #     patch regardless of distance (no air, no radius check) —
-            #     the hard-polygon path where the caller wants all ``nc``
-            #     feet on the ground.
-            #   - ``min_contacts <  nc``: standard radius-based classification
-            #     (foot is air iff ``chosen_dist >= radius``); a foot whose
-            #     closest patch is within radius MUST contact, so the
-            #     outward-snap penalty never trades a reachable contact
-            #     for air via cost arithmetic.
-            #
-            # Outward-snap penalty: nearest-patch snapping tends to push
-            # feet radially outward from the template centroid; a 4-foot
-            # stance that each inflates by a few cm balloons past the
-            # leg's reach envelope and IK fails. Adding
-            # ``cfg.outward_snap_penalty × max(0, r_patch − r_template)``
-            # makes inward snaps strictly cheaper than outward so the
-            # LSA picks the closest-to-centroid patch among options.
+            outward_pen = float(self.cfg.outward_snap_penalty)
             raw_mc = int(self.cfg.min_contacts)
             min_contacts = nc if (raw_mc < 0 or raw_mc > nc) else max(1, raw_mc)
             force_all_snap = min_contacts >= nc
-            effective_radius = float("inf") if force_all_snap else radius
-            contact_mask_c = chosen_dist < effective_radius  # [K, C, nc]
 
-            proj_xy_candidate = projected_world[..., :2]  # [K, nc, 2]
-            tpl_centroid_xy = proj_xy_candidate.mean(dim=1, keepdim=True)  # [K, 1, 2]
-            tpl_r = (proj_xy_candidate - tpl_centroid_xy).norm(dim=-1)  # [K, nc]
-            patch_xy_gather = patch_xy[chosen_idx.view(-1)].view(K, C, nc, 2)
-            patch_r = (patch_xy_gather - tpl_centroid_xy.unsqueeze(1)).norm(dim=-1)  # [K, C, nc]
-            outward = (patch_r - tpl_r.unsqueeze(1)).clamp(min=0)  # [K, C, nc]
-            contact_cost = chosen_dist + float(self.cfg.outward_snap_penalty) * outward
-            cost_per_foot = torch.where(contact_mask_c, contact_cost, torch.full_like(chosen_dist, radius))
-            total_cost = cost_per_foot.sum(dim=-1)  # [K, C]
+            # Per-foot top-``nc`` patch lookup via Warp ``HashGrid``. The
+            # cdist+topk path materialises an ``[K*nc, N_p]`` distance
+            # matrix that on large terrains (e.g. 200x200 m pit with
+            # K~500k, N_p~100k) hits hundreds of GiB; a spatial hash
+            # collapses the cost to ``O(K * nc * patches_in_radius)``
+            # with bounded memory regardless of K or N_p. Search radius
+            # = max-foot-reach + a few snap-distances so force-snap
+            # candidates always find their nearest patches even when the
+            # template projects a foot at the edge of the reach envelope.
+            # ``force_all_snap`` allows snapping up to the full query
+            # radius; soft-polygon paths still gate contact at the
+            # configured ``terrain_snap_distance``.
+            query_radius = self._fk_max_foot_reach + 4.0 * radius
+            effective_radius = query_radius if force_all_snap else radius
+            proj_xy_flat = projected_world[..., :2].reshape(-1, 2).contiguous()
+            topk_i_flat, topk_d_flat = spatial_topk_xy(patch_xy, proj_xy_flat, k=nc, radius=query_radius)
+            topk_idx_full = topk_i_flat.view(K, nc, nc).to(torch.long).clamp(min=0)
+            topk_dists_full = topk_d_flat.view(K, nc, nc)
 
-            if not force_all_snap:
-                # Must-contact constraint: a foot whose closest patch is
-                # within radius has a contact option — any combo that
-                # leaves it as air for cost reasons is invalid.
-                foot_has_contact_option = topk_dists[:, :, 0] < radius  # [K, nc]
-                combo_violates_must_contact = (foot_has_contact_option.unsqueeze(1) & ~contact_mask_c).any(
-                    dim=-1
-                )  # [K, C]
-                total_cost = torch.where(
-                    combo_violates_must_contact, torch.full_like(total_cost, float("inf")), total_cost
-                )
-
-            # Distinctness: contact feet must pick distinct patches. Air
-            # feet encoded with unique negative sentinels so the pairwise-
-            # equal check only sees real contact conflicts.
+            # Enumerate nc^nc combinations once: ``combo[c, i]`` = rank
+            # (0..nc-1) that foot ``i`` picks under combination ``c``.
+            rank_axes = [torch.arange(nc, device=device)] * nc
+            combo = torch.cartesian_prod(*rank_axes).view(-1, nc)  # [nc^nc, nc]
+            C = combo.shape[0]
             neg_sentinel = -torch.arange(1, nc + 1, device=device).view(1, 1, nc)
-            eff_idx = torch.where(contact_mask_c, chosen_idx, neg_sentinel)
-            sorted_eff = eff_idx.sort(dim=-1).values
-            has_dup = (sorted_eff[..., 1:] == sorted_eff[..., :-1]).any(dim=-1)  # [K, C]
-            total_cost = torch.where(has_dup, torch.full_like(total_cost, float("inf")), total_cost)
 
-            # Winding preservation: the snapped stance must preserve the
-            # template's slot→CCW-rank permutation (else two feet have
-            # crossed). Done in angular-CCW order around the stance
-            # centroid, not slot order (slot order itself can be self-
-            # intersecting, e.g. anymal ``[LF, RF, LH, RH]``).
-            tpl_rel = proj_xy_candidate - tpl_centroid_xy
-            tpl_perm = torch.atan2(tpl_rel[..., 1], tpl_rel[..., 0]).argsort(dim=-1)  # [K, nc]
+            # Chunk K through the LSA combo expansion. The hash-grid lookup
+            # already keeps memory bounded; the LSA's ``[K, C, nc]``
+            # intermediates still scale linearly with K, so we cap a
+            # chunk at ~256 MiB of intermediate state.
+            lsa_budget = 256 * 1024 * 1024
+            chunk_K = max(1, lsa_budget // (C * nc * 4 * 4))
 
-            proj_xy_exp = proj_xy_candidate.unsqueeze(1).expand(-1, C, -1, -1)
-            target_xy = torch.where(contact_mask_c.unsqueeze(-1), patch_xy_gather, proj_xy_exp)
-            tgt_rel = target_xy - target_xy.mean(dim=2, keepdim=True)
-            tgt_perm = torch.atan2(tgt_rel[..., 1], tgt_rel[..., 0]).argsort(dim=-1)  # [K, C, nc]
-            perm_match = (tgt_perm == tpl_perm.unsqueeze(1)).all(dim=-1)  # [K, C]
+            is_contact_chunks: list[torch.Tensor] = []
+            contact_ik_chunks: list[torch.Tensor] = []
+            n_found_chunks: list[torch.Tensor] = []
+            no_convex_chunks: list[torch.Tensor] = []
+            for k0 in range(0, K, chunk_K):
+                k1 = min(k0 + chunk_K, K)
+                Kc = k1 - k0
+                proj_chunk = projected_world[k0:k1]  # [Kc, nc, 3]
+                proj_xy = proj_chunk[..., :2]  # [Kc, nc, 2]
 
-            # Hull validity: stance walked in CCW order must be strictly
-            # convex (no foot inside the triangle of the others).
-            target_sorted = torch.gather(target_xy, 2, tgt_perm.unsqueeze(-1).expand(-1, -1, -1, 2))
-            edges = target_sorted.roll(-1, dims=2) - target_sorted
-            next_edges = edges.roll(-1, dims=2)
-            cross = edges[..., 0] * next_edges[..., 1] - edges[..., 1] * next_edges[..., 0]
-            convex_sorted = (cross > 0).all(dim=-1) | (cross < 0).all(dim=-1)  # [K, C]
+                # Top-nc per (candidate, foot) — already computed by hash grid.
+                topk_d = topk_dists_full[k0:k1]  # [Kc, nc, nc]
+                topk_i = topk_idx_full[k0:k1]
 
-            convex_valid = perm_match & convex_sorted
-            total_cost = torch.where(convex_valid, total_cost, torch.full_like(total_cost, float("inf")))
+                # Expand into combo space.
+                gather_rank = combo.view(1, C, nc, 1).expand(Kc, C, nc, 1)
+                chosen_i = torch.gather(topk_i.unsqueeze(1).expand(-1, C, -1, -1), 3, gather_rank).squeeze(-1)
+                chosen_d = torch.gather(topk_d.unsqueeze(1).expand(-1, C, -1, -1), 3, gather_rank).squeeze(-1)
 
-            best_c = total_cost.argmin(dim=-1)  # [K]
-            # Candidates with no valid combo survive ``argmin`` with cost
-            # ``inf`` — flagged so the min-contacts filter below rejects.
-            no_convex = total_cost[torch.arange(K, device=device), best_c].isinf()
-            row_idx = torch.arange(K, device=device)
-            nearest_idx = chosen_idx[row_idx, best_c]  # [K, nc]
-            nearest_dist = chosen_dist[row_idx, best_c]
-            # When ``force_all_snap``, every foot is contact by construction
-            # (``effective_radius = inf`` during LSA); skip the radius gate.
-            is_contact_full = (
-                torch.ones_like(nearest_dist, dtype=torch.bool) if force_all_snap else (nearest_dist < radius)
-            )
-            patch_gather = patch_pts[nearest_idx.view(-1)].view(K, nc, 3)
-            patch_gather[..., 2] = patch_gather[..., 2] + self.foot_ground_offset
+                # Contact mask: forced True under ``force_all_snap``.
+                contact_mask_c = chosen_d < effective_radius  # [Kc, C, nc]
 
-            # Clamp air-foot target z above the local terrain surface so IK
-            # doesn't aim air feet into a raised patch. Local terrain z is
-            # estimated from the foot's xy-nearest morph patch.
-            nearest_local_idx = topk_idx[:, :, 0]  # [K, nc]
-            local_terrain_z = patch_pts[nearest_local_idx.view(-1), 2].view(K, nc)
-            air_floor_z = local_terrain_z + self.foot_ground_offset
-            projected_world_clamped = projected_world.clone()
-            projected_world_clamped[..., 2] = torch.maximum(projected_world[..., 2], air_floor_z)
-            contact_ik = torch.where(is_contact_full.unsqueeze(-1), patch_gather, projected_world_clamped)
+                # Outward-snap-aware contact cost.
+                tpl_centroid_xy = proj_xy.mean(dim=1, keepdim=True)  # [Kc, 1, 2]
+                tpl_r = (proj_xy - tpl_centroid_xy).norm(dim=-1)  # [Kc, nc]
+                patch_xy_gather = patch_xy[chosen_i.view(-1)].view(Kc, C, nc, 2)
+                patch_r = (patch_xy_gather - tpl_centroid_xy.unsqueeze(1)).norm(dim=-1)
+                outward = (patch_r - tpl_r.unsqueeze(1)).clamp(min=0)
+                contact_cost = chosen_d + outward_pen * outward
+                cost_per_foot = torch.where(contact_mask_c, contact_cost, torch.full_like(chosen_d, radius))
+                total_cost = cost_per_foot.sum(dim=-1)  # [Kc, C]
 
-            n_found = is_contact_full.sum(dim=-1)
+                if not force_all_snap:
+                    foot_has_contact_option = topk_d[:, :, 0] < radius  # [Kc, nc]
+                    combo_violates_must_contact = (foot_has_contact_option.unsqueeze(1) & ~contact_mask_c).any(dim=-1)
+                    total_cost = torch.where(
+                        combo_violates_must_contact, torch.full_like(total_cost, float("inf")), total_cost
+                    )
+
+                # Distinctness penalty (contact feet must pick distinct patches).
+                eff_idx = torch.where(contact_mask_c, chosen_i, neg_sentinel)
+                sorted_eff = eff_idx.sort(dim=-1).values
+                has_dup = (sorted_eff[..., 1:] == sorted_eff[..., :-1]).any(dim=-1)
+                total_cost = torch.where(has_dup, torch.full_like(total_cost, float("inf")), total_cost)
+
+                # Winding preservation.
+                tpl_rel = proj_xy - tpl_centroid_xy
+                tpl_perm = torch.atan2(tpl_rel[..., 1], tpl_rel[..., 0]).argsort(dim=-1)  # [Kc, nc]
+
+                proj_xy_exp = proj_xy.unsqueeze(1).expand(-1, C, -1, -1)
+                target_xy = torch.where(contact_mask_c.unsqueeze(-1), patch_xy_gather, proj_xy_exp)
+                tgt_rel = target_xy - target_xy.mean(dim=2, keepdim=True)
+                tgt_perm = torch.atan2(tgt_rel[..., 1], tgt_rel[..., 0]).argsort(dim=-1)
+                perm_match = (tgt_perm == tpl_perm.unsqueeze(1)).all(dim=-1)
+
+                # Hull validity (strictly convex in CCW order).
+                target_sorted = torch.gather(target_xy, 2, tgt_perm.unsqueeze(-1).expand(-1, -1, -1, 2))
+                edges = target_sorted.roll(-1, dims=2) - target_sorted
+                next_edges = edges.roll(-1, dims=2)
+                cross = edges[..., 0] * next_edges[..., 1] - edges[..., 1] * next_edges[..., 0]
+                convex_sorted = (cross > 0).all(dim=-1) | (cross < 0).all(dim=-1)
+                convex_valid = perm_match & convex_sorted
+                total_cost = torch.where(convex_valid, total_cost, torch.full_like(total_cost, float("inf")))
+
+                # Pick best combo; emit per-K outputs.
+                best_c = total_cost.argmin(dim=-1)  # [Kc]
+                row_idx = torch.arange(Kc, device=device)
+                no_convex_chunks.append(total_cost[row_idx, best_c].isinf())
+                nearest_idx_c = chosen_i[row_idx, best_c]  # [Kc, nc]
+                nearest_dist_c = chosen_d[row_idx, best_c]
+                # is_contact mirrors the LSA's effective radius: under
+                # force_all_snap a foot is contact iff the hash grid found
+                # any patch within the (generous) query radius; otherwise
+                # the foot is genuinely out of reach and the candidate
+                # falls through ``out_of_reach`` below.
+                is_contact_c = nearest_dist_c < effective_radius
+                patch_gather = patch_pts[nearest_idx_c.view(-1)].view(Kc, nc, 3)
+                patch_gather[..., 2] = patch_gather[..., 2] + self.foot_ground_offset
+
+                # Air-foot z clamp above local terrain.
+                local_terrain_z = patch_pts[topk_i[:, :, 0].reshape(-1), 2].view(Kc, nc)
+                air_floor_z = local_terrain_z + self.foot_ground_offset
+                proj_clamped = proj_chunk.clone()
+                proj_clamped[..., 2] = torch.maximum(proj_chunk[..., 2], air_floor_z)
+                contact_ik_c = torch.where(is_contact_c.unsqueeze(-1), patch_gather, proj_clamped)
+
+                is_contact_chunks.append(is_contact_c)
+                contact_ik_chunks.append(contact_ik_c)
+                n_found_chunks.append(is_contact_c.sum(dim=-1))
+
+            is_contact_full = torch.cat(is_contact_chunks, dim=0)  # [K, nc]
+            contact_ik = torch.cat(contact_ik_chunks, dim=0)  # [K, nc, 3]
+            n_found = torch.cat(n_found_chunks, dim=0)  # [K]
+            no_convex = torch.cat(no_convex_chunks, dim=0)  # [K]
             out_of_reach = n_found < min_contacts
 
             valid = ~out_of_reach & ~no_convex
