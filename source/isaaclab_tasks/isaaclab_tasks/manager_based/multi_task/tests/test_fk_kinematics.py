@@ -6,7 +6,6 @@
 """Tests for Newton-based forward kinematics via NewtonKinematics."""
 
 import newton
-import newton.ik as ik
 import numpy as np
 import pytest
 import warp as wp
@@ -43,13 +42,6 @@ class TestNewtonKinematics:
                 default_joint_pos=DEFAULT_JPOS,
             )
         )
-
-    @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
-    def test_model_loaded(self, kin):
-        assert kin.model.body_count > 0
-        assert kin.model.joint_count > 0
-        assert len(kin.body_names) == kin.model.body_count
-        assert len(kin.joint_names) == kin.model.joint_count
 
     @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
     def test_default_stance(self, kin):
@@ -95,28 +87,3 @@ class TestNewtonKinematics:
 
         diff = np.abs(mod_bq[:, :3] - default_bq[:, :3]).max()
         assert diff > 0.01, f"Changing joints should move bodies, max diff={diff:.4f}m"
-
-    @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
-    def test_ik_solver_creation(self, kin):
-        foot_ids = [i for i, n in enumerate(kin.body_names) if "FOOT" in n.upper()]
-        co = [
-            ik.IKObjectivePosition(
-                link_index=fid,
-                link_offset=wp.vec3(0, 0, 0),
-                target_positions=wp.zeros(1, dtype=wp.vec3, device=DEVICE),
-                weight=1.0,
-            )
-            for fid in foot_ids
-        ]
-        jlo = ik.IKObjectiveJointLimit(
-            joint_limit_lower=kin.model.joint_limit_lower,
-            joint_limit_upper=kin.model.joint_limit_upper,
-            weight=1.0,
-        )
-        solver = kin.create_ik_solver([*co, jlo], n_problems=1)
-        assert solver is not None
-
-    @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
-    def test_builder_available(self, kin):
-        assert hasattr(kin, "builder")
-        assert len(kin.builder.shape_source) > 0

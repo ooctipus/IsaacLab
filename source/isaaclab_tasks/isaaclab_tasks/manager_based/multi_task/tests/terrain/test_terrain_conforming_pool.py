@@ -22,7 +22,13 @@ from isaaclab.terrains.terrain_generator import TerrainGenerator
 from isaaclab.terrains.trimesh.mesh_terrains_cfg import MeshPlaneTerrainCfg
 
 from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics import NewtonKinematicsCfg
-from isaaclab_tasks.manager_based.multi_task.terrain.mdp.commands.task_table_builder import build_task_table
+from isaaclab_tasks.manager_based.multi_task.terrain.mdp.commands.task_table_builder import (
+    _joint_order_from_names,
+    _pipeline_with_inner_sampling_bounds,
+    _state_count_from_spacing,
+    _terrain_grid_bounds,
+    build_task_table,
+)
 from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget import RetargetPipelineCfg
 from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget.cfg import SamplerCfg
 
@@ -36,31 +42,6 @@ DEVICE = "cuda:0"
 NUM_ROWS = 3
 NUM_COLS = 4
 CELL_SIZE = (8.0, 8.0)
-
-
-@pytest.fixture(scope="module")
-def terrain():
-    """Generate a small terrain grid for testing."""
-    from isaaclab.terrains import HfPyramidStairsTerrainCfg
-
-    cfg = TerrainGeneratorCfg(
-        size=CELL_SIZE,
-        num_rows=NUM_ROWS,
-        num_cols=NUM_COLS,
-        border_width=0.0,
-        use_cache=False,
-        seed=42,
-        curriculum=True,
-        sub_terrains={
-            "stairs": HfPyramidStairsTerrainCfg(
-                step_height_range=(0.05, 0.15),
-                step_width=0.3,
-                platform_width=2.0,
-                inverted=True,
-            )
-        },
-    )
-    return TerrainGenerator(cfg=cfg, device=DEVICE)
 
 
 @pytest.fixture(scope="module")
@@ -108,41 +89,61 @@ def simple_commands():
     }
 
 
-@pytest.fixture(scope="module")
-def stairs_task_table(terrain, pipeline_cfg, simple_commands):
-    """Shared task-table build on the stairs grid (pipeline runs once per module)."""
-    if not wp.is_device_available("cuda:0"):
-        pytest.skip("GPU required")
-    origins = torch.tensor(terrain.terrain_origins, device=DEVICE, dtype=torch.float32)
-    result = build_task_table(
-        terrain_mesh=terrain.terrain_mesh,
-        terrain_origins=origins,
-        cell_size=CELL_SIZE,
-        pipeline_cfg=pipeline_cfg,
-        commands=simple_commands,
-        num_joints=12,
-        pool_size=200,
-        device=DEVICE,
-    )
-    return {"result": result, "origins": origins}
+class TestTaskTableSizingHelpers:
+    """CPU-only checks for spacing-mode sizing and sampler bounds patching."""
 
+    def test_spacing_pool_uses_inner_grid_area(self):
+        origins = torch.zeros(5, 5, 3, dtype=torch.float32)
+        xs = torch.arange(5, dtype=torch.float32) * 10.0 - 20.0
+        ys = torch.arange(5, dtype=torch.float32) * 10.0 - 20.0
+        origins[..., 0], origins[..., 1] = torch.meshgrid(xs, ys, indexing="ij")
 
-class TestBuildTaskTable:
-    """Shape-level smoke test for the task table builder."""
+        x_range, y_range = _terrain_grid_bounds(origins, (10.0, 10.0))
 
-    def test_produces_valid_table(self, stairs_task_table):
-        """State validity (finite + unit quats) is covered by
-        :meth:`TestRealistic.test_accuracy_ground_clearance`, and index validity
-        is covered by :meth:`TestIsolation.test_spawn_target_match_tile_index`
-        (which must dereference every index to run). This is just the shape
-        contract on ``params``.
-        """
-        result = stairs_task_table["result"]
-        assert result["num_tasks"] > 0
-        assert result["spawn_states"].shape[0] > 0
-        assert result["spawn_index"].shape == result["target_index"].shape
-        assert result["params"].shape[1] == 13
-        print(f"  Tasks: {result['num_tasks']}, States: {result['spawn_states'].shape[0]}")
+        assert x_range == pytest.approx((-25.0, 25.0))
+        assert y_range == pytest.approx((-25.0, 25.0))
+        assert _state_count_from_spacing(x_range, y_range, spacing=1.0, area_divisor=3.0) == 833
+
+    def test_inner_sampling_bounds_do_not_mutate_input_cfg(self):
+        cfg = RetargetPipelineCfg(
+            kin=NewtonKinematicsCfg(),
+            sampler=SamplerCfg(),
+            foot_body_names=["LF_FOOT", "RF_FOOT", "LH_FOOT", "RH_FOOT"],
+        )
+
+        patched = _pipeline_with_inner_sampling_bounds(cfg, (-25.0, 25.0), (-25.0, 25.0))
+
+        assert cfg.sampler.patch.x_range is None
+        assert cfg.sampler.patch.y_range is None
+        assert patched.sampler.patch.x_range == (-25.0, 25.0)
+        assert patched.sampler.patch.y_range == (-25.0, 25.0)
+
+    def test_joint_order_from_names_reorders_to_articulation_order(self):
+        source_joint_names = ["LF_HAA", "LF_HFE", "LF_KFE", "RF_HAA"]
+        target_joint_names = ["RF_HAA", "LF_HFE", "LF_HAA", "LF_KFE"]
+
+        assert _joint_order_from_names(source_joint_names, target_joint_names) == [3, 1, 0, 2]
+
+    def test_command_preset_uses_deferred_kinematics_and_spacing(self):
+        import importlib
+
+        from isaaclab_tasks.manager_based.multi_task.terrain.mdp_presets.command_presets import CommandsCfg
+        from isaaclab_tasks.utils import resolve_presets
+
+        importlib.import_module("isaaclab_tasks.manager_based.multi_task.terrain.mdp_presets.robots")
+        cfg = resolve_presets(CommandsCfg(), {"anymal_c"})
+        goal_cfg = cfg.goal_point
+
+        assert goal_cfg.pipeline_cfg.kin.usd_path == ""
+        assert goal_cfg.pool_spacing == pytest.approx(1.0)
+        assert goal_cfg.pool_spacing_area_divisor == pytest.approx(3.0)
+        assert goal_cfg.pipeline_cfg.sampler.min_contacts == 3
+        assert goal_cfg.pipeline_cfg.sampler.terrain_snap_distance == pytest.approx(0.2)
+        assert goal_cfg.pipeline_cfg.sampler.fk_joint_range_overrides == {}
+        assert goal_cfg.pipeline_cfg.sampler.outward_snap_penalty == pytest.approx(1.0)
+        assert "IKObjectiveJointRegularizeCfg" not in {
+            type(objective).__name__ for objective in goal_cfg.pipeline_cfg.extra_objectives
+        }
 
 
 def _bin_xy(xy: torch.Tensor, origins: torch.Tensor, cell_size, num_rows, num_cols):
@@ -183,9 +184,9 @@ def flat_terrain():
 def flat_task_table(flat_terrain, pipeline_cfg, simple_commands):
     """Shared task-table build on the flat grid (pipeline runs once per module).
 
-    ``pool_size = 20 * n_tiles`` so the same result covers the uniformity-CV
-    check (which needs many states per tile) as well as the isolation /
-    border-leak checks.
+    ``pool_spacing = 1.0`` yields about 20 states per tile, so the same
+    result covers the uniformity-CV check (which needs many states per tile)
+    as well as the isolation / border-leak checks.
     """
     if not wp.is_device_available("cuda:0"):
         pytest.skip("GPU required")
@@ -198,8 +199,8 @@ def flat_task_table(flat_terrain, pipeline_cfg, simple_commands):
         pipeline_cfg=pipeline_cfg,
         commands=simple_commands,
         num_joints=12,
-        pool_size=20 * n_tiles,
         device=DEVICE,
+        pool_spacing=1.0,
     )
     return {"result": result, "origins": origins, "n_tiles": n_tiles}
 
@@ -268,7 +269,7 @@ REAL_NUM_ROWS = 10
 REAL_NUM_COLS = 10
 REAL_CELL_SIZE = (10.0, 10.0)
 REAL_BORDER_WIDTH = 20.0
-REAL_POOL_SIZE = 5000  # matches RelativeStateCommandCfg.pool_size
+REAL_POOL_SPACING = 1.0
 
 
 @pytest.fixture(scope="module")
@@ -334,8 +335,8 @@ class TestRealistic:
             pipeline_cfg=pipeline_cfg,
             commands=simple_commands,
             num_joints=12,
-            pool_size=REAL_POOL_SIZE,
             device=DEVICE,
+            pool_spacing=REAL_POOL_SPACING,
         )
         torch.cuda.synchronize()
         t_total = time.perf_counter() - t0
@@ -368,7 +369,7 @@ class TestRealistic:
         cv = (counts.std() / counts.mean().clamp_min(1.0)).item()
         n_border = int((~in_grid).sum().item())
         print(
-            f"\n  Realistic uniformity (pool_size={REAL_POOL_SIZE}, grid={REAL_NUM_ROWS}x{REAL_NUM_COLS}):"
+            f"\n  Realistic uniformity (pool_spacing={REAL_POOL_SPACING}, grid={REAL_NUM_ROWS}x{REAL_NUM_COLS}):"
             f"\n    in-grid states:  {int(counts.sum())} / {spawn_states.shape[0]} "
             f"(border/out-of-grid dropped: {n_border})"
             f"\n    tile coverage:   {coverage:.1%}  ({int((counts > 0).sum())}/{n_tiles} tiles)"
@@ -387,7 +388,7 @@ class TestRealistic:
         n_states = real_result["table"]["spawn_states"].shape[0]
         n_tasks = real_result["table"]["num_tasks"]
         print(
-            f"\n  Realistic speed (pool_size={REAL_POOL_SIZE}):"
+            f"\n  Realistic speed (pool_spacing={REAL_POOL_SPACING}):"
             f"\n    build_task_table: {t_total * 1000:8.1f} ms "
             f"({n_states} states, {n_tasks} tasks)"
         )

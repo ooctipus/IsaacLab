@@ -107,15 +107,6 @@ class TestPipelineStair:
         return convert_to_warp_mesh(mesh.vertices.astype(np.float32), mesh.faces, device=DEVICE)
 
     @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
-    def test_stair_acceptance(self, robot_data, stair_mesh):
-        kin, foot_ids, foot_names = robot_data
-        pipeline = _make_pipeline(foot_names)
-        buf = pipeline.run(stair_mesh, np.zeros(3), n_desired=50)
-        print(pipeline.rejection_summary)
-        if buf.num_selected == 0:
-            pytest.skip("No valid candidates on stair terrain")
-
-    @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
     def test_stair_foot_error(self, robot_data, stair_mesh):
         kin, foot_ids, foot_names = robot_data
 

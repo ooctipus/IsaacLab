@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Tests for RetargetBuffer: allocation, views, reset."""
+"""Tests for the meaningful RetargetBuffer storage contracts."""
 
 import pytest
 import torch
@@ -20,84 +20,63 @@ def _init_warp():
 DEVICE = "cpu"
 
 
-class TestRetargetBufferAllocation:
-    def test_views_shapes(self):
-        buf = RetargetBuffer(100, 19, 17, 4, device=DEVICE)
-        assert buf.contact_targets_t.shape == (400, 3)
-        assert buf.joint_q_init_t.shape == (100, 19)
-        assert buf.joint_q_result_t.shape == (100, 19)
-        assert buf.body_q_t.shape == (1700, 7)
-        assert buf.base_target_pos_t.shape == (100, 3)
-        assert buf.base_target_rot_t.shape == (100, 4)
+def test_float_views_share_one_backing_tensor_and_write_through():
+    """All float views are slices of ``_data`` and writes hit the backing storage."""
+    buf = RetargetBuffer(100, 19, 17, 4, device=DEVICE)
 
-    def test_single_allocation(self):
-        buf = RetargetBuffer(100, 19, 17, 4, device=DEVICE)
-        assert buf._data.is_contiguous()
-        # All float views should point into _data
-        assert buf.contact_targets_t.data_ptr() == buf._data.data_ptr()
+    assert buf._data.is_contiguous()
+    assert buf._data.device == torch.device(DEVICE)
+    assert buf.contact_targets_t.shape == (400, 3)
+    assert buf.joint_q_init_t.shape == (100, 19)
+    assert buf.joint_q_result_t.shape == (100, 19)
+    assert buf.body_q_t.shape == (1700, 7)
+    assert buf.base_target_pos_t.shape == (100, 3)
+    assert buf.base_target_rot_t.shape == (100, 4)
 
-    def test_device(self):
-        buf = RetargetBuffer(10, 19, 17, 4, device=DEVICE)
-        assert buf._data.device == torch.device(DEVICE)
+    base = buf._data.data_ptr()
+    assert buf.contact_targets_t.data_ptr() == base
+    assert buf.joint_q_init_t.data_ptr() > base
+    assert buf.joint_q_result_t.data_ptr() > buf.joint_q_init_t.data_ptr()
 
-    def test_initial_counters(self):
-        buf = RetargetBuffer(50, 19, 17, 4, device=DEVICE)
-        assert buf.num_written == 0
-        assert buf.num_geometry_valid == 0
-        assert buf.num_ik_valid == 0
-        assert buf.num_selected == 0
+    buf.joint_q_result_t[3, 5] = 42.0
+    backing_offset = buf._o_jr + 3 * 19 + 5
+    assert buf._data[backing_offset].item() == 42.0
 
 
-class TestRetargetBufferMasks:
-    def test_set_geometry_valid(self):
-        buf = RetargetBuffer(100, 19, 17, 4, device=DEVICE)
-        buf._geom_valid[0] = True
-        buf._geom_valid[5] = True
-        buf._geom_valid[10] = True
-        assert buf._geom_valid.sum() == 3
+def test_reset_clears_runtime_state_without_reallocating():
+    """Reuse must clear masks/counters while keeping the same allocation."""
+    buf = RetargetBuffer(100, 19, 17, 4, device=DEVICE)
+    ptr_before = buf._data.data_ptr()
+    buf._geom_valid[:3] = True
+    buf._ik_valid[:2] = True
+    buf._selected[:2] = torch.tensor([7, 9], dtype=torch.int32)
+    buf._is_contact[:4] = False
+    buf.num_selected = 2
+    buf.num_written = 10
+    buf.num_geometry_valid = 3
+    buf.num_ik_valid = 2
+    buf.num_final_valid = 1
 
-    def test_reset_clears_masks(self):
-        buf = RetargetBuffer(100, 19, 17, 4, device=DEVICE)
-        buf._geom_valid[0] = True
-        buf.num_written = 10
-        buf.num_geometry_valid = 1
-        buf.reset()
-        assert buf._geom_valid.sum() == 0
-        assert buf.num_written == 0
-        assert buf.num_geometry_valid == 0
+    buf.reset()
 
-    def test_cumulative_masks(self):
-        buf = RetargetBuffer(10, 19, 17, 4, device=DEVICE)
-        buf._geom_valid[:3] = True
-        buf._ik_valid[0] = True
-        buf._ik_valid[2] = True
-        combined = buf._geom_valid & buf._ik_valid
-        assert combined.sum() == 2
-        assert combined[0] and combined[2] and not combined[1]
-
-
-class TestRetargetBufferZeroCopy:
-    def test_torch_view_writes_through(self):
-        buf = RetargetBuffer(10, 19, 17, 4, device=DEVICE)
-        buf.joint_q_result_t[3, 5] = 42.0
-        assert buf.joint_q_result_t[3, 5] == pytest.approx(42.0)
-        # Verify it's in the backing tensor
-        s = buf._o_jr + 3 * 19 + 5
-        assert buf._data[s] == pytest.approx(42.0)
-
-    def test_memory_estimate(self):
-        buf = RetargetBuffer(100, 19, 17, 4, device=DEVICE)
-        assert buf.memory_bytes > 0
-        bigger = RetargetBuffer(200, 19, 17, 4, device=DEVICE)
-        assert bigger.memory_bytes > buf.memory_bytes
+    assert buf._data.data_ptr() == ptr_before
+    assert not buf._geom_valid.any()
+    assert not buf._ik_valid.any()
+    assert not buf._selected.any()
+    assert bool(buf._is_contact.all())
+    assert buf.num_selected == 0
+    assert buf.num_written == 0
+    assert buf.num_geometry_valid == 0
+    assert buf.num_ik_valid == 0
+    assert buf.num_final_valid == 0
 
 
-class TestRetargetBufferReuse:
-    def test_reset_preserves_capacity(self):
-        buf = RetargetBuffer(100, 19, 17, 4, device=DEVICE)
-        buf.num_written = 50
-        buf.num_geometry_valid = 30
-        buf.reset()
-        assert buf.max_candidates == 100
-        assert buf.contact_targets_t.shape == (400, 3)
-        assert buf.num_written == 0
+def test_memory_bound_scales_with_capacity_not_written_count():
+    small = RetargetBuffer(100, 19, 17, 4, device=DEVICE)
+    large = RetargetBuffer(1000, 19, 17, 4, device=DEVICE)
+    ratio = large.memory_bytes / small.memory_bytes
+    assert 9.0 < ratio < 11.0
+
+    mem_empty = small.memory_bytes
+    small.num_written = 50
+    assert small.memory_bytes == mem_empty

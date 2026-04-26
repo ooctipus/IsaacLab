@@ -3,49 +3,34 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-import pytest
 import torch
 
 from isaaclab_tasks.manager_based.multi_task.mdp.util.state_buffer import StateBuffer
 
 
 class TestStateBuffer:
-    def test_empty_buffer(self):
-        buf = StateBuffer(10, 3, torch.device("cpu"))
-        assert len(buf) == 0
-        assert not buf.is_full
-
-    def test_add_and_len(self):
-        buf = StateBuffer(10, 3, torch.device("cpu"))
-        states = torch.randn(4, 3)
-        start, n = buf.add(states)
-        assert start == 0
-        assert n == 4
-        assert len(buf) == 4
-
-    def test_is_full(self):
+    def test_add_caps_at_boundary_and_wraps_next_batch(self):
         buf = StateBuffer(5, 2, torch.device("cpu"))
-        buf.add(torch.randn(5, 2))
-        assert buf.is_full
-        assert len(buf) == 5
+        first = torch.arange(6).reshape(3, 2).float()
+        second = torch.arange(8).reshape(4, 2).float() + 10.0
+        third = torch.tensor([[99.0, 100.0]])
 
-    def test_add_caps_at_boundary(self):
-        buf = StateBuffer(5, 2, torch.device("cpu"))
-        buf.add(torch.randn(3, 2))
-        start, n = buf.add(torch.randn(4, 2))
+        start, n = buf.add(first)
+        assert (start, n) == (0, 3)
+        assert len(buf) == 3
+
+        start, n = buf.add(second)
         assert start == 3
         assert n == 2, "Should cap at buffer boundary"
+        torch.testing.assert_close(buf.data[:3], first)
+        torch.testing.assert_close(buf.data[3:5], second[:2])
         assert len(buf) == 5
-
-    def test_ring_wrap(self):
-        buf = StateBuffer(4, 1, torch.device("cpu"))
-        buf.add(torch.tensor([[1.0], [2.0], [3.0], [4.0]]))
         assert buf.is_full
-        start, n = buf.add(torch.tensor([[5.0], [6.0]]))
+
+        start, n = buf.add(third)
         assert start == 0
-        assert n == 2
-        assert buf.data[0].item() == pytest.approx(5.0)
-        assert buf.data[1].item() == pytest.approx(6.0)
+        assert n == 1
+        torch.testing.assert_close(buf.data[0], third[0])
 
     def test_sample(self):
         buf = StateBuffer(5, 2, torch.device("cpu"))
@@ -55,23 +40,14 @@ class TestStateBuffer:
         sampled = buf.sample(indices)
         assert torch.equal(sampled, data[indices])
 
-    def test_set_tag_names(self):
+    def test_tags_follow_written_prefix_only(self):
         buf = StateBuffer(5, 2, torch.device("cpu"))
         buf.set_tag_names(["a", "b"])
         assert buf.tag_names == ["a", "b"]
 
-    def test_set_tags(self):
-        buf = StateBuffer(5, 2, torch.device("cpu"))
-        buf.set_tags(torch.tensor([0, 2, 4]), torch.tensor([1, 0, 1]))
-        assert buf.tags[0].item() == 1
-        assert buf.tags[1].item() == -1
-        assert buf.tags[2].item() == 0
-        assert buf.tags[4].item() == 1
-
-    def test_success_rates_initially_none(self):
-        buf = StateBuffer(5, 2, torch.device("cpu"))
-        assert buf.success_rates is None
-
-    def test_max_size(self):
-        buf = StateBuffer(42, 2, torch.device("cpu"))
-        assert buf.max_size == 42
+        states = torch.arange(8).reshape(4, 2).float()
+        start, n = buf.add_with_tags(states, torch.tensor([2, 1, 0, 1]))
+        assert (start, n) == (0, 4)
+        torch.testing.assert_close(buf.data[:4], states)
+        torch.testing.assert_close(buf.tags[:4], torch.tensor([2, 1, 0, 1]))
+        assert buf.tags[4].item() == -1

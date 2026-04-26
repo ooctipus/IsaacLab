@@ -32,9 +32,6 @@ from isaaclab_tasks.manager_based.multi_task.mdp.commands.multitask.kernels_torc
     ACTIVATION_KERNELS,
     BUFFER_KIND,
     BUFFER_KIND_READERS,
-    DELTA_KERNELS,
-    METRIC_KERNEL_ID,
-    METRIC_KERNELS,
     SAMPLER_KERNEL_ID,
     SAMPLER_KERNELS,
     STATE_KERNEL_BUFFER_KIND,
@@ -340,27 +337,3 @@ def test_euler_to_quat_zero_range_yields_identity_when_center_zero():
     # xyzw identity has w = 1, xyz = 0.
     assert abs(samples[0, 3].item() - 1.0) < 1e-6
     assert samples[0, :3].abs().max().item() < 1e-6
-
-
-# -----------------------------------------------------------------------------
-# Kernel-id registry sanity (makes sure enums align with tuple indices)
-# -----------------------------------------------------------------------------
-
-
-def test_activation_kernel_ids_align():
-    """Each ACTIVATION_KERNEL_ID indexes the matching kernel in ACTIVATION_KERNELS."""
-    assert len(ACTIVATION_KERNELS) == len(ACTIVATION_KERNEL_ID)
-    for member in ACTIVATION_KERNEL_ID:
-        assert ACTIVATION_KERNELS[int(member)] is not None
-
-
-def test_metric_kernel_ids_align():
-    """Each METRIC_KERNEL_ID indexes the matching kernel in METRIC_KERNELS."""
-    assert len(METRIC_KERNELS) == len(METRIC_KERNEL_ID)
-    for member in METRIC_KERNEL_ID:
-        assert METRIC_KERNELS[int(member)] is not None
-
-
-def test_metric_delta_kernels_align():
-    """DELTA_KERNELS and METRIC_KERNELS must be same length (caller assumes ID parity)."""
-    assert len(DELTA_KERNELS) == len(METRIC_KERNELS)

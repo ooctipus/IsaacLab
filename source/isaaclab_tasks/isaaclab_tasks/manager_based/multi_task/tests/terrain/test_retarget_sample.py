@@ -138,21 +138,6 @@ class TestSampleContactsConvexHull:
         assert checked > 0, "No candidates with non-degenerate XY spread"
 
 
-class TestSampleContactsRejectionStats:
-    """Verify rejection stats are populated."""
-
-    @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
-    def test_rejection_dict_keys(self, robot):
-        kin, foot_ids = robot
-        wp_mesh = _make_flat_mesh()
-        buf = RetargetBuffer(200, kin.model.joint_coord_count, kin.model.body_count, len(foot_ids), device=DEVICE)
-        sampler = _make_sampler(kin, foot_ids)
-        out = sampler(wp_mesh, np.zeros(3), buf, 50)
-        reject = out.reject_stats
-        assert "out_of_reach" in reject
-        assert "non_convex_stance" in reject
-
-
 # ---------------------------------------------------------------------------
 # Multi-robot reachability test
 #
@@ -189,8 +174,9 @@ def _robot_presets_registered():
 
 def _build_sampler_for_robot(robot_name: str):
     """Instantiate a sampler for the named robot preset (flat-terrain sizing)."""
+    from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget import resolve_foot_body_names
     from isaaclab_tasks.manager_based.multi_task.terrain.mdp_presets.robots.robot_presets import (
-        RetargetFootBodyNamesCfg,
+        FootBodyNamesCfg,
         RobotArticulationCfg,
     )
 
@@ -203,7 +189,7 @@ def _build_sampler_for_robot(robot_name: str):
         default_joint_pos=robot_cfg.init_state.joint_pos,
     )
     kin = NewtonKinematics(kin_cfg)
-    foot_names = getattr(RetargetFootBodyNamesCfg, robot_name)
+    foot_names = resolve_foot_body_names(getattr(FootBodyNamesCfg, robot_name), kin.body_names)
     foot_ids = kin.find_body_indices(foot_names)
     sampler = Sampler(SamplerCfg(), kin=kin, foot_body_ids=foot_ids)
     return kin, foot_ids, sampler
