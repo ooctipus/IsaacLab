@@ -11,6 +11,8 @@ term initialization.
 
 from __future__ import annotations
 
+import time
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -18,11 +20,165 @@ import torch
 
 from isaaclab.utils.warp import convert_to_warp_mesh
 
+from isaaclab_tasks.manager_based.multi_task.mdp.util import pack_articulation_reset_state
+
 if TYPE_CHECKING:
     import trimesh
 
     from ...mdp.retarget.cfg import RetargetPipelineCfg
     from .commands_cfg import RelativeStateCommandCfg
+
+
+_COMMAND_PARAM_NAMES = (
+    "pos_x",
+    "pos_y",
+    "pos_z",
+    "roll",
+    "pitch",
+    "yaw",
+    "lin_vel_x",
+    "lin_vel_y",
+    "lin_vel_z",
+    "ang_vel_x",
+    "ang_vel_y",
+    "ang_vel_z",
+    "duration",
+)
+
+
+def _timing_checkpoint(device: str) -> float:
+    """Return a synchronized wall-clock timestamp for startup diagnostics."""
+    torch_device = torch.device(device)
+    if torch_device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize(torch_device)
+    return time.perf_counter()
+
+
+def _terrain_grid_bounds(
+    terrain_origins: torch.Tensor,
+    cell_size: tuple[float, float],
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    """Return inner terrain-grid XY bounds [m]."""
+    half_x = 0.5 * cell_size[0]
+    half_y = 0.5 * cell_size[1]
+    x_range = (
+        float(terrain_origins[..., 0].amin().item() - half_x),
+        float(terrain_origins[..., 0].amax().item() + half_x),
+    )
+    y_range = (
+        float(terrain_origins[..., 1].amin().item() - half_y),
+        float(terrain_origins[..., 1].amax().item() + half_y),
+    )
+    return x_range, y_range
+
+
+def _state_count_from_spacing(
+    x_range: tuple[float, float],
+    y_range: tuple[float, float],
+    spacing: float,
+    area_divisor: float,
+) -> int:
+    """Derive terrain-state count from spacing and sampling area."""
+    if spacing <= 0.0:
+        raise ValueError(f"pool_spacing must be positive, got {spacing}.")
+    if area_divisor <= 0.0:
+        raise ValueError(f"pool_spacing_area_divisor must be positive, got {area_divisor}.")
+    area = max((x_range[1] - x_range[0]) * (y_range[1] - y_range[0]), 0.0)
+    return max(1, int(area / (area_divisor * spacing**2)))
+
+
+def _pipeline_with_inner_sampling_bounds(
+    pipeline_cfg: RetargetPipelineCfg,
+    x_range: tuple[float, float],
+    y_range: tuple[float, float],
+    *,
+    override: bool = False,
+) -> RetargetPipelineCfg:
+    """Return a pipeline cfg whose sampler patch is bounded to the terrain grid."""
+    sampler_cfg = pipeline_cfg.sampler
+    patch_cfg = getattr(sampler_cfg, "patch", None)
+    if patch_cfg is None:
+        return pipeline_cfg
+
+    patch_updates = {}
+    if override or patch_cfg.x_range is None:
+        patch_updates["x_range"] = x_range
+    if override or patch_cfg.y_range is None:
+        patch_updates["y_range"] = y_range
+    if not patch_updates:
+        return pipeline_cfg
+
+    return pipeline_cfg.replace(sampler=sampler_cfg.replace(patch=patch_cfg.replace(**patch_updates)))
+
+
+def _joint_order_from_names(source_joint_names: Sequence[str], target_joint_names: Sequence[str]) -> list[int]:
+    """Return indices that reorder source-joint columns to target-joint order."""
+    source_to_index: dict[str, int] = {}
+    duplicates = set()
+    for idx, name in enumerate(source_joint_names):
+        if name in source_to_index:
+            duplicates.add(name)
+        source_to_index[name] = idx
+    if duplicates:
+        raise ValueError(f"Duplicate source joint names cannot be remapped: {sorted(duplicates)}")
+
+    missing = [name for name in target_joint_names if name not in source_to_index]
+    if missing:
+        raise ValueError(
+            "Retargeted Newton joints do not cover all Isaac articulation joints. "
+            f"Missing: {missing}. Available Newton joints: {list(source_joint_names)}"
+        )
+
+    return [source_to_index[name] for name in target_joint_names]
+
+
+def _newton_revolute_joint_names(kin) -> list[str]:
+    """Return Newton revolute joint names in ``joint_q[7:]`` coordinate order."""
+    n_revolute = int(kin.model.joint_coord_count) - 7
+    joint_names = [""] * n_revolute
+    joint_q_start = kin.model.joint_q_start.numpy()
+    joint_type = kin.model.joint_type.numpy()
+    for joint_index in range(1, len(kin.joint_names)):
+        if int(joint_type[joint_index]) != 1:
+            continue
+        coord_index = int(joint_q_start[joint_index]) - 7
+        if 0 <= coord_index < n_revolute:
+            joint_names[coord_index] = kin.joint_names[joint_index]
+
+    missing = [idx for idx, name in enumerate(joint_names) if not name]
+    if missing:
+        raise RuntimeError(f"Could not resolve Newton revolute joint names for coordinate indices: {missing}")
+    return joint_names
+
+
+def _reorder_spawn_state_joints(
+    spawn_states: torch.Tensor,
+    source_joint_names: Sequence[str],
+    target_joint_names: Sequence[str] | None,
+) -> torch.Tensor:
+    """Return spawn states with joint columns reordered to the target articulation."""
+    if target_joint_names is None:
+        return spawn_states
+
+    n_source = len(source_joint_names)
+    n_target = len(target_joint_names)
+    if spawn_states.shape[1] != 7 + n_source:
+        raise RuntimeError(
+            "Retargeted state width does not match Newton joint-coordinate count: "
+            f"spawn_states.shape[1]={spawn_states.shape[1]}, expected {7 + n_source}."
+        )
+    if n_source != n_target:
+        raise RuntimeError(
+            "Retargeted Newton joint count does not match Isaac articulation joint count: "
+            f"Newton={n_source}, Isaac={n_target}."
+        )
+
+    joint_order = torch.tensor(
+        _joint_order_from_names(source_joint_names, target_joint_names),
+        device=spawn_states.device,
+        dtype=torch.long,
+    )
+    return torch.cat([spawn_states[:, :7], spawn_states[:, 7:].index_select(1, joint_order)], dim=1)
 
 
 def build_task_table(
@@ -32,8 +188,10 @@ def build_task_table(
     pipeline_cfg: RetargetPipelineCfg,
     commands: dict[str, RelativeStateCommandCfg.Commands],
     num_joints: int,
-    pool_size: int,
     device: str,
+    pool_spacing: float,
+    pool_spacing_area_divisor: float = 3.0,
+    robot_joint_names: Sequence[str] | None = None,
 ) -> dict:
     """Run the IK pipeline, bin states by terrain cell, build task table.
 
@@ -44,37 +202,74 @@ def build_task_table(
         pipeline_cfg: Retarget pipeline configuration.
         commands: Command type dict from the command cfg.
         num_joints: Number of robot joints.
-        pool_size: Total IK-solved states to generate.
         device: Torch/Warp device string.
+        pool_spacing: Target spacing between final IK-solved terrain states
+            [m].
+        pool_spacing_area_divisor: Area divisor used for spacing-mode pool
+            sizing.
+        robot_joint_names: Isaac articulation joint names in simulation order.
+            When provided, retargeted Newton joint columns are reordered to
+            this order before the states are stored in the table.
 
     Returns:
-        Dict with keys matching :class:`TaskTable` fields:
+        Dict with keys matching :class:`TaskTable` fields plus FK metadata:
         ``spawn_states``, ``spawn_index``, ``target_index``,
-        ``params``, ``task_mask``, ``offsets``, ``kind``, ``num_tasks``.
+        ``params``, ``task_mask``, ``offsets``, ``kind``,
+        ``task_is_terrain``, ``num_tasks``, ``kin``,
+        ``newton_joint_names``, ``foot_body_names``, ``foot_body_ids``.
     """
     from .commands_cfg import RelativeStateCommandCfg
+
+    timing_start = _timing_checkpoint(device)
 
     num_rows, num_cols = terrain_origins.shape[0], terrain_origins.shape[1]
     num_subterrains = num_rows * num_cols
     cell_size_t = torch.tensor(cell_size, device=device)
+    grid_x_range, grid_y_range = _terrain_grid_bounds(terrain_origins, cell_size)
 
-    # --- Step 1: Run IK pipeline on full terrain mesh ---
+    # --- Step 1: Run IK pipeline on terrain mesh ---
     wp_mesh = convert_to_warp_mesh(terrain_mesh.vertices, terrain_mesh.faces, device=device)
-    pipeline = pipeline_cfg.class_type(pipeline_cfg)
-    buffer = pipeline.run(wp_mesh, np.zeros(3), pool_size)
-    print(pipeline.rejection_summary)
+    cell_x_range = (-0.5 * cell_size[0], 0.5 * cell_size[0])
+    cell_y_range = (-0.5 * cell_size[1], 0.5 * cell_size[1])
+    states_per_cell = _state_count_from_spacing(cell_x_range, cell_y_range, pool_spacing, pool_spacing_area_divisor)
+    total_area = (grid_x_range[1] - grid_x_range[0]) * (grid_y_range[1] - grid_y_range[0])
+    print(
+        f"  Spacing mode: area={total_area:.1f} m^2, spacing={pool_spacing:.3f} m "
+        f"-> states_per_cell={states_per_cell}, total_states={states_per_cell * num_subterrains}",
+        flush=True,
+    )
 
-    if buffer.num_selected > 0:
-        selected = buffer._selected[: buffer.num_selected].long()
-        spawn_states = buffer.joint_q_result_t[selected].clone()
-    else:
-        origins_flat = terrain_origins.reshape(-1, 3).to(device)
-        identity_quat = torch.zeros(origins_flat.shape[0], 4, device=device)
-        identity_quat[:, 3] = 1.0
-        zeros_joints = torch.zeros(origins_flat.shape[0], num_joints, device=device)
-        spawn_states = torch.cat([origins_flat, identity_quat, zeros_joints], dim=-1)
+    # Single global pipeline.run over the entire terrain. Per-cell binning
+    # happens after FK so we get the same CSR layout, but without the
+    # 200-cell-loop fixed overhead (solver build + criteria setup amortized
+    # across one big batch instead of 200 small ones).
+    grid_pipeline_cfg = _pipeline_with_inner_sampling_bounds(pipeline_cfg, grid_x_range, grid_y_range, override=True)
+    pipeline = grid_pipeline_cfg.class_type(grid_pipeline_cfg)
+    total_states = states_per_cell * num_subterrains
+    grid_origin = np.zeros(3, dtype=np.float32)
+    buffer = pipeline.run(wp_mesh, grid_origin, total_states)
+    last_rejection_summary = pipeline.rejection_summary
+    if buffer.num_selected == 0:
+        raise RuntimeError(
+            f"Retarget pipeline produced no valid terrain states for RelativeStateCommand.\n{last_rejection_summary}"
+        )
+    selected = buffer._selected[: buffer.num_selected].long()
+    spawn_states = buffer.joint_q_result_t[selected].clone()
+    print(
+        f"  Global retargeting: requested {total_states}, selected {buffer.num_selected} "
+        f"({100.0 * buffer.num_selected / max(1, total_states):.1f}%)",
+        flush=True,
+    )
 
-    print(f"  Task table: {spawn_states.shape[0]} IK-solved states")
+    newton_joint_names = _newton_revolute_joint_names(pipeline.kin)
+    spawn_states = _reorder_spawn_state_joints(
+        spawn_states,
+        newton_joint_names,
+        robot_joint_names,
+    )
+    spawn_states = pack_articulation_reset_state(spawn_states[:, :7], spawn_states[:, 7:])
+
+    print(f"  Task table: {spawn_states.shape[0]} IK-solved states", flush=True)
 
     # --- Step 2: Bin states by terrain cell (CSR, no padding) ---
     # Drop states that fall outside the sub-terrain grid (e.g. the flat border
@@ -85,8 +280,8 @@ def build_task_table(
 
     base_xy = spawn_states[:, :2]
     cell_xy = (base_xy - grid_origin.unsqueeze(0)) / cell_size_t.unsqueeze(0)
-    row_idx = cell_xy[:, 0].long()
-    col_idx = cell_xy[:, 1].long()
+    row_idx = torch.floor(cell_xy[:, 0]).long()
+    col_idx = torch.floor(cell_xy[:, 1]).long()
     in_grid = (row_idx >= 0) & (row_idx < num_rows) & (col_idx >= 0) & (col_idx < num_cols)
     dropped = int((~in_grid).sum().item())
 
@@ -103,13 +298,14 @@ def build_task_table(
 
     non_empty = int((counts_per_cell > 0).sum())
     if dropped > 0:
-        print(f"  Dropped {dropped} border/out-of-grid states")
+        print(f"  Dropped {dropped} border/out-of-grid states", flush=True)
     cmin = int(counts_per_cell.min().item())
     cmax = int(counts_per_cell.max().item())
     cmean = float(counts_per_cell.float().mean().item())
     print(
         f"  Binned into {num_rows}x{num_cols} grid: {non_empty}/{num_subterrains} non-empty cells, "
-        f"counts min={cmin} mean={cmean:.1f} max={cmax}"
+        f"counts min={cmin} mean={cmean:.1f} max={cmax}",
+        flush=True,
     )
 
     # --- Step 3: Per-cell Cartesian product (shared across command types) ---
@@ -139,6 +335,8 @@ def build_task_table(
         pair_target = torch.zeros(0, device=device, dtype=torch.long)
         pair_tile = torch.zeros(0, device=device, dtype=torch.long)
     num_pairs_per_type = int(pair_spawn.shape[0])
+    if num_pairs_per_type == 0:
+        raise RuntimeError("No terrain cells contained valid retargeted states; cannot build a task table.")
 
     # --- Step 4: Replicate pair layout per command type; sample per-type params ---
     ranges = torch.zeros((len(commands), 13, 2), device=device)
@@ -150,18 +348,20 @@ def build_task_table(
     tile_indices_list = []
     params_list = []
     mask_list = []
+    task_is_terrain_list = []
     row_counts = []
 
     for cmd_id, val in enumerate(commands.values()):
-        for data_id, data in enumerate(val.__dict__.values()):
+        is_terrain_command = isinstance(val, RelativeStateCommandCfg.TerrainCommands)
+        for data_id, name in enumerate(_COMMAND_PARAM_NAMES):
+            data = getattr(val, name)
             if data is not None and isinstance(data, tuple):
                 if data_id < 12:
                     mask[cmd_id, data_id] = True
                 ranges[cmd_id, data_id, 0] = data[0]
                 ranges[cmd_id, data_id, 1] = data[1]
 
-        if isinstance(val, RelativeStateCommandCfg.TerrainCommands):
-            val.pos_x = val.pos_y = val.pos_z = None
+        if is_terrain_command:
             kind[cmd_id] = 1 if (val.roll or val.pitch or val.yaw) else 0
         elif isinstance(val, RelativeStateCommandCfg.PositionCommands):
             kind[cmd_id] = 0
@@ -176,7 +376,7 @@ def build_task_table(
 
         full_mask = torch.zeros(num_pairs_per_type, 12 + num_joints, device=device, dtype=torch.bool)
         full_mask[:, :12] = mask[cmd_id].view(1, 12)
-        if isinstance(val, RelativeStateCommandCfg.TerrainCommands):
+        if is_terrain_command:
             full_mask[:, 12:] = True
 
         spawn_indices_list.append(pair_spawn)
@@ -184,6 +384,9 @@ def build_task_table(
         tile_indices_list.append(pair_tile)
         params_list.append(task_params)
         mask_list.append(full_mask)
+        task_is_terrain_list.append(
+            torch.full((num_pairs_per_type,), is_terrain_command, device=device, dtype=torch.bool)
+        )
         row_counts.append(num_pairs_per_type)
 
     all_spawn = torch.cat(spawn_indices_list, dim=0)
@@ -191,12 +394,14 @@ def build_task_table(
     all_tile = torch.cat(tile_indices_list, dim=0)
     all_params = torch.cat(params_list, dim=0)
     all_masks = torch.cat(mask_list, dim=0)
+    all_task_is_terrain = torch.cat(task_is_terrain_list, dim=0)
 
     counts_t = torch.tensor(row_counts, device=device, dtype=torch.long)
     offsets = torch.zeros(len(commands) + 1, device=device, dtype=torch.long)
     offsets[1:] = torch.cumsum(counts_t, dim=0)
 
-    print(f"  {int(all_spawn.shape[0])} tasks ({len(commands)} command types)")
+    print(f"  {int(all_spawn.shape[0])} tasks ({len(commands)} command types)", flush=True)
+    print(f"  Task table built in {_timing_checkpoint(device) - timing_start:.3f} s", flush=True)
 
     return {
         "num_tasks": int(all_spawn.shape[0]),
@@ -205,7 +410,12 @@ def build_task_table(
         "tile_index": all_tile,
         "params": all_params,
         "task_mask": all_masks,
+        "task_is_terrain": all_task_is_terrain,
         "offsets": offsets,
         "kind": kind,
         "spawn_states": spawn_states,
+        "kin": pipeline.kin,
+        "newton_joint_names": newton_joint_names,
+        "foot_body_names": pipeline.foot_body_names,
+        "foot_body_ids": pipeline.foot_body_ids,
     }
