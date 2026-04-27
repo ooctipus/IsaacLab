@@ -5,10 +5,11 @@
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators.actuator_cfg import ImplicitActuatorCfg
-from isaaclab.assets import RigidObjectCfg, AssetBaseCfg, ArticulationCfg
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 
 # This is where we will get the Robot that we want to use
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR, LOCAL_ASSET_PATH_DIR
+
 from .assembly_keypoints import NIST_BOARD_CFG
 
 ASSET_DIR = f"{ISAACLAB_NUCLEUS_DIR}/Factory"
@@ -124,9 +125,9 @@ NISTBOARD_CFG = RigidObjectCfg(
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST2/Taskboard/nistboard.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-        scale=(1.0, 1.0, 0.5)
+        scale=(1.0, 1.0, 0.5),
     ),
-    init_state=RigidObjectCfg.InitialStateCfg(pos=(0.65 - x, 0.0 - y, 0.0206 - z), rot=(0., 1., 0., 0.)),
+    init_state=RigidObjectCfg.InitialStateCfg(pos=(0.65 - x, 0.0 - y, 0.0206 - z), rot=(0.0, 1.0, 0.0, 0.0)),
 )
 
 ##
@@ -141,7 +142,7 @@ BOLT_M16_CFG = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -152,7 +153,7 @@ NUT_M16_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.03),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -163,7 +164,7 @@ BOLT_M12_CFG = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -174,7 +175,7 @@ NUT_M12_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.03),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -185,7 +186,7 @@ BOLT_M8_CFG = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -196,7 +197,7 @@ NUT_M8_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.03),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -207,7 +208,7 @@ BOLT_M4_CFG = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -218,7 +219,7 @@ NUT_M4_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.03),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 HOLE_16MM_CFG: RigidObjectCfg = RigidObjectCfg(
@@ -228,7 +229,7 @@ HOLE_16MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -239,7 +240,7 @@ ROD_16MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -250,7 +251,7 @@ HOLE_12MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -261,7 +262,7 @@ ROD_12MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -272,7 +273,7 @@ HOLE_8MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -283,7 +284,7 @@ ROD_8MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -294,7 +295,7 @@ HOLE_4MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -305,7 +306,7 @@ ROD_4MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -316,7 +317,7 @@ RECTANGULAR_HOLE_16MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -327,7 +328,7 @@ RECTANGULAR_PEG_16MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -338,7 +339,7 @@ RECTANGULAR_HOLE_12MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -349,7 +350,7 @@ RECTANGULAR_PEG_12MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -360,7 +361,7 @@ RECTANGULAR_HOLE_8MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -371,7 +372,7 @@ RECTANGULAR_PEG_8MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -382,7 +383,7 @@ RECTANGULAR_HOLE_4MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -393,7 +394,7 @@ RECTANGULAR_PEG_4MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -404,7 +405,7 @@ LARGE_GEAR_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -415,7 +416,7 @@ MEDIUM_GEAR_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.012),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -426,7 +427,7 @@ SMALL_GEAR_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 GEAR_BASE_CFG: RigidObjectCfg = RigidObjectCfg(
@@ -436,7 +437,7 @@ GEAR_BASE_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -447,7 +448,7 @@ USBA_PLUG_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 USBA_SOCKET_CFG: RigidObjectCfg = RigidObjectCfg(
@@ -457,7 +458,7 @@ USBA_SOCKET_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.012),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -468,7 +469,7 @@ WATERPROOF_SOCKET_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 WATERPROOF_PLUG_CFG: RigidObjectCfg = RigidObjectCfg(
@@ -478,7 +479,7 @@ WATERPROOF_PLUG_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -489,7 +490,7 @@ DSUB_SOCKET_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -499,8 +500,8 @@ DSUB_PLUG_CFG: RigidObjectCfg = RigidObjectCfg(
         usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST2/dsub_plug.usd",
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.005),
-        collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG
-    )
+        collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+    ),
 )
 
 
@@ -511,7 +512,7 @@ BNC_SOCKET_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -522,7 +523,7 @@ BNC_PLUG_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -533,7 +534,7 @@ RJ45_SOCKET_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
-    )
+    ),
 )
 
 
@@ -544,5 +545,5 @@ RJ45_PLUG_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
-    )
+    ),
 )

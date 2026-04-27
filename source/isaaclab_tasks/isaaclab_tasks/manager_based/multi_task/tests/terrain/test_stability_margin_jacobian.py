@@ -88,9 +88,7 @@ def test_stability_margin_analytic_matches_fd():
         ".*H_KFE": 0.8,
     }
     kin = NewtonKinematics(
-        NewtonKinematicsCfg(
-            usd_path=ANYMAL_USD, device=DEVICE, default_pos=(0, 0, 0.6), default_joint_pos=DEFAULT_JPOS
-        )
+        NewtonKinematicsCfg(usd_path=ANYMAL_USD, device=DEVICE, default_pos=(0, 0, 0.6), default_joint_pos=DEFAULT_JPOS)
     )
 
     foot_body_ids = [i for i, n in enumerate(kin.body_names) if "FOOT" in n.upper()]
@@ -209,6 +207,4 @@ def test_stability_margin_analytic_matches_fd():
         for fi in np.argsort(-flat)[:5]:
             idx = np.unravel_index(fi, abs_err.shape)
             print(f"  worst {idx}: FD={fd_qd[idx]:.4e}  analytic={jac[idx]:.4e}")
-    assert abs_err.max() < 1e-2, (
-        f"analytic stability_margin Jacobian disagrees with FD: max |Δ| = {abs_err.max():.3e}"
-    )
+    assert abs_err.max() < 1e-2, f"analytic stability_margin Jacobian disagrees with FD: max |Δ| = {abs_err.max():.3e}"

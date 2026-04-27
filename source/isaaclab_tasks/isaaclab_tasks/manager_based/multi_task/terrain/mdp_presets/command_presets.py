@@ -125,7 +125,7 @@ class CommandsPresetCfg(PresetCfg):
             match_base_pos=True,
             match_base_rot=True,
             match_feet=True,
-            duration=(0.05, 0.05),
+            duration=(0.05, 1.0),
         ),
     }
     pose = {
@@ -174,14 +174,13 @@ class CommandsCfg:
     goal_point = mdp.RelativeStateCommandCfg(
         asset_name="robot",
         resampling_time_range=(10.0, 10.0),
-        pos_std=0.7,
-        rot_std=0.7,
+        pos_std=0.5,
+        rot_std=0.5,
         lin_vel_std=0.3,
         ang_vel_std=0.3,
-        foot_pos_std=0.5,
+        foot_pos_std=0.25,
         debug_vis=True,
-        pool_spacing=0.2,
-        pool_sampling_size=(10.0, 10.0),
+        pool_spacing=0.4,
         commands=CommandsPresetCfg(),  # type: ignore
         pipeline_cfg=RetargetPipelineCfg(
             kin=NewtonKinematicsCfg(usd_path=""),

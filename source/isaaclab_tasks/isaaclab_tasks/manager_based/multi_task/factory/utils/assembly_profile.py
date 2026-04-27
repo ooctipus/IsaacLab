@@ -168,7 +168,8 @@ class AssemblyProfile:
         self.cfg = cfg
         assert cfg.segments is not None, "AssemblyProfileCfg.segments must be set"
         self.segments: list[EndPointsSegment | IncrementalSegment] = [
-            seg_cfg.class_type(seg_cfg) for seg_cfg in cfg.segments  # type: ignore[misc]
+            seg_cfg.class_type(seg_cfg)
+            for seg_cfg in cfg.segments  # type: ignore[misc]
         ]
         self._samplers: list[StartSampler | None] = [
             seg_cfg.start_sampler.class_type(seg_cfg.start_sampler) if seg_cfg.start_sampler is not None else None

@@ -19,6 +19,7 @@ from ._kernels import jac_fill_row
 
 if TYPE_CHECKING:
     from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget.pipeline import RetargetPipeline
+
     from .cfg import IKObjectiveTerrainCollisionCfg
 
 

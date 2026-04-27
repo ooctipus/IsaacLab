@@ -54,7 +54,7 @@ from isaaclab_tasks.manager_based.multi_task.mdp.util import (
     set_reset_state,
 )
 
-from .task_table_builder import _joint_order_from_names, build_task_table
+from .task_table_builder import _joint_order_from_names, build_task_table, synthesize_terrain_origins
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation
@@ -145,9 +145,22 @@ class RelativeStateCommand(CommandTerm):
         kin_cfg.default_joint_pos = robot_articulation_cfg.init_state.joint_pos
         kin_cfg.device = self.device
 
+        # ``terrain_origins`` is ``None`` when the importer is configured
+        # with ``use_terrain_origins=False`` (env_origins fall back to grid
+        # spacing). Reproduce IsaacLab's tile-centre layout from the
+        # generator cfg so the task table can still bound the sampler.
+        terrain_origins = terrain.terrain_origins
+        if terrain_origins is None:
+            terrain_origins = synthesize_terrain_origins(
+                num_rows=int(terrain_gen.num_rows),
+                num_cols=int(terrain_gen.num_cols),
+                size=terrain_gen.size,
+                device=self.device,
+            )
+
         table_data = build_task_table(
             terrain_mesh=terrain.terrain_mesh,
-            terrain_origins=terrain.terrain_origins,
+            terrain_origins=terrain_origins,
             cell_size=terrain_gen.size,
             pipeline_cfg=pipeline_cfg,
             commands=cfg.commands,
@@ -357,6 +370,14 @@ class RelativeStateCommand(CommandTerm):
         torch.index_select(self.table.task_is_terrain, 0, task_idx, out=terrain_task)
         torch.index_select(self.table.task_uses_feet, 0, task_idx, out=foot_task)
 
+        # Buffer states are sampled in tile-frame (single-patch sampler with
+        # tile centered at world origin). Lift them into per-env world frame
+        # by adding ``env_origins`` so each env operates in its own copy of
+        # the terrain. Required when ``scene.env_spacing != 0``.
+        env_origins = self._env.scene.env_origins[env_ids]
+        target_state[:, :3].add_(env_origins)
+        spawn_state[:, :3].add_(env_origins)
+
         # Build the target row in a local tensor then write it back with a single
         # index_copy_; ``cmd_buf[env_ids, 0]`` is advanced indexing and would copy.
         target = self._target_row_scratch[:num_resets]
@@ -474,6 +495,7 @@ class RelativeStateCommand(CommandTerm):
         self._err[:, 3] = delta[:, 9:12].norm(dim=-1)
         foot_err = self._foot_delta_b.norm(dim=-1).amax(dim=1)
         self._err[:, 4] = torch.where(self._foot_success_mask, foot_err, torch.zeros_like(foot_err))
+        # self.print_state_error()
 
     def print_state_error(self) -> None:
         """Print per-group state-error stats to stdout for terminal debug.

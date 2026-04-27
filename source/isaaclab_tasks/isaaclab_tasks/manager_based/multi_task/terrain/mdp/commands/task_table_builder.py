@@ -55,6 +55,41 @@ def _timing_checkpoint(device: str) -> float:
     return time.perf_counter()
 
 
+def synthesize_terrain_origins(
+    num_rows: int,
+    num_cols: int,
+    size: tuple[float, float],
+    device: torch.device | str = "cpu",
+) -> torch.Tensor:
+    """Reproduce :attr:`isaaclab.terrains.TerrainGenerator.terrain_origins`.
+
+    IsaacLab's :class:`~isaaclab.terrains.TerrainGenerator` lays out tiles at
+    ``((row + 0.5 - num_rows/2) * size_x, (col + 0.5 - num_cols/2) * size_y)``
+    (inline in :meth:`_add_sub_terrain` + the post-loop centering transform).
+    There's no public utility that exposes just the centers, so we compute
+    them from the cfg here. The resulting tensor matches what
+    :attr:`isaaclab.terrains.TerrainImporter.terrain_origins` would hold when
+    :paramref:`~isaaclab.terrains.TerrainImporterCfg.use_terrain_origins` is
+    ``True`` (and is needed when it is ``False``, since the importer leaves
+    ``terrain_origins = None`` in that case).
+
+    Args:
+        num_rows: Sub-terrain row count.
+        num_cols: Sub-terrain column count.
+        size: ``(size_x, size_y)`` per-tile in metres.
+        device: Tensor device.
+
+    Returns:
+        Per-tile centres of shape ``(num_rows, num_cols, 3)``.
+    """
+    origins = torch.zeros(num_rows, num_cols, 3, device=device)
+    row_centers = (torch.arange(num_rows, device=device) - (num_rows - 1) / 2.0) * size[0]
+    col_centers = (torch.arange(num_cols, device=device) - (num_cols - 1) / 2.0) * size[1]
+    origins[..., 0] = row_centers.view(-1, 1)
+    origins[..., 1] = col_centers.view(1, -1)
+    return origins
+
+
 def _terrain_grid_bounds(
     terrain_origins: torch.Tensor,
     cell_size: tuple[float, float],

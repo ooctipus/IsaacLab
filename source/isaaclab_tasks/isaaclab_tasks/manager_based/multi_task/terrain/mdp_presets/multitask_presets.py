@@ -67,7 +67,7 @@ _VELOCITY_ONLY = {
     # only terminate at time_out / drop / base_contact — the composer's
     # G is just the transit-mean activation over both tracking slots,
     # discounted by the safety multiplicative factors.
-    "velocity": [LIN_VEL_TRACKING],
+    "velocity": [ANG_VEL_TRACKING, LIN_VEL_TRACKING, UNDESIRED_CONTACT, MECH_POWER],
 }
 
 _POSITION_ONLY = {
@@ -98,7 +98,7 @@ _POSE_VEL = {
 
 _LOCOMOTION = {
     # Velocity tracking — two tracking subtasks (lin + ang).
-    "velocity": [LIN_VEL_TRACKING, ANG_VEL_TRACKING, UNDESIRED_CONTACT, MECH_POWER],
+    "velocity": [LIN_VEL_TRACKING, ANG_VEL_TRACKING, UNDESIRED_CONTACT],
     # Reach a body-position target near standing height.
     "position": [BODY_POS_INSTANT, UNDESIRED_CONTACT, MECH_POWER],
     # Reach an elevated body-position target (z lifted into the air).

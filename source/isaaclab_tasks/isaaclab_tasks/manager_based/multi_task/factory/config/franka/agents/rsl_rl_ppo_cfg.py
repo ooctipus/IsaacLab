@@ -4,9 +4,13 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from isaaclab.utils import configclass
+
+from isaaclab_rl.rsl_rl import RslRlMLPModelCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
+
 from isaaclab_tasks.utils import PresetCfg, preset
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlMLPModelCfg, RslRlPpoAlgorithmCfg
+
 from .estimator_ppo_algorithm_cfg import SuccessEstimatorPpoAlgorithmCfg
+
 
 @configclass
 class PpoAlgorithmCfg(PresetCfg):
@@ -47,13 +51,14 @@ class PpoAlgorithmCfg(PresetCfg):
     )
     default = actor_critic
 
+
 @configclass
 class FactoryPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 32
     max_iterations = 15000
     save_interval = 200
     experiment_name = "factory"
-    obs_groups=preset(
+    obs_groups = preset(
         default={"actor": ["policy"], "critic": ["policy"]},
         actor_critic={"actor": ["policy"], "critic": ["policy"]},
         success_estimator={"actor": ["policy"], "critic": ["policy"], "success_estimator": ["success"]},

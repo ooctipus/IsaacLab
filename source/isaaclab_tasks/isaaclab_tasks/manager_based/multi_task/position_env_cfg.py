@@ -11,7 +11,7 @@ from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
+from isaaclab.sensors import ContactSensorCfg, MultiMeshRayCasterCfg, patterns
 from isaaclab.sim import SimulationCfg
 from isaaclab.terrains import TerrainGeneratorCfg, TerrainImporterCfg
 from isaaclab.utils import configclass
@@ -30,11 +30,24 @@ class SceneCfg(InteractiveSceneCfg):
     terrain = TerrainImporterCfg(
         prim_path="{ENV_REGEX_NS}/ground",
         terrain_type="generator",
+        # Disable tile-anchored env_origins for every preset.
+        # ``prim_path="{ENV_REGEX_NS}/ground"`` already gives each env its
+        # own copy of the full generated terrain, so the per-tile
+        # curriculum layout would just collapse many envs onto each of
+        # the few tile centres (24 centres for the default 2×12 grid →
+        # ~341 robots per centre, all overlapping at the world-frame
+        # tile centre). With ``use_terrain_origins=False`` the importer
+        # falls back to a grid based on ``env_spacing``, giving every
+        # env its own world-frame slot. The terrain difficulty mix is
+        # still available because every env carries the full multi-tile
+        # mesh; sampling and the task curriculum drive difficulty
+        # selection per-task instead of per-env.
+        use_terrain_origins=False,
         terrain_generator=TerrainGeneratorCfg(
             size=(10.0, 10.0),
             border_width=20.0,
-            num_rows=preset(default=10, flat=1),
-            num_cols=preset(default=20, flat=1),
+            num_rows=preset(default=2, flat=1),
+            num_cols=preset(default=12, flat=1),
             horizontal_scale=0.1,
             vertical_scale=0.005,
             slope_threshold=0.75,
@@ -71,13 +84,13 @@ class SceneCfg(InteractiveSceneCfg):
     robot: ArticulationCfg = mdp_presets.RobotArticulationCfg()  # type: ignore
 
     # sensors
-    height_scanner = RayCasterCfg(
+    height_scanner = MultiMeshRayCasterCfg(
         prim_path=mdp_presets.HeightScannerPrimPathCfg(),  # type: ignore
-        offset=RayCasterCfg.OffsetCfg(pos=(0.5, 0.0, 20.0)),
+        offset=MultiMeshRayCasterCfg.OffsetCfg(pos=(0.5, 0.0, 20.0)),
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=(2.5, 1.5)),
         debug_vis=False,
-        mesh_prim_paths=["/World/envs/env_0/ground"],
+        mesh_prim_paths=["{ENV_REGEX_NS}/ground"],
     )
     contact_forces = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/.*",
@@ -133,7 +146,7 @@ class PositionPhysicsCfg(PresetCfg):
 
 @configclass
 class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
-    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=0)
+    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=preset(default=120.0, flat=10.0))
     sim: SimulationCfg = SimulationCfg(physics=PositionPhysicsCfg())  # type: ignore
     observations: mdp_presets.ObservationsCfg = mdp_presets.ObservationsCfg()  # type: ignore
     actions: ActionsCfg = ActionsCfg()
@@ -143,7 +156,7 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
     events: EventsCfg = EventsCfg()
     curriculum: mdp_presets.CurriculumCfg = mdp_presets.CurriculumCfg()
     viewer: ViewerCfg = ViewerCfg(
-        eye=(4.0 / 4, 7.0 / 4, 7.0 / 4),
+        eye=(4.0, 7.0, 7.0),
         origin_type="asset_body",
         asset_name="robot",
         body_name=mdp_presets.BaseBodyNameCfg(),  # type: ignore
@@ -151,7 +164,7 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
 
     def __post_init__(self):
         self.decimation = preset(default=8, advanced_skills=4)  # type: ignore
-        self.episode_length_s = 6.0
+        self.episode_length_s = 12.0
         self.sim.dt = 0.01
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material

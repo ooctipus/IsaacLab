@@ -70,7 +70,6 @@ def _build_env_cfg():
     from isaaclab.sim import SimulationCfg
     from isaaclab.utils import configclass
 
-    from isaaclab_tasks.manager_based.multi_task.terrain import mdp
     from isaaclab_tasks.manager_based.multi_task.mdp.commands.multitask.kernels_torch import (
         ACTIVATION_KERNEL_ID,
         METRIC_KERNEL_ID,
@@ -81,6 +80,7 @@ def _build_env_cfg():
         MinMaxSampler,
         MultiTaskCfg,
     )
+    from isaaclab_tasks.manager_based.multi_task.terrain import mdp
 
     import isaaclab_assets.robots.anymal as anymal
 

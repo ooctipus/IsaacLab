@@ -21,8 +21,8 @@ import numpy as np
 import torch
 import warp as wp
 
-from . import patch_sampling_cfg as patch_cfg
 from ....mdp.util.grid_downsample import grid_bucket_downsample
+from . import patch_sampling_cfg as patch_cfg
 from .patch_sampling_kernels import morph_validity_kernel, rasterize_grid_kernel
 
 MORPH_TIMINGS: dict[str, float] = {}

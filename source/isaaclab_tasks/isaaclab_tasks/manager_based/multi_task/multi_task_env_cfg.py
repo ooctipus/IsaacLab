@@ -31,6 +31,9 @@ identity is encoded positionally.
 
 from __future__ import annotations
 
+# from isaaclab.sensors import ContactSensorCfg
+from isaaclab_physx.sensors import ContactSensorCfg as PhysXContactSensorCfg
+
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
@@ -41,7 +44,6 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import ContactSensorCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.utils import configclass
 
@@ -66,16 +68,12 @@ class MultiTaskSceneCfg(InteractiveSceneCfg):
     )
     robot = anymal.ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     robot.spawn.usd_path = "https://uwlab-assets.s3.us-west-004.backblazeb2.com/Robots/ANYbotics/ANYmal-C/anymal_c.usd"
-    contact_forces = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/.*",
-        history_length=3,
-        track_air_time=True,
-    )
+    contact_forces = PhysXContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
 
 
 @configclass
 class MultiTaskActionsCfg:
-    joint_pos = mdp.JointPositionActionCfg(asset_name="robot", joint_names=[".*"], scale=0.2, use_default_offset=True)
+    joint_pos = mdp.JointPositionActionCfg(asset_name="robot", joint_names=[".*"], scale=0.5, use_default_offset=True)
 
 
 @configclass
@@ -162,7 +160,7 @@ class MultiTaskEventsCfg:
         mode="reset",
         params={
             "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "z": (0.0, 0.0), "yaw": (-3.14, 3.14)},
-            "velocity_range": {},
+            "velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5)},
         },
     )
     reset_joints = EventTerm(
@@ -203,9 +201,7 @@ class MultiTaskRewardsCfg:
 
     task = RewTerm(func=mdp.command_task_reward, weight=1.0, params={"command_name": "goal_point"})
     early_termination = RewTerm(
-        func=mdp.is_terminated_term,
-        weight=-1.0,
-        params={"term_keys": ["drop", "base_contact"]},
+        func=mdp.is_terminated_term, weight=-1.0, params={"term_keys": ["drop", "base_contact"]}
     )
 
 
@@ -259,7 +255,7 @@ class MultiTaskEnvCfg(ManagerBasedRLEnvCfg):
 
     def __post_init__(self):
         self.decimation = 4
-        self.episode_length_s = 4.0
+        self.episode_length_s = 8.0
         self.sim.dt = 0.01
         self.sim.render_interval = self.decimation
         if self.scene.contact_forces is not None:

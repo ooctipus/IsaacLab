@@ -22,6 +22,7 @@ variant names (``franka``) to body/joint name strings.
 import math
 
 from isaaclab.utils import configclass
+
 from isaaclab_tasks.utils import PresetCfg
 
 from . import assembly_keypoints as kpts
@@ -30,10 +31,9 @@ from .utils import (
     DiscreteYawCfg,
     EndPointsSegmentCfg,
     IncrementalSegmentCfg,
-    UniformYawCfg,
     UniformPoseNoiseCfg,
+    UniformYawCfg,
 )
-
 
 # ---------------------------------------------------------------------------
 # Robot-specific presets
@@ -201,64 +201,114 @@ class FactoryAssemblyProfileCfg(PresetCfg):
     """
 
     # Nut threading — IncrementalSegment with screw pitch
-    nut_thread_m4: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
-        start_pose=kpts.BOLT_M4.fully_screwed_nut_offset,
-        distance=_dist(kpts.BOLT_M4.fully_screwed_nut_offset, kpts.BOLT_M4.bolt_tip_offset),
-        ratio=(0.0, 0.0, kpts.NUT_M4.screw_ratio / (2.0 * math.pi)),
-    )])
-    nut_thread_m8: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
-        start_pose=kpts.BOLT_M8.fully_screwed_nut_offset,
-        distance=_dist(kpts.BOLT_M8.fully_screwed_nut_offset, kpts.BOLT_M8.bolt_tip_offset),
-        ratio=(0.0, 0.0, kpts.NUT_M8.screw_ratio / (2.0 * math.pi)),
-    )])
-    nut_thread_m12: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
-        start_pose=kpts.BOLT_M12.fully_screwed_nut_offset,
-        distance=_dist(kpts.BOLT_M12.fully_screwed_nut_offset, kpts.BOLT_M12.bolt_tip_offset),
-        ratio=(0.0, 0.0, kpts.NUT_M12.screw_ratio / (2.0 * math.pi)),
-    )])
-    nut_thread_m16: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
-        start_pose=kpts.BOLT_M16.fully_screwed_nut_offset,
-        distance=_dist(kpts.BOLT_M16.fully_screwed_nut_offset, kpts.BOLT_M16.bolt_tip_offset),
-        ratio=(0.0, 0.0, kpts.NUT_M16.screw_ratio / (2.0 * math.pi)),
-    )])
+    nut_thread_m4: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                start_pose=kpts.BOLT_M4.fully_screwed_nut_offset,
+                distance=_dist(kpts.BOLT_M4.fully_screwed_nut_offset, kpts.BOLT_M4.bolt_tip_offset),
+                ratio=(0.0, 0.0, kpts.NUT_M4.screw_ratio / (2.0 * math.pi)),
+            )
+        ]
+    )
+    nut_thread_m8: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                start_pose=kpts.BOLT_M8.fully_screwed_nut_offset,
+                distance=_dist(kpts.BOLT_M8.fully_screwed_nut_offset, kpts.BOLT_M8.bolt_tip_offset),
+                ratio=(0.0, 0.0, kpts.NUT_M8.screw_ratio / (2.0 * math.pi)),
+            )
+        ]
+    )
+    nut_thread_m12: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                start_pose=kpts.BOLT_M12.fully_screwed_nut_offset,
+                distance=_dist(kpts.BOLT_M12.fully_screwed_nut_offset, kpts.BOLT_M12.bolt_tip_offset),
+                ratio=(0.0, 0.0, kpts.NUT_M12.screw_ratio / (2.0 * math.pi)),
+            )
+        ]
+    )
+    nut_thread_m16: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                start_pose=kpts.BOLT_M16.fully_screwed_nut_offset,
+                distance=_dist(kpts.BOLT_M16.fully_screwed_nut_offset, kpts.BOLT_M16.bolt_tip_offset),
+                ratio=(0.0, 0.0, kpts.NUT_M16.screw_ratio / (2.0 * math.pi)),
+            )
+        ]
+    )
 
     # Gear mesh — fraction starts at 0.1 so teeth are clear before yaw noise
-    gear_mesh_small: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
-        fraction=(0.1, 1.0), start_sampler=UniformYawCfg(),
-        start_pose=kpts.GEAR_BASE.small_gear_assembled_bottom_offset,
-        distance=_dist(kpts.GEAR_BASE.small_gear_assembled_bottom_offset,
-                       kpts.GEAR_BASE.small_gear_tip_offset),
-    )])
-    gear_mesh_medium: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
-        fraction=(0.1, 1.0), start_sampler=UniformYawCfg(),
-        start_pose=kpts.GEAR_BASE.medium_gear_assembled_bottom_offset,
-        distance=_dist(kpts.GEAR_BASE.medium_gear_assembled_bottom_offset,
-                       kpts.GEAR_BASE.medium_gear_tip_offset),
-    )])
-    gear_mesh_large: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
-        fraction=(0.1, 1.0), start_sampler=UniformYawCfg(),
-        start_pose=kpts.GEAR_BASE.large_gear_assembled_bottom_offset,
-        distance=_dist(kpts.GEAR_BASE.large_gear_assembled_bottom_offset,
-                       kpts.GEAR_BASE.large_gear_tip_offset),
-    )])
+    gear_mesh_small: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                fraction=(0.1, 1.0),
+                start_sampler=UniformYawCfg(),
+                start_pose=kpts.GEAR_BASE.small_gear_assembled_bottom_offset,
+                distance=_dist(kpts.GEAR_BASE.small_gear_assembled_bottom_offset, kpts.GEAR_BASE.small_gear_tip_offset),
+            )
+        ]
+    )
+    gear_mesh_medium: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                fraction=(0.1, 1.0),
+                start_sampler=UniformYawCfg(),
+                start_pose=kpts.GEAR_BASE.medium_gear_assembled_bottom_offset,
+                distance=_dist(
+                    kpts.GEAR_BASE.medium_gear_assembled_bottom_offset, kpts.GEAR_BASE.medium_gear_tip_offset
+                ),
+            )
+        ]
+    )
+    gear_mesh_large: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                fraction=(0.1, 1.0),
+                start_sampler=UniformYawCfg(),
+                start_pose=kpts.GEAR_BASE.large_gear_assembled_bottom_offset,
+                distance=_dist(kpts.GEAR_BASE.large_gear_assembled_bottom_offset, kpts.GEAR_BASE.large_gear_tip_offset),
+            )
+        ]
+    )
 
     # Rod insert (round) — any yaw is valid
-    rod_insert_4mm: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
-        start_sampler=UniformYawCfg(), start_pose=kpts.HOLE_4MM.inserted_peg_base_offset,
-        distance=_dist(kpts.HOLE_4MM.inserted_peg_base_offset, kpts.HOLE_4MM.hole_tip_offset),
-    )])
-    rod_insert_8mm: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
-        start_sampler=UniformYawCfg(), start_pose=kpts.HOLE_8MM.inserted_peg_base_offset,
-        distance=_dist(kpts.HOLE_8MM.inserted_peg_base_offset, kpts.HOLE_8MM.hole_tip_offset),
-    )])
-    rod_insert_12mm: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
-        start_sampler=UniformYawCfg(), start_pose=kpts.HOLE_12MM.inserted_peg_base_offset,
-        distance=_dist(kpts.HOLE_12MM.inserted_peg_base_offset, kpts.HOLE_12MM.hole_tip_offset),
-    )])
-    rod_insert_16mm: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
-        start_sampler=UniformYawCfg(), start_pose=kpts.HOLE_16MM.inserted_peg_base_offset,
-        distance=_dist(kpts.HOLE_16MM.inserted_peg_base_offset, kpts.HOLE_16MM.hole_tip_offset),
-    )])
+    rod_insert_4mm: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                start_sampler=UniformYawCfg(),
+                start_pose=kpts.HOLE_4MM.inserted_peg_base_offset,
+                distance=_dist(kpts.HOLE_4MM.inserted_peg_base_offset, kpts.HOLE_4MM.hole_tip_offset),
+            )
+        ]
+    )
+    rod_insert_8mm: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                start_sampler=UniformYawCfg(),
+                start_pose=kpts.HOLE_8MM.inserted_peg_base_offset,
+                distance=_dist(kpts.HOLE_8MM.inserted_peg_base_offset, kpts.HOLE_8MM.hole_tip_offset),
+            )
+        ]
+    )
+    rod_insert_12mm: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                start_sampler=UniformYawCfg(),
+                start_pose=kpts.HOLE_12MM.inserted_peg_base_offset,
+                distance=_dist(kpts.HOLE_12MM.inserted_peg_base_offset, kpts.HOLE_12MM.hole_tip_offset),
+            )
+        ]
+    )
+    rod_insert_16mm: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                start_sampler=UniformYawCfg(),
+                start_pose=kpts.HOLE_16MM.inserted_peg_base_offset,
+                distance=_dist(kpts.HOLE_16MM.inserted_peg_base_offset, kpts.HOLE_16MM.hole_tip_offset),
+            )
+        ]
+    )
 
     # Peg insert (rectangular) — discrete yaw symmetry
     peg_insert_4mm: AssemblyProfileCfg = AssemblyProfileCfg(
@@ -267,16 +317,21 @@ class FactoryAssemblyProfileCfg(PresetCfg):
                 fraction=(0.0, 0.7),
                 start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi / 2, math.pi, 3 * math.pi / 2]),
                 start_pose=kpts.RECTANGULAR_HOLE_4MM.inserted_peg_base_offset,
-                distance=_dist(kpts.RECTANGULAR_HOLE_4MM.inserted_peg_base_offset,
-                            kpts.RECTANGULAR_HOLE_4MM.hole_tip_offset)),
+                distance=_dist(
+                    kpts.RECTANGULAR_HOLE_4MM.inserted_peg_base_offset, kpts.RECTANGULAR_HOLE_4MM.hole_tip_offset
+                ),
+            ),
             IncrementalSegmentCfg(
                 fraction=(0.7, 1.5),
                 start_sampler=UniformPoseNoiseCfg(
                     x=(-0.01, 0.01), y=(-0.01, 0.01), roll=(-0.3, 0.3), pitch=(-0.3, 0.3), yaw=(-3.14, 3.14)
                 ),
                 start_pose=kpts.RECTANGULAR_HOLE_4MM.one_mm_above_hole_tip_offset,
-                distance=_dist(kpts.RECTANGULAR_HOLE_4MM.one_mm_above_hole_tip_offset,
-                            kpts.RECTANGULAR_HOLE_4MM.above_hole_tip_offset))
+                distance=_dist(
+                    kpts.RECTANGULAR_HOLE_4MM.one_mm_above_hole_tip_offset,
+                    kpts.RECTANGULAR_HOLE_4MM.above_hole_tip_offset,
+                ),
+            ),
         ]
     )
     peg_insert_8mm: AssemblyProfileCfg = AssemblyProfileCfg(
@@ -285,16 +340,21 @@ class FactoryAssemblyProfileCfg(PresetCfg):
                 fraction=(0.0, 0.7),
                 start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi]),
                 start_pose=kpts.RECTANGULAR_HOLE_8MM.inserted_peg_base_offset,
-                distance=_dist(kpts.RECTANGULAR_HOLE_8MM.inserted_peg_base_offset,
-                            kpts.RECTANGULAR_HOLE_8MM.hole_tip_offset)),
+                distance=_dist(
+                    kpts.RECTANGULAR_HOLE_8MM.inserted_peg_base_offset, kpts.RECTANGULAR_HOLE_8MM.hole_tip_offset
+                ),
+            ),
             IncrementalSegmentCfg(
                 fraction=(0.7, 1.5),
                 start_sampler=UniformPoseNoiseCfg(
                     x=(-0.01, 0.01), y=(-0.01, 0.01), roll=(-0.3, 0.3), pitch=(-0.3, 0.3), yaw=(-3.14, 3.14)
                 ),
                 start_pose=kpts.RECTANGULAR_HOLE_8MM.one_mm_above_hole_tip_offset,
-                distance=_dist(kpts.RECTANGULAR_HOLE_8MM.one_mm_above_hole_tip_offset,
-                            kpts.RECTANGULAR_HOLE_8MM.above_hole_tip_offset))
+                distance=_dist(
+                    kpts.RECTANGULAR_HOLE_8MM.one_mm_above_hole_tip_offset,
+                    kpts.RECTANGULAR_HOLE_8MM.above_hole_tip_offset,
+                ),
+            ),
         ]
     )
     peg_insert_12mm: AssemblyProfileCfg = AssemblyProfileCfg(
@@ -303,16 +363,21 @@ class FactoryAssemblyProfileCfg(PresetCfg):
                 fraction=(0.0, 0.7),
                 start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi]),
                 start_pose=kpts.RECTANGULAR_HOLE_12MM.inserted_peg_base_offset,
-                distance=_dist(kpts.RECTANGULAR_HOLE_12MM.inserted_peg_base_offset,
-                            kpts.RECTANGULAR_HOLE_12MM.hole_tip_offset)),
+                distance=_dist(
+                    kpts.RECTANGULAR_HOLE_12MM.inserted_peg_base_offset, kpts.RECTANGULAR_HOLE_12MM.hole_tip_offset
+                ),
+            ),
             IncrementalSegmentCfg(
                 fraction=(0.7, 1.5),
                 start_sampler=UniformPoseNoiseCfg(
                     x=(-0.01, 0.01), y=(-0.01, 0.01), roll=(-0.3, 0.3), pitch=(-0.3, 0.3), yaw=(-3.14, 3.14)
                 ),
                 start_pose=kpts.RECTANGULAR_HOLE_12MM.one_mm_above_hole_tip_offset,
-                distance=_dist(kpts.RECTANGULAR_HOLE_12MM.one_mm_above_hole_tip_offset,
-                            kpts.RECTANGULAR_HOLE_12MM.above_hole_tip_offset))
+                distance=_dist(
+                    kpts.RECTANGULAR_HOLE_12MM.one_mm_above_hole_tip_offset,
+                    kpts.RECTANGULAR_HOLE_12MM.above_hole_tip_offset,
+                ),
+            ),
         ]
     )
     peg_insert_16mm: AssemblyProfileCfg = AssemblyProfileCfg(
@@ -321,8 +386,9 @@ class FactoryAssemblyProfileCfg(PresetCfg):
                 fraction=(0.0, 0.7),
                 start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi]),
                 start_pose=kpts.RECTANGULAR_HOLE_16MM.inserted_peg_base_offset,
-                distance=_dist(kpts.RECTANGULAR_HOLE_16MM.inserted_peg_base_offset,
-                            kpts.RECTANGULAR_HOLE_16MM.hole_tip_offset),
+                distance=_dist(
+                    kpts.RECTANGULAR_HOLE_16MM.inserted_peg_base_offset, kpts.RECTANGULAR_HOLE_16MM.hole_tip_offset
+                ),
             ),
             IncrementalSegmentCfg(
                 fraction=(0.7, 1.5),
@@ -330,44 +396,64 @@ class FactoryAssemblyProfileCfg(PresetCfg):
                     x=(-0.01, 0.01), y=(-0.01, 0.01), roll=(-0.3, 0.3), pitch=(-0.3, 0.3), yaw=(-3.14, 3.14)
                 ),
                 start_pose=kpts.RECTANGULAR_HOLE_16MM.one_mm_above_hole_tip_offset,
-                distance=_dist(kpts.RECTANGULAR_HOLE_16MM.one_mm_above_hole_tip_offset,
-                            kpts.RECTANGULAR_HOLE_16MM.above_hole_tip_offset),
+                distance=_dist(
+                    kpts.RECTANGULAR_HOLE_16MM.one_mm_above_hole_tip_offset,
+                    kpts.RECTANGULAR_HOLE_16MM.above_hole_tip_offset,
+                ),
             ),
         ]
     )
 
     # Connector insert — pure linear, no yaw noise (keyed)
-    usba: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
-        start_pose=kpts.USB_A_SOCKET.plug_assembled,
-        distance=_dist(kpts.USB_A_SOCKET.plug_assembled, kpts.USB_A_SOCKET.entry),
-    )])
-    waterproof: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
-        start_pose=kpts.WATERPROOF_SOCKET.plug_assembled,
-        distance=_dist(kpts.WATERPROOF_SOCKET.plug_assembled, kpts.WATERPROOF_SOCKET.entry),
-    )])
-    dsub: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
-        start_pose=kpts.D_SUB_SOCKET.plug_assembled,
-        distance=_dist(kpts.D_SUB_SOCKET.plug_assembled, kpts.D_SUB_SOCKET.entry),
-    )])
-    rj45: AssemblyProfileCfg = AssemblyProfileCfg(segments=[IncrementalSegmentCfg(
-        start_pose=kpts.RJ45_SOCKET.plug_assembled,
-        distance=_dist(kpts.RJ45_SOCKET.plug_assembled, kpts.RJ45_SOCKET.entry),
-    )])
+    usba: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                start_pose=kpts.USB_A_SOCKET.plug_assembled,
+                distance=_dist(kpts.USB_A_SOCKET.plug_assembled, kpts.USB_A_SOCKET.entry),
+            )
+        ]
+    )
+    waterproof: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                start_pose=kpts.WATERPROOF_SOCKET.plug_assembled,
+                distance=_dist(kpts.WATERPROOF_SOCKET.plug_assembled, kpts.WATERPROOF_SOCKET.entry),
+            )
+        ]
+    )
+    dsub: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                start_pose=kpts.D_SUB_SOCKET.plug_assembled,
+                distance=_dist(kpts.D_SUB_SOCKET.plug_assembled, kpts.D_SUB_SOCKET.entry),
+            )
+        ]
+    )
+    rj45: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                start_pose=kpts.RJ45_SOCKET.plug_assembled,
+                distance=_dist(kpts.RJ45_SOCKET.plug_assembled, kpts.RJ45_SOCKET.entry),
+            )
+        ]
+    )
 
     # BNC — two-segment: linear insertion then 90-deg bayonet twist
-    bnc: AssemblyProfileCfg = AssemblyProfileCfg(segments=[
-        EndPointsSegmentCfg(
-            fraction=(0.0, 0.4),
-            start_pose=kpts.BNC_SOCKET.plug_assembled,
-            end_pose=kpts.BNC_SOCKET.insert_start,
-            revolutions=(0.0, 0.0, 0.25),
-        ),
-        EndPointsSegmentCfg(
-            fraction=(0.4, 1.0),
-            start_pose=kpts.BNC_SOCKET.insert_start,
-            end_pose=kpts.BNC_SOCKET.entry,
-        ),
-    ])
+    bnc: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            EndPointsSegmentCfg(
+                fraction=(0.0, 0.4),
+                start_pose=kpts.BNC_SOCKET.plug_assembled,
+                end_pose=kpts.BNC_SOCKET.insert_start,
+                revolutions=(0.0, 0.0, 0.25),
+            ),
+            EndPointsSegmentCfg(
+                fraction=(0.4, 1.0),
+                start_pose=kpts.BNC_SOCKET.insert_start,
+                end_pose=kpts.BNC_SOCKET.entry,
+            ),
+        ]
+    )
 
     default: AssemblyProfileCfg = nut_thread_m16
 
@@ -520,16 +606,28 @@ class HeldAssetGraspMiddleCfg(PresetCfg):
 
 # Pose ranges reused across size variants within each category
 _NUT_GRASPED_RANGE = dict(
-    x=(-0.005, 0.005), y=(-0.005, 0.005), z=(0.00, 0.035),
-    roll=(3.141, 3.141), pitch=(-0.5, 0.5), yaw=(-2.09, 2.09),
+    x=(-0.005, 0.005),
+    y=(-0.005, 0.005),
+    z=(0.00, 0.035),
+    roll=(3.141, 3.141),
+    pitch=(-0.5, 0.5),
+    yaw=(-2.09, 2.09),
 )
 _GEAR_GRASPED_RANGE = dict(
-    x=(-0.02, 0.02), y=(-0.02, 0.02), z=(0.035, 0.045),
-    roll=(3.141, 3.141), pitch=(-0.5, 0.5), yaw=(-2.09, 2.09),
+    x=(-0.02, 0.02),
+    y=(-0.02, 0.02),
+    z=(0.035, 0.045),
+    roll=(3.141, 3.141),
+    pitch=(-0.5, 0.5),
+    yaw=(-2.09, 2.09),
 )
 _INSERT_GRASPED_RANGE = dict(
-    x=(-0.005, 0.005), y=(-0.005, 0.005), z=(0.047, 0.057),
-    roll=(3.141, 3.141), pitch=(-0.5, 0.5), yaw=(-2.09, 2.09),
+    x=(-0.005, 0.005),
+    y=(-0.005, 0.005),
+    z=(0.047, 0.057),
+    roll=(3.141, 3.141),
+    pitch=(-0.5, 0.5),
+    yaw=(-2.09, 2.09),
 )
 
 
