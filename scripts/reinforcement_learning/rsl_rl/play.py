@@ -78,6 +78,16 @@ parser.add_argument(
     help="Use the pre-trained checkpoint from Nucleus.",
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
+parser.add_argument(
+    "--stochastic",
+    action="store_true",
+    default=False,
+    help=(
+        "Sample actions from the policy distribution instead of using the deterministic mean."
+        " Useful when the trained policy still has wide action variance (Policy/mean_std >> 0)"
+        " and the deterministic mean alone is not goal-directed (sparse-reward PPO failure mode)."
+    ),
+)
 parser.add_argument("--external_callback", default=None, help="Fully qualified path to an externally defined callback.")
 cli_args.add_rsl_rl_args(parser)
 add_launcher_args(parser)
@@ -230,7 +240,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 # run everything in inference mode
                 with torch.inference_mode():
                     # agent stepping
-                    actions = policy(obs)
+                    if args_cli.stochastic:
+                        actions = policy(obs, stochastic_output=True)
+                    else:
+                        actions = policy(obs)
                     # env stepping
                     obs, _, dones, _ = env.step(actions)
                     # reset recurrent states for episodes that have terminated
