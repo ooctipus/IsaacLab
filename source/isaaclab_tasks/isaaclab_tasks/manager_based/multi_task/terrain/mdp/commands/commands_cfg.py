@@ -193,6 +193,10 @@ class RelativeStateCommandCfg(CommandTermCfg):
                 scale=(0.5, 0.5, 0.5),
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
             ),
+            "sphere": sim_utils.SphereCfg(
+                radius=0.05,
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.85, 0.0)),
+            ),
         },
     )
 

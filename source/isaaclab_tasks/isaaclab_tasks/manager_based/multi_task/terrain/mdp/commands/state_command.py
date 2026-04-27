@@ -475,6 +475,31 @@ class RelativeStateCommand(CommandTerm):
         foot_err = self._foot_delta_b.norm(dim=-1).amax(dim=1)
         self._err[:, 4] = torch.where(self._foot_success_mask, foot_err, torch.zeros_like(foot_err))
 
+    def print_state_error(self) -> None:
+        """Print per-group state-error stats to stdout for terminal debug.
+
+        One line per error group with mean / max across envs and the
+        success-threshold the metric is graded against. ``ok%`` is the
+        fraction of envs whose group error sits below threshold.
+
+        Cheap but not free: one CPU sync per scalar (~15 syncs total),
+        so call sparingly — e.g. every N policy steps, not every physics
+        step.
+        """
+        err = self._err  # [num_envs, num_error_groups]
+        thresh = self._reward_scales[0]  # [num_error_groups]
+        mean = err.mean(dim=0)
+        mx = err.amax(dim=0)
+        ok_pct = 100.0 * (err < thresh).float().mean(dim=0)
+        print(f"state error (n_envs={self.num_envs})")
+        print(f"success_rate: {self._success_per_cmd.mean().item()}")
+        for i, name in enumerate(self._error_group_names):
+            short = name.removeprefix("error_")
+            print(
+                f"  {short:<9s} μ={mean[i].item():7.3f}  max={mx[i].item():7.3f}  "
+                f"thr={thresh[i].item():.3f}  ok={ok_pct[i].item():5.1f}%"
+            )
+
     def get_state_error(self):
         return self._err
 
@@ -545,6 +570,19 @@ class RelativeStateCommand(CommandTerm):
             goal_orientations.append(quat)
             goal_scales.append(scale)
             goal_marker_indices.append(torch.zeros((len(vel_task_ids),), device=self.device, dtype=torch.long))
+
+        # One sphere per active foot target. Tasks that don't activate the
+        # foot-pos error group (``_foot_success_mask = False``) are skipped
+        # so the visualizer only shows markers the policy is actually graded
+        # against.
+        foot_active_ids = self._env.scene._ALL_INDICES[self._foot_success_mask]
+        if len(foot_active_ids) > 0:
+            foot_pos_w = self._target_foot_pos_w[foot_active_ids].reshape(-1, 3)
+            n_markers = foot_pos_w.shape[0]
+            goal_translations.append(foot_pos_w)
+            goal_orientations.append(self._identity_quat[:1].expand(n_markers, -1))
+            goal_scales.append(torch.tensor((1.0, 1.0, 1.0), device=self.device).repeat(n_markers, 1))
+            goal_marker_indices.append(torch.full((n_markers,), 3, device=self.device, dtype=torch.long))
 
         self.goal_visualizer.visualize(
             translations=torch.cat(goal_translations, dim=0),
