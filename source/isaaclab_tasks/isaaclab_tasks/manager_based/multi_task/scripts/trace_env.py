@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import functools
+import importlib
 import sys
 import time
 from collections.abc import Callable
@@ -126,6 +127,33 @@ def _wrap_manager(env, manager_name: str, methods: tuple[str, ...]) -> None:
     label = manager_name.removesuffix("_manager")
     for method_name in methods:
         _wrap_method(manager, method_name, f"manager.{label}.{method_name}")
+
+
+def _wrap_module_function(module_name: str, function_name: str, span_name: str) -> None:
+    """Wrap a module-level function with a trace span."""
+    with contextlib.suppress(ImportError):
+        module = importlib.import_module(module_name)
+        _wrap_method(module, function_name, span_name)
+
+
+def _install_startup_tracing() -> None:
+    """Install trace wrappers for scene-startup clone utilities."""
+    clone_spans = (
+        ("isaaclab.cloner", "usd_replicate", "cloner.usd_replicate"),
+        ("isaaclab.cloner.cloner_utils", "usd_replicate", "cloner.usd_replicate"),
+        ("isaaclab.cloner", "filter_collisions", "cloner.filter_collisions"),
+        ("isaaclab.cloner.cloner_utils", "filter_collisions", "cloner.filter_collisions"),
+        ("isaaclab.cloner", "clone_from_template", "cloner.clone_from_template"),
+        ("isaaclab.cloner.cloner_utils", "clone_from_template", "cloner.clone_from_template"),
+        ("isaaclab_physx.cloner", "physx_replicate", "cloner.physx_replicate"),
+        ("isaaclab_physx.cloner.physx_replicate", "physx_replicate", "cloner.physx_replicate"),
+        ("isaaclab_ovphysx.cloner", "ovphysx_replicate", "cloner.ovphysx_replicate"),
+        ("isaaclab_ovphysx.cloner.ovphysx_replicate", "ovphysx_replicate", "cloner.ovphysx_replicate"),
+        ("isaaclab_newton.cloner", "newton_physics_replicate", "cloner.newton_physics_replicate"),
+        ("isaaclab_newton.cloner.newton_replicate", "newton_physics_replicate", "cloner.newton_physics_replicate"),
+    )
+    for module_name, function_name, span_name in clone_spans:
+        _wrap_module_function(module_name, function_name, span_name)
 
 
 def _install_runtime_tracing(env: gym.Env) -> None:
@@ -245,6 +273,7 @@ def main() -> None:
         with launch_simulation(env_cfg, args_cli):
             app_launch_end = recorder.timestamp_ns()
             recorder.record_duration_ns("app_launch", app_launch_start, app_launch_end)
+            _install_startup_tracing()
             _run_traced_env(env_cfg, recorder)
             _print_outputs(recorder)
     finally:
