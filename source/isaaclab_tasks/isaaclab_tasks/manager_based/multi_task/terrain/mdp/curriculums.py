@@ -34,7 +34,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
 
     def __init__(self, cfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
-        debug_vis = cfg.params.get("debug_vis", True)
+        debug_vis = cfg.params.get("debug_vis", False)
 
         self.env = env
         self.goal_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
@@ -90,7 +90,6 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         target: float = 0.5,
         debug_vis: bool = False,
         kappa: float = 5.0,
-        temperature: float = 2.0,
         success_term: str = "success",
     ):
         if env_ids.numel() == 0:
@@ -102,8 +101,15 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.success_monitor.success_update(prev_idx, success)
 
         # 2) SAMPLE NEXT DISCRETE COMMANDS
+        # ``eps`` softens the Beta-kernel tail so tasks that hit the
+        # extremes (rate = 0 or 1) keep getting sampled occasionally.
+        # The default ``eps = 1e-8`` makes such tasks ~10⁶× less likely
+        # than the curriculum band, which effectively abandons them and
+        # masks any policy regression on them.
         probs = beta_sampling_probs(
-            self.success_monitor.success_rate, target=target, kappa=kappa, temperature=temperature
+            self.success_monitor.success_rate,
+            target=target,
+            kappa=kappa
         )
         choices = torch.multinomial(probs, len(env_ids), replacement=True)
         self.command_indices[env_ids] = choices
@@ -306,7 +312,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
                 ),
             }
         )
-        self.frame_visualizer = VisualizationMarkers(MARKER_CFG.replace(prim_path="/World/Visuals/CurriculumPaths"))
+        self.frame_visualizer = VisualizationMarkers(MARKER_CFG.replace(prim_path="/Visuals/Command/curriculum_paths"))
 
         Sc = torch.ones(self._n_lines, 3, device=self.device)
         Sc[:, 2] = Ll

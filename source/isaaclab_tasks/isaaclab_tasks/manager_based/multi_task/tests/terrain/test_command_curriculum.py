@@ -56,13 +56,12 @@ def _sample_by_target_rate(
     env_ids: torch.Tensor,
     target: float = 0.5,
     kappa: float = 2.0,
-    temperature: float = 2.0,
     return_probs: bool = False,
 ):
     """Wrapper for the (now-decoupled) Beta sampling — used only by the legacy
     test cases below. Production code calls :func:`beta_sampling_probs` and
     :func:`torch.multinomial` directly."""
-    probs = beta_sampling_probs(mon.success_rate, target=target, kappa=kappa, temperature=temperature)
+    probs = beta_sampling_probs(mon.success_rate, target=target, kappa=kappa)
     choices = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
     return (choices, probs) if return_probs else choices
 
@@ -385,9 +384,9 @@ class TestSuccessMonitor:
             mon.success_update(ids, mask)
 
         env_ids = torch.arange(4096, device=DEVICE)
-        low = _sample_by_target_rate(mon, env_ids, target=0.0, kappa=5.0, temperature=1.0)
-        high = _sample_by_target_rate(mon, env_ids, target=1.0, kappa=5.0, temperature=1.0)
-        mid = _sample_by_target_rate(mon, env_ids, target=0.5, kappa=5.0, temperature=1.0)
+        low = _sample_by_target_rate(mon, env_ids, target=0.0, kappa=5.0)
+        high = _sample_by_target_rate(mon, env_ids, target=1.0, kappa=5.0)
+        mid = _sample_by_target_rate(mon, env_ids, target=0.5, kappa=5.0)
 
         low_counts = torch.bincount(low.long(), minlength=4).float() / env_ids.numel()
         high_counts = torch.bincount(high.long(), minlength=4).float() / env_ids.numel()
@@ -643,7 +642,7 @@ class _FakeCommandManager:
         return self._term
 
 
-def _bootstrap_curriculum(env, term, target=0.5, kappa=5.0, temperature=2.0, history_len=16):
+def _bootstrap_curriculum(env, term, target=0.5, kappa=5.0, history_len=16):
     """Build a curriculum bound to the term and the env, bypassing visual setup."""
     cfg = SimpleNamespace(
         params={
@@ -651,7 +650,6 @@ def _bootstrap_curriculum(env, term, target=0.5, kappa=5.0, temperature=2.0, his
             "history_len": history_len,
             "target": target,
             "kappa": kappa,
-            "temperature": temperature,
         }
     )
     env.command_manager = _FakeCommandManager(term)
@@ -721,7 +719,7 @@ class TestCurriculum:
         term.cmd_indices[:] = prev_indices
 
         env_ids = torch.arange(env.num_envs, device=DEVICE)
-        curriculum(env, env_ids, target=0.5, kappa=5.0, temperature=2.0, success_term="success")
+        curriculum(env, env_ids, target=0.5, kappa=5.0, success_term="success")
 
         # Monitor should have counted exactly one event per prev_index[i].
         for env_i, task_i in enumerate(prev_indices.tolist()):

@@ -41,11 +41,15 @@ class TestBetaSamplingProbs:
         probs_high_k = beta_sampling_probs(rates, target=0.5, kappa=10.0)
         assert probs_high_k.max() > probs_low_k.max()
 
-    def test_higher_temperature_flattens(self):
+    def test_higher_eps_flattens_tails(self):
         rates = torch.linspace(0, 1, 101)
-        probs_cold = beta_sampling_probs(rates, target=0.5, kappa=4.0, temperature=1.0)
-        probs_hot = beta_sampling_probs(rates, target=0.5, kappa=4.0, temperature=10.0)
-        assert probs_hot.max() < probs_cold.max()
+        probs_tight = beta_sampling_probs(rates, target=0.5, kappa=4.0, eps=1e-8)
+        probs_floored = beta_sampling_probs(rates, target=0.5, kappa=4.0, eps=0.05)
+        # With a higher eps the extreme-rate slots get a non-trivial floor,
+        # so the ratio peak/min shrinks dramatically.
+        ratio_tight = probs_tight.max() / probs_tight.min()
+        ratio_floored = probs_floored.max() / probs_floored.min()
+        assert ratio_floored < ratio_tight
 
 
 class TestTaggedReport:

@@ -12,21 +12,28 @@ def beta_sampling_probs(
     success_rates: torch.Tensor,
     target: float = 0.5,
     kappa: float = 1.0,
-    temperature: float = 2.0,
+    eps: float = 1e-8,
 ) -> torch.Tensor:
     """Convert per-slot success rates into sampling probabilities peaked at ``target``.
 
     Uses a Beta-distribution kernel: slots whose success rate is near ``target``
-    receive the highest weight. ``kappa`` controls concentration and
-    ``temperature`` controls the softmax sharpness.
+    receive the highest weight. ``kappa`` controls concentration.
+
+    ``eps`` doubles as a soft floor on the per-slot weight: the kernel
+    evaluates ``(rate + eps)^(a-1) * (1 - rate + eps)^(b-1)``, so slots at
+    the extremes (``rate = 0`` or ``1``) get weight ``eps^(b-1)`` /
+    ``eps^(a-1)`` rather than 0. With the default ``eps = 1e-8`` extreme
+    slots are ~``10⁶×`` less likely than ``target``, which effectively
+    abandons them — their monitor window goes stale and policy regression
+    on those slots is silently masked. Raise ``eps`` (e.g. ``0.01``-``0.05``)
+    to flatten the tail and guarantee every slot keeps refreshing.
     """
     t = max(0.0, min(1.0, target))
     k = max(0.0, kappa)
     a = 1.0 + k * t
     b = 1.0 + k * (1.0 - t)
-    eps = 1e-8
     w = ((success_rates + eps).pow(a - 1.0) * (1.0 - success_rates + eps).pow(b - 1.0)).clamp_min(eps)
-    return torch.softmax(torch.log(w + eps) / max(1.0, temperature), dim=0)
+    return torch.softmax(torch.log(w + eps), dim=0)
 
 
 def tagged_report(
