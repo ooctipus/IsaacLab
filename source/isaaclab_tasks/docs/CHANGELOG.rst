@@ -1,6 +1,16 @@
 Changelog
 ---------
 
+1.5.30 (2026-04-28)
+~~~~~~~~~~~~~~~~~~~
+
+Added
+^^^^^
+
+* Added benchmark extraction for ``Metrics/success_rate`` and survival
+  success logging for direct cartpole camera environments.
+
+
 1.5.29 (2026-04-27)
 ~~~~~~~~~~~~~~~~~~~
 
