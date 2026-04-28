@@ -32,12 +32,16 @@ class IsaacsimKitPerspectiveVideo:
 
         h, w = self.cfg.window_height, self.cfg.window_width
         if self._rgb_annotator is None:
-            from isaacsim.core.rendering_manager import ViewportManager
+            # USD-direct camera placement (no dependency on ``isaacsim.core.rendering_manager``
+            # or ``isaacsim.core.utils.viewports`` — neither is loaded under
+            # ``--video --headless``). ``ViewportCameraController`` overwrites this pose every
+            # frame for tracking modes; this initial set just covers the very first capture.
+            from isaaclab_physx.renderers.kit_viewport_utils import set_kit_renderer_camera_view
 
-            ViewportManager.set_camera_view(
-                self.cfg.camera_prim_path,
-                eye=list(self.cfg.eye),
-                target=list(self.cfg.lookat),
+            set_kit_renderer_camera_view(
+                eye=self.cfg.eye,
+                target=self.cfg.lookat,
+                camera_prim_path=self.cfg.camera_prim_path,
             )
             self._render_product = rep.create.render_product(self.cfg.camera_prim_path, (w, h))
             self._rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cpu")
