@@ -251,6 +251,7 @@ def build_task_table(
     pool_spacing_area_divisor: float = 3.0,
     pool_sampling_size: tuple[float, float] | None = None,
     robot_joint_names: Sequence[str] | None = None,
+    exclude_self_pairs: bool = True,
 ) -> dict:
     """Run the IK pipeline, bin states by terrain cell, build task table.
 
@@ -271,6 +272,10 @@ def build_task_table(
         robot_joint_names: Isaac articulation joint names in simulation order.
             When provided, retargeted Newton joint columns are reordered to
             this order before the states are stored in the table.
+        exclude_self_pairs: When ``True`` (default), drop pairs where the
+            spawn and target reference the same state, removing the diagonal
+            of each per-cell Cartesian product. Cells with fewer than two
+            valid states contribute no pairs.
 
     Returns:
         Dict with keys matching :class:`TaskTable` fields plus FK metadata:
@@ -418,10 +423,22 @@ def build_task_table(
             n_c = end - start
             if n_c == 0:
                 continue
+            if exclude_self_pairs and n_c < 2:
+                # Need at least two distinct states to form a non-self pair.
+                continue
             ids = cell_values[start:end]
-            pair_spawn_parts.append(ids.repeat_interleave(n_c))
-            pair_target_parts.append(ids.repeat(n_c))
-            pair_tile_parts.append(torch.full((n_c * n_c,), cell, device=device, dtype=torch.long))
+            spawn_ids = ids.repeat_interleave(n_c)
+            target_ids = ids.repeat(n_c)
+            if exclude_self_pairs:
+                keep = spawn_ids != target_ids
+                spawn_ids = spawn_ids[keep]
+                target_ids = target_ids[keep]
+                pair_count = n_c * (n_c - 1)
+            else:
+                pair_count = n_c * n_c
+            pair_spawn_parts.append(spawn_ids)
+            pair_target_parts.append(target_ids)
+            pair_tile_parts.append(torch.full((pair_count,), cell, device=device, dtype=torch.long))
 
         if pair_spawn_parts:
             pair_spawn = torch.cat(pair_spawn_parts)
