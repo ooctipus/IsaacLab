@@ -163,7 +163,7 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
     )
 
     def __post_init__(self):
-        self.decimation = preset(default=8, advanced_skills=4)  # type: ignore
+        self.decimation = preset(default=4, advanced_skills=1)  # type: ignore
         self.episode_length_s = 12.0
         self.sim.dt = 0.01
         self.sim.render_interval = self.decimation
