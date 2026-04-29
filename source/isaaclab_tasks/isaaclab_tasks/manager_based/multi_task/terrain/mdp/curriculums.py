@@ -12,7 +12,13 @@ import torch
 
 from isaaclab.managers import ManagerTermBase
 
-from isaaclab_tasks.manager_based.multi_task.mdp.util import SuccessMonitorCfg, beta_sampling_probs
+from isaaclab_tasks.manager_based.multi_task.mdp.util import (
+    BetaSamplingCfg,
+    SuccessMonitorCfg,
+    UniformSamplingCfg,
+    beta_sampling_probs,
+    uniform_sampling_probs,
+)
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -48,18 +54,19 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         # Discrete command table size
         self.num_discrete_cmd = int(self.goal_term.table.num_tasks)
 
+        # Sampling strategy + success-monitor cfg are both required preset params.
+        self._sampling_cfg: UniformSamplingCfg | BetaSamplingCfg = cfg.params["sampling"]
+
         # Curriculum owns the success monitor + the rate tensor it writes into.
         # The decoupled-rate-tensor pattern (factory-style) lets us hand the same
         # tensor to both the monitor (writer) and the command term (reader)
         # without a copy.
-        success_monitor_cfg = SuccessMonitorCfg(
-            monitored_history_len=cfg.params.get("history_len", 100),
-            num_monitored_data=self.num_discrete_cmd,
-            device=env.device,
-        )
+        monitor_cfg: SuccessMonitorCfg = cfg.params["success_monitor_cfg"]
+        monitor_cfg.num_monitored_data = self.num_discrete_cmd
+        monitor_cfg.device = env.device
         self.success_rate = torch.zeros(self.num_discrete_cmd, device=env.device)
         self.goal_term.success_rates = self.success_rate
-        self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg, self.success_rate)
+        self.success_monitor = monitor_cfg.class_type(monitor_cfg, self.success_rate)
 
         # simple result dict
         self._result: dict[str, torch.Tensor] = {
@@ -87,9 +94,9 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self,
         env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
-        target: float = 0.5,
+        sampling: UniformSamplingCfg | BetaSamplingCfg = BetaSamplingCfg(),
+        success_monitor_cfg: SuccessMonitorCfg | None = None,
         debug_vis: bool = False,
-        kappa: float = 5.0,
         success_term: str = "success",
     ):
         if env_ids.numel() == 0:
@@ -101,16 +108,15 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.success_monitor.success_update(prev_idx, success)
 
         # 2) SAMPLE NEXT DISCRETE COMMANDS
-        # ``eps`` softens the Beta-kernel tail so tasks that hit the
-        # extremes (rate = 0 or 1) keep getting sampled occasionally.
-        # The default ``eps = 1e-8`` makes such tasks ~10⁶× less likely
-        # than the curriculum band, which effectively abandons them and
-        # masks any policy regression on them.
-        probs = beta_sampling_probs(
-            self.success_monitor.success_rate,
-            target=target,
-            kappa=kappa
-        )
+        if isinstance(self._sampling_cfg, BetaSamplingCfg):
+            rates = eval(self._sampling_cfg.success_rate_bind)  # noqa: S307
+            probs = beta_sampling_probs(
+                rates,
+                target=self._sampling_cfg.target,
+                kappa=self._sampling_cfg.kappa,
+            )
+        else:
+            probs = uniform_sampling_probs(self.success_monitor.success_rate)
         choices = torch.multinomial(probs, len(env_ids), replacement=True)
         self.command_indices[env_ids] = choices
 

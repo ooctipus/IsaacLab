@@ -30,6 +30,7 @@ import warp as wp
 
 from isaaclab_tasks.manager_based.multi_task.mdp.util import (
     ArticulationResetStateAdapter,
+    BetaSamplingCfg,
     SuccessMonitor,
     SuccessMonitorCfg,
     beta_sampling_probs,
@@ -235,6 +236,7 @@ def _make_command_term(
         lin_vel_std=0.5,
         ang_vel_std=0.5,
         foot_pos_std=0.1,
+        normalize_command_obs=False,
         debug_vis=False,
     )
     term.robot = _MockRobot(env.num_envs, num_joints, device)
@@ -290,7 +292,10 @@ def _make_command_term(
     term._compute_target_foot_pos_w = _compute_target_foot_pos_w
 
     term.num_error_groups = 5
-    term._reward_scales = torch.tensor([0.5, 0.5, 0.5, 0.5, 0.1], device=device).view(1, 5)
+    num_cmd_types = int(table.offsets.numel() - 1)
+    term._reward_scales = (
+        torch.tensor([0.5, 0.5, 0.5, 0.5, 0.1], device=device).view(1, 5).expand(num_cmd_types, 5).contiguous()
+    )
     term._identity_quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device=device).repeat(env.num_envs, 1)
     term._err = torch.empty(env.num_envs, 5, device=device)
     term._error_group_names = ["error_pos", "error_rot", "error_linvel", "error_angvel", "error_foot_pos"]
@@ -647,9 +652,8 @@ def _bootstrap_curriculum(env, term, target=0.5, kappa=5.0, history_len=16):
     cfg = SimpleNamespace(
         params={
             "debug_vis": False,  # skip VisualizationMarkers construction
-            "history_len": history_len,
-            "target": target,
-            "kappa": kappa,
+            "sampling": BetaSamplingCfg(target=target, kappa=kappa),
+            "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=history_len),
         }
     )
     env.command_manager = _FakeCommandManager(term)
@@ -719,7 +723,7 @@ class TestCurriculum:
         term.cmd_indices[:] = prev_indices
 
         env_ids = torch.arange(env.num_envs, device=DEVICE)
-        curriculum(env, env_ids, target=0.5, kappa=5.0, success_term="success")
+        curriculum(env, env_ids, success_term="success")
 
         # Monitor should have counted exactly one event per prev_index[i].
         for env_i, task_i in enumerate(prev_indices.tolist()):

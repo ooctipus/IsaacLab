@@ -231,10 +231,29 @@ class RelativeStateCommand(CommandTerm):
         self._target_fk_body_q: wp.array | None = None
         self._target_fk_body_qd: wp.array | None = None
 
-        # success threshold per error group: pos, rot, lin_vel, ang_vel, foot_pos
+        # Per-command-type success thresholds: pos, rot, lin_vel, ang_vel, foot_pos.
+        # Each command-type cfg may override any field via its own ``pos_std`` / ``rot_std`` /
+        # ``lin_vel_std`` / ``ang_vel_std`` / ``foot_pos_std`` (``None`` falls back to global).
         self.num_error_groups = 5
-        reward_scale = [cfg.pos_std, cfg.rot_std, cfg.lin_vel_std, cfg.ang_vel_std, cfg.foot_pos_std]
-        self._reward_scales = torch.tensor(reward_scale, device=self.device).view(1, self.num_error_groups)
+        std_attrs = ("pos_std", "rot_std", "lin_vel_std", "ang_vel_std", "foot_pos_std")
+        global_stds = (cfg.pos_std, cfg.rot_std, cfg.lin_vel_std, cfg.ang_vel_std, cfg.foot_pos_std)
+        reward_scales = torch.empty(len(cfg.commands), self.num_error_groups, device=self.device)
+        for cmd_idx, cmd_cfg in enumerate(cfg.commands.values()):
+            for grp_idx, attr in enumerate(std_attrs):
+                override = getattr(cmd_cfg, attr, None)
+                reward_scales[cmd_idx, grp_idx] = global_stds[grp_idx] if override is None else override
+        self._reward_scales = reward_scales
+
+        # Per-cmd-type inverse scale broadcast across the command-obs channels:
+        # 12 root channels grouped as [pos x3, rot x3, lin_vel x3, ang_vel x3]
+        # followed by 3 * num_feet foot-position channels.
+        obs_group_widths = (3, 3, 3, 3, 3 * self.num_feet)
+        obs_inv_scales = torch.empty(len(cfg.commands), self.command_dim, device=self.device)
+        col = 0
+        for grp_idx, width in enumerate(obs_group_widths):
+            obs_inv_scales[:, col : col + width] = reward_scales[:, grp_idx : grp_idx + 1].reciprocal()
+            col += width
+        self._obs_inv_unit_scales = obs_inv_scales
         self._identity_quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device=self.device).repeat(self.num_envs, 1)
 
         # per-group error norms: [num_envs, 5] for pos/rot/lin_vel/ang_vel/foot_pos
@@ -265,7 +284,9 @@ class RelativeStateCommand(CommandTerm):
     def _update_metrics(self):
         for group_idx, name in enumerate(self._error_group_names):
             self.metrics[name] = self._err[:, group_idx]
-        self.metrics["instant_success"] = torch.all(self._err < self._reward_scales, dim=1).float()
+        self.metrics["instant_success"] = torch.all(
+            self._err < self._reward_scales[self.cmd_ids.long()], dim=1
+        ).float()
 
         if self.success_rates is not None:
             offsets = self.table.offsets
@@ -478,10 +499,14 @@ class RelativeStateCommand(CommandTerm):
         self._target_foot_pos_b *= self._foot_success_mask.view(-1, 1, 1)
         self._command_obs[:, :12].copy_(delta[:, :12])
         self._command_obs[:, 12:].copy_(self._target_foot_pos_b.flatten(1))
+        if self.cfg.normalize_command_obs:
+            self._command_obs.mul_(self._obs_inv_unit_scales[self.cmd_ids.long()])
 
         # Success tracking: hold time is trailing scalar at time_idx
         self.compute_state_error()
-        current[:, ti] += self._env.step_dt * torch.all(self._err < self._reward_scales, dim=1)
+        current[:, ti] += self._env.step_dt * torch.all(
+            self._err < self._reward_scales[self.cmd_ids.long()], dim=1
+        )
         torch.sub(target[:, ti], current[:, ti], out=delta[:, ti])
 
     def compute_state_error(self):
@@ -510,10 +535,12 @@ class RelativeStateCommand(CommandTerm):
         step.
         """
         err = self._err  # [num_envs, num_error_groups]
-        thresh = self._reward_scales[0]  # [num_error_groups]
+        # Per-env thresholds vary with cmd_ids; print the strictest per group as a summary.
+        per_env_thresh = self._reward_scales[self.cmd_ids.long()]  # [num_envs, num_error_groups]
+        thresh = per_env_thresh.amin(dim=0)  # [num_error_groups]
         mean = err.mean(dim=0)
         mx = err.amax(dim=0)
-        ok_pct = 100.0 * (err < thresh).float().mean(dim=0)
+        ok_pct = 100.0 * (err < per_env_thresh).float().mean(dim=0)
         print(f"state error (n_envs={self.num_envs})")
         print(f"success_rate: {self._success_per_cmd.mean().item()}")
         for i, name in enumerate(self._error_group_names):

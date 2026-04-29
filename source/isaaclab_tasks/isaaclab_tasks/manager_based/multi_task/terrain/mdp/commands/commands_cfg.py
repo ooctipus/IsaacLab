@@ -60,11 +60,27 @@ class RelativeStateCommandCfg(CommandTermCfg):
     """
 
     pos_std: float = 0.5
+    """Default base-position success threshold [m]. Per-task overrideable via
+    :attr:`Commands.pos_std` / :attr:`TerrainCommands.pos_std`."""
+
     rot_std: float = 0.5
+    """Default base-orientation success threshold [rad]. Per-task overrideable."""
+
     lin_vel_std: float = 0.5
+    """Default linear-velocity success threshold [m/s]. Per-task overrideable."""
+
     ang_vel_std: float = 0.5
+    """Default angular-velocity success threshold [rad/s]. Per-task overrideable."""
+
     foot_pos_std: float = 0.1
-    """Maximum per-foot target error for terrain-state success [m]."""
+    """Default per-foot target-error threshold [m] for terrain-state success.
+    Per-task overrideable via :attr:`TerrainCommands.foot_pos_std`."""
+
+    normalize_command_obs: bool = False
+    """Whether to divide :attr:`RelativeStateCommand.command` channels by the
+    per-task success threshold so the policy sees a unit-scaled "distance to
+    success" signal that is comparable across tasks with different stds.
+    """
 
     @configclass
     class Commands:
@@ -106,6 +122,22 @@ class RelativeStateCommandCfg(CommandTermCfg):
 
         duration: tuple[float, float] = (1.0, 1.0)
         """time required to be considered as success."""
+
+        pos_std: float | None = None
+        """Per-task override for the base-position success threshold [m]. ``None``
+        falls back to :attr:`RelativeStateCommandCfg.pos_std`."""
+
+        rot_std: float | None = None
+        """Per-task override for the base-orientation success threshold [rad]."""
+
+        lin_vel_std: float | None = None
+        """Per-task override for the linear-velocity success threshold [m/s]."""
+
+        ang_vel_std: float | None = None
+        """Per-task override for the angular-velocity success threshold [rad/s]."""
+
+        foot_pos_std: float | None = None
+        """Per-task override for the per-foot target-error threshold [m]."""
 
     @configclass
     class PositionCommands(Commands):
@@ -181,6 +213,22 @@ class RelativeStateCommandCfg(CommandTermCfg):
 
         duration: tuple[float, float] = (1.0, 1.0)
         """Time required to be considered successful [s]."""
+
+        pos_std: float | None = None
+        """Per-task override for the base-position success threshold [m]. ``None``
+        falls back to :attr:`RelativeStateCommandCfg.pos_std`."""
+
+        rot_std: float | None = None
+        """Per-task override for the base-orientation success threshold [rad]."""
+
+        lin_vel_std: float | None = None
+        """Per-task override for the linear-velocity success threshold [m/s]."""
+
+        ang_vel_std: float | None = None
+        """Per-task override for the angular-velocity success threshold [rad/s]."""
+
+        foot_pos_std: float | None = None
+        """Per-task override for the per-foot target-error threshold [m]."""
 
     commands: dict[str, Commands | TerrainCommands] = {}
     """Distribution ranges for the position commands."""

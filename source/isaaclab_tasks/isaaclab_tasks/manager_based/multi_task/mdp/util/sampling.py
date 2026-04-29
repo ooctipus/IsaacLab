@@ -36,6 +36,17 @@ def beta_sampling_probs(
     return torch.softmax(torch.log(w + eps), dim=0)
 
 
+def uniform_sampling_probs(success_rates: torch.Tensor) -> torch.Tensor:
+    """Return a uniform sampling distribution over slots.
+
+    Every slot gets equal probability ``1 / N`` regardless of its success rate.
+    Useful as a non-curriculum baseline or when the goal is to refresh the
+    monitor window evenly across all slots.
+    """
+    n = success_rates.numel()
+    return torch.full_like(success_rates, 1.0 / float(n))
+
+
 def tagged_report(
     values: torch.Tensor,
     tags: torch.Tensor,

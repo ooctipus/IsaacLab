@@ -17,6 +17,7 @@ __all__ = [
     "SuccessMonitorCfg",
     "UniformSamplingCfg",
     "beta_sampling_probs",
+    "uniform_sampling_probs",
     "create_primitive_mesh",
     "get_reset_state",
     "make_reset_state_adapters",
@@ -48,7 +49,7 @@ from .reset_state import (
     temporary_seed,
 )
 from .rigid_object_hasher import RigidObjectHasher
-from .sampling import beta_sampling_probs, tagged_report
+from .sampling import beta_sampling_probs, tagged_report, uniform_sampling_probs
 from .sampling_cfg import BetaSamplingCfg, UniformSamplingCfg
 from .state_buffer import StateBuffer
 from .state_buffer_cfg import StateBufferCfg

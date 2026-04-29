@@ -127,6 +127,12 @@ class CommandsPresetCfg(PresetCfg):
             match_feet=True,
             duration=(0.05, 1.0),
         ),
+        "terrain_pose_cmd_foot": mdp.RelativeStateCommandCfg.TerrainCommands(
+            match_base_pos=True,
+            match_base_rot=True,
+            match_feet=True,
+            duration=(0.05, 1.0),
+        ),
     }
     pose = {
         "pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(
@@ -180,7 +186,7 @@ class CommandsCfg:
         ang_vel_std=0.3,
         foot_pos_std=0.25,
         debug_vis=True,
-        pool_spacing=0.4,
+        pool_spacing=0.2,
         commands=CommandsPresetCfg(),  # type: ignore
         pipeline_cfg=RetargetPipelineCfg(
             kin=NewtonKinematicsCfg(usd_path=""),
