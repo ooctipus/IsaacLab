@@ -10,10 +10,9 @@ instances. Adapters own their tensor slice and the corresponding simulator
 read/write calls, so the buffer and generic set/get path do not branch on
 asset or command type.
 
-- :func:`temporary_seed` — context manager that sets the IsaacSim torch
-  seed within a ``with`` block and restores torch / cuda / numpy / python
-  RNG state on exit. Used to make build-time sampling deterministic
-  without polluting the global RNG.
+- :func:`temporary_seed` — context manager that sets torch / numpy / python
+  RNG seeds within a ``with`` block and restores their state on exit. Used
+  to make build-time sampling deterministic without polluting the global RNG.
 
 Used by :class:`~.event_combinators.reset_accumulator` (state buffer
 fill / draw) and the factory :func:`~..manager_based.multi_task.factory.mdp.observations.get_state` observation.
@@ -21,10 +20,9 @@ fill / draw) and the factory :func:`~..manager_based.multi_task.factory.mdp.obse
 
 from __future__ import annotations
 
-import io
 import random
 from collections.abc import Callable, Sequence
-from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -233,11 +231,11 @@ def pack_articulation_reset_state(
 
 @contextmanager
 def temporary_seed(seed: int, restore_numpy: bool = True, restore_python: bool = True):
-    """Set the IsaacSim torch seed within a ``with`` block; restore on exit.
+    """Seed torch / numpy / python RNGs within a ``with`` block; restore on exit.
 
-    Restores torch (CPU + all CUDA), numpy, and python ``random`` RNG state
-    on exit. ``isaacsim.core.utils.torch.set_seed`` prints to stdout/stderr;
-    this captures and discards that output to keep build logs clean.
+    Saves and restores torch (CPU + all CUDA), numpy, and python ``random``
+    RNG state so deterministic build-time sampling does not perturb the
+    global RNGs used elsewhere.
     """
     cpu_state = torch.get_rng_state()
     cuda_states = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
@@ -245,11 +243,11 @@ def temporary_seed(seed: int, restore_numpy: bool = True, restore_python: bool =
     py_state = random.getstate() if restore_python else None
 
     try:
-        sink = io.StringIO()
-        with redirect_stdout(sink), redirect_stderr(sink):
-            import isaacsim.core.utils.torch as torch_utils
-
-            torch_utils.set_seed(seed)
+        torch.manual_seed(seed)  # seeds CPU + all visible CUDA devices
+        if restore_numpy:
+            np.random.seed(seed)
+        if restore_python:
+            random.seed(seed)
         yield
     finally:
         torch.set_rng_state(cpu_state)
