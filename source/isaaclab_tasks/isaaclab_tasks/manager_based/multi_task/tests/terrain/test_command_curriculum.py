@@ -647,13 +647,15 @@ class _FakeCommandManager:
         return self._term
 
 
-def _bootstrap_curriculum(env, term, target=0.5, kappa=5.0, history_len=16):
+def _bootstrap_curriculum(env, term, target=0.5, kappa=5.0, history_len=16, log_bin_frac=False, log_bin_prob=False):
     """Build a curriculum bound to the term and the env, bypassing visual setup."""
     cfg = SimpleNamespace(
         params={
             "debug_vis": False,  # skip VisualizationMarkers construction
             "sampling": BetaSamplingCfg(target=target, kappa=kappa),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=history_len),
+            "log_bin_frac": log_bin_frac,
+            "log_bin_prob": log_bin_prob,
         }
     )
     env.command_manager = _FakeCommandManager(term)
@@ -742,7 +744,7 @@ class TestCurriculum:
         term = _make_command_term(env, table)
 
         env.termination_manager = _FakeTerminationManager(torch.tensor([True, False] * 4, device=DEVICE))
-        curriculum = _bootstrap_curriculum(env, term)
+        curriculum = _bootstrap_curriculum(env, term, log_bin_frac=True, log_bin_prob=True)
         env_ids = torch.arange(env.num_envs, device=DEVICE)
         result = curriculum(env, env_ids)
 

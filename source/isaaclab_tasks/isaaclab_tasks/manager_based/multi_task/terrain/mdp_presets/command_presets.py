@@ -30,6 +30,7 @@ from .robots.robot_presets import (
     RetargetJointRegularizeTargetsCfg,
     RetargetLateralHipJointPatternCfg,
 )
+from isaaclab_tasks.utils import preset
 
 
 @configclass
@@ -126,12 +127,37 @@ class CommandsPresetCfg(PresetCfg):
             match_base_rot=True,
             match_feet=True,
             duration=(0.05, 1.0),
+            foot_pos_std=0.25
+        ),
+    }
+    terrain_pose_multi_std = {
+        "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
+            match_base_pos=True,
+            match_base_rot=True,
+            match_feet=True,
+            duration=(0.05, 1.0),
+            foot_pos_std=0.5
         ),
         "terrain_pose_cmd_foot": mdp.RelativeStateCommandCfg.TerrainCommands(
             match_base_pos=True,
             match_base_rot=True,
             match_feet=True,
             duration=(0.05, 1.0),
+            foot_pos_std=0.4
+        ),
+        "terrain_pose_cmd_foot": mdp.RelativeStateCommandCfg.TerrainCommands(
+            match_base_pos=True,
+            match_base_rot=True,
+            match_feet=True,
+            duration=(0.05, 1.0),
+            foot_pos_std=0.3
+        ),
+        "terrain_pose_cmd_foot": mdp.RelativeStateCommandCfg.TerrainCommands(
+            match_base_pos=True,
+            match_base_rot=True,
+            match_feet=True,
+            duration=(0.05, 1.0),
+            foot_pos_std=0.2
         ),
     }
     pose = {
@@ -186,7 +212,7 @@ class CommandsCfg:
         ang_vel_std=0.3,
         foot_pos_std=0.25,
         debug_vis=True,
-        pool_spacing=0.2,
+        pool_spacing=preset(spacing02=0.2, spacing05=0.5, spacing10=1.0, default=0.5),
         commands=CommandsPresetCfg(),  # type: ignore
         pipeline_cfg=RetargetPipelineCfg(
             kin=NewtonKinematicsCfg(usd_path=""),

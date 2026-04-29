@@ -26,6 +26,9 @@ if TYPE_CHECKING:
     from .commands import RelativeStateCommand
 
 
+_BIN_NAMES = ("bin_0_20", "bin_20_40", "bin_40_60", "bin_60_80", "bin_80_100")
+
+
 class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
     """Success-rate curriculum over spawn→target patch pairs per (level, type).
 
@@ -68,23 +71,22 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.goal_term.success_rates = self.success_rate
         self.success_monitor = monitor_cfg.class_type(monitor_cfg, self.success_rate)
 
-        # simple result dict
+        # Optional per-bin diagnostics. ``log_bin_frac`` reports the fraction of
+        # discrete commands whose success rate lands in each bin; ``log_bin_prob``
+        # reports the probability mass the sampler places in each bin.
+        self._log_bin_frac: bool = cfg.params.get("log_bin_frac", False)
+        self._log_bin_prob: bool = cfg.params.get("log_bin_prob", False)
+
         self._result: dict[str, torch.Tensor] = {
             "all_success": torch.zeros((), dtype=torch.float, device=env.device),
-            # fraction of discrete commands in each success bin
-            "bin_0_20_frac": torch.zeros((), dtype=torch.float, device=env.device),
-            "bin_20_40_frac": torch.zeros((), dtype=torch.float, device=env.device),
-            "bin_40_60_frac": torch.zeros((), dtype=torch.float, device=env.device),
-            "bin_60_80_frac": torch.zeros((), dtype=torch.float, device=env.device),
-            "bin_80_100_frac": torch.zeros((), dtype=torch.float, device=env.device),
-            # probability mass (under sampling distribution) in each bin
-            "bin_0_20_prob": torch.zeros((), dtype=torch.float, device=env.device),
-            "bin_20_40_prob": torch.zeros((), dtype=torch.float, device=env.device),
-            "bin_40_60_prob": torch.zeros((), dtype=torch.float, device=env.device),
-            "bin_60_80_prob": torch.zeros((), dtype=torch.float, device=env.device),
-            "bin_80_100_prob": torch.zeros((), dtype=torch.float, device=env.device),
         }
-        self.prob_mass_per_bin = torch.zeros(5, dtype=torch.float32, device=self.env.device)
+        if self._log_bin_frac:
+            for name in _BIN_NAMES:
+                self._result[f"{name}_frac"] = torch.zeros((), dtype=torch.float, device=env.device)
+        if self._log_bin_prob:
+            for name in _BIN_NAMES:
+                self._result[f"{name}_prob"] = torch.zeros((), dtype=torch.float, device=env.device)
+            self.prob_mass_per_bin = torch.zeros(len(_BIN_NAMES), dtype=torch.float32, device=env.device)
 
         # Visualization: build spawn→target lines from the task table
         if debug_vis:
@@ -123,24 +125,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         # 3) LOGGING / VISUALIZATION
         success_rates = self.success_monitor.success_rate.clone()  # [num_discrete_cmd]
         self._result["all_success"].copy_(success_rates.mean())
-
-        # Vectorized bin stats
-        bin_ids = (success_rates * 5.0).floor().to(torch.long).clamp_(min=0, max=4)
-        counts = torch.bincount(bin_ids, minlength=5).to(torch.float32)
-        frac_per_bin = counts / float(success_rates.numel())
-        self.prob_mass_per_bin.zero_()
-        self.prob_mass_per_bin.scatter_add_(0, bin_ids, probs)
-
-        bin_names = [
-            "bin_0_20",
-            "bin_20_40",
-            "bin_40_60",
-            "bin_60_80",
-            "bin_80_100",
-        ]
-        for i, name in enumerate(bin_names):
-            self._result[f"{name}_frac"].copy_(frac_per_bin[i])
-            self._result[f"{name}_prob"].copy_(self.prob_mass_per_bin[i])
+        self._update_bin_stats(success_rates, probs)
 
         if debug_vis and hasattr(self, "frame_visualizer"):
             self._recolor_lines(success_rates)
@@ -151,6 +136,22 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
             self._log_terrain_heatmap(success_rates)
 
         return self._result
+
+    def _update_bin_stats(self, success_rates: torch.Tensor, probs: torch.Tensor) -> None:
+        """Write per-bin frac/prob into ``self._result`` if their flags are enabled."""
+        if not (self._log_bin_frac or self._log_bin_prob):
+            return
+        bin_ids = (success_rates * len(_BIN_NAMES)).floor().to(torch.long).clamp_(min=0, max=len(_BIN_NAMES) - 1)
+        if self._log_bin_frac:
+            counts = torch.bincount(bin_ids, minlength=len(_BIN_NAMES)).to(torch.float32)
+            frac_per_bin = counts / float(success_rates.numel())
+            for i, name in enumerate(_BIN_NAMES):
+                self._result[f"{name}_frac"].copy_(frac_per_bin[i])
+        if self._log_bin_prob:
+            self.prob_mass_per_bin.zero_()
+            self.prob_mass_per_bin.scatter_add_(0, bin_ids, probs)
+            for i, name in enumerate(_BIN_NAMES):
+                self._result[f"{name}_prob"].copy_(self.prob_mass_per_bin[i])
 
     def _log_terrain_heatmap(self, success_rates: torch.Tensor):
         """Generate a terrain success-rate heatmap and pass it to the logger via extras."""

@@ -83,6 +83,24 @@ def command_current_state(env: ManagerBasedRLEnv, command_name: str = "goal_poin
     return torch.cat([pos_local, buf[:, 3:12], joint_pos], dim=-1)
 
 
+def command_std(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> torch.Tensor:
+    """Per-env success thresholds of the currently-bound task as a policy observation.
+
+    Returns the active task's ``[pos_std, rot_std, lin_vel_std, ang_vel_std, foot_pos_std]``
+    so the policy can see the threshold alongside the raw command delta. Lets the
+    network distinguish per-task subtasks (e.g. ``terrain_pose_cmd`` vs.
+    ``terrain_pose_cmd_foot``) without losing the absolute error magnitude.
+
+    Args:
+        env: :class:`ManagerBasedRLEnv` instance.
+        command_name: Name of the :class:`RelativeStateCommand` term.
+
+    Returns:
+        Tensor of shape ``[num_envs, 5]``.
+    """
+    return env.command_manager.get_term(command_name).command_std
+
+
 def command_target_state(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> torch.Tensor:
     """Target state: root pose/vel (12D, env-local position) + joint positions.
 

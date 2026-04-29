@@ -281,6 +281,16 @@ class RelativeStateCommand(CommandTerm):
         """Command-type ids derived from the currently selected task rows."""
         return torch.bucketize(self.cmd_indices, self.table.offsets[1:-1], right=True)
 
+    @property
+    def command_std(self) -> torch.Tensor:
+        """Per-env success thresholds for the currently-bound task.
+
+        Shape ``[num_envs, 5]``: ``[pos_std, rot_std, lin_vel_std, ang_vel_std, foot_pos_std]``
+        in the same per-task units as the success criteria. Useful as a policy
+        observation so the network can read the active task's threshold directly.
+        """
+        return self._reward_scales[self.cmd_ids.long()]
+
     def _update_metrics(self):
         for group_idx, name in enumerate(self._error_group_names):
             self.metrics[name] = self._err[:, group_idx]
