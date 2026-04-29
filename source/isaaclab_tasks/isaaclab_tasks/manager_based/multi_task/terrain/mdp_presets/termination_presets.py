@@ -49,7 +49,9 @@ class PositionTerminationsCfg(BaseTerminationsCfg):
         },
     )
 
-    success = DoneTerm(func=mdp.success_terminate, time_out=True)
+    success = DoneTerm(func=mdp.success_terminate)
+
+    time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
 
 @configclass
