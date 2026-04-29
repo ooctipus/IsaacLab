@@ -18,16 +18,13 @@ class PositionRewardsCfg:
     # task rewards
     success = RewTerm(func=mdp.command_success, weight=50.0)
 
-    mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0001)
+    mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0005)
 
     undesired_contact = RewTerm(
         func=mdp.contact_penalty,
-        weight=-0.02,
+        weight=-0.05,
         params={
-            "exclude_contact_sensor_cfg": SceneEntityCfg(
-                "contact_forces",
-                body_names=FootBodyNamesCfg(),  # type: ignore
-            ),
+            "exclude_contact_sensor_cfg": SceneEntityCfg("contact_forces", body_names=FootBodyNamesCfg()),
             "threshold": 1.0,
         },
     )
