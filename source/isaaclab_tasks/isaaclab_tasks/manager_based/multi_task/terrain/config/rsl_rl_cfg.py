@@ -105,7 +105,7 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         # is fed to both heads via the ``features_2d`` kwarg) — halves the dominant conv cost
         # in the PPO update. No-op for non-CNN presets. Math is bit-identical (same module,
         # same input → same output). Currently disabled; flip to True to opt in.
-        share_cnn_encoders=False,
+        share_cnn_encoders=True,
     )
 
 

@@ -26,7 +26,7 @@ class PositionCurriculumCfg:
                 uniform=UniformSamplingCfg(),
                 beta66=BetaSamplingCfg(target=0.66, kappa=1.0),
             ),
-            "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=50),
+            "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=20),
             "success_term": "success",
         },
     )

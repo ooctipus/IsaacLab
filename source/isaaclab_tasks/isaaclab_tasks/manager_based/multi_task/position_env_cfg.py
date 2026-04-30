@@ -95,7 +95,7 @@ class SceneCfg(InteractiveSceneCfg):
         offset=FastTerrainScannerCfg.OffsetCfg(pos=(0.5, 0.0, 20.0)),
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(
-            resolution=preset(default=0.1, res05=0.05, res10=0.1, res02=0.02), size=(2.5, 1.5)
+            resolution=preset(default=0.1, res03=0.03, res10=0.1, res02=0.02), size=(2.5, 1.5)
         ),
         debug_vis=False,
         mesh_prim_paths=["{ENV_REGEX_NS}/ground"],

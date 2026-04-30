@@ -55,6 +55,7 @@ with no logic changes.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, ClassVar
 
@@ -282,14 +283,25 @@ class FastTerrainScanner(SensorBase):
         self._mesh_poses_w_storage = poses_t
 
     def _build_or_lookup_mesh(self, target_prim) -> wp.Mesh:
-        """Parse a single prim's first child ``Mesh`` into a Warp mesh, with global cache."""
-        cache_key = (str(target_prim.GetPath()), self._device)
+        """Parse a single prim's first child ``Mesh`` into a Warp mesh, with global cache.
+
+        Per-env terrain prims (``/World/envs/env_0/ground``, ``/World/envs/env_1/ground``, …)
+        carry identical *local* mesh data — only their world-frame transform differs. Caching
+        on the full path would upload one Warp mesh + BVH per env (e.g. ~14 MB × 4096 ≈ 57 GB),
+        blowing GPU memory; instead we normalize ``env_N`` → ``env_0`` in the cache key so all
+        envs share a single upload. Per-env world poses are still resolved separately by the
+        caller via :func:`resolve_prim_pose`. Mirrors upstream
+        :class:`MultiMeshRayCaster._build_warp_meshes`'s ``is_shared=True`` path.
+        """
+        prim_path = str(target_prim.GetPath())
+        canonical_path = re.sub(r"/env_\d+/", "/env_0/", prim_path)
+        cache_key = (canonical_path, self._device)
         if cache_key in FastTerrainScanner.meshes:
             return FastTerrainScanner.meshes[cache_key]
 
         mesh_prim = sim_utils.get_first_matching_child_prim(target_prim.GetPath(), lambda p: p.GetTypeName() == "Mesh")
         if mesh_prim is None or not mesh_prim.IsValid():
-            raise RuntimeError(f"FastTerrainScanner: no child Mesh prim under '{target_prim.GetPath()}'.")
+            raise RuntimeError(f"FastTerrainScanner: no child Mesh prim under '{prim_path}'.")
 
         trimesh_mesh = create_trimesh_from_geom_mesh(mesh_prim)
         wp_mesh = convert_to_warp_mesh(trimesh_mesh.vertices, trimesh_mesh.faces, device=self._device)
