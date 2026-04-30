@@ -130,36 +130,6 @@ class CommandsPresetCfg(PresetCfg):
             foot_pos_std=0.25
         ),
     }
-    terrain_pose_multi_std = {
-        "terrain_pose_cmd_foot05": mdp.RelativeStateCommandCfg.TerrainCommands(
-            match_base_pos=True,
-            match_base_rot=True,
-            match_feet=True,
-            duration=(0.05, 1.0),
-            foot_pos_std=0.5
-        ),
-        "terrain_pose_cmd_foot04": mdp.RelativeStateCommandCfg.TerrainCommands(
-            match_base_pos=True,
-            match_base_rot=True,
-            match_feet=True,
-            duration=(0.05, 1.0),
-            foot_pos_std=0.4
-        ),
-        "terrain_pose_cmd_foot03": mdp.RelativeStateCommandCfg.TerrainCommands(
-            match_base_pos=True,
-            match_base_rot=True,
-            match_feet=True,
-            duration=(0.05, 1.0),
-            foot_pos_std=0.3
-        ),
-        "terrain_pose_cmd_foot02": mdp.RelativeStateCommandCfg.TerrainCommands(
-            match_base_pos=True,
-            match_base_rot=True,
-            match_feet=True,
-            duration=(0.05, 1.0),
-            foot_pos_std=0.2
-        ),
-    }
     pose = {
         "pose_cmd": mdp.RelativeStateCommandCfg.PoseCommands(
             pos_x=(-3.0, 3.0),
