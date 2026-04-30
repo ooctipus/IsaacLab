@@ -70,6 +70,8 @@ __all__ = [
     "SamplerBaseCfg",
     "SamplerBase",
     "CriterionFn",
+    "height_scan_2d",
+    "vision_obs",
 ]
 
 from .commands import RelativeStateCommandCfg, RelativeStateCommand
@@ -91,6 +93,8 @@ from .observations import (
     achieved_pos_env,
     command_current_state,
     command_target_state,
+    height_scan_2d,
+    vision_obs,
 )
 from isaaclab_tasks.manager_based.multi_task.mdp.rewards import command_task_reward, contact_penalty, mechanical_power
 from .rewards import (

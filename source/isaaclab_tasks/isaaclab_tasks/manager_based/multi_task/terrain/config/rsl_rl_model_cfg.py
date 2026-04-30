@@ -24,6 +24,7 @@ from isaaclab_rl.rsl_rl import (
     RslRlMLPModelCfg,
     RslRlResidualMLPEncoderModelCfg,
     RslRlRNNModelCfg,
+    RslRlCNNModelCfg,
 )
 
 from .rl_cfg import RslRlCommanderActorModelCfg, RslRlTaskEasingActorModelCfg
@@ -40,6 +41,12 @@ MLP_ENCODER_CFG: dict[str, RslRlMLPEncoderModelCfg.EncoderCfg] = {
     ),
 }
 
+CNN_ENCODER_CFG = RslRlCNNModelCfg.CNNCfg(
+    output_channels=[32, 64],
+    kernel_size=[8, 4],
+    stride=[4, 2],
+    activation="elu",
+)
 
 def get_error(env, cmd_proposed: torch.Tensor, cmd_target: torch.Tensor):
     err = (cmd_proposed - cmd_target).clip(max=0.2)
@@ -187,6 +194,13 @@ SIMBA_BIG_ACTOR = RslRlResidualMLPEncoderModelCfg(
     encoder_cfg=MLP_ENCODER_CFG,
 )
 
+CNN_ACTOR_CFG = RslRlCNNModelCfg(
+    obs_normalization=True,
+    hidden_dims=[512, 256, 128],
+    distribution_cfg=RslRlCNNModelCfg.GaussianDistributionCfg(init_std=1.0),
+    cnn_cfg=CNN_ENCODER_CFG,
+    activation="elu",
+)
 
 # ---------------------------------------------------------------------------
 # Critic model cfgs.
@@ -216,6 +230,13 @@ MLP_ENCODER_CRITIC = RslRlMLPEncoderModelCfg(
     encoder_normalization=True,
     stochastic=False,
     encoder_cfg=MLP_ENCODER_CFG,
+)
+
+CNN_CRITIC_CFG = RslRlCNNModelCfg(
+    obs_normalization=True,
+    hidden_dims=[512, 256, 128],
+    cnn_cfg=CNN_ENCODER_CFG,
+    activation="elu",
 )
 
 # SimBa critic defaults: match the actor's width/depth/activation for a clean apples-to-apples

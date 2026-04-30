@@ -31,6 +31,8 @@ from .rsl_rl_model_cfg import (
     ENCODER_ACTOR,
     FLAT_ACTOR,
     FLAT_CRITIC,
+    CNN_ACTOR_CFG,
+    CNN_CRITIC_CFG,
     LSTM_ACTOR,
     LSTM_CRITIC,
     MLP_ENCODER_CRITIC,
@@ -51,6 +53,7 @@ class PositionActorPresetCfg(PresetCfg):
     task_easing = TASK_EASING_ACTOR
     lstm = LSTM_ACTOR
     flat = FLAT_ACTOR
+    cnn = CNN_ACTOR_CFG
     encoder = ENCODER_ACTOR
     simba = SIMBA_ACTOR
     simba_big = SIMBA_BIG_ACTOR
@@ -63,6 +66,7 @@ class PositionCriticPresetCfg(PresetCfg):
     :mod:`rsl_rl_model_cfg`; this preset just maps names → model cfgs."""
 
     flat = FLAT_CRITIC
+    cnn = CNN_CRITIC_CFG
     lstm = LSTM_CRITIC
     mlp_encoder = MLP_ENCODER_CRITIC
     simba = SIMBA_CRITIC
