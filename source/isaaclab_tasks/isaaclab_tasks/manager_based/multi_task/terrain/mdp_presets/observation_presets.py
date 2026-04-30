@@ -9,7 +9,7 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.noise import UniformNoiseCfg as Unoise
 
-from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils import PresetCfg, preset
 
 from .. import mdp
 
@@ -32,9 +32,15 @@ class PositionObservationsCfg:
         joint_vel = ObsTerm(func=mdp.joint_vel)
         last_actions = ObsTerm(func=mdp.last_action)
 
+        def __post_init__(self):
+            self.history_length = preset(default=1, obs_history3=3)
+
     @configclass
     class TaskCfg(ObsGroup):
         goal_point_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "goal_point"})
+
+        def __post_init__(self):
+            self.history_length = preset(default=1, obs_history3=3)
 
     @configclass
     class HeightScanCfg(ObsGroup):
@@ -44,6 +50,9 @@ class PositionObservationsCfg:
             noise=Unoise(n_min=-0.05, n_max=0.05),
             clip=(-1.0, 1.0),
         )
+
+        def __post_init__(self):
+            self.history_length = preset(default=1, obs_history3=3)
 
     policy: PolicyCfg = PolicyCfg()
     task: TaskCfg = TaskCfg()
