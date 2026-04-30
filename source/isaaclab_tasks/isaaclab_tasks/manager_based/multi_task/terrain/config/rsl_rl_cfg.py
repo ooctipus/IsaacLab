@@ -27,12 +27,12 @@ from isaaclab_tasks.utils import PresetCfg
 
 from ..mdp_presets import ExperimentNameCfg
 from .rsl_rl_model_cfg import (
+    CNN_ACTOR_CFG,
+    CNN_CRITIC_CFG,
     COMMANDER_ACTOR,
     ENCODER_ACTOR,
     FLAT_ACTOR,
     FLAT_CRITIC,
-    CNN_ACTOR_CFG,
-    CNN_CRITIC_CFG,
     LSTM_ACTOR,
     LSTM_CRITIC,
     MLP_ENCODER_CRITIC,
@@ -82,6 +82,9 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     resume = False
     experiment_name: str = ExperimentNameCfg()  # type: ignore
     obs_groups = {"actor": ["policy", "task", "height_scan"], "critic": ["policy", "task", "height_scan"]}
+    # Halve the rollout-buffer cost of the height-scan grid (the largest single tensor in the
+    # PPO storage); fp32 precision is restored when mini-batches are yielded to the policy.
+    obs_storage_dtypes = {"height_scan": "float16"}
     actor = PositionActorPresetCfg()  # type: ignore
     critic = PositionCriticPresetCfg()  # type: ignore
     algorithm: RslRlPpoAlgorithmCfg = RslRlPpoAlgorithmCfg(
@@ -97,6 +100,12 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         lam=0.95,
         desired_kl=0.01,
         max_grad_norm=1.0,
+        # When ``share_cnn_encoders=True``, actor and critic point at the same CNN ModuleDict
+        # *and* PPO automatically computes the encoder forward once per minibatch (the result
+        # is fed to both heads via the ``features_2d`` kwarg) — halves the dominant conv cost
+        # in the PPO update. No-op for non-CNN presets. Math is bit-identical (same module,
+        # same input → same output). Currently disabled; flip to True to opt in.
+        share_cnn_encoders=False,
     )
 
 

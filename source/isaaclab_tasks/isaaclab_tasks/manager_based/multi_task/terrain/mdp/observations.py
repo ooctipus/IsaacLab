@@ -53,11 +53,13 @@ class vision_obs(ManagerTermBase):
         # into the grid path (where its ``PinholeCameraPatternCfg`` has no ``size`` /
         # ``resolution`` attributes).
         from isaaclab.sensors import RayCaster, RayCasterCamera, TiledCamera
+
+        from isaaclab_tasks.manager_based.multi_task.sensors import FastTerrainScanner
         if isinstance(self.sensor, (TiledCamera, RayCasterCamera)):
             self._sensor_type = self.sensor.cfg.data_types[0]
             self._fetch = self._fetch_camera
             self._norm = self._depth_norm if self._sensor_type in ("distance_to_image_plane", "depth") else self._rgb_norm
-        elif isinstance(self.sensor, RayCaster):
+        elif isinstance(self.sensor, (RayCaster, FastTerrainScanner)):
             pattern_cfg = self.sensor.cfg.pattern_cfg
             self._nx = round(pattern_cfg.size[0] / pattern_cfg.resolution) + 1
             self._ny = round(pattern_cfg.size[1] / pattern_cfg.resolution) + 1
@@ -66,8 +68,8 @@ class vision_obs(ManagerTermBase):
             self._norm = self._depth_norm
         else:
             raise TypeError(
-                f"vision_obs supports TiledCamera, RayCasterCamera, or RayCaster; got "
-                f"{type(self.sensor).__name__}"
+                f"vision_obs supports TiledCamera, RayCasterCamera, RayCaster, or FastTerrainScanner;"
+                f" got {type(self.sensor).__name__}"
             )
 
     def __call__(

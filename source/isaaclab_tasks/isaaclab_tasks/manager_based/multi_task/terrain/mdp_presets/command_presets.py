@@ -182,7 +182,7 @@ class CommandsCfg:
         ang_vel_std=0.3,
         foot_pos_std=0.25,
         debug_vis=True,
-        pool_spacing=preset(spacing02=0.2, spacing05=0.5, spacing10=1.0, default=0.5),
+        pool_spacing=1.5,
         commands=CommandsPresetCfg(),  # type: ignore
         pipeline_cfg=RetargetPipelineCfg(
             kin=NewtonKinematicsCfg(usd_path=""),

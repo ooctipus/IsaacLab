@@ -11,12 +11,18 @@ from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import ContactSensorCfg, MultiMeshRayCasterCfg, patterns
+from isaaclab.sensors import ContactSensorCfg, patterns
 from isaaclab.sim import SimulationCfg
 from isaaclab.terrains import TerrainGeneratorCfg, TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 
+# Multi-task-local fast height scanner — fresh impl that subclasses only ``SensorBase``,
+# specialized for static terrain (no per-step mesh transform updates), with a single fused
+# kernel that does sensor pose + world-frame ray transform + multi-mesh closest-hit raycast
+# in one launch. Fully self-contained under ``multi_task/sensors/`` so a future rebase onto
+# a new IsaacLab version requires no merge work in shared sensor code.
+from isaaclab_tasks.manager_based.multi_task.sensors import FastTerrainScannerCfg
 from isaaclab_tasks.utils import PresetCfg, preset
 
 from .terrain import mdp, mdp_presets
@@ -84,11 +90,13 @@ class SceneCfg(InteractiveSceneCfg):
     robot: ArticulationCfg = mdp_presets.RobotArticulationCfg()  # type: ignore
 
     # sensors
-    height_scanner = MultiMeshRayCasterCfg(
+    height_scanner = FastTerrainScannerCfg(
         prim_path=mdp_presets.HeightScannerPrimPathCfg(),  # type: ignore
-        offset=MultiMeshRayCasterCfg.OffsetCfg(pos=(0.5, 0.0, 20.0)),
+        offset=FastTerrainScannerCfg.OffsetCfg(pos=(0.5, 0.0, 20.0)),
         ray_alignment="yaw",
-        pattern_cfg=patterns.GridPatternCfg(resolution=preset(default=0.1, res05=0.05, res10=0.1, res02=0.02), size=(2.5, 1.5)),
+        pattern_cfg=patterns.GridPatternCfg(
+            resolution=preset(default=0.1, res05=0.05, res10=0.1, res02=0.02), size=(2.5, 1.5)
+        ),
         debug_vis=False,
         mesh_prim_paths=["{ENV_REGEX_NS}/ground"],
     )

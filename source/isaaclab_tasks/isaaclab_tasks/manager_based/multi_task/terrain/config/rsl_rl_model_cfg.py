@@ -20,11 +20,11 @@ import warp as wp
 from isaaclab.utils.math import quat_apply_inverse
 
 from isaaclab_rl.rsl_rl import (
+    RslRlCNNModelCfg,
     RslRlMLPEncoderModelCfg,
     RslRlMLPModelCfg,
     RslRlResidualMLPEncoderModelCfg,
     RslRlRNNModelCfg,
-    RslRlCNNModelCfg,
 )
 
 from .rl_cfg import RslRlCommanderActorModelCfg, RslRlTaskEasingActorModelCfg
@@ -42,11 +42,38 @@ MLP_ENCODER_CFG: dict[str, RslRlMLPEncoderModelCfg.EncoderCfg] = {
 }
 
 CNN_ENCODER_CFG = RslRlCNNModelCfg.CNNCfg(
-    output_channels=[32, 64],
-    kernel_size=[8, 4],
-    stride=[4, 2],
+    # Classic pyramid widening (16 -> 32 -> 64) over three conv layers. The third
+    # (k=3, s=1) shrinks the spatial dim before the MLP head without much added compute.
+    # With (1, 76, 126) input, the chain is
+    # (16, 18, 30) -> (32, 8, 14) -> (64, 6, 12) -> flatten=4608.
+    #
+    # Channel-count rationale:
+    # * Conv1 = 16 channels (rather than the textbook 32). The conv1 output tensor (and its
+    #   backward gradient) is the largest single activation in the PPO update at large
+    #   mini-batch sizes — at ``num_mini_batches=4, num_envs=4096`` the 32-channel variant is
+    #   ``B * 32 * 18 * 30 * 4 B = 2.11 GiB``, which OOMs in the conv1 input-gradient alloc on
+    #   a 32 GB GPU even after every other memory optimization. 16 channels halves it to
+    #   ~1.05 GiB and clears the OOM cleanly. The height-field input is single-channel anyway,
+    #   so 16 first-layer filters is plenty for the local geometry features the policy needs.
+    # * Conv2 = 32 channels keeps the pyramid expansion gentle and saves another ~0.44 GiB of
+    #   layer-2 activation (vs 64 channels) without losing much because layer-3 immediately
+    #   re-expands to 64.
+    # * Conv3 = 64 channels gives the flatten its full feature breadth before the MLP head.
+    output_channels=[16, 32, 64],
+    kernel_size=[8, 4, 3],
+    stride=[4, 2, 1],
     activation="elu",
+    # NOTE: counterintuitive on this config — ``channels_last=False`` is *faster* under
+    # bf16 autocast on these shapes (Blackwell, cuDNN with the current torch wheel).
+    # When weights are pinned to channels_last, cuDNN's benchmark autotune picks
+    # ``wgrad_alg0_engine<__nv_bfloat16>`` for the conv weight gradient, which is a
+    # generic CUDA-core kernel running ~800 ms/update. With NCHW weights, cuDNN does its
+    # own internal NCHW→NHWC reshuffle (~565 ms) but then dispatches to the tensor-core
+    # ``sm80_xmma_wgrad_implicit_gemm_bf16bf16`` path — net much faster. Verified
+    # empirically: channels_last=True → 2.21 s update; channels_last=False → 1.93 s.
+    channels_last=False,
 )
+
 
 def get_error(env, cmd_proposed: torch.Tensor, cmd_target: torch.Tensor):
     err = (cmd_proposed - cmd_target).clip(max=0.2)

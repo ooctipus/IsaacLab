@@ -18,6 +18,16 @@ class SuccessMonitor:
 
     Maintains a sliding window of boolean results for each slot and writes
     the running success rate into a **caller-provided** tensor.
+
+    The history buffer (:attr:`success_buf`) is always allocated as
+    :data:`torch.bool` — single-bit-per-cell is the documented invariant of this
+    class, and any non-bool storage would multiply memory cost by 4-8× without
+    changing the semantics of a binary success flag. At ``num_monitored_data ≈ 1.2 M``
+    and ``monitored_history_len = 50`` (the multi-task position env), bool storage
+    is ~57 MiB vs ~227 MiB for fp32. If a future caller genuinely needs non-bool
+    storage (e.g. continuous-valued outcomes) they should subclass this monitor
+    and override :attr:`success_buf` allocation explicitly — there is intentionally
+    no cfg knob to silently change the dtype.
     """
 
     def __init__(self, cfg: SuccessMonitorCfg, success_rate: torch.Tensor):
@@ -30,7 +40,12 @@ class SuccessMonitor:
         """
         self.cfg: SuccessMonitorCfg = cfg
         self.success_rate = success_rate
-        self.success_buf = torch.zeros((cfg.num_monitored_data, cfg.monitored_history_len), device=cfg.device)
+        # Bool storage: success outcomes are binary. ``sum`` on a bool tensor returns int64,
+        # which is then divided by :attr:`success_size` (int32) in :meth:`success_update`,
+        # producing the fp32 rate that ``success_rate`` expects.
+        self.success_buf = torch.zeros(
+            (cfg.num_monitored_data, cfg.monitored_history_len), device=cfg.device, dtype=torch.bool
+        )
         self.success_pointer = torch.zeros(cfg.num_monitored_data, device=cfg.device, dtype=torch.int32)
         self.success_size = torch.zeros(cfg.num_monitored_data, device=cfg.device, dtype=torch.int32)
 
