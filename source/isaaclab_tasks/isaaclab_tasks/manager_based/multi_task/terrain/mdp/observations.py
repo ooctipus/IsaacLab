@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 import torch
 
 from isaaclab.managers import ManagerTermBase, SceneEntityCfg
-from isaaclab.sensors import RayCaster, RayCasterCamera, TiledCamera
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv, ManagerBasedRLEnv
@@ -53,6 +52,7 @@ class vision_obs(ManagerTermBase):
         # ``RayCasterCamera`` inherits from ``RayCaster`` and would otherwise be routed
         # into the grid path (where its ``PinholeCameraPatternCfg`` has no ``size`` /
         # ``resolution`` attributes).
+        from isaaclab.sensors import RayCaster, RayCasterCamera, TiledCamera
         if isinstance(self.sensor, (TiledCamera, RayCasterCamera)):
             self._sensor_type = self.sensor.cfg.data_types[0]
             self._fetch = self._fetch_camera
