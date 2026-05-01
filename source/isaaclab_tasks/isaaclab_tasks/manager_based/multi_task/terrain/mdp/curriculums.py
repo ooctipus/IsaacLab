@@ -134,6 +134,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self._log_counter = getattr(self, "_log_counter", 0) + 1
         if self._log_counter % 1000 == 0:
             self._log_terrain_heatmap(success_rates)
+            self._log_spawn_scatter(success_rates, probs)
 
         return self._result
 
@@ -248,6 +249,186 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         plt.close(fig)
 
         self.env.extras.setdefault("log_images", {})["Curriculum/terrain_heatmap"] = img
+
+    def _log_spawn_scatter(self, success_rates: torch.Tensor, probs: torch.Tensor) -> None:
+        """Per-patch diagnostics scatter — three panels over the terrain.
+
+        Each panel shows the same per-patch geometry (one dot per spawn/target
+        patch in world xy) but colors the dots by a different per-patch quantity:
+
+        1. **Success rate** — current rolling success of every command that uses
+           this patch as either spawn or target.
+        2. **Sampling probability** — total probability mass the curriculum
+           sampler currently places on commands that touch this patch.
+        3. **Δ success since last log** — change in (1) versus the previous
+           call to this method, so improvement vs. regression is visible
+           directly.
+
+        Aggregation is two GPU ``scatter_add_`` passes per metric (microseconds);
+        rendering goes through the shared :class:`ScatterDashboard2D` utility.
+        """
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        from isaaclab_tasks.manager_based.multi_task.utils.visualization import (
+            PanelSpec,
+            ScatterDashboard2D,
+            aggregate_endpoints,
+        )
+
+        table = self.goal_term.table
+        n_patches = int(table.spawn_states.shape[0])
+        endpoints = (table.spawn_index, table.target_index)
+
+        # Lazy: GPU buffers, dashboard geometry, prev-rate cache, terrain bg.
+        if not hasattr(self, "_patch_sums"):
+            self._patch_sums = torch.zeros(n_patches, device=self.device)
+            self._patch_counts = torch.zeros(n_patches, device=self.device)
+            self._patch_probs = torch.zeros(n_patches, device=self.device)
+            self._patch_probs_counts = torch.zeros(n_patches, device=self.device)
+            self._prev_patch_rates = torch.zeros(n_patches, device=self.device)
+            self._first_scatter_log = True
+        if not hasattr(self, "_dashboard"):
+            bg_image, bg_extent = self._render_terrain_background()
+            self._dashboard = ScatterDashboard2D(
+                positions=table.spawn_states[:, :2].detach().cpu().numpy(),
+                background_image=bg_image,
+                background_extent=bg_extent,
+            )
+
+        # GPU per-patch aggregation: success and probability, both with spawn
+        # and target endpoint passes.
+        sums, counts = aggregate_endpoints(
+            success_rates,
+            endpoints,
+            n_patches,
+            sums_buf=self._patch_sums,
+            counts_buf=self._patch_counts,
+        )
+        prob_sums, _ = aggregate_endpoints(
+            probs,
+            endpoints,
+            n_patches,
+            sums_buf=self._patch_probs,
+            counts_buf=self._patch_probs_counts,
+        )
+        rates_t = sums / counts.clamp_min(1.0)
+        delta_t = rates_t - self._prev_patch_rates
+        if self._first_scatter_log:
+            delta_t = torch.zeros_like(rates_t)
+            self._first_scatter_log = False
+        self._prev_patch_rates.copy_(rates_t)
+
+        rates = rates_t.cpu().numpy()
+        delta = delta_t.cpu().numpy()
+        prob_per_patch = prob_sums.cpu().numpy()
+        valid = counts.cpu().numpy() > 0
+
+        n_total = int(valid.sum())
+        mean_rate = float(rates[valid].mean()) if n_total else 0.0
+        mean_delta = float(delta[valid].mean()) if n_total else 0.0
+        prob_max = max(float(prob_per_patch[valid].max()) if n_total else 1.0, 1e-9)
+        delta_range = max(float(np.abs(delta[valid]).max()) if n_total else 0.0, 0.05)
+
+        rdylgn = plt.get_cmap("RdYlGn")
+        viridis = plt.get_cmap("viridis")
+
+        panels = [
+            PanelSpec(
+                values=rates,
+                cmap="RdYlGn",
+                vmin=0.0,
+                vmax=1.0,
+                title=f"Success rate (step {self.env.common_step_counter})",
+                legend_entries=[("1.0", rdylgn(1.0)), ("0.5", rdylgn(0.5)), ("0.0", rdylgn(0.0))],
+                stats_text=f"N={n_total}\nmean={mean_rate:.3f}",
+            ),
+            PanelSpec(
+                values=prob_per_patch,
+                cmap="viridis",
+                vmin=0.0,
+                vmax=prob_max,
+                title="Sampling probability",
+                legend_entries=[
+                    (f"{prob_max:.2e}", viridis(1.0)),
+                    (f"{prob_max / 2:.2e}", viridis(0.5)),
+                    ("0", viridis(0.0)),
+                ],
+                stats_text=f"N={n_total}\nsum={float(prob_per_patch[valid].sum()):.3f}",
+            ),
+            PanelSpec(
+                values=delta,
+                cmap="RdYlGn",
+                vmin=-delta_range,
+                vmax=delta_range,
+                title="Δ success rate vs last log",
+                legend_entries=[
+                    (f"+{delta_range:.2f}", rdylgn(1.0)),
+                    ("0", rdylgn(0.5)),
+                    (f"-{delta_range:.2f}", rdylgn(0.0)),
+                ],
+                stats_text=f"N={n_total}\nmean Δ={mean_delta:+.4f}",
+            ),
+        ]
+        img = self._dashboard.render(panels, valid_mask=valid)
+        self.env.extras.setdefault("log_images", {})["Curriculum/spawn_scatter"] = img
+
+    def _render_terrain_background(self):
+        """One-time top-down raycast of the ground mesh into a 2D heightmap.
+
+        Builds a warp mesh from ``env.scene.terrain.terrain_mesh`` and casts a
+        1024×1024 grid of downward rays to recover the topmost surface, so
+        overhanging features (beams, floating islands) shadow correctly
+        without needing per-pixel max-z bookkeeping. Returns ``(image, extent)``
+        for ``ax.imshow(..., extent=...)``; ``(None, None)`` if the terrain has
+        no mesh (e.g. plane-only scenes).
+        """
+        import numpy as np
+
+        from isaaclab.utils.warp import convert_to_warp_mesh, raycast_mesh
+
+        terrain_mesh = getattr(self.env.scene.terrain, "terrain_mesh", None)
+        if terrain_mesh is None or terrain_mesh.vertices.shape[0] == 0:
+            return None, None
+
+        verts = np.asarray(terrain_mesh.vertices, dtype=np.float32)
+        faces = np.asarray(terrain_mesh.faces, dtype=np.int32)
+        xmin, xmax = float(verts[:, 0].min()), float(verts[:, 0].max())
+        ymin, ymax = float(verts[:, 1].min()), float(verts[:, 1].max())
+        zmax = float(verts[:, 2].max())
+
+        # Crop the flat ``border_width`` perimeter — no patches live there and
+        # it just compresses the active tile grid into a smaller central region.
+        border = float(getattr(self.env.scene.terrain.cfg.terrain_generator, "border_width", 0.0))
+        if border > 0.0:
+            xmin += border
+            xmax -= border
+            ymin += border
+            ymax -= border
+
+        H, W = 1024, 1024
+        xs = np.linspace(xmin, xmax, W, dtype=np.float32)
+        ys = np.linspace(ymin, ymax, H, dtype=np.float32)
+        grid_x, grid_y = np.meshgrid(xs, ys, indexing="xy")
+        starts = np.stack(
+            [
+                grid_x.ravel(),
+                grid_y.ravel(),
+                np.full(H * W, zmax + 1.0, dtype=np.float32),
+            ],
+            axis=-1,
+        )
+        dirs = np.tile(np.array([0.0, 0.0, -1.0], dtype=np.float32), (H * W, 1))
+        starts_t = torch.from_numpy(starts).to(self.device)
+        dirs_t = torch.from_numpy(dirs).to(self.device)
+
+        wp_mesh = convert_to_warp_mesh(verts, faces, device=str(self.device))
+        hits, _, _, _ = raycast_mesh(starts_t, dirs_t, wp_mesh, max_dist=zmax + 100.0)
+        z = hits[:, 2].view(H, W).cpu().numpy()
+        # Misses come back as +inf; convert to NaN so the colormap shows them transparent.
+        z = np.where(np.isfinite(z), z, np.nan)
+
+        return z, (xmin, xmax, ymin, ymax)
 
     def _get_connecting_lines(self, start_pos: torch.Tensor, end_pos: torch.Tensor):
         """Compute position, orientation (XYZW), and length for cylinder markers connecting start to end."""
