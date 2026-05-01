@@ -64,7 +64,7 @@ class FactoryPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         success_estimator={"actor": ["policy"], "critic": ["policy"], "success_estimator": ["success"]},
     )  # type: ignore
     actor = RslRlMLPModelCfg(
-        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0, std_type="log"),
+        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0, std_type="scalar"),
         obs_normalization=True,
         hidden_dims=[512, 256, 128, 64],
         activation="elu",

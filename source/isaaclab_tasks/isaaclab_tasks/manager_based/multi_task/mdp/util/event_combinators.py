@@ -64,7 +64,13 @@ class reset_accumulator(ManagerTermBase):
             if hasattr(val, "class_type"):
                 self.acceptance_conditions[key] = val.class_type(val, env)
 
-        self.reset_assets = list(cfg.params.get("reset_assets", []))
+        # Filter to scene-resident assets: callers may include "optional" assets
+        # (e.g. ``small_gear`` / ``medium_gear`` for the gear_mesh_* presets) that
+        # only exist for a subset of presets. This lets a single reset_assets list
+        # cover every preset without per-preset branching.
+        self._requested_reset_assets = list(cfg.params.get("reset_assets", []))
+        present = set(env.scene._articulations) | set(env.scene._rigid_objects)
+        self.reset_assets = [a for a in self._requested_reset_assets if a in present]
         self.reset_state_adapters = reset_state.make_reset_state_adapters(env, self.reset_assets)
         state_dim = reset_state.get_reset_state(
             self._env,
@@ -142,10 +148,10 @@ class reset_accumulator(ManagerTermBase):
         monitor_exclude_terms: list[str] = [],
     ):
         # 1. Pre-collect until buffer is full
-        if reset_assets and list(reset_assets) != self.reset_assets:
+        if reset_assets and list(reset_assets) != self._requested_reset_assets:
             raise ValueError(
                 "reset_accumulator reset_assets changed after initialization. "
-                f"Expected {self.reset_assets}, got {list(reset_assets)}."
+                f"Expected {self._requested_reset_assets}, got {list(reset_assets)}."
             )
         if self.precollecting_phase:
             all_env_ids = torch.arange(env.num_envs, device=env.device)
