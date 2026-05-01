@@ -56,7 +56,7 @@ class PositionActorPresetCfg(PresetCfg):
     cnn = CNN_ACTOR_CFG
     encoder = ENCODER_ACTOR
     simba = SIMBA_ACTOR
-    simba_big = SIMBA_BIG_ACTOR
+    simba_big = SIMBA_ACTOR
     default = encoder
 
 

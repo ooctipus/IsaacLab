@@ -28,6 +28,7 @@ from isaaclab_rl.rsl_rl import (
 )
 
 from .rl_cfg import RslRlCommanderActorModelCfg, RslRlTaskEasingActorModelCfg
+from isaaclab_tasks.utils import preset
 
 # ---------------------------------------------------------------------------
 # Shared pieces.
@@ -274,7 +275,7 @@ SIMBA_CRITIC = RslRlResidualMLPEncoderModelCfg(
     hidden_dim=256,
     num_blocks=2,
     expand=4,
-    activation="swish",
+    activation=preset(relu="relu", swish="swish", default="swish"),
     norm=True,
     obs_normalization=True,
     encoder_normalization=True,
@@ -289,7 +290,7 @@ SIMBA_BIG_CRITIC = RslRlResidualMLPEncoderModelCfg(
     hidden_dim=1024,
     num_blocks=4,
     expand=4,
-    activation="swish",
+    activation=preset(relu="relu", swish="swish", default="swish"),
     norm=True,
     obs_normalization=True,
     encoder_normalization=True,
