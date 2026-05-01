@@ -53,16 +53,19 @@ class PositionObservationsCfg:
 class CRLObservationsCfg:
     """CRL observations: current_state + policy + target_state.
 
-    ``current_state`` and ``target_state`` are 12D vectors
-    (pos, rot, lin_vel, ang_vel) from the command term's ``cmd_buf``.
-    Position is env-local (world minus env origin); orientation and
-    velocities are world-frame.  HER relabels ``target_state`` with
-    achieved ``current_state`` from future timesteps.
+    ``current_state`` and ``target_state`` are ``12 + 3 * num_feet`` vectors
+    composed of root pose/vel (pos, rot, lin_vel, ang_vel) plus per-foot
+    positions, all sourced from the command term. Position and foot
+    positions are env-local (world minus env origin); orientation and
+    velocities are world-frame. The foot section matches the success
+    criterion in :meth:`RelativeStateCommand.compute_state_error` so HER
+    relabels ``target_state`` with achieved ``current_state`` from future
+    timesteps without drifting from the reward signal.
     """
 
     @configclass
     class CurrentStateCfg(ObsGroup):
-        """12D current world state [m, rad, m/s, rad/s]."""
+        """Current state: root pose/vel + foot positions [m, rad, m/s, rad/s]."""
 
         state = ObsTerm(func=mdp.command_current_state, params={"command_name": "goal_point"})
 
@@ -83,7 +86,7 @@ class CRLObservationsCfg:
 
     @configclass
     class TargetStateCfg(ObsGroup):
-        """12D target world state [m, rad, m/s, rad/s]."""
+        """Target state: root pose/vel + foot positions [m, rad, m/s, rad/s]."""
 
         state = ObsTerm(func=mdp.command_target_state, params={"command_name": "goal_point"})
 

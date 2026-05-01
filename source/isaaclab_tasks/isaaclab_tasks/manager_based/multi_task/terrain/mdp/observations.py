@@ -186,27 +186,30 @@ def achieved_pos_env(env: ManagerBasedRLEnv, command_name: str = "goal_point") -
 
 
 def command_current_state(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> torch.Tensor:
-    """Current state: root pose/vel (12D, env-local position) + joint positions.
+    """Current state: root pose/vel (env-local position) + foot positions.
 
-    Layout: ``[x, y, z, roll, pitch, yaw, vx, vy, vz, wx, wy, wz, joint_pos...]``.
+    Layout: ``[x, y, z, roll, pitch, yaw, vx, vy, vz, wx, wy, wz, foot_pos...]``
+    where ``foot_pos`` is ``num_feet`` positions in env-local world frame
+    (world minus env origin), flattened.
 
-    Including joint positions ensures CRL (via HER relabeling) learns to
-    match the full robot configuration, not just the root pose.
+    Foot positions match the success criterion (see
+    :meth:`RelativeStateCommand.compute_state_error`), so HER relabeling
+    ``target ← future current`` produces a self-consistent goal whose
+    error matches the actual reward signal.
 
     Args:
         env: :class:`ManagerBasedRLEnv` instance.
         command_name: Name of the :class:`RelativeStateCommand` term.
 
     Returns:
-        Tensor of shape ``[num_envs, 12 + num_joints]``.
+        Tensor of shape ``[num_envs, 12 + 3 * num_feet]``.
     """
-    import warp as wp
-
     cmd = env.command_manager.get_term(command_name)
     buf = cmd.cmd_buf[:, 2]
-    pos_local = buf[:, :3] - env.scene.terrain.env_origins
-    joint_pos = wp.to_torch(cmd.robot.data.joint_pos)
-    return torch.cat([pos_local, buf[:, 3:12], joint_pos], dim=-1)
+    env_origins = env.scene.terrain.env_origins
+    pos_local = buf[:, :3] - env_origins
+    foot_pos_local = (cmd._current_foot_pos_w - env_origins[:, None, :]).flatten(1)
+    return torch.cat([pos_local, buf[:, 3:12], foot_pos_local], dim=-1)
 
 
 def command_std(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> torch.Tensor:
@@ -228,24 +231,22 @@ def command_std(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> tor
 
 
 def command_target_state(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> torch.Tensor:
-    """Target state: root pose/vel (12D, env-local position) + joint positions.
+    """Target state: root pose/vel (env-local position) + foot positions.
 
-    Layout matches :func:`command_current_state`. The joint portion uses
-    the robot's current joints as placeholder — HER replaces the entire
-    target with a future ``current_state``, so the placeholder values
-    are never used for training.
+    Layout matches :func:`command_current_state`. The foot portion is the
+    commanded target foot positions in env-local world frame (kept fresh
+    by :meth:`RelativeStateCommand._compute_target_foot_pos_w` at resample).
 
     Args:
         env: :class:`ManagerBasedRLEnv` instance.
         command_name: Name of the :class:`RelativeStateCommand` term.
 
     Returns:
-        Tensor of shape ``[num_envs, 12 + num_joints]``.
+        Tensor of shape ``[num_envs, 12 + 3 * num_feet]``.
     """
-    import warp as wp
-
     cmd = env.command_manager.get_term(command_name)
     buf = cmd.cmd_buf[:, 0]
-    pos_local = buf[:, :3] - env.scene.terrain.env_origins
-    joint_pos = wp.to_torch(cmd.robot.data.joint_pos)
-    return torch.cat([pos_local, buf[:, 3:12], joint_pos], dim=-1)
+    env_origins = env.scene.terrain.env_origins
+    pos_local = buf[:, :3] - env_origins
+    foot_pos_local = (cmd._target_foot_pos_w - env_origins[:, None, :]).flatten(1)
+    return torch.cat([pos_local, buf[:, 3:12], foot_pos_local], dim=-1)
