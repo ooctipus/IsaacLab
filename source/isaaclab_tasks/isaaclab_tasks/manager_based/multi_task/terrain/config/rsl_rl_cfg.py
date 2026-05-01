@@ -122,12 +122,23 @@ class PositionLocomotionCRLRunnerCfg(RslRlOffPolicyRunnerCfg):
         "actor": ["current_state", "height_scan", "policy", "target_state"],
         "critic": ["current_state", "height_scan", "policy", "target_state"],
     }
+    # Per-group encoder so the high-dim ``height_scan`` (``(B, 1, 76, 126)``,
+    # 9576 raw values) is compressed before the residual MLP. The same encoder
+    # cfg is forwarded by ``construct_algorithm`` to a single shared
+    # ``_SharedStateEncoder`` instance that is wired into both actor and critic
+    # (see :paramref:`RslRlCrlAlgorithmCfg.share_encoders`). Other groups
+    # (``current_state``, ``target_state``, ``policy``) are low-dim and pass
+    # through without an encoder.
+    _CRL_ENCODER_CFG = {
+        "height_scan": {"hidden_dims": [256, 256], "output_dim": 256, "activation": "elu"},
+    }
     actor: RslRlResidualMLPCfg = RslRlResidualMLPCfg(
         hidden_dim=256,
         depth=8,
         num_layers_per_block=4,
         expand=1,
         activation="swish",
+        encoder_cfg=_CRL_ENCODER_CFG,
     )
     critic: RslRlResidualMLPCfg = RslRlResidualMLPCfg(
         hidden_dim=256,
@@ -136,6 +147,7 @@ class PositionLocomotionCRLRunnerCfg(RslRlOffPolicyRunnerCfg):
         expand=1,
         activation="swish",
         repr_dim=64,
+        encoder_cfg=_CRL_ENCODER_CFG,
     )
     algorithm: RslRlCrlAlgorithmCfg = RslRlCrlAlgorithmCfg(
         actor_lr=8e-4,
@@ -147,6 +159,7 @@ class PositionLocomotionCRLRunnerCfg(RslRlOffPolicyRunnerCfg):
         num_sgd_steps=400,
         logsumexp_penalty_coeff=0.1,
         entropy_param=0.5,
+        share_encoders=True,
         her_cfg=RslRlHerCfg(gamma=0.99),
     )
 

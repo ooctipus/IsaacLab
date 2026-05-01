@@ -282,6 +282,19 @@ class RslRlResidualMLPCfg:
     """Output representation dimensionality (used by CRL critic). If ``None``,
     the output dim is inferred from the task (e.g., action_dim for actors)."""
 
+    encoder_cfg: dict[str, dict] | None = None
+    """Optional per-group MLP encoder configuration for high-dim observations.
+
+    Keys are obs-group names (e.g. ``"height_scan"``); values are kwargs for
+    :class:`~rsl_rl.modules.MLP`. Each named group is routed through its own
+    encoder MLP before concatenation; other groups pass through. Used by CRL's
+    :class:`~rsl_rl.algorithms.crl.SquashedGaussianActor` and
+    :class:`~rsl_rl.algorithms.crl.BilinearCritic` so the policy and the
+    contrastive critic share a compressed view of high-dim state. Example::
+
+        encoder_cfg={"height_scan": {"hidden_dims": [256, 256], "output_dim": 256}}
+    """
+
 
 ############################
 # Algorithm configurations #
@@ -586,6 +599,17 @@ class RslRlCrlAlgorithmCfg:
     use_cuda_graph: bool = True
     """Enable CUDA graph capture for the SGD loop. Set ``False`` to force eager
     execution (useful for debugging)."""
+
+    share_encoders: bool = True
+    """Share per-group obs encoders between the actor and the critic's SA branch.
+
+    When ``True`` (default), the same :class:`~rsl_rl.algorithms.crl._SharedStateEncoder`
+    instance is wired into both the policy network and the bilinear critic, so
+    parameters are tied and the contrastive Q's view of state matches the
+    policy's. The shared encoder is registered with the critic optimizer; the
+    actor's loss back-propagates through it but only the critic step updates
+    its parameters. Set to ``False`` for an ablation that gives actor and
+    critic independent encoder copies (no parameter sharing)."""
 
 
 @configclass

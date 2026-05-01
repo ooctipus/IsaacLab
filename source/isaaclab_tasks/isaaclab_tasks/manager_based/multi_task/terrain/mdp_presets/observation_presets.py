@@ -3,7 +3,6 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab.envs.mdp import height_scan as flat_height_scan
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
@@ -94,13 +93,13 @@ class CRLObservationsCfg:
 
     @configclass
     class HeightScanCfg(ObsGroup):
-        # Flat ``(B, num_rays)`` height scan — CRL's ``SquashedGaussianActor`` and
-        # ``BilinearCritic`` concatenate every group along the last dim, so each
-        # group must be 2D. The CNN-shaped variant from ``mdp.vision_obs`` is
-        # ``(B, 1, H, W)`` and would break that path. Same noise band as the PPO
-        # preset so the two policies see equivalent input.
+        # Same CNN-shaped ``(B, 1, H, W)`` height scan as the PPO preset; the
+        # CRL actor and critic flatten + run a configurable per-group MLP
+        # encoder before the residual MLP via ``encoder_cfg`` on the runner
+        # config (see :class:`PositionLocomotionCRLRunnerCfg`), so the two
+        # policies consume the same observation term.
         height_scan = ObsTerm(
-            func=flat_height_scan,
+            func=mdp.vision_obs,
             params={"sensor_cfg": SceneEntityCfg("height_scanner")},
             noise=Unoise(n_min=-0.05, n_max=0.05),
         )
