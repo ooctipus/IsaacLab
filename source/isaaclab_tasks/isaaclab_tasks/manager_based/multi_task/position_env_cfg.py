@@ -52,8 +52,8 @@ class SceneCfg(InteractiveSceneCfg):
         terrain_generator=TerrainGeneratorCfg(
             size=(10.0, 10.0),
             border_width=20.0,
-            num_rows=preset(default=5, flat=1),
-            num_cols=preset(default=12, flat=1),
+            num_rows=preset(default=5, flat=1, stepping_stone=1),
+            num_cols=preset(default=12, flat=1, stepping_stone=1),
             horizontal_scale=0.1,
             vertical_scale=0.005,
             slope_threshold=0.75,

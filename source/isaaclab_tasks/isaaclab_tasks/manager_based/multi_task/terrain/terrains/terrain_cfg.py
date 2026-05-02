@@ -67,11 +67,21 @@ EXTREME_STAIR = terrain_cfg.HfPyramidStairsTerrainCfg(
 )
 
 
-STEPPING_STONE = isaaclab_terrain.MeshStonesEverywhereTerrainCfg(
+STEPPING_STONE_CURRICULUM = isaaclab_terrain.MeshStonesEverywhereTerrainCfg(
     w_gap=(0.04, 0.26),
     w_stone=(0.96, 0.2),
     s_max=(0.018, 0.118),
     h_max=(0.005, 0.1),
+    holes_depth=-10.0,
+    platform_width=1.5,
+)
+
+
+STEPPING_STONE = isaaclab_terrain.MeshStonesEverywhereTerrainCfg(
+    w_gap=(0.26, 0.26),
+    w_stone=(0.2, 0.2),
+    s_max=(0.118, 0.118),
+    h_max=(0.01, 0.1),
     holes_depth=-10.0,
     platform_width=1.5,
 )

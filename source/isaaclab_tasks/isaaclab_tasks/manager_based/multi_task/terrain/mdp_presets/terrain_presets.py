@@ -21,7 +21,7 @@ class SubTerrainPresetCfg(PresetCfg):
         "pit": terrains.PIT,
         "extreme_stair": terrains.EXTREME_STAIR,
         "slope_inv": terrains.SLOPE_INV,
-        "stepping_stone": terrains.STEPPING_STONE,
+        "stepping_stone": terrains.STEPPING_STONE_CURRICULUM,
         "radiating_beam": terrains.RADIATING_BEAM,
         "contour": terrains.CONTOUR,
         "climbing_box": terrains.CLIMBING_BOX,
