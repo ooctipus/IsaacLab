@@ -305,13 +305,19 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
             sums_buf=self._patch_sums,
             counts_buf=self._patch_counts,
         )
-        prob_sums, _ = aggregate_endpoints(
+        prob_sums, prob_counts = aggregate_endpoints(
             probs,
             endpoints,
             n_patches,
             sums_buf=self._patch_probs,
             counts_buf=self._patch_probs_counts,
         )
+        # Mean-aggregate (matching the success-rate panel) so a patch touched
+        # by ``n_c`` tasks doesn't visually dominate one touched by 1 task —
+        # the "I'm a convergence point" amplification under sum aggregation
+        # crushes everything else into purple at the start of training and
+        # makes the panel hard to read across topologies.
+        prob_sums = prob_sums / prob_counts.clamp_min(1.0)
         rates_t = sums / counts.clamp_min(1.0)
         delta_t = rates_t - self._prev_patch_rates
         if self._first_scatter_log:

@@ -116,10 +116,33 @@ class FastTerrainScanner(SensorBase):
         self._resolve_and_spawn("fast_terrain_scanner")
         # data is created at the end of ``_initialize_impl`` once we know num_rays.
         self._data: FastTerrainScannerData | None = None  # type: ignore[assignment]
+        self._body_idx: int | None = None
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def bind_articulation(self, articulation, body_name: str) -> None:
+        """Bind the sensor pose to a specific articulation body.
+
+        By default the sensor reads its world pose from a :class:`FrameView`,
+        which tracks a spawned child prim under the target body. PhysX does not
+        write articulation body transforms back to Fabric/USD, so the
+        ``FrameView`` returns stale (init-time) positions.
+
+        Call this method after env creation to read the body pose directly from
+        the :class:`Articulation`'s GPU-backed ``body_pos_w`` / ``body_quat_w``
+        tensors, which are always up-to-date.
+
+        Args:
+            articulation: The :class:`Articulation` asset (e.g. ``env.scene["robot"]``).
+            body_name: Name of the body the sensor is attached to (e.g. ``"base"``).
+        """
+        body_ids, _ = articulation.find_bodies(body_name)
+        if not body_ids:
+            raise ValueError(f"Body '{body_name}' not found in articulation.")
+        self._body_idx = body_ids[0]
+        self._articulation = articulation
 
     @property
     def num_instances(self) -> int:
@@ -344,9 +367,18 @@ class FastTerrainScanner(SensorBase):
         self._ray_distance_w = wp.zeros((self._view.count, self.num_rays), dtype=wp.float32, device=self._device)
 
     def _get_view_transforms_wp(self) -> wp.array:
-        """Pack FrameView poses into a Warp ``transformf`` array (tx, ty, tz, qx, qy, qz, qw)."""
-        pos_w, quat_w = self._view.get_world_poses()
-        pos_torch = pos_w.torch.reshape(-1, 3)
-        quat_torch = quat_w.torch.reshape(-1, 4)
+        """Pack sensor poses into a Warp ``transformf`` array (tx, ty, tz, qx, qy, qz, qw).
+
+        When :meth:`bind_articulation` has been called, reads body poses directly
+        from the articulation's GPU-backed tensors (always fresh from PhysX).
+        Otherwise falls back to :class:`FrameView` (Fabric / USD).
+        """
+        if self._body_idx is not None:
+            pos_torch = self._articulation.data.body_pos_w.torch[:, self._body_idx]
+            quat_torch = self._articulation.data.body_quat_w.torch[:, self._body_idx]
+        else:
+            pos_w, quat_w = self._view.get_world_poses()
+            pos_torch = pos_w.torch.reshape(-1, 3)
+            quat_torch = quat_w.torch.reshape(-1, 4)
         poses = torch.cat([pos_torch, quat_torch], dim=-1).contiguous()
         return wp.from_torch(poses).view(wp.transformf)

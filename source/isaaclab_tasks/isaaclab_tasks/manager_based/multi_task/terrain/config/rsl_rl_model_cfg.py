@@ -27,8 +27,9 @@ from isaaclab_rl.rsl_rl import (
     RslRlRNNModelCfg,
 )
 
-from .rl_cfg import RslRlCommanderActorModelCfg, RslRlTaskEasingActorModelCfg
 from isaaclab_tasks.utils import preset
+
+from .rl_cfg import RslRlCommanderActorModelCfg, RslRlTaskEasingActorModelCfg
 
 # ---------------------------------------------------------------------------
 # Shared pieces.
@@ -61,8 +62,8 @@ CNN_ENCODER_CFG = RslRlCNNModelCfg.CNNCfg(
     #   re-expands to 64.
     # * Conv3 = 64 channels gives the flatten its full feature breadth before the MLP head.
     output_channels=[16, 32, 64],
-    kernel_size=[8, 4, 3],
-    stride=[4, 2, 1],
+    kernel_size=[5, 5, 4],
+    stride=[2, 2, 1],
     activation="elu",
     # NOTE: counterintuitive on this config — ``channels_last=False`` is *faster* under
     # bf16 autocast on these shapes (Blackwell, cuDNN with the current torch wheel).

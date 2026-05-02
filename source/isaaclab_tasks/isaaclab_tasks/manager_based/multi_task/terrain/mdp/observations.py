@@ -12,7 +12,7 @@ import torch
 from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 
 if TYPE_CHECKING:
-    from isaaclab.envs import ManagerBasedEnv, ManagerBasedRLEnv
+    from isaaclab.envs import ManagerBasedRLEnv
 
 class vision_obs(ManagerTermBase):
     """Unified 2D vision observation for either :class:`TiledCamera` or :class:`RayCaster`.
@@ -66,6 +66,10 @@ class vision_obs(ManagerTermBase):
             self._ordering = pattern_cfg.ordering
             self._fetch = self._fetch_raycaster
             self._norm = self._depth_norm
+            if isinstance(self.sensor, FastTerrainScanner):
+                asset_name = cfg.params.get("asset_name", "robot")
+                body_name = self.sensor.cfg.prim_path.rsplit("/", 1)[0].rsplit("/", 1)[-1]
+                self.sensor.bind_articulation(env.scene[asset_name], body_name)
         else:
             raise TypeError(
                 f"vision_obs supports TiledCamera, RayCasterCamera, RayCaster, or FastTerrainScanner;"
@@ -106,37 +110,51 @@ class vision_obs(ManagerTermBase):
         images = images - torch.mean(images, dim=(1, 2), keepdim=True)
         return images
 
+    def collage(self, offset: float = 0.5, save_path: str = "./collage.png"):
+        """Save a turbo-colormapped collage of the raw sensor tiles to disk.
 
-def height_scan_2d(env: ManagerBasedEnv, sensor_cfg: SceneEntityCfg, offset: float = 0.5) -> torch.Tensor:
-    """Height scan reshaped to ``(num_envs, 1, H, W)`` for 2D CNN encoders.
+        Fetches unnormalized ``(B, H, W, C)`` images via :meth:`_fetch` and
+        arranges them in a square grid.  Single-channel (depth / heightmap) tiles
+        are mapped through the *turbo* colormap; multi-channel (RGB) tiles are
+        kept as-is.
 
-    Same height computation as :func:`isaaclab.envs.mdp.height_scan` (sensor z
-    minus hit z minus ``offset`` [m]), but the flat ray output is reshaped onto
-    its underlying grid using the sensor's
-    :class:`~isaaclab.sensors.ray_caster.patterns.GridPatternCfg` size /
-    resolution / ordering. Required by :class:`rsl_rl.models.CNNModel`, which
-    rejects flat 1D inputs.
+        Args:
+            offset: Height offset [m] forwarded to :meth:`_fetch_raycaster`.
+            save_path: Destination file path. ``~`` is expanded.
+        """
+        import os
 
-    Args:
-        env: The environment.
-        sensor_cfg: Scene-entity cfg for a :class:`RayCaster` whose pattern is a
-            :class:`GridPatternCfg`.
-        offset: Subtracted from each height value [m]. Defaults to ``0.5``.
+        import matplotlib
+        import numpy as np
+        from PIL import Image
 
-    Returns:
-        Tensor of shape ``[num_envs, 1, H, W]`` where ``H × W = num_rays``,
-        ordered to match the sensor's ``GridPatternCfg.ordering``.
-    """
-    sensor: RayCaster = env.scene.sensors[sensor_cfg.name]
-    pattern_cfg = sensor.cfg.pattern_cfg
-    nx = round(pattern_cfg.size[0] / pattern_cfg.resolution) + 1
-    ny = round(pattern_cfg.size[1] / pattern_cfg.resolution) + 1
-    flat = sensor.data.pos_w.torch[:, 2].unsqueeze(1) - sensor.data.ray_hits_w.torch[..., 2] - offset
-    # ordering="xy" -> inner loop over x -> rows are constant-y -> reshape (Ny, Nx).
-    # ordering="yx" -> inner loop over y -> rows are constant-x -> reshape (Nx, Ny).
-    if pattern_cfg.ordering == "xy":
-        return flat.view(env.num_envs, 1, ny, nx)
-    return flat.view(env.num_envs, 1, nx, ny)
+        images = self._fetch(offset)
+        torch.nan_to_num_(images, nan=0.0)
+        images = images.clamp(-10.0, 10.0)
+        a = images.detach().cpu().numpy()
+        n, h, w, c = a.shape
+        s = int(np.ceil(np.sqrt(n)))
+        canvas = np.full((s * h, s * w, 3), 255, np.uint8)
+        turbo = matplotlib.colormaps["turbo"]
+        for i in range(n):
+            r, col = divmod(i, s)
+            img = a[i]
+            if c == 1:
+                d = img[..., 0]
+                finite = np.isfinite(d)
+                if finite.any():
+                    lo, hi = d[finite].min(), d[finite].max()
+                else:
+                    lo, hi = 0.0, 1.0
+                d = np.clip(d, lo, hi)
+                d = (d - lo) / (hi - lo + 1e-8)
+                rgb = (turbo(d)[..., :3] * 255).astype(np.uint8)
+            else:
+                x = img if img.max() > 1 else img * 255
+                rgb = np.clip(x, 0, 255).astype(np.uint8)
+            canvas[r * h : (r + 1) * h, col * w : (col + 1) * w] = rgb
+        save_path = os.path.expanduser(save_path)
+        Image.fromarray(canvas).save(save_path)
 
 
 def target_pos_env(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> torch.Tensor:

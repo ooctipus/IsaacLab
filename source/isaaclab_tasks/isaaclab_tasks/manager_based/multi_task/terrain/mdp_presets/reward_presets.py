@@ -5,8 +5,9 @@
 
 
 from isaaclab.managers import RewardTermCfg as RewTerm
-from isaaclab.utils import configclass
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.utils import configclass
+
 from isaaclab_tasks.utils import PresetCfg
 
 from .. import mdp

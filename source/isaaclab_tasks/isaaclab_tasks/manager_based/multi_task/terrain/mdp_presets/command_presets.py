@@ -213,10 +213,11 @@ class CommandsCfg:
                     # these modest so orientation flavours the count rather
                     # than dominating it.
                     final_fps_features=preset(
-                        default=None,
+                        xyz=None,
                         xyzyaw=XYZYawFeatures(yaw_scale=0.1),
                         xyz_axis_angle=XYZAxisAngleFeatures(rot_scale=0.25),
                         xyz_joints=XYZJointsFeatures(joint_scale=0.2),
+                        default=None,
                     ),  # type: ignore
                 ),
                 min_contacts=3,

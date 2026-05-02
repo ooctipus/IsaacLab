@@ -254,7 +254,7 @@ class ScatterDashboard2D:
         suptitle: str = "",
         dot_size: float | None = None,
         dot_size_data: float | None = None,
-        density_dot_fraction: float = 0.15,
+        dot_fill_ratio: float = 0.20,
     ) -> np.ndarray:
         """Render all panels into a single RGB image.
 
@@ -270,23 +270,23 @@ class ScatterDashboard2D:
             suptitle: Optional figure-level title.
             dot_size: Scatter marker size in matplotlib ``s=`` units (points
                 squared). Mutually exclusive with :paramref:`dot_size_data`.
-                When set, takes precedence over the density-driven default.
+                When set, overrides the fill-ratio default outright.
             dot_size_data: Dot diameter in *data units* (meters). Marker
                 ``s`` is computed per-render from the panel's data extent
                 so the same physical radius reads correctly across terrain
-                sizes. Use this when you want to lock the dot to a specific
-                physical size (e.g. patch radius). Mutually exclusive with
-                :paramref:`dot_size`.
-            density_dot_fraction: When *both* :paramref:`dot_size` and
-                :paramref:`dot_size_data` are ``None``, the dot diameter
-                auto-scales to ``density_dot_fraction × √(area / num_valid)``
-                — each dot covers about that fraction of the *uniform-
-                equivalent* inter-point spacing. Default ``0.15`` is
-                calibrated against the original ~0.4m visual at the
-                ~50×120m, 888-patch baseline; the formula then auto-shrinks
-                dots when patches pack denser (e.g. ~0.13m at 8k patches,
-                ~0.04m at 80k). Raise for fatter blobs that emphasise
-                color over position; lower for tighter dots.
+                sizes. Mutually exclusive with :paramref:`dot_size`.
+            dot_fill_ratio: Default sizing: every dot is sized so that all
+                visible dots collectively cover this fraction of the
+                rendered axis area. Math: ``s = ratio × axis_area / N``
+                (in points²). Auto-grows dots when ``N`` is small (sparse
+                renders are visible) and auto-shrinks when ``N`` is large
+                (dense renders don't blob). Default ``0.20`` (20% fill —
+                color reads strongly even at small thumbnail sizes); lower
+                toward ``0.05–0.10`` to emphasise position over color,
+                raise toward ``0.30`` for dense-color heatmap-like reads.
+
+        Resolution priority: ``dot_size`` → ``dot_size_data`` →
+        ``dot_fill_ratio``.
 
         Returns:
             ``[H, W, 3]`` ``uint8`` array. Pass directly to
@@ -323,15 +323,13 @@ class ScatterDashboard2D:
                 raise ValueError(f"valid_mask must be [{self._n}], got {valid.shape}")
 
         # Resolve marker ``s``:
-        #   1. explicit ``dot_size`` (raw points²) — wins outright.
-        #   2. explicit ``dot_size_data`` (data-unit diameter) — convert via figure / extent.
-        #   3. neither — auto-pick from point density so dots stay visibly distinct
-        #      regardless of how tightly the patches pack.
+        #   1. explicit ``dot_size`` — wins outright (raw points²).
+        #   2. ``dot_size_data`` — data-unit diameter, converted via figure / extent.
+        #   3. ``dot_fill_ratio`` — sized so all visible dots cover that fraction
+        #      of the rendered axis area. Auto-grows for sparse, shrinks for dense.
         if dot_size is None:
-            # Approximate per-panel axis width in inches; constrained_layout shrinks
-            # this slightly for legend/colorbar space but the residual error doesn't
-            # affect the visual scaling intent.
-            axis_inches = figsize[0] / max(len(panels), 1)
+            panel_w_inches = figsize[0] / max(len(panels), 1)
+            panel_h_inches = figsize[1]
             if self._bg_extent is not None:
                 xmin, xmax, ymin, ymax = self._bg_extent
                 extent_x = max(xmax - xmin, 1e-9)
@@ -339,15 +337,22 @@ class ScatterDashboard2D:
             else:
                 extent_x = max(float(self._xy[:, 0].ptp()) if self._n > 0 else 1.0, 1e-9)
                 extent_y = max(float(self._xy[:, 1].ptp()) if self._n > 0 else 1.0, 1e-9)
+            # ``aspect="equal"`` constrains the axis to whichever dim's scale is
+            # tighter; the actual rendered axis dimensions follow from there.
+            scale_in_per_m = min(panel_w_inches / extent_x, panel_h_inches / extent_y)
+            axis_w_in = scale_in_per_m * extent_x
+            axis_h_in = scale_in_per_m * extent_y
 
-            if dot_size_data is None:
-                # Density-driven: dot diameter ≈ fraction × typical inter-point spacing.
+            if dot_size_data is not None:
+                # diameter [points] = diameter_data * (axis_w_in / extent_x) * 72
+                # s [points²] = π × (diameter_points / 2)²
+                diameter_points = dot_size_data * scale_in_per_m * 72.0
+                dot_size = math.pi * (diameter_points / 2.0) ** 2
+            else:
+                # Fill-ratio: total dot area = ratio × axis area, split evenly across N.
+                axis_area_points_sq = (axis_w_in * 72.0) * (axis_h_in * 72.0)
                 n_visible = max(int(valid.sum()), 1)
-                dot_size_data = density_dot_fraction * math.sqrt(extent_x * extent_y / n_visible)
-            # diameter [points] = diameter_data * (axis_inches / extent_x) * 72
-            # s [points²] = π * (diameter_points / 2)²
-            diameter_points = dot_size_data * axis_inches * 72.0 / extent_x
-            dot_size = math.pi * (diameter_points / 2.0) ** 2
+                dot_size = max(dot_fill_ratio * axis_area_points_sq / n_visible, 1e-3)
 
         for i, (ax, panel) in enumerate(zip(axes, panels)):
             if panel.values.shape[0] != self._n:
