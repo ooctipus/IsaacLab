@@ -252,6 +252,7 @@ def build_task_table(
     pool_sampling_size: tuple[float, float] | None = None,
     robot_joint_names: Sequence[str] | None = None,
     exclude_self_pairs: bool = True,
+    single_target_per_cell: bool = False,
 ) -> dict:
     """Run the IK pipeline, bin states by terrain cell, build task table.
 
@@ -276,6 +277,10 @@ def build_task_table(
             spawn and target reference the same state, removing the diagonal
             of each per-cell Cartesian product. Cells with fewer than two
             valid states contribute no pairs.
+        single_target_per_cell: When ``True``, fix a single random target
+            per cell instead of building the full Cartesian product. Each
+            cell contributes ``n`` (or ``n − 1`` if :paramref:`exclude_self_pairs`)
+            pairs of the form ``(any_spawn_in_cell, that_target)``.
 
     Returns:
         Dict with keys matching :class:`TaskTable` fields plus FK metadata:
@@ -427,15 +432,29 @@ def build_task_table(
                 # Need at least two distinct states to form a non-self pair.
                 continue
             ids = cell_values[start:end]
-            spawn_ids = ids.repeat_interleave(n_c)
-            target_ids = ids.repeat(n_c)
-            if exclude_self_pairs:
-                keep = spawn_ids != target_ids
-                spawn_ids = spawn_ids[keep]
-                target_ids = target_ids[keep]
-                pair_count = n_c * (n_c - 1)
+            if single_target_per_cell:
+                # Fix one cell-state as the goal; every other state pairs to it.
+                # ``torch.randint`` keeps device/dtype consistent with ``ids``.
+                target_pos = int(torch.randint(0, n_c, (1,), device=device).item())
+                target_state = ids[target_pos]
+                spawn_ids = ids
+                if exclude_self_pairs:
+                    keep = spawn_ids != target_state
+                    spawn_ids = spawn_ids[keep]
+                pair_count = int(spawn_ids.shape[0])
+                if pair_count == 0:
+                    continue
+                target_ids = target_state.expand(pair_count)
             else:
-                pair_count = n_c * n_c
+                spawn_ids = ids.repeat_interleave(n_c)
+                target_ids = ids.repeat(n_c)
+                if exclude_self_pairs:
+                    keep = spawn_ids != target_ids
+                    spawn_ids = spawn_ids[keep]
+                    target_ids = target_ids[keep]
+                    pair_count = n_c * (n_c - 1)
+                else:
+                    pair_count = n_c * n_c
             pair_spawn_parts.append(spawn_ids)
             pair_target_parts.append(target_ids)
             pair_tile_parts.append(torch.full((pair_count,), cell, device=device, dtype=torch.long))

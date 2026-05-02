@@ -59,22 +59,37 @@ class RelativeStateCommandCfg(CommandTermCfg):
     then contribute no pairs.
     """
 
+    single_target_per_cell: bool = False
+    """Whether to fix a single random target per terrain cell.
+
+    When ``True``, one state per cell is sampled at table build time as that
+    cell's target; every other state in the cell pairs with it as a spawn.
+    The per-cell pair count drops from ``n × n`` (or ``n × (n − 1)``) to just
+    ``n − 1`` (or ``n``), so each spawn point appears exactly once and the
+    policy converges its target representation onto a single point per cell.
+
+    Use this to study whether the multi-target free pairing is helping or
+    hurting learning — same cells, same spawns, just a much smaller and
+    consistent goal set. Cells with fewer than two valid states are skipped
+    when combined with :attr:`exclude_self_pairs`.
+    """
+
     pos_std: float = 0.5
-    """Default base-position success threshold [m]. Per-task overrideable via
+    """Default base-position success threshold [m]. Per-task overridable via
     :attr:`Commands.pos_std` / :attr:`TerrainCommands.pos_std`."""
 
     rot_std: float = 0.5
-    """Default base-orientation success threshold [rad]. Per-task overrideable."""
+    """Default base-orientation success threshold [rad]. Per-task overridable."""
 
     lin_vel_std: float = 0.5
-    """Default linear-velocity success threshold [m/s]. Per-task overrideable."""
+    """Default linear-velocity success threshold [m/s]. Per-task overridable."""
 
     ang_vel_std: float = 0.5
-    """Default angular-velocity success threshold [rad/s]. Per-task overrideable."""
+    """Default angular-velocity success threshold [rad/s]. Per-task overridable."""
 
     foot_pos_std: float = 0.1
     """Default per-foot target-error threshold [m] for terrain-state success.
-    Per-task overrideable via :attr:`TerrainCommands.foot_pos_std`."""
+    Per-task overridable via :attr:`TerrainCommands.foot_pos_std`."""
 
     normalize_command_obs: bool = False
     """Whether to divide :attr:`RelativeStateCommand.command` channels by the

@@ -177,7 +177,12 @@ class MorphologicalPatchSamplingCfg(PatchSamplingCfg):
     """Maximum height variation within the footprint to accept a cell [m]."""
 
     horizontal_scale: float = 0.1
-    """Rasterization grid spacing [m]."""
+    """Rasterization grid spacing [m].
+
+    Lower values grow the number of valid cells the sampler can draw from —
+    reach for this knob first when the morphological filter raises with
+    ``found only N valid cells but M patches requested``.
+    """
 
     oversample_ratio: float = 2.0
     """Oversample by this factor, then apply farthest-point sampling.

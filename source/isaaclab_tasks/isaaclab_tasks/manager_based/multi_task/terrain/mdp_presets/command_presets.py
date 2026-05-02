@@ -7,7 +7,7 @@
 
 from isaaclab.utils import configclass
 
-from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils import PresetCfg, preset
 
 from ...mdp.util.kinematics import NewtonKinematicsCfg
 from ...mdp.util.kinematics.ik_objectives.cfg import (
@@ -17,7 +17,12 @@ from ...mdp.util.kinematics.ik_objectives.cfg import (
 )
 from .. import mdp
 from ..mdp.retarget import RetargetPipelineCfg
-from ..mdp.retarget.cfg import PatchSamplingCfg, SamplerCfg
+from ..mdp.retarget.cfg import PatchSamplingCfg, SamplerCfg, SamplerSizingCfg
+from ..mdp.retarget.feature_extractors import (
+    XYZAxisAngleFeatures,
+    XYZJointsFeatures,
+    XYZYawFeatures,
+)
 from ..utils.criteria_cfg import (
     CollisionCheckCfg,
     FootPositionErrorCfg,
@@ -30,7 +35,6 @@ from .robots.robot_presets import (
     RetargetJointRegularizeTargetsCfg,
     RetargetLateralHipJointPatternCfg,
 )
-from isaaclab_tasks.utils import preset
 
 
 @configclass
@@ -118,16 +122,25 @@ class CommandsPresetCfg(PresetCfg):
             match_base_pos=True,
             match_base_rot=False,
             match_feet=True,
-            duration=(0.05, 0.05),
+            duration=(0.05, 1.0),
         ),
     }
     terrain_pose = {
         "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
+            match_base_pos=True, match_base_rot=True, match_feet=True, duration=(0.05, 1.0), foot_pos_std=0.25
+        ),
+    }
+    terrain_pos_only = {
+        "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             match_base_pos=True,
-            match_base_rot=True,
-            match_feet=True,
+            match_base_rot=False,
+            match_feet=False,
             duration=(0.05, 1.0),
-            foot_pos_std=0.25
+        ),
+    }
+    terrain_pose_only = {
+        "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
+            match_base_pos=True, match_base_rot=True, match_feet=False, duration=(0.05, 1.0), foot_pos_std=0.25
         ),
     }
     pose = {
@@ -182,7 +195,7 @@ class CommandsCfg:
         ang_vel_std=0.3,
         foot_pos_std=0.25,
         debug_vis=True,
-        pool_spacing=1.5,
+        pool_spacing=0.5,
         commands=CommandsPresetCfg(),  # type: ignore
         pipeline_cfg=RetargetPipelineCfg(
             kin=NewtonKinematicsCfg(usd_path=""),
@@ -190,8 +203,21 @@ class CommandsCfg:
                 patch=PatchSamplingCfg(
                     contact_radius=0.04,
                     max_height_diff=0.03,
-                    horizontal_scale=0.03,
+                    horizontal_scale=0.01,
                     oversample_ratio=5.0,
+                ),
+                sizing=SamplerSizingCfg(
+                    # Conservative per-axis weights: each added feature dim
+                    # multiplies the post-IK FPS count by ``extent / spacing^(D-2)``,
+                    # so small ``spacing`` amplifies dim changes a lot — keep
+                    # these modest so orientation flavours the count rather
+                    # than dominating it.
+                    final_fps_features=preset(
+                        default=None,
+                        xyzyaw=XYZYawFeatures(yaw_scale=0.1),
+                        xyz_axis_angle=XYZAxisAngleFeatures(rot_scale=0.25),
+                        xyz_joints=XYZJointsFeatures(joint_scale=0.2),
+                    ),  # type: ignore
                 ),
                 min_contacts=3,
                 terrain_snap_distance=0.2,

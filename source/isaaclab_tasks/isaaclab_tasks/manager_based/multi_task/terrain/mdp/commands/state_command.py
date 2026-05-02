@@ -171,6 +171,7 @@ class RelativeStateCommand(CommandTerm):
             pool_sampling_size=cfg.pool_sampling_size,
             robot_joint_names=self.robot.joint_names,
             exclude_self_pairs=cfg.exclude_self_pairs,
+            single_target_per_cell=cfg.single_target_per_cell,
         )
         self._target_fk_kin = table_data.pop("kin")
         self._newton_joint_names = table_data.pop("newton_joint_names")
@@ -294,9 +295,7 @@ class RelativeStateCommand(CommandTerm):
     def _update_metrics(self):
         for group_idx, name in enumerate(self._error_group_names):
             self.metrics[name] = self._err[:, group_idx]
-        self.metrics["instant_success"] = torch.all(
-            self._err < self._reward_scales[self.cmd_ids.long()], dim=1
-        ).float()
+        self.metrics["instant_success"] = torch.all(self._err < self._reward_scales[self.cmd_ids.long()], dim=1).float()
 
         if self.success_rates is not None:
             offsets = self.table.offsets
@@ -514,9 +513,7 @@ class RelativeStateCommand(CommandTerm):
 
         # Success tracking: hold time is trailing scalar at time_idx
         self.compute_state_error()
-        current[:, ti] += self._env.step_dt * torch.all(
-            self._err < self._reward_scales[self.cmd_ids.long()], dim=1
-        )
+        current[:, ti] += self._env.step_dt * torch.all(self._err < self._reward_scales[self.cmd_ids.long()], dim=1)
         torch.sub(target[:, ti], current[:, ti], out=delta[:, ti])
 
     def compute_state_error(self):

@@ -346,6 +346,7 @@ def find_flat_patches_morphological(
             f"\n\tmax_height_diff: {cfg.max_height_diff}"
             f"\n\tfootprint: {footprint}"
             f"\n\tx_range: {x_range}, y_range: {y_range}, z_range: {z_range}"
+            f"\n\tHint: lower horizontal_scale or relax max_height_diff to grow num_valid."
         )
 
     with _morph_time("candidates", device):

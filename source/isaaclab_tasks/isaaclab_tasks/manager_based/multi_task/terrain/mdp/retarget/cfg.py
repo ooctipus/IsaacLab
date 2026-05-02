@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import MISSING, field
 
 from isaaclab.utils import configclass
@@ -99,6 +100,54 @@ class SamplerSizingCfg:
 
     ``1.5`` keeps the final FPS pool 50% larger than the desired robot
     count so spatial spread is achievable rather than degenerate.
+    """
+
+    final_fps_spacing: float | None = None
+    """Optional spacing-driven target count for the final FPS thinning.
+
+    When set, the post-IK FPS step computes its target placement count
+    *from the actual feature-space bounding box of surviving candidates*
+    rather than using the upstream ``n_desired``. Specifically:
+
+    .. code-block:: text
+
+        bbox       = features.amax(0) - features.amin(0)
+        xy_area    = bbox[0] * bbox[1]                # treat xy as 2-D manifold
+        extra_vol  = bbox[3:].prod() if D > 3 else 1
+        D_eff      = 2 + max(0, D - 3)                # ignore z; count xyz extras
+        k_target   = max(1, int(xy_area * extra_vol / spacing**D_eff))
+        n_select   = min(k_target, n_valid)
+
+    Lets the same ``spacing`` mean different placement counts depending on
+    the chosen :paramref:`final_fps_features` — adding yaw or rotation
+    naturally scales the count up because the metric volume to fill is
+    larger. ``None`` (default) keeps the production behaviour where the
+    final FPS thins to ``n_desired`` directly.
+    """
+
+    final_fps_features: Callable | None = None
+    """Custom feature extractor for the final FPS spatial-thinning step.
+
+    Maps ``(buffer, valid_indices) -> [N_valid, D]`` where ``D`` is the
+    metric-space dimensionality the FPS thins in. ``None`` (default)
+    falls back to root xyz (3-D Cartesian) — same behaviour as before.
+
+    The grid bucketer partitions whatever ``D`` you return into cells of
+    side ``(volume / k)^{1/D}``, so adding orientation/joint dimensions
+    *automatically* refines the sampling at the same ``pool_spacing``:
+    the volume to fill grows, more buckets exist, and the same target
+    count covers more pose diversity.
+
+    See :mod:`.feature_extractors` for canned options:
+
+    * :func:`~.feature_extractors.xyz_features` — current default.
+    * :func:`~.feature_extractors.xyz_yaw_features` (``yaw_scale``).
+    * :func:`~.feature_extractors.xyz_axis_angle_features` (``rot_scale``).
+    * :func:`~.feature_extractors.xyz_joints_features` (``joint_scale``).
+
+    Or pass any function with the matching signature for full control —
+    e.g. ``lambda b, idx: torch.cat([b.joint_q_result_t[idx, :3],
+    b.joint_q_result_t[idx, 7:13] * 0.4], dim=-1)``.
     """
 
     criteria_yield: float = 0.25

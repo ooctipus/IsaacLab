@@ -3,38 +3,44 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Terrain-conforming spawn validation with batched IK and viser visualization.
+"""Terrain-conforming spawn validation driven by the production env cfg.
 
-Thin CLI wrapper around :class:`RetargetPipeline`.  Generates a terrain mesh
-(either a full terrain grid from a :class:`SubTerrainPresetCfg` preset, or a
-single sub-terrain), runs the pipeline, and visualises accepted/rejected
-candidates in viser.
+Constructs :class:`LocomotionPositionCommandEnvCfg`, resolves presets the
+same way the train script does, and reuses *only* two things from the
+resolved env cfg:
 
-Invoke as ``./isaaclab.sh -p <this_file>.py`` with any of the arg combos below.
-Setting ``$SCRIPT`` first keeps the commands readable::
+* :attr:`env.scene.robot` — articulation cfg (USD path, init state, default
+  joint pose) that drives the IK kinematics.
+* :attr:`env.commands.goal_point` — the same retarget pipeline + sampler
+  + criteria the training task uses, so this tool reflects production
+  behaviour exactly. ``goal_point.pool_spacing`` also doubles as the
+  default density.
 
-    SCRIPT=source/isaaclab_tasks/isaaclab_tasks/manager_based/locomotion/position/utils/tools/validate_spawn_points.py
+The terrain mesh is built from ``env.scene.terrain.terrain_generator`` —
+whichever sub-terrains the selected presets resolved to.
 
-    # Default: whole ``all`` terrain grid with ANYmal-C
-    ./isaaclab.sh -p $SCRIPT
+Usage::
 
-    # Whole terrain grid from a named ``SubTerrainPresetCfg`` preset
-    ./isaaclab.sh -p $SCRIPT --terrain eval --robot go2
+    SCRIPT=source/isaaclab_tasks/isaaclab_tasks/manager_based/multi_task/terrain/utils/tools/validate_spawn_points.py
 
-    # Evaluation mix with Spot, more placements
-    ./isaaclab.sh -p $SCRIPT --terrain eval --robot spot --max_robots 500
+    # ANYmal-C on the default terrain mix.
+    ./isaaclab.sh -p $SCRIPT presets=anymal_c
 
-    # Single sub-terrain (overrides ``--terrain``)
-    ./isaaclab.sh -p $SCRIPT --sub_terrain EXTREME_STAIR --robot anymal_c --difficulty 0.9
+    # Stepping-stone-only terrain with ANYmal-C.
+    ./isaaclab.sh -p $SCRIPT presets=stepping_stone,anymal_c
 
-    # Use the same retarget pipeline configured by ``CommandsCfg.goal_point``
-    ./isaaclab.sh -p $SCRIPT --commands terrain_pos --sub_terrain EXTREME_STAIR --robot anymal_c
+    # Eval mix with Go2.
+    ./isaaclab.sh -p $SCRIPT presets=eval,go2
 
-    # Use the command pipeline, but clip sampling to the centered 10m x 10m window
-    ./isaaclab.sh -p $SCRIPT --commands terrain_pos --spacing 0.1 --pool_sampling_size 10 10
+    # Compose with the FPS-feature presets too.
+    ./isaaclab.sh -p $SCRIPT presets=anymal_c,xyzyaw
 
-    # Stepping-stone sub-terrain with Go2 at an easier difficulty
-    ./isaaclab.sh -p $SCRIPT --sub_terrain STEPPING_STONE --robot go2 --difficulty 0.5
+    # Override placement density (otherwise uses goal_point.pool_spacing).
+    ./isaaclab.sh -p $SCRIPT presets=anymal_c --max_robots 200
+    ./isaaclab.sh -p $SCRIPT presets=anymal_c --spacing 0.4
+
+    # Headless diagnostic — no viser.
+    ./isaaclab.sh -p $SCRIPT presets=anymal_c --no_viewer
 """
 
 from __future__ import annotations
@@ -45,223 +51,154 @@ sys.path[:] = [p for p in sys.path if "pip_prebundle" not in p and "pip_archive"
 
 import argparse
 import builtins
-import dataclasses
+import importlib
 import socket
 import time
 
 import numpy as np
 import torch
-import trimesh
 import warp as wp
 
-from isaaclab.terrains.sub_terrain_cfg import SubTerrainBaseCfg
 from isaaclab.utils.warp import convert_to_warp_mesh
 
 VISER_PORT = 8765
 
-_ROBOT_NAMES = ("anymal_c", "go2", "spot", "h1")
-
 
 # ---------------------------------------------------------------------------
-# Terrain helpers
+# Setup
 # ---------------------------------------------------------------------------
 
 
-def _register_position_task() -> None:
-    """Prevent re-registration of gym envs and eagerly import preset modules."""
+def _bypass_gym_registration() -> None:
+    """Skip Isaac-Sim-coupled gym env registration (this tool doesn't need it)."""
     builtins._isaaclab_tasks_registered = True  # type: ignore[attr-defined]
-    import importlib
 
+
+def _eager_load_presets() -> None:
+    """Force-load preset packages so PresetCfg class attributes are registered.
+
+    Per-robot modules (``anymal_c.py`` etc.) and per-terrain entries are
+    populated at import time. We import a handful of leaf modules eagerly so
+    that ``resolve_presets`` finds ``RobotArticulationCfg.<robot>`` and
+    friends as class attributes.
+    """
     importlib.import_module("isaaclab_tasks.manager_based.multi_task.terrain.terrains")
     importlib.import_module("isaaclab_tasks.manager_based.multi_task.terrain.mdp_presets.robots")
 
 
-def _sub_terrain_lookup() -> dict[str, SubTerrainBaseCfg]:
-    """Return the uppercase ``SubTerrainBaseCfg`` constants defined in terrain_cfg.
-
-    Imports the ``terrain_cfg`` submodule directly (rather than going through the
-    ``terrains`` package, which uses :func:`lazy_export` and so does not expose
-    names via :func:`dir`).
-    """
-    import importlib
-
-    tcfg = importlib.import_module("isaaclab_tasks.manager_based.multi_task.terrain.terrains.terrain_cfg")
-    return {
-        n: getattr(tcfg, n)
-        for n in sorted(dir(tcfg))
-        if n.isupper() and isinstance(getattr(tcfg, n), SubTerrainBaseCfg)
-    }
+def _parse_presets_from_argv(remaining: list[str]) -> set[str]:
+    """Extract hydra-style ``presets=a,b,c`` selections from leftover argv tokens."""
+    selected: set[str] = set()
+    for arg in remaining:
+        if "=" not in arg:
+            continue
+        key, value = arg.split("=", 1)
+        if key.lstrip("-") == "presets":
+            selected.update(s.strip() for s in value.split(",") if s.strip())
+    return selected
 
 
-def _terrain_preset_lookup() -> dict[str, dict]:
-    """Return all sub-terrain-dict fields on :class:`SubTerrainPresetCfg`.
-
-    ``SubTerrainPresetCfg`` is a dataclass whose preset fields are set at
-    instance level, so we enumerate via :func:`dataclasses.fields` rather than
-    :func:`dir` on the class.
-    """
-    from isaaclab_tasks.manager_based.multi_task.terrain.mdp_presets.terrain_presets import (
-        SubTerrainPresetCfg,
-    )
-
-    inst = SubTerrainPresetCfg()
-    presets: dict[str, dict] = {}
-    for f in dataclasses.fields(inst):
-        v = getattr(inst, f.name)
-        if isinstance(v, dict):
-            presets[f.name] = v
-    return presets
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
-def _command_preset_lookup() -> dict[str, dict]:
-    """Return dict-valued fields on :class:`CommandsPresetCfg`."""
-    from isaaclab_tasks.manager_based.multi_task.terrain.mdp_presets.command_presets import (
-        CommandsPresetCfg,
-    )
+def _resolve_robot_usd(robot_cfg) -> str:
+    """Return the robot's USD path, downloading from Nucleus if needed."""
+    from isaaclab.utils.assets import check_file_path, retrieve_file_path
 
-    inst = CommandsPresetCfg()
-    presets: dict[str, dict] = {}
-    for f in dataclasses.fields(inst):
-        v = getattr(inst, f.name)
-        if isinstance(v, dict):
-            presets[f.name] = v
-    return presets
+    usd_path = robot_cfg.spawn.usd_path
+    status = check_file_path(usd_path)
+    if status == 0:
+        raise FileNotFoundError(f"USD not found: {usd_path}")
+    if status == 2:
+        usd_path = retrieve_file_path(usd_path, force_download=False)
+    return usd_path
 
 
-def _sub_terrain_mesh(sub_cfg: SubTerrainBaseCfg, difficulty: float):
-    """Build mesh and origin for a single sub-terrain."""
-    cfg = sub_cfg.copy()
-    cfg.difficulty = difficulty
-    meshes, origin = cfg.function(difficulty, cfg)
-    mesh = trimesh.util.concatenate(meshes)
-    tf = np.eye(4)
-    tf[0:2, -1] = -cfg.size[0] * 0.5, -cfg.size[1] * 0.5
-    mesh.apply_transform(tf)
-    origin += tf[0:3, -1]
-    return mesh, origin
+def _patch_kin_with_robot(pipeline_cfg, robot_cfg, robot_usd: str, device: str):
+    """Return ``pipeline_cfg`` with ``kin`` populated from the robot articulation cfg."""
+    new_kin = pipeline_cfg.kin.copy()
+    new_kin.usd_path = robot_usd
+    new_kin.device = device
+    new_kin.default_pos = (0.0, 0.0, robot_cfg.init_state.pos[2])
+    new_kin.default_joint_pos = robot_cfg.init_state.joint_pos
+    return pipeline_cfg.replace(kin=new_kin)
 
 
-def _terrain_preset_mesh(preset_dict: dict, device: str):
-    """Build a full terrain-grid mesh from a :class:`SubTerrainPresetCfg` preset dict.
-
-    Returns the mesh, the origin (always at ``[0, 0, 0]``), and the inner
-    non-border sampling extents ``(x_range, y_range)`` in the mesh frame.
-    """
-    from isaaclab.terrains import TerrainGeneratorCfg
-    from isaaclab.terrains.terrain_generator import TerrainGenerator
-
-    cfg = TerrainGeneratorCfg(
-        size=(10.0, 10.0),
-        num_rows=10,
-        num_cols=20,
-        border_width=20.0,
-        horizontal_scale=0.1,
-        vertical_scale=0.005,
-        slope_threshold=0.75,
-        use_cache=False,
-        seed=42,
-        curriculum=True,
-        sub_terrains=preset_dict,
-    )
-    gen = TerrainGenerator(cfg=cfg, device=device)
-    inner_x = cfg.num_rows * cfg.size[0] / 2.0
-    inner_y = cfg.num_cols * cfg.size[1] / 2.0
-    return (
-        gen.terrain_mesh,
-        np.zeros(3, dtype=np.float32),
-        (-inner_x, inner_x),
-        (-inner_y, inner_y),
-    )
-
-
-def _resolve_foot_names(robot: str, body_names: list[str]) -> list[str]:
-    """Resolve the foot body names for ``robot``.
-
-    Uses the robot preset foot spec, which may be an exact list or regex.
-    """
-    from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget import resolve_foot_body_names
-    from isaaclab_tasks.manager_based.multi_task.terrain.mdp_presets.robots.robot_presets import (
-        FootBodyNamesCfg,
-    )
-
-    foot_spec = getattr(FootBodyNamesCfg, robot, ".*foot")
-    return resolve_foot_body_names(foot_spec, body_names)
-
-
-def _resolve_robot_preset_value(value, robot: str):
-    """Resolve a robot-specific :class:`PresetCfg` value when needed."""
-    from isaaclab_tasks.utils.hydra import PresetCfg
-
-    if isinstance(value, PresetCfg):
-        return getattr(type(value), robot, getattr(value, "default"))
-    return value
-
-
-def _with_patch_sampling_bounds(
+def _patch_sampler_bounds(
     pipeline_cfg,
-    x_range: tuple[float, float] | None,
-    y_range: tuple[float, float] | None,
+    sampler_x_range: tuple[float, float],
+    sampler_y_range: tuple[float, float],
 ):
-    """Return ``pipeline_cfg`` with terrain-grid sampling bounds applied."""
+    """Clip the morph-patch sampler's ``x_range``/``y_range`` to the active tile region.
+
+    The default pipeline cfg leaves ``x_range`` / ``y_range`` at ``±1e6`` so
+    the patch sampler scans the *full* mesh — including the 20 m flat border
+    around the tile grid. That floods the morph-patch pool with border
+    patches and makes polygon centers in the inner active region fail
+    foot-reachability against them. Production avoids this via
+    :func:`task_table_builder._pipeline_with_inner_sampling_bounds`; we
+    mirror that here so the validate tool reflects training behaviour.
+    """
     sampler_cfg = pipeline_cfg.sampler
     patch_cfg = getattr(sampler_cfg, "patch", None)
     if patch_cfg is None:
         return pipeline_cfg
-
-    patch_updates = {}
-    if x_range is not None:
-        patch_updates["x_range"] = x_range
-    if y_range is not None:
-        patch_updates["y_range"] = y_range
-    if not patch_updates:
-        return pipeline_cfg
-
-    return pipeline_cfg.replace(sampler=sampler_cfg.replace(patch=patch_cfg.replace(**patch_updates)))
-
-
-def _with_sampler_overrides(
-    pipeline_cfg,
-    *,
-    min_contacts: int | None,
-    terrain_snap_distance: float | None,
-):
-    """Return ``pipeline_cfg`` with explicitly supplied sampler overrides."""
-    sampler_cfg = pipeline_cfg.sampler
-    sampler_updates = {}
-    if min_contacts is not None:
-        sampler_updates["min_contacts"] = min_contacts
-    if terrain_snap_distance is not None:
-        sampler_updates["terrain_snap_distance"] = terrain_snap_distance
-    if not sampler_updates:
-        return pipeline_cfg
-
-    return pipeline_cfg.replace(sampler=sampler_cfg.replace(**sampler_updates))
-
-
-def _pipeline_from_commands_cfg(
-    *,
-    robot: str,
-    robot_usd: str,
-    base_height: float,
-    default_jpos: dict[str, float],
-    device: str,
-):
-    """Build the same retarget pipeline config used by ``CommandsCfg.goal_point``."""
-    from isaaclab_tasks.manager_based.multi_task.terrain.mdp_presets.command_presets import CommandsCfg
-
-    goal_cfg = CommandsCfg().goal_point
-    pipeline_cfg = goal_cfg.pipeline_cfg.replace(kin=goal_cfg.pipeline_cfg.kin.copy())
-    kin_cfg = pipeline_cfg.kin
-    kin_cfg.usd_path = robot_usd
-    kin_cfg.device = device
-    kin_cfg.default_pos = (0.0, 0.0, base_height)
-    kin_cfg.default_joint_pos = default_jpos
-
-    return goal_cfg, pipeline_cfg.replace(
-        foot_body_names=_resolve_robot_preset_value(pipeline_cfg.foot_body_names, robot),
-        lateral_hip_joint_pattern=_resolve_robot_preset_value(pipeline_cfg.lateral_hip_joint_pattern, robot),
-        joint_regularize_targets=_resolve_robot_preset_value(pipeline_cfg.joint_regularize_targets, robot),
+    return pipeline_cfg.replace(
+        sampler=sampler_cfg.replace(patch=patch_cfg.replace(x_range=sampler_x_range, y_range=sampler_y_range))
     )
+
+
+def _terrain_grid_extents(terrain_gen_cfg) -> tuple[tuple[float, float], tuple[float, float]]:
+    """Inner (non-border) sampling extents in the mesh frame."""
+    inner_x = terrain_gen_cfg.num_rows * terrain_gen_cfg.size[0] / 2.0
+    inner_y = terrain_gen_cfg.num_cols * terrain_gen_cfg.size[1] / 2.0
+    return (-inner_x, inner_x), (-inner_y, inner_y)
+
+
+def _feature_extra_dim_and_vol(extractor) -> tuple[int, float]:
+    """Return ``(extra_dim, extra_vol_factor)`` from the extractor's a-priori claim.
+
+    ``extra_dim`` is the number of feature axes beyond xyz (z treated as
+    ignored — terrain xy is a 2-D manifold). ``extra_vol_factor`` is the
+    bbox volume those extra axes contribute, in the same units the extractor
+    produces. Falls back to ``(0, 1.0)`` for raw callables or extractors
+    that don't expose :meth:`feature_volume_contribution`.
+    """
+    if extractor is None:
+        return 0, 1.0
+    fn = getattr(extractor, "feature_volume_contribution", None)
+    if fn is None:
+        return 0, 1.0
+    extra_dim, extra_vol = fn()
+    return int(extra_dim), float(extra_vol)
+
+
+def _derive_n_desired(
+    args: argparse.Namespace,
+    pool_spacing_default: float,
+    sampler_x_range: tuple[float, float],
+    sampler_y_range: tuple[float, float],
+    extractor,
+) -> int:
+    """Resolve the budget ``n_desired`` from ``--max_robots`` / ``--spacing`` / cfg default.
+
+    Generalises the original ``area / (3 × spacing²)`` heuristic to richer
+    feature spaces: when the final-FPS feature extractor adds extra axes
+    (yaw, rotation, joints), the budget grows so the upstream sampler
+    produces enough survivors to actually fill the larger metric volume.
+    The ``× 1/3`` factor still accounts for the empirical ~33% criteria
+    yield.
+    """
+    if args.max_robots is not None:
+        return args.max_robots
+    spacing = args.spacing if args.spacing is not None else pool_spacing_default
+    area = max((sampler_x_range[1] - sampler_x_range[0]) * (sampler_y_range[1] - sampler_y_range[0]), 0.0)
+    extra_dim, extra_vol = _feature_extra_dim_and_vol(extractor)
+    vol = area * extra_vol
+    d_eff = 2 + extra_dim
+    return max(1, int(vol / (3.0 * spacing**d_eff)))
 
 
 def _gravity_weight_from_cfg(pipeline_cfg) -> float | None:
@@ -270,78 +207,6 @@ def _gravity_weight_from_cfg(pipeline_cfg) -> float | None:
         if type(objective_cfg).__name__ == "IKObjectiveGravityTorqueCfg":
             return objective_cfg.weight
     return None
-
-
-def _derive_max_robots_from_spacing(
-    args: argparse.Namespace,
-    mesh: trimesh.Trimesh,
-    sampler_x_range: tuple[float, float] | None,
-    sampler_y_range: tuple[float, float] | None,
-) -> None:
-    """Populate ``args.max_robots`` from ``args.spacing`` when requested."""
-    if args.spacing is None:
-        return
-
-    if sampler_x_range is not None and sampler_y_range is not None:
-        x_lo, x_hi = sampler_x_range
-        y_lo, y_hi = sampler_y_range
-    else:
-        v = np.asarray(mesh.vertices)
-        x_lo, x_hi = float(v[:, 0].min()), float(v[:, 0].max())
-        y_lo, y_hi = float(v[:, 1].min()), float(v[:, 1].max())
-    area = max((x_hi - x_lo) * (y_hi - y_lo), 0.0)
-    # Yield factor accounts for (a) criteria rejections (empirically ~33%
-    # pass rate on typical sub-terrains) and (b) the grid-bucket
-    # downsample's effective cell_side ~= sqrt(area/(1.5*k)) needing to
-    # exceed ``spacing`` for the thinning to bite. Factor 1/3 gives a
-    # non-cluttered result on meshes where candidates concentrate on easy
-    # patches.
-    args.max_robots = max(1, int(area / (3.0 * args.spacing**2)))
-    print(f"  Spacing mode: area={area:.1f} m^2, spacing={args.spacing:.3f} m -> max_robots={args.max_robots}")
-
-
-def _apply_density_defaults(args: argparse.Namespace, goal_cfg) -> None:
-    """Set default density from command cfg or legacy manual-tool default."""
-    if args.max_robots is not None or args.spacing is not None:
-        return
-    if goal_cfg is not None:
-        args.spacing = goal_cfg.pool_spacing
-    else:
-        args.max_robots = 300
-
-
-def _pool_sampling_size_from_args(
-    args: argparse.Namespace,
-    goal_cfg,
-) -> tuple[float, float] | None:
-    """Return the CLI or command-cfg pool sampling window size [m]."""
-    if args.pool_sampling_size is not None:
-        return args.pool_sampling_size[0], args.pool_sampling_size[1]
-    if goal_cfg is not None:
-        return goal_cfg.pool_sampling_size
-    return None
-
-
-def _apply_pool_sampling_size(
-    mesh: trimesh.Trimesh,
-    sampler_x_range: tuple[float, float] | None,
-    sampler_y_range: tuple[float, float] | None,
-    sampling_size: tuple[float, float] | None,
-) -> tuple[tuple[float, float] | None, tuple[float, float] | None]:
-    """Clip sampler ranges to a centered command-pool sampling window."""
-    if sampling_size is None:
-        return sampler_x_range, sampler_y_range
-
-    from isaaclab_tasks.manager_based.multi_task.terrain.mdp.commands.task_table_builder import (
-        _centered_sampling_bounds,
-    )
-
-    if sampler_x_range is None or sampler_y_range is None:
-        v = np.asarray(mesh.vertices)
-        sampler_x_range = (float(v[:, 0].min()), float(v[:, 0].max()))
-        sampler_y_range = (float(v[:, 1].min()), float(v[:, 1].max()))
-
-    return _centered_sampling_bounds(sampler_x_range, sampler_y_range, sampling_size)
 
 
 def _draw_active_support_overlay(viewer, buf, feet_all, passed_idx, nc, device) -> None:
@@ -401,285 +266,112 @@ def main():
     import newton
     from newton.viewer import ViewerViser
 
-    from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics import NewtonKinematicsCfg
-    from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics.ik_objectives.cfg import (
-        IKObjectiveGravityTorqueCfg,
-        IKObjectiveStabilityMarginCfg,
-        IKObjectiveTerrainCollisionCfg,
+    parser = argparse.ArgumentParser(
+        description="Validate spawn points using the production env cfg (preset-driven).",
     )
-    from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget import (
-        RetargetPipeline,
-        RetargetPipelineCfg,
-    )
-    from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget.cfg import (
-        PatchSamplingCfg,
-        SamplerCfg,
-    )
-    from isaaclab_tasks.manager_based.multi_task.terrain.utils.criteria_cfg import (
-        CollisionCheckCfg,
-        FootPositionErrorCfg,
-        LateralHipLimitCfg,
-        SolverCostOutlierCfg,
-        SupportPolygonStabilityCfg,
-    )
-
-    _register_position_task()
-
-    from isaaclab_tasks.manager_based.multi_task.terrain.mdp_presets.robots.robot_presets import (
-        RetargetJointRegularizeTargetsCfg,
-        RetargetLateralHipJointPatternCfg,
-        RobotArticulationCfg,
-    )
-
-    def _preset_for(preset_cls: type, robot: str) -> object:
-        """Read a robot's field on a :class:`PresetCfg` subclass, or fall back to default."""
-        return getattr(preset_cls, robot, preset_cls().default)
-
-    sub_terrains = _sub_terrain_lookup()
-    terrain_presets = _terrain_preset_lookup()
-    command_presets = _command_preset_lookup()
-
-    parser = argparse.ArgumentParser(description="Terrain-conforming spawn validation.")
-    parser.add_argument(
-        "--commands",
-        type=str,
-        nargs="?",
-        const="default",
-        default=None,
-        choices=sorted(command_presets.keys()),
-        help=(
-            "Use the position env's ``CommandsCfg.goal_point`` retarget pipeline instead of the tool's "
-            "manual pipeline. Optionally select a CommandsPresetCfg field for context printing; e.g. "
-            "``--commands terrain_pos``. If density is not supplied, ``goal_point.pool_spacing`` is used."
-        ),
-    )
-    parser.add_argument(
-        "--terrain",
-        type=str,
-        default="all",
-        choices=sorted(terrain_presets.keys()),
-        help="Terrain preset key (builds a whole terrain grid).",
-    )
-    parser.add_argument(
-        "--sub_terrain",
-        type=str,
-        default=None,
-        choices=sorted(sub_terrains.keys()),
-        help="Single sub-terrain name. If set, overrides ``--terrain``.",
-    )
-    parser.add_argument("--difficulty", type=float, default=0.8)
-    parser.add_argument(
-        "--robot",
-        type=str,
-        default="anymal_c",
-        choices=sorted(_ROBOT_NAMES),
-        help="Robot preset (resolves USD, base height, joints, foot names, and lateral-hip pattern).",
-    )
+    parser.add_argument("--task", type=str, default="Isaac-Position-v0", help="Gym task id.")
     density_group = parser.add_mutually_exclusive_group()
     density_group.add_argument(
         "--max_robots",
         type=int,
         default=None,
-        help="Number of final placements. Mutually exclusive with ``--spacing``.",
+        help="Number of final placements. Overrides goal_point.pool_spacing.",
     )
     density_group.add_argument(
         "--spacing",
         type=float,
         default=None,
-        help=(
-            "Target minimum distance [m] between final placements. Auto-picks "
-            "``max_robots = sampling_area / (3 * spacing**2)`` so the grid-bucket "
-            "downsample has enough candidates to actually enforce the spacing "
-            "(pure ``area/spacing**2`` is a square-grid upper bound and leaves "
-            "the downsample a no-op when criteria yield <~33%% -- the empirical "
-            "rate on typical sub-terrains)."
-        ),
-    )
-    parser.add_argument(
-        "--min_contacts",
-        type=int,
-        default=None,
-        help=(
-            "Minimum contact slots a candidate must fill to be accepted (see"
-            " :attr:`SamplerCfg.min_contacts`). When ``--commands`` is set,"
-            " defaults to the command pipeline value. Otherwise ``-1`` requires"
-            " every slot to snap to a patch. A positive ``m`` enables the"
-            " soft polygon path: slots without an in-reach patch are marked"
-            " ``is_contact = False`` and get a template-projected target."
-            " ``m = 2`` lets mixed-geometry terrain emit nc=2/3/4 stances"
-            " on a single robot."
-        ),
-    )
-    parser.add_argument(
-        "--terrain_snap_distance",
-        type=float,
-        default=None,
-        help=(
-            "xy distance [m] within which a projected foot snaps to a"
-            " morph patch (see :attr:`SamplerCfg.terrain_snap_distance`)."
-            " Feet farther than this from any patch are treated as air."
-            " When ``--commands`` is set, defaults to the command pipeline"
-            " value. Otherwise ``0.15`` matches typical morph-patch spacing."
-            " Bump to ``0.25``-``0.30`` on rough terrain (CONTOUR,"
-            " EXTREME_STAIR) where patches cluster on flat regions."
-        ),
-    )
-    parser.add_argument(
-        "--pool_sampling_size",
-        type=float,
-        nargs=2,
-        default=None,
-        metavar=("X", "Y"),
-        help=(
-            "Centered XY sampling window size [m]. Overrides ``CommandsCfg.goal_point.pool_sampling_size`` "
-            "when supplied."
-        ),
+        help="Target placement spacing [m]. Defaults to goal_point.pool_spacing from the resolved cfg.",
     )
     parser.add_argument(
         "--no_viewer",
         action="store_true",
         help="Skip the viser viewer; print diagnostics and exit.",
     )
-    args = parser.parse_args()
+    args, remaining = parser.parse_known_args()
+    selected = _parse_presets_from_argv(remaining)
+
+    # Set up env cfg WITHOUT booting Isaac Sim — we just need configclass values.
+    _bypass_gym_registration()
+    _eager_load_presets()
+
+    from isaaclab_tasks.manager_based.multi_task.position_env_cfg import LocomotionPositionCommandEnvCfg
+    from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget import RetargetPipeline
+    from isaaclab_tasks.utils.hydra import resolve_presets
+
+    env_cfg = LocomotionPositionCommandEnvCfg()
+    resolve_presets(env_cfg, selected=selected)
 
     device = "cuda:0"
 
-    # --- Robot preset ---
-    robot_cfg = getattr(RobotArticulationCfg, args.robot)
-    robot_usd = robot_cfg.spawn.usd_path
-    base_height = robot_cfg.init_state.pos[2]
-    default_jpos = robot_cfg.init_state.joint_pos
-    lateral_hip_pattern = _preset_for(RetargetLateralHipJointPatternCfg, args.robot)
-
-    from isaaclab.utils.assets import check_file_path, retrieve_file_path
-
-    file_status = check_file_path(robot_usd)
-    if file_status == 0:
-        raise FileNotFoundError(f"USD not found: {robot_usd}")
-    if file_status == 2:
-        robot_usd = retrieve_file_path(robot_usd, force_download=False)
+    # --- Robot ---
+    robot_cfg = env_cfg.scene.robot
+    if robot_cfg is None or not hasattr(robot_cfg, "spawn"):
+        raise ValueError(
+            "env.scene.robot was not resolved — did you forget a robot preset? "
+            "Try: presets=anymal_c (or go2 / spot / h1 / b2 / mewtwo)."
+        )
+    robot_usd = _resolve_robot_usd(robot_cfg)
 
     # --- Terrain ---
-    sampler_x_range: tuple[float, float] | None = None
-    sampler_y_range: tuple[float, float] | None = None
-    if args.sub_terrain:
-        print(f"Terrain : sub_terrain={args.sub_terrain} (difficulty={args.difficulty})")
-        mesh, origin = _sub_terrain_mesh(sub_terrains[args.sub_terrain], args.difficulty)
-    else:
-        print(f"Terrain : preset={args.terrain}")
-        mesh, origin, sampler_x_range, sampler_y_range = _terrain_preset_mesh(terrain_presets[args.terrain], device)
+    terrain_gen_cfg = env_cfg.scene.terrain.terrain_generator
+    sub_terrain_names = list(terrain_gen_cfg.sub_terrains.keys())
+
+    from isaaclab.terrains.terrain_generator import TerrainGenerator
+
+    gen = TerrainGenerator(cfg=terrain_gen_cfg, device=device)
+    mesh = gen.terrain_mesh
+    origin = np.zeros(3, dtype=np.float32)
+    sampler_x_range, sampler_y_range = _terrain_grid_extents(terrain_gen_cfg)
     wp_mesh = convert_to_warp_mesh(mesh.vertices, mesh.faces, device=device)
-    print(f"  {len(mesh.vertices):,} verts, {len(mesh.faces):,} faces")
 
-    # --- Pipeline config ---
-    goal_cfg = None
-    if args.commands is not None:
-        goal_cfg, pipeline_cfg = _pipeline_from_commands_cfg(
-            robot=args.robot,
-            robot_usd=robot_usd,
-            base_height=base_height,
-            default_jpos=default_jpos,
-            device=device,
+    # --- Pipeline (from env's commands.goal_point) ---
+    goal_cfg = env_cfg.commands.goal_point
+    pipeline_cfg = _patch_kin_with_robot(goal_cfg.pipeline_cfg, robot_cfg, robot_usd, device)
+    pipeline_cfg = _patch_sampler_bounds(pipeline_cfg, sampler_x_range, sampler_y_range)
+
+    # --- Density (feature-aware) ---
+    spacing = args.spacing if args.spacing is not None else goal_cfg.pool_spacing
+    extractor = pipeline_cfg.sampler.sizing.final_fps_features
+    extra_dim, extra_vol = _feature_extra_dim_and_vol(extractor)
+    n_desired = _derive_n_desired(args, goal_cfg.pool_spacing, sampler_x_range, sampler_y_range, extractor)
+
+    # Spacing-driven post-IK count: pipeline derives ``k_target`` from the actual
+    # feature-space bbox of survivors at this spacing, so adding richer features
+    # (yaw, rotation, joints) automatically scales the final placement count up
+    # rather than capping at a pre-computed ``n_desired``.
+    pipeline_cfg = pipeline_cfg.replace(
+        sampler=pipeline_cfg.sampler.replace(
+            sizing=pipeline_cfg.sampler.sizing.replace(final_fps_spacing=spacing),
         )
-        command_names = ", ".join(command_presets[args.commands].keys())
-        print(f"Commands: {args.commands} [{command_names}]")
-
-    _apply_density_defaults(args, goal_cfg)
-    pool_sampling_size = _pool_sampling_size_from_args(args, goal_cfg)
-    sampler_x_range, sampler_y_range = _apply_pool_sampling_size(
-        mesh,
-        sampler_x_range,
-        sampler_y_range,
-        pool_sampling_size,
     )
-    if pool_sampling_size is not None:
-        print(f"Pool    : centered sampling_size={pool_sampling_size}")
 
-    # --- Density derivation ---
-    # When the user passes ``--spacing``, derive the final robot count from
-    # the sampling area. All sampler stage sizes (morph-patches, 4-foot
-    # neighborhoods, IK oversample, buffer capacity) are auto-derived inside
-    # the sampler from ``n_desired`` via the yield-rate cascade, so we don't
-    # have to touch any cfg knobs here.
-    _derive_max_robots_from_spacing(args, mesh, sampler_x_range, sampler_y_range)
-
-    # --- Robot ---
-    print(f"Robot   : {args.robot} ({robot_usd})")
-
-    if args.commands is None:
-        kin_cfg = NewtonKinematicsCfg(
-            usd_path=robot_usd,
-            device=device,
-            default_pos=(0.0, 0.0, base_height),
-            default_joint_pos=default_jpos,
-        )
-
-        from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics import NewtonKinematics
-
-        _tmp = NewtonKinematics(kin_cfg)
-        foot_names = _resolve_foot_names(args.robot, _tmp.body_names)
-        del _tmp
-
-        # Waterfall order: hard physical constraints first (collision,
-        # lateral hip, support-polygon stability) so their buckets report
-        # the true rate of physical invalidity. Cost is a residual
-        # IK-divergence catch on the physically valid subset.
-        criteria_list = [
-            CollisionCheckCfg(n_samples=16, max_pen=0.02),
-        ]
-        if lateral_hip_pattern:
-            criteria_list.append(LateralHipLimitCfg(joint_pattern=lateral_hip_pattern, max_angle=1.05))
-        criteria_list += [
-            SupportPolygonStabilityCfg(),
-            FootPositionErrorCfg(max_err=0.4, aggregate="sum"),
-            SolverCostOutlierCfg(threshold_multiplier=3.0),
-        ]
-
-        # Per-robot joint-regularize targets pulled from the robot preset class.
-        joint_regularize_targets = getattr(RetargetJointRegularizeTargetsCfg, args.robot, {})
-
-        base_rot_weight = 0.5
-        base_pos_weight = 0.05
-        gravity_weight = 0.02
-        patch_cfg = PatchSamplingCfg(x_range=sampler_x_range, y_range=sampler_y_range)
-        sampler_cfg = SamplerCfg(
-            patch=patch_cfg,
-            min_contacts=-1 if args.min_contacts is None else args.min_contacts,
-            terrain_snap_distance=0.15 if args.terrain_snap_distance is None else args.terrain_snap_distance,
-            outward_snap_penalty=1.0,
-        )
-        pipeline_cfg = RetargetPipelineCfg(
-            kin=kin_cfg,
-            sampler=sampler_cfg,
-            foot_body_names=foot_names,
-            lateral_hip_joint_pattern=lateral_hip_pattern,
-            joint_regularize_targets=joint_regularize_targets,
-            base_pos_weight=base_pos_weight,
-            base_rot_weight=base_rot_weight,
-            extra_objectives=[
-                IKObjectiveTerrainCollisionCfg(weight=2.0, margin=0.05, n_samples=4),
-                IKObjectiveStabilityMarginCfg(weight=1.0),
-                IKObjectiveGravityTorqueCfg(weight=gravity_weight),
-                # IKObjectiveJointRegularizeCfg(weight=0.02),
-            ],
-            criteria=criteria_list,
-        )
-
-    pipeline_cfg = _with_patch_sampling_bounds(pipeline_cfg, sampler_x_range, sampler_y_range)
-    pipeline_cfg = _with_sampler_overrides(
-        pipeline_cfg,
-        min_contacts=args.min_contacts,
-        terrain_snap_distance=args.terrain_snap_distance,
+    print(f"Presets : {sorted(selected) or '(none — using defaults)'}")
+    print(f"Robot   : usd={robot_usd}")
+    print(
+        f"Terrain : {len(sub_terrain_names)} sub-terrain(s) × {terrain_gen_cfg.num_rows}×{terrain_gen_cfg.num_cols}"
+        f" tiles → {len(mesh.vertices):,} verts, {len(mesh.faces):,} faces"
+    )
+    print(f"  sub_terrains: {sub_terrain_names}")
+    print(f"  sampler ranges: x={sampler_x_range}, y={sampler_y_range}")
+    print(
+        f"Pipeline: min_contacts={pipeline_cfg.sampler.min_contacts}"
+        f" terrain_snap_distance={pipeline_cfg.sampler.terrain_snap_distance}"
+        f" pool_spacing={goal_cfg.pool_spacing}"
     )
     print(
-        f"Sampler : min_contacts={getattr(pipeline_cfg.sampler, 'min_contacts', None)} "
-        f"terrain_snap_distance={getattr(pipeline_cfg.sampler, 'terrain_snap_distance', None)}"
+        f"IK wts  : base_rot={pipeline_cfg.base_rot_weight}"
+        f" base_pos={pipeline_cfg.base_pos_weight}"
+        f" gravity={_gravity_weight_from_cfg(pipeline_cfg)}"
     )
+    extractor_name = type(extractor).__name__ if extractor is not None else "xyz (default)"
     print(
-        f"IK wts  : base_rot={pipeline_cfg.base_rot_weight}, "
-        f"base_pos={pipeline_cfg.base_pos_weight}, gravity={_gravity_weight_from_cfg(pipeline_cfg)}"
+        f"Features: extractor={extractor_name} extra_dim={extra_dim} extra_vol={extra_vol:.3f}"
+        f" → spacing={spacing:.3f} drives both pre-IK budget and post-IK FPS"
     )
+    print(f"Density : n_desired (budget)={n_desired} (max_robots={args.max_robots} spacing={args.spacing})")
 
+    print("\n--- Running retarget pipeline ---")
     t0 = time.time()
     pipeline = RetargetPipeline(pipeline_cfg)
     kin = pipeline.kin
@@ -694,12 +386,9 @@ def main():
     foot_spread = np.linalg.norm(foot_offsets[:, :2].max(axis=0) - foot_offsets[:, :2].min(axis=0))
     print(f"  standing_height={standing_height:.3f}m foot_spread={foot_spread:.3f}m")
 
-    print("\n--- Running retarget pipeline ---")
-
-    buf = pipeline.run(wp_mesh, origin, n_desired=args.max_robots)
+    buf = pipeline.run(wp_mesh, origin, n_desired=n_desired)
     t_total = time.time() - t0
 
-    # Rejection summary already includes per-criterion counts and timings.
     print(pipeline.rejection_summary)
     print(f"  Wall time: {t_total:.2f}s")
 
@@ -707,12 +396,11 @@ def main():
         print("No valid candidates. Exiting.")
         sys.exit(1)
 
-    # Selected placements' contact-count histogram.
     sel_idx = buf._selected[: buf.num_selected].to(torch.long)
     nc = len(foot_ids)
     is_c_sel = buf.is_contact_t.view(-1, nc)[sel_idx]
     n_active_sel = is_c_sel.to(torch.int32).sum(dim=-1).cpu().tolist()
-    nc_hist = {}
+    nc_hist: dict[int, int] = {}
     for k in n_active_sel:
         nc_hist[int(k)] = nc_hist.get(int(k), 0) + 1
     print(f"  Selected placement contact-count histogram: {dict(sorted(nc_hist.items()))}")
@@ -726,7 +414,6 @@ def main():
     sel = buf._selected[: buf.num_selected].cpu().numpy()
     jq_results = buf.joint_q_result_t.cpu().numpy()
     ct_np = buf.contact_targets_t.cpu().numpy()
-    nc = len(foot_ids)
     cpc = kin.model.joint_coord_count
 
     solved_qs = [jq_results[idx] for idx in sel]
@@ -775,11 +462,7 @@ def main():
     # Conservative candidate density (~10 patches/m^2) so even low-valid-fraction
     # terrains (e.g. FLOATING_ISLAND at ~26% valid cells) comfortably satisfy
     # the request and no fallback is needed.
-    if sampler_x_range is not None and sampler_y_range is not None:
-        vis_area = (sampler_x_range[1] - sampler_x_range[0]) * (sampler_y_range[1] - sampler_y_range[0])
-    else:
-        v_xy = np.asarray(mesh.vertices)
-        vis_area = float((v_xy[:, 0].max() - v_xy[:, 0].min()) * (v_xy[:, 1].max() - v_xy[:, 1].min()))
+    vis_area = (sampler_x_range[1] - sampler_x_range[0]) * (sampler_y_range[1] - sampler_y_range[0])
     vis_num_patches = max(100, min(10000, int(vis_area * 10)))
 
     fc_cfg = MorphologicalPatchSamplingCfg(
@@ -788,8 +471,8 @@ def main():
         max_height_diff=0.03,
         horizontal_scale=0.03,
         oversample_ratio=3.0,
-        x_range=sampler_x_range if sampler_x_range is not None else (-1e6, 1e6),
-        y_range=sampler_y_range if sampler_y_range is not None else (-1e6, 1e6),
+        x_range=sampler_x_range,
+        y_range=sampler_y_range,
     )
 
     fp = fc_cfg.func(wp_mesh, origin, fc_cfg)

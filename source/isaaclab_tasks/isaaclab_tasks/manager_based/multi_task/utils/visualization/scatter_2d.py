@@ -252,7 +252,9 @@ class ScatterDashboard2D:
         figsize: tuple[float, float] = (15, 13),
         dpi: int = 140,
         suptitle: str = "",
-        dot_size: float = 6.0,
+        dot_size: float | None = None,
+        dot_size_data: float | None = None,
+        density_dot_fraction: float = 0.15,
     ) -> np.ndarray:
         """Render all panels into a single RGB image.
 
@@ -266,12 +268,32 @@ class ScatterDashboard2D:
             figsize: Matplotlib figsize in inches.
             dpi: Output dpi.
             suptitle: Optional figure-level title.
-            dot_size: Scatter marker size in matplotlib's ``s=`` units.
+            dot_size: Scatter marker size in matplotlib ``s=`` units (points
+                squared). Mutually exclusive with :paramref:`dot_size_data`.
+                When set, takes precedence over the density-driven default.
+            dot_size_data: Dot diameter in *data units* (meters). Marker
+                ``s`` is computed per-render from the panel's data extent
+                so the same physical radius reads correctly across terrain
+                sizes. Use this when you want to lock the dot to a specific
+                physical size (e.g. patch radius). Mutually exclusive with
+                :paramref:`dot_size`.
+            density_dot_fraction: When *both* :paramref:`dot_size` and
+                :paramref:`dot_size_data` are ``None``, the dot diameter
+                auto-scales to ``density_dot_fraction × √(area / num_valid)``
+                — each dot covers about that fraction of the *uniform-
+                equivalent* inter-point spacing. Default ``0.15`` is
+                calibrated against the original ~0.4m visual at the
+                ~50×120m, 888-patch baseline; the formula then auto-shrinks
+                dots when patches pack denser (e.g. ~0.13m at 8k patches,
+                ~0.04m at 80k). Raise for fatter blobs that emphasise
+                color over position; lower for tighter dots.
 
         Returns:
             ``[H, W, 3]`` ``uint8`` array. Pass directly to
             ``wandb.Image(...)`` or ``PIL.Image.fromarray``.
         """
+        import math
+
         import matplotlib
 
         matplotlib.use("Agg")
@@ -279,6 +301,8 @@ class ScatterDashboard2D:
 
         if len(panels) == 0:
             raise ValueError("panels must contain at least one PanelSpec")
+        if dot_size is not None and dot_size_data is not None:
+            raise ValueError("dot_size and dot_size_data are mutually exclusive")
 
         fig, axes = plt.subplots(
             1,
@@ -297,6 +321,33 @@ class ScatterDashboard2D:
             valid = np.asarray(valid_mask, dtype=bool).reshape(-1)
             if valid.shape != (self._n,):
                 raise ValueError(f"valid_mask must be [{self._n}], got {valid.shape}")
+
+        # Resolve marker ``s``:
+        #   1. explicit ``dot_size`` (raw points²) — wins outright.
+        #   2. explicit ``dot_size_data`` (data-unit diameter) — convert via figure / extent.
+        #   3. neither — auto-pick from point density so dots stay visibly distinct
+        #      regardless of how tightly the patches pack.
+        if dot_size is None:
+            # Approximate per-panel axis width in inches; constrained_layout shrinks
+            # this slightly for legend/colorbar space but the residual error doesn't
+            # affect the visual scaling intent.
+            axis_inches = figsize[0] / max(len(panels), 1)
+            if self._bg_extent is not None:
+                xmin, xmax, ymin, ymax = self._bg_extent
+                extent_x = max(xmax - xmin, 1e-9)
+                extent_y = max(ymax - ymin, 1e-9)
+            else:
+                extent_x = max(float(self._xy[:, 0].ptp()) if self._n > 0 else 1.0, 1e-9)
+                extent_y = max(float(self._xy[:, 1].ptp()) if self._n > 0 else 1.0, 1e-9)
+
+            if dot_size_data is None:
+                # Density-driven: dot diameter ≈ fraction × typical inter-point spacing.
+                n_visible = max(int(valid.sum()), 1)
+                dot_size_data = density_dot_fraction * math.sqrt(extent_x * extent_y / n_visible)
+            # diameter [points] = diameter_data * (axis_inches / extent_x) * 72
+            # s [points²] = π * (diameter_points / 2)²
+            diameter_points = dot_size_data * axis_inches * 72.0 / extent_x
+            dot_size = math.pi * (diameter_points / 2.0) ** 2
 
         for i, (ax, panel) in enumerate(zip(axes, panels)):
             if panel.values.shape[0] != self._n:

@@ -146,7 +146,28 @@ class reset_accumulator(ManagerTermBase):
         keep_accumulating: bool = False,
         report: bool = False,
         monitor_exclude_terms: list[str] = [],
+        wandb_3d_asset: str | None = None,
+        wandb_3d_relative_to: str | None = None,
+        wandb_3d_log_period: int = 100,
     ):
+        """Args (additional 3D-vis params):
+
+        wandb_3d_asset: Asset name whose xyz columns drive a periodic
+            ``wandb.Object3D`` upload of the per-slot success rate, sampling
+            probability, and Δ-success. ``None`` (default) skips upload.
+            The asset must be one of :paramref:`reset_assets`.
+        wandb_3d_relative_to: If set, plot the position offset of
+            :paramref:`wandb_3d_asset` from this reference asset, expressed
+            **in the reference asset's body frame** (i.e., the position
+            difference is rotated by the reference's inverse orientation).
+            For factory: pass ``"fixed_asset"`` here so origin = perfectly
+            assembled and axes are aligned with the goal pose, regardless
+            of how the fixed asset is oriented per buffer slot. ``None``
+            plots env-relative xyz directly.
+        wandb_3d_log_period: Number of ``__call__`` invocations between
+            wandb pushes. Ignored when :paramref:`wandb_3d_asset` is
+            ``None``.
+        """
         # 1. Pre-collect until buffer is full
         if reset_assets and list(reset_assets) != self._requested_reset_assets:
             raise ValueError(
@@ -238,6 +259,120 @@ class reset_accumulator(ManagerTermBase):
             if "log" not in env.extras:
                 env.extras["log"] = {}
             env.extras["log"].update(log)  # type: ignore
+
+        # 6. Periodic 3D wandb scatter (opt-in via ``wandb_3d_asset``).
+        if wandb_3d_asset is not None and not self.precollecting_phase:
+            self._wandb_3d_counter = getattr(self, "_wandb_3d_counter", 0) + 1
+            if self._wandb_3d_counter % wandb_3d_log_period == 0:
+                self._log_wandb_3d_scatter(wandb_3d_asset, wandb_3d_relative_to, sampling)
+
+    # ------------------------------------------------------------------
+    # 3D wandb visualization
+    # ------------------------------------------------------------------
+
+    def _xyz_offset_for_asset(self, asset_name: str) -> int | None:
+        """Return the column offset of an asset's root xyz, or ``None`` if absent.
+
+        State buffer rows are concatenated per-adapter slices; the first three
+        columns of every adapter's slice are the asset's world (or env-relative)
+        ``(x, y, z)``.
+        """
+        offset = 0
+        for adapter in self.reset_state_adapters:
+            if getattr(adapter, "asset_name", None) == asset_name:
+                return offset
+            offset += adapter.state_dim(self._env)
+        return None
+
+    def _log_wandb_3d_scatter(self, asset_name: str, relative_to: str | None, sampling_cfg) -> None:
+        """Push per-slot success / sampling / Δ-success as ``wandb.Object3D``.
+
+        Builds a :class:`ScatterDashboard3D` once on first call. Position
+        per slot is:
+
+        - ``asset.xyz`` (env-relative) when ``relative_to`` is ``None``.
+        - ``quat_apply_inverse(ref.quat, asset.xyz − ref.xyz)`` when
+          ``relative_to`` is set — i.e., the offset rotated into the
+          reference asset's body frame so the cloud's axes are aligned
+          with the goal pose regardless of the reference's orientation.
+
+        Three panels are pushed each call as separate Object3D logs so they
+        appear as independent wandb panels with their own history slider.
+        No-ops cleanly if wandb isn't initialized, either asset isn't in
+        the buffer, or the buffer is empty.
+        """
+        try:
+            import wandb
+        except ImportError:
+            return
+        if wandb.run is None:
+            return
+
+        # Lazy build: dashboard geometry, prev-rate cache, sampling-prob buffer.
+        if not hasattr(self, "_wandb_3d_dashboard"):
+            offset = self._xyz_offset_for_asset(asset_name)
+            if offset is None:
+                self._wandb_3d_dashboard = None
+                return
+            ref_offset = None
+            if relative_to is not None:
+                ref_offset = self._xyz_offset_for_asset(relative_to)
+                if ref_offset is None:
+                    self._wandb_3d_dashboard = None
+                    return
+            n = len(self.state_buffer)
+            if n == 0:
+                return  # buffer not populated yet; retry next gate
+            from isaaclab.utils.math import quat_apply_inverse
+
+            from isaaclab_tasks.manager_based.multi_task.utils.visualization import ScatterDashboard3D
+
+            xyz = self.state_buffer.data[:n, offset : offset + 3]
+            if ref_offset is not None:
+                ref_xyz = self.state_buffer.data[:n, ref_offset : ref_offset + 3]
+                # Adapter slice layout: [pos(3), quat_xyzw(4), lin_vel(3), ang_vel(3), ...].
+                ref_quat = self.state_buffer.data[:n, ref_offset + 3 : ref_offset + 7]
+                xyz = quat_apply_inverse(ref_quat, xyz - ref_xyz)
+            positions_xyz = xyz.detach().cpu().numpy()
+            self._wandb_3d_dashboard = ScatterDashboard3D(positions=positions_xyz)
+            self._wandb_3d_n = n
+            self._wandb_3d_prev_rates = torch.zeros(n, device=self.success_rate.device)
+        if self._wandb_3d_dashboard is None:
+            return
+
+        from isaaclab_tasks.manager_based.multi_task.utils.visualization import PanelSpec
+
+        n = self._wandb_3d_n
+        rates_t = self.success_rate[:n]
+        delta_t = rates_t - self._wandb_3d_prev_rates
+        self._wandb_3d_prev_rates.copy_(rates_t)
+
+        # Sampling probability mirrors the runtime sampler for sample-mass
+        # parity with what the policy actually sees.
+        if isinstance(sampling_cfg, BetaSamplingCfg):
+            probs_t = beta_sampling_probs(rates_t, sampling_cfg.target, sampling_cfg.kappa, sampling_cfg.temperature)
+        else:
+            probs_t = torch.full_like(rates_t, 1.0 / max(n, 1))
+
+        rates = rates_t.detach().cpu().numpy()
+        delta = delta_t.detach().cpu().numpy()
+        probs = probs_t.detach().cpu().numpy()
+
+        prob_max = max(float(probs.max()), 1e-9)
+        delta_range = max(float(abs(delta).max()), 0.05)
+
+        panels = {
+            "success_rate_3d": PanelSpec(values=rates, cmap="RdYlGn", vmin=0.0, vmax=1.0, title="success_rate"),
+            "sampling_prob_3d": PanelSpec(values=probs, cmap="viridis", vmin=0.0, vmax=prob_max, title="sampling_prob"),
+            "delta_success_3d": PanelSpec(
+                values=delta, cmap="RdYlGn", vmin=-delta_range, vmax=delta_range, title="delta_success"
+            ),
+        }
+        log_payload = {
+            f"Curriculum/{tag}": wandb.Object3D(self._wandb_3d_dashboard.to_object3d(panel))
+            for tag, panel in panels.items()
+        }
+        wandb.log(log_payload)
 
 
 class TermChoice(ManagerTermBase):

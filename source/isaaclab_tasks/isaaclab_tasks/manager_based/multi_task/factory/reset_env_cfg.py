@@ -271,6 +271,11 @@ ACCUMULATOR_RESET = EventTerm(
             default=["predictor_truncation"],
             success_estimator=["predictor_truncation"],
         ),
+        # 3D wandb scatter: dot = held_asset xyz **relative to fixed_asset** in
+        # each buffer slot, so origin = perfectly assembled and the cloud reads
+        # as offsets from the goal pose. Pushed as Object3D every 100 calls.
+        "wandb_3d_asset": "held_asset",
+        "wandb_3d_relative_to": "fixed_asset",
     },
 )
 
