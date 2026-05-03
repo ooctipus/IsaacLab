@@ -8,6 +8,7 @@ from isaaclab.managers import SceneEntityCfg
 
 from isaaclab_tasks.manager_based.multi_task.mdp.util import (
     BetaSamplingCfg,
+    FrontierSamplingCfg,
     StateBufferCfg,
     SuccessMonitorCfg,
     UniformSamplingCfg,
@@ -264,6 +265,45 @@ ACCUMULATOR_RESET = EventTerm(
             uniform=UniformSamplingCfg(),
             success_estimator=BetaSamplingCfg(success_rate_bind="self.state_buffer.success_rates", target=0.66),
             monitor=BetaSamplingCfg(success_rate_bind="self.success_rate", target=0.66),
+            # Frontier sampler builds a kNN graph over the post-precollect
+            # slot xyz (using the same ``wandb_3d_asset`` / ``wandb_3d_relative_to``
+            # axes as the 3D scatter) and biases sampling toward slots at
+            # the spatial edge of the policy's current competence. The
+            # ``base`` sampler controls the per-slot floor: ``BetaSamplingCfg``
+            # rewards borderline-rate slots, ``UniformSamplingCfg`` gives
+            # every slot an equal floor so the spatial-frontier term does
+            # all the differentiation. ``frontier_lambda`` mixes the two;
+            # ``0`` reproduces ``base`` alone.
+            frontier=FrontierSamplingCfg(
+                success_rate_bind="self.success_rate",
+                base=BetaSamplingCfg(success_rate_bind="self.success_rate", target=0.66, kappa=1.0),
+                frontier_lambda=0.5,
+                dilation_steps=1,
+            ),
+            frontier_l2=FrontierSamplingCfg(
+                success_rate_bind="self.success_rate",
+                base=BetaSamplingCfg(success_rate_bind="self.success_rate", target=0.66, kappa=1.0),
+                frontier_lambda=2.0,
+                dilation_steps=1,
+            ),
+            frontier_l5=FrontierSamplingCfg(
+                success_rate_bind="self.success_rate",
+                base=BetaSamplingCfg(success_rate_bind="self.success_rate", target=0.66, kappa=1.0),
+                frontier_lambda=5.0,
+                dilation_steps=1,
+            ),
+            frontier_uniform=FrontierSamplingCfg(
+                success_rate_bind="self.success_rate",
+                base=UniformSamplingCfg(),
+                frontier_lambda=2.0,
+                dilation_steps=1,
+            ),
+            frontier_estimator=FrontierSamplingCfg(
+                success_rate_bind="self.state_buffer.success_rates",
+                base=BetaSamplingCfg(success_rate_bind="self.state_buffer.success_rates", target=0.66, kappa=1.0),
+                frontier_lambda=2.0,
+                dilation_steps=1,
+            ),
         ),
         "reset_term": SCENE_RESET,
         "report": True,

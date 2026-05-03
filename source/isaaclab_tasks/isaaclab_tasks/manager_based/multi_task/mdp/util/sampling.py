@@ -43,16 +43,21 @@ def build_knn_indices(
     xy_coords: torch.Tensor,
     k: int,
 ) -> torch.Tensor:
-    """Build a k-NN index table over an xy point set.
+    """Build a k-NN index table over a point set.
 
     Intended for use over the *state buffer* (the pool of physically-valid
-    robot xy positions, e.g. ``task_table.spawn_states[:, :2]``), not over
-    tasks. The state pool is the natural spatial domain regardless of how
-    tasks combine spawn/target endpoints; this function is therefore
-    topology-agnostic.
+    state positions, e.g. ``task_table.spawn_states[:, :2]`` for terrain
+    locomotion or ``held_asset.xyz`` relative to the goal pose for factory
+    assembly), not over tasks. The state pool is the natural spatial
+    domain regardless of how tasks combine endpoints; this function is
+    therefore topology-agnostic.
+
+    Works in arbitrary dimensionality (2D for terrain xy, 3D for factory
+    xyz). The argument name ``xy_coords`` is kept for backward
+    compatibility but the trailing axis can be any positive size.
 
     For each point the returned row contains the indices of its ``k``
-    nearest other points in xy (self excluded). When the pool has fewer
+    nearest other points (self excluded). When the pool has fewer
     than ``k+1`` points, missing slots are padded with the point's own
     index so frontier evaluations on those slots collapse to 0 without
     spurious cross-talk.
@@ -63,7 +68,8 @@ def build_knn_indices(
     pools).
 
     Args:
-        xy_coords: ``[num_points, 2]`` xy positions of the point set.
+        xy_coords: ``[num_points, D]`` positions of the point set;
+            ``D=2`` for xy, ``D=3`` for xyz, etc.
         k: Number of nearest neighbors to record per point.
 
     Returns:

@@ -33,8 +33,14 @@ from tqdm import tqdm
 from isaaclab.managers import EventTermCfg, ManagerTermBase
 
 from . import reset_state
-from .sampling import beta_sampling_probs, tagged_report
-from .sampling_cfg import BetaSamplingCfg, UniformSamplingCfg
+from .sampling import (
+    beta_sampling_probs,
+    build_knn_indices,
+    frontier_sampling_probs,
+    state_frontier_weights,
+    tagged_report,
+)
+from .sampling_cfg import BetaSamplingCfg, FrontierSamplingCfg, UniformSamplingCfg
 from .state_buffer import StateBuffer
 from .state_buffer_cfg import StateBufferCfg
 from .success_monitor_cfg import SuccessMonitorCfg
@@ -98,8 +104,18 @@ class reset_accumulator(ManagerTermBase):
 
         self.success_rate = torch.zeros(max_size, device=env.device)
         self._success_rate_source = "monitor"
-        if isinstance(self._sampling_cfg, BetaSamplingCfg) and "state_buffer" in self._sampling_cfg.success_rate_bind:
+        if (
+            isinstance(self._sampling_cfg, (BetaSamplingCfg, FrontierSamplingCfg))
+            and "state_buffer" in self._sampling_cfg.success_rate_bind
+        ):
             self._success_rate_source = "success_estimator"
+
+        # Frontier sampler builds its kNN graph over the post-precollect
+        # buffer xyz; deferred to the first call after precollect since
+        # the buffer is empty at __init__ time.
+        self._state_knn_indices: torch.Tensor | None = None
+        self._slot_arange: torch.Tensor | None = None
+        self._frontier_log_counter: int = 0
 
     # ------------------------------------------------------------------
     # Buffer accumulation
@@ -142,7 +158,7 @@ class reset_accumulator(ManagerTermBase):
         acceptance_conditions: dict = {},
         state_buffer_cfg: StateBufferCfg = StateBufferCfg(),
         success_monitor_cfg: SuccessMonitorCfg | None = None,
-        sampling: UniformSamplingCfg | BetaSamplingCfg = UniformSamplingCfg(),
+        sampling: UniformSamplingCfg | BetaSamplingCfg | FrontierSamplingCfg = UniformSamplingCfg(),
         keep_accumulating: bool = False,
         report: bool = False,
         monitor_exclude_terms: list[str] = [],
@@ -234,8 +250,23 @@ class reset_accumulator(ManagerTermBase):
             env_ids = self._accumulate(env, env_ids, reset_term)
 
         # 4. Sample a slot and apply the state
+        probs: torch.Tensor | None = None
         if env_ids.numel() > 0:
-            if isinstance(self._sampling_cfg, BetaSamplingCfg):
+            if isinstance(self._sampling_cfg, FrontierSamplingCfg):
+                self._ensure_frontier_knn(wandb_3d_asset, wandb_3d_relative_to)
+                assert self._state_knn_indices is not None and self._slot_arange is not None
+                probs = frontier_sampling_probs(
+                    self.success_rate,
+                    state_knn_indices=self._state_knn_indices,
+                    spawn_index=self._slot_arange,
+                    target_index=self._slot_arange,
+                    base=self._sampling_cfg.base,
+                    frontier_lambda=self._sampling_cfg.frontier_lambda,
+                    dilation_steps=self._sampling_cfg.dilation_steps,
+                    eps=self._sampling_cfg.eps,
+                )
+                slot_idx = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
+            elif isinstance(self._sampling_cfg, BetaSamplingCfg):
                 probs = beta_sampling_probs(
                     self.success_rate,
                     self._sampling_cfg.target,
@@ -259,6 +290,19 @@ class reset_accumulator(ManagerTermBase):
             if "log" not in env.extras:
                 env.extras["log"] = {}
             env.extras["log"].update(log)  # type: ignore
+
+        # 5b. Frontier-bin diagnostic. Buckets per-slot probs by per-slot
+        # frontier weight (same convention as the terrain curriculum) so
+        # we can verify the algorithm is differentiating frontier-unlearned
+        # slots from deep-unlearned ones at the per-slot level.
+        if (
+            isinstance(self._sampling_cfg, FrontierSamplingCfg)
+            and probs is not None
+            and self._state_knn_indices is not None
+        ):
+            self._frontier_log_counter += 1
+            if self._frontier_log_counter % 50 == 0:
+                self._log_frontier_bins(probs)
 
         # 6. Periodic 3D wandb scatter (opt-in via ``wandb_3d_asset``).
         if wandb_3d_asset is not None and not self.precollecting_phase:
@@ -284,11 +328,134 @@ class reset_accumulator(ManagerTermBase):
             offset += adapter.state_dim(self._env)
         return None
 
+    def _slot_xyz_tensor(self, asset_name: str | None, relative_to: str | None) -> torch.Tensor | None:
+        """Per-slot ``[n_slots, 3]`` xyz of ``asset_name``, optionally in ``relative_to``'s body frame.
+
+        Single source of truth for the slot spatial domain shared by the
+        wandb 3D scatter and the frontier kNN graph. Returns ``None`` when
+        the asset (or reference) is not in the buffer or the buffer is
+        empty -- callers should treat this as "not yet ready".
+
+        - ``relative_to=None``: env-relative ``asset.xyz`` straight from
+          the buffer.
+        - ``relative_to`` set: ``quat_apply_inverse(ref.quat, asset.xyz −
+          ref.xyz)`` — the offset rotated into the reference's body frame
+          so axes align with the goal pose regardless of reference
+          orientation.
+        """
+        if asset_name is None:
+            return None
+        offset = self._xyz_offset_for_asset(asset_name)
+        if offset is None:
+            return None
+        ref_offset: int | None = None
+        if relative_to is not None:
+            ref_offset = self._xyz_offset_for_asset(relative_to)
+            if ref_offset is None:
+                return None
+        n = len(self.state_buffer)
+        if n == 0:
+            return None
+        xyz = self.state_buffer.data[:n, offset : offset + 3]
+        if ref_offset is not None:
+            from isaaclab.utils.math import quat_apply_inverse
+
+            ref_xyz = self.state_buffer.data[:n, ref_offset : ref_offset + 3]
+            # Adapter slice layout: [pos(3), quat_xyzw(4), lin_vel(3), ang_vel(3), ...].
+            ref_quat = self.state_buffer.data[:n, ref_offset + 3 : ref_offset + 7]
+            xyz = quat_apply_inverse(ref_quat, xyz - ref_xyz)
+        return xyz
+
+    def _ensure_frontier_knn(self, wandb_3d_asset: str | None, wandb_3d_relative_to: str | None) -> None:
+        """Build the state-pool kNN graph for frontier sampling once after precollect.
+
+        The graph is over the post-precollect slot xyz (the natural state
+        pool), reusing the same ``(asset, relative_to)`` choice as the 3D
+        scatter so the spatial signal the frontier sampler propagates is
+        the one the user can already see in wandb. Shared assembly tasks
+        typically pass ``held_asset`` / ``fixed_asset`` so the cloud's
+        origin is the goal pose.
+        """
+        if self._state_knn_indices is not None:
+            return
+        assert isinstance(self._sampling_cfg, FrontierSamplingCfg)
+        xyz = self._slot_xyz_tensor(wandb_3d_asset, wandb_3d_relative_to)
+        if xyz is None:
+            raise ValueError(
+                "FrontierSamplingCfg requires a per-slot spatial domain to build the kNN graph; "
+                "set ``wandb_3d_asset`` (and optionally ``wandb_3d_relative_to``) on the "
+                "reset_accumulator term so the buffer's slot xyz can be extracted."
+            )
+        self._state_knn_indices = build_knn_indices(xyz, k=self._sampling_cfg.k)
+        self._slot_arange = torch.arange(xyz.shape[0], device=xyz.device, dtype=torch.long)
+
+    def _log_frontier_bins(self, probs: torch.Tensor) -> None:
+        """Bucket per-slot probs by per-slot frontier weight; log to extras + stdout.
+
+        Mirrors the terrain curriculum's frontier-bin diagnostic. With
+        slot==task (``spawn_index==target_index==arange(N)``), the
+        per-task above-mean-deviation reduces to ``2 * (state_frontier −
+        mean).clamp_min(0)``; the factor-of-two is absorbed by the
+        normalization downstream and we report the raw ``state_frontier``
+        bins so the numbers are comparable to the terrain logs.
+        """
+        assert isinstance(self._sampling_cfg, FrontierSamplingCfg)
+        assert self._state_knn_indices is not None and self._slot_arange is not None
+        state_s, state_frontier = state_frontier_weights(
+            self.success_rate,
+            state_knn_indices=self._state_knn_indices,
+            spawn_index=self._slot_arange,
+            target_index=self._slot_arange,
+            dilation_steps=self._sampling_cfg.dilation_steps,
+        )
+
+        bins = [
+            ("ftr<0.01", 0.0, 0.01),
+            ("0.01-0.05", 0.01, 0.05),
+            ("0.05-0.20", 0.05, 0.20),
+            ("0.20-0.50", 0.20, 0.50),
+            ("0.50+", 0.50, 1.001),
+        ]
+        log_dict = self._env.extras.setdefault("log", {})
+        rows = []
+        total_p = float(probs.sum())
+        for label, lo, hi in bins:
+            mask = (state_frontier >= lo) & (state_frontier < hi)
+            n = int(mask.sum())
+            if n == 0:
+                rows.append((label, 0, 0.0, 0.0, 0.0, 0.0))
+                continue
+            mean_p = float(probs[mask].mean())
+            mass = float(probs[mask].sum())
+            mean_self_s = float(state_s[mask].mean())
+            min_ftr = float(state_frontier[mask].min())
+            rows.append((label, n, mean_p, mass, mean_self_s, min_ftr))
+            log_dict[f"Frontier/bin_{label}_count"] = float(n)
+            log_dict[f"Frontier/bin_{label}_mean_prob"] = mean_p
+            log_dict[f"Frontier/bin_{label}_mass"] = mass
+            log_dict[f"Frontier/bin_{label}_mean_self_s"] = mean_self_s
+
+        print(
+            "[FRONTIER DIAG] step="
+            f"{self._env.common_step_counter}  total_p={total_p:.3f}  "
+            f"state_frontier max={float(state_frontier.max()):.3f}  "
+            f"state_s p10/50/90="
+            f"{float(state_s.quantile(0.1)):.3f}/{float(state_s.quantile(0.5)):.3f}/{float(state_s.quantile(0.9)):.3f}",
+            flush=True,
+        )
+        header = f"  {'bin':12s} {'count':>6s} {'mean_p':>10s} {'mass':>8s} {'mean_self_s':>11s} {'min_ftr':>8s}"
+        print(header, flush=True)
+        for label, n, mean_p, mass, mean_self_s, min_ftr in rows:
+            print(
+                f"  {label:12s} {n:6d} {mean_p:10.3e} {mass:8.3f} {mean_self_s:11.3f} {min_ftr:8.3f}",
+                flush=True,
+            )
+
     def _log_wandb_3d_scatter(self, asset_name: str, relative_to: str | None, sampling_cfg) -> None:
         """Push per-slot success / sampling / Δ-success as ``wandb.Object3D``.
 
-        Builds a :class:`ScatterDashboard3D` once on first call. Position
-        per slot is:
+        Builds a :class:`ScatterDashboard3D` once on first call using
+        :meth:`_slot_xyz_tensor` for slot positions:
 
         - ``asset.xyz`` (env-relative) when ``relative_to`` is ``None``.
         - ``quat_apply_inverse(ref.quat, asset.xyz − ref.xyz)`` when
@@ -296,10 +463,12 @@ class reset_accumulator(ManagerTermBase):
           reference asset's body frame so the cloud's axes are aligned
           with the goal pose regardless of the reference's orientation.
 
-        Three panels are pushed each call as separate Object3D logs so they
-        appear as independent wandb panels with their own history slider.
-        No-ops cleanly if wandb isn't initialized, either asset isn't in
-        the buffer, or the buffer is empty.
+        Each call pushes the per-slot panels (success rate, sampling
+        prob, Δ-success, plus state frontier when frontier sampling is
+        active) as separate Object3D logs so they appear as independent
+        wandb panels with their own history slider. No-ops cleanly if
+        wandb isn't initialized, either asset isn't in the buffer, or
+        the buffer is empty.
         """
         try:
             import wandb
@@ -310,31 +479,18 @@ class reset_accumulator(ManagerTermBase):
 
         # Lazy build: dashboard geometry, prev-rate cache, sampling-prob buffer.
         if not hasattr(self, "_wandb_3d_dashboard"):
-            offset = self._xyz_offset_for_asset(asset_name)
-            if offset is None:
-                self._wandb_3d_dashboard = None
-                return
-            ref_offset = None
-            if relative_to is not None:
-                ref_offset = self._xyz_offset_for_asset(relative_to)
-                if ref_offset is None:
+            xyz = self._slot_xyz_tensor(asset_name, relative_to)
+            if xyz is None:
+                # Asset (or ref) absent; remember and never retry.
+                if self._xyz_offset_for_asset(asset_name) is None or (
+                    relative_to is not None and self._xyz_offset_for_asset(relative_to) is None
+                ):
                     self._wandb_3d_dashboard = None
-                    return
-            n = len(self.state_buffer)
-            if n == 0:
-                return  # buffer not populated yet; retry next gate
-            from isaaclab.utils.math import quat_apply_inverse
-
+                return  # buffer empty: retry next gate
             from isaaclab_tasks.manager_based.multi_task.utils.visualization import ScatterDashboard3D
 
-            xyz = self.state_buffer.data[:n, offset : offset + 3]
-            if ref_offset is not None:
-                ref_xyz = self.state_buffer.data[:n, ref_offset : ref_offset + 3]
-                # Adapter slice layout: [pos(3), quat_xyzw(4), lin_vel(3), ang_vel(3), ...].
-                ref_quat = self.state_buffer.data[:n, ref_offset + 3 : ref_offset + 7]
-                xyz = quat_apply_inverse(ref_quat, xyz - ref_xyz)
-            positions_xyz = xyz.detach().cpu().numpy()
-            self._wandb_3d_dashboard = ScatterDashboard3D(positions=positions_xyz)
+            n = xyz.shape[0]
+            self._wandb_3d_dashboard = ScatterDashboard3D(positions=xyz.detach().cpu().numpy())
             self._wandb_3d_n = n
             self._wandb_3d_prev_rates = torch.zeros(n, device=self.success_rate.device)
         if self._wandb_3d_dashboard is None:
@@ -349,7 +505,19 @@ class reset_accumulator(ManagerTermBase):
 
         # Sampling probability mirrors the runtime sampler for sample-mass
         # parity with what the policy actually sees.
-        if isinstance(sampling_cfg, BetaSamplingCfg):
+        if isinstance(sampling_cfg, FrontierSamplingCfg):
+            assert self._state_knn_indices is not None and self._slot_arange is not None
+            probs_t = frontier_sampling_probs(
+                rates_t,
+                state_knn_indices=self._state_knn_indices,
+                spawn_index=self._slot_arange,
+                target_index=self._slot_arange,
+                base=sampling_cfg.base,
+                frontier_lambda=sampling_cfg.frontier_lambda,
+                dilation_steps=sampling_cfg.dilation_steps,
+                eps=sampling_cfg.eps,
+            )
+        elif isinstance(sampling_cfg, BetaSamplingCfg):
             probs_t = beta_sampling_probs(rates_t, sampling_cfg.target, sampling_cfg.kappa, sampling_cfg.temperature)
         else:
             probs_t = torch.full_like(rates_t, 1.0 / max(n, 1))
@@ -368,6 +536,23 @@ class reset_accumulator(ManagerTermBase):
                 values=delta, cmap="RdYlGn", vmin=-delta_range, vmax=delta_range, title="delta_success"
             ),
         }
+        # Add frontier panel when frontier sampling is active so the
+        # spatial signal driving the sampler is visible alongside the
+        # rate / prob / delta panels.
+        if isinstance(sampling_cfg, FrontierSamplingCfg) and self._state_knn_indices is not None:
+            assert self._slot_arange is not None
+            _, state_frontier_t = state_frontier_weights(
+                rates_t,
+                state_knn_indices=self._state_knn_indices,
+                spawn_index=self._slot_arange,
+                target_index=self._slot_arange,
+                dilation_steps=sampling_cfg.dilation_steps,
+            )
+            sf = state_frontier_t.detach().cpu().numpy()
+            sf_max = max(float(sf.max()), 1e-9)
+            panels["state_frontier_3d"] = PanelSpec(
+                values=sf, cmap="viridis", vmin=0.0, vmax=sf_max, title="state_frontier"
+            )
         log_payload = {
             f"Curriculum/{tag}": wandb.Object3D(self._wandb_3d_dashboard.to_object3d(panel))
             for tag, panel in panels.items()
