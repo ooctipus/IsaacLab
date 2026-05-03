@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 """Cluster job submission library.
 
 Handles argument parsing, preset brace expansion, Cartesian sweep products,
@@ -14,7 +19,6 @@ from __future__ import annotations
 
 import itertools
 import os
-import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -62,8 +66,15 @@ CLUSTER_DEFAULTS = {
 }
 
 CLUSTER_KEY_ORDER = [
-    "image", "num_gpu", "num_cpu", "memory", "platform",
-    "dataset", "num_node", "storage", "master_port",
+    "image",
+    "num_gpu",
+    "num_cpu",
+    "memory",
+    "platform",
+    "dataset",
+    "num_node",
+    "storage",
+    "master_port",
 ]
 
 BOOL_FLAGS = {"--video", "--enable_cameras"}
@@ -98,10 +109,10 @@ def expand_preset_braces(val: str) -> list[str]:
     segments: list[tuple[str, list[str]]] = []
     remaining = val
     while "{" in remaining and "}" in remaining:
-        before = remaining[:remaining.index("{")]
-        rest = remaining[remaining.index("{") + 1:]
-        inner = rest[:rest.index("}")]
-        remaining = rest[rest.index("}") + 1:]
+        before = remaining[: remaining.index("{")]
+        rest = remaining[remaining.index("{") + 1 :]
+        inner = rest[: rest.index("}")]
+        remaining = rest[rest.index("}") + 1 :]
         if before:
             segments.append(("fixed", [before]))
         segments.append(("sweep", inner.split(",")))
@@ -120,6 +131,7 @@ def expand_preset_braces(val: str) -> list[str]:
 @dataclass
 class ParsedArgs:
     """Result of parsing command-line arguments."""
+
     cluster: dict[str, str] = field(default_factory=lambda: dict(CLUSTER_DEFAULTS))
     pool: str = ""
     fixed: dict[str, str] = field(default_factory=dict)
@@ -274,11 +286,20 @@ def build_cmd(
     args_parts.extend(cli_flags)
     all_args = " ".join(p for p in args_parts if p)
 
-    return [
-        "osmo", "workflow", "submit", SPEC,
-        "--pool", pool,
-        "--set", f"script={script}",
-    ] + cluster_str.split() + [f"args={all_args}"]
+    return (
+        [
+            "osmo",
+            "workflow",
+            "submit",
+            SPEC,
+            "--pool",
+            pool,
+            "--set",
+            f"script={script}",
+        ]
+        + cluster_str.split()
+        + [f"args={all_args}"]
+    )
 
 
 def launch_job(
@@ -292,8 +313,7 @@ def launch_job(
     cli_flags: list[str],
     dry_run: bool = False,
 ):
-    cmd = build_cmd(script, pool, cluster_str, fixed_str, combo, run_name,
-                    hydra_dels, cli_flags)
+    cmd = build_cmd(script, pool, cluster_str, fixed_str, combo, run_name, hydra_dels, cli_flags)
     print(f"LAUNCHING: {' '.join(cmd)}")
     if not dry_run:
         subprocess.run(cmd, check=False)
@@ -316,24 +336,33 @@ def do_pbt(script: str, p: ParsedArgs, dry_run: bool = False):
 
     for idx in range(num_pop):
         pbt_args = [
-            f"agent.pbt.enabled=True",
+            "agent.pbt.enabled=True",
             f"agent.pbt.num_policies={num_pop}",
             f"agent.pbt.policy_idx={idx}",
             f"agent.pbt.workspace={num_pop}agents_{dt}",
-            f"agent.pbt.directory=/mnt/amlfs-05/shared/workspace/octi",
+            "agent.pbt.directory=/mnt/amlfs-05/shared/workspace/octi",
             f"--wandb-name={idx}_{num_pop}",
-            f"--seed=-1",
+            "--seed=-1",
         ]
         for k, v in p.fixed.items():
             pbt_args.append(f"{k}={v}")
 
         all_args = " ".join(pbt_args + p.hydra_dels + p.cli_flags)
         args_quoted = f"args={all_args}"
-        cmd = [
-            "osmo", "workflow", "submit", SPEC,
-            "--pool", p.pool,
-            "--set", f"script={script}",
-        ] + cluster_str.split() + [args_quoted]
+        cmd = (
+            [
+                "osmo",
+                "workflow",
+                "submit",
+                SPEC,
+                "--pool",
+                p.pool,
+                "--set",
+                f"script={script}",
+            ]
+            + cluster_str.split()
+            + [args_quoted]
+        )
         print(f"+ {' '.join(cmd)}")
         if not dry_run:
             subprocess.run(cmd, check=False)
@@ -346,8 +375,7 @@ def do_submit(script: str, p: ParsedArgs, dry_run: bool = False):
 
     for combo in combos:
         run_name = derive_run_name(p.run_name, combo)
-        launch_job(script, p.pool, cluster_str, fixed_str, combo, run_name,
-                   p.hydra_dels, p.cli_flags, dry_run=dry_run)
+        launch_job(script, p.pool, cluster_str, fixed_str, combo, run_name, p.hydra_dels, p.cli_flags, dry_run=dry_run)
 
 
 def main():

@@ -4,8 +4,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from __future__ import annotations
-import os
+
 import argparse
+import os
 import random
 from typing import TYPE_CHECKING
 
@@ -37,7 +38,7 @@ def add_rsl_rl_args(parser: argparse.ArgumentParser):
     arg_group.add_argument(
         "--log_project_name", type=str, default=None, help="Name of the logging project when using wandb or neptune."
     )
-    arg_group.add_argument(  
+    arg_group.add_argument(
         "--wandb_run_id",
         type=str,
         default=None,
@@ -53,13 +54,14 @@ def add_rsl_rl_args(parser: argparse.ArgumentParser):
         help="Select which wandb checkpoint iteration to load. If not provided, the latest checkpoint will be used.",
     )
     arg_group.add_argument(
-        "--wandb_username", 
+        "--wandb_username",
         type=str,
-        default=None, 
+        default=None,
         help=(
             "Username for Weights & Biases (wandb). If not provided, will use the environment variable WANDB_USERNAME."
         ),
     )
+
 
 def parse_rsl_rl_cfg(task_name: str, args_cli: argparse.Namespace) -> RslRlBaseRunnerCfg:
     """Parse configuration for RSL-RL agent based on inputs.

@@ -49,14 +49,14 @@ image_exists() {
 enter_container() {
   local tag="$1"
   local mount_local="$2"
-  
+
   if [ -z "$tag" ]; then
     echo "Error: Tag required for 'enter' command"
     echo "Usage: ./buildnpush.sh enter <tag> [--mount]"
     echo "  --mount  Mount local directory to /local (container's isaaclab untouched)"
     exit 1
   fi
-  
+
   # Try NGC image first, fall back to local
   local image="nvcr.io/nvidian/octi-isaac-lab:${tag}"
   if ! image_exists "$image"; then
@@ -71,7 +71,7 @@ enter_container() {
       fi
     fi
   fi
-  
+
   local mount_args=""
   if [ "$mount_local" = "--mount" ]; then
     mount_args="-v $(pwd):/local:rw"
@@ -79,7 +79,7 @@ enter_container() {
   else
     echo "🚀 Entering container: ${image}"
   fi
-  
+
   docker run -it --rm \
     --gpus all \
     --network host \
@@ -98,51 +98,51 @@ show_status() {
   echo "📊 Isaac Lab Docker Images Status"
   echo "=================================="
   echo ""
-  
+
   # Current deps hash
   local current_hash=$(compute_deps_hash)
   echo "Current deps hash: ${current_hash}"
   echo ""
-  
+
   # List all isaac-lab images
   echo "Images:"
   docker images --format "  {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}" | grep -E "^  (isaac-lab|nvcr.io/nvidian/octi-isaac-lab)" || echo "  (none)"
   echo ""
-  
+
   # Total disk usage
   echo "Disk Usage:"
   docker system df --format "  Images: {{.Size}}" 2>/dev/null | head -1 || true
   echo ""
-  
+
   # Highlight current deps image
   if image_exists "isaac-lab-deps:${current_hash}"; then
     echo "✓ Current deps image exists: isaac-lab-deps:${current_hash}"
   else
     echo "✗ No deps image for current hash: ${current_hash}"
   fi
-  
+
   exit 0
 }
 
 clean_old_deps() {
   echo "🧹 Cleaning old deps images..."
   echo ""
-  
+
   local current_hash=$(compute_deps_hash)
   local current_image="isaac-lab-deps:${current_hash}"
   local removed=0
-  
+
   # List all isaac-lab-deps images
   local deps_images=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "^isaac-lab-deps:" || true)
-  
+
   if [ -z "$deps_images" ]; then
     echo "No deps images found."
     exit 0
   fi
-  
+
   echo "Current hash: ${current_hash}"
   echo ""
-  
+
   for img in $deps_images; do
     if [ "$img" = "$current_image" ]; then
       echo "  ✓ Keeping: $img (current)"
@@ -152,15 +152,15 @@ clean_old_deps() {
       ((removed++)) || true
     fi
   done
-  
+
   echo ""
   echo "Removed $removed old deps image(s)."
-  
+
   # Also prune dangling images
   echo ""
   echo "Pruning dangling images..."
   docker image prune -f
-  
+
   exit 0
 }
 
@@ -174,24 +174,24 @@ clean_all() {
   echo ""
   read -p "Are you sure? [y/N] " -n 1 -r
   echo ""
-  
+
   if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     echo "Cancelled."
     exit 0
   fi
-  
+
   echo ""
-  
+
   # Remove all matching images
   docker images --format '{{.Repository}}:{{.Tag}}' | grep -E "^(isaac-lab-base|isaac-lab-deps:|nvcr.io/nvidian/octi-isaac-lab:)" | while read img; do
     echo "  🗑 Removing: $img"
     docker rmi "$img" 2>/dev/null || echo "    (failed, may be in use)"
   done
-  
+
   echo ""
   echo "Pruning dangling images..."
   docker image prune -f
-  
+
   echo ""
   echo "Done!"
   exit 0
@@ -358,7 +358,7 @@ echo ""
 # Symlink Resolution (Docker COPY doesn't follow external symlinks)
 # =============================================================================
 ASSETS_DATA_DIR="source/isaaclab_assets/data"
-# Top-level symlinks (relative to repo root) that the Dockerfile COPYs in.
+# Top-level symlinks (relative to repo root) that the Dockerfile copies in.
 # Each must be resolved to its target before `docker build` and restored after.
 EXTRA_SYMLINKS=(
   "dep"
@@ -415,7 +415,7 @@ resolve_symlinks
 # =============================================================================
 if [ "$SKIP_DEPS" -eq 0 ]; then
   echo "▶️  Building full image with dependencies..."
-  
+
   # Build with pip install enabled
   export SKIP_PIP_INSTALL=0
   if [ "$USE_CACHE" -eq 0 ]; then
@@ -423,18 +423,18 @@ if [ "$SKIP_DEPS" -eq 0 ]; then
   else
     unset ISAACLAB_NOCACHE 2>/dev/null || true
   fi
-  
+
   ./docker/container.py start
-  
+
   # Tag as deps image for future cache hits
   echo "🏷  Caching deps image as ${DEPS_IMAGE}"
   docker tag "${BASE_IMAGE}" "${DEPS_IMAGE}"
 else
   echo "▶️  Using cached dependencies, copying source only..."
-  
+
   # Load env vars from .env.base
   source docker/.env.base
-  
+
   # Build using lightweight source-only Dockerfile
   docker build \
     -f docker/Dockerfile.source-only \
@@ -496,9 +496,9 @@ now_epoch=$(date +%s)
 > "${STATE_FILE}.tmp"
 while IFS='|' read -r tag hash timestamp; do
   [ -z "$tag" ] && continue
-  
+
   age_days=$(( (now_epoch - timestamp) / 86400 ))
-  
+
   if [ "$age_days" -le "$MAX_AGE_DAYS" ]; then
     # Keep this mapping
     echo "${tag}|${hash}|${timestamp}" >> "${STATE_FILE}.tmp"

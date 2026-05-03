@@ -301,7 +301,7 @@ class RslRlBaseRunnerCfg:
     then it is appended to the run directory's name, i.e. the logging directory's name will become
     ``{time-stamp}_{run_name}``.
     """
-    run_id: str | None = None  
+    run_id: str | None = None
     """The run ID (e.g. for Weights & Biases). This is the unique identifier for the run as set by the logger."""
 
     logger: Literal["tensorboard", "neptune", "wandb"] = "tensorboard"
