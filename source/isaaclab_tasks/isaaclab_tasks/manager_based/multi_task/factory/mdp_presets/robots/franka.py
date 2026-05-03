@@ -1,0 +1,90 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""Franka Panda robot preset. Activate with ``presets=franka``."""
+
+from __future__ import annotations
+
+__all__: list[str] = []
+
+from isaaclab.managers import RewardTermCfg as RewTerm
+from isaaclab.sensors import ContactSensorCfg
+from isaaclab.utils import configclass
+
+from ... import mdp
+from ...assembly_keypoints import PANDA_HAND
+from ...factory_assets_cfg import FRANKA_PANDA_CFG
+from ...factory_presets import (
+    EndEffectorBodyCfg,
+    GripperGraspOffsetCfg,
+    GripperJointNamesCfg,
+    IKJointNamesCfg,
+    JointEffortNamesCfg,
+)
+from .robot_presets import (
+    GripperAsymContactPenaltyCfg,
+    GripperLeftContactSensorCfg,
+    GripperRightContactSensorCfg,
+    RobotActionsCfg,
+    RobotArticulationCfg,
+)
+
+# ---------------------------------------------------------------------------
+# Robot identity / DOF naming
+# ---------------------------------------------------------------------------
+
+EndEffectorBodyCfg.franka = "panda_fingertip_centered"
+GripperJointNamesCfg.franka = ["panda_finger.*"]
+IKJointNamesCfg.franka = ["panda_joint.*"]
+GripperGraspOffsetCfg.franka = PANDA_HAND.gripper_center_grasp_point
+JointEffortNamesCfg.franka = "(?!panda_joint7$|panda_finger_.*$).*"
+
+# ---------------------------------------------------------------------------
+# Articulation
+# ---------------------------------------------------------------------------
+
+RobotArticulationCfg.franka = FRANKA_PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
+
+# ---------------------------------------------------------------------------
+# Actions
+# ---------------------------------------------------------------------------
+
+
+@configclass
+class FrankaActionsCfg:
+    arm_action = mdp.RelativeJointPositionActionCfg(
+        asset_name="robot",
+        joint_names=["panda_joint.*"],
+        scale={
+            "(?!panda_joint7).*": 0.02,
+            "panda_joint7": 0.2,
+        },
+        use_zero_offset=True,
+    )
+
+    gripper_action = mdp.BinaryJointPositionActionCfg(
+        asset_name="robot",
+        joint_names=["panda_finger.*"],
+        open_command_expr={"panda_finger_.*": 0.04},
+        close_command_expr={"panda_finger_.*": 0.0},
+    )
+
+
+RobotActionsCfg.franka = FrankaActionsCfg()
+
+
+# ---------------------------------------------------------------------------
+# Robot-specific scene sensors and rewards
+# ---------------------------------------------------------------------------
+
+GripperLeftContactSensorCfg.franka = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/panda_leftfinger")
+GripperRightContactSensorCfg.franka = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/panda_rightfinger")
+
+GripperAsymContactPenaltyCfg.franka = RewTerm(
+    func=mdp.gripper_asymetric_contact_penalty,
+    weight=-0.02,
+    params={"threshold": 1.0},
+)

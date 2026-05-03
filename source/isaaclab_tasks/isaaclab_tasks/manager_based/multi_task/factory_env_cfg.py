@@ -3,8 +3,6 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from dataclasses import MISSING
-
 from isaaclab_physx.physics import PhysxCfg
 
 from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
@@ -29,6 +27,7 @@ from .factory.factory_presets import (
     JointEffortNamesCfg,
 )
 from .factory.factory_scenes_cfg import FactorySceneCfg
+from .factory.mdp_presets import GripperAsymContactPenaltyCfg, RobotActionsCfg
 from .factory.reset_env_cfg import RESET_STRATEGIES
 from .mdp.terminations import BaseTerminationsCfg
 
@@ -180,6 +179,7 @@ class TimeoutRewardsCfg:
     )
     progress_reward_fine = RewTerm(func=mdp.progress_reward, weight=0.1, params={"std": 0.005})
     success_reward = RewTerm(func=mdp.success_reward, weight=1.0)
+    bad_finger_contact: RewTerm | None = GripperAsymContactPenaltyCfg()  # type: ignore
 
 
 @configclass
@@ -195,6 +195,7 @@ class SuccessRewardsCfg:
     )
     early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-0.01)
     success_reward = RewTerm(func=mdp.success_reward, weight=100.0)
+    bad_finger_contact: RewTerm | None = GripperAsymContactPenaltyCfg()  # type: ignore
 
 
 @configclass
@@ -312,7 +313,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     rewards: FactoryRewardsCfg = FactoryRewardsCfg()
     curriculum: FactoryCurriculumsCfg = FactoryCurriculumsCfg()
     viewer: ViewerCfg = ViewerCfg(eye=(0.0, 0.8, 0.4), origin_type="asset_root", asset_name="held_asset")
-    actions = MISSING
+    actions: RobotActionsCfg = RobotActionsCfg()  # type: ignore
 
     # Post initialization
     def __post_init__(self) -> None:

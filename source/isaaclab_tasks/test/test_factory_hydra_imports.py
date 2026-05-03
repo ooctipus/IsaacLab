@@ -21,7 +21,7 @@ import pytest
 _FORBIDDEN_PREFIXES = ("pxr", "omni", "carb", "isaacsim", "scipy")
 
 _FACTORY_TASKS = [
-    "Isaac-Factory-Franka-JointPos-v1",
+    "Isaac-Factory-v0",
 ]
 
 
@@ -81,7 +81,7 @@ def test_hydra_resolve_does_not_import_backend_modules(task_name: str):
     json_line = None
     for line in result.stdout.splitlines():
         if line.startswith("__RESULTS__"):
-            json_line = line[len("__RESULTS__"):]
+            json_line = line[len("__RESULTS__") :]
             break
 
     if json_line is None:
@@ -105,6 +105,5 @@ def test_hydra_resolve_does_not_import_backend_modules(task_name: str):
 
     assert not violations and not load_error, (
         f"resolve_task_config for '{task_name}' imported forbidden backend modules.\n"
-        f"Forbidden prefixes: {_FORBIDDEN_PREFIXES}\n"
-        + "\n".join(messages)
+        f"Forbidden prefixes: {_FORBIDDEN_PREFIXES}\n" + "\n".join(messages)
     )

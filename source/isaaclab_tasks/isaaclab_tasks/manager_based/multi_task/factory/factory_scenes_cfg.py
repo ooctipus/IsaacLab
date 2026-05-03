@@ -10,25 +10,36 @@ Each scene class inherits from :class:`FactorySceneBase` and specifies the
 :class:`FactorySceneCfg` is the :class:`PresetCfg` that selects among them.
 """
 
-from dataclasses import MISSING
-
 from isaaclab.assets import ArticulationCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils import configclass
 
 from isaaclab_tasks.utils import PresetCfg
 
 from . import factory_assets_cfg as assets
+from .mdp_presets import (
+    GripperLeftContactSensorCfg,
+    GripperRightContactSensorCfg,
+    RobotArticulationCfg,
+)
 
 
 @configclass
 class FactorySceneBase(InteractiveSceneCfg):
-    """Shared scene assets for all Factory tasks."""
+    """Shared scene assets for all Factory tasks.
+
+    The ``robot`` and gripper-finger contact sensors are resolved from the
+    active robot preset (e.g. ``presets=franka``); see
+    :mod:`.mdp_presets.robots` for how to add a robot.
+    """
 
     ground = assets.GROUND_CFG
     table = assets.TABLE_CFG
     nistboard = assets.NISTBOARD_CFG
-    robot: ArticulationCfg = MISSING  # type: ignore
+    robot: ArticulationCfg = RobotArticulationCfg()  # type: ignore
+    panda_leftfinger_object_s: ContactSensorCfg | None = GripperLeftContactSensorCfg()  # type: ignore
+    panda_rightfinger_object_s: ContactSensorCfg | None = GripperRightContactSensorCfg()  # type: ignore
     dome_light = assets.DOMELIGHT_CFG
 
 
