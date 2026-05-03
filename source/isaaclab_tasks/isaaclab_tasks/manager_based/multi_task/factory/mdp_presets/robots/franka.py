@@ -9,6 +9,7 @@ from __future__ import annotations
 
 __all__: list[str] = []
 
+from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils import configclass
 
@@ -76,15 +77,14 @@ RobotActionsCfg.franka = FrankaActionsCfg()
 
 
 # ---------------------------------------------------------------------------
-# Robot-specific scene sensors
+# Robot-specific scene sensors and rewards
 # ---------------------------------------------------------------------------
 
 GripperLeftContactSensorCfg.franka = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/panda_leftfinger")
 GripperRightContactSensorCfg.franka = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/panda_rightfinger")
 
-# NOTE: ``bad_finger_contact`` reward was historically registered via
-# ``__post_init__`` setattr on a :class:`PresetCfg` parent that the resolver
-# replaced, so the term never reached the reward manager. Existing checkpoints
-# were trained against that "broken" setup. Leaving ``GripperAsymContactPenaltyCfg``
-# at its ``None`` default preserves the previously-shipped behaviour; flip it on
-# explicitly when retraining a policy that actually needs the penalty.
+GripperAsymContactPenaltyCfg.franka = RewTerm(
+    func=mdp.gripper_asymetric_contact_penalty,
+    weight=-0.02,
+    params={"threshold": 1.0},
+)
