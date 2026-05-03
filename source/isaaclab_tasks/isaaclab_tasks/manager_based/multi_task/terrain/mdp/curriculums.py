@@ -14,9 +14,12 @@ from isaaclab.managers import ManagerTermBase
 
 from isaaclab_tasks.manager_based.multi_task.mdp.util import (
     BetaSamplingCfg,
+    FrontierSamplingCfg,
     SuccessMonitorCfg,
     UniformSamplingCfg,
     beta_sampling_probs,
+    build_knn_indices,
+    frontier_sampling_probs,
     uniform_sampling_probs,
 )
 
@@ -58,7 +61,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.num_discrete_cmd = int(self.goal_term.table.num_tasks)
 
         # Sampling strategy + success-monitor cfg are both required preset params.
-        self._sampling_cfg: UniformSamplingCfg | BetaSamplingCfg = cfg.params["sampling"]
+        self._sampling_cfg: UniformSamplingCfg | BetaSamplingCfg | FrontierSamplingCfg = cfg.params["sampling"]
 
         # Curriculum owns the success monitor + the rate tensor it writes into.
         # The decoupled-rate-tensor pattern (factory-style) lets us hand the same
@@ -88,6 +91,17 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
                 self._result[f"{name}_prob"] = torch.zeros((), dtype=torch.float, device=env.device)
             self.prob_mass_per_bin = torch.zeros(len(_BIN_NAMES), dtype=torch.float32, device=env.device)
 
+        # Frontier sampler needs a precomputed kNN graph over the *state*
+        # buffer (the underlying pool of physically-valid xy positions),
+        # not over tasks. The state pool is the natural spatial domain;
+        # spawn/target are just two roles a state can play in a task. This
+        # makes the algorithm topology-agnostic (one spawn / many targets,
+        # many spawns / one target, many of both -- all work the same).
+        self._state_knn_indices: torch.Tensor | None = None
+        if isinstance(self._sampling_cfg, FrontierSamplingCfg):
+            state_xy = self.goal_term.table.spawn_states[:, :2]
+            self._state_knn_indices = build_knn_indices(state_xy, k=self._sampling_cfg.k)
+
         # Visualization: build spawn→target lines from the task table
         if debug_vis:
             self._init_path_visuals_from_discrete()
@@ -96,7 +110,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self,
         env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
-        sampling: UniformSamplingCfg | BetaSamplingCfg = BetaSamplingCfg(),
+        sampling: UniformSamplingCfg | BetaSamplingCfg | FrontierSamplingCfg = BetaSamplingCfg(),
         success_monitor_cfg: SuccessMonitorCfg | None = None,
         debug_vis: bool = False,
         success_term: str = "success",
@@ -110,7 +124,21 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.success_monitor.success_update(prev_idx, success)
 
         # 2) SAMPLE NEXT DISCRETE COMMANDS
-        if isinstance(self._sampling_cfg, BetaSamplingCfg):
+        if isinstance(self._sampling_cfg, FrontierSamplingCfg):
+            rates = eval(self._sampling_cfg.success_rate_bind)  # noqa: S307
+            assert self._state_knn_indices is not None  # built in __init__
+            table = self.goal_term.table
+            probs = frontier_sampling_probs(
+                rates,
+                state_knn_indices=self._state_knn_indices,
+                spawn_index=table.spawn_index,
+                target_index=table.target_index,
+                base=self._sampling_cfg.base,
+                frontier_lambda=self._sampling_cfg.frontier_lambda,
+                dilation_steps=self._sampling_cfg.dilation_steps,
+                eps=self._sampling_cfg.eps,
+            )
+        elif isinstance(self._sampling_cfg, BetaSamplingCfg):
             rates = eval(self._sampling_cfg.success_rate_bind)  # noqa: S307
             probs = beta_sampling_probs(
                 rates,
@@ -136,7 +164,92 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
             self._log_terrain_heatmap(success_rates)
             self._log_spawn_scatter(success_rates, probs)
 
+        # Frontier-bin diagnostic: bucket per-task probs by per-task
+        # state-frontier weight to verify the algorithm is differentiating
+        # frontier-unlearned tasks from deep-unlearned tasks at the
+        # per-task level (independent of dashboard aggregation choices).
+        if isinstance(self._sampling_cfg, FrontierSamplingCfg) and self._log_counter % 50 == 0:
+            self._log_frontier_bins(success_rates, probs)
+
         return self._result
+
+    def _log_frontier_bins(self, success_rates: torch.Tensor, probs: torch.Tensor) -> None:
+        """Bucket per-task probs by task-frontier weight and log to extras + stdout.
+
+        For each task we compute ``task_frontier_w = max(state_frontier[spawn],
+        state_frontier[target])`` and bucket all tasks into a small set of
+        frontier-weight bins. We then report (a) how many tasks fall in each
+        bin, (b) the mean per-task probability in each bin, and (c) the
+        total probability mass in each bin. The expected pattern when the
+        algorithm is functional: mean per-task prob increases with bin
+        index, and the high-frontier bin captures a meaningful fraction of
+        total mass.
+        """
+        assert self._state_knn_indices is not None
+        table = self.goal_term.table
+        n_states = int(table.spawn_states.shape[0])
+        state_sums = torch.zeros(n_states, device=probs.device, dtype=probs.dtype)
+        state_counts = torch.zeros(n_states, device=probs.device, dtype=probs.dtype)
+        ones = torch.ones_like(success_rates)
+        state_sums.scatter_add_(0, table.spawn_index, success_rates)
+        state_sums.scatter_add_(0, table.target_index, success_rates)
+        state_counts.scatter_add_(0, table.spawn_index, ones)
+        state_counts.scatter_add_(0, table.target_index, ones)
+        state_s = state_sums / state_counts.clamp_min(1.0)
+
+        s_dil = state_s
+        for _ in range(max(1, int(self._sampling_cfg.dilation_steps))):
+            s_dil = torch.maximum(s_dil, s_dil[self._state_knn_indices].amax(dim=-1))
+        state_frontier = (1.0 - state_s) * (s_dil - state_s).clamp_min(0.0)
+
+        spawn_f = state_frontier[table.spawn_index]
+        target_f = state_frontier[table.target_index]
+        task_frontier = (spawn_f - spawn_f.mean()).clamp_min(0.0) + (target_f - target_f.mean()).clamp_min(0.0)
+        # Also bucket by self success rate so we can split "frontier-unlearned"
+        # from "borderline" within the high-frontier bin.
+        task_self_s = success_rates
+
+        bins = [
+            ("ftr<0.01", 0.0, 0.01),
+            ("0.01-0.05", 0.01, 0.05),
+            ("0.05-0.20", 0.05, 0.20),
+            ("0.20-0.50", 0.20, 0.50),
+            ("0.50+", 0.50, 1.001),
+        ]
+        log_dict = self.env.extras.setdefault("log", {})
+        rows = []
+        total_p = float(probs.sum())
+        for label, lo, hi in bins:
+            mask = (task_frontier >= lo) & (task_frontier < hi)
+            n = int(mask.sum())
+            if n == 0:
+                rows.append((label, 0, 0.0, 0.0, 0.0, 0.0))
+                continue
+            mean_p = float(probs[mask].mean())
+            mass = float(probs[mask].sum())
+            mean_self_s = float(task_self_s[mask].mean())
+            mean_state_frontier_min = float(task_frontier[mask].min())
+            rows.append((label, n, mean_p, mass, mean_self_s, mean_state_frontier_min))
+            log_dict[f"Frontier/bin_{label}_count"] = float(n)
+            log_dict[f"Frontier/bin_{label}_mean_prob"] = mean_p
+            log_dict[f"Frontier/bin_{label}_mass"] = mass
+            log_dict[f"Frontier/bin_{label}_mean_self_s"] = mean_self_s
+
+        print(
+            "[FRONTIER DIAG] step="
+            f"{self.env.common_step_counter}  total_p={total_p:.3f}  "
+            f"state_frontier max={float(state_frontier.max()):.3f}  "
+            f"state_s p10/50/90="
+            f"{float(state_s.quantile(0.1)):.3f}/{float(state_s.quantile(0.5)):.3f}/{float(state_s.quantile(0.9)):.3f}",
+            flush=True,
+        )
+        header = f"  {'bin':12s} {'count':>6s} {'mean_p':>10s} {'mass':>8s} {'mean_self_s':>11s} {'min_ftr':>8s}"
+        print(header, flush=True)
+        for label, n, mean_p, mass, mean_self_s, min_ftr in rows:
+            print(
+                f"  {label:12s} {n:6d} {mean_p:10.3e} {mass:8.3f} {mean_self_s:11.3f} {min_ftr:8.3f}",
+                flush=True,
+            )
 
     def _update_bin_stats(self, success_rates: torch.Tensor, probs: torch.Tensor) -> None:
         """Write per-bin frac/prob into ``self._result`` if their flags are enabled."""
@@ -286,6 +399,10 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
             self._patch_counts = torch.zeros(n_patches, device=self.device)
             self._patch_probs = torch.zeros(n_patches, device=self.device)
             self._patch_probs_counts = torch.zeros(n_patches, device=self.device)
+            # Target-only buffers for FrontierSamplingCfg-style signals that
+            # live in target space; spawn-side aggregation dilutes them.
+            self._patch_probs_target = torch.zeros(n_patches, device=self.device)
+            self._patch_probs_target_counts = torch.zeros(n_patches, device=self.device)
             self._prev_patch_rates = torch.zeros(n_patches, device=self.device)
             self._first_scatter_log = True
         if not hasattr(self, "_dashboard"):
@@ -312,6 +429,43 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
             sums_buf=self._patch_probs,
             counts_buf=self._patch_probs_counts,
         )
+        # State-pool diagnostic: when frontier sampling is active, show the
+        # per-state frontier weight directly. It lives natively on the patch
+        # grid (one value per ``spawn_states`` row), so no aggregation is
+        # needed -- this surfaces the algorithm's actual spatial signal
+        # without the spawn/target endpoint averaging that dilutes the
+        # "Sampling probability" panel above.
+        if isinstance(self._sampling_cfg, FrontierSamplingCfg) and self._state_knn_indices is not None:
+            ones = torch.ones_like(success_rates)
+            self._patch_probs_target.zero_()
+            self._patch_probs_target_counts.zero_()
+            self._patch_probs_target.scatter_add_(0, table.spawn_index, success_rates)
+            self._patch_probs_target.scatter_add_(0, table.target_index, success_rates)
+            self._patch_probs_target_counts.scatter_add_(0, table.spawn_index, ones)
+            self._patch_probs_target_counts.scatter_add_(0, table.target_index, ones)
+            state_s = self._patch_probs_target / self._patch_probs_target_counts.clamp_min(1.0)
+            s_dil = state_s
+            for _ in range(max(1, int(self._sampling_cfg.dilation_steps))):
+                s_dil = torch.maximum(s_dil, s_dil[self._state_knn_indices].amax(dim=-1))
+            # Mirrors the (1 - state_s) re-weighting in frontier_sampling_probs.
+            state_frontier_t = (1.0 - state_s) * (s_dil - state_s).clamp_min(0.0)
+            spatial_panel_title = "State frontier (s_dil − s_state)"
+            spatial_panel_values = state_frontier_t.cpu().numpy()
+            spatial_valid = self._patch_probs_target_counts.cpu().numpy() > 0
+        else:
+            # Fall back to spawn-aggregated probability for non-frontier
+            # samplers (Beta / Uniform have no spatial signal to surface).
+            prob_spawn_sums, prob_spawn_counts = aggregate_endpoints(
+                probs,
+                (table.spawn_index,),
+                n_patches,
+                sums_buf=self._patch_probs_target,
+                counts_buf=self._patch_probs_target_counts,
+            )
+            prob_spawn_sums = prob_spawn_sums / prob_spawn_counts.clamp_min(1.0)
+            spatial_panel_title = "Sampling prob (spawn only)"
+            spatial_panel_values = prob_spawn_sums.cpu().numpy()
+            spatial_valid = prob_spawn_counts.cpu().numpy() > 0
         # Mean-aggregate (matching the success-rate panel) so a patch touched
         # by ``n_c`` tasks doesn't visually dominate one touched by 1 task —
         # the "I'm a convergence point" amplification under sum aggregation
@@ -334,6 +488,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         mean_rate = float(rates[valid].mean()) if n_total else 0.0
         mean_delta = float(delta[valid].mean()) if n_total else 0.0
         prob_max = max(float(prob_per_patch[valid].max()) if n_total else 1.0, 1e-9)
+        spatial_max = max(float(spatial_panel_values[spatial_valid].max()) if int(spatial_valid.sum()) else 1.0, 1e-9)
         delta_range = max(float(np.abs(delta[valid]).max()) if n_total else 0.0, 0.05)
 
         rdylgn = plt.get_cmap("RdYlGn")
@@ -361,6 +516,19 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
                     ("0", viridis(0.0)),
                 ],
                 stats_text=f"N={n_total}\nsum={float(prob_per_patch[valid].sum()):.3f}",
+            ),
+            PanelSpec(
+                values=spatial_panel_values,
+                cmap="viridis",
+                vmin=0.0,
+                vmax=spatial_max,
+                title=spatial_panel_title,
+                legend_entries=[
+                    (f"{spatial_max:.2e}", viridis(1.0)),
+                    (f"{spatial_max / 2:.2e}", viridis(0.5)),
+                    ("0", viridis(0.0)),
+                ],
+                stats_text=f"N={int(spatial_valid.sum())}\nmax={spatial_max:.3e}",
             ),
             PanelSpec(
                 values=delta,

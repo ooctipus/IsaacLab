@@ -5,7 +5,10 @@
 
 from __future__ import annotations
 
+import numpy as np
 import torch
+
+from .sampling_cfg import BetaSamplingCfg, UniformSamplingCfg
 
 
 def beta_sampling_probs(
@@ -34,6 +37,188 @@ def beta_sampling_probs(
     b = 1.0 + k * (1.0 - t)
     w = ((success_rates + eps).pow(a - 1.0) * (1.0 - success_rates + eps).pow(b - 1.0)).clamp_min(eps)
     return torch.softmax(torch.log(w + eps), dim=0)
+
+
+def build_knn_indices(
+    xy_coords: torch.Tensor,
+    k: int,
+) -> torch.Tensor:
+    """Build a k-NN index table over an xy point set.
+
+    Intended for use over the *state buffer* (the pool of physically-valid
+    robot xy positions, e.g. ``task_table.spawn_states[:, :2]``), not over
+    tasks. The state pool is the natural spatial domain regardless of how
+    tasks combine spawn/target endpoints; this function is therefore
+    topology-agnostic.
+
+    For each point the returned row contains the indices of its ``k``
+    nearest other points in xy (self excluded). When the pool has fewer
+    than ``k+1`` points, missing slots are padded with the point's own
+    index so frontier evaluations on those slots collapse to 0 without
+    spurious cross-talk.
+
+    Uses :class:`scipy.spatial.cKDTree` so the cost is
+    :math:`O(n \\log n)` and memory is :math:`O(n)` (avoids the
+    :math:`O(n^2)` blow-up of a full :func:`torch.cdist` for very large
+    pools).
+
+    Args:
+        xy_coords: ``[num_points, 2]`` xy positions of the point set.
+        k: Number of nearest neighbors to record per point.
+
+    Returns:
+        ``[num_points, k]`` long tensor of point-pool indices.
+    """
+    if k < 1:
+        raise ValueError(f"k must be >= 1; got {k}.")
+    from scipy.spatial import cKDTree
+
+    num_points = int(xy_coords.shape[0])
+    device = xy_coords.device
+    self_idx = torch.arange(num_points, device=device, dtype=torch.long).unsqueeze(-1)
+    knn = self_idx.expand(num_points, k).clone()
+
+    if num_points <= 1:
+        return knn
+
+    xy_np = xy_coords.detach().cpu().numpy()
+    k_eff = min(k, num_points - 1)
+    tree = cKDTree(xy_np)
+    _, idx = tree.query(xy_np, k=k_eff + 1)
+    idx = np.atleast_2d(idx)
+    if idx.shape[0] != num_points:
+        idx = idx.T
+    knn_block = idx[:, 1 : k_eff + 1]
+    if k_eff < k:
+        pad = np.tile(np.arange(num_points, dtype=knn_block.dtype).reshape(-1, 1), (1, k - k_eff))
+        knn_block = np.concatenate([knn_block, pad], axis=1)
+    knn = torch.from_numpy(knn_block).to(device=device, dtype=torch.long)
+    return knn
+
+
+def frontier_sampling_probs(
+    success_rates: torch.Tensor,
+    *,
+    state_knn_indices: torch.Tensor,
+    spawn_index: torch.Tensor,
+    target_index: torch.Tensor,
+    base: BetaSamplingCfg | UniformSamplingCfg,
+    frontier_lambda: float = 0.5,
+    dilation_steps: int = 1,
+    eps: float = 1e-3,
+) -> torch.Tensor:
+    """Combine a per-task base sampler with a state-buffer-graph frontier weight.
+
+    The frontier signal lives in the *state buffer* (the underlying pool
+    of physically-valid robot xy positions, e.g. ``spawn_states``), not
+    in task space. This makes the algorithm topology-agnostic: it works
+    identically whether you have one spawn / many targets, many spawns
+    / one target, or many of both. Per-task quantities are aggregated
+    onto the state pool, the spatial frontier is computed there, and
+    per-task weights are recovered by gathering at each task's two
+    endpoints.
+
+    Steps:
+
+    1. Per-task base weight from the plugged-in ``base`` sampler.
+    2. Aggregate per-task success rates onto each state by mean over
+       all (task, endpoint) pairs that touch the state.
+    3. Compute the per-state frontier ``s_dil − s_state`` from the
+       state-level kNN graph (iterated ``dilation_steps`` times for
+       multi-hop propagation).
+    4. Per-task frontier weight = max over the task's spawn/target
+       endpoint frontier scores.
+    5. Sum, normalize.
+
+    Args:
+        success_rates: ``[num_tasks]`` per-task rolling success rate.
+        state_knn_indices: ``[num_states, k]`` long tensor of state-pool
+            indices from :func:`build_knn_indices` over
+            ``spawn_states[:, :2]``.
+        spawn_index: ``[num_tasks]`` mapping each task to its spawn
+            state index (``task_table.spawn_index``).
+        target_index: ``[num_tasks]`` mapping each task to its target
+            state index (``task_table.target_index``).
+        base: Per-task sampler whose unnormalized kernel forms the
+            "this task itself is borderline" term.
+        frontier_lambda: Mixing weight for the spatial-frontier term.
+            ``0`` reproduces ``base`` alone.
+        dilation_steps: Number of graph-max iterations on the state-pool
+            kNN graph. ``1`` looks at immediate neighbors; ``k_steps``
+            propagates the local max ``k_steps`` hops out.
+        eps: Floor on the per-task weight so the success monitor keeps
+            refreshing every task.
+
+    Returns:
+        ``[num_tasks]`` probability tensor, normalized over all tasks.
+    """
+    device = success_rates.device
+
+    # 1) Per-task baseline weight from the plugged-in sampler cfg.
+    if isinstance(base, BetaSamplingCfg):
+        t = max(0.0, min(1.0, base.target))
+        k = max(0.0, base.kappa)
+        a = 1.0 + k * t
+        b = 1.0 + k * (1.0 - t)
+        base_w = (success_rates + eps).pow(a - 1.0) * (1.0 - success_rates + eps).pow(b - 1.0)
+    elif isinstance(base, UniformSamplingCfg):
+        base_w = torch.ones_like(success_rates)
+    else:
+        raise TypeError(
+            f"Unsupported base sampler '{type(base).__name__}'; expected BetaSamplingCfg or UniformSamplingCfg."
+        )
+    base_w = base_w.clamp_min(eps)
+
+    # 2) Aggregate per-task success onto the state pool. Each task contributes
+    #    once per endpoint (spawn and target), so a state's mean is the average
+    #    success rate of every task touching it in either role.
+    n_states = int(state_knn_indices.shape[0])
+    state_sums = torch.zeros(n_states, device=device, dtype=success_rates.dtype)
+    state_counts = torch.zeros(n_states, device=device, dtype=success_rates.dtype)
+    ones = torch.ones_like(success_rates)
+    state_sums.scatter_add_(0, spawn_index, success_rates)
+    state_sums.scatter_add_(0, target_index, success_rates)
+    state_counts.scatter_add_(0, spawn_index, ones)
+    state_counts.scatter_add_(0, target_index, ones)
+    state_s = state_sums / state_counts.clamp_min(1.0)
+
+    # 3) Per-state frontier via iterated graph-max over the state kNN.
+    #    The ``(1 - state_s)`` factor is essential: without it, borderline
+    #    states (e.g. s=0.6 next to s=0.95) collect nearly as much
+    #    ``s_dil - state_s`` as true frontier states (s=0.05 next to s=0.55),
+    #    so the Beta base term keeps preferring borderline over frontier
+    #    regardless of lambda. Multiplying by ``(1 - state_s)`` says
+    #    "frontier-ness requires both 'I'm not solved' AND 'a neighbor is
+    #    more solved' " -- which is the correct spatial-curriculum semantics
+    #    and matches the user-mental-model of "edge of the learned region".
+    s_dil = state_s
+    for _ in range(max(1, int(dilation_steps))):
+        neighbor_max = s_dil[state_knn_indices].amax(dim=-1)
+        s_dil = torch.maximum(s_dil, neighbor_max)
+    state_frontier = (1.0 - state_s) * (s_dil - state_s).clamp_min(0.0)
+
+    # 4) Per-task frontier = sum of per-endpoint above-mean frontier deviations.
+    #    Topology-agnostic by construction. For each endpoint role (spawn,
+    #    target) we subtract the per-task mean of its state-frontier values
+    #    before clamping at zero. A constant endpoint (e.g. shared target
+    #    under ``single_target_per_cell=True``) has variance 0, so its
+    #    deviation is identically 0 and it contributes nothing. An endpoint
+    #    that varies across tasks contributes its positive-side deviation,
+    #    so tasks whose endpoint is above-average frontier get credit.
+    #    This generalizes without auto-detection or cfg flags:
+    #
+    #      single target, many spawns -> spawn-only (target dev = 0)
+    #      single spawn, many targets -> target-only
+    #      cartesian / N-pair         -> both contribute
+    spawn_frontier = state_frontier[spawn_index]
+    target_frontier = state_frontier[target_index]
+    task_frontier_w = (spawn_frontier - spawn_frontier.mean()).clamp_min(0.0) + (
+        target_frontier - target_frontier.mean()
+    ).clamp_min(0.0)
+
+    # 5) Combine and normalize globally over all tasks.
+    w = base_w + max(0.0, frontier_lambda) * task_frontier_w + eps
+    return w / w.sum()
 
 
 def uniform_sampling_probs(success_rates: torch.Tensor) -> torch.Tensor:

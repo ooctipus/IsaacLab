@@ -8,6 +8,7 @@ from isaaclab.utils import configclass
 
 from isaaclab_tasks.manager_based.multi_task.mdp.util import (
     BetaSamplingCfg,
+    FrontierSamplingCfg,
     SuccessMonitorCfg,
     UniformSamplingCfg,
 )
@@ -26,6 +27,26 @@ class PositionCurriculumCfg:
                 uniform=UniformSamplingCfg(),
                 beta66=BetaSamplingCfg(target=0.66, kappa=1.0),
                 beta50=BetaSamplingCfg(target=0.50, kappa=1.0),
+                frontier=FrontierSamplingCfg(
+                    base=BetaSamplingCfg(target=0.66, kappa=1.0),
+                    frontier_lambda=0.5,
+                    dilation_steps=1,
+                ),
+                frontier_l2=FrontierSamplingCfg(
+                    base=BetaSamplingCfg(target=0.66, kappa=1.0),
+                    frontier_lambda=2.0,
+                    dilation_steps=1,
+                ),
+                frontier_l5=FrontierSamplingCfg(
+                    base=BetaSamplingCfg(target=0.66, kappa=1.0),
+                    frontier_lambda=5.0,
+                    dilation_steps=1,
+                ),
+                frontier_uniform=FrontierSamplingCfg(
+                    base=UniformSamplingCfg(),
+                    frontier_lambda=2.0,
+                    dilation_steps=1,
+                ),
             ),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=20),
             "success_term": "success",
