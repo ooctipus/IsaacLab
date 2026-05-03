@@ -32,6 +32,11 @@ class PositionCurriculumCfg:
                     frontier_lambda=0.5,
                     dilation_steps=1,
                 ),
+                frontier_l1=FrontierSamplingCfg(
+                    base=BetaSamplingCfg(target=0.66, kappa=1.0),
+                    frontier_lambda=1.0,
+                    dilation_steps=1,
+                ),
                 frontier_l2=FrontierSamplingCfg(
                     base=BetaSamplingCfg(target=0.66, kappa=1.0),
                     frontier_lambda=2.0,

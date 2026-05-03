@@ -37,6 +37,7 @@ from .sampling import (
     beta_sampling_probs,
     build_knn_indices,
     frontier_sampling_probs,
+    log_frontier_bins,
     state_frontier_weights,
     tagged_report,
 )
@@ -112,9 +113,11 @@ class reset_accumulator(ManagerTermBase):
 
         # Frontier sampler builds its kNN graph over the post-precollect
         # buffer xyz; deferred to the first call after precollect since
-        # the buffer is empty at __init__ time.
+        # the buffer is empty at __init__ time. Slots are tasks here, so
+        # we drive the algorithm with ``spawn_index=arange(N)`` and
+        # ``target_index=None`` (no separate target endpoint).
         self._state_knn_indices: torch.Tensor | None = None
-        self._slot_arange: torch.Tensor | None = None
+        self._slot_spawn_index: torch.Tensor | None = None
         self._frontier_log_counter: int = 0
 
     # ------------------------------------------------------------------
@@ -254,12 +257,12 @@ class reset_accumulator(ManagerTermBase):
         if env_ids.numel() > 0:
             if isinstance(self._sampling_cfg, FrontierSamplingCfg):
                 self._ensure_frontier_knn(wandb_3d_asset, wandb_3d_relative_to)
-                assert self._state_knn_indices is not None and self._slot_arange is not None
+                assert self._state_knn_indices is not None and self._slot_spawn_index is not None
                 probs = frontier_sampling_probs(
                     self.success_rate,
                     state_knn_indices=self._state_knn_indices,
-                    spawn_index=self._slot_arange,
-                    target_index=self._slot_arange,
+                    spawn_index=self._slot_spawn_index,
+                    target_index=None,
                     base=self._sampling_cfg.base,
                     frontier_lambda=self._sampling_cfg.frontier_lambda,
                     dilation_steps=self._sampling_cfg.dilation_steps,
@@ -387,69 +390,22 @@ class reset_accumulator(ManagerTermBase):
                 "reset_accumulator term so the buffer's slot xyz can be extracted."
             )
         self._state_knn_indices = build_knn_indices(xyz, k=self._sampling_cfg.k)
-        self._slot_arange = torch.arange(xyz.shape[0], device=xyz.device, dtype=torch.long)
+        self._slot_spawn_index = torch.arange(xyz.shape[0], device=xyz.device, dtype=torch.long)
 
     def _log_frontier_bins(self, probs: torch.Tensor) -> None:
-        """Bucket per-slot probs by per-slot frontier weight; log to extras + stdout.
-
-        Mirrors the terrain curriculum's frontier-bin diagnostic. With
-        slot==task (``spawn_index==target_index==arange(N)``), the
-        per-task above-mean-deviation reduces to ``2 * (state_frontier −
-        mean).clamp_min(0)``; the factor-of-two is absorbed by the
-        normalization downstream and we report the raw ``state_frontier``
-        bins so the numbers are comparable to the terrain logs.
-        """
+        """Forward to :func:`log_frontier_bins`; the shared helper does the work."""
         assert isinstance(self._sampling_cfg, FrontierSamplingCfg)
-        assert self._state_knn_indices is not None and self._slot_arange is not None
-        state_s, state_frontier = state_frontier_weights(
+        assert self._state_knn_indices is not None and self._slot_spawn_index is not None
+        log_frontier_bins(
             self.success_rate,
             state_knn_indices=self._state_knn_indices,
-            spawn_index=self._slot_arange,
-            target_index=self._slot_arange,
+            spawn_index=self._slot_spawn_index,
+            target_index=None,
             dilation_steps=self._sampling_cfg.dilation_steps,
+            probs=probs,
+            log_dict=self._env.extras.setdefault("log", {}),
+            step_counter=self._env.common_step_counter,
         )
-
-        bins = [
-            ("ftr<0.01", 0.0, 0.01),
-            ("0.01-0.05", 0.01, 0.05),
-            ("0.05-0.20", 0.05, 0.20),
-            ("0.20-0.50", 0.20, 0.50),
-            ("0.50+", 0.50, 1.001),
-        ]
-        log_dict = self._env.extras.setdefault("log", {})
-        rows = []
-        total_p = float(probs.sum())
-        for label, lo, hi in bins:
-            mask = (state_frontier >= lo) & (state_frontier < hi)
-            n = int(mask.sum())
-            if n == 0:
-                rows.append((label, 0, 0.0, 0.0, 0.0, 0.0))
-                continue
-            mean_p = float(probs[mask].mean())
-            mass = float(probs[mask].sum())
-            mean_self_s = float(state_s[mask].mean())
-            min_ftr = float(state_frontier[mask].min())
-            rows.append((label, n, mean_p, mass, mean_self_s, min_ftr))
-            log_dict[f"Frontier/bin_{label}_count"] = float(n)
-            log_dict[f"Frontier/bin_{label}_mean_prob"] = mean_p
-            log_dict[f"Frontier/bin_{label}_mass"] = mass
-            log_dict[f"Frontier/bin_{label}_mean_self_s"] = mean_self_s
-
-        print(
-            "[FRONTIER DIAG] step="
-            f"{self._env.common_step_counter}  total_p={total_p:.3f}  "
-            f"state_frontier max={float(state_frontier.max()):.3f}  "
-            f"state_s p10/50/90="
-            f"{float(state_s.quantile(0.1)):.3f}/{float(state_s.quantile(0.5)):.3f}/{float(state_s.quantile(0.9)):.3f}",
-            flush=True,
-        )
-        header = f"  {'bin':12s} {'count':>6s} {'mean_p':>10s} {'mass':>8s} {'mean_self_s':>11s} {'min_ftr':>8s}"
-        print(header, flush=True)
-        for label, n, mean_p, mass, mean_self_s, min_ftr in rows:
-            print(
-                f"  {label:12s} {n:6d} {mean_p:10.3e} {mass:8.3f} {mean_self_s:11.3f} {min_ftr:8.3f}",
-                flush=True,
-            )
 
     def _log_wandb_3d_scatter(self, asset_name: str, relative_to: str | None, sampling_cfg) -> None:
         """Push per-slot success / sampling / Δ-success as ``wandb.Object3D``.
@@ -506,12 +462,12 @@ class reset_accumulator(ManagerTermBase):
         # Sampling probability mirrors the runtime sampler for sample-mass
         # parity with what the policy actually sees.
         if isinstance(sampling_cfg, FrontierSamplingCfg):
-            assert self._state_knn_indices is not None and self._slot_arange is not None
+            assert self._state_knn_indices is not None and self._slot_spawn_index is not None
             probs_t = frontier_sampling_probs(
                 rates_t,
                 state_knn_indices=self._state_knn_indices,
-                spawn_index=self._slot_arange,
-                target_index=self._slot_arange,
+                spawn_index=self._slot_spawn_index,
+                target_index=None,
                 base=sampling_cfg.base,
                 frontier_lambda=sampling_cfg.frontier_lambda,
                 dilation_steps=sampling_cfg.dilation_steps,
@@ -540,12 +496,12 @@ class reset_accumulator(ManagerTermBase):
         # spatial signal driving the sampler is visible alongside the
         # rate / prob / delta panels.
         if isinstance(sampling_cfg, FrontierSamplingCfg) and self._state_knn_indices is not None:
-            assert self._slot_arange is not None
+            assert self._slot_spawn_index is not None
             _, state_frontier_t = state_frontier_weights(
                 rates_t,
                 state_knn_indices=self._state_knn_indices,
-                spawn_index=self._slot_arange,
-                target_index=self._slot_arange,
+                spawn_index=self._slot_spawn_index,
+                target_index=None,
                 dilation_steps=sampling_cfg.dilation_steps,
             )
             sf = state_frontier_t.detach().cpu().numpy()

@@ -280,6 +280,12 @@ ACCUMULATOR_RESET = EventTerm(
                 frontier_lambda=0.5,
                 dilation_steps=1,
             ),
+            frontier_l1=FrontierSamplingCfg(
+                success_rate_bind="self.success_rate",
+                base=BetaSamplingCfg(success_rate_bind="self.success_rate", target=0.66, kappa=1.0),
+                frontier_lambda=1.0,
+                dilation_steps=1,
+            ),
             frontier_l2=FrontierSamplingCfg(
                 success_rate_bind="self.success_rate",
                 base=BetaSamplingCfg(success_rate_bind="self.success_rate", target=0.66, kappa=1.0),

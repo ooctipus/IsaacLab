@@ -107,7 +107,7 @@ def state_frontier_weights(
     *,
     state_knn_indices: torch.Tensor,
     spawn_index: torch.Tensor,
-    target_index: torch.Tensor,
+    target_index: torch.Tensor | None = None,
     dilation_steps: int = 1,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Compute per-state success rates and per-state frontier weights.
@@ -135,7 +135,10 @@ def state_frontier_weights(
         state_knn_indices: ``[num_states, k]`` long tensor from
             :func:`build_knn_indices` over the state pool xy.
         spawn_index: ``[num_tasks]`` per-task spawn state index.
-        target_index: ``[num_tasks]`` per-task target state index.
+        target_index: ``[num_tasks]`` per-task target state index, or
+            ``None`` when tasks have no separate target endpoint
+            (e.g. factory's slot==task case). With ``None`` the
+            aggregation uses only ``spawn_index``.
         dilation_steps: Number of graph-max iterations.
 
     Returns:
@@ -148,9 +151,10 @@ def state_frontier_weights(
     state_counts = torch.zeros(n_states, device=device, dtype=success_rates.dtype)
     ones = torch.ones_like(success_rates)
     state_sums.scatter_add_(0, spawn_index, success_rates)
-    state_sums.scatter_add_(0, target_index, success_rates)
     state_counts.scatter_add_(0, spawn_index, ones)
-    state_counts.scatter_add_(0, target_index, ones)
+    if target_index is not None:
+        state_sums.scatter_add_(0, target_index, success_rates)
+        state_counts.scatter_add_(0, target_index, ones)
     state_s = state_sums / state_counts.clamp_min(1.0)
 
     s_dil = state_s
@@ -167,7 +171,7 @@ def frontier_sampling_probs(
     *,
     state_knn_indices: torch.Tensor,
     spawn_index: torch.Tensor,
-    target_index: torch.Tensor,
+    target_index: torch.Tensor | None = None,
     base: BetaSamplingCfg | UniformSamplingCfg,
     frontier_lambda: float = 0.5,
     dilation_steps: int = 1,
@@ -247,16 +251,106 @@ def frontier_sampling_probs(
     #    whose endpoint is above-average-frontier get credit. This
     #    generalizes without auto-detection: single-target topologies
     #    reduce to spawn-only, single-spawn to target-only, all-pair /
-    #    N-pair contribute on both axes.
+    #    N-pair contribute on both axes. ``target_index=None`` means
+    #    "tasks have no separate target endpoint" (factory's slot==task
+    #    case): aggregation uses ``spawn_index`` alone.
     spawn_frontier = state_frontier[spawn_index]
-    target_frontier = state_frontier[target_index]
-    task_frontier_w = (spawn_frontier - spawn_frontier.mean()).clamp_min(0.0) + (
-        target_frontier - target_frontier.mean()
-    ).clamp_min(0.0)
+    task_frontier_w = (spawn_frontier - spawn_frontier.mean()).clamp_min(0.0)
+    if target_index is not None:
+        target_frontier = state_frontier[target_index]
+        task_frontier_w = task_frontier_w + (target_frontier - target_frontier.mean()).clamp_min(0.0)
 
     # 4) Combine and normalize globally over all tasks.
     w = base_w + max(0.0, frontier_lambda) * task_frontier_w + eps
     return w / w.sum()
+
+
+def log_frontier_bins(
+    success_rates: torch.Tensor,
+    *,
+    state_knn_indices: torch.Tensor,
+    spawn_index: torch.Tensor,
+    target_index: torch.Tensor | None,
+    dilation_steps: int,
+    probs: torch.Tensor,
+    log_dict: dict[str, float],
+    step_counter: int,
+) -> None:
+    """Bucket per-task probs by per-task frontier weight; write to log_dict + stdout.
+
+    Computes the same per-task frontier weight the sampler uses (from
+    :func:`state_frontier_weights` plus the above-mean-deviation
+    aggregation) and reports a 5-bin histogram of count, mean prob,
+    total mass, mean self-rate, and bin's min frontier value. Used by
+    both the terrain curriculum and the factory ``reset_accumulator``
+    so the diagnostic stays in lockstep with the algorithm.
+
+    Args:
+        success_rates: ``[num_tasks]`` per-task rolling success rate.
+        state_knn_indices: ``[num_states, k]`` long tensor.
+        spawn_index: ``[num_tasks]`` per-task spawn state index.
+        target_index: ``[num_tasks]`` per-task target state index, or
+            ``None`` for slot==task topologies (factory).
+        dilation_steps: Same value passed to the sampler.
+        probs: ``[num_tasks]`` per-task sampling probability the
+            sampler emitted this step.
+        log_dict: Mutable dict (typically ``env.extras["log"]``) into
+            which ``Frontier/bin_*`` keys are written.
+        step_counter: Iteration counter for the stdout header.
+    """
+    state_s, state_frontier = state_frontier_weights(
+        success_rates,
+        state_knn_indices=state_knn_indices,
+        spawn_index=spawn_index,
+        target_index=target_index,
+        dilation_steps=dilation_steps,
+    )
+    spawn_f = state_frontier[spawn_index]
+    task_frontier = (spawn_f - spawn_f.mean()).clamp_min(0.0)
+    if target_index is not None:
+        target_f = state_frontier[target_index]
+        task_frontier = task_frontier + (target_f - target_f.mean()).clamp_min(0.0)
+
+    bins = [
+        ("ftr<0.01", 0.0, 0.01),
+        ("0.01-0.05", 0.01, 0.05),
+        ("0.05-0.20", 0.05, 0.20),
+        ("0.20-0.50", 0.20, 0.50),
+        ("0.50+", 0.50, 1.001),
+    ]
+    rows = []
+    total_p = float(probs.sum())
+    for label, lo, hi in bins:
+        mask = (task_frontier >= lo) & (task_frontier < hi)
+        n = int(mask.sum())
+        if n == 0:
+            rows.append((label, 0, 0.0, 0.0, 0.0, 0.0))
+            continue
+        mean_p = float(probs[mask].mean())
+        mass = float(probs[mask].sum())
+        mean_self_s = float(success_rates[mask].mean())
+        min_ftr = float(task_frontier[mask].min())
+        rows.append((label, n, mean_p, mass, mean_self_s, min_ftr))
+        log_dict[f"Frontier/bin_{label}_count"] = float(n)
+        log_dict[f"Frontier/bin_{label}_mean_prob"] = mean_p
+        log_dict[f"Frontier/bin_{label}_mass"] = mass
+        log_dict[f"Frontier/bin_{label}_mean_self_s"] = mean_self_s
+
+    print(
+        "[FRONTIER DIAG] step="
+        f"{step_counter}  total_p={total_p:.3f}  "
+        f"state_frontier max={float(state_frontier.max()):.3f}  "
+        f"state_s p10/50/90="
+        f"{float(state_s.quantile(0.1)):.3f}/{float(state_s.quantile(0.5)):.3f}/{float(state_s.quantile(0.9)):.3f}",
+        flush=True,
+    )
+    header = f"  {'bin':12s} {'count':>6s} {'mean_p':>10s} {'mass':>8s} {'mean_self_s':>11s} {'min_ftr':>8s}"
+    print(header, flush=True)
+    for label, n, mean_p, mass, mean_self_s, min_ftr in rows:
+        print(
+            f"  {label:12s} {n:6d} {mean_p:10.3e} {mass:8.3f} {mean_self_s:11.3f} {min_ftr:8.3f}",
+            flush=True,
+        )
 
 
 def uniform_sampling_probs(success_rates: torch.Tensor) -> torch.Tensor:

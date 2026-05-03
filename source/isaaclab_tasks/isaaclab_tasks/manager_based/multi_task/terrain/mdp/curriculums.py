@@ -20,6 +20,7 @@ from isaaclab_tasks.manager_based.multi_task.mdp.util import (
     beta_sampling_probs,
     build_knn_indices,
     frontier_sampling_probs,
+    log_frontier_bins,
     state_frontier_weights,
     uniform_sampling_probs,
 )
@@ -175,73 +176,19 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         return self._result
 
     def _log_frontier_bins(self, success_rates: torch.Tensor, probs: torch.Tensor) -> None:
-        """Bucket per-task probs by per-task frontier weight and log to extras + stdout.
-
-        Uses :func:`state_frontier_weights` (the same helper the sampler
-        itself calls) to compute per-state frontier, then aggregates per
-        task via the same above-mean-deviation rule the sampler uses.
-        Reports (a) count, (b) mean per-task probability, and (c) total
-        probability mass for each bin. When the algorithm is functional
-        the mean prob increases with bin index, and the high-frontier
-        bin captures a meaningful fraction of total mass.
-        """
+        """Forward to :func:`log_frontier_bins`; the shared helper does the work."""
         assert self._state_knn_indices is not None
         table = self.goal_term.table
-        state_s, state_frontier = state_frontier_weights(
+        log_frontier_bins(
             success_rates,
             state_knn_indices=self._state_knn_indices,
             spawn_index=table.spawn_index,
             target_index=table.target_index,
             dilation_steps=self._sampling_cfg.dilation_steps,
+            probs=probs,
+            log_dict=self.env.extras.setdefault("log", {}),
+            step_counter=self.env.common_step_counter,
         )
-        spawn_f = state_frontier[table.spawn_index]
-        target_f = state_frontier[table.target_index]
-        task_frontier = (spawn_f - spawn_f.mean()).clamp_min(0.0) + (target_f - target_f.mean()).clamp_min(0.0)
-        # Also bucket by self success rate so we can split "frontier-unlearned"
-        # from "borderline" within the high-frontier bin.
-        task_self_s = success_rates
-
-        bins = [
-            ("ftr<0.01", 0.0, 0.01),
-            ("0.01-0.05", 0.01, 0.05),
-            ("0.05-0.20", 0.05, 0.20),
-            ("0.20-0.50", 0.20, 0.50),
-            ("0.50+", 0.50, 1.001),
-        ]
-        log_dict = self.env.extras.setdefault("log", {})
-        rows = []
-        total_p = float(probs.sum())
-        for label, lo, hi in bins:
-            mask = (task_frontier >= lo) & (task_frontier < hi)
-            n = int(mask.sum())
-            if n == 0:
-                rows.append((label, 0, 0.0, 0.0, 0.0, 0.0))
-                continue
-            mean_p = float(probs[mask].mean())
-            mass = float(probs[mask].sum())
-            mean_self_s = float(task_self_s[mask].mean())
-            mean_state_frontier_min = float(task_frontier[mask].min())
-            rows.append((label, n, mean_p, mass, mean_self_s, mean_state_frontier_min))
-            log_dict[f"Frontier/bin_{label}_count"] = float(n)
-            log_dict[f"Frontier/bin_{label}_mean_prob"] = mean_p
-            log_dict[f"Frontier/bin_{label}_mass"] = mass
-            log_dict[f"Frontier/bin_{label}_mean_self_s"] = mean_self_s
-
-        print(
-            "[FRONTIER DIAG] step="
-            f"{self.env.common_step_counter}  total_p={total_p:.3f}  "
-            f"state_frontier max={float(state_frontier.max()):.3f}  "
-            f"state_s p10/50/90="
-            f"{float(state_s.quantile(0.1)):.3f}/{float(state_s.quantile(0.5)):.3f}/{float(state_s.quantile(0.9)):.3f}",
-            flush=True,
-        )
-        header = f"  {'bin':12s} {'count':>6s} {'mean_p':>10s} {'mass':>8s} {'mean_self_s':>11s} {'min_ftr':>8s}"
-        print(header, flush=True)
-        for label, n, mean_p, mass, mean_self_s, min_ftr in rows:
-            print(
-                f"  {label:12s} {n:6d} {mean_p:10.3e} {mass:8.3f} {mean_self_s:11.3f} {min_ftr:8.3f}",
-                flush=True,
-            )
 
     def _update_bin_stats(self, success_rates: torch.Tensor, probs: torch.Tensor) -> None:
         """Write per-bin frac/prob into ``self._result`` if their flags are enabled."""
