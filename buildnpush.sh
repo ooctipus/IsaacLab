@@ -358,24 +358,38 @@ echo ""
 # Symlink Resolution (Docker COPY doesn't follow external symlinks)
 # =============================================================================
 ASSETS_DATA_DIR="source/isaaclab_assets/data"
+# Top-level symlinks (relative to repo root) that the Dockerfile COPYs in.
+# Each must be resolved to its target before `docker build` and restored after.
+EXTRA_SYMLINKS=(
+  "dep"
+)
 SYMLINKS_FILE=$(mktemp)
 
-resolve_symlinks() {
-  echo "🔗 Resolving symlinks in ${ASSETS_DATA_DIR}..."
-  if [ ! -d "${ASSETS_DATA_DIR}" ]; then
-    echo "   Directory does not exist, skipping"
+_resolve_one_symlink() {
+  local item="$1"
+  if [ ! -L "$item" ]; then
     return
   fi
-  for item in "${ASSETS_DATA_DIR}"/*; do
-    if [ -L "$item" ]; then
-      target=$(readlink -f "$item")
-      if [ -d "$target" ]; then
-        echo "   📁 Resolving: $item -> $target"
-        rm "$item"
-        cp -rL "$target" "$item"
-        echo "$item:$target" >> "$SYMLINKS_FILE"
-      fi
-    fi
+  local target
+  target=$(readlink -f "$item")
+  if [ ! -d "$target" ]; then
+    return
+  fi
+  echo "   📁 Resolving: $item -> $target"
+  rm "$item"
+  cp -rL "$target" "$item"
+  echo "$item:$target" >> "$SYMLINKS_FILE"
+}
+
+resolve_symlinks() {
+  echo "🔗 Resolving symlinks for build context..."
+  if [ -d "${ASSETS_DATA_DIR}" ]; then
+    for item in "${ASSETS_DATA_DIR}"/*; do
+      _resolve_one_symlink "$item"
+    done
+  fi
+  for item in "${EXTRA_SYMLINKS[@]}"; do
+    _resolve_one_symlink "$item"
   done
 }
 
