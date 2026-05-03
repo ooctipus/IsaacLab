@@ -96,6 +96,66 @@ def build_knn_indices(
     return knn
 
 
+def state_frontier_weights(
+    success_rates: torch.Tensor,
+    *,
+    state_knn_indices: torch.Tensor,
+    spawn_index: torch.Tensor,
+    target_index: torch.Tensor,
+    dilation_steps: int = 1,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute per-state success rates and per-state frontier weights.
+
+    The single source of truth for the state-buffer spatial-frontier
+    computation. Both :func:`frontier_sampling_probs` (the algorithm)
+    and the curriculum's diagnostic / dashboard paths call this so they
+    can never silently diverge.
+
+    Per-state success ``state_s`` is the mean per-task success rate
+    across all tasks touching the state in either endpoint role. The
+    frontier weight is::
+
+        state_frontier = (1 - state_s) * (s_dil - state_s).clamp_min(0)
+
+    where ``s_dil`` is ``state_s`` propagated outward via
+    ``dilation_steps`` graph-max iterations on ``state_knn_indices``.
+    The ``(1 - state_s)`` factor downweights states that are themselves
+    well-learned, even if a more-learned neighbor exists -- the frontier
+    is "I'm not yet solved AND a neighbor is more solved", not just
+    "a neighbor is more solved".
+
+    Args:
+        success_rates: ``[num_tasks]`` per-task rolling success rate.
+        state_knn_indices: ``[num_states, k]`` long tensor from
+            :func:`build_knn_indices` over the state pool xy.
+        spawn_index: ``[num_tasks]`` per-task spawn state index.
+        target_index: ``[num_tasks]`` per-task target state index.
+        dilation_steps: Number of graph-max iterations.
+
+    Returns:
+        ``(state_s, state_frontier)`` -- both ``[num_states]`` on the
+        same device/dtype as ``success_rates``.
+    """
+    device = success_rates.device
+    n_states = int(state_knn_indices.shape[0])
+    state_sums = torch.zeros(n_states, device=device, dtype=success_rates.dtype)
+    state_counts = torch.zeros(n_states, device=device, dtype=success_rates.dtype)
+    ones = torch.ones_like(success_rates)
+    state_sums.scatter_add_(0, spawn_index, success_rates)
+    state_sums.scatter_add_(0, target_index, success_rates)
+    state_counts.scatter_add_(0, spawn_index, ones)
+    state_counts.scatter_add_(0, target_index, ones)
+    state_s = state_sums / state_counts.clamp_min(1.0)
+
+    s_dil = state_s
+    for _ in range(max(1, int(dilation_steps))):
+        neighbor_max = s_dil[state_knn_indices].amax(dim=-1)
+        s_dil = torch.maximum(s_dil, neighbor_max)
+    state_frontier = (1.0 - state_s) * (s_dil - state_s).clamp_min(0.0)
+
+    return state_s, state_frontier
+
+
 def frontier_sampling_probs(
     success_rates: torch.Tensor,
     *,
@@ -114,21 +174,19 @@ def frontier_sampling_probs(
     in task space. This makes the algorithm topology-agnostic: it works
     identically whether you have one spawn / many targets, many spawns
     / one target, or many of both. Per-task quantities are aggregated
-    onto the state pool, the spatial frontier is computed there, and
-    per-task weights are recovered by gathering at each task's two
-    endpoints.
+    onto the state pool, the spatial frontier is computed there
+    (see :func:`state_frontier_weights`), and per-task weights are
+    recovered by summing each endpoint's *above-mean* deviation -- a
+    constant endpoint (e.g. shared target under
+    ``single_target_per_cell=True``) auto-cancels.
 
     Steps:
 
     1. Per-task base weight from the plugged-in ``base`` sampler.
-    2. Aggregate per-task success rates onto each state by mean over
-       all (task, endpoint) pairs that touch the state.
-    3. Compute the per-state frontier ``s_dil − s_state`` from the
-       state-level kNN graph (iterated ``dilation_steps`` times for
-       multi-hop propagation).
-    4. Per-task frontier weight = max over the task's spawn/target
-       endpoint frontier scores.
-    5. Sum, normalize.
+    2. Per-state ``state_frontier`` from :func:`state_frontier_weights`.
+    3. Per-task frontier weight = sum of above-mean deviations at the
+       task's two endpoints. Constant endpoints contribute 0.
+    4. ``w = base_w + lambda * task_frontier_w + eps``; normalize.
 
     Args:
         success_rates: ``[num_tasks]`` per-task rolling success rate.
@@ -152,8 +210,6 @@ def frontier_sampling_probs(
     Returns:
         ``[num_tasks]`` probability tensor, normalized over all tasks.
     """
-    device = success_rates.device
-
     # 1) Per-task baseline weight from the plugged-in sampler cfg.
     if isinstance(base, BetaSamplingCfg):
         t = max(0.0, min(1.0, base.target))
@@ -169,54 +225,30 @@ def frontier_sampling_probs(
         )
     base_w = base_w.clamp_min(eps)
 
-    # 2) Aggregate per-task success onto the state pool. Each task contributes
-    #    once per endpoint (spawn and target), so a state's mean is the average
-    #    success rate of every task touching it in either role.
-    n_states = int(state_knn_indices.shape[0])
-    state_sums = torch.zeros(n_states, device=device, dtype=success_rates.dtype)
-    state_counts = torch.zeros(n_states, device=device, dtype=success_rates.dtype)
-    ones = torch.ones_like(success_rates)
-    state_sums.scatter_add_(0, spawn_index, success_rates)
-    state_sums.scatter_add_(0, target_index, success_rates)
-    state_counts.scatter_add_(0, spawn_index, ones)
-    state_counts.scatter_add_(0, target_index, ones)
-    state_s = state_sums / state_counts.clamp_min(1.0)
+    # 2) Per-state frontier via the shared helper. Single source of truth.
+    _, state_frontier = state_frontier_weights(
+        success_rates,
+        state_knn_indices=state_knn_indices,
+        spawn_index=spawn_index,
+        target_index=target_index,
+        dilation_steps=dilation_steps,
+    )
 
-    # 3) Per-state frontier via iterated graph-max over the state kNN.
-    #    The ``(1 - state_s)`` factor is essential: without it, borderline
-    #    states (e.g. s=0.6 next to s=0.95) collect nearly as much
-    #    ``s_dil - state_s`` as true frontier states (s=0.05 next to s=0.55),
-    #    so the Beta base term keeps preferring borderline over frontier
-    #    regardless of lambda. Multiplying by ``(1 - state_s)`` says
-    #    "frontier-ness requires both 'I'm not solved' AND 'a neighbor is
-    #    more solved' " -- which is the correct spatial-curriculum semantics
-    #    and matches the user-mental-model of "edge of the learned region".
-    s_dil = state_s
-    for _ in range(max(1, int(dilation_steps))):
-        neighbor_max = s_dil[state_knn_indices].amax(dim=-1)
-        s_dil = torch.maximum(s_dil, neighbor_max)
-    state_frontier = (1.0 - state_s) * (s_dil - state_s).clamp_min(0.0)
-
-    # 4) Per-task frontier = sum of per-endpoint above-mean frontier deviations.
-    #    Topology-agnostic by construction. For each endpoint role (spawn,
-    #    target) we subtract the per-task mean of its state-frontier values
-    #    before clamping at zero. A constant endpoint (e.g. shared target
-    #    under ``single_target_per_cell=True``) has variance 0, so its
-    #    deviation is identically 0 and it contributes nothing. An endpoint
-    #    that varies across tasks contributes its positive-side deviation,
-    #    so tasks whose endpoint is above-average frontier get credit.
-    #    This generalizes without auto-detection or cfg flags:
-    #
-    #      single target, many spawns -> spawn-only (target dev = 0)
-    #      single spawn, many targets -> target-only
-    #      cartesian / N-pair         -> both contribute
+    # 3) Per-task frontier = sum of per-endpoint above-mean frontier deviations.
+    #    A constant endpoint has zero variance, so its deviation is
+    #    identically 0 and it contributes nothing. An endpoint that varies
+    #    across tasks contributes its positive-side deviation, so tasks
+    #    whose endpoint is above-average-frontier get credit. This
+    #    generalizes without auto-detection: single-target topologies
+    #    reduce to spawn-only, single-spawn to target-only, all-pair /
+    #    N-pair contribute on both axes.
     spawn_frontier = state_frontier[spawn_index]
     target_frontier = state_frontier[target_index]
     task_frontier_w = (spawn_frontier - spawn_frontier.mean()).clamp_min(0.0) + (
         target_frontier - target_frontier.mean()
     ).clamp_min(0.0)
 
-    # 5) Combine and normalize globally over all tasks.
+    # 4) Combine and normalize globally over all tasks.
     w = base_w + max(0.0, frontier_lambda) * task_frontier_w + eps
     return w / w.sum()
 

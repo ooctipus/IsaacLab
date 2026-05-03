@@ -35,15 +35,18 @@ class BetaSamplingCfg:
 
 @configclass
 class FrontierSamplingCfg:
-    """Frontier-aware sampler combining per-task value with per-tile spatial frontier.
+    """Frontier-aware sampler combining per-task value with per-state spatial frontier.
 
     The ``base`` field plugs in any per-task sampler -- :class:`BetaSamplingCfg`
     for a Beta-shaped per-task weight, or :class:`UniformSamplingCfg` for a
     uniform per-task floor (only the spatial-frontier term distinguishes
-    tasks). The per-tile term aggregates success rates onto the terrain
-    grid, dilates them with one or more 3x3 max-pool steps, and treats
-    ``s_dilated_neighbor - s_tile`` as a frontier score that boosts every
-    task in that tile.
+    tasks). The spatial-frontier term aggregates per-task success rates
+    onto the underlying state pool (via both endpoints), dilates the
+    resulting per-state field via graph-max iterations on a kNN graph
+    over the state xy, and gives each task an above-mean-deviation
+    contribution at each of its endpoint states. Constant endpoints
+    (e.g. shared targets under ``single_target_per_cell=True``) cancel
+    automatically; varying endpoints contribute. Topology-agnostic.
 
     Attributes:
         success_rate_bind: Eval expression resolved against ``self`` to

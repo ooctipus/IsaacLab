@@ -20,6 +20,7 @@ from isaaclab_tasks.manager_based.multi_task.mdp.util import (
     beta_sampling_probs,
     build_knn_indices,
     frontier_sampling_probs,
+    state_frontier_weights,
     uniform_sampling_probs,
 )
 
@@ -174,34 +175,25 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         return self._result
 
     def _log_frontier_bins(self, success_rates: torch.Tensor, probs: torch.Tensor) -> None:
-        """Bucket per-task probs by task-frontier weight and log to extras + stdout.
+        """Bucket per-task probs by per-task frontier weight and log to extras + stdout.
 
-        For each task we compute ``task_frontier_w = max(state_frontier[spawn],
-        state_frontier[target])`` and bucket all tasks into a small set of
-        frontier-weight bins. We then report (a) how many tasks fall in each
-        bin, (b) the mean per-task probability in each bin, and (c) the
-        total probability mass in each bin. The expected pattern when the
-        algorithm is functional: mean per-task prob increases with bin
-        index, and the high-frontier bin captures a meaningful fraction of
-        total mass.
+        Uses :func:`state_frontier_weights` (the same helper the sampler
+        itself calls) to compute per-state frontier, then aggregates per
+        task via the same above-mean-deviation rule the sampler uses.
+        Reports (a) count, (b) mean per-task probability, and (c) total
+        probability mass for each bin. When the algorithm is functional
+        the mean prob increases with bin index, and the high-frontier
+        bin captures a meaningful fraction of total mass.
         """
         assert self._state_knn_indices is not None
         table = self.goal_term.table
-        n_states = int(table.spawn_states.shape[0])
-        state_sums = torch.zeros(n_states, device=probs.device, dtype=probs.dtype)
-        state_counts = torch.zeros(n_states, device=probs.device, dtype=probs.dtype)
-        ones = torch.ones_like(success_rates)
-        state_sums.scatter_add_(0, table.spawn_index, success_rates)
-        state_sums.scatter_add_(0, table.target_index, success_rates)
-        state_counts.scatter_add_(0, table.spawn_index, ones)
-        state_counts.scatter_add_(0, table.target_index, ones)
-        state_s = state_sums / state_counts.clamp_min(1.0)
-
-        s_dil = state_s
-        for _ in range(max(1, int(self._sampling_cfg.dilation_steps))):
-            s_dil = torch.maximum(s_dil, s_dil[self._state_knn_indices].amax(dim=-1))
-        state_frontier = (1.0 - state_s) * (s_dil - state_s).clamp_min(0.0)
-
+        state_s, state_frontier = state_frontier_weights(
+            success_rates,
+            state_knn_indices=self._state_knn_indices,
+            spawn_index=table.spawn_index,
+            target_index=table.target_index,
+            dilation_steps=self._sampling_cfg.dilation_steps,
+        )
         spawn_f = state_frontier[table.spawn_index]
         target_f = state_frontier[table.target_index]
         task_frontier = (spawn_f - spawn_f.mean()).clamp_min(0.0) + (target_f - target_f.mean()).clamp_min(0.0)
@@ -364,7 +356,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.env.extras.setdefault("log_images", {})["Curriculum/terrain_heatmap"] = img
 
     def _log_spawn_scatter(self, success_rates: torch.Tensor, probs: torch.Tensor) -> None:
-        """Per-patch diagnostics scatter — three panels over the terrain.
+        """Per-patch diagnostics scatter — four panels over the terrain.
 
         Each panel shows the same per-patch geometry (one dot per spawn/target
         patch in world xy) but colors the dots by a different per-patch quantity:
@@ -373,7 +365,11 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
            this patch as either spawn or target.
         2. **Sampling probability** — total probability mass the curriculum
            sampler currently places on commands that touch this patch.
-        3. **Δ success since last log** — change in (1) versus the previous
+        3. **State frontier** *(when frontier sampling is active)* — the
+           per-state ``state_frontier`` value the sampler uses, surfaced
+           directly from :func:`state_frontier_weights`. Falls back to
+           "Sampling prob (spawn only)" for non-frontier samplers.
+        4. **Δ success since last log** — change in (1) versus the previous
            call to this method, so improvement vs. regression is visible
            directly.
 
@@ -430,25 +426,26 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
             counts_buf=self._patch_probs_counts,
         )
         # State-pool diagnostic: when frontier sampling is active, show the
-        # per-state frontier weight directly. It lives natively on the patch
+        # per-state frontier weight directly via the shared helper that the
+        # sampler itself uses, so the panel can never silently diverge from
+        # the algorithm. ``state_frontier`` lives natively on the patch
         # grid (one value per ``spawn_states`` row), so no aggregation is
-        # needed -- this surfaces the algorithm's actual spatial signal
-        # without the spawn/target endpoint averaging that dilutes the
-        # "Sampling probability" panel above.
+        # needed -- this surfaces the spatial signal without the
+        # spawn/target endpoint averaging that dilutes the "Sampling
+        # probability" panel above.
         if isinstance(self._sampling_cfg, FrontierSamplingCfg) and self._state_knn_indices is not None:
-            ones = torch.ones_like(success_rates)
-            self._patch_probs_target.zero_()
+            _, state_frontier_t = state_frontier_weights(
+                success_rates,
+                state_knn_indices=self._state_knn_indices,
+                spawn_index=table.spawn_index,
+                target_index=table.target_index,
+                dilation_steps=self._sampling_cfg.dilation_steps,
+            )
+            # Track which states have any task touching them, for valid_mask.
             self._patch_probs_target_counts.zero_()
-            self._patch_probs_target.scatter_add_(0, table.spawn_index, success_rates)
-            self._patch_probs_target.scatter_add_(0, table.target_index, success_rates)
+            ones = torch.ones_like(success_rates)
             self._patch_probs_target_counts.scatter_add_(0, table.spawn_index, ones)
             self._patch_probs_target_counts.scatter_add_(0, table.target_index, ones)
-            state_s = self._patch_probs_target / self._patch_probs_target_counts.clamp_min(1.0)
-            s_dil = state_s
-            for _ in range(max(1, int(self._sampling_cfg.dilation_steps))):
-                s_dil = torch.maximum(s_dil, s_dil[self._state_knn_indices].amax(dim=-1))
-            # Mirrors the (1 - state_s) re-weighting in frontier_sampling_probs.
-            state_frontier_t = (1.0 - state_s) * (s_dil - state_s).clamp_min(0.0)
             spatial_panel_title = "State frontier (s_dil − s_state)"
             spatial_panel_values = state_frontier_t.cpu().numpy()
             spatial_valid = self._patch_probs_target_counts.cpu().numpy() > 0

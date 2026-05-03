@@ -20,6 +20,7 @@ __all__ = [
     "beta_sampling_probs",
     "build_knn_indices",
     "frontier_sampling_probs",
+    "state_frontier_weights",
     "uniform_sampling_probs",
     "create_primitive_mesh",
     "get_reset_state",
@@ -52,7 +53,14 @@ from .reset_state import (
     temporary_seed,
 )
 from .rigid_object_hasher import RigidObjectHasher
-from .sampling import beta_sampling_probs, build_knn_indices, frontier_sampling_probs, tagged_report, uniform_sampling_probs
+from .sampling import (
+    beta_sampling_probs,
+    build_knn_indices,
+    frontier_sampling_probs,
+    state_frontier_weights,
+    tagged_report,
+    uniform_sampling_probs,
+)
 from .sampling_cfg import BetaSamplingCfg, FrontierSamplingCfg, UniformSamplingCfg
 from .state_buffer import StateBuffer
 from .state_buffer_cfg import StateBufferCfg
