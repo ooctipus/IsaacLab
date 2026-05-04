@@ -358,6 +358,22 @@ class RetargetPipelineCfg:
     ik_convergence_threshold: float = 0.01
     """Stop IK early when mean cost change falls below this threshold."""
 
+    ik_chunk_size: int = 0
+    """Maximum IK problems solved in parallel per kernel launch.
+
+    The Levenberg-Marquardt solver allocates ``(N, n_residuals, n_dofs)``
+    Jacobian + auxiliary buffers, which dominates GPU memory at high
+    ``n_desired``. Splitting the workload into chunks lets memory peak
+    at ``chunk_size`` instead of ``N`` -- per-row IK is independent so
+    the result is identical.
+
+    ``0`` (default) auto-derives ``chunk_size`` at run time from
+    ``torch.cuda.mem_get_info`` (uses ~80% of free GPU memory) and the
+    objective list's residual count. Set to a positive integer to pin
+    the chunk size manually -- useful when the pipeline shares the GPU
+    with other workloads whose footprint is hard to predict.
+    """
+
     base_pos_weight: float = 0.05
     """Weight of the base-position IK objective [unitless].
 

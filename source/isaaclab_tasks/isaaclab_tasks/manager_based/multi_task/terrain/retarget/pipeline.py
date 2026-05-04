@@ -350,37 +350,76 @@ class RetargetPipeline:
         N = self.buffer.num_geometry_valid
         self._n_ik_problems = N
         with self._time("ik_build"):
-            all_objs, contact_objs, base_pos_obj, base_rot_obj = self._build_objectives(N, wp_mesh)
+            # Build objectives at chunk_size so the solver's per-row
+            # ``(n_residuals, n_dofs)`` Jacobian + auxiliaries fit in
+            # available GPU memory. A throwaway N=1 build first lets us
+            # count residuals before sizing the real solver.
+            sniff_objs = self._build_objectives(1, wp_mesh)[0]
+            chunk_size = self._compute_ik_chunk_size(N, sniff_objs)
+            del sniff_objs
+
+            all_objs, contact_objs, base_pos_obj, base_rot_obj = self._build_objectives(chunk_size, wp_mesh)
             has_autodiff = any(not obj.supports_analytic() for obj in all_objs)
             jac_mode = ik.IKJacobianType.MIXED if has_autodiff else ik.IKJacobianType.ANALYTIC
-            solver = self.kin.create_ik_solver(all_objs, N, jacobian_mode=jac_mode)
-
-            if contact_objs:
-                self.buffer.scatter_contact_targets(contact_objs, N)
-            wp.copy(base_pos_obj.target_positions, self.buffer.base_target_pos, count=N)
-            wp.copy(base_rot_obj.target_rotations, self.buffer.base_target_rot, count=N)
-
-            jq_in = wp.from_torch(self.buffer.joint_q_init_t[:N].contiguous())
-            jq_out = wp.from_torch(self.buffer.joint_q_result_t[:N].contiguous())
+            solver = self.kin.create_ik_solver(all_objs, chunk_size, jacobian_mode=jac_mode)
+            n_chunks = (N + chunk_size - 1) // chunk_size
 
         with self._time("ik_solve"):
             max_iters = self.cfg.ik_iterations
             threshold = self.cfg.ik_convergence_threshold
             batch_size = max(1, min(3, max_iters))
-            prev_cost = float("inf")
-            total_iters = 0
-            for _ in range(0, max_iters, batch_size):
-                iters = min(batch_size, max_iters - total_iters)
-                solver.step(jq_in, jq_out, iterations=iters)
-                total_iters += iters
-                cur_cost = float(wp.to_torch(solver.costs)[:N].mean())
-                if abs(prev_cost - cur_cost) < threshold:
-                    break
-                prev_cost = cur_cost
-                jq_in = jq_out
+            iters_used = 0
+            all_costs_t = torch.empty(N, device=self.buffer.device, dtype=torch.float32)
 
-            self.buffer.joint_q_result_t[:N] = wp.to_torch(jq_out)
-            self._solver_costs = wp.to_torch(solver.costs)[:N].clone()
+            for chunk_idx in range(n_chunks):
+                start = chunk_idx * chunk_size
+                end = min(start + chunk_size, N)
+                c_size = end - start
+
+                # Tail chunk smaller than the solver's pre-built batch:
+                # rebuild objectives + solver at ``c_size`` (one-time JIT
+                # cost; warp's kernel cache amortizes the same shapes).
+                if c_size < chunk_size:
+                    del solver
+                    all_objs, contact_objs, base_pos_obj, base_rot_obj = self._build_objectives(c_size, wp_mesh)
+                    solver = self.kin.create_ik_solver(all_objs, c_size, jacobian_mode=jac_mode)
+
+                if contact_objs:
+                    self.buffer.scatter_contact_targets(contact_objs, c_size, src_offset=start)
+                wp.copy(
+                    base_pos_obj.target_positions,
+                    self.buffer.base_target_pos,
+                    src_offset=start,
+                    count=c_size,
+                )
+                wp.copy(
+                    base_rot_obj.target_rotations,
+                    self.buffer.base_target_rot,
+                    src_offset=start,
+                    count=c_size,
+                )
+
+                jq_in = wp.from_torch(self.buffer.joint_q_init_t[start:end].contiguous())
+                jq_out = wp.from_torch(self.buffer.joint_q_result_t[start:end].contiguous())
+
+                prev_cost = float("inf")
+                chunk_iters = 0
+                for _ in range(0, max_iters, batch_size):
+                    iters = min(batch_size, max_iters - chunk_iters)
+                    solver.step(jq_in, jq_out, iterations=iters)
+                    chunk_iters += iters
+                    cur_cost = float(wp.to_torch(solver.costs)[:c_size].mean())
+                    if abs(prev_cost - cur_cost) < threshold:
+                        break
+                    prev_cost = cur_cost
+                    jq_in = jq_out
+
+                iters_used = max(iters_used, chunk_iters)
+                self.buffer.joint_q_result_t[start:end] = wp.to_torch(jq_out)
+                all_costs_t[start:end] = wp.to_torch(solver.costs)[:c_size]
+
+            self._solver_costs = all_costs_t
+            total_iters = iters_used
 
         with self._time("fk_eval"):
             self._eval_fk_batched(N)
@@ -452,6 +491,66 @@ class RetargetPipeline:
             torch.cuda.synchronize()
         self._run_time = time.perf_counter() - _run_t0
         return self.buffer
+
+    def _compute_ik_chunk_size(self, N: int, all_objs: list) -> int:
+        """Return the IK batch size to process per kernel launch.
+
+        The Levenberg-Marquardt solver in :class:`newton.ik.IKSolver`
+        allocates ``(N, n_residuals, n_dofs) × float32`` for the Jacobian
+        plus several smaller ``N``-rate scratches. At high ``n_desired``
+        this dominates GPU memory; chunking keeps the peak bounded by
+        ``chunk_size`` instead of ``N`` without affecting results
+        (per-row IK is independent).
+
+        ``cfg.ik_chunk_size > 0`` pins the chunk manually; ``0`` (default)
+        auto-derives it from ``torch.cuda.mem_get_info`` -- 80% of the
+        currently free GPU bytes divided by the per-row solver
+        footprint, then clamped to ``N``.
+
+        Args:
+            N: Total IK problems to solve.
+            all_objs: Constructed objective list -- consulted for
+                ``residual_dim()`` so the per-row footprint reflects the
+                actual objective set rather than a worst-case estimate.
+
+        Returns:
+            Chunk size in IK problems (``>= 1``, ``<= N``).
+        """
+        cfg_size = int(getattr(self.cfg, "ik_chunk_size", 0))
+        if cfg_size > 0:
+            return min(cfg_size, N)
+
+        if not self.kin.device.startswith("cuda"):
+            return N
+
+        free_bytes, _ = torch.cuda.mem_get_info(torch.device(self.kin.device))
+        budget = int(0.8 * free_bytes)
+
+        n_residuals = sum(o.residual_dim() for o in all_objs)
+        n_dofs = int(self.kin.model.joint_dof_count)
+        n_coords = int(self.kin.model.joint_coord_count)
+        body_count = int(self.kin.model.body_count)
+        joint_count = int(self.kin.model.joint_count)
+
+        # Per-row footprint of ``IKOptimizerLM._alloc_solver_buffers``
+        # plus the small per-row state held alongside it. The Jacobian
+        # term ``n_residuals * n_dofs * 4`` dominates at typical sizes
+        # but the others are non-trivial and worth budgeting.
+        per_row = (
+            n_dofs * 4  # qd_zero
+            + body_count * (28 + 24)  # body_q (transformf) + body_qd (spatial_vectorf)
+            + 3 * n_residuals * 4  # residuals + residuals_proposed + residuals_3d
+            + n_residuals * n_dofs * 4  # jacobian
+            + n_dofs * 4  # dq_dof
+            + n_coords * 4  # joint_q_proposed
+            + 5 * 4  # costs / costs_proposed / lambda / accept / pred_reduction
+            + 4  # problem_idx_identity (int32)
+            + joint_count * 28  # X_local
+            + n_dofs * 24  # joint_S_s
+        )
+
+        chunk_size = max(1, budget // max(1, per_row))
+        return min(chunk_size, N)
 
     def _eval_fk_batched(self, N: int) -> None:
         """Run batched FK on solved joint coordinates and store ``body_q`` in the buffer.

@@ -201,6 +201,7 @@ class RetargetBuffer:
         self,
         objectives: list,
         n_active: int,
+        src_offset: int = 0,
     ) -> None:
         """Deinterleave contact targets into per-objective warp arrays.
 
@@ -212,9 +213,15 @@ class RetargetBuffer:
         Args:
             objectives: IK position objectives (one per contact body).
             n_active: Number of active candidates.
+            src_offset: Starting candidate index into the buffer's
+                ``contact_targets`` slab. Combined with ``n_active`` so
+                the method can scatter a sliding window of rows for
+                chunked IK without copying the unchunked source first.
         """
         nc = self.num_contacts
         ct = self.contact_targets
+        if src_offset != 0:
+            ct = ct[src_offset * nc : (src_offset + n_active) * nc]
         flat_dst = wp.zeros(nc * n_active, dtype=wp.vec3, device=self.device)
         wp.launch(
             _scatter_contacts,
