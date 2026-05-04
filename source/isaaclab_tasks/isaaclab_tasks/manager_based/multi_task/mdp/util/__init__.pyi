@@ -26,6 +26,7 @@ __all__ = [
     "beta_sampling_probs",
     "build_knn_indices",
     "frontier_sampling_probs",
+    "log_curriculum_bins",
     "log_frontier_bins",
     "make_curriculum",
     "state_frontier_weights",
@@ -71,6 +72,7 @@ from .sampling import (
     uniform_sampling_probs,
 )
 from .curriculum import WeightedCurriculum, make_curriculum
+from .diagnostics import log_curriculum_bins
 from .sampling_cfg import BetaSamplingCfg, FrontierSamplingCfg, UniformSamplingCfg
 from .signals import BetaSignal, FrontierSignal, InformativenessSignal, UniformSignal
 from .state_buffer import StateBuffer
