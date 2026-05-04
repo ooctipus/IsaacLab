@@ -42,7 +42,7 @@ from .buffer import RetargetBuffer
 from .canonical_shape import canonicalize_shape
 from .cfg import PatchSamplingCfg, SamplerCfg, SamplerSizingCfg
 from .sampler_base import SamplerBase, SamplerOutput, SamplerSizing, compute_sampler_sizing
-from .spatial_topk import spatial_topk_xy
+from .spatial_topk import build_spatial_grid_xy, spatial_topk_xy_with_grid
 
 
 def _prepare_ik_batched(
@@ -435,29 +435,16 @@ class Sampler(SamplerBase):
             torch.cuda.manual_seed_all(42)
 
         with self._time("project"):
-            # Per-candidate (center, yaw, template_idx).
-            centers = patch_pts[torch.randint(0, n_pts, (K,), device=dev_str)]  # [K, 3]
-            yaws = torch.rand(K, device=dev_str) * (2.0 * np.pi)
-            n_tpl = self._fk_shape_samples.shape[0]
-            tpl_idx = torch.randint(0, n_tpl, (K,), device=dev_str)
-            tpl_canon = self._fk_shape_samples[tpl_idx]  # [K, nc, 3]
-
-            # Un-canonicalize: undo per-foot de-nominal, then apply candidate yaw,
-            # then translate by candidate center. Canonical z is already polygon-
-            # centroid-relative; sum with candidate terrain z for world z.
+            # Constants for the un-canonicalization step. The actual
+            # ``[K, nc, ...]`` candidate generation runs INSIDE the
+            # chunk loop below so the working set is bounded by
+            # ``chunk_K`` rather than full ``K``. Holding ``yaws``,
+            # ``tpl_canon``, ``projected_world`` upfront at the dense
+            # ``pool_spacing=0.05 m`` setting (K~60M) costs several GiB
+            # of intermediates *before* the LSA stage.
             cos_n = torch.cos(self._nominal_angle_t)  # [nc]
             sin_n = torch.sin(self._nominal_angle_t)
-            cx = tpl_canon[..., 0]  # [K, nc]
-            cy_ = tpl_canon[..., 1]
-            cz = tpl_canon[..., 2]
-            mid_x = cos_n * cx - sin_n * cy_  # [K, nc]
-            mid_y = sin_n * cx + cos_n * cy_
-            cos_y = torch.cos(yaws).unsqueeze(-1)  # [K, 1]
-            sin_y = torch.sin(yaws).unsqueeze(-1)
-            world_x = cos_y * mid_x - sin_y * mid_y + centers[:, 0:1]  # [K, nc]
-            world_y = sin_y * mid_x + cos_y * mid_y + centers[:, 1:2]
-            world_z = cz + centers[:, 2:3]
-            projected_world = torch.stack([world_x, world_y, world_z], dim=-1)  # [K, nc, 3]
+            n_tpl = self._fk_shape_samples.shape[0]
 
             # Optimal one-patch-per-foot assignment (brute-force bipartite).
             #
@@ -493,10 +480,13 @@ class Sampler(SamplerBase):
             # configured ``terrain_snap_distance``.
             query_radius = self._fk_max_foot_reach + 4.0 * radius
             effective_radius = query_radius if force_all_snap else radius
-            proj_xy_flat = projected_world[..., :2].reshape(-1, 2).contiguous()
-            topk_i_flat, topk_d_flat = spatial_topk_xy(patch_xy, proj_xy_flat, k=nc, radius=query_radius)
-            topk_idx_full = topk_i_flat.view(K, nc, nc).to(torch.long).clamp(min=0)
-            topk_dists_full = topk_d_flat.view(K, nc, nc)
+
+            # Build the per-foot patch hash grid ONCE; query it per chunk
+            # below. Holding the full ``[K * nc, nc]`` topk output upfront
+            # would peak at K * nc * nc * 8 B (idx+dist), which on dense
+            # pools (e.g. ``pool_spacing=0.05 m``, K~60M placements) is
+            # several GiB before any LSA work runs.
+            patch_grid = build_spatial_grid_xy(patch_xy, radius=query_radius)
 
             # Enumerate nc^nc combinations once: ``combo[c, i]`` = rank
             # (0..nc-1) that foot ``i`` picks under combination ``c``.
@@ -505,26 +495,85 @@ class Sampler(SamplerBase):
             C = combo.shape[0]
             neg_sentinel = -torch.arange(1, nc + 1, device=device).view(1, 1, nc)
 
-            # Chunk K through the LSA combo expansion. The hash-grid lookup
-            # already keeps memory bounded; the LSA's ``[K, C, nc]``
-            # intermediates still scale linearly with K, so we cap a
-            # chunk at ~256 MiB of intermediate state.
-            lsa_budget = 256 * 1024 * 1024
-            chunk_K = max(1, lsa_budget // (C * nc * 4 * 4))
+            # Chunk K through the candidate-projection + spatial-topk +
+            # LSA pipeline. The hot rows are ``[Kc, C, nc]`` float / long
+            # tensors (gather, cost, contact-mask, target, edges, ...)
+            # plus the wider ``[Kc, C, nc, 2]`` tensors (proj_xy_exp,
+            # target_xy, tgt_rel, target_sorted, edges, next_edges).
+            # Empirically ~16 of these float-sized scratches coexist at
+            # peak during the convex-validity step, plus a handful of
+            # long-typed gather/permute tensors at 2x the float
+            # footprint, giving an effective per-row peak around
+            # ``20 × C × nc × 4`` bytes.
+            #
+            # Budget = ``0.9 × free GPU bytes``, after a one-shot
+            # ``empty_cache`` to release any cached blocks the upstream
+            # allocator has been hoarding. Aggressive on purpose: the
+            # downstream FPS + IK stages stream their work and don't
+            # need much simultaneous headroom, and the per-chunk peak
+            # inside the loop is bounded by ``per_row_bytes``. No hard
+            # cap -- on a clean 50+ GiB GPU we want a chunk in the tens
+            # of GiB so ``n_chunks`` stays in the low hundreds.
+            torch_device = torch.device(device) if isinstance(device, str) else device
+            per_row_bytes = 32 * C * nc * 4 + nc * nc * 8  # LSA + topk
+            if torch_device.type == "cuda":
+                torch.cuda.empty_cache()
+                free_bytes, _ = torch.cuda.mem_get_info(torch_device)
+                lsa_budget = max(256 * 1024 * 1024, int(0.90 * free_bytes))
+            else:
+                lsa_budget = 1 * 1024 * 1024 * 1024
+            chunk_K = max(1, min(K, lsa_budget // max(1, per_row_bytes)))
+            n_chunks = (K + chunk_K - 1) // chunk_K
+            print(
+                f"[contact_sampling] candidate gen + spatial-topk + LSA over K={K} placements: "
+                f"chunk_K={chunk_K}, n_chunks={n_chunks}, "
+                f"budget={lsa_budget // (1024 * 1024)} MiB, per_row={per_row_bytes // 1024} KiB",
+                flush=True,
+            )
 
             is_contact_chunks: list[torch.Tensor] = []
             contact_ik_chunks: list[torch.Tensor] = []
             n_found_chunks: list[torch.Tensor] = []
             no_convex_chunks: list[torch.Tensor] = []
+            yaws_chunks: list[torch.Tensor] = []
+            tpl_idx_chunks: list[torch.Tensor] = []
             for k0 in range(0, K, chunk_K):
                 k1 = min(k0 + chunk_K, K)
                 Kc = k1 - k0
-                proj_chunk = projected_world[k0:k1]  # [Kc, nc, 3]
+
+                # Per-chunk candidate generation. Each chunk samples its
+                # own (center, yaw, template_idx) triples and produces a
+                # ``[Kc, nc, 3]`` ``proj_chunk`` -- so the ``[K, ...]``
+                # tensors that previously dominated the projection step
+                # never exist at full size.
+                centers_c = patch_pts[torch.randint(0, n_pts, (Kc,), device=dev_str)]  # [Kc, 3]
+                yaws_c = torch.rand(Kc, device=dev_str) * (2.0 * np.pi)
+                tpl_idx_c = torch.randint(0, n_tpl, (Kc,), device=dev_str)
+                tpl_canon_c = self._fk_shape_samples[tpl_idx_c]  # [Kc, nc, 3]
+
+                cx = tpl_canon_c[..., 0]  # [Kc, nc]
+                cy_ = tpl_canon_c[..., 1]
+                cz = tpl_canon_c[..., 2]
+                mid_x = cos_n * cx - sin_n * cy_  # [Kc, nc]
+                mid_y = sin_n * cx + cos_n * cy_
+                cos_y = torch.cos(yaws_c).unsqueeze(-1)  # [Kc, 1]
+                sin_y = torch.sin(yaws_c).unsqueeze(-1)
+                world_x = cos_y * mid_x - sin_y * mid_y + centers_c[:, 0:1]  # [Kc, nc]
+                world_y = sin_y * mid_x + cos_y * mid_y + centers_c[:, 1:2]
+                world_z = cz + centers_c[:, 2:3]
+                proj_chunk = torch.stack([world_x, world_y, world_z], dim=-1)  # [Kc, nc, 3]
                 proj_xy = proj_chunk[..., :2]  # [Kc, nc, 2]
 
-                # Top-nc per (candidate, foot) — already computed by hash grid.
-                topk_d = topk_dists_full[k0:k1]  # [Kc, nc, nc]
-                topk_i = topk_idx_full[k0:k1]
+                # Per-chunk top-nc lookup. ``proj_xy_chunk_flat`` is the
+                # chunk's ``[Kc * nc, 2]`` foot-projection queries against
+                # the prebuilt grid; the output ``[Kc * nc, nc]`` is
+                # bounded by ``chunk_K``, never the full ``K``.
+                proj_xy_chunk_flat = proj_xy.reshape(-1, 2).contiguous()
+                topk_i_chunk_flat, topk_d_chunk_flat = spatial_topk_xy_with_grid(
+                    patch_grid, proj_xy_chunk_flat, k=nc, radius=query_radius
+                )
+                topk_i = topk_i_chunk_flat.view(Kc, nc, nc).to(torch.long).clamp(min=0)
+                topk_d = topk_d_chunk_flat.view(Kc, nc, nc)
 
                 # Expand into combo space.
                 gather_rank = combo.view(1, C, nc, 1).expand(Kc, C, nc, 1)
@@ -601,11 +650,15 @@ class Sampler(SamplerBase):
                 is_contact_chunks.append(is_contact_c)
                 contact_ik_chunks.append(contact_ik_c)
                 n_found_chunks.append(is_contact_c.sum(dim=-1))
+                yaws_chunks.append(yaws_c)
+                tpl_idx_chunks.append(tpl_idx_c)
 
             is_contact_full = torch.cat(is_contact_chunks, dim=0)  # [K, nc]
             contact_ik = torch.cat(contact_ik_chunks, dim=0)  # [K, nc, 3]
             n_found = torch.cat(n_found_chunks, dim=0)  # [K]
             no_convex = torch.cat(no_convex_chunks, dim=0)  # [K]
+            yaws = torch.cat(yaws_chunks, dim=0)  # [K]
+            tpl_idx = torch.cat(tpl_idx_chunks, dim=0)  # [K]
             out_of_reach = n_found < min_contacts
 
             valid = ~out_of_reach & ~no_convex
