@@ -5,44 +5,43 @@
 
 __all__ = [
     "ArticulationResetStateAdapter",
-    "BetaSamplingCfg",
     "BetaSignal",
+    "BetaSignalCfg",
     "CallableResetStateAdapter",
     "CollisionAnalyzerCfg",
-    "FrontierSamplingCfg",
+    "Curriculum",
+    "CurriculumCfg",
     "FrontierSignal",
+    "FrontierSignalCfg",
     "InformativenessSignal",
     "ResetStateAdapter",
     "RigidObjectHasher",
     "RigidObjectResetStateAdapter",
+    "SignalCfg",
     "StateBuffer",
     "StateBufferCfg",
     "StateLayout",
     "SuccessMonitor",
     "SuccessMonitorCfg",
-    "UniformSamplingCfg",
     "UniformSignal",
-    "WeightedCurriculum",
-    "beta_sampling_probs",
+    "UniformSignalCfg",
     "build_knn_indices",
-    "frontier_sampling_probs",
-    "log_curriculum_bins",
-    "make_curriculum",
-    "state_frontier_weights",
-    "uniform_sampling_probs",
     "create_primitive_mesh",
     "get_reset_state",
+    "log_curriculum_bins",
     "make_reset_state_adapters",
     "pack_articulation_reset_state",
     "prim_to_trimesh",
     "prim_to_warp_mesh",
     "sample_object_point_cloud",
     "set_reset_state",
-    "tagged_report",
+    "state_frontier_weights",
     "temporary_seed",
 ]
 
 from .collision_analyzer_cfg import CollisionAnalyzerCfg
+from .curriculum import Curriculum, CurriculumCfg
+from .diagnostics import log_curriculum_bins
 from .mesh_ops import (
     create_primitive_mesh,
     prim_to_trimesh,
@@ -61,18 +60,18 @@ from .reset_state import (
     temporary_seed,
 )
 from .rigid_object_hasher import RigidObjectHasher
-from .sampling import (
-    beta_sampling_probs,
+from .signals import (
+    BetaSignal,
+    BetaSignalCfg,
+    FrontierSignal,
+    FrontierSignalCfg,
+    InformativenessSignal,
+    SignalCfg,
+    UniformSignal,
+    UniformSignalCfg,
     build_knn_indices,
-    frontier_sampling_probs,
     state_frontier_weights,
-    tagged_report,
-    uniform_sampling_probs,
 )
-from .curriculum import WeightedCurriculum, make_curriculum
-from .diagnostics import log_curriculum_bins
-from .sampling_cfg import BetaSamplingCfg, FrontierSamplingCfg, UniformSamplingCfg
-from .signals import BetaSignal, FrontierSignal, InformativenessSignal, UniformSignal
 from .state_buffer import StateBuffer
 from .state_buffer_cfg import StateBufferCfg
 from .state_layout import StateLayout

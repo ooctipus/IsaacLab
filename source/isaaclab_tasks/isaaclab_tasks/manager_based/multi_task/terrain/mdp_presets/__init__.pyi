@@ -6,7 +6,7 @@
 __all__ = [
     "CommandsPresetCfg",
     "CommandsCfg",
-    "CurriculumCfg",
+    "CurriculumPresetCfg",
     "MultiTaskTasksPresetCfg",
     "ObservationsCfg",
     "RewardsCfg",
@@ -25,7 +25,7 @@ __all__ = [
 
 from .command_presets import CommandsCfg, CommandsPresetCfg
 from .multitask_presets import MultiTaskTasksPresetCfg
-from .curriculum_presets import CurriculumCfg
+from .curriculum_presets import CurriculumPresetCfg
 from .observation_presets import ObservationsCfg
 from .reward_presets import RewardsCfg
 from .robots import (

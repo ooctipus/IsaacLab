@@ -3,25 +3,24 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Diagnostic helpers for :class:`WeightedCurriculum`.
+"""Diagnostic helpers for :class:`Curriculum`.
 
-:func:`log_curriculum_bins` is the per-signal generalization of the
-legacy ``log_frontier_bins``: it writes per-bin probability stats
-(bucketed by one chosen signal) plus per-signal aggregate stats into
-``log_dict`` and prints a tabular stdout dump. Used identically by
-both terrain and factory consumers so the diagnostic stays in lockstep
-with whatever the curriculum is doing.
+:func:`log_curriculum_bins` writes per-bin probability stats (bucketed
+by one chosen signal) plus per-signal aggregate stats into ``log_dict``
+and prints a tabular stdout dump. Used identically by both terrain and
+factory consumers so the diagnostic stays in lockstep with whatever
+the curriculum is doing.
 """
 
 from __future__ import annotations
 
 import torch
 
-from .curriculum import WeightedCurriculum
+from .curriculum import Curriculum
 
 
 def log_curriculum_bins(
-    curriculum: WeightedCurriculum,
+    curriculum: Curriculum,
     *,
     success_rates: torch.Tensor,
     probs: torch.Tensor,
@@ -47,7 +46,7 @@ def log_curriculum_bins(
     skipped silently and only the per-signal stats are emitted.
 
     Args:
-        curriculum: The active :class:`WeightedCurriculum`.
+        curriculum: The active :class:`Curriculum`.
         success_rates: ``[num_items]`` per-item rates passed to the
             sampler this step.
         probs: ``[num_items]`` probabilities the sampler produced.

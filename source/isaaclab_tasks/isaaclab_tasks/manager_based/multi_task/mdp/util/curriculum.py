@@ -3,49 +3,48 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""``WeightedCurriculum``: composes informativeness signals into a probability over items.
+"""``Curriculum``: weighted sum of informativeness signals over a state layout.
 
 The curriculum's probability over items is::
 
     probs[i] = (Σ_s weight_s * signal_s.score(rates)[i] + eps) / Z
 
 where ``Z`` normalizes globally. This is the user-facing object the
-factory accumulator and the terrain curriculum both consume; it
-replaces the legacy ``isinstance(cfg, BetaSamplingCfg | FrontierSamplingCfg
-| UniformSamplingCfg)`` branching with one polymorphic call.
+factory accumulator and the terrain curriculum both consume.
 
-The :func:`make_curriculum` factory bridges the legacy cfg classes
-(:class:`BetaSamplingCfg`, :class:`FrontierSamplingCfg`,
-:class:`UniformSamplingCfg`) to a :class:`WeightedCurriculum` with the
-matching ``eps`` so the new path produces numerically identical
-probabilities to the legacy ``beta_sampling_probs`` /
-``frontier_sampling_probs`` / ``uniform_sampling_probs`` functions.
+:class:`CurriculumCfg` is the blueprint: a list of signal cfgs +
+weights + ``eps`` + an optional ``rate_source`` selector. Once a
+:class:`StateLayout` is available, ``cfg.build(layout)`` returns a
+runtime :class:`Curriculum`.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Literal
 
 import torch
 
-from .sampling_cfg import BetaSamplingCfg, FrontierSamplingCfg, UniformSamplingCfg
-from .signals import BetaSignal, FrontierSignal, InformativenessSignal, UniformSignal
+from isaaclab.utils import configclass
+
+from .signals import InformativenessSignal, SignalCfg
 from .state_layout import StateLayout
 
 
 @dataclass
-class WeightedCurriculum:
-    """Weighted-sum composition of informativeness signals.
+class Curriculum:
+    """Runtime weighted-sum composition of informativeness signals.
+
+    Constructed via :meth:`CurriculumCfg.build`; consumers call
+    :meth:`probabilities` per sample step. Holds runtime signals (with
+    cached precomputation like the kNN graph) plus the global ``eps``.
 
     Attributes:
         signals: ``[(signal, weight), ...]`` -- each signal contributes
             ``weight * signal.score(rates)`` to the unnormalized item
-            weights. Negative weights are clamped to 0.
-        eps: Soft floor added to the summed weights before
-            normalization; prevents zero-probability items so a
-            success monitor keeps refreshing every item. Defaults to
-            ``1e-3`` (matches the legacy frontier path); :func:`make_curriculum`
-            overrides per legacy cfg type to keep numerical equivalence.
+            weights. Negative weights clamp to 0.
+        eps: Soft floor added to summed weights before normalization;
+            prevents zero-probability items.
     """
 
     signals: list[tuple[InformativenessSignal, float]]
@@ -71,10 +70,9 @@ class WeightedCurriculum:
     def find_signal(self, name: str) -> InformativenessSignal | None:
         """Return the first active signal with ``signal.name == name``, or ``None``.
 
-        Used by diagnostics that want to surface a specific signal's
-        internals (e.g. :meth:`FrontierSignal.state_frontier`) without
-        having to know whether the curriculum was constructed from a
-        Beta-only or Frontier cfg.
+        Used by diagnostics (e.g. the wandb 3D scatter) that surface a
+        specific signal's internals without having to know which cfg
+        the curriculum was built from.
         """
         for sig, _ in self.signals:
             if sig.name == name:
@@ -82,63 +80,30 @@ class WeightedCurriculum:
         return None
 
 
-def make_curriculum(
-    cfg: BetaSamplingCfg | FrontierSamplingCfg | UniformSamplingCfg,
-    layout: StateLayout,
-) -> WeightedCurriculum:
-    """Bridge a legacy sampling cfg to a :class:`WeightedCurriculum`.
+@configclass
+class CurriculumCfg:
+    """Blueprint for a :class:`Curriculum`.
 
-    Picks ``eps`` per legacy cfg so the resulting curriculum produces
-    numerically identical probabilities to the corresponding legacy
-    function. Specifically:
-
-    - :class:`UniformSamplingCfg` -> single :class:`UniformSignal`,
-      ``eps=0`` (matches ``uniform_sampling_probs`` exactly).
-    - :class:`BetaSamplingCfg` -> single :class:`BetaSignal` with kernel
-      ``eps=1e-8``, curriculum ``eps=1e-8`` (matches ``beta_sampling_probs``).
-    - :class:`FrontierSamplingCfg` -> ``[base_signal, FrontierSignal]``
-      with the base's eps and curriculum eps both set to ``cfg.eps``
-      (matches ``frontier_sampling_probs``).
-
-    Args:
-        cfg: Legacy sampling cfg.
-        layout: State layout the signals will operate over.
-
-    Returns:
-        A :class:`WeightedCurriculum` ready to call
-        :meth:`~WeightedCurriculum.probabilities` on success rates.
+    Attributes:
+        signals: ``[(signal_cfg, weight), ...]`` -- each entry pairs a
+            signal blueprint (``BetaSignalCfg``, ``FrontierSignalCfg``,
+            ``UniformSignalCfg``) with its weight in the weighted sum.
+        eps: Soft floor on per-item probability; prevents
+            zero-probability items so the success monitor keeps
+            refreshing every item.
+        rate_source: Per-consumer rate-source selector. Factory
+            consumers route ``"monitor"`` to ``self.monitor_success_rate``
+            and ``"estimator"`` to ``self.state_buffer.success_rates``;
+            consumers with a single source (terrain, TermChoice) ignore
+            this field.
     """
-    if isinstance(cfg, FrontierSamplingCfg):
-        if isinstance(cfg.base, BetaSamplingCfg):
-            base_signal: InformativenessSignal = BetaSignal(
-                layout,
-                target=cfg.base.target,
-                kappa=cfg.base.kappa,
-                eps=cfg.eps,
-            )
-        elif isinstance(cfg.base, UniformSamplingCfg):
-            base_signal = UniformSignal(layout)
-        else:
-            raise TypeError(
-                f"Unsupported FrontierSamplingCfg.base '{type(cfg.base).__name__}'; "
-                "expected BetaSamplingCfg or UniformSamplingCfg."
-            )
-        frontier = FrontierSignal(layout, k=cfg.k, dilation_steps=cfg.dilation_steps)
-        return WeightedCurriculum(
-            signals=[(base_signal, 1.0), (frontier, cfg.frontier_lambda)],
-            eps=cfg.eps,
+
+    signals: list[tuple[SignalCfg, float]] = field(default_factory=list)
+    eps: float = 1e-3
+    rate_source: Literal["monitor", "estimator"] = "monitor"
+
+    def build(self, layout: StateLayout) -> Curriculum:
+        return Curriculum(
+            signals=[(sig_cfg.build(layout), w) for sig_cfg, w in self.signals],
+            eps=self.eps,
         )
-    if isinstance(cfg, BetaSamplingCfg):
-        return WeightedCurriculum(
-            signals=[(BetaSignal(layout, target=cfg.target, kappa=cfg.kappa, eps=1e-8), 1.0)],
-            eps=1e-8,
-        )
-    if isinstance(cfg, UniformSamplingCfg):
-        return WeightedCurriculum(
-            signals=[(UniformSignal(layout), 1.0)],
-            eps=0.0,
-        )
-    raise TypeError(
-        f"Unsupported sampling cfg '{type(cfg).__name__}'; expected "
-        "BetaSamplingCfg, FrontierSamplingCfg, or UniformSamplingCfg."
-    )

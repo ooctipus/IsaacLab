@@ -7,11 +7,12 @@ from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
 
 from isaaclab_tasks.manager_based.multi_task.mdp.util import (
-    BetaSamplingCfg,
-    FrontierSamplingCfg,
+    BetaSignalCfg,
+    CurriculumCfg,
+    FrontierSignalCfg,
     StateBufferCfg,
     SuccessMonitorCfg,
-    UniformSamplingCfg,
+    UniformSignalCfg,
 )
 from isaaclab_tasks.utils import preset
 
@@ -227,9 +228,15 @@ SCENE_RESET = EventTerm(
                         eval={"grasp_asset_in_air": GRIPPER_GRASP_ASSET_IN_AIR},
                     ),
                     "sampling": preset(
-                        default=BetaSamplingCfg(success_rate_bind="self.term_success_rate"),
-                        uniform=UniformSamplingCfg(),
-                        monitor=BetaSamplingCfg(success_rate_bind="self.term_success_rate"),
+                        default=CurriculumCfg(
+                            signals=[(BetaSignalCfg(target=0.5, kappa=1.0, eps=1e-8), 1.0)],
+                            eps=1e-8,
+                        ),
+                        uniform=CurriculumCfg(signals=[(UniformSignalCfg(), 1.0)], eps=0.0),
+                        monitor=CurriculumCfg(
+                            signals=[(BetaSignalCfg(target=0.5, kappa=1.0, eps=1e-8), 1.0)],
+                            eps=1e-8,
+                        ),
                     ),
                     "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=100),
                     "report": preset(accumulator=False, choice=True, default=False),
@@ -261,54 +268,69 @@ ACCUMULATOR_RESET = EventTerm(
         ),
         "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=50),
         "sampling": preset(
-            default=BetaSamplingCfg(success_rate_bind="self.success_rate"),
-            uniform=UniformSamplingCfg(),
-            success_estimator=BetaSamplingCfg(success_rate_bind="self.state_buffer.success_rates", target=0.66),
-            monitor=BetaSamplingCfg(success_rate_bind="self.success_rate", target=0.66),
-            # Frontier sampler builds a kNN graph over the post-precollect
-            # slot xyz (using the same ``wandb_3d_asset`` / ``wandb_3d_relative_to``
-            # axes as the 3D scatter) and biases sampling toward slots at
+            default=CurriculumCfg(
+                signals=[(BetaSignalCfg(target=0.5, kappa=1.0, eps=1e-8), 1.0)],
+                eps=1e-8,
+            ),
+            uniform=CurriculumCfg(signals=[(UniformSignalCfg(), 1.0)], eps=0.0),
+            success_estimator=CurriculumCfg(
+                signals=[(BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-8), 1.0)],
+                eps=1e-8,
+                rate_source="estimator",
+            ),
+            monitor=CurriculumCfg(
+                signals=[(BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-8), 1.0)],
+                eps=1e-8,
+            ),
+            # Frontier signals build a kNN graph over the post-precollect
+            # slot xyz (the same ``wandb_3d_asset`` / ``wandb_3d_relative_to``
+            # axes as the 3D scatter) and bias sampling toward slots at
             # the spatial edge of the policy's current competence. The
-            # ``base`` sampler controls the per-slot floor: ``BetaSamplingCfg``
-            # rewards borderline-rate slots, ``UniformSamplingCfg`` gives
-            # every slot an equal floor so the spatial-frontier term does
-            # all the differentiation. ``frontier_lambda`` mixes the two;
-            # ``0`` reproduces ``base`` alone.
-            frontier=FrontierSamplingCfg(
-                success_rate_bind="self.success_rate",
-                base=BetaSamplingCfg(success_rate_bind="self.success_rate", target=0.66, kappa=1.0),
-                frontier_lambda=0.5,
-                dilation_steps=1,
+            # weight on the FrontierSignal mixes spatial vs. base
+            # contribution: 0 reproduces base alone, 5+ heavily prioritizes
+            # frontier slots.
+            frontier=CurriculumCfg(
+                signals=[
+                    (BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), 1.0),
+                    (FrontierSignalCfg(k=8, dilation_steps=1), 0.5),
+                ],
+                eps=1e-3,
             ),
-            frontier_l1=FrontierSamplingCfg(
-                success_rate_bind="self.success_rate",
-                base=BetaSamplingCfg(success_rate_bind="self.success_rate", target=0.66, kappa=1.0),
-                frontier_lambda=1.0,
-                dilation_steps=1,
+            frontier_l1=CurriculumCfg(
+                signals=[
+                    (BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), 1.0),
+                    (FrontierSignalCfg(k=8, dilation_steps=1), 1.0),
+                ],
+                eps=1e-3,
             ),
-            frontier_l2=FrontierSamplingCfg(
-                success_rate_bind="self.success_rate",
-                base=BetaSamplingCfg(success_rate_bind="self.success_rate", target=0.66, kappa=1.0),
-                frontier_lambda=2.0,
-                dilation_steps=1,
+            frontier_l2=CurriculumCfg(
+                signals=[
+                    (BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), 1.0),
+                    (FrontierSignalCfg(k=8, dilation_steps=1), 2.0),
+                ],
+                eps=1e-3,
             ),
-            frontier_l5=FrontierSamplingCfg(
-                success_rate_bind="self.success_rate",
-                base=BetaSamplingCfg(success_rate_bind="self.success_rate", target=0.66, kappa=1.0),
-                frontier_lambda=5.0,
-                dilation_steps=1,
+            frontier_l5=CurriculumCfg(
+                signals=[
+                    (BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), 1.0),
+                    (FrontierSignalCfg(k=8, dilation_steps=1), 5.0),
+                ],
+                eps=1e-3,
             ),
-            frontier_uniform=FrontierSamplingCfg(
-                success_rate_bind="self.success_rate",
-                base=UniformSamplingCfg(),
-                frontier_lambda=2.0,
-                dilation_steps=1,
+            frontier_uniform=CurriculumCfg(
+                signals=[
+                    (UniformSignalCfg(), 1.0),
+                    (FrontierSignalCfg(k=8, dilation_steps=1), 2.0),
+                ],
+                eps=1e-3,
             ),
-            frontier_estimator=FrontierSamplingCfg(
-                success_rate_bind="self.state_buffer.success_rates",
-                base=BetaSamplingCfg(success_rate_bind="self.state_buffer.success_rates", target=0.66, kappa=1.0),
-                frontier_lambda=2.0,
-                dilation_steps=1,
+            frontier_estimator=CurriculumCfg(
+                signals=[
+                    (BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), 1.0),
+                    (FrontierSignalCfg(k=8, dilation_steps=1), 2.0),
+                ],
+                eps=1e-3,
+                rate_source="estimator",
             ),
         ),
         "reset_term": SCENE_RESET,

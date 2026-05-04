@@ -7,10 +7,11 @@ from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.utils import configclass
 
 from isaaclab_tasks.manager_based.multi_task.mdp.util import (
-    BetaSamplingCfg,
-    FrontierSamplingCfg,
+    BetaSignalCfg,
+    CurriculumCfg,
+    FrontierSignalCfg,
     SuccessMonitorCfg,
-    UniformSamplingCfg,
+    UniformSignalCfg,
 )
 from isaaclab_tasks.utils import PresetCfg, preset
 
@@ -23,41 +24,59 @@ class PositionCurriculumCfg:
         func=mdp.terrain_spawn_goal_pair_success_rate_levels,
         params={
             "sampling": preset(
-                default=BetaSamplingCfg(target=0.66, kappa=1.0),
-                uniform=UniformSamplingCfg(),
-                beta66=BetaSamplingCfg(target=0.66, kappa=1.0),
-                beta50=BetaSamplingCfg(target=0.50, kappa=1.0),
-                frontier=FrontierSamplingCfg(
-                    base=BetaSamplingCfg(target=0.66, kappa=1.0),
-                    frontier_lambda=0.5,
-                    dilation_steps=1,
+                default=CurriculumCfg(
+                    signals=[(BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-8), 1.0)],
+                    eps=1e-8,
                 ),
-                frontier_l1=FrontierSamplingCfg(
-                    base=BetaSamplingCfg(target=0.66, kappa=1.0),
-                    frontier_lambda=1.0,
-                    dilation_steps=1,
+                uniform=CurriculumCfg(signals=[(UniformSignalCfg(), 1.0)], eps=0.0),
+                beta66=CurriculumCfg(
+                    signals=[(BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-8), 1.0)],
+                    eps=1e-8,
                 ),
-                frontier_l2=FrontierSamplingCfg(
-                    base=BetaSamplingCfg(target=0.66, kappa=1.0),
-                    frontier_lambda=2.0,
-                    dilation_steps=1,
+                beta50=CurriculumCfg(
+                    signals=[(BetaSignalCfg(target=0.50, kappa=1.0, eps=1e-8), 1.0)],
+                    eps=1e-8,
                 ),
-                frontier_l5=FrontierSamplingCfg(
-                    base=BetaSamplingCfg(target=0.66, kappa=1.0),
-                    frontier_lambda=5.0,
-                    dilation_steps=1,
+                frontier=CurriculumCfg(
+                    signals=[
+                        (BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), 1.0),
+                        (FrontierSignalCfg(k=8, dilation_steps=1), 0.5),
+                    ],
+                    eps=1e-3,
                 ),
-                frontier_uniform=FrontierSamplingCfg(
-                    base=UniformSamplingCfg(),
-                    frontier_lambda=2.0,
-                    dilation_steps=1,
+                frontier_l1=CurriculumCfg(
+                    signals=[
+                        (BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), 1.0),
+                        (FrontierSignalCfg(k=8, dilation_steps=1), 1.0),
+                    ],
+                    eps=1e-3,
+                ),
+                frontier_l2=CurriculumCfg(
+                    signals=[
+                        (BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), 1.0),
+                        (FrontierSignalCfg(k=8, dilation_steps=1), 2.0),
+                    ],
+                    eps=1e-3,
+                ),
+                frontier_l5=CurriculumCfg(
+                    signals=[
+                        (BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), 1.0),
+                        (FrontierSignalCfg(k=8, dilation_steps=1), 5.0),
+                    ],
+                    eps=1e-3,
+                ),
+                frontier_uniform=CurriculumCfg(
+                    signals=[
+                        (UniformSignalCfg(), 1.0),
+                        (FrontierSignalCfg(k=8, dilation_steps=1), 2.0),
+                    ],
+                    eps=1e-3,
                 ),
             ),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=20),
             "success_term": "success",
         },
     )
-    # remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
 
 
 @configclass
@@ -67,7 +86,10 @@ class CRLCurriculumCfg:
     terrain_levels = CurrTerm(
         func=mdp.terrain_spawn_goal_pair_success_rate_levels,
         params={
-            "sampling": BetaSamplingCfg(target=0.66, kappa=1.0),
+            "sampling": CurriculumCfg(
+                signals=[(BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-8), 1.0)],
+                eps=1e-8,
+            ),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=100),
             "success_term": "success",
         },
@@ -81,7 +103,7 @@ class AdvancedSkillsCurriculumCfg:
 
 
 @configclass
-class CurriculumCfg(PresetCfg):
+class CurriculumPresetCfg(PresetCfg):
     position = PositionCurriculumCfg()
     crl = CRLCurriculumCfg()
     advanced_skills = AdvancedSkillsCurriculumCfg()

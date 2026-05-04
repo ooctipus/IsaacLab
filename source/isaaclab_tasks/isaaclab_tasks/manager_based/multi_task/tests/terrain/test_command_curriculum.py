@@ -30,10 +30,11 @@ import warp as wp
 
 from isaaclab_tasks.manager_based.multi_task.mdp.util import (
     ArticulationResetStateAdapter,
-    BetaSamplingCfg,
+    BetaSignalCfg,
+    CurriculumCfg,
+    StateLayout,
     SuccessMonitor,
     SuccessMonitorCfg,
-    beta_sampling_probs,
 )
 from isaaclab_tasks.manager_based.multi_task.terrain.mdp.commands.state_command import RelativeStateCommand
 from isaaclab_tasks.manager_based.multi_task.terrain.mdp.curriculums import (
@@ -59,10 +60,22 @@ def _sample_by_target_rate(
     kappa: float = 2.0,
     return_probs: bool = False,
 ):
-    """Wrapper for the (now-decoupled) Beta sampling — used only by the legacy
-    test cases below. Production code calls :func:`beta_sampling_probs` and
-    :func:`torch.multinomial` directly."""
-    probs = beta_sampling_probs(mon.success_rate, target=target, kappa=kappa)
+    """Build a one-shot Beta-only curriculum and sample from it.
+
+    Used only by the legacy test cases in this file; production code
+    constructs ``CurriculumCfg`` once at init and reuses it across
+    sample steps.
+    """
+    n = mon.success_rate.numel()
+    layout = StateLayout(
+        coords=torch.zeros(n, 1, device=mon.success_rate.device),
+        spawn_index=torch.arange(n, device=mon.success_rate.device, dtype=torch.long),
+    )
+    curriculum = CurriculumCfg(
+        signals=[(BetaSignalCfg(target=target, kappa=kappa, eps=1e-8), 1.0)],
+        eps=1e-8,
+    ).build(layout)
+    probs = curriculum.probabilities(mon.success_rate)
     choices = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
     return (choices, probs) if return_probs else choices
 
@@ -652,7 +665,10 @@ def _bootstrap_curriculum(env, term, target=0.5, kappa=5.0, history_len=16, log_
     cfg = SimpleNamespace(
         params={
             "debug_vis": False,  # skip VisualizationMarkers construction
-            "sampling": BetaSamplingCfg(target=target, kappa=kappa),
+            "sampling": CurriculumCfg(
+                signals=[(BetaSignalCfg(target=target, kappa=kappa, eps=1e-8), 1.0)],
+                eps=1e-8,
+            ),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=history_len),
             "log_bin_frac": log_bin_frac,
             "log_bin_prob": log_bin_prob,

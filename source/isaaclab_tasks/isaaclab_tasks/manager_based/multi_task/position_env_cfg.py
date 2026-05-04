@@ -162,7 +162,7 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
     rewards: mdp_presets.RewardsCfg = mdp_presets.RewardsCfg()
     terminations: mdp_presets.TerminationsCfg = mdp_presets.TerminationsCfg()
     events: EventsCfg = EventsCfg()
-    curriculum: mdp_presets.CurriculumCfg = mdp_presets.CurriculumCfg()
+    curriculum: mdp_presets.CurriculumPresetCfg = mdp_presets.CurriculumPresetCfg()
     viewer: ViewerCfg = ViewerCfg(
         eye=(4.0, 7.0, 7.0),
         origin_type="asset_body",

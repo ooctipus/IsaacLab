@@ -13,14 +13,11 @@ import torch
 from isaaclab.managers import ManagerTermBase
 
 from isaaclab_tasks.manager_based.multi_task.mdp.util import (
-    BetaSamplingCfg,
-    FrontierSamplingCfg,
+    CurriculumCfg,
     FrontierSignal,
     StateLayout,
     SuccessMonitorCfg,
-    UniformSamplingCfg,
     log_curriculum_bins,
-    make_curriculum,
 )
 
 if TYPE_CHECKING:
@@ -61,7 +58,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.num_discrete_cmd = int(self.goal_term.table.num_tasks)
 
         # Sampling strategy + success-monitor cfg are both required preset params.
-        self._sampling_cfg: UniformSamplingCfg | BetaSamplingCfg | FrontierSamplingCfg = cfg.params["sampling"]
+        self._sampling_cfg: CurriculumCfg = cfg.params["sampling"]
 
         # Curriculum owns the success monitor + the rate tensor it writes into.
         # The decoupled-rate-tensor pattern (factory-style) lets us hand the same
@@ -102,7 +99,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
             spawn_index=table.spawn_index,
             target_index=table.target_index,
         )
-        self._curriculum = make_curriculum(self._sampling_cfg, self._layout)
+        self._curriculum = self._sampling_cfg.build(self._layout)
 
         # Visualization: build spawn→target lines from the task table
         if debug_vis:
@@ -112,7 +109,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self,
         env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
-        sampling: UniformSamplingCfg | BetaSamplingCfg | FrontierSamplingCfg = BetaSamplingCfg(),
+        sampling: CurriculumCfg = CurriculumCfg(),
         success_monitor_cfg: SuccessMonitorCfg | None = None,
         debug_vis: bool = False,
         success_term: str = "success",
@@ -126,13 +123,10 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.success_monitor.success_update(prev_idx, success)
 
         # 2) SAMPLE NEXT DISCRETE COMMANDS
-        # The curriculum subsumes Beta / Frontier / Uniform via its signal
-        # composition; ``success_rate_bind`` (when the cfg has one) selects
-        # the rate source so a future success-estimator preset can wire in
-        # without touching this branch.
-        rates_bind = getattr(self._sampling_cfg, "success_rate_bind", None)
-        rates = eval(rates_bind) if rates_bind is not None else self.success_rate  # noqa: S307
-        probs = self._curriculum.probabilities(rates)
+        # One curriculum call drives all signal compositions (Beta /
+        # Frontier / Uniform / mixes). Terrain has a single rate source
+        # (the rolling monitor) so we read ``self.success_rate`` directly.
+        probs = self._curriculum.probabilities(self.success_rate)
         choices = torch.multinomial(probs, len(env_ids), replacement=True)
         self.command_indices[env_ids] = choices
 
@@ -319,7 +313,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
             self._patch_counts = torch.zeros(n_patches, device=self.device)
             self._patch_probs = torch.zeros(n_patches, device=self.device)
             self._patch_probs_counts = torch.zeros(n_patches, device=self.device)
-            # Target-only buffers for FrontierSamplingCfg-style signals that
+            # Target-only buffers for spatial signals (FrontierSignal) that
             # live in target space; spawn-side aggregation dilutes them.
             self._patch_probs_target = torch.zeros(n_patches, device=self.device)
             self._patch_probs_target_counts = torch.zeros(n_patches, device=self.device)

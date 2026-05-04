@@ -33,11 +33,9 @@ from tqdm import tqdm
 from isaaclab.managers import EventTermCfg, ManagerTermBase
 
 from . import reset_state
-from .curriculum import WeightedCurriculum, make_curriculum
+from .curriculum import Curriculum, CurriculumCfg
 from .diagnostics import log_curriculum_bins
-from .sampling import beta_sampling_probs, tagged_report
-from .sampling_cfg import BetaSamplingCfg, FrontierSamplingCfg, UniformSamplingCfg
-from .signals import FrontierSignal
+from .signals import FrontierSignal, FrontierSignalCfg
 from .state_buffer import StateBuffer
 from .state_buffer_cfg import StateBufferCfg
 from .state_layout import StateLayout
@@ -45,6 +43,38 @@ from .success_monitor_cfg import SuccessMonitorCfg
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
+
+
+def _tagged_report(
+    values: torch.Tensor,
+    tags: torch.Tensor,
+    tag_names: list[str],
+    reduction: str = "sum",
+) -> dict[str, float]:
+    """Aggregate per-slot ``values`` by tag (private to this module)."""
+    out: dict[str, float] = {}
+    for i, name in enumerate(tag_names):
+        mask = tags == i
+        if not mask.any():
+            out[name] = 0.0
+        elif reduction == "mean":
+            out[name] = values[mask].mean().item()
+        else:
+            out[name] = values[mask].sum().item()
+    return out
+
+
+def _beta_pseudoprob(values: torch.Tensor, target: float = 0.5, kappa: float = 1.0, eps: float = 1e-8) -> torch.Tensor:
+    """Beta-kernel softmax over per-tag means (private to this module).
+
+    Used for the per-strategy ``Metrics/.../SampleProb/{name}`` summary
+    in ``reset_accumulator``'s tagged log; this is a fixed-shape
+    dashboard helper, not the curriculum-driven sampler.
+    """
+    a = 1.0 + max(0.0, kappa) * max(0.0, min(1.0, target))
+    b = 1.0 + max(0.0, kappa) * (1.0 - max(0.0, min(1.0, target)))
+    w = ((values + eps).pow(a - 1.0) * (1.0 - values + eps).pow(b - 1.0)).clamp_min(eps)
+    return torch.softmax(torch.log(w + eps), dim=0)
 
 
 class reset_accumulator(ManagerTermBase):
@@ -90,7 +120,7 @@ class reset_accumulator(ManagerTermBase):
         self.precollecting_phase = True
         self._tag_indices_bind: str | None = buf_cfg.tag_indices_bind
         self._tag_names_resolved = False
-        self._sampling_cfg = cfg.params.get("sampling", UniformSamplingCfg())
+        self._sampling_cfg: CurriculumCfg = cfg.params.get("sampling", CurriculumCfg())
 
         self.monitor_success_rate = torch.zeros(max_size, device=env.device)
         monitor_cfg: SuccessMonitorCfg = cfg.params.get(
@@ -101,21 +131,14 @@ class reset_accumulator(ManagerTermBase):
         self.success_monitor = monitor_cfg.class_type(monitor_cfg, self.monitor_success_rate)
 
         self.success_rate = torch.zeros(max_size, device=env.device)
-        # Select rate source by inspecting the cfg's success_rate_bind
-        # (Beta / Frontier carry one; Uniform doesn't). When the bind
-        # references the state buffer, the predictor head's estimates
-        # drive sampling instead of the rolling monitor.
-        self._success_rate_source = "monitor"
-        bind = getattr(self._sampling_cfg, "success_rate_bind", "")
-        if "state_buffer" in bind:
-            self._success_rate_source = "success_estimator"
-
-        # Curriculum: weighted-sum over informativeness signals (Beta /
-        # Frontier / Uniform). Built lazily after precollect since the
-        # buffer is empty at __init__ time. Slots are items here, so the
-        # layout uses ``spawn_index=arange(N), target_index=None``.
+        # Curriculum: weighted-sum over informativeness signals. Built
+        # lazily after precollect since the buffer is empty at __init__.
+        # Slots are items here, so the layout uses
+        # ``spawn_index=arange(N), target_index=None``. ``cfg.rate_source``
+        # selects between the rolling monitor and the predictor's
+        # success_estimator output.
         self._layout: StateLayout | None = None
-        self._curriculum: WeightedCurriculum | None = None
+        self._curriculum: Curriculum | None = None
         self._curriculum_log_counter: int = 0
 
     # ------------------------------------------------------------------
@@ -159,7 +182,7 @@ class reset_accumulator(ManagerTermBase):
         acceptance_conditions: dict = {},
         state_buffer_cfg: StateBufferCfg = StateBufferCfg(),
         success_monitor_cfg: SuccessMonitorCfg | None = None,
-        sampling: UniformSamplingCfg | BetaSamplingCfg | FrontierSamplingCfg = UniformSamplingCfg(),
+        sampling: CurriculumCfg = CurriculumCfg(),
         keep_accumulating: bool = False,
         report: bool = False,
         monitor_exclude_terms: list[str] = [],
@@ -218,7 +241,7 @@ class reset_accumulator(ManagerTermBase):
             )
 
         # Sync the unified success_rate from the active source
-        if self._success_rate_source == "success_estimator" and self.state_buffer.success_rates is not None:
+        if self._sampling_cfg.rate_source == "estimator" and self.state_buffer.success_rates is not None:
             self.success_rate[:] = self.state_buffer.success_rates
         else:
             self.success_rate[:] = self.monitor_success_rate
@@ -228,8 +251,8 @@ class reset_accumulator(ManagerTermBase):
             if self.state_buffer.tag_names:
                 tags = self.state_buffer.tags[: len(self.state_buffer)]
                 names = self.state_buffer.tag_names
-                monitor_means = tagged_report(self.monitor_success_rate, tags, names, reduction="mean")
-                monitor_probs = beta_sampling_probs(
+                monitor_means = _tagged_report(self.monitor_success_rate, tags, names, reduction="mean")
+                monitor_probs = _beta_pseudoprob(
                     torch.tensor(list(monitor_means.values()), device=env.device), target=0.5, kappa=1
                 )
                 log["Metrics/MonitorSuccessRate"] = self.monitor_success_rate.mean().item()
@@ -237,8 +260,8 @@ class reset_accumulator(ManagerTermBase):
                     log[f"Metrics/MonitorSuccessRate/{name}"] = monitor_means[name]
                     log[f"Metrics/MonitorSampleProb/{name}"] = monitor_probs[i].item()
                 if self.state_buffer.success_rates is not None:
-                    estimator_means = tagged_report(self.state_buffer.success_rates, tags, names, reduction="mean")
-                    estimator_probs = beta_sampling_probs(
+                    estimator_means = _tagged_report(self.state_buffer.success_rates, tags, names, reduction="mean")
+                    estimator_probs = _beta_pseudoprob(
                         torch.tensor(list(estimator_means.values()), device=env.device), target=0.5, kappa=1
                     )
                     log["Metrics/EstimatorSuccessRate"] = self.state_buffer.success_rates.mean().item()
@@ -370,13 +393,15 @@ class reset_accumulator(ManagerTermBase):
             return
         coords = self._slot_xyz_tensor(wandb_3d_asset, wandb_3d_relative_to)
         if coords is None:
-            if isinstance(self._sampling_cfg, FrontierSamplingCfg):
+            # Frontier signals need real coords; non-spatial signals
+            # (Beta / Uniform) don't, so a placeholder works for them.
+            needs_spatial = any(isinstance(sig_cfg, FrontierSignalCfg) for sig_cfg, _ in self._sampling_cfg.signals)
+            if needs_spatial:
                 raise ValueError(
-                    "FrontierSamplingCfg requires a per-slot spatial domain; set "
+                    "FrontierSignalCfg requires a per-slot spatial domain; set "
                     "``wandb_3d_asset`` (and optionally ``wandb_3d_relative_to``) on the "
                     "reset_accumulator term so the buffer's slot xyz can be extracted."
                 )
-            # Beta / Uniform ignore coords -- placeholder is harmless.
             n = self.state_buffer.max_size
             coords = torch.zeros(n, 1, device=self._env.device)
         n = int(coords.shape[0])
@@ -385,7 +410,7 @@ class reset_accumulator(ManagerTermBase):
             spawn_index=torch.arange(n, device=coords.device, dtype=torch.long),
             target_index=None,
         )
-        self._curriculum = make_curriculum(self._sampling_cfg, self._layout)
+        self._curriculum = self._sampling_cfg.build(self._layout)
 
     def _log_wandb_3d_scatter(self, asset_name: str, relative_to: str | None, sampling_cfg) -> None:
         """Push per-slot success / sampling / Δ-success as ``wandb.Object3D``.
@@ -506,18 +531,16 @@ class TermChoice(ManagerTermBase):
         self.num_partitions = len(self.term_partitions)
         self.term_samples = torch.zeros((env.num_envs,), dtype=torch.int, device=env.device)
         self.term_success_rate = torch.zeros(self.num_partitions, device=env.device)
-        self._sampling_cfg = cfg.params.get("sampling", UniformSamplingCfg())
+        self._sampling_cfg: CurriculumCfg = cfg.params.get("sampling", CurriculumCfg())
 
-        # TermChoice items are partition keys, not spatial states; build a
-        # placeholder layout so make_curriculum works (Beta + Uniform
-        # signals ignore coords). The curriculum subsumes the
-        # Beta-vs-Uniform branch downstream.
+        # TermChoice items are partition keys, not spatial states; build
+        # a placeholder layout (Beta + Uniform signals ignore coords).
         self._layout = StateLayout(
             coords=torch.zeros(self.num_partitions, 1, device=env.device),
             spawn_index=torch.arange(self.num_partitions, device=env.device, dtype=torch.long),
             target_index=None,
         )
-        self._curriculum = make_curriculum(self._sampling_cfg, self._layout)
+        self._curriculum = self._sampling_cfg.build(self._layout)
 
         # Need a monitor when the curriculum has any non-uniform signal,
         # or when the user explicitly requested reporting.
@@ -538,7 +561,7 @@ class TermChoice(ManagerTermBase):
         env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
         terms: dict[str, ManagerTermBase],
-        sampling: UniformSamplingCfg | BetaSamplingCfg = UniformSamplingCfg(),
+        sampling: CurriculumCfg = CurriculumCfg(),
         success_monitor_cfg: SuccessMonitorCfg | None = None,
         report: bool = False,
     ) -> None:
@@ -554,12 +577,7 @@ class TermChoice(ManagerTermBase):
             success = env.termination_manager.get_term_cfg("progress_context").func.is_success
             self.success_monitor.success_update(self.term_samples[env_ids], success[env_ids].float())
 
-        # One curriculum call replaces the legacy Beta-vs-Uniform branch.
-        # ``success_rate_bind`` (when the cfg has one) selects the rate
-        # source; defaults to ``self.term_success_rate``.
-        bind = getattr(self._sampling_cfg, "success_rate_bind", None)
-        rates = eval(bind) if bind is not None else self.term_success_rate  # noqa: S307
-        probs = self._curriculum.probabilities(rates)
+        probs = self._curriculum.probabilities(self.term_success_rate)
         self.term_samples[env_ids] = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
         if report:
             log.update(
