@@ -458,14 +458,37 @@ class reset_accumulator(ManagerTermBase):
                 values=delta, cmap="RdYlGn", vmin=-delta_range, vmax=delta_range, title="delta_success"
             ),
         }
-        # Surface the spatial signal directly when a frontier signal is in
-        # the curriculum so the user can see what's driving the sampler.
+        # Per-signal score panels: each active non-constant signal in the
+        # curriculum gets a heatmap of its raw per-slot score, so the
+        # spatial contribution of each signal is visible separately.
+        # Constant signals (e.g. ``UniformSignal``) carry no info and are
+        # skipped.
+        for name, score_t in self._curriculum.signal_scores(rates_t).items():
+            if float(score_t.std()) < 1e-9:
+                continue
+            score_np = score_t.detach().cpu().numpy()
+            panels[f"{name}_score_3d"] = PanelSpec(
+                values=score_np,
+                cmap="viridis",
+                vmin=0.0,
+                vmax=max(float(score_np.max()), 1e-9),
+                title=f"{name}_score",
+            )
+        # Bonus panel for ``FrontierSignal``: the un-aggregated per-state
+        # spatial signal (vs. ``frontier_score_3d`` above which is the
+        # per-item above-mean deviation that goes into the sampler).
+        # Both are complementary -- ``state_frontier_3d`` shows raw
+        # spatial structure, ``frontier_score_3d`` shows what the
+        # sampler actually rewards.
         frontier_signal = self._curriculum.find_signal("frontier")
         if isinstance(frontier_signal, FrontierSignal):
             sf = frontier_signal.state_frontier(rates_t).detach().cpu().numpy()
-            sf_max = max(float(sf.max()), 1e-9)
             panels["state_frontier_3d"] = PanelSpec(
-                values=sf, cmap="viridis", vmin=0.0, vmax=sf_max, title="state_frontier"
+                values=sf,
+                cmap="viridis",
+                vmin=0.0,
+                vmax=max(float(sf.max()), 1e-9),
+                title="state_frontier",
             )
         log_payload = {
             f"Curriculum/{tag}": wandb.Object3D(self._wandb_3d_dashboard.to_object3d(panel))
