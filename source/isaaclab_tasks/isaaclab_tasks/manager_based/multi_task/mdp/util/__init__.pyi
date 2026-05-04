@@ -14,6 +14,7 @@ __all__ = [
     "RigidObjectResetStateAdapter",
     "StateBuffer",
     "StateBufferCfg",
+    "StateLayout",
     "SuccessMonitor",
     "SuccessMonitorCfg",
     "UniformSamplingCfg",
@@ -66,5 +67,6 @@ from .sampling import (
 from .sampling_cfg import BetaSamplingCfg, FrontierSamplingCfg, UniformSamplingCfg
 from .state_buffer import StateBuffer
 from .state_buffer_cfg import StateBufferCfg
+from .state_layout import StateLayout
 from .success_monitor import SuccessMonitor
 from .success_monitor_cfg import SuccessMonitorCfg
