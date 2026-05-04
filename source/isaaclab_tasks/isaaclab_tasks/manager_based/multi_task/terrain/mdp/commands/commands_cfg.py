@@ -59,19 +59,23 @@ class RelativeStateCommandCfg(CommandTermCfg):
     then contribute no pairs.
     """
 
-    single_target_per_cell: bool = False
-    """Whether to fix a single random target per terrain cell.
+    num_targets_per_cell: int = 0
+    """Optional cap on per-cell target states for the spawn × target pairing.
 
-    When ``True``, one state per cell is sampled at table build time as that
-    cell's target; every other state in the cell pairs with it as a spawn.
-    The per-cell pair count drops from ``n × n`` (or ``n × (n − 1)``) to just
-    ``n − 1`` (or ``n``), so each spawn point appears exactly once and the
-    policy converges its target representation onto a single point per cell.
+    ``0`` (default) keeps the full per-cell Cartesian product: every
+    state in a cell is a candidate target for every spawn in the same
+    cell. Setting a positive integer ``N`` first picks ``min(N, n_c)``
+    targets per cell via
+    :func:`~isaaclab_tasks.manager_based.multi_task.terrain.grid_downsample.grid_bucket_downsample`
+    on the cell's spawn xy, then pairs every spawn with each picked
+    target. The per-cell pair count is ``n_c × min(N, n_c)`` (or
+    ``n_c × min(N, n_c) − overlap`` if :attr:`exclude_self_pairs` is
+    set).
 
-    Use this to study whether the multi-target free pairing is helping or
-    hurting learning — same cells, same spawns, just a much smaller and
-    consistent goal set. Cells with fewer than two valid states are skipped
-    when combined with :attr:`exclude_self_pairs`.
+    Use this to study how target-set cardinality affects learning,
+    or to keep task counts bounded when a tile contains many spawn
+    states. ``N = 1`` recovers the previous "single random target per
+    cell" research toggle as a special case.
     """
 
     pos_std: float = 0.5

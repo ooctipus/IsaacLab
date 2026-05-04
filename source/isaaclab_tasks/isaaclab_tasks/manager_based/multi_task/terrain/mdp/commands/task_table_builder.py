@@ -23,6 +23,8 @@ from isaaclab.utils.warp import convert_to_warp_mesh
 from isaaclab_tasks.manager_based.multi_task.curriculum import pack_articulation_reset_state
 from isaaclab_tasks.manager_based.multi_task.trace import trace_span
 
+from ...grid_downsample import grid_bucket_downsample
+
 if TYPE_CHECKING:
     import trimesh
 
@@ -252,7 +254,7 @@ def build_task_table(
     pool_sampling_size: tuple[float, float] | None = None,
     robot_joint_names: Sequence[str] | None = None,
     exclude_self_pairs: bool = True,
-    single_target_per_cell: bool = False,
+    num_targets_per_cell: int = 0,
 ) -> dict:
     """Run the IK pipeline, bin states by terrain cell, build task table.
 
@@ -277,10 +279,13 @@ def build_task_table(
             spawn and target reference the same state, removing the diagonal
             of each per-cell Cartesian product. Cells with fewer than two
             valid states contribute no pairs.
-        single_target_per_cell: When ``True``, fix a single random target
-            per cell instead of building the full Cartesian product. Each
-            cell contributes ``n`` (or ``n − 1`` if :paramref:`exclude_self_pairs`)
-            pairs of the form ``(any_spawn_in_cell, that_target)``.
+        num_targets_per_cell: Optional cap on per-cell target states for
+            the spawn × target pairing. ``0`` keeps the full per-cell
+            Cartesian product (``n_c × n_c``). A positive integer ``N``
+            picks ``min(N, n_c)`` targets per cell via
+            :func:`~isaaclab_tasks.manager_based.multi_task.terrain.grid_downsample.grid_bucket_downsample`
+            on the cell's spawn xy and pairs every spawn with each picked
+            target.
 
     Returns:
         Dict with keys matching :class:`TaskTable` fields plus FK metadata:
@@ -414,13 +419,16 @@ def build_task_table(
         flush=True,
     )
 
-    # --- Step 3: Per-cell Cartesian product (shared across command types) ---
-    # For each cell c with n_c states, produce n_c x n_c (spawn, target) pairs.
+    # --- Step 3: Per-cell spawn × target pairing (shared across command types) ---
+    # For each cell c with n_c spawn states, the target set is either the
+    # full cell (``num_targets_per_cell == 0`` -> n_c × n_c pairs) or an
+    # FPS-thinned subset of size ``min(N, n_c)`` (-> n_c × min(N, n_c) pairs).
     # Cell layout is built once and reused for every command type.
     pair_spawn_parts: list[torch.Tensor] = []
     pair_target_parts: list[torch.Tensor] = []
     pair_tile_parts: list[torch.Tensor] = []
     offsets_cpu = cell_offsets.cpu().tolist()
+    spawn_xy = spawn_states[:, :2]
     with trace_span("task_table.build_pairs", non_empty_cells=non_empty):
         for cell in range(num_subterrains):
             start = offsets_cpu[cell]
@@ -432,29 +440,22 @@ def build_task_table(
                 # Need at least two distinct states to form a non-self pair.
                 continue
             ids = cell_values[start:end]
-            if single_target_per_cell:
-                # Fix one cell-state as the goal; every other state pairs to it.
-                # ``torch.randint`` keeps device/dtype consistent with ``ids``.
-                target_pos = int(torch.randint(0, n_c, (1,), device=device).item())
-                target_state = ids[target_pos]
-                spawn_ids = ids
-                if exclude_self_pairs:
-                    keep = spawn_ids != target_state
-                    spawn_ids = spawn_ids[keep]
-                pair_count = int(spawn_ids.shape[0])
-                if pair_count == 0:
-                    continue
-                target_ids = target_state.expand(pair_count)
+            if num_targets_per_cell <= 0:
+                target_ids_in_cell = ids
             else:
-                spawn_ids = ids.repeat_interleave(n_c)
-                target_ids = ids.repeat(n_c)
-                if exclude_self_pairs:
-                    keep = spawn_ids != target_ids
-                    spawn_ids = spawn_ids[keep]
-                    target_ids = target_ids[keep]
-                    pair_count = n_c * (n_c - 1)
-                else:
-                    pair_count = n_c * n_c
+                n_targets = min(int(num_targets_per_cell), n_c)
+                local_idx = grid_bucket_downsample(spawn_xy[ids], n_targets)
+                target_ids_in_cell = ids[local_idx]
+            n_t = int(target_ids_in_cell.shape[0])
+            spawn_ids = ids.repeat_interleave(n_t)
+            target_ids = target_ids_in_cell.repeat(n_c)
+            if exclude_self_pairs:
+                keep = spawn_ids != target_ids
+                spawn_ids = spawn_ids[keep]
+                target_ids = target_ids[keep]
+            pair_count = int(spawn_ids.shape[0])
+            if pair_count == 0:
+                continue
             pair_spawn_parts.append(spawn_ids)
             pair_target_parts.append(target_ids)
             pair_tile_parts.append(torch.full((pair_count,), cell, device=device, dtype=torch.long))

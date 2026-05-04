@@ -171,7 +171,7 @@ class RelativeStateCommand(CommandTerm):
             pool_sampling_size=cfg.pool_sampling_size,
             robot_joint_names=self.robot.joint_names,
             exclude_self_pairs=cfg.exclude_self_pairs,
-            single_target_per_cell=cfg.single_target_per_cell,
+            num_targets_per_cell=cfg.num_targets_per_cell,
         )
         self._target_fk_kin = table_data.pop("kin")
         self._newton_joint_names = table_data.pop("newton_joint_names")

@@ -196,6 +196,7 @@ class CommandsCfg:
         foot_pos_std=0.25,
         debug_vis=True,
         pool_spacing=0.5,
+        num_targets_per_cell=1,
         commands=CommandsPresetCfg(),  # type: ignore
         pipeline_cfg=RetargetPipelineCfg(
             kin=NewtonKinematicsCfg(usd_path=""),
