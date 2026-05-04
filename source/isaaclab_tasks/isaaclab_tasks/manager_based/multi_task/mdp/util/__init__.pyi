@@ -22,10 +22,12 @@ __all__ = [
     "SuccessMonitorCfg",
     "UniformSamplingCfg",
     "UniformSignal",
+    "WeightedCurriculum",
     "beta_sampling_probs",
     "build_knn_indices",
     "frontier_sampling_probs",
     "log_frontier_bins",
+    "make_curriculum",
     "state_frontier_weights",
     "uniform_sampling_probs",
     "create_primitive_mesh",
@@ -68,6 +70,7 @@ from .sampling import (
     tagged_report,
     uniform_sampling_probs,
 )
+from .curriculum import WeightedCurriculum, make_curriculum
 from .sampling_cfg import BetaSamplingCfg, FrontierSamplingCfg, UniformSamplingCfg
 from .signals import BetaSignal, FrontierSignal, InformativenessSignal, UniformSignal
 from .state_buffer import StateBuffer
