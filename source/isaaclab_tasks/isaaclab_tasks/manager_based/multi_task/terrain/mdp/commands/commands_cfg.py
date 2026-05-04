@@ -50,7 +50,7 @@ class RelativeStateCommandCfg(CommandTermCfg):
     clipped to this centered window before pool sizing and sampling.
     """
 
-    exclude_self_pairs: bool = False
+    exclude_self_pairs: bool = True
     """Whether to drop ``(spawn == target)`` pairs from the per-cell Cartesian product.
 
     When ``True``, the per-cell ``n × n`` pair grid is reduced to ``n × (n - 1)``

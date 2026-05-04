@@ -189,7 +189,7 @@ class CommandsCfg:
     goal_point = mdp.RelativeStateCommandCfg(
         asset_name="robot",
         resampling_time_range=(10.0, 10.0),
-        pos_std=0.5,
+        pos_std=0.4,
         rot_std=0.5,
         lin_vel_std=0.3,
         ang_vel_std=0.3,
