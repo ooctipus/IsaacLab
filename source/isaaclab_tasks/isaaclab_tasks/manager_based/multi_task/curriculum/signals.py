@@ -203,10 +203,18 @@ class FrontierSignal:
     Aggregates per-item rates onto the state pool (via spawn + optional
     target endpoints), computes per-state frontier
     ``(1 - state_s) * (s_dilated - state_s).clamp_min(0)`` via graph
-    max-pool over a kNN graph on ``layout.coords``, then sums
-    above-mean-deviation back to per-item at the spawn endpoint plus
-    (if present) target. Constant endpoints (e.g. shared targets)
-    contribute zero and auto-cancel.
+    max-pool over a kNN graph on ``layout.coords``, then combines
+    above-mean-deviation at both endpoints back into a per-item score.
+
+    When the layout has a separate target endpoint the per-item score
+    is the **minimum** of the two endpoints' above-mean deviations.
+    Reason: an additive combination would let a frontier-adjacent
+    target inherit warmth onto unreachable spawns paired with it,
+    causing the curriculum to repeatedly sample tasks the policy
+    cannot solve yet (the spawn's neighborhood has no learned
+    states). Min requires *both* endpoints to be at the frontier
+    before the task scores positive, so far-from-frontier spawns
+    stay at zero regardless of their tile target's progress.
 
     The kNN graph is built once at construction; per-call cost is only
     the scatter / max-pool / deviation computation.
@@ -223,11 +231,12 @@ class FrontierSignal:
     def score(self, success_rates: torch.Tensor) -> torch.Tensor:
         state_frontier = self.state_frontier(success_rates)
         spawn_f = state_frontier[self._spawn_index]
-        score = (spawn_f - spawn_f.mean()).clamp_min(0.0)
-        if self._target_index is not None:
-            target_f = state_frontier[self._target_index]
-            score = score + (target_f - target_f.mean()).clamp_min(0.0)
-        return score
+        spawn_score = (spawn_f - spawn_f.mean()).clamp_min(0.0)
+        if self._target_index is None:
+            return spawn_score
+        target_f = state_frontier[self._target_index]
+        target_score = (target_f - target_f.mean()).clamp_min(0.0)
+        return torch.minimum(spawn_score, target_score)
 
     def state_frontier(self, success_rates: torch.Tensor) -> torch.Tensor:
         """Per-state frontier ``(1 - state_s) * (s_dil - state_s).clamp_min(0)``.

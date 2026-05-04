@@ -129,6 +129,48 @@ def test_frontier_score_non_negative():
     assert (scores >= 0).all()
 
 
+def test_frontier_no_inheritance_when_one_endpoint_is_far():
+    """Items where one endpoint is at frontier and the other is far stay at zero.
+
+    Pins the "min" combine semantics: an additive score would let a frontier
+    target inherit warmth onto unreachable spawns paired with it (the "free
+    rider" pattern that wastes resets on tasks the policy cannot solve yet).
+    With ``min(spawn_above_mean, target_above_mean)``, the unreachable
+    endpoint keeps the score at zero regardless of the partner's progress.
+    """
+    # Hand-crafted layout: 4 states, 4 items.
+    #   states 0/1: at frontier (state_s low, dilated neighbour high)
+    #   states 2/3: far / unreached (state_s low, neighbours all low)
+    #   item 0:  spawn=0, target=1   (both at frontier)              -> nonzero
+    #   item 1:  spawn=2, target=3   (both far)                      -> zero
+    #   item 2:  spawn=2, target=1   (far spawn, frontier target)    -> zero w/ min
+    #   item 3:  spawn=0, target=3   (frontier spawn, far target)    -> zero w/ min
+    coords = torch.tensor(
+        [
+            [0.00, 0.00],  # state 0 -- at frontier
+            [0.05, 0.05],  # state 1 -- at frontier
+            [10.0, 10.0],  # state 2 -- far
+            [10.0, 10.05],  # state 3 -- far
+        ]
+    )
+    spawn_idx = torch.tensor([0, 2, 2, 0], dtype=torch.long)
+    target_idx = torch.tensor([1, 3, 1, 3], dtype=torch.long)
+    layout = StateLayout(coords=coords, spawn_index=spawn_idx, target_index=target_idx)
+
+    # Per-item rates: item 0 has high rate (so dilation reaches states 0/1),
+    # items 2/3 stay near zero so states 2/3 keep state_s low and unreached.
+    rates = torch.tensor([0.9, 0.0, 0.0, 0.0])
+    cfg = FrontierSignalCfg(k=1, dilation_steps=1)
+    signal = cfg.class_type(cfg, layout)
+    scores = signal.score(rates)
+
+    # Items 1, 2, 3 must be zero -- both-far AND mixed (one far + one frontier)
+    # are equally uninformative under the min semantics.
+    assert float(scores[1]) == 0.0
+    assert float(scores[2]) == 0.0
+    assert float(scores[3]) == 0.0
+
+
 # ---------------------------------------------------------------------------
 # UniformSignal
 # ---------------------------------------------------------------------------
