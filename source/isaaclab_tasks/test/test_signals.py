@@ -129,46 +129,95 @@ def test_frontier_score_non_negative():
     assert (scores >= 0).all()
 
 
-def test_frontier_no_inheritance_when_one_endpoint_is_far():
-    """Items where one endpoint is at frontier and the other is far stay at zero.
+def test_frontier_isolated_unlearned_task_stays_zero():
+    """A task whose feature-space neighbourhood has no learned task scores zero.
 
-    Pins the "min" combine semantics: an additive score would let a frontier
-    target inherit warmth onto unreachable spawns paired with it (the "free
-    rider" pattern that wastes resets on tasks the policy cannot solve yet).
-    With ``min(spawn_above_mean, target_above_mean)``, the unreachable
-    endpoint keeps the score at zero regardless of the partner's progress.
+    Per-task frontier propagates rate via task-feature kNN, so an isolated
+    cluster of unlearned tasks gets no inheritance from a far-away cluster
+    of learned tasks (the kNN graph wires them up to similar tasks, not
+    arbitrary "shares-a-state" tasks).
     """
-    # Hand-crafted layout: 4 states, 4 items.
-    #   states 0/1: at frontier (state_s low, dilated neighbour high)
-    #   states 2/3: far / unreached (state_s low, neighbours all low)
-    #   item 0:  spawn=0, target=1   (both at frontier)              -> nonzero
-    #   item 1:  spawn=2, target=3   (both far)                      -> zero
-    #   item 2:  spawn=2, target=1   (far spawn, frontier target)    -> zero w/ min
-    #   item 3:  spawn=0, target=3   (frontier spawn, far target)    -> zero w/ min
+    # 4 states, 4 items in two well-separated (spawn_xy, target_xy) clusters.
+    # Cluster A (items 0,1): tasks among learned states, high rates.
+    # Cluster B (items 2,3): tasks among unlearned states, far in feature space.
     coords = torch.tensor(
         [
-            [0.00, 0.00],  # state 0 -- at frontier
-            [0.05, 0.05],  # state 1 -- at frontier
-            [10.0, 10.0],  # state 2 -- far
-            [10.0, 10.05],  # state 3 -- far
+            [0.00, 0.00],  # state 0 -- learned cluster
+            [0.05, 0.05],  # state 1 -- learned cluster
+            [100.0, 100.0],  # state 2 -- isolated cluster
+            [100.0, 100.1],  # state 3 -- isolated cluster
         ]
     )
-    spawn_idx = torch.tensor([0, 2, 2, 0], dtype=torch.long)
-    target_idx = torch.tensor([1, 3, 1, 3], dtype=torch.long)
+    spawn_idx = torch.tensor([0, 1, 2, 3], dtype=torch.long)
+    target_idx = torch.tensor([1, 0, 3, 2], dtype=torch.long)
     layout = StateLayout(coords=coords, spawn_index=spawn_idx, target_index=target_idx)
 
-    # Per-item rates: item 0 has high rate (so dilation reaches states 0/1),
-    # items 2/3 stay near zero so states 2/3 keep state_s low and unreached.
+    # Items 0/1 are learned, items 2/3 are unreached. Cluster B is far enough
+    # in feature space that neither A item is its kNN neighbour.
+    rates = torch.tensor([0.9, 0.9, 0.0, 0.0])
+    cfg = FrontierSignalCfg(k=1, dilation_steps=1)
+    signal = cfg.class_type(cfg, layout)
+    scores = signal.score(rates)
+
+    # Items 2/3 stay zero -- their kNN neighbours are within their own
+    # cluster (also at rate 0). No spurious inheritance from cluster A.
+    assert float(scores[2]) == 0.0
+    assert float(scores[3]) == 0.0
+
+
+def test_frontier_propagates_to_neighbour_in_task_space():
+    """An unlearned task whose feature-space neighbour is learned scores positive."""
+    # Two items at nearby task features. Item 0 has high rate, item 1 has zero.
+    # With per-task kNN and dilation, item 1 should inherit from item 0.
+    coords = torch.tensor([[0.0, 0.0], [0.1, 0.1]])
+    spawn_idx = torch.tensor([0, 1], dtype=torch.long)
+    target_idx = torch.tensor([1, 0], dtype=torch.long)
+    layout = StateLayout(coords=coords, spawn_index=spawn_idx, target_index=target_idx)
+
+    rates = torch.tensor([0.9, 0.0])
+    cfg = FrontierSignalCfg(k=1, dilation_steps=1)
+    signal = cfg.class_type(cfg, layout)
+    scores = signal.score(rates)
+
+    # Item 0 is itself learned -> (1 - 0.9) factor gives small score.
+    # Item 1 is unlearned with item 0 as kNN neighbour -> picks up frontier.
+    assert float(scores[1]) > 0.0
+    # Item 0's score is small (already mostly learned).
+    assert float(scores[0]) <= float(scores[1])
+
+
+def test_frontier_partition_isolates_mechanics():
+    """Partitioned kNN keeps mechanically-distinct task families independent.
+
+    Two tasks share spatial endpoints but live in different ``task_partition``
+    classes (e.g. walking-A→B vs flying-A→B). Frontier from the learned
+    family must NOT propagate into the unlearned family.
+    """
+    coords = torch.tensor([[0.0, 0.0], [0.1, 0.1]])
+    # 4 items: same (spawn, target) endpoints, two partitions of two items each.
+    spawn_idx = torch.tensor([0, 1, 0, 1], dtype=torch.long)
+    target_idx = torch.tensor([1, 0, 1, 0], dtype=torch.long)
+    # Items 0,1 -> partition 0 (e.g. walking); items 2,3 -> partition 1 (flying).
+    task_partition = torch.tensor([0, 0, 1, 1], dtype=torch.long)
+    layout = StateLayout(
+        coords=coords,
+        spawn_index=spawn_idx,
+        target_index=target_idx,
+        task_partition=task_partition,
+    )
+
+    # Walking learned (item 0 high), flying still unlearned. With unpartitioned
+    # kNN, item 2 would have item 0 as a feature-space neighbour and inherit
+    # frontier; with partition, items 2/3 see only each other (both at 0).
     rates = torch.tensor([0.9, 0.0, 0.0, 0.0])
     cfg = FrontierSignalCfg(k=1, dilation_steps=1)
     signal = cfg.class_type(cfg, layout)
     scores = signal.score(rates)
 
-    # Items 1, 2, 3 must be zero -- both-far AND mixed (one far + one frontier)
-    # are equally uninformative under the min semantics.
-    assert float(scores[1]) == 0.0
     assert float(scores[2]) == 0.0
     assert float(scores[3]) == 0.0
+    # Partition 0 still propagates internally: item 1 picks up from item 0.
+    assert float(scores[1]) > 0.0
 
 
 # ---------------------------------------------------------------------------

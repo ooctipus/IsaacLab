@@ -109,62 +109,50 @@ def build_knn_indices(coords: torch.Tensor, k: int) -> torch.Tensor:
     return torch.from_numpy(knn_block).to(device=device, dtype=torch.long)
 
 
-def state_frontier_weights(
+def task_frontier_weights(
     success_rates: torch.Tensor,
     *,
-    state_knn_indices: torch.Tensor,
-    spawn_index: torch.Tensor,
-    target_index: torch.Tensor | None = None,
+    task_knn_indices: torch.Tensor,
     dilation_steps: int = 1,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Compute per-state success rates and per-state frontier weights.
+) -> torch.Tensor:
+    """Compute per-task frontier weights from per-task rates and a task kNN graph.
 
-    Per-state success ``state_s`` is the mean per-item success rate
-    across all items touching the state in either endpoint role. The
-    frontier weight is::
+    The frontier weight is::
 
-        state_frontier = (1 - state_s) * (s_dil - state_s).clamp_min(0)
+        task_frontier = (1 - s) * (s_dil - s).clamp_min(0)
 
-    where ``s_dil`` is ``state_s`` propagated outward via
-    ``dilation_steps`` graph-max iterations on ``state_knn_indices``.
-    The ``(1 - state_s)`` factor downweights states that are themselves
-    well-learned, even if a more-learned neighbor exists -- the frontier
-    is "I'm not yet solved AND a neighbor is more solved", not just
-    "a neighbor is more solved".
+    where ``s_dil`` is ``success_rates`` propagated outward via
+    ``dilation_steps`` graph-max iterations on ``task_knn_indices``.
+    The ``(1 - s)`` factor downweights tasks that are themselves
+    already learned, even if a more-learned neighbor exists -- the
+    frontier is "I'm not yet solved AND a similar task is more
+    solved", not just "a similar task is more solved".
+
+    Working at task-level (rather than aggregating per-task rates onto
+    states first) preserves task identity end-to-end. There is no
+    free-rider pathology where a learned target inherits sampling
+    pressure onto unrelated spawns paired with it -- two tasks share
+    propagation only if they are actually neighbors in
+    ``(spawn, target)`` feature space.
 
     Args:
-        success_rates: ``[num_items]`` per-item rolling success rate.
-        state_knn_indices: ``[num_states, k]`` long tensor from
-            :func:`build_knn_indices` over the state pool coords.
-        spawn_index: ``[num_items]`` per-item spawn state index.
-        target_index: ``[num_items]`` per-item target state index, or
-            ``None`` when items have no separate target endpoint
-            (e.g. factory's slot==item case). With ``None`` the
-            aggregation uses only ``spawn_index``.
-        dilation_steps: Number of graph-max iterations.
+        success_rates: ``[num_items]`` per-task rolling success rate.
+        task_knn_indices: ``[num_items, k]`` long tensor from
+            :func:`build_knn_indices` over per-task feature vectors
+            (e.g. ``concat(spawn_xy, target_xy)`` for terrain or
+            ``slot_xyz`` for factory's slot==item topology).
+        dilation_steps: Number of graph-max iterations along the task
+            kNN graph.
 
     Returns:
-        ``(state_s, state_frontier)`` -- both ``[num_states]`` on the
-        same device/dtype as ``success_rates``.
+        ``[num_items]`` task frontier weights on the same device/dtype
+        as ``success_rates``.
     """
-    n_states = int(state_knn_indices.shape[0])
-    device = success_rates.device
-    state_sums = torch.zeros(n_states, device=device, dtype=success_rates.dtype)
-    state_counts = torch.zeros(n_states, device=device, dtype=success_rates.dtype)
-    ones = torch.ones_like(success_rates)
-    state_sums.scatter_add_(0, spawn_index, success_rates)
-    state_counts.scatter_add_(0, spawn_index, ones)
-    if target_index is not None:
-        state_sums.scatter_add_(0, target_index, success_rates)
-        state_counts.scatter_add_(0, target_index, ones)
-    state_s = state_sums / state_counts.clamp_min(1.0)
-
-    s_dil = state_s
+    s_dil = success_rates
     for _ in range(max(1, int(dilation_steps))):
-        neighbor_max = s_dil[state_knn_indices].amax(dim=-1)
+        neighbor_max = s_dil[task_knn_indices].amax(dim=-1)
         s_dil = torch.maximum(s_dil, neighbor_max)
-    state_frontier = (1.0 - state_s) * (s_dil - state_s).clamp_min(0.0)
-    return state_s, state_frontier
+    return (1.0 - success_rates) * (s_dil - success_rates).clamp_min(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -198,64 +186,104 @@ class BetaSignal:
 
 
 class FrontierSignal:
-    """Per-item score from spatial gradient over a state-pool kNN graph.
+    """Per-task frontier score from a kNN graph over the task feature space.
 
-    Aggregates per-item rates onto the state pool (via spawn + optional
-    target endpoints), computes per-state frontier
-    ``(1 - state_s) * (s_dilated - state_s).clamp_min(0)`` via graph
-    max-pool over a kNN graph on ``layout.coords``, then combines
-    above-mean-deviation at both endpoints back into a per-item score.
+    For each task ``i`` with rolling success rate ``s_i``::
 
-    When the layout has a separate target endpoint the per-item score
-    is the **minimum** of the two endpoints' above-mean deviations.
-    Reason: an additive combination would let a frontier-adjacent
-    target inherit warmth onto unreachable spawns paired with it,
-    causing the curriculum to repeatedly sample tasks the policy
-    cannot solve yet (the spawn's neighborhood has no learned
-    states). Min requires *both* endpoints to be at the frontier
-    before the task scores positive, so far-from-frontier spawns
-    stay at zero regardless of their tile target's progress.
+        s_dil_i = max over kNN neighbours of i  (in task-feature space)
+        score_i = (1 - s_i) * (s_dil_i - s_i).clamp_min(0)
 
-    The kNN graph is built once at construction; per-call cost is only
-    the scatter / max-pool / deviation computation.
+    A task scores positive only when its own rate is below the maximum
+    rate among its kNN-similar tasks -- i.e. "this specific task is not
+    yet solved, but a similar task is." Because the signal lives on
+    tasks (never aggregates rates onto states), task identity is
+    preserved end-to-end and there is no "free-rider" pathology where
+    a learned target inherits sampling pressure onto unrelated spawns
+    paired with it.
+
+    The task feature is ``concat(spawn_xy, target_xy)`` when the layout
+    has a separate target endpoint, or just the spawn/slot feature
+    when ``layout.target_index is None`` (factory's slot==item case,
+    where the task feature degenerates to the slot's own coords).
+
+    When ``layout.task_partition`` is set, the kNN is built **within
+    each partition** rather than globally -- two tasks in different
+    partitions are never neighbours regardless of how close they are
+    in feature space. This is how mechanically-distinct task families
+    (walking-A→B vs. flying-A→B vs. terrain-pose vs. velocity-cmd)
+    keep independent frontier manifolds: their spatial endpoints
+    overlap but their dynamics don't, so frontier propagation across
+    families would be a misleading signal.
+
+    The feature space is built once at construction; per-call cost is
+    the max-pool dilation plus an elementwise multiply.
     """
 
     name = "frontier"
 
     def __init__(self, cfg: FrontierSignalCfg, layout: StateLayout) -> None:
-        self._spawn_index = layout.spawn_index
-        self._target_index = layout.target_index
         self._dilation_steps = max(1, int(cfg.dilation_steps))
-        self._knn = build_knn_indices(layout.coords, k=cfg.k)
+        spawn_feat = layout.coords[layout.spawn_index]
+        if layout.target_index is None:
+            task_features = spawn_feat
+        else:
+            target_feat = layout.coords[layout.target_index]
+            task_features = torch.cat([spawn_feat, target_feat], dim=-1)
+        self._knn = _build_partitioned_knn(task_features, layout.task_partition, k=cfg.k)
 
     def score(self, success_rates: torch.Tensor) -> torch.Tensor:
-        state_frontier = self.state_frontier(success_rates)
-        spawn_f = state_frontier[self._spawn_index]
-        spawn_score = (spawn_f - spawn_f.mean()).clamp_min(0.0)
-        if self._target_index is None:
-            return spawn_score
-        target_f = state_frontier[self._target_index]
-        target_score = (target_f - target_f.mean()).clamp_min(0.0)
-        return torch.minimum(spawn_score, target_score)
-
-    def state_frontier(self, success_rates: torch.Tensor) -> torch.Tensor:
-        """Per-state frontier ``(1 - state_s) * (s_dil - state_s).clamp_min(0)``.
-
-        Returns the un-aggregated ``[num_states]`` spatial signal --
-        the intermediate that :meth:`score` then aggregates back to
-        ``[num_items]`` via above-mean-deviation. Surfaced for
-        state-pool diagnostics (terrain spawn scatter, factory wandb
-        3D scatter) so consumers can show the spatial signal directly
-        without recomputing it.
-        """
-        _, state_frontier = state_frontier_weights(
+        return task_frontier_weights(
             success_rates,
-            state_knn_indices=self._knn,
-            spawn_index=self._spawn_index,
-            target_index=self._target_index,
+            task_knn_indices=self._knn,
             dilation_steps=self._dilation_steps,
         )
-        return state_frontier
+
+    def task_frontier(self, success_rates: torch.Tensor) -> torch.Tensor:
+        """Alias for :meth:`score` -- the per-task frontier weight tensor.
+
+        Surfaced separately so diagnostic consumers can pull the
+        per-task spatial signal out of the curriculum without
+        recomputing it. Equivalent to ``self.score(success_rates)``.
+        """
+        return self.score(success_rates)
+
+
+def _build_partitioned_knn(
+    features: torch.Tensor,
+    partition: torch.Tensor | None,
+    k: int,
+) -> torch.Tensor:
+    """Build a per-partition kNN graph over ``features``.
+
+    For each task, returned neighbours come exclusively from tasks
+    sharing the same ``partition`` key. With ``partition is None``
+    behaves identically to :func:`build_knn_indices`.
+
+    Args:
+        features: ``[num_items, feature_dim]`` per-task feature vectors.
+        partition: ``[num_items]`` long tensor of partition keys, or
+            ``None`` for a single global partition.
+        k: Number of nearest neighbours per task.
+
+    Returns:
+        ``[num_items, k]`` long tensor of *global* task indices.
+    """
+    if partition is None:
+        return build_knn_indices(features, k=k)
+
+    n = int(features.shape[0])
+    knn = torch.empty((n, k), dtype=torch.long, device=features.device)
+    for p in torch.unique(partition).tolist():
+        mask = partition == p
+        member_idx = mask.nonzero(as_tuple=False).squeeze(-1)
+        if member_idx.numel() == 0:
+            continue
+        local_features = features[member_idx]
+        local_knn = build_knn_indices(local_features, k=k)
+        # ``local_knn`` indexes into the partition's local feature list;
+        # remap to the global task indices that ``score`` gathers from.
+        knn[member_idx] = member_idx[local_knn]
+    return knn
 
 
 class UniformSignal:

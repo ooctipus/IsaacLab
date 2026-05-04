@@ -35,7 +35,7 @@ from isaaclab.managers import EventTermCfg, ManagerTermBase
 from . import reset_state
 from .curriculum import Curriculum, CurriculumCfg
 from .diagnostics import log_curriculum_bins
-from .signals import FrontierSignal, FrontierSignalCfg
+from .signals import FrontierSignalCfg
 from .state_buffer import StateBuffer
 from .state_buffer_cfg import StateBufferCfg
 from .state_layout import StateLayout
@@ -501,22 +501,12 @@ class reset_accumulator(ManagerTermBase):
                 vmax=max(float(score_np.max()), 1e-9),
                 title=f"{name}_score",
             )
-        # Bonus panel for ``FrontierSignal``: the un-aggregated per-state
-        # spatial signal (vs. ``frontier_score_3d`` above which is the
-        # per-item above-mean deviation that goes into the sampler).
-        # Both are complementary -- ``state_frontier_3d`` shows raw
-        # spatial structure, ``frontier_score_3d`` shows what the
-        # sampler actually rewards.
-        frontier_signal = self._curriculum.find_signal("frontier")
-        if isinstance(frontier_signal, FrontierSignal):
-            sf = frontier_signal.state_frontier(rates_t).detach().cpu().numpy()
-            panels["state_frontier_3d"] = PanelSpec(
-                values=sf,
-                cmap="viridis",
-                vmin=0.0,
-                vmax=max(float(sf.max()), 1e-9),
-                title="state_frontier",
-            )
+        # Note: under the per-task FrontierSignal redesign, the signal's
+        # ``score(rates)`` *is* the per-task frontier value -- there is
+        # no separate "raw spatial signal" to surface as a bonus panel,
+        # so ``frontier_score_3d`` already shows what was previously
+        # split between ``frontier_score`` (above-mean) and
+        # ``state_frontier`` (raw).
         log_payload = {
             f"Curriculum/{tag}": wandb.Object3D(self._wandb_3d_dashboard.to_object3d(panel))
             for tag, panel in panels.items()

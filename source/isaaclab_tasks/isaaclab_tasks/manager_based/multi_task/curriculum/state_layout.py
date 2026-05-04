@@ -32,11 +32,20 @@ class StateLayout:
         target_index: ``[num_items]`` long tensor of target endpoints,
             or ``None`` when items have no separate target endpoint
             (factory's slot==item case).
+        task_partition: Optional ``[num_items]`` long tensor of partition
+            keys (e.g. command-type id for terrain, gait id, mechanic
+            class). Tasks in different partitions live on independent
+            frontier manifolds -- a "walking A→B" and a "flying A→B"
+            share spatial endpoints but should not propagate frontier
+            into each other. ``FrontierSignal`` builds its kNN graph
+            *within* each partition so neighbour relations never cross
+            partition boundaries. ``None`` means a single global partition.
     """
 
     coords: torch.Tensor
     spawn_index: torch.Tensor
     target_index: torch.Tensor | None = None
+    task_partition: torch.Tensor | None = None
 
     def __post_init__(self) -> None:
         if self.coords.ndim != 2:
@@ -49,6 +58,11 @@ class StateLayout:
             raise ValueError(
                 "spawn_index and target_index must have the same shape; "
                 f"got {tuple(self.spawn_index.shape)} vs {tuple(self.target_index.shape)}."
+            )
+        if self.task_partition is not None and self.task_partition.shape != self.spawn_index.shape:
+            raise ValueError(
+                "spawn_index and task_partition must have the same shape; "
+                f"got {tuple(self.spawn_index.shape)} vs {tuple(self.task_partition.shape)}."
             )
 
     @property

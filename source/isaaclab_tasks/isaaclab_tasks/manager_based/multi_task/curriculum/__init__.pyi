@@ -33,7 +33,7 @@ __all__ = [
     "pack_articulation_reset_state",
     "reset_accumulator",
     "set_reset_state",
-    "state_frontier_weights",
+    "task_frontier_weights",
     "temporary_seed",
 ]
 
@@ -61,7 +61,7 @@ from .signals import (
     UniformSignal,
     UniformSignalCfg,
     build_knn_indices,
-    state_frontier_weights,
+    task_frontier_weights,
 )
 from .state_buffer import StateBuffer
 from .state_buffer_cfg import StateBufferCfg

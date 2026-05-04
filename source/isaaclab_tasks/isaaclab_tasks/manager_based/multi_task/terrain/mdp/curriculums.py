@@ -93,11 +93,22 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         # domain; spawn/target are just two roles a state can play in a
         # task. Topology-agnostic (one spawn / many targets, many
         # spawns / one target, many of both -- all the same).
+        # ``task_partition`` is the per-task command-type id, so
+        # FrontierSignal's kNN never crosses command-type boundaries
+        # (a "terrain_position_cmd A→B" and "terrain_pose_cmd A→B"
+        # share spatial endpoints but are mechanically independent).
         table = self.goal_term.table
+        task_partition = torch.zeros(int(table.num_tasks), dtype=torch.long, device=env.device)
+        for cmd_id in range(int(table.offsets.shape[0]) - 1):
+            start = int(table.offsets[cmd_id])
+            end = int(table.offsets[cmd_id + 1])
+            if end > start:
+                task_partition[start:end] = cmd_id
         self._layout = StateLayout(
             coords=table.spawn_states[:, :2],
             spawn_index=table.spawn_index,
             target_index=table.target_index,
+            task_partition=task_partition,
         )
         self._curriculum = self._sampling_cfg.class_type(self._sampling_cfg, self._layout)
 
@@ -281,12 +292,13 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
            this patch as either spawn or target.
         2. **Sampling probability** — total probability mass the curriculum
            sampler currently places on commands that touch this patch.
-        3. **State frontier** *(when a frontier signal is in the
-           curriculum)* — the per-state ``state_frontier`` value the
-           signal uses, surfaced directly via
-           :meth:`FrontierSignal.state_frontier`. Falls back to
-           "Sampling prob (spawn only)" for curricula without spatial
-           structure.
+        3. **Task frontier** *(when a frontier signal is in the
+           curriculum)* — the per-task ``task_frontier`` value the
+           signal uses, mean-aggregated to per-patch via
+           :func:`~....viz.aggregate_endpoints` for display only
+           (the curriculum itself consumes the unaggregated per-task
+           values). Falls back to "Sampling prob (spawn only)" for
+           curricula without spatial structure.
         4. **Δ success since last log** — change in (1) versus the previous
            call to this method, so improvement vs. regression is visible
            directly.
@@ -344,21 +356,25 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
             counts_buf=self._patch_probs_counts,
         )
         # State-pool diagnostic: when a frontier signal is in the
-        # curriculum, surface its per-state frontier directly (no
-        # aggregation needed -- the signal lives natively on the patch
-        # grid). Falls back to spawn-aggregated probability for
-        # curricula without spatial structure.
+        # curriculum, surface its per-task frontier mean-aggregated to
+        # per-state for display. The signal itself lives on tasks now
+        # (no per-state quantity exists), so we average per-task
+        # frontier across every task touching each state -- this is a
+        # *display-only* aggregation that does not feed the curriculum.
         frontier_signal = self._curriculum.find_signal("frontier")
         if isinstance(frontier_signal, FrontierSignal):
-            state_frontier_t = frontier_signal.state_frontier(success_rates)
-            # Track which states have any task touching them, for valid_mask.
-            self._patch_probs_target_counts.zero_()
-            ones = torch.ones_like(success_rates)
-            self._patch_probs_target_counts.scatter_add_(0, table.spawn_index, ones)
-            self._patch_probs_target_counts.scatter_add_(0, table.target_index, ones)
-            spatial_panel_title = "State frontier (s_dil − s_state)"
-            spatial_panel_values = state_frontier_t.cpu().numpy()
-            spatial_valid = self._patch_probs_target_counts.cpu().numpy() > 0
+            task_frontier_t = frontier_signal.task_frontier(success_rates)
+            tf_sums, tf_counts = aggregate_endpoints(
+                task_frontier_t,
+                endpoints,
+                n_patches,
+                sums_buf=self._patch_probs_target,
+                counts_buf=self._patch_probs_target_counts,
+            )
+            tf_per_patch = tf_sums / tf_counts.clamp_min(1.0)
+            spatial_panel_title = "Task frontier (mean over tasks touching state)"
+            spatial_panel_values = tf_per_patch.cpu().numpy()
+            spatial_valid = tf_counts.cpu().numpy() > 0
         else:
             # Fall back to spawn-aggregated probability for non-frontier
             # samplers (Beta / Uniform have no spatial signal to surface).
