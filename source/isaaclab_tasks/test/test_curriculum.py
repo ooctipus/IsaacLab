@@ -14,8 +14,8 @@ from isaaclab_tasks.manager_based.multi_task.curriculum import (
     Curriculum,
     CurriculumCfg,
     FrontierSignalCfg,
+    SignalEntry,
     StateLayout,
-    UniformSignal,
     UniformSignalCfg,
 )
 
@@ -44,7 +44,8 @@ def test_uniform_only_curriculum_is_uniform():
     """A UniformSignal-only curriculum with eps=0 returns exact 1/N probabilities."""
     layout = _layout_terrain(num_items=100)
     rates = torch.rand(100)
-    curr = Curriculum(signals=[(UniformSignal(layout), 1.0)], eps=0.0)
+    cfg = CurriculumCfg(signals=[SignalEntry(cfg=UniformSignalCfg(), weight=1.0)], eps=0.0)
+    curr = cfg.class_type(cfg, layout)
     probs = curr.probabilities(rates)
     assert torch.allclose(probs, torch.full_like(probs, 1.0 / 100))
 
@@ -52,13 +53,16 @@ def test_uniform_only_curriculum_is_uniform():
 def test_curriculum_probabilities_sum_to_one_finite_nonneg():
     layout = _layout_terrain()
     rates = torch.rand(layout.num_items)
-    curr = CurriculumCfg(
-        signals=[
-            (BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), 1.0),
-            (FrontierSignalCfg(k=8, dilation_steps=1), 2.0),
-        ],
-        eps=1e-3,
-    ).build(layout)
+    curr = Curriculum(
+        CurriculumCfg(
+            signals=[
+                SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
+                SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=2.0),
+            ],
+            eps=1e-3,
+        ),
+        layout,
+    )
     probs = curr.probabilities(rates)
     assert torch.isfinite(probs).all()
     assert (probs >= 0).all()
@@ -68,12 +72,15 @@ def test_curriculum_probabilities_sum_to_one_finite_nonneg():
 def test_signal_scores_dict_keys_match_signal_names():
     layout = _layout_terrain()
     rates = torch.rand(layout.num_items)
-    curr = CurriculumCfg(
-        signals=[
-            (BetaSignalCfg(target=0.66, kappa=1.0), 1.0),
-            (FrontierSignalCfg(k=8), 2.0),
-        ],
-    ).build(layout)
+    curr = Curriculum(
+        CurriculumCfg(
+            signals=[
+                SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
+                SignalEntry(cfg=FrontierSignalCfg(k=8), weight=2.0),
+            ],
+        ),
+        layout,
+    )
     scores = curr.signal_scores(rates)
     assert set(scores.keys()) == {"beta", "frontier"}
     for v in scores.values():
@@ -85,19 +92,24 @@ def test_negative_weight_clamped_to_zero():
     """Negative weights clamp to 0; the curriculum becomes uniform via eps."""
     layout = _layout_terrain()
     rates = torch.rand(layout.num_items)
-    pos = Curriculum(signals=[(UniformSignal(layout), 1.0)], eps=0.0).probabilities(rates)
-    neg = Curriculum(signals=[(UniformSignal(layout), -1.0)], eps=1e-6).probabilities(rates)
+    pos_cfg = CurriculumCfg(signals=[SignalEntry(cfg=UniformSignalCfg(), weight=1.0)], eps=0.0)
+    neg_cfg = CurriculumCfg(signals=[SignalEntry(cfg=UniformSignalCfg(), weight=-1.0)], eps=1e-6)
+    pos = pos_cfg.class_type(pos_cfg, layout).probabilities(rates)
+    neg = neg_cfg.class_type(neg_cfg, layout).probabilities(rates)
     assert torch.allclose(pos, neg, atol=1e-6)
 
 
 def test_find_signal_returns_active_signal():
     layout = _layout_terrain()
-    curr = CurriculumCfg(
-        signals=[
-            (BetaSignalCfg(target=0.66, kappa=1.0), 1.0),
-            (FrontierSignalCfg(k=8), 2.0),
-        ],
-    ).build(layout)
+    curr = Curriculum(
+        CurriculumCfg(
+            signals=[
+                SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
+                SignalEntry(cfg=FrontierSignalCfg(k=8), weight=2.0),
+            ],
+        ),
+        layout,
+    )
     beta = curr.find_signal("beta")
     frontier = curr.find_signal("frontier")
     assert beta is not None
@@ -116,12 +128,12 @@ def test_curriculum_cfg_build_produces_runtime_curriculum():
     layout = _layout_terrain()
     cfg = CurriculumCfg(
         signals=[
-            (BetaSignalCfg(target=0.5, kappa=2.0), 1.0),
-            (FrontierSignalCfg(k=8), 1.5),
+            SignalEntry(cfg=BetaSignalCfg(target=0.5, kappa=2.0), weight=1.0),
+            SignalEntry(cfg=FrontierSignalCfg(k=8), weight=1.5),
         ],
         eps=1e-3,
     )
-    curr = cfg.build(layout)
+    curr = cfg.class_type(cfg, layout)
     assert isinstance(curr, Curriculum)
     assert len(curr.signals) == 2
     assert curr.eps == 1e-3
@@ -129,12 +141,12 @@ def test_curriculum_cfg_build_produces_runtime_curriculum():
 
 
 def test_curriculum_cfg_default_rate_source_is_monitor():
-    cfg = CurriculumCfg(signals=[(UniformSignalCfg(), 1.0)])
+    cfg = CurriculumCfg(signals=[SignalEntry(cfg=UniformSignalCfg(), weight=1.0)])
     assert cfg.rate_source == "monitor"
 
 
 def test_curriculum_cfg_estimator_rate_source():
-    cfg = CurriculumCfg(signals=[(UniformSignalCfg(), 1.0)], rate_source="estimator")
+    cfg = CurriculumCfg(signals=[SignalEntry(cfg=UniformSignalCfg(), weight=1.0)], rate_source="estimator")
     assert cfg.rate_source == "estimator"
 
 
@@ -142,13 +154,16 @@ def test_factory_slot_eq_item_layout_works():
     """target_index=None propagates through the cfg.build path."""
     layout = _layout_factory(num_states=64)
     rates = torch.rand(64)
-    curr = CurriculumCfg(
-        signals=[
-            (BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), 1.0),
-            (FrontierSignalCfg(k=8, dilation_steps=1), 2.0),
-        ],
-        eps=1e-3,
-    ).build(layout)
+    curr = Curriculum(
+        CurriculumCfg(
+            signals=[
+                SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
+                SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=2.0),
+            ],
+            eps=1e-3,
+        ),
+        layout,
+    )
     probs = curr.probabilities(rates)
     assert torch.isfinite(probs).all()
     assert abs(float(probs.sum()) - 1.0) < 1e-6
@@ -166,21 +181,21 @@ def test_curriculum_cfg_dilation_steps_propagates():
     )
     rates = torch.zeros(n)
     rates[0] = 0.95
-    p1 = (
-        CurriculumCfg(
-            signals=[(UniformSignalCfg(), 1.0), (FrontierSignalCfg(k=2, dilation_steps=1), 2.0)],
-            eps=1e-3,
-        )
-        .build(layout)
-        .probabilities(rates)
+    cfg1 = CurriculumCfg(
+        signals=[
+            SignalEntry(cfg=UniformSignalCfg(), weight=1.0),
+            SignalEntry(cfg=FrontierSignalCfg(k=2, dilation_steps=1), weight=2.0),
+        ],
+        eps=1e-3,
     )
-    p3 = (
-        CurriculumCfg(
-            signals=[(UniformSignalCfg(), 1.0), (FrontierSignalCfg(k=2, dilation_steps=3), 2.0)],
-            eps=1e-3,
-        )
-        .build(layout)
-        .probabilities(rates)
+    cfg3 = CurriculumCfg(
+        signals=[
+            SignalEntry(cfg=UniformSignalCfg(), weight=1.0),
+            SignalEntry(cfg=FrontierSignalCfg(k=2, dilation_steps=3), weight=2.0),
+        ],
+        eps=1e-3,
     )
+    p1 = Curriculum(cfg1, layout).probabilities(rates)
+    p3 = Curriculum(cfg3, layout).probabilities(rates)
     threshold = 1.0 / n + 1e-6
     assert int((p3 > threshold).sum()) >= int((p1 > threshold).sum())

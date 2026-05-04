@@ -10,8 +10,8 @@ from dataclasses import MISSING
 
 from isaaclab.utils import configclass
 
-from . import patch_sampling_morph as morph_funcs
-from . import patch_sampling_rejection as rejection_funcs
+from . import morph as morph_funcs
+from . import rejection as rejection_funcs
 
 
 @configclass

@@ -31,7 +31,9 @@ import warp as wp
 from isaaclab_tasks.manager_based.multi_task.curriculum import (
     ArticulationResetStateAdapter,
     BetaSignalCfg,
+    Curriculum,  # noqa: F401 -- used in fluent inline construction below,
     CurriculumCfg,
+    SignalEntry,
     StateLayout,
     SuccessMonitor,
     SuccessMonitorCfg,
@@ -71,10 +73,13 @@ def _sample_by_target_rate(
         coords=torch.zeros(n, 1, device=mon.success_rate.device),
         spawn_index=torch.arange(n, device=mon.success_rate.device, dtype=torch.long),
     )
-    curriculum = CurriculumCfg(
-        signals=[(BetaSignalCfg(target=target, kappa=kappa, eps=1e-8), 1.0)],
-        eps=1e-8,
-    ).build(layout)
+    curriculum = Curriculum(
+        CurriculumCfg(
+            signals=[SignalEntry(cfg=BetaSignalCfg(target=target, kappa=kappa, eps=1e-8), weight=1.0)],
+            eps=1e-8,
+        ),
+        layout,
+    )
     probs = curriculum.probabilities(mon.success_rate)
     choices = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
     return (choices, probs) if return_probs else choices
@@ -666,7 +671,7 @@ def _bootstrap_curriculum(env, term, target=0.5, kappa=5.0, history_len=16, log_
         params={
             "debug_vis": False,  # skip VisualizationMarkers construction
             "sampling": CurriculumCfg(
-                signals=[(BetaSignalCfg(target=target, kappa=kappa, eps=1e-8), 1.0)],
+                signals=[SignalEntry(cfg=BetaSignalCfg(target=target, kappa=kappa, eps=1e-8), weight=1.0)],
                 eps=1e-8,
             ),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=history_len),

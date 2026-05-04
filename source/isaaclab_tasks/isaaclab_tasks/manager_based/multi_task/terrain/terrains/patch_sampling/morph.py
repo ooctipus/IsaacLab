@@ -22,8 +22,8 @@ import torch
 import warp as wp
 
 from ....terrain.grid_downsample import grid_bucket_downsample
-from . import patch_sampling_cfg as patch_cfg
-from .patch_sampling_kernels import morph_validity_kernel, rasterize_grid_kernel
+from . import cfg as patch_cfg
+from .kernels import morph_validity_kernel, rasterize_grid_kernel
 
 MORPH_TIMINGS: dict[str, float] = {}
 """Cumulative wall-time per sub-phase of :func:`find_flat_patches_morphological`.

@@ -10,13 +10,12 @@ from __future__ import annotations
 import torch
 
 from isaaclab_tasks.manager_based.multi_task.curriculum import (
-    BetaSignal,
     BetaSignalCfg,
     Curriculum,
     CurriculumCfg,
     FrontierSignalCfg,
+    SignalEntry,
     StateLayout,
-    UniformSignal,
     UniformSignalCfg,
     log_curriculum_bins,
 )
@@ -33,13 +32,16 @@ def _layout_terrain(num_states: int = 50, num_items: int = 200, seed: int = 0) -
 def test_log_writes_per_signal_aggregate_keys():
     """Every active signal contributes Curriculum/<name>/{mean,p90}."""
     layout = _layout_terrain()
-    curriculum = CurriculumCfg(
-        signals=[
-            (BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), 1.0),
-            (FrontierSignalCfg(k=8, dilation_steps=1), 2.0),
-        ],
-        eps=1e-3,
-    ).build(layout)
+    curriculum = Curriculum(
+        CurriculumCfg(
+            signals=[
+                SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
+                SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=2.0),
+            ],
+            eps=1e-3,
+        ),
+        layout,
+    )
     rates = torch.rand(layout.num_items)
     probs = curriculum.probabilities(rates)
     log: dict[str, float] = {}
@@ -53,10 +55,16 @@ def test_log_writes_per_signal_aggregate_keys():
 def test_log_writes_frontier_bin_keys_when_frontier_present():
     """Frontier bin breakdown emitted when curriculum contains a frontier signal."""
     layout = _layout_terrain()
-    curriculum = CurriculumCfg(
-        signals=[(UniformSignalCfg(), 1.0), (FrontierSignalCfg(k=8, dilation_steps=1), 2.0)],
-        eps=1e-3,
-    ).build(layout)
+    curriculum = Curriculum(
+        CurriculumCfg(
+            signals=[
+                SignalEntry(cfg=UniformSignalCfg(), weight=1.0),
+                SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=2.0),
+            ],
+            eps=1e-3,
+        ),
+        layout,
+    )
     rates = torch.rand(layout.num_items)
     probs = curriculum.probabilities(rates)
     log: dict[str, float] = {}
@@ -69,10 +77,13 @@ def test_log_writes_frontier_bin_keys_when_frontier_present():
 def test_log_skips_bin_table_when_bin_signal_absent():
     """When the requested bin_signal isn't in the curriculum, no Frontier/bin_* keys are written."""
     layout = _layout_terrain()
-    curriculum = CurriculumCfg(
-        signals=[(BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-8), 1.0)],
-        eps=1e-8,
-    ).build(layout)
+    curriculum = Curriculum(
+        CurriculumCfg(
+            signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-8), weight=1.0)],
+            eps=1e-8,
+        ),
+        layout,
+    )
     rates = torch.rand(layout.num_items)
     probs = curriculum.probabilities(rates)
     log: dict[str, float] = {}
@@ -86,13 +97,16 @@ def test_log_skips_bin_table_when_bin_signal_absent():
 def test_log_bin_mass_sums_match_probs():
     """Sum of per-bin mass approximates the total probability mass (1.0)."""
     layout = _layout_terrain()
-    curriculum = CurriculumCfg(
-        signals=[
-            (BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), 1.0),
-            (FrontierSignalCfg(k=8, dilation_steps=1), 2.0),
-        ],
-        eps=1e-3,
-    ).build(layout)
+    curriculum = Curriculum(
+        CurriculumCfg(
+            signals=[
+                SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
+                SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=2.0),
+            ],
+            eps=1e-3,
+        ),
+        layout,
+    )
     rates = torch.rand(layout.num_items)
     probs = curriculum.probabilities(rates)
     log: dict[str, float] = {}
@@ -105,7 +119,10 @@ def test_log_bin_signal_kwarg_selects_signal():
     """bin_signal='beta' should bucket by the Beta score instead of frontier."""
     layout = _layout_terrain()
     # Curriculum without frontier so 'beta' is the only signal available.
-    curriculum = Curriculum(signals=[(BetaSignal(layout, target=0.66, kappa=1.0, eps=1e-3), 1.0)], eps=1e-3)
+    cfg = CurriculumCfg(
+        signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0)], eps=1e-3
+    )
+    curriculum = cfg.class_type(cfg, layout)
     rates = torch.rand(layout.num_items)
     probs = curriculum.probabilities(rates)
     log: dict[str, float] = {}
@@ -124,7 +141,8 @@ def test_log_bin_signal_kwarg_selects_signal():
 def test_log_uniform_only_curriculum_no_crash():
     """A trivial uniform-only curriculum should diagnose without error."""
     layout = _layout_terrain()
-    curriculum = Curriculum(signals=[(UniformSignal(layout), 1.0)], eps=0.0)
+    cfg = CurriculumCfg(signals=[SignalEntry(cfg=UniformSignalCfg(), weight=1.0)], eps=0.0)
+    curriculum = cfg.class_type(cfg, layout)
     rates = torch.rand(layout.num_items)
     probs = curriculum.probabilities(rates)
     log: dict[str, float] = {}

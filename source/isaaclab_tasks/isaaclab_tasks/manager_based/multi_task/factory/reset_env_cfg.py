@@ -10,6 +10,7 @@ from isaaclab_tasks.manager_based.multi_task.curriculum import (
     BetaSignalCfg,
     CurriculumCfg,
     FrontierSignalCfg,
+    SignalEntry,
     StateBufferCfg,
     SuccessMonitorCfg,
     UniformSignalCfg,
@@ -229,12 +230,12 @@ SCENE_RESET = EventTerm(
                     ),
                     "sampling": preset(
                         default=CurriculumCfg(
-                            signals=[(BetaSignalCfg(target=0.5, kappa=1.0, eps=1e-8), 1.0)],
+                            signals=[SignalEntry(cfg=BetaSignalCfg(target=0.5, kappa=1.0, eps=1e-8), weight=1.0)],
                             eps=1e-8,
                         ),
-                        uniform=CurriculumCfg(signals=[(UniformSignalCfg(), 1.0)], eps=0.0),
+                        uniform=CurriculumCfg(signals=[SignalEntry(cfg=UniformSignalCfg(), weight=1.0)], eps=0.0),
                         monitor=CurriculumCfg(
-                            signals=[(BetaSignalCfg(target=0.5, kappa=1.0, eps=1e-8), 1.0)],
+                            signals=[SignalEntry(cfg=BetaSignalCfg(target=0.5, kappa=1.0, eps=1e-8), weight=1.0)],
                             eps=1e-8,
                         ),
                     ),
@@ -269,17 +270,17 @@ ACCUMULATOR_RESET = EventTerm(
         "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=50),
         "sampling": preset(
             default=CurriculumCfg(
-                signals=[(BetaSignalCfg(target=0.5, kappa=1.0, eps=1e-8), 1.0)],
+                signals=[SignalEntry(cfg=BetaSignalCfg(target=0.5, kappa=1.0, eps=1e-8), weight=1.0)],
                 eps=1e-8,
             ),
-            uniform=CurriculumCfg(signals=[(UniformSignalCfg(), 1.0)], eps=0.0),
+            uniform=CurriculumCfg(signals=[SignalEntry(cfg=UniformSignalCfg(), weight=1.0)], eps=0.0),
             success_estimator=CurriculumCfg(
-                signals=[(BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-8), 1.0)],
+                signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-8), weight=1.0)],
                 eps=1e-8,
                 rate_source="estimator",
             ),
             monitor=CurriculumCfg(
-                signals=[(BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-8), 1.0)],
+                signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-8), weight=1.0)],
                 eps=1e-8,
             ),
             # Frontier signals build a kNN graph over the post-precollect
@@ -291,43 +292,43 @@ ACCUMULATOR_RESET = EventTerm(
             # frontier slots.
             frontier=CurriculumCfg(
                 signals=[
-                    (BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), 1.0),
-                    (FrontierSignalCfg(k=8, dilation_steps=1), 0.5),
+                    SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
+                    SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=0.5),
                 ],
                 eps=1e-3,
             ),
             frontier_l1=CurriculumCfg(
                 signals=[
-                    (BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), 1.0),
-                    (FrontierSignalCfg(k=8, dilation_steps=1), 1.0),
+                    SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
+                    SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=1.0),
                 ],
                 eps=1e-3,
             ),
             frontier_l2=CurriculumCfg(
                 signals=[
-                    (BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), 1.0),
-                    (FrontierSignalCfg(k=8, dilation_steps=1), 2.0),
+                    SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
+                    SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=2.0),
                 ],
                 eps=1e-3,
             ),
             frontier_l5=CurriculumCfg(
                 signals=[
-                    (BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), 1.0),
-                    (FrontierSignalCfg(k=8, dilation_steps=1), 5.0),
+                    SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
+                    SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=5.0),
                 ],
                 eps=1e-3,
             ),
             frontier_uniform=CurriculumCfg(
                 signals=[
-                    (UniformSignalCfg(), 1.0),
-                    (FrontierSignalCfg(k=8, dilation_steps=1), 2.0),
+                    SignalEntry(cfg=UniformSignalCfg(), weight=1.0),
+                    SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=2.0),
                 ],
                 eps=1e-3,
             ),
             frontier_estimator=CurriculumCfg(
                 signals=[
-                    (BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), 1.0),
-                    (FrontierSignalCfg(k=8, dilation_steps=1), 2.0),
+                    SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
+                    SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=2.0),
                 ],
                 eps=1e-3,
                 rate_source="estimator",

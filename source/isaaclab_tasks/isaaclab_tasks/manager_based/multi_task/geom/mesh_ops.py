@@ -14,7 +14,7 @@ import warp as wp
 
 from isaaclab.utils.warp import convert_to_warp_mesh
 
-from .reset_state import temporary_seed
+from ..curriculum.reset_state import temporary_seed
 from .rigid_object_hasher import RigidObjectHasher
 
 if TYPE_CHECKING:

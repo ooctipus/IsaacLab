@@ -5,7 +5,7 @@
 
 """Warp kernels used by the morphological patch-sampling pipeline.
 
-These kernels are launched from :mod:`patch_sampling_morph`; they are
+These kernels are launched from :mod:`morph`; they are
 factored into their own module so the morph host code stays readable
 and the compiled kernels remain importable in isolation for tests.
 """

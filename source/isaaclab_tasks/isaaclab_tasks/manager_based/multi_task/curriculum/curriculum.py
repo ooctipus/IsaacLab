@@ -9,52 +9,50 @@ The curriculum's probability over items is::
 
     probs[i] = (Σ_s weight_s * signal_s.score(rates)[i] + eps) / Z
 
-where ``Z`` normalizes globally. This is the user-facing object the
-factory accumulator and the terrain curriculum both consume.
+where ``Z`` normalizes globally.
 
-:class:`CurriculumCfg` is the blueprint: a list of signal cfgs +
-weights + ``eps`` + an optional ``rate_source`` selector. Once a
-:class:`StateLayout` is available, ``cfg.build(layout)`` returns a
-runtime :class:`Curriculum`.
+Pattern: :class:`CurriculumCfg` is pure data with a ``class_type`` field
+pointing at :class:`Curriculum`; :class:`Curriculum`'s ``__init__``
+takes ``(cfg, layout)`` and constructs each runtime signal via the
+same idiom (``sig_cfg.class_type(sig_cfg, layout)``). Consumers
+instantiate with::
+
+    curriculum = sampling_cfg.class_type(sampling_cfg, layout)
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Literal
+from dataclasses import field
+from typing import Any
 
 import torch
 
 from isaaclab.utils import configclass
 
-from .signals import InformativenessSignal, SignalCfg
+from .signals import InformativenessSignal
 from .state_layout import StateLayout
 
 
-@dataclass
 class Curriculum:
     """Runtime weighted-sum composition of informativeness signals.
 
-    Constructed via :meth:`CurriculumCfg.build`; consumers call
-    :meth:`probabilities` per sample step. Holds runtime signals (with
-    cached precomputation like the kNN graph) plus the global ``eps``.
-
-    Attributes:
-        signals: ``[(signal, weight), ...]`` -- each signal contributes
-            ``weight * signal.score(rates)`` to the unnormalized item
-            weights. Negative weights clamp to 0.
-        eps: Soft floor added to summed weights before normalization;
-            prevents zero-probability items.
+    Built from a :class:`CurriculumCfg` + :class:`StateLayout`. Holds
+    runtime signals (with cached precomputation like the kNN graph) plus
+    the global ``eps`` and rate-source selector.
     """
 
-    signals: list[tuple[InformativenessSignal, float]]
-    eps: float = 1e-3
+    def __init__(self, cfg: CurriculumCfg, layout: StateLayout) -> None:
+        self.signals: list[tuple[InformativenessSignal, float]] = [
+            (entry.cfg.class_type(entry.cfg, layout), float(entry.weight)) for entry in cfg.signals
+        ]
+        self.eps: float = float(cfg.eps)
+        self.rate_source: str = cfg.rate_source
 
     def probabilities(self, success_rates: torch.Tensor) -> torch.Tensor:
         """Return ``[num_items]`` probability vector summing to 1."""
         w = torch.zeros_like(success_rates)
         for signal, weight in self.signals:
-            w = w + max(0.0, float(weight)) * signal.score(success_rates)
+            w = w + max(0.0, weight) * signal.score(success_rates)
         w = w + self.eps
         return w / w.sum()
 
@@ -81,29 +79,48 @@ class Curriculum:
 
 
 @configclass
+class SignalEntry:
+    """Pairs a signal cfg with its weight in a :class:`CurriculumCfg`.
+
+    A small wrapper around the ``(cfg, weight)`` pairing rather than a
+    raw tuple. Reason: ``class_to_dict`` (the serialiser hydra uses to
+    feed env cfgs into OmegaConf) does not recurse into tuple inputs
+    -- it bails on tuples because they have no ``__dict__``. Wrapping
+    each entry in a configclass forces recursion into the nested
+    signal cfg so its ``class_type`` callable gets converted to a
+    resolvable string before OmegaConf validates the tree.
+
+    Attributes:
+        cfg: A ``BetaSignalCfg`` / ``FrontierSignalCfg`` /
+            ``UniformSignalCfg``. Annotated as ``Any`` so OmegaConf
+            does not try to structurally validate the union.
+        weight: Multiplier on the signal's score in the curriculum's
+            weighted sum.
+    """
+
+    cfg: Any = None
+    weight: float = 1.0
+
+
+@configclass
 class CurriculumCfg:
     """Blueprint for a :class:`Curriculum`.
 
     Attributes:
-        signals: ``[(signal_cfg, weight), ...]`` -- each entry pairs a
-            signal blueprint (``BetaSignalCfg``, ``FrontierSignalCfg``,
-            ``UniformSignalCfg``) with its weight in the weighted sum.
+        class_type: Runtime class to instantiate. Subclasses can override.
+        signals: List of :class:`SignalEntry` -- each pairs a signal
+            blueprint with its weight in the weighted sum.
         eps: Soft floor on per-item probability; prevents
             zero-probability items so the success monitor keeps
             refreshing every item.
-        rate_source: Per-consumer rate-source selector. Factory
-            consumers route ``"monitor"`` to ``self.monitor_success_rate``
-            and ``"estimator"`` to ``self.state_buffer.success_rates``;
-            consumers with a single source (terrain, TermChoice) ignore
-            this field.
+        rate_source: ``"monitor"`` or ``"estimator"`` -- per-consumer
+            rate-source selector. Factory consumers route ``"monitor"``
+            to ``self.monitor_success_rate`` and ``"estimator"`` to
+            ``self.state_buffer.success_rates``; consumers with a single
+            source (terrain, TermChoice) ignore this field.
     """
 
-    signals: list[tuple[SignalCfg, float]] = field(default_factory=list)
+    class_type: type[Curriculum] | str = "{DIR}.curriculum:Curriculum"
+    signals: list = field(default_factory=list)
     eps: float = 1e-3
-    rate_source: Literal["monitor", "estimator"] = "monitor"
-
-    def build(self, layout: StateLayout) -> Curriculum:
-        return Curriculum(
-            signals=[(sig_cfg.build(layout), w) for sig_cfg, w in self.signals],
-            eps=self.eps,
-        )
+    rate_source: str = "monitor"

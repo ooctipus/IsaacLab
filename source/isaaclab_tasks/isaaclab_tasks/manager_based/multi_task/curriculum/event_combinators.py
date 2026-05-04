@@ -410,7 +410,7 @@ class reset_accumulator(ManagerTermBase):
             spawn_index=torch.arange(n, device=coords.device, dtype=torch.long),
             target_index=None,
         )
-        self._curriculum = self._sampling_cfg.build(self._layout)
+        self._curriculum = self._sampling_cfg.class_type(self._sampling_cfg, self._layout)
 
     def _log_wandb_3d_scatter(self, asset_name: str, relative_to: str | None, sampling_cfg) -> None:
         """Push per-slot success / sampling / Δ-success as ``wandb.Object3D``.
@@ -540,7 +540,7 @@ class TermChoice(ManagerTermBase):
             spawn_index=torch.arange(self.num_partitions, device=env.device, dtype=torch.long),
             target_index=None,
         )
-        self._curriculum = self._sampling_cfg.build(self._layout)
+        self._curriculum = self._sampling_cfg.class_type(self._sampling_cfg, self._layout)
 
         # Need a monitor when the curriculum has any non-uniform signal,
         # or when the user explicitly requested reporting.

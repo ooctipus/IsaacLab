@@ -19,7 +19,7 @@ import warp as wp
 
 from isaaclab.utils.warp import raycast_mesh
 
-from . import patch_sampling_cfg as patch_cfg
+from . import cfg as patch_cfg
 
 
 def uniform_sample_multiple_ranges(
@@ -71,7 +71,7 @@ def find_piecewise_range_flat_patches(
     Args:
         wp_mesh: Warp mesh to cast against.
         origin: Origin in the mesh frame (shift applied to all ranges).
-        cfg: :class:`~patch_sampling_cfg.PieceWiseRangeFlatPatchSamplingCfg`.
+        cfg: :class:`~cfg.PieceWiseRangeFlatPatchSamplingCfg`.
 
     Returns:
         Tensor of shape ``(num_patches, 3)`` with patch centres in the
@@ -200,7 +200,7 @@ def find_flat_patches(
     Args:
         wp_mesh: Warp mesh to cast against.
         origin: Origin in the mesh frame.
-        cfg: :class:`~patch_sampling_cfg.FlatPatchSamplingCfg`.
+        cfg: :class:`~cfg.FlatPatchSamplingCfg`.
 
     Returns:
         Tensor of shape ``(num_patches, 3)`` with patch centres in the
@@ -318,7 +318,7 @@ def find_flat_patches_by_radius(
     Args:
         wp_mesh: Warp mesh to cast against.
         origin: Origin in the mesh frame (centre of the annulus).
-        cfg: :class:`~patch_sampling_cfg.FlatPatchSamplingByRadiusCfg`.
+        cfg: :class:`~cfg.FlatPatchSamplingByRadiusCfg`.
 
     Returns:
         Tensor of shape ``(num_patches, 3)`` with patch centres in the

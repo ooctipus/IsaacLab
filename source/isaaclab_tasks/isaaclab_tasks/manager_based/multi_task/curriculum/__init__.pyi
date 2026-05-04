@@ -17,6 +17,7 @@ __all__ = [
     "ResetStateAdapter",
     "RigidObjectResetStateAdapter",
     "SignalCfg",
+    "SignalEntry",
     "StateBuffer",
     "StateBufferCfg",
     "StateLayout",
@@ -36,7 +37,7 @@ __all__ = [
     "temporary_seed",
 ]
 
-from .curriculum import Curriculum, CurriculumCfg
+from .curriculum import Curriculum, CurriculumCfg, SignalEntry
 from .diagnostics import log_curriculum_bins
 from .event_combinators import ChainedResetTerms, TermChoice, reset_accumulator
 from .reset_state import (

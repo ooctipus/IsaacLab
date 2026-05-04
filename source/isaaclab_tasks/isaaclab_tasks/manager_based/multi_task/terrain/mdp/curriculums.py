@@ -99,7 +99,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
             spawn_index=table.spawn_index,
             target_index=table.target_index,
         )
-        self._curriculum = self._sampling_cfg.build(self._layout)
+        self._curriculum = self._sampling_cfg.class_type(self._sampling_cfg, self._layout)
 
         # Visualization: build spawn→target lines from the task table
         if debug_vis:

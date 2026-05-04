@@ -14,17 +14,15 @@ some proxy:
   graph (high "neighbor learned, this state isn't" proxy).
 - :class:`UniformSignal` -- constant 1.0 baseline / floor.
 
+Pattern: each runtime class is paired with a ``*SignalCfg`` configclass
+whose ``class_type`` field points at the runtime class. The cfg carries
+all parameters; the runtime class's ``__init__(cfg, layout)`` reads
+them. Construction follows the standard IsaacLab idiom:
+``cfg.class_type(cfg, layout)`` -- no ``.build()`` method on cfgs, no
+isinstance branching, no resolver helpers.
+
 A :class:`Curriculum` (see :mod:`.curriculum`) composes any number of
 signals into a single normalized probability distribution over items.
-Signals receive their :class:`StateLayout` at construction so per-call
-cost is just the score computation; per-call they consume only
-``success_rates``.
-
-The matching ``*SignalCfg`` configclasses are blueprints: a
-``BetaSignalCfg(target=0.66)`` describes "what kind of signal to build"
-and produces a runtime :class:`BetaSignal` via ``build(layout)`` once
-the layout is known. :class:`CurriculumCfg` aggregates signal cfgs +
-weights + ``eps`` into a curriculum blueprint.
 """
 
 from __future__ import annotations
@@ -177,32 +175,18 @@ def state_frontier_weights(
 class BetaSignal:
     """Per-item Beta-kernel score peaked at a target success rate.
 
-    High when the item's own rate is near :paramref:`target` -- the
-    regime where Bernoulli outcome variance and expected gradient
+    High when the item's own rate is near :paramref:`BetaSignalCfg.target` --
+    the regime where Bernoulli outcome variance and expected gradient
     magnitude are both highest. Independent of layout topology.
-
-    Args:
-        layout: State layout (unused by this signal; kept in the
-            constructor so all signals share a uniform interface).
-        target: Desired success-rate peak in ``[0, 1]``.
-        kappa: Concentration around :paramref:`target`.
-        eps: Soft kernel floor; prevents ``0`` ** ``negative``.
     """
 
     name = "beta"
 
-    def __init__(
-        self,
-        layout: StateLayout,
-        *,
-        target: float = 0.66,
-        kappa: float = 1.0,
-        eps: float = 1e-3,
-    ) -> None:
+    def __init__(self, cfg: BetaSignalCfg, layout: StateLayout) -> None:
         del layout  # unused -- Beta is layout-agnostic
-        self._target = max(0.0, min(1.0, float(target)))
-        self._kappa = max(0.0, float(kappa))
-        self._eps = float(eps)
+        self._target = max(0.0, min(1.0, float(cfg.target)))
+        self._kappa = max(0.0, float(cfg.kappa))
+        self._eps = float(cfg.eps)
         self._a = 1.0 + self._kappa * self._target
         self._b = 1.0 + self._kappa * (1.0 - self._target)
 
@@ -226,27 +210,15 @@ class FrontierSignal:
 
     The kNN graph is built once at construction; per-call cost is only
     the scatter / max-pool / deviation computation.
-
-    Args:
-        layout: State layout providing ``coords`` and the ``spawn_index``
-            / ``target_index`` mapping.
-        k: Number of nearest neighbors per state.
-        dilation_steps: Number of graph max-pool iterations.
     """
 
     name = "frontier"
 
-    def __init__(
-        self,
-        layout: StateLayout,
-        *,
-        k: int = 8,
-        dilation_steps: int = 1,
-    ) -> None:
+    def __init__(self, cfg: FrontierSignalCfg, layout: StateLayout) -> None:
         self._spawn_index = layout.spawn_index
         self._target_index = layout.target_index
-        self._dilation_steps = max(1, int(dilation_steps))
-        self._knn = build_knn_indices(layout.coords, k=k)
+        self._dilation_steps = max(1, int(cfg.dilation_steps))
+        self._knn = build_knn_indices(layout.coords, k=cfg.k)
 
     def score(self, success_rates: torch.Tensor) -> torch.Tensor:
         state_frontier = self.state_frontier(success_rates)
@@ -282,47 +254,51 @@ class UniformSignal:
 
     name = "uniform"
 
-    def __init__(self, layout: StateLayout) -> None:
-        del layout  # unused
+    def __init__(self, cfg: UniformSignalCfg, layout: StateLayout) -> None:
+        del cfg, layout  # unused
 
     def score(self, success_rates: torch.Tensor) -> torch.Tensor:
         return torch.ones_like(success_rates)
 
 
 # ---------------------------------------------------------------------------
-# Signal cfgs (blueprints that build runtime signals once layout is known)
+# Signal cfgs (pure data; ``class_type`` points at the runtime class)
 # ---------------------------------------------------------------------------
 
 
 @configclass
 class BetaSignalCfg:
-    """Blueprint for a :class:`BetaSignal`."""
+    """Blueprint for a :class:`BetaSignal`.
 
+    ``class_type`` is annotated as ``type[BetaSignal] | str`` and given a
+    ``"{DIR}.signals:BetaSignal"`` string value so that hydra /
+    OmegaConf can serialise the cfg through ``OmegaConf.create``
+    without rejecting the unsupported ``type[X]`` annotation. The
+    ``ResolvableString`` wrapper is resolved to the runtime class by
+    :func:`isaaclab.utils.configclass.validate` before consumers call
+    ``cfg.class_type(cfg, layout)``.
+    """
+
+    class_type: type[BetaSignal] | str = "{DIR}.signals:BetaSignal"
     target: float = 0.66
     kappa: float = 1.0
     eps: float = 1e-3
-
-    def build(self, layout: StateLayout) -> BetaSignal:
-        return BetaSignal(layout, target=self.target, kappa=self.kappa, eps=self.eps)
 
 
 @configclass
 class FrontierSignalCfg:
     """Blueprint for a :class:`FrontierSignal`."""
 
+    class_type: type[FrontierSignal] | str = "{DIR}.signals:FrontierSignal"
     k: int = 8
     dilation_steps: int = 1
-
-    def build(self, layout: StateLayout) -> FrontierSignal:
-        return FrontierSignal(layout, k=self.k, dilation_steps=self.dilation_steps)
 
 
 @configclass
 class UniformSignalCfg:
     """Blueprint for a :class:`UniformSignal`."""
 
-    def build(self, layout: StateLayout) -> UniformSignal:
-        return UniformSignal(layout)
+    class_type: type[UniformSignal] | str = "{DIR}.signals:UniformSignal"
 
 
 SignalCfg = BetaSignalCfg | FrontierSignalCfg | UniformSignalCfg
