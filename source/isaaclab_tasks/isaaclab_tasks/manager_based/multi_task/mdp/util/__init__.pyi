@@ -6,9 +6,12 @@
 __all__ = [
     "ArticulationResetStateAdapter",
     "BetaSamplingCfg",
+    "BetaSignal",
     "CallableResetStateAdapter",
     "CollisionAnalyzerCfg",
     "FrontierSamplingCfg",
+    "FrontierSignal",
+    "InformativenessSignal",
     "ResetStateAdapter",
     "RigidObjectHasher",
     "RigidObjectResetStateAdapter",
@@ -18,6 +21,7 @@ __all__ = [
     "SuccessMonitor",
     "SuccessMonitorCfg",
     "UniformSamplingCfg",
+    "UniformSignal",
     "beta_sampling_probs",
     "build_knn_indices",
     "frontier_sampling_probs",
@@ -65,6 +69,7 @@ from .sampling import (
     uniform_sampling_probs,
 )
 from .sampling_cfg import BetaSamplingCfg, FrontierSamplingCfg, UniformSamplingCfg
+from .signals import BetaSignal, FrontierSignal, InformativenessSignal, UniformSignal
 from .state_buffer import StateBuffer
 from .state_buffer_cfg import StateBufferCfg
 from .state_layout import StateLayout
