@@ -15,14 +15,12 @@ from isaaclab.managers import ManagerTermBase
 from isaaclab_tasks.manager_based.multi_task.mdp.util import (
     BetaSamplingCfg,
     FrontierSamplingCfg,
+    FrontierSignal,
+    StateLayout,
     SuccessMonitorCfg,
     UniformSamplingCfg,
-    beta_sampling_probs,
-    build_knn_indices,
-    frontier_sampling_probs,
-    log_frontier_bins,
-    state_frontier_weights,
-    uniform_sampling_probs,
+    log_curriculum_bins,
+    make_curriculum,
 )
 
 if TYPE_CHECKING:
@@ -93,16 +91,18 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
                 self._result[f"{name}_prob"] = torch.zeros((), dtype=torch.float, device=env.device)
             self.prob_mass_per_bin = torch.zeros(len(_BIN_NAMES), dtype=torch.float32, device=env.device)
 
-        # Frontier sampler needs a precomputed kNN graph over the *state*
-        # buffer (the underlying pool of physically-valid xy positions),
-        # not over tasks. The state pool is the natural spatial domain;
-        # spawn/target are just two roles a state can play in a task. This
-        # makes the algorithm topology-agnostic (one spawn / many targets,
-        # many spawns / one target, many of both -- all work the same).
-        self._state_knn_indices: torch.Tensor | None = None
-        if isinstance(self._sampling_cfg, FrontierSamplingCfg):
-            state_xy = self.goal_term.table.spawn_states[:, :2]
-            self._state_knn_indices = build_knn_indices(state_xy, k=self._sampling_cfg.k)
+        # Curriculum: weighted-sum over informativeness signals (Beta /
+        # Frontier / Uniform). The state pool is the natural spatial
+        # domain; spawn/target are just two roles a state can play in a
+        # task. Topology-agnostic (one spawn / many targets, many
+        # spawns / one target, many of both -- all the same).
+        table = self.goal_term.table
+        self._layout = StateLayout(
+            coords=table.spawn_states[:, :2],
+            spawn_index=table.spawn_index,
+            target_index=table.target_index,
+        )
+        self._curriculum = make_curriculum(self._sampling_cfg, self._layout)
 
         # Visualization: build spawn→target lines from the task table
         if debug_vis:
@@ -126,29 +126,13 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.success_monitor.success_update(prev_idx, success)
 
         # 2) SAMPLE NEXT DISCRETE COMMANDS
-        if isinstance(self._sampling_cfg, FrontierSamplingCfg):
-            rates = eval(self._sampling_cfg.success_rate_bind)  # noqa: S307
-            assert self._state_knn_indices is not None  # built in __init__
-            table = self.goal_term.table
-            probs = frontier_sampling_probs(
-                rates,
-                state_knn_indices=self._state_knn_indices,
-                spawn_index=table.spawn_index,
-                target_index=table.target_index,
-                base=self._sampling_cfg.base,
-                frontier_lambda=self._sampling_cfg.frontier_lambda,
-                dilation_steps=self._sampling_cfg.dilation_steps,
-                eps=self._sampling_cfg.eps,
-            )
-        elif isinstance(self._sampling_cfg, BetaSamplingCfg):
-            rates = eval(self._sampling_cfg.success_rate_bind)  # noqa: S307
-            probs = beta_sampling_probs(
-                rates,
-                target=self._sampling_cfg.target,
-                kappa=self._sampling_cfg.kappa,
-            )
-        else:
-            probs = uniform_sampling_probs(self.success_monitor.success_rate)
+        # The curriculum subsumes Beta / Frontier / Uniform via its signal
+        # composition; ``success_rate_bind`` (when the cfg has one) selects
+        # the rate source so a future success-estimator preset can wire in
+        # without touching this branch.
+        rates_bind = getattr(self._sampling_cfg, "success_rate_bind", None)
+        rates = eval(rates_bind) if rates_bind is not None else self.success_rate  # noqa: S307
+        probs = self._curriculum.probabilities(rates)
         choices = torch.multinomial(probs, len(env_ids), replacement=True)
         self.command_indices[env_ids] = choices
 
@@ -166,29 +150,20 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
             self._log_terrain_heatmap(success_rates)
             self._log_spawn_scatter(success_rates, probs)
 
-        # Frontier-bin diagnostic: bucket per-task probs by per-task
-        # state-frontier weight to verify the algorithm is differentiating
-        # frontier-unlearned tasks from deep-unlearned tasks at the
-        # per-task level (independent of dashboard aggregation choices).
-        if isinstance(self._sampling_cfg, FrontierSamplingCfg) and self._log_counter % 50 == 0:
-            self._log_frontier_bins(success_rates, probs)
+        # Curriculum diagnostic: per-signal aggregate stats every 50 steps,
+        # plus the bucketed-by-frontier breakdown when frontier is active.
+        # Helper handles the "no frontier signal" case gracefully so this
+        # is unconditional.
+        if self._log_counter % 50 == 0:
+            log_curriculum_bins(
+                self._curriculum,
+                success_rates=success_rates,
+                probs=probs,
+                log_dict=self.env.extras.setdefault("log", {}),
+                step_counter=self.env.common_step_counter,
+            )
 
         return self._result
-
-    def _log_frontier_bins(self, success_rates: torch.Tensor, probs: torch.Tensor) -> None:
-        """Forward to :func:`log_frontier_bins`; the shared helper does the work."""
-        assert self._state_knn_indices is not None
-        table = self.goal_term.table
-        log_frontier_bins(
-            success_rates,
-            state_knn_indices=self._state_knn_indices,
-            spawn_index=table.spawn_index,
-            target_index=table.target_index,
-            dilation_steps=self._sampling_cfg.dilation_steps,
-            probs=probs,
-            log_dict=self.env.extras.setdefault("log", {}),
-            step_counter=self.env.common_step_counter,
-        )
 
     def _update_bin_stats(self, success_rates: torch.Tensor, probs: torch.Tensor) -> None:
         """Write per-bin frac/prob into ``self._result`` if their flags are enabled."""
@@ -312,10 +287,12 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
            this patch as either spawn or target.
         2. **Sampling probability** — total probability mass the curriculum
            sampler currently places on commands that touch this patch.
-        3. **State frontier** *(when frontier sampling is active)* — the
-           per-state ``state_frontier`` value the sampler uses, surfaced
-           directly from :func:`state_frontier_weights`. Falls back to
-           "Sampling prob (spawn only)" for non-frontier samplers.
+        3. **State frontier** *(when a frontier signal is in the
+           curriculum)* — the per-state ``state_frontier`` value the
+           signal uses, surfaced directly via
+           :meth:`FrontierSignal.state_frontier`. Falls back to
+           "Sampling prob (spawn only)" for curricula without spatial
+           structure.
         4. **Δ success since last log** — change in (1) versus the previous
            call to this method, so improvement vs. regression is visible
            directly.
@@ -372,22 +349,14 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
             sums_buf=self._patch_probs,
             counts_buf=self._patch_probs_counts,
         )
-        # State-pool diagnostic: when frontier sampling is active, show the
-        # per-state frontier weight directly via the shared helper that the
-        # sampler itself uses, so the panel can never silently diverge from
-        # the algorithm. ``state_frontier`` lives natively on the patch
-        # grid (one value per ``spawn_states`` row), so no aggregation is
-        # needed -- this surfaces the spatial signal without the
-        # spawn/target endpoint averaging that dilutes the "Sampling
-        # probability" panel above.
-        if isinstance(self._sampling_cfg, FrontierSamplingCfg) and self._state_knn_indices is not None:
-            _, state_frontier_t = state_frontier_weights(
-                success_rates,
-                state_knn_indices=self._state_knn_indices,
-                spawn_index=table.spawn_index,
-                target_index=table.target_index,
-                dilation_steps=self._sampling_cfg.dilation_steps,
-            )
+        # State-pool diagnostic: when a frontier signal is in the
+        # curriculum, surface its per-state frontier directly (no
+        # aggregation needed -- the signal lives natively on the patch
+        # grid). Falls back to spawn-aggregated probability for
+        # curricula without spatial structure.
+        frontier_signal = self._curriculum.find_signal("frontier")
+        if isinstance(frontier_signal, FrontierSignal):
+            state_frontier_t = frontier_signal.state_frontier(success_rates)
             # Track which states have any task touching them, for valid_mask.
             self._patch_probs_target_counts.zero_()
             ones = torch.ones_like(success_rates)

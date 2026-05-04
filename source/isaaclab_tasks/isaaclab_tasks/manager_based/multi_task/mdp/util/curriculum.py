@@ -68,6 +68,19 @@ class WeightedCurriculum:
         """Names of the active signals, in declaration order."""
         return [sig.name for sig, _ in self.signals]
 
+    def find_signal(self, name: str) -> InformativenessSignal | None:
+        """Return the first active signal with ``signal.name == name``, or ``None``.
+
+        Used by diagnostics that want to surface a specific signal's
+        internals (e.g. :meth:`FrontierSignal.state_frontier`) without
+        having to know whether the curriculum was constructed from a
+        Beta-only or Frontier cfg.
+        """
+        for sig, _ in self.signals:
+            if sig.name == name:
+                return sig
+        return None
+
 
 def make_curriculum(
     cfg: BetaSamplingCfg | FrontierSamplingCfg | UniformSamplingCfg,

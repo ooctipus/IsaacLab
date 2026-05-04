@@ -126,6 +126,24 @@ class FrontierSignal:
         self._knn = build_knn_indices(layout.coords, k=k)
 
     def score(self, success_rates: torch.Tensor) -> torch.Tensor:
+        state_frontier = self.state_frontier(success_rates)
+        spawn_f = state_frontier[self._spawn_index]
+        score = (spawn_f - spawn_f.mean()).clamp_min(0.0)
+        if self._target_index is not None:
+            target_f = state_frontier[self._target_index]
+            score = score + (target_f - target_f.mean()).clamp_min(0.0)
+        return score
+
+    def state_frontier(self, success_rates: torch.Tensor) -> torch.Tensor:
+        """Per-state frontier ``(1 - state_s) * (s_dil - state_s).clamp_min(0)``.
+
+        Returns the un-aggregated ``[num_states]`` spatial signal -- the
+        intermediate that :meth:`score` then aggregates back to
+        ``[num_items]`` via above-mean-deviation. Surfaced for state-
+        pool diagnostics (terrain spawn scatter, factory wandb 3D
+        scatter) so consumers can show the spatial signal directly
+        without recomputing it.
+        """
         _, state_frontier = state_frontier_weights(
             success_rates,
             state_knn_indices=self._knn,
@@ -133,12 +151,7 @@ class FrontierSignal:
             target_index=self._target_index,
             dilation_steps=self._dilation_steps,
         )
-        spawn_f = state_frontier[self._spawn_index]
-        score = (spawn_f - spawn_f.mean()).clamp_min(0.0)
-        if self._target_index is not None:
-            target_f = state_frontier[self._target_index]
-            score = score + (target_f - target_f.mean()).clamp_min(0.0)
-        return score
+        return state_frontier
 
 
 class UniformSignal:
