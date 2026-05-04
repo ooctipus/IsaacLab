@@ -16,19 +16,19 @@ from ...kinematics.ik_objectives.cfg import (
     IKObjectiveTerrainCollisionCfg,
 )
 from .. import mdp
-from ..mdp.retarget import RetargetPipelineCfg
-from ..mdp.retarget.cfg import PatchSamplingCfg, SamplerCfg, SamplerSizingCfg
-from ..mdp.retarget.feature_extractors import (
-    XYZAxisAngleFeatures,
-    XYZJointsFeatures,
-    XYZYawFeatures,
-)
-from ..utils.criteria_cfg import (
+from ..retarget import RetargetPipelineCfg
+from ..retarget.cfg import PatchSamplingCfg, SamplerCfg, SamplerSizingCfg
+from ..retarget.criteria_cfg import (
     CollisionCheckCfg,
     FootPositionErrorCfg,
     LateralHipLimitCfg,
     SolverCostOutlierCfg,
     SupportPolygonStabilityCfg,
+)
+from ..retarget.feature_extractors import (
+    XYZAxisAngleFeatures,
+    XYZJointsFeatures,
+    XYZYawFeatures,
 )
 from .robots.robot_presets import (
     FootBodyNamesCfg,

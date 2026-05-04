@@ -5,8 +5,8 @@
 
 """Unit tests for is_contact-aware criteria (Phase B soft polygon).
 
-:class:`~isaaclab_tasks.manager_based.multi_task.terrain.utils.criteria.FootPositionError`
-and :class:`~isaaclab_tasks.manager_based.multi_task.terrain.utils.criteria.SupportPolygonStability`
+:class:`~isaaclab_tasks.manager_based.multi_task.terrain.retarget.criteria.FootPositionError`
+and :class:`~isaaclab_tasks.manager_based.multi_task.terrain.retarget.criteria.SupportPolygonStability`
 must consult ``buffer.is_contact_t`` so that air slots (``is_contact = False``)
 are skipped by foot-position error aggregation and support-region tests.
 """
@@ -19,9 +19,9 @@ import pytest
 import torch
 import warp as wp
 
-from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget.buffer import RetargetBuffer
-from isaaclab_tasks.manager_based.multi_task.terrain.utils.criteria import FootPositionError, SupportPolygonStability
-from isaaclab_tasks.manager_based.multi_task.terrain.utils.criteria_cfg import (
+from isaaclab_tasks.manager_based.multi_task.terrain.retarget.buffer import RetargetBuffer
+from isaaclab_tasks.manager_based.multi_task.terrain.retarget.criteria import FootPositionError, SupportPolygonStability
+from isaaclab_tasks.manager_based.multi_task.terrain.retarget.criteria_cfg import (
     FootPositionErrorCfg,
     SupportPolygonStabilityCfg,
 )

@@ -191,21 +191,21 @@ def _build_pipeline_cfg(robot_name: str, min_contacts: int = -1):
         IKObjectiveStabilityMarginCfg,
         IKObjectiveTerrainCollisionCfg,
     )
-    from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget import (
-        RetargetPipelineCfg,
-        resolve_foot_body_names,
-    )
-    from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget.cfg import (
-        PatchSamplingCfg,
-        SamplerCfg,
-    )
     from isaaclab_tasks.manager_based.multi_task.terrain.mdp_presets.robots.robot_presets import (
         FootBodyNamesCfg,
         RetargetJointRegularizeTargetsCfg,
         RetargetLateralHipJointPatternCfg,
         RobotArticulationCfg,
     )
-    from isaaclab_tasks.manager_based.multi_task.terrain.utils.criteria_cfg import (
+    from isaaclab_tasks.manager_based.multi_task.terrain.retarget import (
+        RetargetPipelineCfg,
+        resolve_foot_body_names,
+    )
+    from isaaclab_tasks.manager_based.multi_task.terrain.retarget.cfg import (
+        PatchSamplingCfg,
+        SamplerCfg,
+    )
+    from isaaclab_tasks.manager_based.multi_task.terrain.retarget.criteria_cfg import (
         CollisionCheckCfg,
         FootPositionErrorCfg,
         LateralHipLimitCfg,
@@ -353,7 +353,7 @@ def _run_single(
 
     from isaaclab.utils.warp import convert_to_warp_mesh
 
-    from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget import RetargetPipeline
+    from isaaclab_tasks.manager_based.multi_task.terrain.retarget import RetargetPipeline
 
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)

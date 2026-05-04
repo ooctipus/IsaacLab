@@ -19,7 +19,8 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 from ..assembly_keypoints import Offset
-from ..utils import AssemblyProfile, AssemblyProfileCfg
+from ..assembly_profile import AssemblyProfile
+from ..assembly_profile_cfg import AssemblyProfileCfg
 
 
 class progress_context(ManagerTermBase):

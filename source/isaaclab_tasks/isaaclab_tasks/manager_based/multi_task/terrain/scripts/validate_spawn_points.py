@@ -296,7 +296,7 @@ def main():
     _eager_load_presets()
 
     from isaaclab_tasks.manager_based.multi_task.position_env_cfg import LocomotionPositionCommandEnvCfg
-    from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget import RetargetPipeline
+    from isaaclab_tasks.manager_based.multi_task.terrain.retarget import RetargetPipeline
     from isaaclab_tasks.utils.hydra import resolve_presets
 
     env_cfg = LocomotionPositionCommandEnvCfg()
@@ -454,7 +454,7 @@ def main():
     viewer.set_model(vis_model)
     viewer.set_world_offsets((0.0, 0.0, 0.0))
 
-    from isaaclab_tasks.manager_based.multi_task.terrain.terrains.utils.patch_sampling_cfg import (
+    from isaaclab_tasks.manager_based.multi_task.terrain.terrains.patch_sampling.cfg import (
         CircleFootprintCfg,
         MorphologicalPatchSamplingCfg,
     )

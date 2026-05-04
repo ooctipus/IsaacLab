@@ -17,8 +17,8 @@ import numpy as np
 import torch
 import warp as wp
 
-from ....kinematics import NewtonKinematics
-from ....terrain.grid_downsample import grid_bucket_downsample
+from ...kinematics import NewtonKinematics
+from ..grid_downsample import grid_bucket_downsample
 from .buffer import RetargetBuffer
 from .cfg import RetargetPipelineCfg
 from .sampler_base import SamplerBase, SamplerOutput, SamplerSizing, compute_sampler_sizing

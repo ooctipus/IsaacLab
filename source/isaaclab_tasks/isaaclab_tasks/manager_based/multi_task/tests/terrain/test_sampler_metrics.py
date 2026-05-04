@@ -70,7 +70,7 @@ def _lookup_cell(baseline: dict, robot: str, sub_terrain: str, difficulty: float
 @pytest.mark.parametrize(("robot", "sub_terrain", "difficulty"), _REGRESSION_CELLS)
 def test_matches_baseline(robot: str, sub_terrain: str, difficulty: float):
     """Harness output for a fixed cell matches the committed baseline."""
-    from isaaclab_tasks.manager_based.multi_task.terrain.utils.tools.sampler_metrics import (
+    from isaaclab_tasks.manager_based.multi_task.terrain.scripts.sampler_metrics import (
         run_metrics_grid,
     )
 

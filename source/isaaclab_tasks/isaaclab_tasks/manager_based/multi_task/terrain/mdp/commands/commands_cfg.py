@@ -17,7 +17,7 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from .state_command import RelativeStateCommand
 
 if TYPE_CHECKING:
-    from ...mdp.retarget.cfg import RetargetPipelineCfg
+    from ...retarget.cfg import RetargetPipelineCfg
 
 
 @configclass

@@ -26,7 +26,7 @@ from isaaclab.utils import configclass
 from isaaclab_tasks.utils import PresetCfg
 
 from . import assembly_keypoints as kpts
-from .utils import (
+from .assembly_profile_cfg import (
     AssemblyProfileCfg,
     DiscreteYawCfg,
     EndPointsSegmentCfg,

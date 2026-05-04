@@ -142,7 +142,7 @@ from .terminations import (
 )
 from .actions import DefaultJointPositionStaticActionCfg, DefaultJointPositionStaticAction
 from .events import reset_root_state_from_terrain
-from ..utils.kinematic import (
+from ...kinematics import (
     NewtonKinematics,
     IKObjectiveGravityTorque,
     IKObjectiveJointDefault,
@@ -150,7 +150,7 @@ from ..utils.kinematic import (
     IKObjectiveTerrainCollision,
     IKObjectiveTerrainContact,
 )
-from .retarget import (
+from ..retarget import (
     RetargetBuffer,
     RetargetPipeline,
     RetargetPipelineCfg,

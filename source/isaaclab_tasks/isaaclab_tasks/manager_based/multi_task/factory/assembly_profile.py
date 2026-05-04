@@ -20,7 +20,7 @@ import torch
 
 import isaaclab.utils.math as math_utils
 
-from ..assembly_keypoints import Offset
+from .assembly_keypoints import Offset
 
 if TYPE_CHECKING:
     from .assembly_profile_cfg import (

@@ -46,7 +46,7 @@ import warp as wp
 from isaaclab.utils.warp import convert_to_warp_mesh
 
 # Reuse terrain helpers from validate_spawn_points (same directory).
-from isaaclab_tasks.manager_based.multi_task.terrain.utils.tools.validate_spawn_points import (
+from isaaclab_tasks.manager_based.multi_task.terrain.scripts.validate_spawn_points import (
     _ROBOT_NAMES,
     _sub_terrain_lookup,
     _sub_terrain_mesh,
@@ -113,16 +113,16 @@ def main():
         IKObjectiveStabilityMarginCfg,
         IKObjectiveTerrainCollisionCfg,
     )
-    from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget import (
+    from isaaclab_tasks.manager_based.multi_task.terrain.retarget import (
         RetargetPipeline,
         RetargetPipelineCfg,
         resolve_foot_body_names,
     )
-    from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget.cfg import (
+    from isaaclab_tasks.manager_based.multi_task.terrain.retarget.cfg import (
         PatchSamplingCfg,
         SamplerCfg,
     )
-    from isaaclab_tasks.manager_based.multi_task.terrain.utils.criteria_cfg import (
+    from isaaclab_tasks.manager_based.multi_task.terrain.retarget.criteria_cfg import (
         CollisionCheckCfg,
         FootPositionErrorCfg,
         LateralHipLimitCfg,

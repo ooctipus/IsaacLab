@@ -21,10 +21,10 @@ from scipy.spatial import ConvexHull
 from isaaclab.utils.warp import convert_to_warp_mesh
 
 from isaaclab_tasks.manager_based.multi_task.kinematics import NewtonKinematics, NewtonKinematicsCfg
-from isaaclab_tasks.manager_based.multi_task.terrain.canonical_shape import canonicalize_shape
-from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget.buffer import RetargetBuffer
-from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget.cfg import SamplerCfg
-from isaaclab_tasks.manager_based.multi_task.terrain.utils.terrain_contact_sampling import Sampler
+from isaaclab_tasks.manager_based.multi_task.terrain.retarget.buffer import RetargetBuffer
+from isaaclab_tasks.manager_based.multi_task.terrain.retarget.canonical_shape import canonicalize_shape
+from isaaclab_tasks.manager_based.multi_task.terrain.retarget.cfg import SamplerCfg
+from isaaclab_tasks.manager_based.multi_task.terrain.retarget.contact_sampling import Sampler
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -174,11 +174,11 @@ def _robot_presets_registered():
 
 def _build_sampler_for_robot(robot_name: str):
     """Instantiate a sampler for the named robot preset (flat-terrain sizing)."""
-    from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget import resolve_foot_body_names
     from isaaclab_tasks.manager_based.multi_task.terrain.mdp_presets.robots.robot_presets import (
         FootBodyNamesCfg,
         RobotArticulationCfg,
     )
+    from isaaclab_tasks.manager_based.multi_task.terrain.retarget import resolve_foot_body_names
 
     robot_cfg = getattr(RobotArticulationCfg, robot_name)
     usd_path = _resolve_usd(robot_cfg.spawn.usd_path)

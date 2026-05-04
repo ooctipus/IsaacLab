@@ -35,14 +35,14 @@ import torch
 import warp as wp
 
 from ...kinematics import NewtonKinematics
-from ...terrain.canonical_shape import canonicalize_shape
-from ...terrain.grid_downsample import grid_bucket_downsample
-from ...terrain.spatial_topk import spatial_topk_xy
-from ..mdp.retarget.buffer import RetargetBuffer
-from ..mdp.retarget.cfg import PatchSamplingCfg, SamplerCfg, SamplerSizingCfg
-from ..mdp.retarget.sampler_base import SamplerBase, SamplerOutput, SamplerSizing, compute_sampler_sizing
-from ..terrains.utils.patch_sampling_cfg import CircleFootprintCfg, MorphologicalPatchSamplingCfg
-from ..terrains.utils.patch_sampling_morph import MORPH_TIMINGS
+from ..grid_downsample import grid_bucket_downsample
+from ..terrains.patch_sampling.cfg import CircleFootprintCfg, MorphologicalPatchSamplingCfg
+from ..terrains.patch_sampling.morph import MORPH_TIMINGS
+from .buffer import RetargetBuffer
+from .canonical_shape import canonicalize_shape
+from .cfg import PatchSamplingCfg, SamplerCfg, SamplerSizingCfg
+from .sampler_base import SamplerBase, SamplerOutput, SamplerSizing, compute_sampler_sizing
+from .spatial_topk import spatial_topk_xy
 
 
 def _prepare_ik_batched(

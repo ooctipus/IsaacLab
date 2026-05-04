@@ -17,7 +17,8 @@ from isaaclab.managers import EventTermCfg, ManagerTermBase, SceneEntityCfg
 from isaaclab.utils import math as math_utils
 
 from ..assembly_keypoints import NIST_BOARD_CFG
-from ..utils import AssemblyProfile, AssemblyProfileCfg
+from ..assembly_profile import AssemblyProfile
+from ..assembly_profile_cfg import AssemblyProfileCfg
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject

@@ -26,7 +26,7 @@ from isaaclab_tasks.manager_based.multi_task.trace import trace_span
 if TYPE_CHECKING:
     import trimesh
 
-    from ...mdp.retarget.cfg import RetargetPipelineCfg
+    from ...retarget.cfg import RetargetPipelineCfg
     from .commands_cfg import RelativeStateCommandCfg
 
 

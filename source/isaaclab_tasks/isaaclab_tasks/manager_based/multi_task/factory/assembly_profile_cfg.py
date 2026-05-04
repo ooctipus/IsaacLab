@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from isaaclab.utils import configclass
 
-from ..assembly_keypoints import Offset
+from .assembly_keypoints import Offset
 from .assembly_profile import (
     AssemblyProfile,
     DiscreteYaw,

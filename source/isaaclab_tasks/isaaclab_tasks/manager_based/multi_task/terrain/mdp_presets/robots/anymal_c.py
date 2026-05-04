@@ -13,7 +13,7 @@ from isaaclab.assets import ArticulationCfg
 
 import isaaclab_assets.robots.anymal as anymal
 
-from ...utils.criteria import BaseZError, FootPositionError, JointMargin
+from ...retarget.criteria import BaseZError, FootPositionError, JointMargin
 from .robot_presets import (
     AsyncFootPairsCfg,
     BaseBodyNameCfg,

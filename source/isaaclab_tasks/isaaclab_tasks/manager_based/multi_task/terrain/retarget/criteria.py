@@ -21,8 +21,7 @@ import warp as wp
 
 if TYPE_CHECKING:
     from ...kinematics import NewtonKinematics
-    from ..mdp.retarget.buffer import RetargetBuffer
-    from ..mdp.retarget.pipeline import RetargetPipeline
+    from .buffer import RetargetBuffer
     from .criteria_cfg import (
         CollisionCheckCfg,
         FootPositionErrorCfg,
@@ -30,6 +29,7 @@ if TYPE_CHECKING:
         SolverCostOutlierCfg,
         SupportPolygonStabilityCfg,
     )
+    from .pipeline import RetargetPipeline
 
 
 class FootPositionError:

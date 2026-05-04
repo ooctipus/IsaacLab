@@ -20,11 +20,11 @@ import warp as wp
 from isaaclab.utils.warp import convert_to_warp_mesh
 
 from isaaclab_tasks.manager_based.multi_task.kinematics import NewtonKinematics, NewtonKinematicsCfg
-from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget import (
+from isaaclab_tasks.manager_based.multi_task.terrain.retarget import (
     RetargetPipeline,
     RetargetPipelineCfg,
 )
-from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget.cfg import SamplerCfg
+from isaaclab_tasks.manager_based.multi_task.terrain.retarget.cfg import SamplerCfg
 
 
 @pytest.fixture(scope="module", autouse=True)

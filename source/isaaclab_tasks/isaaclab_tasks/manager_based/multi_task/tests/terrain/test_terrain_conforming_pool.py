@@ -30,8 +30,8 @@ from isaaclab_tasks.manager_based.multi_task.terrain.mdp.commands.task_table_bui
     _terrain_grid_bounds,
     build_task_table,
 )
-from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget import RetargetPipelineCfg
-from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget.cfg import SamplerCfg
+from isaaclab_tasks.manager_based.multi_task.terrain.retarget import RetargetPipelineCfg
+from isaaclab_tasks.manager_based.multi_task.terrain.retarget.cfg import SamplerCfg
 
 
 @pytest.fixture(scope="module", autouse=True)

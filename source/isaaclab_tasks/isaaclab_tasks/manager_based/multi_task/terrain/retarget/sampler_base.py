@@ -26,7 +26,7 @@ import numpy as np
 import torch
 import warp as wp
 
-from ....kinematics import NewtonKinematics
+from ...kinematics import NewtonKinematics
 from .buffer import RetargetBuffer
 from .cfg import SamplerBaseCfg
 

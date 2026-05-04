@@ -12,9 +12,9 @@ from dataclasses import MISSING, field
 
 from isaaclab.utils import configclass
 
-from ....kinematics.ik_objectives.cfg import IKObjectiveBaseCfg
-from ....kinematics.newton_kinematics_cfg import NewtonKinematicsCfg
-from ...utils.criteria_cfg import CriterionBaseCfg
+from ...kinematics.ik_objectives.cfg import IKObjectiveBaseCfg
+from ...kinematics.newton_kinematics_cfg import NewtonKinematicsCfg
+from .criteria_cfg import CriterionBaseCfg
 
 
 @configclass
@@ -200,10 +200,10 @@ class SamplerCfg(SamplerBaseCfg):
 
     Geometry-dependent thresholds (nominal foot angle, standing height)
     are derived automatically from the robot's random-joint FK
-    distribution in :class:`~isaaclab_tasks.manager_based.multi_task.terrain.utils.terrain_contact_sampling.Sampler`.
+    distribution in :class:`~isaaclab_tasks.manager_based.multi_task.terrain.retarget.contact_sampling.Sampler`.
     """
 
-    class_type: type | str = "isaaclab_tasks.manager_based.multi_task.terrain.utils.terrain_contact_sampling:Sampler"
+    class_type: type | str = "isaaclab_tasks.manager_based.multi_task.terrain.retarget.contact_sampling:Sampler"
     """Sampler implementation class."""
 
     patch: PatchSamplingCfg = PatchSamplingCfg()

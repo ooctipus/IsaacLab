@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 import torch
 
-from isaaclab_tasks.manager_based.multi_task.terrain.canonical_shape import (
+from isaaclab_tasks.manager_based.multi_task.terrain.retarget.canonical_shape import (
     canonicalize_shape,
     yaw_from_xy_layout,
 )

@@ -35,10 +35,10 @@ def main():
         NewtonKinematics,
         NewtonKinematicsCfg,
     )
-    from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget.buffer import RetargetBuffer
-    from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget.cfg import SupportPolygonSamplerCfg
     from isaaclab_tasks.manager_based.multi_task.terrain.mdp_presets.robots.robot_presets import RobotArticulationCfg
-    from isaaclab_tasks.manager_based.multi_task.terrain.utils.terrain_contact_sampling import SupportPolygonSampler
+    from isaaclab_tasks.manager_based.multi_task.terrain.retarget.buffer import RetargetBuffer
+    from isaaclab_tasks.manager_based.multi_task.terrain.retarget.cfg import SupportPolygonSamplerCfg
+    from isaaclab_tasks.manager_based.multi_task.terrain.retarget.contact_sampling import SupportPolygonSampler
 
     device = "cuda:0"
 
