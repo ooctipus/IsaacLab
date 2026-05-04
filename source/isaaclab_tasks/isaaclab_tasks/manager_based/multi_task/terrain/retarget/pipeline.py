@@ -199,8 +199,14 @@ class RetargetPipeline:
         """
 
     def _ensure_buffer(self, n_desired: int) -> None:
-        """Allocate (or grow) the retarget buffer for a given ``n_desired``."""
-        needed = self.sampler.sizing(n_desired).max_polygons
+        """Allocate (or grow) the retarget buffer for a given ``n_desired``.
+
+        Sized at the *post-FPS* workload (``sizing.ik_capacity``), not the
+        pre-FPS polygon pool (``sizing.max_neighborhoods``). The polygon-FPS
+        oversample lives in cheap per-polygon tensors local to the sampler
+        and never needs the buffer's per-body slots.
+        """
+        needed = self.sampler.sizing(n_desired).ik_capacity
         if self.buffer is not None and self.buffer.max_candidates >= needed:
             return
         self.buffer = RetargetBuffer(
@@ -451,9 +457,11 @@ class RetargetPipeline:
         """Run batched FK on solved joint coordinates and store ``body_q`` in the buffer.
 
         Allocates (or reallocates, when the buffer has grown) ``joint_qd`` and
-        ``body_qd`` scratches at ``max_candidates`` and reuses the buffer's
-        ``body_q`` slab as the zero-copy output. Delegates the actual kernel
-        launch to :meth:`NewtonKinematics.eval_fk_batched`.
+        ``body_qd`` scratches at the buffer's ``max_candidates`` -- which is
+        the IK-stage capacity (post-FPS workload), *not* the sampler's pre-FPS
+        polygon pool. Reuses the buffer's ``body_q`` slab as the zero-copy
+        output. Delegates the actual kernel launch to
+        :meth:`NewtonKinematics.eval_fk_batched`.
 
         Args:
             N: Number of candidates to evaluate (first ``N`` rows of the buffer).

@@ -423,7 +423,11 @@ class Sampler(SamplerBase):
             key = f"morph.{_sub_name}"
             self.sub_timings[key] = self.sub_timings.get(key, 0.0) + _sub_dt
 
-        K = min(sizing.max_neighborhoods, max_n)
+        # ``K`` (polygon pool) lives in cheap per-polygon scratches local
+        # to this sampler — independent of the buffer's per-body slots.
+        # ``target_n`` (post-FPS, what writes into the buffer) is the only
+        # value clamped to ``max_n``.
+        K = sizing.max_neighborhoods
         target_n = min(n_desired * sizing.oversample_candidates, max_n)
 
         torch.manual_seed(42)

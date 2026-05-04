@@ -46,16 +46,28 @@ class SamplerSizing:
     """Polygons sent to IK per final placement (``n_polygons_to_ik / n_final``)."""
 
     max_neighborhoods: int
-    """Neighborhoods (e.g. 4-foot polygon centers) the sampler will assemble."""
+    """Neighborhoods (e.g. 4-foot polygon centers) the sampler will assemble.
+
+    The sampler holds these K polygon candidates in *local* tensors during
+    the polygon-FPS stage; they are independent of the
+    :class:`RetargetBuffer`'s storage capacity and therefore unaffected by
+    :attr:`ik_capacity`.
+    """
 
     n_morph_patches: int
     """Morph-patch target for terrain contact sampling."""
 
-    max_polygons: int
-    """Upper bound on polygon candidates the sampler will emit.
+    ik_capacity: int
+    """Post-FPS workload size — sizes the :class:`RetargetBuffer`.
 
-    Sizes the :class:`RetargetBuffer`. The sampler must guarantee that it
-    never writes more than this many rows into the buffer.
+    The sampler runs polygon-FPS to thin its
+    :attr:`max_neighborhoods` polygon pool down to this many rows before
+    writing into the buffer; IK + FK + criteria + final-FPS all run at
+    this rate. With the default cascade,
+    ``ik_capacity = ceil(n_final * final_fps_oversample / criteria_yield)``
+    -- i.e. polygon-FPS oversample (the part that would only flow through
+    cheap per-polygon scratches) is *excluded* from the buffer's
+    per-body slots.
     """
 
 
@@ -145,12 +157,19 @@ def compute_sampler_sizing(
     K = int(np.ceil(n_polygons_pre_fps / polygon_assembly_yield))
     n_morph_patches = int(np.ceil(n_final * patches_per_polygon * morph_patch_oversample))
     oversample_candidates = max(1, int(np.ceil(n_polygons_pre_criteria / max(n_final, 1))))
+    # Use the *integer-multiple* form so the sampler's
+    # ``target_n = n_final * oversample_candidates`` never gets clamped by
+    # ``buffer.max_candidates`` -- otherwise the post-FPS pool shrinks by
+    # up to ``n_final - 1`` rows vs. the pre-fix behavior, costing a
+    # small fraction of IK diversity. This is at most ``n_final - 1``
+    # rows above ``n_polygons_pre_criteria``.
+    ik_capacity = n_final * oversample_candidates
     return SamplerSizing(
         n_final=n_final,
         oversample_candidates=oversample_candidates,
         max_neighborhoods=K,
         n_morph_patches=n_morph_patches,
-        max_polygons=K,
+        ik_capacity=ik_capacity,
     )
 
 
@@ -187,8 +206,9 @@ class SamplerBase(ABC):
         """Back-derive stage sizes from a target final-robot count.
 
         The pipeline calls this before each :meth:`run` to size the shared
-        :class:`RetargetBuffer` — the sampler guarantees it will emit at
-        most :attr:`SamplerSizing.max_polygons` candidates into the buffer.
+        :class:`RetargetBuffer` — the sampler guarantees it will write at
+        most :attr:`SamplerSizing.ik_capacity` rows into the buffer (the
+        post-FPS workload).
         """
         ...
 

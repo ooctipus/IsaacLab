@@ -38,7 +38,11 @@ class RetargetBuffer:
     (different dtype).
 
     The buffer is allocated once at ``max_candidates`` capacity and
-    reused across runs via :meth:`reset`.
+    reused across runs via :meth:`reset`. ``max_candidates`` here is the
+    *post-FPS* IK-stage workload (what the sampler actually writes after
+    its polygon-FPS thinning), not the pre-FPS polygon pool size — see
+    :attr:`SamplerSizing.ik_capacity` vs.
+    :attr:`SamplerSizing.max_neighborhoods`.
     """
 
     def __init__(
