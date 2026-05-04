@@ -14,6 +14,7 @@ from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
+
 class vision_obs(ManagerTermBase):
     """Unified 2D vision observation for either :class:`TiledCamera` or :class:`RayCaster`.
 
@@ -55,10 +56,13 @@ class vision_obs(ManagerTermBase):
         from isaaclab.sensors import RayCaster, RayCasterCamera, TiledCamera
 
         from isaaclab_tasks.manager_based.multi_task.sensors import FastTerrainScanner
+
         if isinstance(self.sensor, (TiledCamera, RayCasterCamera)):
             self._sensor_type = self.sensor.cfg.data_types[0]
             self._fetch = self._fetch_camera
-            self._norm = self._depth_norm if self._sensor_type in ("distance_to_image_plane", "depth") else self._rgb_norm
+            self._norm = (
+                self._depth_norm if self._sensor_type in ("distance_to_image_plane", "depth") else self._rgb_norm
+            )
         elif isinstance(self.sensor, (RayCaster, FastTerrainScanner)):
             pattern_cfg = self.sensor.cfg.pattern_cfg
             self._nx = round(pattern_cfg.size[0] / pattern_cfg.resolution) + 1

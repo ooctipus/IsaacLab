@@ -78,7 +78,7 @@ import torch  # noqa: E402
 
 from isaaclab.utils.timer import Timer, TimerError  # noqa: E402
 
-from isaaclab_tasks.manager_based.multi_task.mdp.util.trace import (  # noqa: E402
+from isaaclab_tasks.manager_based.multi_task.trace import (  # noqa: E402
     TraceRecorder,
     reset_trace_recorder,
     set_trace_recorder,

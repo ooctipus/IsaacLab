@@ -50,7 +50,7 @@ from .events import (
     reset_held_asset_on_fixed_asset,
     reset_root_state_uniform_on_offset,
 )
-from isaaclab_tasks.manager_based.multi_task.mdp.util.event_combinators import (
+from isaaclab_tasks.manager_based.multi_task.curriculum.event_combinators import (
     ChainedResetTerms,
     TermChoice,
     reset_accumulator,
@@ -74,5 +74,5 @@ from .rewards import (
 )
 from isaaclab_tasks.manager_based.multi_task.mdp.terminations import abnormal_robot_state, out_of_bound
 from .terminations import predictor_truncation, progress_context, split_time_out, success_termination
-from isaaclab_tasks.manager_based.multi_task.mdp.util import CollisionAnalyzerCfg
+from isaaclab_tasks.manager_based.multi_task.geom import (CollisionAnalyzerCfg)
 from isaaclab.envs.mdp import *

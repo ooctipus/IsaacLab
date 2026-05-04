@@ -29,7 +29,7 @@ def main():
     from isaaclab.utils.assets import check_file_path, retrieve_file_path
     from isaaclab.utils.warp import convert_to_warp_mesh
 
-    from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics import (
+    from isaaclab_tasks.manager_based.multi_task.kinematics import (
         IKObjectiveStabilityMargin,
         IKObjectiveTerrainCollision,
         NewtonKinematics,

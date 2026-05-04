@@ -12,8 +12,8 @@ from dataclasses import MISSING, field
 
 from isaaclab.utils import configclass
 
-from ....mdp.util.kinematics.ik_objectives.cfg import IKObjectiveBaseCfg
-from ....mdp.util.kinematics.newton_kinematics_cfg import NewtonKinematicsCfg
+from ....kinematics.ik_objectives.cfg import IKObjectiveBaseCfg
+from ....kinematics.newton_kinematics_cfg import NewtonKinematicsCfg
 from ...utils.criteria_cfg import CriterionBaseCfg
 
 

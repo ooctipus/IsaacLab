@@ -27,7 +27,7 @@ import warp as wp
 
 from isaaclab.utils.warp import convert_to_warp_mesh
 
-from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics import (
+from isaaclab_tasks.manager_based.multi_task.kinematics import (
     IKObjectiveTerrainCollision,
     NewtonKinematics,
     NewtonKinematicsCfg,
@@ -96,7 +96,7 @@ def _make_optimizer(
 
     from newton._src.sim.ik.ik_lm_optimizer import IKOptimizerLM
 
-    from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics.ik_objectives.cfg import (
+    from isaaclab_tasks.manager_based.multi_task.kinematics.ik_objectives.cfg import (
         IKObjectiveTerrainCollisionCfg,
     )
 

@@ -6,7 +6,7 @@
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.utils import configclass
 
-from isaaclab_tasks.manager_based.multi_task.mdp.util import (
+from isaaclab_tasks.manager_based.multi_task.curriculum import (
     BetaSignalCfg,
     CurriculumCfg,
     FrontierSignalCfg,

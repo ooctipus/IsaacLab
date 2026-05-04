@@ -11,7 +11,7 @@ import pytest
 import torch
 import warp as wp
 
-from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics import NewtonKinematics, NewtonKinematicsCfg
+from isaaclab_tasks.manager_based.multi_task.kinematics import NewtonKinematics, NewtonKinematicsCfg
 from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget.buffer import RetargetBuffer
 from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget.pipeline import _validate_results as validate_results
 

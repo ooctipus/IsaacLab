@@ -28,7 +28,7 @@ import pytest
 import torch
 import warp as wp
 
-from isaaclab_tasks.manager_based.multi_task.mdp.util import (
+from isaaclab_tasks.manager_based.multi_task.curriculum import (
     ArticulationResetStateAdapter,
     BetaSignalCfg,
     CurriculumCfg,

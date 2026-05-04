@@ -561,7 +561,7 @@ def main():
         _draw_active_support_overlay(viewer, buf, feet_all, passed_idx, nc, device)
 
     # Visualize collision probe points on ALL robots
-    from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics import _build_collision_probes
+    from isaaclab_tasks.manager_based.multi_task.kinematics import _build_collision_probes
 
     probe_bodies, probe_offsets, _probe_slots = _build_collision_probes(kin.builder, foot_ids, n_samples=16)
     if solved_qs:

@@ -49,7 +49,7 @@ from isaaclab.utils.math import (
     quat_mul,
 )
 
-from isaaclab_tasks.manager_based.multi_task.mdp.util import (
+from isaaclab_tasks.manager_based.multi_task.curriculum import (
     ArticulationResetStateAdapter,
     set_reset_state,
 )

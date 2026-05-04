@@ -37,7 +37,6 @@ from .rsl_rl_model_cfg import (
     LSTM_CRITIC,
     MLP_ENCODER_CRITIC,
     SIMBA_ACTOR,
-    SIMBA_BIG_ACTOR,
     SIMBA_BIG_CRITIC,
     SIMBA_CRITIC,
     TASK_EASING_ACTOR,

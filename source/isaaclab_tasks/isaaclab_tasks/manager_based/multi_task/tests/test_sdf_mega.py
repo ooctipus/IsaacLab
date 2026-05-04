@@ -15,7 +15,7 @@ import warp as wp
 
 from isaaclab.utils.warp import convert_to_warp_mesh
 
-from isaaclab_tasks.manager_based.multi_task.mdp.util.sdf import (
+from isaaclab_tasks.manager_based.multi_task.geom.sdf import (
     ColliderTransform,
     compose_root_mat,
     compute_world_point,

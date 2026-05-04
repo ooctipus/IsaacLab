@@ -67,14 +67,14 @@ def _init_warp():
 
 @pytest.mark.skipif(not wp.is_device_available(DEVICE), reason="GPU required")
 def test_stability_margin_analytic_matches_fd():
-    from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics import (
+    from isaaclab_tasks.manager_based.multi_task.kinematics import (
         NewtonKinematics,
         NewtonKinematicsCfg,
     )
-    from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics.ik_objectives.cfg import (
+    from isaaclab_tasks.manager_based.multi_task.kinematics.ik_objectives.cfg import (
         IKObjectiveStabilityMarginCfg,
     )
-    from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics.ik_objectives.stability_margin import (
+    from isaaclab_tasks.manager_based.multi_task.kinematics.ik_objectives.stability_margin import (
         IKObjectiveStabilityMargin,
         _compute_joint_subtree_origin_coms,
         _stability_margin_residuals,

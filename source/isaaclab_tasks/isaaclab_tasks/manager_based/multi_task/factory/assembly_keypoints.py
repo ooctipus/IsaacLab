@@ -16,7 +16,7 @@ from isaaclab.utils import configclass
 # ``Offset`` lives in the shared util layer — pure rigid-body math, no
 # assembly semantics. Re-exported here for backwards compatibility with
 # call sites that ``from .assembly_keypoints import Offset``.
-from ..mdp.util.pose_offset import Offset
+from ..geom.pose_offset import Offset
 
 __all__ = ["Offset"]
 

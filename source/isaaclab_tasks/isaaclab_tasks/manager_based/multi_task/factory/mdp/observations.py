@@ -7,7 +7,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from isaaclab_tasks.manager_based.multi_task.mdp.util import get_reset_state, make_reset_state_adapters
+from isaaclab_tasks.manager_based.multi_task.curriculum import (
+    get_reset_state,
+    make_reset_state_adapters,
+)
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv

@@ -21,7 +21,7 @@ from isaaclab.terrains import TerrainGeneratorCfg
 from isaaclab.terrains.terrain_generator import TerrainGenerator
 from isaaclab.terrains.trimesh.mesh_terrains_cfg import MeshPlaneTerrainCfg
 
-from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics import NewtonKinematicsCfg
+from isaaclab_tasks.manager_based.multi_task.kinematics import NewtonKinematicsCfg
 from isaaclab_tasks.manager_based.multi_task.terrain.mdp.commands.task_table_builder import (
     _centered_sampling_bounds,
     _joint_order_from_names,

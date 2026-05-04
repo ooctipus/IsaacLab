@@ -289,6 +289,7 @@ def main() -> int:
 
     # Fold cfg offset into the local pattern (init-time constant).
     import isaaclab.utils.math as math_utils  # noqa: PLC0415
+
     starts_folded = starts_1d + off_pos
     dirs_folded = math_utils.quat_apply(off_q.unsqueeze(0).expand(num_rays, 4), dirs_1d)
 

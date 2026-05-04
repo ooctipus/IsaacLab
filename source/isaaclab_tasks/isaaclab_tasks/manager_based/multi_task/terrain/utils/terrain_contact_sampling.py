@@ -34,10 +34,10 @@ import numpy as np
 import torch
 import warp as wp
 
-from ...mdp.util.canonical_shape import canonicalize_shape
-from ...mdp.util.grid_downsample import grid_bucket_downsample
-from ...mdp.util.kinematics import NewtonKinematics
-from ...mdp.util.spatial_topk import spatial_topk_xy
+from ...kinematics import NewtonKinematics
+from ...terrain.canonical_shape import canonicalize_shape
+from ...terrain.grid_downsample import grid_bucket_downsample
+from ...terrain.spatial_topk import spatial_topk_xy
 from ..mdp.retarget.buffer import RetargetBuffer
 from ..mdp.retarget.cfg import PatchSamplingCfg, SamplerCfg, SamplerSizingCfg
 from ..mdp.retarget.sampler_base import SamplerBase, SamplerOutput, SamplerSizing, compute_sampler_sizing

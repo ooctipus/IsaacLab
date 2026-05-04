@@ -11,7 +11,7 @@ import pytest
 import torch
 import warp as wp
 
-from isaaclab_tasks.manager_based.multi_task.mdp.util import (
+from isaaclab_tasks.manager_based.multi_task.curriculum import (
     get_reset_state,
     make_reset_state_adapters,
     pack_articulation_reset_state,

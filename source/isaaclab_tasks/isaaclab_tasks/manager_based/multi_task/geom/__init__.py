@@ -3,6 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""Static geometry helpers: meshes, SDFs, collision analysis, pose offsets, hashing."""
+
 from isaaclab.utils.module import lazy_export
 
 lazy_export()

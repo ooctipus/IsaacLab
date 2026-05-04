@@ -20,8 +20,8 @@ import torch
 
 from isaaclab.utils.warp import convert_to_warp_mesh
 
-from isaaclab_tasks.manager_based.multi_task.mdp.util import pack_articulation_reset_state
-from isaaclab_tasks.manager_based.multi_task.mdp.util.trace import trace_span
+from isaaclab_tasks.manager_based.multi_task.curriculum import pack_articulation_reset_state
+from isaaclab_tasks.manager_based.multi_task.trace import trace_span
 
 if TYPE_CHECKING:
     import trimesh

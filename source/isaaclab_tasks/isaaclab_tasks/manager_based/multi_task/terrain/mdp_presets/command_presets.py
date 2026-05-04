@@ -9,8 +9,8 @@ from isaaclab.utils import configclass
 
 from isaaclab_tasks.utils import PresetCfg, preset
 
-from ...mdp.util.kinematics import NewtonKinematicsCfg
-from ...mdp.util.kinematics.ik_objectives.cfg import (
+from ...kinematics import NewtonKinematicsCfg
+from ...kinematics.ik_objectives.cfg import (
     IKObjectiveGravityTorqueCfg,
     IKObjectiveStabilityMarginCfg,
     IKObjectiveTerrainCollisionCfg,

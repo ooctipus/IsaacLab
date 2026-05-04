@@ -5,7 +5,7 @@
 
 import torch
 
-from isaaclab_tasks.manager_based.multi_task.mdp.util.state_buffer import StateBuffer
+from isaaclab_tasks.manager_based.multi_task.curriculum.state_buffer import StateBuffer
 
 
 class TestStateBuffer:

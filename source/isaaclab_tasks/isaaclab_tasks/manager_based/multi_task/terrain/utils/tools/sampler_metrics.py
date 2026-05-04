@@ -182,11 +182,11 @@ def _build_pipeline_cfg(robot_name: str, min_contacts: int = -1):
             preserves hard-polygon behavior; positive values enable the
             soft polygon path (mixed-nc placements).
     """
-    from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics import (
+    from isaaclab_tasks.manager_based.multi_task.kinematics import (
         NewtonKinematics,
         NewtonKinematicsCfg,
     )
-    from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics.ik_objectives.cfg import (
+    from isaaclab_tasks.manager_based.multi_task.kinematics.ik_objectives.cfg import (
         IKObjectiveJointRegularizeCfg,
         IKObjectiveStabilityMarginCfg,
         IKObjectiveTerrainCollisionCfg,

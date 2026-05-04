@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from isaaclab_tasks.manager_based.multi_task.mdp.util import StateLayout
+from isaaclab_tasks.manager_based.multi_task.curriculum import StateLayout
 
 
 def test_state_layout_basic_2d():

@@ -12,7 +12,7 @@ import torch
 
 from isaaclab.managers import ManagerTermBase
 
-from isaaclab_tasks.manager_based.multi_task.mdp.util import (
+from isaaclab_tasks.manager_based.multi_task.curriculum import (
     CurriculumCfg,
     FrontierSignal,
     StateLayout,

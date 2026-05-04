@@ -64,14 +64,14 @@ def _init_warp():
 
 @pytest.mark.skipif(not wp.is_device_available(DEVICE), reason="GPU required")
 def test_gravity_torque_analytic_matches_fd():
-    from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics import (
+    from isaaclab_tasks.manager_based.multi_task.kinematics import (
         NewtonKinematics,
         NewtonKinematicsCfg,
     )
-    from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics.ik_objectives.cfg import (
+    from isaaclab_tasks.manager_based.multi_task.kinematics.ik_objectives.cfg import (
         IKObjectiveGravityTorqueCfg,
     )
-    from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics.ik_objectives.gravity_torque import (
+    from isaaclab_tasks.manager_based.multi_task.kinematics.ik_objectives.gravity_torque import (
         IKObjectiveGravityTorque,
         _compute_subtree_com,
         _gravity_torque_residuals,

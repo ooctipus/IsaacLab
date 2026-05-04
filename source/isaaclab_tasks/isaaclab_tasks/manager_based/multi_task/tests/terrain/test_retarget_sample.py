@@ -20,8 +20,8 @@ from scipy.spatial import ConvexHull
 
 from isaaclab.utils.warp import convert_to_warp_mesh
 
-from isaaclab_tasks.manager_based.multi_task.mdp.util.canonical_shape import canonicalize_shape
-from isaaclab_tasks.manager_based.multi_task.mdp.util.kinematics import NewtonKinematics, NewtonKinematicsCfg
+from isaaclab_tasks.manager_based.multi_task.kinematics import NewtonKinematics, NewtonKinematicsCfg
+from isaaclab_tasks.manager_based.multi_task.terrain.canonical_shape import canonicalize_shape
 from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget.buffer import RetargetBuffer
 from isaaclab_tasks.manager_based.multi_task.terrain.mdp.retarget.cfg import SamplerCfg
 from isaaclab_tasks.manager_based.multi_task.terrain.utils.terrain_contact_sampling import Sampler

@@ -256,7 +256,7 @@ class _NvmlProbe:
 class MemoryRecorder:
     """Hierarchical memory trace recorder.
 
-    The structure mirrors :class:`isaaclab_tasks.manager_based.multi_task.mdp.util.trace.TraceRecorder`,
+    The structure mirrors :class:`isaaclab_tasks.manager_based.multi_task.trace.TraceRecorder`,
     but stores memory snapshots instead of timing.
     """
 
