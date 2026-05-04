@@ -101,11 +101,13 @@ class reset_accumulator(ManagerTermBase):
         self.success_monitor = monitor_cfg.class_type(monitor_cfg, self.monitor_success_rate)
 
         self.success_rate = torch.zeros(max_size, device=env.device)
+        # Select rate source by inspecting the cfg's success_rate_bind
+        # (Beta / Frontier carry one; Uniform doesn't). When the bind
+        # references the state buffer, the predictor head's estimates
+        # drive sampling instead of the rolling monitor.
         self._success_rate_source = "monitor"
-        if (
-            isinstance(self._sampling_cfg, (BetaSamplingCfg, FrontierSamplingCfg))
-            and "state_buffer" in self._sampling_cfg.success_rate_bind
-        ):
+        bind = getattr(self._sampling_cfg, "success_rate_bind", "")
+        if "state_buffer" in bind:
             self._success_rate_source = "success_estimator"
 
         # Curriculum: weighted-sum over informativeness signals (Beta /
@@ -505,8 +507,22 @@ class TermChoice(ManagerTermBase):
         self.term_samples = torch.zeros((env.num_envs,), dtype=torch.int, device=env.device)
         self.term_success_rate = torch.zeros(self.num_partitions, device=env.device)
         self._sampling_cfg = cfg.params.get("sampling", UniformSamplingCfg())
-        needs_monitor = cfg.params.get("report", False) or isinstance(self._sampling_cfg, BetaSamplingCfg)
-        if needs_monitor:
+
+        # TermChoice items are partition keys, not spatial states; build a
+        # placeholder layout so make_curriculum works (Beta + Uniform
+        # signals ignore coords). The curriculum subsumes the
+        # Beta-vs-Uniform branch downstream.
+        self._layout = StateLayout(
+            coords=torch.zeros(self.num_partitions, 1, device=env.device),
+            spawn_index=torch.arange(self.num_partitions, device=env.device, dtype=torch.long),
+            target_index=None,
+        )
+        self._curriculum = make_curriculum(self._sampling_cfg, self._layout)
+
+        # Need a monitor when the curriculum has any non-uniform signal,
+        # or when the user explicitly requested reporting.
+        needs_rates = any(sig.name != "uniform" for sig, _ in self._curriculum.signals)
+        if cfg.params.get("report", False) or needs_rates:
             monitor_cfg: SuccessMonitorCfg = cfg.params.get(
                 "success_monitor_cfg",
                 SuccessMonitorCfg(num_monitored_data=self.num_partitions, device=env.device),
@@ -538,22 +554,16 @@ class TermChoice(ManagerTermBase):
             success = env.termination_manager.get_term_cfg("progress_context").func.is_success
             self.success_monitor.success_update(self.term_samples[env_ids], success[env_ids].float())
 
-        if isinstance(self._sampling_cfg, BetaSamplingCfg):
-            rates = eval(self._sampling_cfg.success_rate_bind)  # noqa: S307
-            probs = beta_sampling_probs(
-                rates, self._sampling_cfg.target, self._sampling_cfg.kappa, self._sampling_cfg.temperature
-            )
-            self.term_samples[env_ids] = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
-            if report:
-                log.update(
-                    {
-                        f"Metrics/SampleProb/{name}": probs[i].item()
-                        for i, name in enumerate(self.term_partitions.keys())
-                    }
-                )
-        else:
-            self.term_samples[env_ids] = torch.randint(
-                0, self.num_partitions, (env_ids.size(0),), device=env_ids.device, dtype=self.term_samples.dtype
+        # One curriculum call replaces the legacy Beta-vs-Uniform branch.
+        # ``success_rate_bind`` (when the cfg has one) selects the rate
+        # source; defaults to ``self.term_success_rate``.
+        bind = getattr(self._sampling_cfg, "success_rate_bind", None)
+        rates = eval(bind) if bind is not None else self.term_success_rate  # noqa: S307
+        probs = self._curriculum.probabilities(rates)
+        self.term_samples[env_ids] = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
+        if report:
+            log.update(
+                {f"Metrics/SampleProb/{name}": probs[i].item() for i, name in enumerate(self.term_partitions.keys())}
             )
 
         for i, (_, term_cfg) in enumerate(self.term_partitions.items()):

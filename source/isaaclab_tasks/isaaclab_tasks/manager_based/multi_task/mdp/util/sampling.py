@@ -40,21 +40,17 @@ def beta_sampling_probs(
 
 
 def build_knn_indices(
-    xy_coords: torch.Tensor,
+    coords: torch.Tensor,
     k: int,
 ) -> torch.Tensor:
-    """Build a k-NN index table over a point set.
+    """Build a k-NN index table over a point set in arbitrary dimensions.
 
-    Intended for use over the *state buffer* (the pool of physically-valid
+    Intended for use over the *state pool* (the pool of physically-valid
     state positions, e.g. ``task_table.spawn_states[:, :2]`` for terrain
     locomotion or ``held_asset.xyz`` relative to the goal pose for factory
     assembly), not over tasks. The state pool is the natural spatial
     domain regardless of how tasks combine endpoints; this function is
     therefore topology-agnostic.
-
-    Works in arbitrary dimensionality (2D for terrain xy, 3D for factory
-    xyz). The argument name ``xy_coords`` is kept for backward
-    compatibility but the trailing axis can be any positive size.
 
     For each point the returned row contains the indices of its ``k``
     nearest other points (self excluded). When the pool has fewer
@@ -68,8 +64,8 @@ def build_knn_indices(
     pools).
 
     Args:
-        xy_coords: ``[num_points, D]`` positions of the point set;
-            ``D=2`` for xy, ``D=3`` for xyz, etc.
+        coords: ``[num_points, coord_dim]`` positions of the point set;
+            ``coord_dim`` can be any positive size (2 for xy, 3 for xyz).
         k: Number of nearest neighbors to record per point.
 
     Returns:
@@ -79,18 +75,18 @@ def build_knn_indices(
         raise ValueError(f"k must be >= 1; got {k}.")
     from scipy.spatial import cKDTree
 
-    num_points = int(xy_coords.shape[0])
-    device = xy_coords.device
+    num_points = int(coords.shape[0])
+    device = coords.device
     self_idx = torch.arange(num_points, device=device, dtype=torch.long).unsqueeze(-1)
     knn = self_idx.expand(num_points, k).clone()
 
     if num_points <= 1:
         return knn
 
-    xy_np = xy_coords.detach().cpu().numpy()
+    coords_np = coords.detach().cpu().numpy()
     k_eff = min(k, num_points - 1)
-    tree = cKDTree(xy_np)
-    _, idx = tree.query(xy_np, k=k_eff + 1)
+    tree = cKDTree(coords_np)
+    _, idx = tree.query(coords_np, k=k_eff + 1)
     idx = np.atleast_2d(idx)
     if idx.shape[0] != num_points:
         idx = idx.T
@@ -133,7 +129,7 @@ def state_frontier_weights(
     Args:
         success_rates: ``[num_tasks]`` per-task rolling success rate.
         state_knn_indices: ``[num_states, k]`` long tensor from
-            :func:`build_knn_indices` over the state pool xy.
+            :func:`build_knn_indices` over the state pool coords.
         spawn_index: ``[num_tasks]`` per-task spawn state index.
         target_index: ``[num_tasks]`` per-task target state index, or
             ``None`` when tasks have no separate target endpoint
@@ -263,94 +259,6 @@ def frontier_sampling_probs(
     # 4) Combine and normalize globally over all tasks.
     w = base_w + max(0.0, frontier_lambda) * task_frontier_w + eps
     return w / w.sum()
-
-
-def log_frontier_bins(
-    success_rates: torch.Tensor,
-    *,
-    state_knn_indices: torch.Tensor,
-    spawn_index: torch.Tensor,
-    target_index: torch.Tensor | None,
-    dilation_steps: int,
-    probs: torch.Tensor,
-    log_dict: dict[str, float],
-    step_counter: int,
-) -> None:
-    """Bucket per-task probs by per-task frontier weight; write to log_dict + stdout.
-
-    Computes the same per-task frontier weight the sampler uses (from
-    :func:`state_frontier_weights` plus the above-mean-deviation
-    aggregation) and reports a 5-bin histogram of count, mean prob,
-    total mass, mean self-rate, and bin's min frontier value. Used by
-    both the terrain curriculum and the factory ``reset_accumulator``
-    so the diagnostic stays in lockstep with the algorithm.
-
-    Args:
-        success_rates: ``[num_tasks]`` per-task rolling success rate.
-        state_knn_indices: ``[num_states, k]`` long tensor.
-        spawn_index: ``[num_tasks]`` per-task spawn state index.
-        target_index: ``[num_tasks]`` per-task target state index, or
-            ``None`` for slot==task topologies (factory).
-        dilation_steps: Same value passed to the sampler.
-        probs: ``[num_tasks]`` per-task sampling probability the
-            sampler emitted this step.
-        log_dict: Mutable dict (typically ``env.extras["log"]``) into
-            which ``Frontier/bin_*`` keys are written.
-        step_counter: Iteration counter for the stdout header.
-    """
-    state_s, state_frontier = state_frontier_weights(
-        success_rates,
-        state_knn_indices=state_knn_indices,
-        spawn_index=spawn_index,
-        target_index=target_index,
-        dilation_steps=dilation_steps,
-    )
-    spawn_f = state_frontier[spawn_index]
-    task_frontier = (spawn_f - spawn_f.mean()).clamp_min(0.0)
-    if target_index is not None:
-        target_f = state_frontier[target_index]
-        task_frontier = task_frontier + (target_f - target_f.mean()).clamp_min(0.0)
-
-    bins = [
-        ("ftr<0.01", 0.0, 0.01),
-        ("0.01-0.05", 0.01, 0.05),
-        ("0.05-0.20", 0.05, 0.20),
-        ("0.20-0.50", 0.20, 0.50),
-        ("0.50+", 0.50, 1.001),
-    ]
-    rows = []
-    total_p = float(probs.sum())
-    for label, lo, hi in bins:
-        mask = (task_frontier >= lo) & (task_frontier < hi)
-        n = int(mask.sum())
-        if n == 0:
-            rows.append((label, 0, 0.0, 0.0, 0.0, 0.0))
-            continue
-        mean_p = float(probs[mask].mean())
-        mass = float(probs[mask].sum())
-        mean_self_s = float(success_rates[mask].mean())
-        min_ftr = float(task_frontier[mask].min())
-        rows.append((label, n, mean_p, mass, mean_self_s, min_ftr))
-        log_dict[f"Frontier/bin_{label}_count"] = float(n)
-        log_dict[f"Frontier/bin_{label}_mean_prob"] = mean_p
-        log_dict[f"Frontier/bin_{label}_mass"] = mass
-        log_dict[f"Frontier/bin_{label}_mean_self_s"] = mean_self_s
-
-    print(
-        "[FRONTIER DIAG] step="
-        f"{step_counter}  total_p={total_p:.3f}  "
-        f"state_frontier max={float(state_frontier.max()):.3f}  "
-        f"state_s p10/50/90="
-        f"{float(state_s.quantile(0.1)):.3f}/{float(state_s.quantile(0.5)):.3f}/{float(state_s.quantile(0.9)):.3f}",
-        flush=True,
-    )
-    header = f"  {'bin':12s} {'count':>6s} {'mean_p':>10s} {'mass':>8s} {'mean_self_s':>11s} {'min_ftr':>8s}"
-    print(header, flush=True)
-    for label, n, mean_p, mass, mean_self_s, min_ftr in rows:
-        print(
-            f"  {label:12s} {n:6d} {mean_p:10.3e} {mass:8.3f} {mean_self_s:11.3f} {min_ftr:8.3f}",
-            flush=True,
-        )
 
 
 def uniform_sampling_probs(success_rates: torch.Tensor) -> torch.Tensor:
