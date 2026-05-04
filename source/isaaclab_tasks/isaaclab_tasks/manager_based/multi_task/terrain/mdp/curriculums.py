@@ -297,7 +297,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         import matplotlib.pyplot as plt
         import numpy as np
 
-        from isaaclab_tasks.manager_based.multi_task.utils.visualization import (
+        from isaaclab_tasks.manager_based.multi_task.viz import (
             PanelSpec,
             ScatterDashboard2D,
             aggregate_endpoints,

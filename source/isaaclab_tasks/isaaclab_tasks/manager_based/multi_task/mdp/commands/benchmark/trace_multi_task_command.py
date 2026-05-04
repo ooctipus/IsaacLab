@@ -161,7 +161,7 @@ def _build_mock_synthetic_readers(num_envs: int, device: str) -> tuple:
     is to expose dispatch / gather / scatter cost, not the reader. We swap them
     for constant-time tensor returns.
     """
-    from isaaclab_tasks.manager_based.multi_task.mdp.commands.multitask.kernels_torch import BUFFER_KIND
+    from isaaclab_tasks.manager_based.multi_task.mdp.commands.kernels_torch import BUFFER_KIND
 
     nb = len(_ANYMAL_BODY_NAMES)
     nj = len(_ANYMAL_JOINT_NAMES)
@@ -192,8 +192,8 @@ def _build_mock_command(num_envs: int, device: str, use_warp: bool):
     """Construct a real :class:`MultiTaskCommand` against a mocked env + readers."""
     from unittest.mock import patch
 
-    from isaaclab_tasks.manager_based.multi_task.mdp.commands.multitask import multi_task_command as mtc_mod
-    from isaaclab_tasks.manager_based.multi_task.mdp.commands.multitask.multi_task_command import (
+    from isaaclab_tasks.manager_based.multi_task.mdp.commands import multi_task_command as mtc_mod
+    from isaaclab_tasks.manager_based.multi_task.mdp.commands.multi_task_command import (
         MultiTaskCommand,
     )
     from isaaclab_tasks.manager_based.multi_task.multi_task_env_cfg import MultiTaskEnvCfg

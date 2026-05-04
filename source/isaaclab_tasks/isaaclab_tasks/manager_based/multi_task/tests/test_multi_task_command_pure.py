@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import torch
 
-from isaaclab_tasks.manager_based.multi_task.mdp.commands.multitask.spec import pad_index_rows
+from isaaclab_tasks.manager_based.multi_task.mdp.commands.spec import pad_index_rows
 
 
 def test_pad_index_rows_uniform_rows():

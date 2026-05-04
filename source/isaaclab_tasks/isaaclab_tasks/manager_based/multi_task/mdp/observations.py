@@ -9,7 +9,7 @@ Two groups:
 
 - **Multi-task command obs** — ``command_progress``, ``command_reach``,
   ``command_track``, ``command_active``. Wrap properties of any
-  :class:`~.commands.multitask.MultiTaskCommand` so the policy can read its
+  :class:`~.commands.MultiTaskCommand` so the policy can read its
   current task state. Domain-agnostic because the underlying command term
   is.
 - **Frame-relative obs** — ``target_asset_pose_in_root_asset_frame``,

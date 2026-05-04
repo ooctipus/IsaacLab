@@ -448,7 +448,7 @@ class reset_accumulator(ManagerTermBase):
                 ):
                     self._wandb_3d_dashboard = None
                 return  # buffer empty: retry next gate
-            from isaaclab_tasks.manager_based.multi_task.utils.visualization import ScatterDashboard3D
+            from isaaclab_tasks.manager_based.multi_task.viz import ScatterDashboard3D
 
             n = xyz.shape[0]
             self._wandb_3d_dashboard = ScatterDashboard3D(positions=xyz.detach().cpu().numpy())
@@ -457,7 +457,7 @@ class reset_accumulator(ManagerTermBase):
         if self._wandb_3d_dashboard is None:
             return
 
-        from isaaclab_tasks.manager_based.multi_task.utils.visualization import PanelSpec
+        from isaaclab_tasks.manager_based.multi_task.viz import PanelSpec
 
         n = self._wandb_3d_n
         rates_t = self.success_rate[:n]

@@ -37,18 +37,18 @@ import torch
 
 from isaaclab.managers import SceneEntityCfg
 
-import isaaclab_tasks.manager_based.multi_task.mdp.commands.multitask.multi_task_command as mtc_mod
-from isaaclab_tasks.manager_based.multi_task.mdp.commands.multitask.kernels_torch import (
+import isaaclab_tasks.manager_based.multi_task.mdp.commands.multi_task_command as mtc_mod
+from isaaclab_tasks.manager_based.multi_task.mdp.commands.kernels_torch import (
     ACTIVATION_KERNEL_ID,
     METRIC_KERNEL_ID,
     SAMPLER_KERNEL_ID,
     STATE_KERNEL_ID,
 )
-from isaaclab_tasks.manager_based.multi_task.mdp.commands.multitask.multi_task_cfg import (
+from isaaclab_tasks.manager_based.multi_task.mdp.commands.multi_task_cfg import (
     MinMaxSampler,
     MultiTaskCfg,
 )
-from isaaclab_tasks.manager_based.multi_task.mdp.commands.multitask.multi_task_command import MultiTaskCommand
+from isaaclab_tasks.manager_based.multi_task.mdp.commands.multi_task_command import MultiTaskCommand
 
 # -----------------------------------------------------------------------------
 # Mock env / scene / articulation
@@ -262,7 +262,7 @@ class _SyntheticState:
         a single synthetic tensor per kernel answers the prepared read, then the
         real indexer + compute handle slicing and math.
         """
-        from isaaclab_tasks.manager_based.multi_task.mdp.commands.multitask.kernels_torch import (
+        from isaaclab_tasks.manager_based.multi_task.mdp.commands.kernels_torch import (
             BUFFER_KIND,
             STATE_KERNEL_BUFFER_KIND,
         )

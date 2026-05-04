@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import torch
 
-from isaaclab_tasks.manager_based.multi_task.mdp.commands.multitask.reward_composer import (
+from isaaclab_tasks.manager_based.multi_task.mdp.commands.reward_composer import (
     multiplicative_terminal_reward,
 )
 

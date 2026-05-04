@@ -22,13 +22,13 @@ from __future__ import annotations
 
 from isaaclab.managers import SceneEntityCfg
 
-from isaaclab_tasks.manager_based.multi_task.mdp.commands.multitask.kernels_torch import (
+from isaaclab_tasks.manager_based.multi_task.mdp.commands.kernels_torch import (
     ACTIVATION_KERNEL_ID,
     METRIC_KERNEL_ID,
     SAMPLER_KERNEL_ID,
     STATE_KERNEL_ID,
 )
-from isaaclab_tasks.manager_based.multi_task.mdp.commands.multitask.multi_task_cfg import MinMaxSampler, MultiTaskCfg
+from isaaclab_tasks.manager_based.multi_task.mdp.commands.multi_task_cfg import MinMaxSampler, MultiTaskCfg
 
 # Standing height for Anymal-C — the nominal base z for position/pose targets.
 STANDING_Z = (0.4, 0.7)
