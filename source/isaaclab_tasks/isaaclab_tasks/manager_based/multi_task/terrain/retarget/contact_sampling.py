@@ -521,35 +521,43 @@ class Sampler(SamplerBase):
             yaws = torch.empty((K,), dtype=torch.float32, device=device)
             tpl_idx = torch.empty((K,), dtype=torch.int64, device=device)
 
-            # Budget = ``0.7 × free GPU bytes`` AFTER the K-sized
+            # Budget = ``0.5 × free GPU bytes`` AFTER the K-sized
             # outputs are committed, with ``empty_cache`` first to
-            # release any cached blocks the upstream allocator has been
-            # hoarding. The 0.7 factor (vs an aggressive 0.9) leaves
-            # headroom for the caching allocator's fragmentation under
-            # the loop's repeated alloc/free pattern -- the cluster
-            # OOM at K=15M traced to a 1.56 GiB ``sort`` allocation
-            # failing while 5.19 GiB was reserved-but-fragmented in
-            # the cache.
+            # release any cached blocks the upstream allocator has
+            # been hoarding. The 0.5 factor (vs the earlier 0.7) is
+            # deliberately conservative: the loop runs hundreds to
+            # thousands of chunks at dense pool settings, and PyTorch's
+            # caching allocator grows its reserved pool over time as
+            # short-lived intermediates are freed and re-allocated --
+            # the cluster ``isaac-lab-6465`` OOM traced to
+            # ``25 GiB allocated + 2.5 GiB reserved-but-fragmented``
+            # when only 0.6 GiB was free. 50% of free memory leaves
+            # room for that growth alongside the chunk-loop's own
+            # peak.
             #
-            # ``per_row_bytes`` was computed by walking the loop body
-            # tensor-by-tensor and summing the largest coexistence
-            # group, which lives at the hull-validity cross product
-            # (line ~637 below): ``chosen_i`` (8 KiB long) +
-            # ``chosen_d`` (4 float) + ``contact_mask_c`` (1 bool) +
-            # ``patch_xy_gather`` (8 KiB ``[Kc,C,nc,2]`` float) +
-            # ``total_cost`` (1) + ``target_xy`` (8) + ``tgt_rel`` (8)
-            # + ``tgt_perm`` (8 long) + ``target_sorted`` (8) +
-            # ``edges`` (8) + ``next_edges`` (8) + ``cross`` and its
-            # subtraction intermediate (4 + 4) ≈ **78 KiB/Kc** at
-            # nc=4. Round to ``24 × C × nc × 4 = 96 KiB`` for a ~1.2x
-            # safety margin over short-lived intermediates the
-            # allocator may briefly hold past Python's view of scope.
+            # ``per_row_bytes`` is the sum of all ``[Kc, C, nc]`` and
+            # ``[Kc, C, nc, 2]`` tensors that coexist at the hull-
+            # validity peak (line ~637 below). Walking the body:
+            # ``chosen_i`` (8 KiB long) + ``chosen_d`` (4 float) +
+            # ``contact_mask_c`` (1 bool) + ``patch_xy_gather`` (8 KiB
+            # ``[Kc,C,nc,2]`` float) + ``total_cost`` (1) +
+            # ``eff_idx`` (8) + ``sorted_eff.values`` (8) +
+            # ``sort.indices`` transient (8) + ``target_xy`` (8) +
+            # ``tgt_rel`` (8) + ``tgt_perm`` (8 long) +
+            # ``target_sorted`` (8) + ``edges`` (8) + ``next_edges``
+            # (8) + ``cross`` + subtraction intermediate (4 + 4) +
+            # ``patch_r`` (4) + ``outward`` (4) + ``contact_cost`` (4)
+            # + ``cost_per_foot`` (4) ≈ **120 KiB/Kc** at nc=4. Round
+            # to ``40 × C × nc × 4 = 160 KiB`` (~1.3x safety margin
+            # for short-lived intermediates the allocator may briefly
+            # hold past Python's view of scope, plus the per-row
+            # share of the cache growth across iterations).
             torch_device = torch.device(device) if isinstance(device, str) else device
-            per_row_bytes = 24 * C * nc * 4 + nc * nc * 8  # LSA + topk: ~96 KiB at nc=4
+            per_row_bytes = 40 * C * nc * 4 + nc * nc * 8  # LSA + topk: ~160 KiB at nc=4
             if torch_device.type == "cuda":
                 torch.cuda.empty_cache()
                 free_bytes, _ = torch.cuda.mem_get_info(torch_device)
-                lsa_budget = max(256 * 1024 * 1024, int(0.70 * free_bytes))
+                lsa_budget = max(256 * 1024 * 1024, int(0.50 * free_bytes))
             else:
                 lsa_budget = 1 * 1024 * 1024 * 1024
             chunk_K = max(1, min(K, lsa_budget // max(1, per_row_bytes)))
