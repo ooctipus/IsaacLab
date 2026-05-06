@@ -367,6 +367,13 @@ def build_task_table(
         f"({100.0 * buffer.num_selected / max(1, total_states):.1f}%)",
         flush=True,
     )
+    chunk_meta = pipeline._chunk_profile_meta
+    if chunk_meta:
+        print(
+            f"  IK chunks: {chunk_meta['n_chunks']} @ chunk_size={chunk_meta['chunk_size']:,}"
+            f" (N={chunk_meta['N']:,}, max_iters={chunk_meta['max_iters']})",
+            flush=True,
+        )
 
     with trace_span("task_table.pack_spawn_states", selected_states=int(buffer.num_selected)):
         selected = buffer._selected[: buffer.num_selected].long()
