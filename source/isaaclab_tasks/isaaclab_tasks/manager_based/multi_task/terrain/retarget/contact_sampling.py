@@ -488,10 +488,31 @@ class Sampler(SamplerBase):
             # several GiB before any LSA work runs.
             patch_grid = build_spatial_grid_xy(patch_xy, radius=query_radius)
 
-            # Enumerate nc^nc combinations once: ``combo[c, i]`` = rank
+            # Enumerate combinations once: ``combo[c, i]`` = rank
             # (0..nc-1) that foot ``i`` picks under combination ``c``.
-            rank_axes = [torch.arange(nc, device=device)] * nc
-            combo = torch.cartesian_prod(*rank_axes).view(-1, nc)  # [nc^nc, nc]
+            # We enumerate **permutations** (``nc!``) rather than the
+            # full ``nc^nc`` cartesian product. Justification: the
+            # downstream distinctness penalty rejects every combo where
+            # two feet pick the same rank (since
+            # ``topk[i, rank_a] == topk[i, rank_b]`` whenever the rank
+            # axis is duplicated -- both feet land on the same patch).
+            # That rejection erases ``nc^nc - nc!`` of the combos
+            # immediately, so generating them only to ``inf``-out their
+            # cost is pure waste. For ``nc=4`` this drops ``C`` from
+            # 256 to 24 -- a 10x cut to every per-row tensor in the
+            # LSA loop, which is what dominates the chunk budget at
+            # dense pool settings.
+            #
+            # Edge case: when topk has sentinel slots (a foot has fewer
+            # than ``nc`` patches in radius), multiple ranks clamp to
+            # patch 0 and produce duplicate patch ids even within a
+            # permutation -- the distinctness penalty still catches
+            # those, so we keep it below.
+            import itertools
+
+            combo = torch.tensor(
+                list(itertools.permutations(range(nc))), device=device, dtype=torch.long
+            )  # [nc!, nc]
             C = combo.shape[0]
             neg_sentinel = -torch.arange(1, nc + 1, device=device).view(1, 1, nc)
 
