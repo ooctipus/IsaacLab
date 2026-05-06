@@ -28,6 +28,7 @@ __all__ = [
     "DefaultJointPositionStaticActionCfg",
     "DefaultJointPositionStaticAction",
     "reset_root_state_from_terrain",
+    "record_trajectory_video",
     "NewtonKinematics",
     "IKObjectiveJointDefault",
     "IKObjectiveJointRegularize",
@@ -81,7 +82,7 @@ from .terminations import (
     success_terminate,
 )
 from .actions import DefaultJointPositionStaticActionCfg, DefaultJointPositionStaticAction
-from .events import reset_root_state_from_terrain
+from .events import record_trajectory_video, reset_root_state_from_terrain
 from ...kinematics import (
     NewtonKinematics,
     IKObjectiveGravityTorque,

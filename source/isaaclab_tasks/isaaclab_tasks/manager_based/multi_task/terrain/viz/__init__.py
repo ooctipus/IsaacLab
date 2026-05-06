@@ -5,6 +5,6 @@
 
 """Terrain-task-specific visualisation utilities."""
 
-from .trajectory_recorder import TrajectoryVideoWrapper
+from .trajectory_recorder import TrajectoryRecorder
 
-__all__ = ["TrajectoryVideoWrapper"]
+__all__ = ["TrajectoryRecorder"]

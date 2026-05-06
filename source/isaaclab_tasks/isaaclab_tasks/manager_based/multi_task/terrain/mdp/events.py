@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 from functools import reduce
 from typing import TYPE_CHECKING
 
@@ -12,6 +13,9 @@ import torch
 import warp as wp
 
 import isaaclab.utils.math as math_utils
+from isaaclab.managers import EventTermCfg, ManagerTermBase
+
+from ..viz import TrajectoryRecorder
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject
@@ -84,3 +88,69 @@ def reset_root_state_from_terrain(
 
     asset.write_root_pose_to_sim_index(root_pose=torch.cat([positions, orientations], dim=-1), env_ids=env_ids)
     asset.write_root_velocity_to_sim_index(root_velocity=velocities, env_ids=env_ids)
+
+
+class record_trajectory_video(ManagerTermBase):
+    """Per-step event term that drives a :class:`TrajectoryRecorder`.
+
+    Plug into the env cfg as an interval event firing every step::
+
+        traj_video = EventTerm(
+            func=mdp.record_trajectory_video,
+            mode="interval",
+            interval_range_s=(env.step_dt, env.step_dt),  # every step
+            is_global_time=True,
+            params={
+                "command_name": "goal_point",
+                "video_interval": 5000,
+                "video_length": 200,
+                "max_envs": 16,
+            },
+        )
+
+    The recorder writes mp4s under ``{log_dir}/videos/trajectory/``;
+    rsl_rl's logger globs ``*.mp4`` from ``log_dir`` at every iteration
+    end and auto-uploads to W&B, so no logger plumbing is needed.
+
+    Lightweight: per-step capture is two small ``[N_subset, 2]`` CPU
+    copies plus an ``[N_subset]`` bool. Render runs at end-of-window.
+    """
+
+    def __init__(self, cfg: EventTermCfg, env) -> None:
+        super().__init__(cfg, env)
+        params = cfg.params
+        log_dir = getattr(env.cfg, "log_dir", None) or os.getcwd()
+        video_folder = params.get("video_folder") or os.path.join(log_dir, "videos", "trajectory")
+        self.command_name: str = params.get("command_name", "goal_point")
+        self.recorder = TrajectoryRecorder(
+            video_folder=video_folder,
+            video_interval=int(params.get("video_interval", 5000)),
+            video_length=int(params.get("video_length", 200)),
+            max_envs=int(params.get("max_envs", 16)),
+            fps=int(params.get("fps", 30)),
+            trail_steps=int(params.get("trail_steps", 30)),
+        )
+
+    def __call__(self, env: ManagerBasedEnv, env_ids: torch.Tensor, **_: object) -> None:
+        # Read the latest per-env state and pass it to the recorder.
+        # This is a side-effect-only term -- it returns nothing.
+        cmd = env.command_manager.get_term(self.command_name)
+        robot = env.scene["robot"]
+
+        robot_pos = robot.data.root_pos_w
+        if not isinstance(robot_pos, torch.Tensor):
+            robot_pos = wp.to_torch(robot_pos)
+        env_origins = env.scene.env_origins
+        if not isinstance(env_origins, torch.Tensor):
+            env_origins = wp.to_torch(env_origins)
+
+        # Targets: row 0 of the cmd buffer, columns 0:3 = position.
+        target_pos = cmd.cmd_buf[:, 0, :2]
+        # ``instant_success`` -- all active error groups below threshold this step.
+        success = (cmd._err < cmd._reward_scales[cmd.cmd_ids.long()]).all(dim=1)
+
+        robot_xy = (robot_pos[:, :2] - env_origins[:, :2]).detach().cpu().numpy()
+        target_xy = (target_pos - env_origins[:, :2]).detach().cpu().numpy()
+        success_np = success.detach().cpu().numpy()
+
+        self.recorder.maybe_record(robot_xy, target_xy, success_np)
