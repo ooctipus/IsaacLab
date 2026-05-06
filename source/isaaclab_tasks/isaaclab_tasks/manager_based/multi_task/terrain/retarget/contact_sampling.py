@@ -521,19 +521,15 @@ class Sampler(SamplerBase):
             yaws = torch.empty((K,), dtype=torch.float32, device=device)
             tpl_idx = torch.empty((K,), dtype=torch.int64, device=device)
 
-            # Budget = ``0.5 × free GPU bytes`` AFTER the K-sized
+            # Budget = ``0.7 × free GPU bytes`` AFTER the K-sized
             # outputs are committed, with ``empty_cache`` first to
             # release any cached blocks the upstream allocator has
-            # been hoarding. The 0.5 factor (vs the earlier 0.7) is
-            # deliberately conservative: the loop runs hundreds to
-            # thousands of chunks at dense pool settings, and PyTorch's
-            # caching allocator grows its reserved pool over time as
-            # short-lived intermediates are freed and re-allocated --
-            # the cluster ``isaac-lab-6465`` OOM traced to
-            # ``25 GiB allocated + 2.5 GiB reserved-but-fragmented``
-            # when only 0.6 GiB was free. 50% of free memory leaves
-            # room for that growth alongside the chunk-loop's own
-            # peak.
+            # been hoarding. Aggressive on purpose: a smaller budget
+            # blows up ``n_chunks`` and the per-chunk Python overhead
+            # dominates wallclock at dense pool settings. The
+            # ``empty_cache`` call inside the loop (below) keeps the
+            # caching allocator's reserved pool bounded so the 30%
+            # headroom is enough.
             #
             # ``per_row_bytes`` is the sum of all ``[Kc, C, nc]`` and
             # ``[Kc, C, nc, 2]`` tensors that coexist at the hull-
@@ -550,14 +546,13 @@ class Sampler(SamplerBase):
             # + ``cost_per_foot`` (4) ≈ **120 KiB/Kc** at nc=4. Round
             # to ``40 × C × nc × 4 = 160 KiB`` (~1.3x safety margin
             # for short-lived intermediates the allocator may briefly
-            # hold past Python's view of scope, plus the per-row
-            # share of the cache growth across iterations).
+            # hold past Python's view of scope).
             torch_device = torch.device(device) if isinstance(device, str) else device
             per_row_bytes = 40 * C * nc * 4 + nc * nc * 8  # LSA + topk: ~160 KiB at nc=4
             if torch_device.type == "cuda":
                 torch.cuda.empty_cache()
                 free_bytes, _ = torch.cuda.mem_get_info(torch_device)
-                lsa_budget = max(256 * 1024 * 1024, int(0.50 * free_bytes))
+                lsa_budget = max(256 * 1024 * 1024, int(0.70 * free_bytes))
             else:
                 lsa_budget = 1 * 1024 * 1024 * 1024
             chunk_K = max(1, min(K, lsa_budget // max(1, per_row_bytes)))
@@ -685,6 +680,18 @@ class Sampler(SamplerBase):
                 no_convex[k0:k1] = total_cost[row_idx, best_c].isinf()
                 yaws[k0:k1] = yaws_c
                 tpl_idx[k0:k1] = tpl_idx_c
+
+                # Periodically return freed blocks to the system pool so
+                # the allocator's reserved-but-unallocated cache doesn't
+                # grow unboundedly across long chunk loops. Every 100
+                # chunks costs ~few ms each (CUDA sync) but caps the
+                # cache footprint at roughly one-chunk-worth of blocks
+                # rather than peak-across-history -- the difference was
+                # the load-bearing OOM cause at K=60M (cluster
+                # ``isaac-lab-6465`` reported 2.5 GiB
+                # reserved-but-fragmented at OOM time).
+                if torch_device.type == "cuda" and ((k0 // chunk_K) + 1) % 100 == 0:
+                    torch.cuda.empty_cache()
 
             # Release the last iteration's chunk-local tensors so the
             # post-loop FPS + prepare_ik stages aren't pinned by
