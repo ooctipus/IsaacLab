@@ -13,26 +13,28 @@ This module contains the **end-to-end** Warp kernel that, in a single
 3. Un-canonicalize the chosen FK template into world-frame foot xyz
    under the sampled yaw + center.
 4. Query the prebuilt morph-patch ``HashGrid`` for the top-``nc``
-   nearest patches per foot, in registers.
-5. Iterate every foot-rank permutation, evaluating cost +
-   distinctness + force-must-contact + winding + convex-hull validity
-   inline.
-6. Emit per-slot outputs (``is_contact``, ``contact_ik``, ``n_found``,
+   nearest patches per foot.
+5. Precompute per-``(foot, rank)`` cost / target_xy / contact-bit so
+   the permutation loop becomes a sum + small validity checks rather
+   than a square-root-heavy reconstruction per combo.
+6. Iterate the foot-rank permutations (cost / distinctness /
+   force-must-contact / winding / convex-hull) and pick the best
+   survivor.
+7. Emit per-slot outputs (``is_contact``, ``contact_ik``, ``n_found``,
    ``no_convex``, ``yaws``, ``tpl_idx``).
 
 Because every per-slot intermediate lives in registers, this fused
 kernel **eliminates the chunking infrastructure** the previous
 implementation needed: there is no ``[Kc, C, nc, ...]`` family of
-tensors to chunk around, no ``per_row_bytes`` budget, no
-``empty_cache`` dance with the Warp allocator. The only allocations
-the sampler has to do are the K-sized output tensors that the
-downstream FPS + IK stages consume.
+tensors to chunk around, no per-chunk budget, no ``empty_cache``
+dance. The only allocations are the K-sized output tensors that the
+downstream FPS + IK stages consume, and they're the smallest dtypes
+that fit each value.
 
 **Scope**: nc=4 (quadruped) only. The LSA hull check assumes a
 4-point polygon and uses an unrolled 4-element sorting network.
 Other foot counts raise :class:`NotImplementedError` from the
-launcher and the caller falls back to the chunked path in
-``contact_sampling.py``.
+launcher and the caller falls back to the chunked path.
 """
 
 from __future__ import annotations
@@ -55,13 +57,44 @@ TWO_PI: wp.constant = wp.constant(float(2.0 * math.pi))
 
 @wp.struct
 class _FootTopK:
-    """Top-``nc`` patch hits for one foot. ``idx[i]`` and ``dist[i]``
-    give the i-th-nearest patch index + distance. Slots not filled
-    keep ``idx=-1``, ``dist=+inf``.
+    """Top-``nc`` patch hits for one foot, in ascending-distance order.
+
+    Empty slots come back as ``idx=-1``, ``dist=+inf``. The launcher
+    clamps the indices non-negative downstream so the kernel's later
+    ``patch_pts[idx]`` reads never go out of bounds; the ``+inf``
+    distance keeps the contact mask correctly false for those slots.
     """
 
     idx: wp.vec4i
     dist: wp.vec4
+
+
+@wp.struct
+class _FootRanks:
+    """Per-(foot, rank) precomputed values, packed by rank into vec4s.
+
+    Computed once per thread up-front so the permutation loop becomes
+    a 4-lookup sum + validity check rather than a per-combo
+    reconstruction with its own sqrt and branchy gather.
+
+    For each of the 4 ranks of a single foot:
+
+    * ``contact[r]``: 1 if the foot's r-th-nearest patch is within
+      ``effective_radius`` (a true contact target), else 0 (an
+      "air" target -- foot stays at its template-projected xy).
+    * ``target_x[r]`` / ``target_y[r]``: the xy the foot will end up
+      at if rank ``r`` is chosen (patch xy if contact, projected xy
+      if air).
+    * ``cost[r]``: per-foot contribution to the LSA cost (``chosen_d
+      + outward_pen * outward`` if contact, ``radius`` if air). The
+      total cost of a permutation is the sum of four such per-foot
+      values, one per foot's chosen rank.
+    """
+
+    contact: wp.vec4i
+    target_x: wp.vec4
+    target_y: wp.vec4
+    cost: wp.vec4
 
 
 # ---------------------------------------------------------------- helpers
@@ -75,12 +108,7 @@ def _topk4_query(
     qy: wp.float32,
     radius: wp.float32,
 ) -> _FootTopK:
-    """Query ``grid_id`` for the 4 nearest patches around ``(qx, qy)``.
-
-    Streaming "replace-the-max" top-4 followed by a 4-element bubble
-    sort. Returns indices + distances in ascending-distance order;
-    empty slots are left at ``(-1, +inf)``.
-    """
+    """Query ``grid_id`` for the 4 nearest patches around ``(qx, qy)``."""
     out = _FootTopK()
     out.idx = wp.vec4i(-1, -1, -1, -1)
     out.dist = wp.vec4(wp.inf, wp.inf, wp.inf, wp.inf)
@@ -104,25 +132,53 @@ def _topk4_query(
                 out.dist[max_slot] = d
                 out.idx[max_slot] = nb
 
-    # Bubble sort the 4 slots ascending so the caller sees neighbours
-    # in distance order (matches the previous `.sort(...).values`
-    # behaviour the LSA loop assumed).
-    for i in range(4):
-        for j in range(3):
-            if out.dist[j] > out.dist[j + 1]:
-                td = out.dist[j]
-                out.dist[j] = out.dist[j + 1]
-                out.dist[j + 1] = td
-                ti = out.idx[j]
-                out.idx[j] = out.idx[j + 1]
-                out.idx[j + 1] = ti
+    # 4-element sorting network (5 compare-swaps) -- ascending by distance.
+    if out.dist[0] > out.dist[1]:
+        t = out.dist[0]
+        out.dist[0] = out.dist[1]
+        out.dist[1] = t
+        ti = out.idx[0]
+        out.idx[0] = out.idx[1]
+        out.idx[1] = ti
+    if out.dist[2] > out.dist[3]:
+        t = out.dist[2]
+        out.dist[2] = out.dist[3]
+        out.dist[3] = t
+        ti = out.idx[2]
+        out.idx[2] = out.idx[3]
+        out.idx[3] = ti
+    if out.dist[0] > out.dist[2]:
+        t = out.dist[0]
+        out.dist[0] = out.dist[2]
+        out.dist[2] = t
+        ti = out.idx[0]
+        out.idx[0] = out.idx[2]
+        out.idx[2] = ti
+    if out.dist[1] > out.dist[3]:
+        t = out.dist[1]
+        out.dist[1] = out.dist[3]
+        out.dist[3] = t
+        ti = out.idx[1]
+        out.idx[1] = out.idx[3]
+        out.idx[3] = ti
+    if out.dist[1] > out.dist[2]:
+        t = out.dist[1]
+        out.dist[1] = out.dist[2]
+        out.dist[2] = t
+        ti = out.idx[1]
+        out.idx[1] = out.idx[2]
+        out.idx[2] = ti
 
+    # Sentinel-safe: clamp negative indices to 0 so downstream
+    # ``patch_*[idx]`` reads can't OOB. The matching +inf distance
+    # keeps the contact mask correctly false.
+    out.idx = wp.max(out.idx, wp.vec4i(0, 0, 0, 0))
     return out
 
 
 @wp.func
 def _argsort4(a: wp.float32, b: wp.float32, c: wp.float32, d: wp.float32) -> wp.vec4i:
-    """Sorting-network argsort of 4 floats. Returns indices ascending."""
+    """Sorting-network argsort of 4 floats (5 compare-swaps), ascending."""
     v0 = a
     v1 = b
     v2 = c
@@ -171,7 +227,7 @@ def _argsort4(a: wp.float32, b: wp.float32, c: wp.float32, d: wp.float32) -> wp.
 
 @wp.func
 def _has_dup4(a: wp.int32, b: wp.int32, c: wp.int32, d: wp.int32) -> int:
-    """Return 1 if any two of the four ints are equal, else 0."""
+    """1 if any two of the four ints are equal, else 0."""
     if a == b:
         return 1
     if a == c:
@@ -185,6 +241,57 @@ def _has_dup4(a: wp.int32, b: wp.int32, c: wp.int32, d: wp.int32) -> int:
     if c == d:
         return 1
     return 0
+
+
+@wp.func
+def _foot_ranks(
+    top: _FootTopK,
+    proj_x: wp.float32,
+    proj_y: wp.float32,
+    tpl_centroid_x: wp.float32,
+    tpl_centroid_y: wp.float32,
+    tpl_r: wp.float32,
+    patch_xy: wp.array(dtype=wp.vec3),
+    radius: wp.float32,
+    effective_radius: wp.float32,
+    outward_pen: wp.float32,
+) -> _FootRanks:
+    """Precompute per-rank cost / target / contact for one foot.
+
+    Each foot has 4 candidate ranks (its 4 nearest patches in distance
+    order). Whether a permutation picks rank ``r`` for this foot is
+    decided by the combo loop downstream; everything that depends only
+    on ``(foot, rank)`` -- and not on the combo as a whole -- is
+    computed once here so the combo loop becomes a sum + validity
+    check.
+    """
+    out = _FootRanks()
+    out.contact = wp.vec4i(0, 0, 0, 0)
+    out.target_x = wp.vec4(0.0, 0.0, 0.0, 0.0)
+    out.target_y = wp.vec4(0.0, 0.0, 0.0, 0.0)
+    out.cost = wp.vec4(0.0, 0.0, 0.0, 0.0)
+
+    for r in range(4):
+        chi = top.idx[r]
+        chd = top.dist[r]
+        if chd < effective_radius:
+            out.contact[r] = 1
+            px = patch_xy[chi]
+            out.target_x[r] = px[0]
+            out.target_y[r] = px[1]
+            patch_r = wp.sqrt(
+                (px[0] - tpl_centroid_x) * (px[0] - tpl_centroid_x)
+                + (px[1] - tpl_centroid_y) * (px[1] - tpl_centroid_y)
+            )
+            outward = wp.max(patch_r - tpl_r, 0.0)
+            out.cost[r] = chd + outward_pen * outward
+        else:
+            out.contact[r] = 0
+            out.target_x[r] = proj_x
+            out.target_y[r] = proj_y
+            out.cost[r] = radius
+
+    return out
 
 
 # ----------------------------------------------------------------- kernel
@@ -214,10 +321,10 @@ def _fused_sampler_kernel(
     # ---- outputs (allocated by the launcher) ----
     yaws_out: wp.array(dtype=wp.float32),  # [K]
     tpl_idx_out: wp.array(dtype=wp.int32),  # [K]
-    is_contact_out: wp.array2d(dtype=wp.int32),  # [K, NC]
+    is_contact_out: wp.array2d(dtype=wp.uint8),  # [K, NC]
     contact_ik_out: wp.array2d(dtype=wp.vec3),  # [K, NC]
-    n_found_out: wp.array(dtype=wp.int32),  # [K]
-    no_convex_out: wp.array(dtype=wp.int32),  # [K]
+    n_found_out: wp.array(dtype=wp.uint8),  # [K]
+    no_convex_out: wp.array(dtype=wp.uint8),  # [K]
 ):
     """One thread per candidate slot. Does the full sampler work end-to-end."""
     k = wp.tid()
@@ -242,7 +349,7 @@ def _fused_sampler_kernel(
     tc2 = fk_shape_samples[tpl_idx_val, 2]
     tc3 = fk_shape_samples[tpl_idx_val, 3]
 
-    # mid = R(nominal_angle) @ tpl_canon (per-foot rotation about z).
+    # mid = R(nominal_angle) @ tpl_canon, world = R(yaw) @ mid + center.
     mx0 = cos_n[0] * tc0[0] - sin_n[0] * tc0[1]
     my0 = sin_n[0] * tc0[0] + cos_n[0] * tc0[1]
     mx1 = cos_n[1] * tc1[0] - sin_n[1] * tc1[1]
@@ -252,7 +359,6 @@ def _fused_sampler_kernel(
     mx3 = cos_n[3] * tc3[0] - sin_n[3] * tc3[1]
     my3 = sin_n[3] * tc3[0] + cos_n[3] * tc3[1]
 
-    # world = R(yaw) @ mid + center (per-candidate yaw rotation + translation).
     wx0 = cos_y * mx0 - sin_y * my0 + center[0]
     wy0 = sin_y * mx0 + cos_y * my0 + center[1]
     wz0 = tc0[2] + center[2]
@@ -266,49 +372,7 @@ def _fused_sampler_kernel(
     wy3 = sin_y * mx3 + cos_y * my3 + center[1]
     wz3 = tc3[2] + center[2]
 
-    # ----- 3. Top-NC hashgrid query per foot -----
-    top0 = _topk4_query(patch_grid_id, patch_pts_z0, wx0, wy0, query_radius)
-    top1 = _topk4_query(patch_grid_id, patch_pts_z0, wx1, wy1, query_radius)
-    top2 = _topk4_query(patch_grid_id, patch_pts_z0, wx2, wy2, query_radius)
-    top3 = _topk4_query(patch_grid_id, patch_pts_z0, wx3, wy3, query_radius)
-
-    # Sentinel-safe: empty slots come back as ``idx=-1, dist=+inf``.
-    # Clamp idx to 0 so the patch-table reads below are bounds-safe; the
-    # ``dist=+inf`` keeps the contact mask correctly false for those slots.
-    if top0.idx[0] < 0:
-        top0.idx[0] = 0
-    if top0.idx[1] < 0:
-        top0.idx[1] = 0
-    if top0.idx[2] < 0:
-        top0.idx[2] = 0
-    if top0.idx[3] < 0:
-        top0.idx[3] = 0
-    if top1.idx[0] < 0:
-        top1.idx[0] = 0
-    if top1.idx[1] < 0:
-        top1.idx[1] = 0
-    if top1.idx[2] < 0:
-        top1.idx[2] = 0
-    if top1.idx[3] < 0:
-        top1.idx[3] = 0
-    if top2.idx[0] < 0:
-        top2.idx[0] = 0
-    if top2.idx[1] < 0:
-        top2.idx[1] = 0
-    if top2.idx[2] < 0:
-        top2.idx[2] = 0
-    if top2.idx[3] < 0:
-        top2.idx[3] = 0
-    if top3.idx[0] < 0:
-        top3.idx[0] = 0
-    if top3.idx[1] < 0:
-        top3.idx[1] = 0
-    if top3.idx[2] < 0:
-        top3.idx[2] = 0
-    if top3.idx[3] < 0:
-        top3.idx[3] = 0
-
-    # Per-foot template centroid + radii (used by the outward-snap cost).
+    # Template centroid + per-foot template radii (one-time per thread).
     tcx = (wx0 + wx1 + wx2 + wx3) * 0.25
     tcy = (wy0 + wy1 + wy2 + wy3) * 0.25
     tpl_r0 = wp.sqrt((wx0 - tcx) * (wx0 - tcx) + (wy0 - tcy) * (wy0 - tcy))
@@ -316,12 +380,30 @@ def _fused_sampler_kernel(
     tpl_r2 = wp.sqrt((wx2 - tcx) * (wx2 - tcx) + (wy2 - tcy) * (wy2 - tcy))
     tpl_r3 = wp.sqrt((wx3 - tcx) * (wx3 - tcx) + (wy3 - tcy) * (wy3 - tcy))
 
-    # Template winding order around tpl_centroid.
-    tpl_a0 = wp.atan2(wy0 - tcy, wx0 - tcx)
-    tpl_a1 = wp.atan2(wy1 - tcy, wx1 - tcx)
-    tpl_a2 = wp.atan2(wy2 - tcy, wx2 - tcx)
-    tpl_a3 = wp.atan2(wy3 - tcy, wx3 - tcx)
-    tpl_perm = _argsort4(tpl_a0, tpl_a1, tpl_a2, tpl_a3)
+    # Template winding order (one argsort per thread, not per combo).
+    tpl_perm = _argsort4(
+        wp.atan2(wy0 - tcy, wx0 - tcx),
+        wp.atan2(wy1 - tcy, wx1 - tcx),
+        wp.atan2(wy2 - tcy, wx2 - tcx),
+        wp.atan2(wy3 - tcy, wx3 - tcx),
+    )
+
+    # ----- 3. Top-NC hashgrid query per foot -----
+    top0 = _topk4_query(patch_grid_id, patch_pts_z0, wx0, wy0, query_radius)
+    top1 = _topk4_query(patch_grid_id, patch_pts_z0, wx1, wy1, query_radius)
+    top2 = _topk4_query(patch_grid_id, patch_pts_z0, wx2, wy2, query_radius)
+    top3 = _topk4_query(patch_grid_id, patch_pts_z0, wx3, wy3, query_radius)
+
+    # ----- 4. Per-(foot, rank) precompute -----
+    # Each foot's 4 ranks contribute (cost, target_xy, contact-bit) that
+    # only depend on this foot's data, not on which permutation we're
+    # evaluating. Computing them once trims the combo loop from
+    # ~50 ops/iter (with sqrt per combo) to ~30 ops/iter (just lookup +
+    # sum + small validity).
+    fr0 = _foot_ranks(top0, wx0, wy0, tcx, tcy, tpl_r0, patch_pts_z0, radius, effective_radius, outward_pen)
+    fr1 = _foot_ranks(top1, wx1, wy1, tcx, tcy, tpl_r1, patch_pts_z0, radius, effective_radius, outward_pen)
+    fr2 = _foot_ranks(top2, wx2, wy2, tcx, tcy, tpl_r2, patch_pts_z0, radius, effective_radius, outward_pen)
+    fr3 = _foot_ranks(top3, wx3, wy3, tcx, tcy, tpl_r3, patch_pts_z0, radius, effective_radius, outward_pen)
 
     # Per-foot "is there at least one in-radius patch" (force-contact gate).
     has_opt0 = int(0)
@@ -337,7 +419,7 @@ def _fused_sampler_kernel(
     if top3.dist[0] < radius:
         has_opt3 = 1
 
-    # ----- 4. LSA permutation loop -----
+    # ----- 5. LSA permutation loop -----
     best_cost = float(1.0e30)
     best_c = int(-1)
 
@@ -347,28 +429,10 @@ def _fused_sampler_kernel(
         r2 = combo[c, 2]
         r3 = combo[c, 3]
 
-        ci0 = top0.idx[r0]
-        ci1 = top1.idx[r1]
-        ci2 = top2.idx[r2]
-        ci3 = top3.idx[r3]
-
-        cd0 = top0.dist[r0]
-        cd1 = top1.dist[r1]
-        cd2 = top2.dist[r2]
-        cd3 = top3.dist[r3]
-
-        contact0 = int(0)
-        if cd0 < effective_radius:
-            contact0 = 1
-        contact1 = int(0)
-        if cd1 < effective_radius:
-            contact1 = 1
-        contact2 = int(0)
-        if cd2 < effective_radius:
-            contact2 = 1
-        contact3 = int(0)
-        if cd3 < effective_radius:
-            contact3 = 1
+        contact0 = fr0.contact[r0]
+        contact1 = fr1.contact[r1]
+        contact2 = fr2.contact[r2]
+        contact3 = fr3.contact[r3]
 
         # Force-must-contact gate.
         if force_all_snap == 0:
@@ -385,79 +449,42 @@ def _fused_sampler_kernel(
         # use a per-foot negative sentinel so they never collide.
         e0 = -1
         if contact0 == 1:
-            e0 = ci0
+            e0 = top0.idx[r0]
         e1 = -2
         if contact1 == 1:
-            e1 = ci1
+            e1 = top1.idx[r1]
         e2 = -3
         if contact2 == 1:
-            e2 = ci2
+            e2 = top2.idx[r2]
         e3 = -4
         if contact3 == 1:
-            e3 = ci3
+            e3 = top3.idx[r3]
         if _has_dup4(e0, e1, e2, e3) == 1:
             continue
 
-        # Per-foot cost + target xy (for hull check below).
-        cost = float(0.0)
-        if contact0 == 1:
-            px = patch_pts_z0[ci0]
-            patch_r = wp.sqrt((px[0] - tcx) * (px[0] - tcx) + (px[1] - tcy) * (px[1] - tcy))
-            outward = wp.max(patch_r - tpl_r0, 0.0)
-            cost = cost + cd0 + outward_pen * outward
-            tx0 = px[0]
-            ty0 = px[1]
-        else:
-            cost = cost + radius
-            tx0 = wx0
-            ty0 = wy0
-        if contact1 == 1:
-            px = patch_pts_z0[ci1]
-            patch_r = wp.sqrt((px[0] - tcx) * (px[0] - tcx) + (px[1] - tcy) * (px[1] - tcy))
-            outward = wp.max(patch_r - tpl_r1, 0.0)
-            cost = cost + cd1 + outward_pen * outward
-            tx1 = px[0]
-            ty1 = px[1]
-        else:
-            cost = cost + radius
-            tx1 = wx1
-            ty1 = wy1
-        if contact2 == 1:
-            px = patch_pts_z0[ci2]
-            patch_r = wp.sqrt((px[0] - tcx) * (px[0] - tcx) + (px[1] - tcy) * (px[1] - tcy))
-            outward = wp.max(patch_r - tpl_r2, 0.0)
-            cost = cost + cd2 + outward_pen * outward
-            tx2 = px[0]
-            ty2 = px[1]
-        else:
-            cost = cost + radius
-            tx2 = wx2
-            ty2 = wy2
-        if contact3 == 1:
-            px = patch_pts_z0[ci3]
-            patch_r = wp.sqrt((px[0] - tcx) * (px[0] - tcx) + (px[1] - tcy) * (px[1] - tcy))
-            outward = wp.max(patch_r - tpl_r3, 0.0)
-            cost = cost + cd3 + outward_pen * outward
-            tx3 = px[0]
-            ty3 = px[1]
-        else:
-            cost = cost + radius
-            tx3 = wx3
-            ty3 = wy3
-
+        # Cost: precomputed per-(foot, rank) sum.
+        cost = fr0.cost[r0] + fr1.cost[r1] + fr2.cost[r2] + fr3.cost[r3]
         if cost >= best_cost:
             continue
 
-        # Hull validity: target points form a convex polygon whose winding
-        # order matches the template's projected polygon.
+        # Hull validity: target winding matches template + strict convex.
+        tx0 = fr0.target_x[r0]
+        ty0 = fr0.target_y[r0]
+        tx1 = fr1.target_x[r1]
+        ty1 = fr1.target_y[r1]
+        tx2 = fr2.target_x[r2]
+        ty2 = fr2.target_y[r2]
+        tx3 = fr3.target_x[r3]
+        ty3 = fr3.target_y[r3]
+
         ttx = (tx0 + tx1 + tx2 + tx3) * 0.25
         tty = (ty0 + ty1 + ty2 + ty3) * 0.25
-        ta0 = wp.atan2(ty0 - tty, tx0 - ttx)
-        ta1 = wp.atan2(ty1 - tty, tx1 - ttx)
-        ta2 = wp.atan2(ty2 - tty, tx2 - ttx)
-        ta3 = wp.atan2(ty3 - tty, tx3 - ttx)
-        tgt_perm = _argsort4(ta0, ta1, ta2, ta3)
-
+        tgt_perm = _argsort4(
+            wp.atan2(ty0 - tty, tx0 - ttx),
+            wp.atan2(ty1 - tty, tx1 - ttx),
+            wp.atan2(ty2 - tty, tx2 - ttx),
+            wp.atan2(ty3 - tty, tx3 - ttx),
+        )
         if (
             tgt_perm[0] != tpl_perm[0]
             or tgt_perm[1] != tpl_perm[1]
@@ -466,64 +493,19 @@ def _fused_sampler_kernel(
         ):
             continue
 
-        # Sort target xy by tgt_perm and check strict convexity.
-        sx0 = float(0.0)
-        sy0 = float(0.0)
-        sx1 = float(0.0)
-        sy1 = float(0.0)
-        sx2 = float(0.0)
-        sy2 = float(0.0)
-        sx3 = float(0.0)
-        sy3 = float(0.0)
-        if tgt_perm[0] == 0:
-            sx0 = tx0
-            sy0 = ty0
-        if tgt_perm[0] == 1:
-            sx0 = tx1
-            sy0 = ty1
-        if tgt_perm[0] == 2:
-            sx0 = tx2
-            sy0 = ty2
-        if tgt_perm[0] == 3:
-            sx0 = tx3
-            sy0 = ty3
-        if tgt_perm[1] == 0:
-            sx1 = tx0
-            sy1 = ty0
-        if tgt_perm[1] == 1:
-            sx1 = tx1
-            sy1 = ty1
-        if tgt_perm[1] == 2:
-            sx1 = tx2
-            sy1 = ty2
-        if tgt_perm[1] == 3:
-            sx1 = tx3
-            sy1 = ty3
-        if tgt_perm[2] == 0:
-            sx2 = tx0
-            sy2 = ty0
-        if tgt_perm[2] == 1:
-            sx2 = tx1
-            sy2 = ty1
-        if tgt_perm[2] == 2:
-            sx2 = tx2
-            sy2 = ty2
-        if tgt_perm[2] == 3:
-            sx2 = tx3
-            sy2 = ty3
-        if tgt_perm[3] == 0:
-            sx3 = tx0
-            sy3 = ty0
-        if tgt_perm[3] == 1:
-            sx3 = tx1
-            sy3 = ty1
-        if tgt_perm[3] == 2:
-            sx3 = tx2
-            sy3 = ty2
-        if tgt_perm[3] == 3:
-            sx3 = tx3
-            sy3 = ty3
+        # Vec4-indexed permutation gather (replaces 16 if-branches).
+        tx_v = wp.vec4(tx0, tx1, tx2, tx3)
+        ty_v = wp.vec4(ty0, ty1, ty2, ty3)
+        sx0 = tx_v[tgt_perm[0]]
+        sy0 = ty_v[tgt_perm[0]]
+        sx1 = tx_v[tgt_perm[1]]
+        sy1 = ty_v[tgt_perm[1]]
+        sx2 = tx_v[tgt_perm[2]]
+        sy2 = ty_v[tgt_perm[2]]
+        sx3 = tx_v[tgt_perm[3]]
+        sy3 = ty_v[tgt_perm[3]]
 
+        # Edges + cyclic cross products.
         ex0 = sx1 - sx0
         ey0 = sy1 - sy0
         ex1 = sx2 - sx1
@@ -549,23 +531,23 @@ def _fused_sampler_kernel(
         best_cost = cost
         best_c = c
 
-    # ----- 5. Emit outputs from best_c -----
+    # ----- 6. Emit outputs from best_c -----
     if best_c < 0:
-        no_convex_out[k] = 1
-        n_found_out[k] = 0
-        is_contact_out[k, 0] = 0
-        is_contact_out[k, 1] = 0
-        is_contact_out[k, 2] = 0
-        is_contact_out[k, 3] = 0
+        no_convex_out[k] = wp.uint8(1)
+        n_found_out[k] = wp.uint8(0)
+        is_contact_out[k, 0] = wp.uint8(0)
+        is_contact_out[k, 1] = wp.uint8(0)
+        is_contact_out[k, 2] = wp.uint8(0)
+        is_contact_out[k, 3] = wp.uint8(0)
         contact_ik_out[k, 0] = wp.vec3(0.0, 0.0, 0.0)
         contact_ik_out[k, 1] = wp.vec3(0.0, 0.0, 0.0)
         contact_ik_out[k, 2] = wp.vec3(0.0, 0.0, 0.0)
         contact_ik_out[k, 3] = wp.vec3(0.0, 0.0, 0.0)
         return
 
-    no_convex_out[k] = 0
+    no_convex_out[k] = wp.uint8(0)
 
-    # Per-foot air-floor: each foot's nearest patch z plus the offset.
+    # Per-foot air-floor: each foot's nearest patch z + ground offset.
     af0 = patch_pts[top0.idx[0]][2] + foot_ground_offset
     af1 = patch_pts[top1.idx[0]][2] + foot_ground_offset
     af2 = patch_pts[top2.idx[0]][2] + foot_ground_offset
@@ -575,58 +557,46 @@ def _fused_sampler_kernel(
 
     # Foot 0
     rb = combo[best_c, 0]
-    cib = top0.idx[rb]
-    cdb = top0.dist[rb]
-    if cdb < effective_radius:
-        pp = patch_pts[cib]
+    if fr0.contact[rb] == 1:
+        pp = patch_pts[top0.idx[rb]]
         contact_ik_out[k, 0] = wp.vec3(pp[0], pp[1], pp[2] + foot_ground_offset)
-        is_contact_out[k, 0] = 1
+        is_contact_out[k, 0] = wp.uint8(1)
         n_count += 1
     else:
-        z = wp.max(wz0, af0)
-        contact_ik_out[k, 0] = wp.vec3(wx0, wy0, z)
-        is_contact_out[k, 0] = 0
+        contact_ik_out[k, 0] = wp.vec3(wx0, wy0, wp.max(wz0, af0))
+        is_contact_out[k, 0] = wp.uint8(0)
     # Foot 1
     rb = combo[best_c, 1]
-    cib = top1.idx[rb]
-    cdb = top1.dist[rb]
-    if cdb < effective_radius:
-        pp = patch_pts[cib]
+    if fr1.contact[rb] == 1:
+        pp = patch_pts[top1.idx[rb]]
         contact_ik_out[k, 1] = wp.vec3(pp[0], pp[1], pp[2] + foot_ground_offset)
-        is_contact_out[k, 1] = 1
+        is_contact_out[k, 1] = wp.uint8(1)
         n_count += 1
     else:
-        z = wp.max(wz1, af1)
-        contact_ik_out[k, 1] = wp.vec3(wx1, wy1, z)
-        is_contact_out[k, 1] = 0
+        contact_ik_out[k, 1] = wp.vec3(wx1, wy1, wp.max(wz1, af1))
+        is_contact_out[k, 1] = wp.uint8(0)
     # Foot 2
     rb = combo[best_c, 2]
-    cib = top2.idx[rb]
-    cdb = top2.dist[rb]
-    if cdb < effective_radius:
-        pp = patch_pts[cib]
+    if fr2.contact[rb] == 1:
+        pp = patch_pts[top2.idx[rb]]
         contact_ik_out[k, 2] = wp.vec3(pp[0], pp[1], pp[2] + foot_ground_offset)
-        is_contact_out[k, 2] = 1
+        is_contact_out[k, 2] = wp.uint8(1)
         n_count += 1
     else:
-        z = wp.max(wz2, af2)
-        contact_ik_out[k, 2] = wp.vec3(wx2, wy2, z)
-        is_contact_out[k, 2] = 0
+        contact_ik_out[k, 2] = wp.vec3(wx2, wy2, wp.max(wz2, af2))
+        is_contact_out[k, 2] = wp.uint8(0)
     # Foot 3
     rb = combo[best_c, 3]
-    cib = top3.idx[rb]
-    cdb = top3.dist[rb]
-    if cdb < effective_radius:
-        pp = patch_pts[cib]
+    if fr3.contact[rb] == 1:
+        pp = patch_pts[top3.idx[rb]]
         contact_ik_out[k, 3] = wp.vec3(pp[0], pp[1], pp[2] + foot_ground_offset)
-        is_contact_out[k, 3] = 1
+        is_contact_out[k, 3] = wp.uint8(1)
         n_count += 1
     else:
-        z = wp.max(wz3, af3)
-        contact_ik_out[k, 3] = wp.vec3(wx3, wy3, z)
-        is_contact_out[k, 3] = 0
+        contact_ik_out[k, 3] = wp.vec3(wx3, wy3, wp.max(wz3, af3))
+        is_contact_out[k, 3] = wp.uint8(0)
 
-    n_found_out[k] = n_count
+    n_found_out[k] = wp.uint8(n_count)
 
 
 # --------------------------------------------------------------- launcher
@@ -638,23 +608,21 @@ def run_fused_sampler(
     K: int,
     patch_pts: torch.Tensor,  # [N, 3] float -- real xyz
     fk_shape_samples: torch.Tensor,  # [n_tpl, NC, 3] float
-    nominal_angles: torch.Tensor,  # [NC] float -- per-foot rotation about z
+    nominal_angles: torch.Tensor,  # [NC] float
     radius: float,
     query_radius: float,
     outward_pen: float,
     force_all_snap: bool,
     foot_ground_offset: float,
+    block_dim: int = 128,
 ) -> dict[str, torch.Tensor]:
     """Single-launch end-to-end sampler.
 
-    Allocates the K-sized output tensors, builds the morph-patch hashgrid,
-    and runs the fused kernel once over ``K`` candidate slots. Returns a
-    dict with all the K-sized outputs the contact_sampling caller needs.
+    Allocates the K-sized output tensors (smallest dtype that fits each
+    value), builds the morph-patch hashgrid, and runs the fused kernel
+    once over ``K`` candidate slots. Returns a dict of K-sized outputs.
 
-    Restrictions:
-        - ``nc=4`` only (quadruped). Other foot counts raise.
-        - ``patch_pts`` must be on CUDA -- the hashgrid and kernel are
-          GPU-only.
+    Restrictions: ``nc=4`` (quadruped); CUDA tensors required.
     """
     nc = int(fk_shape_samples.shape[1])
     if nc != 4:
@@ -667,45 +635,53 @@ def run_fused_sampler(
     if not patch_pts.is_cuda:
         raise ValueError("Fused sampler requires CUDA tensors.")
 
-    # ---- Build the patch hashgrid (z=0 projection so radius is xy-only). ----
+    # Patch hashgrid (z=0 projection so radius is xy-only).
     patch_xy = patch_pts[:, :2].contiguous()
     patch_grid = build_spatial_grid_xy(patch_xy, radius=query_radius)
 
-    # ---- Build permutation table (24 combos at nc=4). ----
+    # 24 permutations at nc=4 (the all-distinct subset; non-distinct
+    # combos all get rejected by the kernel's distinctness check).
     import itertools
 
     combo = torch.tensor(list(itertools.permutations(range(nc))), device=device, dtype=torch.int32)
 
-    # ---- Per-foot nominal-angle constants packed into wp.vec4. ----
+    # Per-foot nominal-angle constants packed into wp.vec4.
     cos_n_t = torch.cos(nominal_angles).to(torch.float32).cpu().tolist()
     sin_n_t = torch.sin(nominal_angles).to(torch.float32).cpu().tolist()
     cos_n_v = wp.vec4(cos_n_t[0], cos_n_t[1], cos_n_t[2], cos_n_t[3])
     sin_n_v = wp.vec4(sin_n_t[0], sin_n_t[1], sin_n_t[2], sin_n_t[3])
 
-    # ---- Output tensors (the only K-sized memory we need). ----
+    # K-sized outputs in their tightest dtypes:
+    # * yaws: float32 (precision matters for the IK seed).
+    # * tpl_idx: int32 (n_tpl easily fits in int32; rsl_rl downstream
+    #   wants int64 so we convert at the end).
+    # * is_contact / n_found / no_convex: uint8 -- bool / [0..4] /
+    #   bool respectively. Saves ~1 GiB at K=60M vs the int32 we
+    #   used to allocate.
     yaws = torch.empty((K,), dtype=torch.float32, device=device)
     tpl_idx = torch.empty((K,), dtype=torch.int32, device=device)
-    is_contact = torch.empty((K, nc), dtype=torch.int32, device=device)
+    is_contact = torch.empty((K, nc), dtype=torch.uint8, device=device)
     contact_ik = torch.empty((K, nc, 3), dtype=torch.float32, device=device)
-    n_found = torch.empty((K,), dtype=torch.int32, device=device)
-    no_convex = torch.empty((K,), dtype=torch.int32, device=device)
+    n_found = torch.empty((K,), dtype=torch.uint8, device=device)
+    no_convex = torch.empty((K,), dtype=torch.uint8, device=device)
 
     wp.launch(
         _fused_sampler_kernel,
         dim=K,
+        block_dim=int(block_dim),
         inputs=[
             int(seed),
             int(K),
             int(patch_pts.shape[0]),
             int(fk_shape_samples.shape[0]),
             float(radius),
-            float(query_radius if force_all_snap else radius),  # effective_radius
+            float(query_radius if force_all_snap else radius),
             float(query_radius),
             float(outward_pen),
             int(1 if force_all_snap else 0),
             float(foot_ground_offset),
             wp.from_torch(patch_pts.contiguous(), dtype=wp.vec3),
-            patch_grid._pts_wp,  # the z=0 grid points (shared with grid build)
+            patch_grid._pts_wp,  # the z=0 grid points (shared with the grid)
             patch_grid.grid.id,
             wp.from_torch(fk_shape_samples.contiguous(), dtype=wp.vec3),
             cos_n_v,
@@ -715,14 +691,16 @@ def run_fused_sampler(
         outputs=[
             wp.from_torch(yaws, dtype=wp.float32),
             wp.from_torch(tpl_idx, dtype=wp.int32),
-            wp.from_torch(is_contact, dtype=wp.int32),
+            wp.from_torch(is_contact, dtype=wp.uint8),
             wp.from_torch(contact_ik, dtype=wp.vec3),
-            wp.from_torch(n_found, dtype=wp.int32),
-            wp.from_torch(no_convex, dtype=wp.int32),
+            wp.from_torch(n_found, dtype=wp.uint8),
+            wp.from_torch(no_convex, dtype=wp.uint8),
         ],
         device=str(device),
     )
 
+    # Tighter dtypes inside the kernel; expand back to what the caller
+    # expects (rsl_rl downstream uses int64 / bool tensors).
     return {
         "yaws": yaws,
         "tpl_idx": tpl_idx.to(torch.int64),
