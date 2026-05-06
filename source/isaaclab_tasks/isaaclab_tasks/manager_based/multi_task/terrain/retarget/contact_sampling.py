@@ -42,6 +42,7 @@ from .buffer import RetargetBuffer
 from .canonical_shape import canonicalize_shape
 from .cfg import PatchSamplingCfg, SamplerCfg, SamplerSizingCfg
 from .sampler_base import SamplerBase, SamplerOutput, SamplerSizing, compute_sampler_sizing
+from .lsa_kernel import run_lsa
 from .spatial_topk import build_spatial_grid_xy, spatial_topk_xy_with_grid
 
 
@@ -491,30 +492,16 @@ class Sampler(SamplerBase):
             # Enumerate combinations once: ``combo[c, i]`` = rank
             # (0..nc-1) that foot ``i`` picks under combination ``c``.
             # We enumerate **permutations** (``nc!``) rather than the
-            # full ``nc^nc`` cartesian product. Justification: the
-            # downstream distinctness penalty rejects every combo where
-            # two feet pick the same rank (since
-            # ``topk[i, rank_a] == topk[i, rank_b]`` whenever the rank
-            # axis is duplicated -- both feet land on the same patch).
-            # That rejection erases ``nc^nc - nc!`` of the combos
-            # immediately, so generating them only to ``inf``-out their
-            # cost is pure waste. For ``nc=4`` this drops ``C`` from
-            # 256 to 24 -- a 10x cut to every per-row tensor in the
-            # LSA loop, which is what dominates the chunk budget at
-            # dense pool settings.
-            #
-            # Edge case: when topk has sentinel slots (a foot has fewer
-            # than ``nc`` patches in radius), multiple ranks clamp to
-            # patch 0 and produce duplicate patch ids even within a
-            # permutation -- the distinctness penalty still catches
-            # those, so we keep it below.
+            # full ``nc^nc`` cartesian product because the kernel's
+            # distinctness check rejects every same-rank combo. For
+            # ``nc=4`` this is 24 combos, fed to the fused Warp kernel
+            # below.
             import itertools
 
             combo = torch.tensor(
                 list(itertools.permutations(range(nc))), device=device, dtype=torch.long
             )  # [nc!, nc]
             C = combo.shape[0]
-            neg_sentinel = -torch.arange(1, nc + 1, device=device).view(1, 1, nc)
 
             # Chunk K through the candidate-projection + spatial-topk +
             # LSA pipeline. The hot rows are ``[Kc, C, nc]`` float / long
@@ -542,38 +529,35 @@ class Sampler(SamplerBase):
             yaws = torch.empty((K,), dtype=torch.float32, device=device)
             tpl_idx = torch.empty((K,), dtype=torch.int64, device=device)
 
-            # Budget = ``0.7 × free GPU bytes`` AFTER the K-sized
+            # Budget = ``0.85 × free GPU bytes`` AFTER the K-sized
             # outputs are committed, with ``empty_cache`` first to
             # release any cached blocks the upstream allocator has
-            # been hoarding. Aggressive on purpose: a smaller budget
-            # blows up ``n_chunks`` and the per-chunk Python overhead
-            # dominates wallclock at dense pool settings. The
-            # ``empty_cache`` call inside the loop (below) keeps the
-            # caching allocator's reserved pool bounded so the 30%
-            # headroom is enough.
+            # been hoarding. With the fused Warp kernel the chunk
+            # loop's per-row footprint is tiny (just topk + projection
+            # tensors -- the ``[Kc, C, nc]`` family that used to
+            # dominate is gone), so we can be aggressive on the
+            # budget without OOMing.
             #
-            # ``per_row_bytes`` is the sum of all ``[Kc, C, nc]`` and
-            # ``[Kc, C, nc, 2]`` tensors that coexist at the hull-
-            # validity peak (line ~637 below). Walking the body:
-            # ``chosen_i`` (8 KiB long) + ``chosen_d`` (4 float) +
-            # ``contact_mask_c`` (1 bool) + ``patch_xy_gather`` (8 KiB
-            # ``[Kc,C,nc,2]`` float) + ``total_cost`` (1) +
-            # ``eff_idx`` (8) + ``sorted_eff.values`` (8) +
-            # ``sort.indices`` transient (8) + ``target_xy`` (8) +
-            # ``tgt_rel`` (8) + ``tgt_perm`` (8 long) +
-            # ``target_sorted`` (8) + ``edges`` (8) + ``next_edges``
-            # (8) + ``cross`` + subtraction intermediate (4 + 4) +
-            # ``patch_r`` (4) + ``outward`` (4) + ``contact_cost`` (4)
-            # + ``cost_per_foot`` (4) ≈ **120 KiB/Kc** at nc=4. Round
-            # to ``40 × C × nc × 4 = 160 KiB`` (~1.3x safety margin
-            # for short-lived intermediates the allocator may briefly
-            # hold past Python's view of scope).
+            # ``per_row_bytes`` walks every per-K tensor that coexists
+            # during a chunk:
+            # * ``proj_chunk`` ``[Kc, nc, 3] float``                = 48 B/Kc
+            # * ``proj_xy_chunk_flat`` ``[Kc * nc, 2] float``       = 32 B/Kc
+            # * ``topk_i_chunk_flat`` ``[Kc * nc, nc] int32``       = 64 B/Kc
+            # * ``topk_d_chunk_flat`` ``[Kc * nc, nc] float``       = 64 B/Kc
+            # * candidate-gen scratches (mid_x/y, world_x/y/z, etc.) ~80 B/Kc
+            # * kernel outputs (is_contact_c, contact_ik_c, n_found,
+            #   no_convex)                                          ~60 B/Kc
+            # Total ≈ 350 B/Kc but empirically PyTorch's caching
+            # allocator reserves ~6x that across the chunk loop on
+            # account of alignment + cache-pool growth. Round up to
+            # 4 KiB so the post-loop FPS step (which allocates ~1 GiB
+            # of transient sort scratch) has headroom.
             torch_device = torch.device(device) if isinstance(device, str) else device
-            per_row_bytes = 40 * C * nc * 4 + nc * nc * 8  # LSA + topk: ~160 KiB at nc=4
+            per_row_bytes = 4096  # cache-fragmentation-aware margin over the ~350 B real peak
             if torch_device.type == "cuda":
                 torch.cuda.empty_cache()
                 free_bytes, _ = torch.cuda.mem_get_info(torch_device)
-                lsa_budget = max(256 * 1024 * 1024, int(0.70 * free_bytes))
+                lsa_budget = max(256 * 1024 * 1024, int(0.85 * free_bytes))
             else:
                 lsa_budget = 1 * 1024 * 1024 * 1024
             chunk_K = max(1, min(K, lsa_budget // max(1, per_row_bytes)))
@@ -619,123 +603,64 @@ class Sampler(SamplerBase):
                 topk_i_chunk_flat, topk_d_chunk_flat = spatial_topk_xy_with_grid(
                     patch_grid, proj_xy_chunk_flat, k=nc, radius=query_radius
                 )
-                topk_i = topk_i_chunk_flat.view(Kc, nc, nc).to(torch.long).clamp(min=0)
-                topk_d = topk_d_chunk_flat.view(Kc, nc, nc)
+                # Empty topk slots come back as ``-1`` (with ``dist=+inf``);
+                # clamp to ``0`` so the kernel can index ``patch_*`` blindly.
+                # ``dist`` stays ``+inf`` so the contact mask correctly
+                # rejects those slots.
+                topk_i_chunk_flat = topk_i_chunk_flat.clamp_(min=0)
 
-                # Expand into combo space.
-                gather_rank = combo.view(1, C, nc, 1).expand(Kc, C, nc, 1)
-                chosen_i = torch.gather(topk_i.unsqueeze(1).expand(-1, C, -1, -1), 3, gather_rank).squeeze(-1)
-                chosen_d = torch.gather(topk_d.unsqueeze(1).expand(-1, C, -1, -1), 3, gather_rank).squeeze(-1)
-
-                # Contact mask: forced True under ``force_all_snap``.
-                contact_mask_c = chosen_d < effective_radius  # [Kc, C, nc]
-
-                # Outward-snap-aware contact cost.
-                tpl_centroid_xy = proj_xy.mean(dim=1, keepdim=True)  # [Kc, 1, 2]
-                tpl_r = (proj_xy - tpl_centroid_xy).norm(dim=-1)  # [Kc, nc]
-                patch_xy_gather = patch_xy[chosen_i.view(-1)].view(Kc, C, nc, 2)
-                patch_r = (patch_xy_gather - tpl_centroid_xy.unsqueeze(1)).norm(dim=-1)
-                outward = (patch_r - tpl_r.unsqueeze(1)).clamp(min=0)
-                contact_cost = chosen_d + outward_pen * outward
-                cost_per_foot = torch.where(contact_mask_c, contact_cost, torch.full_like(chosen_d, radius))
-                total_cost = cost_per_foot.sum(dim=-1)  # [Kc, C]
-
-                if not force_all_snap:
-                    foot_has_contact_option = topk_d[:, :, 0] < radius  # [Kc, nc]
-                    combo_violates_must_contact = (foot_has_contact_option.unsqueeze(1) & ~contact_mask_c).any(dim=-1)
-                    total_cost = torch.where(
-                        combo_violates_must_contact, torch.full_like(total_cost, float("inf")), total_cost
-                    )
-
-                # Distinctness penalty (contact feet must pick distinct patches).
-                eff_idx = torch.where(contact_mask_c, chosen_i, neg_sentinel)
-                sorted_eff = eff_idx.sort(dim=-1).values
-                has_dup = (sorted_eff[..., 1:] == sorted_eff[..., :-1]).any(dim=-1)
-                total_cost = torch.where(has_dup, torch.full_like(total_cost, float("inf")), total_cost)
-
-                # Winding preservation.
-                tpl_rel = proj_xy - tpl_centroid_xy
-                tpl_perm = torch.atan2(tpl_rel[..., 1], tpl_rel[..., 0]).argsort(dim=-1)  # [Kc, nc]
-
-                proj_xy_exp = proj_xy.unsqueeze(1).expand(-1, C, -1, -1)
-                target_xy = torch.where(contact_mask_c.unsqueeze(-1), patch_xy_gather, proj_xy_exp)
-                tgt_rel = target_xy - target_xy.mean(dim=2, keepdim=True)
-                tgt_perm = torch.atan2(tgt_rel[..., 1], tgt_rel[..., 0]).argsort(dim=-1)
-                perm_match = (tgt_perm == tpl_perm.unsqueeze(1)).all(dim=-1)
-
-                # Hull validity (strictly convex in CCW order).
-                target_sorted = torch.gather(target_xy, 2, tgt_perm.unsqueeze(-1).expand(-1, -1, -1, 2))
-                edges = target_sorted.roll(-1, dims=2) - target_sorted
-                next_edges = edges.roll(-1, dims=2)
-                cross = edges[..., 0] * next_edges[..., 1] - edges[..., 1] * next_edges[..., 0]
-                convex_sorted = (cross > 0).all(dim=-1) | (cross < 0).all(dim=-1)
-                convex_valid = perm_match & convex_sorted
-                total_cost = torch.where(convex_valid, total_cost, torch.full_like(total_cost, float("inf")))
-
-                # Pick best combo; emit per-K outputs.
-                best_c = total_cost.argmin(dim=-1)  # [Kc]
-                row_idx = torch.arange(Kc, device=device)
-                # ``no_convex`` is written into the preallocated full
-                # tensor below, alongside ``is_contact_full`` etc.
-                nearest_idx_c = chosen_i[row_idx, best_c]  # [Kc, nc]
-                nearest_dist_c = chosen_d[row_idx, best_c]
-                # is_contact mirrors the LSA's effective radius: under
-                # force_all_snap a foot is contact iff the hash grid found
-                # any patch within the (generous) query radius; otherwise
-                # the foot is genuinely out of reach and the candidate
-                # falls through ``out_of_reach`` below.
-                is_contact_c = nearest_dist_c < effective_radius
-                patch_gather = patch_pts[nearest_idx_c.view(-1)].view(Kc, nc, 3)
-                patch_gather[..., 2] = patch_gather[..., 2] + self.foot_ground_offset
-
-                # Air-foot z clamp above local terrain.
-                local_terrain_z = patch_pts[topk_i[:, :, 0].reshape(-1), 2].view(Kc, nc)
-                air_floor_z = local_terrain_z + self.foot_ground_offset
-                proj_clamped = proj_chunk.clone()
-                proj_clamped[..., 2] = torch.maximum(proj_chunk[..., 2], air_floor_z)
-                contact_ik_c = torch.where(is_contact_c.unsqueeze(-1), patch_gather, proj_clamped)
+                # Fused LSA: per-K combo enumeration + cost + distinctness +
+                # force-must-contact + winding + convex hull, all in one
+                # kernel. Memory drops from ``O(Kc × C × nc)`` to
+                # ``O(Kc × nc)`` since we never materialise the per-combo
+                # ``[Kc, C, nc, ...]`` tensors that dominated the chunk
+                # budget at dense pool settings.
+                topk_i_3d = topk_i_chunk_flat.view(Kc, nc, nc)
+                topk_d_3d = topk_d_chunk_flat.view(Kc, nc, nc)
+                is_contact_c, contact_ik_c, n_found_c, no_convex_c = run_lsa(
+                    topk_i=topk_i_3d,
+                    topk_d=topk_d_3d,
+                    proj_pos=proj_chunk,
+                    patch_xy=patch_xy,
+                    patch_pts=patch_pts,
+                    combo=combo,
+                    radius=radius,
+                    effective_radius=effective_radius,
+                    outward_pen=outward_pen,
+                    force_all_snap=force_all_snap,
+                    foot_ground_offset=self.foot_ground_offset,
+                )
 
                 is_contact_full[k0:k1] = is_contact_c
                 contact_ik[k0:k1] = contact_ik_c
-                n_found[k0:k1] = is_contact_c.sum(dim=-1)
-                no_convex[k0:k1] = total_cost[row_idx, best_c].isinf()
+                n_found[k0:k1] = n_found_c
+                no_convex[k0:k1] = no_convex_c
                 yaws[k0:k1] = yaws_c
                 tpl_idx[k0:k1] = tpl_idx_c
 
-                # Periodically return freed blocks to the system pool so
-                # the allocator's reserved-but-unallocated cache doesn't
-                # grow unboundedly across long chunk loops. Every 100
-                # chunks costs ~few ms each (CUDA sync) but caps the
-                # cache footprint at roughly one-chunk-worth of blocks
-                # rather than peak-across-history -- the difference was
-                # the load-bearing OOM cause at K=60M (cluster
-                # ``isaac-lab-6465`` reported 2.5 GiB
-                # reserved-but-fragmented at OOM time).
-                if torch_device.type == "cuda" and ((k0 // chunk_K) + 1) % 100 == 0:
+                # ``empty_cache`` every chunk so the Warp allocator (which
+                # runs the LSA + spatial-topk kernels) sees memory that
+                # PyTorch has freed. Warp and PyTorch don't share their
+                # caching pools -- PyTorch's freed-but-cached blocks look
+                # "used" to the CUDA driver, squeezing out Warp's small
+                # per-launch allocations even when nominally there's
+                # plenty of memory free. Costs ~few ms (CUDA sync) per
+                # chunk, but the chunk loop itself dominates wallclock so
+                # it's noise.
+                if torch_device.type == "cuda":
                     torch.cuda.empty_cache()
 
             # Release the last iteration's chunk-local tensors so the
-            # post-loop FPS + prepare_ik stages aren't pinned by
-            # ``last_chunk_K × ~78 KiB`` (~10 GiB at K=60M cluster
-            # density). Without this, Python keeps every loop-local
-            # name bound to its final value until ``__call__`` returns,
-            # holding the blocks even though no code below references
-            # them. ``empty_cache`` then returns the freed pool to
-            # ``mem_get_info`` so any downstream auto-derivation sees
-            # the headroom.
+            # post-loop FPS + prepare_ik stages aren't pinned by the
+            # final chunk's leftovers. ``empty_cache`` then returns
+            # the freed pool to ``mem_get_info`` so any downstream
+            # auto-derivation sees the headroom.
             del centers_c, yaws_c, tpl_idx_c, tpl_canon_c
             del cx, cy_, cz, mid_x, mid_y, cos_y, sin_y
             del world_x, world_y, world_z, proj_chunk, proj_xy
             del proj_xy_chunk_flat, topk_i_chunk_flat, topk_d_chunk_flat
-            del topk_i, topk_d, gather_rank, chosen_i, chosen_d
-            del contact_mask_c, tpl_centroid_xy, tpl_r
-            del patch_xy_gather, patch_r, outward, contact_cost
-            del cost_per_foot, total_cost, eff_idx, sorted_eff, has_dup
-            del tpl_rel, tpl_perm, proj_xy_exp, target_xy, tgt_rel
-            del tgt_perm, perm_match, target_sorted, edges, next_edges
-            del cross, convex_sorted, convex_valid
-            del best_c, row_idx, nearest_idx_c, nearest_dist_c, is_contact_c
-            del patch_gather, local_terrain_z, air_floor_z, proj_clamped, contact_ik_c
+            del topk_i_3d, topk_d_3d
+            del is_contact_c, contact_ik_c, n_found_c, no_convex_c
             if torch_device.type == "cuda":
                 torch.cuda.empty_cache()
 
@@ -748,7 +673,15 @@ class Sampler(SamplerBase):
 
         with self._time("sampler_fps"):
             if n_all_valid > n_valid:
-                centroid_xyz = contact_ik[all_valid_idx].mean(dim=-2)
+                # Compute the centroid mean over full ``contact_ik`` first
+                # then index, instead of ``contact_ik[idx].mean(...)``. The
+                # latter allocates a transient ``[n_valid, nc, 3]`` (~1.4 GiB
+                # at K=60M with 50% valid) before reducing to ``[n_valid, 3]``;
+                # the former allocates only ``[K, 3]`` once (~720 MiB at
+                # K=60M) and indexes that to a smaller ``[n_valid, 3]``.
+                centroid_xyz_full = contact_ik.mean(dim=-2)
+                centroid_xyz = centroid_xyz_full[all_valid_idx]
+                del centroid_xyz_full
                 local_idx = grid_bucket_downsample(centroid_xyz, n_valid)
                 valid_idx = all_valid_idx[local_idx]
             else:
