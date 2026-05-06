@@ -52,6 +52,7 @@ class TrajectoryRecorder:
         max_envs: int = 16,
         fps: int = 30,
         trail_steps: int = 30,
+        wandb_tag: str = "Curriculum/trajectory_video",
     ) -> None:
         self.video_folder = Path(video_folder)
         self.video_folder.mkdir(parents=True, exist_ok=True)
@@ -60,6 +61,13 @@ class TrajectoryRecorder:
         self.max_envs = int(max_envs)
         self.fps = int(fps)
         self.trail_steps = int(trail_steps)
+        # Tag used for the W&B upload. We log under a *unique* key (rather
+        # than relying on rsl_rl's ``*.mp4`` glob, which uploads every mp4
+        # under the hardcoded ``"video"`` key and lets the standard 3D
+        # RecordVideo overwrite us). Mirrors how ``_log_spawn_scatter``
+        # writes to ``env.extras["log_images"]["Curriculum/spawn_scatter"]``
+        # so the panel coexists with the other Curriculum/* dashboards.
+        self.wandb_tag = wandb_tag
 
         self._step_count = 0
         self._recording = False
@@ -112,11 +120,40 @@ class TrajectoryRecorder:
         out_path = self.video_folder / f"trajectory_step_{self._step_count:08d}.mp4"
         try:
             self._render_video(out_path)
+            self._upload_to_wandb(out_path)
         except Exception as exc:  # noqa: BLE001
             print(f"[TrajectoryRecorder] Failed to render {out_path}: {exc}")
         self._frames = []
         self._recording = False
         self._env_subset = None
+
+    def _upload_to_wandb(self, mp4_path: Path) -> None:
+        """Log the rendered mp4 to W&B under :attr:`wandb_tag` if wandb is active.
+
+        Direct ``wandb.log`` (rather than relying on rsl_rl's ``*.mp4`` glob,
+        which uses a hardcoded ``"video"`` key and would overwrite alongside
+        the standard 3D ``RecordVideo`` mp4s). No-op when wandb isn't
+        installed or when no ``wandb.init`` has been called yet.
+
+        After the upload, the file is renamed from ``.mp4`` to
+        ``.mp4.archived`` so rsl_rl's ``rglob("*.mp4")`` (logger.py:290)
+        won't re-upload it under the hardcoded ``"video"`` key on every
+        subsequent iteration -- otherwise the standard 3D-video panel
+        gets polluted with our trajectory videos and the upload bandwidth
+        compounds with iteration count.
+        """
+        try:
+            import wandb
+        except ImportError:
+            return
+        if wandb.run is None:
+            return
+        wandb.log({self.wandb_tag: wandb.Video(str(mp4_path), format="mp4")}, step=self._step_count)
+        # Rename so rsl_rl's mp4 glob can't find it again.
+        try:
+            mp4_path.rename(mp4_path.with_suffix(".mp4.archived"))
+        except OSError as exc:
+            print(f"[TrajectoryRecorder] Failed to archive {mp4_path}: {exc}")
 
     def _render_video(self, out_path: Path) -> None:
         import matplotlib
