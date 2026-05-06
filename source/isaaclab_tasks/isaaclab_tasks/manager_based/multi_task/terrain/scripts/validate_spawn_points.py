@@ -390,6 +390,10 @@ def main():
     t_total = time.time() - t0
 
     print(pipeline.rejection_summary)
+    chunk_profile = pipeline.chunk_profile_summary
+    if chunk_profile:
+        print()
+        print(chunk_profile)
     print(f"  Wall time: {t_total:.2f}s")
 
     if buf.num_selected == 0:

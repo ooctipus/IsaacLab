@@ -197,6 +197,15 @@ class RetargetPipeline:
         Opaque, sampler-specific. Consumed by offline metrics tools; not
         part of the public pipeline API.
         """
+        self._chunk_profile: list[dict] = []
+        """Per-chunk timing + memory snapshots from the last :meth:`run`
+        call's IK loop. Populated only when CUDA is available; surfaced
+        via :attr:`chunk_profile_summary` for orchestration analysis.
+        """
+        self._chunk_profile_meta: dict[str, object] = {}
+        """Run-level context (N, chunk_size, max_iters) that pairs with
+        :attr:`_chunk_profile` for summary rendering.
+        """
 
     def _ensure_buffer(self, n_desired: int) -> None:
         """Allocate (or grow) the retarget buffer for a given ``n_desired``.
@@ -229,6 +238,26 @@ class RetargetPipeline:
             if self.kin.device.startswith("cuda"):
                 torch.cuda.synchronize()
             self._timings[name] = self._timings.get(name, 0.0) + (time.perf_counter() - t0)
+
+    def _snapshot_memory(self) -> dict[str, float]:
+        """Snapshot CUDA + torch memory state in MiB.
+
+        ``cuda_free`` reflects the driver-level free pool, which counts
+        Warp's allocations + any other process on the device -- so the
+        delta across chunks captures Warp pool churn that ``torch_alloc``
+        misses entirely.
+        """
+        if not self.kin.device.startswith("cuda"):
+            return {}
+        mib = 1024.0 * 1024.0
+        free_b, total_b = torch.cuda.mem_get_info()
+        return {
+            "torch_alloc_mib": torch.cuda.memory_allocated() / mib,
+            "torch_reserved_mib": torch.cuda.memory_reserved() / mib,
+            "torch_peak_alloc_mib": torch.cuda.max_memory_allocated() / mib,
+            "cuda_free_mib": free_b / mib,
+            "cuda_total_mib": total_b / mib,
+        }
 
     def _build_objectives(
         self,
@@ -313,6 +342,8 @@ class RetargetPipeline:
         self._n_ik_problems = 0
         self._n_desired = n_desired
         self._sizing = self.sampler.sizing(n_desired)
+        self._chunk_profile = []
+        self._chunk_profile_meta = {}
         if self.kin.device.startswith("cuda"):
             torch.cuda.synchronize()
         _run_t0 = time.perf_counter()
@@ -371,19 +402,53 @@ class RetargetPipeline:
             iters_used = 0
             all_costs_t = torch.empty(N, device=self.buffer.device, dtype=torch.float32)
 
+            is_cuda = self.kin.device.startswith("cuda")
+            self._chunk_profile_meta = {
+                "N": N,
+                "chunk_size": chunk_size,
+                "n_chunks": n_chunks,
+                "max_iters": max_iters,
+                "batch_size": batch_size,
+                "threshold": threshold,
+            }
+
+            def _sync_now() -> None:
+                if is_cuda:
+                    torch.cuda.synchronize()
+
             for chunk_idx in range(n_chunks):
                 start = chunk_idx * chunk_size
                 end = min(start + chunk_size, N)
                 c_size = end - start
 
+                if is_cuda:
+                    torch.cuda.reset_peak_memory_stats()
+                _sync_now()
+                profile: dict = {
+                    "chunk_idx": chunk_idx,
+                    "c_size": c_size,
+                    "rebuild": False,
+                    "rebuild_ms": 0.0,
+                    "iter_solve_ms": [],
+                    "iter_cost_rb_ms": [],
+                    "iter_costs": [],
+                }
+                profile["mem_before"] = self._snapshot_memory()
+                chunk_t0 = time.perf_counter()
+
                 # Tail chunk smaller than the solver's pre-built batch:
                 # rebuild objectives + solver at ``c_size`` (one-time JIT
                 # cost; warp's kernel cache amortizes the same shapes).
                 if c_size < chunk_size:
+                    rebuild_t0 = time.perf_counter()
                     del solver
                     all_objs, contact_objs, base_pos_obj, base_rot_obj = self._build_objectives(c_size, wp_mesh)
                     solver = self.kin.create_ik_solver(all_objs, c_size, jacobian_mode=jac_mode)
+                    _sync_now()
+                    profile["rebuild"] = True
+                    profile["rebuild_ms"] = (time.perf_counter() - rebuild_t0) * 1000.0
 
+                scatter_t0 = time.perf_counter()
                 if contact_objs:
                     self.buffer.scatter_contact_targets(contact_objs, c_size, src_offset=start)
                 wp.copy(
@@ -398,25 +463,40 @@ class RetargetPipeline:
                     src_offset=start,
                     count=c_size,
                 )
-
                 jq_in = wp.from_torch(self.buffer.joint_q_init_t[start:end].contiguous())
                 jq_out = wp.from_torch(self.buffer.joint_q_result_t[start:end].contiguous())
+                _sync_now()
+                profile["scatter_ms"] = (time.perf_counter() - scatter_t0) * 1000.0
 
                 prev_cost = float("inf")
                 chunk_iters = 0
                 for _ in range(0, max_iters, batch_size):
                     iters = min(batch_size, max_iters - chunk_iters)
+                    solve_t0 = time.perf_counter()
                     solver.step(jq_in, jq_out, iterations=iters)
+                    _sync_now()
+                    profile["iter_solve_ms"].append((time.perf_counter() - solve_t0) * 1000.0)
                     chunk_iters += iters
+                    rb_t0 = time.perf_counter()
                     cur_cost = float(wp.to_torch(solver.costs)[:c_size].mean())
+                    profile["iter_cost_rb_ms"].append((time.perf_counter() - rb_t0) * 1000.0)
+                    profile["iter_costs"].append(cur_cost)
                     if abs(prev_cost - cur_cost) < threshold:
                         break
                     prev_cost = cur_cost
                     jq_in = jq_out
 
+                wb_t0 = time.perf_counter()
                 iters_used = max(iters_used, chunk_iters)
                 self.buffer.joint_q_result_t[start:end] = wp.to_torch(jq_out)
                 all_costs_t[start:end] = wp.to_torch(solver.costs)[:c_size]
+                _sync_now()
+                profile["writeback_ms"] = (time.perf_counter() - wb_t0) * 1000.0
+
+                profile["iters_used"] = chunk_iters
+                profile["wall_ms"] = (time.perf_counter() - chunk_t0) * 1000.0
+                profile["mem_after"] = self._snapshot_memory()
+                self._chunk_profile.append(profile)
 
             self._solver_costs = all_costs_t
             total_iters = iters_used
@@ -751,4 +831,113 @@ class RetargetPipeline:
             )
             lines.extend(_render_table(["Phase", "Time", "%"], ["l", "r", "r"], [timing_rows]))
 
+        return "\n".join(lines)
+
+    @property
+    def chunk_profile_summary(self) -> str:
+        """Per-chunk timing + memory breakdown of the last :meth:`run` call's
+        IK solve loop. Empty string when the loop hasn't run or CUDA was
+        unavailable. Designed for studying chunk-size headroom and tail-chunk
+        rebuild cost, not for routine logging.
+        """
+        if not self._chunk_profile:
+            return ""
+
+        meta = self._chunk_profile_meta
+        N = int(meta.get("N", 0))
+        chunk_size = int(meta.get("chunk_size", 0))
+        n_chunks = int(meta.get("n_chunks", 0))
+        max_iters = int(meta.get("max_iters", 0))
+        batch_size = int(meta.get("batch_size", 0))
+
+        def fmt_ms(x: float | None) -> str:
+            return "—" if x is None or x <= 0.0 else f"{x:.1f}"
+
+        def fmt_mib(x: float | None) -> str:
+            return "—" if x is None else f"{x:,.0f}"
+
+        def fmt_conv(costs: list[float]) -> str:
+            if not costs:
+                return "—"
+            if len(costs) == 1:
+                return f"{costs[0]:.2e}"
+            return f"{costs[0]:.2e}→{costs[-1]:.2e}"
+
+        headers = [
+            "chunk",
+            "c_size",
+            "wall ms",
+            "build ms",
+            "setup ms",
+            "solve ms",
+            "rb+wb ms",
+            "iters",
+            "conv (mean cost)",
+            "cuda free MiB (before→after)",
+            "peak alloc MiB",
+        ]
+        rows: list[list[str]] = []
+        for p in self._chunk_profile:
+            iters_used = int(p.get("iters_used", 0))
+            solve_total = sum(p.get("iter_solve_ms", []))
+            rb_total = sum(p.get("iter_cost_rb_ms", [])) + float(p.get("writeback_ms", 0.0))
+            mem_b = p.get("mem_before") or {}
+            mem_a = p.get("mem_after") or {}
+            free_before = mem_b.get("cuda_free_mib")
+            free_after = mem_a.get("cuda_free_mib")
+            free_str = f"{fmt_mib(free_before)} → {fmt_mib(free_after)}"
+            peak = mem_a.get("torch_peak_alloc_mib")
+            rows.append(
+                [
+                    str(p["chunk_idx"]),
+                    f"{p['c_size']:,}",
+                    fmt_ms(p.get("wall_ms")),
+                    fmt_ms(p.get("rebuild_ms")) if p.get("rebuild") else "—",
+                    fmt_ms(p.get("scatter_ms")),
+                    fmt_ms(solve_total),
+                    fmt_ms(rb_total),
+                    f"{iters_used}/{max_iters}",
+                    fmt_conv(p.get("iter_costs", [])),
+                    free_str,
+                    fmt_mib(peak),
+                ]
+            )
+
+        widths = [max(len(headers[i]), max(len(r[i]) for r in rows)) for i in range(len(headers))]
+
+        def border(L: str, M: str, R: str) -> str:
+            return L + M.join("─" * (w + 2) for w in widths) + R
+
+        def fmt_row(cells: list[str]) -> str:
+            parts = []
+            for i, c in enumerate(cells):
+                # Right-align everything except the first two columns.
+                align_right = i >= 2
+                cell = c.rjust(widths[i]) if align_right else c.ljust(widths[i])
+                parts.append(" " + cell + " ")
+            return "│" + "│".join(parts) + "│"
+
+        lines = [
+            f"Chunk profile  (N={N:,} IK problems, {n_chunks} chunks @ chunk_size={chunk_size:,};"
+            f" max_iters={max_iters}, LM batch={batch_size})",
+            border("┌", "┬", "┐"),
+            fmt_row(headers),
+            border("├", "┼", "┤"),
+        ]
+        for row in rows:
+            lines.append(fmt_row(row))
+        lines.append(border("└", "┴", "┘"))
+
+        # Headroom hint: minimum cuda_free across chunks vs the budget that
+        # ``_compute_ik_chunk_size`` saw at sniff time. If min_free is much
+        # higher than the 20% safety margin, chunk_size was undersized.
+        free_after_vals = [(p.get("mem_after") or {}).get("cuda_free_mib") for p in self._chunk_profile]
+        free_after_vals = [v for v in free_after_vals if v is not None]
+        if free_after_vals:
+            min_free = min(free_after_vals)
+            max_free = max(free_after_vals)
+            lines.append(
+                f"  cuda_free over chunks: min={min_free:,.0f} MiB, max={max_free:,.0f} MiB"
+                f"  (delta {max_free - min_free:,.0f} MiB)"
+            )
         return "\n".join(lines)
