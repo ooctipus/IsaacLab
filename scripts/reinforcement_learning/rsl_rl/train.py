@@ -75,6 +75,23 @@ parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
 parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
 parser.add_argument("--video_interval", type=int, default=2000, help="Interval between video recordings (in steps).")
+parser.add_argument(
+    "--trajectory_video",
+    action="store_true",
+    default=False,
+    help=(
+        "Record a 2D top-down trajectory video alongside the standard 3D video. Captures robot xy +"
+        " target xy + instant_success per step over a small subset of envs and renders an mp4 with"
+        " green/red dots so 'standing at goal waiting for hold' and 'standing still doing nothing'"
+        " are visually distinct. Uses ``--video_length`` and ``--video_interval`` for the schedule."
+    ),
+)
+parser.add_argument(
+    "--trajectory_video_envs",
+    type=int,
+    default=16,
+    help="Number of envs to render in each trajectory video panel grid.",
+)
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument(
@@ -219,6 +236,22 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             print("[INFO] Recording videos during training.")
             print_dict(video_kwargs, nesting=4)
             env = gym.wrappers.RecordVideo(env, **video_kwargs)
+
+        # 2D top-down trajectory video (terrain task only -- reads the
+        # ``goal_point`` command term + ``robot.data.root_pos_w``). Schedule
+        # mirrors ``--video`` so the two views are temporally aligned in W&B.
+        if args_cli.trajectory_video:
+            from isaaclab_tasks.manager_based.multi_task.terrain.viz import TrajectoryVideoWrapper
+
+            traj_kwargs = {
+                "video_folder": os.path.join(log_dir, "videos", "trajectory"),
+                "step_trigger": lambda step: step % args_cli.video_interval == 0,
+                "video_length": args_cli.video_length,
+                "max_envs": args_cli.trajectory_video_envs,
+            }
+            print("[INFO] Recording 2D trajectory videos during training.")
+            print_dict(traj_kwargs, nesting=4)
+            env = TrajectoryVideoWrapper(env, **traj_kwargs)
 
         start_time = time.time()
 
