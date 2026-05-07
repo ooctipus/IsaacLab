@@ -26,52 +26,52 @@ class PositionCurriculumCfg:
         params={
             "sampling": preset(
                 default=CurriculumCfg(
-                    signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-8), weight=1.0)],
+                    signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0)],
                     eps=1e-8,
                 ),
                 uniform=CurriculumCfg(signals=[SignalEntry(cfg=UniformSignalCfg(), weight=1.0)], eps=0.0),
                 beta66=CurriculumCfg(
-                    signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-8), weight=1.0)],
+                    signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0)],
                     eps=1e-8,
                 ),
                 beta50=CurriculumCfg(
-                    signals=[SignalEntry(cfg=BetaSignalCfg(target=0.50, kappa=1.0, eps=1e-8), weight=1.0)],
+                    signals=[SignalEntry(cfg=BetaSignalCfg(target=0.50, kappa=1.0), weight=1.0)],
                     eps=1e-8,
                 ),
                 frontier=CurriculumCfg(
                     signals=[
-                        SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
+                        SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
                         SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=0.5),
                     ],
-                    eps=1e-6,
+                    eps=0.0,
                 ),
                 frontier_l1=CurriculumCfg(
                     signals=[
-                        SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
+                        SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
                         SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=1.0),
                     ],
-                    eps=1e-6,
+                    eps=0.0,
                 ),
                 frontier_l2=CurriculumCfg(
                     signals=[
-                        SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
+                        SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
                         SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=2.0),
                     ],
-                    eps=1e-6,
+                    eps=0.0,
                 ),
                 frontier_l5=CurriculumCfg(
                     signals=[
-                        SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
+                        SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
                         SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=5.0),
                     ],
-                    eps=1e-6,
+                    eps=0.0,
                 ),
                 frontier_uniform=CurriculumCfg(
                     signals=[
                         SignalEntry(cfg=UniformSignalCfg(), weight=1.0),
                         SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=2.0),
                     ],
-                    eps=1e-6,
+                    eps=0.0,
                 ),
             ),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=20),
@@ -88,7 +88,7 @@ class CRLCurriculumCfg:
         func=mdp.terrain_spawn_goal_pair_success_rate_levels,
         params={
             "sampling": CurriculumCfg(
-                signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-8), weight=1.0)],
+                signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0)],
                 eps=1e-8,
             ),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=100),

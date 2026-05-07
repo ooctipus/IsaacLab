@@ -56,7 +56,7 @@ def test_curriculum_probabilities_sum_to_one_finite_nonneg():
     curr = Curriculum(
         CurriculumCfg(
             signals=[
-                SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
+                SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
                 SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=2.0),
             ],
             eps=1e-3,
@@ -157,7 +157,7 @@ def test_factory_slot_eq_item_layout_works():
     curr = Curriculum(
         CurriculumCfg(
             signals=[
-                SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
+                SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
                 SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=2.0),
             ],
             eps=1e-3,

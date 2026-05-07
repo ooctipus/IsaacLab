@@ -35,7 +35,7 @@ def test_log_writes_per_signal_aggregate_keys():
     curriculum = Curriculum(
         CurriculumCfg(
             signals=[
-                SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
+                SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
                 SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=2.0),
             ],
             eps=1e-3,
@@ -79,7 +79,7 @@ def test_log_skips_bin_table_when_bin_signal_absent():
     layout = _layout_terrain()
     curriculum = Curriculum(
         CurriculumCfg(
-            signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-8), weight=1.0)],
+            signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0)],
             eps=1e-8,
         ),
         layout,
@@ -100,7 +100,7 @@ def test_log_bin_mass_sums_match_probs():
     curriculum = Curriculum(
         CurriculumCfg(
             signals=[
-                SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
+                SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
                 SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=2.0),
             ],
             eps=1e-3,
@@ -120,7 +120,7 @@ def test_log_bin_signal_kwarg_selects_signal():
     layout = _layout_terrain()
     # Curriculum without frontier so 'beta' is the only signal available.
     cfg = CurriculumCfg(
-        signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0)], eps=1e-3
+        signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0)], eps=1e-3
     )
     curriculum = cfg.class_type(cfg, layout)
     rates = torch.rand(layout.num_items)

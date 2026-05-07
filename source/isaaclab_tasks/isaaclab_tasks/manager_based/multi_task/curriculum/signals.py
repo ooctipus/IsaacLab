@@ -174,15 +174,11 @@ class BetaSignal:
         del layout  # unused -- Beta is layout-agnostic
         self._target = max(0.0, min(1.0, float(cfg.target)))
         self._kappa = max(0.0, float(cfg.kappa))
-        self._eps = float(cfg.eps)
         self._a = 1.0 + self._kappa * self._target
         self._b = 1.0 + self._kappa * (1.0 - self._target)
 
     def score(self, success_rates: torch.Tensor) -> torch.Tensor:
-        eps = self._eps
-        return ((success_rates + eps).pow(self._a - 1.0) * (1.0 - success_rates + eps).pow(self._b - 1.0)).clamp_min(
-            eps
-        )
+        return success_rates.pow(self._a - 1.0) * (1.0 - success_rates).pow(self._b - 1.0)
 
 
 class FrontierSignal:
@@ -319,7 +315,6 @@ class BetaSignalCfg:
     class_type: type[BetaSignal] | str = "{DIR}.signals:BetaSignal"
     target: float = 0.66
     kappa: float = 1.0
-    eps: float = 1e-3
 
 
 @configclass

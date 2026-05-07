@@ -75,7 +75,7 @@ def _sample_by_target_rate(
     )
     curriculum = Curriculum(
         CurriculumCfg(
-            signals=[SignalEntry(cfg=BetaSignalCfg(target=target, kappa=kappa, eps=1e-8), weight=1.0)],
+            signals=[SignalEntry(cfg=BetaSignalCfg(target=target, kappa=kappa), weight=1.0)],
             eps=1e-8,
         ),
         layout,
@@ -671,7 +671,7 @@ def _bootstrap_curriculum(env, term, target=0.5, kappa=5.0, history_len=16, log_
         params={
             "debug_vis": False,  # skip VisualizationMarkers construction
             "sampling": CurriculumCfg(
-                signals=[SignalEntry(cfg=BetaSignalCfg(target=target, kappa=kappa, eps=1e-8), weight=1.0)],
+                signals=[SignalEntry(cfg=BetaSignalCfg(target=target, kappa=kappa), weight=1.0)],
                 eps=1e-8,
             ),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=history_len),
