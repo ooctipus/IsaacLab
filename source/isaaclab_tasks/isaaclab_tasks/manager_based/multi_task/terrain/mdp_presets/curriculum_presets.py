@@ -41,37 +41,37 @@ class PositionCurriculumCfg:
                 frontier=CurriculumCfg(
                     signals=[
                         SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
-                        SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=0.5),
+                        SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=0.5),
                     ],
-                    eps=1e-3,
+                    eps=1e-6,
                 ),
                 frontier_l1=CurriculumCfg(
                     signals=[
                         SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
-                        SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=1.0),
+                        SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=1.0),
                     ],
-                    eps=1e-3,
+                    eps=1e-6,
                 ),
                 frontier_l2=CurriculumCfg(
                     signals=[
                         SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
-                        SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=2.0),
+                        SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=2.0),
                     ],
-                    eps=1e-3,
+                    eps=1e-6,
                 ),
                 frontier_l5=CurriculumCfg(
                     signals=[
                         SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0, eps=1e-3), weight=1.0),
-                        SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=5.0),
+                        SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=5.0),
                     ],
-                    eps=1e-3,
+                    eps=1e-6,
                 ),
                 frontier_uniform=CurriculumCfg(
                     signals=[
                         SignalEntry(cfg=UniformSignalCfg(), weight=1.0),
-                        SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=2.0),
+                        SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=2.0),
                     ],
-                    eps=1e-3,
+                    eps=1e-6,
                 ),
             ),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=20),
