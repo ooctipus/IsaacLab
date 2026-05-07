@@ -130,10 +130,44 @@ class TrajectoryRecorder:
                 self._canvas_w = max(1, int(round(self.CANVAS_MAX_PX * world_w / world_h)))
 
             rgb = heightmap_to_rgb(background_image)
+            # Flip rows so row 0 corresponds to world ymax (cartesian
+            # "north up"). The heightmap is produced with row 0 = ymin
+            # because matplotlib's imshow(origin="lower") -- used by the
+            # spawn-scatter dashboard -- expects that convention. Our
+            # PIL/numpy render path has no imshow to invert the axis,
+            # and we map dots with ``py = (ymax - xy_y) * scale_y`` so
+            # robots at high y go to the top. Flipping the bg here is
+            # what aligns the two conventions.
+            rgb = np.ascontiguousarray(rgb[::-1])
             img = Image.fromarray(rgb, mode="RGB").resize((self._canvas_w, self._canvas_h), resample=Image.BILINEAR)
             self._bg_canvas = np.asarray(img, dtype=np.uint8)
             self._bg_extent = tuple(background_extent)  # type: ignore[assignment]
-            self._gif_palette_image = img.quantize(colors=self.GIF_PALETTE_COLORS, method=Image.MEDIANCUT)
+            # Master palette: bg-adaptive colors (most of the budget) plus
+            # explicit reserved slots for the four overlay colours. PIL's
+            # ``quantize(colors=N)`` runs median-cut on pixel histograms,
+            # so the bg gradient (~230k pixels) drowns out any small dot
+            # swatch we paint in. We reserve 4 trailing entries by hand
+            # to guarantee the dots survive the quantization snap.
+            #
+            # The reference image MUST have one pixel per palette index --
+            # ``frame.quantize(palette=ref)`` only matches against palette
+            # entries that appear in ``ref``'s pixel data, not the full
+            # 256-slot table. A flat ``range(N_PALETTE)`` strip ensures
+            # every entry is "live".
+            n_bg_slots = self.GIF_PALETTE_COLORS - 4
+            bg_palette_img = img.quantize(colors=n_bg_slots, method=Image.MEDIANCUT)
+            pal = list(bg_palette_img.getpalette()[: n_bg_slots * 3])
+            pal += [255, 255, 255]  # bg fill (no-bg fallback)
+            pal += [0, 0, 0]  # target / outline
+            pal += [50, 205, 50]  # success (limegreen)
+            pal += [220, 20, 60]  # fail (crimson)
+            # PIL palettes are flat 768-byte buffers (256 RGB triplets);
+            # pad the unused slots with zero so the buffer is well-formed.
+            pal += [0] * (768 - len(pal))
+            palette_img = Image.new("P", (self.GIF_PALETTE_COLORS, 1))
+            palette_img.putpalette(pal)
+            palette_img.putdata(list(range(self.GIF_PALETTE_COLORS)))
+            self._gif_palette_image = palette_img
 
         # Tag used for the W&B upload. We log under a *unique* key (rather
         # than relying on rsl_rl's ``*.mp4`` glob, which uploads every mp4
