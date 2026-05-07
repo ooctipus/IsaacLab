@@ -55,11 +55,12 @@ class TrajectoryRecorder:
     # cleanly. Smaller setups still work (always >= 1).
     SUBSAMPLE_FRACTION = 0.1
 
-    # Canvas resolution (square, world-frame top-down). 480 px reads
-    # ~1.6k dots cleanly at 2-3 px each while keeping the 200-frame gif
-    # compact -- the terrain bg's colour variation makes per-frame
-    # palettes the gif size driver, not raw pixel count.
-    CANVAS_PX = 480
+    # Maximum canvas side (px) along the longer terrain axis. The shorter
+    # side is computed from the bg-extent aspect ratio so a rectangular
+    # terrain doesn't get squashed into a square. 480 px on the long
+    # side reads ~1.6k dots cleanly at 2-3 px each while keeping the
+    # 200-frame gif compact.
+    CANVAS_MAX_PX = 480
 
     # Master gif palette: precomputed once from the baked terrain canvas
     # so every frame quantizes against the *same* color table. Without
@@ -106,6 +107,11 @@ class TrajectoryRecorder:
         self._bg_canvas: np.ndarray | None = None
         self._bg_extent: tuple[float, float, float, float] | None = None
         self._gif_palette_image: object | None = None
+        # Square fallback when no bg is supplied -- we only learn the
+        # observed-positions aspect at render time, but a square canvas
+        # at the same max budget reads fine.
+        self._canvas_w: int = self.CANVAS_MAX_PX
+        self._canvas_h: int = self.CANVAS_MAX_PX
         if background_image is not None:
             if background_extent is None:
                 raise ValueError("background_extent required when background_image is set")
@@ -113,8 +119,18 @@ class TrajectoryRecorder:
 
             from .terrain_background import heightmap_to_rgb
 
+            xmin, xmax, ymin, ymax = background_extent
+            world_w = max(xmax - xmin, 1e-6)
+            world_h = max(ymax - ymin, 1e-6)
+            if world_w >= world_h:
+                self._canvas_w = self.CANVAS_MAX_PX
+                self._canvas_h = max(1, int(round(self.CANVAS_MAX_PX * world_h / world_w)))
+            else:
+                self._canvas_h = self.CANVAS_MAX_PX
+                self._canvas_w = max(1, int(round(self.CANVAS_MAX_PX * world_w / world_h)))
+
             rgb = heightmap_to_rgb(background_image)
-            img = Image.fromarray(rgb, mode="RGB").resize((self.CANVAS_PX, self.CANVAS_PX), resample=Image.BILINEAR)
+            img = Image.fromarray(rgb, mode="RGB").resize((self._canvas_w, self._canvas_h), resample=Image.BILINEAR)
             self._bg_canvas = np.asarray(img, dtype=np.uint8)
             self._bg_extent = tuple(background_extent)  # type: ignore[assignment]
             self._gif_palette_image = img.quantize(colors=self.GIF_PALETTE_COLORS, method=Image.MEDIANCUT)
@@ -280,7 +296,7 @@ class TrajectoryRecorder:
             x_min, y_min = all_xy.min(axis=0) - margin
             x_max, y_max = all_xy.max(axis=0) + margin
 
-        H = W = self.CANVAS_PX
+        H, W = self._canvas_h, self._canvas_w
         dot_radius = max(1, int(round(2 + 2 / np.sqrt(max(n, 1)))))
         scale_x = (W - 1) / max(x_max - x_min, 1e-6)
         scale_y = (H - 1) / max(y_max - y_min, 1e-6)

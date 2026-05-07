@@ -104,7 +104,7 @@ def render_terrain_background(
 def heightmap_to_rgb(
     heightmap: np.ndarray,
     *,
-    cmap_name: str = "terrain",
+    cmap_name: str = "gray",
     miss_color: tuple[int, int, int] = (255, 255, 255),
 ) -> np.ndarray:
     """Apply a matplotlib colormap to a heightmap, returning ``[H, W, 3] uint8``.
@@ -116,8 +116,9 @@ def heightmap_to_rgb(
 
     Args:
         heightmap: ``[H, W]`` float; ``NaN`` marks misses.
-        cmap_name: matplotlib colormap name. ``"terrain"`` matches the
-            curriculum spawn-scatter aesthetic.
+        cmap_name: matplotlib colormap name. Defaults to plain ``"gray"``
+            (darker = lower terrain) -- vivid maps like ``"terrain"``
+            wash out the dot overlay we paint on top.
         miss_color: RGB triplet [0..255] painted into NaN cells.
 
     Returns:
