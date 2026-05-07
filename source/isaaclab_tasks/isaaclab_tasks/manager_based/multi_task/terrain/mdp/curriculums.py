@@ -473,59 +473,13 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
     def _render_terrain_background(self):
         """One-time top-down raycast of the ground mesh into a 2D heightmap.
 
-        Builds a warp mesh from ``env.scene.terrain.terrain_mesh`` and casts a
-        1024×1024 grid of downward rays to recover the topmost surface, so
-        overhanging features (beams, floating islands) shadow correctly
-        without needing per-pixel max-z bookkeeping. Returns ``(image, extent)``
-        for ``ax.imshow(..., extent=...)``; ``(None, None)`` if the terrain has
-        no mesh (e.g. plane-only scenes).
+        Thin shim over :func:`...viz.render_terrain_background` so the
+        spawn-scatter and the trajectory-video recorder share a single
+        background-renderer implementation.
         """
-        import numpy as np
+        from ..viz import render_terrain_background
 
-        from isaaclab.utils.warp import convert_to_warp_mesh, raycast_mesh
-
-        terrain_mesh = getattr(self.env.scene.terrain, "terrain_mesh", None)
-        if terrain_mesh is None or terrain_mesh.vertices.shape[0] == 0:
-            return None, None
-
-        verts = np.asarray(terrain_mesh.vertices, dtype=np.float32)
-        faces = np.asarray(terrain_mesh.faces, dtype=np.int32)
-        xmin, xmax = float(verts[:, 0].min()), float(verts[:, 0].max())
-        ymin, ymax = float(verts[:, 1].min()), float(verts[:, 1].max())
-        zmax = float(verts[:, 2].max())
-
-        # Crop the flat ``border_width`` perimeter — no patches live there and
-        # it just compresses the active tile grid into a smaller central region.
-        border = float(getattr(self.env.scene.terrain.cfg.terrain_generator, "border_width", 0.0))
-        if border > 0.0:
-            xmin += border
-            xmax -= border
-            ymin += border
-            ymax -= border
-
-        H, W = 1024, 1024
-        xs = np.linspace(xmin, xmax, W, dtype=np.float32)
-        ys = np.linspace(ymin, ymax, H, dtype=np.float32)
-        grid_x, grid_y = np.meshgrid(xs, ys, indexing="xy")
-        starts = np.stack(
-            [
-                grid_x.ravel(),
-                grid_y.ravel(),
-                np.full(H * W, zmax + 1.0, dtype=np.float32),
-            ],
-            axis=-1,
-        )
-        dirs = np.tile(np.array([0.0, 0.0, -1.0], dtype=np.float32), (H * W, 1))
-        starts_t = torch.from_numpy(starts).to(self.device)
-        dirs_t = torch.from_numpy(dirs).to(self.device)
-
-        wp_mesh = convert_to_warp_mesh(verts, faces, device=str(self.device))
-        hits, _, _, _ = raycast_mesh(starts_t, dirs_t, wp_mesh, max_dist=zmax + 100.0)
-        z = hits[:, 2].view(H, W).cpu().numpy()
-        # Misses come back as +inf; convert to NaN so the colormap shows them transparent.
-        z = np.where(np.isfinite(z), z, np.nan)
-
-        return z, (xmin, xmax, ymin, ymax)
+        return render_terrain_background(self.env.scene.terrain, device=self.device)
 
     def _get_connecting_lines(self, start_pos: torch.Tensor, end_pos: torch.Tensor):
         """Compute position, orientation (XYZW), and length for cylinder markers connecting start to end."""

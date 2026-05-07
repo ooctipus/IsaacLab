@@ -5,6 +5,7 @@
 
 """Terrain-task-specific visualisation utilities."""
 
+from .terrain_background import heightmap_to_rgb, render_terrain_background
 from .trajectory_recorder import TrajectoryRecorder
 
-__all__ = ["TrajectoryRecorder"]
+__all__ = ["TrajectoryRecorder", "heightmap_to_rgb", "render_terrain_background"]

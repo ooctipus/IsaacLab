@@ -98,19 +98,21 @@ class record_trajectory_video(ManagerTermBase):
         traj_video = EventTerm(
             func=mdp.record_trajectory_video,
             mode="interval",
-            interval_range_s=(env.step_dt, env.step_dt),  # every step
+            interval_range_s=(0.0, 0.0),  # every step
             is_global_time=True,
             params={
                 "command_name": "goal_point",
                 "video_interval": 5000,
                 "video_length": 200,
-                "max_envs": 16,
             },
         )
 
-    The recorder writes mp4s under ``{log_dir}/videos/trajectory/``;
-    rsl_rl's logger globs ``*.mp4`` from ``log_dir`` at every iteration
-    end and auto-uploads to W&B, so no logger plumbing is needed.
+    The recorder writes a gif (or mp4 when ffmpeg is on PATH) under
+    ``{log_dir}/videos/trajectory/``, uploads each one directly to W&B
+    under ``Curriculum/trajectory_video``, then renames mp4 outputs to
+    ``.mp4.archived`` so rsl_rl's ``rglob("*.mp4")`` can't double-upload
+    under its hardcoded ``"video"`` key (which would overwrite the
+    standard 3D ``RecordVideo`` panel on every subsequent iteration).
 
     Lightweight: per-step capture is two small ``[N_subset, 2]`` CPU
     copies plus an ``[N_subset]`` bool. Render runs at end-of-window.
@@ -122,16 +124,36 @@ class record_trajectory_video(ManagerTermBase):
         log_dir = getattr(env.cfg, "log_dir", None) or os.getcwd()
         video_folder = params.get("video_folder") or os.path.join(log_dir, "videos", "trajectory")
         self.command_name: str = params.get("command_name", "goal_point")
+        # Bake the terrain heightmap once at term construction so every
+        # window's render can blit a pre-baked RGB canvas (no raycast in
+        # the hot path). Mirrors the spawn-scatter background.
+        from ..viz import render_terrain_background
+
+        bg_image, bg_extent = render_terrain_background(env.scene.terrain, device=env.device)
         self.recorder = TrajectoryRecorder(
             video_folder=video_folder,
             video_interval=int(params.get("video_interval", 5000)),
             video_length=int(params.get("video_length", 200)),
-            max_envs=int(params.get("max_envs", 16)),
             fps=int(params.get("fps", 30)),
-            trail_steps=int(params.get("trail_steps", 30)),
+            background_image=bg_image,
+            background_extent=bg_extent,
         )
 
-    def __call__(self, env: ManagerBasedEnv, env_ids: torch.Tensor, **_: object) -> None:
+    def __call__(
+        self,
+        env: ManagerBasedEnv,
+        env_ids: torch.Tensor,
+        # Params are consumed by __init__ via cfg.params and stored on self;
+        # they're listed here only because the manager's static validator
+        # introspects __call__'s signature to match against cfg.params
+        # (manager_base.py:360 -- a bare ``**kwargs`` shows up as a single
+        # mandatory parameter named after the kwargs binding).
+        command_name: str | None = None,
+        video_interval: int | None = None,
+        video_length: int | None = None,
+        video_folder: str | None = None,
+        fps: int | None = None,
+    ) -> None:
         # Read the latest per-env state and pass it to the recorder.
         # This is a side-effect-only term -- it returns nothing.
         cmd = env.command_manager.get_term(self.command_name)

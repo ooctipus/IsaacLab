@@ -140,6 +140,29 @@ class EventsCfg:
         },
     )
 
+    # Top-down 2D trajectory video, captured every ``video_interval``
+    # env steps over a ``video_length``-step window. Renders one shared
+    # world-frame scatter (10% of envs) on top of the same terrain
+    # heightmap the curriculum spawn-scatter uses; robot dots turn green
+    # while ``instant_success`` holds, red otherwise. Uploads directly
+    # to W&B under ``Curriculum/trajectory_video`` so the panel coexists
+    # with the other Curriculum/* dashboards instead of overwriting the
+    # standard 3D RecordVideo mp4 panel. Subsample fraction is hard-coded
+    # in :class:`TrajectoryRecorder` (see ``SUBSAMPLE_FRACTION``).
+    record_trajectory_video = EventTerm(
+        func=mdp.record_trajectory_video,
+        mode="interval",
+        # Fire every step (event manager re-samples on each step from a
+        # zero-width interval; see ``event_manager.py:230``).
+        interval_range_s=(0.0, 0.0),
+        is_global_time=True,
+        params={
+            "command_name": "goal_point",
+            "video_interval": 5000,
+            "video_length": 200,
+        },
+    )
+
 
 @configclass
 class PositionPhysicsCfg(PresetCfg):
