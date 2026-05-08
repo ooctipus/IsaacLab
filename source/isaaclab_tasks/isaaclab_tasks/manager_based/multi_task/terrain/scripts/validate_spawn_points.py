@@ -386,7 +386,16 @@ def main():
     foot_spread = np.linalg.norm(foot_offsets[:, :2].max(axis=0) - foot_offsets[:, :2].min(axis=0))
     print(f"  standing_height={standing_height:.3f}m foot_spread={foot_spread:.3f}m")
 
+    from isaaclab_tasks.manager_based.multi_task.terrain.retarget import apply_final_fps
+
     buf = pipeline.run(wp_mesh, origin, n_desired=n_desired)
+    sizing = pipeline_cfg.sampler.sizing
+    apply_final_fps(
+        buf,
+        n_desired=n_desired,
+        extractor=getattr(sizing, "final_fps_features", None),
+        spacing=getattr(sizing, "final_fps_spacing", None),
+    )
     t_total = time.time() - t0
 
     print(pipeline.rejection_summary)

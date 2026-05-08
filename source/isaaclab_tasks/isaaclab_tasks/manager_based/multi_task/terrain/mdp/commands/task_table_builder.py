@@ -348,10 +348,6 @@ def build_task_table(
         sampling_y_range,
         override=True,
     )
-    # Skip the pipeline's terminal FPS step: we run it via StateBuffer
-    # below so the streaming-buffer thinning path and the locomotion
-    # one-shot path share one implementation. See plan step 2.3.
-    grid_pipeline_cfg = grid_pipeline_cfg.replace(skip_final_fps=True)
     with trace_span(
         "task_table.retarget_pipeline",
         requested_states=total_states,

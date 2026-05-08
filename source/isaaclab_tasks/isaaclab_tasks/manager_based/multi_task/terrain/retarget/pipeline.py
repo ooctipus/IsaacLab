@@ -17,7 +17,6 @@ import numpy as np
 import torch
 import warp as wp
 
-from ...grid_downsample import grid_bucket_downsample
 from ...kinematics import NewtonKinematics
 from .buffer import RetargetBuffer
 from .cfg import RetargetPipelineCfg
@@ -54,7 +53,6 @@ _TIMING_LABELS: dict[str, str] = {
     "ik_solve": "IK solve (batched)",
     "fk_eval": "FK eval (post-solve)",
     "criteria": "criteria (acceptance checks)",
-    "final_fps": "final FPS (spatial thin → target)",
     # Sub-phases of :class:`Sampler`. Keys unmatched here
     # fall back to their last dotted segment, so custom samplers still
     # render readably even without an entry.
@@ -519,64 +517,17 @@ class RetargetPipeline:
         self.buffer.num_ik_valid = int(cum_pass.sum())
         self.buffer.num_final_valid = self.buffer.num_ik_valid
 
-        with self._time("final_fps"):
-            valid_t = self.buffer._ik_valid[: self.buffer.num_written]
-            valid_indices = valid_t.nonzero(as_tuple=False).squeeze(-1)
-            n_valid = valid_indices.shape[0]
-
-            if self.cfg.skip_final_fps:
-                # Caller-managed thinning: surface every post-criteria
-                # candidate. Downstream consumer (typically a
-                # :class:`StateBuffer` with ``oversample_ratio > 1``)
-                # decides the target count and runs the FPS itself.
-                if n_valid > 0:
-                    self.buffer._selected[:n_valid] = valid_indices.to(torch.int32)
-                self.buffer.num_selected = n_valid
-            else:
-                sampler_cfg = self.cfg.sampler
-                sizing = getattr(sampler_cfg, "sizing", None)
-                features_fn = getattr(sizing, "final_fps_features", None) if sizing is not None else None
-                final_spacing = getattr(sizing, "final_fps_spacing", None) if sizing is not None else None
-
-                if n_valid > 0:
-                    # Pluggable feature extractor — defaults to xyz to preserve
-                    # the original 3-D Cartesian thinning behaviour. Passing a
-                    # custom callable lets the user thin in any pose-embedding
-                    # space (xyz + yaw, xyz + rotation log, xyz + joints, …).
-                    slab = self.buffer.joint_q_result_t[valid_indices]
-                    if features_fn is None:
-                        features = slab[:, 0:3]
-                    elif hasattr(features_fn, "compute"):
-                        # cfg-class extractor with a ``compute`` method (e.g. XYZYawFeatures).
-                        features = features_fn.compute(slab)
-                    else:
-                        features = features_fn(slab)
-
-                    if final_spacing is not None:
-                        # Spacing-driven: derive target count from actual feature-space
-                        # bbox. Treat xy as a 2-D manifold (z is mostly noise) and count
-                        # any axes beyond xyz as real extra dimensions.
-                        bbox = features.amax(dim=0) - features.amin(dim=0)
-                        xy_area = float((bbox[0] * bbox[1]).clamp_min(1e-9).item())
-                        if features.shape[1] > 3:
-                            extra_vol = float(bbox[3:].clamp_min(1e-9).prod().item())
-                            d_eff = 2 + (features.shape[1] - 3)
-                        else:
-                            extra_vol = 1.0
-                            d_eff = 2
-                        k_target = max(1, int(xy_area * extra_vol / float(final_spacing) ** d_eff))
-                        n_select = min(k_target, n_valid)
-                    else:
-                        n_select = min(n_desired, n_valid)
-                else:
-                    n_select = 0
-
-                if n_select > 0:
-                    local_idx = grid_bucket_downsample(features, n_select)
-                    selected = valid_indices[local_idx]
-                    self.buffer._selected[:n_select] = selected.to(torch.int32)
-
-                self.buffer.num_selected = n_select
+        # The pipeline emits every post-criteria candidate; thinning is
+        # the caller's responsibility. One-shot scripts call
+        # :func:`~.feature_extractors.apply_final_fps`; the streaming
+        # factory accumulator routes through
+        # :class:`~isaaclab_tasks.manager_based.multi_task.curriculum.StateBuffer`.
+        valid_t = self.buffer._ik_valid[: self.buffer.num_written]
+        valid_indices = valid_t.nonzero(as_tuple=False).squeeze(-1)
+        n_valid = valid_indices.shape[0]
+        if n_valid > 0:
+            self.buffer._selected[:n_valid] = valid_indices.to(torch.int32)
+        self.buffer.num_selected = n_valid
         if self.kin.device.startswith("cuda"):
             torch.cuda.synchronize()
         self._run_time = time.perf_counter() - _run_t0

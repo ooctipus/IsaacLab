@@ -39,10 +39,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import torch
 
 from isaaclab.utils.math import axis_angle_from_quat
+
+from ...grid_downsample import grid_bucket_downsample
+
+if TYPE_CHECKING:
+    from .buffer import RetargetBuffer
 
 FeatureExtractor = Callable[[torch.Tensor], torch.Tensor]
 """Either a raw callable ``(states: [N_valid, joint_coord_count]) -> [N_valid, D]``
@@ -72,6 +78,121 @@ def xyz_features(states: torch.Tensor) -> torch.Tensor:
         ``[N_valid, 3]`` tensor of root translations [m].
     """
     return states[:, 0:3]
+
+
+def bbox_target_count(features: torch.Tensor, spacing: float) -> int:
+    """Derive a target sample count from the feature-space bounding box.
+
+    Treats xy as a 2-D manifold (z is mostly noise from terrain height
+    or vertical position) and counts any axes beyond xyz as real extra
+    dimensions. The grid bucketer's per-cell side at the chosen
+    ``spacing`` then partitions the bbox into ``count`` cells:
+
+    .. code-block:: text
+
+        bbox      = features.amax(0) - features.amin(0)
+        xy_area   = bbox[0] * bbox[1]
+        extra_vol = bbox[3:].prod() if D > 3 else 1
+        D_eff     = 2 + max(0, D - 3)
+        count     = max(1, int(xy_area * extra_vol / spacing**D_eff))
+
+    Use when sampling diversity should track the *actual* feature-space
+    extent of survivors rather than a fixed budget. Adding orientation
+    or joint dimensions to the extractor naturally scales ``count`` up
+    because the metric volume to fill is larger.
+
+    Args:
+        features: ``[N, D]`` feature tensor produced by an extractor.
+        spacing: Desired per-cell side at the FPS metric.
+
+    Returns:
+        Target sample count, ``>= 1``.
+    """
+    if features.shape[0] == 0:
+        return 0
+    bbox = features.amax(dim=0) - features.amin(dim=0)
+    xy_area = float((bbox[0] * bbox[1]).clamp_min(1e-9).item())
+    if features.shape[1] > 3:
+        extra_vol = float(bbox[3:].clamp_min(1e-9).prod().item())
+        d_eff = 2 + (features.shape[1] - 3)
+    else:
+        extra_vol = 1.0
+        d_eff = 2
+    return max(1, int(xy_area * extra_vol / float(spacing) ** d_eff))
+
+
+def _resolve_features(
+    states: torch.Tensor,
+    extractor: FeatureExtractor | None,
+) -> torch.Tensor:
+    """Run :paramref:`extractor` against ``states`` with the standard dispatch.
+
+    ``None`` falls back to xyz (first 3 columns); objects with a ``compute``
+    method are preferred over plain ``__call__`` so cfg-class extractors
+    survive ``PresetCfg`` field discovery (which filters bare callables out
+    of class attributes).
+    """
+    if extractor is None:
+        return states[:, 0:3]
+    if hasattr(extractor, "compute"):
+        return extractor.compute(states)
+    return extractor(states)
+
+
+def apply_final_fps(
+    buffer: RetargetBuffer,
+    n_desired: int,
+    *,
+    extractor: FeatureExtractor | None = None,
+    spacing: float | None = None,
+) -> None:
+    """Run the terminal FPS spatial-thinning pass on a post-criteria buffer.
+
+    Expects ``buffer._selected[:buffer.num_selected]`` to hold every
+    post-criteria candidate (the shape :meth:`RetargetPipeline.run`
+    returns, which always emits the un-thinned set). Computes features
+    via :paramref:`extractor`, derives a target count -- from
+    :func:`bbox_target_count` when :paramref:`spacing` is set,
+    otherwise ``min(n_desired, n_candidates)`` -- runs
+    :func:`grid_bucket_downsample`, and **rewrites** ``buffer._selected``
+    + ``buffer.num_selected`` in place to reflect the survivor subset.
+
+    This is the helper one-shot scripts (validate_spawn_points,
+    sampler_metrics) call to recover the legacy pipeline-internal FPS
+    behaviour. Streaming consumers of the same primitive go through
+    :class:`~isaaclab_tasks.manager_based.multi_task.curriculum.StateBuffer`
+    instead.
+
+    Args:
+        buffer: Buffer with ``_selected[:num_selected]`` already
+            populated with post-criteria candidates.
+        n_desired: Fallback target count when :paramref:`spacing` is
+            ``None``. Clamped to ``num_selected`` from above.
+        extractor: Feature extractor; ``None`` -> xyz.
+        spacing: When set, target count is derived from the feature-
+            space bounding box via :func:`bbox_target_count`.
+    """
+    n_candidates = int(buffer.num_selected)
+    if n_candidates == 0:
+        return
+
+    candidates_idx = buffer._selected[:n_candidates].long()
+    slab = buffer.joint_q_result_t[candidates_idx]
+    features = _resolve_features(slab, extractor)
+
+    if spacing is not None:
+        n_select = min(bbox_target_count(features, spacing), n_candidates)
+    else:
+        n_select = min(int(n_desired), n_candidates)
+
+    if n_select <= 0:
+        buffer.num_selected = 0
+        return
+
+    local_idx = grid_bucket_downsample(features, n_select)
+    selected = candidates_idx[local_idx]
+    buffer._selected[:n_select] = selected.to(torch.int32)
+    buffer.num_selected = n_select
 
 
 @dataclass

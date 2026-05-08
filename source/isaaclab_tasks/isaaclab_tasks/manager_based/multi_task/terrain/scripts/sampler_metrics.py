@@ -370,8 +370,17 @@ def _run_single(
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+    from isaaclab_tasks.manager_based.multi_task.terrain.retarget import apply_final_fps
+
     t0 = time.perf_counter()
     buf = pipeline.run(wp_mesh, origin, n_desired=n_desired)
+    sizing = pipeline_cfg.sampler.sizing
+    apply_final_fps(
+        buf,
+        n_desired=n_desired,
+        extractor=getattr(sizing, "final_fps_features", None),
+        spacing=getattr(sizing, "final_fps_spacing", None),
+    )
     total_s = time.perf_counter() - t0
 
     sampler_s = float(pipeline._timings.get("sampler", 0.0))
