@@ -16,7 +16,7 @@ learn.
 This module exposes pluggable feature extractors that map
 ``(RetargetBuffer, valid_indices) -> [N_valid, D]``. Whatever ``D`` they
 return becomes the metric space the FPS thins in:
-:func:`~.....terrain.grid_downsample.grid_bucket_downsample` partitions
+:func:`~isaaclab_tasks.manager_based.multi_task.grid_downsample.grid_bucket_downsample` partitions
 that ``D``-dim bounding box into buckets sized ``(volume / k)^{1/D}`` and
 keeps one candidate per bucket.
 

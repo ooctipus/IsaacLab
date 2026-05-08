@@ -9,7 +9,7 @@ from collections.abc import Callable
 
 import torch
 
-from ..terrain.grid_downsample import grid_bucket_downsample
+from ..grid_downsample import grid_bucket_downsample
 
 
 class StateBuffer:
@@ -18,7 +18,7 @@ class StateBuffer:
     When ``target_size`` is smaller than ``max_size`` the buffer enters
     *oversample-then-thin* mode: it accumulates linearly up to
     ``max_size`` states, then runs a grid-bucket FPS-style thin via
-    :func:`~isaaclab_tasks.manager_based.multi_task.terrain.grid_downsample.grid_bucket_downsample`
+    :func:`~isaaclab_tasks.manager_based.multi_task.grid_downsample.grid_bucket_downsample`
     over an :paramref:`fps_features` extractor, keeping the most
     spatially diverse ``target_size`` survivors at the front of the
     buffer. Otherwise (``target_size == max_size``) the buffer behaves

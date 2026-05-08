@@ -21,7 +21,7 @@ import numpy as np
 import torch
 import warp as wp
 
-from ....terrain.grid_downsample import grid_bucket_downsample
+from ....grid_downsample import grid_bucket_downsample
 from . import cfg as patch_cfg
 from .kernels import morph_validity_kernel, rasterize_grid_kernel
 

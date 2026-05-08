@@ -1,0 +1,1 @@
+Internal refactor: moved ``grid_bucket_downsample`` from ``multi_task/terrain/grid_downsample.py`` to ``multi_task/grid_downsample.py`` so the curriculum module can use it without reaching across into the terrain subtree. No public-API or behaviour change.

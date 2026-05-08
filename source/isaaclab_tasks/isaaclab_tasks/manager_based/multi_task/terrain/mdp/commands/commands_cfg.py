@@ -66,7 +66,7 @@ class RelativeStateCommandCfg(CommandTermCfg):
     state in a cell is a candidate target for every spawn in the same
     cell. Setting a positive integer ``N`` first picks ``min(N, n_c)``
     targets per cell via
-    :func:`~isaaclab_tasks.manager_based.multi_task.terrain.grid_downsample.grid_bucket_downsample`
+    :func:`~isaaclab_tasks.manager_based.multi_task.grid_downsample.grid_bucket_downsample`
     on the cell's spawn xy, then pairs every spawn with each picked
     target. The per-cell pair count is ``n_c × min(N, n_c)`` (or
     ``n_c × min(N, n_c) − overlap`` if :attr:`exclude_self_pairs` is
