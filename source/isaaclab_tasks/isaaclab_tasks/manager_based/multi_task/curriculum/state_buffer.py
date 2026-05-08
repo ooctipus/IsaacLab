@@ -13,16 +13,24 @@ from ..grid_downsample import extract_features, grid_bucket_downsample
 
 
 class StateBuffer:
-    """Ring buffer of env-origin-relative reset states with per-slot tag metadata.
+    """Holder of state rows with per-slot tag metadata and FPS thinning.
 
-    When ``target_size`` is smaller than ``max_size`` the buffer enters
-    *oversample-then-thin* mode: it accumulates linearly up to
-    ``max_size`` states, then runs a grid-bucket FPS-style thin via
-    :func:`~isaaclab_tasks.manager_based.multi_task.grid_downsample.grid_bucket_downsample`
-    over an :paramref:`fps_features` extractor, keeping the most
-    spatially diverse ``target_size`` survivors at the front of the
-    buffer. Otherwise (``target_size == max_size``) the buffer behaves
-    as a pure ring with FIFO wrap.
+    Two construction modes:
+
+    * **Streaming** (default constructor): pre-allocates owned storage
+      of size ``[max_size, state_dim]``. ``add()`` appends rows; when
+      ``target_size < max_size`` and the buffer fills, :meth:`compact`
+      thins in place to ``target_size`` survivors via a grid-bucket
+      FPS-style downsample over an :paramref:`fps_features` extractor.
+      This is the factory accumulator's lifecycle.
+
+    * **View-wrap** (:meth:`from_states`): no upfront allocation. The
+      buffer wraps a caller-owned slab of states; :meth:`compact`
+      allocates a fresh ``[target_size, state_dim]`` output for the
+      survivors and replaces ``self.data``, leaving the caller's slab
+      untouched. Use when you already have a state tensor and want
+      StateBuffer's FPS thinning without paying the upfront
+      ``[max_size, state_dim]`` zeros of the streaming constructor.
 
     Compaction notifies callbacks registered via
     :meth:`register_compact_callback` with the surviving slot indices,
@@ -48,6 +56,44 @@ class StateBuffer:
         self.tags = torch.full((max_size,), -1, device=device, dtype=torch.int64)
         self.success_rates: torch.Tensor | None = None
         self._compact_callbacks: list[Callable[[torch.Tensor], None]] = []
+        self._owns_data = True
+
+    @classmethod
+    def from_states(
+        cls,
+        states: torch.Tensor,
+        target_size: int,
+        *,
+        fps_features: Callable | None = None,
+    ) -> StateBuffer:
+        """View-wrap a pre-existing state slab for one-shot FPS thinning.
+
+        The buffer's ``data`` aliases ``states`` (no copy on
+        construction). :meth:`compact` allocates a fresh
+        ``[target_size, states.shape[1]]`` tensor for the survivors and
+        replaces ``self.data``, leaving the caller's input untouched.
+
+        Use when you already have a slab of post-criteria candidates
+        and want StateBuffer's FPS thinning without the streaming
+        constructor's upfront ``[max_size, state_dim]`` allocation.
+        Tags + ring-buffer ``add()`` are not supported in this mode --
+        the buffer is single-shot: ``compact()`` once, read survivors
+        from ``self.data``.
+        """
+        self = cls.__new__(cls)
+        n = int(states.shape[0])
+        self.max_size = n
+        self._target_size = int(target_size)
+        self.fps_features = fps_features
+        self.data = states  # view; not copied
+        self._size = n
+        self._ptr = n
+        self.tag_names = None
+        self.tags = torch.full((n,), -1, device=states.device, dtype=torch.int64)
+        self.success_rates = None
+        self._compact_callbacks = []
+        self._owns_data = False
+        return self
 
     def __len__(self) -> int:
         return self._size
@@ -126,16 +172,23 @@ class StateBuffer:
         Idempotent: if the buffer already holds at most ``target_size``
         states, returns ``arange(_size)`` without modifying anything.
         Otherwise, survivors land in slots ``[0, target_size)`` in
-        their original relative order (sorted indices), the tail is
-        zeroed, and any registered compact callbacks are invoked with
-        the surviving index permutation so callers can update parallel
-        arrays.
+        their original relative order (sorted indices), and any
+        registered compact callbacks are invoked with the surviving
+        index permutation so callers can update parallel arrays.
+
+        Streaming mode (``__init__``-constructed): permutes ``self.data``
+        in place; the tail past ``target_size`` is zeroed. Subsequent
+        ``add()`` calls fill from ``target_size`` onwards.
+
+        View-wrap mode (:meth:`from_states`-constructed): allocates a
+        fresh ``[target_size, state_dim]`` output and replaces
+        ``self.data``; the original caller-owned slab is left
+        untouched. Single-shot -- subsequent ``add()`` is not supported.
 
         This method is invoked automatically by :meth:`add` /
         :meth:`add_with_tags` when oversample is enabled and the buffer
         hits capacity. Callers that fill the buffer in a single shot
-        (e.g. the locomotion task-table builder) may invoke it
-        explicitly without first overflowing.
+        (or who used :meth:`from_states`) may invoke it explicitly.
 
         Returns:
             Surviving slot indices (sorted, on-device, ``int64``). Same
@@ -150,12 +203,22 @@ class StateBuffer:
         # which is convenient for any caller that interprets slot
         # position as "freshness".
         keep_sorted = grid_bucket_downsample(features, target).sort().values
-        new_data = self.data[keep_sorted]
-        new_tags = self.tags[keep_sorted]
-        self.data[:target] = new_data
-        self.data[target:] = 0
-        self.tags[:target] = new_tags
-        self.tags[target:] = -1
+        if self._owns_data:
+            # Streaming mode: in-place permute, zero the tail.
+            new_data = self.data[keep_sorted]
+            new_tags = self.tags[keep_sorted]
+            self.data[:target] = new_data
+            self.data[target:] = 0
+            self.tags[:target] = new_tags
+            self.tags[target:] = -1
+        else:
+            # View-wrap mode: allocate a fresh owned output, leave the
+            # caller's source slab untouched. Future operations on this
+            # buffer act on the new owned tensor.
+            self.data = self.data[keep_sorted].contiguous()
+            self.tags = self.tags[keep_sorted].contiguous()
+            self.max_size = target
+            self._owns_data = True
         self._size = target
         self._ptr = target
         for cb in self._compact_callbacks:

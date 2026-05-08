@@ -158,6 +158,47 @@ class TestStateBuffer:
         torch.testing.assert_close(buf.data[:3], states)
         assert len(captured) == 0
 
+    def test_from_states_view_wraps_without_copy(self):
+        """``from_states`` aliases the input tensor; constructor allocates nothing."""
+        torch.manual_seed(5)
+        states = torch.zeros(8, 3)
+        states[:, 0] = torch.linspace(0.0, 7.0, 8)
+        sb = StateBuffer.from_states(states, target_size=4)
+        # ``data`` is the same storage as ``states`` -- not a copy.
+        assert sb.data.data_ptr() == states.data_ptr()
+        assert sb.max_size == 8
+        assert sb.target_size == 4
+        assert len(sb) == 8
+
+    def test_from_states_compact_does_not_mutate_caller_slab(self):
+        """View-wrap compact allocates its own output; caller's slab is untouched."""
+        torch.manual_seed(6)
+        n, target = 8, 3
+        states = torch.zeros(n, 3)
+        states[:, 0] = torch.linspace(0.0, 7.0, n)
+        original = states.clone()
+
+        sb = StateBuffer.from_states(states, target_size=target)
+        keep = sb.compact()
+
+        # Caller's slab is unchanged.
+        torch.testing.assert_close(states, original)
+        # Buffer now owns a freshly-allocated [target, 3] tensor of survivors.
+        assert sb.data.data_ptr() != states.data_ptr()
+        assert sb.data.shape == (target, 3)
+        assert len(sb) == target
+        # Survivors are exactly ``states[keep]``.
+        torch.testing.assert_close(sb.data, states[keep])
+
+    def test_from_states_compact_idempotent_below_target(self):
+        """compact() on a from_states with size <= target is a no-op view-wise."""
+        states = torch.zeros(2, 3)
+        sb = StateBuffer.from_states(states, target_size=4)
+        keep = sb.compact()
+        torch.testing.assert_close(keep, torch.arange(2, dtype=torch.int64))
+        # No mutation of caller; data still aliases.
+        assert sb.data.data_ptr() == states.data_ptr()
+
     def test_explicit_compact_thins_without_filling_capacity(self):
         """compact() can be triggered manually before the buffer overflows.
 
