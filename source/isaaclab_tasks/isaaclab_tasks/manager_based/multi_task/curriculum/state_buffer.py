@@ -90,7 +90,7 @@ class StateBuffer:
         self._ptr = (start + n) % self.max_size
         self._size = min(self._size + n, self.max_size)
         if self._size >= self.max_size and self._target_size < self.max_size:
-            self._compact()
+            self.compact()
         return start, n
 
     def add_with_tags(self, states: torch.Tensor, tags: torch.Tensor) -> tuple[int, int]:
@@ -108,7 +108,7 @@ class StateBuffer:
             indices = torch.arange(start, start + n, device=self.tags.device)
             self.set_tags(indices, tags[:n])
         if self._size >= self.max_size and self._target_size < self.max_size:
-            self._compact()
+            self.compact()
         return start, n
 
     def sample(self, indices: torch.Tensor) -> torch.Tensor:
@@ -133,14 +133,29 @@ class StateBuffer:
             return self.fps_features.compute(states)
         return self.fps_features(states)
 
-    def _compact(self) -> None:
+    def compact(self) -> torch.Tensor:
         """Thin the buffer down to ``target_size`` via grid-bucket FPS.
 
-        Survivors land in slots ``[0, target_size)`` in their original
-        relative order (sorted indices), the tail is zeroed, and any
-        registered compact callbacks are invoked with the surviving
-        index permutation so callers can update parallel arrays.
+        Idempotent: if the buffer already holds at most ``target_size``
+        states, returns ``arange(_size)`` without modifying anything.
+        Otherwise, survivors land in slots ``[0, target_size)`` in
+        their original relative order (sorted indices), the tail is
+        zeroed, and any registered compact callbacks are invoked with
+        the surviving index permutation so callers can update parallel
+        arrays.
+
+        This method is invoked automatically by :meth:`add` /
+        :meth:`add_with_tags` when oversample is enabled and the buffer
+        hits capacity. Callers that fill the buffer in a single shot
+        (e.g. the locomotion task-table builder) may invoke it
+        explicitly without first overflowing.
+
+        Returns:
+            Surviving slot indices (sorted, on-device, ``int64``). Same
+            tensor that registered compact callbacks receive.
         """
+        if self._size <= self._target_size:
+            return torch.arange(self._size, device=self.data.device, dtype=torch.int64)
         target = self._target_size
         states = self.data[: self._size]
         features = self._extract_features(states)
@@ -158,3 +173,4 @@ class StateBuffer:
         self._ptr = target
         for cb in self._compact_callbacks:
             cb(keep_sorted)
+        return keep_sorted

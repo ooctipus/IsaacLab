@@ -141,3 +141,49 @@ class TestStateBuffer:
         start, n = buf.add(wrap)
         assert start == 0 and n == 1
         torch.testing.assert_close(buf.data[0], wrap[0])
+
+    def test_explicit_compact_is_noop_below_target(self):
+        """compact() is idempotent when the buffer already fits target_size."""
+        buf = StateBuffer(8, 3, torch.device("cpu"), target_size=4)
+        states = torch.zeros(3, 3)
+        states[:, 0] = torch.tensor([1.0, 2.0, 3.0])
+        buf.add(states)  # _size=3 <= target=4, no auto-trigger
+        captured: list[torch.Tensor] = []
+        buf.register_compact_callback(lambda idx: captured.append(idx.clone()))
+
+        survivors = buf.compact()
+        # No-op: survivors == arange(3), buffer unchanged, no callback fired.
+        torch.testing.assert_close(survivors, torch.arange(3, dtype=torch.int64))
+        assert len(buf) == 3
+        torch.testing.assert_close(buf.data[:3], states)
+        assert len(captured) == 0
+
+    def test_explicit_compact_thins_without_filling_capacity(self):
+        """compact() can be triggered manually before the buffer overflows.
+
+        This is the locomotion-pipeline shape: dump N candidates (where
+        ``target_size <= N <= max_size``), compact() once, read survivors
+        from buffer.data[:target_size]. Auto-trigger never fires because
+        the buffer never hits max_size.
+        """
+        torch.manual_seed(4)
+        target = 3
+        capacity = 8
+        buf = StateBuffer(capacity, 3, torch.device("cpu"), target_size=target)
+        captured: list[torch.Tensor] = []
+        buf.register_compact_callback(lambda idx: captured.append(idx.clone()))
+
+        n_add = 6  # > target, but < capacity → no auto-compact
+        states = torch.zeros(n_add, 3)
+        states[:, 0] = torch.linspace(0.0, 5.0, n_add)
+        buf.add(states)
+        assert len(buf) == n_add  # auto-compact did not fire
+
+        survivors = buf.compact()
+        assert survivors.shape == (target,)
+        assert (survivors[1:] >= survivors[:-1]).all()
+        assert len(buf) == target
+        torch.testing.assert_close(buf.data[:target], states[survivors])
+        # Callback fires once with the same indices the caller received.
+        assert len(captured) == 1
+        torch.testing.assert_close(captured[0], survivors)
