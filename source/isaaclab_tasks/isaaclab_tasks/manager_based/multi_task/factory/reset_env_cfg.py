@@ -283,55 +283,12 @@ ACCUMULATOR_RESET = EventTerm(
                 signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0)],
                 eps=1e-8,
             ),
-            # Frontier signals build a kNN graph over the post-precollect
-            # slot xyz (the same ``wandb_3d_asset`` / ``wandb_3d_relative_to``
-            # axes as the 3D scatter) and bias sampling toward slots at
-            # the spatial edge of the policy's current competence. The
-            # weight on the FrontierSignal mixes spatial vs. base
-            # contribution: 0 reproduces base alone, 5+ heavily prioritizes
-            # frontier slots.
             frontier=CurriculumCfg(
                 signals=[
                     SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
                     SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=0.5),
                 ],
                 eps=1e-8,
-            ),
-            frontier_l1=CurriculumCfg(
-                signals=[
-                    SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
-                    SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=1.0),
-                ],
-                eps=1e-8,
-            ),
-            frontier_l2=CurriculumCfg(
-                signals=[
-                    SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
-                    SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=2.0),
-                ],
-                eps=1e-8,
-            ),
-            frontier_l5=CurriculumCfg(
-                signals=[
-                    SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
-                    SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=5.0),
-                ],
-                eps=1e-8,
-            ),
-            frontier_uniform=CurriculumCfg(
-                signals=[
-                    SignalEntry(cfg=UniformSignalCfg(), weight=1.0),
-                    SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=2.0),
-                ],
-                eps=1e-8,
-            ),
-            frontier_estimator=CurriculumCfg(
-                signals=[
-                    SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
-                    SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=2.0),
-                ],
-                eps=1e-8,
-                rate_source="estimator",
             ),
         ),
         "reset_term": SCENE_RESET,
