@@ -413,3 +413,22 @@ class RetargetPipelineCfg:
     injected by :meth:`CriterionBaseCfg.build`. Empty list keeps every
     geometry-valid IK solve.
     """
+
+    skip_final_fps: bool = False
+    """When ``True``, skip the pipeline's terminal FPS spatial-thinning step.
+
+    Default ``False`` runs the full
+    ``sample → IK → criteria → final_fps → return`` flow that downstream
+    consumers have always seen. Setting this to ``True`` short-circuits
+    the FPS branch: the buffer's ``_selected`` slot list is populated
+    with *every* post-criteria candidate (``_selected[:num_ik_valid] =
+    nonzero(_ik_valid)``) and ``num_selected = num_ik_valid``. The
+    caller then owns the thinning, typically by feeding the candidates
+    through :class:`~isaaclab_tasks.manager_based.multi_task.curriculum.StateBuffer`'s
+    oversample-then-:meth:`~...StateBuffer.compact` path with the same
+    :paramref:`SamplerSizingCfg.final_fps_features` extractor.
+
+    Step in the curriculum/locomotion convergence: the locomotion task
+    table will migrate to the StateBuffer-driven thin so both paths
+    share one implementation; this flag is the migration switch.
+    """
