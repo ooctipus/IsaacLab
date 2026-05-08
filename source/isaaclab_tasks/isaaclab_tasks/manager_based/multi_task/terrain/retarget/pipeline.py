@@ -543,13 +543,14 @@ class RetargetPipeline:
                     # the original 3-D Cartesian thinning behaviour. Passing a
                     # custom callable lets the user thin in any pose-embedding
                     # space (xyz + yaw, xyz + rotation log, xyz + joints, …).
+                    slab = self.buffer.joint_q_result_t[valid_indices]
                     if features_fn is None:
-                        features = self.buffer.joint_q_result_t[valid_indices, 0:3]
+                        features = slab[:, 0:3]
                     elif hasattr(features_fn, "compute"):
                         # cfg-class extractor with a ``compute`` method (e.g. XYZYawFeatures).
-                        features = features_fn.compute(self.buffer, valid_indices)
+                        features = features_fn.compute(slab)
                     else:
-                        features = features_fn(self.buffer, valid_indices)
+                        features = features_fn(slab)
 
                     if final_spacing is not None:
                         # Spacing-driven: derive target count from actual feature-space

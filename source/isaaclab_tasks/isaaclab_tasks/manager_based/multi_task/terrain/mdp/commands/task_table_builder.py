@@ -20,7 +20,7 @@ import torch
 
 from isaaclab.utils.warp import convert_to_warp_mesh
 
-from isaaclab_tasks.manager_based.multi_task.curriculum import pack_articulation_reset_state
+from isaaclab_tasks.manager_based.multi_task.curriculum import StateBuffer, pack_articulation_reset_state
 from isaaclab_tasks.manager_based.multi_task.trace import trace_span
 
 from ....grid_downsample import grid_bucket_downsample
@@ -348,6 +348,10 @@ def build_task_table(
         sampling_y_range,
         override=True,
     )
+    # Skip the pipeline's terminal FPS step: we run it via StateBuffer
+    # below so the streaming-buffer thinning path and the locomotion
+    # one-shot path share one implementation. See plan step 2.3.
+    grid_pipeline_cfg = grid_pipeline_cfg.replace(skip_final_fps=True)
     with trace_span(
         "task_table.retarget_pipeline",
         requested_states=total_states,
@@ -358,13 +362,35 @@ def build_task_table(
         grid_origin = np.zeros(3, dtype=np.float32)
         buffer = pipeline.run(wp_mesh, grid_origin, total_states)
         last_rejection_summary = pipeline.rejection_summary
-    if buffer.num_selected == 0:
+    # ``buffer.num_selected`` == post-criteria count under skip_final_fps.
+    n_candidates = int(buffer.num_selected)
+    if n_candidates == 0:
         raise RuntimeError(
             f"Retarget pipeline produced no valid terrain states for RelativeStateCommand.\n{last_rejection_summary}"
         )
+
+    # FPS spatial-thinning via StateBuffer: dump every post-criteria
+    # candidate, then ``compact()`` to ``total_states`` survivors using
+    # the cfg's ``final_fps_features`` extractor. The ``StateBuffer``
+    # path matches the streaming factory accumulator's thinning logic
+    # exactly (same primitive, same feature dispatch, same callback hook).
+    candidates_idx = buffer._selected[:n_candidates].long()
+    target_count = min(total_states, n_candidates)
+    with trace_span("task_table.final_fps", n_candidates=n_candidates, target_count=target_count):
+        state_buf = StateBuffer(
+            max_size=n_candidates,
+            state_dim=int(buffer.joint_q_result_t.shape[1]),
+            device=buffer.device,
+            target_size=target_count,
+            fps_features=getattr(grid_pipeline_cfg.sampler.sizing, "final_fps_features", None),
+        )
+        state_buf.add(buffer.joint_q_result_t[candidates_idx])
+        state_buf.compact()
+        spawn_states_raw = state_buf.data[:target_count].clone()
+
     print(
-        f"  Global retargeting: requested {total_states}, selected {buffer.num_selected} "
-        f"({100.0 * buffer.num_selected / max(1, total_states):.1f}%)",
+        f"  Global retargeting: requested {total_states}, selected {target_count} "
+        f"({100.0 * target_count / max(1, total_states):.1f}%)",
         flush=True,
     )
     chunk_meta = pipeline._chunk_profile_meta
@@ -375,12 +401,10 @@ def build_task_table(
             flush=True,
         )
 
-    with trace_span("task_table.pack_spawn_states", selected_states=int(buffer.num_selected)):
-        selected = buffer._selected[: buffer.num_selected].long()
-        spawn_states = buffer.joint_q_result_t[selected].clone()
+    with trace_span("task_table.pack_spawn_states", selected_states=target_count):
         newton_joint_names = _newton_revolute_joint_names(pipeline.kin)
         spawn_states = _reorder_spawn_state_joints(
-            spawn_states,
+            spawn_states_raw,
             newton_joint_names,
             robot_joint_names,
         )

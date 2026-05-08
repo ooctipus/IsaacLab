@@ -13,12 +13,12 @@ more than position. Two states at the same xyz with different orientations,
 or different joint configurations, are different *poses* the policy has to
 learn.
 
-This module exposes pluggable feature extractors that map
-``(RetargetBuffer, valid_indices) -> [N_valid, D]``. Whatever ``D`` they
-return becomes the metric space the FPS thins in:
-:func:`~isaaclab_tasks.manager_based.multi_task.grid_downsample.grid_bucket_downsample` partitions
-that ``D``-dim bounding box into buckets sized ``(volume / k)^{1/D}`` and
-keeps one candidate per bucket.
+This module exposes pluggable feature extractors that map a state slab
+``[N_valid, joint_coord_count]`` to a feature tensor ``[N_valid, D]``.
+Whatever ``D`` they return becomes the metric space the FPS thins in:
+:func:`~isaaclab_tasks.manager_based.multi_task.grid_downsample.grid_bucket_downsample`
+partitions that ``D``-dim bounding box into buckets sized
+``(volume / k)^{1/D}`` and keeps one candidate per bucket.
 
 **Mathematical note on mixing units.** Position is in meters, orientation
 in radians, joint angles in radians. Euclidean distance only makes sense
@@ -39,23 +39,21 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import torch
 
 from isaaclab.utils.math import axis_angle_from_quat
 
-if TYPE_CHECKING:
-    from .buffer import RetargetBuffer
+FeatureExtractor = Callable[[torch.Tensor], torch.Tensor]
+"""Either a raw callable ``(states: [N_valid, joint_coord_count]) -> [N_valid, D]``
+*or* an object exposing a ``compute(states) -> [N_valid, D]`` method.
+The caller (pipeline final-FPS step or
+:class:`~isaaclab_tasks.manager_based.multi_task.curriculum.StateBuffer`)
+dispatches on which one is provided.
 
-FeatureExtractor = Callable[["RetargetBuffer", torch.Tensor], torch.Tensor]
-"""Either a raw callable ``(buffer, valid_indices) -> [N_valid, D]`` *or* an
-object exposing a ``compute(buffer, valid_indices) -> [N_valid, D]`` method.
-The pipeline dispatches on which one is provided.
-
-Implementations slice :attr:`RetargetBuffer.joint_q_result_t` rows indexed
-by ``valid_indices`` (root layout: ``[xyz(3), quat_xyzw(4), joints]``) and
-return a tensor on whatever device the input lives.
+Implementations slice the state-row tensor (root layout:
+``[xyz(3), quat_xyzw(4), joints]``) and return a tensor on whatever
+device the input lives.
 
 The cfg-class extractors below intentionally use ``compute`` instead of
 ``__call__`` so they survive walking through ``PresetCfg`` field discovery
@@ -63,7 +61,7 @@ The cfg-class extractors below intentionally use ``compute`` instead of
 """
 
 
-def xyz_features(buffer: RetargetBuffer, valid_indices: torch.Tensor) -> torch.Tensor:
+def xyz_features(states: torch.Tensor) -> torch.Tensor:
     """Default extractor — just the root xyz.
 
     Reproduces the original FPS behavior. Use when only spatial coverage
@@ -73,7 +71,7 @@ def xyz_features(buffer: RetargetBuffer, valid_indices: torch.Tensor) -> torch.T
     Returns:
         ``[N_valid, 3]`` tensor of root translations [m].
     """
-    return buffer.joint_q_result_t[valid_indices, 0:3]
+    return states[:, 0:3]
 
 
 @dataclass
@@ -92,11 +90,10 @@ class XYZYawFeatures:
 
     yaw_scale: float = 1.0
 
-    def compute(self, buffer: RetargetBuffer, valid_indices: torch.Tensor) -> torch.Tensor:
-        slab = buffer.joint_q_result_t[valid_indices]
-        xyz = slab[:, 0:3]
+    def compute(self, states: torch.Tensor) -> torch.Tensor:
+        xyz = states[:, 0:3]
         # Quaternion is (x, y, z, w); yaw = atan2(2*(w*z + x*y), 1 - 2*(y² + z²))
-        qx, qy, qz, qw = slab[:, 3], slab[:, 4], slab[:, 5], slab[:, 6]
+        qx, qy, qz, qw = states[:, 3], states[:, 4], states[:, 5], states[:, 6]
         yaw = torch.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
         return torch.cat([xyz, (self.yaw_scale * yaw).unsqueeze(-1)], dim=-1)
 
@@ -131,10 +128,9 @@ class XYZAxisAngleFeatures:
 
     rot_scale: float = 0.5
 
-    def compute(self, buffer: RetargetBuffer, valid_indices: torch.Tensor) -> torch.Tensor:
-        slab = buffer.joint_q_result_t[valid_indices]
-        xyz = slab[:, 0:3]
-        rot_vec = axis_angle_from_quat(slab[:, 3:7]) * self.rot_scale
+    def compute(self, states: torch.Tensor) -> torch.Tensor:
+        xyz = states[:, 0:3]
+        rot_vec = axis_angle_from_quat(states[:, 3:7]) * self.rot_scale
         return torch.cat([xyz, rot_vec], dim=-1)
 
     def feature_volume_contribution(self) -> tuple[int, float]:
@@ -170,10 +166,9 @@ class XYZJointsFeatures:
     joint_scale: float = 0.3
     joint_slice: slice | None = None
 
-    def compute(self, buffer: RetargetBuffer, valid_indices: torch.Tensor) -> torch.Tensor:
-        slab = buffer.joint_q_result_t[valid_indices]
-        xyz = slab[:, 0:3]
-        joints = slab[:, 7:] if self.joint_slice is None else slab[:, 7:][:, self.joint_slice]
+    def compute(self, states: torch.Tensor) -> torch.Tensor:
+        xyz = states[:, 0:3]
+        joints = states[:, 7:] if self.joint_slice is None else states[:, 7:][:, self.joint_slice]
         return torch.cat([xyz, self.joint_scale * joints], dim=-1)
 
     def feature_volume_contribution(self) -> tuple[int, float]:
