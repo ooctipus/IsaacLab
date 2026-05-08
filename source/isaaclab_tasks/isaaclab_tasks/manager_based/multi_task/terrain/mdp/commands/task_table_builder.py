@@ -20,10 +20,11 @@ import torch
 
 from isaaclab.utils.warp import convert_to_warp_mesh
 
-from isaaclab_tasks.manager_based.multi_task.curriculum import StateBuffer, pack_articulation_reset_state
+from isaaclab_tasks.manager_based.multi_task.curriculum import pack_articulation_reset_state
 from isaaclab_tasks.manager_based.multi_task.trace import trace_span
 
 from ....grid_downsample import grid_bucket_downsample
+from ...retarget import apply_final_fps
 
 if TYPE_CHECKING:
     import trimesh
@@ -358,31 +359,30 @@ def build_task_table(
         grid_origin = np.zeros(3, dtype=np.float32)
         buffer = pipeline.run(wp_mesh, grid_origin, total_states)
         last_rejection_summary = pipeline.rejection_summary
-    # ``buffer.num_selected`` == post-criteria count under skip_final_fps.
+    # ``buffer.num_selected`` == post-criteria count (pipeline emits the
+    # un-thinned set; thinning is the caller's job).
     n_candidates = int(buffer.num_selected)
     if n_candidates == 0:
         raise RuntimeError(
             f"Retarget pipeline produced no valid terrain states for RelativeStateCommand.\n{last_rejection_summary}"
         )
 
-    # FPS spatial-thinning via StateBuffer: dump every post-criteria
-    # candidate, then ``compact()`` to ``total_states`` survivors using
-    # the cfg's ``fps_features`` extractor. The ``StateBuffer``
-    # path matches the streaming factory accumulator's thinning logic
-    # exactly (same primitive, same feature dispatch, same callback hook).
-    candidates_idx = buffer._selected[:n_candidates].long()
-    target_count = min(total_states, n_candidates)
-    with trace_span("task_table.final_fps", n_candidates=n_candidates, target_count=target_count):
-        state_buf = StateBuffer(
-            max_size=n_candidates,
-            state_dim=int(buffer.joint_q_result_t.shape[1]),
-            device=buffer.device,
-            target_size=target_count,
-            fps_features=getattr(grid_pipeline_cfg.sampler.sizing, "fps_features", None),
+    # FPS spatial-thinning via the one-shot helper. ``apply_final_fps``
+    # rewrites ``buffer._selected`` / ``buffer.num_selected`` in place
+    # to the thinned subset; we then read survivors directly. Avoids
+    # the StateBuffer indirection (allocates ``[N, state_dim]`` zeros
+    # plus an explicit copy + clone) that's overkill for a one-shot.
+    sizing = grid_pipeline_cfg.sampler.sizing
+    with trace_span("task_table.final_fps", n_candidates=n_candidates):
+        apply_final_fps(
+            buffer,
+            n_desired=total_states,
+            extractor=getattr(sizing, "fps_features", None),
+            spacing=getattr(sizing, "fps_spacing", None),
         )
-        state_buf.add(buffer.joint_q_result_t[candidates_idx])
-        state_buf.compact()
-        spawn_states_raw = state_buf.data[:target_count].clone()
+        target_count = int(buffer.num_selected)
+        survivors_idx = buffer._selected[:target_count].long()
+        spawn_states_raw = buffer.joint_q_result_t[survivors_idx].clone()
 
     print(
         f"  Global retargeting: requested {total_states}, selected {target_count} "
