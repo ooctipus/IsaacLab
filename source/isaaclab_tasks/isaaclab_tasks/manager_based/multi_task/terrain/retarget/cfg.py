@@ -102,7 +102,7 @@ class SamplerSizingCfg:
     count so spatial spread is achievable rather than degenerate.
     """
 
-    final_fps_spacing: float | None = None
+    fps_spacing: float | None = None
     """Optional spacing-driven target count for the final FPS thinning.
 
     When set, the post-IK FPS step computes its target placement count
@@ -119,17 +119,17 @@ class SamplerSizingCfg:
         n_select   = min(k_target, n_valid)
 
     Lets the same ``spacing`` mean different placement counts depending on
-    the chosen :paramref:`final_fps_features` — adding yaw or rotation
+    the chosen :paramref:`fps_features` — adding yaw or rotation
     naturally scales the count up because the metric volume to fill is
     larger. ``None`` (default) keeps the production behaviour where the
     final FPS thins to ``n_desired`` directly.
     """
 
-    final_fps_features: Callable | None = None
+    fps_features: Callable | None = None
     """Custom feature extractor for the final FPS spatial-thinning step.
 
-    Maps ``(buffer, valid_indices) -> [N_valid, D]`` where ``D`` is the
-    metric-space dimensionality the FPS thins in. ``None`` (default)
+    Maps ``(states: [N, joint_coord_count]) -> [N, D]`` where ``D`` is
+    the metric-space dimensionality the FPS thins in. ``None`` (default)
     falls back to root xyz (3-D Cartesian) — same behaviour as before.
 
     The grid bucketer partitions whatever ``D`` you return into cells of
@@ -141,13 +141,12 @@ class SamplerSizingCfg:
     See :mod:`.feature_extractors` for canned options:
 
     * :func:`~.feature_extractors.xyz_features` — current default.
-    * :func:`~.feature_extractors.xyz_yaw_features` (``yaw_scale``).
-    * :func:`~.feature_extractors.xyz_axis_angle_features` (``rot_scale``).
-    * :func:`~.feature_extractors.xyz_joints_features` (``joint_scale``).
+    * :class:`~.feature_extractors.XYZYawFeatures` (``yaw_scale``).
+    * :class:`~.feature_extractors.XYZAxisAngleFeatures` (``rot_scale``).
+    * :class:`~.feature_extractors.XYZJointsFeatures` (``joint_scale``).
 
     Or pass any function with the matching signature for full control —
-    e.g. ``lambda b, idx: torch.cat([b.joint_q_result_t[idx, :3],
-    b.joint_q_result_t[idx, 7:13] * 0.4], dim=-1)``.
+    e.g. ``lambda s: torch.cat([s[:, :3], s[:, 7:13] * 0.4], dim=-1)``.
     """
 
     criteria_yield: float = 0.25

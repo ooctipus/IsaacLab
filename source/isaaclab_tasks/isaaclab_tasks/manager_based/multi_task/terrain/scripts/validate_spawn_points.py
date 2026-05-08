@@ -296,7 +296,7 @@ def main():
     _eager_load_presets()
 
     from isaaclab_tasks.manager_based.multi_task.position_env_cfg import LocomotionPositionCommandEnvCfg
-    from isaaclab_tasks.manager_based.multi_task.terrain.retarget import RetargetPipeline
+    from isaaclab_tasks.manager_based.multi_task.terrain.retarget import RetargetPipeline, apply_final_fps
     from isaaclab_tasks.utils.hydra import resolve_presets
 
     env_cfg = LocomotionPositionCommandEnvCfg()
@@ -332,7 +332,7 @@ def main():
 
     # --- Density (feature-aware) ---
     spacing = args.spacing if args.spacing is not None else goal_cfg.pool_spacing
-    extractor = pipeline_cfg.sampler.sizing.final_fps_features
+    extractor = pipeline_cfg.sampler.sizing.fps_features
     extra_dim, extra_vol = _feature_extra_dim_and_vol(extractor)
     n_desired = _derive_n_desired(args, goal_cfg.pool_spacing, sampler_x_range, sampler_y_range, extractor)
 
@@ -342,7 +342,7 @@ def main():
     # rather than capping at a pre-computed ``n_desired``.
     pipeline_cfg = pipeline_cfg.replace(
         sampler=pipeline_cfg.sampler.replace(
-            sizing=pipeline_cfg.sampler.sizing.replace(final_fps_spacing=spacing),
+            sizing=pipeline_cfg.sampler.sizing.replace(fps_spacing=spacing),
         )
     )
 
@@ -386,15 +386,13 @@ def main():
     foot_spread = np.linalg.norm(foot_offsets[:, :2].max(axis=0) - foot_offsets[:, :2].min(axis=0))
     print(f"  standing_height={standing_height:.3f}m foot_spread={foot_spread:.3f}m")
 
-    from isaaclab_tasks.manager_based.multi_task.terrain.retarget import apply_final_fps
-
     buf = pipeline.run(wp_mesh, origin, n_desired=n_desired)
     sizing = pipeline_cfg.sampler.sizing
     apply_final_fps(
         buf,
         n_desired=n_desired,
-        extractor=getattr(sizing, "final_fps_features", None),
-        spacing=getattr(sizing, "final_fps_spacing", None),
+        extractor=getattr(sizing, "fps_features", None),
+        spacing=getattr(sizing, "fps_spacing", None),
     )
     t_total = time.time() - t0
 

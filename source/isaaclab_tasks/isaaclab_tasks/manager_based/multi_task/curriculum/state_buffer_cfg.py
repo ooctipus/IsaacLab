@@ -24,7 +24,7 @@ class StateBufferCfg:
             :paramref:`fps_features`. The 1.0 default reproduces the
             legacy ring-buffer-with-FIFO-wrap behavior.
         fps_features: Feature extractor used during compaction. Mirrors
-            the locomotion pipeline's ``final_fps_features`` API: either
+            the locomotion pipeline's ``fps_features`` API: either
             a plain callable ``(states: Tensor[N, state_dim]) -> Tensor[N, F]``
             or an object exposing a ``.compute(states) -> Tensor[N, F]``
             method (the ``.compute`` form survives

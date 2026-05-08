@@ -213,7 +213,7 @@ class CommandsCfg:
                     # so small ``spacing`` amplifies dim changes a lot — keep
                     # these modest so orientation flavours the count rather
                     # than dominating it.
-                    final_fps_features=preset(
+                    fps_features=preset(
                         xyz=None,
                         xyzyaw=XYZYawFeatures(yaw_scale=0.1),
                         xyz_axis_angle=XYZAxisAngleFeatures(rot_scale=0.25),

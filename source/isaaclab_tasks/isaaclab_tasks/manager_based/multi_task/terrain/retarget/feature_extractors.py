@@ -45,7 +45,7 @@ import torch
 
 from isaaclab.utils.math import axis_angle_from_quat
 
-from ...grid_downsample import grid_bucket_downsample
+from ...grid_downsample import extract_features, grid_bucket_downsample
 
 if TYPE_CHECKING:
     from .buffer import RetargetBuffer
@@ -106,7 +106,8 @@ def bbox_target_count(features: torch.Tensor, spacing: float) -> int:
         spacing: Desired per-cell side at the FPS metric.
 
     Returns:
-        Target sample count, ``>= 1``.
+        Target sample count: ``0`` when ``features`` is empty, otherwise
+        ``>= 1``.
     """
     if features.shape[0] == 0:
         return 0
@@ -119,24 +120,6 @@ def bbox_target_count(features: torch.Tensor, spacing: float) -> int:
         extra_vol = 1.0
         d_eff = 2
     return max(1, int(xy_area * extra_vol / float(spacing) ** d_eff))
-
-
-def _resolve_features(
-    states: torch.Tensor,
-    extractor: FeatureExtractor | None,
-) -> torch.Tensor:
-    """Run :paramref:`extractor` against ``states`` with the standard dispatch.
-
-    ``None`` falls back to xyz (first 3 columns); objects with a ``compute``
-    method are preferred over plain ``__call__`` so cfg-class extractors
-    survive ``PresetCfg`` field discovery (which filters bare callables out
-    of class attributes).
-    """
-    if extractor is None:
-        return states[:, 0:3]
-    if hasattr(extractor, "compute"):
-        return extractor.compute(states)
-    return extractor(states)
 
 
 def apply_final_fps(
@@ -177,8 +160,16 @@ def apply_final_fps(
         return
 
     candidates_idx = buffer._selected[:n_candidates].long()
-    slab = buffer.joint_q_result_t[candidates_idx]
-    features = _resolve_features(slab, extractor)
+    # Hot-path: the default xyz extractor only needs columns 0:3, so a
+    # fused gather+slice avoids materialising the full ``[n, state_dim]``
+    # slab. At 1M candidates with ``state_dim≈25`` that's 88 MB of
+    # transient memory we never allocate. Custom extractors still get
+    # the full slab since they may read quat / joint columns.
+    if extractor is None:
+        features = buffer.joint_q_result_t[candidates_idx, 0:3]
+    else:
+        slab = buffer.joint_q_result_t[candidates_idx]
+        features = extract_features(slab, extractor)
 
     if spacing is not None:
         n_select = min(bbox_target_count(features, spacing), n_candidates)
@@ -191,8 +182,7 @@ def apply_final_fps(
 
     local_idx = grid_bucket_downsample(features, n_select)
     selected = candidates_idx[local_idx]
-    buffer._selected[:n_select] = selected.to(torch.int32)
-    buffer.num_selected = n_select
+    buffer.set_selected(selected)
 
 
 @dataclass

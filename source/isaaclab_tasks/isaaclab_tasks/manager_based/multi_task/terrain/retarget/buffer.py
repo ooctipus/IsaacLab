@@ -246,6 +246,19 @@ class RetargetBuffer:
         self.num_ik_valid = 0
         self.num_final_valid = 0
 
+    def set_selected(self, indices: torch.Tensor) -> None:
+        """Write the selected-slot list and ``num_selected`` in one call.
+
+        ``indices`` are stored at ``self._selected[:n]`` cast to ``int32``
+        (the buffer's storage dtype) and ``self.num_selected`` is set to
+        ``n = indices.shape[0]``. Used by FPS-thinning helpers so they
+        don't have to reach into the private ``_selected`` field.
+        """
+        n = int(indices.shape[0])
+        if n > 0:
+            self._selected[:n] = indices.to(torch.int32)
+        self.num_selected = n
+
     @property
     def memory_bytes(self) -> int:
         """Approximate GPU memory used by this buffer [bytes]."""

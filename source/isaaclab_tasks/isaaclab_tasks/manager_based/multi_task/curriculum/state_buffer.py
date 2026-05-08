@@ -9,7 +9,7 @@ from collections.abc import Callable
 
 import torch
 
-from ..grid_downsample import grid_bucket_downsample
+from ..grid_downsample import extract_features, grid_bucket_downsample
 
 
 class StateBuffer:
@@ -120,19 +120,6 @@ class StateBuffer:
     def set_tags(self, indices: torch.Tensor, tag_ids: torch.Tensor) -> None:
         self.tags[indices] = tag_ids.long()
 
-    def _extract_features(self, states: torch.Tensor) -> torch.Tensor:
-        """Resolve :attr:`fps_features` to a feature tensor.
-
-        Mirrors the locomotion ``final_fps_features`` dispatch: prefer
-        ``.compute(states)`` when present (cfg-class form), else call
-        directly. ``None`` defaults to xyz (first 3 columns).
-        """
-        if self.fps_features is None:
-            return states[:, :3]
-        if hasattr(self.fps_features, "compute"):
-            return self.fps_features.compute(states)
-        return self.fps_features(states)
-
     def compact(self) -> torch.Tensor:
         """Thin the buffer down to ``target_size`` via grid-bucket FPS.
 
@@ -158,7 +145,7 @@ class StateBuffer:
             return torch.arange(self._size, device=self.data.device, dtype=torch.int64)
         target = self._target_size
         states = self.data[: self._size]
-        features = self._extract_features(states)
+        features = extract_features(states, self.fps_features)
         # Sorted survivors preserve the temporal ordering of slots,
         # which is convenient for any caller that interprets slot
         # position as "freshness".

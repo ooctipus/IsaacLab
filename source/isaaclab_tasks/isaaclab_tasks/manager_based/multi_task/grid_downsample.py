@@ -4,11 +4,37 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """Grid-bucket downsampling — a drop-in replacement for farthest-point sampling
-on inputs that are already near-uniform in space."""
+on inputs that are already near-uniform in space — plus the matching feature
+extractor dispatch shared by the locomotion FPS helper and the curriculum
+StateBuffer."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import torch
+
+
+def extract_features(states: torch.Tensor, extractor: Callable | None) -> torch.Tensor:
+    """Run :paramref:`extractor` against ``states`` with the standard dispatch.
+
+    The single source of truth for the ``(states_slab) -> features`` API
+    that both the locomotion one-shot
+    :func:`~isaaclab_tasks.manager_based.multi_task.terrain.retarget.apply_final_fps`
+    and the curriculum streaming
+    :class:`~isaaclab_tasks.manager_based.multi_task.curriculum.StateBuffer.compact`
+    consume.
+
+    ``None`` falls back to xyz (first 3 columns); objects with a
+    ``compute`` method are preferred over plain ``__call__`` so cfg-class
+    extractors survive ``PresetCfg`` field discovery (which filters bare
+    callables out of class attributes).
+    """
+    if extractor is None:
+        return states[:, 0:3]
+    if hasattr(extractor, "compute"):
+        return extractor.compute(states)
+    return extractor(states)
 
 
 def grid_bucket_downsample(pts: torch.Tensor, k: int) -> torch.Tensor:

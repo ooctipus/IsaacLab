@@ -367,7 +367,7 @@ def build_task_table(
 
     # FPS spatial-thinning via StateBuffer: dump every post-criteria
     # candidate, then ``compact()`` to ``total_states`` survivors using
-    # the cfg's ``final_fps_features`` extractor. The ``StateBuffer``
+    # the cfg's ``fps_features`` extractor. The ``StateBuffer``
     # path matches the streaming factory accumulator's thinning logic
     # exactly (same primitive, same feature dispatch, same callback hook).
     candidates_idx = buffer._selected[:n_candidates].long()
@@ -378,7 +378,7 @@ def build_task_table(
             state_dim=int(buffer.joint_q_result_t.shape[1]),
             device=buffer.device,
             target_size=target_count,
-            fps_features=getattr(grid_pipeline_cfg.sampler.sizing, "final_fps_features", None),
+            fps_features=getattr(grid_pipeline_cfg.sampler.sizing, "fps_features", None),
         )
         state_buf.add(buffer.joint_q_result_t[candidates_idx])
         state_buf.compact()
