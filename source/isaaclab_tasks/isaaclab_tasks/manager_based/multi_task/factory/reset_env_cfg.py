@@ -283,6 +283,14 @@ ACCUMULATOR_RESET = EventTerm(
                 signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0)],
                 eps=1e-8,
             ),
+            # ``beta66`` is a semantic alias of ``monitor``: same Beta(0.66)
+            # rolling-monitor curriculum. Useful as a no-frontier baseline
+            # when sweeping ``frontier`` and ``dil*`` so the run names read
+            # "what's the curriculum?" rather than "what's the rate source?".
+            beta66=CurriculumCfg(
+                signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0)],
+                eps=1e-8,
+            ),
             frontier=CurriculumCfg(
                 signals=[
                     SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
