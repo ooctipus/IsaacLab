@@ -112,9 +112,22 @@ class reset_accumulator(ManagerTermBase):
             self.reset_state_adapters,
         ).shape[-1]
         buf_cfg: StateBufferCfg = cfg.params.get("state_buffer_cfg", StateBufferCfg())
-        max_size = buf_cfg.size
+        target_size = int(buf_cfg.size)
+        # Oversample-then-thin: buffer fills to ``oversample_capacity`` then
+        # compacts back to ``target_size``. Parallel arrays (monitor history,
+        # success rate) are sized to the oversample upper bound so they can
+        # cover every reachable slot before compaction.
+        oversample_capacity = max(target_size, int(target_size * float(buf_cfg.oversample_ratio)))
+        max_size = oversample_capacity
 
-        self.state_buffer = StateBuffer(max_size, state_dim, env.device)
+        self.state_buffer = StateBuffer(
+            max_size=oversample_capacity,
+            state_dim=state_dim,
+            device=env.device,
+            target_size=target_size,
+            fps_features=buf_cfg.fps_features,
+        )
+        self.state_buffer.register_compact_callback(self._on_state_buffer_compact)
         reset_accumulator._shared_buffer = self.state_buffer
         self.sampled_slots = torch.zeros(env.num_envs, device=env.device, dtype=torch.int)
         self.precollecting_phase = True
@@ -140,6 +153,40 @@ class reset_accumulator(ManagerTermBase):
         self._layout: StateLayout | None = None
         self._curriculum: Curriculum | None = None
         self._curriculum_log_counter: int = 0
+
+    def _on_state_buffer_compact(self, keep_indices: torch.Tensor) -> None:
+        """Permute parallel arrays in lockstep with a buffer compaction.
+
+        The :class:`StateBuffer` thins itself down to ``target_size``
+        when oversample is enabled; everything outside the buffer that
+        is indexed by slot position must be permuted by the same
+        surviving-index map. The curriculum's :class:`StateLayout` is
+        derived from the buffer's slot xyz, which moves under
+        compaction, so the curriculum is invalidated and rebuilt lazily
+        on the next sampling step.
+        """
+        n_keep = int(keep_indices.shape[0])
+        max_size = self.monitor_success_rate.shape[0]
+        # Permute the running rate scratches; tail goes back to zero so
+        # newly-appended slots start with no observed history.
+        self.monitor_success_rate[:n_keep] = self.monitor_success_rate[keep_indices]
+        self.monitor_success_rate[n_keep:max_size] = 0.0
+        self.success_rate[:n_keep] = self.success_rate[keep_indices]
+        self.success_rate[n_keep:max_size] = 0.0
+        # SuccessMonitor's per-slot rolling history aligns with slot
+        # position too; carry the kept slots' history along.
+        sm = self.success_monitor
+        sm.success_buf[:n_keep] = sm.success_buf[keep_indices]
+        sm.success_buf[n_keep:max_size] = False
+        sm.success_pointer[:n_keep] = sm.success_pointer[keep_indices]
+        sm.success_pointer[n_keep:max_size] = 0
+        sm.success_size[:n_keep] = sm.success_size[keep_indices]
+        sm.success_size[n_keep:max_size] = 0
+        # Drop the curriculum so the next sampling pass rebuilds the
+        # StateLayout against the post-compact slot xyz; FrontierSignal
+        # reuses its kNN graph internally and needs the fresh coords.
+        self._layout = None
+        self._curriculum = None
 
     # ------------------------------------------------------------------
     # Buffer accumulation
