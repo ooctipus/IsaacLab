@@ -45,7 +45,7 @@ def test_log_writes_per_signal_aggregate_keys():
     rates = torch.rand(layout.num_items)
     probs = curriculum.probabilities(rates)
     log: dict[str, float] = {}
-    log_curriculum_bins(curriculum, success_rates=rates, probs=probs, log_dict=log, step_counter=0)
+    log_curriculum_bins(curriculum, success_rates=rates, probs=probs, log_dict=log)
     assert "Curriculum/beta/mean" in log
     assert "Curriculum/beta/p90" in log
     assert "Curriculum/frontier/mean" in log
@@ -68,7 +68,7 @@ def test_log_writes_frontier_bin_keys_when_frontier_present():
     rates = torch.rand(layout.num_items)
     probs = curriculum.probabilities(rates)
     log: dict[str, float] = {}
-    log_curriculum_bins(curriculum, success_rates=rates, probs=probs, log_dict=log, step_counter=0)
+    log_curriculum_bins(curriculum, success_rates=rates, probs=probs, log_dict=log)
     # At least one bin should be populated (count > 0).
     bin_count_keys = [k for k in log if k.startswith("Frontier/bin_") and k.endswith("_count")]
     assert len(bin_count_keys) >= 1
@@ -87,7 +87,7 @@ def test_log_skips_bin_table_when_bin_signal_absent():
     rates = torch.rand(layout.num_items)
     probs = curriculum.probabilities(rates)
     log: dict[str, float] = {}
-    log_curriculum_bins(curriculum, success_rates=rates, probs=probs, log_dict=log, step_counter=0)
+    log_curriculum_bins(curriculum, success_rates=rates, probs=probs, log_dict=log)
     # No frontier signal present -> no bin table.
     assert not any(k.startswith("Frontier/bin_") for k in log)
     # But per-signal stats for beta still present.
@@ -110,7 +110,7 @@ def test_log_bin_mass_sums_match_probs():
     rates = torch.rand(layout.num_items)
     probs = curriculum.probabilities(rates)
     log: dict[str, float] = {}
-    log_curriculum_bins(curriculum, success_rates=rates, probs=probs, log_dict=log, step_counter=0)
+    log_curriculum_bins(curriculum, success_rates=rates, probs=probs, log_dict=log)
     masses = [v for k, v in log.items() if k.startswith("Frontier/bin_") and k.endswith("_mass")]
     assert abs(sum(masses) - float(probs.sum())) < 1e-5
 
@@ -131,7 +131,6 @@ def test_log_bin_signal_kwarg_selects_signal():
         success_rates=rates,
         probs=probs,
         log_dict=log,
-        step_counter=0,
         bin_signal="beta",
     )
     # Bin table emitted because 'beta' is present.
@@ -146,5 +145,5 @@ def test_log_uniform_only_curriculum_no_crash():
     rates = torch.rand(layout.num_items)
     probs = curriculum.probabilities(rates)
     log: dict[str, float] = {}
-    log_curriculum_bins(curriculum, success_rates=rates, probs=probs, log_dict=log, step_counter=0)
+    log_curriculum_bins(curriculum, success_rates=rates, probs=probs, log_dict=log)
     assert "Curriculum/uniform/mean" in log

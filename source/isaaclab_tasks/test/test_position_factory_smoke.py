@@ -93,7 +93,7 @@ def test_env_cfg_to_dict_serialises(task_name: str) -> None:
         # now a sibling-package or has been renamed. Modules that pull in
         # Kit / Newton / USD must NOT be added here -- they segfault when
         # imported outside a launched Kit app.
-        "isaaclab_tasks.manager_based.multi_task.curriculum.signals",
+        "isaaclab_tasks.manager_based.multi_task.curriculum.sampling",
         "isaaclab_tasks.manager_based.multi_task.curriculum.curriculum",
         "isaaclab_tasks.manager_based.multi_task.curriculum.diagnostics",
         "isaaclab_tasks.manager_based.multi_task.curriculum.state_layout",

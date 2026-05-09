@@ -166,7 +166,6 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
                 success_rates=success_rates,
                 probs=probs,
                 log_dict=self.env.extras.setdefault("log", {}),
-                step_counter=self.env.common_step_counter,
             )
 
         return self._result
@@ -294,8 +293,8 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         2. **Sampling probability** — total probability mass the curriculum
            sampler currently places on commands that touch this patch.
         3. **Task frontier** *(when a frontier signal is in the
-           curriculum)* — the per-task ``task_frontier`` value the
-           signal uses, mean-aggregated to per-patch via
+           curriculum)* — the per-task frontier score the signal uses,
+           mean-aggregated to per-patch via
            :func:`~....viz.aggregate_endpoints` for display only
            (the curriculum itself consumes the unaggregated per-task
            values). Falls back to "Sampling prob (spawn only)" for
@@ -364,7 +363,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         # *display-only* aggregation that does not feed the curriculum.
         frontier_signal = self._curriculum.find_signal("frontier")
         if isinstance(frontier_signal, FrontierSignal):
-            task_frontier_t = frontier_signal.task_frontier(success_rates)
+            task_frontier_t = frontier_signal.score(success_rates)
             tf_sums, tf_counts = aggregate_endpoints(
                 task_frontier_t,
                 endpoints,

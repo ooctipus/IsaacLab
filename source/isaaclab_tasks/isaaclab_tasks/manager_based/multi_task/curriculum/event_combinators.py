@@ -35,7 +35,7 @@ from isaaclab.managers import EventTermCfg, ManagerTermBase
 from . import reset_state
 from .curriculum import Curriculum, CurriculumCfg
 from .diagnostics import log_curriculum_bins
-from .signals import FrontierSignalCfg
+from .sampling import FrontierSignalCfg
 from .state_buffer import StateBuffer
 from .state_buffer_cfg import StateBufferCfg
 from .state_layout import StateLayout
@@ -62,19 +62,6 @@ def _tagged_report(
         else:
             out[name] = values[mask].sum().item()
     return out
-
-
-def _beta_pseudoprob(values: torch.Tensor, target: float = 0.5, kappa: float = 1.0, eps: float = 1e-8) -> torch.Tensor:
-    """Beta-kernel softmax over per-tag means (private to this module).
-
-    Used for the per-strategy ``Metrics/.../SampleProb/{name}`` summary
-    in ``reset_accumulator``'s tagged log; this is a fixed-shape
-    dashboard helper, not the curriculum-driven sampler.
-    """
-    a = 1.0 + max(0.0, kappa) * max(0.0, min(1.0, target))
-    b = 1.0 + max(0.0, kappa) * (1.0 - max(0.0, min(1.0, target)))
-    w = ((values + eps).pow(a - 1.0) * (1.0 - values + eps).pow(b - 1.0)).clamp_min(eps)
-    return torch.softmax(torch.log(w + eps), dim=0)
 
 
 class reset_accumulator(ManagerTermBase):
@@ -210,6 +197,8 @@ class reset_accumulator(ManagerTermBase):
                 self.state_buffer.add_with_tags(states, all_tags[env_ids][valid_mask])
             else:
                 self.state_buffer.add(states)
+            self._layout = None
+            self._curriculum = None
 
         return env_ids[~valid_mask]
 
@@ -295,28 +284,23 @@ class reset_accumulator(ManagerTermBase):
         else:
             self.success_rate[:] = self.monitor_success_rate
 
+        log: dict[str, float] = {}
         if report:
-            log: dict[str, float] = {}
+            n_slots = len(self.state_buffer)
             if self.state_buffer.tag_names:
-                tags = self.state_buffer.tags[: len(self.state_buffer)]
+                tags = self.state_buffer.tags[:n_slots]
                 names = self.state_buffer.tag_names
-                monitor_means = _tagged_report(self.monitor_success_rate, tags, names, reduction="mean")
-                monitor_probs = _beta_pseudoprob(
-                    torch.tensor(list(monitor_means.values()), device=env.device), target=0.5, kappa=1
-                )
-                log["Metrics/MonitorSuccessRate"] = self.monitor_success_rate.mean().item()
-                for i, name in enumerate(names):
+                monitor_rates = self.monitor_success_rate[:n_slots]
+                monitor_means = _tagged_report(monitor_rates, tags, names, reduction="mean")
+                log["Metrics/MonitorSuccessRate"] = monitor_rates.mean().item()
+                for name in names:
                     log[f"Metrics/MonitorSuccessRate/{name}"] = monitor_means[name]
-                    log[f"Metrics/MonitorSampleProb/{name}"] = monitor_probs[i].item()
                 if self.state_buffer.success_rates is not None:
-                    estimator_means = _tagged_report(self.state_buffer.success_rates, tags, names, reduction="mean")
-                    estimator_probs = _beta_pseudoprob(
-                        torch.tensor(list(estimator_means.values()), device=env.device), target=0.5, kappa=1
-                    )
-                    log["Metrics/EstimatorSuccessRate"] = self.state_buffer.success_rates.mean().item()
-                    for i, name in enumerate(names):
+                    estimator_rates = self.state_buffer.success_rates[:n_slots]
+                    estimator_means = _tagged_report(estimator_rates, tags, names, reduction="mean")
+                    log["Metrics/EstimatorSuccessRate"] = estimator_rates.mean().item()
+                    for name in names:
                         log[f"Metrics/EstimatorSuccessRate/{name}"] = estimator_means[name]
-                        log[f"Metrics/EstimatorSampleProb/{name}"] = estimator_probs[i].item()
 
         # 3. Optionally accumulate more states
         if keep_accumulating:
@@ -326,10 +310,12 @@ class reset_accumulator(ManagerTermBase):
         # Beta / Frontier / Uniform via its signal composition; one
         # ``probabilities()`` call replaces the legacy 3-branch isinstance.
         probs: torch.Tensor | None = None
+        sample_rates: torch.Tensor | None = None
         if env_ids.numel() > 0:
             self._ensure_curriculum(wandb_3d_asset, wandb_3d_relative_to)
             assert self._curriculum is not None
-            probs = self._curriculum.probabilities(self.success_rate)
+            sample_rates = self.success_rate[: len(self.state_buffer)]
+            probs = self._curriculum.probabilities(sample_rates)
             slot_idx = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
             self.sampled_slots[env_ids] = slot_idx.to(self.sampled_slots.dtype)
             reset_state.set_reset_state(
@@ -339,6 +325,11 @@ class reset_accumulator(ManagerTermBase):
                 self.reset_assets,
                 is_relative=True,
             )
+            if report and self.state_buffer.tag_names:
+                tags = self.state_buffer.tags[: len(self.state_buffer)]
+                sample_probs = _tagged_report(probs, tags, self.state_buffer.tag_names, reduction="sum")
+                for name in self.state_buffer.tag_names:
+                    log[f"Metrics/SampleProb/{name}"] = sample_probs[name]
 
         # 5. Log metrics
         if report:
@@ -353,12 +344,12 @@ class reset_accumulator(ManagerTermBase):
         if probs is not None and self._curriculum is not None:
             self._curriculum_log_counter += 1
             if self._curriculum_log_counter % 50 == 0:
+                assert sample_rates is not None
                 log_curriculum_bins(
                     self._curriculum,
-                    success_rates=self.success_rate,
+                    success_rates=sample_rates,
                     probs=probs,
                     log_dict=self._env.extras.setdefault("log", {}),
-                    step_counter=self._env.common_step_counter,
                 )
 
         # 6. Periodic 3D wandb scatter (opt-in via ``wandb_3d_asset``).
@@ -460,7 +451,7 @@ class reset_accumulator(ManagerTermBase):
                     "``wandb_3d_asset`` (and optionally ``wandb_3d_relative_to``) on the "
                     "reset_accumulator term so the buffer's slot xyz can be extracted."
                 )
-            n = self.state_buffer.max_size
+            n = len(self.state_buffer)
             coords = torch.zeros(n, 1, device=self._env.device)
         n = int(coords.shape[0])
         self._layout = StateLayout(

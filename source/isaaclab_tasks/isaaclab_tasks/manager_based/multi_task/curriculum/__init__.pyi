@@ -22,12 +22,10 @@ __all__ = [
     "TermChoice",
     "UniformSignal",
     "UniformSignalCfg",
-    "build_knn_indices",
     "get_reset_state",
     "log_curriculum_bins",
     "reset_accumulator",
     "set_reset_state",
-    "task_frontier_weights",
     "temporary_seed",
 ]
 
@@ -35,7 +33,7 @@ from .curriculum import Curriculum, CurriculumCfg, SignalEntry
 from .diagnostics import log_curriculum_bins
 from .event_combinators import ChainedResetTerms, TermChoice, reset_accumulator
 from .reset_state import get_reset_state, set_reset_state, temporary_seed
-from .signals import (
+from .sampling import (
     BetaSignal,
     BetaSignalCfg,
     FrontierSignal,
@@ -44,8 +42,6 @@ from .signals import (
     SignalCfg,
     UniformSignal,
     UniformSignalCfg,
-    build_knn_indices,
-    task_frontier_weights,
 )
 from .state_buffer import StateBuffer
 from .state_buffer_cfg import StateBufferCfg

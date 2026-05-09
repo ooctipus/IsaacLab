@@ -24,7 +24,6 @@ def log_curriculum_bins(
     success_rates: torch.Tensor,
     probs: torch.Tensor,
     log_dict: dict[str, float],
-    step_counter: int,
     bin_signal: str = "frontier",
 ) -> None:
     """Bucket per-item ``probs`` by ``bin_signal``'s score; write to ``log_dict``.
@@ -32,9 +31,7 @@ def log_curriculum_bins(
     Writes two kinds of keys into ``log_dict``:
 
     - ``Frontier/bin_<label>_{count,mean_prob,mass,mean_self_s}`` -- the
-      legacy frontier-bin breakdown, bucketed by ``bin_signal``'s raw
-      score (defaults to ``frontier``). Existing wandb dashboards keep
-      working unchanged.
+      frontier-bin breakdown, bucketed by ``bin_signal``'s raw score.
     - ``Curriculum/<signal>/{mean,p90}`` -- per-signal aggregate stats
       so you can see each signal's strength and tail behavior over
       time.
@@ -50,13 +47,10 @@ def log_curriculum_bins(
         probs: ``[num_items]`` probabilities the sampler produced.
         log_dict: Mutable dict (typically ``env.extras["log"]``) that
             receives the diagnostic keys.
-        step_counter: Iteration counter, retained as a parameter for
-            call-site compatibility but no longer surfaced.
         bin_signal: ``signal.name`` to bucket by. Defaults to
-            ``"frontier"`` for backward-compatible dashboards; pass any
-            signal name present in the curriculum to bin by it instead.
+            ``"frontier"``; pass any signal name present in the
+            curriculum to bin by it instead.
     """
-    del step_counter  # retained for call-site compatibility; no stdout output
     scores = curriculum.signal_scores(success_rates)
 
     # Per-signal aggregate stats -- always emitted.

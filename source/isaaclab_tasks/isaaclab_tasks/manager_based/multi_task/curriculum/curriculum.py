@@ -29,7 +29,7 @@ import torch
 
 from isaaclab.utils import configclass
 
-from .signals import InformativenessSignal
+from .sampling import InformativenessSignal
 from .state_layout import StateLayout
 
 
