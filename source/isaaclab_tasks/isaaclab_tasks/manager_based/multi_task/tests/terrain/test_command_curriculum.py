@@ -40,7 +40,7 @@ from isaaclab_tasks.manager_based.multi_task.terrain.mdp.commands.state_command 
 from isaaclab_tasks.manager_based.multi_task.terrain.mdp.curriculums import (
     terrain_spawn_goal_pair_success_rate_levels,
 )
-from isaaclab_tasks.manager_based.multi_task.utils.streamers import FIFOStreamer
+from isaaclab_tasks.manager_based.multi_task.utils.buffer_writers import FIFOBufferWriter
 
 
 def _make_monitor(cfg: SuccessMonitorCfg) -> SuccessMonitor:
@@ -402,17 +402,17 @@ class TestSuccessMonitor:
         assert int(mon.success_pointer[0].item()) == 2
         assert float(mon.success_rate[0].item()) == pytest.approx(0.5)
 
-    def test_fifo_streamer_uses_external_state_tensors(self):
-        """FIFOStreamer should derive capacity from data and allow external state tensors."""
+    def test_fifo_buffer_writer_uses_external_state_tensors(self):
+        """FIFOBufferWriter should derive capacity from data and allow external state tensors."""
         start_ptr = torch.tensor([1, 0], device=DEVICE, dtype=torch.int32)
         size = torch.tensor([1, 0], device=DEVICE, dtype=torch.int32)
         for use_warp in (False, True):
             data = torch.zeros(2, 3, device=DEVICE, dtype=torch.bool)
-            streamer = FIFOStreamer(2, DEVICE, max_updates=4, warp=use_warp)
-            streamer.start_ptr = start_ptr.clone()
-            streamer.size = size.clone()
+            buffer_writer = FIFOBufferWriter(2, DEVICE, max_updates=4, warp=use_warp)
+            buffer_writer.start_ptr = start_ptr.clone()
+            buffer_writer.size = size.clone()
 
-            streamer.add(
+            buffer_writer.add(
                 data,
                 torch.tensor([0, 0, 0, 0], device=DEVICE, dtype=torch.int64),
                 torch.tensor([False, True, True, False], device=DEVICE),
@@ -420,19 +420,19 @@ class TestSuccessMonitor:
             if use_warp and torch.cuda.is_available():
                 torch.cuda.synchronize()
 
-            assert int(streamer.num_changed[0].item()) == 1
-            torch.testing.assert_close(streamer.changed_ids[:1], torch.tensor([0], device=DEVICE))
-            assert int(streamer.start_ptr[0].item()) == 2
-            assert int(streamer.size[0].item()) == 3
+            assert int(buffer_writer.num_changed[0].item()) == 1
+            torch.testing.assert_close(buffer_writer.changed_ids[:1], torch.tensor([0], device=DEVICE))
+            assert int(buffer_writer.start_ptr[0].item()) == 2
+            assert int(buffer_writer.size[0].item()) == 3
             torch.testing.assert_close(data[0], torch.tensor([True, False, True], device=DEVICE))
 
-    def test_fifo_streamer_add_groups_raw_ids(self):
+    def test_fifo_buffer_writer_add_groups_raw_ids(self):
         """Raw ``add`` should group duplicate ids while preserving per-stream FIFO order."""
         for use_warp in (False, True):
             data = torch.zeros(3, 4, device=DEVICE, dtype=torch.bool)
-            streamer = FIFOStreamer(3, DEVICE, max_updates=5, warp=use_warp)
+            buffer_writer = FIFOBufferWriter(3, DEVICE, max_updates=5, warp=use_warp)
 
-            streamer.add(
+            buffer_writer.add(
                 data,
                 torch.tensor([2, 0, 2, 2, 0], device=DEVICE, dtype=torch.int64),
                 torch.tensor([True, False, False, True, True], device=DEVICE),
@@ -440,20 +440,22 @@ class TestSuccessMonitor:
             if use_warp and torch.cuda.is_available():
                 torch.cuda.synchronize()
 
-            assert int(streamer.num_changed[0].item()) == 2
-            torch.testing.assert_close(streamer.changed_ids[:2], torch.tensor([0, 2], device=DEVICE))
+            assert int(buffer_writer.num_changed[0].item()) == 2
+            torch.testing.assert_close(buffer_writer.changed_ids[:2], torch.tensor([0, 2], device=DEVICE))
             torch.testing.assert_close(data[0], torch.tensor([False, True, False, False], device=DEVICE))
             torch.testing.assert_close(data[2], torch.tensor([True, False, True, False], device=DEVICE))
-            torch.testing.assert_close(streamer.start_ptr, torch.tensor([2, 0, 3], device=DEVICE, dtype=torch.int32))
-            torch.testing.assert_close(streamer.size, torch.tensor([2, 0, 3], device=DEVICE, dtype=torch.int32))
+            torch.testing.assert_close(
+                buffer_writer.start_ptr, torch.tensor([2, 0, 3], device=DEVICE, dtype=torch.int32)
+            )
+            torch.testing.assert_close(buffer_writer.size, torch.tensor([2, 0, 3], device=DEVICE, dtype=torch.int32))
 
-    def test_fifo_streamer_warp_add_supports_non_bool_payloads(self):
+    def test_fifo_buffer_writer_warp_add_supports_non_bool_payloads(self):
         """Warp FIFO writes should support non-bool dtype and trailing payload dimensions."""
         data = torch.zeros(3, 4, 2, device=DEVICE, dtype=torch.float32)
-        streamer = FIFOStreamer(3, DEVICE, max_updates=5, warp=True)
+        buffer_writer = FIFOBufferWriter(3, DEVICE, max_updates=5, warp=True)
         values = torch.tensor([[20.0, 21.0], [0.0, 1.0], [22.0, 23.0], [24.0, 25.0], [2.0, 3.0]], device=DEVICE)
 
-        streamer.add(data, torch.tensor([2, 0, 2, 2, 0], device=DEVICE, dtype=torch.int64), values)
+        buffer_writer.add(data, torch.tensor([2, 0, 2, 2, 0], device=DEVICE, dtype=torch.int64), values)
         if torch.cuda.is_available():
             torch.cuda.synchronize()
 
@@ -465,8 +467,8 @@ class TestSuccessMonitor:
             data[2],
             torch.tensor([[20.0, 21.0], [22.0, 23.0], [24.0, 25.0], [0.0, 0.0]], device=DEVICE),
         )
-        torch.testing.assert_close(streamer.start_ptr, torch.tensor([2, 0, 3], device=DEVICE, dtype=torch.int32))
-        torch.testing.assert_close(streamer.size, torch.tensor([2, 0, 3], device=DEVICE, dtype=torch.int32))
+        torch.testing.assert_close(buffer_writer.start_ptr, torch.tensor([2, 0, 3], device=DEVICE, dtype=torch.int32))
+        torch.testing.assert_close(buffer_writer.size, torch.tensor([2, 0, 3], device=DEVICE, dtype=torch.int32))
 
     def test_success_monitor_warp_update_matches_torch_path(self):
         """Warp monitor updates should match the eager Torch success-rate path."""
@@ -514,7 +516,7 @@ class TestSuccessMonitor:
         mon.success_pointer.zero_()
         mon.success_size.zero_()
         mon.success_rate.zero_()
-        mon.streamer.num_changed.zero_()
+        mon.buffer_writer.num_changed.zero_()
         torch.cuda.synchronize()
 
         wp.capture_begin(device="cuda:0")

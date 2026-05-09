@@ -29,4 +29,4 @@ class SuccessMonitorCfg:
     """Maximum number of raw rows per :meth:`SuccessMonitor.success_update` call."""
 
     warp: bool = False
-    """Whether to use the graph-friendly Warp streamer and rate-update path."""
+    """Whether to use the graph-friendly Warp buffer writer and rate-update path."""

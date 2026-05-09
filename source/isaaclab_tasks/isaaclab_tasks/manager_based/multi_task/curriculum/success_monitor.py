@@ -46,7 +46,7 @@ class SuccessMonitor:
         self._impl = backend(cfg, success_rate)
         self.success_rate = self._impl.success_rate
         self.success_buf = self._impl.success_buf
-        self.streamer = self._impl.streamer
+        self.buffer_writer = self._impl.buffer_writer
         self.success_pointer = self._impl.success_pointer
         self.success_size = self._impl.success_size
 

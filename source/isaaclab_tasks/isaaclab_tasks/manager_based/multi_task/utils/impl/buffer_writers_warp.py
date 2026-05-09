@@ -80,7 +80,7 @@ def _fifo_write_sorted_starts_kernel(
     changed_ids[changed_slot] = wp.int64(stream_id)
 
 
-class FIFOStreamerWarp:
+class FIFOBufferWriterWarp:
     """Manage circular writes with Warp arrays and kernels.
 
     ``max_updates`` is the raw event capacity for one :meth:`add` call.

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import torch
 import warp as wp
 
-from isaaclab_tasks.manager_based.multi_task.utils.streamers import FIFOStreamer
+from isaaclab_tasks.manager_based.multi_task.utils.buffer_writers import FIFOBufferWriter
 
 if TYPE_CHECKING:
     from ..success_monitor_cfg import SuccessMonitorCfg
@@ -51,23 +51,23 @@ class SuccessMonitorWarp:
         )
         if success_rate.dtype != torch.float32:
             raise TypeError("SuccessMonitor warp mode requires a float32 success_rate tensor.")
-        self.streamer = FIFOStreamer(
+        self.buffer_writer = FIFOBufferWriter(
             cfg.num_monitored_data,
             cfg.device,
             max_updates=cfg.max_updates,
             warp=True,
         )
-        self.success_pointer = self.streamer.start_ptr
-        self.success_size = self.streamer.size
+        self.success_pointer = self.buffer_writer.start_ptr
+        self.success_size = self.buffer_writer.size
         self._wp_success_buf = wp.from_torch(self.success_buf, dtype=wp.bool)
         self._wp_success_size = wp.from_torch(self.success_size, dtype=wp.int32)
         self._wp_success_rate = wp.from_torch(self.success_rate, dtype=wp.float32)
-        self._wp_changed_ids = wp.from_torch(self.streamer.changed_ids, dtype=wp.int64)
-        self._wp_num_changed = wp.from_torch(self.streamer.num_changed, dtype=wp.int32)
-        self._max_updates = self.streamer.changed_ids.numel()
+        self._wp_changed_ids = wp.from_torch(self.buffer_writer.changed_ids, dtype=wp.int64)
+        self._wp_num_changed = wp.from_torch(self.buffer_writer.num_changed, dtype=wp.int32)
+        self._max_updates = self.buffer_writer.changed_ids.numel()
 
     def success_update(self, ids_all: torch.Tensor, success_mask: torch.Tensor) -> None:
-        self.streamer.add(self.success_buf, ids_all, success_mask)
+        self.buffer_writer.add(self.success_buf, ids_all, success_mask)
         wp.launch(
             _success_rate_update_kernel,
             dim=self._max_updates,

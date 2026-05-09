@@ -8,7 +8,7 @@ from __future__ import annotations
 import torch
 
 
-class FIFOStreamerTorch:
+class FIFOBufferWriterTorch:
     """Manage circular writes into caller-owned per-slot buffers."""
 
     def __init__(

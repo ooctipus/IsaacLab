@@ -8,11 +8,11 @@ from __future__ import annotations
 import torch
 import warp as wp
 
-from .impl.streamers_torch import FIFOStreamerTorch
-from .impl.streamers_warp import FIFOStreamerWarp
+from .impl.buffer_writers_torch import FIFOBufferWriterTorch
+from .impl.buffer_writers_warp import FIFOBufferWriterWarp
 
 
-class Streamer:
+class AppendBufferWriter:
     """Manage append-only writes into caller-owned data."""
 
     def __init__(self, start_ptr: int = 0):
@@ -29,8 +29,8 @@ class Streamer:
         return self.start_ptr >= data.shape[0]
 
 
-class FIFOStreamer:
-    """FIFO streamer over caller-owned per-stream ring buffers.
+class FIFOBufferWriter:
+    """FIFO writer over caller-owned per-stream ring buffers.
 
     ``max_updates`` is the maximum number of raw rows passed to one
     :meth:`add` call. Warp mode uses it to allocate fixed sort/group scratch at
@@ -64,7 +64,7 @@ class FIFOStreamer:
             self._size = size
             self._changed_ids = torch.empty(max_update_capacity, device=start_ptr.device, dtype=torch.int64)
             self._num_changed = torch.zeros(1, device=start_ptr.device, dtype=torch.int32)
-            self._impl = FIFOStreamerWarp(
+            self._impl = FIFOBufferWriterWarp(
                 device=str(start_ptr.device),
                 start_ptr=wp.from_torch(self._start_ptr, dtype=wp.int32),
                 size=wp.from_torch(self._size, dtype=wp.int32),
@@ -73,7 +73,7 @@ class FIFOStreamer:
                 max_updates=max_update_capacity,
             )
         else:
-            self._impl = FIFOStreamerTorch(
+            self._impl = FIFOBufferWriterTorch(
                 num_streams=num_streams,
                 device=device,
                 start_ptr=start_ptr,
