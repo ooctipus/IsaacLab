@@ -37,7 +37,7 @@ class StateLayout:
             class). Tasks in different partitions live on independent
             frontier manifolds -- a "walking A→B" and a "flying A→B"
             share spatial endpoints but should not propagate frontier
-            into each other. ``FrontierSignal`` builds its kNN graph
+            into each other. ``FrontierSamplingStrategy`` builds its kNN graph
             *within* each partition so neighbour relations never cross
             partition boundaries. ``None`` means a single global partition.
     """

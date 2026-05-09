@@ -143,8 +143,8 @@ class EventsCfg:
     # world-frame scatter (10% of envs) on top of the same terrain
     # heightmap the curriculum spawn-scatter uses; robot dots turn green
     # while ``instant_success`` holds, red otherwise. Uploads directly
-    # to W&B under ``Curriculum/trajectory_video`` so the panel coexists
-    # with the other Curriculum/* dashboards instead of overwriting the
+    # to W&B under ``Sampler/trajectory_video`` so the panel coexists
+    # with the other Sampler/* dashboards instead of overwriting the
     # standard 3D RecordVideo mp4 panel. Subsample fraction is hard-coded
     # in :class:`TrajectoryRecorder` (see ``SUBSAMPLE_FRACTION``).
     record_trajectory_video = EventTerm(

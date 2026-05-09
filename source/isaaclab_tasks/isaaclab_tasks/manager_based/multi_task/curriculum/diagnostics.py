@@ -3,10 +3,10 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Diagnostic helpers for :class:`Curriculum`.
+"""Diagnostic helpers for :class:`Sampler`.
 
-:func:`log_curriculum_bins` writes per-bin probability stats (bucketed
-by one chosen signal) plus per-signal aggregate stats into ``log_dict``.
+:func:`log_sampler_bins` writes per-bin probability stats (bucketed by
+one chosen strategy) plus per-strategy aggregate stats into ``log_dict``.
 Consumed by both terrain and factory training loops; downstream wandb
 panels read the dict keys directly.
 """
@@ -15,53 +15,54 @@ from __future__ import annotations
 
 import torch
 
-from .curriculum import Curriculum
+from .sampling import Sampler
 
 
-def log_curriculum_bins(
-    curriculum: Curriculum,
+def log_sampler_bins(
+    sampler: Sampler,
     *,
     success_rates: torch.Tensor,
     probs: torch.Tensor,
     log_dict: dict[str, float],
-    bin_signal: str = "frontier",
+    bin_strategy: str = "frontier",
 ) -> None:
-    """Bucket per-item ``probs`` by ``bin_signal``'s score; write to ``log_dict``.
+    """Bucket per-item ``probs`` by ``bin_strategy``'s score; write to ``log_dict``.
 
     Writes two kinds of keys into ``log_dict``:
 
     - ``Frontier/bin_<label>_{count,mean_prob,mass,mean_self_s}`` -- the
-      frontier-bin breakdown, bucketed by ``bin_signal``'s raw score.
-    - ``Curriculum/<signal>/{mean,p90}`` -- per-signal aggregate stats
-      so you can see each signal's strength and tail behavior over
+      frontier-bin breakdown, bucketed by ``bin_strategy``'s raw score.
+    - ``Sampler/<strategy>/{mean,p90}`` -- per-strategy aggregate stats
+      so you can see each strategy's strength and tail behavior over
       time.
 
-    When ``bin_signal`` isn't present in the curriculum the binned
-    section is skipped silently and only the per-signal stats are
+    When ``bin_strategy`` isn't present in the sampler the binned
+    section is skipped silently and only the per-strategy stats are
     written.
 
     Args:
-        curriculum: The active :class:`Curriculum`.
+        sampler: The active :class:`Sampler`.
         success_rates: ``[num_items]`` per-item rates passed to the
             sampler this step.
         probs: ``[num_items]`` probabilities the sampler produced.
         log_dict: Mutable dict (typically ``env.extras["log"]``) that
             receives the diagnostic keys.
-        bin_signal: ``signal.name`` to bucket by. Defaults to
-            ``"frontier"``; pass any signal name present in the
-            curriculum to bin by it instead.
+        bin_strategy: ``strategy.name`` to bucket by. Defaults to
+            ``"frontier"``; pass any strategy name present in the
+            sampler to bin by it instead.
     """
-    scores = curriculum.signal_scores(success_rates)
+    scores = sampler.scores(success_rates)
+    names = sampler.names
+    # Per-strategy aggregate stats -- always emitted.
+    for i, name in enumerate(names):
+        score = scores[i]
+        log_dict[f"Sampler/{name}/mean"] = float(score.mean())
+        log_dict[f"Sampler/{name}/p90"] = float(score.quantile(0.9))
 
-    # Per-signal aggregate stats -- always emitted.
-    for name, score in scores.items():
-        log_dict[f"Curriculum/{name}/mean"] = float(score.mean())
-        log_dict[f"Curriculum/{name}/p90"] = float(score.quantile(0.9))
+    if bin_strategy not in names:
+        return  # no binned table when the chosen strategy isn't present
 
-    if bin_signal not in scores:
-        return  # no binned table when the chosen signal isn't present
-
-    key = scores[bin_signal]
+    key = scores[names.index(bin_strategy)]
     bins = [
         ("ftr<0.01", 0.0, 0.01),
         ("0.01-0.05", 0.01, 0.05),

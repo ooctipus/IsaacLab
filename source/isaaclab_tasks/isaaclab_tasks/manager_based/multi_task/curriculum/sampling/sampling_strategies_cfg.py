@@ -3,39 +3,93 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Configuration classes for curriculum sampling strategies."""
+"""Configuration classes for sampling strategies."""
 
 from __future__ import annotations
 
 from isaaclab.utils import configclass
 
-from .sampling_strategies import BetaSignal, FrontierSignal, UniformSignal
+from .sampling_strategies import BetaSamplingStrategy, FrontierSamplingStrategy, UniformSamplingStrategy
 
 
 @configclass
-class BetaSignalCfg:
-    """Blueprint for a :class:`BetaSignal`."""
+class BetaSamplingStrategyCfg:
+    """Blueprint for a :class:`BetaSamplingStrategy`.
 
-    class_type: type[BetaSignal] | str = "{DIR}.sampling_strategies:BetaSignal"
+    Score shape:
+
+    .. code-block:: text
+
+        score
+          ^
+          |             /\\
+          |            /  \\
+          |___________/    \\___________
+          +----------------------------> success_rate
+          0          target             1
+    """
+
+    class_type: type[BetaSamplingStrategy] | str = "{DIR}.sampling_strategies:BetaSamplingStrategy"
+    """Runtime strategy class."""
+    weight: float = 1.0
+    """Multiplier on this strategy's score before sampler normalization."""
     target: float = 0.66
+    """Success rate where the Beta score peaks."""
     kappa: float = 1.0
+    """Peak sharpness around :attr:`target`; larger values concentrate more mass near the target."""
 
 
 @configclass
-class FrontierSignalCfg:
-    """Blueprint for a :class:`FrontierSignal`."""
+class FrontierSamplingStrategyCfg:
+    """Blueprint for a :class:`FrontierSamplingStrategy`.
 
-    class_type: type[FrontierSignal] | str = "{DIR}.sampling_strategies:FrontierSignal"
+    Score shape:
+
+    .. code-block:: text
+
+        score
+          ^
+          |          learned neighbor
+          |                 *
+          |              *  |
+          |           *     |  frontier score rises where
+          |        *        |  similar tasks are more solved
+          |_____*___________v____________
+          +-----------------------------> task feature space
+              low-rate task
+    """
+
+    class_type: type[FrontierSamplingStrategy] | str = "{DIR}.sampling_strategies:FrontierSamplingStrategy"
+    """Runtime strategy class."""
+    weight: float = 1.0
+    """Multiplier on this strategy's score before sampler normalization."""
     k: int = 8
+    """Number of nearest neighbors in task feature space."""
     dilation_steps: int = 1
+    """Number of graph max-propagation steps over the kNN neighborhood."""
 
 
 @configclass
-class UniformSignalCfg:
-    """Blueprint for a :class:`UniformSignal`."""
+class UniformSamplingStrategyCfg:
+    """Blueprint for a :class:`UniformSamplingStrategy`.
 
-    class_type: type[UniformSignal] | str = "{DIR}.sampling_strategies:UniformSignal"
+    Score shape:
+
+    .. code-block:: text
+
+        score
+          ^
+          |-----------------------------
+          |
+          |
+          +----------------------------> item index
+    """
+
+    class_type: type[UniformSamplingStrategy] | str = "{DIR}.sampling_strategies:UniformSamplingStrategy"
+    """Runtime strategy class."""
+    weight: float = 1.0
+    """Multiplier on this strategy's constant score before sampler normalization."""
 
 
-SignalCfg = BetaSignalCfg | FrontierSignalCfg | UniformSignalCfg
-"""Discriminated union of signal cfg types."""
+SamplingStrategyCfg = BetaSamplingStrategyCfg | FrontierSamplingStrategyCfg | UniformSamplingStrategyCfg
+"""Discriminated union of sampling-strategy cfg types."""

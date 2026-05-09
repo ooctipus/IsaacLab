@@ -13,11 +13,10 @@ import torch
 from isaaclab.managers import ManagerTermBase
 
 from isaaclab_tasks.manager_based.multi_task.curriculum import (
-    CurriculumCfg,
-    FrontierSignal,
+    SamplerCfg,
     StateLayout,
     SuccessMonitorCfg,
-    log_curriculum_bins,
+    log_sampler_bins,
 )
 
 if TYPE_CHECKING:
@@ -48,7 +47,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.env = env
         self.goal_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
 
-        # Curriculum owns selected task rows; the command term reads this
+        # Sampler owns selected task rows; the command term reads this
         # tensor directly and skips its internal random resampler while bound.
         self.command_indices = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
         self.command_indices.copy_(self.goal_term.cmd_indices)
@@ -58,9 +57,11 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.num_discrete_cmd = int(self.goal_term.table.num_tasks)
 
         # Sampling strategy + success-monitor cfg are both required preset params.
-        self._sampling_cfg: CurriculumCfg = cfg.params["sampling"]
+        self._sampling_cfg: SamplerCfg = cfg.params["sampling"]
+        if self._sampling_cfg.max_samples is None:
+            self._sampling_cfg.max_samples = env.num_envs
 
-        # Curriculum owns the success monitor + the rate tensor it writes into.
+        # Sampler owns the success monitor + the rate tensor it writes into.
         # The decoupled-rate-tensor pattern (factory-style) lets us hand the same
         # tensor to both the monitor (writer) and the command term (reader)
         # without a copy.
@@ -89,13 +90,13 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
                 self._result[f"{name}_prob"] = torch.zeros((), dtype=torch.float, device=env.device)
             self.prob_mass_per_bin = torch.zeros(len(_BIN_NAMES), dtype=torch.float32, device=env.device)
 
-        # Curriculum: weighted-sum over informativeness signals (Beta /
+        # Sampler: weighted-sum over strategies (Beta /
         # Frontier / Uniform). The state pool is the natural spatial
         # domain; spawn/target are just two roles a state can play in a
         # task. Topology-agnostic (one spawn / many targets, many
         # spawns / one target, many of both -- all the same).
         # ``task_partition`` is the per-task command-type id, so
-        # FrontierSignal's kNN never crosses command-type boundaries
+        # FrontierSamplingStrategy's kNN never crosses command-type boundaries
         # (a "terrain_position_cmd A→B" and "terrain_pose_cmd A→B"
         # share spatial endpoints but are mechanically independent).
         table = self.goal_term.table
@@ -111,7 +112,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
             target_index=table.target_index,
             task_partition=task_partition,
         )
-        self._curriculum = self._sampling_cfg.class_type(self._sampling_cfg, self._layout)
+        self._sampler = self._sampling_cfg.class_type(self._sampling_cfg, self._layout)
 
         # Visualization: build spawn→target lines from the task table
         if debug_vis:
@@ -121,7 +122,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self,
         env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
-        sampling: CurriculumCfg = CurriculumCfg(),
+        sampling: SamplerCfg = SamplerCfg(),
         success_monitor_cfg: SuccessMonitorCfg | None = None,
         debug_vis: bool = False,
         success_term: str = "success",
@@ -135,12 +136,13 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.success_monitor.success_update(prev_idx, success)
 
         # 2) SAMPLE NEXT DISCRETE COMMANDS
-        # One curriculum call drives all signal compositions (Beta /
+        # One sampler call drives all strategy compositions (Beta /
         # Frontier / Uniform / mixes). Terrain has a single rate source
         # (the rolling monitor) so we read ``self.success_rate`` directly.
-        probs = self._curriculum.probabilities(self.success_rate)
-        choices = torch.multinomial(probs, len(env_ids), replacement=True)
-        self.command_indices[env_ids] = choices
+        num_samples = self._sampling_cfg.max_samples if self._sampling_cfg.warp else len(env_ids)
+        assert num_samples is not None
+        probs, choices = self._sampler.probabilities_and_sample(self.success_rate, int(num_samples))
+        self.command_indices[env_ids] = choices[: len(env_ids)]
 
         # 3) LOGGING / VISUALIZATION
         success_rates = self.success_monitor.success_rate.clone()  # [num_discrete_cmd]
@@ -156,13 +158,13 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
             self._log_terrain_heatmap(success_rates)
             self._log_spawn_scatter(success_rates, probs)
 
-        # Curriculum diagnostic: per-signal aggregate stats every 50 steps,
+        # Sampler diagnostic: per-strategy aggregate stats every 50 steps,
         # plus the bucketed-by-frontier breakdown when frontier is active.
-        # Helper handles the "no frontier signal" case gracefully so this
+        # Helper handles the "no frontier strategy" case gracefully so this
         # is unconditional.
         if self._log_counter % 50 == 0:
-            log_curriculum_bins(
-                self._curriculum,
+            log_sampler_bins(
+                self._sampler,
                 success_rates=success_rates,
                 probs=probs,
                 log_dict=self.env.extras.setdefault("log", {}),
@@ -280,7 +282,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         img = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)[:, :, :3].copy()
         plt.close(fig)
 
-        self.env.extras.setdefault("log_images", {})["Curriculum/terrain_heatmap"] = img
+        self.env.extras.setdefault("log_images", {})["Sampler/terrain_heatmap"] = img
 
     def _log_spawn_scatter(self, success_rates: torch.Tensor, probs: torch.Tensor) -> None:
         """Per-patch diagnostics scatter — four panels over the terrain.
@@ -325,7 +327,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
             self._patch_counts = torch.zeros(n_patches, device=self.device)
             self._patch_probs = torch.zeros(n_patches, device=self.device)
             self._patch_probs_counts = torch.zeros(n_patches, device=self.device)
-            # Target-only buffers for spatial signals (FrontierSignal) that
+            # Target-only buffers for spatial signals (FrontierSamplingStrategy) that
             # live in target space; spawn-side aggregation dilutes them.
             self._patch_probs_target = torch.zeros(n_patches, device=self.device)
             self._patch_probs_target_counts = torch.zeros(n_patches, device=self.device)
@@ -355,15 +357,14 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
             sums_buf=self._patch_probs,
             counts_buf=self._patch_probs_counts,
         )
-        # State-pool diagnostic: when a frontier signal is in the
-        # curriculum, surface its per-task frontier mean-aggregated to
-        # per-state for display. The signal itself lives on tasks now
+        # State-pool diagnostic: when a frontier strategy is in the
+        # sampler, surface its per-task frontier mean-aggregated to
+        # per-state for display. The strategy itself lives on tasks now
         # (no per-state quantity exists), so we average per-task
         # frontier across every task touching each state -- this is a
-        # *display-only* aggregation that does not feed the curriculum.
-        frontier_signal = self._curriculum.find_signal("frontier")
-        if isinstance(frontier_signal, FrontierSignal):
-            task_frontier_t = frontier_signal.score(success_rates)
+        # *display-only* aggregation that does not feed the sampler.
+        if "frontier" in self._sampler.names:
+            task_frontier_t = self._sampler.scores(success_rates)[self._sampler.names.index("frontier")]
             tf_sums, tf_counts = aggregate_endpoints(
                 task_frontier_t,
                 endpoints,
@@ -468,7 +469,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
             ),
         ]
         img = self._dashboard.render(panels, valid_mask=valid)
-        self.env.extras.setdefault("log_images", {})["Curriculum/spawn_scatter"] = img
+        self.env.extras.setdefault("log_images", {})["Sampler/spawn_scatter"] = img
 
     def _render_terrain_background(self):
         """One-time top-down raycast of the ground mesh into a 2D heightmap.

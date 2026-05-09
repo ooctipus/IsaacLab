@@ -10,11 +10,11 @@ from __future__ import annotations
 import random
 from collections.abc import Sequence
 from contextlib import contextmanager
-from torch import Tensor
 
 import numpy as np
 import torch
 import warp as wp
+from torch import Tensor
 
 
 def get_reset_state(env, env_ids: Tensor, reset_assets: Sequence[str], is_relative: bool = False) -> Tensor:

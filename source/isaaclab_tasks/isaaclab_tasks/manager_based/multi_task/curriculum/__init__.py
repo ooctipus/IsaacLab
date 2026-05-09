@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Curriculum machinery: state layout, signals, weighted curriculum, reset combinators.
+"""Reset-state sampling machinery: state layout, samplers, monitors, and reset combinators.
 
 Public API is declared in :file:`__init__.pyi` and exported via
 ``lazy_export`` so importing this package does not eagerly pull in

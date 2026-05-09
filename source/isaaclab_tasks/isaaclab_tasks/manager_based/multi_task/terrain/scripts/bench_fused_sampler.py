@@ -231,7 +231,7 @@ def main() -> None:
     block_dim_sweep(args.K, inputs, args.block_dims, n_warmup=args.n_warmup, n_runs=args.n_runs)
 
     if args.k_scale:
-        # Use the best block_dim from the sweep -- pre-empt the sweep result here
+        # Use the best block_dim from the sweep -- preempt the sweep result here
         # by hard-coding 128 since that's what we're committing as the default.
         k_scale_sweep(args.k_scale, block_dim=128, inputs=inputs, n_runs=args.n_runs)
 

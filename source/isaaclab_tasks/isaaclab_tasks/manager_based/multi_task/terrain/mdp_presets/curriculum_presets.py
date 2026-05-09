@@ -7,12 +7,11 @@ from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.utils import configclass
 
 from isaaclab_tasks.manager_based.multi_task.curriculum import (
-    BetaSignalCfg,
-    CurriculumCfg,
-    FrontierSignalCfg,
-    SignalEntry,
+    BetaSamplingStrategyCfg,
+    FrontierSamplingStrategyCfg,
+    SamplerCfg,
     SuccessMonitorCfg,
-    UniformSignalCfg,
+    UniformSamplingStrategyCfg,
 )
 from isaaclab_tasks.utils import PresetCfg, preset
 
@@ -20,56 +19,56 @@ from .. import mdp
 
 
 @configclass
-class PositionCurriculumCfg:
+class PositionSamplerCfg:
     terrain_levels = CurrTerm(
         func=mdp.terrain_spawn_goal_pair_success_rate_levels,
         params={
             "sampling": preset(
-                default=CurriculumCfg(
-                    signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0)],
+                default=SamplerCfg(
+                    strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0)],
                     eps=1e-8,
                 ),
-                uniform=CurriculumCfg(signals=[SignalEntry(cfg=UniformSignalCfg(), weight=1.0)], eps=0.0),
-                beta66=CurriculumCfg(
-                    signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0)],
+                uniform=SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=1.0)], eps=0.0),
+                beta66=SamplerCfg(
+                    strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0)],
                     eps=1e-8,
                 ),
-                beta50=CurriculumCfg(
-                    signals=[SignalEntry(cfg=BetaSignalCfg(target=0.50, kappa=1.0), weight=1.0)],
+                beta50=SamplerCfg(
+                    strategies=[BetaSamplingStrategyCfg(target=0.50, kappa=1.0, weight=1.0)],
                     eps=1e-8,
                 ),
-                frontier=CurriculumCfg(
-                    signals=[
-                        SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
-                        SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=0.5),
+                frontier=SamplerCfg(
+                    strategies=[
+                        BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0),
+                        FrontierSamplingStrategyCfg(k=8, dilation_steps=2, weight=0.5),
                     ],
                     eps=1e-8,
                 ),
-                frontier_l1=CurriculumCfg(
-                    signals=[
-                        SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
-                        SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=1.0),
+                frontier_l1=SamplerCfg(
+                    strategies=[
+                        BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0),
+                        FrontierSamplingStrategyCfg(k=8, dilation_steps=2, weight=1.0),
                     ],
                     eps=1e-8,
                 ),
-                frontier_l2=CurriculumCfg(
-                    signals=[
-                        SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
-                        SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=2.0),
+                frontier_l2=SamplerCfg(
+                    strategies=[
+                        BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0),
+                        FrontierSamplingStrategyCfg(k=8, dilation_steps=2, weight=2.0),
                     ],
                     eps=1e-8,
                 ),
-                frontier_l5=CurriculumCfg(
-                    signals=[
-                        SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
-                        SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=5.0),
+                frontier_l5=SamplerCfg(
+                    strategies=[
+                        BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0),
+                        FrontierSamplingStrategyCfg(k=8, dilation_steps=2, weight=5.0),
                     ],
                     eps=1e-8,
                 ),
-                frontier_uniform=CurriculumCfg(
-                    signals=[
-                        SignalEntry(cfg=UniformSignalCfg(), weight=1.0),
-                        SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=2), weight=2.0),
+                frontier_uniform=SamplerCfg(
+                    strategies=[
+                        UniformSamplingStrategyCfg(weight=1.0),
+                        FrontierSamplingStrategyCfg(k=8, dilation_steps=2, weight=2.0),
                     ],
                     eps=1e-8,
                 ),
@@ -81,14 +80,14 @@ class PositionCurriculumCfg:
 
 
 @configclass
-class CRLCurriculumCfg:
+class CRLSamplerCfg:
     """Terrain curriculum without reward-dependent terms."""
 
     terrain_levels = CurrTerm(
         func=mdp.terrain_spawn_goal_pair_success_rate_levels,
         params={
-            "sampling": CurriculumCfg(
-                signals=[SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0)],
+            "sampling": SamplerCfg(
+                strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0)],
                 eps=1e-8,
             ),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=100),
@@ -98,14 +97,14 @@ class CRLCurriculumCfg:
 
 
 @configclass
-class AdvancedSkillsCurriculumCfg:
+class AdvancedSkillsSamplerCfg:
     pass
     # TODO(Mateo)
 
 
 @configclass
 class CurriculumPresetCfg(PresetCfg):
-    position = PositionCurriculumCfg()
-    crl = CRLCurriculumCfg()
-    advanced_skills = AdvancedSkillsCurriculumCfg()
+    position = PositionSamplerCfg()
+    crl = CRLSamplerCfg()
+    advanced_skills = AdvancedSkillsSamplerCfg()
     default = position

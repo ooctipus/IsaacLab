@@ -10,10 +10,10 @@ from __future__ import annotations
 import torch
 
 from isaaclab_tasks.manager_based.multi_task.curriculum import (
-    BetaSignalCfg,
-    FrontierSignalCfg,
+    BetaSamplingStrategyCfg,
+    FrontierSamplingStrategyCfg,
     StateLayout,
-    UniformSignalCfg,
+    UniformSamplingStrategyCfg,
 )
 
 
@@ -34,28 +34,34 @@ def _layout_factory(num_states: int = 64, seed: int = 0) -> StateLayout:
     return StateLayout(coords=coords, spawn_index=spawn)
 
 
+def _score(strategy, rates: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(rates)
+    strategy.score(rates, out)
+    return out
+
+
 # ---------------------------------------------------------------------------
-# BetaSignal
+# BetaSamplingStrategy
 # ---------------------------------------------------------------------------
 
 
 def test_beta_peaks_at_target():
     """Beta kernel maximum is near the target rate."""
     layout = _layout_terrain()
-    cfg = BetaSignalCfg(target=0.5, kappa=4.0)
+    cfg = BetaSamplingStrategyCfg(target=0.5, kappa=4.0)
     signal = cfg.class_type(cfg, layout)
     rates = torch.linspace(0.0, 1.0, 21)
-    scores = signal.score(rates)
+    scores = _score(signal, rates)
     assert int(scores.argmax()) == 10  # index 10 is rate=0.5
 
 
 def test_beta_uniform_input_uniform_output():
     """All-equal rates -> all-equal scores (Beta is per-item-only)."""
     layout = _layout_terrain()
-    cfg = BetaSignalCfg(target=0.66, kappa=1.0)
+    cfg = BetaSamplingStrategyCfg(target=0.66, kappa=1.0)
     signal = cfg.class_type(cfg, layout)
     rates = torch.full((100,), 0.42)
-    scores = signal.score(rates)
+    scores = _score(signal, rates)
     assert float(scores.std()) < 1e-7
 
 
@@ -63,35 +69,35 @@ def test_beta_independent_of_layout():
     """Beta scores depend only on rates, not the layout topology."""
     layout_a = _layout_terrain(num_states=20, num_items=100)
     layout_b = _layout_factory(num_states=100)
-    cfg = BetaSignalCfg(target=0.66, kappa=1.0)
+    cfg = BetaSamplingStrategyCfg(target=0.66, kappa=1.0)
     rates = torch.rand(100)
-    s_a = cfg.class_type(cfg, layout_a).score(rates)
-    s_b = cfg.class_type(cfg, layout_b).score(rates)
+    s_a = _score(cfg.class_type(cfg, layout_a), rates)
+    s_b = _score(cfg.class_type(cfg, layout_b), rates)
     assert torch.allclose(s_a, s_b)
 
 
 def test_beta_score_non_negative():
     """Score is always >= 0."""
     layout = _layout_terrain()
-    cfg = BetaSignalCfg(target=0.66, kappa=1.0)
+    cfg = BetaSamplingStrategyCfg(target=0.66, kappa=1.0)
     signal = cfg.class_type(cfg, layout)
     rates = torch.rand(100)
-    scores = signal.score(rates)
+    scores = _score(signal, rates)
     assert (scores >= 0).all()
 
 
 # ---------------------------------------------------------------------------
-# FrontierSignal
+# FrontierSamplingStrategy
 # ---------------------------------------------------------------------------
 
 
 def test_frontier_zero_when_all_rates_equal():
     """All-equal rates -> identically zero frontier score."""
     layout = _layout_terrain()
-    cfg = FrontierSignalCfg(k=8)
+    cfg = FrontierSamplingStrategyCfg(k=8)
     signal = cfg.class_type(cfg, layout)
     rates = torch.full((layout.num_items,), 0.42)
-    scores = signal.score(rates)
+    scores = _score(signal, rates)
     assert torch.allclose(scores, torch.zeros_like(scores), atol=1e-6)
 
 
@@ -100,21 +106,21 @@ def test_frontier_dilation_grows_signal():
     layout = _layout_terrain(num_states=20, num_items=100)
     rates = torch.zeros(100)
     rates[0] = 0.95
-    cfg1 = FrontierSignalCfg(k=2, dilation_steps=1)
-    cfg3 = FrontierSignalCfg(k=2, dilation_steps=3)
-    s1 = cfg1.class_type(cfg1, layout).score(rates)
-    s3 = cfg3.class_type(cfg3, layout).score(rates)
+    cfg1 = FrontierSamplingStrategyCfg(k=2, dilation_steps=1)
+    cfg3 = FrontierSamplingStrategyCfg(k=2, dilation_steps=3)
+    s1 = _score(cfg1.class_type(cfg1, layout), rates)
+    s3 = _score(cfg3.class_type(cfg3, layout), rates)
     assert int((s3 > 0).sum()) >= int((s1 > 0).sum())
 
 
 def test_frontier_slot_eq_item_no_target():
     """Factory's slot==item topology (target_index=None) produces valid scores."""
     layout = _layout_factory(num_states=64)
-    cfg = FrontierSignalCfg(k=8)
+    cfg = FrontierSamplingStrategyCfg(k=8)
     signal = cfg.class_type(cfg, layout)
     rates = torch.rand(64)
     rates[:5] = 0.9  # learned cluster
-    scores = signal.score(rates)
+    scores = _score(signal, rates)
     assert torch.isfinite(scores).all()
     assert (scores >= 0).all()
 
@@ -122,10 +128,10 @@ def test_frontier_slot_eq_item_no_target():
 def test_frontier_score_non_negative():
     """Score is always >= 0 (above-mean-deviation is clamped)."""
     layout = _layout_terrain()
-    cfg = FrontierSignalCfg(k=8)
+    cfg = FrontierSamplingStrategyCfg(k=8)
     signal = cfg.class_type(cfg, layout)
     rates = torch.rand(layout.num_items)
-    scores = signal.score(rates)
+    scores = _score(signal, rates)
     assert (scores >= 0).all()
 
 
@@ -155,9 +161,9 @@ def test_frontier_isolated_unlearned_task_stays_zero():
     # Items 0/1 are learned, items 2/3 are unreached. Cluster B is far enough
     # in feature space that neither A item is its kNN neighbour.
     rates = torch.tensor([0.9, 0.9, 0.0, 0.0])
-    cfg = FrontierSignalCfg(k=1, dilation_steps=1)
+    cfg = FrontierSamplingStrategyCfg(k=1, dilation_steps=1)
     signal = cfg.class_type(cfg, layout)
-    scores = signal.score(rates)
+    scores = _score(signal, rates)
 
     # Items 2/3 stay zero -- their kNN neighbours are within their own
     # cluster (also at rate 0). No spurious inheritance from cluster A.
@@ -175,9 +181,9 @@ def test_frontier_propagates_to_neighbour_in_task_space():
     layout = StateLayout(coords=coords, spawn_index=spawn_idx, target_index=target_idx)
 
     rates = torch.tensor([0.9, 0.0])
-    cfg = FrontierSignalCfg(k=1, dilation_steps=1)
+    cfg = FrontierSamplingStrategyCfg(k=1, dilation_steps=1)
     signal = cfg.class_type(cfg, layout)
-    scores = signal.score(rates)
+    scores = _score(signal, rates)
 
     # Item 0 is itself learned -> (1 - 0.9) factor gives small score.
     # Item 1 is unlearned with item 0 as kNN neighbour -> picks up frontier.
@@ -210,9 +216,9 @@ def test_frontier_partition_isolates_mechanics():
     # kNN, item 2 would have item 0 as a feature-space neighbour and inherit
     # frontier; with partition, items 2/3 see only each other (both at 0).
     rates = torch.tensor([0.9, 0.0, 0.0, 0.0])
-    cfg = FrontierSignalCfg(k=1, dilation_steps=1)
+    cfg = FrontierSamplingStrategyCfg(k=1, dilation_steps=1)
     signal = cfg.class_type(cfg, layout)
-    scores = signal.score(rates)
+    scores = _score(signal, rates)
 
     assert float(scores[2]) == 0.0
     assert float(scores[3]) == 0.0
@@ -221,32 +227,32 @@ def test_frontier_partition_isolates_mechanics():
 
 
 # ---------------------------------------------------------------------------
-# UniformSignal
+# UniformSamplingStrategy
 # ---------------------------------------------------------------------------
 
 
 def test_uniform_returns_ones():
     layout = _layout_terrain(num_items=100)
-    cfg = UniformSignalCfg()
+    cfg = UniformSamplingStrategyCfg()
     signal = cfg.class_type(cfg, layout)
     rates = torch.rand(100)
-    scores = signal.score(rates)
+    scores = _score(signal, rates)
     assert torch.equal(scores, torch.ones(100))
 
 
 def test_uniform_ignores_rates():
     layout = _layout_terrain(num_items=100)
-    cfg = UniformSignalCfg()
+    cfg = UniformSamplingStrategyCfg()
     signal = cfg.class_type(cfg, layout)
-    s_a = signal.score(torch.zeros(100))
-    s_b = signal.score(torch.rand(100))
+    s_a = _score(signal, torch.zeros(100))
+    s_b = _score(signal, torch.rand(100))
     assert torch.equal(s_a, s_b)
 
 
 def test_uniform_dtype_matches_input():
     layout = _layout_terrain(num_items=64)
-    cfg = UniformSignalCfg()
+    cfg = UniformSamplingStrategyCfg()
     signal = cfg.class_type(cfg, layout)
     for dtype in (torch.float32, torch.float64):
-        scores = signal.score(torch.rand(64, dtype=dtype))
+        scores = _score(signal, torch.rand(64, dtype=dtype))
         assert scores.dtype == dtype

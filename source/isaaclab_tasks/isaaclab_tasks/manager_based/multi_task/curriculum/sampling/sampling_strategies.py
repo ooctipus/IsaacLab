@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Runtime informativeness signals for curriculum sampling."""
+"""Runtime sampling strategies."""
 
 from __future__ import annotations
 
@@ -14,46 +14,52 @@ import torch
 from ..state_layout import StateLayout
 
 if TYPE_CHECKING:
-    from .sampling_strategies_cfg import BetaSignalCfg, FrontierSignalCfg, UniformSignalCfg
+    from .sampling_strategies_cfg import (
+        BetaSamplingStrategyCfg,
+        FrontierSamplingStrategyCfg,
+        UniformSamplingStrategyCfg,
+    )
 
 
-class InformativenessSignal(Protocol):
-    """Per-item informativeness scorer for curriculum sampling.
+class SamplingStrategy(Protocol):
+    """Per-item scorer for sampler probability construction.
 
-    A signal turns ``success_rates`` into a non-negative score per item;
-    the curriculum sums weighted scores across signals and normalizes.
+    A strategy turns ``success_rates`` into a non-negative score per item;
+    the sampler sums weighted scores across strategies and normalizes.
     """
 
     name: str
     """Short identifier used in diagnostic / log keys."""
 
-    def score(self, success_rates: torch.Tensor) -> torch.Tensor:
-        """Return ``[num_items]`` non-negative unnormalized scores."""
+    def score(self, success_rates: torch.Tensor, out: torch.Tensor) -> None:
+        """Write ``[num_items]`` non-negative unnormalized scores into ``out``."""
         ...
 
 
-class BetaSignal:
+class BetaSamplingStrategy:
     """Per-item Beta-kernel score peaked at a target success rate."""
 
     name = "beta"
 
-    def __init__(self, cfg: BetaSignalCfg, layout: StateLayout) -> None:
+    def __init__(self, cfg: BetaSamplingStrategyCfg, layout: StateLayout) -> None:
         del layout
         target = max(0.0, min(1.0, float(cfg.target)))
         kappa = max(0.0, float(cfg.kappa))
         self._a = 1.0 + kappa * target
         self._b = 1.0 + kappa * (1.0 - target)
 
-    def score(self, success_rates: torch.Tensor) -> torch.Tensor:
-        return success_rates.pow(self._a - 1.0) * (1.0 - success_rates).pow(self._b - 1.0)
+    def score(self, success_rates: torch.Tensor, out: torch.Tensor) -> None:
+        out.copy_(success_rates)
+        out.pow_(self._a - 1.0)
+        out.mul_((1.0 - success_rates).pow(self._b - 1.0))
 
 
-class FrontierSignal:
+class FrontierSamplingStrategy:
     """Per-task frontier score from a kNN graph over the task feature space."""
 
     name = "frontier"
 
-    def __init__(self, cfg: FrontierSignalCfg, layout: StateLayout) -> None:
+    def __init__(self, cfg: FrontierSamplingStrategyCfg, layout: StateLayout) -> None:
         self._dilation_steps = max(1, int(cfg.dilation_steps))
         spawn_feat = layout.coords[layout.spawn_index]
         if layout.target_index is None:
@@ -94,21 +100,23 @@ class FrontierSignal:
                 local_knn = torch.cat([local_knn, pad], dim=1)
             self._knn[member_idx] = member_idx[local_knn]
 
-    def score(self, success_rates: torch.Tensor) -> torch.Tensor:
+    def score(self, success_rates: torch.Tensor, out: torch.Tensor) -> None:
         s_dil = success_rates
         for _ in range(self._dilation_steps):
             neighbor_max = s_dil[self._knn].amax(dim=-1)
             s_dil = torch.maximum(s_dil, neighbor_max)
-        return (1.0 - success_rates) * (s_dil - success_rates).clamp_min(0.0)
+        out.copy_(s_dil)
+        out.sub_(success_rates).clamp_min_(0.0)
+        out.mul_(1.0 - success_rates)
 
 
-class UniformSignal:
+class UniformSamplingStrategy:
     """Constant 1.0 per item -- the trivial baseline / floor."""
 
     name = "uniform"
 
-    def __init__(self, cfg: UniformSignalCfg, layout: StateLayout) -> None:
+    def __init__(self, cfg: UniformSamplingStrategyCfg, layout: StateLayout) -> None:
         del cfg, layout
 
-    def score(self, success_rates: torch.Tensor) -> torch.Tensor:
-        return torch.ones_like(success_rates)
+    def score(self, success_rates: torch.Tensor, out: torch.Tensor) -> None:
+        out.fill_(1.0)

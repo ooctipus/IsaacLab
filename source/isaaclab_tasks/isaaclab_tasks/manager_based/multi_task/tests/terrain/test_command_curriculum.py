@@ -29,10 +29,9 @@ import torch
 import warp as wp
 
 from isaaclab_tasks.manager_based.multi_task.curriculum import (
-    BetaSignalCfg,
-    Curriculum,  # noqa: F401 -- used in fluent inline construction below,
-    CurriculumCfg,
-    SignalEntry,
+    BetaSamplingStrategyCfg,
+    Sampler,  # noqa: F401 -- used in fluent inline construction below,
+    SamplerCfg,
     StateLayout,
     SuccessMonitor,
     SuccessMonitorCfg,
@@ -65,7 +64,7 @@ def _sample_by_target_rate(
     """Build a one-shot Beta-only curriculum and sample from it.
 
     Used only by the legacy test cases in this file; production code
-    constructs ``CurriculumCfg`` once at init and reuses it across
+    constructs ``SamplerCfg`` once at init and reuses it across
     sample steps.
     """
     n = mon.success_rate.numel()
@@ -73,9 +72,9 @@ def _sample_by_target_rate(
         coords=torch.zeros(n, 1, device=mon.success_rate.device),
         spawn_index=torch.arange(n, device=mon.success_rate.device, dtype=torch.long),
     )
-    curriculum = Curriculum(
-        CurriculumCfg(
-            signals=[SignalEntry(cfg=BetaSignalCfg(target=target, kappa=kappa), weight=1.0)],
+    curriculum = Sampler(
+        SamplerCfg(
+            strategies=[BetaSamplingStrategyCfg(target=target, kappa=kappa, weight=1.0)],
             eps=1e-8,
         ),
         layout,
@@ -782,7 +781,7 @@ class TestCommandTerm:
 
 
 # ---------------------------------------------------------------------------
-# Curriculum <-> command-term interplay.
+# Sampler <-> command-term interplay.
 # ---------------------------------------------------------------------------
 
 
@@ -807,8 +806,8 @@ def _bootstrap_curriculum(env, term, target=0.5, kappa=5.0, history_len=16, log_
     cfg = SimpleNamespace(
         params={
             "debug_vis": False,  # skip VisualizationMarkers construction
-            "sampling": CurriculumCfg(
-                signals=[SignalEntry(cfg=BetaSignalCfg(target=target, kappa=kappa), weight=1.0)],
+            "sampling": SamplerCfg(
+                strategies=[BetaSamplingStrategyCfg(target=target, kappa=kappa, weight=1.0)],
                 eps=1e-8,
             ),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=history_len),
@@ -839,7 +838,7 @@ class TestCurriculum:
         assert term.success_rates.data_ptr() == curriculum.success_monitor.success_rate.data_ptr()
 
     def test_binds_command_indices_as_alias(self):
-        """Curriculum owns selected task rows and the command term reads the same tensor."""
+        """Sampler owns selected task rows and the command term reads the same tensor."""
         table = _make_task_table()
         env = _make_env(num_envs=8, device=DEVICE)
         term = _make_command_term(env, table)

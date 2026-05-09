@@ -43,7 +43,7 @@ class ScatterDashboard3D:
 
         dashboard = ScatterDashboard3D(positions=keypoints_xyz)
         arr = dashboard.to_object3d(panel_success)
-        wandb.log({"Curriculum/success_3d": wandb.Object3D(arr)})
+        wandb.log({"Sampler/success_3d": wandb.Object3D(arr)})
     """
 
     def __init__(

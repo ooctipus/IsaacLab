@@ -33,9 +33,8 @@ from tqdm import tqdm
 from isaaclab.managers import EventTermCfg, ManagerTermBase
 
 from . import reset_state
-from .curriculum import Curriculum, CurriculumCfg
-from .diagnostics import log_curriculum_bins
-from .sampling import FrontierSignalCfg
+from .diagnostics import log_sampler_bins
+from .sampling import FrontierSamplingStrategyCfg, Sampler, SamplerCfg
 from .state_buffer import StateBuffer
 from .state_buffer_cfg import StateBufferCfg
 from .state_layout import StateLayout
@@ -118,7 +117,9 @@ class reset_accumulator(ManagerTermBase):
         self.precollecting_phase = True
         self._tag_indices_bind: str | None = buf_cfg.tag_indices_bind
         self._tag_names_resolved = False
-        self._sampling_cfg: CurriculumCfg = cfg.params["sampling"]
+        self._sampling_cfg: SamplerCfg = cfg.params["sampling"]
+        if self._sampling_cfg.max_samples is None:
+            self._sampling_cfg.max_samples = env.num_envs
 
         self.monitor_success_rate = torch.zeros(max_size, device=env.device)
         monitor_cfg: SuccessMonitorCfg = cfg.params["success_monitor_cfg"]
@@ -128,15 +129,15 @@ class reset_accumulator(ManagerTermBase):
         self.success_monitor = monitor_cfg.class_type(monitor_cfg, self.monitor_success_rate)
 
         self.success_rate = torch.zeros(max_size, device=env.device)
-        # Curriculum: weighted-sum over informativeness signals. Built
+        # Sampler: weighted-sum over sampling strategies. Built
         # lazily after precollect since the buffer is empty at __init__.
         # Slots are items here, so the layout uses
         # ``spawn_index=arange(N), target_index=None``. ``cfg.rate_source``
         # selects between the rolling monitor and the predictor's
         # success_estimator output.
         self._layout: StateLayout | None = None
-        self._curriculum: Curriculum | None = None
-        self._curriculum_log_counter: int = 0
+        self._sampler: Sampler | None = None
+        self._sampler_log_counter: int = 0
 
     def _on_state_buffer_compact(self, keep_indices: torch.Tensor) -> None:
         """Permute parallel arrays in lockstep with a buffer compaction.
@@ -144,9 +145,9 @@ class reset_accumulator(ManagerTermBase):
         The :class:`StateBuffer` thins itself down to ``target_size``
         when oversample is enabled; everything outside the buffer that
         is indexed by slot position must be permuted by the same
-        surviving-index map. The curriculum's :class:`StateLayout` is
+        surviving-index map. The sampler's :class:`StateLayout` is
         derived from the buffer's slot xyz, which moves under
-        compaction, so the curriculum is invalidated and rebuilt lazily
+        compaction, so the sampler is invalidated and rebuilt lazily
         on the next sampling step.
         """
         n_keep = int(keep_indices.shape[0])
@@ -166,11 +167,11 @@ class reset_accumulator(ManagerTermBase):
         sm.success_pointer[n_keep:max_size] = 0
         sm.success_size[:n_keep] = sm.success_size[keep_indices]
         sm.success_size[n_keep:max_size] = 0
-        # Drop the curriculum so the next sampling pass rebuilds the
-        # StateLayout against the post-compact slot xyz; FrontierSignal
+        # Drop the sampler so the next sampling pass rebuilds the
+        # StateLayout against the post-compact slot xyz; the frontier strategy
         # reuses its kNN graph internally and needs the fresh coords.
         self._layout = None
-        self._curriculum = None
+        self._sampler = None
 
     # ------------------------------------------------------------------
     # Buffer accumulation
@@ -198,7 +199,7 @@ class reset_accumulator(ManagerTermBase):
             else:
                 self.state_buffer.add(states)
             self._layout = None
-            self._curriculum = None
+            self._sampler = None
 
         return env_ids[~valid_mask]
 
@@ -215,7 +216,7 @@ class reset_accumulator(ManagerTermBase):
         acceptance_conditions: dict,
         state_buffer_cfg: StateBufferCfg,
         success_monitor_cfg: SuccessMonitorCfg,
-        sampling: CurriculumCfg,
+        sampling: SamplerCfg,
         keep_accumulating: bool = False,
         report: bool = False,
         monitor_exclude_terms: list[str] | tuple[str, ...] = (),
@@ -306,17 +307,19 @@ class reset_accumulator(ManagerTermBase):
         if keep_accumulating:
             env_ids = self._accumulate(env, env_ids, reset_term)
 
-        # 4. Sample a slot and apply the state. The curriculum subsumes
-        # Beta / Frontier / Uniform via its signal composition; one
+        # 4. Sample a slot and apply the state. The sampler subsumes
+        # Beta / Frontier / Uniform via its strategy composition; one
         # ``probabilities()`` call replaces the legacy 3-branch isinstance.
         probs: torch.Tensor | None = None
         sample_rates: torch.Tensor | None = None
         if env_ids.numel() > 0:
-            self._ensure_curriculum(wandb_3d_asset, wandb_3d_relative_to)
-            assert self._curriculum is not None
+            self._ensure_sampler(wandb_3d_asset, wandb_3d_relative_to)
+            assert self._sampler is not None
             sample_rates = self.success_rate[: len(self.state_buffer)]
-            probs = self._curriculum.probabilities(sample_rates)
-            slot_idx = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
+            num_samples = self._sampling_cfg.max_samples if self._sampling_cfg.warp else len(env_ids)
+            assert num_samples is not None
+            probs, slot_idx = self._sampler.probabilities_and_sample(sample_rates, int(num_samples))
+            slot_idx = slot_idx[: len(env_ids)]
             self.sampled_slots[env_ids] = slot_idx.to(self.sampled_slots.dtype)
             reset_state.set_reset_state(
                 self._env,
@@ -337,16 +340,16 @@ class reset_accumulator(ManagerTermBase):
                 env.extras["log"] = {}
             env.extras["log"].update(log)  # type: ignore
 
-        # 5b. Curriculum diagnostic: per-signal aggregate stats every 50
+        # 5b. Sampler diagnostic: per-strategy aggregate stats every 50
         # sample steps, plus the bucketed-by-frontier breakdown when a
-        # frontier signal is active. Helper handles non-frontier
-        # curricula gracefully so this is unconditional.
-        if probs is not None and self._curriculum is not None:
-            self._curriculum_log_counter += 1
-            if self._curriculum_log_counter % 50 == 0:
+        # frontier strategy is active. Helper handles non-frontier
+        # samplers gracefully so this is unconditional.
+        if probs is not None and self._sampler is not None:
+            self._sampler_log_counter += 1
+            if self._sampler_log_counter % 50 == 0:
                 assert sample_rates is not None
-                log_curriculum_bins(
-                    self._curriculum,
+                log_sampler_bins(
+                    self._sampler,
                     success_rates=sample_rates,
                     probs=probs,
                     log_dict=self._env.extras.setdefault("log", {}),
@@ -423,31 +426,33 @@ class reset_accumulator(ManagerTermBase):
             xyz = quat_apply_inverse(ref_quat, xyz - ref_xyz)
         return xyz
 
-    def _ensure_curriculum(self, wandb_3d_asset: str | None, wandb_3d_relative_to: str | None) -> None:
-        """Build the :class:`StateLayout` and curriculum once after precollect.
+    def _ensure_sampler(self, wandb_3d_asset: str | None, wandb_3d_relative_to: str | None) -> None:
+        """Build the :class:`StateLayout` and sampler once after precollect.
 
         Slots are items here (1-to-1), so the layout uses
         ``spawn_index = arange(N), target_index = None`` over the
         post-precollect slot count. Coords come from
         :meth:`_slot_xyz_tensor` -- the same ``(asset, relative_to)``
-        the wandb 3D scatter uses, so the spatial signal a frontier
-        signal propagates is the one the user can see in wandb.
+        the wandb 3D scatter uses, so the spatial domain a frontier
+        strategy reads is the one the user can see in wandb.
 
         When ``wandb_3d_asset`` is ``None`` (no spatial domain
         configured), Frontier sampling is rejected with a clear error;
         Beta / Uniform sampling proceeds with a placeholder coords
-        tensor (unused by those signals).
+        tensor (unused by those strategies).
         """
-        if self._curriculum is not None:
+        if self._sampler is not None:
             return
         coords = self._slot_xyz_tensor(wandb_3d_asset, wandb_3d_relative_to)
         if coords is None:
-            # Frontier signals need real coords; non-spatial signals
+            # Frontier strategies need real coords; non-spatial strategies
             # (Beta / Uniform) don't, so a placeholder works for them.
-            needs_spatial = any(isinstance(sig_cfg, FrontierSignalCfg) for sig_cfg, _ in self._sampling_cfg.signals)
+            needs_spatial = any(
+                isinstance(strategy_cfg, FrontierSamplingStrategyCfg) for strategy_cfg in self._sampling_cfg.strategies
+            )
             if needs_spatial:
                 raise ValueError(
-                    "FrontierSignalCfg requires a per-slot spatial domain; set "
+                    "FrontierSamplingStrategyCfg requires a per-slot spatial domain; set "
                     "``wandb_3d_asset`` (and optionally ``wandb_3d_relative_to``) on the "
                     "reset_accumulator term so the buffer's slot xyz can be extracted."
                 )
@@ -459,7 +464,7 @@ class reset_accumulator(ManagerTermBase):
             spawn_index=torch.arange(n, device=coords.device, dtype=torch.long),
             target_index=None,
         )
-        self._curriculum = self._sampling_cfg.class_type(self._sampling_cfg, self._layout)
+        self._sampler = self._sampling_cfg.class_type(self._sampling_cfg, self._layout)
 
     def _log_wandb_3d_scatter(self, asset_name: str, relative_to: str | None) -> None:
         """Push per-slot success / sampling / Δ-success as ``wandb.Object3D``.
@@ -516,8 +521,8 @@ class reset_accumulator(ManagerTermBase):
         # Sampling probability mirrors the runtime sampler for sample-mass
         # parity with what the policy actually sees: one ``probabilities()``
         # call drives both the runtime sampler and this panel.
-        assert self._curriculum is not None
-        probs_t = self._curriculum.probabilities(rates_t)
+        assert self._sampler is not None
+        probs_t = self._sampler.probabilities(rates_t)
 
         rates = rates_t.detach().cpu().numpy()
         delta = delta_t.detach().cpu().numpy()
@@ -533,12 +538,14 @@ class reset_accumulator(ManagerTermBase):
                 values=delta, cmap="RdYlGn", vmin=-delta_range, vmax=delta_range, title="delta_success"
             ),
         }
-        # Per-signal score panels: each active non-constant signal in the
-        # curriculum gets a heatmap of its raw per-slot score, so the
-        # spatial contribution of each signal is visible separately.
-        # Constant signals (e.g. ``UniformSignal``) carry no info and are
+        # Per-strategy score panels: each active non-constant strategy in the
+        # sampler gets a heatmap of its raw per-slot score, so the
+        # spatial contribution of each strategy is visible separately.
+        # Constant strategies (e.g. uniform) carry no info and are
         # skipped.
-        for name, score_t in self._curriculum.signal_scores(rates_t).items():
+        score_rows_t = self._sampler.scores(rates_t)
+        for i, name in enumerate(self._sampler.names):
+            score_t = score_rows_t[i]
             if float(score_t.std()) < 1e-9:
                 continue
             score_np = score_t.detach().cpu().numpy()
@@ -549,14 +556,14 @@ class reset_accumulator(ManagerTermBase):
                 vmax=max(float(score_np.max()), 1e-9),
                 title=f"{name}_score",
             )
-        # Note: under the per-task FrontierSignal redesign, the signal's
+        # Note: under the per-task frontier redesign, the strategy's
         # ``score(rates)`` *is* the per-task frontier value -- there is
-        # no separate "raw spatial signal" to surface as a bonus panel,
+        # no separate raw spatial signal to surface as a bonus panel,
         # so ``frontier_score_3d`` already shows what was previously
         # split between ``frontier_score`` (above-mean) and
         # ``state_frontier`` (raw).
         log_payload = {
-            f"Curriculum/{tag}": wandb.Object3D(self._wandb_3d_dashboard.to_object3d(panel))
+            f"Sampler/{tag}": wandb.Object3D(self._wandb_3d_dashboard.to_object3d(panel))
             for tag, panel in panels.items()
         }
         wandb.log(log_payload)
@@ -569,20 +576,22 @@ class TermChoice(ManagerTermBase):
         self.num_partitions = len(self.term_partitions)
         self.term_samples = torch.zeros((env.num_envs,), dtype=torch.int, device=env.device)
         self.term_success_rate = torch.zeros(self.num_partitions, device=env.device)
-        self._sampling_cfg: CurriculumCfg = cfg.params["sampling"]
+        self._sampling_cfg: SamplerCfg = cfg.params["sampling"]
+        if self._sampling_cfg.max_samples is None:
+            self._sampling_cfg.max_samples = env.num_envs
 
         # TermChoice items are partition keys, not spatial states; build
-        # a placeholder layout (Beta + Uniform signals ignore coords).
+        # a placeholder layout (Beta + Uniform strategies ignore coords).
         self._layout = StateLayout(
             coords=torch.zeros(self.num_partitions, 1, device=env.device),
             spawn_index=torch.arange(self.num_partitions, device=env.device, dtype=torch.long),
             target_index=None,
         )
-        self._curriculum = self._sampling_cfg.class_type(self._sampling_cfg, self._layout)
+        self._sampler = self._sampling_cfg.class_type(self._sampling_cfg, self._layout)
 
-        # Need a monitor when the curriculum has any non-uniform signal,
+        # Need a monitor when the sampler has any non-uniform strategy,
         # or when the user explicitly requested reporting.
-        needs_rates = any(sig.name != "uniform" for sig, _ in self._curriculum.signals)
+        needs_rates = any(name != "uniform" for name in self._sampler.names)
         if cfg.params.get("report", False) or needs_rates:
             monitor_cfg: SuccessMonitorCfg = cfg.params["success_monitor_cfg"]
             monitor_cfg.num_monitored_data = self.num_partitions
@@ -597,7 +606,7 @@ class TermChoice(ManagerTermBase):
         env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
         terms: dict[str, ManagerTermBase],
-        sampling: CurriculumCfg,
+        sampling: SamplerCfg,
         success_monitor_cfg: SuccessMonitorCfg,
         report: bool = False,
     ) -> None:
@@ -613,8 +622,10 @@ class TermChoice(ManagerTermBase):
             success = env.termination_manager.get_term_cfg("progress_context").func.is_success
             self.success_monitor.success_update(self.term_samples[env_ids], success[env_ids].float())
 
-        probs = self._curriculum.probabilities(self.term_success_rate)
-        self.term_samples[env_ids] = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
+        num_samples = self._sampling_cfg.max_samples if self._sampling_cfg.warp else len(env_ids)
+        assert num_samples is not None
+        probs, choices = self._sampler.probabilities_and_sample(self.term_success_rate, int(num_samples))
+        self.term_samples[env_ids] = choices[: len(env_ids)].to(torch.int32)
         if report:
             log.update(
                 {f"Metrics/SampleProb/{name}": probs[i].item() for i, name in enumerate(self.term_partitions.keys())}

@@ -4,44 +4,44 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 __all__ = [
-    "BetaSignal",
-    "BetaSignalCfg",
+    "BetaSamplingStrategy",
+    "BetaSamplingStrategyCfg",
     "ChainedResetTerms",
-    "Curriculum",
-    "CurriculumCfg",
-    "FrontierSignal",
-    "FrontierSignalCfg",
-    "InformativenessSignal",
-    "SignalCfg",
-    "SignalEntry",
+    "FrontierSamplingStrategy",
+    "FrontierSamplingStrategyCfg",
+    "Sampler",
+    "SamplerCfg",
+    "SamplingStrategy",
+    "SamplingStrategyCfg",
     "StateBuffer",
     "StateBufferCfg",
     "StateLayout",
     "SuccessMonitor",
     "SuccessMonitorCfg",
     "TermChoice",
-    "UniformSignal",
-    "UniformSignalCfg",
+    "UniformSamplingStrategy",
+    "UniformSamplingStrategyCfg",
     "get_reset_state",
-    "log_curriculum_bins",
+    "log_sampler_bins",
     "reset_accumulator",
     "set_reset_state",
     "temporary_seed",
 ]
 
-from .curriculum import Curriculum, CurriculumCfg, SignalEntry
-from .diagnostics import log_curriculum_bins
+from .diagnostics import log_sampler_bins
 from .event_combinators import ChainedResetTerms, TermChoice, reset_accumulator
 from .reset_state import get_reset_state, set_reset_state, temporary_seed
 from .sampling import (
-    BetaSignal,
-    BetaSignalCfg,
-    FrontierSignal,
-    FrontierSignalCfg,
-    InformativenessSignal,
-    SignalCfg,
-    UniformSignal,
-    UniformSignalCfg,
+    BetaSamplingStrategy,
+    BetaSamplingStrategyCfg,
+    FrontierSamplingStrategy,
+    FrontierSamplingStrategyCfg,
+    Sampler,
+    SamplerCfg,
+    SamplingStrategy,
+    SamplingStrategyCfg,
+    UniformSamplingStrategy,
+    UniformSamplingStrategyCfg,
 )
 from .state_buffer import StateBuffer
 from .state_buffer_cfg import StateBufferCfg

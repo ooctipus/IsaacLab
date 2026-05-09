@@ -121,7 +121,7 @@ def main():
         term.success_monitor.success_rate.copy_(synth2)
         term._log_spawn_scatter(synth2, synth_probs)
 
-        img = env_unwrapped.extras.get("log_images", {}).get("Curriculum/spawn_scatter")
+        img = env_unwrapped.extras.get("log_images", {}).get("Sampler/spawn_scatter")
         if img is None:
             print("[preview] No image was written to extras['log_images'].", file=sys.stderr)
             sys.exit(1)

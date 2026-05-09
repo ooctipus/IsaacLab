@@ -94,7 +94,10 @@ def test_env_cfg_to_dict_serialises(task_name: str) -> None:
         # Kit / Newton / USD must NOT be added here -- they segfault when
         # imported outside a launched Kit app.
         "isaaclab_tasks.manager_based.multi_task.curriculum.sampling",
-        "isaaclab_tasks.manager_based.multi_task.curriculum.curriculum",
+        "isaaclab_tasks.manager_based.multi_task.curriculum.sampling.sampler",
+        "isaaclab_tasks.manager_based.multi_task.curriculum.sampling.sampler_cfg",
+        "isaaclab_tasks.manager_based.multi_task.curriculum.sampling.sampling_strategies",
+        "isaaclab_tasks.manager_based.multi_task.curriculum.sampling.sampling_strategies_cfg",
         "isaaclab_tasks.manager_based.multi_task.curriculum.diagnostics",
         "isaaclab_tasks.manager_based.multi_task.curriculum.state_layout",
         "isaaclab_tasks.manager_based.multi_task.curriculum.state_buffer",

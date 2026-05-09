@@ -76,7 +76,7 @@ class TrajectoryRecorder:
         video_interval: int,
         video_length: int,
         fps: int = 30,
-        wandb_tag: str = "Curriculum/trajectory_video",
+        wandb_tag: str = "Sampler/trajectory_video",
         background_image: np.ndarray | None = None,
         background_extent: tuple[float, float, float, float] | None = None,
     ) -> None:
@@ -173,8 +173,8 @@ class TrajectoryRecorder:
         # than relying on rsl_rl's ``*.mp4`` glob, which uploads every mp4
         # under the hardcoded ``"video"`` key and lets the standard 3D
         # RecordVideo overwrite us). Mirrors how ``_log_spawn_scatter``
-        # writes to ``env.extras["log_images"]["Curriculum/spawn_scatter"]``
-        # so the panel coexists with the other Curriculum/* dashboards.
+        # writes to ``env.extras["log_images"]["Sampler/spawn_scatter"]``
+        # so the panel coexists with the other Sampler/* dashboards.
         self.wandb_tag = wandb_tag
 
         self._step_count = 0

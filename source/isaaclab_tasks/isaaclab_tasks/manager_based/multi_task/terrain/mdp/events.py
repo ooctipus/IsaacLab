@@ -109,7 +109,7 @@ class record_trajectory_video(ManagerTermBase):
 
     The recorder writes a gif (or mp4 when ffmpeg is on PATH) under
     ``{log_dir}/videos/trajectory/``, uploads each one directly to W&B
-    under ``Curriculum/trajectory_video``, then renames mp4 outputs to
+    under ``Sampler/trajectory_video``, then renames mp4 outputs to
     ``.mp4.archived`` so rsl_rl's ``rglob("*.mp4")`` can't double-upload
     under its hardcoded ``"video"`` key (which would overwrite the
     standard 3D ``RecordVideo`` panel on every subsequent iteration).

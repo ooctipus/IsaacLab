@@ -3,20 +3,20 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Unit tests for :class:`Curriculum` and :class:`CurriculumCfg`."""
+"""Unit tests for :class:`Sampler` and :class:`SamplerCfg`."""
 
 from __future__ import annotations
 
+import pytest
 import torch
 
 from isaaclab_tasks.manager_based.multi_task.curriculum import (
-    BetaSignalCfg,
-    Curriculum,
-    CurriculumCfg,
-    FrontierSignalCfg,
-    SignalEntry,
+    BetaSamplingStrategyCfg,
+    FrontierSamplingStrategyCfg,
+    Sampler,
+    SamplerCfg,
     StateLayout,
-    UniformSignalCfg,
+    UniformSamplingStrategyCfg,
 )
 
 
@@ -36,28 +36,28 @@ def _layout_factory(num_states: int = 64, seed: int = 0) -> StateLayout:
 
 
 # ---------------------------------------------------------------------------
-# Curriculum (runtime)
+# Sampler (runtime)
 # ---------------------------------------------------------------------------
 
 
-def test_uniform_only_curriculum_is_uniform():
-    """A UniformSignal-only curriculum with eps=0 returns exact 1/N probabilities."""
+def test_uniform_only_sampler_is_uniform():
+    """A UniformSamplingStrategy-only sampler with eps=0 returns exact 1/N probabilities."""
     layout = _layout_terrain(num_items=100)
     rates = torch.rand(100)
-    cfg = CurriculumCfg(signals=[SignalEntry(cfg=UniformSignalCfg(), weight=1.0)], eps=0.0)
+    cfg = SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=1.0)], eps=0.0)
     curr = cfg.class_type(cfg, layout)
     probs = curr.probabilities(rates)
     assert torch.allclose(probs, torch.full_like(probs, 1.0 / 100))
 
 
-def test_curriculum_probabilities_sum_to_one_finite_nonneg():
+def test_sampler_probabilities_sum_to_one_finite_nonneg():
     layout = _layout_terrain()
     rates = torch.rand(layout.num_items)
-    curr = Curriculum(
-        CurriculumCfg(
-            signals=[
-                SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
-                SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=2.0),
+    curr = Sampler(
+        SamplerCfg(
+            strategies=[
+                BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0),
+                FrontierSamplingStrategyCfg(k=8, dilation_steps=1, weight=2.0),
             ],
             eps=1e-3,
         ),
@@ -69,84 +69,75 @@ def test_curriculum_probabilities_sum_to_one_finite_nonneg():
     assert abs(float(probs.sum()) - 1.0) < 1e-6
 
 
-def test_signal_scores_dict_keys_match_signal_names():
+def test_scores_rows_match_names():
     layout = _layout_terrain()
     rates = torch.rand(layout.num_items)
-    curr = Curriculum(
-        CurriculumCfg(
-            signals=[
-                SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
-                SignalEntry(cfg=FrontierSignalCfg(k=8), weight=2.0),
+    curr = Sampler(
+        SamplerCfg(
+            strategies=[
+                BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0),
+                FrontierSamplingStrategyCfg(k=8, weight=2.0),
             ],
         ),
         layout,
     )
-    scores = curr.signal_scores(rates)
-    assert set(scores.keys()) == {"beta", "frontier"}
-    for v in scores.values():
-        assert v.shape == (layout.num_items,)
-    assert curr.signal_names == ["beta", "frontier"]
+    scores = curr.scores(rates)
+    assert scores.shape == (2, layout.num_items)
+    assert curr.names == ["beta", "frontier"]
 
 
 def test_negative_weight_clamped_to_zero():
-    """Negative weights clamp to 0; the curriculum becomes uniform via eps."""
+    """Negative weights clamp to 0; the sampler becomes uniform via eps."""
     layout = _layout_terrain()
     rates = torch.rand(layout.num_items)
-    pos_cfg = CurriculumCfg(signals=[SignalEntry(cfg=UniformSignalCfg(), weight=1.0)], eps=0.0)
-    neg_cfg = CurriculumCfg(signals=[SignalEntry(cfg=UniformSignalCfg(), weight=-1.0)], eps=1e-6)
+    pos_cfg = SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=1.0)], eps=0.0)
+    neg_cfg = SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=-1.0)], eps=1e-6)
     pos = pos_cfg.class_type(pos_cfg, layout).probabilities(rates)
     neg = neg_cfg.class_type(neg_cfg, layout).probabilities(rates)
     assert torch.allclose(pos, neg, atol=1e-6)
 
 
-def test_find_signal_returns_active_signal():
+def test_names_return_active_strategies_in_order():
     layout = _layout_terrain()
-    curr = Curriculum(
-        CurriculumCfg(
-            signals=[
-                SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
-                SignalEntry(cfg=FrontierSignalCfg(k=8), weight=2.0),
+    curr = Sampler(
+        SamplerCfg(
+            strategies=[
+                BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0),
+                FrontierSamplingStrategyCfg(k=8, weight=2.0),
             ],
         ),
         layout,
     )
-    beta = curr.find_signal("beta")
-    frontier = curr.find_signal("frontier")
-    assert beta is not None
-    assert frontier is not None
-    assert beta.name == "beta"
-    assert frontier.name == "frontier"
-    assert curr.find_signal("missing") is None
+    assert curr.names == ["beta", "frontier"]
 
 
 # ---------------------------------------------------------------------------
-# CurriculumCfg.build (blueprint -> runtime)
+# SamplerCfg (blueprint -> runtime)
 # ---------------------------------------------------------------------------
 
 
-def test_curriculum_cfg_build_produces_runtime_curriculum():
+def test_sampler_cfg_build_produces_runtime_sampler():
     layout = _layout_terrain()
-    cfg = CurriculumCfg(
-        signals=[
-            SignalEntry(cfg=BetaSignalCfg(target=0.5, kappa=2.0), weight=1.0),
-            SignalEntry(cfg=FrontierSignalCfg(k=8), weight=1.5),
+    cfg = SamplerCfg(
+        strategies=[
+            BetaSamplingStrategyCfg(target=0.5, kappa=2.0, weight=1.0),
+            FrontierSamplingStrategyCfg(k=8, weight=1.5),
         ],
         eps=1e-3,
     )
     curr = cfg.class_type(cfg, layout)
-    assert isinstance(curr, Curriculum)
-    assert len(curr.signals) == 2
-    assert curr.eps == 1e-3
-    assert [s.name for s, _ in curr.signals] == ["beta", "frontier"]
+    assert isinstance(curr, Sampler)
+    assert curr.names == ["beta", "frontier"]
+    assert torch.isfinite(curr.probabilities(torch.rand(layout.num_items))).all()
 
 
-def test_curriculum_cfg_default_rate_source_is_monitor():
-    cfg = CurriculumCfg(signals=[SignalEntry(cfg=UniformSignalCfg(), weight=1.0)])
+def test_sampler_cfg_default_rate_source_is_monitor():
+    cfg = SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=1.0)])
     assert cfg.rate_source == "monitor"
 
 
-def test_curriculum_cfg_estimator_rate_source():
-    cfg = CurriculumCfg(signals=[SignalEntry(cfg=UniformSignalCfg(), weight=1.0)], rate_source="estimator")
+def test_sampler_cfg_estimator_rate_source():
+    cfg = SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=1.0)], rate_source="estimator")
     assert cfg.rate_source == "estimator"
 
 
@@ -154,11 +145,11 @@ def test_factory_slot_eq_item_layout_works():
     """target_index=None propagates through the cfg.build path."""
     layout = _layout_factory(num_states=64)
     rates = torch.rand(64)
-    curr = Curriculum(
-        CurriculumCfg(
-            signals=[
-                SignalEntry(cfg=BetaSignalCfg(target=0.66, kappa=1.0), weight=1.0),
-                SignalEntry(cfg=FrontierSignalCfg(k=8, dilation_steps=1), weight=2.0),
+    curr = Sampler(
+        SamplerCfg(
+            strategies=[
+                BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0),
+                FrontierSamplingStrategyCfg(k=8, dilation_steps=1, weight=2.0),
             ],
             eps=1e-3,
         ),
@@ -169,8 +160,8 @@ def test_factory_slot_eq_item_layout_works():
     assert abs(float(probs.sum()) - 1.0) < 1e-6
 
 
-def test_curriculum_cfg_dilation_steps_propagates():
-    """dilation_steps from FrontierSignalCfg actually reaches the runtime signal."""
+def test_sampler_cfg_dilation_steps_propagates():
+    """dilation_steps from FrontierSamplingStrategyCfg actually reaches the runtime signal."""
     torch.manual_seed(0)
     n = 20
     coords = torch.linspace(0, 1, n).unsqueeze(-1).repeat(1, 2)
@@ -181,21 +172,64 @@ def test_curriculum_cfg_dilation_steps_propagates():
     )
     rates = torch.zeros(n)
     rates[0] = 0.95
-    cfg1 = CurriculumCfg(
-        signals=[
-            SignalEntry(cfg=UniformSignalCfg(), weight=1.0),
-            SignalEntry(cfg=FrontierSignalCfg(k=2, dilation_steps=1), weight=2.0),
+    cfg1 = SamplerCfg(
+        strategies=[
+            UniformSamplingStrategyCfg(weight=1.0),
+            FrontierSamplingStrategyCfg(k=2, dilation_steps=1, weight=2.0),
         ],
         eps=1e-3,
     )
-    cfg3 = CurriculumCfg(
-        signals=[
-            SignalEntry(cfg=UniformSignalCfg(), weight=1.0),
-            SignalEntry(cfg=FrontierSignalCfg(k=2, dilation_steps=3), weight=2.0),
+    cfg3 = SamplerCfg(
+        strategies=[
+            UniformSamplingStrategyCfg(weight=1.0),
+            FrontierSamplingStrategyCfg(k=2, dilation_steps=3, weight=2.0),
         ],
         eps=1e-3,
     )
-    p1 = Curriculum(cfg1, layout).probabilities(rates)
-    p3 = Curriculum(cfg3, layout).probabilities(rates)
+    p1 = Sampler(cfg1, layout).probabilities(rates)
+    p3 = Sampler(cfg3, layout).probabilities(rates)
     threshold = 1.0 / n + 1e-6
     assert int((p3 > threshold).sum()) >= int((p1 > threshold).sum())
+
+
+def test_warp_sampler_matches_torch_scores_and_probabilities():
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required for the Warp sampler backend.")
+
+    layout_cpu = _layout_terrain(num_states=24, num_items=96, seed=3)
+    layout_cuda = StateLayout(
+        coords=layout_cpu.coords.cuda(),
+        spawn_index=layout_cpu.spawn_index.cuda(),
+        target_index=layout_cpu.target_index.cuda(),
+    )
+    rates_cpu = torch.rand(layout_cpu.num_items)
+    rates_cuda = rates_cpu.cuda()
+
+    strategies = [
+        BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0),
+        FrontierSamplingStrategyCfg(k=4, dilation_steps=1, weight=0.25),
+        FrontierSamplingStrategyCfg(k=4, dilation_steps=2, weight=0.5),
+        FrontierSamplingStrategyCfg(k=4, dilation_steps=5, weight=0.25),
+        UniformSamplingStrategyCfg(weight=0.1),
+    ]
+    torch_cfg = SamplerCfg(strategies=strategies, eps=1e-3)
+    warp_cfg = SamplerCfg(strategies=strategies, eps=1e-3, warp=True, max_samples=16)
+    torch_sampler = torch_cfg.class_type(torch_cfg, layout_cpu)
+    warp_sampler = warp_cfg.class_type(warp_cfg, layout_cuda)
+
+    scores_t = torch_sampler.scores(rates_cpu)
+    probs_t = torch_sampler.probabilities(rates_cpu)
+    scores_w = warp_sampler.scores(rates_cuda).cpu()
+    probs_w = warp_sampler.probabilities(rates_cuda).cpu()
+
+    assert torch.allclose(scores_w, scores_t, atol=1e-6)
+    assert torch.allclose(probs_w, probs_t, atol=1e-6)
+    samples = warp_sampler.sample(warp_sampler.probabilities(rates_cuda), 16)
+    assert samples.shape == (16,)
+    assert samples.min() >= 0
+    assert samples.max() < layout_cpu.num_items
+    probs_g, samples_g = warp_sampler.probabilities_and_sample(rates_cuda, 16)
+    assert torch.allclose(probs_g.cpu(), probs_t, atol=1e-6)
+    assert samples_g.shape == (16,)
+    assert samples_g.min() >= 0
+    assert samples_g.max() < layout_cpu.num_items
