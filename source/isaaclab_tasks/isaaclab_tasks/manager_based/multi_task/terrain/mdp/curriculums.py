@@ -67,6 +67,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         monitor_cfg: SuccessMonitorCfg = cfg.params["success_monitor_cfg"]
         monitor_cfg.num_monitored_data = self.num_discrete_cmd
         monitor_cfg.device = env.device
+        monitor_cfg.max_updates = env.num_envs if monitor_cfg.max_updates is None else monitor_cfg.max_updates
         self.success_rate = torch.zeros(self.num_discrete_cmd, device=env.device)
         self.goal_term.success_rates = self.success_rate
         self.success_monitor = monitor_cfg.class_type(monitor_cfg, self.success_rate)

@@ -137,6 +137,7 @@ class reset_accumulator(ManagerTermBase):
         monitor_cfg: SuccessMonitorCfg = cfg.params["success_monitor_cfg"]
         monitor_cfg.num_monitored_data = max_size
         monitor_cfg.device = env.device
+        monitor_cfg.max_updates = env.num_envs if monitor_cfg.max_updates is None else monitor_cfg.max_updates
         self.success_monitor = monitor_cfg.class_type(monitor_cfg, self.monitor_success_rate)
 
         self.success_rate = torch.zeros(max_size, device=env.device)
@@ -595,6 +596,7 @@ class TermChoice(ManagerTermBase):
             monitor_cfg: SuccessMonitorCfg = cfg.params["success_monitor_cfg"]
             monitor_cfg.num_monitored_data = self.num_partitions
             monitor_cfg.device = env.device
+            monitor_cfg.max_updates = env.num_envs if monitor_cfg.max_updates is None else monitor_cfg.max_updates
             self.success_monitor = monitor_cfg.class_type(monitor_cfg, self.term_success_rate)
         else:
             self.success_monitor = None

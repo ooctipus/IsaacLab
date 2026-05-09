@@ -24,3 +24,9 @@ class SuccessMonitorCfg:
 
     device: str = "cpu"
     """Device for internal buffers."""
+
+    max_updates: int | None = None
+    """Maximum number of raw rows per :meth:`SuccessMonitor.success_update` call."""
+
+    warp: bool = False
+    """Whether to use the graph-friendly Warp streamer and rate-update path."""
