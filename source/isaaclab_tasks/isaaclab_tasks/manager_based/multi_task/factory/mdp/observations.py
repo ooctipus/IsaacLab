@@ -7,14 +7,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from isaaclab_tasks.manager_based.multi_task.curriculum import (
-    get_reset_state,
-    make_reset_state_adapters,
-)
+from isaaclab_tasks.manager_based.multi_task.curriculum import get_reset_state
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
 def get_state(env: ManagerBasedRLEnv, reset_assets: list[str]):
-    return get_reset_state(env, slice(None), make_reset_state_adapters(env, reset_assets), is_relative=True)
+    return get_reset_state(env, slice(None), reset_assets, is_relative=True)

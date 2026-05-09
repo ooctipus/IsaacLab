@@ -93,25 +93,23 @@ class reset_accumulator(ManagerTermBase):
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
-        self.acceptance_conditions = cfg.params.get("acceptance_conditions")
+        self.acceptance_conditions = cfg.params["acceptance_conditions"]
         for key, val in self.acceptance_conditions.items():
             if hasattr(val, "class_type"):
                 self.acceptance_conditions[key] = val.class_type(val, env)
 
         # Filter to scene-resident assets: callers may include "optional" assets
-        # (e.g. ``small_gear`` / ``medium_gear`` for the gear_mesh_* presets) that
-        # only exist for a subset of presets. This lets a single reset_assets list
-        # cover every preset without per-preset branching.
-        self._requested_reset_assets = list(cfg.params.get("reset_assets", []))
+        # that only exist for a subset of presets.
+        self._requested_reset_assets = list(cfg.params["reset_assets"])
         present = set(env.scene._articulations) | set(env.scene._rigid_objects)
         self.reset_assets = [a for a in self._requested_reset_assets if a in present]
-        self.reset_state_adapters = reset_state.make_reset_state_adapters(env, self.reset_assets)
         state_dim = reset_state.get_reset_state(
             self._env,
             torch.tensor([0], device=env.device),
-            self.reset_state_adapters,
+            self.reset_assets,
         ).shape[-1]
-        buf_cfg: StateBufferCfg = cfg.params.get("state_buffer_cfg", StateBufferCfg())
+        self._state_buffer_cfg: StateBufferCfg = cfg.params["state_buffer_cfg"]
+        buf_cfg = self._state_buffer_cfg
         target_size = int(buf_cfg.size)
         # Oversample-then-thin: buffer fills to ``oversample_capacity`` then
         # compacts back to ``target_size``. Parallel arrays (monitor history,
@@ -133,12 +131,10 @@ class reset_accumulator(ManagerTermBase):
         self.precollecting_phase = True
         self._tag_indices_bind: str | None = buf_cfg.tag_indices_bind
         self._tag_names_resolved = False
-        self._sampling_cfg: CurriculumCfg = cfg.params.get("sampling", CurriculumCfg())
+        self._sampling_cfg: CurriculumCfg = cfg.params["sampling"]
 
         self.monitor_success_rate = torch.zeros(max_size, device=env.device)
-        monitor_cfg: SuccessMonitorCfg = cfg.params.get(
-            "success_monitor_cfg", SuccessMonitorCfg(num_monitored_data=max_size, device=env.device)
-        )
+        monitor_cfg: SuccessMonitorCfg = cfg.params["success_monitor_cfg"]
         monitor_cfg.num_monitored_data = max_size
         monitor_cfg.device = env.device
         self.success_monitor = monitor_cfg.class_type(monitor_cfg, self.monitor_success_rate)
@@ -195,7 +191,7 @@ class reset_accumulator(ManagerTermBase):
     def _accumulate(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor, reset_term: EventTermCfg):
         """Run a single reset attempt and store valid states in the buffer."""
         if not self._tag_names_resolved:
-            buf_cfg: StateBufferCfg = self.cfg.params.get("state_buffer_cfg", StateBufferCfg())
+            buf_cfg = self._state_buffer_cfg
             if buf_cfg.tag_names_bind is not None:
                 self.state_buffer.set_tag_names(eval(buf_cfg.tag_names_bind))  # noqa: S307
             self._tag_names_resolved = True
@@ -207,7 +203,7 @@ class reset_accumulator(ManagerTermBase):
 
         valid_env_ids = env_ids[valid_mask]
         if valid_env_ids.numel() > 0:
-            states = reset_state.get_reset_state(self._env, valid_env_ids, self.reset_state_adapters, is_relative=True)
+            states = reset_state.get_reset_state(self._env, valid_env_ids, self.reset_assets, is_relative=True)
             if self._tag_indices_bind is not None:
                 all_tags = eval(self._tag_indices_bind)  # noqa: S307
                 self.state_buffer.add_with_tags(states, all_tags[env_ids][valid_mask])
@@ -225,14 +221,14 @@ class reset_accumulator(ManagerTermBase):
         env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
         reset_term: EventTermCfg,
-        reset_assets: list[str] = [],
-        acceptance_conditions: dict = {},
-        state_buffer_cfg: StateBufferCfg = StateBufferCfg(),
-        success_monitor_cfg: SuccessMonitorCfg | None = None,
-        sampling: CurriculumCfg = CurriculumCfg(),
+        reset_assets: list[str],
+        acceptance_conditions: dict,
+        state_buffer_cfg: StateBufferCfg,
+        success_monitor_cfg: SuccessMonitorCfg,
+        sampling: CurriculumCfg,
         keep_accumulating: bool = False,
         report: bool = False,
-        monitor_exclude_terms: list[str] = [],
+        monitor_exclude_terms: list[str] | tuple[str, ...] = (),
         wandb_3d_asset: str | None = None,
         wandb_3d_relative_to: str | None = None,
         wandb_3d_log_period: int = 100,
@@ -288,7 +284,12 @@ class reset_accumulator(ManagerTermBase):
             )
 
         # Sync the unified success_rate from the active source
-        if self._sampling_cfg.rate_source == "estimator" and self.state_buffer.success_rates is not None:
+        if self._sampling_cfg.rate_source == "estimator":
+            if self.state_buffer.success_rates is None:
+                raise RuntimeError(
+                    "reset_accumulator sampling rate_source='estimator' requires "
+                    "state_buffer.success_rates to be populated."
+                )
             self.success_rate[:] = self.state_buffer.success_rates
         else:
             self.success_rate[:] = self.monitor_success_rate
@@ -334,7 +335,7 @@ class reset_accumulator(ManagerTermBase):
                 self._env,
                 self.state_buffer.sample(slot_idx),
                 env_ids,
-                self.reset_state_adapters,
+                self.reset_assets,
                 is_relative=True,
             )
 
@@ -363,7 +364,7 @@ class reset_accumulator(ManagerTermBase):
         if wandb_3d_asset is not None and not self.precollecting_phase:
             self._wandb_3d_counter = getattr(self, "_wandb_3d_counter", 0) + 1
             if self._wandb_3d_counter % wandb_3d_log_period == 0:
-                self._log_wandb_3d_scatter(wandb_3d_asset, wandb_3d_relative_to, sampling)
+                self._log_wandb_3d_scatter(wandb_3d_asset, wandb_3d_relative_to)
 
     # ------------------------------------------------------------------
     # 3D wandb visualization
@@ -372,15 +373,24 @@ class reset_accumulator(ManagerTermBase):
     def _xyz_offset_for_asset(self, asset_name: str) -> int | None:
         """Return the column offset of an asset's root xyz, or ``None`` if absent.
 
-        State buffer rows are concatenated per-adapter slices; the first three
-        columns of every adapter's slice are the asset's world (or env-relative)
+        State buffer rows are concatenated per-asset slices; the first three
+        columns of every asset slice are the asset's world (or env-relative)
         ``(x, y, z)``.
         """
         offset = 0
-        for adapter in self.reset_state_adapters:
-            if getattr(adapter, "asset_name", None) == asset_name:
+        reset_asset_set = set(self.reset_assets)
+        for name, articulation in self._env.scene._articulations.items():
+            if name not in reset_asset_set:
+                continue
+            if name == asset_name:
                 return offset
-            offset += adapter.state_dim(self._env)
+            offset += 13 + 2 * articulation.num_joints
+        for name in self._env.scene._rigid_objects:
+            if name not in reset_asset_set:
+                continue
+            if name == asset_name:
+                return offset
+            offset += 13
         return None
 
     def _slot_xyz_tensor(self, asset_name: str | None, relative_to: str | None) -> torch.Tensor | None:
@@ -416,7 +426,7 @@ class reset_accumulator(ManagerTermBase):
             from isaaclab.utils.math import quat_apply_inverse
 
             ref_xyz = self.state_buffer.data[:n, ref_offset : ref_offset + 3]
-            # Adapter slice layout: [pos(3), quat_xyzw(4), lin_vel(3), ang_vel(3), ...].
+            # Asset slice layout: [pos(3), quat_xyzw(4), lin_vel(3), ang_vel(3), ...].
             ref_quat = self.state_buffer.data[:n, ref_offset + 3 : ref_offset + 7]
             xyz = quat_apply_inverse(ref_quat, xyz - ref_xyz)
         return xyz
@@ -459,7 +469,7 @@ class reset_accumulator(ManagerTermBase):
         )
         self._curriculum = self._sampling_cfg.class_type(self._sampling_cfg, self._layout)
 
-    def _log_wandb_3d_scatter(self, asset_name: str, relative_to: str | None, sampling_cfg) -> None:
+    def _log_wandb_3d_scatter(self, asset_name: str, relative_to: str | None) -> None:
         """Push per-slot success / sampling / Δ-success as ``wandb.Object3D``.
 
         Builds a :class:`ScatterDashboard3D` once on first call using
@@ -514,7 +524,6 @@ class reset_accumulator(ManagerTermBase):
         # Sampling probability mirrors the runtime sampler for sample-mass
         # parity with what the policy actually sees: one ``probabilities()``
         # call drives both the runtime sampler and this panel.
-        del sampling_cfg  # superseded by self._curriculum
         assert self._curriculum is not None
         probs_t = self._curriculum.probabilities(rates_t)
 
@@ -568,7 +577,7 @@ class TermChoice(ManagerTermBase):
         self.num_partitions = len(self.term_partitions)
         self.term_samples = torch.zeros((env.num_envs,), dtype=torch.int, device=env.device)
         self.term_success_rate = torch.zeros(self.num_partitions, device=env.device)
-        self._sampling_cfg: CurriculumCfg = cfg.params.get("sampling", CurriculumCfg())
+        self._sampling_cfg: CurriculumCfg = cfg.params["sampling"]
 
         # TermChoice items are partition keys, not spatial states; build
         # a placeholder layout (Beta + Uniform signals ignore coords).
@@ -583,10 +592,7 @@ class TermChoice(ManagerTermBase):
         # or when the user explicitly requested reporting.
         needs_rates = any(sig.name != "uniform" for sig, _ in self._curriculum.signals)
         if cfg.params.get("report", False) or needs_rates:
-            monitor_cfg: SuccessMonitorCfg = cfg.params.get(
-                "success_monitor_cfg",
-                SuccessMonitorCfg(num_monitored_data=self.num_partitions, device=env.device),
-            )  # type: ignore
+            monitor_cfg: SuccessMonitorCfg = cfg.params["success_monitor_cfg"]
             monitor_cfg.num_monitored_data = self.num_partitions
             monitor_cfg.device = env.device
             self.success_monitor = monitor_cfg.class_type(monitor_cfg, self.term_success_rate)
@@ -598,8 +604,8 @@ class TermChoice(ManagerTermBase):
         env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
         terms: dict[str, ManagerTermBase],
-        sampling: CurriculumCfg = CurriculumCfg(),
-        success_monitor_cfg: SuccessMonitorCfg | None = None,
+        sampling: CurriculumCfg,
+        success_monitor_cfg: SuccessMonitorCfg,
         report: bool = False,
     ) -> None:
         if self.num_partitions == 0:

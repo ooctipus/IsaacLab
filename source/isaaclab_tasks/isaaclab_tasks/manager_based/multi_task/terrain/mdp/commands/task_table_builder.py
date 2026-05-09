@@ -20,7 +20,6 @@ import torch
 
 from isaaclab.utils.warp import convert_to_warp_mesh
 
-from isaaclab_tasks.manager_based.multi_task.curriculum import pack_articulation_reset_state
 from isaaclab_tasks.manager_based.multi_task.utils.trace import trace_span
 
 from ....utils.grid_downsample import grid_bucket_downsample
@@ -404,7 +403,9 @@ def build_task_table(
             newton_joint_names,
             robot_joint_names,
         )
-        spawn_states = pack_articulation_reset_state(spawn_states[:, :7], spawn_states[:, 7:])
+        root_state = torch.zeros(spawn_states.shape[0], 13, device=spawn_states.device, dtype=spawn_states.dtype)
+        root_state[:, :7] = spawn_states[:, :7]
+        spawn_states = torch.cat([root_state, spawn_states[:, 7:], torch.zeros_like(spawn_states[:, 7:])], dim=-1)
 
     print(f"  Task table: {spawn_states.shape[0]} IK-solved states", flush=True)
 

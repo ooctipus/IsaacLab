@@ -13,8 +13,6 @@ import warp as wp
 
 from isaaclab_tasks.manager_based.multi_task.curriculum import (
     get_reset_state,
-    make_reset_state_adapters,
-    pack_articulation_reset_state,
     set_reset_state,
 )
 
@@ -78,12 +76,12 @@ def _make_env(num_envs: int = 3, num_joints: int = 4):
     )
 
 
-def test_adapter_get_and_set_reset_state_round_trip_relative():
+def test_get_and_set_reset_state_round_trip_relative():
     env = _make_env()
-    adapters = make_reset_state_adapters(env, ["robot", "box"])
+    reset_assets = ["robot", "box"]
     env_ids = torch.tensor([1, 2])
 
-    state = get_reset_state(env, env_ids, adapters, is_relative=True)
+    state = get_reset_state(env, env_ids, reset_assets, is_relative=True)
     assert state.shape == (2, 13 + 2 * env.scene._articulations["robot"].num_joints + 13)
 
     robot_root = state[:, :13]
@@ -101,7 +99,7 @@ def test_adapter_get_and_set_reset_state_round_trip_relative():
     edited = state.clone()
     edited[:, :3] = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
     edited_before = edited.clone()
-    set_reset_state(env, edited, env_ids, adapters, is_relative=True)
+    set_reset_state(env, edited, env_ids, reset_assets, is_relative=True)
 
     torch.testing.assert_close(edited, edited_before)
     torch.testing.assert_close(
@@ -110,9 +108,9 @@ def test_adapter_get_and_set_reset_state_round_trip_relative():
     )
 
 
-def test_adapter_set_absolute_state_passes_views_without_copy():
+def test_set_absolute_state_passes_views_without_copy():
     env = _make_env()
-    adapters = make_reset_state_adapters(env, ["robot", "box"])
+    reset_assets = ["robot", "box"]
     robot = env.scene._articulations["robot"]
     box = env.scene._rigid_objects["box"]
     env_ids = torch.tensor([0, 2])
@@ -123,7 +121,7 @@ def test_adapter_set_absolute_state_passes_views_without_copy():
     box_root_start = 13 + 2 * robot.num_joints
     states[:, box_root_start + 3 : box_root_start + 7] = torch.tensor([0.0, 0.0, 0.0, 1.0])
 
-    set_reset_state(env, states, env_ids, adapters, is_relative=False)
+    set_reset_state(env, states, env_ids, reset_assets, is_relative=False)
 
     root_call = next(call for call in robot.calls if call[0] == "root")
     joint_call = next(call for call in robot.calls if call[0] == "joint")
@@ -133,24 +131,3 @@ def test_adapter_set_absolute_state_passes_views_without_copy():
     assert joint_call[1].data_ptr() == states[:, 13 : 13 + robot.num_joints].data_ptr()
     assert joint_call[3].data_ptr() == states[:, 13 + robot.num_joints : 13 + 2 * robot.num_joints].data_ptr()
     assert box_call[1].data_ptr() == states[:, box_root_start : box_root_start + 13].data_ptr()
-
-
-def test_pack_articulation_reset_state_defaults_velocities_to_zero():
-    root_pose = torch.zeros(2, 7)
-    root_pose[:, 6] = 1.0
-    joint_pos = torch.ones(2, 3)
-
-    packed = pack_articulation_reset_state(root_pose, joint_pos)
-
-    assert packed.shape == (2, 19)
-    torch.testing.assert_close(packed[:, :7], root_pose)
-    torch.testing.assert_close(packed[:, 7:13], torch.zeros(2, 6))
-    torch.testing.assert_close(packed[:, 13:16], joint_pos)
-    torch.testing.assert_close(packed[:, 16:19], torch.zeros_like(joint_pos))
-
-
-def test_make_reset_state_adapters_rejects_unknown_asset():
-    env = _make_env()
-
-    with pytest.raises(ValueError, match="missing_asset"):
-        make_reset_state_adapters(env, ["robot", "missing_asset"])

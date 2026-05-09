@@ -29,7 +29,6 @@ import torch
 import warp as wp
 
 from isaaclab_tasks.manager_based.multi_task.curriculum import (
-    ArticulationResetStateAdapter,
     BetaSignalCfg,
     Curriculum,  # noqa: F401 -- used in fluent inline construction below,
     CurriculumCfg,
@@ -265,7 +264,7 @@ def _make_command_term(
     )
     term.num_joints = num_joints
     term._joint_pos_slice = slice(13, 13 + num_joints)
-    term._reset_state_adapters = [ArticulationResetStateAdapter("robot")]
+    term._reset_assets = ["robot"]
     term.state_dim = 12 + num_joints + 1
     term.time_idx = 12 + num_joints
     term.table = table

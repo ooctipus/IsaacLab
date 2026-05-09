@@ -49,10 +49,7 @@ from isaaclab.utils.math import (
     quat_mul,
 )
 
-from isaaclab_tasks.manager_based.multi_task.curriculum import (
-    ArticulationResetStateAdapter,
-    set_reset_state,
-)
+from isaaclab_tasks.manager_based.multi_task.curriculum import set_reset_state
 
 from .task_table_builder import _joint_order_from_names, build_task_table, synthesize_terrain_origins
 
@@ -109,7 +106,7 @@ class RelativeStateCommand(CommandTerm):
         self.robot: Articulation = env.scene[cfg.asset_name]
         self.num_joints = self.robot.num_joints
         self._joint_pos_slice = slice(13, 13 + self.num_joints)
-        self._reset_state_adapters = [ArticulationResetStateAdapter(cfg.asset_name)]
+        self._reset_assets = [cfg.asset_name]
         # pos(3) + rot(3) + lin_vel(3) + ang_vel(3) + joint_q(num_joints) + hold(1)
         self.state_dim = 12 + self.num_joints + 1
         self.time_idx = 12 + self.num_joints  # column index for hold/success/remaining time
@@ -439,7 +436,7 @@ class RelativeStateCommand(CommandTerm):
         self._foot_success_mask.index_copy_(0, env_ids, foot_task)
 
         # Teleport robot to the spawn reset state associated with this task.
-        set_reset_state(self._env, spawn_state, env_ids, self._reset_state_adapters)
+        set_reset_state(self._env, spawn_state, env_ids, self._reset_assets)
 
     def _update_command(self):
         """Recompute delta state from current robot state. Minimizes temporaries."""
