@@ -94,9 +94,7 @@ class SceneCfg(InteractiveSceneCfg):
         prim_path=mdp_presets.HeightScannerPrimPathCfg(),  # type: ignore
         offset=FastTerrainScannerCfg.OffsetCfg(pos=(0.5, 0.0, 20.0)),
         ray_alignment="yaw",
-        pattern_cfg=patterns.GridPatternCfg(
-            resolution=preset(default=0.1, res03=0.03, res10=0.1, res05=0.05), size=(2.5, 1.5)
-        ),
+        pattern_cfg=patterns.GridPatternCfg(resolution=0.05, size=(2.5, 1.5)),
         debug_vis=False,
         mesh_prim_paths=["{ENV_REGEX_NS}/ground"],
     )
