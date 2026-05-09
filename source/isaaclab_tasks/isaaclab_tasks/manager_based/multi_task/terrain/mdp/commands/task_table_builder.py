@@ -21,9 +21,9 @@ import torch
 from isaaclab.utils.warp import convert_to_warp_mesh
 
 from isaaclab_tasks.manager_based.multi_task.curriculum import pack_articulation_reset_state
-from isaaclab_tasks.manager_based.multi_task.trace import trace_span
+from isaaclab_tasks.manager_based.multi_task.utils.trace import trace_span
 
-from ....grid_downsample import grid_bucket_downsample
+from ....utils.grid_downsample import grid_bucket_downsample
 from ...retarget import apply_final_fps
 
 if TYPE_CHECKING:
@@ -284,7 +284,7 @@ def build_task_table(
             the spawn × target pairing. ``0`` keeps the full per-cell
             Cartesian product (``n_c × n_c``). A positive integer ``N``
             picks ``min(N, n_c)`` targets per cell via
-            :func:`~isaaclab_tasks.manager_based.multi_task.grid_downsample.grid_bucket_downsample`
+            :func:`~isaaclab_tasks.manager_based.multi_task.utils.grid_downsample.grid_bucket_downsample`
             on the cell's spawn xy and pairs every spawn with each picked
             target.
 

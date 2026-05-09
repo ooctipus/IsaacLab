@@ -34,8 +34,8 @@ import numpy as np
 import torch
 import warp as wp
 
-from ...grid_downsample import grid_bucket_downsample
 from ...kinematics import NewtonKinematics
+from ...utils.grid_downsample import grid_bucket_downsample
 from ..terrains.patch_sampling.cfg import CircleFootprintCfg, MorphologicalPatchSamplingCfg
 from ..terrains.patch_sampling.morph import MORPH_TIMINGS
 from .buffer import RetargetBuffer

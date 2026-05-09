@@ -16,7 +16,7 @@ learn.
 This module exposes pluggable feature extractors that map a state slab
 ``[N_valid, joint_coord_count]`` to a feature tensor ``[N_valid, D]``.
 Whatever ``D`` they return becomes the metric space the FPS thins in:
-:func:`~isaaclab_tasks.manager_based.multi_task.grid_downsample.grid_bucket_downsample`
+:func:`~isaaclab_tasks.manager_based.multi_task.utils.grid_downsample.grid_bucket_downsample`
 partitions that ``D``-dim bounding box into buckets sized
 ``(volume / k)^{1/D}`` and keeps one candidate per bucket.
 
@@ -45,7 +45,7 @@ import torch
 
 from isaaclab.utils.math import axis_angle_from_quat
 
-from ...grid_downsample import extract_features, grid_bucket_downsample
+from ...utils.grid_downsample import extract_features, grid_bucket_downsample
 
 if TYPE_CHECKING:
     from .buffer import RetargetBuffer

@@ -1,0 +1,1 @@
+Internal refactor: moved ``multi_task/grid_downsample.py`` and ``multi_task/trace.py`` into a new ``multi_task/utils/`` subpackage so the ``multi_task/`` top level holds only subpackages and env-cfg modules. All importers updated to ``from ...utils.grid_downsample import ...`` etc.; sphinx ``:func:`` cross-refs follow.

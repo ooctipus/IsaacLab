@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from isaaclab_tasks.manager_based.multi_task.trace import (
+from isaaclab_tasks.manager_based.multi_task.utils.trace import (
     TraceRecorder,
     get_trace_recorder,
     reset_trace_recorder,

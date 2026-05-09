@@ -9,7 +9,7 @@ from collections.abc import Callable
 
 import torch
 
-from ..grid_downsample import extract_features, grid_bucket_downsample
+from ..utils.grid_downsample import extract_features, grid_bucket_downsample
 
 
 class StateBuffer:

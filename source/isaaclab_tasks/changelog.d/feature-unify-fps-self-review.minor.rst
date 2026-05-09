@@ -6,7 +6,7 @@ Changed
 Added
 ^^^^^
 
-* Added :func:`~isaaclab_tasks.manager_based.multi_task.grid_downsample.extract_features`, a shared dispatch helper for ``(states, extractor) -> features``. Both :func:`~isaaclab_tasks.manager_based.multi_task.terrain.retarget.apply_final_fps` and :class:`~isaaclab_tasks.manager_based.multi_task.curriculum.StateBuffer.compact` now call it instead of duplicating the four-line dispatch.
+* Added :func:`~isaaclab_tasks.manager_based.multi_task.utils.grid_downsample.extract_features`, a shared dispatch helper for ``(states, extractor) -> features``. Both :func:`~isaaclab_tasks.manager_based.multi_task.terrain.retarget.apply_final_fps` and :class:`~isaaclab_tasks.manager_based.multi_task.curriculum.StateBuffer.compact` now call it instead of duplicating the four-line dispatch.
 * Added :meth:`~isaaclab_tasks.manager_based.multi_task.terrain.retarget.RetargetBuffer.set_selected`, mediating the ``_selected`` / ``num_selected`` write so FPS-thinning helpers don't poke private fields directly.
 
 Fixed
