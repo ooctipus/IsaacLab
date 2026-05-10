@@ -48,6 +48,73 @@ _ANYMAL_JOINT_NAMES = [
 ]
 
 
+def _make_proxy(torch_tensor: torch.Tensor, wp_dtype) -> "wp.array":
+    """Wrap a contiguous torch tensor as a ProxyArray with the given Warp dtype."""
+    import warp as wp
+    from isaaclab.utils.warp import ProxyArray
+
+    if wp_dtype is wp.float32:
+        shape = tuple(torch_tensor.shape)
+    elif wp_dtype is wp.vec3:
+        shape = tuple(torch_tensor.shape[:-1])
+    elif wp_dtype is wp.quat:
+        shape = tuple(torch_tensor.shape[:-1])
+    else:
+        raise ValueError(f"Unsupported wp_dtype {wp_dtype!r}")
+    return ProxyArray(
+        wp.array(
+            ptr=torch_tensor.data_ptr(),
+            dtype=wp_dtype,
+            shape=shape,
+            device=str(torch_tensor.device),
+        )
+    )
+
+
+class _MockArticulationData:
+    """Mock ``.data`` exposing ProxyArrays for every kind read by the Warp path.
+
+    Both the Torch path (``wp.to_torch(data.body_pos_w)``) and the Warp path
+    (``data.body_pos_w.warp``) read from one seeded source.
+    """
+
+    def __init__(self, num_envs: int, num_bodies: int, num_joints: int, device: str):
+        import warp as wp
+
+        # Identity quat for rotation helpers.
+        q = torch.zeros(num_envs, 4, device=device)
+        q[:, 3] = 1.0
+        self.root_quat_w = q
+
+        # Backing torch tensors (kept alive so the wp.array aliases stay valid).
+        self._body_pos_w_torch = torch.randn(num_envs, num_bodies, 3, device=device).contiguous()
+        quat_raw = torch.randn(num_envs, num_bodies, 4, device=device)
+        self._body_quat_w_torch = torch.nn.functional.normalize(quat_raw, dim=-1).contiguous()
+        self._body_lin_vel_w_torch = torch.randn(num_envs, num_bodies, 3, device=device).contiguous()
+        self._body_ang_vel_w_torch = torch.randn(num_envs, num_bodies, 3, device=device).contiguous()
+        self._joint_pos_torch = torch.randn(num_envs, num_joints, device=device).contiguous()
+        self._joint_vel_torch = torch.randn(num_envs, num_joints, device=device).contiguous()
+        self._applied_torque_torch = torch.randn(num_envs, num_joints, device=device).contiguous()
+
+        self.body_pos_w = _make_proxy(self._body_pos_w_torch, wp.vec3)
+        self.body_quat_w = _make_proxy(self._body_quat_w_torch, wp.quat)
+        self.body_lin_vel_w = _make_proxy(self._body_lin_vel_w_torch, wp.vec3)
+        self.body_ang_vel_w = _make_proxy(self._body_ang_vel_w_torch, wp.vec3)
+        self.joint_pos = _make_proxy(self._joint_pos_torch, wp.float32)
+        self.joint_vel = _make_proxy(self._joint_vel_torch, wp.float32)
+        self.applied_torque = _make_proxy(self._applied_torque_torch, wp.float32)
+
+
+class _MockContactSensorData:
+    """Mock contact sensor data: ProxyArray for ``net_forces_w``."""
+
+    def __init__(self, num_envs: int, num_bodies: int, device: str):
+        import warp as wp
+
+        self._net_forces_w_torch = (torch.randn(num_envs, num_bodies, 3, device=device).abs() * 5.0).contiguous()
+        self.net_forces_w = _make_proxy(self._net_forces_w_torch, wp.vec3)
+
+
 class MockArticulation:
     """Stand-in for :class:`Articulation` satisfying ``SceneEntityCfg.resolve``."""
 
@@ -64,9 +131,12 @@ class MockArticulation:
         self.num_joints = len(self.joint_names)
         self.fixed_tendon_names: list[str] = []
         self.num_fixed_tendons = 0
-        root_quat_w = torch.zeros(num_envs, 4, device=device)
-        root_quat_w[:, 3] = 1.0
-        self.data = types.SimpleNamespace(root_quat_w=root_quat_w)
+        # ProxyArray-backed mock data — works for both Torch and Warp paths.
+        if self.num_joints > 0:
+            self.data = _MockArticulationData(num_envs, self.num_bodies, self.num_joints, device)
+        else:
+            # Contact-sensor-style entity (no joints).
+            self.data = _MockContactSensorData(num_envs, self.num_bodies, device)
 
     @staticmethod
     def _find(names, patterns, preserve_order=False):
