@@ -362,6 +362,7 @@ ASSETS_DATA_DIR="source/isaaclab_assets/data"
 # Each must be resolved to its target before `docker build` and restored after.
 EXTRA_SYMLINKS=(
   "dep"
+  "dep/rsl_rl"
 )
 SYMLINKS_FILE=$(mktemp)
 
