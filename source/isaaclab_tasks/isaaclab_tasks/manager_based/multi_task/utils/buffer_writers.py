@@ -32,54 +32,71 @@ class AppendBufferWriter:
 class FIFOBufferWriter:
     """FIFO writer over caller-owned per-stream ring buffers.
 
-    ``max_updates`` is the maximum number of raw rows passed to one
-    :meth:`add` call. Warp mode uses it to allocate fixed sort/group scratch at
-    construction time, so the hot path can be CUDA-graph captured without
-    allocating. ``data`` and ``new_data`` are expected to be contiguous tensors
-    with matching payload shape.
+    The caller owns all public state tensors. ``changed_ids`` fixes the maximum
+    number of raw rows accepted by one :meth:`add` call and is used to size Warp
+    sort/group scratch at construction time. ``data`` and ``new_data`` are
+    expected to be contiguous tensors with matching payload shape.
     """
 
     def __init__(
         self,
-        num_streams: int | None = None,
-        device: str | torch.device = "cpu",
-        start_ptr: torch.Tensor | None = None,
-        size: torch.Tensor | None = None,
-        max_updates: int | None = None,
+        start_ptr: torch.Tensor,
+        size: torch.Tensor,
+        changed_ids: torch.Tensor,
+        num_changed: torch.Tensor,
         warp: bool = False,
     ):
+        self._validate_state(start_ptr, size, changed_ids, num_changed)
         self._warp = warp
         if warp:
             wp.init()
-            if start_ptr is None:
-                if num_streams is None:
-                    raise ValueError("num_streams is required when start_ptr is not provided.")
-                start_ptr = torch.zeros(num_streams, device=device, dtype=torch.int32)
-            elif num_streams is None:
-                num_streams = int(start_ptr.shape[0])
-            if size is None:
-                size = torch.zeros_like(start_ptr, dtype=torch.int32)
-            max_update_capacity = int(max_updates) if max_updates is not None else int(num_streams)
             self._start_ptr = start_ptr
             self._size = size
-            self._changed_ids = torch.empty(max_update_capacity, device=start_ptr.device, dtype=torch.int64)
-            self._num_changed = torch.zeros(1, device=start_ptr.device, dtype=torch.int32)
+            self._changed_ids = changed_ids
+            self._num_changed = num_changed
             self._impl = FIFOBufferWriterWarp(
                 device=str(start_ptr.device),
                 start_ptr=wp.from_torch(self._start_ptr, dtype=wp.int32),
                 size=wp.from_torch(self._size, dtype=wp.int32),
                 changed_ids=wp.from_torch(self._changed_ids, dtype=wp.int64),
                 num_changed=wp.from_torch(self._num_changed, dtype=wp.int32),
-                max_updates=max_update_capacity,
+                max_updates=int(self._changed_ids.numel()),
             )
         else:
             self._impl = FIFOBufferWriterTorch(
-                num_streams=num_streams,
-                device=device,
                 start_ptr=start_ptr,
                 size=size,
-                max_updates=max_updates,
+                changed_ids=changed_ids,
+                num_changed=num_changed,
             )
+
+    def _validate_state(
+        self,
+        start_ptr: torch.Tensor,
+        size: torch.Tensor,
+        changed_ids: torch.Tensor,
+        num_changed: torch.Tensor,
+    ) -> None:
+        if start_ptr.dtype != torch.int32:
+            raise TypeError(f"start_ptr must have dtype torch.int32, got {start_ptr.dtype}.")
+        if size.dtype != torch.int32:
+            raise TypeError(f"size must have dtype torch.int32, got {size.dtype}.")
+        if changed_ids.dtype != torch.int64:
+            raise TypeError(f"changed_ids must have dtype torch.int64, got {changed_ids.dtype}.")
+        if num_changed.dtype != torch.int32:
+            raise TypeError(f"num_changed must have dtype torch.int32, got {num_changed.dtype}.")
+        if start_ptr.shape != size.shape:
+            raise ValueError(f"start_ptr and size must have matching shape, got {start_ptr.shape} and {size.shape}.")
+        if changed_ids.ndim != 1:
+            raise ValueError(f"changed_ids must be a 1D tensor, got shape {changed_ids.shape}.")
+        if tuple(num_changed.shape) != (1,):
+            raise ValueError(f"num_changed must have shape (1,), got {tuple(num_changed.shape)}.")
+        if (
+            size.device != start_ptr.device
+            or changed_ids.device != start_ptr.device
+            or num_changed.device != start_ptr.device
+        ):
+            raise ValueError("start_ptr, size, changed_ids, and num_changed must be on the same device.")
 
     @property
     def start_ptr(self) -> torch.Tensor:
@@ -115,24 +132,25 @@ class FIFOBufferWriter:
 
     def add(self, data: torch.Tensor, stream_ids: torch.Tensor, new_data: torch.Tensor) -> None:
         """Append values into ``data`` and update changed-stream state."""
-        if not self._warp:
-            self._impl.add(data, stream_ids, new_data)
+        num_updates = stream_ids.numel()
+        if num_updates == 0:
+            self.num_changed.zero_()
             return
-        if stream_ids.numel() == 0:
-            self._num_changed.zero_()
-            return
+
+        capacity = data.shape[1]
         item_bytes = (new_data.numel() // new_data.shape[0]) * new_data.element_size()
-        data_bytes = (
-            data.view(data.shape[0], data.shape[1], -1)
-            .view(torch.uint8)
-            .view(data.shape[0], data.shape[1] * item_bytes)
-        )
-        new_data_bytes = new_data.view(new_data.shape[0], -1).view(torch.uint8).view(new_data.shape[0], item_bytes)
+        if self._warp:
+            data = data.view(data.shape[0], capacity, -1).view(torch.uint8).view(data.shape[0], capacity * item_bytes)
+            new_data = new_data.view(new_data.shape[0], -1).view(torch.uint8).view(new_data.shape[0], item_bytes)
+            data = wp.from_torch(data, dtype=wp.uint8)
+            stream_ids = wp.from_torch(stream_ids, dtype=wp.int64)
+            new_data = wp.from_torch(new_data, dtype=wp.uint8)
+
         self._impl.add(
-            wp.from_torch(data_bytes, dtype=wp.uint8),
-            wp.from_torch(stream_ids, dtype=wp.int64),
-            wp.from_torch(new_data_bytes, dtype=wp.uint8),
-            stream_ids.numel(),
-            data.shape[1],
+            data,
+            stream_ids,
+            new_data,
+            num_updates,
+            capacity,
             item_bytes,
         )

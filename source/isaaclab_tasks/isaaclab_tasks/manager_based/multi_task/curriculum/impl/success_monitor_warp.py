@@ -51,14 +51,18 @@ class SuccessMonitorWarp:
         )
         if success_rate.dtype != torch.float32:
             raise TypeError("SuccessMonitor warp mode requires a float32 success_rate tensor.")
+        self.success_pointer = torch.zeros(cfg.num_monitored_data, device=cfg.device, dtype=torch.int32)
+        self.success_size = torch.zeros_like(self.success_pointer)
+        max_update_capacity = int(cfg.max_updates) if cfg.max_updates is not None else int(cfg.num_monitored_data)
+        changed_ids = torch.empty(max_update_capacity, device=cfg.device, dtype=torch.int64)
+        num_changed = torch.zeros(1, device=cfg.device, dtype=torch.int32)
         self.buffer_writer = FIFOBufferWriter(
-            cfg.num_monitored_data,
-            cfg.device,
-            max_updates=cfg.max_updates,
+            self.success_pointer,
+            self.success_size,
+            changed_ids,
+            num_changed,
             warp=True,
         )
-        self.success_pointer = self.buffer_writer.start_ptr
-        self.success_size = self.buffer_writer.size
         self._wp_success_buf = wp.from_torch(self.success_buf, dtype=wp.bool)
         self._wp_success_size = wp.from_torch(self.success_size, dtype=wp.int32)
         self._wp_success_rate = wp.from_torch(self.success_rate, dtype=wp.float32)

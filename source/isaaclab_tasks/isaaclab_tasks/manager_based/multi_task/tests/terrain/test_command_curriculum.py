@@ -54,6 +54,29 @@ def _make_monitor(cfg: SuccessMonitorCfg) -> SuccessMonitor:
     return SuccessMonitor(cfg, rate)
 
 
+def _make_fifo_writer(
+    num_streams: int,
+    max_updates: int,
+    use_warp: bool,
+    start_ptr: torch.Tensor | None = None,
+    size: torch.Tensor | None = None,
+) -> FIFOBufferWriter:
+    """Construct a FIFO writer with explicit caller-owned state tensors."""
+    if start_ptr is None:
+        start_ptr = torch.zeros(num_streams, device=DEVICE, dtype=torch.int32)
+    if size is None:
+        size = torch.zeros_like(start_ptr)
+    changed_ids = torch.empty(max_updates, device=start_ptr.device, dtype=torch.int64)
+    num_changed = torch.zeros(1, device=start_ptr.device, dtype=torch.int32)
+    return FIFOBufferWriter(
+        start_ptr=start_ptr,
+        size=size,
+        changed_ids=changed_ids,
+        num_changed=num_changed,
+        warp=use_warp,
+    )
+
+
 def _sample_by_target_rate(
     mon: SuccessMonitor,
     env_ids: torch.Tensor,
@@ -403,14 +426,12 @@ class TestSuccessMonitor:
         assert float(mon.success_rate[0].item()) == pytest.approx(0.5)
 
     def test_fifo_buffer_writer_uses_external_state_tensors(self):
-        """FIFOBufferWriter should derive capacity from data and allow external state tensors."""
+        """FIFOBufferWriter should write through explicit external state tensors."""
         start_ptr = torch.tensor([1, 0], device=DEVICE, dtype=torch.int32)
         size = torch.tensor([1, 0], device=DEVICE, dtype=torch.int32)
         for use_warp in (False, True):
             data = torch.zeros(2, 3, device=DEVICE, dtype=torch.bool)
-            buffer_writer = FIFOBufferWriter(2, DEVICE, max_updates=4, warp=use_warp)
-            buffer_writer.start_ptr = start_ptr.clone()
-            buffer_writer.size = size.clone()
+            buffer_writer = _make_fifo_writer(2, 4, use_warp, start_ptr.clone(), size.clone())
 
             buffer_writer.add(
                 data,
@@ -430,7 +451,7 @@ class TestSuccessMonitor:
         """Raw ``add`` should group duplicate ids while preserving per-stream FIFO order."""
         for use_warp in (False, True):
             data = torch.zeros(3, 4, device=DEVICE, dtype=torch.bool)
-            buffer_writer = FIFOBufferWriter(3, DEVICE, max_updates=5, warp=use_warp)
+            buffer_writer = _make_fifo_writer(3, 5, use_warp)
 
             buffer_writer.add(
                 data,
@@ -452,7 +473,7 @@ class TestSuccessMonitor:
     def test_fifo_buffer_writer_warp_add_supports_non_bool_payloads(self):
         """Warp FIFO writes should support non-bool dtype and trailing payload dimensions."""
         data = torch.zeros(3, 4, 2, device=DEVICE, dtype=torch.float32)
-        buffer_writer = FIFOBufferWriter(3, DEVICE, max_updates=5, warp=True)
+        buffer_writer = _make_fifo_writer(3, 5, use_warp=True)
         values = torch.tensor([[20.0, 21.0], [0.0, 1.0], [22.0, 23.0], [24.0, 25.0], [2.0, 3.0]], device=DEVICE)
 
         buffer_writer.add(data, torch.tensor([2, 0, 2, 2, 0], device=DEVICE, dtype=torch.int64), values)
