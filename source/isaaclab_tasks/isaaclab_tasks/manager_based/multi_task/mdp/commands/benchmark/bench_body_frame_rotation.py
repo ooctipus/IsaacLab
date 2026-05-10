@@ -15,7 +15,7 @@ import warp as wp
 
 from isaaclab.utils.math import quat_apply_inverse
 
-from ..kernels_wp import rotate_canonical_vec3_pair
+from ..impl.kernels_wp import rotate_canonical_vec3_pair
 
 
 def _time_cuda(fn: Callable[[], None], repeat: int) -> float:
