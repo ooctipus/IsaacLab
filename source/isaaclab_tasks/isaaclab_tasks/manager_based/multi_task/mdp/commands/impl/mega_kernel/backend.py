@@ -78,11 +78,16 @@ class MegaKernelBackend:
                     self.plan.effective_max_episode_length_wp,
                     0.5,
                     float(command.cfg.quality_easing),
+                    self.plan.inline_rotation_quat_wp,
+                    self.plan.subtask_is_rotatable_wp,
+                    self.plan.use_inline_rotation,
                 ],
                 block_dim=max(command.k_max, 32),
                 device=str(command.device),
             )
-            rotate_canonical_slots_to_body_frame_warp(command, self.plan)
+            # Skip the standalone rotate launch when inline rotation handled it.
+            if not self.plan.use_inline_rotation:
+                rotate_canonical_slots_to_body_frame_warp(command, self.plan)
         else:
             dispatch_mega_warp(command, self.plan)
             rotate_canonical_slots_to_body_frame_warp(command, self.plan)

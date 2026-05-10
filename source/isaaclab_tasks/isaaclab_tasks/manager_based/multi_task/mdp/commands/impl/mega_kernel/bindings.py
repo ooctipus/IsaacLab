@@ -93,6 +93,16 @@ class MegaKernelPlan:
     copy_slabs: tuple[CopySlabBinding, ...] = field(default_factory=tuple)
     body_pos_slabs: tuple[BodyPosSlabBinding, ...] = field(default_factory=tuple)
     dynamic_slabs: tuple[DynamicSlabBinding, ...] = field(default_factory=tuple)
+    # Inline rotation — when ``use_inline_rotation`` is set, the fused
+    # dispatch+compose kernel rotates vec3 deltas in-register and the
+    # standalone ``rotate_canonical_vec3_pair`` launch can be skipped. Only
+    # enabled when there is exactly 1 rotation asset (multi-asset rotation
+    # falls back to the separate rotate kernel).
+    inline_rotation_quat_torch: torch.Tensor | None = None
+    inline_rotation_quat_wp: wp.array | None = None
+    subtask_is_rotatable_i32: torch.Tensor | None = None
+    subtask_is_rotatable_wp: wp.array | None = None
+    use_inline_rotation: int = 0
 
 
 def build_mega_kernel_plan(command: MultiTaskCommandWarp) -> MegaKernelPlan:
@@ -148,6 +158,8 @@ def build_mega_kernel_plan(command: MultiTaskCommandWarp) -> MegaKernelPlan:
     outputs.progress = wp.from_torch(command._progress)
 
     copy_slabs, body_pos_slabs, dynamic_slabs = build_slab_bindings(command)
+    rotations = build_rotation_bindings(command)
+    inline_rot = _build_inline_rotation_metadata(command, rotations)
 
     return MegaKernelPlan(
         state_kernel_id_i32=state_kernel_id_i32,
@@ -165,12 +177,17 @@ def build_mega_kernel_plan(command: MultiTaskCommandWarp) -> MegaKernelPlan:
         state=state,
         composer_state=composer_state,
         outputs=outputs,
-        rotations=build_rotation_bindings(command),
+        rotations=rotations,
         episode_length_buf_wp=wp.from_torch(command._env.episode_length_buf),
         effective_max_episode_length_wp=wp.from_torch(command._effective_max_episode_length),
         copy_slabs=copy_slabs,
         body_pos_slabs=body_pos_slabs,
         dynamic_slabs=dynamic_slabs,
+        inline_rotation_quat_torch=inline_rot["quat_torch"],
+        inline_rotation_quat_wp=inline_rot["quat_wp"],
+        subtask_is_rotatable_i32=inline_rot["flags_torch"],
+        subtask_is_rotatable_wp=inline_rot["flags_wp"],
+        use_inline_rotation=inline_rot["enabled"],
     )
 
 
@@ -249,6 +266,62 @@ def build_slab_bindings(
             )
 
     return tuple(copy_slabs), tuple(body_pos_slabs), tuple(dynamic_slabs)
+
+
+def _build_inline_rotation_metadata(
+    command: MultiTaskCommandWarp,
+    rotations: tuple[RotationBinding, ...],
+) -> dict:
+    """Build inline-rotation metadata + dummy fallbacks for the fused kernel.
+
+    Always returns valid wp.array handles so the fused kernel signature is
+    fixed. ``enabled`` is 1 only when there is exactly one rotation binding
+    (single-asset rotation); 0 otherwise. With multiple bindings, the
+    standalone rotate kernel still runs and the fused kernel skips rotation.
+    """
+    spec = command.spec
+    num_subtasks = max(1, int(spec.state_kernel_id.numel()))
+    num_envs = command.num_envs
+
+    if len(rotations) == 1:
+        binding = rotations[0]
+        quat_torch = binding.root_quat_w
+        quat_wp = binding.root_quat_w_wp
+
+        reach_offsets = {int(o) for o in binding.reach_offsets_i32.cpu().tolist()}
+        track_offsets = {int(o) for o in binding.track_offsets_i32.cpu().tolist()}
+
+        canonical_offset = spec.canonical_offset.cpu().tolist()
+        is_instant = spec.is_instant.cpu().tolist()
+
+        flags = [0] * num_subtasks
+        for sid in range(int(spec.state_kernel_id.numel())):
+            co = int(canonical_offset[sid])
+            if co < 0:
+                continue
+            in_set = reach_offsets if bool(is_instant[sid]) else track_offsets
+            if co in in_set:
+                flags[sid] = 1
+
+        flags_torch = torch.tensor(flags, dtype=torch.int32, device=command.device)
+        flags_wp = wp.from_torch(flags_torch)
+        enabled = 1
+    else:
+        # Dummy zero arrays so the kernel signature stays valid; flag = 0 makes
+        # the rotation branch a no-op.
+        quat_torch = torch.zeros((num_envs, 4), device=command.device, dtype=torch.float32)
+        quat_wp = wp.from_torch(quat_torch)
+        flags_torch = torch.zeros(num_subtasks, dtype=torch.int32, device=command.device)
+        flags_wp = wp.from_torch(flags_torch)
+        enabled = 0
+
+    return {
+        "quat_torch": quat_torch,
+        "quat_wp": quat_wp,
+        "flags_torch": flags_torch,
+        "flags_wp": flags_wp,
+        "enabled": enabled,
+    }
 
 
 def _root_quat_torch(command: MultiTaskCommandWarp, asset_name: str) -> torch.Tensor:

@@ -2687,8 +2687,17 @@ def dispatch_compose_fused(
     effective_max_episode_length: wp.array(dtype=int),
     instant_threshold: float,
     quality_easing: float,
+    inline_root_quat: wp.array2d(dtype=float),
+    subtask_is_rotatable: wp.array(dtype=int),
+    use_inline_rotation: int,
 ):
-    """Fused dispatch + compose. Same outputs as ``dispatch_mega`` + ``compose_reward_parallel``."""
+    """Fused dispatch + compose. Same outputs as ``dispatch_mega`` + ``compose_reward_parallel``.
+
+    When ``use_inline_rotation != 0``, vec3 deltas in the BODY_POS / BODY_LIN_VEL /
+    BODY_ANG_VEL branch are rotated to body frame in-register before scatter,
+    using ``inline_root_quat[env]``. Saves the standalone
+    ``rotate_canonical_vec3_pair`` launch in the captured graph.
+    """
     env, slot = wp.tid()
     n_slots = env_slots.slot_count[env]
 
@@ -2725,6 +2734,17 @@ def dispatch_compose_fused(
             x3 = _project_xyz(state, spec, env, gbase)
             t3 = _read_target_xyz(state, env, tgt_off)
             d3v = t3 - x3
+            # Optional inline body-frame rotation for rotatable vec3 outputs.
+            # ``err`` uses L2 norm which is rotation-invariant — equivalent
+            # output as the standalone ``rotate_canonical_vec3_pair`` kernel.
+            if use_inline_rotation != 0 and subtask_is_rotatable[sid] != 0:
+                q = wp.vec4(
+                    inline_root_quat[env, 0],
+                    inline_root_quat[env, 1],
+                    inline_root_quat[env, 2],
+                    inline_root_quat[env, 3],
+                )
+                d3v = _quat_apply_inverse_xyzw(q, d3v)
             d0 = d3v[0]
             d1 = d3v[1]
             d2 = d3v[2]

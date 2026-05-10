@@ -69,11 +69,15 @@ class ScheduleOrderedMegaBackend:
                     self.plan.mega.effective_max_episode_length_wp,
                     0.5,
                     float(command.cfg.quality_easing),
+                    self.plan.mega.inline_rotation_quat_wp,
+                    self.plan.mega.subtask_is_rotatable_wp,
+                    self.plan.mega.use_inline_rotation,
                 ],
                 block_dim=max(command.k_max, 32),
                 device=str(command.device),
             )
-            rotate_canonical_slots_to_body_frame_warp(command, self.plan.mega)
+            if not self.plan.mega.use_inline_rotation:
+                rotate_canonical_slots_to_body_frame_warp(command, self.plan.mega)
         else:
             dispatch_mega_warp(command, self.plan.mega)
             rotate_canonical_slots_to_body_frame_warp(command, self.plan.mega)
