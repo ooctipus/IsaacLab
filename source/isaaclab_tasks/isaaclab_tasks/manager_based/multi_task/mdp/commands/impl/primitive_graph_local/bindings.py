@@ -61,7 +61,13 @@ _CONTACT_SCHEDULES = (
     SCHEDULE_VEC3_THRESHOLD_SUM_DELTA,
     SCHEDULE_VEC3_THRESHOLD_PAIR_DIFF_DELTA,
 )
-_MIN_PRODUCER_FANOUT = 16
+# Per-kind materialization breakeven. Light producers (1-4 array reads) need
+# many consumers to amortize the global-memory roundtrip cost; heavy producers
+# (multi-element reductions, multi-schedule contact predicate) earn it back at
+# much lower fanout. Determined empirically via bench_tile_fusion_testbed: heavy
+# producers see ~3.5x at fanout 4, light producers break even closer to 16.
+_MIN_FANOUT_LIGHT = 16  # direct vec3 / scalar / quat
+_MIN_FANOUT_HEAVY = 4  # scalar_sum (joint reduction), contact (multi-schedule reuse)
 
 
 def _build_signature_tables(
@@ -218,9 +224,9 @@ def _set_grouped_consumers(
     plan.consumer_counts_i32[unique_nodes.long()] = counts.to(torch.int32)
 
 
-def _should_materialize_producer(work_count: int, node_count: int) -> bool:
+def _should_materialize_producer(work_count: int, node_count: int, threshold: int) -> bool:
     """Return whether a producer kind has enough fanout to pay for materialization."""
-    return node_count > 0 and work_count >= node_count * _MIN_PRODUCER_FANOUT
+    return node_count > 0 and work_count >= node_count * threshold
 
 
 def _sort_command_slots_by_schedule(command: MultiTaskCommandWarp, schedule_ids: torch.Tensor) -> None:
@@ -573,13 +579,17 @@ def refresh_primitive_graph_local_plan(command: MultiTaskCommandWarp, plan: Prim
     plan.scalar_sum_count = plan.scalar_sum_nodes.count
     plan.contact_count = plan.contact_nodes.count
     plan.schedule_counts_py = schedule_counts_py
-    plan.use_vec3_graph = _should_materialize_producer(schedule_counts_py[SCHEDULE_DIRECT_VEC3_DELTA], plan.vec3_count)
-    plan.use_scalar_graph = _should_materialize_producer(
-        schedule_counts_py[SCHEDULE_DIRECT_SCALAR_DELTA], plan.scalar_count
+    plan.use_vec3_graph = _should_materialize_producer(
+        schedule_counts_py[SCHEDULE_DIRECT_VEC3_DELTA], plan.vec3_count, _MIN_FANOUT_LIGHT
     )
-    plan.use_quat_graph = _should_materialize_producer(schedule_counts_py[SCHEDULE_DIRECT_QUAT_DELTA], plan.quat_count)
+    plan.use_scalar_graph = _should_materialize_producer(
+        schedule_counts_py[SCHEDULE_DIRECT_SCALAR_DELTA], plan.scalar_count, _MIN_FANOUT_LIGHT
+    )
+    plan.use_quat_graph = _should_materialize_producer(
+        schedule_counts_py[SCHEDULE_DIRECT_QUAT_DELTA], plan.quat_count, _MIN_FANOUT_LIGHT
+    )
     plan.use_scalar_sum_graph = _should_materialize_producer(
-        schedule_counts_py[SCHEDULE_SCALAR_SUM_DELTA], plan.scalar_sum_count
+        schedule_counts_py[SCHEDULE_SCALAR_SUM_DELTA], plan.scalar_sum_count, _MIN_FANOUT_HEAVY
     )
     plan.use_dense_graph_consumer = (
         (schedule_counts_py[SCHEDULE_DIRECT_VEC3_DELTA] == 0 or plan.use_vec3_graph)
