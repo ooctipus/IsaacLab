@@ -2837,3 +2837,208 @@ def dispatch_compose_fused(
         if n_slots > 0:
             progress_val = activation_sum / float(n_slots)
         outputs.progress[env] = progress_val
+
+
+# ---------------------------------------------------------------------------
+# Fused dispatch_graph_dense + compose — same pattern as dispatch_compose_fused
+# but for the primitive_graph_local backend's dense-consumer path. Used when
+# all producer kinds materialize (use_dense_graph_consumer=True) AND k_max
+# clears the parallel-compose threshold.
+# ---------------------------------------------------------------------------
+
+
+@wp.kernel
+def dispatch_graph_dense_compose_fused(
+    env_slots: EnvSlots,
+    subtask_schedule_ids: wp.array(dtype=int),
+    vec3_nodes: PrimitiveProducerQueue,
+    scalar_nodes: PrimitiveProducerQueue,
+    quat_nodes: PrimitiveProducerQueue,
+    scalar_sum_nodes: PrimitiveProducerQueue,
+    contact_nodes: PrimitiveProducerQueue,
+    spec: SubtaskSpec,
+    state: StateAccess,
+    outputs: Outputs,
+    composer_state: ComposerState,
+    direct_vec3: wp.array2d(dtype=float),
+    direct_scalar: wp.array(dtype=float),
+    direct_quat: wp.array2d(dtype=float),
+    scalar_sum: wp.array(dtype=float),
+    contact_mask: wp.array2d(dtype=float),
+    episode_length_buf: wp.array(dtype=wp.int64),
+    effective_max_episode_length: wp.array(dtype=int),
+    instant_threshold: float,
+    quality_easing: float,
+    vec3_signature_count: int,
+    scalar_signature_count: int,
+    quat_signature_count: int,
+    scalar_sum_signature_count: int,
+    contact_signature_count: int,
+):
+    """Block-per-env fused kernel: dense graph consumer + parallel compose."""
+    env, slot = wp.tid()
+    n_slots = env_slots.slot_count[env]
+
+    old_transit = composer_state.transit_steps[env]
+    new_transit = old_transit + 1
+    tsteps = float(new_transit)
+
+    local_act = float(0.0)
+    local_has_instant = int(0)
+    local_instant_ok = int(1)
+    local_quality = float(1.0)
+
+    if slot < n_slots:
+        sid = env_slots.subtask_ids[env, slot]
+        tgt_off = env_slots.slot_offsets[env, slot]
+        pipeline_id = subtask_schedule_ids[sid]
+        akid = spec.activation_kernel_id[sid]
+        act_param = spec.activation_kernel_param[sid]
+        canon_off = spec.canonical_offset[sid]
+        instant = spec.is_instant_flag[sid]
+        is_tracking_i = spec.is_tracking_flag[sid]
+        stride = spec.state_stride[sid]
+        gcount = spec.gather_count[sid]
+
+        d0 = float(0.0)
+        d1 = float(0.0)
+        d2 = float(0.0)
+        d3 = float(0.0)
+        err = float(0.0)
+
+        if pipeline_id == PIPELINE_DIRECT_VEC3_DELTA:
+            signature = vec3_nodes.subtask_signature[sid]
+            node_id = env * vec3_signature_count + signature
+            x3 = wp.vec3(direct_vec3[node_id, 0], direct_vec3[node_id, 1], direct_vec3[node_id, 2])
+            d3v = _read_target_xyz(state, env, tgt_off) - x3
+            d0 = d3v[0]
+            d1 = d3v[1]
+            d2 = d3v[2]
+            err = _metric_geometric_vec3(d3v)
+        elif pipeline_id == PIPELINE_DIRECT_SCALAR_DELTA:
+            signature = scalar_nodes.subtask_signature[sid]
+            node_id = env * scalar_signature_count + signature
+            d0 = state.targets_flat[env, tgt_off] - direct_scalar[node_id]
+            err = _metric_geometric_scalar(d0)
+        elif pipeline_id == PIPELINE_DIRECT_QUAT_DELTA:
+            signature = quat_nodes.subtask_signature[sid]
+            node_id = env * quat_signature_count + signature
+            q_current = wp.vec4(
+                direct_quat[node_id, 0],
+                direct_quat[node_id, 1],
+                direct_quat[node_id, 2],
+                direct_quat[node_id, 3],
+            )
+            dq = _delta_quaternion(q_current, _read_target_quat_xyzw(state, env, tgt_off))
+            d0 = dq[0]
+            d1 = dq[1]
+            d2 = dq[2]
+            d3 = dq[3]
+            err = _metric_quaternion(dq)
+        elif pipeline_id == PIPELINE_VEC3_THRESHOLD_VECTOR_DELTA:
+            signature = contact_nodes.subtask_signature[sid]
+            node_id = env * contact_signature_count + signature
+            xcb = _contact_mask_vec4(contact_mask, node_id)
+            tc0 = state.targets_flat[env, tgt_off]
+            tc1 = float(0.0)
+            tc2 = float(0.0)
+            tc3 = float(0.0)
+            if stride >= 2:
+                tc1 = state.targets_flat[env, tgt_off + 1]
+            if stride >= 3:
+                tc2 = state.targets_flat[env, tgt_off + 2]
+            if stride >= 4:
+                tc3 = state.targets_flat[env, tgt_off + 3]
+            d0 = tc0 - xcb[0]
+            d1 = tc1 - xcb[1]
+            d2 = tc2 - xcb[2]
+            d3 = tc3 - xcb[3]
+            err = wp.sqrt(d0 * d0 + d1 * d1 + d2 * d2 + d3 * d3)
+        elif pipeline_id == PIPELINE_VEC3_THRESHOLD_SUM_DELTA:
+            signature = contact_nodes.subtask_signature[sid]
+            node_id = env * contact_signature_count + signature
+            count = gcount / 3
+            xcb = _contact_mask_vec4(contact_mask, node_id)
+            x_cnt = float(0.0)
+            for i in range(count):
+                x_cnt = x_cnt + xcb[i]
+            d0 = state.targets_flat[env, tgt_off] - x_cnt
+            err = _metric_geometric_scalar(d0)
+        elif pipeline_id == PIPELINE_VEC3_THRESHOLD_PAIR_DIFF_DELTA:
+            signature = contact_nodes.subtask_signature[sid]
+            node_id = env * contact_signature_count + signature
+            count = gcount / 3
+            half = count / 2
+            xcb = _contact_mask_vec4(contact_mask, node_id)
+            cnt_a = float(0.0)
+            cnt_b = float(0.0)
+            for i in range(count):
+                if i < half:
+                    cnt_a = cnt_a + xcb[i]
+                else:
+                    cnt_b = cnt_b + xcb[i]
+            d0 = state.targets_flat[env, tgt_off] - (cnt_a - cnt_b)
+            err = _metric_geometric_scalar(d0)
+        elif pipeline_id == PIPELINE_SCALAR_SUM_DELTA:
+            signature = scalar_sum_nodes.subtask_signature[sid]
+            node_id = env * scalar_sum_signature_count + signature
+            d0 = state.targets_flat[env, tgt_off] - scalar_sum[node_id]
+            err = _metric_geometric_scalar(d0)
+
+        act = _apply_activation(akid, err, act_param)
+        local_act = act
+
+        _scatter_delta(outputs, env, canon_off, stride, instant, d0, d1, d2, d3)
+        outputs.buf_error[env, slot] = err
+        outputs.buf_activation[env, slot] = act
+
+        new_sum = composer_state.sum_activation[env, slot] + act
+        composer_state.sum_activation[env, slot] = new_sum
+
+        if instant != 0:
+            local_has_instant = 1
+            prev_achieved = composer_state.instant_achieved[env, slot]
+            achieved_int = int(0)
+            if prev_achieved:
+                achieved_int = 1
+            if act > instant_threshold:
+                achieved_int = 1
+            composer_state.instant_achieved[env, slot] = achieved_int != 0
+            local_instant_ok = achieved_int
+        elif is_tracking_i != 0:
+            local_quality = new_sum / tsteps
+
+    combined = wp.vec4(local_act, float(local_has_instant), float(local_instant_ok), local_quality)
+    reduced_t = wp.tile_reduce(_compose_reduce_op, wp.tile(combined, preserve_type=True))
+
+    if slot == 0:
+        composer_state.transit_steps[env] = new_transit
+
+        reduced = wp.tile_extract(reduced_t, 0)
+        activation_sum = reduced[0]
+        has_instant = int(reduced[1])
+        all_instant_ok = int(reduced[2])
+        quality_product = reduced[3]
+
+        success_int = all_instant_ok * has_instant
+        timeout_int = int(0)
+        if episode_length_buf[env] >= wp.int64(effective_max_episode_length[env] - 1):
+            timeout_int = 1
+        done_now_int = success_int
+        if timeout_int == 1:
+            done_now_int = 1
+
+        quality_factor = wp.pow(quality_product, quality_easing)
+        terminal_value = float(all_instant_ok) * quality_factor
+
+        reward = float(0.0)
+        if done_now_int == 1:
+            reward = terminal_value
+
+        outputs.task_reward[env] = reward
+        outputs.task_done_success[env] = success_int != 0
+
+        progress_val = float(0.0)
+        if n_slots > 0:
+            progress_val = activation_sum / float(n_slots)
+        outputs.progress[env] = progress_val
