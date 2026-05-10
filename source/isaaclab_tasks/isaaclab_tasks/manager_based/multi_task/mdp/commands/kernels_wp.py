@@ -2539,6 +2539,18 @@ def compose_reward_from_local(
 # ---------------------------------------------------------------------------
 
 
+@wp.func
+def _compose_reduce_op(a: wp.vec4, b: wp.vec4) -> wp.vec4:
+    """Combined reduction op for the parallel composer.
+
+    Component-wise: sum, max, min, sum. Used so a single
+    :func:`wp.tile_reduce` collapses the four per-slot reductions
+    (``activation_sum``, ``has_instant``, ``all_instant_ok``,
+    ``log_quality_sum``) into one block-wide pass.
+    """
+    return wp.vec4(a[0] + b[0], wp.max(a[1], b[1]), wp.min(a[2], b[2]), a[3] + b[3])
+
+
 @wp.kernel
 def compose_reward_parallel(
     env_slots: EnvSlots,
@@ -2601,20 +2613,20 @@ def compose_reward_parallel(
             safe_ratio = wp.max(ratio, 1.0e-38)
             local_log_quality = wp.log(safe_ratio)
 
-    # Cross-slot reductions over the full block.
-    activation_sum_t = wp.tile_sum(wp.tile(local_act))
-    has_instant_t = wp.tile_max(wp.tile(local_has_instant))
-    all_instant_ok_t = wp.tile_min(wp.tile(local_instant_ok))
-    log_quality_sum_t = wp.tile_sum(wp.tile(local_log_quality))
+    # Pack the four per-slot reduction inputs into a single vec4 and reduce
+    # in one cooperative pass. Component-wise op: sum / max / min / sum.
+    combined = wp.vec4(local_act, float(local_has_instant), float(local_instant_ok), local_log_quality)
+    reduced_t = wp.tile_reduce(_compose_reduce_op, wp.tile(combined, preserve_type=True))
 
     # Thread 0 finalizes per-env outputs.
     if slot == 0:
         composer_state.transit_steps[env] = new_transit
 
-        activation_sum = wp.tile_extract(activation_sum_t, 0)
-        has_instant = wp.tile_extract(has_instant_t, 0)
-        all_instant_ok = wp.tile_extract(all_instant_ok_t, 0)
-        log_quality_sum = wp.tile_extract(log_quality_sum_t, 0)
+        reduced = wp.tile_extract(reduced_t, 0)
+        activation_sum = reduced[0]
+        has_instant = int(reduced[1])
+        all_instant_ok = int(reduced[2])
+        log_quality_sum = reduced[3]
 
         success_int = all_instant_ok * has_instant
         timeout_int = int(0)
