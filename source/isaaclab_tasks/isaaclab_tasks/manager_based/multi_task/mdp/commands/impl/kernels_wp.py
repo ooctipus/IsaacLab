@@ -349,6 +349,102 @@ def fill_slab_body_pos_env_local(
 
 
 # ---------------------------------------------------------------------------
+# Typed slab fills — read scene wp.array views directly without laundering
+# through Torch + reshape. The vec3/quat variants handle PhysX's padded body
+# buffer layout natively (Warp typed indexing respects the per-element stride),
+# so no compaction copy is needed and the launches are capture-safe.
+# ---------------------------------------------------------------------------
+
+
+@wp.kernel
+def fill_slab_vec3(
+    source: wp.array2d(dtype=wp.vec3),
+    unified: wp.array2d(dtype=float),
+    offset: int,
+):
+    """Copy a ``vec3`` scene slab into the unified float buffer.
+
+    Launch shape: ``dim=(num_envs, num_elements)``. Reads one ``vec3`` per
+    thread (Warp handles any per-element padding via the source's stride),
+    writes the 3 components contiguously into ``unified[env, offset + b*3..]``.
+    """
+    env, b = wp.tid()
+    v = source[env, b]
+    base = offset + b * 3
+    unified[env, base] = v[0]
+    unified[env, base + 1] = v[1]
+    unified[env, base + 2] = v[2]
+
+
+@wp.kernel
+def fill_slab_vec3_env_local(
+    body_pos_w: wp.array2d(dtype=wp.vec3),
+    env_origins: wp.array(dtype=wp.vec3),
+    unified: wp.array2d(dtype=float),
+    offset: int,
+):
+    """Vec3 body-pos slab with env-origin subtraction, typed source variant.
+
+    Replaces :func:`fill_slab_body_pos_env_local`. Launch shape:
+    ``dim=(num_envs, num_bodies)``.
+    """
+    env, b = wp.tid()
+    p = body_pos_w[env, b] - env_origins[env]
+    base = offset + b * 3
+    unified[env, base] = p[0]
+    unified[env, base + 1] = p[1]
+    unified[env, base + 2] = p[2]
+
+
+@wp.kernel
+def fill_slab_quat(
+    source: wp.array2d(dtype=wp.quat),
+    unified: wp.array2d(dtype=float),
+    offset: int,
+):
+    """Copy a ``quat`` scene slab into the unified float buffer.
+
+    Launch shape: ``dim=(num_envs, num_elements)``. Writes 4 components
+    contiguously per body.
+    """
+    env, b = wp.tid()
+    q = source[env, b]
+    base = offset + b * 4
+    unified[env, base] = q[0]
+    unified[env, base + 1] = q[1]
+    unified[env, base + 2] = q[2]
+    unified[env, base + 3] = q[3]
+
+
+@wp.kernel
+def fill_slab_joint_mech_power_abs(
+    applied_torque: wp.array2d(dtype=float),
+    joint_vel: wp.array2d(dtype=float),
+    unified: wp.array2d(dtype=float),
+    offset: int,
+):
+    """Compute ``|τ · q̇|`` element-wise into the unified buffer.
+
+    Replaces the Torch-computed reader for ``JOINT_MECH_POWER_ABS``, which
+    was the only genuinely-allocating entry in ``BUFFER_KIND_READERS``. With
+    this kernel reading the two underlying ``wp.array`` directly, the
+    "dynamic slab" category goes away.
+
+    NaN-safe: non-finite products are clamped to 0 to match the Torch
+    reference's defensive handling of reset transients on some physics
+    backends.
+
+    Launch shape: ``dim=(num_envs, num_joints)``.
+    """
+    env, j = wp.tid()
+    p = wp.abs(applied_torque[env, j] * joint_vel[env, j])
+    if wp.isfinite(p):
+        unified[env, offset + j] = p
+    else:
+        unified[env, offset + j] = 0.0
+
+
+# ---------------------------------------------------------------------------
 # Projections — one ``@wp.func`` per state kernel family. Each reads from
 # ``StateAccess`` + ``SubtaskSpec.gather_indices_flat`` and returns the
 # projected state in the smallest typed container that fits.
