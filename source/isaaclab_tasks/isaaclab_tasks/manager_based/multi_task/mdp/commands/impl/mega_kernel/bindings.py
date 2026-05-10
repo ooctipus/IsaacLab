@@ -169,7 +169,7 @@ def build_mega_kernel_plan(command: MultiTaskCommandWarp) -> MegaKernelPlan:
     copy_slabs, body_pos_slabs, dynamic_slabs = build_slab_bindings(command)
     rotations = build_rotation_bindings(command)
     inline_rot = _build_inline_rotation_metadata(command, rotations)
-    combined_slabs = _build_combined_copy_slab_metadata(command, copy_slabs)
+    combined_slabs = build_combined_copy_slab_metadata(command, copy_slabs)
 
     return MegaKernelPlan(
         state_kernel_id_i32=state_kernel_id_i32,
@@ -295,7 +295,7 @@ _MAX_COMBINED_COPY_SLABS = 8
 _COMBINED_SLAB_NUM_ENVS_MIN = 32768
 
 
-def _build_combined_copy_slab_metadata(
+def build_combined_copy_slab_metadata(
     command: MultiTaskCommandWarp,
     copy_slabs: tuple[CopySlabBinding, ...],
 ) -> dict:

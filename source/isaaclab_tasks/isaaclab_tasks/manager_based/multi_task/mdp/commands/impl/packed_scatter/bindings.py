@@ -26,6 +26,7 @@ from ..mega_kernel.bindings import (
     CopySlabBinding,
     DynamicSlabBinding,
     RotationBinding,
+    build_combined_copy_slab_metadata,
     build_rotation_bindings,
     build_slab_bindings,
 )
@@ -91,6 +92,14 @@ class PackedScatterPlan:
     copy_slabs: tuple[CopySlabBinding, ...] = ()
     body_pos_slabs: tuple[BodyPosSlabBinding, ...] = ()
     dynamic_slabs: tuple[DynamicSlabBinding, ...] = ()
+    combined_slab_sources_wp: tuple[wp.array, ...] = ()
+    combined_slab_cumsizes_wp: wp.array | None = None
+    combined_slab_offsets_wp: wp.array | None = None
+    combined_slab_total_size: int = 0
+    combined_slab_num_slabs: int = 0
+    # Keep Torch handles alive so the wp.array views don't dangle.
+    combined_slab_cumsizes_torch: torch.Tensor | None = None
+    combined_slab_offsets_torch: torch.Tensor | None = None
 
 
 def build_packed_scatter_plan(command: MultiTaskCommandWarp) -> PackedScatterPlan:
@@ -163,6 +172,7 @@ def build_packed_scatter_plan(command: MultiTaskCommandWarp) -> PackedScatterPla
     flat_queue.count = wp.from_torch(flat_count_i32)
 
     copy_slabs, body_pos_slabs, dynamic_slabs = build_slab_bindings(command)
+    combined_slabs = build_combined_copy_slab_metadata(command, copy_slabs)
 
     plan = PackedScatterPlan(
         state_kernel_id_i32=state_kernel_id_i32,
@@ -195,6 +205,13 @@ def build_packed_scatter_plan(command: MultiTaskCommandWarp) -> PackedScatterPla
         copy_slabs=copy_slabs,
         body_pos_slabs=body_pos_slabs,
         dynamic_slabs=dynamic_slabs,
+        combined_slab_sources_wp=combined_slabs["sources_wp"],
+        combined_slab_cumsizes_wp=combined_slabs["cumsizes_wp"],
+        combined_slab_offsets_wp=combined_slabs["offsets_wp"],
+        combined_slab_total_size=combined_slabs["total_size"],
+        combined_slab_num_slabs=combined_slabs["num_slabs"],
+        combined_slab_cumsizes_torch=combined_slabs["cumsizes_torch"],
+        combined_slab_offsets_torch=combined_slabs["offsets_torch"],
     )
     refresh_packed_scatter_plan(command, plan)
     return plan

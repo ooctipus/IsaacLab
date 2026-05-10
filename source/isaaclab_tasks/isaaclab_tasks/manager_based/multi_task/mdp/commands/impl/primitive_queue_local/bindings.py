@@ -26,6 +26,7 @@ from ..mega_kernel.bindings import (
     CopySlabBinding,
     DynamicSlabBinding,
     RotationBinding,
+    build_combined_copy_slab_metadata,
     build_rotation_bindings,
     build_slab_bindings,
 )
@@ -74,6 +75,13 @@ class PrimitiveQueueLocalPlan:
     copy_slabs: tuple[CopySlabBinding, ...] = ()
     body_pos_slabs: tuple[BodyPosSlabBinding, ...] = ()
     dynamic_slabs: tuple[DynamicSlabBinding, ...] = ()
+    combined_slab_sources_wp: tuple[wp.array, ...] = ()
+    combined_slab_cumsizes_wp: wp.array | None = None
+    combined_slab_offsets_wp: wp.array | None = None
+    combined_slab_total_size: int = 0
+    combined_slab_num_slabs: int = 0
+    combined_slab_cumsizes_torch: torch.Tensor | None = None
+    combined_slab_offsets_torch: torch.Tensor | None = None
 
 
 def build_primitive_queue_local_plan(command: MultiTaskCommandWarp) -> PrimitiveQueueLocalPlan:
@@ -150,6 +158,7 @@ def build_primitive_queue_local_plan(command: MultiTaskCommandWarp) -> Primitive
     queue.count = wp.from_torch(flat_count_i32)
 
     copy_slabs, body_pos_slabs, dynamic_slabs = build_slab_bindings(command)
+    combined_slabs = build_combined_copy_slab_metadata(command, copy_slabs)
 
     plan = PrimitiveQueueLocalPlan(
         state_kernel_id_i32=state_kernel_id_i32,
@@ -187,6 +196,13 @@ def build_primitive_queue_local_plan(command: MultiTaskCommandWarp) -> Primitive
         copy_slabs=copy_slabs,
         body_pos_slabs=body_pos_slabs,
         dynamic_slabs=dynamic_slabs,
+        combined_slab_sources_wp=combined_slabs["sources_wp"],
+        combined_slab_cumsizes_wp=combined_slabs["cumsizes_wp"],
+        combined_slab_offsets_wp=combined_slabs["offsets_wp"],
+        combined_slab_total_size=combined_slabs["total_size"],
+        combined_slab_num_slabs=combined_slabs["num_slabs"],
+        combined_slab_cumsizes_torch=combined_slabs["cumsizes_torch"],
+        combined_slab_offsets_torch=combined_slabs["offsets_torch"],
     )
     refresh_primitive_queue_local_plan(command, plan)
     return plan
