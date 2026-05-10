@@ -113,7 +113,7 @@ class reset_accumulator(ManagerTermBase):
         )
         self.state_buffer.register_compact_callback(self._on_state_buffer_compact)
         reset_accumulator._shared_buffer = self.state_buffer
-        self.sampled_slots = torch.zeros(env.num_envs, device=env.device, dtype=torch.int)
+        self.sampled_slots = torch.zeros(env.num_envs, device=env.device, dtype=torch.long)
         self.precollecting_phase = True
         self._tag_indices_bind: str | None = buf_cfg.tag_indices_bind
         self._tag_names_resolved = False
@@ -167,6 +167,8 @@ class reset_accumulator(ManagerTermBase):
         sm.success_pointer[n_keep:max_size] = 0
         sm.success_size[:n_keep] = sm.success_size[keep_indices]
         sm.success_size[n_keep:max_size] = 0
+        sm.success_count[:n_keep] = sm.success_count[keep_indices]
+        sm.success_count[n_keep:max_size] = 0
         # Drop the sampler so the next sampling pass rebuilds the
         # StateLayout against the post-compact slot xyz; the frontier strategy
         # reuses its kNN graph internally and needs the fresh coords.
@@ -270,9 +272,7 @@ class reset_accumulator(ManagerTermBase):
                     ]
             monitor_ids = env_ids[~exclude_mask[env_ids]]
         if monitor_ids.numel() > 0:
-            self.success_monitor.success_update(
-                self.sampled_slots[monitor_ids], progress.is_success[monitor_ids].float()
-            )
+            self.success_monitor.success_update(self.sampled_slots[monitor_ids], progress.is_success[monitor_ids])
 
         # Sync the unified success_rate from the active source
         if self._sampling_cfg.rate_source == "estimator":
@@ -574,7 +574,7 @@ class TermChoice(ManagerTermBase):
         super().__init__(cfg, env)
         self.term_partitions: dict[str, EventTermCfg] = cfg.params["terms"]  # type: ignore
         self.num_partitions = len(self.term_partitions)
-        self.term_samples = torch.zeros((env.num_envs,), dtype=torch.int, device=env.device)
+        self.term_samples = torch.zeros((env.num_envs,), dtype=torch.long, device=env.device)
         self.term_success_rate = torch.zeros(self.num_partitions, device=env.device)
         self._sampling_cfg: SamplerCfg = cfg.params["sampling"]
         if self._sampling_cfg.max_samples is None:
@@ -620,12 +620,12 @@ class TermChoice(ManagerTermBase):
             log["Metrics/SuccessRate"] = self.term_success_rate.mean().item()
         if self.success_monitor:
             success = env.termination_manager.get_term_cfg("progress_context").func.is_success
-            self.success_monitor.success_update(self.term_samples[env_ids], success[env_ids].float())
+            self.success_monitor.success_update(self.term_samples[env_ids], success[env_ids])
 
         num_samples = self._sampling_cfg.max_samples if self._sampling_cfg.warp else len(env_ids)
         assert num_samples is not None
         probs, choices = self._sampler.probabilities_and_sample(self.term_success_rate, int(num_samples))
-        self.term_samples[env_ids] = choices[: len(env_ids)].to(torch.int32)
+        self.term_samples[env_ids] = choices[: len(env_ids)]
         if report:
             log.update(
                 {f"Metrics/SampleProb/{name}": probs[i].item() for i, name in enumerate(self.term_partitions.keys())}

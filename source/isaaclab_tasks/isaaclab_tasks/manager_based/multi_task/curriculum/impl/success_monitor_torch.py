@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from isaaclab_tasks.manager_based.multi_task.utils.buffer_writers import FIFOBufferWriter
+from isaaclab_tasks.manager_based.multi_task.kernels.buffer.ring_buffers_torch import ring_append_bool_count_rate
 
 if TYPE_CHECKING:
     from ..success_monitor_cfg import SuccessMonitorCfg
@@ -26,20 +26,33 @@ class SuccessMonitorTorch:
         )
         self.success_pointer = torch.zeros(cfg.num_monitored_data, device=cfg.device, dtype=torch.int32)
         self.success_size = torch.zeros_like(self.success_pointer)
-        max_update_capacity = int(cfg.max_updates) if cfg.max_updates is not None else int(cfg.num_monitored_data)
-        changed_ids = torch.empty(max_update_capacity, device=cfg.device, dtype=torch.int64)
-        num_changed = torch.zeros(1, device=cfg.device, dtype=torch.int32)
-        self.buffer_writer = FIFOBufferWriter(
-            self.success_pointer,
-            self.success_size,
-            changed_ids,
-            num_changed,
-            warp=False,
-        )
+        self.success_count = torch.zeros_like(self.success_pointer)
+
+    def _validate_inputs(self, ids_all: torch.Tensor, success_mask: torch.Tensor) -> None:
+        if ids_all.dtype != torch.int64:
+            raise TypeError(f"SuccessMonitor ids must have dtype torch.int64, got {ids_all.dtype}.")
+        if success_mask.dtype != torch.bool:
+            raise TypeError(f"SuccessMonitor success_mask must have dtype torch.bool, got {success_mask.dtype}.")
+        if ids_all.device != self.success_buf.device:
+            raise ValueError(f"SuccessMonitor ids must be on device {self.success_buf.device}, got {ids_all.device}.")
+        if success_mask.device != self.success_buf.device:
+            raise ValueError(
+                f"SuccessMonitor success_mask must be on device {self.success_buf.device}, got {success_mask.device}."
+            )
+        if ids_all.shape != success_mask.shape:
+            raise ValueError(
+                f"SuccessMonitor ids and success_mask must have matching shape, got "
+                f"{tuple(ids_all.shape)} and {tuple(success_mask.shape)}."
+            )
 
     def success_update(self, ids_all: torch.Tensor, success_mask: torch.Tensor) -> None:
-        self.buffer_writer.add(self.success_buf, ids_all, success_mask)
-        stream_ids = self.buffer_writer.changed_ids[: int(self.buffer_writer.num_changed.item())]
-        self.success_rate[stream_ids] = self.success_buf[stream_ids].sum(dim=1) / self.success_size[stream_ids].clamp(
-            min=1
+        self._validate_inputs(ids_all, success_mask)
+        ring_append_bool_count_rate(
+            self.success_buf,
+            ids_all,
+            success_mask,
+            self.success_pointer,
+            self.success_size,
+            self.success_count,
+            self.success_rate,
         )

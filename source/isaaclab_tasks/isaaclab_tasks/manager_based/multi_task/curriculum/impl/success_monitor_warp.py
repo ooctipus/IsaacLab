@@ -9,35 +9,15 @@ from typing import TYPE_CHECKING
 
 import torch
 import warp as wp
+import warp.utils as wpu
 
-from isaaclab_tasks.manager_based.multi_task.utils.buffer_writers import FIFOBufferWriter
+from isaaclab_tasks.manager_based.multi_task.kernels.buffer.ring_buffers_warp import (
+    ring_append_bool_true_count_rate_sorted_kernel,
+    ring_stream_sort_prepare_kernel,
+)
 
 if TYPE_CHECKING:
     from ..success_monitor_cfg import SuccessMonitorCfg
-
-
-@wp.kernel
-def _success_rate_update_kernel(
-    success_buf: wp.array2d(dtype=wp.bool),
-    success_size: wp.array(dtype=wp.int32),
-    success_rate: wp.array(dtype=wp.float32),
-    changed_ids: wp.array(dtype=wp.int64),
-    num_changed: wp.array(dtype=wp.int32),
-    history_len: int,
-):
-    i = wp.tid()
-    if i >= int(num_changed[0]):
-        return
-
-    slot = int(changed_ids[i])
-    count = int(0)
-    for j in range(history_len):
-        if success_buf[slot, j]:
-            count += 1
-    denom = int(success_size[slot])
-    if denom < 1:
-        denom = 1
-    success_rate[slot] = wp.float32(count) / wp.float32(denom)
 
 
 class SuccessMonitorWarp:
@@ -53,35 +33,72 @@ class SuccessMonitorWarp:
             raise TypeError("SuccessMonitor warp mode requires a float32 success_rate tensor.")
         self.success_pointer = torch.zeros(cfg.num_monitored_data, device=cfg.device, dtype=torch.int32)
         self.success_size = torch.zeros_like(self.success_pointer)
-        max_update_capacity = int(cfg.max_updates) if cfg.max_updates is not None else int(cfg.num_monitored_data)
-        changed_ids = torch.empty(max_update_capacity, device=cfg.device, dtype=torch.int64)
-        num_changed = torch.zeros(1, device=cfg.device, dtype=torch.int32)
-        self.buffer_writer = FIFOBufferWriter(
-            self.success_pointer,
-            self.success_size,
-            changed_ids,
-            num_changed,
-            warp=True,
-        )
+        self.success_count = torch.zeros_like(self.success_pointer)
         self._wp_success_buf = wp.from_torch(self.success_buf, dtype=wp.bool)
+        self._wp_success_pointer = wp.from_torch(self.success_pointer, dtype=wp.int32)
         self._wp_success_size = wp.from_torch(self.success_size, dtype=wp.int32)
+        self._wp_success_count = wp.from_torch(self.success_count, dtype=wp.int32)
         self._wp_success_rate = wp.from_torch(self.success_rate, dtype=wp.float32)
-        self._wp_changed_ids = wp.from_torch(self.buffer_writer.changed_ids, dtype=wp.int64)
-        self._wp_num_changed = wp.from_torch(self.buffer_writer.num_changed, dtype=wp.int32)
-        self._max_updates = self.buffer_writer.changed_ids.numel()
+        self._max_updates = int(cfg.max_updates) if cfg.max_updates is not None else int(cfg.num_monitored_data)
+        self._sort_keys = wp.empty(2 * self._max_updates, dtype=wp.int64, device=str(self.success_buf.device))
+        self._sort_indices = wp.empty(2 * self._max_updates, dtype=wp.int32, device=str(self.success_buf.device))
+
+    def _validate_inputs(self, ids_all: torch.Tensor, success_mask: torch.Tensor) -> None:
+        if ids_all.dtype != torch.int64:
+            raise TypeError(f"SuccessMonitor ids must have dtype torch.int64, got {ids_all.dtype}.")
+        if success_mask.dtype != torch.bool:
+            raise TypeError(f"SuccessMonitor success_mask must have dtype torch.bool, got {success_mask.dtype}.")
+        if ids_all.device != self.success_buf.device:
+            raise ValueError(f"SuccessMonitor ids must be on device {self.success_buf.device}, got {ids_all.device}.")
+        if success_mask.device != self.success_buf.device:
+            raise ValueError(
+                f"SuccessMonitor success_mask must be on device {self.success_buf.device}, got {success_mask.device}."
+            )
+        if ids_all.shape != success_mask.shape:
+            raise ValueError(
+                f"SuccessMonitor ids and success_mask must have matching shape, got "
+                f"{tuple(ids_all.shape)} and {tuple(success_mask.shape)}."
+            )
+        if not ids_all.is_contiguous():
+            raise ValueError("SuccessMonitor warp mode requires contiguous ids.")
+        if not success_mask.is_contiguous():
+            raise ValueError("SuccessMonitor warp mode requires contiguous success_mask.")
+        if ids_all.numel() > self._max_updates:
+            raise ValueError(
+                f"SuccessMonitor received {ids_all.numel()} updates, exceeding max_updates={self._max_updates}."
+            )
 
     def success_update(self, ids_all: torch.Tensor, success_mask: torch.Tensor) -> None:
-        self.buffer_writer.add(self.success_buf, ids_all, success_mask)
+        self._validate_inputs(ids_all, success_mask)
+        count = ids_all.numel()
+        if count == 0:
+            return
+        device = str(self.success_buf.device)
         wp.launch(
-            _success_rate_update_kernel,
-            dim=self._max_updates,
+            ring_stream_sort_prepare_kernel,
+            dim=count,
+            inputs=[
+                wp.from_torch(ids_all, dtype=wp.int64),
+                self._sort_keys,
+                self._sort_indices,
+            ],
+            device=device,
+        )
+        wpu.radix_sort_pairs(self._sort_keys, self._sort_indices, count)
+        wp.launch(
+            ring_append_bool_true_count_rate_sorted_kernel,
+            dim=count,
             inputs=[
                 self._wp_success_buf,
+                self._sort_keys,
+                self._sort_indices,
+                wp.from_torch(success_mask, dtype=wp.bool),
+                self._wp_success_pointer,
                 self._wp_success_size,
+                self._wp_success_count,
                 self._wp_success_rate,
-                self._wp_changed_ids,
-                self._wp_num_changed,
+                count,
                 self.cfg.monitored_history_len,
             ],
-            device=str(self.success_buf.device),
+            device=device,
         )

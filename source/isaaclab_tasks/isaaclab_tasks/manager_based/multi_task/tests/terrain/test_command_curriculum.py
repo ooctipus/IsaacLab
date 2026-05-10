@@ -407,6 +407,7 @@ class TestSuccessMonitor:
         assert int(mon.success_size[0].item()) == 3
         assert int(mon.success_size[1].item()) == 2
         assert int(mon.success_size[2].item()) == 1
+        torch.testing.assert_close(mon.success_count, torch.tensor([2, 1, 1], device=DEVICE, dtype=torch.int32))
         assert float(mon.success_rate[0].item()) == pytest.approx(2.0 / 3.0)
         assert float(mon.success_rate[1].item()) == pytest.approx(0.5)
         assert float(mon.success_rate[2].item()) == pytest.approx(1.0)
@@ -423,7 +424,26 @@ class TestSuccessMonitor:
 
         assert int(mon.success_size[0].item()) == hist
         assert int(mon.success_pointer[0].item()) == 2
+        assert int(mon.success_count[0].item()) == 2
         assert float(mon.success_rate[0].item()) == pytest.approx(0.5)
+
+    def test_success_update_requires_bool_mask(self):
+        """SuccessMonitor owns the bool outcome contract."""
+        for use_warp in (False, True):
+            cfg = SuccessMonitorCfg(
+                monitored_history_len=4,
+                num_monitored_data=2,
+                device=DEVICE,
+                max_updates=1,
+                warp=use_warp,
+            )
+            mon = _make_monitor(cfg)
+
+            with pytest.raises(TypeError, match="success_mask"):
+                mon.success_update(
+                    torch.tensor([0], device=DEVICE, dtype=torch.int64),
+                    torch.tensor([1.0], device=DEVICE),
+                )
 
     def test_fifo_buffer_writer_uses_external_state_tensors(self):
         """FIFOBufferWriter should write through explicit external state tensors."""
@@ -514,6 +534,7 @@ class TestSuccessMonitor:
         torch.testing.assert_close(warp_mon.success_buf, torch_mon.success_buf)
         torch.testing.assert_close(warp_mon.success_size, torch_mon.success_size)
         torch.testing.assert_close(warp_mon.success_pointer, torch_mon.success_pointer)
+        torch.testing.assert_close(warp_mon.success_count, torch_mon.success_count)
         torch.testing.assert_close(warp_mon.success_rate, torch_mon.success_rate)
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA graph capture requires CUDA.")
@@ -536,8 +557,8 @@ class TestSuccessMonitor:
         mon.success_buf.zero_()
         mon.success_pointer.zero_()
         mon.success_size.zero_()
+        mon.success_count.zero_()
         mon.success_rate.zero_()
-        mon.buffer_writer.num_changed.zero_()
         torch.cuda.synchronize()
 
         wp.capture_begin(device="cuda:0")

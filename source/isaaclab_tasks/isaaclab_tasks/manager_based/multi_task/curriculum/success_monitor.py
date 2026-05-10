@@ -23,7 +23,7 @@ class SuccessMonitor:
     the running success rate into a **caller-provided** tensor.
 
     The history buffer (:attr:`success_buf`) is always allocated as
-    :data:`torch.bool` — single-bit-per-cell is the documented invariant of this
+    :data:`torch.bool` — one-byte-per-cell is the documented invariant of this
     class, and any non-bool storage would multiply memory cost by 4-8× without
     changing the semantics of a binary success flag. At ``num_monitored_data ≈ 1.2 M``
     and ``monitored_history_len = 50`` (the multi-task position env), bool storage
@@ -31,6 +31,10 @@ class SuccessMonitor:
     storage (e.g. continuous-valued outcomes) they should subclass this monitor
     and override :attr:`success_buf` allocation explicitly — there is intentionally
     no cfg knob to silently change the dtype.
+
+    The update path requires boolean success values at the monitor boundary.
+    Counts are maintained incrementally in :attr:`success_count` so rate updates
+    do not scan each slot's full history window.
     """
 
     def __init__(self, cfg: SuccessMonitorCfg, success_rate: torch.Tensor):
@@ -46,9 +50,10 @@ class SuccessMonitor:
         self._impl = backend(cfg, success_rate)
         self.success_rate = self._impl.success_rate
         self.success_buf = self._impl.success_buf
-        self.buffer_writer = self._impl.buffer_writer
         self.success_pointer = self._impl.success_pointer
         self.success_size = self._impl.success_size
+        self.success_count = self._impl.success_count
 
     def success_update(self, ids_all: torch.Tensor, success_mask: torch.Tensor) -> None:
+        """Record boolean success outcomes for the provided slot ids."""
         self._impl.success_update(ids_all, success_mask)
