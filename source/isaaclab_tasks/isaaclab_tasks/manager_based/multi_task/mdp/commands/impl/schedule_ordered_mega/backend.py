@@ -36,7 +36,7 @@ class ScheduleOrderedMegaBackend:
         refresh_schedule_ordered_mega_plan(command, self.plan, env_ids)
 
     def dispatch(self, command: MultiTaskCommandWarp, valid_slots: torch.Tensor) -> None:
-        """Run read, schedule-ordered execute, and body-frame rotation through a captured graph."""
+        """Run the full per-step pipeline through a captured graph (compose included)."""
         del valid_slots
         if wp.get_device(str(command.device)).is_capturing:
             self._dispatch_uncaptured(command)
@@ -50,12 +50,12 @@ class ScheduleOrderedMegaBackend:
         wp.capture_launch(self._dispatch_graph)
 
     def _dispatch_uncaptured(self, command: MultiTaskCommandWarp) -> None:
-        """Launch dispatch phase eagerly; used for warmup and graph capture."""
+        """Launch the full per-step pipeline eagerly; used for warmup and graph capture."""
         fill_unified_buffer_warp(command, self.plan.mega)
         dispatch_mega_warp(command, self.plan.mega)
         rotate_canonical_slots_to_body_frame_warp(command, self.plan.mega)
+        compose_warp(command, self.plan.mega)
 
     def compose(self, command: MultiTaskCommandWarp, valid_slots: torch.Tensor) -> None:
-        """Advance composer state and write reward outputs."""
-        del valid_slots
-        compose_warp(command, self.plan.mega)
+        """No-op — compose was captured as part of the dispatch graph."""
+        del command, valid_slots

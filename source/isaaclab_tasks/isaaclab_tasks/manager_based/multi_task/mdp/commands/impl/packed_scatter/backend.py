@@ -39,7 +39,7 @@ class PackedScatterBackend:
         self._dispatch_graph = None
 
     def dispatch(self, command: MultiTaskCommandWarp, valid_slots: torch.Tensor) -> None:
-        """Run read, packed execution, and body-frame rotation through a captured graph."""
+        """Run the full per-step pipeline through a captured graph (compose included)."""
         del valid_slots
         if wp.get_device(str(command.device)).is_capturing:
             self._dispatch_uncaptured(command)
@@ -53,12 +53,12 @@ class PackedScatterBackend:
         wp.capture_launch(self._dispatch_graph)
 
     def _dispatch_uncaptured(self, command: MultiTaskCommandWarp) -> None:
-        """Launch dispatch phase eagerly; used for warmup and graph capture."""
+        """Launch the full per-step pipeline eagerly; used for warmup and graph capture."""
         fill_unified_buffer_warp(command, self.plan)
         dispatch_packed_scatter_warp(command, self.plan)
         rotate_canonical_slots_to_body_frame_warp(command, self.plan)
+        compose_warp(command, self.plan)
 
     def compose(self, command: MultiTaskCommandWarp, valid_slots: torch.Tensor) -> None:
-        """Advance composer state and write reward outputs."""
-        del valid_slots
-        compose_warp(command, self.plan)
+        """No-op — compose was captured as part of the dispatch graph."""
+        del command, valid_slots
