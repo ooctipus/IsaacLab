@@ -7,12 +7,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import torch
 import warp as wp
 
+from ... import multi_task_command as _base_module
+from ...kernel_ids import BUFFER_KIND
 from ...kernels_wp import ComposerState, EnvSlots, Outputs, StateAccess, SubtaskSpec
 
 if TYPE_CHECKING:
@@ -31,6 +33,39 @@ class RotationBinding:
     track_offsets_wp: wp.array
     num_reach_offsets: int
     num_offsets: int
+
+
+@dataclass
+class CopySlabBinding:
+    """Stable scene-backed slab handle for ``fill_slab_copy``."""
+
+    source_torch: torch.Tensor
+    source_wp: wp.array
+    offset: int
+    size: int
+
+
+@dataclass
+class BodyPosSlabBinding:
+    """Stable body-pos slab handle for ``fill_slab_body_pos_env_local``."""
+
+    source_torch: torch.Tensor
+    source_wp: wp.array
+    env_origins_wp: wp.array
+    offset: int
+    size: int
+
+
+@dataclass
+class DynamicSlabBinding:
+    """Slab whose reader allocates fresh tensors per call (cannot prebind)."""
+
+    kind: int
+    asset_name: str
+    offset: int
+    size: int
+    is_body_pos: bool
+    env_origins_wp: wp.array | None
 
 
 @dataclass
@@ -53,6 +88,11 @@ class MegaKernelPlan:
     composer_state: ComposerState
     outputs: Outputs
     rotations: tuple[RotationBinding, ...]
+    episode_length_buf_wp: wp.array
+    effective_max_episode_length_wp: wp.array
+    copy_slabs: tuple[CopySlabBinding, ...] = field(default_factory=tuple)
+    body_pos_slabs: tuple[BodyPosSlabBinding, ...] = field(default_factory=tuple)
+    dynamic_slabs: tuple[DynamicSlabBinding, ...] = field(default_factory=tuple)
 
 
 def build_mega_kernel_plan(command: MultiTaskCommandWarp) -> MegaKernelPlan:
@@ -107,6 +147,8 @@ def build_mega_kernel_plan(command: MultiTaskCommandWarp) -> MegaKernelPlan:
     outputs.task_done_success = wp.from_torch(command._task_done_success)
     outputs.progress = wp.from_torch(command._progress)
 
+    copy_slabs, body_pos_slabs, dynamic_slabs = build_slab_bindings(command)
+
     return MegaKernelPlan(
         state_kernel_id_i32=state_kernel_id_i32,
         metric_kernel_id_i32=metric_kernel_id_i32,
@@ -124,7 +166,89 @@ def build_mega_kernel_plan(command: MultiTaskCommandWarp) -> MegaKernelPlan:
         composer_state=composer_state,
         outputs=outputs,
         rotations=build_rotation_bindings(command),
+        episode_length_buf_wp=wp.from_torch(command._env.episode_length_buf),
+        effective_max_episode_length_wp=wp.from_torch(command._effective_max_episode_length),
+        copy_slabs=copy_slabs,
+        body_pos_slabs=body_pos_slabs,
+        dynamic_slabs=dynamic_slabs,
     )
+
+
+def _read_slab_source(command: MultiTaskCommandWarp, kind: int, asset_name: str, size: int) -> torch.Tensor:
+    """Call the reader and reshape to ``[num_envs, size]``."""
+    raw = _base_module.BUFFER_KIND_READERS[kind](command._env, asset_name)
+    raw_per_env = raw.numel() // command.num_envs
+    if raw_per_env != size:
+        raise RuntimeError(
+            f"State kernel output dim mismatch for slab (kind={kind}, asset={asset_name}): "
+            f"reader returned {raw_per_env} floats per env, but slab was sized for {size}."
+        )
+    return raw.reshape(command.num_envs, size)
+
+
+def build_slab_bindings(
+    command: MultiTaskCommandWarp,
+) -> tuple[tuple[CopySlabBinding, ...], tuple[BodyPosSlabBinding, ...], tuple[DynamicSlabBinding, ...]]:
+    """Prebind slab source handles. Detects unstable readers and falls back."""
+    spec = command.spec
+    kinds = spec.slab_buffer_kinds
+    assets = spec.slab_asset_names
+    offsets = spec.slab_offsets_py
+    sizes = spec.slab_sizes_py
+    body_pos_kind = int(BUFFER_KIND.BODY_POS_W)
+
+    env_origins_torch = command._env.scene.env_origins
+    env_origins_wp = wp.from_torch(env_origins_torch)
+
+    copy_slabs: list[CopySlabBinding] = []
+    body_pos_slabs: list[BodyPosSlabBinding] = []
+    dynamic_slabs: list[DynamicSlabBinding] = []
+
+    for slab_id in range(len(kinds)):
+        kind = kinds[slab_id]
+        asset_name = assets[slab_id]
+        offset = offsets[slab_id]
+        size = sizes[slab_id]
+
+        first = _read_slab_source(command, kind, asset_name, size)
+        second = _read_slab_source(command, kind, asset_name, size)
+        is_stable = first.data_ptr() == second.data_ptr()
+        is_body_pos = kind == body_pos_kind
+
+        if not is_stable:
+            dynamic_slabs.append(
+                DynamicSlabBinding(
+                    kind=kind,
+                    asset_name=asset_name,
+                    offset=offset,
+                    size=size,
+                    is_body_pos=is_body_pos,
+                    env_origins_wp=env_origins_wp if is_body_pos else None,
+                )
+            )
+            continue
+
+        if is_body_pos:
+            body_pos_slabs.append(
+                BodyPosSlabBinding(
+                    source_torch=first,
+                    source_wp=wp.from_torch(first),
+                    env_origins_wp=env_origins_wp,
+                    offset=offset,
+                    size=size,
+                )
+            )
+        else:
+            copy_slabs.append(
+                CopySlabBinding(
+                    source_torch=first,
+                    source_wp=wp.from_torch(first),
+                    offset=offset,
+                    size=size,
+                )
+            )
+
+    return tuple(copy_slabs), tuple(body_pos_slabs), tuple(dynamic_slabs)
 
 
 def _root_quat_torch(command: MultiTaskCommandWarp, asset_name: str) -> torch.Tensor:

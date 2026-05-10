@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import torch
+import warp as wp
 
 from .bindings import MegaKernelPlan, build_mega_kernel_plan
 from .compose import compose_warp
@@ -28,14 +29,28 @@ class MegaKernelBackend:
 
     def __init__(self, command: MultiTaskCommandWarp):
         self.plan: MegaKernelPlan = build_mega_kernel_plan(command)
+        self._dispatch_graph: wp.Graph | None = None
 
     def on_resample(self, command: MultiTaskCommandWarp, env_ids: torch.Tensor) -> None:
         """No-op: env-slot tensors are wrapped directly and mutate in place."""
         del command, env_ids
 
     def dispatch(self, command: MultiTaskCommandWarp, valid_slots: torch.Tensor) -> None:
-        """Run read, execute, and body-frame rotation phases."""
+        """Run read, execute, and body-frame rotation through a captured graph."""
         del valid_slots
+        if wp.get_device(str(command.device)).is_capturing:
+            self._dispatch_uncaptured(command)
+            return
+        if self._dispatch_graph is None:
+            self._dispatch_uncaptured(command)
+            with wp.ScopedCapture(device=str(command.device)) as capture:
+                self._dispatch_uncaptured(command)
+            self._dispatch_graph = capture.graph
+            return
+        wp.capture_launch(self._dispatch_graph)
+
+    def _dispatch_uncaptured(self, command: MultiTaskCommandWarp) -> None:
+        """Launch dispatch phase eagerly; used for warmup and graph capture."""
         fill_unified_buffer_warp(command, self.plan)
         dispatch_mega_warp(command, self.plan)
         rotate_canonical_slots_to_body_frame_warp(command, self.plan)

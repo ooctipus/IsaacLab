@@ -21,7 +21,14 @@ from ...kernels_wp import (
     StateAccess,
     SubtaskSpec,
 )
-from ..mega_kernel.bindings import RotationBinding, build_rotation_bindings
+from ..mega_kernel.bindings import (
+    BodyPosSlabBinding,
+    CopySlabBinding,
+    DynamicSlabBinding,
+    RotationBinding,
+    build_rotation_bindings,
+    build_slab_bindings,
+)
 from ..schedules import (
     NUM_SCHEDULES,
     SCHEDULE_DIRECT_QUAT_DELTA,
@@ -79,6 +86,11 @@ class PackedScatterPlan:
     composer_state: ComposerState
     outputs: Outputs
     rotations: tuple[RotationBinding, ...]
+    episode_length_buf_wp: wp.array
+    effective_max_episode_length_wp: wp.array
+    copy_slabs: tuple[CopySlabBinding, ...] = ()
+    body_pos_slabs: tuple[BodyPosSlabBinding, ...] = ()
+    dynamic_slabs: tuple[DynamicSlabBinding, ...] = ()
 
 
 def build_packed_scatter_plan(command: MultiTaskCommandWarp) -> PackedScatterPlan:
@@ -150,6 +162,8 @@ def build_packed_scatter_plan(command: MultiTaskCommandWarp) -> PackedScatterPla
     flat_queue.pipeline_ids = wp.from_torch(flat_pipeline_ids_i32)
     flat_queue.count = wp.from_torch(flat_count_i32)
 
+    copy_slabs, body_pos_slabs, dynamic_slabs = build_slab_bindings(command)
+
     plan = PackedScatterPlan(
         state_kernel_id_i32=state_kernel_id_i32,
         metric_kernel_id_i32=metric_kernel_id_i32,
@@ -176,6 +190,11 @@ def build_packed_scatter_plan(command: MultiTaskCommandWarp) -> PackedScatterPla
         composer_state=composer_state,
         outputs=outputs,
         rotations=build_rotation_bindings(command),
+        episode_length_buf_wp=wp.from_torch(command._env.episode_length_buf),
+        effective_max_episode_length_wp=wp.from_torch(command._effective_max_episode_length),
+        copy_slabs=copy_slabs,
+        body_pos_slabs=body_pos_slabs,
+        dynamic_slabs=dynamic_slabs,
     )
     refresh_packed_scatter_plan(command, plan)
     return plan
