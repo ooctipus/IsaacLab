@@ -2408,7 +2408,7 @@ def compose_reward(
     # ``episode_length_buf`` for timed-out envs. Latching the terminal value
     # at ``buf == len - 1`` guarantees the reward read at the outer terminal
     # step (``buf == len``) sees it. See the matching guard in
-    # :class:`~.multi_task_command_reference.MultiTaskCommandReference`.
+    # :class:`~.multi_task_command_torch.MultiTaskCommandTorch`.
     timeout_int = int(0)
     if episode_length_buf[env] >= wp.int64(effective_max_episode_length[env] - 1):
         timeout_int = 1

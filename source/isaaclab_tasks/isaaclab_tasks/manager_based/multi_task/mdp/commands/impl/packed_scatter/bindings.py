@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import torch
 import warp as wp
 
-from ...kernels_wp import (
+from ..kernels_wp import (
     ComposerState,
     EnvSlots,
     Outputs,
@@ -44,7 +44,7 @@ from ..schedules import (
 )
 
 if TYPE_CHECKING:
-    from ...multi_task_command_warp import MultiTaskCommandWarp
+    from ..multi_task_command_warp import MultiTaskCommandWarp
 
 PIPELINE_DIRECT_VEC3_DELTA = SCHEDULE_DIRECT_VEC3_DELTA
 PIPELINE_DIRECT_SCALAR_DELTA = SCHEDULE_DIRECT_SCALAR_DELTA

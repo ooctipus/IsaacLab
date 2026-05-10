@@ -16,7 +16,7 @@ from ..mega_kernel.bindings import MegaKernelPlan, build_mega_kernel_plan
 from ..schedules import NUM_SCHEDULES, build_subtask_schedule_ids
 
 if TYPE_CHECKING:
-    from ...multi_task_command_warp import MultiTaskCommandWarp
+    from ..multi_task_command_warp import MultiTaskCommandWarp
 
 
 @dataclass

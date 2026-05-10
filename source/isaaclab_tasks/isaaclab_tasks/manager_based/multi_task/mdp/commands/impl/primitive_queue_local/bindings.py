@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import torch
 import warp as wp
 
-from ...kernels_wp import (
+from ..kernels_wp import (
     ComposerState,
     EnvSlots,
     Outputs,
@@ -33,7 +33,7 @@ from ..mega_kernel.bindings import (
 from ..schedules import NUM_SCHEDULES, SCHEDULE_STATE_KERNELS, validate_schedule_support
 
 if TYPE_CHECKING:
-    from ...multi_task_command_warp import MultiTaskCommandWarp
+    from ..multi_task_command_warp import MultiTaskCommandWarp
 
 
 @dataclass

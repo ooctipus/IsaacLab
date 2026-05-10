@@ -1,31 +1,42 @@
 # Multi-Task Command Dispatch Implementations
 
-Private implementation boundary for the Warp-backed multi-task command term.
-The public surface lives one level up:
+Private implementation boundary for the multi-task command term. The public
+surface lives one level up:
 
 ```text
-commands/multi_task_command.py       # base command term and factory switch
-commands/multi_task_command_warp.py  # public Warp-backed subclass
+commands/__init__.py            # exports MultiTaskCfg, MinMaxSampler, MultiTaskCommand
+commands/multi_task_command.py  # base command term and Torch/Warp factory switch
 ```
+
+Backends, the Warp/Torch subclasses, the config classes, and the Warp and
+Torch kernel registries all live under ``impl/`` so the public surface stays
+just the package-level re-exports and the factory in ``multi_task_command``.
 
 Backends are selectable via ``MultiTaskCfg.dispatch_backend``. Each subfolder
 owns the full ``read -> execute -> rotate -> compose`` pipeline for one
 strategy; the shared pieces (output buffers, compose-kernel selection,
-schedule plans) sit at this level.
+schedule plans, kernel registries) sit at the ``impl/`` level.
 
 ## Folder Layout
 
 ```text
 impl/
-  backend.py              # backend factory and shared phase glue
-  outputs.py              # shared output buffer struct
-  schedules.py            # static schedule plan helpers
-  compose_select.py       # adaptive switch between scalar and parallel composers
-  mega_kernel/            # dense (env, slot) baseline; default for small k_max
-  schedule_ordered_mega/  # dense backend with schedule-ordered slots
-  packed_scatter/         # fused-pipeline-sorted queue with legacy scatter
-  primitive_queue_local/  # per-primitive-family queues with local grouped outputs
-  primitive_graph_local/  # local grouped outputs with shared primitive nodes
+  multi_task_cfg.py            # MultiTaskCfg, MinMaxSampler (config dataclasses)
+  multi_task_command_torch.py  # PyTorch reference subclass (dispatch_backend="torch")
+  multi_task_command_warp.py   # Warp switchboard subclass
+  backend.py                   # Warp backend factory and CommandBackend protocol
+  outputs.py                   # shared output buffer structs
+  schedules.py                 # static schedule plan helpers
+  compose_select.py            # adaptive switch between scalar and parallel composers
+  kernel_ids.py                # kernel ID enums shared by Torch and Warp paths
+  kernels_torch.py             # Torch state/delta/metric/activation kernel registry
+  kernels_wp.py                # Warp kernels (dispatch, compose, rotate, slab fills)
+  kernels_viz.py               # debug visualization for state-kernel markers
+  mega_kernel/                 # dense (env, slot) baseline; default for small k_max
+  schedule_ordered_mega/       # dense backend with schedule-ordered slots
+  packed_scatter/              # fused-pipeline-sorted queue with legacy scatter
+  primitive_queue_local/       # per-primitive-family queues with local grouped outputs
+  primitive_graph_local/       # local grouped outputs with shared primitive nodes
 ```
 
 All hot paths are CUDA-graph captured. Plan construction allocates fixed-size
@@ -68,11 +79,9 @@ If a backend only replaces ``execute``, it should reuse the canonical phases
 exported from ``mega_kernel``:
 
 ```python
-from ..mega_kernel import (
-    compose_warp,
-    fill_unified_buffer_warp,
-    rotate_canonical_slots_to_body_frame_warp,
-)
+from ..mega_kernel.compose import compose_warp
+from ..mega_kernel.read import fill_unified_buffer_warp
+from ..mega_kernel.rotation import rotate_canonical_slots_to_body_frame_warp
 ```
 
 Backend selection is explicit at construction. Do not add hidden fallbacks
@@ -89,7 +98,7 @@ fail at plan-build time.
 
 ### Correctness
 
-- Matches the ``reference`` (Torch) backend across the active presets.
+- Matches the ``"torch"`` reference backend across the active presets.
 - Matches ``mega_kernel`` for the Warp output layout where applicable.
 - Preserves body-frame command semantics.
 - Handles padded slots without leaking output lanes.

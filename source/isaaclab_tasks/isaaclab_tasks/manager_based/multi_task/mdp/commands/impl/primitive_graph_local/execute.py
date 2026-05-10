@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import warp as wp
 
-from ...kernels_wp import (
+from ..kernels_wp import (
     compute_contact_predicate_mask,
     compute_dense_graph_producers,
     compute_direct_quat_nodes,
@@ -42,7 +42,7 @@ from ..schedules import (
 )
 
 if TYPE_CHECKING:
-    from ...multi_task_command_warp import MultiTaskCommandWarp
+    from ..multi_task_command_warp import MultiTaskCommandWarp
     from .bindings import PrimitiveGraphLocalPlan
 
 

@@ -20,7 +20,7 @@ Phases recorded:
 
 - ``MultiTaskCommand.update_command`` — full per-step path.
 - ``MultiTaskCommand.dispatch`` — subclass-provided dispatch
-  (``MultiTaskCommandReference._dispatch`` or
+  (``MultiTaskCommandTorch._dispatch`` or
   ``MultiTaskCommandWarp._dispatch``, whichever the cfg selected).
 
 Output:
@@ -234,7 +234,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--backend",
-        default="reference",
+        default="torch",
         help="Command backend selected through public MultiTaskCfg fields.",
     )
     parser.add_argument(

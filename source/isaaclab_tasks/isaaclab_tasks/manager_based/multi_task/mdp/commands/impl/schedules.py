@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import torch
 
-from ..kernel_ids import STATE_KERNEL_ID
+from .kernel_ids import STATE_KERNEL_ID
 
 SCHEDULE_DIRECT_VEC3_DELTA = 0
 SCHEDULE_DIRECT_SCALAR_DELTA = 1

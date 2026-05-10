@@ -24,6 +24,17 @@ import warp as wp
 from isaaclab.managers import SceneEntityCfg
 
 from isaaclab_tasks.manager_based.multi_task.mdp.commands import multi_task_command as mtc_mod
+from isaaclab_tasks.manager_based.multi_task.mdp.commands.impl.kernels_torch import (
+    ACTIVATION_KERNEL_ID,
+    BUFFER_KIND,
+    METRIC_KERNEL_ID,
+    SAMPLER_KERNEL_ID,
+    STATE_KERNEL_ID,
+)
+from isaaclab_tasks.manager_based.multi_task.mdp.commands.impl.multi_task_cfg import (
+    MinMaxSampler,
+    MultiTaskCfg,
+)
 from isaaclab_tasks.manager_based.multi_task.mdp.commands.impl.schedules import (
     SCHEDULE_DIRECT_QUAT_DELTA,
     SCHEDULE_DIRECT_SCALAR_DELTA,
@@ -32,17 +43,6 @@ from isaaclab_tasks.manager_based.multi_task.mdp.commands.impl.schedules import 
     SCHEDULE_VEC3_THRESHOLD_PAIR_DIFF_DELTA,
     SCHEDULE_VEC3_THRESHOLD_SUM_DELTA,
     SCHEDULE_VEC3_THRESHOLD_VECTOR_DELTA,
-)
-from isaaclab_tasks.manager_based.multi_task.mdp.commands.kernels_torch import (
-    ACTIVATION_KERNEL_ID,
-    BUFFER_KIND,
-    METRIC_KERNEL_ID,
-    SAMPLER_KERNEL_ID,
-    STATE_KERNEL_ID,
-)
-from isaaclab_tasks.manager_based.multi_task.mdp.commands.multi_task_cfg import (
-    MinMaxSampler,
-    MultiTaskCfg,
 )
 from isaaclab_tasks.manager_based.multi_task.mdp.commands.multi_task_command import MultiTaskCommand
 
@@ -538,7 +538,7 @@ def test_warp_matches_pytorch_outputs():
             cmd._update_command()
         return cmd
 
-    cmd_py = build_and_step(dispatch_backend="reference")
+    cmd_py = build_and_step(dispatch_backend="torch")
     for backend in (
         "mega_kernel",
         "schedule_ordered_mega",
@@ -629,7 +629,7 @@ def test_primitive_graph_local_shares_contact_predicate_nodes():
             cmd._update_command()
         return cmd
 
-    cmd_ref = build_and_step("reference")
+    cmd_ref = build_and_step("torch")
     cmd_graph = build_and_step("primitive_graph_local")
 
     plan = cmd_graph._backend.plan
@@ -668,7 +668,7 @@ def test_primitive_graph_local_uses_high_fanout_reduction_nodes():
             cmd._update_command()
         return cmd
 
-    cmd_ref = build_and_step("reference")
+    cmd_ref = build_and_step("torch")
     cmd_graph = build_and_step("primitive_graph_local")
 
     plan = cmd_graph._backend.plan
@@ -707,7 +707,7 @@ def test_schedule_ordered_mega_reorders_slots_without_changing_public_outputs():
             cmd._update_command()
         return cmd
 
-    cmd_ref = build_and_step("reference")
+    cmd_ref = build_and_step("torch")
     cmd_ordered = build_and_step("schedule_ordered_mega")
 
     ref_state_order = cmd_ref.spec.state_kernel_id[cmd_ref._env_subtask_ids[0].long()].tolist()

@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING
 import torch
 import warp as wp
 
-from ...kernels_wp import compute_dense_graph_producers, dispatch_graph_dense_compose_fused
 from ..compose_select import use_parallel_compose
+from ..kernels_wp import compute_dense_graph_producers, dispatch_graph_dense_compose_fused
 from ..mega_kernel.read import fill_unified_buffer_warp
 from ..mega_kernel.rotation import rotate_canonical_slots_to_body_frame_warp
 from .bindings import (
@@ -25,7 +25,7 @@ from .compose import compose_primitive_graph_local_warp
 from .execute import dispatch_primitive_graph_local_warp
 
 if TYPE_CHECKING:
-    from ...multi_task_command_warp import MultiTaskCommandWarp
+    from ..multi_task_command_warp import MultiTaskCommandWarp
 
 
 class PrimitiveGraphLocalBackend:

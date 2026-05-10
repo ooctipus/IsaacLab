@@ -12,10 +12,10 @@ from typing import TYPE_CHECKING
 import warp as wp
 
 from ... import multi_task_command as _base_module
-from ...kernels_wp import fill_slab_body_pos_env_local, fill_slab_copy, fill_slabs_combined_8
+from ..kernels_wp import fill_slab_body_pos_env_local, fill_slab_copy, fill_slabs_combined_8
 
 if TYPE_CHECKING:
-    from ...multi_task_command_warp import MultiTaskCommandWarp
+    from ..multi_task_command_warp import MultiTaskCommandWarp
     from .bindings import MegaKernelPlan
 
 

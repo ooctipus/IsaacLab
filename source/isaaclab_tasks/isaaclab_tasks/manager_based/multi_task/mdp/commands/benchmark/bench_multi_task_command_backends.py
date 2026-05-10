@@ -85,7 +85,7 @@ def main() -> None:
     args = _parse_args()
     backends = (
         [
-            "reference",
+            "torch",
             "mega_kernel",
             "schedule_ordered_mega",
             "packed_scatter",

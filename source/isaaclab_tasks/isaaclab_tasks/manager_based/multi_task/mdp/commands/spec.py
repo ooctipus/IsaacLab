@@ -30,7 +30,7 @@ from isaaclab.managers import SceneEntityCfg
 if TYPE_CHECKING:
     from isaaclab.scene import InteractiveScene
 
-    from .multi_task_cfg import MultiTaskCfg
+    from .impl.multi_task_cfg import MultiTaskCfg
 
 
 # -----------------------------------------------------------------------------
@@ -363,7 +363,7 @@ def build_spec(cfg: MultiTaskCfg, scene: InteractiveScene, device: torch.device 
        flat targets buffer layout.
     5. Pad sampler params to rectangular ``[M, Pmax]``.
     """
-    from .multi_task_cfg import MultiTaskCfg as _MultiTaskCfg
+    from .impl.multi_task_cfg import MultiTaskCfg as _MultiTaskCfg
 
     task_names = list(cfg.tasks.keys())
     sig_to_sid: dict[tuple, int] = {}
@@ -470,7 +470,7 @@ def build_spec(cfg: MultiTaskCfg, scene: InteractiveScene, device: torch.device 
     task_total_stride = torch.zeros(T, dtype=torch.long, device=device)
     # Walk subtasks per task, computing slot offsets and the per-task
     # per-kernel target offset table for debug viz.
-    from .kernels_torch import STATE_KERNELS as _STATE_KERNELS  # noqa: PLC0415
+    from .impl.kernels_torch import STATE_KERNELS as _STATE_KERNELS  # noqa: PLC0415
 
     num_state_kernels = len(_STATE_KERNELS)
     task_kernel_target_offset = torch.full((T, num_state_kernels), -1, dtype=torch.long, device=device)
@@ -500,7 +500,7 @@ def build_spec(cfg: MultiTaskCfg, scene: InteractiveScene, device: torch.device 
     # Used to key read groups so kernels with stride-1 output but variable K
     # (BODY_CONTACT_COUNT, BODY_CONTACT_COUNT_DIFF, JOINT_MECH_POWER)
     # don't get pooled across mismatched K values.
-    from .kernels_torch import (  # noqa: PLC0415
+    from .impl.kernels_torch import (  # noqa: PLC0415
         STATE_KERNEL_BUFFER_KIND,
         buffer_kind_is_body_indexed,
         buffer_kind_per_element_stride,
@@ -532,7 +532,7 @@ def build_spec(cfg: MultiTaskCfg, scene: InteractiveScene, device: torch.device 
         K = _resolve_id_count(subtask_asset_cfgs[sid], body_indexed=body_indexed)
         # CONTACT-family kernels reduce K bodies but read the full per_stride
         # block, so override to full block-read size regardless of intra_stride.
-        from .kernels_torch import STATE_KERNEL_ID as _SKID  # noqa: PLC0415
+        from .impl.kernels_torch import STATE_KERNEL_ID as _SKID  # noqa: PLC0415
 
         if skid in (
             int(_SKID.BODY_CONTACT),
@@ -602,7 +602,7 @@ def build_spec(cfg: MultiTaskCfg, scene: InteractiveScene, device: torch.device 
     # after scatter — so downstream obs terms see body-frame deltas without
     # any frame logic. Multiple subtasks sharing (entity, kernel) collapse to
     # one canonical slot; dedup via a set before sorting.
-    from .kernels_torch import STATE_KERNEL_ID as _SKID  # noqa: PLC0415
+    from .impl.kernels_torch import STATE_KERNEL_ID as _SKID  # noqa: PLC0415
 
     _rotatable_kids = {int(_SKID.BODY_POS), int(_SKID.BODY_LIN_VEL), int(_SKID.BODY_ANG_VEL)}
     _reach_by_asset: dict[str, set[int]] = {}
@@ -822,7 +822,7 @@ def _compute_unified_layout(
     group gather indices stack these across members for one advanced-index
     gather per group at step time.
     """
-    from .kernels_torch import (
+    from .impl.kernels_torch import (
         STATE_KERNEL_BUFFER_KIND,
         buffer_kind_is_body_indexed,
         buffer_kind_per_element_stride,
@@ -953,7 +953,7 @@ def _compute_canonical_layout(
 
     Returns ``(reach_width, track_width, per_subtask_offset, per_subtask_stride)``.
     """
-    from .kernels_torch import STATE_KERNEL_ID as SKID
+    from .impl.kernels_torch import STATE_KERNEL_ID as SKID
 
     # Canonical order: walk kernel ids in a fixed enumeration so every entity
     # lays them out in the same order. Stride comes from the subtasks

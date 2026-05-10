@@ -22,7 +22,7 @@ from isaaclab.utils import configclass
 # The test ``source/isaaclab_tasks/test/test_env_cfg_no_forbidden_imports.py``
 # gates this contract.
 if TYPE_CHECKING:
-    from .multi_task_command import MultiTaskCommand
+    from ..multi_task_command import MultiTaskCommand
 
 
 @configclass
@@ -196,10 +196,10 @@ class MultiTaskCfg(CommandTermCfg):
     appears in the policy obs.
     """
 
-    dispatch_backend: str = "reference"
+    dispatch_backend: str = "torch"
     """Command dispatch backend.
 
-    ``"reference"`` selects the PyTorch reference path. ``"mega_kernel"``
+    ``"torch"`` selects the PyTorch reference path. ``"mega_kernel"``
     selects the current Warp backend whose private execution plan is shaped as
     ``(env, slot)``. ``"schedule_ordered_mega"`` keeps the same dense output
     layout but executes each env's slots in fused-schedule order. ``"packed_scatter"``

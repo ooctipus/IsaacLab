@@ -129,7 +129,7 @@ def build_mock_synthetic_readers(
     joint_names: list[str] | None = None,
 ) -> tuple:
     """Build fixed synthetic readers for each command buffer kind."""
-    from isaaclab_tasks.manager_based.multi_task.mdp.commands.kernels_torch import BUFFER_KIND
+    from isaaclab_tasks.manager_based.multi_task.mdp.commands.impl.kernels_torch import BUFFER_KIND
 
     nb = len(body_names if body_names is not None else _ANYMAL_BODY_NAMES)
     nj = len(joint_names if joint_names is not None else _ANYMAL_JOINT_NAMES)
@@ -161,13 +161,13 @@ def _build_shared_direct_tasks():
     """Build a high-fanout public-command workload over existing state kernels."""
     from isaaclab.managers import SceneEntityCfg
 
-    from isaaclab_tasks.manager_based.multi_task.mdp.commands.kernels_torch import (
+    from isaaclab_tasks.manager_based.multi_task.mdp.commands.impl.kernels_torch import (
         ACTIVATION_KERNEL_ID,
         METRIC_KERNEL_ID,
         SAMPLER_KERNEL_ID,
         STATE_KERNEL_ID,
     )
-    from isaaclab_tasks.manager_based.multi_task.mdp.commands.multi_task_cfg import MinMaxSampler, MultiTaskCfg
+    from isaaclab_tasks.manager_based.multi_task.mdp.commands.impl.multi_task_cfg import MinMaxSampler, MultiTaskCfg
 
     base = SceneEntityCfg("robot", body_names="base")
     subtasks = []
@@ -243,13 +243,13 @@ def _build_future_synthetic_tasks(*, interleave: bool = False):
     """Build a wide public-command workload over production state kernels."""
     from isaaclab.managers import SceneEntityCfg
 
-    from isaaclab_tasks.manager_based.multi_task.mdp.commands.kernels_torch import (
+    from isaaclab_tasks.manager_based.multi_task.mdp.commands.impl.kernels_torch import (
         ACTIVATION_KERNEL_ID,
         METRIC_KERNEL_ID,
         SAMPLER_KERNEL_ID,
         STATE_KERNEL_ID,
     )
-    from isaaclab_tasks.manager_based.multi_task.mdp.commands.multi_task_cfg import MinMaxSampler, MultiTaskCfg
+    from isaaclab_tasks.manager_based.multi_task.mdp.commands.impl.multi_task_cfg import MinMaxSampler, MultiTaskCfg
 
     base = SceneEntityCfg("robot", body_names="base")
     robot = SceneEntityCfg("robot")

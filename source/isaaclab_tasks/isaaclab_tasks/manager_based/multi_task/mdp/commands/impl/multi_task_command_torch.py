@@ -10,24 +10,24 @@ Byte-identical in output to :class:`~.multi_task_command_warp.MultiTaskCommandWa
 and obvious — its role is to be the implementation that the Warp path is
 validated against. Do not optimize this file.
 
-Selected when ``MultiTaskCfg.dispatch_backend="reference"``. The factory
-in :class:`~.multi_task_command.MultiTaskCommand.__new__` routes construction
-to this class automatically; users never reference it directly.
+Selected when ``MultiTaskCfg.dispatch_backend="torch"``. The factory in
+:class:`~..multi_task_command.MultiTaskCommand.__new__` routes construction to
+this class automatically; users never reference it directly.
 """
 
 from __future__ import annotations
 
 import torch
 
-from . import multi_task_command as _base_module
+from .. import multi_task_command as _base_module
+from ..multi_task_command import MultiTaskCommand
+from ..reward_composer import multiplicative_terminal_reward
 from .kernels_torch import ACTIVATION_KERNELS, BUFFER_KIND, DELTA_KERNELS, METRIC_KERNELS, STATE_KERNEL_COMPUTES
-from .multi_task_command import MultiTaskCommand
-from .reward_composer import multiplicative_terminal_reward
 
-__all__ = ["MultiTaskCommandReference"]
+__all__ = ["MultiTaskCommandTorch"]
 
 
-class MultiTaskCommandReference(MultiTaskCommand):
+class MultiTaskCommandTorch(MultiTaskCommand):
     """PyTorch reference — kept for correctness verification.
 
     The per-step dispatch runs as two PyTorch phases:

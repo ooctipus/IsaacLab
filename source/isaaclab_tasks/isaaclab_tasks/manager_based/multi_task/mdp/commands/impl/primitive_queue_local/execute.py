@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import warp as wp
 
-from ...kernels_wp import (
+from ..kernels_wp import (
     dispatch_primitive_local_direct_quat,
     dispatch_primitive_local_direct_scalar,
     dispatch_primitive_local_direct_vec3,
@@ -22,7 +22,7 @@ from ...kernels_wp import (
 )
 
 if TYPE_CHECKING:
-    from ...multi_task_command_warp import MultiTaskCommandWarp
+    from ..multi_task_command_warp import MultiTaskCommandWarp
     from .bindings import PrimitiveQueueLocalPlan
 
 

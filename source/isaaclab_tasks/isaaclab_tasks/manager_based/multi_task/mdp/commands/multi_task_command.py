@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Multi-task command base class + reference/warp factory.
+"""Multi-task command base class + torch/warp factory.
 
 :class:`MultiTaskCommand` is the public name users bind via
 ``MultiTaskCfg.class_type``. It owns all state that is independent of the
@@ -24,10 +24,10 @@ selected through :meth:`_build_output_store`, so future backends can own a
 non-dense hot-path layout and materialize public tensors only at the boundary.
 Two subclasses ship with the module:
 
-- :class:`~.multi_task_command_reference.MultiTaskCommandReference` — PyTorch
-  reference, selected by ``cfg.dispatch_backend="reference"``.
-- :class:`~.multi_task_command_warp.MultiTaskCommandWarp` — Warp backend
-  switchboard, selected by any non-reference backend string.
+- :class:`~.impl.multi_task_command_torch.MultiTaskCommandTorch` — PyTorch
+  reference, selected by ``cfg.dispatch_backend="torch"``.
+- :class:`~.impl.multi_task_command_warp.MultiTaskCommandWarp` — Warp backend
+  switchboard, selected by any non-``"torch"`` backend string.
 
 The :meth:`__new__` factory inspects ``cfg.dispatch_backend`` and returns
 an instance of the right subclass. Users never instantiate the subclasses
@@ -59,7 +59,7 @@ from isaaclab.managers import CommandTerm
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
-from .kernels_torch import (
+from .impl.kernels_torch import (
     ACTIVATION_KERNELS,
     BUFFER_KIND_READERS,
     DELTA_KERNELS,
@@ -78,7 +78,7 @@ _ = BUFFER_KIND_READERS
 from .spec import build_spec
 
 if TYPE_CHECKING:
-    from .multi_task_cfg import MultiTaskCfg
+    from .impl.multi_task_cfg import MultiTaskCfg
 
 __all__ = ["MultiTaskCommand"]
 
@@ -104,13 +104,13 @@ class MultiTaskCommand(CommandTerm):
         check) so they can be instantiated directly in tests.
         """
         if cls is MultiTaskCommand:
-            if cfg.dispatch_backend == "reference":
-                from .multi_task_command_reference import MultiTaskCommandReference
+            if cfg.dispatch_backend == "torch":
+                from .impl.multi_task_command_torch import MultiTaskCommandTorch
 
-                return object.__new__(MultiTaskCommandReference)
+                return object.__new__(MultiTaskCommandTorch)
             # Deferred import avoids a circular dependency at module-load
             # time (the subclass imports from this module).
-            from .multi_task_command_warp import MultiTaskCommandWarp
+            from .impl.multi_task_command_warp import MultiTaskCommandWarp
 
             return object.__new__(MultiTaskCommandWarp)
         return object.__new__(cls)
@@ -425,7 +425,7 @@ class MultiTaskCommand(CommandTerm):
             if not hasattr(self, "_visualizers"):
                 from isaaclab.markers import VisualizationMarkers  # noqa: PLC0415
 
-                from .kernels_torch import STATE_KERNELS as _SK  # noqa: PLC0415
+                from .impl.kernels_torch import STATE_KERNELS as _SK  # noqa: PLC0415
 
                 self._visualizers: dict[str, object] = {}
                 # Per-kernel list of marker paths (so the callback knows which
@@ -471,7 +471,7 @@ class MultiTaskCommand(CommandTerm):
         except (KeyError, AttributeError):
             return
 
-        from .kernels_torch import STATE_KERNELS as _SK  # noqa: PLC0415
+        from .impl.kernels_torch import STATE_KERNELS as _SK  # noqa: PLC0415
 
         per_env_offsets = self.spec.task_kernel_target_offset[self.task_samples]  # [N, K]
         env_arange = torch.arange(self.num_envs, device=self.device)
@@ -741,7 +741,7 @@ class MultiTaskCommand(CommandTerm):
         """Compute backend-owned per-step output-layout data.
 
         Must be implemented by a subclass. See
-        :class:`~.multi_task_command_reference.MultiTaskCommandReference` and
+        :class:`~.impl.multi_task_command_torch.MultiTaskCommandTorch` and
         :class:`~.multi_task_command_warp.MultiTaskCommandWarp`. Public
         tensors exposed through :attr:`command_reach`, :attr:`command_track`,
         :attr:`task_reward`, and :attr:`progress` must remain semantically

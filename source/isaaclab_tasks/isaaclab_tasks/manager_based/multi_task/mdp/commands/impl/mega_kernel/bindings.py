@@ -14,11 +14,11 @@ import torch
 import warp as wp
 
 from ... import multi_task_command as _base_module
-from ...kernel_ids import BUFFER_KIND
-from ...kernels_wp import ComposerState, EnvSlots, Outputs, StateAccess, SubtaskSpec
+from ..kernel_ids import BUFFER_KIND
+from ..kernels_wp import ComposerState, EnvSlots, Outputs, StateAccess, SubtaskSpec
 
 if TYPE_CHECKING:
-    from ...multi_task_command_warp import MultiTaskCommandWarp
+    from ..multi_task_command_warp import MultiTaskCommandWarp
 
 
 @dataclass

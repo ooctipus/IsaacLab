@@ -49,7 +49,7 @@ import torch
 import warp as wp
 
 if TYPE_CHECKING:
-    from .multi_task_command import MultiTaskCommand
+    from ..multi_task_command import MultiTaskCommand
 
 
 _HIDE_Z = -100.0

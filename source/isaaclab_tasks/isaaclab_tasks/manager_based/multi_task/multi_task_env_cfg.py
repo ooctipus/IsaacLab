@@ -47,7 +47,7 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.utils import configclass
 
-from isaaclab_tasks.manager_based.multi_task.mdp.commands.multi_task_cfg import MultiTaskCfg
+from isaaclab_tasks.manager_based.multi_task.mdp.commands.impl.multi_task_cfg import MultiTaskCfg
 from isaaclab_tasks.utils import PresetCfg
 
 import isaaclab_assets.robots.anymal as anymal
@@ -174,7 +174,7 @@ class MultiTaskEventsCfg:
 class MultiTaskRewardsCfg:
     """Two reward terms only — soft-safety constraints (undesired-contact and
     mechanical-power) are folded into the composer as multiplicative
-    :class:`~isaaclab_tasks.manager_based.multi_task.mdp.commands.multi_task_cfg.MultiTaskCfg.TrackingTaskCfg`
+    :class:`~isaaclab_tasks.manager_based.multi_task.mdp.commands.impl.multi_task_cfg.MultiTaskCfg.TrackingTaskCfg`
     subtasks declared with ``expose_in_obs=False``, rather than per-step shaping.
 
     Why no per-step ``undesired_contact`` / ``mech_work`` here: per-step

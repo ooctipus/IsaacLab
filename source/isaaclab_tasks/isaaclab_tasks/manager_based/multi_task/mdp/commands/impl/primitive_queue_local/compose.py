@@ -11,11 +11,11 @@ from typing import TYPE_CHECKING
 
 import warp as wp
 
-from ...kernels_wp import compose_reward, compose_reward_parallel
 from ..compose_select import use_parallel_compose
+from ..kernels_wp import compose_reward, compose_reward_parallel
 
 if TYPE_CHECKING:
-    from ...multi_task_command_warp import MultiTaskCommandWarp
+    from ..multi_task_command_warp import MultiTaskCommandWarp
     from .bindings import PrimitiveQueueLocalPlan
 
 

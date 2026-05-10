@@ -11,10 +11,10 @@ from typing import TYPE_CHECKING
 
 import warp as wp
 
-from ...kernels_wp import dispatch_mega
+from ..kernels_wp import dispatch_mega
 
 if TYPE_CHECKING:
-    from ...multi_task_command_warp import MultiTaskCommandWarp
+    from ..multi_task_command_warp import MultiTaskCommandWarp
     from .bindings import MegaKernelPlan
 
 

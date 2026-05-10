@@ -12,17 +12,17 @@ pieces live under :mod:`.impl`:
 ``primitive_queue_local``, and ``primitive_graph_local`` are wired today. Each
 backend owns its execution plan under :mod:`.impl`.
 
-Selected when ``MultiTaskCfg.dispatch_backend`` is not ``"reference"``. The
-factory in :class:`~.multi_task_command.MultiTaskCommand.__new__` routes
-construction to this class automatically; users never reference it directly.
+Selected when ``MultiTaskCfg.dispatch_backend`` is not ``"torch"``. The factory
+in :class:`~..multi_task_command.MultiTaskCommand.__new__` routes construction
+to this class automatically; users never reference it directly.
 """
 
 from __future__ import annotations
 
 import torch
 
-from .impl import CommandBackend, build_command_backend, build_command_output_store
-from .multi_task_command import MultiTaskCommand
+from ..multi_task_command import MultiTaskCommand
+from . import CommandBackend, build_command_backend, build_command_output_store
 
 __all__ = ["MultiTaskCommandWarp"]
 
@@ -54,7 +54,7 @@ class MultiTaskCommandWarp(MultiTaskCommand):
             self._backend.on_resample(self, env_ids)
 
     def _update_command(self) -> None:
-        """Per-step Warp update — skip the Torch overhead the base class adds for the reference path.
+        """Per-step Warp update — skip the Torch overhead the base class adds for the Torch path.
 
         The base class refreshes ``_slot_valid`` and calls ``_outputs.reset_step()``
         every step. Both are dead overhead for Warp backends:

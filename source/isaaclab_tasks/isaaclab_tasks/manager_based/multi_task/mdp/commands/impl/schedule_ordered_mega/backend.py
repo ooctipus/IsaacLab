@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING
 import torch
 import warp as wp
 
-from ...kernels_wp import dispatch_compose_fused
 from ..compose_select import use_parallel_compose
+from ..kernels_wp import dispatch_compose_fused
 from ..mega_kernel.compose import compose_warp
 from ..mega_kernel.execute import dispatch_mega_warp
 from ..mega_kernel.read import fill_unified_buffer_warp
@@ -21,7 +21,7 @@ from ..mega_kernel.rotation import rotate_canonical_slots_to_body_frame_warp
 from .bindings import ScheduleOrderedMegaPlan, build_schedule_ordered_mega_plan, refresh_schedule_ordered_mega_plan
 
 if TYPE_CHECKING:
-    from ...multi_task_command_warp import MultiTaskCommandWarp
+    from ..multi_task_command_warp import MultiTaskCommandWarp
 
 
 class ScheduleOrderedMegaBackend:

@@ -137,7 +137,7 @@ def test_multi_task_command_runs_10_steps_in_live_env(simulation_app):
 # -----------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("dispatch_backend", ["reference", "mega_kernel"])
+@pytest.mark.parametrize("dispatch_backend", ["torch", "mega_kernel"])
 def test_heterogeneous_multi_task_pinned_state_ground_truth(simulation_app, dispatch_backend):
     """Four envs, four pinned tasks, pinned initial state → per-env exact terminal reward.
 

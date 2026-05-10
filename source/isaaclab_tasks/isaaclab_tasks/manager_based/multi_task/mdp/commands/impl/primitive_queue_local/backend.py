@@ -23,7 +23,7 @@ from .compose import compose_primitive_queue_local_warp
 from .execute import dispatch_primitive_queue_local_warp
 
 if TYPE_CHECKING:
-    from ...multi_task_command_warp import MultiTaskCommandWarp
+    from ..multi_task_command_warp import MultiTaskCommandWarp
 
 
 class PrimitiveQueueLocalBackend:

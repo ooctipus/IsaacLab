@@ -19,7 +19,7 @@ from .bindings import PackedScatterPlan, build_packed_scatter_plan, refresh_pack
 from .execute import dispatch_packed_scatter_warp
 
 if TYPE_CHECKING:
-    from ...multi_task_command_warp import MultiTaskCommandWarp
+    from ..multi_task_command_warp import MultiTaskCommandWarp
 
 
 class PackedScatterBackend:

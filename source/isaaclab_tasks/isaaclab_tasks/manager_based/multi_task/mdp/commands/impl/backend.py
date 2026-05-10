@@ -19,7 +19,7 @@ from .primitive_queue_local.backend import PrimitiveQueueLocalBackend
 from .schedule_ordered_mega.backend import ScheduleOrderedMegaBackend
 
 if TYPE_CHECKING:
-    from ..multi_task_command_warp import MultiTaskCommandWarp
+    from .multi_task_command_warp import MultiTaskCommandWarp
 
 
 class CommandBackend(Protocol):
