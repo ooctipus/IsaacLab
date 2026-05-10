@@ -26,7 +26,6 @@ class PpoAlgorithmCfg(PresetCfg):
         lam=0.95,
         desired_kl=0.01,
         max_grad_norm=1.0,
-        returns_method="gae",
     )
     default = actor_critic
 

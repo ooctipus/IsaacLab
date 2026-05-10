@@ -21,15 +21,17 @@ from isaaclab.utils.math import quat_apply_inverse
 
 from isaaclab_rl.rsl_rl import (
     RslRlCNNModelCfg,
-    RslRlMLPEncoderModelCfg,
     RslRlMLPModelCfg,
-    RslRlResidualMLPEncoderModelCfg,
     RslRlRNNModelCfg,
 )
 
+from isaaclab_tasks.manager_based.multi_task.rl.rsl_rl.rl_cfg import (
+    RslRlCommanderActorModelCfg,
+    RslRlMLPEncoderModelCfg,
+    RslRlResidualMLPEncoderModelCfg,
+    RslRlTaskEasingActorModelCfg,
+)
 from isaaclab_tasks.utils import preset
-
-from .rl_cfg import RslRlCommanderActorModelCfg, RslRlTaskEasingActorModelCfg
 
 # ---------------------------------------------------------------------------
 # Shared pieces.
@@ -65,15 +67,6 @@ CNN_ENCODER_CFG = RslRlCNNModelCfg.CNNCfg(
     kernel_size=[5, 5, 4],
     stride=[2, 2, 1],
     activation="elu",
-    # NOTE: counterintuitive on this config — ``channels_last=False`` is *faster* under
-    # bf16 autocast on these shapes (Blackwell, cuDNN with the current torch wheel).
-    # When weights are pinned to channels_last, cuDNN's benchmark autotune picks
-    # ``wgrad_alg0_engine<__nv_bfloat16>`` for the conv weight gradient, which is a
-    # generic CUDA-core kernel running ~800 ms/update. With NCHW weights, cuDNN does its
-    # own internal NCHW→NHWC reshuffle (~565 ms) but then dispatches to the tensor-core
-    # ``sm80_xmma_wgrad_implicit_gemm_bf16bf16`` path — net much faster. Verified
-    # empirically: channels_last=True → 2.21 s update; channels_last=False → 1.93 s.
-    channels_last=False,
 )
 
 

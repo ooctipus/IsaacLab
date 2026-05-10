@@ -14,17 +14,16 @@ runner composition. The preset classes here just wire those instances into
 
 from isaaclab.utils import configclass
 
-from isaaclab_rl.rsl_rl import (
-    RslRlCrlAlgorithmCfg,
-    RslRlHerCfg,
-    RslRlOffPolicyRunnerCfg,
-    RslRlOnPolicyRunnerCfg,
-    RslRlPpoAlgorithmCfg,
-    RslRlResidualMLPCfg,
-)
+from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
 
 from isaaclab_tasks.utils import PresetCfg
 
+from ...rl.rsl_rl import (
+    RslRlCrlAlgorithmCfg,
+    RslRlHerCfg,
+    RslRlOffPolicyRunnerCfg,
+    RslRlResidualMLPCfg,
+)
 from ..mdp_presets import ExperimentNameCfg
 from .rsl_rl_model_cfg import (
     CNN_ACTOR_CFG,
@@ -73,6 +72,23 @@ class PositionCriticPresetCfg(PresetCfg):
     default = mlp_encoder
 
 
+POSITION_PPO_ALGORITHM_CFG = RslRlPpoAlgorithmCfg(
+    value_loss_coef=1.0,
+    use_clipped_value_loss=True,
+    clip_param=0.2,
+    entropy_coef=0.005,
+    num_learning_epochs=5,
+    num_mini_batches=4,
+    learning_rate=1.0e-4,
+    schedule="adaptive",
+    gamma=0.99,
+    lam=0.95,
+    desired_kl=0.01,
+    max_grad_norm=1.0,
+    share_cnn_encoders=True,
+)
+
+
 @configclass
 class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 32
@@ -81,31 +97,9 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     resume = False
     experiment_name: str = ExperimentNameCfg()  # type: ignore
     obs_groups = {"actor": ["policy", "task", "height_scan"], "critic": ["policy", "task", "height_scan"]}
-    # Halve the rollout-buffer cost of the height-scan grid (the largest single tensor in the
-    # PPO storage); fp32 precision is restored when mini-batches are yielded to the policy.
-    obs_storage_dtypes = {"height_scan": "float16"}
     actor = PositionActorPresetCfg()  # type: ignore
     critic = PositionCriticPresetCfg()  # type: ignore
-    algorithm: RslRlPpoAlgorithmCfg = RslRlPpoAlgorithmCfg(
-        value_loss_coef=1.0,
-        use_clipped_value_loss=True,
-        clip_param=0.2,
-        entropy_coef=0.005,
-        num_learning_epochs=5,
-        num_mini_batches=4,
-        learning_rate=1.0e-4,
-        schedule="adaptive",
-        gamma=0.99,
-        lam=0.95,
-        desired_kl=0.01,
-        max_grad_norm=1.0,
-        # When ``share_cnn_encoders=True``, actor and critic point at the same CNN ModuleDict
-        # *and* PPO automatically computes the encoder forward once per minibatch (the result
-        # is fed to both heads via the ``features_2d`` kwarg) — halves the dominant conv cost
-        # in the PPO update. No-op for non-CNN presets. Math is bit-identical (same module,
-        # same input → same output). Currently disabled; flip to True to opt in.
-        share_cnn_encoders=True,
-    )
+    algorithm: RslRlPpoAlgorithmCfg = POSITION_PPO_ALGORITHM_CFG
 
 
 @configclass
@@ -186,3 +180,4 @@ class MultiTaskLocomotionPPORunnerCfg(PositionLocomotionPPORunnerCfg):
     obs_groups = {"actor": ["policy", "task"], "critic": ["policy", "task"]}
     actor = FLAT_ACTOR  # type: ignore[assignment]
     critic = FLAT_CRITIC  # type: ignore[assignment]
+    algorithm: RslRlPpoAlgorithmCfg = POSITION_PPO_ALGORITHM_CFG.replace(share_cnn_encoders=False)

@@ -7,7 +7,7 @@
 
 from isaaclab.utils import configclass
 
-from isaaclab_rl.rsl_rl import (
+from isaaclab_tasks.manager_based.multi_task.rl.rsl_rl import (
     RslRlCrlAlgorithmCfg,
     RslRlHerCfg,
     RslRlOffPolicyRunnerCfg,

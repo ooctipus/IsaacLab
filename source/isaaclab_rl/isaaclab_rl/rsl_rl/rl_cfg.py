@@ -149,9 +149,6 @@ class RslRlCNNModelCfg(RslRlMLPModelCfg):
         flatten: bool = True
         """Whether to flatten the output of the CNN. Defaults to True."""
 
-        channels_last: bool = False
-        """Pin conv weights and forward inputs to ``torch.channels_last`` on CUDA. Defaults to False."""
-
     cnn_cfg: CNNCfg = MISSING
     """The configuration for the CNN(s)."""
 
@@ -352,18 +349,6 @@ class RslRlPpoAlgorithmCfg:
 
     If True, the advantage is normalized over the mini-batches only.
     Otherwise, the advantage is normalized over the entire collected trajectories.
-    """
-
-    returns_method: Literal["gae", "hindsight_mc"] = "gae"
-    """Method for computing critic return targets.
-
-    - ``"gae"``: Generalized Advantage Estimation (standard). Blends TD and MC
-      returns via the lambda parameter. Good default for dense reward settings.
-    - ``"hindsight_mc"``: Hindsight Monte Carlo. Computes exact discounted returns
-      for completed episodes; bootstraps with V(s) only at the horizon cutoff
-      (end of the rollout buffer). Equivalent to GAE with lambda=1. Best suited
-      for sparse/binary reward tasks where bootstrap bias is more harmful than
-      MC variance.
     """
 
     share_cnn_encoders: bool = False

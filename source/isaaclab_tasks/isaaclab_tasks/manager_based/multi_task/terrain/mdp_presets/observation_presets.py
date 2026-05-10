@@ -19,8 +19,8 @@ class PositionObservationsCfg:
     """Observations for the MDP (encoder variant: ``height_scan`` in its own 1D group).
 
     Separates the flat ``height_scan`` into a dedicated group so it can be routed through a
-    per-group MLP encoder (e.g. :class:`rsl_rl.models.MLPEncoderModel`) before being fused
-    with the proprioceptive ``policy`` group at the main MLP head.
+    per-group MLP encoder before being fused with the proprioceptive ``policy``
+    group at the main MLP head.
     """
 
     @configclass
