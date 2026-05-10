@@ -53,7 +53,7 @@ from dataclasses import dataclass
 import torch
 import warp as wp
 
-from isaaclab_tasks.manager_based.multi_task.mdp.commands.bench_dispatch_homogeneity import (
+from isaaclab_tasks.manager_based.multi_task.mdp.commands.benchmark.bench_dispatch_homogeneity import (
     SRC_WIDTH,
     TGT_WIDTH,
     PackedOutput,
@@ -73,7 +73,6 @@ from isaaclab_tasks.manager_based.multi_task.mdp.commands.bench_dispatch_homogen
     graph_contact_any16_kernel,
     graph_contact_diff16_kernel,
     graph_scalar_reduce_kernel,
-    graph_vec3_kernel,
     local_frame_vec3_graph_kernel,
     packed_contact_any16_scatter_kernel,
     packed_contact_diff16_scatter_kernel,
@@ -97,6 +96,39 @@ from isaaclab_tasks.manager_based.multi_task.mdp.commands.bench_dispatch_homogen
 )
 
 NUM_PRIMITIVE_FAMILIES = 8
+
+
+@wp.kernel
+def graph_vec3_kernel(
+    work_ids: wp.array(dtype=wp.int32),
+    node_ids_by_item: wp.array(dtype=wp.int32),
+    kind: wp.array(dtype=wp.int32),
+    scale: wp.array(dtype=wp.float32),
+    tgt: wp.array2d(dtype=wp.float32),
+    act_param: wp.array(dtype=wp.float32),
+    graph_vec3: wp.array2d(dtype=wp.float32),
+    delta: wp.array2d(dtype=wp.float32),
+    error: wp.array(dtype=wp.float32),
+    activation: wp.array(dtype=wp.float32),
+    count: int,
+):
+    """Consume precomputed vec3 deltas from the future synthetic graph."""
+    q = wp.tid()
+    if q >= count:
+        return
+    i = int(work_ids[q])
+    node = int(node_ids_by_item[i])
+    s = scale[int(kind[i])]
+    d0 = graph_vec3[node, 0] * s
+    d1 = graph_vec3[node, 1] * s
+    d2 = graph_vec3[node, 2] * s
+    err = wp.sqrt(d0 * d0 + d1 * d1 + d2 * d2)
+    delta[i, 0] = d0
+    delta[i, 1] = d1
+    delta[i, 2] = d2
+    delta[i, 3] = 0.0
+    error[i] = err
+    activation[i] = wp.tanh(act_param[i] / (err + 1.0e-6))
 
 
 @wp.kernel

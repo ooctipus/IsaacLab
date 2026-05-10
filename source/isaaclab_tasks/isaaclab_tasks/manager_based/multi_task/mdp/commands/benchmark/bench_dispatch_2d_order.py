@@ -12,7 +12,7 @@ mostly walk slots within an env, slot ordering has a different effect.
 
 Run with:
 
-    ./isaaclab.sh -p -m isaaclab_tasks.manager_based.multi_task.mdp.commands.bench_dispatch_2d_order
+    ./isaaclab.sh -p -m isaaclab_tasks.manager_based.multi_task.mdp.commands.benchmark.bench_dispatch_2d_order
 """
 
 from __future__ import annotations

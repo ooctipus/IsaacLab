@@ -14,7 +14,7 @@ from collections.abc import Callable
 import torch
 import warp as wp
 
-from .kernels_wp import fill_slab_copy
+from ..kernels_wp import fill_slab_copy
 
 
 def _time_wall(fn: Callable[[], None], repeat: int, device: str) -> float:

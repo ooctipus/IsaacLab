@@ -27,7 +27,7 @@ kernel boundary.
 Artifact:
 
 ```bash
-./isaaclab.sh -p -m isaaclab_tasks.manager_based.multi_task.mdp.commands.bench_dispatch_homogeneity
+./isaaclab.sh -p -m isaaclab_tasks.manager_based.multi_task.mdp.commands.benchmark.bench_dispatch_homogeneity
 ```
 
 The benchmark compares:
@@ -257,7 +257,7 @@ Artifacts:
 
 ```bash
 ./isaaclab.sh -p /tmp/octi_queue_build_timing.py
-./isaaclab.sh -p -m isaaclab_tasks.manager_based.multi_task.mdp.commands.bench_dispatch_queue_build
+./isaaclab.sh -p -m isaaclab_tasks.manager_based.multi_task.mdp.commands.benchmark.bench_dispatch_queue_build
 ```
 
 Standalone Torch queue construction for 1M random work items on the same GPU:
@@ -352,7 +352,7 @@ Interpretation:
 Artifact:
 
 ```bash
-./isaaclab.sh -p -m isaaclab_tasks.manager_based.multi_task.mdp.commands.bench_command_pipeline_layout
+./isaaclab.sh -p -m isaaclab_tasks.manager_based.multi_task.mdp.commands.benchmark.bench_command_pipeline_layout
 ```
 
 The real command path does more than dispatch projection/error:
@@ -519,7 +519,7 @@ Isolated benchmark:
 
 ```bash
 ./isaaclab.sh -p -m \
-  isaaclab_tasks.manager_based.multi_task.mdp.commands.bench_body_frame_rotation \
+  isaaclab_tasks.manager_based.multi_task.mdp.commands.benchmark.bench_body_frame_rotation \
   --num_envs 16384 131072 --num_offsets 1 2 4 8 --repeat 200
 ```
 
@@ -575,11 +575,11 @@ Slab binding overhead benchmark:
 
 ```bash
 ./isaaclab.sh -p -m \
-  isaaclab_tasks.manager_based.multi_task.mdp.commands.bench_slab_binding_overhead \
+  isaaclab_tasks.manager_based.multi_task.mdp.commands.benchmark.bench_slab_binding_overhead \
   --num_envs 16384 --repeat 500
 
 ./isaaclab.sh -p -m \
-  isaaclab_tasks.manager_based.multi_task.mdp.commands.bench_slab_binding_overhead \
+  isaaclab_tasks.manager_based.multi_task.mdp.commands.benchmark.bench_slab_binding_overhead \
   --num_envs 131072 --repeat 200
 ```
 
@@ -609,7 +609,7 @@ Interpretation:
 Artifact:
 
 ```bash
-./isaaclab.sh -p -m isaaclab_tasks.manager_based.multi_task.mdp.commands.bench_dispatch_2d_order
+./isaaclab.sh -p -m isaaclab_tasks.manager_based.multi_task.mdp.commands.benchmark.bench_dispatch_2d_order
 ```
 
 Real `dispatch_mega` launches `dim=(num_envs, k_max)`, so flat random ordering
