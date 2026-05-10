@@ -66,7 +66,7 @@ def _wrap_phases(command_term):
 
     Wraps :meth:`_update_command` and :meth:`_dispatch` on the instance
     (the subclass-specific dispatch). The trace labels stay the same
-    whether the term is a reference or Warp instance — the label reflects
+    whether the term is a Torch or Warp instance — the label reflects
     the phase, not the implementation.
     """
     from torch.profiler import record_function

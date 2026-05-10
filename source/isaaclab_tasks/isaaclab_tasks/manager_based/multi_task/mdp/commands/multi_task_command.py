@@ -165,7 +165,7 @@ class MultiTaskCommand(CommandTerm):
         # int32 matches Warp's index-array type so the Warp dispatch can wrap
         # these tensors directly — no per-step int64→int32 ``copy_`` refresh.
         # PyTorch's advanced indexing accepts int32 indices unchanged, so the
-        # reference path works on the same storage.
+        # Torch path works on the same storage.
         self._env_subtask_ids = torch.zeros((num_envs, k_max), dtype=torch.int32, device=device)
         self._env_slot_count = torch.zeros(num_envs, dtype=torch.int32, device=device)
         self._env_slot_offsets = torch.zeros((num_envs, k_max), dtype=torch.int32, device=device)
@@ -513,7 +513,7 @@ class MultiTaskCommand(CommandTerm):
         The composer's contract is: state kernels and deltas are world-frame;
         the reward (via :func:`METRIC_KERNELS`) uses L2 norms that are
         rotation-invariant, so reward math is unaffected. This helper is
-        called at the end of each dispatch (reference or Warp) so that the
+        called at the end of each dispatch (Torch or Warp) so that the
         policy-facing obs tensors come out body-aligned — downstream
         :func:`~..mdp.observations.command_reach` /
         :func:`~..mdp.observations.command_track` read them directly without
@@ -713,7 +713,7 @@ class MultiTaskCommand(CommandTerm):
 
     def _update_command(self):
         """Per-step update: dispatch → compose. Both override points are
-        implemented by the reference and Warp subclasses; this method just
+        implemented by the Torch and Warp subclasses; this method just
         orchestrates buffer clearing and delegation.
 
         Zero per-step allocations: the slot-valid mask is written in place

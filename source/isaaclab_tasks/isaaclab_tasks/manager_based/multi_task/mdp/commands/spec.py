@@ -293,7 +293,7 @@ class TaskSpec:
 
     # Per-layout rotatable-vec3 slot offsets, grouped by asset. The composer
     # reads state in world frame, computes world-frame delta, then
-    # :meth:`MultiTaskCommand._compute_state_delta_error_reference` rotates
+    # :meth:`MultiTaskCommandTorch._compute_state_delta_error_reference` rotates
     # every POS / LIN_VEL / ANG_VEL slot into the originating asset's root
     # frame so the emitted ``command_reach`` / ``command_track`` tensors are
     # body-aligned for policy consumption. Reward/error (``_buf_error``)
