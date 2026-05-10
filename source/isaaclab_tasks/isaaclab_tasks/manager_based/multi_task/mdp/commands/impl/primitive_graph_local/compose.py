@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING
 
 import warp as wp
 
-from ...kernels_wp import compose_reward
+from ...kernels_wp import compose_reward, compose_reward_parallel
+from ..compose_select import use_parallel_compose
 
 if TYPE_CHECKING:
     from ...multi_task_command_warp import MultiTaskCommandWarp
@@ -19,24 +20,29 @@ if TYPE_CHECKING:
 
 
 def compose_primitive_graph_local_warp(command: MultiTaskCommandWarp, plan: PrimitiveGraphLocalPlan) -> None:
-    """Advance composer state using dense slot activations.
-
-    The graph dispatch still writes ``outputs.buf_activation``. Reading that
-    dense env-slot layout is faster than indirect local-row reads until the
-    public output contract no longer requires dense debug slot tensors.
-    """
-    wp.launch(
-        compose_reward,
-        dim=(command.num_envs,),
-        inputs=[
-            plan.env_slots,
-            plan.spec,
-            plan.composer_state,
-            plan.outputs,
-            plan.episode_length_buf_wp,
-            plan.effective_max_episode_length_wp,
-            0.5,
-            float(command.cfg.quality_easing),
-        ],
-        device=str(command.device),
-    )
+    """Advance composer state using dense slot activations."""
+    inputs = [
+        plan.env_slots,
+        plan.spec,
+        plan.composer_state,
+        plan.outputs,
+        plan.episode_length_buf_wp,
+        plan.effective_max_episode_length_wp,
+        0.5,
+        float(command.cfg.quality_easing),
+    ]
+    if use_parallel_compose(command.k_max):
+        wp.launch_tiled(
+            compose_reward_parallel,
+            dim=[command.num_envs],
+            inputs=inputs,
+            block_dim=max(command.k_max, 32),
+            device=str(command.device),
+        )
+    else:
+        wp.launch(
+            compose_reward,
+            dim=(command.num_envs,),
+            inputs=inputs,
+            device=str(command.device),
+        )

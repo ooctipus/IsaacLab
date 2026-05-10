@@ -2519,3 +2519,124 @@ def compose_reward_from_local(
     if n_slots > 0:
         progress_val = activation_sum / float(n_slots)
     outputs.progress[env] = progress_val
+
+
+# ---------------------------------------------------------------------------
+# Parallel composer kernel — block-per-env with cooperative slot reductions.
+#
+# The serial compose loop is the dominant cost at high ``k_max`` (≈ 60 % of
+# the future-synthetic step). This variant launches one block per env with
+# ``block_dim = k_max`` so each thread handles exactly one slot's per-slot
+# state update. Cross-slot reductions go through Warp tile primitives
+# (``tile_sum`` / ``tile_min`` / ``tile_max``); the multiplicative quality
+# factor uses ``log → sum → exp`` to keep the math numerically well-behaved
+# when ``k_max`` is large (288+ slots). Thread 0 writes the per-env outputs.
+#
+# Threads with ``slot >= n_slots`` contribute neutral values to each
+# reduction (0 for sums, 1 for AND-style mins, 0 for max-of-flags, log(1)=0
+# for the log-sum-exp), so the reduction result equals the original serial
+# loop's output.
+# ---------------------------------------------------------------------------
+
+
+@wp.kernel
+def compose_reward_parallel(
+    env_slots: EnvSlots,
+    spec: SubtaskSpec,
+    composer_state: ComposerState,
+    outputs: Outputs,
+    episode_length_buf: wp.array(dtype=wp.int64),
+    effective_max_episode_length: wp.array(dtype=int),
+    instant_threshold: float,
+    quality_easing: float,
+):
+    """Block-per-env composer. Same outputs as :func:`compose_reward`.
+
+    Launch as ``wp.launch_tiled(compose_reward_parallel, dim=[num_envs],
+    block_dim=k_max)``. ``block_dim`` must be ≥ the spec's ``k_max`` so every
+    active slot has a thread; threads beyond ``slot_count[env]`` short-circuit
+    to neutral reduction values.
+    """
+    env, slot = wp.tid()
+    n_slots = env_slots.slot_count[env]
+
+    # All threads load the new transit_steps; only thread 0 writes back.
+    old_transit = composer_state.transit_steps[env]
+    new_transit = old_transit + 1
+    tsteps = float(new_transit)
+
+    # Neutral defaults so threads beyond ``n_slots`` don't perturb reductions.
+    local_act = float(0.0)
+    local_has_instant = int(0)
+    local_instant_ok = int(1)  # min reduction → 0 only if some instant slot failed
+    local_log_quality = float(0.0)  # log(1) = 0 → exp(sum) starts at 1
+
+    if slot < n_slots:
+        sid = env_slots.subtask_ids[env, slot]
+        is_instant = spec.is_instant_flag[sid]
+        is_tracking = spec.is_tracking_flag[sid]
+        act = outputs.buf_activation[env, slot]
+        local_act = act
+
+        # Per-slot ``sum_activation`` update (parallel; no contention).
+        new_sum = composer_state.sum_activation[env, slot] + act
+        composer_state.sum_activation[env, slot] = new_sum
+
+        if is_instant != 0:
+            local_has_instant = 1
+            prev_achieved = composer_state.instant_achieved[env, slot]
+            achieved_int = int(0)
+            if prev_achieved:
+                achieved_int = 1
+            if act > instant_threshold:
+                achieved_int = 1
+            composer_state.instant_achieved[env, slot] = achieved_int != 0
+            local_instant_ok = achieved_int
+        elif is_tracking != 0:
+            # Multiplicative quality factor in log-space across slots so
+            # ``k_max`` of 100+ doesn't underflow. Clamp the input to a tiny
+            # positive value so log(0) doesn't produce -inf — the resulting
+            # quality_factor ends up effectively 0 either way.
+            ratio = new_sum / tsteps
+            safe_ratio = wp.max(ratio, 1.0e-38)
+            local_log_quality = wp.log(safe_ratio)
+
+    # Cross-slot reductions over the full block.
+    activation_sum_t = wp.tile_sum(wp.tile(local_act))
+    has_instant_t = wp.tile_max(wp.tile(local_has_instant))
+    all_instant_ok_t = wp.tile_min(wp.tile(local_instant_ok))
+    log_quality_sum_t = wp.tile_sum(wp.tile(local_log_quality))
+
+    # Thread 0 finalizes per-env outputs.
+    if slot == 0:
+        composer_state.transit_steps[env] = new_transit
+
+        activation_sum = wp.tile_extract(activation_sum_t, 0)
+        has_instant = wp.tile_extract(has_instant_t, 0)
+        all_instant_ok = wp.tile_extract(all_instant_ok_t, 0)
+        log_quality_sum = wp.tile_extract(log_quality_sum_t, 0)
+
+        success_int = all_instant_ok * has_instant
+        timeout_int = int(0)
+        if episode_length_buf[env] >= wp.int64(effective_max_episode_length[env] - 1):
+            timeout_int = 1
+        done_now_int = success_int
+        if timeout_int == 1:
+            done_now_int = 1
+
+        # quality_factor = quality_product ^ quality_easing
+        #                = exp(quality_easing * sum(log(per-slot ratio)))
+        quality_factor = wp.exp(quality_easing * log_quality_sum)
+        terminal_value = float(all_instant_ok) * quality_factor
+
+        reward = float(0.0)
+        if done_now_int == 1:
+            reward = terminal_value
+
+        outputs.task_reward[env] = reward
+        outputs.task_done_success[env] = success_int != 0
+
+        progress_val = float(0.0)
+        if n_slots > 0:
+            progress_val = activation_sum / float(n_slots)
+        outputs.progress[env] = progress_val
