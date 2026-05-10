@@ -2652,3 +2652,188 @@ def compose_reward_parallel(
         if n_slots > 0:
             progress_val = activation_sum / float(n_slots)
         outputs.progress[env] = progress_val
+
+
+# ---------------------------------------------------------------------------
+# Fused dispatch + compose kernel — block-per-env, only worth it at high k_max.
+#
+# The split between :func:`dispatch_mega` and :func:`compose_reward_parallel`
+# requires a global memory roundtrip on ``outputs.buf_activation``: dispatch
+# writes per-slot activation, compose reads it back. At high ``k_max`` the
+# bandwidth and latency of that roundtrip is real (~20 µs on future_synthetic
+# 16k envs).
+#
+# Fusing the two into one block-per-env kernel keeps the activation in
+# registers between the two phases. Writes to ``outputs.buf_activation`` and
+# ``outputs.buf_error`` are still issued for compatibility with metrics and
+# tests, but compose's reduction reads from the in-register value directly
+# instead of going back through global memory.
+#
+# Threshold: same as the parallel composer — only enabled when ``k_max`` is
+# large enough to fill warps with one block per env. Backends select between
+# the (dispatch_mega + parallel compose) and the fused path at construction
+# time based on ``compose_select.use_parallel_compose``.
+# ---------------------------------------------------------------------------
+
+
+@wp.kernel
+def dispatch_compose_fused(
+    env_slots: EnvSlots,
+    spec: SubtaskSpec,
+    state: StateAccess,
+    outputs: Outputs,
+    composer_state: ComposerState,
+    episode_length_buf: wp.array(dtype=wp.int64),
+    effective_max_episode_length: wp.array(dtype=int),
+    instant_threshold: float,
+    quality_easing: float,
+):
+    """Fused dispatch + compose. Same outputs as ``dispatch_mega`` + ``compose_reward_parallel``."""
+    env, slot = wp.tid()
+    n_slots = env_slots.slot_count[env]
+
+    old_transit = composer_state.transit_steps[env]
+    new_transit = old_transit + 1
+    tsteps = float(new_transit)
+
+    local_act = float(0.0)
+    local_has_instant = int(0)
+    local_instant_ok = int(1)
+    local_quality = float(1.0)
+
+    if slot < n_slots:
+        # ---- Dispatch phase ----
+        sid = env_slots.subtask_ids[env, slot]
+        skid = spec.state_kernel_id[sid]
+        akid = spec.activation_kernel_id[sid]
+        act_param = spec.activation_kernel_param[sid]
+        canon_off = spec.canonical_offset[sid]
+        instant = spec.is_instant_flag[sid]
+        is_tracking_i = spec.is_tracking_flag[sid]
+        tgt_off = env_slots.slot_offsets[env, slot]
+        stride = spec.state_stride[sid]
+        gbase = spec.gather_offset[sid]
+        gcount = spec.gather_count[sid]
+
+        d0 = float(0.0)
+        d1 = float(0.0)
+        d2 = float(0.0)
+        d3 = float(0.0)
+        err = float(0.0)
+
+        if skid == STATE_BODY_POS or skid == STATE_BODY_LIN_VEL or skid == STATE_BODY_ANG_VEL:
+            x3 = _project_xyz(state, spec, env, gbase)
+            t3 = _read_target_xyz(state, env, tgt_off)
+            d3v = t3 - x3
+            d0 = d3v[0]
+            d1 = d3v[1]
+            d2 = d3v[2]
+            err = _metric_geometric_vec3(d3v)
+        elif skid == STATE_JOINT_POS or skid == STATE_JOINT_VEL or skid == STATE_BODY_POS_Z:
+            x_s = _project_scalar(state, spec, env, gbase)
+            t_s = state.targets_flat[env, tgt_off]
+            d0 = t_s - x_s
+            err = _metric_geometric_scalar(d0)
+        elif skid == STATE_BODY_QUAT:
+            cq = _project_quat_xyzw(state, spec, env, gbase)
+            tq = _read_target_quat_xyzw(state, env, tgt_off)
+            dq = _delta_quaternion(cq, tq)
+            d0 = dq[0]
+            d1 = dq[1]
+            d2 = dq[2]
+            d3 = dq[3]
+            err = _metric_quaternion(dq)
+        elif skid == STATE_BODY_CONTACT:
+            xcb = _state_body_contact(state, spec, env, gbase, gcount)
+            tc0 = state.targets_flat[env, tgt_off]
+            tc1 = float(0.0)
+            tc2 = float(0.0)
+            tc3 = float(0.0)
+            if stride >= 2:
+                tc1 = state.targets_flat[env, tgt_off + 1]
+            if stride >= 3:
+                tc2 = state.targets_flat[env, tgt_off + 2]
+            if stride >= 4:
+                tc3 = state.targets_flat[env, tgt_off + 3]
+            d0 = tc0 - xcb[0]
+            d1 = tc1 - xcb[1]
+            d2 = tc2 - xcb[2]
+            d3 = tc3 - xcb[3]
+            err = wp.sqrt(d0 * d0 + d1 * d1 + d2 * d2 + d3 * d3)
+        elif skid == STATE_BODY_CONTACT_COUNT:
+            x_cnt = _state_body_contact_count(state, spec, env, gbase, gcount)
+            tgt_cnt = state.targets_flat[env, tgt_off]
+            d0 = tgt_cnt - x_cnt
+            err = _metric_geometric_scalar(d0)
+        elif skid == STATE_BODY_CONTACT_COUNT_DIFF:
+            x_diff = _state_body_contact_count_diff(state, spec, env, gbase, gcount)
+            tgt_diff = state.targets_flat[env, tgt_off]
+            d0 = tgt_diff - x_diff
+            err = _metric_geometric_scalar(d0)
+        elif skid == STATE_JOINT_MECH_POWER:
+            x_pwr = _state_joint_mech_power(state, spec, env, gbase, gcount)
+            tgt_pwr = state.targets_flat[env, tgt_off]
+            d0 = tgt_pwr - x_pwr
+            err = _metric_geometric_scalar(d0)
+
+        # Activation in register — used by both the buf_activation write AND
+        # the compose reduction, no roundtrip needed.
+        act = _apply_activation(akid, err, act_param)
+        local_act = act
+
+        # Dense output writes (kept for tests/metrics compatibility).
+        _scatter_delta(outputs, env, canon_off, stride, instant, d0, d1, d2, d3)
+        outputs.buf_error[env, slot] = err
+        outputs.buf_activation[env, slot] = act
+
+        # ---- Compose phase ----
+        new_sum = composer_state.sum_activation[env, slot] + act
+        composer_state.sum_activation[env, slot] = new_sum
+
+        if instant != 0:
+            local_has_instant = 1
+            prev_achieved = composer_state.instant_achieved[env, slot]
+            achieved_int = int(0)
+            if prev_achieved:
+                achieved_int = 1
+            if act > instant_threshold:
+                achieved_int = 1
+            composer_state.instant_achieved[env, slot] = achieved_int != 0
+            local_instant_ok = achieved_int
+        elif is_tracking_i != 0:
+            local_quality = new_sum / tsteps
+
+    combined = wp.vec4(local_act, float(local_has_instant), float(local_instant_ok), local_quality)
+    reduced_t = wp.tile_reduce(_compose_reduce_op, wp.tile(combined, preserve_type=True))
+
+    if slot == 0:
+        composer_state.transit_steps[env] = new_transit
+
+        reduced = wp.tile_extract(reduced_t, 0)
+        activation_sum = reduced[0]
+        has_instant = int(reduced[1])
+        all_instant_ok = int(reduced[2])
+        quality_product = reduced[3]
+
+        success_int = all_instant_ok * has_instant
+        timeout_int = int(0)
+        if episode_length_buf[env] >= wp.int64(effective_max_episode_length[env] - 1):
+            timeout_int = 1
+        done_now_int = success_int
+        if timeout_int == 1:
+            done_now_int = 1
+
+        quality_factor = wp.pow(quality_product, quality_easing)
+        terminal_value = float(all_instant_ok) * quality_factor
+
+        reward = float(0.0)
+        if done_now_int == 1:
+            reward = terminal_value
+
+        outputs.task_reward[env] = reward
+        outputs.task_done_success[env] = success_int != 0
+
+        progress_val = float(0.0)
+        if n_slots > 0:
+            progress_val = activation_sum / float(n_slots)
+        outputs.progress[env] = progress_val

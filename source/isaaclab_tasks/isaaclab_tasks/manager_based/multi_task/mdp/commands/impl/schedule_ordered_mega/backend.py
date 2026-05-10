@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING
 import torch
 import warp as wp
 
+from ...kernels_wp import dispatch_compose_fused
+from ..compose_select import use_parallel_compose
 from ..mega_kernel.compose import compose_warp
 from ..mega_kernel.execute import dispatch_mega_warp
 from ..mega_kernel.read import fill_unified_buffer_warp
@@ -30,6 +32,7 @@ class ScheduleOrderedMegaBackend:
     def __init__(self, command: MultiTaskCommandWarp):
         self.plan: ScheduleOrderedMegaPlan = build_schedule_ordered_mega_plan(command)
         self._dispatch_graph: wp.Graph | None = None
+        self._use_fused = use_parallel_compose(command.k_max)
 
     def on_resample(self, command: MultiTaskCommandWarp, env_ids: torch.Tensor) -> None:
         """Refresh schedule-ordered slot ranks after task assignment changes."""
@@ -52,9 +55,29 @@ class ScheduleOrderedMegaBackend:
     def _dispatch_uncaptured(self, command: MultiTaskCommandWarp) -> None:
         """Launch the full per-step pipeline eagerly; used for warmup and graph capture."""
         fill_unified_buffer_warp(command, self.plan.mega)
-        dispatch_mega_warp(command, self.plan.mega)
-        rotate_canonical_slots_to_body_frame_warp(command, self.plan.mega)
-        compose_warp(command, self.plan.mega)
+        if self._use_fused:
+            wp.launch_tiled(
+                dispatch_compose_fused,
+                dim=[command.num_envs],
+                inputs=[
+                    self.plan.mega.env_slots,
+                    self.plan.mega.spec,
+                    self.plan.mega.state,
+                    self.plan.mega.outputs,
+                    self.plan.mega.composer_state,
+                    self.plan.mega.episode_length_buf_wp,
+                    self.plan.mega.effective_max_episode_length_wp,
+                    0.5,
+                    float(command.cfg.quality_easing),
+                ],
+                block_dim=max(command.k_max, 32),
+                device=str(command.device),
+            )
+            rotate_canonical_slots_to_body_frame_warp(command, self.plan.mega)
+        else:
+            dispatch_mega_warp(command, self.plan.mega)
+            rotate_canonical_slots_to_body_frame_warp(command, self.plan.mega)
+            compose_warp(command, self.plan.mega)
 
     def compose(self, command: MultiTaskCommandWarp, valid_slots: torch.Tensor) -> None:
         """No-op — compose was captured as part of the dispatch graph."""
