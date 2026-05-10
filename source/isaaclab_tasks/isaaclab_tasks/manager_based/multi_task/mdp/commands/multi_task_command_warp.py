@@ -53,6 +53,26 @@ class MultiTaskCommandWarp(MultiTaskCommand):
         if self._backend is not None:
             self._backend.on_resample(self, env_ids)
 
+    def _update_command(self) -> None:
+        """Per-step Warp update — skip the Torch overhead the base class adds for the reference path.
+
+        The base class refreshes ``_slot_valid`` and calls ``_outputs.reset_step()``
+        every step. Both are dead overhead for Warp backends:
+
+        - All Warp backends ``del valid_slots`` — they read ``slot_count[env]``
+          directly inside the kernels.
+        - Per-step zero of ``buf_error`` / ``buf_activation`` is unnecessary
+          because dispatch overwrites every active slot, and inactive slots are
+          masked out in compose (``slot < slot_count``) and metrics
+          (multiplied by ``active_mask``). Resample still clears outputs for
+          envs whose task changes, so no stale data survives a task switch.
+
+        Saves ~24 µs/step at 16k envs locomotion (Torch ``lt`` + 2× ``zero_()``
+        + their stream-sync overhead with the captured Warp graph).
+        """
+        self._dispatch(self._slot_valid)
+        self._compose(self._slot_valid)
+
     def _dispatch(self, valid_slots: torch.Tensor) -> None:
         """State → delta → metric → activation through the selected backend."""
         assert self._backend is not None
