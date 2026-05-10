@@ -2543,12 +2543,14 @@ def compose_reward_from_local(
 def _compose_reduce_op(a: wp.vec4, b: wp.vec4) -> wp.vec4:
     """Combined reduction op for the parallel composer.
 
-    Component-wise: sum, max, min, sum. Used so a single
-    :func:`wp.tile_reduce` collapses the four per-slot reductions
-    (``activation_sum``, ``has_instant``, ``all_instant_ok``,
-    ``log_quality_sum``) into one block-wide pass.
+    Component-wise: sum, max, min, multiply. Collapses the four per-slot
+    reductions (``activation_sum``, ``has_instant``, ``all_instant_ok``,
+    ``quality_product``) into one cooperative pass. Multiplying the quality
+    ratios directly is mathematically equivalent to exp(sum(log(...))) but
+    avoids per-slot ``wp.log`` and the per-env ``wp.exp``; underflow to 0
+    matches the behavior of ``log → -inf → exp → 0``.
     """
-    return wp.vec4(a[0] + b[0], wp.max(a[1], b[1]), wp.min(a[2], b[2]), a[3] + b[3])
+    return wp.vec4(a[0] + b[0], wp.max(a[1], b[1]), wp.min(a[2], b[2]), a[3] * b[3])
 
 
 @wp.kernel
@@ -2581,7 +2583,7 @@ def compose_reward_parallel(
     local_act = float(0.0)
     local_has_instant = int(0)
     local_instant_ok = int(1)  # min reduction → 0 only if some instant slot failed
-    local_log_quality = float(0.0)  # log(1) = 0 → exp(sum) starts at 1
+    local_quality = float(1.0)  # multiplicative identity for tile_reduce(mul)
 
     if slot < n_slots:
         sid = env_slots.subtask_ids[env, slot]
@@ -2605,17 +2607,14 @@ def compose_reward_parallel(
             composer_state.instant_achieved[env, slot] = achieved_int != 0
             local_instant_ok = achieved_int
         elif is_tracking != 0:
-            # Multiplicative quality factor in log-space across slots so
-            # ``k_max`` of 100+ doesn't underflow. Clamp the input to a tiny
-            # positive value so log(0) doesn't produce -inf — the resulting
-            # quality_factor ends up effectively 0 either way.
-            ratio = new_sum / tsteps
-            safe_ratio = wp.max(ratio, 1.0e-38)
-            local_log_quality = wp.log(safe_ratio)
+            # Multiplicative quality factor: feed the per-slot ratio directly
+            # into the product reduction. Underflow to 0 across many slots is
+            # the desired semantic — matches the original log-sum-exp path.
+            local_quality = new_sum / tsteps
 
     # Pack the four per-slot reduction inputs into a single vec4 and reduce
-    # in one cooperative pass. Component-wise op: sum / max / min / sum.
-    combined = wp.vec4(local_act, float(local_has_instant), float(local_instant_ok), local_log_quality)
+    # in one cooperative pass. Component-wise op: sum / max / min / multiply.
+    combined = wp.vec4(local_act, float(local_has_instant), float(local_instant_ok), local_quality)
     reduced_t = wp.tile_reduce(_compose_reduce_op, wp.tile(combined, preserve_type=True))
 
     # Thread 0 finalizes per-env outputs.
@@ -2626,7 +2625,7 @@ def compose_reward_parallel(
         activation_sum = reduced[0]
         has_instant = int(reduced[1])
         all_instant_ok = int(reduced[2])
-        log_quality_sum = reduced[3]
+        quality_product = reduced[3]
 
         success_int = all_instant_ok * has_instant
         timeout_int = int(0)
@@ -2636,9 +2635,10 @@ def compose_reward_parallel(
         if timeout_int == 1:
             done_now_int = 1
 
-        # quality_factor = quality_product ^ quality_easing
-        #                = exp(quality_easing * sum(log(per-slot ratio)))
-        quality_factor = wp.exp(quality_easing * log_quality_sum)
+        # quality_factor = quality_product ^ quality_easing.
+        # ``wp.pow(0, easing) == 0`` for easing > 0, so an underflowed
+        # product still gives a 0 reward as expected.
+        quality_factor = wp.pow(quality_product, quality_easing)
         terminal_value = float(all_instant_ok) * quality_factor
 
         reward = float(0.0)
