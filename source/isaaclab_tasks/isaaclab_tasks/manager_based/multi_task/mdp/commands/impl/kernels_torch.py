@@ -163,9 +163,9 @@ def _read_body_pos_w(env: ManagerBasedRLEnv, asset_name: str) -> torch.Tensor:
 
     Returns the raw scene tensor as a zero-copy torch view. The env-origin
     subtraction that makes body pos env-local is applied by the dispatch
-    (Warp kernel for Warp path, inline PyTorch for the reference path) so
-    this reader stays allocation-free — essential for CUDA Graph capture
-    and for keeping the "reader = pure read" contract clean.
+    (Warp kernel for Warp path, inline PyTorch for the Torch reference
+    path) so this reader stays allocation-free — essential for CUDA Graph
+    capture and for keeping the "reader = pure read" contract clean.
     """
     articulation: Articulation = env.scene[asset_name]
     return wp.to_torch(articulation.data.body_pos_w)

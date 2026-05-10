@@ -13,10 +13,10 @@ import torch
 import warp as wp
 
 from ..mega_kernel.compose import compose_warp
-from ..mega_kernel.read import fill_unified_buffer_warp
 from ..mega_kernel.rotation import rotate_canonical_slots_to_body_frame_warp
 from .bindings import PackedScatterPlan, build_packed_scatter_plan, refresh_packed_scatter_plan
 from .execute import dispatch_packed_scatter_warp
+from .read import fill_unified_buffer_warp
 
 if TYPE_CHECKING:
     from ..multi_task_command_warp import MultiTaskCommandWarp

@@ -326,28 +326,6 @@ def fill_slab_copy(
     unified[env, offset + i] = source[env, i]
 
 
-@wp.kernel
-def fill_slab_body_pos_env_local(
-    body_pos_w: wp.array2d(dtype=float),
-    env_origins: wp.array2d(dtype=float),
-    unified: wp.array2d(dtype=float),
-    offset: int,
-):
-    """Body-pos slab with env-origin subtraction baked into the copy.
-
-    Writes ``unified[env, offset + i] = body_pos_w[env, i] - env_origins[env, i % 3]``
-    where ``i`` ranges over ``K · 3`` (K body xyz triples flattened). This
-    replaces the PyTorch reader's ``body_pos - env_origins`` allocation —
-    the reader now returns the raw world-frame tensor, and this kernel
-    applies the frame adjustment while copying into the unified buffer.
-
-    Launch shape: ``dim=(num_envs, K * 3)``.
-    """
-    env, i = wp.tid()
-    component = i % 3
-    unified[env, offset + i] = body_pos_w[env, i] - env_origins[env, component]
-
-
 # ---------------------------------------------------------------------------
 # Typed slab fills — read scene wp.array views directly without laundering
 # through Torch + reshape. The vec3/quat variants handle PhysX's padded body
@@ -383,10 +361,9 @@ def fill_slab_vec3_env_local(
     unified: wp.array2d(dtype=float),
     offset: int,
 ):
-    """Vec3 body-pos slab with env-origin subtraction, typed source variant.
+    """Vec3 body-pos slab with env-origin subtraction.
 
-    Replaces :func:`fill_slab_body_pos_env_local`. Launch shape:
-    ``dim=(num_envs, num_bodies)``.
+    Launch shape: ``dim=(num_envs, num_bodies)``.
     """
     env, b = wp.tid()
     p = body_pos_w[env, b] - env_origins[env]
@@ -3170,52 +3147,3 @@ def dispatch_graph_dense_compose_fused(
 # slots use a 1-element dummy that's never touched (their cumulative size
 # range is empty).
 # ---------------------------------------------------------------------------
-
-
-@wp.kernel
-def fill_slabs_combined_8(
-    s0: wp.array2d(dtype=float),
-    s1: wp.array2d(dtype=float),
-    s2: wp.array2d(dtype=float),
-    s3: wp.array2d(dtype=float),
-    s4: wp.array2d(dtype=float),
-    s5: wp.array2d(dtype=float),
-    s6: wp.array2d(dtype=float),
-    s7: wp.array2d(dtype=float),
-    cumulative_sizes: wp.array(dtype=int),  # [9] cumulative sizes; cumulative_sizes[0]=0
-    unified_offsets: wp.array(dtype=int),  # [8] unified offset per slab
-    unified: wp.array2d(dtype=float),
-    num_slabs: int,
-):
-    """Copy up to 8 stable scene slabs into the unified buffer in one launch."""
-    env, total_idx = wp.tid()
-
-    # Find slab via linear scan (num_slabs <= 8, so very fast).
-    slab_id = int(-1)
-    for i in range(num_slabs):
-        if total_idx < cumulative_sizes[i + 1]:
-            slab_id = i
-            break
-
-    if slab_id < 0:
-        return
-
-    intra_idx = total_idx - cumulative_sizes[slab_id]
-    unified_off = unified_offsets[slab_id] + intra_idx
-
-    if slab_id == 0:
-        unified[env, unified_off] = s0[env, intra_idx]
-    elif slab_id == 1:
-        unified[env, unified_off] = s1[env, intra_idx]
-    elif slab_id == 2:
-        unified[env, unified_off] = s2[env, intra_idx]
-    elif slab_id == 3:
-        unified[env, unified_off] = s3[env, intra_idx]
-    elif slab_id == 4:
-        unified[env, unified_off] = s4[env, intra_idx]
-    elif slab_id == 5:
-        unified[env, unified_off] = s5[env, intra_idx]
-    elif slab_id == 6:
-        unified[env, unified_off] = s6[env, intra_idx]
-    elif slab_id == 7:
-        unified[env, unified_off] = s7[env, intra_idx]

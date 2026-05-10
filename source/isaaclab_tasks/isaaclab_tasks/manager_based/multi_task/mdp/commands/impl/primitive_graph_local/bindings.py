@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 import torch
 import warp as wp
 
+from ..kernel_ids import BUFFER_KIND
 from ..kernels_wp import (
     ComposerState,
     EnvSlots,
@@ -30,15 +31,6 @@ from ..kernels_wp import (
     PrimitiveProducerQueue,
     StateAccess,
     SubtaskSpec,
-)
-from ..mega_kernel.bindings import (
-    BodyPosSlabBinding,
-    CopySlabBinding,
-    DynamicSlabBinding,
-    RotationBinding,
-    build_combined_copy_slab_metadata,
-    build_rotation_bindings,
-    build_slab_bindings,
 )
 from ..schedules import (
     NUM_SCHEDULES,
@@ -62,6 +54,187 @@ _CONTACT_SCHEDULES = (
     SCHEDULE_VEC3_THRESHOLD_SUM_DELTA,
     SCHEDULE_VEC3_THRESHOLD_PAIR_DIFF_DELTA,
 )
+
+
+@dataclass
+class RotationBinding:
+    """Warp views for rotating one asset's canonical vec3 command slots."""
+
+    root_quat_w: torch.Tensor
+    reach_offsets_i32: torch.Tensor
+    track_offsets_i32: torch.Tensor
+    root_quat_w_wp: wp.array
+    reach_offsets_wp: wp.array
+    track_offsets_wp: wp.array
+    num_reach_offsets: int
+    num_offsets: int
+
+
+# -- Per-kind slab bindings (this backend's own) ----------------------------
+
+
+@dataclass
+class FloatSlabBinding:
+    """Float-typed scene slab — JOINT_POS, JOINT_VEL."""
+
+    source_wp: wp.array
+    offset: int
+    size: int
+
+
+@dataclass
+class Vec3SlabBinding:
+    """vec3-typed slab without frame transform — BODY_LIN_VEL_W, BODY_ANG_VEL_W,
+    CONTACT_NET_FORCES_W."""
+
+    source_wp: wp.array
+    offset: int
+    size: int
+
+
+@dataclass
+class Vec3EnvLocalSlabBinding:
+    """vec3-typed body slab with env-origin subtraction — BODY_POS_W."""
+
+    source_wp: wp.array
+    env_origins_wp: wp.array
+    offset: int
+    size: int
+
+
+@dataclass
+class QuatSlabBinding:
+    """quat-typed body slab — BODY_QUAT_W."""
+
+    source_wp: wp.array
+    offset: int
+    size: int
+
+
+@dataclass
+class JointMechPowerSlabBinding:
+    """Computed slab ``|τ · q̇|`` — JOINT_MECH_POWER_ABS."""
+
+    applied_torque_wp: wp.array
+    joint_vel_wp: wp.array
+    offset: int
+    size: int
+
+
+def _resolve_slabs(
+    command: MultiTaskCommandWarp,
+) -> tuple[
+    tuple[FloatSlabBinding, ...],
+    tuple[Vec3SlabBinding, ...],
+    tuple[Vec3EnvLocalSlabBinding, ...],
+    tuple[QuatSlabBinding, ...],
+    tuple[JointMechPowerSlabBinding, ...],
+]:
+    """Resolve each spec slab to a stable ``wp.array`` view of scene data."""
+    spec = command.spec
+    kinds = spec.slab_buffer_kinds
+    assets = spec.slab_asset_names
+    offsets = spec.slab_offsets_py
+    sizes = spec.slab_sizes_py
+
+    env_origins_torch = command._env.scene.env_origins
+    env_origins_vec3_wp = wp.array(
+        ptr=env_origins_torch.data_ptr(),
+        dtype=wp.vec3,
+        shape=(command.num_envs,),
+        device=str(command.device),
+    )
+
+    float_slabs: list[FloatSlabBinding] = []
+    vec3_slabs: list[Vec3SlabBinding] = []
+    vec3_env_local_slabs: list[Vec3EnvLocalSlabBinding] = []
+    quat_slabs: list[QuatSlabBinding] = []
+    joint_mech_power_slabs: list[JointMechPowerSlabBinding] = []
+
+    for slab_id in range(len(kinds)):
+        kind = int(kinds[slab_id])
+        asset_name = assets[slab_id]
+        offset = int(offsets[slab_id])
+        size = int(sizes[slab_id])
+
+        if kind == BUFFER_KIND.JOINT_POS:
+            float_slabs.append(FloatSlabBinding(command._env.scene[asset_name].data.joint_pos.warp, offset, size))
+        elif kind == BUFFER_KIND.JOINT_VEL:
+            float_slabs.append(FloatSlabBinding(command._env.scene[asset_name].data.joint_vel.warp, offset, size))
+        elif kind == BUFFER_KIND.BODY_POS_W:
+            vec3_env_local_slabs.append(
+                Vec3EnvLocalSlabBinding(
+                    command._env.scene[asset_name].data.body_pos_w.warp, env_origins_vec3_wp, offset, size
+                )
+            )
+        elif kind == BUFFER_KIND.BODY_LIN_VEL_W:
+            vec3_slabs.append(Vec3SlabBinding(command._env.scene[asset_name].data.body_lin_vel_w.warp, offset, size))
+        elif kind == BUFFER_KIND.BODY_ANG_VEL_W:
+            vec3_slabs.append(Vec3SlabBinding(command._env.scene[asset_name].data.body_ang_vel_w.warp, offset, size))
+        elif kind == BUFFER_KIND.BODY_QUAT_W:
+            quat_slabs.append(QuatSlabBinding(command._env.scene[asset_name].data.body_quat_w.warp, offset, size))
+        elif kind == BUFFER_KIND.CONTACT_NET_FORCES_W:
+            vec3_slabs.append(
+                Vec3SlabBinding(command._env.scene.sensors[asset_name].data.net_forces_w.warp, offset, size)
+            )
+        elif kind == BUFFER_KIND.JOINT_MECH_POWER_ABS:
+            art = command._env.scene[asset_name]
+            joint_mech_power_slabs.append(
+                JointMechPowerSlabBinding(art.data.applied_torque.warp, art.data.joint_vel.warp, offset, size)
+            )
+        else:
+            raise ValueError(
+                f"Unsupported BUFFER_KIND {kind!r} for slab (asset={asset_name!r}, "
+                f"offset={offset}, size={size}). primitive_graph_local requires every reader to "
+                "expose a stable ``wp.array`` via ``ProxyArray.warp``."
+            )
+
+    return (
+        tuple(float_slabs),
+        tuple(vec3_slabs),
+        tuple(vec3_env_local_slabs),
+        tuple(quat_slabs),
+        tuple(joint_mech_power_slabs),
+    )
+
+
+def _root_quat_torch(command: MultiTaskCommandWarp, asset_name: str) -> torch.Tensor:
+    quat = command._env.scene[asset_name].data.root_quat_w
+    if isinstance(quat, torch.Tensor):
+        return quat
+    if hasattr(quat, "torch"):
+        return quat.torch
+    return wp.to_torch(quat)
+
+
+def _build_rotation_bindings(command: MultiTaskCommandWarp) -> tuple[RotationBinding, ...]:
+    s = command.spec
+    bindings: list[RotationBinding] = []
+    asset_names = sorted(set(s.reach_rotatable_vec3_by_asset.keys()) | set(s.track_rotatable_vec3_by_asset.keys()))
+    for asset_name in asset_names:
+        reach_offsets = s.reach_rotatable_vec3_by_asset.get(asset_name, ())
+        track_offsets = s.track_rotatable_vec3_by_asset.get(asset_name, ())
+        num_offsets = len(reach_offsets) + len(track_offsets)
+        if num_offsets == 0:
+            continue
+        root_quat_w = _root_quat_torch(command, asset_name)
+        reach_offsets_i32 = torch.tensor(reach_offsets, device=command.device, dtype=torch.int32)
+        track_offsets_i32 = torch.tensor(track_offsets, device=command.device, dtype=torch.int32)
+        bindings.append(
+            RotationBinding(
+                root_quat_w=root_quat_w,
+                reach_offsets_i32=reach_offsets_i32,
+                track_offsets_i32=track_offsets_i32,
+                root_quat_w_wp=wp.from_torch(root_quat_w),
+                reach_offsets_wp=wp.from_torch(reach_offsets_i32),
+                track_offsets_wp=wp.from_torch(track_offsets_i32),
+                num_reach_offsets=len(reach_offsets),
+                num_offsets=num_offsets,
+            )
+        )
+    return tuple(bindings)
+
+
 # Per-kind materialization breakeven. Light producers (1-4 array reads) need
 # many consumers to amortize the global-memory roundtrip cost; heavy producers
 # (multi-element reductions, multi-schedule contact predicate) earn it back at
@@ -313,16 +486,11 @@ class PrimitiveGraphLocalPlan:
     rotations: tuple[RotationBinding, ...]
     episode_length_buf_wp: wp.array
     effective_max_episode_length_wp: wp.array
-    copy_slabs: tuple[CopySlabBinding, ...] = ()
-    body_pos_slabs: tuple[BodyPosSlabBinding, ...] = ()
-    dynamic_slabs: tuple[DynamicSlabBinding, ...] = ()
-    combined_slab_sources_wp: tuple[wp.array, ...] = ()
-    combined_slab_cumsizes_wp: wp.array | None = None
-    combined_slab_offsets_wp: wp.array | None = None
-    combined_slab_total_size: int = 0
-    combined_slab_num_slabs: int = 0
-    combined_slab_cumsizes_torch: torch.Tensor | None = None
-    combined_slab_offsets_torch: torch.Tensor | None = None
+    float_slabs: tuple[FloatSlabBinding, ...] = ()
+    vec3_slabs: tuple[Vec3SlabBinding, ...] = ()
+    vec3_env_local_slabs: tuple[Vec3EnvLocalSlabBinding, ...] = ()
+    quat_slabs: tuple[QuatSlabBinding, ...] = ()
+    joint_mech_power_slabs: tuple[JointMechPowerSlabBinding, ...] = ()
 
 
 def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> PrimitiveGraphLocalPlan:
@@ -414,8 +582,13 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
     queue.schedule_counts = wp.from_torch(schedule_counts_i32)
     queue.count = wp.from_torch(flat_count_i32)
 
-    copy_slabs, body_pos_slabs, dynamic_slabs = build_slab_bindings(command)
-    combined_slabs = build_combined_copy_slab_metadata(command, copy_slabs)
+    (
+        float_slabs,
+        vec3_slabs,
+        vec3_env_local_slabs,
+        quat_slabs,
+        joint_mech_power_slabs,
+    ) = _resolve_slabs(command)
 
     plan = PrimitiveGraphLocalPlan(
         subtask_schedule_ids_i32=subtask_schedule_ids_i32,
@@ -479,19 +652,14 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
         local_activation_wp=wp.from_torch(local_outputs.local_activation),
         scalar_sum_wp=wp.from_torch(scalar_sum),
         contact_mask_wp=wp.from_torch(contact_mask),
-        rotations=build_rotation_bindings(command),
+        rotations=_build_rotation_bindings(command),
         episode_length_buf_wp=wp.from_torch(command._env.episode_length_buf),
         effective_max_episode_length_wp=wp.from_torch(command._effective_max_episode_length),
-        copy_slabs=copy_slabs,
-        body_pos_slabs=body_pos_slabs,
-        dynamic_slabs=dynamic_slabs,
-        combined_slab_sources_wp=combined_slabs["sources_wp"],
-        combined_slab_cumsizes_wp=combined_slabs["cumsizes_wp"],
-        combined_slab_offsets_wp=combined_slabs["offsets_wp"],
-        combined_slab_total_size=combined_slabs["total_size"],
-        combined_slab_num_slabs=combined_slabs["num_slabs"],
-        combined_slab_cumsizes_torch=combined_slabs["cumsizes_torch"],
-        combined_slab_offsets_torch=combined_slabs["offsets_torch"],
+        float_slabs=float_slabs,
+        vec3_slabs=vec3_slabs,
+        vec3_env_local_slabs=vec3_env_local_slabs,
+        quat_slabs=quat_slabs,
+        joint_mech_power_slabs=joint_mech_power_slabs,
     )
     refresh_primitive_graph_local_plan(command, plan)
     return plan

@@ -9,24 +9,27 @@ The Warp paths collapse many PyTorch launches into compact Warp backends. This
 test runs the production cfg under each selectable backend with the same
 synthetic state and asserts elementwise equality of the output tensors.
 
+Scene data is provided through ``ProxyArray``s on a fake articulation —
+both the Torch path (``wp.to_torch(art.data.body_pos_w)``) and the Warp
+path (``art.data.body_pos_w.warp``) read from the same underlying memory,
+so a single seeded data source feeds both byte-identically.
+
 Skipped when CUDA is unavailable (Warp kernel only compiles for CUDA here).
 """
 
 from __future__ import annotations
 
 import re
-from unittest.mock import patch
 
 import pytest
 import torch
 import warp as wp
 
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.utils.warp import ProxyArray
 
-from isaaclab_tasks.manager_based.multi_task.mdp.commands import multi_task_command as mtc_mod
 from isaaclab_tasks.manager_based.multi_task.mdp.commands.impl.kernels_torch import (
     ACTIVATION_KERNEL_ID,
-    BUFFER_KIND,
     METRIC_KERNEL_ID,
     SAMPLER_KERNEL_ID,
     STATE_KERNEL_ID,
@@ -119,24 +122,102 @@ class _MockArticulation:
         return [], []
 
 
-class _MockArticulationData:
-    """Identity ``root_quat_w`` for the in-dispatch rotation helper."""
+def _proxy(torch_tensor: torch.Tensor, dtype) -> ProxyArray:
+    """Wrap a torch tensor as a ProxyArray with the given Warp dtype.
 
-    def __init__(self, num_envs, device):
+    The Warp array aliases the torch tensor's memory; the ProxyArray exposes
+    both ``.warp`` (for the Warp backend's typed indexing) and ``.torch`` (for
+    the Torch reference path's ``wp.to_torch(art.data.field)`` reader).
+    """
+    if dtype is wp.float32:
+        shape = tuple(torch_tensor.shape)
+    elif dtype is wp.vec3:
+        # torch shape (..., 3) — Warp folds the trailing 3 into the dtype.
+        shape = tuple(torch_tensor.shape[:-1])
+    elif dtype is wp.quat:
+        shape = tuple(torch_tensor.shape[:-1])
+    else:
+        raise ValueError(f"Unsupported dtype {dtype!r}")
+    return ProxyArray(
+        wp.array(
+            ptr=torch_tensor.data_ptr(),
+            dtype=dtype,
+            shape=shape,
+            device=str(torch_tensor.device),
+        )
+    )
+
+
+class _MockArticulationData:
+    """Mock ``Articulation.data`` exposing both ``.warp`` and ``.torch`` accessors.
+
+    Production scene data is exposed via :class:`ProxyArray`; the mock matches
+    that interface so both the Torch path (``wp.to_torch``) and the Warp path
+    (``.warp``) can read from one seeded source.
+    """
+
+    def __init__(self, num_envs: int, num_bodies: int, num_joints: int, device: str, seed: int):
+        g = torch.Generator(device=device).manual_seed(seed)
+        # Identity quat for the rotation helper (kept zero-rotation so the
+        # body-frame conversion is a no-op and the byte-identity comparison
+        # holds across backends that handle rotation differently).
         q = torch.zeros(num_envs, 4, device=device)
         q[:, 3] = 1.0
-        self.root_quat_w = q  # torch; helper's _as_torch passes it through
+        self.root_quat_w = q  # plain torch — only used by rotation helpers
+
+        # Per-kind scene data backing the ProxyArray views below. Kept as
+        # attributes so the underlying torch tensors stay alive for the
+        # lifetime of the wp.array aliases inside each ProxyArray.
+        self._body_pos_w_torch = torch.randn((num_envs, num_bodies, 3), generator=g, device=device).contiguous()
+        quat_raw = torch.randn((num_envs, num_bodies, 4), generator=g, device=device)
+        self._body_quat_w_torch = torch.nn.functional.normalize(quat_raw, dim=-1).contiguous()
+        self._body_lin_vel_w_torch = torch.randn((num_envs, num_bodies, 3), generator=g, device=device).contiguous()
+        self._body_ang_vel_w_torch = torch.randn((num_envs, num_bodies, 3), generator=g, device=device).contiguous()
+        # Joint quantities (zero for joint_pos/joint_vel — only the Warp
+        # kernels that gather these need a backing tensor, and the test cfg
+        # doesn't exercise non-zero joint state).
+        self._joint_pos_torch = torch.zeros((num_envs, num_joints), device=device).contiguous()
+        self._joint_vel_torch = torch.zeros((num_envs, num_joints), device=device).contiguous()
+        # applied_torque feeds the joint_mech_power kernel; non-zero so the
+        # Warp/Torch paths see a non-trivial ``|τ · q̇|`` value (where both
+        # are zero here, the product is zero — still byte-identical).
+        self._applied_torque_torch = torch.randn((num_envs, num_joints), generator=g, device=device).contiguous()
+
+        # ProxyArray views (both paths read through these).
+        self.body_pos_w = _proxy(self._body_pos_w_torch, wp.vec3)
+        self.body_quat_w = _proxy(self._body_quat_w_torch, wp.quat)
+        self.body_lin_vel_w = _proxy(self._body_lin_vel_w_torch, wp.vec3)
+        self.body_ang_vel_w = _proxy(self._body_ang_vel_w_torch, wp.vec3)
+        self.joint_pos = _proxy(self._joint_pos_torch, wp.float32)
+        self.joint_vel = _proxy(self._joint_vel_torch, wp.float32)
+        self.applied_torque = _proxy(self._applied_torque_torch, wp.float32)
+
+
+class _MockContactSensorData:
+    """Mock contact sensor data exposing ``net_forces_w`` as a ProxyArray."""
+
+    def __init__(self, num_envs: int, num_bodies: int, device: str, seed: int):
+        g = torch.Generator(device=device).manual_seed(seed)
+        # Contact forces straddle the 1 N² threshold so the count kernels
+        # see both branches.
+        self._net_forces_w_torch = (
+            torch.randn((num_envs, num_bodies, 3), generator=g, device=device) * 0.8
+        ).contiguous()
+        self.net_forces_w = _proxy(self._net_forces_w_torch, wp.vec3)
 
 
 class _MockScene:
-    def __init__(self, entities, num_envs, device):
+    def __init__(self, entities, num_envs, device, seed):
         self._entities = entities
         self.env_origins = torch.zeros(num_envs, 3, device=device)
-        # Attach identity ``data.root_quat_w`` to each mocked articulation so
-        # the dispatch rotation helper is a no-op (equivalence with Warp is
-        # preserved — both paths rotate by identity).
-        for ent in entities.values():
-            ent.data = _MockArticulationData(num_envs, device)
+        # Each articulation gets a seeded data block so all kinds (body_pos_w,
+        # body_quat_w, body_lin_vel_w, body_ang_vel_w, joint_pos, joint_vel,
+        # applied_torque) have ProxyArray views over deterministic tensors.
+        for i, (name, ent) in enumerate(entities.items()):
+            if name == "contact_forces":
+                ent.data = _MockContactSensorData(num_envs, ent.num_bodies, device, seed=seed + 100 + i)
+            else:
+                ent.data = _MockArticulationData(num_envs, ent.num_bodies, ent.num_joints, device, seed=seed + i)
         self.sensors = entities
 
     def keys(self):
@@ -160,47 +241,17 @@ class _MockEnv:
         self.step_dt = 0.02
 
 
-def _make_env(num_envs: int, device: str):
+def _make_env(num_envs: int, device: str, seed: int = 0):
+    """Build a mock env whose scene exposes seeded ProxyArray data for every kind."""
     robot = _MockArticulation(_ANYMAL_BODY_NAMES, _ANYMAL_JOINT_NAMES)
     contact_forces = _MockArticulation(_ANYMAL_BODY_NAMES)
-    scene = _MockScene({"robot": robot, "contact_forces": contact_forces}, num_envs=num_envs, device=device)
+    scene = _MockScene(
+        {"robot": robot, "contact_forces": contact_forces},
+        num_envs=num_envs,
+        device=device,
+        seed=seed,
+    )
     return _MockEnv(num_envs=num_envs, device=device, max_episode_length=200, scene=scene)
-
-
-def _make_readers(num_envs: int, device: str, seed: int) -> tuple:
-    """Fixed-seed random synthetic per-kind source tensors."""
-    g = torch.Generator(device=device).manual_seed(seed)
-    nb = len(_ANYMAL_BODY_NAMES)
-    nj = len(_ANYMAL_JOINT_NAMES)
-
-    body_pos = torch.randn((num_envs, nb, 3), generator=g, device=device)
-    # Unit quats so metric_quaternion is well-defined.
-    quat = torch.randn((num_envs, nb, 4), generator=g, device=device)
-    body_quat = torch.nn.functional.normalize(quat, dim=-1)
-    body_lin = torch.randn((num_envs, nb, 3), generator=g, device=device)
-    body_ang = torch.randn((num_envs, nb, 3), generator=g, device=device)
-    # Contact forces: mix of above and below the 1 N² threshold so the
-    # count kernels see both branches.
-    contact = torch.randn((num_envs, nb, 3), generator=g, device=device) * 0.8
-
-    by_kind = {
-        int(BUFFER_KIND.JOINT_POS): torch.zeros((num_envs, nj), device=device),
-        int(BUFFER_KIND.JOINT_VEL): torch.zeros((num_envs, nj), device=device),
-        int(BUFFER_KIND.BODY_POS_W): body_pos,
-        int(BUFFER_KIND.BODY_QUAT_W): body_quat,
-        int(BUFFER_KIND.BODY_LIN_VEL_W): body_lin,
-        int(BUFFER_KIND.BODY_ANG_VEL_W): body_ang,
-        int(BUFFER_KIND.CONTACT_NET_FORCES_W): contact,
-        int(BUFFER_KIND.JOINT_MECH_POWER_ABS): torch.rand((num_envs, nj), generator=g, device=device),
-    }
-
-    def make_reader(kind: int):
-        def reader(env, asset_name):
-            return by_kind[kind]
-
-        return reader
-
-    return tuple(make_reader(int(k)) for k in BUFFER_KIND)
 
 
 # ---------------------------------------------------------------------------
@@ -526,16 +577,16 @@ def _unsorted_schedule_cfg(dispatch_backend: str) -> MultiTaskCfg:
 def test_warp_matches_pytorch_outputs():
     device = "cuda:0"
     num_envs = 32
-    readers = _make_readers(num_envs, device, seed=1234)
 
     def build_and_step(dispatch_backend: str):
-        env = _make_env(num_envs=num_envs, device=device)
-        with patch.object(mtc_mod, "BUFFER_KIND_READERS", readers):
-            torch.manual_seed(7)  # same task samples both sides
-            cmd = MultiTaskCommand(_mixed_cfg(dispatch_backend=dispatch_backend), env)
-            # Drive one step — targets are pinned by the seed, so both paths
-            # start with the same `_targets_flat` and `_env_subtask_ids`.
-            cmd._update_command()
+        # Same seed → identical scene data across backends, so torch vs warp
+        # outputs differ only by the dispatch path itself.
+        env = _make_env(num_envs=num_envs, device=device, seed=1234)
+        torch.manual_seed(7)  # same task samples both sides
+        cmd = MultiTaskCommand(_mixed_cfg(dispatch_backend=dispatch_backend), env)
+        # Drive one step — targets are pinned by the seed, so both paths
+        # start with the same `_targets_flat` and `_env_subtask_ids`.
+        cmd._update_command()
         return cmd
 
     cmd_py = build_and_step(dispatch_backend="torch")
@@ -593,23 +644,21 @@ def test_warp_matches_pytorch_outputs():
 def test_local_primitive_dispatch_compose_graph_capture_smoke(dispatch_backend):
     device = "cuda:0"
     num_envs = 32
-    readers = _make_readers(num_envs, device, seed=4321)
-    env = _make_env(num_envs=num_envs, device=device)
-    with patch.object(mtc_mod, "BUFFER_KIND_READERS", readers):
-        torch.manual_seed(17)
-        cmd = MultiTaskCommand(_mixed_cfg(dispatch_backend=dispatch_backend), env)
-        torch.lt(cmd._slot_arange, cmd._env_slot_count.unsqueeze(1), out=cmd._slot_valid)
-        cmd._outputs.reset_step(cmd._slot_valid)
-        cmd._backend.dispatch(cmd, cmd._slot_valid)
-        assert cmd._backend._dispatch_graph is not None
-        cmd._backend.compose(cmd, cmd._slot_valid)
-        torch.cuda.synchronize()
+    env = _make_env(num_envs=num_envs, device=device, seed=4321)
+    torch.manual_seed(17)
+    cmd = MultiTaskCommand(_mixed_cfg(dispatch_backend=dispatch_backend), env)
+    torch.lt(cmd._slot_arange, cmd._env_slot_count.unsqueeze(1), out=cmd._slot_valid)
+    cmd._outputs.reset_step(cmd._slot_valid)
+    cmd._backend.dispatch(cmd, cmd._slot_valid)
+    assert cmd._backend._dispatch_graph is not None
+    cmd._backend.compose(cmd, cmd._slot_valid)
+    torch.cuda.synchronize()
 
-        with wp.ScopedCapture(device=device) as capture:
-            cmd._backend.dispatch(cmd, cmd._slot_valid)
-            cmd._backend.compose(cmd, cmd._slot_valid)
-        wp.capture_launch(capture.graph)
-        torch.cuda.synchronize()
+    with wp.ScopedCapture(device=device) as capture:
+        cmd._backend.dispatch(cmd, cmd._slot_valid)
+        cmd._backend.compose(cmd, cmd._slot_valid)
+    wp.capture_launch(capture.graph)
+    torch.cuda.synchronize()
 
     assert torch.isfinite(cmd.task_reward).all()
     assert torch.isfinite(cmd.progress).all()
@@ -619,14 +668,12 @@ def test_local_primitive_dispatch_compose_graph_capture_smoke(dispatch_backend):
 def test_primitive_graph_local_shares_contact_predicate_nodes():
     device = "cuda:0"
     num_envs = 16
-    readers = _make_readers(num_envs, device, seed=5678)
 
     def build_and_step(dispatch_backend: str):
-        env = _make_env(num_envs=num_envs, device=device)
-        with patch.object(mtc_mod, "BUFFER_KIND_READERS", readers):
-            torch.manual_seed(23)
-            cmd = MultiTaskCommand(_shared_contact_cfg(dispatch_backend=dispatch_backend), env)
-            cmd._update_command()
+        env = _make_env(num_envs=num_envs, device=device, seed=5678)
+        torch.manual_seed(23)
+        cmd = MultiTaskCommand(_shared_contact_cfg(dispatch_backend=dispatch_backend), env)
+        cmd._update_command()
         return cmd
 
     cmd_ref = build_and_step("torch")
@@ -658,14 +705,12 @@ def test_primitive_graph_local_shares_contact_predicate_nodes():
 def test_primitive_graph_local_uses_high_fanout_reduction_nodes():
     device = "cuda:0"
     num_envs = 16
-    readers = _make_readers(num_envs, device, seed=6789)
 
     def build_and_step(dispatch_backend: str):
-        env = _make_env(num_envs=num_envs, device=device)
-        with patch.object(mtc_mod, "BUFFER_KIND_READERS", readers):
-            torch.manual_seed(29)
-            cmd = MultiTaskCommand(_shared_direct_cfg(dispatch_backend=dispatch_backend), env)
-            cmd._update_command()
+        env = _make_env(num_envs=num_envs, device=device, seed=6789)
+        torch.manual_seed(29)
+        cmd = MultiTaskCommand(_shared_direct_cfg(dispatch_backend=dispatch_backend), env)
+        cmd._update_command()
         return cmd
 
     cmd_ref = build_and_step("torch")
@@ -697,14 +742,12 @@ def test_primitive_graph_local_uses_high_fanout_reduction_nodes():
 def test_schedule_ordered_mega_reorders_slots_without_changing_public_outputs():
     device = "cuda:0"
     num_envs = 16
-    readers = _make_readers(num_envs, device, seed=2345)
 
     def build_and_step(dispatch_backend: str):
-        env = _make_env(num_envs=num_envs, device=device)
-        with patch.object(mtc_mod, "BUFFER_KIND_READERS", readers):
-            torch.manual_seed(11)
-            cmd = MultiTaskCommand(_unsorted_schedule_cfg(dispatch_backend=dispatch_backend), env)
-            cmd._update_command()
+        env = _make_env(num_envs=num_envs, device=device, seed=2345)
+        torch.manual_seed(11)
+        cmd = MultiTaskCommand(_unsorted_schedule_cfg(dispatch_backend=dispatch_backend), env)
+        cmd._update_command()
         return cmd
 
     cmd_ref = build_and_step("torch")

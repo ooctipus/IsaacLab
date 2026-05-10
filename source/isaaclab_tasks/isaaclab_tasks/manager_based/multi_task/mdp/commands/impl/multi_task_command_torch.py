@@ -164,8 +164,8 @@ class MultiTaskCommandTorch(MultiTaskCommand):
         # BODY_POS_W readers return world-frame positions; the env-origin
         # subtraction happens inline here (allocation is OK — reference is
         # explicitly the slow path). The Warp subclass bakes the same
-        # subtraction into its own kernel (``fill_slab_body_pos_env_local``)
-        # to keep the path pointer-stable for CUDA Graph capture.
+        # subtraction into its own kernel (``fill_slab_vec3_env_local``) to
+        # keep the path pointer-stable for CUDA Graph capture.
         slab_kinds = self.spec.slab_buffer_kinds
         slab_assets = self.spec.slab_asset_names
         slab_offsets = self.spec.slab_offsets_py

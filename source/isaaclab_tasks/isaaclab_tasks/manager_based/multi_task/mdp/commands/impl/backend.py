@@ -16,10 +16,16 @@ from .outputs import DenseCommandOutputs, PrimitiveLocalCommandOutputs
 from .packed_scatter.backend import PackedScatterBackend
 from .primitive_graph_local.backend import PrimitiveGraphLocalBackend
 from .primitive_queue_local.backend import PrimitiveQueueLocalBackend
-from .schedule_ordered_mega.backend import ScheduleOrderedMegaBackend
 
 if TYPE_CHECKING:
     from .multi_task_command_warp import MultiTaskCommandWarp
+
+
+# ``schedule_ordered_mega`` is not a separate backend — its data management
+# is identical to ``mega_kernel``; the only delta is sorting slot tables by
+# fused-schedule id on resample. Selecting this string constructs
+# ``MegaKernelBackend(slot_order="schedule")`` instead.
+_SCHEDULE_ORDERED_MEGA_NAME = "schedule_ordered_mega"
 
 
 class CommandBackend(Protocol):
@@ -43,9 +49,9 @@ class CommandBackend(Protocol):
 def build_command_backend(command: MultiTaskCommandWarp, name: str) -> CommandBackend:
     """Construct the requested Warp command backend."""
     if name == MegaKernelBackend.name:
-        return MegaKernelBackend(command)
-    if name == ScheduleOrderedMegaBackend.name:
-        return ScheduleOrderedMegaBackend(command)
+        return MegaKernelBackend(command, slot_order="natural")
+    if name == _SCHEDULE_ORDERED_MEGA_NAME:
+        return MegaKernelBackend(command, slot_order="schedule")
     if name == PackedScatterBackend.name:
         return PackedScatterBackend(command)
     if name == PrimitiveQueueLocalBackend.name:
@@ -57,7 +63,7 @@ def build_command_backend(command: MultiTaskCommandWarp, name: str) -> CommandBa
 
 def build_command_output_store(command: MultiTaskCommandWarp, name: str):
     """Construct the output storage layout for a Warp command backend."""
-    if name in (MegaKernelBackend.name, ScheduleOrderedMegaBackend.name, PackedScatterBackend.name):
+    if name in (MegaKernelBackend.name, _SCHEDULE_ORDERED_MEGA_NAME, PackedScatterBackend.name):
         return DenseCommandOutputs(command)
     if name == PrimitiveQueueLocalBackend.name:
         return PrimitiveLocalCommandOutputs(command)

@@ -290,8 +290,8 @@ def test_body_position_w_reader_returns_world_frame_raw():
     """The ``BODY_POS_W`` reader returns the world-frame tensor as a zero-copy view.
 
     The env-origin subtraction that converts world-frame → env-local is applied
-    downstream by the dispatch (Warp kernel ``fill_slab_body_pos_env_local`` for
-    the Warp path, inline ``raw - env_origins`` for the reference path). This
+    downstream by the dispatch (Warp kernel ``fill_slab_vec3_env_local`` for
+    the Warp path, inline ``raw - env_origins`` for the Torch path). This
     keeps every reader a pure zero-copy view over scene storage — essential
     for pointer stability under any future CUDA Graph capture and for the
     "readers don't transform" contract.

@@ -3,12 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Read phase for the current mega-kernel backend.
-
-Per-kind fill kernels read the natural Warp type (float, vec3, quat) from
-the scene's stable ``wp.array`` views and write into the unified buffer.
-Pure Warp launches — no Torch ops on the dispatch path.
-"""
+"""Read phase for packed_scatter — fills the unified buffer from typed slabs."""
 
 from __future__ import annotations
 
@@ -26,18 +21,11 @@ from ..kernels_wp import (
 
 if TYPE_CHECKING:
     from ..multi_task_command_warp import MultiTaskCommandWarp
-    from .bindings import MegaKernelPlan
+    from .bindings import PackedScatterPlan
 
 
-def fill_unified_buffer_warp(command: MultiTaskCommandWarp, plan: MegaKernelPlan) -> None:
-    """Fill the unified scene buffer from per-kind typed sources.
-
-    Each slab launches its kind-specific fill kernel against a ``wp.array``
-    view of the underlying scene data. Padded body buffers (vec3/quat with
-    PhysX alignment) are read natively — the Warp typed indexing respects
-    the per-element stride without a compaction copy. Capture-safe by
-    construction.
-    """
+def fill_unified_buffer_warp(command: MultiTaskCommandWarp, plan: PackedScatterPlan) -> None:
+    """Fill the unified scene buffer from per-kind typed sources."""
     device_str = str(command.device)
     unified_wp = plan.state.unified
 
@@ -48,7 +36,6 @@ def fill_unified_buffer_warp(command: MultiTaskCommandWarp, plan: MegaKernelPlan
             inputs=[slab.source_wp, unified_wp, slab.offset],
             device=device_str,
         )
-
     for slab in plan.vec3_slabs:
         wp.launch(
             fill_slab_vec3,
@@ -56,7 +43,6 @@ def fill_unified_buffer_warp(command: MultiTaskCommandWarp, plan: MegaKernelPlan
             inputs=[slab.source_wp, unified_wp, slab.offset],
             device=device_str,
         )
-
     for slab in plan.vec3_env_local_slabs:
         wp.launch(
             fill_slab_vec3_env_local,
@@ -64,7 +50,6 @@ def fill_unified_buffer_warp(command: MultiTaskCommandWarp, plan: MegaKernelPlan
             inputs=[slab.source_wp, slab.env_origins_wp, unified_wp, slab.offset],
             device=device_str,
         )
-
     for slab in plan.quat_slabs:
         wp.launch(
             fill_slab_quat,
@@ -72,7 +57,6 @@ def fill_unified_buffer_warp(command: MultiTaskCommandWarp, plan: MegaKernelPlan
             inputs=[slab.source_wp, unified_wp, slab.offset],
             device=device_str,
         )
-
     for slab in plan.joint_mech_power_slabs:
         wp.launch(
             fill_slab_joint_mech_power_abs,

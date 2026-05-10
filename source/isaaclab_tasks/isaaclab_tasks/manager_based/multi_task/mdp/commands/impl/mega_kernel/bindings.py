@@ -3,7 +3,13 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Backend-owned execution plan for the current mega-kernel layout."""
+"""Backend-owned execution plan for the current mega-kernel layout.
+
+Slab resolution is direct: each ``BUFFER_KIND`` maps to a stable ``wp.array``
+exposed by the IsaacLab scene (via ``ProxyArray.warp``). No Torch laundering,
+no reshape allocations, no stability fallback. Each slab knows the kernel
+that fills it.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +19,6 @@ from typing import TYPE_CHECKING
 import torch
 import warp as wp
 
-from ... import multi_task_command as _base_module
 from ..kernel_ids import BUFFER_KIND
 from ..kernels_wp import ComposerState, EnvSlots, Outputs, StateAccess, SubtaskSpec
 
@@ -35,37 +40,62 @@ class RotationBinding:
     num_offsets: int
 
 
-@dataclass
-class CopySlabBinding:
-    """Stable scene-backed slab handle for ``fill_slab_copy``."""
+# -- Per-kind slab bindings -------------------------------------------------
+# Each slab dataclass holds only the fields its fill kernel signature needs.
+# The kind is implied by which tuple the slab lives in on the plan.
 
-    source_torch: torch.Tensor
-    source_wp: wp.array
+
+@dataclass
+class FloatSlabBinding:
+    """Float-typed scene slab — used by JOINT_POS, JOINT_VEL."""
+
+    source_wp: wp.array  # wp.array(dtype=float, shape=(num_envs, size))
     offset: int
     size: int
 
 
 @dataclass
-class BodyPosSlabBinding:
-    """Stable body-pos slab handle for ``fill_slab_body_pos_env_local``."""
+class Vec3SlabBinding:
+    """vec3-typed scene slab with no frame transform — used by BODY_LIN_VEL_W,
+    BODY_ANG_VEL_W, CONTACT_NET_FORCES_W."""
 
-    source_torch: torch.Tensor
-    source_wp: wp.array
-    env_origins_wp: wp.array
+    source_wp: wp.array  # wp.array(dtype=vec3, shape=(num_envs, num_elements))
     offset: int
-    size: int
+    size: int  # = num_elements * 3
 
 
 @dataclass
-class DynamicSlabBinding:
-    """Slab whose reader allocates fresh tensors per call (cannot prebind)."""
+class Vec3EnvLocalSlabBinding:
+    """vec3-typed body slab with per-env origin subtraction — used by BODY_POS_W."""
 
-    kind: int
-    asset_name: str
+    source_wp: wp.array  # wp.array(dtype=vec3, shape=(num_envs, num_bodies))
+    env_origins_wp: wp.array  # wp.array(dtype=vec3, shape=(num_envs,))
     offset: int
-    size: int
-    is_body_pos: bool
-    env_origins_wp: wp.array | None
+    size: int  # = num_bodies * 3
+
+
+@dataclass
+class QuatSlabBinding:
+    """quat-typed body slab — used by BODY_QUAT_W."""
+
+    source_wp: wp.array  # wp.array(dtype=quat, shape=(num_envs, num_bodies))
+    offset: int
+    size: int  # = num_bodies * 4
+
+
+@dataclass
+class JointMechPowerSlabBinding:
+    """Computed slab ``|τ · q̇|`` — used by JOINT_MECH_POWER_ABS.
+
+    Both inputs are float arrays exposed by ``Articulation.data``; the fill
+    kernel produces the element-wise absolute product directly into the
+    unified buffer.
+    """
+
+    applied_torque_wp: wp.array
+    joint_vel_wp: wp.array
+    offset: int
+    size: int  # = num_joints
 
 
 @dataclass
@@ -90,9 +120,12 @@ class MegaKernelPlan:
     rotations: tuple[RotationBinding, ...]
     episode_length_buf_wp: wp.array
     effective_max_episode_length_wp: wp.array
-    copy_slabs: tuple[CopySlabBinding, ...] = field(default_factory=tuple)
-    body_pos_slabs: tuple[BodyPosSlabBinding, ...] = field(default_factory=tuple)
-    dynamic_slabs: tuple[DynamicSlabBinding, ...] = field(default_factory=tuple)
+    # Per-kind slab tuples. Each tuple feeds one fill kernel.
+    float_slabs: tuple[FloatSlabBinding, ...] = field(default_factory=tuple)
+    vec3_slabs: tuple[Vec3SlabBinding, ...] = field(default_factory=tuple)
+    vec3_env_local_slabs: tuple[Vec3EnvLocalSlabBinding, ...] = field(default_factory=tuple)
+    quat_slabs: tuple[QuatSlabBinding, ...] = field(default_factory=tuple)
+    joint_mech_power_slabs: tuple[JointMechPowerSlabBinding, ...] = field(default_factory=tuple)
     # Inline rotation — when ``use_inline_rotation`` is set, the fused
     # dispatch+compose kernel rotates vec3 deltas in-register and the
     # standalone ``rotate_canonical_vec3_pair`` launch can be skipped. Only
@@ -103,15 +136,6 @@ class MegaKernelPlan:
     subtask_is_rotatable_i32: torch.Tensor | None = None
     subtask_is_rotatable_wp: wp.array | None = None
     use_inline_rotation: int = 0
-    # Combined slab-copy launch — when num_copy_slabs <= MAX_COPY_SLABS,
-    # all copy slabs run in a single ``fill_slabs_combined_8`` launch.
-    combined_slab_sources_wp: tuple[wp.array, ...] = ()
-    combined_slab_cumsizes_torch: torch.Tensor | None = None
-    combined_slab_cumsizes_wp: wp.array | None = None
-    combined_slab_offsets_torch: torch.Tensor | None = None
-    combined_slab_offsets_wp: wp.array | None = None
-    combined_slab_total_size: int = 0
-    combined_slab_num_slabs: int = 0
 
 
 def build_mega_kernel_plan(command: MultiTaskCommandWarp) -> MegaKernelPlan:
@@ -166,10 +190,15 @@ def build_mega_kernel_plan(command: MultiTaskCommandWarp) -> MegaKernelPlan:
     outputs.task_done_success = wp.from_torch(command._task_done_success)
     outputs.progress = wp.from_torch(command._progress)
 
-    copy_slabs, body_pos_slabs, dynamic_slabs = build_slab_bindings(command)
+    (
+        float_slabs,
+        vec3_slabs,
+        vec3_env_local_slabs,
+        quat_slabs,
+        joint_mech_power_slabs,
+    ) = _resolve_slabs(command)
     rotations = build_rotation_bindings(command)
     inline_rot = _build_inline_rotation_metadata(command, rotations)
-    combined_slabs = build_combined_copy_slab_metadata(command, copy_slabs)
 
     return MegaKernelPlan(
         state_kernel_id_i32=state_kernel_id_i32,
@@ -190,156 +219,115 @@ def build_mega_kernel_plan(command: MultiTaskCommandWarp) -> MegaKernelPlan:
         rotations=rotations,
         episode_length_buf_wp=wp.from_torch(command._env.episode_length_buf),
         effective_max_episode_length_wp=wp.from_torch(command._effective_max_episode_length),
-        copy_slabs=copy_slabs,
-        body_pos_slabs=body_pos_slabs,
-        dynamic_slabs=dynamic_slabs,
+        float_slabs=float_slabs,
+        vec3_slabs=vec3_slabs,
+        vec3_env_local_slabs=vec3_env_local_slabs,
+        quat_slabs=quat_slabs,
+        joint_mech_power_slabs=joint_mech_power_slabs,
         inline_rotation_quat_torch=inline_rot["quat_torch"],
         inline_rotation_quat_wp=inline_rot["quat_wp"],
         subtask_is_rotatable_i32=inline_rot["flags_torch"],
         subtask_is_rotatable_wp=inline_rot["flags_wp"],
         use_inline_rotation=inline_rot["enabled"],
-        combined_slab_sources_wp=combined_slabs["sources_wp"],
-        combined_slab_cumsizes_torch=combined_slabs["cumsizes_torch"],
-        combined_slab_cumsizes_wp=combined_slabs["cumsizes_wp"],
-        combined_slab_offsets_torch=combined_slabs["offsets_torch"],
-        combined_slab_offsets_wp=combined_slabs["offsets_wp"],
-        combined_slab_total_size=combined_slabs["total_size"],
-        combined_slab_num_slabs=combined_slabs["num_slabs"],
     )
 
 
-def _read_slab_source(command: MultiTaskCommandWarp, kind: int, asset_name: str, size: int) -> torch.Tensor:
-    """Call the reader and reshape to ``[num_envs, size]``."""
-    raw = _base_module.BUFFER_KIND_READERS[kind](command._env, asset_name)
-    raw_per_env = raw.numel() // command.num_envs
-    if raw_per_env != size:
-        raise RuntimeError(
-            f"State kernel output dim mismatch for slab (kind={kind}, asset={asset_name}): "
-            f"reader returned {raw_per_env} floats per env, but slab was sized for {size}."
-        )
-    return raw.reshape(command.num_envs, size)
-
-
-def build_slab_bindings(
+def _resolve_slabs(
     command: MultiTaskCommandWarp,
-) -> tuple[tuple[CopySlabBinding, ...], tuple[BodyPosSlabBinding, ...], tuple[DynamicSlabBinding, ...]]:
-    """Prebind slab source handles. Detects unstable readers and falls back."""
+) -> tuple[
+    tuple[FloatSlabBinding, ...],
+    tuple[Vec3SlabBinding, ...],
+    tuple[Vec3EnvLocalSlabBinding, ...],
+    tuple[QuatSlabBinding, ...],
+    tuple[JointMechPowerSlabBinding, ...],
+]:
+    """Resolve each spec slab to a stable ``wp.array`` view of the scene data.
+
+    Reads ``ProxyArray.warp`` directly — no Torch reshape, no ``wp.from_torch``,
+    no laundering. Padded body buffers (vec3/quat with PhysX alignment) are
+    handled natively by Warp's typed indexing in the fill kernels.
+
+    Raises ``ValueError`` at construction time for unsupported buffer kinds —
+    no silent dynamic fallback.
+    """
     spec = command.spec
     kinds = spec.slab_buffer_kinds
     assets = spec.slab_asset_names
     offsets = spec.slab_offsets_py
     sizes = spec.slab_sizes_py
-    body_pos_kind = int(BUFFER_KIND.BODY_POS_W)
 
     env_origins_torch = command._env.scene.env_origins
-    env_origins_wp = wp.from_torch(env_origins_torch)
+    env_origins_vec3_wp = wp.array(
+        ptr=env_origins_torch.data_ptr(),
+        dtype=wp.vec3,
+        shape=(command.num_envs,),
+        device=str(command.device),
+    )
 
-    copy_slabs: list[CopySlabBinding] = []
-    body_pos_slabs: list[BodyPosSlabBinding] = []
-    dynamic_slabs: list[DynamicSlabBinding] = []
+    float_slabs: list[FloatSlabBinding] = []
+    vec3_slabs: list[Vec3SlabBinding] = []
+    vec3_env_local_slabs: list[Vec3EnvLocalSlabBinding] = []
+    quat_slabs: list[QuatSlabBinding] = []
+    joint_mech_power_slabs: list[JointMechPowerSlabBinding] = []
 
     for slab_id in range(len(kinds)):
-        kind = kinds[slab_id]
+        kind = int(kinds[slab_id])
         asset_name = assets[slab_id]
-        offset = offsets[slab_id]
-        size = sizes[slab_id]
+        offset = int(offsets[slab_id])
+        size = int(sizes[slab_id])
 
-        first = _read_slab_source(command, kind, asset_name, size)
-        second = _read_slab_source(command, kind, asset_name, size)
-        is_stable = first.data_ptr() == second.data_ptr()
-        is_body_pos = kind == body_pos_kind
-
-        if not is_stable:
-            dynamic_slabs.append(
-                DynamicSlabBinding(
-                    kind=kind,
-                    asset_name=asset_name,
+        if kind == BUFFER_KIND.JOINT_POS:
+            source_wp = command._env.scene[asset_name].data.joint_pos.warp
+            float_slabs.append(FloatSlabBinding(source_wp=source_wp, offset=offset, size=size))
+        elif kind == BUFFER_KIND.JOINT_VEL:
+            source_wp = command._env.scene[asset_name].data.joint_vel.warp
+            float_slabs.append(FloatSlabBinding(source_wp=source_wp, offset=offset, size=size))
+        elif kind == BUFFER_KIND.BODY_POS_W:
+            source_wp = command._env.scene[asset_name].data.body_pos_w.warp
+            vec3_env_local_slabs.append(
+                Vec3EnvLocalSlabBinding(
+                    source_wp=source_wp,
+                    env_origins_wp=env_origins_vec3_wp,
                     offset=offset,
                     size=size,
-                    is_body_pos=is_body_pos,
-                    env_origins_wp=env_origins_wp if is_body_pos else None,
                 )
             )
-            continue
-
-        if is_body_pos:
-            body_pos_slabs.append(
-                BodyPosSlabBinding(
-                    source_torch=first,
-                    source_wp=wp.from_torch(first),
-                    env_origins_wp=env_origins_wp,
+        elif kind == BUFFER_KIND.BODY_LIN_VEL_W:
+            source_wp = command._env.scene[asset_name].data.body_lin_vel_w.warp
+            vec3_slabs.append(Vec3SlabBinding(source_wp=source_wp, offset=offset, size=size))
+        elif kind == BUFFER_KIND.BODY_ANG_VEL_W:
+            source_wp = command._env.scene[asset_name].data.body_ang_vel_w.warp
+            vec3_slabs.append(Vec3SlabBinding(source_wp=source_wp, offset=offset, size=size))
+        elif kind == BUFFER_KIND.BODY_QUAT_W:
+            source_wp = command._env.scene[asset_name].data.body_quat_w.warp
+            quat_slabs.append(QuatSlabBinding(source_wp=source_wp, offset=offset, size=size))
+        elif kind == BUFFER_KIND.CONTACT_NET_FORCES_W:
+            source_wp = command._env.scene.sensors[asset_name].data.net_forces_w.warp
+            vec3_slabs.append(Vec3SlabBinding(source_wp=source_wp, offset=offset, size=size))
+        elif kind == BUFFER_KIND.JOINT_MECH_POWER_ABS:
+            articulation = command._env.scene[asset_name]
+            joint_mech_power_slabs.append(
+                JointMechPowerSlabBinding(
+                    applied_torque_wp=articulation.data.applied_torque.warp,
+                    joint_vel_wp=articulation.data.joint_vel.warp,
                     offset=offset,
                     size=size,
                 )
             )
         else:
-            copy_slabs.append(
-                CopySlabBinding(
-                    source_torch=first,
-                    source_wp=wp.from_torch(first),
-                    offset=offset,
-                    size=size,
-                )
+            raise ValueError(
+                f"Unsupported BUFFER_KIND {kind!r} for slab (asset={asset_name!r}, "
+                f"offset={offset}, size={size}). Warp backends require every reader to "
+                "expose a stable ``wp.array`` via ``ProxyArray.warp``."
             )
 
-    return tuple(copy_slabs), tuple(body_pos_slabs), tuple(dynamic_slabs)
-
-
-_MAX_COMBINED_COPY_SLABS = 8
-# Combined-launch only wins when per-launch overhead is a noticeable fraction
-# of the read phase, which happens at large env counts. At 16k envs the
-# per-thread routing (linear scan + 8-way branch) costs more than the saved
-# launches; at 131k envs it's a ~25% win on the full step. Threshold picked
-# empirically — re-run bench_multi_task_command_backends with locomotion
-# preset across env counts to retune.
-_COMBINED_SLAB_NUM_ENVS_MIN = 32768
-
-
-def build_combined_copy_slab_metadata(
-    command: MultiTaskCommandWarp,
-    copy_slabs: tuple[CopySlabBinding, ...],
-) -> dict:
-    """Build per-thread routing for the combined slab-copy kernel."""
-    num_slabs = len(copy_slabs)
-    if num_slabs == 0 or num_slabs > _MAX_COMBINED_COPY_SLABS or command.num_envs < _COMBINED_SLAB_NUM_ENVS_MIN:
-        # Disabled — backend falls back to per-slab launches.
-        dummy = torch.zeros((command.num_envs, 1), device=command.device, dtype=torch.float32)
-        dummy_wp = wp.from_torch(dummy)
-        return {
-            "sources_wp": tuple(dummy_wp for _ in range(_MAX_COMBINED_COPY_SLABS)),
-            "cumsizes_torch": None,
-            "cumsizes_wp": None,
-            "offsets_torch": None,
-            "offsets_wp": None,
-            "total_size": 0,
-            "num_slabs": 0,
-        }
-
-    sizes = [int(s.size) for s in copy_slabs]
-    offsets = [int(s.offset) for s in copy_slabs]
-    cumsizes = [0]
-    for s in sizes:
-        cumsizes.append(cumsizes[-1] + s)
-
-    cumsizes_torch = torch.tensor(cumsizes, dtype=torch.int32, device=command.device)
-    offsets_torch = torch.tensor(offsets, dtype=torch.int32, device=command.device)
-
-    # Pad source array references up to MAX with a zero-sized dummy.
-    dummy = torch.zeros((command.num_envs, 1), device=command.device, dtype=torch.float32)
-    dummy_wp = wp.from_torch(dummy)
-    sources_wp: list[wp.array] = [s.source_wp for s in copy_slabs]
-    while len(sources_wp) < _MAX_COMBINED_COPY_SLABS:
-        sources_wp.append(dummy_wp)
-
-    return {
-        "sources_wp": tuple(sources_wp),
-        "cumsizes_torch": cumsizes_torch,
-        "cumsizes_wp": wp.from_torch(cumsizes_torch),
-        "offsets_torch": offsets_torch,
-        "offsets_wp": wp.from_torch(offsets_torch),
-        "total_size": cumsizes[-1],
-        "num_slabs": num_slabs,
-    }
+    return (
+        tuple(float_slabs),
+        tuple(vec3_slabs),
+        tuple(vec3_env_local_slabs),
+        tuple(quat_slabs),
+        tuple(joint_mech_power_slabs),
+    )
 
 
 def _build_inline_rotation_metadata(
