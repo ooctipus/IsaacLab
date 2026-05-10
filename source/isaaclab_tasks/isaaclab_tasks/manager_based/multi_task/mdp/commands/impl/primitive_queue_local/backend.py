@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING
 import torch
 import warp as wp
 
-from ..mega_kernel.rotation import rotate_canonical_slots_to_body_frame_warp
 from .bindings import (
     PrimitiveQueueLocalPlan,
     build_primitive_queue_local_plan,
@@ -21,6 +20,7 @@ from .bindings import (
 from .compose import compose_primitive_queue_local_warp
 from .execute import dispatch_primitive_queue_local_warp
 from .read import fill_unified_buffer_warp
+from .rotation import rotate_canonical_slots_to_body_frame_warp
 
 if TYPE_CHECKING:
     from ..multi_task_command_warp import MultiTaskCommandWarp

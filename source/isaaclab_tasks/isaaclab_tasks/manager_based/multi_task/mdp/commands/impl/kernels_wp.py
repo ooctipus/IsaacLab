@@ -402,10 +402,8 @@ def fill_slab_joint_mech_power_abs(
 ):
     """Compute ``|τ · q̇|`` element-wise into the unified buffer.
 
-    Replaces the Torch-computed reader for ``JOINT_MECH_POWER_ABS``, which
-    was the only genuinely-allocating entry in ``BUFFER_KIND_READERS``. With
-    this kernel reading the two underlying ``wp.array`` directly, the
-    "dynamic slab" category goes away.
+    Reads the two underlying ``wp.array`` directly so the Warp dispatch never
+    materializes a computed reader's result.
 
     NaN-safe: non-finite products are clamped to 0 to match the Torch
     reference's defensive handling of reset transients on some physics

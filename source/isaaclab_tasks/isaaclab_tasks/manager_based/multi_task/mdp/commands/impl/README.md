@@ -32,8 +32,9 @@ impl/
   kernels_torch.py             # Torch state/delta/metric/activation kernel registry
   kernels_wp.py                # Warp kernels (dispatch, compose, rotate, slab fills)
   kernels_viz.py               # debug visualization for state-kernel markers
-  mega_kernel/                 # dense (env, slot) baseline; default for small k_max
-  schedule_ordered_mega/       # dense backend with schedule-ordered slots
+  mega_kernel/                 # dense (env, slot) baseline; default for small k_max.
+                               # Supports ``slot_order="schedule"`` mode, exposed
+                               # publicly as ``dispatch_backend="schedule_ordered_mega"``.
   packed_scatter/              # fused-pipeline-sorted queue with legacy scatter
   primitive_queue_local/       # per-primitive-family queues with local grouped outputs
   primitive_graph_local/       # local grouped outputs with shared primitive nodes
@@ -46,11 +47,10 @@ scratch in ``__init__`` so capture replay is safe.
 
 - ``mega_kernel`` — one fused dispatch over ``(env, slot)`` that branches on
   ``state_kernel_id``. Default for small ``k_max`` where launch fusion beats
-  branch divergence. Owns the canonical ``read``, ``rotate``, and ``compose``
-  phases that other backends reuse.
-- ``schedule_ordered_mega`` — same dense shape as ``mega_kernel`` with slots
-  re-ordered so each warp sees a coherent state-kernel region. Useful when the
-  per-env assignment is heterogeneous but stable.
+  branch divergence. The ``slot_order="schedule"`` mode (selected publicly via
+  ``dispatch_backend="schedule_ordered_mega"``) sorts slot tables on resample so
+  each warp sees a coherent state-kernel region — useful when per-env
+  assignment is heterogeneous but stable.
 - ``packed_scatter`` — fused-pipeline-sorted flat queue feeding a branch-light
   packed dispatch that scatters into the legacy output tensors. Compatibility
   bridge; preserves the public output layout.
