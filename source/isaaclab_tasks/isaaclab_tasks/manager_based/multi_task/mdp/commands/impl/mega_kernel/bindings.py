@@ -103,6 +103,15 @@ class MegaKernelPlan:
     subtask_is_rotatable_i32: torch.Tensor | None = None
     subtask_is_rotatable_wp: wp.array | None = None
     use_inline_rotation: int = 0
+    # Combined slab-copy launch — when num_copy_slabs <= MAX_COPY_SLABS,
+    # all copy slabs run in a single ``fill_slabs_combined_8`` launch.
+    combined_slab_sources_wp: tuple[wp.array, ...] = ()
+    combined_slab_cumsizes_torch: torch.Tensor | None = None
+    combined_slab_cumsizes_wp: wp.array | None = None
+    combined_slab_offsets_torch: torch.Tensor | None = None
+    combined_slab_offsets_wp: wp.array | None = None
+    combined_slab_total_size: int = 0
+    combined_slab_num_slabs: int = 0
 
 
 def build_mega_kernel_plan(command: MultiTaskCommandWarp) -> MegaKernelPlan:
@@ -160,6 +169,7 @@ def build_mega_kernel_plan(command: MultiTaskCommandWarp) -> MegaKernelPlan:
     copy_slabs, body_pos_slabs, dynamic_slabs = build_slab_bindings(command)
     rotations = build_rotation_bindings(command)
     inline_rot = _build_inline_rotation_metadata(command, rotations)
+    combined_slabs = _build_combined_copy_slab_metadata(command, copy_slabs)
 
     return MegaKernelPlan(
         state_kernel_id_i32=state_kernel_id_i32,
@@ -188,6 +198,13 @@ def build_mega_kernel_plan(command: MultiTaskCommandWarp) -> MegaKernelPlan:
         subtask_is_rotatable_i32=inline_rot["flags_torch"],
         subtask_is_rotatable_wp=inline_rot["flags_wp"],
         use_inline_rotation=inline_rot["enabled"],
+        combined_slab_sources_wp=combined_slabs["sources_wp"],
+        combined_slab_cumsizes_torch=combined_slabs["cumsizes_torch"],
+        combined_slab_cumsizes_wp=combined_slabs["cumsizes_wp"],
+        combined_slab_offsets_torch=combined_slabs["offsets_torch"],
+        combined_slab_offsets_wp=combined_slabs["offsets_wp"],
+        combined_slab_total_size=combined_slabs["total_size"],
+        combined_slab_num_slabs=combined_slabs["num_slabs"],
     )
 
 
@@ -266,6 +283,63 @@ def build_slab_bindings(
             )
 
     return tuple(copy_slabs), tuple(body_pos_slabs), tuple(dynamic_slabs)
+
+
+_MAX_COMBINED_COPY_SLABS = 8
+# Combined-launch only wins when per-launch overhead is a noticeable fraction
+# of the read phase, which happens at large env counts. At 16k envs the
+# per-thread routing (linear scan + 8-way branch) costs more than the saved
+# launches; at 131k envs it's a ~25% win on the full step. Threshold picked
+# empirically — re-run bench_multi_task_command_backends with locomotion
+# preset across env counts to retune.
+_COMBINED_SLAB_NUM_ENVS_MIN = 32768
+
+
+def _build_combined_copy_slab_metadata(
+    command: MultiTaskCommandWarp,
+    copy_slabs: tuple[CopySlabBinding, ...],
+) -> dict:
+    """Build per-thread routing for the combined slab-copy kernel."""
+    num_slabs = len(copy_slabs)
+    if num_slabs == 0 or num_slabs > _MAX_COMBINED_COPY_SLABS or command.num_envs < _COMBINED_SLAB_NUM_ENVS_MIN:
+        # Disabled — backend falls back to per-slab launches.
+        dummy = torch.zeros((command.num_envs, 1), device=command.device, dtype=torch.float32)
+        dummy_wp = wp.from_torch(dummy)
+        return {
+            "sources_wp": tuple(dummy_wp for _ in range(_MAX_COMBINED_COPY_SLABS)),
+            "cumsizes_torch": None,
+            "cumsizes_wp": None,
+            "offsets_torch": None,
+            "offsets_wp": None,
+            "total_size": 0,
+            "num_slabs": 0,
+        }
+
+    sizes = [int(s.size) for s in copy_slabs]
+    offsets = [int(s.offset) for s in copy_slabs]
+    cumsizes = [0]
+    for s in sizes:
+        cumsizes.append(cumsizes[-1] + s)
+
+    cumsizes_torch = torch.tensor(cumsizes, dtype=torch.int32, device=command.device)
+    offsets_torch = torch.tensor(offsets, dtype=torch.int32, device=command.device)
+
+    # Pad source array references up to MAX with a zero-sized dummy.
+    dummy = torch.zeros((command.num_envs, 1), device=command.device, dtype=torch.float32)
+    dummy_wp = wp.from_torch(dummy)
+    sources_wp: list[wp.array] = [s.source_wp for s in copy_slabs]
+    while len(sources_wp) < _MAX_COMBINED_COPY_SLABS:
+        sources_wp.append(dummy_wp)
+
+    return {
+        "sources_wp": tuple(sources_wp),
+        "cumsizes_torch": cumsizes_torch,
+        "cumsizes_wp": wp.from_torch(cumsizes_torch),
+        "offsets_torch": offsets_torch,
+        "offsets_wp": wp.from_torch(offsets_torch),
+        "total_size": cumsizes[-1],
+        "num_slabs": num_slabs,
+    }
 
 
 def _build_inline_rotation_metadata(

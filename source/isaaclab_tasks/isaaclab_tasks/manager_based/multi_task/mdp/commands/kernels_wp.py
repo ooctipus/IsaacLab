@@ -3062,3 +3062,64 @@ def dispatch_graph_dense_compose_fused(
         if n_slots > 0:
             progress_val = activation_sum / float(n_slots)
         outputs.progress[env] = progress_val
+
+
+# ---------------------------------------------------------------------------
+# Combined slab-copy kernel. Replaces N separate ``fill_slab_copy`` launches
+# with a single launch, using a 2D grid (env, position) where ``position``
+# enumerates floats across all copy slabs concatenated. Per-thread routing
+# uses ``cumulative_sizes`` to find the slab and intra-slab offset.
+#
+# The kernel takes a fixed ``MAX_COPY_SLABS=8`` source-array slots; unused
+# slots use a 1-element dummy that's never touched (their cumulative size
+# range is empty).
+# ---------------------------------------------------------------------------
+
+
+@wp.kernel
+def fill_slabs_combined_8(
+    s0: wp.array2d(dtype=float),
+    s1: wp.array2d(dtype=float),
+    s2: wp.array2d(dtype=float),
+    s3: wp.array2d(dtype=float),
+    s4: wp.array2d(dtype=float),
+    s5: wp.array2d(dtype=float),
+    s6: wp.array2d(dtype=float),
+    s7: wp.array2d(dtype=float),
+    cumulative_sizes: wp.array(dtype=int),  # [9] cumulative sizes; cumulative_sizes[0]=0
+    unified_offsets: wp.array(dtype=int),  # [8] unified offset per slab
+    unified: wp.array2d(dtype=float),
+    num_slabs: int,
+):
+    """Copy up to 8 stable scene slabs into the unified buffer in one launch."""
+    env, total_idx = wp.tid()
+
+    # Find slab via linear scan (num_slabs <= 8, so very fast).
+    slab_id = int(-1)
+    for i in range(num_slabs):
+        if total_idx < cumulative_sizes[i + 1]:
+            slab_id = i
+            break
+
+    if slab_id < 0:
+        return
+
+    intra_idx = total_idx - cumulative_sizes[slab_id]
+    unified_off = unified_offsets[slab_id] + intra_idx
+
+    if slab_id == 0:
+        unified[env, unified_off] = s0[env, intra_idx]
+    elif slab_id == 1:
+        unified[env, unified_off] = s1[env, intra_idx]
+    elif slab_id == 2:
+        unified[env, unified_off] = s2[env, intra_idx]
+    elif slab_id == 3:
+        unified[env, unified_off] = s3[env, intra_idx]
+    elif slab_id == 4:
+        unified[env, unified_off] = s4[env, intra_idx]
+    elif slab_id == 5:
+        unified[env, unified_off] = s5[env, intra_idx]
+    elif slab_id == 6:
+        unified[env, unified_off] = s6[env, intra_idx]
+    elif slab_id == 7:
+        unified[env, unified_off] = s7[env, intra_idx]
