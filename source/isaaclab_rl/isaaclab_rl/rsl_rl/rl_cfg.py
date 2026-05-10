@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import MISSING
-from typing import Literal
+from typing import Any, Literal
 
 from isaaclab.utils.configclass import configclass
 
@@ -394,6 +394,9 @@ class RslRlPpoAlgorithmCfg:
 class RslRlBaseRunnerCfg:
     """Base configuration of the runner."""
 
+    class_type: type[Any] | str = MISSING
+    """The runner class."""
+
     seed: int = 42
     """The seed for the experiment. Defaults to 42."""
 
@@ -502,6 +505,9 @@ class RslRlBaseRunnerCfg:
 @configclass
 class RslRlOnPolicyRunnerCfg(RslRlBaseRunnerCfg):
     """Configuration of the runner for on-policy algorithms."""
+
+    class_type: type[Any] | str = "rsl_rl.runners:OnPolicyRunner"
+    """The runner class. Defaults to OnPolicyRunner."""
 
     class_name: str = "OnPolicyRunner"
     """The runner class name. Defaults to OnPolicyRunner."""
@@ -615,6 +621,9 @@ class RslRlCrlAlgorithmCfg:
 @configclass
 class RslRlOffPolicyRunnerCfg(RslRlBaseRunnerCfg):
     """Configuration of the runner for off-policy algorithms (e.g. CRL)."""
+
+    class_type: type[Any] | str = "rsl_rl.runners:OffPolicyRunner"
+    """The runner class. Defaults to OffPolicyRunner."""
 
     class_name: str = "OffPolicyRunner"
     """The runner class name. Defaults to OffPolicyRunner."""

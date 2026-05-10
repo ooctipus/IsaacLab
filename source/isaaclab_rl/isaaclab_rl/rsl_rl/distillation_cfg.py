@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import MISSING
-from typing import Literal
+from typing import Any, Literal
 
 from isaaclab.utils.configclass import configclass
 
@@ -51,6 +51,9 @@ class RslRlDistillationAlgorithmCfg:
 @configclass
 class RslRlDistillationRunnerCfg(RslRlBaseRunnerCfg):
     """Configuration of the runner for distillation algorithms."""
+
+    class_type: type[Any] | str = "rsl_rl.runners:DistillationRunner"
+    """The runner class. Defaults to DistillationRunner."""
 
     class_name: str = "DistillationRunner"
     """The runner class name. Defaults to DistillationRunner."""

@@ -727,8 +727,6 @@ def _trace_with_rsl_rl(env_cfg: Any, agent_cfg: Any, recorder: MemoryRecorder, t
     """Build the RSL-RL runner and run ``--rsl_rl_iters`` learning iterations."""
     # Imports kept local so trace_steps-only mode does not pay for rsl_rl import cost.
     with recorder.span("rsl_rl_import"):
-        from rsl_rl.runners import DistillationRunner, OffPolicyRunner, OnPolicyRunner
-
         from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg
 
     import importlib.metadata as _metadata
@@ -749,15 +747,7 @@ def _trace_with_rsl_rl(env_cfg: Any, agent_cfg: Any, recorder: MemoryRecorder, t
             env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
         with recorder.span("rsl_rl_runner_init"):
-            cls_map = {
-                "OnPolicyRunner": OnPolicyRunner,
-                "OffPolicyRunner": OffPolicyRunner,
-                "DistillationRunner": DistillationRunner,
-            }
-            runner_cls = cls_map.get(agent_cfg.class_name)
-            if runner_cls is None:
-                raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
-            runner = runner_cls(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+            runner = agent_cfg.class_type(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
 
         tensor_dump["after_runner_init_env"] = _print_tensor_breakdown(
             "env (after runner init)", env.unwrapped, args_cli.tensor_top

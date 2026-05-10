@@ -25,7 +25,6 @@ import time
 import gymnasium as gym
 import torch
 from packaging import version
-from rsl_rl.runners import DistillationRunner, OffPolicyRunner, OnPolicyRunner
 
 from isaaclab.envs import DirectMARLEnvCfg, DirectRLEnvCfg, ManagerBasedRLEnvCfg
 from isaaclab.utils.assets import retrieve_file_path
@@ -264,18 +263,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
-        if agent_cfg.class_name == "OnPolicyRunner":
-            runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
-        elif agent_cfg.class_name == "OffPolicyRunner":
-            runner = OffPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
-        elif agent_cfg.class_name == "DistillationRunner":
-            runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
-        else:
-            raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
-        # configure_seed must be called after runner construction so that PyTorch deterministic settings
-        # do not interfere with the runner's internal initialization.
-        if args_cli.deterministic:
-            configure_seed(env_cfg.seed, True)
+        runner = agent_cfg.class_type(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
         runner.load(resume_path)
 
         # obtain the trained policy for inference

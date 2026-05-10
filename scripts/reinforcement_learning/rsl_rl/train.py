@@ -28,7 +28,6 @@ from datetime import datetime
 import gymnasium as gym
 import torch
 from packaging import version
-from rsl_rl.runners import DistillationRunner, OffPolicyRunner, OnPolicyRunner
 
 from isaaclab.envs import DirectMARLEnvCfg, DirectRLEnvCfg, ManagerBasedRLEnvCfg
 from isaaclab.utils.dict import print_dict
@@ -226,18 +225,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
         # create runner from rsl-rl
-        if agent_cfg.class_name == "OnPolicyRunner":
-            runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
-        elif agent_cfg.class_name == "OffPolicyRunner":
-            runner = OffPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
-        elif agent_cfg.class_name == "DistillationRunner":
-            runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
-        else:
-            raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
-        # configure_seed must be called after runner construction so that PyTorch deterministic settings
-        # do not interfere with the runner's internal initialization.
-        if args_cli.deterministic:
-            configure_seed(env_cfg.seed, True)
+        runner = agent_cfg.class_type(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
         # write git state to logs
         runner.add_git_repo_to_log(__file__)
         # load the checkpoint
