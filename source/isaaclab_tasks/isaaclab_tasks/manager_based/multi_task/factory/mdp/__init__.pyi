@@ -34,7 +34,6 @@ __all__ = [
     "abnormal_robot_state",
     "progress_context",
     "success_termination",
-    "predictor_truncation",
     "split_time_out",
     "CollisionAnalyzerCfg",
     "RESET_STRATEGIES",
@@ -73,6 +72,6 @@ from .rewards import (
     unstable_manipulation,
 )
 from isaaclab_tasks.manager_based.multi_task.mdp.terminations import abnormal_robot_state, out_of_bound
-from .terminations import predictor_truncation, progress_context, split_time_out, success_termination
+from .terminations import progress_context, split_time_out, success_termination
 from isaaclab_tasks.manager_based.multi_task.geom import (CollisionAnalyzerCfg)
 from isaaclab.envs.mdp import *

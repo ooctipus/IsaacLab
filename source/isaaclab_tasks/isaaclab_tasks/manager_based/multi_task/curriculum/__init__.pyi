@@ -22,13 +22,11 @@ __all__ = [
     "UniformSamplingStrategy",
     "UniformSamplingStrategyCfg",
     "get_reset_state",
-    "log_sampler_bins",
     "reset_accumulator",
     "set_reset_state",
     "temporary_seed",
 ]
 
-from .diagnostics import log_sampler_bins
 from .event_combinators import ChainedResetTerms, TermChoice, reset_accumulator
 from .reset_state import get_reset_state, set_reset_state, temporary_seed
 from .sampling import (

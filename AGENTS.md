@@ -53,9 +53,10 @@ relax the expectations for IsaacLab core modules.
 - **Keep public boundaries small and stable.** Public wrappers, config classes,
   manager term signatures, presets, and test-facing APIs should remain stable
   unless the caller set is fully migrated in the same change.
-- **Internals may move when the public contract stays intact.** Splitting an
-  implementation into `impl/` backends, private kernels, or private helper
-  modules is preferred when it keeps the user-facing API small.
+- **Internals may move when the public contract stays intact.** Move code only
+  when the new location makes the data layout or backend boundary clearer.
+  Backend files and kernel modules are useful; helper modules/classes that just
+  hide a few tensor slices or branches are not.
 - **Avoid compatibility-by-fallback inside hot or controlled paths.** If Octi
   owns all call sites, prefer a direct required contract over optional fallback
   branches, legacy aliases, or broad defensive checks.
@@ -65,9 +66,12 @@ relax the expectations for IsaacLab core modules.
 - **Do not silently accept unknown states.** Missing required config, bad tensor
   shape, wrong dtype, or unsupported backend should fail clearly near the public
   boundary. Do not let kernels or vectorized code continue with ambiguous data.
-- **Do not carry unused generality.** Delete adapters, hooks, and helper classes
-  that are no longer pulling their weight. In Octi multi_task, a short direct
-  function is better than a generic framework that obscures the data layout.
+- **Do not carry unused generality.** Delete adapters, stale aliases, dead
+  properties, cached counters, compatibility branches, diagnostic side
+  channels, hooks, and helper classes that are no longer pulling their weight.
+  State should have a clear temporal role across calls; otherwise keep it local.
+  In Octi multi_task, a short direct block is better than a generic framework
+  that obscures the data layout.
 
 ### Warp and CUDA practice
 
@@ -111,12 +115,32 @@ relax the expectations for IsaacLab core modules.
 - **Simple data layout beats abstraction.** Prefer visible tensor layout and
   short direct code over adapter hierarchies, registries, or generalized
   lifecycle objects when the domain is controlled.
-- **Backend composition is acceptable.** A thin public wrapper that selects
-  `Torch` or `Warp` implementations under `impl/` is preferred over one class
-  filled with backend branches.
+- **Let the code read like data moving through tensors.** Keep append cursors,
+  masks, indices, rates, counts, and slot tables visible at the use site unless
+  they are genuinely reused. Inline small loops and one-use reductions instead
+  of hiding them behind generic helpers.
+- **Prefer stateless functions and kernels over stateful classes.** If a module
+  only groups related tensor operations, expose module-level functions/kernels
+  and let the caller own scratch, counters, and buffers. Use a class only when
+  it owns necessary cross-call state.
+- **Keep temporal state explicit and minimal.** A field is justified when it
+  carries information across calls, such as the slot assigned to each env for
+  the next success update. Do not keep mirrors of values already owned by a
+  monitor, sampler, buffer, or caller.
+- **Backend composition is acceptable when it is a real boundary.** A thin
+  public wrapper may choose Torch or Warp implementations under `impl/`, but do
+  not build a backend abstraction around a few lines of caller-owned tensor
+  logic.
 - **Configuration should be intentional.** Add config knobs only when they
   represent a real operational choice. Do not add knobs to preserve code paths
   that are no longer desired.
+- **Domain-specific policy belongs at the caller/config boundary.** Reusable
+  combinators should expose data or a narrow hook, but should not own factory-
+  specific visualization panels, logging schemas, estimator paths, or preset
+  policy.
+- **No hidden diagnostics in hot paths.** Periodic logs, debug counters, sampler
+  bin dumps, and visualization side channels should be explicit caller-owned
+  behavior. Delete temporary diagnostic helpers once their call sites are gone.
 - **Tests should cover semantics and performance-sensitive shapes.** For
   streamer/monitor-style utilities, test Torch/Warp parity, duplicate ids,
   all-same ids, non-bool payloads if supported, fixed external state tensors,
@@ -124,6 +148,9 @@ relax the expectations for IsaacLab core modules.
 - **Benchmark scripts may be temporary.** Use standalone scripts or
   `./isaaclab.sh -p -c "..."` for timing, report the key numbers, then remove
   temporary benchmark files from the workspace.
+- **No multi_task changelog churn unless requested.** For Octi multi_task
+  experimental work in this branch, do not create or update changelog fragments
+  unless the user explicitly asks for one.
 
 ### Contrast with IsaacLab core
 
@@ -185,6 +212,9 @@ Proper workflow:
 ## Changelog
 
 - **Do not edit `CHANGELOG.rst` or `config/extension.toml` directly.** Each PR adds a fragment file under `source/<package>/changelog.d/`; the changelog and version are compiled by the nightly CI workflow.
+- **Octi multi_task exception:** Do not create or update changelog fragments for
+  `source/isaaclab_tasks/isaaclab_tasks/manager_based/multi_task/` work unless
+  the user explicitly asks for one.
 - **Add one fragment per touched package.** Pick any short, unique slug for the filename — your branch name (with `/` replaced by `-`) is a good default. The filename suffix declares the bump tier; within a batch the highest tier wins for the package.
 
   | Filename | Effect |

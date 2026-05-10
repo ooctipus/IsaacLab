@@ -25,7 +25,6 @@ class SamplerTorch:
             for strategy_cfg in cfg.strategies
         ]
         self.eps = float(cfg.eps)
-        self.rate_source = cfg.rate_source
         self.names = [strategy.name for strategy, _ in self.strategies]
 
     def scores(self, success_rates: torch.Tensor) -> torch.Tensor:

@@ -3,14 +3,19 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+from __future__ import annotations
+
+import torch
+
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.utils.math import quat_apply_inverse
 
 from isaaclab_tasks.manager_based.multi_task.curriculum import (
     BetaSamplingStrategyCfg,
     FrontierSamplingStrategyCfg,
+    Sampler,
     SamplerCfg,
-    StateBufferCfg,
     SuccessMonitorCfg,
     UniformSamplingStrategyCfg,
 )
@@ -32,6 +37,100 @@ from .factory_presets import (
     HeldAssetGraspPointCfg,
     IKJointNamesCfg,
 )
+
+
+def _factory_wandb_held_asset_in_fixed_asset_frame(state_data: torch.Tensor, env, reset_assets: list[str]):
+    fixed_offset = None
+    held_offset = None
+    offset = 0
+    reset_asset_set = set(reset_assets)
+    for name, articulation in env.scene._articulations.items():
+        if name not in reset_asset_set:
+            continue
+        if name == "fixed_asset":
+            fixed_offset = offset
+        elif name == "held_asset":
+            held_offset = offset
+        offset += 13 + 2 * articulation.num_joints
+    for name in env.scene._rigid_objects:
+        if name not in reset_asset_set:
+            continue
+        if name == "fixed_asset":
+            fixed_offset = offset
+        elif name == "held_asset":
+            held_offset = offset
+        offset += 13
+
+    if fixed_offset is None or held_offset is None:
+        return None
+    fixed_xyz = state_data[:, fixed_offset : fixed_offset + 3]
+    fixed_quat = state_data[:, fixed_offset + 3 : fixed_offset + 7]
+    held_xyz = state_data[:, held_offset : held_offset + 3]
+    return quat_apply_inverse(fixed_quat, held_xyz - fixed_xyz)
+
+
+def _factory_wandb_3d_log(
+    state_data: torch.Tensor,
+    success_rates: torch.Tensor,
+    sampler: Sampler,
+    log_state: dict[str, object],
+    env,
+    reset_assets: list[str],
+) -> None:
+    try:
+        import wandb
+    except ImportError:
+        return
+    if wandb.run is None:
+        return
+
+    positions = _factory_wandb_held_asset_in_fixed_asset_frame(state_data, env, reset_assets)
+    if positions is None:
+        return
+
+    from isaaclab_tasks.manager_based.multi_task.viz import PanelSpec, ScatterDashboard3D
+
+    if "dashboard" not in log_state:
+        n = int(positions.shape[0])
+        log_state["dashboard"] = ScatterDashboard3D(positions=positions.detach().cpu().numpy())
+        log_state["prev_rates"] = torch.zeros(n, device=success_rates.device)
+
+    prev_rates = log_state["prev_rates"]
+    n = prev_rates.shape[0]
+    rates_t = success_rates[:n]
+    delta_t = rates_t - prev_rates
+    prev_rates.copy_(rates_t)
+    probs_t = sampler.probabilities(rates_t)
+
+    rates = rates_t.detach().cpu().numpy()
+    delta = delta_t.detach().cpu().numpy()
+    probs = probs_t.detach().cpu().numpy()
+    prob_max = max(float(probs.max()), 1e-9)
+    delta_range = max(float(abs(delta).max()), 0.05)
+
+    panels = {
+        "success_rate_3d": PanelSpec(values=rates, cmap="RdYlGn", vmin=0.0, vmax=1.0, title="success_rate"),
+        "sampling_prob_3d": PanelSpec(values=probs, cmap="viridis", vmin=0.0, vmax=prob_max, title="sampling_prob"),
+        "delta_success_3d": PanelSpec(
+            values=delta, cmap="RdYlGn", vmin=-delta_range, vmax=delta_range, title="delta_success"
+        ),
+    }
+    score_rows_t = sampler.scores(rates_t)
+    for i, name in enumerate(sampler.names):
+        score_t = score_rows_t[i]
+        if float(score_t.std()) >= 1e-9:
+            score_np = score_t.detach().cpu().numpy()
+            panels[f"{name}_score_3d"] = PanelSpec(
+                values=score_np,
+                cmap="viridis",
+                vmin=0.0,
+                vmax=max(float(score_np.max()), 1e-9),
+                title=f"{name}_score",
+            )
+
+    dashboard = log_state["dashboard"]
+    wandb.log({f"Sampler/{tag}": wandb.Object3D(dashboard.to_object3d(panel)) for tag, panel in panels.items()})
+
 
 GRIPPER_GRASP_ASSET_IN_AIR = EventTerm(
     func=mdp.ChainedResetTerms,
@@ -261,11 +360,9 @@ ACCUMULATOR_RESET = EventTerm(
                 obstacle_cfgs=[SceneEntityCfg("fixed_asset"), SceneEntityCfg("robot")],
             ),
         },
-        "state_buffer_cfg": StateBufferCfg(
-            size=preset(default=32768, eval=512),
-            tag_names_bind="list(reset_term.func.terms['reset_strategies'].func.term_partitions.keys())",
-            tag_indices_bind="reset_term.func.terms['reset_strategies'].func.term_samples",
-        ),
+        "state_table_size": preset(default=32768, eval=512),
+        "state_tag_names_bind": "list(reset_term.func.terms['reset_strategies'].func.term_partitions.keys())",
+        "state_tag_indices_bind": "reset_term.func.terms['reset_strategies'].func.term_samples",
         "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=50),
         "sampling": preset(
             default=SamplerCfg(
@@ -273,11 +370,6 @@ ACCUMULATOR_RESET = EventTerm(
                 eps=1e-8,
             ),
             uniform=SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=1.0)], eps=0.0),
-            success_estimator=SamplerCfg(
-                strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0)],
-                eps=1e-8,
-                rate_source="estimator",
-            ),
             monitor=SamplerCfg(
                 strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0)],
                 eps=1e-8,
@@ -304,15 +396,7 @@ ACCUMULATOR_RESET = EventTerm(
         ),
         "reset_term": SCENE_RESET,
         "report": True,
-        "monitor_exclude_terms": preset(
-            default=["predictor_truncation"],
-            success_estimator=["predictor_truncation"],
-        ),
-        # 3D wandb scatter: dot = held_asset xyz **relative to fixed_asset** in
-        # each buffer slot, so origin = perfectly assembled and the cloud reads
-        # as offsets from the goal pose. Pushed as Object3D every 100 calls.
-        "wandb_3d_asset": "held_asset",
-        "wandb_3d_relative_to": "fixed_asset",
+        "wandb_3d_log": _factory_wandb_3d_log,
     },
 )
 

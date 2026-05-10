@@ -22,7 +22,6 @@ class SamplerCfg:
         class_type: Runtime sampler class to instantiate.
         strategies: Weighted sampling-strategy cfgs composed by the sampler.
         eps: Soft floor on per-item probability.
-        rate_source: ``"monitor"`` or ``"estimator"`` for reset-accumulator consumers.
         warp: Whether to use the preallocated Warp backend for score/probability/sample kernels.
             In Warp mode, :meth:`Sampler.probabilities_and_sample` is CUDA-graph captured.
         seed: Base seed for Warp categorical sampling.
@@ -37,8 +36,6 @@ class SamplerCfg:
     """Weighted sampling-strategy cfgs composed by the sampler."""
     eps: float = 1e-3
     """Soft floor on per-item probability before normalization."""
-    rate_source: str = "monitor"
-    """Rate source selected by reset-accumulator consumers."""
     warp: bool = False
     """Whether to use the Warp backend."""
     seed: int = 17

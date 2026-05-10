@@ -16,7 +16,6 @@ from isaaclab_tasks.manager_based.multi_task.curriculum import (
     SamplerCfg,
     StateLayout,
     SuccessMonitorCfg,
-    log_sampler_bins,
 )
 
 if TYPE_CHECKING:
@@ -157,18 +156,6 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         if self._log_counter % 1000 == 0:
             self._log_terrain_heatmap(success_rates)
             self._log_spawn_scatter(success_rates, probs)
-
-        # Sampler diagnostic: per-strategy aggregate stats every 50 steps,
-        # plus the bucketed-by-frontier breakdown when frontier is active.
-        # Helper handles the "no frontier strategy" case gracefully so this
-        # is unconditional.
-        if self._log_counter % 50 == 0:
-            log_sampler_bins(
-                self._sampler,
-                success_rates=success_rates,
-                probs=probs,
-                log_dict=self.env.extras.setdefault("log", {}),
-            )
 
         return self._result
 

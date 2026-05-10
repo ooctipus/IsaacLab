@@ -205,7 +205,6 @@ class SamplerWarp:
 
         wp.init()
         self.eps = float(cfg.eps)
-        self.rate_source = cfg.rate_source
         self.seed = int(cfg.seed)
         self.names: list[str] = []
 

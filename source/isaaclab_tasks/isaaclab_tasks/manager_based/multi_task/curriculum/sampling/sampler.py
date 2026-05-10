@@ -25,7 +25,6 @@ class Sampler:
     def __init__(self, cfg: SamplerCfg, layout: StateLayout) -> None:
         backend = SamplerWarp if cfg.warp else SamplerTorch
         self._impl = backend(cfg, layout)
-        self.rate_source = self._impl.rate_source
 
     @property
     def names(self) -> list[str]:
