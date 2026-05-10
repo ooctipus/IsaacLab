@@ -104,7 +104,7 @@ class MultiTaskCommandsCfg:
         default = MultiTaskCfg(
             resampling_time_range=(10.0, 10.0),
             debug_vis=True,
-            use_warp_dispatch=True,
+            dispatch_backend="mega_kernel",
             tasks=MultiTaskTasksPresetCfg(),  # type: ignore[arg-type]
         )
         minimal_velocity = MinimalVelocityCommandCfg(

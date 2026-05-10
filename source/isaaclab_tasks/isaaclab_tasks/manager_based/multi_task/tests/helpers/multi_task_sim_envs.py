@@ -197,7 +197,7 @@ def make_minimal_multi_task_env_cfg():
     return _EnvCfg()
 
 
-def make_heterogeneous_multi_task_env_cfg(use_warp_dispatch: bool = False):
+def make_heterogeneous_multi_task_env_cfg(dispatch_backend: str = "reference"):
     """Build a four-env live cfg with one pinned command shape per environment."""
     import isaaclab.sim as sim_utils
     from isaaclab.assets import AssetBaseCfg
@@ -257,7 +257,7 @@ def make_heterogeneous_multi_task_env_cfg(use_warp_dispatch: bool = False):
         goal_point = MultiTaskCfg(
             resampling_time_range=(100.0, 100.0),
             debug_vis=False,
-            use_warp_dispatch=use_warp_dispatch,
+            dispatch_backend=dispatch_backend,
             tasks={
                 "pure_track_zero_vel": [
                     MultiTaskCfg.TrackingTaskCfg(

@@ -3,13 +3,11 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Byte-identity check: Warp mega-kernel vs PyTorch reference.
+"""Byte-identity check: Warp command backends vs PyTorch reference.
 
-The Warp path (``cfg.use_warp_dispatch=True``) collapses ~440 per-step kernel
-launches into a single ``wp.launch``. This test runs the production cfg under
-both paths with the same synthetic state and asserts elementwise equality of
-the four output tensors (``_buf_error``, ``_buf_activation``, ``_command_reach``,
-``_command_track``).
+The Warp paths collapse many PyTorch launches into compact Warp backends. This
+test runs the production cfg under each selectable backend with the same
+synthetic state and asserts elementwise equality of the output tensors.
 
 Skipped when CUDA is unavailable (Warp kernel only compiles for CUDA here).
 """
@@ -21,10 +19,20 @@ from unittest.mock import patch
 
 import pytest
 import torch
+import warp as wp
 
 from isaaclab.managers import SceneEntityCfg
 
 from isaaclab_tasks.manager_based.multi_task.mdp.commands import multi_task_command as mtc_mod
+from isaaclab_tasks.manager_based.multi_task.mdp.commands.impl.schedules import (
+    SCHEDULE_DIRECT_QUAT_DELTA,
+    SCHEDULE_DIRECT_SCALAR_DELTA,
+    SCHEDULE_DIRECT_VEC3_DELTA,
+    SCHEDULE_SCALAR_SUM_DELTA,
+    SCHEDULE_VEC3_THRESHOLD_PAIR_DIFF_DELTA,
+    SCHEDULE_VEC3_THRESHOLD_SUM_DELTA,
+    SCHEDULE_VEC3_THRESHOLD_VECTOR_DELTA,
+)
 from isaaclab_tasks.manager_based.multi_task.mdp.commands.kernels_torch import (
     ACTIVATION_KERNEL_ID,
     BUFFER_KIND,
@@ -63,14 +71,28 @@ _ANYMAL_BODY_NAMES = [
     "LH_FOOT",
     "RH_FOOT",
 ]
+_ANYMAL_JOINT_NAMES = [
+    "LF_HAA",
+    "RF_HAA",
+    "LH_HAA",
+    "RH_HAA",
+    "LF_HFE",
+    "RF_HFE",
+    "LH_HFE",
+    "RH_HFE",
+    "LF_KFE",
+    "RF_KFE",
+    "LH_KFE",
+    "RH_KFE",
+]
 
 
 class _MockArticulation:
-    def __init__(self, body_names):
+    def __init__(self, body_names, joint_names=None):
         self.body_names = list(body_names)
-        self.joint_names: list[str] = []
+        self.joint_names = list(joint_names) if joint_names else []
         self.num_bodies = len(self.body_names)
-        self.num_joints = 0
+        self.num_joints = len(self.joint_names)
         self.fixed_tendon_names: list[str] = []
         self.num_fixed_tendons = 0
 
@@ -91,7 +113,7 @@ class _MockArticulation:
         return self._find(self.body_names, patterns, preserve_order)
 
     def find_joints(self, patterns, preserve_order=False):
-        return [], []
+        return self._find(self.joint_names, patterns, preserve_order)
 
     def find_fixed_tendons(self, patterns, preserve_order=False):
         return [], []
@@ -139,7 +161,7 @@ class _MockEnv:
 
 
 def _make_env(num_envs: int, device: str):
-    robot = _MockArticulation(_ANYMAL_BODY_NAMES)
+    robot = _MockArticulation(_ANYMAL_BODY_NAMES, _ANYMAL_JOINT_NAMES)
     contact_forces = _MockArticulation(_ANYMAL_BODY_NAMES)
     scene = _MockScene({"robot": robot, "contact_forces": contact_forces}, num_envs=num_envs, device=device)
     return _MockEnv(num_envs=num_envs, device=device, max_episode_length=200, scene=scene)
@@ -149,6 +171,7 @@ def _make_readers(num_envs: int, device: str, seed: int) -> tuple:
     """Fixed-seed random synthetic per-kind source tensors."""
     g = torch.Generator(device=device).manual_seed(seed)
     nb = len(_ANYMAL_BODY_NAMES)
+    nj = len(_ANYMAL_JOINT_NAMES)
 
     body_pos = torch.randn((num_envs, nb, 3), generator=g, device=device)
     # Unit quats so metric_quaternion is well-defined.
@@ -161,13 +184,14 @@ def _make_readers(num_envs: int, device: str, seed: int) -> tuple:
     contact = torch.randn((num_envs, nb, 3), generator=g, device=device) * 0.8
 
     by_kind = {
-        int(BUFFER_KIND.JOINT_POS): torch.zeros((num_envs, 1), device=device),
-        int(BUFFER_KIND.JOINT_VEL): torch.zeros((num_envs, 1), device=device),
+        int(BUFFER_KIND.JOINT_POS): torch.zeros((num_envs, nj), device=device),
+        int(BUFFER_KIND.JOINT_VEL): torch.zeros((num_envs, nj), device=device),
         int(BUFFER_KIND.BODY_POS_W): body_pos,
         int(BUFFER_KIND.BODY_QUAT_W): body_quat,
         int(BUFFER_KIND.BODY_LIN_VEL_W): body_lin,
         int(BUFFER_KIND.BODY_ANG_VEL_W): body_ang,
         int(BUFFER_KIND.CONTACT_NET_FORCES_W): contact,
+        int(BUFFER_KIND.JOINT_MECH_POWER_ABS): torch.rand((num_envs, nj), generator=g, device=device),
     }
 
     def make_reader(kind: int):
@@ -184,7 +208,7 @@ def _make_readers(num_envs: int, device: str, seed: int) -> tuple:
 # ---------------------------------------------------------------------------
 
 
-def _mixed_cfg(use_warp: bool) -> MultiTaskCfg:
+def _mixed_cfg(dispatch_backend: str) -> MultiTaskCfg:
     """Mini cfg that exercises every Warp branch we support.
 
     Tasks:
@@ -201,7 +225,7 @@ def _mixed_cfg(use_warp: bool) -> MultiTaskCfg:
     return MultiTaskCfg(
         resampling_time_range=(100.0, 100.0),
         debug_vis=False,
-        use_warp_dispatch=use_warp,
+        dispatch_backend=dispatch_backend,
         tasks={
             "vel": [
                 MultiTaskCfg.TrackingTaskCfg(
@@ -327,6 +351,172 @@ def _mixed_cfg(use_warp: bool) -> MultiTaskCfg:
     )
 
 
+def _shared_contact_cfg(dispatch_backend: str) -> MultiTaskCfg:
+    """Cfg with three contact consumers sharing the same force predicate."""
+    feet = SceneEntityCfg("contact_forces", body_names=["LF_FOOT", "RF_FOOT", "LH_FOOT", "RH_FOOT"])
+    return MultiTaskCfg(
+        resampling_time_range=(100.0, 100.0),
+        debug_vis=False,
+        dispatch_backend=dispatch_backend,
+        tasks={
+            "shared_contact": [
+                MultiTaskCfg.TrackingTaskCfg(
+                    asset_cfg=feet,
+                    state_kernel=int(STATE_KERNEL_ID.BODY_CONTACT),
+                    metric_kernel=int(METRIC_KERNEL_ID.GEOMETRIC),
+                    activation_kernel=int(ACTIVATION_KERNEL_ID.LESS),
+                    activation_kernel_param=0.5,
+                    sampler=MinMaxSampler(
+                        kernel=int(SAMPLER_KERNEL_ID.UNIFORM),
+                        minimum=[1.0, 0.0, 1.0, 0.0],
+                        maximum=[1.0, 0.0, 1.0, 0.0],
+                    ),
+                ),
+                MultiTaskCfg.InstantaneousTaskCfg(
+                    asset_cfg=feet,
+                    state_kernel=int(STATE_KERNEL_ID.BODY_CONTACT_COUNT),
+                    metric_kernel=int(METRIC_KERNEL_ID.GEOMETRIC),
+                    activation_kernel=int(ACTIVATION_KERNEL_ID.LESS),
+                    activation_kernel_param=0.5,
+                    sampler=MinMaxSampler(
+                        kernel=int(SAMPLER_KERNEL_ID.UNIFORM),
+                        minimum=[3.0],
+                        maximum=[3.0],
+                    ),
+                ),
+                MultiTaskCfg.TrackingTaskCfg(
+                    asset_cfg=feet,
+                    state_kernel=int(STATE_KERNEL_ID.BODY_CONTACT_COUNT_DIFF),
+                    metric_kernel=int(METRIC_KERNEL_ID.GEOMETRIC),
+                    activation_kernel=int(ACTIVATION_KERNEL_ID.GREATER),
+                    activation_kernel_param=1.5,
+                    sampler=MinMaxSampler(
+                        kernel=int(SAMPLER_KERNEL_ID.UNIFORM),
+                        minimum=[0.0],
+                        maximum=[0.0],
+                    ),
+                ),
+            ]
+        },
+    )
+
+
+def _shared_direct_cfg(dispatch_backend: str) -> MultiTaskCfg:
+    """Cfg with several target-specific consumers sharing current-state producers."""
+    base = SceneEntityCfg("robot", body_names="base")
+    subtasks = []
+    for i in range(4):
+        subtasks.append(
+            MultiTaskCfg.TrackingTaskCfg(
+                asset_cfg=base,
+                state_kernel=int(STATE_KERNEL_ID.BODY_POS),
+                metric_kernel=int(METRIC_KERNEL_ID.GEOMETRIC),
+                activation_kernel=int(ACTIVATION_KERNEL_ID.TANH),
+                activation_kernel_param=0.3 + 0.1 * i,
+                sampler=MinMaxSampler(
+                    kernel=int(SAMPLER_KERNEL_ID.UNIFORM),
+                    minimum=[-1.0 + 0.25 * i, -0.8 + 0.25 * i, 0.4 + 0.05 * i],
+                    maximum=[-0.8 + 0.25 * i, -0.6 + 0.25 * i, 0.5 + 0.05 * i],
+                ),
+                expose_in_obs=False,
+            )
+        )
+    for i in range(4):
+        subtasks.append(
+            MultiTaskCfg.TrackingTaskCfg(
+                asset_cfg=base,
+                state_kernel=int(STATE_KERNEL_ID.BODY_POS_Z),
+                metric_kernel=int(METRIC_KERNEL_ID.GEOMETRIC),
+                activation_kernel=int(ACTIVATION_KERNEL_ID.TANH),
+                activation_kernel_param=0.2 + 0.1 * i,
+                sampler=MinMaxSampler(
+                    kernel=int(SAMPLER_KERNEL_ID.UNIFORM),
+                    minimum=[0.45 + 0.05 * i],
+                    maximum=[0.5 + 0.05 * i],
+                ),
+                expose_in_obs=False,
+            )
+        )
+    for i in range(4):
+        subtasks.append(
+            MultiTaskCfg.TrackingTaskCfg(
+                asset_cfg=base,
+                state_kernel=int(STATE_KERNEL_ID.BODY_QUAT),
+                metric_kernel=int(METRIC_KERNEL_ID.QUATERNION),
+                activation_kernel=int(ACTIVATION_KERNEL_ID.TANH),
+                activation_kernel_param=0.3 + 0.1 * i,
+                sampler=MinMaxSampler(
+                    kernel=int(SAMPLER_KERNEL_ID.EULER_UNIFORM_TO_QUAT),
+                    minimum=[-0.2 + 0.02 * i, -0.2 + 0.02 * i, -0.3 + 0.03 * i],
+                    maximum=[0.2 - 0.02 * i, 0.2 - 0.02 * i, 0.3 - 0.03 * i],
+                    out_dim=4,
+                ),
+                expose_in_obs=False,
+            )
+        )
+    for i in range(16):
+        subtasks.append(
+            MultiTaskCfg.TrackingTaskCfg(
+                asset_cfg=SceneEntityCfg("robot"),
+                state_kernel=int(STATE_KERNEL_ID.JOINT_MECH_POWER),
+                metric_kernel=int(METRIC_KERNEL_ID.GEOMETRIC),
+                activation_kernel=int(ACTIVATION_KERNEL_ID.GAUSSIAN),
+                activation_kernel_param=1200.0 + 50.0 * i,
+                sampler=MinMaxSampler(
+                    kernel=int(SAMPLER_KERNEL_ID.UNIFORM),
+                    minimum=[0.0],
+                    maximum=[0.0],
+                ),
+                expose_in_obs=False,
+            )
+        )
+    return MultiTaskCfg(
+        resampling_time_range=(100.0, 100.0),
+        debug_vis=False,
+        dispatch_backend=dispatch_backend,
+        tasks={"shared_direct": subtasks},
+    )
+
+
+def _unsorted_schedule_cfg(dispatch_backend: str) -> MultiTaskCfg:
+    """Cfg whose authored slot order is intentionally not schedule-sorted."""
+    base = SceneEntityCfg("robot", body_names="base")
+    return MultiTaskCfg(
+        resampling_time_range=(100.0, 100.0),
+        debug_vis=False,
+        dispatch_backend=dispatch_backend,
+        tasks={
+            "quat_then_pos": [
+                MultiTaskCfg.InstantaneousTaskCfg(
+                    asset_cfg=base,
+                    state_kernel=int(STATE_KERNEL_ID.BODY_QUAT),
+                    metric_kernel=int(METRIC_KERNEL_ID.QUATERNION),
+                    activation_kernel=int(ACTIVATION_KERNEL_ID.LESS),
+                    activation_kernel_param=0.3,
+                    sampler=MinMaxSampler(
+                        kernel=int(SAMPLER_KERNEL_ID.EULER_UNIFORM_TO_QUAT),
+                        minimum=[-0.2, -0.2, -0.3],
+                        maximum=[0.2, 0.2, 0.3],
+                        out_dim=4,
+                    ),
+                ),
+                MultiTaskCfg.InstantaneousTaskCfg(
+                    asset_cfg=base,
+                    state_kernel=int(STATE_KERNEL_ID.BODY_POS),
+                    metric_kernel=int(METRIC_KERNEL_ID.GEOMETRIC),
+                    activation_kernel=int(ACTIVATION_KERNEL_ID.LESS),
+                    activation_kernel_param=0.4,
+                    sampler=MinMaxSampler(
+                        kernel=int(SAMPLER_KERNEL_ID.UNIFORM),
+                        minimum=[-1.0, -1.0, 0.4],
+                        maximum=[1.0, 1.0, 0.6],
+                    ),
+                ),
+            ]
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # The test — builds two commands side-by-side and compares outputs.
 # ---------------------------------------------------------------------------
@@ -338,49 +528,198 @@ def test_warp_matches_pytorch_outputs():
     num_envs = 32
     readers = _make_readers(num_envs, device, seed=1234)
 
-    def build_and_step(use_warp: bool):
+    def build_and_step(dispatch_backend: str):
         env = _make_env(num_envs=num_envs, device=device)
         with patch.object(mtc_mod, "BUFFER_KIND_READERS", readers):
             torch.manual_seed(7)  # same task samples both sides
-            cmd = MultiTaskCommand(_mixed_cfg(use_warp=use_warp), env)
+            cmd = MultiTaskCommand(_mixed_cfg(dispatch_backend=dispatch_backend), env)
             # Drive one step — targets are pinned by the seed, so both paths
             # start with the same `_targets_flat` and `_env_subtask_ids`.
             cmd._update_command()
         return cmd
 
-    cmd_py = build_and_step(use_warp=False)
-    cmd_wp = build_and_step(use_warp=True)
+    cmd_py = build_and_step(dispatch_backend="reference")
+    for backend in (
+        "mega_kernel",
+        "schedule_ordered_mega",
+        "packed_scatter",
+        "primitive_queue_local",
+        "primitive_graph_local",
+    ):
+        cmd_wp = build_and_step(dispatch_backend=backend)
 
-    # Sanity: both paths sampled the same tasks / targets.
-    assert torch.equal(cmd_py._env_subtask_ids, cmd_wp._env_subtask_ids)
-    assert torch.equal(cmd_py._env_slot_count, cmd_wp._env_slot_count)
-    assert torch.allclose(cmd_py._targets_flat, cmd_wp._targets_flat)
+        # Sanity: both paths sampled the same tasks / targets.
+        assert torch.equal(cmd_py._env_subtask_ids, cmd_wp._env_subtask_ids), backend
+        assert torch.equal(cmd_py._env_slot_count, cmd_wp._env_slot_count), backend
+        assert torch.allclose(cmd_py._targets_flat, cmd_wp._targets_flat), backend
+
+        atol = 1e-5
+        rtol = 1e-5
+        assert torch.allclose(cmd_py._buf_error, cmd_wp._buf_error, atol=atol, rtol=rtol), (
+            f"{backend} error mismatch: max |Δ| = {(cmd_py._buf_error - cmd_wp._buf_error).abs().max().item():.3e}"
+        )
+        assert torch.allclose(cmd_py._buf_activation, cmd_wp._buf_activation, atol=atol, rtol=rtol), (
+            f"{backend} activation mismatch: max |Δ| = "
+            f"{(cmd_py._buf_activation - cmd_wp._buf_activation).abs().max().item():.3e}"
+        )
+        assert torch.allclose(cmd_py._command_reach, cmd_wp._command_reach, atol=atol, rtol=rtol), (
+            f"{backend} reach mismatch: max |Δ| = "
+            f"{(cmd_py._command_reach - cmd_wp._command_reach).abs().max().item():.3e}"
+        )
+        assert torch.allclose(cmd_py._command_track, cmd_wp._command_track, atol=atol, rtol=rtol), (
+            f"{backend} track mismatch: max |Δ| = "
+            f"{(cmd_py._command_track - cmd_wp._command_track).abs().max().item():.3e}"
+        )
+
+        # Composer outputs — task reward, success, progress, and in-place state.
+        assert torch.allclose(cmd_py._task_reward, cmd_wp._task_reward, atol=atol, rtol=rtol), (
+            f"{backend} task_reward mismatch: max |Δ| = "
+            f"{(cmd_py._task_reward - cmd_wp._task_reward).abs().max().item():.3e}"
+        )
+        assert torch.equal(cmd_py._task_done_success, cmd_wp._task_done_success), backend
+        assert torch.allclose(cmd_py._progress, cmd_wp._progress, atol=atol, rtol=rtol), (
+            f"{backend} progress mismatch: max |Δ| = {(cmd_py._progress - cmd_wp._progress).abs().max().item():.3e}"
+        )
+        assert torch.allclose(cmd_py._sum_activation, cmd_wp._sum_activation, atol=atol, rtol=rtol), (
+            f"{backend} sum_activation mismatch: max |Δ| = "
+            f"{(cmd_py._sum_activation - cmd_wp._sum_activation).abs().max().item():.3e}"
+        )
+        assert torch.equal(cmd_py._transit_steps, cmd_wp._transit_steps), backend
+        assert torch.equal(cmd_py._instant_achieved, cmd_wp._instant_achieved), backend
+
+
+@_NEED_CUDA
+@pytest.mark.parametrize("dispatch_backend", ["primitive_queue_local", "primitive_graph_local"])
+def test_local_primitive_dispatch_compose_graph_capture_smoke(dispatch_backend):
+    device = "cuda:0"
+    num_envs = 32
+    readers = _make_readers(num_envs, device, seed=4321)
+    env = _make_env(num_envs=num_envs, device=device)
+    with patch.object(mtc_mod, "BUFFER_KIND_READERS", readers):
+        torch.manual_seed(17)
+        cmd = MultiTaskCommand(_mixed_cfg(dispatch_backend=dispatch_backend), env)
+        torch.lt(cmd._slot_arange, cmd._env_slot_count.unsqueeze(1), out=cmd._slot_valid)
+        cmd._outputs.reset_step(cmd._slot_valid)
+        cmd._backend.dispatch(cmd, cmd._slot_valid)
+        assert cmd._backend._dispatch_graph is not None
+        cmd._backend.compose(cmd, cmd._slot_valid)
+        torch.cuda.synchronize()
+
+        with wp.ScopedCapture(device=device) as capture:
+            cmd._backend.dispatch(cmd, cmd._slot_valid)
+            cmd._backend.compose(cmd, cmd._slot_valid)
+        wp.capture_launch(capture.graph)
+        torch.cuda.synchronize()
+
+    assert torch.isfinite(cmd.task_reward).all()
+    assert torch.isfinite(cmd.progress).all()
+
+
+@_NEED_CUDA
+def test_primitive_graph_local_shares_contact_predicate_nodes():
+    device = "cuda:0"
+    num_envs = 16
+    readers = _make_readers(num_envs, device, seed=5678)
+
+    def build_and_step(dispatch_backend: str):
+        env = _make_env(num_envs=num_envs, device=device)
+        with patch.object(mtc_mod, "BUFFER_KIND_READERS", readers):
+            torch.manual_seed(23)
+            cmd = MultiTaskCommand(_shared_contact_cfg(dispatch_backend=dispatch_backend), env)
+            cmd._update_command()
+        return cmd
+
+    cmd_ref = build_and_step("reference")
+    cmd_graph = build_and_step("primitive_graph_local")
+
+    plan = cmd_graph._backend.plan
+    contact_work = sum(
+        plan.schedule_counts_py[schedule_id]
+        for schedule_id in (
+            SCHEDULE_VEC3_THRESHOLD_VECTOR_DELTA,
+            SCHEDULE_VEC3_THRESHOLD_SUM_DELTA,
+            SCHEDULE_VEC3_THRESHOLD_PAIR_DIFF_DELTA,
+        )
+    )
+    assert contact_work == num_envs * 3
+    assert plan.contact_count == num_envs
 
     atol = 1e-5
     rtol = 1e-5
-    assert torch.allclose(cmd_py._buf_error, cmd_wp._buf_error, atol=atol, rtol=rtol), (
-        f"error mismatch: max |Δ| = {(cmd_py._buf_error - cmd_wp._buf_error).abs().max().item():.3e}"
-    )
-    assert torch.allclose(cmd_py._buf_activation, cmd_wp._buf_activation, atol=atol, rtol=rtol), (
-        f"activation mismatch: max |Δ| = {(cmd_py._buf_activation - cmd_wp._buf_activation).abs().max().item():.3e}"
-    )
-    assert torch.allclose(cmd_py._command_reach, cmd_wp._command_reach, atol=atol, rtol=rtol), (
-        f"reach mismatch: max |Δ| = {(cmd_py._command_reach - cmd_wp._command_reach).abs().max().item():.3e}"
-    )
-    assert torch.allclose(cmd_py._command_track, cmd_wp._command_track, atol=atol, rtol=rtol), (
-        f"track mismatch: max |Δ| = {(cmd_py._command_track - cmd_wp._command_track).abs().max().item():.3e}"
-    )
+    assert torch.allclose(cmd_ref._buf_error, cmd_graph._buf_error, atol=atol, rtol=rtol)
+    assert torch.allclose(cmd_ref._buf_activation, cmd_graph._buf_activation, atol=atol, rtol=rtol)
+    assert torch.allclose(cmd_ref.command_reach, cmd_graph.command_reach, atol=atol, rtol=rtol)
+    assert torch.allclose(cmd_ref.command_track, cmd_graph.command_track, atol=atol, rtol=rtol)
+    assert torch.allclose(cmd_ref.task_reward, cmd_graph.task_reward, atol=atol, rtol=rtol)
+    assert torch.equal(cmd_ref.task_done, cmd_graph.task_done)
 
-    # Composer outputs — task reward, success, progress, and in-place state.
-    assert torch.allclose(cmd_py._task_reward, cmd_wp._task_reward, atol=atol, rtol=rtol), (
-        f"task_reward mismatch: max |Δ| = {(cmd_py._task_reward - cmd_wp._task_reward).abs().max().item():.3e}"
-    )
-    assert torch.equal(cmd_py._task_done_success, cmd_wp._task_done_success), "task_done_success mismatch"
-    assert torch.allclose(cmd_py._progress, cmd_wp._progress, atol=atol, rtol=rtol), (
-        f"progress mismatch: max |Δ| = {(cmd_py._progress - cmd_wp._progress).abs().max().item():.3e}"
-    )
-    assert torch.allclose(cmd_py._sum_activation, cmd_wp._sum_activation, atol=atol, rtol=rtol), (
-        f"sum_activation mismatch: max |Δ| = {(cmd_py._sum_activation - cmd_wp._sum_activation).abs().max().item():.3e}"
-    )
-    assert torch.equal(cmd_py._transit_steps, cmd_wp._transit_steps)
-    assert torch.equal(cmd_py._instant_achieved, cmd_wp._instant_achieved)
+
+@_NEED_CUDA
+def test_primitive_graph_local_uses_high_fanout_reduction_nodes():
+    device = "cuda:0"
+    num_envs = 16
+    readers = _make_readers(num_envs, device, seed=6789)
+
+    def build_and_step(dispatch_backend: str):
+        env = _make_env(num_envs=num_envs, device=device)
+        with patch.object(mtc_mod, "BUFFER_KIND_READERS", readers):
+            torch.manual_seed(29)
+            cmd = MultiTaskCommand(_shared_direct_cfg(dispatch_backend=dispatch_backend), env)
+            cmd._update_command()
+        return cmd
+
+    cmd_ref = build_and_step("reference")
+    cmd_graph = build_and_step("primitive_graph_local")
+
+    plan = cmd_graph._backend.plan
+    assert plan.schedule_counts_py[SCHEDULE_DIRECT_VEC3_DELTA] == num_envs * 4
+    assert plan.schedule_counts_py[SCHEDULE_DIRECT_SCALAR_DELTA] == num_envs * 4
+    assert plan.schedule_counts_py[SCHEDULE_DIRECT_QUAT_DELTA] == num_envs * 4
+    assert plan.schedule_counts_py[SCHEDULE_SCALAR_SUM_DELTA] == num_envs * 16
+    assert plan.vec3_count == num_envs
+    assert plan.scalar_count == num_envs
+    assert plan.quat_count == num_envs
+    assert plan.scalar_sum_count == num_envs
+    assert not plan.use_vec3_graph
+    assert not plan.use_scalar_graph
+    assert not plan.use_quat_graph
+    assert plan.use_scalar_sum_graph
+
+    atol = 1e-5
+    rtol = 1e-5
+    assert torch.allclose(cmd_ref._buf_error, cmd_graph._buf_error, atol=atol, rtol=rtol)
+    assert torch.allclose(cmd_ref._buf_activation, cmd_graph._buf_activation, atol=atol, rtol=rtol)
+    assert torch.allclose(cmd_ref.task_reward, cmd_graph.task_reward, atol=atol, rtol=rtol)
+    assert torch.equal(cmd_ref.task_done, cmd_graph.task_done)
+
+
+@_NEED_CUDA
+def test_schedule_ordered_mega_reorders_slots_without_changing_public_outputs():
+    device = "cuda:0"
+    num_envs = 16
+    readers = _make_readers(num_envs, device, seed=2345)
+
+    def build_and_step(dispatch_backend: str):
+        env = _make_env(num_envs=num_envs, device=device)
+        with patch.object(mtc_mod, "BUFFER_KIND_READERS", readers):
+            torch.manual_seed(11)
+            cmd = MultiTaskCommand(_unsorted_schedule_cfg(dispatch_backend=dispatch_backend), env)
+            cmd._update_command()
+        return cmd
+
+    cmd_ref = build_and_step("reference")
+    cmd_ordered = build_and_step("schedule_ordered_mega")
+
+    ref_state_order = cmd_ref.spec.state_kernel_id[cmd_ref._env_subtask_ids[0].long()].tolist()
+    ordered_state_order = cmd_ordered.spec.state_kernel_id[cmd_ordered._env_subtask_ids[0].long()].tolist()
+    assert ref_state_order == [int(STATE_KERNEL_ID.BODY_QUAT), int(STATE_KERNEL_ID.BODY_POS)]
+    assert ordered_state_order == [int(STATE_KERNEL_ID.BODY_POS), int(STATE_KERNEL_ID.BODY_QUAT)]
+
+    atol = 1e-5
+    rtol = 1e-5
+    assert torch.allclose(cmd_ref._targets_flat, cmd_ordered._targets_flat)
+    assert torch.allclose(cmd_ref.command_reach, cmd_ordered.command_reach, atol=atol, rtol=rtol)
+    assert torch.allclose(cmd_ref.command_track, cmd_ordered.command_track, atol=atol, rtol=rtol)
+    assert torch.allclose(cmd_ref.task_reward, cmd_ordered.task_reward, atol=atol, rtol=rtol)
+    assert torch.equal(cmd_ref.task_done, cmd_ordered.task_done)
+    assert torch.allclose(cmd_ref.progress, cmd_ordered.progress, atol=atol, rtol=rtol)

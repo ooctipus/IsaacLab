@@ -2,3 +2,9 @@
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
+
+"""Schedule-ordered mega-kernel backend."""
+
+from .backend import ScheduleOrderedMegaBackend
+
+__all__ = ["ScheduleOrderedMegaBackend"]

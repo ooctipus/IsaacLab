@@ -10,24 +10,26 @@
 dispatch implementation:
 
 - :class:`~.spec.TaskSpec` build + kernel-id validation.
-- Per-env buffers (subtask ids, slot counts, offsets, targets,
-  ``_buf_error`` / ``_buf_activation``, canonical reach/track, composer
-  latches, progress).
+- Per-env routing buffers (subtask ids, slot counts, offsets, targets) and
+  composer latches.
+- Backend-owned output storage for errors, activations, canonical commands,
+  terminal rewards, success flags, and progress.
 - ``_resample_command`` / ``_dispatch_samplers`` — target sampling.
 - ``_update_command`` — per-step orchestration (buffer zero →
   ``_dispatch`` → composer → progress).
 
-The dispatch — "given the current state, compute ``_buf_error``,
-``_buf_activation``, and the canonical deltas" — is delegated to a
-subclass via the :meth:`_dispatch` method. Two subclasses ship with the
-module:
+The dispatch — "given the current state, compute output-layout data" — is
+delegated to a subclass via the :meth:`_dispatch` method. Output storage is
+selected through :meth:`_build_output_store`, so future backends can own a
+non-dense hot-path layout and materialize public tensors only at the boundary.
+Two subclasses ship with the module:
 
 - :class:`~.multi_task_command_reference.MultiTaskCommandReference` — PyTorch
-  reference, selected by ``cfg.use_warp_dispatch=False`` (default).
-- :class:`~.multi_task_command_warp.MultiTaskCommandWarp` — Warp-native
-  two-phase dispatch, selected by ``cfg.use_warp_dispatch=True``.
+  reference, selected by ``cfg.dispatch_backend="reference"``.
+- :class:`~.multi_task_command_warp.MultiTaskCommandWarp` — Warp backend
+  switchboard, selected by any non-reference backend string.
 
-The :meth:`__new__` factory inspects ``cfg.use_warp_dispatch`` and returns
+The :meth:`__new__` factory inspects ``cfg.dispatch_backend`` and returns
 an instance of the right subclass. Users never instantiate the subclasses
 directly — ``MultiTaskCfg.class_type = MultiTaskCommand`` handles routing.
 
@@ -85,7 +87,7 @@ class MultiTaskCommand(CommandTerm):
     """Multi-task command term — dispatch-agnostic base.
 
     Construction routes to a subclass via :meth:`__new__` based on
-    ``cfg.use_warp_dispatch``. Subclasses only need to implement
+    ``cfg.dispatch_backend``. Subclasses only need to implement
     :meth:`_dispatch`.
     """
 
@@ -96,23 +98,21 @@ class MultiTaskCommand(CommandTerm):
     # ------------------------------------------------------------------------
 
     def __new__(cls, cfg: MultiTaskCfg, env: ManagerBasedRLEnv):
-        """Return a :class:`MultiTaskCommandReference` or
-        :class:`MultiTaskCommandWarp` instance based on ``cfg.use_warp_dispatch``.
+        """Return a backend subclass based on :attr:`MultiTaskCfg.dispatch_backend`.
 
         Subclass instances bypass the factory (``cls is MultiTaskCommand``
         check) so they can be instantiated directly in tests.
         """
         if cls is MultiTaskCommand:
-            use_warp = bool(getattr(cfg, "use_warp_dispatch", False))
-            if use_warp:
-                # Deferred import avoids a circular dependency at module-load
-                # time (the subclass imports from this module).
-                from .multi_task_command_warp import MultiTaskCommandWarp
+            if cfg.dispatch_backend == "reference":
+                from .multi_task_command_reference import MultiTaskCommandReference
 
-                return object.__new__(MultiTaskCommandWarp)
-            from .multi_task_command_reference import MultiTaskCommandReference
+                return object.__new__(MultiTaskCommandReference)
+            # Deferred import avoids a circular dependency at module-load
+            # time (the subclass imports from this module).
+            from .multi_task_command_warp import MultiTaskCommandWarp
 
-            return object.__new__(MultiTaskCommandReference)
+            return object.__new__(MultiTaskCommandWarp)
         return object.__new__(cls)
 
     # ------------------------------------------------------------------------
@@ -174,18 +174,13 @@ class MultiTaskCommand(CommandTerm):
         # Flat targets buffer: one float per (env, position-within-task) pair.
         self._targets_flat = torch.zeros((num_envs, max(1, self.max_task_total_stride)), device=device)
 
-        # Per-slot scalar runtime state (NO dim padding).
+        # Per-slot composer state (NO dim padding). Output tensors are owned by
+        # the selected backend/output layout, not by the base command term.
         self._sum_activation = torch.zeros((num_envs, k_max), device=device)
-        self._buf_error = torch.zeros((num_envs, k_max), device=device)
-        self._buf_activation = torch.zeros((num_envs, k_max), device=device)
         # ``_transit_steps`` is int32 so the Warp composer can wrap it directly;
         # PyTorch operations on it (``.add_(1)``, ``.to(float)``) work unchanged.
         self._transit_steps = torch.zeros(num_envs, dtype=torch.int32, device=device)
         self._instant_achieved = torch.zeros((num_envs, k_max), dtype=torch.bool, device=device)
-
-        # Composer outputs (refreshed every step).
-        self._task_reward = torch.zeros(num_envs, device=device)
-        self._task_done_success = torch.zeros(num_envs, dtype=torch.bool, device=device)
 
         # Per-env effective episode length (in env steps). For reach/mixed
         # envs always ``max_episode_length``; for pure-tracking envs under
@@ -201,16 +196,6 @@ class MultiTaskCommand(CommandTerm):
         # ``unified[:, indices]`` gathers — no per-asset lookup downstream.
         self._unified_buffer = torch.zeros((num_envs, max(1, self.spec.unified_width)), device=device)
 
-        # Policy-facing command tensors — split into REACH and TRACK so the
-        # policy reads instant-goal deltas separately from tracking-goal deltas.
-        # The split carries the "is this a one-shot reach or an ongoing track"
-        # semantic positionally, eliminating the need for a per-slot type flag.
-        # Same (entity, kernel) used by both types gets disjoint channels in the
-        # two tensors; POS / POS_Z no longer alias, so reach-standing + track-
-        # crouch-z can coexist.
-        self._command_reach = torch.zeros((num_envs, max(1, self.spec.reach_canonical_width)), device=device)
-        self._command_track = torch.zeros((num_envs, max(1, self.spec.track_canonical_width)), device=device)
-
         # Per-channel active mask — ``1.0`` where the channel is populated
         # by a live subtask of the env's current task, ``0.0`` otherwise.
         # Layout matches :attr:`command` (concatenation of reach + track):
@@ -220,9 +205,7 @@ class MultiTaskCommand(CommandTerm):
         active_mask_width = max(1, self.spec.reach_canonical_width + self.spec.track_canonical_width)
         self._command_active = torch.zeros((num_envs, active_mask_width), device=device)
 
-        # Scalar progress per env ∈ [0, 1] — mean of active-slot activations. Encodes
-        # the "sense of activation std" without leaking reward-kernel parameters.
-        self._progress = torch.zeros(num_envs, device=device)
+        self._outputs = self._build_output_store()
 
         # Pre-allocated per-step scratch buffers. ``_slot_arange`` is a constant
         # ``[0, 1, ..., k_max - 1]`` row used to derive ``_slot_valid`` via an
@@ -234,6 +217,12 @@ class MultiTaskCommand(CommandTerm):
         self._slot_valid = torch.zeros((num_envs, k_max), dtype=torch.bool, device=device)
 
         self._resample_command(torch.arange(num_envs, device=device, dtype=torch.long))
+
+    def _build_output_store(self):
+        """Create the backend-owned command output storage layout."""
+        from .impl.outputs import DenseCommandOutputs  # noqa: PLC0415
+
+        return DenseCommandOutputs(self)
 
     def _validate(self):
         """Assert every kernel id in the spec is within its registered kernel tuple."""
@@ -255,7 +244,7 @@ class MultiTaskCommand(CommandTerm):
         split carries the semantic (instant goal vs tracking condition) that a
         single flat ``command`` hides.
         """
-        return torch.cat([self._command_reach, self._command_track], dim=-1)
+        return self._outputs.command
 
     @property
     def command_reach(self) -> torch.Tensor:
@@ -265,7 +254,7 @@ class MultiTaskCommand(CommandTerm):
         subtasks. Each active instant subtask writes ``target - current`` into
         its ``canonical_offset[:+canonical_stride)`` slice of this tensor.
         """
-        return self._command_reach
+        return self._outputs.command_reach
 
     @property
     def command_track(self) -> torch.Tensor:
@@ -275,7 +264,7 @@ class MultiTaskCommand(CommandTerm):
         tracking subtasks. A kernel used by both instant and tracking subtasks
         gets disjoint channels across the two tensors — no aliasing.
         """
-        return self._command_track
+        return self._outputs.command_track
 
     @property
     def command_active(self) -> torch.Tensor:
@@ -312,19 +301,54 @@ class MultiTaskCommand(CommandTerm):
         Encodes the "sense of activation std" without exposing the std itself to
         the policy — the value is task-normalized across kernels/params.
         """
-        return self._progress
+        return self._outputs.progress
 
     @property
     def task_reward(self) -> torch.Tensor:
-        return self._task_reward
+        return self._outputs.task_reward
 
     @property
     def task_done(self) -> torch.Tensor:
-        return self._task_done_success
+        return self._outputs.task_done_success
 
     @property
     def buf_error(self) -> torch.Tensor:
-        return self._buf_error
+        return self._outputs.buf_error
+
+    @property
+    def _buf_error(self) -> torch.Tensor:
+        """Dense error view exposed for current tests/debug paths."""
+        return self._outputs.buf_error
+
+    @property
+    def _buf_activation(self) -> torch.Tensor:
+        """Dense activation view exposed for current tests/debug paths."""
+        return self._outputs.buf_activation
+
+    @property
+    def _command_reach(self) -> torch.Tensor:
+        """Dense reach command view exposed for current tests/debug paths."""
+        return self._outputs.command_reach
+
+    @property
+    def _command_track(self) -> torch.Tensor:
+        """Dense track command view exposed for current tests/debug paths."""
+        return self._outputs.command_track
+
+    @property
+    def _task_reward(self) -> torch.Tensor:
+        """Dense task reward view exposed for current tests/debug paths."""
+        return self._outputs.task_reward
+
+    @property
+    def _task_done_success(self) -> torch.Tensor:
+        """Dense task success view exposed for current tests/debug paths."""
+        return self._outputs.task_done_success
+
+    @property
+    def _progress(self) -> torch.Tensor:
+        """Dense progress view exposed for current tests/debug paths."""
+        return self._outputs.progress
 
     @property
     def effective_max_episode_length(self) -> torch.Tensor:
@@ -599,10 +623,7 @@ class MultiTaskCommand(CommandTerm):
         self._sum_activation[env_ids] = 0.0
         self._transit_steps[env_ids] = 0
         self._instant_achieved[env_ids] = False
-        self._task_reward[env_ids] = 0.0
-        self._task_done_success[env_ids] = False
-        self._command_reach[env_ids] = 0.0
-        self._command_track[env_ids] = 0.0
+        self._outputs.reset_envs(env_ids)
 
         # Refresh the per-channel active mask from the spec's per-task table.
         # ``task_active_mask`` is entirely a function of the spec, so this is
@@ -624,6 +645,11 @@ class MultiTaskCommand(CommandTerm):
         # Sample fresh targets for these envs' active subtasks, writing into the flat
         # target buffer at each slot's (offset, stride).
         self._dispatch_samplers(env_ids)
+        self._on_resample_command(env_ids)
+
+    def _on_resample_command(self, env_ids: torch.Tensor) -> None:
+        """Hook for backend-owned execution plans after task assignment changes."""
+        del env_ids
 
     def _dispatch_samplers(self, env_ids: torch.Tensor) -> None:
         """Run sampler kernels per active (env, slot), writing to the flat target buffer."""
@@ -691,19 +717,17 @@ class MultiTaskCommand(CommandTerm):
         orchestrates buffer clearing and delegation.
 
         Zero per-step allocations: the slot-valid mask is written in place
-        into the pre-allocated :attr:`_slot_valid` buffer, and all four
-        output tensors are zeroed in place. The Warp subclass ignores
-        :attr:`_slot_valid` (its kernels guard on ``env_slot_count[env]``
-        internally); the reference subclass uses it for PyTorch masking.
+        into the pre-allocated :attr:`_slot_valid` buffer. The selected output
+        store prepares its own per-step buffers; dense stores clear slot
+        tensors, while local stores can avoid dense materialization.
         """
         # Active-slot mask — refresh in place. ``_slot_arange`` is constant.
         torch.lt(self._slot_arange, self._env_slot_count.unsqueeze(1), out=self._slot_valid)
 
-        # Reset per-step buffers that we'll be scattering into.
-        self._buf_error.zero_()
-        self._buf_activation.zero_()
-        self._command_reach.zero_()
-        self._command_track.zero_()
+        # Let the selected output layout prepare its hot-path buffers. The
+        # current dense layout clears slot tensors here; local packed layouts
+        # should clear only the data they actually own.
+        self._outputs.reset_step(self._slot_valid)
 
         # Delegate to the subclass — both phases are polymorphic.
         self._dispatch(self._slot_valid)
@@ -714,13 +738,14 @@ class MultiTaskCommand(CommandTerm):
     # ------------------------------------------------------------------------
 
     def _dispatch(self, valid_slots: torch.Tensor) -> None:
-        """Compute ``_buf_error``, ``_buf_activation``, ``_command_reach``, ``_command_track``.
+        """Compute backend-owned per-step output-layout data.
 
         Must be implemented by a subclass. See
         :class:`~.multi_task_command_reference.MultiTaskCommandReference` and
-        :class:`~.multi_task_command_warp.MultiTaskCommandWarp`. Both produce
-        byte-identical outputs; the
-        :mod:`tests.test_multi_task_warp_equivalence` test gates that.
+        :class:`~.multi_task_command_warp.MultiTaskCommandWarp`. Public
+        tensors exposed through :attr:`command_reach`, :attr:`command_track`,
+        :attr:`task_reward`, and :attr:`progress` must remain semantically
+        equivalent across backends.
         """
         raise NotImplementedError(
             f"{type(self).__name__}._dispatch must be overridden. Did you instantiate "

@@ -446,8 +446,7 @@ class SamplerWarp:
         """Sample item indices from ``probs``."""
         if num_samples > self._samples.shape[0]:
             raise ValueError(
-                f"SamplerWarp.sample received {num_samples} samples, "
-                f"but max_samples={self._samples.shape[0]}."
+                f"SamplerWarp.sample received {num_samples} samples, but max_samples={self._samples.shape[0]}."
             )
         wp_probs = wp.from_torch(probs, dtype=wp.float32)
         wpu.array_scan(wp_probs, self._wp_cdf, inclusive=True)

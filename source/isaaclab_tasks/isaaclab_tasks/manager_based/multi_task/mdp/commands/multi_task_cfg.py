@@ -196,18 +196,21 @@ class MultiTaskCfg(CommandTermCfg):
     appears in the policy obs.
     """
 
-    use_warp_dispatch: bool = False
-    """Opt-in to the single-launch Warp mega-kernel for per-step dispatch.
+    dispatch_backend: str = "reference"
+    """Command dispatch backend.
 
-    When ``True``, :meth:`MultiTaskCommand._update_command` replaces the
-    per-``(group, metric_kid)`` PyTorch loop with one ``wp.launch`` over
-    ``(num_envs, k_max)``. All supported kernels (see
-    :mod:`~.kernels_wp`) produce byte-identical outputs to the PyTorch path
-    (validated in tests). Yields ~10× lower per-step latency by collapsing
-    ~440 launches → 1.
-
-    Default ``False`` — the PyTorch path remains the reference. Flip to
-    ``True`` once you've re-run the equivalence tests against your cfg.
+    ``"reference"`` selects the PyTorch reference path. ``"mega_kernel"``
+    selects the current Warp backend whose private execution plan is shaped as
+    ``(env, slot)``. ``"schedule_ordered_mega"`` keeps the same dense output
+    layout but executes each env's slots in fused-schedule order. ``"packed_scatter"``
+    selects the Warp backend with a fused-schedule-sorted flat queue and legacy
+    output scatter. ``"primitive_queue_local"`` groups by primitive schedule,
+    writes local output rows, and composes reward from those local rows.
+    ``"primitive_graph_local"`` adds explicit primitive-graph producer nodes
+    for reusable current-state, reduction, and contact-predicate work before
+    target-specific consumers. New dispatch experiments must become selectable
+    through this field before their numbers count as command-level benchmark
+    results.
     """
 
     tracking_episode_length_min_seconds: float | None = None

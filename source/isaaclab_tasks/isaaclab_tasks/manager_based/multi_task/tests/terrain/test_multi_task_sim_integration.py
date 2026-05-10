@@ -137,8 +137,8 @@ def test_multi_task_command_runs_10_steps_in_live_env(simulation_app):
 # -----------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("use_warp_dispatch", [False, True], ids=["ref", "warp"])
-def test_heterogeneous_multi_task_pinned_state_ground_truth(simulation_app, use_warp_dispatch):
+@pytest.mark.parametrize("dispatch_backend", ["reference", "mega_kernel"])
+def test_heterogeneous_multi_task_pinned_state_ground_truth(simulation_app, dispatch_backend):
     """Four envs, four pinned tasks, pinned initial state → per-env exact terminal reward.
 
     Each env targets a different failure mode:
@@ -163,7 +163,7 @@ def test_heterogeneous_multi_task_pinned_state_ground_truth(simulation_app, use_
     from isaaclab.envs import ManagerBasedRLEnv
 
     torch.manual_seed(0)
-    env_cfg = make_heterogeneous_multi_task_env_cfg(use_warp_dispatch=use_warp_dispatch)
+    env_cfg = make_heterogeneous_multi_task_env_cfg(dispatch_backend=dispatch_backend)
     env = ManagerBasedRLEnv(cfg=env_cfg)
     try:
         cmd = env.command_manager.get_term("goal_point")

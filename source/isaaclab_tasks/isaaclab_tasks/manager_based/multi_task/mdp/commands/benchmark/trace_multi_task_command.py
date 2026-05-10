@@ -34,10 +34,10 @@ Usage::
     # Mock mode (no Isaac Sim required):
     ./isaaclab.sh -p source/isaaclab_tasks/isaaclab_tasks/manager_based/\\
 locomotion/position/mdp/commands/multitask/benchmark/trace_multi_task_command.py \\
-        --num_envs 4096 --num_steps 200
+        --backend mega_kernel --num_envs 4096 --num_steps 200
 
     # Sim mode (real env):
-    ./isaaclab.sh -p ... --mode sim --num_envs 1024 --num_steps 100
+    ./isaaclab.sh -p ... --mode sim --backend mega_kernel --num_envs 1024 --num_steps 100
 """
 
 from __future__ import annotations
@@ -45,172 +45,15 @@ from __future__ import annotations
 import argparse
 import datetime
 import pathlib
-import re
 import sys
 
 import torch
 
-# Standard Anymal-C body / joint sets — matches the production scene so the
-# read dispatch sees the same per-body / per-joint counts.
-_ANYMAL_BODY_NAMES = [
-    "base",
-    "LF_HIP",
-    "RF_HIP",
-    "LH_HIP",
-    "RH_HIP",
-    "LF_THIGH",
-    "RF_THIGH",
-    "LH_THIGH",
-    "RH_THIGH",
-    "LF_SHANK",
-    "RF_SHANK",
-    "LH_SHANK",
-    "RH_SHANK",
-    "LF_FOOT",
-    "RF_FOOT",
-    "LH_FOOT",
-    "RH_FOOT",
-]
-_ANYMAL_JOINT_NAMES = [
-    "LF_HAA",
-    "RF_HAA",
-    "LH_HAA",
-    "RH_HAA",
-    "LF_HFE",
-    "RF_HFE",
-    "LH_HFE",
-    "RH_HFE",
-    "LF_KFE",
-    "RF_KFE",
-    "LH_KFE",
-    "RH_KFE",
-]
-
-
-# ---------------------------------------------------------------------------
-# Mock env (mirrors test_multi_task_command_mock.py helpers).
-# ---------------------------------------------------------------------------
-
-
-class _MockArticulation:
-    """Stand-in for :class:`Articulation` satisfying ``SceneEntityCfg.resolve``."""
-
-    def __init__(self, body_names: list[str], joint_names: list[str] | None = None):
-        self.body_names = list(body_names)
-        self.joint_names = list(joint_names) if joint_names else []
-        self.num_bodies = len(self.body_names)
-        self.num_joints = len(self.joint_names)
-        self.fixed_tendon_names: list[str] = []
-        self.num_fixed_tendons = 0
-
-    @staticmethod
-    def _find(names, patterns, preserve_order=False):
-        if isinstance(patterns, str):
-            patterns = [patterns]
-        ids, matched = [], []
-        for pat in patterns:
-            rx = re.compile(pat)
-            for i, n in enumerate(names):
-                if rx.fullmatch(n) and i not in ids:
-                    ids.append(i)
-                    matched.append(n)
-        return ids, matched
-
-    def find_bodies(self, patterns, preserve_order=False):
-        return self._find(self.body_names, patterns, preserve_order)
-
-    def find_joints(self, patterns, preserve_order=False):
-        return self._find(self.joint_names, patterns, preserve_order)
-
-    def find_fixed_tendons(self, patterns, preserve_order=False):
-        return [], []
-
-
-class _MockScene:
-    def __init__(self, entities: dict, num_envs: int, device: str):
-        self._entities = entities
-        self.env_origins = torch.zeros(num_envs, 3, device=device)
-        self.sensors = entities
-
-    def keys(self):
-        return self._entities.keys()
-
-    def __getitem__(self, name):
-        return self._entities[name]
-
-    def __contains__(self, name):
-        return name in self._entities
-
-
-class _MockEnv:
-    def __init__(self, num_envs: int, device: str, max_episode_length: int, scene):
-        self.num_envs = num_envs
-        self.device = device
-        self.max_episode_length = max_episode_length
-        self.episode_length_buf = torch.zeros(num_envs, dtype=torch.long, device=device)
-        self.scene = scene
-        self.common_step_counter = 0
-        self.step_dt = 0.02
-
-
-def _build_mock_synthetic_readers(num_envs: int, device: str) -> tuple:
-    """Per-step mock readers — pre-allocated random source tensors per buffer kind.
-
-    Real readers do a warp→torch handoff (zero-copy on GPU) plus, for body pos,
-    an env-origin subtraction. Both are O(N · K) and fast; the trace's purpose
-    is to expose dispatch / gather / scatter cost, not the reader. We swap them
-    for constant-time tensor returns.
-    """
-    from isaaclab_tasks.manager_based.multi_task.mdp.commands.kernels_torch import BUFFER_KIND
-
-    nb = len(_ANYMAL_BODY_NAMES)
-    nj = len(_ANYMAL_JOINT_NAMES)
-    by_kind = {
-        int(BUFFER_KIND.JOINT_POS): torch.randn(num_envs, nj, device=device),
-        int(BUFFER_KIND.JOINT_VEL): torch.randn(num_envs, nj, device=device),
-        int(BUFFER_KIND.BODY_POS_W): torch.randn(num_envs, nb, 3, device=device),
-        int(BUFFER_KIND.BODY_QUAT_W): torch.nn.functional.normalize(
-            torch.randn(num_envs, nb, 4, device=device), dim=-1
-        ),
-        int(BUFFER_KIND.BODY_LIN_VEL_W): torch.randn(num_envs, nb, 3, device=device),
-        int(BUFFER_KIND.BODY_ANG_VEL_W): torch.randn(num_envs, nb, 3, device=device),
-        int(BUFFER_KIND.CONTACT_NET_FORCES_W): torch.randn(num_envs, nb, 3, device=device).abs() * 5.0,
-    }
-
-    def make_reader(kind: int):
-        tensor = by_kind[kind]
-
-        def reader(env, asset_name):
-            return tensor
-
-        return reader
-
-    return tuple(make_reader(int(k)) for k in BUFFER_KIND)
-
-
-def _build_mock_command(num_envs: int, device: str, use_warp: bool):
-    """Construct a real :class:`MultiTaskCommand` against a mocked env + readers."""
-    from unittest.mock import patch
-
-    from isaaclab_tasks.manager_based.multi_task.mdp.commands import multi_task_command as mtc_mod
-    from isaaclab_tasks.manager_based.multi_task.mdp.commands.multi_task_command import (
-        MultiTaskCommand,
-    )
-    from isaaclab_tasks.manager_based.multi_task.multi_task_env_cfg import MultiTaskEnvCfg
-
-    robot = _MockArticulation(body_names=_ANYMAL_BODY_NAMES, joint_names=_ANYMAL_JOINT_NAMES)
-    contact_forces = _MockArticulation(body_names=_ANYMAL_BODY_NAMES)
-    scene = _MockScene({"robot": robot, "contact_forces": contact_forces}, num_envs=num_envs, device=device)
-    env = _MockEnv(num_envs=num_envs, device=device, max_episode_length=200, scene=scene)
-
-    cfg = MultiTaskEnvCfg().commands.goal_point
-    cfg.use_warp_dispatch = use_warp
-    readers = _build_mock_synthetic_readers(num_envs, device)
-    with patch.object(mtc_mod, "BUFFER_KIND_READERS", readers):
-        cmd = MultiTaskCommand(cfg, env)
-        # Stash the readers on the command so the per-step path uses them after
-        # the patch context exits (the dispatch reads the module-level name).
-        return cmd, env, readers, mtc_mod
+if __package__:
+    from .mock_command import build_mock_command
+else:
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    from mock_command import build_mock_command
 
 
 # ---------------------------------------------------------------------------
@@ -339,9 +182,12 @@ def _run_sim_mode(args_cli) -> None:
         from isaaclab.envs import ManagerBasedRLEnv
 
         from isaaclab_tasks.manager_based.multi_task.multi_task_env_cfg import MultiTaskEnvCfg
+        from isaaclab_tasks.utils import resolve_presets
 
         env_cfg = MultiTaskEnvCfg()
+        resolve_presets(env_cfg)
         env_cfg.scene.num_envs = args_cli.num_envs
+        env_cfg.commands.goal_point.dispatch_backend = args_cli.backend
         env = ManagerBasedRLEnv(cfg=env_cfg)
         try:
             env.reset()
@@ -387,11 +233,15 @@ def _parse_args() -> argparse.Namespace:
         help="Device for mock-mode tensors.",
     )
     parser.add_argument(
-        "--use_warp",
-        action="store_true",
-        help="Profile the Warp mega-kernel path (cfg.use_warp_dispatch=True).",
+        "--backend",
+        default="reference",
+        help="Command backend selected through public MultiTaskCfg fields.",
     )
-
+    parser.add_argument(
+        "--preset",
+        default=None,
+        help="Optional mock-mode preset passed to the public command benchmark builder.",
+    )
     # Only the sim path needs AppLauncher's CLI surface.
     if "--mode" in sys.argv and "sim" in sys.argv:
         from isaaclab.app import AppLauncher
@@ -410,10 +260,13 @@ def main() -> None:
         return
 
     torch.manual_seed(0)
-    cmd, env, readers, mtc_mod = _build_mock_command(
-        args_cli.num_envs, args_cli.mock_device, use_warp=args_cli.use_warp
+    cmd, env, readers, mtc_mod = build_mock_command(
+        args_cli.num_envs,
+        args_cli.mock_device,
+        dispatch_backend=args_cli.backend,
+        preset=args_cli.preset,
     )
-    print(f"[TRACE] Dispatch path: {'Warp mega-kernel' if args_cli.use_warp else 'PyTorch reference'}")
+    print(f"[TRACE] Backend: {args_cli.backend}, preset={args_cli.preset or 'default'}")
     _profile_loop(cmd, env, readers, mtc_mod, args_cli)
 
 

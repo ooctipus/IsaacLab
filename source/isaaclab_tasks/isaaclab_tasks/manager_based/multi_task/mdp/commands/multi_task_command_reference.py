@@ -10,7 +10,7 @@ Byte-identical in output to :class:`~.multi_task_command_warp.MultiTaskCommandWa
 and obvious — its role is to be the implementation that the Warp path is
 validated against. Do not optimize this file.
 
-Selected when ``MultiTaskCfg.use_warp_dispatch=False`` (default). The factory
+Selected when ``MultiTaskCfg.dispatch_backend="reference"``. The factory
 in :class:`~.multi_task_command.MultiTaskCommand.__new__` routes construction
 to this class automatically; users never reference it directly.
 """
