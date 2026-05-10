@@ -16,11 +16,11 @@ from isaaclab.utils import configclass
 # Keep the command implementation import TYPE_CHECKING-only so this cfg can be
 # constructed (e.g. during hydra's pre-SimulationApp cfg load) without pulling
 # in ``isaaclab.envs.ManagerBasedRLEnv`` → ``isaaclab.sim.SimulationContext``
-# → ``pxr``. ``class_type`` is stored as a ``{DIR}``-qualified string and
-# resolved lazily by :class:`~isaaclab.utils.string.ResolvableString` when the
-# command manager calls ``term_cfg.class_type(...)`` after Kit has launched.
-# The test ``source/isaaclab_tasks/test/test_env_cfg_no_forbidden_imports.py``
-# gates this contract.
+# → ``pxr``. ``class_type`` is stored as a fully-qualified string and resolved
+# lazily by :class:`~isaaclab.utils.string.ResolvableString` when the command
+# manager calls ``term_cfg.class_type(...)`` after Kit has launched. The test
+# ``source/isaaclab_tasks/test/test_env_cfg_no_forbidden_imports.py`` gates
+# this contract.
 if TYPE_CHECKING:
     from ..multi_task_command import MultiTaskCommand
 
@@ -166,7 +166,12 @@ class MultiTaskCfg(CommandTermCfg):
         pass
 
     # Lazy string reference; resolved to ``MultiTaskCommand`` after Kit launches.
-    class_type: type[MultiTaskCommand] | str = "{DIR}.multi_task_command:MultiTaskCommand"
+    # Hardcoded full path because ``{DIR}`` resolves to this module's parent
+    # package (``commands.impl``), but :class:`MultiTaskCommand` lives one level
+    # up at ``commands.multi_task_command``.
+    class_type: type[MultiTaskCommand] | str = (
+        "isaaclab_tasks.manager_based.multi_task.mdp.commands.multi_task_command:MultiTaskCommand"
+    )
     tasks: dict[str, list[BaseTaskCfg]] = MISSING
 
     quality_easing: float = 1.0
