@@ -1142,97 +1142,6 @@ def _contact_mask_vec4(mask: wp.array2d(dtype=float), node_id: int) -> wp.vec4:
 
 
 @wp.kernel
-def compute_contact_predicate_mask(
-    contact_queue: PrimitiveProducerQueue,
-    spec: SubtaskSpec,
-    state: StateAccess,
-    contact_mask: wp.array2d(dtype=float),
-):
-    """Compute shared per-body contact predicates for contact-family consumers."""
-    node_id = wp.tid()
-    if node_id >= contact_queue.count[0]:
-        return
-    env = contact_queue.env_ids[node_id]
-    sid = contact_queue.subtask_ids[node_id]
-    xcb = _state_body_contact(state, spec, env, spec.gather_offset[sid], spec.gather_count[sid])
-    contact_mask[node_id, 0] = xcb[0]
-    contact_mask[node_id, 1] = xcb[1]
-    contact_mask[node_id, 2] = xcb[2]
-    contact_mask[node_id, 3] = xcb[3]
-
-
-@wp.kernel
-def compute_scalar_sum_nodes(
-    nodes: PrimitiveProducerQueue,
-    spec: SubtaskSpec,
-    state: StateAccess,
-    values: wp.array(dtype=float),
-):
-    """Compute shared scalar reductions for scalar-sum consumers."""
-    node_id = wp.tid()
-    if node_id >= nodes.count[0]:
-        return
-    env = nodes.env_ids[node_id]
-    sid = nodes.subtask_ids[node_id]
-    values[node_id] = _state_joint_mech_power(state, spec, env, spec.gather_offset[sid], spec.gather_count[sid])
-
-
-@wp.kernel
-def compute_direct_vec3_nodes(
-    nodes: PrimitiveProducerQueue,
-    spec: SubtaskSpec,
-    state: StateAccess,
-    values: wp.array2d(dtype=float),
-):
-    """Compute shared current vec3 projections for direct-vec3 consumers."""
-    node_id = wp.tid()
-    if node_id >= nodes.count[0]:
-        return
-    env = nodes.env_ids[node_id]
-    sid = nodes.subtask_ids[node_id]
-    x3 = _project_xyz(state, spec, env, spec.gather_offset[sid])
-    values[node_id, 0] = x3[0]
-    values[node_id, 1] = x3[1]
-    values[node_id, 2] = x3[2]
-
-
-@wp.kernel
-def compute_direct_scalar_nodes(
-    nodes: PrimitiveProducerQueue,
-    spec: SubtaskSpec,
-    state: StateAccess,
-    values: wp.array(dtype=float),
-):
-    """Compute shared current scalar projections for direct-scalar consumers."""
-    node_id = wp.tid()
-    if node_id >= nodes.count[0]:
-        return
-    env = nodes.env_ids[node_id]
-    sid = nodes.subtask_ids[node_id]
-    values[node_id] = _project_scalar(state, spec, env, spec.gather_offset[sid])
-
-
-@wp.kernel
-def compute_direct_quat_nodes(
-    nodes: PrimitiveProducerQueue,
-    spec: SubtaskSpec,
-    state: StateAccess,
-    values: wp.array2d(dtype=float),
-):
-    """Compute shared current quaternion projections for direct-quat consumers."""
-    node_id = wp.tid()
-    if node_id >= nodes.count[0]:
-        return
-    env = nodes.env_ids[node_id]
-    sid = nodes.subtask_ids[node_id]
-    q = _project_quat_xyzw(state, spec, env, spec.gather_offset[sid])
-    values[node_id, 0] = q[0]
-    values[node_id, 1] = q[1]
-    values[node_id, 2] = q[2]
-    values[node_id, 3] = q[3]
-
-
-@wp.kernel
 def compute_dense_graph_producers(
     vec3_nodes: PrimitiveProducerQueue,
     scalar_nodes: PrimitiveProducerQueue,
@@ -1577,89 +1486,6 @@ def dispatch_primitive_local_direct_vec3(
 
 
 @wp.kernel
-def dispatch_graph_direct_vec3_grouped(
-    nodes: PrimitiveProducerQueue,
-    queue: PrimitiveLocalQueue,
-    spec: SubtaskSpec,
-    state: StateAccess,
-    outputs: Outputs,
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
-):
-    """Compute one current vec3 producer and all target-specific consumers."""
-    node_id = wp.tid()
-    if node_id >= nodes.count[0]:
-        return
-    env = nodes.env_ids[node_id]
-    sid = nodes.subtask_ids[node_id]
-    x3 = _project_xyz(state, spec, env, spec.gather_offset[sid])
-    start = nodes.consumer_offsets[node_id]
-    count = nodes.consumer_counts[node_id]
-    for j in range(count):
-        index = nodes.consumer_indices[start + j]
-        row_env = queue.env_ids[index]
-        row_sid = queue.subtask_ids[index]
-        d3v = _read_target_xyz(state, row_env, queue.target_offsets[index]) - x3
-        _write_primitive_local_outputs(
-            index,
-            row_env,
-            queue.slot_ids[index],
-            row_sid,
-            spec,
-            outputs,
-            local_delta,
-            local_error,
-            local_activation,
-            d3v[0],
-            d3v[1],
-            d3v[2],
-            0.0,
-            _metric_geometric_vec3(d3v),
-        )
-
-
-@wp.kernel
-def dispatch_graph_direct_vec3(
-    queue: PrimitiveLocalQueue,
-    nodes: PrimitiveProducerQueue,
-    spec: SubtaskSpec,
-    state: StateAccess,
-    outputs: Outputs,
-    direct_vec3: wp.array2d(dtype=float),
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
-):
-    """Consume shared vec3 producers with one thread per target-specific row."""
-    q = wp.tid()
-    if q >= queue.schedule_counts[PIPELINE_DIRECT_VEC3_DELTA]:
-        return
-    index = queue.schedule_offsets[PIPELINE_DIRECT_VEC3_DELTA] + q
-    env = queue.env_ids[index]
-    sid = queue.subtask_ids[index]
-    node_id = nodes.consumer_node_ids[index]
-    x3 = wp.vec3(direct_vec3[node_id, 0], direct_vec3[node_id, 1], direct_vec3[node_id, 2])
-    d3v = _read_target_xyz(state, env, queue.target_offsets[index]) - x3
-    _write_primitive_local_outputs(
-        index,
-        env,
-        queue.slot_ids[index],
-        sid,
-        spec,
-        outputs,
-        local_delta,
-        local_error,
-        local_activation,
-        d3v[0],
-        d3v[1],
-        d3v[2],
-        0.0,
-        _metric_geometric_vec3(d3v),
-    )
-
-
-@wp.kernel
 def dispatch_primitive_local_direct_scalar(
     queue: PrimitiveLocalQueue,
     spec: SubtaskSpec,
@@ -1685,87 +1511,6 @@ def dispatch_primitive_local_direct_scalar(
         local_delta,
         local_error,
         local_activation,
-    )
-
-
-@wp.kernel
-def dispatch_graph_direct_scalar_grouped(
-    nodes: PrimitiveProducerQueue,
-    queue: PrimitiveLocalQueue,
-    spec: SubtaskSpec,
-    state: StateAccess,
-    outputs: Outputs,
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
-):
-    """Compute one current scalar producer and all target-specific consumers."""
-    node_id = wp.tid()
-    if node_id >= nodes.count[0]:
-        return
-    env = nodes.env_ids[node_id]
-    sid = nodes.subtask_ids[node_id]
-    x = _project_scalar(state, spec, env, spec.gather_offset[sid])
-    start = nodes.consumer_offsets[node_id]
-    count = nodes.consumer_counts[node_id]
-    for j in range(count):
-        index = nodes.consumer_indices[start + j]
-        row_env = queue.env_ids[index]
-        row_sid = queue.subtask_ids[index]
-        d0 = state.targets_flat[row_env, queue.target_offsets[index]] - x
-        _write_primitive_local_outputs(
-            index,
-            row_env,
-            queue.slot_ids[index],
-            row_sid,
-            spec,
-            outputs,
-            local_delta,
-            local_error,
-            local_activation,
-            d0,
-            0.0,
-            0.0,
-            0.0,
-            _metric_geometric_scalar(d0),
-        )
-
-
-@wp.kernel
-def dispatch_graph_direct_scalar(
-    queue: PrimitiveLocalQueue,
-    nodes: PrimitiveProducerQueue,
-    spec: SubtaskSpec,
-    state: StateAccess,
-    outputs: Outputs,
-    direct_scalar: wp.array(dtype=float),
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
-):
-    """Consume shared scalar producers with one thread per target-specific row."""
-    q = wp.tid()
-    if q >= queue.schedule_counts[PIPELINE_DIRECT_SCALAR_DELTA]:
-        return
-    index = queue.schedule_offsets[PIPELINE_DIRECT_SCALAR_DELTA] + q
-    env = queue.env_ids[index]
-    sid = queue.subtask_ids[index]
-    d0 = state.targets_flat[env, queue.target_offsets[index]] - direct_scalar[nodes.consumer_node_ids[index]]
-    _write_primitive_local_outputs(
-        index,
-        env,
-        queue.slot_ids[index],
-        sid,
-        spec,
-        outputs,
-        local_delta,
-        local_error,
-        local_activation,
-        d0,
-        0.0,
-        0.0,
-        0.0,
-        _metric_geometric_scalar(d0),
     )
 
 
@@ -1799,94 +1544,6 @@ def dispatch_primitive_local_direct_quat(
 
 
 @wp.kernel
-def dispatch_graph_direct_quat_grouped(
-    nodes: PrimitiveProducerQueue,
-    queue: PrimitiveLocalQueue,
-    spec: SubtaskSpec,
-    state: StateAccess,
-    outputs: Outputs,
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
-):
-    """Compute one current quaternion producer and all target-specific consumers."""
-    node_id = wp.tid()
-    if node_id >= nodes.count[0]:
-        return
-    env = nodes.env_ids[node_id]
-    sid = nodes.subtask_ids[node_id]
-    cq = _project_quat_xyzw(state, spec, env, spec.gather_offset[sid])
-    start = nodes.consumer_offsets[node_id]
-    count = nodes.consumer_counts[node_id]
-    for j in range(count):
-        index = nodes.consumer_indices[start + j]
-        row_env = queue.env_ids[index]
-        row_sid = queue.subtask_ids[index]
-        dq = _delta_quaternion(cq, _read_target_quat_xyzw(state, row_env, queue.target_offsets[index]))
-        _write_primitive_local_outputs(
-            index,
-            row_env,
-            queue.slot_ids[index],
-            row_sid,
-            spec,
-            outputs,
-            local_delta,
-            local_error,
-            local_activation,
-            dq[0],
-            dq[1],
-            dq[2],
-            dq[3],
-            _metric_quaternion(dq),
-        )
-
-
-@wp.kernel
-def dispatch_graph_direct_quat(
-    queue: PrimitiveLocalQueue,
-    nodes: PrimitiveProducerQueue,
-    spec: SubtaskSpec,
-    state: StateAccess,
-    outputs: Outputs,
-    direct_quat: wp.array2d(dtype=float),
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
-):
-    """Consume shared quaternion producers with one thread per target-specific row."""
-    q = wp.tid()
-    if q >= queue.schedule_counts[PIPELINE_DIRECT_QUAT_DELTA]:
-        return
-    index = queue.schedule_offsets[PIPELINE_DIRECT_QUAT_DELTA] + q
-    env = queue.env_ids[index]
-    sid = queue.subtask_ids[index]
-    node_id = nodes.consumer_node_ids[index]
-    q_current = wp.vec4(
-        direct_quat[node_id, 0],
-        direct_quat[node_id, 1],
-        direct_quat[node_id, 2],
-        direct_quat[node_id, 3],
-    )
-    dq = _delta_quaternion(q_current, _read_target_quat_xyzw(state, env, queue.target_offsets[index]))
-    _write_primitive_local_outputs(
-        index,
-        env,
-        queue.slot_ids[index],
-        sid,
-        spec,
-        outputs,
-        local_delta,
-        local_error,
-        local_activation,
-        dq[0],
-        dq[1],
-        dq[2],
-        dq[3],
-        _metric_quaternion(dq),
-    )
-
-
-@wp.kernel
 def dispatch_primitive_local_vec3_threshold_vector(
     queue: PrimitiveLocalQueue,
     spec: SubtaskSpec,
@@ -1909,39 +1566,6 @@ def dispatch_primitive_local_vec3_threshold_vector(
         spec,
         state,
         outputs,
-        local_delta,
-        local_error,
-        local_activation,
-    )
-
-
-@wp.kernel
-def dispatch_graph_contact_vector(
-    queue: PrimitiveLocalQueue,
-    contact_queue: PrimitiveProducerQueue,
-    spec: SubtaskSpec,
-    state: StateAccess,
-    outputs: Outputs,
-    contact_mask: wp.array2d(dtype=float),
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
-):
-    q = wp.tid()
-    if q >= queue.schedule_counts[PIPELINE_VEC3_THRESHOLD_VECTOR_DELTA]:
-        return
-    index = queue.schedule_offsets[PIPELINE_VEC3_THRESHOLD_VECTOR_DELTA] + q
-    _dispatch_contact_vector_from_mask_local(
-        index,
-        queue.env_ids[index],
-        queue.slot_ids[index],
-        queue.subtask_ids[index],
-        queue.target_offsets[index],
-        contact_queue.consumer_node_ids[index],
-        spec,
-        state,
-        outputs,
-        contact_mask,
         local_delta,
         local_error,
         local_activation,
@@ -1978,39 +1602,6 @@ def dispatch_primitive_local_vec3_threshold_sum(
 
 
 @wp.kernel
-def dispatch_graph_contact_sum(
-    queue: PrimitiveLocalQueue,
-    contact_queue: PrimitiveProducerQueue,
-    spec: SubtaskSpec,
-    state: StateAccess,
-    outputs: Outputs,
-    contact_mask: wp.array2d(dtype=float),
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
-):
-    q = wp.tid()
-    if q >= queue.schedule_counts[PIPELINE_VEC3_THRESHOLD_SUM_DELTA]:
-        return
-    index = queue.schedule_offsets[PIPELINE_VEC3_THRESHOLD_SUM_DELTA] + q
-    _dispatch_contact_sum_from_mask_local(
-        index,
-        queue.env_ids[index],
-        queue.slot_ids[index],
-        queue.subtask_ids[index],
-        queue.target_offsets[index],
-        contact_queue.consumer_node_ids[index],
-        spec,
-        state,
-        outputs,
-        contact_mask,
-        local_delta,
-        local_error,
-        local_activation,
-    )
-
-
-@wp.kernel
 def dispatch_primitive_local_vec3_threshold_pair_diff(
     queue: PrimitiveLocalQueue,
     spec: SubtaskSpec,
@@ -2033,39 +1624,6 @@ def dispatch_primitive_local_vec3_threshold_pair_diff(
         spec,
         state,
         outputs,
-        local_delta,
-        local_error,
-        local_activation,
-    )
-
-
-@wp.kernel
-def dispatch_graph_contact_pair_diff(
-    queue: PrimitiveLocalQueue,
-    contact_queue: PrimitiveProducerQueue,
-    spec: SubtaskSpec,
-    state: StateAccess,
-    outputs: Outputs,
-    contact_mask: wp.array2d(dtype=float),
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
-):
-    q = wp.tid()
-    if q >= queue.schedule_counts[PIPELINE_VEC3_THRESHOLD_PAIR_DIFF_DELTA]:
-        return
-    index = queue.schedule_offsets[PIPELINE_VEC3_THRESHOLD_PAIR_DIFF_DELTA] + q
-    _dispatch_contact_pair_diff_from_mask_local(
-        index,
-        queue.env_ids[index],
-        queue.slot_ids[index],
-        queue.subtask_ids[index],
-        queue.target_offsets[index],
-        contact_queue.consumer_node_ids[index],
-        spec,
-        state,
-        outputs,
-        contact_mask,
         local_delta,
         local_error,
         local_activation,
@@ -2098,44 +1656,6 @@ def dispatch_primitive_local_scalar_sum(
         local_delta,
         local_error,
         local_activation,
-    )
-
-
-@wp.kernel
-def dispatch_graph_scalar_sum(
-    queue: PrimitiveLocalQueue,
-    nodes: PrimitiveProducerQueue,
-    spec: SubtaskSpec,
-    state: StateAccess,
-    outputs: Outputs,
-    scalar_sum: wp.array(dtype=float),
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
-):
-    """Consume shared scalar-sum nodes and write scalar-sum local rows in parallel."""
-    q = wp.tid()
-    if q >= queue.schedule_counts[PIPELINE_SCALAR_SUM_DELTA]:
-        return
-    index = queue.schedule_offsets[PIPELINE_SCALAR_SUM_DELTA] + q
-    env = queue.env_ids[index]
-    sid = queue.subtask_ids[index]
-    d0 = state.targets_flat[env, queue.target_offsets[index]] - scalar_sum[nodes.consumer_node_ids[index]]
-    _write_primitive_local_outputs(
-        index,
-        env,
-        queue.slot_ids[index],
-        sid,
-        spec,
-        outputs,
-        local_delta,
-        local_error,
-        local_activation,
-        d0,
-        0.0,
-        0.0,
-        0.0,
-        _metric_geometric_scalar(d0),
     )
 
 
