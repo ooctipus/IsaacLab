@@ -77,7 +77,7 @@ workflow:
           /workspace/isaaclab/_isaac_sim/python.sh -m torch.distributed.run \
             --nnodes 1 \
             --nproc_per_node {{ num_gpu }} \
-            --master_addr localhost \
+            --master_addr 127.0.0.1 \
             --master_port {{ master_port }} \
             /workspace/isaaclab/{{ script }} \
               --distributed \
