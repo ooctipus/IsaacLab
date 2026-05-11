@@ -2198,8 +2198,7 @@ def dispatch_compose_fused(
 # ---------------------------------------------------------------------------
 # Fused dispatch_graph_dense + compose — same pattern as dispatch_compose_fused
 # but for the primitive_graph_local backend's dense-consumer path. Used when
-# all producer kinds materialize (use_dense_graph_consumer=True) AND k_max
-# clears the parallel-compose threshold.
+# ``k_max`` clears the parallel-compose threshold (see ``compose_select``).
 # ---------------------------------------------------------------------------
 
 
