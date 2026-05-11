@@ -14,8 +14,8 @@ just the package-level re-exports and the factory in ``multi_task_command``.
 
 Backends are selectable via ``MultiTaskCfg.dispatch_backend``. Each subfolder
 owns the full ``read -> execute -> rotate -> compose`` pipeline for one
-strategy; the shared pieces (output buffers, compose-kernel selection,
-schedule plans, kernel registries) sit at the ``impl/`` level.
+strategy; the only pieces shared across backends are the kernel registries,
+schedule lowering, and compose-kernel selection.
 
 ## Folder Layout
 
@@ -25,19 +25,19 @@ impl/
   multi_task_command_torch.py  # PyTorch reference subclass (dispatch_backend="torch")
   multi_task_command_warp.py   # Warp switchboard subclass
   backend.py                   # Warp backend factory and CommandBackend protocol
-  outputs.py                   # shared output buffer structs
   schedules.py                 # static schedule plan helpers
   compose_select.py            # adaptive switch between scalar and parallel composers
   kernel_ids.py                # kernel ID enums shared by Torch and Warp paths
   kernels_torch.py             # Torch state/delta/metric/activation kernel registry
   kernels_wp.py                # Warp kernels (dispatch, compose, rotate, slab fills)
-  kernels_viz.py               # debug visualization for state-kernel markers
+  kernels_viz.py               # debug visualization: VIZ_REGISTRY + per-step update fns
   mega_kernel/                 # dense (env, slot) baseline; default for small k_max.
                                # Supports ``slot_order="schedule"`` mode, exposed
                                # publicly as ``dispatch_backend="schedule_ordered_mega"``.
   packed_scatter/              # fused-pipeline-sorted queue with legacy scatter
   primitive_queue_local/       # per-primitive-family queues with local grouped outputs
-  primitive_graph_local/       # local grouped outputs with shared primitive nodes
+  primitive_graph_local/       # dense-kernel signature-graph with always-materialize
+                               # producer launches
 ```
 
 All hot paths are CUDA-graph captured. Plan construction allocates fixed-size
@@ -75,14 +75,11 @@ rotate_backend(command, plan)
 compose_backend(command, plan)
 ```
 
-If a backend only replaces ``execute``, it should reuse the canonical phases
-exported from ``mega_kernel``:
-
-```python
-from ..mega_kernel.compose import compose_warp
-from ..mega_kernel.read import fill_unified_buffer_warp
-from ..mega_kernel.rotation import rotate_canonical_slots_to_body_frame_warp
-```
+Each backend owns its own ``bindings.py`` / ``read.py`` / ``execute.py`` /
+``rotation.py`` / ``compose.py``. Cross-backend imports of phase
+implementations are not allowed — if two backends would share the same
+phase code, duplicate it. The agreement boundary is ``MultiTaskCommandWarp``;
+beyond that each backend describes its own data management.
 
 Backend selection is explicit at construction. Do not add hidden fallbacks
 inside hot kernels; if a backend cannot satisfy its tensor/layout contract,
