@@ -160,10 +160,11 @@ class _MockArticulationData:
         g = torch.Generator(device=device).manual_seed(seed)
         # Identity quat for the rotation helper (kept zero-rotation so the
         # body-frame conversion is a no-op and the byte-identity comparison
-        # holds across backends that handle rotation differently).
-        q = torch.zeros(num_envs, 4, device=device)
-        q[:, 3] = 1.0
-        self.root_quat_w = q  # plain torch — only used by rotation helpers
+        # holds across backends that handle rotation differently). ProxyArray
+        # so backends can pull ``.warp`` directly like a real articulation.
+        self._root_quat_w_torch = torch.zeros((num_envs, 4), device=device).contiguous()
+        self._root_quat_w_torch[:, 3] = 1.0
+        self.root_quat_w = _proxy(self._root_quat_w_torch, wp.quat)
 
         # Per-kind scene data backing the ProxyArray views below. Kept as
         # attributes so the underlying torch tensors stay alive for the

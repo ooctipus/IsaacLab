@@ -28,9 +28,15 @@ if TYPE_CHECKING:
 
 @dataclass
 class RotationBinding:
-    """Warp views for rotating one asset's canonical vec3 command slots."""
+    """Warp views for rotating one asset's canonical vec3 command slots.
 
-    root_quat_w: torch.Tensor
+    ``root_quat_w_wp`` comes from the asset's :class:`ProxyArray` directly, so
+    the underlying storage is anchored by the scene itself — no torch view
+    needed on this binding. The ``*_offsets_i32`` torch tensors *are* kept
+    because we construct them ourselves (via :func:`torch.tensor`) and the
+    ``*_offsets_wp`` views need them alive.
+    """
+
     reach_offsets_i32: torch.Tensor
     track_offsets_i32: torch.Tensor
     root_quat_w_wp: wp.array
@@ -340,6 +346,11 @@ def _build_inline_rotation_metadata(
     fixed. ``enabled`` is 1 only when there is exactly one rotation binding
     (single-asset rotation); 0 otherwise. With multiple bindings, the
     standalone rotate kernel still runs and the fused kernel skips rotation.
+
+    For the single-binding path the quat comes straight from the asset's
+    :class:`ProxyArray` (anchored by the scene) so no torch holder is needed;
+    the multi-binding fallback still owns a zero tensor that must stay alive
+    for its ``wp.from_torch`` view.
     """
     spec = command.spec
     num_subtasks = max(1, int(spec.state_kernel_id.numel()))
@@ -347,7 +358,7 @@ def _build_inline_rotation_metadata(
 
     if len(rotations) == 1:
         binding = rotations[0]
-        quat_torch = binding.root_quat_w
+        quat_torch_anchor: torch.Tensor | None = None
         quat_wp = binding.root_quat_w_wp
 
         reach_offsets = {int(o) for o in binding.reach_offsets_i32.cpu().tolist()}
@@ -370,29 +381,21 @@ def _build_inline_rotation_metadata(
         enabled = 1
     else:
         # Dummy zero arrays so the kernel signature stays valid; flag = 0 makes
-        # the rotation branch a no-op.
-        quat_torch = torch.zeros((num_envs, 4), device=command.device, dtype=torch.float32)
-        quat_wp = wp.from_torch(quat_torch)
+        # the rotation branch a no-op. The zero tensor is owned here, so we
+        # do need the torch holder for ``wp.from_torch`` lifetime.
+        quat_torch_anchor = torch.zeros((num_envs, 4), device=command.device, dtype=torch.float32)
+        quat_wp = wp.from_torch(quat_torch_anchor, dtype=wp.quat)
         flags_torch = torch.zeros(num_subtasks, dtype=torch.int32, device=command.device)
         flags_wp = wp.from_torch(flags_torch)
         enabled = 0
 
     return {
-        "quat_torch": quat_torch,
+        "quat_torch": quat_torch_anchor,
         "quat_wp": quat_wp,
         "flags_torch": flags_torch,
         "flags_wp": flags_wp,
         "enabled": enabled,
     }
-
-
-def _root_quat_torch(command: MultiTaskCommandWarp, asset_name: str) -> torch.Tensor:
-    quat = command._env.scene[asset_name].data.root_quat_w
-    if isinstance(quat, torch.Tensor):
-        return quat
-    if hasattr(quat, "torch"):
-        return quat.torch
-    return wp.to_torch(quat)
 
 
 def build_rotation_bindings(command: MultiTaskCommandWarp) -> tuple[RotationBinding, ...]:
@@ -406,15 +409,14 @@ def build_rotation_bindings(command: MultiTaskCommandWarp) -> tuple[RotationBind
         num_offsets = len(reach_offsets) + len(track_offsets)
         if num_offsets == 0:
             continue
-        root_quat_w = _root_quat_torch(command, asset_name)
+        root_quat_w_wp = command._env.scene[asset_name].data.root_quat_w.warp
         reach_offsets_i32 = torch.tensor(reach_offsets, device=command.device, dtype=torch.int32)
         track_offsets_i32 = torch.tensor(track_offsets, device=command.device, dtype=torch.int32)
         bindings.append(
             RotationBinding(
-                root_quat_w=root_quat_w,
                 reach_offsets_i32=reach_offsets_i32,
                 track_offsets_i32=track_offsets_i32,
-                root_quat_w_wp=wp.from_torch(root_quat_w),
+                root_quat_w_wp=root_quat_w_wp,
                 reach_offsets_wp=wp.from_torch(reach_offsets_i32),
                 track_offsets_wp=wp.from_torch(track_offsets_i32),
                 num_reach_offsets=len(reach_offsets),

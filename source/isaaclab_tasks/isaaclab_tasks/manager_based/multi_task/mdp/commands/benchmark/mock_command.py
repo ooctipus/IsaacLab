@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import re
-import types
 from unittest.mock import patch
 
 import torch
@@ -48,16 +47,15 @@ _ANYMAL_JOINT_NAMES = [
 ]
 
 
-def _make_proxy(torch_tensor: torch.Tensor, wp_dtype) -> "wp.array":
+def _make_proxy(torch_tensor: torch.Tensor, wp_dtype) -> wp.array:
     """Wrap a contiguous torch tensor as a ProxyArray with the given Warp dtype."""
     import warp as wp
+
     from isaaclab.utils.warp import ProxyArray
 
     if wp_dtype is wp.float32:
         shape = tuple(torch_tensor.shape)
-    elif wp_dtype is wp.vec3:
-        shape = tuple(torch_tensor.shape[:-1])
-    elif wp_dtype is wp.quat:
+    elif wp_dtype is wp.vec3 or wp_dtype is wp.quat:
         shape = tuple(torch_tensor.shape[:-1])
     else:
         raise ValueError(f"Unsupported wp_dtype {wp_dtype!r}")
@@ -81,10 +79,11 @@ class _MockArticulationData:
     def __init__(self, num_envs: int, num_bodies: int, num_joints: int, device: str):
         import warp as wp
 
-        # Identity quat for rotation helpers.
-        q = torch.zeros(num_envs, 4, device=device)
-        q[:, 3] = 1.0
-        self.root_quat_w = q
+        # Identity quat for rotation helpers; ProxyArray so production-style
+        # ``.warp`` / ``.torch`` accessors work just like real articulations.
+        self._root_quat_w_torch = torch.zeros(num_envs, 4, device=device).contiguous()
+        self._root_quat_w_torch[:, 3] = 1.0
+        self.root_quat_w = _make_proxy(self._root_quat_w_torch, wp.quat)
 
         # Backing torch tensors (kept alive so the wp.array aliases stay valid).
         self._body_pos_w_torch = torch.randn(num_envs, num_bodies, 3, device=device).contiguous()

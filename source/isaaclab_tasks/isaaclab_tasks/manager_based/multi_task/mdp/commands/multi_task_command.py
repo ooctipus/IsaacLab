@@ -474,14 +474,15 @@ class MultiTaskCommand(CommandTerm):
         inactive slots hold the resample-time zero). Rotating zero is a no-op
         so no state leaks.
         """
-        import warp as wp  # noqa: PLC0415
-
         from isaaclab.utils.math import quat_apply_inverse  # noqa: PLC0415
 
         def _as_torch(q):
-            # Real articulations expose ``root_quat_w`` as a Warp array; mock
-            # tests store a torch tensor directly. Handle both transparently.
-            return q if isinstance(q, torch.Tensor) else wp.to_torch(q)
+            # Real articulations expose ``root_quat_w`` as a ``ProxyArray``;
+            # the pure-torch mock test (``test_multi_task_command_mock``)
+            # stores a torch tensor directly. Handle both.
+            if isinstance(q, torch.Tensor):
+                return q
+            return q.torch
 
         for asset_name, offsets in self.spec.reach_rotatable_vec3_by_asset.items():
             if not offsets:

@@ -1686,7 +1686,7 @@ def dispatch_packed_scatter_flat(
 
 @wp.kernel
 def rotate_canonical_vec3_pair(
-    root_quat_w: wp.array2d(dtype=float),
+    root_quat_w: wp.array(dtype=wp.quat),
     command_reach: wp.array2d(dtype=float),
     reach_offsets: wp.array(dtype=int),
     num_reach_offsets: int,
@@ -1695,12 +1695,8 @@ def rotate_canonical_vec3_pair(
 ):
     """Rotate reach and track vec3 command slots for one root asset."""
     env, offset_id = wp.tid()
-    q = wp.vec4(
-        root_quat_w[env, 0],
-        root_quat_w[env, 1],
-        root_quat_w[env, 2],
-        root_quat_w[env, 3],
-    )
+    qq = root_quat_w[env]
+    q = wp.vec4(qq[0], qq[1], qq[2], qq[3])
     if offset_id < num_reach_offsets:
         off = reach_offsets[offset_id]
         v = wp.vec3(command_reach[env, off], command_reach[env, off + 1], command_reach[env, off + 2])
@@ -2023,7 +2019,7 @@ def dispatch_compose_fused(
     effective_max_episode_length: wp.array(dtype=int),
     instant_threshold: float,
     quality_easing: float,
-    inline_root_quat: wp.array2d(dtype=float),
+    inline_root_quat: wp.array(dtype=wp.quat),
     subtask_is_rotatable: wp.array(dtype=int),
     use_inline_rotation: int,
 ):
@@ -2074,12 +2070,8 @@ def dispatch_compose_fused(
             # ``err`` uses L2 norm which is rotation-invariant — equivalent
             # output as the standalone ``rotate_canonical_vec3_pair`` kernel.
             if use_inline_rotation != 0 and subtask_is_rotatable[sid] != 0:
-                q = wp.vec4(
-                    inline_root_quat[env, 0],
-                    inline_root_quat[env, 1],
-                    inline_root_quat[env, 2],
-                    inline_root_quat[env, 3],
-                )
+                qq = inline_root_quat[env]
+                q = wp.vec4(qq[0], qq[1], qq[2], qq[3])
                 d3v = _quat_apply_inverse_xyzw(q, d3v)
             d0 = d3v[0]
             d1 = d3v[1]
