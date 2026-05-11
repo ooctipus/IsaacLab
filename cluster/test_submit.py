@@ -151,6 +151,14 @@ class TestParseArgs:
         p = parse_args(["platform=gb200"])
         assert p.cluster["platform"] == "gb200"
 
+    def test_multi_gpu_default_cpu_scales(self):
+        p = parse_args(["num_gpu=8"])
+        assert p.cluster["num_cpu"] == "64"
+
+    def test_explicit_multi_gpu_cpu_preserved(self):
+        p = parse_args(["num_gpu=8", "num_cpu=12"])
+        assert p.cluster["num_cpu"] == "12"
+
 
 # =============================================================================
 # build_combos
