@@ -60,58 +60,6 @@ _LIFT_Z = 0.5
 
 
 # ---------------------------------------------------------------------------
-# Marker cfg builders.
-# ---------------------------------------------------------------------------
-
-
-def _arrow_marker_cfg(prim_path: str, color: tuple[float, float, float]):
-    """Velocity arrow — same shape as ``state_command``'s arrows.
-
-    Base scale ``(0.5, 0.5, 0.5)`` matches ``state_command``'s
-    ``current_vel_visualizer_cfg.markers["arrow"].scale`` so per-instance
-    multiplication of ``[|v|·3, 1, 1]`` yields a velocity-proportional arrow.
-    """
-    import isaaclab.sim as sim_utils
-    from isaaclab.markers import VisualizationMarkersCfg
-    from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
-
-    return VisualizationMarkersCfg(
-        prim_path=prim_path,
-        markers={
-            "arrow": sim_utils.UsdFileCfg(
-                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd",
-                scale=(0.5, 0.5, 0.5),
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=color),
-            ),
-        },
-    )
-
-
-def _cuboid_marker_cfg(prim_path: str, color: tuple[float, float, float], size: float = 0.25):
-    """Position-target cuboid — matches ``state_command``'s pos goal."""
-    import isaaclab.sim as sim_utils
-    from isaaclab.markers import VisualizationMarkersCfg
-
-    return VisualizationMarkersCfg(
-        prim_path=prim_path,
-        markers={
-            "cuboid": sim_utils.CuboidCfg(
-                size=(size, size, size),
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=color),
-            ),
-        },
-    )
-
-
-def _frame_marker_cfg(prim_path: str, axis_scale: float = 0.4):
-    from isaaclab.markers import FRAME_MARKER_CFG
-
-    cfg = FRAME_MARKER_CFG.replace(prim_path=prim_path)
-    cfg.markers["frame"].scale = (axis_scale, axis_scale, axis_scale)
-    return cfg
-
-
-# ---------------------------------------------------------------------------
 # Helpers.
 # ---------------------------------------------------------------------------
 
@@ -172,7 +120,23 @@ _PATH_BODY_POS_GOAL = "/Visuals/MultiTaskCommand/body_pos_goal"
 
 
 def markers_body_pos() -> list[tuple[str, object]]:
-    return [(_PATH_BODY_POS_GOAL, _cuboid_marker_cfg(_PATH_BODY_POS_GOAL, color=(1.0, 0.0, 0.0)))]
+    import isaaclab.sim as sim_utils
+    from isaaclab.markers import VisualizationMarkersCfg
+
+    return [
+        (
+            _PATH_BODY_POS_GOAL,
+            VisualizationMarkersCfg(
+                prim_path=_PATH_BODY_POS_GOAL,
+                markers={
+                    "cuboid": sim_utils.CuboidCfg(
+                        size=(0.25, 0.25, 0.25),
+                        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+                    ),
+                },
+            ),
+        )
+    ]
 
 
 def viz_body_pos(cmd: MultiTaskCommand, target_per_env: torch.Tensor, active: torch.Tensor) -> dict:
@@ -194,7 +158,11 @@ _PATH_BODY_QUAT_GOAL = "/Visuals/MultiTaskCommand/body_quat_goal"
 
 
 def markers_body_quat() -> list[tuple[str, object]]:
-    return [(_PATH_BODY_QUAT_GOAL, _frame_marker_cfg(_PATH_BODY_QUAT_GOAL))]
+    from isaaclab.markers import FRAME_MARKER_CFG
+
+    cfg = FRAME_MARKER_CFG.replace(prim_path=_PATH_BODY_QUAT_GOAL)
+    cfg.markers["frame"].scale = (0.4, 0.4, 0.4)
+    return [(_PATH_BODY_QUAT_GOAL, cfg)]
 
 
 def viz_body_quat(cmd: MultiTaskCommand, target_per_env: torch.Tensor, active: torch.Tensor) -> dict:
@@ -215,9 +183,38 @@ _PATH_BODY_LIN_VEL_CURRENT = "/Visuals/MultiTaskCommand/body_lin_vel_current"
 
 
 def markers_body_lin_vel() -> list[tuple[str, object]]:
+    import isaaclab.sim as sim_utils
+    from isaaclab.markers import VisualizationMarkersCfg
+    from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+
+    arrow_usd = f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd"
     return [
-        (_PATH_BODY_LIN_VEL_GOAL, _arrow_marker_cfg(_PATH_BODY_LIN_VEL_GOAL, color=(0.0, 1.0, 0.0))),
-        (_PATH_BODY_LIN_VEL_CURRENT, _arrow_marker_cfg(_PATH_BODY_LIN_VEL_CURRENT, color=(0.0, 0.0, 1.0))),
+        (
+            _PATH_BODY_LIN_VEL_GOAL,
+            VisualizationMarkersCfg(
+                prim_path=_PATH_BODY_LIN_VEL_GOAL,
+                markers={
+                    "arrow": sim_utils.UsdFileCfg(
+                        usd_path=arrow_usd,
+                        scale=(0.5, 0.5, 0.5),
+                        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+                    ),
+                },
+            ),
+        ),
+        (
+            _PATH_BODY_LIN_VEL_CURRENT,
+            VisualizationMarkersCfg(
+                prim_path=_PATH_BODY_LIN_VEL_CURRENT,
+                markers={
+                    "arrow": sim_utils.UsdFileCfg(
+                        usd_path=arrow_usd,
+                        scale=(0.5, 0.5, 0.5),
+                        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
+                    ),
+                },
+            ),
+        ),
     ]
 
 
@@ -250,9 +247,38 @@ _PATH_BODY_ANG_VEL_CURRENT = "/Visuals/MultiTaskCommand/body_ang_vel_current"
 
 
 def markers_body_ang_vel() -> list[tuple[str, object]]:
+    import isaaclab.sim as sim_utils
+    from isaaclab.markers import VisualizationMarkersCfg
+    from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+
+    arrow_usd = f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd"
     return [
-        (_PATH_BODY_ANG_VEL_GOAL, _arrow_marker_cfg(_PATH_BODY_ANG_VEL_GOAL, color=(0.0, 1.0, 0.0))),
-        (_PATH_BODY_ANG_VEL_CURRENT, _arrow_marker_cfg(_PATH_BODY_ANG_VEL_CURRENT, color=(0.0, 0.0, 1.0))),
+        (
+            _PATH_BODY_ANG_VEL_GOAL,
+            VisualizationMarkersCfg(
+                prim_path=_PATH_BODY_ANG_VEL_GOAL,
+                markers={
+                    "arrow": sim_utils.UsdFileCfg(
+                        usd_path=arrow_usd,
+                        scale=(0.5, 0.5, 0.5),
+                        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+                    ),
+                },
+            ),
+        ),
+        (
+            _PATH_BODY_ANG_VEL_CURRENT,
+            VisualizationMarkersCfg(
+                prim_path=_PATH_BODY_ANG_VEL_CURRENT,
+                markers={
+                    "arrow": sim_utils.UsdFileCfg(
+                        usd_path=arrow_usd,
+                        scale=(0.5, 0.5, 0.5),
+                        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
+                    ),
+                },
+            ),
+        ),
     ]
 
 
