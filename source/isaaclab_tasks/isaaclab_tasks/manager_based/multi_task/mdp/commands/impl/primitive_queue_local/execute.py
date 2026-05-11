@@ -37,19 +37,11 @@ _PRIMITIVE_KERNELS = (
 )
 
 
-def _launch_primitive_kernel(command: MultiTaskCommandWarp, plan: PrimitiveQueueLocalPlan, kernel, count: int) -> None:
-    wp.launch(
-        kernel,
-        dim=count,
-        inputs=[plan.queue, plan.spec, plan.state, plan.outputs],
-        device=str(command.device),
-    )
-
-
 def dispatch_primitive_queue_local_warp(command: MultiTaskCommandWarp, plan: PrimitiveQueueLocalPlan) -> None:
     """Run one branch-free launch per non-empty primitive schedule."""
     if plan.total_work == 0:
         return
+    device = str(command.device)
     for kernel, count in zip(_PRIMITIVE_KERNELS, plan.schedule_counts_py):
         if count != 0:
-            _launch_primitive_kernel(command, plan, kernel, count)
+            wp.launch(kernel, dim=count, inputs=[plan.queue, plan.spec, plan.state, plan.outputs], device=device)

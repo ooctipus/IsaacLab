@@ -13,14 +13,17 @@ import torch
 import warp as wp
 
 from ..compose_select import use_parallel_compose
-from ..kernels_wp import compute_dense_graph_producers, dispatch_graph_dense_compose_fused
 from .bindings import (
     PrimitiveGraphLocalPlan,
     build_primitive_graph_local_plan,
     refresh_primitive_graph_local_plan,
 )
 from .compose import compose_primitive_graph_local_warp
-from .execute import dispatch_primitive_graph_local_warp
+from .execute import (
+    dispatch_primitive_graph_local_warp,
+    launch_dense_consumer_fused,
+    launch_dense_producers,
+)
 from .read import fill_unified_buffer_warp
 from .rotation import rotate_canonical_slots_to_body_frame_warp
 
@@ -63,87 +66,14 @@ class PrimitiveGraphLocalBackend:
     def _dispatch_uncaptured(self, command: MultiTaskCommandWarp) -> None:
         """Launch the full per-step pipeline eagerly; used for warmup and graph capture."""
         fill_unified_buffer_warp(command, self.plan)
-
         if self._use_fused_compose and self.plan.total_consumers > 0:
-            self._launch_dense_graph_producers(command)
-            self._launch_dense_graph_consumer_fused(command)
+            launch_dense_producers(command, self.plan)
+            launch_dense_consumer_fused(command, self.plan)
             rotate_canonical_slots_to_body_frame_warp(command, self.plan)
         else:
             dispatch_primitive_graph_local_warp(command, self.plan)
             rotate_canonical_slots_to_body_frame_warp(command, self.plan)
             compose_primitive_graph_local_warp(command, self.plan)
-
-    def _launch_dense_graph_producers(self, command: MultiTaskCommandWarp) -> None:
-        plan = self.plan
-        total_signature_count = (
-            plan.vec3_signature_count
-            + plan.scalar_signature_count
-            + plan.quat_signature_count
-            + plan.scalar_sum_signature_count
-            + plan.contact_signature_count
-        )
-        if total_signature_count == 0:
-            return
-        wp.launch(
-            compute_dense_graph_producers,
-            dim=(command.num_envs, total_signature_count),
-            inputs=[
-                plan.vec3_nodes.nodes_view,
-                plan.scalar_nodes.nodes_view,
-                plan.quat_nodes.nodes_view,
-                plan.scalar_sum_nodes.nodes_view,
-                plan.contact_nodes.nodes_view,
-                plan.spec,
-                plan.state,
-                plan.direct_vec3_wp,
-                plan.direct_scalar_wp,
-                plan.direct_quat_wp,
-                plan.scalar_sum_wp,
-                plan.contact_mask_wp,
-                plan.vec3_signature_count,
-                plan.scalar_signature_count,
-                plan.quat_signature_count,
-                plan.scalar_sum_signature_count,
-                plan.contact_signature_count,
-            ],
-            device=str(command.device),
-        )
-
-    def _launch_dense_graph_consumer_fused(self, command: MultiTaskCommandWarp) -> None:
-        plan = self.plan
-        wp.launch_tiled(
-            dispatch_graph_dense_compose_fused,
-            dim=[command.num_envs],
-            inputs=[
-                plan.env_slots,
-                plan.subtask_schedule_ids_wp,
-                plan.vec3_nodes.nodes_view,
-                plan.scalar_nodes.nodes_view,
-                plan.quat_nodes.nodes_view,
-                plan.scalar_sum_nodes.nodes_view,
-                plan.contact_nodes.nodes_view,
-                plan.spec,
-                plan.state,
-                plan.outputs,
-                plan.composer_state,
-                plan.direct_vec3_wp,
-                plan.direct_scalar_wp,
-                plan.direct_quat_wp,
-                plan.scalar_sum_wp,
-                plan.contact_mask_wp,
-                plan.episode_length_buf_wp,
-                plan.effective_max_episode_length_wp,
-                0.5,
-                float(command.cfg.quality_easing),
-                plan.vec3_signature_count,
-                plan.scalar_signature_count,
-                plan.quat_signature_count,
-                plan.scalar_sum_signature_count,
-                plan.contact_signature_count,
-            ],
-            block_dim=max(command.k_max, 32),
-            device=str(command.device),
-        )
 
     def compose(self, command: MultiTaskCommandWarp) -> None:
         """No-op — compose was captured as part of the dispatch graph."""
