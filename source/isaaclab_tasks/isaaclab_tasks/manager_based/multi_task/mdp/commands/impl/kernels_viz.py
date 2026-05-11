@@ -69,10 +69,34 @@ _PATH_BODY_LIN_VEL_CURRENT = "/Visuals/MultiTaskCommand/body_lin_vel_current"
 _PATH_BODY_ANG_VEL_GOAL = "/Visuals/MultiTaskCommand/body_ang_vel_goal"
 _PATH_BODY_ANG_VEL_CURRENT = "/Visuals/MultiTaskCommand/body_ang_vel_current"
 
+# Cfg templates. Each variant differs only in prim_path; use .replace() at the
+# call site. Goal markers are green, current markers are blue — colors baked
+# into the template so the variation is purely path.
 _ARROW_USD = f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd"
+
+_ARROW_TEMPLATE_GOAL = VisualizationMarkersCfg(
+    prim_path="",  # set per variant via .replace()
+    markers={
+        "arrow": sim_utils.UsdFileCfg(
+            usd_path=_ARROW_USD,
+            scale=(0.5, 0.5, 0.5),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+        ),
+    },
+)
+_ARROW_TEMPLATE_CURRENT = VisualizationMarkersCfg(
+    prim_path="",
+    markers={
+        "arrow": sim_utils.UsdFileCfg(
+            usd_path=_ARROW_USD,
+            scale=(0.5, 0.5, 0.5),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
+        ),
+    },
+)
+
 _BODY_QUAT_GOAL_CFG = FRAME_MARKER_CFG.replace(prim_path=_PATH_BODY_QUAT_GOAL)
 _BODY_QUAT_GOAL_CFG.markers["frame"].scale = (0.4, 0.4, 0.4)
-
 
 _MARKERS_BODY_POS: list[tuple[str, VisualizationMarkersCfg]] = [
     (
@@ -92,60 +116,12 @@ _MARKERS_BODY_QUAT: list[tuple[str, VisualizationMarkersCfg]] = [
     (_PATH_BODY_QUAT_GOAL, _BODY_QUAT_GOAL_CFG),
 ]
 _MARKERS_BODY_LIN_VEL: list[tuple[str, VisualizationMarkersCfg]] = [
-    (
-        _PATH_BODY_LIN_VEL_GOAL,
-        VisualizationMarkersCfg(
-            prim_path=_PATH_BODY_LIN_VEL_GOAL,
-            markers={
-                "arrow": sim_utils.UsdFileCfg(
-                    usd_path=_ARROW_USD,
-                    scale=(0.5, 0.5, 0.5),
-                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
-                ),
-            },
-        ),
-    ),
-    (
-        _PATH_BODY_LIN_VEL_CURRENT,
-        VisualizationMarkersCfg(
-            prim_path=_PATH_BODY_LIN_VEL_CURRENT,
-            markers={
-                "arrow": sim_utils.UsdFileCfg(
-                    usd_path=_ARROW_USD,
-                    scale=(0.5, 0.5, 0.5),
-                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
-                ),
-            },
-        ),
-    ),
+    (_PATH_BODY_LIN_VEL_GOAL, _ARROW_TEMPLATE_GOAL.replace(prim_path=_PATH_BODY_LIN_VEL_GOAL)),
+    (_PATH_BODY_LIN_VEL_CURRENT, _ARROW_TEMPLATE_CURRENT.replace(prim_path=_PATH_BODY_LIN_VEL_CURRENT)),
 ]
 _MARKERS_BODY_ANG_VEL: list[tuple[str, VisualizationMarkersCfg]] = [
-    (
-        _PATH_BODY_ANG_VEL_GOAL,
-        VisualizationMarkersCfg(
-            prim_path=_PATH_BODY_ANG_VEL_GOAL,
-            markers={
-                "arrow": sim_utils.UsdFileCfg(
-                    usd_path=_ARROW_USD,
-                    scale=(0.5, 0.5, 0.5),
-                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
-                ),
-            },
-        ),
-    ),
-    (
-        _PATH_BODY_ANG_VEL_CURRENT,
-        VisualizationMarkersCfg(
-            prim_path=_PATH_BODY_ANG_VEL_CURRENT,
-            markers={
-                "arrow": sim_utils.UsdFileCfg(
-                    usd_path=_ARROW_USD,
-                    scale=(0.5, 0.5, 0.5),
-                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
-                ),
-            },
-        ),
-    ),
+    (_PATH_BODY_ANG_VEL_GOAL, _ARROW_TEMPLATE_GOAL.replace(prim_path=_PATH_BODY_ANG_VEL_GOAL)),
+    (_PATH_BODY_ANG_VEL_CURRENT, _ARROW_TEMPLATE_CURRENT.replace(prim_path=_PATH_BODY_ANG_VEL_CURRENT)),
 ]
 
 
