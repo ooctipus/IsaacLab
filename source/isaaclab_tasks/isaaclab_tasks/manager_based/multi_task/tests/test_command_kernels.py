@@ -261,20 +261,32 @@ def _make_stub_env(articulation, env_origins: torch.Tensor):
     return env
 
 
-def _make_articulation_with_body_pos(body_pos: torch.Tensor):
-    """Wrap a ``[N, num_bodies, 3]`` torch tensor as a warp-backed articulation stub."""
+def _proxy_vec3(t: torch.Tensor):
+    """Wrap a ``[..., 3]`` contiguous torch tensor as a ProxyArray of ``wp.vec3``."""
     import warp as wp
 
+    from isaaclab.utils.warp import ProxyArray
+
+    return ProxyArray(
+        wp.array(
+            ptr=t.data_ptr(),
+            dtype=wp.vec3,
+            shape=tuple(t.shape[:-1]),
+            device=str(t.device),
+        )
+    )
+
+
+def _make_articulation_with_body_pos(body_pos: torch.Tensor):
+    """Wrap a ``[N, num_bodies, 3]`` torch tensor as a warp-backed articulation stub."""
     data = type("_D", (), {})()
-    data.body_pos_w = wp.from_torch(body_pos, dtype=wp.vec3)
+    data.body_pos_w = _proxy_vec3(body_pos)
     return type("_A", (), {"data": data})()
 
 
 def _make_articulation_with_body_lin_vel(lin_vel: torch.Tensor):
-    import warp as wp
-
     data = type("_D", (), {})()
-    data.body_lin_vel_w = wp.from_torch(lin_vel, dtype=wp.vec3)
+    data.body_lin_vel_w = _proxy_vec3(lin_vel)
     return type("_A", (), {"data": data})()
 
 

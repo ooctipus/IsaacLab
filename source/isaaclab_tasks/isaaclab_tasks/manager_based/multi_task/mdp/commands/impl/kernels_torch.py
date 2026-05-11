@@ -21,7 +21,6 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import torch
-import warp as wp
 
 from isaaclab.utils.math import axis_angle_from_quat, quat_from_euler_xyz, quat_inv, quat_mul
 
@@ -150,12 +149,12 @@ DELTA_KERNELS = (delta_geometric, delta_quaternion)
 
 def _read_joint_pos(env: ManagerBasedRLEnv, asset_name: str) -> torch.Tensor:
     articulation: Articulation = env.scene[asset_name]
-    return wp.to_torch(articulation.data.joint_pos)
+    return articulation.data.joint_pos.torch
 
 
 def _read_joint_vel(env: ManagerBasedRLEnv, asset_name: str) -> torch.Tensor:
     articulation: Articulation = env.scene[asset_name]
-    return wp.to_torch(articulation.data.joint_vel)
+    return articulation.data.joint_vel.torch
 
 
 def _read_body_pos_w(env: ManagerBasedRLEnv, asset_name: str) -> torch.Tensor:
@@ -168,27 +167,27 @@ def _read_body_pos_w(env: ManagerBasedRLEnv, asset_name: str) -> torch.Tensor:
     capture and for keeping the "reader = pure read" contract clean.
     """
     articulation: Articulation = env.scene[asset_name]
-    return wp.to_torch(articulation.data.body_pos_w)
+    return articulation.data.body_pos_w.torch
 
 
 def _read_body_quat_w(env: ManagerBasedRLEnv, asset_name: str) -> torch.Tensor:
     articulation: Articulation = env.scene[asset_name]
-    return wp.to_torch(articulation.data.body_quat_w)
+    return articulation.data.body_quat_w.torch
 
 
 def _read_body_lin_vel_w(env: ManagerBasedRLEnv, asset_name: str) -> torch.Tensor:
     articulation: Articulation = env.scene[asset_name]
-    return wp.to_torch(articulation.data.body_lin_vel_w)
+    return articulation.data.body_lin_vel_w.torch
 
 
 def _read_body_ang_vel_w(env: ManagerBasedRLEnv, asset_name: str) -> torch.Tensor:
     articulation: Articulation = env.scene[asset_name]
-    return wp.to_torch(articulation.data.body_ang_vel_w)
+    return articulation.data.body_ang_vel_w.torch
 
 
 def _read_contact_net_forces_w(env: ManagerBasedRLEnv, asset_name: str) -> torch.Tensor:
     sensor = env.scene.sensors[asset_name]
-    return wp.to_torch(sensor.data.net_forces_w)
+    return sensor.data.net_forces_w.torch
 
 
 def _read_joint_mech_power_abs(env: ManagerBasedRLEnv, asset_name: str) -> torch.Tensor:
@@ -201,8 +200,8 @@ def _read_joint_mech_power_abs(env: ManagerBasedRLEnv, asset_name: str) -> torch
     as a stride view.
     """
     articulation: Articulation = env.scene[asset_name]
-    tau = wp.to_torch(articulation.data.applied_torque)
-    qd = wp.to_torch(articulation.data.joint_vel)
+    tau = articulation.data.applied_torque.torch
+    qd = articulation.data.joint_vel.torch
     power = (tau * qd).abs()
     return torch.where(torch.isfinite(power), power, torch.zeros_like(power))
 
