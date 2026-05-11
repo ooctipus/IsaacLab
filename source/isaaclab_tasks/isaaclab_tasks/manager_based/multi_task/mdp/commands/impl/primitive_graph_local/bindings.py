@@ -489,15 +489,6 @@ class PrimitiveGraphLocalPlan:
     direct_vec3_wp: wp.array2d(dtype=float)
     direct_scalar_wp: wp.array(dtype=float)
     direct_quat_wp: wp.array2d(dtype=float)
-    # Backend-owned local-output buffers (was: command._outputs.local_*).
-    # Torch tensors kept on the plan so the wp.from_torch views stay alive.
-    local_delta_torch: torch.Tensor
-    local_error_torch: torch.Tensor
-    local_activation_torch: torch.Tensor
-    slot_local_index_torch: torch.Tensor
-    local_delta_wp: wp.array2d(dtype=float)
-    local_error_wp: wp.array(dtype=float)
-    local_activation_wp: wp.array(dtype=float)
     scalar_sum_wp: wp.array(dtype=float)
     contact_mask_wp: wp.array2d(dtype=float)
     rotations: tuple[RotationBinding, ...]
@@ -588,18 +579,11 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
     scalar_sum = torch.empty(max_consumers, device=command.device, dtype=command._unified_buffer.dtype)
     contact_mask = torch.zeros((max_consumers, 4), device=command.device, dtype=command._unified_buffer.dtype)
 
-    # Backend-owned local outputs.
-    local_delta_torch = torch.zeros((max_consumers, 4), device=command.device)
-    local_error_torch = torch.zeros(max_consumers, device=command.device)
-    local_activation_torch = torch.zeros(max_consumers, device=command.device)
-    slot_local_index_torch = torch.zeros((command.num_envs, command.k_max), device=command.device, dtype=torch.int32)
-
     consumer_view = PrimitiveLocalQueue()
     consumer_view.env_ids = wp.from_torch(consumer_env_ids_i32)
     consumer_view.slot_ids = wp.from_torch(consumer_slot_ids_i32)
     consumer_view.subtask_ids = wp.from_torch(consumer_subtask_ids_i32)
     consumer_view.target_offsets = wp.from_torch(consumer_target_offsets_i32)
-    consumer_view.slot_local_index = wp.from_torch(slot_local_index_torch)
     consumer_view.schedule_offsets = wp.from_torch(schedule_offsets_i32)
     consumer_view.schedule_counts = wp.from_torch(schedule_counts_i32)
     consumer_view.count = wp.from_torch(consumer_count_i32)
@@ -664,13 +648,6 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
         direct_vec3_wp=wp.from_torch(direct_vec3),
         direct_scalar_wp=wp.from_torch(direct_scalar),
         direct_quat_wp=wp.from_torch(direct_quat),
-        local_delta_torch=local_delta_torch,
-        local_error_torch=local_error_torch,
-        local_activation_torch=local_activation_torch,
-        slot_local_index_torch=slot_local_index_torch,
-        local_delta_wp=wp.from_torch(local_delta_torch),
-        local_error_wp=wp.from_torch(local_error_torch),
-        local_activation_wp=wp.from_torch(local_activation_torch),
         scalar_sum_wp=wp.from_torch(scalar_sum),
         contact_mask_wp=wp.from_torch(contact_mask),
         rotations=_build_rotation_bindings(command),
@@ -697,7 +674,6 @@ def refresh_primitive_graph_local_plan(command: MultiTaskCommandWarp, plan: Prim
     _reset_producer_node_table(plan.quat_nodes)
     _reset_producer_node_table(plan.scalar_sum_nodes)
     _reset_producer_node_table(plan.contact_nodes)
-    plan.slot_local_index_torch.zero_()
 
     cursor = 0
     slot_idx = torch.arange(command.k_max, device=command.device, dtype=torch.int32).unsqueeze(0)
@@ -719,7 +695,6 @@ def refresh_primitive_graph_local_plan(command: MultiTaskCommandWarp, plan: Prim
     env_ids_i32 = env_ids.to(torch.int32)
     slot_ids_i32 = slot_ids.to(torch.int32)
     subtask_ids_i32 = subtask_ids.to(torch.int32)
-    local_indices = torch.arange(env_ids.numel(), device=command.device, dtype=torch.int32)
 
     vec3_mask = _build_schedule_mask(state_kernel_ids, SCHEDULE_DIRECT_VEC3_DELTA)
     scalar_mask = _build_schedule_mask(state_kernel_ids, SCHEDULE_DIRECT_SCALAR_DELTA)
@@ -767,7 +742,6 @@ def refresh_primitive_graph_local_plan(command: MultiTaskCommandWarp, plan: Prim
             _set_grouped_consumers(plan.scalar_sum_nodes, cursor, stop, node_ids)
         elif schedule_id in _CONTACT_SCHEDULES:
             plan.contact_nodes.consumer_node_ids_i32[cursor:stop] = contact_node_by_item[group_mask]
-        plan.slot_local_index_torch[env_ids[group_mask], slot_ids[group_mask]] = local_indices[cursor:stop]
         cursor = stop
 
     if cursor != int(env_ids.numel()):

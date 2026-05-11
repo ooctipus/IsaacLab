@@ -163,8 +163,6 @@ class PrimitiveLocalQueue:
     """``[max_work]`` — subtask id for each queued work item."""
     target_offsets: wp.array(dtype=int)
     """``[max_work]`` — target slice offset for each queued work item."""
-    slot_local_index: wp.array2d(dtype=int)
-    """``[N, k_max]`` — local output index for each active env slot."""
     schedule_offsets: wp.array(dtype=int)
     """``[num_schedules]`` — first local output row for each primitive schedule."""
     schedule_counts: wp.array(dtype=int)
@@ -953,15 +951,11 @@ def _dispatch_packed_pipeline_item(
 
 @wp.func
 def _write_primitive_local_outputs(
-    local_index: int,
     env: int,
     slot: int,
     sid: int,
     spec: SubtaskSpec,
     outputs: Outputs,
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
     d0: float,
     d1: float,
     d2: float,
@@ -987,7 +981,6 @@ def _write_primitive_local_outputs(
 
 @wp.func
 def _dispatch_direct_vec3_local(
-    local_index: int,
     env: int,
     slot: int,
     sid: int,
@@ -995,24 +988,17 @@ def _dispatch_direct_vec3_local(
     spec: SubtaskSpec,
     state: StateAccess,
     outputs: Outputs,
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
 ):
     gbase = spec.gather_offset[sid]
     x3 = _project_xyz(state, spec, env, gbase)
     t3 = _read_target_xyz(state, env, tgt_off)
     d3v = t3 - x3
     _write_primitive_local_outputs(
-        local_index,
         env,
         slot,
         sid,
         spec,
         outputs,
-        local_delta,
-        local_error,
-        local_activation,
         d3v[0],
         d3v[1],
         d3v[2],
@@ -1023,7 +1009,6 @@ def _dispatch_direct_vec3_local(
 
 @wp.func
 def _dispatch_direct_scalar_local(
-    local_index: int,
     env: int,
     slot: int,
     sid: int,
@@ -1031,21 +1016,14 @@ def _dispatch_direct_scalar_local(
     spec: SubtaskSpec,
     state: StateAccess,
     outputs: Outputs,
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
 ):
     d0 = state.targets_flat[env, tgt_off] - _project_scalar(state, spec, env, spec.gather_offset[sid])
     _write_primitive_local_outputs(
-        local_index,
         env,
         slot,
         sid,
         spec,
         outputs,
-        local_delta,
-        local_error,
-        local_activation,
         d0,
         0.0,
         0.0,
@@ -1056,7 +1034,6 @@ def _dispatch_direct_scalar_local(
 
 @wp.func
 def _dispatch_direct_quat_local(
-    local_index: int,
     env: int,
     slot: int,
     sid: int,
@@ -1064,22 +1041,15 @@ def _dispatch_direct_quat_local(
     spec: SubtaskSpec,
     state: StateAccess,
     outputs: Outputs,
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
 ):
     gbase = spec.gather_offset[sid]
     dq = _delta_quaternion(_project_quat_xyzw(state, spec, env, gbase), _read_target_quat_xyzw(state, env, tgt_off))
     _write_primitive_local_outputs(
-        local_index,
         env,
         slot,
         sid,
         spec,
         outputs,
-        local_delta,
-        local_error,
-        local_activation,
         dq[0],
         dq[1],
         dq[2],
@@ -1090,7 +1060,6 @@ def _dispatch_direct_quat_local(
 
 @wp.func
 def _dispatch_vec3_threshold_vector_local(
-    local_index: int,
     env: int,
     slot: int,
     sid: int,
@@ -1098,9 +1067,6 @@ def _dispatch_vec3_threshold_vector_local(
     spec: SubtaskSpec,
     state: StateAccess,
     outputs: Outputs,
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
 ):
     stride = spec.state_stride[sid]
     xcb = _state_body_contact(state, spec, env, spec.gather_offset[sid], spec.gather_count[sid])
@@ -1119,15 +1085,11 @@ def _dispatch_vec3_threshold_vector_local(
     d2 = tc2 - xcb[2]
     d3 = tc3 - xcb[3]
     _write_primitive_local_outputs(
-        local_index,
         env,
         slot,
         sid,
         spec,
         outputs,
-        local_delta,
-        local_error,
-        local_activation,
         d0,
         d1,
         d2,
@@ -1218,7 +1180,6 @@ def compute_dense_graph_producers(
 
 @wp.func
 def _dispatch_vec3_threshold_sum_local(
-    local_index: int,
     env: int,
     slot: int,
     sid: int,
@@ -1226,23 +1187,16 @@ def _dispatch_vec3_threshold_sum_local(
     spec: SubtaskSpec,
     state: StateAccess,
     outputs: Outputs,
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
 ):
     d0 = state.targets_flat[env, tgt_off] - _state_body_contact_count(
         state, spec, env, spec.gather_offset[sid], spec.gather_count[sid]
     )
     _write_primitive_local_outputs(
-        local_index,
         env,
         slot,
         sid,
         spec,
         outputs,
-        local_delta,
-        local_error,
-        local_activation,
         d0,
         0.0,
         0.0,
@@ -1253,7 +1207,6 @@ def _dispatch_vec3_threshold_sum_local(
 
 @wp.func
 def _dispatch_contact_vector_from_mask_local(
-    local_index: int,
     env: int,
     slot: int,
     sid: int,
@@ -1263,9 +1216,6 @@ def _dispatch_contact_vector_from_mask_local(
     state: StateAccess,
     outputs: Outputs,
     contact_mask: wp.array2d(dtype=float),
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
 ):
     stride = spec.state_stride[sid]
     xcb = _contact_mask_vec4(contact_mask, node_id)
@@ -1284,15 +1234,11 @@ def _dispatch_contact_vector_from_mask_local(
     d2 = tc2 - xcb[2]
     d3 = tc3 - xcb[3]
     _write_primitive_local_outputs(
-        local_index,
         env,
         slot,
         sid,
         spec,
         outputs,
-        local_delta,
-        local_error,
-        local_activation,
         d0,
         d1,
         d2,
@@ -1303,7 +1249,6 @@ def _dispatch_contact_vector_from_mask_local(
 
 @wp.func
 def _dispatch_contact_sum_from_mask_local(
-    local_index: int,
     env: int,
     slot: int,
     sid: int,
@@ -1313,9 +1258,6 @@ def _dispatch_contact_sum_from_mask_local(
     state: StateAccess,
     outputs: Outputs,
     contact_mask: wp.array2d(dtype=float),
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
 ):
     count = spec.gather_count[sid] / 3
     xcb = _contact_mask_vec4(contact_mask, node_id)
@@ -1324,15 +1266,11 @@ def _dispatch_contact_sum_from_mask_local(
         x_cnt = x_cnt + xcb[i]
     d0 = state.targets_flat[env, tgt_off] - x_cnt
     _write_primitive_local_outputs(
-        local_index,
         env,
         slot,
         sid,
         spec,
         outputs,
-        local_delta,
-        local_error,
-        local_activation,
         d0,
         0.0,
         0.0,
@@ -1343,7 +1281,6 @@ def _dispatch_contact_sum_from_mask_local(
 
 @wp.func
 def _dispatch_contact_pair_diff_from_mask_local(
-    local_index: int,
     env: int,
     slot: int,
     sid: int,
@@ -1353,9 +1290,6 @@ def _dispatch_contact_pair_diff_from_mask_local(
     state: StateAccess,
     outputs: Outputs,
     contact_mask: wp.array2d(dtype=float),
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
 ):
     count = spec.gather_count[sid] / 3
     half = count / 2
@@ -1369,15 +1303,11 @@ def _dispatch_contact_pair_diff_from_mask_local(
             cnt_b = cnt_b + xcb[i]
     d0 = state.targets_flat[env, tgt_off] - (cnt_a - cnt_b)
     _write_primitive_local_outputs(
-        local_index,
         env,
         slot,
         sid,
         spec,
         outputs,
-        local_delta,
-        local_error,
-        local_activation,
         d0,
         0.0,
         0.0,
@@ -1388,7 +1318,6 @@ def _dispatch_contact_pair_diff_from_mask_local(
 
 @wp.func
 def _dispatch_vec3_threshold_pair_diff_local(
-    local_index: int,
     env: int,
     slot: int,
     sid: int,
@@ -1396,23 +1325,16 @@ def _dispatch_vec3_threshold_pair_diff_local(
     spec: SubtaskSpec,
     state: StateAccess,
     outputs: Outputs,
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
 ):
     d0 = state.targets_flat[env, tgt_off] - _state_body_contact_count_diff(
         state, spec, env, spec.gather_offset[sid], spec.gather_count[sid]
     )
     _write_primitive_local_outputs(
-        local_index,
         env,
         slot,
         sid,
         spec,
         outputs,
-        local_delta,
-        local_error,
-        local_activation,
         d0,
         0.0,
         0.0,
@@ -1423,7 +1345,6 @@ def _dispatch_vec3_threshold_pair_diff_local(
 
 @wp.func
 def _dispatch_scalar_sum_local(
-    local_index: int,
     env: int,
     slot: int,
     sid: int,
@@ -1431,23 +1352,16 @@ def _dispatch_scalar_sum_local(
     spec: SubtaskSpec,
     state: StateAccess,
     outputs: Outputs,
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
 ):
     d0 = state.targets_flat[env, tgt_off] - _state_joint_mech_power(
         state, spec, env, spec.gather_offset[sid], spec.gather_count[sid]
     )
     _write_primitive_local_outputs(
-        local_index,
         env,
         slot,
         sid,
         spec,
         outputs,
-        local_delta,
-        local_error,
-        local_activation,
         d0,
         0.0,
         0.0,
@@ -1462,16 +1376,12 @@ def dispatch_primitive_local_direct_vec3(
     spec: SubtaskSpec,
     state: StateAccess,
     outputs: Outputs,
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
 ):
     q = wp.tid()
     if q >= queue.schedule_counts[PIPELINE_DIRECT_VEC3_DELTA]:
         return
     index = queue.schedule_offsets[PIPELINE_DIRECT_VEC3_DELTA] + q
     _dispatch_direct_vec3_local(
-        index,
         queue.env_ids[index],
         queue.slot_ids[index],
         queue.subtask_ids[index],
@@ -1479,9 +1389,6 @@ def dispatch_primitive_local_direct_vec3(
         spec,
         state,
         outputs,
-        local_delta,
-        local_error,
-        local_activation,
     )
 
 
@@ -1491,16 +1398,12 @@ def dispatch_primitive_local_direct_scalar(
     spec: SubtaskSpec,
     state: StateAccess,
     outputs: Outputs,
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
 ):
     q = wp.tid()
     if q >= queue.schedule_counts[PIPELINE_DIRECT_SCALAR_DELTA]:
         return
     index = queue.schedule_offsets[PIPELINE_DIRECT_SCALAR_DELTA] + q
     _dispatch_direct_scalar_local(
-        index,
         queue.env_ids[index],
         queue.slot_ids[index],
         queue.subtask_ids[index],
@@ -1508,9 +1411,6 @@ def dispatch_primitive_local_direct_scalar(
         spec,
         state,
         outputs,
-        local_delta,
-        local_error,
-        local_activation,
     )
 
 
@@ -1520,16 +1420,12 @@ def dispatch_primitive_local_direct_quat(
     spec: SubtaskSpec,
     state: StateAccess,
     outputs: Outputs,
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
 ):
     q = wp.tid()
     if q >= queue.schedule_counts[PIPELINE_DIRECT_QUAT_DELTA]:
         return
     index = queue.schedule_offsets[PIPELINE_DIRECT_QUAT_DELTA] + q
     _dispatch_direct_quat_local(
-        index,
         queue.env_ids[index],
         queue.slot_ids[index],
         queue.subtask_ids[index],
@@ -1537,9 +1433,6 @@ def dispatch_primitive_local_direct_quat(
         spec,
         state,
         outputs,
-        local_delta,
-        local_error,
-        local_activation,
     )
 
 
@@ -1549,16 +1442,12 @@ def dispatch_primitive_local_vec3_threshold_vector(
     spec: SubtaskSpec,
     state: StateAccess,
     outputs: Outputs,
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
 ):
     q = wp.tid()
     if q >= queue.schedule_counts[PIPELINE_VEC3_THRESHOLD_VECTOR_DELTA]:
         return
     index = queue.schedule_offsets[PIPELINE_VEC3_THRESHOLD_VECTOR_DELTA] + q
     _dispatch_vec3_threshold_vector_local(
-        index,
         queue.env_ids[index],
         queue.slot_ids[index],
         queue.subtask_ids[index],
@@ -1566,9 +1455,6 @@ def dispatch_primitive_local_vec3_threshold_vector(
         spec,
         state,
         outputs,
-        local_delta,
-        local_error,
-        local_activation,
     )
 
 
@@ -1578,16 +1464,12 @@ def dispatch_primitive_local_vec3_threshold_sum(
     spec: SubtaskSpec,
     state: StateAccess,
     outputs: Outputs,
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
 ):
     q = wp.tid()
     if q >= queue.schedule_counts[PIPELINE_VEC3_THRESHOLD_SUM_DELTA]:
         return
     index = queue.schedule_offsets[PIPELINE_VEC3_THRESHOLD_SUM_DELTA] + q
     _dispatch_vec3_threshold_sum_local(
-        index,
         queue.env_ids[index],
         queue.slot_ids[index],
         queue.subtask_ids[index],
@@ -1595,9 +1477,6 @@ def dispatch_primitive_local_vec3_threshold_sum(
         spec,
         state,
         outputs,
-        local_delta,
-        local_error,
-        local_activation,
     )
 
 
@@ -1607,16 +1486,12 @@ def dispatch_primitive_local_vec3_threshold_pair_diff(
     spec: SubtaskSpec,
     state: StateAccess,
     outputs: Outputs,
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
 ):
     q = wp.tid()
     if q >= queue.schedule_counts[PIPELINE_VEC3_THRESHOLD_PAIR_DIFF_DELTA]:
         return
     index = queue.schedule_offsets[PIPELINE_VEC3_THRESHOLD_PAIR_DIFF_DELTA] + q
     _dispatch_vec3_threshold_pair_diff_local(
-        index,
         queue.env_ids[index],
         queue.slot_ids[index],
         queue.subtask_ids[index],
@@ -1624,9 +1499,6 @@ def dispatch_primitive_local_vec3_threshold_pair_diff(
         spec,
         state,
         outputs,
-        local_delta,
-        local_error,
-        local_activation,
     )
 
 
@@ -1636,16 +1508,12 @@ def dispatch_primitive_local_scalar_sum(
     spec: SubtaskSpec,
     state: StateAccess,
     outputs: Outputs,
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
 ):
     q = wp.tid()
     if q >= queue.schedule_counts[PIPELINE_SCALAR_SUM_DELTA]:
         return
     index = queue.schedule_offsets[PIPELINE_SCALAR_SUM_DELTA] + q
     _dispatch_scalar_sum_local(
-        index,
         queue.env_ids[index],
         queue.slot_ids[index],
         queue.subtask_ids[index],
@@ -1653,9 +1521,6 @@ def dispatch_primitive_local_scalar_sum(
         spec,
         state,
         outputs,
-        local_delta,
-        local_error,
-        local_activation,
     )
 
 
@@ -1676,9 +1541,6 @@ def dispatch_graph_dense(
     direct_quat: wp.array2d(dtype=float),
     scalar_sum: wp.array(dtype=float),
     contact_mask: wp.array2d(dtype=float),
-    local_delta: wp.array2d(dtype=float),
-    local_error: wp.array(dtype=float),
-    local_activation: wp.array(dtype=float),
     vec3_signature_count: int,
     scalar_signature_count: int,
     quat_signature_count: int,
@@ -1693,7 +1555,6 @@ def dispatch_graph_dense(
     sid = env_slots.subtask_ids[env, slot]
     tgt_off = env_slots.slot_offsets[env, slot]
     pipeline_id = subtask_schedule_ids[sid]
-    local_index = env
 
     if pipeline_id == PIPELINE_DIRECT_VEC3_DELTA:
         signature = vec3_nodes.subtask_signature[sid]
@@ -1701,15 +1562,11 @@ def dispatch_graph_dense(
         x3 = wp.vec3(direct_vec3[node_id, 0], direct_vec3[node_id, 1], direct_vec3[node_id, 2])
         d3v = _read_target_xyz(state, env, tgt_off) - x3
         _write_primitive_local_outputs(
-            local_index,
             env,
             slot,
             sid,
             spec,
             outputs,
-            local_delta,
-            local_error,
-            local_activation,
             d3v[0],
             d3v[1],
             d3v[2],
@@ -1721,15 +1578,11 @@ def dispatch_graph_dense(
         node_id = env * scalar_signature_count + signature
         d0 = state.targets_flat[env, tgt_off] - direct_scalar[node_id]
         _write_primitive_local_outputs(
-            local_index,
             env,
             slot,
             sid,
             spec,
             outputs,
-            local_delta,
-            local_error,
-            local_activation,
             d0,
             0.0,
             0.0,
@@ -1747,15 +1600,11 @@ def dispatch_graph_dense(
         )
         dq = _delta_quaternion(q_current, _read_target_quat_xyzw(state, env, tgt_off))
         _write_primitive_local_outputs(
-            local_index,
             env,
             slot,
             sid,
             spec,
             outputs,
-            local_delta,
-            local_error,
-            local_activation,
             dq[0],
             dq[1],
             dq[2],
@@ -1765,7 +1614,6 @@ def dispatch_graph_dense(
     elif pipeline_id == PIPELINE_VEC3_THRESHOLD_VECTOR_DELTA:
         signature = contact_nodes.subtask_signature[sid]
         _dispatch_contact_vector_from_mask_local(
-            local_index,
             env,
             slot,
             sid,
@@ -1775,14 +1623,10 @@ def dispatch_graph_dense(
             state,
             outputs,
             contact_mask,
-            local_delta,
-            local_error,
-            local_activation,
         )
     elif pipeline_id == PIPELINE_VEC3_THRESHOLD_SUM_DELTA:
         signature = contact_nodes.subtask_signature[sid]
         _dispatch_contact_sum_from_mask_local(
-            local_index,
             env,
             slot,
             sid,
@@ -1792,14 +1636,10 @@ def dispatch_graph_dense(
             state,
             outputs,
             contact_mask,
-            local_delta,
-            local_error,
-            local_activation,
         )
     elif pipeline_id == PIPELINE_VEC3_THRESHOLD_PAIR_DIFF_DELTA:
         signature = contact_nodes.subtask_signature[sid]
         _dispatch_contact_pair_diff_from_mask_local(
-            local_index,
             env,
             slot,
             sid,
@@ -1809,24 +1649,17 @@ def dispatch_graph_dense(
             state,
             outputs,
             contact_mask,
-            local_delta,
-            local_error,
-            local_activation,
         )
     elif pipeline_id == PIPELINE_SCALAR_SUM_DELTA:
         signature = scalar_sum_nodes.subtask_signature[sid]
         node_id = env * scalar_sum_signature_count + signature
         d0 = state.targets_flat[env, tgt_off] - scalar_sum[node_id]
         _write_primitive_local_outputs(
-            local_index,
             env,
             slot,
             sid,
             spec,
             outputs,
-            local_delta,
-            local_error,
-            local_activation,
             d0,
             0.0,
             0.0,
@@ -2025,87 +1858,6 @@ def compose_reward(
     outputs.task_done_success[env] = success_int != 0
 
     # Progress — mean of active-slot activations. Empty slot_count → 0.
-    progress_val = float(0.0)
-    if n_slots > 0:
-        progress_val = activation_sum / float(n_slots)
-    outputs.progress[env] = progress_val
-
-
-@wp.kernel
-def compose_reward_from_local(
-    env_slots: EnvSlots,
-    queue: PrimitiveLocalQueue,
-    spec: SubtaskSpec,
-    composer_state: ComposerState,
-    outputs: Outputs,
-    local_activation: wp.array(dtype=float),
-    episode_length_buf: wp.array(dtype=wp.int64),
-    effective_max_episode_length: wp.array(dtype=int),
-    instant_threshold: float,
-    quality_easing: float,
-):
-    """Composer variant that reads local queued activations.
-
-    This is the first backend-facing split from the dense slot contract:
-    ``env_slots`` still defines logical task slots, but per-slot values are
-    loaded through ``queue.slot_local_index`` rather than from
-    ``outputs.buf_activation``.
-    """
-    env = wp.tid()
-    n_slots = env_slots.slot_count[env]
-
-    composer_state.transit_steps[env] = composer_state.transit_steps[env] + 1
-    tsteps = float(composer_state.transit_steps[env])
-
-    all_instant_ok_int = int(1)
-    has_instant_int = int(0)
-    activation_sum = float(0.0)
-    quality_product = float(1.0)
-
-    for slot in range(n_slots):
-        sid = env_slots.subtask_ids[env, slot]
-        is_instant = spec.is_instant_flag[sid]
-        is_tracking = spec.is_tracking_flag[sid]
-        local_index = queue.slot_local_index[env, slot]
-        act = local_activation[local_index]
-        activation_sum = activation_sum + act
-
-        new_sum = composer_state.sum_activation[env, slot] + act
-        composer_state.sum_activation[env, slot] = new_sum
-
-        if is_instant != 0:
-            has_instant_int = 1
-            prev_achieved = composer_state.instant_achieved[env, slot]
-            achieved_int = int(0)
-            if prev_achieved:
-                achieved_int = 1
-            if act > instant_threshold:
-                achieved_int = 1
-            composer_state.instant_achieved[env, slot] = achieved_int != 0
-            if achieved_int == 0:
-                all_instant_ok_int = 0
-        elif is_tracking != 0:
-            quality_product = quality_product * (new_sum / tsteps)
-
-    success_int = all_instant_ok_int * has_instant_int
-
-    timeout_int = int(0)
-    if episode_length_buf[env] >= wp.int64(effective_max_episode_length[env] - 1):
-        timeout_int = 1
-    done_now_int = success_int
-    if timeout_int == 1:
-        done_now_int = 1
-
-    quality_factor = wp.pow(quality_product, quality_easing)
-    terminal_value = float(all_instant_ok_int) * quality_factor
-
-    reward = float(0.0)
-    if done_now_int == 1:
-        reward = terminal_value
-
-    outputs.task_reward[env] = reward
-    outputs.task_done_success[env] = success_int != 0
-
     progress_val = float(0.0)
     if n_slots > 0:
         progress_val = activation_sum / float(n_slots)

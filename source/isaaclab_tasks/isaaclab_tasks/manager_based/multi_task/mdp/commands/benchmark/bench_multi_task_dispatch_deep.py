@@ -78,15 +78,7 @@ def _launch_local_kernel(command, plan, kernel, count: int) -> None:
     wp.launch(
         kernel,
         dim=count,
-        inputs=[
-            plan.queue,
-            plan.spec,
-            plan.state,
-            plan.outputs,
-            plan.local_delta_wp,
-            plan.local_error_wp,
-            plan.local_activation_wp,
-        ],
+        inputs=[plan.queue, plan.spec, plan.state, plan.outputs],
         device=str(command.device),
     )
 
@@ -147,9 +139,6 @@ def _launch_dense_graph_consumer(command, plan) -> None:
             plan.direct_quat_wp,
             plan.scalar_sum_wp,
             plan.contact_mask_wp,
-            plan.local_delta_wp,
-            plan.local_error_wp,
-            plan.local_activation_wp,
             plan.vec3_signature_count,
             plan.scalar_signature_count,
             plan.quat_signature_count,

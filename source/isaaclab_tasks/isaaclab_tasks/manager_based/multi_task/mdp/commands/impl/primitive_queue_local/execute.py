@@ -41,15 +41,7 @@ def _launch_primitive_kernel(command: MultiTaskCommandWarp, plan: PrimitiveQueue
     wp.launch(
         kernel,
         dim=count,
-        inputs=[
-            plan.queue,
-            plan.spec,
-            plan.state,
-            plan.outputs,
-            plan.local_delta_wp,
-            plan.local_error_wp,
-            plan.local_activation_wp,
-        ],
+        inputs=[plan.queue, plan.spec, plan.state, plan.outputs],
         device=str(command.device),
     )
 
