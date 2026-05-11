@@ -28,10 +28,11 @@ whether to use the fused-compose dense kernel (set at cfg time via
 ``use_parallel_compose``). Callers who want direct (non-materialized)
 compute should select the ``primitive_queue_local`` backend.
 
-This module stays pure Warp — no ``import torch``. The spec data crosses
-into Warp at build time via ``wp.from_torch`` / ``wp.array``; the refresh
-path operates on Warp views of the command's mutable state through tensor
-methods on those views (no ``torch.X`` symbols).
+This module stays pure Warp — no ``import torch``. Spec/env-slot/output
+Warp views come from :class:`MultiTaskCommandWarp`
+(``command.spec_wp`` and friends); the refresh path operates on
+``wp.to_torch`` views of the plan's Warp-owned arrays via tensor methods
+(no ``torch.X`` symbols).
 """
 
 from __future__ import annotations
@@ -61,7 +62,6 @@ from ..schedules import (
     SCHEDULE_VEC3_THRESHOLD_SUM_DELTA,
     SCHEDULE_VEC3_THRESHOLD_VECTOR_DELTA,
     build_subtask_schedule_ids,
-    validate_schedule_support,
 )
 
 if TYPE_CHECKING:
@@ -399,10 +399,9 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
     """Construct the backend-owned primitive graph plan."""
     wp.init()
     s = command.spec
-    validate_schedule_support(s.state_kernel_id, backend_name="primitive_graph_local")
     device_str = str(command.device)
 
-    subtask_schedule_ids_torch = build_subtask_schedule_ids(
+    subtask_schedule_ids_wp = build_subtask_schedule_ids(
         s.state_kernel_id,
         backend_name="primitive_graph_local",
     )
@@ -446,7 +445,7 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
         state=command.state_wp,
         composer_state=command.composer_state_wp,
         outputs=command.outputs_wp,
-        subtask_schedule_ids_wp=wp.from_torch(subtask_schedule_ids_torch),
+        subtask_schedule_ids_wp=subtask_schedule_ids_wp,
         direct_vec3_wp=direct_vec3_wp,
         direct_scalar_wp=direct_scalar_wp,
         direct_quat_wp=direct_quat_wp,

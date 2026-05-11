@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-import torch
-
 from .mega_kernel.backend import MegaKernelBackend
 from .packed_scatter.backend import PackedScatterBackend
 from .primitive_graph_local.backend import PrimitiveGraphLocalBackend
 from .primitive_queue_local.backend import PrimitiveQueueLocalBackend
 
 if TYPE_CHECKING:
+    import torch
+
     from .multi_task_command_warp import MultiTaskCommandWarp
 
 

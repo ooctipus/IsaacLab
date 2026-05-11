@@ -7,9 +7,14 @@
 
 from __future__ import annotations
 
-import torch
+from typing import TYPE_CHECKING
+
+import warp as wp
 
 from .kernel_ids import STATE_KERNEL_ID
+
+if TYPE_CHECKING:
+    import torch
 
 SCHEDULE_DIRECT_VEC3_DELTA = 0
 SCHEDULE_DIRECT_SCALAR_DELTA = 1
@@ -58,13 +63,13 @@ def validate_schedule_support(state_kernel_ids: torch.Tensor, backend_name: str)
         )
 
 
-def build_subtask_schedule_ids(state_kernel_ids: torch.Tensor, backend_name: str) -> torch.Tensor:
-    """Return schedule id per subtask from semantic state-kernel ids."""
+def build_subtask_schedule_ids(state_kernel_ids: torch.Tensor, backend_name: str) -> wp.array:
+    """Return schedule id per subtask from semantic state-kernel ids, as a Warp array."""
     validate_schedule_support(state_kernel_ids, backend_name)
-    schedule_ids = torch.empty(state_kernel_ids.shape, device=state_kernel_ids.device, dtype=torch.int32)
-    for schedule_id, state_kernel_group in enumerate(SCHEDULE_STATE_KERNELS):
-        mask = state_kernel_ids == state_kernel_group[0]
-        for state_kernel_id in state_kernel_group[1:]:
-            mask |= state_kernel_ids == state_kernel_id
-        schedule_ids[mask] = schedule_id
-    return schedule_ids
+    state_kernel_to_schedule: dict[int, int] = {
+        state_kernel_id: schedule_id
+        for schedule_id, group in enumerate(SCHEDULE_STATE_KERNELS)
+        for state_kernel_id in group
+    }
+    schedule_ids = [state_kernel_to_schedule[int(k)] for k in state_kernel_ids.detach().cpu().tolist()]
+    return wp.array(schedule_ids, dtype=wp.int32, device=str(state_kernel_ids.device))

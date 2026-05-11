@@ -5,10 +5,10 @@
 
 """Backend-owned execution plan for primitive-queued local outputs.
 
-Pure Warp — no ``import torch``. Spec data crosses into Warp at build time
-via ``wp.from_torch`` / ``wp.array``; the per-resample refresh uses
-``wp.to_torch`` views of the plan's Warp-owned queue arrays and tensor
-methods on those views (no ``torch.X`` symbols).
+Pure Warp — no ``import torch``. Spec/env-slot/output Warp views come from
+:class:`MultiTaskCommandWarp` (``command.spec_wp`` and friends); the
+per-resample refresh uses ``wp.to_torch`` views of the plan's Warp-owned
+queue arrays plus tensor methods on those views (no ``torch.X`` symbols).
 """
 
 from __future__ import annotations

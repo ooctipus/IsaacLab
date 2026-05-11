@@ -56,11 +56,9 @@ class MegaKernelBackend:
         # reads it through a ``wp.to_torch`` view for the indexing math.
         self._subtask_schedule_ids_wp: wp.array | None = None
         if slot_order == "schedule":
-            self._subtask_schedule_ids_wp = wp.from_torch(
-                build_subtask_schedule_ids(
-                    command.spec.state_kernel_id,
-                    backend_name="mega_kernel(slot_order=schedule)",
-                ).int()
+            self._subtask_schedule_ids_wp = build_subtask_schedule_ids(
+                command.spec.state_kernel_id,
+                backend_name="mega_kernel(slot_order=schedule)",
             )
         # Fuse dispatch + compose into one block-per-env kernel when k_max is
         # large enough to fill warps. Same threshold as the parallel compose

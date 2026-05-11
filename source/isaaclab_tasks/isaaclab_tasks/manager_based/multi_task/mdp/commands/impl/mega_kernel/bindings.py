@@ -7,9 +7,10 @@
 
 Pure Warp — no ``import torch``. Slab resolution is direct: each
 ``BUFFER_KIND`` maps to a stable ``wp.array`` exposed by the IsaacLab scene
-(via ``ProxyArray.warp``). Spec data is converted at build time through
-``wp.from_torch(s.X.int())`` so the resulting wp views' lifetime is bound
-to the plan, not to a separate torch anchor.
+(via ``ProxyArray.warp``). Spec/env-slot/output Warp views are owned by
+:class:`MultiTaskCommandWarp` and consumed here through ``command.spec_wp``,
+``command.env_slots_wp``, ``command.state_wp``, ``command.outputs_wp``, and
+``command.composer_state_wp``.
 """
 
 from __future__ import annotations
@@ -130,7 +131,6 @@ class MegaKernelPlan:
 def build_mega_kernel_plan(command: MultiTaskCommandWarp) -> MegaKernelPlan:
     """Construct the backend-owned mega-kernel execution plan."""
     wp.init()
-    s = command.spec
 
     (
         float_slabs,
