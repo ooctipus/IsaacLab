@@ -63,6 +63,7 @@ from ..schedules import (
     SCHEDULE_VEC3_THRESHOLD_VECTOR_DELTA,
     build_subtask_schedule_ids,
 )
+from .csr_graph import CSRGraph
 
 if TYPE_CHECKING:
     from ..multi_task_command_warp import MultiTaskCommandWarp
@@ -244,46 +245,37 @@ def _build_rotation_bindings(command: MultiTaskCommandWarp) -> tuple[RotationBin
     return tuple(bindings)
 
 
-def _build_signature_tables(
+def _build_consumer_csr_graph(
     command: MultiTaskCommandWarp,
     schedule_ids: tuple[int, ...],
-) -> tuple[wp.array, wp.array]:
-    """Group subtasks by target-independent unified-buffer gather block.
+) -> CSRGraph:
+    """Build the producer-consumer fan-out graph for one fused schedule kind.
 
-    Returns ``(subtask_signature, signature_subtask)`` as Warp-owned int32
-    arrays. The Python loop runs once at build time on CPU lists pulled from
-    the spec; the resulting tables are static across resamples.
+    Consumers are subtask slots; producers are unique gather signatures
+    (target-independent unified-buffer gather blocks). Subtasks whose state
+    kernel is not in this schedule kind get a ``None`` key and contribute no
+    edge — they appear as ``-1`` in the resulting
+    :attr:`CSRGraph.consumer_to_producer`.
     """
     scheduled_state_ids = {
         state_kernel_id for schedule_id in schedule_ids for state_kernel_id in SCHEDULE_STATE_KERNELS[schedule_id]
     }
     s = command.spec
-    device_str = str(command.device)
     state_kernel_id_cpu = s.state_kernel_id.detach().cpu().tolist()
     gather_indices_cpu = s.gather_indices_flat.detach().cpu().tolist()
     gather_offset_cpu = s.subtask_gather_offset.detach().cpu().tolist()
     gather_count_cpu = s.subtask_gather_count.detach().cpu().tolist()
 
-    signature_id_by_gather: dict[tuple[int, ...], int] = {}
-    representative_subtasks: list[int] = []
-    num_subtasks = len(state_kernel_id_cpu)
-    subtask_signature_list = [-1] * num_subtasks
-    for sid in range(num_subtasks):
+    consumer_keys: list[tuple[int, ...] | None] = []
+    for sid in range(len(state_kernel_id_cpu)):
         if int(state_kernel_id_cpu[sid]) not in scheduled_state_ids:
+            consumer_keys.append(None)
             continue
         start = int(gather_offset_cpu[sid])
         count = int(gather_count_cpu[sid])
-        key = tuple(int(v) for v in gather_indices_cpu[start : start + count])
-        signature_id = signature_id_by_gather.get(key)
-        if signature_id is None:
-            signature_id = len(representative_subtasks)
-            signature_id_by_gather[key] = signature_id
-            representative_subtasks.append(sid)
-        subtask_signature_list[sid] = signature_id
+        consumer_keys.append(tuple(int(v) for v in gather_indices_cpu[start : start + count]))
 
-    subtask_signature_wp = wp.array(subtask_signature_list, dtype=wp.int32, device=device_str)
-    signature_subtask_wp = wp.array(representative_subtasks, dtype=wp.int32, device=device_str)
-    return subtask_signature_wp, signature_subtask_wp
+    return CSRGraph.build_from_consumer_keys(consumer_keys, device=command.device)
 
 
 def _build_schedule_mask(state_kernel_ids, schedule_id: int):
@@ -311,11 +303,16 @@ class ProducerNodeTable:
     Warp struct is still named "Queue" because it's shared kernel-API glue.
     The role here is a producer-node table; we keep the Python-side naming
     honest.
+
+    :attr:`csr_graph` holds the full CSR view of the same producer-consumer
+    fan-out — kept reachable so later phases can introspect it (fanout,
+    locality, etc.) without rebuilding.
     """
 
     subtask_signature_wp: wp.array
     signature_subtask_wp: wp.array
     nodes_view: PrimitiveProducerQueue
+    csr_graph: CSRGraph
 
 
 def _make_producer_node_table(
@@ -323,14 +320,15 @@ def _make_producer_node_table(
     schedule_ids: tuple[int, ...],
 ) -> ProducerNodeTable:
     """Allocate one kind's static subtask-signature lookup tables."""
-    subtask_signature_wp, signature_subtask_wp = _build_signature_tables(command, schedule_ids)
+    g = _build_consumer_csr_graph(command, schedule_ids)
     nodes_view = PrimitiveProducerQueue()
-    nodes_view.subtask_signature = subtask_signature_wp
-    nodes_view.signature_subtask = signature_subtask_wp
+    nodes_view.subtask_signature = g.consumer_to_producer
+    nodes_view.signature_subtask = g.producer_to_representative_consumer
     return ProducerNodeTable(
-        subtask_signature_wp=subtask_signature_wp,
-        signature_subtask_wp=signature_subtask_wp,
+        subtask_signature_wp=g.consumer_to_producer,
+        signature_subtask_wp=g.producer_to_representative_consumer,
         nodes_view=nodes_view,
+        csr_graph=g,
     )
 
 
