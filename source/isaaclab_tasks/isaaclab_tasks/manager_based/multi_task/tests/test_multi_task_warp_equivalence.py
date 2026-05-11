@@ -690,7 +690,7 @@ def test_primitive_graph_local_shares_contact_predicate_nodes():
         )
     )
     assert contact_work == num_envs * 3
-    assert plan.contact_node_count == num_envs
+    assert plan.contact_signature_count == 1
 
     atol = 1e-5
     rtol = 1e-5
@@ -722,10 +722,10 @@ def test_primitive_graph_local_materializes_shared_signature_nodes():
     assert plan.schedule_counts_py[SCHEDULE_DIRECT_SCALAR_DELTA] == num_envs * 4
     assert plan.schedule_counts_py[SCHEDULE_DIRECT_QUAT_DELTA] == num_envs * 4
     assert plan.schedule_counts_py[SCHEDULE_SCALAR_SUM_DELTA] == num_envs * 16
-    assert plan.vec3_node_count == num_envs
-    assert plan.scalar_node_count == num_envs
-    assert plan.quat_node_count == num_envs
-    assert plan.scalar_sum_node_count == num_envs
+    assert plan.vec3_signature_count == 1
+    assert plan.scalar_signature_count == 1
+    assert plan.quat_signature_count == 1
+    assert plan.scalar_sum_signature_count == 1
 
     atol = 1e-5
     rtol = 1e-5

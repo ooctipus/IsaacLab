@@ -185,18 +185,19 @@ def _time_graph(command, totals: dict[str, float]) -> None:
 def _print_graph_fanout(command) -> None:
     plan = command._backend.plan
     counts = plan.schedule_counts_py
+    num_envs = command.num_envs
     print("# graph sharing")
     rows = (
-        ("direct_vec3", counts[SCHEDULE_DIRECT_VEC3_DELTA], plan.vec3_node_count),
-        ("direct_scalar", counts[SCHEDULE_DIRECT_SCALAR_DELTA], plan.scalar_node_count),
-        ("direct_quat", counts[SCHEDULE_DIRECT_QUAT_DELTA], plan.quat_node_count),
-        ("scalar_sum", counts[SCHEDULE_SCALAR_SUM_DELTA], plan.scalar_sum_node_count),
+        ("direct_vec3", counts[SCHEDULE_DIRECT_VEC3_DELTA], plan.vec3_signature_count * num_envs),
+        ("direct_scalar", counts[SCHEDULE_DIRECT_SCALAR_DELTA], plan.scalar_signature_count * num_envs),
+        ("direct_quat", counts[SCHEDULE_DIRECT_QUAT_DELTA], plan.quat_signature_count * num_envs),
+        ("scalar_sum", counts[SCHEDULE_SCALAR_SUM_DELTA], plan.scalar_sum_signature_count * num_envs),
         (
             "contact",
             counts[SCHEDULE_VEC3_THRESHOLD_VECTOR_DELTA]
             + counts[SCHEDULE_VEC3_THRESHOLD_SUM_DELTA]
             + counts[SCHEDULE_VEC3_THRESHOLD_PAIR_DIFF_DELTA],
-            plan.contact_node_count,
+            plan.contact_signature_count * num_envs,
         ),
     )
     print(f"# {'producer':<16s} {'work':>10s} {'nodes':>10s} {'fanout':>10s}")

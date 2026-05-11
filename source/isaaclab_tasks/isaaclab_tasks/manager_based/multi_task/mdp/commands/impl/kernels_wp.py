@@ -173,26 +173,19 @@ class PrimitiveLocalQueue:
 
 @wp.struct
 class PrimitiveProducerQueue:
-    """Shared producer nodes and consumer links for primitive graph execution."""
+    """Static signature lookup tables for one producer kind.
+
+    Each producer kind groups subtasks by gather signature (target-independent
+    state read). The dense graph kernels read ``signature_subtask`` to find the
+    representative subtask whose gather block defines the producer, and
+    ``subtask_signature`` to map a consumer's subtask back to its signature.
+    Both tables are spec-derived and constant across resamples.
+    """
 
     subtask_signature: wp.array(dtype=int)
     """``[num_subtasks]`` — producer signature id for each subtask, or ``-1``."""
     signature_subtask: wp.array(dtype=int)
     """``[num_signatures]`` — representative subtask for each signature."""
-    env_ids: wp.array(dtype=int)
-    """``[max_nodes]`` — env id for each unique producer node."""
-    subtask_ids: wp.array(dtype=int)
-    """``[max_nodes]`` — representative subtask whose gather block defines the producer."""
-    consumer_node_ids: wp.array(dtype=int)
-    """``[max_work]`` — producer node id for each local output row."""
-    consumer_indices: wp.array(dtype=int)
-    """``[max_work]`` — local output rows grouped by producer node."""
-    consumer_offsets: wp.array(dtype=int)
-    """``[max_nodes]`` — first index in :attr:`consumer_indices` for each producer node."""
-    consumer_counts: wp.array(dtype=int)
-    """``[max_nodes]`` — number of consumer rows for each producer node."""
-    count: wp.array(dtype=int)
-    """``[1]`` — total active producer nodes."""
 
 
 @wp.struct
