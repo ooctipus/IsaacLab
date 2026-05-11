@@ -47,7 +47,7 @@ def _bench_case(num_envs: int, num_offsets: int, repeat: int, device: torch.devi
         for off in offsets.tolist():
             torch_out[:, off : off + 3] = quat_apply_inverse(quat, torch_out[:, off : off + 3])
 
-    wp_quat = wp.from_torch(quat)
+    wp_quat = wp.from_torch(quat, dtype=wp.quat)
     wp_offsets = wp.from_torch(offsets)
     wp_warp_out = wp.from_torch(warp_out)
     empty_offsets = torch.empty(0, device=device, dtype=torch.int32)
