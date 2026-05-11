@@ -34,6 +34,10 @@ workflow:
         ACCEPT_EULA: Y
         NO_NUCLEUS: Y
         NCCL_DEBUG: WARN
+        NCCL_ASYNC_ERROR_HANDLING: "1"
+        TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+        NCCL_IB_DISABLE: "0"
+        NCCL_SOCKET_IFNAME: "^lo,docker0,virbr0,veth"
       credentials:
         wandb:
           WANDB_USERNAME: wandb_username
@@ -51,6 +55,12 @@ workflow:
 
           export WANDB_API_KEY="${WANDB_API_KEY}"
           export WANDB_USERNAME=nvidia
+          export OMP_NUM_THREADS=$(( {{ num_cpu }} / {{ num_gpu }} ))
+          if [ "${OMP_NUM_THREADS}" -lt 1 ]; then
+            export OMP_NUM_THREADS=1
+          fi
+          export MKL_NUM_THREADS="${OMP_NUM_THREADS}"
+          export OPENBLAS_NUM_THREADS="${OMP_NUM_THREADS}"
 
           {% if num_node > 1 %}
           /workspace/isaaclab/_isaac_sim/python.sh -m torch.distributed.run \

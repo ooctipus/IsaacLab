@@ -133,6 +133,7 @@ class ParsedArgs:
     """Result of parsing command-line arguments."""
 
     cluster: dict[str, str] = field(default_factory=lambda: dict(CLUSTER_DEFAULTS))
+    cluster_overrides: set[str] = field(default_factory=set)
     pool: str = ""
     fixed: dict[str, str] = field(default_factory=dict)
     sweep: dict[str, list[str]] = field(default_factory=dict)
@@ -169,7 +170,23 @@ def _set_cluster_key(key_bare: str, val: str, p: ParsedArgs):
         p.run_name = val
     elif key_bare in CLUSTER_DEFAULTS:
         p.cluster[key_bare] = val
+        p.cluster_overrides.add(key_bare)
     return True
+
+
+def _cluster_int(p: ParsedArgs, key: str) -> int:
+    try:
+        return int(p.cluster[key])
+    except ValueError:
+        print(f"Error: {key} must be an integer, got '{p.cluster[key]}'.", file=sys.stderr)
+        sys.exit(2)
+
+
+def _set_derived_cluster_defaults(p: ParsedArgs) -> None:
+    """Set resource defaults that depend on other cluster resources."""
+    num_gpu = _cluster_int(p, "num_gpu")
+    if num_gpu > 1 and "num_cpu" not in p.cluster_overrides:
+        p.cluster["num_cpu"] = str(max(_cluster_int(p, "num_cpu"), num_gpu * 8))
 
 
 def parse_args(raw_args: list[str]) -> ParsedArgs:
@@ -239,6 +256,7 @@ def parse_args(raw_args: list[str]) -> ParsedArgs:
         p.cluster["platform"] = POOL_TO_PLATFORM[p.pool]
     elif not p.pool:
         p.pool = "isaac-dev-h100-01"
+    _set_derived_cluster_defaults(p)
 
     return p
 
