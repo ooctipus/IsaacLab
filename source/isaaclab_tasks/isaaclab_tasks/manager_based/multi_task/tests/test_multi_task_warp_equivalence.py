@@ -703,7 +703,7 @@ def test_primitive_graph_local_shares_contact_predicate_nodes():
 
 
 @_NEED_CUDA
-def test_primitive_graph_local_uses_high_fanout_reduction_nodes():
+def test_primitive_graph_local_materializes_shared_signature_nodes():
     device = "cuda:0"
     num_envs = 16
 
@@ -726,10 +726,6 @@ def test_primitive_graph_local_uses_high_fanout_reduction_nodes():
     assert plan.scalar_node_count == num_envs
     assert plan.quat_node_count == num_envs
     assert plan.scalar_sum_node_count == num_envs
-    assert not plan.use_vec3_graph
-    assert not plan.use_scalar_graph
-    assert not plan.use_quat_graph
-    assert plan.use_scalar_sum_graph
 
     atol = 1e-5
     rtol = 1e-5

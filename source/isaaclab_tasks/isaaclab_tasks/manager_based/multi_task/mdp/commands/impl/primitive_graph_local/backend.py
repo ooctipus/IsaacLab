@@ -36,9 +36,9 @@ class PrimitiveGraphLocalBackend:
     def __init__(self, command: MultiTaskCommandWarp):
         self.plan: PrimitiveGraphLocalPlan = build_primitive_graph_local_plan(command)
         self._dispatch_graph = None
-        # Fuse the dense-graph consumer with compose when both conditions hold:
-        # the producer/consumer split is in dense-graph mode AND k_max is large
-        # enough for the parallel composer to win.
+        # Fuse the dense-graph consumer with compose when ``k_max`` is large
+        # enough for the parallel composer to win. cfg-time decision; resampling
+        # does not flip the mode.
         self._use_fused_compose = use_parallel_compose(command.k_max)
 
     def on_resample(self, command: MultiTaskCommandWarp, env_ids: torch.Tensor) -> None:
@@ -65,7 +65,7 @@ class PrimitiveGraphLocalBackend:
         """Launch the full per-step pipeline eagerly; used for warmup and graph capture."""
         fill_unified_buffer_warp(command, self.plan)
 
-        if self._use_fused_compose and self.plan.use_dense_graph_consumer and self.plan.total_consumers > 0:
+        if self._use_fused_compose and self.plan.total_consumers > 0:
             self._launch_dense_graph_producers(command)
             self._launch_dense_graph_consumer_fused(command)
             rotate_canonical_slots_to_body_frame_warp(command, self.plan)

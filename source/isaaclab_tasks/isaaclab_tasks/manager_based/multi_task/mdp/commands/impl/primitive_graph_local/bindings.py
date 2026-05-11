@@ -9,9 +9,10 @@ Mathematical structure:
 
 * **Producer nodes** — one per unique ``(env, signature)`` pair. A signature
   is a target-independent gather block (e.g. "the world-frame velocity of
-  body B on this env"). Producers compute their value once and write it
-  into a per-kind buffer (``direct_vec3``, ``scalar_sum``, ``contact_mask``,
-  etc.). Stored in :class:`ProducerNodeTable`, one table per producer kind.
+  body B on this env"). Producers compute their value once per resample and
+  write it into a per-kind buffer (``direct_vec3``, ``scalar_sum``,
+  ``contact_mask``, etc.). Stored in :class:`ProducerNodeTable`, one table
+  per producer kind.
 * **Consumer items** — one per active subtask. Each consumer reads from
   exactly one producer node (its source signature) and writes a target-
   specific result to its local output row. Stored in the plan's
@@ -22,15 +23,10 @@ Mathematical structure:
 * **Reverse adjacency** (consumer → its producer) — stored per consumer as
   ``consumer_node_ids[item]`` inside the producer table.
 
-The public command wrapper stays unchanged; the backend owns the graph layout
-and decides which producer kinds materialize.
-
-KNOWN SMELL (tracked separately): the ``use_*_graph`` mode flags below are a
-runtime fallback to direct-compute when fanout is too low to amortize
-materialization. They make this backend behave as "graph if profitable, else
-queue-style direct". A pure graph backend would always materialize; the
-mode-decision belongs at cfg time (user picks ``primitive_graph_local`` vs
-``primitive_queue_local``), not at dispatch time. See follow-up cleanup.
+All producer kinds always materialize; the only dispatch-time choice is
+whether to use the fused-compose dense kernel (set at cfg time via
+``use_parallel_compose``). Callers who want direct (non-materialized)
+compute should select the ``primitive_queue_local`` backend.
 """
 
 from __future__ import annotations
@@ -254,22 +250,6 @@ def _build_rotation_bindings(command: MultiTaskCommandWarp) -> tuple[RotationBin
     return tuple(bindings)
 
 
-# --- Fallback-flag isolation block — to be removed when the graph backend is
-# made strictly "always materialize". The ``use_*_graph`` plan booleans and
-# ``_should_materialize_producer`` below convert this from a pure graph
-# backend into "graph if profitable, else direct-compute" — the queue-
-# backend path effectively inlined as fallback. Per cfg-time-decision
-# principle, the user should pick ``primitive_graph_local`` vs
-# ``primitive_queue_local`` instead of having dispatch decide per-step.
-# Per-kind materialization breakeven. Light producers (1-4 array reads) need
-# many consumers to amortize the global-memory roundtrip cost; heavy producers
-# (multi-element reductions, multi-schedule contact predicate) earn it back at
-# much lower fanout. Determined empirically via bench_tile_fusion_testbed: heavy
-# producers see ~3.5x at fanout 4, light producers break even closer to 16.
-_MIN_FANOUT_LIGHT = 16  # direct vec3 / scalar / quat
-_MIN_FANOUT_HEAVY = 4  # scalar_sum (joint reduction), contact (multi-schedule reuse)
-
-
 def _build_signature_tables(
     command: MultiTaskCommandWarp,
     schedule_ids: tuple[int, ...],
@@ -300,7 +280,7 @@ def _build_signature_tables(
             representative_subtasks.append(sid)
         subtask_signature[sid] = signature_id
 
-    signature_subtask = torch.tensor(representative_subtasks or [-1], device=command.device, dtype=torch.int32)
+    signature_subtask = torch.tensor(representative_subtasks, device=command.device, dtype=torch.int32)
     return subtask_signature, signature_subtask
 
 
@@ -434,11 +414,6 @@ def _set_grouped_consumers(
     plan.consumer_counts_i32[unique_nodes.long()] = counts.to(torch.int32)
 
 
-def _should_materialize_producer(work_count: int, node_count: int, threshold: int) -> bool:
-    """Return whether a producer kind has enough fanout to pay for materialization."""
-    return node_count > 0 and work_count >= node_count * threshold
-
-
 def _sort_command_slots_by_schedule(command: MultiTaskCommandWarp, schedule_ids: torch.Tensor) -> None:
     """Sort each env's active slots by primitive schedule for dense output locality."""
     slot_ids = torch.arange(command.k_max, device=command.device, dtype=torch.long).unsqueeze(0)
@@ -498,16 +473,6 @@ class PrimitiveGraphLocalPlan:
     quat_node_count: int
     scalar_sum_node_count: int
     contact_node_count: int
-    # Fallback toggles (see header note + ``_should_materialize_producer``):
-    # set per-resample by fanout heuristic; when False, ``execute.py`` takes
-    # the direct-compute branch instead of reading from the producer node
-    # table. To remove: always materialize, delete these flags + the
-    # branches in execute.py / backend.py that read them.
-    use_vec3_graph: bool
-    use_scalar_graph: bool
-    use_quat_graph: bool
-    use_scalar_sum_graph: bool
-    use_dense_graph_consumer: bool
     schedule_counts_py: list[int]
     env_slots: EnvSlots
     # NOTE: ``consumer_view`` is a :class:`PrimitiveLocalQueue` — the kernel-side
@@ -688,11 +653,6 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
         quat_node_count=0,
         scalar_sum_node_count=0,
         contact_node_count=0,
-        use_vec3_graph=False,
-        use_scalar_graph=False,
-        use_quat_graph=False,
-        use_scalar_sum_graph=False,
-        use_dense_graph_consumer=False,
         schedule_counts_py=[0] * NUM_SCHEDULES,
         env_slots=env_slots,
         consumer_view=consumer_view,
@@ -749,11 +709,6 @@ def refresh_primitive_graph_local_plan(command: MultiTaskCommandWarp, plan: Prim
         plan.quat_node_count = 0
         plan.scalar_sum_node_count = 0
         plan.contact_node_count = 0
-        plan.use_vec3_graph = False
-        plan.use_scalar_graph = False
-        plan.use_quat_graph = False
-        plan.use_scalar_sum_graph = False
-        plan.use_dense_graph_consumer = False
         plan.schedule_counts_py = [0] * NUM_SCHEDULES
         return
 
@@ -824,22 +779,4 @@ def refresh_primitive_graph_local_plan(command: MultiTaskCommandWarp, plan: Prim
     plan.scalar_sum_node_count = plan.scalar_sum_nodes.count
     plan.contact_node_count = plan.contact_nodes.count
     plan.schedule_counts_py = schedule_counts_py
-    plan.use_vec3_graph = _should_materialize_producer(
-        schedule_counts_py[SCHEDULE_DIRECT_VEC3_DELTA], plan.vec3_node_count, _MIN_FANOUT_LIGHT
-    )
-    plan.use_scalar_graph = _should_materialize_producer(
-        schedule_counts_py[SCHEDULE_DIRECT_SCALAR_DELTA], plan.scalar_node_count, _MIN_FANOUT_LIGHT
-    )
-    plan.use_quat_graph = _should_materialize_producer(
-        schedule_counts_py[SCHEDULE_DIRECT_QUAT_DELTA], plan.quat_node_count, _MIN_FANOUT_LIGHT
-    )
-    plan.use_scalar_sum_graph = _should_materialize_producer(
-        schedule_counts_py[SCHEDULE_SCALAR_SUM_DELTA], plan.scalar_sum_node_count, _MIN_FANOUT_HEAVY
-    )
-    plan.use_dense_graph_consumer = (
-        (schedule_counts_py[SCHEDULE_DIRECT_VEC3_DELTA] == 0 or plan.use_vec3_graph)
-        and (schedule_counts_py[SCHEDULE_DIRECT_SCALAR_DELTA] == 0 or plan.use_scalar_graph)
-        and (schedule_counts_py[SCHEDULE_DIRECT_QUAT_DELTA] == 0 or plan.use_quat_graph)
-        and (schedule_counts_py[SCHEDULE_SCALAR_SUM_DELTA] == 0 or plan.use_scalar_sum_graph)
-    )
     plan.consumer_count_i32[0] = cursor
