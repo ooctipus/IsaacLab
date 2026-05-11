@@ -22,7 +22,7 @@ from __future__ import annotations
 import torch
 
 from ..multi_task_command import MultiTaskCommand
-from . import CommandBackend, build_command_backend, build_command_output_store
+from . import CommandBackend, build_command_backend
 
 __all__ = ["MultiTaskCommandWarp"]
 
@@ -44,10 +44,6 @@ class MultiTaskCommandWarp(MultiTaskCommand):
         super().__init__(cfg, env)
         self._backend = build_command_backend(self, cfg.dispatch_backend)
 
-    def _build_output_store(self):
-        """Create the output storage layout required by the selected backend."""
-        return build_command_output_store(self, self.cfg.dispatch_backend)
-
     def _on_resample_command(self, env_ids: torch.Tensor) -> None:
         """Refresh backend-owned execution plans after task assignment changes."""
         if self._backend is not None:
@@ -56,7 +52,7 @@ class MultiTaskCommandWarp(MultiTaskCommand):
     def _update_command(self) -> None:
         """Per-step Warp update — skip the Torch overhead the base class adds for the Torch path.
 
-        The base class refreshes ``_slot_valid`` and calls ``_outputs.reset_step()``
+        The base class refreshes ``_slot_valid`` and zeros ``_buf_error``/``_buf_activation``
         every step. Both are dead overhead for Warp backends:
 
         - All Warp backends ``del valid_slots`` — they read ``slot_count[env]``

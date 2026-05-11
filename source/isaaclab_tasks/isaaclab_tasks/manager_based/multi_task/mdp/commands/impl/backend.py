@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Protocol
 import torch
 
 from .mega_kernel.backend import MegaKernelBackend
-from .outputs import DenseCommandOutputs, PrimitiveLocalCommandOutputs
 from .packed_scatter.backend import PackedScatterBackend
 from .primitive_graph_local.backend import PrimitiveGraphLocalBackend
 from .primitive_queue_local.backend import PrimitiveQueueLocalBackend
@@ -58,15 +57,4 @@ def build_command_backend(command: MultiTaskCommandWarp, name: str) -> CommandBa
         return PrimitiveQueueLocalBackend(command)
     if name == PrimitiveGraphLocalBackend.name:
         return PrimitiveGraphLocalBackend(command)
-    raise ValueError(f"Unsupported MultiTaskCommand dispatch backend: {name!r}.")
-
-
-def build_command_output_store(command: MultiTaskCommandWarp, name: str):
-    """Construct the output storage layout for a Warp command backend."""
-    if name in (MegaKernelBackend.name, _SCHEDULE_ORDERED_MEGA_NAME, PackedScatterBackend.name):
-        return DenseCommandOutputs(command)
-    if name == PrimitiveQueueLocalBackend.name:
-        return PrimitiveLocalCommandOutputs(command)
-    if name == PrimitiveGraphLocalBackend.name:
-        return PrimitiveLocalCommandOutputs(command)
     raise ValueError(f"Unsupported MultiTaskCommand dispatch backend: {name!r}.")

@@ -174,8 +174,7 @@ class MultiTaskCommand(CommandTerm):
         # Flat targets buffer: one float per (env, position-within-task) pair.
         self._targets_flat = torch.zeros((num_envs, max(1, self.max_task_total_stride)), device=device)
 
-        # Per-slot composer state (NO dim padding). Output tensors are owned by
-        # the selected backend/output layout, not by the base command term.
+        # Per-slot composer state (NO dim padding).
         self._sum_activation = torch.zeros((num_envs, k_max), device=device)
         # ``_transit_steps`` is int32 so the Warp composer can wrap it directly;
         # PyTorch operations on it (``.add_(1)``, ``.to(float)``) work unchanged.
@@ -205,7 +204,18 @@ class MultiTaskCommand(CommandTerm):
         active_mask_width = max(1, self.spec.reach_canonical_width + self.spec.track_canonical_width)
         self._command_active = torch.zeros((num_envs, active_mask_width), device=device)
 
-        self._outputs = self._build_output_store()
+        # Public-surface output buffers — read by reward / observation / done
+        # terms that consume this command. Allocated directly on the base term;
+        # backends write into them via ``wp.from_torch`` views inside their
+        # plan structs. Anything backend-specific beyond these (e.g.
+        # primitive-local rows) is owned by the backend's plan, not here.
+        self._buf_error = torch.zeros((num_envs, k_max), device=device)
+        self._buf_activation = torch.zeros((num_envs, k_max), device=device)
+        self._command_reach = torch.zeros((num_envs, max(1, self.spec.reach_canonical_width)), device=device)
+        self._command_track = torch.zeros((num_envs, max(1, self.spec.track_canonical_width)), device=device)
+        self._task_reward = torch.zeros(num_envs, device=device)
+        self._task_done_success = torch.zeros(num_envs, dtype=torch.bool, device=device)
+        self._progress = torch.zeros(num_envs, device=device)
 
         # Pre-allocated per-step scratch buffers. ``_slot_arange`` is a constant
         # ``[0, 1, ..., k_max - 1]`` row used to derive ``_slot_valid`` via an
@@ -217,12 +227,6 @@ class MultiTaskCommand(CommandTerm):
         self._slot_valid = torch.zeros((num_envs, k_max), dtype=torch.bool, device=device)
 
         self._resample_command(torch.arange(num_envs, device=device, dtype=torch.long))
-
-    def _build_output_store(self):
-        """Create the backend-owned command output storage layout."""
-        from .impl.outputs import DenseCommandOutputs  # noqa: PLC0415
-
-        return DenseCommandOutputs(self)
 
     def _validate(self):
         """Assert every kernel id in the spec is within its registered kernel tuple."""
@@ -244,7 +248,7 @@ class MultiTaskCommand(CommandTerm):
         split carries the semantic (instant goal vs tracking condition) that a
         single flat ``command`` hides.
         """
-        return self._outputs.command
+        return torch.cat([self._command_reach, self._command_track], dim=-1)
 
     @property
     def command_reach(self) -> torch.Tensor:
@@ -254,7 +258,7 @@ class MultiTaskCommand(CommandTerm):
         subtasks. Each active instant subtask writes ``target - current`` into
         its ``canonical_offset[:+canonical_stride)`` slice of this tensor.
         """
-        return self._outputs.command_reach
+        return self._command_reach
 
     @property
     def command_track(self) -> torch.Tensor:
@@ -264,7 +268,7 @@ class MultiTaskCommand(CommandTerm):
         tracking subtasks. A kernel used by both instant and tracking subtasks
         gets disjoint channels across the two tensors — no aliasing.
         """
-        return self._outputs.command_track
+        return self._command_track
 
     @property
     def command_active(self) -> torch.Tensor:
@@ -301,54 +305,19 @@ class MultiTaskCommand(CommandTerm):
         Encodes the "sense of activation std" without exposing the std itself to
         the policy — the value is task-normalized across kernels/params.
         """
-        return self._outputs.progress
+        return self._progress
 
     @property
     def task_reward(self) -> torch.Tensor:
-        return self._outputs.task_reward
+        return self._task_reward
 
     @property
     def task_done(self) -> torch.Tensor:
-        return self._outputs.task_done_success
+        return self._task_done_success
 
     @property
     def buf_error(self) -> torch.Tensor:
-        return self._outputs.buf_error
-
-    @property
-    def _buf_error(self) -> torch.Tensor:
-        """Dense error view exposed for current tests/debug paths."""
-        return self._outputs.buf_error
-
-    @property
-    def _buf_activation(self) -> torch.Tensor:
-        """Dense activation view exposed for current tests/debug paths."""
-        return self._outputs.buf_activation
-
-    @property
-    def _command_reach(self) -> torch.Tensor:
-        """Dense reach command view exposed for current tests/debug paths."""
-        return self._outputs.command_reach
-
-    @property
-    def _command_track(self) -> torch.Tensor:
-        """Dense track command view exposed for current tests/debug paths."""
-        return self._outputs.command_track
-
-    @property
-    def _task_reward(self) -> torch.Tensor:
-        """Dense task reward view exposed for current tests/debug paths."""
-        return self._outputs.task_reward
-
-    @property
-    def _task_done_success(self) -> torch.Tensor:
-        """Dense task success view exposed for current tests/debug paths."""
-        return self._outputs.task_done_success
-
-    @property
-    def _progress(self) -> torch.Tensor:
-        """Dense progress view exposed for current tests/debug paths."""
-        return self._outputs.progress
+        return self._buf_error
 
     @property
     def effective_max_episode_length(self) -> torch.Tensor:
@@ -623,7 +592,12 @@ class MultiTaskCommand(CommandTerm):
         self._sum_activation[env_ids] = 0.0
         self._transit_steps[env_ids] = 0
         self._instant_achieved[env_ids] = False
-        self._outputs.reset_envs(env_ids)
+        # Clear per-env public outputs so a prior task's values don't leak.
+        self._task_reward[env_ids] = 0.0
+        self._task_done_success[env_ids] = False
+        self._progress[env_ids] = 0.0
+        self._command_reach[env_ids] = 0.0
+        self._command_track[env_ids] = 0.0
 
         # Refresh the per-channel active mask from the spec's per-task table.
         # ``task_active_mask`` is entirely a function of the spec, so this is
@@ -724,10 +698,11 @@ class MultiTaskCommand(CommandTerm):
         # Active-slot mask — refresh in place. ``_slot_arange`` is constant.
         torch.lt(self._slot_arange, self._env_slot_count.unsqueeze(1), out=self._slot_valid)
 
-        # Let the selected output layout prepare its hot-path buffers. The
-        # current dense layout clears slot tensors here; local packed layouts
-        # should clear only the data they actually own.
-        self._outputs.reset_step(self._slot_valid)
+        # Clear per-step dense slot tensors before dispatch. The Warp subclass
+        # overrides this method entirely and skips these zeros (dispatch over-
+        # writes every active slot; inactive slots are masked in compose).
+        self._buf_error.zero_()
+        self._buf_activation.zero_()
 
         # Delegate to the subclass — both phases are polymorphic.
         self._dispatch(self._slot_valid)

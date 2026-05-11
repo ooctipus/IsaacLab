@@ -123,6 +123,12 @@ class PrimitiveQueueLocalPlan:
     state: StateAccess
     composer_state: ComposerState
     outputs: Outputs
+    # Backend-owned local-output buffers. Kept as torch tensors on the plan
+    # so the ``wp.from_torch`` views below stay alive for the captured graph.
+    local_delta_torch: torch.Tensor
+    local_error_torch: torch.Tensor
+    local_activation_torch: torch.Tensor
+    slot_local_index_torch: torch.Tensor
     local_delta_wp: wp.array2d(dtype=float)
     local_error_wp: wp.array(dtype=float)
     local_activation_wp: wp.array(dtype=float)
@@ -189,7 +195,6 @@ def build_primitive_queue_local_plan(command: MultiTaskCommandWarp) -> Primitive
     outputs.task_done_success = wp.from_torch(command._task_done_success)
     outputs.progress = wp.from_torch(command._progress)
 
-    local_outputs = command._outputs
     max_work = command.num_envs * command.k_max
     flat_env_ids_i32 = torch.empty(max_work, device=command.device, dtype=torch.int32)
     flat_slot_ids_i32 = torch.empty(max_work, device=command.device, dtype=torch.int32)
@@ -199,12 +204,19 @@ def build_primitive_queue_local_plan(command: MultiTaskCommandWarp) -> Primitive
     schedule_counts_i32 = torch.zeros(NUM_SCHEDULES, device=command.device, dtype=torch.int32)
     flat_count_i32 = torch.zeros(1, device=command.device, dtype=torch.int32)
 
+    # Backend-owned local outputs (was: command._outputs.local_*). Kept on
+    # the plan so the wp.from_torch views below outlive any captured graph.
+    local_delta_torch = torch.zeros((max_work, 4), device=command.device)
+    local_error_torch = torch.zeros(max_work, device=command.device)
+    local_activation_torch = torch.zeros(max_work, device=command.device)
+    slot_local_index_torch = torch.zeros((command.num_envs, command.k_max), device=command.device, dtype=torch.int32)
+
     queue = PrimitiveLocalQueue()
     queue.env_ids = wp.from_torch(flat_env_ids_i32)
     queue.slot_ids = wp.from_torch(flat_slot_ids_i32)
     queue.subtask_ids = wp.from_torch(flat_subtask_ids_i32)
     queue.target_offsets = wp.from_torch(flat_target_offsets_i32)
-    queue.slot_local_index = wp.from_torch(local_outputs.slot_local_index)
+    queue.slot_local_index = wp.from_torch(slot_local_index_torch)
     queue.schedule_offsets = wp.from_torch(schedule_offsets_i32)
     queue.schedule_counts = wp.from_torch(schedule_counts_i32)
     queue.count = wp.from_torch(flat_count_i32)
@@ -244,9 +256,13 @@ def build_primitive_queue_local_plan(command: MultiTaskCommandWarp) -> Primitive
         state=state,
         composer_state=composer_state,
         outputs=outputs,
-        local_delta_wp=wp.from_torch(local_outputs.local_delta),
-        local_error_wp=wp.from_torch(local_outputs.local_error),
-        local_activation_wp=wp.from_torch(local_outputs.local_activation),
+        local_delta_torch=local_delta_torch,
+        local_error_torch=local_error_torch,
+        local_activation_torch=local_activation_torch,
+        slot_local_index_torch=slot_local_index_torch,
+        local_delta_wp=wp.from_torch(local_delta_torch),
+        local_error_wp=wp.from_torch(local_error_torch),
+        local_activation_wp=wp.from_torch(local_activation_torch),
         rotations=_build_rotation_bindings(command),
         episode_length_buf_wp=wp.from_torch(command._env.episode_length_buf),
         effective_max_episode_length_wp=wp.from_torch(command._effective_max_episode_length),
@@ -379,7 +395,7 @@ def refresh_primitive_queue_local_plan(command: MultiTaskCommandWarp, plan: Prim
     plan.schedule_offsets_i32.zero_()
     plan.schedule_counts_i32.zero_()
     plan.flat_count_i32.zero_()
-    command._outputs.slot_local_index.zero_()
+    plan.slot_local_index_torch.zero_()
 
     cursor = 0
     slot_idx = torch.arange(command.k_max, device=command.device, dtype=torch.int32).unsqueeze(0)
@@ -414,7 +430,7 @@ def refresh_primitive_queue_local_plan(command: MultiTaskCommandWarp, plan: Prim
         plan.flat_slot_ids_i32[cursor:stop] = slot_ids_i32[group_mask]
         plan.flat_subtask_ids_i32[cursor:stop] = subtask_ids_i32[group_mask]
         plan.flat_target_offsets_i32[cursor:stop] = target_offsets[group_mask]
-        command._outputs.slot_local_index[env_ids[group_mask], slot_ids[group_mask]] = local_indices[cursor:stop]
+        plan.slot_local_index_torch[env_ids[group_mask], slot_ids[group_mask]] = local_indices[cursor:stop]
         cursor = stop
 
     if cursor != int(env_ids.numel()):

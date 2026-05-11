@@ -86,7 +86,8 @@ def _time_phase(totals: dict[str, float], name: str, fn: Callable[[], None]) -> 
 
 def _reset_step(command) -> None:
     torch.lt(command._slot_arange, command._env_slot_count.unsqueeze(1), out=command._slot_valid)
-    command._outputs.reset_step(command._slot_valid)
+    command._buf_error.zero_()
+    command._buf_activation.zero_()
 
 
 def _launch_local_kernel(command, plan, kernel, count: int) -> None:

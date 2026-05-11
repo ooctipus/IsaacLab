@@ -648,7 +648,8 @@ def test_local_primitive_dispatch_compose_graph_capture_smoke(dispatch_backend):
     torch.manual_seed(17)
     cmd = MultiTaskCommand(_mixed_cfg(dispatch_backend=dispatch_backend), env)
     torch.lt(cmd._slot_arange, cmd._env_slot_count.unsqueeze(1), out=cmd._slot_valid)
-    cmd._outputs.reset_step(cmd._slot_valid)
+    cmd._buf_error.zero_()
+    cmd._buf_activation.zero_()
     cmd._backend.dispatch(cmd, cmd._slot_valid)
     assert cmd._backend._dispatch_graph is not None
     cmd._backend.compose(cmd, cmd._slot_valid)
