@@ -5,9 +5,12 @@
 
 """Backend-owned execution plan for fused-pipeline packed-scatter dispatch.
 
-Slab resolution is local to this backend — no imports from ``mega_kernel``.
+Pure Warp — no ``import torch``. Slab resolution is local to this backend.
 Each ``BUFFER_KIND`` resolves to a stable ``wp.array`` exposed via
-``ProxyArray.warp`` on the scene assets.
+``ProxyArray.warp`` on the scene assets. Per-resample queue mutations
+operate on ``wp.to_torch`` views of the Warp-owned plan storage so the
+indexing logic stays vectorised; the per-step kernels read the same
+storage through the ``PackedScatterQueue`` wp-struct accessors.
 """
 
 from __future__ import annotations
@@ -15,7 +18,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-import torch
 import warp as wp
 
 from ..kernel_ids import BUFFER_KIND
@@ -59,15 +61,10 @@ NUM_PACKED_PIPELINES = NUM_SCHEDULES
 class RotationBinding:
     """Warp views for rotating one asset's canonical vec3 command slots.
 
-    ``root_quat_w_wp`` comes from the asset's :class:`ProxyArray` directly, so
-    the underlying storage is anchored by the scene itself — no torch view
-    needed on this binding. The ``*_offsets_i32`` torch tensors *are* kept
-    because we construct them ourselves (via :func:`torch.tensor`) and the
-    ``*_offsets_wp`` views need them alive.
+    All arrays are Warp-owned (``wp.array``) or asset-anchored ProxyArray
+    accessors; no torch tensors on the binding.
     """
 
-    reach_offsets_i32: torch.Tensor
-    track_offsets_i32: torch.Tensor
     root_quat_w_wp: wp.array
     reach_offsets_wp: wp.array
     track_offsets_wp: wp.array
@@ -130,22 +127,12 @@ class JointMechPowerSlabBinding:
 class PackedScatterPlan:
     """Long-lived Warp plan for fused-pipeline execution with legacy scatter."""
 
-    state_kernel_id_i32: torch.Tensor
-    metric_kernel_id_i32: torch.Tensor
-    activation_kernel_id_i32: torch.Tensor
-    state_stride_i32: torch.Tensor
-    canonical_offset_i32: torch.Tensor
-    is_instant_i32: torch.Tensor
-    is_tracking_i32: torch.Tensor
-    subtask_gather_offset_i32: torch.Tensor
-    subtask_gather_count_i32: torch.Tensor
-    gather_indices_flat_i32: torch.Tensor
-    flat_env_ids_i32: torch.Tensor
-    flat_slot_ids_i32: torch.Tensor
-    flat_subtask_ids_i32: torch.Tensor
-    flat_target_offsets_i32: torch.Tensor
-    flat_pipeline_ids_i32: torch.Tensor
-    flat_count_i32: torch.Tensor
+    flat_env_ids_wp: wp.array
+    flat_slot_ids_wp: wp.array
+    flat_subtask_ids_wp: wp.array
+    flat_target_offsets_wp: wp.array
+    flat_pipeline_ids_wp: wp.array
+    flat_count_wp: wp.array
     max_work: int
     total_work: int
     env_slots: EnvSlots
@@ -179,13 +166,14 @@ def _resolve_slabs(
     assets = spec.slab_asset_names
     offsets = spec.slab_offsets_py
     sizes = spec.slab_sizes_py
+    device_str = str(command.device)
 
     env_origins_torch = command._env.scene.env_origins
     env_origins_vec3_wp = wp.array(
         ptr=env_origins_torch.data_ptr(),
         dtype=wp.vec3,
         shape=(command.num_envs,),
-        device=str(command.device),
+        device=device_str,
     )
 
     float_slabs: list[FloatSlabBinding] = []
@@ -243,6 +231,7 @@ def _resolve_slabs(
 
 def _build_rotation_bindings(command: MultiTaskCommandWarp) -> tuple[RotationBinding, ...]:
     s = command.spec
+    device_str = str(command.device)
     bindings: list[RotationBinding] = []
     asset_names = sorted(set(s.reach_rotatable_vec3_by_asset.keys()) | set(s.track_rotatable_vec3_by_asset.keys()))
     for asset_name in asset_names:
@@ -252,15 +241,13 @@ def _build_rotation_bindings(command: MultiTaskCommandWarp) -> tuple[RotationBin
         if num_offsets == 0:
             continue
         root_quat_w_wp = command._env.scene[asset_name].data.root_quat_w.warp
-        reach_offsets_i32 = torch.tensor(reach_offsets, device=command.device, dtype=torch.int32)
-        track_offsets_i32 = torch.tensor(track_offsets, device=command.device, dtype=torch.int32)
+        reach_offsets_wp = wp.array(list(reach_offsets), dtype=wp.int32, device=device_str)
+        track_offsets_wp = wp.array(list(track_offsets), dtype=wp.int32, device=device_str)
         bindings.append(
             RotationBinding(
-                reach_offsets_i32=reach_offsets_i32,
-                track_offsets_i32=track_offsets_i32,
                 root_quat_w_wp=root_quat_w_wp,
-                reach_offsets_wp=wp.from_torch(reach_offsets_i32),
-                track_offsets_wp=wp.from_torch(track_offsets_i32),
+                reach_offsets_wp=reach_offsets_wp,
+                track_offsets_wp=track_offsets_wp,
                 num_reach_offsets=len(reach_offsets),
                 num_offsets=num_offsets,
             )
@@ -273,17 +260,7 @@ def build_packed_scatter_plan(command: MultiTaskCommandWarp) -> PackedScatterPla
     wp.init()
     s = command.spec
     validate_schedule_support(s.state_kernel_id, backend_name="packed_scatter")
-
-    state_kernel_id_i32 = s.state_kernel_id.to(torch.int32)
-    metric_kernel_id_i32 = s.metric_kernel_id.to(torch.int32)
-    activation_kernel_id_i32 = s.activation_kernel_id.to(torch.int32)
-    state_stride_i32 = s.state_stride.to(torch.int32)
-    canonical_offset_i32 = s.canonical_offset.to(torch.int32)
-    is_instant_i32 = s.is_instant.to(torch.int32)
-    is_tracking_i32 = s.is_tracking.to(torch.int32)
-    subtask_gather_offset_i32 = s.subtask_gather_offset.to(torch.int32)
-    subtask_gather_count_i32 = s.subtask_gather_count.to(torch.int32)
-    gather_indices_flat_i32 = s.gather_indices_flat.to(torch.int32)
+    device_str = str(command.device)
 
     env_slots = EnvSlots()
     env_slots.subtask_ids = wp.from_torch(command._env_subtask_ids)
@@ -291,17 +268,17 @@ def build_packed_scatter_plan(command: MultiTaskCommandWarp) -> PackedScatterPla
     env_slots.slot_offsets = wp.from_torch(command._env_slot_offsets)
 
     spec_struct = SubtaskSpec()
-    spec_struct.state_kernel_id = wp.from_torch(state_kernel_id_i32)
-    spec_struct.metric_kernel_id = wp.from_torch(metric_kernel_id_i32)
-    spec_struct.activation_kernel_id = wp.from_torch(activation_kernel_id_i32)
+    spec_struct.state_kernel_id = wp.from_torch(s.state_kernel_id.int())
+    spec_struct.metric_kernel_id = wp.from_torch(s.metric_kernel_id.int())
+    spec_struct.activation_kernel_id = wp.from_torch(s.activation_kernel_id.int())
     spec_struct.activation_kernel_param = wp.from_torch(s.activation_kernel_param)
-    spec_struct.state_stride = wp.from_torch(state_stride_i32)
-    spec_struct.canonical_offset = wp.from_torch(canonical_offset_i32)
-    spec_struct.is_instant_flag = wp.from_torch(is_instant_i32)
-    spec_struct.is_tracking_flag = wp.from_torch(is_tracking_i32)
-    spec_struct.gather_offset = wp.from_torch(subtask_gather_offset_i32)
-    spec_struct.gather_count = wp.from_torch(subtask_gather_count_i32)
-    spec_struct.gather_indices_flat = wp.from_torch(gather_indices_flat_i32)
+    spec_struct.state_stride = wp.from_torch(s.state_stride.int())
+    spec_struct.canonical_offset = wp.from_torch(s.canonical_offset.int())
+    spec_struct.is_instant_flag = wp.from_torch(s.is_instant.int())
+    spec_struct.is_tracking_flag = wp.from_torch(s.is_tracking.int())
+    spec_struct.gather_offset = wp.from_torch(s.subtask_gather_offset.int())
+    spec_struct.gather_count = wp.from_torch(s.subtask_gather_count.int())
+    spec_struct.gather_indices_flat = wp.from_torch(s.gather_indices_flat.int())
 
     state = StateAccess()
     state.unified = wp.from_torch(command._unified_buffer)
@@ -322,20 +299,20 @@ def build_packed_scatter_plan(command: MultiTaskCommandWarp) -> PackedScatterPla
     outputs.progress = wp.from_torch(command._progress)
 
     max_work = command.num_envs * command.k_max
-    flat_env_ids_i32 = torch.empty(max_work, device=command.device, dtype=torch.int32)
-    flat_slot_ids_i32 = torch.empty(max_work, device=command.device, dtype=torch.int32)
-    flat_subtask_ids_i32 = torch.empty(max_work, device=command.device, dtype=torch.int32)
-    flat_target_offsets_i32 = torch.empty(max_work, device=command.device, dtype=torch.int32)
-    flat_pipeline_ids_i32 = torch.empty(max_work, device=command.device, dtype=torch.int32)
-    flat_count_i32 = torch.zeros(1, device=command.device, dtype=torch.int32)
+    flat_env_ids_wp = wp.zeros(shape=max_work, dtype=wp.int32, device=device_str)
+    flat_slot_ids_wp = wp.zeros(shape=max_work, dtype=wp.int32, device=device_str)
+    flat_subtask_ids_wp = wp.zeros(shape=max_work, dtype=wp.int32, device=device_str)
+    flat_target_offsets_wp = wp.zeros(shape=max_work, dtype=wp.int32, device=device_str)
+    flat_pipeline_ids_wp = wp.zeros(shape=max_work, dtype=wp.int32, device=device_str)
+    flat_count_wp = wp.zeros(shape=1, dtype=wp.int32, device=device_str)
 
     flat_queue = PackedScatterQueue()
-    flat_queue.env_ids = wp.from_torch(flat_env_ids_i32)
-    flat_queue.slot_ids = wp.from_torch(flat_slot_ids_i32)
-    flat_queue.subtask_ids = wp.from_torch(flat_subtask_ids_i32)
-    flat_queue.target_offsets = wp.from_torch(flat_target_offsets_i32)
-    flat_queue.pipeline_ids = wp.from_torch(flat_pipeline_ids_i32)
-    flat_queue.count = wp.from_torch(flat_count_i32)
+    flat_queue.env_ids = flat_env_ids_wp
+    flat_queue.slot_ids = flat_slot_ids_wp
+    flat_queue.subtask_ids = flat_subtask_ids_wp
+    flat_queue.target_offsets = flat_target_offsets_wp
+    flat_queue.pipeline_ids = flat_pipeline_ids_wp
+    flat_queue.count = flat_count_wp
 
     (
         float_slabs,
@@ -346,22 +323,12 @@ def build_packed_scatter_plan(command: MultiTaskCommandWarp) -> PackedScatterPla
     ) = _resolve_slabs(command)
 
     plan = PackedScatterPlan(
-        state_kernel_id_i32=state_kernel_id_i32,
-        metric_kernel_id_i32=metric_kernel_id_i32,
-        activation_kernel_id_i32=activation_kernel_id_i32,
-        state_stride_i32=state_stride_i32,
-        canonical_offset_i32=canonical_offset_i32,
-        is_instant_i32=is_instant_i32,
-        is_tracking_i32=is_tracking_i32,
-        subtask_gather_offset_i32=subtask_gather_offset_i32,
-        subtask_gather_count_i32=subtask_gather_count_i32,
-        gather_indices_flat_i32=gather_indices_flat_i32,
-        flat_env_ids_i32=flat_env_ids_i32,
-        flat_slot_ids_i32=flat_slot_ids_i32,
-        flat_subtask_ids_i32=flat_subtask_ids_i32,
-        flat_target_offsets_i32=flat_target_offsets_i32,
-        flat_pipeline_ids_i32=flat_pipeline_ids_i32,
-        flat_count_i32=flat_count_i32,
+        flat_env_ids_wp=flat_env_ids_wp,
+        flat_slot_ids_wp=flat_slot_ids_wp,
+        flat_subtask_ids_wp=flat_subtask_ids_wp,
+        flat_target_offsets_wp=flat_target_offsets_wp,
+        flat_pipeline_ids_wp=flat_pipeline_ids_wp,
+        flat_count_wp=flat_count_wp,
         max_work=max_work,
         total_work=0,
         env_slots=env_slots,
@@ -384,10 +351,22 @@ def build_packed_scatter_plan(command: MultiTaskCommandWarp) -> PackedScatterPla
 
 
 def refresh_packed_scatter_plan(command: MultiTaskCommandWarp, plan: PackedScatterPlan) -> None:
-    """Refresh packed queues from the command's current per-env task assignment."""
-    plan.flat_count_i32.zero_()
+    """Refresh packed queues from the command's current per-env task assignment.
+
+    The flat queue arrays are Warp-owned; we mutate the storage through
+    ``wp.to_torch`` views so the per-pipeline indexing stays vectorised.
+    Same storage is read by ``dispatch_packed_scatter_flat`` at step time.
+    """
+    flat_count_torch = wp.to_torch(plan.flat_count_wp)
+    flat_env_ids_torch = wp.to_torch(plan.flat_env_ids_wp)
+    flat_slot_ids_torch = wp.to_torch(plan.flat_slot_ids_wp)
+    flat_subtask_ids_torch = wp.to_torch(plan.flat_subtask_ids_wp)
+    flat_target_offsets_torch = wp.to_torch(plan.flat_target_offsets_wp)
+    flat_pipeline_ids_torch = wp.to_torch(plan.flat_pipeline_ids_wp)
+
+    flat_count_torch.zero_()
     cursor = 0
-    slot_idx = torch.arange(command.k_max, device=command.device, dtype=torch.int32).unsqueeze(0)
+    slot_idx = command._slot_arange
     valid = slot_idx < command._env_slot_count.unsqueeze(1)
     if not bool(valid.any()):
         plan.total_work = 0
@@ -397,9 +376,9 @@ def refresh_packed_scatter_plan(command: MultiTaskCommandWarp, plan: PackedScatt
     subtask_ids = command._env_subtask_ids[env_ids, slot_ids].long()
     state_kernel_ids = command.spec.state_kernel_id[subtask_ids].long()
     target_offsets = command._env_slot_offsets[env_ids, slot_ids]
-    env_ids_i32 = env_ids.to(torch.int32)
-    slot_ids_i32 = slot_ids.to(torch.int32)
-    subtask_ids_i32 = subtask_ids.to(torch.int32)
+    env_ids_i32 = env_ids.int()
+    slot_ids_i32 = slot_ids.int()
+    subtask_ids_i32 = subtask_ids.int()
 
     for pipeline_id, state_kernel_group in enumerate(_PIPELINE_STATE_KERNELS):
         group_mask = state_kernel_ids == state_kernel_group[0]
@@ -409,13 +388,13 @@ def refresh_packed_scatter_plan(command: MultiTaskCommandWarp, plan: PackedScatt
         if count == 0:
             continue
         stop = cursor + count
-        plan.flat_env_ids_i32[cursor:stop] = env_ids_i32[group_mask]
-        plan.flat_slot_ids_i32[cursor:stop] = slot_ids_i32[group_mask]
-        plan.flat_subtask_ids_i32[cursor:stop] = subtask_ids_i32[group_mask]
-        plan.flat_target_offsets_i32[cursor:stop] = target_offsets[group_mask]
-        plan.flat_pipeline_ids_i32[cursor:stop] = pipeline_id
+        flat_env_ids_torch[cursor:stop] = env_ids_i32[group_mask]
+        flat_slot_ids_torch[cursor:stop] = slot_ids_i32[group_mask]
+        flat_subtask_ids_torch[cursor:stop] = subtask_ids_i32[group_mask]
+        flat_target_offsets_torch[cursor:stop] = target_offsets[group_mask]
+        flat_pipeline_ids_torch[cursor:stop] = pipeline_id
         cursor = stop
     if cursor != int(env_ids.numel()):
         raise ValueError("packed_scatter failed to lower every active subtask into a fused pipeline.")
     plan.total_work = cursor
-    plan.flat_count_i32[0] = cursor
+    flat_count_torch[0] = cursor
