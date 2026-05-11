@@ -364,52 +364,35 @@ class MultiTaskCommand(CommandTerm):
         self._effective_max_episode_length[pt_ids] = lengths
 
     # ------------------------------------------------------------------------
-    # Debug visualization — per-kernel ``viz_fn`` dispatch.
+    # Debug visualization — dispatched via :data:`kernels_viz.VIZ_REGISTRY`.
     #
-    # State kernels with a non-``None`` ``viz_fn`` (currently the four
-    # base-tracking kernels: ``BODY_POS`` / ``BODY_QUAT`` / ``BODY_LIN_VEL``
-    # / ``BODY_ANG_VEL``) get one :class:`VisualizationMarkers` each, lazily
-    # created on first ``debug_vis=True`` call. ``_debug_vis_callback`` walks
-    # those kernels each step, gathers per-env targets via the spec's
-    # ``task_kernel_target_offset`` table, calls each ``viz_fn``, and
-    # dispatches to the cached marker. Joint kernels and contact-count
-    # kernels stay ``viz_fn=None`` and are skipped — see ``kernels_viz`` for
-    # the rationale.
+    # The registry currently covers the four base-tracking state kernels
+    # (``BODY_POS`` / ``BODY_QUAT`` / ``BODY_LIN_VEL`` / ``BODY_ANG_VEL``).
+    # Each entry declares its marker cfgs + a per-step ``update_fn``. Joint
+    # and contact-count kernels are absent — they don't have an honest
+    # spatial primitive. See :mod:`.impl.kernels_viz` for the rationale.
     # ------------------------------------------------------------------------
 
     def _set_debug_vis_impl(self, debug_vis: bool) -> None:
-        """Eagerly create per-kernel markers (matches ``state_command``'s pattern).
+        """Create per-kernel markers from :data:`kernels_viz.VIZ_REGISTRY`.
 
-        Walks every state kernel with a ``viz_marker_factory`` and creates one
-        :class:`VisualizationMarkers` per ``(path, cfg)`` pair returned by
-        the factory. Each kernel may register multiple markers — typically a
-        green "goal" + a blue "current" pair so the viewer can compare target
-        vs live state at a glance.
-
-        The factory is pure data; no scene access. Safe to call during
-        command-term ``__init__`` before articulation views are bound.
+        Each registered state kernel declares its own marker list — typically
+        a green "goal" + a blue "current" pair so the viewer can compare
+        target vs live state at a glance. The registry is pure data; no
+        scene access.
         """
         self._debug_vis_enabled = bool(debug_vis)
         if debug_vis:
             if not hasattr(self, "_visualizers"):
                 from isaaclab.markers import VisualizationMarkers  # noqa: PLC0415
 
-                from .impl.kernels_torch import STATE_KERNELS as _SK  # noqa: PLC0415
+                from .impl.kernels_viz import VIZ_REGISTRY  # noqa: PLC0415
 
                 self._visualizers: dict[str, object] = {}
-                # Per-kernel list of marker paths (so the callback knows which
-                # paths each kernel's viz_fn output keys are allowed to use).
-                self._kernel_marker_paths: dict[int, list[str]] = {}
-                for kid, kdef in enumerate(_SK):
-                    if kdef.viz_marker_factory is None:
-                        continue
-                    pairs = kdef.viz_marker_factory()
-                    paths_for_kernel: list[str] = []
-                    for path, cfg in pairs:
+                for entry in VIZ_REGISTRY.values():
+                    for path, cfg in entry.markers:
                         if path not in self._visualizers:
                             self._visualizers[path] = VisualizationMarkers(cfg)
-                        paths_for_kernel.append(path)
-                    self._kernel_marker_paths[kid] = paths_for_kernel
             for vis in self._visualizers.values():
                 vis.set_visibility(True)
         else:
@@ -418,12 +401,11 @@ class MultiTaskCommand(CommandTerm):
                     vis.set_visibility(False)
 
     def _debug_vis_callback(self, event) -> None:  # noqa: ARG002
-        """Update each per-kernel marker for this step.
+        """Update each registered marker for this step.
 
-        Each ``viz_fn`` returns a ``dict[marker_path, kwargs]`` whose keys
-        must be a subset of the paths declared by the kernel's
-        ``viz_marker_factory``. Unknown paths in the dict are ignored with
-        a warning rather than crashing the callback.
+        Each entry in :data:`kernels_viz.VIZ_REGISTRY` provides an
+        ``update_fn`` returning ``dict[marker_path, kwargs]``; unknown paths
+        in the dict are ignored.
 
         Bails cleanly if the scene isn't ready (early-callback race or
         post-crash exception unwind) so we don't compound upstream errors.
@@ -441,12 +423,11 @@ class MultiTaskCommand(CommandTerm):
             return
 
         from .impl.kernels_torch import STATE_KERNELS as _SK  # noqa: PLC0415
+        from .impl.kernels_viz import VIZ_REGISTRY  # noqa: PLC0415
 
         per_env_offsets = self.spec.task_kernel_target_offset[self.task_samples]  # [N, K]
         env_arange = torch.arange(self.num_envs, device=self.device)
-        for kid, kdef in enumerate(_SK):
-            if kdef.viz_fn is None or kid not in self._kernel_marker_paths:
-                continue
+        for kid, entry in VIZ_REGISTRY.items():
             offsets = per_env_offsets[:, kid]
             active = offsets >= 0
             # Skip kernels that no env's current task uses. Without this we
@@ -460,19 +441,19 @@ class MultiTaskCommand(CommandTerm):
             # nothing useful to draw.
             if not bool(active.any()):
                 continue
-            stride = kdef.intra_body_stride
+            stride = _SK[kid].intra_body_stride
             col_idx = offsets.clamp(min=0).unsqueeze(1) + torch.arange(stride, device=self.device).unsqueeze(0)
             row_idx = env_arange.unsqueeze(1).expand_as(col_idx)
             target_per_env = self._targets_flat[row_idx, col_idx]
             try:
-                update = kdef.viz_fn(self, target_per_env, active)
+                update = entry.update_fn(self, target_per_env, active)
                 for path, kwargs in update.items():
                     if path in self._visualizers:
                         self._visualizers[path].visualize(**kwargs)
             except Exception as exc:  # noqa: BLE001
                 # One viz_fn failure shouldn't kill the others. Print so
                 # Kit doesn't silently swallow it.
-                print(f"[multitask-viz] viz_fn for kid={kid} ({kdef.buffer_kind.name}) raised: {exc!r}")
+                print(f"[multitask-viz] viz update for kid={kid} raised: {exc!r}")
 
     def _rotate_canonical_slots_to_body_frame(self) -> None:
         """Rotate POS / LIN_VEL / ANG_VEL slots of :attr:`_command_reach` /

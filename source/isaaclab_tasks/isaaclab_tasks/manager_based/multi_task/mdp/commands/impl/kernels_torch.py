@@ -300,65 +300,15 @@ def state_joint_mech_power(stacked: torch.Tensor) -> torch.Tensor:
 # Kernels sharing a ``buffer_kind`` share the unified-buffer slab read
 # (e.g. BODY_POS / BODY_POS_Z → BODY_POS_W; CONTACT / CONTACT_COUNT /
 # CONTACT_COUNT_DIFF → CONTACT_NET_FORCES_W).
-def _lazy_attr(name: str) -> Callable:
-    """Forward-declare a callable in :mod:`kernels_viz` by name. Real import
-    deferred to first call so :mod:`kernels_viz` (Kit-only) doesn't load
-    during pre-Kit cfg construction."""
-
-    def _wrapper(*args, **kwargs):
-        from . import kernels_viz  # noqa: PLC0415
-
-        return getattr(kernels_viz, name)(*args, **kwargs)
-
-    _wrapper.__name__ = name
-    return _wrapper
-
-
-# Single source of truth for state-kernel metadata. Indexed by :class:`STATE_KERNEL_ID`.
-# Kernels sharing a ``buffer_kind`` share the unified-buffer slab read
-# (e.g. BODY_POS / BODY_POS_Z → BODY_POS_W; CONTACT / CONTACT_COUNT /
-# CONTACT_COUNT_DIFF → CONTACT_NET_FORCES_W).
-#
-# ``viz_marker_factory`` + ``viz_fn`` are set for the four base-tracking
-# kernels (POS, QUAT, LIN_VEL, ANG_VEL). The factory provides the static
-# marker cfg (created once at debug-vis-on); the viz_fn provides per-step
-# visualize kwargs. Joint kernels and contact-count kernels stay ``None``
-# for both — they don't have an honest spatial primitive (see ``kernels_viz``).
+# Debug visualization for the four base-tracking kernels (POS, QUAT, LIN_VEL,
+# ANG_VEL) is bound in :mod:`.kernels_viz` — see :data:`~.kernels_viz.VIZ_REGISTRY`.
 STATE_KERNELS: tuple[StateKernelDef, ...] = (
     StateKernelDef(BUFFER_KIND.JOINT_POS, 0, 1, _state_identity),
     StateKernelDef(BUFFER_KIND.JOINT_VEL, 0, 1, _state_identity),
-    StateKernelDef(
-        BUFFER_KIND.BODY_POS_W,
-        0,
-        3,
-        _state_identity,
-        viz_marker_factory=_lazy_attr("markers_body_pos"),
-        viz_fn=_lazy_attr("viz_body_pos"),
-    ),
-    StateKernelDef(
-        BUFFER_KIND.BODY_QUAT_W,
-        0,
-        4,
-        _state_identity,
-        viz_marker_factory=_lazy_attr("markers_body_quat"),
-        viz_fn=_lazy_attr("viz_body_quat"),
-    ),
-    StateKernelDef(
-        BUFFER_KIND.BODY_LIN_VEL_W,
-        0,
-        3,
-        _state_identity,
-        viz_marker_factory=_lazy_attr("markers_body_lin_vel"),
-        viz_fn=_lazy_attr("viz_body_lin_vel"),
-    ),
-    StateKernelDef(
-        BUFFER_KIND.BODY_ANG_VEL_W,
-        0,
-        3,
-        _state_identity,
-        viz_marker_factory=_lazy_attr("markers_body_ang_vel"),
-        viz_fn=_lazy_attr("viz_body_ang_vel"),
-    ),
+    StateKernelDef(BUFFER_KIND.BODY_POS_W, 0, 3, _state_identity),
+    StateKernelDef(BUFFER_KIND.BODY_QUAT_W, 0, 4, _state_identity),
+    StateKernelDef(BUFFER_KIND.BODY_LIN_VEL_W, 0, 3, _state_identity),
+    StateKernelDef(BUFFER_KIND.BODY_ANG_VEL_W, 0, 3, _state_identity),
     StateKernelDef(BUFFER_KIND.BODY_POS_W, 2, 1, _state_identity),  # BODY_POS_Z — z component
     StateKernelDef(BUFFER_KIND.CONTACT_NET_FORCES_W, 0, 3, state_body_contact),
     StateKernelDef(BUFFER_KIND.CONTACT_NET_FORCES_W, 0, 3, state_body_contact_count),

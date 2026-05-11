@@ -220,35 +220,12 @@ class StateKernelDef:
             whole block).
         compute_fn: Pure tensor op ``[M, N, slice_size] → [M, N, stride]``.
             Runs on the stacked unified-buffer gather for one read group.
-        viz_marker_factory: Static factory for the kernel's markers. Called
-            once at ``MultiTaskCommand._set_debug_vis_impl(True)`` to produce
-            a list of ``(marker_path, VisualizationMarkersCfg)`` pairs —
-            pure data, no scene access. Returning multiple pairs lets one
-            kernel register both a "goal" marker (target value) and a
-            "current" marker (live state) à la ``state_command``. ``None``
-            (default) means "no markers for this kernel"; the base command
-            term skips it.
-        viz_fn: Optional per-step viz update. Signature::
 
-                viz_fn(cmd, target_per_env, active) → dict[marker_path, kwargs]
-
-            where ``target_per_env`` is ``[num_envs, intra_body_stride]`` (the
-            kernel's target slice for each env, gathered from
-            ``cmd._targets_flat``), ``active`` is ``[num_envs] bool``
-            (``True`` iff the env's current task uses this kernel), and the
-            returned dict maps each marker path back to a kwargs dict that
-            gets forwarded to :meth:`VisualizationMarkers.visualize` for
-            that marker. Keys must be a subset of the paths declared by
-            ``viz_marker_factory``.
-
-            Must be paired with ``viz_marker_factory`` to be effective —
-            the base callback only invokes ``viz_fn`` when matching markers
-            exist. Joint and contact-count kernels stay ``None`` for both:
-            they don't have an honest spatial primitive."""
+    Debug visualization is bound separately in :mod:`.kernels_viz` via
+    :data:`~.kernels_viz.VIZ_REGISTRY` so the math registry stays Kit-free.
+    """
 
     buffer_kind: BUFFER_KIND
     intra_body_offset: int
     intra_body_stride: int
     compute_fn: Callable[[torch.Tensor], torch.Tensor]
-    viz_marker_factory: Callable[[], list[tuple[str, object]]] | None = None
-    viz_fn: Callable | None = None

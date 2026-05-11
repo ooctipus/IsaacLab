@@ -3,18 +3,13 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Debug-visualization for state kernels that track the BASE entity.
+"""Debug-visualization registry for state kernels that track the BASE entity.
 
-Two-function-per-kernel pattern (mirrors ``state_command``):
-
-- ``markers_*()`` — pure-data factory returning a list of
-  ``(prim_path, VisualizationMarkersCfg)`` pairs. Called once at
-  ``_set_debug_vis_impl(True)`` time to create marker prims. No scene-
-  state access; safe to call before articulation views are bound.
-- ``viz_*()`` — per-step update returning a ``dict[marker_path, kwargs]``
-  forwarded to :meth:`VisualizationMarkers.visualize` for each marker.
-  Reads scene state (robot pose, current velocity) and computes per-env
-  translations / orientations / scales.
+This module is imported lazily by :meth:`MultiTaskCommand._set_debug_vis_impl`
+post-Kit (it depends on :mod:`isaaclab.sim` and :mod:`isaaclab.markers` which
+need Kit to be loaded). Module-level cfg constants are direct, declarative
+:class:`VisualizationMarkersCfg` literals; the :data:`VIZ_REGISTRY` table maps
+state-kernel ids to their marker list + per-step update function.
 
 Each base-tracking kernel registers TWO markers:
 
@@ -35,20 +30,24 @@ arrow's job is to show the *visual* direction the robot should/does move,
 which is the world-frame velocity. Rotating by the full base quaternion
 (my earlier impl) tied the arrow to the robot's roll/pitch oscillations
 and made it tremble; world-frame rendering keeps it stable.
-
-This module deliberately depends on :mod:`isaaclab.markers` and
-:mod:`isaaclab.utils.math` — Kit-launched-time imports. The kernel
-registry uses ``_lazy_attr`` wrappers so cfg construction stays pre-Kit.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import torch
 import warp as wp
 
+import isaaclab.sim as sim_utils
+from isaaclab.markers import FRAME_MARKER_CFG, VisualizationMarkersCfg
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+
+from .kernel_ids import STATE_KERNEL_ID
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ..multi_task_command import MultiTaskCommand
 
 
@@ -60,7 +59,98 @@ _LIFT_Z = 0.5
 
 
 # ---------------------------------------------------------------------------
-# Helpers.
+# Marker cfg literals — declarative, module-level.
+# ---------------------------------------------------------------------------
+
+_PATH_BODY_POS_GOAL = "/Visuals/MultiTaskCommand/body_pos_goal"
+_PATH_BODY_QUAT_GOAL = "/Visuals/MultiTaskCommand/body_quat_goal"
+_PATH_BODY_LIN_VEL_GOAL = "/Visuals/MultiTaskCommand/body_lin_vel_goal"
+_PATH_BODY_LIN_VEL_CURRENT = "/Visuals/MultiTaskCommand/body_lin_vel_current"
+_PATH_BODY_ANG_VEL_GOAL = "/Visuals/MultiTaskCommand/body_ang_vel_goal"
+_PATH_BODY_ANG_VEL_CURRENT = "/Visuals/MultiTaskCommand/body_ang_vel_current"
+
+_ARROW_USD = f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd"
+_BODY_QUAT_GOAL_CFG = FRAME_MARKER_CFG.replace(prim_path=_PATH_BODY_QUAT_GOAL)
+_BODY_QUAT_GOAL_CFG.markers["frame"].scale = (0.4, 0.4, 0.4)
+
+
+_MARKERS_BODY_POS: list[tuple[str, VisualizationMarkersCfg]] = [
+    (
+        _PATH_BODY_POS_GOAL,
+        VisualizationMarkersCfg(
+            prim_path=_PATH_BODY_POS_GOAL,
+            markers={
+                "cuboid": sim_utils.CuboidCfg(
+                    size=(0.25, 0.25, 0.25),
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+                ),
+            },
+        ),
+    ),
+]
+_MARKERS_BODY_QUAT: list[tuple[str, VisualizationMarkersCfg]] = [
+    (_PATH_BODY_QUAT_GOAL, _BODY_QUAT_GOAL_CFG),
+]
+_MARKERS_BODY_LIN_VEL: list[tuple[str, VisualizationMarkersCfg]] = [
+    (
+        _PATH_BODY_LIN_VEL_GOAL,
+        VisualizationMarkersCfg(
+            prim_path=_PATH_BODY_LIN_VEL_GOAL,
+            markers={
+                "arrow": sim_utils.UsdFileCfg(
+                    usd_path=_ARROW_USD,
+                    scale=(0.5, 0.5, 0.5),
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+                ),
+            },
+        ),
+    ),
+    (
+        _PATH_BODY_LIN_VEL_CURRENT,
+        VisualizationMarkersCfg(
+            prim_path=_PATH_BODY_LIN_VEL_CURRENT,
+            markers={
+                "arrow": sim_utils.UsdFileCfg(
+                    usd_path=_ARROW_USD,
+                    scale=(0.5, 0.5, 0.5),
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
+                ),
+            },
+        ),
+    ),
+]
+_MARKERS_BODY_ANG_VEL: list[tuple[str, VisualizationMarkersCfg]] = [
+    (
+        _PATH_BODY_ANG_VEL_GOAL,
+        VisualizationMarkersCfg(
+            prim_path=_PATH_BODY_ANG_VEL_GOAL,
+            markers={
+                "arrow": sim_utils.UsdFileCfg(
+                    usd_path=_ARROW_USD,
+                    scale=(0.5, 0.5, 0.5),
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+                ),
+            },
+        ),
+    ),
+    (
+        _PATH_BODY_ANG_VEL_CURRENT,
+        VisualizationMarkersCfg(
+            prim_path=_PATH_BODY_ANG_VEL_CURRENT,
+            markers={
+                "arrow": sim_utils.UsdFileCfg(
+                    usd_path=_ARROW_USD,
+                    scale=(0.5, 0.5, 0.5),
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
+                ),
+            },
+        ),
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
+# Helpers shared by the per-step viz_fns.
 # ---------------------------------------------------------------------------
 
 
@@ -111,35 +201,12 @@ def _arrow_kwargs_from_world_vec(
 
 
 # ---------------------------------------------------------------------------
-# BODY_POS — red cuboid at world target. No "current" marker (the robot
-# itself shows the current pos).
+# Per-step viz functions. Each takes the command, the kernel's per-env target
+# slice, and the per-env active mask; returns ``dict[marker_path, kwargs]``.
 # ---------------------------------------------------------------------------
 
 
-_PATH_BODY_POS_GOAL = "/Visuals/MultiTaskCommand/body_pos_goal"
-
-
-def markers_body_pos() -> list[tuple[str, object]]:
-    import isaaclab.sim as sim_utils
-    from isaaclab.markers import VisualizationMarkersCfg
-
-    return [
-        (
-            _PATH_BODY_POS_GOAL,
-            VisualizationMarkersCfg(
-                prim_path=_PATH_BODY_POS_GOAL,
-                markers={
-                    "cuboid": sim_utils.CuboidCfg(
-                        size=(0.25, 0.25, 0.25),
-                        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
-                    ),
-                },
-            ),
-        )
-    ]
-
-
-def viz_body_pos(cmd: MultiTaskCommand, target_per_env: torch.Tensor, active: torch.Tensor) -> dict:
+def _viz_body_pos(cmd: MultiTaskCommand, target_per_env: torch.Tensor, active: torch.Tensor) -> dict:
     env_origins = cmd._env.scene.env_origins
     world_pos = target_per_env + env_origins
     world_pos = world_pos.clone()
@@ -148,24 +215,7 @@ def viz_body_pos(cmd: MultiTaskCommand, target_per_env: torch.Tensor, active: to
     return {_PATH_BODY_POS_GOAL: {"translations": pos}}
 
 
-# ---------------------------------------------------------------------------
-# BODY_QUAT — red frame at robot world pos, oriented to target. No "current"
-# (the robot's frame is the current orientation).
-# ---------------------------------------------------------------------------
-
-
-_PATH_BODY_QUAT_GOAL = "/Visuals/MultiTaskCommand/body_quat_goal"
-
-
-def markers_body_quat() -> list[tuple[str, object]]:
-    from isaaclab.markers import FRAME_MARKER_CFG
-
-    cfg = FRAME_MARKER_CFG.replace(prim_path=_PATH_BODY_QUAT_GOAL)
-    cfg.markers["frame"].scale = (0.4, 0.4, 0.4)
-    return [(_PATH_BODY_QUAT_GOAL, cfg)]
-
-
-def viz_body_quat(cmd: MultiTaskCommand, target_per_env: torch.Tensor, active: torch.Tensor) -> dict:
+def _viz_body_quat(cmd: MultiTaskCommand, target_per_env: torch.Tensor, active: torch.Tensor) -> dict:
     robot = cmd._env.scene["robot"]
     base_pos_w = wp.to_torch(robot.data.root_pos_w).clone()
     base_pos_w[:, 2] += _LIFT_Z
@@ -173,52 +223,7 @@ def viz_body_quat(cmd: MultiTaskCommand, target_per_env: torch.Tensor, active: t
     return {_PATH_BODY_QUAT_GOAL: {"translations": pos, "orientations": target_per_env}}
 
 
-# ---------------------------------------------------------------------------
-# BODY_LIN_VEL — green goal arrow + blue current arrow.
-# ---------------------------------------------------------------------------
-
-
-_PATH_BODY_LIN_VEL_GOAL = "/Visuals/MultiTaskCommand/body_lin_vel_goal"
-_PATH_BODY_LIN_VEL_CURRENT = "/Visuals/MultiTaskCommand/body_lin_vel_current"
-
-
-def markers_body_lin_vel() -> list[tuple[str, object]]:
-    import isaaclab.sim as sim_utils
-    from isaaclab.markers import VisualizationMarkersCfg
-    from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
-
-    arrow_usd = f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd"
-    return [
-        (
-            _PATH_BODY_LIN_VEL_GOAL,
-            VisualizationMarkersCfg(
-                prim_path=_PATH_BODY_LIN_VEL_GOAL,
-                markers={
-                    "arrow": sim_utils.UsdFileCfg(
-                        usd_path=arrow_usd,
-                        scale=(0.5, 0.5, 0.5),
-                        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
-                    ),
-                },
-            ),
-        ),
-        (
-            _PATH_BODY_LIN_VEL_CURRENT,
-            VisualizationMarkersCfg(
-                prim_path=_PATH_BODY_LIN_VEL_CURRENT,
-                markers={
-                    "arrow": sim_utils.UsdFileCfg(
-                        usd_path=arrow_usd,
-                        scale=(0.5, 0.5, 0.5),
-                        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
-                    ),
-                },
-            ),
-        ),
-    ]
-
-
-def viz_body_lin_vel(cmd: MultiTaskCommand, target_per_env: torch.Tensor, active: torch.Tensor) -> dict:
+def _viz_body_lin_vel(cmd: MultiTaskCommand, target_per_env: torch.Tensor, active: torch.Tensor) -> dict:
     """Goal (green) = target velocity in WORLD frame, anchored at robot pos.
     Current (blue) = robot's actual world-frame linear velocity.
 
@@ -228,61 +233,13 @@ def viz_body_lin_vel(cmd: MultiTaskCommand, target_per_env: torch.Tensor, active
     """
     robot = cmd._env.scene["robot"]
     base_pos_w = wp.to_torch(robot.data.root_pos_w)
-    # Goal arrow — target velocity rendered in world frame directly.
     goal_kwargs = _arrow_kwargs_from_world_vec(target_per_env, base_pos_w, active)
-    # Current arrow — robot's actual world-frame velocity. Always shown
-    # for envs where the goal is active so they can be visually compared.
     current_w = wp.to_torch(robot.data.root_lin_vel_w)
     current_kwargs = _arrow_kwargs_from_world_vec(current_w, base_pos_w, active)
     return {_PATH_BODY_LIN_VEL_GOAL: goal_kwargs, _PATH_BODY_LIN_VEL_CURRENT: current_kwargs}
 
 
-# ---------------------------------------------------------------------------
-# BODY_ANG_VEL — green goal + blue current. Same convention.
-# ---------------------------------------------------------------------------
-
-
-_PATH_BODY_ANG_VEL_GOAL = "/Visuals/MultiTaskCommand/body_ang_vel_goal"
-_PATH_BODY_ANG_VEL_CURRENT = "/Visuals/MultiTaskCommand/body_ang_vel_current"
-
-
-def markers_body_ang_vel() -> list[tuple[str, object]]:
-    import isaaclab.sim as sim_utils
-    from isaaclab.markers import VisualizationMarkersCfg
-    from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
-
-    arrow_usd = f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd"
-    return [
-        (
-            _PATH_BODY_ANG_VEL_GOAL,
-            VisualizationMarkersCfg(
-                prim_path=_PATH_BODY_ANG_VEL_GOAL,
-                markers={
-                    "arrow": sim_utils.UsdFileCfg(
-                        usd_path=arrow_usd,
-                        scale=(0.5, 0.5, 0.5),
-                        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
-                    ),
-                },
-            ),
-        ),
-        (
-            _PATH_BODY_ANG_VEL_CURRENT,
-            VisualizationMarkersCfg(
-                prim_path=_PATH_BODY_ANG_VEL_CURRENT,
-                markers={
-                    "arrow": sim_utils.UsdFileCfg(
-                        usd_path=arrow_usd,
-                        scale=(0.5, 0.5, 0.5),
-                        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
-                    ),
-                },
-            ),
-        ),
-    ]
-
-
-def viz_body_ang_vel(cmd: MultiTaskCommand, target_per_env: torch.Tensor, active: torch.Tensor) -> dict:
+def _viz_body_ang_vel(cmd: MultiTaskCommand, target_per_env: torch.Tensor, active: torch.Tensor) -> dict:
     """Goal (green) = ω target axis in world frame, length ∝ |ω|.
     Current (blue) = robot's actual world-frame ω axis."""
     robot = cmd._env.scene["robot"]
@@ -293,3 +250,29 @@ def viz_body_ang_vel(cmd: MultiTaskCommand, target_per_env: torch.Tensor, active
     current_w = wp.to_torch(robot.data.root_ang_vel_w)
     current_kwargs = _arrow_kwargs_from_world_vec(current_w, base_pos_w, active, length_scale=1.0)
     return {_PATH_BODY_ANG_VEL_GOAL: goal_kwargs, _PATH_BODY_ANG_VEL_CURRENT: current_kwargs}
+
+
+# ---------------------------------------------------------------------------
+# Viz registry: state-kernel id → markers + per-step update fn.
+#
+# Kernels without an honest spatial primitive (JOINT_*, BODY_POS_Z,
+# CONTACT_*, JOINT_MECH_POWER) are simply absent from this table — the base
+# command term iterates the registry, not the full STATE_KERNELS tuple.
+# ---------------------------------------------------------------------------
+
+
+class VizEntry(NamedTuple):
+    """One state-kernel's viz binding."""
+
+    markers: list[tuple[str, VisualizationMarkersCfg]]
+    """``(prim_path, cfg)`` pairs — typically a goal + a current marker."""
+    update_fn: Callable[[MultiTaskCommand, torch.Tensor, torch.Tensor], dict]
+    """Per-step update returning ``{marker_path: visualize_kwargs}``."""
+
+
+VIZ_REGISTRY: dict[int, VizEntry] = {
+    int(STATE_KERNEL_ID.BODY_POS): VizEntry(_MARKERS_BODY_POS, _viz_body_pos),
+    int(STATE_KERNEL_ID.BODY_QUAT): VizEntry(_MARKERS_BODY_QUAT, _viz_body_quat),
+    int(STATE_KERNEL_ID.BODY_LIN_VEL): VizEntry(_MARKERS_BODY_LIN_VEL, _viz_body_lin_vel),
+    int(STATE_KERNEL_ID.BODY_ANG_VEL): VizEntry(_MARKERS_BODY_ANG_VEL, _viz_body_ang_vel),
+}

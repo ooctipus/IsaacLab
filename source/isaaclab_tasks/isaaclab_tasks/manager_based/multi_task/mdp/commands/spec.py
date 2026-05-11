@@ -331,7 +331,7 @@ class TaskSpec:
     # ``_targets_flat`` for that ``(task, kernel)`` pair, or ``-1`` if the
     # task doesn't use that kernel. The base command term reads this row at
     # ``debug_vis_callback`` time to gather per-env targets and dispatch to
-    # each kernel's :attr:`~.kernels.StateKernelDef.viz_fn`.
+    # each registered viz ``update_fn`` in :data:`~.impl.kernels_viz.VIZ_REGISTRY`.
     #
     # Multiple subtasks of the same kernel within one task collapse to the
     # first slot's offset (multi-instance kernels per task aren't currently
