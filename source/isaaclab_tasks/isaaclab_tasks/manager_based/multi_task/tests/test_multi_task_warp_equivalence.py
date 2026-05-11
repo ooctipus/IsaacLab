@@ -847,10 +847,28 @@ def test_primitive_graph_local_applies_producer_coherent_slot_order():
     post-sort order is ``[0, 2, 1, 3]`` — producers ``[0, 0, 1, 1]`` — which
     is what a warp of consumer threads sees as broadcast-friendly.
 
-    Public-output invariance under this reorder is exercised in
-    :func:`test_warp_matches_pytorch_outputs` whenever the test cfg has
-    cfg-original order already producer-coherent (so the secondary sort
-    is a no-op and the torch reference matches the Warp output bit-for-bit).
+    NOTE on why this test asserts slot order directly rather than comparing
+    ``cmd_ref.command_track`` against ``cmd_graph.command_track`` (as the
+    sibling :func:`test_schedule_ordered_mega_reorders_slots_without_changing_public_outputs`
+    does): this cfg has two distinct LIN_VEL subtasks (0 and 2) and two
+    distinct ANG_VEL subtasks (1 and 3) all bound to ``robot.base``, so
+    subtasks 0 and 2 share canonical position ``[0:3]`` and subtasks 1
+    and 3 share ``[3:6]``. The torch reference writes through advanced
+    indexing (``self._command_track[rows, cols] = delta``) which PyTorch
+    documents as having **implementation-defined behavior for overlapping
+    (row, col) writes** — "what 'last' means is not guaranteed". The
+    'winning' write varies based on memory layout / prior CUDA state, so
+    cross-backend aggregate comparison is unreliable for this cfg by
+    design. Asserting the slot reorder (the actual Phase 3 mechanism)
+    tests what we care about and is robust.
+
+    This non-determinism doesn't surface in production: real cfgs don't
+    pair multiple tracking subtasks against the same (asset, state-kernel,
+    body) with different targets, so canonical-overlap doesn't occur.
+    Public-output invariance under producer-coherent reorder for
+    overlap-free cfgs is exercised in :func:`test_warp_matches_pytorch_outputs`
+    (which uses ``_mixed_cfg``, every subtask in a distinct canonical
+    position).
     """
     device = "cuda:0"
     num_envs = 16
