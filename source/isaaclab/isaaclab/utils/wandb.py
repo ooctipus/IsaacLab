@@ -27,7 +27,9 @@ def get_model_checkpoint(
         The path to the downloaded model checkpoint.
 
     Example:
-        model_path = get_model_checkpoint(run_id="my_run_id", project="my_project", checkpoint=100, wandb_username="my_username")
+        model_path = get_model_checkpoint(
+            run_id="my_run_id", project="my_project", checkpoint=100, wandb_username="my_username"
+        )
         This will download the model checkpoint from https://wandb.ai/my_username/my_project/runs/my_run_id and save it
         to models_tmp/my_project/my_run_id/model_100.pt
     """
