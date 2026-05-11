@@ -42,7 +42,6 @@ from ..kernels_wp import (
     ComposerState,
     EnvSlots,
     Outputs,
-    PrimitiveLocalQueue,
     PrimitiveProducerQueue,
     StateAccess,
     SubtaskSpec,
@@ -345,7 +344,13 @@ def _sort_command_slots_by_schedule(command: MultiTaskCommandWarp, schedule_ids:
 
 @dataclass
 class PrimitiveGraphLocalPlan:
-    """Long-lived Warp plan for primitive graph execution."""
+    """Long-lived Warp plan for primitive graph execution.
+
+    The dense graph kernels iterate over ``(env, slot)`` via ``env_slots`` and
+    branch on ``subtask_schedule_ids`` — no consumer-table partitioning is
+    needed at dispatch time. Per-resample state is just the sorted slot order
+    (mutated in place on ``command``) plus diagnostic schedule counts.
+    """
 
     subtask_schedule_ids_i32: torch.Tensor
     state_kernel_id_i32: torch.Tensor
@@ -358,13 +363,6 @@ class PrimitiveGraphLocalPlan:
     subtask_gather_offset_i32: torch.Tensor
     subtask_gather_count_i32: torch.Tensor
     gather_indices_flat_i32: torch.Tensor
-    consumer_env_ids_i32: torch.Tensor
-    consumer_slot_ids_i32: torch.Tensor
-    consumer_subtask_ids_i32: torch.Tensor
-    consumer_target_offsets_i32: torch.Tensor
-    schedule_offsets_i32: torch.Tensor
-    schedule_counts_i32: torch.Tensor
-    consumer_count_i32: torch.Tensor
     vec3_nodes: ProducerNodeTable
     scalar_nodes: ProducerNodeTable
     quat_nodes: ProducerNodeTable
@@ -375,7 +373,6 @@ class PrimitiveGraphLocalPlan:
     direct_quat: torch.Tensor
     scalar_sum: torch.Tensor
     contact_mask: torch.Tensor
-    max_consumers: int
     total_consumers: int
     vec3_signature_count: int
     scalar_signature_count: int
@@ -384,12 +381,6 @@ class PrimitiveGraphLocalPlan:
     contact_signature_count: int
     schedule_counts_py: list[int]
     env_slots: EnvSlots
-    # NOTE: ``consumer_view`` is a :class:`PrimitiveLocalQueue` — the kernel-side
-    # Warp struct is shared with ``primitive_queue_local`` (kernel-API glue).
-    # The role here is the *consumer table*: one entry per active subtask
-    # (env, slot, subtask, target_offset), partitioned by kernel via
-    # ``schedule_offsets`` / ``schedule_counts``.
-    consumer_view: PrimitiveLocalQueue
     spec: SubtaskSpec
     state: StateAccess
     composer_state: ComposerState
@@ -474,28 +465,11 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
     scalar_sum_nodes = _make_producer_node_table(command, (SCHEDULE_SCALAR_SUM_DELTA,))
     contact_nodes = _make_producer_node_table(command, _CONTACT_SCHEDULES)
 
-    consumer_env_ids_i32 = torch.empty(max_consumers, device=command.device, dtype=torch.int32)
-    consumer_slot_ids_i32 = torch.empty(max_consumers, device=command.device, dtype=torch.int32)
-    consumer_subtask_ids_i32 = torch.empty(max_consumers, device=command.device, dtype=torch.int32)
-    consumer_target_offsets_i32 = torch.empty(max_consumers, device=command.device, dtype=torch.int32)
-    schedule_offsets_i32 = torch.zeros(NUM_SCHEDULES, device=command.device, dtype=torch.int32)
-    schedule_counts_i32 = torch.zeros(NUM_SCHEDULES, device=command.device, dtype=torch.int32)
-    consumer_count_i32 = torch.zeros(1, device=command.device, dtype=torch.int32)
-
     direct_vec3 = torch.empty((max_consumers, 3), device=command.device, dtype=command._unified_buffer.dtype)
     direct_scalar = torch.empty(max_consumers, device=command.device, dtype=command._unified_buffer.dtype)
     direct_quat = torch.empty((max_consumers, 4), device=command.device, dtype=command._unified_buffer.dtype)
     scalar_sum = torch.empty(max_consumers, device=command.device, dtype=command._unified_buffer.dtype)
     contact_mask = torch.zeros((max_consumers, 4), device=command.device, dtype=command._unified_buffer.dtype)
-
-    consumer_view = PrimitiveLocalQueue()
-    consumer_view.env_ids = wp.from_torch(consumer_env_ids_i32)
-    consumer_view.slot_ids = wp.from_torch(consumer_slot_ids_i32)
-    consumer_view.subtask_ids = wp.from_torch(consumer_subtask_ids_i32)
-    consumer_view.target_offsets = wp.from_torch(consumer_target_offsets_i32)
-    consumer_view.schedule_offsets = wp.from_torch(schedule_offsets_i32)
-    consumer_view.schedule_counts = wp.from_torch(schedule_counts_i32)
-    consumer_view.count = wp.from_torch(consumer_count_i32)
 
     (
         float_slabs,
@@ -517,13 +491,6 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
         subtask_gather_offset_i32=subtask_gather_offset_i32,
         subtask_gather_count_i32=subtask_gather_count_i32,
         gather_indices_flat_i32=gather_indices_flat_i32,
-        consumer_env_ids_i32=consumer_env_ids_i32,
-        consumer_slot_ids_i32=consumer_slot_ids_i32,
-        consumer_subtask_ids_i32=consumer_subtask_ids_i32,
-        consumer_target_offsets_i32=consumer_target_offsets_i32,
-        schedule_offsets_i32=schedule_offsets_i32,
-        schedule_counts_i32=schedule_counts_i32,
-        consumer_count_i32=consumer_count_i32,
         vec3_nodes=vec3_nodes,
         scalar_nodes=scalar_nodes,
         quat_nodes=quat_nodes,
@@ -534,7 +501,6 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
         direct_quat=direct_quat,
         scalar_sum=scalar_sum,
         contact_mask=contact_mask,
-        max_consumers=max_consumers,
         total_consumers=0,
         vec3_signature_count=int(vec3_nodes.signature_subtask_i32.numel()),
         scalar_signature_count=int(scalar_nodes.signature_subtask_i32.numel()),
@@ -543,7 +509,6 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
         contact_signature_count=int(contact_nodes.signature_subtask_i32.numel()),
         schedule_counts_py=[0] * NUM_SCHEDULES,
         env_slots=env_slots,
-        consumer_view=consumer_view,
         spec=spec_struct,
         state=state,
         composer_state=composer_state,
@@ -574,11 +539,7 @@ def refresh_primitive_graph_local_plan(command: MultiTaskCommandWarp, plan: Prim
     consumer table needs rebuilding when slot assignment changes.
     """
     _sort_command_slots_by_schedule(command, plan.subtask_schedule_ids_i32)
-    plan.schedule_offsets_i32.zero_()
-    plan.schedule_counts_i32.zero_()
-    plan.consumer_count_i32.zero_()
 
-    cursor = 0
     slot_idx = torch.arange(command.k_max, device=command.device, dtype=torch.int32).unsqueeze(0)
     valid = slot_idx < command._env_slot_count.unsqueeze(1)
     if not bool(valid.any()):
@@ -586,32 +547,15 @@ def refresh_primitive_graph_local_plan(command: MultiTaskCommandWarp, plan: Prim
         plan.schedule_counts_py = [0] * NUM_SCHEDULES
         return
 
-    env_ids, slot_ids = valid.nonzero(as_tuple=True)
-    subtask_ids = command._env_subtask_ids[env_ids, slot_ids].long()
+    subtask_ids = command._env_subtask_ids[valid].long()
     state_kernel_ids = command.spec.state_kernel_id[subtask_ids].long()
-    target_offsets = command._env_slot_offsets[env_ids, slot_ids]
-    env_ids_i32 = env_ids.to(torch.int32)
-    slot_ids_i32 = slot_ids.to(torch.int32)
-    subtask_ids_i32 = subtask_ids.to(torch.int32)
 
-    schedule_counts_py: list[int] = []
-    for schedule_id, _ in enumerate(SCHEDULE_STATE_KERNELS):
-        group_mask = _build_schedule_mask(state_kernel_ids, schedule_id)
-        count = int(group_mask.sum().item())
-        schedule_counts_py.append(count)
-        plan.schedule_offsets_i32[schedule_id] = cursor
-        plan.schedule_counts_i32[schedule_id] = count
-        if count == 0:
-            continue
-        stop = cursor + count
-        plan.consumer_env_ids_i32[cursor:stop] = env_ids_i32[group_mask]
-        plan.consumer_slot_ids_i32[cursor:stop] = slot_ids_i32[group_mask]
-        plan.consumer_subtask_ids_i32[cursor:stop] = subtask_ids_i32[group_mask]
-        plan.consumer_target_offsets_i32[cursor:stop] = target_offsets[group_mask]
-        cursor = stop
-
-    if cursor != int(env_ids.numel()):
-        raise ValueError("primitive_graph_local failed to lower every active subtask into a primitive schedule.")
-    plan.total_consumers = cursor
+    schedule_counts_py: list[int] = [
+        int(_build_schedule_mask(state_kernel_ids, schedule_id).sum().item())
+        for schedule_id in range(len(SCHEDULE_STATE_KERNELS))
+    ]
+    total = sum(schedule_counts_py)
+    if total != int(subtask_ids.numel()):
+        raise ValueError("primitive_graph_local failed to classify every active subtask into a primitive schedule.")
+    plan.total_consumers = total
     plan.schedule_counts_py = schedule_counts_py
-    plan.consumer_count_i32[0] = cursor
