@@ -690,7 +690,7 @@ def test_primitive_graph_local_shares_contact_predicate_nodes():
         )
     )
     assert contact_work == num_envs * 3
-    assert plan.contact_count == num_envs
+    assert plan.contact_node_count == num_envs
 
     atol = 1e-5
     rtol = 1e-5
@@ -722,10 +722,10 @@ def test_primitive_graph_local_uses_high_fanout_reduction_nodes():
     assert plan.schedule_counts_py[SCHEDULE_DIRECT_SCALAR_DELTA] == num_envs * 4
     assert plan.schedule_counts_py[SCHEDULE_DIRECT_QUAT_DELTA] == num_envs * 4
     assert plan.schedule_counts_py[SCHEDULE_SCALAR_SUM_DELTA] == num_envs * 16
-    assert plan.vec3_count == num_envs
-    assert plan.scalar_count == num_envs
-    assert plan.quat_count == num_envs
-    assert plan.scalar_sum_count == num_envs
+    assert plan.vec3_node_count == num_envs
+    assert plan.scalar_node_count == num_envs
+    assert plan.quat_node_count == num_envs
+    assert plan.scalar_sum_node_count == num_envs
     assert not plan.use_vec3_graph
     assert not plan.use_scalar_graph
     assert not plan.use_quat_graph

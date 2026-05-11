@@ -65,7 +65,7 @@ class PrimitiveGraphLocalBackend:
         """Launch the full per-step pipeline eagerly; used for warmup and graph capture."""
         fill_unified_buffer_warp(command, self.plan)
 
-        if self._use_fused_compose and self.plan.use_dense_graph_consumer and self.plan.total_work > 0:
+        if self._use_fused_compose and self.plan.use_dense_graph_consumer and self.plan.total_consumers > 0:
             self._launch_dense_graph_producers(command)
             self._launch_dense_graph_consumer_fused(command)
             rotate_canonical_slots_to_body_frame_warp(command, self.plan)
@@ -89,11 +89,11 @@ class PrimitiveGraphLocalBackend:
             compute_dense_graph_producers,
             dim=(command.num_envs, total_signature_count),
             inputs=[
-                plan.vec3_nodes.queue,
-                plan.scalar_nodes.queue,
-                plan.quat_nodes.queue,
-                plan.scalar_sum_nodes.queue,
-                plan.contact_nodes.queue,
+                plan.vec3_nodes.nodes_view,
+                plan.scalar_nodes.nodes_view,
+                plan.quat_nodes.nodes_view,
+                plan.scalar_sum_nodes.nodes_view,
+                plan.contact_nodes.nodes_view,
                 plan.spec,
                 plan.state,
                 plan.direct_vec3_wp,
@@ -118,11 +118,11 @@ class PrimitiveGraphLocalBackend:
             inputs=[
                 plan.env_slots,
                 plan.subtask_schedule_ids_wp,
-                plan.vec3_nodes.queue,
-                plan.scalar_nodes.queue,
-                plan.quat_nodes.queue,
-                plan.scalar_sum_nodes.queue,
-                plan.contact_nodes.queue,
+                plan.vec3_nodes.nodes_view,
+                plan.scalar_nodes.nodes_view,
+                plan.quat_nodes.nodes_view,
+                plan.scalar_sum_nodes.nodes_view,
+                plan.contact_nodes.nodes_view,
                 plan.spec,
                 plan.state,
                 plan.outputs,

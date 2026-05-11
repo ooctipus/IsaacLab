@@ -51,7 +51,7 @@ def _launch_local_kernel(command: MultiTaskCommandWarp, plan: PrimitiveGraphLoca
         kernel,
         dim=count,
         inputs=[
-            plan.queue,
+            plan.consumer_view,
             plan.spec,
             plan.state,
             plan.outputs,
@@ -68,8 +68,8 @@ def _launch_direct_vec3_kernel(command: MultiTaskCommandWarp, plan: PrimitiveGra
         dispatch_graph_direct_vec3,
         dim=count,
         inputs=[
-            plan.queue,
-            plan.vec3_nodes.queue,
+            plan.consumer_view,
+            plan.vec3_nodes.nodes_view,
             plan.spec,
             plan.state,
             plan.outputs,
@@ -87,8 +87,8 @@ def _launch_direct_scalar_kernel(command: MultiTaskCommandWarp, plan: PrimitiveG
         dispatch_graph_direct_scalar,
         dim=count,
         inputs=[
-            plan.queue,
-            plan.scalar_nodes.queue,
+            plan.consumer_view,
+            plan.scalar_nodes.nodes_view,
             plan.spec,
             plan.state,
             plan.outputs,
@@ -106,8 +106,8 @@ def _launch_direct_quat_kernel(command: MultiTaskCommandWarp, plan: PrimitiveGra
         dispatch_graph_direct_quat,
         dim=count,
         inputs=[
-            plan.queue,
-            plan.quat_nodes.queue,
+            plan.consumer_view,
+            plan.quat_nodes.nodes_view,
             plan.spec,
             plan.state,
             plan.outputs,
@@ -125,8 +125,8 @@ def _launch_contact_kernel(command: MultiTaskCommandWarp, plan: PrimitiveGraphLo
         kernel,
         dim=count,
         inputs=[
-            plan.queue,
-            plan.contact_nodes.queue,
+            plan.consumer_view,
+            plan.contact_nodes.nodes_view,
             plan.spec,
             plan.state,
             plan.outputs,
@@ -144,8 +144,8 @@ def _launch_scalar_sum_kernel(command: MultiTaskCommandWarp, plan: PrimitiveGrap
         kernel,
         dim=count,
         inputs=[
-            plan.queue,
-            plan.scalar_sum_nodes.queue,
+            plan.consumer_view,
+            plan.scalar_sum_nodes.nodes_view,
             plan.spec,
             plan.state,
             plan.outputs,
@@ -165,11 +165,11 @@ def _launch_dense_graph_consumer(command: MultiTaskCommandWarp, plan: PrimitiveG
         inputs=[
             plan.env_slots,
             plan.subtask_schedule_ids_wp,
-            plan.vec3_nodes.queue,
-            plan.scalar_nodes.queue,
-            plan.quat_nodes.queue,
-            plan.scalar_sum_nodes.queue,
-            plan.contact_nodes.queue,
+            plan.vec3_nodes.nodes_view,
+            plan.scalar_nodes.nodes_view,
+            plan.quat_nodes.nodes_view,
+            plan.scalar_sum_nodes.nodes_view,
+            plan.contact_nodes.nodes_view,
             plan.spec,
             plan.state,
             plan.outputs,
@@ -193,7 +193,7 @@ def _launch_dense_graph_consumer(command: MultiTaskCommandWarp, plan: PrimitiveG
 
 def dispatch_primitive_graph_local_warp(command: MultiTaskCommandWarp, plan: PrimitiveGraphLocalPlan) -> None:
     """Run the primitive graph: shared nodes first, terminal chains second."""
-    if plan.total_work == 0:
+    if plan.total_consumers == 0:
         return
 
     counts = plan.schedule_counts_py
@@ -210,11 +210,11 @@ def dispatch_primitive_graph_local_warp(command: MultiTaskCommandWarp, plan: Pri
                 compute_dense_graph_producers,
                 dim=(command.num_envs, total_signature_count),
                 inputs=[
-                    plan.vec3_nodes.queue,
-                    plan.scalar_nodes.queue,
-                    plan.quat_nodes.queue,
-                    plan.scalar_sum_nodes.queue,
-                    plan.contact_nodes.queue,
+                    plan.vec3_nodes.nodes_view,
+                    plan.scalar_nodes.nodes_view,
+                    plan.quat_nodes.nodes_view,
+                    plan.scalar_sum_nodes.nodes_view,
+                    plan.contact_nodes.nodes_view,
                     plan.spec,
                     plan.state,
                     plan.direct_vec3_wp,
@@ -237,8 +237,8 @@ def dispatch_primitive_graph_local_warp(command: MultiTaskCommandWarp, plan: Pri
         if plan.use_vec3_graph:
             wp.launch(
                 compute_direct_vec3_nodes,
-                dim=plan.vec3_count,
-                inputs=[plan.vec3_nodes.queue, plan.spec, plan.state, plan.direct_vec3_wp],
+                dim=plan.vec3_node_count,
+                inputs=[plan.vec3_nodes.nodes_view, plan.spec, plan.state, plan.direct_vec3_wp],
                 device=str(command.device),
             )
             _launch_direct_vec3_kernel(command, plan, counts[SCHEDULE_DIRECT_VEC3_DELTA])
@@ -250,8 +250,8 @@ def dispatch_primitive_graph_local_warp(command: MultiTaskCommandWarp, plan: Pri
         if plan.use_scalar_graph:
             wp.launch(
                 compute_direct_scalar_nodes,
-                dim=plan.scalar_count,
-                inputs=[plan.scalar_nodes.queue, plan.spec, plan.state, plan.direct_scalar_wp],
+                dim=plan.scalar_node_count,
+                inputs=[plan.scalar_nodes.nodes_view, plan.spec, plan.state, plan.direct_scalar_wp],
                 device=str(command.device),
             )
             _launch_direct_scalar_kernel(command, plan, counts[SCHEDULE_DIRECT_SCALAR_DELTA])
@@ -263,8 +263,8 @@ def dispatch_primitive_graph_local_warp(command: MultiTaskCommandWarp, plan: Pri
         if plan.use_quat_graph:
             wp.launch(
                 compute_direct_quat_nodes,
-                dim=plan.quat_count,
-                inputs=[plan.quat_nodes.queue, plan.spec, plan.state, plan.direct_quat_wp],
+                dim=plan.quat_node_count,
+                inputs=[plan.quat_nodes.nodes_view, plan.spec, plan.state, plan.direct_quat_wp],
                 device=str(command.device),
             )
             _launch_direct_quat_kernel(command, plan, counts[SCHEDULE_DIRECT_QUAT_DELTA])
@@ -276,20 +276,20 @@ def dispatch_primitive_graph_local_warp(command: MultiTaskCommandWarp, plan: Pri
         if plan.use_scalar_sum_graph:
             wp.launch(
                 compute_scalar_sum_nodes,
-                dim=plan.scalar_sum_count,
-                inputs=[plan.scalar_sum_nodes.queue, plan.spec, plan.state, plan.scalar_sum_wp],
+                dim=plan.scalar_sum_node_count,
+                inputs=[plan.scalar_sum_nodes.nodes_view, plan.spec, plan.state, plan.scalar_sum_wp],
                 device=str(command.device),
             )
             _launch_scalar_sum_kernel(command, plan, dispatch_graph_scalar_sum, counts[SCHEDULE_SCALAR_SUM_DELTA])
         else:
             _launch_local_kernel(command, plan, dispatch_primitive_local_scalar_sum, counts[SCHEDULE_SCALAR_SUM_DELTA])
 
-    if plan.contact_count == 0:
+    if plan.contact_node_count == 0:
         return
     wp.launch(
         compute_contact_predicate_mask,
-        dim=plan.contact_count,
-        inputs=[plan.contact_nodes.queue, plan.spec, plan.state, plan.contact_mask_wp],
+        dim=plan.contact_node_count,
+        inputs=[plan.contact_nodes.nodes_view, plan.spec, plan.state, plan.contact_mask_wp],
         device=str(command.device),
     )
     if counts[SCHEDULE_VEC3_THRESHOLD_VECTOR_DELTA] != 0:

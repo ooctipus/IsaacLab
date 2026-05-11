@@ -5,13 +5,32 @@
 
 """Backend-owned primitive graph plan.
 
-This backend keeps the primitive-family queue layout, but makes reusable
-target-independent computations explicit shared IR nodes:
+Mathematical structure:
 
-``current/projection/reduction -> target-specific consumer -> local output``
+* **Producer nodes** — one per unique ``(env, signature)`` pair. A signature
+  is a target-independent gather block (e.g. "the world-frame velocity of
+  body B on this env"). Producers compute their value once and write it
+  into a per-kind buffer (``direct_vec3``, ``scalar_sum``, ``contact_mask``,
+  etc.). Stored in :class:`ProducerNodeTable`, one table per producer kind.
+* **Consumer items** — one per active subtask. Each consumer reads from
+  exactly one producer node (its source signature) and writes a target-
+  specific result to its local output row. Stored in the plan's
+  ``consumer_*_i32`` arrays (one row per consumer), partitioned by kernel
+  via ``schedule_offsets`` / ``schedule_counts``.
+* **Adjacency** (producer → its consumers) — stored per producer table as
+  CSR ``(consumer_offsets, consumer_counts)`` over ``consumer_indices``.
+* **Reverse adjacency** (consumer → its producer) — stored per consumer as
+  ``consumer_node_ids[item]`` inside the producer table.
 
 The public command wrapper stays unchanged; the backend owns the graph layout
-and decides which schedules materialize producer rows.
+and decides which producer kinds materialize.
+
+KNOWN SMELL (tracked separately): the ``use_*_graph`` mode flags below are a
+runtime fallback to direct-compute when fanout is too low to amortize
+materialization. They make this backend behave as "graph if profitable, else
+queue-style direct". A pure graph backend would always materialize; the
+mode-decision belongs at cfg time (user picks ``primitive_graph_local`` vs
+``primitive_queue_local``), not at dispatch time. See follow-up cleanup.
 """
 
 from __future__ import annotations
@@ -235,6 +254,13 @@ def _build_rotation_bindings(command: MultiTaskCommandWarp) -> tuple[RotationBin
     return tuple(bindings)
 
 
+# --- Fallback-flag isolation block — to be removed when the graph backend is
+# made strictly "always materialize". The ``use_*_graph`` plan booleans and
+# ``_should_materialize_producer`` below convert this from a pure graph
+# backend into "graph if profitable, else direct-compute" — the queue-
+# backend path effectively inlined as fallback. Per cfg-time-decision
+# principle, the user should pick ``primitive_graph_local`` vs
+# ``primitive_queue_local`` instead of having dispatch decide per-step.
 # Per-kind materialization breakeven. Light producers (1-4 array reads) need
 # many consumers to amortize the global-memory roundtrip cost; heavy producers
 # (multi-element reductions, multi-schedule contact predicate) earn it back at
@@ -288,8 +314,18 @@ def _build_schedule_mask(state_kernel_ids: torch.Tensor, schedule_id: int) -> to
 
 
 @dataclass
-class PrimitiveProducerPlan:
-    """Long-lived node queue for one target-independent producer kind."""
+class ProducerNodeTable:
+    """Producer-node state for one target-independent producer kind.
+
+    Each *node* is a unique ``(env, signature)`` pair; consumer items reach
+    their producing node via ``consumer_node_ids[item]`` and producers iterate
+    their consumers via the CSR pair ``(consumer_offsets, consumer_counts)``.
+
+    NOTE: ``nodes_view`` is a :class:`PrimitiveProducerQueue` — the kernel-side
+    Warp struct is still named "Queue" in :mod:`kernels_wp` because it's
+    shared kernel-API glue. The role here is a producer-node table; we keep
+    the Python-side naming honest.
+    """
 
     subtask_signature_i32: torch.Tensor
     signature_subtask_i32: torch.Tensor
@@ -301,36 +337,36 @@ class PrimitiveProducerPlan:
     consumer_counts_i32: torch.Tensor
     count_i32: torch.Tensor
     count: int
-    queue: PrimitiveProducerQueue
+    nodes_view: PrimitiveProducerQueue
 
 
-def _make_producer_plan(
+def _make_producer_node_table(
     command: MultiTaskCommandWarp,
-    max_work: int,
+    max_consumers: int,
     schedule_ids: tuple[int, ...],
-) -> PrimitiveProducerPlan:
-    """Allocate one producer queue and its subtask signature tables."""
+) -> ProducerNodeTable:
+    """Allocate one kind's producer-node table + its subtask-signature lookup."""
     subtask_signature_i32, signature_subtask_i32 = _build_signature_tables(command, schedule_ids)
-    env_ids_i32 = torch.empty(max_work, device=command.device, dtype=torch.int32)
-    subtask_ids_i32 = torch.empty(max_work, device=command.device, dtype=torch.int32)
-    consumer_node_ids_i32 = torch.full((max_work,), -1, device=command.device, dtype=torch.int32)
-    consumer_indices_i32 = torch.empty(max_work, device=command.device, dtype=torch.int32)
-    consumer_offsets_i32 = torch.zeros(max_work, device=command.device, dtype=torch.int32)
-    consumer_counts_i32 = torch.zeros(max_work, device=command.device, dtype=torch.int32)
+    env_ids_i32 = torch.empty(max_consumers, device=command.device, dtype=torch.int32)
+    subtask_ids_i32 = torch.empty(max_consumers, device=command.device, dtype=torch.int32)
+    consumer_node_ids_i32 = torch.full((max_consumers,), -1, device=command.device, dtype=torch.int32)
+    consumer_indices_i32 = torch.empty(max_consumers, device=command.device, dtype=torch.int32)
+    consumer_offsets_i32 = torch.zeros(max_consumers, device=command.device, dtype=torch.int32)
+    consumer_counts_i32 = torch.zeros(max_consumers, device=command.device, dtype=torch.int32)
     count_i32 = torch.zeros(1, device=command.device, dtype=torch.int32)
 
-    queue = PrimitiveProducerQueue()
-    queue.subtask_signature = wp.from_torch(subtask_signature_i32)
-    queue.signature_subtask = wp.from_torch(signature_subtask_i32)
-    queue.env_ids = wp.from_torch(env_ids_i32)
-    queue.subtask_ids = wp.from_torch(subtask_ids_i32)
-    queue.consumer_node_ids = wp.from_torch(consumer_node_ids_i32)
-    queue.consumer_indices = wp.from_torch(consumer_indices_i32)
-    queue.consumer_offsets = wp.from_torch(consumer_offsets_i32)
-    queue.consumer_counts = wp.from_torch(consumer_counts_i32)
-    queue.count = wp.from_torch(count_i32)
+    nodes_view = PrimitiveProducerQueue()
+    nodes_view.subtask_signature = wp.from_torch(subtask_signature_i32)
+    nodes_view.signature_subtask = wp.from_torch(signature_subtask_i32)
+    nodes_view.env_ids = wp.from_torch(env_ids_i32)
+    nodes_view.subtask_ids = wp.from_torch(subtask_ids_i32)
+    nodes_view.consumer_node_ids = wp.from_torch(consumer_node_ids_i32)
+    nodes_view.consumer_indices = wp.from_torch(consumer_indices_i32)
+    nodes_view.consumer_offsets = wp.from_torch(consumer_offsets_i32)
+    nodes_view.consumer_counts = wp.from_torch(consumer_counts_i32)
+    nodes_view.count = wp.from_torch(count_i32)
 
-    return PrimitiveProducerPlan(
+    return ProducerNodeTable(
         subtask_signature_i32=subtask_signature_i32,
         signature_subtask_i32=signature_subtask_i32,
         env_ids_i32=env_ids_i32,
@@ -341,11 +377,11 @@ def _make_producer_plan(
         consumer_counts_i32=consumer_counts_i32,
         count_i32=count_i32,
         count=0,
-        queue=queue,
+        nodes_view=nodes_view,
     )
 
 
-def _reset_producer_plan(plan: PrimitiveProducerPlan) -> None:
+def _reset_producer_node_table(plan: ProducerNodeTable) -> None:
     """Clear dynamic producer state before rebuilding the graph plan."""
     plan.consumer_node_ids_i32.fill_(-1)
     plan.consumer_offsets_i32.zero_()
@@ -355,7 +391,7 @@ def _reset_producer_plan(plan: PrimitiveProducerPlan) -> None:
 
 
 def _refresh_producer_nodes(
-    plan: PrimitiveProducerPlan,
+    plan: ProducerNodeTable,
     env_ids: torch.Tensor,
     subtask_ids: torch.Tensor,
     active_mask: torch.Tensor,
@@ -378,7 +414,7 @@ def _refresh_producer_nodes(
 
 
 def _set_grouped_consumers(
-    plan: PrimitiveProducerPlan,
+    plan: ProducerNodeTable,
     row_start: int,
     row_stop: int,
     node_ids: torch.Tensor,
@@ -433,35 +469,40 @@ class PrimitiveGraphLocalPlan:
     subtask_gather_offset_i32: torch.Tensor
     subtask_gather_count_i32: torch.Tensor
     gather_indices_flat_i32: torch.Tensor
-    flat_env_ids_i32: torch.Tensor
-    flat_slot_ids_i32: torch.Tensor
-    flat_subtask_ids_i32: torch.Tensor
-    flat_target_offsets_i32: torch.Tensor
+    consumer_env_ids_i32: torch.Tensor
+    consumer_slot_ids_i32: torch.Tensor
+    consumer_subtask_ids_i32: torch.Tensor
+    consumer_target_offsets_i32: torch.Tensor
     schedule_offsets_i32: torch.Tensor
     schedule_counts_i32: torch.Tensor
-    flat_count_i32: torch.Tensor
-    vec3_nodes: PrimitiveProducerPlan
-    scalar_nodes: PrimitiveProducerPlan
-    quat_nodes: PrimitiveProducerPlan
-    scalar_sum_nodes: PrimitiveProducerPlan
-    contact_nodes: PrimitiveProducerPlan
+    consumer_count_i32: torch.Tensor
+    vec3_nodes: ProducerNodeTable
+    scalar_nodes: ProducerNodeTable
+    quat_nodes: ProducerNodeTable
+    scalar_sum_nodes: ProducerNodeTable
+    contact_nodes: ProducerNodeTable
     direct_vec3: torch.Tensor
     direct_scalar: torch.Tensor
     direct_quat: torch.Tensor
     scalar_sum: torch.Tensor
     contact_mask: torch.Tensor
-    max_work: int
-    total_work: int
+    max_consumers: int
+    total_consumers: int
     vec3_signature_count: int
     scalar_signature_count: int
     quat_signature_count: int
     scalar_sum_signature_count: int
     contact_signature_count: int
-    vec3_count: int
-    scalar_count: int
-    quat_count: int
-    scalar_sum_count: int
-    contact_count: int
+    vec3_node_count: int
+    scalar_node_count: int
+    quat_node_count: int
+    scalar_sum_node_count: int
+    contact_node_count: int
+    # Fallback toggles (see header note + ``_should_materialize_producer``):
+    # set per-resample by fanout heuristic; when False, ``execute.py`` takes
+    # the direct-compute branch instead of reading from the producer node
+    # table. To remove: always materialize, delete these flags + the
+    # branches in execute.py / backend.py that read them.
     use_vec3_graph: bool
     use_scalar_graph: bool
     use_quat_graph: bool
@@ -469,7 +510,12 @@ class PrimitiveGraphLocalPlan:
     use_dense_graph_consumer: bool
     schedule_counts_py: list[int]
     env_slots: EnvSlots
-    queue: PrimitiveLocalQueue
+    # NOTE: ``consumer_view`` is a :class:`PrimitiveLocalQueue` — the kernel-side
+    # Warp struct is shared with ``primitive_queue_local`` (kernel-API glue).
+    # The role here is the *consumer table*: one entry per active subtask
+    # (env, slot, subtask, target_offset), partitioned by kernel via
+    # ``schedule_offsets`` / ``schedule_counts``.
+    consumer_view: PrimitiveLocalQueue
     spec: SubtaskSpec
     state: StateAccess
     composer_state: ComposerState
@@ -556,42 +602,42 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
     outputs.task_done_success = wp.from_torch(command._task_done_success)
     outputs.progress = wp.from_torch(command._progress)
 
-    max_work = command.num_envs * command.k_max
-    vec3_nodes = _make_producer_plan(command, max_work, (SCHEDULE_DIRECT_VEC3_DELTA,))
-    scalar_nodes = _make_producer_plan(command, max_work, (SCHEDULE_DIRECT_SCALAR_DELTA,))
-    quat_nodes = _make_producer_plan(command, max_work, (SCHEDULE_DIRECT_QUAT_DELTA,))
-    scalar_sum_nodes = _make_producer_plan(command, max_work, (SCHEDULE_SCALAR_SUM_DELTA,))
-    contact_nodes = _make_producer_plan(command, max_work, _CONTACT_SCHEDULES)
+    max_consumers = command.num_envs * command.k_max
+    vec3_nodes = _make_producer_node_table(command, max_consumers, (SCHEDULE_DIRECT_VEC3_DELTA,))
+    scalar_nodes = _make_producer_node_table(command, max_consumers, (SCHEDULE_DIRECT_SCALAR_DELTA,))
+    quat_nodes = _make_producer_node_table(command, max_consumers, (SCHEDULE_DIRECT_QUAT_DELTA,))
+    scalar_sum_nodes = _make_producer_node_table(command, max_consumers, (SCHEDULE_SCALAR_SUM_DELTA,))
+    contact_nodes = _make_producer_node_table(command, max_consumers, _CONTACT_SCHEDULES)
 
-    flat_env_ids_i32 = torch.empty(max_work, device=command.device, dtype=torch.int32)
-    flat_slot_ids_i32 = torch.empty(max_work, device=command.device, dtype=torch.int32)
-    flat_subtask_ids_i32 = torch.empty(max_work, device=command.device, dtype=torch.int32)
-    flat_target_offsets_i32 = torch.empty(max_work, device=command.device, dtype=torch.int32)
+    consumer_env_ids_i32 = torch.empty(max_consumers, device=command.device, dtype=torch.int32)
+    consumer_slot_ids_i32 = torch.empty(max_consumers, device=command.device, dtype=torch.int32)
+    consumer_subtask_ids_i32 = torch.empty(max_consumers, device=command.device, dtype=torch.int32)
+    consumer_target_offsets_i32 = torch.empty(max_consumers, device=command.device, dtype=torch.int32)
     schedule_offsets_i32 = torch.zeros(NUM_SCHEDULES, device=command.device, dtype=torch.int32)
     schedule_counts_i32 = torch.zeros(NUM_SCHEDULES, device=command.device, dtype=torch.int32)
-    flat_count_i32 = torch.zeros(1, device=command.device, dtype=torch.int32)
+    consumer_count_i32 = torch.zeros(1, device=command.device, dtype=torch.int32)
 
-    direct_vec3 = torch.empty((max_work, 3), device=command.device, dtype=command._unified_buffer.dtype)
-    direct_scalar = torch.empty(max_work, device=command.device, dtype=command._unified_buffer.dtype)
-    direct_quat = torch.empty((max_work, 4), device=command.device, dtype=command._unified_buffer.dtype)
-    scalar_sum = torch.empty(max_work, device=command.device, dtype=command._unified_buffer.dtype)
-    contact_mask = torch.zeros((max_work, 4), device=command.device, dtype=command._unified_buffer.dtype)
+    direct_vec3 = torch.empty((max_consumers, 3), device=command.device, dtype=command._unified_buffer.dtype)
+    direct_scalar = torch.empty(max_consumers, device=command.device, dtype=command._unified_buffer.dtype)
+    direct_quat = torch.empty((max_consumers, 4), device=command.device, dtype=command._unified_buffer.dtype)
+    scalar_sum = torch.empty(max_consumers, device=command.device, dtype=command._unified_buffer.dtype)
+    contact_mask = torch.zeros((max_consumers, 4), device=command.device, dtype=command._unified_buffer.dtype)
 
     # Backend-owned local outputs.
-    local_delta_torch = torch.zeros((max_work, 4), device=command.device)
-    local_error_torch = torch.zeros(max_work, device=command.device)
-    local_activation_torch = torch.zeros(max_work, device=command.device)
+    local_delta_torch = torch.zeros((max_consumers, 4), device=command.device)
+    local_error_torch = torch.zeros(max_consumers, device=command.device)
+    local_activation_torch = torch.zeros(max_consumers, device=command.device)
     slot_local_index_torch = torch.zeros((command.num_envs, command.k_max), device=command.device, dtype=torch.int32)
 
-    queue = PrimitiveLocalQueue()
-    queue.env_ids = wp.from_torch(flat_env_ids_i32)
-    queue.slot_ids = wp.from_torch(flat_slot_ids_i32)
-    queue.subtask_ids = wp.from_torch(flat_subtask_ids_i32)
-    queue.target_offsets = wp.from_torch(flat_target_offsets_i32)
-    queue.slot_local_index = wp.from_torch(slot_local_index_torch)
-    queue.schedule_offsets = wp.from_torch(schedule_offsets_i32)
-    queue.schedule_counts = wp.from_torch(schedule_counts_i32)
-    queue.count = wp.from_torch(flat_count_i32)
+    consumer_view = PrimitiveLocalQueue()
+    consumer_view.env_ids = wp.from_torch(consumer_env_ids_i32)
+    consumer_view.slot_ids = wp.from_torch(consumer_slot_ids_i32)
+    consumer_view.subtask_ids = wp.from_torch(consumer_subtask_ids_i32)
+    consumer_view.target_offsets = wp.from_torch(consumer_target_offsets_i32)
+    consumer_view.slot_local_index = wp.from_torch(slot_local_index_torch)
+    consumer_view.schedule_offsets = wp.from_torch(schedule_offsets_i32)
+    consumer_view.schedule_counts = wp.from_torch(schedule_counts_i32)
+    consumer_view.count = wp.from_torch(consumer_count_i32)
 
     (
         float_slabs,
@@ -613,13 +659,13 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
         subtask_gather_offset_i32=subtask_gather_offset_i32,
         subtask_gather_count_i32=subtask_gather_count_i32,
         gather_indices_flat_i32=gather_indices_flat_i32,
-        flat_env_ids_i32=flat_env_ids_i32,
-        flat_slot_ids_i32=flat_slot_ids_i32,
-        flat_subtask_ids_i32=flat_subtask_ids_i32,
-        flat_target_offsets_i32=flat_target_offsets_i32,
+        consumer_env_ids_i32=consumer_env_ids_i32,
+        consumer_slot_ids_i32=consumer_slot_ids_i32,
+        consumer_subtask_ids_i32=consumer_subtask_ids_i32,
+        consumer_target_offsets_i32=consumer_target_offsets_i32,
         schedule_offsets_i32=schedule_offsets_i32,
         schedule_counts_i32=schedule_counts_i32,
-        flat_count_i32=flat_count_i32,
+        consumer_count_i32=consumer_count_i32,
         vec3_nodes=vec3_nodes,
         scalar_nodes=scalar_nodes,
         quat_nodes=quat_nodes,
@@ -630,18 +676,18 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
         direct_quat=direct_quat,
         scalar_sum=scalar_sum,
         contact_mask=contact_mask,
-        max_work=max_work,
-        total_work=0,
+        max_consumers=max_consumers,
+        total_consumers=0,
         vec3_signature_count=max(0, int(vec3_nodes.signature_subtask_i32.numel())),
         scalar_signature_count=max(0, int(scalar_nodes.signature_subtask_i32.numel())),
         quat_signature_count=max(0, int(quat_nodes.signature_subtask_i32.numel())),
         scalar_sum_signature_count=max(0, int(scalar_sum_nodes.signature_subtask_i32.numel())),
         contact_signature_count=max(0, int(contact_nodes.signature_subtask_i32.numel())),
-        vec3_count=0,
-        scalar_count=0,
-        quat_count=0,
-        scalar_sum_count=0,
-        contact_count=0,
+        vec3_node_count=0,
+        scalar_node_count=0,
+        quat_node_count=0,
+        scalar_sum_node_count=0,
+        contact_node_count=0,
         use_vec3_graph=False,
         use_scalar_graph=False,
         use_quat_graph=False,
@@ -649,7 +695,7 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
         use_dense_graph_consumer=False,
         schedule_counts_py=[0] * NUM_SCHEDULES,
         env_slots=env_slots,
-        queue=queue,
+        consumer_view=consumer_view,
         spec=spec_struct,
         state=state,
         composer_state=composer_state,
@@ -685,24 +731,24 @@ def refresh_primitive_graph_local_plan(command: MultiTaskCommandWarp, plan: Prim
     _sort_command_slots_by_schedule(command, plan.subtask_schedule_ids_i32)
     plan.schedule_offsets_i32.zero_()
     plan.schedule_counts_i32.zero_()
-    plan.flat_count_i32.zero_()
-    _reset_producer_plan(plan.vec3_nodes)
-    _reset_producer_plan(plan.scalar_nodes)
-    _reset_producer_plan(plan.quat_nodes)
-    _reset_producer_plan(plan.scalar_sum_nodes)
-    _reset_producer_plan(plan.contact_nodes)
+    plan.consumer_count_i32.zero_()
+    _reset_producer_node_table(plan.vec3_nodes)
+    _reset_producer_node_table(plan.scalar_nodes)
+    _reset_producer_node_table(plan.quat_nodes)
+    _reset_producer_node_table(plan.scalar_sum_nodes)
+    _reset_producer_node_table(plan.contact_nodes)
     plan.slot_local_index_torch.zero_()
 
     cursor = 0
     slot_idx = torch.arange(command.k_max, device=command.device, dtype=torch.int32).unsqueeze(0)
     valid = slot_idx < command._env_slot_count.unsqueeze(1)
     if not bool(valid.any()):
-        plan.total_work = 0
-        plan.vec3_count = 0
-        plan.scalar_count = 0
-        plan.quat_count = 0
-        plan.scalar_sum_count = 0
-        plan.contact_count = 0
+        plan.total_consumers = 0
+        plan.vec3_node_count = 0
+        plan.scalar_node_count = 0
+        plan.quat_node_count = 0
+        plan.scalar_sum_node_count = 0
+        plan.contact_node_count = 0
         plan.use_vec3_graph = False
         plan.use_scalar_graph = False
         plan.use_quat_graph = False
@@ -744,10 +790,10 @@ def refresh_primitive_graph_local_plan(command: MultiTaskCommandWarp, plan: Prim
         if count == 0:
             continue
         stop = cursor + count
-        plan.flat_env_ids_i32[cursor:stop] = env_ids_i32[group_mask]
-        plan.flat_slot_ids_i32[cursor:stop] = slot_ids_i32[group_mask]
-        plan.flat_subtask_ids_i32[cursor:stop] = subtask_ids_i32[group_mask]
-        plan.flat_target_offsets_i32[cursor:stop] = target_offsets[group_mask]
+        plan.consumer_env_ids_i32[cursor:stop] = env_ids_i32[group_mask]
+        plan.consumer_slot_ids_i32[cursor:stop] = slot_ids_i32[group_mask]
+        plan.consumer_subtask_ids_i32[cursor:stop] = subtask_ids_i32[group_mask]
+        plan.consumer_target_offsets_i32[cursor:stop] = target_offsets[group_mask]
         if schedule_id == SCHEDULE_DIRECT_VEC3_DELTA:
             node_ids = vec3_node_by_item[group_mask]
             plan.vec3_nodes.consumer_node_ids_i32[cursor:stop] = node_ids
@@ -771,24 +817,24 @@ def refresh_primitive_graph_local_plan(command: MultiTaskCommandWarp, plan: Prim
 
     if cursor != int(env_ids.numel()):
         raise ValueError("primitive_graph_local failed to lower every active subtask into a primitive schedule.")
-    plan.total_work = cursor
-    plan.vec3_count = plan.vec3_nodes.count
-    plan.scalar_count = plan.scalar_nodes.count
-    plan.quat_count = plan.quat_nodes.count
-    plan.scalar_sum_count = plan.scalar_sum_nodes.count
-    plan.contact_count = plan.contact_nodes.count
+    plan.total_consumers = cursor
+    plan.vec3_node_count = plan.vec3_nodes.count
+    plan.scalar_node_count = plan.scalar_nodes.count
+    plan.quat_node_count = plan.quat_nodes.count
+    plan.scalar_sum_node_count = plan.scalar_sum_nodes.count
+    plan.contact_node_count = plan.contact_nodes.count
     plan.schedule_counts_py = schedule_counts_py
     plan.use_vec3_graph = _should_materialize_producer(
-        schedule_counts_py[SCHEDULE_DIRECT_VEC3_DELTA], plan.vec3_count, _MIN_FANOUT_LIGHT
+        schedule_counts_py[SCHEDULE_DIRECT_VEC3_DELTA], plan.vec3_node_count, _MIN_FANOUT_LIGHT
     )
     plan.use_scalar_graph = _should_materialize_producer(
-        schedule_counts_py[SCHEDULE_DIRECT_SCALAR_DELTA], plan.scalar_count, _MIN_FANOUT_LIGHT
+        schedule_counts_py[SCHEDULE_DIRECT_SCALAR_DELTA], plan.scalar_node_count, _MIN_FANOUT_LIGHT
     )
     plan.use_quat_graph = _should_materialize_producer(
-        schedule_counts_py[SCHEDULE_DIRECT_QUAT_DELTA], plan.quat_count, _MIN_FANOUT_LIGHT
+        schedule_counts_py[SCHEDULE_DIRECT_QUAT_DELTA], plan.quat_node_count, _MIN_FANOUT_LIGHT
     )
     plan.use_scalar_sum_graph = _should_materialize_producer(
-        schedule_counts_py[SCHEDULE_SCALAR_SUM_DELTA], plan.scalar_sum_count, _MIN_FANOUT_HEAVY
+        schedule_counts_py[SCHEDULE_SCALAR_SUM_DELTA], plan.scalar_sum_node_count, _MIN_FANOUT_HEAVY
     )
     plan.use_dense_graph_consumer = (
         (schedule_counts_py[SCHEDULE_DIRECT_VEC3_DELTA] == 0 or plan.use_vec3_graph)
@@ -796,4 +842,4 @@ def refresh_primitive_graph_local_plan(command: MultiTaskCommandWarp, plan: Prim
         and (schedule_counts_py[SCHEDULE_DIRECT_QUAT_DELTA] == 0 or plan.use_quat_graph)
         and (schedule_counts_py[SCHEDULE_SCALAR_SUM_DELTA] == 0 or plan.use_scalar_sum_graph)
     )
-    plan.flat_count_i32[0] = cursor
+    plan.consumer_count_i32[0] = cursor
