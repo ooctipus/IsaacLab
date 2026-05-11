@@ -533,10 +533,12 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
 
 
 def refresh_primitive_graph_local_plan(command: MultiTaskCommandWarp, plan: PrimitiveGraphLocalPlan) -> None:
-    """Refresh consumer-table partitioning from the command's current assignment.
+    """Re-sort slots by schedule and refresh diagnostic counts.
 
-    Producer state is fully static (signature lookup tables only); only the
-    consumer table needs rebuilding when slot assignment changes.
+    Producer state is fully static (signature lookup tables only) and the
+    dense kernel iterates ``(env, slot)`` directly — so the only per-resample
+    work here is the in-place slot sort (warp-coherent state-kernel regions)
+    plus updating ``total_consumers`` and ``schedule_counts_py``.
     """
     _sort_command_slots_by_schedule(command, plan.subtask_schedule_ids_i32)
 
