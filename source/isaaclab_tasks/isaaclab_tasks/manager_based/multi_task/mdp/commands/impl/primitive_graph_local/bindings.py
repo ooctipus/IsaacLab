@@ -27,6 +27,11 @@ All producer kinds always materialize; the only dispatch-time choice is
 whether to use the fused-compose dense kernel (set at cfg time via
 ``use_parallel_compose``). Callers who want direct (non-materialized)
 compute should select the ``primitive_queue_local`` backend.
+
+This module stays pure Warp — no ``import torch``. The spec data crosses
+into Warp at build time via ``wp.from_torch`` / ``wp.array``; the refresh
+path operates on Warp views of the command's mutable state through tensor
+methods on those views (no ``torch.X`` symbols).
 """
 
 from __future__ import annotations
@@ -34,7 +39,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import torch
 import warp as wp
 
 from ..kernel_ids import BUFFER_KIND
@@ -74,15 +78,10 @@ _CONTACT_SCHEDULES = (
 class RotationBinding:
     """Warp views for rotating one asset's canonical vec3 command slots.
 
-    ``root_quat_w_wp`` comes from the asset's :class:`ProxyArray` directly, so
-    the underlying storage is anchored by the scene itself — no torch view
-    needed on this binding. The ``*_offsets_i32`` torch tensors *are* kept
-    because we construct them ourselves (via :func:`torch.tensor`) and the
-    ``*_offsets_wp`` views need them alive.
+    All arrays are Warp-owned (``wp.array``) or asset-anchored ProxyArray
+    accessors; no torch tensors on the binding.
     """
 
-    reach_offsets_i32: torch.Tensor
-    track_offsets_i32: torch.Tensor
     root_quat_w_wp: wp.array
     reach_offsets_wp: wp.array
     track_offsets_wp: wp.array
@@ -156,13 +155,14 @@ def _resolve_slabs(
     assets = spec.slab_asset_names
     offsets = spec.slab_offsets_py
     sizes = spec.slab_sizes_py
+    device_str = str(command.device)
 
     env_origins_torch = command._env.scene.env_origins
     env_origins_vec3_wp = wp.array(
         ptr=env_origins_torch.data_ptr(),
         dtype=wp.vec3,
         shape=(command.num_envs,),
-        device=str(command.device),
+        device=device_str,
     )
 
     float_slabs: list[FloatSlabBinding] = []
@@ -220,6 +220,7 @@ def _resolve_slabs(
 
 def _build_rotation_bindings(command: MultiTaskCommandWarp) -> tuple[RotationBinding, ...]:
     s = command.spec
+    device_str = str(command.device)
     bindings: list[RotationBinding] = []
     asset_names = sorted(set(s.reach_rotatable_vec3_by_asset.keys()) | set(s.track_rotatable_vec3_by_asset.keys()))
     for asset_name in asset_names:
@@ -229,15 +230,13 @@ def _build_rotation_bindings(command: MultiTaskCommandWarp) -> tuple[RotationBin
         if num_offsets == 0:
             continue
         root_quat_w_wp = command._env.scene[asset_name].data.root_quat_w.warp
-        reach_offsets_i32 = torch.tensor(reach_offsets, device=command.device, dtype=torch.int32)
-        track_offsets_i32 = torch.tensor(track_offsets, device=command.device, dtype=torch.int32)
+        reach_offsets_wp = wp.array(list(reach_offsets), dtype=wp.int32, device=device_str)
+        track_offsets_wp = wp.array(list(track_offsets), dtype=wp.int32, device=device_str)
         bindings.append(
             RotationBinding(
-                reach_offsets_i32=reach_offsets_i32,
-                track_offsets_i32=track_offsets_i32,
                 root_quat_w_wp=root_quat_w_wp,
-                reach_offsets_wp=wp.from_torch(reach_offsets_i32),
-                track_offsets_wp=wp.from_torch(track_offsets_i32),
+                reach_offsets_wp=reach_offsets_wp,
+                track_offsets_wp=track_offsets_wp,
                 num_reach_offsets=len(reach_offsets),
                 num_offsets=num_offsets,
             )
@@ -248,39 +247,51 @@ def _build_rotation_bindings(command: MultiTaskCommandWarp) -> tuple[RotationBin
 def _build_signature_tables(
     command: MultiTaskCommandWarp,
     schedule_ids: tuple[int, ...],
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Group subtasks by target-independent unified-buffer gather block."""
+) -> tuple[wp.array, wp.array]:
+    """Group subtasks by target-independent unified-buffer gather block.
+
+    Returns ``(subtask_signature, signature_subtask)`` as Warp-owned int32
+    arrays. The Python loop runs once at build time on CPU lists pulled from
+    the spec; the resulting tables are static across resamples.
+    """
     scheduled_state_ids = {
         state_kernel_id for schedule_id in schedule_ids for state_kernel_id in SCHEDULE_STATE_KERNELS[schedule_id]
     }
     s = command.spec
-    state_kernel_id_cpu = s.state_kernel_id.detach().cpu()
-    gather_indices_cpu = s.gather_indices_flat.detach().cpu()
-    gather_offset_cpu = s.subtask_gather_offset.detach().cpu()
-    gather_count_cpu = s.subtask_gather_count.detach().cpu()
+    device_str = str(command.device)
+    state_kernel_id_cpu = s.state_kernel_id.detach().cpu().tolist()
+    gather_indices_cpu = s.gather_indices_flat.detach().cpu().tolist()
+    gather_offset_cpu = s.subtask_gather_offset.detach().cpu().tolist()
+    gather_count_cpu = s.subtask_gather_count.detach().cpu().tolist()
 
     signature_id_by_gather: dict[tuple[int, ...], int] = {}
     representative_subtasks: list[int] = []
-    subtask_signature = torch.full((int(s.state_kernel_id.numel()),), -1, device=command.device, dtype=torch.int32)
-    for sid, state_kernel_id in enumerate(state_kernel_id_cpu.tolist()):
-        if int(state_kernel_id) not in scheduled_state_ids:
+    num_subtasks = len(state_kernel_id_cpu)
+    subtask_signature_list = [-1] * num_subtasks
+    for sid in range(num_subtasks):
+        if int(state_kernel_id_cpu[sid]) not in scheduled_state_ids:
             continue
         start = int(gather_offset_cpu[sid])
         count = int(gather_count_cpu[sid])
-        key = tuple(int(v) for v in gather_indices_cpu[start : start + count].tolist())
+        key = tuple(int(v) for v in gather_indices_cpu[start : start + count])
         signature_id = signature_id_by_gather.get(key)
         if signature_id is None:
             signature_id = len(representative_subtasks)
             signature_id_by_gather[key] = signature_id
             representative_subtasks.append(sid)
-        subtask_signature[sid] = signature_id
+        subtask_signature_list[sid] = signature_id
 
-    signature_subtask = torch.tensor(representative_subtasks, device=command.device, dtype=torch.int32)
-    return subtask_signature, signature_subtask
+    subtask_signature_wp = wp.array(subtask_signature_list, dtype=wp.int32, device=device_str)
+    signature_subtask_wp = wp.array(representative_subtasks, dtype=wp.int32, device=device_str)
+    return subtask_signature_wp, signature_subtask_wp
 
 
-def _build_schedule_mask(state_kernel_ids: torch.Tensor, schedule_id: int) -> torch.Tensor:
-    """Return active-item mask for one fused primitive schedule."""
+def _build_schedule_mask(state_kernel_ids, schedule_id: int):
+    """Return active-item mask for one fused primitive schedule.
+
+    ``state_kernel_ids`` is a torch tensor passed in by the caller; we only
+    use tensor comparison / OR methods here, no ``torch.X`` symbols.
+    """
     state_kernel_group = SCHEDULE_STATE_KERNELS[schedule_id]
     mask = state_kernel_ids == state_kernel_group[0]
     for state_kernel_id in state_kernel_group[1:]:
@@ -302,8 +313,8 @@ class ProducerNodeTable:
     honest.
     """
 
-    subtask_signature_i32: torch.Tensor
-    signature_subtask_i32: torch.Tensor
+    subtask_signature_wp: wp.array
+    signature_subtask_wp: wp.array
     nodes_view: PrimitiveProducerQueue
 
 
@@ -312,30 +323,33 @@ def _make_producer_node_table(
     schedule_ids: tuple[int, ...],
 ) -> ProducerNodeTable:
     """Allocate one kind's static subtask-signature lookup tables."""
-    subtask_signature_i32, signature_subtask_i32 = _build_signature_tables(command, schedule_ids)
+    subtask_signature_wp, signature_subtask_wp = _build_signature_tables(command, schedule_ids)
     nodes_view = PrimitiveProducerQueue()
-    nodes_view.subtask_signature = wp.from_torch(subtask_signature_i32)
-    nodes_view.signature_subtask = wp.from_torch(signature_subtask_i32)
+    nodes_view.subtask_signature = subtask_signature_wp
+    nodes_view.signature_subtask = signature_subtask_wp
     return ProducerNodeTable(
-        subtask_signature_i32=subtask_signature_i32,
-        signature_subtask_i32=signature_subtask_i32,
+        subtask_signature_wp=subtask_signature_wp,
+        signature_subtask_wp=signature_subtask_wp,
         nodes_view=nodes_view,
     )
 
 
-def _sort_command_slots_by_schedule(command: MultiTaskCommandWarp, schedule_ids: torch.Tensor) -> None:
-    """Sort each env's active slots by primitive schedule for dense output locality."""
-    slot_ids = torch.arange(command.k_max, device=command.device, dtype=torch.long).unsqueeze(0)
-    slot_ids = slot_ids.expand(command.num_envs, -1)
-    active = slot_ids < command._env_slot_count.long().unsqueeze(1)
-    subtask_ids = command._env_subtask_ids.long().clamp_min(0)
-    slot_schedule_ids = schedule_ids[subtask_ids]
-    slot_schedule_ids = torch.where(active, slot_schedule_ids, torch.full_like(slot_schedule_ids, NUM_SCHEDULES))
-    slot_order = torch.argsort(slot_schedule_ids, dim=1, stable=True)
+def _sort_command_slots_by_schedule(command: MultiTaskCommandWarp, schedule_ids_torch) -> None:
+    """Sort each env's active slots by primitive schedule for dense output locality.
 
-    command._env_subtask_ids[:] = torch.gather(command._env_subtask_ids, 1, slot_order)
-    command._env_slot_offsets[:] = torch.gather(command._env_slot_offsets, 1, slot_order)
-    command._env_slot_strides[:] = torch.gather(command._env_slot_strides, 1, slot_order)
+    ``schedule_ids_torch`` is a torch view (e.g. ``wp.to_torch(plan.subtask_schedule_ids_wp)``)
+    passed by the caller. We use tensor methods only — no ``torch.X`` symbols.
+    """
+    slot_ids = command._slot_arange.expand(command.num_envs, -1)
+    active = slot_ids < command._env_slot_count.unsqueeze(1)
+    subtask_ids = command._env_subtask_ids.long().clamp_min(0)
+    slot_schedule_ids = schedule_ids_torch[subtask_ids]
+    fallback = slot_schedule_ids.new_full(slot_schedule_ids.shape, NUM_SCHEDULES)
+    slot_schedule_ids = slot_schedule_ids.where(active, fallback)
+    slot_order = slot_schedule_ids.argsort(dim=1, stable=True)
+    command._env_subtask_ids[:] = command._env_subtask_ids.gather(1, slot_order)
+    command._env_slot_offsets[:] = command._env_slot_offsets.gather(1, slot_order)
+    command._env_slot_strides[:] = command._env_slot_strides.gather(1, slot_order)
 
 
 @dataclass
@@ -348,27 +362,11 @@ class PrimitiveGraphLocalPlan:
     (mutated in place on ``command``) plus diagnostic schedule counts.
     """
 
-    subtask_schedule_ids_i32: torch.Tensor
-    state_kernel_id_i32: torch.Tensor
-    metric_kernel_id_i32: torch.Tensor
-    activation_kernel_id_i32: torch.Tensor
-    state_stride_i32: torch.Tensor
-    canonical_offset_i32: torch.Tensor
-    is_instant_i32: torch.Tensor
-    is_tracking_i32: torch.Tensor
-    subtask_gather_offset_i32: torch.Tensor
-    subtask_gather_count_i32: torch.Tensor
-    gather_indices_flat_i32: torch.Tensor
     vec3_nodes: ProducerNodeTable
     scalar_nodes: ProducerNodeTable
     quat_nodes: ProducerNodeTable
     scalar_sum_nodes: ProducerNodeTable
     contact_nodes: ProducerNodeTable
-    direct_vec3: torch.Tensor
-    direct_scalar: torch.Tensor
-    direct_quat: torch.Tensor
-    scalar_sum: torch.Tensor
-    contact_mask: torch.Tensor
     total_consumers: int
     vec3_signature_count: int
     scalar_signature_count: int
@@ -381,12 +379,12 @@ class PrimitiveGraphLocalPlan:
     state: StateAccess
     composer_state: ComposerState
     outputs: Outputs
-    subtask_schedule_ids_wp: wp.array(dtype=int)
-    direct_vec3_wp: wp.array2d(dtype=float)
-    direct_scalar_wp: wp.array(dtype=float)
-    direct_quat_wp: wp.array2d(dtype=float)
-    scalar_sum_wp: wp.array(dtype=float)
-    contact_mask_wp: wp.array2d(dtype=float)
+    subtask_schedule_ids_wp: wp.array
+    direct_vec3_wp: wp.array
+    direct_scalar_wp: wp.array
+    direct_quat_wp: wp.array
+    scalar_sum_wp: wp.array
+    contact_mask_wp: wp.array
     rotations: tuple[RotationBinding, ...]
     episode_length_buf_wp: wp.array
     effective_max_episode_length_wp: wp.array
@@ -402,18 +400,9 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
     wp.init()
     s = command.spec
     validate_schedule_support(s.state_kernel_id, backend_name="primitive_graph_local")
+    device_str = str(command.device)
 
-    state_kernel_id_i32 = s.state_kernel_id.to(torch.int32)
-    metric_kernel_id_i32 = s.metric_kernel_id.to(torch.int32)
-    activation_kernel_id_i32 = s.activation_kernel_id.to(torch.int32)
-    state_stride_i32 = s.state_stride.to(torch.int32)
-    canonical_offset_i32 = s.canonical_offset.to(torch.int32)
-    is_instant_i32 = s.is_instant.to(torch.int32)
-    is_tracking_i32 = s.is_tracking.to(torch.int32)
-    subtask_gather_offset_i32 = s.subtask_gather_offset.to(torch.int32)
-    subtask_gather_count_i32 = s.subtask_gather_count.to(torch.int32)
-    gather_indices_flat_i32 = s.gather_indices_flat.to(torch.int32)
-    subtask_schedule_ids_i32 = build_subtask_schedule_ids(
+    subtask_schedule_ids_torch = build_subtask_schedule_ids(
         s.state_kernel_id,
         backend_name="primitive_graph_local",
     )
@@ -424,17 +413,17 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
     env_slots.slot_offsets = wp.from_torch(command._env_slot_offsets)
 
     spec_struct = SubtaskSpec()
-    spec_struct.state_kernel_id = wp.from_torch(state_kernel_id_i32)
-    spec_struct.metric_kernel_id = wp.from_torch(metric_kernel_id_i32)
-    spec_struct.activation_kernel_id = wp.from_torch(activation_kernel_id_i32)
+    spec_struct.state_kernel_id = wp.from_torch(s.state_kernel_id.int())
+    spec_struct.metric_kernel_id = wp.from_torch(s.metric_kernel_id.int())
+    spec_struct.activation_kernel_id = wp.from_torch(s.activation_kernel_id.int())
     spec_struct.activation_kernel_param = wp.from_torch(s.activation_kernel_param)
-    spec_struct.state_stride = wp.from_torch(state_stride_i32)
-    spec_struct.canonical_offset = wp.from_torch(canonical_offset_i32)
-    spec_struct.is_instant_flag = wp.from_torch(is_instant_i32)
-    spec_struct.is_tracking_flag = wp.from_torch(is_tracking_i32)
-    spec_struct.gather_offset = wp.from_torch(subtask_gather_offset_i32)
-    spec_struct.gather_count = wp.from_torch(subtask_gather_count_i32)
-    spec_struct.gather_indices_flat = wp.from_torch(gather_indices_flat_i32)
+    spec_struct.state_stride = wp.from_torch(s.state_stride.int())
+    spec_struct.canonical_offset = wp.from_torch(s.canonical_offset.int())
+    spec_struct.is_instant_flag = wp.from_torch(s.is_instant.int())
+    spec_struct.is_tracking_flag = wp.from_torch(s.is_tracking.int())
+    spec_struct.gather_offset = wp.from_torch(s.subtask_gather_offset.int())
+    spec_struct.gather_count = wp.from_torch(s.subtask_gather_count.int())
+    spec_struct.gather_indices_flat = wp.from_torch(s.gather_indices_flat.int())
 
     state = StateAccess()
     state.unified = wp.from_torch(command._unified_buffer)
@@ -461,11 +450,11 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
     scalar_sum_nodes = _make_producer_node_table(command, (SCHEDULE_SCALAR_SUM_DELTA,))
     contact_nodes = _make_producer_node_table(command, _CONTACT_SCHEDULES)
 
-    direct_vec3 = torch.empty((max_consumers, 3), device=command.device, dtype=command._unified_buffer.dtype)
-    direct_scalar = torch.empty(max_consumers, device=command.device, dtype=command._unified_buffer.dtype)
-    direct_quat = torch.empty((max_consumers, 4), device=command.device, dtype=command._unified_buffer.dtype)
-    scalar_sum = torch.empty(max_consumers, device=command.device, dtype=command._unified_buffer.dtype)
-    contact_mask = torch.zeros((max_consumers, 4), device=command.device, dtype=command._unified_buffer.dtype)
+    direct_vec3_wp = wp.zeros(shape=(max_consumers, 3), dtype=wp.float32, device=device_str)
+    direct_scalar_wp = wp.zeros(shape=max_consumers, dtype=wp.float32, device=device_str)
+    direct_quat_wp = wp.zeros(shape=(max_consumers, 4), dtype=wp.float32, device=device_str)
+    scalar_sum_wp = wp.zeros(shape=max_consumers, dtype=wp.float32, device=device_str)
+    contact_mask_wp = wp.zeros(shape=(max_consumers, 4), dtype=wp.float32, device=device_str)
 
     (
         float_slabs,
@@ -476,45 +465,29 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
     ) = _resolve_slabs(command)
 
     plan = PrimitiveGraphLocalPlan(
-        subtask_schedule_ids_i32=subtask_schedule_ids_i32,
-        state_kernel_id_i32=state_kernel_id_i32,
-        metric_kernel_id_i32=metric_kernel_id_i32,
-        activation_kernel_id_i32=activation_kernel_id_i32,
-        state_stride_i32=state_stride_i32,
-        canonical_offset_i32=canonical_offset_i32,
-        is_instant_i32=is_instant_i32,
-        is_tracking_i32=is_tracking_i32,
-        subtask_gather_offset_i32=subtask_gather_offset_i32,
-        subtask_gather_count_i32=subtask_gather_count_i32,
-        gather_indices_flat_i32=gather_indices_flat_i32,
         vec3_nodes=vec3_nodes,
         scalar_nodes=scalar_nodes,
         quat_nodes=quat_nodes,
         scalar_sum_nodes=scalar_sum_nodes,
         contact_nodes=contact_nodes,
-        direct_vec3=direct_vec3,
-        direct_scalar=direct_scalar,
-        direct_quat=direct_quat,
-        scalar_sum=scalar_sum,
-        contact_mask=contact_mask,
         total_consumers=0,
-        vec3_signature_count=int(vec3_nodes.signature_subtask_i32.numel()),
-        scalar_signature_count=int(scalar_nodes.signature_subtask_i32.numel()),
-        quat_signature_count=int(quat_nodes.signature_subtask_i32.numel()),
-        scalar_sum_signature_count=int(scalar_sum_nodes.signature_subtask_i32.numel()),
-        contact_signature_count=int(contact_nodes.signature_subtask_i32.numel()),
+        vec3_signature_count=int(vec3_nodes.signature_subtask_wp.shape[0]),
+        scalar_signature_count=int(scalar_nodes.signature_subtask_wp.shape[0]),
+        quat_signature_count=int(quat_nodes.signature_subtask_wp.shape[0]),
+        scalar_sum_signature_count=int(scalar_sum_nodes.signature_subtask_wp.shape[0]),
+        contact_signature_count=int(contact_nodes.signature_subtask_wp.shape[0]),
         schedule_counts_py=[0] * NUM_SCHEDULES,
         env_slots=env_slots,
         spec=spec_struct,
         state=state,
         composer_state=composer_state,
         outputs=outputs,
-        subtask_schedule_ids_wp=wp.from_torch(subtask_schedule_ids_i32),
-        direct_vec3_wp=wp.from_torch(direct_vec3),
-        direct_scalar_wp=wp.from_torch(direct_scalar),
-        direct_quat_wp=wp.from_torch(direct_quat),
-        scalar_sum_wp=wp.from_torch(scalar_sum),
-        contact_mask_wp=wp.from_torch(contact_mask),
+        subtask_schedule_ids_wp=wp.from_torch(subtask_schedule_ids_torch),
+        direct_vec3_wp=direct_vec3_wp,
+        direct_scalar_wp=direct_scalar_wp,
+        direct_quat_wp=direct_quat_wp,
+        scalar_sum_wp=scalar_sum_wp,
+        contact_mask_wp=contact_mask_wp,
         rotations=_build_rotation_bindings(command),
         episode_length_buf_wp=wp.from_torch(command._env.episode_length_buf),
         effective_max_episode_length_wp=wp.from_torch(command._effective_max_episode_length),
@@ -536,9 +509,10 @@ def refresh_primitive_graph_local_plan(command: MultiTaskCommandWarp, plan: Prim
     work here is the in-place slot sort (warp-coherent state-kernel regions)
     plus updating ``total_consumers`` and ``schedule_counts_py``.
     """
-    _sort_command_slots_by_schedule(command, plan.subtask_schedule_ids_i32)
+    schedule_ids_torch = wp.to_torch(plan.subtask_schedule_ids_wp)
+    _sort_command_slots_by_schedule(command, schedule_ids_torch)
 
-    slot_idx = torch.arange(command.k_max, device=command.device, dtype=torch.int32).unsqueeze(0)
+    slot_idx = command._slot_arange
     valid = slot_idx < command._env_slot_count.unsqueeze(1)
     if not bool(valid.any()):
         plan.total_consumers = 0
