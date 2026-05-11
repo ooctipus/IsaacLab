@@ -138,42 +138,6 @@ def build_primitive_queue_local_plan(command: MultiTaskCommandWarp) -> Primitive
     validate_schedule_support(s.state_kernel_id, backend_name="primitive_queue_local")
     device_str = str(command.device)
 
-    env_slots = EnvSlots()
-    env_slots.subtask_ids = wp.from_torch(command._env_subtask_ids)
-    env_slots.slot_count = wp.from_torch(command._env_slot_count)
-    env_slots.slot_offsets = wp.from_torch(command._env_slot_offsets)
-
-    spec_struct = SubtaskSpec()
-    spec_struct.state_kernel_id = wp.from_torch(s.state_kernel_id.int())
-    spec_struct.metric_kernel_id = wp.from_torch(s.metric_kernel_id.int())
-    spec_struct.activation_kernel_id = wp.from_torch(s.activation_kernel_id.int())
-    spec_struct.activation_kernel_param = wp.from_torch(s.activation_kernel_param)
-    spec_struct.state_stride = wp.from_torch(s.state_stride.int())
-    spec_struct.canonical_offset = wp.from_torch(s.canonical_offset.int())
-    spec_struct.is_instant_flag = wp.from_torch(s.is_instant.int())
-    spec_struct.is_tracking_flag = wp.from_torch(s.is_tracking.int())
-    spec_struct.gather_offset = wp.from_torch(s.subtask_gather_offset.int())
-    spec_struct.gather_count = wp.from_torch(s.subtask_gather_count.int())
-    spec_struct.gather_indices_flat = wp.from_torch(s.gather_indices_flat.int())
-
-    state = StateAccess()
-    state.unified = wp.from_torch(command._unified_buffer)
-    state.targets_flat = wp.from_torch(command._targets_flat)
-
-    composer_state = ComposerState()
-    composer_state.sum_activation = wp.from_torch(command._sum_activation)
-    composer_state.transit_steps = wp.from_torch(command._transit_steps)
-    composer_state.instant_achieved = wp.from_torch(command._instant_achieved)
-
-    outputs = Outputs()
-    outputs.buf_error = wp.from_torch(command._buf_error)
-    outputs.buf_activation = wp.from_torch(command._buf_activation)
-    outputs.command_reach = wp.from_torch(command._command_reach)
-    outputs.command_track = wp.from_torch(command._command_track)
-    outputs.task_reward = wp.from_torch(command._task_reward)
-    outputs.task_done_success = wp.from_torch(command._task_done_success)
-    outputs.progress = wp.from_torch(command._progress)
-
     max_work = command.num_envs * command.k_max
     flat_env_ids_wp = wp.zeros(shape=max_work, dtype=wp.int32, device=device_str)
     flat_slot_ids_wp = wp.zeros(shape=max_work, dtype=wp.int32, device=device_str)
@@ -211,15 +175,15 @@ def build_primitive_queue_local_plan(command: MultiTaskCommandWarp) -> Primitive
         max_work=max_work,
         total_work=0,
         schedule_counts_py=[0] * NUM_SCHEDULES,
-        env_slots=env_slots,
+        env_slots=command.env_slots_wp,
         queue=queue,
-        spec=spec_struct,
-        state=state,
-        composer_state=composer_state,
-        outputs=outputs,
+        spec=command.spec_wp,
+        state=command.state_wp,
+        composer_state=command.composer_state_wp,
+        outputs=command.outputs_wp,
         rotations=_build_rotation_bindings(command),
-        episode_length_buf_wp=wp.from_torch(command._env.episode_length_buf),
-        effective_max_episode_length_wp=wp.from_torch(command._effective_max_episode_length),
+        episode_length_buf_wp=command.episode_length_buf_wp,
+        effective_max_episode_length_wp=command.effective_max_episode_length_wp,
         float_slabs=float_slabs,
         vec3_slabs=vec3_slabs,
         vec3_env_local_slabs=vec3_env_local_slabs,
