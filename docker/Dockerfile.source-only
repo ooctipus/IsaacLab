@@ -15,21 +15,18 @@ ENV ISAACLAB_PATH=${ISAACLAB_PATH_ARG}
 
 # Re-create the Isaac Sim symlink (may have been lost if deps image was migrated)
 ARG ISAACSIM_ROOT_PATH_ARG=/isaac-sim
-RUN ln -sf ${ISAACSIM_ROOT_PATH_ARG} ${ISAACLAB_PATH}/_isaac_sim
 
-# Copy source files and local dependency overrides (deps already installed in base)
-COPY ../source ${ISAACLAB_PATH}/source
-COPY ../dep ${ISAACLAB_PATH}/dep
-COPY ../scripts ${ISAACLAB_PATH}/scripts
-COPY ../tools ${ISAACLAB_PATH}/tools
-
-# Fix line endings (Windows git may add \r)
-RUN find ${ISAACLAB_PATH}/source -type f -name "*.sh" -exec sed -i 's/\r$//' {} +
+# Copy source files and local dependency overrides (deps already installed in base).
+# Keep the repo layout intact so editable installs resolve packages from source/.
+COPY source ${ISAACLAB_PATH}/source
+COPY dep ${ISAACLAB_PATH}/dep
+COPY scripts ${ISAACLAB_PATH}/scripts
+COPY tools ${ISAACLAB_PATH}/tools
 
 # Optionally re-run pip install (skipped for source-only, enabled for --force-pip-only)
 ARG RUN_PIP_INSTALL=0
-RUN if [ "${RUN_PIP_INSTALL}" = "1" ]; then \
+RUN ln -sf ${ISAACSIM_ROOT_PATH_ARG} ${ISAACLAB_PATH}/_isaac_sim && \
+    find ${ISAACLAB_PATH}/source -type f -name "*.sh" -exec sed -i 's/\r$//' {} + && \
+    if [ "${RUN_PIP_INSTALL}" = "1" ]; then \
       ${ISAACLAB_PATH}/isaaclab.sh -i rsl_rl; \
     fi
-
-WORKDIR ${ISAACLAB_PATH}

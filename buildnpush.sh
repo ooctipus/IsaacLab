@@ -294,8 +294,22 @@ USE_CACHE=1
 REASON=""
 
 # Check if ANY isaac-lab-deps:* images exist (indicates we're already using new system)
-any_deps_image_exists() {
-  docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "^isaac-lab-deps:" 2>/dev/null
+is_source_only_layered_image() {
+  docker history --no-trunc "$1" 2>/dev/null | grep -Eq "COPY (\\.\\./)?source( |$)"
+}
+
+first_clean_deps_image() {
+  local img
+  for img in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep "^isaac-lab-deps:" || true); do
+    if ! is_source_only_layered_image "$img"; then
+      echo "$img"
+      return
+    fi
+  done
+}
+
+any_clean_deps_image_exists() {
+  [ -n "$(first_clean_deps_image)" ]
 }
 
 if [ "$FORCE_REBUILD" -eq 1 ]; then
@@ -310,19 +324,39 @@ elif [ "$FORCE_PIP" -eq 1 ]; then
   SKIP_DEPS=1
   USE_CACHE=1
   # Use whatever deps image exists (hash may have changed due to setup.py edits)
-  if ! image_exists "$DEPS_IMAGE" && any_deps_image_exists; then
-    EXISTING_DEPS=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "^isaac-lab-deps:" | head -1)
+  if image_exists "$DEPS_IMAGE" && is_source_only_layered_image "$DEPS_IMAGE"; then
+    EXISTING_DEPS=$(first_clean_deps_image)
+    if [ -z "$EXISTING_DEPS" ]; then
+      echo "   ✗ ${DEPS_IMAGE} is source-only layered and no clean deps cache exists."
+      echo "     Re-run with --force-deps to rebuild a clean deps image."
+      exit 1
+    fi
+    echo "   ⚠ ${DEPS_IMAGE} is source-only layered; using ${EXISTING_DEPS}"
+    DEPS_IMAGE="$EXISTING_DEPS"
+  elif ! image_exists "$DEPS_IMAGE" && any_clean_deps_image_exists; then
+    EXISTING_DEPS=$(first_clean_deps_image)
     echo "   ⚠ Deps hash changed but --force-pip-only: using ${EXISTING_DEPS}"
     DEPS_IMAGE="$EXISTING_DEPS"
+  elif ! image_exists "$DEPS_IMAGE"; then
+    echo "   ✗ No deps image available for --force-pip-only."
+    echo "     Re-run without --force-pip-only or use --force-deps."
+    exit 1
   fi
   REASON="pip-only rebuild on existing deps (--force-pip-only)"
 elif image_exists "$DEPS_IMAGE"; then
-  # Exact hash match - use cached deps
-  SKIP_DEPS=1
-  USE_CACHE=1
-  REASON="deps cached (${DEPS_IMAGE})"
-  echo "   ✓ Cached deps image found: ${DEPS_IMAGE}"
-elif ! any_deps_image_exists && image_exists "$BASE_IMAGE"; then
+  if is_source_only_layered_image "$DEPS_IMAGE"; then
+    SKIP_DEPS=0
+    USE_CACHE=1
+    REASON="cached deps image is source-only layered; rebuilding deps"
+    echo "   ⚠ ${DEPS_IMAGE} contains source-only layers - full rebuild required"
+  else
+    # Exact hash match - use cached deps
+    SKIP_DEPS=1
+    USE_CACHE=1
+    REASON="deps cached (${DEPS_IMAGE})"
+    echo "   ✓ Cached deps image found: ${DEPS_IMAGE}"
+  fi
+elif ! any_clean_deps_image_exists && image_exists "$BASE_IMAGE" && ! is_source_only_layered_image "$BASE_IMAGE"; then
   # ONE-TIME MIGRATION: No deps images exist yet, but isaac-lab-base exists
   # This means we're migrating from old system to new system
   echo "   ⚡ One-time migration: tagging existing ${BASE_IMAGE} as deps cache..."
@@ -335,7 +369,7 @@ else
   # Deps changed (hash doesn't match any existing deps image)
   SKIP_DEPS=0
   USE_CACHE=1
-  if any_deps_image_exists; then
+  if any_clean_deps_image_exists; then
     REASON="deps changed, full rebuild required"
     echo "   ⚠ Deps hash changed - full rebuild required"
   else
@@ -438,6 +472,7 @@ else
 
   # Build using lightweight source-only Dockerfile
   docker build \
+    --no-cache \
     -f docker/Dockerfile.source-only \
     --build-arg DEPS_BASE_IMAGE="${DEPS_IMAGE}" \
     --build-arg ISAACLAB_PATH_ARG="${DOCKER_ISAACLAB_PATH}" \
@@ -446,11 +481,11 @@ else
     -t "${BASE_IMAGE}" \
     .
 
-  # Update deps cache when pip was re-installed
+  # Do not tag source-only images as deps cache. Re-tagging here stacks
+  # source-copy layers on future source-only builds and eventually trips
+  # Docker overlay's max-depth limit. Use --force-deps for a clean deps cache.
   if [ "$FORCE_PIP" -eq 1 ]; then
-    NEW_DEPS_TAG="isaac-lab-deps:${DEPS_HASH}"
-    echo "🏷  Updating deps cache as ${NEW_DEPS_TAG}"
-    docker tag "${BASE_IMAGE}" "${NEW_DEPS_TAG}"
+    echo "ℹ️  Not updating deps cache from a source-only build. Use --force-deps for a clean deps cache."
   fi
 fi
 
