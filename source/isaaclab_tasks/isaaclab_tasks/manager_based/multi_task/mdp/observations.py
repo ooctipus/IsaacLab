@@ -22,7 +22,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import torch
-import warp as wp
 
 import isaaclab.utils.math as math_utils
 from isaaclab.managers import SceneEntityCfg
@@ -123,10 +122,10 @@ def target_asset_pose_in_root_asset_frame(
     target_body_idx = 0 if isinstance(target_asset_cfg.body_ids, slice) else target_asset_cfg.body_ids
     root_body_idx = 0 if isinstance(root_asset_cfg.body_ids, slice) else root_asset_cfg.body_ids
 
-    target_pos = wp.to_torch(target_asset.data.body_link_pos_w)[:, target_body_idx].view(-1, 3)
-    target_quat = wp.to_torch(target_asset.data.body_link_quat_w)[:, target_body_idx].view(-1, 4)
-    root_pos = wp.to_torch(root_asset.data.body_link_pos_w)[:, root_body_idx].view(-1, 3)
-    root_quat = wp.to_torch(root_asset.data.body_link_quat_w)[:, root_body_idx].view(-1, 4)
+    target_pos = target_asset.data.body_link_pos_w.torch[:, target_body_idx].view(-1, 3)
+    target_quat = target_asset.data.body_link_quat_w.torch[:, target_body_idx].view(-1, 4)
+    root_pos = root_asset.data.body_link_pos_w.torch[:, root_body_idx].view(-1, 3)
+    root_quat = root_asset.data.body_link_quat_w.torch[:, root_body_idx].view(-1, 4)
 
     if root_asset_offset is not None:
         root_pos, root_quat = root_asset_offset.combine(root_pos, root_quat)
@@ -151,9 +150,9 @@ def asset_link_velocity_in_root_asset_frame(
 
     target_body_idx = 0 if isinstance(target_asset_cfg.body_ids, slice) else target_asset_cfg.body_ids
 
-    root_quat = wp.to_torch(root_asset.data.root_quat_w)
-    lin_vel_w = wp.to_torch(target_asset.data.body_lin_vel_w)[:, target_body_idx].view(-1, 3)
-    ang_vel_w = wp.to_torch(target_asset.data.body_ang_vel_w)[:, target_body_idx].view(-1, 3)
+    root_quat = root_asset.data.root_quat_w.torch
+    lin_vel_w = target_asset.data.body_lin_vel_w.torch[:, target_body_idx].view(-1, 3)
+    ang_vel_w = target_asset.data.body_ang_vel_w.torch[:, target_body_idx].view(-1, 3)
 
     lin_vel_b = math_utils.quat_apply_inverse(root_quat, lin_vel_w)
     ang_vel_b = math_utils.quat_apply_inverse(root_quat, ang_vel_w)
