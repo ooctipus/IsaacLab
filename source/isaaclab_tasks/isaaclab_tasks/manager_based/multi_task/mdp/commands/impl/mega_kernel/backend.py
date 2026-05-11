@@ -15,13 +15,15 @@ Supports two slot-ordering modes through the same execution pipeline:
 
 Same plan, same kernels, same launches — only the slot ordering established
 at resample time differs.
+
+Pure Warp — no ``import torch``. The per-resample sort calls tensor methods
+on Warp-typed views of the command's slot tables (no ``torch.X`` symbols).
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
-import torch
 import warp as wp
 
 from ..compose_select import use_parallel_compose
@@ -50,12 +52,15 @@ class MegaKernelBackend:
         self._dispatch_graph: wp.Graph | None = None
         self._slot_order: SlotOrder = slot_order
         # Cache the subtask→schedule-id lookup table once at plan build for
-        # ``slot_order == "schedule"``. Cheap CPU tensor; reused on every resample.
-        self._subtask_schedule_ids_i32: torch.Tensor | None = None
+        # ``slot_order == "schedule"``. Stored as a Warp-owned array; refresh
+        # reads it through a ``wp.to_torch`` view for the indexing math.
+        self._subtask_schedule_ids_wp: wp.array | None = None
         if slot_order == "schedule":
-            self._subtask_schedule_ids_i32 = build_subtask_schedule_ids(
-                command.spec.state_kernel_id,
-                backend_name="mega_kernel(slot_order=schedule)",
+            self._subtask_schedule_ids_wp = wp.from_torch(
+                build_subtask_schedule_ids(
+                    command.spec.state_kernel_id,
+                    backend_name="mega_kernel(slot_order=schedule)",
+                ).int()
             )
         # Fuse dispatch + compose into one block-per-env kernel when k_max is
         # large enough to fill warps. Same threshold as the parallel compose
@@ -64,33 +69,62 @@ class MegaKernelBackend:
         self._use_fused = use_parallel_compose(command.k_max)
         # ``slot_order="schedule"`` needs the initial sort applied to every env.
         if slot_order == "schedule":
-            self._resort_slots(command, torch.arange(command.num_envs, device=command.device, dtype=torch.long))
+            self._resort_slots(command, env_ids=None)
 
-    def on_resample(self, command: MultiTaskCommandWarp, env_ids: torch.Tensor) -> None:
+    def on_resample(self, command: MultiTaskCommandWarp, env_ids) -> None:
         """Refresh slot ordering when the mode requires it."""
         if self._slot_order == "schedule":
             self._resort_slots(command, env_ids)
 
-    def _resort_slots(self, command: MultiTaskCommandWarp, env_ids: torch.Tensor) -> None:
+    def _resort_slots(self, command: MultiTaskCommandWarp, env_ids) -> None:
         """Sort each resampled env's slot tables by fused-schedule id (stable).
 
         Active slots sort first by schedule; inactive (``slot >= slot_count``)
         slots get ``NUM_SCHEDULES`` so they land at the end. This gives
         ``dispatch_mega`` warp-coherent state-kernel regions.
+
+        ``env_ids=None`` selects all envs (initial sort at backend
+        construction); otherwise ``env_ids`` is a torch index tensor of the
+        envs being resampled this step.
         """
-        if env_ids.numel() == 0:
+        if env_ids is not None and env_ids.numel() == 0:
             return
-        assert self._subtask_schedule_ids_i32 is not None
-        slot_ids = torch.arange(command.k_max, device=command.device, dtype=torch.long).unsqueeze(0)
-        slot_ids = slot_ids.expand(env_ids.numel(), -1)
-        active = slot_ids < command._env_slot_count[env_ids].long().unsqueeze(1)
-        subtask_ids = command._env_subtask_ids[env_ids].long().clamp_min(0)
-        schedule_ids = self._subtask_schedule_ids_i32[subtask_ids]
-        schedule_ids = torch.where(active, schedule_ids, torch.full_like(schedule_ids, NUM_SCHEDULES))
-        slot_order = torch.argsort(schedule_ids, dim=1, stable=True)
-        command._env_subtask_ids[env_ids] = torch.gather(command._env_subtask_ids[env_ids], 1, slot_order)
-        command._env_slot_offsets[env_ids] = torch.gather(command._env_slot_offsets[env_ids], 1, slot_order)
-        command._env_slot_strides[env_ids] = torch.gather(command._env_slot_strides[env_ids], 1, slot_order)
+        assert self._subtask_schedule_ids_wp is not None
+        schedule_ids_torch = wp.to_torch(self._subtask_schedule_ids_wp)
+
+        if env_ids is None:
+            n_rows = command.num_envs
+            subtask_ids_block = command._env_subtask_ids
+            slot_count_block = command._env_slot_count
+            offsets_block = command._env_slot_offsets
+            strides_block = command._env_slot_strides
+        else:
+            n_rows = env_ids.numel()
+            subtask_ids_block = command._env_subtask_ids[env_ids]
+            slot_count_block = command._env_slot_count[env_ids]
+            offsets_block = command._env_slot_offsets[env_ids]
+            strides_block = command._env_slot_strides[env_ids]
+
+        slot_ids = command._slot_arange.expand(n_rows, -1)
+        active = slot_ids < slot_count_block.unsqueeze(1)
+        clamped = subtask_ids_block.long().clamp_min(0)
+        schedule_ids = schedule_ids_torch[clamped]
+        fallback = schedule_ids.new_full(schedule_ids.shape, NUM_SCHEDULES)
+        schedule_ids = schedule_ids.where(active, fallback)
+        slot_order = schedule_ids.argsort(dim=1, stable=True)
+
+        sorted_subtask = subtask_ids_block.gather(1, slot_order)
+        sorted_offsets = offsets_block.gather(1, slot_order)
+        sorted_strides = strides_block.gather(1, slot_order)
+
+        if env_ids is None:
+            command._env_subtask_ids[:] = sorted_subtask
+            command._env_slot_offsets[:] = sorted_offsets
+            command._env_slot_strides[:] = sorted_strides
+        else:
+            command._env_subtask_ids[env_ids] = sorted_subtask
+            command._env_slot_offsets[env_ids] = sorted_offsets
+            command._env_slot_strides[env_ids] = sorted_strides
 
     def dispatch(self, command: MultiTaskCommandWarp) -> None:
         """Run the full per-step pipeline (read + dispatch + rotate + compose) through a captured graph.

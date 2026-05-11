@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import torch
 import warp as wp
 
 from ..compose_select import use_parallel_compose
@@ -44,7 +43,7 @@ class PrimitiveGraphLocalBackend:
         # does not flip the mode.
         self._use_fused_compose = use_parallel_compose(command.k_max)
 
-    def on_resample(self, command: MultiTaskCommandWarp, env_ids: torch.Tensor) -> None:
+    def on_resample(self, command: MultiTaskCommandWarp, env_ids) -> None:
         """Refresh primitive graph queues after task assignment changes."""
         del env_ids
         refresh_primitive_graph_local_plan(command, self.plan)

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import torch
 import warp as wp
 
 from .bindings import PackedScatterPlan, build_packed_scatter_plan, refresh_packed_scatter_plan
@@ -31,7 +30,7 @@ class PackedScatterBackend:
         self.plan: PackedScatterPlan = build_packed_scatter_plan(command)
         self._dispatch_graph: wp.Graph | None = None
 
-    def on_resample(self, command: MultiTaskCommandWarp, env_ids: torch.Tensor) -> None:
+    def on_resample(self, command: MultiTaskCommandWarp, env_ids) -> None:
         """Refresh packed queues after task assignment changes."""
         del env_ids
         refresh_packed_scatter_plan(command, self.plan)

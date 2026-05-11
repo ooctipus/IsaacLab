@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import torch
 import warp as wp
 
 from .bindings import (
@@ -35,7 +34,7 @@ class PrimitiveQueueLocalBackend:
         self.plan: PrimitiveQueueLocalPlan = build_primitive_queue_local_plan(command)
         self._dispatch_graph = None
 
-    def on_resample(self, command: MultiTaskCommandWarp, env_ids: torch.Tensor) -> None:
+    def on_resample(self, command: MultiTaskCommandWarp, env_ids) -> None:
         """Refresh primitive queues after task assignment changes."""
         del env_ids
         refresh_primitive_queue_local_plan(command, self.plan)
