@@ -37,7 +37,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, NamedTuple
 
 import torch
-import warp as wp
 
 import isaaclab.sim as sim_utils
 from isaaclab.markers import FRAME_MARKER_CFG, VisualizationMarkersCfg
@@ -193,7 +192,7 @@ def _viz_body_pos(cmd: MultiTaskCommand, target_per_env: torch.Tensor, active: t
 
 def _viz_body_quat(cmd: MultiTaskCommand, target_per_env: torch.Tensor, active: torch.Tensor) -> dict:
     robot = cmd._env.scene["robot"]
-    base_pos_w = wp.to_torch(robot.data.root_pos_w).clone()
+    base_pos_w = robot.data.root_pos_w.torch.clone()
     base_pos_w[:, 2] += _LIFT_Z
     pos = _hide_inactive(base_pos_w, active)
     return {_PATH_BODY_QUAT_GOAL: {"translations": pos, "orientations": target_per_env}}
@@ -208,9 +207,9 @@ def _viz_body_lin_vel(cmd: MultiTaskCommand, target_per_env: torch.Tensor, activ
     apply to visualization.
     """
     robot = cmd._env.scene["robot"]
-    base_pos_w = wp.to_torch(robot.data.root_pos_w)
+    base_pos_w = robot.data.root_pos_w.torch
     goal_kwargs = _arrow_kwargs_from_world_vec(target_per_env, base_pos_w, active)
-    current_w = wp.to_torch(robot.data.root_lin_vel_w)
+    current_w = robot.data.root_lin_vel_w.torch
     current_kwargs = _arrow_kwargs_from_world_vec(current_w, base_pos_w, active)
     return {_PATH_BODY_LIN_VEL_GOAL: goal_kwargs, _PATH_BODY_LIN_VEL_CURRENT: current_kwargs}
 
@@ -219,11 +218,11 @@ def _viz_body_ang_vel(cmd: MultiTaskCommand, target_per_env: torch.Tensor, activ
     """Goal (green) = ω target axis in world frame, length ∝ |ω|.
     Current (blue) = robot's actual world-frame ω axis."""
     robot = cmd._env.scene["robot"]
-    base_pos_w = wp.to_torch(robot.data.root_pos_w)
+    base_pos_w = robot.data.root_pos_w.torch
     # Smaller length scale than lin_vel — ang vel magnitudes (rad/s) often
     # exceed lin vel (m/s), so this keeps arrow length in a comparable range.
     goal_kwargs = _arrow_kwargs_from_world_vec(target_per_env, base_pos_w, active, length_scale=1.0)
-    current_w = wp.to_torch(robot.data.root_ang_vel_w)
+    current_w = robot.data.root_ang_vel_w.torch
     current_kwargs = _arrow_kwargs_from_world_vec(current_w, base_pos_w, active, length_scale=1.0)
     return {_PATH_BODY_ANG_VEL_GOAL: goal_kwargs, _PATH_BODY_ANG_VEL_CURRENT: current_kwargs}
 

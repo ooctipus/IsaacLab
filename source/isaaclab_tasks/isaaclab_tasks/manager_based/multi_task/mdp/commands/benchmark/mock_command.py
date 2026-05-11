@@ -72,7 +72,7 @@ def _make_proxy(torch_tensor: torch.Tensor, wp_dtype) -> wp.array:
 class _MockArticulationData:
     """Mock ``.data`` exposing ProxyArrays for every kind read by the Warp path.
 
-    Both the Torch path (``wp.to_torch(data.body_pos_w)``) and the Warp path
+    Both the Torch path (``data.body_pos_w.torch``) and the Warp path
     (``data.body_pos_w.warp``) read from one seeded source.
     """
 
