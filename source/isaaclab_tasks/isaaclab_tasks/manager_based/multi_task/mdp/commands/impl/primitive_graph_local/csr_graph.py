@@ -42,6 +42,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+import numpy as np
 import warp as wp
 import warp.sparse as wps
 
@@ -108,6 +109,53 @@ class CSRGraph:
         :attr:`num_active_consumers`.
         """
         return self.bsr.columns
+
+    # ------------------------------------------------------------------
+    # Graph-theoretic introspection (build-time / diagnostic — not hot path).
+    #
+    # Used by the Phase 2.5 workload survey and any future runtime decision
+    # rule (e.g. "is fan-out tight enough that producer-coherent reordering
+    # would pay?"). Each call to ``max_fanout`` / ``fanout_histogram``
+    # triggers one device→host sync of :attr:`producer_offsets`; intended
+    # for one-shot inspection at plan-build time, not per-step calls.
+    # ------------------------------------------------------------------
+
+    @property
+    def max_fanout(self) -> int:
+        """Largest number of consumers attached to any single producer.
+
+        Returns 0 for an empty graph.
+        """
+        if self.num_producers == 0:
+            return 0
+        offsets = self.producer_offsets.numpy()
+        return int(np.diff(offsets).max())
+
+    @property
+    def mean_fanout(self) -> float:
+        """Mean consumers per producer (``num_active_consumers / num_producers``).
+
+        Returns 0.0 for an empty graph. Pure host arithmetic — no device sync.
+        """
+        if self.num_producers == 0:
+            return 0.0
+        return self.num_active_consumers / self.num_producers
+
+    @property
+    def fanout_histogram(self) -> dict[int, int]:
+        """Distribution of fan-out: ``{consumer_count: num_producers_with_that_count}``.
+
+        A tight histogram around a single value means uniform fan-out (and
+        producer-side load balancing is uninteresting). A long-tail
+        histogram means skew (and Phase 4 merge-based load balancing
+        becomes the high-leverage refactor).
+        """
+        if self.num_producers == 0:
+            return {}
+        offsets = self.producer_offsets.numpy()
+        counts = np.diff(offsets)
+        unique, freq = np.unique(counts, return_counts=True)
+        return {int(u): int(f) for u, f in zip(unique, freq, strict=True)}
 
     @classmethod
     def build_from_consumer_keys(

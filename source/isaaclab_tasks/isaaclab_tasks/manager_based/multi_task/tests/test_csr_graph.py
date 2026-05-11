@@ -179,6 +179,69 @@ def test_representative_consumer_is_in_producers_consumer_set() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Graph-theoretic introspection (Phase 2).
+# ---------------------------------------------------------------------------
+
+
+def test_introspection_empty_graph() -> None:
+    """All introspection methods handle the empty graph without sync."""
+    g = CSRGraph.build_from_consumer_keys([None, None, None], device=_DEVICE)
+    assert g.max_fanout == 0
+    assert g.mean_fanout == 0.0
+    assert g.fanout_histogram == {}
+
+
+def test_max_fanout_picks_largest_row() -> None:
+    """``max_fanout`` is the largest per-producer consumer count."""
+    keys = [(0,), (0,), (0,), (1,), (2,), (2,)]
+    g = CSRGraph.build_from_consumer_keys(keys, device=_DEVICE)
+    assert g.max_fanout == 3
+
+
+def test_mean_fanout_is_edge_count_over_producers() -> None:
+    """``mean_fanout`` = num_active_consumers / num_producers."""
+    keys = [(0,), (0,), (1,), (1,), (1,), (2,)]
+    g = CSRGraph.build_from_consumer_keys(keys, device=_DEVICE)
+    assert g.num_active_consumers == 6
+    assert g.num_producers == 3
+    assert g.mean_fanout == pytest.approx(2.0)
+
+
+def test_fanout_histogram_for_uniform_workload() -> None:
+    """Uniform fan-out gives a single-entry histogram."""
+    # Three producers, two consumers each.
+    keys = [(0,), (0,), (1,), (1,), (2,), (2,)]
+    g = CSRGraph.build_from_consumer_keys(keys, device=_DEVICE)
+    assert g.fanout_histogram == {2: 3}
+
+
+def test_fanout_histogram_for_skewed_workload() -> None:
+    """Skewed fan-out gives multi-entry histogram with weighted distribution."""
+    # Producer 0 has 4 consumers, producer 1 has 1, producer 2 has 2.
+    keys = [(0,), (0,), (0,), (0,), (1,), (2,), (2,)]
+    g = CSRGraph.build_from_consumer_keys(keys, device=_DEVICE)
+    assert g.fanout_histogram == {1: 1, 2: 1, 4: 1}
+
+
+def test_max_fanout_consistent_with_histogram_max_bin() -> None:
+    """``max_fanout`` equals the largest key in :attr:`fanout_histogram`."""
+    keys = [(0,), (0,), (1,), (1,), (1,), (1,), (2,)]
+    g = CSRGraph.build_from_consumer_keys(keys, device=_DEVICE)
+    assert g.max_fanout == max(g.fanout_histogram.keys())
+
+
+def test_introspection_with_inactive_consumers() -> None:
+    """Inactive consumers don't pollute fan-out stats — they're not edges."""
+    keys = [(0,), None, (0,), None, (1,)]
+    g = CSRGraph.build_from_consumer_keys(keys, device=_DEVICE)
+    assert g.num_active_consumers == 3
+    assert g.num_producers == 2
+    assert g.max_fanout == 2  # producer 0
+    assert g.mean_fanout == pytest.approx(1.5)
+    assert g.fanout_histogram == {1: 1, 2: 1}
+
+
+# ---------------------------------------------------------------------------
 # Byte-identity vs the legacy inline algorithm (regression guardrail).
 # ---------------------------------------------------------------------------
 
