@@ -650,14 +650,14 @@ def test_local_primitive_dispatch_compose_graph_capture_smoke(dispatch_backend):
     torch.lt(cmd._slot_arange, cmd._env_slot_count.unsqueeze(1), out=cmd._slot_valid)
     cmd._buf_error.zero_()
     cmd._buf_activation.zero_()
-    cmd._backend.dispatch(cmd, cmd._slot_valid)
+    cmd._backend.dispatch(cmd)
     assert cmd._backend._dispatch_graph is not None
-    cmd._backend.compose(cmd, cmd._slot_valid)
+    cmd._backend.compose(cmd)
     torch.cuda.synchronize()
 
     with wp.ScopedCapture(device=device) as capture:
-        cmd._backend.dispatch(cmd, cmd._slot_valid)
-        cmd._backend.compose(cmd, cmd._slot_valid)
+        cmd._backend.dispatch(cmd)
+        cmd._backend.compose(cmd)
     wp.capture_launch(capture.graph)
     torch.cuda.synchronize()
 

@@ -38,9 +38,8 @@ class PackedScatterBackend:
         # Launch dim depends on plan.total_work, which can change after resample.
         self._dispatch_graph = None
 
-    def dispatch(self, command: MultiTaskCommandWarp, valid_slots: torch.Tensor) -> None:
+    def dispatch(self, command: MultiTaskCommandWarp) -> None:
         """Run the full per-step pipeline through a captured graph (compose included)."""
-        del valid_slots
         if wp.get_device(str(command.device)).is_capturing:
             self._dispatch_uncaptured(command)
             return
@@ -59,6 +58,6 @@ class PackedScatterBackend:
         rotate_canonical_slots_to_body_frame_warp(command, self.plan)
         compose_warp(command, self.plan)
 
-    def compose(self, command: MultiTaskCommandWarp, valid_slots: torch.Tensor) -> None:
+    def compose(self, command: MultiTaskCommandWarp) -> None:
         """No-op — compose was captured as part of the dispatch graph."""
-        del command, valid_slots
+        del command

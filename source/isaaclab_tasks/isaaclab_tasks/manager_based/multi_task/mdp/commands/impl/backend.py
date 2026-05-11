@@ -36,11 +36,11 @@ class CommandBackend(Protocol):
         """Refresh backend-owned execution layout after task assignment changes."""
         ...
 
-    def dispatch(self, command: MultiTaskCommandWarp, valid_slots: torch.Tensor) -> None:
+    def dispatch(self, command: MultiTaskCommandWarp) -> None:
         """Compute per-step command deltas and activation buffers."""
         ...
 
-    def compose(self, command: MultiTaskCommandWarp, valid_slots: torch.Tensor) -> None:
+    def compose(self, command: MultiTaskCommandWarp) -> None:
         """Advance composer state and write per-env reward outputs."""
         ...
 

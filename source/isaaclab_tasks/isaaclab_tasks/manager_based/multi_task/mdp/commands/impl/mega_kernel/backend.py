@@ -92,14 +92,13 @@ class MegaKernelBackend:
         command._env_slot_offsets[env_ids] = torch.gather(command._env_slot_offsets[env_ids], 1, slot_order)
         command._env_slot_strides[env_ids] = torch.gather(command._env_slot_strides[env_ids], 1, slot_order)
 
-    def dispatch(self, command: MultiTaskCommandWarp, valid_slots: torch.Tensor) -> None:
+    def dispatch(self, command: MultiTaskCommandWarp) -> None:
         """Run the full per-step pipeline (read + dispatch + rotate + compose) through a captured graph.
 
         The captured graph includes ``compose`` so the public ``compose()`` hook
         becomes a no-op — saves one launch + one host-side stream synchronization
         per step relative to launching compose separately.
         """
-        del valid_slots
         if wp.get_device(str(command.device)).is_capturing:
             self._dispatch_uncaptured(command)
             return
@@ -143,6 +142,6 @@ class MegaKernelBackend:
             rotate_canonical_slots_to_body_frame_warp(command, self.plan)
             compose_warp(command, self.plan)
 
-    def compose(self, command: MultiTaskCommandWarp, valid_slots: torch.Tensor) -> None:
+    def compose(self, command: MultiTaskCommandWarp) -> None:
         """No-op — compose was captured as part of the dispatch graph."""
-        del command, valid_slots
+        del command

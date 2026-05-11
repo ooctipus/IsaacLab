@@ -71,10 +71,12 @@ class MultiTaskCommandWarp(MultiTaskCommand):
 
     def _dispatch(self, valid_slots: torch.Tensor) -> None:
         """State → delta → metric → activation through the selected backend."""
+        del valid_slots  # Warp backends read ``slot_count[env]`` directly inside kernels.
         assert self._backend is not None
-        self._backend.dispatch(self, valid_slots)
+        self._backend.dispatch(self)
 
     def _compose(self, valid_slots: torch.Tensor) -> None:
         """Advance composer state and write terminal reward outputs."""
+        del valid_slots
         assert self._backend is not None
-        self._backend.compose(self, valid_slots)
+        self._backend.compose(self)

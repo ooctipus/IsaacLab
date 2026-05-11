@@ -47,9 +47,8 @@ class PrimitiveGraphLocalBackend:
         refresh_primitive_graph_local_plan(command, self.plan)
         self._dispatch_graph = None
 
-    def dispatch(self, command: MultiTaskCommandWarp, valid_slots: torch.Tensor) -> None:
+    def dispatch(self, command: MultiTaskCommandWarp) -> None:
         """Run the full per-step pipeline through a captured graph (compose included)."""
-        del valid_slots
         if wp.get_device(str(command.device)).is_capturing:
             self._dispatch_uncaptured(command)
             return
@@ -146,6 +145,6 @@ class PrimitiveGraphLocalBackend:
             device=str(command.device),
         )
 
-    def compose(self, command: MultiTaskCommandWarp, valid_slots: torch.Tensor) -> None:
+    def compose(self, command: MultiTaskCommandWarp) -> None:
         """No-op — compose was captured as part of the dispatch graph."""
-        del command, valid_slots
+        del command
