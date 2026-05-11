@@ -23,7 +23,7 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 # in one launch. Fully self-contained under ``multi_task/sensors/`` so a future rebase onto
 # a new IsaacLab version requires no merge work in shared sensor code.
 from isaaclab_tasks.manager_based.multi_task.sensors import FastTerrainScannerCfg
-from isaaclab_tasks.utils import PresetCfg, preset
+from isaaclab_tasks.utils import PresetCfg
 
 from .terrain import mdp, mdp_presets
 
@@ -52,8 +52,8 @@ class SceneCfg(InteractiveSceneCfg):
         terrain_generator=TerrainGeneratorCfg(
             size=(10.0, 10.0),
             border_width=20.0,
-            num_rows=preset(default=5, flat=1, stepping_stone=1),
-            num_cols=preset(default=12, flat=1, stepping_stone=1),
+            num_rows=1,
+            num_cols=12,
             horizontal_scale=0.1,
             vertical_scale=0.005,
             slope_threshold=0.75,
@@ -138,15 +138,6 @@ class EventsCfg:
         },
     )
 
-    # Top-down 2D trajectory video, captured every ``video_interval``
-    # env steps over a ``video_length``-step window. Renders one shared
-    # world-frame scatter (10% of envs) on top of the same terrain
-    # heightmap the curriculum spawn-scatter uses; robot dots turn green
-    # while ``instant_success`` holds, red otherwise. Uploads directly
-    # to W&B under ``Sampler/trajectory_video`` so the panel coexists
-    # with the other Sampler/* dashboards instead of overwriting the
-    # standard 3D RecordVideo mp4 panel. Subsample fraction is hard-coded
-    # in :class:`TrajectoryRecorder` (see ``SUBSAMPLE_FRACTION``).
     record_trajectory_video = EventTerm(
         func=mdp.record_trajectory_video,
         mode="interval",
@@ -175,7 +166,7 @@ class PositionPhysicsCfg(PresetCfg):
 
 @configclass
 class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
-    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=preset(default=120.0, flat=10.0))
+    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=0.0)
     sim: SimulationCfg = SimulationCfg(physics=PositionPhysicsCfg())  # type: ignore
     observations: mdp_presets.ObservationsCfg = mdp_presets.ObservationsCfg()  # type: ignore
     actions: ActionsCfg = ActionsCfg()
@@ -192,13 +183,11 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
     )
 
     def __post_init__(self):
-        self.decimation = preset(default=4, advanced_skills=1)  # type: ignore
+        self.decimation = 4
         self.episode_length_s = 12.0
         self.sim.dt = 0.01
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
 
         if self.scene.height_scanner is not None:
-            self.scene.height_scanner.update_period = preset(
-                default=(4 * self.sim.dt), advanced_skills=(1 * self.sim.dt)
-            )  # type: ignore
+            self.scene.height_scanner.update_period = 4

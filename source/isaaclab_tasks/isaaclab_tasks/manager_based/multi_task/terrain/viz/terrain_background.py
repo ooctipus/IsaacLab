@@ -10,7 +10,7 @@ straight down into a regular ``[H, W]`` grid so 2D plots (curriculum
 spawn-scatter, trajectory recorder, ...) can paint a consistent
 backdrop. Used by:
 
-* :meth:`...mdp.curriculums._log_spawn_scatter`
+* :func:`.sampler_images.spawn_goal_scatter_image`
 * :class:`...viz.trajectory_recorder.TrajectoryRecorder`
 
 We keep the raycast in one place because (a) the heightmap is

@@ -55,6 +55,7 @@ LOCAL_ASSET_PATH_DIR: str = os.path.normpath(
     os.path.join(os.path.dirname(__file__), *([".."] * 4), "source", "isaaclab_assets", "data", "Assets")
 )
 
+
 def check_file_path(path: str) -> Literal[0, 1, 2]:
     """Checks if a file exists on the Nucleus Server or locally.
 

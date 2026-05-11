@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from contextlib import suppress
 from typing import Any
 
 
@@ -66,7 +67,7 @@ class MetricLogger:
 
         # JSONL sink
         self._jsonl_path = os.path.join(self.log_dir, "metrics.jsonl")
-        self._jsonl_fh = open(self._jsonl_path, "a", buffering=1)  # line-buffered
+        self._jsonl_fh = open(self._jsonl_path, "a", buffering=1)  # noqa: SIM115  # line-buffered lifetime sink
 
         # Config snapshot (one-shot)
         if config is not None:
@@ -146,21 +147,15 @@ class MetricLogger:
 
     def close(self) -> None:
         """Flush and close all sinks."""
-        try:
+        with suppress(Exception):
             self._jsonl_fh.close()
-        except Exception:
-            pass
         if self._tb_writer is not None:
-            try:
+            with suppress(Exception):
                 self._tb_writer.flush()
                 self._tb_writer.close()
-            except Exception:
-                pass
         if self._wandb is not None:
-            try:
+            with suppress(Exception):
                 self._wandb.finish()
-            except Exception:
-                pass
 
 
 def _to_scalar(v: Any) -> float:

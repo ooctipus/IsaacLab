@@ -60,16 +60,27 @@ def _draw_panel(
             alpha=background_alpha,
         )
 
+    panel_valid = valid & np.isfinite(panel.values)
     ax.scatter(
-        x[valid],
-        y[valid],
-        c=panel.values[valid],
+        x[panel_valid],
+        y[panel_valid],
+        c=panel.values[panel_valid],
         s=dot_size,
         cmap=panel.cmap,
         vmin=panel.vmin,
         vmax=panel.vmax,
         edgecolors="none",
     )
+    if panel.outline_mask is not None:
+        outline_valid = valid & np.asarray(panel.outline_mask, dtype=bool).reshape(-1)
+        ax.scatter(
+            x[outline_valid],
+            y[outline_valid],
+            s=max(dot_size * 2.0, dot_size + 4.0),
+            facecolors="none",
+            edgecolors=panel.outline_color,
+            linewidths=0.5,
+        )
 
     ax.set_title(panel.title, fontsize=11)
     ax.set_xlabel(xlabel)
@@ -133,6 +144,9 @@ class PanelSpec:
             tuple or hex).
         stats_text: Small text block (multi-line allowed) shown in the
             upper-left corner. Use for ``N=...``, ``mean=...``, etc.
+        outline_mask: Optional boolean mask for points to ring on top of
+            the colored scatter.
+        outline_color: Matplotlib color for :attr:`outline_mask`.
     """
 
     values: np.ndarray
@@ -142,6 +156,8 @@ class PanelSpec:
     title: str
     legend_entries: list[tuple[str, object]] = field(default_factory=list)
     stats_text: str = ""
+    outline_mask: np.ndarray | None = None
+    outline_color: object = "black"
 
 
 def aggregate_endpoints(
@@ -335,8 +351,8 @@ class ScatterDashboard2D:
                 extent_x = max(xmax - xmin, 1e-9)
                 extent_y = max(ymax - ymin, 1e-9)
             else:
-                extent_x = max(float(self._xy[:, 0].ptp()) if self._n > 0 else 1.0, 1e-9)
-                extent_y = max(float(self._xy[:, 1].ptp()) if self._n > 0 else 1.0, 1e-9)
+                extent_x = max(float(np.ptp(self._xy[:, 0])) if self._n > 0 else 1.0, 1e-9)
+                extent_y = max(float(np.ptp(self._xy[:, 1])) if self._n > 0 else 1.0, 1e-9)
             # ``aspect="equal"`` constrains the axis to whichever dim's scale is
             # tighter; the actual rendered axis dimensions follow from there.
             scale_in_per_m = min(panel_w_inches / extent_x, panel_h_inches / extent_y)

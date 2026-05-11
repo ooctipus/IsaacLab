@@ -98,7 +98,6 @@ def test_env_cfg_to_dict_serialises(task_name: str) -> None:
         "isaaclab_tasks.manager_based.multi_task.curriculum.sampling.sampler_cfg",
         "isaaclab_tasks.manager_based.multi_task.curriculum.sampling.sampling_strategies",
         "isaaclab_tasks.manager_based.multi_task.curriculum.sampling.sampling_strategies_cfg",
-        "isaaclab_tasks.manager_based.multi_task.curriculum.diagnostics",
         "isaaclab_tasks.manager_based.multi_task.curriculum.state_layout",
         "isaaclab_tasks.manager_based.multi_task.curriculum.state_buffer",
         "isaaclab_tasks.manager_based.multi_task.curriculum.success_monitor",

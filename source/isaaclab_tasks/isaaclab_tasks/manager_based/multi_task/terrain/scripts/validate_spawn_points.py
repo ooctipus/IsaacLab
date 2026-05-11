@@ -11,9 +11,9 @@ resolved env cfg:
 
 * :attr:`env.scene.robot` — articulation cfg (USD path, init state, default
   joint pose) that drives the IK kinematics.
-* :attr:`env.commands.goal_point` — the same retarget pipeline + sampler
+* :attr:`env.commands.goal_point.task_table` — the same retarget pipeline + sampler
   + criteria the training task uses, so this tool reflects production
-  behaviour exactly. ``goal_point.pool_spacing`` also doubles as the
+  behaviour exactly. ``goal_point.task_table.pool_spacing`` also doubles as the
   default density.
 
 The terrain mesh is built from ``env.scene.terrain.terrain_generator`` —
@@ -35,7 +35,7 @@ Usage::
     # Compose with the FPS-feature presets too.
     ./isaaclab.sh -p $SCRIPT presets=anymal_c,xyzyaw
 
-    # Override placement density (otherwise uses goal_point.pool_spacing).
+    # Override placement density (otherwise uses goal_point.task_table.pool_spacing).
     ./isaaclab.sh -p $SCRIPT presets=anymal_c --max_robots 200
     ./isaaclab.sh -p $SCRIPT presets=anymal_c --spacing 0.4
 
@@ -123,7 +123,7 @@ def _patch_kin_with_robot(pipeline_cfg, robot_cfg, robot_usd: str, device: str):
     new_kin.device = device
     new_kin.default_pos = (0.0, 0.0, robot_cfg.init_state.pos[2])
     new_kin.default_joint_pos = robot_cfg.init_state.joint_pos
-    return pipeline_cfg.replace(kin=new_kin)
+    return pipeline_cfg.replace(asset_cfg=None, kin=new_kin)
 
 
 def _patch_sampler_bounds(
@@ -275,13 +275,13 @@ def main():
         "--max_robots",
         type=int,
         default=None,
-        help="Number of final placements. Overrides goal_point.pool_spacing.",
+        help="Number of final placements. Overrides goal_point.task_table.pool_spacing.",
     )
     density_group.add_argument(
         "--spacing",
         type=float,
         default=None,
-        help="Target placement spacing [m]. Defaults to goal_point.pool_spacing from the resolved cfg.",
+        help="Target placement spacing [m]. Defaults to goal_point.task_table.pool_spacing from the resolved cfg.",
     )
     parser.add_argument(
         "--no_viewer",
@@ -327,14 +327,15 @@ def main():
 
     # --- Pipeline (from env's commands.goal_point) ---
     goal_cfg = env_cfg.commands.goal_point
-    pipeline_cfg = _patch_kin_with_robot(goal_cfg.pipeline_cfg, robot_cfg, robot_usd, device)
+    table_cfg = goal_cfg.task_table
+    pipeline_cfg = _patch_kin_with_robot(table_cfg.pipeline_cfg, robot_cfg, robot_usd, device)
     pipeline_cfg = _patch_sampler_bounds(pipeline_cfg, sampler_x_range, sampler_y_range)
 
     # --- Density (feature-aware) ---
-    spacing = args.spacing if args.spacing is not None else goal_cfg.pool_spacing
+    spacing = args.spacing if args.spacing is not None else table_cfg.pool_spacing
     extractor = pipeline_cfg.sampler.sizing.fps_features
     extra_dim, extra_vol = _feature_extra_dim_and_vol(extractor)
-    n_desired = _derive_n_desired(args, goal_cfg.pool_spacing, sampler_x_range, sampler_y_range, extractor)
+    n_desired = _derive_n_desired(args, table_cfg.pool_spacing, sampler_x_range, sampler_y_range, extractor)
 
     # Spacing-driven post-IK count: pipeline derives ``k_target`` from the actual
     # feature-space bbox of survivors at this spacing, so adding richer features
@@ -357,7 +358,7 @@ def main():
     print(
         f"Pipeline: min_contacts={pipeline_cfg.sampler.min_contacts}"
         f" terrain_snap_distance={pipeline_cfg.sampler.terrain_snap_distance}"
-        f" pool_spacing={goal_cfg.pool_spacing}"
+        f" pool_spacing={table_cfg.pool_spacing}"
     )
     print(
         f"IK wts  : base_rot={pipeline_cfg.base_rot_weight}"

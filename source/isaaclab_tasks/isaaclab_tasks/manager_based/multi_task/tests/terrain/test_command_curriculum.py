@@ -33,13 +33,17 @@ from isaaclab_tasks.manager_based.multi_task.curriculum import (
     Sampler,  # noqa: F401 -- used in fluent inline construction below,
     SamplerCfg,
     StateLayout,
+    StateLayoutCfg,
     SuccessMonitor,
     SuccessMonitorCfg,
 )
+from isaaclab_tasks.manager_based.multi_task.mdp.curriculums import success_rate_sampler
 from isaaclab_tasks.manager_based.multi_task.terrain.mdp.commands.state_command import RelativeStateCommand
-from isaaclab_tasks.manager_based.multi_task.terrain.mdp.curriculums import (
-    terrain_spawn_goal_pair_success_rate_levels,
+from isaaclab_tasks.manager_based.multi_task.terrain.mdp.commands.state_command_payloads import (
+    CommandPayloadBaseFootState,
+    CommandPayloadBaseState,
 )
+from isaaclab_tasks.manager_based.multi_task.terrain.mdp.observations import command_current_state, command_target_state
 from isaaclab_tasks.manager_based.multi_task.utils.buffer_writers import FIFOBufferWriter
 
 
@@ -108,6 +112,17 @@ def _sample_by_target_rate(
 
 
 DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
+CURRICULUM_BINDS = {
+    "success_rates_bind": "env.command_manager.get_term('goal_point').success_rates",
+    "sample_indices_bind": "env.command_manager.get_term('goal_point').cmd_indices",
+    "success_bind": "env.termination_manager.get_term('success')",
+    "layout": StateLayoutCfg(
+        coords_bind="env.command_manager.get_term('goal_point').table.spawn_states[:, :2]",
+        spawn_index_bind="env.command_manager.get_term('goal_point').table.spawn_index",
+        target_index_bind="env.command_manager.get_term('goal_point').table.target_index",
+        task_partition_bind="env.command_manager.get_term('goal_point').table.task_partition",
+    ),
+}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -160,6 +175,7 @@ def _make_task_table(
 
     # CSR offsets and kind tags
     offsets = torch.tensor([0, pos_tasks, num_tasks], device=device, dtype=torch.long)
+    task_partition = torch.bucketize(torch.arange(num_tasks, device=device), offsets[1:-1], right=True)
     kind = torch.tensor([0, 1], device=device, dtype=torch.long)  # 0=pos, 1=pose
 
     return RelativeStateCommand.TaskTable(
@@ -169,9 +185,9 @@ def _make_task_table(
         tile_index=tile_index,
         params=params,
         task_mask=task_mask,
-        task_is_terrain=torch.zeros(num_tasks, dtype=torch.bool, device=device),
-        task_uses_feet=torch.zeros(num_tasks, dtype=torch.bool, device=device),
+        payload_flags=torch.zeros(num_tasks, 1, dtype=torch.bool, device=device),
         offsets=offsets,
+        task_partition=task_partition,
         kind=kind,
         spawn_states=spawn_states,
     )
@@ -237,6 +253,11 @@ class _MockRobot:
         self.calls.append(("jvel", env_ids.clone(), velocity.clone()))
 
 
+class _MockScene(SimpleNamespace):
+    def __getitem__(self, name: str):
+        return self._articulations[name]
+
+
 def _make_env(num_envs: int, device: str, step_dt: float = 0.02):
     """Build a minimal env namespace with just the attributes touched by the MDP code under test."""
     return SimpleNamespace(
@@ -255,6 +276,7 @@ def _make_command_term(
     env,
     table: RelativeStateCommand.TaskTable,
     num_joints: int = 12,
+    payload_class: type = CommandPayloadBaseFootState,
     device: str = DEVICE,
 ) -> RelativeStateCommand:
     """Construct a RelativeStateCommand without invoking its __init__.
@@ -271,77 +293,60 @@ def _make_command_term(
     term.cfg = SimpleNamespace(
         commands=cmd_names,
         resampling_time_range=(1.0, 1.0),
-        pos_std=0.5,
-        rot_std=0.5,
-        lin_vel_std=0.5,
-        ang_vel_std=0.5,
-        foot_pos_std=0.1,
-        normalize_command_obs=False,
+        randomize_command_indices=True,
         debug_vis=False,
+        task_table=SimpleNamespace(pipeline_cfg=SimpleNamespace(asset_cfg=SimpleNamespace(name="robot"))),
+        payload=SimpleNamespace(
+            class_type=payload_class,
+            pos_std=0.5,
+            rot_std=0.5,
+            lin_vel_std=0.5,
+            ang_vel_std=0.5,
+            foot_pos_std=0.1,
+            normalize_command_obs=False,
+        ),
     )
     term.robot = _MockRobot(env.num_envs, num_joints, device)
-    env.scene = SimpleNamespace(
+    env.scene = _MockScene(
         _articulations={"robot": term.robot},
         _rigid_objects={},
         env_origins=torch.zeros(env.num_envs, 3, device=device),
     )
-    term.num_joints = num_joints
-    term._joint_pos_slice = slice(13, 13 + num_joints)
     term._reset_assets = ["robot"]
-    term.state_dim = 12 + num_joints + 1
-    term.time_idx = 12 + num_joints
     term.table = table
     term._command_names = list(cmd_names.keys())
-    term.success_rates = None
+    term.success_rates = torch.zeros(table.num_tasks, device=device, dtype=torch.float32)
     term._success_per_cmd = torch.zeros(table.kind.shape[0], device=device)
 
-    term.cmd_buf = torch.zeros(env.num_envs, 3, term.state_dim, device=device).contiguous()
+    foot_body_ids = [1, 2, 3, 4]
+    newton_foot_body_ids = foot_body_ids
+    isaac_to_newton_joint_order = torch.arange(num_joints, device=device, dtype=torch.long)
+
+    class _FakeTargetFk:
+        model = SimpleNamespace(
+            joint_coord_count=7 + num_joints,
+            joint_dof_count=num_joints,
+            body_count=len(foot_body_ids) + 1,
+        )
+
+        def eval_fk_batched(self, joint_q, joint_qd, body_q, body_qd):
+            wp.to_torch(body_q).zero_()
+
+    table.target_fk_kin = _FakeTargetFk()
+    table.newton_foot_body_ids = newton_foot_body_ids
+    table.isaac_to_newton_joint_order = isaac_to_newton_joint_order
+    table.foot_body_ids = foot_body_ids
+    term._payload = payload_class(term.cfg, env, table)
+
+    term.cmd_buf = torch.zeros(env.num_envs, 3, term._payload.state_dim, device=device).contiguous()
     term.cmd_buf[:, 1] = 1.0
-    term.cmd_mask = torch.zeros(env.num_envs, 12 + num_joints, device=device, dtype=torch.bool)
+    term.cmd_mask = torch.zeros(env.num_envs, term._payload.mask_dim, device=device, dtype=torch.bool)
     term.cmd_indices = torch.zeros(env.num_envs, dtype=torch.long, device=device)
-    term._command_indices_bound = False
-    reset_state_dim = table.spawn_states.shape[1]
-    term._task_idx_scratch = torch.empty(env.num_envs, device=device, dtype=torch.long)
-    term._target_state_idx_scratch = torch.empty_like(term._task_idx_scratch)
-    term._spawn_state_idx_scratch = torch.empty_like(term._task_idx_scratch)
-    term._target_reset_state_scratch = torch.empty(env.num_envs, reset_state_dim, device=device)
-    term._spawn_reset_state_scratch = torch.empty_like(term._target_reset_state_scratch)
-    term._task_params_scratch = torch.empty(env.num_envs, 13, device=device)
-    term._task_mask_scratch = torch.empty_like(term.cmd_mask)
-    term._terrain_task_scratch = torch.empty(env.num_envs, device=device, dtype=torch.bool)
-    term._foot_task_scratch = torch.empty_like(term._terrain_task_scratch)
-    term._target_row_scratch = torch.empty(env.num_envs, term.state_dim, device=device)
-    term._foot_body_ids = [1, 2, 3, 4]
-    term.num_feet = len(term._foot_body_ids)
-    term.command_dim = 12 + 3 * term.num_feet
-    term._target_foot_pos_w = torch.zeros(env.num_envs, term.num_feet, 3, device=device)
-    term._target_foot_pos_resample_scratch = torch.empty_like(term._target_foot_pos_w)
-    term._target_foot_offset_w = torch.empty_like(term._target_foot_pos_w)
-    term._target_foot_pos_b = torch.zeros_like(term._target_foot_pos_w)
-    term._current_foot_pos_w = torch.zeros_like(term._target_foot_pos_w)
-    term._foot_delta_w = torch.empty_like(term._target_foot_pos_w)
-    term._foot_delta_b = torch.zeros_like(term._target_foot_pos_w)
-    term._foot_cross = torch.empty_like(term._target_foot_pos_w)
-    term._foot_cross2 = torch.empty_like(term._target_foot_pos_w)
-    term._foot_success_mask = torch.zeros(env.num_envs, device=device, dtype=torch.bool)
-    term._command_obs = torch.zeros(env.num_envs, term.command_dim, device=device)
-
-    def _compute_target_foot_pos_w(target_state: torch.Tensor, out: torch.Tensor) -> None:
-        out.zero_()
-
-    term._compute_target_foot_pos_w = _compute_target_foot_pos_w
-
-    term.num_error_groups = 5
-    num_cmd_types = int(table.offsets.numel() - 1)
-    term._reward_scales = (
-        torch.tensor([0.5, 0.5, 0.5, 0.5, 0.1], device=device).view(1, 5).expand(num_cmd_types, 5).contiguous()
-    )
-    term._identity_quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device=device).repeat(env.num_envs, 1)
-    term._err = torch.empty(env.num_envs, 5, device=device)
-    term._error_group_names = ["error_pos", "error_rot", "error_linvel", "error_angvel", "error_foot_pos"]
-    term.metrics = {name: torch.zeros(env.num_envs, device=device) for name in term._error_group_names}
+    term.randomize_command_indices = True
+    term._command = torch.zeros(env.num_envs, term._payload.command_dim, device=device)
+    term._err = torch.empty(env.num_envs, term._payload.error_dim, device=device)
+    term.metrics = {name: torch.zeros(env.num_envs, device=device) for name in term._payload.error_names}
     term.metrics["instant_success"] = torch.zeros(env.num_envs, device=device)
-    term._warp_seed = 1
     term._debug_vis_handle = None  # CommandTerm.__del__ expects this attribute
     return term
 
@@ -629,7 +634,7 @@ class TestCommandTerm:
         term = _make_command_term(env, table)
 
         env_ids = torch.arange(env.num_envs, device=DEVICE)
-        term.resample_indices(env_ids)
+        term.cmd_indices[env_ids] = torch.randint(0, table.num_tasks, (env.num_envs,), device=DEVICE)
 
         idx = term.cmd_indices[env_ids]
         ids = term.cmd_ids[env_ids]
@@ -661,10 +666,13 @@ class TestCommandTerm:
         torch.testing.assert_close(term.cmd_buf[env_ids, 0, :3], expected_target_pos)
         torch.testing.assert_close(term.cmd_buf[env_ids, 0, 3:12], table.params[task_idx, 3:12])
         torch.testing.assert_close(
-            term.cmd_buf[env_ids, 0, 12 : 12 + term.num_joints],
-            table.spawn_states[target_state_idx, 13 : 13 + term.num_joints],
+            term.cmd_buf[env_ids, 0, 12 : 12 + term._payload.num_joints],
+            table.spawn_states[target_state_idx, 13 : 13 + term._payload.num_joints],
         )
-        torch.testing.assert_close(term.cmd_buf[env_ids, 0, term.time_idx], table.params[task_idx, 12])
+        torch.testing.assert_close(term.cmd_buf[env_ids, 0, term._payload.time_idx], table.params[task_idx, 12])
+        torch.testing.assert_close(term.cmd_buf[env_ids, 1, term._payload.time_idx], table.params[task_idx, 12])
+        torch.testing.assert_close(term.command[:, :12], term.cmd_buf[:, 1, :12])
+        assert not term.get_task_done().any()
         assert (term.cmd_mask[env_ids] == table.task_mask[task_idx]).all()
 
         # Robot was teleported to the spawn reset state associated with each task.
@@ -687,28 +695,52 @@ class TestCommandTerm:
         table.spawn_states[target_state_id : target_state_id + 1, 3:7] = torch.tensor(
             [[0.0, 0.0, torch.sin(yaw * 0.5), torch.cos(yaw * 0.5)]], device=DEVICE
         )
-        table.spawn_states[target_state_id : target_state_id + 1, 13 : 13 + term.num_joints] = 0.25
+        table.spawn_states[target_state_id : target_state_id + 1, 13 : 13 + term._payload.num_joints] = 0.25
         target_state = table.spawn_states[target_state_id]
 
-        table.task_is_terrain[task_id] = True
-        table.task_uses_feet[task_id] = True
+        table.payload_flags[task_id, 0] = True
         table.task_mask[task_id, :6] = True
         table.task_mask[task_id, 12:] = True
         table.params[task_id, :6] = torch.tensor([[9.0, 9.0, 9.0, 0.3, 0.4, 0.5]], device=DEVICE)
         table.params[task_id, 12] = 0.75
 
         term.cmd_indices[:] = task_id
-        term.resample_indices = lambda env_ids: None
+        term.randomize_command_indices = False
         term._resample_command(torch.tensor([0], device=DEVICE, dtype=torch.long))
 
         torch.testing.assert_close(term.cmd_buf[0, 0, :3], target_state[:3])
         torch.testing.assert_close(term.cmd_buf[0, 0, 3:6], torch.tensor([0.0, 0.0, 1.0], device=DEVICE))
         torch.testing.assert_close(
-            term.cmd_buf[0, 0, 12 : 12 + term.num_joints],
-            target_state[13 : 13 + term.num_joints],
+            term.cmd_buf[0, 0, 12 : 12 + term._payload.num_joints],
+            target_state[13 : 13 + term._payload.num_joints],
         )
-        assert term.cmd_buf[0, 0, term.time_idx].item() == pytest.approx(0.75)
-        assert bool(term._foot_success_mask[0])
+        assert term.cmd_buf[0, 0, term._payload.time_idx].item() == pytest.approx(0.75)
+        assert bool(term._payload.foot_success_mask[0])
+
+    def test_base_state_payload_keeps_terrain_target_without_feet(self):
+        """Base-state payload uses terrain target rows but has no foot command channels."""
+        table = _make_task_table(pos_tasks=1, pose_tasks=1)
+        env = _make_env(num_envs=1, device=DEVICE)
+        term = _make_command_term(env, table, payload_class=CommandPayloadBaseState)
+
+        task_id = torch.tensor([0], dtype=torch.long, device=DEVICE)
+        target_state_id = int(table.target_index[0].item())
+        table.spawn_states[target_state_id : target_state_id + 1, :3] = torch.tensor([[1.0, 2.0, 3.0]], device=DEVICE)
+        table.spawn_states[target_state_id : target_state_id + 1, 3:7] = torch.tensor(
+            [[0.0, 0.0, 0.0, 1.0]], device=DEVICE
+        )
+        table.payload_flags[task_id, 0] = True
+        table.task_mask[task_id, :6] = True
+        table.params[task_id, 12] = 0.75
+
+        term.cmd_indices[:] = task_id
+        term.randomize_command_indices = False
+        term._resample_command(torch.tensor([0], device=DEVICE, dtype=torch.long))
+
+        torch.testing.assert_close(term.cmd_buf[0, 0, :3], table.spawn_states[target_state_id, :3])
+        assert term.command.shape == (env.num_envs, 12)
+        assert not hasattr(term._payload, "target_foot_pos_w")
+        assert not hasattr(term._payload, "foot_success_mask")
 
     def test_hold_time_drains_only_when_all_groups_pass(self):
         """``current[ti]`` advances by ``step_dt`` iff all 5 error groups are below threshold.
@@ -731,8 +763,8 @@ class TestCommandTerm:
         hold_init = 1.0
         target = torch.tensor([0.5, -0.3, 0.8], device=DEVICE)
         term.cmd_buf[:, 0, :3] = target
-        term.cmd_buf[:, 0, term.time_idx] = hold_init
-        term.cmd_buf[:, 2, term.time_idx] = 0.0
+        term.cmd_buf[:, 0, term._payload.time_idx] = hold_init
+        term.cmd_buf[:, 2, term._payload.time_idx] = 0.0
 
         # env 0: robot at target (error=0). env 1: robot offset by +5m in x.
         rs = term.robot._root_state_w
@@ -749,12 +781,12 @@ class TestCommandTerm:
 
         # env 0 accumulated num_ticks * step_dt successes.
         expected_current = num_ticks * env.step_dt
-        assert term.cmd_buf[0, 2, term.time_idx].item() == pytest.approx(expected_current)
+        assert term.cmd_buf[0, 2, term._payload.time_idx].item() == pytest.approx(expected_current)
         # env 0's delta[time_idx] = target - current = hold_init - expected
-        assert term.cmd_buf[0, 1, term.time_idx].item() == pytest.approx(hold_init - expected_current)
+        assert term.cmd_buf[0, 1, term._payload.time_idx].item() == pytest.approx(hold_init - expected_current)
         # env 1 never ticked
-        assert term.cmd_buf[1, 2, term.time_idx].item() == pytest.approx(0.0)
-        assert term.cmd_buf[1, 1, term.time_idx].item() == pytest.approx(hold_init)
+        assert term.cmd_buf[1, 2, term._payload.time_idx].item() == pytest.approx(0.0)
+        assert term.cmd_buf[1, 1, term._payload.time_idx].item() == pytest.approx(hold_init)
 
     def test_command_observation_exposes_target_feet_not_joint_delta(self):
         """Policy command is root delta plus target foot positions in base frame."""
@@ -775,48 +807,87 @@ class TestCommandTerm:
         term.robot._root_state_w[:, 6] = 1.0
         term.robot._root_quat_w[:, :3] = 0.0
         term.robot._root_quat_w[:, 3] = 1.0
-        term._target_foot_pos_w.copy_(target_feet)
-        term._foot_success_mask[:] = torch.tensor([True, False], device=DEVICE)
+        term._payload.target_foot_pos_w.copy_(target_feet)
+        term._payload.foot_success_mask[:] = torch.tensor([True, False], device=DEVICE)
 
         term._update_command()
 
-        assert term.command.shape == (env.num_envs, 12 + 3 * term.num_feet)
-        torch.testing.assert_close(term.command[0, 12:].view(term.num_feet, 3), target_feet[0] - root_pos[0])
-        torch.testing.assert_close(term.command[1, 12:], torch.zeros(3 * term.num_feet, device=DEVICE))
+        num_feet = term._payload.num_feet
+        assert term.command.shape == (env.num_envs, 12 + 3 * num_feet)
+        torch.testing.assert_close(term.command[0, 12:].view(num_feet, 3), target_feet[0] - root_pos[0])
+        torch.testing.assert_close(term.command[1, 12:], torch.zeros(3 * num_feet, device=DEVICE))
         torch.testing.assert_close(
-            term.cmd_buf[:, 1, 12 : 12 + term.num_joints],
+            term.cmd_buf[:, 1, 12 : 12 + term._payload.num_joints],
             torch.zeros_like(term.robot._joint_pos),
         )
+
+    def test_state_observations_use_command_boundary(self):
+        """CRL state observations read payload-defined state through the command term."""
+        table = _make_task_table()
+        env = _make_env(num_envs=2, device=DEVICE)
+        term = _make_command_term(env, table)
+        env.command_manager = SimpleNamespace(get_term=lambda name: term)
+        env.scene.terrain = SimpleNamespace(
+            env_origins=torch.tensor([[10.0, 20.0, 0.0], [-3.0, 4.0, 1.0]], device=DEVICE)
+        )
+
+        current_root = torch.arange(24, device=DEVICE, dtype=torch.float32).view(2, 12)
+        target_root = current_root + 100.0
+        term.cmd_buf[:, 2, :12] = current_root
+        term.cmd_buf[:, 0, :12] = target_root
+        term._payload.current_foot_pos_w.copy_(torch.arange(24, device=DEVICE, dtype=torch.float32).view(2, 4, 3))
+        term._payload.target_foot_pos_w.copy_(term._payload.current_foot_pos_w + 50.0)
+
+        origins = env.scene.terrain.env_origins
+        current_expected = torch.cat(
+            [
+                current_root[:, :3] - origins,
+                current_root[:, 3:12],
+                (term._payload.current_foot_pos_w - origins[:, None]).flatten(1),
+            ],
+            dim=-1,
+        )
+        target_expected = torch.cat(
+            [
+                target_root[:, :3] - origins,
+                target_root[:, 3:12],
+                (term._payload.target_foot_pos_w - origins[:, None]).flatten(1),
+            ],
+            dim=-1,
+        )
+        torch.testing.assert_close(command_current_state(env), current_expected)
+        torch.testing.assert_close(command_target_state(env), target_expected)
 
     def test_get_task_done_triggers_when_delta_nonpositive(self):
         """``get_task_done`` is true exactly when the hold delta has drained to 0."""
         table = _make_task_table()
         env = _make_env(num_envs=4, device=DEVICE)
         term = _make_command_term(env, table)
-        term.cmd_buf[:, 1, term.time_idx] = torch.tensor([0.5, 0.0, -0.1, 1.0], device=DEVICE)
+        term.cmd_buf[:, 1, term._payload.time_idx] = torch.tensor([0.5, 0.0, -0.1, 1.0], device=DEVICE)
         done = term.get_task_done()
         torch.testing.assert_close(done, torch.tensor([False, True, True, False], device=DEVICE))
         reward = term.get_task_reward()
         torch.testing.assert_close(reward, torch.tensor([0.0, 1.0, 1.0, 0.0], device=DEVICE))
 
-    def test_compute_state_error_matches_per_group_norms(self):
-        """``compute_state_error`` writes root norms plus max foot-position error."""
+    def test_update_command_writes_per_group_error_norms(self):
+        """``_update_command`` writes root norms plus max foot-position error."""
         table = _make_task_table()
         env = _make_env(num_envs=2, device=DEVICE)
         term = _make_command_term(env, table)
 
-        delta = term.cmd_buf[:, 1]
-        delta[0, :3] = torch.tensor([3.0, 4.0, 0.0], device=DEVICE)  # pos norm = 5
-        delta[0, 3:6] = torch.tensor([1.0, 0.0, 0.0], device=DEVICE)  # rot norm = 1
-        delta[0, 6:9] = torch.zeros(3, device=DEVICE)  # lin_vel norm = 0
-        delta[0, 9:12] = torch.tensor([0.0, 2.0, 0.0], device=DEVICE)  # ang_vel = 2
-        delta[0, 12 : 12 + term.num_joints] = 0.0
-        delta[1] = 0.0
-        term._foot_success_mask[0] = True
-        term._foot_delta_b[0, 0] = torch.tensor([0.03, 0.04, 0.0], device=DEVICE)
-        term._foot_delta_b[0, 1] = torch.tensor([0.0, 0.0, 0.2], device=DEVICE)
+        term.cmd_indices[:] = 0
+        term.cmd_mask[:, :12] = True
+        target = term.cmd_buf[:, 0]
+        target.zero_()
+        target[0, :3] = torch.tensor([3.0, 4.0, 0.0], device=DEVICE)  # pos norm = 5
+        target[0, 3:6] = torch.tensor([1.0, 0.0, 0.0], device=DEVICE)  # rot norm = 1
+        target[0, 6:9] = torch.zeros(3, device=DEVICE)  # lin_vel norm = 0
+        target[0, 9:12] = torch.tensor([0.0, 2.0, 0.0], device=DEVICE)  # ang_vel = 2
+        term._payload.foot_success_mask[0] = True
+        term._payload.target_foot_pos_w[0, 0] = torch.tensor([0.03, 0.04, 0.0], device=DEVICE)
+        term._payload.target_foot_pos_w[0, 1] = torch.tensor([0.0, 0.0, 0.2], device=DEVICE)
 
-        term.compute_state_error()
+        term._update_command()
         torch.testing.assert_close(
             term._err[0],
             torch.tensor([5.0, 1.0, 0.0, 2.0, 0.2], device=DEVICE),
@@ -845,23 +916,37 @@ class _FakeCommandManager:
         return self._term
 
 
-def _bootstrap_curriculum(env, term, target=0.5, kappa=5.0, history_len=16, log_bin_frac=False, log_bin_prob=False):
+def _bootstrap_curriculum(env, term, target=0.5, kappa=5.0, history_len=16):
     """Build a curriculum bound to the term and the env, bypassing visual setup."""
+    if env.termination_manager is None:
+        env.termination_manager = _FakeTerminationManager(
+            torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        )
     cfg = SimpleNamespace(
         params={
             "debug_vis": False,  # skip VisualizationMarkers construction
+            **CURRICULUM_BINDS,
             "sampling": SamplerCfg(
                 strategies=[BetaSamplingStrategyCfg(target=target, kappa=kappa, weight=1.0)],
                 eps=1e-8,
             ),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=history_len),
-            "log_bin_frac": log_bin_frac,
-            "log_bin_prob": log_bin_prob,
         }
     )
     env.command_manager = _FakeCommandManager(term)
-    curriculum = terrain_spawn_goal_pair_success_rate_levels(cfg=cfg, env=env)
+    curriculum = success_rate_sampler(cfg=cfg, env=env)
     return curriculum
+
+
+def _call_curriculum(curriculum, env, env_ids, **kwargs):
+    return curriculum(
+        env,
+        env_ids,
+        **CURRICULUM_BINDS,
+        sampling=curriculum._sampling_cfg,
+        success_monitor_cfg=curriculum.success_monitor.cfg,
+        **kwargs,
+    )
 
 
 class TestCurriculum:
@@ -876,29 +961,32 @@ class TestCurriculum:
         table = _make_task_table()
         env = _make_env(num_envs=8, device=DEVICE)
         term = _make_command_term(env, table)
+        term.randomize_command_indices = False
         curriculum = _bootstrap_curriculum(env, term)
 
         assert term.success_rates is not None
         assert term.success_rates.data_ptr() == curriculum.success_monitor.success_rate.data_ptr()
 
-    def test_binds_command_indices_as_alias(self):
-        """Sampler owns selected task rows and the command term reads the same tensor."""
+    def test_curriculum_writes_command_owned_indices(self):
+        """Curriculum writes command-owned task rows without replacing the tensor."""
         table = _make_task_table()
         env = _make_env(num_envs=8, device=DEVICE)
         term = _make_command_term(env, table)
 
-        # sanity check: before monkey-patch, resample_indices actually writes.
+        # sanity check: before curriculum ownership, _resample_command samples rows.
         term.cmd_indices[:] = 0
-        term.resample_indices(torch.arange(env.num_envs, device=DEVICE))
+        term._resample_command(torch.arange(env.num_envs, device=DEVICE))
         # With num_tasks=20 and 8 draws the chance of all zeros is astronomically small.
         assert not (term.cmd_indices == 0).all()
 
-        curriculum = _bootstrap_curriculum(env, term)
-        curriculum.command_indices[:] = torch.arange(env.num_envs, device=DEVICE) % table.num_tasks
-        term.resample_indices(torch.arange(env.num_envs, device=DEVICE))
+        term.randomize_command_indices = False
+        command_indices_ptr = term.cmd_indices.data_ptr()
+        _bootstrap_curriculum(env, term)
+        assert term.cmd_indices.data_ptr() == command_indices_ptr
+        term.cmd_indices[:] = torch.arange(env.num_envs, device=DEVICE) % table.num_tasks
+        term._resample_command(torch.arange(env.num_envs, device=DEVICE))
         expected_indices = torch.arange(env.num_envs, device=DEVICE) % table.num_tasks
-        assert torch.equal(term.cmd_indices, expected_indices), "curriculum did not disable random resampling"
-        assert term.cmd_indices.data_ptr() == curriculum.command_indices.data_ptr()
+        assert torch.equal(term.cmd_indices, expected_indices)
         offsets = table.offsets
         ids = term.cmd_ids.long()
         assert ((term.cmd_indices >= offsets[ids]) & (term.cmd_indices < offsets[ids + 1])).all()
@@ -919,6 +1007,7 @@ class TestCurriculum:
         success_mask = torch.tensor([True, True, False, False], device=DEVICE)
         env.termination_manager = _FakeTerminationManager(success_mask)
 
+        term.randomize_command_indices = False
         curriculum = _bootstrap_curriculum(env, term, history_len=50)
 
         # Seed the "previous" indices: env i -> task 2*i so we can read them back
@@ -926,7 +1015,7 @@ class TestCurriculum:
         term.cmd_indices[:] = prev_indices
 
         env_ids = torch.arange(env.num_envs, device=DEVICE)
-        curriculum(env, env_ids, success_term="success")
+        _call_curriculum(curriculum, env, env_ids)
 
         # Monitor should have counted exactly one event per prev_index[i].
         for env_i, task_i in enumerate(prev_indices.tolist()):
@@ -936,39 +1025,6 @@ class TestCurriculum:
 
         # cmd_indices was overwritten after the success update ran.
         assert not torch.equal(term.cmd_indices, prev_indices)
-
-    def test_curriculum_result_bins_have_unit_total(self):
-        """After the call, the prob-mass bins must sum to ~1 and fraction bins to 1."""
-        torch.manual_seed(3)
-        table = _make_task_table(pos_tasks=4, pose_tasks=4)
-        env = _make_env(num_envs=8, device=DEVICE)
-        term = _make_command_term(env, table)
-
-        env.termination_manager = _FakeTerminationManager(torch.tensor([True, False] * 4, device=DEVICE))
-        curriculum = _bootstrap_curriculum(env, term, log_bin_frac=True, log_bin_prob=True)
-        env_ids = torch.arange(env.num_envs, device=DEVICE)
-        result = curriculum(env, env_ids)
-
-        probs = torch.stack(
-            [
-                result["bin_0_20_prob"],
-                result["bin_20_40_prob"],
-                result["bin_40_60_prob"],
-                result["bin_60_80_prob"],
-                result["bin_80_100_prob"],
-            ]
-        )
-        fracs = torch.stack(
-            [
-                result["bin_0_20_frac"],
-                result["bin_20_40_frac"],
-                result["bin_40_60_frac"],
-                result["bin_60_80_frac"],
-                result["bin_80_100_frac"],
-            ]
-        )
-        assert float(probs.sum().item()) == pytest.approx(1.0, abs=1e-4)
-        assert float(fracs.sum().item()) == pytest.approx(1.0)
 
     def test_end_to_end_loop_converges_success_rates(self):
         """Simulate multiple episodes: envs with large error never succeed, the
@@ -982,6 +1038,7 @@ class TestCurriculum:
 
         success_mask = torch.tensor([True, False, False, False], device=DEVICE)
         env.termination_manager = _FakeTerminationManager(success_mask)
+        term.randomize_command_indices = False
         curriculum = _bootstrap_curriculum(env, term, history_len=8)
         env_ids = torch.arange(env.num_envs, device=DEVICE)
 
@@ -989,7 +1046,7 @@ class TestCurriculum:
         pinned = torch.tensor([0, 1, 2, 3], dtype=torch.long, device=DEVICE)
         for _ in range(8):
             term.cmd_indices[:] = pinned
-            curriculum(env, env_ids)
+            _call_curriculum(curriculum, env, env_ids)
 
         # Task 0 was always the "successful" env -> rate close to 1.
         # Tasks 1/2/3 were always failures -> rate close to 0.

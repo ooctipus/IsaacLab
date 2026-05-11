@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import MISSING
 from typing import TYPE_CHECKING
 
@@ -15,6 +16,8 @@ from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from .state_command import RelativeStateCommand
+from .state_command_payloads import CommandPayloadBaseFootState, CommandPayloadBaseState
+from .task_table_builder import build_relative_state_task_table
 
 if TYPE_CHECKING:
     from ...retarget.cfg import RetargetPipelineCfg
@@ -26,80 +29,102 @@ class RelativeStateCommandCfg(CommandTermCfg):
 
     class_type: type = RelativeStateCommand
 
-    asset_name: str = MISSING
-    """Name of the asset in the environment for which the commands are generated."""
+    @configclass
+    class TaskTableCfg:
+        """Task-table builder configuration."""
 
-    pipeline_cfg: RetargetPipelineCfg = MISSING  # type: ignore[assignment]
-    """Retarget pipeline configuration for generating IK-solved spawn states."""
+        class_type: Callable = build_relative_state_task_table
+        """Callable that builds the task table."""
 
-    pool_spacing: float = 1.0
-    """Target spacing between final IK-solved terrain states [m].
+        pipeline_cfg: RetargetPipelineCfg = MISSING  # type: ignore[assignment]
+        """Retarget pipeline configuration for generating IK-solved spawn states."""
 
-    The command derives pool size from sampling area, so sample density scales
-    with the full terrain grid or :attr:`pool_sampling_size`.
-    """
+        pool_spacing: float = 1.0
+        """Target spacing between final IK-solved terrain states [m].
 
-    pool_spacing_area_divisor: float = 3.0
-    """Area divisor used to derive spacing-mode pool size [unitless]."""
+        The table builder derives pool size from sampling area, so sample density
+        scales with the full terrain grid or :attr:`pool_sampling_size`.
+        """
 
-    pool_sampling_size: tuple[float, float] | None = None
-    """Optional centered terrain-state sampling window size ``(x, y)`` [m].
+        pool_spacing_area_divisor: float = 3.0
+        """Area divisor used to derive spacing-mode pool size."""
 
-    ``None`` samples over the full terrain grid. When set, the command still
-    bins states against the full terrain grid, but the IK retarget sampler is
-    clipped to this centered window before pool sizing and sampling.
-    """
+        pool_sampling_size: tuple[float, float] | None = None
+        """Optional centered terrain-state sampling window size ``(x, y)`` [m].
 
-    exclude_self_pairs: bool = True
-    """Whether to drop ``(spawn == target)`` pairs from the per-cell Cartesian product.
+        ``None`` samples over the full terrain grid. When set, the table builder
+        still bins states against the full terrain grid, but the IK retarget
+        sampler is clipped to this centered window before pool sizing and sampling.
+        """
 
-    When ``True``, the per-cell ``n × n`` pair grid is reduced to ``n × (n - 1)``
-    by removing the diagonal — i.e. trivial zero-distance tasks where the
-    spawn state is also the target. Cells with fewer than two valid states
-    then contribute no pairs.
-    """
+        exclude_self_pairs: bool = True
+        """Whether to drop ``(spawn == target)`` pairs from the per-cell Cartesian product.
 
-    num_targets_per_cell: int = 0
-    """Optional cap on per-cell target states for the spawn × target pairing.
+        When ``True``, the per-cell ``n × n`` pair grid is reduced to ``n × (n - 1)``
+        by removing the diagonal. Cells with fewer than two valid states then
+        contribute no pairs.
+        """
 
-    ``0`` (default) keeps the full per-cell Cartesian product: every
-    state in a cell is a candidate target for every spawn in the same
-    cell. Setting a positive integer ``N`` first picks ``min(N, n_c)``
-    targets per cell via
-    :func:`~isaaclab_tasks.manager_based.multi_task.utils.grid_downsample.grid_bucket_downsample`
-    on the cell's spawn xy, then pairs every spawn with each picked
-    target. The per-cell pair count is ``n_c × min(N, n_c)`` (or
-    ``n_c × min(N, n_c) − overlap`` if :attr:`exclude_self_pairs` is
-    set).
+        num_targets_per_cell: int = 0
+        """Optional cap on per-cell target states for the spawn × target pairing.
 
-    Use this to study how target-set cardinality affects learning,
-    or to keep task counts bounded when a tile contains many spawn
-    states. ``N = 1`` recovers the previous "single random target per
-    cell" research toggle as a special case.
-    """
+        ``0`` keeps the full per-cell Cartesian product. A positive ``N`` first
+        picks ``min(N, n_c)`` targets per cell, then pairs every spawn with each
+        picked target.
+        """
 
-    pos_std: float = 0.5
-    """Default base-position success threshold [m]. Per-task overridable via
-    :attr:`Commands.pos_std` / :attr:`TerrainCommands.pos_std`."""
+    task_table: TaskTableCfg = TaskTableCfg()
+    """Task-table builder."""
 
-    rot_std: float = 0.5
-    """Default base-orientation success threshold [rad]. Per-task overridable."""
+    randomize_command_indices: bool = True
+    """Whether command resampling samples new task rows."""
 
-    lin_vel_std: float = 0.5
-    """Default linear-velocity success threshold [m/s]. Per-task overridable."""
+    @configclass
+    class BaseStatePayloadCfg:
+        """Payload that commands base state only."""
 
-    ang_vel_std: float = 0.5
-    """Default angular-velocity success threshold [rad/s]. Per-task overridable."""
+        class_type: type = CommandPayloadBaseState
+        """Payload worker class."""
 
-    foot_pos_std: float = 0.1
-    """Default per-foot target-error threshold [m] for terrain-state success.
-    Per-task overridable via :attr:`TerrainCommands.foot_pos_std`."""
+        pos_std: float = 0.5
+        """Default base-position success threshold [m]. Per-task overridable via command rows."""
 
-    normalize_command_obs: bool = False
-    """Whether to divide :attr:`RelativeStateCommand.command` channels by the
-    per-task success threshold so the policy sees a unit-scaled "distance to
-    success" signal that is comparable across tasks with different stds.
-    """
+        rot_std: float = 0.5
+        """Default base-orientation success threshold [rad]. Per-task overridable via command rows."""
+
+        lin_vel_std: float = 0.5
+        """Default linear-velocity success threshold [m/s]. Per-task overridable via command rows."""
+
+        ang_vel_std: float = 0.5
+        """Default angular-velocity success threshold [rad/s]. Per-task overridable via command rows."""
+
+        normalize_command_obs: bool = False
+        """Whether to divide command channels by the per-task success threshold."""
+
+    @configclass
+    class BaseFootStatePayloadCfg:
+        """Payload that commands base state and terrain target foot positions."""
+
+        class_type: type = CommandPayloadBaseFootState
+        """Payload worker class."""
+
+        pos_std: float = 0.5
+        """Default base-position success threshold [m]. Per-task overridable via command rows."""
+
+        rot_std: float = 0.5
+        """Default base-orientation success threshold [rad]. Per-task overridable via command rows."""
+
+        lin_vel_std: float = 0.5
+        """Default linear-velocity success threshold [m/s]. Per-task overridable via command rows."""
+
+        ang_vel_std: float = 0.5
+        """Default angular-velocity success threshold [rad/s]. Per-task overridable via command rows."""
+
+        foot_pos_std: float = 0.1
+        """Default per-foot target-error threshold [m]."""
+
+        normalize_command_obs: bool = False
+        """Whether to divide command channels by the per-task success threshold."""
 
     @configclass
     class Commands:
@@ -144,7 +169,7 @@ class RelativeStateCommandCfg(CommandTermCfg):
 
         pos_std: float | None = None
         """Per-task override for the base-position success threshold [m]. ``None``
-        falls back to :attr:`RelativeStateCommandCfg.pos_std`."""
+        falls back to the active payload's default."""
 
         rot_std: float | None = None
         """Per-task override for the base-orientation success threshold [rad]."""
@@ -154,9 +179,6 @@ class RelativeStateCommandCfg(CommandTermCfg):
 
         ang_vel_std: float | None = None
         """Per-task override for the angular-velocity success threshold [rad/s]."""
-
-        foot_pos_std: float | None = None
-        """Per-task override for the per-foot target-error threshold [m]."""
 
     @configclass
     class PositionCommands(Commands):
@@ -227,15 +249,12 @@ class RelativeStateCommandCfg(CommandTermCfg):
         match_base_rot: bool = False
         """Whether to command the target state's base orientation [rad]."""
 
-        match_feet: bool = True
-        """Whether success requires matching target foot positions [m]."""
-
         duration: tuple[float, float] = (1.0, 1.0)
         """Time required to be considered successful [s]."""
 
         pos_std: float | None = None
         """Per-task override for the base-position success threshold [m]. ``None``
-        falls back to :attr:`RelativeStateCommandCfg.pos_std`."""
+        falls back to the active payload's default."""
 
         rot_std: float | None = None
         """Per-task override for the base-orientation success threshold [rad]."""
@@ -246,11 +265,11 @@ class RelativeStateCommandCfg(CommandTermCfg):
         ang_vel_std: float | None = None
         """Per-task override for the angular-velocity success threshold [rad/s]."""
 
-        foot_pos_std: float | None = None
-        """Per-task override for the per-foot target-error threshold [m]."""
-
     commands: dict[str, Commands | TerrainCommands] = {}
     """Distribution ranges for the position commands."""
+
+    payload: BaseStatePayloadCfg | BaseFootStatePayloadCfg = BaseFootStatePayloadCfg()
+    """Payload configuration that defines command semantics and observation/error layout."""
 
     goal_visualizer_cfg: VisualizationMarkersCfg = VisualizationMarkersCfg(
         prim_path="/Visuals/Command/goal_state",

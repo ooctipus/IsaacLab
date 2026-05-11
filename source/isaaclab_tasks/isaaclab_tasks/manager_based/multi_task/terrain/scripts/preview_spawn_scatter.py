@@ -8,7 +8,7 @@
 Spins up ``Isaac-Position-v0`` headless with a small ``num_envs``, steps once
 so the curriculum manager initializes its monitors, injects a synthetic
 distance-to-goal -> success-rate distribution so the colormap shows a
-non-trivial pattern, calls ``_log_spawn_scatter`` directly, then writes the
+non-trivial pattern, calls the sampler image logger, then writes the
 resulting numpy image (RGB, HxWx3) to disk via PIL.
 
 The script bypasses wandb entirely — its output is a standalone PNG you can
@@ -62,6 +62,7 @@ def main():
     from PIL import Image
 
     import isaaclab_tasks  # noqa: F401  — registers ``Isaac-Position-v0``
+    from isaaclab_tasks.manager_based.multi_task.terrain.viz.sampler_images import SpawnGoalSamplerImageLogger
     from isaaclab_tasks.utils.hydra import resolve_presets
     from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry
 
@@ -98,7 +99,8 @@ def main():
         # Inject a synthetic distance -> success distribution so the dot
         # colormap exercises the full RdYlGn range. Real training fills this
         # tensor via the success monitor; we overwrite for preview only.
-        table = term.goal_term.table
+        goal_term = env_unwrapped.command_manager.get_term("goal_point")
+        table = goal_term.table
         spawn_xy = table.spawn_states[table.spawn_index, :2]
         target_xy = table.spawn_states[table.target_index, :2]
         distance = (spawn_xy - target_xy).norm(dim=-1)
@@ -114,12 +116,13 @@ def main():
         weights = torch.exp(-((synth - target) ** 2) / 0.05)
         synth_probs = weights / weights.sum()
 
-        # First call seeds the cached "previous rates" — Δ panel shows zeros.
-        term._log_spawn_scatter(synth, synth_probs)
+        image_logger = SpawnGoalSamplerImageLogger()
+        # First call seeds the cached "previous rates" — diff panel shows zeros.
+        image_logger(env_unwrapped, term._sampler, synth, synth_probs)
         # Second call so the Δ panel renders a meaningful diff vs. the first.
         synth2 = (synth + 0.05 * torch.randn_like(synth)).clamp(0.0, 1.0)
         term.success_monitor.success_rate.copy_(synth2)
-        term._log_spawn_scatter(synth2, synth_probs)
+        image_logger(env_unwrapped, term._sampler, synth2, synth_probs)
 
         img = env_unwrapped.extras.get("log_images", {}).get("Sampler/spawn_scatter")
         if img is None:

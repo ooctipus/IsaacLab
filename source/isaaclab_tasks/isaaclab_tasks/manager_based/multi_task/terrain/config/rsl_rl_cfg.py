@@ -14,7 +14,7 @@ runner composition. The preset classes here just wire those instances into
 
 from isaaclab.utils import configclass
 
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
+from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg, RslRlRndCfg
 
 from isaaclab_tasks.utils import PresetCfg
 
@@ -89,6 +89,17 @@ POSITION_PPO_ALGORITHM_CFG = RslRlPpoAlgorithmCfg(
 )
 
 
+POSITION_RND_CFG = RslRlRndCfg(
+    weight=0.01,
+    reward_normalization=True,
+    state_normalization=True,
+    learning_rate=1.0e-3,
+    num_outputs=1,
+    predictor_hidden_dims=[-1],
+    target_hidden_dims=[-1],
+)
+
+
 @configclass
 class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 32
@@ -100,6 +111,16 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     actor = PositionActorPresetCfg()  # type: ignore
     critic = PositionCriticPresetCfg()  # type: ignore
     algorithm: RslRlPpoAlgorithmCfg = POSITION_PPO_ALGORITHM_CFG
+
+
+@configclass
+class PositionLocomotionRndPPORunnerCfg(PositionLocomotionPPORunnerCfg):
+    obs_groups = {
+        "actor": ["policy", "task", "height_scan"],
+        "critic": ["policy", "task", "height_scan"],
+        "rnd_state": ["policy", "task"],
+    }
+    algorithm: RslRlPpoAlgorithmCfg = POSITION_PPO_ALGORITHM_CFG.replace(rnd_cfg=POSITION_RND_CFG)
 
 
 @configclass
@@ -162,6 +183,7 @@ class PositionRunnerCfg(PresetCfg):
     """Runner presets: ``presets=crl`` selects CRL, default is PPO."""
 
     position = PositionLocomotionPPORunnerCfg()
+    rnd = PositionLocomotionRndPPORunnerCfg()
     crl = PositionLocomotionCRLRunnerCfg()
     default = position
 

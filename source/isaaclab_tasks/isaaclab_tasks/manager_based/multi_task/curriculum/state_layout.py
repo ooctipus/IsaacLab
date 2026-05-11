@@ -14,9 +14,15 @@ translate item index -> full reset state in their own way.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import MISSING, dataclass
+from typing import TYPE_CHECKING
 
 import torch
+
+from isaaclab.utils import configclass
+
+if TYPE_CHECKING:
+    from isaaclab.envs import ManagerBasedRLEnv
 
 
 @dataclass
@@ -79,3 +85,29 @@ class StateLayout:
     def coord_dim(self) -> int:
         """Dimensionality of :attr:`coords` (2 for xy, 3 for xyz, ...)."""
         return int(self.coords.shape[1])
+
+
+@configclass
+class StateLayoutCfg:
+    """Eval-backed config for building a :class:`StateLayout` from an env."""
+
+    coords_bind: str = MISSING
+    """Expression resolving to ``StateLayout.coords``."""
+
+    spawn_index_bind: str = MISSING
+    """Expression resolving to ``StateLayout.spawn_index``."""
+
+    target_index_bind: str | None = None
+    """Expression resolving to ``StateLayout.target_index``."""
+
+    task_partition_bind: str | None = None
+    """Expression resolving to ``StateLayout.task_partition``."""
+
+    def build(self, env: ManagerBasedRLEnv) -> StateLayout:
+        """Build the layout from env-owned tensors."""
+        return StateLayout(
+            coords=eval(self.coords_bind),  # noqa: S307
+            spawn_index=eval(self.spawn_index_bind),  # noqa: S307
+            target_index=None if self.target_index_bind is None else eval(self.target_index_bind),  # noqa: S307
+            task_partition=None if self.task_partition_bind is None else eval(self.task_partition_bind),  # noqa: S307
+        )

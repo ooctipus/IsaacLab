@@ -8,7 +8,7 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
-from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils import PresetCfg, preset
 
 from .. import mdp
 from .robots.robot_presets import FootBodyNamesCfg
@@ -32,6 +32,8 @@ class PositionRewardsCfg:
 
     fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["oob", "base_contact"]}, weight=-25.0)
 
+    explore = preset(explore=RewTerm(func=mdp.exploration_reward, weight=0.1), default=None)
+
 
 @configclass
 class EmptyRewardsCfg:
@@ -42,14 +44,7 @@ class EmptyRewardsCfg:
 
 
 @configclass
-class AdvancedSkillsRewardsCfg:
-    pass
-    # TODO(Mateo)
-
-
-@configclass
 class RewardsCfg(PresetCfg):
     position = PositionRewardsCfg()
     crl = EmptyRewardsCfg()
-    advanced_skills = AdvancedSkillsRewardsCfg()
     default = position

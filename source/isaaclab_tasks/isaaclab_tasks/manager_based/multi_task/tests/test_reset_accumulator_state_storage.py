@@ -39,7 +39,9 @@ def _make_accumulator(capacity: int, state_dim: int, target_size: int | None = N
 
 def _termination_manager(num_envs: int) -> SimpleNamespace:
     return SimpleNamespace(
-        get_term_cfg=lambda _name: SimpleNamespace(func=SimpleNamespace(is_success=torch.zeros(num_envs, dtype=torch.bool)))
+        get_term_cfg=lambda _name: SimpleNamespace(
+            func=SimpleNamespace(is_success=torch.zeros(num_envs, dtype=torch.bool))
+        )
     )
 
 

@@ -10,19 +10,29 @@ from isaaclab_tasks.manager_based.multi_task.curriculum import (
     BetaSamplingStrategyCfg,
     FrontierSamplingStrategyCfg,
     SamplerCfg,
+    StateLayoutCfg,
     SuccessMonitorCfg,
     UniformSamplingStrategyCfg,
 )
 from isaaclab_tasks.utils import PresetCfg, preset
 
 from .. import mdp
+from ..viz.sampler_images import log_spawn_goal_sampler_images
 
 
 @configclass
-class PositionSamplerCfg:
+class PositionCurriculumSamplerCfg:
     terrain_levels = CurrTerm(
-        func=mdp.terrain_spawn_goal_pair_success_rate_levels,
+        func=mdp.success_rate_sampler,
         params={
+            "success_rates_bind": "env.command_manager.get_term('goal_point').success_rates",
+            "sample_indices_bind": "env.command_manager.get_term('goal_point').cmd_indices",
+            "layout": StateLayoutCfg(
+                coords_bind="env.command_manager.get_term('goal_point').table.spawn_states[:, :2]",
+                spawn_index_bind="env.command_manager.get_term('goal_point').table.spawn_index",
+                target_index_bind="env.command_manager.get_term('goal_point').table.target_index",
+                task_partition_bind="env.command_manager.get_term('goal_point').table.task_partition",
+            ),
             "sampling": preset(
                 default=SamplerCfg(
                     strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0)],
@@ -33,35 +43,10 @@ class PositionSamplerCfg:
                     strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0)],
                     eps=1e-8,
                 ),
-                beta50=SamplerCfg(
-                    strategies=[BetaSamplingStrategyCfg(target=0.50, kappa=1.0, weight=1.0)],
-                    eps=1e-8,
-                ),
                 frontier=SamplerCfg(
                     strategies=[
                         BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0),
                         FrontierSamplingStrategyCfg(k=8, dilation_steps=2, weight=0.5),
-                    ],
-                    eps=1e-8,
-                ),
-                frontier_l1=SamplerCfg(
-                    strategies=[
-                        BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0),
-                        FrontierSamplingStrategyCfg(k=8, dilation_steps=2, weight=1.0),
-                    ],
-                    eps=1e-8,
-                ),
-                frontier_l2=SamplerCfg(
-                    strategies=[
-                        BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0),
-                        FrontierSamplingStrategyCfg(k=8, dilation_steps=2, weight=2.0),
-                    ],
-                    eps=1e-8,
-                ),
-                frontier_l5=SamplerCfg(
-                    strategies=[
-                        BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0),
-                        FrontierSamplingStrategyCfg(k=8, dilation_steps=2, weight=5.0),
                     ],
                     eps=1e-8,
                 ),
@@ -74,8 +59,15 @@ class PositionSamplerCfg:
                 ),
             ),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=20),
-            "success_term": "success",
+            "success_bind": "env.termination_manager.get_term('success')",
+            "sampler_visual_logger": log_spawn_goal_sampler_images,
+            "sampler_visual_log_period": 1000,
         },
+    )
+
+    remove_explore_reward = preset(
+        explore=CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"}),
+        default=None,
     )
 
 
@@ -84,27 +76,30 @@ class CRLSamplerCfg:
     """Terrain curriculum without reward-dependent terms."""
 
     terrain_levels = CurrTerm(
-        func=mdp.terrain_spawn_goal_pair_success_rate_levels,
+        func=mdp.success_rate_sampler,
         params={
+            "success_rates_bind": "env.command_manager.get_term('goal_point').success_rates",
+            "sample_indices_bind": "env.command_manager.get_term('goal_point').cmd_indices",
+            "layout": StateLayoutCfg(
+                coords_bind="env.command_manager.get_term('goal_point').table.spawn_states[:, :2]",
+                spawn_index_bind="env.command_manager.get_term('goal_point').table.spawn_index",
+                target_index_bind="env.command_manager.get_term('goal_point').table.target_index",
+                task_partition_bind="env.command_manager.get_term('goal_point').table.task_partition",
+            ),
             "sampling": SamplerCfg(
                 strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0)],
                 eps=1e-8,
             ),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=100),
-            "success_term": "success",
+            "success_bind": "env.termination_manager.get_term('success')",
+            "sampler_visual_logger": log_spawn_goal_sampler_images,
+            "sampler_visual_log_period": 1000,
         },
     )
 
 
 @configclass
-class AdvancedSkillsSamplerCfg:
-    pass
-    # TODO(Mateo)
-
-
-@configclass
 class CurriculumPresetCfg(PresetCfg):
-    position = PositionSamplerCfg()
+    position = PositionCurriculumSamplerCfg()
     crl = CRLSamplerCfg()
-    advanced_skills = AdvancedSkillsSamplerCfg()
     default = position

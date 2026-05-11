@@ -25,9 +25,9 @@ class PositionObservationsCfg:
 
     @configclass
     class PolicyCfg(ObsGroup):
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
-        proj_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
+        base_ang_vel = ObsTerm(func=mdp.base_ang_vel)
+        proj_gravity = ObsTerm(func=mdp.projected_gravity)
         joint_pos = ObsTerm(func=mdp.joint_pos)
         joint_vel = ObsTerm(func=mdp.joint_vel)
         last_actions = ObsTerm(func=mdp.last_action)
@@ -41,7 +41,6 @@ class PositionObservationsCfg:
         height_scan = ObsTerm(
             func=mdp.vision_obs,
             params={"sensor_cfg": SceneEntityCfg("height_scanner")},
-            noise=Unoise(n_min=-0.05, n_max=0.05),
         )
 
     policy: PolicyCfg = PolicyCfg()
@@ -58,9 +57,8 @@ class CRLObservationsCfg:
     positions, all sourced from the command term. Position and foot
     positions are env-local (world minus env origin); orientation and
     velocities are world-frame. The foot section matches the success
-    criterion in :meth:`RelativeStateCommand.compute_state_error` so HER
-    relabels ``target_state`` with achieved ``current_state`` from future
-    timesteps without drifting from the reward signal.
+    criterion so HER relabels ``target_state`` with achieved ``current_state``
+    from future timesteps without drifting from the reward signal.
     """
 
     @configclass
@@ -114,16 +112,7 @@ class CRLObservationsCfg:
 
 
 @configclass
-class AdvancedSkillsObservationsCfg:
-    """Observations for the advanced skills MDP."""
-
-    pass
-    # TODO(Mateo)
-
-
-@configclass
 class ObservationsCfg(PresetCfg):
     position = PositionObservationsCfg()
     crl = CRLObservationsCfg()
-    advanced_skills = AdvancedSkillsObservationsCfg()
     default = position

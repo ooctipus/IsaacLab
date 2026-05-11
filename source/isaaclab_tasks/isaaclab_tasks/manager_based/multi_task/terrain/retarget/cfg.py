@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import MISSING, field
 
+from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
 from ...kinematics.ik_objectives.cfg import IKObjectiveBaseCfg
@@ -318,12 +319,18 @@ class SamplerCfg(SamplerBaseCfg):
 class RetargetPipelineCfg:
     """Full retarget pipeline configuration.
 
-    Nests the kinematics, sampler, and foot specification so the
-    pipeline can be constructed with ``cfg.class_type(cfg)``.
+    Nests the scene asset, kinematics, sampler, and foot specification for
+    :class:`RetargetPipeline`.
     """
 
     class_type: type | str = "{DIR}.pipeline:RetargetPipeline"
     """Pipeline implementation class."""
+
+    asset_cfg: SceneEntityCfg | None = None
+    """Scene articulation whose USD and defaults bind the kinematics model.
+
+    ``None`` means :attr:`kin` is already fully resolved.
+    """
 
     kin: NewtonKinematicsCfg = MISSING  # type: ignore[assignment]
     """Kinematics model configuration."""

@@ -7,11 +7,11 @@
 
 A small helper class -- no gym/manager glue, just capture + render -- that
 the :func:`isaaclab_tasks...mdp.events.record_trajectory_video` event term
-drives. Captures per-step ``(robot_xy, target_xy, instant_success)`` for a
+drives. Captures per-step ``(robot_xy, target_xy, task_done)`` for a
 random 10% subsample of envs over a fixed window, then renders one shared
 world-frame scatter as a gif (or mp4 when ffmpeg is on PATH) via
 vectorized numpy splatting. Robots paint **green** while
-``instant_success`` holds and **red** otherwise; targets are black stars.
+``task_done`` holds and **red** otherwise; targets are black stars.
 
 Why this exists: the standard 3D rgb video shows a single env's rendered
 scene, which can mislead when the per-task success rate is high but the
@@ -46,7 +46,7 @@ class TrajectoryRecorder:
 
     The math is layout-agnostic: the caller passes already-local
     ``robot_xy`` and ``target_xy`` (env-origin subtracted), plus the
-    ``instant_success`` boolean.
+    task lifecycle completion boolean.
     """
 
     # Render 10% of the env population per window. Hard-coded rather
@@ -172,9 +172,8 @@ class TrajectoryRecorder:
         # Tag used for the W&B upload. We log under a *unique* key (rather
         # than relying on rsl_rl's ``*.mp4`` glob, which uploads every mp4
         # under the hardcoded ``"video"`` key and lets the standard 3D
-        # RecordVideo overwrite us). Mirrors how ``_log_spawn_scatter``
-        # writes to ``env.extras["log_images"]["Sampler/spawn_scatter"]``
-        # so the panel coexists with the other Sampler/* dashboards.
+        # RecordVideo overwrite us). This mirrors the sampler image logger's
+        # direct W&B upload path so Sampler/* panels coexist.
         self.wandb_tag = wandb_tag
 
         self._step_count = 0
@@ -193,7 +192,7 @@ class TrajectoryRecorder:
         Args:
             robot_xy: ``[num_envs, 2]`` env-local xy of every robot.
             target_xy: ``[num_envs, 2]`` env-local xy of every target.
-            success: ``[num_envs]`` bool flag (e.g. ``instant_success``).
+            success: ``[num_envs]`` task lifecycle completion flag.
         """
         if not self._recording and self._step_count % self.video_interval == 0:
             self._start_recording(num_envs=int(robot_xy.shape[0]))

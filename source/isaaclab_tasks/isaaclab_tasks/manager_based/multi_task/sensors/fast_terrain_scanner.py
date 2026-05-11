@@ -113,6 +113,7 @@ class FastTerrainScanner(SensorBase):
 
     def __init__(self, cfg: FastTerrainScannerCfg):
         super().__init__(cfg)
+        self.body_prim_path = cfg.prim_path.rstrip("/")
         self._resolve_and_spawn("fast_terrain_scanner")
         # data is created at the end of ``_initialize_impl`` once we know num_rays.
         self._data: FastTerrainScannerData | None = None  # type: ignore[assignment]

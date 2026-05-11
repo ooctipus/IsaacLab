@@ -16,6 +16,7 @@ __all__ = [
     "StateBuffer",
     "StateBufferCfg",
     "StateLayout",
+    "StateLayoutCfg",
     "SuccessMonitor",
     "SuccessMonitorCfg",
     "TermChoice",
@@ -43,6 +44,6 @@ from .sampling import (
 )
 from .state_buffer import StateBuffer
 from .state_buffer_cfg import StateBufferCfg
-from .state_layout import StateLayout
+from .state_layout import StateLayout, StateLayoutCfg
 from .success_monitor import SuccessMonitor
 from .success_monitor_cfg import SuccessMonitorCfg

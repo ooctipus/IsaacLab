@@ -27,6 +27,7 @@ from isaaclab_tasks.manager_based.multi_task.terrain.mdp.commands.task_table_bui
     _joint_order_from_names,
     _pipeline_with_inner_sampling_bounds,
     _state_count_from_spacing,
+    _synthesize_terrain_origins,
     _terrain_grid_bounds,
     build_task_table,
 )
@@ -84,7 +85,6 @@ def simple_commands():
         "walk": RelativeStateCommandCfg.TerrainCommands(
             match_base_pos=True,
             match_base_rot=False,
-            match_feet=True,
             duration=(2.0, 2.0),
         )
     }
@@ -104,6 +104,13 @@ class TestTaskTableSizingHelpers:
         assert x_range == pytest.approx((-25.0, 25.0))
         assert y_range == pytest.approx((-25.0, 25.0))
         assert _state_count_from_spacing(x_range, y_range, spacing=1.0, area_divisor=3.0) == 833
+
+    def test_synthesized_origins_match_terrain_generator_layout(self):
+        origins = _synthesize_terrain_origins(2, 3, (10.0, 20.0), device="cpu")
+
+        torch.testing.assert_close(origins[..., 0], torch.tensor([[-5.0, -5.0, -5.0], [5.0, 5.0, 5.0]]))
+        torch.testing.assert_close(origins[..., 1], torch.tensor([[-20.0, 0.0, 20.0], [-20.0, 0.0, 20.0]]))
+        torch.testing.assert_close(origins[..., 2], torch.zeros(2, 3))
 
     def test_centered_sampling_bounds_clip_inner_grid_area(self):
         x_range, y_range = _centered_sampling_bounds((-50.0, 50.0), (-100.0, 100.0), (10.0, 10.0))
@@ -147,17 +154,18 @@ class TestTaskTableSizingHelpers:
         importlib.import_module("isaaclab_tasks.manager_based.multi_task.terrain.mdp_presets.robots")
         cfg = resolve_presets(CommandsCfg(), {"anymal_c"})
         goal_cfg = cfg.goal_point
+        table_cfg = goal_cfg.task_table
 
-        assert goal_cfg.pipeline_cfg.kin.usd_path == ""
-        assert goal_cfg.pool_spacing == pytest.approx(0.5)
-        assert goal_cfg.pool_spacing_area_divisor == pytest.approx(3.0)
-        assert goal_cfg.pool_sampling_size is None
-        assert goal_cfg.pipeline_cfg.sampler.min_contacts == 3
-        assert goal_cfg.pipeline_cfg.sampler.terrain_snap_distance == pytest.approx(0.2)
-        assert goal_cfg.pipeline_cfg.sampler.fk_joint_range_overrides == {}
-        assert goal_cfg.pipeline_cfg.sampler.outward_snap_penalty == pytest.approx(1.0)
+        assert table_cfg.pipeline_cfg.kin.usd_path == ""
+        assert table_cfg.pool_spacing == pytest.approx(0.5)
+        assert table_cfg.pool_spacing_area_divisor == pytest.approx(3.0)
+        assert table_cfg.pool_sampling_size is None
+        assert table_cfg.pipeline_cfg.sampler.min_contacts == 3
+        assert table_cfg.pipeline_cfg.sampler.terrain_snap_distance == pytest.approx(0.2)
+        assert table_cfg.pipeline_cfg.sampler.fk_joint_range_overrides == {}
+        assert table_cfg.pipeline_cfg.sampler.outward_snap_penalty == pytest.approx(1.0)
         assert "IKObjectiveJointRegularizeCfg" not in {
-            type(objective).__name__ for objective in goal_cfg.pipeline_cfg.extra_objectives
+            type(objective).__name__ for objective in table_cfg.pipeline_cfg.extra_objectives
         }
 
 
@@ -212,6 +220,7 @@ def flat_task_table(flat_terrain, pipeline_cfg, simple_commands):
         terrain_origins=origins,
         cell_size=CELL_SIZE,
         pipeline_cfg=pipeline_cfg,
+        env=None,
         commands=simple_commands,
         num_joints=12,
         device=DEVICE,
@@ -310,7 +319,7 @@ def realistic_terrain():
         use_cache=False,
         seed=42,
         curriculum=True,
-        sub_terrains=SubTerrainPresetCfg().all,
+        sub_terrains=SubTerrainPresetCfg().curriculum,
     )
     return TerrainGenerator(cfg=cfg, device=DEVICE)
 
@@ -348,6 +357,7 @@ class TestRealistic:
             terrain_origins=origins,
             cell_size=REAL_CELL_SIZE,
             pipeline_cfg=pipeline_cfg,
+            env=None,
             commands=simple_commands,
             num_joints=12,
             device=DEVICE,

@@ -398,7 +398,6 @@ class Sampler(SamplerBase):
         patch: PatchSamplingCfg = self.cfg.patch
         nc = buffer.num_contacts
         max_n = buffer.max_candidates
-        device = self.kin.device
 
         sizing = self.sizing(n_desired)
         num_patches = max(200, sizing.n_morph_patches)
@@ -418,7 +417,6 @@ class Sampler(SamplerBase):
             origin_t = torch.tensor(origin, dtype=torch.float, device=dev_str)
             fp[:, :3] += origin_t
             patch_pts = fp[:, :3].contiguous()  # [N_p, 3]
-            n_pts = patch_pts.shape[0]
         for _sub_name, _sub_dt in MORPH_TIMINGS.items():
             key = f"morph.{_sub_name}"
             self.sub_timings[key] = self.sub_timings.get(key, 0.0) + _sub_dt

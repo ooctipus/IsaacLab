@@ -5,9 +5,10 @@
 
 """Command presets selectable via ``env.commands.goal_point.commands=<name>``."""
 
+from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
-from isaaclab_tasks.utils import PresetCfg, preset
+from isaaclab_tasks.utils import PresetCfg
 
 from ...kinematics import NewtonKinematicsCfg
 from ...kinematics.ik_objectives.cfg import (
@@ -26,8 +27,6 @@ from ..retarget.criteria_cfg import (
     SupportPolygonStabilityCfg,
 )
 from ..retarget.feature_extractors import (
-    XYZAxisAngleFeatures,
-    XYZJointsFeatures,
     XYZYawFeatures,
 )
 from .robots.robot_presets import (
@@ -69,19 +68,16 @@ class CommandsPresetCfg(PresetCfg):
         "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             match_base_pos=True,
             match_base_rot=False,
-            match_feet=True,
             duration=(0.05, 2.0),
         ),
         "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             match_base_pos=True,
             match_base_rot=True,
-            match_feet=True,
             duration=(0.05, 2.0),
         ),
         "terrain_stand_up_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             match_base_pos=False,
             match_base_rot=True,
-            match_feet=True,
             duration=(0.05, 4.0),
         ),
         "position_cmd": mdp.RelativeStateCommandCfg.PositionCommands(
@@ -107,13 +103,11 @@ class CommandsPresetCfg(PresetCfg):
         "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             match_base_pos=True,
             match_base_rot=True,
-            match_feet=True,
             duration=(0.05, 2.0),
         ),
         "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             match_base_pos=True,
             match_base_rot=False,
-            match_feet=True,
             duration=(0.05, 2.0),
         ),
     }
@@ -121,26 +115,14 @@ class CommandsPresetCfg(PresetCfg):
         "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             match_base_pos=True,
             match_base_rot=False,
-            match_feet=True,
             duration=(0.05, 1.0),
         ),
     }
     terrain_pose = {
         "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
-            match_base_pos=True, match_base_rot=True, match_feet=True, duration=(0.05, 1.0), foot_pos_std=0.25
-        ),
-    }
-    terrain_pos_only = {
-        "terrain_position_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
             match_base_pos=True,
-            match_base_rot=False,
-            match_feet=False,
+            match_base_rot=True,
             duration=(0.05, 1.0),
-        ),
-    }
-    terrain_pose_only = {
-        "terrain_pose_cmd": mdp.RelativeStateCommandCfg.TerrainCommands(
-            match_base_pos=True, match_base_rot=True, match_feet=False, duration=(0.05, 1.0), foot_pos_std=0.25
         ),
     }
     pose = {
@@ -165,21 +147,38 @@ class CommandsPresetCfg(PresetCfg):
             duration=(0.05, 2.0),
         ),
     }
-    vel = (
-        {
-            "lin_vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
-                lin_vel_x=(-2.0, 2.0),
-                lin_vel_y=(-2.0, 2.0),
-                lin_vel_z=None,
-                ang_vel_x=None,
-                ang_vel_y=None,
-                ang_vel_z=(-0.2, 0.2),
-                duration=(0.05, 2.0),
-            ),
-        },
-    )
+    vel = {
+        "lin_vel_cmd": mdp.RelativeStateCommandCfg.VelocityCommands(
+            lin_vel_x=(-2.0, 2.0),
+            lin_vel_y=(-2.0, 2.0),
+            lin_vel_z=None,
+            ang_vel_x=None,
+            ang_vel_y=None,
+            ang_vel_z=(-0.2, 0.2),
+            duration=(0.05, 2.0),
+        ),
+    }
     default = terrain
-    advanced_skills = pos
+
+
+@configclass
+class CommandPayloadPresetCfg(PresetCfg):
+    """Named payload configurations for the position locomotion command."""
+
+    base = mdp.RelativeStateCommandCfg.BaseStatePayloadCfg(
+        pos_std=0.4,
+        rot_std=0.5,
+        lin_vel_std=0.3,
+        ang_vel_std=0.3,
+    )
+    base_foot = mdp.RelativeStateCommandCfg.BaseFootStatePayloadCfg(
+        pos_std=0.4,
+        rot_std=0.5,
+        lin_vel_std=0.3,
+        ang_vel_std=0.3,
+        foot_pos_std=0.25,
+    )
+    default = base_foot
 
 
 @configclass
@@ -187,62 +186,45 @@ class CommandsCfg:
     "Command specifications for the MDP."
 
     goal_point = mdp.RelativeStateCommandCfg(
-        asset_name="robot",
         resampling_time_range=(10.0, 10.0),
-        pos_std=0.4,
-        rot_std=0.5,
-        lin_vel_std=0.3,
-        ang_vel_std=0.3,
-        foot_pos_std=0.25,
         debug_vis=True,
-        pool_spacing=0.5,
-        num_targets_per_cell=1,
+        randomize_command_indices=False,
         commands=CommandsPresetCfg(),  # type: ignore
-        pipeline_cfg=RetargetPipelineCfg(
-            kin=NewtonKinematicsCfg(usd_path=""),
-            sampler=SamplerCfg(
-                patch=PatchSamplingCfg(
-                    contact_radius=0.04,
-                    max_height_diff=0.03,
-                    horizontal_scale=0.01,
-                    oversample_ratio=5.0,
+        payload=CommandPayloadPresetCfg(),  # type: ignore
+        task_table=mdp.RelativeStateCommandCfg.TaskTableCfg(
+            pool_spacing=0.5,
+            num_targets_per_cell=1,
+            pipeline_cfg=RetargetPipelineCfg(
+                asset_cfg=SceneEntityCfg("robot"),
+                kin=NewtonKinematicsCfg(usd_path=""),
+                sampler=SamplerCfg(
+                    patch=PatchSamplingCfg(  # this samples foot patch
+                        contact_radius=0.04, max_height_diff=0.03, horizontal_scale=0.01, oversample_ratio=5.0
+                    ),
+                    sizing=SamplerSizingCfg(fps_features=XYZYawFeatures(yaw_scale=0.1)),
+                    min_contacts=3,
+                    terrain_snap_distance=0.2,
+                    outward_snap_penalty=1.0,
                 ),
-                sizing=SamplerSizingCfg(
-                    # Conservative per-axis weights: each added feature dim
-                    # multiplies the post-IK FPS count by ``extent / spacing^(D-2)``,
-                    # so small ``spacing`` amplifies dim changes a lot — keep
-                    # these modest so orientation flavours the count rather
-                    # than dominating it.
-                    fps_features=preset(
-                        xyz=None,
-                        xyzyaw=XYZYawFeatures(yaw_scale=0.1),
-                        xyz_axis_angle=XYZAxisAngleFeatures(rot_scale=0.25),
-                        xyz_joints=XYZJointsFeatures(joint_scale=0.2),
-                        default=None,
-                    ),  # type: ignore
-                ),
-                min_contacts=3,
-                terrain_snap_distance=0.2,
-                outward_snap_penalty=1.0,
+                foot_body_names=FootBodyNamesCfg(),  # type: ignore[arg-type]
+                lateral_hip_joint_pattern=RetargetLateralHipJointPatternCfg(),  # type: ignore[arg-type]
+                base_pos_weight=0.05,
+                base_rot_weight=0.5,
+                joint_regularize_targets=RetargetJointRegularizeTargetsCfg(),  # type: ignore[arg-type]
+                extra_objectives=[
+                    IKObjectiveTerrainCollisionCfg(weight=2.0, margin=0.05, n_samples=4),
+                    IKObjectiveStabilityMarginCfg(weight=1.0),
+                    IKObjectiveGravityTorqueCfg(weight=0.02),
+                ],
+                criteria=[
+                    CollisionCheckCfg(n_samples=16, max_pen=0.02),
+                    LateralHipLimitCfg(max_angle=1.05),
+                    SupportPolygonStabilityCfg(),
+                    FootPositionErrorCfg(max_err=0.4, aggregate="sum"),
+                    SolverCostOutlierCfg(threshold_multiplier=3.0),
+                ],
+                ik_iterations=200,
+                ik_convergence_threshold=0.01,
             ),
-            foot_body_names=FootBodyNamesCfg(),  # type: ignore[arg-type]
-            lateral_hip_joint_pattern=RetargetLateralHipJointPatternCfg(),  # type: ignore[arg-type]
-            base_pos_weight=0.05,
-            base_rot_weight=0.5,
-            joint_regularize_targets=RetargetJointRegularizeTargetsCfg(),  # type: ignore[arg-type]
-            extra_objectives=[
-                IKObjectiveTerrainCollisionCfg(weight=2.0, margin=0.05, n_samples=4),
-                IKObjectiveStabilityMarginCfg(weight=1.0),
-                IKObjectiveGravityTorqueCfg(weight=0.02),
-            ],
-            criteria=[
-                CollisionCheckCfg(n_samples=16, max_pen=0.02),
-                LateralHipLimitCfg(max_angle=1.05),
-                SupportPolygonStabilityCfg(),
-                FootPositionErrorCfg(max_err=0.4, aggregate="sum"),
-                SolverCostOutlierCfg(threshold_multiplier=3.0),
-            ],
-            ik_iterations=200,
-            ik_convergence_threshold=0.01,
         ),
     )

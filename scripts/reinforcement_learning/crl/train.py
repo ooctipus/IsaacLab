@@ -460,7 +460,9 @@ def _eager_rollout(adapter, env_state, actor_step_fn, training_state, rng, cfg: 
         seed_seq.append(env_state.info["seed"])
         current_obs = env_state.obs
 
-    stack = lambda seq: jnp.stack(seq, axis=0)  # [unroll, num_envs, ...]
+    def stack(seq):
+        return jnp.stack(seq, axis=0)  # [unroll, num_envs, ...]
+
     transitions = Transition(
         observation=stack(obs_seq),
         action=stack(act_seq),

@@ -323,16 +323,24 @@ class TerrainGenerator:
                     self.flat_patches[name] = buf
                 # add the flat patches to the tensor
                 try:
-                    result = find_flat_patches(
-                        wp_mesh=wp_mesh,
-                        origin=origin,
-                        num_patches=patch_cfg.num_patches,
-                        patch_radius=patch_cfg.patch_radius,
-                        x_range=patch_cfg.x_range,
-                        y_range=patch_cfg.y_range,
-                        z_range=patch_cfg.z_range,
-                        max_height_diff=patch_cfg.max_height_diff,
-                    )
+                    if isinstance(patch_cfg.patch_radius, dict):
+                        patch_cfg_dict = dict(patch_cfg.patch_radius)
+                        patch_cfg_dict["patched"] = True
+                        patch_cfg_class = patch_cfg_dict.pop("cfg")
+                        patch_cfg_dict.pop("func", None)
+                        patch_sampling_cfg = patch_cfg_class(**patch_cfg_dict)
+                        result = patch_sampling_cfg.func(wp_mesh, origin, patch_sampling_cfg)
+                    else:
+                        result = find_flat_patches(
+                            wp_mesh=wp_mesh,
+                            origin=origin,
+                            num_patches=patch_cfg.num_patches,
+                            patch_radius=patch_cfg.patch_radius,
+                            x_range=patch_cfg.x_range,
+                            y_range=patch_cfg.y_range,
+                            z_range=patch_cfg.z_range,
+                            max_height_diff=patch_cfg.max_height_diff,
+                        )
                     if result.shape[-1] == 3:
                         self.flat_patches[name][row, col, :, :3] = result
                     else:

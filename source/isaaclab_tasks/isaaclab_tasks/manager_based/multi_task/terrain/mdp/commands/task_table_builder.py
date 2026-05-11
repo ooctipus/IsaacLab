@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -27,6 +28,8 @@ from ...retarget import apply_final_fps
 
 if TYPE_CHECKING:
     import trimesh
+
+    from isaaclab.envs import ManagerBasedEnv
 
     from ...retarget.cfg import RetargetPipelineCfg
     from .commands_cfg import RelativeStateCommandCfg
@@ -49,47 +52,122 @@ _COMMAND_PARAM_NAMES = (
 )
 
 
+@dataclass
+class RelativeStateTaskTable:
+    """Index-based task table for :class:`RelativeStateCommand`."""
+
+    num_tasks: int
+    spawn_index: torch.Tensor
+    """Index into ``spawn_states`` for each task's spawn point."""
+    target_index: torch.Tensor
+    """Index into ``spawn_states`` for each task's target point."""
+    tile_index: torch.Tensor
+    """Terrain tile (``row * num_cols + col``) each task belongs to ``[num_tasks]``."""
+    params: torch.Tensor
+    """Per-task sampled parameters ``[num_tasks, 13]``:
+    ``[0:3]`` pos offset, ``[3:6]`` rot, ``[6:9]`` lin_vel,
+    ``[9:12]`` ang_vel, ``[12]`` hold_time."""
+    task_mask: torch.Tensor
+    """Active command mask ``[num_tasks, 12 + num_joints]``."""
+    payload_flags: torch.Tensor
+    """Opaque payload flags ``[num_tasks, num_payload_flags]``."""
+    offsets: torch.Tensor
+    """CSR offsets ``[num_cmd_types + 1]`` into the task table."""
+    task_partition: torch.Tensor
+    """Command type id for each task row ``[num_tasks]``."""
+    kind: torch.Tensor
+    """Command type tag ``[num_cmd_types]``: 0=pos, 1=pose, 2=vel."""
+    spawn_states: torch.Tensor
+    """Zero-copy reference to reset states ``[num_states, 13 + 2 * num_joints]``."""
+
+    target_fk_kin: object | None = None
+    """Newton kinematics used to FK target feet."""
+    newton_joint_names: list[str] | None = None
+    """Newton joint names matching :attr:`target_fk_kin`."""
+    foot_body_names: list[str] | None = None
+    """Foot body names resolved in Newton order."""
+    newton_foot_body_ids: list[int] | None = None
+    """Foot body ids in Newton order."""
+    isaac_to_newton_joint_order: torch.Tensor | None = None
+    """Index map from Isaac joint order to Newton joint order."""
+    foot_body_ids: list[int] | None = None
+    """Foot body ids in Isaac articulation order."""
+
+
+def build_relative_state_task_table(cfg: RelativeStateCommandCfg, env: ManagerBasedEnv) -> RelativeStateTaskTable:
+    """Build the relative-state command task table from a command cfg and environment."""
+    table_cfg = cfg.task_table
+    if table_cfg.pipeline_cfg.asset_cfg is None:
+        raise ValueError("RelativeStateCommand requires cfg.task_table.pipeline_cfg.asset_cfg.")
+    robot = env.scene[table_cfg.pipeline_cfg.asset_cfg.name]
+    terrain = env.scene.terrain
+    if terrain.terrain_mesh is None:
+        raise RuntimeError(
+            "RelativeStateCommand requires a terrain with a mesh. Set terrain_type='generator' in TerrainImporterCfg."
+        )
+    terrain_origins = terrain.terrain_origins
+    if terrain_origins is None:
+        terrain_gen = terrain.cfg.terrain_generator
+        terrain_origins = _synthesize_terrain_origins(
+            num_rows=int(terrain_gen.num_rows),
+            num_cols=int(terrain_gen.num_cols),
+            cell_size=terrain_gen.size,
+            device=env.device,
+        )
+
+    table_data = build_task_table(
+        terrain_mesh=terrain.terrain_mesh,
+        terrain_origins=terrain_origins,
+        cell_size=terrain.cfg.terrain_generator.size,
+        pipeline_cfg=table_cfg.pipeline_cfg,
+        env=env,
+        commands=cfg.commands,
+        num_joints=robot.num_joints,
+        device=env.device,
+        pool_spacing=table_cfg.pool_spacing,
+        pool_spacing_area_divisor=table_cfg.pool_spacing_area_divisor,
+        pool_sampling_size=table_cfg.pool_sampling_size,
+        robot_joint_names=robot.joint_names,
+        exclude_self_pairs=table_cfg.exclude_self_pairs,
+        num_targets_per_cell=table_cfg.num_targets_per_cell,
+    )
+    target_fk_kin = table_data.pop("kin")
+    newton_joint_names = table_data.pop("newton_joint_names")
+    foot_body_names_expected = table_data.pop("foot_body_names")
+    newton_foot_body_ids = table_data.pop("foot_body_ids")
+    isaac_to_newton_joint_order = torch.tensor(
+        _joint_order_from_names(robot.joint_names, newton_joint_names),
+        device=env.device,
+        dtype=torch.long,
+    )
+    foot_body_ids, foot_body_names = robot.find_bodies(foot_body_names_expected, preserve_order=True)
+    if foot_body_names != foot_body_names_expected:
+        raise RuntimeError(
+            "PhysX foot body order does not match Newton foot body order: "
+            f"physx={foot_body_names}, newton={foot_body_names_expected}."
+        )
+    table_data["task_partition"] = torch.bucketize(
+        torch.arange(int(table_data["num_tasks"]), device=env.device),
+        table_data["offsets"][1:-1],
+        right=True,
+    )
+    return RelativeStateTaskTable(
+        **table_data,
+        target_fk_kin=target_fk_kin,
+        newton_joint_names=newton_joint_names,
+        foot_body_names=foot_body_names_expected,
+        newton_foot_body_ids=newton_foot_body_ids,
+        isaac_to_newton_joint_order=isaac_to_newton_joint_order,
+        foot_body_ids=foot_body_ids,
+    )
+
+
 def _timing_checkpoint(device: str) -> float:
     """Return a synchronized wall-clock timestamp for startup diagnostics."""
     torch_device = torch.device(device)
     if torch_device.type == "cuda" and torch.cuda.is_available():
         torch.cuda.synchronize(torch_device)
     return time.perf_counter()
-
-
-def synthesize_terrain_origins(
-    num_rows: int,
-    num_cols: int,
-    size: tuple[float, float],
-    device: torch.device | str = "cpu",
-) -> torch.Tensor:
-    """Reproduce :attr:`isaaclab.terrains.TerrainGenerator.terrain_origins`.
-
-    IsaacLab's :class:`~isaaclab.terrains.TerrainGenerator` lays out tiles at
-    ``((row + 0.5 - num_rows/2) * size_x, (col + 0.5 - num_cols/2) * size_y)``
-    (inline in :meth:`_add_sub_terrain` + the post-loop centering transform).
-    There's no public utility that exposes just the centers, so we compute
-    them from the cfg here. The resulting tensor matches what
-    :attr:`isaaclab.terrains.TerrainImporter.terrain_origins` would hold when
-    :paramref:`~isaaclab.terrains.TerrainImporterCfg.use_terrain_origins` is
-    ``True`` (and is needed when it is ``False``, since the importer leaves
-    ``terrain_origins = None`` in that case).
-
-    Args:
-        num_rows: Sub-terrain row count.
-        num_cols: Sub-terrain column count.
-        size: ``(size_x, size_y)`` per-tile in metres.
-        device: Tensor device.
-
-    Returns:
-        Per-tile centres of shape ``(num_rows, num_cols, 3)``.
-    """
-    origins = torch.zeros(num_rows, num_cols, 3, device=device)
-    row_centers = (torch.arange(num_rows, device=device) - (num_rows - 1) / 2.0) * size[0]
-    col_centers = (torch.arange(num_cols, device=device) - (num_cols - 1) / 2.0) * size[1]
-    origins[..., 0] = row_centers.view(-1, 1)
-    origins[..., 1] = col_centers.view(1, -1)
-    return origins
 
 
 def _terrain_grid_bounds(
@@ -108,6 +186,22 @@ def _terrain_grid_bounds(
         float(terrain_origins[..., 1].amax().item() + half_y),
     )
     return x_range, y_range
+
+
+def _synthesize_terrain_origins(
+    num_rows: int,
+    num_cols: int,
+    cell_size: tuple[float, float],
+    device: str,
+) -> torch.Tensor:
+    """Return terrain-generator tile origins when importer env origins are disabled."""
+    origins = torch.zeros(num_rows, num_cols, 3, device=device)
+    rows = (torch.arange(num_rows, device=device, dtype=torch.float32) + 0.5) * cell_size[0]
+    cols = (torch.arange(num_cols, device=device, dtype=torch.float32) + 0.5) * cell_size[1]
+    rows -= cell_size[0] * num_rows * 0.5
+    cols -= cell_size[1] * num_cols * 0.5
+    origins[..., 0], origins[..., 1] = torch.meshgrid(rows, cols, indexing="ij")
+    return origins
 
 
 def _state_count_from_spacing(
@@ -246,6 +340,7 @@ def build_task_table(
     terrain_origins: torch.Tensor,
     cell_size: tuple[float, float],
     pipeline_cfg: RetargetPipelineCfg,
+    env: ManagerBasedEnv | None,
     commands: dict[str, RelativeStateCommandCfg.Commands | RelativeStateCommandCfg.TerrainCommands],
     num_joints: int,
     device: str,
@@ -263,6 +358,7 @@ def build_task_table(
         terrain_origins: Per-cell origins ``[num_rows, num_cols, 3]``.
         cell_size: ``(width, height)`` of each terrain cell [m].
         pipeline_cfg: Retarget pipeline configuration.
+        env: Environment passed through to env-bound retarget pipelines.
         commands: Command type dict from the command cfg.
         num_joints: Number of robot joints.
         device: Torch/Warp device string.
@@ -291,7 +387,7 @@ def build_task_table(
         Dict with keys matching :class:`TaskTable` fields plus FK metadata:
         ``spawn_states``, ``spawn_index``, ``target_index``,
         ``params``, ``task_mask``, ``offsets``, ``kind``,
-        ``task_is_terrain``, ``task_uses_feet``, ``num_tasks``, ``kin``,
+        ``payload_flags``, ``num_tasks``, ``kin``,
         ``newton_joint_names``, ``foot_body_names``, ``foot_body_ids``.
     """
     from .commands_cfg import RelativeStateCommandCfg
@@ -354,7 +450,7 @@ def build_task_table(
         sampling_area=sampling_area,
         pool_spacing=pool_spacing,
     ):
-        pipeline = grid_pipeline_cfg.class_type(grid_pipeline_cfg)
+        pipeline = grid_pipeline_cfg.class_type(grid_pipeline_cfg, env=env, device=device)
         grid_origin = np.zeros(3, dtype=np.float32)
         buffer = pipeline.run(wp_mesh, grid_origin, total_states)
         last_rejection_summary = pipeline.rejection_summary
@@ -515,8 +611,7 @@ def build_task_table(
         tile_indices_list = []
         params_list = []
         mask_list = []
-        task_is_terrain_list = []
-        task_uses_feet_list = []
+        payload_flags_list = []
         row_counts = []
 
         for cmd_id, val in enumerate(commands.values()):
@@ -558,17 +653,9 @@ def build_task_table(
             tile_indices_list.append(pair_tile)
             params_list.append(task_params)
             mask_list.append(full_mask)
-            task_is_terrain_list.append(
-                torch.full((num_pairs_per_type,), is_terrain_command, device=device, dtype=torch.bool)
-            )
-            task_uses_feet_list.append(
-                torch.full(
-                    (num_pairs_per_type,),
-                    is_terrain_command and val.match_feet,
-                    device=device,
-                    dtype=torch.bool,
-                )
-            )
+            payload_flags = torch.zeros(num_pairs_per_type, 1, device=device, dtype=torch.bool)
+            payload_flags[:, 0] = is_terrain_command
+            payload_flags_list.append(payload_flags)
             row_counts.append(num_pairs_per_type)
 
         all_spawn = torch.cat(spawn_indices_list, dim=0)
@@ -576,8 +663,7 @@ def build_task_table(
         all_tile = torch.cat(tile_indices_list, dim=0)
         all_params = torch.cat(params_list, dim=0)
         all_masks = torch.cat(mask_list, dim=0)
-        all_task_is_terrain = torch.cat(task_is_terrain_list, dim=0)
-        all_task_uses_feet = torch.cat(task_uses_feet_list, dim=0)
+        all_payload_flags = torch.cat(payload_flags_list, dim=0)
 
         counts_t = torch.tensor(row_counts, device=device, dtype=torch.long)
         offsets = torch.zeros(len(commands) + 1, device=device, dtype=torch.long)
@@ -593,8 +679,7 @@ def build_task_table(
         "tile_index": all_tile,
         "params": all_params,
         "task_mask": all_masks,
-        "task_is_terrain": all_task_is_terrain,
-        "task_uses_feet": all_task_uses_feet,
+        "payload_flags": all_payload_flags,
         "offsets": offsets,
         "kind": kind,
         "spawn_states": spawn_states,

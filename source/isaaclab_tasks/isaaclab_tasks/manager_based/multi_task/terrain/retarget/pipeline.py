@@ -11,6 +11,7 @@ import re
 import time
 from collections.abc import Callable, Sequence
 from contextlib import contextmanager
+from typing import TYPE_CHECKING
 
 import newton.ik as ik
 import numpy as np
@@ -21,6 +22,9 @@ from ...kinematics import NewtonKinematics
 from .buffer import RetargetBuffer
 from .cfg import RetargetPipelineCfg
 from .sampler_base import SamplerBase, SamplerOutput, SamplerSizing, compute_sampler_sizing
+
+if TYPE_CHECKING:
+    from isaaclab.envs import ManagerBasedEnv
 
 # Re-exports so existing ``from .pipeline import ...`` call sites keep
 # resolving the same names.
@@ -153,9 +157,30 @@ class RetargetPipeline:
 
     Args:
         cfg: Full pipeline configuration.
+        env: Environment used to resolve :attr:`RetargetPipelineCfg.asset_cfg`.
+        device: Warp device string used when resolving :attr:`RetargetPipelineCfg.asset_cfg`.
     """
 
-    def __init__(self, cfg: RetargetPipelineCfg):
+    def __init__(self, cfg: RetargetPipelineCfg, env: ManagerBasedEnv | None = None, device: str | None = None):
+        if cfg.asset_cfg is not None:
+            if env is None:
+                raise ValueError("RetargetPipelineCfg.asset_cfg requires RetargetPipeline(..., env=env).")
+            from isaaclab.utils.assets import check_file_path, retrieve_file_path
+
+            articulation_cfg = env.scene[cfg.asset_cfg.name].cfg
+            usd_path = articulation_cfg.spawn.usd_path
+            status = check_file_path(usd_path)
+            if status == 0:
+                raise FileNotFoundError(f"USD not found: {usd_path}")
+            if status == 2:
+                usd_path = retrieve_file_path(usd_path, force_download=False)
+
+            cfg = cfg.replace(kin=cfg.kin.copy())
+            cfg.kin.usd_path = usd_path
+            cfg.kin.default_pos = (0.0, 0.0, articulation_cfg.init_state.pos[2])
+            cfg.kin.default_joint_pos = articulation_cfg.init_state.joint_pos
+            cfg.kin.device = device if device is not None else cfg.kin.device
+
         self.cfg = cfg
 
         self.kin = NewtonKinematics(cfg.kin)

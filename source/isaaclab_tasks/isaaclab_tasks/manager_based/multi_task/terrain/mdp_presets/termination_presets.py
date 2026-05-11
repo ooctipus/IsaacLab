@@ -53,13 +53,6 @@ class PositionTerminationsCfg(BaseTerminationsCfg):
 
 
 @configclass
-class AdvancedSkillsTerminationsCfg:
-    pass
-    # TODO(Mateo)
-
-
-@configclass
 class TerminationsCfg(PresetCfg):
     position = PositionTerminationsCfg()
-    advanced_skills = AdvancedSkillsTerminationsCfg()
     default = position

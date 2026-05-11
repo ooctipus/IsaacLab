@@ -6,7 +6,9 @@
 __all__ = [
     "RelativeStateCommandCfg",
     "RelativeStateCommand",
-    "terrain_spawn_goal_pair_success_rate_levels",
+    "CommandPayloadBaseState",
+    "CommandPayloadBaseFootState",
+    "success_rate_sampler",
     "skip_reward_term",
     "stricten_success_term",
     "activate_reward_term",
@@ -21,6 +23,7 @@ __all__ = [
     "time_out_track_terminate",
     "mechanical_power",
     "command_success",
+    "exploration_reward",
     "contact_penalty",
     "success_terminate",
     "abnormal_robot_state",
@@ -31,7 +34,6 @@ __all__ = [
     "record_trajectory_video",
     "NewtonKinematics",
     "IKObjectiveJointDefault",
-    "IKObjectiveJointRegularize",
     "IKObjectiveGravityTorque",
     "IKObjectiveTerrainContact",
     "IKObjectiveStabilityMargin",
@@ -42,34 +44,33 @@ __all__ = [
     "SamplerBaseCfg",
     "SamplerBase",
     "CriterionFn",
-    "height_scan_2d",
     "vision_obs",
 ]
 
-from .commands import RelativeStateCommandCfg, RelativeStateCommand
-from .curriculums import (
-    terrain_spawn_goal_pair_success_rate_levels,
-    skip_reward_term,
-    stricten_success_term,
-    activate_reward_term,
+from .commands import (
+    CommandPayloadBaseFootState,
+    CommandPayloadBaseState,
+    RelativeStateCommand,
+    RelativeStateCommandCfg,
 )
+from isaaclab_tasks.manager_based.multi_task.mdp.curriculums import success_rate_sampler
+from .curriculums import skip_reward_term, stricten_success_term, activate_reward_term
 from isaaclab_tasks.manager_based.multi_task.mdp.observations import (
     command_active,
     command_progress,
     command_reach,
     command_track,
     time_left,
+    vision_obs,
 )
 from .observations import (
     target_pos_env,
     achieved_pos_env,
     command_current_state,
     command_target_state,
-    height_scan_2d,
-    vision_obs,
 )
 from isaaclab_tasks.manager_based.multi_task.mdp.rewards import command_task_reward, contact_penalty, mechanical_power
-from .rewards import command_success
+from .rewards import command_success, exploration_reward
 from isaaclab_tasks.manager_based.multi_task.mdp.terminations import (
     abnormal_robot_state,
     illegal_contact_ratio,

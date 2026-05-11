@@ -166,10 +166,8 @@ class record_trajectory_video(ManagerTermBase):
         if not isinstance(env_origins, torch.Tensor):
             env_origins = wp.to_torch(env_origins)
 
-        # Targets: row 0 of the cmd buffer, columns 0:3 = position.
-        target_pos = cmd.cmd_buf[:, 0, :2]
-        # ``instant_success`` -- all active error groups below threshold this step.
-        success = (cmd._err < cmd._reward_scales[cmd.cmd_ids.long()]).all(dim=1)
+        target_pos = cmd.target_state[:, :2]
+        success = cmd.get_task_done()
 
         robot_xy = (robot_pos[:, :2] - env_origins[:, :2]).detach().cpu().numpy()
         target_xy = (target_pos - env_origins[:, :2]).detach().cpu().numpy()
