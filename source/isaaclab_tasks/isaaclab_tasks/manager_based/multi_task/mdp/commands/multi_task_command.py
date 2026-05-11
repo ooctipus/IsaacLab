@@ -12,17 +12,17 @@ dispatch implementation:
 - :class:`~.spec.TaskSpec` build + kernel-id validation.
 - Per-env routing buffers (subtask ids, slot counts, offsets, targets) and
   composer latches.
-- Backend-owned output storage for errors, activations, canonical commands,
-  terminal rewards, success flags, and progress.
+- Public output buffers (errors, activations, canonical commands, terminal
+  rewards, success flags, progress) allocated directly on the base term.
 - ``_resample_command`` / ``_dispatch_samplers`` — target sampling.
 - ``_update_command`` — per-step orchestration (buffer zero →
   ``_dispatch`` → composer → progress).
 
 The dispatch — "given the current state, compute output-layout data" — is
-delegated to a subclass via the :meth:`_dispatch` method. Output storage is
-selected through :meth:`_build_output_store`, so future backends can own a
-non-dense hot-path layout and materialize public tensors only at the boundary.
-Two subclasses ship with the module:
+delegated to a subclass via the :meth:`_dispatch` method. Subclasses write
+into the base term's public output buffers; backend-private working state
+(e.g. primitive-local rows) lives on the backend's plan. Two subclasses
+ship with the module:
 
 - :class:`~.impl.multi_task_command_torch.MultiTaskCommandTorch` — PyTorch
   reference, selected by ``cfg.dispatch_backend="torch"``.
