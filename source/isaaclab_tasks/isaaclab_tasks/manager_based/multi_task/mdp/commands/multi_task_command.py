@@ -206,9 +206,10 @@ class MultiTaskCommand(CommandTerm):
 
         # Public-surface output buffers — read by reward / observation / done
         # terms that consume this command. Allocated directly on the base term;
-        # backends write into them via ``wp.from_torch`` views inside their
-        # plan structs. Anything backend-specific beyond these (e.g.
-        # primitive-local rows) is owned by the backend's plan, not here.
+        # backends write into them through the Warp views built once on the
+        # public wrapper (``MultiTaskCommandWarp._build_shared_wp_views``).
+        # Anything backend-specific beyond these (e.g. primitive-local rows) is
+        # owned by the backend's plan, not here.
         self._buf_error = torch.zeros((num_envs, k_max), device=device)
         self._buf_activation = torch.zeros((num_envs, k_max), device=device)
         self._command_reach = torch.zeros((num_envs, max(1, self.spec.reach_canonical_width)), device=device)
