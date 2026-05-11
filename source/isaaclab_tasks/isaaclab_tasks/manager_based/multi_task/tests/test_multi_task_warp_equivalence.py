@@ -764,3 +764,106 @@ def test_schedule_ordered_mega_reorders_slots_without_changing_public_outputs():
     assert torch.allclose(cmd_ref.task_reward, cmd_ordered.task_reward, atol=atol, rtol=rtol)
     assert torch.equal(cmd_ref.task_done, cmd_ordered.task_done)
     assert torch.allclose(cmd_ref.progress, cmd_ordered.progress, atol=atol, rtol=rtol)
+
+
+def _interleaved_producer_cfg(dispatch_backend: str) -> MultiTaskCfg:
+    """Cfg whose authored slot order interleaves two vec3 producers.
+
+    Four subtasks all in the vec3 schedule kind: ``LIN_VEL, ANG_VEL, LIN_VEL,
+    ANG_VEL``. LIN_VEL pair shares one gather signature (producer 0); ANG_VEL
+    pair shares another (producer 1). primitive_graph_local's secondary sort
+    regroups by producer within the schedule region, turning ``[A, B, A, B]``
+    into ``[A, A, B, B]``. The torch reference keeps the authored order.
+    """
+    base = SceneEntityCfg("robot", body_names="base")
+    lin_kwargs = dict(
+        asset_cfg=base,
+        state_kernel=int(STATE_KERNEL_ID.BODY_LIN_VEL),
+        metric_kernel=int(METRIC_KERNEL_ID.GEOMETRIC),
+        activation_kernel=int(ACTIVATION_KERNEL_ID.TANH),
+    )
+    ang_kwargs = dict(
+        asset_cfg=base,
+        state_kernel=int(STATE_KERNEL_ID.BODY_ANG_VEL),
+        metric_kernel=int(METRIC_KERNEL_ID.GEOMETRIC),
+        activation_kernel=int(ACTIVATION_KERNEL_ID.TANH),
+    )
+    return MultiTaskCfg(
+        resampling_time_range=(100.0, 100.0),
+        debug_vis=False,
+        dispatch_backend=dispatch_backend,
+        tasks={
+            "interleaved_producers": [
+                MultiTaskCfg.TrackingTaskCfg(
+                    **lin_kwargs,
+                    activation_kernel_param=0.3,
+                    sampler=MinMaxSampler(
+                        kernel=int(SAMPLER_KERNEL_ID.UNIFORM),
+                        minimum=[-1.0, -1.0, 0.0],
+                        maximum=[1.0, 1.0, 0.0],
+                    ),
+                ),
+                MultiTaskCfg.TrackingTaskCfg(
+                    **ang_kwargs,
+                    activation_kernel_param=0.5,
+                    sampler=MinMaxSampler(
+                        kernel=int(SAMPLER_KERNEL_ID.UNIFORM),
+                        minimum=[0.0, 0.0, -0.5],
+                        maximum=[0.0, 0.0, 0.5],
+                    ),
+                ),
+                MultiTaskCfg.TrackingTaskCfg(
+                    **lin_kwargs,
+                    activation_kernel_param=0.4,
+                    sampler=MinMaxSampler(
+                        kernel=int(SAMPLER_KERNEL_ID.UNIFORM),
+                        minimum=[-0.5, -0.5, 0.0],
+                        maximum=[0.5, 0.5, 0.0],
+                    ),
+                ),
+                MultiTaskCfg.TrackingTaskCfg(
+                    **ang_kwargs,
+                    activation_kernel_param=0.6,
+                    sampler=MinMaxSampler(
+                        kernel=int(SAMPLER_KERNEL_ID.UNIFORM),
+                        minimum=[0.0, 0.0, -0.3],
+                        maximum=[0.0, 0.0, 0.3],
+                    ),
+                ),
+            ]
+        },
+    )
+
+
+@_NEED_CUDA
+def test_primitive_graph_local_applies_producer_coherent_slot_order():
+    """The secondary producer-coherent sort regroups slots within each schedule.
+
+    The interleaved cfg has subtask order ``[LIN_VEL, ANG_VEL, LIN_VEL, ANG_VEL]``
+    (producers ``[0, 1, 0, 1]`` within the vec3 kind). primitive_graph_local
+    applies the composite ``(schedule_id, producer_within_kind)`` sort, which
+    on this cfg degenerates to a pure producer-id sort because all four
+    subtasks share schedule_id = SCHEDULE_DIRECT_VEC3_DELTA. The expected
+    post-sort order is ``[0, 2, 1, 3]`` — producers ``[0, 0, 1, 1]`` — which
+    is what a warp of consumer threads sees as broadcast-friendly.
+
+    Public-output invariance under this reorder is exercised in
+    :func:`test_warp_matches_pytorch_outputs` whenever the test cfg has
+    cfg-original order already producer-coherent (so the secondary sort
+    is a no-op and the torch reference matches the Warp output bit-for-bit).
+    """
+    device = "cuda:0"
+    num_envs = 16
+    env = _make_env(num_envs=num_envs, device=device, seed=4567)
+    torch.manual_seed(31)
+    cmd = MultiTaskCommand(_interleaved_producer_cfg(dispatch_backend="primitive_graph_local"), env)
+    cmd._update_command()
+
+    # Every env in this single-task cfg gets the same slot assignment, so
+    # checking env 0 is sufficient to verify the reorder applied.
+    observed = cmd._env_subtask_ids[0].tolist()
+    assert observed == [0, 2, 1, 3], f"producer-coherent order not applied: expected [0, 2, 1, 3], got {observed}"
+    # Each producer is shared by 2 consumers in this cfg.
+    assert cmd._backend.plan.vec3_nodes.csr_graph.num_producers == 2
+    assert cmd._backend.plan.vec3_nodes.csr_graph.num_active_consumers == 4
+    assert cmd._backend.plan.vec3_nodes.csr_graph.fanout_histogram == {2: 2}

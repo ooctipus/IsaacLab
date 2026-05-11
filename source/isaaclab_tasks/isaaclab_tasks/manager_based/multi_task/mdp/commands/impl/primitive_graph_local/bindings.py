@@ -66,6 +66,8 @@ from ..schedules import (
 from .csr_graph import CSRGraph
 
 if TYPE_CHECKING:
+    import torch
+
     from ..multi_task_command_warp import MultiTaskCommandWarp
 
 _CONTACT_SCHEDULES = (
@@ -332,19 +334,42 @@ def _make_producer_node_table(
     )
 
 
-def _sort_command_slots_by_schedule(command: MultiTaskCommandWarp, schedule_ids_torch) -> None:
-    """Sort each env's active slots by primitive schedule for dense output locality.
+def _sort_command_slots_by_schedule_and_producer(
+    command: MultiTaskCommandWarp,
+    schedule_ids_torch,
+    producer_within_kind_torch,
+    producer_id_stride: int,
+) -> None:
+    """Sort each env's active slots by ``(schedule_id, producer_within_kind)``.
 
-    ``schedule_ids_torch`` is a torch view (e.g. ``wp.to_torch(plan.subtask_schedule_ids_wp)``)
-    passed by the caller. We use tensor methods only — no ``torch.X`` symbols.
+    Outer key (``schedule_id``) groups slots by primitive kind — gives the
+    producer kernel warp-coherent state-kernel regions. Inner key
+    (``producer_within_kind``) groups slots that read from the same
+    producer-buf entry adjacently, so a warp of consecutive consumer
+    threads sees a broadcast load instead of a scatter.
+
+    The two keys are packed into a single integer via the precomputed
+    ``producer_id_stride`` so we can do one stable :func:`argsort` rather
+    than chaining two passes. Inactive slots (``slot >= slot_count``) get
+    a sentinel key ``NUM_SCHEDULES * stride`` that sorts strictly after
+    every valid composite.
+
+    ``schedule_ids_torch`` and ``producer_within_kind_torch`` are torch
+    views (the latter is stored on the plan; the former is a per-refresh
+    :func:`wp.to_torch` view). We use tensor methods only — no ``torch.X``
+    symbols.
     """
     slot_ids = command._slot_arange.expand(command.num_envs, -1)
     active = slot_ids < command._env_slot_count.unsqueeze(1)
     subtask_ids = command._env_subtask_ids.long().clamp_min(0)
     slot_schedule_ids = schedule_ids_torch[subtask_ids]
-    fallback = slot_schedule_ids.new_full(slot_schedule_ids.shape, NUM_SCHEDULES)
-    slot_schedule_ids = slot_schedule_ids.where(active, fallback)
-    slot_order = slot_schedule_ids.argsort(dim=1, stable=True)
+    # Inactive subtasks contribute -1 in producer_within_kind; clamp to 0 so the
+    # composite arithmetic is well-defined even for slots we're about to mask.
+    slot_producer = producer_within_kind_torch[subtask_ids].clamp_min(0)
+    composite = slot_schedule_ids * producer_id_stride + slot_producer
+    fallback = composite.new_full(composite.shape, NUM_SCHEDULES * producer_id_stride)
+    composite = composite.where(active, fallback)
+    slot_order = composite.argsort(dim=1, stable=True)
     command._env_subtask_ids[:] = command._env_subtask_ids.gather(1, slot_order)
     command._env_slot_offsets[:] = command._env_slot_offsets.gather(1, slot_order)
     command._env_slot_strides[:] = command._env_slot_strides.gather(1, slot_order)
@@ -378,6 +403,18 @@ class PrimitiveGraphLocalPlan:
     composer_state: ComposerState
     outputs: Outputs
     subtask_schedule_ids_wp: wp.array
+    # Per-subtask producer id WITHIN its own kind (vec3/scalar/quat/scalar_sum/contact).
+    # Used as the secondary sort key in :func:`_sort_command_slots_by_schedule_and_producer`
+    # so adjacent slots within a kind read the same producer-buf entry — turning
+    # warp-scatter producer-buf loads into broadcast loads. Held as a torch
+    # tensor because the sort path is torch-tensor-method based; built once
+    # at plan time by ORing the 5 per-kind CSRGraph ``consumer_to_producer``
+    # arrays (each subtask is active in exactly one kind).
+    producer_within_kind_torch: torch.Tensor
+    # Stride used when packing ``(schedule_id, producer_within_kind)`` into a single
+    # int sort key: ``key = schedule_id * producer_id_stride + producer_within_kind``.
+    # Set to ``max_num_producers_across_kinds + 1`` at plan build.
+    producer_id_stride: int
     direct_vec3_wp: wp.array
     direct_scalar_wp: wp.array
     direct_quat_wp: wp.array
@@ -410,6 +447,19 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
     quat_nodes = _make_producer_node_table(command, (SCHEDULE_DIRECT_QUAT_DELTA,))
     scalar_sum_nodes = _make_producer_node_table(command, (SCHEDULE_SCALAR_SUM_DELTA,))
     contact_nodes = _make_producer_node_table(command, _CONTACT_SCHEDULES)
+
+    # Combine the 5 per-kind ``consumer_to_producer`` arrays into one per-subtask
+    # producer-within-kind tensor. Each subtask is active in exactly one kind, so
+    # element-wise max over (-1 for not-this-kind, ≥ 0 for this-kind) recovers the
+    # subtask's local producer id. The accompanying stride lets the refresh sort
+    # pack (schedule_id, producer_within_kind) into a single argsort key.
+    kind_tables = (vec3_nodes, scalar_nodes, quat_nodes, scalar_sum_nodes, contact_nodes)
+    producer_within_kind_torch = wp.to_torch(kind_tables[0].csr_graph.consumer_to_producer).clone()
+    for nodes in kind_tables[1:]:
+        producer_within_kind_torch = producer_within_kind_torch.maximum(
+            wp.to_torch(nodes.csr_graph.consumer_to_producer)
+        )
+    producer_id_stride = max(nodes.csr_graph.num_producers for nodes in kind_tables) + 1
 
     direct_vec3_wp = wp.zeros(shape=(max_consumers, 3), dtype=wp.float32, device=device_str)
     direct_scalar_wp = wp.zeros(shape=max_consumers, dtype=wp.float32, device=device_str)
@@ -444,6 +494,8 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
         composer_state=command.composer_state_wp,
         outputs=command.outputs_wp,
         subtask_schedule_ids_wp=subtask_schedule_ids_wp,
+        producer_within_kind_torch=producer_within_kind_torch,
+        producer_id_stride=producer_id_stride,
         direct_vec3_wp=direct_vec3_wp,
         direct_scalar_wp=direct_scalar_wp,
         direct_quat_wp=direct_quat_wp,
@@ -471,7 +523,12 @@ def refresh_primitive_graph_local_plan(command: MultiTaskCommandWarp, plan: Prim
     plus updating ``total_consumers`` and ``schedule_counts_py``.
     """
     schedule_ids_torch = wp.to_torch(plan.subtask_schedule_ids_wp)
-    _sort_command_slots_by_schedule(command, schedule_ids_torch)
+    _sort_command_slots_by_schedule_and_producer(
+        command,
+        schedule_ids_torch,
+        plan.producer_within_kind_torch,
+        plan.producer_id_stride,
+    )
 
     slot_idx = command._slot_arange
     valid = slot_idx < command._env_slot_count.unsqueeze(1)
