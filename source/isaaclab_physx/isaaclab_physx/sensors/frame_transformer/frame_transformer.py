@@ -244,7 +244,9 @@ class FrameTransformer(BaseFrameTransformer):
         tracked_prim_paths = [body_names_to_frames[body_name]["prim_path"] for body_name in body_names_to_frames.keys()]
         tracked_body_names = [body_name for body_name in body_names_to_frames.keys()]
 
-        body_names_regex = [tracked_prim_path.replace("env_0", "env_*") for tracked_prim_path in tracked_prim_paths]
+        # Replace whichever ``env_<N>`` literal the tracked prim paths happen to carry — under
+        # ``CloneCfg.clone_groups`` partitioning the source env is not necessarily ``env_0``.
+        body_names_regex = [re.sub(r"env_\d+", "env_*", tracked_prim_path) for tracked_prim_path in tracked_prim_paths]
 
         # obtain global simulation view
         self._physics_sim_view = SimulationManager.get_physics_sim_view()
@@ -280,9 +282,14 @@ class FrameTransformer(BaseFrameTransformer):
                 )
             ]
 
-            # Only need 0th env as the names and their ordering are the same across environments
+            # Only need one representative env as the names and their ordering are the same across
+            # environments. Use the lowest env index actually present in ``all_prim_paths`` — under
+            # ``CloneCfg.clone_groups`` partitioning the asset may not exist in ``env_0`` (the env
+            # gets assigned to a clone group whose ``InclusionSet`` does not include the asset).
+            first_env_id = extract_env_num_and_prim_path(all_prim_paths[self._per_env_indices[0]])[0]
+            first_env_seg = f"/env_{first_env_id}/"
             sorted_prim_paths = [
-                all_prim_paths[index] for index in self._per_env_indices if "env_0" in all_prim_paths[index]
+                all_prim_paths[index] for index in self._per_env_indices if first_env_seg in all_prim_paths[index]
             ]
 
         else:

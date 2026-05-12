@@ -44,3 +44,12 @@ def sequential(combinations: torch.Tensor, num_clones: int, device: str) -> torc
     """
     chosen = combinations[torch.arange(num_clones, device=device) % len(combinations)]
     return chosen
+
+
+# ``interleaved`` is an alias of :func:`sequential` — both round-robin envs over
+# combinations via ``env_idx % num_combos``. The alias name is preserved for
+# multi-task callers that explicitly want the per-task round-robin semantics
+# (env i lands in clone group i % n_groups), matching the round-robin
+# ``task_id`` produced by :class:`MetaworldMultiTaskCommand` and similar
+# multi-task command terms.
+interleaved = sequential

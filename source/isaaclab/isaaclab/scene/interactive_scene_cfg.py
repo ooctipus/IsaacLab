@@ -3,9 +3,15 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+from __future__ import annotations
+
 from dataclasses import MISSING
+from typing import TYPE_CHECKING
 
 from isaaclab.utils.configclass import configclass
+
+if TYPE_CHECKING:
+    from .clone_cfg import CloneCfg
 
 
 @configclass
@@ -122,5 +128,29 @@ class InteractiveSceneCfg:
         Cloning in fabric can only be enabled if :attr:`replicated_physics` is also enabled.
         If :attr:`replicated_physics` is ``False``, cloning in Fabric will automatically
         default to ``False``.
+
+    """
+
+    clone_cfg: CloneCfg | None = None
+    """Clone configuration for flexible environment partitioning. Defaults to None.
+
+    When set, :class:`InteractiveScene` calls
+    :meth:`~isaaclab.scene.EnvLayout.apply_clone_cfg` to partition
+    ``num_envs`` across the declared groups and register assets to
+    their groups.  Assets referenced in
+    :attr:`~isaaclab.scene.InclusionSet.assets` are only cloned into
+    their groups' environments.
+
+    Example::
+
+        from isaaclab.scene import CloneCfg, InclusionSet
+
+        clone_cfg = CloneCfg(
+            clone_groups={
+                "lift":    InclusionSet(assets=["table", "lift_obj"], weight=1),
+                "cabinet": InclusionSet(assets=["cabinet"], weight=1),
+                "reach":   InclusionSet(assets=["table"], weight=1),
+            }
+        )
 
     """

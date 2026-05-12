@@ -39,6 +39,7 @@ from isaaclab.terrains import TerrainImporter, TerrainImporterCfg
 # It will be removed once the VisuoTactileSensor class is added to the core Isaac Lab framework.
 from isaaclab_contrib.sensors.tacsl_sensor import VisuoTactileSensorCfg
 
+from .env_layout import EnvLayout, resolve_asset_env_ids
 from .interactive_scene_cfg import InteractiveSceneCfg
 
 # import logger
@@ -191,10 +192,20 @@ class InteractiveScene:
                 positions=self._default_env_origins,
             )
 
+        # Multi-task env partition layout — populated when ``cfg.clone_cfg`` declares clone groups.
+        # Reward / observation / event terms can resolve per-group ``env_ids`` against this layout
+        # via :class:`SceneEntityCfg(groups=[...])`.
+        self._layout = EnvLayout(self.cfg.num_envs, self.device)
+        if getattr(self.cfg, "clone_cfg", None) is not None:
+            self._layout.apply_clone_cfg(self.cfg.clone_cfg)
+
         self._global_prim_paths = list()
         has_scene_cfg_entities = self._is_scene_setup_from_cfg()
         if has_scene_cfg_entities:
-            self._clone_plan = self._build_clone_plan_from_cfg()
+            if getattr(self.cfg, "clone_cfg", None) is not None:
+                self._clone_plan = self._build_clone_plan_from_clone_cfg()
+            else:
+                self._clone_plan = self._build_clone_plan_from_cfg()
             self._add_entities_from_cfg()
         else:
             self._clone_plan = cloner.ClonePlan(
@@ -292,6 +303,104 @@ class InteractiveScene:
         plan = cloner.ClonePlan(sources=tuple(sources), destinations=plan.destinations, clone_mask=plan.clone_mask)
         logger.debug("Built heterogeneous ClonePlan with %d source rows.", len(plan.sources))
         return plan
+
+    def _build_clone_plan_from_clone_cfg(self) -> cloner.ClonePlan | None:
+        """Build a flat :class:`~cloner.ClonePlan` from :attr:`InteractiveSceneCfg.clone_cfg`.
+
+        This is the multi-task / heterogeneous-scene path: per-task partitioning is declared
+        via :class:`~isaaclab.scene.CloneCfg` clone groups, each carrying an
+        :class:`~isaaclab.scene.InclusionSet` of asset names. The resulting plan has one row
+        per asset, with a clone-mask equal to the **union** of all clone-group env_ids that
+        include that asset. Assets not referenced by any group are treated as global (cloned
+        to every env). Zero-weight groups contribute no envs.
+
+        Returns ``None`` if no spawnable scene asset has any env assignment (e.g. every
+        group's weight is zero).
+        """
+        clone_cfg = self.cfg.clone_cfg
+        group_names = tuple(clone_cfg.clone_groups.keys())
+        weights = torch.tensor(
+            [float(g.weight) for g in clone_cfg.clone_groups.values()],
+            dtype=torch.float32,
+            device=self.device,
+        )
+        if weights.sum() <= 0:
+            return None
+
+        # Round-robin env→group assignment, respecting weights by repeating group indices.
+        combos = torch.repeat_interleave(
+            torch.arange(len(group_names), device=self.device),
+            weights.to(torch.long),
+        ).unsqueeze(-1)  # [sum_weights, 1]
+        chosen = clone_cfg.clone_strategy(combos, self.num_envs, self.device)  # [num_envs, 1]
+        group_assignment = chosen.squeeze(-1)  # [num_envs]
+
+        # Publish per-group env_ids so reward/obs/event terms can resolve them via
+        # ``SceneEntityCfg(groups=[...])``.
+        self._layout.apply_assignment(group_assignment, group_names)
+
+        cfg_fields = InteractiveSceneCfg.__dataclass_fields__
+        items = [(k, v) for k, v in self.cfg.__dict__.items() if k not in cfg_fields and v is not None]
+        # Spawn non-sensors before sensors to mirror ``_build_clone_plan_from_cfg`` ordering.
+        ordered_items = [item for item in items if not isinstance(item[1], SensorBaseCfg)]
+        ordered_items += [item for item in items if isinstance(item[1], SensorBaseCfg)]
+
+        sources: list[str] = []
+        destinations: list[str] = []
+        masks: list[torch.Tensor] = []
+
+        for asset_name, asset_cfg in ordered_items:
+            cfgs = (
+                asset_cfg.rigid_objects.values()
+                if isinstance(asset_cfg, RigidObjectCollectionCfg)
+                else [asset_cfg]
+            )
+            for cfg in (c for c in cfgs if hasattr(c, "prim_path")):
+                prim_path = cfg.prim_path.format(ENV_REGEX_NS=self.env_regex_ns)
+                if not hasattr(cfg, "spawn") or cfg.spawn is None or self.env_ns not in prim_path:
+                    continue
+                destination = prim_path.replace(self.env_regex_ns, self.env_fmt)
+
+                # Union of env_ids over every clone group whose InclusionSet contains this asset.
+                membership = [
+                    idx
+                    for idx, (_, grp) in enumerate(clone_cfg.clone_groups.items())
+                    if asset_name in getattr(grp, "assets", [])
+                ]
+                if membership:
+                    env_mask = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+                    for idx in membership:
+                        env_mask |= group_assignment == idx
+                else:
+                    # Asset not declared in any clone group → global asset, cloned to all envs.
+                    env_mask = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
+
+                if not bool(env_mask.any()):
+                    # Asset's groups are all zero-weight → skip spawning entirely.
+                    continue
+
+                first_env = int(env_mask.to(torch.int).argmax().item())
+                source = destination.format(first_env)
+                # Single-variant spawners only; multi-variant + clone_groups is not yet wired.
+                if isinstance(cfg.spawn, (sim_utils.MultiAssetSpawnerCfg, sim_utils.MultiUsdFileCfg)):
+                    raise NotImplementedError(
+                        "MultiAssetSpawnerCfg / MultiUsdFileCfg inside a CloneCfg.clone_groups"
+                        f" partition is not yet supported (asset '{asset_name}')."
+                    )
+                cfg.spawn.spawn_path = source
+
+                sources.append(source)
+                destinations.append(destination)
+                masks.append(env_mask)
+
+        if not sources:
+            return None
+
+        return cloner.ClonePlan(
+            sources=tuple(sources),
+            destinations=tuple(destinations),
+            clone_mask=torch.stack(masks),
+        )
 
     def clone_environments(self, copy_from_source: bool = False):
         """Creates clones of the environment ``/World/envs/env_0``.
@@ -503,6 +612,17 @@ class InteractiveScene:
         return self._surface_grippers
 
     @property
+    def layout(self) -> EnvLayout:
+        """The environment partition layout for multi-task scenes.
+
+        Populated from :attr:`InteractiveSceneCfg.clone_cfg` during
+        :meth:`_build_clone_plan_from_clone_cfg`. Empty otherwise (single-task scenes).
+        :class:`SceneEntityCfg` uses this to resolve ``groups=[...]`` patterns into
+        per-group ``env_ids``.
+        """
+        return self._layout
+
+    @property
     def clone_plan(self) -> cloner.ClonePlan | None:
         """Clone plan produced by :meth:`clone_environments`.
 
@@ -544,24 +664,44 @@ class InteractiveScene:
     def reset(self, env_ids: Sequence[int] | None = None):
         """Resets the scene entities.
 
+        When the scene contains heterogeneous assets (registered in the
+        :attr:`layout` via :attr:`InteractiveSceneCfg.clone_cfg`), global
+        ``env_ids`` are mapped to per-asset local indices before dispatch.
+        Assets that don't exist in any of the requested envs are skipped
+        — this prevents :class:`GpuArticulationView` / :class:`GpuRigidBodyView`
+        out-of-bounds asserts when an articulation lives in only a subset
+        of envs.
+
         Args:
             env_ids: The indices of the environments to reset.
                 Defaults to None (all instances).
         """
+        env_ids_t = torch.as_tensor(env_ids, device=self.device) if env_ids is not None else None
+
         # -- assets
-        for articulation in self._articulations.values():
-            articulation.reset(env_ids)
-        for deformable_object in self._deformable_objects.values():
-            deformable_object.reset(env_ids)
-        for rigid_object in self._rigid_objects.values():
-            rigid_object.reset(env_ids)
-        for surface_gripper in self._surface_grippers.values():
-            surface_gripper.reset(env_ids)
+        for name, articulation in self._articulations.items():
+            local = resolve_asset_env_ids(self._layout, name, env_ids_t)
+            if local is not None:
+                articulation.reset(local)
+        for name, deformable_object in self._deformable_objects.items():
+            local = resolve_asset_env_ids(self._layout, name, env_ids_t)
+            if local is not None:
+                deformable_object.reset(local)
+        for name, rigid_object in self._rigid_objects.items():
+            local = resolve_asset_env_ids(self._layout, name, env_ids_t)
+            if local is not None:
+                rigid_object.reset(local)
+        for name, surface_gripper in self._surface_grippers.items():
+            local = resolve_asset_env_ids(self._layout, name, env_ids_t)
+            if local is not None:
+                surface_gripper.reset(local)
         for rigid_object_collection in self._rigid_object_collections.values():
             rigid_object_collection.reset(env_ids)
         # -- sensors
-        for sensor in self._sensors.values():
-            sensor.reset(env_ids)
+        for name, sensor in self._sensors.items():
+            local = resolve_asset_env_ids(self._layout, name, env_ids_t)
+            if local is not None:
+                sensor.reset(local)
 
     def write_data_to_sim(self):
         """Writes the data of the scene entities to the simulation."""

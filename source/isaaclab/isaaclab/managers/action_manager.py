@@ -9,12 +9,18 @@ from __future__ import annotations
 
 import inspect
 import re
+import weakref
 from abc import abstractmethod
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 import torch
 from prettytable import PrettyTable
+
+from isaaclab.utils.version import has_kit
+
+if has_kit():
+    import omni.kit.app
 
 from isaaclab.envs.utils.io_descriptors import GenericActionIODescriptor
 
@@ -60,15 +66,25 @@ class ActionTerm(ManagerTermBase):
 
     def __del__(self):
         """Unsubscribe from the callbacks."""
-        env = getattr(self, "_env", None)
-        sim = getattr(env, "sim", None)
-        registry = getattr(sim, "vis_marker_registry", None)
-        if registry is not None:
-            registry.clear_debug_vis_callback(self)
+        if self._debug_vis_handle:
+            self._debug_vis_handle.unsubscribe()
+            self._debug_vis_handle = None
 
     """
     Properties.
     """
+
+    @property
+    def num_envs(self) -> int:
+        """Number of instances for this action term's asset.
+
+        .. note::
+            This returns ``asset.num_instances`` rather than ``env.num_envs``
+            because partial-env assets may have fewer instances than total
+            environments.  The action manager should be updated to handle
+            this distinction explicitly rather than relying on this override.
+        """
+        return self._asset.num_instances
 
     @property
     @abstractmethod
@@ -131,10 +147,15 @@ class ActionTerm(ManagerTermBase):
         if debug_vis:
             # create a subscriber for the post update event if it doesn't exist
             if self._debug_vis_handle is None:
-                self._debug_vis_handle = self._env.sim.vis_marker_registry.add_debug_vis_callback(self)
+                app_interface = omni.kit.app.get_app_interface()
+                self._debug_vis_handle = app_interface.get_post_update_event_stream().create_subscription_to_pop(
+                    lambda event, obj=weakref.proxy(self): obj._debug_vis_callback(event)
+                )
         else:
             # remove the subscriber if it exists
-            self._env.sim.vis_marker_registry.clear_debug_vis_callback(self)
+            if self._debug_vis_handle is not None:
+                self._debug_vis_handle.unsubscribe()
+                self._debug_vis_handle = None
         # return success
         return True
 

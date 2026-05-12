@@ -8,6 +8,7 @@ __all__ = [
     "ClonePlan",
     "random",
     "sequential",
+    "interleaved",
     "disabled_fabric_change_notifies",
     "filter_collisions",
     "grid_transforms",
@@ -17,7 +18,7 @@ __all__ = [
 
 from .clone_plan import ClonePlan
 from .cloner_cfg import CloneCfg
-from .cloner_strategies import random, sequential
+from .cloner_strategies import interleaved, random, sequential
 from .cloner_utils import (
     disabled_fabric_change_notifies,
     filter_collisions,

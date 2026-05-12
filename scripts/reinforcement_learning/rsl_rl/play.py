@@ -129,6 +129,17 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         # create isaac environment
         env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
+        # enable inline reward-keypoint visualization (atoms in metaworld
+        # quantities side-effect-draw the points they consume; toggle is a
+        # no-op for tasks that don't use that helper)
+        if args_cli.video:
+            try:
+                from isaaclab_contrib.tasks.manipulation.metaworld import mdp as _mw_mdp
+
+                _mw_mdp.set_viz_enabled(True)
+            except (ImportError, AttributeError):
+                pass
+
         # convert to single-agent instance if required by the RL algorithm
         if isinstance(env.unwrapped.cfg, DirectMARLEnvCfg):
             from isaaclab.envs import multi_agent_to_single_agent

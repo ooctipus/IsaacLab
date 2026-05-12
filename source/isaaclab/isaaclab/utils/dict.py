@@ -55,8 +55,9 @@ def class_to_dict(obj: object) -> dict[str, Any]:
     # convert to dictionary
     data = dict()
     for key, value in obj_dict.items():
-        # disregard builtin attributes
-        if key.startswith("__"):
+        # disregard builtin attributes (only meaningful when key is a string —
+        # dataclass-typed configs may contain ``dict[int, ...]`` payloads)
+        if isinstance(key, str) and key.startswith("__"):
             continue
         # Keep lazy callable references as strings; don't force callable introspection.
         if isinstance(value, ResolvableString):
@@ -93,8 +94,9 @@ def update_class_from_dict(obj, data: dict[str, Any], _ns: str = "") -> None:
         KeyError: When dictionary has a key that does not exist in the default config type.
     """
     for key, value in data.items():
-        # key_ns is the full namespace of the key
-        key_ns = _ns + "/" + key
+        # key_ns is the full namespace of the key (cast non-string keys —
+        # e.g. ``dict[int, ...]`` payloads carried verbatim through Hydra)
+        key_ns = _ns + "/" + str(key)
 
         # -- A) if key is present in the object ------------------------------------
         if hasattr(obj, key) or (isinstance(obj, dict) and key in obj):
