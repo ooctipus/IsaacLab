@@ -154,8 +154,13 @@ class record_trajectory_video(ManagerTermBase):
         video_folder: str | None = None,
         fps: int | None = None,
     ) -> None:
-        # Read the latest per-env state and pass it to the recorder.
-        # This is a side-effect-only term -- it returns nothing.
+        env_subset_np = self.recorder.capture_env_indices(num_envs=env.num_envs)
+        if env_subset_np is None:
+            return
+
+        # Read only the sampled envs for the active recording window. The
+        # idle path above is just a counter increment, so ordinary training
+        # steps do not pay GPU->CPU copies for every environment.
         cmd = env.command_manager.get_term(self.command_name)
         robot = env.scene["robot"]
 
@@ -169,8 +174,10 @@ class record_trajectory_video(ManagerTermBase):
         target_pos = cmd.target_state[:, :2]
         success = cmd.get_task_done()
 
-        robot_xy = (robot_pos[:, :2] - env_origins[:, :2]).detach().cpu().numpy()
-        target_xy = (target_pos - env_origins[:, :2]).detach().cpu().numpy()
-        success_np = success.detach().cpu().numpy()
+        env_subset = torch.as_tensor(env_subset_np, device=robot_pos.device, dtype=torch.long)
+        origins = env_origins.index_select(0, env_subset)[:, :2]
+        robot_xy = (robot_pos.index_select(0, env_subset)[:, :2] - origins).detach().cpu().numpy()
+        target_xy = (target_pos.index_select(0, env_subset) - origins).detach().cpu().numpy()
+        success_np = success.index_select(0, env_subset).detach().cpu().numpy()
 
-        self.recorder.maybe_record(robot_xy, target_xy, success_np)
+        self.recorder.append_frame(robot_xy, target_xy, success_np)

@@ -94,8 +94,8 @@ class TrajectoryRecorder:
         """
         self.video_folder = Path(video_folder)
         self.video_folder.mkdir(parents=True, exist_ok=True)
-        self.video_interval = int(video_interval)
-        self.video_length = int(video_length)
+        self.video_interval = max(1, int(video_interval))
+        self.video_length = max(1, int(video_length))
         self.fps = int(fps)
 
         # Pre-bake the background canvas at CANVAS_PX × CANVAS_PX once.
@@ -181,34 +181,24 @@ class TrajectoryRecorder:
         self._frames: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
         self._env_subset: np.ndarray | None = None
 
-    def maybe_record(
+    def capture_env_indices(self, num_envs: int) -> np.ndarray | None:
+        """Advance idle steps cheaply and return env indices during recording."""
+        if not self._recording:
+            if self._step_count % self.video_interval != 0:
+                self._step_count += 1
+                return None
+            self._start_recording(num_envs=num_envs)
+        return self._env_subset
+
+    def append_frame(
         self,
         robot_xy: np.ndarray,
         target_xy: np.ndarray,
         success: np.ndarray,
     ) -> None:
-        """Advance one step.
-
-        Args:
-            robot_xy: ``[num_envs, 2]`` env-local xy of every robot.
-            target_xy: ``[num_envs, 2]`` env-local xy of every target.
-            success: ``[num_envs]`` task lifecycle completion flag.
-        """
-        if not self._recording and self._step_count % self.video_interval == 0:
-            self._start_recording(num_envs=int(robot_xy.shape[0]))
-
-        if self._recording:
-            assert self._env_subset is not None
-            self._frames.append(
-                (
-                    robot_xy[self._env_subset].copy(),
-                    target_xy[self._env_subset].copy(),
-                    success[self._env_subset].copy(),
-                )
-            )
-            if len(self._frames) >= self.video_length:
-                self._finish_recording()
-
+        self._frames.append((robot_xy.copy(), target_xy.copy(), success.copy()))
+        if len(self._frames) >= self.video_length:
+            self._finish_recording()
         self._step_count += 1
 
     # ----------------------------------------------------------------- impl

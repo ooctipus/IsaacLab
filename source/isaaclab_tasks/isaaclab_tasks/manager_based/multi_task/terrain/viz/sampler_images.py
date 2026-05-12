@@ -18,6 +18,14 @@ def wandb_log_image(tag: str, image: object) -> None:
     wandb.log({tag: wandb.Image(image)}, step=int(getattr(wandb.run, "step", 0)))
 
 
+def _wandb_is_active() -> bool:
+    try:
+        import wandb
+    except ImportError:
+        return False
+    return wandb.run is not None
+
+
 def terrain_success_heatmap_image(env, goal_term, success_rates: torch.Tensor):
     import matplotlib
 
@@ -127,6 +135,10 @@ def spawn_goal_scatter_image(env, goal_term, sampler, success_rates: torch.Tenso
         state["target_mask"] = torch.zeros(n_patches, device=device, dtype=torch.bool)
         state["target_mask"][table.target_index] = True
         state["first_scatter_log"] = True
+    edge_ones = state.get("edge_ones")
+    if edge_ones is None or edge_ones.shape != success_rates.shape or edge_ones.device != device:
+        edge_ones = torch.ones_like(success_rates)
+        state["edge_ones"] = edge_ones
     if "dashboard" not in state:
         bg_image, bg_extent = render_terrain_background(env.scene.terrain, device=env.device)
         state["dashboard"] = ScatterDashboard2D(
@@ -141,6 +153,7 @@ def spawn_goal_scatter_image(env, goal_term, sampler, success_rates: torch.Tenso
         n_patches,
         sums_buf=state["patch_sums"],
         counts_buf=state["patch_counts"],
+        ones_buf=edge_ones,
     )
     prob_sums, prob_counts = aggregate_endpoints(
         probs,
@@ -148,6 +161,7 @@ def spawn_goal_scatter_image(env, goal_term, sampler, success_rates: torch.Tenso
         n_patches,
         sums_buf=state["patch_probs"],
         counts_buf=state["patch_probs_counts"],
+        ones_buf=edge_ones,
     )
 
     rates_t = sums / counts.clamp_min(1.0)
@@ -211,7 +225,9 @@ def spawn_goal_scatter_image(env, goal_term, sampler, success_rates: torch.Tenso
         normalizer = weighted_scores.sum() + float(getattr(sampler_impl, "eps", 0.0)) * success_rates.numel()
         attribution = weighted_scores / normalizer.clamp_min(1.0e-12)
         for strategy_idx in plot_strategy_indices:
-            attr_sums, attr_counts = aggregate_endpoints(attribution[strategy_idx], endpoints, n_patches)
+            attr_sums, attr_counts = aggregate_endpoints(
+                attribution[strategy_idx], endpoints, n_patches, ones_buf=edge_ones
+            )
             attr_t = attr_sums / attr_counts.clamp_min(1.0)
             attr_values = attr_t.cpu().numpy()
             attr_valid = attr_counts.cpu().numpy() > 0
@@ -248,7 +264,7 @@ def spawn_goal_scatter_image(env, goal_term, sampler, success_rates: torch.Tenso
             stats_text=f"{count_stats}\nmean delta={mean_delta:+.4f}",
         ),
     )
-    return state["dashboard"].render(panels, valid_mask=valid)
+    return state["dashboard"].render(panels, valid_mask=valid, figsize=(4.5 * len(panels), 5.0), dpi=120)
 
 
 def log_spawn_goal_sampler_images(
@@ -258,6 +274,8 @@ def log_spawn_goal_sampler_images(
     probs: torch.Tensor,
     state: dict | None = None,
 ) -> None:
+    if not _wandb_is_active():
+        return
     if state is None:
         state = getattr(env, "_spawn_goal_sampler_image_state", None)
         if state is None:
