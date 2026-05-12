@@ -23,7 +23,7 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 # in one launch. Fully self-contained under ``multi_task/sensors/`` so a future rebase onto
 # a new IsaacLab version requires no merge work in shared sensor code.
 from isaaclab_tasks.manager_based.multi_task.sensors import FastTerrainScannerCfg
-from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils import PresetCfg, preset
 
 from .terrain import mdp, mdp_presets
 
@@ -52,8 +52,8 @@ class SceneCfg(InteractiveSceneCfg):
         terrain_generator=TerrainGeneratorCfg(
             size=(10.0, 10.0),
             border_width=20.0,
-            num_rows=1,
-            num_cols=12,
+            num_rows=preset(default=1, curriculum=10, terrain_curriculum=10),
+            num_cols=preset(default=1, terrain_curriculum=12),
             horizontal_scale=0.1,
             vertical_scale=0.005,
             slope_threshold=0.75,
@@ -147,7 +147,7 @@ class EventsCfg:
         is_global_time=True,
         params={
             "command_name": "goal_point",
-            "video_interval": 5000,
+            "video_interval": 20000,
             "video_length": 200,
         },
     )

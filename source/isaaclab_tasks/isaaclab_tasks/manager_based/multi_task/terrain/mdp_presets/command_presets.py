@@ -193,7 +193,8 @@ class CommandsCfg:
         payload=CommandPayloadPresetCfg(),  # type: ignore
         task_table=mdp.RelativeStateCommandCfg.TaskTableCfg(
             pool_spacing=0.5,
-            num_targets_per_cell=1,
+            max_spawns_per_cell=30,
+            num_targets_per_cell=5,
             pipeline_cfg=RetargetPipelineCfg(
                 asset_cfg=SceneEntityCfg("robot"),
                 kin=NewtonKinematicsCfg(usd_path=""),

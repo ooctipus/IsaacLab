@@ -100,7 +100,7 @@ def terrain_success_heatmap_image(env, goal_term, success_rates: torch.Tensor):
     fig.suptitle(f"Terrain Success (step {env.common_step_counter})", fontsize=10)
     fig.canvas.draw()
     w, h = fig.canvas.get_width_height()
-    img = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)[:, :, :3].copy()
+    img = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)[:, :, :3].copy()  # pyright: ignore[reportAttributeAccessIssue]
     plt.close(fig)
     return img
 
@@ -123,8 +123,6 @@ def spawn_goal_scatter_image(env, goal_term, sampler, success_rates: torch.Tenso
         state["patch_counts"] = torch.zeros(n_patches, device=device)
         state["patch_probs"] = torch.zeros(n_patches, device=device)
         state["patch_probs_counts"] = torch.zeros(n_patches, device=device)
-        state["patch_spatial"] = torch.zeros(n_patches, device=device)
-        state["patch_spatial_counts"] = torch.zeros(n_patches, device=device)
         state["prev_patch_rates"] = torch.zeros(n_patches, device=device)
         state["target_mask"] = torch.zeros(n_patches, device=device, dtype=torch.bool)
         state["target_mask"][table.target_index] = True
@@ -152,31 +150,6 @@ def spawn_goal_scatter_image(env, goal_term, sampler, success_rates: torch.Tenso
         counts_buf=state["patch_probs_counts"],
     )
 
-    if "frontier" in sampler.names:
-        task_frontier = sampler.scores(success_rates)[sampler.names.index("frontier")]
-        spatial_sums, spatial_counts = aggregate_endpoints(
-            task_frontier,
-            endpoints,
-            n_patches,
-            sums_buf=state["patch_spatial"],
-            counts_buf=state["patch_spatial_counts"],
-        )
-        spatial_values = (spatial_sums / spatial_counts.clamp_min(1.0)).cpu().numpy()
-        spatial_valid = spatial_counts.cpu().numpy() > 0
-        spatial_title = "Task frontier"
-    else:
-        spatial_sums, spatial_counts = aggregate_endpoints(
-            probs,
-            (table.spawn_index,),
-            n_patches,
-            sums_buf=state["patch_spatial"],
-            counts_buf=state["patch_spatial_counts"],
-        )
-        spatial_values = (spatial_sums / spatial_counts.clamp_min(1.0)).cpu().numpy()
-        spatial_valid = spatial_counts.cpu().numpy() > 0
-        spatial_title = "Sampling prob (spawn only)"
-    spatial_values[~spatial_valid] = np.nan
-
     rates_t = sums / counts.clamp_min(1.0)
     prob_t = prob_sums / prob_counts.clamp_min(1.0)
     delta_t = rates_t - state["prev_patch_rates"]
@@ -192,10 +165,12 @@ def spawn_goal_scatter_image(env, goal_term, sampler, success_rates: torch.Tenso
     target_mask = state["target_mask"].cpu().numpy()
 
     n_total = int(valid.sum())
+    n_targets = int(target_mask.sum())
+    n_combinations = int(table.spawn_index.numel())
+    count_stats = f"N={n_total}\ntargets={n_targets}\ncombos={n_combinations}"
     mean_rate = float(rates[valid].mean()) if n_total else 0.0
     mean_delta = float(delta[valid].mean()) if n_total else 0.0
     prob_max = max(float(prob_per_patch[valid].max()) if n_total else 1.0, 1e-9)
-    spatial_max = max(float(spatial_values[spatial_valid].max()) if int(spatial_valid.sum()) else 1.0, 1e-9)
     delta_range = max(float(np.abs(delta[valid]).max()) if n_total else 0.0, 0.05)
 
     rdylgn = plt.get_cmap("RdYlGn")
@@ -208,7 +183,7 @@ def spawn_goal_scatter_image(env, goal_term, sampler, success_rates: torch.Tenso
             vmax=1.0,
             title=f"Success rate (step {env.common_step_counter})",
             legend_entries=[("1.0", rdylgn(1.0)), ("0.5", rdylgn(0.5)), ("0.0", rdylgn(0.0))],
-            stats_text=f"N={n_total}\nmean={mean_rate:.3f}",
+            stats_text=f"{count_stats}\nmean={mean_rate:.3f}",
         ),
         PanelSpec(
             values=prob_per_patch,
@@ -221,22 +196,44 @@ def spawn_goal_scatter_image(env, goal_term, sampler, success_rates: torch.Tenso
                 (f"{prob_max / 2:.2e}", viridis(0.5)),
                 ("0", viridis(0.0)),
             ],
-            stats_text=f"N={n_total}\nsum={float(prob_per_patch[valid].sum()):.3f}",
-        ),
-        PanelSpec(
-            values=spatial_values,
-            cmap="viridis",
-            vmin=0.0,
-            vmax=spatial_max,
-            title=spatial_title,
-            legend_entries=[
-                (f"{spatial_max:.2e}", viridis(1.0)),
-                (f"{spatial_max / 2:.2e}", viridis(0.5)),
-                ("0", viridis(0.0)),
-            ],
-            stats_text=f"N={int(spatial_valid.sum())}\ntargets={int(target_mask.sum())}\nmax={spatial_max:.3e}",
+            stats_text=f"{count_stats}\nsum={float(prob_per_patch[valid].sum()):.3f}",
             outline_mask=target_mask,
         ),
+    ]
+
+    sampler_impl = getattr(sampler, "_impl", None)
+    plot_strategy_indices = getattr(sampler_impl, "_plot_strategy_indices", [])
+    strategy_weights = getattr(sampler_impl, "_weights", None)
+    if plot_strategy_indices and strategy_weights is not None:
+        scores = sampler.scores(success_rates)
+        weights = strategy_weights.to(device=success_rates.device, dtype=success_rates.dtype).clamp_min(0.0)
+        weighted_scores = scores * weights.view(-1, 1)
+        normalizer = weighted_scores.sum() + float(getattr(sampler_impl, "eps", 0.0)) * success_rates.numel()
+        attribution = weighted_scores / normalizer.clamp_min(1.0e-12)
+        for strategy_idx in plot_strategy_indices:
+            attr_sums, attr_counts = aggregate_endpoints(attribution[strategy_idx], endpoints, n_patches)
+            attr_t = attr_sums / attr_counts.clamp_min(1.0)
+            attr_values = attr_t.cpu().numpy()
+            attr_valid = attr_counts.cpu().numpy() > 0
+            attr_values[~attr_valid] = np.nan
+            attr_max = max(float(attr_values[attr_valid].max()) if int(attr_valid.sum()) else 1.0, 1e-9)
+            panels.append(
+                PanelSpec(
+                    values=attr_values,
+                    cmap="viridis",
+                    vmin=0.0,
+                    vmax=attr_max,
+                    title=f"{sampler.names[strategy_idx]} attribution",
+                    legend_entries=[
+                        (f"{attr_max:.2e}", viridis(1.0)),
+                        (f"{attr_max / 2:.2e}", viridis(0.5)),
+                        ("0", viridis(0.0)),
+                    ],
+                    stats_text=f"{count_stats}\nmax={attr_max:.3e}",
+                )
+            )
+
+    panels.append(
         PanelSpec(
             values=delta,
             cmap="RdYlGn",
@@ -248,9 +245,9 @@ def spawn_goal_scatter_image(env, goal_term, sampler, success_rates: torch.Tenso
                 ("0", rdylgn(0.5)),
                 (f"-{delta_range:.2f}", rdylgn(0.0)),
             ],
-            stats_text=f"N={n_total}\nmean delta={mean_delta:+.4f}",
+            stats_text=f"{count_stats}\nmean delta={mean_delta:+.4f}",
         ),
-    ]
+    )
     return state["dashboard"].render(panels, valid_mask=valid)
 
 

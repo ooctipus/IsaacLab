@@ -99,7 +99,7 @@ def _draw_panel(
                 [0],
                 marker="o",
                 color="none",
-                markerfacecolor=color,
+                markerfacecolor=color,  # pyright: ignore[reportArgumentType]
                 markersize=8,
                 label=label,
             )
@@ -395,6 +395,6 @@ class ScatterDashboard2D:
 
         fig.canvas.draw()
         w, h = fig.canvas.get_width_height()
-        img = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)[:, :, :3].copy()
+        img = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)[:, :, :3].copy()  # pyright: ignore[reportAttributeAccessIssue]
         plt.close(fig)
         return img

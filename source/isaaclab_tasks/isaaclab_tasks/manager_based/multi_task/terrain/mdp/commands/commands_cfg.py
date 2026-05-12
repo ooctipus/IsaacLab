@@ -65,6 +65,16 @@ class RelativeStateCommandCfg(CommandTermCfg):
         contribute no pairs.
         """
 
+        max_spawns_per_cell: int = 0
+        """Optional cap on per-cell spawn states for the spawn × target pairing.
+
+        ``0`` keeps every IK-solved state in the cell as a possible spawn.
+        A positive integer ``N`` first picks ``min(N, n_c)`` spawn states via
+        :func:`~isaaclab_tasks.manager_based.multi_task.utils.grid_downsample.grid_bucket_downsample`.
+        Target states are then selected from the remaining non-spawn states
+        when any remain, falling back to the full cell state pool otherwise.
+        """
+
         num_targets_per_cell: int = 0
         """Optional cap on per-cell target states for the spawn × target pairing.
 

@@ -26,6 +26,8 @@ class SamplerTorch:
         ]
         self.eps = float(cfg.eps)
         self.names = [strategy.name for strategy, _ in self.strategies]
+        self._weights = torch.tensor([weight for _, weight in self.strategies], device=layout.coords.device)
+        self._plot_strategy_indices = [i for i, strategy_cfg in enumerate(cfg.strategies) if strategy_cfg.plot]
 
     def scores(self, success_rates: torch.Tensor) -> torch.Tensor:
         """Return contiguous per-strategy score rows shaped ``[num_strategies, num_items]``."""

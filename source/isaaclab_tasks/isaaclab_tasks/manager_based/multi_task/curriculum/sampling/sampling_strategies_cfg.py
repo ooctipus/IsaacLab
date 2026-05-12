@@ -33,6 +33,8 @@ class BetaSamplingStrategyCfg:
     """Runtime strategy class."""
     weight: float = 1.0
     """Multiplier on this strategy's score before sampler normalization."""
+    plot: bool = False
+    """Whether terrain scatter diagnostics should include this strategy's attribution panel."""
     target: float = 0.66
     """Success rate where the Beta score peaks."""
     kappa: float = 1.0
@@ -63,6 +65,8 @@ class FrontierSamplingStrategyCfg:
     """Runtime strategy class."""
     weight: float = 1.0
     """Multiplier on this strategy's score before sampler normalization."""
+    plot: bool = False
+    """Whether terrain scatter diagnostics should include this strategy's attribution panel."""
     k: int = 8
     """Number of nearest neighbors in task feature space."""
     dilation_steps: int = 1
@@ -89,6 +93,8 @@ class UniformSamplingStrategyCfg:
     """Runtime strategy class."""
     weight: float = 1.0
     """Multiplier on this strategy's constant score before sampler normalization."""
+    plot: bool = False
+    """Whether terrain scatter diagnostics should include this strategy's attribution panel."""
 
 
 SamplingStrategyCfg = BetaSamplingStrategyCfg | FrontierSamplingStrategyCfg | UniformSamplingStrategyCfg

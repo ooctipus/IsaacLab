@@ -72,10 +72,11 @@ def grid_bucket_downsample(pts: torch.Tensor, k: int) -> torch.Tensor:
     extents = (maxs - mins).clamp(min=1e-6)
     volume = extents.prod()
 
-    # Oversample cells by 1.5x so empty buckets (from heightmap holes,
-    # collision-reject regions, etc.) don't starve the sampler below
-    # ``k``; we random-subsample the survivors down to exactly ``k``.
-    target_cells = max(int(k * 1.5), k + 1)
+    # Oversample cells so empty buckets (from heightmap holes, collision-reject
+    # regions, etc.) don't starve the sampler below ``k``. Cap at the available
+    # candidate count, then random-subsample bucket survivors down to exactly
+    # ``k``.
+    target_cells = min(n, max(int(k * 3.0), k + 1))
     cell_side = (volume / target_cells) ** (1.0 / d)
 
     bidx = ((pts - mins) / cell_side).long()  # [N, D]

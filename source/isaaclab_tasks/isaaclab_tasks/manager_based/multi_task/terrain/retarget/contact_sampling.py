@@ -170,7 +170,7 @@ class Sampler(SamplerBase):
         # ``foot_ground_offset`` is the foot-body-to-sole z offset, derived
         # from the foot's actual collision geometry (sphere/capsule/box/mesh).
         geom = kin.foot_geometry(foot_body_ids)
-        self.foot_ground_offset = geom["foot_ground_offset"]
+        self.foot_ground_offset: float = float(geom["foot_ground_offset"])
         self.default_joint_q = kin.default_joint_q
 
         # Per-foot nominal angle, canonical-shape library, and standing
@@ -454,7 +454,9 @@ class Sampler(SamplerBase):
             # outputs. All per-thread intermediates live in registers,
             # so the only K-sized memory the sampler needs is the
             # output tensors ``run_fused_sampler`` allocates internally.
-            print(f"[contact_sampling] fused single-kernel sampler over K={K} placements", flush=True)
+            if torch.device(dev_str).type == "cuda":
+                torch.cuda.synchronize()
+            fused_t0 = time.perf_counter()
             outputs = run_fused_sampler(
                 seed=42,
                 K=K,
@@ -466,6 +468,16 @@ class Sampler(SamplerBase):
                 outward_pen=outward_pen,
                 force_all_snap=force_all_snap,
                 foot_ground_offset=self.foot_ground_offset,
+            )
+            if torch.device(dev_str).type == "cuda":
+                torch.cuda.synchronize()
+            fused_dt = time.perf_counter() - fused_t0
+            self.sub_timings["project.fused_kernel"] = self.sub_timings.get("project.fused_kernel", 0.0) + fused_dt
+            throughput = K / max(fused_dt, 1.0e-12) / 1.0e6
+            print(
+                f"[contact_sampling] fused single-kernel sampler over K={K} placements "
+                f"in {fused_dt:.3f} s ({throughput:.2f} M placements/s)",
+                flush=True,
             )
             yaws = outputs["yaws"]
             tpl_idx = outputs["tpl_idx"]

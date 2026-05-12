@@ -16,7 +16,7 @@ from .. import terrains
 class SubTerrainPresetCfg(PresetCfg):
     """Named sub-terrain configurations for the position locomotion task."""
 
-    curriculum = {
+    terrain_curriculum = {
         "gap": terrains.GAP_CURRICULUM,
         "pit": terrains.PIT_CURRICULUM,
         "extreme_stair": terrains.EXTREME_STAIR_CURRICULUM,
@@ -40,4 +40,4 @@ class SubTerrainPresetCfg(PresetCfg):
     stepping_stone_curriculum = {"stepping_stone": terrains.STEPPING_STONE_CURRICULUM}
     radiating_beam = {"radiating_beam": terrains.RADIATING_BEAM}
     flat = {"flat": terrains.FLAT}
-    default = curriculum
+    default = terrain_curriculum

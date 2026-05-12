@@ -207,6 +207,7 @@ class SamplerWarp:
         self.eps = float(cfg.eps)
         self.seed = int(cfg.seed)
         self.names: list[str] = []
+        self._plot_strategy_indices = [i for i, strategy_cfg in enumerate(cfg.strategies) if strategy_cfg.plot]
 
         kinds: list[int] = []
         weights: list[float] = []

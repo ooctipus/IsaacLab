@@ -50,13 +50,6 @@ class PositionCurriculumSamplerCfg:
                     ],
                     eps=1e-8,
                 ),
-                frontier_uniform=SamplerCfg(
-                    strategies=[
-                        UniformSamplingStrategyCfg(weight=1.0),
-                        FrontierSamplingStrategyCfg(k=8, dilation_steps=2, weight=2.0),
-                    ],
-                    eps=1e-8,
-                ),
             ),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=20),
             "success_bind": "env.termination_manager.get_term('success')",

@@ -129,6 +129,7 @@ def build_relative_state_task_table(cfg: RelativeStateCommandCfg, env: ManagerBa
         pool_sampling_size=table_cfg.pool_sampling_size,
         robot_joint_names=robot.joint_names,
         exclude_self_pairs=table_cfg.exclude_self_pairs,
+        max_spawns_per_cell=table_cfg.max_spawns_per_cell,
         num_targets_per_cell=table_cfg.num_targets_per_cell,
     )
     target_fk_kin = table_data.pop("kin")
@@ -335,6 +336,29 @@ def _reorder_spawn_state_joints(
     return torch.cat([spawn_states[:, :7], spawn_states[:, 7:].index_select(1, joint_order)], dim=1)
 
 
+def _print_retarget_timing_table(timings: dict[str, float], retarget_dt: float, final_fps_dt: float) -> None:
+    """Print a compact timing summary for task-table retargeting."""
+    rows = [
+        ("sampler total", timings.get("sampler", 0.0)),
+        ("  fused projection", timings.get("    sampler.project.fused_kernel", 0.0)),
+        ("  morph patch pool", timings.get("  sampler.morph", 0.0)),
+        ("  polygon projection", timings.get("  sampler.project", 0.0)),
+        ("  polygon FPS", timings.get("  sampler.sampler_fps", 0.0)),
+        ("IK build", timings.get("ik_build", 0.0)),
+        ("IK solve", timings.get("ik_solve", 0.0)),
+        ("FK eval", timings.get("fk_eval", 0.0)),
+        ("criteria", timings.get("criteria", 0.0)),
+        ("final FPS", final_fps_dt),
+    ]
+    denom = max(retarget_dt + final_fps_dt, 1.0e-12)
+    width = max(len(name) for name, _ in rows)
+    print(f"  Retarget timings (pipeline={retarget_dt:.3f}s, final_fps={final_fps_dt:.3f}s)", flush=True)
+    for name, dt in rows:
+        if dt <= 0.0:
+            continue
+        print(f"    {name:<{width}} {dt:>8.3f}s  {100.0 * dt / denom:>5.1f}%", flush=True)
+
+
 def build_task_table(
     terrain_mesh: trimesh.Trimesh,
     terrain_origins: torch.Tensor,
@@ -349,6 +373,7 @@ def build_task_table(
     pool_sampling_size: tuple[float, float] | None = None,
     robot_joint_names: Sequence[str] | None = None,
     exclude_self_pairs: bool = True,
+    max_spawns_per_cell: int = 0,
     num_targets_per_cell: int = 0,
 ) -> dict:
     """Run the IK pipeline, bin states by terrain cell, build task table.
@@ -375,6 +400,12 @@ def build_task_table(
             spawn and target reference the same state, removing the diagonal
             of each per-cell Cartesian product. Cells with fewer than two
             valid states contribute no pairs.
+        max_spawns_per_cell: Optional cap on per-cell spawn states for
+            spawn × target pairing. ``0`` keeps every valid state in the cell.
+            A positive integer ``N`` picks ``min(N, n_c)`` spawn states via
+            :func:`~isaaclab_tasks.manager_based.multi_task.utils.grid_downsample.grid_bucket_downsample`.
+            Target states are then selected from the remaining non-spawn states
+            when any remain, falling back to the full cell state pool otherwise.
         num_targets_per_cell: Optional cap on per-cell target states for
             the spawn × target pairing. ``0`` keeps the full per-cell
             Cartesian product (``n_c × n_c``). A positive integer ``N``
@@ -444,6 +475,7 @@ def build_task_table(
         sampling_y_range,
         override=True,
     )
+    retarget_t0 = _timing_checkpoint(device)
     with trace_span(
         "task_table.retarget_pipeline",
         requested_states=total_states,
@@ -454,6 +486,7 @@ def build_task_table(
         grid_origin = np.zeros(3, dtype=np.float32)
         buffer = pipeline.run(wp_mesh, grid_origin, total_states)
         last_rejection_summary = pipeline.rejection_summary
+    retarget_dt = _timing_checkpoint(device) - retarget_t0
     # ``buffer.num_selected`` == post-criteria count (pipeline emits the
     # un-thinned set; thinning is the caller's job).
     n_candidates = int(buffer.num_selected)
@@ -468,6 +501,7 @@ def build_task_table(
     # the StateBuffer indirection (allocates ``[N, state_dim]`` zeros
     # plus an explicit copy + clone) that's overkill for a one-shot.
     sizing = grid_pipeline_cfg.sampler.sizing
+    final_fps_t0 = _timing_checkpoint(device)
     with trace_span("task_table.final_fps", n_candidates=n_candidates):
         apply_final_fps(
             buffer,
@@ -478,6 +512,7 @@ def build_task_table(
         target_count = int(buffer.num_selected)
         survivors_idx = buffer._selected[:target_count].long()
         spawn_states_raw = buffer.joint_q_result_t[survivors_idx].clone()
+    final_fps_dt = _timing_checkpoint(device) - final_fps_t0
 
     print(
         f"  Global retargeting: requested {total_states}, selected {target_count} "
@@ -488,9 +523,11 @@ def build_task_table(
     if chunk_meta:
         print(
             f"  IK chunks: {chunk_meta['n_chunks']} @ chunk_size={chunk_meta['chunk_size']:,}"
-            f" (N={chunk_meta['N']:,}, max_iters={chunk_meta['max_iters']})",
+            f" (N={chunk_meta['N']:,}, max_iters={chunk_meta['max_iters']}, "
+            f"solve={pipeline._timings.get('ik_solve', 0.0):.3f}s)",
             flush=True,
         )
+    _print_retarget_timing_table(pipeline._timings, retarget_dt, final_fps_dt)
 
     with trace_span("task_table.pack_spawn_states", selected_states=target_count):
         newton_joint_names = _newton_revolute_joint_names(pipeline.kin)
@@ -544,13 +581,16 @@ def build_task_table(
     )
 
     # --- Step 3: Per-cell spawn × target pairing (shared across command types) ---
-    # For each cell c with n_c spawn states, the target set is either the
-    # full cell (``num_targets_per_cell == 0`` -> n_c × n_c pairs) or an
-    # FPS-thinned subset of size ``min(N, n_c)`` (-> n_c × min(N, n_c) pairs).
+    # For each cell c with n_c states, the spawn set is either the full cell
+    # or a downsampled subset of size ``min(max_spawns_per_cell, n_c)``. The
+    # target set is independently either the full target-candidate pool or a
+    # downsampled subset of size ``min(num_targets_per_cell, n_candidates)``.
     # Cell layout is built once and reused for every command type.
     pair_spawn_parts: list[torch.Tensor] = []
     pair_target_parts: list[torch.Tensor] = []
     pair_tile_parts: list[torch.Tensor] = []
+    selected_spawn_counts: list[int] = []
+    selected_target_counts: list[int] = []
     offsets_cpu = cell_offsets.cpu().tolist()
     spawn_xy = spawn_states[:, :2]
     with trace_span("task_table.build_pairs", non_empty_cells=non_empty):
@@ -564,15 +604,29 @@ def build_task_table(
                 # Need at least two distinct states to form a non-self pair.
                 continue
             ids = cell_values[start:end]
-            if num_targets_per_cell <= 0:
-                target_ids_in_cell = ids
+            if max_spawns_per_cell == 0:
+                spawn_ids_in_cell = ids
+                target_candidate_ids = ids
             else:
-                n_targets = min(int(num_targets_per_cell), n_c)
-                local_idx = grid_bucket_downsample(spawn_xy[ids], n_targets)
-                target_ids_in_cell = ids[local_idx]
+                if max_spawns_per_cell < 1:
+                    raise ValueError(f"max_spawns_per_cell must be >= 1 or 0 for unlimited, got {max_spawns_per_cell}.")
+                n_spawns = min(int(max_spawns_per_cell), n_c)
+                local_idx = grid_bucket_downsample(spawn_xy[ids], n_spawns)
+                spawn_ids_in_cell = ids[local_idx]
+                spawn_mask = torch.zeros(n_c, device=device, dtype=torch.bool)
+                spawn_mask[local_idx] = True
+                target_candidate_ids = ids[~spawn_mask]
+                if target_candidate_ids.numel() == 0:
+                    target_candidate_ids = ids
+            if num_targets_per_cell <= 0:
+                target_ids_in_cell = target_candidate_ids
+            else:
+                n_targets = min(int(num_targets_per_cell), int(target_candidate_ids.shape[0]))
+                local_idx = grid_bucket_downsample(spawn_xy[target_candidate_ids], n_targets)
+                target_ids_in_cell = target_candidate_ids[local_idx]
             n_t = int(target_ids_in_cell.shape[0])
-            spawn_ids = ids.repeat_interleave(n_t)
-            target_ids = target_ids_in_cell.repeat(n_c)
+            spawn_ids = spawn_ids_in_cell.repeat_interleave(n_t)
+            target_ids = target_ids_in_cell.repeat(int(spawn_ids_in_cell.shape[0]))
             if exclude_self_pairs:
                 keep = spawn_ids != target_ids
                 spawn_ids = spawn_ids[keep]
@@ -580,6 +634,8 @@ def build_task_table(
             pair_count = int(spawn_ids.shape[0])
             if pair_count == 0:
                 continue
+            selected_spawn_counts.append(int(spawn_ids_in_cell.shape[0]))
+            selected_target_counts.append(int(target_ids_in_cell.shape[0]))
             pair_spawn_parts.append(spawn_ids)
             pair_target_parts.append(target_ids)
             pair_tile_parts.append(torch.full((pair_count,), cell, device=device, dtype=torch.long))
@@ -595,6 +651,34 @@ def build_task_table(
         num_pairs_per_type = int(pair_spawn.shape[0])
     if num_pairs_per_type == 0:
         raise RuntimeError("No terrain cells contained valid retargeted states; cannot build a task table.")
+    n_pair_cells = len(selected_spawn_counts)
+    spawn_min = min(selected_spawn_counts)
+    spawn_max = max(selected_spawn_counts)
+    spawn_mean = sum(selected_spawn_counts) / n_pair_cells
+    target_min = min(selected_target_counts)
+    target_max = max(selected_target_counts)
+    target_mean = sum(selected_target_counts) / n_pair_cells
+    spawn_cap_msg = "unlimited" if max_spawns_per_cell == 0 else str(max_spawns_per_cell)
+    target_cap_msg = "unlimited" if num_targets_per_cell <= 0 else str(num_targets_per_cell)
+    print(
+        "  Pair layout: "
+        f"spawn_cap={spawn_cap_msg}, target_cap={target_cap_msg}, cells={n_pair_cells}/{num_subterrains}, "
+        f"spawns/cell min={spawn_min} mean={spawn_mean:.1f} max={spawn_max}, "
+        f"targets/cell min={target_min} mean={target_mean:.1f} max={target_max}, "
+        f"pairs/command={num_pairs_per_type}",
+        flush=True,
+    )
+
+    with trace_span("task_table.compact_spawn_states", states=int(spawn_states.shape[0]), pairs=num_pairs_per_type):
+        used_state_ids, inverse = torch.unique(torch.cat([pair_spawn, pair_target]), sorted=True, return_inverse=True)
+        pair_spawn = inverse[:num_pairs_per_type]
+        pair_target = inverse[num_pairs_per_type:]
+        if int(used_state_ids.shape[0]) < int(spawn_states.shape[0]):
+            print(
+                f"  Compacted task states: {int(spawn_states.shape[0])} -> {int(used_state_ids.shape[0])}",
+                flush=True,
+            )
+        spawn_states = spawn_states.index_select(0, used_state_ids)
 
     # --- Step 4: Replicate pair layout per command type; sample per-type params ---
     with trace_span(
