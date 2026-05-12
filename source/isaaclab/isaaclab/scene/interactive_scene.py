@@ -350,11 +350,7 @@ class InteractiveScene:
         masks: list[torch.Tensor] = []
 
         for asset_name, asset_cfg in ordered_items:
-            cfgs = (
-                asset_cfg.rigid_objects.values()
-                if isinstance(asset_cfg, RigidObjectCollectionCfg)
-                else [asset_cfg]
-            )
+            cfgs = asset_cfg.rigid_objects.values() if isinstance(asset_cfg, RigidObjectCollectionCfg) else [asset_cfg]
             for cfg in (c for c in cfgs if hasattr(c, "prim_path")):
                 prim_path = cfg.prim_path.format(ENV_REGEX_NS=self.env_regex_ns)
                 if not hasattr(cfg, "spawn") or cfg.spawn is None or self.env_ns not in prim_path:
