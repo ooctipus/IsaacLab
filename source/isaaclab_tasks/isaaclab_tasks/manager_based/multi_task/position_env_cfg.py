@@ -183,9 +183,9 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
     )
 
     def __post_init__(self):
-        self.decimation = 4
-        self.episode_length_s = 12.0
-        self.sim.dt = 0.01
+        self.decimation = 8
+        self.episode_length_s = 6.0
+        self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
 
