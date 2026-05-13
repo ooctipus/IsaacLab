@@ -85,21 +85,32 @@ enter_container() {
   if [ -f "${HOME}/.netrc" ]; then
     docker_args+=(-v "${HOME}/.netrc:/root/.netrc:ro")
   fi
-  if [ -d "${HOME}/.cache/ov" ]; then
-    docker_args+=(-v "${HOME}/.cache/ov:/root/.cache/ov:rw")
-  fi
-  if [ -d "${HOME}/.cache/nvidia/GLCache" ]; then
-    docker_args+=(-v "${HOME}/.cache/nvidia/GLCache:/root/.cache/nvidia/GLCache:rw")
-  fi
-  if [ -d "${HOME}/.nv/ComputeCache" ]; then
-    docker_args+=(-v "${HOME}/.nv/ComputeCache:/root/.nv/ComputeCache:rw")
-  fi
-  if [ -d "${HOME}/.cache/NVIDIA/OptixCache" ]; then
-    docker_args+=(-v "${HOME}/.cache/NVIDIA/OptixCache:/root/.cache/NVIDIA/OptixCache:rw")
-  fi
-  if [ -d "_isaac_sim/kit/cache" ]; then
-    docker_args+=(-v "$(readlink -f _isaac_sim/kit/cache):/isaac-sim/kit/cache:rw")
-  fi
+
+  add_cache_mount() {
+    local env_name="$1"
+    local default_source="$2"
+    local shared_root_suffix="$3"
+    local target="$4"
+    local source="${!env_name:-}"
+
+    if [ -z "$source" ] && [ -n "${HOST_ISAACLAB_CACHE_ROOT:-}" ]; then
+      source="${HOST_ISAACLAB_CACHE_ROOT}/${shared_root_suffix}"
+    fi
+    if [ -z "$source" ]; then
+      source="$default_source"
+    fi
+    if [ -d "$source" ]; then
+      docker_args+=(-v "$(readlink -f "$source"):${target}:rw")
+    fi
+  }
+
+  add_cache_mount HOST_ISAACSIM_KIT_CACHE_PATH "_isaac_sim/kit/cache" "isaac-sim/kit/cache" "/isaac-sim/kit/cache"
+  add_cache_mount HOST_OMNIVERSE_CACHE_PATH "${HOME}/.cache/ov" "ov" "/root/.cache/ov"
+  add_cache_mount HOST_NVIDIA_GL_CACHE_PATH \
+    "${HOME}/.cache/nvidia/GLCache" "nvidia/GLCache" "/root/.cache/nvidia/GLCache"
+  add_cache_mount HOST_NVIDIA_COMPUTE_CACHE_PATH "${HOME}/.nv/ComputeCache" "nv/ComputeCache" "/root/.nv/ComputeCache"
+  add_cache_mount HOST_NVIDIA_OPTIX_CACHE_PATH \
+    "${HOME}/.cache/NVIDIA/OptixCache" "NVIDIA/OptixCache" "/root/.cache/NVIDIA/OptixCache"
 
   mkdir -p models_tmp
   docker_args+=(-v "$(pwd)/models_tmp:/workspace/isaaclab/models_tmp:rw")
