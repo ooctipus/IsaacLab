@@ -167,6 +167,7 @@ def aggregate_endpoints(
     *,
     sums_buf: torch.Tensor | None = None,
     counts_buf: torch.Tensor | None = None,
+    ones_buf: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Sum-reduce ``values`` into ``[n_points]`` bins via ``scatter_add_``.
 
@@ -184,6 +185,9 @@ def aggregate_endpoints(
         sums_buf: Optional preallocated ``[n_points]`` buffer to reuse.
             Zeroed in place; created on ``values.device`` if ``None``.
         counts_buf: Same, for the count.
+        ones_buf: Optional preallocated ``[E]`` tensor of ones with the
+            same dtype/device as :paramref:`values`. Reusing it avoids a
+            logging-time allocation for every panel aggregation.
 
     Returns:
         ``(sums, counts)`` — each shape ``[n_points]`` on
@@ -199,7 +203,14 @@ def aggregate_endpoints(
         counts_buf = torch.zeros(n_points, device=values.device, dtype=values.dtype)
     else:
         counts_buf.zero_()
-    ones = torch.ones_like(values)
+    if ones_buf is None:
+        ones = torch.ones_like(values)
+    else:
+        if ones_buf.shape != values.shape:
+            raise ValueError(f"ones_buf must have shape {tuple(values.shape)}, got {tuple(ones_buf.shape)}")
+        if ones_buf.device != values.device or ones_buf.dtype != values.dtype:
+            raise ValueError("ones_buf must have the same device and dtype as values")
+        ones = ones_buf
     for idx in endpoint_indices:
         sums_buf.scatter_add_(0, idx, values)
         counts_buf.scatter_add_(0, idx, ones)
