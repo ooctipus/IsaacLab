@@ -363,13 +363,42 @@ class ContainerInterface:
     def _add_host_cache_mounts(self) -> None:
         """Use existing host shader/cache directories to avoid recompiling shaders after container recreation."""
         cache_mounts = [
-            (self.context_dir.parent / "_isaac_sim" / "kit" / "cache", "${DOCKER_ISAACSIM_ROOT_PATH}/kit/cache"),
-            (Path.home() / ".cache" / "ov", "${DOCKER_USER_HOME}/.cache/ov"),
-            (Path.home() / ".cache" / "nvidia" / "GLCache", "${DOCKER_USER_HOME}/.cache/nvidia/GLCache"),
-            (Path.home() / ".nv" / "ComputeCache", "${DOCKER_USER_HOME}/.nv/ComputeCache"),
-            (Path.home() / ".cache" / "NVIDIA" / "OptixCache", "${DOCKER_USER_HOME}/.cache/NVIDIA/OptixCache"),
+            (
+                "HOST_ISAACSIM_KIT_CACHE_PATH",
+                self.context_dir.parent / "_isaac_sim" / "kit" / "cache",
+                Path("isaac-sim/kit/cache"),
+                "${DOCKER_ISAACSIM_ROOT_PATH}/kit/cache",
+            ),
+            (
+                "HOST_OMNIVERSE_CACHE_PATH",
+                Path.home() / ".cache" / "ov",
+                Path("ov"),
+                "${DOCKER_USER_HOME}/.cache/ov",
+            ),
+            (
+                "HOST_NVIDIA_GL_CACHE_PATH",
+                Path.home() / ".cache" / "nvidia" / "GLCache",
+                Path("nvidia/GLCache"),
+                "${DOCKER_USER_HOME}/.cache/nvidia/GLCache",
+            ),
+            (
+                "HOST_NVIDIA_COMPUTE_CACHE_PATH",
+                Path.home() / ".nv" / "ComputeCache",
+                Path("nv/ComputeCache"),
+                "${DOCKER_USER_HOME}/.nv/ComputeCache",
+            ),
+            (
+                "HOST_NVIDIA_OPTIX_CACHE_PATH",
+                Path.home() / ".cache" / "NVIDIA" / "OptixCache",
+                Path("NVIDIA/OptixCache"),
+                "${DOCKER_USER_HOME}/.cache/NVIDIA/OptixCache",
+            ),
         ]
-        existing_cache_mounts = [(source, target) for source, target in cache_mounts if source.is_dir()]
+        existing_cache_mounts = [
+            (env_name, source, target)
+            for env_name, default_source, shared_root_suffix, target in cache_mounts
+            if (source := self._resolve_host_cache_path(env_name, default_source, shared_root_suffix)) is not None
+        ]
         host_cache_yaml = self.context_dir / ".isaac-lab-host-cache.yaml"
 
         if not existing_cache_mounts:
@@ -377,8 +406,8 @@ class ContainerInterface:
             return
 
         volume_lines = [
-            f"      - type: bind\n        source: {source}\n        target: {target}\n"
-            for source, target in existing_cache_mounts
+            f"      - type: bind\n        source: ${{{env_name}}}\n        target: {target}\n"
+            for env_name, _source, target in existing_cache_mounts
         ]
         volumes_block = "".join(volume_lines)
         host_cache_yaml.write_text(
@@ -394,6 +423,20 @@ class ContainerInterface:
             encoding="utf-8",
         )
         self.add_yamls += ["--file", ".isaac-lab-host-cache.yaml"]
+
+    def _resolve_host_cache_path(self, env_name: str, default_source: Path, shared_root_suffix: Path) -> Path | None:
+        """Resolve a host cache path and export it for the generated compose override."""
+        source = Path(self.environ[env_name]) if env_name in self.environ else None
+        if source is None and "HOST_ISAACLAB_CACHE_ROOT" in self.environ:
+            source = Path(self.environ["HOST_ISAACLAB_CACHE_ROOT"]) / shared_root_suffix
+        if source is None:
+            source = default_source
+
+        if not source.is_dir():
+            return None
+
+        self.environ[env_name] = str(source)
+        return source
 
     def _resolve_image_extension(self, yamls: list[str] | None = None, envs: list[str] | None = None):
         """Resolve the image extension by setting up YAML files, profiles, and environment files for the
