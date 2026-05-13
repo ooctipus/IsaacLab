@@ -239,14 +239,23 @@ clean_all() {
 # Compute hash of dependency files
 # =============================================================================
 compute_deps_hash() {
-  # Hash files that affect pip install (setup.py, requirements.txt only).
-  # extension.toml is metadata and does not affect pip dependencies.
-  find source \( -name "setup.py" -o -name "requirements.txt" \) 2>/dev/null | \
-    sort | \
-    xargs cat 2>/dev/null | \
-    md5sum | \
-    cut -d' ' -f1 | \
-    head -c 12
+  # Hash files that affect the dependency/base image. This includes the Isaac Sim
+  # base image selection, Docker build recipe, package metadata, and extension apt deps.
+  {
+    for file in docker/.env.base docker/Dockerfile.base docker/docker-compose.yaml pyproject.toml environment.yml isaaclab.sh; do
+      if [ -f "$file" ]; then
+        echo "### ${file}"
+        cat "$file"
+      fi
+    done
+
+    find source \( -name "setup.py" -o -name "requirements.txt" -o -name "extension.toml" \) -type f 2>/dev/null | \
+      sort | \
+      while IFS= read -r file; do
+        echo "### ${file}"
+        cat "$file"
+      done
+  } | md5sum | cut -d' ' -f1 | head -c 12
 }
 
 # =============================================================================
