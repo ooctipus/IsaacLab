@@ -60,6 +60,39 @@ workflow:
           export MKL_NUM_THREADS="${OMP_NUM_THREADS}"
           export OPENBLAS_NUM_THREADS="${OMP_NUM_THREADS}"
 
+          CLUSTER_CACHE_ROOT="{{ cluster_cache_root }}"
+          if [ -z "${CLUSTER_CACHE_ROOT}" ]; then
+            for candidate in /mnt/amlfs-*/home/{{ cache_user }}; do
+              if [ -d "${candidate}" ] && [ -w "${candidate}" ]; then
+                CLUSTER_CACHE_ROOT="${candidate}/.cache/isaaclab-cluster"
+                break
+              fi
+            done
+          fi
+
+          if [ -n "${CLUSTER_CACHE_ROOT}" ]; then
+            CLUSTER_CACHE_ROOT="${CLUSTER_CACHE_ROOT}/${ISAACSIM_VERSION:-unknown}/{{ image }}"
+            mkdir -p \
+              "${CLUSTER_CACHE_ROOT}/kit-cache" \
+              "${CLUSTER_CACHE_ROOT}/ov" \
+              "${CLUSTER_CACHE_ROOT}/nvidia/GLCache" \
+              "${CLUSTER_CACHE_ROOT}/nv/ComputeCache"
+
+            rm -rf \
+              /workspace/isaaclab/_isaac_sim/kit/cache \
+              /root/.cache/ov \
+              /root/.cache/nvidia/GLCache \
+              /root/.nv/ComputeCache
+            mkdir -p /workspace/isaaclab/_isaac_sim/kit /root/.cache/nvidia /root/.nv
+            ln -s "${CLUSTER_CACHE_ROOT}/kit-cache" /workspace/isaaclab/_isaac_sim/kit/cache
+            ln -s "${CLUSTER_CACHE_ROOT}/ov" /root/.cache/ov
+            ln -s "${CLUSTER_CACHE_ROOT}/nvidia/GLCache" /root/.cache/nvidia/GLCache
+            ln -s "${CLUSTER_CACHE_ROOT}/nv/ComputeCache" /root/.nv/ComputeCache
+            echo "[INFO] Using shared Isaac Lab cache: ${CLUSTER_CACHE_ROOT}"
+          else
+            echo "[INFO] No writable AMLFS cache root found; using container-local caches."
+          fi
+
           {% if num_node > 1 %}
           /workspace/isaaclab/_isaac_sim/python.sh -m torch.distributed.run \
             --nnodes {{ num_node }} \
@@ -111,5 +144,7 @@ default-values:
   storage: 256
   platform: dgx-h100
   dataset: isaac-lab-ppo-model
+  cache_user: zhengyuz
+  cluster_cache_root: ""
   script: scripts/reinforcement_learning/rsl_rl/train.py
   args:
