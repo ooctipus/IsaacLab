@@ -152,6 +152,8 @@ class RelativeStateCommand(CommandTerm):
         num_row, num_col, num_spawn_per_terrain, _ = spawn_src.shape
         n_subterrains = num_row * num_col
         spawn_flat = spawn_src[..., :3].clone().reshape(n_subterrains, num_spawn_per_terrain, 3)
+        # Terrain patches are surface points; commands track the robot root pose above that surface.
+        root_pos_offset = wp.to_torch(self.robot.data.default_root_pose)[0, :3]
         ranges = torch.zeros((len(commands), 13, 2), device=self.device)  # 0-12 pos,rot,lin_vel,ang_vel. 12 hold time
         mask = torch.zeros((len(commands), 12), device=self.device, dtype=torch.bool)
         kind = torch.zeros(len(commands), dtype=torch.int32, device=self.device)
@@ -206,7 +208,7 @@ class RelativeStateCommand(CommandTerm):
                 #   15    hold time
                 block = torch.zeros(spawn_all.shape[0], 16, device=self.device)
                 block[:, 0:3] = spawn_all
-                block[:, 3:6] = target_all + rand_range[:, :3]
+                block[:, 3:6] = target_all + root_pos_offset + rand_range[:, :3]
                 block[:, 6:16] = rand_range[:, 3:]
                 blocks.append(block)
                 mask_blocks.append(mask[cmd_id].view(1, 12).expand(block.shape[0], 12))
@@ -234,6 +236,7 @@ class RelativeStateCommand(CommandTerm):
                 )
                 block[:, 0:3] = spawn_pos_expanded.reshape(-1, 3)  # spawn position
                 block[:, 3:6] += spawn_pos_expanded.reshape(-1, 3)  # target relative to spawn
+                block[:, 3:6] += root_pos_offset  # target is the robot root pose, not the terrain contact point
                 blocks.append(block)
 
                 block_mask = mask[cmd_id].view(1, 12).expand(count, 12)
