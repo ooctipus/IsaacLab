@@ -31,6 +31,9 @@ class RelativeStateCommandCfg(CommandTermCfg):
 
     ang_vel_std: float = 0.5
 
+    success_joint_pos_threshold: float = 0.5
+    """Maximum absolute joint position deviation from the default pose for task success [rad]."""
+
     @configclass
     class Commands:
         pos_x: tuple[float, float] | None = None

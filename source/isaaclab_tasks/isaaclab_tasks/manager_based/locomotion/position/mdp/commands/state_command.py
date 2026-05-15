@@ -482,7 +482,7 @@ class RelativeStateCommand(CommandTerm):
     def get_task_done(self) -> torch.Tensor:
         joint_pos = wp.to_torch(self.robot.data.joint_pos) - wp.to_torch(self.robot.data.default_joint_pos)
         joint_pos_diff = torch.abs(joint_pos).amax(dim=1)
-        return (self.cmd_buf[:, 1, 12] <= 0.0) & (joint_pos_diff < 1.0)
+        return (self.cmd_buf[:, 1, 12] <= 0.0) & (joint_pos_diff < self.cfg.success_joint_pos_threshold)
 
     def get_task_reward(self) -> torch.Tensor:
         joint_pos = wp.to_torch(self.robot.data.joint_pos) - wp.to_torch(self.robot.data.default_joint_pos)

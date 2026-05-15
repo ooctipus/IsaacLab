@@ -124,6 +124,7 @@ class CommandsCfg:
         rot_std=0.5,
         lin_vel_std=0.3,
         ang_vel_std=0.3,
+        success_joint_pos_threshold=0.5,
         debug_vis=True,
         commands=CommandsPresetCfg(),  # type: ignore
     )
@@ -280,13 +281,13 @@ class RewardsCfg:
     # task rewards
     success = RewTerm(func=mdp.command_success, weight=50.0)
 
-    mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0001)
+    mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.001)
 
-    joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.005)
+    joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.01)
 
     foot_touchdown = RewTerm(
         func=mdp.foot_touchdown_impact,
-        weight=-0.025,
+        weight=-0.05,
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=".*FOOT.*"),
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*FOOT.*"),
@@ -296,7 +297,7 @@ class RewardsCfg:
 
     undesired_contact = RewTerm(
         func=mdp.undesired_contacts,
-        weight=-0.05,
+        weight=-0.1,
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*(?:(FOOT))).*$"), "threshold": 1.0},
     )
 
