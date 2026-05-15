@@ -304,7 +304,7 @@ class RewardsCfg:
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*(?:(FOOT))).*$"), "threshold": 1.0},
     )
 
-    fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-25.0)
+    fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-50.0)
 
     explore = RewTerm(func=mdp.exploration_reward, weight=0.3, params={"forward_only": True})
 
@@ -375,8 +375,8 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
     )
 
     def __post_init__(self):
-        self.decimation = 4
-        self.episode_length_s = 6.0
+        self.decimation = 8
+        self.episode_length_s = 12.0
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
