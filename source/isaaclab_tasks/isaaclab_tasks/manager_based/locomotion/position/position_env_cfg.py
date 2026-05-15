@@ -5,8 +5,10 @@
 
 from dataclasses import MISSING
 
+from isaaclab_newton.physics import NewtonCfg, MJWarpSolverCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
 from isaaclab_physx.physics import PhysxCfg
-
+from isaaclab_newton.sensors import ContactSensorCfg as NewtonContactSensorCfg
+from isaaclab_physx.sensors import ContactSensorCfg as PhysXContactSensorCfg
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
@@ -18,7 +20,7 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import ContactSensorCfg, patterns
+from isaaclab.sensors import patterns
 
 from isaaclab_tasks.manager_based.multi_task.sensors import FastTerrainScannerCfg
 from isaaclab.sim import SimulationCfg
@@ -32,6 +34,13 @@ from isaaclab_tasks.utils import PresetCfg
 from . import mdp
 from .commands_preset import CommandsPresetCfg
 from .terrain_preset import SubTerrainPresetCfg
+
+
+@configclass
+class PositionEnvContactSensorCfg(PresetCfg):
+    default = PhysXContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
+    newton = NewtonContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
+    physx = default
 
 
 @configclass
@@ -97,13 +106,7 @@ class SceneCfg(InteractiveSceneCfg):
         debug_vis=False,
         mesh_prim_paths=["/World/ground"],
     )
-    contact_forces = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/.*",
-        history_length=3,
-        track_air_time=True,
-        debug_vis=True,
-        filter_prim_paths_expr=["/World/ground/terrain/mesh"],
-    )
+    contact_forces = PositionEnvContactSensorCfg()
 
 
 @configclass
@@ -270,7 +273,7 @@ class EventsCfg:
         func=mdp.reset_joints_by_scale,
         mode="reset",
         params={
-            "position_range": (-1.0, 1.0),
+            "position_range": (0.5, 1.5),
             "velocity_range": (0.0, 0.0),
         },
     )
@@ -338,6 +341,20 @@ class PositionPhysicsCfg(PresetCfg):
         gpu_found_lost_pairs_capacity=2**25,
         gpu_collision_stack_size=2**31,
         gpu_max_rigid_patch_count=5 * 2**20,
+    )
+    newton = NewtonCfg(
+        solver_cfg=MJWarpSolverCfg(
+            njmax=200,
+            nconmax=100,
+            cone="pyramidal",
+            impratio=1.0,
+            integrator="implicitfast",
+            use_mujoco_contacts=False,
+        ),
+        collision_cfg=NewtonCollisionPipelineCfg(max_triangle_pairs=2_500_000),
+        num_substeps=1,
+        debug_mode=False,
+        default_shape_cfg=NewtonShapeCfg(margin=0.02),
     )
     physx = default
 

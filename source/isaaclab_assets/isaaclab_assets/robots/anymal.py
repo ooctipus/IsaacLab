@@ -48,6 +48,7 @@ ANYDRIVE_3_LSTM_ACTUATOR_CFG = ActuatorNetLSTMCfg(
     saturation_effort=120.0,
     effort_limit=80.0,
     velocity_limit=7.5,
+    armature=0.001,
 )
 """Configuration for ANYdrive 3.0 (used on ANYmal-C) with LSTM actuator model."""
 

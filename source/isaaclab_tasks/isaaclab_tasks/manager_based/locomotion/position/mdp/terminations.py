@@ -55,11 +55,36 @@ def success_terminate(env: ManagerBasedRLEnv, command_name: str = "goal_point"):
     return command_term.get_task_done()
 
 
-def abnormal_robot_state(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
-    """Terminating environment when violation of velocity limits detects, this usually indicates unstable physics caused
-    by very bad, or aggressive action"""
+def abnormal_robot_state(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    max_body_lin_vel: float = 100.0,
+    max_body_ang_vel: float = 100.0,
+) -> torch.Tensor:
+    """Terminate environments when robot velocities indicate unstable physics.
+
+    Args:
+        env: The manager-based RL environment.
+        asset_cfg: The robot asset configuration.
+        max_body_lin_vel: Maximum body linear speed [m/s].
+        max_body_ang_vel: Maximum body angular speed [rad/s].
+
+    Returns:
+        Boolean tensor indicating environments with abnormal robot state.
+    """
     robot: Articulation = env.scene[asset_cfg.name]
-    return (wp.to_torch(robot.data.joint_vel).abs() > (wp.to_torch(robot.data.joint_vel_limits) * 2)).any(dim=1)
+
+    joint_vel = wp.to_torch(robot.data.joint_vel)[:, asset_cfg.joint_ids]
+    joint_vel_limits = wp.to_torch(robot.data.joint_vel_limits)[:, asset_cfg.joint_ids]
+    joint_vel_abnormal = (joint_vel.abs() > (joint_vel_limits * 2.0)).any(dim=1)
+
+    # body_lin_speed = wp.to_torch(robot.data.body_lin_vel_w)[:, asset_cfg.body_ids].norm(dim=-1).amax(dim=1)
+    # body_ang_speed = wp.to_torch(robot.data.body_ang_vel_w)[:, asset_cfg.body_ids].norm(dim=-1).amax(dim=1)
+    # # print(body_lin_speed)
+    # # print(body_ang_speed)
+    # body_vel_abnormal = (body_lin_speed > max_body_lin_vel) | (body_ang_speed > max_body_ang_vel)
+
+    return joint_vel_abnormal  # | body_vel_abnormal
 
 
 def speed_terminate(env: ManagerBasedRLEnv, robot_cfg=SceneEntityCfg("robot"), speed_limit=2.0) -> torch.Tensor:
