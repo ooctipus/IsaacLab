@@ -260,6 +260,7 @@ class ContainerInterface:
                 + [self.container_name, "bash"]
             )
             subprocess.run(cmd)
+            self.fix_output_ownership()
         else:
             raise RuntimeError(f"The container '{self.container_name}' is not running.")
 
@@ -267,6 +268,7 @@ class ContainerInterface:
         """Stop the running container using the Docker compose command."""
         if self.is_container_running():
             print(f"[INFO] Stopping the launched docker container '{self.container_name}'...\n")
+            self.fix_output_ownership()
             # stop running services
             cmd = (
                 ["docker", "compose"] + self.add_yamls + self.add_profiles + self.add_env_files + ["down", "--volumes"]
@@ -320,6 +322,32 @@ class ContainerInterface:
             print("\n[INFO] Finished copying the artifacts from the container.")
         else:
             raise RuntimeError(f"The container '{self.container_name}' is not running.")
+
+    def fix_output_ownership(self):
+        """Give bind-mounted output artifacts back to the host user.
+
+        Isaac Sim containers run as root by default. This keeps that behavior, but prevents root-owned files under
+        host-mounted output directories such as ``models_tmp`` after using ``container.py enter`` or ``stop``.
+        """
+        if not self.is_container_running():
+            return
+
+        docker_isaac_lab_path = Path(self.dot_vars["DOCKER_ISAACLAB_PATH"])
+        output_paths = [docker_isaac_lab_path.joinpath("models_tmp")]
+        uid = os.getuid()
+        gid = os.getgid()
+
+        for output_path in output_paths:
+            print(f"[INFO] Fixing host ownership for container output path: {output_path}")
+            cmd = [
+                "docker",
+                "exec",
+                self.container_name,
+                "bash",
+                "-lc",
+                f"if [ -e '{output_path}' ]; then chown -R {uid}:{gid} '{output_path}'; fi",
+            ]
+            subprocess.run(cmd, check=False, cwd=self.context_dir, env=self.environ)
 
     def config(self, output_yaml: Path | None = None):
         """Process the Docker compose configuration based on the passed yamls and environment files.

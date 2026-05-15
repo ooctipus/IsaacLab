@@ -124,6 +124,8 @@ x-default-isaac-lab-environment: &default-isaac-lab-environment
   - WANDB_API_KEY
   - WANDB_USERNAME=nvidia
   - OMNI_KIT_ALLOW_ROOT=1
+  # Keep OmniHub state container-local; sharing this through .cache/ov can make Hub fail to launch.
+  - OMNICLIENT_HUB_CACHE_DIR=/tmp/omnihub-cache
 
 x-default-isaac-lab-deploy: &default-isaac-lab-deploy
   resources:
