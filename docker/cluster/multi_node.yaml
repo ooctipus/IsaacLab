@@ -59,6 +59,9 @@ workflow:
           fi
           export MKL_NUM_THREADS="${OMP_NUM_THREADS}"
           export OPENBLAS_NUM_THREADS="${OMP_NUM_THREADS}"
+          # OmniHub state should not live in the shared Omniverse cache; it can break across jobs/containers.
+          export OMNICLIENT_HUB_CACHE_DIR="${TMPDIR:-/tmp}/omnihub-cache-${HOSTNAME:-cluster}"
+          mkdir -p "${OMNICLIENT_HUB_CACHE_DIR}"
 
           CLUSTER_CACHE_ROOT="{{ cluster_cache_root }}"
           if [ -z "${CLUSTER_CACHE_ROOT}" ]; then
