@@ -81,10 +81,15 @@ def parse_cli_args() -> argparse.Namespace:
         parents=[parent_parser],
     )
     build.add_argument("--pull", action="store_true", help="Check for updated parent images before building.")
-    subparsers.add_parser(
+    start = subparsers.add_parser(
         "start",
-        help="Build the docker image and create the container in detached mode.",
+        help="Create the container in detached mode, reusing existing images when possible.",
         parents=[parent_parser],
+    )
+    start.add_argument(
+        "--build",
+        action="store_true",
+        help="Build/rebuild the docker image before starting the container.",
     )
     subparsers.add_parser(
         "enter", help="Begin a new bash process within an existing Isaac Lab container.", parents=[parent_parser]
@@ -158,7 +163,7 @@ def main(args: argparse.Namespace):
             ci.add_yamls += x11_yaml
             ci.environ.update(x11_envar)
         # start the container
-        ci.start()
+        ci.start(build=args.build)
     elif args.command == "enter":
         # refresh the x11 forwarding
         x11_utils.x11_refresh(ci.statefile)

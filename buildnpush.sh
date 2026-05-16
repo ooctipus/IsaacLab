@@ -72,20 +72,47 @@ enter_container() {
     fi
   fi
 
-  local mount_args=""
+  local docker_args=(
+    --gpus all
+    --network host
+    -e "ACCEPT_EULA=Y"
+    -e "OMNI_KIT_ALLOW_ROOT=1"
+    -e "WANDB_USERNAME=${WANDB_USERNAME:-nvidia}"
+  )
+  if [ -n "${WANDB_API_KEY:-}" ]; then
+    docker_args+=(-e "WANDB_API_KEY=${WANDB_API_KEY}")
+  fi
+  if [ -f "${HOME}/.netrc" ]; then
+    docker_args+=(-v "${HOME}/.netrc:/root/.netrc:ro")
+  fi
+  if [ -d "${HOME}/.cache/ov" ]; then
+    docker_args+=(-v "${HOME}/.cache/ov:/root/.cache/ov:rw")
+  fi
+  if [ -d "${HOME}/.cache/nvidia/GLCache" ]; then
+    docker_args+=(-v "${HOME}/.cache/nvidia/GLCache:/root/.cache/nvidia/GLCache:rw")
+  fi
+  if [ -d "${HOME}/.nv/ComputeCache" ]; then
+    docker_args+=(-v "${HOME}/.nv/ComputeCache:/root/.nv/ComputeCache:rw")
+  fi
+  if [ -d "${HOME}/.cache/NVIDIA/OptixCache" ]; then
+    docker_args+=(-v "${HOME}/.cache/NVIDIA/OptixCache:/root/.cache/NVIDIA/OptixCache:rw")
+  fi
+  if [ -d "_isaac_sim/kit/cache" ]; then
+    docker_args+=(-v "$(readlink -f _isaac_sim/kit/cache):/isaac-sim/kit/cache:rw")
+  fi
+
+  mkdir -p models_tmp
+  docker_args+=(-v "$(pwd)/models_tmp:/workspace/isaaclab/models_tmp:rw")
+
   if [ "$mount_local" = "--mount" ]; then
-    mount_args="-v $(pwd):/local:rw"
+    docker_args+=(-v "$(pwd):/local:rw")
     echo "🚀 Entering container: ${image} (local mounted at /local)"
   else
     echo "🚀 Entering container: ${image}"
   fi
 
   docker run -it --rm \
-    --gpus all \
-    --network host \
-    -e "ACCEPT_EULA=Y" \
-    -e "OMNI_KIT_ALLOW_ROOT=1" \
-    $mount_args \
+    "${docker_args[@]}" \
     --entrypoint /bin/bash \
     "${image}"
   exit 0
@@ -459,7 +486,7 @@ if [ "$SKIP_DEPS" -eq 0 ]; then
     unset ISAACLAB_NOCACHE 2>/dev/null || true
   fi
 
-  ./docker/container.py start
+  ./docker/container.py start --build
 
   # Tag as deps image for future cache hits
   echo "🏷  Caching deps image as ${DEPS_IMAGE}"
