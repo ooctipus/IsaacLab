@@ -34,7 +34,7 @@ import warp as wp
 from isaaclab.envs.mdp import time_out as _time_out
 from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject

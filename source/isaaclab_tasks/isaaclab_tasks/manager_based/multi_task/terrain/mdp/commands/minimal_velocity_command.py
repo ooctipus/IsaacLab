@@ -28,7 +28,7 @@ import torch
 import warp as wp
 
 from isaaclab.managers import CommandTerm, CommandTermCfg, SceneEntityCfg
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv

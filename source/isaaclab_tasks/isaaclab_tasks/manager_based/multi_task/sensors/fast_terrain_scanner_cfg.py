@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Literal
 from isaaclab.sensors.ray_caster.patterns.patterns_cfg import PatternBaseCfg
 from isaaclab.sensors.sensor_base_cfg import SensorBaseCfg
 from isaaclab.sim.spawners.sensors import SensorFrameCfg
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 if TYPE_CHECKING:
     from .fast_terrain_scanner import FastTerrainScanner

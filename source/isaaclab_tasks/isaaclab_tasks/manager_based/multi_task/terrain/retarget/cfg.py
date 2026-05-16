@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import MISSING, field
 
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 from ...kinematics.ik_objectives.cfg import IKObjectiveBaseCfg
 from ...kinematics.newton_kinematics_cfg import NewtonKinematicsCfg

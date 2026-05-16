@@ -31,7 +31,7 @@ loudly if resolution happens with no robot selected).
 from dataclasses import MISSING, field
 
 from isaaclab.assets import ArticulationCfg
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.utils import PresetCfg
 

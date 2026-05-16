@@ -6,7 +6,7 @@
 import torch
 import warp as wp
 
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 from isaaclab.utils.math import quat_apply_inverse
 
 from isaaclab_rl.rsl_rl import (

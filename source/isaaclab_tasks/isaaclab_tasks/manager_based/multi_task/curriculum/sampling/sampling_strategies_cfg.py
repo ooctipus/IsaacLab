@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 from .sampling_strategies import BetaSamplingStrategy, FrontierSamplingStrategy, UniformSamplingStrategy
 

@@ -5,7 +5,7 @@
 
 """CRL agent configuration for the Ant goal-reaching task."""
 
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.manager_based.multi_task.rl.rsl_rl import (
     RslRlCrlAlgorithmCfg,

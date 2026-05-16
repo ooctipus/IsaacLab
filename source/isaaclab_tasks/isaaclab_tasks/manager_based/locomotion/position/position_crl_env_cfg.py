@@ -17,7 +17,7 @@ from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 from . import mdp
 from .position_env_cfg import LocomotionPositionCommandEnvCfg, ObservationsEncoderCfg, ObservationsPresetCfg

@@ -11,7 +11,7 @@ __all__: list[str] = []
 
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.sensors import ContactSensorCfg
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 from ... import mdp
 from ...assembly_keypoints import PANDA_HAND

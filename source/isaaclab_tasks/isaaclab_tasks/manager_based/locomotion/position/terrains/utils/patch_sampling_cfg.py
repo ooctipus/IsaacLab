@@ -8,9 +8,35 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import MISSING
 
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
-from . import patch_sampling as sampling_functions
+
+def _find_flat_patches(*args, **kwargs):
+    """Find flat patches with the position terrain sampler."""
+    from . import patch_sampling
+
+    return patch_sampling.find_flat_patches(*args, **kwargs)
+
+
+def _find_piecewise_range_flat_patches(*args, **kwargs):
+    """Find flat patches with piecewise sampling ranges."""
+    from . import patch_sampling
+
+    return patch_sampling.find_piecewise_range_flat_patches(*args, **kwargs)
+
+
+def _find_flat_patches_by_radius(*args, **kwargs):
+    """Find flat patches using radius-based sampling."""
+    from . import patch_sampling
+
+    return patch_sampling.find_flat_patches_by_radius(*args, **kwargs)
+
+
+def _find_flat_patches_morphological(*args, **kwargs):
+    """Find flat patches using morphological heightmap filtering."""
+    from . import patch_sampling
+
+    return patch_sampling.find_flat_patches_morphological(*args, **kwargs)
 
 
 @configclass
@@ -37,7 +63,7 @@ class PatchSamplingCfg:
 
 @configclass
 class FlatPatchSamplingCfg(PatchSamplingCfg):
-    func: Callable = sampling_functions.find_flat_patches
+    func: Callable = _find_flat_patches
     """The function to use for sampling patches."""
 
     patch_radius: float | list[float] = MISSING
@@ -70,7 +96,7 @@ class FlatPatchSamplingCfg(PatchSamplingCfg):
 class PieceWiseRangeFlatPatchSamplingCfg(PatchSamplingCfg):
     """Configuration for sampling flat patches on the sub-terrain with piece-wise ranges."""
 
-    func: Callable = sampling_functions.find_piecewise_range_flat_patches
+    func: Callable = _find_piecewise_range_flat_patches
     """The function to use for sampling patches with piece wise ranges."""
 
     patch_radius: float | list[float] = MISSING
@@ -97,7 +123,7 @@ class PieceWiseRangeFlatPatchSamplingCfg(PatchSamplingCfg):
 
 @configclass
 class FlatPatchSamplingByRadiusCfg(PatchSamplingCfg):
-    func: Callable = sampling_functions.find_flat_patches_by_radius
+    func: Callable = _find_flat_patches_by_radius
 
     patch_radius: float | list[float] = MISSING
 
@@ -155,7 +181,7 @@ class MorphologicalPatchSamplingCfg(PatchSamplingCfg):
     valid region with optional farthest-point refinement.
     """
 
-    func: Callable = sampling_functions.find_flat_patches_morphological
+    func: Callable = _find_flat_patches_morphological
 
     patch_radius: float | list[float] = 0.0
     """Unused by this sampler (kept for base-class compatibility)."""

@@ -45,7 +45,7 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.manager_based.multi_task.mdp.commands.impl.multi_task_cfg import MultiTaskCfg
 from isaaclab_tasks.utils import PresetCfg

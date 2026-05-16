@@ -5,7 +5,7 @@
 
 """Sub-terrain presets selectable via ``env.scene.terrain.terrain_generator.sub_terrains=<name>``."""
 
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.utils import PresetCfg
 

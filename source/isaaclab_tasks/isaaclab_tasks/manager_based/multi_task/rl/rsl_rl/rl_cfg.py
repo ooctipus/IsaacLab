@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import MISSING
 from typing import Any, Literal
 
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlMLPModelCfg
 

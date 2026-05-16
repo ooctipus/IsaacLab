@@ -14,7 +14,7 @@ from dataclasses import MISSING
 from typing import TYPE_CHECKING
 
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 if TYPE_CHECKING:
     from .collision_analyzer import CollisionAnalyzer

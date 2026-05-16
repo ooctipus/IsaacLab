@@ -21,7 +21,7 @@ import torch
 import warp as wp
 
 import isaaclab.utils.math as math_utils
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject

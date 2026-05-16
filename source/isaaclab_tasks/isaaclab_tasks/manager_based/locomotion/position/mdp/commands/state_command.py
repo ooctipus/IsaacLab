@@ -28,7 +28,7 @@ import torch
 import warp as wp
 
 from isaaclab.managers import CommandTerm
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 from isaaclab.utils.math import (
     axis_angle_from_quat,
     euler_xyz_from_quat,

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import torch
 
 from isaaclab.managers import CommandTermCfg, SceneEntityCfg
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 # Keep the command implementation import TYPE_CHECKING-only so this cfg can be
 # constructed (e.g. during hydra's pre-SimulationApp cfg load) without pulling

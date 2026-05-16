@@ -7,7 +7,7 @@ from dataclasses import MISSING
 from typing import Literal
 
 from isaaclab import terrains
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 """
 Different trimesh terrain configurations.

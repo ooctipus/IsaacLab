@@ -8,7 +8,7 @@
 Mirrors :mod:`anymal_c_env_cfg` but inherits from the CRL (sparse-reward) base class.
 """
 
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 from ... import position_crl_env_cfg
 from .anymal_c_env_cfg import AnymalCEnvMixin

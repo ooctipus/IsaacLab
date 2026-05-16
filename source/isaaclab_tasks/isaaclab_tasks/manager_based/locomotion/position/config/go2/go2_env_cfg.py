@@ -7,7 +7,7 @@
 # Pre-defined configs
 ##
 from isaaclab_assets.robots.unitree import UNITREE_GO2_CFG  # isort: skip
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 from ... import position_env_cfg
 

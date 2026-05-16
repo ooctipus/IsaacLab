@@ -6,7 +6,7 @@
 """Command presets selectable via ``env.commands.goal_point.commands=<name>``."""
 
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.utils import PresetCfg
 

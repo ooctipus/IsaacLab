@@ -12,7 +12,7 @@ runner composition. The preset classes here just wire those instances into
 ``agent.actor=<name>`` / ``agent.critic=<name>`` selectable alternatives.
 """
 
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg, RslRlRndCfg
 

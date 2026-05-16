@@ -8,7 +8,7 @@
 ##
 import os
 
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 import isaaclab_assets.robots.unitree as unitree
 from isaaclab_assets import ISAACLAB_ASSETS_DATA_DIR

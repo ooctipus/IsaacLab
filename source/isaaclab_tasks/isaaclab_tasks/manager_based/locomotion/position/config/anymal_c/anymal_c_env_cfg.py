@@ -6,7 +6,7 @@
 ##
 # Pre-defined configs
 ##
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 import isaaclab_assets.robots.anymal as anymal
 

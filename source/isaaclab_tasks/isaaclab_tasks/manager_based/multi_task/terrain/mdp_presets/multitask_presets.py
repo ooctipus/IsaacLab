@@ -17,7 +17,7 @@ users can switch to richer presets (``pose_vel``, ``locomotion``).
 """
 
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.utils import PresetCfg
 
