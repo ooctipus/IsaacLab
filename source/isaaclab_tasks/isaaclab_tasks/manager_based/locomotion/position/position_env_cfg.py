@@ -290,7 +290,7 @@ class TerminationsCfg:
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*foot).*$"), "threshold": 1.0},
     )
 
-    success = DoneTerm(func=mdp.success_terminate, time_out=True)
+    success = DoneTerm(func=mdp.success_terminate, time_out=False)
 
 
 @configclass
