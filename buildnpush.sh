@@ -22,11 +22,13 @@ set -euo pipefail
 #   --force           Force full rebuild (ignore all caches)
 #   --force-deps      Force rebuild dependencies (but use Docker cache)
 #   --force-pip-only  Re-run pip install on cached deps (no isaacsim rebuild)
+#   --copy-only       Copy source onto an existing deps image (no pip install)
 #   --skip-push       Build only, don't push to NGC
 #   -h, --help        Show this help message
 #
 # Examples:
 #   ./buildnpush.sh v1.0              # Smart build (skip deps if unchanged)
+#   ./buildnpush.sh v1.0 --copy-only  # Copy source only, even if deps hash changed
 #   ./buildnpush.sh v1.0 --force      # Full rebuild
 #   ./buildnpush.sh v1.0 --force-pip-only  # Re-run pip install only
 #   ./buildnpush.sh enter v1.0        # Enter container for v1.0
@@ -35,7 +37,7 @@ set -euo pipefail
 # =============================================================================
 
 show_help() {
-  head -33 "$0" | tail -31
+  head -37 "$0" | tail -33
   exit 0
 }
 
@@ -264,6 +266,7 @@ compute_deps_hash() {
 FORCE_REBUILD=0
 FORCE_DEPS=0
 FORCE_PIP=0
+COPY_ONLY=0
 SKIP_PUSH=0
 TAG=""
 
@@ -294,6 +297,10 @@ while [[ $# -gt 0 ]]; do
       FORCE_PIP=1
       shift
       ;;
+    --copy-only)
+      COPY_ONLY=1
+      shift
+      ;;
     --skip-push)
       SKIP_PUSH=1
       shift
@@ -320,6 +327,11 @@ done
 if [ -z "$TAG" ]; then
   echo "Error: Tag is required"
   show_help
+fi
+
+if [ "$COPY_ONLY" -eq 1 ] && { [ "$FORCE_REBUILD" -eq 1 ] || [ "$FORCE_DEPS" -eq 1 ] || [ "$FORCE_PIP" -eq 1 ]; }; then
+  echo "Error: --copy-only cannot be combined with --force, --force-deps, or --force-pip-only."
+  exit 1
 fi
 
 # =============================================================================
@@ -359,7 +371,22 @@ any_clean_deps_image_exists() {
   [ -n "$(first_clean_deps_image)" ]
 }
 
-if [ "$FORCE_REBUILD" -eq 1 ]; then
+if [ "$COPY_ONLY" -eq 1 ]; then
+  SKIP_DEPS=1
+  USE_CACHE=1
+  if image_exists "$DEPS_IMAGE" && ! is_source_only_layered_image "$DEPS_IMAGE"; then
+    echo "   ✓ Cached deps image found: ${DEPS_IMAGE}"
+  elif any_clean_deps_image_exists; then
+    EXISTING_DEPS=$(first_clean_deps_image)
+    echo "   ⚠ Deps hash changed but --copy-only: using ${EXISTING_DEPS}"
+    DEPS_IMAGE="$EXISTING_DEPS"
+  else
+    echo "   ✗ No clean deps image available for --copy-only."
+    echo "     Re-run without --copy-only or use --force-deps."
+    exit 1
+  fi
+  REASON="copy source only on cached deps (--copy-only)"
+elif [ "$FORCE_REBUILD" -eq 1 ]; then
   SKIP_DEPS=0
   USE_CACHE=0
   REASON="forced full rebuild (--force)"
