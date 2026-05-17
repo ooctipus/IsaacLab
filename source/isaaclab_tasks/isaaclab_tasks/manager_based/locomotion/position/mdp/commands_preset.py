@@ -178,7 +178,7 @@ class CommandPayloadPresetCfg(PresetCfg):
         ang_vel_std=0.3,
         foot_pos_std=0.25,
     )
-    default = base_foot
+    default = base
 
 
 @configclass
@@ -246,7 +246,7 @@ class FlatPatchCommandsCfg:
         rot_std=0.5,
         lin_vel_std=0.3,
         ang_vel_std=0.3,
-        success_joint_pos_threshold=0.5,
+        success_joint_pos_threshold=0.25,
         debug_vis=True,
         commands=FlatPatchCommandsPresetCfg(),  # type: ignore
     )
