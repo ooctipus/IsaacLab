@@ -511,7 +511,8 @@ def _format_unknown_presets_error(unknown: set[str], name_to_paths: dict[str, li
             lines.append(f"    -> {p}")
         remaining = len(paths_tuple) - len(shown)
         if remaining > 0:
-            lines.append(f"    ... and {remaining} more paths")
+            lines.append(f"    ... ({remaining} more)")
+        lines.append("")
     return "\n".join(lines)
 
 
