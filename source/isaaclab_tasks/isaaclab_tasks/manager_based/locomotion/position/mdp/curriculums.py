@@ -34,7 +34,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
 
     def __init__(self, cfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
-        debug_vis = cfg.params.get("debug_vis", True)
+        debug_vis = cfg.params.get("debug_vis", False)
 
         self.env = env
         self.goal_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
