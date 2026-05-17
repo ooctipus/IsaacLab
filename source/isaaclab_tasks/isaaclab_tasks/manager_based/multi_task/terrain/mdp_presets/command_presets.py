@@ -22,6 +22,7 @@ from ..retarget.cfg import PatchSamplingCfg, SamplerCfg, SamplerSizingCfg
 from ..retarget.criteria_cfg import (
     CollisionCheckCfg,
     FootPositionErrorCfg,
+    JointWithinLimitCfg,
     LateralHipLimitCfg,
     SolverCostOutlierCfg,
     SupportPolygonStabilityCfg,
@@ -219,6 +220,7 @@ class CommandsCfg:
                 ],
                 criteria=[
                     CollisionCheckCfg(n_samples=16, max_pen=0.02),
+                    JointWithinLimitCfg(limit_ratio=0.9),
                     LateralHipLimitCfg(max_angle=1.05),
                     SupportPolygonStabilityCfg(),
                     FootPositionErrorCfg(max_err=0.4, aggregate="sum"),

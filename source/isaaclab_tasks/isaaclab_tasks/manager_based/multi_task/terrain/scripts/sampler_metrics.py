@@ -208,6 +208,7 @@ def _build_pipeline_cfg(robot_name: str, min_contacts: int = -1):
     from isaaclab_tasks.manager_based.multi_task.terrain.retarget.criteria_cfg import (
         CollisionCheckCfg,
         FootPositionErrorCfg,
+        JointWithinLimitCfg,
         LateralHipLimitCfg,
         SolverCostOutlierCfg,
         SupportPolygonStabilityCfg,
@@ -230,7 +231,7 @@ def _build_pipeline_cfg(robot_name: str, min_contacts: int = -1):
     lateral_hip_pattern = getattr(
         RetargetLateralHipJointPatternCfg, robot_name, RetargetLateralHipJointPatternCfg().default
     )
-    criteria_list: list[Any] = [CollisionCheckCfg(n_samples=16, max_pen=0.02)]
+    criteria_list: list[Any] = [CollisionCheckCfg(n_samples=16, max_pen=0.02), JointWithinLimitCfg(limit_ratio=0.9)]
     if lateral_hip_pattern:
         criteria_list.append(LateralHipLimitCfg(joint_pattern=lateral_hip_pattern, max_angle=1.05))
     criteria_list += [

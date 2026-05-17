@@ -125,6 +125,7 @@ def main():
     from isaaclab_tasks.manager_based.multi_task.terrain.retarget.criteria_cfg import (
         CollisionCheckCfg,
         FootPositionErrorCfg,
+        JointWithinLimitCfg,
         LateralHipLimitCfg,
         SolverCostOutlierCfg,
         SupportPolygonStabilityCfg,
@@ -230,7 +231,7 @@ def main():
     print(f"Feet    : {foot_names}")
 
     # --- Pipeline cfg (mirrors validate_spawn_points) ---
-    criteria_list = [CollisionCheckCfg(n_samples=16, max_pen=0.02)]
+    criteria_list = [CollisionCheckCfg(n_samples=16, max_pen=0.02), JointWithinLimitCfg(limit_ratio=0.9)]
     if lateral_hip_pattern:
         criteria_list.append(LateralHipLimitCfg(joint_pattern=lateral_hip_pattern, max_angle=1.05))
     criteria_list += [

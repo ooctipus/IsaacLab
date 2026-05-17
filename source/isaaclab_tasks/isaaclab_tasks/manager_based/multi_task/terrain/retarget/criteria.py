@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from .criteria_cfg import (
         CollisionCheckCfg,
         FootPositionErrorCfg,
+        JointWithinLimitCfg,
         LateralHipLimitCfg,
         SolverCostOutlierCfg,
         SupportPolygonStabilityCfg,
@@ -146,6 +147,51 @@ class LateralHipLimit:
             return torch.ones(N, device=buffer.device, dtype=torch.bool)
         jq_rev = buffer.joint_q_result_t[:N, 7:]
         return jq_rev[:, joint_idx].abs().max(dim=-1).values <= self.max_angle
+
+
+class JointWithinLimit:
+    """Criterion: all non-root joints must stay inside a scaled retarget joint interval.
+
+    The checked interval is the same effective interval used by the FK
+    sampler: Newton joint limits intersected with
+    ``default_joint_q ± sampler.fk_joint_range`` and any
+    ``sampler.fk_joint_range_overrides``. The final interval is then
+    shrunk around its center by ``limit_ratio``.
+
+    Args:
+        cfg: :class:`~.criteria_cfg.JointWithinLimitCfg` with
+            ``limit_ratio``.
+        pipeline: Live :class:`RetargetPipeline` — read for Newton joint
+            limits and sampler FK joint ranges.
+        wp_mesh: Unused (kept for uniform construction signature).
+    """
+
+    def __init__(self, cfg: JointWithinLimitCfg, pipeline: RetargetPipeline, wp_mesh: object = None) -> None:
+        if not 0.0 < cfg.limit_ratio <= 1.0:
+            raise ValueError(f"JointWithinLimit.limit_ratio must be in (0, 1], got {cfg.limit_ratio}.")
+        jl = wp.to_torch(pipeline.kin.model.joint_limit_lower)
+        ju = wp.to_torch(pipeline.kin.model.joint_limit_upper)
+        default_q = torch.from_numpy(pipeline.kin.default_joint_q).float().to(pipeline.kin.device)
+        rev_default = default_q[7:]
+        n_rev = rev_default.shape[0]
+        joint_range = torch.full((n_rev,), float(pipeline.cfg.sampler.fk_joint_range), device=pipeline.kin.device)
+        for pattern, clamp in pipeline.cfg.sampler.fk_joint_range_overrides.items():
+            for joint_index in pipeline.kin.find_joint_dof_indices(pattern):
+                if joint_index < n_rev:
+                    joint_range[joint_index] = float(clamp)
+        lo = torch.maximum(jl[6 : 6 + n_rev], rev_default - joint_range)
+        hi = torch.minimum(ju[6 : 6 + n_rev], rev_default + joint_range)
+        half_margin = 0.5 * (1.0 - cfg.limit_ratio)
+        span = hi - lo
+        self._safe_lo = lo + half_margin * span
+        self._safe_hi = hi - half_margin * span
+
+    def __call__(self, buffer: RetargetBuffer, N: int) -> torch.Tensor:
+        n_rev = self._safe_lo.shape[0]
+        jq = buffer.joint_q_result_t[:N, 7 : 7 + n_rev]
+        if jq.shape[1] != n_rev:
+            raise RuntimeError(f"JointWithinLimit expected {n_rev} non-root joint coordinates, got {jq.shape[1]}.")
+        return ((jq >= self._safe_lo) & (jq <= self._safe_hi)).all(dim=-1)
 
 
 @dataclass

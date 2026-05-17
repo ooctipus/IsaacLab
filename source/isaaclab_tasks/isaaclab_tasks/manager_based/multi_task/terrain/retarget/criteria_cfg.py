@@ -74,6 +74,25 @@ class LateralHipLimitCfg(CriterionBaseCfg):
 
 
 @configclass
+class JointWithinLimitCfg(CriterionBaseCfg):
+    """Config for :class:`JointWithinLimit`.
+
+    Shrinks every non-root joint's effective retarget interval around
+    its center and rejects candidates outside the reduced interval. The
+    effective interval is the Newton joint limit intersected with the
+    sampler's FK joint range around the default pose. With the default
+    ``limit_ratio = 0.9``, a symmetric interval ``[-L, L]`` becomes
+    ``[-0.9 L, 0.9 L]``.
+    """
+
+    name: str = "joint_limit"
+    class_type: type | str = "{DIR}.criteria:JointWithinLimit"
+
+    limit_ratio: float = 0.9
+    """Allowed fraction of the effective retarget joint interval."""
+
+
+@configclass
 class SupportPolygonStabilityCfg(CriterionBaseCfg):
     """Config for :class:`SupportPolygonStability`.
 
