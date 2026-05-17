@@ -22,6 +22,10 @@ class AnymalCEnvMixin:
         self.scene.robot.spawn.usd_path = (
             "https://uwlab-assets.s3.us-west-004.backblazeb2.com/Robots/ANYbotics/ANYmal-C/anymal_c.usd"
         )
+        pipeline_cfg = self.commands.foot_sampled_commands.goal_point.task_table.pipeline_cfg
+        pipeline_cfg.foot_body_names = ".*FOOT.*"
+        pipeline_cfg.lateral_hip_joint_pattern = ".*HAA"
+        pipeline_cfg.joint_regularize_targets = {".*HAA": 0.0, ".*F_KFE": -0.8, ".*H_KFE": 0.8}
         self.terminations.base_contact.params["sensor_cfg"].body_names = "base"
         if hasattr(self.terminations, "log_gait"):
             self.terminations.log_gait.params["async_pairs"] = (

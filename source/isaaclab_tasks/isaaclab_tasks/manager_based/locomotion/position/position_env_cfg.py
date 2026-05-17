@@ -29,10 +29,19 @@ from isaaclab.utils.configclass import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.noise import UniformNoiseCfg as Unoise
 
+from isaaclab_tasks.manager_based.multi_task.curriculum import (
+    BetaSamplingStrategyCfg,
+    SamplerCfg,
+    StateLayoutCfg,
+    SuccessMonitorCfg,
+)
+from isaaclab_tasks.manager_based.multi_task.mdp.curriculums import success_rate_sampler
+from isaaclab_tasks.manager_based.multi_task.terrain.viz.sampler_images import log_spawn_goal_sampler_images
 from isaaclab_tasks.utils import PresetCfg
 
 from . import mdp
-from .commands_preset import CommandsPresetCfg
+from .mdp.commands_preset import CommandsCfg
+from .mdp.curriculums import terrain_spawn_goal_pair_success_rate_levels
 from .terrain_preset import SubTerrainPresetCfg
 
 
@@ -51,6 +60,7 @@ class SceneCfg(InteractiveSceneCfg):
     terrain = TerrainImporterCfg(
         prim_path="/World/ground",
         terrain_type="generator",
+        use_terrain_origins=True,
         terrain_generator=TerrainGeneratorCfg(
             size=(10.0, 10.0),
             border_width=20.0,
@@ -114,23 +124,6 @@ class ActionsCfg:
     """Actions for the MDP."""
 
     joint_pos = mdp.JointPositionActionCfg(asset_name="robot", joint_names=[".*"], scale=0.2, use_default_offset=True)
-
-
-@configclass
-class CommandsCfg:
-    "Command specifications for the MDP."
-
-    goal_point = mdp.RelativeStateCommandCfg(
-        asset_name="robot",
-        resampling_time_range=(10.0, 10.0),
-        pos_std=0.5,
-        rot_std=0.5,
-        lin_vel_std=0.3,
-        ang_vel_std=0.3,
-        success_joint_pos_threshold=0.5,
-        debug_vis=True,
-        commands=CommandsPresetCfg(),  # type: ignore
-    )
 
 
 @configclass
@@ -253,31 +246,6 @@ class EventsCfg:
         },
     )
 
-    reset_base = EventTerm(
-        func=mdp.reset_root_state_from_terrain,
-        mode="reset",
-        params={
-            "pose_noise": {"x": (-0.05, 0.05), "y": (-0.05, 0.05), "z": (0.0, 0.1), "yaw": (-0.2, 0.2)},
-            "velocity_range": {
-                "x": (-0.1, 0.1),
-                "y": (-0.1, 0.1),
-                "z": (-0.1, 0.1),
-                "roll": (-0.1, 0.1),
-                "pitch": (-0.1, 0.1),
-                "yaw": (-0.1, 0.1),
-            },
-        },
-    )
-
-    reset_robot_joints = EventTerm(
-        func=mdp.reset_joints_by_scale,
-        mode="reset",
-        params={
-            "position_range": (0.5, 1.5),
-            "velocity_range": (0.0, 0.0),
-        },
-    )
-
 
 @configclass
 class RewardsCfg:
@@ -304,7 +272,7 @@ class RewardsCfg:
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*(?:(FOOT))).*$"), "threshold": 1.0},
     )
 
-    fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact"]}, weight=-50.0)
+    fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact", "abnormal_robot"]}, weight=-50.0)
 
     explore = RewTerm(func=mdp.exploration_reward, weight=0.3, params={"forward_only": True})
 
@@ -326,12 +294,45 @@ class TerminationsCfg:
 
 
 @configclass
-class CurriculumCfg:
+class FootSampledCurriculumCfg:
     terrain_levels = CurrTerm(
-        func=mdp.terrain_spawn_goal_pair_success_rate_levels,
+        func=success_rate_sampler,
+        params={
+            "success_rates_bind": "env.command_manager.get_term('goal_point').success_rates",
+            "sample_indices_bind": "env.command_manager.get_term('goal_point').cmd_indices",
+            "layout": StateLayoutCfg(
+                coords_bind="env.command_manager.get_term('goal_point').table.spawn_states[:, :2]",
+                spawn_index_bind="env.command_manager.get_term('goal_point').table.spawn_index",
+                target_index_bind="env.command_manager.get_term('goal_point').table.target_index",
+                task_partition_bind="env.command_manager.get_term('goal_point').table.task_partition",
+            ),
+            "sampling": SamplerCfg(
+                strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0)],
+                eps=1e-8,
+            ),
+            "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=20),
+            "success_bind": "env.termination_manager.get_term('success')",
+            "sampler_visual_logger": log_spawn_goal_sampler_images,
+            "sampler_visual_log_period": 1000,
+        },
+    )
+    remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
+
+
+@configclass
+class FlatPatchCurriculumCfg:
+    terrain_levels = CurrTerm(
+        func=terrain_spawn_goal_pair_success_rate_levels,
         params={"kappa": 5.0, "temperature": 2.0, "target": 0.66, "success_term": "success"},
     )
     remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
+
+
+@configclass
+class CurriculumCfg(PresetCfg):
+    foot_sampled_commands: FootSampledCurriculumCfg = FootSampledCurriculumCfg()
+    flat_patch_commands: FlatPatchCurriculumCfg = FlatPatchCurriculumCfg()
+    default = foot_sampled_commands
 
 
 @configclass
@@ -344,7 +345,7 @@ class PositionPhysicsCfg(PresetCfg):
     )
     newton = NewtonCfg(
         solver_cfg=MJWarpSolverCfg(
-            njmax=200,
+            njmax=250,
             nconmax=100,
             cone="pyramidal",
             impratio=1.0,
@@ -361,7 +362,7 @@ class PositionPhysicsCfg(PresetCfg):
 
 @configclass
 class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
-    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=10)
+    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=0.0)
     sim: SimulationCfg = SimulationCfg(physics=PositionPhysicsCfg())  # type: ignore
     observations: ObservationsPresetCfg = ObservationsPresetCfg()  # type: ignore
     actions: ActionsCfg = ActionsCfg()

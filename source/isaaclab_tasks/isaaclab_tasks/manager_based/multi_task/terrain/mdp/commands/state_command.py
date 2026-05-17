@@ -119,14 +119,31 @@ class RelativeStateCommand(CommandTerm):
         task_rows = self.cmd_indices[env_ids]
         target_states = self.table.spawn_states[self.table.target_index[task_rows]].clone()
         spawn_states = self.table.spawn_states[self.table.spawn_index[task_rows]].clone()
-        env_origins = self._env.scene.env_origins[env_ids]
-        target_states[:, :3].add_(env_origins)
-        spawn_states[:, :3].add_(env_origins)
+        origin_offsets = self._task_state_origin_offsets(env_ids)
+        if origin_offsets is not None:
+            target_states[:, :3].add_(origin_offsets)
+            spawn_states[:, :3].add_(origin_offsets)
 
         self.cmd_mask.index_copy_(0, env_ids, self.table.task_mask[task_rows])
         self._payload.resample(env_ids, task_rows, target_states, self.cmd_buf)
         set_reset_state(self._env, spawn_states, env_ids, self._payload.reset_assets)
         self._payload.update(self.cmd_ids, 0.0, self.cmd_buf, self.cmd_mask, self._command, self._err)
+
+    def _task_state_origin_offsets(self, env_ids: torch.Tensor) -> torch.Tensor | None:
+        """Return the env-replica offset for task-table states, if any."""
+        terrain = self._env.scene.terrain
+        terrain_prim_path = getattr(getattr(terrain, "cfg", None), "prim_path", "")
+        env_regex_ns = getattr(self._env.scene, "env_regex_ns", "")
+        env_ns = getattr(self._env.scene, "env_ns", "")
+        is_replicated_terrain = (env_regex_ns and env_regex_ns in terrain_prim_path) or (
+            env_ns and terrain_prim_path.startswith(f"{env_ns}/")
+        )
+        if not is_replicated_terrain:
+            return None
+        default_env_origins = getattr(self._env.scene, "_default_env_origins", None)
+        if default_env_origins is not None:
+            return default_env_origins[env_ids]
+        return self._env.scene.env_origins[env_ids]
 
     def _update_command(self):
         """Recompute delta state from current robot state. Minimizes temporaries."""

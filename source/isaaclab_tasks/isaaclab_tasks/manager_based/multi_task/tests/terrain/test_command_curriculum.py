@@ -311,6 +311,10 @@ def _make_command_term(
         _articulations={"robot": term.robot},
         _rigid_objects={},
         env_origins=torch.zeros(env.num_envs, 3, device=device),
+        _default_env_origins=torch.zeros(env.num_envs, 3, device=device),
+        env_ns="/World/envs",
+        env_regex_ns="/World/envs/env_.*",
+        terrain=SimpleNamespace(cfg=SimpleNamespace(prim_path="/World/ground")),
     )
     term._reset_assets = ["robot"]
     term.table = table
@@ -681,6 +685,45 @@ class TestCommandTerm:
         _, call_env_ids, root_state = root_calls[0]
         torch.testing.assert_close(call_env_ids, env_ids)
         torch.testing.assert_close(root_state, table.spawn_states[spawn_state_idx, :13])
+
+    def test_spawn_states_are_not_shifted_by_env_origins(self):
+        """Task-table states are already valid world terrain poses."""
+        table = _make_task_table()
+        env = _make_env(num_envs=2, device=DEVICE)
+        term = _make_command_term(env, table)
+        env.scene.env_origins[:] = torch.tensor([[10.0, 20.0, 0.0], [-5.0, 2.0, 0.0]], device=DEVICE)
+
+        env_ids = torch.arange(env.num_envs, device=DEVICE)
+        term.cmd_indices[env_ids] = torch.tensor([0, 1], device=DEVICE)
+        term._resample_command(env_ids)
+
+        task_idx = term.cmd_indices[env_ids]
+        spawn_state_idx = table.spawn_index[task_idx]
+
+        root_calls = [c for c in term.robot.calls if c[0] == "root_state"]
+        _, _, root_state = root_calls[-1]
+        torch.testing.assert_close(root_state[:, :3], table.spawn_states[spawn_state_idx, :3])
+
+    def test_replicated_terrain_spawn_states_are_shifted_by_env_origins(self):
+        """Replicated terrain task-table states are placed into each env world slot."""
+        table = _make_task_table()
+        env = _make_env(num_envs=2, device=DEVICE)
+        term = _make_command_term(env, table)
+        origins = torch.tensor([[10.0, 20.0, 0.0], [-5.0, 2.0, 0.0]], device=DEVICE)
+        env.scene._default_env_origins[:] = origins
+        env.scene.env_origins[:] = origins
+        env.scene.terrain.cfg.prim_path = f"{env.scene.env_regex_ns}/ground"
+
+        env_ids = torch.arange(env.num_envs, device=DEVICE)
+        term.cmd_indices[env_ids] = torch.tensor([0, 1], device=DEVICE)
+        term._resample_command(env_ids)
+
+        task_idx = term.cmd_indices[env_ids]
+        spawn_state_idx = table.spawn_index[task_idx]
+
+        root_calls = [c for c in term.robot.calls if c[0] == "root_state"]
+        _, _, root_state = root_calls[-1]
+        torch.testing.assert_close(root_state[:, :3], table.spawn_states[spawn_state_idx, :3] + origins)
 
     def test_terrain_task_target_uses_valid_target_state(self):
         """Terrain commands should target the sampled IK-valid state, not random pose params."""

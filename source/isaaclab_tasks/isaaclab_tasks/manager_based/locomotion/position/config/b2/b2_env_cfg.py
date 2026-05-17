@@ -30,6 +30,10 @@ class B2EnvMixin:
         self.events.add_base_mass.params["asset_cfg"].body_names = "base_link"
         self.scene.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/base_link"
         self.viewer.body_name = "base_link"
+        pipeline_cfg = self.commands.foot_sampled_commands.goal_point.task_table.pipeline_cfg
+        pipeline_cfg.foot_body_names = ".*foot"
+        pipeline_cfg.lateral_hip_joint_pattern = ".*hip_joint"
+        pipeline_cfg.joint_regularize_targets = {".*hip_joint": 0.0, ".*_calf_joint": -0.873}
 
 
 @configclass

@@ -305,11 +305,62 @@ class RelativeStateCommand(CommandTerm):
         self.resample_indices(env_ids)
         idx = self.cmd_indices[env_ids]
         self.cmd_buf[env_ids, 0, :] = self.spec.descretized_cmd[idx, 3:16]
-        self.cmd_buf[env_ids, 2, 12] = 0.0
         self.cmd_mask[env_ids] = self.spec.descretized_mask[idx]
 
         rows = self.spec.descretized_cmd[idx]
         self._env.scene.terrain.env_origins.index_copy_(0, env_ids.long(), rows[:, 0:3])
+        root_pose, root_velocity = self._reset_robot_to_spawn(env_ids, rows[:, 0:3])
+        self._update_reset_command_state(env_ids, root_pose, root_velocity)
+
+    def _reset_robot_to_spawn(
+        self, env_ids: torch.Tensor, spawn_pos_w: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Place the robot root at the sampled terrain spawn patch."""
+        root_pose = wp.to_torch(self.robot.data.default_root_pose)[env_ids].clone()
+        root_pose[:, :3].add_(spawn_pos_w)
+        root_velocity = wp.to_torch(self.robot.data.default_root_vel)[env_ids].clone()
+        joint_pos = wp.to_torch(self.robot.data.default_joint_pos)[env_ids].clone()
+        joint_vel = wp.to_torch(self.robot.data.default_joint_vel)[env_ids].clone()
+
+        self.robot.write_root_pose_to_sim_index(root_pose=root_pose, env_ids=env_ids)
+        self.robot.write_root_velocity_to_sim_index(root_velocity=root_velocity, env_ids=env_ids)
+        self.robot.write_joint_position_to_sim_index(position=joint_pos, env_ids=env_ids)
+        self.robot.write_joint_velocity_to_sim_index(velocity=joint_vel, env_ids=env_ids)
+        self.robot.set_joint_position_target_index(target=joint_pos, env_ids=env_ids)
+        self.robot.set_joint_velocity_target_index(target=joint_vel, env_ids=env_ids)
+        return root_pose, root_velocity
+
+    def _update_reset_command_state(
+        self, env_ids: torch.Tensor, root_pose: torch.Tensor, root_velocity: torch.Tensor
+    ) -> None:
+        """Initialize command error at reset without advancing success hold time."""
+        root_quat = root_pose[:, 3:7]
+        self.cmd_buf[env_ids, 2, :3] = root_pose[:, :3]
+        self.cmd_buf[env_ids, 2, 3:6] = torch.stack(euler_xyz_from_quat(root_quat), dim=-1)
+        self.cmd_buf[env_ids, 2, 6:12] = root_velocity
+        self.cmd_buf[env_ids, 2, 12] = 0.0
+
+        pos_w = (self.cmd_buf[env_ids, 0, :3] - root_pose[:, :3]) * self.cmd_mask[env_ids, :3]
+        self._rel[env_ids, 0:3] = quat_apply_inverse(root_quat, pos_w)
+        self.cmd_buf[env_ids, 1, :3] = self._rel[env_ids, 0:3]
+
+        quat_des = quat_from_euler_xyz(
+            self.cmd_buf[env_ids, 0, 3],
+            self.cmd_buf[env_ids, 0, 4],
+            self.cmd_buf[env_ids, 0, 5],
+        )
+        quat_err = quat_mul(quat_inv(root_quat), quat_des)
+        self._rel[env_ids, 3:6] = axis_angle_from_quat(quat_err) * self.cmd_mask[env_ids, 3:6]
+        self.cmd_buf[env_ids, 1, 3:6] = self._rel[env_ids, 3:6]
+
+        vel_rel_w = (self.cmd_buf[env_ids, 0, 6:12] - root_velocity) * self.cmd_mask[env_ids, 6:12]
+        self._rel[env_ids, 6:9] = quat_apply_inverse(root_quat, vel_rel_w[:, :3])
+        self._rel[env_ids, 9:12] = quat_apply_inverse(root_quat, vel_rel_w[:, 3:6])
+        self.cmd_buf[env_ids, 1, 6:12] = self._rel[env_ids, 6:12]
+
+        rel_grouped = self.cmd_buf[env_ids, 1, :12].view(env_ids.shape[0], 4, 3)
+        self._err[env_ids] = torch.linalg.vector_norm(rel_grouped, dim=2)
+        self.cmd_buf[env_ids, 1, 12] = self.cmd_buf[env_ids, 0, 12]
 
     def _update_command(self):
         """Update world-state row and recompute relative state for all envs.

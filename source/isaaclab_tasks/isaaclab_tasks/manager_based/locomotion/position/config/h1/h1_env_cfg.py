@@ -28,6 +28,18 @@ class H1EnvMixin:
         self.events.add_base_mass.params["asset_cfg"].body_names = "torso_link"
         self.terminations.base_contact.params["sensor_cfg"].body_names = "^(?!.*ankle_link).*$"
         self.viewer.body_name = "torso_link"
+        pipeline_cfg = self.commands.foot_sampled_commands.goal_point.task_table.pipeline_cfg
+        pipeline_cfg.foot_body_names = ".*ankle_link"
+        pipeline_cfg.lateral_hip_joint_pattern = ".*_hip_roll"
+        pipeline_cfg.joint_regularize_targets = {
+            ".*_hip_yaw": 0.0,
+            ".*_hip_roll": 0.0,
+            "torso": 0.0,
+            ".*_shoulder_pitch": 0.28,
+            ".*_shoulder_roll": 0.0,
+            ".*_shoulder_yaw": 0.0,
+            ".*_elbow": 0.52,
+        }
         if hasattr(self.terminations, "log_gait"):
             self.terminations.log_gait.params["async_pairs"] = (("left_ankle_link", "right_ankle_link"),)
             self.terminations.log_gait.params["sync_pairs"] = ()

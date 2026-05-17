@@ -19,6 +19,15 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.utils.configclass import configclass
 
+from isaaclab_tasks.manager_based.multi_task.curriculum import (
+    BetaSamplingStrategyCfg,
+    SamplerCfg,
+    StateLayoutCfg,
+    SuccessMonitorCfg,
+)
+from isaaclab_tasks.manager_based.multi_task.mdp.curriculums import success_rate_sampler
+from isaaclab_tasks.manager_based.multi_task.terrain.viz.sampler_images import log_spawn_goal_sampler_images
+
 from . import mdp
 from .position_env_cfg import LocomotionPositionCommandEnvCfg, ObservationsEncoderCfg, ObservationsPresetCfg
 
@@ -113,8 +122,25 @@ class CurriculumCfg:
     """
 
     terrain_levels = CurrTerm(
-        func=mdp.terrain_spawn_goal_pair_success_rate_levels,
-        params={"kappa": 5.0, "temperature": 2.0, "target": 0.66, "success_term": "success"},
+        func=success_rate_sampler,
+        params={
+            "success_rates_bind": "env.command_manager.get_term('goal_point').success_rates",
+            "sample_indices_bind": "env.command_manager.get_term('goal_point').cmd_indices",
+            "layout": StateLayoutCfg(
+                coords_bind="env.command_manager.get_term('goal_point').table.spawn_states[:, :2]",
+                spawn_index_bind="env.command_manager.get_term('goal_point').table.spawn_index",
+                target_index_bind="env.command_manager.get_term('goal_point').table.target_index",
+                task_partition_bind="env.command_manager.get_term('goal_point').table.task_partition",
+            ),
+            "sampling": SamplerCfg(
+                strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0)],
+                eps=1e-8,
+            ),
+            "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=20),
+            "success_bind": "env.termination_manager.get_term('success')",
+            "sampler_visual_logger": log_spawn_goal_sampler_images,
+            "sampler_visual_log_period": 1000,
+        },
     )
 
 

@@ -8,9 +8,13 @@
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import torch
+
+if TYPE_CHECKING:
+    import warp as wp
 
 _ANYMAL_BODY_NAMES = [
     "base",

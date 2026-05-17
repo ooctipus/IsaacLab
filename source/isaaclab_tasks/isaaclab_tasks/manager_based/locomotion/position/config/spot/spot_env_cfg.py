@@ -22,6 +22,10 @@ class SpotEnvMixin:
         # overwrite as spot's body names for events
         self.events.add_base_mass.params["asset_cfg"].body_names = "body"
         self.viewer.body_name = "body"
+        pipeline_cfg = self.commands.foot_sampled_commands.goal_point.task_table.pipeline_cfg
+        pipeline_cfg.foot_body_names = ".*_foot"
+        pipeline_cfg.lateral_hip_joint_pattern = ".*hip_x"
+        pipeline_cfg.joint_regularize_targets = {".*hip_x": 0.0, ".*_kn": -1.5}
         if hasattr(self.terminations, "log_gait"):
             self.terminations.log_gait.params["async_pairs"] = (
                 ("fl_foot", "fr_foot"),
