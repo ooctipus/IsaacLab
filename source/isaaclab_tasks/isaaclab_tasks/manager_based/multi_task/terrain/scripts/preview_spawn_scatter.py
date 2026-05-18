@@ -87,6 +87,7 @@ def main(env_cfg, _agent_cfg):
     from PIL import Image
 
     from isaaclab.terrains.terrain_generator import TerrainGenerator
+
     from isaaclab_tasks.manager_based.multi_task.curriculum import StateLayout
     from isaaclab_tasks.manager_based.multi_task.terrain.mdp.commands.task_table_builder import build_task_table
     from isaaclab_tasks.manager_based.multi_task.terrain.scripts.validate_spawn_points import (
@@ -104,8 +105,7 @@ def main(env_cfg, _agent_cfg):
     terrain_gen_cfg = env_cfg.scene.terrain.terrain_generator
     sub_terrain_names = list(terrain_gen_cfg.sub_terrains.keys())
     print(
-        f"[preview] terrain={terrain_gen_cfg.num_rows}x{terrain_gen_cfg.num_cols} "
-        f"sub_terrains={sub_terrain_names}",
+        f"[preview] terrain={terrain_gen_cfg.num_rows}x{terrain_gen_cfg.num_cols} sub_terrains={sub_terrain_names}",
         flush=True,
     )
 
@@ -195,8 +195,9 @@ def main(env_cfg, _agent_cfg):
         print("[preview] No image was written to extras['log_images'].", file=sys.stderr)
         sys.exit(1)
     Image.fromarray(np.asarray(img)).save(args_cli.output)
+    num_states = table.spawn_states.shape[0]
     print(
-        f"[preview] wrote {args_cli.output} (shape={img.shape}, tasks={table.num_tasks}, states={table.spawn_states.shape[0]})",
+        f"[preview] wrote {args_cli.output} (shape={img.shape}, tasks={table.num_tasks}, states={num_states})",
         flush=True,
     )
 

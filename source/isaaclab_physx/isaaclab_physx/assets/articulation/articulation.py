@@ -38,6 +38,7 @@ _HAS_NEWTON_ACTUATORS = importlib.util.find_spec("isaaclab_newton.actuators") is
 
 from isaaclab_physx.assets import kernels as shared_kernels
 from isaaclab_physx.assets.articulation import kernels as articulation_kernels
+from isaaclab_physx.cloner.clone_plan_paths import expand_clone_plan_path
 from isaaclab_physx.physics import PhysxManager as SimulationManager
 
 from .articulation_data import ArticulationData
@@ -3795,7 +3796,10 @@ class Articulation(BaseArticulation):
                 )
             root_prim_path_expr = root_expr + root_prims[0].GetPath().pathString[len(walk_root) :]
         # -- articulation
-        self._root_view = self._physics_sim_view.create_articulation_view(root_prim_path_expr.replace(".*", "*"))
+        root_prim_paths = expand_clone_plan_path(root_prim_path_expr)
+        self._root_view = self._physics_sim_view.create_articulation_view(
+            root_prim_paths if root_prim_paths is not None else root_prim_path_expr.replace(".*", "*")
+        )
 
         # check if the articulation was created
         if self.root_view._backend is None:

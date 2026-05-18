@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING
 import isaaclab.sim as sim_utils
 from isaaclab.managers import CommandTermCfg
 from isaaclab.markers import BLUE_ARROW_X_MARKER_CFG, VisualizationMarkersCfg
-from isaaclab.utils.configclass import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+from isaaclab.utils.configclass import configclass
 
 from .state_command import RelativeStateCommand
 from .state_command_payloads import CommandPayloadBaseFootState, CommandPayloadBaseState

@@ -100,14 +100,21 @@ def physx_replicate(
                 current_worlds[:] = effective_worlds[i]
                 if not current_worlds:
                     continue
-                rep.replicate(
+                success = rep.replicate(
                     _stage_id,
                     src,
                     len(current_worlds),
                     useEnvIds=(len(current_worlds) == num_envs - 1) and device != "cpu",
                     useFabricForReplication=use_fabric,
                 )
-            # unregister only AFTER all replicate() calls completed
-            rep.unregister_replicator(_stage_id)
+                if not success:
+                    raise RuntimeError(
+                        f"PhysX replication failed for source '{src}' to {len(current_worlds)} targets "
+                        f"(use_fabric={use_fabric})."
+                    )
+            # Keep Fabric replication registered so PhysX tensor views search USDRT/Fabric
+            # instead of falling back to USD-only path discovery.
+            if not use_fabric:
+                rep.unregister_replicator(_stage_id)
 
         get_physx_replicator_interface().register_replicator(stage_id, attach_fn, attach_end_fn, rename_fn)

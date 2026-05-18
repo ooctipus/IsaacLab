@@ -37,6 +37,7 @@ import torch
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation
+from isaaclab.cloner import ClonePlan
 from isaaclab.sensors.ray_caster import patterns
 from isaaclab.terrains.trimesh.utils import make_plane
 from isaaclab.terrains.utils import create_prim_from_mesh
@@ -57,6 +58,13 @@ def _make_sim() -> sim_utils.SimulationContext:
     """Fresh stage with a 200 m flat ground plane at z=0."""
     sim_utils.create_new_stage()
     sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(dt=_DT))
+    sim.set_clone_plan(
+        ClonePlan(
+            sources=("/World",),
+            destinations=("/World",),
+            clone_mask=torch.ones((1, 1), dtype=torch.bool, device=sim.device),
+        )
+    )
     mesh = make_plane(size=(200, 200), height=0.0, center_zero=True)
     create_prim_from_mesh(_GROUND_PATH, mesh)
     sim_utils.update_stage()

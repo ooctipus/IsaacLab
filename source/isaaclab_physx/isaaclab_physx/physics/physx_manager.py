@@ -36,6 +36,8 @@ from isaaclab.physics import CallbackHandle, PhysicsEvent, PhysicsManager
 from isaaclab.scene_data import SceneDataBackend, SceneDataFormat
 from isaaclab.utils.string import to_camel_case
 
+from isaaclab_physx.cloner.clone_plan_paths import expand_clone_plan_child_paths
+
 if TYPE_CHECKING:
     from isaaclab.sim.simulation_context import SimulationContext
 
@@ -173,9 +175,9 @@ class PhysxSceneDataBackend(SceneDataBackend):
     def get_rigid_body_view(self) -> omni.physics.tensors.RigidBodyView | None:
         """Lazily create a rigid body view covering all rigid bodies in the scene.
 
-        Discovers rigid body prims by traversing the USD stage and converts
-        per-environment paths (``/World/envs/env_N/...``) into wildcard
-        patterns so a single PhysX view covers every environment instance.
+        When a clone plan is active, only representative source prims are walked
+        and exact backend clone paths are generated from the plan. This avoids
+        depending on cloned USD/Fabric prims.
         """
         if self._rigid_body_view is not None:
             return self._rigid_body_view
@@ -187,15 +189,34 @@ class PhysxSceneDataBackend(SceneDataBackend):
         if stage is None:
             return None
 
-        patterns: set[str] = set()
-        for prim in stage.Traverse():
-            if prim.HasAPI(UsdPhysics.RigidBodyAPI):
-                patterns.add(re.sub(r"/World/envs/env_\d+", "/World/envs/env_*", prim.GetPath().pathString))
+        expected_paths = expand_clone_plan_child_paths(
+            predicate=lambda prim: prim.HasAPI(UsdPhysics.RigidBodyAPI),
+            stage=stage,
+        )
+        patterns = expected_paths
+        if expected_paths is None:
+            patterns = set()
+            for prim in stage.Traverse():
+                if prim.HasAPI(UsdPhysics.RigidBodyAPI):
+                    patterns.add(re.sub(r"/World/envs/env_\d+", "/World/envs/env_*", prim.GetPath().pathString))
 
         if not patterns:
             return None
 
         self._rigid_body_view = self._simulation_view.create_rigid_body_view(list(patterns))
+        if os.environ.get("ISAACLAB_DEBUG_FABRIC_CLONES") == "1":
+            prim_paths = list(self._rigid_body_view.prim_paths)
+            missing_paths = []
+            if expected_paths is not None:
+                prim_path_set = set(prim_paths)
+                missing_paths = [path for path in expected_paths if path not in prim_path_set]
+            logger.warning(
+                "PhysX scene-data diagnostic: requested=%d, view_count=%d, missing_samples=%s, first_paths=%s",
+                len(patterns),
+                self._rigid_body_view.count,
+                missing_paths[:25],
+                prim_paths[:10],
+            )
         return self._rigid_body_view
 
     @property

@@ -5,10 +5,11 @@
 
 from dataclasses import MISSING
 
-from isaaclab_newton.physics import NewtonCfg, MJWarpSolverCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
-from isaaclab_physx.physics import PhysxCfg
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
 from isaaclab_newton.sensors import ContactSensorCfg as NewtonContactSensorCfg
+from isaaclab_physx.physics import PhysxCfg
 from isaaclab_physx.sensors import ContactSensorCfg as PhysXContactSensorCfg
+
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
@@ -21,12 +22,10 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import patterns
-
-from isaaclab_tasks.manager_based.multi_task.sensors import FastTerrainScannerCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.terrains import TerrainGeneratorCfg, TerrainImporterCfg
-from isaaclab.utils.configclass import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
+from isaaclab.utils.configclass import configclass
 from isaaclab.utils.noise import UniformNoiseCfg as Unoise
 
 from isaaclab_tasks.manager_based.multi_task.curriculum import (
@@ -36,6 +35,7 @@ from isaaclab_tasks.manager_based.multi_task.curriculum import (
     SuccessMonitorCfg,
 )
 from isaaclab_tasks.manager_based.multi_task.mdp.curriculums import success_rate_sampler
+from isaaclab_tasks.manager_based.multi_task.sensors import FastTerrainScannerCfg
 from isaaclab_tasks.manager_based.multi_task.terrain.viz.sampler_images import log_spawn_goal_sampler_images
 from isaaclab_tasks.utils import PresetCfg
 
@@ -272,7 +272,9 @@ class RewardsCfg:
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*(?:(FOOT))).*$"), "threshold": 1.0},
     )
 
-    fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact", "abnormal_robot"]}, weight=-50.0)
+    fail = RewTerm(
+        func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact", "abnormal_robot"]}, weight=-50.0
+    )
 
     explore = RewTerm(func=mdp.exploration_reward, weight=0.3, params={"forward_only": True})
 

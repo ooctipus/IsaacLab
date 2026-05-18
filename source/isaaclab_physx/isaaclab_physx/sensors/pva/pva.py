@@ -18,6 +18,7 @@ from isaaclab.markers import VisualizationMarkers
 from isaaclab.sensors.pva import BasePva
 from isaaclab.utils.warp import ProxyArray
 
+from isaaclab_physx.cloner.clone_plan_paths import expand_clone_plan_path
 from isaaclab_physx.physics import PhysxManager as SimulationManager
 
 from .kernels import pva_reset_kernel, pva_update_kernel
@@ -152,7 +153,10 @@ class Pva(BasePva):
 
         self._rigid_parent_expr, fixed_pos_b, fixed_quat_b = self._resolve_rigid_body_ancestor_expr()
         # Create the rigid body view on the ancestor
-        self._view = self._physics_sim_view.create_rigid_body_view(self._rigid_parent_expr.replace(".*", "*"))
+        rigid_parent_paths = expand_clone_plan_path(self._rigid_parent_expr)
+        self._view = self._physics_sim_view.create_rigid_body_view(
+            rigid_parent_paths if rigid_parent_paths is not None else self._rigid_parent_expr.replace(".*", "*")
+        )
 
         # Get world gravity
         gravity = self._physics_sim_view.get_gravity()

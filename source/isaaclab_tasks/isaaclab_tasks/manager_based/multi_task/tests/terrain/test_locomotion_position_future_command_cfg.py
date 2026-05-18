@@ -36,9 +36,7 @@ def test_locomotion_position_uses_future_command_and_curriculum():
     )
 
     reset_terms = [
-        name
-        for name, term in vars(cfg.events).items()
-        if isinstance(term, EventTermCfg) and term.mode == "reset"
+        name for name, term in vars(cfg.events).items() if isinstance(term, EventTermCfg) and term.mode == "reset"
     ]
     assert reset_terms == []
 

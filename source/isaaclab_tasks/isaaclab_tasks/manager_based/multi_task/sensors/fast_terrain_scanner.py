@@ -66,7 +66,6 @@ import warp as wp
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
 from isaaclab.sensors.sensor_base import SensorBase
-from isaaclab.sim.views import FrameView
 from isaaclab.utils.mesh import create_trimesh_from_geom_mesh
 from isaaclab.utils.warp import convert_to_warp_mesh
 
@@ -117,6 +116,7 @@ class FastTerrainScanner(SensorBase):
         self._resolve_and_spawn("fast_terrain_scanner")
         # data is created at the end of ``_initialize_impl`` once we know num_rays.
         self._data: FastTerrainScannerData | None = None  # type: ignore[assignment]
+        self._articulation = None
         self._body_idx: int | None = None
 
     # ------------------------------------------------------------------
@@ -126,14 +126,9 @@ class FastTerrainScanner(SensorBase):
     def bind_articulation(self, articulation, body_name: str) -> None:
         """Bind the sensor pose to a specific articulation body.
 
-        By default the sensor reads its world pose from a :class:`FrameView`,
-        which tracks a spawned child prim under the target body. PhysX does not
-        write articulation body transforms back to Fabric/USD, so the
-        ``FrameView`` returns stale (init-time) positions.
-
-        Call this method after env creation to read the body pose directly from
-        the :class:`Articulation`'s GPU-backed ``body_pos_w`` / ``body_quat_w``
-        tensors, which are always up-to-date.
+        The scanner reads the body pose directly from the :class:`Articulation`'s
+        GPU-backed ``body_pos_w`` / ``body_quat_w`` tensors, which are always
+        up-to-date.
 
         Args:
             articulation: The :class:`Articulation` asset (e.g. ``env.scene["robot"]``).
@@ -147,7 +142,7 @@ class FastTerrainScanner(SensorBase):
 
     @property
     def num_instances(self) -> int:
-        return self._view.count
+        return self._view_count
 
     @property
     def data(self) -> FastTerrainScannerData:
@@ -165,7 +160,7 @@ class FastTerrainScanner(SensorBase):
             num_envs_ids = len(env_ids)
         else:
             env_ids = slice(None)
-            num_envs_ids = self._view.count
+            num_envs_ids = self._view_count
 
         # Resample sensor-position drift.
         self._drift_torch[env_ids] = torch.empty(num_envs_ids, 3, device=self._device).uniform_(*self.cfg.drift_range)
@@ -183,11 +178,7 @@ class FastTerrainScanner(SensorBase):
 
     def _initialize_impl(self):
         super()._initialize_impl()
-
-        # FrameView tracks the spawned sensor prim's world pose; the pose returned already
-        # includes any cfg-defined sensor offset (since the offset is folded into the local
-        # ray pattern at init by ``_initialize_rays``).
-        self._view = FrameView(self.cfg.prim_path, device=self._device, stage=self.stage)
+        self._view_count = self._num_envs
 
         # Resolve alignment mode once at init.
         self._alignment_mode = {"world": 0, "yaw": 1, "base": 2}[self.cfg.ray_alignment]
@@ -214,7 +205,7 @@ class FastTerrainScanner(SensorBase):
         # Inf-init scratch for atomic-min closest-hit (one combined kernel for hits + distance).
         wp.launch(
             fill_inf_kernel,
-            dim=(self._view.count, self.num_rays),
+            dim=(self._view_count, self.num_rays),
             inputs=[env_mask, self._ray_hits_w, self._ray_distance_w],
             device=self._device,
         )
@@ -223,7 +214,7 @@ class FastTerrainScanner(SensorBase):
         sensor_poses_in = self._get_view_transforms_wp()
         wp.launch(
             fast_terrain_raycast_kernel,
-            dim=(self._mesh_ids_wp.shape[1], self._view.count, self.num_rays),
+            dim=(self._mesh_ids_wp.shape[1], self._view_count, self.num_rays),
             inputs=[
                 sensor_poses_in,
                 env_mask,
@@ -247,20 +238,10 @@ class FastTerrainScanner(SensorBase):
     # ------------------------------------------------------------------
 
     def _initialize_warp_meshes(self):
-        """Parse ``cfg.mesh_prim_paths``, upload Warp meshes (deduped by prim path), and
-        build the ``(num_envs, n_meshes_per_env)`` mesh-id table + ``transformf`` pose
-        array the raycast kernel binds.
-
-        For a height scanner the typical case is one prim-path expression matching one
-        terrain prim per env (e.g. ``"{ENV_REGEX_NS}/ground"``). The static-terrain
-        assumption only covers *time*: the per-env mesh world poses (e.g. each env's
-        terrain copy sitting at its own env-origin) are still resolved at init from the
-        actual prim transforms — same as upstream :class:`MultiMeshRayCaster` — and then
-        held constant. Per-step transform updates are skipped.
-        """
-        per_env_mesh_ids: list[list[int]] = [[] for _ in range(self._num_envs)]
+        """Upload source Warp meshes and expand them over the clone-plan env count."""
+        per_env_mesh_ids: list[list[int]] = [[] for _ in range(self._view_count)]
         # Each pose row is laid out as ``(tx, ty, tz, qx, qy, qz, qw)`` for ``wp.transformf``.
-        per_env_poses: list[list[tuple[float, ...]]] = [[] for _ in range(self._num_envs)]
+        per_env_poses: list[list[tuple[float, ...]]] = [[] for _ in range(self._view_count)]
 
         for prim_expr in self.cfg.mesh_prim_paths:
             prim_expr = prim_expr.format(ENV_REGEX_NS="/World/envs/env_.*")
@@ -268,25 +249,23 @@ class FastTerrainScanner(SensorBase):
             if not target_prims:
                 raise RuntimeError(f"FastTerrainScanner: no prims matched '{prim_expr}'.")
 
-            # ``len(target_prims) == 1`` ⇒ a single global prim shared by all envs;
-            # otherwise we expect one prim per env (typical for ``{ENV_REGEX_NS}`` patterns).
+            # ``len(target_prims) == 1`` ⇒ a source/global prim shared by all backend clones.
+            # Otherwise we expect one authored mesh per clone-plan environment.
             is_global = len(target_prims) == 1
-            if not is_global and len(target_prims) != self._num_envs:
+            if not is_global and len(target_prims) != self._view_count:
                 raise RuntimeError(
                     f"FastTerrainScanner: '{prim_expr}' matched {len(target_prims)} prims; expected"
-                    f" 1 (global) or {self._num_envs} (per-env)."
+                    f" 1 (source/global) or {self._view_count} (per-env)."
                 )
 
             for env_idx, target_prim in enumerate(target_prims):
                 wp_mesh = self._build_or_lookup_mesh(target_prim)
-                # ``resolve_prim_pose`` returns ``(translation, quat_xyzw)`` of the prim
-                # in world frame — packed as the 7-tuple ``transformf`` row.
                 pos, quat = sim_utils.resolve_prim_pose(target_prim)
                 pose_row = (*pos, *quat)
                 if is_global:
-                    for e in range(self._num_envs):
-                        per_env_mesh_ids[e].append(wp_mesh.id)
-                        per_env_poses[e].append(pose_row)
+                    for env_id in range(self._view_count):
+                        per_env_mesh_ids[env_id].append(wp_mesh.id)
+                        per_env_poses[env_id].append(pose_row)
                 else:
                     per_env_mesh_ids[env_idx].append(wp_mesh.id)
                     per_env_poses[env_idx].append(pose_row)
@@ -337,7 +316,7 @@ class FastTerrainScanner(SensorBase):
 
         The cfg sensor offset (``cfg.offset.pos`` / ``cfg.offset.rot``) is folded into the
         local ray pattern here, so the kernel never sees it as a separate input. The kernel
-        only applies the runtime sensor pose (from ``FrameView``) plus per-episode drifts.
+        only applies the runtime sensor pose plus per-episode drifts.
         """
         # Pattern (1D — shared across envs, no per-env replication).
         ray_starts_torch, ray_directions_torch = self.cfg.pattern_cfg.func(self.cfg.pattern_cfg, self._device)
@@ -355,31 +334,32 @@ class FastTerrainScanner(SensorBase):
         self._ray_directions_local = wp.from_torch(ray_directions_torch.contiguous(), dtype=wp.vec3f)
 
         # Drift buffers — Warp arrays with zero-copy torch views for ``reset()`` indexing.
-        self._drift = wp.zeros(self._view.count, dtype=wp.vec3f, device=self._device)
-        self._ray_cast_drift = wp.zeros(self._view.count, dtype=wp.vec3f, device=self._device)
+        self._drift = wp.zeros(self._view_count, dtype=wp.vec3f, device=self._device)
+        self._ray_cast_drift = wp.zeros(self._view_count, dtype=wp.vec3f, device=self._device)
         self._drift_torch = wp.to_torch(self._drift)
         self._ray_cast_drift_torch = wp.to_torch(self._ray_cast_drift)
 
         # Per-env sensor pose output (translation + quaternion combined into a single
         # ``transformf``). The data class slices this into ``pos_w`` / ``quat_w`` torch views.
-        self._sensor_pose_w = wp.zeros(self._view.count, dtype=wp.transformf, device=self._device)
-        self._ray_hits_w = wp.zeros((self._view.count, self.num_rays), dtype=wp.vec3f, device=self._device)
+        self._sensor_pose_w = wp.zeros(self._view_count, dtype=wp.transformf, device=self._device)
+        self._ray_hits_w = wp.zeros((self._view_count, self.num_rays), dtype=wp.vec3f, device=self._device)
         # ``atomic_min`` closest-hit scratch — re-init'd each step by ``fill_inf_kernel``.
-        self._ray_distance_w = wp.zeros((self._view.count, self.num_rays), dtype=wp.float32, device=self._device)
+        self._ray_distance_w = wp.zeros((self._view_count, self.num_rays), dtype=wp.float32, device=self._device)
 
     def _get_view_transforms_wp(self) -> wp.array:
         """Pack sensor poses into a Warp ``transformf`` array (tx, ty, tz, qx, qy, qz, qw).
 
-        When :meth:`bind_articulation` has been called, reads body poses directly
-        from the articulation's GPU-backed tensors (always fresh from PhysX).
-        Otherwise falls back to :class:`FrameView` (Fabric / USD).
+        Reads body poses directly from the articulation's GPU-backed tensors
+        (always fresh from the simulation backend).
         """
-        if self._body_idx is not None:
-            pos_torch = self._articulation.data.body_pos_w.torch[:, self._body_idx]
-            quat_torch = self._articulation.data.body_quat_w.torch[:, self._body_idx]
-        else:
-            pos_w, quat_w = self._view.get_world_poses()
-            pos_torch = pos_w.torch.reshape(-1, 3)
-            quat_torch = quat_w.torch.reshape(-1, 4)
+        if self._body_idx is None or self._articulation is None:
+            raise RuntimeError("FastTerrainScanner requires bind_articulation() before sensor update.")
+        pos_torch = self._articulation.data.body_pos_w.torch[:, self._body_idx]
+        quat_torch = self._articulation.data.body_quat_w.torch[:, self._body_idx]
+        if pos_torch.shape[0] != self._view_count or quat_torch.shape[0] != self._view_count:
+            raise RuntimeError(
+                "FastTerrainScanner articulation body tensors do not match the clone-plan environment count: "
+                f"{pos_torch.shape[0]} poses for {self._view_count} envs."
+            )
         poses = torch.cat([pos_torch, quat_torch], dim=-1).contiguous()
         return wp.from_torch(poses).view(wp.transformf)

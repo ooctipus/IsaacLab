@@ -12,8 +12,8 @@ import tempfile
 from contextlib import nullcontext
 from typing import TYPE_CHECKING
 
-from filelock import FileLock
 import numpy as np
+from filelock import FileLock
 
 from pxr import Gf, Sdf, Usd, UsdGeom
 

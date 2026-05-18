@@ -221,6 +221,56 @@ def test_clone_environments_executes_env_root_plan_with_positions(monkeypatch: p
     assert len(set_plan_calls) == 1
 
 
+def test_clone_environments_skips_usd_when_backend_clones(monkeypatch: pytest.MonkeyPatch):
+    """Backends that own cloning should not need asset USD replication."""
+    from isaaclab.cloner import ClonePlan
+
+    scene = object.__new__(InteractiveScene)
+    scene.cfg = SimpleNamespace(replicate_physics=True, num_envs=3)
+    scene.stage = object()
+    scene.physics_backend = "newton"
+    scene._sensors = {}
+    scene.env_fmt = "/World/envs/env_{}"
+    scene._ALL_INDICES = torch.arange(3, dtype=torch.long)
+    scene._default_env_origins = torch.zeros((3, 3), dtype=torch.float32)
+    scene._clone_plan = ClonePlan(
+        sources=(scene.env_fmt.format(0),),
+        destinations=(scene.env_fmt,),
+        clone_mask=torch.ones((1, scene.num_envs), dtype=torch.bool),
+    )
+
+    sim_state: dict = {"plan": None}
+    scene.sim = SimpleNamespace(
+        set_clone_plan=lambda plan: sim_state.__setitem__("plan", plan),
+        get_clone_plan=lambda: sim_state["plan"],
+    )
+    monkeypatch.setattr(InteractiveScene, "device", property(lambda self: "cpu"))
+
+    @contextlib.contextmanager
+    def _noop_fabric_notices(stage, *, restore=True):
+        yield
+
+    monkeypatch.setattr("isaaclab.scene.interactive_scene.cloner.disabled_fabric_change_notifies", _noop_fabric_notices)
+
+    physics_calls = []
+    usd_calls = []
+    scene.cloner_cfg = SimpleNamespace(
+        device="cpu",
+        physics_clone_fn=lambda *args, **kwargs: physics_calls.append((args, kwargs)),
+        clone_usd=False,
+    )
+    monkeypatch.setattr(
+        "isaaclab.scene.interactive_scene.cloner.usd_replicate",
+        lambda *args, **kwargs: usd_calls.append((args, kwargs)),
+    )
+
+    scene.clone_environments(copy_from_source=False)
+
+    assert len(physics_calls) == 1
+    assert usd_calls == []
+    assert sim_state["plan"] is scene._clone_plan
+
+
 def test_clone_environments_skips_replication_without_plan():
     """Direct-path cfg scenes publish no plan and do not dispatch cloners."""
     scene = object.__new__(InteractiveScene)

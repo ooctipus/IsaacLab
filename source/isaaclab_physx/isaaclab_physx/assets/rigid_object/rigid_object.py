@@ -21,6 +21,7 @@ from isaaclab.sim.utils.queries import get_all_matching_child_prims, resolve_mat
 from isaaclab.utils.wrench_composer import WrenchComposer
 
 from isaaclab_physx.assets import kernels as shared_kernels
+from isaaclab_physx.cloner.clone_plan_paths import expand_clone_plan_path
 from isaaclab_physx.physics import PhysxManager as SimulationManager
 
 from .rigid_object_data import RigidObjectData
@@ -918,7 +919,10 @@ class RigidObject(BaseRigidObject):
             )
         root_prim_path_expr = root_expr + root_prims[0].GetPath().pathString[len(walk_root) :]
         # -- object view
-        self._root_view = self._physics_sim_view.create_rigid_body_view(root_prim_path_expr.replace(".*", "*"))
+        root_prim_paths = expand_clone_plan_path(root_prim_path_expr)
+        self._root_view = self._physics_sim_view.create_rigid_body_view(
+            root_prim_paths if root_prim_paths is not None else root_prim_path_expr.replace(".*", "*")
+        )
 
         # check if the rigid body was created
         if self.root_view._backend is None:
