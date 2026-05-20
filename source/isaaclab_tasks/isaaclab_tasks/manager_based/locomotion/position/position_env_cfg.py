@@ -35,6 +35,7 @@ from isaaclab_tasks.manager_based.multi_task.curriculum import (
     SuccessMonitorCfg,
 )
 from isaaclab_tasks.manager_based.multi_task.mdp.curriculums import success_rate_sampler
+from isaaclab_tasks.manager_based.multi_task.mdp.terminations import illegal_contact_ratio
 from isaaclab_tasks.manager_based.multi_task.sensors import FastTerrainScannerCfg
 from isaaclab_tasks.manager_based.multi_task.terrain.viz.sampler_images import log_spawn_goal_sampler_images
 from isaaclab_tasks.utils import PresetCfg
@@ -288,8 +289,11 @@ class TerminationsCfg:
     abnormal_robot = DoneTerm(func=mdp.abnormal_robot_state)
 
     base_contact = DoneTerm(
-        func=mdp.illegal_contact,
-        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*foot).*$"), "threshold": 1.0},
+        func=illegal_contact_ratio,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*"),
+            "threshold_ratio": 3.0,
+        },
     )
 
     success = DoneTerm(func=mdp.success_terminate, time_out=False)
