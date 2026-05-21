@@ -12,7 +12,6 @@ from isaaclab_tasks.utils import PresetCfg
 
 from ...mdp.terminations import BaseTerminationsCfg
 from .. import mdp
-from .robots.robot_presets import NonFootContactBodyNamesCfg
 
 
 @configclass
@@ -28,8 +27,16 @@ class PositionTerminationsCfg(BaseTerminationsCfg):
       which compared against absolute world z and broke for terrains with
       non-zero spawn heights).
     - ``base_contact`` — fires on impact contact (force above 3× bodyweight)
-      against any non-foot body. Allows routine soft contact (kneeling,
-      climbing, leaning) while terminating on shock impacts.
+      against any body. Static loading on any body (foot stance, kneeling,
+      leaning) is bounded above by ~1× total BW by static equilibrium, so
+      3× cleanly gates impact contacts regardless of which body is involved
+      — knees, base, and feet alike. Per-robot configs can narrow
+      ``sensor_cfg.body_names`` to exclude small appendages (e.g. fingers /
+      toes / tail) where contact at any force is expected during normal
+      motion. Reference: CaT (Chane-Sane et al., IROS 2024) uses ~2× total
+      BW under stochastic termination + compliant impedance control on a
+      light quadruped; 3× is the deterministic-termination, stiffer-actuator
+      equivalent.
     - ``success`` — episode-success termination from the goal-tracking command.
     """
 
@@ -44,7 +51,7 @@ class PositionTerminationsCfg(BaseTerminationsCfg):
     base_contact = DoneTerm(
         func=mdp.illegal_contact_ratio,
         params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=NonFootContactBodyNamesCfg()),  # type: ignore
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*"),
             "threshold_ratio": 3.0,
         },
     )
