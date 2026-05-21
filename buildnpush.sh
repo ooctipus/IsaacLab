@@ -13,6 +13,7 @@ set -euo pipefail
 #
 # Usage:
 #   ./buildnpush.sh <tag> [options]
+#   ./buildnpush.sh tag <source-image> <tag> [--skip-push]
 #   ./buildnpush.sh enter <tag>       # Enter a container for the given tag
 #   ./buildnpush.sh --status          # Show images and disk usage
 #   ./buildnpush.sh --clean           # Remove old deps images (keep current)
@@ -23,7 +24,7 @@ set -euo pipefail
 #   --force-deps      Force rebuild dependencies (but use Docker cache)
 #   --force-pip-only  Re-run pip install on cached deps (no isaacsim rebuild)
 #   --copy-only       Copy source onto an existing deps image (no pip install)
-#   --skip-push       Build only, don't push to NGC
+#   --skip-push       Build/tag only, don't push to NGC
 #   -h, --help        Show this help message
 #
 # Examples:
@@ -31,18 +32,73 @@ set -euo pipefail
 #   ./buildnpush.sh v1.0 --copy-only  # Copy source only, even if deps hash changed
 #   ./buildnpush.sh v1.0 --force      # Full rebuild
 #   ./buildnpush.sh v1.0 --force-pip-only  # Re-run pip install only
+#   ./buildnpush.sh tag oocti/isaaclab-manipulation:latest factory
 #   ./buildnpush.sh enter v1.0        # Enter container for v1.0
 #   ./buildnpush.sh --status          # Check current images
 #   ./buildnpush.sh --clean           # Cleanup old deps caches
 # =============================================================================
 
 show_help() {
-  head -37 "$0" | tail -33
+  sed -n "/^# Usage:/,/^# =============================================================================/p" "$0" | sed "s/^# \{0,1\}//"
   exit 0
 }
 
 image_exists() {
   docker image inspect "$1" &>/dev/null
+}
+
+tag_image() {
+  local source_image="${1:-}"
+  local tag="${2:-}"
+  shift 2 2>/dev/null || true
+
+  local skip_push=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --skip-push)
+        skip_push=1
+        shift
+        ;;
+      -h|--help)
+        echo "Usage: ./buildnpush.sh tag <source-image> <tag> [--skip-push]"
+        exit 0
+        ;;
+      *)
+        echo "Unexpected argument for tag: $1"
+        echo "Usage: ./buildnpush.sh tag <source-image> <tag> [--skip-push]"
+        exit 1
+        ;;
+    esac
+  done
+
+  if [ -z "$source_image" ] || [ -z "$tag" ]; then
+    echo "Error: source image and tag are required."
+    echo "Usage: ./buildnpush.sh tag <source-image> <tag> [--skip-push]"
+    exit 1
+  fi
+
+  if ! image_exists "$source_image"; then
+    echo "Error: source image not found locally: ${source_image}"
+    echo "Pull it first, e.g.: docker pull ${source_image}"
+    exit 1
+  fi
+
+  local final_image="nvcr.io/nvidian/octi-isaac-lab:${tag}"
+  echo "🏷  Retagging image"
+  echo "   Source: ${source_image}"
+  echo "   Target: ${final_image}"
+  docker tag "$source_image" "$final_image"
+
+  if [ "$skip_push" -eq 0 ]; then
+    echo "📤 Pushing to NGC: ${final_image}"
+    /home/zhengyuz/ngc-cli/ngc registry image push "$final_image"
+    echo "📤 Image pushed: ${final_image}"
+  else
+    echo "⏭️  Skipping push (--skip-push)"
+  fi
+
+  echo "✅ Done!"
+  exit 0
 }
 
 # =============================================================================
@@ -272,6 +328,10 @@ TAG=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
+    tag)
+      shift
+      tag_image "$@"
+      ;;
     --status)
       show_status
       ;;
@@ -352,37 +412,65 @@ SKIP_DEPS=0
 USE_CACHE=1
 REASON=""
 
-# Check if ANY isaac-lab-deps:* images exist (indicates we're already using new system)
-is_source_only_layered_image() {
-  docker history --no-trunc "$1" 2>/dev/null | grep -Eq "COPY (\\.\\./)?source( |$)"
+# Layer-budget gate: deps caches accumulate layers as ``--force-pip-only`` builds
+# stack source/pip update layers on top. Docker's overlay driver caps an image
+# at 127 layers; we keep well below that so a budgeted cache always has room
+# for at least one more source-only update on top.
+#
+# Reference points (Dockerfile.base + ``--chown`` Dockerfile.source-only):
+#   - Clean ``--force-deps`` cache: ~71 layers
+#   - After 1 ``--force-pip-only`` on top: ~80 layers
+#   - Each subsequent ``--force-pip-only`` adds ~9 layers
+# A budget of 110 lets ~4 ``--force-pip-only`` rounds stack before the user is
+# nudged to flatten with ``--force-deps``.
+MAX_LAYERS_FOR_DEPS_CACHE=110
+
+image_layer_count() {
+  # ``docker history`` includes a header line; subtract it to get the layer count.
+  docker history --no-trunc "$1" 2>/dev/null | tail -n +2 | wc -l
 }
 
-first_clean_deps_image() {
+image_within_layer_budget() {
+  local count
+  count=$(image_layer_count "$1")
+  # An image with 0 layers means ``docker history`` failed (e.g. image missing);
+  # treat that as out-of-budget so we fall through to the error/rebuild paths.
+  [ "$count" -gt 0 ] && [ "$count" -lt "$MAX_LAYERS_FOR_DEPS_CACHE" ]
+}
+
+# Pick the most recently created ``isaac-lab-deps:*`` image that still has layer
+# headroom. Newest-first ordering means promoted ``--force-pip-only`` results
+# (which carry the latest pip state) outrank older clean deps caches.
+newest_within_budget_deps_image() {
   local img
-  for img in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep "^isaac-lab-deps:" || true); do
-    if ! is_source_only_layered_image "$img"; then
+  for img in $(
+    docker images --filter 'reference=isaac-lab-deps:*' \
+      --format '{{.CreatedAt}}\t{{.Repository}}:{{.Tag}}' 2>/dev/null \
+      | sort -k1,1 -r | awk '{print $NF}'
+  ); do
+    if image_within_layer_budget "$img"; then
       echo "$img"
       return
     fi
   done
 }
 
-any_clean_deps_image_exists() {
-  [ -n "$(first_clean_deps_image)" ]
+any_within_budget_deps_image_exists() {
+  [ -n "$(newest_within_budget_deps_image)" ]
 }
 
 if [ "$COPY_ONLY" -eq 1 ]; then
   SKIP_DEPS=1
   USE_CACHE=1
-  if image_exists "$DEPS_IMAGE" && ! is_source_only_layered_image "$DEPS_IMAGE"; then
-    echo "   ✓ Cached deps image found: ${DEPS_IMAGE}"
-  elif any_clean_deps_image_exists; then
-    EXISTING_DEPS=$(first_clean_deps_image)
-    echo "   ⚠ Deps hash changed but --copy-only: using ${EXISTING_DEPS}"
+  if image_exists "$DEPS_IMAGE" && image_within_layer_budget "$DEPS_IMAGE"; then
+    echo "   ✓ Cached deps image found: ${DEPS_IMAGE} ($(image_layer_count "$DEPS_IMAGE") layers)"
+  elif any_within_budget_deps_image_exists; then
+    EXISTING_DEPS=$(newest_within_budget_deps_image)
+    echo "   ⚠ Hash mismatch (or layer-budget exceeded on ${DEPS_IMAGE}); using newest in-budget cache: ${EXISTING_DEPS} ($(image_layer_count "$EXISTING_DEPS") layers)"
     DEPS_IMAGE="$EXISTING_DEPS"
   else
-    echo "   ✗ No clean deps image available for --copy-only."
-    echo "     Re-run without --copy-only or use --force-deps."
+    echo "   ✗ No deps image is within ${MAX_LAYERS_FOR_DEPS_CACHE}-layer budget."
+    echo "     Re-run without --copy-only or use --force-deps to flatten and rebuild."
     exit 1
   fi
   REASON="copy source only on cached deps (--copy-only)"
@@ -397,40 +485,45 @@ elif [ "$FORCE_DEPS" -eq 1 ]; then
 elif [ "$FORCE_PIP" -eq 1 ]; then
   SKIP_DEPS=1
   USE_CACHE=1
-  # Use whatever deps image exists (hash may have changed due to setup.py edits)
-  if image_exists "$DEPS_IMAGE" && is_source_only_layered_image "$DEPS_IMAGE"; then
-    EXISTING_DEPS=$(first_clean_deps_image)
+  # Use whatever deps image exists (hash may have changed due to setup.py edits).
+  # Prefer the current-hash deps cache if it still has layer headroom; otherwise
+  # fall back to the newest in-budget cache so we don't keep stacking layers on
+  # an already-tall image.
+  if image_exists "$DEPS_IMAGE" && image_within_layer_budget "$DEPS_IMAGE"; then
+    echo "   ✓ Using current-hash deps cache: ${DEPS_IMAGE} ($(image_layer_count "$DEPS_IMAGE") layers)"
+  elif image_exists "$DEPS_IMAGE"; then
+    EXISTING_DEPS=$(newest_within_budget_deps_image)
     if [ -z "$EXISTING_DEPS" ]; then
-      echo "   ✗ ${DEPS_IMAGE} is source-only layered and no clean deps cache exists."
-      echo "     Re-run with --force-deps to rebuild a clean deps image."
+      echo "   ✗ ${DEPS_IMAGE} exceeds ${MAX_LAYERS_FOR_DEPS_CACHE}-layer budget and no other cache fits."
+      echo "     Re-run with --force-deps to flatten and rebuild."
       exit 1
     fi
-    echo "   ⚠ ${DEPS_IMAGE} is source-only layered; using ${EXISTING_DEPS}"
+    echo "   ⚠ ${DEPS_IMAGE} exceeds layer budget ($(image_layer_count "$DEPS_IMAGE") layers); using ${EXISTING_DEPS}"
     DEPS_IMAGE="$EXISTING_DEPS"
-  elif ! image_exists "$DEPS_IMAGE" && any_clean_deps_image_exists; then
-    EXISTING_DEPS=$(first_clean_deps_image)
-    echo "   ⚠ Deps hash changed but --force-pip-only: using ${EXISTING_DEPS}"
+  elif any_within_budget_deps_image_exists; then
+    EXISTING_DEPS=$(newest_within_budget_deps_image)
+    echo "   ⚠ Deps hash changed but --force-pip-only: using ${EXISTING_DEPS} ($(image_layer_count "$EXISTING_DEPS") layers)"
     DEPS_IMAGE="$EXISTING_DEPS"
-  elif ! image_exists "$DEPS_IMAGE"; then
+  else
     echo "   ✗ No deps image available for --force-pip-only."
     echo "     Re-run without --force-pip-only or use --force-deps."
     exit 1
   fi
   REASON="pip-only rebuild on existing deps (--force-pip-only)"
 elif image_exists "$DEPS_IMAGE"; then
-  if is_source_only_layered_image "$DEPS_IMAGE"; then
+  if ! image_within_layer_budget "$DEPS_IMAGE"; then
     SKIP_DEPS=0
     USE_CACHE=1
-    REASON="cached deps image is source-only layered; rebuilding deps"
-    echo "   ⚠ ${DEPS_IMAGE} contains source-only layers - full rebuild required"
+    REASON="cached deps image exceeds layer budget; rebuilding deps"
+    echo "   ⚠ ${DEPS_IMAGE} has $(image_layer_count "$DEPS_IMAGE") layers (budget ${MAX_LAYERS_FOR_DEPS_CACHE}) - full rebuild"
   else
     # Exact hash match - use cached deps
     SKIP_DEPS=1
     USE_CACHE=1
     REASON="deps cached (${DEPS_IMAGE})"
-    echo "   ✓ Cached deps image found: ${DEPS_IMAGE}"
+    echo "   ✓ Cached deps image found: ${DEPS_IMAGE} ($(image_layer_count "$DEPS_IMAGE") layers)"
   fi
-elif ! any_clean_deps_image_exists && image_exists "$BASE_IMAGE" && ! is_source_only_layered_image "$BASE_IMAGE"; then
+elif ! any_within_budget_deps_image_exists && image_exists "$BASE_IMAGE" && image_within_layer_budget "$BASE_IMAGE"; then
   # ONE-TIME MIGRATION: No deps images exist yet, but isaac-lab-base exists
   # This means we're migrating from old system to new system
   echo "   ⚡ One-time migration: tagging existing ${BASE_IMAGE} as deps cache..."
@@ -443,7 +536,7 @@ else
   # Deps changed (hash doesn't match any existing deps image)
   SKIP_DEPS=0
   USE_CACHE=1
-  if any_clean_deps_image_exists; then
+  if any_within_budget_deps_image_exists; then
     REASON="deps changed, full rebuild required"
     echo "   ⚠ Deps hash changed - full rebuild required"
   else
@@ -555,11 +648,20 @@ else
     -t "${BASE_IMAGE}" \
     .
 
-  # Do not tag source-only images as deps cache. Re-tagging here stacks
-  # source-copy layers on future source-only builds and eventually trips
-  # Docker overlay's max-depth limit. Use --force-deps for a clean deps cache.
+  # Promote a successful ``--force-pip-only`` build to the deps cache so that
+  # subsequent ``--copy-only`` / ``--force-pip-only`` runs see the latest pip
+  # state (e.g. an upgraded ``warp-lang`` from a setup.py bump). Layer-budget
+  # gate prevents runaway stacking on Docker's overlay driver — when the budget
+  # is exceeded the user is told to flatten with ``--force-deps``.
   if [ "$FORCE_PIP" -eq 1 ]; then
-    echo "ℹ️  Not updating deps cache from a source-only build. Use --force-deps for a clean deps cache."
+    new_layer_count=$(image_layer_count "${BASE_IMAGE}")
+    if [ "${new_layer_count}" -lt "${MAX_LAYERS_FOR_DEPS_CACHE}" ]; then
+      echo "🏷  Promoting --force-pip-only build to deps cache: ${DEPS_IMAGE} (${new_layer_count}/${MAX_LAYERS_FOR_DEPS_CACHE} layers)"
+      docker tag "${BASE_IMAGE}" "${DEPS_IMAGE}"
+    else
+      echo "⚠ Layer count ${new_layer_count} ≥ ${MAX_LAYERS_FOR_DEPS_CACHE}; skipping deps cache promotion."
+      echo "  Run with --force-deps to flatten and reset the layer count."
+    fi
   fi
 fi
 
