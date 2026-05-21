@@ -50,7 +50,7 @@ def test_locomotion_position_anymal_c_command_resolves_without_robot_preset():
     from isaaclab_tasks.utils import resolve_presets
 
     cfg = AnymalCLocomotionPositionCommandEnvCfg()
-    resolve_presets(cfg, {"newton", "all", "base"})
+    resolve_presets(cfg, {"newton_mjwarp", "all", "base"})
 
     goal_cfg = cfg.commands.goal_point
     assert isinstance(goal_cfg, RelativeStateCommandCfg)
@@ -123,3 +123,20 @@ def test_locomotion_position_flat_patch_command_preset_keeps_old_command_schema(
 
     assert isinstance(command_cfg, FlatPatchRelativeStateCommandCfg)
     assert isinstance(command_cfg.commands["terrain_pose_cmd"], FlatPatchRelativeStateCommandCfg.TerrainCommands)
+
+
+def test_locomotion_position_newton_mjwarp_preset_enables_newton_actuators(monkeypatch):
+    """Newton MJWarp position presets should opt into the Newton actuator fast path."""
+    import sys
+
+    from isaaclab_tasks.utils.hydra import resolve_task_config
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["test", "presets=newton_mjwarp,terrain_pose,flat_patch_commands"],
+    )
+
+    cfg, _ = resolve_task_config("Isaac-Position-Anymal-C-v0", "rsl_rl_cfg_entry_point")
+
+    assert cfg.sim.use_newton_actuators is True

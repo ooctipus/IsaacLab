@@ -38,7 +38,7 @@ from isaaclab_tasks.manager_based.multi_task.mdp.curriculums import success_rate
 from isaaclab_tasks.manager_based.multi_task.mdp.terminations import illegal_contact_ratio
 from isaaclab_tasks.manager_based.multi_task.sensors import FastTerrainScannerCfg
 from isaaclab_tasks.manager_based.multi_task.terrain.viz.sampler_images import log_spawn_goal_sampler_images
-from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils import PresetCfg, preset
 
 from . import mdp
 from .mdp.commands_preset import CommandsCfg
@@ -49,7 +49,7 @@ from .terrain_preset import SubTerrainPresetCfg
 @configclass
 class PositionEnvContactSensorCfg(PresetCfg):
     default = PhysXContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
-    newton = NewtonContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
+    newton_mjwarp = NewtonContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
     physx = default
 
 
@@ -337,7 +337,7 @@ class PositionPhysicsCfg(PresetCfg):
         gpu_collision_stack_size=2**31,
         gpu_max_rigid_patch_count=5 * 2**20,
     )
-    newton = NewtonCfg(
+    newton_mjwarp = NewtonCfg(
         solver_cfg=MJWarpSolverCfg(
             njmax=250,
             nconmax=100,
@@ -375,6 +375,7 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
+        self.sim.use_newton_actuators = preset(default=False, newton_mjwarp=True)
 
         if self.scene.height_scanner is not None:
             self.scene.height_scanner.update_period = self.decimation * self.sim.dt
