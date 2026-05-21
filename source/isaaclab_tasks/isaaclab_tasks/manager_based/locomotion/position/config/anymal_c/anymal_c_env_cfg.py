@@ -60,7 +60,6 @@ class AnymalCEnvMixin:
                 implicit_actuator=ANYDRIVE_3_SIMPLE_ACTUATOR_CFG,
                 default=anymal.ANYDRIVE_3_LSTM_ACTUATOR_CFG,
                 lstm_actuator=anymal.ANYDRIVE_3_LSTM_ACTUATOR_CFG,
-                newton_mjwarp=ANYDRIVE_3_LSTM_NEWTON_ACTUATOR_CFG,
             )
         }
         pipeline_cfg = self.commands.foot_sampled_commands.goal_point.task_table.pipeline_cfg
