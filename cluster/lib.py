@@ -28,6 +28,7 @@ SPEC = "docker/cluster/multi_node.yaml"
 
 POOL_TO_PLATFORM = {
     # H100
+    "groot-h100-01": "dgx-h100",
     "groot-h100-ci-02": "dgx-h100",
     "isaac-dev-h100-01": "dgx-h100",
     # L40
