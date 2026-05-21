@@ -129,6 +129,10 @@ def test_locomotion_position_newton_mjwarp_preset_enables_newton_actuators(monke
     """Newton MJWarp position presets should opt into the Newton actuator fast path."""
     import sys
 
+    from isaaclab.actuators import ActuatorNetLSTMCfg
+    from isaaclab_tasks.manager_based.locomotion.position.config.anymal_c.anymal_c_env_cfg import (
+        ANYDRIVE_3_LSTM_ONNX_PATH,
+    )
     from isaaclab_tasks.utils.hydra import resolve_task_config
 
     monkeypatch.setattr(
@@ -138,5 +142,26 @@ def test_locomotion_position_newton_mjwarp_preset_enables_newton_actuators(monke
     )
 
     cfg, _ = resolve_task_config("Isaac-Position-Anymal-C-v0", "rsl_rl_cfg_entry_point")
+    actuator_cfg = cfg.scene.robot.actuators["legs"]
 
     assert cfg.sim.use_newton_actuators is True
+    assert isinstance(actuator_cfg, ActuatorNetLSTMCfg)
+    assert actuator_cfg.network_file == ANYDRIVE_3_LSTM_ONNX_PATH
+
+
+def test_locomotion_position_newton_mjwarp_keeps_actuator_choice_explicit(monkeypatch):
+    """Newton MJWarp should not conflict with explicit actuator presets."""
+    import sys
+
+    from isaaclab.actuators import ImplicitActuatorCfg
+    from isaaclab_tasks.utils.hydra import resolve_task_config
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["test", "presets=newton_mjwarp,implicit_actuator,terrain_pose,flat_patch_commands"],
+    )
+
+    cfg, _ = resolve_task_config("Isaac-Position-Anymal-C-v0", "rsl_rl_cfg_entry_point")
+
+    assert isinstance(cfg.scene.robot.actuators["legs"], ImplicitActuatorCfg)
