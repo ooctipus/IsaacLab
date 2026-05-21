@@ -19,19 +19,20 @@ set -euo pipefail
 #   ./buildnpush.sh --clean           # Remove old deps images (keep current)
 #   ./buildnpush.sh --clean-all       # Remove ALL Isaac Lab images
 #
-# Build Options:
-#   --force           Force full rebuild (ignore all caches)
-#   --force-deps      Force rebuild dependencies (but use Docker cache)
-#   --force-pip-only  Re-run pip install on cached deps (no isaacsim rebuild)
-#   --copy-only       Copy source onto an existing deps image (no pip install)
-#   --skip-push       Build/tag only, don't push to NGC
+# Build Options (ordered by depth of rebuild, light to heavy):
+#   -s, --source      Rebuild source layer only (no pip)
+#   -p, --pip         Rebuild source + re-run pip install
+#   -d, --deps        Rebuild deps + source + pip (uses Docker cache)
+#   -a, --all         Full rebuild from scratch (no Docker cache)
+#       --skip-push   Build/tag only, don't push to NGC
 #   -h, --help        Show this help message
 #
 # Examples:
-#   ./buildnpush.sh v1.0              # Smart build (skip deps if unchanged)
-#   ./buildnpush.sh v1.0 --copy-only  # Copy source only, even if deps hash changed
-#   ./buildnpush.sh v1.0 --force      # Full rebuild
-#   ./buildnpush.sh v1.0 --force-pip-only  # Re-run pip install only
+#   ./buildnpush.sh v1.0          # Smart build (skip deps if unchanged)
+#   ./buildnpush.sh v1.0 -s       # Source-only rebuild
+#   ./buildnpush.sh v1.0 -p       # Source + pip rebuild (use after setup.py edits)
+#   ./buildnpush.sh v1.0 -d       # Deps rebuild
+#   ./buildnpush.sh v1.0 -a       # Full rebuild from scratch
 #   ./buildnpush.sh tag oocti/isaaclab-manipulation:latest factory
 #   ./buildnpush.sh enter v1.0        # Enter container for v1.0
 #   ./buildnpush.sh --status          # Check current images
@@ -319,10 +320,10 @@ compute_deps_hash() {
 # =============================================================================
 # Parse Arguments
 # =============================================================================
-FORCE_REBUILD=0
-FORCE_DEPS=0
-FORCE_PIP=0
-COPY_ONLY=0
+REBUILD_ALL=0
+REBUILD_DEPS=0
+REBUILD_PIP=0
+REBUILD_SOURCE=0
 SKIP_PUSH=0
 TAG=""
 
@@ -345,20 +346,20 @@ while [[ $# -gt 0 ]]; do
       shift
       enter_container "${1:-}" "${2:-}"
       ;;
-    --force)
-      FORCE_REBUILD=1
+    -a|--all)
+      REBUILD_ALL=1
       shift
       ;;
-    --force-deps)
-      FORCE_DEPS=1
+    -d|--deps)
+      REBUILD_DEPS=1
       shift
       ;;
-    --force-pip-only)
-      FORCE_PIP=1
+    -p|--pip)
+      REBUILD_PIP=1
       shift
       ;;
-    --copy-only)
-      COPY_ONLY=1
+    -s|--source)
+      REBUILD_SOURCE=1
       shift
       ;;
     --skip-push)
@@ -389,8 +390,8 @@ if [ -z "$TAG" ]; then
   show_help
 fi
 
-if [ "$COPY_ONLY" -eq 1 ] && { [ "$FORCE_REBUILD" -eq 1 ] || [ "$FORCE_DEPS" -eq 1 ] || [ "$FORCE_PIP" -eq 1 ]; }; then
-  echo "Error: --copy-only cannot be combined with --force, --force-deps, or --force-pip-only."
+if [ "$REBUILD_SOURCE" -eq 1 ] && { [ "$REBUILD_ALL" -eq 1 ] || [ "$REBUILD_DEPS" -eq 1 ] || [ "$REBUILD_PIP" -eq 1 ]; }; then
+  echo "Error: -s/--source cannot be combined with -a/--all, -d/--deps, or -p/--pip."
   exit 1
 fi
 
@@ -412,17 +413,17 @@ SKIP_DEPS=0
 USE_CACHE=1
 REASON=""
 
-# Layer-budget gate: deps caches accumulate layers as ``--force-pip-only`` builds
-# stack source/pip update layers on top. Docker's overlay driver caps an image
-# at 127 layers; we keep well below that so a budgeted cache always has room
-# for at least one more source-only update on top.
+# Layer-budget gate: deps caches accumulate layers as ``-p/--pip`` builds stack
+# source/pip update layers on top. Docker's overlay driver caps an image at 127
+# layers; we keep well below that so a budgeted cache always has room for at
+# least one more source-only update on top.
 #
 # Reference points (Dockerfile.base + ``--chown`` Dockerfile.source-only):
-#   - Clean ``--force-deps`` cache: ~71 layers
-#   - After 1 ``--force-pip-only`` on top: ~80 layers
-#   - Each subsequent ``--force-pip-only`` adds ~9 layers
-# A budget of 110 lets ~4 ``--force-pip-only`` rounds stack before the user is
-# nudged to flatten with ``--force-deps``.
+#   - Clean ``-d/--deps`` cache: ~71 layers
+#   - After 1 ``-p/--pip`` on top: ~80 layers
+#   - Each subsequent ``-p/--pip`` adds ~9 layers
+# A budget of 110 lets ~4 ``-p/--pip`` rounds stack before the user is nudged
+# to flatten with ``-d/--deps``.
 MAX_LAYERS_FOR_DEPS_CACHE=110
 
 image_layer_count() {
@@ -439,8 +440,8 @@ image_within_layer_budget() {
 }
 
 # Pick the most recently created ``isaac-lab-deps:*`` image that still has layer
-# headroom. Newest-first ordering means promoted ``--force-pip-only`` results
-# (which carry the latest pip state) outrank older clean deps caches.
+# headroom. Newest-first ordering means promoted ``-p/--pip`` results (which
+# carry the latest pip state) outrank older clean deps caches.
 newest_within_budget_deps_image() {
   local img
   for img in $(
@@ -459,7 +460,7 @@ any_within_budget_deps_image_exists() {
   [ -n "$(newest_within_budget_deps_image)" ]
 }
 
-if [ "$COPY_ONLY" -eq 1 ]; then
+if [ "$REBUILD_SOURCE" -eq 1 ]; then
   SKIP_DEPS=1
   USE_CACHE=1
   if image_exists "$DEPS_IMAGE" && image_within_layer_budget "$DEPS_IMAGE"; then
@@ -470,19 +471,19 @@ if [ "$COPY_ONLY" -eq 1 ]; then
     DEPS_IMAGE="$EXISTING_DEPS"
   else
     echo "   ✗ No deps image is within ${MAX_LAYERS_FOR_DEPS_CACHE}-layer budget."
-    echo "     Re-run without --copy-only or use --force-deps to flatten and rebuild."
+    echo "     Re-run without -s/--source or use -d/--deps to flatten and rebuild."
     exit 1
   fi
-  REASON="copy source only on cached deps (--copy-only)"
-elif [ "$FORCE_REBUILD" -eq 1 ]; then
+  REASON="source-only rebuild on cached deps (-s/--source)"
+elif [ "$REBUILD_ALL" -eq 1 ]; then
   SKIP_DEPS=0
   USE_CACHE=0
-  REASON="forced full rebuild (--force)"
-elif [ "$FORCE_DEPS" -eq 1 ]; then
+  REASON="full rebuild (-a/--all)"
+elif [ "$REBUILD_DEPS" -eq 1 ]; then
   SKIP_DEPS=0
   USE_CACHE=1
-  REASON="forced deps rebuild (--force-deps)"
-elif [ "$FORCE_PIP" -eq 1 ]; then
+  REASON="deps rebuild (-d/--deps)"
+elif [ "$REBUILD_PIP" -eq 1 ]; then
   SKIP_DEPS=1
   USE_CACHE=1
   # Use whatever deps image exists (hash may have changed due to setup.py edits).
@@ -495,21 +496,21 @@ elif [ "$FORCE_PIP" -eq 1 ]; then
     EXISTING_DEPS=$(newest_within_budget_deps_image)
     if [ -z "$EXISTING_DEPS" ]; then
       echo "   ✗ ${DEPS_IMAGE} exceeds ${MAX_LAYERS_FOR_DEPS_CACHE}-layer budget and no other cache fits."
-      echo "     Re-run with --force-deps to flatten and rebuild."
+      echo "     Re-run with -d/--deps to flatten and rebuild."
       exit 1
     fi
     echo "   ⚠ ${DEPS_IMAGE} exceeds layer budget ($(image_layer_count "$DEPS_IMAGE") layers); using ${EXISTING_DEPS}"
     DEPS_IMAGE="$EXISTING_DEPS"
   elif any_within_budget_deps_image_exists; then
     EXISTING_DEPS=$(newest_within_budget_deps_image)
-    echo "   ⚠ Deps hash changed but --force-pip-only: using ${EXISTING_DEPS} ($(image_layer_count "$EXISTING_DEPS") layers)"
+    echo "   ⚠ Deps hash changed but -p/--pip: using ${EXISTING_DEPS} ($(image_layer_count "$EXISTING_DEPS") layers)"
     DEPS_IMAGE="$EXISTING_DEPS"
   else
-    echo "   ✗ No deps image available for --force-pip-only."
-    echo "     Re-run without --force-pip-only or use --force-deps."
+    echo "   ✗ No deps image available for -p/--pip."
+    echo "     Re-run without -p/--pip or use -d/--deps."
     exit 1
   fi
-  REASON="pip-only rebuild on existing deps (--force-pip-only)"
+  REASON="source + pip rebuild on cached deps (-p/--pip)"
 elif image_exists "$DEPS_IMAGE"; then
   if ! image_within_layer_budget "$DEPS_IMAGE"; then
     SKIP_DEPS=0
@@ -644,23 +645,23 @@ else
     --build-arg DEPS_BASE_IMAGE="${DEPS_IMAGE}" \
     --build-arg ISAACLAB_PATH_ARG="${DOCKER_ISAACLAB_PATH}" \
     --build-arg ISAACSIM_ROOT_PATH_ARG="${DOCKER_ISAACSIM_ROOT_PATH}" \
-    --build-arg RUN_PIP_INSTALL="${FORCE_PIP}" \
+    --build-arg RUN_PIP_INSTALL="${REBUILD_PIP}" \
     -t "${BASE_IMAGE}" \
     .
 
-  # Promote a successful ``--force-pip-only`` build to the deps cache so that
-  # subsequent ``--copy-only`` / ``--force-pip-only`` runs see the latest pip
-  # state (e.g. an upgraded ``warp-lang`` from a setup.py bump). Layer-budget
-  # gate prevents runaway stacking on Docker's overlay driver — when the budget
-  # is exceeded the user is told to flatten with ``--force-deps``.
-  if [ "$FORCE_PIP" -eq 1 ]; then
+  # Promote a successful ``-p/--pip`` build to the deps cache so that subsequent
+  # ``-s/--source`` / ``-p/--pip`` runs see the latest pip state (e.g. an upgraded
+  # ``warp-lang`` from a setup.py bump). The layer-budget gate prevents runaway
+  # stacking on Docker's overlay driver — when the budget is exceeded the user
+  # is told to flatten with ``-d/--deps``.
+  if [ "$REBUILD_PIP" -eq 1 ]; then
     new_layer_count=$(image_layer_count "${BASE_IMAGE}")
     if [ "${new_layer_count}" -lt "${MAX_LAYERS_FOR_DEPS_CACHE}" ]; then
-      echo "🏷  Promoting --force-pip-only build to deps cache: ${DEPS_IMAGE} (${new_layer_count}/${MAX_LAYERS_FOR_DEPS_CACHE} layers)"
+      echo "🏷  Promoting -p/--pip build to deps cache: ${DEPS_IMAGE} (${new_layer_count}/${MAX_LAYERS_FOR_DEPS_CACHE} layers)"
       docker tag "${BASE_IMAGE}" "${DEPS_IMAGE}"
     else
       echo "⚠ Layer count ${new_layer_count} ≥ ${MAX_LAYERS_FOR_DEPS_CACHE}; skipping deps cache promotion."
-      echo "  Run with --force-deps to flatten and reset the layer count."
+      echo "  Run with -d/--deps to flatten and reset the layer count."
     fi
   fi
 fi
