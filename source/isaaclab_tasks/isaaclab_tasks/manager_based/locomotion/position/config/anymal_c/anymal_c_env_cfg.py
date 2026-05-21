@@ -11,6 +11,7 @@ from isaaclab.utils.configclass import configclass
 import isaaclab_assets.robots.anymal as anymal
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab_tasks.utils import preset
+import isaaclab.sim as sim_utils
 from ... import position_env_cfg
 
 
@@ -34,6 +35,18 @@ class AnymalCEnvMixin:
         self.scene.robot.spawn.usd_path = (
             "https://uwlab-assets.s3.us-west-004.backblazeb2.com/Robots/ANYbotics/ANYmal-C/anymal_c.usd"
         )
+        self.scene.robot.spawn.joint_drive_props=preset(
+            implicit_actuator=sim_utils.JointDrivePropertiesCfg(
+                drive_type="force",
+                stiffness=40.0,
+                damping=5.0,
+                max_force=120.0,
+                max_joint_velocity=7.5,
+            ),
+            default=None,
+            lstm_actuator=None,
+        )
+
         self.scene.robot.actuators = {"legs": preset(implicit_actuator = ANYDRIVE_3_SIMPLE_ACTUATOR_CFG, default=anymal.ANYDRIVE_3_LSTM_ACTUATOR_CFG, lstm_actuator= anymal.ANYDRIVE_3_LSTM_ACTUATOR_CFG)}
         pipeline_cfg = self.commands.foot_sampled_commands.goal_point.task_table.pipeline_cfg
         pipeline_cfg.foot_body_names = ".*FOOT.*"
