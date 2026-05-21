@@ -255,18 +255,6 @@ class RewardsCfg:
 
     mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.00025)
 
-    joint_deviation = RewTerm(func=mdp.joint_deviation_l1, weight=-0.01)
-
-    foot_touchdown = RewTerm(
-        func=mdp.foot_touchdown_impact,
-        weight=-0.05,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*FOOT.*"),
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*FOOT.*"),
-            "history_length": 3,
-        },
-    )
-
     undesired_contact = RewTerm(
         func=mdp.undesired_contacts,
         weight=-0.1,
