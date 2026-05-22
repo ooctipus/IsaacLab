@@ -317,7 +317,13 @@ class FootSampledCurriculumCfg:
 class FlatPatchCurriculumCfg:
     terrain_levels = CurrTerm(
         func=terrain_spawn_goal_pair_success_rate_levels,
-        params={"kappa": 5.0, "temperature": 2.0, "target": 0.66, "success_term": "success"},
+        params={
+            "kappa": 5.0,
+            "temperature": 2.0,
+            "target": 0.66,
+            "success_term": "success",
+            "sampling_strategy": preset(default="beta", uniform="uniform"),
+        },
     )
     remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
 

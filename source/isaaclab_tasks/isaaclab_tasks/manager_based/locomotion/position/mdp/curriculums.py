@@ -87,6 +87,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         kappa: float = 5.0,
         temperature: float = 2.0,
         success_term: str = "success",
+        sampling_strategy: str = "beta",
     ):
         if env_ids.numel() == 0:
             return self._result
@@ -97,9 +98,21 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.success_monitor.success_update(prev_idx, success)
 
         # 2) SAMPLE NEXT DISCRETE COMMANDS
-        choices, probs = self.success_monitor.sample_by_target_rate(
-            env_ids, target=target, kappa=kappa, temperature=temperature, return_probs=True
-        )
+        if sampling_strategy == "uniform":
+            probs = torch.full(
+                (self.num_discrete_cmd,),
+                1.0 / float(self.num_discrete_cmd),
+                device=env.device,
+            )
+            choices = torch.randint(
+                0, self.num_discrete_cmd, (env_ids.numel(),), device=env.device, dtype=torch.int32
+            )
+        elif sampling_strategy == "beta":
+            choices, probs = self.success_monitor.sample_by_target_rate(
+                env_ids, target=target, kappa=kappa, temperature=temperature, return_probs=True
+            )
+        else:
+            raise ValueError(f"Unknown sampling_strategy: {sampling_strategy!r}. Expected 'beta' or 'uniform'.")
         self.goal_term.cmd_indices[env_ids] = choices.to(self.goal_term.cmd_indices.dtype)
 
         # 3) UPDATE ENV ORIGINS — must happen before scene.reset() places the robot
