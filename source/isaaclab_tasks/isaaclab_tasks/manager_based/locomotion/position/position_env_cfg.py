@@ -33,6 +33,7 @@ from isaaclab_tasks.manager_based.multi_task.curriculum import (
     SamplerCfg,
     StateLayoutCfg,
     SuccessMonitorCfg,
+    UniformSamplingStrategyCfg,
 )
 from isaaclab_tasks.manager_based.multi_task.mdp.curriculums import success_rate_sampler
 from isaaclab_tasks.manager_based.multi_task.mdp.terminations import illegal_contact_ratio
@@ -318,11 +319,26 @@ class FlatPatchCurriculumCfg:
     terrain_levels = CurrTerm(
         func=terrain_spawn_goal_pair_success_rate_levels,
         params={
-            "kappa": 5.0,
-            "temperature": 2.0,
-            "target": 0.66,
             "success_term": "success",
-            "sampling_strategy": preset(default="beta", uniform="uniform"),
+            "layout": StateLayoutCfg(
+                coords_bind="env.command_manager.get_term('goal_point').spec.descretized_cmd[:, 0:6]",
+                spawn_index_bind=(
+                    "torch.arange("
+                    "env.command_manager.get_term('goal_point').spec.num_descretized_cmd, "
+                    "device=env.device)"
+                ),
+            ),
+            "sampling": preset(
+                default=SamplerCfg(
+                    strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=5.0, weight=1.0)],
+                    eps=1e-8,
+                ),
+                uniform=SamplerCfg(
+                    strategies=[UniformSamplingStrategyCfg(weight=1.0)],
+                    eps=0.0,
+                ),
+            ),
+            "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=100),
         },
     )
     remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})

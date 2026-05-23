@@ -12,7 +12,7 @@ import torch
 
 from isaaclab.managers import ManagerTermBase
 
-from .success_monitor_cfg import SuccessMonitorCfg
+from isaaclab_tasks.manager_based.multi_task.curriculum import SamplerCfg, StateLayoutCfg, SuccessMonitorCfg
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -30,6 +30,11 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
     For each sampled assignment, it sets the env origin to the sampled spawn location
     (instead of the terrain tile origin) and sets the goal command to the sampled
     target location.
+
+    Sampling is delegated to a multi_task :class:`Sampler` built from a
+    :class:`SamplerCfg`; plug in :class:`BetaSamplingStrategyCfg`,
+    :class:`UniformSamplingStrategyCfg`, :class:`FrontierSamplingStrategyCfg`, or a
+    weighted mix to change exploration behavior without modifying this function.
     """
 
     def __init__(self, cfg, env: ManagerBasedRLEnv):
@@ -45,16 +50,23 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         # Discrete command table size
         self.num_discrete_cmd = int(self.goal_term.spec.num_descretized_cmd)
 
-        # Curriculum owns the success monitor
-        success_monitor_cfg = SuccessMonitorCfg(
-            monitored_history_len=cfg.params.get("history_len", 100),
-            num_monitored_data=self.num_discrete_cmd,
-            device=env.device,
-        )
-        self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
+        # Curriculum owns the success_rates tensor; goal_term and monitor both see it
+        self.success_rates = torch.zeros(self.num_discrete_cmd, device=env.device)
+        self.goal_term.success_rates = self.success_rates
 
-        # Bind command term's success buffer to the monitor's internal rate tensor (no copy)
-        self.goal_term.success_rates = self.success_monitor.success_rate
+        # Success monitor: writes computed rates in-place into self.success_rates
+        monitor_cfg: SuccessMonitorCfg = cfg.params["success_monitor_cfg"]
+        monitor_cfg.num_monitored_data = self.num_discrete_cmd
+        monitor_cfg.device = env.device
+        monitor_cfg.max_updates = env.num_envs if monitor_cfg.max_updates is None else monitor_cfg.max_updates
+        self.success_monitor = monitor_cfg.class_type(monitor_cfg, self.success_rates)
+
+        # Sampler with pluggable strategies
+        self._sampling_cfg: SamplerCfg = cfg.params["sampling"]
+        if self._sampling_cfg.max_samples is None:
+            self._sampling_cfg.max_samples = env.num_envs
+        layout_cfg: StateLayoutCfg = cfg.params["layout"]
+        self._sampler = self._sampling_cfg.class_type(self._sampling_cfg, layout_cfg.build(env))
 
         # simple result dict
         self._result: dict[str, torch.Tensor] = {
@@ -82,12 +94,11 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self,
         env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
-        target: float = 0.5,
-        debug_vis: bool = False,
-        kappa: float = 5.0,
-        temperature: float = 2.0,
+        layout: StateLayoutCfg,
+        sampling: SamplerCfg,
+        success_monitor_cfg: SuccessMonitorCfg,
         success_term: str = "success",
-        sampling_strategy: str = "beta",
+        debug_vis: bool = False,
     ):
         if env_ids.numel() == 0:
             return self._result
@@ -98,21 +109,9 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         self.success_monitor.success_update(prev_idx, success)
 
         # 2) SAMPLE NEXT DISCRETE COMMANDS
-        if sampling_strategy == "uniform":
-            probs = torch.full(
-                (self.num_discrete_cmd,),
-                1.0 / float(self.num_discrete_cmd),
-                device=env.device,
-            )
-            choices = torch.randint(
-                0, self.num_discrete_cmd, (env_ids.numel(),), device=env.device, dtype=torch.int32
-            )
-        elif sampling_strategy == "beta":
-            choices, probs = self.success_monitor.sample_by_target_rate(
-                env_ids, target=target, kappa=kappa, temperature=temperature, return_probs=True
-            )
-        else:
-            raise ValueError(f"Unknown sampling_strategy: {sampling_strategy!r}. Expected 'beta' or 'uniform'.")
+        num_samples = self._sampling_cfg.max_samples if self._sampling_cfg.warp else len(env_ids)
+        probs, choices = self._sampler.probabilities_and_sample(self.success_rates, num_samples)
+        choices = choices[: len(env_ids)]
         self.goal_term.cmd_indices[env_ids] = choices.to(self.goal_term.cmd_indices.dtype)
 
         # 3) UPDATE ENV ORIGINS — must happen before scene.reset() places the robot
@@ -120,7 +119,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         env.scene.terrain.env_origins.index_copy_(0, env_ids.long(), rows[:, 0:3])
 
         # 4) LOGGING / VISUALIZATION
-        success_rates = self.success_monitor.get_success_rate()  # [num_discrete_cmd]
+        success_rates = self.success_rates
         self._result["all_success"].copy_(success_rates.mean())
 
         # Vectorized bin stats
