@@ -22,11 +22,14 @@ from typing import TYPE_CHECKING, Any
 import warp as wp
 
 import isaaclab.sim as sim_utils
+from isaaclab.cloner.cloner_utils import iter_clone_plan_matches
 from isaaclab.physics import PhysicsEvent, PhysicsManager
 
 from .kernels import reset_envs_kernel, update_outdated_envs_kernel, update_timestamp_kernel
 
 if TYPE_CHECKING:
+    from isaaclab.cloner import ClonePlan
+
     from .sensor_base_cfg import SensorBaseCfg
 
 logger = logging.getLogger(__name__)
@@ -58,6 +61,8 @@ class SensorBase(ABC):
         self._is_initialized = False
         # flag for whether the sensor is in visualization mode
         self._is_visualizing = False
+        # clone plan used for this sensor's latest initialization
+        self._clone_plan: ClonePlan | None = None
         self.stage = sim_utils.get_current_stage()
 
         # register various callback functions
@@ -216,10 +221,19 @@ class SensorBase(ABC):
         self._device = sim.device
         self._backend = sim.backend
         self._sim_physics_dt = sim.get_physics_dt()
-        # Count number of environments
-        env_prim_path_expr = self.cfg.prim_path.rsplit("/", 1)[0]
-        self._parent_prims = sim_utils.find_matching_prims(env_prim_path_expr)
-        self._num_envs = len(self._parent_prims)
+        # Count number of environments.
+        self._clone_plan = sim.get_clone_plan()
+        clone_plan = self._clone_plan
+        clone_plan_matches = ()
+        if clone_plan is not None and sim.physics_manager.__name__.lower().startswith("newton"):
+            clone_plan_matches = tuple(iter_clone_plan_matches(clone_plan, self.cfg.prim_path))
+        if clone_plan_matches:
+            self._parent_prims = []
+            self._num_envs = int(clone_plan.clone_mask.shape[1])
+        else:
+            env_prim_path_expr = self.cfg.prim_path.rsplit("/", 1)[0]
+            self._parent_prims = sim_utils.find_matching_prims(env_prim_path_expr)
+            self._num_envs = len(self._parent_prims)
         # Create warp env mask arrays for "all envs" cases and resets.
         # Note: We use wp.to_torch() to create zero-copy torch tensor views of warp arrays.
         # This allows warp arrays to be passed to warp kernels while the corresponding torch
@@ -322,6 +336,7 @@ class SensorBase(ABC):
     def _invalidate_initialize_callback(self, event):
         """Invalidates the scene elements."""
         self._is_initialized = False
+        self._clone_plan = None
         sim_ctx = sim_utils.SimulationContext.instance()
         if sim_ctx is not None:
             sim_ctx.vis_marker_registry.clear_debug_vis_callback(self)

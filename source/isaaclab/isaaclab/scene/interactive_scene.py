@@ -38,6 +38,7 @@ from isaaclab.sim import SimulationContext
 from isaaclab.sim.utils.stage import get_current_stage, get_current_stage_id
 from isaaclab.sim.views import FrameView
 from isaaclab.terrains import TerrainImporter, TerrainImporterCfg
+from isaaclab.utils.version import has_kit
 
 # Note: This is a temporary import for the VisuoTactileSensorCfg class.
 # It will be removed once the VisuoTactileSensor class is added to the core Isaac Lab framework.
@@ -162,20 +163,14 @@ class InteractiveScene:
         self._physics_scene_path = None
         # prepare cloner for environment replication
         self.env_prim_paths = [f"{self.env_ns}/env_{i}" for i in range(self.cfg.num_envs)]
+        is_newton_replicated_scene = self.cfg.replicate_physics and self.physics_backend.startswith("newton")
 
         self.cloner_cfg = cloner.CloneCfg(
             clone_regex=self.env_regex_ns,
             clone_in_fabric=self.cfg.clone_in_fabric,
             device=self.device,
             physics_clone_fn=physics_clone_fn,
-            # USD replication runs for every backend.  PhysX/Newton need per-env
-            # USD prims for sensor discovery.  For OVPhysX, the per-env USD
-            # subtrees are layered on TOP of the physics-side ``physx.clone()``
-            # replicas -- PhysX is indifferent to additional USD content and
-            # the two layers don't conflict.  Probing whether this assumption
-            # holds in practice; revert to ``not startswith("ovphysx")`` if
-            # ``physx.clone()`` errors on already-populated targets.
-            clone_usd=True,
+            clone_usd=not is_newton_replicated_scene or has_kit(),
         )
 
         # create source prim
@@ -203,6 +198,7 @@ class InteractiveScene:
         has_scene_cfg_entities = self._is_scene_setup_from_cfg()
         if has_scene_cfg_entities:
             self._clone_plan = self._build_clone_plan_from_cfg()
+            self.sim.set_clone_plan(self._clone_plan)
             self._add_entities_from_cfg()
         else:
             self._clone_plan = cloner.ClonePlan(
@@ -210,6 +206,7 @@ class InteractiveScene:
                 destinations=(self.env_fmt,),
                 clone_mask=torch.ones((1, self.num_envs), device=self.device, dtype=torch.bool),
             )
+            self.sim.set_clone_plan(self._clone_plan)
 
         # Aggregate scene-data requirements from declared visualizers and constructed sensors,
         # then publish to ``SimulationContext`` so downstream providers (constructed later by
@@ -283,22 +280,22 @@ class InteractiveScene:
             self.device,
         )
 
-        # Move each planned source row to the first environment that actually uses it.
-        row = 0
+        # Move each planned source entry to the first environment that actually uses it.
+        source_start = 0
         sources = list(plan.sources)
         for spawn_cfg, destination, count in groups:
-            mask = plan.clone_mask[row : row + count]
+            mask = plan.clone_mask[source_start : source_start + count]
             env_ids = mask.to(torch.int).argmax(dim=1).tolist()
             active = mask.any(dim=1).tolist()
             paths = [destination.format(env_id) if is_active else None for env_id, is_active in zip(env_ids, active)]
-            for i, path in zip(range(row, row + count), paths):
+            for i, path in zip(range(source_start, source_start + count), paths):
                 if path is not None:
                     sources[i] = path
             set_spawn_paths(spawn_cfg, paths)
-            row += count
+            source_start += count
 
         plan = cloner.ClonePlan(sources=tuple(sources), destinations=plan.destinations, clone_mask=plan.clone_mask)
-        logger.debug("Built heterogeneous ClonePlan with %d source rows.", len(plan.sources))
+        logger.debug("Built heterogeneous ClonePlan with %d source entries.", len(plan.sources))
         return plan
 
     def clone_environments(self, copy_from_source: bool = False):

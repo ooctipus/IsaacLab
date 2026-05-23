@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Sequence
+from fnmatch import fnmatch
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -15,9 +16,6 @@ import warp as wp
 from newton.selection import ArticulationView
 from newton.solvers import SolverNotifyFlags
 
-from pxr import UsdPhysics
-
-import isaaclab.sim as sim_utils
 import isaaclab.utils.string as string_utils
 from isaaclab.assets.rigid_object.base_rigid_object import BaseRigidObject
 from isaaclab.physics import PhysicsEvent
@@ -988,51 +986,14 @@ class RigidObject(BaseRigidObject):
     """
 
     def _initialize_impl(self):
-        # obtain the first prim in the regex expression (all others are assumed to be a copy of this)
-        template_prim = sim_utils.find_first_matching_prim(self.cfg.prim_path)
-        if template_prim is None:
-            raise RuntimeError(f"Failed to find prim for expression: '{self.cfg.prim_path}'.")
-        template_prim_path = template_prim.GetPath().pathString
-
-        # find rigid root prims
-        root_prims = sim_utils.get_all_matching_child_prims(
-            template_prim_path,
-            predicate=lambda prim: prim.HasAPI(UsdPhysics.RigidBodyAPI),
-            traverse_instance_prims=False,
-        )
-        if len(root_prims) == 0:
-            raise RuntimeError(
-                f"Failed to find a rigid body when resolving '{self.cfg.prim_path}'."
-                " Please ensure that the prim has 'USD RigidBodyAPI' applied."
-            )
-        if len(root_prims) > 1:
-            raise RuntimeError(
-                f"Failed to find a single rigid body when resolving '{self.cfg.prim_path}'."
-                f" Found multiple '{root_prims}' under '{template_prim_path}'."
-                " Please ensure that there is only one rigid body in the prim path tree."
-            )
-
-        articulation_prims = sim_utils.get_all_matching_child_prims(
-            template_prim_path,
-            predicate=lambda prim: prim.HasAPI(UsdPhysics.ArticulationRootAPI),
-            traverse_instance_prims=False,
-        )
-        if len(articulation_prims) != 0:
-            if articulation_prims[0].GetAttribute("physxArticulation:articulationEnabled").Get():
-                raise RuntimeError(
-                    f"Found an articulation root when resolving '{self.cfg.prim_path}' for rigid objects. These are"
-                    f" located at: '{articulation_prims}' under '{template_prim_path}'. Please disable the articulation"
-                    " root in the USD or from code by setting the parameter"
-                    " 'ArticulationRootPropertiesCfg.articulation_enabled' to False in the spawn configuration."
-                )
-
-        # resolve root prim back into regex expression
-        root_prim_path = root_prims[0].GetPath().pathString
-        root_prim_path_expr = self.cfg.prim_path + root_prim_path[len(template_prim_path) :]
+        root_prim_path_expr = self.cfg.prim_path.replace(".*", "*")
+        articulation_labels = SimulationManager.get_model().articulation_label
+        if not any(fnmatch(label, root_prim_path_expr) for label in articulation_labels):
+            root_prim_path_expr = f"{root_prim_path_expr.rstrip('/')}/*"
         # -- object view
         self._root_view = ArticulationView(
             SimulationManager.get_model(),
-            root_prim_path_expr.replace(".*", "*"),
+            root_prim_path_expr,
             verbose=False,
         )
 

@@ -21,6 +21,63 @@ from .clone_plan import ClonePlan
 logger = logging.getLogger(__name__)
 
 
+def iter_clone_plan_matches(plan: ClonePlan, path_expr: str) -> Iterator[tuple[str, str, str, tuple[int, ...]]]:
+    """Yield clone-plan entries whose destinations own a path expression.
+
+    Example:
+        For an entry with source root ``"/World/source/Robot"``, destination
+        template ``"/World/scenes/{}/Robot"``, and populated env ids
+        ``(0, 2)``, querying ``"/World/scenes/.*/Robot/base"`` yields
+        ``("/World/source/Robot", "/World/scenes/{}/Robot",
+        "/World/source/Robot/base", (0, 2))``.
+
+    Args:
+        plan: Clone plan to query.
+        path_expr: Destination prim path or path expression. Expressions are
+            matched against each clone-plan destination template by treating
+            the template's ``"{}"`` field as the populated environment slot.
+
+    Yields:
+        Tuples ``(source_root, destination_template, source_path, env_ids)``
+        for the nearest matching destination root. Multiple source variants
+        with the same destination root are preserved.
+    """
+    matches: list[tuple[str, str, str, tuple[int, ...]]] = []
+    for source_index, (source_root, destination_template) in enumerate(zip(plan.sources, plan.destinations)):
+        if "{}" not in destination_template:
+            continue
+
+        env_ids = tuple(int(i) for i in plan.clone_mask[source_index].nonzero(as_tuple=False).flatten().tolist())
+        if not env_ids:
+            continue
+
+        source_root = source_root.rstrip("/") or "/"
+        destination_template = destination_template.rstrip("/") or "/"
+
+        destination_prefix, destination_suffix = destination_template.split("{}", 1)
+        if not path_expr.startswith(destination_prefix):
+            continue
+        if destination_suffix:
+            target_suffix_start = path_expr.find(destination_suffix, len(destination_prefix))
+            if target_suffix_start < 0:
+                continue
+            suffix = path_expr[target_suffix_start + len(destination_suffix) :]
+        else:
+            target_slot_and_suffix = path_expr[len(destination_prefix) :]
+            suffix_start = target_slot_and_suffix.find("/")
+            suffix = "" if suffix_start < 0 else target_slot_and_suffix[suffix_start:]
+        if suffix and not suffix.startswith("/"):
+            continue
+        source_path = source_root + suffix if source_root != "/" else suffix or "/"
+
+        matches.append((source_root, destination_template, source_path, env_ids))
+
+    matches.sort(key=lambda match: len(match[1].format(match[3][0])), reverse=True)
+    if matches:
+        owner_length = len(matches[0][1].format(matches[0][3][0]))
+        yield from (match for match in matches if len(match[1].format(match[3][0])) == owner_length)
+
+
 @contextlib.contextmanager
 def disabled_fabric_change_notifies(stage: Usd.Stage, *, restore: bool = True) -> Iterator[None]:
     """Suspend the ``IFabricUsd`` USD notice listener for the body of the ``with`` block.
@@ -119,7 +176,7 @@ def make_clone_plan(
         device: Torch device for tensors in the plan. Defaults to ``"cpu"``.
 
     Returns:
-        A :class:`ClonePlan` whose ``sources`` and ``destinations`` are flattened per-source rows and
+        A :class:`ClonePlan` whose ``sources`` and ``destinations`` are flattened per-source entries and
         whose ``clone_mask`` is a ``[num_src, num_clones]`` boolean tensor.
     """
     if len(sources) != len(destinations):

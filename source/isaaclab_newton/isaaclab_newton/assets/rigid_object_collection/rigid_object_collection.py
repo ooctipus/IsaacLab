@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 import warnings
 from collections.abc import Sequence
+from fnmatch import fnmatch
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -16,9 +17,6 @@ import warp as wp
 from newton.selection import ArticulationView
 from newton.solvers import SolverNotifyFlags
 
-from pxr import UsdPhysics
-
-import isaaclab.sim as sim_utils
 import isaaclab.utils.string as string_utils
 from isaaclab.assets.rigid_object_collection.base_rigid_object_collection import BaseRigidObjectCollection
 from isaaclab.physics import PhysicsEvent
@@ -85,10 +83,6 @@ class RigidObjectCollection(BaseRigidObjectCollection):
                     translation=rigid_body_cfg.init_state.pos,
                     orientation=rigid_body_cfg.init_state.rot,
                 )
-            # check that spawn was successful
-            matching_prims = sim_utils.find_matching_prims(rigid_body_cfg.prim_path)
-            if len(matching_prims) == 0:
-                raise RuntimeError(f"Could not find prim with path {rigid_body_cfg.prim_path}.")
         # stores object names
         self._body_names_list = []
 
@@ -1075,51 +1069,13 @@ class RigidObjectCollection(BaseRigidObjectCollection):
         # clear body names list to prevent double counting on re-initialization
         self._body_names_list.clear()
         root_prim_path_exprs: list[str] = []
+        articulation_labels = SimulationManager.get_model().articulation_label
 
         for name, rigid_body_cfg in self.cfg.rigid_objects.items():
-            # obtain the first prim in the regex expression (all others are assumed to be a copy of this)
-            template_prim = sim_utils.find_first_matching_prim(rigid_body_cfg.prim_path)
-            if template_prim is None:
-                raise RuntimeError(f"Failed to find prim for expression: '{rigid_body_cfg.prim_path}'.")
-            template_prim_path = template_prim.GetPath().pathString
-
-            # find rigid root prims
-            root_prims = sim_utils.get_all_matching_child_prims(
-                template_prim_path,
-                predicate=lambda prim: prim.HasAPI(UsdPhysics.RigidBodyAPI),
-                traverse_instance_prims=False,
-            )
-            if len(root_prims) == 0:
-                raise RuntimeError(
-                    f"Failed to find a rigid body when resolving '{rigid_body_cfg.prim_path}'."
-                    " Please ensure that the prim has 'USD RigidBodyAPI' applied."
-                )
-            if len(root_prims) > 1:
-                raise RuntimeError(
-                    f"Failed to find a single rigid body when resolving '{rigid_body_cfg.prim_path}'."
-                    f" Found multiple '{root_prims}' under '{template_prim_path}'."
-                    " Please ensure that there is only one rigid body in the prim path tree."
-                )
-
-            # check that no rigid object has an articulation root API, which decreases simulation performance
-            articulation_prims = sim_utils.get_all_matching_child_prims(
-                template_prim_path,
-                predicate=lambda prim: prim.HasAPI(UsdPhysics.ArticulationRootAPI),
-                traverse_instance_prims=False,
-            )
-            if len(articulation_prims) != 0:
-                if articulation_prims[0].GetAttribute("physxArticulation:articulationEnabled").Get():
-                    raise RuntimeError(
-                        f"Found an articulation root when resolving '{rigid_body_cfg.prim_path}' in the rigid object"
-                        f" collection. These are located at: '{articulation_prims}' under '{template_prim_path}'."
-                        " Please disable the articulation root in the USD or from code by setting the parameter"
-                        " 'ArticulationRootPropertiesCfg.articulation_enabled' to False in the spawn configuration."
-                    )
-
-            # resolve root prim back into regex expression
-            root_prim_path = root_prims[0].GetPath().pathString
-            root_prim_path_expr = rigid_body_cfg.prim_path + root_prim_path[len(template_prim_path) :]
-            root_prim_path_exprs.append(root_prim_path_expr.replace(".*", "*"))
+            root_prim_path_expr = rigid_body_cfg.prim_path.replace(".*", "*")
+            if not any(fnmatch(label, root_prim_path_expr) for label in articulation_labels):
+                root_prim_path_expr = f"{root_prim_path_expr.rstrip('/')}/*"
+            root_prim_path_exprs.append(root_prim_path_expr)
             self._body_names_list.append(name)
 
         # Build a single pattern that matches ALL body types by wildcarding the differing path segment

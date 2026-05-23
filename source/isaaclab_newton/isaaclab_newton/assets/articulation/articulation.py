@@ -12,6 +12,7 @@ import importlib.util
 import logging
 import warnings
 from collections.abc import Sequence
+from fnmatch import fnmatch
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -22,15 +23,12 @@ from newton.selection import ArticulationView
 from newton.solvers import SolverNotifyFlags
 from prettytable import PrettyTable
 
-from pxr import UsdPhysics
-
 from isaaclab.actuators import ActuatorBase, ActuatorBaseCfg, ImplicitActuator
 from isaaclab.assets.articulation.base_articulation import BaseArticulation
 
 _HAS_NEWTON_ACTUATORS = importlib.util.find_spec("isaaclab_newton.actuators") is not None
 
 from isaaclab.physics import PhysicsEvent
-from isaaclab.sim.utils.queries import find_first_matching_prim, get_all_matching_child_prims
 from isaaclab.utils.string import resolve_matching_names, resolve_matching_names_values
 from isaaclab.utils.types import ArticulationActions
 from isaaclab.utils.version import get_isaac_sim_version, has_kit
@@ -3385,42 +3383,16 @@ class Articulation(BaseArticulation):
             # The articulation root prim path is specified explicitly, so we can just use this.
             root_prim_path_expr = self.cfg.prim_path + self.cfg.articulation_root_prim_path
         else:
-            # No articulation root prim path was specified, so we need to search
-            # for it. We search for this in the first environment and then
-            # create a regex that matches all environments.
-            first_env_matching_prim = find_first_matching_prim(self.cfg.prim_path)
-            if first_env_matching_prim is None:
-                raise RuntimeError(f"Failed to find prim for expression: '{self.cfg.prim_path}'.")
-            first_env_matching_prim_path = first_env_matching_prim.GetPath().pathString
-
-            # Find all articulation root prims in the first environment.
-            first_env_root_prims = get_all_matching_child_prims(
-                first_env_matching_prim_path,
-                predicate=lambda prim: prim.HasAPI(UsdPhysics.ArticulationRootAPI),
-                traverse_instance_prims=False,
-            )
-            if len(first_env_root_prims) == 0:
-                raise RuntimeError(
-                    f"Failed to find an articulation when resolving '{first_env_matching_prim_path}'."
-                    " Please ensure that the prim has 'USD ArticulationRootAPI' applied."
-                )
-            if len(first_env_root_prims) > 1:
-                raise RuntimeError(
-                    f"Failed to find a single articulation when resolving '{first_env_matching_prim_path}'."
-                    f" Found multiple '{first_env_root_prims}' under '{first_env_matching_prim_path}'."
-                    " Please ensure that there is only one articulation in the prim path tree."
-                )
-
-            # Now we convert the found articulation root from the first
-            # environment back into a regex that matches all environments.
-            first_env_root_prim_path = first_env_root_prims[0].GetPath().pathString
-            root_prim_path_relative_to_prim_path = first_env_root_prim_path[len(first_env_matching_prim_path) :]
-            root_prim_path_expr = self.cfg.prim_path + root_prim_path_relative_to_prim_path
+            root_prim_path_expr = self.cfg.prim_path
+        root_prim_path_expr = root_prim_path_expr.replace(".*", "*")
+        articulation_labels = SimulationManager.get_model().articulation_label
+        if not any(fnmatch(label, root_prim_path_expr) for label in articulation_labels):
+            root_prim_path_expr = f"{root_prim_path_expr.rstrip('/')}/*"
 
         # -- articulation
         self._root_view = ArticulationView(
             SimulationManager.get_model(),
-            root_prim_path_expr.replace(".*", "*"),
+            root_prim_path_expr,
             verbose=False,
             exclude_joint_types=[JointType.FREE, JointType.FIXED],
         )
