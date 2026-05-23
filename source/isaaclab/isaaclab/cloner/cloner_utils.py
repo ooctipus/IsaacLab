@@ -161,23 +161,28 @@ def make_clone_plan(
     num_clones: int,
     clone_strategy: callable,
     device: str = "cpu",
-) -> ClonePlan:
-    """Construct a cloning plan mapping prototype prims to per-environment destinations.
+) -> tuple[tuple[str, ...], tuple[str, ...], torch.Tensor]:
+    """Compute the flat source/destination/mask components of a clone plan.
 
-    The plan enumerates all combinations of prototypes, selects a combination per environment using ``clone_strategy``,
-    and builds a boolean masking matrix indicating which prototype populates each environment slot.
+    Enumerates all combinations of prototypes, selects a combination per environment using
+    ``clone_strategy``, and builds the boolean masking matrix that indicates which prototype
+    populates each environment slot. The caller composes the returned tuple into a
+    :class:`ClonePlan` together with the per-environment pose buffer it owns
+    (see :attr:`ClonePlan.env_pose`); this keeps pose authority with the scene and avoids
+    allocating a duplicate pose tensor here.
 
     Args:
-        sources: Prototype prim paths grouped by asset type (e.g., [[robot_a, robot_b], [obj_x]]).
+        sources: Prototype prim paths grouped by asset type (e.g., ``[[robot_a, robot_b], [obj_x]]``).
         destinations: Destination path templates (one per group) with ``"{}"`` placeholder for env id.
         num_clones: Number of environments to populate.
         clone_strategy: Function that picks a prototype combo per environment; signature
             ``clone_strategy(combos: Tensor, num_clones: int, device: str) -> Tensor[num_clones, num_groups]``.
-        device: Torch device for tensors in the plan. Defaults to ``"cpu"``.
+        device: Torch device for the returned mask. Defaults to ``"cpu"``.
 
     Returns:
-        A :class:`ClonePlan` whose ``sources`` and ``destinations`` are flattened per-source entries and
-        whose ``clone_mask`` is a ``[num_src, num_clones]`` boolean tensor.
+        A tuple ``(sources, destinations, clone_mask)`` where ``sources`` and ``destinations``
+        are flattened per-source entries (one entry per prototype) and ``clone_mask`` is a
+        ``[num_src, num_clones]`` boolean tensor on ``device``.
     """
     if len(sources) != len(destinations):
         raise ValueError(f"Expected one destination per source group, got {len(destinations)} and {len(sources)}.")
@@ -207,7 +212,7 @@ def make_clone_plan(
 
     masking = torch.zeros((sum(group_sizes), num_clones), dtype=torch.bool, device=device)
     masking[rows, cols] = True
-    return ClonePlan(sources=src, destinations=dest, clone_mask=masking)
+    return src, dest, masking
 
 
 def usd_replicate(

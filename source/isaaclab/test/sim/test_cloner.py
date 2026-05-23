@@ -224,7 +224,7 @@ def test_clone_decorator_wildcard_patterns(
 
 def test_make_clone_plan_returns_flat_source_rows(sim):
     """make_clone_plan exposes the flat source-to-env mask used by scene cloning."""
-    plan = make_clone_plan(
+    sources, destinations, clone_mask = make_clone_plan(
         [["/World/envs/env_0/Object", "/World/envs/env_1/Object"]],
         ["/World/envs/env_{}/Object"],
         num_clones=4,
@@ -232,24 +232,25 @@ def test_make_clone_plan_returns_flat_source_rows(sim):
         device=sim.cfg.device,
     )
 
-    assert plan.sources == ("/World/envs/env_0/Object", "/World/envs/env_1/Object")
-    assert plan.destinations == ("/World/envs/env_{}/Object", "/World/envs/env_{}/Object")
-    assert plan.clone_mask.shape == (2, 4)
-    assert plan.clone_mask.dtype == torch.bool
-    assert torch.all(plan.clone_mask.sum(dim=0) == 1)
-    actual_source_idx = plan.clone_mask.to(torch.int).argmax(dim=0).cpu()
+    assert sources == ("/World/envs/env_0/Object", "/World/envs/env_1/Object")
+    assert destinations == ("/World/envs/env_{}/Object", "/World/envs/env_{}/Object")
+    assert clone_mask.shape == (2, 4)
+    assert clone_mask.dtype == torch.bool
+    assert torch.all(clone_mask.sum(dim=0) == 1)
+    actual_source_idx = clone_mask.to(torch.int).argmax(dim=0).cpu()
     assert torch.equal(actual_source_idx, torch.tensor([0, 1, 0, 1]))
 
 
 def test_iter_clone_plan_matches(sim):
     """ClonePlan entries can be matched by destination path expression."""
-    plan = make_clone_plan(
+    sources, destinations, clone_mask = make_clone_plan(
         [["/World/envs/env_0/Object", "/World/envs/env_1/Object"]],
         ["/World/envs/env_{}/Object"],
         num_clones=4,
         clone_strategy=sequential,
         device=sim.cfg.device,
     )
+    plan = ClonePlan(sources=sources, destinations=destinations, clone_mask=clone_mask)
 
     matches = list(iter_clone_plan_matches(plan, "/World/envs/env_.*/Object/Body/Camera"))
 

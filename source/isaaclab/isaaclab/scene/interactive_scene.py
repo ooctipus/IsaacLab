@@ -178,21 +178,15 @@ class InteractiveScene:
         self.env_fmt = self.env_regex_ns.replace(".*", "{}")
         # allocate env indices
         self._ALL_INDICES = torch.arange(self.cfg.num_envs, dtype=torch.long, device=self.device)
-        self._default_env_origins, _ = cloner.grid_transforms(self.num_envs, self.cfg.env_spacing, device=self.device)
-        # copy empty prim of env_0 to env_1, env_2, ..., env_{num_envs-1} with correct location.
-        # Suspend Fabric's USD notice listener: scene-init is followed by ``SimulationContext.reset``,
-        # which does the Fabric resync naturally — re-enabling here would just trigger a redundant batch.
-        # Note: ``restore=False`` means the listener stays disabled past this ``with`` block — through
-        # ``_add_entities_from_cfg`` and ``clone_environments`` below — until ``SimulationContext.reset``
-        # re-enables it. The nested suspension inside ``clone_environments`` becomes a no-op as a result.
+        pos, quat = cloner.grid_transforms(self.num_envs, self.cfg.env_spacing, device=self.device)
+        self._default_env_pose = torch.cat([pos, quat], dim=-1)
+        
+        homo_mask = torch.ones((1, self.num_envs), device=self.device, dtype=torch.bool)
+        # Suspend Fabric's USD notice listener enable fast usd cloning
         with cloner.disabled_fabric_change_notifies(self.stage, restore=False):
-            cloner.usd_replicate(
-                self.stage,
-                [self.env_fmt.format(0)],
-                [self.env_fmt],
-                self._ALL_INDICES,
-                positions=self._default_env_origins,
-            )
+            # copy empty prim of env_0 to env_1, env_2, ..., env_{num_envs-1} with correct location.
+            rep_args = (self.stage, [self.env_fmt.format(0)], [self.env_fmt], self._ALL_INDICES, homo_mask, pos, quat)
+            cloner.usd_replicate(*rep_args)
 
         self._global_prim_paths = list()
         has_scene_cfg_entities = self._is_scene_setup_from_cfg()
@@ -201,11 +195,8 @@ class InteractiveScene:
             self.sim.set_clone_plan(self._clone_plan)
             self._add_entities_from_cfg()
         else:
-            self._clone_plan = cloner.ClonePlan(
-                sources=(self.env_fmt.format(0),),
-                destinations=(self.env_fmt,),
-                clone_mask=torch.ones((1, self.num_envs), device=self.device, dtype=torch.bool),
-            )
+            clone_plan = cloner.ClonePlan((self.env_fmt.format(0),), (self.env_fmt,), homo_mask, self._default_env_pose)
+            self._clone_plan = clone_plan
             self.sim.set_clone_plan(self._clone_plan)
 
         # Aggregate scene-data requirements from declared visualizers and constructed sensors,
@@ -253,11 +244,9 @@ class InteractiveScene:
             cfgs = asset_cfg.rigid_objects.values() if isinstance(asset_cfg, RigidObjectCollectionCfg) else [asset_cfg]
             for cfg in (cfg for cfg in cfgs if hasattr(cfg, "prim_path")):
                 prim_path = cfg.prim_path.format(ENV_REGEX_NS=self.env_regex_ns)
-                if not hasattr(cfg, "spawn") or cfg.spawn is None or self.env_ns not in prim_path:
-                    continue
-                if (count := num_variants(cfg.spawn)) <= 0:
-                    raise ValueError(f"Spawner at '{prim_path}' must have at least one variant.")
-                groups.append((cfg.spawn, prim_path.replace(self.env_regex_ns, self.env_fmt), count))
+                if hasattr(cfg, "spawn") or cfg.spawn is None or self.env_ns not in prim_path:
+                    if (count := num_variants(cfg.spawn)) > 0:
+                        groups.append((cfg.spawn, prim_path.replace(self.env_regex_ns, self.env_fmt), count))
 
         if not groups:
             return None
@@ -266,37 +255,33 @@ class InteractiveScene:
         if all(count == 1 for _, _, count in groups):
             for spawn_cfg, destination, _ in groups:
                 set_spawn_paths(spawn_cfg, [destination.format(0)])
-            return cloner.ClonePlan(
-                sources=(self.env_fmt.format(0),),
-                destinations=(self.env_fmt,),
-                clone_mask=torch.ones((1, self.num_envs), device=self.device, dtype=torch.bool),
-            )
+            clone_mask = torch.ones((1, self.num_envs), device=self.device, dtype=torch.bool)
+            return cloner.ClonePlan((self.env_fmt.format(0),), (self.env_fmt,), clone_mask, self._default_env_pose)
 
-        plan = cloner.make_clone_plan(
-            [[destination.format(i) for i in range(count)] for _, destination, count in groups],
-            [destination for _, destination, _ in groups],
-            self.num_envs,
-            self.cloner_cfg.clone_strategy,
-            self.device,
+        sources, destinations, clone_mask = cloner.make_clone_plan(
+            sources=[[destination.format(i) for i in range(count)] for _, destination, count in groups],
+            destinations=[destination for _, destination, _ in groups],
+            num_clones=self.num_envs,
+            clone_strategy=self.cloner_cfg.clone_strategy,
+            device=self.device
         )
 
         # Move each planned source entry to the first environment that actually uses it.
         source_start = 0
-        sources = list(plan.sources)
+        sources = list(sources)
         for spawn_cfg, destination, count in groups:
-            mask = plan.clone_mask[source_start : source_start + count]
-            env_ids = mask.to(torch.int).argmax(dim=1).tolist()
-            active = mask.any(dim=1).tolist()
-            paths = [destination.format(env_id) if is_active else None for env_id, is_active in zip(env_ids, active)]
-            for i, path in zip(range(source_start, source_start + count), paths):
+            submask = clone_mask[source_start : source_start + count]
+            env_ids = submask.to(torch.int).argmax(dim=1).tolist()
+            active = submask.any(dim=1).tolist()
+            paths = [destination.format(eid) if a else None for eid, a in zip(env_ids, active)]
+            for offset, path in enumerate(paths):
                 if path is not None:
-                    sources[i] = path
+                    sources[source_start + offset] = path
             set_spawn_paths(spawn_cfg, paths)
             source_start += count
 
-        plan = cloner.ClonePlan(sources=tuple(sources), destinations=plan.destinations, clone_mask=plan.clone_mask)
-        logger.debug("Built heterogeneous ClonePlan with %d source entries.", len(plan.sources))
-        return plan
+        logger.debug("Built heterogeneous ClonePlan with %d source entries.", len(sources))
+        return cloner.ClonePlan(tuple(sources), destinations, clone_mask, self._default_env_pose)
 
     def clone_environments(self, copy_from_source: bool = False):
         """Creates clones of the environment ``/World/envs/env_0``.
@@ -328,16 +313,12 @@ class InteractiveScene:
                 self.cloner_cfg.physics_clone_fn(
                     self.stage,
                     *replicate_args,
-                    positions=self._default_env_origins,
+                    positions=self._default_env_pose[:, :3],
                     device=self.cloner_cfg.device,
                 )
             if self.cloner_cfg.clone_usd:
-                is_env_root_plan = (
-                    len(plan.sources) == 1
-                    and plan.sources[0] == self.env_fmt.format(0)
-                    and plan.destinations == (self.env_fmt,)
-                )
-                usd_positions = self._default_env_origins if is_env_root_plan else None
+                is_env_root_plan = len(plan.sources) == 1 and plan.destinations == (self.env_fmt,)
+                usd_positions = self._default_env_pose[:, :3] if is_env_root_plan else None
                 cloner.usd_replicate(self.stage, *replicate_args, positions=usd_positions)
 
         # Publish to ``SimulationContext`` (the canonical owner). The :attr:`clone_plan`
@@ -511,7 +492,7 @@ class InteractiveScene:
         if self._terrain is not None:
             return self._terrain.env_origins
         else:
-            return self._default_env_origins
+            return self._default_env_pose[:, :3]
 
     @property
     def terrain(self) -> TerrainImporter | None:
