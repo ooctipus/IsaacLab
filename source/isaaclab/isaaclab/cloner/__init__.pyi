@@ -6,6 +6,7 @@
 __all__ = [
     "CloneCfg",
     "ClonePlan",
+    "UsdReplicateContext",
     "get_replicate_ctx",
     "random",
     "replicate",
@@ -28,3 +29,4 @@ from .cloner_utils import (
     usd_replicate,
 )
 from .replicate_registry import get_replicate_ctx, replicate
+from .usd_replicator import UsdReplicateContext
