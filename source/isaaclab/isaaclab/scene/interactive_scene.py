@@ -180,7 +180,7 @@ class InteractiveScene:
         self._ALL_INDICES = torch.arange(self.cfg.num_envs, dtype=torch.long, device=self.device)
         pos, quat = cloner.grid_transforms(self.num_envs, self.cfg.env_spacing, device=self.device)
         self._default_env_pose = torch.cat([pos, quat], dim=-1)
-        
+
         homo_mask = torch.ones((1, self.num_envs), device=self.device, dtype=torch.bool)
         # Suspend Fabric's USD notice listener enable fast usd cloning
         with cloner.disabled_fabric_change_notifies(self.stage, restore=False):
@@ -263,7 +263,7 @@ class InteractiveScene:
             destinations=[destination for _, destination, _ in groups],
             num_clones=self.num_envs,
             clone_strategy=self.cloner_cfg.clone_strategy,
-            device=self.device
+            device=self.device,
         )
 
         # Move each planned source entry to the first environment that actually uses it.

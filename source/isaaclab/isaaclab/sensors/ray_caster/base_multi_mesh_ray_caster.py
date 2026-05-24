@@ -224,108 +224,84 @@ class BaseMultiMeshRayCaster(BaseRayCaster):
         plan: ClonePlan | None,
         dummy_mesh_id: int | None,
     ):
-        """Build mesh records for the target configuration."""
-        records_per_env = [[] for _ in range(self._num_envs)]
-        target_in_plan = False
-        tracked_target_exprs: list[str] = [target_cfg.prim_expr]
+        """Build per-env mesh records for ``target_cfg``.
 
-        # Prefer ClonePlan data for env-scoped targets; destination USD prims may not exist.
-        if plan is not None and target_cfg.track_mesh_transforms:
-            plan_tracked_target_exprs: list[str] = []
-            prim_expr = target_cfg.prim_expr
-            for source_root, destination_template, source_path, env_ids in iter_clone_plan_matches(plan, prim_expr):
-                target_in_plan = True
-
-                # Load meshes from the authored source entry.
-                source_prims = sim_utils.find_matching_prims(source_path)
-                if not source_prims:
-                    raise RuntimeError(f"No ClonePlan source prims matched '{source_path}'.")
-
-                mesh_ids: list[int] = []
-                row_tracked_target_exprs: list[str] = []
-                for source_prim in source_prims:
-                    rigid_body_records = list(_iter_rigid_body_records(source_prim, source_root))
-                    if not rigid_body_records:
-                        raise RuntimeError(
-                            f"Cannot track ClonePlan target '{target_cfg.prim_expr}' because source prim "
-                            f"'{source_prim.GetPath()}' has no rigid-body ancestor or descendant."
-                        )
-                    for geometry_prim, owner_prim in rigid_body_records:
-                        mesh_id = self._load_target_prim_warp_mesh(geometry_prim, target_cfg, reference_prim=owner_prim)
-                        dummy_mesh_id = mesh_id if dummy_mesh_id is None else dummy_mesh_id
-                        mesh_ids.append(mesh_id)
-                        owner_path = str(owner_prim.GetPath())
-                        if owner_path == source_root:
-                            owner_suffix = ""
-                        elif owner_path.startswith(source_root + "/"):
-                            owner_suffix = owner_path[len(source_root) :]
-                        else:
-                            raise RuntimeError(
-                                f"Tracked target owner '{owner_path}' is not under ClonePlan source root "
-                                f"'{source_root}'."
-                            )
-                        row_tracked_target_exprs.append(destination_template.format(".*") + owner_suffix)
-
-                if len(row_tracked_target_exprs) > len(plan_tracked_target_exprs):
-                    plan_tracked_target_exprs = row_tracked_target_exprs
-
-                # Geometry is selected by ClonePlan; live pose is supplied by backend body/site views.
-                for env_id in env_ids:
-                    for mesh_id in mesh_ids:
-                        records_per_env[env_id].append((mesh_id, (1.0e9, 1.0e9, 1.0e9), (0.0, 0.0, 0.0, 1.0)))
-
-            if target_in_plan:
-                if not plan_tracked_target_exprs:
-                    raise RuntimeError(
-                        f"No tracked body expressions were resolved for target '{target_cfg.prim_expr}'."
-                    )
-                return records_per_env, dummy_mesh_id, plan_tracked_target_exprs
-
-        # Fall back to authored USD prims for global targets and scenes without ClonePlan data.
-        target_prims = sim_utils.find_matching_prims(target_cfg.prim_expr)
-        if not target_prims:
-            raise RuntimeError(f"Failed to find a prim at path expression: {target_cfg.prim_expr}")
-
-        records = []
-        tracked_target_exprs = []
-        for target_prim in target_prims:
-            reference_prim = target_prim
-            if target_cfg.track_mesh_transforms:
-                while reference_prim and reference_prim.IsValid() and str(reference_prim.GetPath()) != "/":
-                    if reference_prim.HasAPI(UsdPhysics.RigidBodyAPI):
-                        break
-                    reference_prim = reference_prim.GetParent()
-                if (
-                    reference_prim is None
-                    or not reference_prim.IsValid()
-                    or not reference_prim.HasAPI(UsdPhysics.RigidBodyAPI)
-                ):
-                    raise RuntimeError(
-                        f"Cannot track non-physics ray-cast target '{target_cfg.prim_expr}'. "
-                        "Set track_mesh_transforms=False for static targets, or apply RigidBodyAPI to dynamic targets."
-                    )
-                tracked_target_exprs.append(str(reference_prim.GetPath()))
-
-            mesh_id = self._load_target_prim_warp_mesh(target_prim, target_cfg, reference_prim=reference_prim)
-            dummy_mesh_id = mesh_id if dummy_mesh_id is None else dummy_mesh_id
-            pos, quat = sim_utils.resolve_prim_pose(reference_prim)
-            pos = (float(pos[0]), float(pos[1]), float(pos[2]))
-            quat = (float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3]))
-            records.append((mesh_id, pos, quat))
-
-        if len(records) == 1:
-            return [list(records) for _ in range(self._num_envs)], dummy_mesh_id, tracked_target_exprs
-
-        # Multiple USD matches are expected to be laid out evenly by environment.
-        if len(records) % self._num_envs != 0:
-            raise RuntimeError(
-                f"Target expression '{target_cfg.prim_expr}' matched {len(records)} mesh records, "
-                f"which cannot be evenly partitioned across {self._num_envs} environments."
+        Tracked targets (``track_mesh_transforms=True``) are resolved through the active
+        :class:`ClonePlan`; live pose comes from the backend body/site view. Static targets
+        are globbed off the stage and tiled across envs (used for global singletons like
+        ``/World/Ground``).
+        """
+        if not target_cfg.track_mesh_transforms:
+            target_prims = sim_utils.find_matching_prims(target_cfg.prim_expr)
+            if not target_prims:
+                raise RuntimeError(f"Failed to find a prim at path expression: {target_cfg.prim_expr}")
+            records = []
+            for target_prim in target_prims:
+                mesh_id = self._load_target_prim_warp_mesh(target_prim, target_cfg, reference_prim=target_prim)
+                dummy_mesh_id = mesh_id if dummy_mesh_id is None else dummy_mesh_id
+                pos, quat = sim_utils.resolve_prim_pose(target_prim)
+                records.append((mesh_id, tuple(map(float, pos)), tuple(map(float, quat))))
+            if len(records) == 1:
+                return [list(records) for _ in range(self._num_envs)], dummy_mesh_id, []
+            if len(records) % self._num_envs != 0:
+                raise RuntimeError(
+                    f"Target expression '{target_cfg.prim_expr}' matched {len(records)} mesh records, "
+                    f"which cannot be evenly partitioned across {self._num_envs} environments."
+                )
+            n_meshes = len(records) // self._num_envs
+            return (
+                [records[env_id * n_meshes : (env_id + 1) * n_meshes] for env_id in range(self._num_envs)],
+                dummy_mesh_id,
+                [],
             )
-        n_meshes = len(records) // self._num_envs
-        records_per_env = [records[env_id * n_meshes : (env_id + 1) * n_meshes] for env_id in range(self._num_envs)]
 
-        return records_per_env, dummy_mesh_id, tracked_target_exprs
+        if plan is None:
+            raise RuntimeError(f"Tracked ray-cast target '{target_cfg.prim_expr}' requires an active ClonePlan.")
+        records_per_env: list[list] = [[] for _ in range(self._num_envs)]
+        plan_tracked_target_exprs: list[str] = []
+        target_in_plan = False
+        for source_path, source_root, destination, env_ids in iter_clone_plan_matches(plan, target_cfg.prim_expr):
+            target_in_plan = True
+            source_prims = sim_utils.find_matching_prims(source_path)
+            if not source_prims:
+                raise RuntimeError(f"No ClonePlan source prims matched '{source_path}'.")
+            mesh_ids: list[int] = []
+            row_tracked_target_exprs: list[str] = []
+            for source_prim in source_prims:
+                rigid_body_records = list(_iter_rigid_body_records(source_prim, source_root))
+                if not rigid_body_records:
+                    raise RuntimeError(
+                        f"Cannot track ClonePlan target '{target_cfg.prim_expr}' because source prim "
+                        f"'{source_prim.GetPath()}' has no rigid-body ancestor or descendant."
+                    )
+                for geometry_prim, owner_prim in rigid_body_records:
+                    mesh_id = self._load_target_prim_warp_mesh(geometry_prim, target_cfg, reference_prim=owner_prim)
+                    dummy_mesh_id = mesh_id if dummy_mesh_id is None else dummy_mesh_id
+                    mesh_ids.append(mesh_id)
+                    owner_path = str(owner_prim.GetPath())
+                    if owner_path == source_root:
+                        owner_suffix = ""
+                    elif owner_path.startswith(source_root + "/"):
+                        owner_suffix = owner_path[len(source_root) :]
+                    else:
+                        raise RuntimeError(
+                            f"Tracked target owner '{owner_path}' is not under ClonePlan source root '{source_root}'."
+                        )
+                    row_tracked_target_exprs.append(destination.format(".*") + owner_suffix)
+            if len(row_tracked_target_exprs) > len(plan_tracked_target_exprs):
+                plan_tracked_target_exprs = row_tracked_target_exprs
+            # Geometry is selected by ClonePlan; live pose is supplied by backend body/site views.
+            for env_id in env_ids:
+                for mesh_id in mesh_ids:
+                    records_per_env[env_id].append((mesh_id, (1.0e9, 1.0e9, 1.0e9), (0.0, 0.0, 0.0, 1.0)))
+        if not target_in_plan:
+            raise RuntimeError(
+                f"Tracked ray-cast target '{target_cfg.prim_expr}' is not covered by the active ClonePlan. "
+                "Set track_mesh_transforms=False for static targets, or extend the plan to cover the target."
+            )
+        if not plan_tracked_target_exprs:
+            raise RuntimeError(f"No tracked body expressions were resolved for target '{target_cfg.prim_expr}'.")
+        return records_per_env, dummy_mesh_id, plan_tracked_target_exprs
 
     def _load_target_prim_warp_mesh(self, target_prim, target_cfg, reference_prim=None) -> int:
         reference_prim = target_prim if reference_prim is None else reference_prim

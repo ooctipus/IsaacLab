@@ -17,6 +17,7 @@ from pxr import UsdGeom
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.sensors as sensor_utils
+from isaaclab.cloner.cloner_utils import expand_clone_plan_paths, source_prim
 from isaaclab.renderers import BaseRenderer, CameraRenderSpec
 from isaaclab.sim.views import FrameView
 from isaaclab.utils import to_camel_case
@@ -471,14 +472,12 @@ class Camera(SensorBase):
         self._renderer = sim_ctx.render_context.get_renderer(self.cfg.renderer_cfg)
         logger.info("Using renderer: %s", type(self._renderer).__name__)
 
-        # Build the render spec early — both the wrapper ISP (which delegates
-        # any renderer-side per-camera setup) and ``create_render_data`` consume
-        # it, and the prims are already authored at this point.
-        cam_paths = tuple(str(p.GetPath()) for p in sim_utils.find_matching_prims(self.cfg.prim_path, self.stage))
-        env_0_prefix = "/World/envs/env_0/"
-        rel_under_env0 = (
-            cam_paths[0].removeprefix(env_0_prefix) if cam_paths and cam_paths[0].startswith(env_0_prefix) else ""
-        )
+        # Build the render spec early — both the wrapper ISP and ``create_render_data`` consume it.
+        plan = self._clone_plan
+        cam_paths = tuple(p for p in expand_clone_plan_paths(plan, self.cfg.prim_path) if p is not None)
+        source_cam_prim, source_root, _, _ = source_prim(plan, self.cfg.prim_path)
+        source_cam_path = source_cam_prim.GetPath().pathString
+        rel_under_env0 = source_cam_path[len(source_root) + 1 :] if source_cam_path != source_root else ""
         device_str = self._device if isinstance(self._device, str) else str(self._device)
         render_spec = CameraRenderSpec(
             cfg=self.cfg,
@@ -512,18 +511,13 @@ class Camera(SensorBase):
         # Create frame count buffer
         self._frame = ProxyArray(wp.zeros(self._view.count, device=self._device, dtype=wp.int64))
 
-        # Convert all encapsulated prims to Camera. Newton keeps only source USD camera prims.
+        # Newton-replicated stages don't author destination prims; intrinsics are clone-invariant
+        # so we read them from the source camera prim regardless.
         self._sensor_prims.clear()
-        view_prims = list(self._view.prims)
-        if not view_prims and cam_paths:
-            view_prims = [self.stage.GetPrimAtPath(cam_paths[0])] * self._view.count
+        view_prims = list(self._view.prims) or [source_cam_prim] * self._view.count
         for cam_prim in view_prims:
-            # Obtain the prim path
-            cam_prim_path = cam_prim.GetPath().pathString
-            # Check if prim is a camera
             if not cam_prim.IsA(UsdGeom.Camera):
-                raise RuntimeError(f"Prim at path '{cam_prim_path}' is not a Camera.")
-            # Add to list
+                raise RuntimeError(f"Prim at path '{cam_prim.GetPath().pathString}' is not a Camera.")
             self._sensor_prims.append(UsdGeom.Camera(cam_prim))
 
         self._render_data = self._renderer.create_render_data(render_spec)
@@ -627,29 +621,16 @@ class Camera(SensorBase):
         if len(env_ids_np) == 0:
             return
 
+        # Intrinsics are clone-invariant; read once and broadcast.
+        sensor_prim = self._sensor_prims[int(env_ids_np[0])]
+        height, width = self.image_shape
+        f_xy = (width * sensor_prim.GetFocalLengthAttr().Get()) / sensor_prim.GetHorizontalApertureAttr().Get()
         intrinsic_matrices = np.zeros((len(env_ids_np), 3, 3), dtype=np.float32)
-        # iterate over all cameras
-        for matrix_id, i in enumerate(env_ids_np):
-            # Get corresponding sensor prim
-            sensor_prim = self._sensor_prims[int(i)]
-            # get camera parameters
-            # currently rendering does not use aperture offsets or vertical aperture
-            focal_length = sensor_prim.GetFocalLengthAttr().Get()
-            horiz_aperture = sensor_prim.GetHorizontalApertureAttr().Get()
-
-            # get viewport parameters
-            height, width = self.image_shape
-            # extract intrinsic parameters
-            f_x = (width * focal_length) / horiz_aperture
-            f_y = f_x
-            c_x = width * 0.5
-            c_y = height * 0.5
-            # create intrinsic matrix for depth linear
-            intrinsic_matrices[matrix_id, 0, 0] = f_x
-            intrinsic_matrices[matrix_id, 0, 2] = c_x
-            intrinsic_matrices[matrix_id, 1, 1] = f_y
-            intrinsic_matrices[matrix_id, 1, 2] = c_y
-            intrinsic_matrices[matrix_id, 2, 2] = 1.0
+        intrinsic_matrices[:, 0, 0] = f_xy
+        intrinsic_matrices[:, 0, 2] = width * 0.5
+        intrinsic_matrices[:, 1, 1] = f_xy
+        intrinsic_matrices[:, 1, 2] = height * 0.5
+        intrinsic_matrices[:, 2, 2] = 1.0
 
         intrinsic_matrices_wp = wp.array(intrinsic_matrices, dtype=wp.mat33f, device=self._device)
         self._update_camera_state(

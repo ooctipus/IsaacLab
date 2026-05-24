@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 import warp as wp
 
-import isaaclab.sim as sim_utils
+from isaaclab.cloner.cloner_utils import descend_source_prims
 from isaaclab.sensors.contact_sensor import BaseContactSensor
 from isaaclab.utils.warp import ProxyArray
 
@@ -190,25 +190,21 @@ class ContactSensor(BaseContactSensor):
         # ``omni.physx``.  The unfiltered API matches what the underlying
         # USD apiSchemas listOp actually carries (verified against
         # :class:`pxr.Sdf.PrimSpec.GetInfo("apiSchemas")`).
-        leaf_pattern = self.cfg.prim_path.rsplit("/", 1)[-1]
-        template_prim_path = self._parent_prims[0].GetPath().pathString
-        body_names: list[str] = []
-        for prim in sim_utils.find_matching_prims(template_prim_path + "/" + leaf_pattern):
-            if "PhysxContactReportAPI" in prim.GetPrimTypeInfo().GetAppliedAPISchemas():
-                body_names.append(prim.GetPath().pathString.rsplit("/", 1)[-1])
-        if not body_names:
+        contact_api = "PhysxContactReportAPI"
+        is_contact_body = lambda p: contact_api in p.GetPrimTypeInfo().GetAppliedAPISchemas()  # noqa: E731
+        bodies = descend_source_prims(self._clone_plan, self.cfg.prim_path, is_contact_body)
+        if not bodies:
             raise RuntimeError(
                 f"Sensor at path '{self.cfg.prim_path}' could not find any bodies with contact reporter API."
                 "\nHINT: Make sure to enable 'activate_contact_sensors' in the corresponding asset spawn configuration."
             )
+        body_names = [p.GetPath().name for p, *_ in bodies]
+        first_prim, source_root, destination, _ = bodies[0]
+        parent_relpath = first_prim.GetPath().GetParentPath().pathString[len(source_root) :]
         self._body_names = body_names
         self._num_sensors = len(body_names)
 
-        # Build glob patterns: one per (env, sensor body).
-        # IsaacLab path forms map to ovphysx fnmatch globs the same way Articulation does.
-        base_glob = self.cfg.prim_path.rsplit("/", 1)[0]
-        base_glob = re.sub(r"\{ENV_REGEX_NS\}", "*", base_glob)
-        base_glob = re.sub(r"\.\*", "*", base_glob)
+        base_glob = (destination + parent_relpath).replace("{}", "*").replace(".*", "*")
         sensor_patterns = [f"{base_glob}/{name}" for name in body_names]
 
         # Build filter patterns (flat: len = n_sensors * filters_per_sensor).

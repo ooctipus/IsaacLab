@@ -16,11 +16,12 @@ from pxr import UsdPhysics
 import isaaclab.utils.math as math_utils
 import isaaclab.utils.string as string_utils
 from isaaclab.assets.articulation import Articulation
+from isaaclab.cloner.cloner_utils import source_prim
 from isaaclab.controllers.differential_ik import DifferentialIKController
 from isaaclab.controllers.operational_space import OperationalSpaceController
 from isaaclab.managers.action_manager import ActionTerm
 from isaaclab.sensors import ContactSensor, ContactSensorCfg, FrameTransformer, FrameTransformerCfg
-from isaaclab.sim.utils import find_matching_prims
+from isaaclab.sim import SimulationContext
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
@@ -329,9 +330,14 @@ class OperationalSpaceControllerAction(ActionTerm):
         # Initialize the task frame transformer if a relative path for the RigidObject, representing the task frame,
         # is provided.
         if self.cfg.task_frame_rel_path is not None:
-            # The source RigidObject can be any child of the articulation asset (we will not use it),
-            # hence, we will use the first RigidObject child.
-            root_rigidbody_path = self._first_RigidObject_child_path()
+            # The task FrameTransformer is parented to any RigidObject under the articulation asset
+            # (the rigid child itself is unused; we only need the env-scoped expression below).
+            plan = SimulationContext.instance().get_clone_plan()
+            asset_prim, *_ = source_prim(plan, self._asset.cfg.prim_path)
+            rigid_child = next((c for c in asset_prim.GetChildren() if c.HasAPI(UsdPhysics.RigidBodyAPI)), None)
+            if rigid_child is None:
+                raise ValueError(f"No child rigid body under: '{self._asset.cfg.prim_path}'.")
+            root_rigidbody_path = self._asset.cfg.prim_path + "/" + rigid_child.GetPath().name
             task_frame_transformer_path = "/World/envs/env_.*/" + self.cfg.task_frame_rel_path
             task_frame_transformer_cfg = FrameTransformerCfg(
                 prim_path=root_rigidbody_path,
@@ -553,29 +559,6 @@ class OperationalSpaceControllerAction(ActionTerm):
     Helper functions.
 
     """
-
-    def _first_RigidObject_child_path(self):
-        """Finds the first ``RigidObject`` child under the articulation asset.
-
-        Raises:
-            ValueError: If no child ``RigidObject`` is found under the articulation asset.
-
-        Returns:
-            str: The path to the first ``RigidObject`` child under the articulation asset.
-        """
-        child_prims = find_matching_prims(self._asset.cfg.prim_path + "/.*")
-        rigid_child_prim = None
-        # Loop through the list and stop at the first RigidObject found
-        for prim in child_prims:
-            if prim.HasAPI(UsdPhysics.RigidBodyAPI):
-                rigid_child_prim = prim
-                break
-        if rigid_child_prim is None:
-            raise ValueError("No child rigid body found under the expression: '{self._asset.cfg.prim_path}'/.")
-        rigid_child_prim_path = rigid_child_prim.GetPath().pathString
-        # Remove the specific env index from the path string
-        rigid_child_prim_path = self._asset.cfg.prim_path + "/" + rigid_child_prim_path.split("/")[-1]
-        return rigid_child_prim_path
 
     def _resolve_command_indexes(self):
         """Resolves the indexes for the various command elements within the command tensor.

@@ -14,6 +14,8 @@ import warp as wp
 from pxr import Gf, Sdf, Usd, UsdGeom, Vt
 
 import isaaclab.sim as sim_utils
+from isaaclab.cloner.cloner_utils import expand_clone_plan_paths
+from isaaclab.sim.simulation_context import SimulationContext
 from isaaclab.utils.warp import ProxyArray
 
 from .base_frame_view import BaseFrameView
@@ -82,7 +84,11 @@ class UsdFrameView(BaseFrameView):
         self._device = device
 
         stage = sim_utils.get_current_stage() if stage is None else stage
-        self._prims: list[Usd.Prim] = sim_utils.find_matching_prims(prim_path, stage=stage)
+        # Plan-derived per-env paths for env-scoped exprs; stage walk for global / non-env exprs.
+        plan = SimulationContext.instance().get_clone_plan()
+        self._prims = [
+            stage.GetPrimAtPath(p) for p in expand_clone_plan_paths(plan, prim_path) if p is not None
+        ] or sim_utils.find_matching_prims(prim_path, stage=stage)
 
         if validate_xform_ops:
             for prim in self._prims:

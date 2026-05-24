@@ -9,11 +9,13 @@ import contextlib
 import itertools
 import logging
 import math
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 
 import torch
 
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdUtils, Vt
+
+from isaaclab.sim.utils.queries import find_matching_prims, get_all_matching_child_prims
 
 from . import _fabric_notices
 from .clone_plan import ClonePlan
@@ -24,27 +26,29 @@ logger = logging.getLogger(__name__)
 def iter_clone_plan_matches(plan: ClonePlan, path_expr: str) -> Iterator[tuple[str, str, str, tuple[int, ...]]]:
     """Yield clone-plan entries whose destinations own a path expression.
 
+    This is the low-level escape hatch. Prefer :func:`source_prim`, :func:`descend_source_prims`,
+    or :func:`ascend_source_prims` for end-user queries.
+
     Example:
         For an entry with source root ``"/World/source/Robot"``, destination
-        template ``"/World/scenes/{}/Robot"``, and populated env ids
-        ``(0, 2)``, querying ``"/World/scenes/.*/Robot/base"`` yields
-        ``("/World/source/Robot", "/World/scenes/{}/Robot",
-        "/World/source/Robot/base", (0, 2))``.
+        ``"/World/scenes/{}/Robot"``, and populated env ids ``(0, 2)``,
+        querying ``"/World/scenes/.*/Robot/base"`` yields
+        ``("/World/source/Robot/base", "/World/source/Robot",
+        "/World/scenes/{}/Robot", (0, 2))``.
 
     Args:
         plan: Clone plan to query.
         path_expr: Destination prim path or path expression. Expressions are
-            matched against each clone-plan destination template by treating
-            the template's ``"{}"`` field as the populated environment slot.
+            matched against each clone-plan destination by treating the
+            destination's ``"{}"`` field as the populated environment slot.
 
     Yields:
-        Tuples ``(source_root, destination_template, source_path, env_ids)``
-        for the nearest matching destination root. Multiple source variants
-        with the same destination root are preserved.
+        Tuples ``(source_path, source_root, destination, env_ids)`` for every
+        plan entry whose destination covers ``path_expr``. The ordering matches
+        the prim-resolved helpers with ``source_path`` taking the place of ``prim``.
     """
-    matches: list[tuple[str, str, str, tuple[int, ...]]] = []
-    for source_index, (source_root, destination_template) in enumerate(zip(plan.sources, plan.destinations)):
-        if "{}" not in destination_template:
+    for source_index, (source_root, destination) in enumerate(zip(plan.sources, plan.destinations)):
+        if "{}" not in destination:
             continue
 
         env_ids = tuple(int(i) for i in plan.clone_mask[source_index].nonzero(as_tuple=False).flatten().tolist())
@@ -52,9 +56,9 @@ def iter_clone_plan_matches(plan: ClonePlan, path_expr: str) -> Iterator[tuple[s
             continue
 
         source_root = source_root.rstrip("/") or "/"
-        destination_template = destination_template.rstrip("/") or "/"
+        destination = destination.rstrip("/") or "/"
 
-        destination_prefix, destination_suffix = destination_template.split("{}", 1)
+        destination_prefix, destination_suffix = destination.split("{}", 1)
         if not path_expr.startswith(destination_prefix):
             continue
         if destination_suffix:
@@ -70,12 +74,124 @@ def iter_clone_plan_matches(plan: ClonePlan, path_expr: str) -> Iterator[tuple[s
             continue
         source_path = source_root + suffix if source_root != "/" else suffix or "/"
 
-        matches.append((source_root, destination_template, source_path, env_ids))
+        yield source_path, source_root, destination, env_ids
 
-    matches.sort(key=lambda match: len(match[1].format(match[3][0])), reverse=True)
-    if matches:
-        owner_length = len(matches[0][1].format(matches[0][3][0]))
-        yield from (match for match in matches if len(match[1].format(match[3][0])) == owner_length)
+
+def source_prim(
+    plan: ClonePlan,
+    prim_expr: str,
+) -> tuple[Usd.Prim, str, str, tuple[int, ...]] | tuple[None, None, None, None]:
+    """Resolve the source-side prim at ``prim_expr``.
+
+    Returns the first ``(prim, source_root, destination, env_ids)`` tuple
+    whose source-side glob matches ``prim_expr``. Performs no walk -- use
+    :func:`descend_source_prims` or :func:`ascend_source_prims` to traverse.
+
+    Args:
+        plan: Clone plan to query.
+        prim_expr: Destination prim path or path expression.
+
+    Returns:
+        ``(prim, source_root, destination, env_ids)`` for the first match,
+        or ``(None, None, None, None)`` when no plan entry covers ``prim_expr``.
+    """
+    for source_path, source_root, destination, env_ids in iter_clone_plan_matches(plan, prim_expr):
+        for prim in find_matching_prims(source_path):
+            return prim, source_root, destination, env_ids
+    return None, None, None, None
+
+
+def descend_source_prims(
+    plan: ClonePlan,
+    prim_expr: str,
+    predicate: Callable[[Usd.Prim], bool],
+) -> list[tuple[Usd.Prim, str, str, tuple[int, ...]]]:
+    """Walk down from the source prim at ``prim_expr``, returning matches.
+
+    For each plan entry covering ``prim_expr``, walks the source-side subtree (including
+    self) and collects every prim satisfying ``predicate``.
+
+    Args:
+        plan: Clone plan to query.
+        prim_expr: Destination prim path or path expression.
+        predicate: Filter applied to each visited prim.
+
+    Returns:
+        A list of ``(prim, source_root, destination, env_ids)`` tuples in
+        depth-first order. Returns ``[]`` when no source prims satisfy the predicate
+        (including when no plan entry covers ``prim_expr``).
+    """
+    matches: list[tuple[Usd.Prim, str, str, tuple[int, ...]]] = []
+    for source_path, source_root, destination, env_ids in iter_clone_plan_matches(plan, prim_expr):
+        for source in find_matching_prims(source_path):
+            for prim in get_all_matching_child_prims(
+                source.GetPath().pathString, predicate=predicate, traverse_instance_prims=False
+            ):
+                matches.append((prim, source_root, destination, env_ids))
+    return matches
+
+
+def ascend_source_prims(
+    plan: ClonePlan,
+    prim_expr: str,
+    predicate: Callable[[Usd.Prim], bool],
+) -> list[tuple[Usd.Prim, str, str, tuple[int, ...]]]:
+    """Walk up from the source prim at ``prim_expr``, returning matches.
+
+    For each plan entry covering ``prim_expr``, walks the source-side ancestor chain
+    (including self) and collects every prim satisfying ``predicate``. Ancestors are
+    yielded closest-first. The walk stops at the plan entry's ``source_root`` -- the
+    surrounding env scope is not part of the per-asset frame and yields incorrect
+    view globs if returned.
+
+    Args:
+        plan: Clone plan to query.
+        prim_expr: Destination prim path or path expression.
+        predicate: Filter applied to each visited prim.
+
+    Returns:
+        A list of ``(prim, source_root, destination, env_ids)`` tuples,
+        ordered from the source prim up to ``source_root``. Returns ``[]`` when no
+        ancestor satisfies the predicate.
+    """
+    matches: list[tuple[Usd.Prim, str, str, tuple[int, ...]]] = []
+    for source_path, source_root, destination, env_ids in iter_clone_plan_matches(plan, prim_expr):
+        for source in find_matching_prims(source_path):
+            current = source
+            while current:
+                if predicate(current):
+                    matches.append((current, source_root, destination, env_ids))
+                if current.GetPath().pathString == source_root:
+                    break
+                current = current.GetParent()
+    return matches
+
+
+def expand_clone_plan_paths(plan: ClonePlan, prim_expr: str) -> list[str | None]:
+    """Return one concrete destination path per environment, or ``None`` for uncovered envs.
+
+    The returned list has length ``plan.clone_mask.shape[1]``. Raises ``RuntimeError`` if
+    two plan entries cover the same environment (ambiguous destination).
+    """
+    num_envs = int(plan.clone_mask.shape[1])
+    paths: list[str | None] = [None] * num_envs
+    for source_path, source_root, destination, env_ids in iter_clone_plan_matches(plan, prim_expr):
+        if source_path == source_root:
+            suffix = ""
+        elif source_path.startswith(source_root + "/"):
+            suffix = source_path[len(source_root) :]
+        elif source_root == "/":
+            suffix = source_path
+        else:
+            raise RuntimeError(f"source path '{source_path}' is not under source root '{source_root}'.")
+        for env_id in env_ids:
+            path = destination.format(env_id) + suffix
+            if paths[env_id] is not None:
+                raise RuntimeError(
+                    f"env {env_id} matched twice for '{prim_expr}' (existing '{paths[env_id]}', new '{path}')."
+                )
+            paths[env_id] = path
+    return paths
 
 
 @contextlib.contextmanager

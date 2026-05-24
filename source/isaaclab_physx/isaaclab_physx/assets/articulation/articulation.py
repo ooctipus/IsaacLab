@@ -27,7 +27,8 @@ from isaaclab.assets.articulation.base_articulation import BaseArticulation
 _HAS_NEWTON_ACTUATORS = importlib.util.find_spec("isaaclab_newton.actuators") is not None
 
 
-from isaaclab.sim.utils.queries import find_first_matching_prim, get_all_matching_child_prims
+from isaaclab.cloner.cloner_utils import descend_source_prims, source_prim
+from isaaclab.sim import SimulationContext
 from isaaclab.utils.string import resolve_matching_names, resolve_matching_names_values
 from isaaclab.utils.types import ArticulationActions
 from isaaclab.utils.version import get_isaac_sim_version, has_kit
@@ -118,8 +119,6 @@ class Articulation(BaseArticulation):
         Args:
             cfg: A configuration instance.
         """
-        from isaaclab.sim import SimulationContext  # noqa: PLC0415
-
         super().__init__(cfg)
 
         sim_ctx = SimulationContext.instance()
@@ -3773,38 +3772,16 @@ class Articulation(BaseArticulation):
             # The articulation root prim path is specified explicitly, so we can just use this.
             root_prim_path_expr = self.cfg.prim_path + self.cfg.articulation_root_prim_path
         else:
-            # No articulation root prim path was specified, so we need to search
-            # for it. We search for this in the first environment and then
-            # create a regex that matches all environments.
-            first_env_matching_prim = find_first_matching_prim(self.cfg.prim_path)
-            if first_env_matching_prim is None:
-                raise RuntimeError(f"Failed to find prim for expression: '{self.cfg.prim_path}'.")
-            first_env_matching_prim_path = first_env_matching_prim.GetPath().pathString
-
-            # Find all articulation root prims in the first environment.
-            first_env_root_prims = get_all_matching_child_prims(
-                first_env_matching_prim_path,
-                predicate=lambda prim: prim.HasAPI(UsdPhysics.ArticulationRootAPI)
-                and prim.GetAttribute("physxArticulation:articulationEnabled").Get() is not False,
-                traverse_instance_prims=False,
-            )
-            if len(first_env_root_prims) == 0:
+            api, enabled_root = UsdPhysics.ArticulationRootAPI, "physxArticulation:articulationEnabled"
+            is_enabled_root = lambda p: p.HasAPI(api) and p.GetAttribute(enabled_root).Get()  # noqa: E731
+            plan = SimulationContext.instance().get_clone_plan()
+            roots = descend_source_prims(plan, self.cfg.prim_path, is_enabled_root)
+            if len(roots) != 1:
                 raise RuntimeError(
-                    f"Failed to find an articulation when resolving '{first_env_matching_prim_path}'."
-                    " Please ensure that the prim has 'USD ArticulationRootAPI' applied."
+                    f"Expected one ArticulationRootAPI prim under '{self.cfg.prim_path}'; found {len(roots)}."
                 )
-            if len(first_env_root_prims) > 1:
-                raise RuntimeError(
-                    f"Failed to find a single articulation when resolving '{first_env_matching_prim_path}'."
-                    f" Found multiple '{first_env_root_prims}' under '{first_env_matching_prim_path}'."
-                    " Please ensure that there is only one articulation in the prim path tree."
-                )
-
-            # Now we convert the found articulation root from the first
-            # environment back into a regex that matches all environments.
-            first_env_root_prim_path = first_env_root_prims[0].GetPath().pathString
-            root_prim_path_relative_to_prim_path = first_env_root_prim_path[len(first_env_matching_prim_path) :]
-            root_prim_path_expr = self.cfg.prim_path + root_prim_path_relative_to_prim_path
+            root_prim, source_root, destination, _ = roots[0]
+            root_prim_path_expr = destination.format("*") + root_prim.GetPath().pathString[len(source_root) :]
 
         # -- articulation
         self._root_view = self._physics_sim_view.create_articulation_view(root_prim_path_expr.replace(".*", "*"))
@@ -3987,16 +3964,15 @@ class Articulation(BaseArticulation):
             )
 
             if has_explicit:
-                first_prim = find_first_matching_prim(self.cfg.prim_path)
-                art_prim_path = str(first_prim.GetPath()) if first_prim is not None else None
-
+                plan = SimulationContext.instance().get_clone_plan()
+                first_prim, *_ = source_prim(plan, self.cfg.prim_path)
                 adapter = NewtonActuatorAdapter.from_usd(
                     stage=get_current_stage(),
                     joint_names=self.joint_names,
                     num_envs=self.num_instances,
                     num_joints=self.num_joints,
                     device=self.device,
-                    articulation_prim_path=art_prim_path,
+                    articulation_prim_path=str(first_prim.GetPath()),
                 )
 
                 # Bind the wrapper's flat aliases of state/input buffers once.

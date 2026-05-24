@@ -25,7 +25,9 @@ import warp as wp
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
 from isaaclab.actuators import ImplicitActuator
+from isaaclab.cloner.cloner_utils import source_prim
 from isaaclab.managers import EventTermCfg, ManagerTermBase, SceneEntityCfg
+from isaaclab.sim import SimulationContext
 from isaaclab.utils.version import compare_versions
 
 if TYPE_CHECKING:
@@ -2148,24 +2150,16 @@ class randomize_visual_texture_material(ManagerTermBase):
         else:
             body_names_regex = ".*"
 
-        # create the affected prim path
-        # Check if the pattern with '/visuals' yields results when matching `body_names_regex`.
-        # If not, fall back to a broader pattern without '/visuals'.
+        # Pick the narrower /visuals pattern when the active ClonePlan has any source matches under it.
         asset_main_prim_path = asset.cfg.prim_path
         pattern_with_visuals = f"{asset_main_prim_path}/{body_names_regex}/visuals"
-        # Use sim_utils to check if any prims currently match this pattern
-        matching_prims = sim_utils.find_matching_prim_paths(pattern_with_visuals)
-        if matching_prims:
-            # If matches are found, use the pattern with /visuals
+        plan = SimulationContext.instance().get_clone_plan()
+        if source_prim(plan, pattern_with_visuals)[0] is not None:
             prim_path = pattern_with_visuals
         else:
-            # If no matches found, fall back to the broader pattern without /visuals
-            # This pattern (e.g., /World/envs/env_.*/Table/.*) should match visual prims
-            # whether they end in /visuals or have other structures.
             prim_path = f"{asset_main_prim_path}/.*"
             logging.info(
-                f"Pattern '{pattern_with_visuals}' found no prims. Falling back to '{prim_path}' for texture"
-                " randomization."
+                f"Pattern '{pattern_with_visuals}' found no prims; using '{prim_path}' for texture randomization."
             )
 
         # extract the replicator version

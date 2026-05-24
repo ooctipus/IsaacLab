@@ -16,7 +16,9 @@ import warp as wp
 from pxr import Gf, Usd, UsdGeom, UsdPhysics
 
 import isaaclab.sim as sim_utils
+from isaaclab.cloner.cloner_utils import expand_clone_plan_paths
 from isaaclab.physics import PhysicsEvent
+from isaaclab.sim import SimulationContext
 from isaaclab.sim.views.base_frame_view import BaseFrameView
 from isaaclab.sim.views.usd_frame_view import UsdFrameView
 from isaaclab.utils.warp import ProxyArray
@@ -311,7 +313,11 @@ class OvPhysxFrameView(BaseFrameView):
 
         stage = sim_utils.get_current_stage() if stage is None else stage
         self._stage = stage
-        self._prims: list[Usd.Prim] = sim_utils.find_matching_prims(prim_path, stage=stage)
+        # Plan-derived per-env paths for env-scoped exprs; stage walk for global / non-env exprs.
+        plan = SimulationContext.instance().get_clone_plan()
+        self._prims: list[Usd.Prim] = [
+            stage.GetPrimAtPath(p) for p in expand_clone_plan_paths(plan, prim_path) if p is not None
+        ] or sim_utils.find_matching_prims(prim_path, stage=stage)
         if not self._prims:
             raise ValueError(f"OvPhysxFrameView: pattern {prim_path!r} matched zero prims.")
 
@@ -507,18 +513,17 @@ class OvPhysxFrameView(BaseFrameView):
         """
         prim_world_tf = xform_cache.GetLocalToWorldTransform(prim)
         prim_world_tf.Orthonormalize()
-        # If the prim itself is a rigid body (directly or via env_0 template), the site offset is identity.
-        if self._prim_or_template_has_rigid_body_api(prim):
+        ancestor = sim_utils.get_first_matching_ancestor_prim(
+            prim.GetPath().pathString, self._prim_or_template_has_rigid_body_api
+        )
+        if ancestor is None:
+            return None, _gf_matrix_to_xform7(prim_world_tf)
+        if ancestor.GetPath() == prim.GetPath():
             return prim.GetPath().pathString, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
-        ancestor = prim.GetParent()
-        while ancestor and ancestor.IsValid() and ancestor.GetPath().pathString != "/":
-            if self._prim_or_template_has_rigid_body_api(ancestor):
-                ancestor_world_tf = xform_cache.GetLocalToWorldTransform(ancestor)
-                ancestor_world_tf.Orthonormalize()
-                local_tf = prim_world_tf * ancestor_world_tf.GetInverse()
-                return ancestor.GetPath().pathString, _gf_matrix_to_xform7(local_tf)
-            ancestor = ancestor.GetParent()
-        return None, _gf_matrix_to_xform7(prim_world_tf)
+        ancestor_world_tf = xform_cache.GetLocalToWorldTransform(ancestor)
+        ancestor_world_tf.Orthonormalize()
+        local_tf = prim_world_tf * ancestor_world_tf.GetInverse()
+        return ancestor.GetPath().pathString, _gf_matrix_to_xform7(local_tf)
 
     def _prim_or_template_has_rigid_body_api(self, prim: Usd.Prim) -> bool:
         """Return whether the prim (or its ``env_0`` equivalent) has ``RigidBodyAPI`` applied.

@@ -17,8 +17,10 @@ from isaaclab_newton.physics import NewtonManager as SimulationManager
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets.deformable_object.base_deformable_object import BaseDeformableObject
+from isaaclab.cloner.cloner_utils import source_prim
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.physics import PhysicsEvent
+from isaaclab.sim import SimulationContext
 from isaaclab.utils.warp import ProxyArray
 
 from .deformable_object_data import DeformableObjectData
@@ -654,14 +656,15 @@ class DeformableObject(BaseDeformableObject):
         # The cloned-regex ``cfg.prim_path`` is still used below to build the
         # registry entry's :attr:`sim_mesh_prim_path` / :attr:`vis_mesh_prim_path`
         # so post-replicate consumers resolve all per-env clones.
-        lookup_path = (
-            self.cfg.spawn.spawn_path
-            if self.cfg.spawn is not None and self.cfg.spawn.spawn_path is not None
-            else self.cfg.prim_path
-        )
-        template_prim = sim_utils.find_first_matching_prim(lookup_path)
+        spawn_path = self.cfg.spawn.spawn_path if self.cfg.spawn is not None else None
+        if spawn_path is not None:
+            # Template-spawn branch: per-env clones are deferred to replicate, so not in the ClonePlan.
+            template_prim = sim_utils.find_first_matching_prim(spawn_path)
+        else:
+            plan = SimulationContext.instance().get_clone_plan()
+            template_prim, *_ = source_prim(plan, self.cfg.prim_path)
         if template_prim is None:
-            raise RuntimeError(f"Failed to find prim for expression: '{lookup_path}'.")
+            raise RuntimeError(f"Failed to find prim for expression: '{spawn_path or self.cfg.prim_path}'.")
         template_prim_path = template_prim.GetPrimPath()
 
         # Discover sim / visual mesh prims under the template.

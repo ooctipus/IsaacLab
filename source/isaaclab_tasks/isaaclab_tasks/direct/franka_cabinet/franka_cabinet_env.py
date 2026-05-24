@@ -12,8 +12,9 @@ from pxr import UsdGeom
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation
+from isaaclab.cloner.cloner_utils import source_prim
 from isaaclab.envs import DirectRLEnv
-from isaaclab.sim.utils.stage import get_current_stage
+from isaaclab.sim import SimulationContext
 from isaaclab.utils.math import combine_frame_transforms, quat_apply, quat_conjugate, sample_uniform
 
 from .franka_cabinet_env_cfg import FrankaCabinetEnvCfg  # noqa: F401
@@ -63,22 +64,15 @@ class FrankaCabinetEnv(DirectRLEnv):
 
         self.robot_dof_targets = torch.zeros((self.num_envs, self._robot.num_joints), device=self.device)
 
-        stage = get_current_stage()
-        hand_pose = get_env_local_pose(
-            self.scene.env_origins[0],
-            UsdGeom.Xformable(stage.GetPrimAtPath("/World/envs/env_0/Robot/panda_link7")),
-            self.device,
-        )
-        lfinger_pose = get_env_local_pose(
-            self.scene.env_origins[0],
-            UsdGeom.Xformable(stage.GetPrimAtPath("/World/envs/env_0/Robot/panda_leftfinger")),
-            self.device,
-        )
-        rfinger_pose = get_env_local_pose(
-            self.scene.env_origins[0],
-            UsdGeom.Xformable(stage.GetPrimAtPath("/World/envs/env_0/Robot/panda_rightfinger")),
-            self.device,
-        )
+        plan = SimulationContext.instance().get_clone_plan()
+
+        def _link_pose(name: str) -> torch.Tensor:
+            link, *_ = source_prim(plan, f"/World/envs/env_.*/Robot/{name}")
+            return get_env_local_pose(self.scene.env_origins[0], UsdGeom.Xformable(link), self.device)
+
+        hand_pose = _link_pose("panda_link7")
+        lfinger_pose = _link_pose("panda_leftfinger")
+        rfinger_pose = _link_pose("panda_rightfinger")
 
         finger_pose = torch.zeros(7, device=self.device)
         finger_pose[0:3] = (lfinger_pose[0:3] + rfinger_pose[0:3]) / 2.0

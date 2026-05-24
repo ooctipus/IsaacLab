@@ -230,7 +230,7 @@ class NewtonSiteFrameView(BaseFrameView):
                 )
             matches = tuple(iter_clone_plan_matches(plan, path_expr)) if plan is not None else ()
             if matches:
-                for source_root, destination_template, source_path, env_ids in matches:
+                for source_path, source_root, destination, env_ids in matches:
                     source_prim = None
                     if not any(token in source_path for token in "*[]()+?|\\"):
                         source_prim = stage.GetPrimAtPath(source_path)
@@ -243,7 +243,7 @@ class NewtonSiteFrameView(BaseFrameView):
                             source_prim,
                             validate_xform_ops,
                             source_root,
-                            destination_template,
+                            destination,
                             env_ids,
                             use_clone_body_pattern,
                             stage,
@@ -265,7 +265,7 @@ class NewtonSiteFrameView(BaseFrameView):
         prim,
         validate_xform_ops: bool,
         source_root: str | None,
-        destination_template: str | None,
+        destination: str | None,
         env_ids: tuple[int, ...] | None,
         use_clone_body_pattern: bool,
         stage,
@@ -287,7 +287,7 @@ class NewtonSiteFrameView(BaseFrameView):
             if body_prim.HasAPI(UsdPhysics.RigidBodyAPI) or body_prim.HasAPI(UsdPhysics.ArticulationRootAPI):
                 pos, quat = sim_utils.resolve_prim_pose(prim, body_prim)
                 body_path = body_prim.GetPath().pathString
-                if source_root is not None and destination_template is not None:
+                if source_root is not None and destination is not None:
                     assert env_ids is not None
                     if body_path == source_root:
                         suffix = ""
@@ -296,7 +296,7 @@ class NewtonSiteFrameView(BaseFrameView):
                     elif source_root.startswith(body_path + "/"):
                         suffix = source_root[len(body_path) :]
                         if use_clone_body_pattern:
-                            destination_root = destination_template.format(".*")
+                            destination_root = destination.format(".*")
                             if not destination_root.endswith(suffix):
                                 raise RuntimeError(
                                     f"FrameView destination root '{destination_root}' does not end with '{suffix}'."
@@ -304,7 +304,7 @@ class NewtonSiteFrameView(BaseFrameView):
                             return (destination_root[: -len(suffix)],), wp.transform(pos, quat), False, env_ids
                         body_patterns = []
                         for env_id in env_ids:
-                            destination_root = destination_template.format(env_id)
+                            destination_root = destination.format(env_id)
                             if not destination_root.endswith(suffix):
                                 raise RuntimeError(
                                     f"FrameView destination root '{destination_root}' does not end with '{suffix}'."
@@ -314,9 +314,9 @@ class NewtonSiteFrameView(BaseFrameView):
                     else:
                         raise RuntimeError(f"FrameView source body '{body_path}' is not under '{source_root}'.")
                     if use_clone_body_pattern:
-                        body_patterns = (destination_template.format(".*") + suffix,)
+                        body_patterns = (destination.format(".*") + suffix,)
                     else:
-                        body_patterns = tuple(destination_template.format(env_id) + suffix for env_id in env_ids)
+                        body_patterns = tuple(destination.format(env_id) + suffix for env_id in env_ids)
                 else:
                     body_patterns = (body_path,)
                 return body_patterns, wp.transform(pos, quat), False, env_ids

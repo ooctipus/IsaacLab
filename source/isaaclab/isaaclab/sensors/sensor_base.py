@@ -221,19 +221,11 @@ class SensorBase(ABC):
         self._device = sim.device
         self._backend = sim.backend
         self._sim_physics_dt = sim.get_physics_dt()
-        # Count number of environments.
+        # Count environments from the clone plan, the single source of truth for replication.
         self._clone_plan = sim.get_clone_plan()
-        clone_plan = self._clone_plan
-        clone_plan_matches = ()
-        if clone_plan is not None and sim.physics_manager.__name__.lower().startswith("newton"):
-            clone_plan_matches = tuple(iter_clone_plan_matches(clone_plan, self.cfg.prim_path))
-        if clone_plan_matches:
-            self._parent_prims = []
-            self._num_envs = int(clone_plan.clone_mask.shape[1])
-        else:
-            env_prim_path_expr = self.cfg.prim_path.rsplit("/", 1)[0]
-            self._parent_prims = sim_utils.find_matching_prims(env_prim_path_expr)
-            self._num_envs = len(self._parent_prims)
+        if not any(iter_clone_plan_matches(self._clone_plan, self.cfg.prim_path)):
+            raise RuntimeError(f"Sensor '{self.cfg.prim_path}' is not covered by the active ClonePlan.")
+        self._num_envs = int(self._clone_plan.clone_mask.shape[1])
         # Create warp env mask arrays for "all envs" cases and resets.
         # Note: We use wp.to_torch() to create zero-copy torch tensor views of warp arrays.
         # This allows warp arrays to be passed to warp kernels while the corresponding torch

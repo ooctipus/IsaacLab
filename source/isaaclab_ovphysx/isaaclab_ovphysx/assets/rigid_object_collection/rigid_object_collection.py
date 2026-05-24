@@ -16,8 +16,9 @@ import warp as wp
 
 from pxr import UsdPhysics
 
-import isaaclab.sim as sim_utils
 from isaaclab.assets.rigid_object_collection.base_rigid_object_collection import BaseRigidObjectCollection
+from isaaclab.cloner.cloner_utils import descend_source_prims, source_prim
+from isaaclab.sim import SimulationContext
 from isaaclab.utils.string import resolve_matching_names
 from isaaclab.utils.wrench_composer import WrenchComposer
 
@@ -74,8 +75,8 @@ class RigidObjectCollection(BaseRigidObjectCollection):
         # flag for whether the asset is initialized
         self._is_initialized = False
         # spawn the rigid objects
+        plan = SimulationContext.instance().get_clone_plan()
         for rigid_body_cfg in self.cfg.rigid_objects.values():
-            # spawn the asset
             if rigid_body_cfg.spawn is not None:
                 rigid_body_cfg.spawn.func(
                     rigid_body_cfg.prim_path,
@@ -83,10 +84,8 @@ class RigidObjectCollection(BaseRigidObjectCollection):
                     translation=rigid_body_cfg.init_state.pos,
                     orientation=rigid_body_cfg.init_state.rot,
                 )
-            # check that spawn was successful
-            matching_prims = sim_utils.find_matching_prims(rigid_body_cfg.prim_path)
-            if len(matching_prims) == 0:
-                raise RuntimeError(f"Could not find prim with path {rigid_body_cfg.prim_path}.")
+            if source_prim(plan, rigid_body_cfg.prim_path)[0] is None:
+                raise RuntimeError(f"'{rigid_body_cfg.prim_path}' is not covered by the active ClonePlan.")
         # stores object names
         self._body_names_list: list[str] = []
         # one fused TensorBinding per tensor type, populated in _initialize_impl
@@ -1039,58 +1038,29 @@ class RigidObjectCollection(BaseRigidObjectCollection):
 
         self._prim_paths: list[str] = []
         self._body_names_list: list[str] = []
-
+        plan = SimulationContext.instance().get_clone_plan()
         for name, obj_cfg in self.cfg.rigid_objects.items():
-            # Convert IsaacLab prim-path notation to the fnmatch-style glob that
-            # OVPhysX create_tensor_binding expects.  Two conventions are in use:
-            #   /World/envs/env_.*/object   -- regex dot-star for any env index
-            #   /World/envs/{ENV_REGEX_NS}/object -- explicit placeholder
+            # OVPhysX create_tensor_binding expects fnmatch-style globs; map both env-regex forms.
             pattern = re.sub(r"\{ENV_REGEX_NS\}", "*", obj_cfg.prim_path)
             pattern = re.sub(r"\.\*", "*", pattern)
 
-            # Validate the prim tree before creating tensor bindings.
-            # OVPhysX silently returns a zero-count binding when the pattern
-            # matches nothing; fail fast here with a clear message instead.
-            template_prim = sim_utils.find_first_matching_prim(obj_cfg.prim_path)
-            if template_prim is None:
-                raise RuntimeError(f"Failed to find prim for expression: '{obj_cfg.prim_path}' (body '{name}').")
-            template_prim_path = template_prim.GetPath().pathString
-
-            root_prims = sim_utils.get_all_matching_child_prims(
-                template_prim_path,
-                predicate=lambda prim: prim.HasAPI(UsdPhysics.RigidBodyAPI),
-                traverse_instance_prims=False,
-            )
-            if len(root_prims) == 0:
+            roots = descend_source_prims(plan, obj_cfg.prim_path, lambda p: p.HasAPI(UsdPhysics.RigidBodyAPI))
+            if len(roots) != 1:
                 raise RuntimeError(
-                    f"Failed to find a rigid body when resolving '{obj_cfg.prim_path}' (body '{name}')."
-                    " Please ensure that the prim has 'USD RigidBodyAPI' applied."
+                    f"Expected one RigidBodyAPI prim under '{obj_cfg.prim_path}' (body '{name}'); found {len(roots)}."
                 )
-            if len(root_prims) > 1:
+            api, enabled_root = UsdPhysics.ArticulationRootAPI, "physxArticulation:articulationEnabled"
+            is_enabled_root = lambda p: p.HasAPI(api) and p.GetAttribute(enabled_root).Get()  # noqa: E731
+            articulation_prims = [p for p, *_ in descend_source_prims(plan, obj_cfg.prim_path, is_enabled_root)]
+            if articulation_prims:
                 raise RuntimeError(
-                    f"Failed to find a single rigid body when resolving '{obj_cfg.prim_path}' (body '{name}')."
-                    f" Found multiple '{root_prims}' under '{template_prim_path}'."
-                    " Please ensure that there is only one rigid body in the prim path tree."
+                    f"Found enabled articulation root(s) {articulation_prims} when resolving"
+                    f" '{obj_cfg.prim_path}' (body '{name}') as a rigid object. Disable via"
+                    " 'ArticulationRootPropertiesCfg.articulation_enabled=False'."
                 )
 
-            articulation_prims = sim_utils.get_all_matching_child_prims(
-                template_prim_path,
-                predicate=lambda prim: prim.HasAPI(UsdPhysics.ArticulationRootAPI),
-                traverse_instance_prims=False,
-            )
-            if len(articulation_prims) != 0:
-                if articulation_prims[0].GetAttribute("physxArticulation:articulationEnabled").Get():
-                    raise RuntimeError(
-                        f"Found an articulation root when resolving '{obj_cfg.prim_path}' (body '{name}') in the"
-                        f" rigid object collection. These are located at: '{articulation_prims}' under"
-                        f" '{template_prim_path}'. Please disable the articulation root in the USD or from code by"
-                        " setting the parameter 'ArticulationRootPropertiesCfg.articulation_enabled' to False in the"
-                        " spawn configuration."
-                    )
-
-            # resolve root prim back into the regex expression
-            root_prim_path = root_prims[0].GetPath().pathString
-            suffix = root_prim_path[len(template_prim_path) :]
+            root_prim, source_root, _, _ = roots[0]
+            suffix = root_prim.GetPath().pathString[len(source_root) :]
             if suffix:
                 pattern = pattern + suffix
 

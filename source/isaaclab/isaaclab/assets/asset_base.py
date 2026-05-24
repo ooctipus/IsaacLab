@@ -18,6 +18,7 @@ import warp as wp
 from pxr import Usd
 
 import isaaclab.sim as sim_utils
+from isaaclab.cloner.cloner_utils import source_prim
 from isaaclab.physics import PhysicsEvent, PhysicsManager
 from isaaclab.sim.simulation_context import SimulationContext
 from isaaclab.sim.utils.stage import get_current_stage
@@ -94,10 +95,9 @@ class AssetBase(ABC):
                 translation=self.cfg.init_state.pos,
                 orientation=self.cfg.init_state.rot,
             )
-            # check that prims exist
-            matching_prims = sim_utils.find_matching_prims(check_path)
-            if len(matching_prims) == 0:
-                raise RuntimeError(f"Could not find prim with path {check_path}.")
+            plan = SimulationContext.instance().get_clone_plan()
+            if source_prim(plan, self.cfg.prim_path)[0] is None:
+                raise RuntimeError(f"Asset '{self.cfg.prim_path}' is not covered by the active ClonePlan.")
             # schema-side post-spawn hook (e.g. ArticulationCfg authors NewtonActuator prims here)
             self.cfg._post_spawn(self.stage)
         else:
@@ -175,20 +175,22 @@ class AssetBase(ABC):
             visible: Whether to make the prims visible or not.
             env_ids: The indices of the object to set visibility. Defaults to None (all instances).
         """
-        # resolve the environment ids
+        if not hasattr(self, "_visibility_destination"):
+            plan = SimulationContext.instance().get_clone_plan()
+            asset_prim, source_root, destination, env_ids_covered = source_prim(plan, self.cfg.prim_path)
+            self._visibility_destination = destination + asset_prim.GetPath().pathString[len(source_root) :]
+            self._visibility_env_ids = env_ids_covered
         if env_ids is None:
-            env_ids = range(len(self._prims))
+            env_ids = self._visibility_env_ids
         elif isinstance(env_ids, torch.Tensor):
             env_ids = env_ids.detach().cpu().tolist()
-
-        # obtain the prims corresponding to the asset
-        # note: we only want to find the prims once since this is a costly operation
-        if not hasattr(self, "_prims"):
-            self._prims = sim_utils.find_matching_prims(self.cfg.prim_path)
-
-        # iterate over the environment ids
+        covered = set(self._visibility_env_ids)
         for env_id in env_ids:
-            sim_utils.set_prim_visibility(self._prims[env_id], visible)
+            if env_id not in covered:
+                continue
+            prim = self.stage.GetPrimAtPath(self._visibility_destination.format(env_id))
+            if prim and prim.IsValid():
+                sim_utils.set_prim_visibility(prim, visible)
 
     def set_debug_vis(self, debug_vis: bool) -> bool:
         """Sets whether to visualize the asset data.

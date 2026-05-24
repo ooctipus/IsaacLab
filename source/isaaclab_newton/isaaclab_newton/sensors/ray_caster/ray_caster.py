@@ -61,11 +61,6 @@ def _gather_pose_by_index_kernel(
     quat_dst[i] = quat_src[src_idx]
 
 
-def _newton_body_pattern(body_path: str) -> str:
-    """Convert a clone-template body path to a Newton body-label pattern."""
-    return body_path.replace("{}", ".*")
-
-
 def _identity_offsets(count: int, device: str) -> tuple[wp.array, wp.array]:
     """Create identity sensor offsets for site poses that already include the offset."""
     offset_pos_wp = wp.zeros(count, dtype=wp.vec3f, device=device)
@@ -91,65 +86,40 @@ class _NewtonRayCasterMixin:
     def __init__(self: Any, cfg):
         """Register sensor and dynamic target sites before cloning occurs."""
         super().__init__(cfg)  # pyright: ignore[reportCallIssue]
-        self._sensor_site_labels = self._register_sites_for_expr(self.cfg.prim_path)
+        identity = wp.transform(wp.vec3(0.0, 0.0, 0.0), wp.quat(0.0, 0.0, 0.0, 1.0))
+        attach_expr = self.cfg.prim_path
+        if attach_expr.rsplit("/", 1)[-1].lower() in ("camera", "raycaster"):
+            attach_expr = attach_expr.rsplit("/", 1)[0]
+        plan = sim_utils.SimulationContext.instance().get_clone_plan()
+        # If ``attach_expr`` resolves to the env-root source itself (no suffix), attach per-world.
+        per_world = any(sp == sr for sp, sr, _, _ in iter_clone_plan_matches(plan, attach_expr))
+        self._sensor_site_labels = [
+            NewtonManager.cl_register_site(None, identity, per_world=True)
+            if per_world
+            else NewtonManager.cl_register_site(attach_expr.replace("{}", ".*"), identity)
+        ]
         self._tracked_site_labels_by_target: dict[tuple[str, ...], list[str]] = {}
         for target_cfg in getattr(self, "_raycast_targets_cfg", []):
-            if target_cfg.track_mesh_transforms:
-                owner_exprs = self._resolve_target_owner_exprs(target_cfg.prim_expr)
-                labels = self._register_target_sites_for_exprs(owner_exprs)
-                self._tracked_site_labels_by_target[tuple(owner_exprs)] = labels
+            if not target_cfg.track_mesh_transforms:
+                continue
+            owner_exprs: list[str] = []
+            for source_path, source_root, destination, _ in iter_clone_plan_matches(plan, target_cfg.prim_expr):
+                source_prims = sim_utils.find_matching_prims(source_path)
+                if not source_prims:
+                    raise RuntimeError(f"No ClonePlan source prims matched '{source_path}'.")
+                for source_prim in source_prims:
+                    sp = str(source_prim.GetPath())
+                    owner = sp if sp == source_root else sp.rsplit("/", 1)[0]
+                    owner_exprs.append(destination.format(".*") + owner[len(source_root) :])
+            if not owner_exprs:
+                raise RuntimeError(f"RayCaster target '{target_cfg.prim_expr}' is not owned by the active ClonePlan.")
+            owner_exprs = list(dict.fromkeys(owner_exprs))
+            labels = list(dict.fromkeys(NewtonManager.cl_register_site(e, identity) for e in owner_exprs))
+            self._tracked_site_labels_by_target[tuple(owner_exprs)] = labels
 
     def _resolve_and_spawn(self, _sensor_name: str, **_spawn_kwargs) -> None:
         """Skip USD sensor prim spawning for Newton ray casters."""
         pass
-
-    def _register_sites_for_expr(self, prim_expr: str) -> list[str]:
-        """Register Newton sites for a prim expression and return site labels."""
-        identity = wp.transform(wp.vec3(0.0, 0.0, 0.0), wp.quat(0.0, 0.0, 0.0, 1.0))
-        attach_expr = prim_expr
-        if prim_expr.rsplit("/", 1)[-1].lower() in ("camera", "raycaster"):
-            attach_expr = prim_expr.rsplit("/", 1)[0]
-
-        sim = sim_utils.SimulationContext.instance()
-        plan = sim.get_clone_plan() if sim is not None else None
-        if plan is not None:
-            for destination_template in plan.destinations:
-                if "{}" not in destination_template:
-                    continue
-                destination_prefix, _ = destination_template.split("{}", 1)
-                if attach_expr.startswith(destination_prefix) and "/" not in attach_expr[len(destination_prefix) :]:
-                    return [NewtonManager.cl_register_site(None, identity, per_world=True)]
-
-        return [NewtonManager.cl_register_site(_newton_body_pattern(attach_expr), identity)]
-
-    def _resolve_target_owner_exprs(self, prim_expr: str) -> list[str]:
-        """Resolve mesh target expressions to owning rigid-body expressions."""
-        sim = sim_utils.SimulationContext.instance()
-        plan = sim.get_clone_plan() if sim is not None else None
-        if plan is None:
-            raise RuntimeError(f"RayCaster target '{prim_expr}' requires an active ClonePlan.")
-
-        owner_exprs: list[str] = []
-        for source_root, destination_template, source_path, _env_ids in iter_clone_plan_matches(plan, prim_expr):
-            source_prims = sim_utils.find_matching_prims(source_path)
-            if not source_prims:
-                raise RuntimeError(f"No ClonePlan source prims matched '{source_path}'.")
-
-            for source_prim in source_prims:
-                source_prim_path = str(source_prim.GetPath())
-                owner_path = source_prim_path
-                if source_prim_path != source_root:
-                    owner_path = source_prim_path.rsplit("/", 1)[0]
-                owner_exprs.append(destination_template.format(".*") + owner_path[len(source_root) :])
-        if not owner_exprs:
-            raise RuntimeError(f"RayCaster target '{prim_expr}' is not owned by the active ClonePlan.")
-        return list(dict.fromkeys(owner_exprs))
-
-    def _register_target_sites_for_exprs(self, owner_exprs: list[str]) -> list[str]:
-        """Register identity-pose Newton sites on target owner bodies."""
-        identity = wp.transform(wp.vec3(0.0, 0.0, 0.0), wp.quat(0.0, 0.0, 0.0, 1.0))
-        labels = [NewtonManager.cl_register_site(owner_expr, identity) for owner_expr in owner_exprs]
-        return list(dict.fromkeys(labels))
 
     def _initialize_pose_tracking(self: Any) -> None:
         """Resolve registered site labels and allocate sensor-owned pose buffers."""
@@ -241,10 +211,7 @@ class _NewtonRayCasterMixin:
             quat_buf = wp.empty(site_count, dtype=wp.quatf, device=self._device)
             pose_buf = wp.empty(site_count, dtype=wp.transformf, device=self._device)
             self._update_newton_site_transforms(site_indices, pose_buf, pos_buf, quat_buf)
-            meshes_per_env = site_count
-            if site_count != 1:
-                # Newton sites arrive as a flat list across envs; the mesh table is indexed per env.
-                meshes_per_env = site_count // self._num_envs
+            meshes_per_env = self._num_meshes_per_env[target_cfg.prim_expr]
 
             wp.launch(
                 copy_mesh_poses_to_table_kernel,
@@ -260,7 +227,7 @@ class _NewtonRayCasterMixin:
                 ],
                 device=self._device,
             )
-            mesh_idx += self._num_meshes_per_env[target_cfg.prim_expr]
+            mesh_idx += meshes_per_env
 
     def _update_newton_site_transforms(
         self: Any,

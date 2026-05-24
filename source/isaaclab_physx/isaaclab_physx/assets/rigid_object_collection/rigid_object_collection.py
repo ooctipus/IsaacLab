@@ -18,9 +18,10 @@ import warp as wp
 import omni.physics.tensors.api as physx
 from pxr import UsdPhysics
 
-import isaaclab.sim as sim_utils
 import isaaclab.utils.string as string_utils
 from isaaclab.assets.rigid_object_collection.base_rigid_object_collection import BaseRigidObjectCollection
+from isaaclab.cloner.cloner_utils import descend_source_prims, source_prim
+from isaaclab.sim import SimulationContext
 from isaaclab.utils.wrench_composer import WrenchComposer
 
 from isaaclab_physx.assets import kernels as shared_kernels
@@ -78,8 +79,8 @@ class RigidObjectCollection(BaseRigidObjectCollection):
         # flag for whether the asset is initialized
         self._is_initialized = False
         # spawn the rigid objects
+        plan = SimulationContext.instance().get_clone_plan()
         for rigid_body_cfg in self.cfg.rigid_objects.values():
-            # spawn the asset
             if rigid_body_cfg.spawn is not None:
                 spawn_path = rigid_body_cfg.spawn.spawn_path or rigid_body_cfg.prim_path
                 rigid_body_cfg.spawn.func(
@@ -88,10 +89,8 @@ class RigidObjectCollection(BaseRigidObjectCollection):
                     translation=rigid_body_cfg.init_state.pos,
                     orientation=rigid_body_cfg.init_state.rot,
                 )
-            # check that spawn was successful
-            matching_prims = sim_utils.find_matching_prims(rigid_body_cfg.prim_path)
-            if len(matching_prims) == 0:
-                raise RuntimeError(f"Could not find prim with path {rigid_body_cfg.prim_path}.")
+            if source_prim(plan, rigid_body_cfg.prim_path)[0] is None:
+                raise RuntimeError(f"'{rigid_body_cfg.prim_path}' is not covered by the active ClonePlan.")
         # stores object names
         self._body_names_list = []
 
@@ -1212,56 +1211,28 @@ class RigidObjectCollection(BaseRigidObjectCollection):
         return wp.clone(env_ids, device="cpu")
 
     def _initialize_impl(self):
-        # clear body names list to prevent double counting on re-initialization
         self._body_names_list.clear()
-        # obtain global simulation view
         self._physics_sim_view = SimulationManager.get_physics_sim_view()
+        plan = SimulationContext.instance().get_clone_plan()
         root_prim_path_exprs = []
         for name, rigid_body_cfg in self.cfg.rigid_objects.items():
-            # obtain the first prim in the regex expression (all others are assumed to be a copy of this)
-            template_prim = sim_utils.find_first_matching_prim(rigid_body_cfg.prim_path)
-            if template_prim is None:
-                raise RuntimeError(f"Failed to find prim for expression: '{rigid_body_cfg.prim_path}'.")
-            template_prim_path = template_prim.GetPath().pathString
-
-            # find rigid root prims
-            root_prims = sim_utils.get_all_matching_child_prims(
-                template_prim_path,
-                predicate=lambda prim: prim.HasAPI(UsdPhysics.RigidBodyAPI),
-                traverse_instance_prims=False,
-            )
-            if len(root_prims) == 0:
+            roots = descend_source_prims(plan, rigid_body_cfg.prim_path, lambda p: p.HasAPI(UsdPhysics.RigidBodyAPI))
+            if len(roots) != 1:
                 raise RuntimeError(
-                    f"Failed to find a rigid body when resolving '{rigid_body_cfg.prim_path}'."
-                    " Please ensure that the prim has 'USD RigidBodyAPI' applied."
+                    f"Expected one RigidBodyAPI prim under '{rigid_body_cfg.prim_path}'; found {len(roots)}."
                 )
-            if len(root_prims) > 1:
+            api, enabled_root = UsdPhysics.ArticulationRootAPI, "physxArticulation:articulationEnabled"
+            is_enabled_root = lambda p: p.HasAPI(api) and p.GetAttribute(enabled_root).Get()  # noqa: E731
+            articulation_prims = [p for p, *_ in descend_source_prims(plan, rigid_body_cfg.prim_path, is_enabled_root)]
+            if articulation_prims:
                 raise RuntimeError(
-                    f"Failed to find a single rigid body when resolving '{rigid_body_cfg.prim_path}'."
-                    f" Found multiple '{root_prims}' under '{template_prim_path}'."
-                    " Please ensure that there is only one rigid body in the prim path tree."
+                    f"Found enabled articulation root(s) {articulation_prims} when resolving"
+                    f" '{rigid_body_cfg.prim_path}' as a rigid object. Disable via"
+                    " 'ArticulationRootPropertiesCfg.articulation_enabled=False'."
                 )
 
-            # check that no rigid object has an articulation root API, which decreases simulation performance
-            articulation_prims = sim_utils.get_all_matching_child_prims(
-                template_prim_path,
-                predicate=lambda prim: prim.HasAPI(UsdPhysics.ArticulationRootAPI),
-                traverse_instance_prims=False,
-            )
-            if len(articulation_prims) != 0:
-                if articulation_prims[0].GetAttribute("physxArticulation:articulationEnabled").Get():
-                    raise RuntimeError(
-                        f"Found an articulation root when resolving '{rigid_body_cfg.prim_path}' in the rigid object"
-                        f" collection. These are located at: '{articulation_prims}' under '{template_prim_path}'."
-                        " Please disable the articulation root in the USD or from code by setting the parameter"
-                        " 'ArticulationRootPropertiesCfg.articulation_enabled' to False in the spawn configuration."
-                    )
-
-            # resolve root prim back into regex expression
-            root_prim_path = root_prims[0].GetPath().pathString
-            root_prim_path_expr = rigid_body_cfg.prim_path + root_prim_path[len(template_prim_path) :]
-            root_prim_path_exprs.append(root_prim_path_expr.replace(".*", "*"))
-
+            root_prim, source_root, destination, _ = roots[0]
+            root_prim_path_exprs.append(destination.format("*") + root_prim.GetPath().pathString[len(source_root) :])
             self._body_names_list.append(name)
 
         # -- object view

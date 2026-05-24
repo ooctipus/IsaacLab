@@ -44,6 +44,7 @@ import ovrtx
 from ovrtx import Device, PrimMode, Renderer, RendererConfig, Semantic
 from packaging.version import Version
 
+from isaaclab.cloner.cloner_utils import expand_clone_plan_paths
 from isaaclab.renderers import BaseRenderer, RenderBufferKind, RenderBufferSpec
 from isaaclab.sim import SimulationContext
 from isaaclab.utils.warp.warp_math import convert_camera_frame_orientation_convention_wp
@@ -250,10 +251,7 @@ class OVRTXRenderer(BaseRenderer):
         if spec.cfg.isp_cfg is not None and "rgb_hdr" not in data_types:
             data_types = [*data_types, "rgb_hdr"]
 
-        env_0_prefix = "/World/envs/env_0/"
-        first_cam_path = spec.camera_prim_paths[0]
-        if not first_cam_path.startswith(env_0_prefix):
-            raise RuntimeError(f"Expected camera prim under '{env_0_prefix}', got '{first_cam_path}'")
+        plan = SimulationContext.instance().get_clone_plan()
         self._camera_rel_path = spec.camera_path_relative_to_env_0
 
         if self._exported_usd_string is not None:
@@ -305,12 +303,12 @@ class OVRTXRenderer(BaseRenderer):
 
             if self._use_ovrtx_cloning and num_envs > 1:
                 logger.info("Using OVRTX internal cloning")
-                self._clone_environments_in_ovrtx(num_envs)
-                self._update_scene_partitions_after_clone(num_envs)
+                self._clone_environments_in_ovrtx(plan, num_envs)
+                self._update_scene_partitions_after_clone(plan, num_envs)
 
             self._initialized_scene = True
 
-            camera_paths = [f"/World/envs/env_{i}/{self._camera_rel_path}" for i in range(num_envs)]
+            camera_paths = expand_clone_plan_paths(plan, f"/World/envs/env_{{}}/{self._camera_rel_path}")
             self._camera_binding = self._renderer.bind_attribute(
                 prim_paths=camera_paths,
                 attribute_name="omni:xform",
@@ -335,24 +333,23 @@ class OVRTXRenderer(BaseRenderer):
 
             self._setup_object_bindings()
 
-    def _clone_environments_in_ovrtx(self, num_envs: int):
-        """Clone base environment (env_0) to all other environments using OvRTX."""
-        logger.info("Cloning base environment to %d targets...", num_envs - 1)
-        source_path = "/World/envs/env_0"
-        target_paths = [f"/World/envs/env_{i}" for i in range(1, num_envs)]
+    def _clone_environments_in_ovrtx(self, plan: Any, num_envs: int):
+        """Clone the source environment to every other env via OVRTX renderer-level cloning."""
+        logger.info("Cloning source environment to %d targets...", num_envs - 1)
+        env_paths = expand_clone_plan_paths(plan, "/World/envs/env_{}")
         try:
-            self._renderer.clone_usd(source_path, target_paths)
-            logger.info("Cloned %d environments successfully", len(target_paths))
+            self._renderer.clone_usd(env_paths[0], env_paths[1:])
+            logger.info("Cloned %d environments successfully", num_envs - 1)
         except Exception as e:
             logger.error("Failed to clone environments: %s", e)
             raise RuntimeError(f"OvRTX environment cloning failed: {e}")
 
-    def _update_scene_partitions_after_clone(self, num_envs: int):
+    def _update_scene_partitions_after_clone(self, plan: Any, num_envs: int):
         """Update scene partition attributes on cloned environments and cameras in OvRTX."""
         logger.info("Writing scene partitions for %d environments...", num_envs)
-        partition_tokens = [f"env_{i}" for i in range(num_envs)]
-        env_prim_paths = [f"/World/envs/env_{i}" for i in range(num_envs)]
-        camera_prim_paths = [f"/World/envs/env_{i}/{self._camera_rel_path}" for i in range(num_envs)]
+        env_prim_paths = expand_clone_plan_paths(plan, "/World/envs/env_{}")
+        camera_prim_paths = expand_clone_plan_paths(plan, f"/World/envs/env_{{}}/{self._camera_rel_path}")
+        partition_tokens = [path.rsplit("/", 1)[-1] for path in env_prim_paths]
 
         try:
             self._renderer.write_attribute(

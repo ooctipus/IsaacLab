@@ -15,7 +15,10 @@ import torch
 import warp as wp
 
 import isaaclab.sim as sim_utils
+from isaaclab.cloner.cloner_utils import expand_clone_plan_paths, source_prim
 from isaaclab.sensors.camera import Camera, CameraCfg
+from isaaclab.sim import SimulationContext
+from isaaclab.utils.math import combine_frame_transforms
 
 _GENERATED_CAMERA_NAME = "VisualizerCamera"
 VISUALIZER_TILED_CAMERA_MAX_TILES = 100
@@ -75,7 +78,8 @@ def _camera_concrete_paths(camera: Camera) -> list[str]:
 
 def find_camera_by_prim_path(camera_sensors: dict[str, Camera], cam_prim_path: str, env_indices: list[int]) -> Camera:
     """Find a scene-owned Camera by config template or concrete camera prim paths."""
-    wanted = {env_path_from_template(cam_prim_path, env_id) for env_id in env_indices}
+    expanded = expand_clone_plan_paths(SimulationContext.instance().get_clone_plan(), cam_prim_path)
+    wanted = {expanded[env_id] for env_id in env_indices if expanded[env_id] is not None}
     for camera in camera_sensors.values():
         if getattr(camera.cfg, "prim_path", None) == cam_prim_path:
             return camera
@@ -113,7 +117,8 @@ def create_visualizer_camera(
         horizontal_aperture=20.955,
         clipping_range=(0.1, 1.0e5),
     )
-    generated_paths = [f"/World/envs/env_{env_id}/{camera_name}" for env_id in range(int(num_envs))]
+    plan = SimulationContext.instance().get_clone_plan()
+    generated_paths = [p for p in expand_clone_plan_paths(plan, f"/World/envs/env_{{}}/{camera_name}") if p is not None]
     for path in generated_paths:
         if len(sim_utils.find_matching_prims(path)) == 0:
             spawn.func(path, spawn, translation=(0.0, 0.0, 0.0), orientation=(0.0, 0.0, 0.0, 1.0))
@@ -212,37 +217,30 @@ def prim_world_positions(
 ) -> torch.Tensor:
     """Return world-space translations for concrete prim paths resolved from env ids.
 
-    Uses ``FrameView`` first so PhysX/Fabric-backed transforms are current; falls
-    back to USD only if the backend view cannot be constructed.
+    Uses scene articulation state when available; otherwise composes the per-env world position
+    from :attr:`ClonePlan.env_pose` and the source-relative pose (Win A).
     """
-    from pxr import UsdGeom
-
-    from isaaclab.sim.views import FrameView
-
     if scene is not None:
         positions = _scene_articulation_positions(scene, prim_path_template, env_indices)
         if positions is not None:
             return positions
 
-    xform_cache = UsdGeom.XformCache()
-    positions = []
-    for env_id in env_indices:
-        prim_path = env_path_from_template(prim_path_template, env_id)
-        try:
-            view = FrameView(prim_path, device="cpu", stage=stage)
-            if view.count != 1:
-                raise RuntimeError(f"expected one prim, got {view.count}")
-            pos_w, _ = view.get_world_poses()
-            pos = pos_w.torch[0].detach().cpu()
-            positions.append((float(pos[0]), float(pos[1]), float(pos[2])))
-        except Exception:
-            prim = stage.GetPrimAtPath(prim_path)
-            if not prim.IsValid():
-                raise RuntimeError(f"tiled_cam_target_prim_path resolved to missing prim: {prim_path!r}.")
-            transform = xform_cache.GetLocalToWorldTransform(prim)
-            translation = transform.ExtractTranslation()
-            positions.append((float(translation[0]), float(translation[1]), float(translation[2])))
-    return torch.tensor(positions, dtype=torch.float32)
+    plan = SimulationContext.instance().get_clone_plan()
+    prim, source_root, _, _ = source_prim(plan, prim_path_template)
+    if prim is None:
+        raise RuntimeError(f"'{prim_path_template}' is not covered by the active ClonePlan.")
+    rel_pos, rel_quat = sim_utils.resolve_prim_pose(prim, stage.GetPrimAtPath(source_root))
+    env_indices_t = torch.as_tensor(env_indices, dtype=torch.long, device=plan.env_pose.device)
+    env_pose = plan.env_pose[env_indices_t]
+    rel_pos_t = torch.as_tensor(rel_pos, dtype=plan.env_pose.dtype, device=plan.env_pose.device)
+    rel_quat_t = torch.as_tensor(rel_quat, dtype=plan.env_pose.dtype, device=plan.env_pose.device)
+    world_pos, _ = combine_frame_transforms(
+        env_pose[:, :3],
+        env_pose[:, 3:],
+        rel_pos_t.expand(env_indices_t.shape[0], 3),
+        rel_quat_t.expand(env_indices_t.shape[0], 4),
+    )
+    return world_pos.detach().cpu().to(torch.float32)
 
 
 def apply_camera_view_from_origins(

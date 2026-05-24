@@ -18,9 +18,10 @@ import warp as wp
 
 from pxr import UsdPhysics
 
-import isaaclab.sim as sim_utils
 from isaaclab.assets.rigid_object.base_rigid_object import BaseRigidObject
 from isaaclab.assets.rigid_object.rigid_object_cfg import RigidObjectCfg
+from isaaclab.cloner.cloner_utils import descend_source_prims
+from isaaclab.sim import SimulationContext
 from isaaclab.utils.string import resolve_matching_names
 from isaaclab.utils.wrench_composer import WrenchComposer
 
@@ -858,47 +859,19 @@ class RigidObject(BaseRigidObject):
         pattern = re.sub(r"\.\*", "*", pattern)
         self._binding_pattern = pattern
 
-        # Validate the prim tree before creating tensor bindings -- the wheel silently
-        # produces a 0-prim binding when the pattern matches nothing, which surfaces as an
-        # obscure ``TypeError`` deep in property accessors.
-        # obtain the first prim in the regex expression (all others are assumed to be a copy of this)
-        template_prim = sim_utils.find_first_matching_prim(self.cfg.prim_path)
-        if template_prim is None:
-            raise RuntimeError(f"Failed to find prim for expression: '{self.cfg.prim_path}'.")
-        template_prim_path = template_prim.GetPath().pathString
-
-        # find rigid root prims
-        root_prims = sim_utils.get_all_matching_child_prims(
-            template_prim_path,
-            predicate=lambda prim: prim.HasAPI(UsdPhysics.RigidBodyAPI),
-            traverse_instance_prims=False,
-        )
-        if len(root_prims) == 0:
+        # Validate via ClonePlan -- ``create_tensor_binding`` silently returns 0-prim otherwise.
+        plan = SimulationContext.instance().get_clone_plan()
+        roots = descend_source_prims(plan, self.cfg.prim_path, lambda p: p.HasAPI(UsdPhysics.RigidBodyAPI))
+        if len(roots) != 1:
+            raise RuntimeError(f"Expected one RigidBodyAPI prim under '{self.cfg.prim_path}'; found {len(roots)}.")
+        api, enabled_root = UsdPhysics.ArticulationRootAPI, "physxArticulation:articulationEnabled"
+        is_enabled_root = lambda p: p.HasAPI(api) and p.GetAttribute(enabled_root).Get()  # noqa: E731
+        articulation_prims = [p for p, *_ in descend_source_prims(plan, self.cfg.prim_path, is_enabled_root)]
+        if articulation_prims:
             raise RuntimeError(
-                f"Failed to find a rigid body when resolving '{self.cfg.prim_path}'."
-                " Please ensure that the prim has 'USD RigidBodyAPI' applied."
+                f"Found enabled articulation root(s) {articulation_prims} when resolving '{self.cfg.prim_path}' as a"
+                " rigid object. Disable via 'ArticulationRootPropertiesCfg.articulation_enabled=False'."
             )
-        if len(root_prims) > 1:
-            raise RuntimeError(
-                f"Failed to find a single rigid body when resolving '{self.cfg.prim_path}'."
-                f" Found multiple '{root_prims}' under '{template_prim_path}'."
-                " Please ensure that there is only one rigid body in the prim path tree."
-            )
-        articulation_prims = sim_utils.get_all_matching_child_prims(
-            template_prim_path,
-            predicate=lambda prim: prim.HasAPI(UsdPhysics.ArticulationRootAPI),
-            traverse_instance_prims=False,
-        )
-        if len(articulation_prims) != 0:
-            if articulation_prims[0].GetAttribute("physxArticulation:articulationEnabled").Get():
-                raise RuntimeError(
-                    f"Found an articulation root when resolving '{self.cfg.prim_path}' for rigid"
-                    f" objects. These are located at: '{articulation_prims}' under"
-                    f" '{template_prim_path}'. Please disable the articulation root in the USD"
-                    " or from code by setting the parameter"
-                    " 'ArticulationRootPropertiesCfg.articulation_enabled' to False in the spawn"
-                    " configuration."
-                )
 
         # Eagerly create every binding the data container reads at init, so failures
         # surface here with a helpful message rather than as a raw wheel exception

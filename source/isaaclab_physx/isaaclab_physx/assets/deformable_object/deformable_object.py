@@ -20,7 +20,9 @@ from pxr import UsdShade
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
 from isaaclab.assets.asset_base import AssetBase
+from isaaclab.cloner.cloner_utils import descend_source_prims
 from isaaclab.markers import VisualizationMarkers
+from isaaclab.sim import SimulationContext
 from isaaclab.utils.warp import ProxyArray
 
 from isaaclab_physx.physics import PhysxManager as SimulationManager
@@ -577,33 +579,15 @@ class DeformableObject(AssetBase):
         return env_ids
 
     def _initialize_impl(self):
-        # obtain global simulation view
         self._physics_sim_view = SimulationManager.get_physics_sim_view()
-        # obtain the first prim in the regex expression (all others are assumed to be a copy of this)
-        template_prim = sim_utils.find_first_matching_prim(self.cfg.prim_path)
-        if template_prim is None:
-            raise RuntimeError(f"Failed to find prim for expression: '{self.cfg.prim_path}'.")
-        template_prim_path = template_prim.GetPath().pathString
-
-        # find deformable root prims
-        root_prims = sim_utils.get_all_matching_child_prims(
-            template_prim_path,
-            predicate=lambda prim: "OmniPhysicsDeformableBodyAPI" in prim.GetAppliedSchemas(),
-            traverse_instance_prims=False,
-        )
-        if len(root_prims) == 0:
+        plan = SimulationContext.instance().get_clone_plan()
+        deformable_api = "OmniPhysicsDeformableBodyAPI"
+        roots = descend_source_prims(plan, self.cfg.prim_path, lambda p: deformable_api in p.GetAppliedSchemas())
+        if len(roots) != 1:
             raise RuntimeError(
-                f"Failed to find a deformable body when resolving '{self.cfg.prim_path}'."
-                " Please ensure that the prim has 'OmniPhysicsDeformableBodyAPI' applied."
+                f"Expected one OmniPhysicsDeformableBodyAPI prim under '{self.cfg.prim_path}'; found {len(roots)}."
             )
-        if len(root_prims) > 1:
-            raise RuntimeError(
-                f"Failed to find a single deformable body when resolving '{self.cfg.prim_path}'."
-                f" Found multiple '{root_prims}' under '{template_prim_path}'."
-                " Please ensure that there is only one deformable body in the prim path tree."
-            )
-        # we only need the first one from the list
-        root_prim = root_prims[0]
+        root_prim, source_root, destination, _ = roots[0]
 
         # find deformable material prims
         material_prim = None
@@ -655,21 +639,11 @@ class DeformableObject(AssetBase):
                 if has_mesh:
                     self._deformable_type = "surface"
 
-        # resolve root path back into regex expression
-        # -- root prim expression
-        root_prim_path = root_prim.GetPath().pathString
-        root_prim_path_expr = self.cfg.prim_path + root_prim_path[len(template_prim_path) :]
-        # -- object view
+        root_prim_path_expr = destination.format("*") + root_prim.GetPath().pathString[len(source_root) :]
         if self._deformable_type == "surface":
-            # surface deformable
-            self._root_physx_view = self._physics_sim_view.create_surface_deformable_body_view(
-                root_prim_path_expr.replace(".*", "*")
-            )
+            self._root_physx_view = self._physics_sim_view.create_surface_deformable_body_view(root_prim_path_expr)
         elif self._deformable_type == "volume":
-            # volume deformable
-            self._root_physx_view = self._physics_sim_view.create_volume_deformable_body_view(
-                root_prim_path_expr.replace(".*", "*")
-            )
+            self._root_physx_view = self._physics_sim_view.create_volume_deformable_body_view(root_prim_path_expr)
         else:
             raise RuntimeError(
                 f"Failed to determine deformable material type for '{root_prim.GetPath().pathString}'."
@@ -686,18 +660,14 @@ class DeformableObject(AssetBase):
 
         # resolve material path back into regex expression
         if material_prim is not None:
-            # -- material prim expression
             material_prim_path = material_prim.GetPath().pathString
-            # check if the material prim is under the template prim
-            # if not then we are assuming that the single material prim is used for all the deformable bodies
-            if template_prim_path in material_prim_path:
-                material_prim_path_expr = self.cfg.prim_path + material_prim_path[len(template_prim_path) :]
+            # If the material prim is under the source asset root the same per-env globbing applies;
+            # otherwise we assume a single shared material is used for all envs.
+            if material_prim_path.startswith(source_root + "/"):
+                material_prim_path_expr = destination.format("*") + material_prim_path[len(source_root) :]
             else:
                 material_prim_path_expr = material_prim_path
-            # -- material view
-            self._material_physx_view = self._physics_sim_view.create_deformable_material_view(
-                material_prim_path_expr.replace(".*", "*")
-            )
+            self._material_physx_view = self._physics_sim_view.create_deformable_material_view(material_prim_path_expr)
         else:
             self._material_physx_view = None
 

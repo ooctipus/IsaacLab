@@ -17,6 +17,8 @@ from newton import Contacts, Control, Model, ModelBuilder, State
 from newton._src.usd.schemas import SchemaResolverNewton, SchemaResolverPhysx
 from newton.solvers import SolverBase, SolverFeatherstone, SolverVBD
 
+from isaaclab.cloner.cloner_utils import source_prim
+from isaaclab.sim import SimulationContext
 from isaaclab.sim.utils.stage import get_current_stage
 
 from .deformable_object import (
@@ -146,23 +148,21 @@ class NewtonCoupledFeatherstoneVBDManager(NewtonManager):
 
         # Setup USD/Fabric sync for Kit viewport deformable rendering
         if not cls._clone_physics_only and cls._deformable_registry:
-            import re
-
             import usdrt
 
             if NewtonManager._usdrt_stage is None:
                 NewtonManager._usdrt_stage = get_current_stage(fabric=True)
 
             stage = get_current_stage()
+            plan = SimulationContext.instance().get_clone_plan()
             for entry in cls._deformable_registry:
+                vis_prim_resolved, source_root, destination, _ = source_prim(plan, entry.vis_mesh_prim_path)
+                vis_destination = destination + vis_prim_resolved.GetPath().pathString[len(source_root) :]
                 for inst_idx, offset in enumerate(entry.particle_offsets):
-                    # Resolve regex pattern to concrete instance path of visual mesh
-                    resolved_vis = re.sub(r"(?<=[Ee]nv_)\.\*", str(inst_idx), entry.vis_mesh_prim_path)
-                    resolved_vis = re.sub(r"\.\*", str(inst_idx), resolved_vis)
-                    vis_prim = stage.GetPrimAtPath(resolved_vis)
-
+                    vis_prim_path = vis_destination.format(inst_idx)
+                    vis_prim = stage.GetPrimAtPath(vis_prim_path)
                     if not vis_prim or not vis_prim.IsValid():
-                        logger.warning("[setup_fabric_particle_sync] vis prim not found at %s", resolved_vis)
+                        logger.warning("[setup_fabric_particle_sync] vis prim not found at %s", vis_prim_path)
                         continue
 
                     # Create per-instance particle offset and count attributes on the visual mesh

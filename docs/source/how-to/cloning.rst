@@ -327,16 +327,6 @@ Choosing an API
      - Isaac Lab's tested path is the ``isaaclab.cloner`` API described here.
 
 
-Migrating From Template Cloning
--------------------------------
-
-The template-root discovery API has been removed. Replace
-``clone_from_template(...)`` calls with explicit source prims plus
-:func:`~isaaclab.cloner.make_clone_plan`, a backend physics replicate function, and
-:func:`~isaaclab.cloner.usd_replicate`. Replace ``TemplateCloneCfg`` with
-:class:`~isaaclab.cloner.CloneCfg` for execution settings such as clone strategy,
-Fabric cloning, and backend replication.
-
 
 Collision Filtering and Isolation
 ---------------------------------

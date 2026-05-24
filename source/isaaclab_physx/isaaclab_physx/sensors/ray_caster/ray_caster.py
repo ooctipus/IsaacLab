@@ -14,33 +14,12 @@ import warp as wp
 from pxr import UsdPhysics
 
 import isaaclab.sim as sim_utils
+from isaaclab.cloner.cloner_utils import ascend_source_prims, source_prim
 from isaaclab.sensors.ray_caster.base_ray_caster import BaseRayCaster
 from isaaclab.sensors.ray_caster.kernels import copy_mesh_transforms_to_table_kernel
+from isaaclab.utils.math import combine_frame_transforms
 
 from isaaclab_physx.physics import PhysxManager
-
-
-def _find_physics_ancestor(prim):
-    """Return the nearest rigid-body ancestor for a sensor or target prim."""
-    ancestor = prim
-    while ancestor and ancestor.IsValid() and ancestor.GetPath().pathString != "/":
-        if ancestor.HasAPI(UsdPhysics.RigidBodyAPI):
-            return ancestor
-        ancestor = ancestor.GetParent()
-    return None
-
-
-def _body_expr_from_sensor_expr(sensor_expr: str, first_sensor_prim, first_body_prim) -> str:
-    """Convert a sensor/target expression to the matching rigid-body expression."""
-    sensor_path = first_sensor_prim.GetPath().pathString
-    body_path = first_body_prim.GetPath().pathString
-    if sensor_path == body_path:
-        return sensor_expr
-    # Example: ``.../Robot/base/sensor`` target -> ``.../Robot/base`` body view.
-    suffix = sensor_path[len(body_path) :]
-    if suffix and sensor_expr.endswith(suffix):
-        return sensor_expr[: -len(suffix)]
-    return body_path
 
 
 def _physx_body_glob(body_expr: str) -> str:
@@ -63,62 +42,50 @@ class _PhysXRayCasterMixin:
 
     def _initialize_pose_tracking(self: Any) -> None:
         """Initialize direct PhysX body tracking or a cached static pose table."""
-        prims = sim_utils.find_matching_prims(self.cfg.prim_path)
-        if len(prims) == 0:
-            raise RuntimeError(f"No sensor prims matched: {self.cfg.prim_path}")
-
-        # The base classes still use ``self._view.count`` in a few generic
-        # places. Point it at the sensor instead of constructing an adapter.
+        # ``self._view.count`` is read by the base classes; route it back to this sensor.
         self._view = self
-        body = _find_physics_ancestor(prims[0])
-        if body is None:
-            self._initialize_static_pose_tracking(prims)
+        sensor_prim, _, destination, _ = source_prim(self._clone_plan, self.cfg.prim_path)
+        bodies = ascend_source_prims(self._clone_plan, self.cfg.prim_path, lambda p: p.HasAPI(UsdPhysics.RigidBodyAPI))
+        if not bodies:
+            self._initialize_static_pose_tracking()
             return
+        body_prim, _, _, _ = bodies[0]
 
-        requested_prim_path = getattr(self, "_requested_prim_path", self.cfg.prim_path)
-        # When the public prim path pointed at a rigid body, BaseRayCaster
-        # spawned a child sensor prim and preserved the original body path.
-        body_expr = (
-            requested_prim_path
-            if self.cfg.prim_path != requested_prim_path
-            else _body_expr_from_sensor_expr(self.cfg.prim_path, prims[0], body)
+        # If the public prim path points at the rigid body itself, BaseRayCaster spawned a child
+        # sensor prim under it and stashed the original body path on ``_requested_prim_path``.
+        requested = getattr(self, "_requested_prim_path", self.cfg.prim_path)
+        body_rel = body_prim.GetPath().pathString[len(sensor_prim.GetPath().pathString) :]
+        body_glob = _physx_body_glob(
+            destination if self.cfg.prim_path != requested or not body_rel else destination + body_rel
         )
-        physics_sim_view = PhysxManager.get_physics_sim_view()
-        if physics_sim_view is None:
-            raise RuntimeError("PhysX simulation view is not initialized.")
-        self._physx_body_view = physics_sim_view.create_rigid_body_view(body_expr.replace(".*", "*"))
+
+        self._physx_body_view = PhysxManager.get_physics_sim_view().create_rigid_body_view(body_glob)
         self._view_count = self._physx_body_view.count
-
-        offset_pos = []
-        offset_quat = []
-        for prim in prims:
-            body_prim = _find_physics_ancestor(prim)
-            p, q = sim_utils.resolve_prim_pose(prim, body_prim)
-            offset_pos.append(p)
-            offset_quat.append(q)
-        if len(offset_pos) == 1 and self._view_count > 1:
-            offset_pos = offset_pos * self._view_count
-            offset_quat = offset_quat * self._view_count
-        self._offset_pos_wp = wp.array(offset_pos[: self._view_count], dtype=wp.vec3f, device=self._device)
-        self._offset_quat_contiguous = torch.tensor(
-            offset_quat[: self._view_count], dtype=torch.float32, device=self._device
-        )
+        p, q = sim_utils.resolve_prim_pose(sensor_prim, body_prim)
+        self._offset_pos_wp = wp.array([p] * self._view_count, dtype=wp.vec3f, device=self._device)
+        self._offset_quat_contiguous = torch.tensor([q] * self._view_count, dtype=torch.float32, device=self._device)
         self._offset_quat_wp = wp.from_torch(self._offset_quat_contiguous, dtype=wp.quatf)
 
-    def _initialize_static_pose_tracking(self: Any, prims) -> None:
-        """Cache authored poses for non-physics sensor frames."""
-        poses = []
-        for prim in prims:
-            pos, quat = sim_utils.resolve_prim_pose(prim)
-            poses.append((*pos, *quat))
-        self._static_view_transforms_torch = torch.tensor(poses, dtype=torch.float32, device=self._device).contiguous()
+    def _initialize_static_pose_tracking(self: Any) -> None:
+        """Cache per-env world poses via Win A: ``env_pose ⊗ source-relative pose``."""
+        plan = self._clone_plan
+        sensor_prim, source_root, _, env_ids = source_prim(plan, self.cfg.prim_path)
+        rel_pos, rel_quat = sim_utils.resolve_prim_pose(
+            sensor_prim, sim_utils.get_current_stage().GetPrimAtPath(source_root)
+        )
+        env_pose = plan.env_pose[torch.as_tensor(env_ids, dtype=torch.long, device=plan.env_pose.device)]
+        rel_pos_t = torch.as_tensor(rel_pos, dtype=env_pose.dtype, device=env_pose.device).expand(len(env_ids), 3)
+        rel_quat_t = torch.as_tensor(rel_quat, dtype=env_pose.dtype, device=env_pose.device).expand(len(env_ids), 4)
+        world_pos, world_quat = combine_frame_transforms(env_pose[:, :3], env_pose[:, 3:], rel_pos_t, rel_quat_t)
+        self._static_view_transforms_torch = (
+            torch.cat([world_pos, world_quat], dim=-1).to(self._device, torch.float32).contiguous()
+        )
         self._static_view_transforms_wp = wp.from_torch(self._static_view_transforms_torch).view(wp.transformf)
         self._physx_body_view = None
-        self._view_count = len(prims)
+        self._view_count = len(env_ids)
         self._offset_pos_wp = wp.zeros(self._view_count, dtype=wp.vec3f, device=self._device)
-        identity_quat = torch.zeros(self._view_count, 4, device=self._device)
-        identity_quat[:, 3] = 1.0
-        self._offset_quat_contiguous = identity_quat.contiguous()
+        self._offset_quat_contiguous = torch.zeros(self._view_count, 4, device=self._device)
+        self._offset_quat_contiguous[:, 3] = 1.0
         self._offset_quat_wp = wp.from_torch(self._offset_quat_contiguous, dtype=wp.quatf)
 
     def _get_view_transforms_wp(self: Any) -> wp.array:
@@ -152,7 +119,9 @@ class _PhysXRayCasterMixin:
                 body_paths.append(target_prim_path)
                 continue
             for prim in prims:
-                body = _find_physics_ancestor(prim)
+                body = sim_utils.get_first_matching_ancestor_prim(
+                    prim.GetPath().pathString, lambda p: p.HasAPI(UsdPhysics.RigidBodyAPI)
+                )
                 if body is None:
                     raise RuntimeError(
                         f"Cannot track non-physics ray-cast target '{target_prim_path}' with PhysX. "

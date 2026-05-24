@@ -15,6 +15,7 @@ from pxr import UsdGeom, UsdPhysics
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
+from isaaclab.cloner.cloner_utils import ascend_source_prims, source_prim
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.sensors.pva import BasePva
 from isaaclab.utils.warp import ProxyArray
@@ -146,35 +147,17 @@ class Pva(BasePva):
         - Otherwise find the closest rigid-body ancestor, cache the fixed transform from that ancestor
           to the target prim, and build the view on the ancestor expression.
         """
-        # Initialize parent class
         super()._initialize_impl()
-        # obtain global simulation view
         self._physics_sim_view = SimulationManager.get_physics_sim_view()
-        # check if the prim at path is a rigid prim
-        prim = sim_utils.find_first_matching_prim(self.cfg.prim_path)
-        if prim is None:
-            raise RuntimeError(f"Failed to find a prim at path expression: {self.cfg.prim_path}")
 
-        # Find the first matching ancestor prim that implements rigid body API
-        ancestor_prim = sim_utils.get_first_matching_ancestor_prim(
-            prim.GetPath(), predicate=lambda _prim: _prim.HasAPI(UsdPhysics.RigidBodyAPI)
-        )
-        if ancestor_prim is None:
-            raise RuntimeError(f"Failed to find a rigid body ancestor prim at path expression: {self.cfg.prim_path}")
-        # Convert ancestor prim path to expression
-        if ancestor_prim == prim:
-            self._rigid_parent_expr = self.cfg.prim_path
-            fixed_pos_b, fixed_quat_b = None, None
-        else:
-            # Convert ancestor prim path to expression by stripping the relative
-            # suffix (including its leading '/') so no trailing '/' remains.
-            relative_path = prim.GetPath().MakeRelativePath(ancestor_prim.GetPath()).pathString
-            self._rigid_parent_expr = self.cfg.prim_path.replace("/" + relative_path, "")
-            # Resolve the relative pose between the target prim and the ancestor prim
-            fixed_pos_b, fixed_quat_b = sim_utils.resolve_prim_pose(prim, ancestor_prim)
-
-        # Create the rigid body view on the ancestor
-        self._view = self._physics_sim_view.create_rigid_body_view(self._rigid_parent_expr.replace(".*", "*"))
+        pva_prim, *_ = source_prim(self._clone_plan, self.cfg.prim_path)
+        bodies = ascend_source_prims(self._clone_plan, self.cfg.prim_path, lambda p: p.HasAPI(UsdPhysics.RigidBodyAPI))
+        if not bodies:
+            raise RuntimeError(f"No rigid body ancestor under: {self.cfg.prim_path}")
+        body, source_root, destination, _ = bodies[0]
+        self._rigid_parent_expr = (destination + body.GetPath().pathString[len(source_root) :]).replace("{}", "*")
+        self._view = self._physics_sim_view.create_rigid_body_view(self._rigid_parent_expr)
+        fixed_pos_b, fixed_quat_b = (None, None) if body == pva_prim else sim_utils.resolve_prim_pose(pva_prim, body)
 
         # Get world gravity
         gravity = self._physics_sim_view.get_gravity()
@@ -190,7 +173,6 @@ class Pva(BasePva):
         # new_offset = fixed * cfg.offset
         # where composition is: p = p_fixed + R_fixed * p_cfg, q = q_fixed * q_cfg
         if fixed_pos_b is not None and fixed_quat_b is not None:
-            # Broadcast fixed transform across instances
             fixed_p = torch.tensor(fixed_pos_b, device=self._device).repeat(self._view.count, 1)
             fixed_q = torch.tensor(fixed_quat_b, device=self._device).repeat(self._view.count, 1)
 

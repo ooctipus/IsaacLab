@@ -15,6 +15,7 @@ from pxr import UsdPhysics
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
+from isaaclab.cloner.cloner_utils import ascend_source_prims, source_prim
 from isaaclab.sensors.imu import BaseImu
 
 from isaaclab_physx.physics import PhysxManager as SimulationManager
@@ -125,25 +126,15 @@ class Imu(BaseImu):
         """
         super()._initialize_impl()
         self._physics_sim_view = SimulationManager.get_physics_sim_view()
-        prim = sim_utils.find_first_matching_prim(self.cfg.prim_path)
-        if prim is None:
-            raise RuntimeError(f"Failed to find a prim at path expression: {self.cfg.prim_path}")
 
-        ancestor_prim = sim_utils.get_first_matching_ancestor_prim(
-            prim.GetPath(), predicate=lambda _prim: _prim.HasAPI(UsdPhysics.RigidBodyAPI)
-        )
-        if ancestor_prim is None:
-            raise RuntimeError(f"Failed to find a rigid body ancestor prim at path expression: {self.cfg.prim_path}")
-
-        if ancestor_prim == prim:
-            self._rigid_parent_expr = self.cfg.prim_path
-            fixed_pos_b, fixed_quat_b = None, None
-        else:
-            relative_path = prim.GetPath().MakeRelativePath(ancestor_prim.GetPath()).pathString
-            self._rigid_parent_expr = self.cfg.prim_path.replace("/" + relative_path, "")
-            fixed_pos_b, fixed_quat_b = sim_utils.resolve_prim_pose(prim, ancestor_prim)
-
-        self._view = self._physics_sim_view.create_rigid_body_view(self._rigid_parent_expr.replace(".*", "*"))
+        imu_prim, *_ = source_prim(self._clone_plan, self.cfg.prim_path)
+        bodies = ascend_source_prims(self._clone_plan, self.cfg.prim_path, lambda p: p.HasAPI(UsdPhysics.RigidBodyAPI))
+        if not bodies:
+            raise RuntimeError(f"No rigid body ancestor under: {self.cfg.prim_path}")
+        body, source_root, destination, _ = bodies[0]
+        self._rigid_parent_expr = (destination + body.GetPath().pathString[len(source_root) :]).replace("{}", "*")
+        self._view = self._physics_sim_view.create_rigid_body_view(self._rigid_parent_expr)
+        fixed_pos_b, fixed_quat_b = (None, None) if body == imu_prim else sim_utils.resolve_prim_pose(imu_prim, body)
 
         # Query world gravity and compute accelerometer bias (real IMUs always measure gravity)
         gravity = self._physics_sim_view.get_gravity()

@@ -16,8 +16,8 @@ import warp as wp
 
 import omni.physics.tensors.api as physx
 
-import isaaclab.sim as sim_utils
 from isaaclab.app.settings_manager import get_settings_manager
+from isaaclab.cloner.cloner_utils import descend_source_prims
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.sensors.contact_sensor import BaseContactSensor
 from isaaclab.utils.warp import ProxyArray
@@ -286,29 +286,20 @@ class ContactSensor(BaseContactSensor):
 
     def _initialize_impl(self):
         super()._initialize_impl()
-        # obtain global simulation view
         self._physics_sim_view = SimulationManager.get_physics_sim_view()
-        # check that only rigid bodies are selected
-        leaf_pattern = self.cfg.prim_path.rsplit("/", 1)[-1]
-        template_prim_path = self._parent_prims[0].GetPath().pathString
-        body_names = list()
-        for prim in sim_utils.find_matching_prims(template_prim_path + "/" + leaf_pattern):
-            # check if prim has contact reporter API
-            if "PhysxContactReportAPI" in prim.GetAppliedSchemas():
-                prim_path = prim.GetPath().pathString
-                body_names.append(prim_path.rsplit("/", 1)[-1])
-        # check that there is at least one body with contact reporter API
-        if not body_names:
+
+        contact_api = "PhysxContactReportAPI"
+        is_contact_body = lambda p: contact_api in p.GetAppliedSchemas()  # noqa: E731
+        bodies = descend_source_prims(self._clone_plan, self.cfg.prim_path, is_contact_body)
+        if not bodies:
             raise RuntimeError(
                 f"Sensor at path '{self.cfg.prim_path}' could not find any bodies with contact reporter API."
                 "\nHINT: Make sure to enable 'activate_contact_sensors' in the corresponding asset spawn configuration."
             )
-
-        # construct regex expression for the body names
-        body_names_regex = r"(" + "|".join(body_names) + r")"
-        body_names_regex = f"{self.cfg.prim_path.rsplit('/', 1)[0]}/{body_names_regex}"
-        # convert regex expressions to glob expressions for PhysX
-        body_names_glob = body_names_regex.replace(".*", "*")
+        body_names = [p.GetPath().name for p, *_ in bodies]
+        first_prim, source_root, destination, _ = bodies[0]
+        parent_relpath = first_prim.GetPath().GetParentPath().pathString[len(source_root) :]
+        body_names_glob = f"{destination}{parent_relpath}/({'|'.join(body_names)})".replace("{}", "*")
         filter_prim_paths_glob = [expr.replace(".*", "*") for expr in self.cfg.filter_prim_paths_expr]
 
         # create a rigid prim view for the sensor
@@ -325,7 +316,7 @@ class ContactSensor(BaseContactSensor):
             raise RuntimeError(
                 "Failed to initialize contact reporter for specified bodies."
                 f"\n\tInput prim path    : {self.cfg.prim_path}"
-                f"\n\tResolved prim paths: {body_names_regex}"
+                f"\n\tResolved prim paths: {body_names_glob}"
             )
 
         # check if filter paths are valid

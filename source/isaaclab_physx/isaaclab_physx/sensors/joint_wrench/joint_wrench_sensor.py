@@ -16,8 +16,8 @@ import warp as wp
 
 from pxr import Usd, UsdPhysics
 
+from isaaclab.cloner.cloner_utils import descend_source_prims, source_prim
 from isaaclab.sensors.joint_wrench import BaseJointWrenchSensor
-from isaaclab.sim.utils.queries import find_first_matching_prim, get_all_matching_child_prims
 
 from isaaclab_physx.physics import PhysxManager as SimulationManager
 
@@ -121,11 +121,18 @@ class JointWrenchSensor(BaseJointWrenchSensor):
         """PHYSICS_READY callback: builds the articulation view and allocates buffers."""
         super()._initialize_impl()
 
+        api, enabled_root = UsdPhysics.ArticulationRootAPI, "physxArticulation:articulationEnabled"
+        is_enabled_root = lambda p: p.HasAPI(api) and p.GetAttribute(enabled_root).Get()  # noqa: E731
         self._physics_sim_view = SimulationManager.get_physics_sim_view()
-        root_prim_path_expr = self._resolve_articulation_root_prim_path()
-        self._root_view = self._physics_sim_view.create_articulation_view(root_prim_path_expr.replace(".*", "*"))
+        self._source_prim, *_ = source_prim(self._clone_plan, self.cfg.prim_path)
+        roots = descend_source_prims(self._clone_plan, self.cfg.prim_path, is_enabled_root)
+        if len(roots) != 1:
+            raise RuntimeError(f"Expected one ArticulationRootAPI prim under '{self.cfg.prim_path}', got {len(roots)}.")
+        root_prim, source_root, destination, _ = roots[0]
+        root_view_glob = destination.format("*") + root_prim.GetPath().pathString[len(source_root) :]
+        self._root_view = self._physics_sim_view.create_articulation_view(root_view_glob)
         if self._root_view._backend is None:
-            raise RuntimeError(f"Failed to create articulation view at: {root_prim_path_expr}. Check PhysX logs.")
+            raise RuntimeError(f"Failed to create articulation view at: {root_view_glob}. Check PhysX logs.")
 
         self._num_bodies = self._root_view.shared_metatype.link_count
         if self._num_bodies == 0:
@@ -137,47 +144,15 @@ class JointWrenchSensor(BaseJointWrenchSensor):
 
         logger.info(f"Joint wrench sensor initialized: {self._num_envs} envs, {self._num_bodies} bodies")
 
-    def _resolve_articulation_root_prim_path(self) -> str:
-        """Resolve the articulation root prim path expression from the configured asset prim path."""
-        first_env_matching_prim = find_first_matching_prim(self.cfg.prim_path)
-        if first_env_matching_prim is None:
-            raise RuntimeError(f"Failed to find prim for expression: '{self.cfg.prim_path}'.")
-        first_env_matching_prim_path = first_env_matching_prim.GetPath().pathString
-
-        first_env_root_prims = get_all_matching_child_prims(
-            first_env_matching_prim_path,
-            predicate=lambda prim: prim.HasAPI(UsdPhysics.ArticulationRootAPI)
-            and prim.GetAttribute("physxArticulation:articulationEnabled").Get() is not False,
-            traverse_instance_prims=False,
-        )
-        if len(first_env_root_prims) == 0:
-            raise RuntimeError(
-                f"Failed to find an articulation when resolving '{first_env_matching_prim_path}'."
-                " Please ensure that the prim has 'USD ArticulationRootAPI' applied."
-            )
-        if len(first_env_root_prims) > 1:
-            raise RuntimeError(
-                f"Failed to find a single articulation when resolving '{first_env_matching_prim_path}'."
-                f" Found multiple '{first_env_root_prims}' under '{first_env_matching_prim_path}'."
-                " Please ensure that there is only one articulation in the prim path tree."
-            )
-
-        first_env_root_prim_path = first_env_root_prims[0].GetPath().pathString
-        root_prim_path_relative_to_prim_path = first_env_root_prim_path[len(first_env_matching_prim_path) :]
-        return self.cfg.prim_path + root_prim_path_relative_to_prim_path
-
     def _create_joint_frame_buffers(self) -> None:
         """Create child-side joint frame transforms indexed by PhysX link order."""
         joint_pos_b = np.zeros((self._num_bodies, 3), dtype=np.float32)
         joint_quat_b = np.zeros((self._num_bodies, 4), dtype=np.float32)
         joint_quat_b[:, 3] = 1.0
 
-        first_env_matching_prim = find_first_matching_prim(self.cfg.prim_path)
-        if first_env_matching_prim is None:
-            raise RuntimeError(f"Failed to find prim for expression: '{self.cfg.prim_path}'.")
         link_name_to_index = {name: index for index, name in enumerate(self._data._body_names)}
 
-        for prim in Usd.PrimRange(first_env_matching_prim):
+        for prim in Usd.PrimRange(self._source_prim):
             joint = UsdPhysics.Joint(prim)
             if not joint or joint.GetJointEnabledAttr().Get() is False:
                 continue

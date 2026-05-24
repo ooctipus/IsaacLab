@@ -21,8 +21,15 @@ from pxr import UsdGeom
 
 import isaaclab.sim as sim_utils
 from isaaclab.cloner import ClonePlan, make_clone_plan, sequential, usd_replicate
-from isaaclab.cloner.cloner_utils import iter_clone_plan_matches
+from isaaclab.cloner.cloner_utils import (
+    ascend_source_prims,
+    descend_source_prims,
+    expand_clone_plan_paths,
+    iter_clone_plan_matches,
+    source_prim,
+)
 from isaaclab.sim import build_simulation_context
+from isaaclab.utils.math import combine_frame_transforms
 
 pytestmark = pytest.mark.isaacsim_ci
 
@@ -256,15 +263,15 @@ def test_iter_clone_plan_matches(sim):
 
     assert matches == [
         (
+            "/World/envs/env_0/Object/Body/Camera",
             "/World/envs/env_0/Object",
             "/World/envs/env_{}/Object",
-            "/World/envs/env_0/Object/Body/Camera",
             (0, 2),
         ),
         (
+            "/World/envs/env_1/Object/Body/Camera",
             "/World/envs/env_1/Object",
             "/World/envs/env_{}/Object",
-            "/World/envs/env_1/Object/Body/Camera",
             (1, 3),
         ),
     ]
@@ -279,9 +286,9 @@ def test_iter_clone_plan_matches(sim):
 
     assert matches == [
         (
+            "/World/envs/env_3/Object/Body/Camera",
             "/World/envs/env_3/Object",
             "/World/envs/env_{}/Object",
-            "/World/envs/env_3/Object/Body/Camera",
             (2, 3),
         )
     ]
@@ -296,9 +303,9 @@ def test_iter_clone_plan_matches(sim):
 
     assert matches == [
         (
+            "/World/source/Object/Body/Camera",
             "/World/source/Object",
             "/World/scenes/{}/Object",
-            "/World/source/Object/Body/Camera",
             (0, 1),
         )
     ]
@@ -313,9 +320,9 @@ def test_iter_clone_plan_matches(sim):
 
     assert matches == [
         (
+            "/World/source/Object/Body/Camera",
             "/World/source",
             "/World/scenes/{}",
-            "/World/source/Object/Body/Camera",
             (0, 1),
         )
     ]
@@ -328,11 +335,204 @@ def test_iter_clone_plan_matches(sim):
 
     matches = list(iter_clone_plan_matches(plan, "/World/envs/env_.*/Object/Body/Camera"))
 
+    # Without nearest-template filtering, both plan entries that cover the queried path are yielded.
     assert matches == [
         (
+            "/World/envs/env_0/Object/Body/Camera",
+            "/World/envs/env_0",
+            "/World/envs/env_{}",
+            (0, 1),
+        ),
+        (
+            "/World/envs/env_0/Object/Body/Camera",
             "/World/envs/env_0/Object",
             "/World/envs/env_{}/Object",
-            "/World/envs/env_0/Object/Body/Camera",
             (0, 1),
-        )
+        ),
+    ]
+
+
+def _make_simple_plan(device: str, num_envs: int = 4) -> ClonePlan:
+    """Construct a homogeneous ClonePlan against ``/World/envs/env_{}/Robot``."""
+    return ClonePlan(
+        sources=("/World/source/Robot",),
+        destinations=("/World/envs/env_{}/Robot",),
+        clone_mask=torch.ones((1, num_envs), dtype=torch.bool, device=device),
+    )
+
+
+def test_expand_clone_plan_paths_basic(sim):
+    """``expand_clone_plan_paths`` returns one concrete path per env."""
+    plan = _make_simple_plan(sim.cfg.device, num_envs=3)
+    paths = expand_clone_plan_paths(plan, "/World/envs/env_.*/Robot/base")
+    assert paths == [
+        "/World/envs/env_0/Robot/base",
+        "/World/envs/env_1/Robot/base",
+        "/World/envs/env_2/Robot/base",
+    ]
+
+
+def test_expand_clone_plan_paths_partial_coverage_returns_none(sim):
+    """Variant clones leave envs uncovered → ``None`` entries (not an error)."""
+    # Two source variants split across 4 envs.
+    mask = torch.zeros((2, 4), dtype=torch.bool, device=sim.cfg.device)
+    mask[0, [0, 1]] = True
+    mask[1, [2]] = True  # env 3 deliberately uncovered
+    plan = ClonePlan(
+        sources=("/World/source/RobotA", "/World/source/RobotB"),
+        destinations=("/World/envs/env_{}/RobotA", "/World/envs/env_{}/RobotB"),
+        clone_mask=mask,
+    )
+    paths = expand_clone_plan_paths(plan, "/World/envs/env_.*/RobotA/base")
+    assert paths == [
+        "/World/envs/env_0/RobotA/base",
+        "/World/envs/env_1/RobotA/base",
+        None,
+        None,
+    ]
+
+
+def test_expand_clone_plan_paths_double_coverage_raises(sim):
+    """Plan corruption: two entries claim the same env → raises."""
+    plan = ClonePlan(
+        sources=("/World/envs/env_0", "/World/envs/env_0/Object"),
+        destinations=("/World/envs/env_{}", "/World/envs/env_{}/Object"),
+        clone_mask=torch.tensor([[True, True], [True, True]], device=sim.cfg.device),
+    )
+    with pytest.raises(RuntimeError, match="matched twice"):
+        expand_clone_plan_paths(plan, "/World/envs/env_.*/Object/Body/Camera")
+
+
+def test_source_prim_returns_resolved_prim(sim):
+    """``source_prim`` resolves the source-side ``Usd.Prim`` for ``prim_expr``."""
+    sim_utils.create_prim("/World/source", "Xform")
+    sim_utils.create_prim("/World/source/Robot", "Xform")
+    sim_utils.create_prim("/World/source/Robot/base", "Xform")
+
+    plan = _make_simple_plan(sim.cfg.device, num_envs=2)
+    prim, source_root, destination, env_ids = source_prim(plan, "/World/envs/env_.*/Robot/base")
+    assert prim.GetPath().pathString == "/World/source/Robot/base"
+    assert source_root == "/World/source/Robot"
+    assert destination == "/World/envs/env_{}/Robot"
+    assert env_ids == (0, 1)
+
+
+def test_descend_source_prims_filters_descendants(sim):
+    """``descend_source_prims`` walks descendants (incl. self) and applies the predicate."""
+    sim_utils.create_prim("/World/source", "Xform")
+    sim_utils.create_prim("/World/source/Robot", "Xform")
+    sim_utils.create_prim("/World/source/Robot/base", "Xform")
+    sim_utils.create_prim("/World/source/Robot/eef", "Xform")
+
+    plan = _make_simple_plan(sim.cfg.device, num_envs=1)
+    matches = descend_source_prims(plan, "/World/envs/env_.*/Robot", lambda p: p.GetPath().name == "eef")
+    assert len(matches) == 1
+    prim, _, _, _ = matches[0]
+    assert prim.GetPath().pathString == "/World/source/Robot/eef"
+
+
+def test_ascend_source_prims_filters_ancestors(sim):
+    """``ascend_source_prims`` walks ancestors (incl. self) up to ``source_root``."""
+    sim_utils.create_prim("/World/source", "Xform")
+    sim_utils.create_prim("/World/source/Robot", "Xform")
+    sim_utils.create_prim("/World/source/Robot/base", "Xform")
+    sim_utils.create_prim("/World/source/Robot/base/imu", "Xform")
+
+    plan = _make_simple_plan(sim.cfg.device, num_envs=1)
+    matches = ascend_source_prims(plan, "/World/envs/env_.*/Robot/base/imu", lambda p: p.GetPath().name == "base")
+    assert len(matches) == 1
+    prim, _, _, _ = matches[0]
+    assert prim.GetPath().pathString == "/World/source/Robot/base"
+
+
+def test_ascend_source_prims_stops_at_source_root(sim):
+    """Walk does not escape ``source_root`` -- returns ``[]`` when only the env scope matches."""
+    sim_utils.create_prim("/World/source", "Xform")
+    sim_utils.create_prim("/World/source/Robot", "Xform")
+    sim_utils.create_prim("/World/source/Robot/base", "Xform")
+
+    plan = _make_simple_plan(sim.cfg.device, num_envs=1)
+    matches = ascend_source_prims(
+        plan, "/World/envs/env_.*/Robot/base", lambda p: p.GetPath().pathString == "/World/source"
+    )
+    assert matches == []
+
+
+def test_source_prim_no_match_returns_none_tuple(sim):
+    """No plan entry covers the expression → ``(None, None, None, None)``."""
+    plan = _make_simple_plan(sim.cfg.device, num_envs=1)
+    out = source_prim(plan, "/World/other/path")
+    assert out == (None, None, None, None)
+
+
+def test_winA_compose_world_pose_against_env_pose(sim):
+    """Win A: ``combine_frame_transforms(env_pose, rel_pose)`` matches the per-env reference."""
+    device = sim.cfg.device
+    env_pose = torch.tensor(
+        [
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+            [1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0],
+            [-1.0, 0.0, 0.5, 0.0, 0.0, 0.7071068, 0.7071068],  # 90° about +Z
+        ],
+        device=device,
+    )
+    rel_pos = torch.tensor([1.0, 0.0, 0.0], device=device)
+    rel_quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device=device)
+    world_pos, world_quat = combine_frame_transforms(
+        env_pose[:, :3], env_pose[:, 3:], rel_pos.expand(3, 3), rel_quat.expand(3, 4)
+    )
+    expected = torch.tensor([[1.0, 0.0, 0.0], [2.0, 2.0, 3.0], [-1.0, 1.0, 0.5]], device=device)
+    assert torch.allclose(world_pos, expected, atol=1e-4)
+    assert torch.allclose(world_quat, env_pose[:, 3:], atol=1e-5)
+
+
+def test_winB_no_destination_prims_on_stage(sim):
+    """Win B: helpers resolve queries from source prims, never touching destinations."""
+    sim_utils.create_prim("/World/source", "Xform")
+    sim_utils.create_prim("/World/source/Robot", "Xform")
+    sim_utils.create_prim("/World/source/Robot/base", "Xform")
+    plan = _make_simple_plan(sim.cfg.device, num_envs=4)
+    stage = sim_utils.get_current_stage()
+
+    matches = list(iter_clone_plan_matches(plan, "/World/envs/env_.*/Robot/base"))
+    assert matches == [("/World/source/Robot/base", "/World/source/Robot", "/World/envs/env_{}/Robot", (0, 1, 2, 3))]
+
+    paths = expand_clone_plan_paths(plan, "/World/envs/env_.*/Robot/base")
+    assert paths == [f"/World/envs/env_{i}/Robot/base" for i in range(4)]
+    assert all(not stage.GetPrimAtPath(p).IsValid() for p in paths)
+
+    prim, source_root, destination, env_ids = source_prim(plan, "/World/envs/env_.*/Robot/base")
+    assert prim.GetPath().pathString == "/World/source/Robot/base"
+    assert (source_root, destination, env_ids) == ("/World/source/Robot", "/World/envs/env_{}/Robot", (0, 1, 2, 3))
+
+
+def test_winB_heterogeneous_partition(sim):
+    """Heterogeneous variant clones: per-env counts differ across sources."""
+    device = sim.cfg.device
+    mask = torch.zeros((3, 4), dtype=torch.bool, device=device)
+    mask[0, [0, 1]] = True
+    mask[1, [2]] = True
+    mask[2, [3]] = True
+    plan = ClonePlan(
+        sources=("/World/source/Robot",) * 3,
+        destinations=("/World/envs/env_{}/RobotA", "/World/envs/env_{}/RobotB", "/World/envs/env_{}/RobotC"),
+        clone_mask=mask,
+    )
+    assert expand_clone_plan_paths(plan, "/World/envs/env_.*/RobotA/base") == [
+        "/World/envs/env_0/RobotA/base",
+        "/World/envs/env_1/RobotA/base",
+        None,
+        None,
+    ]
+    assert expand_clone_plan_paths(plan, "/World/envs/env_.*/RobotB/base") == [
+        None,
+        None,
+        "/World/envs/env_2/RobotB/base",
+        None,
+    ]
+    assert expand_clone_plan_paths(plan, "/World/envs/env_.*/RobotC/base") == [
+        None,
+        None,
+        None,
+        "/World/envs/env_3/RobotC/base",
     ]

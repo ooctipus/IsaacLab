@@ -20,10 +20,10 @@ import warp as wp
 
 from pxr import UsdPhysics
 
-import isaaclab.sim as sim_utils
 from isaaclab.assets.articulation.articulation_cfg import ArticulationCfg
 from isaaclab.assets.articulation.base_articulation import BaseArticulation
-from isaaclab.physics import PhysicsManager
+from isaaclab.cloner.cloner_utils import descend_source_prims, source_prim
+from isaaclab.sim import SimulationContext
 from isaaclab.utils.string import resolve_matching_names
 from isaaclab.utils.wrench_composer import WrenchComposer
 
@@ -3486,43 +3486,21 @@ class Articulation(BaseArticulation):
         # the cfg prim itself. ``create_tensor_binding`` only matches prims that
         # have the API applied, so the pattern must be extended to the actual
         # articulation root.
-        stage = PhysicsManager._sim.stage
+        plan = SimulationContext.instance().get_clone_plan()
         if self.cfg.articulation_root_prim_path is not None:
-            # explicit subpath: skip auto-discovery but validate the prim exists
             root_relative = self.cfg.articulation_root_prim_path
             self._articulation_root_path = prim_path + root_relative
-            if sim_utils.find_first_matching_prim(self._articulation_root_path, stage=stage) is None:
-                raise RuntimeError(
-                    f"Failed to find articulation root prim at '{self._articulation_root_path}'."
-                    " Check that ``cfg.articulation_root_prim_path`` points at a prim that exists"
-                    " in the USD stage."
-                )
+            if source_prim(plan, self._articulation_root_path)[0] is None:
+                raise RuntimeError(f"Articulation root not found at '{self._articulation_root_path}'.")
             pattern = pattern + root_relative
             logger.info("OvPhysxManager: explicit articulation root '%s' (pattern '%s')", root_relative, pattern)
         else:
-            first_prim = sim_utils.find_first_matching_prim(prim_path, stage=stage)
-            if first_prim is None:
-                raise RuntimeError(f"Failed to find prim for expression: '{prim_path}'.")
-            first_prim_path = first_prim.GetPath().pathString
-
-            root_prims = sim_utils.get_all_matching_child_prims(
-                first_prim_path,
-                predicate=lambda p: p.HasAPI(UsdPhysics.ArticulationRootAPI),
-                traverse_instance_prims=False,
-            )
-            if len(root_prims) == 0:
-                raise RuntimeError(
-                    f"Failed to find an articulation root when resolving '{prim_path}'."
-                    " Ensure the prim has 'USD ArticulationRootAPI' applied."
-                )
-            if len(root_prims) > 1:
-                raise RuntimeError(
-                    f"Failed to find a single articulation root when resolving '{prim_path}'."
-                    f" Found multiple under '{first_prim_path}'."
-                )
-
-            self._articulation_root_path = root_prims[0].GetPath().pathString
-            root_relative = self._articulation_root_path[len(first_prim_path) :]
+            roots = descend_source_prims(plan, prim_path, lambda p: p.HasAPI(UsdPhysics.ArticulationRootAPI))
+            if len(roots) != 1:
+                raise RuntimeError(f"Expected one ArticulationRootAPI prim under '{prim_path}'; found {len(roots)}.")
+            root_prim, source_root, _, _ = roots[0]
+            self._articulation_root_path = root_prim.GetPath().pathString
+            root_relative = self._articulation_root_path[len(source_root) :]
             if root_relative:
                 pattern = pattern + root_relative
                 logger.info(

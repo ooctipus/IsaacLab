@@ -15,10 +15,11 @@ import numpy as np
 import torch
 import warp as wp
 
-from pxr import Usd, UsdGeom, UsdPhysics
+from pxr import UsdGeom, UsdPhysics
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
+from isaaclab.cloner.cloner_utils import descend_source_prims, source_prim
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.sensors.camera import Camera
 from isaaclab.sensors.sensor_base import SensorBase
@@ -319,8 +320,8 @@ class VisuoTactileSensor(SensorBase):
             c. Creates rigid body view for object
 
         """
-        elastomer_pattern = self._parent_prims[0].GetPath().pathString.replace("env_0", "env_*")
-        self._elastomer_body_view = self._physics_sim_view.create_rigid_body_view([elastomer_pattern])
+        _, _, elastomer_destination, _ = source_prim(self._clone_plan, self.cfg.prim_path)
+        self._elastomer_body_view = self._physics_sim_view.create_rigid_body_view([elastomer_destination.format("*")])
         # Get elastomer COM for velocity correction
         self._elastomer_com_b = (
             wp.to_torch(self._elastomer_body_view.get_coms()).to(self._device).split([3, 4], dim=-1)[0]
@@ -329,79 +330,26 @@ class VisuoTactileSensor(SensorBase):
         if self.cfg.contact_object_prim_path_expr is None:
             return
 
-        contact_object_mesh, contact_object_rigid_body = self._find_contact_object_components()
-        # Create SDF view for collision detection
-        num_query_points = self.cfg.tactile_array_size[0] * self.cfg.tactile_array_size[1]
-        mesh_path_pattern = contact_object_mesh.GetPath().pathString.replace("env_0", "env_*")
-        self._contact_object_sdf_view = self._physics_sim_view.create_sdf_shape_view(
-            mesh_path_pattern, num_query_points
+        sdf_api = UsdPhysics.MeshCollisionAPI
+        is_sdf_collider = lambda p: p.HasAPI(sdf_api) and sdf_api(p).GetApproximationAttr().Get() == "sdf"  # noqa: E731
+        meshes = descend_source_prims(self._clone_plan, self.cfg.contact_object_prim_path_expr, is_sdf_collider)
+        if not meshes:
+            raise RuntimeError(f"No SDF mesh under '{self.cfg.contact_object_prim_path_expr}'.")
+        mesh_prim, source_root, contact_destination, _ = meshes[0]
+        body_prim = sim_utils.get_first_matching_ancestor_prim(
+            mesh_prim.GetPath().pathString, lambda p: p.HasAPI(UsdPhysics.RigidBodyAPI)
         )
-
-        # Create rigid body views for contact object and elastomer
-        body_path_pattern = contact_object_rigid_body.GetPath().pathString.replace("env_0", "env_*")
-        self._contact_object_body_view = self._physics_sim_view.create_rigid_body_view([body_path_pattern])
+        if body_prim is None:
+            raise RuntimeError(f"No rigid body ancestor for {mesh_prim.GetPath().pathString}.")
+        num_query_points = self.cfg.tactile_array_size[0] * self.cfg.tactile_array_size[1]
+        mesh_pattern = contact_destination.format("*") + mesh_prim.GetPath().pathString[len(source_root) :]
+        body_pattern = contact_destination.format("*") + body_prim.GetPath().pathString[len(source_root) :]
+        self._contact_object_sdf_view = self._physics_sim_view.create_sdf_shape_view(mesh_pattern, num_query_points)
+        self._contact_object_body_view = self._physics_sim_view.create_rigid_body_view([body_pattern])
         # Get contact object COM for velocity correction
         self._contact_object_com_b = (
             wp.to_torch(self._contact_object_body_view.get_coms()).to(self._device).split([3, 4], dim=-1)[0]
         )
-
-    def _find_contact_object_components(self) -> tuple[Any, Any]:
-        """Find and validate contact object SDF mesh and its parent rigid body.
-
-        This method searches for the contact object prim using the configured filter pattern,
-        then locates the first SDF collision mesh within that prim hierarchy and
-        identifies its parent rigid body for physics simulation.
-
-        Returns:
-            Tuple of (contact_object_mesh, contact_object_rigid_body)
-            Returns None if contact object components are not found.
-
-        Note:
-            Only SDF meshes are supported for optimal force field computation performance.
-            If no SDF mesh is found, the method will log a warning and return None.
-        """
-        # Find the contact object prim using the configured pattern
-        contact_object_prim = sim_utils.find_first_matching_prim(self.cfg.contact_object_prim_path_expr)
-        if contact_object_prim is None:
-            raise RuntimeError(
-                f"No contact object prim found matching pattern: {self.cfg.contact_object_prim_path_expr}"
-            )
-
-        def is_sdf_mesh(prim: Usd.Prim) -> bool:
-            """Check if a mesh prim is configured for SDF approximation."""
-            return (
-                prim.HasAPI(UsdPhysics.MeshCollisionAPI)
-                and UsdPhysics.MeshCollisionAPI(prim).GetApproximationAttr().Get() == "sdf"
-            )
-
-        # Find the SDF mesh within the contact object
-        contact_object_mesh = sim_utils.get_first_matching_child_prim(
-            contact_object_prim.GetPath(), predicate=is_sdf_mesh
-        )
-        if contact_object_mesh is None:
-            raise RuntimeError(
-                f"No SDF mesh found under contact object at path: {contact_object_prim.GetPath().pathString}"
-            )
-
-        def find_parent_rigid_body(prim: Usd.Prim) -> Usd.Prim | None:
-            """Find the first parent prim with RigidBodyAPI."""
-            current_prim = prim
-            while current_prim and current_prim.IsValid():
-                if current_prim.HasAPI(UsdPhysics.RigidBodyAPI):
-                    return current_prim
-                current_prim = current_prim.GetParent()
-                if current_prim.GetPath() == "/":
-                    break
-            return None
-
-        # Find the rigid body parent of the SDF mesh
-        contact_object_rigid_body = find_parent_rigid_body(contact_object_mesh)
-        if contact_object_rigid_body is None:
-            raise RuntimeError(
-                f"No contact object rigid body found for mesh at path: {contact_object_mesh.GetPath().pathString}"
-            )
-
-        return contact_object_mesh, contact_object_rigid_body
 
     def _generate_tactile_points(self, num_divs: list, margin: float, visualize: bool):
         """Generate tactile sensing points from elastomer mesh geometry.
@@ -416,16 +364,13 @@ class VisuoTactileSensor(SensorBase):
 
         """
 
-        # Get the elastomer prim path
-        elastomer_prim_path = self._parent_prims[0].GetPath().pathString
-
-        def is_visual_mesh(prim) -> bool:
-            """Check if a mesh prim has visual properties (visual mesh, not collision mesh)."""
-            return prim.IsA(UsdGeom.Mesh) and not prim.HasAPI(UsdPhysics.CollisionAPI)
-
-        elastomer_mesh_prim = sim_utils.get_first_matching_child_prim(elastomer_prim_path, predicate=is_visual_mesh)
+        elastomer_prim, *_ = source_prim(self._clone_plan, self.cfg.prim_path)
+        elastomer_prim_path = elastomer_prim.GetPath().pathString
+        elastomer_mesh_prim = sim_utils.get_first_matching_child_prim(
+            elastomer_prim_path, predicate=lambda p: p.IsA(UsdGeom.Mesh) and not p.HasAPI(UsdPhysics.CollisionAPI)
+        )
         if elastomer_mesh_prim is None:
-            raise RuntimeError(f"No visual mesh found under elastomer at path: {elastomer_prim_path}")
+            raise RuntimeError(f"No visual mesh under elastomer: {elastomer_prim_path}")
 
         logger.info(f"Generating tactile points from USD mesh: {elastomer_mesh_prim.GetPath().pathString}")
 
