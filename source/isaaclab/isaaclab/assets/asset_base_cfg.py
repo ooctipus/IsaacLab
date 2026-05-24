@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import MISSING
 from typing import Any, Literal
 
@@ -61,6 +62,17 @@ class AssetBaseCfg:
 
     If None, then no prims are spawned by the asset class. Instead, it is assumed that the
     asset is already present in the scene.
+    """
+
+    replicate: tuple[str | Callable, ...] = ("isaaclab.cloner.usd_replicator:usd_replicate",)
+    """How this asset gets cloned into every environment.
+
+    Each entry is a function (or a ``"module:attribute"`` string pointing at one) that
+    knows how to clone this asset for one specific backend. They run in order. The
+    default uses USD, which works for any asset spawned from a USD file.
+
+    Most users never touch this. Override it when an asset needs extra cloning work on
+    top of USD, e.g. PhysX or Newton, or when the asset has no USD representation at all.
     """
 
     init_state: InitialStateCfg = InitialStateCfg()

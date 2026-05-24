@@ -3,6 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+from collections.abc import Callable
 from dataclasses import MISSING
 from typing import TYPE_CHECKING
 
@@ -38,3 +39,11 @@ class SensorBaseCfg:
 
     debug_vis: bool = False
     """Whether to visualize the sensor. Defaults to False."""
+
+    replicate: tuple[str | Callable, ...] = ("isaaclab.cloner.usd_replicator:usd_replicate",)
+    """How this sensor gets cloned into every environment.
+
+    Same contract as :attr:`~isaaclab.assets.AssetBaseCfg.replicate`. Sensors that don't
+    spawn a prim of their own (e.g. PVA sensors that just read another asset's joints)
+    override this to ``()``.
+    """
