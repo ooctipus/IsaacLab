@@ -204,19 +204,6 @@ class PhysxSceneDataBackend(SceneDataBackend):
             return None
 
         self._rigid_body_view = self._simulation_view.create_rigid_body_view(list(patterns))
-        if os.environ.get("ISAACLAB_DEBUG_FABRIC_CLONES") == "1":
-            prim_paths = list(self._rigid_body_view.prim_paths)
-            missing_paths = []
-            if expected_paths is not None:
-                prim_path_set = set(prim_paths)
-                missing_paths = [path for path in expected_paths if path not in prim_path_set]
-            logger.warning(
-                "PhysX scene-data diagnostic: requested=%d, view_count=%d, missing_samples=%s, first_paths=%s",
-                len(patterns),
-                self._rigid_body_view.count,
-                missing_paths[:25],
-                prim_paths[:10],
-            )
         return self._rigid_body_view
 
     @property

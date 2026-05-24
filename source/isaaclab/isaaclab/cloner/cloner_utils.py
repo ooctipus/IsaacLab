@@ -450,9 +450,6 @@ def fabric_replicate(
     hierarchy.update_world_xforms()
     _force_fabric_usd_populate(fabric_id.id)
 
-    if os.environ.get("ISAACLAB_DEBUG_FABRIC_CLONES") == "1":
-        log_fabric_clone_diagnostics(stage, sources, destinations, env_ids, mask, phase="after fabric clone")
-
 
 def _force_fabric_usd_populate(fabric_id: int) -> None:
     """Force Fabric/USD consumers to repopulate after direct Fabric cloning."""
@@ -469,118 +466,6 @@ def _force_fabric_usd_populate(fabric_id: int) -> None:
     if was_enabled:
         bindings.set_enable(fabric_id, False)
         bindings.set_enable(fabric_id, True)
-
-
-def log_fabric_clone_diagnostics(
-    stage: Usd.Stage,
-    sources: Sequence[str],
-    destinations: Sequence[str],
-    env_ids: torch.Tensor,
-    mask: torch.Tensor | None,
-    phase: str,
-) -> None:
-    """Log missing Fabric prims/world matrices for a clone operation."""
-    import usdrt
-    from usdrt import Rt
-
-    cache = UsdUtils.StageCache.Get()
-    cached_id = cache.GetId(stage)
-    stage_id = cached_id.ToLongInt() if cached_id.IsValid() else cache.Insert(stage).ToLongInt()
-    usdrt_stage = usdrt.Usd.Stage.Attach(stage_id)
-    hierarchy = usdrt.hierarchy.IFabricHierarchy().get_fabric_hierarchy(
-        usdrt_stage.GetFabricId(), usdrt_stage.GetStageIdAsStageId()
-    )
-    hierarchy.update_world_xforms()
-
-    max_samples = int(os.environ.get("ISAACLAB_DEBUG_FABRIC_CLONES_MAX_SAMPLES", "25"))
-    total_expected = 0
-    missing_prims: list[str] = []
-    missing_world_matrices: list[str] = []
-    missing_mesh_attrs: list[str] = []
-    invisible_prims: list[str] = []
-    rtx_skipped_prims: list[str] = []
-    missing_by_env: dict[int, int] = {}
-    expected_by_env: dict[int, int] = {}
-
-    for row, (source, destination) in enumerate(zip(sources, destinations)):
-        suffixes = _source_prim_suffixes(stage, source)
-        target_envs = env_ids if mask is None else env_ids[mask[row]]
-        for env_id_tensor in target_envs.detach().cpu().tolist():
-            env_id = int(env_id_tensor)
-            expected_by_env[env_id] = expected_by_env.get(env_id, 0) + len(suffixes)
-            for suffix, type_name in suffixes:
-                total_expected += 1
-                prim_path = destination.format(env_id) + suffix
-                prim = usdrt_stage.GetPrimAtPath(prim_path)
-                if not _usdrt_prim_is_valid(prim):
-                    missing_by_env[env_id] = missing_by_env.get(env_id, 0) + 1
-                    if len(missing_prims) < max_samples:
-                        missing_prims.append(prim_path)
-                    continue
-                if type_name in {"Xform", "Mesh"}:
-                    rt_xformable = Rt.Xformable(prim)
-                    world_matrix_attr = rt_xformable.GetFabricHierarchyWorldMatrixAttr()
-                    if world_matrix_attr is None or world_matrix_attr.Get() is None:
-                        if len(missing_world_matrices) < max_samples:
-                            missing_world_matrices.append(prim_path)
-                if type_name == "Mesh":
-                    for attr_name in ("points", "faceVertexCounts", "faceVertexIndices"):
-                        attr = prim.GetAttribute(attr_name)
-                        if attr is None or attr.Get() is None:
-                            if len(missing_mesh_attrs) < max_samples:
-                                missing_mesh_attrs.append(f"{prim_path}:{attr_name}")
-                    visibility = prim.GetAttribute("visibility")
-                    if (
-                        visibility is not None
-                        and visibility.Get() == "invisible"
-                        and len(invisible_prims) < max_samples
-                    ):
-                        invisible_prims.append(prim_path)
-                    rtx_skip = prim.GetAttribute("omni:rtx:skip")
-                    if rtx_skip is not None and bool(rtx_skip.Get()) and len(rtx_skipped_prims) < max_samples:
-                        rtx_skipped_prims.append(prim_path)
-
-    if not (missing_prims or missing_world_matrices or missing_mesh_attrs or invisible_prims or rtx_skipped_prims):
-        logger.warning(
-            "Fabric clone diagnostic (%s): all %d expected cloned prims resolved in Fabric.", phase, total_expected
-        )
-        return
-
-    logger.warning(
-        "Fabric clone diagnostic (%s): checked %d cloned prims; missing prim samples=%s; "
-        "missing world-matrix samples=%s; missing mesh attr samples=%s; invisible mesh samples=%s; "
-        "rtx-skip mesh samples=%s; missing counts by env=%s; expected counts by env=%s",
-        phase,
-        total_expected,
-        missing_prims,
-        missing_world_matrices,
-        missing_mesh_attrs,
-        invisible_prims,
-        rtx_skipped_prims,
-        missing_by_env,
-        expected_by_env,
-    )
-
-
-def _source_prim_suffixes(stage: Usd.Stage, source: str) -> list[tuple[str, str]]:
-    """Return ``(suffix, type_name)`` entries for a source prim subtree."""
-    source_prim = stage.GetPrimAtPath(source)
-    if source_prim is None or not source_prim.IsValid():
-        return []
-    suffixes = []
-    for prim in Usd.PrimRange(source_prim):
-        prim_path = prim.GetPath().pathString
-        suffix = "" if prim_path == source else prim_path[len(source) :]
-        suffixes.append((suffix, prim.GetTypeName()))
-    return suffixes
-
-
-def _usdrt_prim_is_valid(prim) -> bool:
-    """Return whether a USDRT prim handle is valid across binding variants."""
-    if not prim:
-        return False
-    is_valid = getattr(prim, "IsValid", None)
-    return bool(is_valid()) if callable(is_valid) else True
 
 
 def filter_collisions(
