@@ -130,6 +130,7 @@ def test_locomotion_position_newton_mjwarp_preset_enables_newton_actuators(monke
     import sys
 
     from isaaclab.actuators import ActuatorNetLSTMCfg
+
     from isaaclab_tasks.manager_based.locomotion.position.config.anymal_c.anymal_c_env_cfg import (
         ANYDRIVE_3_LSTM_ONNX_PATH,
     )
@@ -154,6 +155,7 @@ def test_locomotion_position_newton_mjwarp_keeps_actuator_choice_explicit(monkey
     import sys
 
     from isaaclab.actuators import ImplicitActuatorCfg
+
     from isaaclab_tasks.utils.hydra import resolve_task_config
 
     monkeypatch.setattr(

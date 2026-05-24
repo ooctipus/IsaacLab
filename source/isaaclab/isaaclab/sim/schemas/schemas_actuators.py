@@ -267,9 +267,7 @@ def _author_actuator_prims(
             rel.SetTargets([Sdf.Path(joint_prim_path)])
 
             if model_path is not None:
-                act_prim.CreateAttribute("newton:modelPath", Sdf.ValueTypeNames.Asset).Set(
-                    Sdf.AssetPath(model_path)
-                )
+                act_prim.CreateAttribute("newton:modelPath", Sdf.ValueTypeNames.Asset).Set(Sdf.AssetPath(model_path))
 
             for attr_name, attr_val in attrs.items():
                 usd_name = f"newton:{_snake_to_camel(attr_name)}"

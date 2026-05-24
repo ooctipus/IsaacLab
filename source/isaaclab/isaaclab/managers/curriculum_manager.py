@@ -139,6 +139,30 @@ class CurriculumManager(ManagerBase):
             state = term_cfg.func(self._env, env_ids, **term_cfg.params)
             self._curriculum_state[name] = state
 
+    def get_term(self, name: str) -> ManagerTermBase:
+        """Returns the curriculum term instance with the specified name.
+
+        Only class-based terms (subclasses of :class:`ManagerTermBase`) have a
+        meaningful instance to return; for function-based terms this returns
+        the raw callable. Matches the accessor convention used by
+        :class:`CommandManager`, :class:`ActionManager`, and
+        :class:`TerminationManager`.
+
+        Args:
+            name: The name of the curriculum term.
+
+        Returns:
+            The curriculum term instance with the specified name.
+
+        Raises:
+            KeyError: If ``name`` is not an active curriculum term.
+        """
+        try:
+            index = self._term_names.index(name)
+        except ValueError:
+            raise KeyError(f"Curriculum term '{name}' not found. Active terms: {self._term_names}") from None
+        return self._term_cfgs[index].func
+
     def get_active_iterable_terms(self, env_idx: int) -> Sequence[tuple[str, Sequence[float]]]:
         """Returns the active terms as iterable sequence of tuples.
 

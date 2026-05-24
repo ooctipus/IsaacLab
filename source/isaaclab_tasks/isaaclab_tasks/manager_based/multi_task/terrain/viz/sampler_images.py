@@ -219,7 +219,7 @@ def spawn_goal_scatter_image(env, goal_term, sampler, success_rates: torch.Tenso
     plot_strategy_indices = getattr(sampler_impl, "_plot_strategy_indices", [])
     strategy_weights = getattr(sampler_impl, "_weights", None)
     if plot_strategy_indices and strategy_weights is not None:
-        scores = sampler.scores(success_rates)
+        scores = sampler.scores()
         weights = strategy_weights.to(device=success_rates.device, dtype=success_rates.dtype).clamp_min(0.0)
         weighted_scores = scores * weights.view(-1, 1)
         normalizer = weighted_scores.sum() + float(getattr(sampler_impl, "eps", 0.0)) * success_rates.numel()

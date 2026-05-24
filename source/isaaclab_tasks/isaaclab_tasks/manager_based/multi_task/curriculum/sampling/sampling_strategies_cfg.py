@@ -7,9 +7,16 @@
 
 from __future__ import annotations
 
+from dataclasses import MISSING
+
 from isaaclab.utils.configclass import configclass
 
-from .sampling_strategies import BetaSamplingStrategy, FrontierSamplingStrategy, UniformSamplingStrategy
+from .sampling_strategies import (
+    BetaSamplingStrategy,
+    FrontierSamplingStrategy,
+    UniformSamplingStrategy,
+    ValueShiftSamplingStrategy,
+)
 
 
 @configclass
@@ -39,6 +46,12 @@ class BetaSamplingStrategyCfg:
     """Success rate where the Beta score peaks."""
     kappa: float = 1.0
     """Peak sharpness around :attr:`target`; larger values concentrate more mass near the target."""
+    success_rate_bind: str = MISSING
+    """Expression evaluated in the sampler's ``bind_ns`` resolving to a ``[num_items]`` success-rate Tensor.
+
+    Use ``"success_rates"`` when the calling curriculum term injects its own
+    rates tensor as the ``success_rates`` kwarg.
+    """
 
 
 @configclass
@@ -71,6 +84,8 @@ class FrontierSamplingStrategyCfg:
     """Number of nearest neighbors in task feature space."""
     dilation_steps: int = 1
     """Number of graph max-propagation steps over the kNN neighborhood."""
+    success_rate_bind: str = MISSING
+    """Expression evaluated in the sampler's ``bind_ns`` resolving to a ``[num_items]`` success-rate Tensor."""
 
 
 @configclass
@@ -97,5 +112,46 @@ class UniformSamplingStrategyCfg:
     """Whether terrain scatter diagnostics should include this strategy's attribution panel."""
 
 
-SamplingStrategyCfg = BetaSamplingStrategyCfg | FrontierSamplingStrategyCfg | UniformSamplingStrategyCfg
+@configclass
+class ValueShiftSamplingStrategyCfg:
+    """Blueprint for a :class:`ValueShiftSamplingStrategy`.
+
+    Score shape:
+
+    .. code-block:: text
+
+        score = |V_new(s) - V_prev(s)|     # per-state critic value shift,
+                                           # populated by an external
+                                           # ValueShiftPPO-like algorithm each
+                                           # update
+    """
+
+    class_type: type[ValueShiftSamplingStrategy] | str = "{DIR}.sampling_strategies:ValueShiftSamplingStrategy"
+    """Runtime strategy class."""
+    weight: float = 1.0
+    """Multiplier on this strategy's score before sampler normalization."""
+    plot: bool = False
+    """Whether terrain scatter diagnostics should include this strategy's attribution panel.
+
+    Defaults to ``False`` because the diagnostic scatter assumes a per-item
+    score lining up with terrain layout; value_shift indexes per discretized
+    command state instead.
+    """
+
+    state_buffer_bind: str = MISSING
+    """Expression resolving to the ``[num_states, ...]`` state pool tensor (count + device)."""
+    cmd_indices_bind: str = MISSING
+    """Expression resolving to ``[num_envs]`` long tensor of per-env command indices."""
+    resample_command_fn_bind: str = MISSING
+    """Expression resolving to ``(env_ids: LongTensor) -> None``.
+
+    Writes the env's pose / state for the cached command index.
+    """
+    get_critic_obs_fn_bind: str = MISSING
+    """Expression resolving to ``() -> dict[str, Tensor]``; returns one batch of critic-group observations."""
+
+
+SamplingStrategyCfg = (
+    BetaSamplingStrategyCfg | FrontierSamplingStrategyCfg | UniformSamplingStrategyCfg | ValueShiftSamplingStrategyCfg
+)
 """Discriminated union of sampling-strategy cfg types."""

@@ -100,7 +100,7 @@ def _factory_wandb_3d_log(
     rates_t = success_rates[:n]
     delta_t = rates_t - prev_rates
     prev_rates.copy_(rates_t)
-    probs_t = sampler.probabilities(rates_t)
+    probs_t = sampler.probabilities()[:n]
 
     rates = rates_t.detach().cpu().numpy()
     delta = delta_t.detach().cpu().numpy()
@@ -115,9 +115,9 @@ def _factory_wandb_3d_log(
             values=delta, cmap="RdYlGn", vmin=-delta_range, vmax=delta_range, title="delta_success"
         ),
     }
-    score_rows_t = sampler.scores(rates_t)
+    score_rows_t = sampler.scores()
     for i, name in enumerate(sampler.names):
-        score_t = score_rows_t[i]
+        score_t = score_rows_t[i][:n]
         if float(score_t.std()) >= 1e-9:
             score_np = score_t.detach().cpu().numpy()
             panels[f"{name}_score_3d"] = PanelSpec(
@@ -328,12 +328,20 @@ SCENE_RESET = EventTerm(
                     ),
                     "sampling": preset(
                         default=SamplerCfg(
-                            strategies=[BetaSamplingStrategyCfg(target=0.5, kappa=1.0, weight=1.0)],
+                            strategies=[
+                                BetaSamplingStrategyCfg(
+                                    target=0.5, kappa=1.0, weight=1.0, success_rate_bind="success_rates"
+                                )
+                            ],
                             eps=1e-8,
                         ),
                         uniform=SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=1.0)], eps=0.0),
                         monitor=SamplerCfg(
-                            strategies=[BetaSamplingStrategyCfg(target=0.5, kappa=1.0, weight=1.0)],
+                            strategies=[
+                                BetaSamplingStrategyCfg(
+                                    target=0.5, kappa=1.0, weight=1.0, success_rate_bind="success_rates"
+                                )
+                            ],
                             eps=1e-8,
                         ),
                     ),
@@ -366,12 +374,16 @@ ACCUMULATOR_RESET = EventTerm(
         "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=50),
         "sampling": preset(
             default=SamplerCfg(
-                strategies=[BetaSamplingStrategyCfg(target=0.5, kappa=1.0, weight=1.0)],
+                strategies=[
+                    BetaSamplingStrategyCfg(target=0.5, kappa=1.0, weight=1.0, success_rate_bind="success_rates")
+                ],
                 eps=1e-8,
             ),
             uniform=SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=1.0)], eps=0.0),
             monitor=SamplerCfg(
-                strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0)],
+                strategies=[
+                    BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates")
+                ],
                 eps=1e-8,
             ),
             # ``beta66`` is a semantic alias of ``monitor``: same Beta(0.66)
@@ -379,16 +391,19 @@ ACCUMULATOR_RESET = EventTerm(
             # when sweeping ``frontier`` and ``dil*`` so the run names read
             # "what's the curriculum?" rather than "what's the rate source?".
             beta66=SamplerCfg(
-                strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0)],
+                strategies=[
+                    BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates")
+                ],
                 eps=1e-8,
             ),
             frontier=SamplerCfg(
                 strategies=[
-                    BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0),
+                    BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates"),
                     FrontierSamplingStrategyCfg(
                         k=8,
                         dilation_steps=preset(default=2, dil1=1, dil2=2, dil3=3, dil4=4, dil5=5),  # type: ignore
                         weight=0.5,
+                        success_rate_bind="success_rates",
                     ),
                 ],
                 eps=1e-8,

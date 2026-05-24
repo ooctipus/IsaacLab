@@ -153,7 +153,8 @@ def main(env_cfg, _agent_cfg):
         target_index=table.target_index,
         task_partition=table.task_partition,
     )
-    sampler = sampling_cfg.class_type(sampling_cfg, layout)
+    success_rates = torch.zeros(int(table.spawn_index.shape[0]), device=device)
+    sampler = sampling_cfg.class_type(sampling_cfg, layout, success_rates=success_rates)
 
     class _CommandManager:
         def get_term(self, name: str):
@@ -180,14 +181,16 @@ def main(env_cfg, _agent_cfg):
     # 0 m -> ~1.0 success, 5 m -> ~0.1 success, plus gaussian jitter.
     synth = (1.0 - distance.clamp_max(5.0) / 5.0) * 0.9 + 0.1
     synth = (synth + 0.15 * torch.randn_like(synth)).clamp(0.0, 1.0)
-    synth_probs = sampler.probabilities(synth)
+    success_rates.copy_(synth)
+    synth_probs = sampler.probabilities().clone()
 
     image_logger = SpawnGoalSamplerImageLogger(log_to_wandb=False)
     # First call seeds the cached "previous rates" — diff panel shows zeros.
     image_logger(env, sampler, synth, synth_probs)
     # Second call so the Δ panel renders a meaningful diff vs. the first.
     synth2 = (synth + 0.05 * torch.randn_like(synth)).clamp(0.0, 1.0)
-    synth_probs2 = sampler.probabilities(synth2)
+    success_rates.copy_(synth2)
+    synth_probs2 = sampler.probabilities().clone()
     image_logger(env, sampler, synth2, synth_probs2)
 
     img = env.extras.get("log_images", {}).get("Sampler/spawn_scatter")

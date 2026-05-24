@@ -35,18 +35,24 @@ class PositionCurriculumSamplerCfg:
             ),
             "sampling": preset(
                 default=SamplerCfg(
-                    strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0)],
+                    strategies=[
+                        BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates")
+                    ],
                     eps=1e-8,
                 ),
                 uniform=SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=1.0)], eps=0.0),
                 beta66=SamplerCfg(
-                    strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0)],
+                    strategies=[
+                        BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates")
+                    ],
                     eps=1e-8,
                 ),
                 frontier=SamplerCfg(
                     strategies=[
-                        BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0),
-                        FrontierSamplingStrategyCfg(k=8, dilation_steps=2, weight=0.5),
+                        BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates"),
+                        FrontierSamplingStrategyCfg(
+                            k=8, dilation_steps=2, weight=0.5, success_rate_bind="success_rates"
+                        ),
                     ],
                     eps=1e-8,
                 ),
@@ -80,7 +86,9 @@ class CRLSamplerCfg:
                 task_partition_bind="env.command_manager.get_term('goal_point').table.task_partition",
             ),
             "sampling": SamplerCfg(
-                strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0)],
+                strategies=[
+                    BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates")
+                ],
                 eps=1e-8,
             ),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=100),

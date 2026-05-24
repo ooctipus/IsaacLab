@@ -39,7 +39,9 @@ class success_rate_sampler(ManagerTermBase):
         if self._sampling_cfg.max_samples is None:
             self._sampling_cfg.max_samples = env.num_envs
         layout_cfg: StateLayoutCfg = cfg.params["layout"]
-        self._sampler = self._sampling_cfg.class_type(self._sampling_cfg, layout_cfg.build(env))
+        self._sampler = self._sampling_cfg.class_type(
+            self._sampling_cfg, layout_cfg.build(env), env=env, success_rates=self.success_rates
+        )
 
     def __call__(
         self,
@@ -61,7 +63,7 @@ class success_rate_sampler(ManagerTermBase):
         self.success_monitor.success_update(prev_idx, self.success[env_ids])
 
         num_samples = self._sampling_cfg.max_samples if self._sampling_cfg.warp else len(env_ids)
-        probs, choices = self._sampler.probabilities_and_sample(self.success_rates, num_samples)
+        probs, choices = self._sampler.probabilities_and_sample(num_samples)
         self.sample_indices[env_ids] = choices[: len(env_ids)]
 
         if sampler_visual_logger is not None:

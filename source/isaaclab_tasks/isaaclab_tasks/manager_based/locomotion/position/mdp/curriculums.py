@@ -66,7 +66,9 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
         if self._sampling_cfg.max_samples is None:
             self._sampling_cfg.max_samples = env.num_envs
         layout_cfg: StateLayoutCfg = cfg.params["layout"]
-        self._sampler = self._sampling_cfg.class_type(self._sampling_cfg, layout_cfg.build(env))
+        self._sampler = self._sampling_cfg.class_type(
+            self._sampling_cfg, layout_cfg.build(env), env=env, success_rates=self.success_rates
+        )
 
         # simple result dict
         self._result: dict[str, torch.Tensor] = {
@@ -110,7 +112,7 @@ class terrain_spawn_goal_pair_success_rate_levels(ManagerTermBase):
 
         # 2) SAMPLE NEXT DISCRETE COMMANDS
         num_samples = self._sampling_cfg.max_samples if self._sampling_cfg.warp else len(env_ids)
-        probs, choices = self._sampler.probabilities_and_sample(self.success_rates, num_samples)
+        probs, choices = self._sampler.probabilities_and_sample(num_samples)
         choices = choices[: len(env_ids)]
         self.goal_term.cmd_indices[env_ids] = choices.to(self.goal_term.cmd_indices.dtype)
 

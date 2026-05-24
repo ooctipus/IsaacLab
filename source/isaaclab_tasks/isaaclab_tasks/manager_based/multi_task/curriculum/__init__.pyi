@@ -22,6 +22,8 @@ __all__ = [
     "TermChoice",
     "UniformSamplingStrategy",
     "UniformSamplingStrategyCfg",
+    "ValueShiftSamplingStrategy",
+    "ValueShiftSamplingStrategyCfg",
     "get_reset_state",
     "reset_accumulator",
     "set_reset_state",
@@ -41,6 +43,8 @@ from .sampling import (
     SamplingStrategyCfg,
     UniformSamplingStrategy,
     UniformSamplingStrategyCfg,
+    ValueShiftSamplingStrategy,
+    ValueShiftSamplingStrategyCfg,
 )
 from .state_buffer import StateBuffer
 from .state_buffer_cfg import StateBufferCfg

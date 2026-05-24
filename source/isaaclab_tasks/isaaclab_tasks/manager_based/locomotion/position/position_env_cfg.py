@@ -34,6 +34,7 @@ from isaaclab_tasks.manager_based.multi_task.curriculum import (
     StateLayoutCfg,
     SuccessMonitorCfg,
     UniformSamplingStrategyCfg,
+    ValueShiftSamplingStrategyCfg,
 )
 from isaaclab_tasks.manager_based.multi_task.mdp.curriculums import success_rate_sampler
 from isaaclab_tasks.manager_based.multi_task.mdp.terminations import illegal_contact_ratio
@@ -302,7 +303,9 @@ class FootSampledCurriculumCfg:
                 task_partition_bind="env.command_manager.get_term('goal_point').table.task_partition",
             ),
             "sampling": SamplerCfg(
-                strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0)],
+                strategies=[
+                    BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates")
+                ],
                 eps=1e-8,
             ),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=20),
@@ -330,12 +333,26 @@ class FlatPatchCurriculumCfg:
             ),
             "sampling": preset(
                 default=SamplerCfg(
-                    strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=5.0, weight=1.0)],
+                    strategies=[
+                        BetaSamplingStrategyCfg(target=0.66, kappa=5.0, weight=1.0, success_rate_bind="success_rates")
+                    ],
                     eps=1e-8,
                 ),
                 uniform=SamplerCfg(
                     strategies=[UniformSamplingStrategyCfg(weight=1.0)],
                     eps=0.0,
+                ),
+                value_shift=SamplerCfg(
+                    strategies=[
+                        ValueShiftSamplingStrategyCfg(
+                            weight=1.0,
+                            state_buffer_bind="env.command_manager.get_term('goal_point').spec.descretized_cmd",
+                            cmd_indices_bind="env.command_manager.get_term('goal_point').cmd_indices",
+                            resample_command_fn_bind="env.command_manager.get_term('goal_point')._resample_command",
+                            get_critic_obs_fn_bind="lambda: env.observation_manager.compute()",
+                        )
+                    ],
+                    eps=1e-8,
                 ),
             ),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=100),

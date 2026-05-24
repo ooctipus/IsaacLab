@@ -157,7 +157,7 @@ def test_accumulator_frontier_samples_from_state_feature_space_without_wandb(mon
 
     acc._state_fps_features = features
     acc._sampling_cfg = SamplerCfg(
-        strategies=[FrontierSamplingStrategyCfg(k=2, dilation_steps=1, weight=1.0)],
+        strategies=[FrontierSamplingStrategyCfg(k=2, dilation_steps=1, weight=1.0, success_rate_bind="success_rates")],
         eps=1e-3,
     )
 

@@ -208,10 +208,12 @@ class reset_accumulator(ManagerTermBase):
                     spawn_index=torch.arange(n, device=coords.device, dtype=torch.long),
                     target_index=None,
                 )
-                self._sampler = self._sampling_cfg.class_type(self._sampling_cfg, layout)
+                self._sampler = self._sampling_cfg.class_type(
+                    self._sampling_cfg, layout, env=env, success_rates=self.monitor_success_rate
+                )
 
             num_samples = self._sampling_cfg.max_samples if self._sampling_cfg.warp else len(env_ids)
-            probs, slot_idx = self._sampler.probabilities_and_sample(self.monitor_success_rate, int(num_samples))
+            probs, slot_idx = self._sampler.probabilities_and_sample(int(num_samples))
             slot_idx = slot_idx[: len(env_ids)]
             self.sampled_slots[env_ids] = slot_idx
             reset_state.set_reset_state(env, self.state_data[slot_idx], env_ids, self.reset_assets, is_relative=True)
@@ -252,7 +254,9 @@ class TermChoice(ManagerTermBase):
             spawn_index=torch.arange(self.num_partitions, device=env.device, dtype=torch.long),
             target_index=None,
         )
-        self._sampler = self._sampling_cfg.class_type(self._sampling_cfg, layout)
+        self._sampler = self._sampling_cfg.class_type(
+            self._sampling_cfg, layout, env=env, success_rates=self.term_success_rate
+        )
 
         # Need a monitor when the sampler has any non-uniform strategy,
         # or when the user explicitly requested reporting.
@@ -288,7 +292,7 @@ class TermChoice(ManagerTermBase):
             self.success_monitor.success_update(self.term_samples[env_ids], success[env_ids])
 
         num_samples = self._sampling_cfg.max_samples if self._sampling_cfg.warp else len(env_ids)
-        probs, choices = self._sampler.probabilities_and_sample(self.term_success_rate, int(num_samples))
+        probs, choices = self._sampler.probabilities_and_sample(int(num_samples))
         self.term_samples[env_ids] = choices[: len(env_ids)]
         if report:
             log.update(

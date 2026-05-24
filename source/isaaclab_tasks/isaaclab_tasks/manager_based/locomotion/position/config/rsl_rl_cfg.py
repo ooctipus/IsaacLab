@@ -253,6 +253,87 @@ class PositionObsGroupsPresetCfg(PresetCfg):
     default: dict[str, list[str]] = encoder
 
 
+
+
+@configclass
+class ValueShiftAlgorithmCfg(RslRlPpoAlgorithmCfg):
+    """PPO algorithm cfg + bind expressions for the value-shift curriculum.
+
+    Bind expressions are popped off this cfg by
+    :meth:`ValueShiftPPO.construct_algorithm` (so they never reach
+    ``PPO.__init__``) and ``eval``-ed against a namespace of
+    ``{env, alg, setattr}``. They wire :class:`ValueShiftPPO`'s three buffers
+    to the matching :class:`ValueShiftSamplingStrategy` attribute on the
+    active terrain-level curriculum term -- so this cfg only makes sense when
+    the sampler preset on that curriculum is also ``value_shift``.
+    """
+
+    class_name: str = "isaaclab_tasks.manager_based.multi_task.rl.rsl_rl.algorithms:ValueShiftPPO"
+    # ``env`` here is the ``RslRlVecEnvWrapper`` from the runner -- managers
+    # live on the underlying ``ManagerBasedRLEnv`` accessed via ``.unwrapped``.
+    bind_observation_exp: str = (
+        "setattr(alg, '_obs_cache',"
+        " env.unwrapped.curriculum_manager.get_term('terrain_levels')"
+        "._sampler._impl.strategies[0][0].observation_cache)"
+    )
+    bind_current_value_exp: str = (
+        "setattr(alg, '_cur_buf',"
+        " env.unwrapped.curriculum_manager.get_term('terrain_levels')"
+        "._sampler._impl.strategies[0][0].cur_val)"
+    )
+    bind_value_diff_exp: str = (
+        "setattr(alg, '_diff_buf',"
+        " env.unwrapped.curriculum_manager.get_term('terrain_levels')"
+        "._sampler._impl.strategies[0][0].diff_val)"
+    )
+
+
+POSITION_PPO_ALGORITHM_CFG = RslRlPpoAlgorithmCfg(
+    value_loss_coef=1.0,
+    use_clipped_value_loss=True,
+    clip_param=0.2,
+    entropy_coef=0.005,
+    num_learning_epochs=5,
+    num_mini_batches=4,
+    learning_rate=1.0e-4,
+    schedule="adaptive",
+    gamma=0.99,
+    lam=0.95,
+    desired_kl=0.01,
+    max_grad_norm=1.0,
+)
+
+
+POSITION_VALUE_SHIFT_ALGORITHM_CFG = ValueShiftAlgorithmCfg(
+    value_loss_coef=1.0,
+    use_clipped_value_loss=True,
+    clip_param=0.2,
+    entropy_coef=0.005,
+    num_learning_epochs=5,
+    num_mini_batches=4,
+    learning_rate=1.0e-4,
+    schedule="adaptive",
+    gamma=0.99,
+    lam=0.95,
+    desired_kl=0.01,
+    max_grad_norm=1.0,
+)
+
+
+@configclass
+class PositionAlgorithmPresetCfg(PresetCfg):
+    """Algorithm preset selectable via ``agent.algorithm=<name>``.
+
+    The ``value_shift`` variant requires the matching ``value_shift`` sampler
+    preset on :class:`FlatPatchCurriculumCfg.terrain_levels.sampling`; the bind
+    expressions on :class:`ValueShiftAlgorithmCfg` reach into that strategy's
+    buffers.
+    """
+
+    default: RslRlPpoAlgorithmCfg = POSITION_PPO_ALGORITHM_CFG
+    value_shift: ValueShiftAlgorithmCfg = POSITION_VALUE_SHIFT_ALGORITHM_CFG
+
+
 @configclass
 class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 32
@@ -264,17 +345,4 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     obs_groups: PositionObsGroupsPresetCfg = PositionObsGroupsPresetCfg()  # type: ignore
     actor = PositionActorPresetCfg()  # type: ignore
     critic = PositionCriticPresetCfg()  # type: ignore
-    algorithm: RslRlPpoAlgorithmCfg = RslRlPpoAlgorithmCfg(
-        value_loss_coef=1.0,
-        use_clipped_value_loss=True,
-        clip_param=0.2,
-        entropy_coef=0.005,
-        num_learning_epochs=5,
-        num_mini_batches=4,
-        learning_rate=1.0e-4,
-        schedule="adaptive",
-        gamma=0.99,
-        lam=0.95,
-        desired_kl=0.01,
-        max_grad_norm=1.0,
-    )
+    algorithm: PositionAlgorithmPresetCfg = PositionAlgorithmPresetCfg()  # type: ignore

@@ -4,16 +4,16 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import torch
-
-from pxr import Usd, UsdPhysics
-
-from isaaclab.cloner.clone_plan import ClonePlan
 from isaaclab_physx.cloner.clone_plan_paths import (
     expand_clone_plan_child_paths,
     expand_clone_plan_path,
     expand_clone_plan_paths,
     resolve_clone_plan_source_paths,
 )
+
+from pxr import Usd, UsdPhysics
+
+from isaaclab.cloner.clone_plan import ClonePlan
 
 
 def test_expand_clone_plan_path_homogeneous_env_root():
@@ -119,6 +119,4 @@ def test_resolve_clone_plan_source_paths_skips_inactive_rows():
         clone_mask=torch.tensor([[True, False], [False, False]], dtype=torch.bool),
     )
 
-    assert resolve_clone_plan_source_paths("/World/envs/env_.*/Robot/base", plan) == [
-        "/World/templates/RobotA/base"
-    ]
+    assert resolve_clone_plan_source_paths("/World/envs/env_.*/Robot/base", plan) == ["/World/templates/RobotA/base"]

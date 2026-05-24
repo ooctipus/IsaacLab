@@ -8,14 +8,15 @@
 ##
 from pathlib import Path
 
+import isaaclab.sim as sim_utils
+from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.utils.configclass import configclass
 
-import isaaclab_assets.robots.anymal as anymal
-from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab_tasks.utils import preset
-import isaaclab.sim as sim_utils
-from ... import position_env_cfg
 
+import isaaclab_assets.robots.anymal as anymal
+
+from ... import position_env_cfg
 
 ANYDRIVE_3_LSTM_ONNX_PATH = str(Path(__file__).resolve().parents[2] / "assets" / "anydrive_3_lstm.onnx")
 ANYDRIVE_3_LSTM_ACTUATOR_CFG = anymal.ANYDRIVE_3_LSTM_ACTUATOR_CFG.replace(
@@ -46,7 +47,7 @@ class AnymalCEnvMixin:
         self.scene.robot.spawn.usd_path = (
             "https://uwlab-assets.s3.us-west-004.backblazeb2.com/Robots/ANYbotics/ANYmal-C/anymal_c.usd"
         )
-        self.scene.robot.spawn.joint_drive_props=preset(
+        self.scene.robot.spawn.joint_drive_props = preset(
             implicit_actuator=sim_utils.JointDrivePropertiesCfg(
                 drive_type="force",
                 stiffness=40.0,

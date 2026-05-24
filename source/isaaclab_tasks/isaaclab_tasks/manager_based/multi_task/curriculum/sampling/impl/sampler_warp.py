@@ -194,20 +194,52 @@ def _sample_cdf_kernel(
 
 
 class SamplerWarp:
-    """Warp backend for weighted sampling strategies."""
+    """Warp backend for weighted sampling strategies.
 
-    def __init__(self, cfg: SamplerCfg, layout: StateLayout) -> None:
+    Restricted to success-rate-driven strategies (Beta / Frontier / Uniform).
+    Strategies with non-success-rate signals (e.g.
+    :class:`ValueShiftSamplingStrategy`) are intentionally rejected at
+    construction time; route those through :class:`SamplerTorch` instead.
+    """
+
+    def __init__(self, cfg: SamplerCfg, layout: StateLayout, **bind_ns) -> None:
         from ..sampling_strategies_cfg import (
             BetaSamplingStrategyCfg,
             FrontierSamplingStrategyCfg,
             UniformSamplingStrategyCfg,
         )
 
+        supported_cfg_types = (BetaSamplingStrategyCfg, FrontierSamplingStrategyCfg, UniformSamplingStrategyCfg)
+        for strategy_cfg in cfg.strategies:
+            if not isinstance(strategy_cfg, supported_cfg_types):
+                raise NotImplementedError(
+                    f"SamplerWarp does not implement strategy {type(strategy_cfg).__name__};"
+                    " use the Torch backend (set ``warp=False`` on SamplerCfg)."
+                )
+
         wp.init()
         self.eps = float(cfg.eps)
         self.seed = int(cfg.seed)
         self.names: list[str] = []
         self._plot_strategy_indices = [i for i, strategy_cfg in enumerate(cfg.strategies) if strategy_cfg.plot]
+
+        # Bind the success-rate tensor once; all Beta / Frontier / Uniform
+        # strategies share it. Resolved against the caller's ``bind_ns``.
+        success_rate_binds = {
+            strategy_cfg.success_rate_bind
+            for strategy_cfg in cfg.strategies
+            if isinstance(strategy_cfg, (BetaSamplingStrategyCfg, FrontierSamplingStrategyCfg))
+        }
+        if len(success_rate_binds) > 1:
+            raise ValueError(
+                f"SamplerWarp requires a single shared success_rate_bind; got {sorted(success_rate_binds)}."
+            )
+        if success_rate_binds:
+            (bind_expr,) = success_rate_binds
+            self._success_rates: torch.Tensor = eval(bind_expr, bind_ns)  # noqa: S307
+        else:
+            # Only Uniform strategies; allocate a zero placeholder of the right shape.
+            self._success_rates = torch.zeros(int(layout.spawn_index.shape[0]), device=layout.coords.device)
 
         kinds: list[int] = []
         weights: list[float] = []
@@ -229,14 +261,14 @@ class SamplerWarp:
         for strategy_cfg in cfg.strategies:
             weights.append(float(strategy_cfg.weight))
             if isinstance(strategy_cfg, BetaSamplingStrategyCfg):
-                strategy = BetaSamplingStrategy(strategy_cfg, layout)
+                strategy = BetaSamplingStrategy(strategy_cfg, layout, **bind_ns)
                 self.names.append(strategy.name)
                 kinds.append(_STRATEGY_BETA)
                 beta_a.append(float(strategy._a))
                 beta_b.append(float(strategy._b))
                 frontier_ids.append(-1)
             elif isinstance(strategy_cfg, FrontierSamplingStrategyCfg):
-                strategy = FrontierSamplingStrategy(strategy_cfg, layout)
+                strategy = FrontierSamplingStrategy(strategy_cfg, layout, **bind_ns)
                 k = int(strategy_cfg.k)
                 dilation_steps = int(strategy._dilation_steps)
                 group_id = frontier_group_by_k.get(k)
@@ -262,7 +294,7 @@ class SamplerWarp:
                     frontier_result_by_group_step[result_key] = result_id
                 frontier_ids.append(result_id)
             elif isinstance(strategy_cfg, UniformSamplingStrategyCfg):
-                strategy = strategy_cfg.class_type(strategy_cfg, layout)
+                strategy = strategy_cfg.class_type(strategy_cfg, layout, **bind_ns)
                 self.names.append(strategy.name)
                 kinds.append(_STRATEGY_UNIFORM)
                 beta_a.append(1.0)
@@ -337,6 +369,7 @@ class SamplerWarp:
         self._graph = None
         self._graph_key: tuple[int, int] | None = None
 
+        self._wp_success_rates = wp.from_torch(self._success_rates, dtype=wp.float32)
         self._wp_strategy_kind = wp.from_torch(self._strategy_kind, dtype=wp.int32)
         self._wp_weights = wp.from_torch(self._weights, dtype=wp.float32)
         self._wp_beta_a = wp.from_torch(self._beta_a, dtype=wp.float32)
@@ -361,15 +394,14 @@ class SamplerWarp:
         self._wp_sample_base = wp.from_torch(self._sample_base, dtype=wp.int64)
         self._wp_samples = wp.from_torch(self._samples, dtype=wp.int64)
 
-    def scores(self, success_rates: torch.Tensor) -> torch.Tensor:
+    def scores(self) -> torch.Tensor:
         """Return contiguous per-strategy score rows shaped ``[num_strategies, num_items]``."""
-        wp_success_rates = wp.from_torch(success_rates, dtype=wp.float32)
-        self._update_frontier(success_rates, wp_success_rates)
+        self._update_frontier()
         wp.launch(
             _sampler_score_kernel,
             dim=(self._num_strategies, self._num_items),
             inputs=[
-                wp_success_rates,
+                self._wp_success_rates,
                 self._wp_score_rows,
                 self._wp_strategy_kind,
                 self._wp_beta_a,
@@ -377,11 +409,11 @@ class SamplerWarp:
                 self._wp_frontier_ids,
                 self._wp_frontier_results,
             ],
-            device=str(success_rates.device),
+            device=str(self._success_rates.device),
         )
         return self._score_rows
 
-    def _update_frontier(self, success_rates: torch.Tensor, wp_success_rates: wp.array(dtype=wp.float32)) -> None:
+    def _update_frontier(self) -> None:
         """Update frontier result rows for the current success rates."""
         frontier_prev = self._wp_frontier_prev
         frontier_next = self._wp_frontier_next
@@ -389,8 +421,8 @@ class SamplerWarp:
             wp.launch(
                 _frontier_init_kernel,
                 dim=(self._num_frontier_groups, self._num_items),
-                inputs=[wp_success_rates, self._wp_frontier_order, frontier_prev],
-                device=str(success_rates.device),
+                inputs=[self._wp_success_rates, self._wp_frontier_order, frontier_prev],
+                device=str(self._success_rates.device),
             )
             for step in range(self._max_dilation_steps):
                 wp.launch(
@@ -408,19 +440,18 @@ class SamplerWarp:
                         step,
                         self._max_k,
                     ],
-                    device=str(success_rates.device),
+                    device=str(self._success_rates.device),
                 )
                 frontier_prev, frontier_next = frontier_next, frontier_prev
 
-    def probabilities(self, success_rates: torch.Tensor) -> torch.Tensor:
+    def probabilities(self) -> torch.Tensor:
         """Return ``[num_items]`` probability vector summing to 1."""
-        wp_success_rates = wp.from_torch(success_rates, dtype=wp.float32)
-        self._update_frontier(success_rates, wp_success_rates)
+        self._update_frontier()
         wp.launch(
             _sampler_weight_kernel,
             dim=self._num_items,
             inputs=[
-                wp_success_rates,
+                self._wp_success_rates,
                 self._wp_weighted,
                 self._wp_strategy_kind,
                 self._wp_weights,
@@ -431,14 +462,14 @@ class SamplerWarp:
                 self.eps,
                 self._num_strategies,
             ],
-            device=str(success_rates.device),
+            device=str(self._success_rates.device),
         )
         wpu.array_sum(self._wp_weighted, out=self._wp_sum, value_count=self._num_items)
         wp.launch(
             _sampler_normalize_kernel,
             dim=self._num_items,
             inputs=[self._wp_weighted, self._wp_sum, self._wp_probs],
-            device=str(success_rates.device),
+            device=str(self._success_rates.device),
         )
         return self._probs
 
@@ -464,9 +495,7 @@ class SamplerWarp:
         )
         return self._samples[:num_samples]
 
-    def probabilities_and_sample(
-        self, success_rates: torch.Tensor, num_samples: int
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def probabilities_and_sample(self, num_samples: int) -> tuple[torch.Tensor, torch.Tensor]:
         """Return probabilities and sampled item indices."""
         if num_samples > self._samples.shape[0]:
             raise ValueError(
@@ -474,10 +503,10 @@ class SamplerWarp:
                 f"but max_samples={self._samples.shape[0]}."
             )
 
-        key = (success_rates.data_ptr(), int(num_samples))
+        key = (self._success_rates.data_ptr(), int(num_samples))
         if self._graph is None or self._graph_key != key:
-            with wp.ScopedCapture(device=str(success_rates.device)) as capture:
-                probs = self.probabilities(success_rates)
+            with wp.ScopedCapture(device=str(self._success_rates.device)) as capture:
+                probs = self.probabilities()
                 self.sample(probs, num_samples)
             self._graph = capture.graph
             self._graph_key = key

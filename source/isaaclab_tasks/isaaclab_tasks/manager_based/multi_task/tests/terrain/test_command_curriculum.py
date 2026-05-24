@@ -101,12 +101,15 @@ def _sample_by_target_rate(
     )
     curriculum = Sampler(
         SamplerCfg(
-            strategies=[BetaSamplingStrategyCfg(target=target, kappa=kappa, weight=1.0)],
+            strategies=[
+                BetaSamplingStrategyCfg(target=target, kappa=kappa, weight=1.0, success_rate_bind="success_rates")
+            ],
             eps=1e-8,
         ),
         layout,
+        success_rates=mon.success_rate,
     )
-    probs = curriculum.probabilities(mon.success_rate)
+    probs = curriculum.probabilities()
     choices = torch.multinomial(probs, len(env_ids), replacement=True).to(torch.int32)
     return (choices, probs) if return_probs else choices
 
@@ -970,7 +973,9 @@ def _bootstrap_curriculum(env, term, target=0.5, kappa=5.0, history_len=16):
             "debug_vis": False,  # skip VisualizationMarkers construction
             **CURRICULUM_BINDS,
             "sampling": SamplerCfg(
-                strategies=[BetaSamplingStrategyCfg(target=target, kappa=kappa, weight=1.0)],
+                strategies=[
+                    BetaSamplingStrategyCfg(target=target, kappa=kappa, weight=1.0, success_rate_bind="success_rates")
+                ],
                 eps=1e-8,
             ),
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=history_len),
