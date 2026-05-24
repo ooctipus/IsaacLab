@@ -6,7 +6,9 @@
 __all__ = [
     "CloneCfg",
     "ClonePlan",
+    "get_replicate_ctx",
     "random",
+    "replicate",
     "sequential",
     "disabled_fabric_change_notifies",
     "filter_collisions",
@@ -25,3 +27,4 @@ from .cloner_utils import (
     make_clone_plan,
     usd_replicate,
 )
+from .replicate_registry import get_replicate_ctx, replicate

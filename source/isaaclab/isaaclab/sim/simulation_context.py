@@ -39,6 +39,7 @@ from isaaclab.visualizers.base_visualizer import BaseVisualizer
 
 if TYPE_CHECKING:
     from isaaclab.cloner.clone_plan import ClonePlan
+    from isaaclab.layout import StageLayout
 
 from .simulation_cfg import SimulationCfg
 from .spawners import DomeLightCfg, GroundPlaneCfg
@@ -183,6 +184,10 @@ class SimulationContext:
         # Newton visualizer model rebuilder on a PhysX backend) consume this to derive
         # their own backend args. None until :meth:`InteractiveScene.clone_environments` runs.
         self._clone_plan: ClonePlan | None = None
+        # Stage layout published by InteractiveScene before asset / sensor construction.
+        # Replaces :attr:`_clone_plan`; the two slots coexist during the migration arc and
+        # ``_clone_plan`` is removed once every consumer has switched to ``StageLayout``.
+        self._stage_layout: StageLayout | None = None
         # Default visualization dt used before/without visualizer initialization.
         physics_dt = getattr(self.cfg.physics, "dt", None)
         self._viz_dt = (physics_dt if physics_dt is not None else self.cfg.dt) * self.cfg.render_interval
@@ -683,6 +688,20 @@ class SimulationContext:
     def set_clone_plan(self, plan: ClonePlan | None) -> None:
         """Set the cloner's clone plan."""
         self._clone_plan = plan
+
+    def get_stage_layout(self) -> StageLayout | None:
+        """Return the :class:`~isaaclab.layout.StageLayout` published by the scene.
+
+        Set by :class:`~isaaclab.scene.InteractiveScene` before asset / sensor construction.
+        Consumed by :func:`isaaclab.cloner.get_replicate_ctx` to lazily build backend
+        replication contexts and by every asset / sensor ``_initialize_impl`` to resolve
+        per-cfg occupancy. ``None`` until the scene publishes a layout.
+        """
+        return self._stage_layout
+
+    def set_stage_layout(self, layout: StageLayout | None) -> None:
+        """Set the active :class:`~isaaclab.layout.StageLayout`."""
+        self._stage_layout = layout
 
     @property
     def visualizers(self) -> list[BaseVisualizer]:
