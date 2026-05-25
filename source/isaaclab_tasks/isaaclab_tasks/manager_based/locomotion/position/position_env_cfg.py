@@ -274,7 +274,7 @@ class RewardsV1Cfg:
 class RewardsV2Cfg:
     reward_composer = RewTerm(
         func=mdp.reward_compose,
-        weight=25.0,
+        weight=1.0,
         params={
             "success": RewTerm(func=mdp.command_success, weight=50.0),
             "quality": {
