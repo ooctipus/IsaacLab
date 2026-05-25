@@ -265,7 +265,7 @@ class ValueShiftAlgorithmCfg(RslRlPpoAlgorithmCfg):
     ``{env, alg, setattr}``. They wire :class:`ValueShiftPPO`'s three buffers
     to the matching :class:`ValueShiftSamplingStrategy` attribute on the
     active terrain-level curriculum term -- so this cfg only makes sense when
-    the sampler preset on that curriculum is also ``value_shift``.
+    the sampler preset on that curriculum includes value-shift scoring.
     """
 
     class_name: str = "isaaclab_tasks.manager_based.multi_task.rl.rsl_rl.algorithms:ValueShiftPPO"
@@ -274,17 +274,17 @@ class ValueShiftAlgorithmCfg(RslRlPpoAlgorithmCfg):
     bind_observation_exp: str = (
         "setattr(alg, '_obs_cache',"
         " env.unwrapped.curriculum_manager.get_term('terrain_levels')"
-        "._sampler._impl.strategies[0][0].observation_cache)"
+        "._sampler._impl.value_shift_strategy.observation_cache)"
     )
     bind_current_value_exp: str = (
         "setattr(alg, '_cur_buf',"
         " env.unwrapped.curriculum_manager.get_term('terrain_levels')"
-        "._sampler._impl.strategies[0][0].cur_val)"
+        "._sampler._impl.value_shift_strategy.cur_val)"
     )
     bind_value_diff_exp: str = (
         "setattr(alg, '_diff_buf',"
         " env.unwrapped.curriculum_manager.get_term('terrain_levels')"
-        "._sampler._impl.strategies[0][0].diff_val)"
+        "._sampler._impl.value_shift_strategy.diff_val)"
     )
 
 
@@ -324,14 +324,14 @@ POSITION_VALUE_SHIFT_ALGORITHM_CFG = ValueShiftAlgorithmCfg(
 class PositionAlgorithmPresetCfg(PresetCfg):
     """Algorithm preset selectable via ``agent.algorithm=<name>``.
 
-    The ``value_shift`` variant requires the matching ``value_shift`` sampler
-    preset on :class:`FlatPatchCurriculumCfg.terrain_levels.sampling`; the bind
-    expressions on :class:`ValueShiftAlgorithmCfg` reach into that strategy's
-    buffers.
+    The value-shift variants require a sampler preset that includes
+    :class:`ValueShiftSamplingStrategy`; the bind expressions on
+    :class:`ValueShiftAlgorithmCfg` reach into that strategy's buffers.
     """
 
     default: RslRlPpoAlgorithmCfg = POSITION_PPO_ALGORITHM_CFG
     value_shift: ValueShiftAlgorithmCfg = POSITION_VALUE_SHIFT_ALGORITHM_CFG
+    beta_value_shift: ValueShiftAlgorithmCfg = value_shift
 
 
 @configclass

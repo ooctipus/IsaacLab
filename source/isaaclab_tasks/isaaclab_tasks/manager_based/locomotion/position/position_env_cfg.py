@@ -251,7 +251,7 @@ class EventsCfg:
 
 
 @configclass
-class RewardsCfg:
+class RewardsV1Cfg:
     # task rewards
     success = RewTerm(func=mdp.command_success, weight=50.0)
 
@@ -268,6 +268,41 @@ class RewardsCfg:
     )
 
     explore = RewTerm(func=mdp.exploration_reward, weight=0.3, params={"forward_only": True})
+
+
+@configclass
+class RewardsV2Cfg:
+    reward_composer = RewTerm(
+        func=mdp.reward_compose,
+        weight=25.0,
+        params={
+            "success": RewTerm(func=mdp.command_success, weight=50.0),
+            "quality": {
+                "mech_work": RewTerm(func=mdp.mechanical_power, weight=-0.00025),
+                "undesired_contact": RewTerm(
+                    func=mdp.undesired_contacts,
+                    weight=-0.1,
+                    params={
+                        "sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*(?:(FOOT))).*$"),
+                        "threshold": 1.0,
+                    },
+                ),
+            },
+        },
+    )
+
+    fail = RewTerm(
+        func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact", "abnormal_robot"]}, weight=-25.0
+    )
+
+    explore = RewTerm(func=mdp.exploration_reward, weight=0.3, params={"forward_only": True})
+
+
+@configclass
+class RewardsCfg(PresetCfg):
+    rew_v1=RewardsV1Cfg()
+    rew_v2=RewardsV2Cfg()
+    default=rew_v1
 
 
 @configclass
@@ -332,15 +367,15 @@ class FlatPatchCurriculumCfg:
                 ),
             ),
             "sampling": preset(
-                default=SamplerCfg(
+                uniform=SamplerCfg(
+                    strategies=[UniformSamplingStrategyCfg(weight=1.0)],
+                    eps=0.0,
+                ),
+                beta=SamplerCfg(
                     strategies=[
                         BetaSamplingStrategyCfg(target=0.66, kappa=5.0, weight=1.0, success_rate_bind="success_rates")
                     ],
                     eps=1e-8,
-                ),
-                uniform=SamplerCfg(
-                    strategies=[UniformSamplingStrategyCfg(weight=1.0)],
-                    eps=0.0,
                 ),
                 value_shift=SamplerCfg(
                     strategies=[
@@ -351,6 +386,25 @@ class FlatPatchCurriculumCfg:
                             resample_command_fn_bind="env.command_manager.get_term('goal_point')._resample_command",
                             get_critic_obs_fn_bind="lambda: env.observation_manager.compute()",
                         )
+                    ],
+                    eps=1e-8,
+                ),
+                beta_value_shift=SamplerCfg(
+                    strategies=[
+                        BetaSamplingStrategyCfg(target=0.66, kappa=5.0, weight=1.0, success_rate_bind="success_rates"),
+                        ValueShiftSamplingStrategyCfg(
+                            weight=1.0,
+                            state_buffer_bind="env.command_manager.get_term('goal_point').spec.descretized_cmd",
+                            cmd_indices_bind="env.command_manager.get_term('goal_point').cmd_indices",
+                            resample_command_fn_bind="env.command_manager.get_term('goal_point')._resample_command",
+                            get_critic_obs_fn_bind="lambda: env.observation_manager.compute()",
+                        )
+                    ],
+                    eps=1e-8,
+                ),
+                default=SamplerCfg(
+                    strategies=[
+                        BetaSamplingStrategyCfg(target=0.66, kappa=5.0, weight=1.0, success_rate_bind="success_rates")
                     ],
                     eps=1e-8,
                 ),

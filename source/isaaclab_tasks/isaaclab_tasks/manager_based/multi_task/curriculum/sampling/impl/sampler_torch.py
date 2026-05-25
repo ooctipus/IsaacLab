@@ -29,14 +29,9 @@ class SamplerTorch:
             (strategy_cfg.class_type(strategy_cfg, layout, **bind_ns), float(strategy_cfg.weight))
             for strategy_cfg in cfg.strategies
         ]
-        # When ValueShift is in use, the runner's bind expressions index
-        # ``strategies[0][0]``; enforce a single-strategy layout to keep that
-        # indexing stable and avoid silent miswiring.
-        if any(isinstance(strategy, ValueShiftSamplingStrategy) for strategy, _ in self.strategies):
-            assert len(self.strategies) == 1, (
-                "ValueShiftSamplingStrategy must be the sole strategy in the sampler;"
-                f" got {len(self.strategies)} strategies."
-            )
+        self.value_shift_strategy: ValueShiftSamplingStrategy | None = next(
+            (strategy for strategy, _ in self.strategies if isinstance(strategy, ValueShiftSamplingStrategy)), None
+        )
         self.eps = float(cfg.eps)
         self.names = [strategy.name for strategy, _ in self.strategies]
         self._plot_strategy_indices = [i for i, strategy_cfg in enumerate(cfg.strategies) if strategy_cfg.plot]
