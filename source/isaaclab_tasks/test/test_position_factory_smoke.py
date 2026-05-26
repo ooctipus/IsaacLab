@@ -51,6 +51,23 @@ def test_env_cfg_constructs(task_name: str) -> None:
     assert hasattr(cfg, "events")
 
 
+def test_position_weight_decay_preset_composes_with_value_shift_algorithm() -> None:
+    """Weight decay preset should tune the active PPO variant, not replace it."""
+    from isaaclab_tasks.manager_based.locomotion.position.config.rsl_rl_cfg import (
+        PositionLocomotionPPORunnerCfg,
+        ValueShiftAlgorithmCfg,
+    )
+    from isaaclab_tasks.utils.hydra import resolve_presets
+
+    cfg = PositionLocomotionPPORunnerCfg()
+
+    resolve_presets(cfg, selected=("beta_value_shift", "weight_decay"))
+
+    assert isinstance(cfg.algorithm, ValueShiftAlgorithmCfg)
+    assert cfg.algorithm.optimizer == "adamw"
+    assert cfg.algorithm.weight_decay == 1.0e-4
+
+
 @pytest.mark.parametrize("task_name", ["Isaac-Position-v0", "Isaac-Factory-v0"])
 def test_env_cfg_to_dict_serialises(task_name: str) -> None:
     """``cfg.to_dict()`` produces a fully-flattened dict with no dataclass instances.

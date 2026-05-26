@@ -22,7 +22,7 @@ from isaaclab_tasks.manager_based.multi_task.rl.rsl_rl import (
     RslRlResidualMLPEncoderModelCfg,
     RslRlTaskEasingActorModelCfg,
 )
-from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils import PresetCfg, preset
 
 MLP_ENCODER_CFG: dict[str, RslRlMLPEncoderModelCfg.EncoderCfg] = {
     "height_scan": RslRlMLPEncoderModelCfg.EncoderCfg(
@@ -253,8 +253,6 @@ class PositionObsGroupsPresetCfg(PresetCfg):
     default: dict[str, list[str]] = encoder
 
 
-
-
 @configclass
 class ValueShiftAlgorithmCfg(RslRlPpoAlgorithmCfg):
     """PPO algorithm cfg + bind expressions for the value-shift curriculum.
@@ -288,36 +286,27 @@ class ValueShiftAlgorithmCfg(RslRlPpoAlgorithmCfg):
     )
 
 
-POSITION_PPO_ALGORITHM_CFG = RslRlPpoAlgorithmCfg(
-    value_loss_coef=1.0,
-    use_clipped_value_loss=True,
-    clip_param=0.2,
-    entropy_coef=0.005,
-    num_learning_epochs=5,
-    num_mini_batches=4,
-    learning_rate=1.0e-4,
-    schedule="adaptive",
-    gamma=0.99,
-    lam=0.95,
-    desired_kl=0.01,
-    max_grad_norm=1.0,
-)
+POSITION_PPO_ALGORITHM_KWARGS = {
+    "value_loss_coef": 1.0,
+    "use_clipped_value_loss": True,
+    "clip_param": 0.2,
+    "entropy_coef": 0.005,
+    "num_learning_epochs": 5,
+    "num_mini_batches": 4,
+    "learning_rate": 1.0e-4,
+    "schedule": "adaptive",
+    "gamma": 0.99,
+    "lam": 0.95,
+    "desired_kl": 0.01,
+    "max_grad_norm": 1.0,
+    "optimizer": preset(default="adam", weight_decay="adamw"),
+    "weight_decay": preset(default=0.0, weight_decay=1.0e-4),
+}
 
 
-POSITION_VALUE_SHIFT_ALGORITHM_CFG = ValueShiftAlgorithmCfg(
-    value_loss_coef=1.0,
-    use_clipped_value_loss=True,
-    clip_param=0.2,
-    entropy_coef=0.005,
-    num_learning_epochs=5,
-    num_mini_batches=4,
-    learning_rate=1.0e-4,
-    schedule="adaptive",
-    gamma=0.99,
-    lam=0.95,
-    desired_kl=0.01,
-    max_grad_norm=1.0,
-)
+POSITION_PPO_ALGORITHM_CFG = RslRlPpoAlgorithmCfg(**POSITION_PPO_ALGORITHM_KWARGS)
+
+POSITION_VALUE_SHIFT_ALGORITHM_CFG = ValueShiftAlgorithmCfg(**POSITION_PPO_ALGORITHM_KWARGS)
 
 
 @configclass
