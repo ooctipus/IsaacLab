@@ -18,6 +18,7 @@ Usage from shell:
 from __future__ import annotations
 
 import itertools
+import json
 import os
 import subprocess
 import sys
@@ -79,6 +80,31 @@ CLUSTER_KEY_ORDER = [
 ]
 
 BOOL_FLAGS = {"--video", "--enable_cameras"}
+AUTO_RESOURCE_KEYS = {"num_cpu", "memory", "storage"}
+
+
+@dataclass(frozen=True)
+class PoolNodeResources:
+    """Free and allocatable resources for one pool node."""
+
+    hostname: str
+    available_gpu: int
+    available_cpu: int
+    available_memory: int
+    available_storage: int
+    allocatable_gpu: int
+    allocatable_cpu: int
+    allocatable_memory: int
+    allocatable_storage: int
+
+
+@dataclass
+class ResourcePlan:
+    """Resource planning diagnostics."""
+
+    source: str
+    changes: dict[str, tuple[str, str]] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
 
 
 def _is_truthy(val: str) -> bool:
@@ -181,6 +207,227 @@ def _cluster_int(p: ParsedArgs, key: str) -> int:
     except ValueError:
         print(f"Error: {key} must be an integer, got '{p.cluster[key]}'.", file=sys.stderr)
         sys.exit(2)
+
+
+def _positive_cluster_int(p: ParsedArgs, key: str) -> int:
+    value = _cluster_int(p, key)
+    if value < 1:
+        print(f"Error: {key} must be positive, got '{value}'.", file=sys.stderr)
+        sys.exit(2)
+    return value
+
+
+def _parse_int_quantity(value: object) -> int:
+    if isinstance(value, str):
+        value = value.strip()
+        if value.endswith("m"):
+            return int(value[:-1]) // 1000
+    return int(value)
+
+
+def _memory_to_gib(value: object) -> int:
+    if isinstance(value, str):
+        value = value.strip()
+        if value.endswith("Ki"):
+            return int(value[:-2]) // (1024 * 1024)
+    return int(value)
+
+
+def _storage_to_gib(value: object) -> int:
+    if isinstance(value, str):
+        value = value.strip()
+        if value.endswith("Ki"):
+            return int(value[:-2]) // (1024 * 1024)
+        value_int = int(value)
+    else:
+        value_int = int(value)
+    if value_int > 1024 * 1024:
+        return value_int // (1024**3)
+    return value_int
+
+
+def _platform_resources(raw: dict, pool: str, platform: str, field: str) -> dict | None:
+    return raw.get(field, {}).get(pool, {}).get(platform)
+
+
+def _node_resources_from_osmo(raw: dict, pool: str, platform: str) -> PoolNodeResources | None:
+    available = _platform_resources(raw, pool, platform, "platform_available_fields")
+    allocatable = _platform_resources(raw, pool, platform, "platform_workflow_allocatable_fields")
+    if allocatable is None:
+        allocatable = _platform_resources(raw, pool, platform, "platform_allocatable_fields")
+    if available is None or allocatable is None:
+        return None
+    return PoolNodeResources(
+        hostname=str(raw.get("hostname", "unknown")),
+        available_gpu=_parse_int_quantity(available.get("gpu", 0)),
+        available_cpu=_parse_int_quantity(available.get("cpu", 0)),
+        available_memory=_memory_to_gib(available.get("memory", 0)),
+        available_storage=_storage_to_gib(available.get("storage", 0)),
+        allocatable_gpu=_parse_int_quantity(allocatable.get("gpu", 0)),
+        allocatable_cpu=_parse_int_quantity(allocatable.get("cpu", 0)),
+        allocatable_memory=_memory_to_gib(allocatable.get("memory", 0)),
+        allocatable_storage=_storage_to_gib(allocatable.get("storage", 0)),
+    )
+
+
+def _load_pool_node_resources(pool: str, platform: str) -> tuple[list[PoolNodeResources], str | None]:
+    cmd = ["osmo", "resource", "list", "--pool", pool, "--mode", "free", "--format-type", "json"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    except OSError as exc:
+        return [], f"could not query OSMO resources: {exc}"
+    if result.returncode != 0:
+        reason = (result.stderr or result.stdout).strip().splitlines()
+        detail = reason[-1] if reason else f"exit code {result.returncode}"
+        return [], f"could not query OSMO resources: {detail}"
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        return [], f"could not parse OSMO resource JSON: {exc}"
+
+    nodes = []
+    for item in data.get("resources", []):
+        node = _node_resources_from_osmo(item, pool, platform)
+        if node is not None:
+            nodes.append(node)
+    if not nodes:
+        return [], f"OSMO returned no nodes for pool={pool} platform={platform}"
+    return nodes, None
+
+
+def _default_auto_resources(num_gpu: int) -> dict[str, int]:
+    cpu = 16 if num_gpu == 1 else num_gpu * 30
+    memory = 64 if num_gpu == 1 else num_gpu * 128
+    return {"num_cpu": cpu, "memory": memory, "storage": 128}
+
+
+def _round_resource(key: str, value: int, num_gpu: int) -> int:
+    if key == "num_cpu":
+        step = max(num_gpu, 1)
+    else:
+        step = 16
+    return max(value // step * step, 1)
+
+
+def _nth_largest(values: list[int], n: int) -> int:
+    return sorted(values, reverse=True)[n - 1]
+
+
+def _resource_value(node: PoolNodeResources, key: str, *, available: bool) -> int:
+    prefix = "available" if available else "allocatable"
+    if key == "num_cpu":
+        return getattr(node, f"{prefix}_cpu")
+    return getattr(node, f"{prefix}_{key}")
+
+
+def _nodes_that_fit(
+    nodes: list[PoolNodeResources], num_gpu: int, num_cpu: int, memory: int, storage: int, *, available: bool
+) -> list[PoolNodeResources]:
+    if available:
+        return [
+            node
+            for node in nodes
+            if node.available_gpu >= num_gpu
+            and node.available_cpu >= num_cpu
+            and node.available_memory >= memory
+            and node.available_storage >= storage
+        ]
+    return [
+        node
+        for node in nodes
+        if node.allocatable_gpu >= num_gpu
+        and node.allocatable_cpu >= num_cpu
+        and node.allocatable_memory >= memory
+        and node.allocatable_storage >= storage
+    ]
+
+
+def apply_auto_resources(p: ParsedArgs, nodes: list[PoolNodeResources] | None = None) -> ResourcePlan:
+    """Fill unspecified CPU, memory, and storage from pool resource data."""
+    num_gpu = _positive_cluster_int(p, "num_gpu")
+    num_node = _positive_cluster_int(p, "num_node")
+    defaults = _default_auto_resources(num_gpu)
+    plan = ResourcePlan(source="heuristic")
+
+    if nodes is None:
+        nodes, warning = _load_pool_node_resources(p.pool, p.cluster["platform"])
+        if warning is not None:
+            plan.warnings.append(warning)
+
+    if nodes:
+        capacity_candidates = [node for node in nodes if node.allocatable_gpu >= num_gpu]
+        if len(capacity_candidates) < num_node:
+            max_gpu = max((node.allocatable_gpu for node in nodes), default=0)
+            print(
+                f"Error: pool '{p.pool}' has only {len(capacity_candidates)} node(s) that can provide "
+                f"num_gpu={num_gpu}; requested num_node={num_node}. Max GPU per node is {max_gpu}.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        available_candidates = [node for node in nodes if node.available_gpu >= num_gpu]
+        if len(available_candidates) >= num_node:
+            basis = available_candidates
+            plan.source = "osmo-free"
+        else:
+            basis = capacity_candidates
+            plan.source = "osmo-capacity"
+            plan.warnings.append(
+                f"pool '{p.pool}' currently has {len(available_candidates)} free node(s) with "
+                f"{num_gpu} GPU(s); {num_node} are required, so the job may queue."
+            )
+
+        for key in AUTO_RESOURCE_KEYS:
+            if key in p.cluster_overrides:
+                continue
+            values = [_resource_value(node, key, available=plan.source == "osmo-free") for node in basis]
+            fit = _nth_largest(values, num_node)
+            value = min(defaults[key], _round_resource(key, fit, num_gpu))
+            old = p.cluster[key]
+            p.cluster[key] = str(value)
+            if p.cluster[key] != old:
+                plan.changes[key] = (old, p.cluster[key])
+
+        final_cpu = _cluster_int(p, "num_cpu")
+        final_memory = _cluster_int(p, "memory")
+        final_storage = _cluster_int(p, "storage")
+        capacity_fit = _nodes_that_fit(nodes, num_gpu, final_cpu, final_memory, final_storage, available=False)
+        if len(capacity_fit) < num_node:
+            print(
+                f"Error: requested resources fit only {len(capacity_fit)} node(s) in pool '{p.pool}', "
+                f"but num_node={num_node}. Request per node is gpu={num_gpu}, cpu={final_cpu}, "
+                f"memory={final_memory}Gi, storage={final_storage}Gi.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        available_fit = _nodes_that_fit(nodes, num_gpu, final_cpu, final_memory, final_storage, available=True)
+        if len(available_fit) < num_node:
+            plan.warnings.append(
+                f"requested resources currently fit {len(available_fit)} free node(s) in pool '{p.pool}', "
+                f"but num_node={num_node}; the job may queue."
+            )
+    else:
+        for key, value in defaults.items():
+            if key in p.cluster_overrides:
+                continue
+            old = p.cluster[key]
+            p.cluster[key] = str(max(_cluster_int(p, key), value))
+            if p.cluster[key] != old:
+                plan.changes[key] = (old, p.cluster[key])
+
+    return plan
+
+
+def report_resource_plan(p: ParsedArgs, plan: ResourcePlan) -> None:
+    if plan.changes:
+        changes = ", ".join(f"{key}={new}" for key, (_, new) in sorted(plan.changes.items()))
+        print(
+            f"Auto resources for pool={p.pool} num_node={p.cluster['num_node']} num_gpu={p.cluster['num_gpu']} "
+            f"({plan.source}): {changes}",
+            file=sys.stderr,
+        )
+    for warning in plan.warnings:
+        print(f"Warning: {warning}", file=sys.stderr)
 
 
 def _set_derived_cluster_defaults(p: ParsedArgs) -> None:
@@ -350,6 +597,8 @@ def do_pbt(script: str, p: ParsedArgs, dry_run: bool = False):
         print("Missing required: num_populations", file=sys.stderr)
         sys.exit(1)
     num_pop = int(p.fixed.pop("num_populations"))
+    plan = apply_auto_resources(p)
+    report_resource_plan(p, plan)
     cluster_str = build_cluster_str(p.cluster)
     dt = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
@@ -388,6 +637,8 @@ def do_pbt(script: str, p: ParsedArgs, dry_run: bool = False):
 
 
 def do_submit(script: str, p: ParsedArgs, dry_run: bool = False):
+    plan = apply_auto_resources(p)
+    report_resource_plan(p, plan)
     cluster_str = build_cluster_str(p.cluster)
     fixed_str = build_fixed_str(p.fixed)
     combos = build_combos(p.sweep)

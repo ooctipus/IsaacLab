@@ -12,6 +12,8 @@ preserving the behavior observed in production terminal output.
 
 import pytest
 from lib import (
+    PoolNodeResources,
+    apply_auto_resources,
     build_cluster_str,
     build_combos,
     derive_run_name,
@@ -158,6 +160,69 @@ class TestParseArgs:
     def test_explicit_multi_gpu_cpu_preserved(self):
         p = parse_args(["num_gpu=8", "num_cpu=12"])
         assert p.cluster["num_cpu"] == "12"
+
+
+# =============================================================================
+# apply_auto_resources
+# =============================================================================
+
+
+class TestApplyAutoResources:
+    @staticmethod
+    def _node(available_gpu=4, available_cpu=220, available_memory=1000, available_storage=5000):
+        return PoolNodeResources(
+            hostname="node",
+            available_gpu=available_gpu,
+            available_cpu=available_cpu,
+            available_memory=available_memory,
+            available_storage=available_storage,
+            allocatable_gpu=4,
+            allocatable_cpu=220,
+            allocatable_memory=1000,
+            allocatable_storage=5000,
+        )
+
+    def test_auto_resources_from_free_nodes(self):
+        p = parse_args(["pool=isaac-dex-l40s-02", "num_gpu=4", "num_node=16"])
+        plan = apply_auto_resources(p, [self._node() for _ in range(16)])
+
+        assert plan.source == "osmo-free"
+        assert p.cluster["num_cpu"] == "120"
+        assert p.cluster["memory"] == "512"
+        assert p.cluster["storage"] == "128"
+
+    def test_auto_resources_cap_to_nth_free_node(self):
+        nodes = [self._node(available_cpu=120, available_memory=512, available_storage=128) for _ in range(3)]
+        nodes.append(self._node(available_cpu=96, available_memory=384, available_storage=96))
+        p = parse_args(["pool=isaac-dex-l40s-02", "num_gpu=4", "num_node=4"])
+        apply_auto_resources(p, nodes)
+
+        assert p.cluster["num_cpu"] == "96"
+        assert p.cluster["memory"] == "384"
+        assert p.cluster["storage"] == "96"
+
+    def test_explicit_resources_are_preserved(self):
+        p = parse_args(
+            [
+                "pool=isaac-dex-l40s-02",
+                "num_gpu=4",
+                "num_node=4",
+                "num_cpu=64",
+                "memory=384",
+                "storage=128",
+            ]
+        )
+        plan = apply_auto_resources(p, [self._node() for _ in range(4)])
+
+        assert plan.changes == {}
+        assert p.cluster["num_cpu"] == "64"
+        assert p.cluster["memory"] == "384"
+        assert p.cluster["storage"] == "128"
+
+    def test_impossible_gpu_per_node_exits(self):
+        p = parse_args(["pool=isaac-dex-l40s-02", "num_gpu=8", "num_node=1"])
+        with pytest.raises(SystemExit):
+            apply_auto_resources(p, [self._node()])
 
 
 # =============================================================================
