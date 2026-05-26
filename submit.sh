@@ -12,7 +12,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 mode="submit"
-dry=""
+dry="${DRY_RUN:-}"
 while [[ "${1:-}" == -* ]]; do
   case "$1" in
     -p|--pbt)     mode="pbt";    shift ;;
