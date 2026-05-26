@@ -320,25 +320,33 @@ def _resource_value(node: PoolNodeResources, key: str, *, available: bool) -> in
     return getattr(node, f"{prefix}_{key}")
 
 
+def _proportional_resource_cap(node: PoolNodeResources, key: str, num_gpu: int, *, available: bool) -> int:
+    if node.allocatable_gpu < 1:
+        return 0
+    allocatable = _resource_value(node, key, available=False)
+    proportional = allocatable * num_gpu // node.allocatable_gpu
+    if available:
+        return min(_resource_value(node, key, available=True), proportional)
+    return proportional
+
+
+def _node_fits_resources(
+    node: PoolNodeResources, num_gpu: int, num_cpu: int, memory: int, storage: int, *, available: bool
+) -> bool:
+    gpu = node.available_gpu if available else node.allocatable_gpu
+    return (
+        gpu >= num_gpu
+        and _proportional_resource_cap(node, "num_cpu", num_gpu, available=available) >= num_cpu
+        and _proportional_resource_cap(node, "memory", num_gpu, available=available) >= memory
+        and _proportional_resource_cap(node, "storage", num_gpu, available=available) >= storage
+    )
+
+
 def _nodes_that_fit(
     nodes: list[PoolNodeResources], num_gpu: int, num_cpu: int, memory: int, storage: int, *, available: bool
 ) -> list[PoolNodeResources]:
-    if available:
-        return [
-            node
-            for node in nodes
-            if node.available_gpu >= num_gpu
-            and node.available_cpu >= num_cpu
-            and node.available_memory >= memory
-            and node.available_storage >= storage
-        ]
     return [
-        node
-        for node in nodes
-        if node.allocatable_gpu >= num_gpu
-        and node.allocatable_cpu >= num_cpu
-        and node.allocatable_memory >= memory
-        and node.allocatable_storage >= storage
+        node for node in nodes if _node_fits_resources(node, num_gpu, num_cpu, memory, storage, available=available)
     ]
 
 
@@ -380,7 +388,9 @@ def apply_auto_resources(p: ParsedArgs, nodes: list[PoolNodeResources] | None = 
         for key in AUTO_RESOURCE_KEYS:
             if key in p.cluster_overrides:
                 continue
-            values = [_resource_value(node, key, available=plan.source == "osmo-free") for node in basis]
+            values = [
+                _proportional_resource_cap(node, key, num_gpu, available=plan.source == "osmo-free") for node in basis
+            ]
             fit = _nth_largest(values, num_node)
             value = min(defaults[key], _round_resource(key, fit, num_gpu))
             old = p.cluster[key]
