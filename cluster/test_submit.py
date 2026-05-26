@@ -169,17 +169,26 @@ class TestParseArgs:
 
 class TestApplyAutoResources:
     @staticmethod
-    def _node(available_gpu=4, available_cpu=220, available_memory=1000, available_storage=5000):
+    def _node(
+        available_gpu=4,
+        available_cpu=220,
+        available_memory=1000,
+        available_storage=5000,
+        allocatable_gpu=4,
+        allocatable_cpu=220,
+        allocatable_memory=1000,
+        allocatable_storage=5000,
+    ):
         return PoolNodeResources(
             hostname="node",
             available_gpu=available_gpu,
             available_cpu=available_cpu,
             available_memory=available_memory,
             available_storage=available_storage,
-            allocatable_gpu=4,
-            allocatable_cpu=220,
-            allocatable_memory=1000,
-            allocatable_storage=5000,
+            allocatable_gpu=allocatable_gpu,
+            allocatable_cpu=allocatable_cpu,
+            allocatable_memory=allocatable_memory,
+            allocatable_storage=allocatable_storage,
         )
 
     def test_auto_resources_from_free_nodes(self):
@@ -200,6 +209,40 @@ class TestApplyAutoResources:
         assert p.cluster["num_cpu"] == "96"
         assert p.cluster["memory"] == "384"
         assert p.cluster["storage"] == "96"
+
+    def test_auto_resources_cap_to_gpu_fraction_on_partial_node(self):
+        node = self._node(
+            available_gpu=8,
+            available_cpu=127,
+            available_memory=989,
+            available_storage=3164,
+            allocatable_gpu=8,
+            allocatable_cpu=125,
+            allocatable_memory=989,
+            allocatable_storage=3164,
+        )
+        p = parse_args(["pool=groot-l40s-03", "num_gpu=4", "num_node=1"])
+        apply_auto_resources(p, [node])
+
+        assert p.cluster["num_cpu"] == "60"
+        assert p.cluster["memory"] == "480"
+        assert p.cluster["storage"] == "128"
+
+    def test_explicit_resources_above_gpu_fraction_exit(self):
+        node = self._node(
+            available_gpu=8,
+            available_cpu=127,
+            available_memory=989,
+            available_storage=3164,
+            allocatable_gpu=8,
+            allocatable_cpu=125,
+            allocatable_memory=989,
+            allocatable_storage=3164,
+        )
+        p = parse_args(["pool=groot-l40s-03", "num_gpu=4", "num_node=1", "num_cpu=120"])
+
+        with pytest.raises(SystemExit):
+            apply_auto_resources(p, [node])
 
     def test_explicit_resources_are_preserved(self):
         p = parse_args(
