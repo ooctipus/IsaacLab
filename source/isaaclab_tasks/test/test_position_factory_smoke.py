@@ -27,9 +27,12 @@ test catches it without paying the cost of the heavier
 from __future__ import annotations
 
 import importlib
+import sys
+from types import SimpleNamespace
 
 import gymnasium as gym
 import pytest
+import torch
 
 import isaaclab_tasks  # noqa: F401 -- registers the gym tasks
 
@@ -51,6 +54,76 @@ def test_env_cfg_constructs(task_name: str) -> None:
     assert hasattr(cfg, "events")
 
 
+def test_factory_accumulator_success_rate_callback_targets_monitor_success_rate() -> None:
+    """Factory accumulator curriculum should bind the reset monitor tensor."""
+    spec = gym.spec("Isaac-Factory-v0")
+    module_path, cls_name = spec.kwargs["env_cfg_entry_point"].split(":")
+    cfg_cls = getattr(importlib.import_module(module_path), cls_name)
+    cfg = cfg_cls()
+    callback = cfg.curriculum.difficulty_scheduler.params["success_rate_callback"]
+
+    expected = "env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate"
+    assert callback.default == expected
+    assert callback.accumulator == expected
+
+    rates = torch.tensor([0.5, 1.0])
+    reset_accumulator = SimpleNamespace(monitor_success_rate=rates)
+    eval_env = SimpleNamespace(
+        event_manager=SimpleNamespace(get_term_cfg=lambda _name: SimpleNamespace(func=reset_accumulator))
+    )
+    assert eval(callback.accumulator, {}, {"env": eval_env}) is rates  # noqa: S307
+
+
+def test_factory_difficulty_scheduler_waits_for_accumulator_rates() -> None:
+    """Initial reset may run curriculum before accumulator reset materializes rates."""
+    from isaaclab_tasks.manager_based.multi_task.factory.mdp.curriculum import DifficultyScheduler
+
+    scheduler = DifficultyScheduler.__new__(DifficultyScheduler)
+    scheduler.current_adr_difficulties = torch.ones(3) * 2
+    scheduler.difficulty_frac = torch.tensor(0.2)
+    reset_accumulator = SimpleNamespace(monitor_success_rate=None)
+    env = SimpleNamespace(
+        device=torch.device("cpu"),
+        event_manager=SimpleNamespace(get_term_cfg=lambda _name: SimpleNamespace(func=reset_accumulator)),
+    )
+
+    result = DifficultyScheduler.__call__(
+        scheduler,
+        env,
+        torch.arange(3),
+        "env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate",
+        max_difficulty=10,
+    )
+
+    assert result is scheduler.difficulty_frac
+    torch.testing.assert_close(scheduler.current_adr_difficulties, torch.ones(3) * 2)
+
+
+def test_factory_difficulty_scheduler_averages_ready_success_rates() -> None:
+    """Difficulty scheduler should average bound rate tensors internally."""
+    from isaaclab_tasks.manager_based.multi_task.factory.mdp.curriculum import DifficultyScheduler
+
+    scheduler = DifficultyScheduler.__new__(DifficultyScheduler)
+    scheduler.current_adr_difficulties = torch.ones(3) * 2
+    scheduler.difficulty_frac = torch.tensor(0.2)
+    reset_accumulator = SimpleNamespace(monitor_success_rate=torch.ones(4))
+    env = SimpleNamespace(
+        device=torch.device("cpu"),
+        event_manager=SimpleNamespace(get_term_cfg=lambda _name: SimpleNamespace(func=reset_accumulator)),
+    )
+
+    result = DifficultyScheduler.__call__(
+        scheduler,
+        env,
+        torch.arange(3),
+        "env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate",
+        max_difficulty=10,
+    )
+
+    torch.testing.assert_close(scheduler.current_adr_difficulties, torch.ones(3) * 3)
+    torch.testing.assert_close(result, torch.tensor(0.3))
+
+
 def test_position_weight_decay_preset_composes_with_value_shift_algorithm() -> None:
     """Weight decay preset should tune the active PPO variant, not replace it."""
     from isaaclab_tasks.manager_based.locomotion.position.config.rsl_rl_cfg import (
@@ -66,6 +139,28 @@ def test_position_weight_decay_preset_composes_with_value_shift_algorithm() -> N
     assert isinstance(cfg.algorithm, ValueShiftAlgorithmCfg)
     assert cfg.algorithm.optimizer == "adamw"
     assert cfg.algorithm.weight_decay == 1.0e-4
+
+
+def test_position_weight_decay_scalar_override_composes_with_value_shift(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Submit-style weight_decay overrides should remain scalar Hydra overrides."""
+    from isaaclab_tasks.manager_based.locomotion.position.config.rsl_rl_cfg import ValueShiftAlgorithmCfg
+    from isaaclab_tasks.utils.hydra import resolve_task_config
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pytest",
+            "presets=beta_value_shift,weight_decay",
+            "agent.algorithm.weight_decay=0.01",
+        ],
+    )
+
+    _, agent_cfg = resolve_task_config("Isaac-Position-Anymal-C-v0", "rsl_rl_cfg_entry_point")
+
+    assert isinstance(agent_cfg.algorithm, ValueShiftAlgorithmCfg)
+    assert agent_cfg.algorithm.optimizer == "adamw"
+    assert agent_cfg.algorithm.weight_decay == 0.01
 
 
 @pytest.mark.parametrize("task_name", ["Isaac-Position-v0", "Isaac-Factory-v0"])

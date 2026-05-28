@@ -199,6 +199,10 @@ def _is_walkable_cfg(cfg) -> bool:
     return hasattr(cfg, "__dataclass_fields__") or isinstance(cfg, (Mapping, list))
 
 
+def _is_leaf_preset(preset_obj: PresetCfg) -> bool:
+    return all(not _is_walkable_cfg(value) for value in _preset_fields(preset_obj).values())
+
+
 def _walk_cfg(cfg, path: str, on_preset: Callable) -> None:
     """Depth-first walk of a config tree, calling *on_preset(parent, key, obj, path)*
     for every :class:`PresetCfg` node.  Recurses through dataclass attrs, dicts,
@@ -330,6 +334,16 @@ def _resolve_active_presets(
     explicit = explicit or {}
     consumed_explicit = consumed_explicit if consumed_explicit is not None else set()
 
+    def explicit_preset_name(preset_obj: PresetCfg, path: str) -> str | None:
+        if path not in explicit:
+            return None
+        fields = _preset_fields(preset_obj)
+        name = _normalize_preset_name(explicit[path], set(fields))
+        if name in fields or not _is_leaf_preset(preset_obj):
+            consumed_explicit.add(path)
+            return explicit[path]
+        return None
+
     def resolve_chain(preset_obj: PresetCfg, path: str):
         seen: set[int] = set()
         val = preset_obj
@@ -343,14 +357,12 @@ def _resolve_active_presets(
                 val,
                 selected,
                 path=path,
-                explicit_name=explicit.get(path),
+                explicit_name=explicit_preset_name(val, path),
                 consumed_selected=consumed_selected,
             )
         return val
 
     if isinstance(cfg, PresetCfg):
-        if root_path in explicit:
-            consumed_explicit.add(root_path)
         cfg = resolve_chain(cfg, root_path or "<root>")
 
     queue = deque([(root_path, cfg)])
@@ -361,8 +373,6 @@ def _resolve_active_presets(
         for key, val in _iter_cfg_items(obj):
             child_path = f"{path}.{key}" if path else str(key)
             if isinstance(val, PresetCfg):
-                if child_path in explicit:
-                    consumed_explicit.add(child_path)
                 resolved = resolve_chain(val, child_path or "<root>")
                 if isinstance(obj, list):
                     obj[int(key)] = resolved
