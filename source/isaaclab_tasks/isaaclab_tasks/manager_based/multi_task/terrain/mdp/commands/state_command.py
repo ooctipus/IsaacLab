@@ -112,6 +112,7 @@ class RelativeStateCommand(CommandTerm):
         if env_ids.numel() == 0:
             return
 
+        env_ids = env_ids.long()
         num_resets = env_ids.numel()
         if self.randomize_command_indices:
             self.cmd_indices[env_ids] = torch.randint(0, self.table.num_tasks, (num_resets,), device=self.device)
