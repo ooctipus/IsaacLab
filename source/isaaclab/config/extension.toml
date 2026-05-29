@@ -20,6 +20,7 @@ requirements = [
     "hidapi",
     "gymnasium==0.29.0",
     "trimesh",
+    "mapbox-earcut",
     "websockets"
 ]
 
@@ -31,6 +32,7 @@ modules = [
     "hid",
     "gymnasium",
     "trimesh",
+    "mapbox_earcut",
     "websockets"
 ]
 
