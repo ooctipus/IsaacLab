@@ -26,6 +26,7 @@ Example usage::
 
 import ast
 import functools
+import re
 import sys
 import warnings
 from collections import deque
@@ -718,15 +719,81 @@ def _apply_preset_scalars(cfgs: dict, hydra_cfg: dict, preset_scalar: list) -> N
             _setattr(hydra_cfg, full_path, val)
 
 
+_INDEX_RE = re.compile(r"\[(-?\d+)\]")
+
+
+def _step(obj, key: str):
+    """Resolve one ``.``-separated path segment, supporting list indices.
+
+    The segment may contain ``[N]`` index suffixes (e.g. ``foo[0][2]``) and,
+    when ``obj`` is a list/tuple, may itself be a bare integer literal
+    (e.g. ``foo.3.bar``). Plain string segments are looked up as
+    :class:`Mapping` keys or attribute names.
+    """
+    indices: list[int] = []
+    while True:
+        m = _INDEX_RE.search(key)
+        if not m:
+            break
+        indices.append(int(m.group(1)))
+        key = key[: m.start()] + key[m.end() :]
+    if key:
+        if isinstance(obj, Mapping):
+            obj = obj[key]
+        elif isinstance(obj, (list, tuple)) and key.lstrip("-").isdigit():
+            obj = obj[int(key)]
+        else:
+            obj = getattr(obj, key)
+    for i in indices:
+        obj = obj[i]
+    return obj
+
+
 def _setattr(obj, path: str, val):
-    """Set nested attribute/key (e.g., "actions.arm_action.scale")."""
+    """Set nested attribute / dict key / list index.
+
+    Supports three addressing styles per ``.``-separated segment, in
+    addition to plain attribute / dict-key access:
+
+    * ``foo[3]``                — bracketed integer index (lists)
+    * ``foo.3.bar``             — bare integer segment (lists)
+    * ``foo[1][2]`` / nested    — chained bracket indices
+
+    Examples::
+
+        _setattr(cfg, "actions.arm_action.scale", 0.1)
+        _setattr(cfg, "extra_objectives.3.weight", 0.25)
+        _setattr(cfg, "extra_objectives[3].weight", 0.25)
+        _setattr(cfg, "extra_objectives[3]", new_obj_cfg)
+    """
     *parts, leaf = path.split(".")
     for p in parts:
-        obj = obj[p] if isinstance(obj, Mapping) else getattr(obj, p)
-    if isinstance(obj, dict):
-        obj[leaf] = val
-    else:
-        setattr(obj, leaf, val)
+        obj = _step(obj, p)
+    indices: list[int] = []
+    while True:
+        m = _INDEX_RE.search(leaf)
+        if not m:
+            break
+        indices.append(int(m.group(1)))
+        leaf = leaf[: m.start()] + leaf[m.end() :]
+    if not indices:
+        if isinstance(obj, dict):
+            obj[leaf] = val
+        elif isinstance(obj, list) and leaf.lstrip("-").isdigit():
+            obj[int(leaf)] = val
+        else:
+            setattr(obj, leaf, val)
+        return
+    if leaf:
+        if isinstance(obj, Mapping):
+            obj = obj[leaf]
+        elif isinstance(obj, (list, tuple)) and leaf.lstrip("-").isdigit():
+            obj = obj[int(leaf)]
+        else:
+            obj = getattr(obj, leaf)
+    for i in indices[:-1]:
+        obj = obj[i]
+    obj[indices[-1]] = val
 
 
 def _parse_val(s: str):
