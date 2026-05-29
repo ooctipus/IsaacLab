@@ -347,6 +347,65 @@ class TerminationsCfg:
     success = DoneTerm(func=mdp.success_terminate, time_out=False)
 
 
+def _make_sampler_presets(state_buffer_bind: str):
+    """Build a sampler preset, parameterized by the per-task state-buffer bind.
+
+    The ``state_buffer_bind`` only needs to evaluate to a ``[num_tasks, K]``
+    tensor (the value-shift strategy uses ``shape[0]`` as the cache length).
+    Different curricula expose this through different attributes on the
+    ``goal_point`` term: foot-sampled uses ``table.params`` (multi-task
+    :class:`RelativeStateCommand`), flat-patch uses ``spec.descretized_cmd``
+    (locomotion/position :class:`RelativeStateCommand`).
+    """
+    return preset(
+        uniform=SamplerCfg(
+            strategies=[UniformSamplingStrategyCfg(weight=1.0)],
+            eps=0.0,
+        ),
+        beta=SamplerCfg(
+            strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=2.5, weight=1.0, success_rate_bind="success_rates")],
+            eps=1e-4,
+        ),
+        value_shift=SamplerCfg(
+            strategies=[
+                ValueShiftSamplingStrategyCfg(
+                    weight=0.5,
+                    state_buffer_bind=state_buffer_bind,
+                    cmd_indices_bind="env.command_manager.get_term('goal_point').cmd_indices",
+                    resample_command_fn_bind="env.command_manager.get_term('goal_point')._resample_command",
+                    get_critic_obs_fn_bind="lambda: env.observation_manager.compute()",
+                )
+            ],
+            eps=1e-4,
+        ),
+        beta_value_shift=SamplerCfg(
+            strategies=[
+                BetaSamplingStrategyCfg(target=0.66, kappa=2.5, weight=1.0, success_rate_bind="success_rates"),
+                ValueShiftSamplingStrategyCfg(
+                    weight=1.0,
+                    state_buffer_bind=state_buffer_bind,
+                    cmd_indices_bind="env.command_manager.get_term('goal_point').cmd_indices",
+                    resample_command_fn_bind="env.command_manager.get_term('goal_point')._resample_command",
+                    get_critic_obs_fn_bind="lambda: env.observation_manager.compute()",
+                ),
+            ],
+            eps=1e-4,
+        ),
+        default=SamplerCfg(
+            strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=2.5, weight=1.0, success_rate_bind="success_rates")],
+            eps=1e-4,
+        ),
+    )
+
+
+FOOT_SAMPLED_SAMPLER_PRESETS = _make_sampler_presets(
+    state_buffer_bind="env.command_manager.get_term('goal_point').table.task_partition",
+)
+FLAT_PATCH_SAMPLER_PRESETS = _make_sampler_presets(
+    state_buffer_bind="env.command_manager.get_term('goal_point').spec.descretized_cmd",
+)
+
+
 @configclass
 class FootSampledCurriculumCfg:
     terrain_levels = CurrTerm(
@@ -360,13 +419,8 @@ class FootSampledCurriculumCfg:
                 target_index_bind="env.command_manager.get_term('goal_point').table.target_index",
                 task_partition_bind="env.command_manager.get_term('goal_point').table.task_partition",
             ),
-            "sampling": SamplerCfg(
-                strategies=[
-                    BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates")
-                ],
-                eps=1e-8,
-            ),
-            "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=20),
+            "sampling": FOOT_SAMPLED_SAMPLER_PRESETS,
+            "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=100),
             "success_bind": "env.termination_manager.get_term('success')",
             "sampler_visual_logger": log_spawn_goal_sampler_images,
             "sampler_visual_log_period": 1000,
@@ -389,49 +443,7 @@ class FlatPatchCurriculumCfg:
                     "device=env.device)"
                 ),
             ),
-            "sampling": preset(
-                uniform=SamplerCfg(
-                    strategies=[UniformSamplingStrategyCfg(weight=1.0)],
-                    eps=0.0,
-                ),
-                beta=SamplerCfg(
-                    strategies=[
-                        BetaSamplingStrategyCfg(target=0.66, kappa=2.5, weight=1.0, success_rate_bind="success_rates")
-                    ],
-                    eps=1e-4,
-                ),
-                value_shift=SamplerCfg(
-                    strategies=[
-                        ValueShiftSamplingStrategyCfg(
-                            weight=0.5,
-                            state_buffer_bind="env.command_manager.get_term('goal_point').spec.descretized_cmd",
-                            cmd_indices_bind="env.command_manager.get_term('goal_point').cmd_indices",
-                            resample_command_fn_bind="env.command_manager.get_term('goal_point')._resample_command",
-                            get_critic_obs_fn_bind="lambda: env.observation_manager.compute()",
-                        )
-                    ],
-                    eps=1e-4,
-                ),
-                beta_value_shift=SamplerCfg(
-                    strategies=[
-                        BetaSamplingStrategyCfg(target=0.66, kappa=2.5, weight=1.0, success_rate_bind="success_rates"),
-                        ValueShiftSamplingStrategyCfg(
-                            weight=1.0,
-                            state_buffer_bind="env.command_manager.get_term('goal_point').spec.descretized_cmd",
-                            cmd_indices_bind="env.command_manager.get_term('goal_point').cmd_indices",
-                            resample_command_fn_bind="env.command_manager.get_term('goal_point')._resample_command",
-                            get_critic_obs_fn_bind="lambda: env.observation_manager.compute()",
-                        ),
-                    ],
-                    eps=1e-4,
-                ),
-                default=SamplerCfg(
-                    strategies=[
-                        BetaSamplingStrategyCfg(target=0.66, kappa=2.5, weight=1.0, success_rate_bind="success_rates")
-                    ],
-                    eps=1e-4,
-                ),
-            ),
+            "sampling": FLAT_PATCH_SAMPLER_PRESETS,
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=100),
         },
     )

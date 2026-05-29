@@ -96,6 +96,36 @@ class IKObjectiveGravityTorqueCfg(IKObjectiveBaseCfg):
 
 
 @configclass
+class IKObjectiveJointDefaultCfg(IKObjectiveBaseCfg):
+    """Config for :class:`IKObjectiveJointDefault`.
+
+    Penalizes deviation of every (non-root) joint DOF from its angle in
+    :attr:`~isaaclab_tasks.manager_based.multi_task.kinematics.NewtonKinematics.default_joint_q`,
+    i.e. the asset's default joint configuration captured at kinematics
+    init. Differs from :class:`IKObjectiveJointRegularizeCfg` in two ways:
+
+    * **Coverage:** every (non-root) DOF is regularized; there is no
+      regex selection.
+    * **Targets:** targets are fixed to the per-DOF entries of
+      ``default_joint_q``, so each joint is pulled toward the robot's
+      nominal pose rather than a user-supplied angle.
+
+    Use a small weight (typical ``0.02``--``0.1``) so the foot-contact,
+    base-pose, and stability objectives still dominate the solve and the
+    objective only nudges the IK toward the robot's nominal pose where
+    the contact constraints leave slack.
+    """
+
+    class_type: type | str = "{DIR}.joint_default:IKObjectiveJointDefault"
+
+    weight: float = 0.05
+    """Uniform residual weight [unitless] applied to every (non-root) DOF."""
+
+    skip_root: bool = True
+    """Exclude the free-root joint's 6 DOFs from regularization."""
+
+
+@configclass
 class IKObjectiveJointRegularizeCfg(IKObjectiveBaseCfg):
     """Config for :class:`IKObjectiveJointRegularize`.
 

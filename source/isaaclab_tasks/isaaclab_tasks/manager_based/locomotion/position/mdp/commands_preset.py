@@ -9,6 +9,7 @@ from isaaclab.utils.configclass import configclass
 from isaaclab_tasks.manager_based.multi_task.kinematics import NewtonKinematicsCfg
 from isaaclab_tasks.manager_based.multi_task.kinematics.ik_objectives.cfg import (
     IKObjectiveGravityTorqueCfg,
+    IKObjectiveJointDefaultCfg,
     IKObjectiveStabilityMarginCfg,
     IKObjectiveTerrainCollisionCfg,
 )
@@ -193,8 +194,8 @@ class FootSampledCommandsCfg:
         payload=CommandPayloadPresetCfg(),  # type: ignore
         task_table=RelativeStateCommandCfg.TaskTableCfg(
             pool_spacing=0.5,
-            max_spawns_per_cell=30,
-            num_targets_per_cell=5,
+            max_spawns_per_cell=20,
+            num_targets_per_cell=20,
             pipeline_cfg=RetargetPipelineCfg(
                 asset_cfg=SceneEntityCfg("robot"),
                 kin=NewtonKinematicsCfg(usd_path=""),
@@ -219,6 +220,7 @@ class FootSampledCommandsCfg:
                     IKObjectiveTerrainCollisionCfg(weight=2.0, margin=0.05, n_samples=4),
                     IKObjectiveStabilityMarginCfg(weight=1.0),
                     IKObjectiveGravityTorqueCfg(weight=0.02),
+                    IKObjectiveJointDefaultCfg(weight=0.25),
                 ],
                 criteria=[
                     CollisionCheckCfg(n_samples=16, max_pen=0.02),
