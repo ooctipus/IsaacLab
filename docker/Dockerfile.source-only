@@ -28,8 +28,34 @@ COPY --chown=isaaclab:isaaclab tools ${ISAACLAB_PATH}/tools
 
 # Optionally re-run pip install (skipped for source-only, enabled for --force-pip-only)
 ARG RUN_PIP_INSTALL=0
-RUN ln -sf ${ISAACSIM_ROOT_PATH_ARG} ${ISAACLAB_PATH}/_isaac_sim && \
+RUN ln -sfn ${ISAACSIM_ROOT_PATH_ARG} ${ISAACLAB_PATH}/_isaac_sim && \
     find ${ISAACLAB_PATH}/source -type f -name "*.sh" -exec sed -i 's/\r$//' {} + && \
     if [ "${RUN_PIP_INSTALL}" = "1" ]; then \
       ${ISAACLAB_PATH}/isaaclab.sh -i rsl_rl; \
     fi
+
+# Override the PyPI ``rsl-rl-lib`` (pulled in by ``isaaclab_rl``) with the
+# local fork at ``dep/rsl_rl`` whenever it is present. This is the source of
+# truth for features like ``PPO(weight_decay=...)`` that aren't in the PyPI
+# release. ``--no-deps`` keeps the existing dependency tree intact;
+# ``--force-reinstall`` overwrites the PyPI build with the editable local
+# one. Runs unconditionally so ``-p/--pip`` (source-only) rebuilds pick it up.
+RUN if [ -d ${ISAACLAB_PATH}/dep/rsl_rl ]; then \
+      ${ISAACLAB_PATH}/isaaclab.sh -p -m pip install --no-deps --force-reinstall \
+        -e ${ISAACLAB_PATH}/dep/rsl_rl; \
+    fi
+
+# Make the editable ``dep/rsl_rl`` win import resolution against the
+# Isaac-Sim-bundled ``rsl_rl`` at
+# ``_isaac_sim/kit/python/lib/python3.12/site-packages/rsl_rl``. The bundled
+# site-packages directory is earlier on ``sys.path`` than ``~/.local`` where
+# pip's user-site install lands, so without prepending the source directory
+# to ``PYTHONPATH`` the bundled copy shadows the editable one. The
+# IsaacSim-bundled site-packages live behind a read-only mount in this
+# image, so removing the bundled tree isn't an option here.
+#
+# Set unconditionally even when ``dep/rsl_rl`` is absent on the host:
+# ``ENV`` cannot be gated on a runtime ``[ -d ... ]`` check, and Python
+# silently skips ``PYTHONPATH`` entries that don't exist on disk, so the
+# extra path is harmless when the fork isn't checked out.
+ENV PYTHONPATH=${ISAACLAB_PATH}/dep/rsl_rl
