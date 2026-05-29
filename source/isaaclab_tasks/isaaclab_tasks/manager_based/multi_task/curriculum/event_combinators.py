@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 import torch
 from tqdm import tqdm
 
-from isaaclab.managers import EventTermCfg, ManagerTermBase, ManagerTermBaseCfg
+from isaaclab.managers import EventTermCfg, ManagerTermBase
 
 from ..utils.grid_downsample import extract_features, grid_bucket_downsample
 from . import reset_state

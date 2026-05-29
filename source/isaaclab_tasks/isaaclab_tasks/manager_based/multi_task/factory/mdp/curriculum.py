@@ -91,7 +91,11 @@ class DifficultyScheduler(ManagerTermBase):
         max_difficulty: int = 50,
         promotion_only: bool = False,
     ):
-        success_rate = eval(success_rate_callback)
+        success_rates = eval(success_rate_callback, {}, {"env": env})  # noqa: S307
+        if success_rates is None:
+            return self.difficulty_frac
+        success_rate = success_rates.mean()
+
         move_up = success_rate > 0.8
         demot = self.current_adr_difficulties[env_ids] if promotion_only else self.current_adr_difficulties[env_ids] - 1
         self.current_adr_difficulties[env_ids] = torch.where(
