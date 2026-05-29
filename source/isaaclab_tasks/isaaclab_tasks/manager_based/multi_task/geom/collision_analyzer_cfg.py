@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import MISSING
 from typing import TYPE_CHECKING
 
-from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import ManagerTermBaseCfg, SceneEntityCfg
 from isaaclab.utils.configclass import configclass
 
 if TYPE_CHECKING:
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 
 @configclass
-class CollisionAnalyzerCfg:
+class CollisionAnalyzerCfg(ManagerTermBaseCfg):
     """Configuration for :class:`CollisionAnalyzer`.
 
     The analyzer samples a point cloud on the surface of the asset's collision
@@ -30,8 +30,8 @@ class CollisionAnalyzerCfg:
     sampled points are at least :attr:`min_dist` away from every obstacle.
     """
 
-    class_type: type[CollisionAnalyzer] = "{DIR}.collision_analyzer:CollisionAnalyzer"
-    """The class to instantiate from this configuration."""
+    func: type[CollisionAnalyzer] | str = "{DIR}.collision_analyzer:CollisionAnalyzer"
+    """The callable class to instantiate from this configuration."""
 
     num_points: int = 32
     """Number of surface points sampled per rigid body of the asset."""

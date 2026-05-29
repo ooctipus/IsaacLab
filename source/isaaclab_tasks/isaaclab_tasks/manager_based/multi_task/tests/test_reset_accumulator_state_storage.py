@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 import torch
 
+from isaaclab.managers import ManagerTermBaseCfg
+
 import isaaclab_tasks.manager_based.multi_task.curriculum.event_combinators as event_combinators
 from isaaclab_tasks.manager_based.multi_task.curriculum.sampling import FrontierSamplingStrategyCfg, SamplerCfg
 from isaaclab_tasks.manager_based.multi_task.curriculum.success_monitor_cfg import SuccessMonitorCfg
@@ -43,6 +45,35 @@ def _termination_manager(num_envs: int) -> SimpleNamespace:
             func=SimpleNamespace(is_success=torch.zeros(num_envs, dtype=torch.bool))
         )
     )
+
+
+def test_accumulator_init_accepts_resolved_manager_term_cfg_conditions(monkeypatch) -> None:
+    """Resolved nested manager-term cfgs should be valid acceptance conditions."""
+
+    class Condition:
+        def __call__(self, _env, env_ids):
+            return torch.ones_like(env_ids, dtype=torch.bool)
+
+    monkeypatch.setattr(event_combinators.reset_state, "get_reset_state", lambda *_args: torch.zeros(1, 2))
+    env = SimpleNamespace(
+        device=torch.device("cpu"),
+        num_envs=1,
+        scene=SimpleNamespace(_articulations={}, _rigid_objects={}),
+    )
+    condition = ManagerTermBaseCfg(func=Condition())
+    cfg = SimpleNamespace(
+        params={
+            "acceptance_conditions": {"ok": condition},
+            "reset_assets": [],
+            "state_table_size": 4,
+            "sampling": SimpleNamespace(max_samples=None),
+            "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=2),
+        }
+    )
+
+    acc = reset_accumulator(cfg, env)
+
+    assert acc.acceptance_conditions["ok"] is condition
 
 
 def test_accumulator_precollect_appends_direct_data_and_tag_indices(monkeypatch):

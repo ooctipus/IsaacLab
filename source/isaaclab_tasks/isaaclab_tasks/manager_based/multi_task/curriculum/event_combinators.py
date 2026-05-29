@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 import torch
 from tqdm import tqdm
 
-from isaaclab.managers import EventTermCfg, ManagerTermBase
+from isaaclab.managers import EventTermCfg, ManagerTermBase, ManagerTermBaseCfg
 
 from ..utils.grid_downsample import extract_features, grid_bucket_downsample
 from . import reset_state
@@ -136,8 +136,9 @@ class reset_accumulator(ManagerTermBase):
                 prev_size = state_size
                 reset_term.func(env, all_env_ids, **reset_term.params)
                 valid_mask = torch.ones(len(all_env_ids), dtype=torch.bool, device=env.device)
-                for _, val in self.acceptance_conditions.items():
-                    valid_mask &= val(env, all_env_ids)
+                for condition in self.acceptance_conditions.values():
+                    condition_func = condition if callable(condition) else condition.func
+                    valid_mask &= condition_func(env, all_env_ids)
 
                 valid_env_ids = all_env_ids[valid_mask]
                 if valid_env_ids.numel() > 0:
