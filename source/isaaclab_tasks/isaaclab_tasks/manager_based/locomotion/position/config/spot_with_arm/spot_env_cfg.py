@@ -102,6 +102,7 @@ class SpotEnvMixin:
 
         self.terminations.base_contact.params["sensor_cfg"].body_names = "body"
         self.viewer.body_name = "body"
+        self.commands.foot_sampled_commands.goal_point.foot_body_names = [".*_foot"]
         pipeline_cfg = self.commands.foot_sampled_commands.goal_point.task_table.pipeline_cfg
         pipeline_cfg.foot_body_names = ".*_foot"
         pipeline_cfg.lateral_hip_joint_pattern = ".*hip_x"

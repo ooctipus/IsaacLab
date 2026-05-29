@@ -137,6 +137,68 @@ class RelativeStateCommand(CommandTerm):
         self.metrics["error_linvel"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["error_angvel"] = torch.zeros(self.num_envs, device=self.device)
 
+        # Success-criterion bookkeeping: resolve support feet and prepare lazy
+        # caches for body weight and characteristic limb length ``L_ref``. The
+        # ``L_ref`` capture is deferred to the first ``get_task_done`` call so
+        # the asset is fully spawned and articulated when we read body Z.
+        foot_ids, _ = self.robot.find_bodies(self.cfg.foot_body_names)
+        if len(foot_ids) == 0:
+            raise ValueError(
+                "RelativeStateCommandCfg.foot_body_names matched no bodies on asset"
+                f" {self.cfg.asset_name!r}; cannot derive N_support_feet or L_ref."
+            )
+        self._foot_ids: list[int] = list(foot_ids)
+        self._n_support_feet: int = len(self._foot_ids)
+        self._weight: torch.Tensor | None = None  # [num_envs], m·g per env
+        self._L_ref: float | None = None  # scalar, ⟨z_base − mean_f z_foot⟩_envs at first call
+
+        # Resolve the joint-wrench sensor used by the success gate. We read the
+        # joint reaction torque rather than ``applied_torque`` so that hard
+        # joint-stop reactions (which are absorbed by constraints, not the
+        # actuator) are counted toward the per-joint mechanical load.
+        self._wrench_sensor = env.scene[self.cfg.joint_wrench_sensor_name]
+
+        # Resolve the contact sensor used by the feet-bear-weight gate. We map
+        # each foot body (by articulation index) to its channel index on the
+        # contact sensor by body-name match, because the contact sensor's body
+        # ordering need not coincide with the articulation's.
+        self._contact_sensor = env.scene[self.cfg.contact_sensor_name]
+        robot_body_names = list(self.robot.data.body_names)
+        sensor_body_names = list(self._contact_sensor.body_names or [])
+        contact_foot_channels: list[int] = []
+        for fid in self._foot_ids:
+            name = robot_body_names[fid]
+            try:
+                contact_foot_channels.append(sensor_body_names.index(name))
+            except ValueError as err:
+                raise RuntimeError(
+                    f"ContactSensor {self.cfg.contact_sensor_name!r} does not cover foot body"
+                    f" {name!r}; expand the sensor's prim_path regex to include all feet."
+                ) from err
+        self._contact_foot_channels: torch.Tensor = torch.tensor(
+            contact_foot_channels, device=self.device, dtype=torch.long
+        )
+
+        # Bind a live per-env gravity view so the success effort gate remains
+        # a true geometric ratio under per-env gravity randomization. Newton
+        # exposes ``model.gravity`` as a per-world Warp array — a zero-copy
+        # torch view here reflects subsequent gravity-event writes
+        # automatically. PhysX only has a scene-wide gravity, so we cache the
+        # PhysX simulation view and read it lazily after startup events fire
+        # (mirrors how :class:`mdp.randomize_physics_scene_gravity` writes it).
+        self._sim_gravity: torch.Tensor | None = None
+        self._physics_sim_view = None
+        try:
+            import isaaclab_newton.physics.newton_manager as nm  # noqa: PLC0415
+
+            model = nm.NewtonManager.get_model()
+            if model is not None and model.gravity is not None:
+                self._sim_gravity = wp.to_torch(model.gravity)
+        except ImportError:
+            pass
+        if self._sim_gravity is None:
+            self._physics_sim_view = env.sim.physics_sim_view
+
         self._warp_seed = 1
 
     def _build_spec(self, commands: dict[str, RelativeStateCommandCfg.Commands]) -> CommandSpec:
@@ -531,9 +593,56 @@ class RelativeStateCommand(CommandTerm):
         return self._err
 
     def get_task_done(self) -> torch.Tensor:
-        joint_pos = wp.to_torch(self.robot.data.joint_pos) - wp.to_torch(self.robot.data.default_joint_pos)
-        joint_pos_diff = torch.abs(joint_pos).amax(dim=1)
-        return (self.cmd_buf[:, 1, 12] <= 0.0) & (joint_pos_diff < self.cfg.success_joint_pos_threshold)
+        """Return ``True`` per env where the task is considered successfully held.
+
+        Terrain-invariant gates (all must hold):
+
+        1. ``timer_done``: goal held for the required duration.
+        2. ``settled``: every body's linear/angular speed below the configured
+           thresholds.
+        3. ``natural``: worst-joint specific effort
+           ``max_j |τ_react,axis_j| / (m·|g|·L_ref) < multiplier / N_support_feet``.
+        4. ``feet_bear_weight``: ``sum_f max(0, F_z[f]) / (m·|g|) >= min_foot_weight_fraction``.
+
+        See :class:`RelativeStateCommandCfg` for the knobs.
+        """
+        if self._weight is None:
+            body_mass = wp.to_torch(self.robot.data.body_mass)
+            if self._sim_gravity is not None:
+                g_mag = self._sim_gravity.norm(dim=-1)
+            else:
+                g = self._physics_sim_view.get_gravity()  # physx case
+                g_vec = torch.tensor((g[0], g[1], g[2]), device=self.device, dtype=torch.float32)
+                g_mag = g_vec.norm().expand(self.num_envs)
+            self._weight = body_mass.sum(dim=-1) * g_mag
+        if self._L_ref is None:
+            body_pos_w = wp.to_torch(self.robot.data.body_pos_w)
+            z_base = body_pos_w[:, 0, 2]
+            z_feet = body_pos_w[:, self._foot_ids, 2].mean(dim=-1)
+            self._L_ref = float((z_base - z_feet).mean().item())
+
+        timer_done = self.cmd_buf[:, 1, 12] <= 0.0
+
+        lin_speed_max = wp.to_torch(self.robot.data.body_lin_vel_w).norm(dim=-1).amax(dim=-1)
+        ang_speed_max = wp.to_torch(self.robot.data.body_ang_vel_w).norm(dim=-1).amax(dim=-1)
+        settled = (lin_speed_max < self.cfg.success_body_lin_speed_thresh) & (
+            ang_speed_max < self.cfg.success_body_ang_speed_thresh
+        )
+
+        # Joint-axis (incoming-joint-frame x) component of the reaction wrench;
+        # includes hard-stop constraint reactions that ``applied_torque`` misses.
+        wrench_torque = wp.to_torch(self._wrench_sensor.data.torque)
+        joint_axis_torque_max = wrench_torque[..., 0].abs().amax(dim=-1)
+        specific_effort_max = joint_axis_torque_max / (self._weight * self._L_ref)
+        threshold = self.cfg.success_effort_multiplier / float(self._n_support_feet)
+        natural = specific_effort_max < threshold
+
+        net_forces = wp.to_torch(self._contact_sensor.data.net_forces_w)
+        foot_fz = net_forces[:, self._contact_foot_channels, 2].sum(dim=-1)
+        weight_supported = foot_fz / self._weight
+        feet_bear_weight = weight_supported >= self.cfg.success_min_foot_weight_fraction
+
+        return timer_done & settled & natural & feet_bear_weight
 
     def get_task_reward(self) -> torch.Tensor:
         return self.get_task_done().float()

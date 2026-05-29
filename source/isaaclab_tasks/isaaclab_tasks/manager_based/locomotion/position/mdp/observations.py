@@ -9,7 +9,9 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from isaaclab.assets import Articulation
 from isaaclab.managers import ManagerTermBase, SceneEntityCfg
+from isaaclab.utils import math as math_utils
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -61,6 +63,30 @@ class bound_height_scan(ManagerTermBase):
     ) -> torch.Tensor:
         sensor = env.scene.sensors[sensor_cfg.name]
         return sensor.data.pos_w.torch[:, 2].unsqueeze(1) - sensor.data.ray_hits_w.torch[..., 2] - offset
+
+
+def gravity_b(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """World-frame gravity vector projected into the robot's base frame, with magnitude preserved.
+
+    Companion to the standard :func:`~isaaclab.envs.mdp.projected_gravity` observation,
+    which exposes the *unit* gravity direction. Under per-env gravity randomization
+    (see :class:`~isaaclab.envs.mdp.randomize_physics_scene_gravity`) the unit
+    direction conveys tilt only — heavy and light gravity are indistinguishable
+    after normalization. This observation preserves ``‖g‖`` so the policy can
+    additionally adapt to the magnitude (e.g. heavier loading, more reaction
+    force needed at the same posture).
+
+    Args:
+        env: :class:`ManagerBasedRLEnv` instance.
+        asset_cfg: Robot articulation cfg. Defaults to ``SceneEntityCfg("robot")``.
+
+    Returns:
+        Gravity vector in the base frame [m/s\\ :sup:`2`], shape ``(num_envs, 3)``.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    g_w = asset.data.GRAVITY_VEC_W.torch
+    base_quat_w = asset.data.root_link_quat_w.torch
+    return math_utils.quat_apply_inverse(base_quat_w, g_w)
 
 
 def time_left(env: ManagerBasedRLEnv) -> torch.Tensor:

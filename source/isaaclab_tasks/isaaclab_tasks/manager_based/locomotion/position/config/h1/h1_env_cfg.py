@@ -28,6 +28,7 @@ class H1EnvMixin:
         self.events.add_base_mass.params["asset_cfg"].body_names = "torso_link"
         self.terminations.base_contact.params["sensor_cfg"].body_names = "^(?!.*ankle_link).*$"
         self.viewer.body_name = "torso_link"
+        self.commands.foot_sampled_commands.goal_point.foot_body_names = [".*ankle_link"]
         pipeline_cfg = self.commands.foot_sampled_commands.goal_point.task_table.pipeline_cfg
         pipeline_cfg.foot_body_names = ".*ankle_link"
         pipeline_cfg.lateral_hip_joint_pattern = ".*_hip_roll"

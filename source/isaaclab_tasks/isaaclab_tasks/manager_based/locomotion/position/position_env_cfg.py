@@ -22,6 +22,7 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import patterns
+from isaaclab.sensors.joint_wrench import JointWrenchSensorCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.terrains import TerrainGeneratorCfg, TerrainImporterCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
@@ -120,6 +121,7 @@ class SceneCfg(InteractiveSceneCfg):
         mesh_prim_paths=["/World/ground"],
     )
     contact_forces = PositionEnvContactSensorCfg()
+    joint_wrench = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
 
 
 @configclass
@@ -138,6 +140,10 @@ class ObservationsCfg:
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
         proj_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))
+        # Body-frame gravity vector with magnitude preserved [m/s^2]. Pairs with
+        # ``proj_gravity`` (unit direction) so the policy can also condition on
+        # ``‖g‖`` under per-env gravity randomization.
+        gravity_b = ObsTerm(func=mdp.gravity_b, noise=Unoise(n_min=-0.5, n_max=0.5))
         joint_pos = ObsTerm(func=mdp.joint_pos)
         joint_vel = ObsTerm(func=mdp.joint_vel)
         last_actions = ObsTerm(func=mdp.last_action)
@@ -181,6 +187,10 @@ class ObservationsEncoderCfg:
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
         proj_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))
+        # Body-frame gravity vector with magnitude preserved [m/s^2]. Pairs with
+        # ``proj_gravity`` (unit direction) so the policy can also condition on
+        # ``‖g‖`` under per-env gravity randomization.
+        gravity_b = ObsTerm(func=mdp.gravity_b, noise=Unoise(n_min=-0.5, n_max=0.5))
         joint_pos = ObsTerm(func=mdp.joint_pos)
         joint_vel = ObsTerm(func=mdp.joint_vel)
         last_actions = ObsTerm(func=mdp.last_action)
@@ -249,25 +259,38 @@ class EventsCfg:
         },
     )
 
+    # gravity_scale = EventTerm(
+    #     func=mdp.randomize_physics_scene_gravity,
+    #     mode="startup",
+    #     params={
+    #         "gravity_distribution_params": (
+    #             [-0.5, -0.5, -9.81 * 1.25],
+    #             [+0.5, +0.5, -9.81 * 0.75],
+    #         ),
+    #         "operation": "abs",
+    #         "distribution": "uniform",
+    #     },
+    # )
+
 
 @configclass
 class RewardsV1Cfg:
     # task rewards
-    success = RewTerm(func=mdp.command_success, weight=50.0)
+    success = RewTerm(func=mdp.command_success, weight=5.0)
 
-    mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.00025)
+    mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.000025)
 
     undesired_contact = RewTerm(
         func=mdp.undesired_contacts,
-        weight=-0.1,
+        weight=-0.01,
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*(?:(FOOT))).*$"), "threshold": 1.0},
     )
 
     fail = RewTerm(
-        func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact", "abnormal_robot"]}, weight=-25.0
+        func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact", "abnormal_robot"]}, weight=-2.0
     )
 
-    explore = RewTerm(func=mdp.exploration_reward, weight=0.3, params={"forward_only": True})
+    explore = RewTerm(func=mdp.exploration_reward, weight=0.03, params={"forward_only": True})
 
 
 @configclass
@@ -276,12 +299,12 @@ class RewardsV2Cfg:
         func=mdp.reward_compose,
         weight=1.0,
         params={
-            "success": RewTerm(func=mdp.command_success, weight=50.0),
+            "success": RewTerm(func=mdp.command_success, weight=5.0),
             "quality": {
-                "mech_work": RewTerm(func=mdp.mechanical_power, weight=-0.00025),
+                "mech_work": RewTerm(func=mdp.mechanical_power, weight=-0.000025),
                 "undesired_contact": RewTerm(
                     func=mdp.undesired_contacts,
-                    weight=-0.1,
+                    weight=-0.01,
                     params={
                         "sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*(?:(FOOT))).*$"),
                         "threshold": 1.0,
@@ -292,17 +315,17 @@ class RewardsV2Cfg:
     )
 
     fail = RewTerm(
-        func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact", "abnormal_robot"]}, weight=-25.0
+        func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact", "abnormal_robot"]}, weight=-2.5
     )
 
-    explore = RewTerm(func=mdp.exploration_reward, weight=0.3, params={"forward_only": True})
+    explore = RewTerm(func=mdp.exploration_reward, weight=0.03, params={"forward_only": True})
 
 
 @configclass
 class RewardsCfg(PresetCfg):
-    rew_v1=RewardsV1Cfg()
-    rew_v2=RewardsV2Cfg()
-    default=rew_v1
+    rew_v1 = RewardsV1Cfg()
+    rew_v2 = RewardsV2Cfg()
+    default = rew_v1
 
 
 @configclass
@@ -380,7 +403,7 @@ class FlatPatchCurriculumCfg:
                 value_shift=SamplerCfg(
                     strategies=[
                         ValueShiftSamplingStrategyCfg(
-                            weight=1.0,
+                            weight=0.5,
                             state_buffer_bind="env.command_manager.get_term('goal_point').spec.descretized_cmd",
                             cmd_indices_bind="env.command_manager.get_term('goal_point').cmd_indices",
                             resample_command_fn_bind="env.command_manager.get_term('goal_point')._resample_command",
@@ -398,7 +421,7 @@ class FlatPatchCurriculumCfg:
                             cmd_indices_bind="env.command_manager.get_term('goal_point').cmd_indices",
                             resample_command_fn_bind="env.command_manager.get_term('goal_point')._resample_command",
                             get_critic_obs_fn_bind="lambda: env.observation_manager.compute()",
-                        )
+                        ),
                     ],
                     eps=1e-4,
                 ),

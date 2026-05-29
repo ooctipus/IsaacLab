@@ -31,8 +31,38 @@ class RelativeStateCommandCfg(CommandTermCfg):
 
     ang_vel_std: float = 0.5
 
-    success_joint_pos_threshold: float = 0.5
-    """Maximum absolute joint position deviation from the default pose for task success [rad]."""
+    foot_body_names: list[str] = MISSING
+    """Regex(es) selecting support-foot bodies. Used for ``N_support_feet`` and
+    the characteristic limb length ``L_ref`` (base-to-mean-foot Z)."""
+
+    success_effort_multiplier: float = 0.6
+    """Specific-effort threshold scaled by ``1 / N_support_feet``.
+
+    Success gate: ``max_j |τ_react,axis_j| / (m·g·L_ref) < multiplier / N_support_feet``.
+    For a quadruped, ``0.6`` → per-foot threshold ``0.15``.
+    """
+
+    joint_wrench_sensor_name: str = "joint_wrench"
+    """Scene name of the :class:`~isaaclab.sensors.JointWrenchSensor` (wrench is
+    read instead of ``applied_torque`` so joint-stop reactions are counted)."""
+
+    contact_sensor_name: str = "contact_forces"
+    """Scene name of the :class:`~isaaclab.sensors.ContactSensor` used for the
+    feet-bear-weight gate."""
+
+    success_min_foot_weight_fraction: float = 0.80
+    """Minimum fraction of ``m·g`` borne by the feet.
+
+    Success gate: ``sum_f max(0, F_z[f]) / (m·g) >= multiplier``. Rejects poses
+    where thighs/shanks rest on the terrain — those reactions go through hip
+    constraints off the joint axis and are invisible to the effort gate.
+    """
+
+    success_body_lin_speed_thresh: float = 0.30
+    """Per-body linear-speed ceiling [m/s] for the "bodies settled" gate."""
+
+    success_body_ang_speed_thresh: float = 0.30
+    """Per-body angular-speed ceiling [rad/s] for the "bodies settled" gate."""
 
     @configclass
     class Commands:

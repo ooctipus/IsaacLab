@@ -11,6 +11,7 @@ __all__ = [
     "target_pos_env",
     "achieved_pos_env",
     "bound_height_scan",
+    "gravity_b",
     "task_reward",
     "heading_tracking",
     "exploration_reward",
@@ -60,6 +61,7 @@ from .observations import (
     target_pos_env,
     achieved_pos_env,
     bound_height_scan,
+    gravity_b,
 )
 from .rewards import (
     task_reward,

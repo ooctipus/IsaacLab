@@ -38,6 +38,7 @@ ANYDRIVE_3_SIMPLE_ACTUATOR_CFG = ImplicitActuatorCfg(
     armature={".*": 0.001},
 )
 
+
 @configclass
 class AnymalCEnvMixin:
     def __post_init__(self: position_env_cfg.LocomotionPositionCommandEnvCfg):
@@ -66,11 +67,13 @@ class AnymalCEnvMixin:
                 lstm_actuator=ANYDRIVE_3_LSTM_ACTUATOR_CFG,
             )
         }
+        self.commands.foot_sampled_commands.goal_point.foot_body_names = [".*FOOT.*"]
         pipeline_cfg = self.commands.foot_sampled_commands.goal_point.task_table.pipeline_cfg
         pipeline_cfg.foot_body_names = ".*FOOT.*"
         pipeline_cfg.lateral_hip_joint_pattern = ".*HAA"
         pipeline_cfg.joint_regularize_targets = {".*HAA": 0.0, ".*F_KFE": -0.8, ".*H_KFE": 0.8}
         self.terminations.base_contact.params["sensor_cfg"].body_names = "base"
+
 
 @configclass
 class AnymalCLocomotionPositionCommandEnvCfg(AnymalCEnvMixin, position_env_cfg.LocomotionPositionCommandEnvCfg):

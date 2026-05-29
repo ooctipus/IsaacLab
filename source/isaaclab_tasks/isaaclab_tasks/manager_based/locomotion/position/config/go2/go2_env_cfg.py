@@ -30,6 +30,7 @@ class Go2EnvMixin:
             "R[L,R]_thigh_joint": 0.35,
             ".*_calf_joint": -0.873,
         }
+        self.commands.foot_sampled_commands.goal_point.foot_body_names = [".*_foot"]
         pipeline_cfg = self.commands.foot_sampled_commands.goal_point.task_table.pipeline_cfg
         pipeline_cfg.foot_body_names = ".*_foot"
         pipeline_cfg.lateral_hip_joint_pattern = ".*hip_joint"
