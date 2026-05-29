@@ -21,7 +21,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import torch
-
 from rsl_rl.algorithms.ppo import PPO
 
 if TYPE_CHECKING:
@@ -47,7 +46,7 @@ class ValueShiftPPO(PPO):
     ``|V_new - V_prev|`` magnitude.
     """
 
-    _obs_cache: "TensorDict | None" = None
+    _obs_cache: TensorDict | None = None
     _cur_buf: torch.Tensor | None = None
     _diff_buf: torch.Tensor | None = None
 
@@ -64,7 +63,7 @@ class ValueShiftPPO(PPO):
         return loss_dict
 
     @staticmethod
-    def construct_algorithm(obs, env: "VecEnv", cfg: dict, device: str) -> "ValueShiftPPO":
+    def construct_algorithm(obs, env: VecEnv, cfg: dict, device: str) -> ValueShiftPPO:
         """Build the ValueShiftPPO algorithm and wire its three bind buffers.
 
         Bind expressions live on the ``algorithm`` sub-cfg (kept inside the

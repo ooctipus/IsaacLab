@@ -6,9 +6,9 @@
 """Task-level rsl_rl algorithm extensions.
 
 This package keeps PPO subclasses that need task-specific bindings (e.g.
-:class:`ValueShiftPPO`) at the task level rather than in ``dep/rsl_rl``. Names
-are re-exported here so :func:`rsl_rl.utils.resolve_callable` can resolve the
-fully-qualified module path declared on a runner cfg's ``algorithm.class_name``.
+:class:`ValueShiftPPO`) at the task level. Names are re-exported here so
+:func:`rsl_rl.utils.resolve_callable` can resolve the fully-qualified module
+path declared on a runner cfg's ``algorithm.class_name``.
 """
 
 from .value_shift_ppo import ValueShiftPPO
