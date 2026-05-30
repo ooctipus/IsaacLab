@@ -76,28 +76,39 @@ workflow:
           if [ -n "${CLUSTER_CACHE_ROOT}" ]; then
             CLUSTER_CACHE_ROOT="${CLUSTER_CACHE_ROOT}/${ISAACSIM_VERSION:-unknown}/{{ image }}"
             mkdir -p \
+              "${CLUSTER_CACHE_ROOT}/warp" \
               "${CLUSTER_CACHE_ROOT}/kit-cache" \
               "${CLUSTER_CACHE_ROOT}/ov" \
               "${CLUSTER_CACHE_ROOT}/nvidia/GLCache" \
               "${CLUSTER_CACHE_ROOT}/nv/ComputeCache"
 
+            export WARP_CACHE_PATH="${CLUSTER_CACHE_ROOT}/warp"
+            mkdir -p "${WARP_CACHE_PATH}"
+
             rm -rf \
-              /workspace/isaaclab/_isaac_sim/kit/cache \
               /root/.cache/ov \
               /root/.cache/nvidia/GLCache \
               /root/.nv/ComputeCache
-            mkdir -p /workspace/isaaclab/_isaac_sim/kit /root/.cache/nvidia /root/.nv
-            ln -s "${CLUSTER_CACHE_ROOT}/kit-cache" /workspace/isaaclab/_isaac_sim/kit/cache
-            ln -s "${CLUSTER_CACHE_ROOT}/ov" /root/.cache/ov
-            ln -s "${CLUSTER_CACHE_ROOT}/nvidia/GLCache" /root/.cache/nvidia/GLCache
-            ln -s "${CLUSTER_CACHE_ROOT}/nv/ComputeCache" /root/.nv/ComputeCache
+            mkdir -p /root/.cache/nvidia /root/.nv
+            ln -sfn "${CLUSTER_CACHE_ROOT}/ov" /root/.cache/ov
+            ln -sfn "${CLUSTER_CACHE_ROOT}/nvidia/GLCache" /root/.cache/nvidia/GLCache
+            ln -sfn "${CLUSTER_CACHE_ROOT}/nv/ComputeCache" /root/.nv/ComputeCache
+
+            # Kit/OV shader caches apply to Isaac Sim images only (skip for kitless).
+            if [ -d /workspace/isaaclab/_isaac_sim/kit ] || [ -L /workspace/isaaclab/_isaac_sim ]; then
+              rm -rf /workspace/isaaclab/_isaac_sim/kit/cache
+              mkdir -p /workspace/isaaclab/_isaac_sim/kit
+              ln -sfn "${CLUSTER_CACHE_ROOT}/kit-cache" /workspace/isaaclab/_isaac_sim/kit/cache
+            fi
+
             echo "[INFO] Using shared Isaac Lab cache: ${CLUSTER_CACHE_ROOT}"
+            echo "[INFO] WARP kernel cache: ${WARP_CACHE_PATH}"
           else
             echo "[INFO] No writable AMLFS cache root found; using container-local caches."
           fi
 
           {% if num_node > 1 %}
-          /workspace/isaaclab/_isaac_sim/python.sh -m torch.distributed.run \
+          python -m torch.distributed.run \
             --nnodes {{ num_node }} \
             --nproc_per_node {{ num_gpu }} \
             --node_rank {{ item }} \
@@ -108,7 +119,7 @@ workflow:
               --workflow_id {{workflow_id}} \
               {{ args }}
           {% elif num_gpu > 1 %}
-          /workspace/isaaclab/_isaac_sim/python.sh -m torch.distributed.run \
+          python -m torch.distributed.run \
             --nnodes 1 \
             --nproc_per_node {{ num_gpu }} \
             --master_addr 127.0.0.1 \
@@ -118,7 +129,7 @@ workflow:
               --workflow_id {{workflow_id}} \
               {{ args }}
           {% else %}
-          /workspace/isaaclab/_isaac_sim/python.sh \
+          python \
             /workspace/isaaclab/{{ script }} \
               --workflow_id {{workflow_id}} \
               {{ args }}

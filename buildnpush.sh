@@ -483,18 +483,63 @@ any_within_budget_deps_image_exists() {
   [ -n "$(newest_within_budget_deps_image)" ]
 }
 
+# Tag SOURCE as the current-hash deps cache when it still has layer headroom.
+promote_to_deps_cache() {
+  local source="$1"
+  local reason="$2"
+  docker tag "$source" "$DEPS_IMAGE"
+  echo "   ⚡ ${reason}"
+  echo "      ${source} -> ${DEPS_IMAGE} ($(image_layer_count "$DEPS_IMAGE") layers)"
+}
+
+# Resolve DEPS_IMAGE for -s/--source or -p/--pip overlay builds.
+# Reuses, in order: exact-hash deps cache, any in-budget deps cache, the image
+# already tagged for this build (FINAL_IMAGE), then isaac-lab-base.
+resolve_overlay_deps_image() {
+  local mode_label="$1"
+
+  if image_exists "$DEPS_IMAGE" && image_within_layer_budget "$DEPS_IMAGE"; then
+    echo "   ✓ Cached deps image found: ${DEPS_IMAGE} ($(image_layer_count "$DEPS_IMAGE") layers)"
+    return 0
+  fi
+
+  if image_exists "$DEPS_IMAGE"; then
+    echo "   ⚠ ${DEPS_IMAGE} exceeds layer budget ($(image_layer_count "$DEPS_IMAGE") layers)"
+  fi
+
+  local existing_deps
+  existing_deps=$(newest_within_budget_deps_image)
+  if [ -n "$existing_deps" ]; then
+    echo "   ⚠ Using newest in-budget deps cache: ${existing_deps} ($(image_layer_count "$existing_deps") layers)"
+    DEPS_IMAGE="$existing_deps"
+    return 0
+  fi
+
+  local candidate
+  for candidate in "${FINAL_IMAGE}" "${BASE_IMAGE}"; do
+    if image_exists "$candidate" && image_within_layer_budget "$candidate"; then
+      promote_to_deps_cache "$candidate" "Reusing ${candidate} as deps cache for ${mode_label}"
+      return 0
+    fi
+  done
+
+  local deps_count
+  deps_count=$(docker images --filter 'reference=isaac-lab-deps:*' --format '{{.Tag}}' 2>/dev/null | wc -l)
+  if [ "$deps_count" -gt 0 ]; then
+    echo "   ✗ All isaac-lab-deps:* caches exceed ${MAX_LAYERS_FOR_DEPS_CACHE}-layer budget."
+    echo "     Re-run with -d/--deps to flatten and rebuild."
+  else
+    echo "   ✗ No deps cache found for overlay build."
+    echo "     Build once with: ./buildnpush.sh ${TAG}$([ "$KITLESS" -eq 1 ] && echo ' --kitless')"
+    echo "     Or flatten with: ./buildnpush.sh ${TAG}$([ "$KITLESS" -eq 1 ] && echo ' --kitless') -d"
+  fi
+  return 1
+}
+
 if [ "$REBUILD_SOURCE" -eq 1 ]; then
   SKIP_DEPS=1
   USE_CACHE=1
-  if image_exists "$DEPS_IMAGE" && image_within_layer_budget "$DEPS_IMAGE"; then
-    echo "   ✓ Cached deps image found: ${DEPS_IMAGE} ($(image_layer_count "$DEPS_IMAGE") layers)"
-  elif any_within_budget_deps_image_exists; then
-    EXISTING_DEPS=$(newest_within_budget_deps_image)
-    echo "   ⚠ Hash mismatch (or layer-budget exceeded on ${DEPS_IMAGE}); using newest in-budget cache: ${EXISTING_DEPS} ($(image_layer_count "$EXISTING_DEPS") layers)"
-    DEPS_IMAGE="$EXISTING_DEPS"
-  else
-    echo "   ✗ No deps image is within ${MAX_LAYERS_FOR_DEPS_CACHE}-layer budget."
-    echo "     Re-run without -s/--source or use -d/--deps to flatten and rebuild."
+  if ! resolve_overlay_deps_image "-s/--source"; then
     exit 1
   fi
   REASON="source-only rebuild on cached deps (-s/--source)"
@@ -509,28 +554,7 @@ elif [ "$REBUILD_DEPS" -eq 1 ]; then
 elif [ "$REBUILD_PIP" -eq 1 ]; then
   SKIP_DEPS=1
   USE_CACHE=1
-  # Use whatever deps image exists (hash may have changed due to setup.py edits).
-  # Prefer the current-hash deps cache if it still has layer headroom; otherwise
-  # fall back to the newest in-budget cache so we don't keep stacking layers on
-  # an already-tall image.
-  if image_exists "$DEPS_IMAGE" && image_within_layer_budget "$DEPS_IMAGE"; then
-    echo "   ✓ Using current-hash deps cache: ${DEPS_IMAGE} ($(image_layer_count "$DEPS_IMAGE") layers)"
-  elif image_exists "$DEPS_IMAGE"; then
-    EXISTING_DEPS=$(newest_within_budget_deps_image)
-    if [ -z "$EXISTING_DEPS" ]; then
-      echo "   ✗ ${DEPS_IMAGE} exceeds ${MAX_LAYERS_FOR_DEPS_CACHE}-layer budget and no other cache fits."
-      echo "     Re-run with -d/--deps to flatten and rebuild."
-      exit 1
-    fi
-    echo "   ⚠ ${DEPS_IMAGE} exceeds layer budget ($(image_layer_count "$DEPS_IMAGE") layers); using ${EXISTING_DEPS}"
-    DEPS_IMAGE="$EXISTING_DEPS"
-  elif any_within_budget_deps_image_exists; then
-    EXISTING_DEPS=$(newest_within_budget_deps_image)
-    echo "   ⚠ Deps hash changed but -p/--pip: using ${EXISTING_DEPS} ($(image_layer_count "$EXISTING_DEPS") layers)"
-    DEPS_IMAGE="$EXISTING_DEPS"
-  else
-    echo "   ✗ No deps image available for -p/--pip."
-    echo "     Re-run without -p/--pip or use -d/--deps."
+  if ! resolve_overlay_deps_image "-p/--pip"; then
     exit 1
   fi
   REASON="source + pip rebuild on cached deps (-p/--pip)"
@@ -547,25 +571,30 @@ elif image_exists "$DEPS_IMAGE"; then
     REASON="deps cached (${DEPS_IMAGE})"
     echo "   ✓ Cached deps image found: ${DEPS_IMAGE} ($(image_layer_count "$DEPS_IMAGE") layers)"
   fi
-elif ! any_within_budget_deps_image_exists && image_exists "$BASE_IMAGE" && image_within_layer_budget "$BASE_IMAGE"; then
-  # ONE-TIME MIGRATION: No deps images exist yet, but isaac-lab-base exists
-  # This means we're migrating from old system to new system
-  echo "   ⚡ One-time migration: tagging existing ${BASE_IMAGE} as deps cache..."
-  docker tag "${BASE_IMAGE}" "${DEPS_IMAGE}"
-  SKIP_DEPS=1
-  USE_CACHE=1
-  REASON="migrated existing image (one-time)"
-  echo "   ✓ Tagged as ${DEPS_IMAGE}"
+elif ! any_within_budget_deps_image_exists; then
+  migrated=0
+  for candidate in "${FINAL_IMAGE}" "${BASE_IMAGE}"; do
+    if image_exists "$candidate" && image_within_layer_budget "$candidate"; then
+      promote_to_deps_cache "$candidate" "Reusing ${candidate} as deps cache (first overlay build)"
+      SKIP_DEPS=1
+      USE_CACHE=1
+      REASON="migrated existing image (${candidate})"
+      migrated=1
+      break
+    fi
+  done
+  if [ "$migrated" -eq 0 ]; then
+    SKIP_DEPS=0
+    USE_CACHE=1
+    REASON="first build (no existing images)"
+    echo "   ✗ No cached deps for hash ${DEPS_HASH}"
+  fi
 else
-  # Deps changed (hash doesn't match any existing deps image)
+  # Deps hash changed but another in-budget deps cache exists.
   SKIP_DEPS=0
   USE_CACHE=1
-  if any_within_budget_deps_image_exists; then
-    REASON="deps changed, full rebuild required"
-    echo "   ⚠ Deps hash changed - full rebuild required"
-  else
-    REASON="first build (no existing images)"
-  fi
+  REASON="deps changed, full rebuild required"
+  echo "   ⚠ Deps hash changed - full rebuild required"
   echo "   ✗ No cached deps for hash ${DEPS_HASH}"
 fi
 
@@ -689,11 +718,8 @@ else
     -t "${BASE_IMAGE}" \
     .
 
-  # Promote a successful ``-p/--pip`` build to the deps cache so that subsequent
-  # ``-s/--source`` / ``-p/--pip`` runs see the latest pip state (e.g. an upgraded
-  # ``warp-lang`` from a setup.py bump). The layer-budget gate prevents runaway
-  # stacking on Docker's overlay driver — when the budget is exceeded the user
-  # is told to flatten with ``-d/--deps``.
+  # Promote a successful -p/--pip build to the deps cache so later -s/-p runs
+  # see the latest pip state. Skip promotion when the layer budget is exceeded.
   if [ "$REBUILD_PIP" -eq 1 ]; then
     new_layer_count=$(image_layer_count "${BASE_IMAGE}")
     if [ "${new_layer_count}" -lt "${MAX_LAYERS_FOR_DEPS_CACHE}" ]; then
@@ -733,32 +759,38 @@ echo "🧹 Cleaning up old deps images..."
 STATE_FILE="${HOME}/.isaaclab-deps-cache.txt"
 MAX_AGE_DAYS=30
 old_deps_removed=0
+KITLESS_FLAG=$([ "$KITLESS" -eq 1 ] && echo 1 || echo 0)
 
-# Update state file: TAG|DEPS_HASH|TIMESTAMP
+# Update state file: TAG|DEPS_HASH|TIMESTAMP|KITLESS
 touch "$STATE_FILE"
-# Remove old entry for this tag, add new one
-grep -v "^${TAG}|" "$STATE_FILE" > "${STATE_FILE}.tmp" 2>/dev/null || true
-echo "${TAG}|${DEPS_HASH}|$(date +%s)" >> "${STATE_FILE}.tmp"
+grep -vE "^${TAG}\|[^|]+\|[0-9]+\|${KITLESS_FLAG}$" "$STATE_FILE" > "${STATE_FILE}.tmp" 2>/dev/null || true
+echo "${TAG}|${DEPS_HASH}|$(date +%s)|${KITLESS_FLAG}" >> "${STATE_FILE}.tmp"
 mv "${STATE_FILE}.tmp" "$STATE_FILE"
 
 # Build list of deps hashes to keep (from state file)
-keep_hashes=""
+keep_hashes=" ${DEPS_IMAGE}"
 now_epoch=$(date +%s)
 
 # Read state file, remove old entries, collect hashes to keep
 > "${STATE_FILE}.tmp"
-while IFS='|' read -r tag hash timestamp; do
+while IFS='|' read -r tag hash f3 f4; do
   [ -z "$tag" ] && continue
+  if [ -n "$f4" ]; then
+    timestamp=$f3
+    kitless_flag=$f4
+  else
+    timestamp=$f3
+    kitless_flag=0
+  fi
 
-  age_days=$(( (now_epoch - timestamp) / 86400 ))
+  age_days=$(((now_epoch - timestamp) / 86400))
 
   if [ "$age_days" -le "$MAX_AGE_DAYS" ]; then
-    # Keep this mapping
-    echo "${tag}|${hash}|${timestamp}" >> "${STATE_FILE}.tmp"
+    echo "${tag}|${hash}|${timestamp}|${kitless_flag}" >> "${STATE_FILE}.tmp"
     keep_hashes="${keep_hashes} isaac-lab-deps:${hash}"
-    echo "   ✓ Tag '${tag}' → deps:${hash} (${age_days}d old)"
+    echo "   ✓ Tag '${tag}' deps:${hash} kitless=${kitless_flag} age=${age_days}d"
   else
-    echo "   ⏰ Tag '${tag}' mapping expired (${age_days}d old)"
+    echo "   ⏰ Tag '${tag}' mapping expired age=${age_days}d"
   fi
 done < "$STATE_FILE"
 mv "${STATE_FILE}.tmp" "$STATE_FILE"
@@ -767,11 +799,14 @@ mv "${STATE_FILE}.tmp" "$STATE_FILE"
 deps_images=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "^isaac-lab-deps:" || true)
 
 for img in $deps_images; do
-  if echo "$keep_hashes" | grep -q "$img"; then
-    : # Already logged above
+  if echo "$keep_hashes" | grep -qF "$img"; then
+    continue
+  fi
+  echo "   🗑 Removing: $img (not mapped to any tag)"
+  if docker rmi "$img" 2>/dev/null; then
+    old_deps_removed=$((old_deps_removed + 1))
   else
-    echo "   🗑 Removing: $img (not mapped to any tag)"
-    docker rmi "$img" 2>/dev/null && ((old_deps_removed++)) || echo "      (in use, skipped)"
+    echo "      in use, skipped"
   fi
 done
 
