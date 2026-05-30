@@ -112,8 +112,11 @@ class FastTerrainScanner(SensorBase):
 
     def __init__(self, cfg: FastTerrainScannerCfg):
         super().__init__(cfg)
+        # ``body_prim_path`` is the physics-body path the scanner is attached to. The pose is
+        # read straight from that body's articulation tensors (see ``bind_articulation`` /
+        # ``_get_view_transforms_wp``), so — like the upstream ray casters — no sensor prim is
+        # spawned and ``SensorBase._initialize_impl`` resolves ``num_envs`` from ``cfg.prim_path``.
         self.body_prim_path = cfg.prim_path.rstrip("/")
-        self._resolve_and_spawn("fast_terrain_scanner")
         # data is created at the end of ``_initialize_impl`` once we know num_rays.
         self._data: FastTerrainScannerData | None = None  # type: ignore[assignment]
         self._articulation = None
