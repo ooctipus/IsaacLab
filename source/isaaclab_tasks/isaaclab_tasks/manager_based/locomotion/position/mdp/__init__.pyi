@@ -47,6 +47,7 @@ __all__ = [
     "forwardness",
     "DefaultJointPositionStaticActionCfg",
     "DefaultJointPositionStaticAction",
+    "reset_root_state_from_terrain",
 ]
 
 from .commands import RelativeStateCommandCfg, RelativeStateCommand
@@ -96,4 +97,5 @@ from .terminations import (
     forwardness,
 )
 from .actions import DefaultJointPositionStaticActionCfg, DefaultJointPositionStaticAction
+from .events import reset_root_state_from_terrain
 from isaaclab.envs.mdp import *

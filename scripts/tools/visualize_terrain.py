@@ -119,7 +119,8 @@ def _sample_patches(
         clean_cfg = _reconstruct_patch_cfg(mangled_cfg)
         patches = clean_cfg.func(wp_mesh, origin, clean_cfg)
         origin_t = torch.tensor(origin, dtype=torch.float, device=patches.device)
-        results[name] = (patches + origin_t).cpu().numpy()
+        patches[:, :3] += origin_t
+        results[name] = patches[:, :3].cpu().numpy()
     return results
 
 

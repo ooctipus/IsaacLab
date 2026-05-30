@@ -311,6 +311,10 @@ class TerrainImporter:
             # compute environment origins
             self.env_origins = self._compute_env_origins_grid(self.cfg.num_envs, self.cfg.env_spacing)
 
+        # spawn orientation buffer [x, y, z, w] (parallel to env_origins, identity by default)
+        self.env_spawn_quats = torch.zeros(self.cfg.num_envs, 4, device=self.device)
+        self.env_spawn_quats[:, 3] = 1.0
+
     def update_env_origins(self, env_ids: torch.Tensor, move_up: torch.Tensor, move_down: torch.Tensor):
         """Update the environment origins based on the terrain levels."""
         # check if grid-like spawning

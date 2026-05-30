@@ -180,10 +180,10 @@ class EventsCfg:
     )
 
     reset_base = EventTerm(
-        func=mdp.reset_root_state_uniform,
+        func=mdp.reset_root_state_from_terrain,
         mode="reset",
         params={
-            "pose_range": {"x": (-0.0, 0.0), "y": (-0.0, 0.0), "z": (0.0, 0.1), "yaw": (-3.14, 3.14)},
+            "pose_noise": {"x": (-0.05, 0.05), "y": (-0.05, 0.05), "z": (0.0, 0.1), "yaw": (-0.2, 0.2)},
             "velocity_range": {
                 "x": (-0.1, 0.1),
                 "y": (-0.1, 0.1),
@@ -248,7 +248,7 @@ class TerminationsCfg:
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*foot).*$"), "threshold": 1.0},
     )
 
-    success = DoneTerm(func=mdp.success_terminate)
+    success = DoneTerm(func=mdp.success_terminate, time_out=True)
 
 
 @configclass
