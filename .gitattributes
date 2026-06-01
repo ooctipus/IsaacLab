@@ -15,3 +15,7 @@ source/isaaclab_tasks/test/golden_images/**/*.png filter=lfs diff=lfs merge=lfs 
 
 *.bat text eol=crlf
 *.sh text eol=lf
+
+# Store this checkpoint as a plain Git binary (overrides the *.pt LFS rule above) so it
+# can be reproduced without git-lfs installed.
+model_14800.pt -filter -diff -merge -text
