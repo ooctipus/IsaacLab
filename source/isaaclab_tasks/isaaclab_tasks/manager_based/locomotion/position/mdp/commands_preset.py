@@ -169,14 +169,14 @@ class CommandPayloadPresetCfg(PresetCfg):
     base = RelativeStateCommandCfg.BaseStatePayloadCfg(
         pos_std=0.4,
         rot_std=0.5,
-        lin_vel_std=0.3,
-        ang_vel_std=0.3,
+        lin_vel_std=0.2,
+        ang_vel_std=0.2,
     )
     base_foot = RelativeStateCommandCfg.BaseFootStatePayloadCfg(
         pos_std=0.4,
         rot_std=0.5,
-        lin_vel_std=0.3,
-        ang_vel_std=0.3,
+        lin_vel_std=0.2,
+        ang_vel_std=0.2,
         foot_pos_std=0.25,
     )
     default = base
@@ -220,7 +220,7 @@ class FootSampledCommandsCfg:
                     IKObjectiveTerrainCollisionCfg(weight=2.0, margin=0.05, n_samples=4),
                     IKObjectiveStabilityMarginCfg(weight=1.0),
                     IKObjectiveGravityTorqueCfg(weight=0.02),
-                    IKObjectiveJointDefaultCfg(weight=0.25),
+                    IKObjectiveJointDefaultCfg(weight=0.5),
                 ],
                 criteria=[
                     CollisionCheckCfg(n_samples=16, max_pen=0.02),

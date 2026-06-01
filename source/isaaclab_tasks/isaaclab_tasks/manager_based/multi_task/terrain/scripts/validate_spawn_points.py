@@ -69,9 +69,42 @@ VISER_PORT = 8765
 # ---------------------------------------------------------------------------
 
 
-def _bypass_gym_registration() -> None:
-    """Skip Isaac-Sim-coupled gym env registration (this tool doesn't need it)."""
+def _set_registration_guard() -> None:
+    """Stop ``isaaclab_tasks/__init__`` from eagerly importing every task package.
+
+    A full ``import isaaclab_tasks`` pulls in Isaac-Sim-coupled task modules at
+    import time. Setting this guard (stashed on ``builtins`` so it survives the
+    sys.modules churn in ``AppLauncher``) lets us import only the position
+    config packages we actually need.
+    """
     builtins._isaaclab_tasks_registered = True  # type: ignore[attr-defined]
+
+
+def _register_position_tasks() -> None:
+    """Register the position-family gym task ids without booting Isaac Sim.
+
+    Each config package calls ``gym.register`` with lazy *string* entry points,
+    so the env cfg module is only imported when :func:`resolve_task_config`
+    resolves it. This keeps ``--task`` working for both the preset-driven
+    ``Isaac-Position-v0`` and the per-robot ``Isaac-Position-<Robot>-v0`` tasks
+    without the Isaac-Sim-coupled side effects of a full ``import isaaclab_tasks``.
+    """
+    _set_registration_guard()
+    candidates = (
+        "isaaclab_tasks.manager_based.multi_task.terrain.config",
+        "isaaclab_tasks.manager_based.locomotion.position.config.anymal_c",
+        "isaaclab_tasks.manager_based.locomotion.position.config.b2",
+        "isaaclab_tasks.manager_based.locomotion.position.config.go2",
+        "isaaclab_tasks.manager_based.locomotion.position.config.h1",
+        "isaaclab_tasks.manager_based.locomotion.position.config.mewtwo",
+        "isaaclab_tasks.manager_based.locomotion.position.config.spot",
+        "isaaclab_tasks.manager_based.locomotion.position.config.spot_with_arm",
+    )
+    for module_name in candidates:
+        try:
+            importlib.import_module(module_name)
+        except Exception as exc:  # noqa: BLE001 - dev tool: surface and continue
+            print(f"[validate_spawn_points] WARN: skipped registering '{module_name}': {exc}")
 
 
 def _eager_load_presets() -> None:
@@ -84,18 +117,6 @@ def _eager_load_presets() -> None:
     """
     importlib.import_module("isaaclab_tasks.manager_based.multi_task.terrain.terrains")
     importlib.import_module("isaaclab_tasks.manager_based.multi_task.terrain.mdp_presets.robots")
-
-
-def _parse_presets_from_argv(remaining: list[str]) -> set[str]:
-    """Extract hydra-style ``presets=a,b,c`` selections from leftover argv tokens."""
-    selected: set[str] = set()
-    for arg in remaining:
-        if "=" not in arg:
-            continue
-        key, value = arg.split("=", 1)
-        if key.lstrip("-") == "presets":
-            selected.update(s.strip() for s in value.split(",") if s.strip())
-    return selected
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +291,9 @@ def main():
         description="Validate spawn points using the production env cfg (preset-driven).",
     )
     parser.add_argument("--task", type=str, default="Isaac-Position-v0", help="Gym task id.")
+    parser.add_argument(
+        "--agent", type=str, default="rsl_rl_cfg_entry_point", help="Agent config entry-point key."
+    )
     density_group = parser.add_mutually_exclusive_group()
     density_group.add_argument(
         "--max_robots",
@@ -288,19 +312,33 @@ def main():
         action="store_true",
         help="Skip the viser viewer; print diagnostics and exit.",
     )
-    args, remaining = parser.parse_known_args()
-    selected = _parse_presets_from_argv(remaining)
+    # Set the registration guard BEFORE importing any ``isaaclab_tasks`` submodule, so the
+    # package __init__ does not eagerly import every (Isaac-Sim-coupled) task package.
+    _set_registration_guard()
 
-    # Set up env cfg WITHOUT booting Isaac Sim — we just need configclass values.
-    _bypass_gym_registration()
+    from isaaclab_tasks.utils import fold_preset_tokens, setup_preset_cli
+
+    args, remaining = setup_preset_cli(parser)
+    # Hand the leftover preset / Hydra-override tokens to ``resolve_task_config`` through
+    # ``sys.argv``, mirroring scripts/reinforcement_learning/rsl_rl/train.py.
+    sys.argv = [sys.argv[0]] + fold_preset_tokens(remaining)
+    selected = {
+        name
+        for token in sys.argv[1:]
+        if token.startswith("presets=")
+        for name in token.split("=", 1)[1].split(",")
+        if name
+    }
+
+    # Register the position task ids (lazy string entry points) and populate preset
+    # tables, then resolve the requested ``--task`` env cfg WITHOUT booting Isaac Sim.
+    _register_position_tasks()
     _eager_load_presets()
 
-    from isaaclab_tasks.manager_based.multi_task.position_env_cfg import LocomotionPositionCommandEnvCfg
     from isaaclab_tasks.manager_based.multi_task.terrain.retarget import RetargetPipeline, apply_final_fps
-    from isaaclab_tasks.utils.hydra import resolve_presets
+    from isaaclab_tasks.utils.hydra import resolve_task_config
 
-    env_cfg = LocomotionPositionCommandEnvCfg()
-    resolve_presets(env_cfg, selected=selected)
+    env_cfg, _ = resolve_task_config(args.task, args.agent)
 
     device = "cuda:0"
 

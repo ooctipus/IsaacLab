@@ -35,7 +35,11 @@ ANYDRIVE_3_SIMPLE_ACTUATOR_CFG = ImplicitActuatorCfg(
     velocity_limit=7.5,
     stiffness={".*": 40.0},
     damping={".*": 5.0},
-    armature={".*": 0.001},
+    # Reflected drivetrain inertia of the ANYdrive (N^2 * J_rotor, gear + rotor). The original 0.001
+    # was ~0, which let the policy fling the legs ballistically for free. 0.15 matches the physics
+    # estimate for a harmonic-drive quad and ETH's PACE sim2real fits for geared joints (arXiv
+    # 2509.06342, geared hips ~0.14 kg*m^2). Requires a retrain to take effect.
+    armature={".*": 0.15},
 )
 
 

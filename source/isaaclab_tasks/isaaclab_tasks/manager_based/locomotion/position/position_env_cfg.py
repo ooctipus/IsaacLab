@@ -69,7 +69,7 @@ class SceneCfg(InteractiveSceneCfg):
             size=(10.0, 10.0),
             border_width=20.0,
             num_rows=10,
-            num_cols=20,
+            num_cols=14,
             horizontal_scale=0.1,
             vertical_scale=0.005,
             slope_threshold=0.75,
@@ -286,12 +286,6 @@ class RewardsV1Cfg:
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*(?:(FOOT))).*$"), "threshold": 1.0},
     )
 
-    fail = RewTerm(
-        func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact", "abnormal_robot"]}, weight=-2.0
-    )
-
-    explore = RewTerm(func=mdp.exploration_reward, weight=0.03, params={"forward_only": True})
-
 
 @configclass
 class RewardsV2Cfg:
@@ -313,12 +307,6 @@ class RewardsV2Cfg:
             },
         },
     )
-
-    fail = RewTerm(
-        func=mdp.is_terminated_term, params={"term_keys": ["drop", "base_contact", "abnormal_robot"]}, weight=-2.5
-    )
-
-    explore = RewTerm(func=mdp.exploration_reward, weight=0.03, params={"forward_only": True})
 
 
 @configclass
@@ -426,8 +414,6 @@ class FootSampledCurriculumCfg:
             "sampler_visual_log_period": 1000,
         },
     )
-    remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
-
 
 @configclass
 class FlatPatchCurriculumCfg:
@@ -447,7 +433,6 @@ class FlatPatchCurriculumCfg:
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=100),
         },
     )
-    remove_explore_reward = CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"})
 
 
 @configclass

@@ -106,5 +106,6 @@ class SubTerrainPresetCfg(PresetCfg):
     stepping_stone = {"stepping_stone": terrains.STEPPING_STONE}
     radiating_beam = {"radiating_beam": terrains.RADIATING_BEAM}
     flat = {"flat": terrains.FLAT}
+    maze = {"maze": terrains.MAZE}
     foot_sampled_commands = all
     default = all
