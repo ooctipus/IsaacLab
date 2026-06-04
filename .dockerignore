@@ -28,4 +28,26 @@ _isaac_sim
 docker/.isaac-lab-docker-history
 # ignore uv environment
 env_isaaclab
+.venv
 tools/wheel_builder/build/
+# ignore IDE and AI agent configs
+.claude/
+.cursor/
+.vscode/
+.codex/
+CLAUDE.md
+AGENTS.md
+claude.md
+greptile.json
+# ignore local dev caches
+.pytest_cache/
+.ruff_cache/
+nv_shadercache/
+shadercache/
+.pretrained_checkpoints/
+models_tmp/
+# ignore local cluster/build scripts
+buildnpush.sh
+submit.sh
+# ignore local dev directories
+fabrics-sim/

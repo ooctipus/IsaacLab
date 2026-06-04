@@ -74,6 +74,7 @@ parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy 
 parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
+parser.add_argument("--workflow_id", type=str, default=None, help="Workflow ID.")
 parser.add_argument("--export_io_descriptors", action="store_true", default=False, help="Export IO descriptors.")
 parser.add_argument(
     "--ray-proc-id", "-rid", type=int, default=None, help="Automatically configured by Ray integration, otherwise None."
@@ -163,13 +164,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
         log_root_path = os.path.abspath(log_root_path)
         print(f"[INFO] Logging experiment in directory: {log_root_path}")
-        # specify directory for logging runs: {time-stamp}_{run_name}
+        # specify directory for logging runs: {time-stamp}_{run_name}_{workflow_id}
         log_dir = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         # The Ray Tune workflow extracts experiment name using the logging line below, hence, do not
         # change it (see PR #2346, comment-2819298849)
         print(f"Exact experiment name requested from command line: {log_dir}")
         if agent_cfg.run_name:
             log_dir += f"_{agent_cfg.run_name}"
+        if args_cli.workflow_id:
+            log_dir += f"_{args_cli.workflow_id}"
         log_dir = os.path.join(log_root_path, log_dir)
 
         # set the IO descriptors export flag if requested

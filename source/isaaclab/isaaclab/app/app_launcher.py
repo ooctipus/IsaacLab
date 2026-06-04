@@ -1047,10 +1047,13 @@ class AppLauncher:
             launcher_args["multi_gpu"] = False
             # limit CPU threads to minimize thread context switching
             # this ensures processes do not take up all available threads and fight for resources
-            num_cpu_cores = os.cpu_count()
-            num_threads_per_process = num_cpu_cores // int(os.getenv("WORLD_SIZE", 1))
+            num_cpu_cores = os.cpu_count() or 1
+            local_world_size = max(int(os.getenv("LOCAL_WORLD_SIZE", os.getenv("WORLD_SIZE", "1"))), 1)
+            num_threads_per_process = max(num_cpu_cores // local_world_size, 1)
             # set environment variables to limit CPU threads
             os.environ["PXR_WORK_THREAD_LIMIT"] = str(num_threads_per_process)
+            os.environ["OMP_NUM_THREADS"] = str(num_threads_per_process)
+            os.environ["MKL_NUM_THREADS"] = str(num_threads_per_process)
             os.environ["OPENBLAS_NUM_THREADS"] = str(num_threads_per_process)
             # pass command line variable to kit
             sys.argv.append(f"--/plugins/carb.tasking.plugin/threadCount={num_threads_per_process}")

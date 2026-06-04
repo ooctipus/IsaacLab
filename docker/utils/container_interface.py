@@ -87,6 +87,8 @@ class ContainerInterface:
 
         # resolve the image extension through the passed yamls and envs
         self._resolve_image_extension(yamls, envs)
+        self._add_wandb_credentials_mount()
+        self._add_host_cache_mounts()
         # load the environment variables from the .env files
         self._parse_dot_vars()
 
@@ -134,8 +136,7 @@ class ContainerInterface:
         Returns:
             True if the image exists, otherwise False.
         """
-        result = subprocess.run(["docker", "image", "inspect", self.image_name], capture_output=True, text=True)
-        return result.returncode == 0
+        return self._does_image_exist(self.image_name)
 
     def build(self):
         """Build the Docker image."""
@@ -164,20 +165,23 @@ class ContainerInterface:
             subprocess.run(cmd, check=False, cwd=self.context_dir, env=self.environ)
             print(f"[INFO] Finished building the docker image for the profile '{self.profile}'.\n")
 
-    def start(self):
-        """Build and start the Docker container using the Docker compose command."""
-        print(
-            f"[INFO] Building the docker image and starting the container '{self.container_name}' in the"
-            " background...\n"
-        )
+    def start(self, build: bool = False):
+        """Start the Docker container using the Docker compose command.
+
+        Args:
+            build: If True, build/rebuild the image before starting. If False, reuse existing images
+                and only build when the requested image is missing.
+        """
+        print(f"[INFO] Starting the container '{self.container_name}' in the background...\n")
         # Check if the container history file exists
         container_history_file = self.context_dir / ".isaac-lab-docker-history"
         if not container_history_file.exists():
             # Create the file with sticky bit on the group
             container_history_file.touch(mode=0o2644, exist_ok=True)
 
-        # build the image for the base profile if not running base (up will build base already if profile is base)
-        if self.profile != "base":
+        # build the image for the base profile if not running base and the base image is missing
+        base_image_name = f"{self.base_service_name}{self.suffix}:latest"
+        if self.profile != "base" and (build or not self._does_image_exist(base_image_name)):
             cmd = (
                 ["docker", "compose"]
                 + ["--file", "docker-compose.yaml"]
@@ -187,13 +191,25 @@ class ContainerInterface:
             )
             subprocess.run(cmd, check=False, cwd=self.context_dir, env=self.environ)
 
-        # start the container and build the image if not available
+        if build or not self.does_image_exist():
+            cmd = (
+                ["docker", "compose"]
+                + self.add_yamls
+                + self.add_profiles
+                + self.add_env_files
+                + ["build", self.service_name]
+            )
+            if not build:
+                print(f"[INFO] Docker image '{self.image_name}' does not exist. Building it once before start.\n")
+            subprocess.run(cmd, check=False, cwd=self.context_dir, env=self.environ)
+
+        # start the container without forcing a rebuild
         cmd = (
             ["docker", "compose"]
             + self.add_yamls
             + self.add_profiles
             + self.add_env_files
-            + ["up", "--detach", "--build", "--remove-orphans"]
+            + ["up", "--detach", "--no-build", "--remove-orphans"]
         )
         subprocess.run(cmd, check=False, cwd=self.context_dir, env=self.environ)
 
@@ -211,6 +227,7 @@ class ContainerInterface:
                 + [self.container_name, "bash"]
             )
             subprocess.run(cmd)
+            self.fix_output_ownership()
         else:
             raise RuntimeError(f"The container '{self.container_name}' is not running.")
 
@@ -218,6 +235,7 @@ class ContainerInterface:
         """Stop the running container using the Docker compose command."""
         if self.is_container_running():
             print(f"[INFO] Stopping the launched docker container '{self.container_name}'...\n")
+            self.fix_output_ownership()
             # stop running services
             cmd = (
                 ["docker", "compose"] + self.add_yamls + self.add_profiles + self.add_env_files + ["down", "--volumes"]
@@ -271,6 +289,32 @@ class ContainerInterface:
         else:
             raise RuntimeError(f"The container '{self.container_name}' is not running.")
 
+    def fix_output_ownership(self):
+        """Give bind-mounted output artifacts back to the host user.
+
+        Isaac Sim containers run as root by default. This keeps that behavior, but prevents root-owned files under
+        host-mounted output directories such as ``models_tmp`` after using ``container.py enter`` or ``stop``.
+        """
+        if not self.is_container_running():
+            return
+
+        docker_isaac_lab_path = Path(self.dot_vars["DOCKER_ISAACLAB_PATH"])
+        output_paths = [docker_isaac_lab_path.joinpath("models_tmp")]
+        uid = os.getuid()
+        gid = os.getgid()
+
+        for output_path in output_paths:
+            print(f"[INFO] Fixing host ownership for container output path: {output_path}")
+            cmd = [
+                "docker",
+                "exec",
+                self.container_name,
+                "bash",
+                "-lc",
+                f"if [ -e '{output_path}' ]; then chown -R {uid}:{gid} '{output_path}'; fi",
+            ]
+            subprocess.run(cmd, check=False, cwd=self.context_dir, env=self.environ)
+
     def config(self, output_yaml: Path | None = None):
         """Process the Docker compose configuration based on the passed yamls and environment files.
 
@@ -296,6 +340,97 @@ class ContainerInterface:
     """
     Helper functions.
     """
+
+    def _does_image_exist(self, image_name: str) -> bool:
+        """Check if a Docker image exists."""
+        result = subprocess.run(["docker", "image", "inspect", image_name], capture_output=True, text=True)
+        return result.returncode == 0
+
+    def _add_wandb_credentials_mount(self) -> None:
+        """Mount host W&B credentials when available without making them required for all users."""
+        netrc_path = Path.home() / ".netrc"
+        wandb_yaml = self.context_dir / "docker-compose.wandb.yaml"
+        if netrc_path.is_file() and wandb_yaml.is_file():
+            self.environ["HOST_WANDB_NETRC_PATH"] = str(netrc_path)
+            self.add_yamls += ["--file", "docker-compose.wandb.yaml"]
+
+    def _add_host_cache_mounts(self) -> None:
+        """Use existing host shader/cache directories to avoid recompiling shaders after container recreation."""
+        cache_mounts = [
+            (
+                "HOST_ISAACSIM_KIT_CACHE_PATH",
+                self.context_dir.parent / "_isaac_sim" / "kit" / "cache",
+                Path("isaac-sim/kit/cache"),
+                "${DOCKER_ISAACSIM_ROOT_PATH}/kit/cache",
+            ),
+            (
+                "HOST_OMNIVERSE_CACHE_PATH",
+                Path.home() / ".cache" / "ov",
+                Path("ov"),
+                "${DOCKER_USER_HOME}/.cache/ov",
+            ),
+            (
+                "HOST_NVIDIA_GL_CACHE_PATH",
+                Path.home() / ".cache" / "nvidia" / "GLCache",
+                Path("nvidia/GLCache"),
+                "${DOCKER_USER_HOME}/.cache/nvidia/GLCache",
+            ),
+            (
+                "HOST_NVIDIA_COMPUTE_CACHE_PATH",
+                Path.home() / ".nv" / "ComputeCache",
+                Path("nv/ComputeCache"),
+                "${DOCKER_USER_HOME}/.nv/ComputeCache",
+            ),
+            (
+                "HOST_NVIDIA_OPTIX_CACHE_PATH",
+                Path.home() / ".cache" / "NVIDIA" / "OptixCache",
+                Path("NVIDIA/OptixCache"),
+                "${DOCKER_USER_HOME}/.cache/NVIDIA/OptixCache",
+            ),
+        ]
+        existing_cache_mounts = [
+            (env_name, source, target)
+            for env_name, default_source, shared_root_suffix, target in cache_mounts
+            if (source := self._resolve_host_cache_path(env_name, default_source, shared_root_suffix)) is not None
+        ]
+        host_cache_yaml = self.context_dir / ".isaac-lab-host-cache.yaml"
+
+        if not existing_cache_mounts:
+            host_cache_yaml.unlink(missing_ok=True)
+            return
+
+        volume_lines = [
+            f"      - type: bind\n        source: ${{{env_name}}}\n        target: {target}\n"
+            for env_name, _source, target in existing_cache_mounts
+        ]
+        volumes_block = "".join(volume_lines)
+        host_cache_yaml.write_text(
+            "# Generated by docker/container.py. Do not commit.\n"
+            "services:\n"
+            "  isaac-lab-base:\n"
+            "    volumes:\n"
+            f"{volumes_block}"
+            "\n"
+            "  isaac-lab-ros2:\n"
+            "    volumes:\n"
+            f"{volumes_block}",
+            encoding="utf-8",
+        )
+        self.add_yamls += ["--file", ".isaac-lab-host-cache.yaml"]
+
+    def _resolve_host_cache_path(self, env_name: str, default_source: Path, shared_root_suffix: Path) -> Path | None:
+        """Resolve a host cache path and export it for the generated compose override."""
+        source = Path(self.environ[env_name]) if env_name in self.environ else None
+        if source is None and "HOST_ISAACLAB_CACHE_ROOT" in self.environ:
+            source = Path(self.environ["HOST_ISAACLAB_CACHE_ROOT"]) / shared_root_suffix
+        if source is None:
+            source = default_source
+
+        if not source.is_dir():
+            return None
+
+        self.environ[env_name] = str(source)
+        return source
 
     def _resolve_image_extension(self, yamls: list[str] | None = None, envs: list[str] | None = None):
         """Resolve the image extension by setting up YAML files, profiles, and environment files for the

@@ -1,0 +1,39 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Lightweight Dockerfile for source-only updates when dependencies are cached.
+# This simply copies source files over an existing isaac-lab-deps image.
+# Pass RUN_PIP_INSTALL=1 to also re-run pip install (for --force-pip-only).
+
+# syntax=docker/dockerfile:1
+ARG DEPS_BASE_IMAGE=isaac-lab-deps:latest
+FROM ${DEPS_BASE_IMAGE}
+
+# Path to the Isaac Lab directory
+ARG ISAACLAB_PATH_ARG
+ENV ISAACLAB_PATH=${ISAACLAB_PATH_ARG}
+
+# Re-create the Isaac Sim symlink (may have been lost if deps image was migrated)
+ARG ISAACSIM_ROOT_PATH_ARG=/isaac-sim
+
+# Copy source files (deps already installed in the base/deps image).
+# Keep the repo layout intact so the uv editable installs created in
+# ``Dockerfile.base`` keep resolving the isaaclab_* packages from source/.
+# ``--chown=isaaclab:isaaclab`` matches the user/group set up in ``Dockerfile.base``
+# (uid/gid 1000) so editable metadata can be written under the non-root user.
+COPY --chown=isaaclab:isaaclab source ${ISAACLAB_PATH}/source
+COPY --chown=isaaclab:isaaclab scripts ${ISAACLAB_PATH}/scripts
+COPY --chown=isaaclab:isaaclab tools ${ISAACLAB_PATH}/tools
+
+# Recreate the Isaac Sim symlink and normalize shell line endings. Optionally
+# re-run the uv sync (skipped for plain source-only, enabled for --force-pip-only)
+# to pick up any dependency drift. ``UV_PROJECT_ENVIRONMENT``/``VIRTUAL_ENV`` are
+# inherited from the base image, so this targets the same ``.venv``; ``--frozen``
+# keeps it pinned to ``uv.lock`` and ``--inexact`` preserves the system-site
+# Isaac Sim packages uv does not manage.
+ARG RUN_PIP_INSTALL=0
+RUN ln -sfn ${ISAACSIM_ROOT_PATH_ARG} ${ISAACLAB_PATH}/_isaac_sim && \
+    find ${ISAACLAB_PATH}/source -type f -name "*.sh" -exec sed -i 's/\r$//' {} + && \
+    if [ "${RUN_PIP_INSTALL}" = "1" ]; then \
+      cd ${ISAACLAB_PATH} && uv sync --frozen --inexact; \
+    fi
