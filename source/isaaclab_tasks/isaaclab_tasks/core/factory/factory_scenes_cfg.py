@@ -14,7 +14,7 @@ from dataclasses import MISSING
 
 from isaaclab.assets import ArticulationCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 from isaaclab_tasks.utils import PresetCfg
 
 from . import factory_assets_cfg as assets

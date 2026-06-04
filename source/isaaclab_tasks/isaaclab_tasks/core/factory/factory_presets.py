@@ -21,7 +21,7 @@ variant names (``franka``) to body/joint name strings.
 
 import math
 
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 from isaaclab_tasks.utils import PresetCfg
 
 from . import assembly_keypoints as kpts

@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from __future__ import annotations
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
 from .success_monitor import SuccessMonitor
 

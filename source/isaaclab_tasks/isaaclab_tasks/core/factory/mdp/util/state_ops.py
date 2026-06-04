@@ -5,9 +5,8 @@
 
 from __future__ import annotations
 
-import io
 import random
-from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from contextlib import contextmanager
 
 import numpy as np
 import torch
@@ -257,10 +256,13 @@ def temporary_seed(seed: int, restore_numpy: bool = True, restore_python: bool =
     py_state = random.getstate() if restore_python else None
 
     try:
-        sink = io.StringIO()
-        with redirect_stdout(sink), redirect_stderr(sink):
-            import isaacsim.core.utils.torch as torch_utils
-            torch_utils.set_seed(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+        if restore_numpy:
+            np.random.seed(seed)
+        if restore_python:
+            random.seed(seed)
         yield
     finally:
         torch.set_rng_state(cpu_state)

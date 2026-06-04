@@ -13,7 +13,7 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 from isaaclab_physx.physics import PhysxCfg
 from isaaclab_tasks.utils import PresetCfg, preset
 from . import mdp
