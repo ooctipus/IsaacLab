@@ -15,6 +15,8 @@ from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.utils.configclass import configclass
 from isaaclab_physx.physics import PhysxCfg
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
+from isaaclab_newton.physics.newton_manager_cfg import
 from isaaclab_tasks.utils import PresetCfg, preset
 from . import mdp
 from .reset_env_cfg import RESET_STRATEGIES
@@ -241,19 +243,6 @@ class SuccessTerminationsCfg:
     oob = _OOB
     progress_context = _PROGRESS_CONTEXT
     success = DoneTerm(func=mdp.success_termination)
-    predictor_truncation = DoneTerm(
-        func=mdp.predictor_truncation,
-        params={
-            "success_threshold": 0.98,
-            "failure_threshold": 0.02,
-            "consecutive_steps": 20,
-            "truncation_ratio": 0.5,
-            "min_loss": 0.3,
-            "truncate_on_success": False,
-            "truncate_on_failure": True,
-            "exclude_from_estimator": preset(default=False, success_estimator=True),
-        },
-    )
 
 
 @configclass
@@ -295,6 +284,65 @@ class FactoryCurriculumsCfg:
         eval=None
     )
 
+@configclass
+class FactoryPhysicsCfg(PresetCfg):
+    """Physics-backend preset for Factory tasks.
+
+    Selected via ``presets=physx`` (default) or ``presets=newton_mjwarp``. The PhysX
+    variant keeps Factory's contact-rich solver tuning; the Newton variant follows Newton's
+    reference ``example_nut_bolt_sdf`` (MuJoCo/Newton solver path): few constraint iterations
+    with many line-search iterations, ``impratio=1.0``, ``num_substeps=5``, a small global
+    shape gap, and Newton's SDF collision pipeline (rather than MuJoCo's internal contacts).
+    Capacity knobs (``njmax``/``nconmax``) are kept larger than the bare nut/bolt demo since
+    Factory's scene also contains the robot, NIST board, and table.
+    """
+
+    default = PhysxCfg(
+        solver_type=1,
+        max_position_iteration_count=192,
+        max_velocity_iteration_count=1,
+        bounce_threshold_velocity=0.2,
+        friction_offset_threshold=0.01,
+        friction_correlation_distance=0.00625,
+        gpu_max_rigid_contact_count=2**23,
+        gpu_max_rigid_patch_count=2**23,
+        gpu_collision_stack_size=2**32 - 1,
+        gpu_max_num_partitions=1,
+        gpu_found_lost_pairs_capacity=2**22,
+    )
+    newton_mjwarp = NewtonCfg(
+        solver_cfg=MJWarpSolverCfg(
+            solver="newton",
+            integrator="implicitfast",
+            njmax=1500,
+            nconmax=300,
+            impratio=1.0,
+            cone="pyramidal",
+            update_data_interval=2,
+            iterations=15,
+            ls_iterations=100,
+            ls_parallel=False,
+            use_mujoco_contacts=False,
+        ),
+        # Buffer capacities sized from measured peaks at num_envs=8192 in the contact-rich
+        # start_assembled regime: triangle-pair peak ~14.4M (1.76k/env), rigid-contact peak
+        # ~0.74M (90/env). Previous values (60M; auto-estimated 36.7M) ran at ~24% / ~2%
+        # utilization. Headroom is ~2x triangle pairs, ~5x contacts. Buffer size affects VRAM
+        # only, not step time; an overflow would silently drop contacts, hence the margin.
+        # Scale up if running materially more than 8192 envs (the overflow warning is the cue).
+        collision_cfg=NewtonCollisionPipelineCfg(
+            broad_phase="sap",
+            max_triangle_pairs=60_000_000,
+            rigid_contact_max=5_000_000,
+        ),
+        default_shape_cfg=NewtonShapeCfg(margin=0.0, gap=0.001, ke=1e7, kd=1e4),
+        num_substeps=5,
+        debug_mode=False,
+        use_cuda_graph=True,
+    )
+    physx = default
+
+
 ##
 # Environment configuration
 ##
@@ -322,19 +370,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
         # simulation settings
         self.sim.dt = 0.04 / self.decimation
         self.sim.render_interval = self.decimation
-        self.sim.physics = PhysxCfg(
-            solver_type=1,
-            max_position_iteration_count=192,
-            max_velocity_iteration_count=1,
-            bounce_threshold_velocity=0.2,
-            friction_offset_threshold=0.01,
-            friction_correlation_distance=0.00625,
-            gpu_max_rigid_contact_count=2**23,
-            gpu_max_rigid_patch_count=2**23,
-            gpu_collision_stack_size=2**32 - 1,
-            gpu_max_num_partitions=1,
-            gpu_found_lost_pairs_capacity=2 ** 22
-        )
+        self.sim.physics = FactoryPhysicsCfg()
 
         self.sim.physics_material.static_friction = 0.5
         self.sim.physics_material.dynamic_friction = 0.5

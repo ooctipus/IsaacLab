@@ -8,12 +8,12 @@ from isaaclab.utils.configclass import configclass
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.managers import RewardTermCfg as RewTerm
 
-from ...factory_assets_cfg import FRANKA_PANDA_CFG
+from ...factory_assets_cfg import FRANKA_PANDA_NEWTON_CFG, FRANKA_PANDA_PHYSX_CFG
 from ...factory_env_base import FactoryBaseEnvCfg
 from ...assembly_keypoints import PANDA_HAND
 from ...factory_presets import EndEffectorBodyCfg, GripperGraspOffsetCfg, GripperJointNamesCfg, IKJointNamesCfg, JointEffortNamesCfg
 from ... import factory_scenes_cfg as scenes
-from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils import PresetCfg, preset
 from ... import mdp
 
 EndEffectorBodyCfg.franka = "panda_fingertip_centered"
@@ -31,7 +31,10 @@ GripperGraspOffsetCfg.default = GripperGraspOffsetCfg.franka
 JointEffortNamesCfg.franka = "(?!panda_joint7$|panda_finger_.*$).*"
 JointEffortNamesCfg.default = JointEffortNamesCfg.franka
 
-_FRANKA_ROBOT = FRANKA_PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+_FRANKA_ROBOT = preset(
+    default=FRANKA_PANDA_PHYSX_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot"),
+    newton_mjwarp=FRANKA_PANDA_NEWTON_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+)
 
 
 @configclass
@@ -41,7 +44,7 @@ class ActionCfg:
         joint_names=["panda_joint.*"],
         scale={
             "(?!panda_joint7).*": 0.02,
-            "panda_joint7": 0.2,
+            "panda_joint7": 0.02,
         },
         use_zero_offset=True,
     )

@@ -173,6 +173,7 @@ class reset_end_effector_around_asset(ManagerTermBase):
         )
         self.solver: DifferentialInverseKinematicsAction = None  # type: ignore
         self.grasp_angle_range  = (0.3, 0.7)
+        self.is_physx = "physx" in env.sim.physics_manager.__name__.lower()
 
     def __call__(
         self,
@@ -215,7 +216,8 @@ class reset_end_effector_around_asset(ManagerTermBase):
         # wrist_high = self.robot.data.joint_pos_limits[env_ids, self.wrist_idx, 1]
         # wrist_pos = (wrist_low + (wrist_high - wrist_low) * torch.rand_like(wrist_low)).view(len(env_ids), -1)
         # self.robot.write_joint_position_to_sim(position=wrist_pos, joint_ids=self.wrist_idx, env_ids=env_ids)
-        self.robot.root_physx_view.get_jacobians()
+        if self.is_physx:
+            self.robot.root_physx_view.get_jacobians()
 
 
 def reset_root_state_uniform_on_offset(
