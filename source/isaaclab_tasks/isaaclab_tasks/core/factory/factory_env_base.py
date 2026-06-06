@@ -15,8 +15,8 @@ from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.utils.configclass import configclass
 from isaaclab_physx.physics import PhysxCfg
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
-from isaaclab_newton.physics.newton_manager_cfg import
+from isaaclab_newton.physics import MJWarpSolverCfg, NanReplayCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
+from isaaclab_newton.physics.newton_manager_cfg import ReplayBufferCfg
 from isaaclab_tasks.utils import PresetCfg, preset
 from . import mdp
 from .reset_env_cfg import RESET_STRATEGIES
@@ -336,9 +336,26 @@ class FactoryPhysicsCfg(PresetCfg):
             rigid_contact_max=5_000_000,
         ),
         default_shape_cfg=NewtonShapeCfg(margin=0.0, gap=0.001, ke=1e7, kd=1e4),
-        num_substeps=5,
+        num_substeps=4,
         debug_mode=False,
+        # Replay/debug capture keeps solver buffers for cold export, so disable CUDA graphing.
         use_cuda_graph=True,
+        # TEMP (NaN debugging): rolling state buffer + auto-export on NaN. Remove to disable.
+        # nan_replay=NanReplayCfg(
+        #     buffer_size=8,
+        #     export_path="/tmp/factory_bench/nan_debug/",
+        #     export_envs_only=True,
+        #     max_exports=5,
+        #     per_substep=False,
+        #     replay=ReplayBufferCfg(
+        #         enabled=True,
+        #         record_state=True,
+        #         record_control=True,
+        #         record_solver=True,
+        #         record_contacts=True,
+        #         record_mjwarp_context=True,
+        #     ),
+        # ),
     )
     physx = default
 
