@@ -1,0 +1,620 @@
+--- a/mujoco_warp/_src/solver.py
++++ b/mujoco_warp/_src/solver.py
+@@ -23,6 +23,205 @@
+ from mujoco_warp._src import smooth
+ from mujoco_warp._src import support
+ from mujoco_warp._src import types
++
++# TEMP debug (FACTORY_SOLVE_TRACE=1): per-iteration NaN tripwire to pinpoint which solver
++# op first produces a non-finite value. Forces the Python iteration loop (host checks can't
++# run inside a captured while). Remove after diagnosis.
++import os as _os
++
++_SOLVE_TRACE = _os.environ.get("FACTORY_SOLVE_TRACE") == "1"
++_SOLVE_SNAPSHOT = _os.environ.get("FACTORY_SOLVE_SNAPSHOT") == "1"
++_HESSIAN_DIAG_REG = float(_os.environ.get("FACTORY_HESSIAN_DIAG_REG", "0.0"))
++_SOLVER_DEBUG_LAST = None
++
++# TEMP debug (FACTORY_PRESOLVE_DUMP=<path>): on the first solve whose output qacc has a NaN,
++# dump the COMPLETE consistent pre-solve solver state for that world (efc.*, qM, qfrc_smooth,
++# qacc_warmstart, contacts, opts) to an npz. These inputs are NOT overwritten by _solve (the
++# qacc_warmstart->qacc copy happens later in euler), so post-_solve-on-NaN they are exactly the
++# inputs that produced the NaN -> a Level-0 direct-solve from this npz reproduces it bit-for-bit.
++_PRESOLVE_DUMP_PATH = _os.environ.get("FACTORY_PRESOLVE_DUMP")
++_PRESOLVE_DUMPED = False
++
++# TEMP debug (FACTORY_ITER_DUMP=<path>): at the FIRST solver iteration whose Cholesky output
++# (ctx.Mgrad) goes NaN, dump the Hessian ctx.h, its assembly inputs (efc.J/D/state, qM) and the
++# gradient for that world. A deterministic replay then re-derives H = qM + Jᵀ·diag(state_check(D,
++# state))·J with the real float32 kernel and factorizes it -> reproduces the numerically-indefinite
++# Hessian -> NaN, deterministically (the non-deterministic part — which efc_state/J/D the atomic-add
++# trajectory reached — is pinned by the recording). Forces the Python iteration loop so the failing
++# iteration can be host-detected before the NaN propagates.
++_ITER_DUMP_PATH = _os.environ.get("FACTORY_ITER_DUMP")
++_ITER_DUMPED = False
++
++
++def _iter_dump(m, d, ctx):
++    global _ITER_DUMPED
++    if _ITER_DUMPED:
++        return
++    import numpy as _np
++    import torch as _torch
++
++    mg = wp.to_torch(ctx.Mgrad)
++    bad = (~_torch.isfinite(mg)).reshape(mg.shape[0], -1).any(1)
++    if not bool(bad.any()):
++        return
++    w = int(_torch.nonzero(bad)[0].item())
++    nworld = int(mg.shape[0])
++    niter = int(wp.to_torch(d.solver_niter).reshape(-1)[w].item()) if hasattr(d, "solver_niter") else -1
++    out = {"_nan_world": _np.int64(w), "_niter": _np.int64(niter), "_nworld": _np.int64(nworld)}
++
++    def save(name, arr):
++        if arr is None:
++            return
++        try:
++            t = wp.to_torch(arr).detach().cpu().numpy()
++        except Exception:
++            return
++        out[name] = t[w] if (t.ndim >= 1 and t.shape[0] == nworld) else t
++
++    save("ctx_h", ctx.h)
++    save("ctx_grad", ctx.grad)
++    save("ctx_Mgrad", ctx.Mgrad)
++    for nm in ("J", "J_rownnz", "J_rowadr", "J_colind", "D", "state", "type", "id"):
++        if hasattr(d.efc, nm):
++            save("efc_" + nm, getattr(d.efc, nm))
++    for nm in ("qM", "qLDiagInv", "qfrc_smooth", "qacc_smooth", "nefc", "ne", "nf", "nl"):
++        if hasattr(d, nm):
++            save("d_" + nm, getattr(d, nm))
++    _np.savez(_ITER_DUMP_PATH, **out)
++    _ITER_DUMPED = True
++    print(f"[ITER_DUMP] first NaN in ctx.Mgrad at world {w}, niter {niter}; dumped Hessian+inputs "
++          f"to {_ITER_DUMP_PATH}", flush=True)
++    raise RuntimeError(f"ITER_DUMP: NaN Mgrad world {w} niter {niter}; Hessian + inputs dumped.")
++
++
++def _presolve_dump(m, d):
++    global _PRESOLVE_DUMPED
++    if _PRESOLVE_DUMPED:
++        return
++    import numpy as _np
++    import torch as _torch
++
++    def npy(a):
++        return wp.to_torch(a).detach().cpu().numpy()
++
++    # Gate on a NaN in post-solve qacc FIRST and early-return otherwise. Do NOT do host copies before
++    # this gate: on the inner solve's one-time CUDA graph-capture step a host op raises
++    # cudaErrorStreamCaptureImplicit. (A world whose Mgrad NaN is absorbed by the linesearch keeps a
++    # finite qacc and is skipped here; the next step that propagates a NaN is captured instead.)
++    qacc = wp.to_torch(d.qacc)
++    bad = (~_torch.isfinite(qacc)).reshape(qacc.shape[0], -1).any(1)
++    if not bool(bad.any()):
++        return
++    qacc_world = int(_torch.nonzero(bad)[0].item())
++
++    # Prefer the GPU snapshot world (meta[3]) so EVERY per-world array (qpos/qvel/qM/efc/contacts)
++    # describes the SAME world as the captured snap_h/snap_efc_state. The post-solve "first NaN qacc"
++    # world can differ from the snapshot world when several worlds go NaN in one solve (two independent
++    # selection passes), which would otherwise silently mix two worlds in the dump.
++    snap = _SOLVER_DEBUG_LAST
++    snap_world = None
++    if snap is not None and hasattr(snap, "debug_meta"):
++        _meta = npy(snap.debug_meta).reshape(-1)
++        if _meta.size and int(_meta[0]) != 0:
++            snap_world = int(_meta[3])
++    w = snap_world if snap_world is not None else qacc_world
++    nworld = int(qacc.shape[0])
++    out = {
++        "_nan_world": _np.int64(w),
++        "_nworld": _np.int64(nworld),
++        "_snap_world": _np.int64(snap_world if snap_world is not None else -1),
++        "_qacc_nan_world": _np.int64(qacc_world),
++    }
++
++    def save_row(prefix, obj, names):
++        for nm in names:
++            if not hasattr(obj, nm):
++                continue
++            arr = getattr(obj, nm)
++            if arr is None:
++                continue
++            try:
++                t = npy(arr)
++            except Exception:
++                continue
++            out[prefix + nm] = t[w] if (t.ndim >= 1 and t.shape[0] == nworld) else t
++
++    save_row("d_", d, ["qpos", "qvel", "qacc", "qacc_smooth", "qacc_warmstart", "qfrc_smooth",
++                       "qfrc_constraint", "qfrc_bias", "qM", "qLD", "qLDiagInv", "qfrc_applied",
++                       "ctrl", "act", "nefc", "ne", "nf", "nl", "nacon", "ncon"])
++    save_row("efc_", d.efc, ["J", "J_rownnz", "J_rowadr", "J_colind", "D", "aref", "pos", "vel",
++                             "Jqvel", "type", "margin", "frictionloss", "force", "id"])
++    try:
++        cw = npy(d.contact.worldid).reshape(-1)
++        nacon = int(npy(d.nacon).reshape(-1)[0]) if hasattr(d, "nacon") else cw.shape[0]
++        sel = _np.where(cw[:nacon] == w)[0]
++        out["_contact_sel"] = sel.astype(_np.int64)
++        for nm in ("friction", "dim", "solref", "solimp", "solreffriction", "efc_address",
++                   "dist", "pos", "frame", "geom", "includemargin"):
++            if hasattr(d.contact, nm) and getattr(d.contact, nm) is not None:
++                out["contact_" + nm] = npy(getattr(d.contact, nm))[sel]
++    except Exception as exc:  # noqa: BLE001
++        out["_contact_error"] = str(exc)
++    for nm in ("iterations", "ls_iterations", "tolerance", "ls_tolerance", "impratio", "cone",
++               "integrator", "timestep", "is_sparse", "solver"):
++        if hasattr(m.opt, nm):
++            v = getattr(m.opt, nm)
++            try:
++                out["opt_" + nm] = npy(v) if "array" in str(type(v)).lower() else _np.asarray(v)
++            except Exception:
++                try:
++                    out["opt_" + nm] = _np.asarray(int(v))
++                except Exception:
++                    pass
++    # Record the sparse mass-matrix structure (mjwarp's own qM_mulm_* layout) so d_qM can be densified
++    # offline EXACTLY (M[dofid, col[k]] = qM[madr[k]]). NB: do NOT launch mul_m here -- a kernel launch
++    # during the dump conflicts with the solve's CUDA graph capture (cudaErrorStreamCaptureImplicit).
++    # Reads via npy() are safe (the snapshot/opts pulls below do the same).
++    try:
++        for nm in ("qM_mulm_rowadr", "qM_mulm_col", "qM_mulm_madr"):
++            if hasattr(m, nm) and getattr(m, nm) is not None:
++                out["m_" + nm] = npy(getattr(m, nm))
++    except Exception as exc:  # noqa: BLE001
++        out["_qM_struct_error"] = str(exc)
++
++    # Pull the GPU-side solve snapshot (FACTORY_SOLVE_SNAPSHOT): the FAILING-iteration Hessian
++    # ctx.h and efc_state (the cone zones). Post-solve d.efc.state is garbage (NaN-propagated), so
++    # the snapshot is the only source of the clean failing-iteration state that makes H indefinite.
++    snap = _SOLVER_DEBUG_LAST
++    if snap is not None:
++        meta = npy(snap.debug_meta) if hasattr(snap, "debug_meta") else _np.zeros(8)
++        out["snap_meta"] = meta
++        for nm in ("debug_h", "debug_efc_state", "debug_efc_D", "debug_grad", "debug_mgrad",
++                   "debug_qacc_warmstart", "debug_qacc_smooth", "debug_qacc", "debug_jaref",
++                   "debug_search", "debug_force"):
++            if hasattr(snap, nm) and getattr(snap, nm) is not None:
++                try:
++                    out["snap_" + nm[6:]] = npy(getattr(snap, nm))
++                except Exception:
++                    pass
++        out["_snap_triggered"] = _np.int64(int(meta.reshape(-1)[0]) if meta.size else 0)
++    _np.savez(_PRESOLVE_DUMP_PATH, **out)
++    _PRESOLVE_DUMPED = True
++    print(f"[PRESOLVE_DUMP] wrote pre-solve state + solve-snapshot for NaN world {w} to "
++          f"{_PRESOLVE_DUMP_PATH} ({len(out)} arrays; snap_triggered={out.get('_snap_triggered')})", flush=True)
++    raise RuntimeError(f"PRESOLVE_DUMP: NaN qacc in world {w}; pre-solve state dumped.")
++
++
++def _trace_check(arr, name, d):
++    import torch
++
++    t = wp.to_torch(arr)
++    bad = ~torch.isfinite(t)
++    if bool(bad.any()):
++        flat = bad.reshape(t.shape[0], -1).any(1) if t.ndim >= 1 else bad.reshape(1)
++        w = int(torch.nonzero(flat)[0].item()) if bool(flat.any()) else -1
++        niter = int(wp.to_torch(d.solver_niter)[w].item()) if 0 <= w < d.nworld else -1
++        print(
++            f"[SOLVE_TRACE] FIRST non-finite in '{name}': world={w} solver_niter={niter} "
++            f"#bad={int(bad.sum())}/{t.numel()}",
++            flush=True,
++        )
++        raise RuntimeError(f"SOLVE_TRACE: non-finite in {name} (world {w}, iter {niter})")
+ from mujoco_warp._src.block_cholesky import create_blocked_cholesky_func
+ from mujoco_warp._src.block_cholesky import create_blocked_cholesky_solve_func
+ from mujoco_warp._src.warp_util import cache_kernel
+@@ -75,6 +274,38 @@
+   # Incremental Hessian update (Newton only)
+   changed_efc_ids: wp.array2d[int]
+   changed_efc_count: wp.array[int]
++  debug_meta: wp.array[int]
++  debug_qacc_warmstart: wp.array[float]
++  debug_qacc_smooth: wp.array[float]
++  debug_qacc: wp.array[float]
++  debug_jaref: wp.array[float]
++  debug_search: wp.array[float]
++  debug_mv: wp.array[float]
++  debug_jv: wp.array[float]
++  debug_grad: wp.array[float]
++  debug_mgrad: wp.array[float]
++  debug_force: wp.array[float]
++  debug_h: wp.array2d[float]
++
++
++@dataclasses.dataclass
++class SolverDebugSnapshot:
++  """Persistent small GPU snapshot for the first non-finite solver value."""
++
++  debug_meta: wp.array[int]
++  debug_qacc_warmstart: wp.array[float]
++  debug_qacc_smooth: wp.array[float]
++  debug_qacc: wp.array[float]
++  debug_jaref: wp.array[float]
++  debug_search: wp.array[float]
++  debug_mv: wp.array[float]
++  debug_jv: wp.array[float]
++  debug_grad: wp.array[float]
++  debug_mgrad: wp.array[float]
++  debug_force: wp.array[float]
++  debug_h: wp.array2d[float]
++  debug_efc_state: wp.array[int]
++  debug_efc_D: wp.array[float]
+ 
+ 
+ def create_inverse_context(m: types.Model, d: types.Data) -> InverseContext:
+@@ -143,6 +374,233 @@
+     hfactor=wp.zeros((nworld, nv_pad, nv_pad), dtype=float) if alloc_hfactor else wp.empty((nworld, 0, 0), dtype=float),
+     changed_efc_ids=wp.empty((nworld, njmax), dtype=int) if alloc_h else wp.empty((nworld, 0), dtype=int),
+     changed_efc_count=wp.empty((nworld,), dtype=int) if alloc_h else wp.empty((0,), dtype=int),
++    debug_meta=wp.zeros((16,), dtype=int),
++    debug_qacc_warmstart=wp.zeros((nv,), dtype=float),
++    debug_qacc_smooth=wp.zeros((nv,), dtype=float),
++    debug_qacc=wp.zeros((nv,), dtype=float),
++    debug_jaref=wp.zeros((njmax,), dtype=float),
++    debug_search=wp.zeros((nv,), dtype=float),
++    debug_mv=wp.zeros((nv,), dtype=float),
++    debug_jv=wp.zeros((njmax,), dtype=float),
++    debug_grad=wp.zeros((nv,), dtype=float),
++    debug_mgrad=wp.zeros((nv,), dtype=float),
++    debug_force=wp.zeros((njmax,), dtype=float),
++    debug_h=wp.zeros((nv_pad, nv_pad), dtype=float),
++  )
++
++
++def create_solver_debug_snapshot(m: types.Model, d: types.Data) -> SolverDebugSnapshot:
++  """Allocate a persistent small debug snapshot buffer."""
++  nv = m.nv
++  nv_pad = m.nv_pad
++  njmax = d.njmax
++  return SolverDebugSnapshot(
++    debug_meta=wp.zeros((16,), dtype=int),
++    debug_qacc_warmstart=wp.zeros((nv,), dtype=float),
++    debug_qacc_smooth=wp.zeros((nv,), dtype=float),
++    debug_qacc=wp.zeros((nv,), dtype=float),
++    debug_jaref=wp.zeros((njmax,), dtype=float),
++    debug_search=wp.zeros((nv,), dtype=float),
++    debug_mv=wp.zeros((nv,), dtype=float),
++    debug_jv=wp.zeros((njmax,), dtype=float),
++    debug_grad=wp.zeros((nv,), dtype=float),
++    debug_mgrad=wp.zeros((nv,), dtype=float),
++    debug_force=wp.zeros((njmax,), dtype=float),
++    debug_h=wp.zeros((nv_pad, nv_pad), dtype=float),
++    debug_efc_state=wp.zeros((njmax,), dtype=int),
++    debug_efc_D=wp.zeros((njmax,), dtype=float),
++  )
++
++
++@wp.kernel
++def debug_scan_2d(
++  arr: wp.array2d[float],
++  ncols: int,
++  phase: int,
++  solver_niter: wp.array[int],
++  meta: wp.array[int],
++):
++  worldid, col = wp.tid()
++  if col >= ncols:
++    return
++  if meta[0] != 0:
++    return
++  v = arr[worldid, col]
++  if v != v:
++    meta[0] = 1
++    meta[1] = phase
++    meta[2] = solver_niter[worldid]
++    meta[3] = worldid
++    meta[4] = col
++
++
++@wp.kernel
++def debug_scan_2d_active_cols(
++  arr: wp.array2d[float],
++  active_cols: wp.array[int],
++  phase: int,
++  solver_niter: wp.array[int],
++  meta: wp.array[int],
++):
++  worldid, col = wp.tid()
++  if col >= active_cols[worldid]:
++    return
++  if meta[0] != 0:
++    return
++  v = arr[worldid, col]
++  if v != v:
++    meta[0] = 1
++    meta[1] = phase
++    meta[2] = solver_niter[worldid]
++    meta[3] = worldid
++    meta[4] = col
++
++
++@wp.kernel
++def debug_scan_3d(
++  arr: wp.array3d[float],
++  n0: int,
++  n1: int,
++  phase: int,
++  solver_niter: wp.array[int],
++  meta: wp.array[int],
++):
++  worldid, i, j = wp.tid()
++  if i >= n0 or j >= n1:
++    return
++  if meta[0] != 0:
++    return
++  v = arr[worldid, i, j]
++  if v != v:
++    meta[0] = 1
++    meta[1] = phase
++    meta[2] = solver_niter[worldid]
++    meta[3] = worldid
++    meta[4] = i
++    meta[5] = j
++
++
++@wp.kernel
++def debug_snapshot_kernel(
++  nv: int,
++  njmax: int,
++  nv_pad: int,
++  efc_state_in: wp.array2d[int],
++  efc_D_in: wp.array2d[float],
++  qacc_warmstart: wp.array2d[float],
++  qacc_smooth: wp.array2d[float],
++  qacc: wp.array2d[float],
++  Jaref: wp.array2d[float],
++  search: wp.array2d[float],
++  mv: wp.array2d[float],
++  jv: wp.array2d[float],
++  grad: wp.array2d[float],
++  Mgrad: wp.array2d[float],
++  force: wp.array2d[float],
++  h: wp.array3d[float],
++  meta: wp.array[int],
++  debug_qacc_warmstart: wp.array[float],
++  debug_qacc_smooth: wp.array[float],
++  debug_qacc: wp.array[float],
++  debug_jaref: wp.array[float],
++  debug_search: wp.array[float],
++  debug_mv: wp.array[float],
++  debug_jv: wp.array[float],
++  debug_grad: wp.array[float],
++  debug_mgrad: wp.array[float],
++  debug_force: wp.array[float],
++  debug_h: wp.array2d[float],
++  debug_efc_state: wp.array[int],
++  debug_efc_D: wp.array[float],
++):
++  idx = wp.tid()
++  if meta[0] == 0 or meta[6] != 0:
++    return
++  worldid = meta[3]
++  if idx < nv:
++    debug_qacc_warmstart[idx] = qacc_warmstart[worldid, idx]
++    debug_qacc_smooth[idx] = qacc_smooth[worldid, idx]
++    debug_qacc[idx] = qacc[worldid, idx]
++    debug_search[idx] = search[worldid, idx]
++    debug_mv[idx] = mv[worldid, idx]
++    debug_grad[idx] = grad[worldid, idx]
++    debug_mgrad[idx] = Mgrad[worldid, idx]
++  if idx < njmax:
++    debug_jaref[idx] = Jaref[worldid, idx]
++    debug_jv[idx] = jv[worldid, idx]
++    debug_force[idx] = force[worldid, idx]
++    debug_efc_state[idx] = efc_state_in[worldid, idx]
++    debug_efc_D[idx] = efc_D_in[worldid, idx]
++  if idx < nv_pad * nv_pad:
++    i = idx // nv_pad
++    j = idx - i * nv_pad
++    debug_h[i, j] = h[worldid, i, j]
++  if idx == 0:
++    meta[6] = 1
++
++
++def _debug_snapshot_phase(m: types.Model, d: types.Data, ctx: SolverContext, phase: int):
++  if not _SOLVE_SNAPSHOT:
++    return
++  snap = _SOLVER_DEBUG_LAST
++  if snap is None:
++    return
++  wp.launch(debug_scan_2d, dim=(d.nworld, m.nv), inputs=[d.qacc, m.nv, phase * 100 + 1, d.solver_niter, snap.debug_meta])
++  wp.launch(debug_scan_2d_active_cols, dim=(d.nworld, d.njmax), inputs=[ctx.Jaref, d.nefc, phase * 100 + 2, d.solver_niter, snap.debug_meta])
++  wp.launch(debug_scan_2d, dim=(d.nworld, m.nv), inputs=[ctx.search, m.nv, phase * 100 + 3, d.solver_niter, snap.debug_meta])
++  wp.launch(debug_scan_2d, dim=(d.nworld, m.nv), inputs=[ctx.mv, m.nv, phase * 100 + 4, d.solver_niter, snap.debug_meta])
++  wp.launch(debug_scan_2d_active_cols, dim=(d.nworld, d.njmax), inputs=[ctx.jv, d.nefc, phase * 100 + 5, d.solver_niter, snap.debug_meta])
++  wp.launch(debug_scan_2d, dim=(d.nworld, m.nv), inputs=[ctx.grad, m.nv, phase * 100 + 6, d.solver_niter, snap.debug_meta])
++  wp.launch(debug_scan_2d, dim=(d.nworld, m.nv), inputs=[ctx.Mgrad, m.nv, phase * 100 + 7, d.solver_niter, snap.debug_meta])
++  wp.launch(debug_scan_2d_active_cols, dim=(d.nworld, d.njmax), inputs=[d.efc.force, d.nefc, phase * 100 + 8, d.solver_niter, snap.debug_meta])
++  if ctx.h.shape[1] > 0 and ctx.h.shape[2] > 0:
++    wp.launch(debug_scan_3d, dim=(d.nworld, m.nv_pad, m.nv_pad), inputs=[ctx.h, m.nv_pad, m.nv_pad, phase * 100 + 9, d.solver_niter, snap.debug_meta])
++  _debug_copy_snapshot(m, d, ctx)
++
++
++def _debug_copy_snapshot(m: types.Model, d: types.Data, ctx: SolverContext):
++  if not _SOLVE_SNAPSHOT:
++    return
++  snap = _SOLVER_DEBUG_LAST
++  if snap is None:
++    return
++  wp.launch(
++    debug_snapshot_kernel,
++    dim=max(m.nv_pad * m.nv_pad, d.njmax, m.nv),
++    inputs=[
++      m.nv,
++      d.njmax,
++      m.nv_pad,
++      d.efc.state,
++      d.efc.D,
++      d.qacc_warmstart,
++      d.qacc_smooth,
++      d.qacc,
++      ctx.Jaref,
++      ctx.search,
++      ctx.mv,
++      ctx.jv,
++      ctx.grad,
++      ctx.Mgrad,
++      d.efc.force,
++      ctx.h,
++      snap.debug_meta,
++    ],
++    outputs=[
++      snap.debug_qacc_warmstart,
++      snap.debug_qacc_smooth,
++      snap.debug_qacc,
++      snap.debug_jaref,
++      snap.debug_search,
++      snap.debug_mv,
++      snap.debug_jv,
++      snap.debug_grad,
++      snap.debug_mgrad,
++      snap.debug_force,
++      snap.debug_h,
++      snap.debug_efc_state,
++      snap.debug_efc_D,
++    ],
+   )
+ 
+ 
+@@ -2785,6 +3243,7 @@
+   return kernel
+ 
+ 
++@cache_kernel
+ def update_gradient_cholesky_blocked_skip_unchanged(tile_size: int, matrix_size: int):
+   """Blocked Cholesky that skips factorization when no constraints changed."""
+ 
+@@ -2826,12 +3285,32 @@
+   ctx_h_out[worldid, dofid, dofid] = 1.0
+ 
+ 
++@wp.kernel
++def regularize_hessian_diag(nv: int, reg: float, ctx_done_in: wp.array[bool], ctx_h_out: wp.array3d[float]):
++  worldid, dofid = wp.tid()
++
++  if ctx_done_in[worldid]:
++    return
++  if dofid >= nv:
++    return
++
++  ctx_h_out[worldid, dofid, dofid] += reg
++
++
+ def _cholesky_factorize_solve(m: types.Model, d: types.Data, ctx: SolverContext, skip_unchanged: bool = False):
+   """Cholesky factorize ctx.h and solve for Mgrad.
+ 
+   If skip_unchanged is True (blocked path only), worlds where no constraints
+   changed reuse the cached factorization in hfactor instead of refactorizing.
+   """
++  if _HESSIAN_DIAG_REG > 0.0:
++    wp.launch(
++      regularize_hessian_diag,
++      dim=(d.nworld, m.nv),
++      inputs=[m.nv, _HESSIAN_DIAG_REG, ctx.done],
++      outputs=[ctx.h],
++    )
++
+   if m.nv <= _BLOCK_CHOLESKY_DIM:
+     wp.launch_tiled(
+       update_gradient_cholesky(m.nv),
+@@ -3236,6 +3715,10 @@
+   nsolving: wp.array[int],
+ ):
+   _linesearch(m, d, ctx, step_size_cost)
++  _debug_snapshot_phase(m, d, ctx, 10)
++  if _SOLVE_TRACE:
++    _trace_check(d.qacc, "qacc(after linesearch)", d)
++    _trace_check(ctx.cost, "cost(after linesearch)", d)
+ 
+   if m.opt.solver == types.SolverType.CG:
+     wp.launch(
+@@ -3256,11 +3739,22 @@
+     ctx.changed_efc_count.zero_()
+ 
+   _update_constraint(m, d, ctx, track_changes=incremental)
++  _debug_snapshot_phase(m, d, ctx, 20)
++  if _SOLVE_TRACE:
++    _trace_check(d.efc.force, "efc.force(after update_constraint)", d)
++    _trace_check(ctx.cost, "cost(after update_constraint)", d)
+ 
+   if incremental:
+     _update_gradient_incremental(m, d, ctx)
+   else:
+     _update_gradient(m, d, ctx)
++  _debug_snapshot_phase(m, d, ctx, 30)
++  if _ITER_DUMP_PATH:
++    _iter_dump(m, d, ctx)
++  if _SOLVE_TRACE:
++    _trace_check(ctx.h, "h-Hessian(after update_gradient)", d)
++    _trace_check(ctx.grad, "grad(after update_gradient)", d)
++    _trace_check(ctx.Mgrad, "Mgrad-CholeskySolve(after update_gradient)", d)
+ 
+   # polak-ribiere
+   if m.opt.solver == types.SolverType.CG:
+@@ -3279,6 +3773,7 @@
+     inputs=[m.opt.solver, ctx.Mgrad, ctx.search, ctx.beta, ctx.done],
+     outputs=[ctx.search, ctx.search_dot],
+   )
++  _debug_snapshot_phase(m, d, ctx, 40)
+ 
+   wp.launch(
+     solve_done,
+@@ -3338,23 +3833,46 @@
+ 
+ @event_scope
+ def solve(m: types.Model, d: types.Data):
++  global _SOLVER_DEBUG_LAST
+   if d.njmax == 0 or m.nv == 0:
+     wp.copy(d.qacc, d.qacc_smooth)
+     d.solver_niter.fill_(0)
+   else:
++    if _SOLVE_SNAPSHOT and (
++      _SOLVER_DEBUG_LAST is None
++      or not isinstance(_SOLVER_DEBUG_LAST, SolverDebugSnapshot)
++      or _SOLVER_DEBUG_LAST.debug_qacc.shape[0] != m.nv
++      or _SOLVER_DEBUG_LAST.debug_jaref.shape[0] != d.njmax
++      or _SOLVER_DEBUG_LAST.debug_h.shape[0] != m.nv_pad
++    ):
++      _SOLVER_DEBUG_LAST = create_solver_debug_snapshot(m, d)
+     ctx = create_solver_context(m, d)
+     _solve(m, d, ctx)
++  if _PRESOLVE_DUMP_PATH:
++    _presolve_dump(m, d)
+ 
+ 
+ def _solve(m: types.Model, d: types.Data, ctx: SolverContext):
+   """Finds forces that satisfy constraints."""
++  if _SOLVE_SNAPSHOT:
++    snap = _SOLVER_DEBUG_LAST
++    if snap is not None:
++      wp.launch(debug_scan_2d, dim=(d.nworld, m.nv), inputs=[d.qacc_warmstart, m.nv, 510, d.solver_niter, snap.debug_meta])
++      wp.launch(debug_scan_2d, dim=(d.nworld, m.nv), inputs=[d.qacc_smooth, m.nv, 511, d.solver_niter, snap.debug_meta])
++    _debug_copy_snapshot(m, d, ctx)
+   if not (m.opt.disableflags & types.DisableBit.WARMSTART):
+     wp.copy(d.qacc, d.qacc_warmstart)
+   else:
+     wp.copy(d.qacc, d.qacc_smooth)
++  if _SOLVE_SNAPSHOT:
++    snap = _SOLVER_DEBUG_LAST
++    if snap is not None:
++      wp.launch(debug_scan_2d, dim=(d.nworld, m.nv), inputs=[d.qacc, m.nv, 601, d.solver_niter, snap.debug_meta])
++    _debug_copy_snapshot(m, d, ctx)
+ 
+   #  context
+   init_context(m, d, ctx, grad=True)
++  _debug_snapshot_phase(m, d, ctx, 1)
+ 
+   # search = -Mgrad
+   wp.launch(
+@@ -3367,7 +3885,7 @@
+   step_size_cost = wp.empty((d.nworld, m.opt.ls_iterations if m.opt.ls_parallel else 0), dtype=float)
+ 
+   nsolving = wp.full(shape=(1,), value=d.nworld, dtype=int)
+-  if m.opt.iterations != 0 and m.opt.graph_conditional:
++  if m.opt.iterations != 0 and m.opt.graph_conditional and not _SOLVE_TRACE and not _ITER_DUMP_PATH:
+     # Note: the iteration kernel (indicated by while_body) is repeatedly launched
+     # as long as condition_iteration is not zero.
+     # condition_iteration is a warp array of size 1 and type int, it counts the number
