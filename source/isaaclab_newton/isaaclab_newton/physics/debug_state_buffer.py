@@ -521,9 +521,17 @@ class DebugStateBuffer:
                 data["shape_world"] = self._shape_world
             except Exception:
                 logger.exception("Failed to re-collide pre-state in NaN export")
-        self._dump_contacts_obj(data, self._last_contacts, "contact", bad_envs)
+        try:
+            self._dump_contacts_obj(data, self._last_contacts, "contact", bad_envs)
+        except Exception:
+            logger.exception("Failed to dump live contacts in NaN export")
+        # Best-effort: solver internals read the mjwarp solve snapshot, which only exists when mjwarp
+        # is patched (FACTORY_SOLVE_SNAPSHOT) -- never let its absence cost the whole capture.
         if self._last_solver is not None:
-            self._add_solver_internals(data, bad_envs)
+            try:
+                self._add_solver_internals(data, bad_envs)
+            except Exception:
+                logger.exception("Failed to dump solver internals in NaN export")
 
     def _dump_contacts_obj(self, data: dict, c, prefix: str, bad_envs: list[int]) -> None:
         """Dump a populated Newton ``Contacts`` filtered to the NaN'd env(s) via the shape->world map."""
@@ -546,7 +554,10 @@ class DebugStateBuffer:
         data[f"{prefix}_shape0"] = sh0[sel]
         data[f"{prefix}_shape1"] = sh1[sel]
         for field, suffix in _CONTACT_DUMP_FIELDS:
-            data[f"{prefix}_{suffix}"] = wp.to_torch(getattr(c, field))[:cnt].cpu().numpy()[sel]
+            arr = getattr(c, field, None)  # Newton's Contacts schema varies by version; skip absent fields
+            if arr is None:
+                continue
+            data[f"{prefix}_{suffix}"] = wp.to_torch(arr)[:cnt].cpu().numpy()[sel]
 
     def _add_solver_internals(self, data: dict, bad_envs: list[int]) -> None:
         """Dump the MJWarp solver's internal state for the NaN'd world -- the data that explains *why*
