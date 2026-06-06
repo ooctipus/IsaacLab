@@ -1102,9 +1102,27 @@ class KitVisualizer(BaseVisualizer):
             return False
         camera_prim = usd_stage.GetPrimAtPath(camera_path)
         if not camera_prim.IsValid():
-            return False
+            if not self._ensure_default_viewport_camera(camera_path):
+                return False
         self._viewport_api.set_active_camera(camera_path)
         return True
+
+    def _ensure_default_viewport_camera(self, camera_path: str) -> bool:
+        """Create the default Kit perspective camera prim when it has not been authored yet."""
+        if camera_path != "/OmniverseKit_Persp":
+            return False
+        usd_stage = self._scene_data_provider.usd_stage if self._scene_data_provider else None
+        if usd_stage is None:
+            return False
+        try:
+            from isaacsim.core.rendering_manager import ViewportManager
+
+            ViewportManager.set_camera_view(camera_path, eye=list(self.cfg.eye), target=list(self.cfg.lookat))
+        except Exception as exc:
+            logger.debug("[KitVisualizer] Could not initialize default viewport camera via ViewportManager: %s", exc)
+            UsdGeom.Camera.Define(usd_stage, camera_path)
+        camera_prim = usd_stage.GetPrimAtPath(camera_path)
+        return camera_prim.IsValid()
 
     def _apply_env_visibility(self, usd_stage, num_envs: int, visible_env_ids: list[int]) -> None:
         """Hide environments not listed in ``visible_env_ids`` (cosmetic partial visualization)."""

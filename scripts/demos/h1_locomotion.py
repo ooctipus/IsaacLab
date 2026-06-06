@@ -47,7 +47,6 @@ app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 import torch
-from rsl_rl.runners import OnPolicyRunner
 
 import carb
 import omni
@@ -107,7 +106,7 @@ class H1RoughDemo:
         self.env = RslRlVecEnvWrapper(ManagerBasedRLEnv(cfg=env_cfg))
         self.device = self.env.unwrapped.device
         # load previously trained model
-        ppo_runner = OnPolicyRunner(self.env, agent_cfg.to_dict(), log_dir=None, device=self.device)
+        ppo_runner = agent_cfg.class_type(self.env, agent_cfg.to_dict(), log_dir=None, device=self.device)
         ppo_runner.load(checkpoint)
         # obtain the trained policy for inference
         self.policy = ppo_runner.get_inference_policy(device=self.device)

@@ -97,7 +97,7 @@ class TerrainGenerator:
 
     The dictionary keys are the names of the flat patch sampling configurations. This maps to a
     tensor containing the flat patches for each sub-terrain. The shape of the tensor is
-    (num_rows, num_cols, num_patches, 3).
+    (num_rows, num_cols, num_patches, 7) where each patch stores ``[x, y, z, qx, qy, qz, qw]``.
 
     For instance, the key "root_spawn" maps to a tensor containing the flat patches for spawning an asset.
     Similarly, the key "target_spawn" maps to a tensor containing the flat patches for setting targets.
@@ -185,10 +185,10 @@ class TerrainGenerator:
         self.terrain_mesh.apply_transform(transform)
         # -- terrain origins
         self.terrain_origins += transform[:3, -1]
-        # -- valid patches
+        # -- valid patches (offset positions by terrain origins, leave quaternions untouched)
         terrain_origins_torch = torch.tensor(self.terrain_origins, dtype=torch.float, device=self.device).unsqueeze(2)
         for name, value in self.flat_patches.items():
-            self.flat_patches[name] = value + terrain_origins_torch
+            value[:, :, :, :3] += terrain_origins_torch
 
     def __str__(self):
         """Return a string representation of the terrain generator."""
@@ -314,21 +314,42 @@ class TerrainGenerator:
             for name, patch_cfg in sub_terrain_cfg.flat_patch_sampling.items():
                 patch_cfg: FlatPatchSamplingCfg
                 # create the flat patches tensor (if not already created)
+                # stores [x, y, z, qx, qy, qz, qw] per patch = 7 values
                 if name not in self.flat_patches:
-                    self.flat_patches[name] = torch.zeros(
-                        (self.cfg.num_rows, self.cfg.num_cols, patch_cfg.num_patches, 3), device=self.device
+                    buf = torch.zeros(
+                        (self.cfg.num_rows, self.cfg.num_cols, patch_cfg.num_patches, 7), device=self.device
                     )
+                    buf[:, :, :, 6] = 1.0  # identity quaternion w=1
+                    self.flat_patches[name] = buf
                 # add the flat patches to the tensor
-                self.flat_patches[name][row, col] = find_flat_patches(
-                    wp_mesh=wp_mesh,
-                    origin=origin,
-                    num_patches=patch_cfg.num_patches,
-                    patch_radius=patch_cfg.patch_radius,
-                    x_range=patch_cfg.x_range,
-                    y_range=patch_cfg.y_range,
-                    z_range=patch_cfg.z_range,
-                    max_height_diff=patch_cfg.max_height_diff,
-                )
+                try:
+                    if isinstance(patch_cfg.patch_radius, dict):
+                        patch_cfg_dict = dict(patch_cfg.patch_radius)
+                        patch_cfg_dict["patched"] = True
+                        patch_cfg_class = patch_cfg_dict.pop("cfg")
+                        patch_cfg_dict.pop("func", None)
+                        patch_sampling_cfg = patch_cfg_class(**patch_cfg_dict)
+                        result = patch_sampling_cfg.func(wp_mesh, origin, patch_sampling_cfg)
+                    else:
+                        result = find_flat_patches(
+                            wp_mesh=wp_mesh,
+                            origin=origin,
+                            num_patches=patch_cfg.num_patches,
+                            patch_radius=patch_cfg.patch_radius,
+                            x_range=patch_cfg.x_range,
+                            y_range=patch_cfg.y_range,
+                            z_range=patch_cfg.z_range,
+                            max_height_diff=patch_cfg.max_height_diff,
+                        )
+                    if result.shape[-1] == 3:
+                        self.flat_patches[name][row, col, :, :3] = result
+                    else:
+                        self.flat_patches[name][row, col] = result
+                except RuntimeError as e:
+                    raise RuntimeError(
+                        f"Flat patch sampling failed for terrain at (row={row}, col={col}),"
+                        f" patch_name='{name}', terrain_type={type(sub_terrain_cfg).__name__}"
+                    ) from e
 
         # transform the mesh to the correct position
         transform = np.eye(4)

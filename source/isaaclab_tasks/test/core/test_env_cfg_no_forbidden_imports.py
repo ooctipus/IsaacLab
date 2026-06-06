@@ -5,11 +5,13 @@
 
 """Test that env_cfg construction does not import forbidden backend modules.
 
-``load_cfg_from_registry`` runs BEFORE SimulationApp is launched to inspect
-the physics backend and decide whether Kit is needed at all.  Config classes
-are pure data — they must be constructable without any runtime dependencies
-that conflict with Kit's internal ``fork()`` or that require a running
-simulator.
+The Hydra pipeline (``isaaclab_tasks.utils.hydra.register_task``) loads
+*both* the env cfg and the agent cfg, recurses through ``collect_presets``
+and ``resolve_presets``, and finally serialises the cfg tree to a dict.
+All of that runs BEFORE ``SimulationApp`` is launched — the cfg must stay
+constructable without triggering backend imports that would otherwise
+conflict with Kit's internal ``fork()`` or require a running simulator.
+This test mirrors the full hydra surface, not just ``load_cfg_from_registry``.
 
 Forbidden categories
 --------------------
@@ -74,7 +76,7 @@ _ALL_ISAAC_TASKS = sorted(
 
 def _build_batch_script(task_names: list[str]) -> str:
     return textwrap.dedent(f"""\
-        import sys, traceback, json
+        import gymnasium, sys, traceback, json
 
         FORBIDDEN = {list(_FORBIDDEN_PREFIXES)!r}
         task_names = {task_names!r}
@@ -82,12 +84,20 @@ def _build_batch_script(task_names: list[str]) -> str:
         import isaaclab_tasks  # noqa: F401
         import isaaclab_tasks_experimental  # noqa: F401
         from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry
+        from isaaclab_tasks.utils.hydra import collect_presets, resolve_presets
+        from isaaclab.envs.utils.spaces import replace_env_cfg_spaces_with_strings
 
         results = {{}}
 
         for task_name in task_names:
             violations = {{}}
             load_error = None
+
+            # Discover the registered rsl_rl entry point (absent for some tasks).
+            spec = gymnasium.registry.get(task_name)
+            agent_entry = "rsl_rl_cfg_entry_point" if (
+                spec is not None and "rsl_rl_cfg_entry_point" in (spec.kwargs or {{}})
+            ) else None
 
             _orig_import = __builtins__.__import__
 
@@ -99,7 +109,26 @@ def _build_batch_script(task_names: list[str]) -> str:
 
             __builtins__.__import__ = _hook
             try:
-                cfg = load_cfg_from_registry(task_name, "env_cfg_entry_point")
+                # Mirror ``isaaclab_tasks.utils.hydra.register_task`` through to the
+                # point where Hydra serialises the cfg tree to a dict — this is
+                # the full pre-Kit import surface exercised by ``train.py``.
+                env_cfg = load_cfg_from_registry(task_name, "env_cfg_entry_point")
+                agent_cfg = load_cfg_from_registry(task_name, agent_entry) if agent_entry else None
+                presets = {{
+                    "env": collect_presets(env_cfg),
+                    "agent": collect_presets(agent_cfg) if agent_cfg else {{}},
+                }}
+                env_cfg = resolve_presets(env_cfg, frozenset())
+                if agent_cfg is not None:
+                    agent_cfg = resolve_presets(agent_cfg, frozenset())
+                for section_presets in presets.values():
+                    for path_presets in section_presets.values():
+                        for alt in path_presets.values():
+                            resolve_presets(alt, frozenset())
+                env_cfg = replace_env_cfg_spaces_with_strings(env_cfg)
+                env_cfg.to_dict()
+                if agent_cfg is not None and hasattr(agent_cfg, "to_dict"):
+                    agent_cfg.to_dict()
             except Exception as exc:
                 load_error = str(exc)
             finally:

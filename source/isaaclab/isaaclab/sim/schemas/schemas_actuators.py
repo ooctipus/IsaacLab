@@ -266,19 +266,20 @@ def _author_actuator_prims(
         raw_delay = getattr(cfg, "max_delay", 0) if is_delayed else 0
         delay_map = resolve_per_dof(raw_delay, joint_names, cast=int) if raw_delay else {}
 
-        patched_model_path: str | None = None
+        model_path: str | None = None
         if is_neural:
-            meta: dict[str, Any] = {}
             if isinstance(cfg, ActuatorNetMLPCfg):
-                meta["model_type"] = "mlp"
-                meta["input_order"] = cfg.input_order
-                meta["input_idx"] = list(cfg.input_idx)
-                meta["pos_scale"] = cfg.pos_scale
-                meta["vel_scale"] = cfg.vel_scale
-                meta["torque_scale"] = cfg.torque_scale
+                meta: dict[str, Any] = {
+                    "model_type": "mlp",
+                    "input_order": cfg.input_order,
+                    "input_idx": list(cfg.input_idx),
+                    "pos_scale": cfg.pos_scale,
+                    "vel_scale": cfg.vel_scale,
+                    "torque_scale": cfg.torque_scale,
+                }
+                model_path = _resave_checkpoint_with_metadata(cfg.network_file, meta)
             else:
-                meta["model_type"] = "lstm"
-            patched_model_path = _resave_checkpoint_with_metadata(cfg.network_file, meta)
+                model_path = cfg.network_file
 
         for jname in joint_names:
             joint_prim_path = joint_inventory[jname]
@@ -327,10 +328,8 @@ def _author_actuator_prims(
             rel = act_prim.CreateRelationship("newton:targets")
             rel.SetTargets([Sdf.Path(joint_prim_path)])
 
-            if patched_model_path is not None:
-                act_prim.CreateAttribute("newton:modelPath", Sdf.ValueTypeNames.Asset).Set(
-                    Sdf.AssetPath(patched_model_path)
-                )
+            if model_path is not None:
+                act_prim.CreateAttribute("newton:modelPath", Sdf.ValueTypeNames.Asset).Set(Sdf.AssetPath(model_path))
 
             for attr_name, attr_val in attrs.items():
                 usd_name = f"newton:{_snake_to_camel(attr_name)}"

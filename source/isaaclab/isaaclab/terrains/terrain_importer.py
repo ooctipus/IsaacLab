@@ -56,6 +56,9 @@ class TerrainImporter:
     env_origins: torch.Tensor
     """The origins of the environments. Shape is (num_envs, 3)."""
 
+    terrain_mesh: trimesh.Trimesh | None
+    """Combined terrain mesh, when the terrain is generated."""
+
     def __init__(self, cfg: TerrainImporterCfg):
         """Initialize the terrain importer.
 
@@ -78,6 +81,7 @@ class TerrainImporter:
         self.terrain_prim_paths = list()
         self.terrain_origins = None
         self.env_origins = None  # assigned later when `configure_env_origins` is called
+        self.terrain_mesh = None
         # private variables
         self._terrain_flat_patches = dict()
 
@@ -90,7 +94,8 @@ class TerrainImporter:
             terrain_generator = self.cfg.terrain_generator.class_type(
                 cfg=self.cfg.terrain_generator, device=self.device
             )
-            self.import_mesh("terrain", terrain_generator.terrain_mesh)
+            self.terrain_mesh = terrain_generator.terrain_mesh
+            self.import_mesh("terrain", self.terrain_mesh)
             # Tag the terrain collider with its height-field resolution. Backends that
             # collide against heightfields (e.g. Newton) can swap the large collision
             # mesh for an equivalent heightfield at solver-init time; other backends

@@ -408,7 +408,7 @@ class ManagerBasedEnv:
             A tuple containing the observations and extras.
         """
         if env_ids is None:
-            env_ids = torch.arange(self.num_envs, dtype=torch.int32, device=self.device)
+            env_ids = torch.arange(self.num_envs, dtype=torch.int64, device=self.device)
 
         # trigger recorder terms for pre-reset calls
         self.recorder_manager.record_pre_reset(env_ids)
@@ -469,7 +469,7 @@ class ManagerBasedEnv:
         """
         # reset all envs in the scene if env_ids is None
         if env_ids is None:
-            env_ids = torch.arange(self.num_envs, dtype=torch.int32, device=self.device)
+            env_ids = torch.arange(self.num_envs, dtype=torch.int64, device=self.device)
 
         # trigger recorder terms for pre-reset calls
         self.recorder_manager.record_pre_reset(env_ids)
@@ -601,7 +601,13 @@ class ManagerBasedEnv:
     def close(self):
         """Cleanup for the environment."""
         if not self._is_closed:
-            # Stop simulation first to allow physics to clean up properly
+            # Tear down the viewport camera controller before sim.stop(): the latter pumps
+            # Kit app events (omni.kit.app.get_app().update()), which would otherwise fire
+            # the controller's still-subscribed post-update callback against assets whose
+            # physics views were just invalidated by the timeline-stop event.
+            del self.viewport_camera_controller
+
+            # Stop simulation to allow physics to clean up properly
             self.sim.stop()
 
             # Drop cached observation tensors so they don't survive close via

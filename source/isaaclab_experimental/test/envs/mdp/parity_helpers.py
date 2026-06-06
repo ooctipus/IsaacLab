@@ -37,7 +37,10 @@ NUM_HISTORY = 3
 CMD_DIM = 3
 BODY_IDS = [0, 2]
 
-# Gravity direction constant (normalized, same as ArticulationData.GRAVITY_VEC_W)
+# Gravity unit direction used by numpy reference computations. ``GRAVITY_VEC_W``
+# now carries m/s^2 magnitude per env (Newton's per-world gravity array), and
+# warp kernels normalize internally before projecting; the reference here stays
+# the unit direction so post-normalize results match.
 GRAVITY_DIR_NP = np.array([[0.0, 0.0, -1.0]], dtype=np.float32)
 
 
