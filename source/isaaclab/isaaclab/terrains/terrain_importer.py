@@ -16,8 +16,6 @@ import isaaclab.sim as sim_utils
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.markers.config import FRAME_MARKER_CFG
 
-from .utils import create_prim_from_mesh
-
 if TYPE_CHECKING:
     from .terrain_importer_cfg import TerrainImporterCfg
 
@@ -77,6 +75,8 @@ class TerrainImporter:
         self.terrain_prim_paths = list()
         self.terrain_origins = None
         self.env_origins = None  # assigned later when `configure_env_origins` is called
+        self.terrain_mesh: trimesh.Trimesh | None = None
+        """Combined trimesh for the full terrain (if generated)."""
         # private variables
         self._terrain_flat_patches = dict()
 
@@ -89,7 +89,8 @@ class TerrainImporter:
             terrain_generator = self.cfg.terrain_generator.class_type(
                 cfg=self.cfg.terrain_generator, device=self.device
             )
-            self.import_mesh("terrain", terrain_generator.terrain_mesh)
+            self.terrain_mesh = terrain_generator.terrain_mesh
+            self.import_mesh("terrain", self.terrain_mesh)
             if self.cfg.use_terrain_origins:
                 # configure the terrain origins based on the terrain generator
                 self.configure_env_origins(terrain_generator.terrain_origins)
@@ -248,9 +249,11 @@ class TerrainImporter:
         self.terrain_prim_paths.append(prim_path)
 
         # import the mesh
-        create_prim_from_mesh(
-            prim_path, mesh, visual_material=self.cfg.visual_material, physics_material=self.cfg.physics_material
+        mesh_cfg = sim_utils.MeshFileCfg(
+            visual_material=self.cfg.visual_material,
+            physics_material=self.cfg.physics_material,
         )
+        mesh_cfg.func(prim_path, mesh_cfg, mesh=mesh)
 
     def import_usd(self, name: str, usd_path: str):
         """Import a mesh from a USD file.
@@ -310,6 +313,10 @@ class TerrainImporter:
                 raise ValueError("Environment spacing must be specified for configuring grid-like origins.")
             # compute environment origins
             self.env_origins = self._compute_env_origins_grid(self.cfg.num_envs, self.cfg.env_spacing)
+
+        # spawn orientation buffer [x, y, z, w] (parallel to env_origins, identity by default)
+        self.env_spawn_quats = torch.zeros(self.cfg.num_envs, 4, device=self.device)
+        self.env_spawn_quats[:, 3] = 1.0
 
     def update_env_origins(self, env_ids: torch.Tensor, move_up: torch.Tensor, move_down: torch.Tensor):
         """Update the environment origins based on the terrain levels."""

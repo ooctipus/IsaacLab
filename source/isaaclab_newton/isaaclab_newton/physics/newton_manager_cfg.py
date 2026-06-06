@@ -75,6 +75,20 @@ class NewtonShapeCfg:
     gap: float = 0.01
     """Default per-shape contact gap [m]. Newton's upstream default is ``None``."""
 
+    ke: float = 2.5e3
+    """Default per-shape contact elastic stiffness [N/m].
+
+    Governs how hard a contact resists penetration; consumed by the SemiImplicit,
+    Featherstone, and MuJoCo (Newton) solver paths. Newton's upstream default is
+    ``2.5e3``. Raise it (e.g. ``1e7``) for stiff, low-penetration contacts in
+    contact-rich assembly tasks.
+    """
+
+    kd: float = 100.0
+    """Default per-shape contact damping coefficient.
+
+    Damps the normal contact response. Newton's upstream default is ``100.0``.
+    """
 
 @configclass
 class NewtonCfg(PhysicsCfg):

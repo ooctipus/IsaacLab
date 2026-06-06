@@ -324,6 +324,17 @@ def _resolve_distributed_device(cfg, launcher_args: argparse.Namespace | dict | 
     if sim_cfg is not None:
         sim_cfg.device = device_str
     torch.cuda.set_device(device_str)
+    # If Warp was initialized during task/config imports before distributed
+    # device resolution, its default device may still be cuda:0 on nonzero
+    # ranks. Keep it aligned without importing or initializing Warp here.
+    warp_module = sys.modules.get("warp")
+    warp_context = sys.modules.get("warp._src.context")
+    if (
+        warp_module is not None
+        and warp_context is not None
+        and getattr(warp_context, "runtime", None) is not None
+    ):
+        warp_module.set_device(device_str)
     logger.info(
         "Distributed device resolved to %s (local_rank=%d, visible_gpus=%d)",
         device_str,

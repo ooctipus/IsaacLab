@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import tempfile
 from contextlib import nullcontext
 from typing import TYPE_CHECKING
@@ -23,6 +24,7 @@ from isaaclab.sim.utils import (
     change_prim_property,
     clone,
     create_prim,
+    find_matching_prim_paths,
     get_current_stage,
     get_first_matching_child_prim,
     select_usd_variants,
@@ -32,12 +34,76 @@ from isaaclab.utils.assets import check_file_path, retrieve_file_path
 from isaaclab.utils.version import has_kit
 
 if TYPE_CHECKING:
-    from pxr import Gf, Sdf, Usd, UsdGeom  # noqa: F401
+    from pxr import Sdf, Usd, UsdGeom  # noqa: F401
 
     from . import from_files_cfg
 
 # import logger
 logger = logging.getLogger(__name__)
+
+
+_VALID_PRIM_PATH_REGEX = re.compile(r"^[a-zA-Z0-9/_]+$")
+
+
+def _is_regex_prim_path(path: str) -> bool:
+    """Return whether ``path`` contains regex characters."""
+    return _VALID_PRIM_PATH_REGEX.match(path) is None
+
+
+def _ensure_prim_specs(root_layer: Sdf.Layer, prim_path: str) -> None:
+    """Create prim specs for ``prim_path`` and its ancestors."""
+    current_path = ""
+    for path_part in prim_path.strip("/").split("/"):
+        current_path = f"{current_path}/{path_part}"
+        Sdf.CreatePrimInLayer(root_layer, current_path)
+
+
+def _resolve_mesh_spawn_paths(prim_path: str) -> tuple[str, list[str]]:
+    """Resolve source and destination prim paths for mesh spawning."""
+    prim_path = str(prim_path)
+    if not prim_path.startswith("/"):
+        raise ValueError(f"Prim path '{prim_path}' is not global. It must start with '/'.")
+
+    root_path, asset_path = prim_path.rsplit("/", 1)
+    asset_path = asset_path.replace(".*", "0")
+    if not _is_regex_prim_path(root_path):
+        return f"{root_path}/{asset_path}", []
+
+    root_parts = root_path.strip("/").split("/")
+    for prefix_len in range(len(root_parts), 0, -1):
+        prefix_path = "/" + "/".join(root_parts[:prefix_len])
+        if not _is_regex_prim_path(prefix_path):
+            continue
+
+        source_parent_paths = find_matching_prim_paths(prefix_path)
+        if not source_parent_paths:
+            continue
+
+        suffix = "/".join(root_parts[prefix_len:])
+        if suffix:
+            source_path = f"{source_parent_paths[0]}/{suffix}/{asset_path}"
+            destination_paths = [f"{parent}/{suffix}/{asset_path}" for parent in source_parent_paths[1:]]
+        else:
+            source_path = f"{source_parent_paths[0]}/{asset_path}"
+            destination_paths = [f"{parent}/{asset_path}" for parent in source_parent_paths[1:]]
+        return source_path, destination_paths
+
+    raise RuntimeError(f"Unable to find source prim path for mesh spawn: '{root_path}'.")
+
+
+def _apply_spawn_metadata(prim: Usd.Prim, cfg) -> None:
+    """Apply common spawner metadata to a spawned prim."""
+    if hasattr(cfg, "visible"):
+        imageable = UsdGeom.Imageable(prim)
+        if cfg.visible:
+            imageable.MakeVisible()
+        else:
+            imageable.MakeInvisible()
+    if hasattr(cfg, "semantic_tags") and cfg.semantic_tags is not None:
+        for semantic_type, semantic_value in cfg.semantic_tags:
+            semantic_type_sanitized = semantic_type.replace(" ", "_")
+            semantic_value_sanitized = semantic_value.replace(" ", "_")
+            add_labels(prim, labels=[semantic_value_sanitized], instance_name=semantic_type_sanitized, overwrite=False)
 
 
 @clone
@@ -166,6 +232,95 @@ def spawn_from_mjcf(
     mjcf_loader = converters.MjcfConverter(cfg)
     # spawn asset from the generated usd file
     return _spawn_from_usd_file(prim_path, mjcf_loader.usd_path, cfg, translation, orientation)
+
+
+def spawn_from_mesh(
+    prim_path: str,
+    cfg: from_files_cfg.MeshFileCfg,
+    mesh: trimesh.Trimesh,
+    translation: tuple[float, float, float] | None = None,
+    orientation: tuple[float, float, float, float] | None = None,
+    **kwargs,
+) -> Usd.Prim:
+    """Spawn an in-memory triangle mesh into the scene.
+
+    The spawned prim hierarchy is ``prim_path`` as an ``Xform`` root with a
+    child mesh at ``prim_path/mesh``. Regex prim paths are supported by
+    spawning the source mesh under the first matching parent and copying the
+    resulting prim subtree to the remaining matching parents.
+
+    Args:
+        prim_path: The prim path or pattern to spawn the mesh at.
+        cfg: The mesh spawner configuration.
+        mesh: Triangle mesh data to spawn.
+        translation: Translation to apply to the mesh root [m]. Defaults to None.
+        orientation: Orientation ``(x, y, z, w)`` to apply to the mesh root. Defaults to None.
+        **kwargs: Additional keyword arguments for compatibility with other spawners.
+
+    Returns:
+        The source root prim of the spawned mesh.
+    """
+    del kwargs
+    stage = get_current_stage()
+    source_path, destination_paths = _resolve_mesh_spawn_paths(prim_path)
+    if stage.GetPrimAtPath(source_path).IsValid():
+        raise ValueError(f"A prim already exists at path: '{source_path}'.")
+
+    root_prim = create_prim(source_path, "Xform", translation=translation, orientation=orientation, stage=stage)
+    mesh_prim = create_prim(
+        f"{source_path}/mesh",
+        "Mesh",
+        attributes={
+            "points": mesh.vertices,
+            "faceVertexIndices": mesh.faces.flatten(),
+            "faceVertexCounts": np.asarray([3] * len(mesh.faces)),
+            "subdivisionScheme": "bilinear",
+        },
+        stage=stage,
+    )
+
+    if cfg.collision_props is not None:
+        schemas.define_collision_properties(str(mesh_prim.GetPrimPath()), cfg.collision_props, stage=stage)
+
+    if mesh.visual.vertex_colors is not None:
+        rgba_colors = np.asarray(mesh.visual.vertex_colors).astype(np.float32) / 255.0
+        color_prim_attr = mesh_prim.GetAttribute("primvars:displayColor")
+        color_prim_var = UsdGeom.Primvar(color_prim_attr)
+        color_prim_var.SetInterpolation(UsdGeom.Tokens.vertex)
+        color_prim_attr.Set(rgba_colors[:, :3])
+        display_prim_attr = mesh_prim.GetAttribute("primvars:displayOpacity")
+        display_prim_var = UsdGeom.Primvar(display_prim_attr)
+        display_prim_var.SetInterpolation(UsdGeom.Tokens.vertex)
+        display_prim_attr.Set(rgba_colors[:, 3])
+
+    if cfg.visual_material is not None:
+        material_path = (
+            f"{source_path}/{cfg.visual_material_path}"
+            if not cfg.visual_material_path.startswith("/")
+            else cfg.visual_material_path
+        )
+        cfg.visual_material.func(material_path, cfg.visual_material)
+        bind_visual_material(str(mesh_prim.GetPrimPath()), material_path, stage=stage)
+
+    if cfg.physics_material is not None:
+        material_path = (
+            f"{source_path}/{cfg.physics_material_path}"
+            if not cfg.physics_material_path.startswith("/")
+            else cfg.physics_material_path
+        )
+        cfg.physics_material.func(material_path, cfg.physics_material)
+        bind_physics_material(str(mesh_prim.GetPrimPath()), material_path, stage=stage)
+
+    _apply_spawn_metadata(root_prim, cfg)
+
+    if destination_paths:
+        root_layer = stage.GetRootLayer()
+        with Sdf.ChangeBlock():
+            for destination_path in destination_paths:
+                _ensure_prim_specs(root_layer, destination_path)
+                Sdf.CopySpec(root_layer, Sdf.Path(source_path), root_layer, Sdf.Path(destination_path))
+
+    return root_prim
 
 
 def spawn_ground_plane(

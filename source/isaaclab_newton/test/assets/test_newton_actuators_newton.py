@@ -1076,6 +1076,8 @@ def _run_authoring_introspection(actuator_cfgs: dict) -> dict:
                     "clamping_types": clamp_types,
                     "has_delay": act.delay is not None,
                     "num_indices": len(act.indices),
+                    "model_path": getattr(act.controller, "model_path", None),
+                    "is_graphable": act.is_graphable(),
                 }
             )
 
@@ -1307,36 +1309,6 @@ def _make_dummy_mlp_checkpoint(device: str = "cpu") -> str:
     return tmp_path
 
 
-class _DummyLSTM(torch.nn.Module):
-    """Minimal LSTM network for actuator testing."""
-
-    def __init__(self):
-        super().__init__()
-        self.lstm = torch.nn.LSTM(input_size=2, hidden_size=4, num_layers=1, batch_first=True)
-        self.fc = torch.nn.Linear(4, 1)
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        hc: tuple[torch.Tensor, torch.Tensor],
-    ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
-        out, hc_new = self.lstm(x, hc)
-        return self.fc(out[:, -1, :]), hc_new
-
-
-def _make_dummy_lstm_checkpoint(device: str = "cpu") -> str:
-    """Create a minimal TorchScript LSTM checkpoint with metadata."""
-    torch.manual_seed(42)
-    net = _DummyLSTM().to(device).eval()
-    scripted = torch.jit.script(net)
-
-    with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as tmp:
-        tmp_path = tmp.name
-    extra = {"metadata.json": json.dumps({"model_type": "lstm"})}
-    torch.jit.save(scripted, tmp_path, _extra_files=extra)
-    return tmp_path
-
-
 class TestNeuralMLPAuthoring(unittest.TestCase):
     """Verify ActuatorNetMLPCfg is authored as Newton NeuralMLP controller
     with DC motor clamping.
@@ -1396,7 +1368,7 @@ class TestNeuralLSTMAuthoring(unittest.TestCase):
     def setUpClass(cls):
         from isaaclab.actuators.actuator_net_cfg import ActuatorNetLSTMCfg  # noqa: PLC0415
 
-        cls.lstm_path = _make_dummy_lstm_checkpoint()
+        cls.lstm_path = ANYDRIVE_3_LSTM_ONNX_PATH
         cls.result = _run_authoring_introspection(
             {
                 "lstm_legs": ActuatorNetLSTMCfg(
@@ -1415,10 +1387,6 @@ class TestNeuralLSTMAuthoring(unittest.TestCase):
             }
         )
 
-    @classmethod
-    def tearDownClass(cls):
-        os.unlink(cls.lstm_path)
-
     def test_num_actuators(self):
         self.assertGreaterEqual(self.result["num_actuators"], 2)
 
@@ -1430,6 +1398,18 @@ class TestNeuralLSTMAuthoring(unittest.TestCase):
         lstm_acts = [a for a in self.result["actuator_info"] if a["controller_type"] == "ControllerNeuralLSTM"]
         for a in lstm_acts:
             self.assertIn("ClampingDCMotor", a["clamping_types"])
+
+    def test_lstm_checkpoint_uses_onnx_path(self):
+        lstm_acts = [a for a in self.result["actuator_info"] if a["controller_type"] == "ControllerNeuralLSTM"]
+        self.assertTrue(len(lstm_acts) > 0, "No NeuralLSTM controller found")
+        for a in lstm_acts:
+            self.assertEqual(a["model_path"], self.lstm_path)
+
+    def test_lstm_controller_is_graphable(self):
+        lstm_acts = [a for a in self.result["actuator_info"] if a["controller_type"] == "ControllerNeuralLSTM"]
+        self.assertTrue(len(lstm_acts) > 0, "No NeuralLSTM controller found")
+        for a in lstm_acts:
+            self.assertTrue(a["is_graphable"], "NeuralLSTM controller should use the graphable ONNX path")
 
 
 if __name__ == "__main__":

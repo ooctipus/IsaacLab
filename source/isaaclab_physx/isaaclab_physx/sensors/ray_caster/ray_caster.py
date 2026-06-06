@@ -17,6 +17,7 @@ import isaaclab.sim as sim_utils
 from isaaclab.sensors.ray_caster.base_ray_caster import BaseRayCaster
 from isaaclab.sensors.ray_caster.kernels import copy_mesh_transforms_to_table_kernel
 
+from isaaclab_physx.cloner.clone_plan_paths import expand_clone_plan_path, expand_clone_plan_paths
 from isaaclab_physx.physics import PhysxManager
 
 
@@ -144,7 +145,10 @@ class _PhysXRayCasterMixin:
         physics_sim_view = PhysxManager.get_physics_sim_view()
         if physics_sim_view is None:
             raise RuntimeError("PhysX simulation view is not initialized.")
-        return physics_sim_view.create_rigid_body_view([_physx_body_glob(path) for path in body_paths])
+        body_view_paths = expand_clone_plan_paths(body_paths)
+        return physics_sim_view.create_rigid_body_view(
+            body_view_paths if body_view_paths is not None else [_physx_body_glob(path) for path in body_paths]
+        )
 
     def _update_mesh_transforms(self: Any) -> None:
         """Refresh dynamic multi-mesh targets directly from PhysX views."""

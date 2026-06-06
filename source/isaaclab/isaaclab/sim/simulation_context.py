@@ -387,9 +387,7 @@ class SimulationContext:
 
     def has_active_visualizers(self) -> bool:
         """Return whether any visualizer path is active for rendering/camera control."""
-        return bool(self.get_setting("/isaaclab/visualizer/types")) or bool(
-            self.get_setting("/isaaclab/video/auto_start_kit")
-        )
+        return bool(self.get_setting("/isaaclab/visualizer/types")) or bool(self.get_setting("/isaaclab/video/enabled"))
 
     def is_headless_or_exist_active_visualizer(self) -> bool:
         """Return whether the simulation should keep stepping without visualizers or with an active visualizer."""
@@ -401,10 +399,17 @@ class SimulationContext:
 
     @property
     def is_rendering(self) -> bool:
-        """Returns whether rendering is active (GUI, RTX sensors, visualizers, or XR)."""
+        """Returns whether a per-step consumer needs rendering (GUI, RTX sensors, visualizers, or XR).
+
+        ``_has_offscreen_render`` is intentionally not consulted here: it is set whenever
+        ``enable_cameras=True`` (including the implicit enable from ``--video``) but does not
+        by itself indicate a consumer that needs a fresh frame every step. RTX sensors flip
+        ``/isaaclab/render/rtx_sensors`` when they are spawned, and the gym ``RecordVideo``
+        wrapper drives rendering via :meth:`render` only while it is actively capturing — so
+        gating the step-loop render on those signals keeps Kit idle between recording windows.
+        """
         return (
             self._has_gui
-            or self._has_offscreen_render
             or self.get_setting("/isaaclab/render/rtx_sensors")
             or bool(self.resolve_visualizer_types())
             or self._xr_enabled

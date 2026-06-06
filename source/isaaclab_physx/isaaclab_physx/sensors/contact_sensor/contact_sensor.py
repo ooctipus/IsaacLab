@@ -23,6 +23,11 @@ from isaaclab.sensors.contact_sensor import BaseContactSensor
 from isaaclab.sim.utils.queries import resolve_matching_prims_from_source
 from isaaclab.utils.warp import ProxyArray
 
+from isaaclab_physx.cloner.clone_plan_paths import (
+    expand_clone_plan_path,
+    expand_clone_plan_paths,
+    resolve_clone_plan_source_paths,
+)
 from isaaclab_physx.physics import PhysxManager as SimulationManager
 
 from .contact_sensor_data import ContactSensorData
@@ -35,7 +40,79 @@ from .kernels import (
 )
 
 if TYPE_CHECKING:
+    from isaaclab.cloner import ClonePlan
     from isaaclab.sensors.contact_sensor import ContactSensorCfg
+
+
+def _env_id_from_path(path: str) -> int | None:
+    env_token = "/envs/env_"
+    start = path.find(env_token)
+    if start < 0:
+        return None
+    token = path[start + len(env_token) :].split("/", 1)[0]
+    return int(token) if token.isdigit() else None
+
+
+def _filter_patterns_per_sensor_path(sensor_paths: Sequence[str], filter_exprs: Sequence[str]) -> list[list[str]]:
+    if not filter_exprs:
+        return [[] for _ in sensor_paths]
+
+    expanded_filters = [(expr, expand_clone_plan_path(expr)) for expr in filter_exprs]
+    filter_patterns = []
+    for sensor_path in sensor_paths:
+        sensor_env_id = _env_id_from_path(sensor_path)
+        sensor_filters = []
+        for expr, expanded_paths in expanded_filters:
+            if expanded_paths is None or sensor_env_id is None:
+                sensor_filters.append(expr.replace(".*", "*"))
+            else:
+                sensor_filters.extend(
+                    path.replace(".*", "*") for path in expanded_paths if _env_id_from_path(path) == sensor_env_id
+                )
+        filter_patterns.append(sensor_filters)
+    return filter_patterns
+
+
+def _define_usd_contact_report_handles(stage: Usd.Stage, sensor_paths: Sequence[str]) -> None:
+    """Author sparse USD API handles required by current PhysX tensor contact discovery."""
+    layer = stage.GetRootLayer()
+    with Sdf.ChangeBlock():
+        for path in sensor_paths:
+            prim = stage.GetPrimAtPath(path)
+            if prim.IsValid():
+                continue
+            prim_spec = Sdf.CreatePrimInLayer(layer, path)
+            prim_spec.specifier = Sdf.SpecifierOver
+            prim_spec.typeName = ""
+            prim_spec.SetInfo(Usd.Tokens.apiSchemas, Sdf.TokenListOp.Create({"PhysxContactReportAPI"}))
+            threshold_spec = prim_spec.GetAttributeAtPath(path + ".physxContactReport:threshold")
+            if threshold_spec is None:
+                threshold_spec = Sdf.AttributeSpec(prim_spec, "physxContactReport:threshold", Sdf.ValueTypeNames.Float)
+            threshold_spec.default = 0.0
+
+
+def _find_contact_body_names(source_parent_paths: Sequence[str], leaf_pattern: str) -> list[str]:
+    """Find contact-enabled body names and require a fixed set across source variants."""
+    body_names_by_source: list[list[str]] = []
+    for source_parent_path in source_parent_paths:
+        body_names = []
+        for prim in sim_utils.find_matching_prims(source_parent_path + "/" + leaf_pattern):
+            if "PhysxContactReportAPI" in prim.GetAppliedSchemas():
+                body_names.append(prim.GetPath().pathString.rsplit("/", 1)[-1])
+        body_names_by_source.append(body_names)
+
+    if not body_names_by_source:
+        return []
+
+    reference = body_names_by_source[0]
+    reference_set = set(reference)
+    for body_names in body_names_by_source[1:]:
+        if set(body_names) != reference_set:
+            raise RuntimeError(
+                "ContactSensor requires the same contact-enabled body names across clone-plan source variants."
+                f"\n\tSource body sets: {body_names_by_source}"
+            )
+    return reference
 
 
 class ContactSensor(BaseContactSensor):
@@ -285,6 +362,22 @@ class ContactSensor(BaseContactSensor):
     Implementation.
     """
 
+    def _prepare_clone_handles(self, stage: Usd.Stage, clone_plan: ClonePlan) -> None:
+        """Author sparse PhysX tensor contact handles for cloned Fabric-only bodies."""
+        parent_path_expr, leaf_pattern = self.cfg.prim_path.rsplit("/", 1)
+        source_parent_paths = resolve_clone_plan_source_paths(parent_path_expr, clone_plan)
+        if source_parent_paths is None:
+            return
+
+        body_names = _find_contact_body_names(source_parent_paths, leaf_pattern)
+        if not body_names:
+            return
+
+        body_path_exprs = [f"{parent_path_expr}/{body_name}" for body_name in body_names]
+        body_paths = expand_clone_plan_paths(body_path_exprs, clone_plan)
+        if body_paths is not None:
+            _define_usd_contact_report_handles(stage, body_paths)
+
     def _initialize_impl(self):
         super()._initialize_impl()
         # obtain global simulation view
@@ -321,11 +414,21 @@ class ContactSensor(BaseContactSensor):
         self._body_physx_view = self._physics_sim_view.create_rigid_body_view(body_names_glob)
         self._contact_view = self._physics_sim_view.create_rigid_contact_view(
             body_names_glob,
-            filter_patterns=filter_prim_paths_glob,
+            filter_patterns=contact_filter_patterns,
             max_contact_data_count=self.cfg.max_contact_data_count_per_prim * len(body_names) * self._num_envs,
         )
         # resolve the true count of bodies
         self._num_sensors = self.body_physx_view.count // self._num_envs
+        if self.contact_view.sensor_count != self.body_physx_view.count:
+            raise RuntimeError(
+                "Failed to initialize contact reporter for all specified bodies."
+                f"\n\tInput prim path      : {self.cfg.prim_path}"
+                f"\n\tResolved prim paths  : {body_names_regex}"
+                f"\n\tRigid body count     : {self.body_physx_view.count}"
+                f"\n\tRigid contact count  : {self.contact_view.sensor_count}"
+                f"\n\tExpected per env     : {len(body_names)}"
+                f"\n\tNum envs             : {self._num_envs}"
+            )
         # check that contact reporter succeeded
         if self._num_sensors != len(body_names):
             raise RuntimeError(

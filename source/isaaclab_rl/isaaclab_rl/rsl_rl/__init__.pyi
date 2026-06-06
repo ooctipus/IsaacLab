@@ -4,6 +4,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 __all__ = [
+    "RslRlCrlAlgorithmCfg",
+    "RslRlOffPolicyRunnerCfg",
+    "RslRlResidualMLPCfg",
     "RslRlDistillationAlgorithmCfg",
     "RslRlDistillationRunnerCfg",
     "RslRlDistillationStudentTeacherCfg",
@@ -14,7 +17,10 @@ __all__ = [
     "CNNModel",
     "RslRlBaseRunnerCfg",
     "RslRlCNNModelCfg",
+    "RslRlHerCfg",
+    "RslRlMLPEncoderModelCfg",
     "RslRlMLPModelCfg",
+    "RslRlResidualMLPEncoderModelCfg",
     "RslRlOnPolicyRunnerCfg",
     "RslRlPpoActorCriticCfg",
     "RslRlPpoActorCriticRecurrentCfg",
@@ -36,7 +42,13 @@ from .models import CNNModel
 from .rl_cfg import (
     RslRlBaseRunnerCfg,
     RslRlCNNModelCfg,
+    RslRlCrlAlgorithmCfg,
+    RslRlOffPolicyRunnerCfg,
+    RslRlResidualMLPCfg,
+    RslRlHerCfg,
+    RslRlMLPEncoderModelCfg,
     RslRlMLPModelCfg,
+    RslRlResidualMLPEncoderModelCfg,
     RslRlOnPolicyRunnerCfg,
     RslRlPpoActorCriticCfg,
     RslRlPpoActorCriticRecurrentCfg,

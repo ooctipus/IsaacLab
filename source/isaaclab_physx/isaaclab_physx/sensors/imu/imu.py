@@ -14,6 +14,7 @@ import warp as wp
 import isaaclab.utils.math as math_utils
 from isaaclab.sensors.imu import BaseImu
 
+from isaaclab_physx.cloner.clone_plan_paths import expand_clone_plan_path
 from isaaclab_physx.physics import PhysxManager as SimulationManager
 
 from .imu_data import ImuData

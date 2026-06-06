@@ -195,7 +195,9 @@ def handle_deprecated_rsl_rl_cfg(agent_cfg: RslRlBaseRunnerCfg, installed_versio
 
             for model_name in _MODEL_CFG_NAMES:
                 if _has_non_missing_attr(agent_cfg, model_name):
-                    _update_distribution_cfg(getattr(agent_cfg, model_name), RslRlMLPModelCfg)
+                    model_cfg = getattr(agent_cfg, model_name)
+                    if hasattr(model_cfg, "distribution_cfg"):
+                        _update_distribution_cfg(model_cfg, RslRlMLPModelCfg)
 
     return agent_cfg
 

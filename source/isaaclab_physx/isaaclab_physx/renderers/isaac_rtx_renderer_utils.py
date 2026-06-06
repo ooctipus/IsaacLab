@@ -113,7 +113,7 @@ def ensure_isaac_rtx_render_update() -> None:
     No-op conditions:
         * Already called this step (dedup across camera instances).
         * A visualizer already pumps ``app.update()`` (e.g. KitVisualizer).
-        * Rendering is not active.
+        * Rendering is not active and ``--video`` is not enabled.
     """
     global _last_render_update_key
 
@@ -135,7 +135,13 @@ def ensure_isaac_rtx_render_update() -> None:
         _last_render_update_key = key
         return
 
-    if not sim.is_rendering:
+    # ``--video`` is an explicit consumer that does not flip ``is_rendering`` on its own
+    # (see :attr:`SimulationContext.is_rendering` — ``_has_offscreen_render`` is excluded so
+    # the step loop stays idle between recording windows). Without this branch, the recorder's
+    # ``render_rgb_array`` would pump Kit on stale Fabric: markers (which write USD directly)
+    # render at the current pose while the articulated robot stays at the last-synced pose,
+    # causing the body to vanish from the framed area when the viewer tracks ``asset_body``.
+    if not sim.is_rendering and not bool(sim.get_setting("/isaaclab/video/enabled")):
         return
 
     # Sync physics results → Fabric so RTX sees updated positions.

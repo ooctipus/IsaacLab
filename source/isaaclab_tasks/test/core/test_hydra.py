@@ -19,6 +19,7 @@ from isaaclab_tasks.utils import hydra as hydra_mod
 from isaaclab_tasks.utils.hydra import (
     PresetCfg,
     _format_unknown_presets_error,
+    _setattr,
     apply_overrides,
     collect_presets,
     parse_overrides,
@@ -1511,3 +1512,79 @@ def test_resolve_active_presets_no_physics_hit_for_scalar_preset():
     # physics=newton_mjwarp (typed selector) must error.
     with pytest.raises(ValueError, match="physics=newton_mjwarp"):
         hydra_mod._validate_typed_presets({PresetTarget.PHYSICS: {"newton_mjwarp"}}, typed_hits)
+# Tests: _setattr nested path with list indexing
+# =============================================================================
+
+
+@configclass
+class _SetattrLeaf:
+    weight: float = 1.0
+    nested: list = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.nested is None:
+            self.nested = [10, 20, 30]
+
+
+@configclass
+class _SetattrOuter:
+    items: list = None  # type: ignore[assignment]
+    by_name: dict = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.items is None:
+            self.items = [_SetattrLeaf(), _SetattrLeaf(weight=2.0), _SetattrLeaf(weight=3.0), _SetattrLeaf(weight=4.0)]
+        if self.by_name is None:
+            self.by_name = {"a": _SetattrLeaf(weight=9.0)}
+
+
+def test_setattr_list_index_via_numeric_dot():
+    """``items.3.weight=...`` walks into a list element by integer index."""
+    o = _SetattrOuter()
+    _setattr(o, "items.3.weight", 0.25)
+    assert o.items[3].weight == 0.25
+
+
+def test_setattr_list_index_via_bracket():
+    """``items[2].weight=...`` walks into a list element by integer index."""
+    o = _SetattrOuter()
+    _setattr(o, "items[2].weight", 0.5)
+    assert o.items[2].weight == 0.5
+
+
+def test_setattr_list_index_replace_whole_element():
+    """``items[1]=<obj>`` replaces a list element wholesale."""
+    o = _SetattrOuter()
+    replacement = _SetattrLeaf(weight=99.0)
+    _setattr(o, "items[1]", replacement)
+    assert o.items[1] is replacement
+
+
+def test_setattr_chained_bracket_indices():
+    """``items[0].nested[2]=...`` chains bracketed indices through nested lists."""
+    o = _SetattrOuter()
+    _setattr(o, "items[0].nested[2]", 333)
+    assert o.items[0].nested[2] == 333
+
+
+def test_setattr_bare_numeric_leaf_into_list():
+    """Bare numeric leaf addresses a list element when the parent is a list."""
+    o = _SetattrOuter()
+    _setattr(o.items[0].nested, "0", 111)
+    assert o.items[0].nested[0] == 111
+
+
+def test_setattr_dict_key_unchanged():
+    """Dict-key access still works alongside the new list-indexing branches."""
+    o = _SetattrOuter()
+    _setattr(o, "by_name.a.weight", 7.0)
+    assert o.by_name["a"].weight == 7.0
+
+
+def test_setattr_list_index_out_of_range_raises():
+    """Out-of-range index surfaces as ``IndexError`` rather than a silent no-op."""
+    o = _SetattrOuter()
+    with pytest.raises(IndexError):
+        _setattr(o, "items.10.weight", 0.0)
+    with pytest.raises(IndexError):
+        _setattr(o, "items[10].weight", 0.0)

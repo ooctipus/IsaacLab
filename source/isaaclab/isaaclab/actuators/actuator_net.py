@@ -87,7 +87,7 @@ class ActuatorNetLSTM(DCMotor):
                 self.sea_input, (self.sea_hidden_state, self.sea_cell_state)
             )
         self.computed_effort = torques.reshape(self._num_envs, self.num_joints)
-
+        self._joint_vel[:] = joint_vel
         # clip the computed effort based on the motor limits
         self.applied_effort = self._clip_effort(self.computed_effort)
 

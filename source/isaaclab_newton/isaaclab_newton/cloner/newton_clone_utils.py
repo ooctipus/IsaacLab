@@ -32,11 +32,17 @@ def build_source_builders(
     for source in sources:
         builder = create_builder()
         solvers.SolverMuJoCo.register_custom_attributes(builder)
+        # When ``simplify_meshes`` is set, honor the per-shape ``physics:approximation``
+        # token authored on each collider (e.g. via
+        # ``CollisionPropertiesCfg(mesh_collision_property=NewtonMeshCollisionPropertiesCfg(...))``)
+        # so callers can opt individual colliders into convex-hull / decomposition while
+        # leaving SDF- and primitive-collider shapes untouched. ``import_usd`` skips shapes
+        # carrying ``NewtonSDFCollisionAPI``, so this never clobbers SDF assets (nut/bolt).
         builder.add_usd(
             stage,
             root_path=source,
             load_visual_shapes=True,
-            skip_mesh_approximation=True,
+            skip_mesh_approximation=not simplify_meshes,
             schema_resolvers=schema_resolvers,
             ignore_paths=ignore_paths,
         )

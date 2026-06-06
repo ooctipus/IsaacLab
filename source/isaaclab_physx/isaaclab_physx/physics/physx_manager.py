@@ -36,6 +36,8 @@ from isaaclab.physics import CallbackHandle, PhysicsEvent, PhysicsManager
 from isaaclab.scene_data import SceneDataBackend, SceneDataFormat
 from isaaclab.utils.string import to_camel_case
 
+from isaaclab_physx.cloner.clone_plan_paths import expand_clone_plan_child_paths
+
 if TYPE_CHECKING:
     from isaaclab.sim.simulation_context import SimulationContext
 

@@ -25,6 +25,7 @@ from isaaclab.utils.wrench_composer import WrenchComposer
 
 from isaaclab_physx.assets import kernels as shared_kernels
 from isaaclab_physx.cloner import queue_physx_replication
+from isaaclab_physx.cloner.clone_plan_paths import expand_clone_plan_paths
 from isaaclab_physx.physics import PhysxManager as SimulationManager
 
 from .kernels import resolve_view_ids
@@ -1325,7 +1326,12 @@ class RigidObjectCollection(BaseRigidObjectCollection):
             self._body_names_list.append(name)
 
         # -- object view
-        self._root_view = self._physics_sim_view.create_rigid_body_view(root_prim_path_exprs)
+        root_prim_paths = expand_clone_plan_paths(root_prim_path_exprs)
+        self._root_view = self._physics_sim_view.create_rigid_body_view(
+            root_prim_paths
+            if root_prim_paths is not None
+            else [expr.replace(".*", "*") for expr in root_prim_path_exprs]
+        )
 
         # check if the rigid body was created
         if self._root_view._backend is None:

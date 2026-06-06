@@ -29,6 +29,7 @@ dependencies = [
     # procedural-generation
     "trimesh",
     "pyglet>=2.1.6,<3",
+    "mapbox-earcut",
     # pytetwild ships only an x86_64 manylinux wheel and its sdist fails to build on
     # aarch64 (CMake hardcodes -m64). Gate it on x86_64 so ARM64 docker builds are
     # not blocked; tetrahedralize callers degrade gracefully via ImportError when missing.
@@ -37,8 +38,10 @@ dependencies = [
     # image processing
     "transformers==4.57.6",
     "einops",
-    "warp-lang==1.14.0",
+    "warp-lang>=1.14.0rc2",
     "matplotlib>=3.10.3",
+    # experiment tracking
+    "wandb",
     # keep consistent with isaac sim version
     "pillow==12.1.1",
     # required by omni.replicator.core S3 backend

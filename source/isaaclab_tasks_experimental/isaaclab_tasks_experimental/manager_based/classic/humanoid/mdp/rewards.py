@@ -47,6 +47,9 @@ def _upright_posture_bonus_kernel(
     threshold: float,
     out: wp.array(dtype=wp.float32),
 ):
+    # Per-env unit-direction projection: ``gravity_w`` carries m/s^2 magnitude
+    # and may be per-env under gravity randomization. Normalize so ``up_proj``
+    # remains in [-1, 1] (the threshold's intended domain).
     i = wp.tid()
     up_proj = -rotate_vec_to_body_frame(wp.normalize(gravity_w[i]), root_pose_w[i])[2]
     out[i] = wp.where(up_proj > threshold, 1.0, 0.0)

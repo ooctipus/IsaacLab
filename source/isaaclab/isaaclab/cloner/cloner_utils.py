@@ -342,6 +342,103 @@ def make_clone_plan(
     )
 
 
+def fabric_replicate(
+    stage: Usd.Stage,
+    sources: Sequence[str],
+    destinations: Sequence[str],
+    env_ids: torch.Tensor,
+    mask: torch.Tensor | None = None,
+    positions: torch.Tensor | None = None,
+    quaternions: torch.Tensor | None = None,
+) -> None:
+    """Replicate prim hierarchies directly in Fabric.
+
+    Args:
+        stage: USD stage whose Fabric stage should receive the clones.
+        sources: Source prim paths.
+        destinations: Destination formattable templates with ``"{}"`` for env index.
+        env_ids: Environment indices.
+        mask: Optional per-source mask selecting destination environments.
+        positions: Optional positions [m] (``[E, 3]``) used for Fabric local translation.
+        quaternions: Optional orientations (``[E, 4]``) in ``xyzw`` used for Fabric local orientation.
+    """
+    import usdrt
+
+    try:
+        from isaacsim.core.cloner.bindings._isaac_cloner import _fabric_clone
+    except ModuleNotFoundError:
+        import omni.kit.app
+
+        ext_manager = omni.kit.app.get_app().get_extension_manager()
+        ext_manager.set_extension_enabled_immediate("isaacsim.core.cloner", True)
+        from isaacsim.core.cloner.bindings._isaac_cloner import _fabric_clone
+
+    stage_cache = UsdUtils.StageCache.Get()
+    cached_id = stage_cache.GetId(stage)
+    stage_id = cached_id.ToLongInt() if cached_id.IsValid() else stage_cache.Insert(stage).ToLongInt()
+    usdrt_stage = usdrt.Usd.Stage.Attach(stage_id)
+
+    def dp_depth(template: str) -> int:
+        return Sdf.Path(template.format(0)).pathElementCount
+
+    for row in sorted(range(len(sources)), key=lambda i: dp_depth(destinations[i])):
+        source = sources[row]
+        destination = destinations[row]
+        target_envs = env_ids if mask is None else env_ids[mask[row]]
+        prim_paths = [
+            prim_path for env_id in target_envs.tolist() if (prim_path := destination.format(int(env_id))) != source
+        ]
+        if not prim_paths:
+            continue
+        if not _fabric_clone(stage_id, source, prim_paths):
+            raise RuntimeError(f"Fabric cloning failed for source '{source}' to {len(prim_paths)} targets.")
+
+    if positions is None and quaternions is None:
+        return
+
+    for row in range(len(sources)):
+        destination = destinations[row]
+        target_envs = env_ids if mask is None else env_ids[mask[row]]
+        for env_id in target_envs.tolist():
+            prim = usdrt_stage.GetPrimAtPath(destination.format(int(env_id)))
+            if not prim:
+                continue
+            attr = prim.GetAttribute("omni:fabric:localMatrix")
+            local_matrix = attr.Get()
+            transform = usdrt.Gf.Transform(local_matrix)
+            if positions is not None:
+                position = positions[int(env_id)].detach().cpu().tolist()
+                transform.SetTranslation(usdrt.Gf.Vec3d(float(position[0]), float(position[1]), float(position[2])))
+            if quaternions is not None:
+                quat = quaternions[int(env_id)].detach().cpu().tolist()
+                transform.SetRotation(
+                    usdrt.Gf.Rotation(usdrt.Gf.Quatd(float(quat[3]), usdrt.Gf.Vec3d(*map(float, quat[:3]))))
+                )
+            attr.Set(transform.GetMatrix())
+
+    fabric_id = usdrt_stage.GetFabricId()
+    hierarchy = usdrt.hierarchy.IFabricHierarchy().get_fabric_hierarchy(fabric_id, stage_id)
+    hierarchy.update_world_xforms()
+    _force_fabric_usd_populate(fabric_id.id)
+
+
+def _force_fabric_usd_populate(fabric_id: int) -> None:
+    """Force Fabric/USD consumers to repopulate after direct Fabric cloning."""
+    bindings = _fabric_notices.get_bindings()
+    if bindings is None:
+        return
+    if not bindings.validate_with(fabric_id):
+        return
+
+    # Direct Fabric cloning does not author USD specs, so USD notices do not drive the
+    # renderer's minimal-populate path. Round-tripping the listener keeps the cloned
+    # prims visible to Fabric/USD consumers without reintroducing USD asset copies.
+    was_enabled = bindings.is_enabled(fabric_id)
+    if was_enabled:
+        bindings.set_enable(fabric_id, False)
+        bindings.set_enable(fabric_id, True)
+
+
 def filter_collisions(
     stage: Usd.Stage,
     physicsscene_path: str,

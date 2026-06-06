@@ -7,6 +7,7 @@ __all__ = [
     "CloneCfg",
     "ClonePlan",
     "disabled_fabric_change_notifies",
+    "fabric_replicate",
     "filter_collisions",
     "get_suffix",
     "grid_transforms",
@@ -29,6 +30,7 @@ from .cloner_cfg import CloneCfg
 from .cloner_strategies import random, sequential
 from ._fabric_notices import disabled_fabric_change_notifies
 from .cloner_utils import (
+    fabric_replicate,
     filter_collisions,
     get_suffix,
     grid_transforms,

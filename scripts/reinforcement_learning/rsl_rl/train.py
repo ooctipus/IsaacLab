@@ -28,13 +28,11 @@ from datetime import datetime
 import gymnasium as gym
 import torch
 from packaging import version
-from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
 from isaaclab.app import add_launcher_args, launch_simulation
 from isaaclab.envs import DirectMARLEnvCfg, DirectRLEnvCfg, ManagerBasedRLEnvCfg
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_yaml
-from isaaclab.utils.seed import configure_seed
 from isaaclab.utils.string import list_intersection, string_to_callable
 
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg
@@ -57,7 +55,13 @@ RSL_RL_VERSION = "5.0.1"
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
-torch.backends.cudnn.benchmark = False
+# Enable cuDNN autotune: on the first few calls cuDNN measures algorithm options for
+# each conv shape and caches the fastest. PPO repeats the same conv shapes 20+ times
+# per iteration, so the warmup cost is amortized immediately and convs typically run
+# 20-40% faster after the first iteration. Profiling on the position-CNN configuration
+# showed conv backward dominating Learning time at ~33% of total update; this flag is
+# the highest-ROI conv-side speedup available.
+torch.backends.cudnn.benchmark = True
 
 # -- argparse ----------------------------------------------------------------
 parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
@@ -215,16 +219,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
         # create runner from rsl-rl
-        if agent_cfg.class_name == "OnPolicyRunner":
-            runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
-        elif agent_cfg.class_name == "DistillationRunner":
-            runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
-        else:
-            raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
-        # configure_seed must be called after runner construction so that PyTorch deterministic settings
-        # do not interfere with the runner's internal initialization.
-        if args_cli.deterministic:
-            configure_seed(env_cfg.seed, True)
+        runner = agent_cfg.class_type(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
         # write git state to logs
         runner.add_git_repo_to_log(__file__)
         # load the checkpoint
