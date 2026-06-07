@@ -37,9 +37,6 @@ from isaaclab_tasks.core.multi_task.curriculum import (
     UniformSamplingStrategyCfg,
     ValueShiftSamplingStrategyCfg,
 )
-from isaaclab_tasks.core.multi_task.mdp import vision_obs
-from isaaclab_tasks.core.multi_task.mdp.curriculums import success_rate_sampler
-from isaaclab_tasks.core.multi_task.mdp.terminations import illegal_contact_ratio
 from isaaclab_tasks.core.multi_task.sensors import FastTerrainScannerCfg
 from isaaclab_tasks.core.multi_task.terrain.viz.sampler_images import log_spawn_goal_sampler_images
 from isaaclab_tasks.utils import PresetCfg, preset
@@ -189,9 +186,6 @@ class ObservationsEncoderCfg:
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
         proj_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))
-        # Body-frame gravity vector with magnitude preserved [m/s^2]. Pairs with
-        # ``proj_gravity`` (unit direction) so the policy can also condition on
-        # ``‖g‖`` under per-env gravity randomization.
         gravity_b = ObsTerm(func=mdp.gravity_b, noise=Unoise(n_min=-0.5, n_max=0.5))
         joint_pos = ObsTerm(func=mdp.joint_pos)
         joint_vel = ObsTerm(func=mdp.joint_vel)
@@ -204,7 +198,7 @@ class ObservationsEncoderCfg:
     @configclass
     class HeightScanCfg(ObsGroup):
         height_scan = ObsTerm(
-            func=vision_obs,
+            func=mdp.vision_obs,
             params={"sensor_cfg": SceneEntityCfg("height_scanner")},
             noise=Unoise(n_min=-0.05, n_max=0.05),
             clip=(-1.0, 1.0),
@@ -329,20 +323,13 @@ class TerminationsCfg:
     abnormal_robot = DoneTerm(func=mdp.abnormal_robot_state)
 
     base_contact = DoneTerm(
-        func=illegal_contact_ratio,
+        func=mdp.illegal_contact_ratio,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*"),
             "threshold_ratio": 3.0,
         },
     )
 
-    # Hard physical ceiling on the internal load that propagates through the kinematic chain.
-    # The foot-contact gate (``base_contact``) only sees the ground reaction; it misses the
-    # reaction wrench transmitted up the legs on a hard landing. Grounded as a body-weight
-    # multiple, like ``base_contact``: in-vivo joint contact forces are ~2-3.5x BW in
-    # walking/stairs, ~5x running, ~8-9x stumbling, so 6x BW sits above vigorous gait but inside
-    # the stumble band. Runtime probing confirmed normal gait peaks near ~4x BW while jump-downs
-    # spike past 10x. See :class:`~...mdp.terminations.joint_reaction_overload`.
     joint_reaction = DoneTerm(
         func=mdp.joint_reaction_overload,
         time_out=False,
@@ -417,7 +404,7 @@ FLAT_PATCH_SAMPLER_PRESETS = _make_sampler_presets(
 @configclass
 class FootSampledCurriculumCfg:
     terrain_levels = CurrTerm(
-        func=success_rate_sampler,
+        func=mdp.success_rate_sampler,
         params={
             "success_rates_bind": "env.command_manager.get_term('goal_point').success_rates",
             "sample_indices_bind": "env.command_manager.get_term('goal_point').cmd_indices",
