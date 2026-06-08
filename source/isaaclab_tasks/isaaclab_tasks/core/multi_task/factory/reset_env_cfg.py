@@ -325,7 +325,7 @@ SCENE_RESET = EventTerm(
                             "start_assembled": ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
                             "start_grasped_then_assembled": GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER,
                         },
-                        eval={"grasp_asset_in_air": GRIPPER_GRASP_ASSET_IN_AIR},
+                        eval={"grasp_asset_in_air": ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE},
                     ),
                     "sampling": preset(
                         default=SamplerCfg(
@@ -391,9 +391,9 @@ ACCUMULATOR_RESET = EventTerm(
             # rolling-monitor curriculum. Useful as a no-frontier baseline
             # when sweeping ``frontier`` and ``dil*`` so the run names read
             # "what's the curriculum?" rather than "what's the rate source?".
-            beta66=SamplerCfg(
+            beta=SamplerCfg(
                 strategies=[
-                    BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates")
+                    BetaSamplingStrategyCfg(target=0.5, kappa=1.0, weight=1.0, success_rate_bind="success_rates")
                 ],
                 eps=1e-4,
             ),
@@ -433,7 +433,7 @@ ACCUMULATOR_RESET = EventTerm(
                 strategies=[
                     BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates"),
                     ValueShiftSamplingStrategyCfg(
-                        weight=0.5,
+                        weight=0.05,
                         state_buffer_bind="env.event_manager.get_term_cfg('reset_strategies').func.state_data",
                         cmd_indices_bind="env.event_manager.get_term_cfg('reset_strategies').func.sampled_slots",
                         resample_command_fn_bind=(
