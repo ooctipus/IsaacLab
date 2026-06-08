@@ -26,6 +26,7 @@ encoder" single config choices rather than separate architectures.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import torch
@@ -85,9 +86,7 @@ class ResidualMLPEncoderModel(MLPEncoderModel):
         hidden_dims: list[int] | tuple[int, ...] | None = None,  # noqa: ARG002
     ) -> None:
         if encoder_cfg is None and cnns is None:
-            raise ValueError(
-                "ResidualMLPEncoderModel requires 'encoder_cfg' unless encoders are shared through 'cnns'."
-            )
+            encoder_cfg = {}
         nn.Module.__init__(self)
         if cnns is not None:
             self._encoded_obs_group_keys = list(cnns.keys())
@@ -186,6 +185,32 @@ class ResidualMLPEncoderModel(MLPEncoderModel):
             return int(encoder.output_dim)  # type: ignore[attr-defined]
         return get_mlp_output_dim(encoder)
 
+    def _get_obs_dim(self, obs: TensorDict, obs_groups: dict[str, list[str]], obs_set: str) -> tuple[list[str], int]:
+        """Select passthrough and encoded groups, allowing identity-only SimBa heads."""
+        passthrough_groups: list[str] = []
+        passthrough_dim = 0
+        encoded_groups: list[str] = []
+        encoded_dims: list[int] = []
+        for obs_group in obs_groups[obs_set]:
+            shape = obs[obs_group].shape
+            feature_dim = math.prod(shape[1:])
+            if obs_group in self._encoded_obs_group_keys:
+                encoded_groups.append(obs_group)
+                encoded_dims.append(int(feature_dim))
+            else:
+                if len(shape) != 2:
+                    raise ValueError(
+                        f"Observation '{obs_group}' must be encoded or flattened before ResidualMLPEncoderModel."
+                    )
+                passthrough_groups.append(obs_group)
+                passthrough_dim += int(shape[-1])
+        missing = set(self._encoded_obs_group_keys) - set(encoded_groups)
+        if missing:
+            raise ValueError(f"encoder_cfg contains observation groups not present in {obs_set}: {sorted(missing)}")
+        self.obs_groups_encoded = encoded_groups
+        self.obs_dims_encoded = encoded_dims
+        return passthrough_groups, passthrough_dim
+
     def get_latent(
         self, obs: TensorDict, masks: torch.Tensor | None = None, hidden_state: HiddenState = None
     ) -> torch.Tensor:
@@ -207,12 +232,18 @@ class ResidualMLPEncoderModel(MLPEncoderModel):
                 flat = x.reshape(-1, self.obs_dims_encoded[i])
                 features = self.encoders[group](self.encoder_normalizers[group](flat))
             encoded.append(features.reshape(*lead_shape, features.shape[-1]))
-        latent_encoded = torch.cat(encoded, dim=-1)
+        latent_encoded = torch.cat(encoded, dim=-1) if encoded else None
 
         if self.obs_groups:
             latent_passthrough = self.obs_normalizer(torch.cat([obs[group] for group in self.obs_groups], dim=-1))
-            latent = torch.cat([latent_passthrough, latent_encoded], dim=-1)
+            latent = (
+                torch.cat([latent_passthrough, latent_encoded], dim=-1)
+                if latent_encoded is not None
+                else latent_passthrough
+            )
         else:
+            if latent_encoded is None:
+                raise RuntimeError("ResidualMLPEncoderModel requires at least one passthrough or encoded group.")
             latent = latent_encoded
 
         latent = self.head_norm(latent)
