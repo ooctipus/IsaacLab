@@ -26,7 +26,7 @@ Three terms and one base cfg live here:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
 import warp as wp
@@ -39,6 +39,7 @@ from isaaclab.utils.configclass import configclass
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject
     from isaaclab.envs import ManagerBasedRLEnv
+    from isaaclab.sensors.joint_wrench import JointWrenchSensor
 
 
 def abnormal_robot_state(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
@@ -124,6 +125,47 @@ class illegal_contact_ratio(ManagerTermBase):
         net_forces = wp.to_torch(self._sensor.data.net_forces_w_history)
         max_force = torch.max(torch.linalg.norm(net_forces[:, :, self._body_ids], dim=-1), dim=1)[0]
         return torch.any(max_force > self._threshold, dim=1)
+
+
+class joint_reaction_overload(ManagerTermBase):
+    """Terminate when reported joint reaction force exceeds a body-weight multiple."""
+
+    def __init__(self, cfg: DoneTerm, env: ManagerBasedRLEnv) -> None:
+        super().__init__(cfg, env)
+        params = cast(dict[str, Any], cfg.params)
+        force_ratio = float(params["force_ratio"])
+        sensor_cfg: SceneEntityCfg = params.get("sensor_cfg", SceneEntityCfg("joint_wrench"))
+        asset_cfg: SceneEntityCfg = params.get("asset_cfg", SceneEntityCfg("robot"))
+        force_mode = str(params.get("force_mode", "off_axis"))
+        if force_mode not in ("off_axis", "magnitude"):
+            raise ValueError("joint_reaction_overload force_mode must be 'off_axis' or 'magnitude'.")
+        self._sensor = cast("JointWrenchSensor", env.scene.sensors[sensor_cfg.name])
+        if force_mode == "off_axis":
+            axes_data = self._sensor.data.force_axes
+            if axes_data is None:
+                raise RuntimeError("joint_reaction_overload force_mode='off_axis' requires joint force axes.")
+            self._force_axes = torch.nn.functional.normalize(axes_data.torch, dim=-1).unsqueeze(0)
+            self._reduce_force = self._force_off_axis
+        else:
+            self._reduce_force = self._force_identity
+        asset: Articulation = env.scene[asset_cfg.name]
+        total_mass = asset.data.body_mass.torch.sum(dim=-1)
+        self._threshold = (force_ratio * total_mass * 9.81).unsqueeze(-1)
+        cfg.params = {}
+
+    def __call__(self, env: ManagerBasedRLEnv) -> torch.Tensor:
+        force_data = self._sensor.data.force
+        if force_data is None:
+            raise RuntimeError("joint_reaction_overload requires an initialized JointWrenchSensor.")
+        force = self._reduce_force(force_data.torch)
+        max_force = torch.linalg.norm(force, dim=-1)
+        return torch.any(max_force > self._threshold, dim=1)
+
+    def _force_identity(self, force: torch.Tensor) -> torch.Tensor:
+        return force
+
+    def _force_off_axis(self, force: torch.Tensor) -> torch.Tensor:
+        return force - torch.sum(force * self._force_axes, dim=-1, keepdim=True) * self._force_axes
 
 
 @configclass

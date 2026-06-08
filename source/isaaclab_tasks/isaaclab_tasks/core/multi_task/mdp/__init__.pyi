@@ -23,6 +23,7 @@ __all__ = [
     "abnormal_robot_state",
     "out_of_bound",
     "illegal_contact_ratio",
+    "joint_reaction_overload",
     "BaseTerminationsCfg",
 ]
 
@@ -39,4 +40,4 @@ from .observations import (
     vision_obs,
 )
 from .rewards import action_l2_clamped, action_rate_l2_clamped, command_task_reward, contact_penalty, mechanical_power
-from .terminations import BaseTerminationsCfg, abnormal_robot_state, illegal_contact_ratio, out_of_bound
+from .terminations import BaseTerminationsCfg, abnormal_robot_state, illegal_contact_ratio, joint_reaction_overload, out_of_bound
