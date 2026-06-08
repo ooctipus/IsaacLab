@@ -75,26 +75,25 @@ DOMELIGHT_CFG = AssetBaseCfg(
 
 
 FRANKA_ACTUATORS_CFG = {
-    "panda_shoulder": ImplicitActuatorCfg(  # type:ignore
+    "panda_shoulder": ImplicitActuatorCfg(  # type: ignore
         joint_names_expr=["panda_joint[1-4]"],
         effort_limit_sim=87.0,
         stiffness=80.0,
         damping=4.0,
-        armature=0.1,
+        armature=1e-3,
     ),
-    "panda_forearm": ImplicitActuatorCfg(  # type:ignore
+    "panda_forearm": ImplicitActuatorCfg(  # type: ignore
         joint_names_expr=["panda_joint[5-7]"],
         effort_limit_sim=12.0,
         stiffness=80.0,
         damping=4.0,
-        armature=0.1,
+        armature=1e-3,
     ),
-    "panda_hand": ImplicitActuatorCfg(  # type:ignore
+    "panda_hand": ImplicitActuatorCfg(  # type: ignore
         joint_names_expr=["panda_finger_joint.*"],
-        effort_limit_sim=12.0,
-        stiffness=12.0,
-        damping=4.0,
-        armature=0.1,
+        effort_limit_sim=40.0,
+        stiffness=2e3,
+        damping=1e2,
     ),
 }
 
