@@ -35,7 +35,7 @@ class _SocketCollisionPropsCfg(PresetCfg):
     newton_mjwarp = sim_utils.NewtonSDFCollisionPropertiesCfg(
         rest_offset=0.0,
         contact_gap=0.005,
-        sdf_max_resolution=512,
+        sdf_max_resolution=256,
         sdf_narrow_band_inner=-0.005,
         sdf_narrow_band_outer=0.005,
     )
@@ -48,10 +48,9 @@ class _PlugCollisionPropsCfg(PresetCfg):
 
     default = sim_utils.CollisionPropertiesCfg(contact_offset=0.0025, rest_offset=0.0)
     newton_mjwarp = sim_utils.NewtonSDFCollisionPropertiesCfg(
-        contact_offset=0.0025,
         rest_offset=0.0,
         contact_gap=0.005,
-        sdf_max_resolution=512,
+        sdf_max_resolution=256,
         sdf_narrow_band_inner=-0.005,
         sdf_narrow_band_outer=0.005,
     )
