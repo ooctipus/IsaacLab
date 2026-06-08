@@ -3,14 +3,17 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+from typing import Any
+
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_rl.rsl_rl import RslRlMLPModelCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
 
+from isaaclab_tasks.core.multi_task.rl.rsl_rl import RslRlResidualMLPEncoderModelCfg
 from isaaclab_tasks.utils import PresetCfg, preset
 
 # Shared PPO hyper-parameters reused by both the plain-PPO and value-shift variants.
-_FACTORY_PPO_KWARGS = dict(
+_FACTORY_PPO_KWARGS: dict[str, Any] = dict(
     value_loss_coef=1.0,
     use_clipped_value_loss=True,
     clip_param=0.2,
@@ -24,6 +27,77 @@ _FACTORY_PPO_KWARGS = dict(
     desired_kl=0.01,
     max_grad_norm=1.0,
 )
+
+
+@configclass
+class FactoryActorPresetCfg(PresetCfg):
+    """Actor presets selectable via ``agent.actor=<name>``."""
+
+    actor_critic = RslRlMLPModelCfg(
+        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0, std_type="scalar"),
+        obs_normalization=True,
+        hidden_dims=[512, 256, 128, 64],
+        activation="elu",
+    )
+    simba = RslRlResidualMLPEncoderModelCfg(
+        hidden_dim=256,
+        num_blocks=2,
+        expand=4,
+        activation="swish",
+        norm=True,
+        obs_normalization=True,
+        encoder_normalization=True,
+        stochastic=True,
+        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0, std_type="scalar"),
+        encoder_cfg={},
+    )
+    simba_big = RslRlResidualMLPEncoderModelCfg(
+        hidden_dim=512,
+        num_blocks=2,
+        expand=4,
+        activation="swish",
+        norm=True,
+        obs_normalization=True,
+        encoder_normalization=True,
+        stochastic=True,
+        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0, std_type="scalar"),
+        encoder_cfg={},
+    )
+    default = actor_critic
+
+
+@configclass
+class FactoryCriticPresetCfg(PresetCfg):
+    """Critic presets selectable via ``agent.critic=<name>``."""
+
+    actor_critic = RslRlMLPModelCfg(
+        obs_normalization=True,
+        hidden_dims=[512, 256, 128, 64],
+        activation="elu",
+    )
+    simba = RslRlResidualMLPEncoderModelCfg(
+        hidden_dim=256,
+        num_blocks=2,
+        expand=4,
+        activation="swish",
+        norm=True,
+        obs_normalization=True,
+        encoder_normalization=True,
+        stochastic=False,
+        encoder_cfg={},
+    )
+    simba_big = RslRlResidualMLPEncoderModelCfg(
+        hidden_dim=1024,
+        num_blocks=4,
+        expand=4,
+        activation="swish",
+        norm=True,
+        obs_normalization=True,
+        encoder_normalization=True,
+        stochastic=False,
+        encoder_cfg={},
+    )
+    default = actor_critic
 
 
 @configclass
@@ -76,16 +150,9 @@ class FactoryPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     obs_groups = preset(
         default={"actor": ["policy"], "critic": ["policy"]},
         actor_critic={"actor": ["policy"], "critic": ["policy"]},
+        simba={"actor": ["policy"], "critic": ["policy"]},
+        simba_big={"actor": ["policy"], "critic": ["policy"]},
     )  # type: ignore
-    actor = RslRlMLPModelCfg(
-        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0, std_type="scalar"),
-        obs_normalization=True,
-        hidden_dims=[512, 256, 128, 64],
-        activation="elu",
-    )
-    critic = RslRlMLPModelCfg(
-        obs_normalization=True,
-        hidden_dims=[512, 256, 128, 64],
-        activation="elu",
-    )
+    actor = FactoryActorPresetCfg()  # type: ignore
+    critic = FactoryCriticPresetCfg()  # type: ignore
     algorithm = PpoAlgorithmCfg()  # type: ignore
