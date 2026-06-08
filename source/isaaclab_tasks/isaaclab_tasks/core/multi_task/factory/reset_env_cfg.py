@@ -378,14 +378,14 @@ ACCUMULATOR_RESET = EventTerm(
                 strategies=[
                     BetaSamplingStrategyCfg(target=0.5, kappa=1.0, weight=1.0, success_rate_bind="success_rates")
                 ],
-                eps=1e-4,
+                eps=1e-3,
             ),
             uniform=SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=1.0)], eps=0.0),
             monitor=SamplerCfg(
                 strategies=[
                     BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates")
                 ],
-                eps=1e-4,
+                eps=1e-3,
             ),
             # ``beta66`` is a semantic alias of ``monitor``: same Beta(0.66)
             # rolling-monitor curriculum. Useful as a no-frontier baseline
@@ -395,11 +395,11 @@ ACCUMULATOR_RESET = EventTerm(
                 strategies=[
                     BetaSamplingStrategyCfg(target=0.5, kappa=1.0, weight=1.0, success_rate_bind="success_rates")
                 ],
-                eps=1e-4,
+                eps=1e-3,
             ),
             frontier=SamplerCfg(
                 strategies=[
-                    BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates"),
+                    BetaSamplingStrategyCfg(target=0.5, kappa=1.0, weight=1.0, success_rate_bind="success_rates"),
                     FrontierSamplingStrategyCfg(
                         k=8,
                         dilation_steps=preset(default=2, dil1=1, dil2=2, dil3=3, dil4=4, dil5=5),  # type: ignore
@@ -407,7 +407,7 @@ ACCUMULATOR_RESET = EventTerm(
                         success_rate_bind="success_rates",
                     ),
                 ],
-                eps=1e-4,
+                eps=1e-3,
             ),
             # Value-shift prioritizes table slots whose critic value moved most between
             # updates. The binds reach this accumulator instance (the ``reset_strategies``
