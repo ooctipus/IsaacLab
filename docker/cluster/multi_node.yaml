@@ -20,10 +20,6 @@ workflow:
     {% if item == 0 %}
     - name: master
       lead: true
-      outputs:
-      - dataset:
-          name: {{ dataset }}
-          path: model
     {% else %}
     - name: worker_{{item}}
     {% endif %}
@@ -44,7 +40,6 @@ workflow:
       - path: /tmp/run.sh
         contents: |
           set -euo pipefail
-          mkdir -p {{output}}/model
 
           # Avoid Vulkan conflicts in Isaac containers
           if [ -e "/usr/share/vulkan" ] && [ -e "/etc/vulkan" ]; then
@@ -132,11 +127,6 @@ workflow:
             --workflow_id {{workflow_id}} \
             {{ args }}
           {% endif %}
-
-          # Collect logs/checkpoints into the dataset output dir
-          shopt -s nullglob
-          mv logs/* {{output}}/model/ 2>/dev/null || true
-
       - path: /tmp/config.json
         contents: |
           {
@@ -155,7 +145,6 @@ default-values:
   memory: 64
   storage: 256
   platform: dgx-h100
-  dataset: isaac-lab-ppo-model
   cache_user: zhengyuz
   cluster_cache_root: ""
   args:
