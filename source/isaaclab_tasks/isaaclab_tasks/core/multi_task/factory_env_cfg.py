@@ -120,19 +120,19 @@ class FactoryEventCfg:
         },
     )
 
-    # Held-asset (nut) angular-instability fix: its small rotational inertia (~0.012 kg.m^2) under the
-    # stiff contact (ke=1e7) lets contact torque run the angular velocity away exponentially -> NaN
-    # (observed in the grasp_asset_in_air reset). Bump the diagonal inertia to damp it, as in dexsuite.
-    held_asset_inertia = EventTerm(
-        func=mdp.randomize_rigid_body_inertia,
-        mode="startup",
-        params={
-            "asset_cfg": SceneEntityCfg("held_asset"),
-            "inertia_distribution_params": [0.01, 0.01],
-            "operation": "add",
-            "diagonal_only": True,
-        },
-    )
+    # # Held-asset (nut) angular-instability fix: its small rotational inertia (~0.012 kg.m^2) under the
+    # # stiff contact (ke=1e7) lets contact torque run the angular velocity away exponentially -> NaN
+    # # (observed in the grasp_asset_in_air reset). Bump the diagonal inertia to damp it, as in dexsuite.
+    # held_asset_inertia = EventTerm(
+    #     func=mdp.randomize_rigid_body_inertia,
+    #     mode="startup",
+    #     params={
+    #         "asset_cfg": SceneEntityCfg("held_asset"),
+    #         "inertia_distribution_params": [0.01, 0.01],
+    #         "operation": "add",
+    #         "diagonal_only": True,
+    #     },
+    # )
 
     fixed_asset_material = EventTerm(
         func=mdp.randomize_rigid_body_material,  # type: ignore
