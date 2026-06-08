@@ -345,8 +345,8 @@ class FactoryPhysicsCfg(PresetCfg):
             max_triangle_pairs=60_000_000,
             rigid_contact_max=5_000_000,
         ),
-        default_shape_cfg=NewtonShapeCfg(margin=0.0, gap=0.001, ke=1e7, kd=1e4),
-        num_substeps=4,
+        default_shape_cfg=NewtonShapeCfg(ke=1e7, kd=1e4),
+        num_substeps=2,
         debug_mode=False,
         use_cuda_graph=True,
     )
