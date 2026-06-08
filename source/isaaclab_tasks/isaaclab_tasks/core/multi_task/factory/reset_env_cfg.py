@@ -334,7 +334,7 @@ SCENE_RESET = EventTerm(
                                     target=0.5, kappa=1.0, weight=1.0, success_rate_bind="success_rates"
                                 )
                             ],
-                            eps=1e-4,
+                            eps=1e-3,
                         ),
                         uniform=SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=1.0)], eps=0.0),
                         monitor=SamplerCfg(
@@ -343,7 +343,7 @@ SCENE_RESET = EventTerm(
                                     target=0.5, kappa=1.0, weight=1.0, success_rate_bind="success_rates"
                                 )
                             ],
-                            eps=1e-4,
+                            eps=1e-3,
                         ),
                     ),
                     "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=100),
@@ -369,7 +369,7 @@ ACCUMULATOR_RESET = EventTerm(
                 obstacle_cfgs=[SceneEntityCfg("fixed_asset"), SceneEntityCfg("robot")],
             ),
         },
-        "state_table_size": preset(default=32768, eval=512),
+        "state_table_size": preset(default=32768, eval=64),
         "state_tag_names_bind": "list(reset_term.func.terms['reset_strategies'].func.term_partitions.keys())",
         "state_tag_indices_bind": "reset_term.func.terms['reset_strategies'].func.term_samples",
         "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=50),
@@ -383,7 +383,7 @@ ACCUMULATOR_RESET = EventTerm(
             uniform=SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=1.0)], eps=0.0),
             monitor=SamplerCfg(
                 strategies=[
-                    BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates")
+                    BetaSamplingStrategyCfg(target=0.5, kappa=1.0, weight=1.0, success_rate_bind="success_rates")
                 ],
                 eps=1e-3,
             ),
@@ -427,11 +427,11 @@ ACCUMULATOR_RESET = EventTerm(
                         get_critic_obs_fn_bind="lambda: env.observation_manager.compute()",
                     )
                 ],
-                eps=1e-4,
+                eps=1e-3,
             ),
             beta_value_shift=SamplerCfg(
                 strategies=[
-                    BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates"),
+                    BetaSamplingStrategyCfg(target=0.5, kappa=1.0, weight=1.0, success_rate_bind="success_rates"),
                     ValueShiftSamplingStrategyCfg(
                         weight=0.05,
                         state_buffer_bind="env.event_manager.get_term_cfg('reset_strategies').func.state_data",
@@ -442,7 +442,7 @@ ACCUMULATOR_RESET = EventTerm(
                         get_critic_obs_fn_bind="lambda: env.observation_manager.compute()",
                     ),
                 ],
-                eps=1e-4,
+                eps=1e-3,
             ),
         ),
         "reset_term": SCENE_RESET,
