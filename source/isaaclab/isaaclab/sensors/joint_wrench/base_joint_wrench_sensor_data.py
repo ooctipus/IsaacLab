@@ -40,3 +40,12 @@ class BaseJointWrenchSensorData(ABC):
         initialized.
         """
         raise NotImplementedError
+
+    @property
+    def force_axes(self) -> ProxyArray | None:
+        """Main force axis for each reported joint in the same frame as :attr:`force`.
+
+        Shape is ``(num_bodies, 3)``. ``None`` when the backend does not expose
+        joint axes.
+        """
+        return None

@@ -409,6 +409,7 @@ class ContactSensor(BaseContactSensor):
         body_names_regex = f"{body_parent}/{body_names_regex}"
         body_names_glob = body_names_regex.replace(".*", "*")
         filter_prim_paths_glob = [expr.replace(".*", "*") for expr in self.cfg.filter_prim_paths_expr]
+        contact_filter_patterns = filter_prim_paths_glob
 
         # create a rigid prim view for the sensor
         self._body_physx_view = self._physics_sim_view.create_rigid_body_view(body_names_glob)
