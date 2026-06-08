@@ -17,9 +17,11 @@ class JointWrenchSensorData(BaseJointWrenchSensorData):
     def __init__(self):
         self._force: wp.array | None = None
         self._torque: wp.array | None = None
+        self._force_axes: wp.array | None = None
         self._body_names: list[str] = []
         self._force_ta: ProxyArray | None = None
         self._torque_ta: ProxyArray | None = None
+        self._force_axes_ta: ProxyArray | None = None
 
     @property
     def force(self) -> ProxyArray | None:
@@ -52,6 +54,15 @@ class JointWrenchSensorData(BaseJointWrenchSensorData):
         if self._torque_ta is None:
             self._torque_ta = ProxyArray(self._torque)
         return self._torque_ta
+
+    @property
+    def force_axes(self) -> ProxyArray | None:
+        """Main force axis for each reported joint in the incoming joint frame."""
+        if self._force_axes is None:
+            return None
+        if self._force_axes_ta is None:
+            self._force_axes_ta = ProxyArray(self._force_axes)
+        return self._force_axes_ta
 
     def create_buffers(self, num_envs: int, num_bodies: int, device: str) -> None:
         """Allocate internal buffers.

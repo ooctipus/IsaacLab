@@ -174,6 +174,25 @@ class JointWrenchSensor(BaseJointWrenchSensor):
         self._data._body_names = [link_names[int(b)] for b in joint_child_np]
 
         self._data.create_buffers(num_envs=self._num_envs, num_joints=self._num_joints, device=self._device)
+        joint_layout = self._root_view.frequency_layouts[model.AttributeFrequency.JOINT]
+        if joint_layout.indices is None:
+            selected_joint_ids = list(range(joint_layout.slice.start, joint_layout.slice.stop))
+        else:
+            selected_joint_ids = [int(i) for i in joint_layout.indices.numpy()]
+        joint_axis = model.joint_axis.numpy()
+        joint_qd_start = model.joint_qd_start.numpy()
+        joint_dof_dim = model.joint_dof_dim.numpy()
+        force_axes = []
+        for joint_idx in range(self._num_joints):
+            model_joint_id = selected_joint_ids[joint_idx]
+            dof_count = int(joint_dof_dim[model_joint_id][0] + joint_dof_dim[model_joint_id][1])
+            if dof_count <= 0:
+                force_axes.append((0.0, 0.0, 1.0))
+                continue
+            dof_idx = int(joint_qd_start[model_joint_id])
+            force_axes.append(tuple(float(v) for v in joint_axis[dof_idx]))
+        self._data._force_axes = wp.array(force_axes, dtype=wp.vec3f, device=self._device)
+        self._data._force_axes_ta = None
 
         logger.info(f"Joint wrench sensor initialized: {self._num_envs} envs, {self._num_joints} joints")
 
@@ -220,7 +239,9 @@ class JointWrenchSensor(BaseJointWrenchSensor):
         self._num_joints = 0
         self._data._force = None
         self._data._torque = None
+        self._data._force_axes = None
         self._data._body_names = []
         self._data._force_ta = None
         self._data._torque_ta = None
+        self._data._force_axes_ta = None
         NewtonManager.request_extended_state_attribute("body_parent_f")

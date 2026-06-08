@@ -154,6 +154,8 @@ class JointWrenchSensor(BaseJointWrenchSensor):
         joint_pos_b = np.zeros((self._num_bodies, 3), dtype=np.float32)
         joint_quat_b = np.zeros((self._num_bodies, 4), dtype=np.float32)
         joint_quat_b[:, 3] = 1.0
+        force_axes = np.zeros((self._num_bodies, 3), dtype=np.float32)
+        force_axes[:, 2] = 1.0
 
         first_env_matching_prim = resolve_matching_prims_from_source(self.cfg.prim_path)[0][0]
         link_name_to_index = {name: index for index, name in enumerate(self._data._body_names)}
@@ -183,8 +185,24 @@ class JointWrenchSensor(BaseJointWrenchSensor):
                     float(local_rot1.GetReal()),
                 )
 
+            if prim.IsA(UsdPhysics.RevoluteJoint):
+                axis_attr = UsdPhysics.RevoluteJoint(prim).GetAxisAttr()
+            elif prim.IsA(UsdPhysics.PrismaticJoint):
+                axis_attr = UsdPhysics.PrismaticJoint(prim).GetAxisAttr()
+            else:
+                axis_attr = None
+            axis = axis_attr.Get() if axis_attr else None
+            if axis == "X":
+                force_axes[body_index] = (1.0, 0.0, 0.0)
+            elif axis == "Y":
+                force_axes[body_index] = (0.0, 1.0, 0.0)
+            elif axis == "Z":
+                force_axes[body_index] = (0.0, 0.0, 1.0)
+
         self._joint_pos_b = wp.array(joint_pos_b, dtype=wp.vec3f, device=self._device)
         self._joint_quat_b = wp.array(joint_quat_b, dtype=wp.quatf, device=self._device)
+        self._data._force_axes = wp.array(force_axes, dtype=wp.vec3f, device=self._device)
+        self._data._force_axes_ta = None
 
     def _update_buffers_impl(self, env_mask: wp.array) -> None:
         """Read PhysX incoming joint wrenches and split them into force / torque buffers.
@@ -264,6 +282,8 @@ class JointWrenchSensor(BaseJointWrenchSensor):
         self._update_cmd = None
         self._data._force = None
         self._data._torque = None
+        self._data._force_axes = None
         self._data._body_names = []
         self._data._force_ta = None
         self._data._torque_ta = None
+        self._data._force_axes_ta = None
