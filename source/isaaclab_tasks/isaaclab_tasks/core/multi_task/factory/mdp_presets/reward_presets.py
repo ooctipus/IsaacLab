@@ -40,13 +40,7 @@ class TimeoutRewardsCfg:
 class SuccessRewardsV0Cfg:
     """Legacy reward terms for the success-terminate formulation."""
 
-    action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-1e-4)
-    action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-1e-4)
-    joint_effort = RewTerm(
-        func=mdp.joint_torques_l2,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=JointEffortNamesCfg())},  # type:ignore
-        weight=-1e-4,
-    )
+    mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.000025)
     early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-0.01)  # type: ignore
     success_reward = RewTerm(func=mdp.success_reward, weight=100.0)
 
