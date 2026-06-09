@@ -39,6 +39,7 @@ from isaaclab.utils.configclass import configclass
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject
     from isaaclab.envs import ManagerBasedRLEnv
+    from isaaclab.sensors import ContactSensor
     from isaaclab.sensors.joint_wrench import JointWrenchSensor
 
 
@@ -109,20 +110,27 @@ class illegal_contact_ratio(ManagerTermBase):
 
     def __init__(self, cfg: DoneTerm, env: ManagerBasedRLEnv) -> None:
         super().__init__(cfg, env)
-        threshold_ratio = float(cfg.params["threshold_ratio"])
-        sensor_cfg: SceneEntityCfg = cfg.params["sensor_cfg"]
-        asset_cfg: SceneEntityCfg = cfg.params.get("asset_cfg", SceneEntityCfg("robot"))
-        self._sensor = env.scene.sensors[sensor_cfg.name]
+        params = cast(dict[str, Any], cfg.params)
+        threshold_ratio = float(params["threshold_ratio"])
+        sensor_cfg: SceneEntityCfg = params["sensor_cfg"]
+        asset_cfg: SceneEntityCfg = params.get("asset_cfg", SceneEntityCfg("robot"))
+        self._sensor = cast("ContactSensor", env.scene.sensors[sensor_cfg.name])
         self._body_ids = sensor_cfg.body_ids
+        net_forces_history = self._sensor.data.net_forces_w_history
+        if net_forces_history is None:
+            raise RuntimeError(
+                "illegal_contact_ratio requires the contact sensor to be configured with history_length > 0."
+            )
+        self._net_forces_history = net_forces_history
         asset: Articulation = env.scene[asset_cfg.name]
         # [num_envs, 1] for broadcast against per-body force [num_envs, n_bodies].
-        total_mass = wp.to_torch(asset.data.body_mass).sum(dim=-1)
+        total_mass = asset.data.body_mass.torch.sum(dim=-1)
         self._threshold = (threshold_ratio * total_mass * 9.81).unsqueeze(-1)
         # Manager will not pass kwargs back to ``__call__`` if cfg.params is empty.
         cfg.params = {}
 
     def __call__(self, env: ManagerBasedRLEnv) -> torch.Tensor:
-        net_forces = wp.to_torch(self._sensor.data.net_forces_w_history)
+        net_forces = self._net_forces_history.torch
         max_force = torch.max(torch.linalg.norm(net_forces[:, :, self._body_ids], dim=-1), dim=1)[0]
         return torch.any(max_force > self._threshold, dim=1)
 
@@ -157,7 +165,8 @@ class joint_reaction_overload(ManagerTermBase):
         force_data = self._sensor.data.force
         if force_data is None:
             raise RuntimeError("joint_reaction_overload requires an initialized JointWrenchSensor.")
-        force = self._reduce_force(force_data.torch)
+        force_total = force_data.torch
+        force = self._reduce_force(force_total)
         max_force = torch.linalg.norm(force, dim=-1)
         return torch.any(max_force > self._threshold, dim=1)
 
