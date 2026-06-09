@@ -152,7 +152,7 @@ class RslRlHerCfg:
 class RslRlCrlAlgorithmCfg:
     """Configuration for the CRL algorithm."""
 
-    class_name: str = "CRL"
+    class_name: str = "isaaclab_tasks.core.multi_task.rl.rsl_rl.algorithms:CRL"
     """The algorithm class name."""
 
     actor_lr: float = 3e-4
@@ -196,7 +196,7 @@ class RslRlCrlAlgorithmCfg:
 class RslRlOffPolicyRunnerCfg(RslRlBaseRunnerCfg):
     """Configuration for off-policy runners."""
 
-    class_type: type[Any] | str = "rsl_rl.runners:OffPolicyRunner"
+    class_type: type[Any] | str = "isaaclab_tasks.core.multi_task.rl.rsl_rl.runners:OffPolicyRunner"
     """The runner class."""
 
     class_name: str = "OffPolicyRunner"

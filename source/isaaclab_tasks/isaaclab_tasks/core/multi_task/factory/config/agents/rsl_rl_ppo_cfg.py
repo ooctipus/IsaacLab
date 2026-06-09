@@ -134,11 +134,21 @@ class ValueShiftAlgorithmCfg(RslRlPpoAlgorithmCfg):
 
 
 @configclass
+class SuccessorLatentAlgorithmCfg(RslRlPpoAlgorithmCfg):
+    """PPO algorithm cfg + successor-latent value loss coefficient."""
+
+    class_name: str = "isaaclab_tasks.core.multi_task.rl.rsl_rl.algorithms:SuccessorLatentPPO"
+    successor_loss_coef: float = 0.01
+    """Coefficient for the vector-valued successor-latent loss."""
+
+
+@configclass
 class PpoAlgorithmCfg(PresetCfg):
     actor_critic = RslRlPpoAlgorithmCfg(class_name="PPO", **_FACTORY_PPO_KWARGS)
     default = actor_critic
     value_shift = ValueShiftAlgorithmCfg(**_FACTORY_PPO_KWARGS)
     beta_value_shift = value_shift
+    successor_latent = SuccessorLatentAlgorithmCfg(**_FACTORY_PPO_KWARGS)
 
 
 @configclass
