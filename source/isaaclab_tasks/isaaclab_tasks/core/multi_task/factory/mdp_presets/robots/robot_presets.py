@@ -28,7 +28,6 @@ selected.
 from dataclasses import MISSING
 
 from isaaclab.assets import ArticulationCfg
-from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils.configclass import configclass
 

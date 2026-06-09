@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Copyright (c) 2021-2026, ETH Zurich and NVIDIA CORPORATION
 # All rights reserved.
 #
@@ -10,12 +15,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from tensordict import TensorDict
-
 from rsl_rl.algorithms.ppo import PPO
 from rsl_rl.env import VecEnv
 from rsl_rl.models import MLPModel
 from rsl_rl.utils import resolve_callable, resolve_obs_groups
+from tensordict import TensorDict
 
 from ..storage import SuccessEstimatorRolloutStorage
 
@@ -136,7 +140,11 @@ class SuccessEstimatorPPO(PPO):
         last_success_probs = torch.sigmoid(self.success_estimator(obs).detach())
 
         for step in reversed(range(st.num_transitions_per_env)):
-            next_probs = last_success_probs if step == st.num_transitions_per_env - 1 else torch.sigmoid(st.success_values[step + 1])
+            next_probs = (
+                last_success_probs
+                if step == st.num_transitions_per_env - 1
+                else torch.sigmoid(st.success_values[step + 1])
+            )
             next_is_not_terminal = 1.0 - st.dones[step].float()
             st.success_returns[step] = st.success_rewards[step] + next_is_not_terminal * next_probs
 
@@ -363,7 +371,9 @@ class SuccessEstimatorPPO(PPO):
             return
         n = len(self._state_buffer)
         time_left = torch.ones(n, 1, device=self.device)
-        obs_td = TensorDict({"success": torch.cat([self._state_buffer.data[:n].to(self.device), time_left], dim=-1)}, batch_size=[n])
+        obs_td = TensorDict(
+            {"success": torch.cat([self._state_buffer.data[:n].to(self.device), time_left], dim=-1)}, batch_size=[n]
+        )
 
         p = torch.sigmoid(self.success_estimator(obs_td).squeeze(-1))
         self._state_buffer.success_rates = p

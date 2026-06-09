@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Copyright (c) 2021-2026, ETH Zurich and NVIDIA CORPORATION
 # All rights reserved.
 #
@@ -118,9 +123,7 @@ class HindsightRelabeling:
         Returns:
             Tuple of ``(t, e, future_t)``, each of shape ``[num_samples]``.
         """
-        assert self._episode_end is not None, (
-            "Call update_episode_boundaries() before sample_indices()."
-        )
+        assert self._episode_end is not None, "Call update_episode_boundaries() before sample_indices()."
         size = buffer.size
         device = buffer.device
         num_envs = buffer.num_envs

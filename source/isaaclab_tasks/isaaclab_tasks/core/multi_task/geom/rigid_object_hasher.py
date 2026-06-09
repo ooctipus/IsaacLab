@@ -4,11 +4,13 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import hashlib
+
 import numpy as np
 import torch
-
 import warp as wp
+
 from pxr import Gf, Usd, UsdGeom, UsdPhysics  # noqa: F401
+
 from isaaclab.cloner.cloner_utils import iter_clone_plan_matches
 from isaaclab.sim import SimulationContext
 from isaaclab.sim.utils import get_current_stage
@@ -21,7 +23,6 @@ class RigidObjectHasher:
     """Compute per-root and per-collider hashes and full 3x3 transforms."""
 
     def __init__(self, num_envs, prim_path_pattern, device="cpu"):
-
         self.prim_path_pattern = prim_path_pattern
         self.device = device
         if prim_path_pattern in HASH_STORE:
@@ -153,9 +154,15 @@ class RigidObjectHasher:
         stor["collider_prims"] = collider_prims
         stor["collider_prim_hashes"] = torch.tensor(collider_prim_hashes, dtype=torch.int64, device="cpu")
         stor["collider_prim_env_ids"] = torch.tensor(collider_prim_env_ids, dtype=torch.int64, device="cpu")
-        stor["collider_rel_pos"] = torch.stack(collider_rel_pos_list).to("cpu") if collider_rel_pos_list else torch.empty(0, 3)
-        stor["collider_rel_mat"] = torch.stack(collider_rel_mat_list).to("cpu") if collider_rel_mat_list else torch.empty(0, 3, 3)
-        stor["collider_rel_mat_inv"] = torch.stack(collider_rel_mat_inv_list).to("cpu") if collider_rel_mat_inv_list else torch.empty(0, 3, 3)
+        stor["collider_rel_pos"] = (
+            torch.stack(collider_rel_pos_list).to("cpu") if collider_rel_pos_list else torch.empty(0, 3)
+        )
+        stor["collider_rel_mat"] = (
+            torch.stack(collider_rel_mat_list).to("cpu") if collider_rel_mat_list else torch.empty(0, 3, 3)
+        )
+        stor["collider_rel_mat_inv"] = (
+            torch.stack(collider_rel_mat_inv_list).to("cpu") if collider_rel_mat_inv_list else torch.empty(0, 3, 3)
+        )
         stor["root_prim_hashes"] = torch.tensor(root_prim_hashes, dtype=torch.int64, device="cpu")
         stor["root_prim_scales"] = torch.stack(root_prim_scales).to("cpu")
 

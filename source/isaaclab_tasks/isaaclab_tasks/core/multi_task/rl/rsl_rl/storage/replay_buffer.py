@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Copyright (c) 2021-2026, ETH Zurich and NVIDIA CORPORATION
 # All rights reserved.
 #
@@ -54,9 +59,7 @@ class ReplayBuffer:
                 number of timesteps to insert. ``T`` must be <= ``capacity``.
         """
         T = chunk.shape[0]
-        assert T <= self.capacity, (
-            f"Chunk length {T} exceeds buffer capacity {self.capacity}"
-        )
+        assert self.capacity >= T, f"Chunk length {T} exceeds buffer capacity {self.capacity}"
 
         end = self._insert_pos + T
         if end <= self.capacity:

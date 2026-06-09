@@ -359,12 +359,15 @@ class SuccessorLatentPPO(PPO):
                 stop = (i + 1) * mini_batch_size
                 batch_idx = indices[start:stop]
 
-                yield RolloutStorage.Batch(
-                    observations=observations[batch_idx],
-                    actions=actions[batch_idx],
-                    values=values[batch_idx],
-                    advantages=advantages[batch_idx],
-                    returns=returns[batch_idx],
-                    old_actions_log_prob=old_actions_log_prob[batch_idx],
-                    old_distribution_params=tuple(p[batch_idx] for p in old_distribution_params),
-                ), successor_returns[batch_idx]
+                yield (
+                    RolloutStorage.Batch(
+                        observations=observations[batch_idx],
+                        actions=actions[batch_idx],
+                        values=values[batch_idx],
+                        advantages=advantages[batch_idx],
+                        returns=returns[batch_idx],
+                        old_actions_log_prob=old_actions_log_prob[batch_idx],
+                        old_distribution_params=tuple(p[batch_idx] for p in old_distribution_params),
+                    ),
+                    successor_returns[batch_idx],
+                )

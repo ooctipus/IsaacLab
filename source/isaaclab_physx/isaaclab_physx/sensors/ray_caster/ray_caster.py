@@ -17,7 +17,7 @@ import isaaclab.sim as sim_utils
 from isaaclab.sensors.ray_caster.base_ray_caster import BaseRayCaster
 from isaaclab.sensors.ray_caster.kernels import copy_mesh_transforms_to_table_kernel
 
-from isaaclab_physx.cloner.clone_plan_paths import expand_clone_plan_path, expand_clone_plan_paths
+from isaaclab_physx.cloner.clone_plan_paths import expand_clone_plan_paths
 from isaaclab_physx.physics import PhysxManager
 
 

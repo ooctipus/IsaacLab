@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Copyright (c) 2021-2026, ETH Zurich and NVIDIA CORPORATION
 # All rights reserved.
 #
@@ -26,16 +31,14 @@ from math import prod
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from tensordict import TensorDict
-
 from rsl_rl.env import VecEnv
 from rsl_rl.modules import MLP
 from rsl_rl.utils import resolve_obs_groups
+from tensordict import TensorDict
 
 from ..extensions import HindsightRelabeling, resolve_her_config
 from ..models.residual_mlp import ResidualMLP
 from ..storage import ReplayBuffer
-
 
 # ---------------------------------------------------------------------------
 # Shared per-group encoder (used by both actor and critic, optionally tied)
@@ -361,9 +364,7 @@ class BilinearCritic(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         return self.sa_forward(state, action), self.g_forward(goal)
 
-    def forward(
-        self, state: torch.Tensor, action: torch.Tensor, goal: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, state: torch.Tensor, action: torch.Tensor, goal: torch.Tensor) -> torch.Tensor:
         sa_repr, g_repr = self.encode(state, action, goal)
         return -torch.linalg.norm(sa_repr - g_repr, dim=-1)
 
@@ -565,21 +566,22 @@ class CRL:
     ) -> None:
         """Write one transition directly into the replay buffer."""
         if self._episode_seed is None:
-            self._episode_seed = torch.zeros(
-                dones.shape[0], device=self.device, dtype=torch.float32
-            )
+            self._episode_seed = torch.zeros(dones.shape[0], device=self.device, dtype=torch.float32)
 
         done_float = dones.float().view(-1)
         truncated = extras.get("time_outs", torch.zeros_like(done_float))
 
-        row = torch.cat([
-            self._last_obs,
-            self._last_actions,
-            rewards.view(-1, 1),
-            done_float.unsqueeze(-1),
-            self._episode_seed.unsqueeze(-1),
-            truncated.unsqueeze(-1),
-        ], dim=-1)
+        row = torch.cat(
+            [
+                self._last_obs,
+                self._last_actions,
+                rewards.view(-1, 1),
+                done_float.unsqueeze(-1),
+                self._episode_seed.unsqueeze(-1),
+                truncated.unsqueeze(-1),
+            ],
+            dim=-1,
+        )
         self.buffer.insert(row.unsqueeze(0))
 
         self._episode_seed = self._episode_seed + done_float
@@ -636,9 +638,9 @@ class CRL:
             for i in range(self.num_sgd_steps):
                 idx = self._all_idx_flat[i]
                 ft_idx = self._all_idx_ft_flat[i]
-                mb_state = flat_buffer[idx, :self.obs_dim]
-                mb_act = flat_buffer[idx, self._act_start:self._act_end]
-                mb_goal = flat_buffer[ft_idx, self.goal_start_idx:self.goal_end_idx]
+                mb_state = flat_buffer[idx, : self.obs_dim]
+                mb_act = flat_buffer[idx, self._act_start : self._act_end]
+                mb_goal = flat_buffer[ft_idx, self.goal_start_idx : self.goal_end_idx]
 
                 with torch.autocast(self.device, dtype=torch.bfloat16, enabled=self._use_amp):
                     critic_loss, g_repr = self._compiled_critic_loss(mb_state, mb_act, mb_goal)
@@ -669,9 +671,9 @@ class CRL:
             flat_buf = self.buffer.data.reshape(-1, self.buffer.data_dim)
             last_idx = self._all_idx_flat[-1, :diag_n]
             last_ft = self._all_idx_ft_flat[-1, :diag_n]
-            ds = flat_buf[last_idx, :self.obs_dim]
-            da = flat_buf[last_idx, self._act_start:self._act_end]
-            dg = flat_buf[last_ft, self.goal_start_idx:self.goal_end_idx]
+            ds = flat_buf[last_idx, : self.obs_dim]
+            da = flat_buf[last_idx, self._act_start : self._act_end]
+            dg = flat_buf[last_ft, self.goal_start_idx : self.goal_end_idx]
             dfg = dg
 
             sa_r, g_r = self.critic.encode(ds, da, dg)
@@ -686,7 +688,7 @@ class CRL:
 
             act_mean_abs = actor_act.abs().mean().item()
             act_std = actor_act.std().item()
-            achieved = ds[:, self.goal_start_idx:self.goal_end_idx]
+            achieved = ds[:, self.goal_start_idx : self.goal_end_idx]
             her_goal_dist = torch.linalg.norm(achieved - dg, dim=-1)
             policy_entropy = -lp.mean().item()
 
@@ -779,16 +781,16 @@ class CRL:
         for i in range(self.num_sgd_steps):
             idx = self._all_idx_flat[i]
             ft_idx = self._all_idx_ft_flat[i]
-            mb_state = flat_buf[idx, :self.obs_dim]
-            mb_act = flat_buf[idx, self._act_start:self._act_end]
-            mb_goal = flat_buf[ft_idx, self.goal_start_idx:self.goal_end_idx]
+            mb_state = flat_buf[idx, : self.obs_dim]
+            mb_act = flat_buf[idx, self._act_start : self._act_end]
+            mb_goal = flat_buf[ft_idx, self.goal_start_idx : self.goal_end_idx]
 
             with torch.autocast(self.device, dtype=torch.bfloat16, enabled=self._use_amp):
                 sa_repr, g_repr = self.critic.encode(mb_state, mb_act, mb_goal)
                 logits = -torch.cdist(sa_repr, g_repr, p=2)
                 critic_loss = -(logits.diag() - torch.logsumexp(logits, dim=1)).mean()
                 logsumexp_reg = torch.logsumexp(logits + 1e-6, dim=1)
-                critic_loss = critic_loss + self.logsumexp_penalty_coeff * (logsumexp_reg ** 2).mean()
+                critic_loss = critic_loss + self.logsumexp_penalty_coeff * (logsumexp_reg**2).mean()
             self.critic_optimizer.zero_grad(set_to_none=True)
             critic_loss.backward()
             self.critic_optimizer.step()
@@ -829,7 +831,10 @@ class CRL:
         return loss, g_repr
 
     def _actor_loss_fn(
-        self, mb_state: torch.Tensor, mb_goal: torch.Tensor, cached_g_repr: torch.Tensor,
+        self,
+        mb_state: torch.Tensor,
+        mb_goal: torch.Tensor,
+        cached_g_repr: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Uses cached g_repr to skip redundant g_encoder forward pass."""
         actor_obs = torch.cat([mb_state, mb_goal], dim=-1)
@@ -845,7 +850,7 @@ class CRL:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def construct_algorithm(obs: TensorDict, env: VecEnv, cfg: dict, device: str) -> "CRL":
+    def construct_algorithm(obs: TensorDict, env: VecEnv, cfg: dict, device: str) -> CRL:
         """Build CRL from config dict. Called by ``OnPolicyRunner.__init__``."""
         alg_cfg = dict(cfg["algorithm"])
         alg_cfg.pop("class_name", None)

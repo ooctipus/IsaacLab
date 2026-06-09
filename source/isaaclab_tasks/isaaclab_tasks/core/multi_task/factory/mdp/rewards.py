@@ -55,6 +55,7 @@ def success_reward(env: ManagerBasedRLEnv, context: str = "progress_context") ->
     z_distance_reached: torch.Tensor = getattr(context_term, "z_distance_reached")
     return torch.where(orientation_aligned & position_centered & z_distance_reached, 1.0, 0.0)
 
+
 class unstable_manipulation(ManagerTermBase):
     def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
         # initialize the base class

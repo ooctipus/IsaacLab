@@ -54,10 +54,7 @@ def test_gym_task_registers():
     assert "Isaac-Position-MultiTask-v0" in gym.envs.registry
     spec = gym.envs.registry["Isaac-Position-MultiTask-v0"]
     assert spec.entry_point == "isaaclab.envs:ManagerBasedRLEnv"
-    assert (
-        spec.kwargs["env_cfg_entry_point"]
-        == "isaaclab_tasks.core.multi_task.multi_task_env_cfg:MultiTaskEnvCfg"
-    )
+    assert spec.kwargs["env_cfg_entry_point"] == "isaaclab_tasks.core.multi_task.multi_task_env_cfg:MultiTaskEnvCfg"
 
 
 def test_env_cfg_imports_and_constructs():

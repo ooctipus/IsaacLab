@@ -12,16 +12,16 @@ Each scene class inherits from :class:`FactorySceneBase` and specifies the
 
 from isaaclab.assets import ArticulationCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors.joint_wrench import JointWrenchSensorCfg
 from isaaclab.sensors import ContactSensorCfg
+from isaaclab.sensors.joint_wrench import JointWrenchSensorCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.utils import PresetCfg
 
 from . import factory_assets_cfg as assets
 from .mdp_presets import (
-    RobotContactSensorsCfg,
     RobotArticulationCfg,
+    RobotContactSensorsCfg,
 )
 
 

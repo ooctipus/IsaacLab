@@ -90,6 +90,7 @@ class NewtonShapeCfg:
     Damps the normal contact response. Newton's upstream default is ``100.0``.
     """
 
+
 @configclass
 class NewtonCfg(PhysicsCfg):
     """Configuration for Newton physics manager.

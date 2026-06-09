@@ -12,10 +12,10 @@ def test_locomotion_position_uses_future_command_and_curriculum():
     """The working position env should use the future task-table command stack."""
     from isaaclab.managers import EventTermCfg
 
-    from isaaclab_tasks.core.position.position_env_cfg import LocomotionPositionCommandEnvCfg
     from isaaclab_tasks.core.multi_task.mdp.curriculums import success_rate_sampler
     from isaaclab_tasks.core.multi_task.terrain.mdp.commands.commands_cfg import RelativeStateCommandCfg
     from isaaclab_tasks.core.multi_task.terrain.retarget.criteria_cfg import JointWithinLimitCfg
+    from isaaclab_tasks.core.position.position_env_cfg import LocomotionPositionCommandEnvCfg
     from isaaclab_tasks.utils import resolve_presets
 
     cfg = LocomotionPositionCommandEnvCfg()
@@ -43,10 +43,10 @@ def test_locomotion_position_uses_future_command_and_curriculum():
 
 def test_locomotion_position_anymal_c_command_resolves_without_robot_preset():
     """Anymal-C position tasks should not require a separate robot preset for retarget fields."""
+    from isaaclab_tasks.core.multi_task.terrain.mdp.commands.commands_cfg import RelativeStateCommandCfg
     from isaaclab_tasks.core.position.config.anymal_c.anymal_c_env_cfg import (
         AnymalCLocomotionPositionCommandEnvCfg,
     )
-    from isaaclab_tasks.core.multi_task.terrain.mdp.commands.commands_cfg import RelativeStateCommandCfg
     from isaaclab_tasks.utils import resolve_presets
 
     cfg = AnymalCLocomotionPositionCommandEnvCfg()

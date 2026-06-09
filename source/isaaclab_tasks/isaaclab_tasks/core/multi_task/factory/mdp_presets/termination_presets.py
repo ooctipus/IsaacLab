@@ -12,7 +12,6 @@ from .. import mdp
 from ..factory_presets import FactoryAssemblyProfileCfg, HeldAssetAlignOffsetCfg
 
 
-
 @configclass
 class TimeoutTerminationsCfg(BaseTerminationsCfg):
     """Termination terms for the timeout-terminate formulation."""

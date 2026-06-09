@@ -255,8 +255,9 @@ class TestSimbaPresetPipeline:
     def test_presets_construct_through_runner_pipeline(self, recurrent):
         from importlib import metadata
 
-        from isaaclab_rl.rsl_rl import handle_deprecated_rsl_rl_cfg
         from rsl_rl.utils import resolve_callable
+
+        from isaaclab_rl.rsl_rl import handle_deprecated_rsl_rl_cfg
 
         from isaaclab_tasks.core.multi_task.terrain.config.rsl_rl_cfg import PositionLocomotionPPORunnerCfg
         from isaaclab_tasks.core.multi_task.terrain.config.rsl_rl_model_cfg import SIMBA_ACTOR, SIMBA_RNN_ACTOR

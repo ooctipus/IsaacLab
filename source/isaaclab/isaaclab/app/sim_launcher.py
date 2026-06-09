@@ -329,11 +329,7 @@ def _resolve_distributed_device(cfg, launcher_args: argparse.Namespace | dict | 
     # ranks. Keep it aligned without importing or initializing Warp here.
     warp_module = sys.modules.get("warp")
     warp_context = sys.modules.get("warp._src.context")
-    if (
-        warp_module is not None
-        and warp_context is not None
-        and getattr(warp_context, "runtime", None) is not None
-    ):
+    if warp_module is not None and warp_context is not None and getattr(warp_context, "runtime", None) is not None:
         warp_module.set_device(device_str)
     logger.info(
         "Distributed device resolved to %s (local_rank=%d, visible_gpus=%d)",

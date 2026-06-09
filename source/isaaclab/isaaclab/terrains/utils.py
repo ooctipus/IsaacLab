@@ -11,8 +11,6 @@ import torch
 import trimesh
 import warp as wp
 
-from pxr import UsdGeom
-
 import isaaclab.sim as sim_utils
 from isaaclab.utils.warp import raycast_mesh
 
