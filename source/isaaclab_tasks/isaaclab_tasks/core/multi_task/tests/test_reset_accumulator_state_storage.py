@@ -12,8 +12,10 @@ import torch
 from isaaclab.managers import ManagerTermBaseCfg
 
 import isaaclab_tasks.core.multi_task.curriculum.event_combinators as event_combinators
-from isaaclab_tasks.core.multi_task.curriculum.sampling import FrontierSamplingStrategyCfg, SamplerCfg
+from isaaclab_tasks.core.multi_task.curriculum.sampling import SamplerCfg, UniformSamplingStrategyCfg
+from isaaclab_tasks.core.multi_task.curriculum.state_layout import StateLayoutCfg
 from isaaclab_tasks.core.multi_task.curriculum.success_monitor_cfg import SuccessMonitorCfg
+from isaaclab_tasks.core.multi_task.mdp.curriculums import success_rate_sampler
 
 reset_accumulator = event_combinators.reset_accumulator
 
@@ -23,19 +25,16 @@ def _make_accumulator(capacity: int, state_dim: int, target_size: int | None = N
     acc.state_data = torch.zeros((capacity, state_dim))
     acc.state_tag_indices = torch.full((capacity,), -1, dtype=torch.int64)
     acc.state_tag_names = None
+    acc.state_coords = None
+    acc.slot_indices = None
     acc._state_target_size = capacity if target_size is None else target_size
     acc._state_fps_features = None
     acc._state_tag_names_bind = None
     acc._tag_indices_bind = None
-    acc._requested_reset_assets = []
     acc.reset_assets = []
     acc.acceptance_conditions = {}
-    acc._success_monitor_cfg = SuccessMonitorCfg(monitored_history_len=2)
     acc.monitor_success_rate = None
-    acc.success_monitor = None
-    acc.precollecting_phase = True
-    acc._sampler = None
-    acc._wandb_3d_log_state = {}
+    acc.precollecting_phase = False
     return acc
 
 
@@ -54,7 +53,7 @@ def test_accumulator_init_accepts_resolved_manager_term_cfg_conditions(monkeypat
         def __call__(self, _env, env_ids):
             return torch.ones_like(env_ids, dtype=torch.bool)
 
-    monkeypatch.setattr(event_combinators.reset_state, "get_reset_state", lambda *_args: torch.zeros(1, 2))
+    monkeypatch.setattr(event_combinators.reset_state, "get_reset_state", lambda *_args, **_kwargs: torch.zeros(1, 2))
     env = SimpleNamespace(
         device=torch.device("cpu"),
         num_envs=1,
@@ -66,8 +65,7 @@ def test_accumulator_init_accepts_resolved_manager_term_cfg_conditions(monkeypat
             "acceptance_conditions": {"ok": condition},
             "reset_assets": [],
             "state_table_size": 4,
-            "sampling": SimpleNamespace(max_samples=None),
-            "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=2),
+            "reset_term": SimpleNamespace(func=lambda *_args, **_kwargs: None, params={}),
         }
     )
 
@@ -81,7 +79,6 @@ def test_accumulator_precollect_appends_direct_data_and_tag_indices(monkeypatch)
     acc._env = SimpleNamespace()
     acc._state_tag_names_bind = "env.tag_names"
     acc._tag_indices_bind = "env.tag_indices"
-    acc._sampling_cfg = SimpleNamespace()
 
     rows = torch.arange(6).reshape(3, 2).float()
     env = SimpleNamespace(
@@ -101,23 +98,15 @@ def test_accumulator_precollect_appends_direct_data_and_tag_indices(monkeypatch)
 
     monkeypatch.setattr(event_combinators.reset_state, "get_reset_state", get_reset_state)
 
-    acc.sampled_slots = torch.zeros(env.num_envs, dtype=torch.long)
-    acc(
-        env,
-        torch.empty(0, dtype=torch.long),
-        reset_term,
-        reset_assets=[],
-        acceptance_conditions={},
-        state_table_size=acc._state_target_size,
-        success_monitor_cfg=acc._success_monitor_cfg,
-        sampling=acc._sampling_cfg,
-    )
+    acc._precollect_state_table(env, reset_term)
+    acc._finalize_state_table(env)
 
     assert acc.state_tag_names == env.tag_names
     torch.testing.assert_close(acc.state_data, torch.cat([rows, rows[:2]], dim=0))
     torch.testing.assert_close(acc.state_tag_indices, torch.tensor([0, 1, 2, 0, 1]))
     assert acc.monitor_success_rate.shape == (5,)
-    assert acc.success_monitor.success_buf.shape == (5, 2)
+    torch.testing.assert_close(acc.state_coords, acc.state_data)
+    torch.testing.assert_close(acc.slot_indices, torch.arange(5))
 
 
 def test_accumulator_state_compact_precedes_monitor_materialization(monkeypatch):
@@ -127,7 +116,6 @@ def test_accumulator_state_compact_precedes_monitor_materialization(monkeypatch)
     acc = _make_accumulator(capacity=capacity, state_dim=3, target_size=target)
     acc._env = SimpleNamespace()
     acc._tag_indices_bind = "env.tag_indices"
-    acc._sampling_cfg = SimpleNamespace()
 
     states = torch.cat([torch.arange(capacity).float().unsqueeze(-1), torch.zeros(capacity, 2)], dim=-1)
     tag_indices = torch.arange(capacity, dtype=torch.int64) + 30
@@ -145,17 +133,8 @@ def test_accumulator_state_compact_precedes_monitor_materialization(monkeypatch)
         return env.state_rows[env_ids]
 
     monkeypatch.setattr(event_combinators.reset_state, "get_reset_state", get_reset_state)
-    acc.sampled_slots = torch.zeros(env.num_envs, dtype=torch.long)
-    acc(
-        env,
-        torch.empty(0, dtype=torch.long),
-        reset_term,
-        reset_assets=[],
-        acceptance_conditions={},
-        state_table_size=acc._state_target_size,
-        success_monitor_cfg=acc._success_monitor_cfg,
-        sampling=acc._sampling_cfg,
-    )
+    acc._precollect_state_table(env, reset_term)
+    acc._finalize_state_table(env)
 
     assert acc.state_data.shape[0] == target
     assert acc.state_data.shape == (target, 3)
@@ -165,13 +144,13 @@ def test_accumulator_state_compact_precedes_monitor_materialization(monkeypatch)
         assert matches.numel() == 1
         assert tag.item() == tag_indices[matches[0]].item()
     assert acc.monitor_success_rate.shape == (target,)
-    assert acc.success_monitor.success_buf.shape == (target, 2)
+    assert acc.state_coords.shape == (target, 3)
+    torch.testing.assert_close(acc.slot_indices, torch.arange(target))
 
 
-def test_accumulator_frontier_samples_from_state_feature_space_without_wandb(monkeypatch):
+def test_accumulator_applies_curriculum_selected_slots(monkeypatch):
     acc = _make_accumulator(capacity=4, state_dim=4)
     acc._env = SimpleNamespace(extras={})
-    acc.precollecting_phase = False
     acc.state_data[:] = torch.tensor(
         [
             [0.0, 0.0, 0.0, 10.0],
@@ -180,6 +159,7 @@ def test_accumulator_frontier_samples_from_state_feature_space_without_wandb(mon
             [3.0, 0.0, 0.0, 21.0],
         ]
     )
+    acc.sampled_slots = torch.tensor([3, 1], dtype=torch.long)
     feature_calls = {"n": 0}
 
     def features(states):
@@ -187,10 +167,7 @@ def test_accumulator_frontier_samples_from_state_feature_space_without_wandb(mon
         return states[:, [0, 3]]
 
     acc._state_fps_features = features
-    acc._sampling_cfg = SamplerCfg(
-        strategies=[FrontierSamplingStrategyCfg(k=2, dilation_steps=1, weight=1.0, success_rate_bind="success_rates")],
-        eps=1e-3,
-    )
+    acc._finalize_state_table(SimpleNamespace(device=torch.device("cpu")))
 
     env = SimpleNamespace(
         device=torch.device("cpu"),
@@ -206,7 +183,6 @@ def test_accumulator_frontier_samples_from_state_feature_space_without_wandb(mon
         applied["env_ids"] = env_ids
 
     monkeypatch.setattr(event_combinators.reset_state, "set_reset_state", set_reset_state)
-    acc.sampled_slots = torch.zeros(env.num_envs, dtype=torch.long)
     acc(
         env,
         torch.tensor([0, 1]),
@@ -214,11 +190,100 @@ def test_accumulator_frontier_samples_from_state_feature_space_without_wandb(mon
         reset_assets=[],
         acceptance_conditions={},
         state_table_size=acc._state_target_size,
-        success_monitor_cfg=acc._success_monitor_cfg,
-        sampling=acc._sampling_cfg,
     )
 
-    assert acc._sampler is not None
     assert feature_calls["n"] == 1
+    torch.testing.assert_close(acc.state_coords, acc.state_data[:, [0, 3]])
+    torch.testing.assert_close(applied["states"], acc.state_data[torch.tensor([3, 1])])
     assert applied["states"].shape == (2, 4)
     torch.testing.assert_close(applied["env_ids"], torch.tensor([0, 1]))
+
+
+def test_accumulator_external_sampling_applies_existing_slots_without_resampling(monkeypatch):
+    acc = _make_accumulator(capacity=3, state_dim=2)
+    acc._env = SimpleNamespace(extras={})
+    acc.precollecting_phase = False
+    acc.state_data[:] = torch.tensor([[10.0, 0.0], [20.0, 0.0], [30.0, 0.0]])
+    acc.sampled_slots = torch.tensor([2, 0], dtype=torch.long)
+    acc._finalize_state_table(SimpleNamespace(device=torch.device("cpu")))
+
+    env = SimpleNamespace(
+        device=torch.device("cpu"),
+        num_envs=2,
+        extras={},
+        termination_manager=_termination_manager(2),
+    )
+    reset_term = SimpleNamespace(func=lambda *_args, **_kwargs: None, params={})
+    applied = {}
+
+    def set_reset_state(_env, states, env_ids, _reset_assets, is_relative=False):
+        applied["states"] = states.clone()
+        applied["env_ids"] = env_ids.clone()
+
+    monkeypatch.setattr(event_combinators.reset_state, "set_reset_state", set_reset_state)
+
+    acc(
+        env,
+        torch.tensor([0, 1]),
+        reset_term,
+        reset_assets=[],
+        acceptance_conditions={},
+        state_table_size=acc._state_target_size,
+    )
+
+    torch.testing.assert_close(acc.state_coords, acc.state_data)
+    torch.testing.assert_close(acc.slot_indices, torch.tensor([0, 1, 2]))
+    torch.testing.assert_close(applied["states"], torch.tensor([[30.0, 0.0], [10.0, 0.0]]))
+    torch.testing.assert_close(applied["env_ids"], torch.tensor([0, 1]))
+
+
+def test_success_rate_sampler_binds_existing_source_tensors():
+    class Source:
+        def __init__(self):
+            self.monitor_success_rate = torch.zeros(3)
+            self.sampled_slots = torch.zeros(2, dtype=torch.long)
+            self.state_coords = torch.arange(3, dtype=torch.float32).unsqueeze(-1)
+            self.slot_indices = torch.arange(3, dtype=torch.long)
+
+    source = Source()
+    env = SimpleNamespace(device=torch.device("cpu"), num_envs=2, source=source, success=torch.tensor([True, False]))
+    cfg = SimpleNamespace(
+        params={
+            "success_rates_bind": "env.source.monitor_success_rate",
+            "sample_indices_bind": "env.source.sampled_slots",
+            "success_bind": "env.success",
+            "layout": StateLayoutCfg(
+                coords_bind="env.source.state_coords",
+                spawn_index_bind="env.source.slot_indices",
+            ),
+            "sampling": SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=1.0)], eps=0.0),
+            "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=2),
+        }
+    )
+
+    term = success_rate_sampler(cfg, env)
+    assert term.success_rates is source.monitor_success_rate
+    assert term.sample_indices is source.sampled_slots
+
+    result = term(env, torch.tensor([0, 1]), **cfg.params)
+
+    assert source.sampled_slots.shape == (2,)
+    assert result["success"].shape == ()
+
+
+def test_factory_sampler_config_lives_on_curriculum():
+    from isaaclab_tasks.core.multi_task.factory.config.agents.rsl_rl_ppo_cfg import ValueShiftAlgorithmCfg
+    from isaaclab_tasks.core.multi_task.factory.reset_env_cfg import (
+        ACCUMULATOR_RESET,
+        FACTORY_RESET_SAMPLER_PRESETS,
+    )
+    from isaaclab_tasks.core.multi_task.factory_env_cfg import FactoryCurriculumsCfg
+
+    curriculum = FactoryCurriculumsCfg()
+
+    assert "sample_in_event" not in ACCUMULATOR_RESET.params
+    assert "sampling" not in ACCUMULATOR_RESET.params
+    assert curriculum.reset_sampler.params["sampling"].default.eps == FACTORY_RESET_SAMPLER_PRESETS.default.eps
+    assert len(curriculum.reset_sampler.params["sampling"].beta_value_shift.strategies) == 2
+    assert curriculum.reset_sampler.params["sample_indices_bind"].endswith(".sampled_slots")
+    assert "curriculum_manager.get_term('reset_sampler')" in ValueShiftAlgorithmCfg().bind_observation_exp
