@@ -108,8 +108,8 @@ class ValueShiftAlgorithmCfg(RslRlPpoAlgorithmCfg):
     :meth:`ValueShiftPPO.construct_algorithm` (so they never reach
     ``PPO.__init__``) and ``eval``-ed against ``{env, alg, setattr}``. They wire
     :class:`ValueShiftPPO`'s three buffers to the matching
-    :class:`ValueShiftSamplingStrategy` living on the ``reset_strategies``
-    accumulator term. Only meaningful when that accumulator's sampler preset
+    :class:`ValueShiftSamplingStrategy` living on the ``reset_sampler``
+    curriculum term. Only meaningful when that curriculum sampler preset
     includes value-shift scoring (``value_shift`` / ``beta_value_shift``).
     """
 
@@ -118,17 +118,17 @@ class ValueShiftAlgorithmCfg(RslRlPpoAlgorithmCfg):
     # live on the underlying ``ManagerBasedRLEnv`` accessed via ``.unwrapped``.
     bind_observation_exp: str = (
         "setattr(alg, '_obs_cache',"
-        " env.unwrapped.event_manager.get_term_cfg('reset_strategies').func"
+        " env.unwrapped.curriculum_manager.get_term('reset_sampler')"
         "._sampler._impl.value_shift_strategy.observation_cache)"
     )
     bind_current_value_exp: str = (
         "setattr(alg, '_cur_buf',"
-        " env.unwrapped.event_manager.get_term_cfg('reset_strategies').func"
+        " env.unwrapped.curriculum_manager.get_term('reset_sampler')"
         "._sampler._impl.value_shift_strategy.cur_val)"
     )
     bind_value_diff_exp: str = (
         "setattr(alg, '_diff_buf',"
-        " env.unwrapped.event_manager.get_term_cfg('reset_strategies').func"
+        " env.unwrapped.curriculum_manager.get_term('reset_sampler')"
         "._sampler._impl.value_shift_strategy.diff_val)"
     )
 

@@ -3,6 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
 from isaaclab_physx.physics import PhysxCfg
 
 from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
@@ -12,7 +13,8 @@ from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils.configclass import configclass
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
+
+from isaaclab_tasks.core.multi_task.curriculum import StateLayoutCfg, SuccessMonitorCfg
 from isaaclab_tasks.utils import PresetCfg, preset
 
 from .factory import mdp, mdp_presets
@@ -23,7 +25,7 @@ from .factory.factory_presets import (
 )
 from .factory.factory_scenes_cfg import FactorySceneCfg
 from .factory.mdp_presets import RobotActionsCfg
-from .factory.reset_env_cfg import RESET_STRATEGIES
+from .factory.reset_env_cfg import FACTORY_RESET_SAMPLER_PRESETS, RESET_STRATEGIES
 
 
 @configclass
@@ -175,6 +177,21 @@ class FactoryTerminationsCfg(PresetCfg):
 
 @configclass
 class FactoryCurriculumsCfg:
+    reset_sampler = CurrTerm(
+        func=mdp.success_rate_sampler,
+        params={
+            "success_rates_bind": "env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate",
+            "sample_indices_bind": "env.event_manager.get_term_cfg('reset_strategies').func.sampled_slots",
+            "layout": StateLayoutCfg(
+                coords_bind="env.event_manager.get_term_cfg('reset_strategies').func.state_coords",
+                spawn_index_bind="env.event_manager.get_term_cfg('reset_strategies').func.slot_indices",
+            ),
+            "sampling": FACTORY_RESET_SAMPLER_PRESETS,
+            "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=50),
+            "success_bind": "env.termination_manager.get_term_cfg('progress_context').func.is_success",
+        },
+    )
+
     difficulty_scheduler = CurrTerm(
         func=mdp.DifficultyScheduler,
         params={
@@ -207,6 +224,7 @@ class FactoryCurriculumsCfg:
 ##
 # Environment configuration
 ##
+
 
 @configclass
 class FactoryPhysicsCfg(PresetCfg):
