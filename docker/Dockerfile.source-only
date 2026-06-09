@@ -24,6 +24,7 @@ ARG ISAACSIM_ROOT_PATH_ARG=/isaac-sim
 COPY --chown=isaaclab:isaaclab source ${ISAACLAB_PATH}/source
 COPY --chown=isaaclab:isaaclab scripts ${ISAACLAB_PATH}/scripts
 COPY --chown=isaaclab:isaaclab tools ${ISAACLAB_PATH}/tools
+COPY --chown=isaaclab:isaaclab pyproject.toml uv.lock ${ISAACLAB_PATH}/
 COPY --chown=isaaclab:isaaclab isaaclab.sh ${ISAACLAB_PATH}/isaaclab.sh
 
 # Recreate the Isaac Sim symlink and normalize shell line endings. Optionally
@@ -35,6 +36,7 @@ COPY --chown=isaaclab:isaaclab isaaclab.sh ${ISAACLAB_PATH}/isaaclab.sh
 ARG RUN_PIP_INSTALL=0
 RUN ln -sfn ${ISAACSIM_ROOT_PATH_ARG} ${ISAACLAB_PATH}/_isaac_sim && \
     find ${ISAACLAB_PATH}/source -type f -name "*.sh" -exec sed -i 's/\r$//' {} + && \
+    find ${ISAACSIM_ROOT_PATH_ARG}/extscache -path "*/pip_prebundle/typing_extensions.py" -delete 2>/dev/null || true && \
     if [ "${RUN_PIP_INSTALL}" = "1" ]; then \
       cd ${ISAACLAB_PATH} && uv sync --frozen --inexact; \
     fi
