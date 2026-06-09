@@ -46,7 +46,7 @@ rl-games = [
     "gym",
     "standard-distutils",
 ]
-rsl-rl = ["rsl-rl-lib @ git+https://github.com/ooctipus/rsl_rl.git@octi/locomotion_features", "onnxscript>=0.5.4"]
+rsl-rl = ["rsl-rl-lib @ git+https://github.com/ooctipus/rsl_rl.git@octi/locomotion_features_5_4_1", "onnxscript>=0.5.4"]
 all = [
     "stable-baselines3>=2.6", "tqdm", "rich",
     "skrl>=2.1.0",
@@ -54,7 +54,7 @@ all = [
     "rl-games @ git+https://github.com/isaac-sim/rl_games.git@python3.11",
     "gym",
     "standard-distutils",
-    "rsl-rl-lib @ git+https://github.com/ooctipus/rsl_rl.git@octi/locomotion_features",
+    "rsl-rl-lib @ git+https://github.com/ooctipus/rsl_rl.git@octi/locomotion_features_5_4_1",
     "onnxscript>=0.5.4",
 ]
 
