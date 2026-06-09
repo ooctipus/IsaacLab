@@ -222,9 +222,7 @@ class RslRlCommanderActorModelCfg(RslRlMLPModelCfg):
     injected into the observation dictionary before the actor MLP runs.
     """
 
-    class_name: str = (
-        "isaaclab_tasks.core.multi_task.rl.rsl_rl.models.commander_actor_model:CommanderActorModel"
-    )
+    class_name: str = "isaaclab_tasks.core.multi_task.rl.rsl_rl.models.commander_actor_model:CommanderActorModel"
     """The model class name. Defaults to CommanderActorModel."""
 
     commander_hidden_dims: list[int] = [256, 256, 256]
@@ -264,9 +262,7 @@ class RslRlTaskEasingActorModelCfg(RslRlMLPModelCfg):
     progressively refines the task observation before passing it to the actor MLP.
     """
 
-    class_name: str = (
-        "isaaclab_tasks.core.multi_task.rl.rsl_rl.models.task_easing_actor_model:TaskEasingActorModel"
-    )
+    class_name: str = "isaaclab_tasks.core.multi_task.rl.rsl_rl.models.task_easing_actor_model:TaskEasingActorModel"
     """The model class name. Defaults to TaskEasingActorModel."""
 
     task_easing_constraint_fn: Literal["relu", "softplus"] = "relu"

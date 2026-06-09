@@ -224,7 +224,6 @@ class reset_end_effector_around_asset(ManagerTermBase):
             self.robot.root_physx_view.get_jacobians()
 
 
-
 def reset_root_state_uniform_on_offset(
     env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,

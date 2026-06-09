@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Copyright (c) 2021-2026, ETH Zurich and NVIDIA CORPORATION
 # All rights reserved.
 #
@@ -8,8 +13,8 @@ from __future__ import annotations
 
 import os
 import time
-import torch
 
+import torch
 from rsl_rl.env import VecEnv
 from rsl_rl.models import MLPModel
 from rsl_rl.utils import check_nan, resolve_callable
@@ -98,7 +103,7 @@ class OffPolicyRunner:
                 self.alg.compute_returns(obs)
             pct = min(self.alg.buffer.size / min_size * 100, 100)
             print(f"\r  Buffer: {self.alg.buffer.size}/{min_size} ({pct:.0f}%)", end="", flush=True)
-        print(f"\n[OffPolicyRunner] Buffer ready. Starting training.", flush=True)
+        print("\n[OffPolicyRunner] Buffer ready. Starting training.", flush=True)
 
         # ---- Phase 2: Training loop (mirrors OnPolicyRunner) ----
         start_it = self.current_learning_iteration

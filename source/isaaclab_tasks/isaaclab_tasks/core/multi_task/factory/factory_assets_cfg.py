@@ -4,13 +4,15 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import isaaclab.sim as sim_utils
-from isaaclab.utils.configclass import configclass
 from isaaclab.actuators.actuator_cfg import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 
 # This is where we will get the Robot that we want to use
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR, LOCAL_ASSET_PATH_DIR
+from isaaclab.utils.configclass import configclass
+
 from isaaclab_tasks.utils import PresetCfg
+
 from .assembly_keypoints import NIST_BOARD_CFG
 
 ASSET_DIR = f"{ISAACLAB_NUCLEUS_DIR}/Factory"
@@ -26,6 +28,7 @@ ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG = sim_utils.RigidBodyPropertiesCfg(
     solver_position_iteration_count=192,
     solver_velocity_iteration_count=1,
 )
+
 
 @configclass
 class _SocketCollisionPropsCfg(PresetCfg):
@@ -55,7 +58,6 @@ class _PlugCollisionPropsCfg(PresetCfg):
         sdf_narrow_band_outer=0.005,
     )
     physx = default
-
 
 
 ASSEMBLY_SOCKET_COLLISION_PROPS_CFG = _SocketCollisionPropsCfg()

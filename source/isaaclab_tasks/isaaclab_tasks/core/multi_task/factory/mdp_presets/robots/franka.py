@@ -9,7 +9,6 @@ from __future__ import annotations
 
 __all__: list[str] = []
 
-from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils.configclass import configclass
 
@@ -26,9 +25,9 @@ from ...factory_presets import (
     JointEffortNamesCfg,
 )
 from .robot_presets import (
-    RobotContactSensorsCfg,
     RobotActionsCfg,
     RobotArticulationCfg,
+    RobotContactSensorsCfg,
 )
 
 # ---------------------------------------------------------------------------

@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Copyright (c) 2021-2026, ETH Zurich and NVIDIA CORPORATION
 # All rights reserved.
 #
@@ -6,11 +11,11 @@
 
 from __future__ import annotations
 
-import torch
 from collections.abc import Generator
-from tensordict import TensorDict
 
+import torch
 from rsl_rl.storage.rollout_storage import RolloutStorage
+from tensordict import TensorDict
 
 
 class SuccessEstimatorRolloutStorage(RolloutStorage):
@@ -81,9 +86,7 @@ class SuccessEstimatorRolloutStorage(RolloutStorage):
             if transition.success_mask is not None:
                 self.success_mask[step].copy_(transition.success_mask.view(-1, 1))
 
-    def mini_batch_generator(
-        self, num_mini_batches: int, num_epochs: int = 8
-    ) -> Generator[Batch, None, None]:
+    def mini_batch_generator(self, num_mini_batches: int, num_epochs: int = 8) -> Generator[Batch, None, None]:
         """Yield shuffled mini-batches including success-estimator data."""
         if self.training_type != "rl":
             raise ValueError("This function is only available for reinforcement learning training.")
