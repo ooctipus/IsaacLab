@@ -4,17 +4,25 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 __all__ = [
-    "GripperAsymContactPenaltyCfg",
-    "GripperLeftContactSensorCfg",
-    "GripperRightContactSensorCfg",
+    "RobotContactSensorsCfg",
     "RobotActionsCfg",
     "RobotArticulationCfg",
+    "TimeoutRewardsCfg",
+    "SuccessRewardsV0Cfg",
+    "SuccessRewardsV1Cfg",
+    "TimeoutTerminationsCfg",
+    "SuccessTerminationsV0Cfg",
+    "SuccessTerminationsV1Cfg",
 ]
 
+from .reward_presets import TimeoutRewardsCfg, SuccessRewardsV0Cfg, SuccessRewardsV1Cfg
+from .termination_presets import (
+    TimeoutTerminationsCfg,
+    SuccessTerminationsV0Cfg,
+    SuccessTerminationsV1Cfg,
+)
 from .robots import (
-    GripperAsymContactPenaltyCfg,
-    GripperLeftContactSensorCfg,
-    GripperRightContactSensorCfg,
+    RobotContactSensorsCfg,
     RobotActionsCfg,
     RobotArticulationCfg,
 )

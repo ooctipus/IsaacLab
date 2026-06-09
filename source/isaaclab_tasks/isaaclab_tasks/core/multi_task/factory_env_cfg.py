@@ -10,43 +10,25 @@ from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
-from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.utils.configclass import configclass
 from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
 from isaaclab_tasks.utils import PresetCfg, preset
 
-from .factory import mdp
+from .factory import mdp, mdp_presets
 from .factory.factory_presets import (
     EndEffectorBodyCfg,
-    FactoryAssemblyProfileCfg,
     FixedAssetTipCfg,
-    HeldAssetAlignOffsetCfg,
     HeldAssetTipCfg,
-    JointEffortNamesCfg,
 )
 from .factory.factory_scenes_cfg import FactorySceneCfg
-from .factory.mdp_presets import GripperAsymContactPenaltyCfg, RobotActionsCfg
+from .factory.mdp_presets import RobotActionsCfg
 from .factory.reset_env_cfg import RESET_STRATEGIES
-from .mdp.terminations import BaseTerminationsCfg
 
 
 @configclass
 class FactoryObservationsCfg:
     """Observation specifications for Factory."""
-
-    @configclass
-    class SuccessEstimatorInputCfg(ObsGroup):
-        state = ObsTerm(
-            func=mdp.get_state, params={"reset_assets": ["nistboard", "fixed_asset", "held_asset", "robot"]}
-        )
-
-        time_left = ObsTerm(func=mdp.time_left)
-
-        def __post_init__(self):
-            self.enable_corruption = False
-            self.concatenate_terms = True
 
     @configclass
     class PolicyCfg(ObsGroup):
@@ -96,7 +78,6 @@ class FactoryObservationsCfg:
 
     policy: PolicyCfg = PolicyCfg()
     critic: PolicyCfg = PolicyCfg()
-    success: SuccessEstimatorInputCfg = SuccessEstimatorInputCfg()
 
 
 @configclass
@@ -171,100 +152,25 @@ class FactoryEventCfg:
 
 
 @configclass
-class TimeoutRewardsCfg:
-    """Reward terms for the timeout-terminate formulation (success is not terminal)."""
-
-    action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-1e-4)
-    action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-1e-4)
-    joint_effort = RewTerm(
-        func=mdp.joint_torques_l2,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=JointEffortNamesCfg())},  # type:ignore
-        weight=-1e-4,
-    )
-    early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-0.01)
-    reach_reward = RewTerm(
-        func=mdp.reach_reward,
-        weight=0.1,
-        params={
-            "std": 1.0,
-            "held_asset_cfg": SceneEntityCfg("held_asset"),
-            "ee_cfg": SceneEntityCfg("robot", body_names=EndEffectorBodyCfg()),  # type:ignore
-        },
-    )
-    progress_reward_fine = RewTerm(func=mdp.progress_reward, weight=0.1, params={"std": 0.005})
-    success_reward = RewTerm(func=mdp.success_reward, weight=1.0)
-    bad_finger_contact: RewTerm | None = GripperAsymContactPenaltyCfg()  # type: ignore
-
-
-@configclass
-class SuccessRewardsCfg:
-    """Reward terms for the success-terminate formulation (success is terminal)."""
-
-    action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-1e-4)
-    action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-1e-4)
-    joint_effort = RewTerm(
-        func=mdp.joint_torques_l2,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=JointEffortNamesCfg())},  # type:ignore
-        weight=-1e-4,
-    )
-    early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-0.01)
-    success_reward = RewTerm(func=mdp.success_reward, weight=100.0)
-    bad_finger_contact: RewTerm | None = GripperAsymContactPenaltyCfg()  # type: ignore
-
-
-@configclass
 class FactoryRewardsCfg(PresetCfg):
     """Reward configuration preset for Factory tasks."""
 
-    timeout_terminate: TimeoutRewardsCfg = TimeoutRewardsCfg()
-    success_terminate: SuccessRewardsCfg = SuccessRewardsCfg()
-    default: SuccessRewardsCfg = success_terminate
-
-
-_PROGRESS_CONTEXT = DoneTerm(
-    func=mdp.progress_context,
-    params={
-        "success_threshold": 0.001,
-        "held_asset_cfg": SceneEntityCfg("held_asset"),
-        "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
-        "held_asset_offset": HeldAssetAlignOffsetCfg(),
-        "assembly_profile": FactoryAssemblyProfileCfg(),
-    },
-)
-
-_OOB = DoneTerm(
-    func=mdp.out_of_bound,
-    params={
-        "asset_cfg": SceneEntityCfg("held_asset"),
-        "in_bound_range": {"x": (-0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)},
-    },
-)
-
-
-@configclass
-class TimeoutTerminationsCfg(BaseTerminationsCfg):
-    """Termination terms for the timeout-terminate formulation."""
-
-    oob = _OOB
-    progress_context = _PROGRESS_CONTEXT
-
-
-@configclass
-class SuccessTerminationsCfg(BaseTerminationsCfg):
-    """Termination terms for the success-terminate formulation."""
-
-    oob = _OOB
-    progress_context = _PROGRESS_CONTEXT
-    success = DoneTerm(func=mdp.success_termination)
+    timeout_terminate: mdp_presets.TimeoutRewardsCfg = mdp_presets.TimeoutRewardsCfg()
+    success_terminate_v0: mdp_presets.SuccessRewardsV0Cfg = mdp_presets.SuccessRewardsV0Cfg()
+    success_terminate_v1: mdp_presets.SuccessRewardsV1Cfg = mdp_presets.SuccessRewardsV1Cfg()
+    success_terminate: mdp_presets.SuccessRewardsV1Cfg = success_terminate_v1
+    default: mdp_presets.SuccessRewardsV1Cfg = success_terminate
 
 
 @configclass
 class FactoryTerminationsCfg(PresetCfg):
     """Termination configuration preset for Factory tasks."""
 
-    timeout_terminate: TimeoutTerminationsCfg = TimeoutTerminationsCfg()
-    success_terminate: SuccessTerminationsCfg = SuccessTerminationsCfg()
-    default: SuccessTerminationsCfg = success_terminate
+    timeout_terminate: mdp_presets.TimeoutTerminationsCfg = mdp_presets.TimeoutTerminationsCfg()
+    success_terminate_v0: mdp_presets.SuccessTerminationsV0Cfg = mdp_presets.SuccessTerminationsV0Cfg()
+    success_terminate_v1: mdp_presets.SuccessTerminationsV1Cfg = mdp_presets.SuccessTerminationsV1Cfg()
+    success_terminate: mdp_presets.SuccessTerminationsV1Cfg = success_terminate_v1
+    default: mdp_presets.SuccessTerminationsV1Cfg = success_terminate
 
 
 @configclass

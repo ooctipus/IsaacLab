@@ -4,17 +4,13 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 __all__ = [
-    "GripperAsymContactPenaltyCfg",
-    "GripperLeftContactSensorCfg",
-    "GripperRightContactSensorCfg",
+    "RobotContactSensorsCfg",
     "RobotActionsCfg",
     "RobotArticulationCfg",
 ]
 
 from .robot_presets import (
-    GripperAsymContactPenaltyCfg,
-    GripperLeftContactSensorCfg,
-    GripperRightContactSensorCfg,
+    RobotContactSensorsCfg,
     RobotActionsCfg,
     RobotArticulationCfg,
 )

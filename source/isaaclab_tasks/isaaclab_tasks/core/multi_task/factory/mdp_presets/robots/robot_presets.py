@@ -59,25 +59,7 @@ class RobotActionsCfg(PresetCfg):
 
 
 @configclass
-class GripperLeftContactSensorCfg(PresetCfg):
-    """Robot-specific contact sensor on the left finger / gripper pad."""
+class RobotContactSensorsCfg(PresetCfg):
+    """Robot-specific contact sensors."""
 
-    default: ContactSensorCfg | None = None
-
-
-@configclass
-class GripperRightContactSensorCfg(PresetCfg):
-    """Robot-specific contact sensor on the right finger / gripper pad."""
-
-    default: ContactSensorCfg | None = None
-
-
-@configclass
-class GripperAsymContactPenaltyCfg(PresetCfg):
-    """Robot-specific reward term penalizing asymmetric finger contacts.
-
-    Default is ``None`` (no penalty); robots with paired finger sensors set
-    this to a :class:`RewardTermCfg` referencing those sensors.
-    """
-
-    default: RewTerm | None = None
+    default: ContactSensorCfg = MISSING  # type: ignore[assignment]

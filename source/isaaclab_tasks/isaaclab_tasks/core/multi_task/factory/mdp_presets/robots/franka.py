@@ -26,9 +26,7 @@ from ...factory_presets import (
     JointEffortNamesCfg,
 )
 from .robot_presets import (
-    GripperAsymContactPenaltyCfg,
-    GripperLeftContactSensorCfg,
-    GripperRightContactSensorCfg,
+    RobotContactSensorsCfg,
     RobotActionsCfg,
     RobotArticulationCfg,
 )
@@ -86,11 +84,4 @@ RobotActionsCfg.franka = FrankaActionsCfg()
 # Robot-specific scene sensors and rewards
 # ---------------------------------------------------------------------------
 
-GripperLeftContactSensorCfg.franka = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/panda_leftfinger")
-GripperRightContactSensorCfg.franka = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/panda_rightfinger")
-
-GripperAsymContactPenaltyCfg.franka = RewTerm(
-    func=mdp.gripper_asymetric_contact_penalty,
-    weight=-0.02,
-    params={"threshold": 1.0},
-)
+RobotContactSensorsCfg.franka = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3)

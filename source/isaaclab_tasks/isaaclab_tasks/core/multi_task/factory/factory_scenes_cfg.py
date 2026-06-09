@@ -12,6 +12,7 @@ Each scene class inherits from :class:`FactorySceneBase` and specifies the
 
 from isaaclab.assets import ArticulationCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors.joint_wrench import JointWrenchSensorCfg
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils.configclass import configclass
 
@@ -19,8 +20,7 @@ from isaaclab_tasks.utils import PresetCfg
 
 from . import factory_assets_cfg as assets
 from .mdp_presets import (
-    GripperLeftContactSensorCfg,
-    GripperRightContactSensorCfg,
+    RobotContactSensorsCfg,
     RobotArticulationCfg,
 )
 
@@ -38,8 +38,8 @@ class FactorySceneBase(InteractiveSceneCfg):
     table = assets.TABLE_CFG
     nistboard = assets.NISTBOARD_CFG
     robot: ArticulationCfg = RobotArticulationCfg()  # type: ignore
-    panda_leftfinger_object_s: ContactSensorCfg | None = GripperLeftContactSensorCfg()  # type: ignore
-    panda_rightfinger_object_s: ContactSensorCfg | None = GripperRightContactSensorCfg()  # type: ignore
+    contact_sensors: ContactSensorCfg = RobotContactSensorsCfg()  # type: ignore
+    joint_wrench = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
     dome_light = assets.DOMELIGHT_CFG
 
 
