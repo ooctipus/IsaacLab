@@ -62,6 +62,21 @@ class SuccessTerminationsV0Cfg(BaseTerminationsCfg):
             "in_bound_range": {"x": (-0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)},
         },
     )
+    bad_contact = DoneTerm(
+        func=mdp.illegal_contact_ratio,  # type: ignore
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_sensors", body_names=".*"),
+            "threshold_ratio": 3.0,
+        },
+    )
+    joint_reaction = DoneTerm(
+        func=mdp.joint_reaction_overload,  # type: ignore
+        params={
+            "sensor_cfg": SceneEntityCfg("joint_wrench"),
+            "force_ratio": 5.0,
+            "force_mode": "off_axis",
+        },
+    )
     progress_context = DoneTerm(
         func=mdp.progress_context,  # type: ignore
         params={
