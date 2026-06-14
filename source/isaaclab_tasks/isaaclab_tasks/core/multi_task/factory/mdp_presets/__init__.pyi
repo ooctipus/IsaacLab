@@ -8,18 +8,15 @@ __all__ = [
     "RobotActionsCfg",
     "RobotArticulationCfg",
     "TimeoutRewardsCfg",
-    "SuccessRewardsV0Cfg",
-    "SuccessRewardsV1Cfg",
+    "SuccessRewardsCfg",
     "TimeoutTerminationsCfg",
-    "SuccessTerminationsV0Cfg",
-    "SuccessTerminationsV1Cfg",
+    "SuccessTerminationsCfg",
 ]
 
-from .reward_presets import TimeoutRewardsCfg, SuccessRewardsV0Cfg, SuccessRewardsV1Cfg
+from .reward_presets import SuccessRewardsCfg, TimeoutRewardsCfg
 from .termination_presets import (
     TimeoutTerminationsCfg,
-    SuccessTerminationsV0Cfg,
-    SuccessTerminationsV1Cfg,
+    SuccessTerminationsCfg,
 )
 from .robots import (
     RobotContactSensorsCfg,

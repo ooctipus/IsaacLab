@@ -37,23 +37,10 @@ class TimeoutRewardsCfg:
 
 
 @configclass
-class SuccessRewardsV0Cfg:
-    """Legacy reward terms for the success-terminate formulation."""
+class SuccessRewardsCfg:
+    """Reward terms for the success-terminate formulation."""
 
     mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.000025)
     early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-0.01)  # type: ignore
-    success_reward = RewTerm(func=mdp.success_reward, weight=100.0)
-
-
-@configclass
-class SuccessRewardsV1Cfg:
-    """Contact-aware reward terms for the success-terminate formulation."""
-
-    success_reward = RewTerm(func=mdp.success_reward, weight=5.0)
-    mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.000025)
-    undesired_contact = RewTerm(
-        func=mdp.undesired_contacts,
-        weight=-0.01,
-        params={"sensor_cfg": SceneEntityCfg("contact_sensors", body_names="^(?!.*fingertip).*$"), "threshold": 1.0},
-    )
-    # early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["abnormal", "bad_contact", "oob", "joint_reaction"]}, weight=-0.1)  # type: ignore
+    # sparse success: 1 when the (symmetry-aware) pose error is within threshold, 0 otherwise
+    success_reward = RewTerm(func=mdp.success_reward, weight=1.0)

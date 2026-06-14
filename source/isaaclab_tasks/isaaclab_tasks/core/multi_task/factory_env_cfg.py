@@ -20,12 +20,33 @@ from isaaclab_tasks.utils import PresetCfg, preset
 from .factory import mdp, mdp_presets
 from .factory.factory_presets import (
     EndEffectorBodyCfg,
+    FactoryAssemblyProfileCfg,
+    FingerBodyNamesCfg,
+    FixedAssetMapCfg,
     FixedAssetTipCfg,
+    GripperBodyNamesCfg,
+    HeldAssetAlignOffsetCfg,
+    HeldAssetSymmetryCfg,
     HeldAssetTipCfg,
 )
 from .factory.factory_scenes_cfg import FactorySceneCfg
 from .factory.mdp_presets import RobotActionsCfg
-from .factory.reset_env_cfg import FACTORY_RESET_SAMPLER_PRESETS, RESET_STRATEGIES
+from .factory.reset_env_cfg import FACTORY_RESET_SAMPLER_PRESETS
+from .factory.retarget import (
+    BoardLibraryCfg,
+    CollisionAvoidanceCfg,
+    CollisionCheckCfg,
+    FactoryIKPipelineCfg,
+    FactoryRobotCfg,
+    FingerPinObjectiveCfg,
+    GraspSamplingCfg,
+    IKSolveCfg,
+    JointDefaultObjectiveCfg,
+    JointLimitObjectiveCfg,
+    JointWithinLimitCfg,
+    PlacementSamplingCfg,
+    ReachRowsCfg,
+)
 
 
 @configclass
@@ -51,14 +72,7 @@ class FactoryObservationsCfg:
             },
         )
 
-        held_asset_in_fixed_asset_frame: ObsTerm = ObsTerm(
-            func=mdp.target_asset_pose_in_root_asset_frame,
-            params={
-                "target_asset_cfg": SceneEntityCfg("held_asset"),
-                "root_asset_cfg": SceneEntityCfg("fixed_asset"),
-                "root_asset_offset": FixedAssetTipCfg(),
-            },
-        )
+        reset_state_commands: ObsTerm = ObsTerm(func=mdp.generated_commands, params={"command_name": "reset_state"})
 
         fixed_asset_in_end_effector_frame: ObsTerm = ObsTerm(
             func=mdp.target_asset_pose_in_root_asset_frame,
@@ -103,20 +117,6 @@ class FactoryEventCfg:
         },
     )
 
-    # # Held-asset (nut) angular-instability fix: its small rotational inertia (~0.012 kg.m^2) under the
-    # # stiff contact (ke=1e7) lets contact torque run the angular velocity away exponentially -> NaN
-    # # (observed in the grasp_asset_in_air reset). Bump the diagonal inertia to damp it, as in dexsuite.
-    # held_asset_inertia = EventTerm(
-    #     func=mdp.randomize_rigid_body_inertia,
-    #     mode="startup",
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("held_asset"),
-    #         "inertia_distribution_params": [0.01, 0.01],
-    #         "operation": "add",
-    #         "diagonal_only": True,
-    #     },
-    # )
-
     fixed_asset_material = EventTerm(
         func=mdp.randomize_rigid_body_material,  # type: ignore
         mode="startup",
@@ -141,8 +141,6 @@ class FactoryEventCfg:
         },
     )
 
-    reset_strategies = RESET_STRATEGIES
-
     variable_gravity = preset(
         default=EventTerm(
             func=mdp.randomize_physics_scene_gravity,
@@ -154,14 +152,101 @@ class FactoryEventCfg:
 
 
 @configclass
+class FactoryCommandsCfg:
+    """Command specifications for Factory."""
+
+    reset_state = mdp.StateCommandCfg(
+        resampling_time_range=(1.0e9, 1.0e9),
+        debug_vis=True,
+        randomize_command_indices=False,
+        states_relative=True,
+        commands={
+            "assembly_asset": mdp.FactoryAssemblyAssetCommandCfg(
+                orientation_threshold=0.025,
+                position_threshold=0.005,
+                duration=(0.0, 1.0),
+            )
+        },
+        payload=mdp.FactoryAssemblyPayloadCfg(
+            reset_assets=["nistboard", "fixed_asset", "held_asset", "robot"],
+            held_asset_cfg=SceneEntityCfg("held_asset"),
+            fixed_asset_cfg=SceneEntityCfg("fixed_asset"),
+            robot_cfg=SceneEntityCfg("robot"),
+            symmetry=HeldAssetSymmetryCfg(),  # type: ignore[arg-type]
+        ),
+        task_table=mdp.FactoryResetStateTableCfg(
+            pipeline_cfg=FactoryIKPipelineCfg(
+                # identity: scene entities + robot presets -- USD paths, stance, and
+                # device resolve from the live env at wiring time (no assumptions here)
+                board=BoardLibraryCfg(  # stage 1: the WORLD cells (terrain-grid analog)
+                    board_asset_cfg=SceneEntityCfg("nistboard"),
+                    fixed_asset_cfg=SceneEntityCfg("fixed_asset"),
+                    fixed_asset_map=FixedAssetMapCfg(),  # type: ignore[arg-type]
+                    num_boards=128,
+                    pose_range={
+                        "x": (-0.1, 0.1),
+                        "y": (-0.1, 0.1),
+                        "z": (0.0, 0.1),
+                        "roll": (-0.5, 0.5),
+                        "pitch": (-0.5, 0.5),
+                        "yaw": (-0.8, 0.8),
+                    },
+                ),
+                placement=PlacementSamplingCfg(  # stage 2: states WITHIN each configuration
+                    held_asset_cfg=SceneEntityCfg("held_asset"),
+                    assembly_profile=FactoryAssemblyProfileCfg(),  # type: ignore[arg-type]
+                    align_offset=HeldAssetAlignOffsetCfg(),  # type: ignore[arg-type]
+                    placements_per_board=16,  # total scales with the library (4 x candidates)
+                    placement_weights={"on_bolt": 0.5, "on_table": 0.2, "in_air": 0.3},
+                    assembly_bands={
+                        "near_seated": (0.0, 0.33),
+                        "mid_insertion": (0.33, 0.85),
+                        "above_tip": (0.85, 1.6),
+                    },
+                    grasp=GraspSamplingCfg(  # per placement: antipodal pairs on the held mesh
+                        grasps_per_placement=8,
+                        ik_seeds_per_grasp=4,  # IK starting poses tried per grasp (19%->33% solved)
+                        friction_mu=0.5,
+                        aperture_range=(0.002, 0.08),
+                        n_pairs_retained=512,
+                    ),
+                ),
+                robot=FactoryRobotCfg(  # stage 3: place the robot on each candidate + accept
+                    asset_cfg=SceneEntityCfg("robot"),
+                    ee_body_name=EndEffectorBodyCfg(),  # type: ignore[arg-type]
+                    finger_body_names=FingerBodyNamesCfg(),  # type: ignore[arg-type]
+                    gripper_body_names=GripperBodyNamesCfg(),  # type: ignore[arg-type]
+                    solve=IKSolveCfg(
+                        iterations=250,
+                        refine_iterations=40,
+                        pos_tol=0.004,
+                        objectives=[  # soft constraint terms; membership enables (mirror of criteria)
+                            JointLimitObjectiveCfg(weight=10.0),
+                            JointDefaultObjectiveCfg(weight=0.0005),  # gentle arm centering (0.05 kills mm-reach)
+                            FingerPinObjectiveCfg(weight=10.0),
+                            CollisionAvoidanceCfg(weight=20.0, margin=0.001, n_samples=48),
+                        ],
+                    ),
+                    criteria=[
+                        JointWithinLimitCfg(limit_ratio=0.9),  # not parked against a joint stop
+                        CollisionCheckCfg(n_samples=240, max_pen=0.0005, self_max_pen=0.002, adjacency_hops=2),
+                    ],
+                    reach=ReachRowsCfg(per_grasp=1, standoff_range=(0.03, 0.15), clearance=0.005),
+                ),
+            ),
+            rows_per_board=20,  # table size = this x board.num_boards
+            targets_per_board=20,  # goals = spread subset of each board's rows (<= rows_per_board)
+        ),
+    )
+
+
+@configclass
 class FactoryRewardsCfg(PresetCfg):
     """Reward configuration preset for Factory tasks."""
 
     timeout_terminate: mdp_presets.TimeoutRewardsCfg = mdp_presets.TimeoutRewardsCfg()
-    success_terminate_v0: mdp_presets.SuccessRewardsV0Cfg = mdp_presets.SuccessRewardsV0Cfg()
-    success_terminate_v1: mdp_presets.SuccessRewardsV1Cfg = mdp_presets.SuccessRewardsV1Cfg()
-    success_terminate: mdp_presets.SuccessRewardsV1Cfg = success_terminate_v1
-    default: mdp_presets.SuccessRewardsV1Cfg = success_terminate
+    success_terminate: mdp_presets.SuccessRewardsCfg = mdp_presets.SuccessRewardsCfg()
+    default: mdp_presets.SuccessRewardsCfg = success_terminate
 
 
 @configclass
@@ -169,10 +254,8 @@ class FactoryTerminationsCfg(PresetCfg):
     """Termination configuration preset for Factory tasks."""
 
     timeout_terminate: mdp_presets.TimeoutTerminationsCfg = mdp_presets.TimeoutTerminationsCfg()
-    success_terminate_v0: mdp_presets.SuccessTerminationsV0Cfg = mdp_presets.SuccessTerminationsV0Cfg()
-    success_terminate_v1: mdp_presets.SuccessTerminationsV1Cfg = mdp_presets.SuccessTerminationsV1Cfg()
-    success_terminate: mdp_presets.SuccessTerminationsV1Cfg = success_terminate_v1
-    default: mdp_presets.SuccessTerminationsV1Cfg = success_terminate
+    success_terminate: mdp_presets.SuccessTerminationsCfg = mdp_presets.SuccessTerminationsCfg()
+    default: mdp_presets.SuccessTerminationsCfg = success_terminate
 
 
 @configclass
@@ -180,15 +263,16 @@ class FactoryCurriculumsCfg:
     reset_sampler = CurrTerm(
         func=mdp.success_rate_sampler,
         params={
-            "success_rates_bind": "env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate",
-            "sample_indices_bind": "env.event_manager.get_term_cfg('reset_strategies').func.sampled_slots",
+            "success_rates_bind": "env.command_manager.get_term('reset_state').success_rates",
+            "sample_indices_bind": "env.command_manager.get_term('reset_state').cmd_indices",
             "layout": StateLayoutCfg(
-                coords_bind="env.event_manager.get_term_cfg('reset_strategies').func.state_coords",
-                spawn_index_bind="env.event_manager.get_term_cfg('reset_strategies').func.slot_indices",
+                coords_bind="env.command_manager.get_term('reset_state').table.state_coords",
+                spawn_index_bind="env.command_manager.get_term('reset_state').table.spawn_index",
+                target_index_bind="env.command_manager.get_term('reset_state').table.target_index",
             ),
             "sampling": FACTORY_RESET_SAMPLER_PRESETS,
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=50),
-            "success_bind": "env.termination_manager.get_term_cfg('progress_context').func.is_success",
+            "success_bind": "env.command_manager.get_term('reset_state').get_task_done()",
         },
     )
 
@@ -196,11 +280,7 @@ class FactoryCurriculumsCfg:
         func=mdp.DifficultyScheduler,
         params={
             "max_difficulty": 10,
-            "success_rate_callback": preset(
-                default="env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate",
-                accumulator="env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate",
-                choice="env.event_manager.get_term_cfg('reset_strategies').func.terms['reset_strategies'].func.term_success_rate",
-            ),
+            "success_rate_callback": "env.command_manager.get_term('reset_state').success_rates",
         },
     )
 
@@ -287,15 +367,16 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     terminations: FactoryTerminationsCfg = FactoryTerminationsCfg()
     rewards: FactoryRewardsCfg = FactoryRewardsCfg()
     curriculum: FactoryCurriculumsCfg = FactoryCurriculumsCfg()
-    viewer: ViewerCfg = ViewerCfg(eye=(0.0, 0.8, 0.4), origin_type="asset_root", asset_name="held_asset")
+    viewer: ViewerCfg = ViewerCfg(eye=((3.5, 1.0, 0.35)), lookat=(0.0, 1.0, 0.35))
     actions: RobotActionsCfg = RobotActionsCfg()  # type: ignore
+    commands: FactoryCommandsCfg = FactoryCommandsCfg()
 
     # Post initialization
     def __post_init__(self) -> None:
         """Post initialization."""
         # general settings
         self.decimation = 8
-        self.episode_length_s = 14.0
+        self.episode_length_s = 0.5
         # simulation settings
         self.sim.dt = 0.04 / self.decimation
         self.sim.render_interval = self.decimation
