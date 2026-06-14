@@ -26,7 +26,7 @@ def target_pos_env(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> 
 
     Args:
         env: :class:`ManagerBasedRLEnv` instance.
-        command_name: Name of the :class:`RelativeStateCommand` term. Defaults to
+        command_name: Name of the :class:`~isaaclab_tasks.core.multi_task.mdp.commands.StateCommand` term. Defaults to
             ``"goal_point"`` matching the position task.
 
     Returns:
@@ -35,7 +35,7 @@ def target_pos_env(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> 
     """
     command_term = env.command_manager.get_term(command_name)
     env_origins = env.scene.terrain.env_origins  # [num_envs, 3]
-    return command_term.cmd_buf[:, 0, :3] - env_origins
+    return command_term.payload.cmd_buf[:, 0, :3] - env_origins
 
 
 def achieved_pos_env(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> torch.Tensor:
@@ -48,7 +48,7 @@ def achieved_pos_env(env: ManagerBasedRLEnv, command_name: str = "goal_point") -
 
     Args:
         env: :class:`ManagerBasedRLEnv` instance.
-        command_name: Name of the :class:`RelativeStateCommand` term.
+        command_name: Name of the :class:`~isaaclab_tasks.core.multi_task.mdp.commands.StateCommand` term.
 
     Returns:
         Tensor of shape ``[num_envs, 3]`` with the robot root position [m]
@@ -56,7 +56,7 @@ def achieved_pos_env(env: ManagerBasedRLEnv, command_name: str = "goal_point") -
     """
     command_term = env.command_manager.get_term(command_name)
     env_origins = env.scene.terrain.env_origins  # [num_envs, 3]
-    return command_term.cmd_buf[:, 2, :3] - env_origins
+    return command_term.payload.cmd_buf[:, 2, :3] - env_origins
 
 
 def command_current_state(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> torch.Tensor:
@@ -72,14 +72,14 @@ def command_current_state(env: ManagerBasedRLEnv, command_name: str = "goal_poin
 
     Args:
         env: :class:`ManagerBasedRLEnv` instance.
-        command_name: Name of the :class:`RelativeStateCommand` term.
+        command_name: Name of the :class:`~isaaclab_tasks.core.multi_task.mdp.commands.StateCommand` term.
 
     Returns:
         Tensor of shape ``[num_envs, 12 + 3 * num_feet]``.
     """
     cmd = env.command_manager.get_term(command_name)
     env_origins = env.scene.terrain.env_origins
-    return cmd.current_state_env(env_origins)
+    return cmd.payload.current_state_env(env_origins)
 
 
 def command_std(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> torch.Tensor:
@@ -90,7 +90,7 @@ def command_std(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> tor
 
     Args:
         env: :class:`ManagerBasedRLEnv` instance.
-        command_name: Name of the :class:`RelativeStateCommand` term.
+        command_name: Name of the :class:`~isaaclab_tasks.core.multi_task.mdp.commands.StateCommand` term.
 
     Returns:
         Tensor of shape ``[num_envs, num_error_groups]``.
@@ -106,11 +106,11 @@ def command_target_state(env: ManagerBasedRLEnv, command_name: str = "goal_point
 
     Args:
         env: :class:`ManagerBasedRLEnv` instance.
-        command_name: Name of the :class:`RelativeStateCommand` term.
+        command_name: Name of the :class:`~isaaclab_tasks.core.multi_task.mdp.commands.StateCommand` term.
 
     Returns:
         Tensor of shape ``[num_envs, 12 + 3 * num_feet]``.
     """
     cmd = env.command_manager.get_term(command_name)
     env_origins = env.scene.terrain.env_origins
-    return cmd.target_state_env(env_origins)
+    return cmd.payload.target_state_env(env_origins)

@@ -3,6 +3,13 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""Locomotion building blocks for the shared :class:`~...mdp.commands.StateCommand`.
+
+The env wires up a :class:`~...mdp.commands.StateCommandCfg` directly; this module
+only supplies the locomotion ``task_table`` cfg, the base/foot payload cfgs (which
+own their debug visualizers), and the command-variant cfgs.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -10,12 +17,11 @@ from dataclasses import MISSING
 from typing import TYPE_CHECKING
 
 import isaaclab.sim as sim_utils
-from isaaclab.managers import CommandTermCfg
 from isaaclab.markers import BLUE_ARROW_X_MARKER_CFG, VisualizationMarkersCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 
-from .state_command import RelativeStateCommand
+from ....mdp.commands.state_command_cfg import StateCommandCfg
 from .state_command_payloads import CommandPayloadBaseFootState, CommandPayloadBaseState
 from .task_table_builder import build_relative_state_task_table
 
@@ -23,291 +29,291 @@ if TYPE_CHECKING:
     from ...retarget.cfg import RetargetPipelineCfg
 
 
+# Default debug-vis marker cfgs shared by the base/foot payloads (configclass
+# deep-copies these per instance).
+_GOAL_VISUALIZER_CFG = VisualizationMarkersCfg(
+    prim_path="/Visuals/Command/goal_state",
+    markers={
+        "vel_arrow": sim_utils.UsdFileCfg(
+            usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd",
+            scale=(0.5, 0.5, 0.5),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+        ),
+        "cuboid": sim_utils.CuboidCfg(
+            size=(0.25, 0.25, 0.25),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+        ),
+        "pose_arrow": sim_utils.UsdFileCfg(
+            usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd",
+            scale=(0.5, 0.5, 0.5),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+        ),
+        "sphere": sim_utils.SphereCfg(
+            radius=0.05,
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.85, 0.0)),
+        ),
+    },
+)
+
+_CURRENT_VEL_VISUALIZER_CFG = BLUE_ARROW_X_MARKER_CFG.replace(prim_path="/Visuals/Command/velocity_current")
+_CURRENT_VEL_VISUALIZER_CFG.markers["arrow"].scale = (0.5, 0.5, 0.5)
+
+
 @configclass
-class RelativeStateCommandCfg(CommandTermCfg):
-    """Configuration for the relative state command generator."""
+class TaskTableCfg(StateCommandCfg.TaskTableCfg):
+    """Task-table builder configuration for the locomotion command."""
 
-    class_type: type = RelativeStateCommand
+    class_type: Callable = build_relative_state_task_table
+    """Callable that builds the task table."""
 
-    @configclass
-    class TaskTableCfg:
-        """Task-table builder configuration."""
+    pipeline_cfg: RetargetPipelineCfg = MISSING  # type: ignore[assignment]
+    """Retarget pipeline configuration for generating IK-solved spawn states."""
 
-        class_type: Callable = build_relative_state_task_table
-        """Callable that builds the task table."""
+    pool_spacing: float = 1.0
+    """Target spacing between final IK-solved terrain states [m].
 
-        pipeline_cfg: RetargetPipelineCfg = MISSING  # type: ignore[assignment]
-        """Retarget pipeline configuration for generating IK-solved spawn states."""
+    The table builder derives pool size from sampling area, so sample density
+    scales with the full terrain grid or :attr:`pool_sampling_size`.
+    """
 
-        pool_spacing: float = 1.0
-        """Target spacing between final IK-solved terrain states [m].
+    pool_spacing_area_divisor: float = 3.0
+    """Area divisor used to derive spacing-mode pool size."""
 
-        The table builder derives pool size from sampling area, so sample density
-        scales with the full terrain grid or :attr:`pool_sampling_size`.
-        """
+    pool_sampling_size: tuple[float, float] | None = None
+    """Optional centered terrain-state sampling window size ``(x, y)`` [m].
 
-        pool_spacing_area_divisor: float = 3.0
-        """Area divisor used to derive spacing-mode pool size."""
+    ``None`` samples over the full terrain grid. When set, the table builder
+    still bins states against the full terrain grid, but the IK retarget
+    sampler is clipped to this centered window before pool sizing and sampling.
+    """
 
-        pool_sampling_size: tuple[float, float] | None = None
-        """Optional centered terrain-state sampling window size ``(x, y)`` [m].
+    exclude_self_pairs: bool = True
+    """Whether to drop ``(spawn == target)`` pairs from the per-cell Cartesian product.
 
-        ``None`` samples over the full terrain grid. When set, the table builder
-        still bins states against the full terrain grid, but the IK retarget
-        sampler is clipped to this centered window before pool sizing and sampling.
-        """
+    When ``True``, the per-cell ``n × n`` pair grid is reduced to ``n × (n - 1)``
+    by removing the diagonal. Cells with fewer than two valid states then
+    contribute no pairs.
+    """
 
-        exclude_self_pairs: bool = True
-        """Whether to drop ``(spawn == target)`` pairs from the per-cell Cartesian product.
+    max_spawns_per_cell: int = 0
+    """Optional cap on per-cell spawn states for the spawn × target pairing.
 
-        When ``True``, the per-cell ``n × n`` pair grid is reduced to ``n × (n - 1)``
-        by removing the diagonal. Cells with fewer than two valid states then
-        contribute no pairs.
-        """
+    ``0`` keeps every IK-solved state in the cell as a possible spawn.
+    A positive integer ``N`` first picks ``min(N, n_c)`` spawn states via
+    :func:`~isaaclab_tasks.core.multi_task.utils.grid_downsample.grid_bucket_downsample`.
+    Target states are then selected from the remaining non-spawn states
+    when any remain, falling back to the full cell state pool otherwise.
+    """
 
-        max_spawns_per_cell: int = 0
-        """Optional cap on per-cell spawn states for the spawn × target pairing.
+    num_targets_per_cell: int = 0
+    """Optional cap on per-cell target states for the spawn × target pairing.
 
-        ``0`` keeps every IK-solved state in the cell as a possible spawn.
-        A positive integer ``N`` first picks ``min(N, n_c)`` spawn states via
-        :func:`~isaaclab_tasks.core.multi_task.utils.grid_downsample.grid_bucket_downsample`.
-        Target states are then selected from the remaining non-spawn states
-        when any remain, falling back to the full cell state pool otherwise.
-        """
+    ``0`` keeps the full per-cell Cartesian product. A positive ``N`` first
+    picks ``min(N, n_c)`` targets per cell, then pairs every spawn with each
+    picked target.
+    """
 
-        num_targets_per_cell: int = 0
-        """Optional cap on per-cell target states for the spawn × target pairing.
 
-        ``0`` keeps the full per-cell Cartesian product. A positive ``N`` first
-        picks ``min(N, n_c)`` targets per cell, then pairs every spawn with each
-        picked target.
-        """
+@configclass
+class BaseStatePayloadCfg(StateCommandCfg.PayloadCfg):
+    """Payload that commands base state only."""
 
-    task_table: TaskTableCfg = TaskTableCfg()
-    """Task-table builder."""
+    class_type: type = CommandPayloadBaseState
+    """Payload worker class."""
 
-    randomize_command_indices: bool = True
-    """Whether command resampling samples new task rows."""
+    pos_std: float = 0.5
+    """Default base-position success threshold [m]. Per-task overridable via command rows."""
 
-    @configclass
-    class BaseStatePayloadCfg:
-        """Payload that commands base state only."""
+    rot_std: float = 0.5
+    """Default base-orientation success threshold [rad]. Per-task overridable via command rows."""
 
-        class_type: type = CommandPayloadBaseState
-        """Payload worker class."""
+    lin_vel_std: float = 0.5
+    """Default linear-velocity success threshold [m/s]. Per-task overridable via command rows."""
 
-        pos_std: float = 0.5
-        """Default base-position success threshold [m]. Per-task overridable via command rows."""
+    ang_vel_std: float = 0.5
+    """Default angular-velocity success threshold [rad/s]. Per-task overridable via command rows."""
 
-        rot_std: float = 0.5
-        """Default base-orientation success threshold [rad]. Per-task overridable via command rows."""
+    normalize_command_obs: bool = False
+    """Whether to divide command channels by the per-task success threshold."""
 
-        lin_vel_std: float = 0.5
-        """Default linear-velocity success threshold [m/s]. Per-task overridable via command rows."""
+    goal_visualizer_cfg: VisualizationMarkersCfg = _GOAL_VISUALIZER_CFG
+    """Debug marker for the goal state (pos/pose/vel)."""
 
-        ang_vel_std: float = 0.5
-        """Default angular-velocity success threshold [rad/s]. Per-task overridable via command rows."""
+    current_vel_visualizer_cfg: VisualizationMarkersCfg = _CURRENT_VEL_VISUALIZER_CFG
+    """Debug marker for the current base velocity."""
 
-        normalize_command_obs: bool = False
-        """Whether to divide command channels by the per-task success threshold."""
 
-    @configclass
-    class BaseFootStatePayloadCfg:
-        """Payload that commands base state and terrain target foot positions."""
+@configclass
+class BaseFootStatePayloadCfg(StateCommandCfg.PayloadCfg):
+    """Payload that commands base state and terrain target foot positions."""
 
-        class_type: type = CommandPayloadBaseFootState
-        """Payload worker class."""
+    class_type: type = CommandPayloadBaseFootState
+    """Payload worker class."""
 
-        pos_std: float = 0.5
-        """Default base-position success threshold [m]. Per-task overridable via command rows."""
+    pos_std: float = 0.5
+    """Default base-position success threshold [m]. Per-task overridable via command rows."""
 
-        rot_std: float = 0.5
-        """Default base-orientation success threshold [rad]. Per-task overridable via command rows."""
+    rot_std: float = 0.5
+    """Default base-orientation success threshold [rad]. Per-task overridable via command rows."""
 
-        lin_vel_std: float = 0.5
-        """Default linear-velocity success threshold [m/s]. Per-task overridable via command rows."""
+    lin_vel_std: float = 0.5
+    """Default linear-velocity success threshold [m/s]. Per-task overridable via command rows."""
 
-        ang_vel_std: float = 0.5
-        """Default angular-velocity success threshold [rad/s]. Per-task overridable via command rows."""
+    ang_vel_std: float = 0.5
+    """Default angular-velocity success threshold [rad/s]. Per-task overridable via command rows."""
 
-        foot_pos_std: float = 0.1
-        """Default per-foot target-error threshold [m]."""
+    foot_pos_std: float = 0.1
+    """Default per-foot target-error threshold [m]."""
 
-        normalize_command_obs: bool = False
-        """Whether to divide command channels by the per-task success threshold."""
+    normalize_command_obs: bool = False
+    """Whether to divide command channels by the per-task success threshold."""
 
-    @configclass
-    class Commands:
-        pos_x: tuple[float, float] | None = None
-        """Range for the x position (in m)."""
+    goal_visualizer_cfg: VisualizationMarkersCfg = _GOAL_VISUALIZER_CFG
+    """Debug marker for the goal state (pos/pose/vel/foot)."""
 
-        pos_y: tuple[float, float] | None = None
-        """Range for the y position (in m)."""
+    current_vel_visualizer_cfg: VisualizationMarkersCfg = _CURRENT_VEL_VISUALIZER_CFG
+    """Debug marker for the current base velocity."""
 
-        pos_z: tuple[float, float] | None = None
-        """Range for the y position (in m)."""
 
-        roll: tuple[float, float] | None = None
-        """Range for the base roll orientation (in radian)."""
+@configclass
+class Commands:
+    pos_x: tuple[float, float] | None = None
+    """Range for the x position (in m)."""
 
-        pitch: tuple[float, float] | None = None
-        """Range for the base pitch orientation (in radian)."""
+    pos_y: tuple[float, float] | None = None
+    """Range for the y position (in m)."""
 
-        yaw: tuple[float, float] | None = None
-        """Range for the base yaw orientation (in radian)."""
+    pos_z: tuple[float, float] | None = None
+    """Range for the y position (in m)."""
 
-        lin_vel_x: tuple[float, float] | None = None
-        """Range for the linear-x velocity command (in m/s)."""
+    roll: tuple[float, float] | None = None
+    """Range for the base roll orientation (in radian)."""
 
-        lin_vel_y: tuple[float, float] | None = None
-        """Range for the linear-y velocity command (in m/s)."""
+    pitch: tuple[float, float] | None = None
+    """Range for the base pitch orientation (in radian)."""
 
-        lin_vel_z: tuple[float, float] | None = None
-        """Range for the linear-z velocity command (in m/s)."""
+    yaw: tuple[float, float] | None = None
+    """Range for the base yaw orientation (in radian)."""
 
-        ang_vel_x: tuple[float, float] | None = None
-        """Range for the angular-x velocity command (in rad/s)."""
+    lin_vel_x: tuple[float, float] | None = None
+    """Range for the linear-x velocity command (in m/s)."""
 
-        ang_vel_y: tuple[float, float] | None = None
-        """Range for the angular-y velocity command (in rad/s)."""
+    lin_vel_y: tuple[float, float] | None = None
+    """Range for the linear-y velocity command (in m/s)."""
 
-        ang_vel_z: tuple[float, float] | None = None
-        """Range for the angular-z velocity command (in rad/s)."""
+    lin_vel_z: tuple[float, float] | None = None
+    """Range for the linear-z velocity command (in m/s)."""
 
-        duration: tuple[float, float] = (1.0, 1.0)
-        """time required to be considered as success."""
+    ang_vel_x: tuple[float, float] | None = None
+    """Range for the angular-x velocity command (in rad/s)."""
 
-        pos_std: float | None = None
-        """Per-task override for the base-position success threshold [m]. ``None``
-        falls back to the active payload's default."""
+    ang_vel_y: tuple[float, float] | None = None
+    """Range for the angular-y velocity command (in rad/s)."""
 
-        rot_std: float | None = None
-        """Per-task override for the base-orientation success threshold [rad]."""
+    ang_vel_z: tuple[float, float] | None = None
+    """Range for the angular-z velocity command (in rad/s)."""
 
-        lin_vel_std: float | None = None
-        """Per-task override for the linear-velocity success threshold [m/s]."""
+    duration: tuple[float, float] = (1.0, 1.0)
+    """time required to be considered as success."""
 
-        ang_vel_std: float | None = None
-        """Per-task override for the angular-velocity success threshold [rad/s]."""
+    pos_std: float | None = None
+    """Per-task override for the base-position success threshold [m]. ``None``
+    falls back to the active payload's default."""
 
-    @configclass
-    class PositionCommands(Commands):
-        """Uniform distribution ranges for the position commands."""
+    rot_std: float | None = None
+    """Per-task override for the base-orientation success threshold [rad]."""
 
-        pos_x: tuple[float, float] | None = MISSING
-        """Range for the x position (in m)."""
+    lin_vel_std: float | None = None
+    """Per-task override for the linear-velocity success threshold [m/s]."""
 
-        pos_y: tuple[float, float] | None = MISSING
-        """Range for the y position (in m)."""
+    ang_vel_std: float | None = None
+    """Per-task override for the angular-velocity success threshold [rad/s]."""
 
-        pos_z: tuple[float, float] | None = MISSING
-        """Range for the y position (in m)."""
 
-    @configclass
-    class PoseCommands(Commands):
-        pos_x: tuple[float, float] | None = MISSING
-        """Range for the x position (in m)."""
+@configclass
+class PositionCommands(Commands):
+    """Uniform distribution ranges for the position commands."""
 
-        pos_y: tuple[float, float] | None = MISSING
-        """Range for the y position (in m)."""
+    pos_x: tuple[float, float] | None = MISSING
+    """Range for the x position (in m)."""
 
-        pos_z: tuple[float, float] | None = MISSING
-        """Range for the y position (in m)."""
+    pos_y: tuple[float, float] | None = MISSING
+    """Range for the y position (in m)."""
 
-        roll: tuple[float, float] | None = MISSING
-        """Range for the base roll orientation (in radian)."""
+    pos_z: tuple[float, float] | None = MISSING
+    """Range for the y position (in m)."""
 
-        pitch: tuple[float, float] | None = MISSING
-        """Range for the base pitch orientation (in radian)."""
 
-        yaw: tuple[float, float] | None = MISSING
-        """Range for the base yaw orientation (in radian)."""
+@configclass
+class PoseCommands(Commands):
+    pos_x: tuple[float, float] | None = MISSING
+    """Range for the x position (in m)."""
 
-    @configclass
-    class VelocityCommands(Commands):
-        lin_vel_x: tuple[float, float] | None = MISSING
-        """Range for the linear-x velocity command (in m/s)."""
+    pos_y: tuple[float, float] | None = MISSING
+    """Range for the y position (in m)."""
 
-        lin_vel_y: tuple[float, float] | None = MISSING
-        """Range for the linear-y velocity command (in m/s)."""
+    pos_z: tuple[float, float] | None = MISSING
+    """Range for the y position (in m)."""
 
-        lin_vel_z: tuple[float, float] | None = MISSING
-        """Range for the linear-z velocity command (in m/s)."""
+    roll: tuple[float, float] | None = MISSING
+    """Range for the base roll orientation (in radian)."""
 
-        ang_vel_x: tuple[float, float] | None = MISSING
-        """Range for the angular-x velocity command (in rad/s)."""
+    pitch: tuple[float, float] | None = MISSING
+    """Range for the base pitch orientation (in radian)."""
 
-        ang_vel_y: tuple[float, float] | None = MISSING
-        """Range for the angular-y velocity command (in rad/s)."""
+    yaw: tuple[float, float] | None = MISSING
+    """Range for the base yaw orientation (in radian)."""
 
-        ang_vel_z: tuple[float, float] | None = MISSING
-        """Range for the angular-z velocity command (in rad/s)."""
 
-    @configclass
-    class TerrainCommands:
-        """Terrain-state command backed by sampled spawn/target states."""
+@configclass
+class VelocityCommands(Commands):
+    lin_vel_x: tuple[float, float] | None = MISSING
+    """Range for the linear-x velocity command (in m/s)."""
 
-        spawn_key: str = "spawn"
-        """State-buffer key used for reset spawn states."""
+    lin_vel_y: tuple[float, float] | None = MISSING
+    """Range for the linear-y velocity command (in m/s)."""
 
-        target_key: str = "target"
-        """State-buffer key used for command target states."""
+    lin_vel_z: tuple[float, float] | None = MISSING
+    """Range for the linear-z velocity command (in m/s)."""
 
-        match_base_pos: bool = True
-        """Whether to command the target state's base position [m]."""
+    ang_vel_x: tuple[float, float] | None = MISSING
+    """Range for the angular-x velocity command (in rad/s)."""
 
-        match_base_rot: bool = False
-        """Whether to command the target state's base orientation [rad]."""
+    ang_vel_y: tuple[float, float] | None = MISSING
+    """Range for the angular-y velocity command (in rad/s)."""
 
-        duration: tuple[float, float] = (1.0, 1.0)
-        """Time required to be considered successful [s]."""
+    ang_vel_z: tuple[float, float] | None = MISSING
+    """Range for the angular-z velocity command (in rad/s)."""
 
-        pos_std: float | None = None
-        """Per-task override for the base-position success threshold [m]. ``None``
-        falls back to the active payload's default."""
 
-        rot_std: float | None = None
-        """Per-task override for the base-orientation success threshold [rad]."""
+@configclass
+class TerrainCommands:
+    """Terrain-state command backed by sampled spawn/target states."""
 
-        lin_vel_std: float | None = None
-        """Per-task override for the linear-velocity success threshold [m/s]."""
+    spawn_key: str = "spawn"
+    """State-buffer key used for reset spawn states."""
 
-        ang_vel_std: float | None = None
-        """Per-task override for the angular-velocity success threshold [rad/s]."""
+    target_key: str = "target"
+    """State-buffer key used for command target states."""
 
-    commands: dict[str, Commands | TerrainCommands] = {}
-    """Distribution ranges for the position commands."""
+    match_base_pos: bool = True
+    """Whether to command the target state's base position [m]."""
 
-    payload: BaseStatePayloadCfg | BaseFootStatePayloadCfg = BaseFootStatePayloadCfg()
-    """Payload configuration that defines command semantics and observation/error layout."""
+    match_base_rot: bool = False
+    """Whether to command the target state's base orientation [rad]."""
 
-    goal_visualizer_cfg: VisualizationMarkersCfg = VisualizationMarkersCfg(
-        prim_path="/Visuals/Command/goal_state",
-        markers={
-            "vel_arrow": sim_utils.UsdFileCfg(
-                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd",
-                scale=(0.5, 0.5, 0.5),
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
-            ),
-            "cuboid": sim_utils.CuboidCfg(
-                size=(0.25, 0.25, 0.25),
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
-            ),
-            "pose_arrow": sim_utils.UsdFileCfg(
-                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd",
-                scale=(0.5, 0.5, 0.5),
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
-            ),
-            "sphere": sim_utils.SphereCfg(
-                radius=0.05,
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.85, 0.0)),
-            ),
-        },
-    )
+    duration: tuple[float, float] = (1.0, 1.0)
+    """Time required to be considered successful [s]."""
 
-    current_vel_visualizer_cfg: VisualizationMarkersCfg = BLUE_ARROW_X_MARKER_CFG.replace(
-        prim_path="/Visuals/Command/velocity_current"
-    )
-    """The configuration for the current velocity visualization marker. Defaults to BLUE_ARROW_X_MARKER_CFG."""
+    pos_std: float | None = None
+    """Per-task override for the base-position success threshold [m]. ``None``
+    falls back to the active payload's default."""
 
-    current_vel_visualizer_cfg.markers["arrow"].scale = (0.5, 0.5, 0.5)
+    rot_std: float | None = None
+    """Per-task override for the base-orientation success threshold [rad]."""
+
+    lin_vel_std: float | None = None
+    """Per-task override for the linear-velocity success threshold [m/s]."""
+
+    ang_vel_std: float | None = None
+    """Per-task override for the angular-velocity success threshold [rad/s]."""

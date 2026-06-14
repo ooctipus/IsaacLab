@@ -119,7 +119,7 @@ def target_pos_env(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> 
     """
     command_term = env.command_manager.get_term(command_name)
     env_origins = env.scene.terrain.env_origins  # [num_envs, 3]
-    return command_term.cmd_buf[:, 0, :3] - env_origins
+    return command_term.payload.cmd_buf[:, 0, :3] - env_origins
 
 
 def achieved_pos_env(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> torch.Tensor:
@@ -140,4 +140,4 @@ def achieved_pos_env(env: ManagerBasedRLEnv, command_name: str = "goal_point") -
     """
     command_term = env.command_manager.get_term(command_name)
     env_origins = env.scene.terrain.env_origins  # [num_envs, 3]
-    return command_term.cmd_buf[:, 2, :3] - env_origins
+    return command_term.payload.cmd_buf[:, 2, :3] - env_origins

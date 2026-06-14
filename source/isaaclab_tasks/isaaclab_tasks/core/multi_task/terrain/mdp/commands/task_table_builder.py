@@ -31,8 +31,9 @@ if TYPE_CHECKING:
 
     from isaaclab.envs import ManagerBasedEnv
 
+    from ....mdp.commands.state_command_cfg import StateCommandCfg
     from ...retarget.cfg import RetargetPipelineCfg
-    from .commands_cfg import RelativeStateCommandCfg
+    from .commands_cfg import Commands, TerrainCommands
 
 
 _COMMAND_PARAM_NAMES = (
@@ -54,7 +55,7 @@ _COMMAND_PARAM_NAMES = (
 
 @dataclass
 class RelativeStateTaskTable:
-    """Index-based task table for :class:`RelativeStateCommand`."""
+    """Index-based task table for the locomotion :class:`~...mdp.commands.StateCommand`."""
 
     num_tasks: int
     spawn_index: torch.Tensor
@@ -93,8 +94,21 @@ class RelativeStateTaskTable:
     foot_body_ids: list[int] | None = None
     """Foot body ids in Isaac articulation order."""
 
+    def gather(self, task_rows: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return ``(spawn_states, target_states)`` rows for the selected tasks.
 
-def build_relative_state_task_table(cfg: RelativeStateCommandCfg, env: ManagerBasedEnv) -> RelativeStateTaskTable:
+        Args:
+            task_rows: Task-table row indices ``[n]``.
+
+        Returns:
+            Spawn and target reset-state rows, each ``[n, 13 + 2 * num_joints]``.
+        """
+        spawn_states = self.spawn_states[self.spawn_index[task_rows]].clone()
+        target_states = self.spawn_states[self.target_index[task_rows]].clone()
+        return spawn_states, target_states
+
+
+def build_relative_state_task_table(cfg: StateCommandCfg, env: ManagerBasedEnv) -> RelativeStateTaskTable:
     """Build the relative-state command task table from a command cfg and environment."""
     table_cfg = cfg.task_table
     if table_cfg.pipeline_cfg.asset_cfg is None:
@@ -365,7 +379,7 @@ def build_task_table(
     cell_size: tuple[float, float],
     pipeline_cfg: RetargetPipelineCfg,
     env: ManagerBasedEnv | None,
-    commands: dict[str, RelativeStateCommandCfg.Commands | RelativeStateCommandCfg.TerrainCommands],
+    commands: dict[str, Commands | TerrainCommands],
     num_joints: int,
     device: str,
     pool_spacing: float,
@@ -421,7 +435,7 @@ def build_task_table(
         ``payload_flags``, ``num_tasks``, ``kin``,
         ``newton_joint_names``, ``foot_body_names``, ``foot_body_ids``.
     """
-    from .commands_cfg import RelativeStateCommandCfg
+    from .commands_cfg import PoseCommands, PositionCommands, TerrainCommands, VelocityCommands
 
     timing_start = _timing_checkpoint(device)
 
@@ -699,7 +713,7 @@ def build_task_table(
         row_counts = []
 
         for cmd_id, val in enumerate(commands.values()):
-            is_terrain_command = isinstance(val, RelativeStateCommandCfg.TerrainCommands)
+            is_terrain_command = isinstance(val, TerrainCommands)
             if is_terrain_command:
                 if val.match_base_pos:
                     mask[cmd_id, :3] = True
@@ -716,11 +730,11 @@ def build_task_table(
                             mask[cmd_id, data_id] = True
                         ranges[cmd_id, data_id, 0] = data[0]
                         ranges[cmd_id, data_id, 1] = data[1]
-                if isinstance(val, RelativeStateCommandCfg.PositionCommands):
+                if isinstance(val, PositionCommands):
                     kind[cmd_id] = 0
-                elif isinstance(val, RelativeStateCommandCfg.PoseCommands):
+                elif isinstance(val, PoseCommands):
                     kind[cmd_id] = 1
-                elif isinstance(val, RelativeStateCommandCfg.VelocityCommands):
+                elif isinstance(val, VelocityCommands):
                     kind[cmd_id] = 2
 
             range_min = ranges[cmd_id, :, 0].view(1, 13)
