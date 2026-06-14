@@ -47,6 +47,7 @@ from .factory.retarget import (
     PlacementSamplingCfg,
     ReachRowsCfg,
 )
+from .factory.viz.sampler_images import log_factory_board_grid
 
 
 @configclass
@@ -236,6 +237,10 @@ class FactoryCommandsCfg:
             ),
             rows_per_board=20,  # table size = this x board.num_boards
             targets_per_board=20,  # goals = spread subset of each board's rows (<= rows_per_board)
+            # reject reset states whose nut spawns outside the oob box (else they
+            # terminate on step 0). Keep in sync with SuccessTerminationsCfg.oob.
+            nut_bounds={"x": (-0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)},
+            stash_viz_geometry=True,  # precompute silhouettes for the success-grid image logger
         ),
     )
 
@@ -273,6 +278,12 @@ class FactoryCurriculumsCfg:
             "sampling": FACTORY_RESET_SAMPLER_PRESETS,
             "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=50),
             "success_bind": "env.command_manager.get_term('reset_state').get_task_done()",
+            # periodic success-grid + tag-matrix images (wandb/extras). The grid is
+            # rasterization-bound (not cacheable -- colors change every call), so the
+            # logger draws 8 states/board at dpi 70 (~1.5 s total); the period is kept
+            # large to stay negligible against training throughput.
+            "sampler_visual_logger": log_factory_board_grid,
+            "sampler_visual_log_period": 2000,
         },
     )
 

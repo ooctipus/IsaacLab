@@ -79,6 +79,20 @@ class FactoryResetStateTableCfg(StateCommandCfg.TaskTableCfg):
     """Grasped rows close the fingers this much past contact [m] so the position
     drive holds the asset with real clamp force during settle and after reset."""
 
+    nut_bounds: dict[str, tuple[float, float]] | None = None
+    """Optional per-axis ``(min, max)`` env-local bounds on the held-asset (nut)
+    root position. Rows whose nut spawns outside are rejected at build so they
+    cannot trigger the ``oob`` termination on the first step (a dead-on-arrival
+    state that pollutes curriculum success). Keep in sync with the task's
+    :func:`~...mdp.terminations.out_of_bound` ``in_bound_range``. ``None`` disables
+    the filter (no change to the stored table)."""
+
+    stash_viz_geometry: bool = False
+    """Precompute the success-grid silhouettes at table build (see
+    :mod:`~..viz.geometry`) and stash them on the table for the curriculum image
+    logger. Off by default so the stored table is unchanged; turn on alongside the
+    :func:`~..viz.sampler_images.log_factory_board_grid` ``sampler_visual_logger``."""
+
 
 @configclass
 class FactoryAssemblyPayloadCfg(StateCommandCfg.PayloadCfg):

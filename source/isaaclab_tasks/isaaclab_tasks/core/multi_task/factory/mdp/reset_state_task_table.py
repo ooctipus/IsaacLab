@@ -65,6 +65,16 @@ class FactoryResetStateTaskTable:
     built_size: int
     target_size: int
 
+    # optional success-grid geometry (numpy), stashed only when
+    # ``FactoryResetStateTableCfg.stash_viz_geometry`` is set; see
+    # :mod:`~..viz.geometry` and :mod:`~..viz.sampler_images`.
+    viz_link_polys: object | None = None
+    viz_nut_polys: object | None = None
+    viz_board_polys: object | None = None
+    viz_bolt_polys: object | None = None
+    viz_cell_of_state: object | None = None
+    viz_n_boards: int | None = None
+
     @property
     def num_tasks(self) -> int:
         """Number of task slots (spawn x target pairs)."""
@@ -101,8 +111,8 @@ def build_factory_reset_state_task_table(cfg: StateCommandCfg, env: ManagerBased
     reset_assets = sorted(
         (set(env.scene._articulations) | set(env.scene._rigid_objects)) & set(cfg.payload.reset_assets)
     )
-    state_data, state_tag_indices, state_board_indices, state_tag_names, built, target = _precollect_from_pipeline(
-        env, table_cfg, reset_assets
+    state_data, state_tag_indices, state_board_indices, state_tag_names, built, target, viz_geom = (
+        _precollect_from_pipeline(env, table_cfg, reset_assets)
     )
     coords, spawn_index, target_index, slot_indices, task_tag_indices = _pair_within_boards(
         table_cfg, state_data, state_tag_indices, state_board_indices
@@ -120,6 +130,7 @@ def build_factory_reset_state_task_table(cfg: StateCommandCfg, env: ManagerBased
         num_states=int(state_data.shape[0]),
         built_size=built,
         target_size=target,
+        **(viz_geom or {}),
     )
 
 
@@ -172,6 +183,16 @@ def _precollect_from_pipeline(env, table_cfg, reset_assets):
         (env.scene["fixed_asset"], result.bolt_pose),
     ]
     total = result.joint_q.shape[0]
+    # optional nut-in-bounds gate: reject rows whose held asset spawns outside the
+    # task's oob box, so they cannot terminate on the first step
+    nut_lo = nut_hi = None
+    if table_cfg.nut_bounds is not None:
+        axes = ("x", "y", "z")
+        nut_lo = torch.tensor([table_cfg.nut_bounds.get(a, (-1e9, 1e9))[0] for a in axes], device=env.device)
+        nut_hi = torch.tensor([table_cfg.nut_bounds.get(a, (-1e9, 1e9))[1] for a in axes], device=env.device)
+    # accumulate survivor pose data for the (optional) success-grid geometry
+    stash = bool(getattr(table_cfg, "stash_viz_geometry", False))
+    viz_jq, viz_nut, viz_bolt, viz_board, viz_bidx = [], [], [], [], []
     rows, row_tags, row_boards, survived = [], [], [], 0
     for start in range(0, total, env.num_envs):
         stop = min(start + env.num_envs, total)
@@ -199,11 +220,20 @@ def _precollect_from_pipeline(env, table_cfg, reset_assets):
                 dim=-1
             )
             valid = drift < table_cfg.settle_max_drift
+        if nut_lo is not None:
+            nut = result.nut_pose[b][:, :3]
+            valid = valid & ((nut >= nut_lo) & (nut <= nut_hi)).all(dim=1)
         states = get_reset_state(env, ids, reset_assets, is_relative=True)
         rows.append(states[valid])
         row_tags.append(result.tag[b][valid])
         row_boards.append(result.board_index[b][valid])
         survived += int(valid.sum())
+        if stash:
+            viz_jq.append(jq[valid])
+            viz_nut.append(result.nut_pose[b][valid])
+            viz_bolt.append(result.bolt_pose[b][valid])
+            viz_board.append(result.board_pose[b][valid])
+            viz_bidx.append(result.board_index[b][valid])
     state_data = torch.cat(rows).contiguous()
     state_tag_indices = torch.cat(row_tags).contiguous()
     state_board_indices = torch.cat(row_boards).contiguous()
@@ -211,9 +241,23 @@ def _precollect_from_pipeline(env, table_cfg, reset_assets):
         name: int((state_tag_indices == t).sum()) for t, name in enumerate(tag_names) if bool((result.tag == t).any())
     }
     print(f"[reset_state] pipeline table: {total} rows -> {survived} survived the settle gate {per_tag}")
+    # success-grid geometry (built here while the pipeline model + meshes are alive)
+    viz_geom = None
+    if stash and rows:
+        from ..viz.geometry import build_success_grid_geometry
+
+        torch.cuda.empty_cache()  # the table build runs at peak sim memory
+        viz_geom = build_success_grid_geometry(
+            pipeline.model,
+            torch.cat(viz_jq),
+            torch.cat(viz_nut),
+            torch.cat(viz_bolt),
+            torch.cat(viz_board),
+            torch.cat(viz_bidx),
+        )
     # ``built`` is the PRE-settle row count (the survival denominator); the stored
     # ``state_data`` is the survivors
-    return state_data, state_tag_indices, state_board_indices, tag_names, total, target_size
+    return state_data, state_tag_indices, state_board_indices, tag_names, total, target_size, viz_geom
 
 
 def _pair_within_boards(table_cfg, state_data, state_tag_indices, state_board_indices):

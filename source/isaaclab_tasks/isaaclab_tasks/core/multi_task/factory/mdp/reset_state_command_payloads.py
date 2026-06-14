@@ -271,15 +271,8 @@ class FactoryAssemblyPayload:
         self._env.extras["successes"] = self.is_success
 
     def log_metrics(self, env: ManagerBasedRLEnv, success_rates: torch.Tensor) -> None:
-        """Aggregate the per-slot curriculum success rate into per-tag log entries."""
-        if not self.table.state_tag_names:
-            return
-        log = env.extras.setdefault("log", {})
-        log["Metrics/MonitorSuccessRate"] = success_rates.mean().item()
-        tags = self.table.task_tag_indices
-        for i, name in enumerate(self.table.state_tag_names):
-            mask = tags == i
-            log[f"Metrics/MonitorSuccessRate/{name}"] = success_rates[mask].mean().item() if mask.any() else 0.0
+        """Log the overall curriculum success rate (the per-tag breakdown is the tag-matrix image)."""
+        env.extras.setdefault("log", {})["Metrics/MonitorSuccessRate"] = success_rates.mean().item()
 
     def set_debug_vis(self, debug_vis: bool) -> None:
         """Create (lazily) and toggle the held-asset target-frame marker."""
