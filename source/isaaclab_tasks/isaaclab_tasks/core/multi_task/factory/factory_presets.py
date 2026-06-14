@@ -25,15 +25,26 @@ from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.utils import PresetCfg
 
+from ..utils.symmetry import AssetSymmetryCfg, AxisSymmetryCfg
 from . import assembly_keypoints as kpts
 from .assembly_profile_cfg import (
     AssemblyProfileCfg,
-    DiscreteYawCfg,
     EndPointsSegmentCfg,
     IncrementalSegmentCfg,
+    SymmetryOrbitCfg,
     UniformPoseNoiseCfg,
-    UniformYawCfg,
 )
+
+# Per-held-asset rotational symmetry -- the SINGLE source of truth shared by the
+# assembly sampler (SymmetryOrbitCfg spawns an equivalent target) and the success
+# criterion (HeldAssetSymmetryCfg accepts any equivalent). Continuous yaw for the
+# round threaded/insert/gear parts; N-fold for the rectangular pegs; none for the
+# keyed connectors.
+_SYM_CONTINUOUS: AssetSymmetryCfg = AssetSymmetryCfg(elements=[AxisSymmetryCfg(order=0)])
+_SYM_4FOLD: AssetSymmetryCfg = AssetSymmetryCfg(elements=[AxisSymmetryCfg(order=4)])
+_SYM_2FOLD: AssetSymmetryCfg = AssetSymmetryCfg(elements=[AxisSymmetryCfg(order=2)])
+_SYM_NONE: AssetSymmetryCfg = AssetSymmetryCfg(elements=[AxisSymmetryCfg(order=1)])
+
 
 # ---------------------------------------------------------------------------
 # Robot-specific presets
@@ -50,6 +61,20 @@ class EndEffectorBodyCfg(PresetCfg):
 @configclass
 class GripperJointNamesCfg(PresetCfg):
     """Joint name regex for gripper/finger joints per robot variant."""
+
+    default: list[str] | None = None
+
+
+@configclass
+class FingerBodyNamesCfg(PresetCfg):
+    """Finger body names carrying the pad contact points, per robot variant."""
+
+    default: list[str] | None = None
+
+
+@configclass
+class GripperBodyNamesCfg(PresetCfg):
+    """Gripper body names (hand + fingers) probed for collision, per robot variant."""
 
     default: list[str] | None = None
 
@@ -243,7 +268,7 @@ class FactoryAssemblyProfileCfg(PresetCfg):
         segments=[
             IncrementalSegmentCfg(
                 fraction=(0.1, 1.0),
-                start_sampler=UniformYawCfg(),
+                start_sampler=SymmetryOrbitCfg(symmetry=_SYM_CONTINUOUS),
                 start_pose=kpts.GEAR_BASE.small_gear_assembled_bottom_offset,
                 distance=_dist(kpts.GEAR_BASE.small_gear_assembled_bottom_offset, kpts.GEAR_BASE.small_gear_tip_offset),
             )
@@ -253,7 +278,7 @@ class FactoryAssemblyProfileCfg(PresetCfg):
         segments=[
             IncrementalSegmentCfg(
                 fraction=(0.1, 1.0),
-                start_sampler=UniformYawCfg(),
+                start_sampler=SymmetryOrbitCfg(symmetry=_SYM_CONTINUOUS),
                 start_pose=kpts.GEAR_BASE.medium_gear_assembled_bottom_offset,
                 distance=_dist(
                     kpts.GEAR_BASE.medium_gear_assembled_bottom_offset, kpts.GEAR_BASE.medium_gear_tip_offset
@@ -265,7 +290,7 @@ class FactoryAssemblyProfileCfg(PresetCfg):
         segments=[
             IncrementalSegmentCfg(
                 fraction=(0.1, 1.0),
-                start_sampler=UniformYawCfg(),
+                start_sampler=SymmetryOrbitCfg(symmetry=_SYM_CONTINUOUS),
                 start_pose=kpts.GEAR_BASE.large_gear_assembled_bottom_offset,
                 distance=_dist(kpts.GEAR_BASE.large_gear_assembled_bottom_offset, kpts.GEAR_BASE.large_gear_tip_offset),
             )
@@ -276,7 +301,7 @@ class FactoryAssemblyProfileCfg(PresetCfg):
     rod_insert_4mm: AssemblyProfileCfg = AssemblyProfileCfg(
         segments=[
             IncrementalSegmentCfg(
-                start_sampler=UniformYawCfg(),
+                start_sampler=SymmetryOrbitCfg(symmetry=_SYM_CONTINUOUS),
                 start_pose=kpts.HOLE_4MM.inserted_peg_base_offset,
                 distance=_dist(kpts.HOLE_4MM.inserted_peg_base_offset, kpts.HOLE_4MM.hole_tip_offset),
             )
@@ -285,7 +310,7 @@ class FactoryAssemblyProfileCfg(PresetCfg):
     rod_insert_8mm: AssemblyProfileCfg = AssemblyProfileCfg(
         segments=[
             IncrementalSegmentCfg(
-                start_sampler=UniformYawCfg(),
+                start_sampler=SymmetryOrbitCfg(symmetry=_SYM_CONTINUOUS),
                 start_pose=kpts.HOLE_8MM.inserted_peg_base_offset,
                 distance=_dist(kpts.HOLE_8MM.inserted_peg_base_offset, kpts.HOLE_8MM.hole_tip_offset),
             )
@@ -294,7 +319,7 @@ class FactoryAssemblyProfileCfg(PresetCfg):
     rod_insert_12mm: AssemblyProfileCfg = AssemblyProfileCfg(
         segments=[
             IncrementalSegmentCfg(
-                start_sampler=UniformYawCfg(),
+                start_sampler=SymmetryOrbitCfg(symmetry=_SYM_CONTINUOUS),
                 start_pose=kpts.HOLE_12MM.inserted_peg_base_offset,
                 distance=_dist(kpts.HOLE_12MM.inserted_peg_base_offset, kpts.HOLE_12MM.hole_tip_offset),
             )
@@ -303,7 +328,7 @@ class FactoryAssemblyProfileCfg(PresetCfg):
     rod_insert_16mm: AssemblyProfileCfg = AssemblyProfileCfg(
         segments=[
             IncrementalSegmentCfg(
-                start_sampler=UniformYawCfg(),
+                start_sampler=SymmetryOrbitCfg(symmetry=_SYM_CONTINUOUS),
                 start_pose=kpts.HOLE_16MM.inserted_peg_base_offset,
                 distance=_dist(kpts.HOLE_16MM.inserted_peg_base_offset, kpts.HOLE_16MM.hole_tip_offset),
             )
@@ -315,7 +340,7 @@ class FactoryAssemblyProfileCfg(PresetCfg):
         segments=[
             IncrementalSegmentCfg(
                 fraction=(0.0, 0.7),
-                start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi / 2, math.pi, 3 * math.pi / 2]),
+                start_sampler=SymmetryOrbitCfg(symmetry=_SYM_4FOLD),
                 start_pose=kpts.RECTANGULAR_HOLE_4MM.inserted_peg_base_offset,
                 distance=_dist(
                     kpts.RECTANGULAR_HOLE_4MM.inserted_peg_base_offset, kpts.RECTANGULAR_HOLE_4MM.hole_tip_offset
@@ -338,7 +363,7 @@ class FactoryAssemblyProfileCfg(PresetCfg):
         segments=[
             IncrementalSegmentCfg(
                 fraction=(0.0, 0.7),
-                start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi]),
+                start_sampler=SymmetryOrbitCfg(symmetry=_SYM_2FOLD),
                 start_pose=kpts.RECTANGULAR_HOLE_8MM.inserted_peg_base_offset,
                 distance=_dist(
                     kpts.RECTANGULAR_HOLE_8MM.inserted_peg_base_offset, kpts.RECTANGULAR_HOLE_8MM.hole_tip_offset
@@ -361,7 +386,7 @@ class FactoryAssemblyProfileCfg(PresetCfg):
         segments=[
             IncrementalSegmentCfg(
                 fraction=(0.0, 0.7),
-                start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi]),
+                start_sampler=SymmetryOrbitCfg(symmetry=_SYM_2FOLD),
                 start_pose=kpts.RECTANGULAR_HOLE_12MM.inserted_peg_base_offset,
                 distance=_dist(
                     kpts.RECTANGULAR_HOLE_12MM.inserted_peg_base_offset, kpts.RECTANGULAR_HOLE_12MM.hole_tip_offset
@@ -384,7 +409,7 @@ class FactoryAssemblyProfileCfg(PresetCfg):
         segments=[
             IncrementalSegmentCfg(
                 fraction=(0.0, 0.7),
-                start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi]),
+                start_sampler=SymmetryOrbitCfg(symmetry=_SYM_2FOLD),
                 start_pose=kpts.RECTANGULAR_HOLE_16MM.inserted_peg_base_offset,
                 distance=_dist(
                     kpts.RECTANGULAR_HOLE_16MM.inserted_peg_base_offset, kpts.RECTANGULAR_HOLE_16MM.hole_tip_offset
@@ -494,125 +519,42 @@ class HeldAssetAlignOffsetCfg(PresetCfg):
 
 
 @configclass
-class HeldAssetGraspPointCfg(PresetCfg):
-    # Nut threading
-    nut_thread_m4: kpts.Offset = kpts.NUT_M4.grasp_point
-    nut_thread_m8: kpts.Offset = kpts.NUT_M8.grasp_point
-    nut_thread_m12: kpts.Offset = kpts.NUT_M12.grasp_point
-    nut_thread_m16: kpts.Offset = kpts.NUT_M16.grasp_point
+class HeldAssetSymmetryCfg(PresetCfg):
+    """Held-asset symmetry per task variant, consumed by the
+    :class:`~...utils.symmetry.Symmetry` and the assembly sampler. Each value
+    is an :class:`~...utils.symmetry.AssetSymmetryCfg`; the shared ``_SYM_*``
+    constants below are the single source of truth (continuous / N-fold / none)."""
 
-    # Gear mesh
-    gear_mesh_small: kpts.Offset = kpts.SMALL_GEAR.grasp_point
-    gear_mesh_medium: kpts.Offset = kpts.MEDIUM_GEAR.grasp_point
-    gear_mesh_large: kpts.Offset = kpts.LARGE_GEAR.grasp_point
+    # Threaded nuts / round rods / gears: continuous yaw symmetry (yaw is free).
+    nut_thread_m4: AssetSymmetryCfg = _SYM_CONTINUOUS
+    nut_thread_m8: AssetSymmetryCfg = _SYM_CONTINUOUS
+    nut_thread_m12: AssetSymmetryCfg = _SYM_CONTINUOUS
+    nut_thread_m16: AssetSymmetryCfg = _SYM_CONTINUOUS
+    rod_insert_4mm: AssetSymmetryCfg = _SYM_CONTINUOUS
+    rod_insert_8mm: AssetSymmetryCfg = _SYM_CONTINUOUS
+    rod_insert_12mm: AssetSymmetryCfg = _SYM_CONTINUOUS
+    rod_insert_16mm: AssetSymmetryCfg = _SYM_CONTINUOUS
+    gear_mesh_small: AssetSymmetryCfg = _SYM_CONTINUOUS
+    gear_mesh_medium: AssetSymmetryCfg = _SYM_CONTINUOUS
+    gear_mesh_large: AssetSymmetryCfg = _SYM_CONTINUOUS
 
-    # Rod insert (round)
-    rod_insert_4mm: kpts.Offset = kpts.ROD_4MM.grasp_point
-    rod_insert_8mm: kpts.Offset = kpts.ROD_8MM.grasp_point
-    rod_insert_12mm: kpts.Offset = kpts.ROD_12MM.grasp_point
-    rod_insert_16mm: kpts.Offset = kpts.ROD_16MM.grasp_point
+    # Pegs: discrete yaw symmetry (square = 4-fold, rectangular = 2-fold), matching
+    # the DiscreteYaw orders in the assembly profiles.
+    peg_insert_4mm: AssetSymmetryCfg = _SYM_4FOLD
+    peg_insert_8mm: AssetSymmetryCfg = _SYM_2FOLD
+    peg_insert_12mm: AssetSymmetryCfg = _SYM_2FOLD
+    peg_insert_16mm: AssetSymmetryCfg = _SYM_2FOLD
 
-    # Peg insert (rectangular)
-    peg_insert_4mm: kpts.Offset = kpts.RECTANGULAR_PEG_4MM.grasp_point
-    peg_insert_8mm: kpts.Offset = kpts.RECTANGULAR_PEG_8MM.grasp_point
-    peg_insert_12mm: kpts.Offset = kpts.RECTANGULAR_PEG_12MM.grasp_point
-    peg_insert_16mm: kpts.Offset = kpts.RECTANGULAR_PEG_16MM.grasp_point
+    # Keyed connectors: no rotational symmetry.
+    usba: AssetSymmetryCfg = _SYM_NONE
+    waterproof: AssetSymmetryCfg = _SYM_NONE
+    bnc: AssetSymmetryCfg = _SYM_NONE
+    dsub: AssetSymmetryCfg = _SYM_NONE
+    rj45: AssetSymmetryCfg = _SYM_NONE
 
-    # Connector insert
-    usba: kpts.Offset = kpts.USB_A_PLUG.grasp_point
-    waterproof: kpts.Offset = kpts.WATERPROOF_PLUG.grasp_point
-    bnc: kpts.Offset = kpts.BNC_PLUG.grasp_point
-    dsub: kpts.Offset = kpts.D_SUB_PLUG.grasp_point
-    rj45: kpts.Offset = kpts.RJ45_PLUG.grasp_point
-
-    default: kpts.Offset = nut_thread_m16
-
-
-@configclass
-class HeldAssetGraspDiameterCfg(PresetCfg):
-    # Nut threading
-    nut_thread_m4: float = kpts.NUT_M4.grasp_diameter
-    nut_thread_m8: float = kpts.NUT_M8.grasp_diameter
-    nut_thread_m12: float = kpts.NUT_M12.grasp_diameter
-    nut_thread_m16: float = kpts.NUT_M16.grasp_diameter
-
-    # Gear mesh
-    gear_mesh_small: float = kpts.SMALL_GEAR.grasp_diameter
-    gear_mesh_medium: float = kpts.MEDIUM_GEAR.grasp_diameter
-    gear_mesh_large: float = kpts.LARGE_GEAR.grasp_diameter
-
-    # Rod insert (round)
-    rod_insert_4mm: float = kpts.ROD_4MM.grasp_diameter
-    rod_insert_8mm: float = kpts.ROD_8MM.grasp_diameter
-    rod_insert_12mm: float = kpts.ROD_12MM.grasp_diameter
-    rod_insert_16mm: float = kpts.ROD_16MM.grasp_diameter
-
-    # Peg insert (rectangular)
-    peg_insert_4mm: float = kpts.RECTANGULAR_PEG_4MM.grasp_diameter
-    peg_insert_8mm: float = kpts.RECTANGULAR_PEG_8MM.grasp_diameter
-    peg_insert_12mm: float = kpts.RECTANGULAR_PEG_12MM.grasp_diameter
-    peg_insert_16mm: float = kpts.RECTANGULAR_PEG_16MM.grasp_diameter
-
-    # Connector insert
-    usba: float = kpts.USB_A_PLUG.grasp_diameter
-    waterproof: float = kpts.WATERPROOF_PLUG.grasp_diameter
-    bnc: float = kpts.BNC_PLUG.grasp_diameter
-    dsub: float = kpts.D_SUB_PLUG.grasp_diameter
-    rj45: float = kpts.RJ45_PLUG.grasp_diameter
-
-    default: float = nut_thread_m16
+    default: AssetSymmetryCfg = _SYM_NONE
 
 
-@configclass
-class HeldAssetGraspMiddleCfg(PresetCfg):
-    """Offset used for positioning the EE around the held asset.
-
-    For nut variants this is the center_axis_middle (grasp from above the threading axis),
-    while for all other variants it is the grasp_point.
-    """
-
-    # Nut threading — center axis middle for threading approach
-    nut_thread_m4: kpts.Offset = kpts.NUT_M4.center_axis_middle
-    nut_thread_m8: kpts.Offset = kpts.NUT_M8.center_axis_middle
-    nut_thread_m12: kpts.Offset = kpts.NUT_M12.center_axis_middle
-    nut_thread_m16: kpts.Offset = kpts.NUT_M16.center_axis_middle
-
-    # Gear mesh
-    gear_mesh_small: kpts.Offset = kpts.SMALL_GEAR.grasp_point
-    gear_mesh_medium: kpts.Offset = kpts.MEDIUM_GEAR.grasp_point
-    gear_mesh_large: kpts.Offset = kpts.LARGE_GEAR.grasp_point
-
-    # Rod insert (round)
-    rod_insert_4mm: kpts.Offset = kpts.ROD_4MM.grasp_point
-    rod_insert_8mm: kpts.Offset = kpts.ROD_8MM.grasp_point
-    rod_insert_12mm: kpts.Offset = kpts.ROD_12MM.grasp_point
-    rod_insert_16mm: kpts.Offset = kpts.ROD_16MM.grasp_point
-
-    # Peg insert (rectangular)
-    peg_insert_4mm: kpts.Offset = kpts.RECTANGULAR_PEG_4MM.grasp_point
-    peg_insert_8mm: kpts.Offset = kpts.RECTANGULAR_PEG_8MM.grasp_point
-    peg_insert_12mm: kpts.Offset = kpts.RECTANGULAR_PEG_12MM.grasp_point
-    peg_insert_16mm: kpts.Offset = kpts.RECTANGULAR_PEG_16MM.grasp_point
-
-    # Connector insert
-    usba: kpts.Offset = kpts.USB_A_PLUG.grasp_point
-    waterproof: kpts.Offset = kpts.WATERPROOF_PLUG.grasp_point
-    bnc: kpts.Offset = kpts.BNC_PLUG.grasp_point
-    dsub: kpts.Offset = kpts.D_SUB_PLUG.grasp_point
-    rj45: kpts.Offset = kpts.RJ45_PLUG.grasp_point
-
-    default: kpts.Offset = nut_thread_m16
-
-
-# Pose ranges reused across size variants within each category
-_NUT_GRASPED_RANGE = dict(
-    x=(-0.005, 0.005),
-    y=(-0.005, 0.005),
-    z=(0.00, 0.035),
-    roll=(3.141, 3.141),
-    pitch=(-0.5, 0.5),
-    yaw=(-2.09, 2.09),
-)
 _GEAR_GRASPED_RANGE = dict(
     x=(-0.02, 0.02),
     y=(-0.02, 0.02),
@@ -629,40 +571,3 @@ _INSERT_GRASPED_RANGE = dict(
     pitch=(-0.5, 0.5),
     yaw=(-2.09, 2.09),
 )
-
-
-@configclass
-class GraspedPoseRangeCfg(PresetCfg):
-    """Pose range for the ``start_grasped_then_assembled`` reset strategy."""
-
-    # Nut threading
-    nut_thread_m4: dict = _NUT_GRASPED_RANGE
-    nut_thread_m8: dict = _NUT_GRASPED_RANGE
-    nut_thread_m12: dict = _NUT_GRASPED_RANGE
-    nut_thread_m16: dict = _NUT_GRASPED_RANGE
-
-    # Gear mesh
-    gear_mesh_small: dict = _GEAR_GRASPED_RANGE
-    gear_mesh_medium: dict = _GEAR_GRASPED_RANGE
-    gear_mesh_large: dict = _GEAR_GRASPED_RANGE
-
-    # Rod insert (round)
-    rod_insert_4mm: dict = _INSERT_GRASPED_RANGE
-    rod_insert_8mm: dict = _INSERT_GRASPED_RANGE
-    rod_insert_12mm: dict = _INSERT_GRASPED_RANGE
-    rod_insert_16mm: dict = _INSERT_GRASPED_RANGE
-
-    # Peg insert (rectangular)
-    peg_insert_4mm: dict = _INSERT_GRASPED_RANGE
-    peg_insert_8mm: dict = _INSERT_GRASPED_RANGE
-    peg_insert_12mm: dict = _INSERT_GRASPED_RANGE
-    peg_insert_16mm: dict = _INSERT_GRASPED_RANGE
-
-    # Connector insert
-    usba: dict = _INSERT_GRASPED_RANGE
-    waterproof: dict = _INSERT_GRASPED_RANGE
-    bnc: dict = _INSERT_GRASPED_RANGE
-    dsub: dict = _INSERT_GRASPED_RANGE
-    rj45: dict = _INSERT_GRASPED_RANGE
-
-    default: dict = nut_thread_m16

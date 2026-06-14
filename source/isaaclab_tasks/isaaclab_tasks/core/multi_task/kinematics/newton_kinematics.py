@@ -20,7 +20,7 @@ import newton
 import newton.ik as ik
 import numpy as np
 import warp as wp
-from newton import GeoType
+from newton import GeoType, JointType
 from newton._src.sim.ik.ik_common import eval_fk_batched as _newton_eval_fk_batched
 
 from .newton_kinematics_cfg import NewtonKinematicsCfg  # re-exported for backcompat
@@ -70,13 +70,21 @@ class NewtonKinematics:
             jnames[idx] = path.rsplit("/", 1)[-1]
         self.joint_names = jnames
 
+        # Root coordinate count: 7 for a free-floating base (3 position + 4
+        # quaternion), 0 for a fixed base. Non-root joints occupy
+        # ``joint_q[n_root_coords:]``. Reading it from the model (instead of
+        # assuming a free root) lets the same wrapper drive fixed-base arms.
+        self._n_root_coords = self._compute_root_coord_count()
+
         jq = self.model.joint_q.numpy().copy()
-        jq[0:3] = cfg.default_pos
-        jq[3:7] = cfg.default_quat
+        if self._n_root_coords >= 7:
+            # Free-floating base only: the first 7 coords are the root pose.
+            jq[0:3] = cfg.default_pos
+            jq[3:7] = cfg.default_quat
         if cfg.default_joint_pos is not None:
             resolved = self._resolve_joint_pos_map(cfg.default_joint_pos)
-            n = min(len(resolved), len(jq) - 7)
-            jq[7 : 7 + n] = resolved[:n]
+            n = min(len(resolved), len(jq) - self._n_root_coords)
+            jq[self._n_root_coords : self._n_root_coords + n] = resolved[:n]
         state = self.eval_fk(wp.array(jq, dtype=float, device=cfg.device))
         self._default_joint_q = jq
         self._default_body_q = state.body_q.numpy()
@@ -85,28 +93,49 @@ class NewtonKinematics:
         """Resolve a ``{regex: value}`` dict to a flat joint position array.
 
         Uses ``joint_q_start`` to map each matched joint to its actual
-        position in ``joint_q[7:]``, correctly skipping fixed and ball
-        joints that contribute no DOFs.
+        position in ``joint_q[n_root_coords:]`` (the non-root coordinates),
+        accepting single-DoF position joints (revolute or prismatic) and
+        skipping fixed/ball/free joints that carry no scalar default here.
         """
-        n_coords = self.model.joint_coord_count - 7
+        n_root = self._n_root_coords
+        n_coords = self.model.joint_coord_count - n_root
         jpos = np.zeros(n_coords, dtype=np.float32)
         q_start = self.model.joint_q_start.numpy()
         joint_type = self.model.joint_type.numpy()
+        single_dof = (int(JointType.PRISMATIC), int(JointType.REVOLUTE))
         for pattern, value in joint_pos_map.items():
             regex = re.compile(pattern)
             for jidx in range(1, len(self.joint_names)):
                 if not regex.fullmatch(self.joint_names[jidx]):
                     continue
-                if int(joint_type[jidx]) != 1:
+                if int(joint_type[jidx]) not in single_dof:
                     continue
-                qi = int(q_start[jidx]) - 7
+                qi = int(q_start[jidx]) - n_root
                 if 0 <= qi < n_coords:
                     jpos[qi] = value
         return jpos
 
+    def _compute_root_coord_count(self) -> int:
+        """Number of ``joint_q`` coordinates consumed by the root joint.
+
+        ``7`` for a free-floating base (joint 0 is a ``FREE`` joint: 3
+        position + 4 quaternion), ``0`` for a fixed base (joint 0 is
+        ``FIXED``). Derived from ``joint_q_start`` so it reflects the actual
+        model layout regardless of the root joint type.
+        """
+        if self.model.joint_count <= 1:
+            return int(self.model.joint_coord_count)
+        q_start = self.model.joint_q_start.numpy()
+        return int(q_start[1] - q_start[0])
+
     @property
     def device(self) -> str:
         return str(self.model.device)
+
+    @property
+    def n_root_coords(self) -> int:
+        """Coordinates the root joint consumes (7 free-floating, 0 fixed-base)."""
+        return self._n_root_coords
 
     @property
     def default_joint_q(self) -> np.ndarray:
@@ -140,9 +169,9 @@ class NewtonKinematics:
     def find_joint_dof_indices(self, pattern: str) -> list[int]:
         """Find revolute-joint DOF indices matching a regex pattern.
 
-        Returns indices into ``joint_q[7:]`` (i.e. excluding the 7
-        free-root coordinates).  Uses ``joint_q_start`` for correct
-        mapping even when the model contains non-revolute joints.
+        Returns indices into ``joint_q[n_root_coords:]`` (i.e. excluding the
+        root coordinates).  Uses ``joint_q_start`` for correct mapping even
+        when the model contains non-revolute joints.
 
         Args:
             pattern: Regex matched against each joint name.
@@ -158,7 +187,7 @@ class NewtonKinematics:
             if int(joint_type[jidx]) != 1:
                 continue
             if regex.fullmatch(self.joint_names[jidx]):
-                indices.append(int(q_start[jidx]) - 7)
+                indices.append(int(q_start[jidx]) - self._n_root_coords)
         return sorted(indices)
 
     def foot_geometry(self, foot_body_ids: list[int]) -> dict[str, np.ndarray | float]:
