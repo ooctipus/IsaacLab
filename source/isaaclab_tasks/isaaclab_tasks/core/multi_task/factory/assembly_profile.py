@@ -20,16 +20,16 @@ import torch
 
 import isaaclab.utils.math as math_utils
 
+from ..utils.symmetry.asset_symmetry import KIND_CYCLIC
 from .assembly_keypoints import Offset
 
 if TYPE_CHECKING:
     from .assembly_profile_cfg import (
         AssemblyProfileCfg,
-        DiscreteYawCfg,
         EndPointsSegmentCfg,
         IncrementalSegmentCfg,
+        SymmetryOrbitCfg,
         UniformPoseNoiseCfg,
-        UniformYawCfg,
     )
 
 # ---------------------------------------------------------------------------
@@ -48,40 +48,28 @@ Returns:
 """
 
 
-class UniformYaw:
-    """Uniformly random yaw in ``[-pi, pi]``, no position noise."""
+class SymmetryOrbit:
+    """Samples a symmetry-equivalent start rotation from an :class:`AssetSymmetryCfg`.
 
-    def __init__(self, cfg: UniformYawCfg):
+    Reuses the compiled asset symmetry so the sampler and success criterion share
+    the same equivalent-goal definition. No position noise.
+    """
+
+    def __init__(self, cfg: SymmetryOrbitCfg):
         self.cfg = cfg
+        self._symmetry = cfg.symmetry.class_type(cfg.symmetry)
 
     def __call__(self, num_envs: int, device: str | torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+        device = torch.device(device)
         pos = torch.zeros(num_envs, 3, device=device)
-        yaw = math_utils.sample_uniform(-math.pi, math.pi, (num_envs,), device=device)
-        quat = math_utils.quat_from_euler_xyz(
-            torch.zeros(num_envs, device=device),
-            torch.zeros(num_envs, device=device),
-            yaw,
-        )
-        return pos, quat
-
-
-class DiscreteYaw:
-    """Randomly chosen from a discrete set of yaw angles [rad], no position noise."""
-
-    def __init__(self, cfg: DiscreteYawCfg):
-        self.cfg = cfg
-        self.yaws: list[float] = cfg.yaws if cfg.yaws is not None else []
-
-    def __call__(self, num_envs: int, device: str | torch.device) -> tuple[torch.Tensor, torch.Tensor]:
-        pos = torch.zeros(num_envs, 3, device=device)
-        yaw_options = torch.tensor(self.yaws, device=device)
-        indices = torch.randint(0, len(self.yaws), (num_envs,), device=device)
-        yaw = yaw_options[indices]
-        quat = math_utils.quat_from_euler_xyz(
-            torch.zeros(num_envs, device=device),
-            torch.zeros(num_envs, device=device),
-            yaw,
-        )
+        table = self._symmetry.table
+        if table.kind == KIND_CYCLIC and table.order == 0:
+            axis = torch.as_tensor(table.axis, dtype=torch.float32, device=device).expand(num_envs, -1)
+            angle = torch.empty(num_envs, device=device).uniform_(-math.pi, math.pi)
+            quat = math_utils.quat_from_angle_axis(angle, axis)
+        else:
+            orbit = torch.as_tensor(self._symmetry.finite_orbit_quat, dtype=torch.float32, device=device)
+            quat = orbit[torch.randint(0, orbit.shape[0], (num_envs,), device=device)]
         return pos, quat
 
 

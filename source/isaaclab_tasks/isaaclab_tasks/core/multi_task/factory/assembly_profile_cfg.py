@@ -14,22 +14,25 @@ types are provided:
 * :class:`IncrementalSegmentCfg` — defined by start pose, travel distance, and
   a screw-pitch ratio (m/rad).
 
-Start-sampler configs (:class:`UniformYawCfg`, :class:`DiscreteYawCfg`) define
-noise applied on top of each segment's start pose.  ``None`` means no noise.
+Start-sampler configs define noise applied on top of each segment's start pose:
+:class:`SymmetryOrbitCfg` (symmetry-backed rotational equivalents) and
+:class:`UniformPoseNoiseCfg` (free 6-DoF noise).  ``None`` means no noise.
 """
 
 from __future__ import annotations
 
+from dataclasses import MISSING
+
 from isaaclab.utils.configclass import configclass
 
+from ..utils.symmetry import AssetSymmetryCfg
 from .assembly_keypoints import Offset
 from .assembly_profile import (
     AssemblyProfile,
-    DiscreteYaw,
     EndPointsSegment,
     IncrementalSegment,
+    SymmetryOrbit,
     UniformPoseNoise,
-    UniformYaw,
 )
 
 # ---------------------------------------------------------------------------
@@ -38,22 +41,17 @@ from .assembly_profile import (
 
 
 @configclass
-class UniformYawCfg:
-    """Uniformly random yaw in ``[-pi, pi]``, no position noise."""
+class SymmetryOrbitCfg:
+    """Sample a symmetry-equivalent start rotation from a held-asset symmetry
+    definition -- continuous yaw or N-fold rotation about the asset's axis, so the
+    asset's symmetry is declared once and shared with the success criterion. No
+    position noise."""
 
-    class_type: type = UniformYaw
+    class_type: type = SymmetryOrbit
     """Class of the sampler implementation."""
 
-
-@configclass
-class DiscreteYawCfg:
-    """Randomly chosen from a discrete set of yaw angles [rad], no position noise."""
-
-    class_type: type = DiscreteYaw
-    """Class of the sampler implementation."""
-
-    yaws: list[float] | None = None
-    """Yaw angles [rad] to sample from."""
+    symmetry: AssetSymmetryCfg = MISSING
+    """The held asset's symmetry; the start rotation is sampled from its orbit."""
 
 
 @configclass
@@ -100,7 +98,7 @@ class EndPointsSegmentCfg:
     fraction: tuple[float, float] = (0.0, 1.0)
     """Fraction range ``(lo, hi)`` this segment covers. ``0`` is assembled."""
 
-    start_sampler: UniformYawCfg | DiscreteYawCfg | UniformPoseNoiseCfg | None = None
+    start_sampler: SymmetryOrbitCfg | UniformPoseNoiseCfg | None = None
     """Noise config applied on top of the interpolated pose. ``None`` means no noise."""
 
     start_pose: Offset = Offset()
@@ -126,7 +124,7 @@ class IncrementalSegmentCfg:
     fraction: tuple[float, float] = (0.0, 1.0)
     """Fraction range ``(lo, hi)`` this segment covers. ``0`` is assembled."""
 
-    start_sampler: UniformYawCfg | DiscreteYawCfg | UniformPoseNoiseCfg | None = None
+    start_sampler: SymmetryOrbitCfg | UniformPoseNoiseCfg | None = None
     """Noise config applied on top of the interpolated pose. ``None`` means no noise."""
 
     start_pose: Offset = Offset()
