@@ -27,7 +27,7 @@ import numpy as np
 import pytest
 import warp as wp
 
-from isaaclab_tasks.core.multi_task.mdp.commands.impl.primitive_graph_local.csr_graph import CSRGraph
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.primitive_graph_local.csr_graph import CSRGraph
 
 # Use CPU device throughout -- the build path is CPU-only Python; no need to
 # require a GPU for these tests.

@@ -27,7 +27,7 @@ from isaaclab.utils.math import quat_from_euler_xyz
 # ``_make_articulation_with_body_pos`` — now needs an explicit init.
 wp.init()
 
-from isaaclab_tasks.core.multi_task.mdp.commands.impl.kernels_torch import (
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.kernels_torch import (
     ACTIVATION_KERNEL_ID,
     ACTIVATION_KERNELS,
     BUFFER_KIND,

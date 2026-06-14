@@ -106,7 +106,7 @@ def test_commands_cfg_is_multitask():
     (so hydra can swap it for :class:`MinimalVelocityCommandCfg` via CLI);
     ``resolve_presets`` picks the default alternative — ``MultiTaskCfg``.
     """
-    from isaaclab_tasks.core.multi_task.mdp.commands.impl.multi_task_cfg import MultiTaskCfg
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.multi_task_cfg import MultiTaskCfg
     from isaaclab_tasks.core.multi_task.multi_task_env_cfg import MultiTaskEnvCfg
     from isaaclab_tasks.utils import resolve_presets
 
@@ -169,8 +169,8 @@ def test_tripod_walk_structure():
     :func:`test_default_safety_subtasks_appended_to_every_task` cover the safety
     suffix.
     """
-    from isaaclab_tasks.core.multi_task.mdp.commands.impl.kernels_torch import STATE_KERNEL_ID
-    from isaaclab_tasks.core.multi_task.mdp.commands.impl.multi_task_cfg import MultiTaskCfg
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.kernels_torch import STATE_KERNEL_ID
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.multi_task_cfg import MultiTaskCfg
 
     cfg = _env_cfg_with_locomotion_preset()
     subtasks = cfg.commands.goal_point.tasks["tripod_walk"]
@@ -197,11 +197,11 @@ def test_gait_tasks_use_count_diff_tracking_with_mirrored_splits():
     - ``run``:  first half = front pair ``(LF, RF)``; second half = hind pair ``(LH, RH)``
     - ``trot``: first half = one diagonal ``(LF, RH)``; second half = other diagonal ``(RF, LH)``
     """
-    from isaaclab_tasks.core.multi_task.mdp.commands.impl.kernels_torch import (
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.kernels_torch import (
         ACTIVATION_KERNEL_ID,
         STATE_KERNEL_ID,
     )
-    from isaaclab_tasks.core.multi_task.mdp.commands.impl.multi_task_cfg import MultiTaskCfg
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.multi_task_cfg import MultiTaskCfg
 
     cfg = _env_cfg_with_locomotion_preset()
 
@@ -232,7 +232,7 @@ def test_task_type_composition_is_correct():
     :func:`test_default_safety_subtasks_appended_to_every_task`); we filter
     those out here so the assertions stay focused on the task definition.
     """
-    from isaaclab_tasks.core.multi_task.mdp.commands.impl.multi_task_cfg import MultiTaskCfg
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.multi_task_cfg import MultiTaskCfg
 
     cfg = _env_cfg_with_locomotion_preset()
     tasks = cfg.commands.goal_point.tasks
@@ -277,8 +277,8 @@ def test_default_safety_subtasks_appended_to_every_task():
     + kernel-id + target here; their actual scales come from the templates
     in :mod:`isaaclab_tasks.core.multi_task.terrain.tasks_cfg`.
     """
-    from isaaclab_tasks.core.multi_task.mdp.commands.impl.kernels_torch import STATE_KERNEL_ID
-    from isaaclab_tasks.core.multi_task.mdp.commands.impl.multi_task_cfg import MultiTaskCfg
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.kernels_torch import STATE_KERNEL_ID
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.multi_task_cfg import MultiTaskCfg
 
     cfg = _env_cfg_with_locomotion_preset()
     for task_name, subtasks in cfg.commands.goal_point.tasks.items():
@@ -365,7 +365,7 @@ def test_canonical_widths_are_split_by_reach_and_track():
     # Minimal scene stub sufficient for SceneEntityCfg.resolve — mirrors the mock env.
     import re as _re
 
-    from isaaclab_tasks.core.multi_task.mdp.commands.spec import build_spec
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.spec import build_spec
 
     class _StubArticulation:
         def __init__(self, body_names: list[str]):

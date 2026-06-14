@@ -23,20 +23,22 @@ else:
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
     from mock_command import build_mock_command
 
-from isaaclab_tasks.core.multi_task.mdp.commands.impl.kernels_wp import (
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.kernels_wp import (
     compute_dense_graph_producers,
     dispatch_graph_dense,
 )
-from isaaclab_tasks.core.multi_task.mdp.commands.impl.mega_kernel.compose import compose_warp
-from isaaclab_tasks.core.multi_task.mdp.commands.impl.mega_kernel.execute import dispatch_mega_warp
-from isaaclab_tasks.core.multi_task.mdp.commands.impl.mega_kernel.read import fill_unified_buffer_warp
-from isaaclab_tasks.core.multi_task.mdp.commands.impl.mega_kernel.rotation import (
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.mega_kernel.compose import compose_warp
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.mega_kernel.execute import dispatch_mega_warp
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.mega_kernel.read import (
+    fill_unified_buffer_warp,
+)
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.mega_kernel.rotation import (
     rotate_canonical_slots_to_body_frame_warp,
 )
-from isaaclab_tasks.core.multi_task.mdp.commands.impl.primitive_queue_local.execute import (
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.primitive_queue_local.execute import (
     _PRIMITIVE_KERNELS,
 )
-from isaaclab_tasks.core.multi_task.mdp.commands.impl.schedules import (
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.schedules import (
     SCHEDULE_DIRECT_QUAT_DELTA,
     SCHEDULE_DIRECT_SCALAR_DELTA,
     SCHEDULE_DIRECT_VEC3_DELTA,
