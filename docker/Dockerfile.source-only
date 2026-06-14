@@ -16,6 +16,15 @@ ENV ISAACLAB_PATH=${ISAACLAB_PATH_ARG}
 # Re-create the Isaac Sim symlink (may have been lost if deps image was migrated)
 ARG ISAACSIM_ROOT_PATH_ARG=/isaac-sim
 
+# Clear the dirs we re-copy so the overlay reflects DELETIONS, not just additions.
+# Docker ``COPY`` only adds/overwrites; it never removes files absent from the new
+# source tree. Without this, files deleted/moved upstream (e.g. the task-package
+# restructure that moved ``core/lift_franka_soft`` -> ``core/lift/config/franka_soft``)
+# survive in the deps base image and cause duplicate gym registrations at import
+# (``Isaac-Lift-Soft-Franka`` vs ``...-v0``). The ``:?`` guard fails the build if
+# ISAACLAB_PATH is unset rather than wiping a root-level path.
+RUN rm -rf "${ISAACLAB_PATH:?}/source" "${ISAACLAB_PATH:?}/scripts" "${ISAACLAB_PATH:?}/tools"
+
 # Copy source files (deps already installed in the base/deps image).
 # Keep the repo layout intact so the uv editable installs created in
 # ``Dockerfile.base`` keep resolving the isaaclab_* packages from source/.
