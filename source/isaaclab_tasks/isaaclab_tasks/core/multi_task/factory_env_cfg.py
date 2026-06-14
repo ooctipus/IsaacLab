@@ -356,7 +356,7 @@ class FactoryPhysicsCfg(PresetCfg):
             solver="newton",
             integrator="implicitfast",
             njmax=1500,
-            nconmax=300,
+            nconmax=400,
             impratio=1.0,
             cone="pyramidal",
             update_data_interval=2,
@@ -369,7 +369,7 @@ class FactoryPhysicsCfg(PresetCfg):
             rigid_contact_max=5_000_000,
         ),
         default_shape_cfg=NewtonShapeCfg(ke=1e7, kd=1e4),
-        num_substeps=2,
+        num_substeps=8,
         debug_mode=False,
         use_cuda_graph=True,
     )
