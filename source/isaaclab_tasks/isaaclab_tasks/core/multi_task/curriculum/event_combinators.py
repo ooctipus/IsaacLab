@@ -10,16 +10,10 @@ reset strategies without baking in robot or task semantics:
 
 - :class:`reset_accumulator` — pre-collect validated reset states into a
   shared state table, then apply externally selected slots.
-- :class:`TermChoice` — partition envs over a set of sub-event-terms;
-  uniform or success-rate-weighted sampling.
+- :class:`TermChoice` — uniformly partition envs over a set of sub-event-terms,
+  recording each env's choice so callers can tag the produced states.
 - :class:`ChainedResetTerms` — sequentially apply a list of reset terms,
   optionally gated by a per-env Bernoulli probability.
-
-``TermChoice`` couples to a ``progress_context`` termination term that exposes
-``.is_success``: a per-env bool tensor read at runtime to update the success
-monitor. Any domain (locomotion, manipulation, …) can satisfy this contract by
-registering a termination term named ``progress_context`` whose function exposes
-an ``.is_success`` attribute.
 """
 
 from __future__ import annotations
@@ -34,9 +28,6 @@ from isaaclab.managers import EventTermCfg, ManagerTermBase
 
 from ..utils.grid_downsample import extract_features, grid_bucket_downsample
 from . import reset_state
-from .sampling import SamplerCfg
-from .state_layout import StateLayout
-from .success_monitor_cfg import SuccessMonitorCfg
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -184,73 +175,34 @@ class reset_accumulator(ManagerTermBase):
 
 
 class TermChoice(ManagerTermBase):
+    """Uniformly partition envs across reset sub-terms, recording each env's choice.
+
+    Used at state-table precollection to diversify the generated reset states and
+    to tag each state with the sub-term ("strategy") that produced it via
+    :attr:`term_samples` / :attr:`term_partitions`. It carries no success signal:
+    curriculum and success accounting live on the consuming command and its
+    sampler, not here.
+    """
+
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
         self.term_partitions: dict[str, EventTermCfg] = cfg.params["terms"]  # type: ignore
         self.num_partitions = len(self.term_partitions)
         self.term_samples = torch.zeros((env.num_envs,), dtype=torch.long, device=env.device)
-        self.term_success_rate = torch.zeros(self.num_partitions, device=env.device)
-        self._sampling_cfg: SamplerCfg = cfg.params["sampling"]
-        if self._sampling_cfg.max_samples is None:
-            self._sampling_cfg.max_samples = env.num_envs
-
-        layout = StateLayout(
-            coords=torch.zeros(self.num_partitions, 1, device=env.device),
-            spawn_index=torch.arange(self.num_partitions, device=env.device, dtype=torch.long),
-            target_index=None,
-        )
-        self._sampler = self._sampling_cfg.class_type(
-            self._sampling_cfg, layout, env=env, success_rates=self.term_success_rate
-        )
-
-        # Need a monitor when the sampler has any non-uniform strategy,
-        # or when the user explicitly requested reporting.
-        needs_rates = any(name != "uniform" for name in self._sampler.names)
-        if cfg.params.get("report", False) or needs_rates:
-            monitor_cfg: SuccessMonitorCfg = cfg.params["success_monitor_cfg"]
-            monitor_cfg.num_monitored_data = self.num_partitions
-            monitor_cfg.device = env.device
-            monitor_cfg.max_updates = env.num_envs if monitor_cfg.max_updates is None else monitor_cfg.max_updates
-            self.success_monitor = monitor_cfg.class_type(monitor_cfg, self.term_success_rate)
-        else:
-            self.success_monitor = None
 
     def __call__(
         self,
         env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
-        terms: dict[str, ManagerTermBase],
-        sampling: SamplerCfg,
-        success_monitor_cfg: SuccessMonitorCfg,
-        report: bool = False,
+        terms: dict[str, EventTermCfg],
     ) -> None:
         if self.num_partitions == 0:
             return
-        if report:
-            log = {
-                f"Metrics/SuccessRate/{name}": self.term_success_rate[i].item()
-                for i, name in enumerate(self.term_partitions.keys())
-            }
-            log["Metrics/SuccessRate"] = self.term_success_rate.mean().item()
-        if self.success_monitor:
-            success = env.termination_manager.get_term_cfg("progress_context").func.is_success
-            self.success_monitor.success_update(self.term_samples[env_ids], success[env_ids])
-
-        num_samples = self._sampling_cfg.max_samples if self._sampling_cfg.warp else len(env_ids)
-        probs, choices = self._sampler.probabilities_and_sample(int(num_samples))
-        self.term_samples[env_ids] = choices[: len(env_ids)]
-        if report:
-            log.update(
-                {f"Metrics/SampleProb/{name}": probs[i].item() for i, name in enumerate(self.term_partitions.keys())}
-            )
-
-        for i, (_, term_cfg) in enumerate(self.term_partitions.items()):
+        self.term_samples[env_ids] = torch.randint(0, self.num_partitions, (len(env_ids),), device=env_ids.device)
+        for i, term_cfg in enumerate(self.term_partitions.values()):
             term_ids = env_ids[self.term_samples[env_ids] == i]
             if term_ids.numel() > 0:
                 term_cfg.func(env, term_ids, **term_cfg.params)
-
-        if report:
-            env.extras.setdefault("log", {}).update(log)
 
 
 class ChainedResetTerms(ManagerTermBase):

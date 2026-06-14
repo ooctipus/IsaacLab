@@ -271,19 +271,29 @@ def test_success_rate_sampler_binds_existing_source_tensors():
     assert result["success"].shape == ()
 
 
-def test_factory_sampler_config_lives_on_curriculum():
+def test_factory_sampler_config_lives_on_command_term():
     from isaaclab_tasks.core.multi_task.factory.config.agents.rsl_rl_ppo_cfg import ValueShiftAlgorithmCfg
-    from isaaclab_tasks.core.multi_task.factory.reset_env_cfg import (
-        ACCUMULATOR_RESET,
-        FACTORY_RESET_SAMPLER_PRESETS,
-    )
-    from isaaclab_tasks.core.multi_task.factory_env_cfg import FactoryCurriculumsCfg
+    from isaaclab_tasks.core.multi_task.factory.reset_env_cfg import FACTORY_RESET_SAMPLER_PRESETS
+    from isaaclab_tasks.core.multi_task.factory_env_cfg import FactoryCommandsCfg, FactoryCurriculumsCfg
 
+    commands = FactoryCommandsCfg()
     curriculum = FactoryCurriculumsCfg()
 
-    assert "sample_in_event" not in ACCUMULATOR_RESET.params
-    assert "sampling" not in ACCUMULATOR_RESET.params
+    assert list(commands.reset_state.commands.keys()) == ["assembly_asset"]
+    assert commands.reset_state.commands["assembly_asset"].position_threshold == 0.0025
+    assert commands.reset_state.commands["assembly_asset"].duration == (0.0, 1.0)
+    assert commands.reset_state.payload.reset_assets == ["nistboard", "fixed_asset", "held_asset", "robot"]
+    assert commands.reset_state.task_table.pipeline_cfg is not None
+    assert commands.reset_state.task_table.pipeline_cfg.variant == "nut_thread_m16"
+    assert commands.reset_state.task_table.settle_steps > 0
+    assert commands.reset_state.task_table.rows_per_board.default == 4
+    assert commands.reset_state.task_table.targets_per_board == 4
+    assert commands.reset_state.randomize_command_indices is False
     assert curriculum.reset_sampler.params["sampling"].default.eps == FACTORY_RESET_SAMPLER_PRESETS.default.eps
     assert len(curriculum.reset_sampler.params["sampling"].beta_value_shift.strategies) == 2
-    assert curriculum.reset_sampler.params["sample_indices_bind"].endswith(".sampled_slots")
+    assert curriculum.reset_sampler.params["sample_indices_bind"].endswith(".cmd_indices")
+    assert "command_manager.get_term('reset_state')" in curriculum.reset_sampler.params["success_rates_bind"]
+    assert curriculum.reset_sampler.params["layout"].target_index_bind is not None
+    value_shift_strategy = curriculum.reset_sampler.params["sampling"].beta_value_shift.strategies[1]
+    assert "command_manager.get_term('reset_state')" in value_shift_strategy.state_buffer_bind
     assert "curriculum_manager.get_term('reset_sampler')" in ValueShiftAlgorithmCfg().bind_observation_exp

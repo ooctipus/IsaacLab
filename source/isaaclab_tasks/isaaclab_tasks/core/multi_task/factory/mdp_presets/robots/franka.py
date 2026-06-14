@@ -19,6 +19,8 @@ from ...assembly_keypoints import PANDA_HAND
 from ...factory_assets_cfg import FRANKA_PANDA_NEWTON_CFG, FRANKA_PANDA_PHYSX_CFG
 from ...factory_presets import (
     EndEffectorBodyCfg,
+    FingerBodyNamesCfg,
+    GripperBodyNamesCfg,
     GripperGraspOffsetCfg,
     GripperJointNamesCfg,
     IKJointNamesCfg,
@@ -36,6 +38,8 @@ from .robot_presets import (
 
 EndEffectorBodyCfg.franka = "panda_fingertip_centered"
 GripperJointNamesCfg.franka = ["panda_finger.*"]
+FingerBodyNamesCfg.franka = ["panda_leftfinger", "panda_rightfinger"]
+GripperBodyNamesCfg.franka = ["panda_hand", "panda_leftfinger", "panda_rightfinger"]
 IKJointNamesCfg.franka = ["panda_joint.*"]
 GripperGraspOffsetCfg.franka = PANDA_HAND.gripper_center_grasp_point
 JointEffortNamesCfg.franka = "(?!panda_joint7$|panda_finger_.*$).*"
