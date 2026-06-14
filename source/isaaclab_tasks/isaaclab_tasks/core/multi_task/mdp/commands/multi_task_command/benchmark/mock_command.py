@@ -202,7 +202,7 @@ def build_mock_synthetic_readers(
     joint_names: list[str] | None = None,
 ) -> tuple:
     """Build fixed synthetic readers for each command buffer kind."""
-    from isaaclab_tasks.core.multi_task.mdp.commands.impl.kernels_torch import BUFFER_KIND
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.kernels_torch import BUFFER_KIND
 
     nb = len(body_names if body_names is not None else _ANYMAL_BODY_NAMES)
     nj = len(joint_names if joint_names is not None else _ANYMAL_JOINT_NAMES)
@@ -234,13 +234,16 @@ def _build_shared_direct_tasks():
     """Build a high-fanout public-command workload over existing state kernels."""
     from isaaclab.managers import SceneEntityCfg
 
-    from isaaclab_tasks.core.multi_task.mdp.commands.impl.kernels_torch import (
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.kernels_torch import (
         ACTIVATION_KERNEL_ID,
         METRIC_KERNEL_ID,
         SAMPLER_KERNEL_ID,
         STATE_KERNEL_ID,
     )
-    from isaaclab_tasks.core.multi_task.mdp.commands.impl.multi_task_cfg import MinMaxSampler, MultiTaskCfg
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.multi_task_cfg import (
+        MinMaxSampler,
+        MultiTaskCfg,
+    )
 
     base = SceneEntityCfg("robot", body_names="base")
     subtasks = []
@@ -316,13 +319,16 @@ def _build_future_synthetic_tasks(*, interleave: bool = False):
     """Build a wide public-command workload over production state kernels."""
     from isaaclab.managers import SceneEntityCfg
 
-    from isaaclab_tasks.core.multi_task.mdp.commands.impl.kernels_torch import (
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.kernels_torch import (
         ACTIVATION_KERNEL_ID,
         METRIC_KERNEL_ID,
         SAMPLER_KERNEL_ID,
         STATE_KERNEL_ID,
     )
-    from isaaclab_tasks.core.multi_task.mdp.commands.impl.multi_task_cfg import MinMaxSampler, MultiTaskCfg
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.multi_task_cfg import (
+        MinMaxSampler,
+        MultiTaskCfg,
+    )
 
     base = SceneEntityCfg("robot", body_names="base")
     robot = SceneEntityCfg("robot")
@@ -400,7 +406,7 @@ def _build_future_synthetic_tasks(*, interleave: bool = False):
 def build_mock_command(num_envs: int, device: str, dispatch_backend: str, preset: str | None = None):
     """Construct a real command term against a mocked env and synthetic readers."""
     from isaaclab_tasks.core.multi_task.mdp.commands import multi_task_command as mtc_mod
-    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command import MultiTaskCommand
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.multi_task_command import MultiTaskCommand
     from isaaclab_tasks.core.multi_task.multi_task_env_cfg import MultiTaskEnvCfg
     from isaaclab_tasks.core.multi_task.terrain.mdp_presets.multitask_presets import MultiTaskTasksPresetCfg
     from isaaclab_tasks.utils import resolve_presets

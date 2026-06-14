@@ -28,17 +28,17 @@ import warp as wp
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils.warp import ProxyArray
 
-from isaaclab_tasks.core.multi_task.mdp.commands.impl.kernels_torch import (
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.kernels_torch import (
     ACTIVATION_KERNEL_ID,
     METRIC_KERNEL_ID,
     SAMPLER_KERNEL_ID,
     STATE_KERNEL_ID,
 )
-from isaaclab_tasks.core.multi_task.mdp.commands.impl.multi_task_cfg import (
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.multi_task_cfg import (
     MinMaxSampler,
     MultiTaskCfg,
 )
-from isaaclab_tasks.core.multi_task.mdp.commands.impl.schedules import (
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.schedules import (
     SCHEDULE_DIRECT_QUAT_DELTA,
     SCHEDULE_DIRECT_SCALAR_DELTA,
     SCHEDULE_DIRECT_VEC3_DELTA,
@@ -47,7 +47,7 @@ from isaaclab_tasks.core.multi_task.mdp.commands.impl.schedules import (
     SCHEDULE_VEC3_THRESHOLD_SUM_DELTA,
     SCHEDULE_VEC3_THRESHOLD_VECTOR_DELTA,
 )
-from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command import MultiTaskCommand
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.multi_task_command import MultiTaskCommand
 
 _NEED_CUDA = pytest.mark.skipif(not torch.cuda.is_available(), reason="Warp mega-kernel requires CUDA")
 

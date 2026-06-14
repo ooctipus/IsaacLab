@@ -47,7 +47,7 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_tasks.core.multi_task.mdp.commands.impl.multi_task_cfg import MultiTaskCfg
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.multi_task_cfg import MultiTaskCfg
 from isaaclab_tasks.utils import PresetCfg
 
 import isaaclab_assets.robots.anymal as anymal
@@ -174,7 +174,7 @@ class MultiTaskEventsCfg:
 class MultiTaskRewardsCfg:
     """Two reward terms only — soft-safety constraints (undesired-contact and
     mechanical-power) are folded into the composer as multiplicative
-    :class:`~isaaclab_tasks.core.multi_task.mdp.commands.impl.multi_task_cfg.MultiTaskCfg.TrackingTaskCfg`
+    :class:`~isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.multi_task_cfg.MultiTaskCfg.TrackingTaskCfg`
     subtasks declared with ``expose_in_obs=False``, rather than per-step shaping.
 
     Why no per-step ``undesired_contact`` / ``mech_work`` here: per-step
@@ -183,7 +183,7 @@ class MultiTaskRewardsCfg:
     invert success preference when the penalty exceeds the gain. The
     multiplicative form ``G · ∏ safety_factor_k`` discounts the terminal
     smoothly while keeping ``G ∈ [0, 1]`` — see the design rationale in
-    :func:`~isaaclab_tasks.core.multi_task.mdp.commands.reward_composer.multiplicative_terminal_reward`.
+    :func:`~isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.reward_composer.multiplicative_terminal_reward`.
     The two soft-safety subtasks (``UNDESIRED_CONTACT_SAFETY``,
     ``MECH_POWER_SAFETY`` in :mod:`.terrain.tasks_cfg`) are attached to
     every task via :func:`.terrain.mdp_presets.multitask_presets._with_safety`.
