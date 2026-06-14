@@ -14,12 +14,12 @@ import torch
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
-    from .commands import RelativeStateCommand
+    from ...mdp.commands.state_command import StateCommand
 
 
 def success_terminate(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> torch.Tensor:
     """Episode-success termination: fires when the goal-tracking command reports done."""
-    command_term: RelativeStateCommand = env.command_manager.get_term(command_name)
+    command_term: StateCommand = env.command_manager.get_term(command_name)
     return command_term.get_task_done()
 
 

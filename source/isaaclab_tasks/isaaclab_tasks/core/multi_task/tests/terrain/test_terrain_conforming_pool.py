@@ -79,10 +79,10 @@ def pipeline_cfg():
 @pytest.fixture(scope="module")
 def simple_commands():
     """Minimal command dict for testing."""
-    from isaaclab_tasks.core.multi_task.terrain.mdp.commands.commands_cfg import RelativeStateCommandCfg
+    from isaaclab_tasks.core.multi_task.terrain.mdp.commands.commands_cfg import TerrainCommands
 
     return {
-        "walk": RelativeStateCommandCfg.TerrainCommands(
+        "walk": TerrainCommands(
             match_base_pos=True,
             match_base_rot=False,
             duration=(2.0, 2.0),

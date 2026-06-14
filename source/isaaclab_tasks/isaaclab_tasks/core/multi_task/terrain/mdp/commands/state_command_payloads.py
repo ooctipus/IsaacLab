@@ -3,10 +3,17 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Semantic workers for :class:`RelativeStateCommand`.
+"""Semantic workers for the unified :class:`~...mdp.commands.StateCommand`.
 
-Payloads interpret gathered task rows and mutate command-owned buffers with
-payload-specific reset/update/debug semantics.
+A payload owns its own lifecycle buffers and interprets gathered task rows: it
+writes the per-env target, computes the policy observation + error, advances the
+hold timer / success, reports thresholds, aggregates curriculum metrics, and
+draws debug markers. The command shell only selects task rows and routes origin
+framing.
+
+The two payloads here share :class:`CommandPayloadBase` (the ``cmd_buf`` lifecycle
++ success/threshold/metric/debug machinery) and differ only in target writing,
+delta/error computation, and the per-env state views.
 """
 
 from __future__ import annotations
@@ -28,36 +35,163 @@ from isaaclab.utils.math import (
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
 
-    from .commands_cfg import RelativeStateCommandCfg
+    from ....mdp.commands.state_command_cfg import StateCommandCfg
     from .task_table_builder import RelativeStateTaskTable
 
 
-class CommandPayloadBaseState:
-    """Base-state command semantics.
+class CommandPayloadBase:
+    """Shared ``cmd_buf`` lifecycle for relative-state payloads.
 
-    This payload writes root-state targets and computes root-state deltas,
-    policy observations, errors, success, and debug markers.
+    Owns the per-env command buffer ``cmd_buf[N, 3, state_dim]`` (slot 0 target,
+    1 delta, 2 current), the active-channel mask, the per-env command-type id,
+    success/threshold readout, curriculum metric aggregation, and debug
+    visualization. Subclasses set the dimensions + ``reward_scales`` and override
+    target writing (:meth:`resample`), delta/error (:meth:`update`), the per-env
+    state views, and :meth:`debug_visualize`.
     """
+
+    def __init__(self, cfg: StateCommandCfg, env: ManagerBasedEnv, table: RelativeStateTaskTable):
+        self._cfg = cfg
+        self.table = table
+        self.device = env.device
+        self.num_envs = env.num_envs
+        self._command_names = list(cfg.commands.keys())
+
+    def _alloc_lifecycle(self) -> None:
+        """Allocate the shared buffers once dimensions are known (subclass calls this)."""
+        self.cmd_buf = torch.zeros(self.num_envs, 3, self.state_dim, device=self.device).contiguous()
+        self.cmd_buf[:, 1] = 1.0
+        self.cmd_mask = torch.zeros(self.num_envs, self.mask_dim, device=self.device, dtype=torch.bool)
+        self.cmd_ids = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+        self._success_per_cmd = torch.zeros(self.table.kind.shape[0], device=self.device)
+
+    def _store_task_selection(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
+        """Record the per-env command-type id (CSR bucket) and active-channel mask."""
+        self.cmd_ids[env_ids] = torch.bucketize(task_rows, self.table.offsets[1:-1], right=True)
+        self.cmd_mask.index_copy_(0, env_ids, self.table.task_mask[task_rows])
+
+    @property
+    def target_state(self) -> torch.Tensor:
+        """Per-env target state rows ``cmd_buf[:, 0]``."""
+        return self.cmd_buf[:, 0]
+
+    def command_std(self) -> torch.Tensor:
+        """Per-env success thresholds for the currently-bound command ids."""
+        return self.reward_scales[self.cmd_ids]
+
+    def success(self, error: torch.Tensor, cmd_ids: torch.Tensor) -> torch.Tensor:
+        """Return per-env success from command-owned error."""
+        return torch.all(error < self.reward_scales[cmd_ids], dim=1)
+
+    def get_task_done(self) -> torch.Tensor:
+        """Per-env done: the hold timer has fully drained."""
+        return self.cmd_buf[:, 1, self.time_idx] <= 0.0
+
+    def get_task_reward(self) -> torch.Tensor:
+        """Per-env terminal reward: 1 when done, else 0."""
+        return (self.cmd_buf[:, 1, self.time_idx] <= 0.0).float()
+
+    def log_metrics(self, env: ManagerBasedEnv, success_rates: torch.Tensor) -> None:
+        """Aggregate the per-task success rate into per-command-type log entries."""
+        log = env.extras.setdefault("log", {})
+        for cmd_id, name in enumerate(self._command_names):
+            start = int(self.table.offsets[cmd_id].item())
+            end = int(self.table.offsets[cmd_id + 1].item())
+            self._success_per_cmd[cmd_id] = success_rates[start:end].mean() if end > start else 0.0
+            log["Metrics/goal_point/success_rate_" + name] = self._success_per_cmd[cmd_id].item()
+
+    def set_debug_vis(self, debug_vis: bool) -> None:
+        """Create (lazily) and toggle the goal + current-velocity visualizers."""
+        if debug_vis:
+            from isaaclab.markers import VisualizationMarkers
+
+            if not hasattr(self, "goal_visualizer"):
+                self.goal_visualizer = VisualizationMarkers(self._cfg.payload.goal_visualizer_cfg)
+            if not hasattr(self, "current_vel_visualizer"):
+                self.current_vel_visualizer = VisualizationMarkers(self._cfg.payload.current_vel_visualizer_cfg)
+            self.goal_visualizer.set_visibility(True)
+            self.current_vel_visualizer.set_visibility(True)
+        else:
+            if hasattr(self, "goal_visualizer"):
+                self.goal_visualizer.set_visibility(False)
+            if hasattr(self, "current_vel_visualizer"):
+                self.current_vel_visualizer.set_visibility(False)
+
+    def _draw_current_velocity(self) -> None:
+        """Draw the current base-velocity arrow (shared across payloads)."""
+        base_pos_w = wp.to_torch(self.robot.data.root_pos_w).clone()
+        base_pos_w[:, 2] += 0.5
+        xy_velocity = wp.to_torch(self.robot.data.root_lin_vel_b)[:, :2]
+        scale = torch.tensor(self.current_vel_visualizer.cfg.markers["arrow"].scale, device=self.device).repeat(
+            xy_velocity.shape[0], 1
+        )
+        scale[:, 0] *= torch.linalg.norm(xy_velocity, dim=1) * 3.0
+        heading_angle = torch.atan2(xy_velocity[:, 1], xy_velocity[:, 0])
+        zeros = torch.zeros_like(heading_angle)
+        quat = quat_mul(wp.to_torch(self.robot.data.root_quat_w), quat_from_euler_xyz(zeros, zeros, heading_angle))
+        self.current_vel_visualizer.visualize(base_pos_w, quat, scale)
+
+    def _draw_base_goal_markers(self, env: ManagerBasedEnv) -> tuple[list, list, list, list]:
+        """Build the shared pos/pose/vel goal marker batches (foot markers added by subclass)."""
+        identity_quat = torch.zeros(self.num_envs, 4, device=self.device)
+        identity_quat[:, 3] = 1.0
+        kinds = self.table.kind[self.cmd_ids]
+        pos_task_ids = env.scene._ALL_INDICES[kinds == 0]
+        pose_task_ids = env.scene._ALL_INDICES[kinds == 1]
+        vel_task_ids = env.scene._ALL_INDICES[kinds == 2]
+
+        translations, orientations, scales, marker_indices = [], [], [], []
+        if len(pos_task_ids) > 0:
+            goal_pos = self.cmd_buf[pos_task_ids, 0, :3].clone()
+            goal_pos[:, 2] += 0.5
+            translations.append(goal_pos)
+            orientations.append(identity_quat[: len(pos_task_ids)])
+            scales.append(torch.tensor((1.0, 1.0, 1.0), device=self.device).repeat(len(pos_task_ids), 1))
+            marker_indices.append(torch.full((len(pos_task_ids),), 1, device=self.device, dtype=torch.long))
+        if len(pose_task_ids) > 0:
+            goal_pos = self.cmd_buf[pose_task_ids, 0, :3].clone()
+            goal_pos[:, 2] += 0.5
+            translations.append(goal_pos)
+            euler = self.cmd_buf[pose_task_ids, 0, 3:6]
+            orientations.append(quat_from_euler_xyz(euler[:, 0], euler[:, 1], euler[:, 2]))
+            scales.append(torch.tensor((1.0, 1.0, 1.0), device=self.device).repeat(len(pose_task_ids), 1))
+            marker_indices.append(torch.full((len(pose_task_ids),), 2, device=self.device, dtype=torch.long))
+        if len(vel_task_ids) > 0:
+            base_pos_w = wp.to_torch(self.robot.data.root_pos_w)[vel_task_ids].clone()
+            base_pos_w[:, 2] += 0.5
+            xy_cmd = self.cmd_buf[vel_task_ids, 0, 6:8]
+            scale = torch.tensor(self.goal_visualizer.cfg.markers["vel_arrow"].scale, device=self.device).repeat(
+                len(vel_task_ids), 1
+            )
+            scale[:, 0] *= torch.linalg.norm(xy_cmd, dim=1) * 3.0
+            heading_angle = torch.atan2(xy_cmd[:, 1], xy_cmd[:, 0])
+            zeros = torch.zeros_like(heading_angle)
+            quat = quat_mul(identity_quat[: len(vel_task_ids)], quat_from_euler_xyz(zeros, zeros, heading_angle))
+            translations.append(base_pos_w)
+            orientations.append(quat)
+            scales.append(scale)
+            marker_indices.append(torch.zeros((len(vel_task_ids),), device=self.device, dtype=torch.long))
+        return translations, orientations, scales, marker_indices
+
+
+class CommandPayloadBaseState(CommandPayloadBase):
+    """Base-state command semantics: root-state targets, deltas, observation, error, success."""
 
     error_names = ("error_pos", "error_rot", "error_linvel", "error_angvel")
     error_dim = 4
 
-    def __init__(
-        self,
-        cfg: RelativeStateCommandCfg,
-        env: ManagerBasedEnv,
-        table: RelativeStateTaskTable,
-    ):
+    def __init__(self, cfg: StateCommandCfg, env: ManagerBasedEnv, table: RelativeStateTaskTable):
+        super().__init__(cfg, env, table)
         if cfg.task_table.pipeline_cfg.asset_cfg is None:
             raise ValueError("CommandPayloadBaseState requires cfg.task_table.pipeline_cfg.asset_cfg.")
         robot = env.scene[cfg.task_table.pipeline_cfg.asset_cfg.name]
         device = env.device
         self.robot = robot
-        self.table = table
         self.reset_assets = [cfg.task_table.pipeline_cfg.asset_cfg.name]
         self.command_dim = 12
         self.state_dim = 12 + robot.num_joints + 1
         self.mask_dim = 12 + robot.num_joints
+        self.num_joints = robot.num_joints
         self.time_idx = 12 + robot.num_joints
         self.cmd_joint_pos_slice = slice(12, 12 + robot.num_joints)
         self.reset_joint_pos_slice = slice(13, 13 + robot.num_joints)
@@ -80,17 +214,22 @@ class CommandPayloadBaseState:
             obs_inv_scales[:, col : col + width] = reward_scales[:, group_idx : group_idx + 1].reciprocal()
             col += width
         self.obs_inv_unit_scales = obs_inv_scales
+        self._alloc_lifecycle()
 
     def resample(
         self,
         env_ids: torch.Tensor,
         task_rows: torch.Tensor,
         target_states: torch.Tensor,
-        cmd_buf: torch.Tensor,
+        target_origin: torch.Tensor | None,
     ) -> None:
         """Write target state for selected rows."""
+        self._store_task_selection(env_ids, task_rows)
+        if target_origin is not None:
+            target_states = target_states.clone()
+            target_states[:, :3] += target_origin
         num_resets = env_ids.numel()
-        target_cmd = torch.empty(num_resets, self.state_dim, device=cmd_buf.device)
+        target_cmd = torch.empty(num_resets, self.state_dim, device=self.cmd_buf.device)
         task_params = self.table.params[task_rows]
         uses_terrain_target = self.table.payload_flags[task_rows, 0]
 
@@ -113,19 +252,14 @@ class CommandPayloadBaseState:
                 target_cmd[terrain_local_ids, 5] = yaw
         target_cmd[:, self.time_idx].copy_(task_params[:, 12])
 
-        cmd_buf[:, 0].index_copy_(0, env_ids, target_cmd)
-        cmd_buf[:, 2, self.time_idx].index_fill_(0, env_ids, 0.0)
+        self.cmd_buf[:, 0].index_copy_(0, env_ids, target_cmd)
+        self.cmd_buf[:, 2, self.time_idx].index_fill_(0, env_ids, 0.0)
 
-    def update(
-        self,
-        cmd_ids: torch.Tensor,
-        step_dt: float,
-        cmd_buf: torch.Tensor,
-        cmd_mask: torch.Tensor,
-        command_obs: torch.Tensor,
-        error: torch.Tensor,
-    ) -> None:
+    def update(self, step_dt: float, command_obs: torch.Tensor, error: torch.Tensor) -> None:
         """Update current state, delta, observation, error, and hold progress."""
+        cmd_buf = self.cmd_buf
+        cmd_mask = self.cmd_mask
+        cmd_ids = self.cmd_ids
         current = cmd_buf[:, 2]
         target = cmd_buf[:, 0]
         delta = cmd_buf[:, 1]
@@ -165,117 +299,38 @@ class CommandPayloadBaseState:
         current[:, self.time_idx] += step_dt * self.success(error, cmd_ids)
         torch.sub(target[:, self.time_idx], current[:, self.time_idx], out=delta[:, self.time_idx])
 
-    def success(self, error: torch.Tensor, cmd_ids: torch.Tensor) -> torch.Tensor:
-        """Return per-env success from command-owned error."""
-        return torch.all(error < self.reward_scales[cmd_ids], dim=1)
-
-    def command_std(self, cmd_ids: torch.Tensor) -> torch.Tensor:
-        """Return per-env success thresholds for active command ids."""
-        return self.reward_scales[cmd_ids]
-
-    def current_state_env(self, current: torch.Tensor, env_origins: torch.Tensor) -> torch.Tensor:
+    def current_state_env(self, env_origins: torch.Tensor) -> torch.Tensor:
         """Return current root state in the per-env local frame."""
+        current = self.cmd_buf[:, 2]
         return torch.cat([current[:, :3] - env_origins, current[:, 3:12]], dim=-1)
 
-    def target_state_env(self, target: torch.Tensor, env_origins: torch.Tensor) -> torch.Tensor:
+    def target_state_env(self, env_origins: torch.Tensor) -> torch.Tensor:
         """Return target root state in the per-env local frame."""
+        target = self.cmd_buf[:, 0]
         return torch.cat([target[:, :3] - env_origins, target[:, 3:12]], dim=-1)
 
-    def debug_visualize(
-        self,
-        env,
-        cmd_ids: torch.Tensor,
-        cmd_buf: torch.Tensor,
-        goal_visualizer,
-        current_vel_visualizer,
-    ) -> None:
+    def debug_visualize(self, env: ManagerBasedEnv) -> None:
         """Draw payload-specific target and current-velocity debug markers."""
         if not self.robot.is_initialized:
             return
-        table = self.table
-        device = cmd_buf.device
-        identity_quat = torch.zeros(cmd_buf.shape[0], 4, device=device)
-        identity_quat[:, 3] = 1.0
-        kinds = table.kind[cmd_ids]
-        pos_task_ids = env.scene._ALL_INDICES[kinds == 0]
-        pose_task_ids = env.scene._ALL_INDICES[kinds == 1]
-        vel_task_ids = env.scene._ALL_INDICES[kinds == 2]
-
-        goal_translations = []
-        goal_orientations = []
-        goal_scales = []
-        goal_marker_indices = []
-
-        if len(pos_task_ids) > 0:
-            goal_pos = cmd_buf[pos_task_ids, 0, :3].clone()
-            goal_pos[:, 2] += 0.5
-            goal_translations.append(goal_pos)
-            goal_orientations.append(identity_quat[: len(pos_task_ids)])
-            goal_scales.append(torch.tensor((1.0, 1.0, 1.0), device=device).repeat(len(pos_task_ids), 1))
-            goal_marker_indices.append(torch.full((len(pos_task_ids),), 1, device=device, dtype=torch.long))
-
-        if len(pose_task_ids) > 0:
-            goal_pos = cmd_buf[pose_task_ids, 0, :3].clone()
-            goal_pos[:, 2] += 0.5
-            goal_translations.append(goal_pos)
-            euler = cmd_buf[pose_task_ids, 0, 3:6]
-            quat = quat_from_euler_xyz(euler[:, 0], euler[:, 1], euler[:, 2])
-            goal_orientations.append(quat)
-            goal_scales.append(torch.tensor((1.0, 1.0, 1.0), device=device).repeat(len(pose_task_ids), 1))
-            goal_marker_indices.append(torch.full((len(pose_task_ids),), 2, device=device, dtype=torch.long))
-
-        if len(vel_task_ids) > 0:
-            base_pos_w = wp.to_torch(self.robot.data.root_pos_w)[vel_task_ids].clone()
-            base_pos_w[:, 2] += 0.5
-            xy_cmd = cmd_buf[vel_task_ids, 0, 6:8]
-            scale = torch.tensor(goal_visualizer.cfg.markers["vel_arrow"].scale, device=device).repeat(
-                len(vel_task_ids), 1
-            )
-            scale[:, 0] *= torch.linalg.norm(xy_cmd, dim=1) * 3.0
-            heading_angle = torch.atan2(xy_cmd[:, 1], xy_cmd[:, 0])
-            zeros = torch.zeros_like(heading_angle)
-            quat = quat_mul(identity_quat[: len(vel_task_ids)], quat_from_euler_xyz(zeros, zeros, heading_angle))
-            goal_translations.append(base_pos_w)
-            goal_orientations.append(quat)
-            goal_scales.append(scale)
-            goal_marker_indices.append(torch.zeros((len(vel_task_ids),), device=device, dtype=torch.long))
-
-        goal_visualizer.visualize(
-            translations=torch.cat(goal_translations, dim=0),
-            orientations=torch.cat(goal_orientations, dim=0),
-            scales=torch.cat(goal_scales, dim=0),
-            marker_indices=torch.cat(goal_marker_indices, dim=0),
+        translations, orientations, scales, marker_indices = self._draw_base_goal_markers(env)
+        self.goal_visualizer.visualize(
+            translations=torch.cat(translations, dim=0),
+            orientations=torch.cat(orientations, dim=0),
+            scales=torch.cat(scales, dim=0),
+            marker_indices=torch.cat(marker_indices, dim=0),
         )
-
-        base_pos_w = wp.to_torch(self.robot.data.root_pos_w).clone()
-        base_pos_w[:, 2] += 0.5
-        xy_velocity = wp.to_torch(self.robot.data.root_lin_vel_b)[:, :2]
-        scale = torch.tensor(current_vel_visualizer.cfg.markers["arrow"].scale, device=device).repeat(
-            xy_velocity.shape[0], 1
-        )
-        scale[:, 0] *= torch.linalg.norm(xy_velocity, dim=1) * 3.0
-        heading_angle = torch.atan2(xy_velocity[:, 1], xy_velocity[:, 0])
-        zeros = torch.zeros_like(heading_angle)
-        quat = quat_mul(wp.to_torch(self.robot.data.root_quat_w), quat_from_euler_xyz(zeros, zeros, heading_angle))
-        current_vel_visualizer.visualize(base_pos_w, quat, scale)
+        self._draw_current_velocity()
 
 
-class CommandPayloadBaseFootState:
-    """Base-state and target-foot command semantics.
-
-    This payload reads live robot state, interprets task rows, and writes
-    target/current/delta/observation and error tensors.
-    """
+class CommandPayloadBaseFootState(CommandPayloadBase):
+    """Base-state and target-foot command semantics."""
 
     error_names = ("error_pos", "error_rot", "error_linvel", "error_angvel", "error_foot_pos")
     error_dim = 5
 
-    def __init__(
-        self,
-        cfg: RelativeStateCommandCfg,
-        env: ManagerBasedEnv,
-        table: RelativeStateTaskTable,
-    ):
+    def __init__(self, cfg: StateCommandCfg, env: ManagerBasedEnv, table: RelativeStateTaskTable):
+        super().__init__(cfg, env, table)
         if cfg.task_table.pipeline_cfg.asset_cfg is None:
             raise ValueError("CommandPayloadBaseFootState requires cfg.task_table.pipeline_cfg.asset_cfg.")
         robot = env.scene[cfg.task_table.pipeline_cfg.asset_cfg.name]
@@ -290,9 +345,7 @@ class CommandPayloadBaseFootState:
         num_joints = robot.num_joints
         payload_cfg = cfg.payload
         self.robot = robot
-        self.table = table
         self.reset_assets = [cfg.task_table.pipeline_cfg.asset_cfg.name]
-        self.num_envs = env.num_envs
         self.num_joints = num_joints
         self.foot_body_ids = table.foot_body_ids
         self.newton_foot_body_ids = table.newton_foot_body_ids
@@ -304,7 +357,6 @@ class CommandPayloadBaseFootState:
         self.joint_pos_slice = slice(13, 13 + num_joints)
         self.isaac_to_newton_joint_order = table.isaac_to_newton_joint_order
         self.target_fk_kin = table.target_fk_kin
-        self.device = device
 
         std_attrs = ("pos_std", "rot_std", "lin_vel_std", "ang_vel_std")
         global_stds = (payload_cfg.pos_std, payload_cfg.rot_std, payload_cfg.lin_vel_std, payload_cfg.ang_vel_std)
@@ -343,15 +395,20 @@ class CommandPayloadBaseFootState:
         self._target_fk_body_qd = wp.zeros(
             (env.num_envs, int(model.body_count)), dtype=wp.spatial_vectorf, device=device
         )
+        self._alloc_lifecycle()
 
     def resample(
         self,
         env_ids: torch.Tensor,
         task_rows: torch.Tensor,
         target_states: torch.Tensor,
-        cmd_buf: torch.Tensor,
+        target_origin: torch.Tensor | None,
     ) -> None:
         """Write target state for selected rows."""
+        self._store_task_selection(env_ids, task_rows)
+        if target_origin is not None:
+            target_states = target_states.clone()
+            target_states[:, :3] += target_origin
         num_resets = env_ids.numel()
         target_cmd = torch.empty(num_resets, self.state_dim, device=self.device)
         task_params = self.table.params[task_rows]
@@ -376,8 +433,8 @@ class CommandPayloadBaseFootState:
                 target_cmd[terrain_local_ids, 4] = pitch
                 target_cmd[terrain_local_ids, 5] = yaw
         target_cmd[:, self.time_idx].copy_(task_params[:, 12])
-        cmd_buf[:, 0].index_copy_(0, env_ids, target_cmd)
-        cmd_buf[:, 2, self.time_idx].index_fill_(0, env_ids, 0.0)
+        self.cmd_buf[:, 0].index_copy_(0, env_ids, target_cmd)
+        self.cmd_buf[:, 2, self.time_idx].index_fill_(0, env_ids, 0.0)
 
         target_foot_pos = self._target_foot_pos_resample[:num_resets]
         if bool(uses_foot_target.any()):
@@ -404,16 +461,11 @@ class CommandPayloadBaseFootState:
         self.target_foot_pos_w.index_copy_(0, env_ids, target_foot_pos)
         self.foot_success_mask.index_copy_(0, env_ids, uses_foot_target)
 
-    def update(
-        self,
-        cmd_ids: torch.Tensor,
-        step_dt: float,
-        cmd_buf: torch.Tensor,
-        cmd_mask: torch.Tensor,
-        command_obs: torch.Tensor,
-        error: torch.Tensor,
-    ) -> None:
+    def update(self, step_dt: float, command_obs: torch.Tensor, error: torch.Tensor) -> None:
         """Update current state, delta, observation, error, and hold progress."""
+        cmd_buf = self.cmd_buf
+        cmd_mask = self.cmd_mask
+        cmd_ids = self.cmd_ids
         current = cmd_buf[:, 2]
         target = cmd_buf[:, 0]
         delta = cmd_buf[:, 1]
@@ -482,110 +534,40 @@ class CommandPayloadBaseFootState:
         current[:, self.time_idx] += step_dt * self.success(error, cmd_ids)
         torch.sub(target[:, self.time_idx], current[:, self.time_idx], out=delta[:, self.time_idx])
 
-    def success(self, error: torch.Tensor, cmd_ids: torch.Tensor) -> torch.Tensor:
-        """Return per-env success from command-owned error."""
-        return torch.all(error < self.reward_scales[cmd_ids], dim=1)
-
-    def command_std(self, cmd_ids: torch.Tensor) -> torch.Tensor:
-        """Return per-env success thresholds for active command ids."""
-        return self.reward_scales[cmd_ids]
-
-    def current_state_env(self, current: torch.Tensor, env_origins: torch.Tensor) -> torch.Tensor:
+    def current_state_env(self, env_origins: torch.Tensor) -> torch.Tensor:
         """Return current root and foot state in the per-env local frame."""
+        current = self.cmd_buf[:, 2]
         pos_local = current[:, :3] - env_origins
         foot_pos_local = (self.current_foot_pos_w - env_origins[:, None, :]).flatten(1)
         return torch.cat([pos_local, current[:, 3:12], foot_pos_local], dim=-1)
 
-    def target_state_env(self, target: torch.Tensor, env_origins: torch.Tensor) -> torch.Tensor:
+    def target_state_env(self, env_origins: torch.Tensor) -> torch.Tensor:
         """Return target root and foot state in the per-env local frame."""
+        target = self.cmd_buf[:, 0]
         pos_local = target[:, :3] - env_origins
         foot_pos_local = (self.target_foot_pos_w - env_origins[:, None, :]).flatten(1)
         return torch.cat([pos_local, target[:, 3:12], foot_pos_local], dim=-1)
 
-    def debug_visualize(
-        self,
-        env,
-        cmd_ids: torch.Tensor,
-        cmd_buf: torch.Tensor,
-        goal_visualizer,
-        current_vel_visualizer,
-    ) -> None:
-        """Draw payload-specific target and current-velocity debug markers."""
+    def debug_visualize(self, env: ManagerBasedEnv) -> None:
+        """Draw payload-specific target, foot-target, and current-velocity markers."""
         if not self.robot.is_initialized:
             return
-        table = self.table
-        target_foot_pos_w = self.target_foot_pos_w
-        foot_success_mask = self.foot_success_mask
+        translations, orientations, scales, marker_indices = self._draw_base_goal_markers(env)
         identity_quat = torch.zeros(self.num_envs, 4, device=self.device)
         identity_quat[:, 3] = 1.0
-        kinds = table.kind[cmd_ids]
-        pos_task_ids = env.scene._ALL_INDICES[kinds == 0]
-        pose_task_ids = env.scene._ALL_INDICES[kinds == 1]
-        vel_task_ids = env.scene._ALL_INDICES[kinds == 2]
-
-        goal_translations = []
-        goal_orientations = []
-        goal_scales = []
-        goal_marker_indices = []
-
-        if len(pos_task_ids) > 0:
-            goal_pos = cmd_buf[pos_task_ids, 0, :3].clone()
-            goal_pos[:, 2] += 0.5
-            goal_translations.append(goal_pos)
-            goal_orientations.append(identity_quat[: len(pos_task_ids)])
-            goal_scales.append(torch.tensor((1.0, 1.0, 1.0), device=self.device).repeat(len(pos_task_ids), 1))
-            goal_marker_indices.append(torch.full((len(pos_task_ids),), 1, device=self.device, dtype=torch.long))
-
-        if len(pose_task_ids) > 0:
-            goal_pos = cmd_buf[pose_task_ids, 0, :3].clone()
-            goal_pos[:, 2] += 0.5
-            goal_translations.append(goal_pos)
-            euler = cmd_buf[pose_task_ids, 0, 3:6]
-            quat = quat_from_euler_xyz(euler[:, 0], euler[:, 1], euler[:, 2])
-            goal_orientations.append(quat)
-            goal_scales.append(torch.tensor((1.0, 1.0, 1.0), device=self.device).repeat(len(pose_task_ids), 1))
-            goal_marker_indices.append(torch.full((len(pose_task_ids),), 2, device=self.device, dtype=torch.long))
-
-        if len(vel_task_ids) > 0:
-            base_pos_w = wp.to_torch(self.robot.data.root_pos_w)[vel_task_ids].clone()
-            base_pos_w[:, 2] += 0.5
-            xy_cmd = cmd_buf[vel_task_ids, 0, 6:8]
-            scale = torch.tensor(goal_visualizer.cfg.markers["vel_arrow"].scale, device=self.device).repeat(
-                len(vel_task_ids), 1
-            )
-            scale[:, 0] *= torch.linalg.norm(xy_cmd, dim=1) * 3.0
-            heading_angle = torch.atan2(xy_cmd[:, 1], xy_cmd[:, 0])
-            zeros = torch.zeros_like(heading_angle)
-            quat = quat_mul(identity_quat[: len(vel_task_ids)], quat_from_euler_xyz(zeros, zeros, heading_angle))
-            goal_translations.append(base_pos_w)
-            goal_orientations.append(quat)
-            goal_scales.append(scale)
-            goal_marker_indices.append(torch.zeros((len(vel_task_ids),), device=self.device, dtype=torch.long))
-
-        foot_active_ids = env.scene._ALL_INDICES[foot_success_mask]
+        foot_active_ids = env.scene._ALL_INDICES[self.foot_success_mask]
         if len(foot_active_ids) > 0:
-            foot_pos_w = target_foot_pos_w[foot_active_ids].reshape(-1, 3)
+            foot_pos_w = self.target_foot_pos_w[foot_active_ids].reshape(-1, 3)
             n_markers = foot_pos_w.shape[0]
-            goal_translations.append(foot_pos_w)
-            goal_orientations.append(identity_quat[:1].expand(n_markers, -1))
-            goal_scales.append(torch.tensor((1.0, 1.0, 1.0), device=self.device).repeat(n_markers, 1))
-            goal_marker_indices.append(torch.full((n_markers,), 3, device=self.device, dtype=torch.long))
+            translations.append(foot_pos_w)
+            orientations.append(identity_quat[:1].expand(n_markers, -1))
+            scales.append(torch.tensor((1.0, 1.0, 1.0), device=self.device).repeat(n_markers, 1))
+            marker_indices.append(torch.full((n_markers,), 3, device=self.device, dtype=torch.long))
 
-        goal_visualizer.visualize(
-            translations=torch.cat(goal_translations, dim=0),
-            orientations=torch.cat(goal_orientations, dim=0),
-            scales=torch.cat(goal_scales, dim=0),
-            marker_indices=torch.cat(goal_marker_indices, dim=0),
+        self.goal_visualizer.visualize(
+            translations=torch.cat(translations, dim=0),
+            orientations=torch.cat(orientations, dim=0),
+            scales=torch.cat(scales, dim=0),
+            marker_indices=torch.cat(marker_indices, dim=0),
         )
-
-        base_pos_w = wp.to_torch(self.robot.data.root_pos_w).clone()
-        base_pos_w[:, 2] += 0.5
-        xy_velocity = wp.to_torch(self.robot.data.root_lin_vel_b)[:, :2]
-        scale = torch.tensor(current_vel_visualizer.cfg.markers["arrow"].scale, device=self.device).repeat(
-            xy_velocity.shape[0], 1
-        )
-        scale[:, 0] *= torch.linalg.norm(xy_velocity, dim=1) * 3.0
-        heading_angle = torch.atan2(xy_velocity[:, 1], xy_velocity[:, 0])
-        zeros = torch.zeros_like(heading_angle)
-        quat = quat_mul(wp.to_torch(self.robot.data.root_quat_w), quat_from_euler_xyz(zeros, zeros, heading_angle))
-        current_vel_visualizer.visualize(base_pos_w, quat, scale)
+        self._draw_current_velocity()

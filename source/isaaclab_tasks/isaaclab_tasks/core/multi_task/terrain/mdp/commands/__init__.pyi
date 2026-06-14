@@ -6,10 +6,26 @@
 __all__ = [
     "CommandPayloadBaseState",
     "CommandPayloadBaseFootState",
-    "RelativeStateCommandCfg",
-    "RelativeStateCommand",
+    "StateCommandCfg",
+    "TaskTableCfg",
+    "BaseStatePayloadCfg",
+    "BaseFootStatePayloadCfg",
+    "Commands",
+    "PositionCommands",
+    "PoseCommands",
+    "VelocityCommands",
+    "TerrainCommands",
 ]
 
-from .commands_cfg import RelativeStateCommandCfg
-from .state_command import RelativeStateCommand
-from .state_command_payloads import CommandPayloadBaseState, CommandPayloadBaseFootState
+from isaaclab_tasks.core.multi_task.mdp.commands.state_command_cfg import StateCommandCfg
+from .commands_cfg import (
+    BaseFootStatePayloadCfg,
+    BaseStatePayloadCfg,
+    Commands,
+    PoseCommands,
+    PositionCommands,
+    TaskTableCfg,
+    TerrainCommands,
+    VelocityCommands,
+)
+from .state_command_payloads import CommandPayloadBaseFootState, CommandPayloadBaseState

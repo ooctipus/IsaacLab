@@ -12,8 +12,8 @@ def test_locomotion_position_uses_future_command_and_curriculum():
     """The working position env should use the future task-table command stack."""
     from isaaclab.managers import EventTermCfg
 
+    from isaaclab_tasks.core.multi_task.mdp.commands.state_command_cfg import StateCommandCfg
     from isaaclab_tasks.core.multi_task.mdp.curriculums import success_rate_sampler
-    from isaaclab_tasks.core.multi_task.terrain.mdp.commands.commands_cfg import RelativeStateCommandCfg
     from isaaclab_tasks.core.multi_task.terrain.retarget.criteria_cfg import JointWithinLimitCfg
     from isaaclab_tasks.core.position.position_env_cfg import LocomotionPositionCommandEnvCfg
     from isaaclab_tasks.utils import resolve_presets
@@ -21,7 +21,7 @@ def test_locomotion_position_uses_future_command_and_curriculum():
     cfg = LocomotionPositionCommandEnvCfg()
     resolve_presets(cfg)
 
-    assert isinstance(cfg.commands.goal_point, RelativeStateCommandCfg)
+    assert isinstance(cfg.commands.goal_point, StateCommandCfg)
     assert cfg.scene.terrain.prim_path == "/World/ground"
     assert cfg.scene.terrain.use_terrain_origins is True
     assert cfg.scene.height_scanner.mesh_prim_paths == ["/World/ground"]
@@ -43,7 +43,8 @@ def test_locomotion_position_uses_future_command_and_curriculum():
 
 def test_locomotion_position_anymal_c_command_resolves_without_robot_preset():
     """Anymal-C position tasks should not require a separate robot preset for retarget fields."""
-    from isaaclab_tasks.core.multi_task.terrain.mdp.commands.commands_cfg import RelativeStateCommandCfg
+    from isaaclab_tasks.core.multi_task.mdp.commands.state_command_cfg import StateCommandCfg
+    from isaaclab_tasks.core.multi_task.terrain.mdp.commands.commands_cfg import BaseStatePayloadCfg
     from isaaclab_tasks.core.position.config.anymal_c.anymal_c_env_cfg import (
         AnymalCLocomotionPositionCommandEnvCfg,
     )
@@ -53,8 +54,8 @@ def test_locomotion_position_anymal_c_command_resolves_without_robot_preset():
     resolve_presets(cfg, {"newton_mjwarp", "all", "base"})
 
     goal_cfg = cfg.commands.goal_point
-    assert isinstance(goal_cfg, RelativeStateCommandCfg)
-    assert isinstance(goal_cfg.payload, RelativeStateCommandCfg.BaseStatePayloadCfg)
+    assert isinstance(goal_cfg, StateCommandCfg)
+    assert isinstance(goal_cfg.payload, BaseStatePayloadCfg)
     assert goal_cfg.task_table.pipeline_cfg.foot_body_names == ".*FOOT.*"
     assert goal_cfg.task_table.pipeline_cfg.lateral_hip_joint_pattern == ".*HAA"
 

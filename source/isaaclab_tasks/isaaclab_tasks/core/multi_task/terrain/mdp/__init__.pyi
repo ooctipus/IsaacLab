@@ -4,8 +4,15 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 __all__ = [
-    "RelativeStateCommandCfg",
-    "RelativeStateCommand",
+    "StateCommandCfg",
+    "TaskTableCfg",
+    "BaseStatePayloadCfg",
+    "BaseFootStatePayloadCfg",
+    "Commands",
+    "PositionCommands",
+    "PoseCommands",
+    "VelocityCommands",
+    "TerrainCommands",
     "CommandPayloadBaseState",
     "CommandPayloadBaseFootState",
     "success_rate_sampler",
@@ -48,10 +55,17 @@ __all__ = [
 ]
 
 from .commands import (
+    BaseFootStatePayloadCfg,
+    BaseStatePayloadCfg,
     CommandPayloadBaseFootState,
     CommandPayloadBaseState,
-    RelativeStateCommand,
-    RelativeStateCommandCfg,
+    Commands,
+    PoseCommands,
+    PositionCommands,
+    StateCommandCfg,
+    TaskTableCfg,
+    TerrainCommands,
+    VelocityCommands,
 )
 from isaaclab_tasks.core.multi_task.mdp.curriculums import success_rate_sampler
 from .curriculums import skip_reward_term, stricten_success_term, activate_reward_term

@@ -13,7 +13,16 @@ from isaaclab_tasks.core.multi_task.kinematics.ik_objectives.cfg import (
     IKObjectiveStabilityMarginCfg,
     IKObjectiveTerrainCollisionCfg,
 )
-from isaaclab_tasks.core.multi_task.terrain.mdp.commands.commands_cfg import RelativeStateCommandCfg
+from isaaclab_tasks.core.multi_task.mdp.commands.state_command_cfg import StateCommandCfg
+from isaaclab_tasks.core.multi_task.terrain.mdp.commands.commands_cfg import (
+    BaseFootStatePayloadCfg,
+    BaseStatePayloadCfg,
+    PoseCommands,
+    PositionCommands,
+    TaskTableCfg,
+    TerrainCommands,
+    VelocityCommands,
+)
 from isaaclab_tasks.core.multi_task.terrain.retarget import RetargetPipelineCfg
 from isaaclab_tasks.core.multi_task.terrain.retarget.cfg import (
     PatchSamplingCfg,
@@ -42,7 +51,7 @@ class CommandsPresetCfg(PresetCfg):
     """Named command configurations for the position locomotion task."""
 
     all_commands = {
-        "lin_vel_cmd": RelativeStateCommandCfg.VelocityCommands(
+        "lin_vel_cmd": VelocityCommands(
             roll=(-0.0, 0.0),
             pitch=(-0.0, 0.0),
             yaw=None,
@@ -54,7 +63,7 @@ class CommandsPresetCfg(PresetCfg):
             ang_vel_z=(-0.2, 0.2),
             duration=(0.05, 4.0),
         ),
-        "ang_vel_cmd": RelativeStateCommandCfg.VelocityCommands(
+        "ang_vel_cmd": VelocityCommands(
             roll=(-0.0, 0.0),
             pitch=(-0.0, 0.0),
             yaw=None,
@@ -66,22 +75,22 @@ class CommandsPresetCfg(PresetCfg):
             ang_vel_z=(-2.0, 2.0),
             duration=(0.05, 4.0),
         ),
-        "terrain_position_cmd": RelativeStateCommandCfg.TerrainCommands(
+        "terrain_position_cmd": TerrainCommands(
             match_base_pos=True,
             match_base_rot=False,
             duration=(0.05, 2.0),
         ),
-        "terrain_pose_cmd": RelativeStateCommandCfg.TerrainCommands(
+        "terrain_pose_cmd": TerrainCommands(
             match_base_pos=True,
             match_base_rot=True,
             duration=(0.05, 2.0),
         ),
-        "terrain_stand_up_cmd": RelativeStateCommandCfg.TerrainCommands(
+        "terrain_stand_up_cmd": TerrainCommands(
             match_base_pos=False,
             match_base_rot=True,
             duration=(0.05, 4.0),
         ),
-        "position_cmd": RelativeStateCommandCfg.PositionCommands(
+        "position_cmd": PositionCommands(
             pos_x=(-3.0, 3.0),
             pos_y=(-3.0, 3.0),
             pos_z=None,
@@ -90,7 +99,7 @@ class CommandsPresetCfg(PresetCfg):
             yaw=None,
             duration=(0.05, 2.0),
         ),
-        "pose_cmd": RelativeStateCommandCfg.PoseCommands(
+        "pose_cmd": PoseCommands(
             pos_x=(-3.0, 3.0),
             pos_y=(-3.0, 3.0),
             pos_z=None,
@@ -101,33 +110,33 @@ class CommandsPresetCfg(PresetCfg):
         ),
     }
     terrain = {
-        "terrain_pose_cmd": RelativeStateCommandCfg.TerrainCommands(
+        "terrain_pose_cmd": TerrainCommands(
             match_base_pos=True,
             match_base_rot=True,
             duration=(0.05, 2.0),
         ),
-        "terrain_position_cmd": RelativeStateCommandCfg.TerrainCommands(
+        "terrain_position_cmd": TerrainCommands(
             match_base_pos=True,
             match_base_rot=False,
             duration=(0.05, 2.0),
         ),
     }
     terrain_pos = {
-        "terrain_position_cmd": RelativeStateCommandCfg.TerrainCommands(
+        "terrain_position_cmd": TerrainCommands(
             match_base_pos=True,
             match_base_rot=False,
             duration=(0.05, 1.0),
         ),
     }
     terrain_pose = {
-        "terrain_pose_cmd": RelativeStateCommandCfg.TerrainCommands(
+        "terrain_pose_cmd": TerrainCommands(
             match_base_pos=True,
             match_base_rot=True,
             duration=(0.05, 1.0),
         ),
     }
     pose = {
-        "pose_cmd": RelativeStateCommandCfg.PoseCommands(
+        "pose_cmd": PoseCommands(
             pos_x=(-3.0, 3.0),
             pos_y=(-3.0, 3.0),
             pos_z=None,
@@ -138,7 +147,7 @@ class CommandsPresetCfg(PresetCfg):
         ),
     }
     pos = {
-        "position_cmd": RelativeStateCommandCfg.PositionCommands(
+        "position_cmd": PositionCommands(
             pos_x=(-3.0, 3.0),
             pos_y=(-3.0, 3.0),
             pos_z=None,
@@ -149,7 +158,7 @@ class CommandsPresetCfg(PresetCfg):
         ),
     }
     vel = {
-        "lin_vel_cmd": RelativeStateCommandCfg.VelocityCommands(
+        "lin_vel_cmd": VelocityCommands(
             lin_vel_x=(-2.0, 2.0),
             lin_vel_y=(-2.0, 2.0),
             lin_vel_z=None,
@@ -166,13 +175,13 @@ class CommandsPresetCfg(PresetCfg):
 class CommandPayloadPresetCfg(PresetCfg):
     """Named payload configurations for the position locomotion command."""
 
-    base = RelativeStateCommandCfg.BaseStatePayloadCfg(
+    base = BaseStatePayloadCfg(
         pos_std=0.4,
         rot_std=0.5,
         lin_vel_std=0.2,
         ang_vel_std=0.2,
     )
-    base_foot = RelativeStateCommandCfg.BaseFootStatePayloadCfg(
+    base_foot = BaseFootStatePayloadCfg(
         pos_std=0.4,
         rot_std=0.5,
         lin_vel_std=0.2,
@@ -186,13 +195,14 @@ class CommandPayloadPresetCfg(PresetCfg):
 class FootSampledCommandsCfg:
     """Command specifications for the MDP."""
 
-    goal_point = RelativeStateCommandCfg(
+    goal_point = StateCommandCfg(
         resampling_time_range=(10.0, 10.0),
         debug_vis=True,
         randomize_command_indices=False,
+        states_relative=True,
         commands=CommandsPresetCfg(),  # type: ignore
         payload=CommandPayloadPresetCfg(),  # type: ignore
-        task_table=RelativeStateCommandCfg.TaskTableCfg(
+        task_table=TaskTableCfg(
             pool_spacing=0.5,
             max_spawns_per_cell=20,
             num_targets_per_cell=20,

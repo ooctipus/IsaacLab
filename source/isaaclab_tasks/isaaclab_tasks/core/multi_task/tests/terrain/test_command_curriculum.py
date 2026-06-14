@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Mock-based tests for the RelativeStateCommand <-> curriculum interplay.
+"""Mock-based tests for the StateCommand <-> curriculum interplay.
 
 The goal here is to exercise the MDP logic (task-table indexing, hold-time
 bookkeeping, success-rate ring buffer, curriculum-driven resampling) without
@@ -15,7 +15,7 @@ Organization:
 
 * :class:`TestSuccessMonitor` - standalone, no env/robot required.
 * :class:`TestCommandTerm` - indexing/hold-time invariants of
-  :class:`RelativeStateCommand` with a mocked env + robot.
+  :class:`StateCommand` with a mocked env + robot.
 * :class:`TestCurriculum` - end-to-end curriculum + command-term loop,
   verifying the alias binding and ordering of success-update vs. resample.
 """
@@ -37,13 +37,19 @@ from isaaclab_tasks.core.multi_task.curriculum import (
     SuccessMonitor,
     SuccessMonitorCfg,
 )
+from isaaclab_tasks.core.multi_task.mdp.commands.state_command import StateCommand
 from isaaclab_tasks.core.multi_task.mdp.curriculums import success_rate_sampler
-from isaaclab_tasks.core.multi_task.terrain.mdp.commands.state_command import RelativeStateCommand
 from isaaclab_tasks.core.multi_task.terrain.mdp.commands.state_command_payloads import (
     CommandPayloadBaseFootState,
     CommandPayloadBaseState,
 )
-from isaaclab_tasks.core.multi_task.terrain.mdp.observations import command_current_state, command_target_state
+from isaaclab_tasks.core.multi_task.terrain.mdp.commands.task_table_builder import RelativeStateTaskTable
+from isaaclab_tasks.core.multi_task.terrain.mdp.observations import (
+    achieved_pos_env,
+    command_current_state,
+    command_target_state,
+    target_pos_env,
+)
 from isaaclab_tasks.core.multi_task.utils.buffer_writers import FIFOBufferWriter
 
 
@@ -144,7 +150,7 @@ def _make_task_table(
     pos_tasks: int = 10,
     pose_tasks: int = 10,
     device: str = DEVICE,
-) -> RelativeStateCommand.TaskTable:
+) -> RelativeStateTaskTable:
     """Build a synthetic TaskTable with two command kinds (pos + pose).
 
     ``spawn_states`` contain random, finite reset states
@@ -181,7 +187,7 @@ def _make_task_table(
     task_partition = torch.bucketize(torch.arange(num_tasks, device=device), offsets[1:-1], right=True)
     kind = torch.tensor([0, 1], device=device, dtype=torch.long)  # 0=pos, 1=pose
 
-    return RelativeStateCommand.TaskTable(
+    return RelativeStateTaskTable(
         num_tasks=num_tasks,
         spawn_index=spawn_index,
         target_index=target_index,
@@ -277,19 +283,19 @@ def _make_env(num_envs: int, device: str, step_dt: float = 0.02):
 
 def _make_command_term(
     env,
-    table: RelativeStateCommand.TaskTable,
+    table: RelativeStateTaskTable,
     num_joints: int = 12,
     payload_class: type = CommandPayloadBaseFootState,
     device: str = DEVICE,
-) -> RelativeStateCommand:
-    """Construct a RelativeStateCommand without invoking its __init__.
+) -> StateCommand:
+    """Construct a StateCommand without invoking its __init__.
 
     The real __init__ calls build_task_table (the expensive IK pipeline) and
     requires an actual terrain + asset, neither of which we want in a mock
     test. Instead we allocate the object, set only the fields the methods
     under test reach for, and return it ready to use.
     """
-    term = object.__new__(RelativeStateCommand)
+    term = object.__new__(StateCommand)
     term._env = env
     cmd_names = {"pos_cmd": None, "pose_cmd": None}
     # A thin cfg only needs .commands (used in _update_metrics) and std scales.
@@ -321,9 +327,7 @@ def _make_command_term(
     )
     term._reset_assets = ["robot"]
     term.table = table
-    term._command_names = list(cmd_names.keys())
     term.success_rates = torch.zeros(table.num_tasks, device=device, dtype=torch.float32)
-    term._success_per_cmd = torch.zeros(table.kind.shape[0], device=device)
 
     foot_body_ids = [1, 2, 3, 4]
     newton_foot_body_ids = foot_body_ids
@@ -345,9 +349,8 @@ def _make_command_term(
     table.foot_body_ids = foot_body_ids
     term._payload = payload_class(term.cfg, env, table)
 
-    term.cmd_buf = torch.zeros(env.num_envs, 3, term._payload.state_dim, device=device).contiguous()
-    term.cmd_buf[:, 1] = 1.0
-    term.cmd_mask = torch.zeros(env.num_envs, term._payload.mask_dim, device=device, dtype=torch.bool)
+    # cmd_buf / cmd_mask / cmd_ids are now owned + allocated by the payload
+    term.states_relative = False
     term.cmd_indices = torch.zeros(env.num_envs, dtype=torch.long, device=device)
     term.randomize_command_indices = True
     term._command = torch.zeros(env.num_envs, term._payload.command_dim, device=device)
@@ -626,7 +629,7 @@ class TestSuccessMonitor:
 
 
 # ---------------------------------------------------------------------------
-# RelativeStateCommand: MDP accuracy with the mock environment.
+# StateCommand: MDP accuracy with the mock environment.
 # ---------------------------------------------------------------------------
 
 
@@ -641,10 +644,13 @@ class TestCommandTerm:
         term = _make_command_term(env, table)
 
         env_ids = torch.arange(env.num_envs, device=DEVICE)
+        # cmd_ids is stored by the payload at resample time from the selected rows
+        term.randomize_command_indices = False
         term.cmd_indices[env_ids] = torch.randint(0, table.num_tasks, (env.num_envs,), device=DEVICE)
+        term._resample_command(env_ids)
 
         idx = term.cmd_indices[env_ids]
-        ids = term.cmd_ids[env_ids]
+        ids = term._payload.cmd_ids[env_ids]
         offsets = table.offsets
         lo = offsets[ids.long()]
         hi = offsets[ids.long() + 1]
@@ -670,17 +676,21 @@ class TestCommandTerm:
         spawn_state_idx = table.spawn_index[task_idx]
 
         expected_target_pos = table.spawn_states[target_state_idx, :3] + table.params[task_idx, :3]
-        torch.testing.assert_close(term.cmd_buf[env_ids, 0, :3], expected_target_pos)
-        torch.testing.assert_close(term.cmd_buf[env_ids, 0, 3:12], table.params[task_idx, 3:12])
+        torch.testing.assert_close(term._payload.cmd_buf[env_ids, 0, :3], expected_target_pos)
+        torch.testing.assert_close(term._payload.cmd_buf[env_ids, 0, 3:12], table.params[task_idx, 3:12])
         torch.testing.assert_close(
-            term.cmd_buf[env_ids, 0, 12 : 12 + term._payload.num_joints],
+            term._payload.cmd_buf[env_ids, 0, 12 : 12 + term._payload.num_joints],
             table.spawn_states[target_state_idx, 13 : 13 + term._payload.num_joints],
         )
-        torch.testing.assert_close(term.cmd_buf[env_ids, 0, term._payload.time_idx], table.params[task_idx, 12])
-        torch.testing.assert_close(term.cmd_buf[env_ids, 1, term._payload.time_idx], table.params[task_idx, 12])
-        torch.testing.assert_close(term.command[:, :12], term.cmd_buf[:, 1, :12])
+        torch.testing.assert_close(
+            term._payload.cmd_buf[env_ids, 0, term._payload.time_idx], table.params[task_idx, 12]
+        )
+        torch.testing.assert_close(
+            term._payload.cmd_buf[env_ids, 1, term._payload.time_idx], table.params[task_idx, 12]
+        )
+        torch.testing.assert_close(term.command[:, :12], term._payload.cmd_buf[:, 1, :12])
         assert not term.get_task_done().any()
-        assert (term.cmd_mask[env_ids] == table.task_mask[task_idx]).all()
+        assert (term._payload.cmd_mask[env_ids] == table.task_mask[task_idx]).all()
 
         # Robot was teleported to the spawn reset state associated with each task.
         root_calls = [c for c in term.robot.calls if c[0] == "root_state"]
@@ -713,9 +723,10 @@ class TestCommandTerm:
         env = _make_env(num_envs=2, device=DEVICE)
         term = _make_command_term(env, table)
         origins = torch.tensor([[10.0, 20.0, 0.0], [-5.0, 2.0, 0.0]], device=DEVICE)
-        env.scene._default_env_origins[:] = origins
         env.scene.env_origins[:] = origins
-        env.scene.terrain.cfg.prim_path = f"{env.scene.env_regex_ns}/ground"
+        # replicated terrain: the env declares its stored states as env-local, so
+        # the command lifts spawn/target by env_origins (no terrain sniffing)
+        term.states_relative = True
 
         env_ids = torch.arange(env.num_envs, device=DEVICE)
         term.cmd_indices[env_ids] = torch.tensor([0, 1], device=DEVICE)
@@ -754,13 +765,13 @@ class TestCommandTerm:
         term.randomize_command_indices = False
         term._resample_command(torch.tensor([0], device=DEVICE, dtype=torch.long))
 
-        torch.testing.assert_close(term.cmd_buf[0, 0, :3], target_state[:3])
-        torch.testing.assert_close(term.cmd_buf[0, 0, 3:6], torch.tensor([0.0, 0.0, 1.0], device=DEVICE))
+        torch.testing.assert_close(term._payload.cmd_buf[0, 0, :3], target_state[:3])
+        torch.testing.assert_close(term._payload.cmd_buf[0, 0, 3:6], torch.tensor([0.0, 0.0, 1.0], device=DEVICE))
         torch.testing.assert_close(
-            term.cmd_buf[0, 0, 12 : 12 + term._payload.num_joints],
+            term._payload.cmd_buf[0, 0, 12 : 12 + term._payload.num_joints],
             target_state[13 : 13 + term._payload.num_joints],
         )
-        assert term.cmd_buf[0, 0, term._payload.time_idx].item() == pytest.approx(0.75)
+        assert term._payload.cmd_buf[0, 0, term._payload.time_idx].item() == pytest.approx(0.75)
         assert bool(term._payload.foot_success_mask[0])
 
     def test_base_state_payload_keeps_terrain_target_without_feet(self):
@@ -783,7 +794,7 @@ class TestCommandTerm:
         term.randomize_command_indices = False
         term._resample_command(torch.tensor([0], device=DEVICE, dtype=torch.long))
 
-        torch.testing.assert_close(term.cmd_buf[0, 0, :3], table.spawn_states[target_state_id, :3])
+        torch.testing.assert_close(term._payload.cmd_buf[0, 0, :3], table.spawn_states[target_state_id, :3])
         assert term.command.shape == (env.num_envs, 12)
         assert not hasattr(term._payload, "target_foot_pos_w")
         assert not hasattr(term._payload, "foot_success_mask")
@@ -803,14 +814,14 @@ class TestCommandTerm:
 
         # Force a known task for both envs: task 0 (pos-only, pos mask on x,y,z).
         term.cmd_indices[:] = 0
-        term.cmd_mask[:] = table.task_mask[0]
+        term._payload.cmd_mask[:] = table.task_mask[0]
 
         # Seed cmd_buf: target = arbitrary, current = target (aligned); hold = 1.0.
         hold_init = 1.0
         target = torch.tensor([0.5, -0.3, 0.8], device=DEVICE)
-        term.cmd_buf[:, 0, :3] = target
-        term.cmd_buf[:, 0, term._payload.time_idx] = hold_init
-        term.cmd_buf[:, 2, term._payload.time_idx] = 0.0
+        term._payload.cmd_buf[:, 0, :3] = target
+        term._payload.cmd_buf[:, 0, term._payload.time_idx] = hold_init
+        term._payload.cmd_buf[:, 2, term._payload.time_idx] = 0.0
 
         # env 0: robot at target (error=0). env 1: robot offset by +5m in x.
         rs = term.robot._root_state_w
@@ -827,12 +838,12 @@ class TestCommandTerm:
 
         # env 0 accumulated num_ticks * step_dt successes.
         expected_current = num_ticks * env.step_dt
-        assert term.cmd_buf[0, 2, term._payload.time_idx].item() == pytest.approx(expected_current)
+        assert term._payload.cmd_buf[0, 2, term._payload.time_idx].item() == pytest.approx(expected_current)
         # env 0's delta[time_idx] = target - current = hold_init - expected
-        assert term.cmd_buf[0, 1, term._payload.time_idx].item() == pytest.approx(hold_init - expected_current)
+        assert term._payload.cmd_buf[0, 1, term._payload.time_idx].item() == pytest.approx(hold_init - expected_current)
         # env 1 never ticked
-        assert term.cmd_buf[1, 2, term._payload.time_idx].item() == pytest.approx(0.0)
-        assert term.cmd_buf[1, 1, term._payload.time_idx].item() == pytest.approx(hold_init)
+        assert term._payload.cmd_buf[1, 2, term._payload.time_idx].item() == pytest.approx(0.0)
+        assert term._payload.cmd_buf[1, 1, term._payload.time_idx].item() == pytest.approx(hold_init)
 
     def test_command_observation_exposes_target_feet_not_joint_delta(self):
         """Policy command is root delta plus target foot positions in base frame."""
@@ -863,7 +874,7 @@ class TestCommandTerm:
         torch.testing.assert_close(term.command[0, 12:].view(num_feet, 3), target_feet[0] - root_pos[0])
         torch.testing.assert_close(term.command[1, 12:], torch.zeros(3 * num_feet, device=DEVICE))
         torch.testing.assert_close(
-            term.cmd_buf[:, 1, 12 : 12 + term._payload.num_joints],
+            term._payload.cmd_buf[:, 1, 12 : 12 + term._payload.num_joints],
             torch.zeros_like(term.robot._joint_pos),
         )
 
@@ -879,8 +890,8 @@ class TestCommandTerm:
 
         current_root = torch.arange(24, device=DEVICE, dtype=torch.float32).view(2, 12)
         target_root = current_root + 100.0
-        term.cmd_buf[:, 2, :12] = current_root
-        term.cmd_buf[:, 0, :12] = target_root
+        term._payload.cmd_buf[:, 2, :12] = current_root
+        term._payload.cmd_buf[:, 0, :12] = target_root
         term._payload.current_foot_pos_w.copy_(torch.arange(24, device=DEVICE, dtype=torch.float32).view(2, 4, 3))
         term._payload.target_foot_pos_w.copy_(term._payload.current_foot_pos_w + 50.0)
 
@@ -904,12 +915,18 @@ class TestCommandTerm:
         torch.testing.assert_close(command_current_state(env), current_expected)
         torch.testing.assert_close(command_target_state(env), target_expected)
 
+        # CRL goal/achieved obs read cmd_buf through the command's payload (the
+        # command shell no longer owns cmd_buf); regression for the env-local
+        # target/achieved position observations.
+        torch.testing.assert_close(target_pos_env(env), target_root[:, :3] - origins)
+        torch.testing.assert_close(achieved_pos_env(env), current_root[:, :3] - origins)
+
     def test_get_task_done_triggers_when_delta_nonpositive(self):
         """``get_task_done`` is true exactly when the hold delta has drained to 0."""
         table = _make_task_table()
         env = _make_env(num_envs=4, device=DEVICE)
         term = _make_command_term(env, table)
-        term.cmd_buf[:, 1, term._payload.time_idx] = torch.tensor([0.5, 0.0, -0.1, 1.0], device=DEVICE)
+        term._payload.cmd_buf[:, 1, term._payload.time_idx] = torch.tensor([0.5, 0.0, -0.1, 1.0], device=DEVICE)
         done = term.get_task_done()
         torch.testing.assert_close(done, torch.tensor([False, True, True, False], device=DEVICE))
         reward = term.get_task_reward()
@@ -922,8 +939,8 @@ class TestCommandTerm:
         term = _make_command_term(env, table)
 
         term.cmd_indices[:] = 0
-        term.cmd_mask[:, :12] = True
-        target = term.cmd_buf[:, 0]
+        term._payload.cmd_mask[:, :12] = True
+        target = term._payload.cmd_buf[:, 0]
         target.zero_()
         target[0, :3] = torch.tensor([3.0, 4.0, 0.0], device=DEVICE)  # pos norm = 5
         target[0, 3:6] = torch.tensor([1.0, 0.0, 0.0], device=DEVICE)  # rot norm = 1
@@ -1036,7 +1053,7 @@ class TestCurriculum:
         expected_indices = torch.arange(env.num_envs, device=DEVICE) % table.num_tasks
         assert torch.equal(term.cmd_indices, expected_indices)
         offsets = table.offsets
-        ids = term.cmd_ids.long()
+        ids = term._payload.cmd_ids.long()
         assert ((term.cmd_indices >= offsets[ids]) & (term.cmd_indices < offsets[ids + 1])).all()
 
     def test_success_update_uses_cmd_indices_before_overwrite(self):

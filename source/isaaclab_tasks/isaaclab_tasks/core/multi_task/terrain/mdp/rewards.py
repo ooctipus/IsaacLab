@@ -16,11 +16,11 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation
     from isaaclab.envs import ManagerBasedRLEnv
 
-    from .commands import RelativeStateCommand
+    from ...mdp.commands.state_command import StateCommand
 
 
 def command_success(env: ManagerBasedRLEnv):
-    command_term: RelativeStateCommand = env.command_manager.get_term("goal_point")
+    command_term: StateCommand = env.command_manager.get_term("goal_point")
     return command_term.get_task_reward()
 
 
