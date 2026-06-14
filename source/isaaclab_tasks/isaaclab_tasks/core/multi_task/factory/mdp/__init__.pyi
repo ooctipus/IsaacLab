@@ -41,6 +41,5 @@ from isaaclab_tasks.core.multi_task.mdp.terminations import (
     joint_reaction_overload as joint_reaction_overload,
     out_of_bound as out_of_bound,
 )
-from .terminations import split_time_out as split_time_out
 from .terminations import success_termination as success_termination
 from isaaclab.envs.mdp import *

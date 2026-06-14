@@ -290,9 +290,6 @@ class VelocityCommands(Commands):
 class TerrainCommands:
     """Terrain-state command backed by sampled spawn/target states."""
 
-    spawn_key: str = "spawn"
-    """State-buffer key used for reset spawn states."""
-
     target_key: str = "target"
     """State-buffer key used for command target states."""
 
