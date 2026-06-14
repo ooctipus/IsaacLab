@@ -24,6 +24,7 @@ __all__ = [
     "NutPlacementSampler",
     "PlacementSamplingCfg",
     "ReachRowsCfg",
+    "RowSelectionCfg",
     "collision_min_sd",
     "edges_vs_posed_mesh_hit",
     "find_criterion",
@@ -51,6 +52,7 @@ from .cfg import (
     JointWithinLimitCfg,
     PlacementSamplingCfg,
     ReachRowsCfg,
+    RowSelectionCfg,
     find_criterion,
     resolve_from_task,
 )
