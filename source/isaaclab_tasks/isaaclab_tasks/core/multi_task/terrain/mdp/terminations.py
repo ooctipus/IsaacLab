@@ -14,7 +14,7 @@ import torch
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
-    from ...mdp.commands.state_command import StateCommand
+    from ...mdp.commands.state_command.state_command import StateCommand
 
 
 def success_terminate(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> torch.Tensor:

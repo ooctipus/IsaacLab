@@ -13,7 +13,7 @@ from isaaclab_tasks.core.multi_task.kinematics.ik_objectives.cfg import (
     IKObjectiveStabilityMarginCfg,
     IKObjectiveTerrainCollisionCfg,
 )
-from isaaclab_tasks.core.multi_task.mdp.commands.state_command_cfg import StateCommandCfg
+from isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command_cfg import StateCommandCfg
 from isaaclab_tasks.core.multi_task.terrain.mdp.commands.commands_cfg import (
     BaseFootStatePayloadCfg,
     BaseStatePayloadCfg,

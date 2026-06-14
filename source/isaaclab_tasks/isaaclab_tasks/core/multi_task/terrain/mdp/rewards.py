@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation
     from isaaclab.envs import ManagerBasedRLEnv
 
-    from ...mdp.commands.state_command import StateCommand
+    from ...mdp.commands.state_command.state_command import StateCommand
 
 
 def command_success(env: ManagerBasedRLEnv):

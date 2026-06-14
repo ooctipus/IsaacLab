@@ -35,7 +35,7 @@ from isaaclab.utils.math import (
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
 
-    from ....mdp.commands.state_command_cfg import StateCommandCfg
+    from ....mdp.commands.state_command.state_command_cfg import StateCommandCfg
     from .task_table_builder import RelativeStateTaskTable
 
 

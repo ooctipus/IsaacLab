@@ -17,7 +17,7 @@ __all__ = [
     "TerrainCommands",
 ]
 
-from isaaclab_tasks.core.multi_task.mdp.commands.state_command_cfg import StateCommandCfg
+from isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command_cfg import StateCommandCfg
 from .commands_cfg import (
     BaseFootStatePayloadCfg,
     BaseStatePayloadCfg,

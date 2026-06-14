@@ -21,7 +21,7 @@ from isaaclab.markers import BLUE_ARROW_X_MARKER_CFG, VisualizationMarkersCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 
-from ....mdp.commands.state_command_cfg import StateCommandCfg
+from ....mdp.commands.state_command.state_command_cfg import StateCommandCfg
 from .state_command_payloads import CommandPayloadBaseFootState, CommandPayloadBaseState
 from .task_table_builder import build_relative_state_task_table
 
