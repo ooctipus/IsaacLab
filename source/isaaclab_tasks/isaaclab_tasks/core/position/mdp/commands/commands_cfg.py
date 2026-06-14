@@ -162,8 +162,6 @@ class RelativeStateCommandCfg(CommandTermCfg):
     class TerrainCommands(Commands):
         """Uniform distribution ranges for the position commands."""
 
-        spawn_key: str = "spawn"
-
         target_key: str = "target"
 
         pos_x: tuple[float, float] | None = MISSING
