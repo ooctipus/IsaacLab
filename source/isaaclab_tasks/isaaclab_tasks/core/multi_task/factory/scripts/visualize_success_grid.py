@@ -41,6 +41,25 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Preview the factory success grid with random values (no sim).")
     ap.add_argument("--num_boards", type=int, default=16, help="Board-library size (small = fast preview).")
     ap.add_argument("--rows_per_board", type=int, default=10, help="Reset-state rows per board configuration.")
+    ap.add_argument(
+        "--placements_per_board",
+        type=int,
+        default=None,
+        help="Override placement candidates/board (nut-position supply).",
+    )
+    ap.add_argument(
+        "--grasps_per_placement",
+        type=int,
+        default=None,
+        help="Override grasps/placement (fewer = less grasp redundancy).",
+    )
+    ap.add_argument(
+        "--fps_nut_weight", type=float, default=None, help="Row-FPS weight on nut position (raise for more nuts)."
+    )
+    ap.add_argument(
+        "--fps_approach_weight", type=float, default=None, help="Row-FPS weight on grasp approach direction."
+    )
+    ap.add_argument("--fps_tag_weight", type=float, default=None, help="Row-FPS weight on placement-tag one-hot.")
     ap.add_argument("--max_states_per_board", type=int, default=None, help="Cap states drawn per cell (default: all).")
     ap.add_argument("--k", type=int, default=16, help="Silhouette polygon resolution (support directions).")
     ap.add_argument("--link_mode", choices=["outline", "fill", "off"], default="outline", help="Robot link rendering.")
@@ -66,6 +85,16 @@ def main() -> None:
     table_cfg = resolve_from_task()
     cfg = table_cfg.pipeline_cfg
     cfg.board.num_boards = args.num_boards
+    if args.placements_per_board is not None:
+        cfg.placement.placements_per_board = args.placements_per_board
+    if args.grasps_per_placement is not None:
+        cfg.placement.grasp.grasps_per_placement = args.grasps_per_placement
+    if args.fps_nut_weight is not None:
+        cfg.row_selection.nut_weight = args.fps_nut_weight
+    if args.fps_approach_weight is not None:
+        cfg.row_selection.approach_weight = args.fps_approach_weight
+    if args.fps_tag_weight is not None:
+        cfg.row_selection.tag_weight = args.fps_tag_weight
 
     pipeline = FactoryIKPipeline(cfg)
     result = pipeline.build_balanced_table(args.rows_per_board * cfg.board.num_boards)

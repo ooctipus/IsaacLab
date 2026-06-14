@@ -426,6 +426,26 @@ class FactoryRobotCfg:
 
 
 @configclass
+class RowSelectionCfg:
+    """Per-board final-row FPS diversity weights: which axes the kept rows spread over.
+
+    Each board farthest-point-downsamples its solved rows to ``rows_per_board`` in a
+    weighted feature space; higher ``nut_weight`` relative to the others packs more
+    DISTINCT nut positions per board (fewer grasps/approaches per nut), higher
+    ``approach_weight`` / ``tag_weight`` keeps more grasp-approach / state-kind variety.
+    """
+
+    nut_weight: float = 1.0
+    """Weight on the nut position in the bolt frame [per m]."""
+
+    approach_weight: float = 0.15
+    """Weight on the end-effector approach direction (a unit vector) [m per unit]."""
+
+    tag_weight: float = 0.2
+    """Weight on the placement-strategy tag one-hot."""
+
+
+@configclass
 class FactoryIKPipelineCfg:
     """Full offline factory Newton-IK reset-state pipeline configuration."""
 
@@ -464,6 +484,11 @@ class FactoryIKPipelineCfg:
     robot: FactoryRobotCfg = FactoryRobotCfg()
     """The robot and how it is placed on each candidate (identity, two-phase
     solve, acceptance criteria, reach rows)."""
+
+    row_selection: RowSelectionCfg = RowSelectionCfg()
+    """Per-board final-row diversity weighting (nut position vs grasp approach vs
+    tag). Raise ``nut_weight`` relative to the others for more distinct nut
+    positions per board."""
 
 
 def find_criterion(criteria: list, cls: type):

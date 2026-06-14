@@ -84,6 +84,14 @@ class FactoryObservationsCfg:
             },
         )
 
+        held_asset_in_end_effector_frame: ObsTerm = ObsTerm(
+            func=mdp.target_asset_pose_in_root_asset_frame,
+            params={
+                "target_asset_cfg": SceneEntityCfg("held_asset"),
+                "root_asset_cfg": SceneEntityCfg("robot", body_names=EndEffectorBodyCfg()),  # type:ignore
+            },
+        )
+
         joint_pos = ObsTerm(func=mdp.joint_pos)
 
         prev_action = ObsTerm(func=mdp.last_action)
@@ -183,7 +191,7 @@ class FactoryCommandsCfg:
                     board_asset_cfg=SceneEntityCfg("nistboard"),
                     fixed_asset_cfg=SceneEntityCfg("fixed_asset"),
                     fixed_asset_map=FixedAssetMapCfg(),  # type: ignore[arg-type]
-                    num_boards=128,
+                    num_boards=64,
                     pose_range={
                         "x": (-0.1, 0.1),
                         "y": (-0.1, 0.1),
@@ -197,7 +205,7 @@ class FactoryCommandsCfg:
                     held_asset_cfg=SceneEntityCfg("held_asset"),
                     assembly_profile=FactoryAssemblyProfileCfg(),  # type: ignore[arg-type]
                     align_offset=HeldAssetAlignOffsetCfg(),  # type: ignore[arg-type]
-                    placements_per_board=16,  # total scales with the library (4 x candidates)
+                    placements_per_board=64,  # total scales with the library (4 x candidates)
                     placement_weights={"on_bolt": 0.5, "on_table": 0.2, "in_air": 0.3},
                     assembly_bands={
                         "near_seated": (0.0, 0.33),
@@ -235,8 +243,8 @@ class FactoryCommandsCfg:
                     reach=ReachRowsCfg(per_grasp=1, standoff_range=(0.03, 0.15), clearance=0.005),
                 ),
             ),
-            rows_per_board=20,  # table size = this x board.num_boards
-            targets_per_board=20,  # goals = spread subset of each board's rows (<= rows_per_board)
+            rows_per_board=30,  # table size = this x board.num_boards
+            targets_per_board=30,  # goals = spread subset of each board's rows (<= rows_per_board)
             # reject reset states whose nut spawns outside the oob box (else they
             # terminate on step 0). Keep in sync with SuccessTerminationsCfg.oob.
             nut_bounds={"x": (-0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)},

@@ -784,13 +784,14 @@ class FactoryIKPipeline:
         # nut pose and would otherwise dedupe against it -- so within a board the
         # picks spread across tags first, then within tags.
         m = self.model
+        sel = cfg.row_selection
         body_q = m.eval_fk(joint_q)
         ee_z = math_utils.quat_apply(
             body_q[:, m.ee_body, 3:7], torch.tensor([0.0, 0.0, 1.0], device=self.device).expand(joint_q.shape[0], 3)
         )
         rel = math_utils.quat_apply_inverse(bolt_pose[:, 3:7], nut_pose[:, :3] - bolt_pose[:, :3])
-        tag_hot = 0.2 * torch.nn.functional.one_hot(tag, num_classes=len(self.tag_names)).float()
-        feats = torch.cat([rel, 0.15 * ee_z, tag_hot], dim=-1)  # 0.15 m per unit of approach direction
+        tag_hot = sel.tag_weight * torch.nn.functional.one_hot(tag, num_classes=len(self.tag_names)).float()
+        feats = torch.cat([sel.nut_weight * rel, sel.approach_weight * ee_z, tag_hot], dim=-1)
         keep = []
         for b in range(cfg.board.num_boards):
             bi = (board_index == b).nonzero(as_tuple=False).squeeze(-1)
