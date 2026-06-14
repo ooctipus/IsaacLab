@@ -37,6 +37,7 @@ from newton import GeoType
 from newton._src.sim.ik.ik_common import eval_fk_batched
 
 import isaaclab.utils.math as math_utils
+from isaaclab.utils.assets import check_file_path, retrieve_file_path
 
 if TYPE_CHECKING:
     from .cfg import FactoryIKPipelineCfg
@@ -83,6 +84,26 @@ _BOX_FACES = np.array(
 )
 
 
+_RESOLVED_ASSET_PATHS: dict[str, str] = {}
+
+
+def _resolve_asset_path(path: str) -> str:
+    """Resolve a local or remote Isaac asset path to a local path Newton can open."""
+    cached = _RESOLVED_ASSET_PATHS.get(path)
+    if cached is not None:
+        return cached
+
+    status = check_file_path(path)
+    if status == 0:
+        raise FileNotFoundError(f"USD asset not found: {path}")
+    if status == 2:
+        resolved = retrieve_file_path(path, force_download=False)
+    else:
+        resolved = path
+    _RESOLVED_ASSET_PATHS[path] = resolved
+    return resolved
+
+
 def _mesh_edges(verts: np.ndarray, faces: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Unique edge endpoint pairs of a triangle mesh, ``([E, 3], [E, 3])``."""
     e = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
@@ -110,6 +131,7 @@ def load_collider_mesh(
     faces re-wound (if needed) so face normals point out of the material --
     antipodal sampling and signed-distance queries both depend on the normal sign.
     """
+    usd_path = _resolve_asset_path(usd_path)
     builder = newton.ModelBuilder()
     builder.add_usd(usd_path, floating=False, skip_mesh_approximation=True)
     if builder.body_count != 1:
@@ -209,8 +231,8 @@ class FactoryIKModel:
                 " resolve_from_task()"
             )
         scene = cfg.scene
-        held_usd = getattr(scene, cfg.placement.held_asset_cfg.name).spawn.usd_path
-        fixed_usd = getattr(scene, cfg.board.fixed_asset_cfg.name).spawn.usd_path
+        held_usd = _resolve_asset_path(getattr(scene, cfg.placement.held_asset_cfg.name).spawn.usd_path)
+        fixed_usd = _resolve_asset_path(getattr(scene, cfg.board.fixed_asset_cfg.name).spawn.usd_path)
 
         # --- robot-only kinematic model ---
         builder = newton.ModelBuilder()
@@ -219,6 +241,7 @@ class FactoryIKModel:
             raise ValueError(
                 "no robot USD: set cfg.robot.usd_path or provide a scene whose robot entry has a USD spawn"
             )
+        robot_usd = _resolve_asset_path(robot_usd)
         res = builder.add_usd(robot_usd, collapse_fixed_joints=False)
         names = [""] * builder.body_count
         for path, idx in res.get("path_body_map", {}).items():
