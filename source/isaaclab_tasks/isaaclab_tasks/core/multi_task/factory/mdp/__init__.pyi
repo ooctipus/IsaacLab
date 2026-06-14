@@ -5,7 +5,7 @@
 
 from .curriculum import DifficultyScheduler as DifficultyScheduler
 from .curriculum import initial_final_interpolate_fn as initial_final_interpolate_fn
-from isaaclab_tasks.core.multi_task.mdp.commands.state_command_cfg import StateCommandCfg as StateCommandCfg
+from isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command_cfg import StateCommandCfg as StateCommandCfg
 from .reset_state_command_payloads import FactoryAssemblyPayload as FactoryAssemblyPayload
 from .reset_state_command_cfg import FactoryAssemblyAssetCommandCfg as FactoryAssemblyAssetCommandCfg
 from .reset_state_command_cfg import FactoryAssemblyPayloadCfg as FactoryAssemblyPayloadCfg

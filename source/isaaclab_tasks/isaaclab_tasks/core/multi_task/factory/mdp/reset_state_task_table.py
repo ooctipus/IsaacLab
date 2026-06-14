@@ -29,7 +29,7 @@ from isaaclab_tasks.core.multi_task.utils.grid_downsample import extract_feature
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
-    from ...mdp.commands.state_command_cfg import StateCommandCfg
+    from ...mdp.commands.state_command.state_command_cfg import StateCommandCfg
 
 
 @dataclass

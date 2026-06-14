@@ -15,7 +15,7 @@ from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.utils import PresetCfg
 
-from ...mdp.commands.state_command_cfg import StateCommandCfg
+from ...mdp.commands.state_command.state_command_cfg import StateCommandCfg
 from ...utils.symmetry import AssetSymmetryCfg
 from ..retarget.cfg import FactoryIKPipelineCfg
 

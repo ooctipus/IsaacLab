@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject
     from isaaclab.envs import ManagerBasedRLEnv
 
-    from ...mdp.commands.state_command_cfg import StateCommandCfg
+    from ...mdp.commands.state_command.state_command_cfg import StateCommandCfg
     from .reset_state_task_table import FactoryResetStateTaskTable
 
 

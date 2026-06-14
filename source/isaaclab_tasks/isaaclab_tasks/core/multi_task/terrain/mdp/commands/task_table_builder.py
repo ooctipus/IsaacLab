@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
     from isaaclab.envs import ManagerBasedEnv
 
-    from ....mdp.commands.state_command_cfg import StateCommandCfg
+    from ....mdp.commands.state_command.state_command_cfg import StateCommandCfg
     from ...retarget.cfg import RetargetPipelineCfg
     from .commands_cfg import Commands, TerrainCommands
 

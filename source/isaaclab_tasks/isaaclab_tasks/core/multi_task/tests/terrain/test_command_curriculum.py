@@ -37,7 +37,7 @@ from isaaclab_tasks.core.multi_task.curriculum import (
     SuccessMonitor,
     SuccessMonitorCfg,
 )
-from isaaclab_tasks.core.multi_task.mdp.commands.state_command import StateCommand
+from isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command import StateCommand
 from isaaclab_tasks.core.multi_task.mdp.curriculums import success_rate_sampler
 from isaaclab_tasks.core.multi_task.terrain.mdp.commands.state_command_payloads import (
     CommandPayloadBaseFootState,
