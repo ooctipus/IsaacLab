@@ -395,7 +395,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
         """Post initialization."""
         # general settings
         self.decimation = 8
-        self.episode_length_s = 0.5
+        self.episode_length_s = 14.0
         # simulation settings
         self.sim.dt = 0.04 / self.decimation
         self.sim.render_interval = self.decimation
