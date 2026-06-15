@@ -3,7 +3,10 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
+from isaaclab_newton.sensors import ContactSensorCfg as NewtonContactSensorCfg
 from isaaclab_physx.physics import PhysxCfg
+from isaaclab_physx.sensors import ContactSensorCfg as PhysXContactSensorCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
@@ -11,7 +14,8 @@ from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import ContactSensorCfg, patterns
+from isaaclab.sensors import patterns
+from isaaclab.sensors.joint_wrench import JointWrenchSensorCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.terrains import TerrainGeneratorCfg, TerrainImporterCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
@@ -23,9 +27,16 @@ from isaaclab.utils.configclass import configclass
 # in one launch. Fully self-contained under ``multi_task/sensors/`` so a future rebase onto
 # a new IsaacLab version requires no merge work in shared sensor code.
 from isaaclab_tasks.core.multi_task.sensors import FastTerrainScannerCfg
-from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils import PresetCfg, preset
 
 from .terrain import mdp, mdp_presets
+
+
+@configclass
+class PositionEnvContactSensorCfg(PresetCfg):
+    default = PhysXContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
+    newton_mjwarp = NewtonContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
+    physx = default
 
 
 @configclass
@@ -36,24 +47,12 @@ class SceneCfg(InteractiveSceneCfg):
     terrain = TerrainImporterCfg(
         prim_path="{ENV_REGEX_NS}/ground",
         terrain_type="generator",
-        # Disable tile-anchored env_origins for every preset.
-        # ``prim_path="{ENV_REGEX_NS}/ground"`` already gives each env its
-        # own copy of the full generated terrain, so the per-tile
-        # curriculum layout would just collapse many envs onto each of
-        # the few tile centres (24 centres for the default 2×12 grid →
-        # ~341 robots per centre, all overlapping at the world-frame
-        # tile centre). With ``use_terrain_origins=False`` the importer
-        # falls back to a grid based on ``env_spacing``, giving every
-        # env its own world-frame slot. The terrain difficulty mix is
-        # still available because every env carries the full multi-tile
-        # mesh; sampling and the task curriculum drive difficulty
-        # selection per-task instead of per-env.
-        use_terrain_origins=False,
+        use_terrain_origins=True,
         terrain_generator=TerrainGeneratorCfg(
             size=(10.0, 10.0),
             border_width=20.0,
             num_rows=10,
-            num_cols=12,
+            num_cols=14,
             horizontal_scale=0.1,
             vertical_scale=0.005,
             slope_threshold=0.75,
@@ -62,7 +61,7 @@ class SceneCfg(InteractiveSceneCfg):
             sub_terrains=mdp_presets.SubTerrainPresetCfg(),  # type: ignore
         ),
         max_init_terrain_level=5,
-        collision_group=0,
+        collision_group=-1,
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",
             restitution_combine_mode="multiply",
@@ -94,16 +93,12 @@ class SceneCfg(InteractiveSceneCfg):
         prim_path=mdp_presets.HeightScannerPrimPathCfg(),  # type: ignore
         offset=FastTerrainScannerCfg.OffsetCfg(pos=(0.5, 0.0, 20.0)),
         ray_alignment="yaw",
-        pattern_cfg=patterns.GridPatternCfg(resolution=0.05, size=(2.5, 1.5)),
+        pattern_cfg=patterns.GridPatternCfg(resolution=0.075, size=(2.5, 1.5)),
         debug_vis=False,
         mesh_prim_paths=["{ENV_REGEX_NS}/ground"],
     )
-    contact_forces = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/.*",
-        history_length=3,
-        track_air_time=True,
-        debug_vis=True,
-    )
+    contact_forces = PositionEnvContactSensorCfg()
+    joint_wrench = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
 
 
 @configclass
@@ -138,20 +133,6 @@ class EventsCfg:
         },
     )
 
-    record_trajectory_video = EventTerm(
-        func=mdp.record_trajectory_video,
-        mode="interval",
-        # Fire every step (event manager re-samples on each step from a
-        # zero-width interval; see ``event_manager.py:230``).
-        interval_range_s=(0.0, 0.0),
-        is_global_time=True,
-        params={
-            "command_name": "goal_point",
-            "video_interval": 20000,
-            "video_length": 200,
-        },
-    )
-
 
 @configclass
 class PositionPhysicsCfg(PresetCfg):
@@ -160,6 +141,20 @@ class PositionPhysicsCfg(PresetCfg):
         gpu_found_lost_pairs_capacity=2**25,
         gpu_collision_stack_size=2**31,
         gpu_max_rigid_patch_count=5 * 2**20,
+    )
+    newton_mjwarp = NewtonCfg(
+        solver_cfg=MJWarpSolverCfg(
+            njmax=250,
+            nconmax=100,
+            cone="pyramidal",
+            impratio=1.0,
+            integrator="implicitfast",
+            use_mujoco_contacts=False,
+        ),
+        collision_cfg=NewtonCollisionPipelineCfg(max_triangle_pairs=2_500_000),
+        num_substeps=1,
+        debug_mode=False,
+        default_shape_cfg=NewtonShapeCfg(margin=0.02),
     )
     physx = default
 
@@ -176,18 +171,19 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
     events: EventsCfg = EventsCfg()
     curriculum: mdp_presets.CurriculumPresetCfg = mdp_presets.CurriculumPresetCfg()
     viewer: ViewerCfg = ViewerCfg(
-        eye=(4.0, 7.0, 7.0),
+        eye=(4.0 / 4, 7.0 / 4, 7.0 / 4),
         origin_type="asset_body",
         asset_name="robot",
         body_name=mdp_presets.BaseBodyNameCfg(),  # type: ignore
     )
 
     def __post_init__(self):
-        self.decimation = 8
-        self.episode_length_s = 6.0
-        self.sim.dt = 0.005
+        self.decimation = 4
+        self.episode_length_s = 12.0
+        self.sim.dt = 0.01
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
+        self.sim.use_newton_actuators = preset(default=False, newton_mjwarp=True)
 
         if self.scene.height_scanner is not None:
             self.scene.height_scanner.update_period = self.decimation * self.sim.dt

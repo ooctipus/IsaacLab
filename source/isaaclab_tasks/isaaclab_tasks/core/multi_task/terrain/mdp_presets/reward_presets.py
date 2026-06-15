@@ -8,31 +8,23 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_tasks.utils import PresetCfg, preset
+from isaaclab_tasks.utils import PresetCfg
 
 from .. import mdp
-from .robots.robot_presets import FootBodyNamesCfg
 
 
 @configclass
 class PositionRewardsCfg:
     # task rewards
-    success = RewTerm(func=mdp.command_success, weight=50.0)
+    success = RewTerm(func=mdp.command_success, weight=5.0)
 
-    mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.0005)
+    mech_work = RewTerm(func=mdp.mechanical_power, weight=-0.000025)
 
     undesired_contact = RewTerm(
-        func=mdp.contact_penalty,
-        weight=-0.05,
-        params={
-            "exclude_contact_sensor_cfg": SceneEntityCfg("contact_forces", body_names=FootBodyNamesCfg()),
-            "threshold": 1.0,
-        },
+        func=mdp.undesired_contacts,
+        weight=-0.01,
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="^(?!.*(?:(FOOT))).*$"), "threshold": 1.0},
     )
-
-    fail = RewTerm(func=mdp.is_terminated_term, params={"term_keys": ["oob", "base_contact"]}, weight=-25.0)
-
-    explore = preset(explore=RewTerm(func=mdp.exploration_reward, weight=0.1), default=None)
 
 
 @configclass

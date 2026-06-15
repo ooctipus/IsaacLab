@@ -26,7 +26,7 @@ class SubTerrainPresetCfg(PresetCfg):
         "contour": terrains.CONTOUR_CURRICULUM,
         "climbing_box": terrains.CLIMBING_BOX_CURRICULUM,
         "floating_island": terrains.FLOATING_ISLAND_CURRICULUM,
-        # "maze": terrains.MAZE_CURRICULUM,
+        "maze": terrains.MAZE_CURRICULUM,
         "random_jump_box": terrains.RANDOM_JUMP_BOX_CURRICULUM,
         "random_parallel_box": terrains.RANDOM_PARALLEL_BOX_CURRICULUM,
         "balancing_beam": terrains.BALANCING_BEAM_CURRICULUM,

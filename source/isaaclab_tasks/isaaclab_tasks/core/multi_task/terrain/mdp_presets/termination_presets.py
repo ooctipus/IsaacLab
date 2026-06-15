@@ -10,7 +10,7 @@ from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.utils import PresetCfg
 
-from ...mdp.terminations import BaseTerminationsCfg
+from ...mdp.terminations import BaseTerminationsCfg, joint_reaction_overload
 from .. import mdp
 
 
@@ -37,6 +37,9 @@ class PositionTerminationsCfg(BaseTerminationsCfg):
       BW under stochastic termination + compliant impedance control on a
       light quadruped; 3× is the deterministic-termination, stiffer-actuator
       equivalent.
+    - ``joint_reaction`` — fires when a joint's measured reaction force exceeds
+      6× its effort limit (via the ``joint_wrench`` sensor); mechanical-overload
+      guard carried over from the legacy position stack.
     - ``success`` — episode-success termination from the goal-tracking command.
     """
 
@@ -53,6 +56,14 @@ class PositionTerminationsCfg(BaseTerminationsCfg):
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*"),
             "threshold_ratio": 3.0,
+        },
+    )
+
+    joint_reaction = DoneTerm(
+        func=joint_reaction_overload,
+        params={
+            "sensor_cfg": SceneEntityCfg("joint_wrench"),
+            "force_ratio": 6.0,
         },
     )
 
