@@ -12,6 +12,7 @@ import tempfile
 from contextlib import nullcontext
 from typing import TYPE_CHECKING
 
+import numpy as np
 from filelock import FileLock
 from isaaclab_physx.sim.spawners.materials import PhysxRigidBodyMaterialCfg
 
@@ -34,6 +35,8 @@ from isaaclab.utils.assets import check_file_path, retrieve_file_path
 from isaaclab.utils.version import has_kit
 
 if TYPE_CHECKING:
+    import trimesh
+
     from pxr import Sdf, Usd, UsdGeom  # noqa: F401
 
     from . import from_files_cfg
@@ -52,6 +55,8 @@ def _is_regex_prim_path(path: str) -> bool:
 
 def _ensure_prim_specs(root_layer: Sdf.Layer, prim_path: str) -> None:
     """Create prim specs for ``prim_path`` and its ancestors."""
+    from pxr import Sdf  # noqa: PLC0415
+
     current_path = ""
     for path_part in prim_path.strip("/").split("/"):
         current_path = f"{current_path}/{path_part}"
@@ -93,6 +98,8 @@ def _resolve_mesh_spawn_paths(prim_path: str) -> tuple[str, list[str]]:
 
 def _apply_spawn_metadata(prim: Usd.Prim, cfg) -> None:
     """Apply common spawner metadata to a spawned prim."""
+    from pxr import UsdGeom  # noqa: PLC0415
+
     if hasattr(cfg, "visible"):
         imageable = UsdGeom.Imageable(prim)
         if cfg.visible:
@@ -261,6 +268,8 @@ def spawn_from_mesh(
         The source root prim of the spawned mesh.
     """
     del kwargs
+    from pxr import Sdf, UsdGeom  # noqa: PLC0415
+
     stage = get_current_stage()
     source_path, destination_paths = _resolve_mesh_spawn_paths(prim_path)
     if stage.GetPrimAtPath(source_path).IsValid():
