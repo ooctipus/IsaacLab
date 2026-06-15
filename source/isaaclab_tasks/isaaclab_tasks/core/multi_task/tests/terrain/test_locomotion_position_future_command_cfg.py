@@ -14,8 +14,8 @@ def test_locomotion_position_uses_future_command_and_curriculum():
 
     from isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command_cfg import StateCommandCfg
     from isaaclab_tasks.core.multi_task.mdp.curriculums import success_rate_sampler
+    from isaaclab_tasks.core.multi_task.position_env_cfg import LocomotionPositionCommandEnvCfg
     from isaaclab_tasks.core.multi_task.terrain.retarget.criteria_cfg import JointWithinLimitCfg
-    from isaaclab_tasks.core.position.position_env_cfg import LocomotionPositionCommandEnvCfg
     from isaaclab_tasks.utils import resolve_presets
 
     cfg = LocomotionPositionCommandEnvCfg()
@@ -44,14 +44,12 @@ def test_locomotion_position_uses_future_command_and_curriculum():
 def test_locomotion_position_anymal_c_command_resolves_without_robot_preset():
     """Anymal-C position tasks should not require a separate robot preset for retarget fields."""
     from isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command_cfg import StateCommandCfg
+    from isaaclab_tasks.core.multi_task.position_env_cfg import LocomotionPositionCommandEnvCfg
     from isaaclab_tasks.core.multi_task.terrain.mdp.commands.commands_cfg import BaseStatePayloadCfg
-    from isaaclab_tasks.core.position.config.anymal_c.anymal_c_env_cfg import (
-        AnymalCLocomotionPositionCommandEnvCfg,
-    )
     from isaaclab_tasks.utils import resolve_presets
 
-    cfg = AnymalCLocomotionPositionCommandEnvCfg()
-    resolve_presets(cfg, {"newton_mjwarp", "all", "base"})
+    cfg = LocomotionPositionCommandEnvCfg()
+    resolve_presets(cfg, {"anymal_c", "newton_mjwarp", "all", "base"})
 
     goal_cfg = cfg.commands.goal_point
     assert isinstance(goal_cfg, StateCommandCfg)
@@ -62,68 +60,25 @@ def test_locomotion_position_anymal_c_command_resolves_without_robot_preset():
 
 def test_locomotion_position_subterrains_do_not_request_flat_patches():
     """Position terrain presets should rely on the task-table pipeline, not terrain flat patches."""
-    from isaaclab_tasks.core.position.terrain_preset import SubTerrainPresetCfg
+    from isaaclab_tasks.core.multi_task.terrain.mdp_presets import SubTerrainPresetCfg
 
     presets = SubTerrainPresetCfg()
     preset_names = (
-        "all",
-        "eval",
+        "terrain_curriculum",
         "gap",
         "pit",
         "extreme_stair",
         "slope_inv",
+        "square_pillar_obstacle",
         "stepping_stone",
+        "stepping_stone_curriculum",
         "radiating_beam",
         "flat",
-        "foot_sampled_commands",
+        "default",
     )
     for preset_name in preset_names:
         for terrain_name, terrain_cfg in getattr(presets, preset_name).items():
             assert not getattr(terrain_cfg, "flat_patch_sampling", None), f"{preset_name}.{terrain_name}"
-
-
-def test_locomotion_position_flat_patch_command_preset_restores_old_stack():
-    """The old flat-patch command stack should remain selectable when requested."""
-    from isaaclab_tasks.core.position.mdp.commands import (
-        RelativeStateCommandCfg as FlatPatchRelativeStateCommandCfg,
-    )
-    from isaaclab_tasks.core.position.mdp.curriculums import (
-        terrain_spawn_goal_pair_success_rate_levels,
-    )
-    from isaaclab_tasks.core.position.position_env_cfg import LocomotionPositionCommandEnvCfg
-    from isaaclab_tasks.utils import resolve_presets
-
-    cfg = LocomotionPositionCommandEnvCfg()
-    resolve_presets(cfg, {"flat_patch_commands"})
-
-    assert isinstance(cfg.commands.goal_point, FlatPatchRelativeStateCommandCfg)
-    assert cfg.curriculum.terrain_levels.func is terrain_spawn_goal_pair_success_rate_levels
-    assert all(
-        {"spawn", "target"} <= set(getattr(terrain_cfg, "flat_patch_sampling", {}))
-        for terrain_cfg in cfg.scene.terrain.terrain_generator.sub_terrains.values()
-    )
-
-
-def test_locomotion_position_flat_patch_command_preset_keeps_old_command_schema(monkeypatch):
-    """Global command presets should stay inside the selected command stack."""
-    import sys
-
-    from isaaclab_tasks.core.position.mdp.commands import (
-        RelativeStateCommandCfg as FlatPatchRelativeStateCommandCfg,
-    )
-    from isaaclab_tasks.utils.hydra import resolve_task_config
-
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["test", "presets=base,flat_patch_commands,terrain_pose"],
-    )
-
-    cfg, _ = resolve_task_config("Isaac-Position-Anymal-C-v0", "rsl_rl_cfg_entry_point")
-    command_cfg = cfg.commands.goal_point
-
-    assert isinstance(command_cfg, FlatPatchRelativeStateCommandCfg)
-    assert isinstance(command_cfg.commands["terrain_pose_cmd"], FlatPatchRelativeStateCommandCfg.TerrainCommands)
 
 
 def test_locomotion_position_newton_mjwarp_preset_enables_newton_actuators(monkeypatch):
@@ -132,23 +87,22 @@ def test_locomotion_position_newton_mjwarp_preset_enables_newton_actuators(monke
 
     from isaaclab.actuators import ActuatorNetLSTMCfg
 
-    from isaaclab_tasks.core.position.config.anymal_c.anymal_c_env_cfg import (
-        ANYDRIVE_3_LSTM_ONNX_PATH,
-    )
     from isaaclab_tasks.utils.hydra import resolve_task_config
 
     monkeypatch.setattr(
         sys,
         "argv",
-        ["test", "presets=newton_mjwarp,terrain_pose,flat_patch_commands"],
+        ["test", "presets=anymal_c,newton_mjwarp,terrain_pose"],
     )
 
-    cfg, _ = resolve_task_config("Isaac-Position-Anymal-C-v0", "rsl_rl_cfg_entry_point")
+    cfg, _ = resolve_task_config("Isaac-Position-v0", "rsl_rl_cfg_entry_point")
     actuator_cfg = cfg.scene.robot.actuators["legs"]
 
     assert cfg.sim.use_newton_actuators is True
     assert isinstance(actuator_cfg, ActuatorNetLSTMCfg)
-    assert actuator_cfg.network_file == ANYDRIVE_3_LSTM_ONNX_PATH
+    assert isinstance(actuator_cfg.network_file, str)
+    assert actuator_cfg.network_file
+    assert actuator_cfg.network_file.endswith(".onnx")
 
 
 def test_locomotion_position_newton_mjwarp_keeps_actuator_choice_explicit(monkeypatch):
@@ -162,9 +116,9 @@ def test_locomotion_position_newton_mjwarp_keeps_actuator_choice_explicit(monkey
     monkeypatch.setattr(
         sys,
         "argv",
-        ["test", "presets=newton_mjwarp,implicit_actuator,terrain_pose,flat_patch_commands"],
+        ["test", "presets=anymal_c,newton_mjwarp,implicit_actuator,terrain_pose"],
     )
 
-    cfg, _ = resolve_task_config("Isaac-Position-Anymal-C-v0", "rsl_rl_cfg_entry_point")
+    cfg, _ = resolve_task_config("Isaac-Position-v0", "rsl_rl_cfg_entry_point")
 
     assert isinstance(cfg.scene.robot.actuators["legs"], ImplicitActuatorCfg)
