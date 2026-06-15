@@ -51,6 +51,7 @@ __all__ = [
     "SamplerBase",
     "CriterionFn",
     "vision_obs",
+    "gravity_b",
 ]
 
 from .commands import (
@@ -81,6 +82,7 @@ from .observations import (
     achieved_pos_env,
     command_current_state,
     command_target_state,
+    gravity_b,
 )
 from isaaclab_tasks.core.multi_task.mdp.rewards import command_task_reward, contact_penalty, mechanical_power
 from .rewards import command_success, exploration_reward

@@ -170,14 +170,14 @@ class CommandPayloadPresetCfg(PresetCfg):
     base = mdp.BaseStatePayloadCfg(
         pos_std=0.4,
         rot_std=0.5,
-        lin_vel_std=0.3,
-        ang_vel_std=0.3,
+        lin_vel_std=0.2,
+        ang_vel_std=0.2,
     )
     base_foot = mdp.BaseFootStatePayloadCfg(
         pos_std=0.4,
         rot_std=0.5,
-        lin_vel_std=0.3,
-        ang_vel_std=0.3,
+        lin_vel_std=0.2,
+        ang_vel_std=0.2,
         foot_pos_std=0.25,
     )
     default = base
@@ -205,7 +205,7 @@ class CommandsCfg:
                     patch=PatchSamplingCfg(  # this samples foot patch
                         contact_radius=0.04, max_height_diff=0.03, horizontal_scale=0.01, oversample_ratio=5.0
                     ),
-                    sizing=SamplerSizingCfg(fps_features=XYZYawFeatures(yaw_scale=0.1)),
+                    sizing=SamplerSizingCfg(fps_features=XYZYawFeatures(yaw_scale=0.1), criteria_yield=0.10),
                     min_contacts=3,
                     terrain_snap_distance=0.2,
                     outward_snap_penalty=1.0,
@@ -219,7 +219,7 @@ class CommandsCfg:
                     IKObjectiveTerrainCollisionCfg(weight=2.0, margin=0.05, n_samples=4),
                     IKObjectiveStabilityMarginCfg(weight=1.0),
                     IKObjectiveGravityTorqueCfg(weight=0.02),
-                    IKObjectiveJointDefaultCfg(weight=0.25),
+                    IKObjectiveJointDefaultCfg(weight=0.5),
                 ],
                 criteria=[
                     CollisionCheckCfg(n_samples=16, max_pen=0.02),

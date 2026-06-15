@@ -36,37 +36,32 @@ class PositionCurriculumSamplerCfg:
             "sampling": preset(
                 default=SamplerCfg(
                     strategies=[
-                        BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates")
+                        BetaSamplingStrategyCfg(target=0.66, kappa=2.5, weight=1.0, success_rate_bind="success_rates")
                     ],
-                    eps=1e-8,
+                    eps=1e-4,
                 ),
                 uniform=SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=1.0)], eps=0.0),
                 beta66=SamplerCfg(
                     strategies=[
-                        BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates")
+                        BetaSamplingStrategyCfg(target=0.66, kappa=2.5, weight=1.0, success_rate_bind="success_rates")
                     ],
-                    eps=1e-8,
+                    eps=1e-4,
                 ),
                 frontier=SamplerCfg(
                     strategies=[
-                        BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates"),
+                        BetaSamplingStrategyCfg(target=0.66, kappa=2.5, weight=1.0, success_rate_bind="success_rates"),
                         FrontierSamplingStrategyCfg(
                             k=8, dilation_steps=2, weight=0.5, success_rate_bind="success_rates"
                         ),
                     ],
-                    eps=1e-8,
+                    eps=1e-4,
                 ),
             ),
-            "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=20),
+            "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=100),
             "success_bind": "env.termination_manager.get_term('success')",
             "sampler_visual_logger": log_spawn_goal_sampler_images,
             "sampler_visual_log_period": 1000,
         },
-    )
-
-    remove_explore_reward = preset(
-        explore=CurrTerm(func=mdp.skip_reward_term, params={"reward_term": "explore"}),
-        default=None,
     )
 
 

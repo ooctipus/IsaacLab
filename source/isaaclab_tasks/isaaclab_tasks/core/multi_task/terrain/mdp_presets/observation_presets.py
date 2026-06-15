@@ -25,9 +25,13 @@ class PositionObservationsCfg:
 
     @configclass
     class PolicyCfg(ObsGroup):
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel)
-        proj_gravity = ObsTerm(func=mdp.projected_gravity)
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
+        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
+        proj_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))
+        # Body-frame gravity vector with magnitude preserved [m/s^2]. Pairs with
+        # ``proj_gravity`` (unit direction) so the policy can also condition on
+        # ``||g||`` under per-env gravity randomization.
+        gravity_b = ObsTerm(func=mdp.gravity_b, noise=Unoise(n_min=-0.5, n_max=0.5))
         joint_pos = ObsTerm(func=mdp.joint_pos)
         joint_vel = ObsTerm(func=mdp.joint_vel)
         last_actions = ObsTerm(func=mdp.last_action)
@@ -41,6 +45,8 @@ class PositionObservationsCfg:
         height_scan = ObsTerm(
             func=mdp.vision_obs,
             params={"sensor_cfg": SceneEntityCfg("height_scanner")},
+            noise=Unoise(n_min=-0.05, n_max=0.05),
+            clip=(-1.0, 1.0),
         )
 
     policy: PolicyCfg = PolicyCfg()
