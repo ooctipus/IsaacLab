@@ -39,7 +39,7 @@ from isaaclab.envs import ManagerBasedRLEnv
 from isaaclab.sim import SimulationCfg, build_simulation_context
 
 import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.core.multi_task.terrain.mdp_presets.robots.anymal_c import ANYDRIVE_3_LSTM_ONNX_PATH
+from isaaclab_tasks.core.multi_task.terrain.mdp_presets.robots.anymal_c import ANYDRIVE_3_LSTM_JIT_PATH
 from isaaclab_tasks.core.velocity.config.g1.flat_env_cfg import G1FlatEnvCfg
 
 from isaaclab_assets import ANYMAL_C_CFG
@@ -1369,7 +1369,7 @@ class TestNeuralLSTMAuthoring(unittest.TestCase):
     def setUpClass(cls):
         from isaaclab.actuators.actuator_net_cfg import ActuatorNetLSTMCfg  # noqa: PLC0415
 
-        cls.lstm_path = ANYDRIVE_3_LSTM_ONNX_PATH
+        cls.lstm_path = ANYDRIVE_3_LSTM_JIT_PATH
         cls.result = _run_authoring_introspection(
             {
                 "lstm_legs": ActuatorNetLSTMCfg(
@@ -1400,17 +1400,20 @@ class TestNeuralLSTMAuthoring(unittest.TestCase):
         for a in lstm_acts:
             self.assertIn("ClampingDCMotor", a["clamping_types"])
 
-    def test_lstm_checkpoint_uses_onnx_path(self):
+    def test_lstm_checkpoint_uses_jit_path(self):
         lstm_acts = [a for a in self.result["actuator_info"] if a["controller_type"] == "ControllerNeuralLSTM"]
         self.assertTrue(len(lstm_acts) > 0, "No NeuralLSTM controller found")
         for a in lstm_acts:
             self.assertEqual(a["model_path"], self.lstm_path)
 
-    def test_lstm_controller_is_graphable(self):
+    def test_lstm_controller_is_not_graphable(self):
+        # The pinned newton revision runs the LSTM controller via torch
+        # (``ControllerNeuralLSTM.is_graphable()`` is ``False``); the graphable warp path is
+        # not present in this newton, so the actuator reports non-graphable.
         lstm_acts = [a for a in self.result["actuator_info"] if a["controller_type"] == "ControllerNeuralLSTM"]
         self.assertTrue(len(lstm_acts) > 0, "No NeuralLSTM controller found")
         for a in lstm_acts:
-            self.assertTrue(a["is_graphable"], "NeuralLSTM controller should use the graphable ONNX path")
+            self.assertFalse(a["is_graphable"], "current newton LSTM controller runs via torch, not graphable")
 
 
 if __name__ == "__main__":

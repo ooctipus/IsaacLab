@@ -31,11 +31,13 @@ from .robot_presets import (
     SyncFootPairsCfg,
 )
 
-# Local ONNX checkpoint for the Newton-native ANYdrive LSTM controller. Newton authors a
-# NeuralLSTM controller only when ``network_file`` ends in ``.onnx`` (the PhysX path uses the
-# official TorchScript ``.pt`` on Nucleus), so the ``newton_mjwarp`` preset points at this
-# bundled file. Kept local to avoid a remote fetch on the cluster.
-ANYDRIVE_3_LSTM_ONNX_PATH = str(Path(__file__).parent / "assets" / "anydrive_3_lstm.onnx")
+# Pre-exported TorchScript ANYdrive checkpoint for the Newton LSTM actuator controller.
+# Newton's neural-actuator parser loads a TorchScript (or dict) checkpoint and selects the
+# controller from the ``model_type`` in its embedded metadata; the official Nucleus checkpoint
+# carries no such metadata, so this bundled copy is the official network re-saved with
+# ``{"model_type": "lstm"}``. The PhysX path keeps the official checkpoint via its Lab-side
+# ActuatorNetLSTM. Kept local to avoid a remote fetch on the cluster.
+ANYDRIVE_3_LSTM_JIT_PATH = str(Path(__file__).parent / "assets" / "anydrive_3_lstm.pt")
 
 _ANYMAL_C_CFG: ArticulationCfg = anymal.ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 _ANYMAL_C_CFG.spawn.usd_path = (  # type: ignore[attr-defined]
@@ -44,7 +46,7 @@ _ANYMAL_C_CFG.spawn.usd_path = (  # type: ignore[attr-defined]
 _ANYMAL_C_CFG.actuators["legs"] = _ANYMAL_C_CFG.actuators["legs"].replace(
     network_file=preset(
         default=anymal.ANYDRIVE_3_LSTM_ACTUATOR_CFG.network_file,
-        newton_mjwarp=ANYDRIVE_3_LSTM_ONNX_PATH,
+        newton_mjwarp=ANYDRIVE_3_LSTM_JIT_PATH,
     )
 )
 

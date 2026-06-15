@@ -3838,12 +3838,13 @@ class Articulation(BaseArticulation):
             joint_ids = torch.tensor(joint_ids, device=self.device, dtype=torch.int32)
 
         actuator_cls = actuator_cfg.class_type
-        if properties_only and str(getattr(actuator_cfg, "network_file", "")).lower().endswith(".onnx"):
+        if properties_only:
             from isaaclab.actuators import DCMotor  # noqa: PLC0415
             from isaaclab.actuators.actuator_net_cfg import ActuatorNetLSTMCfg  # noqa: PLC0415
 
             if isinstance(actuator_cfg, ActuatorNetLSTMCfg):
-                # Only physical properties are needed here; Newton loads the ONNX controller.
+                # Only physical properties are needed here; Newton runs the LSTM controller from
+                # its authored checkpoint, so the Lab side need not load the network.
                 actuator_cls = DCMotor
 
         actuator: ActuatorBase = actuator_cls(
