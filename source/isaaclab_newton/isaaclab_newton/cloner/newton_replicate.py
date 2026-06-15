@@ -14,6 +14,8 @@ from newton._src.usd.schemas import SchemaResolverNewton, SchemaResolverPhysx
 
 from pxr import Usd
 
+from isaaclab.sim.utils.newton_model_utils import replace_newton_builder_shape_colors
+
 from isaaclab_newton.physics import NewtonManager
 
 
@@ -60,6 +62,7 @@ def _build_newton_builder_from_mapping(
         ignore_paths=["/World/envs", *sources],
         schema_resolvers=schema_resolvers,
     )
+    replace_newton_builder_shape_colors(builder, stage)
 
     # Deformable prim paths are handled by per_world_builder_hooks, not add_usd.
     # Resolve the regex prim_path patterns to concrete env_0 paths so add_usd
@@ -93,6 +96,7 @@ def _build_newton_builder_from_mapping(
         )
         if simplify_meshes:
             p.approximate_meshes("convex_hull", keep_visual_shapes=True)
+        replace_newton_builder_shape_colors(p, stage)
         protos[src_path] = p
 
     # Inject registered sites into prototypes (and global sites into main builder)

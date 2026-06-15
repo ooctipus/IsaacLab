@@ -35,7 +35,7 @@ from newton.solvers import SolverBase, SolverKamino, SolverNotifyFlags
 
 from isaaclab.physics import CallbackHandle, PhysicsEvent, PhysicsManager
 from isaaclab.scene_data import SceneDataBackend, SceneDataFormat, SceneDataProvider
-from isaaclab.sim.utils.newton_model_utils import replace_newton_shape_colors
+from isaaclab.sim.utils.newton_model_utils import replace_newton_builder_shape_colors, replace_newton_shape_colors
 from isaaclab.sim.utils.stage import get_current_stage
 from isaaclab.utils import checked_apply
 from isaaclab.utils.string import resolve_matching_names
@@ -986,8 +986,6 @@ class NewtonManager(PhysicsManager):
             cls._model.set_gravity(cls._gravity_vector)
             cls._model.num_envs = cls._num_envs
 
-            replace_newton_shape_colors(cls._model)
-
         if cls._pending_extended_contact_attributes:
             cls._model.request_contact_attributes(*cls._pending_extended_contact_attributes)
             NewtonManager._pending_extended_contact_attributes = set()
@@ -1075,11 +1073,13 @@ class NewtonManager(PhysicsManager):
         if not env_paths:
             # No env Xforms — flat loading
             builder.add_usd(stage, schema_resolvers=schema_resolvers)
+            replace_newton_builder_shape_colors(builder, stage)
             NewtonManager._world_xforms = [wp.transform()]
         else:
             # Load everything except the env subtrees (ground plane, lights, etc.)
             ignore_paths = [path for _, path in env_paths]
             builder.add_usd(stage, ignore_paths=ignore_paths, schema_resolvers=schema_resolvers)
+            replace_newton_builder_shape_colors(builder, stage)
 
             # Build a prototype from the first env (all envs assumed identical)
             _, proto_path = env_paths[0]
@@ -1089,6 +1089,7 @@ class NewtonManager(PhysicsManager):
                 root_path=proto_path,
                 schema_resolvers=schema_resolvers,
             )
+            replace_newton_builder_shape_colors(proto, stage)
 
             # Inject registered sites into the proto before replication
             global_sites, proto_sites, world_sites = cls._cl_inject_sites(builder, {proto_path: proto})
