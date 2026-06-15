@@ -45,7 +45,7 @@ class SceneCfg(InteractiveSceneCfg):
 
     # ground terrain
     terrain = TerrainImporterCfg(
-        prim_path="{ENV_REGEX_NS}/ground",
+        prim_path="/World/ground",
         terrain_type="generator",
         use_terrain_origins=True,
         terrain_generator=TerrainGeneratorCfg(
@@ -95,7 +95,7 @@ class SceneCfg(InteractiveSceneCfg):
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.075, size=(2.5, 1.5)),
         debug_vis=False,
-        mesh_prim_paths=["{ENV_REGEX_NS}/ground"],
+        mesh_prim_paths=["/World/ground"],
     )
     contact_forces = PositionEnvContactSensorCfg()
     joint_wrench = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
@@ -161,7 +161,7 @@ class PositionPhysicsCfg(PresetCfg):
 
 @configclass
 class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
-    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=120.0)
+    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=0.0)
     sim: SimulationCfg = SimulationCfg(physics=PositionPhysicsCfg())  # type: ignore
     observations: mdp_presets.ObservationsCfg = mdp_presets.ObservationsCfg()  # type: ignore
     actions: ActionsCfg = ActionsCfg()
