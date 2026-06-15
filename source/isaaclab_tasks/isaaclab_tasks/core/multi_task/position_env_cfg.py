@@ -44,10 +44,17 @@ class SceneCfg(InteractiveSceneCfg):
     """ "Configuration for the terrain scene with a legged robot."""
 
     # ground terrain
+    #
+    # Per-env terrain (``{ENV_REGEX_NS}/ground``) clones one tile per environment and
+    # ``use_terrain_origins=False`` makes the importer place env origins on a flat
+    # ``env_spacing`` grid (z=0). The foot-sample retarget table is built against this model:
+    # spawn base z is the standing height above a z=0 tile. Switching to a global terrain with
+    # ``use_terrain_origins=True`` injects terrain elevation into the env origins, which the
+    # sampler does not expect and which makes robots spawn above the surface.
     terrain = TerrainImporterCfg(
-        prim_path="/World/ground",
+        prim_path="{ENV_REGEX_NS}/ground",
         terrain_type="generator",
-        use_terrain_origins=True,
+        use_terrain_origins=False,
         terrain_generator=TerrainGeneratorCfg(
             size=(10.0, 10.0),
             border_width=20.0,
@@ -95,7 +102,7 @@ class SceneCfg(InteractiveSceneCfg):
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.075, size=(2.5, 1.5)),
         debug_vis=False,
-        mesh_prim_paths=["/World/ground"],
+        mesh_prim_paths=["{ENV_REGEX_NS}/ground"],
     )
     contact_forces = PositionEnvContactSensorCfg()
     joint_wrench = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
@@ -161,7 +168,7 @@ class PositionPhysicsCfg(PresetCfg):
 
 @configclass
 class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
-    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=0.0)
+    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=120.0)
     sim: SimulationCfg = SimulationCfg(physics=PositionPhysicsCfg())  # type: ignore
     observations: mdp_presets.ObservationsCfg = mdp_presets.ObservationsCfg()  # type: ignore
     actions: ActionsCfg = ActionsCfg()
