@@ -9,7 +9,11 @@ from __future__ import annotations
 
 __all__: list[str] = []
 
+from pathlib import Path
+
 from isaaclab.assets import ArticulationCfg
+
+from isaaclab_tasks.utils import preset
 
 import isaaclab_assets.robots.anymal as anymal
 
@@ -27,9 +31,21 @@ from .robot_presets import (
     SyncFootPairsCfg,
 )
 
+# Local ONNX checkpoint for the Newton-native ANYdrive LSTM controller. Newton authors a
+# NeuralLSTM controller only when ``network_file`` ends in ``.onnx`` (the PhysX path uses the
+# official TorchScript ``.pt`` on Nucleus), so the ``newton_mjwarp`` preset points at this
+# bundled file. Kept local to avoid a remote fetch on the cluster.
+ANYDRIVE_3_LSTM_ONNX_PATH = str(Path(__file__).parent / "assets" / "anydrive_3_lstm.onnx")
+
 _ANYMAL_C_CFG: ArticulationCfg = anymal.ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 _ANYMAL_C_CFG.spawn.usd_path = (  # type: ignore[attr-defined]
     "https://uwlab-assets.s3.us-west-004.backblazeb2.com/Robots/ANYbotics/ANYmal-C/anymal_c.usd"
+)
+_ANYMAL_C_CFG.actuators["legs"] = _ANYMAL_C_CFG.actuators["legs"].replace(
+    network_file=preset(
+        default=anymal.ANYDRIVE_3_LSTM_ACTUATOR_CFG.network_file,
+        newton_mjwarp=ANYDRIVE_3_LSTM_ONNX_PATH,
+    )
 )
 
 RobotArticulationCfg.anymal_c = _ANYMAL_C_CFG

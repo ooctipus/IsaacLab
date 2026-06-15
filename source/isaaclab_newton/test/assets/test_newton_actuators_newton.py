@@ -39,6 +39,7 @@ from isaaclab.envs import ManagerBasedRLEnv
 from isaaclab.sim import SimulationCfg, build_simulation_context
 
 import isaaclab_tasks  # noqa: F401
+from isaaclab_tasks.core.multi_task.terrain.mdp_presets.robots.anymal_c import ANYDRIVE_3_LSTM_ONNX_PATH
 from isaaclab_tasks.core.velocity.config.g1.flat_env_cfg import G1FlatEnvCfg
 
 from isaaclab_assets import ANYMAL_C_CFG
