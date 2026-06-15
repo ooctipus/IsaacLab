@@ -217,29 +217,6 @@ class TestSimbaCnnEncoder:
         assert out.shape == (steps, num_envs, _NUM_ACTIONS)
         assert torch.isfinite(out).all()
 
-    def test_position_presets_wire_encoder_types(self):
-        try:
-            from isaaclab_tasks.core.position.config.rsl_rl_cfg import (
-                PositionActorPresetCfg,
-                PositionCriticPresetCfg,
-            )
-        except (ImportError, TypeError) as exc:
-            # The position config depends on a newer isaaclab_rl (e.g. PPO ``weight_decay``); skip when
-            # the importable isaaclab_rl predates it rather than reporting a spurious failure.
-            pytest.skip(f"position config not importable in this environment: {exc}")
-
-        def is_cnn(model_cfg):
-            return any(hasattr(c, "output_channels") for c in model_cfg.encoder_cfg.values())
-
-        for preset_cls in (PositionActorPresetCfg, PositionCriticPresetCfg):
-            presets = preset_cls()
-            assert not is_cnn(presets.simba_mlp)
-            assert is_cnn(presets.simba_cnn)
-            assert not is_cnn(presets.simba_mlp_big)
-            assert is_cnn(presets.simba_cnn_big)
-            # back-compat aliases point at the MLP variants
-            assert not is_cnn(presets.simba)
-
 
 class TestSimbaPresetPipeline:
     """End-to-end: the SimBa presets must survive the real ``handle_deprecated -> to_dict ->

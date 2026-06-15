@@ -90,16 +90,7 @@ def _register_position_tasks() -> None:
     without the Isaac-Sim-coupled side effects of a full ``import isaaclab_tasks``.
     """
     _set_registration_guard()
-    candidates = (
-        "isaaclab_tasks.core.multi_task.terrain.config",
-        "isaaclab_tasks.core.position.config.anymal_c",
-        "isaaclab_tasks.core.position.config.b2",
-        "isaaclab_tasks.core.position.config.go2",
-        "isaaclab_tasks.core.position.config.h1",
-        "isaaclab_tasks.core.position.config.mewtwo",
-        "isaaclab_tasks.core.position.config.spot",
-        "isaaclab_tasks.core.position.config.spot_with_arm",
-    )
+    candidates = ("isaaclab_tasks.core.multi_task.terrain.config",)
     for module_name in candidates:
         try:
             importlib.import_module(module_name)
