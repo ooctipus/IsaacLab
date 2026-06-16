@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
 # All rights reserved.
 #
@@ -25,10 +24,10 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Iterable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_KITLESS_BASE_IMAGE = "nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04"
@@ -116,8 +115,7 @@ def run(
             env=merged_env,
             check=False,
             text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
         )
         if check and proc.returncode != 0:
             stderr = proc.stderr.strip()
@@ -138,13 +136,16 @@ def docker(*args: str, capture: bool = False, check: bool = True, env: dict[str,
 def image_exists(image: str) -> bool:
     """Return whether a Docker image exists locally."""
 
-    return subprocess.run(
-        ["docker", "image", "inspect", image],
-        cwd=REPO_ROOT,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    ).returncode == 0
+    return (
+        subprocess.run(
+            ["docker", "image", "inspect", image],
+            cwd=REPO_ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        ).returncode
+        == 0
+    )
 
 
 def image_created(image: str) -> str:
@@ -216,7 +217,7 @@ def parse_env_file(path: Path) -> dict[str, str]:
     return env
 
 
-def hash_file(md5: "hashlib._Hash", path: Path, label: str) -> None:
+def hash_file(md5: hashlib._Hash, path: Path, label: str) -> None:
     """Add a file's bash-compatible marker and bytes to a dependency hash."""
 
     if not path.is_file():
@@ -247,9 +248,7 @@ def compute_deps_hash(kitless: bool) -> str:
 
     source = REPO_ROOT / "source"
     source_files = [
-        path
-        for path in source.rglob("*")
-        if path.is_file() and path.name in {"pyproject.toml", "extension.toml"}
+        path for path in source.rglob("*") if path.is_file() and path.name in {"pyproject.toml", "extension.toml"}
     ]
     for path in sorted(source_files, key=lambda item: item.relative_to(REPO_ROOT).as_posix()):
         hash_file(md5, path, path.relative_to(REPO_ROOT).as_posix())
@@ -323,24 +322,19 @@ def resolve_pip_overlay_base(ctx: BuildContext) -> str:
 
     prepared = prepared_checkpoint_image(ctx)
     if prepared:
-        print(
-            f"   using last prepared image for pip overlay: {prepared} "
-            f"({image_layer_count(prepared)} layers)"
-        )
+        print(f"   using last prepared image for pip overlay: {prepared} ({image_layer_count(prepared)} layers)")
         return prepared
 
     if image_exists(ctx.deps_image) and image_within_layer_budget(ctx.deps_image):
         print(
-            f"   using cached deps image for pip overlay: {ctx.deps_image} "
-            f"({image_layer_count(ctx.deps_image)} layers)"
+            f"   using cached deps image for pip overlay: {ctx.deps_image} ({image_layer_count(ctx.deps_image)} layers)"
         )
         return ctx.deps_image
 
     existing = newest_within_budget_deps_image()
     if existing:
         print(
-            f"   using newest in-budget deps cache for pip overlay: {existing} "
-            f"({image_layer_count(existing)} layers)"
+            f"   using newest in-budget deps cache for pip overlay: {existing} ({image_layer_count(existing)} layers)"
         )
         return existing
 
@@ -355,10 +349,7 @@ def determine_plan(ctx: BuildContext) -> BuildPlan:
         prepared = prepared_checkpoint_image(ctx)
         if prepared is None:
             raise BuildError("No prepared image found for -s/--source. Run -p/--pip or -d/--deps first.")
-        print(
-            f"   using last prepared image for source overlay: {prepared} "
-            f"({image_layer_count(prepared)} layers)"
-        )
+        print(f"   using last prepared image for source overlay: {prepared} ({image_layer_count(prepared)} layers)")
         return BuildPlan(True, True, False, "source-only overlay on last prepared image (-s/--source)", prepared)
 
     if args.all:
@@ -388,9 +379,7 @@ def determine_plan(ctx: BuildContext) -> BuildPlan:
 
     if newest_within_budget_deps_image() is None:
         candidate = newest_image(
-            img
-            for img in [ctx.prepared_image, ctx.final_image, BASE_IMAGE]
-            if image_within_layer_budget(img)
+            img for img in [ctx.prepared_image, ctx.final_image, BASE_IMAGE] if image_within_layer_budget(img)
         )
         if candidate:
             docker("tag", candidate, ctx.deps_image)
@@ -450,6 +439,9 @@ def build_full_deps(ctx: BuildContext, plan: BuildPlan, docker_env: dict[str, st
         )
     else:
         run(["./docker/container.py", "start", "--build"], env=env, unset_env=unset_env)
+
+    if not image_exists(BASE_IMAGE):
+        raise BuildError(f"Full deps build did not produce {BASE_IMAGE}; see the Docker build output above.")
 
     print(f"Caching deps image as {ctx.deps_image}")
     docker("tag", BASE_IMAGE, ctx.deps_image)
@@ -657,10 +649,7 @@ def clean_all() -> None:
     """Remove all local Isaac Lab build images after confirmation."""
 
     print("Removing ALL Isaac Lab Docker images.")
-    print(
-        "This removes isaac-lab-base, isaac-lab-prepared:*, "
-        "isaac-lab-deps:*, and final NGC tags."
-    )
+    print("This removes isaac-lab-base, isaac-lab-prepared:*, isaac-lab-deps:*, and final NGC tags.")
     reply = input("Are you sure? [y/N] ")
     if reply.lower() not in {"y", "yes"}:
         print("Cancelled.")

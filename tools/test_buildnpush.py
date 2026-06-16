@@ -50,7 +50,6 @@ class BuildnpushTest(unittest.TestCase):
         self.assertFalse(plan.run_pip_install)
         self.assertEqual(plan.build_base_image, ctx.prepared_image)
 
-
     def test_source_overlay_prefers_checkpoint_over_newer_final_image(self) -> None:
         ctx = _ctx(bp.BuildArgs(tag="factory", source=True))
         with self._mock_images(
@@ -99,7 +98,6 @@ class BuildnpushTest(unittest.TestCase):
         self.assertTrue(plan.skip_deps)
         self.assertFalse(plan.run_pip_install)
         self.assertEqual(plan.build_base_image, ctx.deps_image)
-
 
     def test_source_tagging_preserves_prepared_checkpoint(self) -> None:
         ctx = _ctx(bp.BuildArgs(tag="factory", source=True, skip_push=True))
