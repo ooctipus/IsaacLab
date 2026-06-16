@@ -445,9 +445,11 @@ REASON=""
 #   - Clean ``-d/--deps`` cache: ~71 layers
 #   - After 1 ``-p/--pip`` on top: ~80 layers
 #   - Each subsequent ``-p/--pip`` adds ~9 layers
-# A budget of 110 lets ~4 ``-p/--pip`` rounds stack before the user is nudged
-# to flatten with ``-d/--deps``.
-MAX_LAYERS_FOR_DEPS_CACHE=110
+# Every -d/-p/-s promotes its result to the hash-matched cache (isaac-lab-deps:<hash>) so the
+# next build inherits the latest deps -- but Docker caps an image at 127 layers, so the cache
+# CANNOT grow forever. The budget forces a -d flatten (back to ~71) before the cap; 118 leaves
+# room for one synced overlay (~base+8) below 127.
+MAX_LAYERS_FOR_DEPS_CACHE=118
 
 image_layer_count() {
   # ``docker history`` includes a header line; subtract it to get the layer count.
@@ -598,12 +600,22 @@ else
   echo "   ✗ No cached deps for hash ${DEPS_HASH}"
 fi
 
+# Guard against a source-only (-s) overlay silently reverting dependencies. When we reuse a
+# cached deps image whose hash does NOT match the current lock (uv.lock changed but no matching
+# deps cache exists yet), the cache's .venv is stale; without a uv sync the build would ship the
+# cache's old package versions. Force the in-image uv sync so deps match uv.lock. Run -d later to
+# flatten this into a fresh hash-matched cache and make -s fast again.
+if [ "$SKIP_DEPS" -eq 1 ] && [ "$DEPS_IMAGE" != "isaac-lab-deps:${DEPS_HASH}" ] && [ "$REBUILD_PIP" -eq 0 ]; then
+  echo "   ⚠ Deps cache (${DEPS_IMAGE}) != lock hash (${DEPS_HASH}); forcing uv sync so -s does not revert deps."
+  REBUILD_PIP=1
+fi
+
 echo ""
 echo "📋 Build Configuration:"
 echo "   Tag:           ${TAG}"
 echo "   Deps Hash:     ${DEPS_HASH}"
 echo "   Strategy:      ${REASON}"
-echo "   Pip Install:   $([ "$SKIP_DEPS" -eq 0 ] && echo "YES" || echo "SKIP (cached)")"
+echo "   Pip Install:   $(if [ "$SKIP_DEPS" -eq 0 ] || [ "$REBUILD_PIP" -eq 1 ]; then echo "YES"; else echo "SKIP (cached)"; fi)"
 echo "   Docker Cache:  $([ "$USE_CACHE" -eq 1 ] && echo "YES" || echo "NO")"
 echo "   Push to NGC:   $([ "$SKIP_PUSH" -eq 0 ] && echo "YES" || echo "SKIP")"
 echo ""
@@ -718,16 +730,20 @@ else
     -t "${BASE_IMAGE}" \
     .
 
-  # Promote a successful -p/--pip build to the deps cache so later -s/-p runs
-  # see the latest pip state. Skip promotion when the layer budget is exceeded.
+  # Promote a synced overlay build to the HASH-MATCHED deps cache (isaac-lab-deps:<current
+  # lock hash>) so the next -s/-p exact-matches it and inherits the up-to-date deps -- no
+  # repeated uv sync, no silent revert. Tagging the current hash (not the fallback cache we
+  # built ON) is what makes the next resolve find an exact match. Skipped past the layer
+  # budget, where -d/--deps must flatten (Docker's 127-layer cap).
   if [ "$REBUILD_PIP" -eq 1 ]; then
+    hash_cache="isaac-lab-deps:${DEPS_HASH}"
     new_layer_count=$(image_layer_count "${BASE_IMAGE}")
     if [ "${new_layer_count}" -lt "${MAX_LAYERS_FOR_DEPS_CACHE}" ]; then
-      echo "🏷  Promoting -p/--pip build to deps cache: ${DEPS_IMAGE} (${new_layer_count}/${MAX_LAYERS_FOR_DEPS_CACHE} layers)"
-      docker tag "${BASE_IMAGE}" "${DEPS_IMAGE}"
+      echo "🏷  Promoting synced build to hash-matched deps cache: ${hash_cache} (${new_layer_count}/${MAX_LAYERS_FOR_DEPS_CACHE} layers)"
+      docker tag "${BASE_IMAGE}" "${hash_cache}"
     else
-      echo "⚠ Layer count ${new_layer_count} ≥ ${MAX_LAYERS_FOR_DEPS_CACHE}; skipping deps cache promotion."
-      echo "  Run with -d/--deps to flatten and reset the layer count."
+      echo "⚠ Layer count ${new_layer_count} ≥ ${MAX_LAYERS_FOR_DEPS_CACHE} (cap 127); skipping promotion."
+      echo "  Run -d/--deps to flatten back to ~71 layers; then -s/-p stay fast again."
     fi
   fi
 fi
