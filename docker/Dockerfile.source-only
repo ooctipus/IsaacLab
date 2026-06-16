@@ -1,61 +1,46 @@
+# syntax=docker/dockerfile:1
 # Copyright (c) 2022-2025, The Isaac Lab Project Developers
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # Lightweight Dockerfile for source-only updates when dependencies are cached.
-# This simply copies source files over an existing isaac-lab-deps image.
-# Pass RUN_PIP_INSTALL=1 to also re-run pip install (for --force-pip-only).
 
-# syntax=docker/dockerfile:1
 ARG DEPS_BASE_IMAGE=isaac-lab-deps:latest
 FROM ${DEPS_BASE_IMAGE}
 
-# Path to the Isaac Lab directory
 ARG ISAACLAB_PATH_ARG
+ARG ISAACSIM_ROOT_PATH_ARG=/isaac-sim
+ARG RUN_PIP_INSTALL=0
+
 ENV ISAACLAB_PATH=${ISAACLAB_PATH_ARG}
 
-# Re-create the Isaac Sim symlink (may have been lost if deps image was migrated)
-ARG ISAACSIM_ROOT_PATH_ARG=/isaac-sim
-
-# Clear the dirs we re-copy so the overlay reflects DELETIONS, not just additions.
-# Docker ``COPY`` only adds/overwrites; it never removes files absent from the new
-# source tree. Without this, files deleted/moved upstream (e.g. the task-package
-# restructure that moved ``core/lift_franka_soft`` -> ``core/lift/config/franka_soft``)
-# survive in the deps base image and cause duplicate gym registrations at import
-# (``Isaac-Lift-Soft-Franka`` vs ``...-v0``). The ``:?`` guard fails the build if
-# ISAACLAB_PATH is unset rather than wiping a root-level path.
-RUN rm -rf "${ISAACLAB_PATH:?}/source" "${ISAACLAB_PATH:?}/scripts" "${ISAACLAB_PATH:?}/tools"
-
-# Copy source files (deps already installed in the base/deps image).
-# Keep the repo layout intact so the uv editable installs created in
-# ``Dockerfile.base`` keep resolving the isaaclab_* packages from source/.
-# ``--chown=isaaclab:isaaclab`` matches the user/group set up in ``Dockerfile.base``
-# (uid/gid 1000) so editable metadata can be written under the non-root user.
-COPY --chown=isaaclab:isaaclab source ${ISAACLAB_PATH}/source
-COPY --chown=isaaclab:isaaclab scripts ${ISAACLAB_PATH}/scripts
-COPY --chown=isaaclab:isaaclab tools ${ISAACLAB_PATH}/tools
-COPY --chown=isaaclab:isaaclab pyproject.toml uv.lock ${ISAACLAB_PATH}/
-COPY --chown=isaaclab:isaaclab isaaclab.sh ${ISAACLAB_PATH}/isaaclab.sh
-
-# Recreate the Isaac Sim symlink and normalize shell line endings.
-ARG RUN_PIP_INSTALL=0
-RUN ln -sfn ${ISAACSIM_ROOT_PATH_ARG} ${ISAACLAB_PATH}/_isaac_sim && \
-    find ${ISAACLAB_PATH}/source -type f -name "*.sh" -exec sed -i 's/\r$//' {} + && \
-    find ${ISAACSIM_ROOT_PATH_ARG}/extscache -path "*/pip_prebundle/typing_extensions.py" -delete 2>/dev/null || true
-
-# Optionally re-sync dependencies in place for -p/--pip (skipped for plain source-only).
-# ``UV_PROJECT_ENVIRONMENT``/``VIRTUAL_ENV`` (inherited from the base image) target the same
-# ``.venv``; ``--frozen`` pins to ``uv.lock`` and ``--inexact`` preserves the system-site Isaac
-# Sim packages uv does not manage. Two specifics keep this a fast in-place update instead of a
-# full venv rebuild:
-#   * ``--python ${ISAACLAB_PATH}/.venv/bin/python`` pins uv to the venv's existing interpreter.
-#     Without it, uv's default preference downloads a uv-managed CPython and REBUILDS the whole
-#     ``--system-site`` venv (deleting ``.venv/lib``) -- slow, and it fails when the cached deps
-#     image's venv is not owned by the build user.
-#   * ``USER root`` lets the install write into that venv regardless of how the cached deps image
-#     owns it; the runtime user only reads the venv, so root-written package files are harmless.
-#     Restored to ``isaaclab`` afterward so the container still runs unprivileged.
+# Keep source overlays to one filesystem-changing layer. BuildKit bind mounts
+# expose the current build context without creating separate COPY layers; the
+# RUN block owns deletion, copy, metadata repair, and optional -p dependency sync.
 USER root
-RUN if [ "${RUN_PIP_INSTALL}" = "1" ]; then \
-      cd ${ISAACLAB_PATH} && uv sync --frozen --inexact --python ${ISAACLAB_PATH}/.venv/bin/python; \
+RUN --mount=type=bind,source=source,target=/tmp/isaaclab_overlay/source,readonly \
+    --mount=type=bind,source=scripts,target=/tmp/isaaclab_overlay/scripts,readonly \
+    --mount=type=bind,source=tools,target=/tmp/isaaclab_overlay/tools,readonly \
+    --mount=type=bind,source=pyproject.toml,target=/tmp/isaaclab_overlay/pyproject.toml,readonly \
+    --mount=type=bind,source=uv.lock,target=/tmp/isaaclab_overlay/uv.lock,readonly \
+    --mount=type=bind,source=isaaclab.sh,target=/tmp/isaaclab_overlay/isaaclab.sh,readonly \
+    --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    rm -rf "${ISAACLAB_PATH:?}/source" "${ISAACLAB_PATH:?}/scripts" "${ISAACLAB_PATH:?}/tools" && \
+    cp -a /tmp/isaaclab_overlay/source "${ISAACLAB_PATH}/source" && \
+    cp -a /tmp/isaaclab_overlay/scripts "${ISAACLAB_PATH}/scripts" && \
+    cp -a /tmp/isaaclab_overlay/tools "${ISAACLAB_PATH}/tools" && \
+    cp -a /tmp/isaaclab_overlay/pyproject.toml /tmp/isaaclab_overlay/uv.lock "${ISAACLAB_PATH}/" && \
+    cp -a /tmp/isaaclab_overlay/isaaclab.sh "${ISAACLAB_PATH}/isaaclab.sh" && \
+    chown -R isaaclab:isaaclab \
+      "${ISAACLAB_PATH}/source" \
+      "${ISAACLAB_PATH}/scripts" \
+      "${ISAACLAB_PATH}/tools" \
+      "${ISAACLAB_PATH}/pyproject.toml" \
+      "${ISAACLAB_PATH}/uv.lock" \
+      "${ISAACLAB_PATH}/isaaclab.sh" && \
+    ln -sfn ${ISAACSIM_ROOT_PATH_ARG} "${ISAACLAB_PATH}/_isaac_sim" && \
+    find "${ISAACLAB_PATH}/source" -type f -name "*.sh" -exec sed -i 's/\r$//' {} + && \
+    (find ${ISAACSIM_ROOT_PATH_ARG}/extscache -path "*/pip_prebundle/typing_extensions.py" -delete 2>/dev/null || true) && \
+    if [ "${RUN_PIP_INSTALL}" = "1" ]; then \
+      cd "${ISAACLAB_PATH}" && uv sync --frozen --inexact --python "${ISAACLAB_PATH}/.venv/bin/python"; \
     fi
 USER isaaclab
