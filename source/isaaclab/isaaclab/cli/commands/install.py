@@ -768,9 +768,7 @@ def _install_isaaclab_submodules(isaaclab_submodules: list[str]) -> None:
         # installed and only emits a post-install conflict warning. ``only-if-needed``
         # keeps satisfying versions untouched (avoids churning numpy/pillow/
         # etc. that come bundled with Isaac Sim's kit python).
-        run_command(
-            pip_cmd + ["install", "--upgrade", "--upgrade-strategy", "only-if-needed", "--editable", str(item)]
-        )
+        run_command(pip_cmd + ["install", "--upgrade", "--upgrade-strategy", "only-if-needed", "--editable", str(item)])
         _upgrade_extension_pip_dependencies(
             python_exe,
             pip_cmd,
