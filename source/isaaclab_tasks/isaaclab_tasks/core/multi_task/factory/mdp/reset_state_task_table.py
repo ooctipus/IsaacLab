@@ -6,13 +6,12 @@
 """Build the Factory reset-state task table (the analog of the locomotion
 ``RelativeStateTaskTable``).
 
-The offline Newton-IK pipeline fills candidate rows; each batch is written into
-the live envs, settled for a few physics steps (drifting rows rejected -- the
-simulation-validated acceptance label), and harvested back through
-``get_reset_state`` so the stored rows use the exact env serialization. The
-survivors are then paired spawn x target WITHIN each board configuration. The
-result is a flat, index-based :class:`FactoryResetStateTaskTable` the command
-term consumes; the command itself only owns per-env lifecycle tensors.
+The offline Newton-IK pipeline fills candidate rows, then rows are serialized
+directly into the same layout as ``get_reset_state``. No live-env batching or
+sim stepping is involved. Survivors are paired spawn x target WITHIN each board
+configuration. The result is a flat, index-based
+:class:`FactoryResetStateTaskTable` the command term consumes; the command
+itself only owns per-env lifecycle tensors.
 """
 
 from __future__ import annotations
@@ -23,7 +22,6 @@ from typing import TYPE_CHECKING
 import torch
 import warp as wp
 
-from isaaclab_tasks.core.multi_task.curriculum import get_reset_state
 from isaaclab_tasks.core.multi_task.utils.grid_downsample import extract_features, grid_bucket_downsample
 
 if TYPE_CHECKING:
@@ -37,7 +35,7 @@ class FactoryResetStateTaskTable:
     """Flat, index-based reset-state table for the factory :class:`~...mdp.commands.StateCommand`.
 
     Attributes:
-        state_data: Settled reset-state rows [num_states, row_dim] in env-local
+        state_data: Reset-state rows [num_states, row_dim] in env-local
             serialization (the exact :func:`get_reset_state` layout).
         state_tag_indices: Placement-strategy tag per row [num_states].
         state_board_indices: Board-configuration index per row [num_states].
@@ -48,7 +46,7 @@ class FactoryResetStateTaskTable:
         slot_indices: ``arange(num_slots)``.
         task_tag_indices: Spawn tag per slot [num_slots].
         num_states: Stored row count.
-        built_size: Rows produced before the settle gate (survival denominator).
+        built_size: Rows produced before the final geometric filters.
         target_size: Density target ``rows_per_board x num_boards``.
     """
 
@@ -95,12 +93,12 @@ class FactoryResetStateTaskTable:
 
 
 def build_factory_reset_state_task_table(cfg: StateCommandCfg, env: ManagerBasedRLEnv) -> FactoryResetStateTaskTable:
-    """Fill the table from the offline Newton-IK pipeline + a settle gate, then pair.
+    """Fill the table from the offline Newton-IK pipeline, then pair.
 
     Args:
         cfg: The command cfg (``task_table`` carries the pipeline + density knobs;
             ``payload.reset_assets`` defines the row layout).
-        env: The live env (assets resolve from its scene; the settle gate steps it).
+        env: The live env whose scene resolves asset identity and row layout.
 
     Returns:
         The finalized :class:`FactoryResetStateTaskTable`.
@@ -135,7 +133,7 @@ def build_factory_reset_state_task_table(cfg: StateCommandCfg, env: ManagerBased
 
 
 def _precollect_from_pipeline(env, table_cfg, reset_assets):
-    """Run the offline pipeline, settle each batch, harvest the survivors."""
+    """Run the offline pipeline and serialize geometric survivor rows."""
     from ..retarget import FactoryIKPipeline
 
     pcfg = table_cfg.pipeline_cfg
@@ -156,8 +154,8 @@ def _precollect_from_pipeline(env, table_cfg, reset_assets):
     tag_names = list(result.tag_names)
     m = pipeline.model
 
-    # pipeline poses are in the robot base frame; the env writes are env-local,
-    # so the robot base must sit at its env origin with identity rotation
+    # pipeline poses are in the robot base frame; stored rows are env-local, so
+    # the robot base must sit at its env origin with identity rotation.
     root_rel = wp.to_torch(robot.data.root_pos_w)[0] - env.scene.env_origins[0]
     if float(root_rel.norm()) > 1e-3:
         raise RuntimeError(f"robot base is {root_rel.tolist()} m off its env origin; pipeline frames assume 0")
@@ -177,87 +175,119 @@ def _precollect_from_pipeline(env, table_cfg, reset_assets):
     squeeze = torch.where(result.family % 2 == 1, table_cfg.finger_squeeze, -table_cfg.finger_squeeze)
     squeeze = torch.where(grasped, squeeze, torch.zeros_like(squeeze))
 
-    assets = [
-        (env.scene["held_asset"], result.nut_pose),
-        (env.scene["nistboard"], result.board_pose),
-        (env.scene["fixed_asset"], result.bolt_pose),
-    ]
     total = result.joint_q.shape[0]
-    # optional nut-in-bounds gate: reject rows whose held asset spawns outside the
-    # task's oob box, so they cannot terminate on the first step
-    nut_lo = nut_hi = None
-    if table_cfg.nut_bounds is not None:
-        axes = ("x", "y", "z")
-        nut_lo = torch.tensor([table_cfg.nut_bounds.get(a, (-1e9, 1e9))[0] for a in axes], device=env.device)
-        nut_hi = torch.tensor([table_cfg.nut_bounds.get(a, (-1e9, 1e9))[1] for a in axes], device=env.device)
-    # accumulate survivor pose data for the (optional) success-grid geometry
-    stash = bool(getattr(table_cfg, "stash_viz_geometry", False))
-    viz_jq, viz_nut, viz_bolt, viz_board, viz_bidx = [], [], [], [], []
-    rows, row_tags, row_boards, survived = [], [], [], 0
-    for start in range(0, total, env.num_envs):
-        stop = min(start + env.num_envs, total)
-        b = slice(start, stop)
-        ids = torch.arange(stop - start, device=env.device)
-        jp = wp.to_torch(robot.data.default_joint_pos)[ids].clone()
-        jq = result.joint_q[b]
-        jp[:, [i for _, i in arm_pairs]] = jq[:, [c for c, _ in arm_pairs]]
-        jp[:, [i for _, i in finger_pairs]] = jq[:, [c for c, _ in finger_pairs]] + squeeze[b].unsqueeze(-1)
-        robot.write_joint_state_to_sim(jp, torch.zeros_like(jp), env_ids=ids)
-        robot.set_joint_position_target(jp, env_ids=ids)
-        zeros6 = torch.zeros(ids.numel(), 6, device=env.device)
-        for asset, pose in assets:
-            root = torch.cat([pose[b, :3] + env.scene.env_origins[ids], pose[b, 3:7]], dim=-1)
-            asset.write_root_pose_to_sim(root, env_ids=ids)
-            asset.write_root_com_velocity_to_sim(zeros6, env_ids=ids)
-        valid = torch.ones(ids.numel(), dtype=torch.bool, device=env.device)
-        if table_cfg.settle_steps > 0:
-            env.scene.write_data_to_sim()
-            for _ in range(table_cfg.settle_steps):
-                env.sim.step(render=False)
-                env.scene.update(dt=env.physics_dt)
-            held = env.scene["held_asset"]
-            drift = (wp.to_torch(held.data.root_pos_w)[ids] - env.scene.env_origins[ids] - result.nut_pose[b, :3]).norm(
-                dim=-1
-            )
-            valid = drift < table_cfg.settle_max_drift
-        if nut_lo is not None:
-            nut = result.nut_pose[b][:, :3]
-            valid = valid & ((nut >= nut_lo) & (nut <= nut_hi)).all(dim=1)
-        states = get_reset_state(env, ids, reset_assets, is_relative=True)
-        rows.append(states[valid])
-        row_tags.append(result.tag[b][valid])
-        row_boards.append(result.board_index[b][valid])
-        survived += int(valid.sum())
-        if stash:
-            viz_jq.append(jq[valid])
-            viz_nut.append(result.nut_pose[b][valid])
-            viz_bolt.append(result.bolt_pose[b][valid])
-            viz_board.append(result.board_pose[b][valid])
-            viz_bidx.append(result.board_index[b][valid])
-    state_data = torch.cat(rows).contiguous()
-    state_tag_indices = torch.cat(row_tags).contiguous()
-    state_board_indices = torch.cat(row_boards).contiguous()
-    per_tag = {
-        name: int((state_tag_indices == t).sum()) for t, name in enumerate(tag_names) if bool((result.tag == t).any())
-    }
-    print(f"[reset_state] pipeline table: {total} rows -> {survived} survived the settle gate {per_tag}")
-    # success-grid geometry (built here while the pipeline model + meshes are alive)
-    viz_geom = None
-    if stash and rows:
-        from ..viz.geometry import build_success_grid_geometry
-
-        torch.cuda.empty_cache()  # the table build runs at peak sim memory
-        viz_geom = build_success_grid_geometry(
-            pipeline.model,
-            torch.cat(viz_jq),
-            torch.cat(viz_nut),
-            torch.cat(viz_bolt),
-            torch.cat(viz_board),
-            torch.cat(viz_bidx),
-        )
-    # ``built`` is the PRE-settle row count (the survival denominator); the stored
-    # ``state_data`` is the survivors
+    valid = _nut_bounds_mask(table_cfg, result.nut_pose[:, :3])
+    state_data = _serialize_pipeline_rows(
+        env,
+        table_cfg,
+        reset_assets,
+        robot,
+        result,
+        arm_pairs,
+        finger_pairs,
+        squeeze,
+        valid,
+    )
+    state_tag_indices = result.tag[valid].contiguous()
+    state_board_indices = result.board_index[valid].contiguous()
+    survived = int(valid.sum())
+    per_tag = _tag_counts(state_tag_indices, tag_names)
+    print(f"[reset_state] geometric pipeline table: {total} rows -> {survived} stored {per_tag}")
+    viz_geom = _build_viz_geometry(table_cfg, pipeline, result, valid)
     return state_data, state_tag_indices, state_board_indices, tag_names, total, target_size, viz_geom
+
+
+def _nut_bounds_mask(table_cfg, nut_xyz: torch.Tensor) -> torch.Tensor:
+    """Return the configured geometric survivor mask for held-asset root positions."""
+    if table_cfg.nut_bounds is None:
+        return torch.ones(nut_xyz.shape[0], dtype=torch.bool, device=nut_xyz.device)
+    axes = ("x", "y", "z")
+    lo = torch.tensor([table_cfg.nut_bounds.get(axis, (-1e9, 1e9))[0] for axis in axes], device=nut_xyz.device)
+    hi = torch.tensor([table_cfg.nut_bounds.get(axis, (-1e9, 1e9))[1] for axis in axes], device=nut_xyz.device)
+    return ((nut_xyz >= lo) & (nut_xyz <= hi)).all(dim=1)
+
+
+def _serialize_pipeline_rows(env, table_cfg, reset_assets, robot, result, arm_pairs, finger_pairs, squeeze, valid):
+    """Serialize geometric pipeline rows in the exact ``get_reset_state(..., relative=True)`` layout."""
+    pcfg = table_cfg.pipeline_cfg
+    reset_asset_set = set(reset_assets)
+    pose_by_asset = {
+        pcfg.placement.held_asset_cfg.name: result.nut_pose[valid],
+        pcfg.board.board_asset_cfg.name: result.board_pose[valid],
+        pcfg.board.fixed_asset_cfg.name: result.bolt_pose[valid],
+    }
+    row_count = int(valid.sum())
+    states: list[torch.Tensor] = []
+    for name, articulation in env.scene._articulations.items():
+        if name not in reset_asset_set:
+            continue
+        if name == pcfg.robot.asset_cfg.name:
+            root_state = _repeat_root_state_relative(env, articulation, row_count)
+            joint_pos = _robot_joint_pos_from_pipeline(
+                robot, result.joint_q[valid], arm_pairs, finger_pairs, squeeze[valid]
+            )
+            joint_vel = torch.zeros_like(joint_pos)
+            states.extend((root_state, joint_pos, joint_vel))
+        else:
+            root_state = _repeat_root_state_relative(env, articulation, row_count)
+            joint_pos = wp.to_torch(articulation.data.default_joint_pos)[0].expand(row_count, -1).clone()
+            joint_vel = torch.zeros_like(joint_pos)
+            states.extend((root_state, joint_pos, joint_vel))
+
+    for name, rigid_object in env.scene._rigid_objects.items():
+        if name not in reset_asset_set:
+            continue
+        if name in pose_by_asset:
+            states.append(_root_state_from_pose(pose_by_asset[name]))
+        else:
+            states.append(_repeat_root_state_relative(env, rigid_object, row_count))
+    if not states:
+        raise RuntimeError(f"no reset assets from {reset_assets} exist in the factory scene")
+    return torch.cat(states, dim=-1).contiguous()
+
+
+def _robot_joint_pos_from_pipeline(robot, joint_q, arm_pairs, finger_pairs, squeeze):
+    """Map Newton joint coordinates into the live robot articulation joint order."""
+    joint_pos = wp.to_torch(robot.data.default_joint_pos)[0].expand(joint_q.shape[0], -1).clone()
+    joint_pos[:, [i for _, i in arm_pairs]] = joint_q[:, [c for c, _ in arm_pairs]]
+    joint_pos[:, [i for _, i in finger_pairs]] = joint_q[:, [c for c, _ in finger_pairs]] + squeeze.unsqueeze(-1)
+    return joint_pos
+
+
+def _root_state_from_pose(pose: torch.Tensor) -> torch.Tensor:
+    """Create root-state rows from env-local pose rows and zero root velocity."""
+    root_state = torch.zeros(pose.shape[0], 13, device=pose.device, dtype=pose.dtype)
+    root_state[:, :7] = pose
+    return root_state
+
+
+def _repeat_root_state_relative(env, asset, row_count: int) -> torch.Tensor:
+    """Repeat the first env's current root state in env-local coordinates."""
+    root_state = wp.to_torch(asset.data.root_state_w)[0].clone()
+    root_state[:3] -= env.scene.env_origins[0]
+    return root_state.unsqueeze(0).expand(row_count, -1).clone()
+
+
+def _build_viz_geometry(table_cfg, pipeline, result, valid):
+    """Build optional success-grid geometry for the kept geometric rows."""
+    if not bool(getattr(table_cfg, "stash_viz_geometry", False)) or not bool(valid.any()):
+        return None
+    from ..viz.geometry import build_success_grid_geometry
+
+    torch.cuda.empty_cache()  # the table build runs at peak sim memory
+    return build_success_grid_geometry(
+        pipeline.model,
+        result.joint_q[valid],
+        result.nut_pose[valid],
+        result.bolt_pose[valid],
+        result.board_pose[valid],
+        result.board_index[valid],
+    )
+
+
+def _tag_counts(state_tag_indices: torch.Tensor, tag_names: list[str]) -> dict[str, int]:
+    """Return non-empty per-tag counts for table-build logging."""
+    return {name: int((state_tag_indices == tag).sum()) for tag, name in enumerate(tag_names)}
 
 
 def _pair_within_boards(table_cfg, state_data, state_tag_indices, state_board_indices):
@@ -267,8 +297,8 @@ def _pair_within_boards(table_cfg, state_data, state_tag_indices, state_board_in
     state_ids = torch.arange(num_states, device=state_data.device, dtype=torch.long)
     # a goal solved against a different board pose would point at the wrong bolt.
     # Goals are a spatially-spread SUBSET of the board's own rows
-    # (targets_per_board <= rows_per_board by contract); the settle gate can leave
-    # a board with fewer rows, in which case all of them serve as goals.
+    # (targets_per_board <= rows_per_board by contract); geometric filters can
+    # leave a board with fewer rows, in which case all of them serve as goals.
     targets_per_board = int(table_cfg.targets_per_board)
     if targets_per_board <= 0 or targets_per_board > int(table_cfg.rows_per_board):
         raise ValueError(

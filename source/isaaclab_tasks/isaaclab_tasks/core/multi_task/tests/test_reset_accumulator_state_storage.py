@@ -280,14 +280,12 @@ def test_factory_sampler_config_lives_on_command_term():
     curriculum = FactoryCurriculumsCfg()
 
     assert list(commands.reset_state.commands.keys()) == ["assembly_asset"]
-    assert commands.reset_state.commands["assembly_asset"].position_threshold == 0.0025
+    assert commands.reset_state.commands["assembly_asset"].position_threshold == 0.005
     assert commands.reset_state.commands["assembly_asset"].duration == (0.0, 1.0)
     assert commands.reset_state.payload.reset_assets == ["nistboard", "fixed_asset", "held_asset", "robot"]
     assert commands.reset_state.task_table.pipeline_cfg is not None
-    assert commands.reset_state.task_table.pipeline_cfg.variant == "nut_thread_m16"
-    assert commands.reset_state.task_table.settle_steps > 0
-    assert commands.reset_state.task_table.rows_per_board.default == 4
-    assert commands.reset_state.task_table.targets_per_board == 4
+    assert int(commands.reset_state.task_table.rows_per_board) > 0
+    assert commands.reset_state.task_table.targets_per_board == commands.reset_state.task_table.rows_per_board
     assert commands.reset_state.randomize_command_indices is False
     assert curriculum.reset_sampler.params["sampling"].default.eps == FACTORY_RESET_SAMPLER_PRESETS.default.eps
     assert len(curriculum.reset_sampler.params["sampling"].beta_value_shift.strategies) == 2

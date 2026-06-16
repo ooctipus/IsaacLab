@@ -50,8 +50,7 @@ class FactoryResetStateTableCfg(StateCommandCfg.TaskTableCfg):
 
     pipeline_cfg: FactoryIKPipelineCfg = MISSING
     """Offline Newton-IK pipeline filling the table (see
-    :class:`~..retarget.FactoryIKPipeline`). Tags are pipeline data; rows pass
-    the settle gate below before being stored."""
+    :class:`~..retarget.FactoryIKPipeline`). Tags are pipeline data."""
 
     rows_per_board: int | PresetCfg = 8
     """Average reset-state rows kept PER board configuration; the total table size
@@ -68,16 +67,9 @@ class FactoryResetStateTableCfg(StateCommandCfg.TaskTableCfg):
     state_table_fps_features: Callable | None = None
     """Feature extractor for state-table compaction and sampler layout."""
 
-    settle_steps: int = 24
-    """Physics steps each pipeline batch settles for before harvesting (the
-    simulation-validated acceptance label). ``0`` stores rows geometrically."""
-
-    settle_max_drift: float = 0.005
-    """Reject a settled row whose held-asset position drifted more than this [m]."""
-
     finger_squeeze: float = 0.001
     """Grasped rows close the fingers this much past contact [m] so the position
-    drive holds the asset with real clamp force during settle and after reset."""
+    drive holds the asset with clamp force after reset."""
 
     nut_bounds: dict[str, tuple[float, float]] | None = None
     """Optional per-axis ``(min, max)`` env-local bounds on the held-asset (nut)

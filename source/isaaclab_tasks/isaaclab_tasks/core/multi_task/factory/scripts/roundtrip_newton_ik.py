@@ -17,7 +17,7 @@ before swapping _precollect_state_table (Step 6).
 Read-only (no write/step), so it is robust to the write-then-refresh sim API.
 NOTE: warp/newton/the IK prototypes are imported INSIDE the function, after
 launch_simulation has started the Kit app -- importing them before the app boots
-crashes the interpreter (matches visualize_reset_states.py's deferred imports).
+crashes the interpreter (matches the live Factory inspection script's deferred imports).
 
 Run:
   SCRIPT=source/isaaclab_tasks/isaaclab_tasks/core/multi_task/factory/scripts/roundtrip_newton_ik.py
