@@ -36,16 +36,26 @@ COPY --chown=isaaclab:isaaclab tools ${ISAACLAB_PATH}/tools
 COPY --chown=isaaclab:isaaclab pyproject.toml uv.lock ${ISAACLAB_PATH}/
 COPY --chown=isaaclab:isaaclab isaaclab.sh ${ISAACLAB_PATH}/isaaclab.sh
 
-# Recreate the Isaac Sim symlink and normalize shell line endings. Optionally
-# re-run the uv sync (skipped for plain source-only, enabled for --force-pip-only)
-# to pick up any dependency drift. ``UV_PROJECT_ENVIRONMENT``/``VIRTUAL_ENV`` are
-# inherited from the base image, so this targets the same ``.venv``; ``--frozen``
-# keeps it pinned to ``uv.lock`` and ``--inexact`` preserves the system-site
-# Isaac Sim packages uv does not manage.
+# Recreate the Isaac Sim symlink and normalize shell line endings.
 ARG RUN_PIP_INSTALL=0
 RUN ln -sfn ${ISAACSIM_ROOT_PATH_ARG} ${ISAACLAB_PATH}/_isaac_sim && \
     find ${ISAACLAB_PATH}/source -type f -name "*.sh" -exec sed -i 's/\r$//' {} + && \
-    find ${ISAACSIM_ROOT_PATH_ARG}/extscache -path "*/pip_prebundle/typing_extensions.py" -delete 2>/dev/null || true && \
-    if [ "${RUN_PIP_INSTALL}" = "1" ]; then \
-      cd ${ISAACLAB_PATH} && uv sync --frozen --inexact; \
+    find ${ISAACSIM_ROOT_PATH_ARG}/extscache -path "*/pip_prebundle/typing_extensions.py" -delete 2>/dev/null || true
+
+# Optionally re-sync dependencies in place for -p/--pip (skipped for plain source-only).
+# ``UV_PROJECT_ENVIRONMENT``/``VIRTUAL_ENV`` (inherited from the base image) target the same
+# ``.venv``; ``--frozen`` pins to ``uv.lock`` and ``--inexact`` preserves the system-site Isaac
+# Sim packages uv does not manage. Two specifics keep this a fast in-place update instead of a
+# full venv rebuild:
+#   * ``--python ${ISAACLAB_PATH}/.venv/bin/python`` pins uv to the venv's existing interpreter.
+#     Without it, uv's default preference downloads a uv-managed CPython and REBUILDS the whole
+#     ``--system-site`` venv (deleting ``.venv/lib``) -- slow, and it fails when the cached deps
+#     image's venv is not owned by the build user.
+#   * ``USER root`` lets the install write into that venv regardless of how the cached deps image
+#     owns it; the runtime user only reads the venv, so root-written package files are harmless.
+#     Restored to ``isaaclab`` afterward so the container still runs unprivileged.
+USER root
+RUN if [ "${RUN_PIP_INSTALL}" = "1" ]; then \
+      cd ${ISAACLAB_PATH} && uv sync --frozen --inexact --python ${ISAACLAB_PATH}/.venv/bin/python; \
     fi
+USER isaaclab
