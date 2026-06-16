@@ -222,7 +222,11 @@ RUN chmod 755 \
 # Isaac Sim's pip prebundle can appear before the project venv on PYTHONPATH
 # after ``setup_conda_env.sh`` is sourced. Its stale ``typing_extensions`` copy
 # breaks modern W&B/Pydantic imports, so let the venv-provided package win.
+USER root
+
 RUN find ${ISAACSIM_ROOT_PATH}/extscache -path "*/pip_prebundle/typing_extensions.py" -delete
+
+USER isaaclab
 
 # copy the rest of the files
 COPY --chown=isaaclab:isaaclab . ${ISAACLAB_PATH}/
