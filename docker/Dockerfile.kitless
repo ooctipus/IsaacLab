@@ -1,0 +1,170 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+# syntax=docker/dockerfile:1
+#
+# Kit-less Isaac Lab image: Newton backend only, no Isaac Sim.
+#
+# Unlike Dockerfile.base (which layers uv on top of the NGC Isaac Sim image and
+# inherits the bundled isaacsim/omni via --system-site-packages), this image
+# starts from a plain CUDA/Ubuntu base and lets uv manage its own CPython 3.12.
+# ``uv sync`` installs the default workspace (isaaclab* editable + newton main +
+# rsl_rl fork + torch cu128), which does not include the Isaac Sim pip package.
+# As a result PhysX, Kit rendering, RTX, and ROS workflows are unavailable; the
+# Newton physics backend (incl. MuJoCo-Warp) and the Newton visualizer work.
+
+# Base image: a CUDA/Ubuntu image is used so the NVIDIA container runtime exposes
+# the driver at run time. torch ``2.10.0+cu128`` bundles its own CUDA runtime, so
+# a ``-runtime`` (or even plain Ubuntu) base is sufficient; override via build-arg
+# if a different CUDA/Ubuntu combination is required.
+ARG KITLESS_BASE_IMAGE_ARG=nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
+FROM ${KITLESS_BASE_IMAGE_ARG} AS base
+
+# Set default RUN shell to bash
+SHELL ["/bin/bash", "-c"]
+
+# Adds labels to the Dockerfile
+LABEL version="2.1.1"
+LABEL description="Kit-less Dockerfile for building and running Isaac Lab with the Newton backend (no Isaac Sim)."
+
+# Arguments
+# Path to the Isaac Lab directory
+ARG ISAACLAB_PATH_ARG
+ENV ISAACLAB_PATH=${ISAACLAB_PATH_ARG}
+# Home dir of the runtime docker user, typically '/root'
+ARG DOCKER_USER_HOME_ARG
+ENV DOCKER_USER_HOME=${DOCKER_USER_HOME_ARG}
+ENV HOME=${DOCKER_USER_HOME}
+
+# Set environment variables
+ENV LANG=C.UTF-8
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install uv-managed CPython into a shared, root-owned location (world-readable)
+# instead of the runtime user's home. This keeps the interpreter out of the
+# ``chown -R ${DOCKER_USER_HOME}`` below (it would otherwise copy-up thousands of
+# files on overlayfs) while still being usable by the non-root user's venv.
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
+
+USER root
+
+# Install dependencies. ``ca-certificates`` is required for uv to fetch its
+# managed CPython build and resolve packages over HTTPS.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    libglib2.0-0 \
+    ncurses-term \
+    cmake \
+    git \
+    wget
+
+# arm64-only build deps (mirrors Dockerfile.base):
+# - imgui-bundle has no prebuilt arm64 wheel; needs GL/X11 dev headers.
+# - swig is required for the nlopt source build.
+# - libgmp-dev is required by pytetwild's fTetWild source build (no aarch64 wheel for 0.2.3).
+RUN if [ "$(dpkg --print-architecture)" = "arm64" ]; then \
+        apt-get update && \
+        apt-get install -y --no-install-recommends \
+        libgl1-mesa-dev libopengl-dev libglx-dev \
+        libx11-dev libxcursor-dev libxi-dev libxinerama-dev libxrandr-dev \
+        libgmp-dev \
+        swig; \
+    fi
+
+# Bring in the uv binary (pinned) used for the dependency install below.
+COPY --from=ghcr.io/astral-sh/uv:0.9.4 /uv /uvx /usr/local/bin/
+
+# copy files necessary for installing Isaac Lab and its dependencies
+# this way we minimize the chance of cache invalidation on file edits
+# (uv.lock + pyproject.toml + source/ are the inputs uv sync resolves against).
+# ``--chown=1000:1000`` (numeric, since the isaaclab user is created later) sets
+# ownership as the files are written, so we avoid a slow recursive ``chown`` over
+# source/ (incl. the bulky isaaclab_assets/data) on overlayfs.
+COPY --chown=1000:1000 ../isaaclab.* ../environment.yml ../pyproject.toml ../uv.lock ${ISAACLAB_PATH}/
+COPY --chown=1000:1000 ../tools/ ${ISAACLAB_PATH}/tools/
+COPY --chown=1000:1000 ../source/ ${ISAACLAB_PATH}/source/
+
+# Fix the line endings for the shell scripts (Windows git may add \r)
+RUN find ${ISAACLAB_PATH} -type f -name "*.sh" -exec sed -i 's/\r$//' {} +
+
+# Ensure isaaclab.sh has execute permissions
+RUN chmod +x ${ISAACLAB_PATH}/isaaclab.sh
+
+# Install the apt dependencies that extensions declare in their extension.toml.
+# This needs root and the ``toml`` module; ``uv run --no-project --with toml``
+# gives an ephemeral interpreter with toml without touching the project venv, so
+# we can build the venv later as the non-root user.
+RUN uv run --no-project --with toml python ${ISAACLAB_PATH}/tools/install_deps.py apt ${ISAACLAB_PATH}/source && \
+    apt-get -y autoremove && apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# for singularity usage, create the runtime cache directories and NVIDIA binary
+# placeholders so the image runs under singularity on clusters.
+RUN mkdir -p ${DOCKER_USER_HOME}/.cache/pip && \
+    mkdir -p ${DOCKER_USER_HOME}/.cache/nvidia/GLCache && \
+    mkdir -p ${DOCKER_USER_HOME}/.nv/ComputeCache && \
+    mkdir -p ${DOCKER_USER_HOME}/Documents && \
+    touch /bin/nvidia-smi && \
+    touch /bin/nvidia-debugdump && \
+    touch /bin/nvidia-persistenced && \
+    touch /bin/nvidia-cuda-mps-control && \
+    touch /bin/nvidia-cuda-mps-server && \
+    touch /etc/localtime && \
+    mkdir -p /var/run/nvidia-persistenced && \
+    touch /var/run/nvidia-persistenced/socket
+
+# aliasing isaaclab.sh and tensorboard for convenience
+RUN echo "export ISAACLAB_PATH=${ISAACLAB_PATH}" >> ${DOCKER_USER_HOME}/.bashrc && \
+    echo "alias isaaclab=${ISAACLAB_PATH}/isaaclab.sh" >> ${DOCKER_USER_HOME}/.bashrc && \
+    echo "alias tensorboard='${ISAACLAB_PATH}/.venv/bin/python -m tensorboard'" >> ${DOCKER_USER_HOME}/.bashrc && \
+    echo "export TZ=$(date +%Z)" >> ${DOCKER_USER_HOME}/.bashrc && \
+    echo "shopt -s histappend" >> ${DOCKER_USER_HOME}/.bashrc && \
+    echo "PROMPT_COMMAND='history -a'" >> ${DOCKER_USER_HOME}/.bashrc
+
+# Create the non-root runtime user. The source tree is already owned by uid 1000
+# (via COPY --chown above) and the heavy ``uv sync`` runs as this user below, so
+# the only thing left to chown is the small runtime home (${DOCKER_USER_HOME}) --
+# the uv-managed Python lives in /opt, not here. uid/gid 1000 match GitHub runner
+# bind mounts; --non-unique covers base images that already carry a 1000 user.
+RUN groupadd --non-unique --gid 1000 isaaclab \
+ && useradd --non-unique --uid 1000 --gid 1000 -M -l -s /bin/bash -d ${DOCKER_USER_HOME} isaaclab
+
+# Keep the runtime home closed to unrelated users and owned by the runtime user.
+# Also pre-create the uv-managed Python dir owned by uid 1000 so the venv step
+# below (run as isaaclab) can install CPython 3.12 into it.
+RUN chown -R isaaclab:isaaclab ${DOCKER_USER_HOME} && \
+    chmod 750 ${DOCKER_USER_HOME} && \
+    mkdir -p ${UV_PYTHON_INSTALL_DIR} && \
+    chown -R isaaclab:isaaclab ${UV_PYTHON_INSTALL_DIR}
+
+# Activate the uv environment for all shells. With ``VIRTUAL_ENV`` set and the
+# venv's bin on ``PATH``, ``isaaclab.sh`` selects ``$VIRTUAL_ENV/bin/python``
+# (there is no ``_isaac_sim`` to source), and bare ``python``/``pip`` resolve to
+# the uv environment.
+ENV UV_PROJECT_ENVIRONMENT=${ISAACLAB_PATH}/.venv
+ENV VIRTUAL_ENV=${ISAACLAB_PATH}/.venv
+ENV PATH=${ISAACLAB_PATH}/.venv/bin:${PATH}
+
+USER isaaclab
+
+# Create the uv environment on uv's own managed CPython 3.12 (no bundled
+# interpreter to inherit, so no --system-site-packages) and install Isaac Lab
+# (Newton backend) + the locked dependency tree. ``--frozen`` installs exactly
+# what ``uv.lock`` pins; the default workspace excludes the Isaac Sim pip package
+# so this stays kit-less. The cache mount is owned by uid/gid 1000 so the
+# non-root user can populate it.
+RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/uv,uid=1000,gid=1000 \
+    cd ${ISAACLAB_PATH} && \
+    uv venv --python 3.12 ${ISAACLAB_PATH}/.venv && \
+    uv sync --frozen
+
+# copy the rest of the files
+COPY --chown=isaaclab:isaaclab ../ ${ISAACLAB_PATH}/
+
+# make working directory as the Isaac Lab directory
+# this is the default directory when the container is run
+WORKDIR ${ISAACLAB_PATH}
