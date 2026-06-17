@@ -65,6 +65,34 @@ class CommandPayloadBase:
         self.cmd_ids = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self._success_per_cmd = torch.zeros(self.table.kind.shape[0], device=self.device)
 
+    def _init_success_gates(self, cfg: StateCommandCfg, env: ManagerBasedEnv) -> None:
+        """Bind old position-task success gates to the payload."""
+        payload_cfg = cfg.payload
+        if self.table.foot_body_ids is None or len(self.table.foot_body_ids) == 0:
+            raise ValueError("Command payload success gates require table foot_body_ids.")
+        self._foot_ids = list(self.table.foot_body_ids)
+        self._wrench_sensor = env.scene[payload_cfg.joint_wrench_sensor_name]
+        self._contact_sensor = env.scene[payload_cfg.contact_sensor_name]
+        robot_body_names = list(self.robot.data.body_names)
+        sensor_body_names = list(self._contact_sensor.body_names or [])
+        contact_foot_channels: list[int] = []
+        for foot_id in self._foot_ids:
+            body_name = robot_body_names[foot_id]
+            try:
+                contact_foot_channels.append(sensor_body_names.index(body_name))
+            except ValueError as err:
+                raise RuntimeError(
+                    f"ContactSensor {payload_cfg.contact_sensor_name!r} does not cover foot body {body_name!r}; "
+                    "expand the sensor prim_path regex to include all feet."
+                ) from err
+        self._contact_foot_channels = torch.tensor(contact_foot_channels, device=self.device, dtype=torch.long)
+        self._weight: torch.Tensor | None = None
+        self._L_ref: float | None = None
+        self._success_effort_multiplier = float(payload_cfg.success_effort_multiplier)
+        self._success_min_foot_weight_fraction = float(payload_cfg.success_min_foot_weight_fraction)
+        self._success_body_lin_speed_thresh = float(payload_cfg.success_body_lin_speed_thresh)
+        self._success_body_ang_speed_thresh = float(payload_cfg.success_body_ang_speed_thresh)
+
     def _store_task_selection(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
         """Record the per-env command-type id (CSR bucket) and active-channel mask."""
         self.cmd_ids[env_ids] = torch.bucketize(task_rows, self.table.offsets[1:-1], right=True)
@@ -84,12 +112,44 @@ class CommandPayloadBase:
         return torch.all(error < self.reward_scales[cmd_ids], dim=1)
 
     def get_task_done(self) -> torch.Tensor:
-        """Per-env done: the hold timer has fully drained."""
-        return self.cmd_buf[:, 1, self.time_idx] <= 0.0
+        """Per-env done: old position success gates plus the hold timer."""
+        timer_done = self.cmd_buf[:, 1, self.time_idx] <= 0.0
+        if self._weight is None:
+            body_mass = wp.to_torch(self.robot.data.body_mass)
+            gravity_vec = self.robot.data.GRAVITY_VEC_W.torch
+            if gravity_vec.ndim == 1:
+                g_mag = gravity_vec.norm().expand(self.num_envs)
+            else:
+                g_mag = gravity_vec.norm(dim=-1)
+            self._weight = body_mass.sum(dim=-1) * g_mag
+        if self._L_ref is None:
+            body_pos_w = wp.to_torch(self.robot.data.body_pos_w)
+            z_base = body_pos_w[:, 0, 2]
+            z_feet = body_pos_w[:, self._foot_ids, 2].mean(dim=-1)
+            self._L_ref = float((z_base - z_feet).mean().item())
+
+        lin_speed_max = wp.to_torch(self.robot.data.body_lin_vel_w).norm(dim=-1).amax(dim=-1)
+        ang_speed_max = wp.to_torch(self.robot.data.body_ang_vel_w).norm(dim=-1).amax(dim=-1)
+        settled = (lin_speed_max < self._success_body_lin_speed_thresh) & (
+            ang_speed_max < self._success_body_ang_speed_thresh
+        )
+
+        wrench_torque = wp.to_torch(self._wrench_sensor.data.torque)
+        joint_axis_torque_max = wrench_torque[..., 0].abs().amax(dim=-1)
+        specific_effort_max = joint_axis_torque_max / (self._weight * self._L_ref)
+        effort_threshold = self._success_effort_multiplier / float(len(self._foot_ids))
+        natural = specific_effort_max < effort_threshold
+
+        net_forces = wp.to_torch(self._contact_sensor.data.net_forces_w)
+        foot_fz = net_forces[:, self._contact_foot_channels, 2].sum(dim=-1)
+        weight_supported = foot_fz / self._weight
+        feet_bear_weight = weight_supported >= self._success_min_foot_weight_fraction
+
+        return timer_done & settled & natural & feet_bear_weight
 
     def get_task_reward(self) -> torch.Tensor:
         """Per-env terminal reward: 1 when done, else 0."""
-        return (self.cmd_buf[:, 1, self.time_idx] <= 0.0).float()
+        return self.get_task_done().float()
 
     def log_metrics(self, env: ManagerBasedEnv, success_rates: torch.Tensor) -> None:
         """Aggregate the per-task success rate into per-command-type log entries."""
@@ -215,6 +275,7 @@ class CommandPayloadBaseState(CommandPayloadBase):
             col += width
         self.obs_inv_unit_scales = obs_inv_scales
         self._alloc_lifecycle()
+        self._init_success_gates(cfg, env)
 
     def resample(
         self,
@@ -396,6 +457,7 @@ class CommandPayloadBaseFootState(CommandPayloadBase):
             (env.num_envs, int(model.body_count)), dtype=wp.spatial_vectorf, device=device
         )
         self._alloc_lifecycle()
+        self._init_success_gates(cfg, env)
 
     def resample(
         self,

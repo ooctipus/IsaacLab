@@ -12,11 +12,13 @@ runner composition. The preset classes here just wire those instances into
 ``agent.actor=<name>`` / ``agent.critic=<name>`` selectable alternatives.
 """
 
+from typing import Any
+
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg, RslRlRndCfg
 
-from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils import PresetCfg, preset
 
 from ...rl.rsl_rl import (
     RslRlCrlAlgorithmCfg,
@@ -36,8 +38,17 @@ from .rsl_rl_model_cfg import (
     LSTM_CRITIC,
     MLP_ENCODER_CRITIC,
     SIMBA_ACTOR,
+    SIMBA_BIG_ACTOR,
     SIMBA_BIG_CRITIC,
+    SIMBA_CNN_ACTOR,
+    SIMBA_CNN_BIG_ACTOR,
+    SIMBA_CNN_BIG_CRITIC,
+    SIMBA_CNN_CRITIC,
     SIMBA_CRITIC,
+    SIMBA_MLP_ACTOR,
+    SIMBA_MLP_BIG_ACTOR,
+    SIMBA_MLP_BIG_CRITIC,
+    SIMBA_MLP_CRITIC,
     SIMBA_RNN_ACTOR,
     SIMBA_RNN_CRITIC,
     TASK_EASING_ACTOR,
@@ -56,7 +67,11 @@ class PositionActorPresetCfg(PresetCfg):
     cnn = CNN_ACTOR_CFG
     encoder = ENCODER_ACTOR
     simba = SIMBA_ACTOR
-    simba_big = SIMBA_ACTOR
+    simba_big = SIMBA_BIG_ACTOR
+    simba_mlp = SIMBA_MLP_ACTOR
+    simba_mlp_big = SIMBA_MLP_BIG_ACTOR
+    simba_cnn = SIMBA_CNN_ACTOR
+    simba_cnn_big = SIMBA_CNN_BIG_ACTOR
     simba_rnn = SIMBA_RNN_ACTOR
     default = encoder
 
@@ -69,14 +84,38 @@ class PositionCriticPresetCfg(PresetCfg):
     flat = FLAT_CRITIC
     cnn = CNN_CRITIC_CFG
     lstm = LSTM_CRITIC
+    encoder = MLP_ENCODER_CRITIC
     mlp_encoder = MLP_ENCODER_CRITIC
     simba = SIMBA_CRITIC
     simba_big = SIMBA_BIG_CRITIC
+    simba_mlp = SIMBA_MLP_CRITIC
+    simba_mlp_big = SIMBA_MLP_BIG_CRITIC
+    simba_cnn = SIMBA_CNN_CRITIC
+    simba_cnn_big = SIMBA_CNN_BIG_CRITIC
     simba_rnn = SIMBA_RNN_CRITIC
     default = mlp_encoder
 
 
-POSITION_PPO_ALGORITHM_CFG = RslRlPpoAlgorithmCfg(
+@configclass
+class PositionObsGroupsPresetCfg(PresetCfg):
+    """Observation-group mapping presets selectable with the model presets."""
+
+    flat: dict[str, list[str]] = {"actor": ["policy", "task"], "critic": ["policy", "task"]}
+    encoder: dict[str, list[str]] = {
+        "actor": ["policy", "task", "height_scan"],
+        "critic": ["policy", "task", "height_scan"],
+    }
+    simba: dict[str, list[str]] = encoder
+    simba_big: dict[str, list[str]] = encoder
+    simba_mlp: dict[str, list[str]] = encoder
+    simba_mlp_big: dict[str, list[str]] = encoder
+    simba_cnn: dict[str, list[str]] = encoder
+    simba_cnn_big: dict[str, list[str]] = encoder
+    simba_rnn: dict[str, list[str]] = encoder
+    default: dict[str, list[str]] = encoder
+
+
+_POSITION_PPO_ALGORITHM_KWARGS: dict[str, Any] = dict(
     value_loss_coef=1.0,
     use_clipped_value_loss=True,
     clip_param=0.2,
@@ -85,12 +124,50 @@ POSITION_PPO_ALGORITHM_CFG = RslRlPpoAlgorithmCfg(
     num_mini_batches=4,
     learning_rate=1.0e-4,
     schedule="adaptive",
-    gamma=0.99,
+    gamma=0.999,
     lam=0.95,
     desired_kl=0.01,
     max_grad_norm=1.0,
-    share_cnn_encoders=True,
+    optimizer=preset(default="adam", adamw="adamw", adam="adam"),
+    weight_decay=preset(default=0.0, adamw=0.01, adam=0.0),
+    share_cnn_encoders=False,
 )
+
+POSITION_PPO_ALGORITHM_CFG = RslRlPpoAlgorithmCfg(**_POSITION_PPO_ALGORITHM_KWARGS)
+
+
+@configclass
+class ValueShiftAlgorithmCfg(RslRlPpoAlgorithmCfg):
+    """PPO algorithm cfg + bind expressions for the value-shift curriculum."""
+
+    class_name: str = "isaaclab_tasks.core.multi_task.rl.rsl_rl.algorithms:ValueShiftPPO"
+    bind_observation_exp: str = (
+        "setattr(alg, '_obs_cache',"
+        " env.unwrapped.curriculum_manager.get_term('terrain_levels')"
+        "._sampler._impl.value_shift_strategy.observation_cache)"
+    )
+    bind_current_value_exp: str = (
+        "setattr(alg, '_cur_buf',"
+        " env.unwrapped.curriculum_manager.get_term('terrain_levels')"
+        "._sampler._impl.value_shift_strategy.cur_val)"
+    )
+    bind_value_diff_exp: str = (
+        "setattr(alg, '_diff_buf',"
+        " env.unwrapped.curriculum_manager.get_term('terrain_levels')"
+        "._sampler._impl.value_shift_strategy.diff_val)"
+    )
+
+
+POSITION_VALUE_SHIFT_ALGORITHM_CFG = ValueShiftAlgorithmCfg(**_POSITION_PPO_ALGORITHM_KWARGS)
+
+
+@configclass
+class PositionAlgorithmPresetCfg(PresetCfg):
+    """Algorithm preset selectable via ``agent.algorithm=<name>``."""
+
+    default: RslRlPpoAlgorithmCfg = POSITION_PPO_ALGORITHM_CFG
+    value_shift: ValueShiftAlgorithmCfg = POSITION_VALUE_SHIFT_ALGORITHM_CFG
+    beta_value_shift: ValueShiftAlgorithmCfg = value_shift
 
 
 POSITION_RND_CFG = RslRlRndCfg(
@@ -111,10 +188,10 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     save_interval = 200
     resume = False
     experiment_name: str = ExperimentNameCfg()  # type: ignore
-    obs_groups = {"actor": ["policy", "task", "height_scan"], "critic": ["policy", "task", "height_scan"]}
+    obs_groups: PositionObsGroupsPresetCfg = PositionObsGroupsPresetCfg()  # type: ignore
     actor = PositionActorPresetCfg()  # type: ignore
     critic = PositionCriticPresetCfg()  # type: ignore
-    algorithm: RslRlPpoAlgorithmCfg = POSITION_PPO_ALGORITHM_CFG
+    algorithm = PositionAlgorithmPresetCfg()  # type: ignore[assignment]
 
 
 @configclass

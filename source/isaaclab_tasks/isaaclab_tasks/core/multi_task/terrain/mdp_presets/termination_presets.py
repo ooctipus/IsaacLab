@@ -12,6 +12,7 @@ from isaaclab_tasks.utils import PresetCfg
 
 from ...mdp.terminations import BaseTerminationsCfg, joint_reaction_overload
 from .. import mdp
+from .robots.robot_presets import NonFootContactBodyNamesCfg
 
 
 @configclass
@@ -54,7 +55,7 @@ class PositionTerminationsCfg(BaseTerminationsCfg):
     base_contact = DoneTerm(
         func=mdp.illegal_contact_ratio,
         params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=NonFootContactBodyNamesCfg()),  # type: ignore[arg-type]
             "threshold_ratio": 3.0,
         },
     )
@@ -64,6 +65,7 @@ class PositionTerminationsCfg(BaseTerminationsCfg):
         params={
             "sensor_cfg": SceneEntityCfg("joint_wrench"),
             "force_ratio": 6.0,
+            "force_mode": "magnitude",
         },
     )
 

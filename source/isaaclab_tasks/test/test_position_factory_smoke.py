@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from dataclasses import fields as dataclass_fields
 from types import SimpleNamespace
 
 import gymnasium as gym
@@ -35,6 +36,28 @@ import pytest
 import torch
 
 import isaaclab_tasks  # noqa: F401 -- registers the gym tasks
+
+
+def test_position_uses_global_terrain_like_old_position_task() -> None:
+    """Position scene should use one global terrain, not one ground prim per env."""
+    from isaaclab_tasks.core.multi_task.position_env_cfg import LocomotionPositionCommandEnvCfg
+
+    cfg = LocomotionPositionCommandEnvCfg()
+
+    assert cfg.scene.terrain.prim_path == "/World/ground"
+    assert cfg.scene.terrain.use_terrain_origins is True
+    assert cfg.scene.height_scanner.mesh_prim_paths == ["/World/ground"]
+    assert cfg.scene.env_spacing == 0.0
+    assert cfg.commands.goal_point.states_relative is False
+
+
+def test_position_joint_reaction_uses_magnitude_force_mode() -> None:
+    """Position joint-reaction termination should match the old full-force magnitude gate."""
+    from isaaclab_tasks.core.multi_task.terrain.mdp_presets.termination_presets import PositionTerminationsCfg
+
+    cfg = PositionTerminationsCfg()
+
+    assert cfg.joint_reaction.params["force_mode"] == "magnitude"
 
 
 @pytest.mark.parametrize("task_name", ["Isaac-Position-v0", "Isaac-Factory-v0"])
@@ -54,24 +77,21 @@ def test_env_cfg_constructs(task_name: str) -> None:
     assert hasattr(cfg, "events")
 
 
-def test_factory_accumulator_success_rate_callback_targets_monitor_success_rate() -> None:
-    """Factory accumulator curriculum should bind the reset monitor tensor."""
+def test_factory_success_rate_callback_targets_reset_state_command() -> None:
+    """Factory difficulty curriculum should bind the reset-state success rates."""
     spec = gym.spec("Isaac-Factory-v0")
     module_path, cls_name = spec.kwargs["env_cfg_entry_point"].split(":")
     cfg_cls = getattr(importlib.import_module(module_path), cls_name)
     cfg = cfg_cls()
     callback = cfg.curriculum.difficulty_scheduler.params["success_rate_callback"]
 
-    expected = "env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate"
-    assert callback.default == expected
-    assert callback.accumulator == expected
+    expected = "env.command_manager.get_term('reset_state').success_rates"
+    assert callback == expected
 
     rates = torch.tensor([0.5, 1.0])
-    reset_accumulator = SimpleNamespace(monitor_success_rate=rates)
-    eval_env = SimpleNamespace(
-        event_manager=SimpleNamespace(get_term_cfg=lambda _name: SimpleNamespace(func=reset_accumulator))
-    )
-    assert eval(callback.accumulator, {}, {"env": eval_env}) is rates  # noqa: S307
+    reset_state = SimpleNamespace(success_rates=rates)
+    eval_env = SimpleNamespace(command_manager=SimpleNamespace(get_term=lambda _name: reset_state))
+    assert eval(callback, {}, {"env": eval_env}) is rates  # noqa: S307
 
 
 def test_factory_difficulty_scheduler_waits_for_accumulator_rates() -> None:
@@ -124,26 +144,11 @@ def test_factory_difficulty_scheduler_averages_ready_success_rates() -> None:
     torch.testing.assert_close(result, torch.tensor(0.3))
 
 
-def test_position_weight_decay_preset_composes_with_value_shift_algorithm() -> None:
-    """Weight decay preset should tune the active PPO variant, not replace it."""
-    from isaaclab_tasks.core.position.config.rsl_rl_cfg import (
-        PositionLocomotionPPORunnerCfg,
-        ValueShiftAlgorithmCfg,
-    )
-    from isaaclab_tasks.utils.hydra import resolve_presets
-
-    cfg = PositionLocomotionPPORunnerCfg()
-
-    resolve_presets(cfg, selected=("beta_value_shift", "weight_decay"))
-
-    assert isinstance(cfg.algorithm, ValueShiftAlgorithmCfg)
-    assert cfg.algorithm.optimizer == "adamw"
-    assert cfg.algorithm.weight_decay == 1.0e-4
-
-
-def test_position_weight_decay_scalar_override_composes_with_value_shift(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Submit-style weight_decay overrides should remain scalar Hydra overrides."""
-    from isaaclab_tasks.core.position.config.rsl_rl_cfg import ValueShiftAlgorithmCfg
+def test_factory_actor_critic_preset_composes_with_value_shift_algorithm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Actor-critic model preset should not replace the factory PPO algorithm branch."""
+    from isaaclab_tasks.core.multi_task.factory.config.agents.rsl_rl_ppo_cfg import ValueShiftAlgorithmCfg
     from isaaclab_tasks.utils.hydra import resolve_task_config
 
     monkeypatch.setattr(
@@ -151,16 +156,167 @@ def test_position_weight_decay_scalar_override_composes_with_value_shift(monkeyp
         "argv",
         [
             "pytest",
-            "presets=beta_value_shift,weight_decay",
-            "agent.algorithm.weight_decay=0.01",
+            "presets=actor_critic,beta_value_shift",
         ],
     )
 
-    _, agent_cfg = resolve_task_config("Isaac-Position-Anymal-C-v0", "rsl_rl_cfg_entry_point")
+    _, agent_cfg = resolve_task_config("Isaac-Factory-v0", "rsl_rl_cfg_entry_point")
 
     assert isinstance(agent_cfg.algorithm, ValueShiftAlgorithmCfg)
-    assert agent_cfg.algorithm.optimizer == "adamw"
-    assert agent_cfg.algorithm.weight_decay == 0.01
+
+
+def test_position_anymal_c_base_contact_matches_old_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Anymal-C base-contact termination should monitor only the base body."""
+    from isaaclab_tasks.utils.hydra import resolve_task_config
+
+    monkeypatch.setattr(sys, "argv", ["pytest", "presets=anymal_c"])
+
+    env_cfg, _ = resolve_task_config("Isaac-Position-v0", "rsl_rl_cfg_entry_point")
+
+    assert env_cfg.terminations.base_contact.params["sensor_cfg"].body_names == "base"
+
+
+@pytest.mark.parametrize(
+    ("preset_name", "command_name"),
+    [
+        ("terrain_pose", "terrain_pose_cmd"),
+        ("terrain_pos", "terrain_position_cmd"),
+    ],
+)
+def test_position_terrain_command_duration_matches_old_task(
+    monkeypatch: pytest.MonkeyPatch,
+    preset_name: str,
+    command_name: str,
+) -> None:
+    """Terrain command hold duration should match the old position task."""
+    from isaaclab_tasks.utils.hydra import resolve_task_config
+
+    monkeypatch.setattr(sys, "argv", ["pytest", f"presets={preset_name}"])
+
+    env_cfg, _ = resolve_task_config("Isaac-Position-v0", "rsl_rl_cfg_entry_point")
+
+    assert env_cfg.commands.goal_point.commands[command_name].duration == (0.05, 1.0)
+
+
+def test_position_success_gate_payload_matches_old_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Position command success should keep the old settled/naturalness gates."""
+    from isaaclab_tasks.utils.hydra import resolve_task_config
+
+    monkeypatch.setattr(sys, "argv", ["pytest", "presets=anymal_c,terrain_pose"])
+
+    env_cfg, _ = resolve_task_config("Isaac-Position-v0", "rsl_rl_cfg_entry_point")
+    payload = env_cfg.commands.goal_point.payload
+
+    assert payload.success_effort_multiplier == 0.8
+    assert payload.joint_wrench_sensor_name == "joint_wrench"
+    assert payload.contact_sensor_name == "contact_forces"
+    assert payload.success_min_foot_weight_fraction == 0.80
+    assert payload.success_body_lin_speed_thresh == 0.30
+    assert payload.success_body_ang_speed_thresh == 0.30
+
+
+def test_position_simba_big_actor_uses_big_model() -> None:
+    """Position simba_big actor preset should use the wider SimBa actor cfg."""
+    from isaaclab_tasks.core.multi_task.terrain.config.rsl_rl_cfg import PositionLocomotionPPORunnerCfg
+    from isaaclab_tasks.utils.hydra import resolve_presets
+
+    cfg = PositionLocomotionPPORunnerCfg()
+    resolve_presets(cfg, selected=("simba_big",))
+
+    assert cfg.actor.hidden_dim == 512
+    assert cfg.critic.hidden_dim == 1024
+
+
+def test_position_preserves_old_preset_surface_except_flat_commands() -> None:
+    """Migrated position cfg should keep old selectable preset names."""
+    from isaaclab_tasks.core.multi_task.terrain.config.rsl_rl_cfg import (
+        PositionActorPresetCfg,
+        PositionCriticPresetCfg,
+        PositionObsGroupsPresetCfg,
+    )
+    from isaaclab_tasks.core.multi_task.terrain.mdp_presets.curriculum_presets import CurriculumPresetCfg
+    from isaaclab_tasks.core.multi_task.terrain.mdp_presets.observation_presets import ObservationsCfg
+    from isaaclab_tasks.core.multi_task.terrain.mdp_presets.reward_presets import RewardsCfg
+
+    def fields(obj) -> set[str]:
+        return {field.name for field in dataclass_fields(obj)}
+
+    simba_names = {"simba", "simba_big", "simba_mlp", "simba_mlp_big", "simba_cnn", "simba_cnn_big"}
+
+    assert {"commander", "task_easing", "lstm", "flat", "encoder", *simba_names, "default"} <= fields(
+        PositionActorPresetCfg()
+    )
+    assert {"flat", "lstm", "encoder", *simba_names, "default"} <= fields(PositionCriticPresetCfg())
+    assert {"flat", "encoder", *simba_names, "default"} <= fields(PositionObsGroupsPresetCfg())
+    assert {"flat", "encoder", *simba_names, "default"} <= fields(ObservationsCfg())
+    assert {"rew_v1", "rew_v2", "default"} <= fields(RewardsCfg())
+    assert {"foot_sampled_commands", "default"} <= fields(CurriculumPresetCfg())
+    assert "flat_patch_commands" not in fields(CurriculumPresetCfg())
+
+
+def test_position_old_preset_names_resolve_except_flat_commands(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Old position preset names should still resolve through Hydra."""
+    from isaaclab_tasks.utils.hydra import resolve_task_config
+
+    old_names = (
+        "flat",
+        "encoder",
+        "simba_mlp",
+        "simba_mlp_big",
+        "simba_cnn",
+        "simba_cnn_big",
+        "rew_v1",
+        "rew_v2",
+        "foot_sampled_commands",
+        "base",
+        "base_foot",
+        "terrain",
+        "terrain_pos",
+        "terrain_pose",
+        "pose",
+        "pos",
+        "vel",
+        "all_commands",
+    )
+    for name in old_names:
+        monkeypatch.setattr(sys, "argv", ["pytest", f"presets=anymal_c,{name}"])
+        resolve_task_config("Isaac-Position-v0", "rsl_rl_cfg_entry_point")
+
+    monkeypatch.setattr(sys, "argv", ["pytest", "presets=flat_patch_commands"])
+    with pytest.raises(ValueError, match="flat_patch_commands"):
+        resolve_task_config("Isaac-Position-v0", "rsl_rl_cfg_entry_point")
+
+
+def test_position_beta_value_shift_sampler_includes_value_shift_strategy() -> None:
+    """Position beta_value_shift should combine Beta sampling with value-shift scoring."""
+    from isaaclab_tasks.core.multi_task.curriculum import ValueShiftSamplingStrategyCfg
+    from isaaclab_tasks.core.multi_task.terrain.mdp_presets.curriculum_presets import PositionCurriculumSamplerCfg
+    from isaaclab_tasks.utils.hydra import resolve_presets
+
+    cfg = PositionCurriculumSamplerCfg()
+    resolve_presets(cfg, selected=("beta_value_shift",))
+
+    sampling = cfg.terrain_levels.params["sampling"]
+    value_shift = [s for s in sampling.strategies if isinstance(s, ValueShiftSamplingStrategyCfg)]
+
+    assert len(value_shift) == 1
+    assert value_shift[0].state_buffer_bind == "env.command_manager.get_term('goal_point').table.task_partition"
+
+
+def test_position_beta_value_shift_preset_uses_value_shift_algorithm() -> None:
+    """Position beta_value_shift should select the matching ValueShiftPPO algorithm cfg."""
+    from isaaclab_tasks.core.multi_task.terrain.config.rsl_rl_cfg import (
+        PositionLocomotionPPORunnerCfg,
+        ValueShiftAlgorithmCfg,
+    )
+    from isaaclab_tasks.utils.hydra import resolve_presets
+
+    cfg = PositionLocomotionPPORunnerCfg()
+    resolve_presets(cfg, selected=("beta_value_shift",))
+
+    assert isinstance(cfg.algorithm, ValueShiftAlgorithmCfg)
+    assert cfg.algorithm.gamma == 0.999
+    assert cfg.algorithm.share_cnn_encoders is False
 
 
 @pytest.mark.parametrize("task_name", ["Isaac-Position-v0", "Isaac-Factory-v0"])

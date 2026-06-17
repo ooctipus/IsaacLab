@@ -27,6 +27,7 @@ Example usage::
 """
 
 import ast
+import copy
 import functools
 import re
 import sys
@@ -225,6 +226,27 @@ def _is_leaf_preset(preset_obj: PresetCfg) -> bool:
     return all(not _is_walkable_cfg(value) for value in _preset_fields(preset_obj).values())
 
 
+def _same_preset_value(lhs, rhs) -> bool:
+    """Return whether two preset alternatives represent the same choice."""
+    if lhs is rhs:
+        return True
+    try:
+        return bool(lhs == rhs)
+    except (TypeError, ValueError, RuntimeError):
+        return False
+
+
+def _copy_preset_value(value):
+    """Return an isolated selected preset value.
+
+    Preset alternatives are templates stored on class attributes. Active-tree
+    resolution mutates selected config objects as it replaces nested presets,
+    so returning the shared alternative directly can erase sibling choices for
+    later resolves in the same process.
+    """
+    return copy.deepcopy(value) if _is_walkable_cfg(value) else value
+
+
 def _walk_cfg(cfg, path: str, on_preset: Callable) -> None:
     """Depth-first walk of a config tree, calling *on_preset(parent, key, obj, path)*
     for every :class:`PresetCfg` node.  Recurses through dataclass attrs, dicts,
@@ -290,18 +312,22 @@ def _pick_alternative(
 ):
     """Choose the best alternative from a PresetCfg.
 
-    Priority: first match in ``selected``, then ``default`` (preferring
-    class-level over instance-level).
+    Priority: non-default matches in ``selected``, then default-equivalent
+    matches in ``selected``, then ``default``. Default-equivalent global
+    matches are weak so broad names can compose with a more specific preset
+    on the same node.
 
     Raises:
         ValueError: If no matching name and no ``default`` field exists.
     """
     fields = _preset_fields(preset_obj)
     field_names = set(fields)
+    has_default = "default" in fields
+    default_value = fields.get("default")
     if explicit_name is not None:
         explicit_name = _normalize_preset_name(explicit_name, field_names)
         if explicit_name in fields:
-            return fields[explicit_name]
+            return _copy_preset_value(fields[explicit_name])
         avail = list(fields)
         hint = ""
         if explicit_name in PresetTarget.all_legacy_aliases():
@@ -313,12 +339,14 @@ def _pick_alternative(
 
     match_name = None
     match_value = None
+    match_is_default = False
     for name in selected:
         raw_name = name
         name = _normalize_preset_name(raw_name, field_names)
         if name not in fields or name == match_name:
             continue
         val = fields[name]
+        val_is_default = has_default and _same_preset_value(val, default_value)
         if consumed_selected is not None:
             consumed_selected.add(raw_name)
             consumed_selected.add(name)
@@ -329,15 +357,19 @@ def _pick_alternative(
                 typed_hits.setdefault(raw_name, set()).update(targets)
                 typed_hits.setdefault(name, set()).update(targets)
         if match_name is not None:
-            if match_value is not val and match_value != val:
-                raise ValueError(
-                    f"Conflicting global presets: '{match_name}' and '{name}' both define preset for '{path}'"
-                )
-        match_name, match_value = name, val
+            if _same_preset_value(match_value, val):
+                continue
+            if match_is_default and not val_is_default:
+                match_name, match_value, match_is_default = name, val, val_is_default
+                continue
+            if not match_is_default and val_is_default:
+                continue
+            raise ValueError(f"Conflicting global presets: '{match_name}' and '{name}' both define preset for '{path}'")
+        match_name, match_value, match_is_default = name, val, val_is_default
     if match_name is not None:
-        return match_value
-    if "default" in fields:
-        return fields["default"]
+        return _copy_preset_value(match_value)
+    if has_default:
+        return _copy_preset_value(default_value)
     raise ValueError(
         f"PresetCfg {type(preset_obj).__name__} at '{path}' has no 'default' field "
         f"and none of the selected presets {selected} match its fields {set(fields.keys())}."
@@ -427,8 +459,8 @@ def resolve_presets(cfg, selected=()):
 
     For each ``PresetCfg`` found during an active-tree breadth-first walk:
 
-    1. Pick the first name from *selected* that exists as a field on the
-       preset, otherwise fall back to ``default``.
+    1. Pick the matching non-default name from *selected* if one exists;
+       otherwise pick a default-equivalent match or fall back to ``default``.
     2. Replace the preset in its parent (dict key or dataclass attr).
     3. Continue walking the replacement (which may contain more presets).
 

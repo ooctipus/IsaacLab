@@ -13,6 +13,7 @@ from isaaclab_tasks.core.multi_task.curriculum import (
     StateLayoutCfg,
     SuccessMonitorCfg,
     UniformSamplingStrategyCfg,
+    ValueShiftSamplingStrategyCfg,
 )
 from isaaclab_tasks.utils import PresetCfg, preset
 
@@ -41,9 +42,34 @@ class PositionCurriculumSamplerCfg:
                     eps=1e-4,
                 ),
                 uniform=SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=1.0)], eps=0.0),
-                beta66=SamplerCfg(
+                beta=SamplerCfg(
                     strategies=[
                         BetaSamplingStrategyCfg(target=0.66, kappa=2.5, weight=1.0, success_rate_bind="success_rates")
+                    ],
+                    eps=1e-4,
+                ),
+                value_shift=SamplerCfg(
+                    strategies=[
+                        ValueShiftSamplingStrategyCfg(
+                            weight=0.5,
+                            state_buffer_bind="env.command_manager.get_term('goal_point').table.task_partition",
+                            cmd_indices_bind="env.command_manager.get_term('goal_point').cmd_indices",
+                            resample_command_fn_bind="env.command_manager.get_term('goal_point')._resample_command",
+                            get_critic_obs_fn_bind="lambda: env.observation_manager.compute()",
+                        )
+                    ],
+                    eps=1e-4,
+                ),
+                beta_value_shift=SamplerCfg(
+                    strategies=[
+                        BetaSamplingStrategyCfg(target=0.66, kappa=2.5, weight=1.0, success_rate_bind="success_rates"),
+                        ValueShiftSamplingStrategyCfg(
+                            weight=1.0,
+                            state_buffer_bind="env.command_manager.get_term('goal_point').table.task_partition",
+                            cmd_indices_bind="env.command_manager.get_term('goal_point').cmd_indices",
+                            resample_command_fn_bind="env.command_manager.get_term('goal_point')._resample_command",
+                            get_critic_obs_fn_bind="lambda: env.observation_manager.compute()",
+                        ),
                     ],
                     eps=1e-4,
                 ),
@@ -96,6 +122,7 @@ class CRLSamplerCfg:
 
 @configclass
 class CurriculumPresetCfg(PresetCfg):
-    position = PositionCurriculumSamplerCfg()
+    foot_sampled_commands = PositionCurriculumSamplerCfg()
+    position = foot_sampled_commands
     crl = CRLSamplerCfg()
-    default = position
+    default = foot_sampled_commands

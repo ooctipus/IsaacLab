@@ -31,6 +31,7 @@ __all__ = [
     "mechanical_power",
     "command_success",
     "exploration_reward",
+    "reward_compose",
     "contact_penalty",
     "success_terminate",
     "abnormal_robot_state",
@@ -51,6 +52,7 @@ __all__ = [
     "SamplerBase",
     "CriterionFn",
     "vision_obs",
+    "bound_height_scan",
     "gravity_b",
 ]
 
@@ -78,6 +80,7 @@ from isaaclab_tasks.core.multi_task.mdp.observations import (
     vision_obs,
 )
 from .observations import (
+    bound_height_scan,
     target_pos_env,
     achieved_pos_env,
     command_current_state,
@@ -85,7 +88,7 @@ from .observations import (
     gravity_b,
 )
 from isaaclab_tasks.core.multi_task.mdp.rewards import command_task_reward, contact_penalty, mechanical_power
-from .rewards import command_success, exploration_reward
+from .rewards import command_success, exploration_reward, reward_compose
 from isaaclab_tasks.core.multi_task.mdp.terminations import (
     abnormal_robot_state,
     illegal_contact_ratio,

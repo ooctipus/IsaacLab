@@ -136,6 +136,24 @@ class BaseStatePayloadCfg(StateCommandCfg.PayloadCfg):
     normalize_command_obs: bool = False
     """Whether to divide command channels by the per-task success threshold."""
 
+    success_effort_multiplier: float = 0.8
+    """Specific-effort threshold multiplier for the terminal naturalness gate."""
+
+    joint_wrench_sensor_name: str = "joint_wrench"
+    """Scene name of the joint-wrench sensor used by the success gate."""
+
+    contact_sensor_name: str = "contact_forces"
+    """Scene name of the contact sensor used by the feet-bear-weight gate."""
+
+    success_min_foot_weight_fraction: float = 0.80
+    """Minimum fraction of body weight that feet must support for success."""
+
+    success_body_lin_speed_thresh: float = 0.30
+    """Per-body linear-speed ceiling [m/s] for the success settled gate."""
+
+    success_body_ang_speed_thresh: float = 0.30
+    """Per-body angular-speed ceiling [rad/s] for the success settled gate."""
+
     goal_visualizer_cfg: VisualizationMarkersCfg = _GOAL_VISUALIZER_CFG
     """Debug marker for the goal state (pos/pose/vel)."""
 
@@ -167,6 +185,24 @@ class BaseFootStatePayloadCfg(StateCommandCfg.PayloadCfg):
 
     normalize_command_obs: bool = False
     """Whether to divide command channels by the per-task success threshold."""
+
+    success_effort_multiplier: float = 0.8
+    """Specific-effort threshold multiplier for the terminal naturalness gate."""
+
+    joint_wrench_sensor_name: str = "joint_wrench"
+    """Scene name of the joint-wrench sensor used by the success gate."""
+
+    contact_sensor_name: str = "contact_forces"
+    """Scene name of the contact sensor used by the feet-bear-weight gate."""
+
+    success_min_foot_weight_fraction: float = 0.80
+    """Minimum fraction of body weight that feet must support for success."""
+
+    success_body_lin_speed_thresh: float = 0.30
+    """Per-body linear-speed ceiling [m/s] for the success settled gate."""
+
+    success_body_ang_speed_thresh: float = 0.30
+    """Per-body angular-speed ceiling [rad/s] for the success settled gate."""
 
     goal_visualizer_cfg: VisualizationMarkersCfg = _GOAL_VISUALIZER_CFG
     """Debug marker for the goal state (pos/pose/vel/foot)."""

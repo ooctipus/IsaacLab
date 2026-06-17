@@ -1191,6 +1191,66 @@ def test_apply_overrides_aliased_globals_no_conflict():
     assert env_cfg.mode == SharedCfg()
 
 
+@pytest.mark.parametrize(
+    "selected",
+    [
+        ["actor_critic", "beta_value_shift"],
+        ["beta_value_shift", "actor_critic"],
+    ],
+)
+def test_apply_overrides_default_alias_global_yields_to_specific_global(selected: list[str]):
+    """Default-equivalent globals compose with a specific preset on the same node."""
+
+    @configclass
+    class AlgorithmPresetCfg(PresetCfg):
+        actor_critic: str = "ppo"
+        default: str = actor_critic
+        beta_value_shift: str = "value_shift"
+
+    @configclass
+    class DefaultAliasAgentCfg:
+        algorithm: AlgorithmPresetCfg = AlgorithmPresetCfg()
+
+    env_cfg = PresetCfgEnvCfg()
+    agent_cfg = DefaultAliasAgentCfg()
+    presets = {"env": collect_presets(env_cfg), "agent": collect_presets(agent_cfg)}
+    hydra_cfg = {"env": env_cfg.to_dict(), "agent": agent_cfg.to_dict()}
+
+    apply_overrides(env_cfg, agent_cfg, hydra_cfg, selected, [], [], presets)
+
+    assert agent_cfg.algorithm == "value_shift"
+
+
+def test_resolve_presets_does_not_mutate_selected_config_templates():
+    """Resolving nested presets should not rewrite the shared alternative template."""
+
+    @configclass
+    class NestedPresetCfg(PresetCfg):
+        default: str = "default_nested"
+        special: str = "special_nested"
+
+    @configclass
+    class BranchCfg:
+        nested: NestedPresetCfg = NestedPresetCfg()
+
+    @configclass
+    class BranchPresetCfg(PresetCfg):
+        default: BranchCfg = BranchCfg()
+
+    @configclass
+    class RootCfg:
+        branch: BranchPresetCfg = BranchPresetCfg()
+
+    first = RootCfg()
+    resolve_presets(first, selected=("special",))
+    assert first.branch.nested == "special_nested"
+
+    second = RootCfg()
+    resolve_presets(second, selected=())
+
+    assert second.branch.nested == "default_nested"
+
+
 # =============================================================================
 # Tests: parse_overrides edge cases
 # =============================================================================

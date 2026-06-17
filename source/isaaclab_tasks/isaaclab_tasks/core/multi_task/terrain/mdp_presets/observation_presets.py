@@ -15,13 +15,47 @@ from .. import mdp
 
 
 @configclass
-class PositionObservationsCfg:
-    """Observations for the MDP (encoder variant: ``height_scan`` in its own 1D group).
+class FlatPositionObservationsCfg:
+    """Observations for the MDP with ``height_scan`` concatenated into ``policy``."""
 
-    Separates the flat ``height_scan`` into a dedicated group so it can be routed through a
-    per-group MLP encoder before being fused with the proprioceptive ``policy``
-    group at the main MLP head.
-    """
+    @configclass
+    class PolicyCfg(ObsGroup):
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
+        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
+        proj_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))
+        gravity_b = ObsTerm(func=mdp.gravity_b, noise=Unoise(n_min=-0.5, n_max=0.5))
+        joint_pos = ObsTerm(func=mdp.joint_pos)
+        joint_vel = ObsTerm(func=mdp.joint_vel)
+        last_actions = ObsTerm(func=mdp.last_action)
+        height_scan = ObsTerm(
+            func=mdp.bound_height_scan,
+            params={
+                "sensor_cfg": SceneEntityCfg("height_scanner"),
+                "asset_cfg": SceneEntityCfg("robot", body_names=["base"]),
+            },
+            noise=Unoise(n_min=-0.05, n_max=0.05),
+            clip=(-1.0, 1.0),
+        )
+
+        def __post_init__(self):
+            self.enable_corruption = True
+            self.concatenate_terms = True
+
+    @configclass
+    class TaskCfg(ObsGroup):
+        goal_point_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "goal_point"})
+
+        def __post_init__(self):
+            self.enable_corruption = True
+            self.concatenate_terms = True
+
+    policy: PolicyCfg = PolicyCfg()
+    task: TaskCfg = TaskCfg()
+
+
+@configclass
+class PositionObservationsCfg:
+    """Observations for the MDP with ``height_scan`` in a dedicated encoder group."""
 
     @configclass
     class PolicyCfg(ObsGroup):
@@ -119,6 +153,14 @@ class CRLObservationsCfg:
 
 @configclass
 class ObservationsCfg(PresetCfg):
-    position = PositionObservationsCfg()
+    flat = FlatPositionObservationsCfg()
+    encoder = PositionObservationsCfg()
+    position = encoder
+    simba = encoder
+    simba_big = encoder
+    simba_mlp = encoder
+    simba_mlp_big = encoder
+    simba_cnn = encoder
+    simba_cnn_big = encoder
     crl = CRLObservationsCfg()
-    default = position
+    default = encoder

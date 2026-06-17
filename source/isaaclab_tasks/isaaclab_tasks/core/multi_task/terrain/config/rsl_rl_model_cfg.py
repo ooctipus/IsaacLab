@@ -45,24 +45,16 @@ MLP_ENCODER_CFG: dict[str, RslRlMLPEncoderModelCfg.EncoderCfg] = {
     ),
 }
 
-CNN_ENCODER_CFG = RslRlCNNModelCfg.CNNCfg(
-    # Classic pyramid widening (16 -> 32 -> 64) over three conv layers. The third
-    # (k=3, s=1) shrinks the spatial dim before the MLP head without much added compute.
-    # With (1, 76, 126) input, the chain is
-    # (16, 18, 30) -> (32, 8, 14) -> (64, 6, 12) -> flatten=4608.
-    #
-    # Channel-count rationale:
-    # * Conv1 = 16 channels (rather than the textbook 32). The conv1 output tensor (and its
-    #   backward gradient) is the largest single activation in the PPO update at large
-    #   mini-batch sizes — at ``num_mini_batches=4, num_envs=4096`` the 32-channel variant is
-    #   ``B * 32 * 18 * 30 * 4 B = 2.11 GiB``, which OOMs in the conv1 input-gradient alloc on
-    #   a 32 GB GPU even after every other memory optimization. 16 channels halves it to
-    #   ~1.05 GiB and clears the OOM cleanly. The height-field input is single-channel anyway,
-    #   so 16 first-layer filters is plenty for the local geometry features the policy needs.
-    # * Conv2 = 32 channels keeps the pyramid expansion gentle and saves another ~0.44 GiB of
-    #   layer-2 activation (vs 64 channels) without losing much because layer-3 immediately
-    #   re-expands to 64.
-    # * Conv3 = 64 channels gives the flatten its full feature breadth before the MLP head.
+CNN_ENCODER_CFG: dict[str, RslRlCNNModelCfg.CNNCfg] = {
+    "height_scan": RslRlCNNModelCfg.CNNCfg(
+        output_channels=[16, 32],
+        kernel_size=[3, 3],
+        stride=[2, 2],
+        activation="elu",
+    ),
+}
+
+CNN_MODEL_ENCODER_CFG = RslRlCNNModelCfg.CNNCfg(
     output_channels=[16, 32, 64],
     kernel_size=[5, 5, 4],
     stride=[2, 2, 1],
@@ -187,7 +179,7 @@ ENCODER_ACTOR = RslRlMLPEncoderModelCfg(
 # smooth-activation choice of the previous (post-norm) implementation that was training well.
 # Use ``agent.actor.num_blocks=1 agent.actor.activation=relu`` to explore the paper's exact
 # PPO defaults (Table 10) as an ablation.
-SIMBA_ACTOR = RslRlResidualMLPEncoderModelCfg(
+SIMBA_MLP_ACTOR = RslRlResidualMLPEncoderModelCfg(
     hidden_dim=256,
     num_blocks=2,
     expand=4,
@@ -203,7 +195,7 @@ SIMBA_ACTOR = RslRlResidualMLPEncoderModelCfg(
 # Wider SimBa actor for capacity-scaling experiments. Same architecture as ``SIMBA_ACTOR``, doubled
 # width. Critic should also switch to ``SIMBA_BIG_CRITIC`` (which is wider AND deeper than the actor
 # per the SimBa paper's finding that critic capacity matters more than actor capacity).
-SIMBA_BIG_ACTOR = RslRlResidualMLPEncoderModelCfg(
+SIMBA_MLP_BIG_ACTOR = RslRlResidualMLPEncoderModelCfg(
     hidden_dim=512,
     num_blocks=2,
     expand=4,
@@ -221,6 +213,35 @@ SIMBA_BIG_ACTOR = RslRlResidualMLPEncoderModelCfg(
 # vs no memory" partner of ``SIMBA_ACTOR`` -- the only difference is the populated ``memory`` field, so
 # any performance delta is attributable to memory rather than to backbone quality. Switch to GRU with
 # ``agent.actor.memory.rnn_type=gru`` as an ablation.
+SIMBA_CNN_ACTOR = RslRlResidualMLPEncoderModelCfg(
+    hidden_dim=256,
+    num_blocks=2,
+    expand=4,
+    activation="swish",
+    norm=True,
+    obs_normalization=True,
+    encoder_normalization=True,
+    stochastic=True,
+    distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0, std_type="log"),
+    encoder_cfg=CNN_ENCODER_CFG,
+)
+
+SIMBA_CNN_BIG_ACTOR = RslRlResidualMLPEncoderModelCfg(
+    hidden_dim=512,
+    num_blocks=2,
+    expand=4,
+    activation="swish",
+    norm=True,
+    obs_normalization=True,
+    encoder_normalization=True,
+    stochastic=True,
+    distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0, std_type="log"),
+    encoder_cfg=CNN_ENCODER_CFG,
+)
+
+SIMBA_ACTOR = SIMBA_MLP_ACTOR
+SIMBA_BIG_ACTOR = SIMBA_MLP_BIG_ACTOR
+
 SIMBA_RNN_ACTOR = RslRlResidualMLPEncoderModelCfg(
     hidden_dim=256,
     num_blocks=2,
@@ -240,7 +261,7 @@ CNN_ACTOR_CFG = RslRlCNNModelCfg(
     obs_normalization=True,
     hidden_dims=[512, 256, 128],
     distribution_cfg=RslRlCNNModelCfg.GaussianDistributionCfg(init_std=1.0),
-    cnn_cfg=CNN_ENCODER_CFG,
+    cnn_cfg=CNN_MODEL_ENCODER_CFG,
     activation="elu",
 )
 
@@ -277,7 +298,7 @@ MLP_ENCODER_CRITIC = RslRlMLPEncoderModelCfg(
 CNN_CRITIC_CFG = RslRlCNNModelCfg(
     obs_normalization=True,
     hidden_dims=[512, 256, 128],
-    cnn_cfg=CNN_ENCODER_CFG,
+    cnn_cfg=CNN_MODEL_ENCODER_CFG,
     activation="elu",
 )
 
@@ -285,7 +306,7 @@ CNN_CRITIC_CFG = RslRlCNNModelCfg(
 # baseline. The paper's Table 10 suggests a wider critic (512) and ReLU; explore that with
 # ``agent.critic.hidden_dim=512 agent.critic.activation=relu`` as an ablation once the base
 # config is verified to learn.
-SIMBA_CRITIC = RslRlResidualMLPEncoderModelCfg(
+SIMBA_MLP_CRITIC = RslRlResidualMLPEncoderModelCfg(
     hidden_dim=256,
     num_blocks=2,
     expand=4,
@@ -300,7 +321,7 @@ SIMBA_CRITIC = RslRlResidualMLPEncoderModelCfg(
 # Scaled-up SimBa critic: 4 residual blocks of 1024 width (4x expansion -> 4096 inner width).
 # Per the SimBa paper's scaling analysis (Figure 4), critic capacity helps more than actor
 # capacity; this preset realizes that by scaling the critic more aggressively than the actor.
-SIMBA_BIG_CRITIC = RslRlResidualMLPEncoderModelCfg(
+SIMBA_MLP_BIG_CRITIC = RslRlResidualMLPEncoderModelCfg(
     hidden_dim=1024,
     num_blocks=4,
     expand=4,
@@ -316,6 +337,33 @@ SIMBA_BIG_CRITIC = RslRlResidualMLPEncoderModelCfg(
 # ``memory`` cfg), mirroring ``SIMBA_RNN_ACTOR``. A recurrent critic gives the value function the same
 # temporal context as the actor, which is generally required for the recurrent actor to learn a
 # consistent advantage.
+SIMBA_CNN_CRITIC = RslRlResidualMLPEncoderModelCfg(
+    hidden_dim=256,
+    num_blocks=2,
+    expand=4,
+    activation=preset(relu="relu", swish="swish", default="swish"),
+    norm=True,
+    obs_normalization=True,
+    encoder_normalization=True,
+    stochastic=False,
+    encoder_cfg=CNN_ENCODER_CFG,
+)
+
+SIMBA_CNN_BIG_CRITIC = RslRlResidualMLPEncoderModelCfg(
+    hidden_dim=1024,
+    num_blocks=4,
+    expand=4,
+    activation=preset(relu="relu", swish="swish", default="swish"),
+    norm=True,
+    obs_normalization=True,
+    encoder_normalization=True,
+    stochastic=False,
+    encoder_cfg=CNN_ENCODER_CFG,
+)
+
+SIMBA_CRITIC = SIMBA_MLP_CRITIC
+SIMBA_BIG_CRITIC = SIMBA_MLP_BIG_CRITIC
+
 SIMBA_RNN_CRITIC = RslRlResidualMLPEncoderModelCfg(
     hidden_dim=256,
     num_blocks=2,

@@ -122,3 +122,6 @@ def test_locomotion_position_newton_mjwarp_keeps_actuator_choice_explicit(monkey
     cfg, _ = resolve_task_config("Isaac-Position-v0", "rsl_rl_cfg_entry_point")
 
     assert isinstance(cfg.scene.robot.actuators["legs"], ImplicitActuatorCfg)
+    assert cfg.scene.robot.spawn.joint_drive_props is not None
+    assert cfg.scene.robot.spawn.joint_drive_props.stiffness == 40.0
+    assert cfg.scene.robot.spawn.joint_drive_props.damping == 5.0

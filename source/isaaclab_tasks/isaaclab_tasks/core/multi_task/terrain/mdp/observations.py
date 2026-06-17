@@ -10,11 +10,42 @@ from typing import TYPE_CHECKING
 import torch
 
 import isaaclab.utils.math as math_utils
-from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation
     from isaaclab.envs import ManagerBasedRLEnv
+    from isaaclab.managers.manager_term_cfg import ObservationTermCfg
+
+
+class bound_height_scan(ManagerTermBase):
+    """Flat height-scan observation bound to the robot body."""
+
+    cfg: ObservationTermCfg
+
+    def __init__(self, cfg: ObservationTermCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        sensor = env.scene.sensors[cfg.params["sensor_cfg"].name]
+        if not hasattr(sensor, "bind_articulation"):
+            return
+        asset_cfg: SceneEntityCfg = cfg.params["asset_cfg"]
+        if asset_cfg.body_names is None or len(asset_cfg.body_names) != 1:
+            raise ValueError(
+                "bound_height_scan: asset_cfg.body_names must list exactly one body to bind to;"
+                f" got {asset_cfg.body_names!r}."
+            )
+        sensor.bind_articulation(env.scene[asset_cfg.name], asset_cfg.body_names[0])
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        sensor_cfg: SceneEntityCfg,
+        asset_cfg: SceneEntityCfg,
+        offset: float = 0.5,
+    ) -> torch.Tensor:
+        del env, asset_cfg
+        sensor = self._env.scene.sensors[sensor_cfg.name]
+        return sensor.data.pos_w.torch[:, 2].unsqueeze(1) - sensor.data.ray_hits_w.torch[..., 2] - offset
 
 
 def gravity_b(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:

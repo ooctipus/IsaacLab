@@ -191,7 +191,7 @@ class CommandsCfg:
         resampling_time_range=(10.0, 10.0),
         debug_vis=True,
         randomize_command_indices=False,
-        states_relative=True,
+        states_relative=False,
         commands=CommandsPresetCfg(),  # type: ignore
         payload=CommandPayloadPresetCfg(),  # type: ignore
         task_table=mdp.TaskTableCfg(
