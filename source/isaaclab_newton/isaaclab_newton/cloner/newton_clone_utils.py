@@ -47,7 +47,24 @@ def build_source_builders(
             ignore_paths=ignore_paths,
         )
         if simplify_meshes:
-            builder.approximate_meshes("convex_hull", keep_visual_shapes=True)
+            # Convex-hull only plain mesh colliders. Shapes carrying SDF/hydroelastic
+            # state (e.g. an authored fine ``sdf`` thread sharing a body with a coarse
+            # ``hull``) must be left untouched: ``approximate_meshes`` raises rather than
+            # silently dropping their SDF when asked to remesh them.
+            from newton import GeoType, ShapeFlags
+
+            approx_shapes = [
+                i
+                for i, stype in enumerate(builder.shape_type)
+                if stype == GeoType.MESH
+                and builder.shape_flags[i] & ShapeFlags.COLLIDE_SHAPES
+                and builder.shape_sdf_max_resolution[i] is None
+                and builder.shape_sdf_target_voxel_size[i] is None
+                and builder.shape_sdf_padding[i] is None
+                and not (builder.shape_flags[i] & ShapeFlags.HYDROELASTIC)
+            ]
+            if approx_shapes:
+                builder.approximate_meshes("convex_hull", shape_indices=approx_shapes, keep_visual_shapes=True)
         replace_newton_builder_shape_colors(builder, stage)
         builders[source] = builder
     return builders
