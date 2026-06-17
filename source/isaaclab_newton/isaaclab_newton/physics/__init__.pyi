@@ -14,6 +14,7 @@ __all__ = [
     "NewtonMJWarpManager",
     "MJWarpSolverCfg",
     "NewtonCfg",
+    "NewtonCollisionPairingCfg",
     "NewtonCollisionPipelineCfg",
     "NewtonManager",
     "NewtonShapeCfg",
@@ -30,7 +31,7 @@ from .mjwarp_manager import NewtonMJWarpManager
 from .mjwarp_manager_cfg import MJWarpSolverCfg
 from .mpm_manager import NewtonMPMManager
 from .mpm_manager_cfg import MPMSolverCfg
-from .newton_collision_cfg import HydroelasticSDFCfg, NewtonCollisionPipelineCfg
+from .newton_collision_cfg import HydroelasticSDFCfg, NewtonCollisionPairingCfg, NewtonCollisionPipelineCfg
 from .newton_manager import NewtonManager
 from .newton_manager_cfg import (
     NewtonCfg,

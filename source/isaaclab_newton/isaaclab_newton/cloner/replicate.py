@@ -94,13 +94,23 @@ def _build_newton_builder_from_mapping(
     # Inject registered sites into source builders (and global sites into main builder).
     global_sites, source_sites, root_sites = NewtonManager._cl_inject_sites(builder, source_builders)
 
+    # Build a collision-pairing hook from the active NewtonCfg, if configured.
+    post_replicate_hooks = list(NewtonManager._post_replicate_hooks)
+    from isaaclab_newton.physics import NewtonCfg
+
+    cfg = PhysicsManager._cfg
+    if isinstance(cfg, NewtonCfg) and cfg.collision_pairing is not None:
+        from isaaclab_newton.physics.newton_collision_pairing import build_collision_pairing_hook
+
+        post_replicate_hooks.append(build_collision_pairing_hook(cfg.collision_pairing))
+
     replicate_args = (builder, sources, mapping, positions, quaternions, source_builders)
     local_site_map, world_xforms = replicate_builder_mapping(
         *replicate_args,
         source_site_indices=source_sites,
         env_root_sites=root_sites,
         per_world_builder_hooks=NewtonManager._per_world_builder_hooks,
-        post_replicate_hooks=NewtonManager._post_replicate_hooks,
+        post_replicate_hooks=post_replicate_hooks,
     )
 
     site_index_map = {label: (idx, None) for label, idx in global_sites.items()}

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from isaaclab.physics import PhysicsCfg
 from isaaclab.utils.configclass import configclass
 
-from .newton_collision_cfg import NewtonCollisionPipelineCfg
+from .newton_collision_cfg import NewtonCollisionPairingCfg, NewtonCollisionPipelineCfg
 
 if TYPE_CHECKING:
     from isaaclab_newton.physics import NewtonManager
@@ -152,6 +152,15 @@ class NewtonCfg(PhysicsCfg):
         Setting this while ``MJWarpSolverCfg.use_mujoco_contacts=True`` raises
         :class:`ValueError`.  When ``KaminoSolverCfg.use_collision_detector=True``,
         the field is ignored because Kamino's internal detector handles contacts.
+    """
+
+    collision_pairing: NewtonCollisionPairingCfg | None = None
+    """Regex-driven collision grouping applied after replication.
+
+    Compiled into Newton ``shape_collision_group`` / ``shape_collision_filter_pairs``
+    and an optional SDF-on-convex pass in a single post-replicate pass. ``None``
+    (default) leaves the replicated collision groups untouched. See
+    :class:`NewtonCollisionPairingCfg`.
     """
 
     default_shape_cfg: NewtonShapeCfg = NewtonShapeCfg()

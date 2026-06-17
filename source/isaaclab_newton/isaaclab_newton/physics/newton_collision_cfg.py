@@ -184,3 +184,46 @@ class NewtonCollisionPipelineCfg:
         if hydro_cfg is not None:
             cfg_dict["sdf_hydroelastic_config"] = HydroelasticSDF.Config(**hydro_cfg)
         return cfg_dict
+
+
+@configclass
+class NewtonCollisionPairingCfg:
+    """Regex-driven collision grouping applied to the replicated Newton model.
+
+    Compiled in a single post-replicate pass over the model builder. Regexes
+    match per-shape collision labels, which are the source USD collider prim
+    paths before per-env renaming (e.g.
+    ``/factory_nut_m16_loose/factory_nut_loose/collision_012``). This does no
+    geometry generation: coarse colliders are authored in the USD assets and a
+    pairing entry only re-groups or filters existing colliders.
+
+    Set on :attr:`NewtonCfg.collision_pairing`.
+    """
+
+    mate: list[tuple[str, str]] = []
+    """Collider-label regex pairs to isolate into a private mate group.
+
+    Each ``(a, b)`` entry routes every collider matching ``a`` or ``b`` into one
+    private positive collision group (group ``k`` for the ``k``-th entry), so
+    those colliders collide only with each other and are removed from the
+    default world. Use to keep a fine mating profile (e.g. a thread mesh) in
+    contact with its partner only, while a coarse outer collider authored in the
+    same asset handles world contacts. Cross-environment isolation is handled by
+    Newton's per-world filter regardless of the shared group id.
+    """
+
+    forbid: list[tuple[str, str]] = []
+    """Collider-label regex pairs to filter out of collision.
+
+    Each ``(a, b)`` entry adds a ``shape_collision_filter_pair`` between every
+    ``a``-matched and every ``b``-matched collider that share a world. Use to
+    stop two solid coarse outer hulls from wedging and blocking insertion.
+    """
+
+    convex_sdf_resolution: int | None = None
+    """Texture-SDF resolution baked onto convex-hull and box colliders [voxels].
+
+    When set, convex-hull shapes without an authored SDF and box shapes are
+    routed through the planar-SDF contact kernel at this resolution instead of
+    GJK/MPR. ``None`` (default) leaves those shapes on the convex path.
+    """
