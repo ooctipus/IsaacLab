@@ -3,7 +3,13 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
+from isaaclab_newton.physics import (
+    MJWarpSolverCfg,
+    NewtonCfg,
+    NewtonCollisionPairingCfg,
+    NewtonCollisionPipelineCfg,
+    NewtonShapeCfg,
+)
 from isaaclab_physx.physics import PhysxCfg
 
 from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
@@ -369,6 +375,15 @@ class FactoryPhysicsCfg(PresetCfg):
             rigid_contact_max=5_000_000,
         ),
         default_shape_cfg=NewtonShapeCfg(ke=1e7, kd=1e4),
+        # Isolate the fine ``sdf`` threads into a private mate group (they collide
+        # only with each other; the coarse ``hull`` carries world contacts), filter
+        # the two solid hulls so they cannot wedge, and route convex/box colliders
+        # through the planar-SDF kernel.
+        collision_pairing=NewtonCollisionPairingCfg(
+            mate=[(r"(?i)nut.*/sdf", r"(?i)bolt.*/sdf")],
+            forbid=[(r"(?i)nut.*/hull", r"(?i)bolt.*/hull")],
+            convex_sdf_resolution=64,
+        ),
         num_substeps=8,
         debug_mode=False,
         use_cuda_graph=True,
@@ -394,7 +409,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     def __post_init__(self) -> None:
         """Post initialization."""
         # general settings
-        self.decimation = 8
+        self.decimation = 4
         self.episode_length_s = 14.0
         # simulation settings
         self.sim.dt = 0.04 / self.decimation

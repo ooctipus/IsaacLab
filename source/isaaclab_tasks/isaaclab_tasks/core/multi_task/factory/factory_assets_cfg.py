@@ -186,13 +186,18 @@ NISTBOARD_CFG = RigidObjectCfg(
 ##
 
 
+# The ``*_sdf_hull`` assets carry two sibling colliders per body: a fine ``sdf``
+# thread (NewtonSDFCollisionAPI, res 256) and a coarse ``hull`` (convexHull). The
+# SDF props are authored in the USD, so ``collision_props`` is left ``None`` here
+# to avoid the asset-root ``@apply_nested`` pass clobbering the coarse hull with
+# the fine SDF settings. Grouping is handled by ``NewtonCfg.collision_pairing``.
 BOLT_M16_CFG = RigidObjectCfg(
     prim_path="/World/envs/env_.*/BOLT_M16",
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST2/thread_m16.usd",
+        usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST2/thread_m16_sdf_hull.usd",
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
-        collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        collision_props=None,
     ),
 )
 
@@ -200,10 +205,10 @@ BOLT_M16_CFG = RigidObjectCfg(
 NUT_M16_CFG: RigidObjectCfg = RigidObjectCfg(
     prim_path="/World/envs/env_.*/NUT_M16",
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST2/nut_m16.usd",
+        usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST2/nut_m16_sdf_hull.usd",
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.03),
-        collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        collision_props=None,
     ),
 )
 
