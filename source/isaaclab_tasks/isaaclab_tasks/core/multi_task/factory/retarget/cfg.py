@@ -108,15 +108,6 @@ class GraspSamplingCfg:
     seeds each IK problem from the nearest template by pair geometry.
     """
 
-    grasps_per_placement: int = 8
-    """Pairs sampled (with replacement) per nut placement (the ``G`` in ``W x G``)."""
-
-    ik_seeds_per_grasp: int = 1
-    """IK problems solved per grasp candidate, each seeded from a different nearby
-    FK template. ``> 1`` explores multiple arm branches (elbow/approach homotopy
-    classes) per grasp -- a gradient solve cannot re-route around the board from a
-    single seed -- at linear solver cost. All surviving branches are kept as rows."""
-
     n_surface_samples: int = 2048
     """Area-weighted surface samples on the held collider mesh for pair generation."""
 
@@ -164,17 +155,11 @@ class PlacementSamplingCfg:
     align_offset: object = HeldAssetAlignOffsetCfg()  # type: ignore[assignment]
     """Held-asset alignment keypoint offset (variant preset)."""
 
-    placements_per_board: int = 4
-    """Nut placements sampled PER board configuration in a build round (the total
-    scales with the library automatically: ``placements_per_board x len(library)``
-    candidates -- growing or oversampling the library never thins each board's
-    feasibility evidence)."""
-
     grasp: GraspSamplingCfg = GraspSamplingCfg()
     """How each placement becomes states: antipodal grasp pairs cast onto the
-    placed nut (``grasps_per_placement`` x ``ik_seeds_per_grasp`` IK problems per
-    placement). Nested here because grasps are per-placement work, not a separate
-    stage: cells -> placements -> grasps -> seeds."""
+    placed nut. The per-build candidate budget is derived from
+    :attr:`FactoryIKPipelineCfg.yield_ratio`, :attr:`FactoryIKPipelineCfg.diversity_knob`,
+    and the requested ``rows_per_board`` rather than exposed as direct count knobs."""
 
     placement_weights: dict[str, float] = field(
         default_factory=lambda: {"on_bolt": 0.5, "on_table": 0.2, "in_air": 0.3}
@@ -480,6 +465,23 @@ class FactoryIKPipelineCfg:
 
     placement: PlacementSamplingCfg = PlacementSamplingCfg()
     """Nut placement sampling within the board configurations."""
+
+    yield_ratio: float = 0.05
+    """Expected useful-row yield per raw IK candidate in a build round.
+
+    ``rows_per_board * diversity_knob / yield_ratio`` estimates the raw IK
+    work needed to produce enough accepted rows before final per-board FPS. The value is deliberately an
+    estimate: the build still validates feasibility from actual accepted rows and
+    fails clearly if the candidate library does not qualify.
+    """
+
+    diversity_knob: float = 4.0
+    """Oversampling factor applied to the requested rows before final FPS.
+
+    Larger values solve more raw IK candidates per requested row, giving the
+    per-board FPS step more nut placements, approach directions, and arm branches
+    to choose from. This is the single tuning knob for reset-table diversity.
+    """
 
     robot: FactoryRobotCfg = FactoryRobotCfg()
     """The robot and how it is placed on each candidate (identity, two-phase

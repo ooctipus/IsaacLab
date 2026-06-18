@@ -23,7 +23,7 @@ class success_rate_sampler(ManagerTermBase):
 
     def __init__(self, cfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
-        self._log_counter = 0
+        self._log_counter = -1
 
         self.success_rates: torch.Tensor = eval(cfg.params["success_rates_bind"])  # noqa: S307
         self.sample_indices: torch.Tensor = eval(cfg.params["sample_indices_bind"])  # noqa: S307
@@ -67,8 +67,10 @@ class success_rate_sampler(ManagerTermBase):
         self.sample_indices[env_ids] = choices[: len(env_ids)]
 
         if sampler_visual_logger is not None:
-            self._log_counter += 1
-            if self._log_counter % sampler_visual_log_period == 0:
+            # The RL wrapper resets the env once before the runner starts logging.
+            # Skip that deterministic pre-run call, then emit on counter 0 and every period after.
+            if self._log_counter >= 0 and self._log_counter % sampler_visual_log_period == 0:
                 sampler_visual_logger(env, self._sampler, self.success_rates, probs)
+            self._log_counter += 1
 
         return {"success": self.success_rates.mean()}

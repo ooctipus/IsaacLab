@@ -26,6 +26,8 @@ _FACTORY_PPO_KWARGS: dict[str, Any] = dict(
     lam=0.92,
     desired_kl=0.01,
     max_grad_norm=1.0,
+    optimizer=preset(default="adam", adamw="adamw", adam="adam"),
+    weight_decay=preset(default=0.0, adamw=0.01, adam=0.0),
 )
 
 
@@ -144,6 +146,8 @@ class SuccessorLatentAlgorithmCfg(RslRlPpoAlgorithmCfg):
 
 @configclass
 class PpoAlgorithmCfg(PresetCfg):
+    """Algorithm preset selectable via ``agent.algorithm=<name>``."""
+
     actor_critic = RslRlPpoAlgorithmCfg(class_name="PPO", **_FACTORY_PPO_KWARGS)
     default = actor_critic
     value_shift = ValueShiftAlgorithmCfg(**_FACTORY_PPO_KWARGS)

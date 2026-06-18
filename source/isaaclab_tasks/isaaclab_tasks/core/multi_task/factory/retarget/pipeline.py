@@ -24,6 +24,7 @@ accepted rows carry the COMMANDED placement exactly, and a nut without a grasp
 
 from __future__ import annotations
 
+import math
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -52,6 +53,10 @@ from .samplers import GraspPairSampler, NutPlacementSampler
 
 if TYPE_CHECKING:
     from .cfg import FactoryIKPipelineCfg
+
+
+_DERIVED_GRASPS_PER_PLACEMENT = 8
+_DERIVED_IK_SEEDS_PER_GRASP = 4
 
 
 @dataclass
@@ -460,18 +465,18 @@ class FactoryIKPipeline:
 
     def build_table(
         self,
-        num_placements: int | None = None,
-        grasps_per_placement: int | None = None,
-        board_library: tuple[torch.Tensor, torch.Tensor] | None = None,
+        num_placements: int,
+        grasps_per_placement: int,
+        ik_seeds_per_grasp: int,
+        board_library: tuple[torch.Tensor, torch.Tensor],
     ) -> FactoryIKResult:
         """Sample, solve, filter, and return the accepted reset-state rows.
 
         Args:
-            num_placements: Explicit TOTAL nut placements; defaults to
-                :attr:`PlacementSamplingCfg.placements_per_board` x the board
-                library size.
-            grasps_per_placement: Antipodal pairs per sub-world; defaults to
-                :attr:`GraspSamplingCfg.grasps_per_placement`.
+            num_placements: Total nut placements across the supplied board library.
+            grasps_per_placement: Antipodal pairs sampled per placement.
+            ik_seeds_per_grasp: Nearby FK templates tried as IK seeds per grasp.
+            board_library: Candidate board and fixed-asset poses.
 
         Returns:
             The accepted (reachable + collision-clear) rows as a
@@ -481,21 +486,18 @@ class FactoryIKPipeline:
             torch.cuda.synchronize()
         t0 = time.perf_counter()
         cfg = self.cfg
-        if num_placements is not None:
-            w = num_placements
-        else:
-            n_lib = board_library[0].shape[0] if board_library is not None else cfg.board.num_boards
-            w = cfg.placement.placements_per_board * n_lib
-        g = grasps_per_placement if grasps_per_placement is not None else cfg.placement.grasp.grasps_per_placement
+        w = int(num_placements)
+        g = int(grasps_per_placement)
+        k = int(ik_seeds_per_grasp)
 
         self._timings = {}
         with self._timed("sample placements"):
             nut_pose, world_tag, board_pose, bolt_pose, board_index = self.placement_sampler.sample(
                 w, board_library=board_library
             )
-        self._n_worlds, self._n_grasps, self._n_seeds = w, g, self.cfg.placement.grasp.ik_seeds_per_grasp
+        self._n_worlds, self._n_grasps, self._n_seeds = w, g, k
         with self._timed("sample grasps + seed"):
-            t_plus, t_minus, seed_arm, world_idx, _pair_sep, family = self.grasp_sampler.sample(nut_pose, g)
+            t_plus, t_minus, seed_arm, world_idx, _pair_sep, family = self.grasp_sampler.sample(nut_pose, g, k)
         tag = world_tag[world_idx]
         cand_nut_pose = nut_pose[world_idx]
         cand_board_pose = board_pose[world_idx].contiguous()
@@ -726,19 +728,29 @@ class FactoryIKPipeline:
 
         Raises:
             RuntimeError: If fewer than ``num_boards`` candidates qualify -- raise
-                :attr:`PlacementSamplingCfg.placements_per_board` (more supply
-                per candidate), :attr:`BoardLibraryCfg.library_oversample` (more
-                candidates), or relax :attr:`BoardLibraryCfg.pose_range`.
+                :attr:`FactoryIKPipelineCfg.diversity_knob` or
+                :attr:`BoardLibraryCfg.library_oversample`, lower
+                :attr:`FactoryIKPipelineCfg.yield_ratio`, or relax
+                :attr:`BoardLibraryCfg.pose_range`.
         """
         cfg = self.cfg
         rows_per_board = max(1, table_size // cfg.board.num_boards)
         n_cand = max(cfg.board.num_boards, int(round(cfg.board.num_boards * cfg.board.library_oversample)))
+        if cfg.yield_ratio <= 0.0 or cfg.yield_ratio > 1.0:
+            raise ValueError(f"yield_ratio={cfg.yield_ratio} must be in (0, 1].")
+        if cfg.diversity_knob <= 0.0:
+            raise ValueError(f"diversity_knob={cfg.diversity_knob} must be positive.")
+        seeds_per_grasp = _DERIVED_IK_SEEDS_PER_GRASP
+        grasps_per_placement = _DERIVED_GRASPS_PER_PLACEMENT
+        raw_ik_per_board = max(1, int(math.ceil(rows_per_board * cfg.diversity_knob / cfg.yield_ratio)))
+        placements_per_board = max(1, int(math.ceil(raw_ik_per_board / (grasps_per_placement * seeds_per_grasp))))
+        num_placements = placements_per_board * n_cand
 
         # candidate configuration library: geometrically clear + pose-spread; the
         # build round below is the feasibility test. Kept on the pipeline after
         # selection -- rows' board_index maps into it.
         board_library = self.placement_sampler._sample_board(n_cand)
-        r = self.build_table(board_library=board_library)
+        r = self.build_table(num_placements, grasps_per_placement, seeds_per_grasp, board_library)
         if self.device.startswith("cuda"):
             # release the torch cache: inside a running sim the torch and warp
             # allocators compete for the same device, and torch hoarding freed
@@ -750,8 +762,8 @@ class FactoryIKPipeline:
         if qualified.numel() < cfg.board.num_boards:
             raise RuntimeError(
                 f"only {int(qualified.numel())} of {n_cand} candidate boards supplied >="
-                f" {rows_per_board} rows (need {cfg.board.num_boards}) -- raise"
-                " placement.placements_per_board or board.library_oversample, or relax board.pose_range"
+                f" {rows_per_board} rows (need {cfg.board.num_boards}) -- raise diversity_knob or"
+                " board.library_oversample, lower yield_ratio, or relax board.pose_range"
             )
 
         # keep num_boards spread over pose space (the same (pos, 0.1*rpy) feature
@@ -814,6 +826,10 @@ class FactoryIKPipeline:
         nut_counts_t = torch.tensor(nut_counts, dtype=torch.float)
         self._balanced_stats = {
             "candidates": n_cand,
+            "placements_per_board": placements_per_board,
+            "grasps_per_placement": grasps_per_placement,
+            "ik_seeds_per_grasp": seeds_per_grasp,
+            "raw_ik_per_board": placements_per_board * grasps_per_placement * seeds_per_grasp,
             "qualified": int(qualified.numel()),
             "kept_boards": cfg.board.num_boards,
             "accumulated": int(r.tag.shape[0]),
@@ -947,6 +963,14 @@ class FactoryIKPipeline:
                     f" {fmt(b['kept_boards'])} kept (pose FPS)",
                 ]
             ]
+            bal_rows.append(
+                [
+                    "  derived budget / board",
+                    "raw IK",
+                    f"{fmt(b['placements_per_board'])} placements × {b['grasps_per_placement']} grasps × "
+                    f"{b['ik_seeds_per_grasp']} seeds = {fmt(b['raw_ik_per_board'])}",
+                ]
+            )
             bal_rows.append(["  survivor pool", "rows", fmt(b["accumulated"])])
             bal_rows.append(["  final table (per-board FPS)", "rows", fmt(b["kept"])])
             lo, med, hi = b["nut_per_board"]

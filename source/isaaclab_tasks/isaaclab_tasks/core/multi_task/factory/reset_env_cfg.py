@@ -24,12 +24,12 @@ from isaaclab_tasks.utils import preset
 
 FACTORY_RESET_SAMPLER_PRESETS = preset(
     default=SamplerCfg(
-        strategies=[BetaSamplingStrategyCfg(target=0.5, kappa=1.0, weight=1.0, success_rate_bind="success_rates")],
+        strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=2.0, weight=1.0, success_rate_bind="success_rates")],
         eps=1e-3,
     ),
     uniform=SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=1.0)], eps=0.0),
     monitor=SamplerCfg(
-        strategies=[BetaSamplingStrategyCfg(target=0.5, kappa=1.0, weight=1.0, success_rate_bind="success_rates")],
+        strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=2.0, weight=1.0, success_rate_bind="success_rates")],
         eps=1e-3,
     ),
     # ``beta`` is a semantic alias of ``monitor``: same Beta rolling-monitor
@@ -37,12 +37,12 @@ FACTORY_RESET_SAMPLER_PRESETS = preset(
     # ``dil*`` so run names read "what's the curriculum?" rather than "what's the
     # rate source?".
     beta=SamplerCfg(
-        strategies=[BetaSamplingStrategyCfg(target=0.5, kappa=1.0, weight=1.0, success_rate_bind="success_rates")],
+        strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=2.0, weight=1.0, success_rate_bind="success_rates")],
         eps=1e-3,
     ),
     frontier=SamplerCfg(
         strategies=[
-            BetaSamplingStrategyCfg(target=0.5, kappa=1.0, weight=1.0, success_rate_bind="success_rates"),
+            BetaSamplingStrategyCfg(target=0.66, kappa=2.0, weight=1.0, success_rate_bind="success_rates"),
             FrontierSamplingStrategyCfg(
                 k=8,
                 dilation_steps=preset(default=2, dil1=1, dil2=2, dil3=3, dil4=4, dil5=5),  # type: ignore

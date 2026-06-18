@@ -156,11 +156,10 @@ class ObservationsCfg(PresetCfg):
     flat = FlatPositionObservationsCfg()
     encoder = PositionObservationsCfg()
     position = encoder
-    simba = encoder
-    simba_big = encoder
     simba_mlp = encoder
     simba_mlp_big = encoder
     simba_cnn = encoder
     simba_cnn_big = encoder
+    simba_rnn = encoder
     crl = CRLObservationsCfg()
     default = encoder

@@ -363,13 +363,14 @@ class GraspPairSampler:
         return feats[keep].contiguous(), jq[keep][:, arm].contiguous()
 
     def sample(
-        self, nut_pose: torch.Tensor, grasps_per_placement: int
+        self, nut_pose: torch.Tensor, grasps_per_placement: int, ik_seeds_per_grasp: int
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Cast ``G`` antipodal pairs per placement to world and seed each IK problem.
 
         Args:
             nut_pose: Sub-world nut placements [W, 7] (pos [m] + quat xyzw).
             grasps_per_placement: Pairs ``G`` sampled (with replacement) per placement.
+            ik_seeds_per_grasp: Nearby FK templates used as IK seeds per grasp.
 
         Returns:
             ``(t_plus[W*G, 3], t_minus[W*G, 3], seed_arm[W*G, 7], world_idx[W*G],
@@ -392,7 +393,7 @@ class GraspPairSampler:
         # seed lands in; the 6-dim pad features barely constrain the 7-dof arm, so
         # near templates already span arm branches -- measured equal to explicit
         # arm-spread selection)
-        k = self.cfg.placement.grasp.ik_seeds_per_grasp
+        k = max(1, min(int(ik_seeds_per_grasp), int(self.tpl_feats.shape[0])))
         dist = torch.cdist(pair_features(t_plus, t_minus, self.cfg.placement.grasp.seed_axis_scale), self.tpl_feats)
         seed_idx = dist.topk(min(k, dist.shape[1]), dim=1, largest=False).indices.reshape(-1)
         world_idx = torch.arange(w, device=self.device).repeat_interleave(g)

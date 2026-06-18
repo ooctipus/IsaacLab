@@ -76,30 +76,6 @@ DOMELIGHT_CFG = AssetBaseCfg(
 )
 
 
-FRANKA_ACTUATORS_CFG = {
-    "panda_shoulder": ImplicitActuatorCfg(  # type: ignore
-        joint_names_expr=["panda_joint[1-4]"],
-        effort_limit_sim=87.0,
-        stiffness=80.0,
-        damping=4.0,
-        armature=1e-3,
-    ),
-    "panda_forearm": ImplicitActuatorCfg(  # type: ignore
-        joint_names_expr=["panda_joint[5-7]"],
-        effort_limit_sim=12.0,
-        stiffness=80.0,
-        damping=4.0,
-        armature=1e-3,
-    ),
-    "panda_hand": ImplicitActuatorCfg(  # type: ignore
-        joint_names_expr=["panda_finger_joint.*"],
-        effort_limit_sim=40.0,
-        stiffness=2e3,
-        damping=1e2,
-    ),
-}
-
-
 FRANKA_DEFAULT_STATE_CFG = ArticulationCfg.InitialStateCfg(
     joint_pos={
         "panda_joint1": 0.00871,
@@ -133,7 +109,28 @@ FRANKA_PANDA_PHYSX_CFG = ArticulationCfg(
         collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
     ),
     init_state=FRANKA_DEFAULT_STATE_CFG,
-    actuators=FRANKA_ACTUATORS_CFG,
+    actuators={
+        "panda_shoulder": ImplicitActuatorCfg(  # type: ignore
+            joint_names_expr=["panda_joint[1-4]"],
+            effort_limit_sim=87.0,
+            stiffness=80.0,
+            damping=4.0,
+            armature=1e-3,
+        ),
+        "panda_forearm": ImplicitActuatorCfg(  # type: ignore
+            joint_names_expr=["panda_joint[5-7]"],
+            effort_limit_sim=12.0,
+            stiffness=80.0,
+            damping=4.0,
+            armature=1e-3,
+        ),
+        "panda_hand": ImplicitActuatorCfg(  # type: ignore
+            joint_names_expr=["panda_finger_joint.*"],
+            effort_limit_sim=40.0,
+            stiffness=2e3,
+            damping=1e2,
+        ),
+    },
 )
 
 
@@ -156,7 +153,42 @@ FRANKA_PANDA_NEWTON_CFG = ArticulationCfg(
         joint_drive_props=sim_utils.JointDrivePropertiesCfg(ensure_drives_exist=True),
     ),
     init_state=FRANKA_DEFAULT_STATE_CFG,
-    actuators=FRANKA_ACTUATORS_CFG,
+    actuators={
+        "panda_joint12": ImplicitActuatorCfg(  # type: ignore
+            joint_names_expr=["panda_joint[1-2]"],
+            effort_limit_sim=87.0,
+            stiffness=1000.0,
+            damping=60.0,
+            armature=0.1,
+        ),
+        "panda_joint34": ImplicitActuatorCfg(  # type: ignore
+            joint_names_expr=["panda_joint[3-4]"],
+            effort_limit_sim=87.0,
+            stiffness=750.0,
+            damping=44.0,
+            armature=0.1,
+        ),
+        "panda_forearm": ImplicitActuatorCfg(  # type: ignore
+            joint_names_expr=["panda_joint[5-7]"],
+            effort_limit_sim=12.0,
+            stiffness=300.0,
+            damping=4.0,
+            armature=0.1,
+        ),
+        "panda_hand": ImplicitActuatorCfg(  # type: ignore
+            joint_names_expr=["panda_finger_joint.*"],
+            effort_limit_sim=40.0,
+            stiffness=2e3,
+            damping=1e2,
+            armature=0.1,
+            # The franka USD declares a 0.05 m/s finger velocity limit (real-hardware
+            # spec). MuJoCo does not enforce it, and the stiff finger PD reaches
+            # ~0.46 m/s during normal grasping, so the 2x abnormal-velocity gate fired
+            # every episode. Override to a value matching the sim gripper's envelope so
+            # the divergence watchdog stays meaningful for all joints.
+            velocity_limit_sim=0.5,
+        ),
+    },
 )
 
 # Table

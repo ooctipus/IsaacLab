@@ -197,7 +197,7 @@ class FactoryCommandsCfg:
                     board_asset_cfg=SceneEntityCfg("nistboard"),
                     fixed_asset_cfg=SceneEntityCfg("fixed_asset"),
                     fixed_asset_map=FixedAssetMapCfg(),  # type: ignore[arg-type]
-                    num_boards=64,
+                    num_boards=16,
                     pose_range={
                         "x": (-0.1, 0.1),
                         "y": (-0.1, 0.1),
@@ -211,21 +211,22 @@ class FactoryCommandsCfg:
                     held_asset_cfg=SceneEntityCfg("held_asset"),
                     assembly_profile=FactoryAssemblyProfileCfg(),  # type: ignore[arg-type]
                     align_offset=HeldAssetAlignOffsetCfg(),  # type: ignore[arg-type]
-                    placements_per_board=64,  # total scales with the library (4 x candidates)
                     placement_weights={"on_bolt": 0.5, "on_table": 0.2, "in_air": 0.3},
                     assembly_bands={
                         "near_seated": (0.0, 0.33),
                         "mid_insertion": (0.33, 0.85),
                         "above_tip": (0.85, 1.6),
                     },
-                    grasp=GraspSamplingCfg(  # per placement: antipodal pairs on the held mesh
-                        grasps_per_placement=8,
-                        ik_seeds_per_grasp=4,  # IK starting poses tried per grasp (19%->33% solved)
+                    grasp=GraspSamplingCfg(  # antipodal pairs on the held mesh
                         friction_mu=0.5,
                         aperture_range=(0.002, 0.08),
                         n_pairs_retained=512,
                     ),
                 ),
+                # stage 3 budget: rows_per_board is the requested output; these
+                # convert it into the one-shot raw IK candidate budget.
+                yield_ratio=0.05,
+                diversity_knob=4.0,
                 robot=FactoryRobotCfg(  # stage 3: place the robot on each candidate + accept
                     asset_cfg=SceneEntityCfg("robot"),
                     ee_body_name=EndEffectorBodyCfg(),  # type: ignore[arg-type]
@@ -237,20 +238,20 @@ class FactoryCommandsCfg:
                         pos_tol=0.004,
                         objectives=[  # soft constraint terms; membership enables (mirror of criteria)
                             JointLimitObjectiveCfg(weight=10.0),
-                            JointDefaultObjectiveCfg(weight=0.0005),  # gentle arm centering (0.05 kills mm-reach)
+                            JointDefaultObjectiveCfg(weight=0.001),  # gentle arm centering (0.05 kills mm-reach)
                             FingerPinObjectiveCfg(weight=10.0),
                             CollisionAvoidanceCfg(weight=20.0, margin=0.001, n_samples=48),
                         ],
                     ),
                     criteria=[
-                        JointWithinLimitCfg(limit_ratio=0.9),  # not parked against a joint stop
+                        JointWithinLimitCfg(limit_ratio=0.8),  # not parked against a joint stop
                         CollisionCheckCfg(n_samples=240, max_pen=0.0005, self_max_pen=0.002, adjacency_hops=2),
                     ],
                     reach=ReachRowsCfg(per_grasp=1, standoff_range=(0.03, 0.15), clearance=0.005),
                 ),
             ),
-            rows_per_board=30,  # table size = this x board.num_boards
-            targets_per_board=30,  # goals = spread subset of each board's rows (<= rows_per_board)
+            rows_per_board=50,  # table size = this x board.num_boards
+            targets_per_board=50,  # goals = spread subset of each board's rows (<= rows_per_board)
             # reject reset states whose nut spawns outside the oob box (else they
             # terminate on step 0). Keep in sync with SuccessTerminationsCfg.oob.
             nut_bounds={"x": (-0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)},

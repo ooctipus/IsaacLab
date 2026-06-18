@@ -6,7 +6,7 @@
 """rsl_rl runner configurations + actor / critic preset dispatchers.
 
 This module assembles the position-locomotion runner cfgs. Model cfg instances
-themselves (``COMMANDER_ACTOR``, ``SIMBA_CRITIC``, etc.) live in
+themselves (``COMMANDER_ACTOR``, ``SIMBA_MLP_CRITIC``, etc.) live in
 :mod:`rsl_rl_model_cfg` so model definitions stay independent of preset /
 runner composition. The preset classes here just wire those instances into
 ``agent.actor=<name>`` / ``agent.critic=<name>`` selectable alternatives.
@@ -37,14 +37,10 @@ from .rsl_rl_model_cfg import (
     LSTM_ACTOR,
     LSTM_CRITIC,
     MLP_ENCODER_CRITIC,
-    SIMBA_ACTOR,
-    SIMBA_BIG_ACTOR,
-    SIMBA_BIG_CRITIC,
     SIMBA_CNN_ACTOR,
     SIMBA_CNN_BIG_ACTOR,
     SIMBA_CNN_BIG_CRITIC,
     SIMBA_CNN_CRITIC,
-    SIMBA_CRITIC,
     SIMBA_MLP_ACTOR,
     SIMBA_MLP_BIG_ACTOR,
     SIMBA_MLP_BIG_CRITIC,
@@ -66,8 +62,6 @@ class PositionActorPresetCfg(PresetCfg):
     flat = FLAT_ACTOR
     cnn = CNN_ACTOR_CFG
     encoder = ENCODER_ACTOR
-    simba = SIMBA_ACTOR
-    simba_big = SIMBA_BIG_ACTOR
     simba_mlp = SIMBA_MLP_ACTOR
     simba_mlp_big = SIMBA_MLP_BIG_ACTOR
     simba_cnn = SIMBA_CNN_ACTOR
@@ -86,8 +80,6 @@ class PositionCriticPresetCfg(PresetCfg):
     lstm = LSTM_CRITIC
     encoder = MLP_ENCODER_CRITIC
     mlp_encoder = MLP_ENCODER_CRITIC
-    simba = SIMBA_CRITIC
-    simba_big = SIMBA_BIG_CRITIC
     simba_mlp = SIMBA_MLP_CRITIC
     simba_mlp_big = SIMBA_MLP_BIG_CRITIC
     simba_cnn = SIMBA_CNN_CRITIC
@@ -105,8 +97,6 @@ class PositionObsGroupsPresetCfg(PresetCfg):
         "actor": ["policy", "task", "height_scan"],
         "critic": ["policy", "task", "height_scan"],
     }
-    simba: dict[str, list[str]] = encoder
-    simba_big: dict[str, list[str]] = encoder
     simba_mlp: dict[str, list[str]] = encoder
     simba_mlp_big: dict[str, list[str]] = encoder
     simba_cnn: dict[str, list[str]] = encoder

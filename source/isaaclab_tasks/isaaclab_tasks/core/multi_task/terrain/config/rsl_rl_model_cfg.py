@@ -192,8 +192,8 @@ SIMBA_MLP_ACTOR = RslRlResidualMLPEncoderModelCfg(
     encoder_cfg=MLP_ENCODER_CFG,
 )
 
-# Wider SimBa actor for capacity-scaling experiments. Same architecture as ``SIMBA_ACTOR``, doubled
-# width. Critic should also switch to ``SIMBA_BIG_CRITIC`` (which is wider AND deeper than the actor
+# Wider SimBa actor for capacity-scaling experiments. Same architecture as ``SIMBA_MLP_ACTOR``, doubled
+# width. Critic should also switch to ``SIMBA_MLP_BIG_CRITIC`` (which is wider AND deeper than the actor
 # per the SimBa paper's finding that critic capacity matters more than actor capacity).
 SIMBA_MLP_BIG_ACTOR = RslRlResidualMLPEncoderModelCfg(
     hidden_dim=512,
@@ -208,9 +208,9 @@ SIMBA_MLP_BIG_ACTOR = RslRlResidualMLPEncoderModelCfg(
     encoder_cfg=MLP_ENCODER_CFG,
 )
 
-# Recurrent SimBa actor: byte-for-byte the same SimBa head as ``SIMBA_ACTOR`` with an LSTM inserted
+# Recurrent SimBa actor: byte-for-byte the same SimBa head as ``SIMBA_MLP_ACTOR`` with an LSTM inserted
 # between the encoder latent and the residual head, via the ``memory`` cfg. This is the clean "memory
-# vs no memory" partner of ``SIMBA_ACTOR`` -- the only difference is the populated ``memory`` field, so
+# vs no memory" partner of ``SIMBA_MLP_ACTOR`` -- the only difference is the populated ``memory`` field, so
 # any performance delta is attributable to memory rather than to backbone quality. Switch to GRU with
 # ``agent.actor.memory.rnn_type=gru`` as an ablation.
 SIMBA_CNN_ACTOR = RslRlResidualMLPEncoderModelCfg(
@@ -239,8 +239,6 @@ SIMBA_CNN_BIG_ACTOR = RslRlResidualMLPEncoderModelCfg(
     encoder_cfg=CNN_ENCODER_CFG,
 )
 
-SIMBA_ACTOR = SIMBA_MLP_ACTOR
-SIMBA_BIG_ACTOR = SIMBA_MLP_BIG_ACTOR
 
 SIMBA_RNN_ACTOR = RslRlResidualMLPEncoderModelCfg(
     hidden_dim=256,
@@ -333,7 +331,7 @@ SIMBA_MLP_BIG_CRITIC = RslRlResidualMLPEncoderModelCfg(
     encoder_cfg=MLP_ENCODER_CFG,
 )
 
-# Recurrent SimBa critic: matches ``SIMBA_CRITIC`` with an LSTM before the residual head (via the
+# Recurrent SimBa critic: matches ``SIMBA_MLP_CRITIC`` with an LSTM before the residual head (via the
 # ``memory`` cfg), mirroring ``SIMBA_RNN_ACTOR``. A recurrent critic gives the value function the same
 # temporal context as the actor, which is generally required for the recurrent actor to learn a
 # consistent advantage.
@@ -361,8 +359,6 @@ SIMBA_CNN_BIG_CRITIC = RslRlResidualMLPEncoderModelCfg(
     encoder_cfg=CNN_ENCODER_CFG,
 )
 
-SIMBA_CRITIC = SIMBA_MLP_CRITIC
-SIMBA_BIG_CRITIC = SIMBA_MLP_BIG_CRITIC
 
 SIMBA_RNN_CRITIC = RslRlResidualMLPEncoderModelCfg(
     hidden_dim=256,
