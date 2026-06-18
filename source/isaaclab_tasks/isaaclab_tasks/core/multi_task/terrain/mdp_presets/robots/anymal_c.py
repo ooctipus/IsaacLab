@@ -33,13 +33,11 @@ from .robot_presets import (
     SyncFootPairsCfg,
 )
 
-# Pre-exported ANYdrive LSTM checkpoint used by Newton-native actuator authoring.
-# The old position task selected this ONNX file for ``newton_mjwarp`` so Newton
-# loads the controller directly instead of routing through the Lab TorchScript
-# actuator path.
-ANYDRIVE_3_LSTM_ONNX_PATH = str(Path(__file__).parent / "assets" / "anydrive_3_lstm.onnx")
-# Backward-compatible alias for older Newton actuator tests/imports.
-ANYDRIVE_3_LSTM_JIT_PATH = ANYDRIVE_3_LSTM_ONNX_PATH
+# TorchScript ANYdrive LSTM checkpoint used by Newton-native actuator authoring.
+# This Newton revision loads neural actuators through the PyTorch checkpoint
+# loader; the authoring step adds metadata that matches Isaac Lab's LSTM input
+# convention.
+ANYDRIVE_3_LSTM_JIT_PATH = str(Path(__file__).parent / "assets" / "anydrive_3_lstm.pt")
 
 _ANYMAL_C_CFG: ArticulationCfg = anymal.ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 _ANYMAL_C_CFG.spawn.usd_path = (  # type: ignore[attr-defined]
@@ -60,7 +58,7 @@ _ANYMAL_C_CFG.spawn.joint_drive_props = preset(
 ANYDRIVE_3_LSTM_ACTUATOR_CFG = anymal.ANYDRIVE_3_LSTM_ACTUATOR_CFG.replace(
     network_file=preset(
         default=anymal.ANYDRIVE_3_LSTM_ACTUATOR_CFG.network_file,
-        newton_mjwarp=ANYDRIVE_3_LSTM_ONNX_PATH,
+        newton_mjwarp=ANYDRIVE_3_LSTM_JIT_PATH,
     )
 )
 ANYDRIVE_3_SIMPLE_ACTUATOR_CFG = ImplicitActuatorCfg(
