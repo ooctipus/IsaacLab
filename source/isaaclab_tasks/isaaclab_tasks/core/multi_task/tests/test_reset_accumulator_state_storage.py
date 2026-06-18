@@ -284,6 +284,12 @@ def test_factory_sampler_config_lives_on_command_term():
     assert commands.reset_state.commands["assembly_asset"].duration == (0.0, 1.0)
     assert commands.reset_state.payload.reset_assets == ["nistboard", "fixed_asset", "held_asset", "robot"]
     assert commands.reset_state.task_table.pipeline_cfg is not None
+    pcfg = commands.reset_state.task_table.pipeline_cfg
+    assert pcfg.yield_ratio > 0.0
+    assert pcfg.diversity_knob > 0.0
+    assert not hasattr(pcfg.placement, "placements_per_board")
+    assert not hasattr(pcfg.placement.grasp, "grasps_per_placement")
+    assert not hasattr(pcfg.placement.grasp, "ik_seeds_per_grasp")
     assert int(commands.reset_state.task_table.rows_per_board) > 0
     assert commands.reset_state.task_table.targets_per_board == commands.reset_state.task_table.rows_per_board
     assert commands.reset_state.randomize_command_indices is False

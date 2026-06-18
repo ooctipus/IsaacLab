@@ -238,7 +238,7 @@ class FactoryCommandsCfg:
                         pos_tol=0.004,
                         objectives=[  # soft constraint terms; membership enables (mirror of criteria)
                             JointLimitObjectiveCfg(weight=10.0),
-                            JointDefaultObjectiveCfg(weight=0.001),  # gentle arm centering (0.05 kills mm-reach)
+                            JointDefaultObjectiveCfg(weight=0.025),  # gentle arm centering (0.05 kills mm-reach)
                             FingerPinObjectiveCfg(weight=10.0),
                             CollisionAvoidanceCfg(weight=20.0, margin=0.001, n_samples=48),
                         ],

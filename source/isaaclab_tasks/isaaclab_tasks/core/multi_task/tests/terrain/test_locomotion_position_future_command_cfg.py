@@ -41,6 +41,42 @@ def test_locomotion_position_uses_future_command_and_curriculum():
     assert reset_terms == []
 
 
+def test_locomotion_position_uses_verified_legacy_terminations():
+    """Position tasks should keep the termination surface from the working runs."""
+    from isaaclab.envs import mdp as base_mdp
+    from isaaclab.managers import TerminationTermCfg as DoneTerm
+
+    from isaaclab_tasks.core.multi_task.mdp.terminations import joint_reaction_overload
+    from isaaclab_tasks.core.multi_task.position_env_cfg import LocomotionPositionCommandEnvCfg
+    from isaaclab_tasks.core.multi_task.terrain import mdp
+    from isaaclab_tasks.utils import resolve_presets
+
+    cfg = LocomotionPositionCommandEnvCfg()
+    resolve_presets(cfg)
+
+    done_terms = {name: term for name, term in vars(cfg.terminations).items() if isinstance(term, DoneTerm)}
+
+    assert list(done_terms) == [
+        "time_out",
+        "abnormal_robot",
+        "drop",
+        "base_contact",
+        "joint_reaction",
+        "success",
+    ]
+    assert getattr(cfg.terminations, "abnormal") is None
+    assert not hasattr(cfg.terminations, "oob")
+
+    assert cfg.terminations.abnormal_robot.func is mdp.abnormal_robot_state
+    assert cfg.terminations.drop.func is base_mdp.root_height_below_minimum
+    assert cfg.terminations.drop.params == {"minimum_height": -20.0}
+    assert cfg.terminations.joint_reaction.func is joint_reaction_overload
+    assert cfg.terminations.joint_reaction.params["sensor_cfg"].name == "joint_wrench"
+    assert cfg.terminations.joint_reaction.params["force_ratio"] == 6.0
+    assert "force_mode" not in cfg.terminations.joint_reaction.params
+    assert cfg.terminations.success.func is mdp.success_terminate
+
+
 def test_locomotion_position_anymal_c_command_resolves_without_robot_preset():
     """Anymal-C position tasks should not require a separate robot preset for retarget fields."""
     from isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command_cfg import StateCommandCfg
@@ -102,7 +138,7 @@ def test_locomotion_position_newton_mjwarp_preset_enables_newton_actuators(monke
     assert isinstance(actuator_cfg, ActuatorNetLSTMCfg)
     assert isinstance(actuator_cfg.network_file, str)
     assert actuator_cfg.network_file
-    assert actuator_cfg.network_file.endswith(".onnx")
+    assert actuator_cfg.network_file.endswith(".pt")
 
 
 def test_locomotion_position_newton_mjwarp_keeps_actuator_choice_explicit(monkeypatch):

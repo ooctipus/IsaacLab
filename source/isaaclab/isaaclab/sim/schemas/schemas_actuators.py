@@ -217,7 +217,13 @@ def _author_actuator_prims(
                 }
                 model_path = _resave_checkpoint_with_metadata(cfg.network_file, meta)
             else:
-                model_path = cfg.network_file
+                model_path = _resave_checkpoint_with_metadata(
+                    cfg.network_file,
+                    {
+                        "model_type": "lstm",
+                        "vel_scale": -1.0,
+                    },
+                )
 
         for jname in joint_names:
             joint_prim_path = joint_inventory[jname]

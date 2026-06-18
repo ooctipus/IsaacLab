@@ -215,20 +215,20 @@ def test_position_success_gate_payload_matches_old_task(monkeypatch: pytest.Monk
     assert payload.success_body_ang_speed_thresh == 0.30
 
 
-def test_position_simba_big_actor_uses_big_model() -> None:
-    """Position simba_big actor preset should use the wider SimBa actor cfg."""
+def test_position_simba_mlp_big_actor_uses_big_model() -> None:
+    """Position simba_mlp_big actor preset should use the wider SimBa actor cfg."""
     from isaaclab_tasks.core.multi_task.terrain.config.rsl_rl_cfg import PositionLocomotionPPORunnerCfg
     from isaaclab_tasks.utils.hydra import resolve_presets
 
     cfg = PositionLocomotionPPORunnerCfg()
-    resolve_presets(cfg, selected=("simba_big",))
+    resolve_presets(cfg, selected=("simba_mlp_big",))
 
     assert cfg.actor.hidden_dim == 512
     assert cfg.critic.hidden_dim == 1024
 
 
-def test_position_preserves_old_preset_surface_except_flat_commands() -> None:
-    """Migrated position cfg should keep old selectable preset names."""
+def test_position_exposes_explicit_preset_surface_except_flat_commands() -> None:
+    """Migrated position cfg should expose explicit preset names without alias presets."""
     from isaaclab_tasks.core.multi_task.terrain.config.rsl_rl_cfg import (
         PositionActorPresetCfg,
         PositionCriticPresetCfg,
@@ -241,7 +241,7 @@ def test_position_preserves_old_preset_surface_except_flat_commands() -> None:
     def fields(obj) -> set[str]:
         return {field.name for field in dataclass_fields(obj)}
 
-    simba_names = {"simba", "simba_big", "simba_mlp", "simba_mlp_big", "simba_cnn", "simba_cnn_big"}
+    simba_names = {"simba_mlp", "simba_mlp_big", "simba_cnn", "simba_cnn_big", "simba_rnn"}
 
     assert {"commander", "task_easing", "lstm", "flat", "encoder", *simba_names, "default"} <= fields(
         PositionActorPresetCfg()
@@ -250,15 +250,18 @@ def test_position_preserves_old_preset_surface_except_flat_commands() -> None:
     assert {"flat", "encoder", *simba_names, "default"} <= fields(PositionObsGroupsPresetCfg())
     assert {"flat", "encoder", *simba_names, "default"} <= fields(ObservationsCfg())
     assert {"rew_v1", "rew_v2", "default"} <= fields(RewardsCfg())
+    for cfg in (PositionActorPresetCfg(), PositionCriticPresetCfg(), PositionObsGroupsPresetCfg(), ObservationsCfg()):
+        assert "simba" not in fields(cfg)
+        assert "simba_big" not in fields(cfg)
     assert {"foot_sampled_commands", "default"} <= fields(CurriculumPresetCfg())
     assert "flat_patch_commands" not in fields(CurriculumPresetCfg())
 
 
-def test_position_old_preset_names_resolve_except_flat_commands(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Old position preset names should still resolve through Hydra."""
+def test_position_explicit_preset_names_resolve_except_flat_commands(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Explicit position preset names should resolve through Hydra."""
     from isaaclab_tasks.utils.hydra import resolve_task_config
 
-    old_names = (
+    preset_names = (
         "flat",
         "encoder",
         "simba_mlp",
@@ -278,13 +281,14 @@ def test_position_old_preset_names_resolve_except_flat_commands(monkeypatch: pyt
         "vel",
         "all_commands",
     )
-    for name in old_names:
+    for name in preset_names:
         monkeypatch.setattr(sys, "argv", ["pytest", f"presets=anymal_c,{name}"])
         resolve_task_config("Isaac-Position-v0", "rsl_rl_cfg_entry_point")
 
-    monkeypatch.setattr(sys, "argv", ["pytest", "presets=flat_patch_commands"])
-    with pytest.raises(ValueError, match="flat_patch_commands"):
-        resolve_task_config("Isaac-Position-v0", "rsl_rl_cfg_entry_point")
+    for alias in ("simba", "simba_big", "flat_patch_commands"):
+        monkeypatch.setattr(sys, "argv", ["pytest", f"presets={alias}"])
+        with pytest.raises(ValueError, match=alias):
+            resolve_task_config("Isaac-Position-v0", "rsl_rl_cfg_entry_point")
 
 
 def test_position_beta_value_shift_sampler_includes_value_shift_strategy() -> None:

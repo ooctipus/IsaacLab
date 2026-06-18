@@ -237,9 +237,9 @@ class TestSimbaPresetPipeline:
         from isaaclab_rl.rsl_rl import handle_deprecated_rsl_rl_cfg
 
         from isaaclab_tasks.core.multi_task.terrain.config.rsl_rl_cfg import PositionLocomotionPPORunnerCfg
-        from isaaclab_tasks.core.multi_task.terrain.config.rsl_rl_model_cfg import SIMBA_ACTOR, SIMBA_RNN_ACTOR
+        from isaaclab_tasks.core.multi_task.terrain.config.rsl_rl_model_cfg import SIMBA_MLP_ACTOR, SIMBA_RNN_ACTOR
 
-        actor_cfg = SIMBA_RNN_ACTOR if recurrent else SIMBA_ACTOR
+        actor_cfg = SIMBA_RNN_ACTOR if recurrent else SIMBA_MLP_ACTOR
         assert (actor_cfg.memory is not None) == recurrent
 
         runner = PositionLocomotionPPORunnerCfg()

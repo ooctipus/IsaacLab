@@ -1034,7 +1034,12 @@ Sourced from :mod:`isaaclab_assets.robots.spot`.
 """
 
 
-def _run_authoring_introspection(actuator_cfgs: dict) -> dict:
+def _run_authoring_introspection(
+    actuator_cfgs: dict,
+    *,
+    newton_cfg: NewtonCfg = NEWTON_CFG,
+    decimation: int = 1,
+) -> dict:
     """Instantiate Newton simulation, return Newton actuator introspection.
 
     Verifies that Lab configs are correctly authored to Newton USD schemas
@@ -1042,9 +1047,9 @@ def _run_authoring_introspection(actuator_cfgs: dict) -> dict:
 
     Returns:
         Dict with ``num_actuators``, ``actuator_info`` (list of per-actuator
-        dicts), and ``joint_pos`` (recorded trajectories).
+        dicts), manager graphability flags, and ``joint_pos`` (recorded trajectories).
     """
-    sim_cfg = SimulationCfg(dt=DT, physics=NEWTON_CFG, use_newton_actuators=True)
+    sim_cfg = SimulationCfg(dt=DT, physics=newton_cfg, use_newton_actuators=True)
 
     with build_simulation_context(
         device="cuda:0",
@@ -1065,7 +1070,12 @@ def _run_authoring_introspection(actuator_cfgs: dict) -> dict:
         sim.reset()
         assert articulation.is_initialized
 
+        if decimation > 1:
+            SimulationManager.set_decimation(decimation)
+
         model = SimulationManager.get_model()
+        manager_all_graphable = SimulationManager._is_all_graphable()
+        manager_handles_decimation = SimulationManager.handles_decimation()
 
         actuator_info = []
         for act in model.actuators:
@@ -1099,6 +1109,8 @@ def _run_authoring_introspection(actuator_cfgs: dict) -> dict:
         "num_actuators": len(model.actuators),
         "actuator_info": actuator_info,
         "joint_pos": recorded_pos,
+        "manager_all_graphable": manager_all_graphable,
+        "manager_handles_decimation": manager_handles_decimation,
     }
 
 
@@ -1400,11 +1412,16 @@ class TestNeuralLSTMAuthoring(unittest.TestCase):
         for a in lstm_acts:
             self.assertIn("ClampingDCMotor", a["clamping_types"])
 
-    def test_lstm_checkpoint_uses_jit_path(self):
+    def test_lstm_checkpoint_metadata_preserves_lab_velocity_input(self):
         lstm_acts = [a for a in self.result["actuator_info"] if a["controller_type"] == "ControllerNeuralLSTM"]
         self.assertTrue(len(lstm_acts) > 0, "No NeuralLSTM controller found")
         for a in lstm_acts:
-            self.assertEqual(a["model_path"], self.lstm_path)
+            self.assertIsNotNone(a["model_path"])
+            extra_files = {"metadata.json": ""}
+            torch.jit.load(a["model_path"], map_location="cpu", _extra_files=extra_files)
+            metadata = json.loads(extra_files["metadata.json"])
+            self.assertEqual(metadata["model_type"], "lstm")
+            self.assertEqual(metadata["vel_scale"], -1.0)
 
     def test_lstm_controller_is_not_graphable(self):
         # The pinned newton revision runs the LSTM controller via torch

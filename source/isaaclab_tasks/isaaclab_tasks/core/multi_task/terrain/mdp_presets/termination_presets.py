@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 
+from isaaclab.envs import mdp as base_mdp
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.utils.configclass import configclass
@@ -19,38 +20,25 @@ from .robots.robot_presets import NonFootContactBodyNamesCfg
 class PositionTerminationsCfg(BaseTerminationsCfg):
     """Locomotion termination cfg.
 
-    Inherits ``time_out`` and ``abnormal`` from
-    :class:`~isaaclab_tasks.core.multi_task.mdp.terminations.BaseTerminationsCfg`.
-    Adds:
+    Inherits ``time_out`` from
+    :class:`~isaaclab_tasks.core.multi_task.mdp.terminations.BaseTerminationsCfg`,
+    disables the inherited ``abnormal`` alias, and adds:
 
-    - ``oob`` — fires when the robot's env-relative root drops below 20 m
-      (replaces the older ``mdp.root_height_below_minimum``-based ``drop``,
-      which compared against absolute world z and broke for terrains with
-      non-zero spawn heights).
+    - ``abnormal_robot`` — legacy joint-velocity-limit watchdog. The inherited
+      ``abnormal`` alias is disabled to keep logs and term names aligned with
+      the verified working position runs.
+    - ``drop`` — legacy absolute root-height guard at ``minimum_height=-20``.
     - ``base_contact`` — fires on impact contact (force above 3× bodyweight)
-      against any body. Static loading on any body (foot stance, kneeling,
-      leaning) is bounded above by ~1× total BW by static equilibrium, so
-      3× cleanly gates impact contacts regardless of which body is involved
-      — knees, base, and feet alike. Per-robot configs can narrow
-      ``sensor_cfg.body_names`` to exclude small appendages (e.g. fingers /
-      toes / tail) where contact at any force is expected during normal
-      motion. Reference: CaT (Chane-Sane et al., IROS 2024) uses ~2× total
-      BW under stochastic termination + compliant impedance control on a
-      light quadruped; 3× is the deterministic-termination, stiffer-actuator
-      equivalent.
-    - ``joint_reaction`` — fires when a joint's measured reaction force exceeds
-      6× its effort limit (via the ``joint_wrench`` sensor); mechanical-overload
-      guard carried over from the legacy position stack.
+      against the configured non-foot body set.
+    - ``joint_reaction`` — legacy bodyweight-scaled joint reaction overload
+      guard via the ``joint_wrench`` sensor.
     - ``success`` — episode-success termination from the goal-tracking command.
     """
 
-    oob = DoneTerm(
-        func=mdp.out_of_bound,
-        params={
-            "asset_cfg": SceneEntityCfg("robot"),
-            "in_bound_range": {"x": (-1e6, 1e6), "y": (-1e6, 1e6), "z": (-20.0, 1e6)},
-        },
-    )
+    abnormal = None
+    abnormal_robot = DoneTerm(func=mdp.abnormal_robot_state)
+
+    drop = DoneTerm(func=base_mdp.root_height_below_minimum, params={"minimum_height": -20.0})
 
     base_contact = DoneTerm(
         func=mdp.illegal_contact_ratio,
@@ -65,7 +53,6 @@ class PositionTerminationsCfg(BaseTerminationsCfg):
         params={
             "sensor_cfg": SceneEntityCfg("joint_wrench"),
             "force_ratio": 6.0,
-            "force_mode": "magnitude",
         },
     )
 

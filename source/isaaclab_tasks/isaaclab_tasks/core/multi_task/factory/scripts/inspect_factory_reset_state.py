@@ -28,7 +28,7 @@ import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 import torch
@@ -110,9 +110,8 @@ def _print_config(command_cfg, table_cfg) -> None:
     print(f"  command keys         : {list(command_cfg.commands.keys())}")
     print(f"  reset assets         : {list(command_cfg.payload.reset_assets)}")
     print(f"  board configurations : {int(pcfg.board.num_boards)}")
-    print(f"  placements/board     : {int(pcfg.placement.placements_per_board)}")
-    print(f"  grasps/placement     : {int(pcfg.placement.grasp.grasps_per_placement)}")
-    print(f"  ik seeds/grasp       : {int(pcfg.placement.grasp.ik_seeds_per_grasp)}")
+    print(f"  yield ratio          : {float(pcfg.yield_ratio):.3f}")
+    print(f"  diversity knob       : {float(pcfg.diversity_knob):.2f}")
     print(f"  rows/board           : {int(table_cfg.rows_per_board)}")
     print(f"  targets/board        : {int(table_cfg.targets_per_board)}")
     print(f"  nut bounds           : {table_cfg.nut_bounds}")
@@ -237,7 +236,9 @@ def _safe_image_name(tag: str) -> str:
 
 
 def _write_success_grid(env_cfg, table: FactoryResetStateTaskTable, out_prefix: str) -> None:
-    """Run the configured sampler visual logger against the simless preview table."""
+    """Run the configured training sampler visual logger against the simless preview table."""
+    # Keep this path wired through the resolved env config. The inspector should
+    # reproduce training behavior, not override visual logger render settings.
     sampler_term = env_cfg.curriculum.reset_sampler
     sampler_cfg = sampler_term.params["sampling"]
     logger = sampler_term.params["sampler_visual_logger"]
@@ -255,7 +256,7 @@ def _write_success_grid(env_cfg, table: FactoryResetStateTaskTable, out_prefix: 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    images = cast(dict[str, np.ndarray], preview_env.extras.get("log_images", {}))
+    images = preview_env.extras.get("log_images", {})
     if not images:
         raise RuntimeError("configured sampler_visual_logger did not emit any images.")
     for tag, image in images.items():
@@ -263,6 +264,35 @@ def _write_success_grid(env_cfg, table: FactoryResetStateTaskTable, out_prefix: 
         path.parent.mkdir(parents=True, exist_ok=True)
         plt.imsave(path, image)
         print(f"[factory_reset_state] wrote {tag} -> {path} ({image.shape[1]}x{image.shape[0]})")
+
+
+def _collision_mesh_table(model) -> list[tuple[int, np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+    """Return robot collision mesh shapes in body-local frames."""
+    import newton
+
+    flags = model.shape_flags.numpy()
+    shape_body = model.shape_body.numpy()
+    shape_tf = wp.to_torch(model.shape_transform).cpu().numpy()
+    collide = int(newton.ShapeFlags.COLLIDE_SHAPES)
+    meshes = []
+    for shape_id in range(model.shape_count):
+        if (int(flags[shape_id]) & collide) == 0:
+            continue
+        source = model.shape_source[shape_id] if shape_id < len(model.shape_source) else None
+        verts = getattr(source, "vertices", None) if source is not None else None
+        faces = getattr(source, "indices", None) if source is not None else None
+        if verts is None or faces is None:
+            continue
+        meshes.append(
+            (
+                int(shape_body[shape_id]),
+                np.asarray(verts, dtype=np.float32).reshape(-1, 3),
+                np.asarray(faces, dtype=np.int32).reshape(-1, 3),
+                shape_tf[shape_id, :3].astype(np.float32, copy=True),
+                shape_tf[shape_id, 3:7].astype(np.float32, copy=True),
+            )
+        )
+    return meshes
 
 
 def _run_viewer(pipeline: FactoryIKPipeline, result, valid: torch.Tensor, port: int, collision_geom: bool) -> None:
@@ -285,7 +315,7 @@ def _run_viewer(pipeline: FactoryIKPipeline, result, valid: torch.Tensor, port: 
     print(f"[viz] rendering all {row_count} configured table rows across {n_boards} board-configuration cells")
     geom_mode = "collision/simple" if collision_geom else "visual"
     print(f"[viz] geometry mode: {geom_mode}")
-    print("[viz] robot rows rendered as body-frame skeletons for browser load")
+    print("[viz] robot and held rows rendered as collision meshes tinted by placement tag")
 
     body_q_t = fmodel.eval_fk(result.joint_q[sel])
     grip_probes = wp.array(fmodel.gripper_probes, dtype=wp.vec3, device=cfg.device)
@@ -342,7 +372,6 @@ def _run_viewer(pipeline: FactoryIKPipeline, result, valid: torch.Tensor, port: 
 
     body_q = body_q_t.cpu().numpy()
     nut_pose = result.nut_pose[sel].cpu().numpy()
-    pad_targets = result.pad_targets[sel].cpu().numpy()
     if collision_geom:
         obstacle_render = dict(fmodel.obstacle_geom)
         board_v, board_f = fmodel.board_verts, fmodel.board_faces
@@ -377,10 +406,15 @@ def _run_viewer(pipeline: FactoryIKPipeline, result, valid: torch.Tensor, port: 
 
     ident = np.array([0.0, 0.0, 0.0, 1.0])
     n_tags = len(result.tag_names)
-    robot_segments_by_tag: list[list[np.ndarray]] = [[] for _ in range(n_tags)]
-    robot_points_by_tag: list[list[np.ndarray]] = [[] for _ in range(n_tags)]
-    held_points_by_tag: list[list[np.ndarray]] = [[] for _ in range(n_tags)]
-    pad_points_by_tag: list[list[list[np.ndarray]]] = [[[], []] for _ in range(n_tags)]
+    robot_meshes = _collision_mesh_table(fmodel.model)
+    if not robot_meshes:
+        raise RuntimeError("robot USD did not expose collision mesh geometry for the viser preview")
+    robot_verts_by_tag: list[list[np.ndarray]] = [[] for _ in range(n_tags)]
+    robot_faces_by_tag: list[list[np.ndarray]] = [[] for _ in range(n_tags)]
+    robot_vert_base_by_tag = [0 for _ in range(n_tags)]
+    held_verts_by_tag: list[list[np.ndarray]] = [[] for _ in range(n_tags)]
+    held_faces_by_tag: list[list[np.ndarray]] = [[] for _ in range(n_tags)]
+    held_vert_base_by_tag = [0 for _ in range(n_tags)]
 
     for board_id in range(n_boards):
         off = np.array([(board_id % cols) * spacing, (board_id // cols) * spacing, 0.0], dtype=np.float32)
@@ -409,14 +443,20 @@ def _run_viewer(pipeline: FactoryIKPipeline, result, valid: torch.Tensor, port: 
         cell_rows = np.nonzero(board_ids == board_id)[0]
         for cell_row in cell_rows.tolist():
             tag = int(row_tags[cell_row])
-            robot_points = (body_q[cell_row, :, :3] + off).astype(np.float32, copy=False)
-            robot_points_by_tag[tag].append(robot_points)
-            if robot_points.shape[0] > 1:
-                robot_segments_by_tag[tag].append(np.stack([robot_points[:-1], robot_points[1:]], axis=1))
+            for body_id, shape_verts, shape_faces, shape_pos, shape_quat in robot_meshes:
+                body_pos = body_q[cell_row, body_id, :3]
+                body_quat = body_q[cell_row, body_id, 3:7]
+                body_verts = _rot(body_quat, _rot(shape_quat, shape_verts) + shape_pos) + body_pos + off
+                robot_verts_by_tag[tag].append(body_verts.astype(np.float32, copy=False))
+                robot_faces_by_tag[tag].append(shape_faces + robot_vert_base_by_tag[tag])
+                robot_vert_base_by_tag[tag] += shape_verts.shape[0]
 
-            held_points_by_tag[tag].append((nut_pose[cell_row, :3] + off).astype(np.float32, copy=False))
-            pad_points_by_tag[tag][0].append(pad_targets[cell_row, 0] + off)
-            pad_points_by_tag[tag][1].append(pad_targets[cell_row, 1] + off)
+            held_pos = nut_pose[cell_row, :3]
+            held_quat = nut_pose[cell_row, 3:7]
+            held_verts = _rot(held_quat, fmodel.held_verts) + held_pos + off
+            held_verts_by_tag[tag].append(held_verts.astype(np.float32, copy=False))
+            held_faces_by_tag[tag].append(fmodel.held_faces + held_vert_base_by_tag[tag])
+            held_vert_base_by_tag[tag] += fmodel.held_verts.shape[0]
 
         if cell_rows.size:
             tag_txt = " ".join(
@@ -438,49 +478,27 @@ def _run_viewer(pipeline: FactoryIKPipeline, result, valid: torch.Tensor, port: 
         )
 
     for tag, tag_name in enumerate(result.tag_names):
-        if not robot_points_by_tag[tag]:
+        if not robot_verts_by_tag[tag]:
             continue
-        arm_color = np.asarray(_TAG_PALETTE[tag % len(_TAG_PALETTE)], dtype=np.float32)
-        robot_points = np.concatenate(robot_points_by_tag[tag], axis=0)
-        point_colors = np.tile(arm_color[None, :], (robot_points.shape[0], 1))
+        arm_color = _TAG_PALETTE[tag % len(_TAG_PALETTE)]
         row_handles_by_tag[tag].append(
-            server.scene.add_point_cloud(
-                f"/rows/{tag_name}/franka_bodies",
-                points=robot_points,
-                colors=point_colors,
-                point_size=0.012,
+            server.scene.add_mesh_simple(
+                f"/rows/{tag_name}/franka_collision",
+                np.concatenate(robot_verts_by_tag[tag], axis=0),
+                np.concatenate(robot_faces_by_tag[tag], axis=0),
+                color=arm_color,
+                opacity=0.38,
             )
         )
-        if robot_segments_by_tag[tag]:
-            robot_segments = np.concatenate(robot_segments_by_tag[tag], axis=0)
-            segment_colors = np.tile(arm_color[None, None, :], (robot_segments.shape[0], 2, 1))
-            row_handles_by_tag[tag].append(
-                server.scene.add_line_segments(
-                    f"/rows/{tag_name}/franka_links",
-                    points=robot_segments,
-                    colors=segment_colors,
-                    line_width=2.0,
-                )
-            )
-        held_points = np.stack(held_points_by_tag[tag], axis=0).astype(np.float32, copy=False)
-        held_colors = np.tile(np.asarray([[1.0, 0.84, 0.0]], dtype=np.float32), (held_points.shape[0], 1))
         row_handles_by_tag[tag].append(
-            server.scene.add_point_cloud(
-                f"/rows/{tag_name}/held_asset_centers",
-                points=held_points,
-                colors=held_colors,
-                point_size=0.016,
+            server.scene.add_mesh_simple(
+                f"/rows/{tag_name}/held_asset_collision",
+                np.concatenate(held_verts_by_tag[tag], axis=0),
+                np.concatenate(held_faces_by_tag[tag], axis=0),
+                color=(1.0, 0.84, 0.0),
+                opacity=0.62,
             )
         )
-        for pad_idx, color in ((0, (1.0, 0.1, 0.1)), (1, (0.1, 0.9, 0.1))):
-            points = np.stack(pad_points_by_tag[tag][pad_idx], axis=0).astype(np.float32, copy=False)
-            colors = np.tile(np.asarray([color], dtype=np.float32), (points.shape[0], 1))
-            row_handles_by_tag[tag].append(
-                server.scene.add_point_cloud(
-                    f"/rows/{tag_name}/pad{pad_idx}", points=points, colors=colors, point_size=0.008
-                )
-            )
-
     tag_counts = (
         np.bincount(row_tags, minlength=len(result.tag_names))
         if row_tags.size
@@ -564,9 +582,8 @@ def _run_viewer(pipeline: FactoryIKPipeline, result, valid: torch.Tensor, port: 
         f"({n_boards} board cells, {row_count} table rows overlaid)"
     )
     print(f"[factory_reset_state] remote URL:  http://{hostname}:{actual_port}")
-    print("[factory_reset_state] robot skeletons are tinted by placement tag; held-asset centers are gold.")
+    print("[factory_reset_state] robot and held-asset collision meshes are tinted by placement tag.")
     print("[factory_reset_state] use the viser placement-tag checkboxes to show/hide groups.")
-    print("[factory_reset_state] pad targets: red = +jaw-y pad, green = -jaw-y pad")
     try:
         while True:
             time.sleep(0.5)
