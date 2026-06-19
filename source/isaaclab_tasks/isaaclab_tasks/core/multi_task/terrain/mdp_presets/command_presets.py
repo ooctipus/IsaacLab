@@ -172,6 +172,8 @@ class CommandPayloadPresetCfg(PresetCfg):
         rot_std=0.5,
         lin_vel_std=0.2,
         ang_vel_std=0.2,
+        success_effort_multiplier=0.8,
+        success_min_foot_weight_fraction=0.80,
     )
     base_foot = mdp.BaseFootStatePayloadCfg(
         pos_std=0.4,

@@ -90,8 +90,6 @@ class CommandPayloadBase:
         self._L_ref: float | None = None
         self._success_effort_multiplier = float(payload_cfg.success_effort_multiplier)
         self._success_min_foot_weight_fraction = float(payload_cfg.success_min_foot_weight_fraction)
-        self._success_body_lin_speed_thresh = float(payload_cfg.success_body_lin_speed_thresh)
-        self._success_body_ang_speed_thresh = float(payload_cfg.success_body_ang_speed_thresh)
 
     def _store_task_selection(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
         """Record the per-env command-type id (CSR bucket) and active-channel mask."""
@@ -111,9 +109,8 @@ class CommandPayloadBase:
         """Return per-env success from command-owned error."""
         return torch.all(error < self.reward_scales[cmd_ids], dim=1)
 
-    def get_task_done(self) -> torch.Tensor:
-        """Per-env done: old position success gates plus the hold timer."""
-        timer_done = self.cmd_buf[:, 1, self.time_idx] <= 0.0
+    def _success_timer_gate(self) -> torch.Tensor:
+        """Return physical gates required before accumulating successful hold time."""
         if self._weight is None:
             body_mass = wp.to_torch(self.robot.data.body_mass)
             gravity_vec = self.robot.data.GRAVITY_VEC_W.torch
@@ -128,12 +125,6 @@ class CommandPayloadBase:
             z_feet = body_pos_w[:, self._foot_ids, 2].mean(dim=-1)
             self._L_ref = float((z_base - z_feet).mean().item())
 
-        lin_speed_max = wp.to_torch(self.robot.data.body_lin_vel_w).norm(dim=-1).amax(dim=-1)
-        ang_speed_max = wp.to_torch(self.robot.data.body_ang_vel_w).norm(dim=-1).amax(dim=-1)
-        settled = (lin_speed_max < self._success_body_lin_speed_thresh) & (
-            ang_speed_max < self._success_body_ang_speed_thresh
-        )
-
         wrench_torque = wp.to_torch(self._wrench_sensor.data.torque)
         joint_axis_torque_max = wrench_torque[..., 0].abs().amax(dim=-1)
         specific_effort_max = joint_axis_torque_max / (self._weight * self._L_ref)
@@ -145,7 +136,11 @@ class CommandPayloadBase:
         weight_supported = foot_fz / self._weight
         feet_bear_weight = weight_supported >= self._success_min_foot_weight_fraction
 
-        return timer_done & settled & natural & feet_bear_weight
+        return natural & feet_bear_weight
+
+    def get_task_done(self) -> torch.Tensor:
+        """Per-env done from accumulated successful hold time."""
+        return self.cmd_buf[:, 1, self.time_idx] <= 0.0
 
     def get_task_reward(self) -> torch.Tensor:
         """Per-env terminal reward: 1 when done, else 0."""
@@ -357,7 +352,8 @@ class CommandPayloadBaseState(CommandPayloadBase):
         error[:, 2] = delta[:, 6:9].norm(dim=-1)
         error[:, 3] = delta[:, 9:12].norm(dim=-1)
 
-        current[:, self.time_idx] += step_dt * self.success(error, cmd_ids)
+        hold_success = self.success(error, cmd_ids) #  & self._success_timer_gate()
+        current[:, self.time_idx] += step_dt * hold_success
         torch.sub(target[:, self.time_idx], current[:, self.time_idx], out=delta[:, self.time_idx])
 
     def current_state_env(self, env_origins: torch.Tensor) -> torch.Tensor:
@@ -593,7 +589,8 @@ class CommandPayloadBaseFootState(CommandPayloadBase):
         foot_err = self._foot_delta_b.norm(dim=-1).amax(dim=1)
         error[:, 4] = torch.where(self.foot_success_mask, foot_err, torch.zeros_like(foot_err))
 
-        current[:, self.time_idx] += step_dt * self.success(error, cmd_ids)
+        hold_success = self.success(error, cmd_ids) & self._success_timer_gate()
+        current[:, self.time_idx] += step_dt * hold_success
         torch.sub(target[:, self.time_idx], current[:, self.time_idx], out=delta[:, self.time_idx])
 
     def current_state_env(self, env_origins: torch.Tensor) -> torch.Tensor:

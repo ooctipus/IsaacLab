@@ -148,12 +148,6 @@ class BaseStatePayloadCfg(StateCommandCfg.PayloadCfg):
     success_min_foot_weight_fraction: float = 0.80
     """Minimum fraction of body weight that feet must support for success."""
 
-    success_body_lin_speed_thresh: float = 0.30
-    """Per-body linear-speed ceiling [m/s] for the success settled gate."""
-
-    success_body_ang_speed_thresh: float = 0.30
-    """Per-body angular-speed ceiling [rad/s] for the success settled gate."""
-
     goal_visualizer_cfg: VisualizationMarkersCfg = _GOAL_VISUALIZER_CFG
     """Debug marker for the goal state (pos/pose/vel)."""
 
@@ -197,12 +191,6 @@ class BaseFootStatePayloadCfg(StateCommandCfg.PayloadCfg):
 
     success_min_foot_weight_fraction: float = 0.80
     """Minimum fraction of body weight that feet must support for success."""
-
-    success_body_lin_speed_thresh: float = 0.30
-    """Per-body linear-speed ceiling [m/s] for the success settled gate."""
-
-    success_body_ang_speed_thresh: float = 0.30
-    """Per-body angular-speed ceiling [rad/s] for the success settled gate."""
 
     goal_visualizer_cfg: VisualizationMarkersCfg = _GOAL_VISUALIZER_CFG
     """Debug marker for the goal state (pos/pose/vel/foot)."""
