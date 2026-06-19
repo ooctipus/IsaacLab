@@ -373,7 +373,7 @@ class FactoryPhysicsCfg(PresetCfg):
         collision_cfg=NewtonCollisionPipelineCfg(
             broad_phase="sap",
             max_triangle_pairs=60_000_000,
-            rigid_contact_max=5_000_000,
+            rigid_contact_max=7_000_000,
         ),
         default_shape_cfg=NewtonShapeCfg(ke=1e7, kd=1e4),
         # Isolate the fine ``sdf`` threads into a private mate group (they collide

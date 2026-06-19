@@ -11,7 +11,7 @@ from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR, LOCAL_ASSET_PATH_DIR
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils import PresetCfg, preset
 
 from .assembly_keypoints import NIST_BOARD_CFG
 
@@ -177,15 +177,16 @@ FRANKA_PANDA_NEWTON_CFG = ArticulationCfg(
         ),
         "panda_hand": ImplicitActuatorCfg(  # type: ignore
             joint_names_expr=["panda_finger_joint.*"],
-            effort_limit_sim=40.0,
-            stiffness=2e3,
-            damping=1e2,
+            # MuJoCo Menagerie drives the coupled Panda fingers with one tendon actuator
+            # using kp=100 N/m, kd=10 N*s/m, and force limits of +/-100 N on the
+            # split tendon. With 0.5 tendon coefficients on both finger joints, the
+            # independent-joint approximation is half those values per finger.
+            effort_limit_sim=50.0,
+            stiffness=50.0,
+            damping=5.0,
             armature=0.1,
-            # The franka USD declares a 0.05 m/s finger velocity limit (real-hardware
-            # spec). MuJoCo does not enforce it, and the stiff finger PD reaches
-            # ~0.46 m/s during normal grasping, so the 2x abnormal-velocity gate fired
-            # every episode. Override to a value matching the sim gripper's envelope so
-            # the divergence watchdog stays meaningful for all joints.
+            # Keep the watchdog above the real-hardware USD velocity limit; the MuJoCo
+            # reference model does not enforce that limit for simulated gripper commands.
             velocity_limit_sim=0.5,
         ),
     },
@@ -226,10 +227,18 @@ NISTBOARD_CFG = RigidObjectCfg(
 BOLT_M16_CFG = RigidObjectCfg(
     prim_path="/World/envs/env_.*/BOLT_M16",
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST2/thread_m16_sdf_hull.usd",
+        usd_path=preset(  # type: ignore[arg-type]
+            default=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST2/thread_m16.usd",
+            physx=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST2/thread_m16.usd",
+            newton_mjwarp=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST2/thread_m16_sdf_hull.usd",
+        ),
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
-        collision_props=None,
+        collision_props=preset(
+            default=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+            physx=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+            newton_mjwarp=None,
+        ),
     ),
 )
 
@@ -237,10 +246,18 @@ BOLT_M16_CFG = RigidObjectCfg(
 NUT_M16_CFG: RigidObjectCfg = RigidObjectCfg(
     prim_path="/World/envs/env_.*/NUT_M16",
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST2/nut_m16_sdf_hull.usd",
+        usd_path=preset(  # type: ignore[arg-type]
+            default=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST2/nut_m16.usd",
+            physx=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST2/nut_m16.usd",
+            newton_mjwarp=f"{LOCAL_ASSET_PATH_DIR}/Props/NIST2/nut_m16_sdf_hull.usd",
+        ),
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.03),
-        collision_props=None,
+        collision_props=preset(
+            default=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+            physx=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+            newton_mjwarp=None,
+        ),
     ),
 )
 
