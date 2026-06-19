@@ -28,6 +28,7 @@ __all__ = [
     "RslRlRNNModelCfg",
     "RslRlRndCfg",
     "RslRlSymmetryCfg",
+    "RslRlValueShiftCfg",
     "RslRlVecEnvWrapper",
 ]
 
@@ -57,5 +58,6 @@ from .rl_cfg import (
 )
 from .rnd_cfg import RslRlRndCfg
 from .symmetry_cfg import RslRlSymmetryCfg
+from .value_shift_cfg import RslRlValueShiftCfg
 from .utils import handle_deprecated_rsl_rl_cfg
 from .vecenv_wrapper import RslRlVecEnvWrapper

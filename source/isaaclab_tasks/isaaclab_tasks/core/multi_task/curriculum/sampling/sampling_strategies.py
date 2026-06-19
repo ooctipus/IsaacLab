@@ -142,11 +142,11 @@ class ValueShiftSamplingStrategy:
     """Per-state critic value-shift score.
 
     Maintains a fixed observation cache (one entry per discretized command
-    state) built once at ``__init__``. An external RL algorithm (e.g.
-    :class:`ValueShiftPPO`) evaluates the critic on this cache every update
-    and writes the per-state ``|V_new - V_prev|`` magnitude into
-    :attr:`diff_val`. The strategy's :meth:`score` simply copies that signal
-    into the sampler's output buffer.
+    state) built once at ``__init__``. An external consumer (the
+    :class:`~rsl_rl.extensions.ValueShift` PPO augmentation) evaluates the
+    critic on this cache every update and writes the per-state
+    ``|V_new - V_prev|`` magnitude into :attr:`diff_val`. The strategy's
+    :meth:`score` simply copies that signal into the sampler's output buffer.
 
     The cache fill loop drives state transitions by writing
     :attr:`cmd_indices` and calling :attr:`resample_command_fn`; between each

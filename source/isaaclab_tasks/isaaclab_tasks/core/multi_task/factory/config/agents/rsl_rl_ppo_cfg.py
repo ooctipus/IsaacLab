@@ -7,7 +7,7 @@ from typing import Any
 
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_rl.rsl_rl import RslRlMLPModelCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
+from isaaclab_rl.rsl_rl import RslRlMLPModelCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg, RslRlValueShiftCfg
 
 from isaaclab_tasks.core.multi_task.rl.rsl_rl import RslRlResidualMLPEncoderModelCfg
 from isaaclab_tasks.utils import PresetCfg, preset
@@ -104,34 +104,28 @@ class FactoryCriticPresetCfg(PresetCfg):
 
 @configclass
 class ValueShiftAlgorithmCfg(RslRlPpoAlgorithmCfg):
-    """PPO algorithm cfg + bind expressions for the value-shift curriculum.
+    """PPO + the value-shift augmentation: binds the curriculum sampler's value-shift
+    strategy buffers onto the :class:`~rsl_rl.extensions.ValueShift` extension.
 
-    Bind expressions are popped off this cfg by
-    :meth:`ValueShiftPPO.construct_algorithm` (so they never reach
-    ``PPO.__init__``) and ``eval``-ed against ``{env, alg, setattr}``. They wire
-    :class:`ValueShiftPPO`'s three buffers to the matching
-    :class:`ValueShiftSamplingStrategy` living on the ``reset_sampler``
-    curriculum term. Only meaningful when that curriculum sampler preset
-    includes value-shift scoring (``value_shift`` / ``beta_value_shift``).
+    Only meaningful when the ``reset_sampler`` curriculum preset includes
+    value-shift scoring (``value_shift`` / ``beta_value_shift``).
     """
 
-    class_name: str = "isaaclab_tasks.core.multi_task.rl.rsl_rl.algorithms:ValueShiftPPO"
     # ``env`` here is the ``RslRlVecEnvWrapper`` from the runner -- managers
     # live on the underlying ``ManagerBasedRLEnv`` accessed via ``.unwrapped``.
-    bind_observation_exp: str = (
-        "setattr(alg, '_obs_cache',"
-        " env.unwrapped.curriculum_manager.get_term('reset_sampler')"
-        "._sampler._impl.value_shift_strategy.observation_cache)"
-    )
-    bind_current_value_exp: str = (
-        "setattr(alg, '_cur_buf',"
-        " env.unwrapped.curriculum_manager.get_term('reset_sampler')"
-        "._sampler._impl.value_shift_strategy.cur_val)"
-    )
-    bind_value_diff_exp: str = (
-        "setattr(alg, '_diff_buf',"
-        " env.unwrapped.curriculum_manager.get_term('reset_sampler')"
-        "._sampler._impl.value_shift_strategy.diff_val)"
+    value_shift_cfg: RslRlValueShiftCfg = RslRlValueShiftCfg(
+        observation_bind=(
+            "setattr(self, 'obs_cache', env.unwrapped.curriculum_manager"
+            ".get_term('reset_sampler')._sampler._impl.value_shift_strategy.observation_cache)"
+        ),
+        current_value_bind=(
+            "setattr(self, 'cur_val', env.unwrapped.curriculum_manager"
+            ".get_term('reset_sampler')._sampler._impl.value_shift_strategy.cur_val)"
+        ),
+        value_diff_bind=(
+            "setattr(self, 'diff_val', env.unwrapped.curriculum_manager"
+            ".get_term('reset_sampler')._sampler._impl.value_shift_strategy.diff_val)"
+        ),
     )
 
 

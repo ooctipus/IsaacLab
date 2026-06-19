@@ -12,6 +12,7 @@ from isaaclab.utils.configclass import configclass
 
 from .rnd_cfg import RslRlRndCfg
 from .symmetry_cfg import RslRlSymmetryCfg
+from .value_shift_cfg import RslRlValueShiftCfg
 
 #########################
 # Model configurations #
@@ -200,7 +201,7 @@ class RslRlPpoAlgorithmCfg:
     """Weight decay coefficient applied by the policy optimizer. Defaults to 0.0."""
 
     log_weight_decay_metrics: bool = True
-    """Whether to log weight-decay parameter-norm diagnostics when weight decay is non-zero. Defaults to True."""
+    """Whether to log the optimized-parameter L2 norm when weight decay is active. Defaults to True."""
 
     value_loss_coef: float = MISSING
     """The coefficient for the value loss."""
@@ -235,6 +236,9 @@ class RslRlPpoAlgorithmCfg:
 
     symmetry_cfg: RslRlSymmetryCfg | None = None
     """The symmetry configuration. Defaults to None, in which case symmetry is not used."""
+
+    value_shift_cfg: RslRlValueShiftCfg | None = None
+    """The value-shift configuration. Defaults to None, in which case value-shift is not used."""
 
 
 #########################

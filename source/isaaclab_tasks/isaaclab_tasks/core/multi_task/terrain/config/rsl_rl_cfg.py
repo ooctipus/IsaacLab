@@ -16,7 +16,7 @@ from typing import Any
 
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg, RslRlRndCfg
+from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg, RslRlRndCfg, RslRlValueShiftCfg
 
 from isaaclab_tasks.utils import PresetCfg, preset
 
@@ -128,23 +128,22 @@ POSITION_PPO_ALGORITHM_CFG = RslRlPpoAlgorithmCfg(**_POSITION_PPO_ALGORITHM_KWAR
 
 @configclass
 class ValueShiftAlgorithmCfg(RslRlPpoAlgorithmCfg):
-    """PPO algorithm cfg + bind expressions for the value-shift curriculum."""
+    """PPO + the value-shift augmentation: binds the curriculum sampler's value-shift
+    strategy buffers onto the :class:`~rsl_rl.extensions.ValueShift` extension."""
 
-    class_name: str = "isaaclab_tasks.core.multi_task.rl.rsl_rl.algorithms:ValueShiftPPO"
-    bind_observation_exp: str = (
-        "setattr(alg, '_obs_cache',"
-        " env.unwrapped.curriculum_manager.get_term('terrain_levels')"
-        "._sampler._impl.value_shift_strategy.observation_cache)"
-    )
-    bind_current_value_exp: str = (
-        "setattr(alg, '_cur_buf',"
-        " env.unwrapped.curriculum_manager.get_term('terrain_levels')"
-        "._sampler._impl.value_shift_strategy.cur_val)"
-    )
-    bind_value_diff_exp: str = (
-        "setattr(alg, '_diff_buf',"
-        " env.unwrapped.curriculum_manager.get_term('terrain_levels')"
-        "._sampler._impl.value_shift_strategy.diff_val)"
+    value_shift_cfg: RslRlValueShiftCfg = RslRlValueShiftCfg(
+        observation_bind=(
+            "setattr(self, 'obs_cache', env.unwrapped.curriculum_manager"
+            ".get_term('terrain_levels')._sampler._impl.value_shift_strategy.observation_cache)"
+        ),
+        current_value_bind=(
+            "setattr(self, 'cur_val', env.unwrapped.curriculum_manager"
+            ".get_term('terrain_levels')._sampler._impl.value_shift_strategy.cur_val)"
+        ),
+        value_diff_bind=(
+            "setattr(self, 'diff_val', env.unwrapped.curriculum_manager"
+            ".get_term('terrain_levels')._sampler._impl.value_shift_strategy.diff_val)"
+        ),
     )
 
 
