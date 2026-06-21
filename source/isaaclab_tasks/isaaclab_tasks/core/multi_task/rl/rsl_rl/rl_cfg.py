@@ -106,6 +106,40 @@ class RslRlResidualMLPEncoderModelCfg(RslRlMLPEncoderModelCfg):
 
 
 @configclass
+class RslRlSuccessorFeatureCriticModelCfg(RslRlResidualMLPEncoderModelCfg):
+    """SimBa encoder + two (free-norm) successor-representation heads (``psi``, ``phi``).
+
+    The command is folded into the encoded state; ``psi``/``phi`` branch off the shared latent and feed the
+    dynamics-anchored successor value ``V = <psi, w>`` (the read-out ``w`` lives in the
+    :class:`~rsl_rl.extensions.SuccessorFeatures` extension). Use with the ``successor`` algorithm preset.
+    """
+
+    class_name: str = (
+        "isaaclab_tasks.core.multi_task.rl.rsl_rl.models.successor_feature_critic_model:SuccessorFeatureCriticModel"
+    )
+    """The model class name."""
+
+    feature_dim: int = 128
+    """Width ``d`` of the ``psi`` / ``phi`` heads (and of ``w``)."""
+
+
+@configclass
+class RslRlSuccessorActorModelCfg(RslRlResidualMLPEncoderModelCfg):
+    """SimBa encoder + a z-conditioned Gaussian policy head ``pi(a | [h(s), z])``.
+
+    The goal is absent from the actor's observation; it enters only via the goal embedding ``z = B(goal)``
+    (supplied by the :class:`~rsl_rl.extensions.SuccessorFeatures` extension), so the policy must consult ``z``.
+    Use with the ``successor`` algorithm + critic presets; ``feature_dim`` must match the critic's.
+    """
+
+    class_name: str = "isaaclab_tasks.core.multi_task.rl.rsl_rl.models.successor_actor_model:SuccessorActorModel"
+    """The model class name."""
+
+    feature_dim: int = 128
+    """Width ``d`` of the goal embedding ``z`` (must equal the critic's ``feature_dim``)."""
+
+
+@configclass
 class RslRlResidualMLPCfg:
     """Configuration for a residual MLP backbone."""
 

@@ -11,6 +11,7 @@ from .rl_cfg import (
     RslRlOffPolicyRunnerCfg,
     RslRlResidualMLPCfg,
     RslRlResidualMLPEncoderModelCfg,
+    RslRlSuccessorFeatureCriticModelCfg,
     RslRlTaskEasingActorModelCfg,
 )
 
@@ -22,5 +23,6 @@ __all__ = [
     "RslRlOffPolicyRunnerCfg",
     "RslRlResidualMLPCfg",
     "RslRlResidualMLPEncoderModelCfg",
+    "RslRlSuccessorFeatureCriticModelCfg",
     "RslRlTaskEasingActorModelCfg",
 ]
