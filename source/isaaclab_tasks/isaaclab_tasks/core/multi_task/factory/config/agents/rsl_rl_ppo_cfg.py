@@ -7,9 +7,18 @@ from typing import Any
 
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_rl.rsl_rl import RslRlMLPModelCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg, RslRlValueShiftCfg
+from isaaclab_rl.rsl_rl import (
+    RslRlMLPModelCfg,
+    RslRlOnPolicyRunnerCfg,
+    RslRlPpoAlgorithmCfg,
+    RslRlSuccessorCfg,
+    RslRlValueShiftCfg,
+)
 
-from isaaclab_tasks.core.multi_task.rl.rsl_rl import RslRlResidualMLPEncoderModelCfg
+from isaaclab_tasks.core.multi_task.rl.rsl_rl import (
+    RslRlResidualMLPEncoderModelCfg,
+    RslRlSuccessorFeatureCriticModelCfg,
+)
 from isaaclab_tasks.utils import PresetCfg, preset
 
 # Shared PPO hyper-parameters reused by both the plain-PPO and value-shift variants.
@@ -22,7 +31,7 @@ _FACTORY_PPO_KWARGS: dict[str, Any] = dict(
     num_mini_batches=4,
     learning_rate=1.0e-4,
     schedule="adaptive",
-    gamma=0.995,
+    gamma=0.99,
     lam=0.92,
     desired_kl=0.01,
     max_grad_norm=1.0,
@@ -99,6 +108,21 @@ class FactoryCriticPresetCfg(PresetCfg):
         stochastic=False,
         encoder_cfg={},
     )
+    # Successor-representation critic: two heads (``psi`` free, ``phi`` hard-normed to sqrt(d)) vs a scalar value;
+    # the value is derived in the ``successor`` algorithm extension as ``V = <psi, w>``. Pair with the
+    # ``successor`` algorithm preset, whose ``feature_dim`` must match the one set here.
+    successor = RslRlSuccessorFeatureCriticModelCfg(
+        feature_dim=128,
+        hidden_dim=256,
+        num_blocks=2,
+        expand=4,
+        activation="swish",
+        norm=True,
+        obs_normalization=True,
+        encoder_normalization=True,
+        stochastic=False,
+        encoder_cfg={},
+    )
     default = actor_critic
 
 
@@ -139,6 +163,20 @@ class SuccessorLatentAlgorithmCfg(RslRlPpoAlgorithmCfg):
 
 
 @configclass
+class SuccessorAlgorithmCfg(RslRlPpoAlgorithmCfg):
+    """PPO with the dynamics-anchored successor-representation value
+    (:class:`~rsl_rl.extensions.SuccessorFeatures`).
+
+    The critic exposes ``psi`` (free) and ``phi`` (sqrt(d)-normed) heads (the ``successor`` critic preset, pluggable
+    via ``agent.critic``) learned reward-free from the forward-backward occupancy objective; the value is the
+    derived read-out ``V = <psi, w>`` with ``w`` the static EMA success centroid. Purely an algorithm-axis
+    augmentation -- no sampler/value-shift coupling. ``feature_dim`` must match the critic preset's.
+    """
+
+    successor_cfg: RslRlSuccessorCfg = RslRlSuccessorCfg(feature_dim=128)
+
+
+@configclass
 class PpoAlgorithmCfg(PresetCfg):
     """Algorithm preset selectable via ``agent.algorithm=<name>``."""
 
@@ -147,6 +185,7 @@ class PpoAlgorithmCfg(PresetCfg):
     value_shift = ValueShiftAlgorithmCfg(**_FACTORY_PPO_KWARGS)
     beta_value_shift = value_shift
     successor_latent = SuccessorLatentAlgorithmCfg(**_FACTORY_PPO_KWARGS)
+    successor = SuccessorAlgorithmCfg(**_FACTORY_PPO_KWARGS)
 
 
 @configclass

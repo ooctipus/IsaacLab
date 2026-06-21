@@ -75,6 +75,14 @@ class PositionObservationsCfg:
         goal_point_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "goal_point"})
 
     @configclass
+    class AbsPoseCfg(ObsGroup):
+        # Robot env-local ABSOLUTE pose (x, y, z, cos(yaw), sin(yaw)). Carries position in the STATE so a goal can
+        # be specified absolutely: the live obs holds the current pose, and z = B(goal) holds the goal's pose (the
+        # goal cache teleports to the target, so this same term records it). Used by the z-conditioned successor
+        # critic/actor in place of the goal-relative ``task`` delta.
+        base_pose = ObsTerm(func=mdp.root_pose_in_env_frame)
+
+    @configclass
     class HeightScanCfg(ObsGroup):
         height_scan = ObsTerm(
             func=mdp.vision_obs,
@@ -85,6 +93,7 @@ class PositionObservationsCfg:
 
     policy: PolicyCfg = PolicyCfg()
     task: TaskCfg = TaskCfg()
+    abs_pose: AbsPoseCfg = AbsPoseCfg()
     height_scan: HeightScanCfg = HeightScanCfg()
 
 

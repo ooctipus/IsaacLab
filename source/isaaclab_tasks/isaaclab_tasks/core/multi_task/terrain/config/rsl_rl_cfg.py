@@ -16,7 +16,13 @@ from typing import Any
 
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg, RslRlRndCfg, RslRlValueShiftCfg
+from isaaclab_rl.rsl_rl import (
+    RslRlOnPolicyRunnerCfg,
+    RslRlPpoAlgorithmCfg,
+    RslRlRndCfg,
+    RslRlSuccessorCfg,
+    RslRlValueShiftCfg,
+)
 
 from isaaclab_tasks.utils import PresetCfg, preset
 
@@ -47,6 +53,8 @@ from .rsl_rl_model_cfg import (
     SIMBA_MLP_CRITIC,
     SIMBA_RNN_ACTOR,
     SIMBA_RNN_CRITIC,
+    SIMBA_SF_ACTOR,
+    SIMBA_SF_CRITIC,
     TASK_EASING_ACTOR,
 )
 
@@ -67,6 +75,7 @@ class PositionActorPresetCfg(PresetCfg):
     simba_cnn = SIMBA_CNN_ACTOR
     simba_cnn_big = SIMBA_CNN_BIG_ACTOR
     simba_rnn = SIMBA_RNN_ACTOR
+    successor = SIMBA_SF_ACTOR
     default = encoder
 
 
@@ -85,6 +94,7 @@ class PositionCriticPresetCfg(PresetCfg):
     simba_cnn = SIMBA_CNN_CRITIC
     simba_cnn_big = SIMBA_CNN_BIG_CRITIC
     simba_rnn = SIMBA_RNN_CRITIC
+    successor = SIMBA_SF_CRITIC
     default = mlp_encoder
 
 
@@ -103,6 +113,16 @@ class PositionObsGroupsPresetCfg(PresetCfg):
     simba_cnn_big: dict[str, list[str]] = encoder
     simba_rnn: dict[str, list[str]] = encoder
     default: dict[str, list[str]] = encoder
+    # z-conditioned forward-backward (Meta-Motivo): the goal is specified ABSOLUTELY, not as a delta. The state
+    # carries the robot's env-local ABSOLUTE pose (``abs_pose``) instead of the goal-relative ``task`` delta, so:
+    # the policy always knows WHERE IT IS; the goal's absolute pose enters ONLY via ``z = B(goal)`` (the goal
+    # cache teleports to the target, so ``abs_pose`` then records the goal pose). The actor/F must consult z to
+    # know where to head -> z is the load-bearing goal channel (the delta would let them bypass z). This makes z
+    # genuinely matter even single-policy, because different goals are different absolute poses -> different z.
+    successor: dict[str, list[str]] = {
+        "actor": ["policy", "abs_pose", "height_scan"],
+        "critic": ["policy", "abs_pose", "height_scan"],
+    }
 
 
 _POSITION_PPO_ALGORITHM_KWARGS: dict[str, Any] = dict(
@@ -114,7 +134,7 @@ _POSITION_PPO_ALGORITHM_KWARGS: dict[str, Any] = dict(
     num_mini_batches=4,
     learning_rate=1.0e-4,
     schedule="adaptive",
-    gamma=0.999,
+    gamma=0.99,
     lam=0.95,
     desired_kl=0.01,
     max_grad_norm=1.0,
@@ -151,12 +171,27 @@ POSITION_VALUE_SHIFT_ALGORITHM_CFG = ValueShiftAlgorithmCfg(**_POSITION_PPO_ALGO
 
 
 @configclass
+class SuccessorAlgorithmCfg(RslRlPpoAlgorithmCfg):
+    """PPO with the dynamics-anchored successor-representation value
+    (:class:`~rsl_rl.extensions.SuccessorFeatures`).
+
+    The critic exposes ``psi`` (free) and ``phi`` (sqrt(d)-normed) heads (the ``successor`` critic preset, pluggable
+    via ``agent.critic``) learned reward-free from the forward-backward occupancy objective; the value is the
+    derived read-out ``V = <psi, w>`` with ``w`` the static EMA success centroid. Purely an algorithm-axis
+    augmentation -- no sampler/value-shift coupling. ``feature_dim`` must match the critic preset's.
+    """
+
+    successor_cfg: RslRlSuccessorCfg = RslRlSuccessorCfg(feature_dim=128)
+
+
+@configclass
 class PositionAlgorithmPresetCfg(PresetCfg):
     """Algorithm preset selectable via ``agent.algorithm=<name>``."""
 
     default: RslRlPpoAlgorithmCfg = POSITION_PPO_ALGORITHM_CFG
     value_shift: ValueShiftAlgorithmCfg = POSITION_VALUE_SHIFT_ALGORITHM_CFG
     beta_value_shift: ValueShiftAlgorithmCfg = value_shift
+    successor: SuccessorAlgorithmCfg = SuccessorAlgorithmCfg(**_POSITION_PPO_ALGORITHM_KWARGS)
 
 
 POSITION_RND_CFG = RslRlRndCfg(

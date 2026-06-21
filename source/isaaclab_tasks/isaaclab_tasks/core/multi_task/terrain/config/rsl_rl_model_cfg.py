@@ -29,6 +29,8 @@ from isaaclab_tasks.core.multi_task.rl.rsl_rl.rl_cfg import (
     RslRlCommanderActorModelCfg,
     RslRlMLPEncoderModelCfg,
     RslRlResidualMLPEncoderModelCfg,
+    RslRlSuccessorActorModelCfg,
+    RslRlSuccessorFeatureCriticModelCfg,
     RslRlTaskEasingActorModelCfg,
 )
 from isaaclab_tasks.utils import preset
@@ -192,6 +194,23 @@ SIMBA_MLP_ACTOR = RslRlResidualMLPEncoderModelCfg(
     encoder_cfg=MLP_ENCODER_CFG,
 )
 
+# z-conditioned SimBa actor for the forward-backward successor critic (Meta-Motivo): same SimBa policy head as
+# SIMBA_MLP_ACTOR but reads the goal embedding z = B(goal) (the goal is absent from its observation). Pair with
+# ``agent.critic=successor agent.algorithm=successor agent.obs_groups=successor``.
+SIMBA_SF_ACTOR = RslRlSuccessorActorModelCfg(
+    feature_dim=128,
+    hidden_dim=256,
+    num_blocks=2,
+    expand=4,
+    activation="swish",
+    norm=True,
+    obs_normalization=True,
+    encoder_normalization=True,
+    stochastic=True,
+    distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0, std_type="log"),
+    encoder_cfg=MLP_ENCODER_CFG,
+)
+
 # Wider SimBa actor for capacity-scaling experiments. Same architecture as ``SIMBA_MLP_ACTOR``, doubled
 # width. Critic should also switch to ``SIMBA_MLP_BIG_CRITIC`` (which is wider AND deeper than the actor
 # per the SimBa paper's finding that critic capacity matters more than actor capacity).
@@ -305,6 +324,23 @@ CNN_CRITIC_CFG = RslRlCNNModelCfg(
 # ``agent.critic.hidden_dim=512 agent.critic.activation=relu`` as an ablation once the base
 # config is verified to learn.
 SIMBA_MLP_CRITIC = RslRlResidualMLPEncoderModelCfg(
+    hidden_dim=256,
+    num_blocks=2,
+    expand=4,
+    activation=preset(relu="relu", swish="swish", default="swish"),
+    norm=True,
+    obs_normalization=True,
+    encoder_normalization=True,
+    stochastic=False,
+    encoder_cfg=MLP_ENCODER_CFG,
+)
+
+# Successor-representation critic: the SimBa encoder feeds two (free-norm) heads (``psi``, ``phi``)
+# instead of a scalar value. The command is folded into the encoded state; the value is derived in the
+# ``successor`` algorithm extension as ``V = <psi, w>``. Pair with the ``successor`` algorithm preset, whose
+# ``feature_dim`` must match the one set here.
+SIMBA_SF_CRITIC = RslRlSuccessorFeatureCriticModelCfg(
+    feature_dim=128,
     hidden_dim=256,
     num_blocks=2,
     expand=4,
