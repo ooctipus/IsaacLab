@@ -299,5 +299,5 @@ def test_factory_sampler_config_lives_on_command_term():
     assert "command_manager.get_term('reset_state')" in curriculum.reset_sampler.params["success_rates_bind"]
     assert curriculum.reset_sampler.params["layout"].target_index_bind is not None
     value_shift_strategy = curriculum.reset_sampler.params["sampling"].beta_value_shift.strategies[1]
-    assert "command_manager.get_term('reset_state')" in value_shift_strategy.state_buffer_bind
+    assert "command_manager.get_term('reset_state')" in value_shift_strategy.obs_cache_bind
     assert "curriculum_manager.get_term('reset_sampler')" in ValueShiftAlgorithmCfg().bind_observation_exp

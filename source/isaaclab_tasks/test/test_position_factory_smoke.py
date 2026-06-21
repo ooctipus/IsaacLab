@@ -304,7 +304,7 @@ def test_position_beta_value_shift_sampler_includes_value_shift_strategy() -> No
     value_shift = [s for s in sampling.strategies if isinstance(s, ValueShiftSamplingStrategyCfg)]
 
     assert len(value_shift) == 1
-    assert value_shift[0].state_buffer_bind == "env.command_manager.get_term('goal_point').table.task_partition"
+    assert value_shift[0].obs_cache_bind == "env.command_manager.get_term('goal_point').get_spawn_obs_cache()"
 
 
 def test_position_beta_value_shift_preset_uses_value_shift_algorithm() -> None:

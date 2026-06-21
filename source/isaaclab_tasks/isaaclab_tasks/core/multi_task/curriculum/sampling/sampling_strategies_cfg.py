@@ -137,17 +137,9 @@ class ValueShiftSamplingStrategyCfg:
     command state instead.
     """
 
-    state_buffer_bind: str = MISSING
-    """Expression resolving to the ``[num_states, ...]`` state pool tensor (count + device)."""
-    cmd_indices_bind: str = MISSING
-    """Expression resolving to ``[num_envs]`` long tensor of per-env command indices."""
-    resample_command_fn_bind: str = MISSING
-    """Expression resolving to ``(env_ids: LongTensor) -> None``.
-
-    Writes the env's pose / state for the cached command index.
-    """
-    get_critic_obs_fn_bind: str = MISSING
-    """Expression resolving to ``() -> dict[str, Tensor]``; returns one batch of critic-group observations."""
+    obs_cache_bind: str = MISSING
+    """Expression resolving to the ``[num_states, ...]`` observation cache (a ``TensorDict``) to score value
+    drift over -- e.g. ``env.command_manager.get_term('goal_point').get_spawn_obs_cache()``."""
 
 
 SamplingStrategyCfg = (

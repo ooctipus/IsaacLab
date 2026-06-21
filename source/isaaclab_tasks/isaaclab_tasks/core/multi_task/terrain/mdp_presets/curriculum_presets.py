@@ -52,10 +52,7 @@ class PositionCurriculumSamplerCfg:
                     strategies=[
                         ValueShiftSamplingStrategyCfg(
                             weight=0.5,
-                            state_buffer_bind="env.command_manager.get_term('goal_point').table.task_partition",
-                            cmd_indices_bind="env.command_manager.get_term('goal_point').cmd_indices",
-                            resample_command_fn_bind="env.command_manager.get_term('goal_point')._resample_command",
-                            get_critic_obs_fn_bind="lambda: env.observation_manager.compute()",
+                            obs_cache_bind="env.command_manager.get_term('goal_point').get_spawn_obs_cache()",
                         )
                     ],
                     eps=1e-4,
@@ -65,10 +62,7 @@ class PositionCurriculumSamplerCfg:
                         BetaSamplingStrategyCfg(target=0.66, kappa=2.5, weight=1.0, success_rate_bind="success_rates"),
                         ValueShiftSamplingStrategyCfg(
                             weight=1.0,
-                            state_buffer_bind="env.command_manager.get_term('goal_point').table.task_partition",
-                            cmd_indices_bind="env.command_manager.get_term('goal_point').cmd_indices",
-                            resample_command_fn_bind="env.command_manager.get_term('goal_point')._resample_command",
-                            get_critic_obs_fn_bind="lambda: env.observation_manager.compute()",
+                            obs_cache_bind="env.command_manager.get_term('goal_point').get_spawn_obs_cache()",
                         ),
                     ],
                     eps=1e-4,

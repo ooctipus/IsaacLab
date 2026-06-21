@@ -141,83 +141,28 @@ class UniformSamplingStrategy:
 class ValueShiftSamplingStrategy:
     """Per-state critic value-shift score.
 
-    Maintains a fixed observation cache (one entry per discretized command
-    state) built once at ``__init__``. An external consumer (the
+    Binds to a fixed observation cache (one entry per task -- e.g.
+    :meth:`~...StateCommand.get_spawn_obs_cache`, the episode-start observation
+    of each task). An external consumer (the
     :class:`~rsl_rl.extensions.ValueShift` PPO augmentation) evaluates the
     critic on this cache every update and writes the per-state
-    ``|V_new - V_prev|`` magnitude into :attr:`diff_val`. The strategy's
-    :meth:`score` simply copies that signal into the sampler's output buffer.
-
-    The cache fill loop drives state transitions by writing
-    :attr:`cmd_indices` and calling :attr:`resample_command_fn`; between each
-    batch it runs ``env.sim.forward()`` + ``env.scene.update(dt=0.0)`` so
-    sensor inputs (e.g. height_scan via ``FastTerrainScanner`` reading
-    ``body_pos_w``) reflect the freshly written pose before
-    :meth:`get_critic_obs_fn` is queried.
+    ``|V_new - V_prev|`` magnitude into :attr:`diff_val`; :meth:`score` copies
+    that signal into the sampler's output buffer.
     """
 
     name = "value_shift"
 
     def __init__(self, cfg: ValueShiftSamplingStrategyCfg, layout: StateLayout, **bind_ns) -> None:
         del layout
-        env = bind_ns["env"]
-        self._sim = env.sim
-        self._scene = env.scene
-        self.state_buffer: torch.Tensor = eval(cfg.state_buffer_bind, bind_ns)  # noqa: S307
-        self.cmd_indices: torch.Tensor = eval(cfg.cmd_indices_bind, bind_ns)  # noqa: S307
-        self.resample_command_fn = eval(cfg.resample_command_fn_bind, bind_ns)  # noqa: S307
-        self.get_critic_obs_fn = eval(cfg.get_critic_obs_fn_bind, bind_ns)  # noqa: S307
-
-        assert isinstance(self.state_buffer, torch.Tensor) and self.state_buffer.shape[0] > 0, (
-            "ValueShift state_buffer must be a non-empty Tensor."
+        self.observation_cache: TensorDict = eval(cfg.obs_cache_bind, bind_ns)  # noqa: S307
+        assert isinstance(self.observation_cache, TensorDict) and self.observation_cache.batch_size[0] > 0, (
+            "ValueShift obs_cache_bind must resolve to a non-empty TensorDict."
         )
-        assert self.cmd_indices.dtype == torch.long, (
-            f"ValueShift cmd_indices must be torch.long; got {self.cmd_indices.dtype}."
-        )
-        assert callable(self.resample_command_fn) and callable(self.get_critic_obs_fn)
-
-        self.observation_cache: TensorDict = self._create_observation_cache()
         n = self.observation_cache.batch_size[0]
-        # Allocate cur/diff on the OBS device (matches what critic reads),
-        # not state_buffer.device — they can differ in multi-GPU setups.
+        # Allocate cur/diff on the OBS device (matches what the critic reads).
         device = next(iter(self.observation_cache.values())).device
         self.cur_val = torch.zeros(n, device=device)
         self.diff_val = torch.zeros(n, device=device)
-
-    def _create_observation_cache(self) -> TensorDict:
-        """Sweep through every state in :attr:`state_buffer` and cache obs."""
-        n = int(self.state_buffer.shape[0])
-        # Probe once for shapes/dtypes; flush kinematics first so the probe
-        # reflects current (post-init) env state rather than uninitialized buffers.
-        self._sim.forward()
-        self._scene.update(dt=0.0)
-        probe: dict[str, torch.Tensor] = self.get_critic_obs_fn()
-        num_envs = next(iter(probe.values())).shape[0]
-        cache_dict: dict[str, torch.Tensor] = {
-            group: torch.zeros(
-                (n, *tensor.shape[1:]),
-                device=tensor.device,
-                dtype=tensor.dtype,
-            )
-            for group, tensor in probe.items()
-        }
-        device = self.cmd_indices.device
-        count = 0
-        while count < n:
-            batch = min(num_envs, n - count)
-            env_ids = torch.arange(batch, device=device, dtype=torch.long)
-            state_ids = torch.arange(count, count + batch, device=device, dtype=torch.long)
-            self.cmd_indices[env_ids] = state_ids
-            self.resample_command_fn(env_ids)
-            # Refresh kinematics + asset data buffers so sensors (e.g. height_scan
-            # via FastTerrainScanner reading body_pos_w) see the freshly written pose.
-            self._sim.forward()
-            self._scene.update(dt=0.0)
-            obs: dict[str, torch.Tensor] = self.get_critic_obs_fn()
-            for group in cache_dict:
-                cache_dict[group][state_ids] = obs[group][:batch].detach()
-            count += batch
-        return TensorDict(cache_dict, batch_size=[n])
 
     def score(self, out: torch.Tensor) -> None:
         out.copy_(self.diff_val)

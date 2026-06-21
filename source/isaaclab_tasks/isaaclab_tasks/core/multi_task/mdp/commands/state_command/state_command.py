@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import torch
+from tensordict import TensorDict
 
 from isaaclab.managers import CommandTerm
 
@@ -60,6 +61,11 @@ class StateCommand(CommandTerm):
         self.cmd_indices = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         # per-task curriculum success rate (written by the curriculum's monitor)
         self.success_rates = torch.zeros(self.table.num_tasks, device=self.device, dtype=torch.float32)
+        # lazily-built [num_tasks, ...] caches of raw observations at each task's TARGET config (the goal
+        # library for the z-conditioned successor critic: z = B(goal)) and SPAWN config (episode-start obs,
+        # used e.g. by value-shift sampling). See :meth:`get_target_obs_cache` / :meth:`get_spawn_obs_cache`.
+        self._target_obs_cache: TensorDict | None = None
+        self._spawn_obs_cache: TensorDict | None = None
 
         self._command = torch.zeros(self.num_envs, self._payload.command_dim, device=self.device)
         self._err = torch.empty(self.num_envs, self._payload.error_dim, device=self.device)
@@ -102,6 +108,89 @@ class StateCommand(CommandTerm):
     def get_task_reward(self) -> torch.Tensor:
         """Per-env task-success reward (payload-defined)."""
         return self._payload.get_task_reward()
+
+    @torch.no_grad()
+    def get_target_obs_cache(self) -> TensorDict:
+        """Raw observations at every task's TARGET config (delta-0 goal), ``[num_tasks, ...]``, built once.
+
+        The z-conditioned successor critic conditions on the goal via ``z = B(goal)``, where the goal is the
+        observation AT a task's target config (target proprioception + perception). Cached after the first call
+        (the table is fixed); the learner recomputes ``B(cache)`` live each update (the encoder keeps training,
+        so raw obs -- not embeddings -- are cached).
+        """
+        if self._target_obs_cache is None:
+            self._target_obs_cache = self._build_obs_cache(use_target=True)
+        return self._target_obs_cache
+
+    @torch.no_grad()
+    def get_spawn_obs_cache(self) -> TensorDict:
+        """Raw observations at every task's SPAWN config, ``[num_tasks, ...]``, built once.
+
+        The observation a fresh episode of each task starts from -- e.g. the value-shift sampling strategy
+        scores per-task value drift at this episode-start observation. Cached after the first call.
+        """
+        if self._spawn_obs_cache is None:
+            self._spawn_obs_cache = self._build_obs_cache(use_target=False)
+        return self._spawn_obs_cache
+
+    @torch.no_grad()
+    def _build_obs_cache(self, use_target: bool) -> TensorDict:
+        """Sweep all :attr:`table.num_tasks` tasks and cache the observation at each task's SPAWN or TARGET
+        state, ``[num_tasks, ...]``.
+
+        Each env-sized batch teleports the reset assets to the chosen state (reusing :func:`set_reset_state`,
+        the same write the per-env reset uses), settles the sim, and force-recomputes ray-cast sensors --
+        ``scene.update(dt=0.0)`` does NOT advance their lazy update timer, so the height scan would otherwise be
+        stale at the teleported pose. Live env state is saved and restored so the sweep leaves running episodes
+        untouched.
+        """
+        env = self._env
+        num_envs, num_tasks, device = self.num_envs, self.table.num_tasks, self.device
+        reset_assets = self._payload.reset_assets
+
+        # Save live state of every reset asset (+ the selected rows) so the sweep is non-destructive.
+        saved = {}
+        for name in reset_assets:
+            asset = env.scene[name]
+            jpos = getattr(asset.data, "joint_pos", None)
+            saved[name] = (
+                asset.data.root_state_w.clone(),
+                None if jpos is None else jpos.clone(),
+                None if jpos is None else asset.data.joint_vel.clone(),
+            )
+        saved_cmd = self.cmd_indices.clone()
+
+        cache: TensorDict | None = None
+        all_env_ids = torch.arange(num_envs, device=device)
+        for start in range(0, num_tasks, num_envs):
+            task_ids = torch.arange(start, min(start + num_envs, num_tasks), device=device)
+            env_ids = all_env_ids[: task_ids.numel()]
+            spawn_states, target_states = self.table.gather(task_ids)
+            states = target_states if use_target else spawn_states
+            set_reset_state(env, states, env_ids, reset_assets, is_relative=self.states_relative)
+            env.sim.forward()
+            env.scene.update(dt=0.0)
+            for sensor in env.scene.sensors.values():
+                sensor.update(dt=0.0, force_recompute=True)
+            obs = env.observation_manager.compute()
+            if cache is None:
+                cache = TensorDict(
+                    {g: torch.zeros((num_tasks, *t.shape[1:]), dtype=t.dtype, device=device) for g, t in obs.items()},
+                    batch_size=[num_tasks],
+                )
+            for g, t in obs.items():
+                cache[g][task_ids] = t[env_ids]
+
+        # Restore live state.
+        for name, (root, jpos, jvel) in saved.items():
+            asset = env.scene[name]
+            asset.write_root_state_to_sim(root)
+            if jpos is not None:
+                asset.write_joint_state_to_sim(jpos, jvel)
+        self.cmd_indices.copy_(saved_cmd)
+        env.sim.forward()
+        env.scene.update(dt=0.0)
+        return cache
 
     def _resample_command(self, env_ids: torch.Tensor) -> None:
         if env_ids.numel() == 0:

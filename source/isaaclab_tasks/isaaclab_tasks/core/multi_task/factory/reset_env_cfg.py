@@ -59,10 +59,7 @@ FACTORY_RESET_SAMPLER_PRESETS = preset(
         strategies=[
             ValueShiftSamplingStrategyCfg(
                 weight=1.0,
-                state_buffer_bind="env.command_manager.get_term('reset_state').table.slot_indices",
-                cmd_indices_bind="env.command_manager.get_term('reset_state').cmd_indices",
-                resample_command_fn_bind="env.command_manager.get_term('reset_state')._resample_command",
-                get_critic_obs_fn_bind="lambda: env.observation_manager.compute()",
+                obs_cache_bind="env.command_manager.get_term('reset_state').get_spawn_obs_cache()",
             )
         ],
         eps=1e-3,
@@ -72,10 +69,7 @@ FACTORY_RESET_SAMPLER_PRESETS = preset(
             BetaSamplingStrategyCfg(target=0.5, kappa=1.0, weight=1.0, success_rate_bind="success_rates"),
             ValueShiftSamplingStrategyCfg(
                 weight=0.05,
-                state_buffer_bind="env.command_manager.get_term('reset_state').table.slot_indices",
-                cmd_indices_bind="env.command_manager.get_term('reset_state').cmd_indices",
-                resample_command_fn_bind="env.command_manager.get_term('reset_state')._resample_command",
-                get_critic_obs_fn_bind="lambda: env.observation_manager.compute()",
+                obs_cache_bind="env.command_manager.get_term('reset_state').get_spawn_obs_cache()",
             ),
         ],
         eps=1e-3,
