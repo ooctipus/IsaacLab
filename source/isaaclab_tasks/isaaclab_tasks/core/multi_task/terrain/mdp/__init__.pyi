@@ -52,6 +52,7 @@ __all__ = [
     "SamplerBase",
     "CriterionFn",
     "vision_obs",
+    "root_pose_in_env_frame",
     "bound_height_scan",
     "gravity_b",
 ]
@@ -76,6 +77,7 @@ from isaaclab_tasks.core.multi_task.mdp.observations import (
     command_progress,
     command_reach,
     command_track,
+    root_pose_in_env_frame,
     time_left,
     vision_obs,
 )

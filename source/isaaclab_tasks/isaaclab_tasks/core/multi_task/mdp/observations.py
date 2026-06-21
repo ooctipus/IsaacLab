@@ -297,3 +297,19 @@ def asset_link_velocity_in_root_asset_frame(
     ang_vel_b = math_utils.quat_apply_inverse(root_quat, ang_vel_w)
 
     return torch.cat([lin_vel_b, ang_vel_b], dim=1)
+
+
+def root_pose_in_env_frame(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Robot root pose in the env-local frame: position ``[m]`` relative to the env origin + heading, shape
+    ``[num_envs, 5]`` (x, y, z, cos(yaw), sin(yaw)).
+
+    The ABSOLUTE (env-local) pose carried as a state observation, so a goal can be specified absolutely rather
+    than as a goal-relative delta. The policy reads its CURRENT env-local pose here; the goal's env-local pose
+    enters the z-conditioned successor critic via ``z = B(goal)`` -- the goal cache teleports the robot to the
+    target, so this same term then records the goal's pose. The policy reaches the goal by comparing its current
+    pose (observation) to the goal pose (z). Heading is encoded as ``cos``/``sin`` of yaw for continuity.
+    """
+    asset: RigidObject | Articulation = env.scene[asset_cfg.name]
+    pos = asset.data.root_pos_w.torch - env.scene.env_origins  # env-local position
+    yaw = math_utils.euler_xyz_from_quat(asset.data.root_quat_w.torch)[2]
+    return torch.cat([pos, torch.cos(yaw).unsqueeze(-1), torch.sin(yaw).unsqueeze(-1)], dim=-1)
