@@ -11,6 +11,7 @@ from typing import Any, Literal
 from isaaclab.utils.configclass import configclass
 
 from .rnd_cfg import RslRlRndCfg
+from .successor_cfg import RslRlSuccessorCfg
 from .symmetry_cfg import RslRlSymmetryCfg
 from .value_shift_cfg import RslRlValueShiftCfg
 
@@ -239,6 +240,9 @@ class RslRlPpoAlgorithmCfg:
 
     value_shift_cfg: RslRlValueShiftCfg | None = None
     """The value-shift configuration. Defaults to None, in which case value-shift is not used."""
+
+    successor_cfg: RslRlSuccessorCfg | None = None
+    """The successor-feature configuration. Defaults to None, in which case the successor head is not used."""
 
 
 #########################

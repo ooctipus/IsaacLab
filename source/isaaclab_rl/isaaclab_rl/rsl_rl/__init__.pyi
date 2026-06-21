@@ -27,6 +27,7 @@ __all__ = [
     "RslRlPpoAlgorithmCfg",
     "RslRlRNNModelCfg",
     "RslRlRndCfg",
+    "RslRlSuccessorCfg",
     "RslRlSymmetryCfg",
     "RslRlValueShiftCfg",
     "RslRlVecEnvWrapper",
@@ -57,6 +58,7 @@ from .rl_cfg import (
     RslRlRNNModelCfg,
 )
 from .rnd_cfg import RslRlRndCfg
+from .successor_cfg import RslRlSuccessorCfg
 from .symmetry_cfg import RslRlSymmetryCfg
 from .value_shift_cfg import RslRlValueShiftCfg
 from .utils import handle_deprecated_rsl_rl_cfg
