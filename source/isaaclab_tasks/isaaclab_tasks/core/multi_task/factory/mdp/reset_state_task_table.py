@@ -113,7 +113,7 @@ def build_factory_reset_state_task_table(cfg: StateCommandCfg, env: ManagerBased
         _precollect_from_pipeline(env, table_cfg, reset_assets)
     )
     coords, spawn_index, target_index, slot_indices, task_tag_indices = _pair_within_boards(
-        table_cfg, state_data, state_tag_indices, state_board_indices
+        table_cfg, state_data, state_tag_indices, state_board_indices, state_tag_names
     )
     return FactoryResetStateTaskTable(
         state_data=state_data,
@@ -290,8 +290,13 @@ def _tag_counts(state_tag_indices: torch.Tensor, tag_names: list[str]) -> dict[s
     return {name: int((state_tag_indices == tag).sum()) for tag, name in enumerate(tag_names)}
 
 
-def _pair_within_boards(table_cfg, state_data, state_tag_indices, state_board_indices):
-    """Pair spawn x target WITHIN each board configuration (per-cell pairing)."""
+def _pair_within_boards(table_cfg, state_data, state_tag_indices, state_board_indices, state_tag_names):
+    """Pair spawn x target WITHIN each board configuration (per-cell pairing).
+
+    When ``table_cfg.allowed_tag_pairs`` is set, only slots whose ``(spawn_tag,
+    target_tag)`` placement-tag names appear in that list survive (e.g. eval-time
+    seated<->in-air only); ``None`` keeps every spawn x target pair.
+    """
     coords = extract_features(state_data, table_cfg.state_table_fps_features).contiguous()
     num_states = int(state_data.shape[0])
     state_ids = torch.arange(num_states, device=state_data.device, dtype=torch.long)
@@ -316,6 +321,37 @@ def _pair_within_boards(table_cfg, state_data, state_tag_indices, state_board_in
         target_chunks.append(board_targets.repeat(int(board_ids.shape[0])))
     spawn_index = torch.cat(spawn_chunks)
     target_index = torch.cat(target_chunks)
+    spawn_index, target_index = _filter_allowed_tag_pairs(
+        table_cfg, spawn_index, target_index, state_tag_indices, state_tag_names
+    )
     slot_indices = torch.arange(spawn_index.shape[0], device=state_data.device, dtype=torch.long)
     task_tag_indices = state_tag_indices[spawn_index]
     return coords, spawn_index, target_index, slot_indices, task_tag_indices
+
+
+def _filter_allowed_tag_pairs(table_cfg, spawn_index, target_index, state_tag_indices, state_tag_names):
+    """Keep only slots whose ``(spawn_tag, target_tag)`` names are in ``allowed_tag_pairs``.
+
+    ``None``/empty leaves the full spawn x target product untouched (training
+    default). Unknown tag names or a filter that matches zero slots raise here, at
+    the table boundary, rather than silently producing an empty curriculum.
+    """
+    allowed = table_cfg.allowed_tag_pairs
+    if not allowed:
+        return spawn_index, target_index
+    name_to_id = {name: i for i, name in enumerate(state_tag_names)}
+    unknown = sorted({name for pair in allowed for name in pair} - set(name_to_id))
+    if unknown:
+        raise ValueError(
+            f"allowed_tag_pairs references unknown placement tags {unknown}; available: {state_tag_names}."
+        )
+    pair_ids = {(name_to_id[spawn], name_to_id[target]) for spawn, target in allowed}
+    spawn_tags = state_tag_indices[spawn_index]
+    target_tags = state_tag_indices[target_index]
+    keep = torch.zeros(spawn_index.shape[0], dtype=torch.bool, device=spawn_index.device)
+    for spawn_id, target_id in pair_ids:
+        keep |= (spawn_tags == spawn_id) & (target_tags == target_id)
+    if not bool(keep.any()):
+        present = sorted(state_tag_names[i] for i in torch.unique(state_tag_indices).tolist())
+        raise ValueError(f"allowed_tag_pairs={allowed} matched 0 task slots; tags present in the table: {present}.")
+    return spawn_index[keep], target_index[keep]

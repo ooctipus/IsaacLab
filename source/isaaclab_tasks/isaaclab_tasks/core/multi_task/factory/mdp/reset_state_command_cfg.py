@@ -64,6 +64,17 @@ class FactoryResetStateTableCfg(StateCommandCfg.TaskTableCfg):
     are existing states, so this must be <= :attr:`rows_per_board`). Every spawn
     in a board is paired with its board's full goal set."""
 
+    allowed_tag_pairs: list[tuple[str, str]] | None | PresetCfg = None
+    """Optional restriction on which task slots survive, by the placement-tag
+    *names* of each ``(spawn, target)`` pair. ``None`` (default) keeps every spawn
+    x target pair, so training is unchanged. When set, only slots whose
+    ``(spawn_tag_name, target_tag_name)`` is in the list survive -- e.g.
+    ``[("near_seated", "in_air"), ("in_air", "near_seated")]`` evaluates only the
+    seated<->in-air transitions. Tag names are the placement sampler's: the
+    assembly bands (``near_seated``, ``mid_insertion``, ``above_tip``) plus
+    ``on_table`` and ``in_air``. Unknown names or a set that matches zero slots
+    raise at table build."""
+
     state_table_fps_features: Callable | None = None
     """Feature extractor for state-table compaction and sampler layout."""
 

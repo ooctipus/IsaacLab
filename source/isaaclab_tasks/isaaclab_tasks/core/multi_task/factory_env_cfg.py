@@ -252,6 +252,13 @@ class FactoryCommandsCfg:
             ),
             rows_per_board=50,  # table size = this x board.num_boards
             targets_per_board=50,  # goals = spread subset of each board's rows (<= rows_per_board)
+            # eval-only slot filter: keep only specific (spawn_tag -> target_tag)
+            # placement-tag pairs. ``seated_air`` evaluates just the seated<->in-air
+            # transitions; default keeps every pair (training unchanged).
+            allowed_tag_pairs=preset(
+                default=None,
+                seated_air=[("near_seated", "in_air"), ("in_air", "near_seated")],
+            ),
             # reject reset states whose nut spawns outside the oob box (else they
             # terminate on step 0). Keep in sync with SuccessTerminationsCfg.oob.
             nut_bounds={"x": (-0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)},
