@@ -53,6 +53,7 @@ class PositionTerminationsCfg(BaseTerminationsCfg):
         params={
             "sensor_cfg": SceneEntityCfg("joint_wrench"),
             "force_ratio": 6.0,
+            "force_mode": "off_axis",
         },
     )
 

@@ -352,7 +352,7 @@ class CommandPayloadBaseState(CommandPayloadBase):
         error[:, 2] = delta[:, 6:9].norm(dim=-1)
         error[:, 3] = delta[:, 9:12].norm(dim=-1)
 
-        hold_success = self.success(error, cmd_ids) #  & self._success_timer_gate()
+        hold_success = self.success(error, cmd_ids) & self._success_timer_gate()
         current[:, self.time_idx] += step_dt * hold_success
         torch.sub(target[:, self.time_idx], current[:, self.time_idx], out=delta[:, self.time_idx])
 
