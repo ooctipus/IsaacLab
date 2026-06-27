@@ -42,6 +42,10 @@ ENV HOME=${DOCKER_USER_HOME}
 ENV LANG=C.UTF-8
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Newton's headless ViewerGL uses EGL but still links the OpenGL loader. Request
+# the NVIDIA graphics driver libraries in addition to the CUDA compute runtime.
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+
 # Install uv-managed CPython into a shared, root-owned location (world-readable)
 # instead of the runtime user's home. This keeps the interpreter out of the
 # ``chown -R ${DOCKER_USER_HOME}`` below (it would otherwise copy-up thousands of
@@ -56,6 +60,8 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
+    libegl1 \
+    libgl1 \
     libglib2.0-0 \
     ncurses-term \
     cmake \
