@@ -50,6 +50,7 @@ from isaaclab.utils.timer import Timer
 from isaaclab_newton.cloner.newton_clone_utils import replicate_builder_mapping
 from isaaclab_newton.physics.visualization_builder import build_visualization_builder_from_stage_envs
 
+from .debug_state_buffer import DebugStateBuffer
 from .newton_manager_cfg import NewtonCfg, NewtonShapeCfg
 
 if TYPE_CHECKING:
@@ -254,6 +255,11 @@ class NewtonManager(PhysicsManager):
     _pending_extended_state_attributes: set[str] = set()
     _pending_extended_contact_attributes: set[str] = set()
     _report_contacts: bool = False
+    # Debug state buffer for NaN replay (None = disabled)
+    _debug_state_buffer: DebugStateBuffer | None = None
+    # Optional per-env episode-length tensor (the RL env's ``episode_length_buf``)
+    # recorded by the NaN debug buffer; registered via :meth:`set_debug_episode_length`.
+    _debug_episode_length = None
     # Per-world reset masks (allocated in start_simulation, consumed in step)
     _world_reset_mask: wp.array | None = None  # (num_envs,) wp.bool — for SolverKamino.reset(world_mask=...)
     _fk_reset_mask: wp.array | None = None  # (articulation_count,) wp.bool — for eval_fk(mask=...)
@@ -668,6 +674,12 @@ class NewtonManager(PhysicsManager):
         NewtonManager._world_reset_mask.zero_()
         NewtonManager._fk_reset_mask.zero_()
 
+        # Snapshot the pre-physics state (post-reset / post-action input to this step)
+        # so the NaN export can tell a reset-induced NaN from a physics-produced one.
+        if cls._debug_state_buffer is not None:
+            with wp.ScopedDevice(PhysicsManager._device):
+                cls._debug_state_buffer.capture_pre(cls._state_0)
+
         physics_dt = cls._solver_dt * cls._num_substeps
         use_graph = cfg is not None and cfg.use_cuda_graph and cls._graph is not None and "cuda" in device  # type: ignore[union-attr]
 
@@ -692,6 +704,26 @@ class NewtonManager(PhysicsManager):
                 with wp.ScopedDevice(device):
                     cls._simulate_physics_only()
             PhysicsManager._sim_time += physics_dt
+
+        if cls._debug_state_buffer is not None:
+            # In per-substep deep mode the buffer is driven from inside the solver loop
+            # (observe_substep); the per-env-step capture is skipped to avoid double-recording.
+            if not cls._debug_state_buffer.per_substep:
+                with wp.ScopedDevice(PhysicsManager._device):
+                    cls._debug_state_buffer.step(
+                        cls._state_0,
+                        PhysicsManager._sim_time,
+                        episode_length=cls._debug_episode_length,
+                        contacts=cls._contacts,
+                        solver=cls._solver,
+                        collision_pipeline=cls._collision_pipeline,
+                    )
+            if cls._debug_state_buffer.nan_halt:
+                nr = getattr(PhysicsManager._cfg, "nan_replay", None)
+                export_dir = nr.export_path if nr is not None else "."
+                raise RuntimeError(
+                    f"NaN detected in physics state. Debug replay exported to {export_dir}. Halting simulation."
+                )
 
         if cls._usdrt_stage is not None:
             cls._mark_state_dirty()
@@ -800,12 +832,91 @@ class NewtonManager(PhysicsManager):
         NewtonManager._pending_extended_state_attributes = set()
         NewtonManager._pending_extended_contact_attributes = set()
         NewtonManager._views = []
+        if cls._debug_state_buffer is not None:
+            cls._debug_state_buffer.clear()
+        NewtonManager._debug_state_buffer = None
         cls._solver_specific_clear()
+
+    @staticmethod
+    def _make_scene_exporter():
+        """Build a callable that exports the NaN'd env's geometry to USD.
+
+        Kitless-Newton skips USD cloning, so the destination ``env_{i}`` prims are
+        empty transforms on the USD stage — the geometry lives at the clone-plan
+        *source* root (e.g. ``/World/envs/env_0``), referenced/payloaded from the
+        asset USDs. Exporting the destination subtree (or a plain spec copy of the
+        source) therefore yields an empty scene. Instead we resolve the clone-plan
+        source(s) for the target env, ``Flatten()`` the stage (inlining referenced
+        meshes and resolving instancing into in-file prototypes), and save the whole
+        flattened layer with the source root as default prim. The companion ``.npz``
+        carries the per-env state, so source geometry is sufficient for replay
+        regardless of which env NaN'd.
+
+        Returns ``None`` only if USD is entirely unavailable.
+        """
+        try:
+            from pxr import Usd  # noqa: F401
+        except ImportError:
+            return None
+
+        def _exporter(usd_path: str, env_ids: list[int]) -> None:
+            from pxr import Usd
+
+            stage = get_current_stage()
+            if stage is None:
+                return
+            # Resolve clone-plan source root(s) populating the target env. The
+            # geometry is identical across (homogeneous) envs, so the source
+            # suffices; per-env state comes from the .npz.
+            source_roots: list[str] = []
+            try:
+                from isaaclab.sim import SimulationContext
+
+                plan = SimulationContext.instance().get_clone_plan()
+            except Exception:
+                plan = None
+            target = int(env_ids[0]) if env_ids else 0
+            if plan is not None:
+                for idx, src in enumerate(plan.sources):
+                    populated = plan.clone_mask[idx].nonzero(as_tuple=False).flatten().tolist()
+                    root = src.rstrip("/")
+                    if target in populated and root not in source_roots:
+                        source_roots.append(root)
+            if not source_roots:
+                source_roots = ["/World/envs/env_0"]
+            # Flatten so referenced/payloaded asset meshes inline and instancing
+            # resolves to in-file prototypes (a subtree export would drop those).
+            try:
+                flat_layer = stage.Flatten()
+                flat_stage = Usd.Stage.Open(flat_layer)
+                default = flat_stage.GetPrimAtPath(source_roots[0])
+                if default.IsValid():
+                    flat_stage.SetDefaultPrim(default)
+                flat_layer.Export(usd_path)
+            except Exception as exc:  # noqa: BLE001 — cold NaN path; never mask the NaN report
+                logger.warning("NaN scene USD export failed (%s); .npz state still written", exc)
+
+        return _exporter
 
     @classmethod
     def set_builder(cls, builder: ModelBuilder) -> None:
         """Set the Newton model builder."""
         NewtonManager._builder = builder
+
+    @classmethod
+    def set_debug_episode_length(cls, episode_length) -> None:
+        """Register the per-env episode-length source for the NaN debug buffer to record.
+
+        Args:
+            episode_length: Either a ``(num_envs,)`` tensor or a no-arg callable
+                returning the live tensor (e.g. ``lambda: env.episode_length_buf``).
+                A callable is preferred: the RL env may reallocate
+                ``episode_length_buf``, which would stale a captured tensor ref (it
+                then read ``0``). Read each step and dumped for the NaN'd env(s), so a
+                just-reset episode can be told from a long-running one. ``None``
+                disables episode-length capture.
+        """
+        NewtonManager._debug_episode_length = episode_length
 
     @classmethod
     def create_builder(cls, up_axis: str | None = None, **kwargs) -> ModelBuilder:
@@ -1139,6 +1250,25 @@ class NewtonManager(PhysicsManager):
         # Allocate per-world reset masks (used by all solvers for masked FK, and by Kamino for masked reset)
         NewtonManager._world_reset_mask = wp.zeros(cls._model.world_count, dtype=wp.bool, device=device)
         NewtonManager._fk_reset_mask = wp.zeros(cls._model.articulation_count, dtype=wp.bool, device=device)
+
+        nan_replay_cfg = getattr(PhysicsManager._cfg, "nan_replay", None)
+        if nan_replay_cfg is not None:
+            NewtonManager._debug_state_buffer = DebugStateBuffer(
+                cls._model,
+                nan_replay_cfg.buffer_size,
+                export_path=nan_replay_cfg.export_path,
+                export_envs_only=nan_replay_cfg.export_envs_only,
+                max_exports=nan_replay_cfg.max_exports,
+                scene_exporter=cls._make_scene_exporter(),
+                collision_pipeline=cls._collision_pipeline,
+                per_substep=nan_replay_cfg.per_substep,
+                replay_cfg=nan_replay_cfg.replay,
+            )
+            logger.info(
+                "Debug state buffer enabled: %d snapshots%s",
+                cls._debug_state_buffer.size,
+                " (per-substep deep mode; CUDA graph must be off)" if cls._debug_state_buffer.per_substep else "",
+            )
 
         logger.info("Dispatching PHYSICS_READY callbacks")
         cls.dispatch_event(PhysicsEvent.PHYSICS_READY)
@@ -1637,22 +1767,72 @@ class NewtonManager(PhysicsManager):
         # top-of-loop collide(), not this one.
         collide_mid_loop = collide_every > 0 and cls._needs_collision_pipeline and contacts is not None
 
+        # Deep per-substep NaN capture (CUDA graph must be off in this mode). Observes the
+        # state after every solver substep so the failing substep is caught before the NaN
+        # smears across the state vector.
+        dbg = cls._debug_state_buffer
+        substep_debug = dbg is not None and dbg.per_substep
+
+        def _observe(i: int) -> bool:
+            dbg.observe_substep(
+                cls._state_0,
+                PhysicsManager._sim_time,
+                episode_length=cls._debug_episode_length,
+                contacts=contacts,
+                solver=cls._solver,
+                collision_pipeline=cls._collision_pipeline,
+                substep_idx=i,
+            )
+            return dbg.nan_halt
+
         if cls._use_single_state:
             for i in range(cls._num_substeps):
+                if dbg is not None:
+                    dbg.record_step_replay_pre(
+                        cls._state_0,
+                        control=cls._control,
+                        contacts=contacts,
+                        solver=cls._solver,
+                        sim_time=PhysicsManager._sim_time,
+                        substep_idx=i,
+                        episode_length=cls._debug_episode_length()
+                        if callable(cls._debug_episode_length)
+                        else cls._debug_episode_length,
+                    )
                 cls._step_solver(cls._state_0, cls._state_0, cls._control, contacts, cls._solver_dt)
                 cls._state_0.clear_forces()
+                if dbg is not None:
+                    dbg.record_step_replay_post(cls._state_0, solver=cls._solver)
+                if substep_debug and _observe(i):
+                    return
                 if collide_mid_loop and (i + 1) % collide_every == 0 and i + 1 < cls._num_substeps:
                     cls._collision_pipeline.collide(cls._state_0, contacts)
         else:
             cfg = PhysicsManager._cfg
             need_copy_on_last = (cfg is not None and cfg.use_cuda_graph) and cls._num_substeps % 2 == 1  # type: ignore[union-attr]
             for i in range(cls._num_substeps):
+                if dbg is not None:
+                    dbg.record_step_replay_pre(
+                        cls._state_0,
+                        control=cls._control,
+                        contacts=contacts,
+                        solver=cls._solver,
+                        sim_time=PhysicsManager._sim_time,
+                        substep_idx=i,
+                        episode_length=cls._debug_episode_length()
+                        if callable(cls._debug_episode_length)
+                        else cls._debug_episode_length,
+                    )
                 cls._step_solver(cls._state_0, cls._state_1, cls._control, contacts, cls._solver_dt)
                 if need_copy_on_last and i == cls._num_substeps - 1:
                     cls._state_0.assign(cls._state_1)
                 else:
                     NewtonManager._state_0, NewtonManager._state_1 = cls._state_1, cls._state_0
                 cls._state_0.clear_forces()
+                if dbg is not None:
+                    dbg.record_step_replay_post(cls._state_0, solver=cls._solver)
+                if substep_debug and _observe(i):
+                    return
                 if collide_mid_loop and (i + 1) % collide_every == 0 and i + 1 < cls._num_substeps:
                     cls._collision_pipeline.collide(cls._state_0, contacts)
 
