@@ -23,7 +23,7 @@ from .dexsuite_kuka_allegro_env_cfg import (
     KukaAllegroSceneCfg,
 )
 
-_SCENE_KWARGS = {"num_envs": 4096, "env_spacing": 3, "replicate_physics": True}
+_SCENE_KWARGS = {"num_envs": 4096, "env_spacing": 0.0, "replicate_physics": True}
 
 
 @configclass
