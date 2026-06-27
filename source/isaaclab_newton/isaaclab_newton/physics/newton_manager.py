@@ -14,9 +14,9 @@ import inspect
 import logging
 import re
 from abc import abstractmethod
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 import torch
@@ -102,18 +102,24 @@ from isaaclab_newton.cloner.newton_clone_utils import (
 )
 from isaaclab_newton.physics.featherstone_manager_cfg import FeatherstoneSolverCfg
 from isaaclab_newton.physics.mjwarp_manager_cfg import MJWarpSolverCfg
-from isaaclab_newton.physics.newton_manager_cfg import NewtonCfg, NewtonShapeCfg, NewtonSolverCfg
+from isaaclab_newton.physics.newton_manager_cfg import (
+    NewtonCfg,
+    NewtonDebugCaptureCfg,
+    NewtonShapeCfg,
+    NewtonSolverCfg,
+)
 from isaaclab_newton.physics.visualization_builder import build_visualization_builder_from_stage_envs
 from isaaclab_newton.physics.visualization_deformables import populate_shadow_deformable_registry
 from isaaclab_newton.physics.xpbd_manager_cfg import XPBDSolverCfg
 
-from .debug_state_buffer import DebugStateBuffer
+from ._incident_recorder import PhysicsIncidentRecorder, _OperationProviderCleanupError
 
 if TYPE_CHECKING:
     from isaaclab_newton.actuators import NewtonActuatorAdapter
     from isaaclab_newton.physics.newton_collision_cfg import NewtonCollisionPipelineCfg
 
 logger = logging.getLogger(__name__)
+_DEBUG_INCIDENT_TRIGGER_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 
 # Tagged union for entries in _cl_site_index_map.
 # _GlobalSite: (global_shape_idx, None)           — body_pattern was None
@@ -357,6 +363,70 @@ class NewtonManager(PhysicsManager):
         which subclass is active.
     """
 
+    class DebugOperationProvider(Protocol):
+        """Protocol for solver-specific transient debug operations."""
+
+        def bind(self, solver: SolverBase | Mapping[str, SolverBase]) -> None:
+            """Bind the provider to the finalized single or coupled solver.
+
+            Args:
+                solver: Finalized solver or deterministic coupled-solver mapping.
+            """
+            ...
+
+        def snapshot(self) -> object:
+            """Return the current transient operation snapshot.
+
+            Returns:
+                Complete solver-specific operation snapshot.
+            """
+            ...
+
+        def close(self) -> None:
+            """Release provider hooks and solver references."""
+            ...
+
+    @dataclass(frozen=True, slots=True)
+    class DebugTriggerContext:
+        """Read-only capture-phase state passed to a custom incident trigger."""
+
+        model: Model
+        """Finalized Newton model."""
+        state: State
+        """Newton state at the trigger evaluation phase."""
+        control: Control
+        """Live Newton control inputs."""
+        solver: SolverBase | Mapping[str, SolverBase]
+        """Single solver or deterministic mapping of coupled solver slots."""
+        contacts: Contacts | None
+        """Live Newton contacts, when allocated."""
+        collision_pipeline: CollisionPipeline | None
+        """Live external collision pipeline, when configured."""
+        operations: object | None
+        """Latest solver-specific transient operations, when configured."""
+        sim_time: float
+        """Trigger evaluation simulation time [s]."""
+        phase: str
+        """Evaluation phase: ``solver_post`` or ``dispatch_post``."""
+        substep_idx: int | None
+        """Solver substep index for ``solver_post``; otherwise ``None``."""
+
+    @dataclass(frozen=True, slots=True)
+    class DebugTriggerResult:
+        """Incident scope and reason returned by a custom trigger."""
+
+        reason: str
+        """Human-readable reason the trigger fired."""
+        world_ids: tuple[int, ...] = ()
+        """World indices affected by the incident."""
+        global_scope: bool = False
+        """Whether the incident also affects global state."""
+
+    @classmethod
+    def provides_implicit_damping(cls) -> bool:
+        # Newton's symplectic integrator has no implicit damping.
+        return False
+
     _solver_dt: float = 1.0 / 200.0
     _num_substeps: int = 1
     _decimation: int = 1
@@ -393,11 +463,14 @@ class NewtonManager(PhysicsManager):
     _report_contacts: bool = False
     _supports_contact_sensors: bool = True
 
-    # Debug state buffer for NaN replay (None = disabled)
-    _debug_state_buffer: DebugStateBuffer | None = None
-    # Optional per-env episode-length tensor (the RL env's ``episode_length_buf``)
-    # recorded by the NaN debug buffer; registered via :meth:`set_debug_episode_length`.
-    _debug_episode_length = None
+    # Strict incident capture (None = disabled)
+    _incident_recorder: PhysicsIncidentRecorder | None = None
+    # Explicit solver-specific provider for transient replay operations.
+    _debug_operation_provider: DebugOperationProvider | None = None
+    # A recorder initialization attempt bound this provider but could not close it.
+    _debug_operation_provider_cleanup_pending: bool = False
+    # User-owned capture-phase incident predicates, evaluated in sorted order.
+    _debug_incident_triggers: dict[str, Callable[[DebugTriggerContext], DebugTriggerResult | None]] = {}
 
     # Per-world reset masks (allocated in start_simulation, consumed in step/forward).
     # Newton reserves the final slot for global entities in world -1.
@@ -596,6 +669,7 @@ class NewtonManager(PhysicsManager):
         data layer invokes ``NewtonManager.forward()`` on the base class, where ``cls`` is the
         base ``NewtonManager``; the bound delegate dispatches to the concrete subclass override.
         """
+        cls._rearm_incidents_from_reset_mask()
         cls._reset_solver_internals_delegate(cls._world_reset_mask)
         cls._eval_fk(cls._world_reset_mask, cls._fk_reset_mask)
         if cls._fk_reset_mask is not None:
@@ -908,6 +982,53 @@ class NewtonManager(PhysicsManager):
         )
 
     @classmethod
+    def _rearm_incidents_from_reset_mask(cls) -> None:
+        """Rearm reset worlds before recording their next physics transition."""
+        recorder = cls._incident_recorder
+        reset_world_mask = cls._world_reset_mask
+        if recorder is None or reset_world_mask is None:
+            return
+        values = reset_world_mask.numpy()
+        world_count = int(cls._model.world_count)
+        expected_shape = (world_count + 1,)
+        if values.shape != expected_shape:
+            raise RuntimeError(
+                "Newton reset mask shape changed before incident rearming: "
+                f"expected {expected_shape}, got {values.shape}."
+            )
+        world_ids = tuple(index for index, value in enumerate(values[:world_count].tolist()) if bool(value))
+        if world_ids:
+            recorder.rearm_reset_worlds(world_ids, all_worlds=len(world_ids) == world_count)
+
+    @classmethod
+    def _capture_incident_pre_state(cls) -> None:
+        """Capture the state immediately before any physics integration."""
+        if cls._incident_recorder is not None:
+            with wp.ScopedDevice(PhysicsManager._device):
+                cls._incident_recorder.capture_pre(cls._state_0)
+
+    @classmethod
+    def _capture_incident_post_state(cls) -> None:
+        """Observe the post-physics state and honor the configured halt policy."""
+        recorder = cls._incident_recorder
+        if recorder is None:
+            return
+        if not recorder.capture_per_substep:
+            with wp.ScopedDevice(PhysicsManager._device):
+                trigger_results = cls._evaluate_debug_incident_triggers(
+                    phase="dispatch_post",
+                    substep_idx=None,
+                    sim_time=PhysicsManager._sim_time,
+                )
+                recorder.step(cls._state_0, PhysicsManager._sim_time, trigger_results=trigger_results)
+        if recorder.halted:
+            capture_cfg = PhysicsManager._cfg.debug_capture
+            raise RuntimeError(
+                f"Physics incident detected. Incident artifacts were exported to {capture_cfg.output_dir}. "
+                "Halting simulation."
+            )
+
+    @classmethod
     def step(cls) -> None:
         """Step the physics simulation.
 
@@ -982,11 +1103,8 @@ class NewtonManager(PhysicsManager):
         if not state_reconciled:
             cls.forward()
 
-        # Snapshot the pre-physics state (post-reset / post-action input to this step)
-        # so the NaN export can tell a reset-induced NaN from a physics-produced one.
-        if cls._debug_state_buffer is not None:
-            with wp.ScopedDevice(PhysicsManager._device):
-                cls._debug_state_buffer.capture_pre(cls._state_0)
+        # Snapshot the post-reset/pre-dispatch state immediately before integration.
+        cls._capture_incident_pre_state()
 
         physics_dt = cls._solver_dt * cls._num_substeps
         use_graph = cfg is not None and cfg.use_cuda_graph and cls._graph is not None and "cuda" in device  # type: ignore[union-attr]
@@ -1013,25 +1131,7 @@ class NewtonManager(PhysicsManager):
                     cls._simulate_physics_only()
             PhysicsManager._sim_time += physics_dt
 
-        if cls._debug_state_buffer is not None:
-            # In per-substep deep mode the buffer is driven from inside the solver loop
-            # (observe_substep); the per-env-step capture is skipped to avoid double-recording.
-            if not cls._debug_state_buffer.per_substep:
-                with wp.ScopedDevice(PhysicsManager._device):
-                    cls._debug_state_buffer.step(
-                        cls._state_0,
-                        PhysicsManager._sim_time,
-                        episode_length=cls._debug_episode_length,
-                        contacts=cls._contacts,
-                        solver=cls._solver,
-                        collision_pipeline=cls._collision_pipeline,
-                    )
-            if cls._debug_state_buffer.nan_halt:
-                nr = getattr(PhysicsManager._cfg, "nan_replay", None)
-                export_dir = nr.export_path if nr is not None else "."
-                raise RuntimeError(
-                    f"NaN detected in physics state. Debug replay exported to {export_dir}. Halting simulation."
-                )
+        cls._capture_incident_post_state()
 
         if cls._usdrt_stage is not None:
             cls._mark_state_dirty()
@@ -1087,6 +1187,26 @@ class NewtonManager(PhysicsManager):
     @classmethod
     def clear(cls):
         """Clear all Newton-specific state (callbacks cleared by super().close())."""
+        if NewtonManager._incident_recorder is not None:
+            # Keep the complete manager state intact when recorder teardown fails,
+            # so the same recorder can retry provider cleanup on the next call.
+            NewtonManager._incident_recorder.clear()
+        elif NewtonManager._debug_operation_provider_cleanup_pending:
+            provider = NewtonManager._debug_operation_provider
+            if provider is None:
+                raise RuntimeError(
+                    "Debug operation provider cleanup is pending, but the provider reference is missing."
+                )
+            try:
+                provider.close()
+            except Exception as exc:
+                raise RuntimeError(
+                    "Pending debug operation provider cleanup failed. The provider remains owned by "
+                    "NewtonManager; fix the teardown failure and call NewtonManager.clear() again: "
+                    f"{exc}"
+                ) from exc
+            NewtonManager._debug_operation_provider_cleanup_pending = False
+
         NewtonManager._use_fabric_gpu_hierarchy = None
         NewtonManager._newton_fabric_ready = False
         NewtonManager._builder = None
@@ -1164,69 +1284,81 @@ class NewtonManager(PhysicsManager):
         NewtonManager._pending_extended_state_attributes = set()
         NewtonManager._pending_extended_contact_attributes = set()
         NewtonManager._views = []
-        if cls._debug_state_buffer is not None:
-            cls._debug_state_buffer.clear()
-        NewtonManager._debug_state_buffer = None
+        NewtonManager._debug_incident_triggers = {}
+        NewtonManager._incident_recorder = None
+        NewtonManager._debug_operation_provider = None
+        NewtonManager._debug_operation_provider_cleanup_pending = False
         cls._solver_specific_clear()
 
     @staticmethod
-    def _make_scene_exporter():
-        """Build a callable that exports the NaN'd env's geometry to USD.
+    def _make_scene_exporter() -> Callable[[str, list[int]], None]:
+        """Build a strict callable that exports optional static USD context.
 
-        Kitless-Newton skips USD cloning, so the destination ``env_{i}`` prims are
-        empty transforms on the USD stage — the geometry lives at the clone-plan
-        *source* root (e.g. ``/World/envs/env_0``), referenced/payloaded from the
-        asset USDs. Exporting the destination subtree (or a plain spec copy of the
-        source) therefore yields an empty scene. Instead we resolve the clone-plan
-        source(s) for the target env, ``Flatten()`` the stage (inlining referenced
-        meshes and resolving instancing into in-file prototypes), and save the whole
-        flattened layer with the source root as default prim. The companion ``.npz``
-        carries the per-env state, so source geometry is sufficient for replay
-        regardless of which env NaN'd.
-
-        Returns ``None`` only if USD is entirely unavailable.
+        The exporter validates clone-plan coverage, then flattens the full stage
+        so referenced geometry is self-contained. It does not prune the stage to
+        failed worlds or stamp post-step Newton transforms; captured arrays are
+        authoritative for dynamic incident state. Any missing stage, clone plan,
+        source, or failed export raises for the partial-archive policy.
         """
-        try:
-            from pxr import Usd  # noqa: F401
-        except ImportError:
-            return None
 
-        def _exporter(usd_path: str, env_ids: list[int]) -> None:
+        def _exporter(usd_path: str, world_ids: list[int]) -> None:
             from pxr import Usd
 
             stage = get_current_stage()
             if stage is None:
-                return
-            # Resolve clone-plan source root(s) populating the target env. The
-            # geometry is identical across (homogeneous) envs, so the source
-            # suffices; per-env state comes from the .npz.
-            source_roots: list[str] = []
-            try:
-                from isaaclab.sim import SimulationContext
+                raise RuntimeError("Cannot export incident scene because the USD stage is unavailable.")
 
-                plan = SimulationContext.instance().get_clone_plan()
-            except Exception:
-                plan = None
-            target = int(env_ids[0]) if env_ids else 0
-            if plan is not None:
-                for idx, src in enumerate(plan.sources):
-                    populated = plan.clone_mask[idx].nonzero(as_tuple=False).flatten().tolist()
-                    root = src.rstrip("/")
-                    if target in populated and root not in source_roots:
+            sim = SimulationContext.instance()
+            if sim is None:
+                raise RuntimeError("Cannot export incident scene because SimulationContext is unavailable.")
+            plan = sim.get_clone_plan()
+            if plan is None:
+                raise RuntimeError("Cannot export incident scene because no clone plan is registered.")
+            if not plan.sources:
+                raise RuntimeError("Cannot export incident scene because the clone plan has no sources.")
+
+            requested_worlds: set[int] = set()
+            for world_id in world_ids:
+                if not isinstance(world_id, int) or isinstance(world_id, bool) or world_id < 0:
+                    raise ValueError(f"Incident world IDs must be non-negative integers, got {world_id!r}.")
+                requested_worlds.add(world_id)
+
+            source_roots: list[str] = []
+            covered_worlds: set[int] = set()
+            for source_index, source in enumerate(plan.sources):
+                root = source.rstrip("/")
+                if not root:
+                    raise RuntimeError(f"Clone-plan source {source_index} is empty.")
+                if not requested_worlds:
+                    if root not in source_roots:
                         source_roots.append(root)
+                    continue
+                populated = set(plan.clone_mask[source_index].nonzero(as_tuple=False).flatten().tolist())
+                matching_worlds = requested_worlds.intersection(populated)
+                if matching_worlds:
+                    covered_worlds.update(matching_worlds)
+                    if root not in source_roots:
+                        source_roots.append(root)
+
+            missing_worlds = requested_worlds.difference(covered_worlds)
+            if missing_worlds:
+                raise RuntimeError(f"Clone plan has no source for incident worlds {sorted(missing_worlds)}.")
             if not source_roots:
-                source_roots = ["/World/envs/env_0"]
-            # Flatten so referenced/payloaded asset meshes inline and instancing
-            # resolves to in-file prototypes (a subtree export would drop those).
-            try:
-                flat_layer = stage.Flatten()
-                flat_stage = Usd.Stage.Open(flat_layer)
-                default = flat_stage.GetPrimAtPath(source_roots[0])
-                if default.IsValid():
-                    flat_stage.SetDefaultPrim(default)
-                flat_layer.Export(usd_path)
-            except Exception as exc:  # noqa: BLE001 — cold NaN path; never mask the NaN report
-                logger.warning("NaN scene USD export failed (%s); .npz state still written", exc)
+                raise RuntimeError("Clone plan did not resolve any incident scene sources.")
+
+            flat_layer = stage.Flatten()
+            if flat_layer is None:
+                raise RuntimeError("USD stage flattening returned no layer.")
+            flat_stage = Usd.Stage.Open(flat_layer)
+            if flat_stage is None:
+                raise RuntimeError("Flattened incident USD layer could not be opened.")
+            for source_root in source_roots:
+                source_prim = flat_stage.GetPrimAtPath(source_root)
+                if not source_prim.IsValid():
+                    raise RuntimeError(f"Clone-plan source {source_root!r} is missing from the flattened stage.")
+            flat_stage.SetDefaultPrim(flat_stage.GetPrimAtPath(source_roots[0]))
+            if flat_layer.Export(usd_path) is False:
+                raise RuntimeError(f"Failed to export incident scene to {usd_path!r}.")
 
         return _exporter
 
@@ -1236,19 +1368,233 @@ class NewtonManager(PhysicsManager):
         NewtonManager._builder = builder
 
     @classmethod
-    def set_debug_episode_length(cls, episode_length) -> None:
-        """Register the per-env episode-length source for the NaN debug buffer to record.
+    def set_debug_operation_provider(cls, provider: DebugOperationProvider) -> None:
+        """Register the explicit transient-operation provider for incident debugging.
+
+        Providers must expose callable ``bind(solver)``, ``snapshot()``, and
+        ``close()`` methods. Registration must happen before solver initialization.
 
         Args:
-            episode_length: Either a ``(num_envs,)`` tensor or a no-arg callable
-                returning the live tensor (e.g. ``lambda: env.episode_length_buf``).
-                A callable is preferred: the RL env may reallocate
-                ``episode_length_buf``, which would stale a captured tensor ref (it
-                then read ``0``). Read each step and dumped for the NaN'd env(s), so a
-                just-reset episode can be told from a long-running one. ``None``
-                disables episode-length capture.
+            provider: Solver-specific operation provider.
+
+        Raises:
+            TypeError: If the provider does not implement the required methods.
+            RuntimeError: If a provider is already registered or capture is initialized.
         """
-        NewtonManager._debug_episode_length = episode_length
+        if provider is None:
+            raise TypeError("Debug operation provider must not be None.")
+        for method_name in ("bind", "snapshot", "close"):
+            method = getattr(provider, method_name, None)
+            if not callable(method):
+                raise TypeError(f"Debug operation provider must implement callable {method_name}().")
+        if cls._debug_operation_provider is not None:
+            raise RuntimeError("A debug operation provider is already registered.")
+        if cls._incident_recorder is not None:
+            raise RuntimeError("Debug operation providers must be registered before solver initialization.")
+        NewtonManager._debug_operation_provider = provider
+
+    @classmethod
+    def set_debug_incident_trigger(
+        cls,
+        name: str,
+        trigger: Callable[[DebugTriggerContext], DebugTriggerResult | None],
+    ) -> None:
+        """Register a custom physics incident trigger at the configured capture cadence.
+
+        Args:
+            name: Stable lower-snake-case trigger name.
+            trigger: Callable receiving :class:`DebugTriggerContext` and returning
+                :class:`DebugTriggerResult` or ``None``.
+
+        Raises:
+            TypeError: If the name or trigger has an invalid type.
+            ValueError: If the name is invalid or already registered.
+            RuntimeError: If incident capture is disabled or already initialized.
+        """
+        if not isinstance(name, str):
+            raise TypeError("Debug incident trigger name must be a string.")
+        if _DEBUG_INCIDENT_TRIGGER_NAME_PATTERN.fullmatch(name) is None:
+            raise ValueError(f"Debug incident trigger name {name!r} must be lower snake case and start with a letter.")
+        if not callable(trigger):
+            raise TypeError(f"Debug incident trigger {name!r} must be callable.")
+        cfg = PhysicsManager._cfg
+        if not isinstance(cfg, NewtonCfg) or cfg.debug_capture is None:
+            raise RuntimeError("Debug incident triggers require NewtonCfg.debug_capture to be configured.")
+        if cls._incident_recorder is not None:
+            raise RuntimeError("Debug incident triggers must be registered before solver initialization.")
+        if name in NewtonManager._debug_incident_triggers:
+            raise ValueError(f"Debug incident trigger {name!r} is already registered.")
+        NewtonManager._debug_incident_triggers[name] = trigger
+
+    @classmethod
+    def _snapshot_debug_operations_for_trigger(cls) -> object | None:
+        """Return one strict operation snapshot for a trigger evaluation."""
+        cfg = PhysicsManager._cfg
+        capture_cfg = cfg.debug_capture if cfg is not None else None
+        if capture_cfg is None or not (capture_cfg.record_operations or capture_cfg.replay.record_operations):
+            return None
+        if cls._incident_recorder is None or cls._debug_operation_provider is None:
+            raise RuntimeError(
+                "Debug operation trigger context requires a bound incident recorder and operation provider."
+            )
+        try:
+            operations = cls._debug_operation_provider.snapshot()
+        except Exception as exc:
+            raise RuntimeError(f"Debug operation provider snapshot failed before trigger evaluation: {exc}") from exc
+        if operations is None:
+            raise RuntimeError("Debug operation provider snapshot returned None before trigger evaluation.")
+        return operations
+
+    @classmethod
+    def _evaluate_debug_incident_triggers(
+        cls,
+        *,
+        phase: str,
+        substep_idx: int | None,
+        sim_time: float,
+    ) -> dict[str, DebugTriggerResult]:
+        """Evaluate registered triggers in deterministic order at one capture phase."""
+        if phase not in {"solver_post", "dispatch_post"}:
+            raise RuntimeError(f"Unknown debug incident trigger phase {phase!r}.")
+        if (phase == "dispatch_post") != (substep_idx is None):
+            raise RuntimeError(f"Debug incident trigger phase {phase!r} received substep_idx={substep_idx!r}.")
+        if not cls._debug_incident_triggers:
+            return {}
+        context = cls.DebugTriggerContext(
+            model=cls._model,
+            state=cls._state_0,
+            control=cls._control,
+            solver=cls._discover_solver_provider(),
+            contacts=cls._contacts,
+            collision_pipeline=cls._collision_pipeline,
+            operations=cls._snapshot_debug_operations_for_trigger(),
+            sim_time=float(sim_time),
+            phase=phase,
+            substep_idx=substep_idx,
+        )
+        results: dict[str, NewtonManager.DebugTriggerResult] = {}
+        for name, trigger in sorted(cls._debug_incident_triggers.items()):
+            try:
+                result = trigger(context)
+            except Exception as exc:
+                raise RuntimeError(f"Debug incident trigger {name!r} failed: {exc}") from exc
+            if result is None:
+                continue
+            if not isinstance(result, NewtonManager.DebugTriggerResult):
+                raise RuntimeError(
+                    f"Debug incident trigger {name!r} returned {type(result).__name__}; "
+                    "expected NewtonManager.DebugTriggerResult or None."
+                )
+            results[name] = result
+        return results
+
+    @classmethod
+    def _discover_solver_provider(cls) -> SolverBase | dict[str, SolverBase]:
+        """Discover every live solver stored across the manager class hierarchy.
+
+        Returns:
+            The solver itself when exactly one unique instance is live. Multiple
+            solver slots are returned as a mapping sorted by the slot names with
+            leading underscores removed.
+
+        Raises:
+            RuntimeError: If no solver is live or distinct MRO slots collapse to
+                the same public key.
+        """
+        slots: dict[str, tuple[type, str, SolverBase]] = {}
+        for owner in cls.__mro__:
+            for raw_name, value in vars(owner).items():
+                if not isinstance(value, SolverBase):
+                    continue
+                name = raw_name.lstrip("_")
+                if not name:
+                    raise RuntimeError(f"Solver slot {owner.__qualname__}.{raw_name} has no usable provider name.")
+                previous = slots.get(name)
+                if previous is not None and previous[2] is not value:
+                    raise RuntimeError(
+                        f"Solver slots {previous[0].__qualname__}.{previous[1]} and "
+                        f"{owner.__qualname__}.{raw_name} both map to provider key {name!r}."
+                    )
+                slots[name] = (owner, raw_name, value)
+
+        if not slots:
+            raise RuntimeError(f"{cls.__name__} has no live SolverBase provider.")
+
+        providers: dict[str, SolverBase] = {}
+        seen: set[int] = set()
+        for name in sorted(slots):
+            solver = slots[name][2]
+            if id(solver) in seen:
+                continue
+            providers[name] = solver
+            seen.add(id(solver))
+        if len(providers) == 1:
+            return next(iter(providers.values()))
+        return providers
+
+    @classmethod
+    def _validate_debug_operation_provider_configuration(
+        cls,
+        capture_cfg: NewtonDebugCaptureCfg | None,
+    ) -> None:
+        """Reject an explicit operation provider that no capture mode will use."""
+        if cls._debug_operation_provider is None:
+            return
+        recording_requested = capture_cfg is not None and (
+            capture_cfg.record_operations or capture_cfg.replay.record_operations
+        )
+        if not recording_requested:
+            raise RuntimeError(
+                "A debug operation provider is registered, but operation recording is disabled. "
+                "Set NewtonCfg.debug_capture.record_operations=True or "
+                "NewtonCfg.debug_capture.replay.record_operations=True."
+            )
+
+    @classmethod
+    def _resolve_debug_operation_provider(
+        cls,
+        solver_provider: SolverBase | Mapping[str, SolverBase],
+        capture_cfg: NewtonDebugCaptureCfg,
+    ) -> DebugOperationProvider | None:
+        """Resolve an explicit provider or create the default MJWarp provider."""
+        provider = cls._debug_operation_provider
+        if not (capture_cfg.record_operations or capture_cfg.replay.record_operations) or provider is not None:
+            return provider
+
+        if isinstance(solver_provider, Mapping):
+            compatible_solvers = [
+                solver
+                for solver in solver_provider.values()
+                if isinstance(solver, SolverMuJoCo) and not solver.use_mujoco_cpu
+            ]
+        elif isinstance(solver_provider, SolverMuJoCo) and not solver_provider.use_mujoco_cpu:
+            compatible_solvers = [solver_provider]
+        else:
+            compatible_solvers = []
+
+        if len(compatible_solvers) == 1:
+            from .mjwarp_debug import MJWarpDebugOperationProvider  # noqa: PLC0415
+
+            provider = MJWarpDebugOperationProvider()
+            NewtonManager._debug_operation_provider = provider
+            logger.info("Automatically enabled final-context MJWarp operation capture")
+            return provider
+
+        if isinstance(solver_provider, Mapping):
+            discovered = (
+                f"coupled solver mapping with slots {sorted(solver_provider)} and "
+                f"{len(compatible_solvers)} compatible MJWarp-backed SolverMuJoCo instances"
+            )
+        elif isinstance(solver_provider, SolverMuJoCo):
+            discovered = "CPU SolverMuJoCo"
+        else:
+            discovered = f"{type(solver_provider).__module__}.{type(solver_provider).__qualname__}"
+        raise RuntimeError(
+            "Newton debug operation capture has no automatic provider for "
+            f"{discovered}. The built-in provider requires exactly one MJWarp-backed SolverMuJoCo; "
+            "register a compatible provider with NewtonManager.set_debug_operation_provider() "
+            "before solver initialization."
+        )
 
     @classmethod
     def create_builder(cls, up_axis: str | None = None, **kwargs) -> ModelBuilder:
@@ -1685,25 +2031,6 @@ class NewtonManager(PhysicsManager):
         # Isaac Lab resets local environments only, so that slot remains false.
         NewtonManager._world_reset_mask = wp.zeros(cls._model.world_count + 1, dtype=wp.bool, device=device)
         NewtonManager._fk_reset_mask = wp.zeros(cls._model.articulation_count, dtype=wp.bool, device=device)
-
-        nan_replay_cfg = getattr(PhysicsManager._cfg, "nan_replay", None)
-        if nan_replay_cfg is not None:
-            NewtonManager._debug_state_buffer = DebugStateBuffer(
-                cls._model,
-                nan_replay_cfg.buffer_size,
-                export_path=nan_replay_cfg.export_path,
-                export_envs_only=nan_replay_cfg.export_envs_only,
-                max_exports=nan_replay_cfg.max_exports,
-                scene_exporter=cls._make_scene_exporter(),
-                collision_pipeline=cls._collision_pipeline,
-                per_substep=nan_replay_cfg.per_substep,
-                replay_cfg=nan_replay_cfg.replay,
-            )
-            logger.info(
-                "Debug state buffer enabled: %d snapshots%s",
-                cls._debug_state_buffer.size,
-                " (per-substep deep mode; CUDA graph must be off)" if cls._debug_state_buffer.per_substep else "",
-            )
 
         logger.info("Dispatching PHYSICS_READY callbacks")
         cls.dispatch_event(PhysicsEvent.PHYSICS_READY)
@@ -2203,6 +2530,15 @@ class NewtonManager(PhysicsManager):
             return
         cls._solver.reset(cls._state_0, world_mask=world_mask, flags=0)
 
+    @classmethod
+    def _prepare_debug_capture_providers(cls) -> None:
+        """Materialize solver-owned providers before strict schema binding.
+
+        The default implementation is a no-op. Solver managers override this
+        when upstream providers allocate capture-visible arrays lazily, and must
+        initialize them without advancing physics.
+        """
+
     # ----- Lifecycle orchestration ----------------------------------------
 
     @classmethod
@@ -2225,6 +2561,11 @@ class NewtonManager(PhysicsManager):
         cfg = PhysicsManager._cfg
         if cfg is None:
             return
+        if NewtonManager._debug_operation_provider_cleanup_pending:
+            raise RuntimeError(
+                "Cannot initialize the Newton solver while debug operation provider cleanup is pending. "
+                "Call NewtonManager.clear() to retry cleanup first."
+            )
 
         with Timer(name="newton_initialize_solver", msg="Initialize solver took:", activity="Initializing solver"):
             NewtonManager._num_substeps = cfg.num_substeps  # type: ignore[union-attr]
@@ -2263,6 +2604,39 @@ class NewtonManager(PhysicsManager):
         # Runs before graph capture below so the capture warmup sees a valid body_q.
         cls._eval_fk(None, None)
         cls._mark_transforms_dirty()
+
+        debug_capture_cfg = cfg.debug_capture
+        cls._validate_debug_operation_provider_configuration(debug_capture_cfg)
+        if NewtonManager._debug_incident_triggers and debug_capture_cfg is None:
+            raise RuntimeError("Registered debug incident triggers require NewtonCfg.debug_capture to be configured.")
+        if debug_capture_cfg is not None:
+            cls._prepare_debug_capture_providers()
+            solver_provider = cls._discover_solver_provider()
+            operation_provider = cls._resolve_debug_operation_provider(solver_provider, debug_capture_cfg)
+            try:
+                recorder = PhysicsIncidentRecorder(
+                    cls._model,
+                    debug_capture_cfg,
+                    state=cls._state_0,
+                    control=cls._control,
+                    solver=solver_provider,
+                    contacts=cls._contacts,
+                    triggers=dict(sorted(NewtonManager._debug_incident_triggers.items())),
+                    collision_pipeline=cls._collision_pipeline,
+                    scene_exporter=cls._make_scene_exporter() if debug_capture_cfg.record_scene else None,
+                    context_provider=PhysicsManager.get_debug_context,
+                    operation_provider=operation_provider,
+                )
+            except _OperationProviderCleanupError:
+                NewtonManager._debug_operation_provider_cleanup_pending = True
+                raise
+            NewtonManager._incident_recorder = recorder
+            NewtonManager._debug_operation_provider_cleanup_pending = False
+            logger.info(
+                "Physics incident recorder enabled: %d history snapshots%s",
+                cls._incident_recorder.history_length,
+                " (per-substep capture)" if cls._incident_recorder.capture_per_substep else "",
+            )
 
         # Skip the initial graph capture when the Newton actuator fast path is
         # active. Capturing here would use ``cls._decimation`` (still its default
@@ -2315,10 +2689,8 @@ class NewtonManager(PhysicsManager):
                     NewtonManager._graph = capture.graph
                     logger.info("Newton CUDA graph captured (standard Warp mode)")
 
-                    # Kamino: StateKamino.from_newton() lazily allocates body_f_total,
-                    # joint_q_prev, and joint_lambdas via wp.clone/wp.zeros during the
-                    # first step() inside graph capture. Replay once to pin those
-                    # memory-pool addresses before any eager solver.reset() call.
+                    # Replay Kamino once to initialize graph-owned solver scratch and
+                    # pin its addresses before eager reset calls can interleave.
                     if isinstance(cls._solver, SolverKamino):
                         wp.capture_launch(cls._graph)
                 else:
@@ -2475,85 +2847,108 @@ class NewtonManager(PhysicsManager):
     # ------------------------------------------------------------------
 
     @classmethod
-    def _run_solver_substeps(cls, contacts) -> None:
-        """Run ``num_substeps`` solver iterations, handling double-buffered state swap."""
+    def _run_solver_substeps(
+        cls,
+        contacts,
+        *,
+        dispatch_time: float,
+        substep_idx_offset: int = 0,
+    ) -> bool:
+        """Run solver substeps and report whether incident capture requested a halt.
+
+        Args:
+            contacts: Contact provider used by the active solver.
+            dispatch_time: Simulation time at the start of this solver dispatch [s].
+            substep_idx_offset: Number of solver substeps completed earlier in
+                the current manager step. Replay records, incident triggers, and
+                per-substep observations receive the resulting manager-step-wide
+                index; collision scheduling remains local to this dispatch.
+
+        Returns:
+            ``True`` when per-substep capture requested an immediate halt.
+        """
         collide_every = cls._collision_decimation
         # Last substep is skipped: its contact set would only feed the next tick's
         # top-of-loop collide(), not this one.
         collide_mid_loop = collide_every > 0 and cls._needs_collision_pipeline and contacts is not None
 
-        # Deep per-substep NaN capture (CUDA graph must be off in this mode). Observes the
-        # state after every solver substep so the failing substep is caught before the NaN
-        # smears across the state vector.
-        dbg = cls._debug_state_buffer
-        substep_debug = dbg is not None and dbg.per_substep
+        recorder = cls._incident_recorder
+        capture_per_substep = recorder is not None and recorder.capture_per_substep
 
-        def _observe(i: int) -> bool:
-            dbg.observe_substep(
-                cls._state_0,
-                PhysicsManager._sim_time,
-                episode_length=cls._debug_episode_length,
-                contacts=contacts,
-                solver=cls._solver,
-                collision_pipeline=cls._collision_pipeline,
-                substep_idx=i,
+        def _observe(substep_idx: int, post_time: float) -> bool:
+            assert recorder is not None
+            trigger_results = cls._evaluate_debug_incident_triggers(
+                phase="solver_post",
+                substep_idx=substep_idx,
+                sim_time=post_time,
             )
-            return dbg.nan_halt
+            recorder.observe_substep(
+                cls._state_0,
+                post_time,
+                substep_idx=substep_idx,
+                trigger_results=trigger_results,
+            )
+            return recorder.halted
 
         if cls._use_single_state:
-            for i in range(cls._num_substeps):
+            for substep_idx_local in range(cls._num_substeps):
+                substep_idx = substep_idx_offset + substep_idx_local
+                pre_time = dispatch_time + substep_idx_local * cls._solver_dt
+                post_time = pre_time + cls._solver_dt
                 for callback in cls._state_force_callbacks:
                     callback(cls._state_0)
-                if dbg is not None:
-                    dbg.record_step_replay_pre(
+                if recorder is not None:
+                    recorder.record_step_replay_pre(
                         cls._state_0,
-                        control=cls._control,
-                        contacts=contacts,
-                        solver=cls._solver,
-                        sim_time=PhysicsManager._sim_time,
-                        substep_idx=i,
-                        episode_length=cls._debug_episode_length()
-                        if callable(cls._debug_episode_length)
-                        else cls._debug_episode_length,
+                        sim_time=pre_time,
+                        substep_idx=substep_idx,
                     )
                 cls._step_solver(cls._state_0, cls._state_0, cls._control, contacts, cls._solver_dt)
+                if recorder is not None:
+                    recorder.record_step_replay_post(cls._state_0)
+                halted = capture_per_substep and _observe(substep_idx, post_time)
                 cls._state_0.clear_forces()
-                if dbg is not None:
-                    dbg.record_step_replay_post(cls._state_0, solver=cls._solver)
-                if substep_debug and _observe(i):
-                    return
-                if collide_mid_loop and (i + 1) % collide_every == 0 and i + 1 < cls._num_substeps:
+                if halted:
+                    return True
+                if (
+                    collide_mid_loop
+                    and (substep_idx_local + 1) % collide_every == 0
+                    and substep_idx_local + 1 < cls._num_substeps
+                ):
                     cls._collision_pipeline.collide(cls._state_0, contacts)
         else:
             cfg = PhysicsManager._cfg
             need_copy_on_last = cfg is not None and cls._num_substeps % 2 == 1
-            for i in range(cls._num_substeps):
+            for substep_idx_local in range(cls._num_substeps):
+                substep_idx = substep_idx_offset + substep_idx_local
+                pre_time = dispatch_time + substep_idx_local * cls._solver_dt
+                post_time = pre_time + cls._solver_dt
                 for callback in cls._state_force_callbacks:
                     callback(cls._state_0)
-                if dbg is not None:
-                    dbg.record_step_replay_pre(
+                if recorder is not None:
+                    recorder.record_step_replay_pre(
                         cls._state_0,
-                        control=cls._control,
-                        contacts=contacts,
-                        solver=cls._solver,
-                        sim_time=PhysicsManager._sim_time,
-                        substep_idx=i,
-                        episode_length=cls._debug_episode_length()
-                        if callable(cls._debug_episode_length)
-                        else cls._debug_episode_length,
+                        sim_time=pre_time,
+                        substep_idx=substep_idx,
                     )
                 cls._step_solver(cls._state_0, cls._state_1, cls._control, contacts, cls._solver_dt)
-                if need_copy_on_last and i == cls._num_substeps - 1:
+                if need_copy_on_last and substep_idx_local == cls._num_substeps - 1:
                     cls._state_0.assign(cls._state_1)
                 else:
                     NewtonManager._state_0, NewtonManager._state_1 = cls._state_1, cls._state_0
+                if recorder is not None:
+                    recorder.record_step_replay_post(cls._state_0)
+                halted = capture_per_substep and _observe(substep_idx, post_time)
                 cls._state_0.clear_forces()
-                if dbg is not None:
-                    dbg.record_step_replay_post(cls._state_0, solver=cls._solver)
-                if substep_debug and _observe(i):
-                    return
-                if collide_mid_loop and (i + 1) % collide_every == 0 and i + 1 < cls._num_substeps:
+                if halted:
+                    return True
+                if (
+                    collide_mid_loop
+                    and (substep_idx_local + 1) % collide_every == 0
+                    and substep_idx_local + 1 < cls._num_substeps
+                ):
                     cls._collision_pipeline.collide(cls._state_0, contacts)
+        return False
 
     @classmethod
     def _update_sensors(cls, contacts) -> None:
@@ -2584,7 +2979,8 @@ class NewtonManager(PhysicsManager):
         physics_dt = cls._solver_dt * cls._num_substeps
         contacts = cls._contacts if cls._needs_collision_pipeline else None
 
-        for _ in range(cls._decimation):
+        halted = False
+        for decimation_idx in range(cls._decimation):
             if cls._needs_collision_pipeline:
                 cls._collision_pipeline.collide(cls._state_0, cls._contacts)
 
@@ -2593,11 +2989,19 @@ class NewtonManager(PhysicsManager):
             for cb in cls._post_actuator_callbacks:
                 cb()
 
-            cls._run_solver_substeps(contacts)
+            dispatch_time = PhysicsManager._sim_time + decimation_idx * physics_dt
+            halted = cls._run_solver_substeps(
+                contacts,
+                dispatch_time=dispatch_time,
+                substep_idx_offset=decimation_idx * cls._num_substeps,
+            )
+            if halted:
+                break
 
         for cb in cls._post_step_callbacks:
             cb()
-        cls._update_sensors(contacts)
+        if not halted:
+            cls._update_sensors(contacts)
 
     @classmethod
     def _simulate_physics_only(cls) -> None:
@@ -2612,10 +3016,11 @@ class NewtonManager(PhysicsManager):
         else:
             contacts = None
 
-        cls._run_solver_substeps(contacts)
+        halted = cls._run_solver_substeps(contacts, dispatch_time=PhysicsManager._sim_time)
         for cb in cls._post_step_callbacks:
             cb()
-        cls._update_sensors(contacts)
+        if not halted:
+            cls._update_sensors(contacts)
 
     # State accessors (used extensively by articulation/rigid object data)
     @classmethod

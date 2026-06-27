@@ -9,7 +9,13 @@
 
     NewtonManager
     NewtonCfg
+    NewtonDebugCaptureCfg
+    NewtonDebugReplayCfg
     NewtonSoftContactCfg
+    MJWarpDebugOperationProvider
+    ReplayAdapter
+    ReplayCapability
+    ReplayRequest
     NewtonCollisionPipelineCfg
     NewtonFeatherstoneManager
     NewtonKaminoManager
@@ -45,6 +51,30 @@ Physics Manager
   :inherited-members:
   :show-inheritance:
 
+Physics Debugging
+-----------------
+
+.. autoclass:: MJWarpDebugOperationProvider
+  :members:
+  :show-inheritance:
+
+.. autoclass:: ReplayAdapter
+  :members:
+
+.. autoclass:: ReplayCapability
+  :members:
+
+.. autoclass:: ReplayRequest
+  :members:
+
+.. autodata:: REPLAY_STAGES
+
+.. autofunction:: register_replay_adapter
+
+.. autofunction:: get_replay_adapter
+
+.. autofunction:: get_replay_adapter_ids
+
 Physics Configuration
 ---------------------
 
@@ -54,6 +84,16 @@ Physics Configuration
   :exclude-members: __init__
 
 .. autoclass:: NewtonSoftContactCfg
+  :members:
+  :show-inheritance:
+  :exclude-members: __init__
+
+.. autoclass:: NewtonDebugCaptureCfg
+  :members:
+  :show-inheritance:
+  :exclude-members: __init__
+
+.. autoclass:: NewtonDebugReplayCfg
   :members:
   :show-inheritance:
   :exclude-members: __init__
@@ -155,6 +195,7 @@ Solver Managers
   :members:
   :inherited-members:
   :show-inheritance:
+  :exclude-members: DebugOperationProvider, DebugTriggerContext, DebugTriggerResult
 
 .. autoclass:: NewtonVBDManager
   :members:
@@ -165,18 +206,22 @@ Solver Managers
   :members:
   :inherited-members:
   :show-inheritance:
+  :exclude-members: DebugOperationProvider, DebugTriggerContext, DebugTriggerResult
 
 .. autoclass:: NewtonFeatherstoneManager
   :members:
   :inherited-members:
   :show-inheritance:
+  :exclude-members: DebugOperationProvider, DebugTriggerContext, DebugTriggerResult
 
 .. autoclass:: NewtonKaminoManager
   :members:
   :inherited-members:
   :show-inheritance:
+  :exclude-members: DebugOperationProvider, DebugTriggerContext, DebugTriggerResult
 
 .. autoclass:: NewtonMPMManager
   :members:
   :inherited-members:
   :show-inheritance:
+  :exclude-members: DebugOperationProvider, DebugTriggerContext, DebugTriggerResult

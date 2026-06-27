@@ -82,24 +82,17 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         # store the render mode
         self.render_mode = render_mode
 
-        # If the active physics backend exposes a NaN debug buffer, let it record per-env
-        # episode length alongside the captured state (backend-agnostic; no-op otherwise).
-        _physics_manager = getattr(self.sim, "physics_manager", None)
-        if _physics_manager is not None and hasattr(_physics_manager, "set_debug_episode_length"):
-            try:
-                # Register a callable, not the tensor: ``episode_length_buf`` may be
-                # reallocated after this point, which would stale a captured reference
-                # (it read 0). The buffer resolves this lazily each step.
-                _physics_manager.set_debug_episode_length(lambda: self.episode_length_buf)
-            except Exception:
-                pass
-
         # initialize data and constants
         # -- set the framerate of the gym video recorder wrapper so that the playback speed of the
         #    produced video matches the simulation
         self.metadata["render_fps"] = 1 / self.step_dt
         self.has_rtx_sensors = self.sim.get_setting("/isaaclab/render/rtx_sensors")
         print("[INFO]: Completed setting up the environment...")
+
+    def _register_physics_debug_context(self) -> None:
+        """Expose live RL workflow counters to physics incident capture."""
+        self.sim.physics_manager.set_debug_context_provider("episode_length", lambda: self.episode_length_buf)
+        self.sim.physics_manager.set_debug_context_provider("common_step_counter", lambda: self.common_step_counter)
 
     """
     Properties.

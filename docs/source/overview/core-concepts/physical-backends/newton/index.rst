@@ -67,6 +67,7 @@ For direct ``Model``/``State`` access and generic selections, see
   installation
   supported-features
   migrating-assets-from-physx-to-newton
+  debugging-incidents
   mjwarp-solver
   kamino-solver
   using-vbd-solver

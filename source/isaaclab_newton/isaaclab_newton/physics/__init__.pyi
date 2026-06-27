@@ -17,7 +17,16 @@ __all__ = [
     "KaminoPADMMSolverCfg",
     "MPMSolverCfg",
     "MJWarpSolverCfg",
-    "NanReplayCfg",
+    "MJWarpDebugOperationProvider",
+    "NewtonDebugCaptureCfg",
+    "NewtonDebugReplayCfg",
+    "REPLAY_STAGES",
+    "ReplayAdapter",
+    "ReplayCapability",
+    "ReplayRequest",
+    "get_replay_adapter",
+    "get_replay_adapter_ids",
+    "register_replay_adapter",
     "NewtonCfg",
     "NewtonCollisionPipelineCfg",
     "NewtonFeatherstoneManager",
@@ -34,6 +43,15 @@ __all__ = [
     "XPBDSolverCfg",
 ]
 
+from .debug_replay import (
+    REPLAY_STAGES,
+    ReplayAdapter,
+    ReplayCapability,
+    ReplayRequest,
+    get_replay_adapter,
+    get_replay_adapter_ids,
+    register_replay_adapter,
+)
 from .featherstone_manager import NewtonFeatherstoneManager
 from .featherstone_manager_cfg import FeatherstoneSolverCfg
 from .kamino_manager import NewtonKaminoManager
@@ -50,12 +68,14 @@ from .kamino_manager_cfg import (
 )
 from .mjwarp_manager import NewtonMJWarpManager
 from .mjwarp_manager_cfg import MJWarpSolverCfg
+from .mjwarp_debug import MJWarpDebugOperationProvider
 from .mpm_manager import NewtonMPMManager
 from .mpm_manager_cfg import MPMSolverCfg
 from .newton_collision_cfg import HydroelasticSDFCfg, NewtonCollisionPipelineCfg
 from .newton_manager import NewtonManager
 from .newton_manager_cfg import (
-    NanReplayCfg,
+    NewtonDebugCaptureCfg,
+    NewtonDebugReplayCfg,
     NewtonCfg,
     NewtonShapeCfg,
     NewtonSoftContactCfg,

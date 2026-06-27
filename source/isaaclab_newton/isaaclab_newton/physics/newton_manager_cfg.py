@@ -120,78 +120,362 @@ class NewtonShapeCfg:
     """
 
 @configclass
-class ReplayBufferCfg:
-    """Configuration for the opt-in one-step replay buffer."""
+class NewtonDebugReplayCfg:
+    """Configuration for opt-in transition replay capture."""
 
     enabled: bool = False
     """Whether to record replay transitions."""
 
-    export_envs_only: bool = True
-    """When True, export replay state only for the NaN envs."""
-
     record_state: bool = True
-    """Record pre/post Newton state arrays."""
+    """Whether to record pre/post Newton state arrays."""
 
     record_control: bool = True
-    """Record control inputs such as ``control.joint_f``."""
+    """Whether to record control inputs such as ``control.joint_f``."""
 
     record_solver: bool = True
-    """Record selected MJWarp solver vectors."""
+    """Whether to record the active solver provider."""
 
     record_contacts: bool = False
-    """Record contact data in the hot path. Expensive; normally use cold recompute/export."""
+    """Whether to record live contact data for each transition."""
 
-    record_mjwarp_context: bool = False
-    """Record full MJWarp solver context. Very expensive; use only for focused diagnosis."""
+    record_collision_pipeline: bool = False
+    """Whether to record the external collision pipeline for each transition.
+
+    This retains rolling collision internals in both replay pre/post snapshots
+    and can materially increase memory use. The finalized external Newton
+    collision pipeline is a required load-time provider when enabled.
+    """
+
+    record_operations: bool = False
+    """Whether to record solver-specific transient operations for exact replay.
+
+    This capability requires a compatible operation provider. Physics
+    initialization fails when the active solver cannot provide the requested
+    transient operation snapshots.
+    """
+
+    include_fields: tuple[str, ...] = ("*",)
+    """Glob patterns selecting fields from the discovered replay schema."""
+
+    exclude_fields: tuple[str, ...] = ()
+    """Glob patterns excluding fields from the discovered replay schema."""
 
 
 @configclass
-class NanReplayCfg:
-    """Configuration for the NaN replay debug buffer.
+class NewtonDebugCaptureCfg:
+    """Configuration for strict Newton physics incident capture.
 
-    When attached to :class:`NewtonCfg`, a rolling buffer of GPU state snapshots
-    is kept.  If a NaN is detected after a physics step the buffer is exported to
-    disk (with optional USD scene export) and simulation is halted.
+    When attached to :class:`NewtonCfg`, a rolling history of physics state is
+    retained. Non-finite state produces versioned incident artifacts containing
+    the complete discovered provider schema and optional transition replay.
     """
 
-    buffer_size: int = 200
-    """Number of state snapshots to keep in the rolling buffer.
+    history_length: int = 200
+    """Number of state snapshots retained in chronological history."""
 
-    Capped at 2000 to bound GPU memory use.
+    output_dir: str = "./physics_debug/"
+    """Directory for incident ``.npz`` and optional ``.usd`` artifacts."""
+
+    record_scene: bool = False
+    """Whether to export optional static full-stage USD geometry and context.
+
+    Scene export requires an available USD stage and clone plan at incident time.
+    The USD is not world-focused or stamped with post-step Newton transforms;
+    captured arrays remain authoritative for failing dynamic state.
     """
 
-    export_path: str = "./nan_debug/"
-    """Directory for exported ``.npz`` and ``.usd`` files."""
+    failed_worlds_only: bool = True
+    """Whether world-scoped artifacts contain only the failed world.
 
-    export_envs_only: bool = True
-    """When True and simulation has multiple envs, export only the env(s)
-    that contain NaN.
-
-    This keeps the replay file small and replayable with a single-env scene.
-    When False, the full state (all envs) is exported.
+    Global entities required by the failed world remain included. Set this to
+    ``False`` to retain the full multi-world state in every artifact.
     """
 
-    max_exports: int = 5
-    """Maximum number of NaN export events before halting simulation.
+    max_incidents: int = 5
+    """Maximum number of distinct incident events to export.
 
-    Each export event covers a distinct set of newly-NaN env_ids.  After this
-    many exports the debug buffer stops recording and the physics step raises
-    ``RuntimeError``.
+    One event can produce multiple artifacts when several worlds fail in the
+    same step. This limit controls retention only; stopping is controlled
+    independently by :attr:`halt_on_incident`.
     """
 
-    per_substep: bool = False
-    """When True, NaN detection runs after every solver substep (not just once per
-    env-step), capturing the exact substep where the NaN is *born* together with the
-    last finite pre-substep state and the solver internals at that substep.
+    halt_on_incident: bool = True
+    """Whether to halt simulation immediately after the first incident.
 
-    This requires the CUDA graph to be disabled (host-side checks cannot run inside a
-    captured graph), so set :attr:`NewtonCfg.use_cuda_graph` to ``False`` alongside it.
-    Slower, but it isolates the failing substep before the NaN propagates across the
-    state — use for deep diagnosis, not production.
+    Continuing to step a non-finite physics state is unsafe, so this defaults
+    to ``True`` independently of :attr:`max_incidents`.
     """
 
-    replay: ReplayBufferCfg = ReplayBufferCfg()
-    """Optional one-step replay recorder configuration."""
+    fail_on_capture_error: bool = True
+    """Whether a runtime capture failure raises after saving a partial artifact.
+
+    Required provider and schema failures always fail during physics
+    initialization. This option controls cold-path failures such as scene export
+    after the state history has already been preserved as a partial artifact.
+    """
+
+    max_gpu_bytes: int = 2 * 1024**3
+    """Maximum total GPU memory allocated by state and replay histories.
+
+    Physics initialization fails with a field-by-field report before an
+    allocation would exceed this budget. Fields are never silently dropped.
+    """
+
+    record_model: bool = True
+    """Whether to record discovered Newton model arrays and metadata."""
+
+    record_control: bool = True
+    """Whether to record the live applied Newton control in each cold incident."""
+
+    record_contacts: bool = False
+    """Whether to record active Newton contact data on an incident."""
+
+    record_collision_pipeline: bool = False
+    """Whether to record the finalized external Newton collision pipeline.
+
+    When enabled, the external collision pipeline is a required load-time
+    provider. Solvers that perform collision detection internally should record
+    their collision state through :attr:`record_solver` instead.
+    """
+
+    record_solver: bool = True
+    """Whether to record the active solver's discovered arrays and metadata."""
+
+    record_operations: bool = False
+    """Whether to retain the latest solver-specific transient operations.
+
+    This is independent of transition replay. Enabling it requires a compatible
+    operation provider and active solver, and makes operation values available
+    to incident archives and automatic non-finite detection.
+    """
+
+    include_private_fields: bool = True
+    """Whether to include private fields from provider instance storage.
+
+    Comprehensive discovery reads private ``vars`` and declared slots when this
+    option is enabled. It never invokes properties or descends into opaque
+    unregistered runtime resources.
+    """
+
+    detect_nonfinite_in: tuple[str, ...] = ("state",)
+    """Incident providers scanned for NaN and infinity values.
+
+    Allowed names are ``"state"``, ``"model"``, ``"control"``, ``"contacts"``,
+    ``"solver"``, ``"collision_pipeline"``, ``"context"``, and
+    ``"operations"``. Recorded retained providers must also have their
+    corresponding ``record_*`` option enabled. Context detection scans
+    registered workflow values and requires a capturable context provider when
+    the recorder binds. Solver detection includes retained Hessian,
+    factorization, and constraint arrays. Transient operation detection requires
+    :attr:`record_operations` and is independent of transition replay.
+    """
+
+    detect_nonfinite_include_fields: tuple[str, ...] = ("*",)
+    """Glob patterns selecting recorded fields for automatic non-finite scans.
+
+    These patterns affect detection only; matching values remain governed by
+    :attr:`include_fields` and are always archived when recorded. Every pattern
+    must match a recorded floating-point or complex field under
+    :attr:`detect_nonfinite_in`.
+    """
+
+    detect_nonfinite_exclude_fields: tuple[str, ...] = ()
+    """Glob patterns excluded from automatic non-finite scans.
+
+    Use this for allocated but mode-inactive buffers whose contents are not
+    initialized by the active solver path. Excluded values remain archived.
+    """
+
+    include_fields: tuple[str, ...] = ("*",)
+    """Glob patterns selecting fields from discovered incident providers."""
+
+    exclude_fields: tuple[str, ...] = ()
+    """Glob patterns excluding fields from discovered incident providers."""
+
+    capture_per_substep: bool = False
+    """Whether incident detection runs after every solver substep.
+
+    This requires CUDA graph capture to be disabled because host-side checks
+    cannot run inside a captured graph. It records the exact failing substep and
+    its last finite pre-state for deep diagnosis.
+    """
+
+    replay: NewtonDebugReplayCfg = NewtonDebugReplayCfg()
+    """Optional transition replay configuration."""
+
+
+def _validate_bool_fields(owner: object, field_names: tuple[str, ...], prefix: str) -> None:
+    """Validate boolean configuration fields."""
+    for field_name in field_names:
+        if not isinstance(getattr(owner, field_name), bool):
+            raise TypeError(f"{prefix}.{field_name} must be a bool.")
+
+
+def _validate_pattern_fields(
+    owner: object,
+    prefix: str,
+    include_field: str,
+    exclude_field: str,
+) -> None:
+    """Validate one strict include/exclude glob tuple pair."""
+    for field_name, allow_empty in ((include_field, False), (exclude_field, True)):
+        patterns = getattr(owner, field_name)
+        if not isinstance(patterns, tuple):
+            raise TypeError(f"{prefix}.{field_name} must be a tuple of strings.")
+        if not patterns and not allow_empty:
+            raise ValueError(f"{prefix}.{field_name} must not be empty.")
+        if any(not isinstance(pattern, str) or not pattern for pattern in patterns):
+            raise ValueError(f"{prefix}.{field_name} must contain only non-empty strings.")
+        if len(set(patterns)) != len(patterns):
+            raise ValueError(f"{prefix}.{field_name} must not contain duplicates.")
+
+
+def _validate_debug_patterns(owner: object, prefix: str) -> None:
+    """Validate strict archive include and exclude glob tuples."""
+    _validate_pattern_fields(owner, prefix, "include_fields", "exclude_fields")
+
+
+def _validate_debug_replay_cfg(replay: object) -> NewtonDebugReplayCfg:
+    """Validate transition replay configuration and return its narrowed type."""
+    if not isinstance(replay, NewtonDebugReplayCfg):
+        raise TypeError("NewtonCfg.debug_capture.replay must be a NewtonDebugReplayCfg instance.")
+    _validate_bool_fields(
+        replay,
+        (
+            "enabled",
+            "record_state",
+            "record_control",
+            "record_solver",
+            "record_contacts",
+            "record_collision_pipeline",
+            "record_operations",
+        ),
+        "NewtonCfg.debug_capture.replay",
+    )
+    if replay.record_operations and not replay.enabled:
+        raise ValueError(
+            "NewtonCfg.debug_capture.replay.record_operations=True requires "
+            "NewtonCfg.debug_capture.replay.enabled=True."
+        )
+    if replay.record_collision_pipeline and not replay.enabled:
+        raise ValueError(
+            "NewtonCfg.debug_capture.replay.record_collision_pipeline=True requires "
+            "NewtonCfg.debug_capture.replay.enabled=True."
+        )
+    _validate_debug_patterns(replay, "NewtonCfg.debug_capture.replay")
+    if replay.enabled and not any(
+        (
+            replay.record_state,
+            replay.record_control,
+            replay.record_solver,
+            replay.record_contacts,
+            replay.record_collision_pipeline,
+            replay.record_operations,
+        )
+    ):
+        raise ValueError("NewtonCfg.debug_capture.replay must record at least one provider when enabled.")
+    return replay
+
+
+def _validate_detect_nonfinite_in(capture: NewtonDebugCaptureCfg) -> None:
+    """Validate provider selection for automatic non-finite incidents."""
+    providers = capture.detect_nonfinite_in
+    if not isinstance(providers, tuple):
+        raise TypeError("NewtonCfg.debug_capture.detect_nonfinite_in must be a tuple of strings.")
+    if not providers:
+        raise ValueError("NewtonCfg.debug_capture.detect_nonfinite_in must not be empty.")
+    if any(not isinstance(provider, str) or not provider for provider in providers):
+        raise ValueError("NewtonCfg.debug_capture.detect_nonfinite_in must contain only non-empty strings.")
+    if len(set(providers)) != len(providers):
+        raise ValueError("NewtonCfg.debug_capture.detect_nonfinite_in must not contain duplicates.")
+
+    allowed = (
+        "state",
+        "model",
+        "control",
+        "contacts",
+        "solver",
+        "collision_pipeline",
+        "context",
+        "operations",
+    )
+    invalid = [provider for provider in providers if provider not in allowed]
+    if invalid:
+        raise ValueError(
+            "NewtonCfg.debug_capture.detect_nonfinite_in contains unsupported providers "
+            f"{invalid}; expected only {list(allowed)}."
+        )
+
+    required_record_flags = {
+        "model": "record_model",
+        "control": "record_control",
+        "contacts": "record_contacts",
+        "solver": "record_solver",
+        "collision_pipeline": "record_collision_pipeline",
+        "operations": "record_operations",
+    }
+    for provider in providers:
+        record_flag = required_record_flags.get(provider)
+        if record_flag is not None and not getattr(capture, record_flag):
+            raise ValueError(
+                f"NewtonCfg.debug_capture.detect_nonfinite_in includes {provider!r}, which requires {record_flag}=True."
+            )
+
+
+def _validate_debug_capture_cfg(
+    capture: NewtonDebugCaptureCfg | None,
+    use_cuda_graph: bool,
+) -> None:
+    """Validate strict incident capture configuration."""
+    if capture is None:
+        return
+    if not isinstance(capture, NewtonDebugCaptureCfg):
+        raise TypeError("NewtonCfg.debug_capture must be a NewtonDebugCaptureCfg instance or None.")
+
+    for field_name in ("history_length", "max_incidents", "max_gpu_bytes"):
+        value = getattr(capture, field_name)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(f"NewtonCfg.debug_capture.{field_name} must be an int.")
+        if value < 1:
+            raise ValueError(f"NewtonCfg.debug_capture.{field_name} must be at least 1.")
+    if not isinstance(capture.output_dir, str):
+        raise TypeError("NewtonCfg.debug_capture.output_dir must be a str.")
+    if not capture.output_dir.strip():
+        raise ValueError("NewtonCfg.debug_capture.output_dir must not be empty.")
+
+    _validate_bool_fields(
+        capture,
+        (
+            "failed_worlds_only",
+            "halt_on_incident",
+            "fail_on_capture_error",
+            "record_scene",
+            "record_model",
+            "record_control",
+            "record_contacts",
+            "record_collision_pipeline",
+            "record_solver",
+            "record_operations",
+            "include_private_fields",
+            "capture_per_substep",
+        ),
+        "NewtonCfg.debug_capture",
+    )
+    replay = _validate_debug_replay_cfg(capture.replay)
+    _validate_debug_patterns(capture, "NewtonCfg.debug_capture")
+    _validate_pattern_fields(
+        capture,
+        "NewtonCfg.debug_capture",
+        "detect_nonfinite_include_fields",
+        "detect_nonfinite_exclude_fields",
+    )
+    _validate_detect_nonfinite_in(capture)
+    if use_cuda_graph and (capture.capture_per_substep or replay.enabled or capture.record_operations):
+        raise ValueError(
+            "Newton debug_capture.capture_per_substep, debug_capture.replay.enabled, and "
+            "debug_capture.record_operations are not CUDA graph safe. Set NewtonCfg.use_cuda_graph=False "
+            "or disable those debug_capture options."
+        )
 
 @configclass
 class NewtonCfg(PhysicsCfg):
@@ -334,12 +618,12 @@ class NewtonCfg(PhysicsCfg):
     ``"lbvh"`` / ``"sah"`` / ``"cubql"`` trade-off.
     """
 
-    nan_replay: NanReplayCfg | None = None
-    """NaN replay debug buffer configuration.
+    debug_capture: NewtonDebugCaptureCfg | None = None
+    """Strict physics debug capture configuration.
 
-    Set to a :class:`NanReplayCfg` instance to enable the rolling state buffer
-    and automatic NaN detection / export.  ``None`` (default) disables the
-    debug buffer entirely (zero overhead).
+    Set to :class:`NewtonDebugCaptureCfg` to enable rolling state history,
+    non-finite incident artifacts, and optional transition replay. ``None``
+    disables capture and its runtime overhead.
     """
 
     def __post_init__(self):
@@ -359,6 +643,8 @@ class NewtonCfg(PhysicsCfg):
             self.solver_cfg = MJWarpSolverCfg()
 
         self.class_type = self.solver_cfg.class_type
+
+        _validate_debug_capture_cfg(self.debug_capture, self.use_cuda_graph)
 
         # Mid-tick re-collide is silently disabled when collision_decimation >= num_substeps.
         if self.collision_decimation > 0 and self.collision_decimation >= self.num_substeps:

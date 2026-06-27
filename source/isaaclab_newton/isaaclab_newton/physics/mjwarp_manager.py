@@ -120,6 +120,29 @@ class NewtonMJWarpManager(NewtonManager):
         cls._solver.reset(cls._state_0, world_mask=world_mask, flags=0)
 
     @classmethod
+    def _prepare_debug_capture_providers(cls) -> None:
+        """Reject stale Newton contact mirrors for internal MJWarp collision."""
+        super()._prepare_debug_capture_providers()
+        cfg = PhysicsManager._cfg
+        capture_cfg = cfg.debug_capture if cfg is not None else None
+        if cls._needs_collision_pipeline or capture_cfg is None:
+            return
+        requested_flags: list[str] = []
+        if capture_cfg.record_contacts:
+            requested_flags.append("debug_capture.record_contacts")
+        if capture_cfg.replay.record_contacts:
+            requested_flags.append("debug_capture.replay.record_contacts")
+        if requested_flags:
+            raise ValueError(
+                "Internal MJWarp contact buffers are sensor-reporting mirrors and are not live at "
+                "incident capture cadence. Disable "
+                + " and ".join(requested_flags)
+                + "; use debug_capture.record_solver for solver.mjw_data.contact and "
+                "debug_capture.record_operations (or replay.record_operations for transition history) "
+                "for the built-in MJWarp CollisionContext."
+            )
+
+    @classmethod
     def _log_solver_debug(cls) -> None:
         """Optionally log MuJoCo solver convergence at the end of step."""
         cfg = PhysicsManager._cfg

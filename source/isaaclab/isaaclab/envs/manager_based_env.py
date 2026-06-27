@@ -16,6 +16,7 @@ import torch
 
 from isaaclab.app.loading_screen import report_activity
 from isaaclab.managers import ActionManager, EventManager, ObservationManager, RecorderManager
+from isaaclab.physics import PhysicsManager
 from isaaclab.scene import InteractiveScene
 from isaaclab.sim import SimulationContext
 from isaaclab.sim.utils.stage import use_stage
@@ -121,15 +122,31 @@ class ManagerBasedEnv:
             self.sim: SimulationContext = SimulationContext.instance()
             created_sim = False
 
+        # Register workflow-owned diagnostic state before the first simulator
+        # reset so physics backends can bind a complete debug schema while the
+        # solver is initialized.
         # From this point on, if __init__ fails we must tear down the SimulationContext
         # singleton (only if we created it) so callers can retry or proceed.
+        debug_context_providers_before = dict(PhysicsManager._debug_context_providers)
         try:
+            self._register_physics_debug_context()
             self._init_sim()
         except Exception:
-            if created_sim:
-                self.sim.clear_instance()
+            try:
+                if created_sim:
+                    self.sim.clear_instance()
+            finally:
+                PhysicsManager._debug_context_providers = debug_context_providers_before
             raise
         self._is_closed = False
+
+    def _register_physics_debug_context(self) -> None:
+        """Register workflow values that physics diagnostics should record.
+
+        Subclasses can register lazy providers through the physics manager.
+        This hook runs after simulation context construction and before the
+        first simulator reset.
+        """
 
     def _init_sim(self):
         """Complete environment initialization after the SimulationContext is created.

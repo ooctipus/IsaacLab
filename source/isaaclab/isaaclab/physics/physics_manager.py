@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -22,6 +23,8 @@ if TYPE_CHECKING:
     from isaaclab.sim.simulation_context import SimulationContext
 
 logger = logging.getLogger(__name__)
+
+_DEBUG_CONTEXT_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 class PhysicsEvent(Enum):
@@ -86,6 +89,7 @@ class PhysicsManager(ABC):
     _sim_time: ClassVar[float] = 0.0
     _callbacks: ClassVar[dict[int, tuple[Any, Callable, int, str | None, Any]]] = {}
     _callback_id: ClassVar[int] = 0
+    _debug_context_providers: ClassVar[dict[str, Callable[[], Any]]] = {}
 
     @classmethod
     def _prepare_stage_creation(cls) -> None:
@@ -279,6 +283,84 @@ class PhysicsManager(ABC):
         cls._callbacks.clear()
 
     @classmethod
+    def set_debug_context_provider(
+        cls,
+        name: str,
+        provider: Callable[[], Any],
+        *,
+        replace: bool = False,
+    ) -> None:
+        """Register a lazily resolved workflow value for physics diagnostics.
+
+        Args:
+            name: Stable snake-case archive field name.
+            provider: No-argument callable returning the current value.
+            replace: Whether to replace an existing provider with the same name.
+
+        Raises:
+            TypeError: If ``name``, ``provider``, or ``replace`` has an invalid type.
+            ValueError: If ``name`` is not snake case or already exists.
+        """
+        if not isinstance(name, str):
+            raise TypeError("Debug context provider name must be a string.")
+        if _DEBUG_CONTEXT_NAME_PATTERN.fullmatch(name) is None:
+            raise ValueError(f"Debug context provider name {name!r} must be lower snake case and start with a letter.")
+        if not callable(provider):
+            raise TypeError(f"Debug context provider {name!r} must be callable.")
+        if not isinstance(replace, bool):
+            raise TypeError("Debug context provider replace must be a bool.")
+        if name in PhysicsManager._debug_context_providers and not replace:
+            raise ValueError(f"Debug context provider {name!r} is already registered.")
+        PhysicsManager._debug_context_providers[name] = provider
+
+    @classmethod
+    def get_debug_context(cls) -> dict[str, Any]:
+        """Resolve every registered workflow diagnostic value.
+
+        Returns:
+            Values keyed by stable provider name.
+
+        Raises:
+            RuntimeError: If a provider raises or returns ``None``.
+        """
+        values: dict[str, Any] = {}
+        for name, provider in sorted(PhysicsManager._debug_context_providers.items()):
+            try:
+                value = provider()
+            except Exception as exc:
+                raise RuntimeError(f"Debug context provider {name!r} failed: {exc}") from exc
+            if value is None:
+                raise RuntimeError(f"Debug context provider {name!r} returned None.")
+            values[name] = value
+        return values
+
+    @classmethod
+    def remove_debug_context_provider(cls, name: str) -> None:
+        """Remove one registered workflow diagnostic provider.
+
+        Args:
+            name: Exact registered provider name.
+
+        Raises:
+            TypeError: If ``name`` is not a string.
+            ValueError: If ``name`` is not lower snake case.
+            KeyError: If no provider is registered under ``name``.
+        """
+        if not isinstance(name, str):
+            raise TypeError("Debug context provider name must be a string.")
+        if _DEBUG_CONTEXT_NAME_PATTERN.fullmatch(name) is None:
+            raise ValueError(f"Debug context provider name {name!r} must be lower snake case and start with a letter.")
+        try:
+            del PhysicsManager._debug_context_providers[name]
+        except KeyError as exc:
+            raise KeyError(f"Debug context provider {name!r} is not registered.") from exc
+
+    @classmethod
+    def clear_debug_context_providers(cls) -> None:
+        """Remove all workflow diagnostic providers."""
+        PhysicsManager._debug_context_providers.clear()
+
+    @classmethod
     def _wrap_weak_ref(cls, callback: Callable) -> Callable:
         """Wrap bound methods with weak references to prevent leaks.
 
@@ -362,6 +444,7 @@ class PhysicsManager(ABC):
         PhysicsManager._cfg = sim_context.cfg.physics
         PhysicsManager._device = sim_context.cfg.device
         PhysicsManager._sim_time = 0.0
+        PhysicsManager._debug_context_providers = {}
 
         # Synchronize the process-wide CUDA device before backend-specific
         # initialization allocates state. PyTorch must select the device before
@@ -460,6 +543,7 @@ class PhysicsManager(ABC):
                 PhysicsManager._sim = None
                 PhysicsManager._cfg = None
                 PhysicsManager._sim_time = 0.0
+                PhysicsManager._debug_context_providers = {}
 
         if callback_errors:
             raise RuntimeError(

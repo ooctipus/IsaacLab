@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 
 import warp as wp
-from newton import Model, eval_fk
+from newton import Model, ModelBuilder, eval_fk
 from newton.solvers import SolverKamino
 
 from isaaclab.physics import PhysicsManager
@@ -56,6 +56,36 @@ class NewtonKaminoManager(NewtonManager):
 
     # Annotate the concrete solver type.
     _solver: SolverKamino
+
+    @classmethod
+    def _register_builder_attributes(cls, builder: ModelBuilder) -> None:
+        """Register Kamino state arrays before the Newton model is finalized.
+
+        Kamino otherwise allocates body_f_total, joint_q_prev, and
+        joint_lambdas lazily while adapting the first solver state. Eager
+        registration keeps both simulation states and the recorder's strict
+        initialization-time schema stable. Newton validates duplicate
+        registrations, so this hook remains idempotent across builder setup and
+        simulation start.
+
+        Args:
+            builder: Newton model builder receiving Kamino's custom attributes.
+        """
+        SolverKamino.register_custom_attributes(builder)
+
+    @classmethod
+    def _prepare_debug_capture_providers(cls) -> None:
+        """Materialize Kamino's lazy control and detector provider schema.
+
+        SolverKamino.step initializes its control aliases and active detector on
+        first use. Bind them here with the same objects, without solving, so the
+        recorder sees the complete stable schema at initialization.
+        """
+        solver = cls._solver
+        if not isinstance(solver, SolverKamino):
+            raise RuntimeError("NewtonKaminoManager requires a SolverKamino provider.")
+        solver._control_kamino.from_newton(cls._control, solver._model_kamino)
+        solver._detector = solver._collision_detector_kamino if solver._config.use_collision_detector else None
 
     @classmethod
     def _get_kamino_solver_cfg(cls) -> _KaminoSolverCfgBase:
