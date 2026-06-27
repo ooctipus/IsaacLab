@@ -179,27 +179,27 @@ USER isaaclab
 
 # Install Isaac Lab and its dependencies with uv, as the non-root user so the
 # venv is created already-owned (see the chown note above). The venv is built on
-# the Isaac Sim bundled interpreter (so the ABI matches the native libs Isaac Sim
-# loads at runtime) but WITHOUT --system-site-packages. This keeps the venv's only
-# Python-side USD the pip ``usd-core`` (OpenUSD) that uv installs; Isaac Sim's
-# ``isaacsim``/``omni`` are exposed at run time via ``isaaclab.sh`` sourcing
-# ``setup_*_env.sh`` (PYTHONPATH), mirroring the local source setup. Crucially,
-# this avoids folding Isaac Sim's bundled ``pxr`` into the venv alongside the pip
-# ``usd-core`` -- two USD builds in one process re-register USD/Tf C++ types and
-# crash (``No to_python converter for ...UsdTimeCode``). ``UV_PYTHON_PREFERENCE=system``
-# lets uv use the bundled interpreter despite ``python-preference = "only-managed"``;
-# ``--frozen`` installs exactly what ``uv.lock`` pins; ``--inexact`` keeps uv from
-# pruning the manually pip-installed arm64 build deps below. On arm64, nlopt
-# 2.6.2 (pinned via isaacteleop) has no wheel and is built with --no-build-isolation.
+# uv's own managed CPython 3.12 (NOT the Isaac Sim bundled interpreter) and
+# WITHOUT --system-site-packages. CPython 3.12 is ABI-stable across patch
+# releases, so Isaac Sim's ``cp312`` native extensions (``isaacsim``/``omni``,
+# exposed at run time via ``isaaclab.sh`` sourcing ``setup_*_env.sh`` on
+# PYTHONPATH) load fine on the managed interpreter -- this mirrors the working
+# local source setup. Building the venv on the bundled interpreter instead makes
+# ``uv sync`` lay down a mixed ``pxr``: ``usd-core`` and ``usd-exchange`` both
+# ship a ``pxr/`` tree and clobber each other's shared objects in an order that
+# links ``pxr.Usd`` against one USD build and ``pxr.UsdGeom`` against another, so
+# importing them together re-registers USD/Tf C++ types and crashes with
+# ``No to_python converter for ...UsdTimeCode``. ``--frozen`` installs exactly
+# what ``uv.lock`` pins; ``--inexact`` keeps uv from pruning the manually
+# pip-installed arm64 build deps below. On arm64, nlopt 2.6.2 (pinned via
+# isaacteleop) has no wheel and is built with --no-build-isolation.
 RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/uv,uid=1000,gid=1000 \
     cd ${ISAACLAB_PATH} && \
-    UV_PYTHON_PREFERENCE=system \
-    uv venv --python ${ISAACSIM_ROOT_PATH}/kit/python/bin/python3 ${ISAACLAB_PATH}/.venv && \
+    uv venv --python 3.12 ${ISAACLAB_PATH}/.venv && \
     if [ "$(dpkg --print-architecture)" = "arm64" ]; then \
         uv pip install setuptools wheel numpy && \
         uv pip install --no-build-isolation nlopt==2.6.2; \
     fi && \
-    UV_PYTHON_PREFERENCE=system \
     uv sync --frozen --inexact
 
 # Isaac Sim's pip prebundle can appear before the project venv on PYTHONPATH
