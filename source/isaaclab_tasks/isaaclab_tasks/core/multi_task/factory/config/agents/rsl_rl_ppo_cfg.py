@@ -31,12 +31,12 @@ _FACTORY_PPO_KWARGS: dict[str, Any] = dict(
     num_mini_batches=4,
     learning_rate=1.0e-4,
     schedule="adaptive",
-    gamma=0.99,
-    lam=0.92,
+    gamma=0.999,
+    lam=0.85,
     desired_kl=0.01,
     max_grad_norm=1.0,
-    optimizer=preset(default="adam", adamw="adamw", adam="adam"),
-    weight_decay=preset(default=0.0, adamw=0.01, adam=0.0),
+    optimizer=preset(default="adamw", adamw="adamw", adam="adam"),
+    weight_decay=preset(default=0.01, adamw=0.01, adam=0.0),
 )
 
 

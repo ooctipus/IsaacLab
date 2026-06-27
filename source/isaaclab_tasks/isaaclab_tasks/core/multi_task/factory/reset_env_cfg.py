@@ -24,7 +24,13 @@ from isaaclab_tasks.utils import preset
 
 FACTORY_RESET_SAMPLER_PRESETS = preset(
     default=SamplerCfg(
-        strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=2.0, weight=1.0, success_rate_bind="success_rates")],
+        strategies=[
+            BetaSamplingStrategyCfg(target=0.5, kappa=1.0, weight=1.0, success_rate_bind="success_rates"),
+            ValueShiftSamplingStrategyCfg(
+                weight=0.05,
+                obs_cache_bind="env.command_manager.get_term('reset_state').get_spawn_obs_cache()",
+            ),
+        ],
         eps=1e-3,
     ),
     uniform=SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=1.0)], eps=0.0),

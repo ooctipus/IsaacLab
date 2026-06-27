@@ -409,7 +409,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     terminations: FactoryTerminationsCfg = FactoryTerminationsCfg()
     rewards: FactoryRewardsCfg = FactoryRewardsCfg()
     curriculum: FactoryCurriculumsCfg = FactoryCurriculumsCfg()
-    viewer: ViewerCfg = ViewerCfg(eye=((3.5, 1.0, 0.35)), lookat=(0.0, 1.0, 0.35))
+    viewer: ViewerCfg = ViewerCfg(eye=((2.5, 0.0, 0.35)), lookat=(0.0, 0.0, 0.35))
     actions: RobotActionsCfg = RobotActionsCfg()  # type: ignore
     commands: FactoryCommandsCfg = FactoryCommandsCfg()
 
