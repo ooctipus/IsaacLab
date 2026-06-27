@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_DEBUG_CONTEXT_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+
 
 class PhysicsEvent(Enum):
     """Physics simulation lifecycle events.

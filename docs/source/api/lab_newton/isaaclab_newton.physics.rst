@@ -15,6 +15,10 @@
     NewtonBackendCfg
     NewtonBuilderCfg
     NewtonSoftContactCfg
+    MJWarpDebugOperationProvider
+    ReplayAdapter
+    ReplayCapability
+    ReplayRequest
     NewtonCollisionPipelineCfg
     NewtonShapeCfg
     NewtonSolver
@@ -117,6 +121,16 @@ Physics Configuration
 .. autofunction:: create_newton_builder
 
 .. autoclass:: NewtonSoftContactCfg
+  :members:
+  :show-inheritance:
+  :exclude-members: __init__
+
+.. autoclass:: NewtonDebugCaptureCfg
+  :members:
+  :show-inheritance:
+  :exclude-members: __init__
+
+.. autoclass:: NewtonDebugReplayCfg
   :members:
   :show-inheritance:
   :exclude-members: __init__

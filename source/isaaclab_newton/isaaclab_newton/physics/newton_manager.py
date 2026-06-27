@@ -40,7 +40,7 @@ from .newton_backend import NewtonBackend, NewtonCloneRecord, SiteEntry
 from .newton_builder import create_builder
 from .newton_scene_data import NewtonSceneDataBackend
 
-from .debug_state_buffer import DebugStateBuffer
+from ._incident_recorder import PhysicsIncidentRecorder, _OperationProviderCleanupError
 
 if TYPE_CHECKING:
     from isaaclab.assets import BaseArticulation
@@ -48,6 +48,7 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+_DEBUG_INCIDENT_TRIGGER_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 
 
 def create_newton_builder(cfg: NewtonBuilderCfg) -> ModelBuilder:
