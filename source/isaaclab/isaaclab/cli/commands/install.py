@@ -603,7 +603,14 @@ def _install_isaaclab_submodules(isaaclab_submodules: list[str]) -> None:
             print_warning(f"Submodule directory not found or missing pyproject.toml: {item}")
             continue
         print_info(f"Installing submodule: {pkg_name}")
-        run_command(pip_cmd + ["install", "--editable", str(item)])
+        # ``--upgrade --upgrade-strategy only-if-needed`` makes ``pip install -e``
+        # actually re-resolve transitive deps that no longer satisfy the package's
+        # pins (e.g. after bumping ``warp-lang`` in ``setup.py`` on top of an
+        # existing image). Without this flag pip silently keeps the stale version
+        # installed and only emits a post-install conflict warning. ``only-if-needed``
+        # keeps satisfying versions untouched (avoids churning numpy/pillow/
+        # etc. that come bundled with Isaac Sim's kit python).
+        run_command(pip_cmd + ["install", "--upgrade", "--upgrade-strategy", "only-if-needed", "--editable", str(item)])
         _upgrade_extension_pip_dependencies(
             python_exe,
             pip_cmd,
@@ -697,26 +704,29 @@ def _install_extra_feature(feature_name: str, selector: str = "") -> None:
     python_exe = extract_python_exe()
     pip_cmd = get_pip_command(python_exe)
     source_dir = ISAACLAB_ROOT / "source"
+    upgrade_flags = ["--upgrade", "--upgrade-strategy", "only-if-needed"]
 
     if feature_name == "contrib":
         _install_contrib_extra_dependencies(selector)
     elif feature_name == "newton":
         if selector:
             print_warning(f"'newton' does not support selectors (got '{selector}'). Installing all newton extras.")
-        print_info(
-            "Installing newton extras (newton[sim], pyglet, PyOpenGL-accelerate, imgui-bundle, typing-extensions)..."
-        )
-        run_command(pip_cmd + ["install", "--editable", f"{source_dir}/isaaclab_newton[all]"])
-        run_command(pip_cmd + ["install", "--editable", f"{source_dir}/isaaclab_physx[newton]"])
-        run_command(pip_cmd + ["install", "--editable", f"{source_dir}/isaaclab_visualizers[newton]"])
+        print_info("Installing newton extras (newton[sim], PyOpenGL-accelerate, imgui-bundle, typing-extensions)...")
+        run_command(pip_cmd + ["install", *upgrade_flags, "--editable", f"{source_dir}/isaaclab_newton[all]"])
+        run_command(pip_cmd + ["install", *upgrade_flags, "--editable", f"{source_dir}/isaaclab_physx[newton]"])
+        run_command(pip_cmd + ["install", *upgrade_flags, "--editable", f"{source_dir}/isaaclab_visualizers[newton]"])
     elif feature_name == "rl":
         extra = selector if selector else "all"
         print_info(f"Installing RL framework extras: {extra}...")
-        run_command(pip_cmd + ["install", "--editable", f"{source_dir}/isaaclab_rl[{extra}]"])
+        run_command(pip_cmd + ["install", *upgrade_flags, "--editable", f"{source_dir}/isaaclab_rl[{extra}]"])
+        # Override rsl-rl with local editable copy if present.
+        local_rsl_rl = os.path.join(ISAACLAB_ROOT, "dep", "rsl_rl")
+        if os.path.isdir(local_rsl_rl):
+            run_command(pip_cmd + ["install", *upgrade_flags, "--editable", local_rsl_rl])
     elif feature_name == "visualizer":
         extra = selector if selector else "all"
         print_info(f"Installing visualizer extras: {extra}...")
-        run_command(pip_cmd + ["install", "--editable", f"{source_dir}/isaaclab_visualizers[{extra}]"])
+        run_command(pip_cmd + ["install", *upgrade_flags, "--editable", f"{source_dir}/isaaclab_visualizers[{extra}]"])
     elif feature_name == "ov":
         _install_ov_extra_dependencies(selector)
     else:

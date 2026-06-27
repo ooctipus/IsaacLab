@@ -142,6 +142,8 @@ def run(argv: list[str]) -> None:
         print(f"Exact experiment name requested from command line: {log_dir}")
         if agent_cfg.run_name:
             log_dir += f"_{agent_cfg.run_name}"
+        if args_cli.workflow_id:
+            log_dir += f"_{args_cli.workflow_id}"
         log_dir = os.path.join(log_root_path, log_dir)
 
         configure_io_descriptors(env_cfg, args_cli, logger)
