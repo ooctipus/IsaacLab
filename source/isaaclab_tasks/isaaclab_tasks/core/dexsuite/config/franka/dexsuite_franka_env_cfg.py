@@ -7,12 +7,13 @@ from isaaclab.assets import ArticulationCfg
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import CameraCfg, ContactSensorCfg
-from isaaclab.utils.configclass import configclass
-from isaaclab_tasks.utils import preset
 from isaaclab.sim import MeshConeCfg, MeshSphereCfg
+from isaaclab.utils.configclass import configclass
+
+from isaaclab_tasks.utils import preset
 
 from isaaclab_assets.robots import FRANKA_PANDA_CFG
-from isaaclab_assets.robots.franka import PHYSX_ACTUATOR_CFG, NEWTON_ACTUATOR_CFG
+from isaaclab_assets.robots.franka import NEWTON_ACTUATOR_CFG, PHYSX_ACTUATOR_CFG
 
 from ... import dexsuite_env_cfg as dexsuite
 from ... import mdp
@@ -31,8 +32,9 @@ def _spawn_franka_with_finger_equality(prim_path, cfg, translation=None, orienta
     inside the instanceable link prims), so they are editable directly - no de-instancing needed
     (de-instancing breaks the finger contact sensors).
     """
-    import isaaclab.sim as sim_utils  # noqa: PLC0415
     from pxr import Sdf, Usd  # noqa: PLC0415
+
+    import isaaclab.sim as sim_utils  # noqa: PLC0415
 
     prim = sim_utils.spawn_from_usd(prim_path, cfg, translation, orientation, **kwargs)
     for root in sim_utils.find_matching_prims(prim_path):
@@ -118,7 +120,7 @@ class FrankaReorientRewardCfg(dexsuite.RewardsCfg):
 
 @configclass
 class FrankaMixinCfg:
-    scene: FrankaSceneCfg = FrankaSceneCfg(num_envs=4096, env_spacing=3, replicate_physics=True)
+    scene: FrankaSceneCfg = FrankaSceneCfg(num_envs=4096, env_spacing=0, replicate_physics=True)
     rewards: FrankaReorientRewardCfg = FrankaReorientRewardCfg()
     observations: StateObservationCfg = StateObservationCfg()
     actions: FrankaRelJointPosActionCfg = FrankaRelJointPosActionCfg()

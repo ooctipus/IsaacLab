@@ -7,6 +7,8 @@ from dataclasses import MISSING
 
 from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
 from isaaclab_physx.physics import PhysxCfg
+from isaaclab_visualizers.newton import NewtonVisualizerCfg
+from isaaclab_visualizers.kit import KitVisualizerCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
@@ -24,7 +26,7 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 from isaaclab.utils.noise import UniformNoiseCfg as Unoise
 
-from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils import PresetCfg, preset
 
 from . import mdp
 from .adr_curriculum import CurriculumCfg
@@ -455,8 +457,8 @@ class DexsuiteReorientEnvCfg(ManagerBasedEnvCfg):
     """Dexsuite reorientation task definition, also the base definition for derivative Lift task and evaluation task"""
 
     # Scene settings
-    viewer: ViewerCfg = ViewerCfg(eye=(-2.25, 0.0, 0.75), lookat=(0.0, 0.0, 0.45), origin_type="env")
-    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=3, replicate_physics=True)
+    viewer: ViewerCfg = ViewerCfg(eye=(-2.25, 0.0, 0.75), lookat=(0.0, 0.0, 0.45), origin_type="env", env_index=0)
+    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=0, replicate_physics=True)
     # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
@@ -495,6 +497,26 @@ class DexsuiteReorientEnvCfg(ManagerBasedEnvCfg):
         self.commands.object_pose.position_only = False
         self.episode_length_s = 6.0
         self.is_finite_horizon = False
+        self.sim.visualizer_cfgs = preset(  # type: ignore
+            default=[KitVisualizerCfg(
+                headless=True,
+                visible_env_indices=[0, 1],
+                eye=(-2.25, 0.0, 0.75),
+                lookat=(0.0, 0.0, 0.45),
+            )],
+            newton_mjwarp=[NewtonVisualizerCfg(
+                # headless=True,
+                eye=(-1.75, 0.0, 0.75),
+                lookat=(0.0, 0.0, 0.45),
+                visible_env_indices=[0, 1],
+            )],
+            physx=[KitVisualizerCfg(
+                headless=True,
+                visible_env_indices=[0, 1],
+                eye=(-2.25, 0.0, 0.75),
+                lookat=(0.0, 0.0, 0.45),
+            )]
+        )
 
         # simulation settings
         self.sim.dt = 1 / 120
