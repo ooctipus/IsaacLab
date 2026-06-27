@@ -345,7 +345,7 @@ class EventCfg:
         func=mdp.reset_joints_by_offset,
         mode="reset",
         params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names="iiwa7_joint_7"),
+            "asset_cfg": SceneEntityCfg("robot", joint_names="wrist"),
             "position_range": [-3, 3],
             "velocity_range": [0.0, 0.0],
         },
@@ -365,14 +365,14 @@ class RewardsCfg:
 
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-0.005)
 
-    fingers_to_object = RewTerm(func=mdp.object_ee_distance, params={"std": 0.4}, weight=1.0)
+    fingers_to_object = RewTerm(func=mdp.object_ee_distance, params={"std": 0.4}, weight=0.25)
 
     position_tracking = RewTerm(
         func=mdp.position_command_error_tanh,
         weight=2.0,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
-            "std": 0.2,
+            "std": 0.1,
             "command_name": "object_pose",
             "align_asset_cfg": SceneEntityCfg("object"),
         },
@@ -394,7 +394,7 @@ class RewardsCfg:
         weight=10,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
-            "pos_std": 0.1,
+            "pos_std": 0.05,
             "rot_std": 0.5,
             "command_name": "object_pose",
             "align_asset_cfg": SceneEntityCfg("object"),
@@ -413,7 +413,7 @@ class TerminationsCfg:
     object_out_of_bound = DoneTerm(
         func=mdp.out_of_bound,
         params={
-            "in_bound_range": {"x": (-1.5, 0.5), "y": (-2.0, 2.0), "z": (0.0, 2.0)},
+            "in_bound_range": {"x": (-1.5, 0.5), "y": (-2.0, 2.0), "z": (0.3, 2.0)},
             "asset_cfg": SceneEntityCfg("object"),
         },
     )

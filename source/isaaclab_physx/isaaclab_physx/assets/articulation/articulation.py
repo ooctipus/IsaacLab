@@ -3867,7 +3867,18 @@ class Articulation(BaseArticulation):
             resolve_kwargs = {"predicate": has_articulation_root_api, "expected_num_matches": 1}
             _, root_prim_path_expr = resolve_matching_prims_from_source(self.cfg.prim_path, **resolve_kwargs)[0]
         # -- articulation
-        self._root_view = self._physics_sim_view.create_articulation_view(root_prim_path_expr.replace(".*", "*"))
+        # HACK (fixed_dof partitions): a root expr with TWO wildcards (env dim + sub-asset dim, e.g.
+        # ``env_*/Keyboard/parts/part_*``) does not form a single articulation view. Expand the inner
+        # wildcard into an explicit list of single-(env)-wildcard patterns and pass the list
+        # (``create_articulation_view`` accepts a list of patterns).
+        view_glob = root_prim_path_expr.replace(".*", "*")
+        if view_glob.count("*") > 1:
+            from isaaclab.sim.utils.queries import find_matching_prim_paths
+
+            leaf_names = sorted({p.rsplit("/", 1)[-1] for p in find_matching_prim_paths(root_prim_path_expr)})
+            base_glob = view_glob.rsplit("/", 1)[0]
+            view_glob = [f"{base_glob}/{leaf}" for leaf in leaf_names]
+        self._root_view = self._physics_sim_view.create_articulation_view(view_glob)
 
         # check if the articulation was created
         if self.root_view._backend is None:

@@ -15,13 +15,79 @@ Reference: https://github.com/frankaemika/franka_ros
 """
 
 import isaaclab.sim as sim_utils
-from isaaclab.actuators import ImplicitActuatorCfg
+from isaaclab.actuators import ActuatorBaseCfg, ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 
 ##
 # Configuration
 ##
+
+
+PHYSX_ACTUATOR_CFG: dict[str, ActuatorBaseCfg] = {
+    "panda_shoulder": ImplicitActuatorCfg(
+        joint_names_expr=["panda_joint[1-4]"],
+        effort_limit_sim=87.0,
+        stiffness=80.0,
+        damping=4.0,
+        armature=1e-3,
+    ),
+    "panda_forearm": ImplicitActuatorCfg(
+        joint_names_expr=["panda_joint[5-7]"],
+        effort_limit_sim=12.0,
+        stiffness=80.0,
+        damping=4.0,
+        armature=1e-3,
+    ),
+    "panda_hand": ImplicitActuatorCfg(
+        joint_names_expr=["panda_finger_joint.*"],
+        effort_limit_sim=200.0,
+        stiffness=2e3,
+        damping=1e2,
+    ),
+}
+
+
+NEWTON_ACTUATOR_CFG: dict[str, ActuatorBaseCfg] = {
+    "panda_joint12": ImplicitActuatorCfg(
+        joint_names_expr=["panda_joint[1-2]"],
+        effort_limit_sim=87.0,
+        velocity_limit_sim=2.618,
+        stiffness=4500.0,
+        damping=450.0,
+        armature=0.1,
+    ),
+    "panda_joint34": ImplicitActuatorCfg(
+        joint_names_expr=["panda_joint[3-4]"],
+        effort_limit_sim=87.0,
+        velocity_limit_sim=2.618,
+        stiffness=3500.0,
+        damping=350.0,
+        armature=0.1,
+    ),
+    "panda_forearm": ImplicitActuatorCfg(
+        joint_names_expr=["panda_joint[5-7]"],
+        effort_limit_sim=12.0,
+        velocity_limit_sim=5.253,
+        stiffness=2000.0,
+        damping=200.0,
+        armature=0.1,
+    ),
+    "panda_hand": ImplicitActuatorCfg(
+        joint_names_expr=["panda_finger_joint.*"],
+        # MuJoCo Menagerie drives the coupled Panda fingers with one tendon actuator
+        # using kp=100 N/m, kd=10 N*s/m, and force limits of +/-100 N on the
+        # split tendon. With 0.5 tendon coefficients on both finger joints, the
+        # independent-joint approximation is half those values per finger.
+        effort_limit_sim=50.0,
+        stiffness=50.0,
+        damping=5.0,
+        armature=0.1,
+        # Keep the watchdog above the real-hardware USD velocity limit; the MuJoCo
+        # reference model does not enforce that limit for simulated gripper commands.
+        velocity_limit_sim=5.0,
+    ),
+}
 
 FRANKA_PANDA_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
@@ -48,28 +114,7 @@ FRANKA_PANDA_CFG = ArticulationCfg(
             "panda_finger_joint.*": 0.04,
         },
     ),
-    actuators={
-        "panda_shoulder": ImplicitActuatorCfg(
-            joint_names_expr=["panda_joint[1-4]"],
-            effort_limit_sim=87.0,
-            stiffness=80.0,
-            damping=4.0,
-            armature=1e-3,
-        ),
-        "panda_forearm": ImplicitActuatorCfg(
-            joint_names_expr=["panda_joint[5-7]"],
-            effort_limit_sim=12.0,
-            stiffness=80.0,
-            damping=4.0,
-            armature=1e-3,
-        ),
-        "panda_hand": ImplicitActuatorCfg(
-            joint_names_expr=["panda_finger_joint.*"],
-            effort_limit_sim=200.0,
-            stiffness=2e3,
-            damping=1e2,
-        ),
-    },
+    actuators=PHYSX_ACTUATOR_CFG,
     soft_joint_pos_limit_factor=1.0,
 )
 """Configuration of Franka Emika Panda robot."""
