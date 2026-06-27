@@ -17,6 +17,7 @@ __all__ = [
     "KaminoPADMMSolverCfg",
     "MPMSolverCfg",
     "MJWarpSolverCfg",
+    "NanReplayCfg",
     "NewtonCfg",
     "NewtonCollisionPipelineCfg",
     "NewtonFeatherstoneManager",
@@ -54,6 +55,7 @@ from .mpm_manager_cfg import MPMSolverCfg
 from .newton_collision_cfg import HydroelasticSDFCfg, NewtonCollisionPipelineCfg
 from .newton_manager import NewtonManager
 from .newton_manager_cfg import (
+    NanReplayCfg,
     NewtonCfg,
     NewtonShapeCfg,
     NewtonSoftContactCfg,
