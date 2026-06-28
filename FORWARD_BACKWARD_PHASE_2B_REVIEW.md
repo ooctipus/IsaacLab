@@ -191,7 +191,7 @@ and **0.30% duration**. Additional Torch allocation is **4.322 MiB**. The
 explicit dense payload lower bound is 3.903 MiB:
 
 ```text
-1024 × (928 observation + 36 qpos + 35 qvel) × 4 bytes + 1024 validity bits/bytes
+1024 × (928 observation + 36 qpos + 35 qvel) × 4 bytes + 1024 validity bytes
 ```
 
 The measured excess over that payload is approximately 0.42 MiB. This is close
@@ -270,6 +270,8 @@ gate; that remains a later correct-terminal comparison.
 | RSL-RL pre-commit, all files before and after commit | all hooks passed |
 | BFM adapter Ruff | passed; 9 files formatted |
 | Meta adapter Ruff | passed; 8 files formatted |
+| Isaac Phase 2B files, all configured hooks | passed |
+| Isaac all-files hook | attempted; blocked by unrelated cloner/contact-sensor lint and pre-existing golden-image LFS pointer errors |
 
 ## Retained failure and correction ledger
 
