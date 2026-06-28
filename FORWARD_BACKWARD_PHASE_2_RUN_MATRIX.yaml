@@ -1,0 +1,107 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+schema: forward_backward_phase2_run_matrix_v1
+status: pending_phase_2a_review
+candidate:
+  repository: /home/zhengyuz/Projects/rsl_rl
+  commit: af2105f58184331a68ae7d419233ea9277f19ed2
+artifact_root: /home/zhengyuz/Projects/forward_backward_phase2_runs
+
+hardware:
+  local:
+    gpus: 2
+    model: NVIDIA GeForce RTX 5090
+    usable_gib_per_gpu: 31.3566
+    bfm_full_shape_eligible: false
+  bfm_required:
+    minimum_device_gib: 48
+    reason: >-
+      Native 1,024-environment BFM adds 8.213 GiB beyond its starting CUDA
+      context. Together with the measured 25.2188 GiB learner peak, the
+      projected co-resident footprint is 33.432 GiB before safety margin.
+    required_headroom_fraction: 0.15
+
+meta:
+  reference_seeds: [0, 1, 2]
+  candidate_seeds: [0, 1, 2]
+  short:
+    transitions: 500000
+    reference_seeds: [0]
+    candidate_seeds: [0]
+    evaluation_transitions: [500000]
+  pilot:
+    transitions: 1500000
+    reference_seeds: [0, 1, 2]
+    candidate_seeds: [0, 1, 2]
+    evaluation_transitions: [500000, 1000000, 1500000]
+  full:
+    transitions: 5000000
+    reference_seeds_to_run: [1, 2]
+    candidate_seeds: [0, 1, 2]
+    evaluation_transitions: [500000, 1000000, 1500000, 2000000, 2500000, 3000000, 3500000, 4000000, 4500000]
+  measured_reference_full_hours: 2.627
+  measured_native_env_edge_positions_per_second: 8630.797
+
+bfm:
+  native_reference_seed: 4728
+  pilot_seeds: [4728, 4729, 4730]
+  num_envs: 1024
+  updates_per_vector_step: 16
+  terminal_profiles:
+    native_reference: source_reproduction_only
+    correct_terminal: matched_source_and_candidate
+  short:
+    transitions: 9600000
+    reference_seeds: [4728]
+    candidate_seeds: [4728]
+    evaluation_transitions: [9600000]
+  pilot:
+    transitions: 28800000
+    reference_seeds: [4728, 4729, 4730]
+    candidate_seeds: [4728, 4729, 4730]
+    evaluation_transitions: [9600000, 19200000, 28800000]
+  full:
+    transitions: 211200000
+    reference_seeds: [4728]
+    candidate_seeds: [4728]
+    evaluation_stride: 9600000
+  measured:
+    native_env_vector_steps_per_second: 23.0777
+    native_env_incremental_gib: 8.213
+    source_hours:
+      short: 6.791
+      pilot_per_seed: 20.342
+      full: 149.580
+    candidate_optimistic_hours:
+      short: 9.074
+      pilot_per_seed: 27.223
+      full: 199.638
+    candidate_budget_hours_with_20_percent_contingency:
+      short: 10.889
+      pilot_per_seed: 32.668
+      full: 239.566
+    paired_budget_gpu_hours:
+      short: 17.680
+      pilot_all_seeds: 159.030
+      full: 389.146
+
+storage:
+  currently_available_gib: 139.64
+  minimum_free_gib_before_bfm_training: 80
+  policy:
+    - Evaluation runs inline at the frozen transition grid; per-motion numeric rows are immutable.
+    - Full learner/replay checkpoints are rolling recovery scratch until the run is complete.
+    - The final full checkpoint, final model, metrics, manifests, and resource trace become immutable at COMPLETE.
+    - No complete reference or candidate artifact is overwritten or silently discarded.
+
+environment_resolution:
+  isaaclab_python: /home/zhengyuz/Projects/IsaacLab.wt/feature-unify/.venv/bin/python
+  metamotivo_python: /home/zhengyuz/Projects/metamotivo/.venv/bin/python
+  bfm_zero_python: /home/zhengyuz/Projects/BFM-Zero/.venv/bin/python
+  bfm_clean_rsl_selection: >-
+    The BFM environment currently resolves an installed RSL-RL by default.
+    Phase 2B must select /home/zhengyuz/Projects/rsl_rl explicitly and refreeze
+    the environment before candidate execution.

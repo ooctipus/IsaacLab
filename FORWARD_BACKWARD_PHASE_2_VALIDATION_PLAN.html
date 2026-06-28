@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Forward–Backward Phase 2 · Reference-Environment Validation Plan</title>
+  <script>
+    window.MathJax = {
+      tex: {inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']], tags: 'ams'},
+      chtml: {scale: 0.93}
+    };
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+  <style>
+    :root{--ink:#17202a;--muted:#59636e;--paper:#f7f4ec;--line:#d9d2c4;--navy:#17365d;--blue:#1e6592;--green:#245b45;--green-bg:#e6f2eb;--amber:#805c15;--amber-bg:#fff1cc;--red:#8a302b;--red-bg:#fbe5df;--purple:#5e477b;--purple-bg:#eee8f6}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--ink);background:radial-gradient(circle at 10% 0%,rgba(30,101,146,.1),transparent 28rem),radial-gradient(circle at 94% 12%,rgba(36,91,69,.09),transparent 24rem),var(--paper);font:16px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}a{color:var(--blue);text-underline-offset:.15em}code,pre{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace}code{padding:.07rem .27rem;border-radius:.24rem;background:#edf0f2;font-size:.91em}pre{overflow-x:auto;margin:.8rem 0;padding:.9rem 1rem;border:1px solid #cfd5da;border-radius:.52rem;background:#f1f4f6;font-size:.81rem;line-height:1.43}
+    .hero{padding:4.3rem max(1.5rem,calc((100vw - 1180px)/2)) 3rem;color:#f7fbff;background:linear-gradient(135deg,#102b4b,#194b67 58%,#276b66);border-bottom:5px solid #bf9c4a}.hero .kicker,.eyebrow{font-size:.75rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase}.hero .kicker{color:#b8dbe7}.hero h1{max-width:1030px;margin:.5rem 0;font:clamp(2.4rem,5vw,4.6rem)/.99 Georgia,serif;letter-spacing:-.035em}.hero .subtitle{max-width:970px;color:#e3edf2;font-size:1.16rem}.meta{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1.4rem}.pill{border:1px solid rgba(255,255,255,.35);border-radius:999px;padding:.28rem .7rem;background:rgba(255,255,255,.08);font-size:.78rem}.pill b{color:#ffe6a5}
+    .layout{display:grid;grid-template-columns:255px minmax(0,1fr);max-width:1460px;margin:auto}nav{position:sticky;top:0;align-self:start;max-height:100vh;overflow:auto;padding:1.5rem 1rem 2rem 1.3rem;border-right:1px solid var(--line);background:rgba(247,244,236,.93);backdrop-filter:blur(8px)}nav h2{margin:0 0 .7rem;color:var(--navy);font-size:.77rem;letter-spacing:.12em;text-transform:uppercase}nav a{display:block;margin:.05rem 0;padding:.33rem .45rem;border-radius:.35rem;color:#344552;text-decoration:none;font-size:.81rem;line-height:1.24}nav a:hover{background:#e5edef;color:var(--navy)}nav .letter{display:inline-block;width:1.65rem;color:var(--blue);font-weight:900}main{min-width:0;padding:2rem clamp(1.1rem,4vw,4.2rem) 6rem}section{max-width:1130px;margin:0 auto 2rem;padding:2.15rem 2.3rem;border:1px solid var(--line);border-radius:.78rem;background:rgba(255,253,248,.96);box-shadow:0 8px 28px rgba(35,48,57,.05)}section>:first-child{margin-top:0}h2{margin:0 0 1rem;color:var(--navy);font:2rem/1.08 Georgia,serif}h3{margin:1.5rem 0 .5rem;color:#214f6e;font-size:1.17rem;line-height:1.25}p{margin:.6rem 0}ul,ol{padding-left:1.35rem}li{margin:.27rem 0}.lede{color:#34434e;font-size:1.08rem}.eyebrow{margin-bottom:.28rem;color:var(--blue)}
+    .grid2,.grid3,.grid4{display:grid;gap:.82rem;margin:1rem 0}.grid2{grid-template-columns:repeat(2,minmax(0,1fr))}.grid3{grid-template-columns:repeat(3,minmax(0,1fr))}.grid4{grid-template-columns:repeat(4,minmax(0,1fr))}.card{padding:.88rem .96rem;border:1px solid var(--line);border-radius:.52rem;background:#fffdfa}.card strong{display:block;margin-bottom:.25rem;color:var(--navy)}.metric{color:var(--green);font-size:1.38rem;font-weight:850}.small{color:var(--muted);font-size:.85rem}.callout{margin:1rem 0;padding:.82rem .98rem;border-left:5px solid;border-radius:.34rem}.decision{border-color:var(--green);background:var(--green-bg)}.warning{border-color:var(--red);background:var(--red-bg)}.choice{border-color:var(--amber);background:var(--amber-bg)}.future{border-color:var(--purple);background:var(--purple-bg)}
+    .table-wrap{overflow-x:auto;margin:.82rem 0 1.1rem}table{width:100%;border-collapse:collapse;font-size:.85rem}th,td{padding:.56rem .6rem;border:1px solid var(--line);vertical-align:top}th{color:#f8fbfd;background:var(--navy);text-align:left}tbody tr:nth-child(even) td{background:#f7f6f1}.equation{overflow-x:auto;margin:.85rem 0;padding:.6rem .85rem;border:1px solid #d6dde2;border-radius:.43rem;background:#f8fafb;text-align:center}.flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:.4rem;margin:1rem 0}.flow .node{flex:1 1 140px;padding:.67rem .72rem;border:1px solid #b9cbd5;border-radius:.43rem;background:#edf6f8;text-align:center;font-size:.82rem}.flow .node b{display:block;color:var(--navy)}.arrow{align-self:center;color:var(--blue);font-size:1.25rem;font-weight:900}.phase{border-top:6px solid var(--blue)}.phase-label{display:inline-grid;place-items:center;min-width:2.55rem;height:2.2rem;margin-right:.45rem;padding:0 .35rem;border-radius:999px;color:#fff;background:var(--blue);font:900 .9rem/1 monospace}.checklist{list-style:none;padding-left:0}.checklist li{position:relative;padding-left:1.5rem}.checklist li:before{content:"□";position:absolute;left:0;color:var(--blue);font-weight:900}.status-line{padding:.62rem .78rem;border:1px dashed #af8f42;border-radius:.4rem;background:#fff7dd;font-weight:700}footer{max-width:1130px;margin:auto;color:var(--muted);font-size:.8rem}
+    @media(max-width:940px){.layout{display:block}nav{position:static;max-height:none;columns:2;border-right:0;border-bottom:1px solid var(--line)}nav h2{column-span:all}.grid3,.grid4{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:650px){nav{columns:1}main{padding-inline:.7rem}section{padding:1.3rem 1rem}.grid2,.grid3,.grid4{grid-template-columns:1fr}.arrow{display:none}}@media print{@page{size:Letter;margin:.55in}body{background:#fff;font-size:9.2pt}.hero{padding:.4in .45in;break-after:page}.layout{display:block}nav{display:none}main{padding:0}section{max-width:none;margin:0 0 .2in;padding:.2in .22in;border-radius:0;box-shadow:none}h2,h3,table,.card,.callout,.equation,pre{break-inside:avoid}h2,h3{break-after:avoid}.phase{break-before:page}a{color:inherit;text-decoration:none}}
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <p class="kicker">Unified MetaMotivo + BFM-Zero · Phase 2 design gate</p>
+    <h1>Reference-Environment Validation Plan</h1>
+    <p class="subtitle">A staged, falsifiable experiment for deciding whether the clean RSL-RL <code>ForwardBackward</code> learner is numerically faithful and statistically non-inferior in the two environments where the source algorithms are known to learn—before either environment is rewritten.</p>
+    <div class="meta">
+      <span class="pill"><b>Status</b> design for review; no Phase 2 execution started</span>
+      <span class="pill"><b>Date</b> 2026-06-27</span>
+      <span class="pill"><b>Code baseline</b> RSL-RL <code>af2105f</code></span>
+      <span class="pill"><b>Environment</b> repository-local <code>.venv</code> only</span>
+      <span class="pill"><b>Review</b> stop after every letter</span>
+    </div>
+  </header>
+  <div class="layout">
+    <nav aria-label="Document navigation">
+      <h2>Contents</h2>
+      <a href="#outcome">0 · Question and outcome</a>
+      <a href="#boundary">1 · Scope and non-goals</a>
+      <a href="#topology">2 · Experiment topology</a>
+      <a href="#identity">3 · Frozen identities</a>
+      <a href="#adapters">4 · Translation boundary</a>
+      <a href="#evidence">5 · Evidence ladder</a>
+      <a href="#statistics">6 · Metrics and statistics</a>
+      <a href="#artifacts">7 · Artifact contract</a>
+      <a href="#systems">8 · Compute and systems</a>
+      <a href="#phase-2a"><span class="letter">2A</span>Preflight</a>
+      <a href="#phase-2b"><span class="letter">2B</span>Adapters/evaluators</a>
+      <a href="#phase-2c"><span class="letter">2C</span>Numerical parity</a>
+      <a href="#phase-2d"><span class="letter">2D</span>Short learning</a>
+      <a href="#phase-2e"><span class="letter">2E</span>Paired pilots</a>
+      <a href="#phase-2f"><span class="letter">2F</span>Full reproduction</a>
+      <a href="#invalidation">15 · Invalidation law</a>
+      <a href="#review">16 · Review packets</a>
+      <a href="#sources">17 · Frozen sources</a>
+    </nav>
+    <main>
+      <section id="outcome">
+        <p class="eyebrow">0 · Scientific question</p>
+        <h2>Does the clean learner preserve the behavior that made both references work?</h2>
+        <p class="lede">Phase 1 established equation tests, integration, GPU replay, checkpoint identity, and full-scale update feasibility. Phase 2 asks the missing empirical question: when attached to the unchanged native environments, does the same implementation reproduce MetaMotivo and BFM-Zero without hiding differences inside an adapter or a tuned evaluation?</p>
+        <div class="grid4">
+          <div class="card"><strong>Learner candidates</strong><span class="metric">1</span><br><span class="small">RSL-RL <code>ForwardBackward</code></span></div>
+          <div class="card"><strong>Native environments</strong><span class="metric">2</span><br><span class="small">HumEnv and HumanoidVerse</span></div>
+          <div class="card"><strong>Validation gates</strong><span class="metric">6</span><br><span class="small">2A–2F; cheapest evidence first</span></div>
+          <div class="card"><strong>Long-run policy</strong><span class="metric">earned</span><br><span class="small">no full run before pilots pass</span></div>
+        </div>
+        <div class="callout decision"><strong>Decision at 2F.</strong> The result is <em>pass</em>, <em>fail with an identified cause</em>, or <em>inconclusive because a frozen prerequisite could not be executed</em>. “Loss went down” and a single favorable seed are not Phase 2 passes.</div>
+        <p>This document refines <a href="FORWARD_BACKWARD_UNIFICATION_PLAN.md">the durable unification plan</a>. Frozen Phase 0 facts and thresholds remain authoritative; a conflict is resolved by revising this plan before observing new outcomes, never by moving a threshold after a run.</p>
+      </section>
+
+      <section id="boundary">
+        <p class="eyebrow">1 · Scope boundary</p>
+        <h2>Validate the algorithm now; rebuild environments and policy learning later</h2>
+        <div class="table-wrap"><table><thead><tr><th>In Phase 2</th><th>Explicitly not in Phase 2</th></tr></thead><tbody>
+          <tr><td>Native MetaMotivo/HumEnv through a translation-only adapter.</td><td>The broken IsaacLab <code>MetamotivoEnvCfg</code>; replace it in Phase 3.</td></tr>
+          <tr><td>Native BFM-Zero G1 and its unchanged tracking evaluator.</td><td>The clean IsaacLab G1 environment; build it in Phase 4.</td></tr>
+          <tr><td>The Phase 1 off-policy direct-Q learner and frozen presets.</td><td>Replay-free or strict PPO training; those remain Phases 6–7.</td></tr>
+          <tr><td>Adapter/evaluator plumbing, comparisons, and necessary bug fixes.</td><td>Hyperparameter search, reward redesign, Warp optimization, or mixed precision.</td></tr>
+          <tr><td>Released training distributions and native metrics.</td><td>Held-out LaFAN subject-5 generalization, which requires separate paired retraining.</td></tr>
+        </tbody></table></div>
+        <div class="callout warning"><strong>No algorithm mathematics in adapters.</strong> An adapter may name, reshape, and transport native facts. It may not compute FB targets, rewards, discounts, value targets, relabeling, context normalization, actor losses, or optimizer updates.</div>
+        <div class="callout choice"><strong>No silent repair of a reference.</strong> A known source defect is either retained in a labeled native-reference reproduction or corrected for both sides of a matched ablation.</div>
+      </section>
+
+      <section id="topology">
+        <p class="eyebrow">2 · Causal structure</p>
+        <h2>One candidate, two source systems, and no mixed ownership</h2>
+        <div class="flow"><div class="node"><b>native environment</b>state, action, boundary, expert source</div><span class="arrow">→</span><div class="node"><b>translation adapter</b>named facts only</div><span class="arrow">→</span><div class="node"><b>RSL-RL learner</b>all FB/D/Q/actor mathematics</div><span class="arrow">→</span><div class="node"><b>native evaluator</b>motion rollout and metric</div><span class="arrow">→</span><div class="node"><b>paired analysis</b>join, bootstrap, AUC</div></div>
+        <div class="table-wrap"><table><thead><tr><th>Location</th><th>Owns</th><th>Must not own</th></tr></thead><tbody>
+          <tr><td><code>../../rsl_rl</code></td><td>Generic learner, model, storage, runner, equations, generic tests.</td><td>HumEnv/HumanoidVerse imports or experiment metrics.</td></tr>
+          <tr><td><code>../../metamotivo/phase2_adapter/</code></td><td>HumEnv wrapper, expert provider, Meta entry points and preset translation.</td><td>Duplicated learner operations.</td></tr>
+          <tr><td><code>../../BFM-Zero/phase2_adapter/</code></td><td>G1 wrapper, expert provider, final capture, profile selection, all-motion evaluator.</td><td>Reimplemented EMD or copied clean learner code.</td></tr>
+          <tr><td><code>scripts/reinforcement_learning/forward_backward/phase2/</code></td><td>Manifest validation, paired statistics, tables, plots.</td><td>Environment stepping or learner updates.</td></tr>
+          <tr><td><code>$PHASE2_ROOT</code></td><td>Immutable run artifacts and generated reports.</td><td>Unversioned source code.</td></tr>
+        </tbody></table></div>
+        <p class="small">Adapter code remains in the CC BY-NC reference repositories. Numeric aggregation is independently authored in the BSD workspace and consumes declared numeric records only.</p>
+      </section>
+
+      <section id="identity">
+        <p class="eyebrow">3 · Frozen experiment identity</p>
+        <h2>Every comparison starts from a manifest, not from a remembered command</h2>
+        <div class="table-wrap"><table><thead><tr><th>Track</th><th>Frozen source</th><th>Data/evaluation</th><th>Seeds / horizon</th></tr></thead><tbody>
+          <tr><td>Meta reference</td><td>MetaMotivo <code>ff8dcc55</code>; HumEnv <code>0548761a</code>; frozen local fingerprints.</td><td>1,638 CMU train episodes; 182 local test motions.</td><td><code>{0,1,2}</code>; 5M; evaluate 0.5M–4.5M.</td></tr>
+          <tr><td>Meta candidate</td><td>RSL-RL <code>af2105f</code> plus reviewed Phase 2 fixes.</td><td>Same split, assignment, action/control and evaluator.</td><td>Paired <code>{0,1,2}</code>; equal transitions.</td></tr>
+          <tr><td>BFM released</td><td>BFM-Zero <code>b87916f5</code>, released checkpoint and CSV.</td><td>862 clips from 40 LaFAN motions; 29-joint EMD.</td><td><code>4728</code>; curve through 211.2M.</td></tr>
+          <tr><td>BFM pilot</td><td>Reviewed source/candidate commits under the same correct-terminal adapter.</td><td>Motion assignment and all exogenous randomness paired.</td><td><code>{4728,4729,4730}</code>.</td></tr>
+          <tr><td>BFM full</td><td>Matched corrected-terminal pair plus released native-reference evidence.</td><td>All 862 motions; stochastic and deterministic harnesses separate.</td><td><code>4728</code>; 211.2M after approval.</td></tr>
+        </tbody></table></div>
+        <h3>Record before launch</h3>
+        <ul class="checklist">
+          <li>Commit, branch, staged/unstaged diff hashes, untracked manifest, and adapter content hash.</li>
+          <li>Resolved config, argv, environment variables, working directory, and empty output directory.</li>
+          <li>Python, Torch, CUDA, driver, simulator, GPU, visible device, and dependency-freeze hash.</li>
+          <li>Dataset, split, checkpoint, fixture, joint/order, schema, action-map, and evaluator hashes.</li>
+          <li>Seeds, terminal profile, env count, replay capacity, precision, grid, and expected row cardinality.</li>
+        </ul>
+        <div class="callout warning"><strong>Dirty worktrees are evidence, not permission to clean.</strong> Record exact local state and commit focused Phase 2 changes without discarding unrelated work.</div>
+      </section>
+
+      <section id="adapters">
+        <p class="eyebrow">4 · Translation contract</p>
+        <h2>Adapters expose source facts in three fixed schemas</h2>
+        <div class="grid3">
+          <div class="card"><strong>Online transition</strong>Named current/returned observations, valid final information, action, behavior context, terminated/truncated/context-change facts, autoreset mode, raw evidence.</div>
+          <div class="card"><strong>Expert sequence</strong>Named observations shaped <code>[batch,8,...]</code>, motion identity, timestep, and proof that no sequence crosses a motion.</div>
+          <div class="card"><strong>Evaluation state</strong>Native <code>qpos</code>/<code>qvel</code>, motion/time identity, and evaluator metadata; never learner replay.</div>
+        </div>
+        <div class="table-wrap"><table><thead><tr><th>Case</th><th>Required</th><th>Forbidden</th></tr></thead><tbody>
+          <tr><td>Meta timeout</td><td>Retain true final pre-reset state; suppress reset-only pseudo-transition.</td><td>Reset observation as successor.</td></tr>
+          <tr><td>BFM native-reference</td><td>Source/released evidence retain historical post-reset behavior only for reproduction.</td><td>Calling this the clean contract.</td></tr>
+          <tr><td>BFM correct-terminal</td><td>Capture pre-reset successor for both source and candidate.</td><td>Fixing one side or silently using reset state.</td></tr>
+          <tr><td>Final unavailable</td><td>Fail correct-terminal; label any pre-step approximation separately.</td><td>Claiming returned post-reset state is final.</td></tr>
+        </tbody></table></div>
+        <h3>BFM final-state selection</h3>
+        <ol><li>Prefer a supported final-observation API.</li><li>Otherwise use a narrow pre-reset wrapper hook.</li><li>Otherwise benchmark reset-row-selective recomputation.</li><li>If none is exact, stop the correct-terminal track.</li></ol>
+        <h3>Adapter acceptance</h3>
+        <ul class="checklist">
+          <li>Exact field widths, dtypes, device, order, joint/action mapping, control rate, and reset semantics.</li>
+          <li>BFM history is field-major/newest-first; reset history and last action are zero.</li>
+          <li>Expert windows are contiguous, length eight, and motion-safe.</li>
+          <li>Boundary masks match hand-constructed reset traces.</li>
+          <li>Evaluation-only state never enters replay or observation routes.</li>
+          <li>Evaluators fail unless exactly 182 Meta or 862 BFM motion results exist.</li>
+          <li>BFM calls unchanged <code>HumanoidVerseIsaacTrackingEvaluation</code>; no EMD rewrite.</li>
+        </ul>
+      </section>
+
+      <section id="evidence">
+        <p class="eyebrow">5 · Evidence ladder</p>
+        <h2>A failed cheap gate blocks every more expensive interpretation</h2>
+        <div class="table-wrap"><table><thead><tr><th>Gate</th><th>Question</th><th>Evidence</th><th>Failure response</th></tr></thead><tbody>
+          <tr><td>2A</td><td>Can the experiment be identified and afforded?</td><td>Hashes, smoke commands, throughput, capacity, budget.</td><td>Repair provenance/resource plan.</td></tr>
+          <tr><td>2B</td><td>Are native facts transported unchanged?</td><td>Schema, boundary, expert, action, evaluator tests.</td><td>Fix adapter; invalidate downstream artifacts.</td></tr>
+          <tr><td>2C</td><td>Do both learners calculate the same update?</td><td>Values, gradients, ownership, Adam, EMA/normalizer.</td><td>Fix/classify; no training.</td></tr>
+          <tr><td>2D</td><td>Does the integrated system begin learning stably?</td><td>Matched short runs and resource traces.</td><td>Diagnose; no pilot.</td></tr>
+          <tr><td>2E</td><td>Is behavior consistent across paired seeds?</td><td>Three-seed equal-transition pilots.</td><td>Stop or define a new experiment.</td></tr>
+          <tr><td>2F</td><td>Is it non-inferior at reference scale?</td><td>Frozen final/AUC/PHC and BFM gates.</td><td>Fail/inconclusive; do not hide it in rewrites.</td></tr>
+        </tbody></table></div>
+        <div class="callout decision"><strong>Meta first as shared canary.</strong> Within 2C–2E, run lower-cost Meta before BFM learning. BFM checkpoint evaluation may proceed in 2B, but a shared learner defect blocks expensive BFM training.</div>
+      </section>
+
+      <section id="statistics">
+        <p class="eyebrow">6 · Metrics and statistical law</p>
+        <h2>Pair first, aggregate second, and never drop a difficult row</h2>
+        <p>Every evaluator emits records keyed by <code>(implementation, training_seed, evaluation_seed, motion_id, checkpoint_transition)</code>. Inner-join on every pairing key. Missing, duplicate, nonfinite, or unexpected rows fail validation.</p>
+        <div class="equation">\[\operatorname{AUC}=\frac{1}{t_K-t_0}\sum_{k=0}^{K-1}\frac{e_k+e_{k+1}}{2}(t_{k+1}-t_k).\]</div>
+        <p>Use exactly 10,000 paired percentile-bootstrap replicates from NumPy <code>default_rng(20260626)</code>. The one-sided 95% upper bound is quantile 0.95. No interpolation, forward fill, unpaired interval, normal approximation, or post-hoc checkpoint choice.</p>
+        <h3>Meta final gates</h3>
+        <div class="equation">\[U_{.95}(\mathrm{EMD}_{new}-\mathrm{EMD}_{ref})\le\max(0.05,0.03\overline{\mathrm{EMD}}_{ref})\]</div>
+        <div class="equation">\[U_{.95}(\mathrm{AUC}_{new}-1.05\mathrm{AUC}_{ref})\le0,\qquad U_{.95}(\mathrm{PHC}_{ref}-\mathrm{PHC}_{new})\le0.03.\]</div>
+        <p>Seeds <code>{0,1,2}</code> are the outer bootstrap level; resample the 182 paired motions within seed and reuse that selection across checkpoints. Final EMD is 4.5M; AUC is the 0.5M–4.5M grid.</p>
+        <h3>BFM final gates</h3>
+        <div class="table-wrap"><table><thead><tr><th>Native stochastic gate</th><th>Threshold</th></tr></thead><tbody>
+          <tr><td>First mean EMD below 0.75</td><td>By 163.2M.</td></tr><tr><td>Mean EMD at 211.2M</td><td>≤ <code>0.7453</code>.</td></tr><tr><td>AUC, 9.6M–211.2M</td><td>≤ <code>0.808657325</code>.</td></tr><tr><td>AUC, 0–211.2M</td><td>≤ <code>0.865363030</code>.</td></tr>
+        </tbody></table></div>
+        <p>The deterministic harness first evaluates the released checkpoint, then paired motions. The one-sided upper bound for <code>candidate EMD - reference EMD</code> must be below <code>0.0101</code>; superiority requires it below zero. Never treat the released stochastic CSV as paired data.</p>
+        <h3>Numerical gates before learning</h3>
+        <div class="table-wrap"><table><thead><tr><th>Comparison</th><th>Tolerance</th></tr></thead><tbody>
+          <tr><td>FP64 CPU values / gradients</td><td><code>1e-10/1e-12</code> and <code>1e-9/1e-11</code></td></tr><tr><td>Reference vs clean FP32 values / gradients</td><td><code>2e-5/2e-6</code> and <code>5e-5/5e-6</code></td></tr><tr><td>One Adam step</td><td><code>rtol=2e-5, atol=2e-7</code></td></tr><tr><td>Deterministic CUDA FP32</td><td><code>rtol=1e-4, atol=1e-5</code></td></tr><tr><td>Gradient structure</td><td>Cosine ≥ <code>0.99999</code>, normalized L2 ≤ <code>1e-4</code>, exact ownership.</td></tr>
+        </tbody></table></div>
+        <p class="small">The frozen ill-conditioned Meta inverse-covariance output keeps <code>rtol=5e-4, atol=5e-3</code>. TF32/BF16 are systems ablations, never semantic oracles.</p>
+      </section>
+
+      <section id="artifacts">
+        <p class="eyebrow">7 · Artifact contract</p>
+        <h2>Runs are immutable records with a declared completeness law</h2>
+        <pre>$PHASE2_ROOT/
+  registry.jsonl
+  meta/{reference|candidate}/seed-{seed}/{run_id}/
+  bfm/{native-reference|correct-terminal}/{reference|candidate}/seed-{seed}/{run_id}/
+    manifest.json  resolved_config.json  command.txt  environment.txt
+    metrics.csv    resources.csv         logs/       checkpoints/
+    validation.json  COMPLETE
+  reports/{gate_id}/
+    joined_metrics.csv  bootstrap.npz  tables/  figures/  report.json</pre>
+        <ul><li>Never reuse a <code>run_id</code> or write into a non-empty run directory.</li><li>Write <code>COMPLETE</code> only after checkpoint, cardinality, finite-value, and hash validation.</li><li>Retain failed/interrupted runs with failure records.</li><li>Associate checkpoints with transitions, not log index or wall time.</li><li>Reports consume only explicitly listed complete run IDs.</li></ul>
+        <p>Minimum record: <code>implementation, training_seed, evaluation_seed, motion_id, checkpoint_transition, terminal_profile, metric_name, metric_value, run_id, evaluator_hash, dataset_hash</code>.</p>
+        <div class="callout warning"><strong>Reference artifacts are read-only.</strong> Never write Phase 2 output into the archived Meta directory, released BFM evidence, or Phase 0 oracle directories.</div>
+      </section>
+
+      <section id="systems">
+        <p class="eyebrow">8 · Systems truth before training budget</p>
+        <h2>Measure throughput and memory in the real native process</h2>
+        <div class="grid3"><div class="card"><strong>Meta cadence</strong><span class="metric">50 envs</span><br><span class="small">500 transitions, then 50 updates</span></div><div class="card"><strong>BFM cadence</strong><span class="metric">1,024 envs</span><br><span class="small">16 updates per vector step</span></div><div class="card"><strong>BFM device</strong><span class="metric">≥48 GB</span><br><span class="small">simulator-inclusive 15% gate</span></div></div>
+        <p>Phase 1 measured the exact BFM learner at 25.2188 GiB peak reserved on a 31.3566 GiB device, leaving only 1.4343 GiB inside the 85% budget. A 32 GB GPU is learner-only development capacity, not an authorized 1,024-environment training device.</p>
+        <ul class="checklist"><li>Measure env steps/s, updates/s, evaluation/checkpoint time, GPU allocated/reserved/total, host RSS, and disk growth.</li><li>Probe final env count and exact learner batch/model/replay capacity.</li><li>Estimate every run including evaluator and checkpoint overhead.</li><li>Freeze pilot horizons before reading pilot outcomes.</li></ul>
+        <div class="table-wrap"><table><thead><tr><th>Run</th><th>Default horizon</th><th>Reason</th></tr></thead><tbody>
+          <tr><td>2D Meta</td><td>0.5M</td><td>One native evaluation interval.</td></tr><tr><td>2D BFM</td><td>9.6M</td><td>One native evaluation interval.</td></tr><tr><td>2E Meta</td><td>1.5M × 3 seeds</td><td>Three evaluation points.</td></tr><tr><td>2E BFM</td><td>28.8M × 3 seeds</td><td>Three post-initialization intervals.</td></tr><tr><td>2F Meta</td><td>5M</td><td>Frozen reference budget.</td></tr><tr><td>2F BFM</td><td>211.2M</td><td>Frozen released horizon.</td></tr>
+        </tbody></table></div>
+        <p class="small">2D/2E defaults become immutable when 2A is approved. They may change during 2A only for measured feasibility and before outcomes. The final 2F horizons and gates do not change.</p>
+      </section>
+
+      <section id="phase-2a" class="phase">
+        <p class="eyebrow"><span class="phase-label">2A</span>Evidence and compute preflight</p>
+        <h2>Prove the experiment can be named, executed, stored, and afforded</h2>
+        <h3>Work</h3>
+        <ol><li>Snapshot current commits/local fingerprints for all five repositories without cleaning.</li><li>Persist exact dependency-freeze commands and outputs for each <code>.venv</code>.</li><li>Verify every frozen dataset, split, checkpoint, oracle, joint-order, and evaluator hash.</li><li>Select empty persistent <code>$PHASE2_ROOT</code> and enforce no-overwrite registration.</li><li>Run reference import, reset, step, expert-window, checkpoint-load, and evaluator smoke probes.</li><li>Load/evaluate the released BFM checkpoint through the existing single-motion path.</li><li>Run final-shape Meta and BFM systems probes on reviewed hardware.</li><li>Freeze 2D/2E horizons, GPU-hours, disk budget, and abort thresholds.</li></ol>
+        <h3>Exit gate</h3>
+        <ul class="checklist"><li>All required identities verify or Phase 2 stops with a named prerequisite.</li><li>Both native environments load and step in their own <code>.venv</code>.</li><li>BFM full shape retains ≥15% measured device headroom with no fallback.</li><li>Reviewed budget covers 2B–2E; 2F stays separately authorized.</li><li>No candidate learning outcome selected a horizon or threshold.</li></ul>
+        <div class="status-line">Stop and present provenance, resource measurements, and the frozen run matrix before 2B.</div>
+      </section>
+
+      <section id="phase-2b" class="phase">
+        <p class="eyebrow"><span class="phase-label">2B</span>Translation adapters and native evaluators</p>
+        <h2>Connect public contracts without creating a third algorithm</h2>
+        <h3>Work</h3>
+        <ol><li>Implement the Meta named-observation/action/expert/final-state adapter.</li><li>Implement the BFM asymmetric-route/history/auxiliary/tracking adapter.</li><li>Implement and benchmark exact BFM pre-reset capture for <code>correct-terminal</code>.</li><li>Add frozen <code>phase2_adapter/evaluate_all_motions.py</code> backed by the unchanged evaluator.</li><li>Normalize native outputs into the common long-form schema without changing metrics.</li><li>Add manifest/cardinality and deterministic paired-statistics tooling.</li><li>Create source/candidate entry points differing only in learner ownership.</li></ol>
+        <div class="table-wrap"><table><thead><tr><th>Area</th><th>Meta</th><th>BFM</th></tr></thead><tbody>
+          <tr><td>Observation/action</td><td>358 state, 69 controls, 30 Hz.</td><td>64/463/29/372, exact 29-joint order, 50 Hz.</td></tr><tr><td>Boundary</td><td>Suppress reset-only pseudo-step; retain final.</td><td>Native-reference labeled; correct-terminal exact.</td></tr><tr><td>Expert</td><td>Length 8, same motion.</td><td>Length 8, same motion, 527-wide B/D route.</td></tr><tr><td>Evaluation</td><td>All 182 motions.</td><td>All 862 clips, full 29-joint EMD.</td></tr>
+        </tbody></table></div>
+        <h3>Exit gate</h3>
+        <ul class="checklist"><li>All native adapter tests pass.</li><li>Non-terminal source behavior is unchanged by wrapping.</li><li>All-motion outputs are complete and finite.</li><li>Final capture matches pre-reset physical state and reports cost.</li><li>No duplicated learner mathematics or EMD implementation.</li></ul>
+        <div class="status-line">Stop and present adapter diffs, schema traces, terminal proofs, evaluator outputs, and cost before 2C.</div>
+      </section>
+
+      <section id="phase-2c" class="phase">
+        <p class="eyebrow"><span class="phase-label">2C</span>Fixed-batch and deterministic update parity</p>
+        <h2>Match calculations before asking stochastic training to explain discrepancies</h2>
+        <h3>Work</h3>
+        <ol><li>Regenerate both Phase 0 oracles and verify semantic hashes.</li><li>Feed identical inputs, draws, state, contexts, and parameters to source/clean paths.</li><li>Compare normalized routes, policy, F/B/D/Q, contexts, targets, losses, rewards, and critic/actor values.</li><li>Compare parameter gradients, ownership, direction/scale, and one Adam step.</li><li>Compare sequential optimizer, EMA, normalizer, context-buffer, counter, version, and RNG mutation.</li><li>Run CPU FP64/FP32 and CUDA FP32 gates.</li><li>Classify every mismatch by causal owner.</li></ol>
+        <p>An intentional difference needs an independent equation pass, one isolated switch at the proper boundary, fixed-batch source/corrected comparison, and a named learning ablation.</p>
+        <h3>Exit gate</h3>
+        <ul class="checklist"><li>All shared quantities meet tolerance.</li><li>Gradient ownership and one-step mutations are correct.</li><li>Known differences have fixtures/profiles.</li><li>No unexplained mismatch remains.</li><li>RSL-RL tests and full formatting pass after fixes.</li></ul>
+        <div class="status-line">Stop and present value/gradient/Adam parity and the mismatch ledger before 2D.</div>
+      </section>
+
+      <section id="phase-2d" class="phase">
+        <p class="eyebrow"><span class="phase-label">2D</span>Matched short learning runs</p>
+        <h2>Test integration and learning direction with one expensive seed</h2>
+        <ol><li><strong>Meta seed 0:</strong> fresh source/candidate for 0.5M.</li><li><strong>BFM seed 4728:</strong> source/candidate under <code>correct-terminal</code> for 9.6M.</li><li>Evaluate the released BFM checkpoint in native stochastic and deterministic harnesses as evaluator validation.</li></ol>
+        <h3>Observe without tuning</h3>
+        <ul><li>Replay readiness, cadence, contexts, expert sampling, reset mix, terminal counts.</li><li>All losses, reward channels, normalizers, target/online scale, actor scale, gradient/update norms.</li><li>First complete native metrics and paired per-motion deltas.</li><li>Throughput, memory, evaluator/checkpoint time, and disk.</li></ul>
+        <h3>Immediate stop</h3>
+        <ul><li>Any nonfinite state or incomplete metric.</li><li>Replay/boundary error, terminal overflow, or missing correct-terminal final.</li><li>Memory drift, &lt;15% headroom, or host spill.</li><li>Cadence, mixture, assignment, or randomization mismatch.</li><li>Gross regression attributable to an unclassified mismatch.</li></ul>
+        <p class="small">2D is integration evidence, not non-inferiority. A noisy first point is reported, not optimized against. Any change invalidates and reruns the affected pair.</p>
+        <div class="status-line">Stop and present short curves, diagnostics, full-motion metrics, terminal counts, and systems traces before 2E.</div>
+      </section>
+
+      <section id="phase-2e" class="phase">
+        <p class="eyebrow"><span class="phase-label">2E</span>Equal-transition paired pilots</p>
+        <h2>Use three seeds to decide whether full reproduction is justified</h2>
+        <div class="table-wrap"><table><thead><tr><th>Track</th><th>Seeds</th><th>Horizon</th><th>Grid</th><th>Pairing</th></tr></thead><tbody>
+          <tr><td>Meta source/candidate</td><td><code>0,1,2</code></td><td>1.5M</td><td>0.5/1.0/1.5M</td><td>Assignments and motion rows paired.</td></tr><tr><td>BFM correct-terminal source/candidate</td><td><code>4728,4729,4730</code></td><td>28.8M</td><td>9.6/19.2/28.8M</td><td>All exogenous randomness and rows paired.</td></tr>
+        </tbody></table></div>
+        <h3>Analysis</h3>
+        <ol><li>Validate and inner-join complete records before aggregation.</li><li>Report every seed, unweighted seed mean, paired motion distributions, AUC, and frozen intervals.</li><li>Plot transition count, never wall time, on learning axes.</li><li>Report boundary counts/systems costs beside behavior.</li><li>Keep BFM released native-reference evidence separate from correct-terminal pilots.</li></ol>
+        <h3>Advance only if</h3>
+        <ul class="checklist"><li>All candidate seeds complete without semantic/numerical/systems failure.</li><li>No pairing/evaluator row is missing.</li><li>Learning direction/scale is source-consistent on most seeds with no catastrophic seed.</li><li>Differences are resolved or have a predeclared 2F ablation.</li><li>Measured 2F cost receives explicit approval.</li></ul>
+        <div class="callout warning"><strong>No pilot tuning loop.</strong> A new architecture, reward, optimizer, or schedule is a new experiment requiring plan revision and rerunning affected gates.</div>
+        <div class="status-line">Stop and present every seed curve, paired statistics, failure ledger, and exact 2F compute request.</div>
+      </section>
+
+      <section id="phase-2f" class="phase">
+        <p class="eyebrow"><span class="phase-label">2F</span>Full baseline reproduction and decision</p>
+        <h2>Run only comparisons needed for the frozen non-inferiority decision</h2>
+        <h3>Meta full matrix</h3>
+        <ul><li>Retain archived source seed 0 after hash/evaluator validation.</li><li>Run missing source seeds 1/2 for 5M in fresh directories.</li><li>Run candidate seeds 0/1/2 for 5M.</li><li>Evaluate 182 motions every 0.5M through 4.5M.</li><li>Apply hierarchical paired final EMD, AUC, and PHC gates.</li></ul>
+        <h3>BFM full matrix</h3>
+        <ul><li>Validate released native-reference checkpoint and CSV through all-motion harness.</li><li>Run one seed-4728 source/candidate <code>correct-terminal</code> pair for 211.2M.</li><li>Evaluate every 9.6M with the native stochastic protocol and all 862 motions.</li><li>Evaluate final checkpoints in deterministic paired harness.</li><li>Apply absolute gates only to stochastic curves and <code>0.0101</code> only to paired deterministic rows.</li><li>Do not claim held-out subject-5 performance.</li></ul>
+        <div class="table-wrap"><table><thead><tr><th>Axis</th><th>Required evidence</th><th>Pass law</th></tr></thead><tbody>
+          <tr><td>Numerics</td><td>2C value/gradient/update tables.</td><td>Frozen tolerances or isolated ablations.</td></tr><tr><td>Meta</td><td>3 seeds, 182 motions, final/AUC/PHC.</td><td>All three frozen inequalities.</td></tr><tr><td>BFM native</td><td>Milestone, final EMD, two AUCs.</td><td>All four absolute gates.</td></tr><tr><td>BFM fair pair</td><td>Correct-terminal curve and deterministic motions.</td><td>Upper delta bound &lt; <code>0.0101</code>.</td></tr><tr><td>Systems</td><td>Throughput, peaks, disk, checkpoint cost.</td><td>No drift/fallback; ≥15% headroom.</td></tr><tr><td>Provenance</td><td>Complete manifests/registry.</td><td>No missing identity or row.</td></tr>
+        </tbody></table></div>
+        <p><strong>Pass</strong>: both native environments meet their own criteria. <strong>Partial pass</strong>: one passes and one has an isolated documented failure, requiring explicit approval. <strong>Fail</strong>: a valid comparison violates a gate. <strong>Inconclusive</strong>: required data/compute/pairing could not be obtained; this is not a pass.</p>
+        <div class="status-line">Stop with the full Phase 2 report. Phase 3 does not begin without explicit user approval.</div>
+      </section>
+
+      <section id="invalidation">
+        <p class="eyebrow">15 · Failure, repair, and evidence lifetime</p>
+        <h2>A change invalidates evidence downstream of the contract it touched</h2>
+        <div class="table-wrap"><table><thead><tr><th>Change</th><th>Return to</th><th>Invalidate</th></tr></thead><tbody>
+          <tr><td>Identity/dataset/checkpoint/evaluator error</td><td>2A</td><td>All dependent runs.</td></tr><tr><td>Observation/action/expert/terminal adapter defect</td><td>2B</td><td>2C–2F for affected profile.</td></tr><tr><td>Equation/gradient/order/target/normalizer/RNG defect</td><td>2C</td><td>All candidate learning at that commit.</td></tr><tr><td>Logging-only change with proven identical training</td><td>Review</td><td>Reports only if records change.</td></tr><tr><td>Architecture/reward/schedule/precision/replay/optimizer change</td><td>Plan revision + 2C</td><td>All candidate learning comparisons.</td></tr><tr><td>Statistics bug</td><td>Analysis tests</td><td>Reports/decisions, not raw complete rows.</td></tr>
+        </tbody></table></div>
+        <p>Every mismatch gets an ID, minimal reproducer, affected hashes/rows, causal classification, fix/ablation commit, invalid run IDs, and review decision. Raw runs remain immutable and visibly invalidated rather than deleted.</p>
+      </section>
+
+      <section id="review">
+        <p class="eyebrow">16 · Review contract</p>
+        <h2>What the user receives after each letter</h2>
+        <div class="table-wrap"><table><thead><tr><th>Review</th><th>Packet</th></tr></thead><tbody>
+          <tr><td>2A</td><td>Provenance, hashes, environment/resource measurements, run matrix, cost, blockers.</td></tr><tr><td>2B</td><td>File tree, diffs, schema/action/history tests, terminal traces, evaluator proof/cost.</td></tr><tr><td>2C</td><td>Equation/tensor table, value/gradient/Adam comparisons, ownership, mismatches.</td></tr><tr><td>2D</td><td>Short curves, component diagnostics, first metrics, terminal counts, systems trace.</td></tr><tr><td>2E</td><td>Every seed curve, paired distributions/intervals, pilot AUC, failures, full-run request.</td></tr><tr><td>2F</td><td>Final tables/curves/gates, variance, systems/provenance audit, explicit decision.</td></tr>
+        </tbody></table></div>
+        <ul class="checklist"><li>Meta and BFM metrics remain separate.</li><li>Thresholds exactly match Phase 0.</li><li>Rows are complete, finite, paired where claimed, and traceable.</li><li>BFM profiles are visibly separate.</li><li>Matched comparisons have equal transitions/settings/evaluator identity.</li><li>Systems cost accompanies behavior.</li><li>Reference defects have isolated treatment.</li><li>No CC implementation/assets/weights move into BSD repositories.</li><li>Phase 3 stays blocked pending approval.</li></ul>
+      </section>
+
+      <section id="sources">
+        <p class="eyebrow">17 · Frozen source anchors</p>
+        <h2>The evidence already has an address</h2>
+        <div class="grid2"><div class="card"><strong>Specifications</strong><ul><li><a href="FORWARD_BACKWARD_UNIFICATION_PLAN.md">Durable plan</a></li><li><a href="FORWARD_BACKWARD_PHASE_0_REVIEW.md">Frozen Phase 0 contracts</a></li><li><a href="FORWARD_BACKWARD_PHASE_1_IMPLEMENTATION_PLAN.html">Phase 1 plan</a></li><li><a href="FORWARD_BACKWARD_PHASE_1FG_REVIEW.md">Final Phase 1 review</a></li><li><a href="FORWARD_BACKWARD_MATHEMATICAL_FOUNDATIONS.html">Mathematical foundations</a></li><li><a href="SF_CRITIC_DESIGN_REVISED.html">Reference/successor audit</a></li></ul></div><div class="card"><strong>Code/oracles</strong><ul><li><a href="../../rsl_rl/rsl_rl/algorithms/forward_backward.py">Clean learner</a></li><li><a href="../../metamotivo/metamotivo/fb_cpr/agent.py">Meta reference</a></li><li><a href="../../metamotivo/examples/phase0_oracle/">Meta oracle</a></li><li><a href="../../BFM-Zero/humanoidverse/agents/fb_cpr_aux/agent.py">BFM reference</a></li><li><a href="../../BFM-Zero/phase0_oracle/">BFM oracle</a></li><li><a href="../../BFM-Zero/new_model_for_training_code_inference/">Released BFM evidence</a></li></ul></div></div>
+        <div class="callout future"><strong>Later phases remain inactive.</strong> Phase 3 replaces SMPL/Meta, Phase 4 builds clean IsaacLab G1, Phase 5 validates both new environments, and Phases 6–7 add replay-free diagnostics and strict on-policy training. None rescues a failed native-reference result.</div>
+      </section>
+      <footer><p>Forward–Backward Phase 2 validation plan · independently authored experiment specification · 2026-06-27. Frozen thresholds/provenance come from <a href="FORWARD_BACKWARD_PHASE_0_REVIEW.md">Phase 0</a>.</p></footer>
+    </main>
+  </div>
+</body>
+</html>
