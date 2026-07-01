@@ -1,0 +1,151 @@
+{
+  "collections": {
+    "g1_lafan_50hz": {
+      "evaluation": {
+        "bytes": 209659488,
+        "clips": 40,
+        "file": "humanoidverse/data/lafan_29dof.pkl",
+        "frames": 264705,
+        "frames_per_clip_max": 8194,
+        "frames_per_clip_min": 3066,
+        "sha256": "f3a0c2810363f5c50bf4146fa2db33c1ff5b90d00cb7c0bc2aa4622696375e11"
+      },
+      "fields": {
+        "dof": {
+          "dtype": "float32",
+          "motionlib_consumed": false,
+          "shape": ["frames", 29],
+          "units": "rad"
+        },
+        "fps": {
+          "dtype": "int64",
+          "motionlib_consumed": true,
+          "value": 30
+        },
+        "motion_name": {
+          "dtype": "unicode",
+          "motionlib_consumed": false,
+          "present_in": ["training"]
+        },
+        "pose_aa": {
+          "convention": "root rotation vector followed by 29 fixed-axis G1 joint rotation vectors",
+          "dtype": "float32",
+          "motionlib_consumed": true,
+          "shape": ["frames", 30, 3],
+          "units": "rad"
+        },
+        "root_rot": {
+          "convention": "xyzw",
+          "dtype": "float32",
+          "motionlib_consumed": false,
+          "shape": ["frames", 4]
+        },
+        "root_trans_offset": {
+          "dtype": "float32",
+          "frame": "world",
+          "motionlib_consumed": true,
+          "shape": ["frames", 3],
+          "units": "m"
+        },
+        "smpl_joints": {
+          "dtype": "float32",
+          "motionlib_consumed": false,
+          "shape": ["frames", 24, 3],
+          "units": "m"
+        }
+      },
+      "format": "joblib_pickle_mapping_clip_name_to_field_mapping",
+      "license": {
+        "dataset_specific_evidence": "not_present_in_local_repository",
+        "repository_license": "CC-BY-NC-4.0",
+        "repository_license_file_sha256": "db2e35513dbadcdc67f5819a3bfee2777786538dd3531620cd5fbd4b6ed6e538",
+        "redistribution_gate": "requires_dataset_specific_provenance_review",
+        "scope_note": "The repository states CC-BY-NC-4.0 for BFM-Zero, but no adjacent file independently establishes rights for the included retargeted LAFAN artifacts."
+      },
+      "loader": {
+        "clip_sampling": "priority_multinomial_with_replacement",
+        "interpolation": {
+          "body_rotation": "slerp",
+          "joint_position": "linear",
+          "position_velocity": "linear"
+        },
+        "source_to_control_rate": "continuous_time_query_from_30_Hz_source_at_50_Hz_control",
+        "tail": "clip_query_phase_to_0_1_and_hold_last_frame"
+      },
+      "semantic_level": "robot_pose_g1_not_canonical_lafan",
+      "training": {
+        "bytes": 205117479,
+        "clips": 862,
+        "file": "humanoidverse/data/lafan_29dof_10s-clipped.pkl",
+        "frames": 258600,
+        "frames_per_clip": 300,
+        "sha256": "7f5aa36957808ee2e972472b18add8510533742710ba312d8b8c6e6014f1c010"
+      }
+    },
+    "smpl_humenv_30hz": {
+      "fields": {
+        "motion_id": {
+          "dtype": "int64",
+          "shape": ["frames", 1]
+        },
+        "observation": {
+          "dtype": "float64",
+          "shape": ["frames", 358]
+        },
+        "qpos": {
+          "dtype": "float32",
+          "shape": ["frames", 76]
+        },
+        "qvel": {
+          "dtype": "float32",
+          "shape": ["frames", 75]
+        },
+        "terminated": {
+          "dtype": "bool",
+          "law": "all_false",
+          "shape": ["frames", 1]
+        },
+        "truncated": {
+          "dtype": "bool",
+          "law": "exactly_final_frame_true",
+          "shape": ["frames", 1]
+        }
+      },
+      "format": "one_HDF5_file_per_clip_with_group_ep_0",
+      "license": {
+        "derived_hdf5_redistribution_gate": "requires_AMASS_CMU_and_SMPL_rights_review",
+        "humenv_code_license": "CC-BY-NC-4.0",
+        "humenv_license_file_sha256": "41003d4a74749c0220e33dd415042164b5a1093ed401f36277234f772d22d3d0",
+        "source_access": "AMASS and SMPL require separately registered downloads",
+        "source_note": "HumEnv documents the transform but does not bundle the credential-gated canonical AMASS/SMPL sources."
+      },
+      "semantic_level": "smpl_robot_state_and_observation_not_canonical_amass",
+      "test": {
+        "bytes": 270893772,
+        "clips": 182,
+        "frames": 88364,
+        "ordered_content_manifest_sha256": "b07b6417c232452a78c1637ca6273fd29745a447c2b9f04aa60554d559f2187a",
+        "split_file": "data_preparation/test_train_split/0-CMU_test_0.1.txt",
+        "split_file_sha256": "c9b77782f5c35e0a33b3daa18c110856554acbebed00c4b2877b836d53f9b1b7"
+      },
+      "train": {
+        "bytes": 2238215540,
+        "clips": 1638,
+        "frames": 730307,
+        "ordered_content_manifest_sha256": "64ac5d55b168520ec5729980398f2363470c700d732be2ff7d3f2241850b4e5c",
+        "split_file": "data_preparation/test_train_split/0-CMU_train_0.1.txt",
+        "split_file_sha256": "99929805f4ab531a89bff89837d27c403625d4b4d89d1a4d381b88825548a996"
+      }
+    }
+  },
+  "evidence_files": {
+    "BFM-Zero/LICENSE": "db2e35513dbadcdc67f5819a3bfee2777786538dd3531620cd5fbd4b6ed6e538",
+    "BFM-Zero/README.md": "5819c502f1cc321ab17cd993d5b5674ed987f4f9171a7813138fff7104aa7ed7",
+    "BFM-Zero/humanoidverse/data/robots/g1/g1_29dof.xml": "439c1ec0806583d73b492da9484b0cb9e9eae215e0d9506e3c2fa69016733532",
+    "BFM-Zero/humanoidverse/utils/motion_lib/motion_lib_base.py": "570cbfcd433820ec225807f16ebdad5fd4da6de9bb55a742dfb2968c15c4eb31",
+    "BFM-Zero/humanoidverse/utils/motion_lib/torch_humanoid_batch.py": "a720d7c17d1f0987bf11f48dbbb1a457e95a0338cf574c10b12b79cf92f73c77",
+    "humenv/LICENSE": "41003d4a74749c0220e33dd415042164b5a1093ed401f36277234f772d22d3d0",
+    "humenv/data_preparation/README.md": "537c446ab3e320a47883a296ba03b3324170f0e0df5fe34df0422cd9bff563da"
+  },
+  "schema": "forward_backward_phase3a_native_motion_data_v1"
+}
