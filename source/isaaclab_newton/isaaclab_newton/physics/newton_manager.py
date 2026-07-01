@@ -1881,7 +1881,7 @@ class NewtonManager(PhysicsManager):
             cls._scene_data_mapping = scene_data_provider.create_mapping(body_paths)
 
         cls._scene_data.transforms = cls._state_0.body_q
-        scene_data_provider.get_transforms(cls._scene_data, mapping=cls._scene_data_mapping)
+        scene_data_provider.get_transforms(cls._scene_data, mapping=cls._scene_data_mapping, allow_passthrough=False)
 
     @staticmethod
     def _resolve_scene_data_body_paths(body_paths: list[str | None], stage) -> list[str | None]:

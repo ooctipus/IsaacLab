@@ -221,3 +221,48 @@ def test_resolve_scene_data_body_paths_uses_joint_body_targets():
     resolved_paths = NewtonManager._resolve_scene_data_body_paths(body_paths, stage)
 
     assert resolved_paths == ["/World/envs/env_0/Robot/robot0_forearm"]
+
+
+def test_update_visualization_state_copies_identity_mapped_transforms(monkeypatch):
+    """Identity-mapped backend transforms must update Newton's persistent shadow state."""
+    import numpy as np
+    import warp as wp
+    from isaaclab_newton.physics import NewtonManager
+
+    from isaaclab.scene_data import SceneDataFormat, SceneDataProvider
+
+    _reset_newton_manager_state()
+    monkeypatch.setattr(NewtonManager, "_backend_is_newton", classmethod(lambda cls, scene_data_provider=None: False))
+
+    body_paths = ["/World/envs/env_0/Object", "/World/envs/env_1/Object"]
+    source_transforms = wp.array(
+        [
+            [1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0],
+            [4.0, 5.0, 6.0, 0.0, 0.0, 0.0, 1.0],
+        ],
+        dtype=wp.transformf,
+        device="cpu",
+    )
+    source_data = SceneDataFormat.Transform()
+    source_data.transforms = source_transforms
+    backend = SimpleNamespace(
+        transforms=source_data,
+        transform_paths=body_paths,
+        transform_count=len(body_paths),
+    )
+    provider_impl = SceneDataProvider(backend)
+    provider = SimpleNamespace(
+        usd_stage=None,
+        create_mapping=provider_impl.create_mapping,
+        get_transforms=provider_impl.get_transforms,
+    )
+
+    destination = wp.zeros(len(body_paths), dtype=wp.transformf, device="cpu")
+    destination_ptr = destination.ptr
+    NewtonManager._model = SimpleNamespace(body_label=body_paths)
+    NewtonManager._state_0 = SimpleNamespace(body_q=destination)
+
+    NewtonManager.update_visualization_state(provider)
+
+    assert NewtonManager._state_0.body_q.ptr == destination_ptr
+    np.testing.assert_allclose(NewtonManager._state_0.body_q.numpy(), source_transforms.numpy())
