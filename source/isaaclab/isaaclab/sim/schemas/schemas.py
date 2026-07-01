@@ -134,6 +134,24 @@ def _get_field_declaring_class(cfg_class: type, field_name: str) -> type | None:
     return None
 
 
+def _get_declared_field_sdf_type(decl_class: type, field_name: str) -> Sdf.ValueTypeNames | None:
+    """Resolve optional exact USD type metadata for one declared config field."""
+    field_types = decl_class.__dict__.get("_usd_field_types", {}) or {}
+    type_name = field_types.get(field_name)
+    if type_name is None:
+        return None
+    if not isinstance(type_name, str):
+        raise TypeError(
+            f"{decl_class.__name__}._usd_field_types[{field_name!r}] must be an Sdf.ValueTypeNames attribute name."
+        )
+    sdf_type = getattr(Sdf.ValueTypeNames, type_name, None)
+    if sdf_type is None:
+        raise ValueError(
+            f"{decl_class.__name__}._usd_field_types[{field_name!r}] names unknown USD type {type_name!r}."
+        )
+    return sdf_type
+
+
 def _apply_namespaced_schemas(prim, cfg, cfg_dict: dict) -> None:
     """Route every cfg field to its declaring class's namespace and apply schemas.
 
@@ -159,6 +177,10 @@ def _apply_namespaced_schemas(prim, cfg, cfg_dict: dict) -> None:
        means base-class fields go under the base namespace (e.g. ``physics:*``) even when
        the cfg instance is a PhysX subclass -- the subclass's ``_usd_namespace =
        "physxRigidBody"`` only governs *its own* fields.
+       Optional field-type metadata maps config field names to exact USD type
+       names. The writer uses that metadata only to create absent attributes;
+       registered schema attributes always retain their declared type.
+
 
     Args:
         prim: The USD prim to author on.
@@ -188,14 +210,14 @@ def _apply_namespaced_schemas(prim, cfg, cfg_dict: dict) -> None:
             safe_set_attribute_on_usd_prim(prim, f"{exc_ns}:{usd_attr}", value, camel_case=False)
 
     # 2. Group remaining non-None writes by declaring class.
-    by_class: dict[type, list[tuple[str, object]]] = {}
+    by_class: dict[type, list[tuple[str, str, object]]] = {}
     for cfg_field, value in list(cfg_dict.items()):
         if value is None:
             continue
         decl_class = _get_field_declaring_class(cfg_class, cfg_field)
         if decl_class is None:
             continue
-        by_class.setdefault(decl_class, []).append((to_camel_case(cfg_field, "cC"), value))
+        by_class.setdefault(decl_class, []).append((cfg_field, to_camel_case(cfg_field, "cC"), value))
 
     for decl_class, writes in by_class.items():
         # Read namespace/schema from the declaring class's own ``__dict__`` (not via
@@ -204,14 +226,20 @@ def _apply_namespaced_schemas(prim, cfg, cfg_dict: dict) -> None:
         applied_schema = decl_class.__dict__.get("_usd_applied_schema", None)
         if namespace is None:
             raise ValueError(
-                f"{decl_class.__name__} declares fields {[a for a, _ in writes]} but does"
+                f"{decl_class.__name__} declares fields {[a for _, a, _ in writes]} but does"
                 " not define '_usd_namespace'. Add '_usd_namespace' to the class metadata"
                 " or route the fields via '_usd_field_exceptions'."
             )
         if applied_schema and applied_schema not in prim.GetAppliedSchemas():
             prim.AddAppliedSchema(applied_schema)
-        for usd_attr, value in writes:
-            safe_set_attribute_on_usd_prim(prim, f"{namespace}:{usd_attr}", value, camel_case=False)
+        for cfg_field, usd_attr, value in writes:
+            safe_set_attribute_on_usd_prim(
+                prim,
+                f"{namespace}:{usd_attr}",
+                value,
+                camel_case=False,
+                type_to_create_if_not_exist=_get_declared_field_sdf_type(decl_class, cfg_field),
+            )
 
 
 """

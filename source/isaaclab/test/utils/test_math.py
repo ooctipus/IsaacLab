@@ -198,6 +198,80 @@ def test_axis_angle_from_quat_approximation(device):
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+def test_quat_from_rotation_vector_zero_and_tiny(device):
+    """Test finite identity and Taylor behavior at zero and tiny angles."""
+    rotation_vector = torch.tensor(
+        [[0.0, 0.0, 0.0], [1.0e-8, -2.0e-8, 3.0e-8]],
+        dtype=torch.float32,
+        device=device,
+    )
+
+    quaternion = math_utils.quat_from_rotation_vector(rotation_vector)
+
+    torch.testing.assert_close(
+        quaternion[0],
+        torch.tensor([0.0, 0.0, 0.0, 1.0], device=device),
+        rtol=0.0,
+        atol=0.0,
+    )
+    assert torch.all(torch.isfinite(quaternion))
+    torch.testing.assert_close(
+        math_utils.axis_angle_from_quat(quaternion),
+        rotation_vector,
+        rtol=1.0e-6,
+        atol=1.0e-9,
+    )
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+def test_quat_from_rotation_vector_batched_round_trip(device):
+    """Test arbitrary leading dimensions and inversion below the pi branch cut."""
+    rotation_vector = torch.tensor(
+        [
+            [[0.1, 0.2, -0.3], [0.0, 0.0, 0.0], [1.2, -0.4, 0.2]],
+            [[-0.7, 0.5, 0.1], [0.2, 0.3, 0.4], [-1.0, -0.2, 0.6]],
+        ],
+        dtype=torch.float32,
+        device=device,
+    )
+
+    quaternion = math_utils.quat_from_rotation_vector(rotation_vector)
+
+    assert quaternion.shape == (2, 3, 4)
+    torch.testing.assert_close(
+        torch.linalg.vector_norm(quaternion, dim=-1),
+        torch.ones((2, 3), device=device),
+    )
+    torch.testing.assert_close(
+        math_utils.axis_angle_from_quat(quaternion),
+        rotation_vector,
+        rtol=1.0e-5,
+        atol=1.0e-6,
+    )
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+def test_quat_from_rotation_vector_matches_released_equation(device):
+    """Freeze the direct sine-over-angle operation order used by motion data."""
+    rotation_vector = torch.tensor(
+        [[0.0, 0.0, 0.0], [1.0e-8, -2.0e-8, 3.0e-8], [0.3, 0.0, 1.1], [-2.0, 0.2, 0.4]],
+        dtype=torch.float32,
+        device=device,
+    )
+    angle = torch.linalg.vector_norm(rotation_vector, dim=-1, keepdim=True)
+    half_angle = 0.5 * angle
+    small_angle = angle.abs() < 1.0e-6
+    ratio = torch.empty_like(angle)
+    ratio[~small_angle] = torch.sin(half_angle[~small_angle]) / angle[~small_angle]
+    ratio[small_angle] = 0.5 - angle[small_angle] ** 2 / 48.0
+    expected = torch.cat((rotation_vector * ratio, torch.cos(half_angle)), dim=-1)
+
+    actual = math_utils.quat_from_rotation_vector(rotation_vector)
+
+    torch.testing.assert_close(actual, expected, rtol=0.0, atol=0.0)
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
 def test_quat_error_magnitude(device):
     """Test quat_error_magnitude method."""
     # No rotation (xyzw format)
@@ -891,6 +965,35 @@ def test_matrix_from_quat(device):
     torch.testing.assert_close(rot_mat_scipy.to(device=device), rot_mat)
     q_value = math_utils.quat_unique(math_utils.quat_from_matrix(rot_mat))
     torch.testing.assert_close(q_rand, q_value)
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+def test_matrix_from_quat_preserves_xyzw_tensor_reduction(device):
+    """Keep generic matrix conversion independent of source-specific arithmetic order."""
+    quaternion = torch.tensor(
+        [[0.5058510899543762, 0.859718382358551, 0.01779167354106903, 0.06842775642871857]],
+        dtype=torch.float32,
+        device=device,
+    )
+    x, y, z, w = quaternion.unbind(-1)
+    scale = 2.0 / (quaternion * quaternion).sum(-1)
+    expected = torch.stack(
+        (
+            1.0 - scale * (y * y + z * z),
+            scale * (x * y - z * w),
+            scale * (x * z + y * w),
+            scale * (x * y + z * w),
+            1.0 - scale * (x * x + z * z),
+            scale * (y * z - x * w),
+            scale * (x * z - y * w),
+            scale * (y * z + x * w),
+            1.0 - scale * (x * x + y * y),
+        ),
+        dim=-1,
+    ).reshape(-1, 3, 3)
+    actual = math_utils.matrix_from_quat(quaternion)
+
+    torch.testing.assert_close(actual, expected, rtol=0.0, atol=0.0)
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda:0"])

@@ -103,6 +103,21 @@ def test_spawn_cuboid(sim):
     assert prim.GetAttribute("size").Get() == min(cfg.size)
 
 
+def test_spawn_plane(sim):
+    """Test spawning a local UsdGeom.Plane prim."""
+    cfg = sim_utils.PlaneCfg(size=(2.0, 3.0), axis="Z")
+    prim = cfg.func("/World/Plane", cfg)
+
+    assert prim.IsValid()
+    assert sim.stage.GetPrimAtPath("/World/Plane").IsValid()
+    assert prim.GetPrimTypeInfo().GetTypeName() == "Xform"
+    prim = sim.stage.GetPrimAtPath("/World/Plane/geometry/mesh")
+    assert prim.GetPrimTypeInfo().GetTypeName() == "Plane"
+    assert prim.GetAttribute("width").Get() == cfg.size[0]
+    assert prim.GetAttribute("length").Get() == cfg.size[1]
+    assert prim.GetAttribute("axis").Get() == cfg.axis
+
+
 def test_spawn_sphere(sim):
     """Test spawning of UsdGeom.Sphere prim."""
     cfg = sim_utils.SphereCfg(radius=1.0)

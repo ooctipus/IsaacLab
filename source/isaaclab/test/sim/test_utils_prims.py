@@ -22,6 +22,7 @@ import torch
 from pxr import Gf, Sdf, Usd, UsdGeom
 
 import isaaclab.sim as sim_utils
+import isaaclab.sim.utils.prims as prim_utils
 from isaaclab.sim.utils.prims import _to_tuple  # type: ignore[reportPrivateUsage]
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR, retrieve_file_path
 
@@ -513,6 +514,63 @@ def test_change_prim_property_clear_value():
     assert result is True
     # Note: After clearing, the attribute should go its default value
     assert prim.GetAttribute("size").Get() == 2.0
+
+
+@pytest.mark.parametrize(
+    "attr_name,value,value_type,expected",
+    [
+        ("doubleValues", (0.1, 0.2), Sdf.ValueTypeNames.DoubleArray, (0.1, 0.2)),
+        ("tokenValues", ("first", "second"), Sdf.ValueTypeNames.TokenArray, ("first", "second")),
+    ],
+    ids=["double_array", "token_array"],
+)
+def test_safe_set_attribute_on_usd_prim_uses_declared_array_type(monkeypatch, attr_name, value, value_type, expected):
+    """Test existing array attributes use their declared OpenUSD container type."""
+    stage = sim_utils.get_current_stage()
+    prim = sim_utils.create_prim("/World/Test", "Xform", stage=stage)
+    attribute = prim.CreateAttribute(attr_name, value_type, custom=True)
+    received = {}
+    original = prim_utils.change_prim_property
+
+    def record_native_value(*args, **kwargs):
+        received["value"] = kwargs["value"]
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(prim_utils, "change_prim_property", record_native_value)
+
+    sim_utils.safe_set_attribute_on_usd_prim(prim, attr_name, value, camel_case=False)
+
+    assert isinstance(received["value"], type(value_type.defaultValue))
+    assert tuple(attribute.Get()) == expected
+
+
+def test_safe_set_attribute_on_usd_prim_uses_explicit_type_for_absent_array(monkeypatch):
+    """Test an explicit OpenUSD type creates an absent array attribute without tuple inference."""
+    stage = sim_utils.get_current_stage()
+    prim = sim_utils.create_prim("/World/Test", "Xform", stage=stage)
+    received = {}
+    original = prim_utils.change_prim_property
+
+    def record_native_value(*args, **kwargs):
+        received["value"] = kwargs["value"]
+        received["type"] = kwargs["type_to_create_if_not_exist"]
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(prim_utils, "change_prim_property", record_native_value)
+
+    sim_utils.safe_set_attribute_on_usd_prim(
+        prim,
+        "doubleValues",
+        (0.1, 0.2),
+        camel_case=False,
+        type_to_create_if_not_exist=Sdf.ValueTypeNames.DoubleArray,
+    )
+
+    attribute = prim.GetAttribute("doubleValues")
+    assert received["type"] == Sdf.ValueTypeNames.DoubleArray
+    assert isinstance(received["value"], type(Sdf.ValueTypeNames.DoubleArray.defaultValue))
+    assert attribute.GetTypeName() == Sdf.ValueTypeNames.DoubleArray
+    assert tuple(attribute.Get()) == (0.1, 0.2)
 
 
 @pytest.mark.parametrize(

@@ -46,6 +46,22 @@ class ShapeCfg(RigidObjectSpawnerCfg):
 
 
 @configclass
+class PlaneCfg(ShapeCfg):
+    """Configuration parameters for a finite visual, infinite collision plane.
+
+    See :meth:`spawn_plane` for more information.
+    """
+
+    func: Callable | str = "{DIR}.shapes:spawn_plane"
+
+    size: tuple[float, float] = MISSING
+    """Visual width and length [m]."""
+
+    axis: Literal["X", "Y", "Z"] = "Z"
+    """Plane normal axis. Defaults to ``"Z"``."""
+
+
+@configclass
 class SphereCfg(ShapeCfg):
     """Configuration parameters for a sphere prim.
 

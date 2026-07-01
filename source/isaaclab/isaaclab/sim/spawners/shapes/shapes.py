@@ -17,6 +17,38 @@ if TYPE_CHECKING:
 
 
 @clone
+def spawn_plane(
+    prim_path: str,
+    cfg: shapes_cfg.PlaneCfg,
+    translation: tuple[float, float, float] | None = None,
+    orientation: tuple[float, float, float, float] | None = None,
+    **kwargs,
+) -> Usd.Prim:
+    """Create a local USDGeom plane with optional collision and materials.
+
+    The width and length control the visual extent. Collision is the infinite
+    half-space represented by ``UsdGeomPlane``.
+
+    Args:
+        prim_path: Path or pattern at which to spawn the plane.
+        cfg: Plane geometry, collision, and material configuration.
+        translation: Position [m] relative to the parent prim.
+        orientation: Quaternion in ``(x, y, z, w)`` order.
+        **kwargs: Additional clone-spawner arguments.
+
+    Returns:
+        The created plane root prim.
+
+    Raises:
+        ValueError: If a prim already exists at :paramref:`prim_path`.
+    """
+    stage = get_current_stage()
+    attributes = {"width": cfg.size[0], "length": cfg.size[1], "axis": cfg.axis.upper()}
+    _spawn_geom_from_prim_type(prim_path, cfg, "Plane", attributes, translation, orientation, stage=stage)
+    return stage.GetPrimAtPath(prim_path)
+
+
+@clone
 def spawn_sphere(
     prim_path: str,
     cfg: shapes_cfg.SphereCfg,

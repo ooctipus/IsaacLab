@@ -514,6 +514,33 @@ def axis_angle_from_quat(quat: torch.Tensor, eps: float = 1.0e-6) -> torch.Tenso
 
 
 @torch.jit.script
+def quat_from_rotation_vector(rotation_vector: torch.Tensor, eps: float = 1.0e-6) -> torch.Tensor:
+    """Convert rotation vectors [rad] to quaternions.
+
+    A rotation vector points along the rotation axis and has magnitude equal to
+    the rotation angle. The conversion uses a second-order Taylor expansion near
+    zero to avoid dividing by a small angle.
+
+    Args:
+        rotation_vector: Rotation vectors [rad]. Shape is (..., 3).
+        eps: Angle threshold for the Taylor expansion [rad].
+
+    Returns:
+        Quaternions in (x, y, z, w). Shape is (..., 4).
+    """
+    angle = torch.linalg.vector_norm(rotation_vector, dim=-1, keepdim=True)
+    half_angle = 0.5 * angle
+    small_angle = angle.abs() < eps
+    sin_half_angle_over_angle = torch.empty_like(angle)
+    sin_half_angle_over_angle[~small_angle] = torch.sin(half_angle[~small_angle]) / angle[~small_angle]
+    sin_half_angle_over_angle[small_angle] = 0.5 - angle[small_angle] ** 2 / 48.0
+    return torch.cat(
+        (rotation_vector * sin_half_angle_over_angle, torch.cos(half_angle)),
+        dim=-1,
+    )
+
+
+@torch.jit.script
 def quat_from_angle_axis(angle: torch.Tensor, axis: torch.Tensor) -> torch.Tensor:
     """Convert rotations given as angle-axis to quaternions.
 

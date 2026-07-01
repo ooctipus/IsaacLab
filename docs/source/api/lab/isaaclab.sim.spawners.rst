@@ -54,6 +54,7 @@ Shapes
     ConeCfg
     CuboidCfg
     CylinderCfg
+    PlaneCfg
     SphereCfg
 
 .. autoclass:: ShapeCfg
@@ -84,6 +85,13 @@ Shapes
 .. autofunction:: spawn_cylinder
 
 .. autoclass:: CylinderCfg
+    :members:
+    :show-inheritance:
+    :exclude-members: __init__, func
+
+.. autofunction:: spawn_plane
+
+.. autoclass:: PlaneCfg
     :members:
     :show-inheritance:
     :exclude-members: __init__, func

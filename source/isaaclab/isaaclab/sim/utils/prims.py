@@ -340,51 +340,74 @@ def safe_set_attribute_on_usd_schema(schema_api: Usd.APISchemaBase, name: str, v
         raise TypeError(f"Attribute '{attr_name}' does not exist on prim '{schema_api.GetPath()}'.")
 
 
-def safe_set_attribute_on_usd_prim(prim: Usd.Prim, attr_name: str, value: Any, camel_case: bool):
-    """Set the value of a attribute on its USD prim.
+def safe_set_attribute_on_usd_prim(
+    prim: Usd.Prim,
+    attr_name: str,
+    value: Any,
+    camel_case: bool,
+    type_to_create_if_not_exist: Sdf.ValueTypeNames | None = None,
+) -> None:
+    """Set an attribute on a USD prim, creating it when necessary.
 
-    The function creates a new attribute if it does not exist on the prim. This is because in some cases (such
-    as with shaders), their attributes are not exposed as USD prim properties that can be altered. This function
-    allows us to set the value of the attributes in these cases.
+    Existing attributes always keep their declared USD type. When an attribute
+    is absent, callers may provide its exact type instead of relying on Python
+    value-shape inference.
 
     Args:
         prim: The USD prim to set the attribute on.
         attr_name: The name of the attribute.
-        value: The value to set the attribute to.
+        value: The value to set on the attribute.
         camel_case: Whether to convert the attribute name to camel case.
+        type_to_create_if_not_exist: Exact USD type for an absent attribute.
     """
     from pxr import Sdf  # noqa: PLC0415
 
-    # if value is None, do nothing
     if value is None:
         return
-    # convert attribute name to camel case
     if camel_case:
         attr_name = to_camel_case(attr_name, to="cC")
-    # resolve sdf type based on value
-    if isinstance(value, bool):
-        sdf_type = Sdf.ValueTypeNames.Bool
-    elif isinstance(value, int):
-        sdf_type = Sdf.ValueTypeNames.Int
-    elif isinstance(value, float):
-        sdf_type = Sdf.ValueTypeNames.Float
-    elif isinstance(value, str):
-        sdf_type = Sdf.ValueTypeNames.String
-    elif isinstance(value, (tuple, list)) and len(value) == 3 and any(isinstance(v, float) for v in value):
-        sdf_type = Sdf.ValueTypeNames.Float3
-    elif isinstance(value, (tuple, list)) and len(value) == 2 and any(isinstance(v, float) for v in value):
-        sdf_type = Sdf.ValueTypeNames.Float2
-    else:
-        raise NotImplementedError(
-            f"Cannot set attribute '{attr_name}' with value '{value}'. Please modify the code to support this type."
-        )
 
-    # change property using the change_prim_property function
+    attribute = prim.GetAttribute(attr_name)
+    if attribute.IsValid():
+        sdf_type = attribute.GetTypeName()
+        create_type = None
+    else:
+        sdf_type = type_to_create_if_not_exist
+        create_type = type_to_create_if_not_exist
+        if sdf_type is None:
+            if isinstance(value, bool):
+                sdf_type = Sdf.ValueTypeNames.Bool
+            elif isinstance(value, int):
+                sdf_type = Sdf.ValueTypeNames.Int
+            elif isinstance(value, float):
+                sdf_type = Sdf.ValueTypeNames.Float
+            elif isinstance(value, str):
+                sdf_type = Sdf.ValueTypeNames.String
+            elif (
+                isinstance(value, (tuple, list)) and len(value) == 3 and any(isinstance(item, float) for item in value)
+            ):
+                sdf_type = Sdf.ValueTypeNames.Float3
+            elif (
+                isinstance(value, (tuple, list)) and len(value) == 2 and any(isinstance(item, float) for item in value)
+            ):
+                sdf_type = Sdf.ValueTypeNames.Float2
+            else:
+                raise NotImplementedError(
+                    f"Cannot set attribute '{attr_name}' with value '{value}'."
+                    " Provide type_to_create_if_not_exist for this value type."
+                )
+            create_type = sdf_type
+
+    if sdf_type.isArray:
+        native_type = type(sdf_type.defaultValue)
+        if not isinstance(value, native_type):
+            value = native_type(value)
+
     change_prim_property(
         prop_path=f"{prim.GetPath()}.{attr_name}",
         value=value,
         stage=prim.GetStage(),
-        type_to_create_if_not_exist=sdf_type,
+        type_to_create_if_not_exist=create_type,
     )
 
 
