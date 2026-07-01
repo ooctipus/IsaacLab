@@ -151,6 +151,8 @@ class RigidObjectCollectionData(BaseRigidObjectCollectionData):
         reset_timestamps(
             [
                 self._body_com_pose_w if from_link else None,
+                self._projected_gravity_b,
+                self._heading_w,
                 # body com states
                 self._body_state_w,
                 self._body_link_state_w,
