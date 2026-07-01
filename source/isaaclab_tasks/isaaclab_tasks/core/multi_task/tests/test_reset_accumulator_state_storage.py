@@ -237,10 +237,9 @@ def test_accumulator_external_sampling_applies_existing_slots_without_resampling
     torch.testing.assert_close(applied["env_ids"], torch.tensor([0, 1]))
 
 
-def test_success_rate_sampler_binds_existing_source_tensors():
+def test_success_rate_sampler_owns_rates_and_binds_selected_rows():
     class Source:
         def __init__(self):
-            self.monitor_success_rate = torch.zeros(3)
             self.sampled_slots = torch.zeros(2, dtype=torch.long)
             self.state_coords = torch.arange(3, dtype=torch.float32).unsqueeze(-1)
             self.slot_indices = torch.arange(3, dtype=torch.long)
@@ -249,7 +248,6 @@ def test_success_rate_sampler_binds_existing_source_tensors():
     env = SimpleNamespace(device=torch.device("cpu"), num_envs=2, source=source, success=torch.tensor([True, False]))
     cfg = SimpleNamespace(
         params={
-            "success_rates_bind": "env.source.monitor_success_rate",
             "sample_indices_bind": "env.source.sampled_slots",
             "success_bind": "env.success",
             "layout": StateLayoutCfg(
@@ -262,7 +260,8 @@ def test_success_rate_sampler_binds_existing_source_tensors():
     )
 
     term = success_rate_sampler(cfg, env)
-    assert term.success_rates is source.monitor_success_rate
+    assert term.success_rates.shape == (3,)
+    assert term.success_rates.data_ptr() == term.success_monitor.success_rate.data_ptr()
     assert term.sample_indices is source.sampled_slots
 
     result = term(env, torch.tensor([0, 1]), **cfg.params)
@@ -271,8 +270,8 @@ def test_success_rate_sampler_binds_existing_source_tensors():
     assert result["success"].shape == ()
 
 
-def test_factory_sampler_config_lives_on_command_term():
-    from isaaclab_tasks.core.multi_task.factory.config.agents.rsl_rl_ppo_cfg import ValueShiftAlgorithmCfg
+def test_factory_sampler_config_separates_command_and_curriculum_state():
+    from isaaclab_tasks.core.multi_task.curriculum import ValueShiftSamplingStrategyCfg
     from isaaclab_tasks.core.multi_task.factory.reset_env_cfg import FACTORY_RESET_SAMPLER_PRESETS
     from isaaclab_tasks.core.multi_task.factory_env_cfg import FactoryCommandsCfg, FactoryCurriculumsCfg
 
@@ -294,10 +293,15 @@ def test_factory_sampler_config_lives_on_command_term():
     assert commands.reset_state.task_table.targets_per_board == commands.reset_state.task_table.rows_per_board
     assert commands.reset_state.randomize_command_indices is False
     assert curriculum.reset_sampler.params["sampling"].default.eps == FACTORY_RESET_SAMPLER_PRESETS.default.eps
-    assert len(curriculum.reset_sampler.params["sampling"].beta_value_shift.strategies) == 2
     assert curriculum.reset_sampler.params["sample_indices_bind"].endswith(".cmd_indices")
-    assert "command_manager.get_term('reset_state')" in curriculum.reset_sampler.params["success_rates_bind"]
+    assert "success_rates_bind" not in curriculum.reset_sampler.params
     assert curriculum.reset_sampler.params["layout"].target_index_bind is not None
-    value_shift_strategy = curriculum.reset_sampler.params["sampling"].beta_value_shift.strategies[1]
-    assert "command_manager.get_term('reset_state')" in value_shift_strategy.obs_cache_bind
-    assert "curriculum_manager.get_term('reset_sampler')" in ValueShiftAlgorithmCfg().bind_observation_exp
+    sampling = curriculum.reset_sampler.params["sampling"]
+    assert not any(isinstance(strategy, ValueShiftSamplingStrategyCfg) for strategy in sampling.default.strategies)
+    assert isinstance(sampling.value_shift.strategies[0], ValueShiftSamplingStrategyCfg)
+    assert any(isinstance(strategy, ValueShiftSamplingStrategyCfg) for strategy in sampling.beta_value_shift.strategies)
+    assert "get_spawn_obs_cache" not in sampling.beta_value_shift.strategies[1].obs_cache_bind
+    assert (
+        "curriculum_manager.get_term('reset_sampler')"
+        in curriculum.difficulty_scheduler.params["success_rate_callback"]
+    )

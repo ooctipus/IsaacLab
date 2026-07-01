@@ -12,6 +12,7 @@ import warp as wp
 
 from isaaclab.utils.warp.proxy_array import ProxyArray
 
+from ...curriculum import set_reset_state
 from ...utils.symmetry import Symmetry
 
 if TYPE_CHECKING:
@@ -83,9 +84,9 @@ class FactoryAssemblyPayload:
     """Assembly progress and success semantics for the factory reset-state command.
 
     Owns the per-env goal pose, the symmetry-reduced alignment error, the
-    threshold/hold-timer success state, and the held-asset debug marker. The
-    command shell selects the table row, writes the spawn state, and routes the
-    origin offset; this payload realizes the goal and the success contract.
+    threshold/hold-timer success state, and the held-asset debug marker. It
+    interprets selected table rows, resolves their coordinate frame, and writes
+    both spawn and target state; the command shell sees only opaque row ids.
     """
 
     error_names = ("orientation", "position")
@@ -96,6 +97,7 @@ class FactoryAssemblyPayload:
         payload_cfg = cfg.payload
         self._env = env
         self._device = env.device
+        self._states_relative = cfg.states_relative
         self.table = table
         self.reset_assets = sorted(
             (set(env.scene._articulations) | set(env.scene._rigid_objects)) & set(payload_cfg.reset_assets)
@@ -177,7 +179,33 @@ class FactoryAssemblyPayload:
         """Sparse success reward: 1 when :meth:`get_task_done`, else 0."""
         return self.is_success.float()
 
-    def resample(
+    def bind(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
+        """Bind selected assembly rows and write their simulator reset state."""
+        spawn_states, target_states = self.table.gather(task_rows)
+        target_origin = self._env.scene.env_origins[env_ids] if self._states_relative else None
+        self._bind_target(env_ids, task_rows, target_states, target_origin)
+        set_reset_state(
+            self._env,
+            spawn_states,
+            env_ids,
+            self.reset_assets,
+            is_relative=self._states_relative,
+        )
+
+    def bind_target(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
+        """Bind selected assembly targets and write their target simulator state."""
+        _, target_states = self.table.gather(task_rows)
+        target_origin = self._env.scene.env_origins[env_ids] if self._states_relative else None
+        self._bind_target(env_ids, task_rows, target_states, target_origin)
+        set_reset_state(
+            self._env,
+            target_states,
+            env_ids,
+            self.reset_assets,
+            is_relative=self._states_relative,
+        )
+
+    def _bind_target(
         self,
         env_ids: torch.Tensor,
         task_rows: torch.Tensor,
@@ -269,10 +297,6 @@ class FactoryAssemblyPayload:
         self.duration_held[:] = torch.where(instant_success, self.duration_held + step_dt, 0.0)
         self.is_success[:] = instant_success & (self.duration_held >= self.duration_required)
         self._env.extras["successes"] = self.is_success
-
-    def log_metrics(self, env: ManagerBasedRLEnv, success_rates: torch.Tensor) -> None:
-        """Log the overall curriculum success rate (the per-tag breakdown is the tag-matrix image)."""
-        env.extras.setdefault("log", {})["Metrics/MonitorSuccessRate"] = success_rates.mean().item()
 
     def set_debug_vis(self, debug_vis: bool) -> None:
         """Create (lazily) and toggle the held-asset target-frame marker."""

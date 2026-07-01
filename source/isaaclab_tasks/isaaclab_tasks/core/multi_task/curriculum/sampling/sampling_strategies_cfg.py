@@ -138,8 +138,8 @@ class ValueShiftSamplingStrategyCfg:
     """
 
     obs_cache_bind: str = MISSING
-    """Expression resolving to the ``[num_states, ...]`` observation cache (a ``TensorDict``) to score value
-    drift over -- e.g. ``env.command_manager.get_term('goal_point').get_spawn_obs_cache()``."""
+    """Expression resolving to an explicit immutable [num_states, ...]
+    observation cache supplied by the caller."""
 
 
 SamplingStrategyCfg = (

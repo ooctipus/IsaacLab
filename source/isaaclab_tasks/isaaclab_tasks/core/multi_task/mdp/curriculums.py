@@ -17,6 +17,8 @@ from isaaclab_tasks.core.multi_task.curriculum import SamplerCfg, StateLayoutCfg
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
+    from isaaclab_tasks.core.multi_task.curriculum import ValueShiftSamplingStrategy
+
 
 class success_rate_sampler(ManagerTermBase):
     """Update item success rates and sample the next item indices."""
@@ -24,13 +26,15 @@ class success_rate_sampler(ManagerTermBase):
     def __init__(self, cfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
         self._log_counter = -1
+        self._monitor_initialized = False
 
-        self.success_rates: torch.Tensor = eval(cfg.params["success_rates_bind"])  # noqa: S307
         self.sample_indices: torch.Tensor = eval(cfg.params["sample_indices_bind"])  # noqa: S307
         self.success: torch.Tensor = eval(cfg.params["success_bind"])  # noqa: S307
+        layout = cfg.params["layout"].build(env)
+        self.success_rates = torch.zeros(layout.num_items, device=self.sample_indices.device)
 
         monitor_cfg: SuccessMonitorCfg = cfg.params["success_monitor_cfg"]
-        monitor_cfg.num_monitored_data = int(self.success_rates.numel())
+        monitor_cfg.num_monitored_data = layout.num_items
         monitor_cfg.device = env.device
         monitor_cfg.max_updates = env.num_envs if monitor_cfg.max_updates is None else monitor_cfg.max_updates
         self.success_monitor = monitor_cfg.class_type(monitor_cfg, self.success_rates)
@@ -38,16 +42,19 @@ class success_rate_sampler(ManagerTermBase):
         self._sampling_cfg: SamplerCfg = cfg.params["sampling"]
         if self._sampling_cfg.max_samples is None:
             self._sampling_cfg.max_samples = env.num_envs
-        layout_cfg: StateLayoutCfg = cfg.params["layout"]
         self._sampler = self._sampling_cfg.class_type(
-            self._sampling_cfg, layout_cfg.build(env), env=env, success_rates=self.success_rates
+            self._sampling_cfg, layout, env=env, success_rates=self.success_rates
         )
+
+    @property
+    def value_shift(self) -> ValueShiftSamplingStrategy:
+        """Return the selected value-shift strategy and its learner buffers."""
+        return self._sampler.value_shift
 
     def __call__(
         self,
         env: ManagerBasedRLEnv,
         env_ids: torch.Tensor,
-        success_rates_bind: str,
         sample_indices_bind: str,
         success_bind: str,
         layout: StateLayoutCfg,
@@ -55,12 +62,15 @@ class success_rate_sampler(ManagerTermBase):
         success_monitor_cfg: SuccessMonitorCfg,
         sampler_visual_logger: Callable[..., None] | None = None,
         sampler_visual_log_period: int = 1000,
-    ):
+    ) -> dict[str, torch.Tensor]:
         if env_ids.numel() == 0:
             return {"success": self.success_rates.mean()}
 
-        prev_idx = self.sample_indices[env_ids]
-        self.success_monitor.success_update(prev_idx, self.success[env_ids])
+        if self._monitor_initialized:
+            prev_idx = self.sample_indices[env_ids]
+            self.success_monitor.success_update(prev_idx, self.success[env_ids])
+        else:
+            self._monitor_initialized = True
 
         num_samples = self._sampling_cfg.max_samples if self._sampling_cfg.warp else len(env_ids)
         probs, choices = self._sampler.probabilities_and_sample(num_samples)

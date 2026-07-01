@@ -27,7 +27,7 @@ def test_locomotion_position_uses_future_command_and_curriculum():
     assert cfg.scene.height_scanner.mesh_prim_paths == ["/World/ground"]
     assert not hasattr(cfg.commands.goal_point.task_table, "state_frame")
     assert cfg.curriculum.terrain_levels.func is success_rate_sampler
-    assert "success_rates_bind" in cfg.curriculum.terrain_levels.params
+    assert "success_rates_bind" not in cfg.curriculum.terrain_levels.params
     assert any(
         isinstance(criteria_cfg, JointWithinLimitCfg)
         and criteria_cfg.limit_ratio == 0.9

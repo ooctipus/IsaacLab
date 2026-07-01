@@ -148,26 +148,24 @@ POSITION_PPO_ALGORITHM_CFG = RslRlPpoAlgorithmCfg(**_POSITION_PPO_ALGORITHM_KWAR
 
 @configclass
 class ValueShiftAlgorithmCfg(RslRlPpoAlgorithmCfg):
-    """PPO + the value-shift augmentation: binds the curriculum sampler's value-shift
-    strategy buffers onto the :class:`~rsl_rl.extensions.ValueShift` extension."""
+    """PPO with post-update critic drift bound to the Position curriculum."""
 
     value_shift_cfg: RslRlValueShiftCfg = RslRlValueShiftCfg(
         observation_bind=(
             "setattr(self, 'obs_cache', env.unwrapped.curriculum_manager"
-            ".get_term('terrain_levels')._sampler._impl.value_shift_strategy.observation_cache)"
+            ".get_term('terrain_levels').value_shift.observation_cache)"
         ),
         current_value_bind=(
-            "setattr(self, 'cur_val', env.unwrapped.curriculum_manager"
-            ".get_term('terrain_levels')._sampler._impl.value_shift_strategy.cur_val)"
+            "setattr(self, 'cur_val', env.unwrapped.curriculum_manager.get_term('terrain_levels').value_shift.cur_val)"
         ),
         value_diff_bind=(
             "setattr(self, 'diff_val', env.unwrapped.curriculum_manager"
-            ".get_term('terrain_levels')._sampler._impl.value_shift_strategy.diff_val)"
+            ".get_term('terrain_levels').value_shift.diff_val)"
         ),
     )
 
 
-POSITION_VALUE_SHIFT_ALGORITHM_CFG = ValueShiftAlgorithmCfg(**_POSITION_PPO_ALGORITHM_KWARGS)
+POSITION_VALUE_SHIFT_ALGORITHM_CFG = ValueShiftAlgorithmCfg(**(_POSITION_PPO_ALGORITHM_KWARGS | {"gamma": 0.999}))
 
 
 @configclass
@@ -175,13 +173,18 @@ class SuccessorAlgorithmCfg(RslRlPpoAlgorithmCfg):
     """PPO with the dynamics-anchored successor-representation value
     (:class:`~rsl_rl.extensions.SuccessorFeatures`).
 
-    The critic exposes ``psi`` (free) and ``phi`` (sqrt(d)-normed) heads (the ``successor`` critic preset, pluggable
-    via ``agent.critic``) learned reward-free from the forward-backward occupancy objective; the value is the
-    derived read-out ``V = <psi, w>`` with ``w`` the static EMA success centroid. Purely an algorithm-axis
-    augmentation -- no sampler/value-shift coupling. ``feature_dim`` must match the critic preset's.
+    The critic learns forward/backward maps from the reward-free occupancy objective. The goal cache supplies
+    ``z = B(goal)``; actor and value share that immutable behavior context, with
+    ``V(s, z) = <F(s, z), z>``. Select this through global ``presets=successor``, which installs the matching
+    actor, critic, observation groups, and environment-side ``goal_observations`` cache. Selecting only
+    ``agent.algorithm=successor`` is incomplete. ``feature_dim`` must match the critic preset.
     """
 
-    successor_cfg: RslRlSuccessorCfg = RslRlSuccessorCfg(feature_dim=128)
+    successor_cfg: RslRlSuccessorCfg = RslRlSuccessorCfg(
+        feature_dim=128,
+        goal_observation_bind=("env.unwrapped.curriculum_manager.get_term('goal_observations').observations"),
+        goal_indices_bind="env.unwrapped.command_manager.get_term('goal_point').cmd_indices",
+    )
 
 
 @configclass

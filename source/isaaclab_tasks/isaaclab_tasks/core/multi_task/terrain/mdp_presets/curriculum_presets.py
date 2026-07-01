@@ -9,6 +9,7 @@ from isaaclab.utils.configclass import configclass
 from isaaclab_tasks.core.multi_task.curriculum import (
     BetaSamplingStrategyCfg,
     FrontierSamplingStrategyCfg,
+    ObservationCache,
     SamplerCfg,
     StateLayoutCfg,
     SuccessMonitorCfg,
@@ -26,7 +27,6 @@ class PositionCurriculumSamplerCfg:
     terrain_levels = CurrTerm(
         func=mdp.success_rate_sampler,
         params={
-            "success_rates_bind": "env.command_manager.get_term('goal_point').success_rates",
             "sample_indices_bind": "env.command_manager.get_term('goal_point').cmd_indices",
             "layout": StateLayoutCfg(
                 coords_bind="env.command_manager.get_term('goal_point').table.spawn_states[:, :2]",
@@ -52,7 +52,7 @@ class PositionCurriculumSamplerCfg:
                     strategies=[
                         ValueShiftSamplingStrategyCfg(
                             weight=0.5,
-                            obs_cache_bind="env.command_manager.get_term('goal_point').get_spawn_obs_cache()",
+                            obs_cache_bind="materialize_state_command_observations(env, 'goal_point')",
                         )
                     ],
                     eps=1e-4,
@@ -62,7 +62,7 @@ class PositionCurriculumSamplerCfg:
                         BetaSamplingStrategyCfg(target=0.66, kappa=2.5, weight=1.0, success_rate_bind="success_rates"),
                         ValueShiftSamplingStrategyCfg(
                             weight=1.0,
-                            obs_cache_bind="env.command_manager.get_term('goal_point').get_spawn_obs_cache()",
+                            obs_cache_bind="materialize_state_command_observations(env, 'goal_point')",
                         ),
                     ],
                     eps=1e-4,
@@ -92,7 +92,6 @@ class CRLSamplerCfg:
     terrain_levels = CurrTerm(
         func=mdp.success_rate_sampler,
         params={
-            "success_rates_bind": "env.command_manager.get_term('goal_point').success_rates",
             "sample_indices_bind": "env.command_manager.get_term('goal_point').cmd_indices",
             "layout": StateLayoutCfg(
                 coords_bind="env.command_manager.get_term('goal_point').table.spawn_states[:, :2]",
@@ -115,8 +114,21 @@ class CRLSamplerCfg:
 
 
 @configclass
+class PositionSuccessorCurriculumCfg(PositionCurriculumSamplerCfg):
+    """Position curriculum with a cold, expression-bound goal observation cache."""
+
+    goal_observations = CurrTerm(
+        func=ObservationCache,
+        params={
+            "observations_bind": "materialize_state_command_target_observations(env, 'goal_point')",
+        },
+    )
+
+
+@configclass
 class CurriculumPresetCfg(PresetCfg):
     foot_sampled_commands = PositionCurriculumSamplerCfg()
     position = foot_sampled_commands
     crl = CRLSamplerCfg()
+    successor = PositionSuccessorCurriculumCfg()
     default = foot_sampled_commands

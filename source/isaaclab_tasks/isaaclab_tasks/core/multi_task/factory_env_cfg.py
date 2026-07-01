@@ -20,7 +20,7 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_tasks.core.multi_task.curriculum import StateLayoutCfg, SuccessMonitorCfg
+from isaaclab_tasks.core.multi_task.curriculum import ObservationCache, StateLayoutCfg, SuccessMonitorCfg
 from isaaclab_tasks.utils import PresetCfg, preset
 
 from .factory import mdp, mdp_presets
@@ -290,7 +290,6 @@ class FactoryCurriculumsCfg:
     reset_sampler = CurrTerm(
         func=mdp.success_rate_sampler,
         params={
-            "success_rates_bind": "env.command_manager.get_term('reset_state').success_rates",
             "sample_indices_bind": "env.command_manager.get_term('reset_state').cmd_indices",
             "layout": StateLayoutCfg(
                 coords_bind="env.command_manager.get_term('reset_state').table.state_coords",
@@ -313,8 +312,16 @@ class FactoryCurriculumsCfg:
         func=mdp.DifficultyScheduler,
         params={
             "max_difficulty": 10,
-            "success_rate_callback": "env.command_manager.get_term('reset_state').success_rates",
+            "success_rate_callback": "env.curriculum_manager.get_term('reset_sampler').success_rates",
         },
+    )
+
+    goal_observations = preset(
+        default=None,
+        successor=CurrTerm(
+            func=ObservationCache,
+            params={"observations_bind": ("materialize_state_command_target_observations(env, 'reset_state')")},
+        ),
     )
 
     gravity_adr = preset(

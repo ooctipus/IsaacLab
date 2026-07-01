@@ -78,6 +78,10 @@ class FactoryResetStateTaskTable:
         """Number of task slots (spawn x target pairs)."""
         return int(self.spawn_index.shape[0])
 
+    def sample_rows(self, count: int) -> torch.Tensor:
+        """Sample task slots uniformly on the table device."""
+        return torch.randint(0, self.num_tasks, (count,), device=self.spawn_index.device)
+
     def gather(self, task_rows: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Return ``(spawn_states, target_states)`` reset-state rows for the slots.
 

@@ -19,8 +19,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 import torch
-from tensordict import TensorDict
 
+from ..observation_cache import evaluate_observation_cache_bind
 from ..state_layout import StateLayout
 
 if TYPE_CHECKING:
@@ -141,9 +141,8 @@ class UniformSamplingStrategy:
 class ValueShiftSamplingStrategy:
     """Per-state critic value-shift score.
 
-    Binds to a fixed observation cache (one entry per task -- e.g.
-    :meth:`~...StateCommand.get_spawn_obs_cache`, the episode-start observation
-    of each task). An external consumer (the
+    Binds to an explicit fixed observation cache with one entry per task. An
+    external consumer (the
     :class:`~rsl_rl.extensions.ValueShift` PPO augmentation) evaluates the
     critic on this cache every update and writes the per-state
     ``|V_new - V_prev|`` magnitude into :attr:`diff_val`; :meth:`score` copies
@@ -153,12 +152,10 @@ class ValueShiftSamplingStrategy:
     name = "value_shift"
 
     def __init__(self, cfg: ValueShiftSamplingStrategyCfg, layout: StateLayout, **bind_ns) -> None:
-        del layout
-        self.observation_cache: TensorDict = eval(cfg.obs_cache_bind, bind_ns)  # noqa: S307
-        assert isinstance(self.observation_cache, TensorDict) and self.observation_cache.batch_size[0] > 0, (
-            "ValueShift obs_cache_bind must resolve to a non-empty TensorDict."
-        )
+        self.observation_cache = evaluate_observation_cache_bind(cfg.obs_cache_bind, bind_ns["env"], bind_ns)
         n = self.observation_cache.batch_size[0]
+        if n != layout.num_items:
+            raise ValueError(f"ValueShift observation rows ({n}) must match layout items ({layout.num_items}).")
         # Allocate cur/diff on the OBS device (matches what the critic reads).
         device = next(iter(self.observation_cache.values())).device
         self.cur_val = torch.zeros(n, device=device)

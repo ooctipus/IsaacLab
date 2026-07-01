@@ -46,10 +46,7 @@ class RslRlSuccessorCfg:
     the latent space (Meta-Motivo ``train_goal_ratio``: ``0.5`` for FB/DMC, ``0.2`` for FB-CPR humanoid)."""
 
     goal_command_name: str = "goal_point"
-    """Name of the command-manager term (a ``StateCommand``) that exposes the per-task target-observation cache
-    (``get_target_obs_cache()``) and the per-env ``cmd_indices``. Bound once at construction by a single
-    deterministic lookup -- it must name an existing term, or construction fails. Default ``"goal_point"`` is
-    the position task's term."""
+    """Deprecated command-manager lookup used when explicit goal bindings are absent."""
 
     fb_batch_size: int = 1024
     """Cap on the forward-backward batch-matrix size (Meta-Motivo trains FB at 1024). The full ``[n, n]`` measure
@@ -64,3 +61,9 @@ class RslRlSuccessorCfg:
     target's lag keeps pulling the measure down); at ``0.01`` the target fully tracks within a rollout, the
     restraint vanishes, and ``F``/``M_diag`` run away. ``0.0001`` gave a bounded, decorrelated representation
     (``m_diag`` ~47, ``f_norm`` ~10 ~= the analytic ``1/(1-gamma)/sqrt(d)``) in the value-off gate."""
+
+    goal_observation_bind: str | None = None
+    """Expression resolving to the immutable per-task goal-observation TensorDict."""
+
+    goal_indices_bind: str | None = None
+    """Expression resolving to the stable per-environment goal-row tensor."""

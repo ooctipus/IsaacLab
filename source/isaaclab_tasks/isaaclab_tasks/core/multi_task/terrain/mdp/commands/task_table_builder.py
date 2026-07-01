@@ -94,6 +94,10 @@ class RelativeStateTaskTable:
     foot_body_ids: list[int] | None = None
     """Foot body ids in Isaac articulation order."""
 
+    def sample_rows(self, count: int) -> torch.Tensor:
+        """Sample task rows uniformly on the table device."""
+        return torch.randint(0, self.num_tasks, (count,), device=self.spawn_index.device)
+
     def gather(self, task_rows: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Return ``(spawn_states, target_states)`` rows for the selected tasks.
 

@@ -36,20 +36,25 @@ class StateCommandCfg(CommandTermCfg):
 
     @configclass
     class TaskTableCfg:
-        """Base task-table builder cfg; subclass per domain."""
+        """Base immutable task-table builder configuration."""
 
         class_type: Callable | str = MISSING
-        """Builder (or resolvable string) invoked as ``class_type(cfg, env)``;
-        must yield a table exposing ``num_tasks`` and ``gather(task_rows)``."""
+        """Builder invoked as class_type(cfg, env).
+
+        The result exposes ``num_tasks`` and ``sample_rows(count)``; its
+        remaining typed data is consumed only by the matching payload.
+        """
 
     @configclass
     class PayloadCfg:
         """Base payload worker cfg; subclass per domain."""
 
         class_type: type | str = MISSING
-        """Payload worker class (or resolvable string) invoked as
-        ``class_type(cfg, env, table)``; must implement the payload protocol the
-        command delegates to."""
+        """Payload class invoked as class_type(cfg, env, table).
+
+        The payload binds selected rows, owns reset writes and domain frames,
+        and updates the command and error tensors.
+        """
 
     class_type: type | str = "{DIR}.state_command:StateCommand"
 
@@ -67,11 +72,8 @@ class StateCommandCfg(CommandTermCfg):
     selector is driven entirely by an external curriculum binding."""
 
     states_relative: bool = False
-    """Whether stored table states are expressed in each env's local frame.
+    """Whether the domain payload interprets stored positions as env-local.
 
-    When ``True`` the command writes spawn states with
-    :func:`~...curriculum.set_reset_state` ``is_relative=True`` (per-asset
-    ``env_origins`` added) and lifts the payload target by ``env_origins``. When
-    ``False`` the states are already world-frame (e.g. a single shared terrain)
-    and no origin offset is applied. This replaces runtime terrain-replication
-    sniffing: the deploying scene declares its frame explicitly."""
+    The matching payload owns origin resolution for reset and target data;
+    StateCommand does not interpret this field.
+    """

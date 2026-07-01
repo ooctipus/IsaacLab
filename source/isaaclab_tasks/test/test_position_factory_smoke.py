@@ -77,20 +77,20 @@ def test_env_cfg_constructs(task_name: str) -> None:
     assert hasattr(cfg, "events")
 
 
-def test_factory_success_rate_callback_targets_reset_state_command() -> None:
-    """Factory difficulty curriculum should bind the reset-state success rates."""
+def test_factory_success_rate_callback_targets_reset_sampler() -> None:
+    """Factory difficulty curriculum should bind curriculum-owned success rates."""
     spec = gym.spec("Isaac-Factory-v0")
     module_path, cls_name = spec.kwargs["env_cfg_entry_point"].split(":")
     cfg_cls = getattr(importlib.import_module(module_path), cls_name)
     cfg = cfg_cls()
     callback = cfg.curriculum.difficulty_scheduler.params["success_rate_callback"]
 
-    expected = "env.command_manager.get_term('reset_state').success_rates"
+    expected = "env.curriculum_manager.get_term('reset_sampler').success_rates"
     assert callback == expected
 
     rates = torch.tensor([0.5, 1.0])
-    reset_state = SimpleNamespace(success_rates=rates)
-    eval_env = SimpleNamespace(command_manager=SimpleNamespace(get_term=lambda _name: reset_state))
+    reset_sampler = SimpleNamespace(success_rates=rates)
+    eval_env = SimpleNamespace(curriculum_manager=SimpleNamespace(get_term=lambda _name: reset_sampler))
     assert eval(callback, {}, {"env": eval_env}) is rates  # noqa: S307
 
 
@@ -304,7 +304,19 @@ def test_position_beta_value_shift_sampler_includes_value_shift_strategy() -> No
     value_shift = [s for s in sampling.strategies if isinstance(s, ValueShiftSamplingStrategyCfg)]
 
     assert len(value_shift) == 1
-    assert value_shift[0].obs_cache_bind == "env.command_manager.get_term('goal_point').get_spawn_obs_cache()"
+    assert value_shift[0].obs_cache_bind == "materialize_state_command_observations(env, 'goal_point')"
+
+
+def test_factory_beta_value_shift_sampler_includes_value_shift_strategy() -> None:
+    """Factory beta_value_shift should combine Beta and critic-drift scoring."""
+    from isaaclab_tasks.core.multi_task.curriculum import ValueShiftSamplingStrategyCfg
+    from isaaclab_tasks.core.multi_task.factory.reset_env_cfg import FACTORY_RESET_SAMPLER_PRESETS
+
+    sampling = FACTORY_RESET_SAMPLER_PRESETS.beta_value_shift
+    value_shift = [s for s in sampling.strategies if isinstance(s, ValueShiftSamplingStrategyCfg)]
+
+    assert len(value_shift) == 1
+    assert value_shift[0].obs_cache_bind == "materialize_state_command_observations(env, 'reset_state')"
 
 
 def test_position_beta_value_shift_preset_uses_value_shift_algorithm() -> None:
@@ -321,6 +333,82 @@ def test_position_beta_value_shift_preset_uses_value_shift_algorithm() -> None:
     assert isinstance(cfg.algorithm, ValueShiftAlgorithmCfg)
     assert cfg.algorithm.gamma == 0.999
     assert cfg.algorithm.share_cnn_encoders is False
+
+
+@pytest.mark.parametrize("task_name", ["position", "factory"])
+def test_value_shift_algorithm_uses_public_curriculum_boundary(task_name: str) -> None:
+    """Learner bindings should stop at the curriculum term's public ValueShift view."""
+    from isaaclab_tasks.utils.hydra import resolve_presets
+
+    if task_name == "position":
+        from isaaclab_tasks.core.multi_task.terrain.config.rsl_rl_cfg import PositionLocomotionPPORunnerCfg
+
+        cfg = PositionLocomotionPPORunnerCfg()
+    else:
+        from isaaclab_tasks.core.multi_task.factory.config.agents.rsl_rl_ppo_cfg import FactoryPPORunnerCfg
+
+        cfg = FactoryPPORunnerCfg()
+    resolve_presets(cfg, selected=("beta_value_shift",))
+
+    value_shift_cfg = cfg.algorithm.value_shift_cfg
+    for expression in (
+        value_shift_cfg.observation_bind,
+        value_shift_cfg.current_value_bind,
+        value_shift_cfg.value_diff_bind,
+    ):
+        assert ".value_shift." in expression
+        assert "._sampler" not in expression
+        assert "_impl" not in expression
+
+
+def test_successor_cfg_preserves_existing_positional_field_order() -> None:
+    """New expression fields must not shift existing positional configuration."""
+    from isaaclab_rl.rsl_rl import RslRlSuccessorCfg
+
+    cfg = RslRlSuccessorCfg(64, "vector_td", 2.0, 0.25, "task", 321, 0.02)
+
+    assert cfg.goal_command_name == "task"
+    assert cfg.fb_batch_size == 321
+    assert cfg.target_tau == 0.02
+    assert cfg.goal_observation_bind is None
+    assert cfg.goal_indices_bind is None
+
+
+@pytest.mark.parametrize("task_name", ["position", "factory"])
+def test_successor_presets_bind_cold_goal_observations(task_name: str) -> None:
+    """Successor should bind a cold curriculum cache without command-owned observations."""
+    from isaaclab_tasks.core.multi_task.curriculum import ObservationCache
+    from isaaclab_tasks.utils.hydra import resolve_presets
+
+    if task_name == "position":
+        from isaaclab_tasks.core.multi_task.position_env_cfg import LocomotionPositionCommandEnvCfg
+        from isaaclab_tasks.core.multi_task.terrain.config.rsl_rl_cfg import PositionLocomotionPPORunnerCfg
+
+        env_cfg = LocomotionPositionCommandEnvCfg()
+        agent_cfg = PositionLocomotionPPORunnerCfg()
+        expected_indices = "env.unwrapped.command_manager.get_term('goal_point').cmd_indices"
+    else:
+        from isaaclab_tasks.core.multi_task.factory.config.agents.rsl_rl_ppo_cfg import FactoryPPORunnerCfg
+        from isaaclab_tasks.core.multi_task.factory_env_cfg import FactoryBaseEnvCfg
+
+        env_cfg = FactoryBaseEnvCfg()
+        agent_cfg = FactoryPPORunnerCfg()
+        expected_indices = "env.unwrapped.command_manager.get_term('reset_state').cmd_indices"
+
+    resolve_presets(env_cfg, selected=("successor",))
+    resolve_presets(agent_cfg, selected=("successor",))
+
+    assert env_cfg.curriculum.goal_observations.func is ObservationCache
+    assert (
+        "materialize_state_command_target_observations"
+        in (env_cfg.curriculum.goal_observations.params["observations_bind"])
+    )
+    successor_cfg = agent_cfg.algorithm.successor_cfg
+    assert successor_cfg.goal_observation_bind == (
+        "env.unwrapped.curriculum_manager.get_term('goal_observations').observations"
+    )
+    assert successor_cfg.goal_indices_bind == expected_indices
+    assert "get_target_obs_cache" not in successor_cfg.goal_observation_bind
 
 
 @pytest.mark.parametrize("task_name", ["Isaac-Position-v0", "Isaac-Factory-v0"])

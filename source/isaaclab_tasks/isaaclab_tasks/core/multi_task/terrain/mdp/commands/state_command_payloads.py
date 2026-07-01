@@ -5,15 +5,15 @@
 
 """Semantic workers for the unified :class:`~...mdp.commands.StateCommand`.
 
-A payload owns its own lifecycle buffers and interprets gathered task rows: it
-writes the per-env target, computes the policy observation + error, advances the
-hold timer / success, reports thresholds, aggregates curriculum metrics, and
-draws debug markers. The command shell only selects task rows and routes origin
-framing.
+A payload owns its lifecycle buffers and interprets selected task rows: it
+gathers the matching spawn and target states, resolves their coordinate frame,
+writes the simulator reset state, computes the policy observation and error,
+advances success state, reports thresholds, and draws debug markers. The
+command shell only selects opaque task rows.
 
-The two payloads here share :class:`CommandPayloadBase` (the ``cmd_buf`` lifecycle
-+ success/threshold/metric/debug machinery) and differ only in target writing,
-delta/error computation, and the per-env state views.
+The two payloads here share :class:`CommandPayloadBase` (the ``cmd_buf``
+lifecycle plus success, threshold, reset, and debug machinery) and differ only
+in target writing, delta/error computation, and the per-env state views.
 """
 
 from __future__ import annotations
@@ -32,6 +32,8 @@ from isaaclab.utils.math import (
     quat_mul,
 )
 
+from isaaclab_tasks.core.multi_task.curriculum import set_reset_state
+
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
 
@@ -44,18 +46,19 @@ class CommandPayloadBase:
 
     Owns the per-env command buffer ``cmd_buf[N, 3, state_dim]`` (slot 0 target,
     1 delta, 2 current), the active-channel mask, the per-env command-type id,
-    success/threshold readout, curriculum metric aggregation, and debug
-    visualization. Subclasses set the dimensions + ``reward_scales`` and override
-    target writing (:meth:`resample`), delta/error (:meth:`update`), the per-env
+    success/threshold readout, reset-state binding, and debug visualization.
+    Subclasses set the dimensions and ``reward_scales`` and implement target
+    writing (:meth:`_bind_target`), delta/error (:meth:`update`), the per-env
     state views, and :meth:`debug_visualize`.
     """
 
     def __init__(self, cfg: StateCommandCfg, env: ManagerBasedEnv, table: RelativeStateTaskTable):
         self._cfg = cfg
+        self._env = env
+        self._states_relative = cfg.states_relative
         self.table = table
         self.device = env.device
         self.num_envs = env.num_envs
-        self._command_names = list(cfg.commands.keys())
 
     def _alloc_lifecycle(self) -> None:
         """Allocate the shared buffers once dimensions are known (subclass calls this)."""
@@ -63,7 +66,32 @@ class CommandPayloadBase:
         self.cmd_buf[:, 1] = 1.0
         self.cmd_mask = torch.zeros(self.num_envs, self.mask_dim, device=self.device, dtype=torch.bool)
         self.cmd_ids = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
-        self._success_per_cmd = torch.zeros(self.table.kind.shape[0], device=self.device)
+
+    def bind(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
+        """Bind selected terrain rows and write their simulator reset state."""
+        spawn_states, target_states = self.table.gather(task_rows)
+        target_origin = self._env.scene.env_origins[env_ids] if self._states_relative else None
+        self._bind_target(env_ids, task_rows, target_states, target_origin)
+        set_reset_state(
+            self._env,
+            spawn_states,
+            env_ids,
+            self.reset_assets,
+            is_relative=self._states_relative,
+        )
+
+    def bind_target(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
+        """Bind selected terrain targets and write their target simulator state."""
+        _, target_states = self.table.gather(task_rows)
+        target_origin = self._env.scene.env_origins[env_ids] if self._states_relative else None
+        self._bind_target(env_ids, task_rows, target_states, target_origin)
+        set_reset_state(
+            self._env,
+            target_states,
+            env_ids,
+            self.reset_assets,
+            is_relative=self._states_relative,
+        )
 
     def _init_success_gates(self, cfg: StateCommandCfg, env: ManagerBasedEnv) -> None:
         """Bind old position-task success gates to the payload."""
@@ -145,15 +173,6 @@ class CommandPayloadBase:
     def get_task_reward(self) -> torch.Tensor:
         """Per-env terminal reward: 1 when done, else 0."""
         return self.get_task_done().float()
-
-    def log_metrics(self, env: ManagerBasedEnv, success_rates: torch.Tensor) -> None:
-        """Aggregate the per-task success rate into per-command-type log entries."""
-        log = env.extras.setdefault("log", {})
-        for cmd_id, name in enumerate(self._command_names):
-            start = int(self.table.offsets[cmd_id].item())
-            end = int(self.table.offsets[cmd_id + 1].item())
-            self._success_per_cmd[cmd_id] = success_rates[start:end].mean() if end > start else 0.0
-            log["Metrics/goal_point/success_rate_" + name] = self._success_per_cmd[cmd_id].item()
 
     def set_debug_vis(self, debug_vis: bool) -> None:
         """Create (lazily) and toggle the goal + current-velocity visualizers."""
@@ -272,7 +291,7 @@ class CommandPayloadBaseState(CommandPayloadBase):
         self._alloc_lifecycle()
         self._init_success_gates(cfg, env)
 
-    def resample(
+    def _bind_target(
         self,
         env_ids: torch.Tensor,
         task_rows: torch.Tensor,
@@ -455,7 +474,7 @@ class CommandPayloadBaseFootState(CommandPayloadBase):
         self._alloc_lifecycle()
         self._init_success_gates(cfg, env)
 
-    def resample(
+    def _bind_target(
         self,
         env_ids: torch.Tensor,
         task_rows: torch.Tensor,
