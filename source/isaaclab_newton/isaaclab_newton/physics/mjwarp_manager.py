@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import inspect
 import logging
+import warnings
 
 import numpy as np
-from newton import Contacts, Model
+from newton import Contacts, Model, ModelBuilder
 from newton.solvers import SolverMuJoCo
+from newton.usd import SchemaResolverMjc
 
 from isaaclab.physics import PhysicsManager
 
@@ -32,6 +34,22 @@ class NewtonMJWarpManager(NewtonManager):
     """
 
     @classmethod
+    def _usd_schema_resolvers(cls) -> tuple[object, ...]:
+        """Include authored MuJoCo fields in every MJWarp USD import."""
+        return (SchemaResolverMjc(), *super()._usd_schema_resolvers())
+
+    @classmethod
+    def _convert_mjc_equality_constraints(cls) -> bool:
+        """Preserve native MuJoCo equality rows for :class:`SolverMuJoCo`."""
+        return False
+
+    @classmethod
+    def _register_builder_attributes(cls, builder: ModelBuilder) -> None:
+        """Register MuJoCo fields before USD import and builder replication."""
+        if not builder.has_custom_attribute("mujoco:solref"):
+            SolverMuJoCo.register_custom_attributes(builder)
+
+    @classmethod
     def _build_solver(cls, model: Model, solver_cfg: MJWarpSolverCfg) -> None:
         """Construct :class:`SolverMuJoCo` and populate the base-class slots.
 
@@ -44,7 +62,19 @@ class NewtonMJWarpManager(NewtonManager):
         ignored = {"class_type", "solver_type", "ls_parallel"}
         valid = set(inspect.signature(SolverMuJoCo.__init__).parameters) - {"self", "model"} - ignored
         kwargs = {k: v for k, v in solver_cfg.to_dict().items() if k in valid}
-        NewtonManager._solver = SolverMuJoCo(model, **kwargs)
+        if solver_cfg.enable_native_ccd:
+            solver = SolverMuJoCo(model, **kwargs)
+        else:
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r"(Geom .*|Pair .*): authored margin=.*zeroed for NATIVECCD/MULTICCD compatibility.*",
+                    category=UserWarning,
+                    module=r"newton\._src\.solvers\.mujoco\.solver_mujoco",
+                )
+                solver = SolverMuJoCo(model, **kwargs)
+            cls._disable_native_ccd(solver)
+        NewtonManager._solver = solver
         NewtonManager._use_single_state = True
         NewtonManager._needs_collision_pipeline = not solver_cfg.use_mujoco_contacts
 
@@ -56,6 +86,54 @@ class NewtonMJWarpManager(NewtonManager):
                 "solver_cfg.use_mujoco_contacts=True. Either set "
                 "use_mujoco_contacts=False or remove collision_cfg."
             )
+
+    @classmethod
+    def step(cls) -> None:
+        """Step MuJoCo-Warp and publish body kinematics from the final generalized state.
+
+        MuJoCo-Warp owns generalized-coordinate integration. Re-evaluating Newton
+        forward kinematics once at the simulation-step boundary makes
+        :attr:`newton.State.body_q` and :attr:`newton.State.body_qd` consistent
+        with the final ``joint_q`` and ``joint_qd`` exposed to asset data and
+        terminal-observation consumers.
+        """
+        sim = PhysicsManager._sim
+        is_playing = sim is not None and sim.is_playing()
+        super().step()
+        if is_playing:
+            cls.forward()
+
+    @staticmethod
+    def _disable_native_ccd(solver: SolverMuJoCo) -> None:
+        """Select MJWarp's margin-compatible primitive collision path.
+
+        MuJoCo Warp rejects nonzero margins for native box-pair CCD and for
+        eligible multi-contact CCD pairs. :class:`MJWarpSolverCfg` rejects the
+        multi-contact combination before this method runs. Newton currently
+        zeroes all authored margins while constructing such a model, so restore
+        the registered shape and explicit-pair values before CUDA graph capture.
+        """
+        mujoco = solver._mujoco
+        disableflags = int(solver.mj_model.opt.disableflags)
+        disableflags |= int(mujoco.mjtDisableBit.mjDSBL_NATIVECCD)
+        disableflags |= int(mujoco.mjtDisableBit.mjDSBL_MULTICCD)
+        solver.mj_model.opt.disableflags = disableflags
+        solver.mjw_model.opt.disableflags = disableflags
+
+        solver._zero_margins_for_native_ccd = False
+        use_mujoco_contacts = solver._use_mujoco_contacts
+        solver._use_mujoco_contacts = False
+        try:
+            solver._update_geom_properties()
+            solver._update_pair_properties()
+        finally:
+            solver._use_mujoco_contacts = use_mujoco_contacts
+
+        solver.mj_model.geom_margin[:] = solver.mjw_model.geom_margin.numpy()[0]
+        solver.mj_model.geom_gap[:] = solver.mjw_model.geom_gap.numpy()[0]
+        if solver.mj_model.npair:
+            solver.mj_model.pair_margin[:] = solver.mjw_model.pair_margin.numpy()[0]
+            solver.mj_model.pair_gap[:] = solver.mjw_model.pair_gap.numpy()[0]
 
     @classmethod
     def _initialize_contacts(cls) -> None:

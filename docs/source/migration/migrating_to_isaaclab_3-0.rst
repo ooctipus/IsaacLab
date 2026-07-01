@@ -279,6 +279,8 @@ available under :mod:`isaaclab_newton.sim.schemas`:
      - ``mjc:gravcomp`` (body-level gravity compensation, MuJoCo solver only)
    * - :class:`~isaaclab_newton.sim.schemas.MujocoJointDrivePropertiesCfg`
      - ``mjc:actuatorgravcomp`` via ``MjcJointAPI`` (joint-level routing)
+   * - :class:`~isaaclab_newton.sim.schemas.MujocoCollisionPropertiesCfg`
+     - Raw ``mjc:margin``, ``mjc:solimp``, and ``mjc:solref`` via ``MjcCollisionAPI``
 
 The MuJoCo cfgs subclass their Newton parent because MuJoCo is one of Newton's
 solver options.

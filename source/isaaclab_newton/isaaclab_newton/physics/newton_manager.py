@@ -47,7 +47,10 @@ from isaaclab.utils import checked_apply
 from isaaclab.utils.string import resolve_matching_names
 from isaaclab.utils.timer import Timer
 
-from isaaclab_newton.cloner.newton_clone_utils import replicate_builder_mapping
+from isaaclab_newton.cloner.newton_clone_utils import (
+    add_usd_with_scoped_custom_frequencies,
+    replicate_builder_mapping,
+)
 from isaaclab_newton.physics.visualization_builder import build_visualization_builder_from_stage_envs
 
 from .newton_manager_cfg import NewtonCfg, NewtonShapeCfg
@@ -803,7 +806,11 @@ class NewtonManager(PhysicsManager):
         NewtonManager._builder = builder
 
     @classmethod
-    def create_builder(cls, up_axis: str | None = None, **kwargs) -> ModelBuilder:
+    def create_builder(
+        cls,
+        up_axis: str | None = None,
+        **kwargs,
+    ) -> ModelBuilder:
         """Create a :class:`ModelBuilder` configured with default settings.
 
         Forwards :class:`NewtonShapeCfg` defaults onto Newton's upstream
@@ -828,6 +835,27 @@ class NewtonManager(PhysicsManager):
         shape_cfg = cfg.default_shape_cfg if isinstance(cfg, NewtonCfg) else NewtonShapeCfg()
         checked_apply(shape_cfg, builder.default_shape_cfg)
         return builder
+
+    @classmethod
+    def _usd_schema_resolvers(cls) -> tuple[object, ...]:
+        """Return the schema resolvers for one solver-owned USD import."""
+        return (SchemaResolverNewton(), SchemaResolverPhysx())
+
+    @classmethod
+    def _convert_mjc_equality_constraints(cls) -> bool:
+        """Return whether authored MuJoCo equalities become generic Newton constraints."""
+        return True
+
+    @classmethod
+    def _import_usd(cls, builder: ModelBuilder, stage: Usd.Stage, **kwargs) -> object:
+        """Import USD through the active solver's schema and ownership contract."""
+        return add_usd_with_scoped_custom_frequencies(
+            builder,
+            stage,
+            schema_resolvers=cls._usd_schema_resolvers(),
+            convert_mjc_equality_constraints=cls._convert_mjc_equality_constraints(),
+            **kwargs,
+        )
 
     @classmethod
     def _register_builder_attributes(cls, builder: ModelBuilder) -> None:
@@ -1228,11 +1256,9 @@ class NewtonManager(PhysicsManager):
 
         builder = cls.create_builder(up_axis=up_axis)
 
-        schema_resolvers = [SchemaResolverNewton(), SchemaResolverPhysx()]
-
         if not env_paths:
             # No env Xforms — flat loading
-            builder.add_usd(stage, schema_resolvers=schema_resolvers)
+            cls._import_usd(builder, stage)
             replace_newton_builder_shape_colors(builder, stage)
             NewtonManager._world_xforms = [wp.transform()]
             for hook in cls._per_world_builder_hooks:
@@ -1240,12 +1266,12 @@ class NewtonManager(PhysicsManager):
         else:
             # Load everything except the env subtrees (ground plane, lights, etc.)
             ignore_paths = [path for _, path in env_paths]
-            builder.add_usd(stage, ignore_paths=ignore_paths, schema_resolvers=schema_resolvers)
+            cls._import_usd(builder, stage, ignore_paths=ignore_paths)
             replace_newton_builder_shape_colors(builder, stage)
 
             _, proto_path = env_paths[0]
             source_builders = {proto_path: cls.create_builder(up_axis=up_axis)}
-            source_builders[proto_path].add_usd(stage, root_path=proto_path, schema_resolvers=schema_resolvers)
+            cls._import_usd(source_builders[proto_path], stage, root_path=proto_path)
             replace_newton_builder_shape_colors(source_builders[proto_path], stage)
             cls._cl_protos = source_builders
 

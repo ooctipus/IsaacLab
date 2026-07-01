@@ -75,6 +75,14 @@ Here is a very brief explanation of some of the key parameters above:
   cone) can be found in the MuJoCo documentation here:
   https://mujoco.readthedocs.io/en/stable/XMLreference.html#option-impratio
 
+* ``enable_native_ccd`` and ``enable_multiccd``: These select native box-pair
+  continuous collision detection and multi-contact CCD, respectively. MuJoCo
+  Warp does not support nonzero contact margins for native box-pair CCD or for
+  eligible multi-contact CCD pairs. Set both options to ``False`` when the
+  authored margin is part of the intended contact model; Isaac Lab then retains
+  the margin and uses MuJoCo Warp's primitive box-pair collision path. The
+  default keeps native CCD enabled and multi-contact CCD disabled.
+
 * ``num_substeps``: The number of substeps to perform when running the simulation.
   Setting this to a number larger than one allows to decimate the simulation
   without requiring Isaac Lab to process data between two substeps. This can be

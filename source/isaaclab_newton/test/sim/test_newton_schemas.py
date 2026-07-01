@@ -14,6 +14,7 @@ simulation_app = AppLauncher(headless=True).app
 
 import pytest
 from isaaclab_newton.sim.schemas import (
+    MujocoCollisionPropertiesCfg,
     MujocoJointDrivePropertiesCfg,
     MujocoRigidBodyPropertiesCfg,
     NewtonArticulationRootPropertiesCfg,
@@ -25,10 +26,11 @@ from isaaclab_newton.sim.schemas import (
     NewtonSDFCollisionPropertiesCfg,
 )
 
-from pxr import UsdPhysics
+from pxr import Sdf, UsdPhysics
 
 import isaaclab.sim as sim_utils
 import isaaclab.sim.schemas as schemas
+import isaaclab.sim.schemas.schemas as schema_impl
 from isaaclab.sim import SimulationCfg, SimulationContext
 from isaaclab.sim.spawners.materials import spawn_rigid_body_material
 
@@ -113,6 +115,107 @@ def test_mujoco_actuatorgravcomp_not_written_when_none(setup_sim):
     schemas.modify_joint_drive_properties("/World/art_gc2", MujocoJointDrivePropertiesCfg())
     attr = stage.GetPrimAtPath("/World/art_gc2/joint0").GetAttribute("mjc:actuatorgravcomp")
     assert not attr.IsValid(), "mjc:actuatorgravcomp should not be authored when None"
+
+
+# ---------------------------------------------------------------------------
+# MuJoCo collision
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.isaacsim_ci
+def test_mujoco_collision_properties_written(setup_sim):
+    """Raw MuJoCo contact parameters must be authored through MjcCollisionAPI."""
+    stage = sim_utils.get_current_stage()
+    sim_utils.create_prim("/World/col_mujoco", prim_type="Cube", translation=(2.0, 0.0, 0.5))
+    schemas.define_collision_properties(
+        "/World/col_mujoco",
+        MujocoCollisionPropertiesCfg(
+            collision_enabled=True,
+            margin=0.001,
+            solimp=(0.99, 0.99, 0.003, 0.5, 2.0),
+            solref=(0.015, 1.0),
+        ),
+    )
+    prim = stage.GetPrimAtPath("/World/col_mujoco")
+
+    assert prim.GetAttribute("physics:collisionEnabled").Get() is True
+    assert prim.GetAttribute("mjc:margin").Get() == pytest.approx(0.001)
+    assert tuple(prim.GetAttribute("mjc:solimp").Get()) == pytest.approx((0.99, 0.99, 0.003, 0.5, 2.0))
+    assert tuple(prim.GetAttribute("mjc:solref").Get()) == pytest.approx((0.015, 1.0))
+    assert _has_authored_api_schema(prim, "MjcCollisionAPI")
+
+
+@pytest.mark.isaacsim_ci
+def test_mujoco_collision_properties_create_arrays_without_registered_schema(setup_sim):
+    """MuJoCo tuple fields retain their declared array type when the API schema is unavailable."""
+    stage = sim_utils.get_current_stage()
+    prim = sim_utils.create_prim("/World/col_mujoco_unregistered", prim_type="Cube")
+    applied_schemas = []
+
+    class PrimWithoutRegisteredSchema:
+        """Delegate USD writes while simulating an authored-only API schema token."""
+
+        def GetAppliedSchemas(self):
+            return applied_schemas
+
+        def AddAppliedSchema(self, schema_name):
+            applied_schemas.append(schema_name)
+
+        def GetAttribute(self, name):
+            return prim.GetAttribute(name)
+
+        def GetPath(self):
+            return prim.GetPath()
+
+        def GetStage(self):
+            return prim.GetStage()
+
+    cfg = MujocoCollisionPropertiesCfg(
+        solimp=(0.99, 0.99, 0.003, 0.5, 2.0),
+        solref=(0.015, 1.0),
+    )
+    schema_impl._apply_namespaced_schemas(
+        PrimWithoutRegisteredSchema(),
+        cfg,
+        {"solimp": cfg.solimp, "solref": cfg.solref},
+    )
+
+    solimp = stage.GetPrimAtPath("/World/col_mujoco_unregistered").GetAttribute("mjc:solimp")
+    solref = stage.GetPrimAtPath("/World/col_mujoco_unregistered").GetAttribute("mjc:solref")
+    assert applied_schemas == ["MjcCollisionAPI"]
+    assert solimp.GetTypeName() == Sdf.ValueTypeNames.DoubleArray
+    assert solref.GetTypeName() == Sdf.ValueTypeNames.DoubleArray
+    assert tuple(solimp.Get()) == pytest.approx(cfg.solimp)
+    assert tuple(solref.Get()) == pytest.approx(cfg.solref)
+
+
+@pytest.mark.isaacsim_ci
+def test_mujoco_collision_schema_not_written_when_none(setup_sim):
+    """Empty MuJoCo fields must not apply MjcCollisionAPI."""
+    stage = sim_utils.get_current_stage()
+    sim_utils.create_prim("/World/col_mujoco_empty", prim_type="Cube", translation=(3.0, 0.0, 0.5))
+    schemas.define_collision_properties("/World/col_mujoco_empty", MujocoCollisionPropertiesCfg())
+
+    assert not _has_authored_api_schema(stage.GetPrimAtPath("/World/col_mujoco_empty"), "MjcCollisionAPI")
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    (
+        {"margin": -0.001},
+        {"solimp": (0.9, 0.9, 0.001, 0.5)},
+        {"solimp": (1.1, 0.9, 0.001, 0.5, 2.0)},
+        {"solimp": (0.9, 0.9, 0.0, 0.5, 2.0)},
+        {"solimp": (0.9, 0.9, 0.001, 1.1, 2.0)},
+        {"solimp": (0.9, 0.9, 0.001, 0.5, 0.5)},
+        {"solref": (0.015, -1.0)},
+        {"solref": (0.0, 1.0)},
+    ),
+)
+def test_mujoco_collision_properties_reject_invalid_values(kwargs):
+    """Malformed raw contact parameters must fail at the public config boundary."""
+    with pytest.raises(ValueError):
+        MujocoCollisionPropertiesCfg(**kwargs)
 
 
 # ---------------------------------------------------------------------------

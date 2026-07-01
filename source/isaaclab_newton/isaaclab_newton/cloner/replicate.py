@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 
 import torch
 from newton import ModelBuilder
-from newton._src.usd.schemas import SchemaResolverNewton, SchemaResolverPhysx
 
 from pxr import Usd
 
@@ -57,14 +56,20 @@ def _build_newton_builder_from_mapping(
         quaternions = torch.zeros((mapping.size(1), 4), device=mapping.device, dtype=torch.float32)
         quaternions[:, 3] = 1.0
 
-    schema_resolvers = [SchemaResolverNewton(), SchemaResolverPhysx()]
     manager_cls = PhysicsManager._sim.physics_manager
+    from isaaclab_newton.physics import NewtonCfg
+
+    cfg = PhysicsManager._cfg
 
     builder = manager_cls.create_builder(up_axis=up_axis)
-    stage_info = builder.add_usd(
+    excluded_paths = ["/World/envs", *sources]
+    # Solver attributes must exist before parsing global shapes and options. The scoped importer applies
+    # the same exclusions to custom-frequency traversal, so clone-source entities remain owned solely by
+    # the source builders merged below.
+    stage_info = manager_cls._import_usd(
+        builder,
         stage,
-        ignore_paths=["/World/envs", *sources],
-        schema_resolvers=schema_resolvers,
+        ignore_paths=excluded_paths,
     )
     replace_newton_builder_shape_colors(builder, stage)
 
@@ -86,7 +91,7 @@ def _build_newton_builder_from_mapping(
         stage,
         sources,
         lambda: manager_cls.create_builder(up_axis=up_axis),
-        schema_resolvers,
+        manager_cls._import_usd,
         ignore_paths=deformable_ignore_paths or None,
         simplify_meshes=simplify_meshes,
     )
@@ -96,9 +101,6 @@ def _build_newton_builder_from_mapping(
 
     # Build a collision-pairing hook from the active NewtonCfg, if configured.
     post_replicate_hooks = list(NewtonManager._post_replicate_hooks)
-    from isaaclab_newton.physics import NewtonCfg
-
-    cfg = PhysicsManager._cfg
     if isinstance(cfg, NewtonCfg) and cfg.collision_pairing is not None:
         from isaaclab_newton.physics.newton_collision_pairing import build_collision_pairing_hook
 

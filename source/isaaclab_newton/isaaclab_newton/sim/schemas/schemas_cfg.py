@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import ClassVar, Literal
 
 from isaaclab.sim.schemas.schemas_cfg import (
@@ -164,6 +165,76 @@ class NewtonCollisionPropertiesCfg(CollisionBaseCfg):
     Written to ``newton:contactGap`` via ``NewtonCollisionAPI``.
     Set to ``-inf`` to use Newton's builder default. Range: [0, inf).
     """
+
+
+@configclass
+class MujocoCollisionPropertiesCfg(NewtonCollisionPropertiesCfg):
+    """MuJoCo-solver-specific collision properties.
+
+    Extends :class:`NewtonCollisionPropertiesCfg` with the raw per-geometry
+    contact parameters consumed by Newton's MuJoCo solver.
+
+    See :meth:`~isaaclab.sim.schemas.modify_collision_properties` for more information.
+
+    .. note::
+        If the values are None, they are not modified.
+    """
+
+    _usd_namespace: ClassVar[str | None] = "mjc"
+    _usd_applied_schema: ClassVar[str | None] = "MjcCollisionAPI"
+    _usd_field_exceptions: ClassVar[dict] = {}
+    _usd_field_types: ClassVar[dict[str, str]] = {"solimp": "DoubleArray", "solref": "DoubleArray"}
+
+    margin: float | None = None
+    """MuJoCo collision-detection margin [m].
+
+    Written to ``mjc:margin`` via ``MjcCollisionAPI``. MuJoCo activates the
+    constraint when distance falls below ``margin - gap``.
+    """
+
+    solimp: tuple[float, float, float, float, float] | None = None
+    """MuJoCo contact-impedance parameters.
+
+    Components are ``[0] d0 [dimensionless]``, ``[1] d_width [dimensionless]``,
+    ``[2] width [m]``, ``[3] midpoint [dimensionless]``, and
+    ``[4] power [dimensionless]``. Written to ``mjc:solimp`` via
+    ``MjcCollisionAPI``.
+    """
+
+    solref: tuple[float, float] | None = None
+    """MuJoCo contact reference parameters.
+
+    In the positive convention, components are ``[0] time constant [s]`` and
+    ``[1] damping ratio [dimensionless]``. When both values are negative,
+    MuJoCo interprets their magnitudes as direct stiffness and damping. Their
+    SI units depend on the constraint dimension: translational contact uses
+    [N/m] and [N·s/m], while rotational contact uses [N·m/rad] and
+    [N·m·s/rad]. Written without conversion to ``mjc:solref`` via
+    ``MjcCollisionAPI``.
+    """
+
+    def __post_init__(self) -> None:
+        """Validate MuJoCo's collision-parameter domains."""
+        if self.margin is not None and (not math.isfinite(self.margin) or self.margin < 0.0):
+            raise ValueError("margin must be finite and non-negative.")
+        if self.solimp is not None:
+            if len(self.solimp) != 5 or not all(math.isfinite(value) for value in self.solimp):
+                raise ValueError("solimp must contain five finite values.")
+            d0, d_width, width, midpoint, power = self.solimp
+            if not (0.0 <= d0 <= 1.0 and 0.0 <= d_width <= 1.0):
+                raise ValueError("solimp d0 and d_width must lie in [0, 1].")
+            if width <= 0.0:
+                raise ValueError("solimp width must be positive.")
+            if not 0.0 <= midpoint <= 1.0:
+                raise ValueError("solimp midpoint must lie in [0, 1].")
+            if power < 1.0:
+                raise ValueError("solimp power must be at least one.")
+        if self.solref is not None:
+            if len(self.solref) != 2 or not all(math.isfinite(value) for value in self.solref):
+                raise ValueError("solref must contain two finite values.")
+            first, second = self.solref
+            if not ((first > 0.0 and second > 0.0) or (first < 0.0 and second < 0.0)):
+                raise ValueError("solref values must be both positive or both negative.")
 
 
 @configclass

@@ -25,6 +25,7 @@ Covers:
 
 from __future__ import annotations
 
+import inspect
 from types import SimpleNamespace
 
 import numpy as np
@@ -47,8 +48,10 @@ from isaaclab_newton.physics import (
     XPBDSolverCfg,
 )
 from isaaclab_newton.physics.mpm_manager import _make_solver_config
+from newton import ModelBuilder
 from newton.solvers import SolverFeatherstone, SolverImplicitMPM, SolverKamino, SolverMuJoCo, SolverXPBD
 
+from isaaclab.physics import PhysicsManager
 from isaaclab.sim import SimulationCfg, build_simulation_context
 
 # ---------------------------------------------------------------------------
@@ -115,6 +118,130 @@ SOLVER_MATRIX = [
         id="implicit_mpm",
     ),
 ]
+
+
+def test_mjwarp_step_finalizes_body_kinematics(monkeypatch) -> None:
+    """MJWarp must republish body kinematics after its generalized-state step."""
+    calls = []
+    monkeypatch.setattr(PhysicsManager, "_sim", SimpleNamespace(is_playing=lambda: True))
+    monkeypatch.setattr(NewtonManager, "step", classmethod(lambda cls: calls.append("solver")))
+    monkeypatch.setattr(NewtonMJWarpManager, "forward", classmethod(lambda cls: calls.append("kinematics")))
+
+    NewtonMJWarpManager.step()
+
+    assert calls == ["solver", "kinematics"]
+
+
+def test_mjwarp_multicontact_control_is_explicit() -> None:
+    """Native multi-contact generation must be selectable explicitly."""
+    defaults = MJWarpSolverCfg()
+    assert not defaults.enable_multiccd
+    assert defaults.enable_native_ccd
+
+    exact = MJWarpSolverCfg(enable_multiccd=True)
+    assert exact.to_dict()["enable_multiccd"] is True
+
+    margin_compatible = MJWarpSolverCfg(enable_native_ccd=False)
+    assert margin_compatible.to_dict()["enable_native_ccd"] is False
+
+
+def test_mjwarp_native_ccd_cannot_be_disabled_while_multiccd_is_enabled() -> None:
+    """The margin-compatible primitive path must reject contradictory CCD choices."""
+    with pytest.raises(ValueError, match="enable_native_ccd=False.*enable_multiccd=False"):
+        MJWarpSolverCfg(enable_native_ccd=False, enable_multiccd=True)
+
+
+def test_mjwarp_native_ccd_disable_preserves_real_model_margins() -> None:
+    """The bridge must set both CCD flags and restore authored model margins."""
+    sim_cfg = SimulationCfg(
+        dt=1.0 / 120.0,
+        device="cuda:0",
+        gravity=(0.0, 0.0, -9.81),
+        physics=NewtonCfg(
+            solver_cfg=MJWarpSolverCfg(enable_native_ccd=False, enable_multiccd=False),
+            use_cuda_graph=False,
+        ),
+    )
+
+    with build_simulation_context(sim_cfg=sim_cfg) as sim:
+        builder = sim.physics_manager.create_builder()
+        body = builder.add_body(mass=1.0)
+        builder.add_joint_revolute(parent=-1, child=body, axis=(0.0, 0.0, 1.0))
+        builder.add_shape_box(
+            body=body,
+            hx=0.1,
+            hy=0.1,
+            hz=0.1,
+            cfg=builder.ShapeConfig(margin=0.01),
+        )
+        builder.add_ground_plane()
+        NewtonManager.set_builder(builder)
+        sim.reset()
+
+        solver = NewtonManager._solver
+        assert isinstance(solver, SolverMuJoCo)
+        mujoco, _ = solver.import_mujoco()
+        native_ccd = int(mujoco.mjtDisableBit.mjDSBL_NATIVECCD)
+        multiccd = int(mujoco.mjtDisableBit.mjDSBL_MULTICCD)
+        expected_flags = native_ccd | multiccd
+        assert int(solver.mj_model.opt.disableflags) & expected_flags == expected_flags
+        assert int(solver.mjw_model.opt.disableflags) & expected_flags == expected_flags
+        np.testing.assert_allclose(np.sort(solver.mj_model.geom_margin), np.array((0.0, 0.01)), atol=1.0e-7)
+        np.testing.assert_allclose(
+            solver.mjw_model.geom_margin.numpy()[0],
+            solver.mj_model.geom_margin,
+            atol=0.0,
+        )
+
+
+def test_mjwarp_manager_registers_contact_model_attributes() -> None:
+    """Every MJWarp builder must retain authored MuJoCo contact parameters."""
+    builder = ModelBuilder()
+    NewtonMJWarpManager._register_builder_attributes(builder)
+
+    assert builder.has_custom_attribute("mujoco:solref")
+    assert builder.has_custom_attribute("mujoco:solref_mode")
+    assert builder.has_custom_attribute("mujoco:geom_solimp")
+
+
+def test_mjwarp_stage_fallback_uses_native_import_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fallback construction must retain MuJoCo fields and native equality rows."""
+
+    class _Builder:
+        custom_frequencies = {}
+
+        def add_usd(self, stage, **kwargs):
+            self.stage = stage
+            self.kwargs = kwargs
+
+    builder = _Builder()
+    world = SimpleNamespace(IsValid=lambda: False)
+    stage = SimpleNamespace(GetPrimAtPath=lambda _path: world)
+    module = inspect.getmodule(NewtonManager)
+    assert module is not None
+    monkeypatch.setattr(module, "get_current_stage", lambda: stage)
+    monkeypatch.setattr(module.UsdGeom, "GetStageUpAxis", lambda _stage: "Z")
+    monkeypatch.setattr(module, "replace_newton_builder_shape_colors", lambda _builder, _stage: None)
+    monkeypatch.setattr(
+        NewtonMJWarpManager,
+        "create_builder",
+        classmethod(lambda cls, up_axis=None: builder),
+    )
+    monkeypatch.setattr(NewtonMJWarpManager, "set_builder", classmethod(lambda cls, value: None))
+    monkeypatch.setattr(NewtonMJWarpManager, "_per_world_builder_hooks", ())
+
+    NewtonMJWarpManager.instantiate_builder_from_stage()
+
+    assert any(type(resolver).__name__ == "SchemaResolverMjc" for resolver in builder.kwargs["schema_resolvers"])
+    assert builder.kwargs["convert_mjc_equality_constraints"] is False
+
+
+def test_stage_fallback_has_one_manager_owned_usd_import_boundary() -> None:
+    """Flat, global, and prototype imports must not bypass the manager contract."""
+    source = inspect.getsource(NewtonManager.instantiate_builder_from_stage)
+
+    assert ".add_usd(" not in source
+    assert source.count("cls._import_usd(") == 3
 
 
 # ---------------------------------------------------------------------------

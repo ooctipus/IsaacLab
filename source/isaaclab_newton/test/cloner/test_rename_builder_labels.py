@@ -6,16 +6,19 @@
 """Unit tests for Newton clone label rewriting and visualization clone-plan sources."""
 
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 import newton
 import torch
 from isaaclab_newton.cloner import newton_clone_utils as newton_clone_utils_module
+from isaaclab_newton.cloner import replicate as replicate_module
 from isaaclab_newton.cloner.newton_clone_utils import (
     _BUILTIN_LABEL_TYPES,
     rename_builder_labels,
     replicate_builder_mapping,
 )
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonManager, NewtonMJWarpManager
 from isaaclab_newton.physics import visualization_builder as visualization_builder_module
 from newton.solvers import SolverMuJoCo
 
@@ -302,6 +305,254 @@ class TestReplicateBuilderMapping(unittest.TestCase):
         self.assertEqual(builder.geometry_sources_for_world(1), [])
 
 
+class TestCloneBuilderImportOwnership(unittest.TestCase):
+    def test_scoped_custom_frequency_filters_match_ignore_paths_and_restore(self):
+        calls = []
+        context = object()
+
+        class _Prim:
+            def __init__(self, path):
+                self.path = path
+
+            def GetPath(self):
+                return self.path
+
+        def original_filter(prim, received_context):
+            calls.append((str(prim.GetPath()), received_context))
+            return True
+
+        frequency = SimpleNamespace(usd_prim_filter=original_filter)
+        null_frequency = SimpleNamespace(usd_prim_filter=None)
+
+        class _Builder:
+            custom_frequencies = {"active": frequency, "inactive": null_frequency}
+
+            def add_usd(self, stage, *, ignore_paths, **kwargs):
+                del stage, kwargs
+                self.filter_during_import = frequency.usd_prim_filter
+                self.ignore_paths = ignore_paths
+                return [
+                    path
+                    for path in ("/World/envs/env_0/item", "/World/envsibling/item", "/World/global/item")
+                    if frequency.usd_prim_filter(_Prim(path), context)
+                ]
+
+        builder = _Builder()
+        accepted = newton_clone_utils_module.add_usd_with_scoped_custom_frequencies(
+            builder,
+            object(),
+            ignore_paths=("/World/envs",),
+        )
+
+        self.assertEqual(accepted, ["/World/global/item"])
+        self.assertEqual(builder.ignore_paths, ("/World/envs",))
+        self.assertIsNot(builder.filter_during_import, original_filter)
+        self.assertIs(frequency.usd_prim_filter, original_filter)
+        self.assertIsNone(null_frequency.usd_prim_filter)
+        self.assertEqual(calls, [("/World/global/item", context)])
+
+    def test_scoped_custom_frequency_filters_restore_after_import_failure(self):
+        def original_filter(prim, context):
+            del prim, context
+            return True
+
+        frequency = SimpleNamespace(usd_prim_filter=original_filter)
+
+        class _Builder:
+            custom_frequencies = {"active": frequency}
+
+            def add_usd(self, stage, **kwargs):
+                del stage, kwargs
+                self.filter_during_import = frequency.usd_prim_filter
+                raise RuntimeError("import failed")
+
+        builder = _Builder()
+        with self.assertRaisesRegex(RuntimeError, "import failed"):
+            newton_clone_utils_module.add_usd_with_scoped_custom_frequencies(
+                builder,
+                object(),
+                ignore_paths=("/World/envs",),
+            )
+
+        self.assertIsNot(builder.filter_during_import, original_filter)
+        self.assertIs(frequency.usd_prim_filter, original_filter)
+
+    def test_global_import_keeps_mujoco_shape_fields_and_excludes_clone_rows(self):
+        class _Prim:
+            def __init__(self, path):
+                self.path = path
+
+            def GetPath(self):
+                return self.path
+
+        def suffix_filter(suffix):
+            return lambda prim, context: str(prim.GetPath()).endswith(suffix)
+
+        original_filters = {
+            "mujoco:actuator": suffix_filter("/actuator"),
+            "mujoco:equality_constraint": suffix_filter("/equality"),
+            "test:global": suffix_filter("/global_row"),
+        }
+
+        class _Builder:
+            def __init__(self):
+                self.custom_frequencies = {
+                    name: SimpleNamespace(usd_prim_filter=callback) for name, callback in original_filters.items()
+                }
+                self._custom_frequency_counts = dict.fromkeys(original_filters, 0)
+                self.custom_attributes = {}
+                self.add_usd_kwargs = None
+                self.geom_margin = None
+                self.geom_solimp = None
+                self.geom_solref = None
+
+            def add_usd(self, stage, **kwargs):
+                del stage
+                self.add_usd_kwargs = kwargs
+                self.assert_mujoco_resolver = any(
+                    type(resolver).__name__ == "SchemaResolverMjc" for resolver in kwargs["schema_resolvers"]
+                )
+                if self.assert_mujoco_resolver:
+                    self.geom_margin = 0.001
+                    self.geom_solimp = (0.99, 0.99, 0.003, 0.5, 2.0)
+                    self.geom_solref = (0.015, 1.0)
+                context = {"builder": self}
+                for path in (
+                    "/World/envs/env_0/Robot/actuator",
+                    "/World/envs/env_0/Robot/equality",
+                    "/World/global/global_row",
+                ):
+                    prim = _Prim(path)
+                    for name, frequency in self.custom_frequencies.items():
+                        if frequency.usd_prim_filter(prim, context):
+                            self._custom_frequency_counts[name] += 1
+                return {"stage": "global"}
+
+        builder = _Builder()
+        source_builder = SimpleNamespace(_custom_frequency_counts={"mujoco:actuator": 69})
+        source_builders = {"/World/envs/env_0": source_builder}
+
+        class _Manager(NewtonMJWarpManager):
+            @classmethod
+            def create_builder(cls, **kwargs):
+                self.assertEqual(kwargs, {"up_axis": "Z"})
+                return builder
+
+        mapping = torch.zeros((1, 1), dtype=torch.bool)
+        with (
+            mock.patch.object(replicate_module.PhysicsManager, "_sim", SimpleNamespace(physics_manager=_Manager)),
+            mock.patch.object(
+                replicate_module.PhysicsManager,
+                "_cfg",
+                NewtonCfg(solver_cfg=MJWarpSolverCfg()),
+            ),
+            mock.patch.object(replicate_module, "replace_newton_builder_shape_colors"),
+            mock.patch.object(replicate_module, "build_source_builders", return_value=source_builders) as build_sources,
+            mock.patch.object(replicate_module, "replicate_builder_mapping", return_value=({}, [])),
+            mock.patch.object(replicate_module.NewtonManager, "_deformable_registry", ()),
+            mock.patch.object(replicate_module.NewtonManager, "_post_replicate_hooks", ()),
+            mock.patch.object(replicate_module.NewtonManager, "_per_world_builder_hooks", ()),
+            mock.patch.object(replicate_module.NewtonManager, "_cl_inject_sites", return_value=({}, {}, {})),
+        ):
+            result, _, _, _, returned_sources = replicate_module._build_newton_builder_from_mapping(
+                stage=object(),
+                sources=("/World/envs/env_0",),
+                destinations=("/World/envs/env_{}",),
+                env_ids=torch.tensor((0,), dtype=torch.int64),
+                mapping=mapping,
+            )
+
+        self.assertIs(result, builder)
+        self.assertTrue(builder.assert_mujoco_resolver)
+        self.assertIs(build_sources.call_args.args[3].__func__, _Manager._import_usd.__func__)
+        self.assertFalse(builder.add_usd_kwargs["convert_mjc_equality_constraints"])
+        self.assertEqual(builder.geom_margin, 0.001)
+        self.assertEqual(builder.geom_solimp, (0.99, 0.99, 0.003, 0.5, 2.0))
+        self.assertEqual(builder.geom_solref, (0.015, 1.0))
+        self.assertEqual(builder._custom_frequency_counts["mujoco:actuator"], 0)
+        self.assertEqual(builder._custom_frequency_counts["mujoco:equality_constraint"], 0)
+        self.assertEqual(builder._custom_frequency_counts["test:global"], 1)
+        self.assertEqual(returned_sources["/World/envs/env_0"]._custom_frequency_counts["mujoco:actuator"], 69)
+        for name, callback in original_filters.items():
+            self.assertIs(builder.custom_frequencies[name].usd_prim_filter, callback)
+
+    def test_non_mujoco_solver_keeps_newton_equality_conversion(self):
+        builder = SimpleNamespace(custom_frequencies={}, add_usd=mock.Mock(return_value={}), up_axis="Z")
+
+        class _Manager(NewtonManager):
+            @classmethod
+            def create_builder(cls, **kwargs):
+                self.assertEqual(kwargs, {"up_axis": "Z"})
+                return builder
+
+        build_sources = mock.Mock(return_value={})
+        with (
+            mock.patch.object(replicate_module.PhysicsManager, "_sim", SimpleNamespace(physics_manager=_Manager)),
+            mock.patch.object(replicate_module.PhysicsManager, "_cfg", object()),
+            mock.patch.object(replicate_module, "replace_newton_builder_shape_colors"),
+            mock.patch.object(replicate_module, "build_source_builders", build_sources),
+            mock.patch.object(replicate_module, "replicate_builder_mapping", return_value=({}, [])),
+            mock.patch.object(replicate_module.NewtonManager, "_deformable_registry", ()),
+            mock.patch.object(replicate_module.NewtonManager, "_post_replicate_hooks", ()),
+            mock.patch.object(replicate_module.NewtonManager, "_per_world_builder_hooks", ()),
+            mock.patch.object(replicate_module.NewtonManager, "_cl_inject_sites", return_value=({}, {}, {})),
+        ):
+            replicate_module._build_newton_builder_from_mapping(
+                stage=object(),
+                sources=("/World/envs/env_0",),
+                destinations=("/World/envs/env_{}",),
+                env_ids=torch.tensor((0,), dtype=torch.int64),
+                mapping=torch.zeros((1, 1), dtype=torch.bool),
+            )
+
+        self.assertTrue(builder.add_usd.call_args.kwargs["convert_mjc_equality_constraints"])
+        self.assertIs(build_sources.call_args.args[3].__func__, _Manager._import_usd.__func__)
+
+    def test_source_builder_registration_belongs_to_factory(self):
+        builder = SimpleNamespace(add_usd=mock.Mock(), up_axis="Z")
+        import_usd = mock.Mock()
+        with (
+            mock.patch.object(newton.solvers.SolverMuJoCo, "register_custom_attributes") as register,
+            mock.patch.object(newton_clone_utils_module, "replace_newton_builder_shape_colors"),
+        ):
+            result = newton_clone_utils_module.build_source_builders(
+                stage=object(),
+                sources=("/World/envs/env_0",),
+                create_builder=lambda: builder,
+                import_usd=import_usd,
+                simplify_meshes=False,
+            )
+
+        self.assertEqual(result, {"/World/envs/env_0": builder})
+        register.assert_not_called()
+
+        import_usd.assert_called_once()
+
+    def test_registered_mujoco_source_builder_preserves_native_equality(self):
+        stage = Usd.Stage.CreateInMemory()
+        UsdGeom.Xform.Define(stage, "/World")
+        UsdGeom.Xform.Define(stage, "/World/envs")
+        UsdGeom.Xform.Define(stage, "/World/envs/env_0")
+
+        def create_builder():
+            builder = newton.ModelBuilder()
+            SolverMuJoCo.register_custom_attributes(builder)
+            return builder
+
+        with mock.patch.object(newton_clone_utils_module, "replace_newton_builder_shape_colors"):
+            builders = newton_clone_utils_module.build_source_builders(
+                stage=stage,
+                sources=("/World/envs/env_0",),
+                create_builder=create_builder,
+                import_usd=NewtonMJWarpManager._import_usd,
+                simplify_meshes=False,
+            )
+
+        builder = builders["/World/envs/env_0"]
+        self.assertIn("mujoco:actuator", builder.custom_frequencies)
+        self.assertIn("mujoco:equality_constraint", builder.custom_frequencies)
+
+
 class TestVisualizationClonePlan(unittest.TestCase):
     @staticmethod
     def _define_xform(stage, path, translation=None):
@@ -333,7 +584,6 @@ class TestVisualizationClonePlan(unittest.TestCase):
             mock.patch.object(newton_clone_utils_module, "ModelBuilder", _FakeVisualizationModelBuilder),
             mock.patch.object(visualization_builder_module, "SchemaResolverNewton", lambda: object()),
             mock.patch.object(visualization_builder_module, "SchemaResolverPhysx", lambda: object()),
-            mock.patch.object(newton_clone_utils_module.solvers.SolverMuJoCo, "register_custom_attributes"),
         ):
             builder = visualization_builder_module.build_visualization_builder_from_stage_envs(
                 stage, env_paths, clone_plan

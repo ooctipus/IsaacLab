@@ -60,6 +60,7 @@ extension package:
    ├── CollisionBaseCfg
    │   ├── isaaclab_physx.sim.schemas.PhysxCollisionPropertiesCfg
    │   └── isaaclab_newton.sim.schemas.NewtonCollisionPropertiesCfg
+   │       ├── isaaclab_newton.sim.schemas.MujocoCollisionPropertiesCfg
    │       ├── isaaclab_newton.sim.schemas.NewtonMeshCollisionPropertiesCfg
    │       └── isaaclab_newton.sim.schemas.NewtonSDFCollisionPropertiesCfg
    │
@@ -119,10 +120,13 @@ The choice depends on which backends you target and which fields you need.
    the ``newton:*`` namespace for future native fields and act as the parent for
    solver-specific subclasses.
 
-**Use a MuJoCo subclass** (``MujocoRigidBodyPropertiesCfg``, ``MujocoJointDrivePropertiesCfg``)
+**Use a MuJoCo subclass** (``MujocoRigidBodyPropertiesCfg``, ``MujocoJointDrivePropertiesCfg``,
+   ``MujocoCollisionPropertiesCfg``)
    when you specifically use Newton's **MuJoCo** solver and need MuJoCo-only
    knobs (gravity compensation via ``mjc:gravcomp`` /
-   ``mjc:actuatorgravcomp``). Inherits from the Newton base, so
+   ``mjc:actuatorgravcomp`` or raw per-geometry contact parameters via
+   ``mjc:margin``, ``mjc:solimp``, and ``mjc:solref``). Inherits from the
+   Newton base, so
    ``isinstance(cfg, NewtonRigidBodyPropertiesCfg)`` is True.
 
 What parameters live where
@@ -280,17 +284,19 @@ running Newton's MuJoCo solver.
    * - ``MujocoJointDrivePropertiesCfg``
      - ``actuatorgravcomp``
      - ``mjc:actuatorgravcomp`` via ``MjcJointAPI``
+   * - ``MujocoCollisionPropertiesCfg``
+     - ``margin``, ``solimp``, ``solref``
+     - ``mjc:margin``, ``mjc:solimp``, ``mjc:solref`` via ``MjcCollisionAPI``
 
 .. note::
 
-   The two MuJoCo rows differ in their USD applied-schema requirement:
-   ``mjc:actuatorgravcomp`` is part of the registered ``MjcJointAPI`` applied
-   schema (so the writer calls ``prim.AddAppliedSchema("MjcJointAPI")`` when
-   the field is non-None). ``mjc:gravcomp`` has no registered Mjc applied
-   schema for body-level gravity compensation, so the writer authors it as a
-   raw USD attribute. Newton's MuJoCo solver consumes both via the same
-   resolver path; the schema-application difference is purely a USD-side
-   detail.
+   The MuJoCo fields use two USD authoring paths. ``mjc:actuatorgravcomp`` and
+   the contact fields belong to the registered ``MjcJointAPI`` and
+   ``MjcCollisionAPI`` applied schemas, respectively. ``mjc:gravcomp`` has no
+   registered Mjc applied schema for body-level gravity compensation, so the
+   writer authors it as a raw USD attribute. Newton's MuJoCo solver consumes
+   all of them through the same resolver path; the schema-application
+   difference is purely a USD-side detail.
 
 .. _schema-cfgs-mixed:
 

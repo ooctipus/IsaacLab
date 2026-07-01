@@ -5,12 +5,13 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from typing import Any
 
 import torch
 import warp as wp
-from newton import ModelBuilder, solvers
+from newton import ModelBuilder
 
 from pxr import Usd
 
@@ -18,11 +19,48 @@ from isaaclab.cloner.cloner_utils import replace_path_prefix
 from isaaclab.sim.utils.newton_model_utils import replace_newton_builder_shape_colors
 
 
+def add_usd_with_scoped_custom_frequencies(
+    builder: ModelBuilder,
+    stage: Usd.Stage,
+    *,
+    ignore_paths: Sequence[str] | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Import USD while applying ``ignore_paths`` to custom-frequency filters.
+
+    Newton's built-in USD traversal honors ``ignore_paths``, but registered
+    custom-frequency filters visit the full stage. Compose each non-null filter
+    with the same :func:`re.match` exclusions during import, then restore the
+    original callback identity even when import fails.
+    """
+    ignored = tuple(ignore_paths or ())
+    original_filters = []
+    for frequency in getattr(builder, "custom_frequencies", {}).values():
+        original = frequency.usd_prim_filter
+        if original is None:
+            continue
+
+        def scoped_filter(prim, context, original=original):
+            path = str(prim.GetPath())
+            if any(re.match(pattern, path) for pattern in ignored):
+                return False
+            return original(prim, context)
+
+        original_filters.append((frequency, original))
+        frequency.usd_prim_filter = scoped_filter
+
+    try:
+        return builder.add_usd(stage, ignore_paths=ignore_paths, **kwargs)
+    finally:
+        for frequency, original in original_filters:
+            frequency.usd_prim_filter = original
+
+
 def build_source_builders(
     stage: Usd.Stage,
     sources: Sequence[str],
     create_builder: Callable[[], ModelBuilder],
-    schema_resolvers: Sequence[Any],
+    import_usd: Callable[..., Any],
     *,
     ignore_paths: Sequence[str] | None = None,
     simplify_meshes: bool = True,
@@ -31,19 +69,18 @@ def build_source_builders(
     builders: dict[str, ModelBuilder] = {}
     for source in sources:
         builder = create_builder()
-        solvers.SolverMuJoCo.register_custom_attributes(builder)
         # When ``simplify_meshes`` is set, honor the per-shape ``physics:approximation``
         # token authored on each collider (e.g. via
         # ``CollisionPropertiesCfg(mesh_collision_property=NewtonMeshCollisionPropertiesCfg(...))``)
         # so callers can opt individual colliders into convex-hull / decomposition while
         # leaving SDF- and primitive-collider shapes untouched. ``import_usd`` skips shapes
         # carrying ``NewtonSDFCollisionAPI``, so this never clobbers SDF assets (nut/bolt).
-        builder.add_usd(
+        import_usd(
+            builder,
             stage,
             root_path=source,
             load_visual_shapes=True,
             skip_mesh_approximation=not simplify_meshes,
-            schema_resolvers=schema_resolvers,
             ignore_paths=ignore_paths,
         )
         if simplify_meshes:

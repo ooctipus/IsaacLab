@@ -111,6 +111,18 @@ class MJWarpSolverCfg(NewtonSolverCfg):
         :class:`ValueError` because the two collision modes are mutually exclusive.
     """
 
+    enable_multiccd: bool = False
+    """Whether MuJoCo generates multiple contacts for eligible geometry pairs."""
+
+    enable_native_ccd: bool = True
+    """Whether MuJoCo Warp uses native convex collision detection for box pairs.
+
+    Disable this together with :attr:`enable_multiccd` when a model contains
+    nonzero contact margins on box or mesh geometry. MuJoCo Warp does not
+    support those margins with native or multi-contact CCD; the non-CCD path
+    retains the authored margins and uses primitive box-pair collision.
+    """
+
     tolerance: float = 1e-6
     """Solver convergence tolerance for the constraint residual.
 
@@ -121,6 +133,8 @@ class MJWarpSolverCfg(NewtonSolverCfg):
     """
 
     def __post_init__(self):
+        if not self.enable_native_ccd and self.enable_multiccd:
+            raise ValueError("enable_native_ccd=False requires enable_multiccd=False.")
         if self.ls_parallel:
             warnings.warn(
                 "MJWarpSolverCfg.ls_parallel is deprecated and ignored. "
