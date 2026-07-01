@@ -128,7 +128,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     with launch_simulation(env_cfg, args_cli):
         # override configurations with non-hydra CLI arguments
         agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
-        env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
+        env_cfg.scene.num_envs = agent_cfg.resolve_num_envs(args_cli.num_envs, env_cfg.scene.num_envs)
         agent_cfg.max_iterations = (
             args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
         )
@@ -201,7 +201,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             env = multi_agent_to_single_agent(env)
 
         # save resume path before creating a new log_dir
-        if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
+        if agent_cfg.resume or agent_cfg.get_algorithm_class_name() == "Distillation":
             resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
 
         # wrap for video recording
@@ -226,7 +226,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         # write git state to logs
         runner.add_git_repo_to_log(__file__)
         # load the checkpoint
-        if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
+        if agent_cfg.resume or agent_cfg.get_algorithm_class_name() == "Distillation":
             print(f"[INFO]: Loading model checkpoint from: {resume_path}")
             # load previously trained model
             runner.load(resume_path)
@@ -237,7 +237,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
         # run training
         try:
-            runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
+            runner.learn(
+                num_learning_iterations=agent_cfg.max_iterations,
+                init_at_random_ep_len=agent_cfg.init_at_random_ep_len,
+            )
             print(f"Training time: {round(time.time() - start_time, 2)} seconds")
             # close the simulator
             env.close()

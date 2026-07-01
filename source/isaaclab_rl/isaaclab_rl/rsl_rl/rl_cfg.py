@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import MISSING
 from typing import Any, Literal
 
@@ -263,6 +264,9 @@ class RslRlBaseRunnerCfg:
     device: str = "cuda:0"
     """The device for the rl-agent. Defaults to cuda:0."""
 
+    num_envs: int | None = None
+    """Preferred parallel environment count. Defaults to None, which preserves the environment config."""
+
     num_steps_per_env: int = MISSING
     """The number of steps per environment per update."""
 
@@ -318,6 +322,9 @@ class RslRlBaseRunnerCfg:
     check_for_nan: bool = True
     """Whether to check for NaN values coming from the environment."""
 
+    init_at_random_ep_len: bool = True
+    """Whether the runner starts environments at random episode phases."""
+
     save_interval: int = MISSING
     """The number of iterations between saves."""
 
@@ -360,6 +367,58 @@ class RslRlBaseRunnerCfg:
 
     If regex expression, the latest (alphabetical order) matching file will be loaded.
     """
+
+    def get_algorithm_class_name(self) -> str:
+        """Return the configured algorithm class name across typed and mapping sections."""
+        algorithm = self.algorithm  # type: ignore[attr-defined]
+        class_name = algorithm["class_name"] if isinstance(algorithm, Mapping) else algorithm.class_name
+        if not isinstance(class_name, str) or not class_name:
+            raise ValueError("The algorithm class_name must be a nonempty string.")
+        return class_name
+
+    def resolve_num_envs(self, cli_num_envs: int | None, env_num_envs: int) -> int:
+        """Resolve the environment count with CLI, runner, then environment precedence.
+
+        Args:
+            cli_num_envs: Explicit command-line environment count, or ``None``.
+            env_num_envs: Environment configuration fallback count.
+
+        Returns:
+            The selected parallel environment count.
+        """
+        if cli_num_envs is not None:
+            return cli_num_envs
+        if self.num_envs is not None:
+            return self.num_envs
+        return env_num_envs
+
+
+@configclass
+class RslRlOffPolicyRunnerCfg(RslRlBaseRunnerCfg):
+    """Configuration of the generic fixed-step off-policy RSL-RL runner."""
+
+    class_type: type[Any] | str = "rsl_rl.runners:OffPolicyRunner"
+    """The runner class. Defaults to :class:`rsl_rl.runners.OffPolicyRunner`."""
+
+    class_name: str = "OffPolicyRunner"
+    """The runner class name. Defaults to ``"OffPolicyRunner"``."""
+
+    empirical_normalization: bool = False
+    """Deprecated runner-level normalization, disabled for model-owned normalization."""
+
+    num_updates_per_iteration: int = MISSING
+    """Number of replay updates after each fixed collection block."""
+
+    random_action_steps: int = 0
+    """Number of environment transitions collected from the algorithm's random policy."""
+
+    algorithm: dict[str, object] = MISSING
+    """Off-policy algorithm configuration."""
+
+    torch_compile_mode: str | None = None
+    """Optional :func:`torch.compile` mode applied by the algorithm constructor."""
+    lifecycle_extension: dict[str, object] | None = None
+    """Optional extension invoked at exact completed-transition boundaries."""
 
 
 @configclass

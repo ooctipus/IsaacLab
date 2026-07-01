@@ -32,7 +32,9 @@ parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
 parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
 parser.add_argument("--video_interval", type=int, default=2000, help="Interval between video recordings (in steps).")
-parser.add_argument("--num_envs", type=int, default=4096, help="Number of environments to simulate.")
+parser.add_argument(
+    "--num_envs", type=int, default=None, help="Number of environments to simulate; overrides runner presets."
+)
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--seed", type=int, default=42, help="Seed used for the environment")
 parser.add_argument("--max_iterations", type=int, default=10, help="RL Policy training iterations.")
@@ -156,7 +158,7 @@ def main(
     # parse configuration
     # override configurations with non-hydra CLI arguments
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
-    env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
+    env_cfg.scene.num_envs = agent_cfg.resolve_num_envs(args_cli.num_envs, env_cfg.scene.num_envs)
     agent_cfg.max_iterations = (
         args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
     )
@@ -254,7 +256,10 @@ def main(
 
     # run training with continuous benchmark monitoring
     with early_stop_ctx, BenchmarkMonitor(benchmark, interval=1.0):
-        runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
+        runner.learn(
+            num_learning_iterations=agent_cfg.max_iterations,
+            init_at_random_ep_len=agent_cfg.init_at_random_ep_len,
+        )
 
     if world_rank == 0:
         # Final update after training completes
