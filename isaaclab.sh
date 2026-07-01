@@ -18,6 +18,8 @@ elif [ -n "$CONDA_PREFIX" ]; then
     python_exe="$CONDA_PREFIX/bin/python"
 elif [ -f "$ISAACLAB_PATH/env_isaaclab/bin/python" ]; then
     python_exe="$ISAACLAB_PATH/env_isaaclab/bin/python"
+elif [ -f "$ISAACLAB_PATH/.venv/bin/python" ]; then
+    python_exe="$ISAACLAB_PATH/.venv/bin/python"
 elif [ -f "$ISAACLAB_PATH/_isaac_sim/python.sh" ]; then
     python_exe="$ISAACLAB_PATH/_isaac_sim/python.sh"
 else
@@ -85,7 +87,13 @@ PY
 while IFS= read -r site_packages_path; do
     _prepend_pythonpath "$site_packages_path"
 done <<< "$site_packages_paths"
-_prepend_pythonpath "$ISAACLAB_PATH/source/isaaclab"
+
+# Prefer every package from this checkout over editable finders embedded in a
+# shared Isaac Sim installation. Those finders may point at another worktree
+# while using the same generated module name as the active environment.
+for package_path in "$ISAACLAB_PATH"/source/*; do
+    _prepend_pythonpath "$package_path"
+done
 
 # Execute CLI.
 exec "$python_exe" -c "from isaaclab.cli import cli; cli()" "$@"

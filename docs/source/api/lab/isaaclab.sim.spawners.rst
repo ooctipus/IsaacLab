@@ -240,6 +240,7 @@ From Files
   .. autosummary::
 
     UrdfFileCfg
+    MjcfFileCfg
     UsdFileCfg
     GroundPlaneCfg
 
@@ -247,6 +248,13 @@ From Files
 
 .. autoclass:: UrdfFileCfg
     :members:
+    :exclude-members: __init__, func
+
+.. autofunction:: spawn_from_mjcf
+
+.. autoclass:: MjcfFileCfg
+    :members:
+    :show-inheritance:
     :exclude-members: __init__, func
 
 .. autofunction:: spawn_from_usd

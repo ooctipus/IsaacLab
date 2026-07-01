@@ -34,6 +34,13 @@ class FileCfg(RigidObjectSpawnerCfg, DeformableObjectSpawnerCfg):
     scale: tuple[float, float, float] | None = None
     """Scale of the asset. Defaults to None, in which case the scale is not modified."""
 
+    variants: object | dict[str, str] | None = None
+    """Variants to select on the referenced or generated USD. Defaults to None.
+
+    This can be a configclass object or a dictionary mapping variant-set names
+    to selections. See :meth:`~isaaclab.sim.utils.select_usd_variants`.
+    """
+
     articulation_props: schemas.ArticulationRootPropertiesCfg | None = None
     """Properties to apply to the articulation root."""
 
@@ -112,14 +119,6 @@ class UsdFileCfg(FileCfg):
 
     usd_path: str = MISSING
     """Path to the USD file to spawn asset from."""
-
-    variants: object | dict[str, str] | None = None
-    """Variants to select from in the input USD file. Defaults to None, in which case no variants are applied.
-
-    This can either be a configclass object, in which case each attribute is used as a variant set name and
-    its specified value, or a dictionary mapping between the two. Please check the
-    :meth:`~isaaclab.sim.utils.select_usd_variants` function for more information.
-    """
 
 
 @configclass

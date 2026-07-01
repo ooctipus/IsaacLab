@@ -123,6 +123,19 @@ def test_create_prim_from_usd(test_setup_teardown):
     assert sim.stage.GetPrimAtPath(prim_path).IsValid()
 
 
+def test_file_spawner_selects_generated_physics_variant(test_setup_teardown):
+    """The MJCF file spawner must select a requested variant on its generated USD."""
+    _, converter_cfg = test_setup_teardown
+    cfg = sim_utils.MjcfFileCfg(
+        asset_path=converter_cfg.asset_path,
+        variants={"Physics": "mujoco"},
+    )
+
+    prim = cfg.func("/World/Robot", cfg)
+
+    assert prim.GetVariantSet("Physics").GetVariantSelection() == "mujoco"
+
+
 @pytest.mark.isaacsim_ci
 def test_self_collision(test_setup_teardown):
     """Verify that ``self_collision=True`` enables self-collisions on the Newton articulation root.
