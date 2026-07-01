@@ -31,3 +31,4 @@ include = ["isaaclab_assets", "isaaclab_assets.*"]
 
 [tool.setuptools.package-data]
 "*" = ["*.pyi"]
+"isaaclab_assets.robots.smpl" = ["*.xml"]
