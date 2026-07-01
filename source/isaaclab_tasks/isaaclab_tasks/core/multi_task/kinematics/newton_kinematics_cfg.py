@@ -27,6 +27,9 @@ class NewtonKinematicsCfg:
     usd_path: str = MISSING  # type: ignore[assignment]
     """Path to the robot USD file."""
 
+    mjcf_path: str | None = None
+    """Path to the robot MJCF file, or ``None`` when :attr:`usd_path` is used."""
+
     device: str = "cuda:0"
     """Warp device string."""
 

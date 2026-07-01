@@ -7,7 +7,7 @@
 
 Wraps :class:`newton.Model` behind a single :class:`NewtonKinematics`
 object that owns the model, ordered body/joint names, and default stance.
-The USD is parsed exactly once in ``__init__``.
+The configured USD or MJCF is parsed exactly once in ``__init__``.
 
 No IsaacSim dependency -- only Newton + Warp.
 """
@@ -19,6 +19,7 @@ import re
 import newton
 import newton.ik as ik
 import numpy as np
+import torch
 import warp as wp
 from newton import GeoType, JointType
 from newton._src.sim.ik.ik_common import eval_fk_batched as _newton_eval_fk_batched
@@ -29,7 +30,7 @@ __all__ = ["NewtonKinematics", "NewtonKinematicsCfg"]
 
 
 class NewtonKinematics:
-    """Newton kinematic model built from a USD file.
+    """Newton kinematic model built from one USD or MJCF file.
 
     Owns the :class:`newton.Model`, ordered body/joint name lists, and
     the default stance (computed via FK at construction time).
@@ -42,7 +43,10 @@ class NewtonKinematics:
     """Finalized Newton model."""
 
     usd_path: str
-    """Absolute path to the USD file used to build this model."""
+    """Path to the USD file used to build this model, or an empty string."""
+
+    mjcf_path: str
+    """Path to the MJCF file used to build this model, or an empty string."""
 
     body_names: list[str]
     """Ordered body names (index ``i`` corresponds to Newton body ``i``)."""
@@ -50,25 +54,63 @@ class NewtonKinematics:
     joint_names: list[str]
     """Ordered joint names (index ``i`` corresponds to Newton joint ``i``)."""
 
+    joint_q_names: list[str]
+    """Ordered labels for every Newton joint coordinate."""
+
+    joint_qd_names: list[str]
+    """Ordered labels for every Newton joint velocity."""
+
     def __init__(self, cfg: NewtonKinematicsCfg):
         self.cfg = cfg
-        self.usd_path = str(cfg.usd_path)
+
+        usd_path = cfg.usd_path if isinstance(cfg.usd_path, str) and cfg.usd_path else None
+        mjcf_path = cfg.mjcf_path if isinstance(cfg.mjcf_path, str) and cfg.mjcf_path else None
+        if (usd_path is None) == (mjcf_path is None):
+            raise ValueError("NewtonKinematicsCfg must define exactly one of usd_path or mjcf_path.")
+        self.usd_path = usd_path or ""
+        self.mjcf_path = mjcf_path or ""
 
         self.builder = newton.ModelBuilder()
-        result = self.builder.add_usd(self.usd_path, collapse_fixed_joints=cfg.collapse_fixed_joints)
+        if self.usd_path:
+            result = self.builder.add_usd(self.usd_path, collapse_fixed_joints=cfg.collapse_fixed_joints)
+        else:
+            self.builder.add_mjcf(
+                self.mjcf_path,
+                collapse_fixed_joints=cfg.collapse_fixed_joints,
+                enable_self_collisions=False,
+                parse_meshes=False,
+                parse_sites=False,
+                parse_visuals=False,
+            )
+            result = None
         self.model = self.builder.finalize(device=cfg.device)
 
-        path_body_map: dict[str, int] = result.get("path_body_map", {})
-        names = [""] * self.model.body_count
-        for path, idx in path_body_map.items():
-            names[idx] = path.rsplit("/", 1)[-1]
-        self.body_names = names
+        if result is not None:
+            # Keep the established USD-facing labels, including its unnamed
+            # synthetic root joint. Newton's MJCF parser has no path maps.
+            self.body_names = self._names_from_path_map(result.get("path_body_map", {}), self.model.body_count)
+            self.joint_names = self._names_from_path_map(result.get("path_joint_map", {}), self.model.joint_count)
+        else:
+            self.body_names = self._names_from_model_labels(self.model.body_label, "body")
+            self.joint_names = self._names_from_model_labels(self.model.joint_label, "joint")
 
-        path_joint_map: dict[str, int] = result.get("path_joint_map", {})
-        jnames = [""] * self.model.joint_count
-        for path, idx in path_joint_map.items():
-            jnames[idx] = path.rsplit("/", 1)[-1]
-        self.joint_names = jnames
+        model_joint_names = [
+            label.rsplit("/", 1)[-1] or f"joint_{index}" for index, label in enumerate(self.model.joint_label)
+        ]
+        self.joint_q_names = self._coordinate_names(
+            model_joint_names,
+            self.model.joint_q_start.numpy(),
+            self.model.joint_type.numpy(),
+            self.model.joint_coord_count,
+            velocity=False,
+        )
+        self.joint_qd_names = self._coordinate_names(
+            model_joint_names,
+            self.model.joint_qd_start.numpy(),
+            self.model.joint_type.numpy(),
+            self.model.joint_dof_count,
+            velocity=True,
+        )
 
         # Root coordinate count: 7 for a free-floating base (3 position + 4
         # quaternion), 0 for a fixed base. Non-root joints occupy
@@ -88,6 +130,98 @@ class NewtonKinematics:
         state = self.eval_fk(wp.array(jq, dtype=float, device=cfg.device))
         self._default_joint_q = jq
         self._default_body_q = state.body_q.numpy()
+
+    @staticmethod
+    def _names_from_path_map(path_map: dict[str, int], count: int) -> list[str]:
+        """Return ordered leaf labels from a Newton USD parser path map."""
+        names = [""] * count
+        for path, index in path_map.items():
+            names[index] = path.rsplit("/", 1)[-1]
+        return names
+
+    @staticmethod
+    def _names_from_model_labels(labels: list[str], kind: str) -> list[str]:
+        """Return unique ordered leaf labels from a finalized Newton model.
+
+        Args:
+            labels: Newton model labels in model index order.
+            kind: Human-readable label kind for error messages.
+
+        Returns:
+            Model labels stripped to their final path components.
+
+        Raises:
+            ValueError: If a model label is empty or leaf labels are not unique.
+        """
+        names = [label.rsplit("/", 1)[-1] for label in labels]
+        if any(not name for name in names):
+            raise ValueError(f"Newton model contains an empty {kind} label.")
+        if len(set(names)) != len(names):
+            raise ValueError(f"Newton model {kind} leaf labels must be unique: {names}")
+        return names
+
+    @staticmethod
+    def _coordinate_names(
+        joint_names: list[str],
+        starts: np.ndarray,
+        joint_types: np.ndarray,
+        count: int,
+        *,
+        velocity: bool,
+    ) -> list[str]:
+        """Derive ordered scalar coordinate labels from Newton joint ranges."""
+        if len(starts) != len(joint_names) + 1 or len(joint_types) != len(joint_names):
+            raise ValueError("Newton joint metadata lengths are inconsistent.")
+
+        free_suffixes = (
+            (
+                "linear_velocity_x",
+                "linear_velocity_y",
+                "linear_velocity_z",
+                "angular_velocity_x",
+                "angular_velocity_y",
+                "angular_velocity_z",
+            )
+            if velocity
+            else (
+                "position_x",
+                "position_y",
+                "position_z",
+                "rotation_x",
+                "rotation_y",
+                "rotation_z",
+                "rotation_w",
+            )
+        )
+        ball_suffixes = (
+            ("angular_velocity_x", "angular_velocity_y", "angular_velocity_z")
+            if velocity
+            else ("rotation_x", "rotation_y", "rotation_z", "rotation_w")
+        )
+        generic = "velocity" if velocity else "coordinate"
+        names: list[str] = []
+        for index, joint_name in enumerate(joint_names):
+            start = int(starts[index])
+            end = int(starts[index + 1])
+            width = end - start
+            if width == 0:
+                continue
+            if width == 1:
+                names.append(joint_name)
+                continue
+            joint_type = int(joint_types[index])
+            if joint_type == int(JointType.FREE):
+                suffixes = free_suffixes
+            elif joint_type == int(JointType.BALL):
+                suffixes = ball_suffixes
+            else:
+                suffixes = tuple(f"{generic}_{offset}" for offset in range(width))
+            if len(suffixes) != width:
+                raise ValueError(f"Joint '{joint_name}' exposes {width} unexpected scalar coordinates.")
+            names.extend(f"{joint_name}:{suffix}" for suffix in suffixes)
+        if len(names) != count:
+            raise ValueError(f"Newton joint ranges describe {len(names)} labels, expected {count}.")
+        return names
 
     def _resolve_joint_pos_map(self, joint_pos_map: dict[str, float]) -> np.ndarray:
         """Resolve a ``{regex: value}`` dict to a flat joint position array.
@@ -356,4 +490,60 @@ class NewtonKinematics:
         if body_qd is None:
             body_qd = wp.zeros((n, self.model.body_count), dtype=wp.spatial_vectorf, device=self.device)
         _newton_eval_fk_batched(self.model, joint_q, joint_qd, body_q, body_qd)
+        return body_q, body_qd
+
+    def eval_fk_batched_torch(
+        self,
+        joint_q: torch.Tensor,
+        joint_qd: torch.Tensor,
+        body_q: torch.Tensor,
+        body_qd: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Run batched FK from Torch tensors into caller-owned Torch outputs.
+
+        This path performs no tensor allocation and never repairs an input by
+        copying it. Every tensor must be contiguous, ``float32``, and resident
+        on the kinematic model's device.
+
+        Args:
+            joint_q: Joint coordinates [m or rad, depending on joint type],
+                shape ``[N, joint_coord_count]``.
+            joint_qd: Joint velocities [m/s or rad/s, depending on joint type],
+                shape ``[N, joint_dof_count]``.
+            body_q: Caller-owned body transforms, shape ``[N, body_count, 7]``.
+                Components are position [m] followed by an ``xyzw`` quaternion.
+            body_qd: Caller-owned body spatial velocities, shape
+                ``[N, body_count, 6]``. Components are linear xyz [m/s]
+                followed by angular xyz [rad/s].
+
+        Returns:
+            The unchanged ``(body_q, body_qd)`` output tensor objects.
+
+        Raises:
+            ValueError: If shape, dtype, stride, or device violates the contract.
+        """
+        batch_size = joint_q.shape[0] if joint_q.ndim > 0 else -1
+        expected_shapes = (
+            (joint_q, (batch_size, self.model.joint_coord_count), "joint_q"),
+            (joint_qd, (batch_size, self.model.joint_dof_count), "joint_qd"),
+            (body_q, (batch_size, self.model.body_count, 7), "body_q"),
+            (body_qd, (batch_size, self.model.body_count, 6), "body_qd"),
+        )
+        for tensor, shape, name in expected_shapes:
+            if tensor.dtype != torch.float32:
+                raise ValueError(f"{name} must use float32; received {tensor.dtype}.")
+            if not tensor.is_contiguous():
+                raise ValueError(f"{name} must be contiguous.")
+            if str(wp.device_from_torch(tensor.device)) != self.device:
+                raise ValueError(f"{name} must be on {self.device}; received {tensor.device}.")
+            if tuple(tensor.shape) != shape:
+                raise ValueError(f"{name} must have shape {shape}; received {tuple(tensor.shape)}.")
+
+        _newton_eval_fk_batched(
+            self.model,
+            wp.from_torch(joint_q, dtype=wp.float32),
+            wp.from_torch(joint_qd, dtype=wp.float32),
+            wp.from_torch(body_q, dtype=wp.transformf),
+            wp.from_torch(body_qd, dtype=wp.spatial_vectorf),
+        )
         return body_q, body_qd
