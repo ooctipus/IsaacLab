@@ -1,0 +1,204 @@
+{
+  "schema": "forward_backward_phase3g_motion_timing_ablation_v1",
+  "question": "Can one 1/300 s physics clock and one common control rate serve both robots without hiding a tracking, learning, safety, or throughput regression?",
+  "status": "frozen_experiment_contract_not_executed",
+  "invariants": {
+    "source_clock": "Each clip retains its own source_fps; reference lookup interpolates in seconds and never rewrites source rows.",
+    "episode_duration_seconds": 10.0,
+    "autoreset_mode": "same_step",
+    "final_state": "Exact pre-reset reached observation is required on every done edge; fallback count must remain zero.",
+    "robot": "Asset, actuator, body order, joint order, controller gains, action normalization, and observation routes remain robot-preset data.",
+    "data": "The same source split, clip order, materialized bank hash, reset mixture, and evaluation initial states are used within each robot comparison.",
+    "reward_boundary": "Environment reward remains a density multiplied by control_dt exactly once by RewardManager; stored auxiliary evidence remains raw.",
+    "discount_rule": "Every Bellman target, helper critic, and return estimator uses gamma_new = exp(log(gamma_native) * control_dt_new / control_dt_native).",
+    "target_updates": "Polyak rates and update counts are frozen per gradient update; update-to-transition ratio is reported and never silently retimed.",
+    "randomness": "Common seeds and evaluation initial states are paired within robot; cross-robot values are not paired observations."
+  },
+  "native_discount": {
+    "gamma_per_step": 0.98,
+    "smpl_cmu": {
+      "control_dt_seconds": 0.03333333333333333,
+      "exponential_decay_rate_per_second": 0.606081219525584
+    },
+    "g1_lafan": {
+      "control_dt_seconds": 0.02,
+      "exponential_decay_rate_per_second": 1.0101353658759733
+    },
+    "warning": "Equal native gamma does not mean equal physical discount horizon because the control periods differ."
+  },
+  "cells": [
+    {
+      "id": "smpl_native_30hz",
+      "robot": "smpl_cmu",
+      "role": "native_baseline",
+      "physics_dt_seconds": 0.0022222222222222222,
+      "control_decimation": 15,
+      "control_dt_seconds": 0.03333333333333333,
+      "horizon_steps": 300,
+      "gamma": 0.98
+    },
+    {
+      "id": "smpl_common_physics_30hz",
+      "robot": "smpl_cmu",
+      "role": "common_physics_native_control_and_common_30hz",
+      "physics_dt_seconds": 0.0033333333333333335,
+      "control_decimation": 10,
+      "control_dt_seconds": 0.03333333333333333,
+      "horizon_steps": 300,
+      "gamma": 0.98
+    },
+    {
+      "id": "smpl_common_physics_50hz",
+      "robot": "smpl_cmu",
+      "role": "common_50hz",
+      "physics_dt_seconds": 0.0033333333333333335,
+      "control_decimation": 6,
+      "control_dt_seconds": 0.02,
+      "horizon_steps": 500,
+      "gamma": 0.9879515465497972
+    },
+    {
+      "id": "g1_native_50hz",
+      "robot": "g1_lafan",
+      "role": "native_baseline",
+      "physics_dt_seconds": 0.005,
+      "control_decimation": 4,
+      "control_dt_seconds": 0.02,
+      "horizon_steps": 500,
+      "gamma": 0.98
+    },
+    {
+      "id": "g1_common_physics_50hz",
+      "robot": "g1_lafan",
+      "role": "common_physics_native_control_and_common_50hz",
+      "physics_dt_seconds": 0.0033333333333333335,
+      "control_decimation": 6,
+      "control_dt_seconds": 0.02,
+      "horizon_steps": 500,
+      "gamma": 0.98
+    },
+    {
+      "id": "g1_common_physics_30hz",
+      "robot": "g1_lafan",
+      "role": "common_30hz",
+      "physics_dt_seconds": 0.0033333333333333335,
+      "control_decimation": 10,
+      "control_dt_seconds": 0.03333333333333333,
+      "horizon_steps": 300,
+      "gamma": 0.9668893860393032
+    }
+  ],
+  "comparison_order": [
+    {
+      "stage": "physics_only",
+      "pairs": [
+        [
+          "smpl_native_30hz",
+          "smpl_common_physics_30hz"
+        ],
+        [
+          "g1_native_50hz",
+          "g1_common_physics_50hz"
+        ]
+      ],
+      "purpose": "Isolate integration/contact/actuator sensitivity while retaining each native control period."
+    },
+    {
+      "stage": "common_control_open_loop_and_frozen_policy",
+      "pairs": [
+        [
+          "smpl_common_physics_30hz",
+          "smpl_common_physics_50hz"
+        ],
+        [
+          "g1_common_physics_50hz",
+          "g1_common_physics_30hz"
+        ]
+      ],
+      "purpose": "Measure controller and observation/action sampling sensitivity before retraining."
+    },
+    {
+      "stage": "common_control_training",
+      "common_30hz": [
+        "smpl_common_physics_30hz",
+        "g1_common_physics_30hz"
+      ],
+      "common_50hz": [
+        "smpl_common_physics_50hz",
+        "g1_common_physics_50hz"
+      ],
+      "purpose": "Train only after deterministic tracking and reward-discretization checks pass."
+    }
+  ],
+  "training_budget_views": [
+    {
+      "name": "physical_exposure",
+      "fixed": "aggregate simulated robot-seconds",
+      "reported": [
+        "transitions",
+        "gradient_updates",
+        "update_to_transition_ratio",
+        "wall_time"
+      ]
+    },
+    {
+      "name": "compute_exposure",
+      "fixed": "transitions and gradient updates",
+      "reported": [
+        "aggregate simulated robot-seconds",
+        "wall_time"
+      ]
+    }
+  ],
+  "reward_discretization_gate": {
+    "environment_scalar": "Already a physical-time density integral because RewardManager multiplies by control_dt.",
+    "auxiliary_evidence": "No blanket dt scaling is allowed. Each channel must declare whether it is a density, impulse, state occupancy cost, or finite difference before a changed-control-rate learning comparison.",
+    "action_rate": "Must be derived against elapsed seconds or explicitly retained as a per-action source objective; these are different experiments.",
+    "native_rows": "Never alter source-faithful reward coefficients.",
+    "changed_control_rows": "Report both source-objective and physically normalized variants if channel semantics permit both; do not merge them."
+  },
+  "metrics": {
+    "stability": [
+      "nonfinite_count",
+      "unexpected_termination_rate",
+      "root_height_and_orientation_bounds"
+    ],
+    "tracking": [
+      "root_position_error_m",
+      "root_orientation_geodesic_error_rad",
+      "joint_position_error_rad",
+      "body_position_error_m",
+      "phase_error_seconds"
+    ],
+    "learning": [
+      "evaluation_emd",
+      "broad_reward",
+      "fb_objective",
+      "off_diagonal_term",
+      "actor_objective",
+      "helper_target_fit"
+    ],
+    "safety": [
+      "joint_limit_violations",
+      "torque_limit_violations",
+      "undesired_contacts",
+      "foot_slip_m_s"
+    ],
+    "systems": [
+      "physics_steps_per_second",
+      "transitions_per_second",
+      "learner_update_seconds",
+      "peak_device_memory_bytes"
+    ]
+  },
+  "decision": {
+    "no_combined_score": true,
+    "eligibility": "A common timing candidate is eligible only if both robots separately pass predeclared native-relative tracking, learning, safety, and systems gates.",
+    "failure_ownership": {
+      "physics_only_failure": "simulator_or_controller_preset",
+      "open_loop_control_failure": "control_sampling_or_observation_history",
+      "reward_discretization_failure": "channel_semantics",
+      "training_only_failure": "learner_or_optimization"
+    }
+  }
+}

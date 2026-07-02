@@ -1,0 +1,735 @@
+{
+  "claim": {
+    "canonicality": "portable_source_contract_with_declared_skeleton_not_a_canonical_dataset",
+    "does_not_prove": [
+      "learned human-to-robot retarget quality",
+      "simulator tracking quality",
+      "policy quality or convergence"
+    ],
+    "level": "structural_interface_proof",
+    "proves": [
+      "source-level local rotations remain independent of the scene articulation",
+      "per-clip source clocks survive source-to-trajectory construction",
+      "one non-native source can feed the G1 task-table axes and learner views"
+    ]
+  },
+  "code_identity": {
+    "environment_cfg_sha256": "7c561be9641ef80a355095e21058dbf74986fd50863d05a3705ebe5cdc5cb527",
+    "generator_sha256": "ce5b4e204214938dea5064559e658564b86ce5915d8c9a6d84a8ed5acad2e183",
+    "projection_sha256": "e89b560af40142c057c7d8e8e9a9877ca230fe6a6759e23e88950c21256a717b",
+    "target_builder_sha256": "b2b2696517899ddcd5425ed213659c2af8923bb2cef06fcb152ee2ce45beaa3a"
+  },
+  "composition": {
+    "control_decimation": 4,
+    "control_dt_seconds": 0.02,
+    "expert_grid": {
+      "mode": "uniform_before_source_end",
+      "step_seconds": 0.02
+    },
+    "identifier": "g1_analytical_human_50hz",
+    "physics_dt_seconds": 0.005,
+    "scene_robot": "g1_29dof",
+    "selected_preset": "g1_cmu",
+    "source_identifier": "analytical_human_motion",
+    "source_template": "smpl_cmu"
+  },
+  "error_ownership": {
+    "policy": {
+      "metric": "evaluation_emd_broad_reward_safety_after_tracking_error_is_reported",
+      "owner": "learner_and_observation_action_routes",
+      "status": "not_claimed_by_pure_data_fixture"
+    },
+    "retarget": {
+      "fixture_metric": "analytic_g1_joint_position_and_velocity_max_abs_error",
+      "owner": "source_to_trajectory_builder",
+      "position_tolerance_rad": 2e-06,
+      "status": "measured_by_structural_test",
+      "velocity_tolerance_rad_s": 5e-05
+    },
+    "simulator_tracking": {
+      "metric": "robot_state_minus_materialized_reference_at_equal_time",
+      "owner": "controller_and_simulator",
+      "status": "not_claimed_by_pure_data_fixture"
+    }
+  },
+  "schema": "forward_backward_phase3g_structural_cross_composition_v3",
+  "source": {
+    "archive": {
+      "clips": [
+        {
+          "frames": 12,
+          "id": "walk_24hz",
+          "source_fps": 24.0
+        },
+        {
+          "frames": 15,
+          "id": "turn_60hz",
+          "source_fps": 60.0
+        }
+      ],
+      "file": "human_motion_g1_structural_v1.npz",
+      "license": "synthetic_fixture_bsd_3_clause",
+      "ordered_fields": [
+        "clip_ids",
+        "frame_offsets",
+        "source_fps",
+        "root_translation",
+        "local_rotation_wxyz",
+        "valid"
+      ],
+      "sha256": "26ff8ee732a6e1854cea0e6d793b089fd955e19c762af822a5fec65588b67320",
+      "tensors": {
+        "clip_ids": {
+          "dtype": "<U16",
+          "sha256": "0074b6139f1f341e01b39507ab662853c38dc4da9cf6ab9da097fdee4486ba9a",
+          "shape": [
+            2
+          ]
+        },
+        "frame_offsets": {
+          "dtype": "int64",
+          "sha256": "945d18e14245ad6ffae5c6e91bfd0b1e59f85bb416f6bf8a7b1153e924c88650",
+          "shape": [
+            3
+          ]
+        },
+        "local_rotation_wxyz": {
+          "dtype": "float32",
+          "sha256": "64ae437362d50d7315a5b1d1b7d0485874971e0e5e186da6436cc901541b10a9",
+          "shape": [
+            27,
+            30,
+            4
+          ]
+        },
+        "root_translation": {
+          "dtype": "float32",
+          "sha256": "5d212699f460753a4bdf4a782957d9d5e145cb9fae9769f556f8a3d56d7ccc3a",
+          "shape": [
+            27,
+            3
+          ]
+        },
+        "source_fps": {
+          "dtype": "float64",
+          "sha256": "171eecb812c5f351754bb2ab287775e02132b9cdef6512ef8cca5b1f8adffca1",
+          "shape": [
+            2
+          ]
+        },
+        "valid": {
+          "dtype": "bool",
+          "sha256": "9dcf97a184f32623d11a73124ceb99a5709b083721e878a16d78f596718ba7b2",
+          "shape": [
+            2
+          ]
+        }
+      }
+    },
+    "semantic_level": "analytical_human_local_rotation_motion",
+    "skeleton": {
+      "angle_unit": "rad",
+      "body_names": [
+        "human_body_00",
+        "human_body_01",
+        "human_body_02",
+        "human_body_03",
+        "human_body_04",
+        "human_body_05",
+        "human_body_06",
+        "human_body_07",
+        "human_body_08",
+        "human_body_09",
+        "human_body_10",
+        "human_body_11",
+        "human_body_12",
+        "human_body_13",
+        "human_body_14",
+        "human_body_15",
+        "human_body_16",
+        "human_body_17",
+        "human_body_18",
+        "human_body_19",
+        "human_body_20",
+        "human_body_21",
+        "human_body_22",
+        "human_body_23",
+        "human_body_24",
+        "human_body_25",
+        "human_body_26",
+        "human_body_27",
+        "human_body_28",
+        "human_body_29"
+      ],
+      "content_sha256": "85d5e55d2a775aed0767120069f7eeeb52233808033c757902996ffd89e4ee7d",
+      "identifier": "analytical_human_30_body_v1",
+      "identity_sha256": "9f89e8d9af6f7b45833cf9cab0046480da4f95bcb22a1d0ec73e338ae8b5be0e",
+      "joint_axes": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "joint_child_body_indices": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29
+      ],
+      "joint_names": [
+        "human_ball_joint_01",
+        "human_ball_joint_02",
+        "human_ball_joint_03",
+        "human_ball_joint_04",
+        "human_ball_joint_05",
+        "human_ball_joint_06",
+        "human_ball_joint_07",
+        "human_ball_joint_08",
+        "human_ball_joint_09",
+        "human_ball_joint_10",
+        "human_ball_joint_11",
+        "human_ball_joint_12",
+        "human_ball_joint_13",
+        "human_ball_joint_14",
+        "human_ball_joint_15",
+        "human_ball_joint_16",
+        "human_ball_joint_17",
+        "human_ball_joint_18",
+        "human_ball_joint_19",
+        "human_ball_joint_20",
+        "human_ball_joint_21",
+        "human_ball_joint_22",
+        "human_ball_joint_23",
+        "human_ball_joint_24",
+        "human_ball_joint_25",
+        "human_ball_joint_26",
+        "human_ball_joint_27",
+        "human_ball_joint_28",
+        "human_ball_joint_29"
+      ],
+      "parent_indices": [
+        -1,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        0,
+        7,
+        8,
+        9,
+        10,
+        11,
+        0,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        15,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28
+      ],
+      "position_unit": "m",
+      "rest_rotation_wxyz": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.996179,
+          0.0,
+          -0.0873386,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.996179,
+          0.0,
+          0.0873386,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.996179,
+          0.0,
+          -0.0873386,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.996179,
+          0.0,
+          0.0873386,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.990264,
+          0.139201,
+          1.38722e-05,
+          -9.86868e-05
+        ],
+        [
+          0.990268,
+          -0.139172,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.990264,
+          -0.139201,
+          1.38722e-05,
+          9.86868e-05
+        ],
+        [
+          0.990268,
+          0.139172,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "rest_translation_m": [
+        [
+          0.0,
+          0.0,
+          0.8723000000000001
+        ],
+        [
+          0.0,
+          0.07089720000000001,
+          -0.11297000000000001
+        ],
+        [
+          0.0,
+          0.0572,
+          -0.0335115
+        ],
+        [
+          0.0275011,
+          0.0,
+          -0.13653200000000001
+        ],
+        [
+          -0.0861003,
+          0.00236379,
+          -0.19507400000000003
+        ],
+        [
+          0.0,
+          -0.0001038895,
+          -0.330011
+        ],
+        [
+          0.0,
+          0.0,
+          -0.019313800000000002
+        ],
+        [
+          0.0,
+          -0.07089720000000001,
+          -0.11297000000000001
+        ],
+        [
+          0.0,
+          -0.0572,
+          -0.0335115
+        ],
+        [
+          0.0275011,
+          0.0,
+          -0.13653200000000001
+        ],
+        [
+          -0.0861003,
+          -0.00236379,
+          -0.19507400000000003
+        ],
+        [
+          0.0,
+          0.0001038895,
+          -0.330011
+        ],
+        [
+          0.0,
+          0.0,
+          -0.019313800000000002
+        ],
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          -0.00435985,
+          0.0,
+          0.038500000000000006
+        ],
+        [
+          0.0,
+          0.0,
+          0.020900000000000002
+        ],
+        [
+          0.00435193,
+          0.110242,
+          0.261558
+        ],
+        [
+          0.0,
+          0.041800000000000004,
+          -0.015214100000000001
+        ],
+        [
+          0.0,
+          0.006864,
+          -0.11352000000000001
+        ],
+        [
+          0.0173613,
+          0.0,
+          -0.08856980000000002
+        ],
+        [
+          0.11000000000000001,
+          0.0020767010000000002,
+          -0.011000000000000001
+        ],
+        [
+          0.041800000000000004,
+          0.0,
+          0.0
+        ],
+        [
+          0.050600000000000006,
+          0.0,
+          0.0
+        ],
+        [
+          0.00435193,
+          -0.110231,
+          0.261558
+        ],
+        [
+          0.0,
+          -0.041800000000000004,
+          -0.015214100000000001
+        ],
+        [
+          0.0,
+          -0.006864,
+          -0.11352000000000001
+        ],
+        [
+          0.0173613,
+          0.0,
+          -0.08856980000000002
+        ],
+        [
+          0.11000000000000001,
+          -0.0020767010000000002,
+          -0.011000000000000001
+        ],
+        [
+          0.041800000000000004,
+          0.0,
+          0.0
+        ],
+        [
+          0.050600000000000006,
+          0.0,
+          0.0
+        ]
+      ],
+      "root_rotation_convention": "local_wxyz_full_body_rotations",
+      "root_translation_frame": "right_handed_z_up_world"
+    }
+  },
+  "target": {
+    "axis_contract_sha256": "47bcce287cfee9336fcb4f8bf52812f6412e74096091faae93251bd06c215d7d",
+    "joint_names": [
+      "left_hip_pitch_joint",
+      "right_hip_pitch_joint",
+      "waist_yaw_joint",
+      "left_hip_roll_joint",
+      "right_hip_roll_joint",
+      "waist_roll_joint",
+      "left_hip_yaw_joint",
+      "right_hip_yaw_joint",
+      "waist_pitch_joint",
+      "left_knee_joint",
+      "right_knee_joint",
+      "left_shoulder_pitch_joint",
+      "right_shoulder_pitch_joint",
+      "left_ankle_pitch_joint",
+      "right_ankle_pitch_joint",
+      "left_shoulder_roll_joint",
+      "right_shoulder_roll_joint",
+      "left_ankle_roll_joint",
+      "right_ankle_roll_joint",
+      "left_shoulder_yaw_joint",
+      "right_shoulder_yaw_joint",
+      "left_elbow_joint",
+      "right_elbow_joint",
+      "left_wrist_roll_joint",
+      "right_wrist_roll_joint",
+      "left_wrist_pitch_joint",
+      "right_wrist_pitch_joint",
+      "left_wrist_yaw_joint",
+      "right_wrist_yaw_joint"
+    ],
+    "projection": "globally_closest_sign_invariant_geodesic_fit_per_ordered_target_hinge_chain",
+    "reference_frame_names": [
+      "pelvis",
+      "left_hip_pitch_link",
+      "right_hip_pitch_link",
+      "waist_yaw_link",
+      "left_hip_roll_link",
+      "right_hip_roll_link",
+      "waist_roll_link",
+      "left_hip_yaw_link",
+      "right_hip_yaw_link",
+      "torso_link",
+      "left_knee_link",
+      "right_knee_link",
+      "left_shoulder_pitch_link",
+      "right_shoulder_pitch_link",
+      "left_ankle_pitch_link",
+      "right_ankle_pitch_link",
+      "left_shoulder_roll_link",
+      "right_shoulder_roll_link",
+      "left_ankle_roll_link",
+      "right_ankle_roll_link",
+      "left_shoulder_yaw_link",
+      "right_shoulder_yaw_link",
+      "left_elbow_link",
+      "right_elbow_link",
+      "left_wrist_roll_link",
+      "right_wrist_roll_link",
+      "left_wrist_pitch_link",
+      "right_wrist_pitch_link",
+      "left_wrist_yaw_link",
+      "right_wrist_yaw_link",
+      "head_link"
+    ],
+    "reference_skeleton_identity_sha256": "993eedd0b6c61e13a4a1751680d9625f0c3f1954390cc7883f7fc12071e589ab",
+    "scene_robot": "g1_29dof",
+    "scene_robot_asset": "g1_29dof_rev_1_0.usd",
+    "target_joint_source_body_indices": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29
+    ],
+    "trajectory_builder_contract": "g1_human_ordered_hinge_fit_structural_v3",
+    "trajectory_builder_factory": "isaaclab_tasks.core.multi_task.motion.trajectory.g1_smpl:g1_smpl_humenv_frame_builder"
+  }
+}

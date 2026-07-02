@@ -1,0 +1,159 @@
+{
+  "schema": "forward_backward_phase3g_motion_provider_migration_v1",
+  "status": "frozen_experiment_contract_not_implemented",
+  "principle": "Environment facts, learned immediate providers, and value readouts remain different objects even when the actor maximizes their common discounted return.",
+  "unchanged_transition_interface": {
+    "observations": [
+      "current",
+      "reached",
+      "returned",
+      "final"
+    ],
+    "actions": [
+      "behavior",
+      "emitted"
+    ],
+    "boundary": [
+      "terminated",
+      "truncated",
+      "action_applied",
+      "final_valid",
+      "episode_continuation",
+      "bootstrap_continuation",
+      "context_continuation"
+    ],
+    "reward_facts": [
+      "environment_reward",
+      "raw_named_auxiliary_evidence"
+    ],
+    "provenance": [
+      "observation_layout_version",
+      "normalizer_version",
+      "provider_name",
+      "provider_version",
+      "provider_timing",
+      "behavior_context"
+    ],
+    "rule": "Exact final reached state is used whenever available; one counted pre-step fallback is permitted only when the environment cannot expose final observation."
+  },
+  "common_update_protocol": [
+    "Collect immutable behavior transitions and raw environment evidence.",
+    "Freeze target actor, target F/B, normalizers, and every reward-provider snapshot used by a target.",
+    "Update representation/provider parameters only from their declared data laws.",
+    "Materialize each provider channel once with detached parameters, its version, sign, and temporal anchor.",
+    "Train vector successor or named helper critics on the immutable materialized channels.",
+    "Freeze F/B/providers/critics and materialize actor values or advantages once.",
+    "Update the actor without a gradient path through a state-only provider or value target.",
+    "Discard an on-policy rollout, or retain an off-policy edge only with its immutable behavior and provenance fields."
+  ],
+  "stages": [
+    {
+      "id": "expert_discriminator_reproduction",
+      "purpose": "Reproduce the validated native algorithms before removing expert data.",
+      "positive_law": "Expert current states paired with contexts derived from aligned expert windows.",
+      "negative_law": "Current replay states paired with their immutable behavior contexts.",
+      "provider": {
+        "name": "discriminator",
+        "output": "logit",
+        "timing": "current_state",
+        "sign": 1,
+        "update": "logistic_loss_plus_declared_gradient_penalty",
+        "freeze": "snapshot for reward and Bellman target materialization"
+      },
+      "expert_data": "required",
+      "value_path": "named discriminator helper critic or declared vector-successor channel",
+      "actor_path": "maximize detached helper value with the frozen coefficient",
+      "gate": "Native MetaMotivo and BFM non-inferiority remains unchanged."
+    },
+    {
+      "id": "own_experience_discriminator",
+      "purpose": "Remove expert trajectories while retaining a non-degenerate context-conditioned intrinsic objective.",
+      "positive_law": "Pair a behavior context z_t with a future reached state from the same episode and unchanged context segment; sample the future offset from a declared distribution.",
+      "negative_law": "Pair that same z_t with a reached state sampled independently from another valid context segment; reject accidental same-segment pairs.",
+      "provider": {
+        "name": "own_experience_discriminator",
+        "output": "log_density_ratio",
+        "timing": "current_state",
+        "sign": 1,
+        "update": "balanced_logistic_loss_with_frozen_sampling_law_and_optional_declared_gradient_penalty",
+        "freeze": "snapshot for one complete representation/value/actor block"
+      },
+      "expert_data": "forbidden",
+      "anti_shortcut_checks": [
+        "Positive and negative state marginals use the same replay snapshot.",
+        "Context identifiers, padding, episode length, clip identity, and reset source cannot reveal the label.",
+        "Held-out logits are reported by future-offset and context-frequency bins.",
+        "A shuffled-context control must collapse to chance."
+      ],
+      "value_path": "the same named helper critic or vector-successor channel as reproduction",
+      "actor_path": "maximize detached helper value; no actor gradient enters the discriminator",
+      "gate": "Beat the shuffled-context control and retain native safety before expert data is removed from later stages."
+    },
+    {
+      "id": "physical_energy",
+      "purpose": "Replace style classification with a task-independent efficiency objective when that is the intended task.",
+      "positive_law": "not_applicable",
+      "negative_law": "not_applicable",
+      "provider": {
+        "name": "physical_energy",
+        "output": "negative_energy_or_cost",
+        "timing": "transition_action_and_reached_physics",
+        "sign": -1,
+        "update": "none for a fixed physical formula; a learned energy is a separate experiment with an external calibration target",
+        "freeze": "fixed channel definition and coefficients for the complete run"
+      },
+      "expert_data": "forbidden",
+      "source": "Raw environment-owned torque, action-rate, contact, slip, and limit evidence with declared units and discretization.",
+      "anti_collapse_rule": "An unconstrained learned scalar E trained only by minimizing E on its own rollouts is invalid because the constant-minus-infinity solution is unconstrained.",
+      "value_path": "vector successor over raw energy components, then a fixed linear readout",
+      "actor_path": "maximize detached negative discounted energy subject to separately reported task and safety gates",
+      "gate": "Energy and task quality are both reported; an efficient policy that ceases to imitate is not a pass."
+    },
+    {
+      "id": "general_value_readout",
+      "purpose": "Allow partial-observation value prediction without asserting that immediate reward is a function of phi.",
+      "reward_identity": "r_t is supplied by declared environment/provider channels; it is not defined by the value network.",
+      "value_identity": "V_alpha(H_t) = alpha^T Psi_R(H_t) for linear channel composition, or a deliberately detached nonlinear h(Psi_R(H_t)) trained from declared returns.",
+      "residual_identity": "r_t = V(H_t) - gamma * V(H_reached_t_plus_1) is a Bellman residual/reconstruction under the learned value and correct masks, not self-supervision for an otherwise reward-free value.",
+      "provider": {
+        "name": "none",
+        "output": "not_applicable",
+        "timing": "not_applicable",
+        "sign": 1,
+        "update": "value readout is trained against returns from declared channels",
+        "freeze": "value or advantage is detached and materialized once before actor updates"
+      },
+      "expert_data": "forbidden",
+      "actor_path": "maximize detached V or advantage; no actor gradient enters state-only value targets",
+      "gate": "Held-out return calibration and policy improvement both pass; recursive self-targeting without an anchored channel is rejected."
+    }
+  ],
+  "comparison_matrix": {
+    "frozen_between_cells": [
+      "motion preset",
+      "observation routes",
+      "F/B architecture and gauge",
+      "discount and masks",
+      "actor architecture",
+      "optimizer/update budget",
+      "environment evidence interface"
+    ],
+    "reported": [
+      "provider calibration",
+      "provider reward distribution by context and episode phase",
+      "successor_or_helper_target_fit",
+      "evaluation_emd",
+      "broad_reward",
+      "safety channels",
+      "policy entropy",
+      "throughput and memory"
+    ],
+    "forbidden_shortcuts": [
+      "Changing provider data law and actor coefficient in one comparison.",
+      "Recomputing a mutable provider inside an allegedly immutable actor update.",
+      "Calling h(Psi) an immediate reward.",
+      "Training a learned energy without a non-collapse anchor.",
+      "Dropping final reached observations or context-segment masks."
+    ]
+  }
+}
