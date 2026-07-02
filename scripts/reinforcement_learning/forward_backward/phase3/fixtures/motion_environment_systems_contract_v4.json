@@ -1,0 +1,107 @@
+{
+  "schema": "forward_backward_phase3e_motion_environment_systems_contract_v4",
+  "shared": {
+    "capture_cost": {
+      "action_bound": 0.25,
+      "action_period_steps": 17,
+      "action_seed_base": 10000,
+      "benchmark_gpu_ownership": "only_compute_process_on_physical_gpu_at_boundaries",
+      "environment_seed_base": 7400,
+      "measured_native_horizons": 2,
+      "num_envs": 1024,
+      "pair_capture_order": [
+        [
+          "off",
+          "on"
+        ],
+        [
+          "on",
+          "off"
+        ],
+        [
+          "off",
+          "on"
+        ],
+        [
+          "on",
+          "off"
+        ],
+        [
+          "off",
+          "on"
+        ]
+      ],
+      "pairs": 5,
+      "warmup_steps": 32
+    },
+    "gates": {
+      "mean_peak_allocated_delta_bytes": 16777216,
+      "student_t_critical_95_two_sided": 2.7764451051977987,
+      "throughput_loss_upper_95_fraction": 0.05
+    },
+    "repeatability_scale": {
+      "action_bound": 0.25,
+      "action_period_steps": 17,
+      "action_seed": 9917,
+      "benchmark_steps": 64,
+      "environment_seed": 7301,
+      "num_envs": [
+        1,
+        16,
+        1024
+      ],
+      "repetitions": 2,
+      "warmup_steps": 8
+    }
+  },
+  "profiles": {
+    "g1_lafan": {
+      "applied_actions_before_timeout": 501,
+      "configured_horizon_steps": 500,
+      "control_decimation": 4,
+      "control_dt_seconds": 0.02,
+      "motion_split": "evaluation",
+      "physics_dt_seconds": 0.005,
+      "repeatability": {
+        "full_horizon": {
+          "absolute_tolerance": 0.0,
+          "comparison": "exact_signature",
+          "relative_tolerance": 0.0
+        },
+        "one_edge": {
+          "absolute_tolerance": 0.0,
+          "comparison": "exact_signature",
+          "relative_tolerance": 0.0
+        },
+        "reset_state": "exact_identity"
+      },
+      "reset_source_names": [
+        "reference",
+        "lie_down"
+      ]
+    },
+    "smpl_cmu": {
+      "applied_actions_before_timeout": 300,
+      "configured_horizon_steps": 300,
+      "control_decimation": 15,
+      "control_dt_seconds": 0.03333333333333333,
+      "motion_split": "evaluation",
+      "physics_dt_seconds": 0.0022222222222222222,
+      "repeatability": {
+        "full_horizon": {
+          "comparison": "semantic_finiteness"
+        },
+        "one_edge": {
+          "absolute_tolerance": 0.001,
+          "comparison": "bounded_signature",
+          "relative_tolerance": 0.0
+        },
+        "reset_state": "exact_identity"
+      },
+      "reset_source_names": [
+        "motion",
+        "fall"
+      ]
+    }
+  }
+}
