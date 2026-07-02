@@ -1,0 +1,14 @@
+{
+  "checkpoint_transition": 4975000,
+  "dataset_hash": "c9b77782f5c35e0a33b3daa18c110856554acbebed00c4b2877b836d53f9b1b7",
+  "duration_seconds": 43.66763399215415,
+  "evaluation_seed": 0,
+  "evaluator_hash": "84e9185ac780ffe6cdc71160a57a230419a55bbda837796725fce03935cea767",
+  "expected_motion_count": 182,
+  "implementation": "metamotivo_source",
+  "record_count": 1638,
+  "run_id": "meta_source_seed0_t4975000_20260628_retry4",
+  "schema": "forward_backward_phase2_manifest_v1",
+  "terminal_profile": "next_step_exact",
+  "training_seed": 0
+}

@@ -1,0 +1,15 @@
+{
+  "schema": "forward_backward_native_result_source_receipt_v1",
+  "normalization": "append_one_line_feed",
+  "artifacts": {
+    "evaluation_manifest": {
+      "source_sha256": "8cbd775109c71ec200e9adb79d5064c2277992cdc023e7c40ada7e2a2e476164",
+      "normalized_sha256": "a266d7b1f3b052290156606f78d7673f936d96dca884cf4d8ce20c14ee9f01fd"
+    },
+    "native_metrics": {
+      "source_sha256": "d459bcf362eb092368a90d626713e44baf33b542f17c05264789359787bb1f81",
+      "normalized_sha256": "466af7bfe413e13f330fa670cde3b02252cd5e04b9a56cb796cc4fe60db6fe7c"
+    }
+  },
+  "audited_unretained_csv_sha256": "640fb139564eba87ce2e22993928f1a0c66581eeb1b523bbcbe29662fededaee"
+}

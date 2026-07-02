@@ -1,0 +1,17 @@
+{
+  "collected_transitions": 2000000,
+  "iteration": 4000,
+  "model_scalar_count": 42091356,
+  "model_tensor_count": 116,
+  "output": {
+    "bytes": 168413763,
+    "filename": "model_4000.pt",
+    "sha256": "ec299d50ccd7be50914ff72aab01cb9280fb15854a74decd0e2f7c257c6a0ca9"
+  },
+  "schema": "forward_backward_evaluation_checkpoint_v1",
+  "source": {
+    "bytes": 5908822669,
+    "filename": "model_4000.pt",
+    "sha256": "d2793fd6187a3625823e3c2beb5404fc20900c2c8b741f94fc07db6206a9b082"
+  }
+}

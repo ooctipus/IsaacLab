@@ -1,0 +1,127 @@
+{
+  "schema": "forward_backward_dashboard_native_emd_v1",
+  "series": [
+    {
+      "domain": "metamotivo-source-full-seed0",
+      "evidence": "native_result_paired",
+      "milestones": [
+        {
+          "evaluation_manifest": "runtime/native_emd/meta_source_seed0/4975000/manifest.json",
+          "native_metrics": "runtime/native_emd/meta_source_seed0/4975000/native_metrics.json",
+          "source_receipt": "runtime/native_emd/meta_source_seed0/4975000/source_receipt.json"
+        }
+      ]
+    },
+    {
+      "domain": "phase3-smpl-cmu-post-sampler-seed0",
+      "evidence": "checkpoint_record_paired",
+      "milestones": [
+        {
+          "checkpoint_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/checkpoints/model_1000.json",
+          "evaluation_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/evaluations/500000.json"
+        },
+        {
+          "checkpoint_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/checkpoints/model_2000.json",
+          "evaluation_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/evaluations/1000000.json"
+        },
+        {
+          "checkpoint_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/checkpoints/model_3000.json",
+          "evaluation_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/evaluations/1500000.json"
+        },
+        {
+          "checkpoint_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/checkpoints/model_4000.json",
+          "evaluation_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/evaluations/2000000.json"
+        },
+        {
+          "checkpoint_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/checkpoints/model_5000.json",
+          "evaluation_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/evaluations/2500000.json"
+        },
+        {
+          "checkpoint_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/checkpoints/model_6000.json",
+          "evaluation_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/evaluations/3000000.json"
+        },
+        {
+          "checkpoint_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/checkpoints/model_7000.json",
+          "evaluation_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/evaluations/3500000.json"
+        },
+        {
+          "checkpoint_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/checkpoints/model_8000.json",
+          "evaluation_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/evaluations/4000000.json"
+        },
+        {
+          "checkpoint_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/checkpoints/model_9000.json",
+          "evaluation_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/evaluations/4500000.json"
+        },
+        {
+          "checkpoint_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/checkpoints/model_10000.json",
+          "evaluation_record": "runtime/native_emd/smpl_cmu_post_sampler_seed0/evaluations/5000000.json"
+        }
+      ]
+    },
+    {
+      "domain": "bfm-phase2f-full-v2-source-seed4728",
+      "evidence": "run_event",
+      "milestones": [
+        {
+          "evaluation_record": "runtime/native_emd/bfm_source_direct_v2_seed4728/evaluations/0.json"
+        },
+        {
+          "evaluation_record": "runtime/native_emd/bfm_source_direct_v2_seed4728/evaluations/9600000.json"
+        },
+        {
+          "evaluation_record": "runtime/native_emd/bfm_source_direct_v2_seed4728/evaluations/19200000.json"
+        },
+        {
+          "evaluation_record": "runtime/native_emd/bfm_source_direct_v2_seed4728/evaluations/28800000.json"
+        },
+        {
+          "evaluation_record": "runtime/native_emd/bfm_source_direct_v2_seed4728/evaluations/38400000.json"
+        }
+      ]
+    },
+    {
+      "domain": "bfm-phase2f-full-v2-candidate-seed4728",
+      "evidence": "run_event",
+      "milestones": [
+        {
+          "evaluation_record": "runtime/native_emd/rsl_rl_direct_v2_seed4728/evaluations/0.json"
+        },
+        {
+          "evaluation_record": "runtime/native_emd/rsl_rl_direct_v2_seed4728/evaluations/9600000.json"
+        },
+        {
+          "evaluation_record": "runtime/native_emd/rsl_rl_direct_v2_seed4728/evaluations/19200000.json"
+        },
+        {
+          "evaluation_record": "runtime/native_emd/rsl_rl_direct_v2_seed4728/evaluations/28800000.json"
+        }
+      ]
+    },
+    {
+      "domain": "phase3-g1-lafan-seed4728",
+      "evidence": "checkpoint_record_paired",
+      "milestones": [
+        {
+          "checkpoint_record": "runtime/native_emd/g1_lafan_seed4728/checkpoints/model_9375.json",
+          "evaluation_record": "runtime/native_emd/g1_lafan_seed4728/evaluations/9600000.json"
+        },
+        {
+          "checkpoint_record": "runtime/native_emd/g1_lafan_seed4728/checkpoints/model_18750.json",
+          "evaluation_record": "runtime/native_emd/g1_lafan_seed4728/evaluations/19200000.json"
+        },
+        {
+          "checkpoint_record": "runtime/native_emd/g1_lafan_seed4728/checkpoints/model_28125.json",
+          "evaluation_record": "runtime/native_emd/g1_lafan_seed4728/evaluations/28800000.json"
+        },
+        {
+          "checkpoint_record": "runtime/native_emd/g1_lafan_seed4728/checkpoints/model_37500.json",
+          "evaluation_record": "runtime/native_emd/g1_lafan_seed4728/evaluations/38400000.json"
+        },
+        {
+          "checkpoint_record": "runtime/native_emd/g1_lafan_seed4728/checkpoints/model_46875.json",
+          "evaluation_record": "runtime/native_emd/g1_lafan_seed4728/evaluations/48000000.json"
+        }
+      ]
+    }
+  ]
+}

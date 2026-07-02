@@ -1,0 +1,58 @@
+{
+  "contract": {
+    "assignment": "exact_shortest_augmenting_path",
+    "cost": "released_float32_euclidean_distance",
+    "host_trajectory_copies": 0,
+    "motion_assignment": "released_random_shuffle_first_env",
+    "motion_assignment_rng": "evaluation_transaction_python_rng",
+    "per_step_host_synchronizations": 0,
+    "repeated_call_peak_increment_bytes": 0,
+    "rollout_horizon": "maximum_unique_clip_length_per_chunk",
+    "tie_policy": "lowest_unused_column",
+    "trajectory_device": "cuda",
+    "workspace_bytes": 977325256
+  },
+  "implementation_sha256": {
+    "producer.py": "3c6d3603d239d0680cf617705429641778179a0902e81173f76de6582316a812",
+    "tracking.py": "afa46c4a2e330763f82f490aa688eb41f1ad04b96f2f770979ebe3fe1f8eae04",
+    "uniform_emd_warp.py": "8b829f454a92cd3c35c5776b394cb2fc2334ed08b33476bad158bde38dae071b"
+  },
+  "measurements": {
+    "calls": [
+      {
+        "batch_size": 862,
+        "feature_width": 29,
+        "seconds": 20.19785834895447
+      },
+      {
+        "batch_size": 862,
+        "feature_width": 23,
+        "seconds": 19.624729139264673
+      }
+    ],
+    "device": {
+      "name": "NVIDIA RTX 6000 Ada Generation",
+      "torch_version": "2.10.0+cu128",
+      "uuid": "GPU-5b2fd8a4-f6b5-5650-9d07-b23b545a4c4c",
+      "warp_version": "1.16.0.dev20260630"
+    },
+    "full_two_call_seconds": 39.82258748821914
+  },
+  "recorded_at": "2026-07-02T08:46:32.967896+00:00",
+  "schema": "g1_lafan_gpu_emd_benchmark_v2",
+  "workload": {
+    "assignment_batch_size": 862,
+    "assignment_calls": 2,
+    "clip_count": 862,
+    "feature_widths": [
+      29,
+      23
+    ],
+    "frame_count_per_clip": 499,
+    "rollout_chunk_sizes": [
+      380,
+      380,
+      102
+    ]
+  }
+}
