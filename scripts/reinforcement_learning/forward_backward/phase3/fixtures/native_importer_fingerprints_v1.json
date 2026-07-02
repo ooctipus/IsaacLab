@@ -1,0 +1,1506 @@
+{
+  "format": "forward_backward_phase3c_native_importer_fingerprints_v1",
+  "sampling": {
+    "sampled_clip_positions": [
+      "first",
+      "middle=floor(clip_count/2)",
+      "last"
+    ],
+    "sampled_frame_positions": [
+      "first",
+      "middle=floor(frame_count/2)",
+      "last"
+    ],
+    "hash_input": "one declared-encoding scalar or one C-contiguous native-dtype frame"
+  },
+  "humenv_hdf5": {
+    "source_file": {
+      "name": "0-CMU_91_91_19_poses.hdf5",
+      "sha256": "7b1580a40b2a9134dd25977b256747fbe08cdb9ef50ac501f0d911ba385d17e1"
+    },
+    "ordered_clip_ids": [
+      "0-CMU_91_91_19_poses"
+    ],
+    "ordered_clip_ids_sha256": "56739a94d4dfde3a7d085552ed26d3d184396b40a9542136c24eecdd758e80a0",
+    "clips": [
+      {
+        "clip_id": "0-CMU_91_91_19_poses",
+        "native_episode_id": "ep_0",
+        "field_order": [
+          "motion_id",
+          "observation",
+          "qpos",
+          "qvel",
+          "terminated",
+          "truncated"
+        ],
+        "fields": {
+          "motion_id": {
+            "dtype": "<i8",
+            "shape": [
+              472,
+              1
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "799a66b5b46c45776134dacc2bdb46720f1f8ca961d5ed6c5b0ef29e8b43ae7c"
+              },
+              {
+                "position": "middle",
+                "index": 236,
+                "sha256": "799a66b5b46c45776134dacc2bdb46720f1f8ca961d5ed6c5b0ef29e8b43ae7c"
+              },
+              {
+                "position": "last",
+                "index": 471,
+                "sha256": "799a66b5b46c45776134dacc2bdb46720f1f8ca961d5ed6c5b0ef29e8b43ae7c"
+              }
+            ]
+          },
+          "observation": {
+            "dtype": "<f8",
+            "shape": [
+              472,
+              358
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "f50959330c710f8ae4aa689270e1d0070a2fda915e24aae2ecace9be84293f4e"
+              },
+              {
+                "position": "middle",
+                "index": 236,
+                "sha256": "c19aae9e32bc3519891c1a6b78f71924a8fa86dfa116e4fcd3608a015dddef23"
+              },
+              {
+                "position": "last",
+                "index": 471,
+                "sha256": "b879c09932af9a3ff83dc1f84514c01f1afc46fbfee78c25b2e10be30a6088ec"
+              }
+            ]
+          },
+          "qpos": {
+            "dtype": "<f4",
+            "shape": [
+              472,
+              76
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "694a65d4d54496b3cbf2e12226a672add7c09bad6d4e65472f0c8b36c4f9dd43"
+              },
+              {
+                "position": "middle",
+                "index": 236,
+                "sha256": "bb5148529a2d0841cb907b75993344f2ad9ed40f64895cda222dcdf88c611980"
+              },
+              {
+                "position": "last",
+                "index": 471,
+                "sha256": "49b8c4facecbdf5a46fb3b157373fe2ebf13829767446e0828885175b0a30423"
+              }
+            ]
+          },
+          "qvel": {
+            "dtype": "<f4",
+            "shape": [
+              472,
+              75
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "4e7a0c5935cd51ee2e632078108737557318d5cabd27cad2cf4b0635db41fb60"
+              },
+              {
+                "position": "middle",
+                "index": 236,
+                "sha256": "157dbf730ea8a5561e06836c6980d63c3dc14034aa2281deb30c9fb5dadad8dc"
+              },
+              {
+                "position": "last",
+                "index": 471,
+                "sha256": "c072980d9e24b688872ff709aa817cc1ce0473669943f94bdd0dbb4dca176f3d"
+              }
+            ]
+          },
+          "terminated": {
+            "dtype": "|b1",
+            "shape": [
+              472,
+              1
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+              },
+              {
+                "position": "middle",
+                "index": 236,
+                "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+              },
+              {
+                "position": "last",
+                "index": 471,
+                "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+              }
+            ]
+          },
+          "truncated": {
+            "dtype": "|b1",
+            "shape": [
+              472,
+              1
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+              },
+              {
+                "position": "middle",
+                "index": 236,
+                "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+              },
+              {
+                "position": "last",
+                "index": 471,
+                "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "bfm_g1_joblib": {
+    "source_file": {
+      "name": "lafan_29dof_10s-clipped.pkl",
+      "sha256": "7f5aa36957808ee2e972472b18add8510533742710ba312d8b8c6e6014f1c010"
+    },
+    "ordered_clip_ids": [
+      "fallAndGetUp1_subject4_clip0",
+      "fallAndGetUp1_subject4_clip1",
+      "fallAndGetUp1_subject4_clip2",
+      "fallAndGetUp1_subject4_clip3",
+      "fallAndGetUp1_subject4_clip4",
+      "fallAndGetUp1_subject4_clip5",
+      "fallAndGetUp1_subject4_clip6",
+      "fallAndGetUp1_subject4_clip7",
+      "fallAndGetUp1_subject4_clip8",
+      "fallAndGetUp1_subject4_clip9",
+      "fallAndGetUp1_subject4_clip10",
+      "fallAndGetUp1_subject4_clip11",
+      "fallAndGetUp1_subject4_clip12",
+      "fallAndGetUp1_subject4_clip13",
+      "fallAndGetUp1_subject4_clip14",
+      "fallAndGetUp1_subject4_clip15",
+      "dance1_subject3_clip0",
+      "dance1_subject3_clip1",
+      "dance1_subject3_clip2",
+      "dance1_subject3_clip3",
+      "dance1_subject3_clip4",
+      "dance1_subject3_clip5",
+      "dance1_subject3_clip6",
+      "dance1_subject3_clip7",
+      "dance1_subject3_clip8",
+      "dance1_subject3_clip9",
+      "dance1_subject3_clip10",
+      "dance1_subject3_clip11",
+      "dance1_subject3_clip12",
+      "dance2_subject4_clip0",
+      "dance2_subject4_clip1",
+      "dance2_subject4_clip2",
+      "dance2_subject4_clip3",
+      "dance2_subject4_clip4",
+      "dance2_subject4_clip5",
+      "dance2_subject4_clip6",
+      "dance2_subject4_clip7",
+      "dance2_subject4_clip8",
+      "dance2_subject4_clip9",
+      "dance2_subject4_clip10",
+      "dance2_subject4_clip11",
+      "dance2_subject4_clip12",
+      "dance2_subject4_clip13",
+      "dance2_subject4_clip14",
+      "dance2_subject4_clip15",
+      "dance2_subject4_clip16",
+      "dance2_subject4_clip17",
+      "dance2_subject4_clip18",
+      "dance2_subject4_clip19",
+      "dance2_subject4_clip20",
+      "dance2_subject4_clip21",
+      "fightAndSports1_subject1_clip0",
+      "fightAndSports1_subject1_clip1",
+      "fightAndSports1_subject1_clip2",
+      "fightAndSports1_subject1_clip3",
+      "fightAndSports1_subject1_clip4",
+      "fightAndSports1_subject1_clip5",
+      "fightAndSports1_subject1_clip6",
+      "fightAndSports1_subject1_clip7",
+      "fightAndSports1_subject1_clip8",
+      "fightAndSports1_subject1_clip9",
+      "fightAndSports1_subject1_clip10",
+      "fightAndSports1_subject1_clip11",
+      "fightAndSports1_subject1_clip12",
+      "fightAndSports1_subject1_clip13",
+      "fightAndSports1_subject1_clip14",
+      "fightAndSports1_subject1_clip15",
+      "fightAndSports1_subject1_clip16",
+      "fightAndSports1_subject1_clip17",
+      "fightAndSports1_subject1_clip18",
+      "fightAndSports1_subject1_clip19",
+      "fightAndSports1_subject1_clip20",
+      "fightAndSports1_subject1_clip21",
+      "fightAndSports1_subject1_clip22",
+      "fightAndSports1_subject1_clip23",
+      "jumps1_subject1_clip0",
+      "jumps1_subject1_clip1",
+      "jumps1_subject1_clip2",
+      "jumps1_subject1_clip3",
+      "jumps1_subject1_clip4",
+      "jumps1_subject1_clip5",
+      "jumps1_subject1_clip6",
+      "jumps1_subject1_clip7",
+      "jumps1_subject1_clip8",
+      "jumps1_subject1_clip9",
+      "jumps1_subject1_clip10",
+      "jumps1_subject1_clip11",
+      "jumps1_subject1_clip12",
+      "jumps1_subject1_clip13",
+      "jumps1_subject1_clip14",
+      "jumps1_subject1_clip15",
+      "jumps1_subject1_clip16",
+      "jumps1_subject1_clip17",
+      "jumps1_subject1_clip18",
+      "jumps1_subject1_clip19",
+      "jumps1_subject1_clip20",
+      "jumps1_subject1_clip21",
+      "jumps1_subject1_clip22",
+      "jumps1_subject1_clip23",
+      "fight1_subject3_clip0",
+      "fight1_subject3_clip1",
+      "fight1_subject3_clip2",
+      "fight1_subject3_clip3",
+      "fight1_subject3_clip4",
+      "fight1_subject3_clip5",
+      "fight1_subject3_clip6",
+      "fight1_subject3_clip7",
+      "fight1_subject3_clip8",
+      "fight1_subject3_clip9",
+      "fight1_subject3_clip10",
+      "fight1_subject3_clip11",
+      "fight1_subject3_clip12",
+      "fight1_subject3_clip13",
+      "fight1_subject3_clip14",
+      "fight1_subject3_clip15",
+      "fight1_subject3_clip16",
+      "fight1_subject3_clip17",
+      "fight1_subject3_clip18",
+      "fight1_subject3_clip19",
+      "fight1_subject3_clip20",
+      "fight1_subject3_clip21",
+      "fight1_subject3_clip22",
+      "fight1_subject3_clip23",
+      "run1_subject5_clip0",
+      "run1_subject5_clip1",
+      "run1_subject5_clip2",
+      "run1_subject5_clip3",
+      "run1_subject5_clip4",
+      "run1_subject5_clip5",
+      "run1_subject5_clip6",
+      "run1_subject5_clip7",
+      "run1_subject5_clip8",
+      "run1_subject5_clip9",
+      "run1_subject5_clip10",
+      "run1_subject5_clip11",
+      "run1_subject5_clip12",
+      "run1_subject5_clip13",
+      "run1_subject5_clip14",
+      "run1_subject5_clip15",
+      "run1_subject5_clip16",
+      "run1_subject5_clip17",
+      "run1_subject5_clip18",
+      "run1_subject5_clip19",
+      "run1_subject5_clip20",
+      "run1_subject5_clip21",
+      "run1_subject5_clip22",
+      "dance1_subject2_clip0",
+      "dance1_subject2_clip1",
+      "dance1_subject2_clip2",
+      "dance1_subject2_clip3",
+      "dance1_subject2_clip4",
+      "dance1_subject2_clip5",
+      "dance1_subject2_clip6",
+      "dance1_subject2_clip7",
+      "dance1_subject2_clip8",
+      "dance1_subject2_clip9",
+      "dance1_subject2_clip10",
+      "dance1_subject2_clip11",
+      "dance1_subject2_clip12",
+      "walk1_subject5_clip0",
+      "walk1_subject5_clip1",
+      "walk1_subject5_clip2",
+      "walk1_subject5_clip3",
+      "walk1_subject5_clip4",
+      "walk1_subject5_clip5",
+      "walk1_subject5_clip6",
+      "walk1_subject5_clip7",
+      "walk1_subject5_clip8",
+      "walk1_subject5_clip9",
+      "walk1_subject5_clip10",
+      "walk1_subject5_clip11",
+      "walk1_subject5_clip12",
+      "walk1_subject5_clip13",
+      "walk1_subject5_clip14",
+      "walk1_subject5_clip15",
+      "walk1_subject5_clip16",
+      "walk1_subject5_clip17",
+      "walk1_subject5_clip18",
+      "walk1_subject5_clip19",
+      "walk1_subject5_clip20",
+      "walk1_subject5_clip21",
+      "walk1_subject5_clip22",
+      "walk1_subject5_clip23",
+      "walk1_subject5_clip24",
+      "walk1_subject5_clip25",
+      "run2_subject1_clip0",
+      "run2_subject1_clip1",
+      "run2_subject1_clip2",
+      "run2_subject1_clip3",
+      "run2_subject1_clip4",
+      "run2_subject1_clip5",
+      "run2_subject1_clip6",
+      "run2_subject1_clip7",
+      "run2_subject1_clip8",
+      "run2_subject1_clip9",
+      "run2_subject1_clip10",
+      "run2_subject1_clip11",
+      "run2_subject1_clip12",
+      "run2_subject1_clip13",
+      "run2_subject1_clip14",
+      "run2_subject1_clip15",
+      "run2_subject1_clip16",
+      "run2_subject1_clip17",
+      "run2_subject1_clip18",
+      "run2_subject1_clip19",
+      "run2_subject1_clip20",
+      "run2_subject1_clip21",
+      "run2_subject1_clip22",
+      "run2_subject1_clip23",
+      "sprint1_subject4_clip0",
+      "sprint1_subject4_clip1",
+      "sprint1_subject4_clip2",
+      "sprint1_subject4_clip3",
+      "sprint1_subject4_clip4",
+      "sprint1_subject4_clip5",
+      "sprint1_subject4_clip6",
+      "sprint1_subject4_clip7",
+      "sprint1_subject4_clip8",
+      "sprint1_subject4_clip9",
+      "sprint1_subject4_clip10",
+      "sprint1_subject4_clip11",
+      "sprint1_subject4_clip12",
+      "sprint1_subject4_clip13",
+      "sprint1_subject4_clip14",
+      "sprint1_subject4_clip15",
+      "sprint1_subject4_clip16",
+      "sprint1_subject4_clip17",
+      "sprint1_subject4_clip18",
+      "sprint1_subject4_clip19",
+      "sprint1_subject4_clip20",
+      "sprint1_subject4_clip21",
+      "sprint1_subject4_clip22",
+      "sprint1_subject4_clip23",
+      "sprint1_subject4_clip24",
+      "sprint1_subject4_clip25",
+      "sprint1_subject4_clip26",
+      "jumps1_subject5_clip0",
+      "jumps1_subject5_clip1",
+      "jumps1_subject5_clip2",
+      "jumps1_subject5_clip3",
+      "jumps1_subject5_clip4",
+      "jumps1_subject5_clip5",
+      "jumps1_subject5_clip6",
+      "jumps1_subject5_clip7",
+      "jumps1_subject5_clip8",
+      "jumps1_subject5_clip9",
+      "jumps1_subject5_clip10",
+      "jumps1_subject5_clip11",
+      "jumps1_subject5_clip12",
+      "jumps1_subject5_clip13",
+      "jumps1_subject5_clip14",
+      "jumps1_subject5_clip15",
+      "jumps1_subject5_clip16",
+      "jumps1_subject5_clip17",
+      "jumps1_subject5_clip18",
+      "jumps1_subject5_clip19",
+      "jumps1_subject5_clip20",
+      "jumps1_subject5_clip21",
+      "jumps1_subject5_clip22",
+      "jumps1_subject5_clip23",
+      "sprint1_subject2_clip0",
+      "sprint1_subject2_clip1",
+      "sprint1_subject2_clip2",
+      "sprint1_subject2_clip3",
+      "sprint1_subject2_clip4",
+      "sprint1_subject2_clip5",
+      "sprint1_subject2_clip6",
+      "sprint1_subject2_clip7",
+      "sprint1_subject2_clip8",
+      "sprint1_subject2_clip9",
+      "sprint1_subject2_clip10",
+      "sprint1_subject2_clip11",
+      "sprint1_subject2_clip12",
+      "sprint1_subject2_clip13",
+      "sprint1_subject2_clip14",
+      "sprint1_subject2_clip15",
+      "sprint1_subject2_clip16",
+      "sprint1_subject2_clip17",
+      "sprint1_subject2_clip18",
+      "sprint1_subject2_clip19",
+      "sprint1_subject2_clip20",
+      "sprint1_subject2_clip21",
+      "sprint1_subject2_clip22",
+      "sprint1_subject2_clip23",
+      "sprint1_subject2_clip24",
+      "sprint1_subject2_clip25",
+      "sprint1_subject2_clip26",
+      "walk2_subject1_clip0",
+      "walk2_subject1_clip1",
+      "walk2_subject1_clip2",
+      "walk2_subject1_clip3",
+      "walk2_subject1_clip4",
+      "walk2_subject1_clip5",
+      "walk2_subject1_clip6",
+      "walk2_subject1_clip7",
+      "walk2_subject1_clip8",
+      "walk2_subject1_clip9",
+      "walk2_subject1_clip10",
+      "walk2_subject1_clip11",
+      "walk2_subject1_clip12",
+      "walk2_subject1_clip13",
+      "walk2_subject1_clip14",
+      "walk2_subject1_clip15",
+      "walk2_subject1_clip16",
+      "walk2_subject1_clip17",
+      "walk2_subject1_clip18",
+      "walk2_subject1_clip19",
+      "walk2_subject1_clip20",
+      "walk2_subject1_clip21",
+      "walk2_subject1_clip22",
+      "walk3_subject4_clip0",
+      "walk3_subject4_clip1",
+      "walk3_subject4_clip2",
+      "walk3_subject4_clip3",
+      "walk3_subject4_clip4",
+      "walk3_subject4_clip5",
+      "walk3_subject4_clip6",
+      "walk3_subject4_clip7",
+      "walk3_subject4_clip8",
+      "walk3_subject4_clip9",
+      "walk3_subject4_clip10",
+      "walk3_subject4_clip11",
+      "walk3_subject4_clip12",
+      "walk3_subject4_clip13",
+      "walk3_subject4_clip14",
+      "walk3_subject4_clip15",
+      "walk3_subject4_clip16",
+      "walk3_subject4_clip17",
+      "walk3_subject4_clip18",
+      "walk3_subject4_clip19",
+      "walk3_subject4_clip20",
+      "walk3_subject4_clip21",
+      "walk3_subject4_clip22",
+      "walk3_subject4_clip23",
+      "walk3_subject2_clip0",
+      "walk3_subject2_clip1",
+      "walk3_subject2_clip2",
+      "walk3_subject2_clip3",
+      "walk3_subject2_clip4",
+      "walk3_subject2_clip5",
+      "walk3_subject2_clip6",
+      "walk3_subject2_clip7",
+      "walk3_subject2_clip8",
+      "walk3_subject2_clip9",
+      "walk3_subject2_clip10",
+      "walk3_subject2_clip11",
+      "walk3_subject2_clip12",
+      "walk3_subject2_clip13",
+      "walk3_subject2_clip14",
+      "walk3_subject2_clip15",
+      "walk3_subject2_clip16",
+      "walk3_subject2_clip17",
+      "walk3_subject2_clip18",
+      "walk3_subject2_clip19",
+      "walk3_subject2_clip20",
+      "walk3_subject2_clip21",
+      "walk3_subject2_clip22",
+      "walk3_subject2_clip23",
+      "fallAndGetUp2_subject3_clip0",
+      "fallAndGetUp2_subject3_clip1",
+      "fallAndGetUp2_subject3_clip2",
+      "fallAndGetUp2_subject3_clip3",
+      "fallAndGetUp2_subject3_clip4",
+      "fallAndGetUp2_subject3_clip5",
+      "fallAndGetUp2_subject3_clip6",
+      "fallAndGetUp2_subject3_clip7",
+      "fallAndGetUp2_subject3_clip8",
+      "fallAndGetUp2_subject3_clip9",
+      "fallAndGetUp2_subject3_clip10",
+      "fallAndGetUp2_subject3_clip11",
+      "fallAndGetUp2_subject3_clip12",
+      "fallAndGetUp2_subject3_clip13",
+      "fallAndGetUp2_subject3_clip14",
+      "fallAndGetUp2_subject3_clip15",
+      "dance1_subject1_clip0",
+      "dance1_subject1_clip1",
+      "dance1_subject1_clip2",
+      "dance1_subject1_clip3",
+      "dance1_subject1_clip4",
+      "dance1_subject1_clip5",
+      "dance1_subject1_clip6",
+      "dance1_subject1_clip7",
+      "dance1_subject1_clip8",
+      "dance1_subject1_clip9",
+      "dance1_subject1_clip10",
+      "dance1_subject1_clip11",
+      "dance1_subject1_clip12",
+      "fight1_subject5_clip0",
+      "fight1_subject5_clip1",
+      "fight1_subject5_clip2",
+      "fight1_subject5_clip3",
+      "fight1_subject5_clip4",
+      "fight1_subject5_clip5",
+      "fight1_subject5_clip6",
+      "fight1_subject5_clip7",
+      "fight1_subject5_clip8",
+      "fight1_subject5_clip9",
+      "fight1_subject5_clip10",
+      "fight1_subject5_clip11",
+      "fight1_subject5_clip12",
+      "fight1_subject5_clip13",
+      "fight1_subject5_clip14",
+      "fight1_subject5_clip15",
+      "fight1_subject5_clip16",
+      "fight1_subject5_clip17",
+      "fight1_subject5_clip18",
+      "fight1_subject5_clip19",
+      "fight1_subject5_clip20",
+      "fight1_subject5_clip21",
+      "fight1_subject5_clip22",
+      "fight1_subject5_clip23",
+      "fallAndGetUp1_subject5_clip0",
+      "fallAndGetUp1_subject5_clip1",
+      "fallAndGetUp1_subject5_clip2",
+      "fallAndGetUp1_subject5_clip3",
+      "fallAndGetUp1_subject5_clip4",
+      "fallAndGetUp1_subject5_clip5",
+      "fallAndGetUp1_subject5_clip6",
+      "fallAndGetUp1_subject5_clip7",
+      "fallAndGetUp1_subject5_clip8",
+      "fallAndGetUp1_subject5_clip9",
+      "fallAndGetUp1_subject5_clip10",
+      "fallAndGetUp1_subject5_clip11",
+      "fallAndGetUp1_subject5_clip12",
+      "fallAndGetUp1_subject5_clip13",
+      "fallAndGetUp1_subject5_clip14",
+      "fallAndGetUp1_subject5_clip15",
+      "fallAndGetUp2_subject2_clip0",
+      "fallAndGetUp2_subject2_clip1",
+      "fallAndGetUp2_subject2_clip2",
+      "fallAndGetUp2_subject2_clip3",
+      "fallAndGetUp2_subject2_clip4",
+      "fallAndGetUp2_subject2_clip5",
+      "fallAndGetUp2_subject2_clip6",
+      "fallAndGetUp2_subject2_clip7",
+      "fallAndGetUp2_subject2_clip8",
+      "fallAndGetUp2_subject2_clip9",
+      "fallAndGetUp2_subject2_clip10",
+      "fallAndGetUp2_subject2_clip11",
+      "fallAndGetUp2_subject2_clip12",
+      "fallAndGetUp2_subject2_clip13",
+      "fallAndGetUp2_subject2_clip14",
+      "fallAndGetUp2_subject2_clip15",
+      "walk3_subject3_clip0",
+      "walk3_subject3_clip1",
+      "walk3_subject3_clip2",
+      "walk3_subject3_clip3",
+      "walk3_subject3_clip4",
+      "walk3_subject3_clip5",
+      "walk3_subject3_clip6",
+      "walk3_subject3_clip7",
+      "walk3_subject3_clip8",
+      "walk3_subject3_clip9",
+      "walk3_subject3_clip10",
+      "walk3_subject3_clip11",
+      "walk3_subject3_clip12",
+      "walk3_subject3_clip13",
+      "walk3_subject3_clip14",
+      "walk3_subject3_clip15",
+      "walk3_subject3_clip16",
+      "walk3_subject3_clip17",
+      "walk3_subject3_clip18",
+      "walk3_subject3_clip19",
+      "walk3_subject3_clip20",
+      "walk3_subject3_clip21",
+      "walk3_subject3_clip22",
+      "walk3_subject3_clip23",
+      "jumps1_subject2_clip0",
+      "jumps1_subject2_clip1",
+      "jumps1_subject2_clip2",
+      "jumps1_subject2_clip3",
+      "jumps1_subject2_clip4",
+      "jumps1_subject2_clip5",
+      "jumps1_subject2_clip6",
+      "jumps1_subject2_clip7",
+      "jumps1_subject2_clip8",
+      "jumps1_subject2_clip9",
+      "jumps1_subject2_clip10",
+      "jumps1_subject2_clip11",
+      "jumps1_subject2_clip12",
+      "jumps1_subject2_clip13",
+      "jumps1_subject2_clip14",
+      "jumps1_subject2_clip15",
+      "jumps1_subject2_clip16",
+      "jumps1_subject2_clip17",
+      "jumps1_subject2_clip18",
+      "jumps1_subject2_clip19",
+      "jumps1_subject2_clip20",
+      "jumps1_subject2_clip21",
+      "jumps1_subject2_clip22",
+      "jumps1_subject2_clip23",
+      "walk2_subject4_clip0",
+      "walk2_subject4_clip1",
+      "walk2_subject4_clip2",
+      "walk2_subject4_clip3",
+      "walk2_subject4_clip4",
+      "walk2_subject4_clip5",
+      "walk2_subject4_clip6",
+      "walk2_subject4_clip7",
+      "walk2_subject4_clip8",
+      "walk2_subject4_clip9",
+      "walk2_subject4_clip10",
+      "walk2_subject4_clip11",
+      "walk2_subject4_clip12",
+      "walk2_subject4_clip13",
+      "walk2_subject4_clip14",
+      "walk2_subject4_clip15",
+      "walk2_subject4_clip16",
+      "walk2_subject4_clip17",
+      "walk2_subject4_clip18",
+      "walk2_subject4_clip19",
+      "walk2_subject4_clip20",
+      "walk2_subject4_clip21",
+      "walk2_subject4_clip22",
+      "run1_subject2_clip0",
+      "run1_subject2_clip1",
+      "run1_subject2_clip2",
+      "run1_subject2_clip3",
+      "run1_subject2_clip4",
+      "run1_subject2_clip5",
+      "run1_subject2_clip6",
+      "run1_subject2_clip7",
+      "run1_subject2_clip8",
+      "run1_subject2_clip9",
+      "run1_subject2_clip10",
+      "run1_subject2_clip11",
+      "run1_subject2_clip12",
+      "run1_subject2_clip13",
+      "run1_subject2_clip14",
+      "run1_subject2_clip15",
+      "run1_subject2_clip16",
+      "run1_subject2_clip17",
+      "run1_subject2_clip18",
+      "run1_subject2_clip19",
+      "run1_subject2_clip20",
+      "run1_subject2_clip21",
+      "run1_subject2_clip22",
+      "walk1_subject1_clip0",
+      "walk1_subject1_clip1",
+      "walk1_subject1_clip2",
+      "walk1_subject1_clip3",
+      "walk1_subject1_clip4",
+      "walk1_subject1_clip5",
+      "walk1_subject1_clip6",
+      "walk1_subject1_clip7",
+      "walk1_subject1_clip8",
+      "walk1_subject1_clip9",
+      "walk1_subject1_clip10",
+      "walk1_subject1_clip11",
+      "walk1_subject1_clip12",
+      "walk1_subject1_clip13",
+      "walk1_subject1_clip14",
+      "walk1_subject1_clip15",
+      "walk1_subject1_clip16",
+      "walk1_subject1_clip17",
+      "walk1_subject1_clip18",
+      "walk1_subject1_clip19",
+      "walk1_subject1_clip20",
+      "walk1_subject1_clip21",
+      "walk1_subject1_clip22",
+      "walk1_subject1_clip23",
+      "walk1_subject1_clip24",
+      "walk1_subject1_clip25",
+      "run2_subject4_clip0",
+      "run2_subject4_clip1",
+      "run2_subject4_clip2",
+      "run2_subject4_clip3",
+      "run2_subject4_clip4",
+      "run2_subject4_clip5",
+      "run2_subject4_clip6",
+      "run2_subject4_clip7",
+      "run2_subject4_clip8",
+      "run2_subject4_clip9",
+      "run2_subject4_clip10",
+      "run2_subject4_clip11",
+      "run2_subject4_clip12",
+      "run2_subject4_clip13",
+      "run2_subject4_clip14",
+      "run2_subject4_clip15",
+      "run2_subject4_clip16",
+      "run2_subject4_clip17",
+      "run2_subject4_clip18",
+      "run2_subject4_clip19",
+      "run2_subject4_clip20",
+      "run2_subject4_clip21",
+      "run2_subject4_clip22",
+      "run2_subject4_clip23",
+      "walk3_subject1_clip0",
+      "walk3_subject1_clip1",
+      "walk3_subject1_clip2",
+      "walk3_subject1_clip3",
+      "walk3_subject1_clip4",
+      "walk3_subject1_clip5",
+      "walk3_subject1_clip6",
+      "walk3_subject1_clip7",
+      "walk3_subject1_clip8",
+      "walk3_subject1_clip9",
+      "walk3_subject1_clip10",
+      "walk3_subject1_clip11",
+      "walk3_subject1_clip12",
+      "walk3_subject1_clip13",
+      "walk3_subject1_clip14",
+      "walk3_subject1_clip15",
+      "walk3_subject1_clip16",
+      "walk3_subject1_clip17",
+      "walk3_subject1_clip18",
+      "walk3_subject1_clip19",
+      "walk3_subject1_clip20",
+      "walk3_subject1_clip21",
+      "walk3_subject1_clip22",
+      "walk3_subject1_clip23",
+      "dance2_subject5_clip0",
+      "dance2_subject5_clip1",
+      "dance2_subject5_clip2",
+      "dance2_subject5_clip3",
+      "dance2_subject5_clip4",
+      "dance2_subject5_clip5",
+      "dance2_subject5_clip6",
+      "dance2_subject5_clip7",
+      "dance2_subject5_clip8",
+      "dance2_subject5_clip9",
+      "dance2_subject5_clip10",
+      "dance2_subject5_clip11",
+      "dance2_subject5_clip12",
+      "dance2_subject5_clip13",
+      "dance2_subject5_clip14",
+      "dance2_subject5_clip15",
+      "dance2_subject5_clip16",
+      "dance2_subject5_clip17",
+      "dance2_subject5_clip18",
+      "dance2_subject5_clip19",
+      "dance2_subject5_clip20",
+      "dance2_subject5_clip21",
+      "dance2_subject1_clip0",
+      "dance2_subject1_clip1",
+      "dance2_subject1_clip2",
+      "dance2_subject1_clip3",
+      "dance2_subject1_clip4",
+      "dance2_subject1_clip5",
+      "dance2_subject1_clip6",
+      "dance2_subject1_clip7",
+      "dance2_subject1_clip8",
+      "dance2_subject1_clip9",
+      "dance2_subject1_clip10",
+      "dance2_subject1_clip11",
+      "dance2_subject1_clip12",
+      "dance2_subject1_clip13",
+      "dance2_subject1_clip14",
+      "dance2_subject1_clip15",
+      "dance2_subject1_clip16",
+      "dance2_subject1_clip17",
+      "dance2_subject1_clip18",
+      "dance2_subject1_clip19",
+      "dance2_subject1_clip20",
+      "dance2_subject1_clip21",
+      "walk4_subject1_clip0",
+      "walk4_subject1_clip1",
+      "walk4_subject1_clip2",
+      "walk4_subject1_clip3",
+      "walk4_subject1_clip4",
+      "walk4_subject1_clip5",
+      "walk4_subject1_clip6",
+      "walk4_subject1_clip7",
+      "walk4_subject1_clip8",
+      "walk4_subject1_clip9",
+      "walk4_subject1_clip10",
+      "walk4_subject1_clip11",
+      "walk4_subject1_clip12",
+      "walk4_subject1_clip13",
+      "walk4_subject1_clip14",
+      "walk4_subject1_clip15",
+      "dance2_subject2_clip0",
+      "dance2_subject2_clip1",
+      "dance2_subject2_clip2",
+      "dance2_subject2_clip3",
+      "dance2_subject2_clip4",
+      "dance2_subject2_clip5",
+      "dance2_subject2_clip6",
+      "dance2_subject2_clip7",
+      "dance2_subject2_clip8",
+      "dance2_subject2_clip9",
+      "dance2_subject2_clip10",
+      "dance2_subject2_clip11",
+      "dance2_subject2_clip12",
+      "dance2_subject2_clip13",
+      "dance2_subject2_clip14",
+      "dance2_subject2_clip15",
+      "dance2_subject2_clip16",
+      "dance2_subject2_clip17",
+      "dance2_subject2_clip18",
+      "dance2_subject2_clip19",
+      "dance2_subject2_clip20",
+      "dance2_subject2_clip21",
+      "walk2_subject3_clip0",
+      "walk2_subject3_clip1",
+      "walk2_subject3_clip2",
+      "walk2_subject3_clip3",
+      "walk2_subject3_clip4",
+      "walk2_subject3_clip5",
+      "walk2_subject3_clip6",
+      "walk2_subject3_clip7",
+      "walk2_subject3_clip8",
+      "walk2_subject3_clip9",
+      "walk2_subject3_clip10",
+      "walk2_subject3_clip11",
+      "walk2_subject3_clip12",
+      "walk2_subject3_clip13",
+      "walk2_subject3_clip14",
+      "walk2_subject3_clip15",
+      "walk2_subject3_clip16",
+      "walk2_subject3_clip17",
+      "walk2_subject3_clip18",
+      "walk2_subject3_clip19",
+      "walk2_subject3_clip20",
+      "walk2_subject3_clip21",
+      "walk2_subject3_clip22",
+      "fallAndGetUp1_subject1_clip0",
+      "fallAndGetUp1_subject1_clip1",
+      "fallAndGetUp1_subject1_clip2",
+      "fallAndGetUp1_subject1_clip3",
+      "fallAndGetUp1_subject1_clip4",
+      "fallAndGetUp1_subject1_clip5",
+      "fallAndGetUp1_subject1_clip6",
+      "fallAndGetUp1_subject1_clip7",
+      "fallAndGetUp1_subject1_clip8",
+      "fallAndGetUp1_subject1_clip9",
+      "fallAndGetUp1_subject1_clip10",
+      "fallAndGetUp1_subject1_clip11",
+      "fallAndGetUp1_subject1_clip12",
+      "fallAndGetUp1_subject1_clip13",
+      "fallAndGetUp1_subject1_clip14",
+      "fallAndGetUp1_subject1_clip15",
+      "walk1_subject2_clip0",
+      "walk1_subject2_clip1",
+      "walk1_subject2_clip2",
+      "walk1_subject2_clip3",
+      "walk1_subject2_clip4",
+      "walk1_subject2_clip5",
+      "walk1_subject2_clip6",
+      "walk1_subject2_clip7",
+      "walk1_subject2_clip8",
+      "walk1_subject2_clip9",
+      "walk1_subject2_clip10",
+      "walk1_subject2_clip11",
+      "walk1_subject2_clip12",
+      "walk1_subject2_clip13",
+      "walk1_subject2_clip14",
+      "walk1_subject2_clip15",
+      "walk1_subject2_clip16",
+      "walk1_subject2_clip17",
+      "walk1_subject2_clip18",
+      "walk1_subject2_clip19",
+      "walk1_subject2_clip20",
+      "walk1_subject2_clip21",
+      "walk1_subject2_clip22",
+      "walk1_subject2_clip23",
+      "walk1_subject2_clip24",
+      "walk1_subject2_clip25",
+      "fallAndGetUp3_subject1_clip0",
+      "fallAndGetUp3_subject1_clip1",
+      "fallAndGetUp3_subject1_clip2",
+      "fallAndGetUp3_subject1_clip3",
+      "fallAndGetUp3_subject1_clip4",
+      "fallAndGetUp3_subject1_clip5",
+      "fallAndGetUp3_subject1_clip6",
+      "fallAndGetUp3_subject1_clip7",
+      "fallAndGetUp3_subject1_clip8",
+      "fallAndGetUp3_subject1_clip9",
+      "dance2_subject3_clip0",
+      "dance2_subject3_clip1",
+      "dance2_subject3_clip2",
+      "dance2_subject3_clip3",
+      "dance2_subject3_clip4",
+      "dance2_subject3_clip5",
+      "dance2_subject3_clip6",
+      "dance2_subject3_clip7",
+      "dance2_subject3_clip8",
+      "dance2_subject3_clip9",
+      "dance2_subject3_clip10",
+      "dance2_subject3_clip11",
+      "dance2_subject3_clip12",
+      "dance2_subject3_clip13",
+      "dance2_subject3_clip14",
+      "dance2_subject3_clip15",
+      "dance2_subject3_clip16",
+      "dance2_subject3_clip17",
+      "dance2_subject3_clip18",
+      "dance2_subject3_clip19",
+      "dance2_subject3_clip20",
+      "dance2_subject3_clip21",
+      "fight1_subject2_clip0",
+      "fight1_subject2_clip1",
+      "fight1_subject2_clip2",
+      "fight1_subject2_clip3",
+      "fight1_subject2_clip4",
+      "fight1_subject2_clip5",
+      "fight1_subject2_clip6",
+      "fight1_subject2_clip7",
+      "fight1_subject2_clip8",
+      "fight1_subject2_clip9",
+      "fight1_subject2_clip10",
+      "fight1_subject2_clip11",
+      "fight1_subject2_clip12",
+      "fight1_subject2_clip13",
+      "fight1_subject2_clip14",
+      "fight1_subject2_clip15",
+      "fight1_subject2_clip16",
+      "fight1_subject2_clip17",
+      "fight1_subject2_clip18",
+      "fight1_subject2_clip19",
+      "fight1_subject2_clip20",
+      "fight1_subject2_clip21",
+      "fight1_subject2_clip22",
+      "fight1_subject2_clip23",
+      "walk3_subject5_clip0",
+      "walk3_subject5_clip1",
+      "walk3_subject5_clip2",
+      "walk3_subject5_clip3",
+      "walk3_subject5_clip4",
+      "walk3_subject5_clip5",
+      "walk3_subject5_clip6",
+      "walk3_subject5_clip7",
+      "walk3_subject5_clip8",
+      "walk3_subject5_clip9",
+      "walk3_subject5_clip10",
+      "walk3_subject5_clip11",
+      "walk3_subject5_clip12",
+      "walk3_subject5_clip13",
+      "walk3_subject5_clip14",
+      "walk3_subject5_clip15",
+      "walk3_subject5_clip16",
+      "walk3_subject5_clip17",
+      "walk3_subject5_clip18",
+      "walk3_subject5_clip19",
+      "walk3_subject5_clip20",
+      "walk3_subject5_clip21",
+      "walk3_subject5_clip22",
+      "walk3_subject5_clip23",
+      "fightAndSports1_subject4_clip0",
+      "fightAndSports1_subject4_clip1",
+      "fightAndSports1_subject4_clip2",
+      "fightAndSports1_subject4_clip3",
+      "fightAndSports1_subject4_clip4",
+      "fightAndSports1_subject4_clip5",
+      "fightAndSports1_subject4_clip6",
+      "fightAndSports1_subject4_clip7",
+      "fightAndSports1_subject4_clip8",
+      "fightAndSports1_subject4_clip9",
+      "fightAndSports1_subject4_clip10",
+      "fightAndSports1_subject4_clip11",
+      "fightAndSports1_subject4_clip12",
+      "fightAndSports1_subject4_clip13",
+      "fightAndSports1_subject4_clip14",
+      "fightAndSports1_subject4_clip15",
+      "fightAndSports1_subject4_clip16",
+      "fightAndSports1_subject4_clip17",
+      "fightAndSports1_subject4_clip18",
+      "fightAndSports1_subject4_clip19",
+      "fightAndSports1_subject4_clip20",
+      "fightAndSports1_subject4_clip21",
+      "fightAndSports1_subject4_clip22",
+      "fightAndSports1_subject4_clip23"
+    ],
+    "ordered_clip_ids_sha256": "7e34cb01112bf9807006c75f287bafba33eb86dc66f188a4e80ad03500eaf895",
+    "sampled_clips": [
+      {
+        "position": 0,
+        "clip_id": "fallAndGetUp1_subject4_clip0",
+        "field_order": [
+          "root_trans_offset",
+          "pose_aa",
+          "dof",
+          "root_rot",
+          "smpl_joints",
+          "fps",
+          "motion_name"
+        ],
+        "fields": {
+          "root_trans_offset": {
+            "dtype": "<f4",
+            "shape": [
+              300,
+              3
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "0b416491a886cbddae88079b18d6a0336c5c24b4339f4eafbb0def78f3eaf512"
+              },
+              {
+                "position": "middle",
+                "index": 150,
+                "sha256": "40d7307dfa7e6ae5e3f593f4fb530305412afd250c8b0cd29265319e352e7deb"
+              },
+              {
+                "position": "last",
+                "index": 299,
+                "sha256": "b48319a8011de4d69832603a34542292d6cdcdeafe159f4200a56d9d4899d0d9"
+              }
+            ]
+          },
+          "pose_aa": {
+            "dtype": "<f4",
+            "shape": [
+              300,
+              30,
+              3
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "34a6fad1d95835beb123a9b48c1de580660afd550b737bfa2fa6863299488a5a"
+              },
+              {
+                "position": "middle",
+                "index": 150,
+                "sha256": "fd0d9deead0928727dc9989d178c36805a729208b2e34bf389446e6000f6b7de"
+              },
+              {
+                "position": "last",
+                "index": 299,
+                "sha256": "869817935676d95cc9d10244e356df16e7cd7205e191ecb6ac2b15e7795549b2"
+              }
+            ]
+          },
+          "dof": {
+            "dtype": "<f4",
+            "shape": [
+              300,
+              29
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "8cf2e9421dd8dd7d5599da24554f02bde29f543f0f5d95559e5a4d9312d605a0"
+              },
+              {
+                "position": "middle",
+                "index": 150,
+                "sha256": "d414d2f0d0d57b76e8bb5382b50d134e32808dfe933ad8934e24fb3f058e57d2"
+              },
+              {
+                "position": "last",
+                "index": 299,
+                "sha256": "c24934c53b347b810cc9fc02eec0b31ee5646252a69edcf31bf4b82a7c6b3e80"
+              }
+            ]
+          },
+          "root_rot": {
+            "dtype": "<f4",
+            "shape": [
+              300,
+              4
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "6db062c59e7a32269f232fc793032323ba334a8e4b8560b7183a1feaf501a68a"
+              },
+              {
+                "position": "middle",
+                "index": 150,
+                "sha256": "3e12f019f13d51afbebb57fbdfcaccefffafafc2878f0d3ac235f408fddcb374"
+              },
+              {
+                "position": "last",
+                "index": 299,
+                "sha256": "611214abc7720c9477afaf49da1d0ca3b059c75dac33dda3bb70413f9680cbe6"
+              }
+            ]
+          },
+          "smpl_joints": {
+            "dtype": "<f4",
+            "shape": [
+              300,
+              24,
+              3
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "2d5565fb483d8ea4525a7a9229677d1038ad34b6e22c8d5152e1d7f7b9817597"
+              },
+              {
+                "position": "middle",
+                "index": 150,
+                "sha256": "2d5565fb483d8ea4525a7a9229677d1038ad34b6e22c8d5152e1d7f7b9817597"
+              },
+              {
+                "position": "last",
+                "index": 299,
+                "sha256": "2d5565fb483d8ea4525a7a9229677d1038ad34b6e22c8d5152e1d7f7b9817597"
+              }
+            ]
+          },
+          "fps": {
+            "scalar_type": "python:int",
+            "scalar_encoding": "UTF-8 decimal",
+            "shape": [],
+            "scalar_bytes_sha256": "624b60c58c9d8bfb6ff1886c2fd605d2adeb6ea4da576068201b6c6958ce93f4"
+          },
+          "motion_name": {
+            "scalar_type": "python:str",
+            "scalar_encoding": "UTF-8",
+            "shape": [],
+            "scalar_bytes_sha256": "9e7b470c2133b42eca78ea7b587811f5937bcea723d027e9e7f3126203eea872"
+          }
+        }
+      },
+      {
+        "position": 431,
+        "clip_id": "fallAndGetUp2_subject2_clip4",
+        "field_order": [
+          "root_trans_offset",
+          "pose_aa",
+          "dof",
+          "root_rot",
+          "smpl_joints",
+          "fps",
+          "motion_name"
+        ],
+        "fields": {
+          "root_trans_offset": {
+            "dtype": "<f4",
+            "shape": [
+              300,
+              3
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "3c9656473dbf2c1f651e1197867101036f8136fb25010199ba2b9ee41c186288"
+              },
+              {
+                "position": "middle",
+                "index": 150,
+                "sha256": "f3e9aea21514673729e8e457f5ebb8526704a926084eef45c690c4b0575b90d3"
+              },
+              {
+                "position": "last",
+                "index": 299,
+                "sha256": "75645fa40bf577fd938ad3aecaea8dfcb84b39a5a87ec78a01352f4396b4ab6f"
+              }
+            ]
+          },
+          "pose_aa": {
+            "dtype": "<f4",
+            "shape": [
+              300,
+              30,
+              3
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "b713045ac011a20391d29f9517b565ec81e05321a6876f8f62f170bb8ad4f108"
+              },
+              {
+                "position": "middle",
+                "index": 150,
+                "sha256": "061504f10247f394db68250f774bb45df10464ab0f1ff40f6d0a22e7c5e9c314"
+              },
+              {
+                "position": "last",
+                "index": 299,
+                "sha256": "ea0bedcc0a37063bf1db10254f667364b43ab092c7535fd2017cfc84dde7e92b"
+              }
+            ]
+          },
+          "dof": {
+            "dtype": "<f4",
+            "shape": [
+              300,
+              29
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "fcff2e1e8dbb62623180bc53133491646635e73e9882fede036078c7c9689907"
+              },
+              {
+                "position": "middle",
+                "index": 150,
+                "sha256": "c80337d440a9bea6ebbc1765ba9f5ca2734f2fbde62a33f7e9392a6b9c34eee4"
+              },
+              {
+                "position": "last",
+                "index": 299,
+                "sha256": "11740839b8221b21d3e9a3fbfe809ffbe8d3bef6f3d38cada20aa1bf66b0824f"
+              }
+            ]
+          },
+          "root_rot": {
+            "dtype": "<f4",
+            "shape": [
+              300,
+              4
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "f6ef7bcfe828059567b9adc3fc5b1b9d2a64b5e83502d0d2ca5b7211742416ff"
+              },
+              {
+                "position": "middle",
+                "index": 150,
+                "sha256": "063f400a3faf633dbb1195c4e92fa7507b6303c1ed6f0a7fb1566777344b6e7c"
+              },
+              {
+                "position": "last",
+                "index": 299,
+                "sha256": "3ae8da2e51ac922293f8545c260c917a0ec6e2d84c1f35e16441c7d659ed67f1"
+              }
+            ]
+          },
+          "smpl_joints": {
+            "dtype": "<f4",
+            "shape": [
+              300,
+              24,
+              3
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "2d5565fb483d8ea4525a7a9229677d1038ad34b6e22c8d5152e1d7f7b9817597"
+              },
+              {
+                "position": "middle",
+                "index": 150,
+                "sha256": "2d5565fb483d8ea4525a7a9229677d1038ad34b6e22c8d5152e1d7f7b9817597"
+              },
+              {
+                "position": "last",
+                "index": 299,
+                "sha256": "2d5565fb483d8ea4525a7a9229677d1038ad34b6e22c8d5152e1d7f7b9817597"
+              }
+            ]
+          },
+          "fps": {
+            "scalar_type": "python:int",
+            "scalar_encoding": "UTF-8 decimal",
+            "shape": [],
+            "scalar_bytes_sha256": "624b60c58c9d8bfb6ff1886c2fd605d2adeb6ea4da576068201b6c6958ce93f4"
+          },
+          "motion_name": {
+            "scalar_type": "python:str",
+            "scalar_encoding": "UTF-8",
+            "shape": [],
+            "scalar_bytes_sha256": "621e38303acfb05bc595f7afc135698f78cdb73264ac614016da803d8f7b0d62"
+          }
+        }
+      },
+      {
+        "position": 861,
+        "clip_id": "fightAndSports1_subject4_clip23",
+        "field_order": [
+          "root_trans_offset",
+          "pose_aa",
+          "dof",
+          "root_rot",
+          "smpl_joints",
+          "fps",
+          "motion_name"
+        ],
+        "fields": {
+          "root_trans_offset": {
+            "dtype": "<f4",
+            "shape": [
+              300,
+              3
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "c7d944f0855640fc64dfa745c57346255894e45c3d83e08c36f9d9f11aa2d801"
+              },
+              {
+                "position": "middle",
+                "index": 150,
+                "sha256": "91d5be870a43582f9b85dedc747ece82d66af2f262916d4881f498979cbd54be"
+              },
+              {
+                "position": "last",
+                "index": 299,
+                "sha256": "a7f8d392a632fd7f3400ce4c18176fd776b72e991f278e7b92259b4e73ece4a2"
+              }
+            ]
+          },
+          "pose_aa": {
+            "dtype": "<f4",
+            "shape": [
+              300,
+              30,
+              3
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "6e76ffa8e56d6b7633a56bf50732305ba3d9063cbffaf4c8f7f28028e1d7537d"
+              },
+              {
+                "position": "middle",
+                "index": 150,
+                "sha256": "58a77ceba9cb4446a90625ae83f3ff7e8c45b45900194134815f0bc45f29aacb"
+              },
+              {
+                "position": "last",
+                "index": 299,
+                "sha256": "5a6e7ad89e52a1b46968f6f0dbc024a7039235a5eb3a885aa53e57ce8213ab6f"
+              }
+            ]
+          },
+          "dof": {
+            "dtype": "<f4",
+            "shape": [
+              300,
+              29
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "4a71fd9fa4f48145400c3056a30a280bd2695491770b09e4ddebbbf061fb34fc"
+              },
+              {
+                "position": "middle",
+                "index": 150,
+                "sha256": "60f3c097e4e24972f3a16309f741f6080f60ca4fac33f7c5c18bb87d5a3cee07"
+              },
+              {
+                "position": "last",
+                "index": 299,
+                "sha256": "b33dfd946f7b78bb0b7416d770d49f1658477aeab830ac49c4bc2d2c4c3549c7"
+              }
+            ]
+          },
+          "root_rot": {
+            "dtype": "<f4",
+            "shape": [
+              300,
+              4
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "e92aea43d4d7fa645a76c4004efd4b718ec265d03b321192e6c8b1c4d85a6d81"
+              },
+              {
+                "position": "middle",
+                "index": 150,
+                "sha256": "5591fed9e54ee4582ac69eeb0b126c5e8645b8fa21e6f2ebd4f76bd5c8e7c332"
+              },
+              {
+                "position": "last",
+                "index": 299,
+                "sha256": "f4a7da58ab7a2b44e042f2a693ec05e86ca6ec44b6e867085be58e177abd2e8d"
+              }
+            ]
+          },
+          "smpl_joints": {
+            "dtype": "<f4",
+            "shape": [
+              300,
+              24,
+              3
+            ],
+            "frame_bytes": [
+              {
+                "position": "first",
+                "index": 0,
+                "sha256": "2d5565fb483d8ea4525a7a9229677d1038ad34b6e22c8d5152e1d7f7b9817597"
+              },
+              {
+                "position": "middle",
+                "index": 150,
+                "sha256": "2d5565fb483d8ea4525a7a9229677d1038ad34b6e22c8d5152e1d7f7b9817597"
+              },
+              {
+                "position": "last",
+                "index": 299,
+                "sha256": "2d5565fb483d8ea4525a7a9229677d1038ad34b6e22c8d5152e1d7f7b9817597"
+              }
+            ]
+          },
+          "fps": {
+            "scalar_type": "python:int",
+            "scalar_encoding": "UTF-8 decimal",
+            "shape": [],
+            "scalar_bytes_sha256": "624b60c58c9d8bfb6ff1886c2fd605d2adeb6ea4da576068201b6c6958ce93f4"
+          },
+          "motion_name": {
+            "scalar_type": "python:str",
+            "scalar_encoding": "UTF-8",
+            "shape": [],
+            "scalar_bytes_sha256": "e43fabd62b0dc350f24996528259196d686d80304564af224b28604b8ad01c7f"
+          }
+        }
+      }
+    ]
+  }
+}

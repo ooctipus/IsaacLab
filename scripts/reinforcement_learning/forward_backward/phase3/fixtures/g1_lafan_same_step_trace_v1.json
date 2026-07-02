@@ -1,0 +1,919 @@
+{
+  "declaration": {
+    "exact_final_capture_adapter": {
+      "file": "phase2_adapter/environment.py",
+      "revision": "f0495e864ffcf332f346bd7b55e9aa108cb8b38f",
+      "sha256": "52a35f031b2808479cf0dbf75bdb1ead5c7c4292f33c6f3cb33ca8e367460cc7"
+    },
+    "motion_data": {
+      "clip_count": 2,
+      "clip_ids": [
+        "synthetic_g1_periodic_00",
+        "synthetic_g1_periodic_01"
+      ],
+      "contains_dataset_values": false,
+      "content_sha256": "50f731fc9ab9ef4f97cd2c592c4851e58358c0cbffa4e83a23250e57aad7c23f",
+      "fps": 30,
+      "frames_per_clip": 360,
+      "generator": "generate_g1_lafan_trace.py::synthetic_motion_source",
+      "identifier": "phase3_synthetic_g1_periodic_v1",
+      "kind": "procedural_synthetic",
+      "ordered_fields": [
+        "root_trans_offset",
+        "pose_aa",
+        "fps"
+      ],
+      "pose_aa": {
+        "dtype": "float32",
+        "shape": [
+          360,
+          30,
+          3
+        ]
+      },
+      "root_trans_offset": {
+        "dtype": "float32",
+        "shape": [
+          360,
+          3
+        ]
+      }
+    },
+    "native_environment_byte_identity": {
+      "completed_capacity_run_revision": "0a4132620e5b588752cf7d77cacda1720d6e4b08",
+      "environment_files_unchanged_across_revisions": true,
+      "later_cadence_revision": "f0495e864ffcf332f346bd7b55e9aa108cb8b38f",
+      "released_baseline_revision": "b87916f52d3d9e6eeba484f5e80851a235191837",
+      "source_files": {
+        "humanoidverse/agents/envs/humanoidverse_isaac.py": "6b95ca28e6e45cef75f3a0ee76507d157e871604b95d25baaaf5c653107327eb",
+        "humanoidverse/agents/utils.py": "ee8d66a79b4379b544b121d8d611b42013d15e3691b85fb4b1170119b31bf018",
+        "humanoidverse/config/domain_rand/domain_rand.yaml": "faa55c426be6202f7582ba318bac797e46dbedfa70e150e17fd69f2d5f742555",
+        "humanoidverse/config/env/legged_motions.yaml": "06b99581f90f1c89f6dc27aad8c918b66f167759c55e394bbab6b12c308d0726",
+        "humanoidverse/config/exp/bfm_zero/bfm_zero.yaml": "d63b2c4d3707c0127577c816730aa283a01e2b45649006cd6fb7140ae6a8d761",
+        "humanoidverse/config/obs/bfm_zero_obs.yaml": "3037b6ec30cd1084ae846e03e8f5479e817f9c94c10cce099ab9ace45dfd4f1d",
+        "humanoidverse/config/rewards/reward_bfm_zero.yaml": "4dd2638380d1088e2e6bb964fbfb387dbbd03e98c41c57064d1b11c910d7752e",
+        "humanoidverse/config/robot/g1/g1_29dof_hard_waist.yaml": "b3c8b7d25faca3908d874bef4471f1362385428612cce845d2df5467cd71f53e",
+        "humanoidverse/config/simulator/isaacsim.yaml": "eff29df3a8bf96487cf25371009a17282fe85670b3c5815f1662f1cf29761bc2",
+        "humanoidverse/envs/legged_base_task/legged_robot_base.py": "bc00a197aac294bb7b8200194bc5daf6ed0801d1422151aa811d7ca34fe08776",
+        "humanoidverse/envs/legged_robot_motions/legged_robot_motions.py": "c2adfe2fa3d6db1b7d6ceb0c809aae2faf2f589f8321256ff05d6cba3747a359",
+        "humanoidverse/simulator/isaacsim/isaacsim.py": "c546e0390b6ef2c5cd37655f64f5d677a0c2a13df05c8a11e3508f902f12b4aa",
+        "humanoidverse/utils/motion_lib/motion_lib_base.py": "570cbfcd433820ec225807f16ebdad5fd4da6de9bb55a742dfb2968c15c4eb31",
+        "humanoidverse/utils/motion_lib/torch_humanoid_batch.py": "a720d7c17d1f0987bf11f48dbbb1a457e95a0338cf574c10b12b79cf92f73c77"
+      }
+    },
+    "profile": "g1_lafan_50hz",
+    "reference_config": {
+      "file": "new_model_for_training_code_inference/config.json",
+      "frozen_environment": {
+        "bytes": 1820,
+        "sha256": "a21a2ba220f1749c6b51f1debd3bca3ee1253d3bc2a8a85365a880cd0f01700f"
+      },
+      "sha256": "96889c351a919a907f1f6e3001c5213fe5469ffc4fc2d87c0ef52e422eba7d0f"
+    },
+    "schema": "forward_backward_phase3a_g1_lafan_trace_declaration_v1",
+    "scientific_contract_manifest": {
+      "bytes": 996,
+      "sha256": "fef5ad10041c9973c7c12d1e3c28424f43e1439010cdddad19a24accbfd85959"
+    },
+    "trace": {
+      "action_equation": "processed = clip(5 * behavior, -5, 5)",
+      "autoreset_mode": "same_step",
+      "configured_horizon_seconds": 0.04,
+      "configured_horizon_steps": 2,
+      "final_done_observation": "exact_pre_reset_capture",
+      "num_envs": 2,
+      "returned_done_observation": "post_reset",
+      "seed": 20260629,
+      "steps": 5,
+      "timeout_action_index_zero_based": 2
+    },
+    "trace_closure_members": [
+      "meta_humenv_next_step_trace_v1.json",
+      "meta_humenv_next_step_trace_v1.npz",
+      "g1_lafan_same_step_trace_v1.json",
+      "g1_lafan_same_step_trace_v1.npz"
+    ]
+  },
+  "evidence_order": {
+    "environment": [
+      "feet_heading_alignment",
+      "limits_dof_pos",
+      "limits_dof_vel",
+      "limits_torque",
+      "penalty_action_rate",
+      "penalty_ankle_roll",
+      "penalty_feet_ori",
+      "penalty_slippage",
+      "penalty_torques",
+      "penalty_undesired_contact"
+    ],
+    "learner_auxiliary": [
+      "limits_dof_pos",
+      "limits_torque",
+      "penalty_action_rate",
+      "penalty_ankle_roll",
+      "penalty_feet_ori",
+      "penalty_slippage",
+      "penalty_torques",
+      "penalty_undesired_contact"
+    ]
+  },
+  "profile": "g1_lafan_50hz",
+  "runtime": {
+    "device": "cuda:0",
+    "numpy": "1.26.4",
+    "python": "3.10.20"
+  },
+  "schema": "forward_backward_phase3_g1_lafan_trace_v1",
+  "source": {
+    "exact_final_capture_adapter_sha256": "52a35f031b2808479cf0dbf75bdb1ead5c7c4292f33c6f3cb33ca8e367460cc7",
+    "motion_source": {
+      "clip_count": 2,
+      "clip_ids": [
+        "synthetic_g1_periodic_00",
+        "synthetic_g1_periodic_01"
+      ],
+      "contains_dataset_values": false,
+      "content_sha256": "50f731fc9ab9ef4f97cd2c592c4851e58358c0cbffa4e83a23250e57aad7c23f",
+      "errors": [],
+      "exact_recipe_match": true,
+      "expected_file": {
+        "bytes": 268235,
+        "sha256": "1fce99d07078687aebc90201aa6fc66cd5aeebec8c0618c8bcbfc512aeee59ca"
+      },
+      "file": {
+        "bytes": 268235,
+        "sha256": "1fce99d07078687aebc90201aa6fc66cd5aeebec8c0618c8bcbfc512aeee59ca"
+      },
+      "fps": 30,
+      "frames_per_clip": 360,
+      "generator": "generate_g1_lafan_trace.py::synthetic_motion_source",
+      "identifier": "phase3_synthetic_g1_periodic_v1",
+      "kind": "procedural_synthetic",
+      "ordered_fields": [
+        "root_trans_offset",
+        "pose_aa",
+        "fps"
+      ],
+      "pose_aa": {
+        "dtype": "float32",
+        "shape": [
+          360,
+          30,
+          3
+        ]
+      },
+      "root_trans_offset": {
+        "dtype": "float32",
+        "shape": [
+          360,
+          3
+        ]
+      },
+      "schema": "forward_backward_phase3_synthetic_g1_source_inspection_v1"
+    },
+    "physical_body_names": [
+      "pelvis",
+      "left_hip_pitch_link",
+      "left_hip_roll_link",
+      "left_hip_yaw_link",
+      "left_knee_link",
+      "left_ankle_pitch_link",
+      "left_ankle_roll_link",
+      "right_hip_pitch_link",
+      "right_hip_roll_link",
+      "right_hip_yaw_link",
+      "right_knee_link",
+      "right_ankle_pitch_link",
+      "right_ankle_roll_link",
+      "waist_yaw_link",
+      "waist_roll_link",
+      "torso_link",
+      "left_shoulder_pitch_link",
+      "left_shoulder_roll_link",
+      "left_shoulder_yaw_link",
+      "left_elbow_link",
+      "left_wrist_roll_link",
+      "left_wrist_pitch_link",
+      "left_wrist_yaw_link",
+      "right_shoulder_pitch_link",
+      "right_shoulder_roll_link",
+      "right_shoulder_yaw_link",
+      "right_elbow_link",
+      "right_wrist_roll_link",
+      "right_wrist_pitch_link",
+      "right_wrist_yaw_link"
+    ],
+    "physical_shape_count": 33,
+    "repository_revision": "f0495e864ffcf332f346bd7b55e9aa108cb8b38f",
+    "source_files": {
+      "humanoidverse/agents/envs/humanoidverse_isaac.py": "6b95ca28e6e45cef75f3a0ee76507d157e871604b95d25baaaf5c653107327eb",
+      "humanoidverse/agents/utils.py": "ee8d66a79b4379b544b121d8d611b42013d15e3691b85fb4b1170119b31bf018",
+      "humanoidverse/config/domain_rand/domain_rand.yaml": "faa55c426be6202f7582ba318bac797e46dbedfa70e150e17fd69f2d5f742555",
+      "humanoidverse/config/env/legged_motions.yaml": "06b99581f90f1c89f6dc27aad8c918b66f167759c55e394bbab6b12c308d0726",
+      "humanoidverse/config/exp/bfm_zero/bfm_zero.yaml": "d63b2c4d3707c0127577c816730aa283a01e2b45649006cd6fb7140ae6a8d761",
+      "humanoidverse/config/obs/bfm_zero_obs.yaml": "3037b6ec30cd1084ae846e03e8f5479e817f9c94c10cce099ab9ace45dfd4f1d",
+      "humanoidverse/config/rewards/reward_bfm_zero.yaml": "4dd2638380d1088e2e6bb964fbfb387dbbd03e98c41c57064d1b11c910d7752e",
+      "humanoidverse/config/robot/g1/g1_29dof_hard_waist.yaml": "b3c8b7d25faca3908d874bef4471f1362385428612cce845d2df5467cd71f53e",
+      "humanoidverse/config/simulator/isaacsim.yaml": "eff29df3a8bf96487cf25371009a17282fe85670b3c5815f1662f1cf29761bc2",
+      "humanoidverse/envs/legged_base_task/legged_robot_base.py": "bc00a197aac294bb7b8200194bc5daf6ed0801d1422151aa811d7ca34fe08776",
+      "humanoidverse/envs/legged_robot_motions/legged_robot_motions.py": "c2adfe2fa3d6db1b7d6ceb0c809aae2faf2f589f8321256ff05d6cba3747a359",
+      "humanoidverse/simulator/isaacsim/isaacsim.py": "c546e0390b6ef2c5cd37655f64f5d677a0c2a13df05c8a11e3508f902f12b4aa",
+      "humanoidverse/utils/motion_lib/motion_lib_base.py": "570cbfcd433820ec225807f16ebdad5fd4da6de9bb55a742dfb2968c15c4eb31",
+      "humanoidverse/utils/motion_lib/torch_humanoid_batch.py": "a720d7c17d1f0987bf11f48dbbb1a457e95a0338cf574c10b12b79cf92f73c77"
+    },
+    "trace_generator": {
+      "bytes": 38829,
+      "sha256": "32b0555bb17a9acfd475cf6e9313fda6ce71107fd9b00a124ff92178187dc500"
+    }
+  },
+  "trace": {
+    "file": "g1_lafan_same_step_trace_v1.npz",
+    "file_sha256": "0959ba0435e37496cac0a716d7221fb7986f44aa236dd1180db4f184fc1927c3",
+    "tensors": {
+      "action_applied": {
+        "dtype": "bool",
+        "sha256": "ffadf8d89d37b3b55fe1847b513cf92e3be87e4c168708c7851845df96fb36be",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "behavior_action": {
+        "dtype": "float32",
+        "sha256": "6e9ee60dbf7268cc02b3c3bc98ea10ec0a4fcb513287a5e4b5b5d64e3769cdf8",
+        "shape": [
+          5,
+          2,
+          29
+        ]
+      },
+      "controller_target_joint_position": {
+        "dtype": "float32",
+        "sha256": "5889a17b49a5ad44ff38e2eb2d6611e031360b54cd334db3c8a0b4b91ec1f41b",
+        "shape": [
+          5,
+          2,
+          29
+        ]
+      },
+      "current_body_angular_velocity": {
+        "dtype": "float32",
+        "sha256": "0356047b4f1c78c10f63d8470f60887c748c16507cc96ac3edb818cbe2f21631",
+        "shape": [
+          5,
+          2,
+          31,
+          3
+        ]
+      },
+      "current_body_com_pose_xyzw": {
+        "dtype": "float32",
+        "sha256": "c7181e240305566460060f47f042776ea8970d71224a958e91c894fc3c03cb4f",
+        "shape": [
+          5,
+          2,
+          30,
+          7
+        ]
+      },
+      "current_body_inertia": {
+        "dtype": "float32",
+        "sha256": "cc04f7f5c0b2f43fe9de219afdced7913e7029214481e5f8c32b9801c193e929",
+        "shape": [
+          5,
+          2,
+          30,
+          9
+        ]
+      },
+      "current_body_linear_velocity": {
+        "dtype": "float32",
+        "sha256": "57691cc5ff8dab2bf6156d4dad9e2b6af2b5d5f0022b08183ada3cd7dde1db63",
+        "shape": [
+          5,
+          2,
+          31,
+          3
+        ]
+      },
+      "current_body_mass": {
+        "dtype": "float32",
+        "sha256": "e9881f5b1d9b9aa9ccfa56b194272d9d146b457aab69e7518f9173a0d4c1a5ef",
+        "shape": [
+          5,
+          2,
+          30
+        ]
+      },
+      "current_body_position": {
+        "dtype": "float32",
+        "sha256": "e673309bf3992ef9ef736979f577b6e8df6d856dec3226ffbeb2fdbb7e52a7bf",
+        "shape": [
+          5,
+          2,
+          31,
+          3
+        ]
+      },
+      "current_body_rotation_xyzw": {
+        "dtype": "float32",
+        "sha256": "4cf8a1299804c63117f079d0c348b9775ff13591d73d50e25557d4c2d570e402",
+        "shape": [
+          5,
+          2,
+          31,
+          4
+        ]
+      },
+      "current_contact_force": {
+        "dtype": "float32",
+        "sha256": "6b7b26cd8603681e0b654c16da95ef50eac5191005096003542a4b625d0b95b1",
+        "shape": [
+          5,
+          2,
+          30,
+          3
+        ]
+      },
+      "current_default_joint_offset": {
+        "dtype": "float32",
+        "sha256": "832602e52f320339954f28a1cfa3daeb6edacd1600d49a00b05a3ecbf0c54779",
+        "shape": [
+          5,
+          2,
+          29
+        ]
+      },
+      "current_episode_step": {
+        "dtype": "int64",
+        "sha256": "f50a8de2b185c85de595a5541d5db2b172ce7db1ed9b0ddc56079b540c9426b8",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "current_history_actor": {
+        "dtype": "float32",
+        "sha256": "3efa4e0475a6dacb52a9ae7483171c3895b957f0fe2e8fc96916d16279f3f6ec",
+        "shape": [
+          5,
+          2,
+          372
+        ]
+      },
+      "current_joint_armature": {
+        "dtype": "float32",
+        "sha256": "772461e30ab5354e1b4885c1c183c26dcbddaa9368519a265fcfd928cc969cf4",
+        "shape": [
+          5,
+          2,
+          29
+        ]
+      },
+      "current_joint_damping": {
+        "dtype": "float32",
+        "sha256": "6a463993ebe582560f2d4bf7fd2a77ab882d9d21ec5c515fbd36e99dc5cc3cab",
+        "shape": [
+          5,
+          2,
+          29
+        ]
+      },
+      "current_joint_effort_limit": {
+        "dtype": "float32",
+        "sha256": "33ae25d3298e15991842a5dc283bdf60b6761d97efb0c262f279a2acad61f151",
+        "shape": [
+          5,
+          2,
+          29
+        ]
+      },
+      "current_joint_friction": {
+        "dtype": "float32",
+        "sha256": "a109f60a2913296da397d0506e5028879a2d24b34dcc871362b9fc58d6f8e5c3",
+        "shape": [
+          5,
+          2,
+          29
+        ]
+      },
+      "current_joint_position_limit": {
+        "dtype": "float32",
+        "sha256": "41f56adcd39423ae9e1a86587dedae00dfcaf1d6b4ad3686226c8c19134f68c9",
+        "shape": [
+          5,
+          2,
+          29,
+          2
+        ]
+      },
+      "current_joint_stiffness": {
+        "dtype": "float32",
+        "sha256": "9139085c4137ed2d272f976498d0bf48487cb4aed1bd3954b8d583ac3bdd7a0a",
+        "shape": [
+          5,
+          2,
+          29
+        ]
+      },
+      "current_joint_velocity_limit": {
+        "dtype": "float32",
+        "sha256": "e9e26eb907dc65f7b683fa7d271ae88621f6e0d8a5846e6778be69e815b8ef0f",
+        "shape": [
+          5,
+          2,
+          29
+        ]
+      },
+      "current_last_action": {
+        "dtype": "float32",
+        "sha256": "4503b4668f483c1aebf09b09b86ec462a30ce6ef2afe1c477a71518052f6f165",
+        "shape": [
+          5,
+          2,
+          29
+        ]
+      },
+      "current_motion_id": {
+        "dtype": "int64",
+        "sha256": "cf1aaf290fc898d4d68341f5a0b13ae82921bdb971c527b7621a2a2c48ad9426",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "current_privileged_state": {
+        "dtype": "float32",
+        "sha256": "05fcb53549b5b68d81245bd252015f5e34197fe8cc50630186bd6cc130e52a8d",
+        "shape": [
+          5,
+          2,
+          463
+        ]
+      },
+      "current_qpos": {
+        "dtype": "float32",
+        "sha256": "33a8094d5170d55aa1654efcec4becb7b7ed881b0840dce0f4f76ab58c3db94f",
+        "shape": [
+          5,
+          2,
+          36
+        ]
+      },
+      "current_qvel": {
+        "dtype": "float32",
+        "sha256": "0678c21faa48296c6337ae06be55d7f6a9f57f404db0993ae177eab3d96ef638",
+        "shape": [
+          5,
+          2,
+          35
+        ]
+      },
+      "current_reference_time_seconds": {
+        "dtype": "float32",
+        "sha256": "9947d9d221fd0f31743b5e901b6db27af9ec9719f41b6a56c89ad14d0e1de36f",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "current_shape_material": {
+        "dtype": "float32",
+        "sha256": "fa2d810a348cfc71db65909c4bedc5998de4c0681104cc0ce2bbfe2f84c7c57e",
+        "shape": [
+          5,
+          2,
+          33,
+          3
+        ]
+      },
+      "current_state": {
+        "dtype": "float32",
+        "sha256": "d68cb58af9a906b7926f0e39a38be3e2da2fb379e2b34e6e13b12f18bbfc9eda",
+        "shape": [
+          5,
+          2,
+          64
+        ]
+      },
+      "environment_raw_evidence": {
+        "dtype": "float32",
+        "sha256": "e414b5e9fcbfb22e500ed47ab0edbfd9f69a628449f8cf87c42b64b6dc374e21",
+        "shape": [
+          5,
+          2,
+          10
+        ]
+      },
+      "environment_reward": {
+        "dtype": "float32",
+        "sha256": "a744730b68ef0ff2eac396c18734a84f2848bf4603e5633ae2c95a5b20f22b79",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "environment_reward_recomposed": {
+        "dtype": "float32",
+        "sha256": "679318a5cebe849f32f6cb68077d0caad2b229aad23100eccda3366d22eb5480",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "estimated_pd_torque": {
+        "dtype": "float32",
+        "sha256": "e0a9ea82e165af1b831ca7575a278dc0ba96bb138921d06c8521cc44950d402e",
+        "shape": [
+          5,
+          2,
+          29
+        ]
+      },
+      "final_body_angular_velocity": {
+        "dtype": "float32",
+        "sha256": "ed9305a29bae3b1a0f31132ba3674baf94d6c55e008d5f02939efce86d711c58",
+        "shape": [
+          5,
+          2,
+          31,
+          3
+        ]
+      },
+      "final_body_linear_velocity": {
+        "dtype": "float32",
+        "sha256": "018f5fe9d7d0ff42c77969907e7c6cdb03b28d33f8ebc1792262df7c80c01a22",
+        "shape": [
+          5,
+          2,
+          31,
+          3
+        ]
+      },
+      "final_body_position": {
+        "dtype": "float32",
+        "sha256": "661a29937a2d8944fd5021dc4fde07022d0d6b656a71d6b0bf7b1c817e3d303d",
+        "shape": [
+          5,
+          2,
+          31,
+          3
+        ]
+      },
+      "final_body_rotation_xyzw": {
+        "dtype": "float32",
+        "sha256": "f2a1d0bf6f22321d7d4942841739bd5f54b90742141ffcf51f9f6852a5e5dcab",
+        "shape": [
+          5,
+          2,
+          31,
+          4
+        ]
+      },
+      "final_contact_force": {
+        "dtype": "float32",
+        "sha256": "5720483a4fcccb17264eb92a362cd901e26877d122006e9607b508cf2eae677f",
+        "shape": [
+          5,
+          2,
+          30,
+          3
+        ]
+      },
+      "final_history_actor": {
+        "dtype": "float32",
+        "sha256": "334d769ec64c3acbcec63b994ab26c3477bbdc4fc81479988c505d3142936129",
+        "shape": [
+          5,
+          2,
+          372
+        ]
+      },
+      "final_last_action": {
+        "dtype": "float32",
+        "sha256": "d071a7af23e3f7fe08ab3c493632775e25490753e8e1634097f2ef3f37afab2e",
+        "shape": [
+          5,
+          2,
+          29
+        ]
+      },
+      "final_observation_valid": {
+        "dtype": "bool",
+        "sha256": "8d241d8f8c8c5f154eecf0f6236a82efe0fd854e928749dbb9fc48b3c5458807",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "final_privileged_state": {
+        "dtype": "float32",
+        "sha256": "5b6299513703927689a3b02304dacc31a39db772e039a1dbfbe6d29ecd5555e5",
+        "shape": [
+          5,
+          2,
+          463
+        ]
+      },
+      "final_qpos": {
+        "dtype": "float32",
+        "sha256": "b8bafeb94bc4b3ce937f08c48ede0eafb8c7a74701a22b3e8226d019f7057ae7",
+        "shape": [
+          5,
+          2,
+          36
+        ]
+      },
+      "final_qvel": {
+        "dtype": "float32",
+        "sha256": "d7319f90abdd2c7107e0dc506ecf2d56b0ee5e37a5f0a54bff9d6ab705eff0ff",
+        "shape": [
+          5,
+          2,
+          35
+        ]
+      },
+      "final_state": {
+        "dtype": "float32",
+        "sha256": "0b3d54cdd9c75f15ee3da1983833b96aa81628f57ad6d5790bbf439a597fe5e4",
+        "shape": [
+          5,
+          2,
+          64
+        ]
+      },
+      "learner_auxiliary_raw_evidence": {
+        "dtype": "float32",
+        "sha256": "32f0edda3cdd907e2cf7039bdc3e4741fe9d48dc5219251aa72c72cb30447f6f",
+        "shape": [
+          5,
+          2,
+          8
+        ]
+      },
+      "learner_auxiliary_reward": {
+        "dtype": "float32",
+        "sha256": "4e6ed667e460aa9bfda1ac54449dcfb5cf4a4b7cc6d7a8bde41d1455a257c796",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "penalty_scale": {
+        "dtype": "float32",
+        "sha256": "f12471225f1f06b9b96a2cdfa0958a7eb73b76babb8e4db25c9896c18480c1b8",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "processed_action": {
+        "dtype": "float32",
+        "sha256": "40728c1730258fe28f376744aa5ea48443203b44a8a0055380acf8af2bad7eaf",
+        "shape": [
+          5,
+          2,
+          29
+        ]
+      },
+      "returned_body_angular_velocity": {
+        "dtype": "float32",
+        "sha256": "f07d9f6f1d965bc932dc9f81ccd07a7ba59d5b5c16f59947c7ec599e8f2d1e7e",
+        "shape": [
+          5,
+          2,
+          31,
+          3
+        ]
+      },
+      "returned_body_linear_velocity": {
+        "dtype": "float32",
+        "sha256": "6830de8cc89a49dbead0604d2a1df76fcc54669930ef0fc186f1e6f7975c04ba",
+        "shape": [
+          5,
+          2,
+          31,
+          3
+        ]
+      },
+      "returned_body_position": {
+        "dtype": "float32",
+        "sha256": "54fbf3c6c4d1b56072696dfe7729afb34b68847198c293674855ee56b7decca2",
+        "shape": [
+          5,
+          2,
+          31,
+          3
+        ]
+      },
+      "returned_body_rotation_xyzw": {
+        "dtype": "float32",
+        "sha256": "f804d35f2f0cc957618c73926d826570a01794b20fe3448b1dfeb6cae348b7f3",
+        "shape": [
+          5,
+          2,
+          31,
+          4
+        ]
+      },
+      "returned_contact_force": {
+        "dtype": "float32",
+        "sha256": "fad4c9c0d9966ff00399fe9d0f97f6144ae21d988ddb90038c1942b99a1d89a6",
+        "shape": [
+          5,
+          2,
+          30,
+          3
+        ]
+      },
+      "returned_episode_step": {
+        "dtype": "int64",
+        "sha256": "13299d5568787832ae4412bac32bf70465d29f3a11a4d81a3c481360cf8c5071",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "returned_history_actor": {
+        "dtype": "float32",
+        "sha256": "83b1a23a5a6d03da8f9551abae241a683f8a27ad29ec2abaa9c2e852340c16e7",
+        "shape": [
+          5,
+          2,
+          372
+        ]
+      },
+      "returned_last_action": {
+        "dtype": "float32",
+        "sha256": "c9f93925f085aa8fde7d0c214c76e0ff62146c25a0b32e541127d8c33704ba87",
+        "shape": [
+          5,
+          2,
+          29
+        ]
+      },
+      "returned_motion_id": {
+        "dtype": "int64",
+        "sha256": "0738d0c846a9f42db9845c4696aebb1d935fb00e44e2d376b53b184c2606f007",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "returned_privileged_state": {
+        "dtype": "float32",
+        "sha256": "b9ced0c0139c99691adacf4f21e6378b9542479feaf0355761da75898f1f99be",
+        "shape": [
+          5,
+          2,
+          463
+        ]
+      },
+      "returned_qpos": {
+        "dtype": "float32",
+        "sha256": "5a5f6d2f1ec73632b0af2a6844832273117353591b78cd3a4429f1075c107907",
+        "shape": [
+          5,
+          2,
+          36
+        ]
+      },
+      "returned_qvel": {
+        "dtype": "float32",
+        "sha256": "1f9a807cde51225a4b90fa5fe9756b9cea7100f08c54a1931cbbe9b3680c8fe6",
+        "shape": [
+          5,
+          2,
+          35
+        ]
+      },
+      "returned_reference_time_seconds": {
+        "dtype": "float32",
+        "sha256": "f2dd9596c6b9f46123b7cf3ffd7a802528766cb01a5345d0eb96547d5794a337",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "returned_state": {
+        "dtype": "float32",
+        "sha256": "b84cac3568c9fbfb5e174aa02ceaf07bbd5a03edd24ecdeb0f35fbe27c87acdf",
+        "shape": [
+          5,
+          2,
+          64
+        ]
+      },
+      "substep_applied_pd_torque": {
+        "dtype": "float32",
+        "sha256": "30d3a1520fcb9d0e4efafa5255f04b8dda864dc2bbd19be96ef66a6fd603e0b7",
+        "shape": [
+          5,
+          2,
+          4,
+          29
+        ]
+      },
+      "substep_body_angular_velocity": {
+        "dtype": "float32",
+        "sha256": "bf3d1341a0314284e0ce96bb6f33a03ce94b5a1e21247e7da5bee21fb69d36d5",
+        "shape": [
+          5,
+          2,
+          4,
+          31,
+          3
+        ]
+      },
+      "substep_body_linear_velocity": {
+        "dtype": "float32",
+        "sha256": "80612a0ae10b579dc15628aa48d2cdbea5b8d93c39cdd91bcb4c9cfa360e00b2",
+        "shape": [
+          5,
+          2,
+          4,
+          31,
+          3
+        ]
+      },
+      "substep_body_position": {
+        "dtype": "float32",
+        "sha256": "079bf2ae6768c867861a7b8467952f49804cd5f723c2fd523a01787c3d537d96",
+        "shape": [
+          5,
+          2,
+          4,
+          31,
+          3
+        ]
+      },
+      "substep_body_rotation_xyzw": {
+        "dtype": "float32",
+        "sha256": "a0f280c963dc4cae3b22a8680bcd6a967247e4c1ce82b67c17d7427d96a4b663",
+        "shape": [
+          5,
+          2,
+          4,
+          31,
+          4
+        ]
+      },
+      "substep_contact_force": {
+        "dtype": "float32",
+        "sha256": "2b22b69902b7464a5855252086e3341d35d34f591ab4d96e4e526f8239952b68",
+        "shape": [
+          5,
+          2,
+          4,
+          30,
+          3
+        ]
+      },
+      "substep_qpos": {
+        "dtype": "float32",
+        "sha256": "a952856e55f2ad35cd095a89a0d8e9630a1ffe03253af02e353cc4f95aeffe67",
+        "shape": [
+          5,
+          2,
+          4,
+          36
+        ]
+      },
+      "substep_qvel": {
+        "dtype": "float32",
+        "sha256": "dd5347a0c4f7556851eee58b14c98720c957c382668d8878dbd0347f6304c8d1",
+        "shape": [
+          5,
+          2,
+          4,
+          35
+        ]
+      },
+      "target_reference_time_seconds": {
+        "dtype": "float32",
+        "sha256": "159a66c829d55a585f3a97a31a846269172fe5a77f511f6b781ff4f9f7c987ac",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "terminated": {
+        "dtype": "bool",
+        "sha256": "01d448afd928065458cf670b60f5a594d735af0172c8d67f22a81680132681ca",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "truncated": {
+        "dtype": "bool",
+        "sha256": "8d241d8f8c8c5f154eecf0f6236a82efe0fd854e928749dbb9fc48b3c5458807",
+        "shape": [
+          5,
+          2
+        ]
+      }
+    }
+  }
+}

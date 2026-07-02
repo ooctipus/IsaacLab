@@ -1,0 +1,762 @@
+{
+  "edge_state": {
+    "fixed_model_facts": [
+      "model_actuator_biasprm",
+      "model_actuator_ctrlrange",
+      "model_actuator_forcerange",
+      "model_actuator_gainprm",
+      "model_actuator_gear",
+      "model_actuator_trnid",
+      "model_body_inertia",
+      "model_body_ipos",
+      "model_body_iquat",
+      "model_body_mass",
+      "model_body_parentid",
+      "model_body_pos",
+      "model_body_quat",
+      "model_dof_armature",
+      "model_dof_damping",
+      "model_geom_bodyid",
+      "model_geom_conaffinity",
+      "model_geom_condim",
+      "model_geom_contype",
+      "model_geom_friction",
+      "model_geom_gap",
+      "model_geom_margin",
+      "model_geom_pos",
+      "model_geom_priority",
+      "model_geom_quat",
+      "model_geom_size",
+      "model_geom_solimp",
+      "model_geom_solmix",
+      "model_geom_solref",
+      "model_geom_type",
+      "model_jnt_axis",
+      "model_jnt_bodyid",
+      "model_jnt_pos",
+      "model_jnt_stiffness",
+      "model_jnt_type",
+      "model_option_cone",
+      "model_option_disableflags",
+      "model_option_enableflags",
+      "model_option_gravity",
+      "model_option_impratio",
+      "model_option_integrator",
+      "model_option_is_sparse",
+      "model_option_iterations",
+      "model_option_jacobian",
+      "model_option_ls_iterations",
+      "model_option_ls_tolerance",
+      "model_option_noslip_iterations",
+      "model_option_noslip_tolerance",
+      "model_option_sdf_initpoints",
+      "model_option_sdf_iterations",
+      "model_option_solver",
+      "model_option_timestep",
+      "model_option_tolerance",
+      "model_qpos_spring"
+    ],
+    "mutable_next_step_inputs": [
+      "qpos",
+      "qvel",
+      "control",
+      "qacc_warmstart",
+      "qfrc_applied",
+      "xfrc_applied",
+      "simulation_time_seconds"
+    ]
+  },
+  "generator_sha256": "d6d903f0fb3a6868e40521e353b5f79bfc80d003fe4a31a0225c8db712ead36a",
+  "mdp": {
+    "action_dim": 69,
+    "autoreset_mode": "next_step",
+    "control_decimation": 15,
+    "control_dt_seconds": 0.03333333333333333,
+    "observation_dim": 358,
+    "physics_dt_seconds": 0.0022222222222222222,
+    "production_horizon_steps": 300,
+    "qpos_dim": 76,
+    "qvel_dim": 75,
+    "reset_profile": "default_t_pose_trace_only",
+    "reward": "zero",
+    "termination": "never",
+    "trace_horizon_steps": 3
+  },
+  "profile": "smpl_humenv_30hz",
+  "runtime": {
+    "gymnasium": "1.3.0",
+    "humenv": "0.2.0",
+    "mujoco": "3.9.0",
+    "numpy": "2.2.6",
+    "python": "3.10.19"
+  },
+  "schema": "forward_backward_phase3_meta_humenv_trace_v2",
+  "source": {
+    "files": {
+      "humenv/__init__.py": "8914768eafc83a63e7bab8c350286f5810932d1135b422547b7ad05b97298935",
+      "humenv/assets/robot.xml": "a38c014814929152ddeb3e2a4f18a99c5eb861f0c7f6678416624c39dba9b024",
+      "humenv/env.py": "b21013bf05263364d181c2c191fb66cc2978ad9a8f5b8b192f41ee57e89e20cb",
+      "humenv/reset.py": "317a0487cbceb64550b33c88bfdc83e222247fcbdc194cb67e3525efe4b76e1e"
+    },
+    "license": "CC-BY-NC-4.0",
+    "repository": "humenv",
+    "revision": "0548761a19b783c6a3548a14a8c4ea1ca35e94af"
+  },
+  "trace": {
+    "file": "meta_humenv_next_step_trace_v2.npz",
+    "file_sha256": "97c7836c93dccde22c4229621f2a5c2b3cc065edd71312f53fb4683be9922439",
+    "num_envs": 2,
+    "reset_only_step": 3,
+    "seed": 20260629,
+    "steps": 5,
+    "tensors": {
+      "action_applied": {
+        "dtype": "bool",
+        "sha256": "01e416e71a1cf70191e7fefacc2974509cbae608ee5509dc8680369093f961cd",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "actions": {
+        "dtype": "float64",
+        "sha256": "d4bc1bec92f68ffefbfd8cd2cabb2111a6616e257ad708ef2955bd5a70690c2c",
+        "shape": [
+          5,
+          2,
+          69
+        ]
+      },
+      "current_body_ang_vel": {
+        "dtype": "float64",
+        "sha256": "bbfc5f59f2262f60cf191c051f2a8b103b9a912a8435147bf753e0436afbb9e2",
+        "shape": [
+          5,
+          2,
+          24,
+          3
+        ]
+      },
+      "current_body_lin_vel": {
+        "dtype": "float64",
+        "sha256": "fe896acf5b68ec3d309e865624c3be426bbb9464f5441ca90ea41968175ff47c",
+        "shape": [
+          5,
+          2,
+          24,
+          3
+        ]
+      },
+      "current_body_pos": {
+        "dtype": "float64",
+        "sha256": "0d1dd0f9b0d6f16b6c4ed52c6e750522b6f3a4078662106773b2209de0a87bcb",
+        "shape": [
+          5,
+          2,
+          24,
+          3
+        ]
+      },
+      "current_body_quat": {
+        "dtype": "float64",
+        "sha256": "f9b49c493c68bb7be43a6529352cd3b048c1d83c177cb3db1615a608bd4c4242",
+        "shape": [
+          5,
+          2,
+          24,
+          4
+        ]
+      },
+      "current_control": {
+        "dtype": "float64",
+        "sha256": "8ba01e24777d1ffa4ff51cc97af3aa51252ad09dd0ffbc987700e2526bd18c3c",
+        "shape": [
+          5,
+          2,
+          69
+        ]
+      },
+      "current_observation": {
+        "dtype": "float64",
+        "sha256": "74c82649b26289447d843cece93ea9bd2953691a5ce6f871a633ac1924e4a1a6",
+        "shape": [
+          5,
+          2,
+          358
+        ]
+      },
+      "current_qacc_warmstart": {
+        "dtype": "float64",
+        "sha256": "6bb47fb3fa943b2bc8c95700b40fa2e6e96fb67a71854afcab265fe142574ee2",
+        "shape": [
+          5,
+          2,
+          75
+        ]
+      },
+      "current_qfrc_applied": {
+        "dtype": "float64",
+        "sha256": "a6bedce1e512d6531cd02fe7a0b72bb64f229cdb254ec48d63308877004e620a",
+        "shape": [
+          5,
+          2,
+          75
+        ]
+      },
+      "current_qpos": {
+        "dtype": "float64",
+        "sha256": "d3576104a74acef7833b0fc8d19b3ff03de0b9613e9d135f40b01c5e071bbd42",
+        "shape": [
+          5,
+          2,
+          76
+        ]
+      },
+      "current_qvel": {
+        "dtype": "float64",
+        "sha256": "4a9e89b23b2797daf12cc344b5f21d3f3d2c1bfaa1bdf209dc188ac3f72ca540",
+        "shape": [
+          5,
+          2,
+          75
+        ]
+      },
+      "current_simulation_time_seconds": {
+        "dtype": "float64",
+        "sha256": "df0ba4941f83064c1cfa059091fc4c455c44e9fcdef571194e5a2c0117c6e5d2",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "current_time": {
+        "dtype": "int32",
+        "sha256": "af0df301b23ce1f6713bcf52753121e3afc3388be3483bbebb620ffa3c45fff1",
+        "shape": [
+          5,
+          2,
+          1
+        ]
+      },
+      "current_xfrc_applied": {
+        "dtype": "float64",
+        "sha256": "ff6698a6e831ffcf47af2fed388ffc262f319e72b26cd140929d1e19b1246ad4",
+        "shape": [
+          5,
+          2,
+          25,
+          6
+        ]
+      },
+      "model_actuator_biasprm": {
+        "dtype": "float64",
+        "sha256": "f42e74f698c6ed1ae7c4cb564e8c6f2362159df6bced77a4f3b6b33ea390084d",
+        "shape": [
+          69,
+          10
+        ]
+      },
+      "model_actuator_ctrlrange": {
+        "dtype": "float64",
+        "sha256": "8872bcebc6ded0815fccdc9ba04245544a00e10072f7729783bd8de2d7d34046",
+        "shape": [
+          69,
+          2
+        ]
+      },
+      "model_actuator_forcerange": {
+        "dtype": "float64",
+        "sha256": "e55f9935ca3fd31ddcab86abb5eaf8bd505bfa2dd99cceb0318765531f166ae0",
+        "shape": [
+          69,
+          2
+        ]
+      },
+      "model_actuator_gainprm": {
+        "dtype": "float64",
+        "sha256": "d1b5b54c4c237062c4eac20135c2cab2f339e8c528caaa4d061d41222cb014a0",
+        "shape": [
+          69,
+          10
+        ]
+      },
+      "model_actuator_gear": {
+        "dtype": "float64",
+        "sha256": "7c4acc14dd1f5875471347b6e39ae7f46b4fea5cdb90cfc19329e3869b3a9fd4",
+        "shape": [
+          69,
+          6
+        ]
+      },
+      "model_actuator_trnid": {
+        "dtype": "int32",
+        "sha256": "eab2f6531f8534f87d764ae04859934460119b06b28b675cc6281b295ae88f44",
+        "shape": [
+          69,
+          2
+        ]
+      },
+      "model_body_inertia": {
+        "dtype": "float64",
+        "sha256": "2a92370b913fb096911764957f6e62c28ae4c4c0f3a7b8cc6b2d8e3e9d8bdb5b",
+        "shape": [
+          25,
+          3
+        ]
+      },
+      "model_body_ipos": {
+        "dtype": "float64",
+        "sha256": "0407b27f2e1e1f0fda10131d85d0f5160085d986b62d10608151606ae4d9be76",
+        "shape": [
+          25,
+          3
+        ]
+      },
+      "model_body_iquat": {
+        "dtype": "float64",
+        "sha256": "979d09183e9a2d4c7eb76e160fc3e74516921e18814f665823c46d3dbbe21a2f",
+        "shape": [
+          25,
+          4
+        ]
+      },
+      "model_body_mass": {
+        "dtype": "float64",
+        "sha256": "217cf624cb46e4d45a03d6f9a430abf314d7c091839ca823b0f63d5d066d41ad",
+        "shape": [
+          25
+        ]
+      },
+      "model_body_parentid": {
+        "dtype": "int32",
+        "sha256": "225abab0fea5f63ec29b5c534696a5376c7721316f5d9459f51d64adde13a7dd",
+        "shape": [
+          25
+        ]
+      },
+      "model_body_pos": {
+        "dtype": "float64",
+        "sha256": "6ce871635c5f21913dfcdd21e2c0c5b37962a3013e75415ee58df7aa222d55c9",
+        "shape": [
+          25,
+          3
+        ]
+      },
+      "model_body_quat": {
+        "dtype": "float64",
+        "sha256": "bee483858193f9b10e0614ced4c7dc1abf723fed4e3b0cb1e6d73a2175dbcb4a",
+        "shape": [
+          25,
+          4
+        ]
+      },
+      "model_dof_armature": {
+        "dtype": "float64",
+        "sha256": "9c456e30ab71d0a7a4922c95ca840107e390f1c8ff7d1711351f0de037eaf569",
+        "shape": [
+          75
+        ]
+      },
+      "model_dof_damping": {
+        "dtype": "float64",
+        "sha256": "37240e83cd9cd8b5d0bc9b2f5ee2f712adab8d81d1dc6842f96aab5f98f2d75f",
+        "shape": [
+          75
+        ]
+      },
+      "model_geom_bodyid": {
+        "dtype": "int32",
+        "sha256": "d77886ccda5444b5915a9cdb3790c559c97bbe40cb9d722ebadf21e291932524",
+        "shape": [
+          26
+        ]
+      },
+      "model_geom_conaffinity": {
+        "dtype": "int32",
+        "sha256": "f6d54d953201e25b15d38695cab0af12f9b5e25f746541e2104e78fff4a8b52c",
+        "shape": [
+          26
+        ]
+      },
+      "model_geom_condim": {
+        "dtype": "int32",
+        "sha256": "751014fa57072ae4e2987d4e8ed5d66f5ac5a145518dedb87a1844a53229d13a",
+        "shape": [
+          26
+        ]
+      },
+      "model_geom_contype": {
+        "dtype": "int32",
+        "sha256": "f6d54d953201e25b15d38695cab0af12f9b5e25f746541e2104e78fff4a8b52c",
+        "shape": [
+          26
+        ]
+      },
+      "model_geom_friction": {
+        "dtype": "float64",
+        "sha256": "1d693dbfd3ac3f30c90d34b24941bf23774539ea1389aae380a58e13989e5cc5",
+        "shape": [
+          26,
+          3
+        ]
+      },
+      "model_geom_gap": {
+        "dtype": "float64",
+        "sha256": "46f531b7ea0428fbf2c3ca2b60e8dc33d6bbfa000e0fd1b489c5e39140a47006",
+        "shape": [
+          26
+        ]
+      },
+      "model_geom_margin": {
+        "dtype": "float64",
+        "sha256": "5017e21799075da375de90dcbd5c0b2671867bc420fac8c2b05abb4347ff9069",
+        "shape": [
+          26
+        ]
+      },
+      "model_geom_pos": {
+        "dtype": "float64",
+        "sha256": "d3c17bb48d1eadc5b28db761a3130934b519137d1fa3b2c5ebd8a4f8f9629651",
+        "shape": [
+          26,
+          3
+        ]
+      },
+      "model_geom_priority": {
+        "dtype": "int32",
+        "sha256": "0103cc79478385221360218a8324c0ab38bd4a90a66465145b31f7da6a496421",
+        "shape": [
+          26
+        ]
+      },
+      "model_geom_quat": {
+        "dtype": "float64",
+        "sha256": "9be87d0d0d5f2b98069887b3dedd54e4b5801456bbf60c628f85fc214683351c",
+        "shape": [
+          26,
+          4
+        ]
+      },
+      "model_geom_size": {
+        "dtype": "float64",
+        "sha256": "f73e4810009dbfcf6217a48fd26f3346e490b10d72fec91176e2d1e80723510e",
+        "shape": [
+          26,
+          3
+        ]
+      },
+      "model_geom_solimp": {
+        "dtype": "float64",
+        "sha256": "b23b78863e7af5e344050c23ce98ab7d9061181a2bced6310cbbcabf66f8b585",
+        "shape": [
+          26,
+          5
+        ]
+      },
+      "model_geom_solmix": {
+        "dtype": "float64",
+        "sha256": "e13df150f83aa72bbae2f96ec689e5b580021cf33cae213c9afac3ca1ba6af96",
+        "shape": [
+          26
+        ]
+      },
+      "model_geom_solref": {
+        "dtype": "float64",
+        "sha256": "4ef6c896087007dbc5186061bdfa4103ae29eeed349e1ab0ea50122bf33315c7",
+        "shape": [
+          26,
+          2
+        ]
+      },
+      "model_geom_type": {
+        "dtype": "int32",
+        "sha256": "9d5ad047f9c6560fdb0adf81c30e4a6ca085a258db9889396a5d55939fdc7c8e",
+        "shape": [
+          26
+        ]
+      },
+      "model_jnt_axis": {
+        "dtype": "float64",
+        "sha256": "af9f0e21c6053b91a35b157cb89d96e320c66b150a8f3e5b8bf3f46ab7b4e3ec",
+        "shape": [
+          70,
+          3
+        ]
+      },
+      "model_jnt_bodyid": {
+        "dtype": "int32",
+        "sha256": "730cf6412cd4cae25afb96c01c1d8d589637198d4111082a6d8cd8ee384bedce",
+        "shape": [
+          70
+        ]
+      },
+      "model_jnt_pos": {
+        "dtype": "float64",
+        "sha256": "065cc6b2b996ca729f6aa0208e13ac4b494dd0d74a4c4df6053d08b0c11da865",
+        "shape": [
+          70,
+          3
+        ]
+      },
+      "model_jnt_stiffness": {
+        "dtype": "float64",
+        "sha256": "4ac2e22410f370917c5a22f8e718999cb9e921bcada3fcee99389d4de4551296",
+        "shape": [
+          70
+        ]
+      },
+      "model_jnt_type": {
+        "dtype": "int32",
+        "sha256": "071aac35c00a86ea3534f9551bea57db7813c6c31597538064bfac28c2b458a6",
+        "shape": [
+          70
+        ]
+      },
+      "model_option_cone": {
+        "dtype": "int64",
+        "sha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+        "shape": []
+      },
+      "model_option_disableflags": {
+        "dtype": "int64",
+        "sha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+        "shape": []
+      },
+      "model_option_enableflags": {
+        "dtype": "int64",
+        "sha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+        "shape": []
+      },
+      "model_option_gravity": {
+        "dtype": "float64",
+        "sha256": "ae1e8d988bda31f91f37b3360818f46f5216924d49e011e065e323fe23f3bf2e",
+        "shape": [
+          3
+        ]
+      },
+      "model_option_impratio": {
+        "dtype": "float64",
+        "sha256": "6c3c396ed6b5c36dcae172271f462051b1266b851e92df3deea8ac65478fd712",
+        "shape": []
+      },
+      "model_option_integrator": {
+        "dtype": "int64",
+        "sha256": "35be322d094f9d154a8aba4733b8497f180353bd7ae7b0a15f90b586b549f28b",
+        "shape": []
+      },
+      "model_option_is_sparse": {
+        "dtype": "int64",
+        "sha256": "7c9fa136d4413fa6173637e883b6998d32e1d675f88cddff9dcbcf331820f4b8",
+        "shape": []
+      },
+      "model_option_iterations": {
+        "dtype": "int64",
+        "sha256": "26ab39150b6330152576e4c7fa7e0caa804b5e9db0476a3e48e6b53f1cda8279",
+        "shape": []
+      },
+      "model_option_jacobian": {
+        "dtype": "int64",
+        "sha256": "d86e8112f3c4c4442126f8e9f44f16867da487f29052bf91b810457db34209a4",
+        "shape": []
+      },
+      "model_option_ls_iterations": {
+        "dtype": "int64",
+        "sha256": "0cbbab9d99fb661a1686f17ccaaf8a9d069aa8cb755925045a1d049c060b9e67",
+        "shape": []
+      },
+      "model_option_ls_tolerance": {
+        "dtype": "float64",
+        "sha256": "c738dd99fada954a0be83cb94069e65973256ed5a199cd293841c789ad3b0910",
+        "shape": []
+      },
+      "model_option_noslip_iterations": {
+        "dtype": "int64",
+        "sha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+        "shape": []
+      },
+      "model_option_noslip_tolerance": {
+        "dtype": "float64",
+        "sha256": "7b0355ed5a68124501a73561e1be6ccc44d9d9920beea11896f7f1dd926b2012",
+        "shape": []
+      },
+      "model_option_sdf_initpoints": {
+        "dtype": "int64",
+        "sha256": "552a4a6608d384327b0410f4da0f5da26e1e983f02e8d6ca1e115cd89bef0829",
+        "shape": []
+      },
+      "model_option_sdf_iterations": {
+        "dtype": "int64",
+        "sha256": "a111f275cc2e7588000001d300a31e76336d15b9d314cd1a1d8f3d3556975eed",
+        "shape": []
+      },
+      "model_option_solver": {
+        "dtype": "int64",
+        "sha256": "d86e8112f3c4c4442126f8e9f44f16867da487f29052bf91b810457db34209a4",
+        "shape": []
+      },
+      "model_option_timestep": {
+        "dtype": "float64",
+        "sha256": "68aa2ab72cbc62cac6a41c23c5220b36fb36209a562857aaa17f5182e91aceb0",
+        "shape": []
+      },
+      "model_option_tolerance": {
+        "dtype": "float64",
+        "sha256": "e972f4b445c8285197ecdc3f8831870d6eec67c062060c2aca46408dd58aefca",
+        "shape": []
+      },
+      "model_qpos_spring": {
+        "dtype": "float64",
+        "sha256": "d85ad8743a8bba6dffb65ccb61f92422c848d8c8ad214ee9fbc4f635fff641fb",
+        "shape": [
+          76
+        ]
+      },
+      "returned_body_ang_vel": {
+        "dtype": "float64",
+        "sha256": "25e692b191d0f422b1b2714deded4c260b3fdac74f0e952a22bbecb24a86e965",
+        "shape": [
+          5,
+          2,
+          24,
+          3
+        ]
+      },
+      "returned_body_lin_vel": {
+        "dtype": "float64",
+        "sha256": "b68cbe2fe0325834937276f18cb4101efccf703184cc735b2711c1b844753539",
+        "shape": [
+          5,
+          2,
+          24,
+          3
+        ]
+      },
+      "returned_body_pos": {
+        "dtype": "float64",
+        "sha256": "7809c3bebdc587c9df4bb821758f4a8a13bb294d61cd8bac8fdcd1957ca7b4b7",
+        "shape": [
+          5,
+          2,
+          24,
+          3
+        ]
+      },
+      "returned_body_quat": {
+        "dtype": "float64",
+        "sha256": "a8cc0033ba48fbd225196bd3188595c72793001044f2fbcf0e17194f825ba2dd",
+        "shape": [
+          5,
+          2,
+          24,
+          4
+        ]
+      },
+      "returned_control": {
+        "dtype": "float64",
+        "sha256": "a79e132c85d32db37494d9729ca9f28acd6e41039884fbc2b0b59b4978140fe8",
+        "shape": [
+          5,
+          2,
+          69
+        ]
+      },
+      "returned_observation": {
+        "dtype": "float64",
+        "sha256": "f09de7afdd7644277aed9771992496fc4b5b18041fa780c3c51f65280433c97b",
+        "shape": [
+          5,
+          2,
+          358
+        ]
+      },
+      "returned_qacc_warmstart": {
+        "dtype": "float64",
+        "sha256": "3277979fa579da9f924d8f118e7ae8cbdf379c500a085d5e01cb789d618b63aa",
+        "shape": [
+          5,
+          2,
+          75
+        ]
+      },
+      "returned_qfrc_applied": {
+        "dtype": "float64",
+        "sha256": "a6bedce1e512d6531cd02fe7a0b72bb64f229cdb254ec48d63308877004e620a",
+        "shape": [
+          5,
+          2,
+          75
+        ]
+      },
+      "returned_qpos": {
+        "dtype": "float64",
+        "sha256": "a4efac53884749295df3d08b2c0f7ac812137de25b3953fb6e531e2d4382a6c6",
+        "shape": [
+          5,
+          2,
+          76
+        ]
+      },
+      "returned_qvel": {
+        "dtype": "float64",
+        "sha256": "54184ba27a35896c69b0d625e21f6d7628c49180aad9d87da6686fad837ec3c0",
+        "shape": [
+          5,
+          2,
+          75
+        ]
+      },
+      "returned_simulation_time_seconds": {
+        "dtype": "float64",
+        "sha256": "0650345905c5c535924adbc9c98cbd01ea653e3b71565fb80cc0be0fa40fd157",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "returned_time": {
+        "dtype": "int32",
+        "sha256": "b2c057d5751aae185b6347f1312d622aa8da41515ef133f57d2062a2b90bbf2d",
+        "shape": [
+          5,
+          2,
+          1
+        ]
+      },
+      "returned_xfrc_applied": {
+        "dtype": "float64",
+        "sha256": "ff6698a6e831ffcf47af2fed388ffc262f319e72b26cd140929d1e19b1246ad4",
+        "shape": [
+          5,
+          2,
+          25,
+          6
+        ]
+      },
+      "reward": {
+        "dtype": "float64",
+        "sha256": "5b6fb58e61fa475939767d68a446f97f1bff02c0e5935a3ea8bb51e6515783d8",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "terminated": {
+        "dtype": "bool",
+        "sha256": "01d448afd928065458cf670b60f5a594d735af0172c8d67f22a81680132681ca",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "truncated": {
+        "dtype": "bool",
+        "sha256": "8d241d8f8c8c5f154eecf0f6236a82efe0fd854e928749dbb9fc48b3c5458807",
+        "shape": [
+          5,
+          2
+        ]
+      }
+    },
+    "timeout_step": 2
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "members": {
+    "g1_lafan_same_step_trace_v1.json": {
+      "bytes": 26502,
+      "sha256": "f78a71718b3893f47695f1a3632ffbbdabb5445207b621cf23eaa72491d6694c"
+    },
+    "g1_lafan_same_step_trace_v1.npz": {
+      "bytes": 145255,
+      "sha256": "0959ba0435e37496cac0a716d7221fb7986f44aa236dd1180db4f184fc1927c3"
+    },
+    "meta_humenv_next_step_trace_v1.json": {
+      "bytes": 6097,
+      "sha256": "5292f9754121344321d7e674eed280fb430529778cd5537159deac5790d3265f"
+    },
+    "meta_humenv_next_step_trace_v1.npz": {
+      "bytes": 101196,
+      "sha256": "bb8914b2785cf275faec69f9680b212b252ea527a8e371993729c9b31faaea78"
+    }
+  },
+  "schema": "forward_backward_phase3_native_trace_manifest_v1"
+}

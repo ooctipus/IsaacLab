@@ -1,0 +1,241 @@
+{
+  "mdp": {
+    "action_dim": 69,
+    "autoreset_mode": "next_step",
+    "control_decimation": 15,
+    "control_dt_seconds": 0.03333333333333333,
+    "observation_dim": 358,
+    "physics_dt_seconds": 0.0022222222222222222,
+    "production_horizon_steps": 300,
+    "qpos_dim": 76,
+    "qvel_dim": 75,
+    "reset_profile": "default_t_pose_trace_only",
+    "reward": "zero",
+    "termination": "never",
+    "trace_horizon_steps": 3
+  },
+  "profile": "smpl_humenv_30hz",
+  "runtime": {
+    "gymnasium": "1.3.0",
+    "humenv": "0.2.0",
+    "mujoco": "3.9.0",
+    "numpy": "2.2.6",
+    "python": "3.10.19"
+  },
+  "schema": "forward_backward_phase3_meta_humenv_trace_v1",
+  "source": {
+    "files": {
+      "humenv/__init__.py": "8914768eafc83a63e7bab8c350286f5810932d1135b422547b7ad05b97298935",
+      "humenv/assets/robot.xml": "a38c014814929152ddeb3e2a4f18a99c5eb861f0c7f6678416624c39dba9b024",
+      "humenv/env.py": "b21013bf05263364d181c2c191fb66cc2978ad9a8f5b8b192f41ee57e89e20cb",
+      "humenv/reset.py": "317a0487cbceb64550b33c88bfdc83e222247fcbdc194cb67e3525efe4b76e1e"
+    },
+    "license": "CC-BY-NC-4.0",
+    "repository": "humenv",
+    "revision": "0548761a19b783c6a3548a14a8c4ea1ca35e94af"
+  },
+  "trace": {
+    "file": "meta_humenv_next_step_trace_v1.npz",
+    "file_sha256": "bb8914b2785cf275faec69f9680b212b252ea527a8e371993729c9b31faaea78",
+    "num_envs": 2,
+    "reset_only_step": 3,
+    "seed": 20260629,
+    "steps": 5,
+    "tensors": {
+      "action_applied": {
+        "dtype": "bool",
+        "sha256": "01e416e71a1cf70191e7fefacc2974509cbae608ee5509dc8680369093f961cd",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "actions": {
+        "dtype": "float64",
+        "sha256": "d4bc1bec92f68ffefbfd8cd2cabb2111a6616e257ad708ef2955bd5a70690c2c",
+        "shape": [
+          5,
+          2,
+          69
+        ]
+      },
+      "current_body_ang_vel": {
+        "dtype": "float64",
+        "sha256": "bbfc5f59f2262f60cf191c051f2a8b103b9a912a8435147bf753e0436afbb9e2",
+        "shape": [
+          5,
+          2,
+          24,
+          3
+        ]
+      },
+      "current_body_lin_vel": {
+        "dtype": "float64",
+        "sha256": "fe896acf5b68ec3d309e865624c3be426bbb9464f5441ca90ea41968175ff47c",
+        "shape": [
+          5,
+          2,
+          24,
+          3
+        ]
+      },
+      "current_body_pos": {
+        "dtype": "float64",
+        "sha256": "0d1dd0f9b0d6f16b6c4ed52c6e750522b6f3a4078662106773b2209de0a87bcb",
+        "shape": [
+          5,
+          2,
+          24,
+          3
+        ]
+      },
+      "current_body_quat": {
+        "dtype": "float64",
+        "sha256": "f9b49c493c68bb7be43a6529352cd3b048c1d83c177cb3db1615a608bd4c4242",
+        "shape": [
+          5,
+          2,
+          24,
+          4
+        ]
+      },
+      "current_observation": {
+        "dtype": "float64",
+        "sha256": "74c82649b26289447d843cece93ea9bd2953691a5ce6f871a633ac1924e4a1a6",
+        "shape": [
+          5,
+          2,
+          358
+        ]
+      },
+      "current_qpos": {
+        "dtype": "float64",
+        "sha256": "d3576104a74acef7833b0fc8d19b3ff03de0b9613e9d135f40b01c5e071bbd42",
+        "shape": [
+          5,
+          2,
+          76
+        ]
+      },
+      "current_qvel": {
+        "dtype": "float64",
+        "sha256": "4a9e89b23b2797daf12cc344b5f21d3f3d2c1bfaa1bdf209dc188ac3f72ca540",
+        "shape": [
+          5,
+          2,
+          75
+        ]
+      },
+      "current_time": {
+        "dtype": "int32",
+        "sha256": "af0df301b23ce1f6713bcf52753121e3afc3388be3483bbebb620ffa3c45fff1",
+        "shape": [
+          5,
+          2,
+          1
+        ]
+      },
+      "returned_body_ang_vel": {
+        "dtype": "float64",
+        "sha256": "25e692b191d0f422b1b2714deded4c260b3fdac74f0e952a22bbecb24a86e965",
+        "shape": [
+          5,
+          2,
+          24,
+          3
+        ]
+      },
+      "returned_body_lin_vel": {
+        "dtype": "float64",
+        "sha256": "b68cbe2fe0325834937276f18cb4101efccf703184cc735b2711c1b844753539",
+        "shape": [
+          5,
+          2,
+          24,
+          3
+        ]
+      },
+      "returned_body_pos": {
+        "dtype": "float64",
+        "sha256": "7809c3bebdc587c9df4bb821758f4a8a13bb294d61cd8bac8fdcd1957ca7b4b7",
+        "shape": [
+          5,
+          2,
+          24,
+          3
+        ]
+      },
+      "returned_body_quat": {
+        "dtype": "float64",
+        "sha256": "a8cc0033ba48fbd225196bd3188595c72793001044f2fbcf0e17194f825ba2dd",
+        "shape": [
+          5,
+          2,
+          24,
+          4
+        ]
+      },
+      "returned_observation": {
+        "dtype": "float64",
+        "sha256": "f09de7afdd7644277aed9771992496fc4b5b18041fa780c3c51f65280433c97b",
+        "shape": [
+          5,
+          2,
+          358
+        ]
+      },
+      "returned_qpos": {
+        "dtype": "float64",
+        "sha256": "a4efac53884749295df3d08b2c0f7ac812137de25b3953fb6e531e2d4382a6c6",
+        "shape": [
+          5,
+          2,
+          76
+        ]
+      },
+      "returned_qvel": {
+        "dtype": "float64",
+        "sha256": "54184ba27a35896c69b0d625e21f6d7628c49180aad9d87da6686fad837ec3c0",
+        "shape": [
+          5,
+          2,
+          75
+        ]
+      },
+      "returned_time": {
+        "dtype": "int32",
+        "sha256": "b2c057d5751aae185b6347f1312d622aa8da41515ef133f57d2062a2b90bbf2d",
+        "shape": [
+          5,
+          2,
+          1
+        ]
+      },
+      "reward": {
+        "dtype": "float64",
+        "sha256": "5b6fb58e61fa475939767d68a446f97f1bff02c0e5935a3ea8bb51e6515783d8",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "terminated": {
+        "dtype": "bool",
+        "sha256": "01d448afd928065458cf670b60f5a594d735af0172c8d67f22a81680132681ca",
+        "shape": [
+          5,
+          2
+        ]
+      },
+      "truncated": {
+        "dtype": "bool",
+        "sha256": "8d241d8f8c8c5f154eecf0f6236a82efe0fd854e928749dbb9fc48b3c5458807",
+        "shape": [
+          5,
+          2
+        ]
+      }
+    },
+    "timeout_step": 2
+  }
+}

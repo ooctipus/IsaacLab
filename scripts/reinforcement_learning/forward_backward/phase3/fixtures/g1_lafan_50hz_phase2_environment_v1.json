@@ -1,0 +1,43 @@
+{
+  "environment": {
+    "camera_render_save_dir": "isaac_videos",
+    "context_length": null,
+    "device": "cuda:0",
+    "disable_domain_randomization": false,
+    "disable_obs_noise": false,
+    "enable_cameras": false,
+    "hydra_overrides": [
+      "robot=g1/g1_29dof_hard_waist",
+      "robot.control.action_scale=0.25",
+      "robot.control.action_clip_value=5.0",
+      "robot.control.normalize_action_to=5.0",
+      "env.config.lie_down_init=True",
+      "env.config.lie_down_init_prob=0.3"
+    ],
+    "include_dr_info": false,
+    "include_history_actor": true,
+    "include_history_noaction": false,
+    "include_last_action": true,
+    "included_dr_obs_names": null,
+    "lafan_tail_path": "/home/yitangl/motivo_isaac/humanoidverse/data/lafan_29dof_10s-clipped.pkl",
+    "make_config_g1env_compatible": false,
+    "max_episode_length_s": null,
+    "name": "humanoidverse_isaac",
+    "relative_config_path": "exp/bfm_zero/bfm_zero",
+    "root_height_obs": true
+  },
+  "native_environment_byte_identity": {
+    "completed_capacity_run_revision": "0a4132620e5b588752cf7d77cacda1720d6e4b08",
+    "environment_files_unchanged_from_released_baseline": true,
+    "later_cadence_revision": "f0495e864ffcf332f346bd7b55e9aa108cb8b38f",
+    "released_baseline_revision": "b87916f52d3d9e6eeba484f5e80851a235191837"
+  },
+  "reference_config_file": "new_model_for_training_code_inference/config.json",
+  "reference_config_sha256": "96889c351a919a907f1f6e3001c5213fe5469ffc4fc2d87c0ef52e422eba7d0f",
+  "runtime_rebindings": [
+    "device",
+    "lafan_tail_path"
+  ],
+  "schema": "forward_backward_phase3a_g1_lafan_phase2_environment_v1",
+  "source_note": "The recorded lafan_tail_path is historical evidence. Phase 2 rebinds it to the content-hashed local training artifact without changing any other environment field."
+}

@@ -1,0 +1,247 @@
+{
+  "logical_transition": {
+    "action_applied": {
+      "dtype": "bool",
+      "shape": ["batch", 1]
+    },
+    "behavior_action": {
+      "meaning": "action sampled by the behavior policy and stored in replay",
+      "shape": ["batch", "action_width"]
+    },
+    "context_changed": {
+      "dtype": "bool",
+      "shape": ["batch", 1]
+    },
+    "environment_reward": {
+      "shape": ["batch", 1],
+      "timing": "transition"
+    },
+    "final_observation": {
+      "meaning": "pre-reset reached state for same-step done rows",
+      "shape": ["batch", "named_fields"]
+    },
+    "final_observation_valid": {
+      "dtype": "bool",
+      "shape": ["batch", 1]
+    },
+    "motion": {
+      "fields": ["clip_id", "episode_relative_step", "reference_time_seconds", "reset_source", "tail_valid"],
+      "shape": ["batch", "named_fields"]
+    },
+    "processed_action": {
+      "meaning": "action after environment normalization, clipping, delay, and controller preprocessing",
+      "shape": ["batch", "action_width"]
+    },
+    "provider_versions": {
+      "fields": ["observation_layout", "normalizer", "reward_provider", "motion_bank"],
+      "shape": ["batch", "named_fields"]
+    },
+    "reached_observation": {
+      "selection": "final when same-step done and valid, otherwise returned",
+      "shape": ["batch", "named_fields"]
+    },
+    "returned_observation": {
+      "meaning": "literal environment step return, post-reset on same-step done",
+      "shape": ["batch", "named_fields"]
+    },
+    "terminated": {
+      "dtype": "bool",
+      "shape": ["batch", 1]
+    },
+    "transition_evidence": {
+      "meaning": "raw named environment-owned facts before scalar weights",
+      "shape": ["batch", "evidence_width"]
+    },
+    "truncated": {
+      "dtype": "bool",
+      "shape": ["batch", 1]
+    }
+  },
+  "motion_bank": {
+    "flat_frame_axis": "frames from clip i occupy [offsets[i], offsets[i + 1])",
+    "required_identity": [
+      "source_content_hash",
+      "source_skeleton_hash",
+      "robot_layout_hash",
+      "materializer_version",
+      "time_policy"
+    ],
+    "required_metadata": ["clip_id", "offsets", "frame_count", "source_fps", "split", "validity"],
+    "sampling_law": "requested windows never cross offsets and exact requested cardinality is returned or construction fails"
+  },
+  "profiles": {
+    "g1_lafan_50hz": {
+      "action_width": 29,
+      "history_actor": {
+        "fields": [
+          {
+            "length": 4,
+            "name": "processed_action",
+            "noise_half_range": 0.0,
+            "observation_scale": 1.0,
+            "width": 29
+          },
+          {
+            "length": 4,
+            "name": "base_angular_velocity_scaled_noisy",
+            "noise_half_range_before_scale": 0.2,
+            "observation_scale": 0.25,
+            "width": 3
+          },
+          {
+            "length": 4,
+            "name": "joint_position_scaled_noisy",
+            "noise_half_range_before_scale": 0.01,
+            "observation_scale": 1.0,
+            "width": 29
+          },
+          {
+            "length": 4,
+            "name": "joint_velocity_scaled_noisy",
+            "noise_half_range_before_scale": 0.5,
+            "observation_scale": 1.0,
+            "width": 29
+          },
+          {
+            "length": 4,
+            "name": "projected_gravity_scaled_noisy",
+            "noise_half_range_before_scale": 0.05,
+            "observation_scale": 1.0,
+            "width": 3
+          }
+        ],
+        "layout": "field_major_then_newest_first_time",
+        "native_internal_autoreset_seed_eligibility": true,
+        "phase2_corrected_seed_eligibility": false,
+        "width": 372
+      },
+      "last_action": {
+        "meaning": "processed action for the immediately preceding physical edge at a current observation",
+        "width": 29
+      },
+      "reference_frame_count": 31,
+      "physical_body_count": 30,
+      "privileged_state": {
+        "components": [
+          {"frame": "world_z", "name": "root_height", "units": "m", "width": 1},
+          {"frame": "heading_local", "name": "non_root_body_position", "units": "m", "width": 90},
+          {"frame": "heading_local", "name": "body_rotation_tangent_normal", "width": 186},
+          {"frame": "heading_local", "name": "body_linear_velocity", "units": "m/s", "width": 93},
+          {"frame": "heading_local", "name": "body_angular_velocity", "units": "rad/s", "width": 93}
+        ],
+        "declared_yaml_width": 462,
+        "runtime_width": 463
+      },
+      "qpos": {
+        "components": [
+          {"convention": "world", "name": "root_position", "units": "m", "width": 3},
+          {"convention": "wxyz", "name": "root_rotation", "width": 4},
+          {"name": "joint_position", "units": "rad", "width": 29}
+        ],
+        "width": 36
+      },
+      "qvel": {
+        "components": [
+          {"frame": "world", "name": "root_linear_velocity", "units": "m/s", "width": 3},
+          {"frame": "root_local", "name": "root_angular_velocity", "units": "rad/s", "width": 3},
+          {"name": "joint_velocity", "units": "rad/s", "width": 29}
+        ],
+        "width": 35
+      },
+      "routes": {
+        "actor": 465,
+        "backward": 527,
+        "critic_auxiliary": 928,
+        "critic_discriminator": 928,
+        "discriminator": 527,
+        "forward": 928,
+        "underlying_hydra_actor_concat": 928,
+        "underlying_hydra_declared_actor_space": 927
+      },
+      "state": {
+        "components": [
+          {
+            "meaning": "joint position minus default and randomized default offset",
+            "name": "joint_position",
+            "noise_half_range_before_scale": 0.01,
+            "units": "rad",
+            "width": 29
+          },
+          {
+            "name": "joint_velocity",
+            "noise_half_range_before_scale": 0.5,
+            "units": "rad/s",
+            "width": 29
+          },
+          {
+            "name": "projected_gravity",
+            "noise_half_range_before_scale": 0.05,
+            "width": 3
+          },
+          {
+            "name": "base_angular_velocity",
+            "noise_half_range_before_scale": 0.2,
+            "observation_scale": 0.25,
+            "units": "rad/s",
+            "width": 3
+          }
+        ],
+        "width": 64
+      }
+    },
+    "smpl_humenv_30hz": {
+      "action_width": 69,
+      "observation": {
+        "components": [
+          {"name": "root_height", "width": 1},
+          {"name": "non_root_local_positions", "width": 69},
+          {"name": "local_rotations_6d", "width": 144},
+          {"name": "local_linear_velocities", "width": 72},
+          {"name": "local_angular_velocities", "width": 72}
+        ],
+        "dtype_in_HDF5": "float64",
+        "width": 358
+      },
+      "physical_body_count": 24,
+      "qpos": {
+        "components": [
+          {"name": "root_position", "width": 3},
+          {"convention": "wxyz", "name": "root_rotation", "width": 4},
+          {"name": "joint_position", "width": 69}
+        ],
+        "width": 76
+      },
+      "qvel": {
+        "components": [
+          {"name": "free_root_velocity", "width": 6},
+          {"name": "joint_velocity", "width": 69}
+        ],
+        "width": 75
+      },
+      "routes": {
+        "actor": 358,
+        "backward": 358,
+        "discriminator": 358,
+        "forward": 358
+      }
+    }
+  },
+  "schema": "forward_backward_phase3a_native_tensor_layouts_v1",
+  "tolerances": {
+    "body_angular_velocity": {"atol": 0.0001, "rtol": 0.0001},
+    "body_linear_velocity": {"atol": 0.0001, "rtol": 0.0001},
+    "body_position": {"atol": 1e-05, "rtol": 1e-05},
+    "discrete_and_identity": "exact",
+    "environment_reward_and_raw_evidence": {"atol": 1e-05, "rtol": 1e-05},
+    "history_and_action": {"atol": 1e-06, "rtol": 1e-06},
+    "observation": {"atol": 0.0001, "rtol": 0.0001},
+    "quaternion": {"comparison": "sign_invariant_geodesic_angle_rad", "max": 1e-05},
+    "trace_fixture_regeneration": "exact_tensor_hash"
+  },
+  "views": {
+    "evaluation": ["reset_frame", "target_sequence", "robot_specific_metrics"],
+    "expert_edge": ["current_window", "reached_window", "clip_id", "boundary_valid"],
+    "reference": ["interpolated_robot_facts", "reference_time_seconds", "tail_valid"],
+    "reset": ["simulator_root_state", "simulator_joint_state", "clip_id", "source_time_seconds", "reset_source"]
+  }
+}

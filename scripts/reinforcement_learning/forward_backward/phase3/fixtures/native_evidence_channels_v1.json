@@ -1,0 +1,178 @@
+{
+  "algebra": {
+    "composition": "r_alpha = sum_i alpha_i * raw_evidence_i",
+    "environment_ownership": "physical and task facts measured on the transition",
+    "learned_provider_ownership": "discriminator, energy, and FB-implied channels are frozen and versioned by the learner",
+    "no_double_application": ["sign", "control_dt", "curriculum_scale", "normalization", "provider_version"],
+    "partial_observation_value": "V(history_t) may be valid when no immediate reward is a function of phi_t; residual r_t = V(history_t) - gamma * V(reached_history_t_plus_1) uses exact reached timing"
+  },
+  "profiles": {
+    "g1_lafan_50hz": {
+      "compositions": {
+        "environment_scalar": {
+          "coefficient_interpretation": "reward_density_per_second_then_multiply_by_control_dt",
+          "coefficients": {
+            "feet_heading_alignment": -0.1,
+            "limits_dof_pos": -10.0,
+            "limits_dof_vel": -5.0,
+            "limits_torque": -5.0,
+            "penalty_action_rate": -0.5,
+            "penalty_ankle_roll": -0.5,
+            "penalty_feet_ori": -0.1,
+            "penalty_slippage": -1.0,
+            "penalty_torques": -1e-06,
+            "penalty_undesired_contact": -1.0
+          },
+          "control_dt_seconds": 0.02,
+          "equation": "sum_i raw_i * yaml_density_i * control_dt * (penalty_scale if i in curriculum_channels else 1)",
+          "only_positive_clipping": false,
+          "penalty_curriculum": {
+            "channels": [
+              "penalty_torques",
+              "penalty_action_rate",
+              "limits_dof_pos",
+              "limits_torque",
+              "penalty_slippage",
+              "penalty_undesired_contact",
+              "penalty_ankle_roll",
+              "penalty_feet_ori"
+            ],
+            "degree_per_reset_update": 1e-05,
+            "enabled": true,
+            "initial_scale": 0.1,
+            "maximum_scale": 1.0,
+            "minimum_scale": 0.0,
+            "scale_down_when_average_episode_length_below": 40,
+            "scale_up_when_average_episode_length_above": 42
+          }
+        },
+        "learner_auxiliary_scalar": {
+          "coefficient_interpretation": "per_transition_raw_evidence_weight_no_dt",
+          "coefficients": {
+            "limits_dof_pos": -10.0,
+            "limits_torque": 0.0,
+            "penalty_action_rate": -0.1,
+            "penalty_ankle_roll": -4.0,
+            "penalty_feet_ori": -0.4,
+            "penalty_slippage": -2.0,
+            "penalty_torques": 0.0,
+            "penalty_undesired_contact": -1.0
+          },
+          "equation": "normalize_scale_only(sum_i raw_i * released_aux_coefficient_i)",
+          "normalization": "scale_only_running_standard_deviation_after_scalar_composition",
+          "zero_coefficient_evidence_is_retained": ["penalty_torques", "limits_torque"]
+        }
+      },
+      "environment_raw_evidence": {
+        "feet_heading_alignment": {
+          "definition": "absolute wrapped left and right foot heading error from root heading",
+          "nonnegative_cost": true,
+          "timing": "transition_reached_physics"
+        },
+        "limits_dof_pos": {
+          "definition": "summed distance outside simulator soft joint-position limits",
+          "nonnegative_cost": true,
+          "timing": "transition_reached_physics",
+          "units": "rad"
+        },
+        "limits_dof_vel": {
+          "definition": "summed clipped excess over 0.95 times joint-velocity limits",
+          "nonnegative_cost": true,
+          "timing": "transition_reached_physics",
+          "units": "rad/s"
+        },
+        "limits_torque": {
+          "definition": "summed excess of estimated clipped PD torque over 0.95 times torque limits",
+          "nonnegative_cost": true,
+          "timing": "transition_reached_physics",
+          "units": "N*m"
+        },
+        "penalty_action_rate": {
+          "definition": "sum squared difference between previous and current processed actions",
+          "nonnegative_cost": true,
+          "timing": "transition_action"
+        },
+        "penalty_ankle_roll": {
+          "definition": "sum squared left and right ankle-roll positions",
+          "nonnegative_cost": true,
+          "timing": "transition_reached_physics",
+          "units": "rad^2"
+        },
+        "penalty_feet_ori": {
+          "definition": "contact-gated horizontal gravity norm in each foot frame",
+          "nonnegative_cost": true,
+          "timing": "transition_reached_physics"
+        },
+        "penalty_slippage": {
+          "definition": "summed foot linear speed when contact-force norm exceeds 1 N",
+          "nonnegative_cost": true,
+          "timing": "transition_reached_physics",
+          "units": "m/s"
+        },
+        "penalty_torques": {
+          "definition": "sum squared estimated clipped PD torques, not a measured actuator-force tensor",
+          "nonnegative_cost": true,
+          "timing": "transition_action_and_reached_physics",
+          "units": "(N*m)^2"
+        },
+        "penalty_undesired_contact": {
+          "definition": "binary any contact component above 1 N on configured pelvis, shoulder, or hip bodies",
+          "nonnegative_cost": true,
+          "timing": "transition_reached_physics"
+        }
+      },
+      "learner_raw_evidence": {
+        "limits_dof_pos": {"anchor": "transition", "raw": true},
+        "limits_torque": {"anchor": "transition", "raw": true},
+        "penalty_action_rate": {"anchor": "transition", "raw": true},
+        "penalty_ankle_roll": {"anchor": "transition", "raw": true},
+        "penalty_feet_ori": {"anchor": "transition", "raw": true},
+        "penalty_slippage": {"anchor": "transition", "raw": true},
+        "penalty_torques": {"anchor": "transition", "raw": true},
+        "penalty_undesired_contact": {"anchor": "transition", "raw": true}
+      },
+      "learned_channels": {
+        "discriminator": {
+          "anchor": "declared_current_or_reached_state",
+          "owner": "learner",
+          "requires_provider_version": true
+        },
+        "energy": {
+          "anchor": "declared_state_or_transition",
+          "export_sign": "negative_once",
+          "owner": "learner",
+          "requires_provider_version": true
+        },
+        "fb_implied": {
+          "anchor": "declared_goal_measure",
+          "owner": "learner",
+          "requires_gauge_and_measure_version": true
+        }
+      }
+    },
+    "smpl_humenv_30hz": {
+      "environment_raw_evidence": {},
+      "environment_scalar": {
+        "constant": 0.0
+      },
+      "learned_channels": {
+        "discriminator": {
+          "owner": "learner",
+          "requires_provider_version": true
+        },
+        "fb_implied": {
+          "owner": "learner",
+          "requires_gauge_and_measure_version": true
+        }
+      }
+    }
+  },
+  "schema": "forward_backward_phase3a_native_evidence_channels_v1",
+  "source_files": {
+    "humanoidverse/agents/fb_cpr_aux/agent.py": "df34b4c9c4f4b4f0d067fe781f3f8166c94f4b2747e83c641a5101f2c20679bd",
+    "humanoidverse/agents/nn_models.py": "bace2c9967320ab0cf1e570054acf1f7e0378f15690e11af11fcce462b3a9254",
+    "humanoidverse/config/rewards/reward_bfm_zero.yaml": "4dd2638380d1088e2e6bb964fbfb387dbbd03e98c41c57064d1b11c910d7752e",
+    "humanoidverse/envs/legged_base_task/legged_robot_base.py": "bc00a197aac294bb7b8200194bc5daf6ed0801d1422151aa811d7ca34fe08776",
+    "humanoidverse/envs/legged_robot_motions/legged_robot_motions.py": "c2adfe2fa3d6db1b7d6ceb0c809aae2faf2f589f8321256ff05d6cba3747a359"
+  }
+}

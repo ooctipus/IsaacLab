@@ -1,0 +1,29 @@
+{
+  "members": {
+    "g1_lafan_50hz_phase2_environment_v1.json": {
+      "bytes": 1820,
+      "sha256": "a21a2ba220f1749c6b51f1debd3bca3ee1253d3bc2a8a85365a880cd0f01700f"
+    },
+    "g1_lafan_50hz_skeleton_v1.json": {
+      "bytes": 6022,
+      "sha256": "fdaca09fd6a2d816a3cb38ee9617f7cb79bdf826758a8655ea473064be7e6342"
+    },
+    "native_evidence_channels_v1.json": {
+      "bytes": 7563,
+      "sha256": "cec7de468e87a15ccc4f341650470ceb6eb415c9c91335fd54db5ddc9558462f"
+    },
+    "native_motion_data_v1.json": {
+      "bytes": 5899,
+      "sha256": "29a9bf3cc57ef28bb495979b8ccae06b14c756c931031be91d7e3b9a3ebabcfa"
+    },
+    "native_profiles_v1.json": {
+      "bytes": 9398,
+      "sha256": "041b4f4fc252aba4f97c3bd1a15e1850cbde3b053868038109d5bd2b8e830c26"
+    },
+    "native_tensor_layouts_v1.json": {
+      "bytes": 8395,
+      "sha256": "a1693f928679bbd78cb8642a62e5023d6943dbac68916f3ecaef2912316e0ed1"
+    }
+  },
+  "schema": "forward_backward_phase3a_native_contract_manifest_v1"
+}
