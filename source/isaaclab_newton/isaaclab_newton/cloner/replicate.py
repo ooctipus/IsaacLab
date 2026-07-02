@@ -66,7 +66,7 @@ def _build_newton_builder_from_mapping(
     # Solver attributes must exist before parsing global shapes and options. The scoped importer applies
     # the same exclusions to custom-frequency traversal, so clone-source entities remain owned solely by
     # the source builders merged below.
-    stage_info = manager_cls._import_usd(
+    stage_info = manager_cls._import_stage(
         builder,
         stage,
         ignore_paths=excluded_paths,
@@ -91,7 +91,7 @@ def _build_newton_builder_from_mapping(
         stage,
         sources,
         lambda: manager_cls.create_builder(up_axis=up_axis),
-        manager_cls._import_usd,
+        manager_cls._import_stage,
         ignore_paths=deformable_ignore_paths or None,
         simplify_meshes=simplify_meshes,
     )

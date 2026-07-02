@@ -13,10 +13,16 @@ import torch
 import warp as wp
 from newton import ModelBuilder
 
-from pxr import Usd
+from pxr import Sdf, Usd
 
 from isaaclab.cloner.cloner_utils import replace_path_prefix
 from isaaclab.sim.utils.newton_model_utils import replace_newton_builder_shape_colors
+from isaaclab.sim.utils.transforms import resolve_prim_pose
+
+from isaaclab_newton.sim.spawners.mjcf import (
+    NEWTON_MJCF_ASSET_PATH_ATTR,
+    NEWTON_MJCF_SELF_COLLISION_ATTR,
+)
 
 
 def add_usd_with_scoped_custom_frequencies(
@@ -56,11 +62,131 @@ def add_usd_with_scoped_custom_frequencies(
             frequency.usd_prim_filter = original
 
 
+_NATIVE_MJCF_CUSTOM_LABELS = (
+    "mujoco:equality_constraint_label",
+    "mujoco:joint_dof_label",
+    "mujoco:actuator_target_label",
+    "mujoco:tendon_label",
+)
+
+
+def _prefix_label(root_path: str, label: str) -> str:
+    """Place one non-empty Newton label below a USD marker path."""
+    return f"{root_path.rstrip('/')}/{label.lstrip('/')}" if label else label
+
+
+def _prefix_new_mjcf_labels(
+    builder: ModelBuilder,
+    root_path: str,
+    builtin_starts: dict[str, int],
+    custom_starts: dict[str, int | frozenset[object]],
+) -> None:
+    """Prefix labels appended by one native MJCF import with its marker path."""
+    for kind, start in builtin_starts.items():
+        labels = getattr(builder, f"{kind}_label")
+        labels[start:] = [_prefix_label(root_path, label) for label in labels[start:]]
+
+    for name in _NATIVE_MJCF_CUSTOM_LABELS:
+        attribute = builder.custom_attributes.get(name)
+        if attribute is None:
+            continue
+        values = attribute.values
+        start = custom_starts.get(name, 0 if isinstance(values, list) else frozenset())
+        if isinstance(values, list):
+            if not isinstance(start, int):
+                raise TypeError(f"Native MJCF attribute '{name}' changed storage type during import.")
+            values[start:] = [_prefix_label(root_path, value) for value in values[start:]]
+        elif isinstance(values, dict):
+            if not isinstance(start, frozenset):
+                raise TypeError(f"Native MJCF attribute '{name}' changed storage type during import.")
+            for key in values.keys() - start:
+                values[key] = _prefix_label(root_path, values[key])
+
+
+def add_native_mjcf_from_stage(
+    builder: ModelBuilder,
+    stage: Usd.Stage,
+    *,
+    root_path: str | None = None,
+    ignore_paths: Sequence[str] | None = None,
+    load_visual_shapes: bool = True,
+    skip_equality_constraints: bool = False,
+    convert_mjc_equality_constraints: bool = True,
+) -> tuple[str, ...]:
+    """Import Newton-native MJCF markers from one USD stage subtree.
+
+    Args:
+        builder: Newton model builder receiving the parsed MJCF assets.
+        stage: USD stage containing native MJCF marker prims.
+        root_path: Optional subtree root. The full stage is searched when unset.
+        ignore_paths: Optional regular expressions excluding marker paths.
+        load_visual_shapes: Whether to parse MJCF visual geometry.
+        skip_equality_constraints: Whether to omit MuJoCo equality metadata.
+        convert_mjc_equality_constraints: Whether Newton converts MuJoCo
+            equality metadata to generic constraints.
+
+    Returns:
+        Marker paths imported into ``builder``.
+    """
+    root = stage.GetPrimAtPath(root_path) if root_path is not None else stage.GetPseudoRoot()
+    if not root.IsValid():
+        return ()
+
+    ignored = tuple(ignore_paths or ())
+    imported: list[str] = []
+    for prim in Usd.PrimRange(root):
+        marker_path = str(prim.GetPath())
+        if any(re.match(pattern, marker_path) for pattern in ignored):
+            continue
+        asset_attr = prim.GetAttribute(NEWTON_MJCF_ASSET_PATH_ATTR)
+        if not asset_attr.IsValid() or not asset_attr.HasAuthoredValueOpinion():
+            continue
+        asset = asset_attr.Get()
+        if not isinstance(asset, Sdf.AssetPath):
+            raise TypeError(f"Native MJCF marker '{marker_path}' must store an Sdf.AssetPath.")
+        asset_path = asset.resolvedPath or asset.path
+        if not asset_path:
+            raise ValueError(f"Native MJCF marker '{marker_path}' has an empty asset path.")
+        self_collision_attr = prim.GetAttribute(NEWTON_MJCF_SELF_COLLISION_ATTR)
+        if not self_collision_attr.IsValid() or not self_collision_attr.HasAuthoredValueOpinion():
+            raise ValueError(f"Native MJCF marker '{marker_path}' has no self-collision policy.")
+
+        builtin_starts = {
+            kind: len(getattr(builder, f"{kind}_label"))
+            for kind in _BUILTIN_LABEL_TYPES
+            if kind != "equality_constraint" or "mujoco:equality_constraint_label" not in builder.custom_attributes
+        }
+        custom_starts: dict[str, int | frozenset[object]] = {}
+        for name in _NATIVE_MJCF_CUSTOM_LABELS:
+            attribute = builder.custom_attributes.get(name)
+            if attribute is None:
+                continue
+            values = attribute.values
+            if isinstance(values, list):
+                custom_starts[name] = len(values)
+            elif isinstance(values, dict):
+                custom_starts[name] = frozenset(values)
+
+        position, orientation = resolve_prim_pose(prim)
+        builder.add_mjcf(
+            asset_path,
+            xform=wp.transform(position, orientation),
+            up_axis=builder.up_axis,
+            parse_visuals=load_visual_shapes,
+            enable_self_collisions=bool(self_collision_attr.Get()),
+            skip_equality_constraints=skip_equality_constraints,
+            convert_mjc_equality_constraints=convert_mjc_equality_constraints,
+        )
+        _prefix_new_mjcf_labels(builder, marker_path, builtin_starts, custom_starts)
+        imported.append(marker_path)
+    return tuple(imported)
+
+
 def build_source_builders(
     stage: Usd.Stage,
     sources: Sequence[str],
     create_builder: Callable[[], ModelBuilder],
-    import_usd: Callable[..., Any],
+    import_stage: Callable[..., Any],
     *,
     ignore_paths: Sequence[str] | None = None,
     simplify_meshes: bool = True,
@@ -73,9 +199,9 @@ def build_source_builders(
         # token authored on each collider (e.g. via
         # ``CollisionPropertiesCfg(mesh_collision_property=NewtonMeshCollisionPropertiesCfg(...))``)
         # so callers can opt individual colliders into convex-hull / decomposition while
-        # leaving SDF- and primitive-collider shapes untouched. ``import_usd`` skips shapes
+        # leaving SDF- and primitive-collider shapes untouched. ``import_stage`` skips shapes
         # carrying ``NewtonSDFCollisionAPI``, so this never clobbers SDF assets (nut/bolt).
-        import_usd(
+        import_stage(
             builder,
             stage,
             root_path=source,

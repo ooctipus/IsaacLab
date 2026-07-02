@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import inspect
 from types import SimpleNamespace
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -222,6 +223,8 @@ def test_mjwarp_stage_fallback_uses_native_import_contract(monkeypatch: pytest.M
     monkeypatch.setattr(module, "get_current_stage", lambda: stage)
     monkeypatch.setattr(module.UsdGeom, "GetStageUpAxis", lambda _stage: "Z")
     monkeypatch.setattr(module, "replace_newton_builder_shape_colors", lambda _builder, _stage: None)
+    native_import = mock.Mock(return_value=())
+    monkeypatch.setattr(module, "add_native_mjcf_from_stage", native_import)
     monkeypatch.setattr(
         NewtonMJWarpManager,
         "create_builder",
@@ -234,14 +237,15 @@ def test_mjwarp_stage_fallback_uses_native_import_contract(monkeypatch: pytest.M
 
     assert any(type(resolver).__name__ == "SchemaResolverMjc" for resolver in builder.kwargs["schema_resolvers"])
     assert builder.kwargs["convert_mjc_equality_constraints"] is False
+    assert native_import.call_args.kwargs["convert_mjc_equality_constraints"] is False
 
 
-def test_stage_fallback_has_one_manager_owned_usd_import_boundary() -> None:
+def test_stage_fallback_has_one_manager_owned_stage_import_boundary() -> None:
     """Flat, global, and prototype imports must not bypass the manager contract."""
     source = inspect.getsource(NewtonManager.instantiate_builder_from_stage)
 
     assert ".add_usd(" not in source
-    assert source.count("cls._import_usd(") == 3
+    assert source.count("cls._import_stage(") == 3
 
 
 # ---------------------------------------------------------------------------

@@ -48,6 +48,7 @@ from isaaclab.utils.string import resolve_matching_names
 from isaaclab.utils.timer import Timer
 
 from isaaclab_newton.cloner.newton_clone_utils import (
+    add_native_mjcf_from_stage,
     add_usd_with_scoped_custom_frequencies,
     replicate_builder_mapping,
 )
@@ -847,15 +848,24 @@ class NewtonManager(PhysicsManager):
         return True
 
     @classmethod
-    def _import_usd(cls, builder: ModelBuilder, stage: Usd.Stage, **kwargs) -> object:
-        """Import USD through the active solver's schema and ownership contract."""
-        return add_usd_with_scoped_custom_frequencies(
+    def _import_stage(cls, builder: ModelBuilder, stage: Usd.Stage, **kwargs) -> object:
+        """Import USD entities and Newton-native MJCF markers from one stage scope."""
+        stage_info = add_usd_with_scoped_custom_frequencies(
             builder,
             stage,
             schema_resolvers=cls._usd_schema_resolvers(),
             convert_mjc_equality_constraints=cls._convert_mjc_equality_constraints(),
             **kwargs,
         )
+        add_native_mjcf_from_stage(
+            builder,
+            stage,
+            root_path=kwargs.get("root_path"),
+            ignore_paths=kwargs.get("ignore_paths"),
+            load_visual_shapes=kwargs.get("load_visual_shapes", True),
+            convert_mjc_equality_constraints=cls._convert_mjc_equality_constraints(),
+        )
+        return stage_info
 
     @classmethod
     def _register_builder_attributes(cls, builder: ModelBuilder) -> None:
@@ -1258,7 +1268,7 @@ class NewtonManager(PhysicsManager):
 
         if not env_paths:
             # No env Xforms — flat loading
-            cls._import_usd(builder, stage)
+            cls._import_stage(builder, stage)
             replace_newton_builder_shape_colors(builder, stage)
             NewtonManager._world_xforms = [wp.transform()]
             for hook in cls._per_world_builder_hooks:
@@ -1266,12 +1276,12 @@ class NewtonManager(PhysicsManager):
         else:
             # Load everything except the env subtrees (ground plane, lights, etc.)
             ignore_paths = [path for _, path in env_paths]
-            cls._import_usd(builder, stage, ignore_paths=ignore_paths)
+            cls._import_stage(builder, stage, ignore_paths=ignore_paths)
             replace_newton_builder_shape_colors(builder, stage)
 
             _, proto_path = env_paths[0]
             source_builders = {proto_path: cls.create_builder(up_axis=up_axis)}
-            cls._import_usd(source_builders[proto_path], stage, root_path=proto_path)
+            cls._import_stage(source_builders[proto_path], stage, root_path=proto_path)
             replace_newton_builder_shape_colors(source_builders[proto_path], stage)
             cls._cl_protos = source_builders
 

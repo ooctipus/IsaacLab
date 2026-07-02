@@ -453,6 +453,10 @@ class TestCloneBuilderImportOwnership(unittest.TestCase):
             mock.patch.object(replicate_module.NewtonManager, "_post_replicate_hooks", ()),
             mock.patch.object(replicate_module.NewtonManager, "_per_world_builder_hooks", ()),
             mock.patch.object(replicate_module.NewtonManager, "_cl_inject_sites", return_value=({}, {}, {})),
+            mock.patch(
+                "isaaclab_newton.physics.newton_manager.add_native_mjcf_from_stage",
+                return_value=(),
+            ),
         ):
             result, _, _, _, returned_sources = replicate_module._build_newton_builder_from_mapping(
                 stage=object(),
@@ -464,7 +468,7 @@ class TestCloneBuilderImportOwnership(unittest.TestCase):
 
         self.assertIs(result, builder)
         self.assertTrue(builder.assert_mujoco_resolver)
-        self.assertIs(build_sources.call_args.args[3].__func__, _Manager._import_usd.__func__)
+        self.assertIs(build_sources.call_args.args[3].__func__, _Manager._import_stage.__func__)
         self.assertFalse(builder.add_usd_kwargs["convert_mjc_equality_constraints"])
         self.assertEqual(builder.geom_margin, 0.001)
         self.assertEqual(builder.geom_solimp, (0.99, 0.99, 0.003, 0.5, 2.0))
@@ -496,6 +500,10 @@ class TestCloneBuilderImportOwnership(unittest.TestCase):
             mock.patch.object(replicate_module.NewtonManager, "_post_replicate_hooks", ()),
             mock.patch.object(replicate_module.NewtonManager, "_per_world_builder_hooks", ()),
             mock.patch.object(replicate_module.NewtonManager, "_cl_inject_sites", return_value=({}, {}, {})),
+            mock.patch(
+                "isaaclab_newton.physics.newton_manager.add_native_mjcf_from_stage",
+                return_value=(),
+            ),
         ):
             replicate_module._build_newton_builder_from_mapping(
                 stage=object(),
@@ -506,11 +514,11 @@ class TestCloneBuilderImportOwnership(unittest.TestCase):
             )
 
         self.assertTrue(builder.add_usd.call_args.kwargs["convert_mjc_equality_constraints"])
-        self.assertIs(build_sources.call_args.args[3].__func__, _Manager._import_usd.__func__)
+        self.assertIs(build_sources.call_args.args[3].__func__, _Manager._import_stage.__func__)
 
     def test_source_builder_registration_belongs_to_factory(self):
         builder = SimpleNamespace(add_usd=mock.Mock(), up_axis="Z")
-        import_usd = mock.Mock()
+        import_stage = mock.Mock()
         with (
             mock.patch.object(newton.solvers.SolverMuJoCo, "register_custom_attributes") as register,
             mock.patch.object(newton_clone_utils_module, "replace_newton_builder_shape_colors"),
@@ -519,14 +527,14 @@ class TestCloneBuilderImportOwnership(unittest.TestCase):
                 stage=object(),
                 sources=("/World/envs/env_0",),
                 create_builder=lambda: builder,
-                import_usd=import_usd,
+                import_stage=import_stage,
                 simplify_meshes=False,
             )
 
         self.assertEqual(result, {"/World/envs/env_0": builder})
         register.assert_not_called()
 
-        import_usd.assert_called_once()
+        import_stage.assert_called_once()
 
     def test_registered_mujoco_source_builder_preserves_native_equality(self):
         stage = Usd.Stage.CreateInMemory()
@@ -544,7 +552,7 @@ class TestCloneBuilderImportOwnership(unittest.TestCase):
                 stage=stage,
                 sources=("/World/envs/env_0",),
                 create_builder=create_builder,
-                import_usd=NewtonMJWarpManager._import_usd,
+                import_stage=NewtonMJWarpManager._import_stage,
                 simplify_meshes=False,
             )
 
@@ -584,10 +592,16 @@ class TestVisualizationClonePlan(unittest.TestCase):
             mock.patch.object(newton_clone_utils_module, "ModelBuilder", _FakeVisualizationModelBuilder),
             mock.patch.object(visualization_builder_module, "SchemaResolverNewton", lambda: object()),
             mock.patch.object(visualization_builder_module, "SchemaResolverPhysx", lambda: object()),
+            mock.patch.object(visualization_builder_module, "add_native_mjcf_from_stage") as native_import,
         ):
             builder = visualization_builder_module.build_visualization_builder_from_stage_envs(
                 stage, env_paths, clone_plan
             )
+
+        self.assertTrue(native_import.call_args_list)
+        for call in native_import.call_args_list:
+            self.assertTrue(call.kwargs["skip_equality_constraints"])
+            self.assertFalse(call.kwargs["convert_mjc_equality_constraints"])
 
         self.assertEqual(
             [builder.geometry_sources_for_world(i) for i in range(3)],

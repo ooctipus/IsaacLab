@@ -17,6 +17,7 @@ from pxr import Usd
 from isaaclab.sim.utils.transforms import resolve_prim_pose
 
 from isaaclab_newton.cloner.newton_clone_utils import (
+    add_native_mjcf_from_stage,
     add_usd_with_scoped_custom_frequencies,
     build_source_builders,
     rename_builder_labels,
@@ -44,17 +45,27 @@ def build_visualization_builder_from_stage_envs(
     quaternions = torch.tensor([quat for _, quat in poses], dtype=torch.float32)
     schema_resolvers = [SchemaResolverNewton(), SchemaResolverPhysx()]
 
-    def import_usd(builder: ModelBuilder, stage: Usd.Stage, **kwargs: Any) -> Any:
-        return add_usd_with_scoped_custom_frequencies(
+    def import_stage(builder: ModelBuilder, stage: Usd.Stage, **kwargs: Any) -> Any:
+        stage_info = add_usd_with_scoped_custom_frequencies(
             builder,
             stage,
             schema_resolvers=schema_resolvers,
             convert_mjc_equality_constraints=False,
             **kwargs,
         )
+        add_native_mjcf_from_stage(
+            builder,
+            stage,
+            root_path=kwargs.get("root_path"),
+            ignore_paths=kwargs.get("ignore_paths"),
+            load_visual_shapes=kwargs.get("load_visual_shapes", True),
+            skip_equality_constraints=True,
+            convert_mjc_equality_constraints=False,
+        )
+        return stage_info
 
     builder = ModelBuilder(up_axis=up_axis)
-    import_usd(
+    import_stage(
         builder,
         stage,
         ignore_paths=["/World/envs", *sources],
@@ -63,7 +74,7 @@ def build_visualization_builder_from_stage_envs(
         stage,
         sources,
         lambda: ModelBuilder(up_axis=up_axis),
-        import_usd,
+        import_stage,
         simplify_meshes=False,
     )
     replicate_builder_mapping(builder, sources, mapping, positions, quaternions, source_builders)
