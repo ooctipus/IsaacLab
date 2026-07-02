@@ -1,0 +1,435 @@
+{
+  "code_identity": {
+    "bundle_sha256": "f282d913b749a4b79aaaa42dd5715999d15c95825cc6f85e155e5cde2b7abe24",
+    "python_sources": {
+      "benchmark_motion_task_table": "5113e43e8f881a652718fd0d1931ca5ded23607bdff43d6db1d3ef90e75c48ad",
+      "isaaclab.sim.schemas.schemas_cfg": "c23fde175d325b091f32a6eb8afc5f63bcafb4ba59dbced89fcff9ceefaa1a40",
+      "isaaclab_assets.robots.smpl.smpl_constants": "a1167e4211f265177bac467ae34b35c79147dbdf26b6997ab3403339114970a3",
+      "isaaclab_newton.sim.schemas.schemas_cfg": "ee2c0aa30ee1a03476a283e1a326277d149f20d772cee1d8bcec3d2ce24e6153",
+      "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics": "e450f76a2bfe11ff0986c60c5519a7ddc5009579477478547945e6958f85fbfd",
+      "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics_cfg": "bb54968f13676e3d7185ae40bfe4792c38c5bb5029f9e10d68ea759f315d036c",
+      "isaaclab_tasks.core.multi_task.motion.config.robots.smpl": "eb0b8bcf1224f03297bb34866626665029cd94b9e8c816db8bfc702657cf9b63",
+      "isaaclab_tasks.core.multi_task.motion.config.source_skeletons": "d658140666c8f1aed3c9004d2e4f8fab4d77299a45c74ac66d10445f96a055c3",
+      "isaaclab_tasks.core.multi_task.motion.config.sources": "827bfd66236b4b9a81ef5ea1af80d61e25b7c327b74c5a72e062320291667763",
+      "isaaclab_tasks.core.multi_task.motion.data._identity": "386dddd8b1339521350772e50e9113eab010d0ffe1bee873b6c2fa88081fec49",
+      "isaaclab_tasks.core.multi_task.motion.data.clip_index": "a11b678c9b39e96be989ac20d3b6292f0dc976e232dc1315615c52de6f626abf",
+      "isaaclab_tasks.core.multi_task.motion.data.importers._hashing": "6843ce1f208fa3ed0b69466dbdd908ac7e6026a6dc4ba8d1286f0e4ad17614cd",
+      "isaaclab_tasks.core.multi_task.motion.data.importers.humenv_hdf5": "1fa45bc49f29338c885dc6ec0f187e711d0773b6b7743529c551644aaa0c34aa",
+      "isaaclab_tasks.core.multi_task.motion.data.sample_grid": "3eca55c9d434db72810e815a91dc89637a9d310275a039a347b7d425f911d478",
+      "isaaclab_tasks.core.multi_task.motion.data.skeleton": "63d04d889c2f3c3f389c55899688a9b4b6e18dc4d541b08ece1d749e37985ceb",
+      "isaaclab_tasks.core.multi_task.motion.frames": "01265380578fa7140fc5f38efc9933c30b3802314f4d1852d6ffdd6097e8691a",
+      "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_state_payload": "f8dee3bb5b1901f275d1d872bcc6339af7ff9780abe98aa76d236da28f591111",
+      "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table": "2eafb32d7a2492328caf34090c722f79865c8e84b0bd216605bc1512437ad4e7",
+      "isaaclab_tasks.core.multi_task.motion.trajectory.smpl": "bec23be04ebcfebf77b14f6102f68d1be84a882a77529a2688eca2b6b3d12c0e"
+    },
+    "python_symbols": {
+      "isaaclab_tasks.core.multi_task.motion.mdp.commands.MotionTaskTableCfg": "fb234daacbd3e0504ffd3eee67e9bab7282f0288545ea132d14b53314f1a0db8"
+    },
+    "reference_assets": {
+      "reference/humenv.xml": "a38c014814929152ddeb3e2a4f18a99c5eb861f0c7f6678416624c39dba9b024"
+    },
+    "resolved_construction": {
+      "control_dt_seconds": 0.03333333333333333,
+      "preset": "smpl_cmu",
+      "source": {
+        "format": "one_hdf5_file_per_clip_with_group_ep_0",
+        "identifier": "smpl_cmu",
+        "license": "amass_cmu_and_smpl_registered_source_required",
+        "open_source": "isaaclab_tasks.core.multi_task.motion.config.sources:_open_humenv_source",
+        "semantic_level": "smpl_robot_state_and_observation",
+        "skeleton_factory": "isaaclab_tasks.core.multi_task.motion.config.source_skeletons:smpl_humenv_source_skeleton",
+        "skeleton_identity_sha256": "a5c7c88ded36d9184c49b4b515b48fe2f62ae4734275673a2a50632157dddf0a",
+        "source_fps": 30.0,
+        "split": {
+          "artifact": "data_preparation/test_train_split/0-CMU_train_0.1.txt",
+          "artifact_sha256": "99929805f4ab531a89bff89837d27c403625d4b4d89d1a4d381b88825548a996",
+          "clip_count": 1638,
+          "frame_count": 730307,
+          "name": "train",
+          "source_content_sha256": "fe17c0673e1f5d55d985ac135e36c895df81c2cac91417df0e966fd32eb3e6b6"
+        }
+      },
+      "table": {
+        "expert_sample_grid": {
+          "mode": "source_rows",
+          "step_seconds": null
+        },
+        "frame_builder_factory": "isaaclab_tasks.core.multi_task.motion.trajectory.smpl:smpl_humenv_frame_builder",
+        "reference_kinematics_factory": "isaaclab_tasks.core.multi_task.motion.config.robots.smpl:smpl_reference_kinematics",
+        "reset_sources": [
+          [
+            "motion",
+            0.8
+          ],
+          [
+            "fall",
+            0.2
+          ]
+        ],
+        "task_row_mode": "source_frames",
+        "task_sampling_law": "clip_categorical_then_discrete_source_frame_v1"
+      }
+    }
+  },
+  "construction": {
+    "cuda_memory": null,
+    "frames_per_second": 38095.66468514,
+    "host_rss_bytes": {
+      "after_source_inspect": 974696448,
+      "after_source_open": 954040320,
+      "after_table_build_and_source_release": 2676674560,
+      "baseline": 952307712,
+      "process_peak": 4568756224
+    },
+    "seconds": 19.170344080775976
+  },
+  "correctness": {
+    "fixed_reference_matches_allocating_oracle": {
+      "atol": 2e-06,
+      "maximum_absolute_error_by_field": {
+        "joint_position": 0.0,
+        "joint_velocity": 0.0,
+        "observation": 0.0,
+        "root_angular_velocity": 0.0,
+        "root_linear_velocity": 0.0,
+        "root_position": 0.0,
+        "root_rotation": 0.0
+      },
+      "passed": true,
+      "rtol": 2e-05
+    },
+    "fixed_reference_output_pointers_stable": true
+  },
+  "parameters": {
+    "batch_size": 4096,
+    "control_dt_seconds": 0.03333333333333333,
+    "field_iterations": 10000,
+    "iterations": 10,
+    "samples": 7,
+    "time_program_length": 16,
+    "warmup": 3
+  },
+  "runtime": {
+    "dependencies": {
+      "h5py": {
+        "distribution_version": "3.16.0",
+        "module_source_sha256": "d4a46803087247cef67ee34a4d98d797be2f55b1f9230bc5f8a1fa358f8d1b87",
+        "module_version": "3.16.0"
+      },
+      "newton": {
+        "distribution_version": "1.4.0.dev0",
+        "module_source_sha256": "5527cc692d6ff881555f676bca70896f47aaf70213129239b65b47a12d25da31",
+        "module_version": "1.4.0.dev0"
+      },
+      "newton_owners": {
+        "model_builder_add_mjcf": {
+          "owner": "newton._src.sim.builder:ModelBuilder.add_mjcf",
+          "source_sha256": "7d4d18f30820b3dd4ec1f1893bddf2876d547b592d624ee977670fb8f8417c1f"
+        }
+      },
+      "numpy": {
+        "distribution_version": "2.4.6",
+        "module_source_sha256": "92a46f791e453926d3292af2582b89995a289475f0eaaea71a949823200b838a",
+        "module_version": "2.4.6"
+      },
+      "torch": {
+        "cuda_version": "12.8",
+        "distribution_version": "2.10.0+cu128",
+        "git_version": "449b1768410104d3ed79d3bcfe4ba1d65c7f22c0",
+        "module_source_sha256": "51c90fe34a7cf869517d1bab4cd114498790e169ec668f1a154c35ec64117a5e",
+        "module_version": "2.10.0+cu128"
+      },
+      "warp": {
+        "distribution_version": "1.16.0.dev20260630",
+        "module_source_sha256": "cb3cb0f9fd80237a74e6277476cb6862be0c0f993cfad1c1e3e580e322e26479",
+        "module_version": "1.16.0.dev20260630"
+      }
+    },
+    "dependencies_sha256": "66d44d33372717481e6ba322bc483aed8dc079cc806d58c14248f686b2f750f5",
+    "device": "cpu",
+    "platform": "Linux-6.17.0-35-generic-x86_64-with-glibc2.39",
+    "python": "3.12.13",
+    "torch": "2.10.0+cu128",
+    "torch_threads": 24
+  },
+  "schema": "forward_backward_phase3c_motion_task_table_lookup_v4",
+  "source": {
+    "artifact": "data_preparation/test_train_split/0-CMU_train_0.1.txt",
+    "artifact_sha256": "99929805f4ab531a89bff89837d27c403625d4b4d89d1a4d381b88825548a996",
+    "clips": 1638,
+    "frames": 730307,
+    "preset": "smpl_cmu",
+    "remaining_clips_after_build": 0,
+    "remaining_frames_after_build": 0,
+    "source_content_sha256": "fe17c0673e1f5d55d985ac135e36c895df81c2cac91417df0e966fd32eb3e6b6",
+    "split": "train"
+  },
+  "task_table": {
+    "compact_metadata_bytes": 11765190,
+    "field_names": [
+      "root_position",
+      "root_rotation",
+      "root_linear_velocity",
+      "root_angular_velocity",
+      "joint_position",
+      "joint_velocity",
+      "observation"
+    ],
+    "field_shapes": {
+      "joint_position": [
+        69
+      ],
+      "joint_velocity": [
+        69
+      ],
+      "observation": [
+        358
+      ],
+      "root_angular_velocity": [
+        3
+      ],
+      "root_linear_velocity": [
+        3
+      ],
+      "root_position": [
+        3
+      ],
+      "root_rotation": [
+        4
+      ]
+    },
+    "frame_builder_identity_sha256": "07919e3437b711110369a148dc167ec8e1db4ab9854762996f78c4d10c6294b7",
+    "frame_builder_version": "smpl_humenv_exact_mjcf_v1",
+    "identity_sha256": "eb9e80a5a85c96b2dce5a509fa1fb1332ff6c051c83c74acc90413aa5476e170",
+    "logical_row_width": 509,
+    "physical_row_width": 509,
+    "reset_fields": [
+      "root_position",
+      "root_rotation",
+      "root_linear_velocity",
+      "root_angular_velocity",
+      "joint_position",
+      "joint_velocity"
+    ],
+    "reset_source_names": [
+      "motion",
+      "fall"
+    ],
+    "reset_source_probabilities": [
+      0.800000011920929,
+      0.20000000298023224
+    ],
+    "resident_bytes": 1498670242,
+    "root_reference_aliases": false,
+    "storage_contract_passed": true,
+    "storage_pareto": [
+      {
+        "can_reset_simulator": true,
+        "dense_frame_bytes": 441105428,
+        "direct_expert_rows": false,
+        "float32_scalars_per_frame": 151,
+        "name": "reset_state_only",
+        "status": "derived_if_stored_alone"
+      },
+      {
+        "can_reset_simulator": false,
+        "dense_frame_bytes": 1045799624,
+        "direct_expert_rows": true,
+        "float32_scalars_per_frame": 358,
+        "name": "expert_observation_only",
+        "status": "derived_if_stored_alone"
+      },
+      {
+        "can_reset_simulator": true,
+        "dense_frame_bytes": 1486905052,
+        "direct_expert_rows": true,
+        "float32_scalars_per_frame": 509,
+        "name": "production_state_and_observation",
+        "status": "materialized"
+      }
+    ],
+    "stored_field_names": [
+      "root_position",
+      "root_rotation",
+      "root_linear_velocity",
+      "root_angular_velocity",
+      "joint_position",
+      "joint_velocity",
+      "observation"
+    ],
+    "task_row_mode": "source_frames",
+    "task_sampling_law": "clip_categorical_then_discrete_source_frame_v1",
+    "trajectory_bytes": 1486905052,
+    "unique_physical_storage_count": 7
+  },
+  "throughput": {
+    "allocating_reference_oracle": {
+      "iterations_per_sample": 10,
+      "maximum_rate": 3028719.0259279846,
+      "median_rate": 2717725.9085640735,
+      "minimum_rate": 2426388.2049341775,
+      "sample_count": 7,
+      "sample_rates": [
+        2426388.2049341775,
+        3028719.0259279846,
+        2717725.9085640735,
+        2847457.1635444136,
+        2962410.5273607513,
+        2603510.0432410147,
+        2655356.8124269866
+      ],
+      "sample_seconds": [
+        0.016881057992577553,
+        0.013523869216442108,
+        0.015071424189954996,
+        0.01438476424664259,
+        0.013826577924191952,
+        0.01573260687291622,
+        0.015425422228872776
+      ],
+      "unit": "rows_per_second",
+      "units_per_call": 4096,
+      "warmup_calls": 3
+    },
+    "bind_exact_capacity_table": {
+      "iterations_per_sample": 10,
+      "maximum_rate": 2.9067362793639586,
+      "median_rate": 2.8534388904370886,
+      "minimum_rate": 2.7704217109392792,
+      "sample_count": 7,
+      "sample_rates": [
+        2.7704217109392792,
+        2.80391981887958,
+        2.8563403372991654,
+        2.8534388904370886,
+        2.8091595460046466,
+        2.8609389604715427,
+        2.9067362793639586
+      ],
+      "sample_seconds": [
+        3.6095587760210037,
+        3.566435792017728,
+        3.50098336301744,
+        3.504543249029666,
+        3.559783570934087,
+        3.495355943683535,
+        3.4402845799922943
+      ],
+      "unit": "binds_per_second",
+      "units_per_call": 1,
+      "warmup_calls": 3
+    },
+    "current_reached_reference": {
+      "iterations_per_sample": 10,
+      "maximum_rate": 2952089.966711477,
+      "median_rate": 2685444.8663507667,
+      "minimum_rate": 2621425.1563340514,
+      "sample_count": 7,
+      "sample_rates": [
+        2621425.1563340514,
+        2657496.473917126,
+        2685444.8663507667,
+        2785054.623493394,
+        2732032.69086922,
+        2952089.966711477,
+        2626504.217548452
+      ],
+      "sample_seconds": [
+        0.03125017695128918,
+        0.030826005153357983,
+        0.030505187809467316,
+        0.029414144810289145,
+        0.029984999913722277,
+        0.027749831788241863,
+        0.031189746223390102
+      ],
+      "unit": "transition_rows_per_second",
+      "units_per_call": 8192,
+      "warmup_calls": 3
+    },
+    "fixed_runtime_reference": {
+      "iterations_per_sample": 10,
+      "maximum_rate": 4004624.7655778187,
+      "median_rate": 3815748.2551608467,
+      "minimum_rate": 3658141.6380399456,
+      "sample_count": 7,
+      "sample_rates": [
+        3658141.6380399456,
+        3723882.7791200764,
+        4004624.7655778187,
+        3853927.282650286,
+        3876057.8063260685,
+        3774322.052598458,
+        3815748.2551608467
+      ],
+      "sample_seconds": [
+        0.011196942068636417,
+        0.010999272111803293,
+        0.010228174272924662,
+        0.010628119576722383,
+        0.01056743785738945,
+        0.01085228007286787,
+        0.010734460782259703
+      ],
+      "unit": "rows_per_second",
+      "units_per_call": 4096,
+      "warmup_calls": 3
+    },
+    "named_field_lookup": {
+      "iterations_per_sample": 10000,
+      "maximum_rate": 7897340.949651907,
+      "median_rate": 6889803.840417133,
+      "minimum_rate": 4539245.906615322,
+      "sample_count": 7,
+      "sample_rates": [
+        6889803.840417133,
+        6247316.0278694965,
+        7756002.950012316,
+        6351679.098010334,
+        4539245.906615322,
+        7897340.949651907,
+        7587788.101409661
+      ],
+      "sample_seconds": [
+        0.0014514201320707798,
+        0.0016006873920559883,
+        0.001289323903620243,
+        0.0015743868425488472,
+        0.0022030090913176537,
+        0.0012662489898502827,
+        0.0013179071247577667
+      ],
+      "unit": "calls_per_second",
+      "units_per_call": 1,
+      "warmup_calls": 3
+    },
+    "reset_state_gather": {
+      "iterations_per_sample": 10,
+      "maximum_rate": 23590639.212688174,
+      "median_rate": 16302175.34662699,
+      "minimum_rate": 11446954.769010417,
+      "sample_count": 7,
+      "sample_rates": [
+        20204479.811831117,
+        23590639.212688174,
+        11446954.769010417,
+        19097612.654765885,
+        14818083.703444023,
+        12694000.361951247,
+        16302175.34662699
+      ],
+      "sample_seconds": [
+        0.002027273178100586,
+        0.001736281905323267,
+        0.0035782442428171635,
+        0.002144770696759224,
+        0.0027641900815069675,
+        0.003226721193641424,
+        0.002512548118829727
+      ],
+      "unit": "rows_per_second",
+      "units_per_call": 4096,
+      "warmup_calls": 3
+    }
+  }
+}

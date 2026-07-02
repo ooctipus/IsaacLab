@@ -1,0 +1,246 @@
+{
+  "baseline": {
+    "full_domain_before_after": {
+      "reason": "The historical cache path teleported simulator assets and recomputed observations; its complete dependency state and matching runtime artifacts were not frozen. Recreating it in the final tree would change the system being measured.",
+      "status": "waived_not_reconstructable_as_controlled_comparison"
+    },
+    "hot_shell_reference": "Exact StateCommand source recovered from the frozen migration revision and run with tensor-equivalent table/payload work."
+  },
+  "configuration": {
+    "batch_size": 1024,
+    "devices": [
+      "cpu",
+      "cuda:0"
+    ],
+    "init_iterations": 30,
+    "init_warmup": 5,
+    "iterations": 200,
+    "num_envs": 4096,
+    "num_tasks": 8192,
+    "profile_iterations": 20,
+    "profiles": [
+      {
+        "command_dim": 12,
+        "error_dim": 4,
+        "name": "position_like",
+        "row_width": 48
+      },
+      {
+        "command_dim": 7,
+        "error_dim": 2,
+        "name": "factory_like",
+        "row_width": 30
+      }
+    ],
+    "repeats": 9,
+    "seed": 0,
+    "torch_threads": 1,
+    "warmup": 20
+  },
+  "decision": {
+    "cpu_reference_gate_passed": true,
+    "cuda_reference_gate_passed": true,
+    "cuda_resample_allocation_accounted": true,
+    "cuda_update_allocation_free": true,
+    "gate_passed": true,
+    "owned_storage_pointer_stability_passed": true,
+    "resample_allocation_policy": "Reset-time resample allocations are measured and reported; the per-step update must allocate no CUDA tensor storage.",
+    "semantic_equivalence_passed": true
+  },
+  "identity": {
+    "benchmark_script_sha256": "f49e583ca7127b077a18ab5fbf907ae0a580159d83d36d7d0e0c4a309f6bbea8",
+    "combiner_script_sha256": "152a7bdfc50fe90459ecc76cfe04370c7758cf6f0c60a3f45fce331b3896b645",
+    "cpu_measurement_sha256": "7bfe3c7fbe58bb5d51599dc48b0d41ae3be5f55fae0ef5ed9bf1606aa9c472c6",
+    "cuda_measurement_sha256": "00aa07a408c379a81fce212f8165f551b8ecf605c24db53dc9a03ca75acb2913",
+    "current_state_command_cfg_sha256": "bc7014d6e02fa1e42d0d77bd1744b2d046f5458013890d9d2b861c301407629e",
+    "current_state_command_sha256": "50b6467d7190326bc5be5c6ec8fe55fa3c8db33d6099c0941a8ec4a3fef7c252",
+    "historical_revision": "fe51e5646a335e05844a10fa93d9479da2749847",
+    "historical_state_command_sha256": "d03104733554d1c46d5501d24e96b04cebfc0ebc37ba83fd3ee6e9bd7d244c54"
+  },
+  "measurements": {
+    "cpu": {
+      "comparison": {
+        "factory_like": {
+          "construction_median_ratio": 1.0324801846424208,
+          "pinned_resample_median_ratio": 1.1259760488640218,
+          "randomized_resample_median_ratio": 0.9479719215410632,
+          "state_owned_byte_ratio": 0.8888888888888888,
+          "update_median_ratio": 0.9503642952653011
+        },
+        "position_like": {
+          "construction_median_ratio": 1.059624362908047,
+          "pinned_resample_median_ratio": 1.0930227632100729,
+          "randomized_resample_median_ratio": 0.9345873413353354,
+          "state_owned_byte_ratio": 0.9259259259259259,
+          "update_median_ratio": 1.0543536781671736
+        }
+      },
+      "configuration_sha256": "d52d8d3ae1247abc2cf649ed13097301a24316c81598fabf474e2dd61bbfed3a",
+      "decision": {
+        "absolute_metrics_only_for_domain_payloads": true,
+        "gate_passed": true,
+        "no_material_regression_threshold_ratio": 1.25,
+        "owned_storage_pointer_stability_passed": true,
+        "reference_ratio_gate_applies_to": [
+          "construction_median_ratio",
+          "randomized_resample_median_ratio",
+          "pinned_resample_median_ratio",
+          "update_median_ratio"
+        ],
+        "reference_ratio_gate_passed": true,
+        "semantic_equivalence_passed": true
+      },
+      "file": "state_command_systems_cpu_v1.json",
+      "runtime": {
+        "cuda": "12.8",
+        "device": "cpu",
+        "device_name": "x86_64",
+        "python": "3.12.12",
+        "torch": "2.10.0+cu128"
+      }
+    },
+    "cuda": {
+      "comparison": {
+        "factory_like": {
+          "construction_median_ratio": 0.9358708195888998,
+          "pinned_resample_median_ratio": 1.2199106815154603,
+          "randomized_resample_median_ratio": 0.8265454337496626,
+          "state_owned_byte_ratio": 0.8888888888888888,
+          "update_median_ratio": 1.0052796552308387
+        },
+        "position_like": {
+          "construction_median_ratio": 0.822943459294091,
+          "pinned_resample_median_ratio": 0.9168347999777009,
+          "randomized_resample_median_ratio": 0.6457299542318905,
+          "state_owned_byte_ratio": 0.9259259259259259,
+          "update_median_ratio": 0.7911846017422148
+        }
+      },
+      "configuration_sha256": "bdc82b73a01caa4055e271c443a2eb2150be6064185dad47f357cb20876d93c2",
+      "current_allocations": {
+        "factory_like": {
+          "pinned_resample_allocations": {
+            "cuda_peak_additional_bytes": 131072,
+            "owned_storage_pointers_stable": true,
+            "positive_self_cpu_memory_by_operator": {},
+            "positive_self_cpu_memory_bytes": 0,
+            "positive_self_cpu_memory_operator_calls": 0,
+            "positive_self_device_memory_by_operator": {
+              "aten::index": 163840,
+              "aten::resize_": 2457600
+            },
+            "positive_self_device_memory_bytes": 2621440,
+            "positive_self_device_memory_operator_calls": 40,
+            "profiled_calls": 20,
+            "python_peak_bytes": 28645
+          },
+          "randomized_resample_allocations": {
+            "cuda_peak_additional_bytes": 131072,
+            "owned_storage_pointers_stable": true,
+            "positive_self_cpu_memory_by_operator": {},
+            "positive_self_cpu_memory_bytes": 0,
+            "positive_self_cpu_memory_operator_calls": 0,
+            "positive_self_device_memory_by_operator": {
+              "aten::empty": 163840,
+              "aten::resize_": 2457600
+            },
+            "positive_self_device_memory_bytes": 2621440,
+            "positive_self_device_memory_operator_calls": 60,
+            "profiled_calls": 20,
+            "python_peak_bytes": 28757
+          },
+          "update_allocations": {
+            "cuda_peak_additional_bytes": 0,
+            "owned_storage_pointers_stable": true,
+            "positive_self_cpu_memory_by_operator": {},
+            "positive_self_cpu_memory_bytes": 0,
+            "positive_self_cpu_memory_operator_calls": 0,
+            "positive_self_device_memory_by_operator": {},
+            "positive_self_device_memory_bytes": 0,
+            "positive_self_device_memory_operator_calls": 0,
+            "profiled_calls": 20,
+            "python_peak_bytes": 28645
+          }
+        },
+        "position_like": {
+          "pinned_resample_allocations": {
+            "cuda_peak_additional_bytes": 204800,
+            "owned_storage_pointers_stable": true,
+            "positive_self_cpu_memory_by_operator": {},
+            "positive_self_cpu_memory_bytes": 0,
+            "positive_self_cpu_memory_operator_calls": 0,
+            "positive_self_device_memory_by_operator": {
+              "aten::index": 163840,
+              "aten::resize_": 3932160
+            },
+            "positive_self_device_memory_bytes": 4096000,
+            "positive_self_device_memory_operator_calls": 40,
+            "profiled_calls": 20,
+            "python_peak_bytes": 31185
+          },
+          "randomized_resample_allocations": {
+            "cuda_peak_additional_bytes": 204800,
+            "owned_storage_pointers_stable": true,
+            "positive_self_cpu_memory_by_operator": {},
+            "positive_self_cpu_memory_bytes": 0,
+            "positive_self_cpu_memory_operator_calls": 0,
+            "positive_self_device_memory_by_operator": {
+              "aten::empty": 163840,
+              "aten::resize_": 3932160
+            },
+            "positive_self_device_memory_bytes": 4096000,
+            "positive_self_device_memory_operator_calls": 60,
+            "profiled_calls": 20,
+            "python_peak_bytes": 132054
+          },
+          "update_allocations": {
+            "cuda_peak_additional_bytes": 0,
+            "owned_storage_pointers_stable": true,
+            "positive_self_cpu_memory_by_operator": {},
+            "positive_self_cpu_memory_bytes": 0,
+            "positive_self_cpu_memory_operator_calls": 0,
+            "positive_self_device_memory_by_operator": {},
+            "positive_self_device_memory_bytes": 0,
+            "positive_self_device_memory_operator_calls": 0,
+            "profiled_calls": 20,
+            "python_peak_bytes": 28721
+          }
+        }
+      },
+      "decision": {
+        "absolute_metrics_only_for_domain_payloads": true,
+        "gate_passed": true,
+        "no_material_regression_threshold_ratio": 1.25,
+        "owned_storage_pointer_stability_passed": true,
+        "reference_ratio_gate_applies_to": [
+          "construction_median_ratio",
+          "randomized_resample_median_ratio",
+          "pinned_resample_median_ratio",
+          "update_median_ratio"
+        ],
+        "reference_ratio_gate_passed": true,
+        "semantic_equivalence_passed": true
+      },
+      "file": "state_command_systems_cuda_v1.json",
+      "runtime": {
+        "cuda": "12.8",
+        "device": "cuda:0",
+        "device_name": "NVIDIA GeForce RTX 5090",
+        "python": "3.12.12",
+        "torch": "2.10.0+cu128"
+      }
+    }
+  },
+  "schema": "forward_backward_phase3_state_command_systems_v1",
+  "scope": {
+    "domain_boundary": "Position-like and Factory-like tensor shapes with identical synthetic payload work isolate shell ownership.",
+    "measured": "Exact historical/final StateCommand shell construction, resample, update, storage, and allocation behavior on CPU and CUDA.",
+    "not_claimed": [
+      "simulator reset-write throughput",
+      "Position sensor and robot-state kernel throughput",
+      "Factory symmetry and Warp kernel throughput",
+      "historical observation-cache materialization throughput"
+    ]
+  },
+  "status": "passed"
+}

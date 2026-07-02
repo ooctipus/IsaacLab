@@ -1,0 +1,573 @@
+{
+  "baseline": {
+    "full_domain_before_after": {
+      "reason": "The historical cache path teleported simulator assets and recomputed observations; its complete dependency state and matching runtime artifacts were not frozen. Recreating it in the final tree would change the system being measured.",
+      "status": "waived_not_reconstructable_as_controlled_comparison"
+    },
+    "hot_shell_reference": "Exact StateCommand source recovered from the frozen migration revision and run with tensor-equivalent table/payload work."
+  },
+  "comparison": {
+    "factory_like": {
+      "construction_median_ratio": 0.9358708195888998,
+      "pinned_resample_median_ratio": 1.2199106815154603,
+      "randomized_resample_median_ratio": 0.8265454337496626,
+      "state_owned_byte_ratio": 0.8888888888888888,
+      "update_median_ratio": 1.0052796552308387
+    },
+    "position_like": {
+      "construction_median_ratio": 0.822943459294091,
+      "pinned_resample_median_ratio": 0.9168347999777009,
+      "randomized_resample_median_ratio": 0.6457299542318905,
+      "state_owned_byte_ratio": 0.9259259259259259,
+      "update_median_ratio": 0.7911846017422148
+    }
+  },
+  "configuration": {
+    "batch_size": 1024,
+    "device": "cuda:0",
+    "init_iterations": 30,
+    "init_warmup": 5,
+    "iterations": 200,
+    "num_envs": 4096,
+    "num_tasks": 8192,
+    "profile_iterations": 20,
+    "profiles": [
+      {
+        "command_dim": 12,
+        "error_dim": 4,
+        "name": "position_like",
+        "row_width": 48
+      },
+      {
+        "command_dim": 7,
+        "error_dim": 2,
+        "name": "factory_like",
+        "row_width": 30
+      }
+    ],
+    "repeats": 9,
+    "seed": 0,
+    "torch_threads": 1,
+    "warmup": 20
+  },
+  "decision": {
+    "absolute_metrics_only_for_domain_payloads": true,
+    "gate_passed": true,
+    "no_material_regression_threshold_ratio": 1.25,
+    "owned_storage_pointer_stability_passed": true,
+    "reference_ratio_gate_applies_to": [
+      "construction_median_ratio",
+      "randomized_resample_median_ratio",
+      "pinned_resample_median_ratio",
+      "update_median_ratio"
+    ],
+    "reference_ratio_gate_passed": true,
+    "semantic_equivalence_passed": true
+  },
+  "identity": {
+    "benchmark_script_sha256": "f49e583ca7127b077a18ab5fbf907ae0a580159d83d36d7d0e0c4a309f6bbea8",
+    "configuration_sha256": "bdc82b73a01caa4055e271c443a2eb2150be6064185dad47f357cb20876d93c2",
+    "current_state_command_cfg_sha256": "bc7014d6e02fa1e42d0d77bd1744b2d046f5458013890d9d2b861c301407629e",
+    "current_state_command_sha256": "50b6467d7190326bc5be5c6ec8fe55fa3c8db33d6099c0941a8ec4a3fef7c252",
+    "historical_revision": "fe51e5646a335e05844a10fa93d9479da2749847",
+    "historical_state_command_sha256": "d03104733554d1c46d5501d24e96b04cebfc0ebc37ba83fd3ee6e9bd7d244c54",
+    "repository_head": "c9c3b9af377a4132588a7126f4073ed12b072124"
+  },
+  "results": {
+    "factory_like": {
+      "current": {
+        "construction": {
+          "median_ns": 320736.5,
+          "p95_ns": 350929.69999999995,
+          "python_peak_bytes": 29340,
+          "samples": 30,
+          "storage": {
+            "payload_owned_bytes": 491520,
+            "state_command_owned_bytes": 262144,
+            "table_owned_bytes": 983040,
+            "tensor_shapes": {
+              "cmd_indices": [
+                4096
+              ],
+              "command": [
+                4096,
+                7
+              ],
+              "command_counter": [
+                4096
+              ],
+              "error": [
+                4096,
+                2
+              ],
+              "metric.error_0": [
+                4096
+              ],
+              "metric.error_1": [
+                4096
+              ],
+              "payload.bound": [
+                4096,
+                30
+              ],
+              "table.rows": [
+                8192,
+                30
+              ],
+              "time_left": [
+                4096
+              ]
+            }
+          }
+        },
+        "pinned_resample": {
+          "calls_per_second": 24936.90029092635,
+          "env_rows_per_second": 25535385.897908583,
+          "iterations_per_repeat": 200,
+          "median_ns_per_call": 40101.215,
+          "p95_ns_per_call": 40419.117,
+          "repeats": 9
+        },
+        "pinned_resample_allocations": {
+          "cuda_peak_additional_bytes": 131072,
+          "owned_storage_pointers_stable": true,
+          "positive_self_cpu_memory_by_operator": {},
+          "positive_self_cpu_memory_bytes": 0,
+          "positive_self_cpu_memory_operator_calls": 0,
+          "positive_self_device_memory_by_operator": {
+            "aten::index": 163840,
+            "aten::resize_": 2457600
+          },
+          "positive_self_device_memory_bytes": 2621440,
+          "positive_self_device_memory_operator_calls": 40,
+          "profiled_calls": 20,
+          "python_peak_bytes": 28645
+        },
+        "randomized_resample": {
+          "calls_per_second": 23776.52821554659,
+          "env_rows_per_second": 24347164.89271971,
+          "iterations_per_repeat": 200,
+          "median_ns_per_call": 42058.285,
+          "p95_ns_per_call": 42476.977,
+          "repeats": 9
+        },
+        "randomized_resample_allocations": {
+          "cuda_peak_additional_bytes": 131072,
+          "owned_storage_pointers_stable": true,
+          "positive_self_cpu_memory_by_operator": {},
+          "positive_self_cpu_memory_bytes": 0,
+          "positive_self_cpu_memory_operator_calls": 0,
+          "positive_self_device_memory_by_operator": {
+            "aten::empty": 163840,
+            "aten::resize_": 2457600
+          },
+          "positive_self_device_memory_bytes": 2621440,
+          "positive_self_device_memory_operator_calls": 60,
+          "profiled_calls": 20,
+          "python_peak_bytes": 28757
+        },
+        "update": {
+          "calls_per_second": 83436.76015060335,
+          "env_rows_per_second": 341756969.57687134,
+          "iterations_per_repeat": 200,
+          "median_ns_per_call": 11985.125,
+          "p95_ns_per_call": 12122.616,
+          "repeats": 9
+        },
+        "update_allocations": {
+          "cuda_peak_additional_bytes": 0,
+          "owned_storage_pointers_stable": true,
+          "positive_self_cpu_memory_by_operator": {},
+          "positive_self_cpu_memory_bytes": 0,
+          "positive_self_cpu_memory_operator_calls": 0,
+          "positive_self_device_memory_by_operator": {},
+          "positive_self_device_memory_bytes": 0,
+          "positive_self_device_memory_operator_calls": 0,
+          "profiled_calls": 20,
+          "python_peak_bytes": 28645
+        }
+      },
+      "historical_reference": {
+        "construction": {
+          "median_ns": 342714.5,
+          "p95_ns": 358406.15,
+          "python_peak_bytes": 29380,
+          "samples": 30,
+          "storage": {
+            "payload_owned_bytes": 491520,
+            "state_command_owned_bytes": 294912,
+            "table_owned_bytes": 983040,
+            "tensor_shapes": {
+              "cmd_indices": [
+                4096
+              ],
+              "command": [
+                4096,
+                7
+              ],
+              "command_counter": [
+                4096
+              ],
+              "error": [
+                4096,
+                2
+              ],
+              "metric.error_0": [
+                4096
+              ],
+              "metric.error_1": [
+                4096
+              ],
+              "payload.bound": [
+                4096,
+                30
+              ],
+              "success_rates": [
+                8192
+              ],
+              "table.rows": [
+                8192,
+                30
+              ],
+              "time_left": [
+                4096
+              ]
+            }
+          }
+        },
+        "pinned_resample": {
+          "calls_per_second": 30420.791028787044,
+          "env_rows_per_second": 31150890.013477933,
+          "iterations_per_repeat": 200,
+          "median_ns_per_call": 32872.255,
+          "p95_ns_per_call": 34366.831,
+          "repeats": 9
+        },
+        "pinned_resample_allocations": {
+          "cuda_peak_additional_bytes": 131072,
+          "owned_storage_pointers_stable": true,
+          "positive_self_cpu_memory_by_operator": {},
+          "positive_self_cpu_memory_bytes": 0,
+          "positive_self_cpu_memory_operator_calls": 0,
+          "positive_self_device_memory_by_operator": {
+            "aten::index": 163840,
+            "aten::resize_": 2457600
+          },
+          "positive_self_device_memory_bytes": 2621440,
+          "positive_self_device_memory_operator_calls": 40,
+          "profiled_calls": 20,
+          "python_peak_bytes": 28645
+        },
+        "randomized_resample": {
+          "calls_per_second": 19652.380826980047,
+          "env_rows_per_second": 20124037.966827568,
+          "iterations_per_repeat": 200,
+          "median_ns_per_call": 50884.42,
+          "p95_ns_per_call": 52697.619,
+          "repeats": 9
+        },
+        "randomized_resample_allocations": {
+          "cuda_peak_additional_bytes": 131072,
+          "owned_storage_pointers_stable": true,
+          "positive_self_cpu_memory_by_operator": {},
+          "positive_self_cpu_memory_bytes": 0,
+          "positive_self_cpu_memory_operator_calls": 0,
+          "positive_self_device_memory_by_operator": {
+            "aten::empty": 163840,
+            "aten::index": 163840,
+            "aten::resize_": 2457600
+          },
+          "positive_self_device_memory_bytes": 2785280,
+          "positive_self_device_memory_operator_calls": 80,
+          "profiled_calls": 20,
+          "python_peak_bytes": 28645
+        },
+        "update": {
+          "calls_per_second": 83877.27747777672,
+          "env_rows_per_second": 343561328.54897344,
+          "iterations_per_repeat": 200,
+          "median_ns_per_call": 11922.18,
+          "p95_ns_per_call": 12634.530999999999,
+          "repeats": 9
+        },
+        "update_allocations": {
+          "cuda_peak_additional_bytes": 0,
+          "owned_storage_pointers_stable": true,
+          "positive_self_cpu_memory_by_operator": {},
+          "positive_self_cpu_memory_bytes": 0,
+          "positive_self_cpu_memory_operator_calls": 0,
+          "positive_self_device_memory_by_operator": {},
+          "positive_self_device_memory_bytes": 0,
+          "positive_self_device_memory_operator_calls": 0,
+          "profiled_calls": 20,
+          "python_peak_bytes": 35533
+        }
+      }
+    },
+    "position_like": {
+      "current": {
+        "construction": {
+          "median_ns": 290515.5,
+          "p95_ns": 307961.85,
+          "python_peak_bytes": 29956,
+          "samples": 30,
+          "storage": {
+            "payload_owned_bytes": 786432,
+            "state_command_owned_bytes": 409600,
+            "table_owned_bytes": 1572864,
+            "tensor_shapes": {
+              "cmd_indices": [
+                4096
+              ],
+              "command": [
+                4096,
+                12
+              ],
+              "command_counter": [
+                4096
+              ],
+              "error": [
+                4096,
+                4
+              ],
+              "metric.error_0": [
+                4096
+              ],
+              "metric.error_1": [
+                4096
+              ],
+              "metric.error_2": [
+                4096
+              ],
+              "metric.error_3": [
+                4096
+              ],
+              "payload.bound": [
+                4096,
+                48
+              ],
+              "table.rows": [
+                8192,
+                48
+              ],
+              "time_left": [
+                4096
+              ]
+            }
+          }
+        },
+        "pinned_resample": {
+          "calls_per_second": 32342.94910772272,
+          "env_rows_per_second": 33119179.886308067,
+          "iterations_per_repeat": 200,
+          "median_ns_per_call": 30918.64,
+          "p95_ns_per_call": 31423.494,
+          "repeats": 9
+        },
+        "pinned_resample_allocations": {
+          "cuda_peak_additional_bytes": 204800,
+          "owned_storage_pointers_stable": true,
+          "positive_self_cpu_memory_by_operator": {},
+          "positive_self_cpu_memory_bytes": 0,
+          "positive_self_cpu_memory_operator_calls": 0,
+          "positive_self_device_memory_by_operator": {
+            "aten::index": 163840,
+            "aten::resize_": 3932160
+          },
+          "positive_self_device_memory_bytes": 4096000,
+          "positive_self_device_memory_operator_calls": 40,
+          "profiled_calls": 20,
+          "python_peak_bytes": 31185
+        },
+        "randomized_resample": {
+          "calls_per_second": 31247.231690567416,
+          "env_rows_per_second": 31997165.251141034,
+          "iterations_per_repeat": 200,
+          "median_ns_per_call": 32002.835,
+          "p95_ns_per_call": 32806.22,
+          "repeats": 9
+        },
+        "randomized_resample_allocations": {
+          "cuda_peak_additional_bytes": 204800,
+          "owned_storage_pointers_stable": true,
+          "positive_self_cpu_memory_by_operator": {},
+          "positive_self_cpu_memory_bytes": 0,
+          "positive_self_cpu_memory_operator_calls": 0,
+          "positive_self_device_memory_by_operator": {
+            "aten::empty": 163840,
+            "aten::resize_": 3932160
+          },
+          "positive_self_device_memory_bytes": 4096000,
+          "positive_self_device_memory_operator_calls": 60,
+          "profiled_calls": 20,
+          "python_peak_bytes": 132054
+        },
+        "update": {
+          "calls_per_second": 105486.62297762364,
+          "env_rows_per_second": 432073207.71634644,
+          "iterations_per_repeat": 200,
+          "median_ns_per_call": 9479.875,
+          "p95_ns_per_call": 9638.065999999999,
+          "repeats": 9
+        },
+        "update_allocations": {
+          "cuda_peak_additional_bytes": 0,
+          "owned_storage_pointers_stable": true,
+          "positive_self_cpu_memory_by_operator": {},
+          "positive_self_cpu_memory_bytes": 0,
+          "positive_self_cpu_memory_operator_calls": 0,
+          "positive_self_device_memory_by_operator": {},
+          "positive_self_device_memory_bytes": 0,
+          "positive_self_device_memory_operator_calls": 0,
+          "profiled_calls": 20,
+          "python_peak_bytes": 28721
+        }
+      },
+      "historical_reference": {
+        "construction": {
+          "median_ns": 353020.0,
+          "p95_ns": 517780.14999999985,
+          "python_peak_bytes": 29524,
+          "samples": 30,
+          "storage": {
+            "payload_owned_bytes": 786432,
+            "state_command_owned_bytes": 442368,
+            "table_owned_bytes": 1572864,
+            "tensor_shapes": {
+              "cmd_indices": [
+                4096
+              ],
+              "command": [
+                4096,
+                12
+              ],
+              "command_counter": [
+                4096
+              ],
+              "error": [
+                4096,
+                4
+              ],
+              "metric.error_0": [
+                4096
+              ],
+              "metric.error_1": [
+                4096
+              ],
+              "metric.error_2": [
+                4096
+              ],
+              "metric.error_3": [
+                4096
+              ],
+              "payload.bound": [
+                4096,
+                48
+              ],
+              "success_rates": [
+                8192
+              ],
+              "table.rows": [
+                8192,
+                48
+              ],
+              "time_left": [
+                4096
+              ]
+            }
+          }
+        },
+        "pinned_resample": {
+          "calls_per_second": 29653.141275867918,
+          "env_rows_per_second": 30364816.666488748,
+          "iterations_per_repeat": 200,
+          "median_ns_per_call": 33723.24,
+          "p95_ns_per_call": 33979.08,
+          "repeats": 9
+        },
+        "pinned_resample_allocations": {
+          "cuda_peak_additional_bytes": 204800,
+          "owned_storage_pointers_stable": true,
+          "positive_self_cpu_memory_by_operator": {},
+          "positive_self_cpu_memory_bytes": 0,
+          "positive_self_cpu_memory_operator_calls": 0,
+          "positive_self_device_memory_by_operator": {
+            "aten::index": 163840,
+            "aten::resize_": 3932160
+          },
+          "positive_self_device_memory_bytes": 4096000,
+          "positive_self_device_memory_operator_calls": 40,
+          "profiled_calls": 20,
+          "python_peak_bytes": 28869
+        },
+        "randomized_resample": {
+          "calls_per_second": 20177.273489423376,
+          "env_rows_per_second": 20661528.053169537,
+          "iterations_per_repeat": 200,
+          "median_ns_per_call": 49560.71,
+          "p95_ns_per_call": 56688.708,
+          "repeats": 9
+        },
+        "randomized_resample_allocations": {
+          "cuda_peak_additional_bytes": 204800,
+          "owned_storage_pointers_stable": true,
+          "positive_self_cpu_memory_by_operator": {},
+          "positive_self_cpu_memory_bytes": 0,
+          "positive_self_cpu_memory_operator_calls": 0,
+          "positive_self_device_memory_by_operator": {
+            "aten::empty": 163840,
+            "aten::index": 163840,
+            "aten::resize_": 3932160
+          },
+          "positive_self_device_memory_bytes": 4259840,
+          "positive_self_device_memory_operator_calls": 80,
+          "profiled_calls": 20,
+          "python_peak_bytes": 28869
+        },
+        "update": {
+          "calls_per_second": 83459.39178968233,
+          "env_rows_per_second": 341849668.7705388,
+          "iterations_per_repeat": 200,
+          "median_ns_per_call": 11981.875,
+          "p95_ns_per_call": 12079.35,
+          "repeats": 9
+        },
+        "update_allocations": {
+          "cuda_peak_additional_bytes": 0,
+          "owned_storage_pointers_stable": true,
+          "positive_self_cpu_memory_by_operator": {},
+          "positive_self_cpu_memory_bytes": 0,
+          "positive_self_cpu_memory_operator_calls": 0,
+          "positive_self_device_memory_by_operator": {},
+          "positive_self_device_memory_bytes": 0,
+          "positive_self_device_memory_operator_calls": 0,
+          "profiled_calls": 20,
+          "python_peak_bytes": 28869
+        }
+      }
+    }
+  },
+  "runtime": {
+    "cuda": "12.8",
+    "device": "cuda:0",
+    "device_name": "NVIDIA GeForce RTX 5090",
+    "python": "3.12.12",
+    "torch": "2.10.0+cu128"
+  },
+  "schema": "forward_backward_phase3_state_command_systems_measurement_v1",
+  "scope": {
+    "interpretation": "The historical reference isolates shell ownership and dispatch; it is not an end-to-end domain benchmark.",
+    "measured": "StateCommand construction and direct tensor-payload delegation on the declared CPU or CUDA device.",
+    "not_measured": [
+      "simulator reset writes",
+      "Position sensor and robot-state kernels",
+      "Factory symmetry and Warp kernels",
+      "historical lazy observation-cache materialization"
+    ]
+  },
+  "semantic_equivalence": {
+    "factory_like": true,
+    "position_like": true
+  },
+  "status": "passed"
+}

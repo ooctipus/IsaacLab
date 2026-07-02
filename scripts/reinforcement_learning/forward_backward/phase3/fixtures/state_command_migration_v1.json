@@ -1,0 +1,166 @@
+{
+  "schema": "forward_backward.phase3.state_command_migration.v1",
+  "captured_at": "2026-06-29",
+  "repository_revision": "fe51e5646a335e05844a10fa93d9479da2749847",
+  "scope": "source/isaaclab_tasks/isaaclab_tasks/core/multi_task",
+  "decision": {
+    "task_table": "Own immutable domain rows and typed batched selection only.",
+    "state_command": "Own manager callbacks, selected row ids, fixed command and error tensors, metrics, and debug dispatch.",
+    "payload": "Bind selected rows, resolve domain frames, emit simulator reset writes, and update per-environment task facts.",
+    "curriculum": "Own sampling probabilities, rolling outcomes, and per-row success rates.",
+    "motion_provider": "Own read-only reset, reference, expert-edge, and evaluation views over one immutable robot-motion bank.",
+    "algorithm_bridge": "Map named environment facts, final observations, evidence, and motion metadata to the RSL-RL transition contract."
+  },
+  "public_symbols_retained": [
+    "isaaclab_tasks.core.multi_task.mdp.commands.StateCommand",
+    "isaaclab_tasks.core.multi_task.mdp.commands.StateCommandCfg"
+  ],
+  "state_command_removals": [
+    "TensorDict dependency",
+    "_target_obs_cache",
+    "_spawn_obs_cache",
+    "get_target_obs_cache",
+    "get_spawn_obs_cache",
+    "_build_obs_cache",
+    "success_rates",
+    "spawn/target interpretation in _resample_command",
+    "coordinate lifting in _resample_command",
+    "set_reset_state call in _resample_command"
+  ],
+  "state_command_result": {
+    "construction": "Build table, build payload against table, then allocate manager-owned fixed tensors.",
+    "selection": "Keep one fixed-size long tensor of selected table rows; external curricula may write it in place.",
+    "resample": "Optionally sample row ids, then call payload.bind(env_ids, selected_rows).",
+    "update": "Call payload.update(step_dt, command, error).",
+    "statistics": "Read payload task facts for metrics only; no curriculum history or learner state lives on the command."
+  },
+  "migration_units": [
+    {
+      "name": "shared_command",
+      "paths": [
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/mdp/commands/state_command/state_command.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/mdp/commands/state_command/state_command_cfg.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/mdp/commands/state_command/__init__.pyi",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/mdp/commands/__init__.pyi"
+      ],
+      "action": "rewrite",
+      "proof": "The shell has no TensorDict, reset writer, coordinate branch, learner cache, reward-provider branch, or success-history storage."
+    },
+    {
+      "name": "position_domain",
+      "paths": [
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/position_env_cfg.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/terrain/mdp/commands/task_table_builder.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/terrain/mdp/commands/state_command_payloads.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/terrain/mdp/commands/commands_cfg.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/terrain/mdp/observations.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/terrain/mdp/events.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/terrain/mdp/rewards.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/terrain/mdp/terminations.py"
+      ],
+      "action": "migrate",
+      "proof": "Payload.bind reproduces the current selected spawn write, target construction, env-origin framing, masks, timers, and command/error tensors elementwise."
+    },
+    {
+      "name": "factory_domain",
+      "paths": [
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/factory_env_cfg.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/factory/mdp/reset_state_command_cfg.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/factory/mdp/reset_state_task_table.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/factory/mdp/reset_state_command_payloads.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/factory/mdp/rewards.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/factory/mdp/terminations.py"
+      ],
+      "action": "migrate",
+      "proof": "Payload.bind reproduces the current paired-row reset, held-asset goal, symmetry reduction, thresholds, hold duration, and command/error tensors elementwise."
+    },
+    {
+      "name": "curriculum_ownership",
+      "paths": [
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/mdp/curriculums.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/terrain/mdp_presets/curriculum_presets.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/terrain/mdp/curriculums.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/factory/mdp/curriculum.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/factory/reset_env_cfg.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/factory/viz/sampler_images.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/terrain/viz/sampler_images.py"
+      ],
+      "action": "migrate",
+      "proof": "success_rate_sampler builds the layout once, allocates exactly layout.num_items rates, gives that tensor to SuccessMonitor and Sampler, and exposes it through CurriculumManager.get_term()."
+    },
+    {
+      "name": "learner_cache_decoupling",
+      "paths": [
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/curriculum/sampling/sampling_strategies.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/curriculum/sampling/sampling_strategies_cfg.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/terrain/config/rsl_rl_cfg.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/factory/config/agents/rsl_rl_ppo_cfg.py"
+      ],
+      "action": "detach",
+      "proof": "No shipped Position or Factory preset asks StateCommand to teleport all rows and materialize observations. Generic value-shift code, if retained, accepts an explicit external immutable cache and names no command method."
+    },
+    {
+      "name": "superseded_motion_attempt",
+      "paths": [
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/metamotivo_cfg.py",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/config/metamotivo",
+        "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/mdp/commands/state_command/metamotivo_task.py"
+      ],
+      "action": "delete_after_replacement",
+      "proof": "No algorithm-branded environment, last-frame goal command, per-clip task-row duplication, runtime HDF5 load, target-observation cache, or simulator-specific divergence patch remains."
+    }
+  ],
+  "pre_migration_hashes": {
+    "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/mdp/commands/state_command/state_command.py": "d03104733554d1c46d5501d24e96b04cebfc0ebc37ba83fd3ee6e9bd7d244c54",
+    "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/mdp/commands/state_command/state_command_cfg.py": "3f20d8d2bf0ba421817d9c42b04b7bc6734d316c708771b0feeb18c552665456",
+    "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/position_env_cfg.py": "5f90c2e134626699905eb0b3d758760725eaaf586e040c1fdf629e21e55b928d",
+    "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/factory_env_cfg.py": "3af2cb4af22efdf298332964235fe32f5e56cafd44dddcc3c0e47d13f8ec4e94",
+    "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/mdp/curriculums.py": "91ce2a53d33116ff8dda9568e0f328ae89138808644c4c546aba6a181b40ccca",
+    "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/terrain/mdp/commands/task_table_builder.py": "998ded3c69a8e606dc355b9834441b585a70648ab7343d7618e8de8475bfff2a",
+    "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/terrain/mdp/commands/state_command_payloads.py": "1061dd4b89aa5440ba7312a4fd6cefafa0fa13820850cd23fcd519267b4352e9",
+    "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/factory/mdp/reset_state_task_table.py": "bc7a5cad7ec1f7b1e2a5ac6fadf54c7647c847f64407ae74f5fc595253a1518e",
+    "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/factory/mdp/reset_state_command_payloads.py": "9dabafd8730209cd9cd8816950b57250975b32107e31a95e3e3d4654f7157b17"
+  },
+  "caller_tests_to_migrate": [
+    "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/tests/test_reset_accumulator_state_storage.py",
+    "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/tests/terrain/test_command_curriculum.py",
+    "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/tests/terrain/test_locomotion_position_future_command_cfg.py"
+  ],
+  "required_new_tests": [
+    "shared payload-bind lifecycle and reset-ownership regression",
+    "curriculum-owned success-rate allocation and stable-storage regression",
+    "Position pre/post migration tensor oracle",
+    "Factory pre/post migration tensor oracle",
+    "StateCommand dependency and forbidden-symbol architecture test",
+    "Position and Factory initialization/resample benchmark"
+  ],
+  "systems_evidence": {
+    "status": "passed",
+    "record": "state_command_systems_v1.json",
+    "record_sha256": "d2842de2116fb913440b24eee2049ffc99197c832f9dc341acab33c4268308ef",
+    "benchmark": "../benchmark_state_command_delegation.py",
+    "scope": "Exact historical and final shell construction/resample/update with tensor-equivalent Position-like and Factory-like shapes.",
+    "device_records": {
+      "cpu": "state_command_systems_cpu_v1.json",
+      "cuda": "state_command_systems_cuda_v1.json"
+    },
+    "combiner": "../combine_state_command_systems_evidence.py",
+    "full_domain_before_after": "waived_not_reconstructable_as_controlled_comparison",
+    "absolute_final_path": [
+      "initialization time and peak Python memory",
+      "randomized and externally-pinned resample throughput and Torch allocation operators",
+      "update throughput and allocation operators",
+      "owned tensor storage and pointer stability"
+    ]
+  },
+  "gates": [
+    "A regression proves StateCommand delegates binding and reset ownership to the payload.",
+    "The regression fails when the payload bind call is removed.",
+    "Position selected-row reset, target, command, error, success, and timer tensors match the frozen behavior.",
+    "Factory selected-row reset, target, command, error, success, and timer tensors match the frozen behavior.",
+    "Curriculum rates have one owner and retain stable storage while selected row ids are updated in place.",
+    "No command-owned observation cache or algorithm-branded motion command remains.",
+    "Initialization time, hot resample time, allocations, and peak memory do not regress materially.",
+    "All known Position and Factory tests pass, followed by repository pre-commit."
+  ]
+}
