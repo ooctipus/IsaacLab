@@ -1,0 +1,300 @@
+{
+  "axes": {
+    "body": {
+      "behavior_names": [
+        "pelvis",
+        "left_hip_pitch_link",
+        "left_hip_roll_link",
+        "left_hip_yaw_link",
+        "left_knee_link",
+        "left_ankle_pitch_link",
+        "left_ankle_roll_link",
+        "right_hip_pitch_link",
+        "right_hip_roll_link",
+        "right_hip_yaw_link",
+        "right_knee_link",
+        "right_ankle_pitch_link",
+        "right_ankle_roll_link",
+        "waist_yaw_link",
+        "waist_roll_link",
+        "torso_link",
+        "left_shoulder_pitch_link",
+        "left_shoulder_roll_link",
+        "left_shoulder_yaw_link",
+        "left_elbow_link",
+        "left_wrist_roll_link",
+        "left_wrist_pitch_link",
+        "left_wrist_yaw_link",
+        "right_shoulder_pitch_link",
+        "right_shoulder_roll_link",
+        "right_shoulder_yaw_link",
+        "right_elbow_link",
+        "right_wrist_roll_link",
+        "right_wrist_pitch_link",
+        "right_wrist_yaw_link"
+      ],
+      "behavior_to_physical": [
+        0,
+        1,
+        4,
+        7,
+        10,
+        14,
+        18,
+        2,
+        5,
+        8,
+        11,
+        15,
+        19,
+        3,
+        6,
+        9,
+        12,
+        16,
+        20,
+        22,
+        24,
+        26,
+        28,
+        13,
+        17,
+        21,
+        23,
+        25,
+        27,
+        29
+      ],
+      "is_identity": false,
+      "physical_names": [
+        "pelvis",
+        "left_hip_pitch_link",
+        "right_hip_pitch_link",
+        "waist_yaw_link",
+        "left_hip_roll_link",
+        "right_hip_roll_link",
+        "waist_roll_link",
+        "left_hip_yaw_link",
+        "right_hip_yaw_link",
+        "torso_link",
+        "left_knee_link",
+        "right_knee_link",
+        "left_shoulder_pitch_link",
+        "right_shoulder_pitch_link",
+        "left_ankle_pitch_link",
+        "right_ankle_pitch_link",
+        "left_shoulder_roll_link",
+        "right_shoulder_roll_link",
+        "left_ankle_roll_link",
+        "right_ankle_roll_link",
+        "left_shoulder_yaw_link",
+        "right_shoulder_yaw_link",
+        "left_elbow_link",
+        "right_elbow_link",
+        "left_wrist_roll_link",
+        "right_wrist_roll_link",
+        "left_wrist_pitch_link",
+        "right_wrist_pitch_link",
+        "left_wrist_yaw_link",
+        "right_wrist_yaw_link"
+      ]
+    },
+    "joint": {
+      "behavior_names": [
+        "left_hip_pitch_joint",
+        "left_hip_roll_joint",
+        "left_hip_yaw_joint",
+        "left_knee_joint",
+        "left_ankle_pitch_joint",
+        "left_ankle_roll_joint",
+        "right_hip_pitch_joint",
+        "right_hip_roll_joint",
+        "right_hip_yaw_joint",
+        "right_knee_joint",
+        "right_ankle_pitch_joint",
+        "right_ankle_roll_joint",
+        "waist_yaw_joint",
+        "waist_roll_joint",
+        "waist_pitch_joint",
+        "left_shoulder_pitch_joint",
+        "left_shoulder_roll_joint",
+        "left_shoulder_yaw_joint",
+        "left_elbow_joint",
+        "left_wrist_roll_joint",
+        "left_wrist_pitch_joint",
+        "left_wrist_yaw_joint",
+        "right_shoulder_pitch_joint",
+        "right_shoulder_roll_joint",
+        "right_shoulder_yaw_joint",
+        "right_elbow_joint",
+        "right_wrist_roll_joint",
+        "right_wrist_pitch_joint",
+        "right_wrist_yaw_joint"
+      ],
+      "behavior_to_physical": [
+        0,
+        3,
+        6,
+        9,
+        13,
+        17,
+        1,
+        4,
+        7,
+        10,
+        14,
+        18,
+        2,
+        5,
+        8,
+        11,
+        15,
+        19,
+        21,
+        23,
+        25,
+        27,
+        12,
+        16,
+        20,
+        22,
+        24,
+        26,
+        28
+      ],
+      "is_identity": false,
+      "physical_names": [
+        "left_hip_pitch_joint",
+        "right_hip_pitch_joint",
+        "waist_yaw_joint",
+        "left_hip_roll_joint",
+        "right_hip_roll_joint",
+        "waist_roll_joint",
+        "left_hip_yaw_joint",
+        "right_hip_yaw_joint",
+        "waist_pitch_joint",
+        "left_knee_joint",
+        "right_knee_joint",
+        "left_shoulder_pitch_joint",
+        "right_shoulder_pitch_joint",
+        "left_ankle_pitch_joint",
+        "right_ankle_pitch_joint",
+        "left_shoulder_roll_joint",
+        "right_shoulder_roll_joint",
+        "left_ankle_roll_joint",
+        "right_ankle_roll_joint",
+        "left_shoulder_yaw_joint",
+        "right_shoulder_yaw_joint",
+        "left_elbow_joint",
+        "right_elbow_joint",
+        "left_wrist_roll_joint",
+        "right_wrist_roll_joint",
+        "left_wrist_pitch_joint",
+        "right_wrist_pitch_joint",
+        "left_wrist_yaw_joint",
+        "right_wrist_yaw_joint"
+      ]
+    }
+  },
+  "checkpoint": {
+    "missing_keys": [],
+    "path": "/tmp/bfm_candidate_seed4728_t9600000.pt",
+    "sha256": "6be44a20885b4b40751d61b9c5b88cf7c27f98d2bdc2e33d3004b4360118d2cb",
+    "strict_load": true,
+    "unexpected_keys": []
+  },
+  "decision": {
+    "passed": true,
+    "status": "passed"
+  },
+  "frozen_native_batch": {
+    "outputs": {
+      "action_sha256": "3636867142c9c1432bc3f58b42ea9fa3b0dd1e96d95d00125c65d1e9d3ef11dd",
+      "backward_sha256": "d5533bdac4d957a825cdebdb3407f1bfe35869c3dbd4d81771f2214143b79925",
+      "context_norm_mean": 16.0,
+      "context_sha256": "d5533bdac4d957a825cdebdb3407f1bfe35869c3dbd4d81771f2214143b79925"
+    },
+    "raw_physical_order_counterexample": {
+      "action_max_abs_delta": 0.09188750386238098,
+      "backward_max_abs_delta": 1.383813500404358,
+      "context_max_abs_delta": 1.383813500404358
+    },
+    "route_max_abs_error": 0.0,
+    "route_max_abs_errors": {
+      "action_named_vs_direct": 0.0,
+      "backward_named_vs_direct": 0.0,
+      "context_named_vs_direct": 0.0
+    }
+  },
+  "model": {
+    "field_widths": {
+      "history_actor": 372,
+      "last_action": 29,
+      "privileged_state": 463,
+      "state": 64
+    },
+    "observation_schema_sha256": "7b2f98047b1a4fcb5d079ee5d86c23af6a59692b913f570614b2b062f246d19e",
+    "routes": {
+      "actor": [
+        "state",
+        "last_action",
+        "history_actor"
+      ],
+      "backward": [
+        "state",
+        "privileged_state"
+      ],
+      "critic_auxiliary": [
+        "state",
+        "privileged_state",
+        "last_action",
+        "history_actor"
+      ],
+      "critic_discriminator": [
+        "state",
+        "privileged_state",
+        "last_action",
+        "history_actor"
+      ],
+      "discriminator": [
+        "state",
+        "privileged_state"
+      ],
+      "forward": [
+        "state",
+        "privileged_state",
+        "last_action",
+        "history_actor"
+      ]
+    }
+  },
+  "native_trace": {
+    "batch_size": 2,
+    "path": "/home/zhengyuz/Projects/IsaacLab.wt/feature-unify/scripts/reinforcement_learning/forward_backward/phase3/fixtures/g1_lafan_same_step_trace_v1.npz",
+    "sha256": "0959ba0435e37496cac0a716d7221fb7986f44aa236dd1180db4f184fc1927c3",
+    "step": 0
+  },
+  "runtime": {
+    "limit_seconds": 120.0,
+    "num_envs": 2,
+    "rollout_steps": 4,
+    "seconds": 19.41217903792858
+  },
+  "schema": "forward_backward_phase3_g1_checkpoint_semantic_preflight_v1",
+  "short_live_rollout": {
+    "action_l2_mean": 2.288489507157472,
+    "action_request_max_abs_error": 0.0,
+    "action_target_max_abs_error": 0.0,
+    "done_rows": 0,
+    "final_observation_rows": 0,
+    "finite": true,
+    "num_envs": 2,
+    "processed_action_max_abs_error": 0.0,
+    "steps": 4
+  },
+  "source": {
+    "preflight_sha256": "e859769d462ff6a04e1054c63bf3df9192e1ba125e6315e8cba62d14e82f8a14",
+    "reference_artifact_root": "/home/zhengyuz/Projects/BFM-Zero",
+    "source_artifact_root": "/home/zhengyuz/Projects/BFM-Zero"
+  }
+}
