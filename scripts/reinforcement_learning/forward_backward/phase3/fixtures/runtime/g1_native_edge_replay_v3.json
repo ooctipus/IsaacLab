@@ -1,0 +1,2589 @@
+{
+  "candidate_replay": {
+    "current": {
+      "comparable": {
+        "base_angular_velocity": {
+          "atol": 0.05002,
+          "max_abs": 0.04301799461245537,
+          "mean_abs": 0.02007625054878493,
+          "passed": true,
+          "rms": 0.023971563067062055,
+          "rtol": 0.0
+        },
+        "joint_position": {
+          "atol": 0.01002,
+          "max_abs": 0.009923916310071945,
+          "mean_abs": 0.005166232888185387,
+          "passed": true,
+          "rms": 0.005935795973690114,
+          "rtol": 0.0
+        },
+        "joint_velocity": {
+          "atol": 0.50002,
+          "max_abs": 0.49883002042770386,
+          "mean_abs": 0.24429044689108007,
+          "passed": true,
+          "rms": 0.2843942161305908,
+          "rtol": 0.0
+        }
+      },
+      "source_clock_or_simulator_residual": {
+        "privileged_state": {
+          "max_abs": 6.480777621269226,
+          "mean_abs": 0.049504029124309706,
+          "rms": 0.3596060161467066
+        },
+        "projected_gravity": {
+          "max_abs": 0.04805191757623106,
+          "mean_abs": 0.021871357455347608,
+          "rms": 0.025793569029011972
+        }
+      }
+    },
+    "exact": {
+      "all_reached_rows_captured": {
+        "passed": true
+      },
+      "auxiliary_evidence_selection": {
+        "atol": 0.0,
+        "max_abs": 0.0,
+        "mean_abs": 0.0,
+        "passed": true,
+        "rms": 0.0,
+        "rtol": 0.0
+      },
+      "controller_target_joint_position": {
+        "atol": 2e-06,
+        "max_abs": 5.960464477539063e-08,
+        "mean_abs": 4.364370272077363e-09,
+        "passed": true,
+        "rms": 9.941472684730055e-09,
+        "rtol": 0.0
+      },
+      "done_mask": {
+        "expected_done_rows": 2,
+        "observed_done_rows": 2,
+        "passed": true
+      },
+      "environment_reward_from_raw_evidence": {
+        "atol": 2e-06,
+        "max_abs": 0.0,
+        "mean_abs": 0.0,
+        "passed": true,
+        "rms": 0.0,
+        "rtol": 0.0
+      },
+      "final_observation_valid": {
+        "expected_rows": 2,
+        "observed_rows": 2,
+        "passed": true
+      },
+      "history_recurrence": {
+        "atol": 0.0,
+        "max_abs": 0.0,
+        "mean_abs": 0.0,
+        "passed": true,
+        "rms": 0.0,
+        "rtol": 0.0
+      },
+      "injected_physics_fact_readback": {
+        "body_com_pose": {
+          "atol": 0.0,
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "passed": true,
+          "rms": 0.0,
+          "rtol": 0.0
+        },
+        "body_inertia": {
+          "atol": 1e-07,
+          "max_abs": 2.9802322387695312e-08,
+          "mean_abs": 2.3064344179391372e-10,
+          "passed": true,
+          "rms": 1.6324240428638689e-09,
+          "rtol": 1e-06
+        },
+        "body_mass": {
+          "atol": 0.0,
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "passed": true,
+          "rms": 0.0,
+          "rtol": 0.0
+        },
+        "passed": true,
+        "shape_material": {
+          "atol": 0.0,
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "passed": true,
+          "rms": 0.0,
+          "rtol": 0.0
+        }
+      },
+      "injected_qpos_readback": {
+        "joint_position": {
+          "atol": 2e-06,
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "passed": true,
+          "rms": 0.0,
+          "rtol": 0.0
+        },
+        "passed": true,
+        "root_position": {
+          "atol": 2e-06,
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "passed": true,
+          "rms": 0.0,
+          "rtol": 0.0
+        },
+        "root_rotation": {
+          "atol": 2e-06,
+          "max": 2.9802322387695312e-08,
+          "mean": 8.940696716308593e-09,
+          "passed": true,
+          "rms": 1.6323404237781944e-08,
+          "unit": "rad"
+        }
+      },
+      "injected_qvel_readback": {
+        "atol": 2e-05,
+        "max_abs": 1.1920928955078125e-07,
+        "mean_abs": 1.021793910435268e-09,
+        "passed": true,
+        "rms": 8.353768446764172e-09,
+        "rtol": 0.0
+      },
+      "joint_drive_readback": {
+        "armature": {
+          "atol": 0.0,
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "passed": true,
+          "rms": 0.0,
+          "rtol": 0.0
+        },
+        "damping": {
+          "atol": 0.0,
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "passed": true,
+          "rms": 0.0,
+          "rtol": 0.0
+        },
+        "effort_limit": {
+          "atol": 0.0,
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "passed": true,
+          "rms": 0.0,
+          "rtol": 0.0
+        },
+        "friction": {
+          "atol": 0.0,
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "passed": true,
+          "rms": 0.0,
+          "rtol": 0.0
+        },
+        "passed": true,
+        "position_limit": {
+          "atol": 0.0,
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "passed": true,
+          "rms": 0.0,
+          "rtol": 0.0
+        },
+        "stiffness": {
+          "atol": 0.0,
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "passed": true,
+          "rms": 0.0,
+          "rtol": 0.0
+        },
+        "velocity_limit": {
+          "atol": 0.0,
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "passed": true,
+          "rms": 0.0,
+          "rtol": 0.0
+        }
+      }
+    },
+    "reached_transition": {
+      "applied_pd_torque": {
+        "max_abs": 7.132144927978516,
+        "mean_abs": 0.0734672185162018,
+        "rms": 0.4555507828478517
+      },
+      "body_angular_velocity": {
+        "max_abs": 0.9916730374097824,
+        "mean_abs": 0.09326688894149704,
+        "rms": 0.23425253472340765
+      },
+      "body_linear_velocity": {
+        "max_abs": 0.7009311020374298,
+        "mean_abs": 0.0223608609741116,
+        "rms": 0.0768215085216049
+      },
+      "body_position": {
+        "max_abs": 0.013733863830566406,
+        "mean_abs": 0.0004106940644022117,
+        "rms": 0.0014361204696674795
+      },
+      "body_rotation_geodesic": {
+        "max": 0.021726771031991814,
+        "mean": 0.0035856302860128985,
+        "rms": 0.008067753630570565,
+        "unit": "rad"
+      },
+      "claim": "measurement_after_all_exposed_source_transition_facts_injected",
+      "contact_force": {
+        "max_abs": 3.0880508422851562,
+        "mean_abs": 0.008383730849192136,
+        "rms": 0.13728521805306276
+      },
+      "environment_raw_evidence_by_channel": {
+        "feet_heading_alignment": {
+          "max_abs": 0.001978836953639984,
+          "mean_abs": 0.0006045907735824585,
+          "rms": 0.0007906192333850837
+        },
+        "limits_dof_pos": {
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "rms": 0.0
+        },
+        "limits_dof_vel": {
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "rms": 0.0
+        },
+        "limits_torque": {
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "rms": 0.0
+        },
+        "penalty_action_rate": {
+          "max_abs": 4.76837158203125e-07,
+          "mean_abs": 5.3644180297851564e-08,
+          "rms": 1.513770234489476e-07
+        },
+        "penalty_ankle_roll": {
+          "max_abs": 0.0001974825281649828,
+          "mean_abs": 4.2499275878071785e-05,
+          "rms": 6.87296208066237e-05
+        },
+        "penalty_feet_ori": {
+          "max_abs": 0.0010485723614692688,
+          "mean_abs": 0.00016146525740623474,
+          "rms": 0.00034324885445603695
+        },
+        "penalty_slippage": {
+          "max_abs": 0.05614914000034332,
+          "mean_abs": 0.0061400942504405975,
+          "rms": 0.017774106176925594
+        },
+        "penalty_torques": {
+          "max_abs": 30.803466796875,
+          "mean_abs": 5.6464385986328125,
+          "rms": 10.907904720480925
+        },
+        "penalty_undesired_contact": {
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "rms": 0.0
+        }
+      },
+      "qpos": {
+        "max_abs": 0.08309069834649563,
+        "mean_abs": 0.0035444260671586864,
+        "rms": 0.011473663713646894
+      },
+      "qvel": {
+        "max_abs": 5.029700234532356,
+        "mean_abs": 0.22237953208397293,
+        "rms": 0.7044076595588097
+      }
+    },
+    "substep_transition": {
+      "claim": "measured_cross_simulator_physics_not_elementwise_parity",
+      "first_substep_body_max": {
+        "head_link": {
+          "position_m": 0.003352642059326172,
+          "rotation_rad": 0.016245269710520375
+        },
+        "left_ankle_pitch_link": {
+          "position_m": 0.004415035247802734,
+          "rotation_rad": 0.055400817156354656
+        },
+        "left_ankle_roll_link": {
+          "position_m": 0.005302906036376953,
+          "rotation_rad": 0.07089828389695428
+        },
+        "left_elbow_link": {
+          "position_m": 0.0019861459732055664,
+          "rotation_rad": 0.010519312684320655
+        },
+        "left_hip_pitch_link": {
+          "position_m": 0.0025249719619750977,
+          "rotation_rad": 0.0064582244324720185
+        },
+        "left_hip_roll_link": {
+          "position_m": 0.00268477201461792,
+          "rotation_rad": 0.010805092240452703
+        },
+        "left_hip_yaw_link": {
+          "position_m": 0.002721130847930908,
+          "rotation_rad": 0.02258514144958811
+        },
+        "left_knee_link": {
+          "position_m": 0.002683281898498535,
+          "rotation_rad": 0.030030745423063433
+        },
+        "left_shoulder_pitch_link": {
+          "position_m": 0.002152085304260254,
+          "rotation_rad": 0.013002011615224778
+        },
+        "left_shoulder_roll_link": {
+          "position_m": 0.002017498016357422,
+          "rotation_rad": 0.01316584521361875
+        },
+        "left_shoulder_yaw_link": {
+          "position_m": 0.0019567012786865234,
+          "rotation_rad": 0.008515309019483617
+        },
+        "left_wrist_pitch_link": {
+          "position_m": 0.002461850643157959,
+          "rotation_rad": 0.021931554596506773
+        },
+        "left_wrist_roll_link": {
+          "position_m": 0.0022270679473876953,
+          "rotation_rad": 0.021471232004916813
+        },
+        "left_wrist_yaw_link": {
+          "position_m": 0.00258713960647583,
+          "rotation_rad": 0.022523171821787605
+        },
+        "pelvis": {
+          "position_m": 0.002338588237762451,
+          "rotation_rad": 0.011246842909407109
+        },
+        "right_ankle_pitch_link": {
+          "position_m": 0.0068511962890625,
+          "rotation_rad": 0.10438886912583992
+        },
+        "right_ankle_roll_link": {
+          "position_m": 0.00818490982055664,
+          "rotation_rad": 0.1179200757573534
+        },
+        "right_elbow_link": {
+          "position_m": 0.00305938720703125,
+          "rotation_rad": 0.011069542209766728
+        },
+        "right_hip_pitch_link": {
+          "position_m": 0.002136707305908203,
+          "rotation_rad": 0.007319288976823708
+        },
+        "right_hip_roll_link": {
+          "position_m": 0.001971602439880371,
+          "rotation_rad": 0.025527139172440823
+        },
+        "right_hip_yaw_link": {
+          "position_m": 0.0024213790893554688,
+          "rotation_rad": 0.07178678127173341
+        },
+        "right_knee_link": {
+          "position_m": 0.0018956959247589111,
+          "rotation_rad": 0.07727643876045094
+        },
+        "right_shoulder_pitch_link": {
+          "position_m": 0.003345489501953125,
+          "rotation_rad": 0.01705095592612498
+        },
+        "right_shoulder_roll_link": {
+          "position_m": 0.0037713050842285156,
+          "rotation_rad": 0.01649875102332128
+        },
+        "right_shoulder_yaw_link": {
+          "position_m": 0.0030150413513183594,
+          "rotation_rad": 0.009997277775653051
+        },
+        "right_wrist_pitch_link": {
+          "position_m": 0.0024275779724121094,
+          "rotation_rad": 0.04577584559300805
+        },
+        "right_wrist_roll_link": {
+          "position_m": 0.002434253692626953,
+          "rotation_rad": 0.046465114494386665
+        },
+        "right_wrist_yaw_link": {
+          "position_m": 0.0024175643920898438,
+          "rotation_rad": 0.046105473675476724
+        },
+        "torso_link": {
+          "position_m": 0.002379000186920166,
+          "rotation_rad": 0.01624518342040066
+        },
+        "waist_roll_link": {
+          "position_m": 0.002379119396209717,
+          "rotation_rad": 0.015726257175352948
+        },
+        "waist_yaw_link": {
+          "position_m": 0.002338588237762451,
+          "rotation_rad": 0.015260992284151871
+        }
+      },
+      "substeps": [
+        {
+          "applied_pd_torque": {
+            "max_abs": 5.7220458984375e-06,
+            "mean_abs": 2.2351741790771484e-07,
+            "rms": 7.078589719228843e-07
+          },
+          "body_angular_velocity": {
+            "max_abs": 4.057034015655518,
+            "mean_abs": 0.4846955796447771,
+            "rms": 0.8457846017297963
+          },
+          "body_linear_velocity": {
+            "max_abs": 1.036575585603714,
+            "mean_abs": 0.05914163200924044,
+            "rms": 0.10662913027306983
+          },
+          "body_position": {
+            "max_abs": 0.00818490982055664,
+            "mean_abs": 0.000653152455705949,
+            "rms": 0.0010438851914389379
+          },
+          "body_rotation_geodesic": {
+            "max": 0.1179200757573534,
+            "mean": 0.01172699423797352,
+            "rms": 0.019995179790508397,
+            "unit": "rad"
+          },
+          "contact_force": {
+            "max_abs": 1.0129776000976562,
+            "mean_abs": 0.0011714513021444065,
+            "rms": 0.03378664500876141
+          },
+          "index_zero_based": 0,
+          "max_abs_by_edge": {
+            "applied_pd_torque": [
+              3.814697265625e-06,
+              5.364418029785156e-07,
+              3.814697265625e-06,
+              1.9073486328125e-06,
+              1.9073486328125e-06,
+              3.814697265625e-06,
+              1.9073486328125e-06,
+              1.9073486328125e-06,
+              5.7220458984375e-06,
+              2.86102294921875e-06
+            ],
+            "contact_force": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0129776000976562,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.034912109375
+            ],
+            "qpos": [
+              1.4591962099075317e-05,
+              7.68899917602539e-06,
+              0.0014827060513198376,
+              0.0024474868550896645,
+              4.5359134674072266e-05,
+              8.280202746391296e-05,
+              3.5762786865234375e-07,
+              2.706330269575119e-05,
+              7.35744833946228e-05,
+              0.00015985965728759766
+            ],
+            "qvel": [
+              0.492170125246048,
+              0.7414245009422302,
+              0.6024304032325745,
+              0.8883389830589294,
+              0.14482729136943817,
+              0.23588839173316956,
+              0.9443963766098022,
+              0.8901845812797546,
+              0.21847540140151978,
+              0.24141094088554382
+            ]
+          },
+          "qpos": {
+            "joint_position": {
+              "max_abs": 0.00015985965728759766,
+              "mean_abs": 1.0285673839650277e-05,
+              "rms": 2.2045499481516853e-05
+            },
+            "root_position": {
+              "max_abs": 0.0003714561462402344,
+              "mean_abs": 2.7051381766796113e-05,
+              "rms": 8.398066342510487e-05
+            },
+            "root_rotation": {
+              "max": 0.005385897519745716,
+              "mean": 0.0009038904331636416,
+              "rms": 0.002041730069002688,
+              "unit": "rad"
+            }
+          },
+          "qvel": {
+            "joint_velocity": {
+              "max_abs": 0.04777860641479492,
+              "mean_abs": 0.0024462046173947126,
+              "rms": 0.005473328351460247
+            },
+            "root_angular_velocity": {
+              "max_abs": 0.9443963766098022,
+              "mean_abs": 0.33018642192085584,
+              "rms": 0.41933776067299505
+            },
+            "root_linear_velocity": {
+              "max_abs": 0.00026888400316238403,
+              "mean_abs": 5.552486206094424e-05,
+              "rms": 9.297936957655245e-05
+            }
+          }
+        },
+        {
+          "applied_pd_torque": {
+            "max_abs": 0.08712053298950195,
+            "mean_abs": 0.006956450358547014,
+            "rms": 0.015428724708738174
+          },
+          "body_angular_velocity": {
+            "max_abs": 6.067281544208527,
+            "mean_abs": 0.6558331954795605,
+            "rms": 1.1253937316648952
+          },
+          "body_linear_velocity": {
+            "max_abs": 0.8764160871505737,
+            "mean_abs": 0.07792777031034749,
+            "rms": 0.11477490593495392
+          },
+          "body_position": {
+            "max_abs": 0.01026010513305664,
+            "mean_abs": 0.0011084918310785646,
+            "rms": 0.0015688830635795087
+          },
+          "body_rotation_geodesic": {
+            "max": 0.0932697644676736,
+            "mean": 0.018514739185096902,
+            "rms": 0.024657848473014443,
+            "unit": "rad"
+          },
+          "contact_force": {
+            "max_abs": 27.375524520874023,
+            "mean_abs": 0.0343382118585133,
+            "rms": 0.9172436740051085
+          },
+          "index_zero_based": 1,
+          "max_abs_by_edge": {
+            "applied_pd_torque": [
+              0.012008488178253174,
+              0.0016116201877593994,
+              0.006115913391113281,
+              0.016671180725097656,
+              0.08712053298950195,
+              0.06322097778320312,
+              0.0003185272216796875,
+              0.007852435111999512,
+              0.05883598327636719,
+              0.06500244140625
+            ],
+            "contact_force": [
+              0.0,
+              0.0,
+              27.375524520874023,
+              0.0,
+              0.43190765380859375,
+              2.7322616577148438,
+              0.0,
+              0.0,
+              0.0,
+              0.36223602294921875
+            ],
+            "qpos": [
+              8.764490485191345e-05,
+              2.989312633872032e-05,
+              0.002968031680211425,
+              0.004889819771051407,
+              0.00013326853513717651,
+              0.00021225586533546448,
+              2.0617619156837463e-05,
+              2.4273991584777832e-05,
+              0.0002008676528930664,
+              9.503960609436035e-05
+            ],
+            "qvel": [
+              0.5786292552947998,
+              1.0030890703201294,
+              2.051853895187378,
+              1.1856715679168701,
+              0.1698300540447235,
+              0.3995665907859802,
+              1.2669143676757812,
+              1.1656296253204346,
+              0.3406301438808441,
+              0.3870979845523834
+            ]
+          },
+          "qpos": {
+            "joint_position": {
+              "max_abs": 0.002581879496574402,
+              "mean_abs": 4.127997712328516e-05,
+              "rms": 0.00017492892131924342
+            },
+            "root_position": {
+              "max_abs": 0.0007433891296386719,
+              "mean_abs": 5.471282638609409e-05,
+              "rms": 0.0001679918549913981
+            },
+            "root_rotation": {
+              "max": 0.010776195054748704,
+              "mean": 0.001820573127892224,
+              "rms": 0.004092530566576365,
+              "unit": "rad"
+            }
+          },
+          "qvel": {
+            "joint_velocity": {
+              "max_abs": 2.051853895187378,
+              "mean_abs": 0.01730954833930872,
+              "rms": 0.13486930370071581
+            },
+            "root_angular_velocity": {
+              "max_abs": 1.2669143676757812,
+              "mean_abs": 0.454786084095637,
+              "rms": 0.5617835463901923
+            },
+            "root_linear_velocity": {
+              "max_abs": 0.004971114918589592,
+              "mean_abs": 0.0004342754604294896,
+              "rms": 0.001232056910713079
+            }
+          }
+        },
+        {
+          "applied_pd_torque": {
+            "max_abs": 3.7965731620788574,
+            "mean_abs": 0.04586268149573228,
+            "rms": 0.2718269689266853
+          },
+          "body_angular_velocity": {
+            "max_abs": 7.885022878646851,
+            "mean_abs": 0.7367928212128708,
+            "rms": 1.2580292375248558
+          },
+          "body_linear_velocity": {
+            "max_abs": 0.7578848302364349,
+            "mean_abs": 0.0926925055778914,
+            "rms": 0.12745187005689582
+          },
+          "body_position": {
+            "max_abs": 0.011745929718017578,
+            "mean_abs": 0.001671548002344426,
+            "rms": 0.002280166931083118
+          },
+          "body_rotation_geodesic": {
+            "max": 0.0950959129113578,
+            "mean": 0.026115088593921115,
+            "rms": 0.03329881779814343,
+            "unit": "rad"
+          },
+          "contact_force": {
+            "max_abs": 83.40105438232422,
+            "mean_abs": 0.10205170625033538,
+            "rms": 2.7838981275348895
+          },
+          "index_zero_based": 2,
+          "max_abs_by_edge": {
+            "applied_pd_torque": [
+              0.013130664825439453,
+              0.0252838134765625,
+              3.7965731620788574,
+              0.039221763610839844,
+              0.0632166862487793,
+              0.2010345458984375,
+              0.030027389526367188,
+              0.022846221923828125,
+              0.08420848846435547,
+              0.04017066955566406
+            ],
+            "contact_force": [
+              0.05792236328125,
+              0.0,
+              83.40105438232422,
+              0.0,
+              0.462249755859375,
+              2.5037078857421875,
+              0.0,
+              1.1503677368164062,
+              3.2663955688476562,
+              0.9272232055664062
+            ],
+            "qpos": [
+              9.600818157196045e-05,
+              0.00011727772653102875,
+              0.005659371614456177,
+              0.007327614352107048,
+              0.00021011382341384888,
+              0.000340830534696579,
+              8.40015709400177e-05,
+              0.00023012235760688782,
+              0.0002219080924987793,
+              0.00013262778520584106
+            ],
+            "qvel": [
+              0.6214656829833984,
+              1.0417580604553223,
+              1.0416100025177002,
+              1.222154140472412,
+              0.2128008008003235,
+              0.4492294192314148,
+              1.3119854927062988,
+              1.1829431056976318,
+              0.41019052267074585,
+              0.482503205537796
+            ]
+          },
+          "qpos": {
+            "joint_position": {
+              "max_abs": 0.005659371614456177,
+              "mean_abs": 9.524593052478379e-05,
+              "rms": 0.00038708713123452633
+            },
+            "root_position": {
+              "max_abs": 0.0011067390441894531,
+              "mean_abs": 7.88629132633408e-05,
+              "rms": 0.00024553552128285603
+            },
+            "root_rotation": {
+              "max": 0.016162307653866538,
+              "mean": 0.002769453346818681,
+              "rms": 0.006191094771180919,
+              "unit": "rad"
+            }
+          },
+          "qvel": {
+            "joint_velocity": {
+              "max_abs": 1.0416100025177002,
+              "mean_abs": 0.018016020537771543,
+              "rms": 0.07936423647376825
+            },
+            "root_angular_velocity": {
+              "max_abs": 1.3119854927062988,
+              "mean_abs": 0.4838947616517544,
+              "rms": 0.5865646765238922
+            },
+            "root_linear_velocity": {
+              "max_abs": 0.012866191565990448,
+              "mean_abs": 0.0010753916343674065,
+              "rms": 0.003011439321386476
+            }
+          }
+        },
+        {
+          "applied_pd_torque": {
+            "max_abs": 7.132144927978516,
+            "mean_abs": 0.0734672185162018,
+            "rms": 0.4555507828478517
+          },
+          "body_angular_velocity": {
+            "max_abs": 7.561525821685791,
+            "mean_abs": 0.7903544687589469,
+            "rms": 1.304987022672263
+          },
+          "body_linear_velocity": {
+            "max_abs": 0.6880372911691666,
+            "mean_abs": 0.1071685344555673,
+            "rms": 0.14342940384983385
+          },
+          "body_position": {
+            "max_abs": 0.012782096862792969,
+            "mean_abs": 0.00233705859338384,
+            "rms": 0.00313585232714226
+          },
+          "body_rotation_geodesic": {
+            "max": 0.12919973594703923,
+            "mean": 0.03487275987532002,
+            "rms": 0.04452076947677054,
+            "unit": "rad"
+          },
+          "contact_force": {
+            "max_abs": 3.0880508422851562,
+            "mean_abs": 0.008383730849192136,
+            "rms": 0.13728521805306276
+          },
+          "index_zero_based": 3,
+          "max_abs_by_edge": {
+            "applied_pd_torque": [
+              0.03442955017089844,
+              0.062415122985839844,
+              7.132144927978516,
+              0.07787704467773438,
+              0.08355569839477539,
+              0.10007381439208984,
+              0.07262229919433594,
+              0.2540626525878906,
+              0.3185415267944336,
+              0.08340120315551758
+            ],
+            "contact_force": [
+              0.00664520263671875,
+              0.0,
+              3.0880508422851562,
+              0.0,
+              0.5771636962890625,
+              0.03153228759765625,
+              0.0,
+              1.38201904296875,
+              2.2705459594726562,
+              0.02761077880859375
+            ],
+            "qpos": [
+              0.00021057948470115662,
+              0.0002563744783401489,
+              0.009530037641525269,
+              0.009765952825546265,
+              0.00023756921291351318,
+              0.0004594773054122925,
+              0.00018839165568351746,
+              0.00018361955881118774,
+              0.0003128349781036377,
+              0.00021792203187942505
+            ],
+            "qvel": [
+              0.5949020981788635,
+              0.9843541979789734,
+              0.7882700562477112,
+              1.1509654521942139,
+              0.3138338327407837,
+              0.5424140691757202,
+              1.2421549558639526,
+              1.1123074293136597,
+              0.4963529109954834,
+              0.5475962162017822
+            ]
+          },
+          "qpos": {
+            "joint_position": {
+              "max_abs": 0.009530037641525269,
+              "mean_abs": 0.000157352412936924,
+              "rms": 0.0006367051078672864
+            },
+            "root_position": {
+              "max_abs": 0.001476287841796875,
+              "mean_abs": 0.00010324252458910147,
+              "rms": 0.00032164339014931144
+            },
+            "root_rotation": {
+              "max": 0.02154492974904805,
+              "mean": 0.0037065016274021425,
+              "rms": 0.008267260018224311,
+              "unit": "rad"
+            }
+          },
+          "qvel": {
+            "joint_velocity": {
+              "max_abs": 0.6765815019607544,
+              "mean_abs": 0.013721667699804851,
+              "rms": 0.048944381043900496
+            },
+            "root_angular_velocity": {
+              "max_abs": 1.2421549558639526,
+              "mean_abs": 0.4662340642263492,
+              "rms": 0.5621874290678094
+            },
+            "root_linear_velocity": {
+              "max_abs": 0.01460190862417221,
+              "mean_abs": 0.0010969093741247586,
+              "rms": 0.0032208568411075888
+            }
+          }
+        }
+      ]
+    }
+  },
+  "code_identity": {
+    "dependency_identity": {
+      "bundle_sha256": "666dd1c9e234d229cc0a9719489768fef7fe38ddd51f32246f87e64f539ed311",
+      "preset": "g1_lafan",
+      "python_sources": {
+        "isaaclab.assets.articulation.articulation_cfg": "90fe321c76e23785bc70cbdae7f45ea9301cae11dfed5245deaff4edec65bf53",
+        "isaaclab.assets.articulation.base_articulation": "61d38c3b817e086eac3a734a66410478219bc6cea9db9ce62b35a992522b1b40",
+        "isaaclab.assets.articulation.base_articulation_data": "80844346c1bc99b33ef66794c0aececaf2aa3724beebbf1fd7ca15f4b32ea4df",
+        "isaaclab.envs.manager_based_rl_env": "b7a37b15f50495133c70e44f213799dd2cd75a9d3e3af142b3bf413fd71ba2f3",
+        "isaaclab.envs.manager_based_rl_env_cfg": "cacc7a0f4a187c041d9c871092ee5b73013836ecc74b48683a2c73deddaa0757",
+        "isaaclab.envs.mdp.terminations": "c72b39e47235b48699bd887ed021f66fa2ca02656f833271eadea55078519588",
+        "isaaclab.managers.action_manager": "2facb9eaee7722509603b0794c57bf760f8b6eb7290830d4899b413bbd40109d",
+        "isaaclab.managers.command_manager": "606a9ae2c985426c48d1138927b8a18cb0ff1ba4edfbf867b896f9f15af9fd33",
+        "isaaclab.managers.curriculum_manager": "a3a03d9c89ce094e5447b81c067e370699768586041bf1f1111729d69c196f4c",
+        "isaaclab.managers.event_manager": "e29960173b398f8e79c026b74e50c5d02f57fc0a0a1fea4f7dad7237e41fda75",
+        "isaaclab.managers.manager_base": "1010080f1a0dafd166e296ee7f3cea116f73f29c53bf2f1ed00f770add5901d5",
+        "isaaclab.managers.observation_manager": "de7c9b2c6b6e0bdb431a0574727982feebe72142ebf41b1140dce624b932d6b8",
+        "isaaclab.managers.reward_manager": "6be44a98df5aed8a0ebac2913ebea33010633e007e816697a6d99f7ccfd731db",
+        "isaaclab.managers.termination_manager": "cb6333f11fa6472f7d8034bae9835714e83ae3edde97894b767f1351a7eea99d",
+        "isaaclab.physics.physics_manager": "421b611d33ae338de62c2acb6b08fb1e2d7630c29aab845063bdbcca2ec432f5",
+        "isaaclab.physics.physics_manager_cfg": "6a43a6de20a9eef1d0720c51e06e0c31e5e9b782a7ef67fe986e1ccc65f937da",
+        "isaaclab.sim.schemas.schemas": "548ce8126c8e7ae989e4d4ab67dcb97f343f5f7732f1ec839f51385089e8c056",
+        "isaaclab.sim.schemas.schemas_cfg": "c23fde175d325b091f32a6eb8afc5f63bcafb4ba59dbced89fcff9ceefaa1a40",
+        "isaaclab.sim.simulation_context": "568407c1d9ec60833b37f341edde2f32ec6a872516df4d4204a0c624e97c4a41",
+        "isaaclab.sim.spawners.materials.physics_materials": "164037ec58e0411b55c25da6c0bb2f2323c7cd4274692b1ea5a8f722785c39c8",
+        "isaaclab.sim.spawners.materials.physics_materials_cfg": "54865641d6cd906042160dfbdf935471270d4e230e324c6c69c119153f376e45",
+        "isaaclab.sim.spawners.shapes.shapes": "d4eb750afc2a1d423cff752aae7c752dd196a58e20fb76993ff2ac3fbac44f86",
+        "isaaclab.sim.spawners.shapes.shapes_cfg": "022ddbb3cabf94ddbc51e92371af22787666f09efddab903e6b15aeef537052d",
+        "isaaclab.sim.utils.prims": "7f3c06684728ff2d3471073ab5de5ae9798246615fe3e622b4115c52813dfd46",
+        "isaaclab.utils.math": "6cea18209c70b73fa301a9bb6990026b8ae29af43cb495f2a886d0bbbe7bf170",
+        "isaaclab_physx.assets.articulation.articulation": "8f4e50ac2afe5f1ceb718da5cb1e4bc1f2eb132204f1593965aac25b9ff15ac8",
+        "isaaclab_physx.assets.articulation.articulation_data": "fabdf6cdb4875bde34d6330ba925f41bfd4067c9ab38d263ee6526c245d9518c",
+        "isaaclab_physx.assets.articulation.kernels": "3429fbd7dc2d91b7e6aeb67ce40fbc24d7f9fe66cd3988a4e735714e3f087569",
+        "isaaclab_physx.physics.physx_manager": "79852394dafa48aeb5e9cdb39072dde27c9ab35f6b587a17ce931318ab44fd4a",
+        "isaaclab_physx.physics.physx_manager_cfg": "a09ae907d6e46cf466e0b764be56753e6e1e554755aa1ea5fa3ac4863d70aed3",
+        "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics": "e450f76a2bfe11ff0986c60c5519a7ddc5009579477478547945e6958f85fbfd",
+        "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics_cfg": "bb54968f13676e3d7185ae40bfe4792c38c5bb5029f9e10d68ea759f315d036c",
+        "isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command": "50b6467d7190326bc5be5c6ec8fe55fa3c8db33d6099c0941a8ec4a3fef7c252",
+        "isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command_cfg": "bc7014d6e02fa1e42d0d77bd1744b2d046f5458013890d9d2b861c301407629e",
+        "isaaclab_tasks.core.multi_task.motion.config.environment": "e87f831e348ecc4190eed2993c57cb4664c641151d22c0722353cd331fd85ac5",
+        "isaaclab_tasks.core.multi_task.motion.config.presets": "58d93b5eb7f036b43cbeeea975735a4d27af15772416b4acce481195324ea6d2",
+        "isaaclab_tasks.core.multi_task.motion.config.profiles": "9289a9cf91e9903540c06ad684bd295568e9041d2795571ed4f64e993d682a63",
+        "isaaclab_tasks.core.multi_task.motion.config.robots.g1": "5372194cad85cd6fa9e9036d04e590bb6750c4b0b2c520ae6ac1a73476d0158a",
+        "isaaclab_tasks.core.multi_task.motion.config.simulations": "a99f178ae238b7c693315a955abe1c26c5fa9ee3603bb11b19bacd12e5c43af5",
+        "isaaclab_tasks.core.multi_task.motion.config.source_skeletons": "d658140666c8f1aed3c9004d2e4f8fab4d77299a45c74ac66d10445f96a055c3",
+        "isaaclab_tasks.core.multi_task.motion.config.sources": "827bfd66236b4b9a81ef5ea1af80d61e25b7c327b74c5a72e062320291667763",
+        "isaaclab_tasks.core.multi_task.motion.data._identity": "386dddd8b1339521350772e50e9113eab010d0ffe1bee873b6c2fa88081fec49",
+        "isaaclab_tasks.core.multi_task.motion.data.clip_index": "a11b678c9b39e96be989ac20d3b6292f0dc976e232dc1315615c52de6f626abf",
+        "isaaclab_tasks.core.multi_task.motion.data.importers._hashing": "6843ce1f208fa3ed0b69466dbdd908ac7e6026a6dc4ba8d1286f0e4ad17614cd",
+        "isaaclab_tasks.core.multi_task.motion.data.importers.bfm_g1_joblib": "75231491023bedf17a1cb503a81fe6fa0e9d547667b2d88e4bf78874d7b4a7ac",
+        "isaaclab_tasks.core.multi_task.motion.data.sample_grid": "3eca55c9d434db72810e815a91dc89637a9d310275a039a347b7d425f911d478",
+        "isaaclab_tasks.core.multi_task.motion.data.skeleton": "63d04d889c2f3c3f389c55899688a9b4b6e18dc4d541b08ece1d749e37985ceb",
+        "isaaclab_tasks.core.multi_task.motion.frames": "01265380578fa7140fc5f38efc9933c30b3802314f4d1852d6ffdd6097e8691a",
+        "isaaclab_tasks.core.multi_task.motion.mdp.actions": "e0a8ecd10f8b56d83c10488472eb77a97b3ac42a84d813f417ff50df4a144da6",
+        "isaaclab_tasks.core.multi_task.motion.mdp.actions_cfg": "e33fc1a9cf24dc422fc6b292bf303e8143de4d45a9eb5eab03a1f508ce74fd17",
+        "isaaclab_tasks.core.multi_task.motion.mdp.commands.commands_cfg": "e1c2381f764fc124180bec9a0be7a30d4415003ac1e9151fa19bd269893ff466",
+        "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_state_payload": "f8dee3bb5b1901f275d1d872bcc6339af7ff9780abe98aa76d236da28f591111",
+        "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table": "2eafb32d7a2492328caf34090c722f79865c8e84b0bd216605bc1512437ad4e7",
+        "isaaclab_tasks.core.multi_task.motion.mdp.curriculums": "29e5e500b7d46e0bf0ad5a485156ea9002d724f4d92f217d669ebd4c72316ece",
+        "isaaclab_tasks.core.multi_task.motion.mdp.events": "141f471f0d35d4d1a33fed14f58bacdd4b8b772485efe923988d2fb2070f1f54",
+        "isaaclab_tasks.core.multi_task.motion.mdp.history": "a2ca03a452c8c85931cfd3e36c07f971ca6f83dc497e8c5638ebdde8322bae8f",
+        "isaaclab_tasks.core.multi_task.motion.mdp.observations": "d4f158e08e5edd8b761a4a86728e17d4373702bf2c2f3af101a0a37eaad8405e",
+        "isaaclab_tasks.core.multi_task.motion.mdp.reset_sources": "09a5e40b9e67c64b2994f0766de4cf7d11e6306d59a049a654bc934e19fe18d9",
+        "isaaclab_tasks.core.multi_task.motion.mdp.runtime": "2717eda93acdf9f2c35bb8949a681b69b7a8358e238b9f165017aa3e25bb83c9",
+        "isaaclab_tasks.core.multi_task.motion.trajectory._time": "43bf144bb4614f641a59f5a476106f7a82fd2e34547e93fe90b3e8236fb4efa7",
+        "isaaclab_tasks.core.multi_task.motion.trajectory.g1": "b2b2696517899ddcd5425ed213659c2af8923bb2cef06fcb152ee2ce45beaa3a",
+        "isaaclab_tasks.core.multi_task.motion_env": "2ce86ba92ef8804b71db6315f765ccb6e7cbbcb9242ee811d3bb36e03cce12a7",
+        "isaaclab_tasks.core.multi_task.motion_env_cfg": "7c561be9641ef80a355095e21058dbf74986fd50863d05a3705ebe5cdc5cb527",
+        "motion_environment_identity": "87b180b03e76cb67156dc6947af851b959b3c36110693d30e3f737ad1f3de23a"
+      },
+      "resolved_axes": {
+        "construction": {
+          "frame_builder_factory": "isaaclab_tasks.core.multi_task.motion.trajectory.g1:g1_lafan_frame_builder",
+          "frame_builder_type": "isaaclab_tasks.core.multi_task.motion.trajectory.g1:G1LafanFrameBuilder",
+          "reference_kinematics_factory": "isaaclab_tasks.core.multi_task.motion.config.robots.g1:g1_reference_kinematics",
+          "reset_sources": [
+            [
+              "reference",
+              0.7
+            ],
+            [
+              "lie_down",
+              0.3
+            ]
+          ],
+          "task_row_mode": "clip_time_ranges",
+          "task_sampling_law": "clip_categorical_then_continuous_time_v1"
+        },
+        "expert_grid": {
+          "mode": "uniform_before_source_end",
+          "step_seconds": 0.02
+        },
+        "preset": "g1_lafan",
+        "robot": {
+          "action_type": "MotionJointPositionActionCfg",
+          "asset_file": "g1_29dof_rev_1_0.usd",
+          "body_names": [
+            "pelvis",
+            "left_hip_pitch_link",
+            "right_hip_pitch_link",
+            "waist_yaw_link",
+            "left_hip_roll_link",
+            "right_hip_roll_link",
+            "waist_roll_link",
+            "left_hip_yaw_link",
+            "right_hip_yaw_link",
+            "torso_link",
+            "left_knee_link",
+            "right_knee_link",
+            "left_shoulder_pitch_link",
+            "right_shoulder_pitch_link",
+            "left_ankle_pitch_link",
+            "right_ankle_pitch_link",
+            "left_shoulder_roll_link",
+            "right_shoulder_roll_link",
+            "left_ankle_roll_link",
+            "right_ankle_roll_link",
+            "left_shoulder_yaw_link",
+            "right_shoulder_yaw_link",
+            "left_elbow_link",
+            "right_elbow_link",
+            "left_wrist_roll_link",
+            "right_wrist_roll_link",
+            "left_wrist_pitch_link",
+            "right_wrist_pitch_link",
+            "left_wrist_yaw_link",
+            "right_wrist_yaw_link"
+          ],
+          "joint_names": [
+            "left_hip_pitch_joint",
+            "right_hip_pitch_joint",
+            "waist_yaw_joint",
+            "left_hip_roll_joint",
+            "right_hip_roll_joint",
+            "waist_roll_joint",
+            "left_hip_yaw_joint",
+            "right_hip_yaw_joint",
+            "waist_pitch_joint",
+            "left_knee_joint",
+            "right_knee_joint",
+            "left_shoulder_pitch_joint",
+            "right_shoulder_pitch_joint",
+            "left_ankle_pitch_joint",
+            "right_ankle_pitch_joint",
+            "left_shoulder_roll_joint",
+            "right_shoulder_roll_joint",
+            "left_ankle_roll_joint",
+            "right_ankle_roll_joint",
+            "left_shoulder_yaw_joint",
+            "right_shoulder_yaw_joint",
+            "left_elbow_joint",
+            "right_elbow_joint",
+            "left_wrist_roll_joint",
+            "right_wrist_roll_joint",
+            "left_wrist_pitch_joint",
+            "right_wrist_pitch_joint",
+            "left_wrist_yaw_joint",
+            "right_wrist_yaw_joint"
+          ],
+          "prim_path": "{ENV_REGEX_NS}/Robot"
+        },
+        "runtime": {
+          "applied_actions_before_timeout": 501,
+          "auxiliary_evidence": [
+            "penalty_torques",
+            "penalty_action_rate",
+            "limits_dof_pos",
+            "limits_torque",
+            "penalty_undesired_contact",
+            "penalty_feet_ori",
+            "penalty_ankle_roll",
+            "penalty_slippage"
+          ],
+          "command_fields": [],
+          "compute_final_obs": true,
+          "control_decimation": 4,
+          "episode_length_seconds": 10.0,
+          "episode_length_steps": 501,
+          "history_fields": [
+            [
+              "processed_action",
+              29
+            ],
+            [
+              "base_angular_velocity",
+              3
+            ],
+            [
+              "joint_position",
+              29
+            ],
+            [
+              "joint_velocity",
+              29
+            ],
+            [
+              "projected_gravity",
+              3
+            ]
+          ],
+          "history_length": 4,
+          "physics_dt_seconds": 0.005,
+          "raw_evidence": [
+            {
+              "anchor": "transition_action_and_reached_physics",
+              "name": "penalty_torques",
+              "unit": "(N*m)^2",
+              "width": 1
+            },
+            {
+              "anchor": "transition_action",
+              "name": "penalty_action_rate",
+              "unit": "",
+              "width": 1
+            },
+            {
+              "anchor": "transition_reached_physics",
+              "name": "limits_dof_pos",
+              "unit": "rad",
+              "width": 1
+            },
+            {
+              "anchor": "transition_reached_physics",
+              "name": "limits_dof_vel",
+              "unit": "rad/s",
+              "width": 1
+            },
+            {
+              "anchor": "transition_reached_physics",
+              "name": "limits_torque",
+              "unit": "N*m",
+              "width": 1
+            },
+            {
+              "anchor": "transition_reached_physics",
+              "name": "penalty_slippage",
+              "unit": "m/s",
+              "width": 1
+            },
+            {
+              "anchor": "transition_reached_physics",
+              "name": "penalty_undesired_contact",
+              "unit": "",
+              "width": 1
+            },
+            {
+              "anchor": "transition_reached_physics",
+              "name": "penalty_ankle_roll",
+              "unit": "rad^2",
+              "width": 1
+            },
+            {
+              "anchor": "transition_reached_physics",
+              "name": "penalty_feet_ori",
+              "unit": "",
+              "width": 1
+            },
+            {
+              "anchor": "transition_reached_physics",
+              "name": "feet_heading_alignment",
+              "unit": "rad",
+              "width": 1
+            }
+          ],
+          "reset_transform_factory": "isaaclab_tasks.core.multi_task.motion.config.environment:_g1_reference_and_lie_down_reset",
+          "root_velocity_frame": "center_of_mass",
+          "step_fields": [],
+          "transition_state_factory": "isaaclab_tasks.core.multi_task.motion.mdp.runtime:make_g1_motion_runtime"
+        },
+        "source": {
+          "evaluation_content_sha256": "f3a0c2810363f5c50bf4146fa2db33c1ff5b90d00cb7c0bc2aa4622696375e11",
+          "format": "joblib_pickle_mapping_clip_name_to_field_mapping",
+          "identifier": "g1_lafan",
+          "semantic_level": "robot_pose_g1_not_canonical_lafan",
+          "train_content_sha256": "7f5aa36957808ee2e972472b18add8510533742710ba312d8b8c6e6014f1c010"
+        }
+      },
+      "resolved_axes_sha256": "7371c6ec9dd0e83be8400a0b7b90c9d4d126d6a72c3a1e43318546ffe3e25bcf",
+      "resolved_configuration": {
+        "actions": {
+          "joint_position": {
+            "action_clip": 5.0,
+            "action_scale": 0.25,
+            "asset_name": "robot",
+            "class_type": "isaaclab_tasks.core.multi_task.motion.mdp.actions:MotionJointPositionAction",
+            "clip": null,
+            "debug_vis": false,
+            "default_joint_offset_range": [
+              0.0,
+              0.0
+            ],
+            "joint_names": [
+              "left_hip_pitch_joint",
+              "left_hip_roll_joint",
+              "left_hip_yaw_joint",
+              "left_knee_joint",
+              "left_ankle_pitch_joint",
+              "left_ankle_roll_joint",
+              "right_hip_pitch_joint",
+              "right_hip_roll_joint",
+              "right_hip_yaw_joint",
+              "right_knee_joint",
+              "right_ankle_pitch_joint",
+              "right_ankle_roll_joint",
+              "waist_yaw_joint",
+              "waist_roll_joint",
+              "waist_pitch_joint",
+              "left_shoulder_pitch_joint",
+              "left_shoulder_roll_joint",
+              "left_shoulder_yaw_joint",
+              "left_elbow_joint",
+              "left_wrist_roll_joint",
+              "left_wrist_pitch_joint",
+              "left_wrist_yaw_joint",
+              "right_shoulder_pitch_joint",
+              "right_shoulder_roll_joint",
+              "right_shoulder_yaw_joint",
+              "right_elbow_joint",
+              "right_wrist_roll_joint",
+              "right_wrist_pitch_joint",
+              "right_wrist_yaw_joint"
+            ],
+            "normalize_to": 5.0,
+            "preserve_order": true
+          }
+        },
+        "commands": {
+          "motion": {
+            "class_type": "isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command:StateCommand",
+            "cmd_kind": null,
+            "commands": {},
+            "debug_vis": false,
+            "element_names": null,
+            "payload": {
+              "auxiliary_evidence": [
+                "penalty_torques",
+                "penalty_action_rate",
+                "limits_dof_pos",
+                "limits_torque",
+                "penalty_undesired_contact",
+                "penalty_feet_ori",
+                "penalty_ankle_roll",
+                "penalty_slippage"
+              ],
+              "class_type": "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_state_payload:MotionStatePayload",
+              "command_fields": [],
+              "episode_length_steps": 501,
+              "history_fields": [
+                [
+                  "processed_action",
+                  29
+                ],
+                [
+                  "base_angular_velocity",
+                  3
+                ],
+                [
+                  "joint_position",
+                  29
+                ],
+                [
+                  "joint_velocity",
+                  29
+                ],
+                [
+                  "projected_gravity",
+                  3
+                ]
+              ],
+              "history_length": 4,
+              "raw_evidence": [
+                {
+                  "anchor": "transition_action_and_reached_physics",
+                  "name": "penalty_torques",
+                  "unit": "(N*m)^2",
+                  "width": 1
+                },
+                {
+                  "anchor": "transition_action",
+                  "name": "penalty_action_rate",
+                  "unit": "",
+                  "width": 1
+                },
+                {
+                  "anchor": "transition_reached_physics",
+                  "name": "limits_dof_pos",
+                  "unit": "rad",
+                  "width": 1
+                },
+                {
+                  "anchor": "transition_reached_physics",
+                  "name": "limits_dof_vel",
+                  "unit": "rad/s",
+                  "width": 1
+                },
+                {
+                  "anchor": "transition_reached_physics",
+                  "name": "limits_torque",
+                  "unit": "N*m",
+                  "width": 1
+                },
+                {
+                  "anchor": "transition_reached_physics",
+                  "name": "penalty_slippage",
+                  "unit": "m/s",
+                  "width": 1
+                },
+                {
+                  "anchor": "transition_reached_physics",
+                  "name": "penalty_undesired_contact",
+                  "unit": "",
+                  "width": 1
+                },
+                {
+                  "anchor": "transition_reached_physics",
+                  "name": "penalty_ankle_roll",
+                  "unit": "rad^2",
+                  "width": 1
+                },
+                {
+                  "anchor": "transition_reached_physics",
+                  "name": "penalty_feet_ori",
+                  "unit": "",
+                  "width": 1
+                },
+                {
+                  "anchor": "transition_reached_physics",
+                  "name": "feet_heading_alignment",
+                  "unit": "rad",
+                  "width": 1
+                }
+              ],
+              "reset_transform_factory": "isaaclab_tasks.core.multi_task.motion.config.environment:_g1_reference_and_lie_down_reset",
+              "robot_asset_name": "robot",
+              "root_velocity_frame": "center_of_mass",
+              "step_fields": [],
+              "transition_state_factory": "isaaclab_tasks.core.multi_task.motion.mdp.runtime:make_g1_motion_runtime"
+            },
+            "randomize_command_indices": true,
+            "resampling_time_range": [
+              1000000000.0,
+              1000000000.0
+            ],
+            "states_relative": true,
+            "task_table": {
+              "class_type": "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table:build_motion_task_table",
+              "expert_sample_grid": {
+                "mode": "uniform_before_source_end",
+                "step_seconds": 0.02
+              },
+              "frame_builder_factory": "isaaclab_tasks.core.multi_task.motion.trajectory.g1:g1_lafan_frame_builder",
+              "motion_split": "evaluation",
+              "reference_kinematics_factory": "isaaclab_tasks.core.multi_task.motion.config.robots.g1:g1_reference_kinematics",
+              "reset_sources": [
+                [
+                  "reference",
+                  0.7
+                ],
+                [
+                  "lie_down",
+                  0.3
+                ]
+              ],
+              "source": {
+                "evaluation": {
+                  "artifact": "humanoidverse/data/lafan_29dof.pkl",
+                  "artifact_sha256": "f3a0c2810363f5c50bf4146fa2db33c1ff5b90d00cb7c0bc2aa4622696375e11",
+                  "clip_count": 40,
+                  "frame_count": 264705,
+                  "name": "evaluation",
+                  "source_content_sha256": "f3a0c2810363f5c50bf4146fa2db33c1ff5b90d00cb7c0bc2aa4622696375e11"
+                },
+                "format": "joblib_pickle_mapping_clip_name_to_field_mapping",
+                "identifier": "g1_lafan",
+                "license": "retargeted_lafan_redistribution_requires_provenance_review",
+                "open_source": "isaaclab_tasks.core.multi_task.motion.config.sources:_open_g1_source",
+                "semantic_level": "robot_pose_g1_not_canonical_lafan",
+                "skeleton_factory": "isaaclab_tasks.core.multi_task.motion.config.source_skeletons:g1_lafan_source_skeleton",
+                "source_fps": 30.0,
+                "train": {
+                  "artifact": "humanoidverse/data/lafan_29dof_10s-clipped.pkl",
+                  "artifact_sha256": "7f5aa36957808ee2e972472b18add8510533742710ba312d8b8c6e6014f1c010",
+                  "clip_count": 862,
+                  "frame_count": 258600,
+                  "name": "training",
+                  "source_content_sha256": "7f5aa36957808ee2e972472b18add8510533742710ba312d8b8c6e6014f1c010"
+                }
+              },
+              "task_row_mode": "clip_time_ranges"
+            }
+          }
+        },
+        "compute_final_obs": true,
+        "curriculum": {
+          "penalty_scale": {
+            "func": "isaaclab_tasks.core.multi_task.motion.mdp.curriculums:MotionPenaltyScaleCurriculum",
+            "params": {}
+          }
+        },
+        "decimation": 4,
+        "episode_length_s": 10.0,
+        "events": {
+          "body_mass": {
+            "func": "isaaclab.envs.mdp.events:randomize_rigid_body_mass",
+            "interval_range_s": null,
+            "is_global_time": false,
+            "min_step_count_between_reset": 0,
+            "mode": "startup",
+            "params": {
+              "asset_cfg": {
+                "body_ids": {
+                  "start": null,
+                  "step": null,
+                  "stop": null
+                },
+                "body_names": ".*",
+                "fixed_tendon_ids": {
+                  "start": null,
+                  "step": null,
+                  "stop": null
+                },
+                "fixed_tendon_names": null,
+                "joint_ids": {
+                  "start": null,
+                  "step": null,
+                  "stop": null
+                },
+                "joint_names": null,
+                "name": "robot",
+                "object_collection_ids": {
+                  "start": null,
+                  "step": null,
+                  "stop": null
+                },
+                "object_collection_names": null,
+                "preserve_order": false
+              },
+              "distribution": "uniform",
+              "mass_distribution_params": [
+                1.0,
+                1.0
+              ],
+              "operation": "scale"
+            },
+            "resample_interval_on_reset": true
+          },
+          "body_mass_inertia": null,
+          "push": null,
+          "robot_material": {
+            "func": "isaaclab.envs.mdp.events:randomize_rigid_body_material",
+            "interval_range_s": null,
+            "is_global_time": false,
+            "min_step_count_between_reset": 0,
+            "mode": "startup",
+            "params": {
+              "asset_cfg": {
+                "body_ids": {
+                  "start": null,
+                  "step": null,
+                  "stop": null
+                },
+                "body_names": ".*",
+                "fixed_tendon_ids": {
+                  "start": null,
+                  "step": null,
+                  "stop": null
+                },
+                "fixed_tendon_names": null,
+                "joint_ids": {
+                  "start": null,
+                  "step": null,
+                  "stop": null
+                },
+                "joint_names": null,
+                "name": "robot",
+                "object_collection_ids": {
+                  "start": null,
+                  "step": null,
+                  "stop": null
+                },
+                "object_collection_names": null,
+                "preserve_order": false
+              },
+              "dynamic_friction_range": [
+                1.0,
+                1.0
+              ],
+              "num_buckets": 1,
+              "restitution_range": [
+                0.0,
+                0.0
+              ],
+              "static_friction_range": [
+                1.0,
+                1.0
+              ]
+            },
+            "resample_interval_on_reset": true
+          },
+          "torso_com": {
+            "func": "isaaclab.envs.mdp.events:randomize_rigid_body_com",
+            "interval_range_s": null,
+            "is_global_time": false,
+            "min_step_count_between_reset": 0,
+            "mode": "startup",
+            "params": {
+              "asset_cfg": {
+                "body_ids": {
+                  "start": null,
+                  "step": null,
+                  "stop": null
+                },
+                "body_names": "torso_link",
+                "fixed_tendon_ids": {
+                  "start": null,
+                  "step": null,
+                  "stop": null
+                },
+                "fixed_tendon_names": null,
+                "joint_ids": {
+                  "start": null,
+                  "step": null,
+                  "stop": null
+                },
+                "joint_names": null,
+                "name": "robot",
+                "object_collection_ids": {
+                  "start": null,
+                  "step": null,
+                  "stop": null
+                },
+                "object_collection_names": null,
+                "preserve_order": false
+              },
+              "com_range": {
+                "x": [
+                  0.0,
+                  0.0
+                ],
+                "y": [
+                  0.0,
+                  0.0
+                ],
+                "z": [
+                  0.0,
+                  0.0
+                ]
+              }
+            },
+            "resample_interval_on_reset": true
+          }
+        },
+        "is_finite_horizon": false,
+        "num_rerenders_on_reset": 0,
+        "observations": {
+          "history_actor": {
+            "concatenate_dim": -1,
+            "concatenate_terms": true,
+            "enable_corruption": false,
+            "flatten_history_dim": true,
+            "history_length": null,
+            "value": {
+              "clip": null,
+              "flatten_history_dim": true,
+              "func": "isaaclab_tasks.core.multi_task.motion.mdp.observations:motion_history",
+              "history_length": 0,
+              "modifiers": null,
+              "noise": null,
+              "params": {
+                "command_name": "motion"
+              },
+              "scale": null
+            }
+          },
+          "last_action": {
+            "concatenate_dim": -1,
+            "concatenate_terms": true,
+            "enable_corruption": false,
+            "flatten_history_dim": true,
+            "history_length": null,
+            "value": {
+              "clip": null,
+              "flatten_history_dim": true,
+              "func": "isaaclab_tasks.core.multi_task.motion.mdp.observations:motion_last_action",
+              "history_length": 0,
+              "modifiers": null,
+              "noise": null,
+              "params": {
+                "action_name": "joint_position"
+              },
+              "scale": null
+            }
+          },
+          "privileged_state": {
+            "concatenate_dim": -1,
+            "concatenate_terms": true,
+            "enable_corruption": false,
+            "flatten_history_dim": true,
+            "history_length": null,
+            "value": {
+              "clip": null,
+              "flatten_history_dim": true,
+              "func": "isaaclab_tasks.core.multi_task.motion.mdp.observations:g1_privileged_body_observation",
+              "history_length": 0,
+              "modifiers": null,
+              "noise": null,
+              "params": {
+                "asset_cfg": {
+                  "body_ids": {
+                    "start": null,
+                    "step": null,
+                    "stop": null
+                  },
+                  "body_names": [
+                    "pelvis",
+                    "left_hip_pitch_link",
+                    "left_hip_roll_link",
+                    "left_hip_yaw_link",
+                    "left_knee_link",
+                    "left_ankle_pitch_link",
+                    "left_ankle_roll_link",
+                    "right_hip_pitch_link",
+                    "right_hip_roll_link",
+                    "right_hip_yaw_link",
+                    "right_knee_link",
+                    "right_ankle_pitch_link",
+                    "right_ankle_roll_link",
+                    "waist_yaw_link",
+                    "waist_roll_link",
+                    "torso_link",
+                    "left_shoulder_pitch_link",
+                    "left_shoulder_roll_link",
+                    "left_shoulder_yaw_link",
+                    "left_elbow_link",
+                    "left_wrist_roll_link",
+                    "left_wrist_pitch_link",
+                    "left_wrist_yaw_link",
+                    "right_shoulder_pitch_link",
+                    "right_shoulder_roll_link",
+                    "right_shoulder_yaw_link",
+                    "right_elbow_link",
+                    "right_wrist_roll_link",
+                    "right_wrist_pitch_link",
+                    "right_wrist_yaw_link"
+                  ],
+                  "fixed_tendon_ids": {
+                    "start": null,
+                    "step": null,
+                    "stop": null
+                  },
+                  "fixed_tendon_names": null,
+                  "joint_ids": {
+                    "start": null,
+                    "step": null,
+                    "stop": null
+                  },
+                  "joint_names": null,
+                  "name": "robot",
+                  "object_collection_ids": {
+                    "start": null,
+                    "step": null,
+                    "stop": null
+                  },
+                  "object_collection_names": null,
+                  "preserve_order": true
+                },
+                "parent_body_index": 15
+              },
+              "scale": null
+            }
+          },
+          "state": {
+            "base_angular_velocity": {
+              "clip": null,
+              "flatten_history_dim": true,
+              "func": "isaaclab_tasks.core.multi_task.motion.mdp.observations:motion_root_angular_velocity",
+              "history_length": 0,
+              "modifiers": null,
+              "noise": {
+                "func": "isaaclab.utils.noise.noise_model:uniform_noise",
+                "n_max": 0.2,
+                "n_min": -0.2,
+                "operation": "add"
+              },
+              "params": {},
+              "scale": 0.25
+            },
+            "concatenate_dim": -1,
+            "concatenate_terms": true,
+            "enable_corruption": false,
+            "flatten_history_dim": true,
+            "history_length": null,
+            "joint_position": {
+              "clip": null,
+              "flatten_history_dim": true,
+              "func": "isaaclab_tasks.core.multi_task.motion.mdp.observations:motion_joint_position",
+              "history_length": 0,
+              "modifiers": null,
+              "noise": {
+                "func": "isaaclab.utils.noise.noise_model:uniform_noise",
+                "n_max": 0.01,
+                "n_min": -0.01,
+                "operation": "add"
+              },
+              "params": {
+                "action_name": "joint_position"
+              },
+              "scale": null
+            },
+            "joint_velocity": {
+              "clip": null,
+              "flatten_history_dim": true,
+              "func": "isaaclab_tasks.core.multi_task.motion.mdp.observations:motion_joint_velocity",
+              "history_length": 0,
+              "modifiers": null,
+              "noise": {
+                "func": "isaaclab.utils.noise.noise_model:uniform_noise",
+                "n_max": 0.5,
+                "n_min": -0.5,
+                "operation": "add"
+              },
+              "params": {
+                "action_name": "joint_position"
+              },
+              "scale": null
+            },
+            "projected_gravity": {
+              "clip": null,
+              "flatten_history_dim": true,
+              "func": "isaaclab_tasks.core.multi_task.motion.mdp.observations:motion_projected_gravity",
+              "history_length": 0,
+              "modifiers": null,
+              "noise": {
+                "func": "isaaclab.utils.noise.noise_model:uniform_noise",
+                "n_max": 0.05,
+                "n_min": -0.05,
+                "operation": "add"
+              },
+              "params": {},
+              "scale": null
+            }
+          }
+        },
+        "rerender_on_reset": false,
+        "rewards": {
+          "environment": {
+            "func": "isaaclab_tasks.core.multi_task.motion.mdp.runtime:motion_transition_reward",
+            "params": {},
+            "weight": 1.0
+          }
+        },
+        "scene": {
+          "class_type": "isaaclab.scene.interactive_scene:InteractiveScene",
+          "clone_in_fabric": false,
+          "contact_forces": {
+            "class_type": "isaaclab_physx.sensors.contact_sensor.contact_sensor:ContactSensor",
+            "debug_vis": false,
+            "filter_prim_paths_expr": [],
+            "force_threshold": null,
+            "history_length": 0,
+            "max_contact_data_count_per_prim": null,
+            "prim_path": "{ENV_REGEX_NS}/Robot/.*",
+            "track_air_time": false,
+            "track_contact_points": false,
+            "track_friction_forces": false,
+            "track_pose": false,
+            "update_period": 0.005,
+            "visualizer_cfg": {
+              "class_type": "isaaclab.markers.visualization_markers:VisualizationMarkers",
+              "markers": {
+                "contact": {
+                  "activate_contact_sensors": false,
+                  "collision_props": null,
+                  "copy_from_source": true,
+                  "func": "isaaclab.sim.spawners.shapes.shapes:spawn_sphere",
+                  "mass_props": null,
+                  "physics_material": null,
+                  "physics_material_path": "material",
+                  "radius": 0.02,
+                  "rigid_props": null,
+                  "semantic_tags": null,
+                  "spawn_path": null,
+                  "visible": true,
+                  "visual_material": {
+                    "diffuse_color": [
+                      1.0,
+                      0.0,
+                      0.0
+                    ],
+                    "emissive_color": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "func": "isaaclab.sim.spawners.materials.visual_materials:spawn_preview_surface",
+                    "metallic": 0.0,
+                    "opacity": 1.0,
+                    "roughness": 0.5
+                  },
+                  "visual_material_path": "material"
+                },
+                "no_contact": {
+                  "activate_contact_sensors": false,
+                  "collision_props": null,
+                  "copy_from_source": true,
+                  "func": "isaaclab.sim.spawners.shapes.shapes:spawn_sphere",
+                  "mass_props": null,
+                  "physics_material": null,
+                  "physics_material_path": "material",
+                  "radius": 0.02,
+                  "rigid_props": null,
+                  "semantic_tags": null,
+                  "spawn_path": null,
+                  "visible": false,
+                  "visual_material": {
+                    "diffuse_color": [
+                      0.0,
+                      1.0,
+                      0.0
+                    ],
+                    "emissive_color": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "func": "isaaclab.sim.spawners.materials.visual_materials:spawn_preview_surface",
+                    "metallic": 0.0,
+                    "opacity": 1.0,
+                    "roughness": 0.5
+                  },
+                  "visual_material_path": "material"
+                }
+              },
+              "prim_path": "/Visuals/ContactSensor"
+            }
+          },
+          "dome_light": {
+            "class_type": null,
+            "collision_group": 0,
+            "debug_vis": false,
+            "disable_shape_checks": null,
+            "init_state": {
+              "pos": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "rot": [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            },
+            "prim_path": "/World/domeLight",
+            "spawn": {
+              "color": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "color_temperature": 6500.0,
+              "copy_from_source": true,
+              "enable_color_temperature": false,
+              "exposure": 0.0,
+              "func": "isaaclab.sim.spawners.lights.lights:spawn_light",
+              "intensity": 750.0,
+              "normalize": false,
+              "prim_type": "DomeLight",
+              "semantic_tags": null,
+              "spawn_path": null,
+              "texture_file": null,
+              "texture_format": "automatic",
+              "visible": true,
+              "visible_in_primary_ray": true
+            }
+          },
+          "env_spacing": 3.0,
+          "filter_collisions": true,
+          "ground": {
+            "class_type": null,
+            "collision_group": 0,
+            "debug_vis": false,
+            "disable_shape_checks": null,
+            "init_state": {
+              "pos": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "rot": [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            },
+            "prim_path": "/World/ground",
+            "spawn": {
+              "activate_contact_sensors": false,
+              "axis": "Z",
+              "collision_props": {
+                "_usd_applied_schema": null,
+                "_usd_field_exceptions": {
+                  "PhysxCollisionAPI": [
+                    "physxCollision",
+                    [
+                      "contact_offset",
+                      "rest_offset"
+                    ]
+                  ]
+                },
+                "_usd_namespace": "physics",
+                "collision_enabled": true,
+                "contact_offset": null,
+                "mesh_collision_property": null,
+                "rest_offset": null
+              },
+              "copy_from_source": true,
+              "func": "isaaclab.sim.spawners.shapes.shapes:spawn_plane",
+              "mass_props": null,
+              "physics_material": {
+                "_usd_applied_schema": null,
+                "_usd_field_exceptions": {},
+                "_usd_namespace": "physics",
+                "dynamic_friction": 1.0,
+                "func": "isaaclab.sim.spawners.materials.physics_materials:spawn_rigid_body_material",
+                "restitution": 0.0,
+                "static_friction": 1.0
+              },
+              "physics_material_path": "material",
+              "rigid_props": null,
+              "semantic_tags": null,
+              "size": [
+                200.0,
+                200.0
+              ],
+              "spawn_path": null,
+              "visible": true,
+              "visual_material": null,
+              "visual_material_path": "material"
+            }
+          },
+          "lazy_sensor_update": true,
+          "replicate_physics": true,
+          "robot": {
+            "actuator_value_resolution_debug_print": false,
+            "actuators": {
+              "motion": {
+                "armature": {
+                  "left_ankle_pitch_joint": 0.007219450082629919,
+                  "left_ankle_roll_joint": 0.007219450082629919,
+                  "left_elbow_joint": 0.0036097250413149595,
+                  "left_hip_pitch_joint": 0.025101924315094948,
+                  "left_hip_roll_joint": 0.025101924315094948,
+                  "left_hip_yaw_joint": 0.010177520103752613,
+                  "left_knee_joint": 0.025101924315094948,
+                  "left_shoulder_pitch_joint": 0.0036097250413149595,
+                  "left_shoulder_roll_joint": 0.0036097250413149595,
+                  "left_shoulder_yaw_joint": 0.0036097250413149595,
+                  "left_wrist_pitch_joint": 0.0042500002309679985,
+                  "left_wrist_roll_joint": 0.0036097250413149595,
+                  "left_wrist_yaw_joint": 0.0042500002309679985,
+                  "right_ankle_pitch_joint": 0.007219450082629919,
+                  "right_ankle_roll_joint": 0.007219450082629919,
+                  "right_elbow_joint": 0.0036097250413149595,
+                  "right_hip_pitch_joint": 0.025101924315094948,
+                  "right_hip_roll_joint": 0.025101924315094948,
+                  "right_hip_yaw_joint": 0.010177520103752613,
+                  "right_knee_joint": 0.025101924315094948,
+                  "right_shoulder_pitch_joint": 0.0036097250413149595,
+                  "right_shoulder_roll_joint": 0.0036097250413149595,
+                  "right_shoulder_yaw_joint": 0.0036097250413149595,
+                  "right_wrist_pitch_joint": 0.0042500002309679985,
+                  "right_wrist_roll_joint": 0.0036097250413149595,
+                  "right_wrist_yaw_joint": 0.0042500002309679985,
+                  "waist_pitch_joint": 0.007219450082629919,
+                  "waist_roll_joint": 0.007219450082629919,
+                  "waist_yaw_joint": 0.010177520103752613
+                },
+                "class_type": "isaaclab.actuators.actuator_pd:ImplicitActuator",
+                "damping": {
+                  "left_ankle_pitch_joint": 1.8144500255584717,
+                  "left_ankle_roll_joint": 1.8144500255584717,
+                  "left_elbow_joint": 0.9072200059890747,
+                  "left_hip_pitch_joint": 6.308800220489502,
+                  "left_hip_roll_joint": 6.308800220489502,
+                  "left_hip_yaw_joint": 2.557889938354492,
+                  "left_knee_joint": 6.308800220489502,
+                  "left_shoulder_pitch_joint": 0.9072200059890747,
+                  "left_shoulder_roll_joint": 0.9072200059890747,
+                  "left_shoulder_yaw_joint": 0.9072200059890747,
+                  "left_wrist_pitch_joint": 1.0681400299072266,
+                  "left_wrist_roll_joint": 0.9072200059890747,
+                  "left_wrist_yaw_joint": 1.0681400299072266,
+                  "right_ankle_pitch_joint": 1.8144500255584717,
+                  "right_ankle_roll_joint": 1.8144500255584717,
+                  "right_elbow_joint": 0.9072200059890747,
+                  "right_hip_pitch_joint": 6.308800220489502,
+                  "right_hip_roll_joint": 6.308800220489502,
+                  "right_hip_yaw_joint": 2.557889938354492,
+                  "right_knee_joint": 6.308800220489502,
+                  "right_shoulder_pitch_joint": 0.9072200059890747,
+                  "right_shoulder_roll_joint": 0.9072200059890747,
+                  "right_shoulder_yaw_joint": 0.9072200059890747,
+                  "right_wrist_pitch_joint": 1.0681400299072266,
+                  "right_wrist_roll_joint": 0.9072200059890747,
+                  "right_wrist_yaw_joint": 1.0681400299072266,
+                  "waist_pitch_joint": 5.0,
+                  "waist_roll_joint": 5.0,
+                  "waist_yaw_joint": 5.0
+                },
+                "dynamic_friction": null,
+                "effort_limit": null,
+                "effort_limit_sim": {
+                  "left_ankle_pitch_joint": 50.0,
+                  "left_ankle_roll_joint": 50.0,
+                  "left_elbow_joint": 25.0,
+                  "left_hip_pitch_joint": 139.0,
+                  "left_hip_roll_joint": 139.0,
+                  "left_hip_yaw_joint": 88.0,
+                  "left_knee_joint": 139.0,
+                  "left_shoulder_pitch_joint": 25.0,
+                  "left_shoulder_roll_joint": 25.0,
+                  "left_shoulder_yaw_joint": 25.0,
+                  "left_wrist_pitch_joint": 5.0,
+                  "left_wrist_roll_joint": 25.0,
+                  "left_wrist_yaw_joint": 5.0,
+                  "right_ankle_pitch_joint": 50.0,
+                  "right_ankle_roll_joint": 50.0,
+                  "right_elbow_joint": 25.0,
+                  "right_hip_pitch_joint": 139.0,
+                  "right_hip_roll_joint": 139.0,
+                  "right_hip_yaw_joint": 88.0,
+                  "right_knee_joint": 139.0,
+                  "right_shoulder_pitch_joint": 25.0,
+                  "right_shoulder_roll_joint": 25.0,
+                  "right_shoulder_yaw_joint": 25.0,
+                  "right_wrist_pitch_joint": 5.0,
+                  "right_wrist_roll_joint": 25.0,
+                  "right_wrist_yaw_joint": 5.0,
+                  "waist_pitch_joint": 50.0,
+                  "waist_roll_joint": 50.0,
+                  "waist_yaw_joint": 88.0
+                },
+                "friction": {
+                  "left_ankle_pitch_joint": 0.029999999329447746,
+                  "left_ankle_roll_joint": 0.029999999329447746,
+                  "left_elbow_joint": 0.029999999329447746,
+                  "left_hip_pitch_joint": 0.029999999329447746,
+                  "left_hip_roll_joint": 0.029999999329447746,
+                  "left_hip_yaw_joint": 0.029999999329447746,
+                  "left_knee_joint": 0.029999999329447746,
+                  "left_shoulder_pitch_joint": 0.029999999329447746,
+                  "left_shoulder_roll_joint": 0.029999999329447746,
+                  "left_shoulder_yaw_joint": 0.029999999329447746,
+                  "left_wrist_pitch_joint": 0.029999999329447746,
+                  "left_wrist_roll_joint": 0.029999999329447746,
+                  "left_wrist_yaw_joint": 0.029999999329447746,
+                  "right_ankle_pitch_joint": 0.029999999329447746,
+                  "right_ankle_roll_joint": 0.029999999329447746,
+                  "right_elbow_joint": 0.029999999329447746,
+                  "right_hip_pitch_joint": 0.029999999329447746,
+                  "right_hip_roll_joint": 0.029999999329447746,
+                  "right_hip_yaw_joint": 0.029999999329447746,
+                  "right_knee_joint": 0.029999999329447746,
+                  "right_shoulder_pitch_joint": 0.029999999329447746,
+                  "right_shoulder_roll_joint": 0.029999999329447746,
+                  "right_shoulder_yaw_joint": 0.029999999329447746,
+                  "right_wrist_pitch_joint": 0.029999999329447746,
+                  "right_wrist_roll_joint": 0.029999999329447746,
+                  "right_wrist_yaw_joint": 0.029999999329447746,
+                  "waist_pitch_joint": 0.029999999329447746,
+                  "waist_roll_joint": 0.029999999329447746,
+                  "waist_yaw_joint": 0.029999999329447746
+                },
+                "joint_names_expr": [
+                  "left_hip_pitch_joint",
+                  "right_hip_pitch_joint",
+                  "waist_yaw_joint",
+                  "left_hip_roll_joint",
+                  "right_hip_roll_joint",
+                  "waist_roll_joint",
+                  "left_hip_yaw_joint",
+                  "right_hip_yaw_joint",
+                  "waist_pitch_joint",
+                  "left_knee_joint",
+                  "right_knee_joint",
+                  "left_shoulder_pitch_joint",
+                  "right_shoulder_pitch_joint",
+                  "left_ankle_pitch_joint",
+                  "right_ankle_pitch_joint",
+                  "left_shoulder_roll_joint",
+                  "right_shoulder_roll_joint",
+                  "left_ankle_roll_joint",
+                  "right_ankle_roll_joint",
+                  "left_shoulder_yaw_joint",
+                  "right_shoulder_yaw_joint",
+                  "left_elbow_joint",
+                  "right_elbow_joint",
+                  "left_wrist_roll_joint",
+                  "right_wrist_roll_joint",
+                  "left_wrist_pitch_joint",
+                  "right_wrist_pitch_joint",
+                  "left_wrist_yaw_joint",
+                  "right_wrist_yaw_joint"
+                ],
+                "stiffness": {
+                  "left_ankle_pitch_joint": 28.501249313354492,
+                  "left_ankle_roll_joint": 28.501249313354492,
+                  "left_elbow_joint": 14.250619888305664,
+                  "left_hip_pitch_joint": 99.09842681884766,
+                  "left_hip_roll_joint": 99.09842681884766,
+                  "left_hip_yaw_joint": 40.17924118041992,
+                  "left_knee_joint": 99.09842681884766,
+                  "left_shoulder_pitch_joint": 14.250619888305664,
+                  "left_shoulder_roll_joint": 14.250619888305664,
+                  "left_shoulder_yaw_joint": 14.250619888305664,
+                  "left_wrist_pitch_joint": 16.778329849243164,
+                  "left_wrist_roll_joint": 14.250619888305664,
+                  "left_wrist_yaw_joint": 16.778329849243164,
+                  "right_ankle_pitch_joint": 28.501249313354492,
+                  "right_ankle_roll_joint": 28.501249313354492,
+                  "right_elbow_joint": 14.250619888305664,
+                  "right_hip_pitch_joint": 99.09842681884766,
+                  "right_hip_roll_joint": 99.09842681884766,
+                  "right_hip_yaw_joint": 40.17924118041992,
+                  "right_knee_joint": 99.09842681884766,
+                  "right_shoulder_pitch_joint": 14.250619888305664,
+                  "right_shoulder_roll_joint": 14.250619888305664,
+                  "right_shoulder_yaw_joint": 14.250619888305664,
+                  "right_wrist_pitch_joint": 16.778329849243164,
+                  "right_wrist_roll_joint": 14.250619888305664,
+                  "right_wrist_yaw_joint": 16.778329849243164,
+                  "waist_pitch_joint": 300.0,
+                  "waist_roll_joint": 300.0,
+                  "waist_yaw_joint": 300.0
+                },
+                "velocity_limit": null,
+                "velocity_limit_sim": {
+                  "left_ankle_pitch_joint": 37.0,
+                  "left_ankle_roll_joint": 37.0,
+                  "left_elbow_joint": 37.0,
+                  "left_hip_pitch_joint": 32.0,
+                  "left_hip_roll_joint": 32.0,
+                  "left_hip_yaw_joint": 32.0,
+                  "left_knee_joint": 20.0,
+                  "left_shoulder_pitch_joint": 37.0,
+                  "left_shoulder_roll_joint": 37.0,
+                  "left_shoulder_yaw_joint": 37.0,
+                  "left_wrist_pitch_joint": 22.0,
+                  "left_wrist_roll_joint": 37.0,
+                  "left_wrist_yaw_joint": 22.0,
+                  "right_ankle_pitch_joint": 37.0,
+                  "right_ankle_roll_joint": 37.0,
+                  "right_elbow_joint": 37.0,
+                  "right_hip_pitch_joint": 32.0,
+                  "right_hip_roll_joint": 32.0,
+                  "right_hip_yaw_joint": 32.0,
+                  "right_knee_joint": 20.0,
+                  "right_shoulder_pitch_joint": 37.0,
+                  "right_shoulder_roll_joint": 37.0,
+                  "right_shoulder_yaw_joint": 37.0,
+                  "right_wrist_pitch_joint": 22.0,
+                  "right_wrist_roll_joint": 37.0,
+                  "right_wrist_yaw_joint": 22.0,
+                  "waist_pitch_joint": 37.0,
+                  "waist_roll_joint": 37.0,
+                  "waist_yaw_joint": 32.0
+                },
+                "viscous_friction": null
+              }
+            },
+            "articulation_root_prim_path": null,
+            "class_type": "isaaclab.assets.articulation.articulation:Articulation",
+            "collision_group": 0,
+            "debug_vis": false,
+            "disable_shape_checks": null,
+            "init_state": {
+              "ang_vel": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "joint_pos": {
+                "left_ankle_pitch_joint": -0.20000000298023224,
+                "left_ankle_roll_joint": 0.0,
+                "left_elbow_joint": 0.0,
+                "left_hip_pitch_joint": -0.10000000149011612,
+                "left_hip_roll_joint": 0.0,
+                "left_hip_yaw_joint": 0.0,
+                "left_knee_joint": 0.30000001192092896,
+                "left_shoulder_pitch_joint": 0.0,
+                "left_shoulder_roll_joint": 0.0,
+                "left_shoulder_yaw_joint": 0.0,
+                "left_wrist_pitch_joint": 0.0,
+                "left_wrist_roll_joint": 0.0,
+                "left_wrist_yaw_joint": 0.0,
+                "right_ankle_pitch_joint": -0.20000000298023224,
+                "right_ankle_roll_joint": 0.0,
+                "right_elbow_joint": 0.0,
+                "right_hip_pitch_joint": -0.10000000149011612,
+                "right_hip_roll_joint": 0.0,
+                "right_hip_yaw_joint": 0.0,
+                "right_knee_joint": 0.30000001192092896,
+                "right_shoulder_pitch_joint": 0.0,
+                "right_shoulder_roll_joint": 0.0,
+                "right_shoulder_yaw_joint": 0.0,
+                "right_wrist_pitch_joint": 0.0,
+                "right_wrist_roll_joint": 0.0,
+                "right_wrist_yaw_joint": 0.0,
+                "waist_pitch_joint": 0.0,
+                "waist_roll_joint": 0.0,
+                "waist_yaw_joint": 0.0
+              },
+              "joint_vel": {
+                ".*": 0.0
+              },
+              "lin_vel": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "pos": [
+                0.0,
+                0.0,
+                0.8
+              ],
+              "rot": [
+                1.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "prim_path": "{ENV_REGEX_NS}/Robot",
+            "soft_joint_pos_limit_factor": 0.9,
+            "spawn": {
+              "activate_contact_sensors": true,
+              "articulation_props": {
+                "_usd_applied_schema": "PhysxArticulationAPI",
+                "_usd_field_exceptions": {
+                  "PhysxArticulationAPI": [
+                    "physxArticulation",
+                    [
+                      "articulation_enabled"
+                    ]
+                  ]
+                },
+                "_usd_namespace": "physxArticulation",
+                "articulation_enabled": null,
+                "enabled_self_collisions": true,
+                "fix_root_link": null,
+                "sleep_threshold": null,
+                "solver_position_iteration_count": 4,
+                "solver_velocity_iteration_count": 0,
+                "stabilization_threshold": null
+              },
+              "collision_props": null,
+              "copy_from_source": true,
+              "deformable_props": null,
+              "fixed_tendons_props": null,
+              "func": "isaaclab.sim.spawners.from_files.from_files:spawn_from_usd",
+              "joint_drive_props": null,
+              "mass_props": null,
+              "physics_material": null,
+              "physics_material_path": "material",
+              "rigid_props": {
+                "_usd_applied_schema": "PhysxRigidBodyAPI",
+                "_usd_field_exceptions": {
+                  "PhysxRigidBodyAPI": [
+                    "physxRigidBody",
+                    [
+                      "disable_gravity"
+                    ]
+                  ]
+                },
+                "_usd_namespace": "physxRigidBody",
+                "angular_damping": 0.0,
+                "disable_gravity": false,
+                "enable_gyroscopic_forces": null,
+                "kinematic_enabled": null,
+                "linear_damping": 0.0,
+                "max_angular_velocity": 1000.0,
+                "max_contact_impulse": null,
+                "max_depenetration_velocity": 1.0,
+                "max_linear_velocity": 1000.0,
+                "retain_accelerations": false,
+                "rigid_body_enabled": null,
+                "sleep_threshold": null,
+                "solver_position_iteration_count": null,
+                "solver_velocity_iteration_count": null,
+                "stabilization_threshold": null
+              },
+              "scale": null,
+              "semantic_tags": null,
+              "spatial_tendons_props": null,
+              "spawn_path": null,
+              "usd_asset_file": "g1_29dof_rev_1_0.usd",
+              "variants": null,
+              "visible": true,
+              "visual_material": null,
+              "visual_material_path": "material"
+            }
+          }
+        },
+        "sim": {
+          "create_stage_in_memory": false,
+          "dt": 0.005,
+          "enable_scene_query_support": false,
+          "gravity": [
+            0.0,
+            0.0,
+            -9.81
+          ],
+          "logging_level": "WARNING",
+          "physics": {
+            "bounce_threshold_velocity": 0.5,
+            "class_type": "isaaclab_physx.physics.physx_manager:PhysxManager",
+            "enable_ccd": false,
+            "enable_enhanced_determinism": false,
+            "enable_external_forces_every_iteration": false,
+            "enable_scene_query_support": false,
+            "enable_stabilization": false,
+            "friction_correlation_distance": 0.025,
+            "friction_offset_threshold": 0.04,
+            "gpu_collision_stack_size": 67108864,
+            "gpu_found_lost_aggregate_pairs_capacity": 33554432,
+            "gpu_found_lost_pairs_capacity": 33554432,
+            "gpu_heap_capacity": 67108864,
+            "gpu_max_num_partitions": 8,
+            "gpu_max_particle_contacts": 1048576,
+            "gpu_max_rigid_contact_count": 8388608,
+            "gpu_max_rigid_patch_count": 5242880,
+            "gpu_max_soft_body_contacts": 1048576,
+            "gpu_temp_buffer_capacity": 16777216,
+            "gpu_total_aggregate_pairs_capacity": 33554432,
+            "max_position_iteration_count": 255,
+            "max_velocity_iteration_count": 255,
+            "min_position_iteration_count": 1,
+            "min_velocity_iteration_count": 0,
+            "solve_articulation_contact_last": false,
+            "solver_type": 1
+          },
+          "physics_material": {
+            "_usd_applied_schema": "PhysxMaterialAPI",
+            "_usd_field_exceptions": {},
+            "_usd_namespace": "physxMaterial",
+            "compliant_contact_damping": null,
+            "compliant_contact_stiffness": null,
+            "dynamic_friction": 0.5,
+            "friction_combine_mode": null,
+            "func": "isaaclab.sim.spawners.materials.physics_materials:spawn_rigid_body_material",
+            "restitution": 0.0,
+            "restitution_combine_mode": null,
+            "static_friction": 0.5
+          },
+          "physics_prim_path": "/physicsScene",
+          "render": {
+            "ambient_light_intensity": null,
+            "ambient_occlusion_denoiser_mode": null,
+            "antialiasing_mode": null,
+            "carb_settings": null,
+            "dlss_mode": null,
+            "dome_light_upper_lower_strategy": null,
+            "enable_ambient_occlusion": null,
+            "enable_direct_lighting": null,
+            "enable_dl_denoiser": null,
+            "enable_dlssg": null,
+            "enable_global_illumination": null,
+            "enable_reflections": null,
+            "enable_shadows": null,
+            "enable_translucency": null,
+            "max_bounces": null,
+            "rendering_mode": null,
+            "samples_per_pixel": null,
+            "split_clearcoat": null,
+            "split_glass": null,
+            "split_rough_reflection": null,
+            "view_tile_limit": null
+          },
+          "render_interval": 4,
+          "save_logs_to_file": true,
+          "use_fabric": true,
+          "use_newton_actuators": false,
+          "visualizer_cfgs": []
+        },
+        "terminations": {
+          "time_out": {
+            "func": "isaaclab_tasks.core.multi_task.motion.mdp.runtime:motion_time_out",
+            "params": {
+              "applied_actions_before_timeout": 501
+            },
+            "time_out": true
+          }
+        }
+      },
+      "resolved_configuration_sha256": "8de4c7e9af74598688d7e3bb00e8f287a321792221d2a7e19060e3ba329d6086",
+      "robot_assets": {
+        "reference/g1_29dof.xml": "439c1ec0806583d73b492da9484b0cb9e9eae215e0d9506e3c2fa69016733532",
+        "simulation/configuration/g1_29dof_rev_1_0_base.usd": "d9768c942783ae0932f0c3db3558d5283b9a93ba0e561d15d8984f548aa2a65d",
+        "simulation/configuration/g1_29dof_rev_1_0_physics.usd": "cde4ff0378183e4e2063df1fdcad4060df8247eaf1da777f45e2adea0b6dde22",
+        "simulation/configuration/g1_29dof_rev_1_0_sensor.usd": "5115364b53bffbb37007af0fd1038336679b66abdae134bc87d0fca9829f9b60",
+        "simulation/g1_29dof_rev_1_0.usd": "cfed730bb043c42708260f25bf3bdf49ac80deed5d5a49384721b8e01059a96e"
+      },
+      "runtime_dependencies": {
+        "isaac_sim": {
+          "version": "6.0.1-alpha.1",
+          "version_sha256": "b048288c87b861bf6429130003e3787abc459920ff28f2eb6aa6a220308e1cb5"
+        },
+        "joblib": {
+          "distribution_version": "1.5.1",
+          "module_source_sha256": "b814aeb1392c5cba4a03ea40a0b3b8c1d4eb1e424e7e1b41dbdee671395eb04f",
+          "module_version": "1.5.1"
+        },
+        "newton": {
+          "distribution_version": "1.4.0.dev0",
+          "module_source_sha256": "5527cc692d6ff881555f676bca70896f47aaf70213129239b65b47a12d25da31",
+          "module_version": "1.4.0.dev0"
+        },
+        "newton_owners": {
+          "model_builder_add_mjcf": {
+            "owner": "newton._src.sim.builder:ModelBuilder.add_mjcf",
+            "source_sha256": "7d4d18f30820b3dd4ec1f1893bddf2876d547b592d624ee977670fb8f8417c1f"
+          }
+        },
+        "numpy": {
+          "distribution_version": "2.4.6",
+          "module_source_sha256": "92a46f791e453926d3292af2582b89995a289475f0eaaea71a949823200b838a",
+          "module_version": "2.4.6"
+        },
+        "torch": {
+          "cuda_version": "12.8",
+          "distribution_version": "2.10.0+cu128",
+          "git_version": "449b1768410104d3ed79d3bcfe4ba1d65c7f22c0",
+          "module_source_sha256": "51c90fe34a7cf869517d1bab4cd114498790e169ec668f1a154c35ec64117a5e",
+          "module_version": "2.10.0+cu128"
+        },
+        "warp": {
+          "distribution_version": "1.15.0.dev20260529",
+          "module_source_sha256": "f29f6368f025003a48a17a0dd6ed4eb1ef3d825c041026c07a6e1d00a31abc52",
+          "module_version": "1.15.0.dev20260529"
+        }
+      },
+      "runtime_dependencies_sha256": "5c3212ef7e952a3136c1078fb07bf73bdc0115e87055fd844dc33cd2ad12e08a",
+      "schema": "forward_backward_phase3_motion_environment_dependency_identity_v7"
+    },
+    "environment_semantic_sha256": "11cd29234d70875bff1747a5975acbd31d9c7c72fe5b09bc602b97a576ceb138",
+    "probe_sha256": "5aaffb3828b07741ae9f8038302e80557ba2f33bb5b9421950e4fdd07a91a42a"
+  },
+  "controlled_candidate": {
+    "edge_seed": "exact_frozen_source_transition_facts",
+    "frozen_source_joint_axis_mapped_once_to_live_axis": true,
+    "observation_noise": "disabled",
+    "physics_facts": "source_body_mass_inertia_com_and_shape_material_per_edge",
+    "pushes": "disabled",
+    "reference_artifact_root": "/home/zhengyuz/Projects/BFM-Zero",
+    "source_artifact_root": "/home/zhengyuz/Projects/BFM-Zero"
+  },
+  "decision": {
+    "current_observation_contract_passed": true,
+    "exact_contract_passed": true,
+    "passed": true,
+    "simulator_elementwise_parity_claimed": false
+  },
+  "offline_oracle_checks": {
+    "actor_noise_envelope": {
+      "max_fraction_of_declared_half_range": 0.9976600408554077,
+      "passed": true
+    },
+    "exact": {
+      "controller_target_joint_position": {
+        "atol": 0.0,
+        "max_abs": 0.0,
+        "mean_abs": 0.0,
+        "passed": true,
+        "rms": 0.0,
+        "rtol": 0.0
+      },
+      "history_recurrence": {
+        "atol": 0.0,
+        "max_abs": 0.0,
+        "mean_abs": 0.0,
+        "passed": true,
+        "rms": 0.0,
+        "rtol": 0.0
+      },
+      "privileged_body_algebra": {
+        "current": {
+          "atol": 2e-05,
+          "max_abs": 8.344650268554688e-07,
+          "mean_abs": 5.214625802343305e-08,
+          "passed": true,
+          "rms": 1.2237076865113925e-07,
+          "rtol": 2e-06
+        },
+        "final": {
+          "atol": 2e-05,
+          "max_abs": 5.960464477539062e-07,
+          "mean_abs": 7.028828855695664e-08,
+          "passed": true,
+          "rms": 1.3556226905142454e-07,
+          "rtol": 2e-06
+        },
+        "returned": {
+          "atol": 2e-05,
+          "max_abs": 8.344650268554688e-07,
+          "mean_abs": 5.3559266951918055e-08,
+          "passed": true,
+          "rms": 1.2332514004034696e-07,
+          "rtol": 2e-06
+        }
+      },
+      "processed_action": {
+        "atol": 0.0,
+        "max_abs": 0.0,
+        "mean_abs": 0.0,
+        "passed": true,
+        "rms": 0.0,
+        "rtol": 0.0
+      },
+      "source_auxiliary_selection": {
+        "atol": 0.0,
+        "max_abs": 0.0,
+        "mean_abs": 0.0,
+        "passed": true,
+        "rms": 0.0,
+        "rtol": 0.0
+      },
+      "source_reward_recomposition": {
+        "atol": 1e-05,
+        "max_abs": 9.313225746154785e-10,
+        "mean_abs": 2.3865140974521635e-10,
+        "passed": true,
+        "rms": 3.722560814423366e-10,
+        "rtol": 1e-05
+      }
+    },
+    "history_reset_seed_normalization": {
+      "source_law": "post_reset_observation_is_appended_to_history",
+      "source_post_autoreset_seed_rows": 2,
+      "unified_law": "only_nodes_reached_by_applied_actions_enter_history"
+    },
+    "source_current_clock_skew": {
+      "max": 0.02009814469983556,
+      "mean": 0.0034574218188909802,
+      "rms": 0.007832557280503031,
+      "skewed_rows": 2,
+      "total_rows": 10,
+      "unit": "rad"
+    }
+  },
+  "oracle": {
+    "edges": 10,
+    "metadata_sha256": "f78a71718b3893f47695f1a3632ffbbdabb5445207b621cf23eaa72491d6694c",
+    "path": "/home/zhengyuz/Projects/IsaacLab.wt/feature-unify/scripts/reinforcement_learning/forward_backward/phase3/fixtures/g1_lafan_same_step_trace_v1.npz",
+    "physical_shape_count": 33,
+    "sha256": "0959ba0435e37496cac0a716d7221fb7986f44aa236dd1180db4f184fc1927c3",
+    "source_revision": "f0495e864ffcf332f346bd7b55e9aa108cb8b38f",
+    "source_trace_generator": {
+      "bytes": 38829,
+      "sha256": "32b0555bb17a9acfd475cf6e9313fda6ce71107fd9b00a124ff92178187dc500"
+    }
+  },
+  "profile": "g1_lafan",
+  "schema": "forward_backward_phase3e_g1_native_edge_replay_v3"
+}
