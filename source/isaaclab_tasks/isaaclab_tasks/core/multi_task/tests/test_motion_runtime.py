@@ -188,6 +188,8 @@ def _action(robot: _Robot, num_envs: int) -> MotionJointPositionAction:
     action._joint_velocity = torch.empty_like(action._raw_actions)
     action.default_joint_offset = torch.zeros_like(action._raw_actions)
     action.joint_position_target = torch.empty_like(action._raw_actions)
+    action._reset_default_joint_offset = torch.empty_like(action._raw_actions)
+    action._reset_joint_position_target = torch.empty_like(action._raw_actions)
     action.joint_default_position = robot.data.default_joint_pos.torch[0].clone()
     action.joint_stiffness = robot.data.joint_stiffness.torch[0].clone()
     action.joint_damping = robot.data.joint_damping.torch[0].clone()

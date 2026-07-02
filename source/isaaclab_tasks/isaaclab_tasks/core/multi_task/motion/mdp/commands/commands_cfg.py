@@ -19,7 +19,7 @@ from isaaclab.utils.configclass import configclass
 from ....mdp.commands.state_command.state_command_cfg import StateCommandCfg
 from ...data import MotionSampleGrid
 from .motion_state_payload import MotionStatePayload
-from .motion_task_table import build_motion_task_table
+from .motion_task_table import TaskSamplingLaw, _task_sampling_law, build_motion_task_table
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -60,6 +60,11 @@ class MotionTaskTableCfg(StateCommandCfg.TaskTableCfg):
 
     task_row_mode: Literal["source_frames", "clip_time_ranges"] = MISSING
     """Controlled rule that derives selectable rows from valid source clips."""
+
+    @property
+    def task_sampling_law(self) -> TaskSamplingLaw:
+        """Sampling law implied by :attr:`task_row_mode`."""
+        return _task_sampling_law(self.task_row_mode)
 
     reset_sources: tuple[tuple[str, float], ...] = MISSING
     """Ordered reset-source names and sampling probabilities."""

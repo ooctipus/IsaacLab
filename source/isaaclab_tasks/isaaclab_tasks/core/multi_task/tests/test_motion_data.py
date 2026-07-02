@@ -497,8 +497,10 @@ def test_task_row_modes_generate_exact_rows_and_expose_reset_source_names() -> N
     expected_times = torch.tensor((0.0, 1.0 / 30.0, 2.0 / 30.0, 3.0 / 30.0, 4.0 / 30.0, 0.0, 0.05, 0.1, 0.15))
 
     assert source_frames.task_row_mode == "source_frames"
+    assert source_frames.task_sampling_law == "clip_categorical_then_discrete_source_frame_v1"
     assert source_frames.reset_source_names == ("reference", "fall")
     torch.testing.assert_close(source_frames.clip_indices, torch.tensor((0, 0, 0, 0, 0, 1, 1, 1, 1)))
+    torch.testing.assert_close(source_frames.clip_start_rows, torch.tensor((0, 5)))
     torch.testing.assert_close(source_frames.reset_time_ranges_seconds[:, 0], expected_times)
     torch.testing.assert_close(source_frames.reset_time_ranges_seconds[:, 1], expected_times)
 
@@ -515,7 +517,9 @@ def test_task_row_modes_generate_exact_rows_and_expose_reset_source_names() -> N
         seed=source_frames.seed,
     )
     assert clip_ranges.task_row_mode == "clip_time_ranges"
+    assert clip_ranges.task_sampling_law == "clip_categorical_then_continuous_time_v1"
     torch.testing.assert_close(clip_ranges.clip_indices, torch.tensor((0, 1)))
+    torch.testing.assert_close(clip_ranges.clip_start_rows, torch.tensor((0, 1)))
     torch.testing.assert_close(
         clip_ranges.reset_time_ranges_seconds,
         torch.tensor(((0.0, 4.0 / 30.0), (0.0, 3.0 / 20.0))),
@@ -554,6 +558,9 @@ def test_stream_writer_preallocates_once_and_finishes_without_copy() -> None:
     assert table.clip_valid.tolist() == [True, True]
     metadata = (
         table.clip_offsets,
+        table.clip_start_rows,
+        table._sampling_row_starts,
+        table._sampling_row_counts,
         table.frame_counts,
         table.source_fps,
         table.clip_valid,

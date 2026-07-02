@@ -57,6 +57,8 @@ class MotionJointPositionAction(ActionTerm):
         self.joint_effort_limit = data.joint_effort_limits.torch[0, joint_ids].clone()
         self.default_joint_offset = torch.zeros_like(self._processed_actions)
         self.joint_position_target = torch.empty_like(self._processed_actions)
+        self._reset_default_joint_offset = torch.empty_like(self._processed_actions)
+        self._reset_joint_position_target = torch.empty_like(self._processed_actions)
         self._applied_torque = torch.zeros_like(self._processed_actions)
         self.joint_target_gain = cfg.action_scale * self.joint_effort_limit / self.joint_stiffness
 
@@ -140,15 +142,27 @@ class MotionJointPositionAction(ActionTerm):
 
     def reset(self, env_ids: Sequence[int] | None = None) -> None:
         """Clear action state and sample the episodic default-pose offset [rad]."""
-        self._raw_actions[env_ids] = 0.0
-        self._processed_actions[env_ids] = 0.0
-        self._applied_torque[env_ids] = 0.0
-        if env_ids is None:
+        full_reset = env_ids is None or (
+            isinstance(env_ids, slice) and env_ids.start is None and env_ids.stop is None and env_ids.step is None
+        )
+        if full_reset:
+            self._raw_actions.zero_()
+            self._processed_actions.zero_()
+            self._applied_torque.zero_()
             offset = self.default_joint_offset
+            offset.uniform_(*self.cfg.default_joint_offset_range)
+            torch.add(self.joint_default_position, offset, out=self.joint_position_target)
         else:
-            offset = self.default_joint_offset[env_ids]
-        offset.uniform_(*self.cfg.default_joint_offset_range)
-        self.joint_position_target[env_ids] = self.joint_default_position + offset
+            self._raw_actions[env_ids] = 0.0
+            self._processed_actions[env_ids] = 0.0
+            self._applied_torque[env_ids] = 0.0
+            count = len(env_ids)
+            offset = self._reset_default_joint_offset[:count]
+            target = self._reset_joint_position_target[:count]
+            offset.uniform_(*self.cfg.default_joint_offset_range)
+            torch.add(self.joint_default_position, offset, out=target)
+            self.default_joint_offset[env_ids] = offset
+            self.joint_position_target[env_ids] = target
 
     @property
     def applied_torque(self) -> torch.Tensor:

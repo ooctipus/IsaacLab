@@ -153,6 +153,59 @@ def test_g1_action_maps_declared_behavior_axis_to_live_articulation_once() -> No
     assert action.joint_velocity.data_ptr() == velocity.data_ptr()
 
 
+def test_g1_action_reset_writes_selected_nonzero_default_offsets() -> None:
+    """A subset reset must retain its sampled default-pose offsets in persistent action state."""
+    asset = _ConfiguredAsset(4, ("joint_a", "joint_b"))
+    env = SimpleNamespace(num_envs=4, device="cpu", scene={"robot": asset})
+    cfg = MotionJointPositionActionCfg(
+        asset_name="robot",
+        joint_names=[".*"],
+        default_joint_offset_range=(0.25, 0.25),
+    )
+    action = MotionJointPositionAction(cfg, env)
+    action._raw_actions.fill_(1.0)
+    action._processed_actions.fill_(1.0)
+    action._applied_torque.fill_(1.0)
+    selected = torch.tensor((1, 3), dtype=torch.int64)
+
+    action.reset(selected)
+
+    expected_offsets = torch.zeros(4, 2)
+    expected_offsets[selected] = 0.25
+    torch.testing.assert_close(action.default_joint_offset, expected_offsets)
+    torch.testing.assert_close(action.joint_position_target[selected], torch.full((2, 2), 0.25))
+    torch.testing.assert_close(action.raw_actions[selected], torch.zeros(2, 2))
+    torch.testing.assert_close(action.processed_actions[selected], torch.zeros(2, 2))
+    torch.testing.assert_close(action.applied_torque[selected], torch.zeros(2, 2))
+
+
+def test_g1_action_full_slice_reset_uses_full_buffers_without_scratch() -> None:
+    """The manager's full slice must take the allocation-free whole-buffer reset path."""
+    asset = _ConfiguredAsset(4, ("joint_a", "joint_b"))
+    env = SimpleNamespace(num_envs=4, device="cpu", scene={"robot": asset})
+    cfg = MotionJointPositionActionCfg(
+        asset_name="robot",
+        joint_names=[".*"],
+        default_joint_offset_range=(0.25, 0.25),
+    )
+    action = MotionJointPositionAction(cfg, env)
+    action._raw_actions.fill_(1.0)
+    action._processed_actions.fill_(1.0)
+    action._applied_torque.fill_(1.0)
+    action._reset_default_joint_offset.fill_(-3.0)
+    action._reset_joint_position_target.fill_(-5.0)
+
+    action.reset(slice(None))
+
+    torch.testing.assert_close(action.raw_actions, torch.zeros(4, 2))
+    torch.testing.assert_close(action.processed_actions, torch.zeros(4, 2))
+    torch.testing.assert_close(action.applied_torque, torch.zeros(4, 2))
+    torch.testing.assert_close(action.default_joint_offset, torch.full((4, 2), 0.25))
+    torch.testing.assert_close(action.joint_position_target, torch.full((4, 2), 0.25))
+    torch.testing.assert_close(action._reset_default_joint_offset, torch.full((4, 2), -3.0))
+    torch.testing.assert_close(action._reset_joint_position_target, torch.full((4, 2), -5.0))
+
+
 def test_g1_action_matches_native_processed_target_and_torque() -> None:
     """The articulation-derived action law must match the frozen BFM trace elementwise."""
     path = _phase3_fixtures() / "g1_lafan_same_step_trace_v1.npz"

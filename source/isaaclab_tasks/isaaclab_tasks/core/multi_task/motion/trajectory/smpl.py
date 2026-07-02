@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,13 +39,14 @@ def _sha256(path: str) -> str:
 
 
 def smpl_live_joint_source_names(live_joint_names: tuple[str, ...]) -> tuple[str, ...]:
-    """Resolve native Body_x:0/1/2 labels to HumEnv XYZ source labels."""
+    """Resolve native combined three-axis joint labels to HumEnv coordinates."""
     source_names: list[str] = []
     for name in live_joint_names:
         joint_name, separator, component = name.rpartition(":")
-        if not separator or not joint_name.endswith("_x") or component not in ("0", "1", "2"):
-            raise ValueError("SMPL live joints must use native Body_x:0/1/2 coordinate labels.")
-        source_names.append(f"{joint_name[:-1]}{'xyz'[int(component)]}")
+        match = re.fullmatch(r"(.+)_x_\1_y_\1_z", joint_name)
+        if not separator or match is None or component not in ("0", "1", "2"):
+            raise ValueError("SMPL live joints must use native Body_x_Body_y_Body_z:0/1/2 coordinate labels.")
+        source_names.append(f"{match.group(1)}_{'xyz'[int(component)]}")
     resolved = tuple(source_names)
     if len(set(resolved)) != len(resolved):
         raise ValueError("SMPL live joints do not resolve to unique source coordinates.")

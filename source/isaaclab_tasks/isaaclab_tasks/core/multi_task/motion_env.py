@@ -11,18 +11,21 @@ import copy
 import random
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from typing import Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 import numpy as np
 import torch
 
 from isaaclab.envs import ManagerBasedRLEnv
-from isaaclab.managers import ManagerTermBase
+from isaaclab.managers import ManagerTermBase, ObservationManager
 from isaaclab.utils.configclass import resolve_cfg_presets
 
 from .motion.mdp.commands import MotionStatePayload
 from .motion.mdp.runtime import MotionRuntime
 from .motion_env_cfg import MotionImitationEnvCfg
+
+if TYPE_CHECKING:
+    from isaaclab.envs.common import VecEnvObs
 
 
 @runtime_checkable
@@ -36,6 +39,19 @@ class _EvaluationStateTerm(Protocol):
         """Restore state returned by :meth:`evaluation_state_dict`."""
 
 
+def _observation_manager_supports_selected_reset(manager: ObservationManager) -> bool:
+    """Return whether global recomputation has no manager-owned hidden state."""
+    return (
+        not any(manager._group_obs_class_term_cfgs.values())
+        and not manager._group_obs_class_instances
+        and all(
+            term_cfg.history_length == 0 and term_cfg.noise is None and not term_cfg.modifiers
+            for term_cfgs in manager._group_obs_term_cfgs.values()
+            for term_cfg in term_cfgs
+        )
+    )
+
+
 class MotionImitationEnv(ManagerBasedRLEnv):
     """One simulator lifecycle for both native motion profiles."""
 
@@ -45,6 +61,7 @@ class MotionImitationEnv(ManagerBasedRLEnv):
         resolve_cfg_presets(cfg)
         self._evaluation_clip_indices: torch.Tensor | None = None
         super().__init__(cfg=cfg, render_mode=render_mode, **kwargs)
+        self._evaluation_all_env_ids = torch.arange(self.num_envs, dtype=torch.int64, device=self.device)
 
     def load_managers(self) -> None:
         """Attach transition state after the command manager builds its trajectory table."""
@@ -89,28 +106,140 @@ class MotionImitationEnv(ManagerBasedRLEnv):
             dtype=torch.bool,
             device=self.device,
         )
+        self._evaluation_task_rows = torch.empty(
+            self.num_envs,
+            dtype=torch.int64,
+            device=self.device,
+        )
+        self._evaluation_selected = torch.zeros(
+            self.num_envs,
+            dtype=torch.bool,
+            device=self.device,
+        )
+        self._selected_reset_observations_are_stateless = _observation_manager_supports_selected_reset(
+            self.observation_manager
+        )
 
-    def reset_motion_clips(self, clip_indices: torch.Tensor):
-        """Reset every environment to the start of one explicit motion clip."""
+    def _validate_motion_clip_reset(
+        self,
+        clip_indices: torch.Tensor,
+        env_ids: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Validate paired exact-reset vectors and return the selected environment rows."""
+        if env_ids is None:
+            env_ids = self._evaluation_all_env_ids
         if (
-            clip_indices.shape != (self.num_envs,)
+            env_ids.ndim != 1
+            or env_ids.numel() < 1
+            or clip_indices.shape != env_ids.shape
+            or env_ids.dtype is not torch.int64
             or clip_indices.dtype is not torch.int64
+            or env_ids.device != torch.device(self.device)
             or clip_indices.device != torch.device(self.device)
         ):
-            raise ValueError("Evaluation clip indices must be one int64 row per environment on its device.")
+            raise ValueError("Evaluation environment and clip indices must be paired int64 device vectors.")
+        torch._assert_async(
+            torch.all((env_ids >= 0) & (env_ids < self.num_envs)),
+            "Evaluation environment indices must be in range.",
+        )
+        torch._assert_async(
+            torch.all(env_ids[1:] > env_ids[:-1]),
+            "Evaluation environment indices must be strictly increasing.",
+        )
+        return env_ids
+
+    def _bind_motion_clip_starts(self, env_ids: torch.Tensor, clip_indices: torch.Tensor) -> None:
+        """Bind selected command and payload rows to exact source-frame-zero states."""
+        command = self.command_manager.get_term("motion")
+        payload = command.payload
+        if not isinstance(payload, MotionStatePayload):
+            raise TypeError("The motion command must own MotionStatePayload.")
+        task_rows = self._evaluation_task_rows[: clip_indices.shape[0]]
+        torch.index_select(command.table.clip_start_rows, 0, clip_indices, out=task_rows)
+        torch._assert_async(
+            torch.all(task_rows >= 0),
+            "Every evaluation clip must have a motion task row.",
+        )
+        command.cmd_indices.index_copy_(0, env_ids, task_rows)
+        payload.bind_clip_start(env_ids, clip_indices)
+
+    def reset_motion_clips(
+        self,
+        clip_indices: torch.Tensor,
+        *,
+        env_ids: torch.Tensor | None = None,
+    ) -> tuple[VecEnvObs, dict]:
+        """Reset selected environments to the start of explicit motion clips.
+
+        Args:
+            clip_indices: Motion clip index paired with each selected environment.
+            env_ids: Selected environment indices. ``None`` selects every environment.
+
+        Returns:
+            Environment observations and extras after the selected reset.
+        """
+        env_ids = self._validate_motion_clip_reset(clip_indices, env_ids)
         if self._evaluation_clip_indices is not None:
             raise RuntimeError("An exact motion reset is already active.")
-        self._evaluation_clip_indices = clip_indices.clone()
+        self._evaluation_clip_indices = clip_indices
         try:
-            return self.reset(
-                env_ids=torch.arange(
-                    self.num_envs,
-                    dtype=torch.int64,
-                    device=self.device,
-                )
-            )
+            return self.reset(env_ids=env_ids)
         finally:
             self._evaluation_clip_indices = None
+
+    def reset_motion_clips_selected(
+        self,
+        clip_indices: torch.Tensor,
+        *,
+        env_ids: torch.Tensor,
+    ) -> tuple[VecEnvObs, dict]:
+        """Reset exact motion clips in a stateless observation profile.
+
+        This evaluation-only lifecycle clears selected scene, observation, action, payload,
+        and episode state. It intentionally excludes training curriculum, logging, recorder,
+        command-resampling, and reset-randomization transactions. Observation-manager history,
+        corruption, modifiers, and class terms are rejected because a global recomputation could
+        otherwise mutate hidden state for unselected lanes.
+
+        Args:
+            clip_indices: Motion clip index paired with each selected environment.
+            env_ids: Strictly increasing selected environment indices.
+
+        Returns:
+            Full environment observations with unselected rows preserved, plus extras.
+        """
+        env_ids = self._validate_motion_clip_reset(clip_indices, env_ids)
+        if not self._selected_reset_observations_are_stateless:
+            raise RuntimeError("Selected motion reset requires history-free, corruption-free stateless observations.")
+        self.scene.reset(env_ids)
+        self.observation_manager.reset(env_ids)
+        self.action_manager.reset(env_ids)
+        self.episode_length_buf.index_fill_(0, env_ids, 0)
+        self._bind_motion_clip_starts(env_ids, clip_indices)
+
+        self.scene.write_data_to_sim()
+        self.sim.forward()
+        if self.has_rtx_sensors and self.cfg.num_rerenders_on_reset > 0:
+            for _ in range(self.cfg.num_rerenders_on_reset):
+                self.sim.render()
+
+        previous = self.obs_buf
+        observations = self.observation_manager.compute(update_history=False)
+        self._evaluation_selected.zero_()
+        self._evaluation_selected.index_fill_(0, env_ids, True)
+        for name, value in observations.items():
+            prior = previous.get(name)
+            if (
+                not isinstance(value, torch.Tensor)
+                or not isinstance(prior, torch.Tensor)
+                or value.shape != prior.shape
+                or value.shape[0] != self.num_envs
+            ):
+                raise TypeError("Selected motion reset requires flat tensor observation groups with stable shapes.")
+            selected = self._evaluation_selected.view(self.num_envs, *((1,) * (value.ndim - 1)))
+            torch.where(selected, value, prior, out=value)
+        self.obs_buf = observations
+        return self.obs_buf, self.extras
 
     def _reset_idx(self, env_ids) -> None:
         """Apply an exact evaluation binding after normal manager reset state is cleared."""
@@ -118,19 +247,7 @@ class MotionImitationEnv(ManagerBasedRLEnv):
         if self._evaluation_clip_indices is None:
             return
         env_ids = torch.as_tensor(env_ids, dtype=torch.int64, device=self.device)
-        command = self.command_manager.get_term("motion")
-        payload = command.payload
-        if not isinstance(payload, MotionStatePayload):
-            raise TypeError("The motion command must own MotionStatePayload.")
-        selected_clips = self._evaluation_clip_indices.index_select(0, env_ids)
-        matches = command.table.clip_indices[:, None] == selected_clips[None, :]
-        torch._assert_async(
-            torch.all(torch.any(matches, dim=0)),
-            "Every evaluation clip must have a motion task row.",
-        )
-        task_rows = torch.argmax(matches.to(dtype=torch.int8), dim=0).to(dtype=torch.int64)
-        command.cmd_indices.index_copy_(0, env_ids, task_rows)
-        payload.bind_clip_start(env_ids, selected_clips)
+        self._bind_motion_clip_starts(env_ids, self._evaluation_clip_indices)
 
     def step(self, action: torch.Tensor):
         """Capture current history sources and publish the completed logical edge."""
@@ -151,8 +268,8 @@ class MotionImitationEnv(ManagerBasedRLEnv):
         """Return every class-based manager term that evaluation can advance."""
         terms: list[tuple[str, _EvaluationStateTerm]] = []
         seen: set[int] = set()
-        for mode, names in self.event_manager.active_terms.items():
-            for name in names:
+        for mode in ("reset", "interval"):
+            for name in self.event_manager.active_terms.get(mode, ()):
                 term = self.event_manager.get_term_cfg(name).func
                 if isinstance(term, type) and issubclass(term, ManagerTermBase):
                     raise RuntimeError(f"Class-based event term {mode}.{name} is not initialized.")

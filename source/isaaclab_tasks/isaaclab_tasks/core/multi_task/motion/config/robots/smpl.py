@@ -10,41 +10,27 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+from isaaclab_newton.sim import NewtonMjcfFileCfg
+
 from isaaclab_assets.robots.smpl.smpl_cfg import SMPL_HUMANOID_CFG
-from isaaclab_assets.robots.smpl.smpl_constants import SMPL_HUMENV_MJCF_PATH, SMPL_HUMENV_MJCF_SHA256
+from isaaclab_assets.robots.smpl.smpl_constants import (
+    MUJOCO_BODY_NAMES,
+    SMPL_HUMENV_MJCF_PATH,
+    SMPL_HUMENV_MJCF_SHA256,
+    SMPL_ROBOT_MJCF_PATH,
+)
 
 _ROBOT_PRIM_PATH = "{ENV_REGEX_NS}/Robot"
-_SMPL_SIMULATOR_BODY_NAMES = (
-    "Pelvis",
-    "L_Hip",
-    "L_Knee",
-    "L_Ankle",
-    "L_Toe",
-    "R_Hip",
-    "R_Knee",
-    "R_Ankle",
-    "R_Toe",
-    "Torso",
-    "Spine",
-    "Chest",
-    "L_Thorax",
-    "L_Shoulder",
-    "L_Elbow",
-    "L_Wrist",
-    "L_Hand",
-    "Neck",
-    "Head",
-    "R_Thorax",
-    "R_Shoulder",
-    "R_Elbow",
-    "R_Wrist",
-    "R_Hand",
-)
+_SMPL_SIMULATOR_BODY_NAMES = MUJOCO_BODY_NAMES
 _SMPL_SIMULATOR_JOINT_NAMES = tuple(
-    f"{body}_x:{component}" for body in _SMPL_SIMULATOR_BODY_NAMES[1:] for component in range(3)
+    f"{body}_x_{body}_y_{body}_z:{component}" for body in _SMPL_SIMULATOR_BODY_NAMES[1:] for component in range(3)
 )
 
-SMPL_MOTION_ARTICULATION_CFG = SMPL_HUMANOID_CFG.replace(prim_path=_ROBOT_PRIM_PATH)
+SMPL_MOTION_ARTICULATION_CFG = SMPL_HUMANOID_CFG.replace(
+    prim_path=_ROBOT_PRIM_PATH,
+    spawn=NewtonMjcfFileCfg(asset_path=SMPL_ROBOT_MJCF_PATH, self_collision=True),
+    articulation_root_prim_path="/humanoid",
+)
 """Packaged exact SMPL articulation whose native asset owns control and passive terms."""
 
 

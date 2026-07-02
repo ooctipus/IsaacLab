@@ -13,9 +13,10 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
+from isaaclab_newton.sim import NewtonMjcfFileCfg
 
 from isaaclab.assets import ArticulationCfg
-from isaaclab.sim import MjcfFileCfg, SimulationCfg
+from isaaclab.sim import SimulationCfg
 
 import isaaclab_tasks.core.multi_task.motion.config.environment as motion_environment
 from isaaclab_tasks.core.multi_task.motion.config.agents import (
@@ -48,7 +49,6 @@ from isaaclab_tasks.utils.hydra import collect_presets, resolve_presets
 from isaaclab_assets.robots.smpl.smpl_constants import (
     SMPL_HUMENV_MJCF_PATH,
     SMPL_HUMENV_MJCF_SHA256,
-    SMPL_NEWTON_VARIANT,
     SMPL_ROBOT_MJCF_PATH,
     SMPL_ROBOT_MJCF_SHA256,
 )
@@ -88,6 +88,7 @@ def test_one_name_broadcasts_every_direct_environment_axis(
     }[name]
     if name == "smpl_cmu":
         assert table_cfg.task_row_mode == "source_frames"
+        assert table_cfg.task_sampling_law == "clip_categorical_then_discrete_source_frame_v1"
         assert cfg.commands.motion.payload.reset_transform_factory.__name__ == "_smpl_mocap_and_fall_reset"
         assert table_cfg.reset_sources == (
             ("motion", profile.reset.motion_frame_probability),
@@ -95,6 +96,7 @@ def test_one_name_broadcasts_every_direct_environment_axis(
         )
     else:
         assert table_cfg.task_row_mode == "clip_time_ranges"
+        assert table_cfg.task_sampling_law == "clip_categorical_then_continuous_time_v1"
         assert cfg.commands.motion.payload.reset_transform_factory.__name__ == "_g1_reference_and_lie_down_reset"
         assert table_cfg.reset_sources == (
             ("reference", 1.0 - profile.reset.lie_down_probability),
@@ -263,10 +265,10 @@ def test_g1_articulation_actuator_uses_live_simulator_joint_axis() -> None:
 def test_smpl_articulation_has_one_native_actuator_authority() -> None:
     """The native MuJoCo asset must own SMPL controls and passive joint terms alone."""
     assert SMPL_MOTION_ARTICULATION_CFG.actuators == {}
-    assert isinstance(SMPL_MOTION_ARTICULATION_CFG.spawn, MjcfFileCfg)
+    assert isinstance(SMPL_MOTION_ARTICULATION_CFG.spawn, NewtonMjcfFileCfg)
     assert SMPL_MOTION_ARTICULATION_CFG.spawn.asset_path == SMPL_ROBOT_MJCF_PATH
     assert SMPL_MOTION_ARTICULATION_CFG.spawn.self_collision is True
-    assert SMPL_MOTION_ARTICULATION_CFG.spawn.variants == {"Physics": SMPL_NEWTON_VARIANT}
+    assert SMPL_MOTION_ARTICULATION_CFG.articulation_root_prim_path == "/humanoid"
 
 
 def test_packaged_smpl_source_hashes_are_frozen() -> None:

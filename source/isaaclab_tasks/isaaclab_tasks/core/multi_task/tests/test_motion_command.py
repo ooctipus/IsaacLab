@@ -509,6 +509,7 @@ def test_source_frame_rows_use_output_offsets_when_invalid_clips_are_skipped() -
     table = _table(valid=(False, True), task_row_mode="source_frames")
 
     torch.testing.assert_close(table.clip_indices, torch.ones(4, dtype=torch.int64))
+    torch.testing.assert_close(table.clip_start_rows, torch.tensor((-1, 0), dtype=torch.int64))
     expected_time = torch.arange(4, dtype=torch.float32) / 4.0
     torch.testing.assert_close(table.reset_time_ranges_seconds[:, 0], expected_time)
     torch.testing.assert_close(table.reset_time_ranges_seconds[:, 1], expected_time)
@@ -533,51 +534,158 @@ def test_task_row_modes_keep_reset_source_distributions_compact() -> None:
     assert ranges.reset_source_names == ("reference", "lie_down")
     torch.testing.assert_close(source.reset_source_probabilities, torch.tensor((0.8, 0.2)))
     torch.testing.assert_close(ranges.reset_source_probabilities, torch.tensor((0.7, 0.3)))
+    assert source.task_sampling_law == "clip_categorical_then_discrete_source_frame_v1"
+    assert ranges.task_sampling_law == "clip_categorical_then_continuous_time_v1"
 
 
-def test_task_table_default_sampling_retains_uniform_integer_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Unweighted tables should preserve the allocation-free uniform row sampler."""
-    table = _table()
-    assert table._row_priorities.numel() == 0
-    expected = torch.tensor((0, 2, 4, 6), dtype=torch.int64)
+def test_unequal_clip_lengths_keep_clip_sampling_uniform(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clip selection and conditional frame selection must be separate exact draws."""
+    table = _table(task_row_mode="source_frames")
+
+    assert table.num_tasks == 7
+    assert len(table.clip_ids) == 2
+    torch.testing.assert_close(table.clip_indices, torch.tensor((0, 0, 0, 1, 1, 1, 1)))
+    torch.testing.assert_close(table._sampling_row_starts, torch.tensor((0, 3)))
+    torch.testing.assert_close(table._sampling_row_counts, torch.tensor((3, 4)))
+    clip_draws = torch.tensor((0, 1, 0, 1), dtype=torch.int64)
+    frame_draws = torch.tensor((0.0, 0.0, 0.999, 0.74))
+
+    def sample_clips(weights, count, replacement, *, generator):
+        torch.testing.assert_close(weights, torch.ones(2))
+        assert weights.data_ptr() == table.clip_priorities.data_ptr()
+        assert count == clip_draws.shape[0]
+        assert replacement
+        assert generator is table.generator
+        return clip_draws
+
+    def sample_frames(count, *, device, generator):
+        assert count == frame_draws.shape[0]
+        assert device == table.device
+        assert generator is table.generator
+        return frame_draws
+
+    monkeypatch.setattr(torch, "multinomial", sample_clips)
+    monkeypatch.setattr(torch, "rand", sample_frames)
+
+    torch.testing.assert_close(table.sample_rows(clip_draws.shape[0]), torch.tensor((0, 3, 2, 5)))
+
+
+def test_one_row_per_clip_sampling_is_exactly_the_clip_draw(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A clip-range table must not consume a redundant within-clip random draw."""
+    table = _table(task_row_mode="clip_time_ranges")
+    expected = torch.tensor((1, 0, 1, 1), dtype=torch.int64)
+    torch.testing.assert_close(table._sampling_row_starts, torch.tensor((0, 1)))
+    torch.testing.assert_close(table._sampling_row_counts, torch.ones(2, dtype=torch.int64))
 
     def sample(
-        high: int,
-        size: tuple[int, ...],
+        weights: torch.Tensor,
+        count: int,
+        replacement: bool,
+        *,
+        generator: torch.Generator,
+    ) -> torch.Tensor:
+        torch.testing.assert_close(weights, torch.ones(2))
+        assert weights.data_ptr() == table.clip_priorities.data_ptr()
+        assert count == expected.shape[0]
+        assert replacement
+        assert generator is table.generator
+        return expected
+
+    def reject_frame_draw(*_args: object, **_kwargs: object) -> torch.Tensor:
+        pytest.fail("one-row clip sampling must not draw a local row")
+
+    monkeypatch.setattr(torch, "multinomial", sample)
+    monkeypatch.setattr(torch, "rand", reject_frame_draw)
+
+    torch.testing.assert_close(table.sample_rows(expected.shape[0]), expected)
+
+
+def test_task_table_priorities_are_total_clip_mass(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Priority updates must change clip mass without multiplying it by row count."""
+    table = _table(task_row_mode="source_frames")
+    priorities = torch.tensor((2.0, 8.0))
+    table.set_clip_priorities(table.clip_ids, priorities)
+    clip_draws = torch.tensor((1, 0, 1), dtype=torch.int64)
+    frame_draws = torch.tensor((0.99, 0.5, 0.0))
+
+    row_probabilities = torch.cat((torch.full((3,), 0.2 / 3.0), torch.full((4,), 0.8 / 4.0)))
+    torch.testing.assert_close(row_probabilities[:3].sum(), torch.tensor(0.2))
+    torch.testing.assert_close(row_probabilities[3:].sum(), torch.tensor(0.8))
+
+    def sample(
+        weights: torch.Tensor,
+        count: int,
+        replacement: bool,
+        *,
+        generator: torch.Generator,
+    ) -> torch.Tensor:
+        torch.testing.assert_close(weights, priorities)
+        assert weights.data_ptr() == table.clip_priorities.data_ptr()
+        assert count == clip_draws.shape[0]
+        assert replacement
+        assert generator is table.generator
+        return clip_draws
+
+    def sample_frames(
+        count: int,
         *,
         device: torch.device,
         generator: torch.Generator,
     ) -> torch.Tensor:
-        """Return known rows after checking the uniform sampler contract."""
-        assert high == table.num_tasks
-        assert size == (expected.shape[0],)
+        assert count == frame_draws.shape[0]
         assert device == table.device
         assert generator is table.generator
-        return expected
+        return frame_draws
 
-    monkeypatch.setattr(torch, "randint", sample)
+    monkeypatch.setattr(torch, "multinomial", sample)
+    monkeypatch.setattr(torch, "rand", sample_frames)
 
-    sampled = table.sample_rows(expected.shape[0])
+    sampled_rows = table.sample_rows(clip_draws.shape[0])
 
-    assert sampled.data_ptr() == expected.data_ptr()
-
-
-def test_task_table_priorities_use_stable_clip_ids_and_preserve_row_semantics() -> None:
-    """Clip weights should govern rows without changing the all-ones distribution."""
-    table = _table()
-
-    assert table.clip_ids == ("clip_a", "clip_b")
-    torch.testing.assert_close(table.clip_priorities, torch.ones(2))
-    table.set_clip_priorities(table.clip_ids, torch.tensor((0.0, 1.0)))
-    assert table.clip_priorities_active
-    assert table._row_priorities.shape == (table.num_tasks,)
-    sampled_rows = table.sample_rows(128)
-
-    assert torch.all(table.clip_indices[sampled_rows] == 1)
+    torch.testing.assert_close(sampled_rows, torch.tensor((6, 1, 3)))
+    torch.testing.assert_close(table.clip_indices[sampled_rows], clip_draws)
     previous = table.clip_priorities.clone()
     with pytest.raises(ValueError, match="clip ids"):
         table.set_clip_priorities(("clip_b", "clip_a"), torch.ones(2))
     torch.testing.assert_close(table.clip_priorities, previous)
+
+
+def test_task_table_priority_reset_restores_equal_clip_mass(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reset must restore one unit of mass per clip regardless of row count."""
+    table = _table(task_row_mode="source_frames")
+    table.set_clip_priorities(table.clip_ids, torch.tensor((2.0, 8.0)))
+    table.reset_clip_priorities()
+    expected = torch.tensor((0, 1), dtype=torch.int64)
+
+    def sample(
+        weights: torch.Tensor,
+        count: int,
+        replacement: bool,
+        *,
+        generator: torch.Generator,
+    ) -> torch.Tensor:
+        torch.testing.assert_close(weights, torch.ones(2))
+        assert count == expected.shape[0]
+        assert replacement
+        assert generator is table.generator
+        return expected
+
+    def sample_frames(
+        count: int,
+        *,
+        device: torch.device,
+        generator: torch.Generator,
+    ) -> torch.Tensor:
+        assert count == expected.shape[0]
+        assert device == table.device
+        assert generator is table.generator
+        return torch.zeros(count)
+
+    monkeypatch.setattr(torch, "multinomial", sample)
+    monkeypatch.setattr(torch, "rand", sample_frames)
+
+    torch.testing.assert_close(table.clip_priorities, torch.ones(2))
+    torch.testing.assert_close(table.sample_rows(expected.shape[0]), torch.tensor((0, 3)))
 
 
 @pytest.mark.parametrize("probabilities", ((0.8, 0.2), (0.7, 0.3)))

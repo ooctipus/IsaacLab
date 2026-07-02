@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import ast
+import inspect
 import subprocess
 import sys
 import textwrap
@@ -26,7 +27,7 @@ from isaaclab.sim import PlaneCfg
 from isaaclab_tasks.core.multi_task.motion.mdp import AppliedTransitionHistory, AppliedTransitionHistoryLayout
 from isaaclab_tasks.core.multi_task.motion.mdp.commands import MotionStatePayload
 from isaaclab_tasks.core.multi_task.motion.mdp.runtime import motion_time_out
-from isaaclab_tasks.core.multi_task.motion_env import MotionImitationEnv
+from isaaclab_tasks.core.multi_task.motion_env import MotionImitationEnv, _observation_manager_supports_selected_reset
 from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg, MotionSceneCfg
 from isaaclab_tasks.utils import resolve_presets
 
@@ -243,6 +244,8 @@ def test_exact_motion_reset_binds_after_normal_manager_reset_and_clears_pending_
     env.scene = SimpleNamespace(num_envs=2)
     env.sim = SimpleNamespace(device=torch.device("cpu"))
     env._evaluation_clip_indices = None
+    env._evaluation_all_env_ids = torch.arange(2, dtype=torch.int64)
+    env._evaluation_task_rows = torch.empty(2, dtype=torch.int64)
     payload = object.__new__(MotionStatePayload)
 
     def bind_clip_start(env_ids: torch.Tensor, clip_indices: torch.Tensor) -> None:
@@ -251,7 +254,7 @@ def test_exact_motion_reset_binds_after_normal_manager_reset_and_clears_pending_
     payload.bind_clip_start = bind_clip_start
     command = SimpleNamespace(
         payload=payload,
-        table=SimpleNamespace(clip_indices=torch.tensor((1, 0, 1), dtype=torch.int64)),
+        table=SimpleNamespace(clip_start_rows=torch.tensor((1, 0), dtype=torch.int64)),
         cmd_indices=torch.zeros(2, dtype=torch.int64),
     )
     env.command_manager = SimpleNamespace(
@@ -272,6 +275,177 @@ def test_exact_motion_reset_binds_after_normal_manager_reset_and_clears_pending_
 
     assert result[0]["state"].shape == (2, 1)
     assert [event[0] for event in events] == ["base", "bind"]
+
+
+def test_exact_motion_reset_binds_only_selected_environments(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Evaluation refill must reset and rebind only the lanes receiving new clips."""
+    events: list[object] = []
+    env = object.__new__(MotionImitationEnv)
+    env._is_closed = True
+    env.scene = SimpleNamespace(num_envs=4)
+    env.sim = SimpleNamespace(device=torch.device("cpu"))
+    env._evaluation_clip_indices = None
+    env._evaluation_task_rows = torch.empty(4, dtype=torch.int64)
+    payload = object.__new__(MotionStatePayload)
+
+    def bind_clip_start(env_ids: torch.Tensor, clip_indices: torch.Tensor) -> None:
+        events.append(("bind", env_ids.clone(), clip_indices.clone()))
+
+    payload.bind_clip_start = bind_clip_start
+    command = SimpleNamespace(
+        payload=payload,
+        table=SimpleNamespace(clip_start_rows=torch.tensor((1, 2, 0), dtype=torch.int64)),
+        cmd_indices=torch.zeros(4, dtype=torch.int64),
+    )
+    env.command_manager = SimpleNamespace(get_term=lambda name: command if name == "motion" else None)
+
+    def base_reset_idx(_env, env_ids) -> None:
+        events.append(("base", torch.as_tensor(env_ids).clone()))
+
+    def base_reset(_env, *, env_ids):
+        _env._reset_idx(env_ids)
+        return {"state": torch.zeros(4, 1)}, {}
+
+    monkeypatch.setattr(ManagerBasedRLEnv, "_reset_idx", base_reset_idx)
+    monkeypatch.setattr(ManagerBasedRLEnv, "reset", base_reset)
+    env_ids = torch.tensor((1, 3), dtype=torch.int64)
+    clip_indices = torch.tensor((2, 0), dtype=torch.int64)
+
+    result = MotionImitationEnv.reset_motion_clips(env, clip_indices, env_ids=env_ids)
+
+    assert result[0]["state"].shape == (4, 1)
+    assert [event[0] for event in events] == ["base", "bind"]
+    torch.testing.assert_close(events[0][1], env_ids)
+    torch.testing.assert_close(events[1][1], env_ids)
+    torch.testing.assert_close(events[1][2], clip_indices)
+    torch.testing.assert_close(command.cmd_indices, torch.tensor((0, 0, 0, 1), dtype=torch.int64))
+    assert env._evaluation_clip_indices is None
+
+    with pytest.raises(RuntimeError, match="strictly increasing"):
+        MotionImitationEnv.reset_motion_clips(
+            env,
+            clip_indices,
+            env_ids=torch.tensor((3, 1), dtype=torch.int64),
+        )
+    with pytest.raises(RuntimeError, match="must be in range"):
+        MotionImitationEnv.reset_motion_clips(
+            env,
+            clip_indices,
+            env_ids=torch.tensor((1, 4), dtype=torch.int64),
+        )
+
+
+def test_exact_motion_reset_uses_direct_clip_start_rows() -> None:
+    """Evaluation refill must not allocate a task-row-by-clip broadcast matrix."""
+    source = inspect.getsource(MotionImitationEnv._bind_motion_clip_starts)
+
+    assert "clip_start_rows" in source
+    assert "torch.index_select" in source
+    assert "[:, None]" not in source
+
+
+def test_selected_motion_reset_requires_stateless_manager_features() -> None:
+    """Selected refill is available only when the observation manager owns no hidden state."""
+    term = SimpleNamespace(history_length=0, noise=None, modifiers=None)
+    manager = SimpleNamespace(
+        _group_obs_class_term_cfgs={"policy": []},
+        _group_obs_class_instances=[],
+        _group_obs_term_cfgs={"policy": [term]},
+    )
+
+    assert _observation_manager_supports_selected_reset(manager)
+    term.noise = object()
+    assert not _observation_manager_supports_selected_reset(manager)
+    term.noise = None
+    term.history_length = 1
+    assert not _observation_manager_supports_selected_reset(manager)
+    term.history_length = 0
+    term.modifiers = [object()]
+    assert not _observation_manager_supports_selected_reset(manager)
+    term.modifiers = None
+    manager._group_obs_class_term_cfgs["policy"] = [object()]
+    assert not _observation_manager_supports_selected_reset(manager)
+
+
+def test_selected_motion_reset_preserves_active_lanes_without_training_reset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Packed evaluation must reset selected lanes without mutating another active trajectory."""
+    env = object.__new__(MotionImitationEnv)
+    env._is_closed = True
+    env.scene = SimpleNamespace(
+        num_envs=3,
+        reset=lambda env_ids: None,
+        write_data_to_sim=lambda: None,
+    )
+    env.sim = SimpleNamespace(
+        device=torch.device("cpu"),
+        forward=lambda: None,
+    )
+    env.has_rtx_sensors = False
+    env.cfg = SimpleNamespace(num_rerenders_on_reset=0)
+    env.extras = {}
+    env.obs_buf = {"policy": torch.tensor(((1.0,), (2.0,), (3.0,)))}
+    env._evaluation_selected = torch.zeros(3, dtype=torch.bool)
+    env._evaluation_task_rows = torch.empty(3, dtype=torch.int64)
+    env._selected_reset_observations_are_stateless = True
+    env.episode_length_buf = torch.tensor((7, 8, 9), dtype=torch.int64)
+    reset_calls: list[tuple[str, torch.Tensor]] = []
+
+    def compute_observations(*, update_history: bool) -> dict[str, torch.Tensor]:
+        assert update_history is False
+        return {"policy": torch.tensor(((10.0,), (20.0,), (30.0,)))}
+
+    env.observation_manager = SimpleNamespace(
+        reset=lambda env_ids: reset_calls.append(("observation", env_ids.clone())),
+        compute=compute_observations,
+    )
+    env.action_manager = SimpleNamespace(
+        reset=lambda env_ids: reset_calls.append(("action", env_ids.clone())),
+    )
+    env._bind_motion_clip_starts = lambda env_ids, clip_indices: reset_calls.append(
+        ("bind", torch.stack((env_ids, clip_indices)))
+    )
+    monkeypatch.setattr(
+        ManagerBasedRLEnv,
+        "reset",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("training reset must not run")),
+    )
+
+    observations, _extras = MotionImitationEnv.reset_motion_clips_selected(
+        env,
+        torch.tensor((4,), dtype=torch.int64),
+        env_ids=torch.tensor((1,), dtype=torch.int64),
+    )
+
+    torch.testing.assert_close(observations["policy"], torch.tensor(((1.0,), (20.0,), (3.0,))))
+    torch.testing.assert_close(env.episode_length_buf, torch.tensor((7, 0, 9)))
+    assert [name for name, _value in reset_calls] == ["observation", "action", "bind"]
+
+
+def test_selected_motion_reset_rejects_stateful_observations_before_mutation() -> None:
+    """History or corruption must fail before any selected environment state is reset."""
+    env = object.__new__(MotionImitationEnv)
+    env._is_closed = True
+    env.sim = SimpleNamespace(device=torch.device("cpu"))
+    env._evaluation_task_rows = torch.empty(2, dtype=torch.int64)
+    env._selected_reset_observations_are_stateless = False
+    reset_called = False
+
+    def reset_scene(_env_ids: torch.Tensor) -> None:
+        nonlocal reset_called
+        reset_called = True
+
+    env.scene = SimpleNamespace(num_envs=2, reset=reset_scene)
+
+    with pytest.raises(RuntimeError, match="history-free, corruption-free stateless"):
+        MotionImitationEnv.reset_motion_clips_selected(
+            env,
+            torch.tensor((0,), dtype=torch.int64),
+            env_ids=torch.tensor((1,), dtype=torch.int64),
+        )
+
+    assert reset_called is False
 
 
 def _copy_g1_history_source(

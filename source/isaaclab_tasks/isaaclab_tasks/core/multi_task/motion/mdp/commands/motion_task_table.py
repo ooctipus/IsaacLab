@@ -25,6 +25,19 @@ if TYPE_CHECKING:
     from ....mdp.commands.state_command.state_command_cfg import StateCommandCfg
 
 Interpolation = Literal["linear", "slerp", "left"]
+TaskSamplingLaw = Literal[
+    "clip_categorical_then_discrete_source_frame_v1",
+    "clip_categorical_then_continuous_time_v1",
+]
+
+
+def _task_sampling_law(task_row_mode: str) -> TaskSamplingLaw:
+    """Return the sampling law owned by one controlled task-row mode."""
+    if task_row_mode == "source_frames":
+        return "clip_categorical_then_discrete_source_frame_v1"
+    if task_row_mode == "clip_time_ranges":
+        return "clip_categorical_then_continuous_time_v1"
+    raise ValueError(f"Unsupported task-row mode: {task_row_mode!r}.")
 
 
 class MotionFrameSource(Protocol):
@@ -560,6 +573,7 @@ class MotionTaskTable:
         "_clip_ids",
         "_clip_index",
         "_clip_offsets",
+        "_clip_start_rows",
         "_clip_valid",
         "_frame_builder_identity_sha256",
         "_frame_builder_version",
@@ -567,7 +581,8 @@ class MotionTaskTable:
         "_frames",
         "_joint_names",
         "_reference_frame_names",
-        "_row_priorities",
+        "_sampling_row_counts",
+        "_sampling_row_starts",
         "_sealed",
         "_source_fps",
         "_task_row_mode",
@@ -636,6 +651,22 @@ class MotionTaskTable:
         reset_source_names, reset_source_probabilities = _reset_source_data(reset_sources, device)
         normalized_reset_sources = tuple((name, float(probability)) for name, probability in reset_sources)
         num_tasks = clip_indices.shape[0]
+        row = 0
+        clip_start_rows_values: list[int] = []
+        sampling_row_starts_values: list[int] = []
+        sampling_row_counts_values: list[int] = []
+        for clip in clip_index.clips:
+            clip_start_rows_values.append(row if clip.valid else -1)
+            if clip.valid:
+                row_count = clip.frame_count if task_row_mode == "source_frames" else 1
+                sampling_row_starts_values.append(row)
+                sampling_row_counts_values.append(row_count)
+                row += row_count
+        if row != num_tasks:
+            raise RuntimeError("Derived clip-start rows do not cover the motion task table.")
+        clip_start_rows = torch.tensor(clip_start_rows_values, dtype=torch.int64, device=device)
+        sampling_row_starts = torch.tensor(sampling_row_starts_values, dtype=torch.int64, device=device)
+        sampling_row_counts = torch.tensor(sampling_row_counts_values, dtype=torch.int64, device=device)
         if (
             clip_indices.ndim != 1
             or clip_indices.dtype is not torch.int64
@@ -692,6 +723,9 @@ class MotionTaskTable:
         object.__setattr__(self, "_reference_frame_names", reference_frame_names)
         object.__setattr__(self, "_task_row_mode", task_row_mode)
         object.__setattr__(self, "_clip_offsets", clip_offsets)
+        object.__setattr__(self, "_clip_start_rows", clip_start_rows)
+        object.__setattr__(self, "_sampling_row_starts", sampling_row_starts)
+        object.__setattr__(self, "_sampling_row_counts", sampling_row_counts)
         object.__setattr__(self, "_frame_counts", frame_counts)
         object.__setattr__(self, "_source_fps", source_fps)
         object.__setattr__(self, "_clip_valid", clip_valid)
@@ -704,7 +738,6 @@ class MotionTaskTable:
         object.__setattr__(self, "generator", generator)
         object.__setattr__(self, "_clip_ids", tuple(clip_index.clip_ids[index] for index in valid_indices))
         object.__setattr__(self, "clip_priorities", torch.ones(len(valid_indices), dtype=torch.float32, device=device))
-        object.__setattr__(self, "_row_priorities", torch.empty(0, dtype=torch.float32, device=device))
         object.__setattr__(
             self,
             "_cache_identity",
@@ -857,6 +890,11 @@ class MotionTaskTable:
         return self._task_row_mode
 
     @property
+    def task_sampling_law(self) -> TaskSamplingLaw:
+        """Sampling law implied by :attr:`task_row_mode`."""
+        return _task_sampling_law(self._task_row_mode)
+
+    @property
     def cache_identity(self) -> str:
         """Deterministic source, builder, columns, and timing identity."""
         return self._cache_identity
@@ -865,6 +903,11 @@ class MotionTaskTable:
     def clip_offsets(self) -> torch.Tensor:
         """Clip prefix offsets on the trajectory frame axis."""
         return self._clip_offsets
+
+    @property
+    def clip_start_rows(self) -> torch.Tensor:
+        """First selectable task row per source clip, with ``-1`` for invalid clips."""
+        return self._clip_start_rows
 
     @property
     def frame_counts(self) -> torch.Tensor:
@@ -906,6 +949,9 @@ class MotionTaskTable:
         """Resident bytes owned by trajectory, clip, descriptor, and priority tensors."""
         tensors = (
             self._clip_offsets,
+            self._clip_start_rows,
+            self._sampling_row_starts,
+            self._sampling_row_counts,
             self._frame_counts,
             self._source_fps,
             self._clip_valid,
@@ -913,7 +959,6 @@ class MotionTaskTable:
             self.reset_time_ranges_seconds,
             self.reset_source_probabilities,
             self.clip_priorities,
-            self._row_priorities,
         )
         return self._frames.memory_bytes + sum(value.numel() * value.element_size() for value in tensors)
 
@@ -921,11 +966,6 @@ class MotionTaskTable:
     def num_tasks(self) -> int:
         """Number of selectable motion descriptors."""
         return self.clip_indices.shape[0]
-
-    @property
-    def clip_priorities_active(self) -> bool:
-        """Whether row sampling currently uses external clip priorities."""
-        return self._row_priorities.numel() > 0
 
     def field(self, name: str) -> torch.Tensor:
         """Return one concrete trajectory tensor without indirection or copying."""
@@ -979,10 +1019,18 @@ class MotionTaskTable:
         )
 
     def sample_rows(self, count: int) -> torch.Tensor:
-        """Sample table rows from mutable stable-clip priorities."""
-        if not self.clip_priorities_active:
-            return torch.randint(self.num_tasks, (count,), device=self.device, generator=self.generator)
-        return torch.multinomial(self._row_priorities, count, replacement=True, generator=self.generator)
+        """Sample a clip by total mass, then a supported row uniformly within it."""
+        clip_slots = torch.multinomial(
+            self.clip_priorities,
+            count,
+            replacement=True,
+            generator=self.generator,
+        )
+        task_rows = self._sampling_row_starts[clip_slots]
+        if self._task_row_mode == "source_frames":
+            fraction = torch.rand(count, device=self.device, generator=self.generator)
+            task_rows += torch.floor(fraction * self._sampling_row_counts[clip_slots]).to(torch.int64)
+        return task_rows
 
     def validate_clip_priorities(self, clip_ids: tuple[str, ...], priorities: torch.Tensor) -> None:
         """Validate a stable-ID priority update without mutating table state."""
@@ -1001,22 +1049,13 @@ class MotionTaskTable:
             raise ValueError("Motion priorities must be non-negative with positive total mass.")
 
     def set_clip_priorities(self, clip_ids: tuple[str, ...], priorities: torch.Tensor) -> None:
-        """Commit one validated stable-ID priority update."""
+        """Set total sampling mass per stable clip."""
         self.validate_clip_priorities(clip_ids, priorities)
         self.clip_priorities.copy_(priorities)
-        valid_clip_indices = torch.arange(len(self._clip_index.clips), device=self.device)[self._clip_valid]
-        priorities_by_clip = torch.zeros(len(self._clip_index.clips), device=self.device)
-        priorities_by_clip[valid_clip_indices] = priorities
-        row_priorities = priorities_by_clip[self.clip_indices]
-        if self._row_priorities.shape != row_priorities.shape:
-            object.__setattr__(self, "_row_priorities", row_priorities)
-        else:
-            self._row_priorities.copy_(row_priorities)
 
     def reset_clip_priorities(self) -> None:
-        """Restore the allocation-free uniform row-sampling state."""
+        """Restore equal total sampling mass for every valid clip."""
         self.clip_priorities.fill_(1.0)
-        object.__setattr__(self, "_row_priorities", self.clip_priorities.new_empty(0))
 
     def sample_reset_sources(self, count: int) -> torch.Tensor:
         """Sample reset-source indices independently from motion descriptors."""
