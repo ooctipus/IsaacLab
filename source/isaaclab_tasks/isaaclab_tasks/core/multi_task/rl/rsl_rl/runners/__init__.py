@@ -5,6 +5,7 @@
 
 """Task-level rsl_rl runners."""
 
+from .crl_runner import CrlRunner
 from .off_policy_runner import OffPolicyRunner
 
-__all__ = ["OffPolicyRunner"]
+__all__ = ["CrlRunner", "OffPolicyRunner"]

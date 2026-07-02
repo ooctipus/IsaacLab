@@ -9,15 +9,15 @@ from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.core.multi_task.rl.rsl_rl import (
     RslRlCrlAlgorithmCfg,
+    RslRlCrlRunnerCfg,
     RslRlHerCfg,
-    RslRlOffPolicyRunnerCfg,
     RslRlResidualMLPCfg,
 )
 
 
 @configclass
-class AntCRLRunnerCfg(RslRlOffPolicyRunnerCfg):
-    """OffPolicyRunner config for the Ant CRL task."""
+class AntCRLRunnerCfg(RslRlCrlRunnerCfg):
+    """CRL replay-runner config for the Ant goal-reaching task."""
 
     num_steps_per_env = 62
     max_iterations = 5000

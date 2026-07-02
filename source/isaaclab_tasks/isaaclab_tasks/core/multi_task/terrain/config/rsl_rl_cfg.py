@@ -28,8 +28,8 @@ from isaaclab_tasks.utils import PresetCfg, preset
 
 from ...rl.rsl_rl import (
     RslRlCrlAlgorithmCfg,
+    RslRlCrlRunnerCfg,
     RslRlHerCfg,
-    RslRlOffPolicyRunnerCfg,
     RslRlResidualMLPCfg,
 )
 from ..mdp_presets import ExperimentNameCfg
@@ -232,8 +232,8 @@ class PositionLocomotionRndPPORunnerCfg(PositionLocomotionPPORunnerCfg):
 
 
 @configclass
-class PositionLocomotionCRLRunnerCfg(RslRlOffPolicyRunnerCfg):
-    """OffPolicyRunner configuration for CRL on the position locomotion task."""
+class PositionLocomotionCRLRunnerCfg(RslRlCrlRunnerCfg):
+    """CRL replay-runner configuration for the position locomotion task."""
 
     num_steps_per_env = 62
     max_iterations = 5000

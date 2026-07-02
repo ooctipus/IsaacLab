@@ -6,6 +6,7 @@
 from .rl_cfg import (
     RslRlCommanderActorModelCfg,
     RslRlCrlAlgorithmCfg,
+    RslRlCrlRunnerCfg,
     RslRlHerCfg,
     RslRlMLPEncoderModelCfg,
     RslRlOffPolicyRunnerCfg,
@@ -18,6 +19,7 @@ from .rl_cfg import (
 __all__ = [
     "RslRlCommanderActorModelCfg",
     "RslRlCrlAlgorithmCfg",
+    "RslRlCrlRunnerCfg",
     "RslRlHerCfg",
     "RslRlMLPEncoderModelCfg",
     "RslRlOffPolicyRunnerCfg",

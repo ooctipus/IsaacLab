@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 from dataclasses import MISSING
 from typing import Any, Literal
@@ -227,13 +228,13 @@ class RslRlCrlAlgorithmCfg:
 
 
 @configclass
-class RslRlOffPolicyRunnerCfg(RslRlBaseRunnerCfg):
-    """Configuration for off-policy runners."""
+class RslRlCrlRunnerCfg(RslRlBaseRunnerCfg):
+    """Configuration for the CRL-specific replay and prefill lifecycle."""
 
-    class_type: type[Any] | str = "isaaclab_tasks.core.multi_task.rl.rsl_rl.runners:OffPolicyRunner"
-    """The runner class."""
+    class_type: type[Any] | str = "isaaclab_tasks.core.multi_task.rl.rsl_rl.runners:CrlRunner"
+    """The CRL runner class."""
 
-    class_name: str = "OffPolicyRunner"
+    class_name: str = "CrlRunner"
     """The runner class name."""
 
     actor: RslRlResidualMLPCfg = MISSING
@@ -244,6 +245,30 @@ class RslRlOffPolicyRunnerCfg(RslRlBaseRunnerCfg):
 
     algorithm: RslRlCrlAlgorithmCfg = MISSING
     """The algorithm configuration."""
+
+
+@configclass
+class RslRlOffPolicyRunnerCfg(RslRlCrlRunnerCfg):
+    """Deprecated task-local name for :class:`RslRlCrlRunnerCfg`.
+
+    .. deprecated:: 8.0.2
+        Use :class:`RslRlCrlRunnerCfg`. Generic off-policy algorithms should
+        use :class:`isaaclab_rl.rsl_rl.RslRlOffPolicyRunnerCfg` instead.
+    """
+
+    class_type: type[Any] | str = "isaaclab_tasks.core.multi_task.rl.rsl_rl.runners:OffPolicyRunner"
+    """Deprecated runner wrapper retained for one release."""
+
+    class_name: str = "OffPolicyRunner"
+    """Deprecated runner class name retained for one release."""
+
+    def __post_init__(self) -> None:
+        """Warn that the task-local off-policy name now belongs to CRL."""
+        warnings.warn(
+            "RslRlOffPolicyRunnerCfg is deprecated; use RslRlCrlRunnerCfg.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
 
 @configclass
