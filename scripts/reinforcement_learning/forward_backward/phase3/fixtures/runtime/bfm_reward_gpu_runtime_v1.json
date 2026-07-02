@@ -1,0 +1,53 @@
+{
+  "benchmark": {
+    "device_name": "NVIDIA RTX 6000 Ada Generation",
+    "episodes_per_task": 4,
+    "iterations": 1000,
+    "microseconds_per_compiled_algebra_only": 124.12097677588463,
+    "microseconds_per_fk_only": 95.24743910878897,
+    "microseconds_per_reward_step": 606.7632832564414,
+    "physical_gpu_uuid": "GPU-ec08549f-c376-5290-59f3-79125cd3c660",
+    "reward_rows_per_second": 250509.55486994915,
+    "rows_per_step": 152,
+    "runtime_setup_seconds": 1.797007078770548,
+    "task_count": 38,
+    "temporary_peak_bytes": 105984
+  },
+  "correctness": {
+    "cpu_cuda_max_absolute_difference": 2.5331974029541016e-07,
+    "finite": true,
+    "frozen_oracle_atol": 3e-05,
+    "frozen_oracle_rtol": 3e-05,
+    "frozen_oracle_tasks_passed": 38,
+    "frozen_oracle_tasks_total": 38
+  },
+  "device_residency": {
+    "final_scalar_transfer_only": true,
+    "kinematics": "newton_batched_fk",
+    "per_step_host_synchronizations": 0,
+    "reward_algebra": "torch_compile_fullgraph",
+    "trajectory_host_copies": 0
+  },
+  "recorded_at": "2026-07-02T11:08:43.783178+00:00",
+  "reward_contract": {
+    "action_dependency": false,
+    "feature_width": 16,
+    "layout": "task_major_episode_major",
+    "source_oracle": "frozen BFM-Zero MuJoCo reward classes",
+    "source_oracle_role": "evidence_generation_only",
+    "task_count": 38
+  },
+  "runtime": {
+    "torch": "2.10.0+cu128",
+    "warp": "1.16.0.dev20260630"
+  },
+  "schema": "forward_backward_phase3_bfm_reward_gpu_runtime_v1",
+  "source_identity": {
+    "bfm_reward_runtime_sha256": "f69aefd00712fd777a3c2c2a1c96c2c59e4a9527a785ec32a2f38b3a368896ac",
+    "frozen_reward_source_sha256": "4cf4928aa7066b026b14d6bd86e055d90411b9bfd4fa36860cc55898911172a2",
+    "newton_kinematics_sha256": "e450f76a2bfe11ff0986c60c5519a7ddc5009579477478547945e6958f85fbfd",
+    "producer_sha256": "675e7bfc072f9be0e89f58e8295a06e9d585b4f92b3a2dc0dcfefdf131520c90",
+    "reward_context_source_sha256": "faf3af436ceb763bf025cfd1fb0c78c08e6558f60dcf2069b6f42a55ce71280d"
+  },
+  "status": "passed"
+}

@@ -1,0 +1,17 @@
+{
+  "files": {
+    "humanoidverse/envs/g1_env_helper/bench/reward_eval_hv.py": "24547cb7385dd14a3c97ec5ce9b3e9a82f76292889a33fb5f5c97428a482d8b2",
+    "humanoidverse/envs/g1_env_helper/rewards.py": "4cf4928aa7066b026b14d6bd86e055d90411b9bfd4fa36860cc55898911172a2",
+    "phase2_adapter/environment.py": "52a35f031b2808479cf0dbf75bdb1ead5c7c4292f33c6f3cb33ca8e367460cc7",
+    "phase2_adapter/policy.py": "a9e17d74f200ff11ade63c6f211aec9f4e6d850cbd3252f1e44ec498a4cd23b6",
+    "phase2_adapter/reward_evaluation.py": "f1bcdfca4407396172ecc38e5e8ccdbdc6eea6f3fd515e7cace3a37212fce083"
+  },
+  "repository": {
+    "revision": "f93f64dd542dabbcfb57140909c261bee9c231e0",
+    "source_root": ".",
+    "tree": "a0975b697d39461b5367d3fadff6176431b52aca",
+    "upstream_url": "https://github.com/LeCAR-Lab/BFM-Zero.git",
+    "url": "https://github.com/ooctipus/BFM-Zero.git"
+  },
+  "schema": "forward_backward_phase3_bfm_reward_source_identity_v1"
+}

@@ -1,0 +1,86 @@
+{
+  "schema": "forward_backward_phase3g_g1_policy_quality_protocol_audit_v1",
+  "status": "frozen_after_reset_corpus_audit",
+  "phase_ownership": {
+    "phase2": "convergence_and_policy_quality",
+    "phase3": "deterministic_environment_learner_integration_and_structural_composition",
+    "broad_reward_role_in_phase3": "diagnostic_only"
+  },
+  "audited_evidence": {
+    "classification": "inconclusive_protocol_identity",
+    "authoritative": false,
+    "reason": "The Phase 2 baseline and IsaacLab candidate did not consume one shared realized reset corpus, and 380 episode rows per metric do not support an authoritative unpaired point-estimate non-inferiority decision.",
+    "episode_rows_per_metric": 380,
+    "shared_episode_bank_sha256": null,
+    "shared_realized_assignment_sha256": null,
+    "historical_point_results": {
+      "threshold_ratio_minimum": 0.95,
+      "phase2_baseline_return_mean": 54.874055758924804,
+      "pre_sampler_candidate_return_mean": 52.59287716196083,
+      "pre_sampler_ratio": 0.9584288318875909,
+      "pre_sampler_result": "met",
+      "post_sampler_candidate_return_mean": 51.10669467049539,
+      "post_sampler_ratio": 0.9313453136217896,
+      "post_sampler_result": "not_met",
+      "post_sampler_threshold_shortfall": 1.02365830148317,
+      "interpretation": "diagnostic_point_gate_only"
+    }
+  },
+  "future_authority_contract": {
+    "schema": "forward_backward_g1_broad_reward_episode_bank_v1",
+    "identity_requirements": {
+      "baseline_episode_bank_sha256": "required_lowercase_sha256",
+      "candidate_episode_bank_sha256": "required_lowercase_sha256",
+      "baseline_realized_assignment_sha256": "required_lowercase_sha256",
+      "candidate_realized_assignment_sha256": "required_lowercase_sha256",
+      "episode_bank_sha256_must_match": true,
+      "realized_assignment_sha256_must_match": true
+    },
+    "ordered_episode_key": [
+      "reward_task_id",
+      "episode_id"
+    ],
+    "episode_bank_fields": {
+      "motion": {
+        "clip_id": "exact_stable_source_clip_id",
+        "continuous_reset_time_seconds": "exact_binary64_value",
+        "task_sampling_law_identity": "exact_versioned_identity"
+      },
+      "reset": {
+        "reset_source": "exact_named_source",
+        "fall_state": "exact_pose_velocity_and_transform_when_selected"
+      },
+      "domain_randomization": {
+        "owner": "episode_bank",
+        "values": "exact_realized_friction_mass_center_of_mass_gain_and_delay_values_in_physical_units"
+      },
+      "observation_noise": {
+        "owner": "backend_neutral_counter_stream",
+        "stream": "stateless_algorithm_and_version_plus_per_component_key_counter_mapping",
+        "optional_audit_values": "exact_realized_tensors_may_be_retained_but_are_not_required"
+      },
+      "push": {
+        "owner": "episode_bank",
+        "values": "exact_schedule_and_realized_linear_and_angular_velocity_changes"
+      }
+    },
+    "closure_fields": [
+      "episode_row_count",
+      "motion_source_identity",
+      "motion_table_identity",
+      "checkpoint_identity",
+      "reward_context_dataset_model_identity",
+      "evaluator_identity",
+      "environment_semantic_identity",
+      "simulator_identity"
+    ],
+    "statistical_contract": {
+      "required_before_observing_results": true,
+      "paired_statistic_definition": "required",
+      "non_inferiority_margin": "required",
+      "confidence_level": "required",
+      "acceptance_rule": "required"
+    },
+    "authority_rule": "Matching bank and realized-assignment identities are necessary but not sufficient; a frozen paired statistical contract must also authorize the comparison."
+  }
+}

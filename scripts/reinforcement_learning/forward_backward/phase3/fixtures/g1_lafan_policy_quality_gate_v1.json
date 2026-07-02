@@ -1,0 +1,65 @@
+{
+  "schema": "forward_backward_phase3g_g1_lafan_policy_quality_gate_v1",
+  "status": "frozen_before_corrected_policy_evaluation",
+  "comparison": "The Phase 3 shared environment evaluates the exact accepted Phase 2 candidate checkpoint with the same native-stochastic corpus, seed, reward tasks, horizon, and normalization. Before any corrected evaluation, the safety increase allowance was tightened from 0.01 to 0.001 because the former limit exceeded the valid [0,1] rate domain at this baseline and was tautological.",
+  "checkpoint": {
+    "transition": 9600000,
+    "training_seed": 4728,
+    "sha256": "6be44a20885b4b40751d61b9c5b88cf7c27f98d2bdc2e33d3004b4360118d2cb"
+  },
+  "protocol": {
+    "preset": "g1_lafan",
+    "motion_split": "train",
+    "clip_count": 862,
+    "frame_count": 258600,
+    "evaluation_seed": 4728,
+    "domain_randomization": true,
+    "observation_noise": true,
+    "reward_task_count": 38,
+    "episodes_per_task": 10,
+    "reward_horizon": 500,
+    "tracking_coverage_fraction": 1.0
+  },
+  "phase2_baseline": {
+    "implementation": "rsl_rl_candidate_residual_6x1024",
+    "evaluation_protocol": "native_stochastic",
+    "tracking_manifest_sha256": "a92d6150dfd0ce1d13ec1c97324482fd525142fbf96762471c6e1a805d14c435",
+    "tracking_metrics_sha256": "46a493ade4c87b2110ed185cb2e7ff359c0a4e0a9d30f965841da3769082fc47",
+    "reward_manifest_sha256": "c93199c60995f4df074ae64173f9654d8633ffa449a246f8b4fb38e4a4cc3b68",
+    "reward_metrics_sha256": "6cb5bb69a356f6167c9667c332517eb55d1f2e42de772c98f4b52d3f56e3dcc1",
+    "tracking": {
+      "emd_mean": 1.317105856436808,
+      "obs_state_emd_mean": 1.144622921994978
+    },
+    "broad_reward": {
+      "return_mean": 54.874055758924804,
+      "safety_violation_rate_mean": 0.998410530153074,
+      "termination_rate_mean": 0.0,
+      "auxiliary_cost_mean": 2.005842283211256,
+      "action_l2_mean": 2.749174585467891
+    }
+  },
+  "acceptance": {
+    "tracking": {
+      "emd_mean_absolute_delta_max": 0.05,
+      "obs_state_emd_mean_absolute_delta_max": 0.02,
+      "coverage_fraction_min": 1.0
+    },
+    "broad_reward": {
+      "return_mean_ratio_min": 0.95,
+      "safety_violation_rate_mean_increase_max": 0.001,
+      "safety_violation_rate_rationale": "Discriminating in-domain bound: baseline plus allowance is 0.999410530153074, so a maximum rate of 1.0 fails.",
+      "termination_rate_mean_max": 0.01,
+      "auxiliary_cost_mean_absolute_delta_max": 0.1,
+      "action_l2_mean_absolute_delta_max": 0.1
+    }
+  },
+  "cross_source_measurement": {
+    "preset": "g1_cmu",
+    "motion_split": "evaluation",
+    "clip_count": 182,
+    "frame_count": 88364,
+    "required_tracking_coverage_fraction": 1.0,
+    "claim": "Zero-shot composition is measured with finite EMD, broad reward, and safety after current retarget and simulator companion evidence validates; no native non-inferiority threshold is invented for this unseen corpus."
+  }
+}
