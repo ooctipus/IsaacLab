@@ -1,0 +1,315 @@
+{
+  "claim_scope": "native_environment_learner_integration_one_update_group_not_convergence_evaluator_or_systems",
+  "excluded_claims": [
+    "convergence_or_non_inferiority",
+    "tracking_evaluator_or_curriculum_lifecycle",
+    "final_observation_capture_and_systems_headroom_owned_by_phase3e",
+    "exact_simulator_state_resume"
+  ],
+  "failure": [
+    "identity_or_route_mismatch",
+    "missing_or_nonfinite_metric_or_actor_state",
+    "collection_update_version_or_context_count_mismatch",
+    "replay_boundary_or_terminal_overflow_error",
+    "checkpoint_hash_strict_load_or_restart_mismatch",
+    "simulator_cloner_or_contact_identity_changes_after_launch"
+  ],
+  "launch_gate": "wait_for_final_phase3e_simulator_and_cloner_identity",
+  "phase3e_to_phase3f_environment_bridge": {
+    "phase3e_motion_split": "evaluation",
+    "phase3f_motion_split": "train",
+    "required_resolved_axes_relation": "exact_equal",
+    "required_resolved_configuration_difference": [
+      "commands.motion.task_table.motion_split"
+    ]
+  },
+  "phase_prerequisites": {
+    "phase3e": [
+      "frozen_simulator_cloner_and_contact_identity",
+      "exact_final_observation_capture",
+      "environment_device_memory_and_throughput"
+    ],
+    "phase3g": [
+      "tracking_evaluator_and_policy_non_inferiority_are_separate"
+    ]
+  },
+  "profiles": {
+    "g1_lafan": {
+      "checkpoint": {
+        "environment_resume": "restart",
+        "filename": "model_12.pt",
+        "iteration": 12,
+        "strict_map_location": "cpu",
+        "strict_mmap": true
+      },
+      "closed_input_identity": {
+        "checkpoint_schema_sha256": "c62ecf693d22509f3c05143dd2cc4a905e757791de60bb6d3921c269696693ed",
+        "environment_dependency_bundle_sha256": "70e6b9ef3d0afe608b749633070d8e80d357d840c55aaf88aab649d984f227d1",
+        "expert_schema_sha256": "aafd5cb6d00f65941de1301b1abb035d965b6fee09d58fa9450672d79e119a02",
+        "learner_code_bundle_sha256": "4b583f26eb407cbeee69f15c738786c5db542e68950c051040d689f1d5b2884f",
+        "learner_runtime_bundle_sha256": "0b27d9ce550690a79ceb23915323f483164d0a871e4907aaef797bd1d7cfc960",
+        "observation_schema_sha256": "7b2f98047b1a4fcb5d079ee5d86c23af6a59692b913f570614b2b062f246d19e",
+        "python_source_identity_sha256": "393b12af83e11362ca214de8033f8a9c0df55420dd38d6da20bf5732d0686efd",
+        "receipt_code_sha256": "dae3d62cf9d7c942129ffc40ac2c7d60e0443902bdc0401f63cca38d77556af6",
+        "resolved_agent_config_sha256": "b8d0a135aa6866e8dd33b2f5585038cba0c626a2240e8f9c8b5bc5123b95407e",
+        "resolved_axes_sha256": "7371c6ec9dd0e83be8400a0b7b90c9d4d126d6a72c3a1e43318546ffe3e25bcf",
+        "runner_source_sha256": "898f6a6e29bf8d9b692a4ae7b081f9b8a082f191237eb9e35c28d58e38f86bef",
+        "task_bridge_code_bundle_sha256": "c65cdc8a42e3ad2941ef73e3bb93bd2365f7a3e91f86ee3435804434355a86b8",
+        "task_table_sha256": "c06647d85899a9b0ad1e78047c4eeb0b17b283f25d43b60b69b6cf16b2bf9936",
+        "training_cli_sha256": "566c126c3d90b7385e71c71bd03e0e0a0fdb47c9700b587ab8bbf7fbcdc3d0a5"
+      },
+      "collection": {
+        "expected_transitions": 12288,
+        "expected_update_calls": 16,
+        "expected_update_groups": 1,
+        "iterations": 12,
+        "num_envs": 1024,
+        "random_action_transitions": 10240,
+        "steps_per_iteration": 1,
+        "updates_per_group": 16
+      },
+      "command": [
+        "./isaaclab.sh",
+        "train",
+        "--rl_library",
+        "rsl_rl",
+        "--task",
+        "Isaac-Motion-Imitation-v0",
+        "--headless",
+        "--device",
+        "cuda:0",
+        "--num_envs",
+        "1024",
+        "--max_iterations",
+        "12",
+        "presets=g1_lafan",
+        "env.commands.motion.task_table.source_artifact_root=<SOURCE_ARTIFACT_ROOT>",
+        "env.commands.motion.task_table.reference_artifact_root=<REFERENCE_ARTIFACT_ROOT>",
+        "agent.lifecycle_extension=null",
+        "agent.replay.capacity_transitions=12288",
+        "--training_callback",
+        "forward_backward.phase3.motion_training_receipt:training_callback"
+      ],
+      "device_scope": {
+        "dtype": "torch.float32",
+        "expert": "cuda:0",
+        "learner": "cuda:0",
+        "replay": "cuda:0",
+        "simulator": "cuda:0"
+      },
+      "environment_semantic_sha256": "97bcc7308ad3f29daa3967a3fcb9b204ccbd668e20a8dcf0dbb64423436f5717",
+      "execution_scale_overrides": {
+        "lifecycle_extension": null,
+        "max_iterations": 12,
+        "replay_capacity_transitions": 12288
+      },
+      "learner": {
+        "batch_size": 1024,
+        "context_buffer_capacity": 8192,
+        "expected_version_names": [
+          "actor",
+          "context",
+          "discriminator",
+          "normalizer",
+          "representation",
+          "target",
+          "value/auxiliary",
+          "value/discriminator",
+          "reward_normalizer/auxiliary"
+        ],
+        "required_metrics": [
+          "actor/fb_value",
+          "actor/helper_value",
+          "actor/loss",
+          "discriminator/gradient_penalty",
+          "discriminator/logistic",
+          "discriminator/loss",
+          "fb/diagonal",
+          "fb/implied_value",
+          "fb/loss",
+          "fb/measure",
+          "fb/off_diagonal",
+          "fb/orthogonality",
+          "fb/orthogonality_diagonal",
+          "fb/orthogonality_off_diagonal",
+          "value/discriminator/loss",
+          "value/discriminator/reward",
+          "value/discriminator/target",
+          "value/auxiliary/loss",
+          "value/auxiliary/reward",
+          "value/auxiliary/target"
+        ]
+      },
+      "validation_command_template": [
+        "./isaaclab.sh",
+        "train",
+        "--rl_library",
+        "rsl_rl",
+        "--task",
+        "Isaac-Motion-Imitation-v0",
+        "--headless",
+        "--device",
+        "cuda:0",
+        "--num_envs",
+        "1024",
+        "--validate_checkpoint",
+        "<FINAL_CHECKPOINT>",
+        "--max_iterations",
+        "12",
+        "presets=g1_lafan",
+        "env.commands.motion.task_table.source_artifact_root=<SOURCE_ARTIFACT_ROOT>",
+        "env.commands.motion.task_table.reference_artifact_root=<REFERENCE_ARTIFACT_ROOT>",
+        "agent.lifecycle_extension=null",
+        "agent.replay.capacity_transitions=12288",
+        "--training_callback",
+        "forward_backward.phase3.motion_training_receipt:training_callback"
+      ]
+    },
+    "smpl_cmu": {
+      "checkpoint": {
+        "environment_resume": "restart",
+        "filename": "model_102.pt",
+        "iteration": 102,
+        "strict_map_location": "cpu",
+        "strict_mmap": true
+      },
+      "closed_input_identity": {
+        "checkpoint_schema_sha256": "e824e08356cafe28c48834971c2018e8faac5651c0b23da79e38544832877115",
+        "environment_dependency_bundle_sha256": "752584cb626217976c07e9b80036407deba6505845b63ace07766df7e0f719bd",
+        "expert_schema_sha256": "544581e23062a1a2a2584ee6bb62d3d56039d8a324c7632019067807a02cbe1b",
+        "learner_code_bundle_sha256": "4b583f26eb407cbeee69f15c738786c5db542e68950c051040d689f1d5b2884f",
+        "learner_runtime_bundle_sha256": "0b27d9ce550690a79ceb23915323f483164d0a871e4907aaef797bd1d7cfc960",
+        "observation_schema_sha256": "3ca6b1683360759cd862fce13fa3e128c15461ba258d05ef2b6c4013cd439a3c",
+        "python_source_identity_sha256": "393b12af83e11362ca214de8033f8a9c0df55420dd38d6da20bf5732d0686efd",
+        "receipt_code_sha256": "dae3d62cf9d7c942129ffc40ac2c7d60e0443902bdc0401f63cca38d77556af6",
+        "resolved_agent_config_sha256": "6a69db7d62b3466e5e2fd64e197fafd81d5455ad1ada9f1d619418bb9bd67eac",
+        "resolved_axes_sha256": "38d7137df6acbd7c39c8a5e2790b968eb201d21be95799d600b5c238e05ff8e1",
+        "runner_source_sha256": "898f6a6e29bf8d9b692a4ae7b081f9b8a082f191237eb9e35c28d58e38f86bef",
+        "task_bridge_code_bundle_sha256": "0117b63ce83101fe9167076e59164f6941f965730b320c68c60640c4ef945158",
+        "task_table_sha256": "eb9e80a5a85c96b2dce5a509fa1fb1332ff6c051c83c74acc90413aa5476e170",
+        "training_cli_sha256": "566c126c3d90b7385e71c71bd03e0e0a0fdb47c9700b587ab8bbf7fbcdc3d0a5"
+      },
+      "collection": {
+        "expected_transitions": 51000,
+        "expected_update_calls": 50,
+        "expected_update_groups": 1,
+        "iterations": 102,
+        "num_envs": 50,
+        "random_action_transitions": 50000,
+        "steps_per_iteration": 10,
+        "updates_per_group": 50
+      },
+      "command": [
+        "./isaaclab.sh",
+        "train",
+        "--rl_library",
+        "rsl_rl",
+        "--task",
+        "Isaac-Motion-Imitation-v0",
+        "--headless",
+        "--device",
+        "cuda:0",
+        "--num_envs",
+        "50",
+        "--max_iterations",
+        "102",
+        "presets=smpl_cmu",
+        "env.commands.motion.task_table.source_artifact_root=<SOURCE_ARTIFACT_ROOT>",
+        "agent.lifecycle_extension=null",
+        "agent.replay.capacity_transitions=51000",
+        "--training_callback",
+        "forward_backward.phase3.motion_training_receipt:training_callback"
+      ],
+      "device_scope": {
+        "dtype": "torch.float32",
+        "expert": "cuda:0",
+        "learner": "cuda:0",
+        "replay": "cuda:0",
+        "simulator": "cuda:0"
+      },
+      "environment_semantic_sha256": "ce495b7c8e0d41457278bd821c8071206b53b10bc1dddd46fcf836abcc9fe5b9",
+      "execution_scale_overrides": {
+        "lifecycle_extension": null,
+        "max_iterations": 102,
+        "replay_capacity_transitions": 51000
+      },
+      "learner": {
+        "batch_size": 1024,
+        "context_buffer_capacity": 10000,
+        "expected_version_names": [
+          "actor",
+          "context",
+          "discriminator",
+          "normalizer",
+          "representation",
+          "target",
+          "value/discriminator"
+        ],
+        "required_metrics": [
+          "actor/fb_value",
+          "actor/helper_value",
+          "actor/loss",
+          "discriminator/gradient_penalty",
+          "discriminator/logistic",
+          "discriminator/loss",
+          "fb/diagonal",
+          "fb/implied_value",
+          "fb/loss",
+          "fb/measure",
+          "fb/off_diagonal",
+          "fb/orthogonality",
+          "fb/orthogonality_diagonal",
+          "fb/orthogonality_off_diagonal",
+          "value/discriminator/loss",
+          "value/discriminator/reward",
+          "value/discriminator/target"
+        ]
+      },
+      "validation_command_template": [
+        "./isaaclab.sh",
+        "train",
+        "--rl_library",
+        "rsl_rl",
+        "--task",
+        "Isaac-Motion-Imitation-v0",
+        "--headless",
+        "--device",
+        "cuda:0",
+        "--num_envs",
+        "50",
+        "--validate_checkpoint",
+        "<FINAL_CHECKPOINT>",
+        "--max_iterations",
+        "102",
+        "presets=smpl_cmu",
+        "env.commands.motion.task_table.source_artifact_root=<SOURCE_ARTIFACT_ROOT>",
+        "agent.lifecycle_extension=null",
+        "agent.replay.capacity_transitions=51000",
+        "--training_callback",
+        "forward_backward.phase3.motion_training_receipt:training_callback"
+      ]
+    }
+  },
+  "schema": "forward_backward_phase3_motion_training_smoke_contract_v2",
+  "status": "prepared_not_launched",
+  "success": {
+    "identity": [
+      "broad_environment_bundle_matches_before_after_and_reload",
+      "resolved_axes_match_before_after_and_reload",
+      "runner_table_expert_observation_and_checkpoint_schema_match"
+    ],
+    "learner": [
+      "exact_collection_update_version_and_context_counts",
+      "all_required_metrics_action_statistics_actor_parameters_and_cached_distribution_params_finite",
+      "zero_replay_contract_errors",
+      "zero_terminal_overflow",
+      "checkpoint_hash_size_and_restart_semantics_verified"
+    ],
+    "process": [
+      "training_returns_normally",
+      "completion_record_published",
+      "fresh_process_strict_mmap_cpu_load",
+      "passed_receipt_published"
+    ]
+  }
+}

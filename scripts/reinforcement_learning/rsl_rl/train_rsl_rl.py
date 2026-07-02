@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 RSL_RL_VERSION = "5.4.1"
 RL_ROOT = Path(__file__).resolve().parents[1]
 CLI_ARGS = import_local_module("isaaclab_rsl_rl_cli_args", RL_ROOT / "rsl_rl" / "cli_args.py")
-_TRAINING_CALLBACK_STAGES = frozenset({"launch", "complete", "validate"})
+_TRAINING_CALLBACK_STAGES = frozenset({"prepare", "launch", "complete", "validate"})
 
 
 # PLACEHOLDER: Extension template (do not remove this comment)
@@ -104,7 +104,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--training_callback",
         default=None,
-        help="Optional module:callable invoked at launch, completion, or checkpoint validation.",
+        help="Optional module:callable invoked at preparation, launch, completion, or checkpoint validation.",
+    )
+    parser.add_argument(
+        "--training_callback_mode",
+        choices=("train", "prepare"),
+        default="train",
+        help="Run training normally, or construct the environment and runner for callback preparation then exit.",
     )
     parser.add_argument(
         "--validate_checkpoint",
@@ -125,6 +131,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         args_cli.training_callback = string_to_callable(args_cli.training_callback)
 
     # physics=/renderer=/presets= tokens pass through the remainder for hydra to parse later
+    if args_cli.training_callback_mode == "prepare" and args_cli.training_callback is None:
+        parser.error("--training_callback_mode prepare requires --training_callback.")
     set_hydra_args(list_intersection(remaining_args, remaining_args_env_registration))
     return args_cli
 
@@ -209,6 +217,14 @@ def run(argv: list[str]) -> None:
             "runner": runner,
             "log_dir": Path(log_dir),
         }
+        if args_cli.training_callback_mode == "prepare":
+            if args_cli.validate_checkpoint is not None:
+                raise ValueError("Callback preparation cannot be combined with --validate_checkpoint.")
+            try:
+                _invoke_training_callback(args_cli.training_callback, "prepare", **callback_values)
+            finally:
+                env.close()
+            return
         if args_cli.validate_checkpoint is not None:
             if agent_cfg.resume or agent_cfg.get_algorithm_class_name() == "Distillation":
                 raise ValueError("--validate_checkpoint cannot be combined with resume or distillation loading.")

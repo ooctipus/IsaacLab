@@ -77,11 +77,13 @@ def test_training_callback_receives_only_declared_stages() -> None:
     def record_stage(**values: object) -> None:
         calls.append(values["stage"])
 
+    module._invoke_training_callback(record_stage, "prepare", marker=0)
+
     module._invoke_training_callback(record_stage, "launch", marker=1)
     module._invoke_training_callback(record_stage, "complete", marker=2)
     module._invoke_training_callback(record_stage, "validate", marker=3)
 
-    assert calls == ["launch", "complete", "validate"]
+    assert calls == ["prepare", "launch", "complete", "validate"]
     with pytest.raises(ValueError, match="callback stage"):
         module._invoke_training_callback(record_stage, "misspelled", marker=4)
 

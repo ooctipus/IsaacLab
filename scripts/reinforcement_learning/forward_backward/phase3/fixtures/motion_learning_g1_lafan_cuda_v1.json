@@ -1,0 +1,329 @@
+{
+  "claim_scope": {
+    "convergence_non_inferiority": "not_evaluated",
+    "expert_attachment": "exact_train_corpus",
+    "first_update": "deterministic_integration_canary",
+    "source_numerical_parity": "inherited_from_phase2_not_remeasured_here"
+  },
+  "code_identity": {
+    "evidence_sha256": "128bfeac95273f0ea21778dda058ed7330932214bdcea7272b9a9432ea0f5385",
+    "motion_expert_provider_sha256": "4c95cbd4711ff65e529c24f5b7e0ea59137bb6ab7fc3f4e857bb2b67fc495ca2",
+    "native_trace_sha256": "0959ba0435e37496cac0a716d7221fb7986f44aa236dd1180db4f184fc1927c3",
+    "rsl_algorithm_sha256": "aec6b66f7dff37486585b906a47d5749b6b1d18fdb5d10344c19a2ff39b498ca",
+    "rsl_expert_buffer_sha256": "8c10129e1e562adef1544058f0936866b1b57992cdcc6ce622b4be39bf66f7a3",
+    "rsl_replay_sha256": "8955d6b49ba11ee3a1c4cb39e9a985c09c5f617beb2d942ce30f8c26ed08fadb"
+  },
+  "expert": {
+    "clip_count": 862,
+    "clip_offsets_sha256": "4ff0af3c3eaaffcc1d0548dd9c231d5afa7e536fb0e77e47e8dbcf6fea11ffbd",
+    "expert_data_sha256": "ba7ae8f2fefc0a7dc6eb370ab00ed9d3f2b259af27a9975a03d28645e252582b",
+    "expert_feature_width": 527,
+    "expert_frame_count": 430138,
+    "expert_frames_sha256": "25a5fe406cc28b6f9b09074901170b06f0e864e538d8220ac5d63fa00ac3a42e",
+    "expert_schema_sha256": "aafd5cb6d00f65941de1301b1abb035d965b6fee09d58fa9450672d79e119a02",
+    "sample_grid": {
+      "mode": "uniform_before_source_end",
+      "step_seconds": 0.02
+    },
+    "source_frame_count": 258600,
+    "window_counts": {
+      "257": 208604,
+      "8": 423242
+    },
+    "window_lengths": [
+      8,
+      257
+    ],
+    "zero_copy_native_observations": false
+  },
+  "first_update_canary": {
+    "batch_size": 8,
+    "claim_scope": "deterministic_native_trace_integration_not_convergence_or_source_numerical_parity",
+    "deterministic_fields": [
+      "checkpoint_schema_sha256",
+      "model_before",
+      "model_after",
+      "changed_components",
+      "metrics",
+      "metrics_sha256",
+      "update_step",
+      "versions",
+      "context_buffer_size",
+      "replay_transitions"
+    ],
+    "repeat_count": 2,
+    "repeat_update_seconds": [
+      0.10383823839947581,
+      0.06745484890416265
+    ],
+    "replay_capacity_transitions": 32,
+    "result": {
+      "changed_components": [
+        "actor",
+        "backward",
+        "discriminator",
+        "forward",
+        "target_backward",
+        "target_forward",
+        "target_value/auxiliary",
+        "target_value/discriminator",
+        "value/auxiliary",
+        "value/discriminator"
+      ],
+      "checkpoint_schema_sha256": "0a4c05bbdfe6b36efac637ddbfc6452e4e84dec840810cdd4c363b86ac21726d",
+      "context_buffer_size": 8,
+      "metrics": {
+        "actor/fb_value": -17.038379669189453,
+        "actor/helper_value": -1.0180494785308838,
+        "actor/loss": 38.59478759765625,
+        "discriminator/gradient_penalty": 0.18758270144462585,
+        "discriminator/logistic": 1.1360681056976318,
+        "discriminator/loss": 3.011895179748535,
+        "fb/diagonal": 4.344380855560303,
+        "fb/implied_value": 0.0,
+        "fb/loss": 2287473.0,
+        "fb/measure": 705.0664672851562,
+        "fb/off_diagonal": 700.7221069335938,
+        "fb/orthogonality": 22867.6796875,
+        "fb/orthogonality_diagonal": -256.0,
+        "fb/orthogonality_off_diagonal": 23123.6796875,
+        "value/auxiliary/loss": 18.143972396850586,
+        "value/auxiliary/reward": -3.675574541091919,
+        "value/auxiliary/target": -3.766472816467285,
+        "value/discriminator/loss": 4.086385726928711,
+        "value/discriminator/reward": 0.27204960584640503,
+        "value/discriminator/target": -1.3266589641571045
+      },
+      "metrics_sha256": "f2ebc50eb8e1939374e793e4d17cddfc77cd68e0aa1fcfa4bcaec8f0402c2209",
+      "model_after": "06698e39f907a812a7a9449b575a91dae1f93e6a56df5db20cf86402ebc0ae1d",
+      "model_before": "86216bd2eb5bba9837f05843358cf84a021731b5bc621156be6027e63ab8049f",
+      "replay_transitions": 10,
+      "update_seconds": 0.10383823839947581,
+      "update_step": 1,
+      "versions": {
+        "actor": 1,
+        "context": 1,
+        "discriminator": 1,
+        "normalizer": 1,
+        "representation": 1,
+        "reward_normalizer/auxiliary": 1,
+        "target": 1,
+        "value/auxiliary": 1,
+        "value/discriminator": 1
+      }
+    },
+    "status": "passed"
+  },
+  "learner": {
+    "model": {
+      "actor_cfg": {
+        "embedding_layers": 2,
+        "hidden_dim": 1024,
+        "hidden_layers": 6,
+        "residual": true
+      },
+      "backward_hidden_dims": [
+        256
+      ],
+      "backward_normalization": true,
+      "class_name": "rsl_rl.models.forward_backward_model:ForwardBackwardModel",
+      "context_dim": 256,
+      "context_normalization": true,
+      "discriminator_hidden_dims": [
+        1024,
+        1024,
+        1024
+      ],
+      "distribution_cfg": {
+        "action_range": [
+          -1.0,
+          1.0
+        ],
+        "class_name": "ClippedGaussianDistribution",
+        "init_std": 0.05,
+        "noise_clip": 0.3
+      },
+      "forward_cfg": {
+        "embedding_layers": 6,
+        "hidden_dim": 1024,
+        "hidden_layers": 6,
+        "residual": true
+      },
+      "initialization_type": "orthogonal",
+      "normalization_eps": 1e-05,
+      "normalization_momentum": 0.01,
+      "normalization_type": "exponential",
+      "value_heads": [
+        {
+          "network": {
+            "embedding_layers": 6,
+            "hidden_dim": 1024,
+            "hidden_layers": 6,
+            "residual": true
+          },
+          "spec": {
+            "ensemble_size": 2,
+            "has_target": true,
+            "kind": "critic",
+            "name": "discriminator",
+            "reward_channels": [
+              "discriminator"
+            ],
+            "route": "critic_discriminator"
+          }
+        },
+        {
+          "network": {
+            "embedding_layers": 6,
+            "hidden_dim": 1024,
+            "hidden_layers": 6,
+            "residual": true
+          },
+          "spec": {
+            "ensemble_size": 2,
+            "has_target": true,
+            "kind": "critic",
+            "name": "auxiliary",
+            "reward_channels": [
+              "penalty_torques",
+              "penalty_action_rate",
+              "limits_dof_pos",
+              "limits_torque",
+              "penalty_undesired_contact",
+              "penalty_feet_ori",
+              "penalty_ankle_roll",
+              "penalty_slippage"
+            ],
+            "reward_composition": "scalar",
+            "route": "critic_auxiliary"
+          }
+        }
+      ]
+    },
+    "observation_schema_sha256": "7b2f98047b1a4fcb5d079ee5d86c23af6a59692b913f570614b2b062f246d19e",
+    "routes": {
+      "actor": [
+        "state",
+        "last_action",
+        "history_actor"
+      ],
+      "backward": [
+        "state",
+        "privileged_state"
+      ],
+      "critic_auxiliary": [
+        "state",
+        "privileged_state",
+        "last_action",
+        "history_actor"
+      ],
+      "critic_discriminator": [
+        "state",
+        "privileged_state",
+        "last_action",
+        "history_actor"
+      ],
+      "discriminator": [
+        "state",
+        "privileged_state"
+      ],
+      "forward": [
+        "state",
+        "privileged_state",
+        "last_action",
+        "history_actor"
+      ]
+    },
+    "runner_config_sha256": "a1769db490f4a5750735bc17d3df93f7a249e83f5852b07c9ae175069c056e1a"
+  },
+  "preset": "g1_lafan",
+  "runtime": {
+    "cuda_device_name": "NVIDIA RTX 6000 Ada Generation",
+    "cuda_peak_allocated_bytes": 3918453760,
+    "deterministic_algorithms": true,
+    "device": "cuda:0",
+    "numpy": "2.4.6",
+    "platform": "Linux-6.17.0-35-generic-x86_64-with-glibc2.39",
+    "python": "3.12.13",
+    "torch": "2.10.0+cu128",
+    "torch_threads": 1
+  },
+  "schema": "forward_backward_phase3_motion_learning_evidence_v1",
+  "source": {
+    "artifact": "humanoidverse/data/lafan_29dof_10s-clipped.pkl",
+    "artifact_sha256": "7f5aa36957808ee2e972472b18add8510533742710ba312d8b8c6e6014f1c010",
+    "identifier": "g1_lafan",
+    "source_content_sha256": "7f5aa36957808ee2e972472b18add8510533742710ba312d8b8c6e6014f1c010",
+    "split": "training"
+  },
+  "status": "measured",
+  "task_table": {
+    "frame_builder_identity_sha256": "27a1e08cebd1b61e4a3226808d2862765a97a331fae84ddcb9965d532052ed4c",
+    "frame_builder_version": "g1_lafan_exact_mjcf_v1",
+    "identity_sha256": "c06647d85899a9b0ad1e78047c4eeb0b17b283f25d43b60b69b6cf16b2bf9936",
+    "joint_names": [
+      "left_hip_pitch_joint",
+      "right_hip_pitch_joint",
+      "waist_yaw_joint",
+      "left_hip_roll_joint",
+      "right_hip_roll_joint",
+      "waist_roll_joint",
+      "left_hip_yaw_joint",
+      "right_hip_yaw_joint",
+      "waist_pitch_joint",
+      "left_knee_joint",
+      "right_knee_joint",
+      "left_shoulder_pitch_joint",
+      "right_shoulder_pitch_joint",
+      "left_ankle_pitch_joint",
+      "right_ankle_pitch_joint",
+      "left_shoulder_roll_joint",
+      "right_shoulder_roll_joint",
+      "left_ankle_roll_joint",
+      "right_ankle_roll_joint",
+      "left_shoulder_yaw_joint",
+      "right_shoulder_yaw_joint",
+      "left_elbow_joint",
+      "right_elbow_joint",
+      "left_wrist_roll_joint",
+      "right_wrist_roll_joint",
+      "left_wrist_pitch_joint",
+      "right_wrist_pitch_joint",
+      "left_wrist_yaw_joint",
+      "right_wrist_yaw_joint"
+    ],
+    "reference_frame_names": [
+      "pelvis",
+      "left_hip_pitch_link",
+      "right_hip_pitch_link",
+      "waist_yaw_link",
+      "left_hip_roll_link",
+      "right_hip_roll_link",
+      "waist_roll_link",
+      "left_hip_yaw_link",
+      "right_hip_yaw_link",
+      "torso_link",
+      "left_knee_link",
+      "right_knee_link",
+      "left_shoulder_pitch_link",
+      "right_shoulder_pitch_link",
+      "left_ankle_pitch_link",
+      "right_ankle_pitch_link",
+      "left_shoulder_roll_link",
+      "right_shoulder_roll_link",
+      "left_ankle_roll_link",
+      "right_ankle_roll_link",
+      "left_shoulder_yaw_link",
+      "right_shoulder_yaw_link",
+      "left_elbow_link",
+      "right_elbow_link",
+      "left_wrist_roll_link",
+      "right_wrist_roll_link",
+      "left_wrist_pitch_link",
+      "right_wrist_pitch_link",
+      "left_wrist_yaw_link",
+      "right_wrist_yaw_link",
+      "head_link"
+    ]
+  }
+}
