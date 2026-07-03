@@ -142,10 +142,17 @@ def _write_pose_and_render(
     camera: Camera,
     root_poses: torch.Tensor,
 ) -> torch.Tensor:
-    """Write a kinematic pose, advance one frame, and return rendered depth."""
+    """Write a kinematic pose, settle a few frames, and return rendered depth.
+
+    The contract asserts the steady-state pose→pixels mapping, so several frames are stepped
+    before sampling: measuring the same frame as the write races renderers whose tiled output
+    lags the transform update by a frame (observed as an intermittently empty tile on Isaac RTX
+    when an articulation shares the scene).
+    """
     rigid_object.write_root_pose_to_sim_index(root_pose=root_poses)
-    sim.step()
-    scene.update(sim.cfg.dt)
+    for _ in range(3):
+        sim.step()
+        scene.update(sim.cfg.dt)
     torch.testing.assert_close(rigid_object.data.root_link_pose_w.torch, root_poses, rtol=0.0, atol=1.0e-4)
     return camera.data.output["depth"].torch.clone()
 
