@@ -95,6 +95,8 @@ class IsaacRtxRenderData:
 
     annotators: dict[str, Any]
     render_product_paths: list[str]
+    render_product: Any = None
+    """Replicator tiled render product handle, kept so :meth:`IsaacRtxRenderer.cleanup` can destroy it."""
     output_data: dict[str, ProxyArray] | None = None
     spec: CameraRenderSpec | None = None
     renderer_info: dict[str, Any] = field(default_factory=dict)
@@ -397,6 +399,7 @@ class IsaacRtxRenderer(BaseRenderer):
         return IsaacRtxRenderData(
             annotators=annotators,
             render_product_paths=render_product_paths,
+            render_product=rp,
             spec=spec,
             ppisp_pipeline=ppisp_pipeline,
         )
@@ -577,9 +580,21 @@ class IsaacRtxRenderer(BaseRenderer):
                 camera_data.info[output_name] = info
 
     def cleanup(self, render_data: IsaacRtxRenderData | None):
-        """Detach annotators from render product.
-        See :meth:`~isaaclab.renderers.base_renderer.BaseRenderer.cleanup`."""
+        """Detach annotators and destroy the tiled render product.
+        See :meth:`~isaaclab.renderers.base_renderer.BaseRenderer.cleanup`.
+
+        Destroying the render product matters: a leaked product keeps referencing its (deleted)
+        cameras in the render scheduler, and a later render product created in the same process
+        can intermittently lose one of its tiles to the orphan (observed as an all-infinite depth
+        tile in back-to-back simulation sessions).
+        """
         if render_data:
             for annotator in render_data.annotators.values():
                 annotator.detach(render_data.render_product_paths)
+            if render_data.render_product is not None:
+                try:
+                    render_data.render_product.destroy()
+                except Exception as error:  # noqa: BLE001
+                    logger.warning("Failed to destroy tiled render product: %s", error)
+                render_data.render_product = None
             render_data.spec = None

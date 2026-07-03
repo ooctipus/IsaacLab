@@ -11,6 +11,7 @@ the simulation context and renderer configuration needed to run it.
 
 from __future__ import annotations
 
+import gc
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -118,14 +119,23 @@ def _make_scene_cfg(backend: RigidObjectRenderingBackend) -> InteractiveSceneCfg
     return _SceneCfg(num_envs=_NUM_ENVS, env_spacing=_ENV_SPACING)
 
 
-def _measure_depth_mask(depth: torch.Tensor, backend_name: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def _measure_depth_mask(
+    depth: torch.Tensor, backend_name: str, camera: Camera | None = None
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Return silhouette height, width, and horizontal centroid for every camera."""
     depth_image = depth[..., 0]
     valid = torch.isfinite(depth_image) & (depth_image > _MIN_OBJECT_DEPTH) & (depth_image < _MAX_OBJECT_DEPTH)
     pixel_counts = valid.sum(dim=(1, 2))
+    finite = torch.where(torch.isfinite(depth_image), depth_image, torch.zeros_like(depth_image))
+    diagnostics = (
+        f" depth min={finite.amin(dim=(1, 2)).tolist()} max={finite.amax(dim=(1, 2)).tolist()}"
+        f" finite%={(torch.isfinite(depth_image).float().mean(dim=(1, 2)) * 100).tolist()}"
+    )
+    if camera is not None:
+        diagnostics += f" camera pos_w={camera.data.pos_w.torch.tolist()}"
     assert torch.all(pixel_counts >= _MIN_OBJECT_PIXELS), (
         f"[{backend_name}] Expected at least {_MIN_OBJECT_PIXELS} object pixels per camera, "
-        f"got {pixel_counts.tolist()}."
+        f"got {pixel_counts.tolist()}.{diagnostics}"
     )
 
     silhouette_heights = valid.any(dim=2).sum(dim=1)
@@ -183,7 +193,7 @@ def run_rigid_object_scale_and_pose_rendering_contract(backend: RigidObjectRende
             center_poses[:, 6] = 1.0
 
             center_depth = _write_pose_and_render(sim, scene, rigid_object, camera, center_poses)
-            center_heights, center_widths, center_centroids = _measure_depth_mask(center_depth, backend.name)
+            center_heights, center_widths, center_centroids = _measure_depth_mask(center_depth, backend.name, camera)
             assert torch.all(center_heights > 3 * center_widths), (
                 f"[{backend.name}] Expected root-scaled cubes to render as tall silhouettes, got "
                 f"heights={center_heights.tolist()} and widths={center_widths.tolist()}."
@@ -199,12 +209,12 @@ def run_rigid_object_scale_and_pose_rendering_contract(backend: RigidObjectRende
             negative_poses = center_poses.clone()
             negative_poses[:, 0] -= _OBJECT_SHIFT
             negative_depth = _write_pose_and_render(sim, scene, rigid_object, camera, negative_poses)
-            _, _, negative_centroids = _measure_depth_mask(negative_depth, backend.name)
+            _, _, negative_centroids = _measure_depth_mask(negative_depth, backend.name, camera)
 
             positive_poses = center_poses.clone()
             positive_poses[:, 0] += _OBJECT_SHIFT
             positive_depth = _write_pose_and_render(sim, scene, rigid_object, camera, positive_poses)
-            _, _, positive_centroids = _measure_depth_mask(positive_depth, backend.name)
+            _, _, positive_centroids = _measure_depth_mask(positive_depth, backend.name, camera)
 
             negative_delta = negative_centroids - center_centroids
             positive_delta = positive_centroids - center_centroids
@@ -220,5 +230,11 @@ def run_rigid_object_scale_and_pose_rendering_contract(backend: RigidObjectRende
             )
         finally:
             sim.register_interactive_scene(None)
+            # Release the camera's render products deterministically. Relying on Camera.__del__
+            # races the next contract run's renderer setup: native event subscriptions keep the
+            # sensor alive past this scope, and a stale render product then leaves one camera of
+            # the next run tracing an empty, torn-down stage (all-infinite depth tile).
+            camera._invalidate_initialize_callback(None)  # noqa: SLF001
             del camera, rigid_object, scene
+            gc.collect()
             backend.cleanup()
