@@ -569,9 +569,27 @@ def update_state_and_cleanup(ctx: BuildContext) -> None:
     docker("image", "prune", "-f", capture=True, check=False)
 
 
+def clean_stale_egg_info() -> None:
+    """Remove stale editable-install ``*.egg-info`` dirs from ``source/`` before building.
+
+    They are regenerable build artifacts. When created by a local install they are owned by the host
+    user, but the container build runs as uid 1000; setuptools then aborts with "Cannot update time stamp
+    of directory '<pkg>.egg-info'". ``source/`` is bind-mounted into the container, so ``.dockerignore``
+    cannot filter them out - clearing them here is the reliable fix.
+    """
+    removed = 0
+    for egg_info in sorted((REPO_ROOT / "source").glob("*/*.egg-info")):
+        if egg_info.is_dir():
+            shutil.rmtree(egg_info, ignore_errors=True)
+            removed += 1
+    if removed:
+        print(f"Removed {removed} stale *.egg-info dir(s) from source/")
+
+
 def build_image(args: BuildArgs) -> None:
     """Run the requested build."""
 
+    clean_stale_egg_info()
     ctx = make_context(args)
     print("Dependency Analysis...")
     print(f"   Hash: {ctx.deps_hash if ctx.deps_hash else 'SKIP (-s)'}")
