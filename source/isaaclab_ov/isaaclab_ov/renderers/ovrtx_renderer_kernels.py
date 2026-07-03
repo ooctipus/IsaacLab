@@ -314,9 +314,34 @@ def sync_newton_transforms_kernel(
     ovrtx_transforms: wp.array(dtype=wp.mat44d),  # type: ignore
     newton_body_indices: wp.array(dtype=wp.int32),  # type: ignore
     newton_body_q: wp.array(dtype=wp.transformf),  # type: ignore
+    body_scales: wp.array(dtype=wp.vec3d),  # type: ignore
 ):
-    """Sync Newton physics body transforms to OVRTX 4x4 column-major matrices."""
+    """Sync Newton physics body transforms to OVRTX 4x4 column-major matrices.
+
+    The written ``omni:xform`` replaces the prim's full transform stack (``omni:resetXformStack``),
+    while physics poses carry no scale, so each body's authored local scale is recomposed into the
+    matrix — otherwise non-uniformly scaled rigid objects render at unit scale.
+    """
     i = wp.tid()
     body_idx = newton_body_indices[i]
     transform = newton_body_q[body_idx]
-    ovrtx_transforms[i] = wp.transpose(wp.mat44d(wp.transform_to_matrix(transform)))
+    scale = body_scales[i]
+    scale_mat = wp.mat44d(
+        scale[0],
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        scale[1],
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        scale[2],
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+    )
+    ovrtx_transforms[i] = wp.transpose(wp.mat44d(wp.transform_to_matrix(transform)) * scale_mat)

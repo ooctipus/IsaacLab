@@ -262,6 +262,7 @@ class OVRTXRenderer(BaseRenderer):
         self._camera_binding = None
         self._object_binding = None
         self._object_newton_indices: wp.array | None = None
+        self._object_scales: wp.array | None = None
         self._initialized_scene = False
         self._exported_usd_string: str | None = None
         self._camera_rel_path: str | None = None
@@ -495,6 +496,10 @@ class OVRTXRenderer(BaseRenderer):
                 logger.info("No dynamic objects found for binding")
                 return
 
+            # The bound omni:xform replaces each prim's transform stack while physics poses carry
+            # no scale: record every body's authored local scale so the sync kernel can recompose it.
+            object_scales = [self._authored_local_scale(path) for path in object_paths]
+
             self._object_binding = self._renderer.bind_attribute(
                 prim_paths=object_paths,
                 attribute_name="omni:xform",
@@ -514,12 +519,47 @@ class OVRTXRenderer(BaseRenderer):
             if self._object_binding is not None:
                 logger.info("Object binding created successfully")
                 self._object_newton_indices = wp.array(newton_indices, dtype=wp.int32, device=self._device)
+                self._object_scales = wp.array(object_scales, dtype=wp.vec3d, device=self._device)
             else:
                 logger.warning("Object binding is None")
         except ImportError:
             logger.info("Newton not available, skipping object bindings")
         except Exception as e:
             logger.warning("Error setting up object bindings: %s", e)
+
+    def _authored_local_scale(self, body_path: str) -> tuple[float, float, float]:
+        """Return the authored local ``xformOp:scale`` of one bound body prim (identity if absent).
+
+        Bodies of cloned environments have no prim on the source-only stage; their planned source
+        prim carries the identical authored scale, so the path is rewritten through the clone plan.
+        """
+        from pxr import Sdf  # noqa: PLC0415
+
+        from isaaclab.sim.utils.stage import get_current_stage  # noqa: PLC0415
+
+        stage = get_current_stage()
+        prim = stage.GetPrimAtPath(body_path) if Sdf.Path.IsValidPathString(body_path) else None
+        if (prim is None or not prim.IsValid()) and self._clone_plan is not None:
+            path = Sdf.Path(body_path)
+            num_envs = self._clone_plan.clone_mask.shape[1]
+            env_ids = torch.arange(num_envs, device=self._clone_plan.clone_mask.device)
+            for row_idx, (source, template) in enumerate(
+                zip(self._clone_plan.sources, self._clone_plan.destinations, strict=True)
+            ):
+                for env_id in env_ids[self._clone_plan.clone_mask[row_idx]].tolist():
+                    destination = Sdf.Path(template.format(env_id))
+                    if path.HasPrefix(destination):
+                        prim = stage.GetPrimAtPath(path.ReplacePrefix(destination, Sdf.Path(source)))
+                        break
+                if prim is not None and prim.IsValid():
+                    break
+        if prim is None or not prim.IsValid():
+            return (1.0, 1.0, 1.0)
+        scale_attr = prim.GetAttribute("xformOp:scale")
+        scale = scale_attr.Get() if scale_attr.IsValid() else None
+        if scale is None:
+            return (1.0, 1.0, 1.0)
+        return (float(scale[0]), float(scale[1]), float(scale[2]))
 
     def create_render_data(self, spec: CameraRenderSpec) -> OVRTXRenderData:
         """Create OVRTX-specific RenderData with GPU buffers.
@@ -565,7 +605,7 @@ class OVRTXRenderer(BaseRenderer):
 
     def update_transforms(self) -> None:
         """Sync physics objects to OVRTX."""
-        if self._object_binding is None or self._object_newton_indices is None:
+        if self._object_binding is None or self._object_newton_indices is None or self._object_scales is None:
             return
 
         try:
@@ -583,7 +623,7 @@ class OVRTXRenderer(BaseRenderer):
                 wp.launch(
                     kernel=sync_newton_transforms_kernel,
                     dim=len(self._object_newton_indices),
-                    inputs=[ovrtx_transforms, self._object_newton_indices, body_q],
+                    inputs=[ovrtx_transforms, self._object_newton_indices, body_q, self._object_scales],
                     device=self._device,
                 )
         except Exception as e:
