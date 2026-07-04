@@ -45,8 +45,41 @@
 ## Octi multi_task project practices
 
 These practices apply to the Octi-style code under
-`source/isaaclab_tasks/isaaclab_tasks/manager_based/multi_task/`. They do **not**
+`source/isaaclab_tasks/isaaclab_tasks/core/multi_task/`. They do **not**
 relax the expectations for IsaacLab core modules.
+
+### Architecture acceptance
+
+- **Design migrations from the final composition root outward.** Establish the
+  public root config, owners, independent selection axes, dependency direction,
+  and intended file tree before admitting migrated implementation pieces.
+- **Behavioral parity is not structural approval.** Source-faithful equations,
+  tensors, checkpoints, and training curves do not justify preserving a
+  research repository's module decomposition.
+- **Ask whether every file and symbol should exist.** One-use helpers, tiny
+  factories, product aliases, compatibility facades, and config-only modules
+  should be inlined or deleted unless they define a real reusable boundary.
+- **Make environment roots readable.** A reader should understand the scene,
+  actions, observations, commands, events, rewards, terminations, curriculum,
+  timing, and concrete preset alternatives from the environment config without
+  following chains of config-only files.
+- **Keep preset axes independent.** Robot, dataset, physics backend, and
+  algorithm choices must not be encoded as composite product alternatives.
+  Use :class:`PresetCfg` for coherent structured alternatives and ``preset()``
+  only for small local field values.
+- **Reuse IsaacLab terms when semantics match.** Do not wrap standard action,
+  observation, event, reward, or termination terms merely to rename them.
+  Keep a custom term only for behavior that the common term cannot express.
+- **Gate absence, not only presence.** Architecture tests must reject forbidden
+  files, aliases, duplicate owners, dependency inversions, and wrappers around
+  existing terms. Do not add tests that preserve accidental structure.
+- **Audit structure before completion.** Perform a centralized file-by-file
+  existence and ownership review against Position and Factory before relying on
+  numerical, runtime, or training evidence.
+- **Keep compact code compact.** If a signature, scalar preset, tuple return,
+  or tensor expression fits the configured 120-character limit, keep it on one
+  line. Review formatter output manually; formatter acceptance does not certify
+  readable line layout.
 
 ### Compatibility policy
 
@@ -213,7 +246,7 @@ Proper workflow:
 
 - **Do not edit `CHANGELOG.rst` or `config/extension.toml` directly.** Each PR adds a fragment file under `source/<package>/changelog.d/`; the changelog and version are compiled by the nightly CI workflow.
 - **Octi multi_task exception:** Do not create or update changelog fragments for
-  `source/isaaclab_tasks/isaaclab_tasks/manager_based/multi_task/` work unless
+  `source/isaaclab_tasks/isaaclab_tasks/core/multi_task/` work unless
   the user explicitly asks for one.
 - **Add one fragment per touched package.** Pick any short, unique slug for the filename — your branch name (with `/` replaced by `-`) is a good default. The filename suffix declares the bump tier; within a batch the highest tier wins for the package.
 
