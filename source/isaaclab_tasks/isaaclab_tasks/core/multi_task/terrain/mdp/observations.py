@@ -92,9 +92,7 @@ def target_pos_env(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> 
         Tensor of shape ``[num_envs, 3]`` with ``(x, y, z)`` targets [m] in the
         per-env local frame.
     """
-    command_term = env.command_manager.get_term(command_name)
-    env_origins = env.scene.terrain.env_origins  # [num_envs, 3]
-    return command_term.payload.cmd_buf[:, 0, :3] - env_origins
+    return env.command_manager.get_term(command_name).get_state("target_position")
 
 
 def achieved_pos_env(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> torch.Tensor:
@@ -113,9 +111,7 @@ def achieved_pos_env(env: ManagerBasedRLEnv, command_name: str = "goal_point") -
         Tensor of shape ``[num_envs, 3]`` with the robot root position [m]
         relative to the terrain spawn origin for that env.
     """
-    command_term = env.command_manager.get_term(command_name)
-    env_origins = env.scene.terrain.env_origins  # [num_envs, 3]
-    return command_term.payload.cmd_buf[:, 2, :3] - env_origins
+    return env.command_manager.get_term(command_name).get_state("current_position")
 
 
 def command_current_state(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> torch.Tensor:
@@ -136,9 +132,7 @@ def command_current_state(env: ManagerBasedRLEnv, command_name: str = "goal_poin
     Returns:
         Tensor of shape ``[num_envs, 12 + 3 * num_feet]``.
     """
-    cmd = env.command_manager.get_term(command_name)
-    env_origins = env.scene.terrain.env_origins
-    return cmd.payload.current_state_env(env_origins)
+    return env.command_manager.get_term(command_name).get_state("current")
 
 
 def command_std(env: ManagerBasedRLEnv, command_name: str = "goal_point") -> torch.Tensor:
@@ -170,6 +164,4 @@ def command_target_state(env: ManagerBasedRLEnv, command_name: str = "goal_point
     Returns:
         Tensor of shape ``[num_envs, 12 + 3 * num_feet]``.
     """
-    cmd = env.command_manager.get_term(command_name)
-    env_origins = env.scene.terrain.env_origins
-    return cmd.payload.target_state_env(env_origins)
+    return env.command_manager.get_term(command_name).get_state("target")

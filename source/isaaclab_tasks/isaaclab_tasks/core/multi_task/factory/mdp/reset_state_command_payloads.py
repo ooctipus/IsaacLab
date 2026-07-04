@@ -48,7 +48,6 @@ def _command_update_kernel(
     orientation_error: wp.array(dtype=wp.float32),
     command: wp.array2d(dtype=wp.float32),
     error: wp.array2d(dtype=wp.float32),
-    position_distance: wp.array(dtype=wp.float32),
 ):
     """Frame the symmetry-reduced alignment error as the robot-base-frame command.
 
@@ -77,7 +76,6 @@ def _command_update_kernel(
     dist = wp.length(delta)
     error[i, 0] = orientation_error[i]
     error[i, 1] = dist
-    position_distance[i] = dist
 
 
 class FactoryAssemblyPayload:
@@ -115,8 +113,6 @@ class FactoryAssemblyPayload:
 
         # success / hold-timer state (owned here -- the command reads it back via
         # get_task_done / get_task_reward / command_std)
-        self.orientation_aligned = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
-        self.position_reached = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
         self.is_success = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
         self.duration_required = torch.zeros(env.num_envs, device=env.device)
         self.duration_held = torch.zeros(env.num_envs, device=env.device)
@@ -144,7 +140,6 @@ class FactoryAssemblyPayload:
         self.target_pos = ProxyArray(wp.zeros(env.num_envs, dtype=wp.vec3, device=dev))
         self.target_quat = ProxyArray(target_quat)
         self.orientation_error = ProxyArray(wp.zeros(env.num_envs, dtype=wp.float32, device=dev))
-        self.position_distance = ProxyArray(wp.zeros(env.num_envs, dtype=wp.float32, device=dev))
         self._nearest_quat = ProxyArray(wp.zeros(env.num_envs, dtype=wp.quatf, device=dev))
 
         self._viz_cfg = payload_cfg.held_asset_visualizer_cfg
@@ -178,6 +173,10 @@ class FactoryAssemblyPayload:
     def get_task_reward(self) -> torch.Tensor:
         """Sparse success reward: 1 when :meth:`get_task_done`, else 0."""
         return self.is_success.float()
+
+    def sample_rows(self, count: int) -> torch.Tensor:
+        """Sample task rows through the factory table's policy."""
+        return self.table.sample_rows(count)
 
     def bind(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
         """Bind selected assembly rows and write their simulator reset state."""
@@ -259,7 +258,8 @@ class FactoryAssemblyPayload:
         as a quaternion (xyzw). Success error is the symmetry-reduced orientation
         angle [rad] and the position distance [m]. The hold timer advances by
         ``step_dt`` while all active error groups are within threshold;
-        :attr:`is_success` latches once it passes the per-env required duration.
+        :attr:`is_success` becomes true once it passes the per-env required duration
+        and clears whenever the pose leaves the active thresholds.
 
         ``wp.from_torch`` is a zero-copy reinterpret, so no host work happens here.
         """
@@ -285,18 +285,14 @@ class FactoryAssemblyPayload:
                 self.orientation_error.warp,
                 wp.from_torch(command_out),
                 wp.from_torch(error_out),
-                self.position_distance.warp,
             ],
             device=str(self._device),
         )
         # threshold + hold-timer success (masked-off error groups always pass)
         active_success = (error_out < self.command_thresholds) | ~self.cmd_mask
         instant_success = torch.all(active_success, dim=1)
-        self.orientation_aligned[:] = error_out[:, 0] < self.command_thresholds[:, 0]
-        self.position_reached[:] = error_out[:, 1] < self.command_thresholds[:, 1]
         self.duration_held[:] = torch.where(instant_success, self.duration_held + step_dt, 0.0)
         self.is_success[:] = instant_success & (self.duration_held >= self.duration_required)
-        self._env.extras["successes"] = self.is_success
 
     def set_debug_vis(self, debug_vis: bool) -> None:
         """Create (lazily) and toggle the held-asset target-frame marker."""

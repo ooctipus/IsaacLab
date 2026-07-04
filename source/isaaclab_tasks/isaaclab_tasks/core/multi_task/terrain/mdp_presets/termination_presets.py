@@ -35,6 +35,8 @@ class PositionTerminationsCfg(BaseTerminationsCfg):
     - ``success`` — episode-success termination from the goal-tracking command.
     """
 
+    abnormal = None
+
     abnormal_robot = DoneTerm(func=mdp.abnormal_robot_state)
 
     drop = DoneTerm(func=base_mdp.root_height_below_minimum, params={"minimum_height": -20.0})
@@ -52,7 +54,7 @@ class PositionTerminationsCfg(BaseTerminationsCfg):
         params={
             "sensor_cfg": SceneEntityCfg("joint_wrench"),
             "force_ratio": 6.0,
-            "force_mode": "off_axis",
+            "force_mode": "magnitude",
         },
     )
 

@@ -73,7 +73,7 @@ def test_locomotion_position_uses_verified_legacy_terminations():
     assert cfg.terminations.joint_reaction.func is joint_reaction_overload
     assert cfg.terminations.joint_reaction.params["sensor_cfg"].name == "joint_wrench"
     assert cfg.terminations.joint_reaction.params["force_ratio"] == 6.0
-    assert "force_mode" not in cfg.terminations.joint_reaction.params
+    assert cfg.terminations.joint_reaction.params["force_mode"] == "magnitude"
     assert cfg.terminations.success.func is mdp.success_terminate
 
 

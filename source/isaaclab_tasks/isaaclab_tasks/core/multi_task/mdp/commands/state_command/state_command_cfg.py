@@ -41,8 +41,8 @@ class StateCommandCfg(CommandTermCfg):
         class_type: Callable | str = MISSING
         """Builder invoked as class_type(cfg, env).
 
-        The result exposes ``num_tasks`` and ``sample_rows(count)``; its
-        remaining typed data is consumed only by the matching payload.
+        The result exposes ``num_tasks``; its remaining typed data is consumed
+        only by the matching payload, which owns ``sample_rows(count)``.
         """
 
     @configclass

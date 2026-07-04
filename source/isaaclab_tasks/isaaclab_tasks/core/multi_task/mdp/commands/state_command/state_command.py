@@ -21,9 +21,7 @@ import torch
 from isaaclab.managers import CommandTerm
 
 if TYPE_CHECKING:
-    from tensordict import TensorDict
-
-    from isaaclab.envs import ManagerBasedEnv
+    from isaaclab.envs import ManagerBasedRLEnv
 
     from .state_command_cfg import StateCommandCfg
 
@@ -33,7 +31,7 @@ class StateCommand(CommandTerm):
 
     cfg: StateCommandCfg
 
-    def __init__(self, cfg: StateCommandCfg, env: ManagerBasedEnv):
+    def __init__(self, cfg: StateCommandCfg, env: ManagerBasedRLEnv):
         # table first, then the payload bound to that table (one construction
         # order for every domain). The factory table reads ``cfg.payload`` for
         # its reset-asset set, so it needs no constructed payload. Both are built
@@ -53,8 +51,9 @@ class StateCommand(CommandTerm):
 
         self._command = torch.zeros(self.num_envs, self._payload.command_dim, device=self.device)
         self._err = torch.empty(self.num_envs, self._payload.error_dim, device=self.device)
-        for name in self._payload.error_names:
-            self.metrics[name] = torch.zeros(self.num_envs, device=self.device)
+        self._update_step = env.common_step_counter
+        for group_idx, name in enumerate(self._payload.error_names):
+            self.metrics[name] = self._err[:, group_idx]
 
         self._resample_command(torch.arange(self.num_envs, device=self.device))
         self._update_command()
@@ -83,11 +82,13 @@ class StateCommand(CommandTerm):
     @property
     def command(self) -> torch.Tensor:
         """Policy-facing command observation written by the active payload."""
+        self._refresh()
         return self._command
 
     @property
     def error(self) -> torch.Tensor:
         """Per-env, per-group command error written by the active payload."""
+        self._refresh()
         return self._err
 
     @property
@@ -110,74 +111,92 @@ class StateCommand(CommandTerm):
 
     @property
     def command_std(self) -> torch.Tensor:
-        """Per-env success thresholds for the currently-bound rows ``[N, error_dim]``."""
-        return self._payload.command_std()
+        """Return success thresholds when the active payload defines them."""
+        command_std = getattr(self._payload, "command_std", None)
+        if command_std is None:
+            raise NotImplementedError(f"{type(self._payload).__name__} does not define success thresholds.")
+        return command_std()
 
     def get_task_done(self) -> torch.Tensor:
-        """Per-env task-success flag (payload-defined)."""
-        return self._payload.get_task_done()
+        """Return task success when the active payload defines it."""
+        get_task_done = getattr(self._payload, "get_task_done", None)
+        if get_task_done is None:
+            raise NotImplementedError(f"{type(self._payload).__name__} does not define task success.")
+        self._refresh()
+        return get_task_done()
 
     def get_task_reward(self) -> torch.Tensor:
-        """Per-env task-success reward (payload-defined)."""
-        return self._payload.get_task_reward()
+        """Return task reward when the active payload defines it."""
+        get_task_reward = getattr(self._payload, "get_task_reward", None)
+        if get_task_reward is None:
+            raise NotImplementedError(f"{type(self._payload).__name__} does not define task reward.")
+        self._refresh()
+        return get_task_reward()
 
-    def bind_rows(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
-        """Select exact table rows and run the normal payload binding lifecycle."""
+    def get_state(self, name: str) -> torch.Tensor:
+        """Return named domain state when the active payload defines it."""
+        get_state = getattr(self._payload, "get_state", None)
+        if get_state is None:
+            raise NotImplementedError(f"{type(self._payload).__name__} does not define named command state.")
+        self._refresh()
+        return get_state(name)
+
+    def bind_rows(
+        self,
+        env_ids: torch.Tensor,
+        task_rows: torch.Tensor,
+    ) -> None:
+        """Bind exact table rows through one command-owned transaction.
+
+        Args:
+            env_ids: Environment rows receiving new tasks.
+            task_rows: Task-table rows paired with :paramref:`env_ids`.
+        """
+        self._refresh()
         self.cmd_indices[env_ids] = task_rows
         self._payload.bind(env_ids, task_rows)
+        self.materialize()
+
+    def bind_rows_target(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
+        """Bind target physics and command state for cold observation materialization.
+
+        Args:
+            env_ids: Environment rows receiving target states.
+            task_rows: Task-table rows paired with :paramref:`env_ids`.
+        """
+        self._refresh()
+        self.cmd_indices[env_ids] = task_rows
+        self._payload.bind_target(env_ids, task_rows)
+        self.materialize()
+
+    def materialize(self) -> None:
+        """Refresh command outputs after a cold simulator-state materialization."""
         self._payload.update(0.0, self._command, self._err)
-
-    def get_target_obs_cache(self) -> TensorDict:
-        """Return the new curriculum-owned target cache through a deprecated boundary."""
-        warnings.warn(
-            "StateCommand.get_target_obs_cache() is deprecated; bind the goal observation cache explicitly.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        manager = getattr(self._env, "curriculum_manager", None)
-        if manager is None:
-            raise RuntimeError("The environment has no curriculum manager with a goal observation cache.")
-        try:
-            return manager.get_term("goal_observations").observations
-        except KeyError:
-            raise RuntimeError(
-                "No goal observation cache is configured; select the successor preset and bind its curriculum term."
-            ) from None
-
-    def get_spawn_obs_cache(self) -> TensorDict:
-        """Return the new curriculum-owned spawn cache through a deprecated boundary."""
-        warnings.warn(
-            "StateCommand.get_spawn_obs_cache() is deprecated; bind the ValueShift observation cache explicitly.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        manager = getattr(self._env, "curriculum_manager", None)
-        if manager is not None:
-            for name in manager.active_terms:
-                term = manager.get_term(name)
-                if getattr(term, "sample_indices", None) is self.cmd_indices:
-                    try:
-                        return term.value_shift.observation_cache
-                    except RuntimeError:
-                        break
-        raise RuntimeError("No ValueShift observation cache owns this StateCommand's selected rows.")
+        self._update_step = self._env.common_step_counter
 
     def _resample_command(self, env_ids: torch.Tensor) -> None:
         if env_ids.numel() == 0:
             return
         env_ids = env_ids.long()
         if self.randomize_command_indices:
-            task_rows = self.table.sample_rows(env_ids.numel())
+            task_rows = self._payload.sample_rows(env_ids.numel())
         else:
             task_rows = self.cmd_indices[env_ids]
         self.bind_rows(env_ids, task_rows)
 
-    def _update_command(self) -> None:
+    def _refresh(self) -> None:
+        """Update payload state once for the latest completed control step."""
+        step = self._env.common_step_counter
+        if self._update_step == step:
+            return
         self._payload.update(self._env.step_dt, self._command, self._err)
+        self._update_step = step
+
+    def _update_command(self) -> None:
+        self._refresh()
 
     def _update_metrics(self) -> None:
-        for group_idx, name in enumerate(self._payload.error_names):
-            self.metrics[name] = self._err[:, group_idx]
+        self._refresh()
 
     def _set_debug_vis_impl(self, debug_vis: bool) -> None:
         self._payload.set_debug_vis(debug_vis)

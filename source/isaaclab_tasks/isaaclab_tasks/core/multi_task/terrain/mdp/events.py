@@ -100,13 +100,13 @@ class record_trajectory_video(ManagerTermBase):
         if not isinstance(env_origins, torch.Tensor):
             env_origins = wp.to_torch(env_origins)
 
-        target_pos = cmd.payload.target_state[:, :2]
+        target_pos = cmd.get_state("target_position")[:, :2]
         success = cmd.get_task_done()
 
         env_subset = torch.as_tensor(env_subset_np, device=robot_pos.device, dtype=torch.long)
         origins = env_origins.index_select(0, env_subset)[:, :2]
         robot_xy = (robot_pos.index_select(0, env_subset)[:, :2] - origins).detach().cpu().numpy()
-        target_xy = (target_pos.index_select(0, env_subset) - origins).detach().cpu().numpy()
+        target_xy = target_pos.index_select(0, env_subset).detach().cpu().numpy()
         success_np = success.index_select(0, env_subset).detach().cpu().numpy()
 
         self.recorder.append_frame(robot_xy, target_xy, success_np)

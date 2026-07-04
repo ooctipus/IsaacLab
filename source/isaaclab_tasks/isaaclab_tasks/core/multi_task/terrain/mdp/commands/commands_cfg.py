@@ -137,7 +137,7 @@ class BaseStatePayloadCfg(StateCommandCfg.PayloadCfg):
     """Whether to divide command channels by the per-task success threshold."""
 
     success_effort_multiplier: float = 0.8
-    """Specific-effort threshold multiplier for the terminal naturalness gate."""
+    """Specific-effort threshold multiplier for the successful-hold naturalness gate."""
 
     joint_wrench_sensor_name: str = "joint_wrench"
     """Scene name of the joint-wrench sensor used by the success gate."""
@@ -146,7 +146,13 @@ class BaseStatePayloadCfg(StateCommandCfg.PayloadCfg):
     """Scene name of the contact sensor used by the feet-bear-weight gate."""
 
     success_min_foot_weight_fraction: float = 0.80
-    """Minimum fraction of body weight that feet must support for success."""
+    """Minimum body-weight fraction that feet must support while accumulating successful hold time."""
+
+    success_body_lin_speed_thresh: float = 0.30
+    """Per-body linear-speed ceiling [m/s] while accumulating successful hold time."""
+
+    success_body_ang_speed_thresh: float = 0.30
+    """Per-body angular-speed ceiling [rad/s] while accumulating successful hold time."""
 
     goal_visualizer_cfg: VisualizationMarkersCfg = _GOAL_VISUALIZER_CFG
     """Debug marker for the goal state (pos/pose/vel)."""
@@ -181,7 +187,7 @@ class BaseFootStatePayloadCfg(StateCommandCfg.PayloadCfg):
     """Whether to divide command channels by the per-task success threshold."""
 
     success_effort_multiplier: float = 0.8
-    """Specific-effort threshold multiplier for the terminal naturalness gate."""
+    """Specific-effort threshold multiplier for the successful-hold naturalness gate."""
 
     joint_wrench_sensor_name: str = "joint_wrench"
     """Scene name of the joint-wrench sensor used by the success gate."""
@@ -190,7 +196,13 @@ class BaseFootStatePayloadCfg(StateCommandCfg.PayloadCfg):
     """Scene name of the contact sensor used by the feet-bear-weight gate."""
 
     success_min_foot_weight_fraction: float = 0.80
-    """Minimum fraction of body weight that feet must support for success."""
+    """Minimum body-weight fraction that feet must support while accumulating successful hold time."""
+
+    success_body_lin_speed_thresh: float = 0.30
+    """Per-body linear-speed ceiling [m/s] while accumulating successful hold time."""
+
+    success_body_ang_speed_thresh: float = 0.30
+    """Per-body angular-speed ceiling [rad/s] while accumulating successful hold time."""
 
     goal_visualizer_cfg: VisualizationMarkersCfg = _GOAL_VISUALIZER_CFG
     """Debug marker for the goal state (pos/pose/vel/foot)."""

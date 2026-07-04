@@ -34,6 +34,11 @@ class _BindingPayload:
     def __init__(self) -> None:
         self.bound: tuple[torch.Tensor, torch.Tensor] | None = None
         self.update_steps: list[float] = []
+        self.sample_counts: list[int] = []
+
+    def sample_rows(self, count: int) -> torch.Tensor:
+        self.sample_counts.append(count)
+        return torch.tensor([7, 3], dtype=torch.long)
 
     def bind(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
         self.bound = (env_ids.clone(), task_rows.clone())
@@ -48,13 +53,14 @@ def test_state_command_delegates_selected_rows_without_interpreting_table_data()
     """The generic shell must not require a spawn/target table shape or write reset state."""
     payload = _BindingPayload()
     term = object.__new__(StateCommand)
-    term._env = SimpleNamespace(step_dt=0.02, device=torch.device("cpu"))
+    term._env = SimpleNamespace(step_dt=0.02, common_step_counter=0, device=torch.device("cpu"))
     term.table = SimpleNamespace(num_tasks=5)
     term._payload = payload
     term.randomize_command_indices = False
     term.cmd_indices = torch.tensor([4, 2, 1], dtype=torch.long)
     term._command = torch.zeros(3, payload.command_dim)
     term._err = torch.zeros(3, payload.error_dim)
+    term._update_step = term._env.common_step_counter
     term._debug_vis_handle = None
 
     env_ids = torch.tensor([0, 2], dtype=torch.long)
@@ -69,15 +75,16 @@ def test_state_command_delegates_selected_rows_without_interpreting_table_data()
 
 
 def test_state_command_bind_rows_owns_selection_and_delegates_semantics() -> None:
-    """Cold consumers should bind exact rows through the normal command lifecycle."""
+    """Binding closes the outgoing step before replacing selected task rows."""
     payload = _BindingPayload()
     term = object.__new__(StateCommand)
-    term._env = SimpleNamespace(step_dt=0.02, device=torch.device("cpu"))
+    term._env = SimpleNamespace(step_dt=0.02, common_step_counter=0, device=torch.device("cpu"))
     term.table = SimpleNamespace(num_tasks=5)
     term._payload = payload
     term.cmd_indices = torch.zeros(3, dtype=torch.long)
     term._command = torch.zeros(3, payload.command_dim)
     term._err = torch.zeros(3, payload.error_dim)
+    term._update_step = term._env.common_step_counter
 
     env_ids = torch.tensor([0, 2], dtype=torch.long)
     rows = torch.tensor([4, 1], dtype=torch.long)
@@ -89,35 +96,36 @@ def test_state_command_bind_rows_owns_selection_and_delegates_semantics() -> Non
     torch.testing.assert_close(payload.bound[1], rows)
     assert payload.update_steps == [0.0]
 
+    term._env.common_step_counter += 1
+    replacement_rows = torch.tensor([2, 3], dtype=torch.long)
+    term.bind_rows(env_ids, replacement_rows)
 
-def test_state_command_delegates_random_row_sampling_to_table() -> None:
-    """The table must own the row distribution selected during resampling."""
+    torch.testing.assert_close(term.cmd_indices, torch.tensor([2, 0, 3]))
+    assert payload.update_steps == [0.0, 0.02, 0.0]
+
+
+def test_state_command_delegates_random_row_sampling_to_payload() -> None:
+    """The payload must own the row distribution selected during resampling."""
 
     class _SentinelTable:
         num_tasks = 100
 
-        def __init__(self) -> None:
-            self.sample_counts: list[int] = []
-
-        def sample_rows(self, count: int) -> torch.Tensor:
-            self.sample_counts.append(count)
-            return torch.tensor([7, 3], dtype=torch.long)
-
     payload = _BindingPayload()
     table = _SentinelTable()
     term = object.__new__(StateCommand)
-    term._env = SimpleNamespace(step_dt=0.02, device=torch.device("cpu"))
+    term._env = SimpleNamespace(step_dt=0.02, common_step_counter=0, device=torch.device("cpu"))
     term.table = table
     term._payload = payload
     term.randomize_command_indices = True
     term.cmd_indices = torch.zeros(3, dtype=torch.long)
     term._command = torch.zeros(3, payload.command_dim)
     term._err = torch.zeros(3, payload.error_dim)
+    term._update_step = term._env.common_step_counter
 
     env_ids = torch.tensor([0, 2], dtype=torch.long)
     term._resample_command(env_ids)
 
-    assert table.sample_counts == [2]
+    assert payload.sample_counts == [2]
     torch.testing.assert_close(term.cmd_indices, torch.tensor([7, 0, 3]))
     assert payload.bound is not None
     torch.testing.assert_close(payload.bound[1], torch.tensor([7, 3]))
@@ -157,6 +165,21 @@ def test_success_rate_sampler_owns_exact_layout_sized_rate_storage() -> None:
 
     assert term.success_rates.data_ptr() == rate_ptr
     assert result["success"].shape == ()
+
+
+def test_factory_success_monitor_reads_command_edge_before_same_step_reset() -> None:
+    """Nonterminal Factory success must be consumed before command reset."""
+    from isaaclab.envs import ManagerBasedRLEnv
+
+    from isaaclab_tasks.core.multi_task.factory.mdp_presets.termination_presets import TimeoutTerminationsCfg
+    from isaaclab_tasks.core.multi_task.factory_env_cfg import FactoryCurriculumsCfg
+
+    success_bind = FactoryCurriculumsCfg().reset_sampler.params["success_bind"]
+    reset_source = inspect.getsource(ManagerBasedRLEnv._reset_idx)
+
+    assert success_bind == "env.command_manager.get_term('reset_state').get_task_done()"
+    assert reset_source.index("curriculum_manager.compute") < reset_source.index("command_manager.reset")
+    assert not hasattr(TimeoutTerminationsCfg(), "success")
 
 
 def test_factory_payload_owns_descriptor_binding_and_relative_reset(monkeypatch) -> None:
@@ -260,21 +283,17 @@ def test_position_payload_bind_target_writes_target_state(monkeypatch) -> None:
     assert calls["reset"][3:] == (payload.reset_assets, True)
 
 
-def test_state_command_deprecated_views_delegate_to_new_owners() -> None:
-    """Deprecated command APIs should delegate without restoring materialization ownership."""
+def test_state_command_retained_deprecated_views_delegate_to_new_owners() -> None:
+    """Retained command views should delegate without restoring materialization ownership."""
     term = object.__new__(StateCommand)
     term.cmd_indices = torch.zeros(2, dtype=torch.long)
     term.cfg = SimpleNamespace(states_relative=True)
     rates = torch.tensor([0.25, 0.75])
-    spawn_cache = object()
-    target_cache = object()
     sampler_term = SimpleNamespace(
         sample_indices=term.cmd_indices,
         success_rates=rates,
-        value_shift=SimpleNamespace(observation_cache=spawn_cache),
     )
-    goal_term = SimpleNamespace(observations=target_cache)
-    terms = {"terrain_levels": sampler_term, "goal_observations": goal_term}
+    terms = {"terrain_levels": sampler_term}
     manager = SimpleNamespace(active_terms=list(terms), get_term=terms.__getitem__)
     term._env = SimpleNamespace(curriculum_manager=manager)
 
@@ -282,10 +301,27 @@ def test_state_command_deprecated_views_delegate_to_new_owners() -> None:
         assert term.states_relative is True
     with pytest.warns(DeprecationWarning, match="success_rates"):
         assert term.success_rates is rates
-    with pytest.warns(DeprecationWarning, match="get_spawn_obs_cache"):
-        assert term.get_spawn_obs_cache() is spawn_cache
-    with pytest.warns(DeprecationWarning, match="get_target_obs_cache"):
-        assert term.get_target_obs_cache() is target_cache
+
+
+def test_state_command_has_no_learner_cache_compatibility_accessors() -> None:
+    """Learner caches must be bound directly instead of routed through the command."""
+    assert not hasattr(StateCommand, "get_spawn_obs_cache")
+    assert not hasattr(StateCommand, "get_target_obs_cache")
+
+
+def test_state_command_rejects_payload_capabilities_that_are_not_owned() -> None:
+    """Domains without success or named state must not fabricate zero tensors."""
+    term = object.__new__(StateCommand)
+    term._payload = _BindingPayload()
+
+    with pytest.raises(NotImplementedError, match="success thresholds"):
+        _ = term.command_std
+    with pytest.raises(NotImplementedError, match="task success"):
+        term.get_task_done()
+    with pytest.raises(NotImplementedError, match="task reward"):
+        term.get_task_reward()
+    with pytest.raises(NotImplementedError, match="named command state"):
+        term.get_state("unused")
 
 
 def test_state_command_source_has_no_domain_or_learner_ownership() -> None:
@@ -298,6 +334,8 @@ def test_state_command_source_has_no_domain_or_learner_ownership() -> None:
         "env_origins",
         "_build_obs_cache",
         "observation_manager",
+        "get_spawn_obs_cache",
+        "get_target_obs_cache",
         "sim.forward",
         "scene.update",
     ):
@@ -305,8 +343,10 @@ def test_state_command_source_has_no_domain_or_learner_ownership() -> None:
 
 
 def test_factory_selected_rows_match_frozen_lifecycle_oracle(monkeypatch) -> None:
-    """Factory binding preserves reset, target, command, error, timer, and success tensors."""
+    """Factory success includes the action that crosses the required hold duration."""
     from isaaclab_tasks.core.multi_task.factory.mdp import reset_state_command_payloads as factory_payloads
+    from isaaclab_tasks.core.multi_task.factory.mdp.rewards import success_reward
+    from isaaclab_tasks.core.multi_task.factory.mdp.terminations import success_termination
 
     class _Table:
         num_tasks = 2
@@ -329,7 +369,12 @@ def test_factory_selected_rows_match_frozen_lifecycle_oracle(monkeypatch) -> Non
 
     num_envs = 3
     origins = torch.tensor([[10.0, 0.0, 0.0], [0.0, 0.0, 0.0], [-5.0, 0.0, 0.0]])
-    env = SimpleNamespace(scene=SimpleNamespace(env_origins=origins), extras={})
+    env = SimpleNamespace(
+        scene=SimpleNamespace(env_origins=origins),
+        extras={},
+        step_dt=0.1,
+        common_step_counter=0,
+    )
     table = _Table()
     payload = object.__new__(factory_payloads.FactoryAssemblyPayload)
     payload._env = env
@@ -346,13 +391,11 @@ def test_factory_selected_rows_match_frozen_lifecycle_oracle(monkeypatch) -> Non
     payload._duration_ranges = torch.tensor([[0.2, 0.2], [0.3, 0.3]])
     payload.cmd_mask = torch.zeros(num_envs, 2, dtype=torch.bool)
     payload.command_thresholds = torch.full((num_envs, 2), 1.0)
-    payload.orientation_aligned = torch.zeros(num_envs, dtype=torch.bool)
-    payload.position_reached = torch.zeros(num_envs, dtype=torch.bool)
     payload.is_success = torch.zeros(num_envs, dtype=torch.bool)
     payload.duration_required = torch.zeros(num_envs)
     payload.duration_held = torch.zeros(num_envs)
 
-    held_pos = torch.tensor([[11.0, 2.0, 3.0], [0.0, 0.0, 0.0], [-0.8, 5.0, 6.0]])
+    held_pos = torch.tensor([[11.2, 2.0, 3.0], [0.0, 0.0, 0.0], [-0.8, 5.0, 6.0]])
     identity_quat = torch.zeros(num_envs, 4)
     identity_quat[:, 3] = 1.0
     payload.held_asset = SimpleNamespace(
@@ -371,7 +414,6 @@ def test_factory_selected_rows_match_frozen_lifecycle_oracle(monkeypatch) -> Non
     target_quat.fill_(wp.quatf(0.0, 0.0, 0.0, 1.0))
     payload.target_quat = ProxyArray(target_quat)
     payload.orientation_error = ProxyArray(wp.zeros(num_envs, dtype=wp.float32, device="cpu"))
-    payload.position_distance = ProxyArray(wp.zeros(num_envs, dtype=wp.float32, device="cpu"))
     payload._nearest_quat = ProxyArray(wp.zeros(num_envs, dtype=wp.quatf, device="cpu"))
 
     reset_calls: list[tuple[torch.Tensor, torch.Tensor, list[str], bool]] = []
@@ -396,16 +438,60 @@ def test_factory_selected_rows_match_frozen_lifecycle_oracle(monkeypatch) -> Non
 
     command = torch.empty(num_envs, payload.command_dim)
     error = torch.empty(num_envs, payload.error_dim)
-    payload.update(0.1, command, error)
+    payload.update(0.0, command, error)
 
-    torch.testing.assert_close(command[0], torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]))
+    term = object.__new__(StateCommand)
+    term._env = env
+    term._payload = payload
+    term._command = command
+    term._err = error
+    term._update_step = env.common_step_counter
+    term.metrics = {name: error[:, group_idx] for group_idx, name in enumerate(payload.error_names)}
+    terms = {"reset_state": term}
+    env.command_manager = SimpleNamespace(get_term=terms.__getitem__)
+
+    update_dts: list[float] = []
+    payload_update = payload.update
+
+    def tracked_update(step_dt: float, command_out: torch.Tensor, error_out: torch.Tensor) -> None:
+        update_dts.append(step_dt)
+        payload_update(step_dt, command_out, error_out)
+
+    payload.update = tracked_update
+
+    torch.testing.assert_close(command[0], torch.tensor([-0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]))
     torch.testing.assert_close(command[2], torch.tensor([-0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]))
-    torch.testing.assert_close(error[env_ids], torch.tensor([[0.0, 0.0], [0.0, 0.2]]))
-    torch.testing.assert_close(payload.duration_held[env_ids], torch.tensor([0.1, 0.0]))
+    torch.testing.assert_close(error[env_ids], torch.tensor([[0.0, 0.2], [0.0, 0.2]]))
+    torch.testing.assert_close(payload.duration_held[env_ids], torch.zeros(2))
     torch.testing.assert_close(payload.is_success[env_ids], torch.tensor([False, False]))
 
-    payload.update(0.1, command, error)
+    env.common_step_counter += 1
+    held_pos[0].copy_(payload.target_pos.torch[0])
+    torch.testing.assert_close(success_termination(env)[env_ids], torch.tensor([False, False]))
+    torch.testing.assert_close(payload.duration_held[env_ids], torch.tensor([0.1, 0.0]))
 
+    # Every public read in one control step observes the same refresh; none may
+    # credit the hold duration twice.
+    torch.testing.assert_close(success_reward(env)[env_ids], torch.tensor([0.0, 0.0]))
+    torch.testing.assert_close(term.error[env_ids], torch.tensor([[0.0, 0.0], [0.0, 0.2]]))
+    torch.testing.assert_close(payload.duration_held[env_ids], torch.tensor([0.1, 0.0]))
+    term._update_metrics()
+    term._update_command()
+    assert update_dts == [0.1]
+
+    env.common_step_counter += 1
+    torch.testing.assert_close(success_termination(env)[env_ids], torch.tensor([True, False]))
     torch.testing.assert_close(payload.duration_held[env_ids], torch.tensor([0.2, 0.0]))
     torch.testing.assert_close(payload.is_success[env_ids], torch.tensor([True, False]))
-    assert env.extras["successes"] is payload.is_success
+    torch.testing.assert_close(success_reward(env)[env_ids], torch.tensor([1.0, 0.0]))
+    torch.testing.assert_close(payload.duration_held[env_ids], torch.tensor([0.2, 0.0]))
+    assert "successes" not in env.extras
+    assert update_dts == [0.1, 0.1]
+
+    held_pos[0, 0] += 0.2
+    env.common_step_counter += 1
+    torch.testing.assert_close(success_termination(env)[env_ids], torch.tensor([False, False]))
+    torch.testing.assert_close(success_reward(env)[env_ids], torch.tensor([0.0, 0.0]))
+    torch.testing.assert_close(payload.duration_held[env_ids], torch.zeros(2))
+    torch.testing.assert_close(payload.is_success[env_ids], torch.tensor([False, False]))
+    assert update_dts == [0.1, 0.1, 0.1]

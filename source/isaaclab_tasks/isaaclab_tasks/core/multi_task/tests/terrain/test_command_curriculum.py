@@ -222,6 +222,8 @@ class _MockRobot:
         self._body_link_pos_w = torch.zeros(num_envs, len(self.body_names), 3, device=device)
         self._body_pos_w = self._body_link_pos_w.clone()
         self._body_pos_w[:, 0, 2] = 1.0
+        self._body_lin_vel_w = torch.zeros(num_envs, len(self.body_names), 3, device=device)
+        self._body_ang_vel_w = torch.zeros_like(self._body_lin_vel_w)
         self._body_mass = torch.ones(num_envs, len(self.body_names), device=device)
         self.data = SimpleNamespace(
             body_names=self.body_names,
@@ -231,6 +233,8 @@ class _MockRobot:
             joint_vel=wp.from_torch(self._joint_vel),
             body_link_pos_w=wp.from_torch(self._body_link_pos_w),
             body_pos_w=wp.from_torch(self._body_pos_w),
+            body_lin_vel_w=wp.from_torch(self._body_lin_vel_w),
+            body_ang_vel_w=wp.from_torch(self._body_ang_vel_w),
             body_mass=wp.from_torch(self._body_mass),
             GRAVITY_VEC_W=SimpleNamespace(torch=torch.tensor([0.0, 0.0, -9.81], device=device)),
         )
@@ -326,6 +330,8 @@ def _make_command_term(
             contact_sensor_name="contact_forces",
             success_effort_multiplier=0.8,
             success_min_foot_weight_fraction=0.8,
+            success_body_lin_speed_thresh=0.3,
+            success_body_ang_speed_thresh=0.3,
         ),
     )
     term.robot = _MockRobot(env.num_envs, num_joints, device)
@@ -377,7 +383,8 @@ def _make_command_term(
     term.randomize_command_indices = True
     term._command = torch.zeros(env.num_envs, term._payload.command_dim, device=device)
     term._err = torch.empty(env.num_envs, term._payload.error_dim, device=device)
-    term.metrics = {name: torch.zeros(env.num_envs, device=device) for name in term._payload.error_names}
+    term._update_step = env.common_step_counter
+    term.metrics = {name: term._err[:, group_idx] for group_idx, name in enumerate(term._payload.error_names)}
     term.metrics["instant_success"] = torch.zeros(env.num_envs, device=device)
     term._debug_vis_handle = None  # CommandTerm.__del__ expects this attribute
     return term
@@ -856,6 +863,7 @@ class TestCommandTerm:
 
         num_ticks = 5
         for _ in range(num_ticks):
+            env.common_step_counter += 1
             term._update_command()
 
         # env 0 accumulated num_ticks * step_dt successes.
@@ -866,6 +874,27 @@ class TestCommandTerm:
         # env 1 never ticked
         assert term._payload.cmd_buf[1, 2, term._payload.time_idx].item() == pytest.approx(0.0)
         assert term._payload.cmd_buf[1, 1, term._payload.time_idx].item() == pytest.approx(hold_init)
+
+    def test_hold_time_requires_every_body_to_be_settled(self):
+        """Hold progress should pause while any body exceeds a settled-speed ceiling."""
+        table = _make_task_table()
+        env = _make_env(num_envs=3, device=DEVICE, step_dt=0.1)
+        term = _make_command_term(env, table)
+
+        term.cmd_indices.zero_()
+        term._payload.cmd_mask[:] = table.task_mask[0]
+        term._payload.cmd_buf[:, 0].zero_()
+        term._payload.cmd_buf[:, 0, term._payload.time_idx] = 1.0
+        term.robot._body_lin_vel_w[1, 2, 0] = 0.31
+        term.robot._body_ang_vel_w[2, 3, 1] = 0.31
+
+        env.common_step_counter += 1
+        term._update_command()
+
+        torch.testing.assert_close(
+            term._payload.cmd_buf[:, 2, term._payload.time_idx],
+            torch.tensor([0.1, 0.0, 0.0], device=DEVICE),
+        )
 
     def test_command_observation_exposes_target_feet_not_joint_delta(self):
         """Policy command is root delta plus target foot positions in base frame."""
@@ -889,6 +918,7 @@ class TestCommandTerm:
         term._payload.target_foot_pos_w.copy_(target_feet)
         term._payload.foot_success_mask[:] = torch.tensor([True, False], device=DEVICE)
 
+        env.common_step_counter += 1
         term._update_command()
 
         num_feet = term._payload.num_feet
@@ -917,6 +947,15 @@ class TestCommandTerm:
         term._payload.current_foot_pos_w.copy_(torch.arange(24, device=DEVICE, dtype=torch.float32).view(2, 4, 3))
         term._payload.target_foot_pos_w.copy_(term._payload.current_foot_pos_w + 50.0)
 
+        update_steps: list[float] = []
+
+        def track_update(step_dt: float, command: torch.Tensor, error: torch.Tensor) -> None:
+            del command, error
+            update_steps.append(step_dt)
+
+        term._payload.update = track_update
+        env.common_step_counter += 1
+
         origins = env.scene.terrain.env_origins
         current_expected = torch.cat(
             [
@@ -942,6 +981,7 @@ class TestCommandTerm:
         # target/achieved position observations.
         torch.testing.assert_close(target_pos_env(env), target_root[:, :3] - origins)
         torch.testing.assert_close(achieved_pos_env(env), current_root[:, :3] - origins)
+        assert update_steps == [env.step_dt]
 
     def test_get_task_done_triggers_when_delta_nonpositive(self):
         """``get_task_done`` is true exactly when the hold delta has drained to 0."""
@@ -972,6 +1012,7 @@ class TestCommandTerm:
         term._payload.target_foot_pos_w[0, 0] = torch.tensor([0.03, 0.04, 0.0], device=DEVICE)
         term._payload.target_foot_pos_w[0, 1] = torch.tensor([0.0, 0.0, 0.2], device=DEVICE)
 
+        env.common_step_counter += 1
         term._update_command()
         torch.testing.assert_close(
             term._err[0],
@@ -1200,6 +1241,7 @@ def test_position_selected_rows_match_frozen_lifecycle_oracle():
     torch.testing.assert_close(joint_calls[0][1], env_ids)
     torch.testing.assert_close(joint_calls[0][2], table.spawn_states[:, 13:])
 
+    env.common_step_counter += 1
     term._update_command()
 
     torch.testing.assert_close(

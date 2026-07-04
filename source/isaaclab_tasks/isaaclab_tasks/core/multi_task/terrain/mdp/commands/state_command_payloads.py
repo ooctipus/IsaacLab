@@ -67,6 +67,10 @@ class CommandPayloadBase:
         self.cmd_mask = torch.zeros(self.num_envs, self.mask_dim, device=self.device, dtype=torch.bool)
         self.cmd_ids = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
 
+    def sample_rows(self, count: int) -> torch.Tensor:
+        """Sample task rows through the terrain table's policy."""
+        return self.table.sample_rows(count)
+
     def bind(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
         """Bind selected terrain rows and write their simulator reset state."""
         spawn_states, target_states = self.table.gather(task_rows)
@@ -115,9 +119,11 @@ class CommandPayloadBase:
                 ) from err
         self._contact_foot_channels = torch.tensor(contact_foot_channels, device=self.device, dtype=torch.long)
         self._weight: torch.Tensor | None = None
-        self._L_ref: float | None = None
+        self._L_ref: torch.Tensor | None = None
         self._success_effort_multiplier = float(payload_cfg.success_effort_multiplier)
         self._success_min_foot_weight_fraction = float(payload_cfg.success_min_foot_weight_fraction)
+        self._success_body_lin_speed_thresh = float(payload_cfg.success_body_lin_speed_thresh)
+        self._success_body_ang_speed_thresh = float(payload_cfg.success_body_ang_speed_thresh)
 
     def _store_task_selection(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
         """Record the per-env command-type id (CSR bucket) and active-channel mask."""
@@ -128,6 +134,19 @@ class CommandPayloadBase:
     def target_state(self) -> torch.Tensor:
         """Per-env target state rows ``cmd_buf[:, 0]``."""
         return self.cmd_buf[:, 0]
+
+    def get_state(self, name: str) -> torch.Tensor:
+        """Return one domain state in the environment-local frame."""
+        env_origins = self._env.scene.terrain.env_origins
+        if name == "current":
+            return self.current_state_env(env_origins)
+        if name == "target":
+            return self.target_state_env(env_origins)
+        if name == "current_position":
+            return self.cmd_buf[:, 2, :3] - env_origins
+        if name == "target_position":
+            return self.cmd_buf[:, 0, :3] - env_origins
+        raise KeyError(f"Unknown relative-state command state {name!r}.")
 
     def command_std(self) -> torch.Tensor:
         """Per-env success thresholds for the currently-bound command ids."""
@@ -151,7 +170,13 @@ class CommandPayloadBase:
             body_pos_w = wp.to_torch(self.robot.data.body_pos_w)
             z_base = body_pos_w[:, 0, 2]
             z_feet = body_pos_w[:, self._foot_ids, 2].mean(dim=-1)
-            self._L_ref = float((z_base - z_feet).mean().item())
+            self._L_ref = (z_base - z_feet).mean()
+
+        lin_speed_max = wp.to_torch(self.robot.data.body_lin_vel_w).norm(dim=-1).amax(dim=-1)
+        ang_speed_max = wp.to_torch(self.robot.data.body_ang_vel_w).norm(dim=-1).amax(dim=-1)
+        settled = (lin_speed_max < self._success_body_lin_speed_thresh) & (
+            ang_speed_max < self._success_body_ang_speed_thresh
+        )
 
         wrench_torque = wp.to_torch(self._wrench_sensor.data.torque)
         joint_axis_torque_max = wrench_torque[..., 0].abs().amax(dim=-1)
@@ -164,7 +189,7 @@ class CommandPayloadBase:
         weight_supported = foot_fz / self._weight
         feet_bear_weight = weight_supported >= self._success_min_foot_weight_fraction
 
-        return natural & feet_bear_weight
+        return settled & natural & feet_bear_weight
 
     def get_task_done(self) -> torch.Tensor:
         """Per-env done from accumulated successful hold time."""

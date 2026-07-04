@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import inspect
 from types import SimpleNamespace
 
 import pytest
@@ -47,21 +48,21 @@ class _StateCommand:
         self.command_updates: list[float] = []
         self.spawn_calls: list[tuple[torch.Tensor, torch.Tensor]] = []
         self.target_calls: list[tuple[torch.Tensor, torch.Tensor]] = []
-        self.payload = SimpleNamespace(bind_target=self._bind_target, update=self._update)
 
     def bind_rows(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
         self.spawn_calls.append((env_ids.clone(), task_rows.clone()))
         self.cmd_indices[env_ids] = task_rows
         self.physical_rows[env_ids] = task_rows + 10
 
-    def _bind_target(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
+    def bind_rows_target(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
         self.target_calls.append((env_ids.clone(), task_rows.clone()))
+        self.cmd_indices[env_ids] = task_rows
         self.physical_rows[env_ids] = task_rows + 100
 
-    def _update(self, step_dt: float, command: torch.Tensor, error: torch.Tensor) -> None:
-        self.command_updates.append(step_dt)
-        command.copy_(self.cmd_indices.unsqueeze(-1))
-        error.zero_()
+    def materialize(self) -> None:
+        self.command_updates.append(0.0)
+        self.command.copy_(self.cmd_indices.unsqueeze(-1))
+        self.error.zero_()
 
 
 def _make_env(num_envs: int = 2, num_tasks: int = 5):
@@ -120,6 +121,15 @@ def test_target_observation_cache_uses_domain_target_binding() -> None:
     torch.testing.assert_close(cache["policy"][:, 1], torch.arange(100, 105, dtype=torch.float32))
     assert [rows.tolist() for _, rows in term.target_calls] == [[0, 1], [2, 3], [4]]
     assert term.command_updates == [0.0, 0.0, 0.0]
+
+
+def test_observation_cache_uses_only_state_command_public_boundary() -> None:
+    """Cold cache construction must not mutate payload or row storage directly."""
+    from isaaclab_tasks.core.multi_task.curriculum import observation_cache
+
+    source = inspect.getsource(observation_cache)
+    assert ".payload" not in source
+    assert ".cmd_indices" not in source
 
 
 def test_observation_cache_rejects_materialization_after_first_reset() -> None:

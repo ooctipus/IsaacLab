@@ -69,7 +69,7 @@ def materialize_state_command_observations(env: ManagerBasedRLEnv, command_name:
         env,
         command.table.num_tasks,
         command.bind_rows,
-        lambda: command.payload.update(0.0, command.command, command.error),
+        command.materialize,
     )
 
 
@@ -77,15 +77,11 @@ def materialize_state_command_target_observations(env: ManagerBasedRLEnv, comman
     """Materialize observations with physics and command bound to each target row."""
     command = env.command_manager.get_term(command_name)
 
-    def bind_target(env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
-        command.cmd_indices[env_ids] = task_rows
-        command.payload.bind_target(env_ids, task_rows)
-
     return _materialize_observations(
         env,
         command.table.num_tasks,
-        bind_target,
-        lambda: command.payload.update(0.0, command.command, command.error),
+        command.bind_rows_target,
+        command.materialize,
     )
 
 
