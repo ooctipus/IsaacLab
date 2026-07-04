@@ -17,17 +17,15 @@ from types import SimpleNamespace
 import torch
 from motion_environment_identity import (
     motion_composition_dependency_identity,
+    motion_environment_axes,
     motion_g1_live_axes,
 )
 
 from isaaclab.utils.math import convert_quat
 
-from isaaclab_tasks.core.multi_task.motion.data.importers import HumEnvHdf5Clips
-from isaaclab_tasks.core.multi_task.motion.trajectory.g1_smpl import (
-    G1SmplHumEnvFrameBuilder,
-    fit_ordered_hinge_coordinates,
-    smpl_humenv_local_rotation_wxyz,
-)
+from isaaclab_tasks.core.multi_task.kinematics import fit_ordered_hinge_coordinates
+from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClips
+from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1LocalBodyPoseFrameBuilder
 from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
 from isaaclab_tasks.utils import resolve_presets
 
@@ -79,9 +77,9 @@ def _resolved_builder(
     reference_artifact_root: Path,
     motion_split: str,
     device: torch.device,
-) -> tuple[MotionImitationEnvCfg, G1SmplHumEnvFrameBuilder]:
+) -> tuple[MotionImitationEnvCfg, G1LocalBodyPoseFrameBuilder]:
     """Build the direct G1-CMU trajectory policy without creating a simulator."""
-    cfg = resolve_presets(MotionImitationEnvCfg(), selected={"g1_cmu"})
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("g1_cmu"))
     table_cfg = cfg.commands.motion.task_table
     table_cfg.source_artifact_root = str(source_artifact_root)
     table_cfg.reference_artifact_root = str(reference_artifact_root)
@@ -93,23 +91,9 @@ def _resolved_builder(
     )
     env = SimpleNamespace(cfg=cfg, device=str(device), scene={"robot": robot})
     builder = cfg.commands.motion.task_table.frame_builder_factory(env)
-    if not isinstance(builder, G1SmplHumEnvFrameBuilder):
-        raise TypeError("The resolved g1_cmu command axis must build G1SmplHumEnvFrameBuilder.")
+    if not isinstance(builder, G1LocalBodyPoseFrameBuilder):
+        raise TypeError("The resolved g1_cmu command axis must build G1LocalBodyPoseFrameBuilder.")
     return cfg, builder
-
-
-def _projection_groups(mapping: tuple[int, ...]) -> tuple[tuple[int, int, int], ...]:
-    """Return the contiguous source-body groups encoded by the target hinge map."""
-    groups: list[tuple[int, int, int]] = []
-    start = 0
-    while start < len(mapping):
-        source_body = mapping[start]
-        stop = start + 1
-        while stop < len(mapping) and mapping[stop] == source_body:
-            stop += 1
-        groups.append((start, stop, source_body))
-        start = stop
-    return tuple(groups)
 
 
 def _measure(
@@ -148,21 +132,21 @@ def _measure(
     body_height_chunks: list[torch.Tensor] = []
     foot_height_chunks: list[torch.Tensor] = []
     selected_clip_ids: list[str] = []
-    groups = _projection_groups(builder.projection.target_joint_source_body_indices)
+    groups = builder.projection.joint_groups
     group_indices = tuple(source_body for _, _, source_body in groups)
     target_axes = torch.tensor(
-        builder.projection.target_builder.source_skeleton.joint_axes,
+        builder.projection.target_tree.joint_axes,
         dtype=torch.float32,
         device=device,
     )
-    for clip_position, (clip_id, fields) in enumerate(source.clips()):
+    for clip_position, (clip_id, clip) in enumerate(source.clips()):
         if max_clips is not None and clip_position >= max_clips:
             break
-        qpos_array = fields["qpos"]
-        if not hasattr(qpos_array, "dtype"):
-            raise TypeError("HumEnv qpos must be a NumPy array.")
-        qpos = torch.as_tensor(qpos_array, device=device)
-        local_wxyz = smpl_humenv_local_rotation_wxyz(qpos, builder.source_skeleton)
+        root_translation = clip.root_translation
+        if not hasattr(root_translation, "dtype"):
+            raise TypeError("HumEnv root translation must be a NumPy array.")
+        root_translation = torch.as_tensor(root_translation, device=device)
+        local_wxyz = clip.local_body_rotation_wxyz(builder.source_skeleton, device=device)
         local_xyzw = convert_quat(local_wxyz, to="xyzw")
         residual = torch.stack(
             tuple(
@@ -174,11 +158,11 @@ def _measure(
             ),
             dim=-1,
         )
-        pose_axis_angle = builder.projection.project_local_rotations(local_wxyz)
-        facts = builder.projection.target_builder.build_pose_frames(
+        pose_axis_angle = builder.projection.project(local_wxyz)
+        facts = builder.target_builder.build_pose_frames(
             pose_axis_angle,
-            qpos[:, :3],
-            builder.source_fps,
+            root_translation,
+            clip.source_fps,
         )
 
         joint_position = facts.joint_position
@@ -207,8 +191,8 @@ def _measure(
             "composition_dependency_identity": motion_composition_dependency_identity(
                 preset="g1_cmu",
                 cfg=cfg,
-                importer_type=HumEnvHdf5Clips,
-                frame_builder_type=G1SmplHumEnvFrameBuilder,
+                importer_type=CmuHumEnvSmplClips,
+                frame_builder_type=G1LocalBodyPoseFrameBuilder,
                 frame_builder_identity_sha256=builder.construction_identity_sha256,
                 reference_artifact_root=reference_artifact_root,
             ),

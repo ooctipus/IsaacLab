@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from isaaclab_tasks.core.multi_task.motion.mdp.observations import smpl_humenv_observation
+from isaaclab_tasks.core.multi_task.motion.robots.smpl.observations import smpl_humenv_observation
 
 FIXTURES = Path(__file__).parent / "fixtures"
 META_METADATA = FIXTURES / "meta_humenv_next_step_trace_v1.json"

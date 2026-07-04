@@ -137,7 +137,7 @@
   "systems_evidence": {
     "status": "passed",
     "record": "state_command_systems_v1.json",
-    "record_sha256": "d2842de2116fb913440b24eee2049ffc99197c832f9dc341acab33c4268308ef",
+    "record_sha256": "7ad5a6a0ea77871ba5bc99685adab01e2d94a9d35793378fd9f0975ca9548e20",
     "benchmark": "../benchmark_state_command_delegation.py",
     "scope": "Exact historical and final shell construction/resample/update with tensor-equivalent Position-like and Factory-like shapes.",
     "device_records": {

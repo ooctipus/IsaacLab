@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import copy
+import dataclasses
+import enum
 import hashlib
 import importlib.metadata
 import importlib.util
@@ -20,6 +22,10 @@ import re
 from collections.abc import Mapping
 from functools import cache
 from pathlib import Path
+
+from rsl_rl.utils import resolve_callable
+
+from isaaclab_tasks.core.multi_task.rl.rsl_rl import RslRlForwardBackwardRunnerCfg
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _RECEIPT_SCHEMA = "forward_backward_phase3f_motion_training_receipt_v1"
@@ -354,18 +360,22 @@ def _canonical_config_value(value: object, path: str) -> object:
         return {name: _canonical_config_value(value[name], f"{path}.{name}") for name in sorted(value)}
     if isinstance(value, list | tuple):
         return [_canonical_config_value(item, f"{path}[{index}]") for index, item in enumerate(value)]
-    if callable(value):
-        module = getattr(value, "__module__", None)
-        qualname = getattr(value, "__qualname__", None)
-        if not isinstance(module, str) or not isinstance(qualname, str):
-            raise TypeError(f"Resolved callable has no stable owner at {path}.")
-        return {"callable": f"{module}:{qualname}"}
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return _canonical_config_value(dataclasses.asdict(value), path)
+    if isinstance(value, enum.Enum):
+        return _canonical_config_value(value.value, path)
     if value is None or isinstance(value, bool | int | str):
         return value
     if isinstance(value, float):
         if not math.isfinite(value):
             raise ValueError(f"Resolved agent config contains a non-finite float at {path}.")
         return value
+    if callable(value):
+        module = getattr(value, "__module__", None)
+        qualname = getattr(value, "__qualname__", None)
+        if not isinstance(module, str) or not isinstance(qualname, str):
+            raise TypeError(f"Resolved callable has no stable owner at {path}.")
+        return {"callable": f"{module}:{qualname}"}
     raise TypeError(f"Resolved agent config contains unsupported {type(value).__name__} at {path}.")
 
 
@@ -398,10 +408,9 @@ def _python_package_bundle_sha256(package_root: Path) -> str:
     return digest
 
 
-def _task_bridge_identity(env: object, agent_cfg: object) -> dict[str, object]:
+def _task_bridge_identity(env: object, agent_cfg: RslRlForwardBackwardRunnerCfg) -> dict[str, object]:
     """Retain the wrapper, runner-config, and expert-provider source owners."""
-    expert = _mapping(getattr(agent_cfg, "expert", None), "agent expert configuration")
-    provider = expert.get("provider")
+    provider = resolve_callable(str(agent_cfg.expert.provider))
     if not callable(provider):
         raise ValueError("Resolved agent expert provider must be callable.")
     owners = {
@@ -724,21 +733,57 @@ def _contract_profile(preset: str) -> dict[str, object]:
 
 
 def _preset(env_cfg: object) -> str:
-    source = env_cfg.commands.motion.task_table.source
-    preset = source.identifier
-    if preset not in ("smpl_cmu", "g1_lafan"):
-        raise ValueError(f"Unsupported Phase 3F motion preset: {preset!r}.")
-    return preset
+    from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+    from isaaclab_physx.physics import PhysxCfg
+
+    from isaaclab_tasks.core.multi_task.mdp import NativeMujocoControlActionCfg
+    from isaaclab_tasks.core.multi_task.motion.robots.g1.actions_cfg import G1JointPositionActionCfg
+
+    _action_name, action_cfg = _sibling_module("motion_environment_identity").motion_action_term_cfg(env_cfg)
+    if isinstance(action_cfg, NativeMujocoControlActionCfg):
+        robot = "smpl"
+    elif isinstance(action_cfg, G1JointPositionActionCfg):
+        robot = "g1"
+    else:
+        raise ValueError(f"Unsupported Phase 3F robot action configuration: {type(action_cfg)!r}.")
+
+    table_cfg = env_cfg.commands.motion.task_table
+    source_id = table_cfg.source.identifier
+    if source_id == "cmu_humenv_smpl":
+        source = "cmu"
+    elif source_id == "lafan_g1_29dof":
+        source = "lafan"
+    else:
+        raise ValueError(f"Unsupported Phase 3F motion source: {source_id!r}.")
+
+    simulation_cfg = env_cfg.sim
+    physics_cfg = simulation_cfg.physics
+    if isinstance(physics_cfg, NewtonCfg) and isinstance(physics_cfg.solver_cfg, MJWarpSolverCfg):
+        backend = "newton_mjwarp"
+    elif isinstance(physics_cfg, PhysxCfg):
+        backend = "physx"
+    else:
+        raise ValueError(f"Unsupported Phase 3F physics configuration: {type(physics_cfg)!r}.")
+
+    horizon_steps = math.ceil(env_cfg.episode_length_s / (simulation_cfg.dt * env_cfg.decimation))
+    semantics = (robot, source, backend, simulation_cfg.dt, env_cfg.decimation, horizon_steps, table_cfg.task_row_mode)
+    native_profiles = {
+        ("smpl", "cmu", "newton_mjwarp", 1.0 / 450.0, 15, 300, "source_frames"): "smpl_cmu",
+        ("g1", "lafan", "physx", 1.0 / 200.0, 4, 501, "clip_time_ranges"): "g1_lafan",
+    }
+    if semantics not in native_profiles:
+        raise ValueError(f"Phase 3F has no native reproduction contract for resolved semantics {semantics!r}.")
+    return native_profiles[semantics]
 
 
 def _native_types(preset: str) -> tuple[type, type]:
-    from isaaclab_tasks.core.multi_task.motion.data.importers import BfmG1JoblibClips, HumEnvHdf5Clips
-    from isaaclab_tasks.core.multi_task.motion.trajectory.g1 import G1LafanFrameBuilder
-    from isaaclab_tasks.core.multi_task.motion.trajectory.smpl import SmplHumEnvFrameBuilder
+    from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClips, LafanG1JoblibClips
+    from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1PoseFrameBuilder
+    from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplGeneralizedCoordinateFrameBuilder
 
     if preset == "smpl_cmu":
-        return HumEnvHdf5Clips, SmplHumEnvFrameBuilder
-    return BfmG1JoblibClips, G1LafanFrameBuilder
+        return CmuHumEnvSmplClips, SmplGeneralizedCoordinateFrameBuilder
+    return LafanG1JoblibClips, G1PoseFrameBuilder
 
 
 def _motion_table(env: object):
@@ -826,7 +871,7 @@ def _assert_runtime_contract(
 ) -> None:
     """Require the exact frozen lifecycle, collection cadence, and update math."""
     if agent_cfg.lifecycle_extension is not None or runner.lifecycle_extension is not None:
-        raise ValueError("Phase 3F learner integration must set agent.lifecycle_extension=null.")
+        raise ValueError("Phase 3F learner integration must select the tracking_off lifecycle preset.")
     collection = _mapping(profile.get("collection"), "collection")
     actual = {
         "num_envs": env.num_envs,

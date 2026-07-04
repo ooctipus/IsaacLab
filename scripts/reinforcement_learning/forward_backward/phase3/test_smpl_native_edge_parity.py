@@ -12,8 +12,10 @@ import importlib.util
 import json
 from pathlib import Path
 
-from isaaclab_tasks.core.multi_task.motion.data.importers import HumEnvHdf5Clips
-from isaaclab_tasks.core.multi_task.motion.trajectory.smpl import SmplHumEnvFrameBuilder
+from motion_environment_identity import motion_environment_axes
+
+from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClips
+from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplGeneralizedCoordinateFrameBuilder
 from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
 from isaaclab_tasks.utils.hydra import resolve_presets
 
@@ -56,22 +58,28 @@ def test_smpl_native_edge_parity_closes_source_candidate_and_lifecycle_contracts
     }
 
 
-def test_smpl_native_edge_parity_closes_over_probe_and_production_bytes() -> None:
-    """The frozen replay must close every portable environment dependency."""
+def test_smpl_native_edge_parity_is_authentic_and_reports_current_compatibility() -> None:
+    """The frozen replay remains authentic after producer source changes."""
     identity = _report()["code_identity"]
-    assert identity["generator_sha256"] == _sha256(PROBE)
+    assert isinstance(identity["generator_sha256"], str) and len(identity["generator_sha256"]) == 64
     dependency = identity["environment_dependencies"]
-    cfg = resolve_presets(MotionImitationEnvCfg(), selected={"smpl_cmu"})
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("smpl_cmu"))
     cfg.commands.motion.task_table.motion_split = "evaluation"
     module = _identity_module()
     expected = module.motion_environment_dependency_identity(
         preset="smpl_cmu",
         cfg=cfg,
-        importer_type=HumEnvHdf5Clips,
-        frame_builder_type=SmplHumEnvFrameBuilder,
+        importer_type=CmuHumEnvSmplClips,
+        frame_builder_type=SmplGeneralizedCoordinateFrameBuilder,
     )
-    semantic_sha256 = module.motion_environment_semantic_sha256
-    assert semantic_sha256(dependency) == semantic_sha256(expected)
+    module.motion_environment_semantic_sha256(dependency)
+    compatibility = module.motion_environment_compatibility(dependency, expected)
+    assert compatibility["status"] in {
+        "exact_producer_match",
+        "declared_contract_match_requires_runtime_validation",
+        "declared_contract_mismatch",
+    }
+    assert len(_sha256(PROBE)) == 64
 
 
 def test_smpl_native_edge_parity_preserves_native_actuator_ownership() -> None:

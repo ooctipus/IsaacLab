@@ -34,6 +34,18 @@ def _current_allocations(record: dict, operation: str):
         yield profile_result["current"][operation]
 
 
+def _link_migration_manifest(migration_path: Path, record_path: Path) -> None:
+    """Relink the saved migration decision to one generated systems record."""
+    migration = _load(migration_path)
+    if migration.get("schema") != "forward_backward.phase3.state_command_migration.v1":
+        raise ValueError("StateCommand migration manifest has an unsupported schema.")
+    systems = migration.get("systems_evidence")
+    if not isinstance(systems, dict) or systems.get("record") != record_path.name:
+        raise ValueError("StateCommand migration manifest references a different systems record.")
+    systems["record_sha256"] = _sha256(record_path)
+    migration_path.write_text(json.dumps(migration, indent=2) + "\n")
+
+
 def combine(cpu_path: Path, cuda_path: Path) -> dict:
     cpu = _load(cpu_path)
     cuda = _load(cuda_path)
@@ -164,6 +176,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cpu", type=Path, required=True)
     parser.add_argument("--cuda", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--migration_manifest", type=Path)
     return parser.parse_args()
 
 
@@ -172,6 +185,8 @@ def main() -> None:
     record = combine(args.cpu, args.cuda)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    if args.migration_manifest is not None:
+        _link_migration_manifest(args.migration_manifest, args.output)
     print(json.dumps(record["decision"], indent=2, sort_keys=True))
 
 

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import torch
+from motion_environment_identity import motion_environment_axes, motion_runner_axes
 from rsl_rl.models.forward_backward_model import ForwardBackwardInferenceModel, ForwardBackwardModel
 from tensordict import TensorDictBase
 
@@ -36,7 +37,7 @@ _NATIVE_ENVIRONMENT_SOURCE_OWNERS = (
     "isaaclab_newton.physics.newton_manager",
     "isaaclab_newton.sim.spawners.mjcf.mjcf",
     "isaaclab_newton.sim.spawners.mjcf.mjcf_cfg",
-    "isaaclab_tasks.core.multi_task.motion.config.robots.smpl",
+    "isaaclab_tasks.core.multi_task.motion.robots.smpl.articulation",
 )
 
 
@@ -366,28 +367,36 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
         motion_environment_dependency_identity,
         motion_environment_semantic_sha256,
     )
-    from tensordict import TensorDict, TensorDictBase
-
-    from isaaclab_tasks.core.multi_task.motion.config.agents import MotionForwardBackwardRunnerPresetsCfg
-    from isaaclab_tasks.core.multi_task.motion.config.sources import SMPL_CMU_SOURCE_CFG
-    from isaaclab_tasks.core.multi_task.motion.data.importers import HumEnvHdf5Clips
-    from isaaclab_tasks.core.multi_task.motion.impl import uniform_emd_warp
-    from isaaclab_tasks.core.multi_task.motion.rsl_rl import motion_expert_buffer_smpl_cmu
-    from isaaclab_tasks.core.multi_task.motion.tracking import (
+    from motion_tracking_records import motion_tracking_metrics_to_dict
+    from smpl_tracking_evaluation import (
         motion_tracking_refill_lane_count,
         smpl_motion_tracking_evaluator,
         smpl_motion_tracking_evaluator_packed,
     )
-    from isaaclab_tasks.core.multi_task.motion.trajectory.smpl import SmplHumEnvFrameBuilder
-    from isaaclab_tasks.core.multi_task.motion_env import MotionImitationEnv
+    from tensordict import TensorDictBase
+
+    from isaaclab.envs import ManagerBasedRLEnv
+
+    from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
+
+    from isaaclab_tasks.core.multi_task.metrics.impl import uniform_assignment_warp
+    from isaaclab_tasks.core.multi_task.motion.config.agents import MotionForwardBackwardRunnerCfg
+    from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClips
+    from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplGeneralizedCoordinateFrameBuilder
     from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
+    from isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_expert import forward_backward_expert_buffer
+    from isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_tracking import (
+        forward_backward_evaluation_scope,
+    )
     from isaaclab_tasks.utils import resolve_presets
 
     checkpoints = request.identities
     policy_count = len(checkpoints)
     source_root = args.source_artifact_root.expanduser().resolve()
     faithful = request.evaluator_mode == "faithful"
-    source = SMPL_CMU_SOURCE_CFG.open_split(source_root, SMPL_CMU_SOURCE_CFG.evaluation)
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes(_PROFILE))
+    source_cfg = cfg.commands.motion.task_table.source
+    source = source_cfg.open_split(source_root, source_cfg.evaluation)
     try:
         source_index = source.inspect()
     finally:
@@ -397,16 +406,12 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
     evaluation_horizon = max(clip.frame_count for clip in source_index.clips)
     action_counts = tuple(clip.frame_count - 1 for clip in source_index.clips)
     theoretical_lanes = motion_tracking_refill_lane_count(action_counts)
-    if request.lanes_per_policy_override is None:
-        lanes_per_policy = 50 if faithful else theoretical_lanes
-    else:
-        lanes_per_policy = request.lanes_per_policy_override
-    if not faithful and lanes_per_policy > len(source_index.clips):
-        raise ValueError("Packed SMPL lanes per policy cannot exceed the held-out clip count.")
+    lanes_per_policy = len(source_index.clips)
+    if request.lanes_per_policy_override not in (None, lanes_per_policy):
+        raise ValueError("Packed SMPL evaluation requires one lane per clip; partial-reset refill was removed.")
     environment_num_envs = lanes_per_policy if faithful else policy_count * lanes_per_policy
     checkpoint_batch, checkpoint_batch_sha256 = _checkpoint_batch_identity(checkpoints)
 
-    cfg = resolve_presets(MotionImitationEnvCfg(), selected={_PROFILE})
     cfg.sim.device = args.device
     cfg.scene.num_envs = environment_num_envs
     cfg.seed = args.environment_seed
@@ -414,25 +419,24 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
     table_cfg.source_artifact_root = str(source_root)
     table_cfg.reference_artifact_root = str(args.reference_artifact_root.expanduser().resolve())
     table_cfg.motion_split = "evaluation"
-    cfg.commands.motion.payload.episode_length_steps = evaluation_horizon
-    cfg.terminations.time_out.params["applied_actions_before_timeout"] = evaluation_horizon
     cfg.episode_length_s = evaluation_horizon * cfg.sim.dt * cfg.decimation
     environment_dependency_identity = motion_environment_dependency_identity(
         preset=_PROFILE,
         cfg=cfg,
-        importer_type=HumEnvHdf5Clips,
-        frame_builder_type=SmplHumEnvFrameBuilder,
+        importer_type=CmuHumEnvSmplClips,
+        frame_builder_type=SmplGeneralizedCoordinateFrameBuilder,
         reference_artifact_root=table_cfg.reference_artifact_root,
     )
     environment_semantic_sha256 = motion_environment_semantic_sha256(environment_dependency_identity)
     native_environment_owner_hashes = _native_environment_owner_hashes(environment_dependency_identity)
 
-    runner_values = resolve_presets(MotionForwardBackwardRunnerPresetsCfg(), selected={_PROFILE}).to_dict()
-    env = MotionImitationEnv(cfg=cfg)
+    runner_selection = motion_environment_axes(_PROFILE) | motion_runner_axes(_PROFILE)
+    runner_values = resolve_presets(MotionForwardBackwardRunnerCfg(), selected=runner_selection).to_dict()
+    env = RslRlVecEnvWrapper(ManagerBasedRLEnv(cfg=cfg))
     try:
         if env.max_episode_length < evaluation_horizon:
             raise RuntimeError("Resolved evaluation horizon is shorter than the longest held-out clip.")
-        table = env.command_manager.get_term("motion").table
+        table = env.unwrapped.command_manager.get_term("motion").table
         if (
             table.clip_ids != source_index.clip_ids
             or len(table.clip_ids) != _EXPECTED_CLIPS
@@ -441,14 +445,13 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
         ):
             raise RuntimeError("Materialized SMPL evaluation table differs from the inspected source identity.")
 
-        reset = env.reset()
-        observations = reset[0] if isinstance(reset, tuple) else reset
+        observations, _reset_info = env.reset()
         if not isinstance(observations, TensorDictBase):
-            observations = TensorDict(observations, batch_size=[env.num_envs])
+            raise TypeError("SMPL EMD requires TensorDict observations from the RSL VecEnv wrapper.")
         model_template = ForwardBackwardModel.from_config(
             observations,
             runner_values["obs_groups"],
-            env.action_manager.total_action_dim,
+            env.num_actions,
             runner_values["model"],
         )
         if faithful:
@@ -468,21 +471,43 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
                 device=env.device,
             )
 
-        expert = motion_expert_buffer_smpl_cmu(
+        expert_cfg = runner_values["expert"]
+        expert = forward_backward_expert_buffer(
             env,
             model.observation_schema,
             env.device,
-            command_name="motion",
-            window_lengths=(8,),
-            seed=runner_values["seed"],
+            source_bind=expert_cfg["source_bind"],
+            sampling_mode=expert_cfg["sampling_mode"],
+            sampling_step_seconds=expert_cfg["sampling_step_seconds"],
+            target_projection=expert_cfg["target_projection"],
+            target_projection_binds=tuple(expert_cfg["target_projection_binds"]),
+            window_lengths=tuple(expert_cfg["window_lengths"]),
+            seed=expert_cfg["seed"],
         )
-        if expert.clip_ids != table.clip_ids or expert.frames.data_ptr() != table.field("observation").data_ptr():
-            raise RuntimeError("SMPL evaluator did not retain the table-owned native observation rows.")
+        if expert.clip_ids != table.clip_ids or expert.frames.shape != (table.clip_index.total_frames, 358):
+            raise RuntimeError("SMPL evaluator expert projection does not cover the physical table rows.")
 
         before = exclusive_physical_gpu_snapshot(args.device)
-        with env.evaluation_transaction(args.evaluation_seed):
+        command = env.unwrapped.command_manager.get_term("motion")
+        with forward_backward_evaluation_scope(
+            env,
+            command,
+            command.payload.evaluation_scope,
+            args.evaluation_seed,
+            reset_source_name="reference",
+        ):
             if faithful:
-                evaluations = (smpl_motion_tracking_evaluator(model, env, expert, expert.clip_ids),)
+                evaluations = (
+                    smpl_motion_tracking_evaluator(
+                        model,
+                        env,
+                        expert,
+                        expert.clip_ids,
+                        sampling_mode=expert_cfg["sampling_mode"],
+                        sampling_step_seconds=expert_cfg["sampling_step_seconds"],
+                        evaluation_seed=args.evaluation_seed,
+                    ),
+                )
             else:
                 evaluations = smpl_motion_tracking_evaluator_packed(
                     model,
@@ -490,6 +515,9 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
                     expert,
                     expert.clip_ids,
                     policy_count=policy_count,
+                    sampling_mode=expert_cfg["sampling_mode"],
+                    sampling_step_seconds=expert_cfg["sampling_step_seconds"],
+                    evaluation_seed=args.evaluation_seed,
                 )
         after = exclusive_physical_gpu_snapshot(args.device)
         physical_gpu_uuid = validate_same_exclusive_gpu(before, after)
@@ -517,7 +545,7 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
             ),
         }
         source_identity = {
-            "split_artifact_sha256": SMPL_CMU_SOURCE_CFG.evaluation.artifact_sha256,
+            "split_artifact_sha256": source_cfg.evaluation.artifact_sha256,
             "source_content_sha256": source_index.source_content_sha256,
             "source_index_content_identity_sha256": source_index.content_identity_sha256,
             "table_cache_identity": table.cache_identity,
@@ -534,7 +562,7 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
         evaluator = smpl_motion_tracking_evaluator if faithful else smpl_motion_tracking_evaluator_packed
         implementation = {
             "evaluator_sha256": _source_sha256(evaluator),
-            "uniform_emd_warp_sha256": _source_sha256(uniform_emd_warp),
+            "uniform_assignment_warp_sha256": _source_sha256(uniform_assignment_warp),
             "producer_sha256": _sha256(Path(__file__)),
             "model_config_sha256": _canonical_sha256(runner_values["model"]),
             "observation_routes_sha256": _canonical_sha256(runner_values["obs_groups"]),
@@ -548,8 +576,8 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
         }
         reports = []
         for checkpoint_index, (checkpoint, evaluation) in enumerate(zip(checkpoints, evaluations, strict=True)):
-            metrics = evaluation.serializable_metrics()
-            emd = [float(metrics[clip_id]["emd"]) for clip_id in evaluation.clip_ids]
+            metrics = motion_tracking_metrics_to_dict(evaluation)
+            emd = [float(metrics[clip_id]["emd"]) for clip_id in evaluation.sequence_ids]
             if any(not math.isfinite(value) or value < 0.0 for value in emd):
                 raise ValueError("SMPL evaluation emitted nonfinite or negative EMD.")
             if any("obs_state_emd" in row for row in metrics.values()):
@@ -565,7 +593,7 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
                 "environment": environment_identity,
                 "implementation": implementation,
                 "gpu_ownership": gpu_ownership,
-                "clip_ids": list(evaluation.clip_ids),
+                "clip_ids": list(evaluation.sequence_ids),
                 "metrics": metrics,
                 "emd": emd,
                 "emd_statistics": _statistics(emd),

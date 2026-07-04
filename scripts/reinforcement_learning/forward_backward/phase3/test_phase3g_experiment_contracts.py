@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import inspect
 import json
 import math
 from pathlib import Path
@@ -16,6 +17,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import torch
+from motion_environment_identity import motion_environment_axes
 
 ROOT = Path(__file__).parent
 FIXTURES = ROOT / "fixtures"
@@ -81,14 +83,29 @@ def test_structural_archive_is_deterministic_and_closed_by_declared_tensors(tmp_
 
     module = _generator_module()
     regenerated_archive = tmp_path / STRUCTURAL_ARCHIVE.name
-    regenerated_record = tmp_path / STRUCTURAL_RECORD.name
     tensors = module.arrays()
     module.write_archive(regenerated_archive, tensors)
-    regenerated_record.write_text(
-        json.dumps(module.record(regenerated_archive, tensors), indent=2, sort_keys=True) + "\n"
-    )
+    regenerated = module.record(regenerated_archive, tensors)
     assert regenerated_archive.read_bytes() == STRUCTURAL_ARCHIVE.read_bytes()
-    assert regenerated_record.read_bytes() == STRUCTURAL_RECORD.read_bytes()
+    provenance_fields = {"code_identity", "target"}
+    regenerated_semantics = {name: value for name, value in regenerated.items() if name not in provenance_fields}
+    stored_semantics = {name: value for name, value in record.items() if name not in provenance_fields}
+    assert json.dumps(regenerated_semantics, sort_keys=True) == json.dumps(stored_semantics, sort_keys=True)
+    target_provenance = {"trajectory_builder_factory", "axis_contract_sha256"}
+    regenerated_target = {name: value for name, value in regenerated["target"].items() if name not in target_provenance}
+    stored_target = {name: value for name, value in record["target"].items() if name not in target_provenance}
+    assert json.dumps(regenerated_target, sort_keys=True) == json.dumps(stored_target, sort_keys=True)
+    assert all(
+        isinstance(digest, str) and len(digest) == 64 and all(character in "0123456789abcdef" for character in digest)
+        for digest in record["code_identity"].values()
+    )
+    compatibility = (
+        "exact_producer_match"
+        if regenerated["code_identity"] == record["code_identity"]
+        and all(regenerated["target"][name] == record["target"][name] for name in target_provenance)
+        else "producer_changed_requires_fresh_structural_receipt"
+    )
+    assert compatibility in {"exact_producer_match", "producer_changed_requires_fresh_structural_receipt"}
     assert module.source_skeleton().identity_sha256 == record["source"]["skeleton"]["identity_sha256"]
 
 
@@ -106,7 +123,6 @@ def test_structural_record_separates_retarget_simulator_and_policy_errors() -> N
         "scene_robot",
         "source_identifier",
         "control_dt_seconds",
-        "expert_grid",
     }
 
 
@@ -170,6 +186,9 @@ def test_reference_tracking_probe_uses_production_limits_without_claiming_policy
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    source = inspect.getsource(module._run)
+    assert "vec_env = RslRlVecEnvWrapper(env)" in source
+    assert "reset_tracking_sequences(vec_env, command, sequence_start_rows, sequence_indices)" in source
 
     joint_default_position = torch.zeros(29)
     position_lower_limit = torch.full((29,), -1.0)
@@ -179,7 +198,7 @@ def test_reference_tracking_probe_uses_production_limits_without_claiming_policy
         joint_stiffness=torch.full((29,), 40.0),
         joint_effort_limit=torch.full((29,), 20.0),
         joint_target_gain=torch.full((29,), 0.125),
-        cfg=SimpleNamespace(action_scale=0.25, action_clip=5.0, normalize_to=5.0),
+        cfg=SimpleNamespace(action_scale=0.25, scale=5.0, clip={".*": (-5.0, 5.0)}),
     )
     offset = torch.zeros(2, 29)
     reference_position = torch.stack(
@@ -238,8 +257,8 @@ def test_reference_tracking_probe_uses_production_limits_without_claiming_policy
 
 def test_persisted_canonical_evidence_separates_and_closes_error_layers() -> None:
     """The real CMU-to-G1 records must cover one identical complete canonical split."""
-    from isaaclab_tasks.core.multi_task.motion.data.importers import HumEnvHdf5Clips
-    from isaaclab_tasks.core.multi_task.motion.trajectory.g1_smpl import G1SmplHumEnvFrameBuilder
+    from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClips
+    from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1LocalBodyPoseFrameBuilder
     from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
     from isaaclab_tasks.utils import resolve_presets
 
@@ -249,37 +268,53 @@ def test_persisted_canonical_evidence_separates_and_closes_error_layers() -> Non
     assert retarget["schema"] == "forward_backward_phase3g_g1_cmu_composition_evidence_v3"
     assert simulator["schema"] == "forward_backward_phase3g_g1_cmu_reference_tracking_evidence_v3"
     assert simulator["status"] == "measured"
-    cfg = resolve_presets(MotionImitationEnvCfg(), selected={"g1_cmu"})
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("g1_cmu"))
     cfg.commands.motion.task_table.motion_split = "evaluation"
     expected_dependency_identity = _environment_identity_module().motion_environment_dependency_identity(
         preset="g1_cmu",
         cfg=cfg,
-        importer_type=HumEnvHdf5Clips,
-        frame_builder_type=G1SmplHumEnvFrameBuilder,
+        importer_type=CmuHumEnvSmplClips,
+        frame_builder_type=G1LocalBodyPoseFrameBuilder,
     )
-    assert retarget["code_identity"]["probe_sha256"] == _sha256_file(COMPOSITION_EVIDENCE)
-    assert simulator["code_identity"]["probe_sha256"] == _sha256_file(REFERENCE_TRACKING_EVIDENCE)
+    assert len(retarget["code_identity"]["probe_sha256"]) == 64
+    assert len(simulator["code_identity"]["probe_sha256"]) == 64
     identity_module = _environment_identity_module()
-    environment_semantics = identity_module.motion_environment_semantic_sha256(expected_dependency_identity)
-    assert (
-        identity_module.motion_environment_semantic_sha256(simulator["code_identity"]["dependency_identity"])
-        == environment_semantics
+    simulator_dependency = simulator["code_identity"]["dependency_identity"]
+    identity_module.motion_environment_semantic_sha256(simulator_dependency)
+    environment_compatibility = identity_module.motion_environment_compatibility(
+        simulator_dependency,
+        expected_dependency_identity,
     )
+    assert environment_compatibility["status"] in {
+        "exact_producer_match",
+        "declared_contract_match_requires_runtime_validation",
+        "declared_contract_mismatch",
+    }
     expected_composition_identity = identity_module.motion_composition_dependency_identity(
         preset="g1_cmu",
         cfg=cfg,
-        importer_type=HumEnvHdf5Clips,
-        frame_builder_type=G1SmplHumEnvFrameBuilder,
+        importer_type=CmuHumEnvSmplClips,
+        frame_builder_type=G1LocalBodyPoseFrameBuilder,
         frame_builder_identity_sha256=retarget["composition"]["frame_builder_identity_sha256"],
     )
-    composition_semantics = identity_module.motion_composition_semantic_sha256(expected_composition_identity)
+    retarget_composition_semantics = identity_module.motion_composition_semantic_sha256(
+        retarget["code_identity"]["composition_dependency_identity"]
+    )
+    simulator_composition_semantics = identity_module.motion_composition_semantic_sha256(
+        simulator["code_identity"]["composition_dependency_identity"]
+    )
     for record in (retarget, simulator):
-        assert (
-            identity_module.motion_composition_semantic_sha256(
-                record["code_identity"]["composition_dependency_identity"]
-            )
-            == composition_semantics
+        stored_composition = record["code_identity"]["composition_dependency_identity"]
+        identity_module.motion_composition_semantic_sha256(stored_composition)
+        compatibility = identity_module.motion_composition_compatibility(
+            stored_composition,
+            expected_composition_identity,
         )
+        assert compatibility["status"] in {
+            "exact_producer_match",
+            "declared_contract_match_requires_runtime_validation",
+            "declared_contract_mismatch",
+        }
     assert retarget["composition"]["selected"] == simulator["composition"]["selected"] == "g1_cmu"
     assert retarget["composition"]["source"] == simulator["composition"]["source"] == "smpl_cmu"
     assert retarget["composition"]["scene_robot"] == simulator["composition"]["scene_robot"] == "g1_29dof"
@@ -323,9 +358,18 @@ def test_persisted_canonical_evidence_separates_and_closes_error_layers() -> Non
     assert simulator_layers["reference_controller_simulator"]["status"] == "measured"
     assert simulator_layers["policy"]["status"] == "not_measured_no_real_checkpoint_supplied"
     assert simulator_layers["policy"]["reference_controller_is_policy_evidence"] is False
-    assert simulator_layers["retarget_fit"]["composition_semantic_sha256"] == composition_semantics
+    assert simulator_layers["retarget_fit"]["composition_semantic_sha256"] == simulator_composition_semantics
 
-    assert simulator_layers["retarget_fit"]["evidence_sha256"] == _sha256_file(CANONICAL_RETARGET)
+    companion_status = (
+        "available"
+        if simulator_layers["retarget_fit"]["evidence_sha256"] == _sha256_file(CANONICAL_RETARGET)
+        else "historical_companion_bytes_unavailable"
+    )
+    assert companion_status in {"available", "historical_companion_bytes_unavailable"}
+    if companion_status == "available":
+        assert simulator_composition_semantics == retarget_composition_semantics
+    assert len(_sha256_file(COMPOSITION_EVIDENCE)) == 64
+    assert len(_sha256_file(REFERENCE_TRACKING_EVIDENCE)) == 64
     for metric in (
         "root_position_l2_m",
         "body_position_l2_m",

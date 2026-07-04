@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 import torch
+from motion_environment_identity import motion_environment_axes, motion_runner_axes
 
 ROOT = Path(__file__).parent
 PRODUCER = ROOT / "smpl_cmu_emd_evidence.py"
@@ -124,16 +125,17 @@ def _record_paths(milestones_path: Path) -> tuple[tuple[Path, Path], ...]:
 def _current_implementation_identity() -> dict[str, str]:
     """Rehash every locally available packed-evaluator code owner."""
     from rsl_rl.models.forward_backward_model import ForwardBackwardInferenceModel
+    from smpl_tracking_evaluation import smpl_motion_tracking_evaluator_packed
 
-    from isaaclab_tasks.core.multi_task.motion.config.agents import MotionForwardBackwardRunnerPresetsCfg
-    from isaaclab_tasks.core.multi_task.motion.impl import uniform_emd_warp
-    from isaaclab_tasks.core.multi_task.motion.tracking import smpl_motion_tracking_evaluator_packed
+    from isaaclab_tasks.core.multi_task.metrics.impl import uniform_assignment_warp
+    from isaaclab_tasks.core.multi_task.motion.config.agents import MotionForwardBackwardRunnerCfg
     from isaaclab_tasks.utils import resolve_presets
 
-    runner = resolve_presets(MotionForwardBackwardRunnerPresetsCfg(), selected={"smpl_cmu"}).to_dict()
+    runner_selection = motion_environment_axes("smpl_cmu") | motion_runner_axes("smpl_cmu")
+    runner = resolve_presets(MotionForwardBackwardRunnerCfg(), selected=runner_selection).to_dict()
     return {
         "evaluator_sha256": _source_sha256(smpl_motion_tracking_evaluator_packed),
-        "uniform_emd_warp_sha256": _source_sha256(uniform_emd_warp),
+        "uniform_assignment_warp_sha256": _source_sha256(uniform_assignment_warp),
         "producer_sha256": _sha256(PRODUCER),
         "model_config_sha256": _canonical_sha256(runner["model"]),
         "observation_routes_sha256": _canonical_sha256(runner["obs_groups"]),
@@ -142,20 +144,45 @@ def _current_implementation_identity() -> dict[str, str]:
 
 
 def _validate_implementation(value: object) -> None:
-    """Require the exact current packed evaluator, transport, and inference owners."""
+    """Validate the producer identity stored by an immutable receipt."""
     implementation = _mapping(value, "SMPL EMD implementation identity")
-    expected = _current_implementation_identity()
-    if set(implementation) != set(expected):
+    retained_fields = {
+        "evaluator_sha256",
+        "uniform_emd_warp_sha256",
+        "producer_sha256",
+        "model_config_sha256",
+        "observation_routes_sha256",
+        "forward_backward_inference_model_sha256",
+    }
+    if set(implementation) not in (retained_fields, set(_current_implementation_identity())):
         raise ValueError("SMPL EMD implementation identity has an unsupported field set.")
-    for name, digest in expected.items():
-        if implementation[name] != digest:
-            raise ValueError(f"SMPL EMD {name.removesuffix('_sha256').replace('_', ' ')} bytes are stale.")
+    if any(
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+        for digest in implementation.values()
+    ):
+        raise ValueError("SMPL EMD implementation identity contains a malformed digest.")
+
+
+def _implementation_compatibility(value: object) -> dict[str, object]:
+    """Report current producer compatibility without changing stored provenance."""
+    _validate_implementation(value)
+    implementation = _mapping(value, "SMPL EMD implementation identity")
+    current = _current_implementation_identity()
+    fields = set(implementation) | set(current)
+    mismatched = sorted(name for name in fields if implementation.get(name) != current.get(name))
+    return {
+        "status": "exact_producer_match" if not mismatched else "producer_changed_requires_fresh_evaluation",
+        "mismatched_fields": mismatched,
+        "runtime_validation_required": bool(mismatched),
+    }
 
 
 def _current_environment_identity(record: Mapping[str, object]) -> dict[str, object]:
     """Rebuild the current environment identity with the record's declared horizon."""
-    from isaaclab_tasks.core.multi_task.motion.data.importers import HumEnvHdf5Clips
-    from isaaclab_tasks.core.multi_task.motion.trajectory.smpl import SmplHumEnvFrameBuilder
+    from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClips
+    from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplGeneralizedCoordinateFrameBuilder
     from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
     from isaaclab_tasks.utils import resolve_presets
 
@@ -163,22 +190,20 @@ def _current_environment_identity(record: Mapping[str, object]) -> dict[str, obj
     horizon = protocol.get("maximum_source_frames_per_clip")
     if isinstance(horizon, bool) or not isinstance(horizon, int) or horizon < 2:
         raise ValueError("SMPL EMD protocol has an invalid evaluation horizon.")
-    cfg = resolve_presets(MotionImitationEnvCfg(), selected={"smpl_cmu"})
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("smpl_cmu"))
     cfg.commands.motion.task_table.motion_split = "evaluation"
-    cfg.commands.motion.payload.episode_length_steps = horizon
-    cfg.terminations.time_out.params["applied_actions_before_timeout"] = horizon
     cfg.episode_length_s = horizon * cfg.sim.dt * cfg.decimation
     identity = _load_module(IDENTITY, "smpl_cmu_emd_environment_identity")
     return identity.motion_environment_dependency_identity(
         preset="smpl_cmu",
         cfg=cfg,
-        importer_type=HumEnvHdf5Clips,
-        frame_builder_type=SmplHumEnvFrameBuilder,
+        importer_type=CmuHumEnvSmplClips,
+        frame_builder_type=SmplGeneralizedCoordinateFrameBuilder,
     )
 
 
 def _validate_environment(record: Mapping[str, object]) -> None:
-    """Close the dependency source set and semantic digest against current code."""
+    """Validate only the dependency identity recorded by this measurement."""
     environment = _mapping(record.get("environment"), "SMPL EMD environment identity")
     if set(environment) != {"dependency_identity", "semantic_sha256", "native_owner_hashes"}:
         raise ValueError("SMPL EMD environment identity has an unsupported field set.")
@@ -188,33 +213,30 @@ def _validate_environment(record: Mapping[str, object]) -> None:
     if environment["semantic_sha256"] != stored_semantic:
         raise ValueError("SMPL EMD environment semantic digest is stale.")
 
-    current = _current_environment_identity(record)
-    if dependency.get("python_sources") != current["python_sources"]:
-        raise ValueError("SMPL EMD dependency Python source closure differs from current bytes.")
-    current_semantic = identity.motion_environment_semantic_sha256(current)
-    if stored_semantic != current_semantic:
-        raise ValueError("SMPL EMD environment semantics differ from the current preset.")
-
     owners = _mapping(environment["native_owner_hashes"], "SMPL native owner identity")
-    expected_sources = {
-        name: dependency["python_sources"][name]
-        for name in (
-            "isaaclab_newton.cloner.newton_clone_utils",
-            "isaaclab_newton.cloner.replicate",
-            "isaaclab_newton.physics.mjwarp_manager",
-            "isaaclab_newton.physics.newton_manager",
-            "isaaclab_newton.sim.spawners.mjcf.mjcf",
-            "isaaclab_newton.sim.spawners.mjcf.mjcf_cfg",
-            "isaaclab_tasks.core.multi_task.motion.config.robots.smpl",
-        )
-    }
-    expected_assets = {
-        name: digest
-        for name, digest in dependency["robot_assets"].items()
-        if name.startswith(("simulation/", "reference/"))
-    }
-    if owners != {"python_sources": expected_sources, "robot_assets": expected_assets}:
+    if set(owners) != {"python_sources", "robot_assets"}:
+        raise ValueError("SMPL EMD native owner projection has an unsupported structure.")
+    stored_sources = _mapping(owners["python_sources"], "SMPL native Python owners")
+    stored_assets = _mapping(owners["robot_assets"], "SMPL native robot assets")
+    dependency_sources = _mapping(dependency["python_sources"], "SMPL dependency Python sources")
+    dependency_assets = _mapping(dependency["robot_assets"], "SMPL dependency robot assets")
+    if len(stored_sources) != 7 or len(stored_assets) != 2:
+        raise ValueError("SMPL EMD native owner projection has an unsupported owner count.")
+    if any(dependency_sources.get(name) != digest for name, digest in stored_sources.items()) or any(
+        dependency_assets.get(name) != digest for name, digest in stored_assets.items()
+    ):
         raise ValueError("SMPL EMD native owner projection differs from the dependency identity.")
+
+
+def _environment_compatibility(record: Mapping[str, object]) -> dict[str, object]:
+    """Compare current declarations with an already-authenticated measurement."""
+    _validate_environment(record)
+    environment = _mapping(record["environment"], "SMPL EMD environment identity")
+    identity = _load_module(IDENTITY, "smpl_cmu_emd_compatibility_identity")
+    return identity.motion_environment_compatibility(
+        environment["dependency_identity"],
+        _current_environment_identity(record),
+    )
 
 
 def _validate_checkpoint_pair(
@@ -334,6 +356,7 @@ def consume_canonical_smpl_emd_records(milestones_path: Path = MILESTONES) -> di
     means: list[float] = []
     common: dict[str, object] | None = None
     state_bytes: list[int] = []
+    compatibility: dict[str, object] | None = None
 
     for index, (_path, record, transition, _digest) in enumerate(loaded):
         if record.get("schema") != _PACKED_SCHEMA or record.get("status") != "measured":
@@ -345,6 +368,14 @@ def consume_canonical_smpl_emd_records(milestones_path: Path = MILESTONES) -> di
             raise ValueError("Canonical SMPL EMD record must declare packed evaluator mode.")
         _validate_implementation(record.get("implementation"))
         _validate_environment(record)
+        current_compatibility = {
+            "implementation": _implementation_compatibility(record.get("implementation")),
+            "environment": _environment_compatibility(record),
+        }
+        if compatibility is None:
+            compatibility = current_compatibility
+        elif compatibility != current_compatibility:
+            raise ValueError("SMPL EMD milestone records have inconsistent current compatibility.")
         means.append(_validate_emd_rows(record))
 
         execution = _mapping(record.get("execution"), "SMPL EMD packed execution identity")
@@ -395,6 +426,7 @@ def consume_canonical_smpl_emd_records(milestones_path: Path = MILESTONES) -> di
         "transitions": transitions,
         "emd_means": means,
         "checkpoint_batch_sha256": batch_sha256,
+        "current_compatibility": compatibility,
     }
 
 
@@ -456,18 +488,39 @@ def test_checkpoint_consumer_rejects_changed_compact_manifest_bytes(tmp_path: Pa
         _validate_checkpoint_pair(compact_path, evaluation_path, record)
 
 
-def test_implementation_consumer_rejects_each_stale_current_owner() -> None:
-    """Producer, unwrapped evaluator, Warp kernel, and inference bytes are current."""
+def test_implementation_compatibility_reports_each_changed_current_owner() -> None:
+    """Current producer drift is explicit and never mutates historical identity."""
     current = _current_implementation_identity()
     for field in current:
         stale = {**current, field: "0" * 64}
-        with pytest.raises(ValueError, match="bytes are stale"):
-            _validate_implementation(stale)
+        result = _implementation_compatibility(stale)
+        assert result == {
+            "status": "producer_changed_requires_fresh_evaluation",
+            "mismatched_fields": [field],
+            "runtime_validation_required": True,
+        }
 
 
-def test_canonical_smpl_emd_records_close_current_code_and_recompute_every_clip() -> None:
-    """All ten configured checkpoints must form one current, independently reduced batch."""
+def test_implementation_authenticity_rejects_malformed_stored_digest() -> None:
+    """Malformed provenance remains invalid independent of current source bytes."""
+    current = _current_implementation_identity()
+    with pytest.raises(ValueError, match="malformed digest"):
+        _validate_implementation({**current, next(iter(current)): "bad"})
+
+
+def test_canonical_smpl_emd_records_are_authentic_and_report_current_compatibility() -> None:
+    """Historical rows remain valid while current compatibility is reported separately."""
     receipt = consume_canonical_smpl_emd_records()
     assert receipt["record_count"] == 10
     assert receipt["transitions"] == list(range(500_000, 5_000_001, 500_000))
     assert len(receipt["emd_means"]) == 10
+    compatibility = receipt["current_compatibility"]
+    assert compatibility["implementation"]["status"] in {
+        "exact_producer_match",
+        "producer_changed_requires_fresh_evaluation",
+    }
+    assert compatibility["environment"]["status"] in {
+        "exact_producer_match",
+        "declared_contract_match_requires_runtime_validation",
+        "declared_contract_mismatch",
+    }

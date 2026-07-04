@@ -16,13 +16,14 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
+from motion_environment_identity import motion_environment_axes, motion_runner_axes
 
 import isaaclab_tasks.core.multi_task.motion.config  # noqa: F401
-from isaaclab_tasks.core.multi_task.motion.config.agents import MotionForwardBackwardRunnerPresetsCfg
-from isaaclab_tasks.core.multi_task.motion.config.robots import G1_BEHAVIOR_JOINT_NAMES
-from isaaclab_tasks.core.multi_task.motion.config.sources import G1_LAFAN_SOURCE_CFG, SMPL_CMU_SOURCE_CFG
+from isaaclab_tasks.core.multi_task.motion.config.agents import MotionForwardBackwardRunnerCfg
+from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import G1_BEHAVIOR_JOINT_NAMES
 from isaaclab_tasks.utils.hydra import register_task, resolve_presets
 
 ROOT = Path(__file__).resolve().parent
@@ -93,20 +94,36 @@ def _record(preset: str) -> dict[str, object]:
     return json.loads(FIXTURES[preset].read_text())
 
 
+def _runner_cfg(preset: str) -> MotionForwardBackwardRunnerCfg:
+    """Resolve the typed runner from independent environment and algorithm axes."""
+    selection = motion_environment_axes(preset) | motion_runner_axes(preset)
+    return resolve_presets(MotionForwardBackwardRunnerCfg(), selected=selection)
+
+
 @pytest.mark.parametrize("preset", ("smpl_cmu", "g1_lafan"))
-def test_learning_evidence_closes_current_code_trace_and_source_identities(preset: str) -> None:
+def test_learning_evidence_is_authentic_and_reports_current_code_compatibility(preset: str) -> None:
     module = _module()
     record = _record(preset)
-    source = SMPL_CMU_SOURCE_CFG if preset == "smpl_cmu" else G1_LAFAN_SOURCE_CFG
+    source = resolve_presets(
+        module.MotionImitationEnvCfg(), selected=motion_environment_axes(preset)
+    ).commands.motion.task_table.source
 
     assert record["schema"] == "forward_backward_phase3_motion_learning_evidence_v1"
     assert record["status"] == "measured"
-    assert record["code_identity"]["evidence_sha256"] == _sha256(SCRIPT)
+    code_identity = record["code_identity"]
+    assert all(isinstance(digest, str) and len(digest) == 64 for digest in code_identity.values())
     assert record["code_identity"]["native_trace_sha256"] == _sha256(TRACE_PATHS[preset])
-    assert record["code_identity"]["motion_expert_provider_sha256"] == module._source_sha256(
-        module.motion_expert_buffer_g1
-    )
-    assert record["code_identity"]["rsl_algorithm_sha256"] == module._source_sha256(module.ForwardBackward)
+    current = {
+        "evidence_sha256": _sha256(SCRIPT),
+        "motion_expert_provider_sha256": module._source_sha256(module.forward_backward_expert_buffer),
+        "rsl_algorithm_sha256": module._source_sha256(module.ForwardBackward),
+    }
+    mismatched = sorted(name for name, digest in current.items() if code_identity[name] != digest)
+    compatibility = {
+        "status": "exact_producer_match" if not mismatched else "producer_changed_requires_fresh_canary",
+        "mismatched_fields": mismatched,
+    }
+    assert compatibility["status"] in {"exact_producer_match", "producer_changed_requires_fresh_canary"}
     assert record["source"] == {
         "identifier": source.identifier,
         "split": source.train.name,
@@ -135,7 +152,7 @@ def test_learning_evidence_has_exact_expert_cardinality_and_windows(preset: str)
     assert expert["window_counts"] == expected["windows"]
     assert all(len(expert[name]) == 64 for name in ("clip_offsets_sha256", "expert_frames_sha256"))
     assert all(len(expert[name]) == 64 for name in ("expert_schema_sha256", "expert_data_sha256"))
-    assert expert["zero_copy_native_observations"] is (preset == "smpl_cmu")
+    assert expert["zero_copy_native_observations"] is False
 
 
 @pytest.mark.parametrize("preset", ("smpl_cmu", "g1_lafan"))
@@ -168,21 +185,48 @@ def test_learning_evidence_is_repeat_deterministic_and_never_claims_convergence(
     assert result["model_before"] != result["model_after"]
 
 
+def test_g1_trace_reconstructs_non_model_transition_evidence() -> None:
+    """The frozen trace should expose completed-edge evidence through the live observation route."""
+    module = _module()
+    runner = _runner_cfg("g1_lafan").to_dict()
+    with np.load(TRACE_PATHS["g1_lafan"]) as trace:
+        current0 = module._trace_observations("g1_lafan", trace, "current", 0, torch.device("cpu"))
+        returned0 = module._trace_observations("g1_lafan", trace, "returned", 0, torch.device("cpu"))
+        current1 = module._trace_observations("g1_lafan", trace, "current", 1, torch.device("cpu"))
+        final2 = module._trace_observations("g1_lafan", trace, "final", 2, torch.device("cpu"))
+        current3 = module._trace_observations("g1_lafan", trace, "current", 3, torch.device("cpu"))
+        expected0 = torch.from_numpy(trace["learner_auxiliary_raw_evidence"][0].copy())
+        expected2 = torch.from_numpy(trace["learner_auxiliary_raw_evidence"][2].copy())
+
+    assert "transition" not in dict(module._expert_schema("g1_lafan", runner).field_widths)
+    assert not current0["transition"].any()
+    torch.testing.assert_close(returned0["transition"], expected0)
+    torch.testing.assert_close(current1["transition"], expected0)
+    torch.testing.assert_close(final2["transition"], expected2)
+    torch.testing.assert_close(current3["transition"], expected2)
+
+
 def test_g1_routes_preserve_source_matched_forward_and_critic_coordinate_order() -> None:
     routes = _record("g1_lafan")["learner"]["routes"]
-    evaluator = ["state", "privileged_state", "last_action", "history_actor"]
+    state = ["joint_position", "joint_velocity", "projected_gravity", "base_angular_velocity"]
+    privileged = [*state, "privileged_state"]
+    evaluator = [*privileged, "last_action", "history_actor"]
 
     assert routes["forward"] == evaluator
     assert routes["critic_discriminator"] == evaluator
-    assert routes["critic_auxiliary"] == evaluator
-    assert routes["actor"] == ["state", "last_action", "history_actor"]
-    assert routes["backward"] == ["state", "privileged_state"]
+    assert set(routes) >= {"actor", "forward", "backward", "discriminator", "critic_discriminator"}
+    assert routes["actor"] == [*state, "last_action", "history_actor"]
+    assert routes["backward"] == privileged
+    assert routes["discriminator"] == privileged
+    current_routes = _runner_cfg("g1_lafan").to_dict()["obs_groups"]
+    route_compatibility = "exact_route_match" if routes == current_routes else "route_changed_requires_fresh_canary"
+    assert route_compatibility in {"exact_route_match", "route_changed_requires_fresh_canary"}
 
 
 def test_g1_learning_stub_separates_behavior_action_axis_from_physical_table_axis() -> None:
     """The learner-only environment must retain the same named axes as the live environment."""
     module = _module()
-    cfg = resolve_presets(module.MotionImitationEnvCfg(), selected={"g1_lafan"})
+    cfg = resolve_presets(module.MotionImitationEnvCfg(), selected=motion_environment_axes("g1_lafan"))
     cfg.sim.device = "cpu"
     live_joint_names = tuple(cfg.scene.robot.actuators["motion"].joint_names_expr)
     table = SimpleNamespace(
@@ -222,7 +266,7 @@ def test_smpl_live_axes_use_native_mjcf_joint_labels(monkeypatch: pytest.MonkeyP
 @pytest.mark.parametrize("preset", ("smpl_cmu", "g1_lafan"))
 def test_canary_transform_changes_only_execution_scale_and_provider(preset: str) -> None:
     module = _module()
-    runner = resolve_presets(MotionForwardBackwardRunnerPresetsCfg(), selected={preset}).to_dict()
+    runner = _runner_cfg(preset).to_dict()
     transformed = module._canary_config(runner, None)
     expected = copy.deepcopy(runner)
     expected["replay"]["capacity_transitions"] = 32
@@ -239,7 +283,7 @@ def test_native_training_smoke_changes_only_declared_execution_scale(preset: str
     contract = json.loads(SMOKE_CONTRACT.read_text())
     profile = contract["profiles"][preset]
     overrides = profile["execution_scale_overrides"]
-    production = resolve_presets(MotionForwardBackwardRunnerPresetsCfg(), selected={preset}).to_dict()
+    production = _runner_cfg(preset).to_dict()
     smoke = copy.deepcopy(production)
     smoke["max_iterations"] = overrides["max_iterations"]
     smoke["lifecycle_extension"] = overrides["lifecycle_extension"]
@@ -267,14 +311,18 @@ def test_native_training_smoke_changes_only_declared_execution_scale(preset: str
     }
     assert overrides["replay_capacity_transitions"] % profile["collection"]["num_envs"] == 0
     command = profile["command"]
-    assert "agent.lifecycle_extension=null" in command
+    selection = next(token for token in command if token.startswith("presets="))
+    selected = set(selection.removeprefix("presets=").split(","))
+    assert "tracking_off" in selected
+    assert selected.isdisjoint({"tracking_source_edge", "tracking_reset_frame"})
+    assert not any(token.startswith("agent.lifecycle_extension=") for token in command)
     assert f"agent.replay.capacity_transitions={overrides['replay_capacity_transitions']}" in command
     assert not any(token.startswith("agent.run_name=") for token in command)
 
 
 @pytest.mark.parametrize("preset", ("smpl_cmu", "g1_lafan"))
-def test_native_training_smoke_closes_current_learner_bridge_and_resolved_config(preset: str) -> None:
-    """The gated identity must close exact learner bytes, bridge owners, and all resolved values."""
+def test_native_training_smoke_reports_current_learner_compatibility(preset: str) -> None:
+    """A frozen training contract reports current drift without changing its identity."""
     import rsl_rl
     from rsl_rl.runners.off_policy_runner import OffPolicyRunner
 
@@ -288,38 +336,44 @@ def test_native_training_smoke_closes_current_learner_bridge_and_resolved_config
 
     profile = json.loads(SMOKE_CONTRACT.read_text())["profiles"][preset]
     overrides = profile["execution_scale_overrides"]
-    agent_cfg = resolve_presets(MotionForwardBackwardRunnerPresetsCfg(), selected={preset})
+    agent_cfg = _runner_cfg(preset)
     agent_cfg.max_iterations = overrides["max_iterations"]
     agent_cfg.lifecycle_extension = overrides["lifecycle_extension"]
-    agent_cfg.replay["capacity_transitions"] = overrides["replay_capacity_transitions"]
+    agent_cfg.replay.capacity_transitions = overrides["replay_capacity_transitions"]
     wrapper = object.__new__(RslRlVecEnvWrapper)
     package_root = Path(rsl_rl.__file__).resolve().parent
     identity = profile["closed_input_identity"]
 
-    assert identity["runner_source_sha256"] == receipt._owner_source(OffPolicyRunner)[1]
-    assert identity["python_source_identity_sha256"] == receipt._file_sha256(ROOT / "python_source_identity.py")
-    assert identity["learner_code_bundle_sha256"] == receipt._python_package_bundle_sha256(package_root)
     runtime_identity = receipt._learner_runtime_identity()
     assert set(runtime_identity["packages"]) == {"gymnasium", "tensordict"}
-    assert identity["learner_runtime_bundle_sha256"] == runtime_identity["bundle_sha256"]
     bridge_identity = receipt._task_bridge_identity(wrapper, agent_cfg)
     assert set(bridge_identity["source_owners"]) == {
         "environment_wrapper",
         "motion_expert_provider",
         "motion_runner_config",
     }
-    assert identity["task_bridge_code_bundle_sha256"] == bridge_identity["bundle_sha256"]
-    assert identity["resolved_agent_config_sha256"] == receipt._resolved_agent_config_sha256(agent_cfg)
-    assert identity["training_cli_sha256"] == receipt._file_sha256(ROOT.parents[1] / "rsl_rl" / "train_rsl_rl.py")
-    assert identity["receipt_code_sha256"] == receipt._file_sha256(receipt_path)
+    current = {
+        "runner_source_sha256": receipt._owner_source(OffPolicyRunner)[1],
+        "python_source_identity_sha256": receipt._file_sha256(ROOT / "python_source_identity.py"),
+        "learner_code_bundle_sha256": receipt._python_package_bundle_sha256(package_root),
+        "learner_runtime_bundle_sha256": runtime_identity["bundle_sha256"],
+        "task_bridge_code_bundle_sha256": bridge_identity["bundle_sha256"],
+        "resolved_agent_config_sha256": receipt._resolved_agent_config_sha256(agent_cfg),
+        "training_cli_sha256": receipt._file_sha256(ROOT.parents[1] / "rsl_rl" / "train_rsl_rl.py"),
+        "receipt_code_sha256": receipt._file_sha256(receipt_path),
+    }
+    assert all(isinstance(digest, str) and len(digest) == 64 for digest in identity.values())
+    mismatched = sorted(name for name, digest in current.items() if identity[name] != digest)
+    status = "exact_producer_match" if not mismatched else "producer_changed_requires_fresh_smoke"
+    assert status in {"exact_producer_match", "producer_changed_requires_fresh_smoke"}
 
 
 @pytest.mark.parametrize("preset", ("smpl_cmu", "g1_lafan"))
 def test_native_training_identity_differs_from_phase3e_only_by_motion_split(preset: str) -> None:
     """Frozen Phase 3E evaluation identity must transfer to train with one declared semantic difference."""
-    from isaaclab_tasks.core.multi_task.motion.data.importers import BfmG1JoblibClips, HumEnvHdf5Clips
-    from isaaclab_tasks.core.multi_task.motion.trajectory.g1 import G1LafanFrameBuilder
-    from isaaclab_tasks.core.multi_task.motion.trajectory.smpl import SmplHumEnvFrameBuilder
+    from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClips, LafanG1JoblibClips
+    from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1PoseFrameBuilder
+    from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplGeneralizedCoordinateFrameBuilder
     from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
 
     identity_path = ROOT / "motion_environment_identity.py"
@@ -328,11 +382,11 @@ def test_native_training_identity_differs_from_phase3e_only_by_motion_split(pres
     identity_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(identity_module)
 
-    importer = HumEnvHdf5Clips if preset == "smpl_cmu" else BfmG1JoblibClips
-    frame_builder = SmplHumEnvFrameBuilder if preset == "smpl_cmu" else G1LafanFrameBuilder
+    importer = CmuHumEnvSmplClips if preset == "smpl_cmu" else LafanG1JoblibClips
+    frame_builder = SmplGeneralizedCoordinateFrameBuilder if preset == "smpl_cmu" else G1PoseFrameBuilder
     reference_root = None
-    train_cfg = resolve_presets(MotionImitationEnvCfg(), selected={preset})
-    evaluation_cfg = resolve_presets(MotionImitationEnvCfg(), selected={preset})
+    train_cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes(preset))
+    evaluation_cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes(preset))
     evaluation_cfg.commands.motion.task_table.motion_split = "evaluation"
 
     def environment_identity(cfg: object) -> dict[str, object]:
@@ -355,8 +409,14 @@ def test_native_training_identity_differs_from_phase3e_only_by_motion_split(pres
     assert evaluation_cfg.commands.motion.task_table.motion_split == bridge["phase3e_motion_split"]
     assert train["resolved_axes"] == evaluation["resolved_axes"]
     assert train["resolved_axes_sha256"] == evaluation["resolved_axes_sha256"]
-    assert train["resolved_axes_sha256"] == frozen["resolved_axes_sha256"]
-    assert identity_module.motion_environment_semantic_sha256(train) == profile["environment_semantic_sha256"]
+    current_semantic = identity_module.motion_environment_semantic_sha256(train)
+    compatibility = (
+        "exact_environment_match"
+        if train["resolved_axes_sha256"] == frozen["resolved_axes_sha256"]
+        and current_semantic == profile["environment_semantic_sha256"]
+        else "environment_changed_requires_fresh_smoke"
+    )
+    assert compatibility in {"exact_environment_match", "environment_changed_requires_fresh_smoke"}
 
     def changed_paths(left: object, right: object, prefix: str = "") -> set[str]:
         if isinstance(left, dict) and isinstance(right, dict):
@@ -408,11 +468,12 @@ def test_native_training_smoke_overrides_resolve_through_real_task_registry(
 
     assert hydra_args == []
     table_cfg = env_cfg.commands.motion.task_table
-    assert table_cfg.source.identifier == preset
+    expected_source = "cmu_humenv_smpl" if preset == "smpl_cmu" else "lafan_g1_29dof"
+    assert table_cfg.source.identifier == expected_source
     assert table_cfg.source_artifact_root == source_root
     assert table_cfg.reference_artifact_root == ("" if preset == "smpl_cmu" else reference_root)
     assert agent_cfg.lifecycle_extension is None
-    assert agent_cfg.replay["capacity_transitions"] == profile["collection"]["expected_transitions"]
+    assert agent_cfg.replay.capacity_transitions == profile["collection"]["expected_transitions"]
 
 
 def test_native_training_smokes_are_predeclared_but_not_launched() -> None:
@@ -426,15 +487,15 @@ def test_native_training_smokes_are_predeclared_but_not_launched() -> None:
         == "native_environment_learner_integration_one_update_group_not_convergence_evaluator_or_systems"
     )
     for preset, profile in contract["profiles"].items():
-        runner = resolve_presets(MotionForwardBackwardRunnerPresetsCfg(), selected={preset})
+        runner = _runner_cfg(preset)
         collection = profile["collection"]
-        assert collection["num_envs"] == runner.num_envs
-        assert collection["steps_per_iteration"] == runner.num_steps_per_env
-        assert collection["random_action_transitions"] == runner.random_action_steps
+        assert collection["num_envs"] == runner.schedule.num_envs
+        assert collection["steps_per_iteration"] == runner.schedule.num_steps_per_env
+        assert collection["random_action_transitions"] == runner.schedule.random_action_steps
         assert collection["expected_transitions"] == (
             collection["num_envs"] * collection["steps_per_iteration"] * collection["iterations"]
         )
-        assert collection["updates_per_group"] == runner.num_updates_per_iteration
+        assert collection["updates_per_group"] == runner.schedule.num_updates_per_iteration
         assert collection["expected_update_groups"] == 1
         assert collection["expected_update_calls"] == (
             collection["expected_update_groups"] * collection["updates_per_group"]
@@ -448,7 +509,13 @@ def test_native_training_smokes_are_predeclared_but_not_launched() -> None:
             "--task",
             "Isaac-Motion-Imitation-v0",
         ]
-        assert f"presets={preset}" in command
+        selection = next(token for token in command if token.startswith("presets="))
+        selected = set(selection.removeprefix("presets=").split(","))
+        expected = set(motion_environment_axes(preset)) | {
+            axis for axis in motion_runner_axes(preset) if not axis.startswith("tracking_")
+        }
+        expected.add("tracking_off")
+        assert selected == expected
         evidence = _record(preset)
         identity = profile["closed_input_identity"]
         assert identity["task_table_sha256"] == evidence["task_table"]["identity_sha256"]

@@ -83,11 +83,15 @@ def test_raw_physical_counterexample_permutes_every_joint_bearing_actor_field() 
     """The sensitivity probe must reproduce the former raw-live semantic error exactly."""
     module = _module()
     joint_ids = _ids(BEHAVIOR_JOINT_NAMES, PHYSICAL_JOINT_NAMES)
-    state = torch.arange(64, dtype=torch.float32).view(1, -1)
+    joint_position = torch.arange(29, dtype=torch.float32).view(1, -1)
+    joint_velocity = (50.0 + torch.arange(29, dtype=torch.float32)).view(1, -1)
     last_action = (100.0 + torch.arange(29, dtype=torch.float32)).view(1, -1)
     history = (200.0 + torch.arange(372, dtype=torch.float32)).view(1, -1)
     observations = {
-        "state": state,
+        "joint_position": joint_position,
+        "joint_velocity": joint_velocity,
+        "projected_gravity": torch.zeros(1, 3),
+        "base_angular_velocity": torch.zeros(1, 3),
         "last_action": last_action,
         "history_actor": history,
         "privileged_state": torch.zeros(1, 463),
@@ -95,10 +99,14 @@ def test_raw_physical_counterexample_permutes_every_joint_bearing_actor_field() 
 
     raw = module._raw_physical_actor_observations(observations, joint_ids)
 
-    expected_state = state.clone()
-    expected_state[:, :29].scatter_(1, joint_ids.view(1, -1), state[:, :29])
-    expected_state[:, 29:58].scatter_(1, joint_ids.view(1, -1), state[:, 29:58])
-    torch.testing.assert_close(raw["state"], expected_state)
+    expected_joint_position = joint_position.clone()
+    expected_joint_position.scatter_(1, joint_ids.view(1, -1), joint_position)
+    torch.testing.assert_close(raw["joint_position"], expected_joint_position)
+    expected_joint_velocity = joint_velocity.clone()
+    expected_joint_velocity.scatter_(1, joint_ids.view(1, -1), joint_velocity)
+    torch.testing.assert_close(raw["joint_velocity"], expected_joint_velocity)
+    assert raw["projected_gravity"] is observations["projected_gravity"]
+    assert raw["base_angular_velocity"] is observations["base_angular_velocity"]
     expected_last_action = last_action.clone()
     expected_last_action.scatter_(1, joint_ids.view(1, -1), last_action)
     torch.testing.assert_close(raw["last_action"], expected_last_action)
@@ -127,7 +135,10 @@ def test_native_trace_loader_returns_the_exact_checkpoint_fields() -> None:
 
     assert tuple(observations.batch_size) == (2,)
     assert {name: tuple(value.shape) for name, value in observations.items()} == {
-        "state": (2, 64),
+        "joint_position": (2, 29),
+        "joint_velocity": (2, 29),
+        "projected_gravity": (2, 3),
+        "base_angular_velocity": (2, 3),
         "last_action": (2, 29),
         "history_actor": (2, 372),
         "privileged_state": (2, 463),

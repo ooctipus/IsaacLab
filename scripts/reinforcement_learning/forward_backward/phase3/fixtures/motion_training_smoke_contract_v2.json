@@ -43,19 +43,19 @@
         "strict_mmap": true
       },
       "closed_input_identity": {
-        "checkpoint_schema_sha256": "c62ecf693d22509f3c05143dd2cc4a905e757791de60bb6d3921c269696693ed",
-        "environment_dependency_bundle_sha256": "70e6b9ef3d0afe608b749633070d8e80d357d840c55aaf88aab649d984f227d1",
-        "expert_schema_sha256": "aafd5cb6d00f65941de1301b1abb035d965b6fee09d58fa9450672d79e119a02",
-        "learner_code_bundle_sha256": "4b583f26eb407cbeee69f15c738786c5db542e68950c051040d689f1d5b2884f",
+        "checkpoint_schema_sha256": "589f35c871d124cddc77619e3d5b01ebf18e5c5917ed42a0e13276a210e32246",
+        "environment_dependency_bundle_sha256": "2c085cd9270b55f688d69c5585a0a7b54690a03b596bf77d646234ca63c47102",
+        "expert_schema_sha256": "1a025ce349e93a59ffe2f13d2182b9a73bb2fbff0ac7683e29989571fbe08d61",
+        "learner_code_bundle_sha256": "7ac2fa2588b9ce4014671ea24c4db55ec6aca8ca5846e6a461033a40a783737f",
         "learner_runtime_bundle_sha256": "0b27d9ce550690a79ceb23915323f483164d0a871e4907aaef797bd1d7cfc960",
-        "observation_schema_sha256": "7b2f98047b1a4fcb5d079ee5d86c23af6a59692b913f570614b2b062f246d19e",
+        "observation_schema_sha256": "7c3777921396ea72f2c563444a08872199534641aa7ff104a0cc452b00c34543",
         "python_source_identity_sha256": "393b12af83e11362ca214de8033f8a9c0df55420dd38d6da20bf5732d0686efd",
-        "receipt_code_sha256": "dae3d62cf9d7c942129ffc40ac2c7d60e0443902bdc0401f63cca38d77556af6",
-        "resolved_agent_config_sha256": "b8d0a135aa6866e8dd33b2f5585038cba0c626a2240e8f9c8b5bc5123b95407e",
-        "resolved_axes_sha256": "7371c6ec9dd0e83be8400a0b7b90c9d4d126d6a72c3a1e43318546ffe3e25bcf",
+        "receipt_code_sha256": "3a5e5590c4ac62b546bed28e9c3c0ade6bc9b0c768053fe10d8958da1732c2a0",
+        "resolved_agent_config_sha256": "69627daddbd38e5c2ef1c6bca66c2a5fa7a7963aca5f4e48f75a65b884e8c34e",
+        "resolved_axes_sha256": "a4e5b5bb1ebd6aedfc70ae47eec4253e3b30a90c4cc42d3d5337b363ac3ae4c7",
         "runner_source_sha256": "898f6a6e29bf8d9b692a4ae7b081f9b8a082f191237eb9e35c28d58e38f86bef",
-        "task_bridge_code_bundle_sha256": "c65cdc8a42e3ad2941ef73e3bb93bd2365f7a3e91f86ee3435804434355a86b8",
-        "task_table_sha256": "c06647d85899a9b0ad1e78047c4eeb0b17b283f25d43b60b69b6cf16b2bf9936",
+        "task_bridge_code_bundle_sha256": "383496a334a9cbcd5bab2428ceb6941d4de171f8ece72a9eab23897f3cf314c1",
+        "task_table_sha256": "cb63cdba1fa00c2b35495e63cdea496a0e05e024b5a3ec9df6c384727a7e1197",
         "training_cli_sha256": "566c126c3d90b7385e71c71bd03e0e0a0fdb47c9700b587ab8bbf7fbcdc3d0a5"
       },
       "collection": {
@@ -82,10 +82,9 @@
         "1024",
         "--max_iterations",
         "12",
-        "presets=g1_lafan",
+        "presets=g1,lafan,physx,timing_sim200_control50_horizon501,sampling_clip_time,evidence_physical_auxiliary,randomization_physics_observation_pose_push,helpers_discriminator_auxiliary,tracking_off,model_residual_6x1024,replay_episode_uniform_5120k,schedule_1024x1_211p2m,optimization_lr3e4_implied0_actor0p05,context_expert_half_8192,exploration_std0p05_range5,seed_4728,expert_clock_50hz",
         "env.commands.motion.task_table.source_artifact_root=<SOURCE_ARTIFACT_ROOT>",
         "env.commands.motion.task_table.reference_artifact_root=<REFERENCE_ARTIFACT_ROOT>",
-        "agent.lifecycle_extension=null",
         "agent.replay.capacity_transitions=12288",
         "--training_callback",
         "forward_backward.phase3.motion_training_receipt:training_callback"
@@ -97,7 +96,7 @@
         "replay": "cuda:0",
         "simulator": "cuda:0"
       },
-      "environment_semantic_sha256": "97bcc7308ad3f29daa3967a3fcb9b204ccbd668e20a8dcf0dbb64423436f5717",
+      "environment_semantic_sha256": "dcd9e934186c5f1f88e8223f6a1df4e2d94b2cede4ba3d8f4107039fe3a0842b",
       "execution_scale_overrides": {
         "lifecycle_extension": null,
         "max_iterations": 12,
@@ -156,10 +155,9 @@
         "<FINAL_CHECKPOINT>",
         "--max_iterations",
         "12",
-        "presets=g1_lafan",
+        "presets=g1,lafan,physx,timing_sim200_control50_horizon501,sampling_clip_time,evidence_physical_auxiliary,randomization_physics_observation_pose_push,helpers_discriminator_auxiliary,tracking_off,model_residual_6x1024,replay_episode_uniform_5120k,schedule_1024x1_211p2m,optimization_lr3e4_implied0_actor0p05,context_expert_half_8192,exploration_std0p05_range5,seed_4728,expert_clock_50hz",
         "env.commands.motion.task_table.source_artifact_root=<SOURCE_ARTIFACT_ROOT>",
         "env.commands.motion.task_table.reference_artifact_root=<REFERENCE_ARTIFACT_ROOT>",
-        "agent.lifecycle_extension=null",
         "agent.replay.capacity_transitions=12288",
         "--training_callback",
         "forward_backward.phase3.motion_training_receipt:training_callback"
@@ -174,19 +172,19 @@
         "strict_mmap": true
       },
       "closed_input_identity": {
-        "checkpoint_schema_sha256": "e824e08356cafe28c48834971c2018e8faac5651c0b23da79e38544832877115",
-        "environment_dependency_bundle_sha256": "752584cb626217976c07e9b80036407deba6505845b63ace07766df7e0f719bd",
-        "expert_schema_sha256": "544581e23062a1a2a2584ee6bb62d3d56039d8a324c7632019067807a02cbe1b",
-        "learner_code_bundle_sha256": "4b583f26eb407cbeee69f15c738786c5db542e68950c051040d689f1d5b2884f",
+        "checkpoint_schema_sha256": "5187df4162776fb73445f6bfdbfd842f2093fa21ef674935853dee7270e7baeb",
+        "environment_dependency_bundle_sha256": "dc63271751cce3d309c241273e68409befcc62faea079c8c8319f13b741b189d",
+        "expert_schema_sha256": "dbe53a1ba436915837f70c4b7fc067e2111923791333a8d7a5d05f7ce74ae1b0",
+        "learner_code_bundle_sha256": "7ac2fa2588b9ce4014671ea24c4db55ec6aca8ca5846e6a461033a40a783737f",
         "learner_runtime_bundle_sha256": "0b27d9ce550690a79ceb23915323f483164d0a871e4907aaef797bd1d7cfc960",
         "observation_schema_sha256": "3ca6b1683360759cd862fce13fa3e128c15461ba258d05ef2b6c4013cd439a3c",
         "python_source_identity_sha256": "393b12af83e11362ca214de8033f8a9c0df55420dd38d6da20bf5732d0686efd",
-        "receipt_code_sha256": "dae3d62cf9d7c942129ffc40ac2c7d60e0443902bdc0401f63cca38d77556af6",
-        "resolved_agent_config_sha256": "6a69db7d62b3466e5e2fd64e197fafd81d5455ad1ada9f1d619418bb9bd67eac",
-        "resolved_axes_sha256": "38d7137df6acbd7c39c8a5e2790b968eb201d21be95799d600b5c238e05ff8e1",
+        "receipt_code_sha256": "3a5e5590c4ac62b546bed28e9c3c0ade6bc9b0c768053fe10d8958da1732c2a0",
+        "resolved_agent_config_sha256": "6ea2fc08b89c695326e2ee61c02f083cf87266335d04d904e844b5b8fa171b08",
+        "resolved_axes_sha256": "b4dd6dea384ae213f03fe7d187d82fc8ffb929b1b0b315a00798262c7f6280b3",
         "runner_source_sha256": "898f6a6e29bf8d9b692a4ae7b081f9b8a082f191237eb9e35c28d58e38f86bef",
-        "task_bridge_code_bundle_sha256": "0117b63ce83101fe9167076e59164f6941f965730b320c68c60640c4ef945158",
-        "task_table_sha256": "eb9e80a5a85c96b2dce5a509fa1fb1332ff6c051c83c74acc90413aa5476e170",
+        "task_bridge_code_bundle_sha256": "383496a334a9cbcd5bab2428ceb6941d4de171f8ece72a9eab23897f3cf314c1",
+        "task_table_sha256": "58ae200a5c34806db4a7d6cfcb4a224c18c4152b28d5b1981225d56598517d20",
         "training_cli_sha256": "566c126c3d90b7385e71c71bd03e0e0a0fdb47c9700b587ab8bbf7fbcdc3d0a5"
       },
       "collection": {
@@ -213,9 +211,8 @@
         "50",
         "--max_iterations",
         "102",
-        "presets=smpl_cmu",
+        "presets=smpl,cmu,newton_mjwarp,timing_sim450_control30_horizon300,sampling_source_rows,helpers_discriminator,tracking_off,model_plain_2x1024,replay_transition_uniform_2m,schedule_50x10_5m,optimization_lr1e4_implied0p1_actor0p01,context_online_10k,exploration_std0p2_range1,seed_0,expert_clock_source_rows",
         "env.commands.motion.task_table.source_artifact_root=<SOURCE_ARTIFACT_ROOT>",
-        "agent.lifecycle_extension=null",
         "agent.replay.capacity_transitions=51000",
         "--training_callback",
         "forward_backward.phase3.motion_training_receipt:training_callback"
@@ -227,7 +224,7 @@
         "replay": "cuda:0",
         "simulator": "cuda:0"
       },
-      "environment_semantic_sha256": "ce495b7c8e0d41457278bd821c8071206b53b10bc1dddd46fcf836abcc9fe5b9",
+      "environment_semantic_sha256": "ffaa797b438b054cf94c87b6facc5bbbd35e1873b5c5a34a65d1ab5fbc195943",
       "execution_scale_overrides": {
         "lifecycle_extension": null,
         "max_iterations": 102,
@@ -281,9 +278,8 @@
         "<FINAL_CHECKPOINT>",
         "--max_iterations",
         "102",
-        "presets=smpl_cmu",
+        "presets=smpl,cmu,newton_mjwarp,timing_sim450_control30_horizon300,sampling_source_rows,helpers_discriminator,tracking_off,model_plain_2x1024,replay_transition_uniform_2m,schedule_50x10_5m,optimization_lr1e4_implied0p1_actor0p01,context_online_10k,exploration_std0p2_range1,seed_0,expert_clock_source_rows",
         "env.commands.motion.task_table.source_artifact_root=<SOURCE_ARTIFACT_ROOT>",
-        "agent.lifecycle_extension=null",
         "agent.replay.capacity_transitions=51000",
         "--training_callback",
         "forward_backward.phase3.motion_training_receipt:training_callback"

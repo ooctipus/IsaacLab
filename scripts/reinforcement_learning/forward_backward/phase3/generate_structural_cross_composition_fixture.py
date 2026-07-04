@@ -17,13 +17,13 @@ from inspect import getsourcefile
 from pathlib import Path
 
 import numpy as np
-from motion_environment_identity import motion_g1_live_axes
+from motion_environment_identity import motion_environment_axes, motion_g1_live_axes
 
-from isaaclab_tasks.core.multi_task.motion.config.source_skeletons import g1_lafan_source_skeleton
+from isaaclab_tasks.core.multi_task.kinematics import KinematicTreeRotationProjection
 from isaaclab_tasks.core.multi_task.motion.data import MotionSkeleton
-from isaaclab_tasks.core.multi_task.motion.frames import G1_HEAD_FRAME_NAME
-from isaaclab_tasks.core.multi_task.motion.trajectory.g1 import G1LafanFrameBuilder
-from isaaclab_tasks.core.multi_task.motion.trajectory.g1_smpl import G1HumanFrameProjection
+from isaaclab_tasks.core.multi_task.motion.data.sources import lafan_g1_29dof_skeleton
+from isaaclab_tasks.core.multi_task.motion.robots.g1.frames import G1_HEAD_FRAME_NAME
+from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1PoseFrameBuilder
 from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
 from isaaclab_tasks.utils import resolve_presets
 
@@ -35,7 +35,7 @@ _CONTENT_SHA256 = hashlib.sha256(b"analytical-human-30-body-structural-fixture-v
 
 def source_skeleton() -> MotionSkeleton:
     """Return the declared human source skeleton used by the structural proof."""
-    target = g1_lafan_source_skeleton()
+    target = lafan_g1_29dof_skeleton()
     return MotionSkeleton(
         identifier="analytical_human_30_body_v1",
         content_sha256=_CONTENT_SHA256,
@@ -55,7 +55,7 @@ def source_skeleton() -> MotionSkeleton:
 
 def arrays() -> dict[str, np.ndarray]:
     """Return ordered portable arrays with independent per-clip clocks."""
-    target = g1_lafan_source_skeleton()
+    target = lafan_g1_29dof_skeleton()
     source_fps = (24.0, 60.0)
     frame_counts = (12, 15)
     offsets = np.asarray((0, frame_counts[0], sum(frame_counts)), dtype=np.int64)
@@ -88,7 +88,6 @@ def arrays() -> dict[str, np.ndarray]:
         "source_fps": np.asarray(source_fps, dtype=np.float64),
         "root_translation": np.concatenate(roots, axis=0),
         "local_rotation_wxyz": np.concatenate(rotations, axis=0),
-        "valid": np.asarray((True, True), dtype=np.bool_),
     }
 
 
@@ -133,8 +132,8 @@ def write_archive(path: Path, tensors: dict[str, np.ndarray]) -> None:
 def record(archive_path: Path, tensors: dict[str, np.ndarray]) -> dict[str, object]:
     """Return the structural claim, provenance, and separated error owners."""
     source = source_skeleton()
-    target = g1_lafan_source_skeleton()
-    cfg = resolve_presets(MotionImitationEnvCfg(), selected={"g1_cmu"})
+    target = lafan_g1_29dof_skeleton()
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("g1_cmu"))
     table_cfg = cfg.commands.motion.task_table
     joint_names, body_names = motion_g1_live_axes(cfg)
     reference_frame_names = (*body_names, G1_HEAD_FRAME_NAME)
@@ -205,15 +204,11 @@ def record(archive_path: Path, tensors: dict[str, np.ndarray]) -> dict[str, obje
             "physics_dt_seconds": cfg.sim.dt,
             "control_decimation": cfg.decimation,
             "control_dt_seconds": cfg.sim.dt * cfg.decimation,
-            "expert_grid": {
-                "mode": table_cfg.expert_sample_grid.mode.value,
-                "step_seconds": table_cfg.expert_sample_grid.step_seconds,
-            },
         },
         "code_identity": {
             "generator_sha256": _sha256_file(Path(__file__)),
-            "target_builder_sha256": _source_sha256(G1LafanFrameBuilder),
-            "projection_sha256": _source_sha256(G1HumanFrameProjection),
+            "target_builder_sha256": _source_sha256(G1PoseFrameBuilder),
+            "projection_sha256": _source_sha256(KinematicTreeRotationProjection),
             "environment_cfg_sha256": _source_sha256(MotionImitationEnvCfg),
         },
         "error_ownership": {

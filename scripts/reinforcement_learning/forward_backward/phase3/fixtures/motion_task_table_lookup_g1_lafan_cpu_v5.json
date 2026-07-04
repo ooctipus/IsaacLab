@@ -1,27 +1,26 @@
 {
   "code_identity": {
-    "bundle_sha256": "562df1a7444dff245a080a596239c7d4c77fd59f403672c08b9b6a15ef5d855d",
+    "bundle_sha256": "5fd353835b6af1ef14f523402516b871e11de04b966fa460837ca0d3b3b3a779",
     "python_sources": {
-      "benchmark_motion_task_table": "5113e43e8f881a652718fd0d1931ca5ded23607bdff43d6db1d3ef90e75c48ad",
+      "benchmark_motion_task_table": "fb0e09459e8bcdfc682b5591e0cfd8ebd13dad7a6f60651a82dad19b22dfbf03",
       "isaaclab.sim.schemas.schemas_cfg": "c23fde175d325b091f32a6eb8afc5f63bcafb4ba59dbced89fcff9ceefaa1a40",
       "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics": "e450f76a2bfe11ff0986c60c5519a7ddc5009579477478547945e6958f85fbfd",
       "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics_cfg": "bb54968f13676e3d7185ae40bfe4792c38c5bb5029f9e10d68ea759f315d036c",
-      "isaaclab_tasks.core.multi_task.motion.config.robots.g1": "5372194cad85cd6fa9e9036d04e590bb6750c4b0b2c520ae6ac1a73476d0158a",
-      "isaaclab_tasks.core.multi_task.motion.config.source_skeletons": "d658140666c8f1aed3c9004d2e4f8fab4d77299a45c74ac66d10445f96a055c3",
-      "isaaclab_tasks.core.multi_task.motion.config.sources": "827bfd66236b4b9a81ef5ea1af80d61e25b7c327b74c5a72e062320291667763",
-      "isaaclab_tasks.core.multi_task.motion.data._identity": "386dddd8b1339521350772e50e9113eab010d0ffe1bee873b6c2fa88081fec49",
-      "isaaclab_tasks.core.multi_task.motion.data.clip_index": "a11b678c9b39e96be989ac20d3b6292f0dc976e232dc1315615c52de6f626abf",
-      "isaaclab_tasks.core.multi_task.motion.data.importers._hashing": "6843ce1f208fa3ed0b69466dbdd908ac7e6026a6dc4ba8d1286f0e4ad17614cd",
-      "isaaclab_tasks.core.multi_task.motion.data.importers.bfm_g1_joblib": "75231491023bedf17a1cb503a81fe6fa0e9d547667b2d88e4bf78874d7b4a7ac",
-      "isaaclab_tasks.core.multi_task.motion.data.sample_grid": "3eca55c9d434db72810e815a91dc89637a9d310275a039a347b7d425f911d478",
+      "isaaclab_tasks.core.multi_task.motion.data._identity": "4a7dc69c4f398d91d3e6a69deee06ebf5704f76ece1b3368a2ec1d261de1be81",
+      "isaaclab_tasks.core.multi_task.motion.data.clip_index": "df56ea13cf3b7621cb92ef85b5f0f4f4382b3349abe453a19252158a76bc4d97",
       "isaaclab_tasks.core.multi_task.motion.data.skeleton": "63d04d889c2f3c3f389c55899688a9b4b6e18dc4d541b08ece1d749e37985ceb",
-      "isaaclab_tasks.core.multi_task.motion.frames": "01265380578fa7140fc5f38efc9933c30b3802314f4d1852d6ffdd6097e8691a",
-      "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_state_payload": "f8dee3bb5b1901f275d1d872bcc6339af7ff9780abe98aa76d236da28f591111",
-      "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table": "2eafb32d7a2492328caf34090c722f79865c8e84b0bd216605bc1512437ad4e7",
-      "isaaclab_tasks.core.multi_task.motion.trajectory.g1": "b2b2696517899ddcd5425ed213659c2af8923bb2cef06fcb152ee2ce45beaa3a"
+      "isaaclab_tasks.core.multi_task.motion.data.source": "6beb99ba03b8c6be2f4a3bb4e47783e991e206c5822f6fa2381a2b526f466823",
+      "isaaclab_tasks.core.multi_task.motion.data.sources.lafan_g1_29dof": "4d5d1fa39dfd5b2079d8dfee2e4d5da170546955e6244b83e1d1a907b1083ccf",
+      "isaaclab_tasks.core.multi_task.motion.data.sources.lafan_g1_29dof_coordinates": "911732b3eb9ea5e09ba9ae2f238090c1ad1c7c2f718b9c478efd5d58e285d413",
+      "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_sampler": "5164e4b96bca6c6f4816388d96a18491159e8d3b281c69ee59e7a2720926e6dc",
+      "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_state_payload": "ae76e6ef6781fafce9993f4c598649e6ba87f3ccc6fa95b6292ac5068ccf9d5a",
+      "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table": "cfa7a07341c071c53462004905b6843fd13bbd6e7a883ed4c171b6187661c18b",
+      "isaaclab_tasks.core.multi_task.motion.robots.g1.articulation": "53a0c9fefc7eb30039fc739a5bb3518d7983be38f1959c55c7d0cec8f841a419",
+      "isaaclab_tasks.core.multi_task.motion.robots.g1.frames": "9cd559f6d1a3116929653292cea4953fff789e5d7c69e140e5aa6144e1bd62f2",
+      "isaaclab_tasks.core.multi_task.motion.robots.g1.reference": "b83e546ec1a33b9e8df8c478577e1db7192a05655280ffc64952a8825bdeac36"
     },
     "python_symbols": {
-      "isaaclab_tasks.core.multi_task.motion.mdp.commands.MotionTaskTableCfg": "fb234daacbd3e0504ffd3eee67e9bab7282f0288545ea132d14b53314f1a0db8"
+      "isaaclab_tasks.core.multi_task.motion.mdp.commands.MotionTaskTableCfg": "89556f31f1d306c1491073f8411b0bbe0748355d5510cc85adcd0f4259f24121"
     },
     "reference_assets": {
       "reference/g1_29dof.xml": "439c1ec0806583d73b492da9484b0cb9e9eae215e0d9506e3c2fa69016733532"
@@ -29,13 +28,25 @@
     "resolved_construction": {
       "control_dt_seconds": 0.02,
       "preset": "g1_lafan",
+      "sampler": {
+        "reset_sources": [
+          [
+            "reference",
+            0.7
+          ],
+          [
+            "lie_down",
+            0.3
+          ]
+        ]
+      },
       "source": {
         "format": "joblib_pickle_mapping_clip_name_to_field_mapping",
-        "identifier": "g1_lafan",
+        "identifier": "lafan_g1_29dof",
         "license": "retargeted_lafan_redistribution_requires_provenance_review",
-        "open_source": "isaaclab_tasks.core.multi_task.motion.config.sources:_open_g1_source",
+        "open_source": "isaaclab_tasks.core.multi_task.motion.data.sources.lafan_g1_29dof:open_lafan_g1_source",
         "semantic_level": "robot_pose_g1_not_canonical_lafan",
-        "skeleton_factory": "isaaclab_tasks.core.multi_task.motion.config.source_skeletons:g1_lafan_source_skeleton",
+        "skeleton_factory": "isaaclab_tasks.core.multi_task.motion.data.sources.lafan_g1_29dof_coordinates:lafan_g1_29dof_skeleton",
         "skeleton_identity_sha256": "993eedd0b6c61e13a4a1751680d9625f0c3f1954390cc7883f7fc12071e589ab",
         "source_fps": 30.0,
         "split": {
@@ -48,38 +59,23 @@
         }
       },
       "table": {
-        "expert_sample_grid": {
-          "mode": "uniform_before_source_end",
-          "step_seconds": 0.02
-        },
-        "frame_builder_factory": "isaaclab_tasks.core.multi_task.motion.trajectory.g1:g1_lafan_frame_builder",
-        "reference_kinematics_factory": "isaaclab_tasks.core.multi_task.motion.config.robots.g1:g1_reference_kinematics",
-        "reset_sources": [
-          [
-            "reference",
-            0.7
-          ],
-          [
-            "lie_down",
-            0.3
-          ]
-        ],
-        "task_row_mode": "clip_time_ranges",
-        "task_sampling_law": "clip_categorical_then_continuous_time_v1"
+        "frame_builder_factory": "isaaclab_tasks.core.multi_task.motion.robots.g1.reference:retargeted_lafan_to_g1_frame_builder",
+        "reference_kinematics_factory": "isaaclab_tasks.core.multi_task.motion.robots.g1.reference:g1_reference_kinematics",
+        "task_row_mode": "clip_time_ranges"
       }
     }
   },
   "construction": {
     "cuda_memory": null,
-    "frames_per_second": 117722.79215935997,
+    "frames_per_second": 99295.45020992526,
     "host_rss_bytes": {
-      "after_source_inspect": 1164230656,
-      "after_source_open": 1163997184,
-      "after_table_build_and_source_release": 1817305088,
-      "baseline": 952410112,
-      "process_peak": 2047750144
+      "after_source_inspect": 1258438656,
+      "after_source_open": 1258409984,
+      "after_table_build_and_source_release": 1765904384,
+      "baseline": 1046855680,
+      "process_peak": 1920696320
     },
-    "seconds": 2.1966859200038016
+    "seconds": 2.6043489349540323
   },
   "correctness": {
     "fixed_reference_matches_allocating_oracle": {
@@ -101,21 +97,33 @@
     },
     "fixed_reference_output_pointers_stable": true
   },
+  "motion_sampler": {
+    "reset_source_names": [
+      "reference",
+      "lie_down"
+    ],
+    "reset_source_probabilities": [
+      0.699999988079071,
+      0.30000001192092896
+    ],
+    "resident_bytes": 17248,
+    "task_sampling_law": "clip_categorical_then_continuous_time_v1"
+  },
   "parameters": {
     "batch_size": 4096,
     "control_dt_seconds": 0.02,
     "field_iterations": 10000,
     "iterations": 10,
-    "samples": 7,
+    "samples": 5,
     "time_program_length": 16,
-    "warmup": 3
+    "warmup": 1
   },
   "runtime": {
     "dependencies": {
       "joblib": {
-        "distribution_version": "1.5.3",
-        "module_source_sha256": "5bed10f143569bbad2266640f5eabe8a172428ce8944abce9b597c48de38a624",
-        "module_version": "1.5.3"
+        "distribution_version": "1.5.1",
+        "module_source_sha256": "b814aeb1392c5cba4a03ea40a0b3b8c1d4eb1e424e7e1b41dbdee671395eb04f",
+        "module_version": "1.5.1"
       },
       "newton": {
         "distribution_version": "1.4.0.dev0",
@@ -141,19 +149,19 @@
         "module_version": "2.10.0+cu128"
       },
       "warp": {
-        "distribution_version": "1.16.0.dev20260630",
-        "module_source_sha256": "cb3cb0f9fd80237a74e6277476cb6862be0c0f993cfad1c1e3e580e322e26479",
-        "module_version": "1.16.0.dev20260630"
+        "distribution_version": "1.15.0.dev20260529",
+        "module_source_sha256": "f29f6368f025003a48a17a0dd6ed4eb1ef3d825c041026c07a6e1d00a31abc52",
+        "module_version": "1.15.0.dev20260529"
       }
     },
-    "dependencies_sha256": "38de670cd16b14ccd0942d6271232e71a9a8a4947e8afdb5ad93b844dc825bf6",
+    "dependencies_sha256": "5b3ff83d6f80014ba4592982ca732e8a4f9712d1eb00e886e473da350430b4bd",
     "device": "cpu",
     "platform": "Linux-6.17.0-35-generic-x86_64-with-glibc2.39",
-    "python": "3.12.13",
+    "python": "3.12.12",
     "torch": "2.10.0+cu128",
     "torch_threads": 24
   },
-  "schema": "forward_backward_phase3c_motion_task_table_lookup_v4",
+  "schema": "forward_backward_phase3c_motion_task_table_lookup_v5",
   "source": {
     "artifact": "humanoidverse/data/lafan_29dof_10s-clipped.pkl",
     "artifact_sha256": "7f5aa36957808ee2e972472b18add8510533742710ba312d8b8c6e6014f1c010",
@@ -166,7 +174,7 @@
     "split": "training"
   },
   "task_table": {
-    "compact_metadata_bytes": 56046,
+    "compact_metadata_bytes": 37936,
     "field_names": [
       "root_position",
       "root_rotation",
@@ -215,9 +223,9 @@
         4
       ]
     },
-    "frame_builder_identity_sha256": "27a1e08cebd1b61e4a3226808d2862765a97a331fae84ddcb9965d532052ed4c",
-    "frame_builder_version": "g1_lafan_exact_mjcf_v1",
-    "identity_sha256": "c06647d85899a9b0ad1e78047c4eeb0b17b283f25d43b60b69b6cf16b2bf9936",
+    "frame_builder_identity_sha256": "972141c31e47ca05ba3d68305b3f385956b0113b3601c84b0f380fc8887a71dc",
+    "frame_builder_version": "g1_pose_exact_mjcf_v1",
+    "identity_sha256": "cb63cdba1fa00c2b35495e63cdea496a0e05e024b5a3ec9df6c384727a7e1197",
     "logical_row_width": 474,
     "physical_row_width": 461,
     "reset_fields": [
@@ -228,15 +236,7 @@
       "joint_position",
       "joint_velocity"
     ],
-    "reset_source_names": [
-      "reference",
-      "lie_down"
-    ],
-    "reset_source_probabilities": [
-      0.699999988079071,
-      0.30000001192092896
-    ],
-    "resident_bytes": 476914446,
+    "resident_bytes": 476896336,
     "root_reference_aliases": true,
     "storage_contract_passed": true,
     "storage_pareto": [
@@ -282,178 +282,153 @@
       "body_angular_velocity"
     ],
     "task_row_mode": "clip_time_ranges",
-    "task_sampling_law": "clip_categorical_then_continuous_time_v1",
     "trajectory_bytes": 476858400,
     "unique_physical_storage_count": 6
   },
   "throughput": {
     "allocating_reference_oracle": {
       "iterations_per_sample": 10,
-      "maximum_rate": 678852.5656259847,
-      "median_rate": 489155.73459509114,
-      "minimum_rate": 259472.62629049024,
-      "sample_count": 7,
+      "maximum_rate": 1016224.6383331615,
+      "median_rate": 966079.0691120451,
+      "minimum_rate": 925895.9519330768,
+      "sample_count": 5,
       "sample_rates": [
-        489155.73459509114,
-        381622.748375103,
-        456422.3782982525,
-        638283.8165160388,
-        539906.3197685351,
-        259472.62629049024,
-        678852.5656259847
+        1016224.6383331615,
+        965625.1587184834,
+        966079.0691120451,
+        925895.9519330768,
+        1001084.8638534431
       ],
       "sample_seconds": [
-        0.08373611327260733,
-        0.10733112785965204,
-        0.08974143676459789,
-        0.06417207978665829,
-        0.07586501305922866,
-        0.1578586557880044,
-        0.06033710716292262
+        0.040306048933416605,
+        0.04241811600513756,
+        0.042398185934871435,
+        0.04423823207616806,
+        0.04091561213135719
       ],
       "unit": "rows_per_second",
       "units_per_call": 4096,
-      "warmup_calls": 3
+      "warmup_calls": 1
     },
     "bind_exact_capacity_table": {
       "iterations_per_sample": 10,
-      "maximum_rate": 9.079794729456344,
-      "median_rate": 6.775411190010934,
-      "minimum_rate": 6.144650878515294,
-      "sample_count": 7,
+      "maximum_rate": 9.013962572321162,
+      "median_rate": 8.833826626538183,
+      "minimum_rate": 8.695628205010635,
+      "sample_count": 5,
       "sample_rates": [
-        6.491636067816116,
-        6.144650878515294,
-        6.775411190010934,
-        6.7332896094998755,
-        7.083238630646271,
-        9.079794729456344,
-        8.935356331829405
+        8.695628205010635,
+        9.013962572321162,
+        8.926660550320305,
+        8.823273109771037,
+        8.833826626538183
       ],
       "sample_seconds": [
-        1.5404437179677188,
-        1.627431761007756,
-        1.4759251829236746,
-        1.4851581589318812,
-        1.4117835811339319,
-        1.1013464839197695,
-        1.1191495480015874
+        1.150003169896081,
+        1.109390006866306,
+        1.1202397518791258,
+        1.13336625485681,
+        1.132012255024165
       ],
       "unit": "binds_per_second",
       "units_per_call": 1,
-      "warmup_calls": 3
+      "warmup_calls": 1
     },
     "current_reached_reference": {
       "iterations_per_sample": 10,
-      "maximum_rate": 989231.2055743196,
-      "median_rate": 830321.6106875723,
-      "minimum_rate": 490644.0231940417,
-      "sample_count": 7,
+      "maximum_rate": 1168130.7141720413,
+      "median_rate": 1068946.963356467,
+      "minimum_rate": 999320.8725580852,
+      "sample_count": 5,
       "sample_rates": [
-        847603.3055551054,
-        989231.2055743196,
-        749966.4142661612,
-        776923.004181274,
-        490644.0231940417,
-        830321.6106875723,
-        910771.8671331469
+        1068946.963356467,
+        999320.8725580852,
+        1004692.3378653909,
+        1080385.310040836,
+        1168130.7141720413
       ],
       "sample_seconds": [
-        0.09664898598566651,
-        0.08281178306788206,
-        0.10923155816271901,
-        0.10544159403070807,
-        0.1669642268680036,
-        0.09866056591272354,
-        0.0899456855840981
+        0.07663616887293756,
+        0.08197567192837596,
+        0.08153739897534251,
+        0.07582479994744062,
+        0.0701291379518807
       ],
       "unit": "transition_rows_per_second",
       "units_per_call": 8192,
-      "warmup_calls": 3
+      "warmup_calls": 1
     },
     "fixed_runtime_reference": {
       "iterations_per_sample": 10,
-      "maximum_rate": 1253953.3500939715,
-      "median_rate": 680125.5477303714,
-      "minimum_rate": 230119.61759138922,
-      "sample_count": 7,
+      "maximum_rate": 1535658.325398717,
+      "median_rate": 1478277.321322597,
+      "minimum_rate": 1270374.1020380666,
+      "sample_count": 5,
       "sample_rates": [
-        388197.20257921214,
-        708770.9854312037,
-        230119.61759138922,
-        1253953.3500939715,
-        680125.5477303714,
-        374527.76022083685,
-        795291.6827264582
+        1478277.321322597,
+        1535658.325398717,
+        1527601.1249541407,
+        1391032.7525695425,
+        1270374.1020380666
       ],
       "sample_seconds": [
-        0.10551338270306587,
-        0.05779017601162195,
-        0.17799438582733274,
-        0.032664692029356956,
-        0.06022417498752475,
-        0.1093643899075687,
-        0.05150311626493931
+        0.02770792692899704,
+        0.026672599837183952,
+        0.026813282165676355,
+        0.029445748077705503,
+        0.032242470886558294
       ],
       "unit": "rows_per_second",
       "units_per_call": 4096,
-      "warmup_calls": 3
+      "warmup_calls": 1
     },
     "named_field_lookup": {
       "iterations_per_sample": 10000,
-      "maximum_rate": 1824435.272876426,
-      "median_rate": 1818971.254868485,
-      "minimum_rate": 1753433.9176551767,
-      "sample_count": 7,
+      "maximum_rate": 1638076.2514854833,
+      "median_rate": 1625785.747288362,
+      "minimum_rate": 1473527.9278725402,
+      "sample_count": 5,
       "sample_rates": [
-        1818971.254868485,
-        1753433.9176551767,
-        1820974.8458498078,
-        1824435.272876426,
-        1822507.1184402716,
-        1817716.439831985,
-        1802393.2842860408
+        1629625.309673852,
+        1487318.614919405,
+        1625785.747288362,
+        1638076.2514854833,
+        1473527.9278725402
       ],
       "sample_seconds": [
-        0.005497612990438938,
-        0.005703094881027937,
-        0.005491564050316811,
-        0.005481148138642311,
-        0.005486947018653154,
-        0.005501408129930496,
-        0.005548178683966398
+        0.006136379903182387,
+        0.00672350893728435,
+        0.006150871980935335,
+        0.006104721920564771,
+        0.006786433979868889
       ],
       "unit": "calls_per_second",
       "units_per_call": 1,
-      "warmup_calls": 3
+      "warmup_calls": 1
     },
     "reset_state_gather": {
       "iterations_per_sample": 10,
-      "maximum_rate": 15870357.048960328,
-      "median_rate": 5627647.542938509,
-      "minimum_rate": 804590.0353628034,
-      "sample_count": 7,
+      "maximum_rate": 18568981.309635546,
+      "median_rate": 13895376.664367646,
+      "minimum_rate": 11669368.757914567,
+      "sample_count": 5,
       "sample_rates": [
-        15870357.048960328,
-        5181377.833850003,
-        5627647.542938509,
-        5520344.39543674,
-        11681314.665483143,
-        11098965.132391866,
-        804590.0353628034
+        11669368.757914567,
+        12392582.931874342,
+        18568981.309635546,
+        16564265.690588024,
+        13895376.664367646
       ],
       "sample_seconds": [
-        0.0025809123180806637,
-        0.007905233185738325,
-        0.007278352044522762,
-        0.007419826928526163,
-        0.0035064546391367912,
-        0.003690434154123068,
-        0.050907913595438004
+        0.003510044189170003,
+        0.003305202815681696,
+        0.0022058291360735893,
+        0.00247279298491776,
+        0.0029477430507540703
       ],
       "unit": "rows_per_second",
       "units_per_call": 4096,
-      "warmup_calls": 3
+      "warmup_calls": 1
     }
   }
 }

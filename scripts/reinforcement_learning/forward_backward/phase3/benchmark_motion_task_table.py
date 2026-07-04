@@ -24,58 +24,48 @@ from collections.abc import Callable
 from pathlib import Path
 
 import torch
-from motion_environment_identity import motion_composition_runtime_dependencies
+from motion_environment_identity import (
+    _motion_live_axes,
+    motion_composition_runtime_dependencies,
+    motion_environment_axes,
+)
 
-from isaaclab_tasks.core.multi_task.kinematics import NewtonKinematics, NewtonKinematicsCfg
-from isaaclab_tasks.core.multi_task.motion.config.robots.g1 import (
-    _SIMULATOR_JOINT_NAMES as G1_LIVE_JOINT_NAMES,
-)
-from isaaclab_tasks.core.multi_task.motion.config.robots.g1 import (
-    G1_BEHAVIOR_BODY_NAMES,
-    G1_BEHAVIOR_JOINT_NAMES,
-)
-from isaaclab_tasks.core.multi_task.motion.config.robots.smpl import (
-    _SMPL_SIMULATOR_BODY_NAMES as SMPL_LIVE_BODY_NAMES,
-)
-from isaaclab_tasks.core.multi_task.motion.config.robots.smpl import (
-    _SMPL_SIMULATOR_JOINT_NAMES as SMPL_LIVE_JOINT_NAMES,
-)
-from isaaclab_tasks.core.multi_task.motion.mdp.commands import MotionTaskTable, MotionTaskTableCfg
+from isaaclab_tasks.core.multi_task.kinematics import KinematicTree, NewtonKinematics, NewtonKinematicsCfg
+from isaaclab_tasks.core.multi_task.motion.mdp.commands import MotionSampler, MotionTaskTable, MotionTaskTableCfg
 from isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_state_payload import _MotionReferenceResolver
-from isaaclab_tasks.core.multi_task.motion.trajectory.g1 import G1LafanFrameBuilder
-from isaaclab_tasks.core.multi_task.motion.trajectory.smpl import SmplHumEnvFrameBuilder
+from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1PoseFrameBuilder
+from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplGeneralizedCoordinateFrameBuilder
 from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
 from isaaclab_tasks.utils.hydra import resolve_presets
 
-from isaaclab_assets.robots.smpl.smpl_constants import SMPL_HUMENV_MJCF_PATH
+from isaaclab_assets.robots.smpl.smpl_constants import SMPL_HUMENV_MJCF_PATH, SMPL_HUMENV_MJCF_SHA256
 
 _COMMON_CONSTRUCTION_MODULES = (
     "isaaclab.sim.schemas.schemas_cfg",
     "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics",
     "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics_cfg",
-    "isaaclab_tasks.core.multi_task.motion.config.source_skeletons",
-    "isaaclab_tasks.core.multi_task.motion.config.sources",
-    "isaaclab_tasks.core.multi_task.motion.data._identity",
+    "isaaclab_tasks.core.multi_task.motion.identity",
     "isaaclab_tasks.core.multi_task.motion.data.clip_index",
-    "isaaclab_tasks.core.multi_task.motion.data.importers._hashing",
-    "isaaclab_tasks.core.multi_task.motion.data.sample_grid",
+    "isaaclab_tasks.core.multi_task.motion.data.source",
     "isaaclab_tasks.core.multi_task.motion.data.skeleton",
-    "isaaclab_tasks.core.multi_task.motion.frames",
     "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_state_payload",
+    "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_sampler",
     "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table",
 )
 _PROFILE_CONSTRUCTION_MODULES = {
     "g1_lafan": (
-        "isaaclab_tasks.core.multi_task.motion.config.robots.g1",
-        "isaaclab_tasks.core.multi_task.motion.data.importers.bfm_g1_joblib",
-        "isaaclab_tasks.core.multi_task.motion.trajectory.g1",
+        "isaaclab_tasks.core.multi_task.motion.robots.g1.articulation",
+        "isaaclab_tasks.core.multi_task.motion.data.sources.lafan_g1_29dof",
+        "isaaclab_tasks.core.multi_task.motion.robots.g1.frames",
+        "isaaclab_tasks.core.multi_task.motion.robots.g1.reference",
     ),
     "smpl_cmu": (
         "isaaclab_assets.robots.smpl.smpl_constants",
-        "isaaclab_tasks.core.multi_task.motion.config.robots.smpl",
+        "isaaclab_tasks.core.multi_task.motion.robots.smpl.articulation",
         "isaaclab_newton.sim.schemas.schemas_cfg",
-        "isaaclab_tasks.core.multi_task.motion.data.importers.humenv_hdf5",
-        "isaaclab_tasks.core.multi_task.motion.trajectory.smpl",
+        "isaaclab_tasks.core.multi_task.motion.data.sources.cmu_humenv_smpl",
+        "isaaclab_tasks.core.multi_task.motion.robots.smpl.frames",
+        "isaaclab_tasks.core.multi_task.motion.robots.smpl.reference",
     ),
 }
 
@@ -88,11 +78,15 @@ _RESET_FIELDS = (
     "joint_velocity",
 )
 
-_G1_BODY_BY_JOINT = dict(zip(G1_BEHAVIOR_JOINT_NAMES, G1_BEHAVIOR_BODY_NAMES[1:], strict=True))
-G1_LIVE_BODY_NAMES = (
-    G1_BEHAVIOR_BODY_NAMES[0],
-    *(_G1_BODY_BY_JOINT[joint_name] for joint_name in G1_LIVE_JOINT_NAMES),
-)
+
+def _tensor_bytes(*values: torch.Tensor) -> int:
+    """Return resident bytes for caller-selected tensors."""
+    return sum(value.numel() * value.element_size() for value in values)
+
+
+def _motion_frame_bytes(table: MotionTaskTable) -> int:
+    """Return resident bytes in concrete trajectory columns."""
+    return _tensor_bytes(*(table.frames.field(name) for name in table.frames.stored_fields))
 
 
 def _sha256(path: Path) -> str:
@@ -132,8 +126,8 @@ def _resolved_construction_contract(
 ) -> dict[str, object]:
     """Project the exact resolved inputs that determine one table measurement."""
     source = table_cfg.source
+    payload_cfg = cfg.commands.motion.payload
     skeleton = source.build_skeleton()
-    grid = table_cfg.expert_sample_grid
     return {
         "preset": preset,
         "control_dt_seconds": float(cfg.sim.dt * cfg.decimation),
@@ -158,13 +152,10 @@ def _resolved_construction_contract(
         "table": {
             "frame_builder_factory": _callable_name(table_cfg.frame_builder_factory),
             "reference_kinematics_factory": _callable_name(table_cfg.reference_kinematics_factory),
-            "expert_sample_grid": {
-                "mode": grid.mode.value,
-                "step_seconds": grid.step_seconds,
-            },
             "task_row_mode": table_cfg.task_row_mode,
-            "task_sampling_law": table_cfg.task_sampling_law,
-            "reset_sources": [list(value) for value in table_cfg.reset_sources],
+        },
+        "sampler": {
+            "reset_sources": [list(value) for value in payload_cfg.reset_sources],
         },
     }
 
@@ -173,6 +164,7 @@ def _construction_code_identity(
     preset: str,
     source_importer_type: type,
     frame_builder_type: type,
+    construction_callables: tuple[Callable[..., object], ...],
     reference_artifact_root: Path | None,
     resolved_contract: dict[str, object],
 ) -> dict[str, object]:
@@ -183,6 +175,7 @@ def _construction_code_identity(
         source_importer_type.__module__,
         frame_builder_type.__module__,
     }
+    modules.update(value.__module__ for value in construction_callables)
     python_sources = {name: _module_sha256(name) for name in sorted(modules)}
     python_sources["benchmark_motion_task_table"] = _sha256(Path(__file__).resolve())
     python_symbols = {
@@ -267,11 +260,13 @@ def _rates(
 
 def _frame_builder(
     preset: str,
+    cfg: MotionImitationEnvCfg,
     source_cfg,
     reference_artifact_root: Path | None,
     device: torch.device,
 ):
     """Construct the exact source-to-live-order builder without a simulator."""
+    live_joint_names, live_body_names = _motion_live_axes(cfg)
     if preset == "g1_lafan":
         if reference_artifact_root is None:
             raise ValueError("g1_lafan requires --reference_artifact_root.")
@@ -284,11 +279,19 @@ def _frame_builder(
                 collapse_fixed_joints=False,
             )
         )
-        return G1LafanFrameBuilder(
-            source_skeleton=source_cfg.build_skeleton(),
+        source_skeleton = source_cfg.build_skeleton()
+        target_tree = KinematicTree.from_newton(reference)
+        if source_skeleton.joint_names != target_tree.joint_names:
+            raise ValueError("The benchmark G1 source and target joint axes differ.")
+        if source_skeleton.body_names != target_tree.body_names:
+            raise ValueError("The benchmark G1 source and target body axes differ.")
+        return G1PoseFrameBuilder(
+            target_tree=target_tree,
+            pose_coordinate_identity_sha256=source_skeleton.identity_sha256,
             reference_kinematics=reference,
-            live_joint_names=G1_LIVE_JOINT_NAMES,
-            live_body_names=G1_LIVE_BODY_NAMES,
+            reference_mjcf_sha256=_sha256(path),
+            live_joint_names=live_joint_names,
+            live_body_names=live_body_names,
         )
 
     reference = NewtonKinematics(
@@ -299,11 +302,12 @@ def _frame_builder(
             collapse_fixed_joints=False,
         )
     )
-    return SmplHumEnvFrameBuilder(
+    return SmplGeneralizedCoordinateFrameBuilder(
         source_skeleton=source_cfg.build_skeleton(),
         reference_kinematics=reference,
-        live_joint_names=SMPL_LIVE_JOINT_NAMES,
-        live_body_names=SMPL_LIVE_BODY_NAMES,
+        reference_mjcf_sha256=SMPL_HUMENV_MJCF_SHA256,
+        live_joint_names=live_joint_names,
+        live_body_names=live_body_names,
     )
 
 
@@ -312,8 +316,9 @@ def _storage_pareto(preset: str, frames: int, table: MotionTaskTable) -> list[di
     if preset == "smpl_cmu":
         tiers = (
             ("reset_state_only", 151, True, False, "derived_if_stored_alone"),
-            ("expert_observation_only", 358, False, True, "derived_if_stored_alone"),
-            ("production_state_and_observation", 509, True, True, "materialized"),
+            ("expert_observation_if_stored_alone", 358, False, True, "derived_if_stored_alone"),
+            ("production_shared_root_reference", 450, True, True, "materialized"),
+            ("production_plus_duplicate_expert_projection", 808, True, True, "rejected_duplicate_corpus"),
         )
     else:
         tiers = (
@@ -326,7 +331,7 @@ def _storage_pareto(preset: str, frames: int, table: MotionTaskTable) -> list[di
     result = []
     for name, width, can_reset, direct_expert, status in tiers:
         dense_bytes = frames * width * torch.tensor([], dtype=torch.float32).element_size()
-        if status == "materialized" and dense_bytes != table.frames.memory_bytes:
+        if status == "materialized" and dense_bytes != _motion_frame_bytes(table):
             raise RuntimeError(f"The production {preset} tier differs from MotionTaskTable trajectory bytes.")
         result.append(
             {
@@ -378,9 +383,10 @@ def _parity(
 
 def _measure(args: argparse.Namespace) -> dict[str, object]:
     """Construct one exact task table and benchmark every reviewed lookup boundary."""
-    cfg = resolve_presets(MotionImitationEnvCfg(), selected={args.preset})
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes(args.preset))
     table_cfg = cfg.commands.motion.task_table
     source_cfg = table_cfg.source
+    payload_cfg = cfg.commands.motion.payload
     split = source_cfg.train if args.motion_split == "train" else source_cfg.evaluation
     device = torch.device(args.device)
     if device.type == "cuda":
@@ -403,19 +409,35 @@ def _measure(args: argparse.Namespace) -> dict[str, object]:
     ):
         raise RuntimeError("The opened source differs from the selected canonical split.")
 
-    builder = _frame_builder(args.preset, source_cfg, args.reference_artifact_root, device)
+    builder = _frame_builder(args.preset, cfg, source_cfg, args.reference_artifact_root, device)
     started = time.perf_counter()
-    table = MotionTaskTable.build(
-        source,
+    source_skeleton = source_cfg.build_skeleton()
+    if index.skeleton_sha256 != source_skeleton.identity_sha256:
+        raise RuntimeError("The source index and source skeleton identities differ.")
+    frames = builder.allocate(index.total_frames, device=device)
+    clip_count = 0
+    for clip_id, clip in source.clips():
+        if clip_count == len(index.clips):
+            raise RuntimeError(f"Motion source yielded undeclared clip {clip_id!r}.")
+        expected = index.clips[clip_count]
+        if clip_id != expected.clip_id:
+            raise RuntimeError(f"Motion source expected clip {expected.clip_id!r}, got {clip_id!r}.")
+        start, end = index.offsets[clip_count : clip_count + 2]
+        frames.copy_clip_(start, end, builder.build_frames(clip, device=device))
+        clip_count += 1
+    if clip_count != len(index.clips):
+        raise RuntimeError(f"Motion source yielded {clip_count} of {len(index.clips)} declared clips.")
+    table = MotionTaskTable(
         index,
-        builder,
+        frames,
+        builder.joint_names,
+        builder.reference_frame_names,
+        builder.version,
+        builder.construction_identity_sha256,
         table_cfg.task_row_mode,
-        table_cfg.reset_sources,
-        table_cfg.expert_sample_grid,
-        seed=0,
-        device=device,
     )
     _synchronize(device)
+    sampler = MotionSampler(table, payload_cfg.reset_sources, seed=0)
     construction_seconds = time.perf_counter() - started
     remaining_clips = getattr(source, "remaining_clips", 0)
     remaining_frames = getattr(source, "remaining_frames", 0)
@@ -467,24 +489,20 @@ def _measure(args: argparse.Namespace) -> dict[str, object]:
         )
     )
     exact_capacity = all(table.field(name).shape[0] == index.total_frames for name in stored_field_names)
-    storage_contract_passed = exact_capacity and table.frames.memory_bytes == trajectory_bytes
-    storage_contract_passed &= root_reference_aliases if args.preset == "g1_lafan" else not root_reference_aliases
+    storage_contract_passed = exact_capacity and _motion_frame_bytes(table) == trajectory_bytes
+    storage_contract_passed &= root_reference_aliases
     if not storage_contract_passed:
         raise RuntimeError("MotionTaskTable physical storage differs from its preset contract.")
 
     reset_rows = table.clip_offsets.index_select(0, clip_indices) + local_frames
-    reset_sources = table_cfg.reset_sources
-    rebound = MotionTaskTable.from_storage(
+    rebound = MotionTaskTable(
         table.clip_index,
         table.frames,
         table.joint_names,
         table.reference_frame_names,
         table.frame_builder_version,
         table.frame_builder_identity_sha256,
-        table.task_row_mode,
-        reset_sources,
-        table.expert_sample_grid,
-        seed=table.seed,
+        table_cfg.task_row_mode,
     )
     if rebound.frames is not table.frames or rebound.cache_identity != table.cache_identity:
         raise RuntimeError("Exact-capacity table binding changed trajectory storage or identity.")
@@ -523,17 +541,14 @@ def _measure(args: argparse.Namespace) -> dict[str, object]:
 
     def bind_storage() -> None:
         nonlocal sink
-        sink = MotionTaskTable.from_storage(
+        sink = MotionTaskTable(
             table.clip_index,
             table.frames,
             table.joint_names,
             table.reference_frame_names,
             table.frame_builder_version,
             table.frame_builder_identity_sha256,
-            table.task_row_mode,
-            reset_sources,
-            table.expert_sample_grid,
-            seed=table.seed,
+            table_cfg.task_row_mode,
         )
 
     throughput = {
@@ -601,10 +616,26 @@ def _measure(args: argparse.Namespace) -> dict[str, object]:
     runtime_dependencies_sha256 = hashlib.sha256(
         json.dumps(runtime_dependencies, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    metadata_bytes = table.memory_bytes - trajectory_bytes
-    task_sampling_law = table_cfg.task_sampling_law
-    if task_sampling_law != table.task_sampling_law:
-        raise RuntimeError("Resolved table sampling law differs from the runtime table property.")
+    metadata_bytes = _tensor_bytes(
+        table.clip_offsets,
+        table.clip_start_rows,
+        table.frame_counts,
+        table.source_fps,
+        table.clip_indices,
+        table.reset_time_ranges_seconds,
+    )
+    table_resident_bytes = trajectory_bytes + metadata_bytes
+    sampler_resident_bytes = _tensor_bytes(
+        sampler._sampling_row_starts,
+        sampler._sampling_row_counts,
+        sampler.reset_source_probabilities,
+        sampler.clip_priorities,
+    )
+    task_sampling_law = (
+        "clip_categorical_then_discrete_source_frame_v1"
+        if table_cfg.task_row_mode == "source_frames"
+        else "clip_categorical_then_continuous_time_v1"
+    )
     cuda_memory = None
     if device.type == "cuda":
         cuda_memory = {
@@ -614,11 +645,17 @@ def _measure(args: argparse.Namespace) -> dict[str, object]:
             "peak_reserved_bytes": torch.cuda.max_memory_reserved(device),
         }
     return {
-        "schema": "forward_backward_phase3c_motion_task_table_lookup_v4",
+        "schema": "forward_backward_phase3c_motion_task_table_lookup_v5",
         "code_identity": _construction_code_identity(
             args.preset,
             source_importer_type,
             type(builder),
+            (
+                source_cfg.open_source,
+                source_cfg.skeleton_factory,
+                table_cfg.frame_builder_factory,
+                table_cfg.reference_kinematics_factory,
+            ),
             args.reference_artifact_root,
             _resolved_construction_contract(args.preset, cfg, table_cfg, split),
         ),
@@ -646,10 +683,7 @@ def _measure(args: argparse.Namespace) -> dict[str, object]:
             "identity_sha256": table.cache_identity,
             "frame_builder_identity_sha256": table.frame_builder_identity_sha256,
             "frame_builder_version": table.frame_builder_version,
-            "task_row_mode": table.task_row_mode,
-            "task_sampling_law": task_sampling_law,
-            "reset_source_names": table.reset_source_names,
-            "reset_source_probabilities": table.reset_source_probabilities.cpu().tolist(),
+            "task_row_mode": table_cfg.task_row_mode,
             "field_names": field_names,
             "stored_field_names": stored_field_names,
             "field_shapes": {name: list(table.field(name).shape[1:]) for name in field_names},
@@ -658,11 +692,17 @@ def _measure(args: argparse.Namespace) -> dict[str, object]:
             "physical_row_width": physical_row_width,
             "trajectory_bytes": trajectory_bytes,
             "compact_metadata_bytes": metadata_bytes,
-            "resident_bytes": table.memory_bytes,
+            "resident_bytes": table_resident_bytes,
             "root_reference_aliases": root_reference_aliases,
             "unique_physical_storage_count": len(storages),
             "storage_contract_passed": storage_contract_passed,
             "storage_pareto": _storage_pareto(args.preset, index.total_frames, table),
+        },
+        "motion_sampler": {
+            "task_sampling_law": task_sampling_law,
+            "reset_source_names": sampler.reset_source_names,
+            "reset_source_probabilities": sampler.reset_source_probabilities.cpu().tolist(),
+            "resident_bytes": sampler_resident_bytes,
         },
         "construction": {
             "seconds": construction_seconds,

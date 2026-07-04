@@ -5,28 +5,28 @@
     "minimum": -0.25,
     "period_steps": 17,
     "seed": 9917,
-    "sha256": "389e1ccd72b21ddd7f258d7dbb15d72886c9c946151d02961291e570ec3eb82e"
+    "sha256": "5158376e85f6eb30cd1cf19e90126610bf55b4f88c3d0e1fc6e8ab884b537ba3"
   },
   "action_width": 69,
   "applied_actions_before_timeout": 300,
   "applied_rows": 307200,
   "benchmark": {
-    "baseline_allocated_bytes": 206079488,
+    "baseline_allocated_bytes": 206069248,
     "baseline_reserved_bytes": 484442112,
     "capture_final_obs": true,
     "captured_final_rows": 0,
     "complete_timeout_vectors": 0,
     "expected_terminal_rows": 0,
-    "measured_seconds": 3.1541738426312804,
+    "measured_seconds": 2.9387342769186944,
     "measured_steps": 64,
     "measured_transitions": 65536,
     "missing_final_rows": 0,
-    "peak_allocated_bytes": 209447936,
+    "peak_allocated_bytes": 209437696,
     "peak_allocated_increment_bytes": 3368448,
     "peak_reserved_bytes": 484442112,
     "peak_reserved_increment_bytes": 0,
     "terminal_rows": 0,
-    "transitions_per_second": 20777.548502313508,
+    "transitions_per_second": 22300.757341257628,
     "warmup_steps": 8
   },
   "benchmark_gpu_ownership": {
@@ -37,12 +37,14 @@
   "captured_final_rows": 1024,
   "code_identity": {
     "dependency_identity": {
-      "bundle_sha256": "b9b025ac15a03c468906ccb23e7df712bcadc66d1b0ea36514bdb584d2f3ff07",
+      "bundle_sha256": "27da367c9d7aff31ed91e3c26bd5ff157eb77a23110a915291957a727da4626a",
       "preset": "smpl_cmu",
       "python_sources": {
         "isaaclab.assets.articulation.articulation_cfg": "90fe321c76e23785bc70cbdae7f45ea9301cae11dfed5245deaff4edec65bf53",
         "isaaclab.assets.articulation.base_articulation": "61d38c3b817e086eac3a734a66410478219bc6cea9db9ce62b35a992522b1b40",
         "isaaclab.assets.articulation.base_articulation_data": "80844346c1bc99b33ef66794c0aececaf2aa3724beebbf1fd7ca15f4b32ea4df",
+        "isaaclab.envs.manager_based_env": "42d20af7182397b34c6fa6cde3b620e1e28863947882bee60b7bd00a5668c312",
+        "isaaclab.envs.manager_based_env_cfg": "3bcd73dc5d4519131c7add1be74093d341ba771452f96a48cf25f9e4b526134d",
         "isaaclab.envs.manager_based_rl_env": "b7a37b15f50495133c70e44f213799dd2cd75a9d3e3af142b3bf413fd71ba2f3",
         "isaaclab.envs.manager_based_rl_env_cfg": "cacc7a0f4a187c041d9c871092ee5b73013836ecc74b48683a2c73deddaa0757",
         "isaaclab.envs.mdp.terminations": "c72b39e47235b48699bd887ed021f66fa2ca02656f833271eadea55078519588",
@@ -64,9 +66,9 @@
         "isaaclab.sim.spawners.shapes.shapes": "d4eb750afc2a1d423cff752aae7c752dd196a58e20fb76993ff2ac3fbac44f86",
         "isaaclab.sim.spawners.shapes.shapes_cfg": "022ddbb3cabf94ddbc51e92371af22787666f09efddab903e6b15aeef537052d",
         "isaaclab.sim.utils.prims": "7f3c06684728ff2d3471073ab5de5ae9798246615fe3e622b4115c52813dfd46",
-        "isaaclab.utils.math": "6cea18209c70b73fa301a9bb6990026b8ae29af43cb495f2a886d0bbbe7bf170",
+        "isaaclab.utils.math": "b672fb08c7a213efc394d824671f29bfdc983b02741069408ec3cce67291badc",
         "isaaclab_assets.robots.smpl.smpl_cfg": "f485e9c0236e669bc183ed7ad679384e345075317b724134215dbff122234357",
-        "isaaclab_assets.robots.smpl.smpl_constants": "a1167e4211f265177bac467ae34b35c79147dbdf26b6997ab3403339114970a3",
+        "isaaclab_assets.robots.smpl.smpl_constants": "bfffc385295bcac884bf744bf2ae7eb5e182d1ab3e92d5bcbb70f2f5c5ae39b0",
         "isaaclab_newton.actuators.adapter": "18633536ebc03587d1813a0ce54e23fa3759589f8b37a7fe9c59956a36450026",
         "isaaclab_newton.actuators.kernels": "b33aed455e6dade7417ae47aab0ebddabfb57fac5da158da9cd457b0881c8b60",
         "isaaclab_newton.assets.articulation.articulation": "6a8cd79d8d731bf9cf6f1c7aae66bb65afe1c73764c40f4c55bd1a2a18b34449",
@@ -83,66 +85,39 @@
         "isaaclab_newton.sim.schemas.schemas_cfg": "ee2c0aa30ee1a03476a283e1a326277d149f20d772cee1d8bcec3d2ce24e6153",
         "isaaclab_newton.sim.spawners.mjcf.mjcf": "2e1302b9b5a225576446b9dd9a8323cd99e8850bbe0b336dd6f8c6dc9c857810",
         "isaaclab_newton.sim.spawners.mjcf.mjcf_cfg": "beb5f8f09452ee8c6a949c6e64aca5e03d398947527ec1e2b896e0526eebac27",
+        "isaaclab_tasks.core.multi_task.kinematics.kinematic_tree": "685493d05db3985f594457222c3a1c67ada2ec6d3d024f1882f38074e5c95579",
         "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics": "e450f76a2bfe11ff0986c60c5519a7ddc5009579477478547945e6958f85fbfd",
         "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics_cfg": "bb54968f13676e3d7185ae40bfe4792c38c5bb5029f9e10d68ea759f315d036c",
-        "isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command": "50b6467d7190326bc5be5c6ec8fe55fa3c8db33d6099c0941a8ec4a3fef7c252",
-        "isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command_cfg": "bc7014d6e02fa1e42d0d77bd1744b2d046f5458013890d9d2b861c301407629e",
-        "isaaclab_tasks.core.multi_task.motion.config.environment": "e87f831e348ecc4190eed2993c57cb4664c641151d22c0722353cd331fd85ac5",
-        "isaaclab_tasks.core.multi_task.motion.config.presets": "58d93b5eb7f036b43cbeeea975735a4d27af15772416b4acce481195324ea6d2",
-        "isaaclab_tasks.core.multi_task.motion.config.profiles": "9289a9cf91e9903540c06ad684bd295568e9041d2795571ed4f64e993d682a63",
-        "isaaclab_tasks.core.multi_task.motion.config.robots.smpl": "eb0b8bcf1224f03297bb34866626665029cd94b9e8c816db8bfc702657cf9b63",
-        "isaaclab_tasks.core.multi_task.motion.config.simulations": "a99f178ae238b7c693315a955abe1c26c5fa9ee3603bb11b19bacd12e5c43af5",
-        "isaaclab_tasks.core.multi_task.motion.config.source_skeletons": "d658140666c8f1aed3c9004d2e4f8fab4d77299a45c74ac66d10445f96a055c3",
-        "isaaclab_tasks.core.multi_task.motion.config.sources": "827bfd66236b4b9a81ef5ea1af80d61e25b7c327b74c5a72e062320291667763",
-        "isaaclab_tasks.core.multi_task.motion.data._identity": "386dddd8b1339521350772e50e9113eab010d0ffe1bee873b6c2fa88081fec49",
-        "isaaclab_tasks.core.multi_task.motion.data.clip_index": "a11b678c9b39e96be989ac20d3b6292f0dc976e232dc1315615c52de6f626abf",
-        "isaaclab_tasks.core.multi_task.motion.data.importers._hashing": "6843ce1f208fa3ed0b69466dbdd908ac7e6026a6dc4ba8d1286f0e4ad17614cd",
-        "isaaclab_tasks.core.multi_task.motion.data.importers.humenv_hdf5": "1fa45bc49f29338c885dc6ec0f187e711d0773b6b7743529c551644aaa0c34aa",
-        "isaaclab_tasks.core.multi_task.motion.data.sample_grid": "3eca55c9d434db72810e815a91dc89637a9d310275a039a347b7d425f911d478",
+        "isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command": "d56ca6859be33069559d9cd5c92ce50f3956656b525cdbd0252c0d6c04b37afc",
+        "isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command_cfg": "a49a0cf2bed1f092b27fb15d70101d583cb046c2958703e2df56cd09376ed995",
+        "isaaclab_tasks.core.multi_task.mdp.native_mujoco_action": "9aeeb68aa3efe89d9f6bf406511dbcd6f0ae7f01bd7b5ef3e954ed551e4bae3c",
+        "isaaclab_tasks.core.multi_task.mdp.native_mujoco_action_cfg": "a77f9f1242a892a2298f906633ce45d845d6162dfe78afb65f13281e47e54c92",
+        "isaaclab_tasks.core.multi_task.motion.data._identity": "4a7dc69c4f398d91d3e6a69deee06ebf5704f76ece1b3368a2ec1d261de1be81",
+        "isaaclab_tasks.core.multi_task.motion.data.clip_index": "df56ea13cf3b7621cb92ef85b5f0f4f4382b3349abe453a19252158a76bc4d97",
         "isaaclab_tasks.core.multi_task.motion.data.skeleton": "63d04d889c2f3c3f389c55899688a9b4b6e18dc4d541b08ece1d749e37985ceb",
-        "isaaclab_tasks.core.multi_task.motion.frames": "01265380578fa7140fc5f38efc9933c30b3802314f4d1852d6ffdd6097e8691a",
-        "isaaclab_tasks.core.multi_task.motion.mdp.actions": "e0a8ecd10f8b56d83c10488472eb77a97b3ac42a84d813f417ff50df4a144da6",
-        "isaaclab_tasks.core.multi_task.motion.mdp.actions_cfg": "e33fc1a9cf24dc422fc6b292bf303e8143de4d45a9eb5eab03a1f508ce74fd17",
-        "isaaclab_tasks.core.multi_task.motion.mdp.commands.commands_cfg": "e1c2381f764fc124180bec9a0be7a30d4415003ac1e9151fa19bd269893ff466",
-        "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_state_payload": "f8dee3bb5b1901f275d1d872bcc6339af7ff9780abe98aa76d236da28f591111",
-        "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table": "2eafb32d7a2492328caf34090c722f79865c8e84b0bd216605bc1512437ad4e7",
-        "isaaclab_tasks.core.multi_task.motion.mdp.curriculums": "29e5e500b7d46e0bf0ad5a485156ea9002d724f4d92f217d669ebd4c72316ece",
-        "isaaclab_tasks.core.multi_task.motion.mdp.events": "141f471f0d35d4d1a33fed14f58bacdd4b8b772485efe923988d2fb2070f1f54",
-        "isaaclab_tasks.core.multi_task.motion.mdp.history": "a2ca03a452c8c85931cfd3e36c07f971ca6f83dc497e8c5638ebdde8322bae8f",
-        "isaaclab_tasks.core.multi_task.motion.mdp.observations": "d4f158e08e5edd8b761a4a86728e17d4373702bf2c2f3af101a0a37eaad8405e",
-        "isaaclab_tasks.core.multi_task.motion.mdp.reset_sources": "09a5e40b9e67c64b2994f0766de4cf7d11e6306d59a049a654bc934e19fe18d9",
-        "isaaclab_tasks.core.multi_task.motion.mdp.runtime": "2717eda93acdf9f2c35bb8949a681b69b7a8358e238b9f165017aa3e25bb83c9",
-        "isaaclab_tasks.core.multi_task.motion.trajectory._time": "43bf144bb4614f641a59f5a476106f7a82fd2e34547e93fe90b3e8236fb4efa7",
-        "isaaclab_tasks.core.multi_task.motion.trajectory.smpl": "bec23be04ebcfebf77b14f6102f68d1be84a882a77529a2688eca2b6b3d12c0e",
-        "isaaclab_tasks.core.multi_task.motion_env": "2ce86ba92ef8804b71db6315f765ccb6e7cbbcb9242ee811d3bb36e03cce12a7",
-        "isaaclab_tasks.core.multi_task.motion_env_cfg": "7c561be9641ef80a355095e21058dbf74986fd50863d05a3705ebe5cdc5cb527",
-        "motion_environment_identity": "87b180b03e76cb67156dc6947af851b959b3c36110693d30e3f737ad1f3de23a"
+        "isaaclab_tasks.core.multi_task.motion.data.source": "6beb99ba03b8c6be2f4a3bb4e47783e991e206c5822f6fa2381a2b526f466823",
+        "isaaclab_tasks.core.multi_task.motion.data.sources.cmu_humenv_smpl": "20e9e9133b82581c7a97e2c4f413613ed4b975fbf679b865f654ef09809455c2",
+        "isaaclab_tasks.core.multi_task.motion.mdp.commands.commands_cfg": "abd0143e3be2d404c03d85c432a13db93ce2c20789244d9876bf4aa209387d32",
+        "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_state_payload": "ae76e6ef6781fafce9993f4c598649e6ba87f3ccc6fa95b6292ac5068ccf9d5a",
+        "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table": "cfa7a07341c071c53462004905b6843fd13bbd6e7a883ed4c171b6187661c18b",
+        "isaaclab_tasks.core.multi_task.motion.robots.smpl.articulation": "981c8a0781a9218971c5f881bb3a76c228b1daec6e99af4efe980a49b5a287ad",
+        "isaaclab_tasks.core.multi_task.motion.robots.smpl.frames": "2b07e6493780b330b3e49fe0eb9190c36653f62c632ed6f669585d623c442946",
+        "isaaclab_tasks.core.multi_task.motion.robots.smpl.observations": "bee8badfc1927b510711c6df86a81764ad55fbc804b10df4851af378ecf9610c",
+        "isaaclab_tasks.core.multi_task.motion.robots.smpl.reference": "55a6458f65b530b496beefde1ccac0a13eab4b993e70c2713acdada928b950d6",
+        "isaaclab_tasks.core.multi_task.motion.robots.smpl.reset": "39b9f17dd6a2094aa490418432ef2583e5c1a388aad5073c41706f20a97c1e01",
+        "isaaclab_tasks.core.multi_task.motion_env_cfg": "f78ee24edbf35a1694817c92af766b8c66a44fab89fd073f0935ce105ce20b25",
+        "motion_environment_identity": "81b383f5d6e6017973036b87694877e976fcf8661ea45496d124353138ae8f4d"
       },
       "resolved_axes": {
         "construction": {
-          "frame_builder_factory": "isaaclab_tasks.core.multi_task.motion.trajectory.smpl:smpl_humenv_frame_builder",
-          "frame_builder_type": "isaaclab_tasks.core.multi_task.motion.trajectory.smpl:SmplHumEnvFrameBuilder",
-          "reference_kinematics_factory": "isaaclab_tasks.core.multi_task.motion.config.robots.smpl:smpl_reference_kinematics",
-          "reset_sources": [
-            [
-              "motion",
-              0.8
-            ],
-            [
-              "fall",
-              0.2
-            ]
-          ],
-          "task_row_mode": "source_frames",
-          "task_sampling_law": "clip_categorical_then_discrete_source_frame_v1"
-        },
-        "expert_grid": {
-          "mode": "source_rows",
-          "step_seconds": null
+          "frame_builder_factory": "isaaclab_tasks.core.multi_task.motion.robots.smpl.reference:smpl_humenv_frame_builder",
+          "frame_builder_type": "isaaclab_tasks.core.multi_task.motion.robots.smpl.reference:SmplHumEnvFrameBuilder",
+          "reference_kinematics_factory": "isaaclab_tasks.core.multi_task.motion.robots.smpl.reference:smpl_reference_kinematics",
+          "task_row_mode": "source_frames"
         },
         "preset": "smpl_cmu",
         "robot": {
-          "action_type": "MotionMujocoControlActionCfg",
+          "action_type": "NativeMujocoControlActionCfg",
           "asset_file": "robot.xml",
           "body_names": [
             "Pelvis",
@@ -245,36 +220,44 @@
         },
         "runtime": {
           "applied_actions_before_timeout": 300,
-          "auxiliary_evidence": [],
           "command_fields": [],
           "compute_final_obs": true,
           "control_decimation": 15,
           "episode_length_seconds": 10.0,
-          "episode_length_steps": 300,
-          "history_fields": [],
-          "history_length": 0,
           "physics_dt_seconds": 0.0022222222222222222,
-          "raw_evidence": [],
-          "reset_transform_factory": "isaaclab_tasks.core.multi_task.motion.config.environment:_smpl_mocap_and_fall_reset",
+          "reset_transform_factory": "isaaclab_tasks.core.multi_task.motion.robots.smpl.reset:SmplMocapAndFallReset",
           "root_velocity_frame": "link",
           "step_fields": [],
-          "transition_state_factory": "isaaclab_tasks.core.multi_task.motion.mdp.runtime:make_smpl_motion_runtime"
+          "transition_evidence_concatenated": null,
+          "transition_evidence_names": null
+        },
+        "sampling": {
+          "reset_sources": [
+            [
+              "motion",
+              0.8
+            ],
+            [
+              "fall",
+              0.2
+            ]
+          ]
         },
         "source": {
           "evaluation_content_sha256": "2621cf6d60231a1a6c319d9ab1c44d66c13bb76de4c7bad7e7bdef2d57f0ed32",
           "format": "one_hdf5_file_per_clip_with_group_ep_0",
-          "identifier": "smpl_cmu",
+          "identifier": "cmu_humenv_smpl",
           "semantic_level": "smpl_robot_state_and_observation",
           "train_content_sha256": "fe17c0673e1f5d55d985ac135e36c895df81c2cac91417df0e966fd32eb3e6b6"
         }
       },
-      "resolved_axes_sha256": "38d7137df6acbd7c39c8a5e2790b968eb201d21be95799d600b5c238e05ff8e1",
+      "resolved_axes_sha256": "b4dd6dea384ae213f03fe7d187d82fc8ffb929b1b0b315a00798262c7f6280b3",
       "resolved_configuration": {
         "actions": {
           "joint_position": {
             "action_width": 69,
             "asset_name": "robot",
-            "class_type": "isaaclab_tasks.core.multi_task.motion.mdp.actions:MotionMujocoControlAction",
+            "class_type": "isaaclab_tasks.core.multi_task.mdp.native_mujoco_action:NativeMujocoControlAction",
             "clip": null,
             "debug_vis": false
           }
@@ -287,34 +270,8 @@
             "debug_vis": false,
             "element_names": null,
             "payload": {
-              "auxiliary_evidence": [],
               "class_type": "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_state_payload:MotionStatePayload",
               "command_fields": [],
-              "episode_length_steps": 300,
-              "history_fields": [],
-              "history_length": 0,
-              "raw_evidence": [],
-              "reset_transform_factory": "isaaclab_tasks.core.multi_task.motion.config.environment:_smpl_mocap_and_fall_reset",
-              "robot_asset_name": "robot",
-              "root_velocity_frame": "link",
-              "step_fields": [],
-              "transition_state_factory": "isaaclab_tasks.core.multi_task.motion.mdp.runtime:make_smpl_motion_runtime"
-            },
-            "randomize_command_indices": true,
-            "resampling_time_range": [
-              1000000000.0,
-              1000000000.0
-            ],
-            "states_relative": true,
-            "task_table": {
-              "class_type": "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table:build_motion_task_table",
-              "expert_sample_grid": {
-                "mode": "source_rows",
-                "step_seconds": null
-              },
-              "frame_builder_factory": "isaaclab_tasks.core.multi_task.motion.trajectory.smpl:smpl_humenv_frame_builder",
-              "motion_split": "evaluation",
-              "reference_kinematics_factory": "isaaclab_tasks.core.multi_task.motion.config.robots.smpl:smpl_reference_kinematics",
               "reset_sources": [
                 [
                   "motion",
@@ -325,7 +282,35 @@
                   0.2
                 ]
               ],
+              "reset_transform_binds": {
+                "device": "env.device",
+                "live_joint_names": "tuple(payload.robot.joint_names)",
+                "physics_dt_seconds": "env.physics_dt",
+                "physics_steps_per_action": "round(env.step_dt / env.physics_dt)",
+                "seed": "env.cfg.seed"
+              },
+              "reset_transform_factory": "isaaclab_tasks.core.multi_task.motion.robots.smpl.reset:SmplMocapAndFallReset",
+              "reset_transform_params": {
+                "fall_pool_size": 8192,
+                "random_actions_high_exclusive": 5
+              },
+              "robot_asset_name": "robot",
+              "root_velocity_frame": "link",
+              "step_fields": []
+            },
+            "randomize_command_indices": true,
+            "resampling_time_range": [
+              1000000000.0,
+              1000000000.0
+            ],
+            "states_relative": true,
+            "task_table": {
+              "class_type": "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table:build_motion_task_table",
+              "frame_builder_factory": "isaaclab_tasks.core.multi_task.motion.robots.smpl.reference:smpl_humenv_frame_builder",
+              "motion_split": "evaluation",
+              "reference_kinematics_factory": "isaaclab_tasks.core.multi_task.motion.robots.smpl.reference:smpl_reference_kinematics",
               "source": {
+                "clip_directory": "data_preparation/humenv_amass",
                 "evaluation": {
                   "artifact": "data_preparation/test_train_split/0-CMU_test_0.1.txt",
                   "artifact_sha256": "c9b77782f5c35e0a33b3daa18c110856554acbebed00c4b2877b836d53f9b1b7",
@@ -335,11 +320,11 @@
                   "source_content_sha256": "2621cf6d60231a1a6c319d9ab1c44d66c13bb76de4c7bad7e7bdef2d57f0ed32"
                 },
                 "format": "one_hdf5_file_per_clip_with_group_ep_0",
-                "identifier": "smpl_cmu",
+                "identifier": "cmu_humenv_smpl",
                 "license": "amass_cmu_and_smpl_registered_source_required",
-                "open_source": "isaaclab_tasks.core.multi_task.motion.config.sources:_open_humenv_source",
+                "open_source": "isaaclab_tasks.core.multi_task.motion.data.sources.cmu_humenv_smpl:open_cmu_humenv_smpl_source",
                 "semantic_level": "smpl_robot_state_and_observation",
-                "skeleton_factory": "isaaclab_tasks.core.multi_task.motion.config.source_skeletons:smpl_humenv_source_skeleton",
+                "skeleton_factory": "isaaclab_tasks.core.multi_task.motion.data.sources.cmu_humenv_smpl_coordinates:cmu_humenv_smpl_skeleton",
                 "source_fps": 30.0,
                 "train": {
                   "artifact": "data_preparation/test_train_split/0-CMU_train_0.1.txt",
@@ -355,55 +340,10 @@
           }
         },
         "compute_final_obs": true,
-        "curriculum": {
-          "penalty_scale": null
-        },
+        "curriculum": null,
         "decimation": 15,
         "episode_length_s": 10.0,
-        "events": {
-          "body_mass": null,
-          "body_mass_inertia": {
-            "func": "isaaclab_tasks.core.multi_task.motion.mdp.events:set_smpl_body_mass_inertia",
-            "interval_range_s": null,
-            "is_global_time": false,
-            "min_step_count_between_reset": 0,
-            "mode": "startup",
-            "params": {
-              "asset_cfg": {
-                "body_ids": {
-                  "start": null,
-                  "step": null,
-                  "stop": null
-                },
-                "body_names": null,
-                "fixed_tendon_ids": {
-                  "start": null,
-                  "step": null,
-                  "stop": null
-                },
-                "fixed_tendon_names": null,
-                "joint_ids": {
-                  "start": null,
-                  "step": null,
-                  "stop": null
-                },
-                "joint_names": null,
-                "name": "robot",
-                "object_collection_ids": {
-                  "start": null,
-                  "step": null,
-                  "stop": null
-                },
-                "object_collection_names": null,
-                "preserve_order": false
-              }
-            },
-            "resample_interval_on_reset": true
-          },
-          "push": null,
-          "robot_material": null,
-          "torso_com": null
-        },
+        "events": null,
         "is_finite_horizon": false,
         "num_rerenders_on_reset": 0,
         "observations": {
@@ -416,7 +356,7 @@
             "observation": {
               "clip": null,
               "flatten_history_dim": true,
-              "func": "isaaclab_tasks.core.multi_task.motion.mdp.observations:smpl_body_observation",
+              "func": "isaaclab_tasks.core.multi_task.motion.robots.smpl.observations:smpl_body_observation",
               "history_length": 0,
               "modifiers": null,
               "noise": null,
@@ -480,13 +420,7 @@
           }
         },
         "rerender_on_reset": false,
-        "rewards": {
-          "environment": {
-            "func": "isaaclab_tasks.core.multi_task.motion.mdp.runtime:motion_transition_reward",
-            "params": {},
-            "weight": 1.0
-          }
-        },
+        "rewards": null,
         "scene": {
           "class_type": "isaaclab.scene.interactive_scene:InteractiveScene",
           "clone_in_fabric": false,
@@ -756,15 +690,13 @@
         },
         "terminations": {
           "time_out": {
-            "func": "isaaclab_tasks.core.multi_task.motion.mdp.runtime:motion_time_out",
-            "params": {
-              "applied_actions_before_timeout": 300
-            },
+            "func": "isaaclab.envs.mdp.terminations:time_out",
+            "params": {},
             "time_out": true
           }
         }
       },
-      "resolved_configuration_sha256": "15d136fd84e912ce1440c44f6d2dc4495698dffaeac6d0e6203742d57a4912de",
+      "resolved_configuration_sha256": "ab2af49b33568713df714df572920d04d24a6f2ae75756c6c240f77723b419f8",
       "robot_assets": {
         "reference/humenv.xml": "a38c014814929152ddeb3e2a4f18a99c5eb861f0c7f6678416624c39dba9b024",
         "simulation/robot.xml": "f91b6d512f9fcece8d781ccf49afbea2ba5dfd33be0be376e84d5b5579e79fe2"
@@ -776,8 +708,8 @@
           "module_version": "3.16.0"
         },
         "isaac_sim": {
-          "version": "6.0.0-rc.59+release.41464.5f2772bc.gl",
-          "version_sha256": "2c678ddc2b0fc0f2d819ee728004487f8e7cb9b0be2877dd846813edb3796c90"
+          "version": "6.0.1-alpha.1",
+          "version_sha256": "b048288c87b861bf6429130003e3787abc459920ff28f2eb6aa6a220308e1cb5"
         },
         "mujoco": {
           "distribution_version": "3.8.1",
@@ -809,7 +741,7 @@
           },
           "solver_mujoco": {
             "owner": "newton._src.solvers.mujoco.solver_mujoco:SolverMuJoCo",
-            "source_sha256": "c2172dffacefdb6c940fe3092f6f16dd90243b2952f9e7fe87da7e49858e6156"
+            "source_sha256": "a482b6c0523b596f5a68350c60b2e9febbc75bf64a986b377d0355c74af5cd84"
           }
         },
         "numpy": {
@@ -825,19 +757,19 @@
           "module_version": "2.10.0+cu128"
         },
         "warp": {
-          "distribution_version": "1.16.0.dev20260630",
-          "module_source_sha256": "cb3cb0f9fd80237a74e6277476cb6862be0c0f993cfad1c1e3e580e322e26479",
-          "module_version": "1.16.0.dev20260630"
+          "distribution_version": "1.15.0.dev20260529",
+          "module_source_sha256": "f29f6368f025003a48a17a0dd6ed4eb1ef3d825c041026c07a6e1d00a31abc52",
+          "module_version": "1.15.0.dev20260529"
         }
       },
-      "runtime_dependencies_sha256": "0a6d22848477d47664812135a3cc605853585af2fafb1cadc90cf47e24e86229",
-      "schema": "forward_backward_phase3_motion_environment_dependency_identity_v7"
+      "runtime_dependencies_sha256": "2634604ed29838d89820a5214c54361a4bff7669dbd95fd3c0e05a3dc3502267",
+      "schema": "forward_backward_phase3_motion_environment_dependency_identity_v9"
     },
     "gpu_ownership_sha256": "53e5e17221ac869d6d73e61f4a31fe052ae7fa8ae06414789d74412027bce1f3",
-    "probe_sha256": "b97c67fb6b9466be56166a2ff9dbc699f8163fed77a5a96962db3b1895e49fe8"
+    "probe_sha256": "bd8da3f27b300f95e77c23e4eead25e1a222040ad384035ab795c2fb28c4402b"
   },
   "configured_horizon_steps": 300,
-  "construction_seconds": 15.36380517296493,
+  "construction_seconds": 17.176487367018126,
   "control_decimation": 15,
   "control_dt": 0.03333333333333333,
   "device": "cuda:0",
@@ -847,7 +779,7 @@
     "replicate": 1,
     "role": "repeatability"
   },
-  "execution_started_unix_ns": 1782989239835104207,
+  "execution_started_unix_ns": 1783124908047515270,
   "final_rows": 1024,
   "finite_final_observations": true,
   "finite_observations": true,
@@ -866,12 +798,6 @@
     ]
   },
   "one_edge_signature": {
-    "motion_facts.action_applied": {
-      "count": 1024,
-      "maximum_absolute": 1.0,
-      "mean": 1.0,
-      "mean_square": 1.0
-    },
     "motion_facts.clip_index": {
       "count": 1024,
       "maximum_absolute": 181.0,
@@ -895,6 +821,12 @@
       "maximum_absolute": 0.03333333507180214,
       "mean": 0.03333333507180214,
       "mean_square": 0.0011111112270090345
+    },
+    "motion_facts.prior_edge_applied": {
+      "count": 1024,
+      "maximum_absolute": 1.0,
+      "mean": 1.0,
+      "mean_square": 1.0
     },
     "motion_facts.reference_phase": {
       "count": 1024,
@@ -934,45 +866,45 @@
     },
     "observations.policy": {
       "count": 366592,
-      "maximum_absolute": 59.45557403564453,
-      "mean": 0.236871458231041,
-      "mean_square": 5.313202793125699
+      "maximum_absolute": 59.45566940307617,
+      "mean": 0.23687146158550829,
+      "mean_square": 5.313203312114333
     },
     "robot.body_link_pose_w": {
       "count": 172032,
       "maximum_absolute": 49.1717643737793,
-      "mean": 0.31133233815348405,
-      "mean_square": 219.25270207743387
+      "mean": 0.3113323402254185,
+      "mean_square": 219.25270212526377
     },
     "robot.body_link_velocity_w": {
       "count": 147456,
-      "maximum_absolute": 57.39064025878906,
-      "mean": 0.12692715461476448,
-      "mean_square": 12.82850207312322
+      "maximum_absolute": 57.39131164550781,
+      "mean": 0.12692714451099243,
+      "mean_square": 12.828503362704575
     },
     "robot.joint_position": {
       "count": 70656,
-      "maximum_absolute": 2.4316110610961914,
-      "mean": -0.0048025035992755,
-      "mean_square": 0.11750272896593843
+      "maximum_absolute": 2.4316112995147705,
+      "mean": -0.004802502873204677,
+      "mean_square": 0.11750272869522659
     },
     "robot.joint_velocity": {
       "count": 70656,
-      "maximum_absolute": 51.02368927001953,
-      "mean": -0.3034537615458643,
-      "mean_square": 25.675049042983886
+      "maximum_absolute": 51.02370071411133,
+      "mean": -0.3034536799930541,
+      "mean_square": 25.67504980781395
     },
     "robot.root_link_pose_w": {
       "count": 7168,
       "maximum_absolute": 48.82948303222656,
-      "mean": 0.3291394110051929,
-      "mean_square": 219.2444416162094
+      "mean": 0.3291394121086861,
+      "mean_square": 219.24444158328396
     },
     "robot.root_link_velocity_w": {
       "count": 6144,
-      "maximum_absolute": 15.448695182800293,
-      "mean": -0.14650071723214825,
-      "mean_square": 1.7804463774901447
+      "maximum_absolute": 15.448759078979492,
+      "mean": -0.14650072604243292,
+      "mean_square": 1.7804465525147073
     },
     "transition.action_applied": {
       "count": 1024,
@@ -1019,7 +951,7 @@
   "physics_dt": 0.0022222222222222222,
   "physics_manager": "NewtonMJWarpManager",
   "post_construction_memory": {
-    "allocated_bytes": 196239872,
+    "allocated_bytes": 196229632,
     "reserved_bytes": 484442112
   },
   "preset": "smpl_cmu",
@@ -1030,13 +962,6 @@
     "motion": 811
   },
   "reset_state_identity": {
-    "motion_facts.action_applied": {
-      "dtype": "torch.bool",
-      "sha256": "5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
-      "shape": [
-        1024
-      ]
-    },
     "motion_facts.clip_index": {
       "dtype": "torch.int64",
       "sha256": "2c38b0d96df298acf23021fe8a8785a906f170e01a834c903a85b6033fc6a578",
@@ -1061,6 +986,13 @@
     "motion_facts.episode_time_seconds": {
       "dtype": "torch.float32",
       "sha256": "ad7facb2586fc6e966c004d7d1d16b024f5805ff7cb47c7a85dabd8b48892ca7",
+      "shape": [
+        1024
+      ]
+    },
+    "motion_facts.prior_edge_applied": {
+      "dtype": "torch.bool",
+      "sha256": "5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
       "shape": [
         1024
       ]
@@ -1110,7 +1042,7 @@
     },
     "observations.policy": {
       "dtype": "torch.float32",
-      "sha256": "f0cea91c5b489da89e92bac2fd686b7cca2fd625c61f75ccee90a91463fedd09",
+      "sha256": "7f59e1ac1c13c773dfb2db31513cf349a47c9f8c3df93bce5827b9d53e96b751",
       "shape": [
         1024,
         358
@@ -1127,7 +1059,7 @@
     },
     "robot.body_link_velocity_w": {
       "dtype": "torch.float32",
-      "sha256": "d419922a7cf5c7131db42885270604ff5412e856504e51448038f2075ccc567f",
+      "sha256": "b2028e32077b10d6c43e02844199cf8f05a169fed1ece301b549b04f61dd2d5b",
       "shape": [
         1024,
         24,
@@ -1170,7 +1102,7 @@
   "schema": "forward_backward_phase3e_motion_environment_probe_v9",
   "seed": 7301,
   "semantic_steps": 300,
-  "source_artifact_root": "/home/isaaclab/octi/forward_backward/artifacts/phase3/source_deployments/smpl_cmu",
+  "source_artifact_root": "/home/zhengyuz/Projects/humenv",
   "task_table_builder_identity": "07919e3437b711110369a148dc167ec8e1db4ab9854762996f78c4d10c6294b7",
   "task_table_builder_version": "smpl_humenv_exact_mjcf_v1",
   "task_table_clip_count": 182,
@@ -1183,14 +1115,14 @@
   "trajectory_signature": {
     "final_observations": {
       "policy": {
-        "squared_sum": 232137.60552330114,
-        "sum": 4319.85117936568
+        "squared_sum": 236260.73365974208,
+        "sum": 4524.299616737077
       }
     },
     "observations": {
       "policy": {
-        "squared_sum": 89353003.17752805,
-        "sum": 1912420.3870450163
+        "squared_sum": 89521211.12214525,
+        "sum": 1836641.6854112945
       }
     },
     "reward": {

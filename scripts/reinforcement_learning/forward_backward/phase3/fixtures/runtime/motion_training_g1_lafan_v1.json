@@ -6,7 +6,7 @@
     "filename": "model_12.pt",
     "map_location": "cpu",
     "mmap": true,
-    "sha256": "a4119a4a9fa95ac1b1ac0ace69dad24c0404416bc5859838833fc7606b52bf55",
+    "sha256": "cbb2bec557c7e387f965018e58539d5514bd5823408750812cda3bf6331dc8f4",
     "strict_load": true
   },
   "collection": {
@@ -19,21 +19,21 @@
     "steps_per_iteration": 1,
     "updates_per_group": 16
   },
-  "contract_declaration_sha256": "3c31aaac1f1f99bae5d2f1a5fb1ffa2240fb4d4b41af976c478cefd1a3063a7d",
+  "contract_declaration_sha256": "355038124c76836b832a9693b718fb3120c224299885ae362c25c1b6e73ce42a",
   "identity": {
-    "checkpoint_schema_sha256": "c62ecf693d22509f3c05143dd2cc4a905e757791de60bb6d3921c269696693ed",
-    "environment_dependency_bundle_sha256": "70e6b9ef3d0afe608b749633070d8e80d357d840c55aaf88aab649d984f227d1",
-    "environment_semantic_sha256": "97bcc7308ad3f29daa3967a3fcb9b204ccbd668e20a8dcf0dbb64423436f5717",
+    "checkpoint_schema_sha256": "e61545931be59f0c6afc74ad35738cd874c90da1736fe695a1c44a2d9c87aa32",
+    "environment_dependency_bundle_sha256": "2baa681dab25d041fe42534b51379f3f4bc4f82708b5a32cc5c37813dedd6fa6",
+    "environment_semantic_sha256": "047b732a0dfb7d8378ffcbaca82cf233260be090ad71085d8cf0121d490fdb00",
     "expert_schema_sha256": "aafd5cb6d00f65941de1301b1abb035d965b6fee09d58fa9450672d79e119a02",
-    "learner_code_bundle_sha256": "4b583f26eb407cbeee69f15c738786c5db542e68950c051040d689f1d5b2884f",
+    "learner_code_bundle_sha256": "c3a02ded48613b1c7258d858c195a25754ffcf05c920522d2371e13b610b4f2f",
     "learner_runtime_bundle_sha256": "0b27d9ce550690a79ceb23915323f483164d0a871e4907aaef797bd1d7cfc960",
     "observation_schema_sha256": "7b2f98047b1a4fcb5d079ee5d86c23af6a59692b913f570614b2b062f246d19e",
     "python_source_identity_sha256": "393b12af83e11362ca214de8033f8a9c0df55420dd38d6da20bf5732d0686efd",
     "receipt_code_sha256": "dae3d62cf9d7c942129ffc40ac2c7d60e0443902bdc0401f63cca38d77556af6",
-    "resolved_agent_config_sha256": "b8d0a135aa6866e8dd33b2f5585038cba0c626a2240e8f9c8b5bc5123b95407e",
+    "resolved_agent_config_sha256": "56d34d9b8ae7c6d2ab6e178416a0b750151df3a21d37f79fd3936815fdc48820",
     "resolved_axes_sha256": "7371c6ec9dd0e83be8400a0b7b90c9d4d126d6a72c3a1e43318546ffe3e25bcf",
     "runner_source_sha256": "898f6a6e29bf8d9b692a4ae7b081f9b8a082f191237eb9e35c28d58e38f86bef",
-    "task_bridge_code_bundle_sha256": "c65cdc8a42e3ad2941ef73e3bb93bd2365f7a3e91f86ee3435804434355a86b8",
+    "task_bridge_code_bundle_sha256": "867dd5cd6089e0b74fd57eb7796f40f01152c504598f68aae07dc2f0afa7920c",
     "task_table_sha256": "c06647d85899a9b0ad1e78047c4eeb0b17b283f25d43b60b69b6cf16b2bf9936",
     "training_cli_sha256": "566c126c3d90b7385e71c71bd03e0e0a0fdb47c9700b587ab8bbf7fbcdc3d0a5"
   },
@@ -65,7 +65,7 @@
   "provenance": {
     "environment": {
       "dependency_identity": {
-        "bundle_sha256": "70e6b9ef3d0afe608b749633070d8e80d357d840c55aaf88aab649d984f227d1",
+        "bundle_sha256": "2baa681dab25d041fe42534b51379f3f4bc4f82708b5a32cc5c37813dedd6fa6",
         "preset": "g1_lafan",
         "python_sources": {
           "isaaclab.assets.articulation.articulation_cfg": "90fe321c76e23785bc70cbdae7f45ea9301cae11dfed5245deaff4edec65bf53",
@@ -100,9 +100,9 @@
           "isaaclab_physx.physics.physx_manager_cfg": "a09ae907d6e46cf466e0b764be56753e6e1e554755aa1ea5fa3ac4863d70aed3",
           "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics": "e450f76a2bfe11ff0986c60c5519a7ddc5009579477478547945e6958f85fbfd",
           "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics_cfg": "bb54968f13676e3d7185ae40bfe4792c38c5bb5029f9e10d68ea759f315d036c",
-          "isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command": "50b6467d7190326bc5be5c6ec8fe55fa3c8db33d6099c0941a8ec4a3fef7c252",
+          "isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command": "1566170eee5501315da70ec2f9ffa101470a575c63905029bb0067978c289e02",
           "isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command_cfg": "bc7014d6e02fa1e42d0d77bd1744b2d046f5458013890d9d2b861c301407629e",
-          "isaaclab_tasks.core.multi_task.motion.config.environment": "e87f831e348ecc4190eed2993c57cb4664c641151d22c0722353cd331fd85ac5",
+          "isaaclab_tasks.core.multi_task.motion.config.environment": "11aa9f9c2407f0a67f1e9954fd0dc9f364de4f9634fce0b405041e6f384a3f09",
           "isaaclab_tasks.core.multi_task.motion.config.presets": "58d93b5eb7f036b43cbeeea975735a4d27af15772416b4acce481195324ea6d2",
           "isaaclab_tasks.core.multi_task.motion.config.profiles": "9289a9cf91e9903540c06ad684bd295568e9041d2795571ed4f64e993d682a63",
           "isaaclab_tasks.core.multi_task.motion.config.robots.g1": "5372194cad85cd6fa9e9036d04e590bb6750c4b0b2c520ae6ac1a73476d0158a",
@@ -118,18 +118,18 @@
           "isaaclab_tasks.core.multi_task.motion.frames": "01265380578fa7140fc5f38efc9933c30b3802314f4d1852d6ffdd6097e8691a",
           "isaaclab_tasks.core.multi_task.motion.mdp.actions": "e0a8ecd10f8b56d83c10488472eb77a97b3ac42a84d813f417ff50df4a144da6",
           "isaaclab_tasks.core.multi_task.motion.mdp.actions_cfg": "e33fc1a9cf24dc422fc6b292bf303e8143de4d45a9eb5eab03a1f508ce74fd17",
-          "isaaclab_tasks.core.multi_task.motion.mdp.commands.commands_cfg": "e1c2381f764fc124180bec9a0be7a30d4415003ac1e9151fa19bd269893ff466",
-          "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_state_payload": "f8dee3bb5b1901f275d1d872bcc6339af7ff9780abe98aa76d236da28f591111",
+          "isaaclab_tasks.core.multi_task.motion.mdp.commands.commands_cfg": "f54ea5d54d880679e21d0880c08ba4072624f7d34bf4e48b2c2d3bfe4412846b",
+          "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_state_payload": "d96de8ed203160fbfe61e8ab6db1b809fd37c13bb9816fe896c3d657f91e6682",
           "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table": "2eafb32d7a2492328caf34090c722f79865c8e84b0bd216605bc1512437ad4e7",
           "isaaclab_tasks.core.multi_task.motion.mdp.curriculums": "29e5e500b7d46e0bf0ad5a485156ea9002d724f4d92f217d669ebd4c72316ece",
           "isaaclab_tasks.core.multi_task.motion.mdp.events": "141f471f0d35d4d1a33fed14f58bacdd4b8b772485efe923988d2fb2070f1f54",
           "isaaclab_tasks.core.multi_task.motion.mdp.history": "a2ca03a452c8c85931cfd3e36c07f971ca6f83dc497e8c5638ebdde8322bae8f",
-          "isaaclab_tasks.core.multi_task.motion.mdp.observations": "d4f158e08e5edd8b761a4a86728e17d4373702bf2c2f3af101a0a37eaad8405e",
+          "isaaclab_tasks.core.multi_task.motion.mdp.observations": "aa1825fd61437ca66ab669983c8f25744b9bd10b5931acd876fc31a25d7118f9",
           "isaaclab_tasks.core.multi_task.motion.mdp.reset_sources": "09a5e40b9e67c64b2994f0766de4cf7d11e6306d59a049a654bc934e19fe18d9",
-          "isaaclab_tasks.core.multi_task.motion.mdp.runtime": "2717eda93acdf9f2c35bb8949a681b69b7a8358e238b9f165017aa3e25bb83c9",
+          "isaaclab_tasks.core.multi_task.motion.mdp.runtime": "f04ed2da9d3c902e1b23ae283f5a8bc0c3f14fa0d40a9e422d4f515c512808f9",
           "isaaclab_tasks.core.multi_task.motion.trajectory._time": "43bf144bb4614f641a59f5a476106f7a82fd2e34547e93fe90b3e8236fb4efa7",
           "isaaclab_tasks.core.multi_task.motion.trajectory.g1": "b2b2696517899ddcd5425ed213659c2af8923bb2cef06fcb152ee2ce45beaa3a",
-          "isaaclab_tasks.core.multi_task.motion_env": "2ce86ba92ef8804b71db6315f765ccb6e7cbbcb9242ee811d3bb36e03cce12a7",
+          "isaaclab_tasks.core.multi_task.motion_env": "824c8c199f53e0122c0efebcd70e1f6b0cb7c0b4b858307d486b3a955881744a",
           "isaaclab_tasks.core.multi_task.motion_env_cfg": "7c561be9641ef80a355095e21058dbf74986fd50863d05a3705ebe5cdc5cb527",
           "motion_environment_identity": "87b180b03e76cb67156dc6947af851b959b3c36110693d30e3f737ad1f3de23a"
         },
@@ -956,6 +956,25 @@
                 "params": {},
                 "scale": null
               }
+            },
+            "transition": {
+              "auxiliary_evidence": {
+                "clip": null,
+                "flatten_history_dim": true,
+                "func": "isaaclab_tasks.core.multi_task.motion.mdp.observations:motion_auxiliary_evidence",
+                "history_length": 0,
+                "modifiers": null,
+                "noise": null,
+                "params": {
+                  "command_name": "motion"
+                },
+                "scale": null
+              },
+              "concatenate_dim": -1,
+              "concatenate_terms": true,
+              "enable_corruption": false,
+              "flatten_history_dim": true,
+              "history_length": null
             }
           },
           "rerender_on_reset": false,
@@ -1612,7 +1631,7 @@
             }
           }
         },
-        "resolved_configuration_sha256": "9d50f69e11d3c0ac2dd009d488fe0be8071e5af5f7410a88747ea6a139c24055",
+        "resolved_configuration_sha256": "00d4cc54bcb0eea013a265fa98a5f0c6af44045651fe37b785b180e7030bce87",
         "robot_assets": {
           "reference/g1_29dof.xml": "439c1ec0806583d73b492da9484b0cb9e9eae215e0d9506e3c2fa69016733532",
           "simulation/configuration/g1_29dof_rev_1_0_base.usd": "d9768c942783ae0932f0c3db3558d5283b9a93ba0e561d15d8984f548aa2a65d",
@@ -1622,13 +1641,13 @@
         },
         "runtime_dependencies": {
           "isaac_sim": {
-            "version": "6.0.0-rc.59+release.41464.5f2772bc.gl",
-            "version_sha256": "2c678ddc2b0fc0f2d819ee728004487f8e7cb9b0be2877dd846813edb3796c90"
+            "version": "6.0.1-alpha.1",
+            "version_sha256": "b048288c87b861bf6429130003e3787abc459920ff28f2eb6aa6a220308e1cb5"
           },
           "joblib": {
-            "distribution_version": "1.5.3",
-            "module_source_sha256": "5bed10f143569bbad2266640f5eabe8a172428ce8944abce9b597c48de38a624",
-            "module_version": "1.5.3"
+            "distribution_version": "1.5.1",
+            "module_source_sha256": "b814aeb1392c5cba4a03ea40a0b3b8c1d4eb1e424e7e1b41dbdee671395eb04f",
+            "module_version": "1.5.1"
           },
           "newton": {
             "distribution_version": "1.4.0.dev0",
@@ -1654,18 +1673,18 @@
             "module_version": "2.10.0+cu128"
           },
           "warp": {
-            "distribution_version": "1.16.0.dev20260630",
-            "module_source_sha256": "cb3cb0f9fd80237a74e6277476cb6862be0c0f993cfad1c1e3e580e322e26479",
-            "module_version": "1.16.0.dev20260630"
+            "distribution_version": "1.15.0.dev20260529",
+            "module_source_sha256": "f29f6368f025003a48a17a0dd6ed4eb1ef3d825c041026c07a6e1d00a31abc52",
+            "module_version": "1.15.0.dev20260529"
           }
         },
-        "runtime_dependencies_sha256": "9933fb02cf591199097bed32480e1508328e07c10455a92d3b2bd8f72ebac903",
+        "runtime_dependencies_sha256": "5c3212ef7e952a3136c1078fb07bf73bdc0115e87055fd844dc33cd2ad12e08a",
         "schema": "forward_backward_phase3_motion_environment_dependency_identity_v7"
       },
-      "semantic_sha256": "97bcc7308ad3f29daa3967a3fcb9b204ccbd668e20a8dcf0dbb64423436f5717"
+      "semantic_sha256": "047b732a0dfb7d8378ffcbaca82cf233260be090ad71085d8cf0121d490fdb00"
     },
     "learner_code": {
-      "bundle_sha256": "4b583f26eb407cbeee69f15c738786c5db542e68950c051040d689f1d5b2884f",
+      "bundle_sha256": "c3a02ded48613b1c7258d858c195a25754ffcf05c920522d2371e13b610b4f2f",
       "python_file_count": 40,
       "python_files": [
         {
@@ -1682,7 +1701,7 @@
         },
         {
           "path": "algorithms/forward_backward.py",
-          "sha256": "aec6b66f7dff37486585b906a47d5749b6b1d18fdb5d10344c19a2ff39b498ca"
+          "sha256": "fbf88ca1e025549383d378e4235489e53b81565c92c2decab3df7abc54604830"
         },
         {
           "path": "algorithms/ppo.py",
@@ -1847,7 +1866,7 @@
       "schema": "forward_backward_phase3f_learner_runtime_identity_v1"
     },
     "task_bridge": {
-      "bundle_sha256": "c65cdc8a42e3ad2941ef73e3bb93bd2365f7a3e91f86ee3435804434355a86b8",
+      "bundle_sha256": "867dd5cd6089e0b74fd57eb7796f40f01152c504598f68aae07dc2f0afa7920c",
       "source_owner_count": 3,
       "source_owners": {
         "environment_wrapper": {
@@ -1860,15 +1879,15 @@
         },
         "motion_runner_config": {
           "owner": "isaaclab_tasks.core.multi_task.motion.config.agents.rsl_rl_fb_cfg:G1LafanForwardBackwardRunnerCfg",
-          "source_sha256": "732268d706e21a84fbbae1f1138c4bbfff41f8acceee09f8eae149b666f63bd0"
+          "source_sha256": "8ce54ed8dd3f682a2384921238ee3bcea735e3b6e7865fa555269b4f7b7fccf4"
         }
       }
     }
   },
   "records_sha256": {
-    "complete": "c9f86455592fc356c56b99ddfa5ade23fc19bbb9f9596e19053598101d5d10aa",
-    "launch": "88cb1b94b0b40336a5d6b449761558382de46d36f35588eb858c0cd3c39a2b85",
-    "validation": "124b8ba0d5b22fe0d61e427538be5e23f9631d1280a3e8a40c3a7e3c21b178af"
+    "complete": "035bbd67465d53ce3fd416a999b4ee4b58acffbceb31a2e87358c4332b7c2563",
+    "launch": "d329d2cc62b9cc4af0934eb7032915bd57a750030d90517de342e75c689de8ad",
+    "validation": "855269e374d0646ce3d60d9311497d4da40b50996b1a6a5ac5cf2c1dc57667de"
   },
   "runner": {
     "action_statistics_finite": true,
@@ -1890,26 +1909,26 @@
     "collected_transitions": 12288,
     "completed_iterations": 12,
     "last_metrics": {
-      "actor/fb_value": -5.85584831237793,
-      "actor/helper_value": -0.16384947299957275,
-      "actor/loss": 7.978679180145264,
-      "discriminator/gradient_penalty": 0.30977046489715576,
-      "discriminator/logistic": 1.2606992721557617,
-      "discriminator/loss": 4.35840368270874,
-      "fb/diagonal": -17.593748092651367,
+      "actor/fb_value": -5.850189208984375,
+      "actor/helper_value": -0.16423112154006958,
+      "actor/loss": 7.9805378913879395,
+      "discriminator/gradient_penalty": 0.30975252389907837,
+      "discriminator/logistic": 1.2596747875213623,
+      "discriminator/loss": 4.357199668884277,
+      "fb/diagonal": -17.649765014648438,
       "fb/implied_value": 0.0,
-      "fb/loss": 36901.9453125,
-      "fb/measure": 440.38360595703125,
-      "fb/off_diagonal": 457.97735595703125,
-      "fb/orthogonality": 364.6156005859375,
+      "fb/loss": 36892.96875,
+      "fb/measure": 440.3000793457031,
+      "fb/off_diagonal": 457.9498291015625,
+      "fb/orthogonality": 364.52667236328125,
       "fb/orthogonality_diagonal": -256.0,
-      "fb/orthogonality_off_diagonal": 620.6156005859375,
-      "value/auxiliary/loss": 4.578372955322266,
-      "value/auxiliary/reward": -3.440782308578491,
-      "value/auxiliary/target": -4.592723846435547,
-      "value/discriminator/loss": 1.9378454685211182,
-      "value/discriminator/reward": -0.07943479716777802,
-      "value/discriminator/target": -0.8567838668823242
+      "fb/orthogonality_off_diagonal": 620.5266723632812,
+      "value/auxiliary/loss": 4.588101863861084,
+      "value/auxiliary/reward": -3.442749500274658,
+      "value/auxiliary/target": -4.595852375030518,
+      "value/discriminator/loss": 1.9429771900177002,
+      "value/discriminator/reward": -0.0806126594543457,
+      "value/discriminator/target": -0.8609750270843506
     },
     "metric_names": [
       "discriminator/loss",

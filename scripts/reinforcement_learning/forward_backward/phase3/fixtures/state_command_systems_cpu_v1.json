@@ -8,18 +8,18 @@
   },
   "comparison": {
     "factory_like": {
-      "construction_median_ratio": 1.0324801846424208,
-      "pinned_resample_median_ratio": 1.1259760488640218,
-      "randomized_resample_median_ratio": 0.9479719215410632,
+      "construction_median_ratio": 0.9433697178494896,
+      "pinned_resample_median_ratio": 1.0858228991784438,
+      "randomized_resample_median_ratio": 0.9104069681904735,
       "state_owned_byte_ratio": 0.8888888888888888,
-      "update_median_ratio": 0.9503642952653011
+      "update_median_ratio": 0.9792820687504797
     },
     "position_like": {
-      "construction_median_ratio": 1.059624362908047,
-      "pinned_resample_median_ratio": 1.0930227632100729,
-      "randomized_resample_median_ratio": 0.9345873413353354,
+      "construction_median_ratio": 0.8811803303765339,
+      "pinned_resample_median_ratio": 1.077622522084256,
+      "randomized_resample_median_ratio": 0.9886655361091332,
       "state_owned_byte_ratio": 0.9259259259259259,
-      "update_median_ratio": 1.0543536781671736
+      "update_median_ratio": 0.9949346533113401
     }
   },
   "configuration": {
@@ -65,21 +65,21 @@
     "semantic_equivalence_passed": true
   },
   "identity": {
-    "benchmark_script_sha256": "f49e583ca7127b077a18ab5fbf907ae0a580159d83d36d7d0e0c4a309f6bbea8",
+    "benchmark_script_sha256": "345709d84111e2556b8b75574a056daf11f6805c0407a3f82bd286b1862078ba",
     "configuration_sha256": "d52d8d3ae1247abc2cf649ed13097301a24316c81598fabf474e2dd61bbfed3a",
-    "current_state_command_cfg_sha256": "bc7014d6e02fa1e42d0d77bd1744b2d046f5458013890d9d2b861c301407629e",
-    "current_state_command_sha256": "50b6467d7190326bc5be5c6ec8fe55fa3c8db33d6099c0941a8ec4a3fef7c252",
+    "current_state_command_cfg_sha256": "a49a0cf2bed1f092b27fb15d70101d583cb046c2958703e2df56cd09376ed995",
+    "current_state_command_sha256": "d56ca6859be33069559d9cd5c92ce50f3956656b525cdbd0252c0d6c04b37afc",
     "historical_revision": "fe51e5646a335e05844a10fa93d9479da2749847",
     "historical_state_command_sha256": "d03104733554d1c46d5501d24e96b04cebfc0ebc37ba83fd3ee6e9bd7d244c54",
-    "repository_head": "c9c3b9af377a4132588a7126f4073ed12b072124"
+    "repository_head": "2d92bf490e4176f5a86c486ff725aec8633bec17"
   },
   "results": {
     "factory_like": {
       "current": {
         "construction": {
-          "median_ns": 686223.5,
-          "p95_ns": 1190280.1499999992,
-          "python_peak_bytes": 29404,
+          "median_ns": 638558.0,
+          "p95_ns": 776581.6,
+          "python_peak_bytes": 29412,
           "samples": 30,
           "storage": {
             "payload_owned_bytes": 491520,
@@ -121,11 +121,11 @@
           }
         },
         "pinned_resample": {
-          "calls_per_second": 17997.210972215635,
-          "env_rows_per_second": 18429144.03554881,
+          "calls_per_second": 19190.423211200683,
+          "env_rows_per_second": 19650993.3682695,
           "iterations_per_repeat": 200,
-          "median_ns_per_call": 55564.165,
-          "p95_ns_per_call": 58314.67999999999,
+          "median_ns_per_call": 52109.325,
+          "p95_ns_per_call": 53072.032,
           "repeats": 9
         },
         "pinned_resample_allocations": {
@@ -144,20 +144,20 @@
           "python_peak_bytes": 5464
         },
         "randomized_resample": {
-          "calls_per_second": 17970.60153353925,
-          "env_rows_per_second": 18401895.970344193,
+          "calls_per_second": 18521.752965378953,
+          "env_rows_per_second": 18966275.03654805,
           "iterations_per_repeat": 200,
-          "median_ns_per_call": 55646.44,
-          "p95_ns_per_call": 60918.33899999999,
+          "median_ns_per_call": 53990.57,
+          "p95_ns_per_call": 56243.188,
           "repeats": 9
         },
         "randomized_resample_allocations": {
           "cuda_peak_additional_bytes": 0,
           "owned_storage_pointers_stable": true,
           "positive_self_cpu_memory_by_operator": {
-            "aten::empty": 155648,
+            "aten::empty": 147456,
             "aten::index_select": 2457600,
-            "aten::randint": 8192
+            "aten::randint": 16384
           },
           "positive_self_cpu_memory_bytes": 2621440,
           "positive_self_cpu_memory_operator_calls": 80,
@@ -168,11 +168,11 @@
           "python_peak_bytes": 5096
         },
         "update": {
-          "calls_per_second": 44412.20118638313,
-          "env_rows_per_second": 181912376.0594253,
+          "calls_per_second": 45291.78325526539,
+          "env_rows_per_second": 185515144.21356705,
           "iterations_per_repeat": 200,
-          "median_ns_per_call": 22516.335,
-          "p95_ns_per_call": 22587.766,
+          "median_ns_per_call": 22079.06,
+          "p95_ns_per_call": 24015.425,
           "repeats": 9
         },
         "update_allocations": {
@@ -190,8 +190,8 @@
       },
       "historical_reference": {
         "construction": {
-          "median_ns": 664636.0,
-          "p95_ns": 697599.2999999999,
+          "median_ns": 676890.5,
+          "p95_ns": 898090.7499999994,
           "python_peak_bytes": 29444,
           "samples": 30,
           "storage": {
@@ -237,11 +237,11 @@
           }
         },
         "pinned_resample": {
-          "calls_per_second": 20264.42850106758,
-          "env_rows_per_second": 20750774.785093203,
+          "calls_per_second": 20837.400967647227,
+          "env_rows_per_second": 21337498.59087076,
           "iterations_per_repeat": 200,
-          "median_ns_per_call": 49347.555,
-          "p95_ns_per_call": 54055.981999999996,
+          "median_ns_per_call": 47990.63,
+          "p95_ns_per_call": 48945.157999999996,
           "repeats": 9
         },
         "pinned_resample_allocations": {
@@ -257,24 +257,24 @@
           "positive_self_device_memory_bytes": 0,
           "positive_self_device_memory_operator_calls": 0,
           "profiled_calls": 20,
-          "python_peak_bytes": 5440
+          "python_peak_bytes": 5056
         },
         "randomized_resample": {
-          "calls_per_second": 17035.62566699798,
-          "env_rows_per_second": 17444480.683005933,
+          "calls_per_second": 16862.332962783566,
+          "env_rows_per_second": 17267028.953890372,
           "iterations_per_repeat": 200,
-          "median_ns_per_call": 58700.515,
-          "p95_ns_per_call": 65494.59,
+          "median_ns_per_call": 59303.775,
+          "p95_ns_per_call": 59842.39599999999,
           "repeats": 9
         },
         "randomized_resample_allocations": {
           "cuda_peak_additional_bytes": 0,
           "owned_storage_pointers_stable": true,
           "positive_self_cpu_memory_by_operator": {
-            "aten::empty": 155648,
+            "aten::empty": 147456,
             "aten::index": 163840,
             "aten::index_select": 2457600,
-            "aten::randint": 8192
+            "aten::randint": 16384
           },
           "positive_self_cpu_memory_bytes": 2785280,
           "positive_self_cpu_memory_operator_calls": 100,
@@ -285,11 +285,11 @@
           "python_peak_bytes": 5064
         },
         "update": {
-          "calls_per_second": 42207.770281677775,
-          "env_rows_per_second": 172883027.07375216,
+          "calls_per_second": 44353.43120361463,
+          "env_rows_per_second": 181671654.21000552,
           "iterations_per_repeat": 200,
-          "median_ns_per_call": 23692.32,
-          "p95_ns_per_call": 24876.739999999998,
+          "median_ns_per_call": 22546.17,
+          "p95_ns_per_call": 23037.633,
           "repeats": 9
         },
         "update_allocations": {
@@ -309,8 +309,8 @@
     "position_like": {
       "current": {
         "construction": {
-          "median_ns": 911029.0,
-          "p95_ns": 1321273.3999999994,
+          "median_ns": 990811.5,
+          "p95_ns": 2254650.3999999994,
           "python_peak_bytes": 29956,
           "samples": 30,
           "storage": {
@@ -359,11 +359,11 @@
           }
         },
         "pinned_resample": {
-          "calls_per_second": 17149.783205303054,
-          "env_rows_per_second": 17561378.002230328,
+          "calls_per_second": 17717.211686485436,
+          "env_rows_per_second": 18142424.766961087,
           "iterations_per_repeat": 200,
-          "median_ns_per_call": 58309.775,
-          "p95_ns_per_call": 62282.026,
+          "median_ns_per_call": 56442.29,
+          "p95_ns_per_call": 59002.629,
           "repeats": 9
         },
         "pinned_resample_allocations": {
@@ -382,11 +382,11 @@
           "python_peak_bytes": 5592
         },
         "randomized_resample": {
-          "calls_per_second": 17270.245930892594,
-          "env_rows_per_second": 17684731.833234016,
+          "calls_per_second": 15794.457251116866,
+          "env_rows_per_second": 16173524.225143671,
           "iterations_per_repeat": 200,
-          "median_ns_per_call": 57903.055,
-          "p95_ns_per_call": 66417.908,
+          "median_ns_per_call": 63313.35,
+          "p95_ns_per_call": 66693.158,
           "repeats": 9
         },
         "randomized_resample_allocations": {
@@ -402,14 +402,14 @@
           "positive_self_device_memory_bytes": 0,
           "positive_self_device_memory_operator_calls": 0,
           "profiled_calls": 20,
-          "python_peak_bytes": 120041
+          "python_peak_bytes": 120025
         },
         "update": {
-          "calls_per_second": 47128.418342003395,
-          "env_rows_per_second": 193038001.5288459,
+          "calls_per_second": 49474.12713415924,
+          "env_rows_per_second": 202646024.74151623,
           "iterations_per_repeat": 200,
-          "median_ns_per_call": 21218.62,
-          "p95_ns_per_call": 25973.148999999998,
+          "median_ns_per_call": 20212.585,
+          "p95_ns_per_call": 20714.392,
           "repeats": 9
         },
         "update_allocations": {
@@ -427,8 +427,8 @@
       },
       "historical_reference": {
         "construction": {
-          "median_ns": 859766.0,
-          "p95_ns": 1559252.6999999993,
+          "median_ns": 1124414.0,
+          "p95_ns": 2128307.9999999995,
           "python_peak_bytes": 29580,
           "samples": 30,
           "storage": {
@@ -480,11 +480,11 @@
           }
         },
         "pinned_resample": {
-          "calls_per_second": 18745.103427514045,
-          "env_rows_per_second": 19194985.90977438,
+          "calls_per_second": 19092.466341891086,
+          "env_rows_per_second": 19550685.534096472,
           "iterations_per_repeat": 200,
-          "median_ns_per_call": 53347.265,
-          "p95_ns_per_call": 56169.17,
+          "median_ns_per_call": 52376.68,
+          "p95_ns_per_call": 52625.026,
           "repeats": 9
         },
         "pinned_resample_allocations": {
@@ -503,23 +503,24 @@
           "python_peak_bytes": 5520
         },
         "randomized_resample": {
-          "calls_per_second": 16140.553228760302,
-          "env_rows_per_second": 16527926.50625055,
+          "calls_per_second": 15615.435545728242,
+          "env_rows_per_second": 15990205.99882572,
           "iterations_per_repeat": 200,
-          "median_ns_per_call": 61955.745,
-          "p95_ns_per_call": 66631.95999999999,
+          "median_ns_per_call": 64039.2,
+          "p95_ns_per_call": 66431.97099999999,
           "repeats": 9
         },
         "randomized_resample_allocations": {
           "cuda_peak_additional_bytes": 0,
           "owned_storage_pointers_stable": true,
           "positive_self_cpu_memory_by_operator": {
-            "aten::empty": 163840,
+            "aten::empty": 147456,
             "aten::index": 163840,
-            "aten::index_select": 3932160
+            "aten::index_select": 3932160,
+            "aten::randint": 16384
           },
           "positive_self_cpu_memory_bytes": 4259840,
-          "positive_self_cpu_memory_operator_calls": 80,
+          "positive_self_cpu_memory_operator_calls": 100,
           "positive_self_device_memory_by_operator": {},
           "positive_self_device_memory_bytes": 0,
           "positive_self_device_memory_operator_calls": 0,
@@ -527,11 +528,11 @@
           "python_peak_bytes": 5160
         },
         "update": {
-          "calls_per_second": 49690.02122509257,
-          "env_rows_per_second": 203530326.93797916,
+          "calls_per_second": 49223.52352810589,
+          "env_rows_per_second": 201619552.37112173,
           "iterations_per_repeat": 200,
-          "median_ns_per_call": 20124.765,
-          "p95_ns_per_call": 22440.15,
+          "median_ns_per_call": 20315.49,
+          "p95_ns_per_call": 20802.695999999996,
           "repeats": 9
         },
         "update_allocations": {

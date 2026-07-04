@@ -10,7 +10,8 @@ mass, material, center-of-mass pose, reached contact force, root/joint state,
 controller offset, actor facts, history, and behavior action.  The controlled
 candidate disables new randomness and injects those source facts.  Each
 edge starts from the source root/joint state and receives the source default
-joint offset, current actor facts, history, and behavior action.
+joint offset and behavior action. Learner-owned history is replayed separately
+through the current RSL-RL history contract.
 """
 
 from __future__ import annotations
@@ -43,25 +44,27 @@ simulation_app = app_launcher.app
 import torch
 import warp as wp
 from motion_environment_identity import (
+    motion_environment_axes,
     motion_environment_dependency_identity,
     motion_environment_semantic_sha256,
 )
+from rsl_rl.algorithms.forward_backward import ForwardBackward
+from rsl_rl.storage.forward_backward_replay import ForwardBackwardHistoryLayout
+from tensordict import TensorDict
 
+from isaaclab.envs import ManagerBasedRLEnv
 from isaaclab.utils.math import quat_apply, quat_apply_inverse
 
-from isaaclab_tasks.core.multi_task.motion.config.robots import G1_MOTION_ARTICULATION_CFG
-from isaaclab_tasks.core.multi_task.motion.config.source_skeletons import g1_lafan_source_skeleton
-from isaaclab_tasks.core.multi_task.motion.data.importers import BfmG1JoblibClips
-from isaaclab_tasks.core.multi_task.motion.mdp.actions import MotionJointPositionAction
-from isaaclab_tasks.core.multi_task.motion.mdp.commands import MotionStatePayload
-from isaaclab_tasks.core.multi_task.motion.mdp.observations import g1_privileged_observation
-from isaaclab_tasks.core.multi_task.motion.trajectory.g1 import G1LafanFrameBuilder
-from isaaclab_tasks.core.multi_task.motion_env import MotionImitationEnv
+from isaaclab_tasks.core.multi_task.motion.data.sources import LafanG1JoblibClips, lafan_g1_29dof_skeleton
+from isaaclab_tasks.core.multi_task.motion.robots.g1.actions import G1JointPositionAction
+from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import G1_MOTION_ARTICULATION_CFG
+from isaaclab_tasks.core.multi_task.motion.robots.g1.observations import g1_bfm_privileged_observation
+from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1PoseFrameBuilder
 from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
 from isaaclab_tasks.utils import resolve_presets
 
 _HISTORY_FIELDS = (
-    ("processed_action", 29, slice(0, 29)),
+    ("last_action", 29, slice(0, 29)),
     ("base_angular_velocity", 3, slice(61, 64)),
     ("joint_position", 29, slice(0, 29)),
     ("joint_velocity", 29, slice(29, 58)),
@@ -138,19 +141,73 @@ def _history_successor(
     for name, width, state_slice in _HISTORY_FIELDS:
         end = offset + 4 * width
         view = expected[:, offset:end].reshape(-1, 4, width)
-        source = current_last_action if name == "processed_action" else current_state[:, state_slice]
+        source = current_last_action if name == "last_action" else current_state[:, state_slice]
         view[prior_edge_applied, 1:] = view[prior_edge_applied, :-1].copy()
         view[prior_edge_applied, 0] = source[prior_edge_applied]
         offset = end
     return expected
 
 
+def _actor_observations(state: np.ndarray, last_action: np.ndarray) -> TensorDict:
+    """Split the released 64-wide actor state into current named learner fields."""
+    batch_size = state.shape[0]
+    return TensorDict(
+        {
+            "joint_position": torch.from_numpy(state[:, :29]),
+            "joint_velocity": torch.from_numpy(state[:, 29:58]),
+            "projected_gravity": torch.from_numpy(state[:, 58:61]),
+            "base_angular_velocity": torch.from_numpy(state[:, 61:64]),
+            "last_action": torch.from_numpy(last_action),
+        },
+        batch_size=[batch_size],
+    )
+
+
+def _learner_history_recurrence(oracle: Mapping[str, np.ndarray]) -> dict[str, object]:
+    """Replay the frozen sequence through the public learner-owned history API."""
+    layout = ForwardBackwardHistoryLayout(
+        history_field="history_actor",
+        history_length=4,
+        include_seed_observations=False,
+        sources=tuple(ForwardBackwardHistoryLayout.Source(name) for name, _width, _slice in _HISTORY_FIELDS),
+    )
+    current_expected = np.zeros_like(oracle["current_history_actor"][0])
+    source_valid = np.zeros(current_expected.shape[0], dtype=np.bool_)
+    initial = _actor_observations(oracle["current_state"][0], oracle["current_last_action"][0])
+    history = ForwardBackward.EvaluationHistory(layout, initial)
+    actual_rows: list[np.ndarray] = []
+    expected_rows: list[np.ndarray] = []
+    for index in range(oracle["current_state"].shape[0]):
+        current = _actor_observations(oracle["current_state"][index], oracle["current_last_action"][index])
+        history.decorate_current(current)
+        actual_rows.append(_numpy(current["history_actor"]))
+        expected_rows.append(current_expected.copy())
+        reached_expected = _history_successor(
+            current_expected,
+            oracle["current_state"][index],
+            oracle["current_last_action"][index],
+            source_valid,
+        )
+        done = oracle["terminated"][index] | oracle["truncated"][index]
+        returned_expected = reached_expected.copy()
+        returned_expected[done] = 0.0
+        returned = _actor_observations(oracle["returned_state"][index], oracle["returned_last_action"][index])
+        history.advance(current, returned, torch.from_numpy(done))
+        actual_rows.append(_numpy(returned["history_actor"]))
+        expected_rows.append(returned_expected)
+        current_expected = returned_expected
+        source_valid = ~done
+
+    return _within(np.concatenate(actual_rows), np.concatenate(expected_rows), atol=0.0)
+
+
 def _controlled_environment_cfg() -> MotionImitationEnvCfg:
     """Resolve G1-LAFAN and disable randomness before exact source-fact injection."""
-    cfg = resolve_presets(MotionImitationEnvCfg(), selected={"g1_lafan"})
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("g1_lafan"))
     action = cfg.actions.joint_position
     action.default_joint_offset_range = (0.0, 0.0)
-    cfg.observations.state.enable_corruption = False
+    for name in ("joint_position", "joint_velocity", "projected_gravity", "base_angular_velocity"):
+        getattr(cfg.observations, name).enable_corruption = False
     assert cfg.events.robot_material is not None
     assert cfg.events.body_mass is not None
     assert cfg.events.torso_com is not None
@@ -279,7 +336,7 @@ def _substep_measurement(
 
 
 def _offline_exact(oracle: Mapping[str, np.ndarray], evidence: Mapping[str, object]) -> dict[str, object]:
-    source_skeleton = g1_lafan_source_skeleton()
+    source_skeleton = lafan_g1_29dof_skeleton()
     default_joint_position = torch.tensor(
         [G1_MOTION_ARTICULATION_CFG.init_state.joint_pos[name] for name in source_skeleton.joint_names],
         dtype=torch.float32,
@@ -301,7 +358,7 @@ def _offline_exact(oracle: Mapping[str, np.ndarray], evidence: Mapping[str, obje
             torch.from_numpy(oracle[f"{prefix}_{name}"]).reshape(-1, *oracle[f"{prefix}_{name}"].shape[2:])
             for name in ("body_position", "body_rotation_xyzw", "body_linear_velocity", "body_angular_velocity")
         )
-        actual = g1_privileged_observation(*values).reshape(*oracle[f"{prefix}_privileged_state"].shape)
+        actual = g1_bfm_privileged_observation(*values).reshape(*oracle[f"{prefix}_privileged_state"].shape)
         expected = torch.from_numpy(oracle[f"{prefix}_privileged_state"])
         valid = (
             torch.from_numpy(oracle["final_observation_valid"])
@@ -400,22 +457,20 @@ def _run_candidate(
     dependency_identity = motion_environment_dependency_identity(
         preset="g1_lafan",
         cfg=cfg,
-        importer_type=BfmG1JoblibClips,
-        frame_builder_type=G1LafanFrameBuilder,
+        importer_type=LafanG1JoblibClips,
+        frame_builder_type=G1PoseFrameBuilder,
         reference_artifact_root=table_cfg.reference_artifact_root,
     )
-    env = MotionImitationEnv(cfg=cfg)
+    env = ManagerBasedRLEnv(cfg=cfg)
 
     try:
         env.reset()
         robot = env.scene["robot"]
         action = env.action_manager.get_term("joint_position")
-        command = env.command_manager.get_term("motion")
-        table = command.table
-        payload = command.payload
-        if not isinstance(action, MotionJointPositionAction) or not isinstance(payload, MotionStatePayload):
-            raise TypeError("Controlled G1 replay requires the final motion action and payload types.")
-        source_joint_names = g1_lafan_source_skeleton().joint_names
+        table = env.command_manager.get_term("motion").table
+        if not isinstance(action, G1JointPositionAction):
+            raise TypeError("Controlled G1 replay requires the final motion action type.")
+        source_joint_names = lafan_g1_29dof_skeleton().joint_names
         simulator_joint_names = tuple(robot.joint_names)
         if table.joint_names != simulator_joint_names:
             raise ValueError("The trajectory table must retain the live simulator joint axis.")
@@ -437,7 +492,7 @@ def _run_candidate(
         body_ids, observed_body_names = robot.find_bodies(list(source_body_names), preserve_order=True)
         if tuple(observed_body_names) != source_body_names:
             raise ValueError("Candidate articulation cannot reproduce the source physical-body order.")
-        contact_sensor = env._motion_runtime.contact_sensor
+        contact_sensor = env.scene.sensors["contact_forces"]
         sensor_ids, observed_sensor_names = contact_sensor.find_sensors(list(source_body_names), preserve_order=True)
         if tuple(observed_sensor_names) != source_body_names:
             raise ValueError("Candidate contact sensor cannot reproduce the source physical-body order.")
@@ -476,15 +531,11 @@ def _run_candidate(
         source_last_action = torch.from_numpy(flat["current_last_action"]).to(device)
         action.default_joint_offset.copy_(source_offset)
         action._processed_actions.copy_(source_last_action)
-        action._raw_actions.copy_(action._processed_actions / action.cfg.normalize_to)
+        action._raw_actions.copy_(action._processed_actions / action.cfg.scale)
         action.joint_position_target.copy_(action.joint_default_position + action.default_joint_offset)
-        source_history = torch.from_numpy(flat["current_history_actor"]).to(device)
-        payload.history_value.copy_(source_history)
-        payload.prior_edge_applied.copy_(torch.from_numpy(flat["current_episode_step"] > 0).to(device))
         env.episode_length_buf.zero_()
         expected_done = torch.from_numpy(flat["terminated"] | flat["truncated"]).to(device)
-        timeout_count = env.cfg.terminations.time_out.params["applied_actions_before_timeout"]
-        env.episode_length_buf[expected_done] = timeout_count - 1
+        env.episode_length_buf[expected_done] = env.max_episode_length - 1
 
         env.scene.write_data_to_sim()
         env.sim.forward()
@@ -502,16 +553,18 @@ def _run_candidate(
             "velocity_limit": robot.data.joint_vel_limits.torch.index_select(1, joint_ids),
             "position_limit": robot.data.joint_pos_limits.torch.index_select(1, joint_ids),
         }
-        candidate_current = {name: value.clone() for name, value in env.observation_manager.compute().items()}
+        measured = env.observation_manager.compute()
+        candidate_current = {
+            name: measured[name].clone()
+            for name in (
+                "joint_position",
+                "joint_velocity",
+                "projected_gravity",
+                "base_angular_velocity",
+                "privileged_state",
+            )
+        }
 
-        # Feed the exact frozen actor facts to the history recurrence.  The
-        # separately retained candidate_current remains the actual noise-free
-        # observation measured from the injected physical state.
-        env.obs_buf = {name: value.clone() for name, value in candidate_current.items()}
-        source_state = torch.from_numpy(flat["current_state"]).to(device)
-        env.obs_buf["state"].copy_(source_state)
-        env.obs_buf["last_action"].copy_(source_last_action)
-        env.obs_buf["history_actor"].copy_(payload.history_value)
         substep_values: dict[str, list[torch.Tensor]] = {name: [] for name in _SUBSTEP_FIELDS}
         original_scene_update = env.scene.update
 
@@ -557,12 +610,23 @@ def _run_candidate(
 
         env._reset_idx = types.MethodType(capture_reset, env)
         env.scene.update = types.MethodType(update_with_capture, env.scene)
+        reward_density = torch.empty(num_edges, len(env.reward_manager.active_terms), device=device)
+        penalty_scale = env.curriculum_manager.get_term("penalty_scale").scale.clone()
+        original_reward_compute = env.reward_manager.compute
+
+        def compute_reward_with_capture(_instance, dt):
+            result = original_reward_compute(dt)
+            reward_density.copy_(env.reward_manager._step_reward)
+            return result
+
+        env.reward_manager.compute = types.MethodType(compute_reward_with_capture, env.reward_manager)
         behavior = torch.from_numpy(flat["behavior_action"]).to(device)
         try:
             returned, reward, terminated, truncated, extras = env.step(behavior)
         finally:
             env._reset_idx = original_reset
             env.scene.update = original_scene_update
+            env.reward_manager.compute = original_reward_compute
         if any(len(values) != 4 for values in substep_values.values()):
             raise RuntimeError("Candidate G1 replay must capture exactly four physics substeps per action.")
         candidate_substeps = {name: torch.stack(values, dim=1) for name, values in substep_values.items()}
@@ -583,20 +647,32 @@ def _run_candidate(
         final = extras.get("final_obs")
         if final is None:
             raise RuntimeError("Candidate G1 done rows require exact pre-reset final observations.")
-        history_actual = returned["history_actor"].clone()
-        history_actual[expected_done] = final["history_actor"][expected_done]
-        history_expected = _history_successor(
-            _numpy(source_history),
-            _numpy(source_state),
-            _numpy(source_last_action),
-            flat["current_episode_step"] > 0,
-        )
+        final_valid = extras.get("final_obs_valid", done).to(device).bool().reshape(num_edges)
+        history_recurrence = _learner_history_recurrence(oracle)
 
         raw_names = tuple(evidence["environment_raw_evidence"])
-        raw = torch.cat(tuple(payload.raw_evidence[name] for name in raw_names), dim=-1)
-        auxiliary_names = tuple(payload.auxiliary_evidence_names)
-        if set(auxiliary_names) != set(evidence["learner_raw_evidence"]):
-            raise ValueError("Runtime auxiliary evidence names differ from the frozen learner contract.")
+        auxiliary_names = tuple(evidence["learner_raw_evidence"])
+        returned_transition = returned["transition"]
+        final_transition = final["transition"]
+        values = tuple(returned_transition[name] for name in auxiliary_names)
+        values = tuple(value if value.ndim == 2 else value.unsqueeze(-1) for value in values)
+        auxiliary = torch.cat(values, dim=-1)
+        values = tuple(final_transition[name] for name in auxiliary_names)
+        values = tuple(value if value.ndim == 2 else value.unsqueeze(-1) for value in values)
+        final_auxiliary = torch.cat(values, dim=-1)
+        auxiliary = torch.where(final_valid[:, None], final_auxiliary, auxiliary)
+
+        term_names = tuple(env.reward_manager.active_terms)
+        if set(term_names) != set(raw_names):
+            raise ValueError("Runtime reward terms differ from the frozen environment evidence contract.")
+        raw_columns = []
+        for name in raw_names:
+            term_cfg = env.reward_manager.get_term_cfg(name)
+            value = reward_density[:, term_names.index(name)] / term_cfg.weight
+            if name in auxiliary_names:
+                value = value / penalty_scale
+            raw_columns.append(value)
+        raw = torch.stack(raw_columns, dim=-1)
         auxiliary_indices = [raw_names.index(name) for name in auxiliary_names]
         composed_auxiliary = raw[:, auxiliary_indices]
 
@@ -614,13 +690,21 @@ def _run_candidate(
             )
             for name in ("position", "rotation_xyzw", "linear_velocity", "angular_velocity")
         )
-        current_state = _numpy(candidate_current["state"])
+        current_state = _numpy(
+            torch.cat(
+                tuple(
+                    candidate_current[name]
+                    for name in ("joint_position", "joint_velocity", "projected_gravity", "base_angular_velocity")
+                ),
+                dim=-1,
+            )
+        )
         oracle_reached_contact = np.where(
             flat["final_observation_valid"][:, None, None],
             flat["final_contact_force"],
             flat["returned_contact_force"],
         )
-        source_state = _numpy(source_state)
+        source_state = flat["current_state"]
         actual_qpos = _numpy(current_qpos)
         expected_qpos = flat["current_qpos"]
         root_position = _within(actual_qpos[:, :3], expected_qpos[:, :3], atol=2.0e-6)
@@ -661,22 +745,20 @@ def _run_candidate(
             ),
             "injected_physics_fact_readback": physics_readback,
             "joint_drive_readback": drive_readback,
-            "history_recurrence": _within(_numpy(history_actual), history_expected, atol=0.0),
+            "history_recurrence": history_recurrence,
             "done_mask": {
                 "passed": bool(torch.equal(terminated | truncated, expected_done)),
                 "expected_done_rows": int(expected_done.sum()),
                 "observed_done_rows": int((terminated | truncated).sum()),
             },
             "final_observation_valid": {
-                "passed": bool(torch.equal(extras["final_obs_valid"], expected_done)),
+                "passed": bool(torch.equal(final_valid, expected_done)),
                 "expected_rows": int(expected_done.sum()),
-                "observed_rows": int(extras["final_obs_valid"].sum()),
+                "observed_rows": int(final_valid.sum()),
             },
-            "auxiliary_evidence_selection": _within(
-                _numpy(extras["auxiliary_reward_evidence"]), _numpy(composed_auxiliary), atol=0.0
-            ),
+            "auxiliary_evidence_selection": _within(_numpy(auxiliary), _numpy(composed_auxiliary), atol=0.0),
             "environment_reward_from_raw_evidence": _within(
-                _numpy(reward), _numpy(env._motion_runtime.environment_reward * env.step_dt), atol=2.0e-6
+                _numpy(reward), _numpy(reward_density.sum(dim=-1) * env.step_dt), atol=2.0e-6
             ),
             "all_reached_rows_captured": {"passed": bool(reached_valid.all())},
         }

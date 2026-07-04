@@ -52,6 +52,19 @@ def test_aggregator_dependency_schema_matches_its_identity_producer() -> None:
     assert _module()._DEPENDENCY_SCHEMA == _environment_identity_module()._SCHEMA
 
 
+def test_aggregator_critical_dependencies_exclude_learner_evaluation() -> None:
+    """Critical environment identity must exclude learner-side tracking and metrics."""
+    module = _module()
+    dependencies = set(module._CRITICAL_COMMON_DEPENDENCIES)
+    for profile_dependencies in module._CRITICAL_PROFILE_DEPENDENCIES.values():
+        dependencies.update(profile_dependencies)
+
+    assert "isaaclab_tasks.core.multi_task.motion_env" not in dependencies
+    assert all(".motion.config.agents" not in name for name in dependencies)
+    assert all(".motion.metrics" not in name for name in dependencies)
+    assert all(".motion.evaluation" not in name for name in dependencies)
+
+
 def _signature(scale: float) -> dict[str, object]:
     return {
         "observations": {"state": {"sum": scale, "squared_sum": scale * scale}},
@@ -139,6 +152,14 @@ def _dependency_identity() -> dict[str, object]:
     module = _module()
     names = module._CRITICAL_COMMON_DEPENDENCIES | module._CRITICAL_PROFILE_DEPENDENCIES["g1_lafan"]
     resolved_axes = {"preset": "g1_lafan"}
+    assert "isaaclab.envs.mdp.terminations" in module._CRITICAL_COMMON_DEPENDENCIES
+    assert "isaaclab_tasks.core.multi_task.motion.mdp.terminations" not in names
+    assert "isaaclab_tasks.core.multi_task.motion.mdp.commands.observations" not in names
+    assert "isaaclab_tasks.core.multi_task.motion.robots.g1.history" not in names
+    assert "isaaclab_tasks.core.multi_task.motion.robots.g1.transition" not in names
+    assert "isaaclab_tasks.core.multi_task.motion.robots.g1.actions" in names
+    assert "isaaclab_tasks.core.multi_task.motion.robots.g1.rewards" not in names
+
     resolved_configuration = {name: {} for name in sorted(module._CRITICAL_CONFIGURATION_AXES)}
     package = {
         "module_version": "1.0",
@@ -165,7 +186,7 @@ def _dependency_identity() -> dict[str, object]:
     }
 
     identity = {
-        "schema": "forward_backward_phase3_motion_environment_dependency_identity_v7",
+        "schema": module._DEPENDENCY_SCHEMA,
         "preset": "g1_lafan",
         "resolved_axes": resolved_axes,
         "resolved_axes_sha256": hashlib.sha256(
@@ -376,7 +397,7 @@ def test_probe_snapshots_declared_config_before_environment_construction() -> No
     main_source = ast.get_source_segment(source, main)
     assert main_source is not None
     snapshot = "configured_cfg = copy.deepcopy(cfg)"
-    construction = "env = MotionImitationEnv(cfg=cfg)"
+    construction = "env = ManagerBasedRLEnv(cfg=cfg)"
     assert snapshot in main_source
     assert main_source.index(snapshot) < main_source.index(construction)
     assert "cfg=configured_cfg" in main_source
@@ -481,7 +502,7 @@ def test_aggregator_normalizes_native_actuator_rows_per_environment(tmp_path: Pa
         record["physics_manager"] = "NewtonMJWarpManager"
         record["physics_details"] = {
             "manager": "NewtonMJWarpManager",
-            "native_action_writer": "MotionMujocoControlAction",
+            "native_action_writer": "NativeMujocoControlAction",
             "native_actuator_rows": 69 * record["num_envs"],
         }
         identities.append(module._environment_identity(record))
@@ -490,7 +511,7 @@ def test_aggregator_normalizes_native_actuator_rows_per_environment(tmp_path: Pa
 
     assert identity["physics_details"] == {
         "manager": "NewtonMJWarpManager",
-        "native_action_writer": "MotionMujocoControlAction",
+        "native_action_writer": "NativeMujocoControlAction",
         "native_actuator_rows_per_env": 69,
     }
 
@@ -501,7 +522,7 @@ def test_aggregator_rejects_nonintegral_native_actuator_ownership(tmp_path: Path
     record = next(record for _path, record in _records(tmp_path) if record["num_envs"] == 16)
     record["physics_details"] = {
         "manager": "NewtonMJWarpManager",
-        "native_action_writer": "MotionMujocoControlAction",
+        "native_action_writer": "NativeMujocoControlAction",
         "native_actuator_rows": 69 * record["num_envs"] + 1,
     }
 

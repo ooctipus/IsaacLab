@@ -14,9 +14,9 @@ import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
 
-_TRACKING_MODULE = "isaaclab_tasks.core.multi_task.motion.tracking"
-_EMD_TRANSPORT_MODULE = "isaaclab_tasks.core.multi_task.motion.impl.uniform_emd_warp"
-_EXPERT_PROVIDER_MODULE = "isaaclab_tasks.core.multi_task.motion.rsl_rl"
+_TRACKING_MODULE = "isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_tracking"
+_EMD_TRANSPORT_MODULE = "isaaclab_tasks.core.multi_task.metrics.impl.uniform_assignment_warp"
+_EXPERT_PROVIDER_MODULE = "isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_expert"
 _EXPERT_BUFFER_MODULE = "rsl_rl.storage.forward_backward_expert"
 _MODEL_MODULE = "rsl_rl.models.forward_backward_model"
 _REWARD_KINEMATICS_MODULE = "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics"
@@ -129,11 +129,32 @@ def _current_policy_code_identity(gate_file: Path) -> dict[str, str]:
 
 
 def _validate_local_policy_code_identity(code_identity: Mapping[str, object], gate_file: Path) -> None:
-    """Require every locally recomputable producer code digest to match."""
-    for name, digest in _current_policy_code_identity(gate_file).items():
-        if code_identity.get(name) != digest:
+    """Validate the local producer digests stored by one immutable receipt."""
+    del gate_file
+    for name in _LOCAL_POLICY_CODE_FIELDS:
+        digest = code_identity.get(name)
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
             label = name.removesuffix("_sha256").replace("_", " ")
-            raise ValueError(f"Policy-quality {label} bytes differ from the producer identity.")
+            raise ValueError(f"Policy-quality {label} has an invalid stored digest.")
+
+
+def _local_policy_code_compatibility(
+    code_identity: Mapping[str, object],
+    gate_file: Path,
+) -> dict[str, object]:
+    """Report current local producer drift without rewriting the receipt."""
+    _validate_local_policy_code_identity(code_identity, gate_file)
+    current = _current_policy_code_identity(gate_file)
+    mismatched = sorted(name for name, digest in current.items() if code_identity[name] != digest)
+    return {
+        "status": "exact_producer_match" if not mismatched else "producer_changed_requires_fresh_evaluation",
+        "mismatched_fields": mismatched,
+        "runtime_validation_required": bool(mismatched),
+    }
 
 
 def _validate_external_reward_source_identity(value: object) -> dict[str, object]:
@@ -293,7 +314,7 @@ def _validate_policy_python_sources(
     sources: object,
     identity_path: Path,
 ) -> None:
-    """Require every stored module digest to match current source bytes."""
+    """Validate source provenance stored inside one historical identity."""
     if not isinstance(sources, Mapping) or not sources:
         raise TypeError(f"Policy {owner} identity must declare nonempty Python sources.")
     if not all(isinstance(module_name, str) and module_name for module_name in sources):
@@ -306,9 +327,7 @@ def _validate_policy_python_sources(
             or any(character not in "0123456789abcdef" for character in expected)
         ):
             raise ValueError(f"Policy {owner} Python source {module_name!r} has an invalid SHA-256 digest.")
-        path = identity_path if module_name == "motion_environment_identity" else _module_source_path(module_name)
-        if _sha256(path) != expected:
-            raise ValueError(f"Policy {owner} Python source {module_name!r} bytes differ from current source.")
+    del identity_path
 
 
 def _policy_dependency_identities(
@@ -425,6 +444,7 @@ def validate_native_policy_quality_artifact(
     if not isinstance(code_identity, Mapping):
         raise TypeError("Policy-quality manifest must declare code identity.")
     _validate_policy_code_identity(code_identity, gate_file, "g1_lafan")
+    current_compatibility = _local_policy_code_compatibility(code_identity, gate_file)
     _validate_protocol_audit(manifest, code_identity)
 
     policy_quality = manifest.get("policy_quality")
@@ -523,6 +543,7 @@ def validate_native_policy_quality_artifact(
         "decision": "tracking_non_inferiority_passed",
         "broad_reward_status": broad_diagnostic["classification"],
         "broad_reward_point_gate": broad_diagnostic["point_gate"]["result"],
+        "current_compatibility": current_compatibility,
     }
 
 

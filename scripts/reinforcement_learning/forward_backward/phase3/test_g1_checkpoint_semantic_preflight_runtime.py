@@ -33,7 +33,7 @@ def test_short_rollout_checks_live_action_target_without_host_reductions() -> No
     """The live smoke must execute fixed device reductions and mapped target checks."""
     module = _module()
     action_term = SimpleNamespace(
-        cfg=SimpleNamespace(normalize_to=5.0, action_clip=5.0),
+        cfg=SimpleNamespace(scale=5.0, clip={".*": (-5.0, 5.0)}),
         joint_ids=torch.tensor((1, 0), dtype=torch.int64),
         raw_actions=torch.zeros(2, 2),
         processed_actions=torch.zeros(2, 2),
@@ -53,15 +53,12 @@ def test_short_rollout_checks_live_action_target_without_host_reductions() -> No
         num_envs = 2
         device = "cpu"
 
-        def evaluation_transaction(self, _seed):
-            return nullcontext()
-
         def reset(self):
             return {"state": torch.zeros(2, 1)}
 
         def step(self, actions):
             action_term.raw_actions.copy_(actions)
-            action_term.processed_actions.copy_(actions * action_term.cfg.normalize_to)
+            action_term.processed_actions.copy_(actions * action_term.cfg.scale)
             action_term.joint_position_target.copy_(action_term.processed_actions)
             physical_target[:, action_term.joint_ids] = action_term.joint_position_target
             return (
@@ -69,11 +66,15 @@ def test_short_rollout_checks_live_action_target_without_host_reductions() -> No
                 torch.zeros(2),
                 torch.zeros(2, dtype=torch.bool),
                 torch.zeros(2, dtype=torch.bool),
-                {"final_obs_valid": torch.zeros(2, dtype=torch.bool)},
+                {},
             )
 
     result = module._short_rollout(
         env=Env(),
+        evaluation_scope=lambda *_args, **_kwargs: nullcontext(),
+        command=object(),
+        domain_scope=object(),
+        history_factory=lambda _observations: None,
         model=Model(),
         context=torch.ones(1, 2),
         robot=robot,

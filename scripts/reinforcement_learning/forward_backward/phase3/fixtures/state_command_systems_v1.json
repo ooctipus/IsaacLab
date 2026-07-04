@@ -48,12 +48,12 @@
     "semantic_equivalence_passed": true
   },
   "identity": {
-    "benchmark_script_sha256": "f49e583ca7127b077a18ab5fbf907ae0a580159d83d36d7d0e0c4a309f6bbea8",
-    "combiner_script_sha256": "152a7bdfc50fe90459ecc76cfe04370c7758cf6f0c60a3f45fce331b3896b645",
-    "cpu_measurement_sha256": "7bfe3c7fbe58bb5d51599dc48b0d41ae3be5f55fae0ef5ed9bf1606aa9c472c6",
-    "cuda_measurement_sha256": "00aa07a408c379a81fce212f8165f551b8ecf605c24db53dc9a03ca75acb2913",
-    "current_state_command_cfg_sha256": "bc7014d6e02fa1e42d0d77bd1744b2d046f5458013890d9d2b861c301407629e",
-    "current_state_command_sha256": "50b6467d7190326bc5be5c6ec8fe55fa3c8db33d6099c0941a8ec4a3fef7c252",
+    "benchmark_script_sha256": "345709d84111e2556b8b75574a056daf11f6805c0407a3f82bd286b1862078ba",
+    "combiner_script_sha256": "0b85647eb5a227d99bd5b21e1d31f4dd2f1edfe2108ef505b04d4b58c372ac79",
+    "cpu_measurement_sha256": "8706428077bdf4a9d1cfd66a7d0b56c44c46481e3d58dd3ea8d77e4c3bc98812",
+    "cuda_measurement_sha256": "3625f165542b60d61ebe96b370ae41fe38640b77aaae59bf38feb9793d3597cd",
+    "current_state_command_cfg_sha256": "a49a0cf2bed1f092b27fb15d70101d583cb046c2958703e2df56cd09376ed995",
+    "current_state_command_sha256": "d56ca6859be33069559d9cd5c92ce50f3956656b525cdbd0252c0d6c04b37afc",
     "historical_revision": "fe51e5646a335e05844a10fa93d9479da2749847",
     "historical_state_command_sha256": "d03104733554d1c46d5501d24e96b04cebfc0ebc37ba83fd3ee6e9bd7d244c54"
   },
@@ -61,18 +61,18 @@
     "cpu": {
       "comparison": {
         "factory_like": {
-          "construction_median_ratio": 1.0324801846424208,
-          "pinned_resample_median_ratio": 1.1259760488640218,
-          "randomized_resample_median_ratio": 0.9479719215410632,
+          "construction_median_ratio": 0.9433697178494896,
+          "pinned_resample_median_ratio": 1.0858228991784438,
+          "randomized_resample_median_ratio": 0.9104069681904735,
           "state_owned_byte_ratio": 0.8888888888888888,
-          "update_median_ratio": 0.9503642952653011
+          "update_median_ratio": 0.9792820687504797
         },
         "position_like": {
-          "construction_median_ratio": 1.059624362908047,
-          "pinned_resample_median_ratio": 1.0930227632100729,
-          "randomized_resample_median_ratio": 0.9345873413353354,
+          "construction_median_ratio": 0.8811803303765339,
+          "pinned_resample_median_ratio": 1.077622522084256,
+          "randomized_resample_median_ratio": 0.9886655361091332,
           "state_owned_byte_ratio": 0.9259259259259259,
-          "update_median_ratio": 1.0543536781671736
+          "update_median_ratio": 0.9949346533113401
         }
       },
       "configuration_sha256": "d52d8d3ae1247abc2cf649ed13097301a24316c81598fabf474e2dd61bbfed3a",
@@ -102,18 +102,18 @@
     "cuda": {
       "comparison": {
         "factory_like": {
-          "construction_median_ratio": 0.9358708195888998,
-          "pinned_resample_median_ratio": 1.2199106815154603,
-          "randomized_resample_median_ratio": 0.8265454337496626,
+          "construction_median_ratio": 0.9090999296397193,
+          "pinned_resample_median_ratio": 1.1812187740326894,
+          "randomized_resample_median_ratio": 0.8243114417725373,
           "state_owned_byte_ratio": 0.8888888888888888,
-          "update_median_ratio": 1.0052796552308387
+          "update_median_ratio": 1.162322789394327
         },
         "position_like": {
-          "construction_median_ratio": 0.822943459294091,
-          "pinned_resample_median_ratio": 0.9168347999777009,
-          "randomized_resample_median_ratio": 0.6457299542318905,
+          "construction_median_ratio": 0.7711101377330024,
+          "pinned_resample_median_ratio": 0.964990311093077,
+          "randomized_resample_median_ratio": 0.6535760817020786,
           "state_owned_byte_ratio": 0.9259259259259259,
-          "update_median_ratio": 0.7911846017422148
+          "update_median_ratio": 0.7863376379669431
         }
       },
       "configuration_sha256": "bdc82b73a01caa4055e271c443a2eb2150be6064185dad47f357cb20876d93c2",
@@ -176,7 +176,7 @@
             "positive_self_device_memory_bytes": 4096000,
             "positive_self_device_memory_operator_calls": 40,
             "profiled_calls": 20,
-            "python_peak_bytes": 31185
+            "python_peak_bytes": 31157
           },
           "randomized_resample_allocations": {
             "cuda_peak_additional_bytes": 204800,
@@ -191,7 +191,7 @@
             "positive_self_device_memory_bytes": 4096000,
             "positive_self_device_memory_operator_calls": 60,
             "profiled_calls": 20,
-            "python_peak_bytes": 132054
+            "python_peak_bytes": 132018
           },
           "update_allocations": {
             "cuda_peak_additional_bytes": 0,
@@ -203,7 +203,7 @@
             "positive_self_device_memory_bytes": 0,
             "positive_self_device_memory_operator_calls": 0,
             "profiled_calls": 20,
-            "python_peak_bytes": 28721
+            "python_peak_bytes": 28693
           }
         }
       },

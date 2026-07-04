@@ -25,6 +25,7 @@ os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 import numpy as np
 import torch
+from motion_environment_identity import motion_action_term_cfg, motion_environment_axes, motion_runner_axes
 from rsl_rl.algorithms.forward_backward import ForwardBackward
 from rsl_rl.models.forward_backward_model import ForwardBackwardObservationSchema
 from rsl_rl.storage.forward_backward_expert import ForwardBackwardExpertBuffer
@@ -32,15 +33,12 @@ from rsl_rl.storage.forward_backward_replay import ForwardBackwardTransitionBatc
 from tensordict import TensorDict
 
 from isaaclab_tasks.core.multi_task.kinematics import NewtonKinematics, NewtonKinematicsCfg
-from isaaclab_tasks.core.multi_task.motion.config.agents import MotionForwardBackwardRunnerPresetsCfg
-from isaaclab_tasks.core.multi_task.motion.config.robots import G1_BEHAVIOR_JOINT_NAMES
-from isaaclab_tasks.core.multi_task.motion.data._identity import canonical_sha256
+from isaaclab_tasks.core.multi_task.motion.config.agents import MotionForwardBackwardRunnerCfg
+from isaaclab_tasks.core.multi_task.motion.identity import canonical_sha256
 from isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table import build_motion_task_table
-from isaaclab_tasks.core.multi_task.motion.rsl_rl import (
-    motion_expert_buffer_g1,
-    motion_expert_buffer_smpl_cmu,
-)
+from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import G1_BEHAVIOR_JOINT_NAMES
 from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
+from isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_expert import forward_backward_expert_buffer
 from isaaclab_tasks.utils.hydra import resolve_presets
 
 ROOT = Path(__file__).resolve().parent
@@ -51,7 +49,15 @@ TRACE_PATHS = {
 }
 FIELD_WIDTHS = {
     "smpl_cmu": {"policy": 358},
-    "g1_lafan": {"state": 64, "last_action": 29, "history_actor": 372, "privileged_state": 463},
+    "g1_lafan": {
+        "joint_position": 29,
+        "joint_velocity": 29,
+        "projected_gravity": 3,
+        "base_angular_velocity": 3,
+        "last_action": 29,
+        "history_actor": 372,
+        "privileged_state": 463,
+    },
 }
 ACTION_WIDTHS = {"smpl_cmu": 69, "g1_lafan": 29}
 EXPECTED_TRAIN_COUNTS = {
@@ -154,7 +160,7 @@ def _construction_env(
     device: torch.device,
 ) -> SimpleNamespace:
     """Resolve one direct preset into the minimum table-construction environment."""
-    cfg = resolve_presets(MotionImitationEnvCfg(), selected={preset})
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes(preset))
     cfg.seed = 0
     cfg.sim.device = str(device)
     table_cfg = cfg.commands.motion.task_table
@@ -180,18 +186,17 @@ def _canonical_g1_defaults(cfg: MotionImitationEnvCfg, joint_names: tuple[str, .
 def _learner_env(table, cfg: MotionImitationEnvCfg, preset: str) -> SimpleNamespace:
     """Expose the completed command table and canonical action facts to RSL-RL."""
     payload = SimpleNamespace(table=table)
-    command = SimpleNamespace(payload=payload)
+    command = SimpleNamespace(payload=payload, table=table)
     command_manager = SimpleNamespace(get_term=lambda name: command if name == "motion" else None)
     action_joint_names = G1_BEHAVIOR_JOINT_NAMES if preset == "g1_lafan" else table.joint_names
     action = SimpleNamespace(joint_names=action_joint_names)
     if preset == "g1_lafan":
         action.joint_default_position = _canonical_g1_defaults(cfg, action_joint_names)
         action.default_joint_offset = torch.zeros(2, 29, device=table.device)
-    action_manager = SimpleNamespace(get_term=lambda name: action if name == "joint_position" else None)
-    robot = SimpleNamespace(
-        joint_names=table.joint_names,
-        body_names=table.reference_frame_names[:-1] if table.reference_frame_names else (),
-    )
+    action_name, _action_cfg = motion_action_term_cfg(cfg)
+    action_manager = SimpleNamespace(get_term=lambda name: action if name == action_name else None)
+    body_names = table.reference_frame_names[:-1] if preset == "g1_lafan" else table.reference_frame_names
+    robot = SimpleNamespace(joint_names=table.joint_names, body_names=body_names)
     env = SimpleNamespace(
         num_envs=2,
         num_actions=ACTION_WIDTHS[preset],
@@ -212,28 +217,31 @@ def _expert_buffer(preset: str, env: SimpleNamespace, runner: dict[str, object])
     """Attach the command-owned table through the production expert provider."""
     schema = _expert_schema(preset, runner)
     expert_cfg = runner["expert"]
-    provider = motion_expert_buffer_smpl_cmu if preset == "smpl_cmu" else motion_expert_buffer_g1
-    return provider(
+    return forward_backward_expert_buffer(
         env,
         schema,
         str(env.unwrapped.command_manager.get_term("motion").payload.table.device),
-        command_name=expert_cfg["command_name"],
+        source_bind=expert_cfg["source_bind"],
+        sampling_mode=expert_cfg["sampling_mode"],
+        sampling_step_seconds=expert_cfg["sampling_step_seconds"],
+        target_projection=expert_cfg["target_projection"],
+        target_projection_binds=tuple(expert_cfg["target_projection_binds"]),
         window_lengths=tuple(expert_cfg["window_lengths"]),
         seed=int(expert_cfg["seed"]),
     )
 
 
-def _expert_audit(preset: str, table, expert: ForwardBackwardExpertBuffer) -> dict[str, object]:
+def _expert_audit(
+    preset: str,
+    table,
+    expert: ForwardBackwardExpertBuffer,
+    sampling_mode: str,
+    sampling_step_seconds: float | None,
+) -> dict[str, object]:
     """Verify clip-safe expert cardinality and retain exact content identities."""
-    grid = table.expert_sample_grid
-    counts = tuple(
-        grid.sample_count(frame_count=clip.frame_count, source_fps=clip.source_fps)
-        for clip in table.clip_index.clips
-        if clip.valid
-    )
-    offsets = [0]
-    for count in counts:
-        offsets.append(offsets[-1] + count)
+    sampled = table.sample(sampling_mode, sampling_step_seconds)
+    offsets = sampled.clip_offsets
+    counts = tuple(end - start for start, end in zip(offsets[:-1], offsets[1:], strict=True))
     expected = EXPECTED_TRAIN_COUNTS[preset]
     if (
         len(counts) != expected["clips"]
@@ -241,7 +249,7 @@ def _expert_audit(preset: str, table, expert: ForwardBackwardExpertBuffer) -> di
         or offsets[-1] != expected["expert_frames"]
     ):
         raise RuntimeError("Resolved native expert cardinality differs from the frozen train split.")
-    if expert.clip_offsets.tolist() != offsets or expert.clip_ids != table.clip_ids:
+    if tuple(expert.clip_offsets.tolist()) != offsets or expert.clip_ids != table.clip_ids:
         raise RuntimeError("Expert offsets or clip ids differ from the command-owned table clock.")
     window_counts = {
         str(length): sum(max(0, count - length) for count in counts) for length in expert.schema.window_lengths
@@ -251,16 +259,14 @@ def _expert_audit(preset: str, table, expert: ForwardBackwardExpertBuffer) -> di
         "source_frame_count": table.clip_index.total_frames,
         "expert_frame_count": expert.schema.num_frames,
         "expert_feature_width": expert.schema.expert_feature_width,
-        "sample_grid": {"mode": grid.mode.value, "step_seconds": grid.step_seconds},
+        "sample_grid": {"mode": sampling_mode, "step_seconds": sampling_step_seconds},
         "window_lengths": list(expert.schema.window_lengths),
         "window_counts": window_counts,
         "clip_offsets_sha256": _tensor_sha256(expert.clip_offsets),
         "expert_frames_sha256": _tensor_sha256(expert.frames),
         "expert_schema_sha256": expert.schema.schema_hash,
         "expert_data_sha256": expert.schema.data_hash,
-        "zero_copy_native_observations": (
-            expert.frames.data_ptr() == table.field("observation").data_ptr() if preset == "smpl_cmu" else False
-        ),
+        "zero_copy_native_observations": False,
     }
 
 
@@ -275,10 +281,24 @@ def _trace_observations(
     if preset == "smpl_cmu":
         values = {"policy": torch.from_numpy(trace[f"{prefix}_observation"][step]).to(device, torch.float32)}
     else:
+        state = torch.from_numpy(trace[f"{prefix}_state"][step]).to(device, torch.float32)
+        joint_position, joint_velocity, projected_gravity, base_angular_velocity = torch.split(
+            state, (29, 29, 3, 3), dim=-1
+        )
         values = {
-            name: torch.from_numpy(trace[f"{prefix}_{name}"][step]).to(device, torch.float32)
-            for name in FIELD_WIDTHS[preset]
+            "joint_position": joint_position,
+            "joint_velocity": joint_velocity,
+            "projected_gravity": projected_gravity,
+            "base_angular_velocity": base_angular_velocity,
+            "last_action": torch.from_numpy(trace[f"{prefix}_last_action"][step]).to(device, torch.float32),
+            "privileged_state": torch.from_numpy(trace[f"{prefix}_privileged_state"][step]).to(device, torch.float32),
         }
+        edge_evidence = trace["learner_auxiliary_raw_evidence"]
+        if prefix == "current":
+            evidence = np.zeros_like(edge_evidence[step]) if step == 0 else edge_evidence[step - 1]
+        else:
+            evidence = edge_evidence[step]
+        values["transition"] = torch.from_numpy(evidence).to(device, torch.float32)
     return TensorDict(values, batch_size=[2])
 
 
@@ -291,6 +311,7 @@ def _clone_expert(expert: ForwardBackwardExpertBuffer, seed: int) -> ForwardBack
         expert.schema,
         seed=seed,
         clip_ids=expert.clip_ids,
+        clip_length_values=expert.clip_length_values,
     )
 
 
@@ -315,7 +336,6 @@ def _canary_config(
 def _append_trace(learner: ForwardBackward, preset: str, trace: np.lib.npyio.NpzFile) -> None:
     """Append logical edges after exact native-autoreset normalization."""
     device = learner.device
-    generator = torch.Generator(device=device).manual_seed(30_000 + int(learner.model.action_dim))
     for step in range(trace["terminated"].shape[0]):
         action_applied = torch.from_numpy(trace["action_applied"][step]).to(device).unsqueeze(-1)
         if not torch.any(action_applied):
@@ -340,32 +360,27 @@ def _append_trace(learner: ForwardBackward, preset: str, trace: np.lib.npyio.Npz
                     batch_size=[2],
                 )
             actions = torch.from_numpy(trace["actions"][step]).to(device, torch.float32)
-            evidence = torch.empty(2, 0, dtype=torch.float32, device=device)
         else:
             final = _trace_observations(preset, trace, "final", step, device)
             final_valid = torch.from_numpy(trace["final_observation_valid"][step]).to(device).unsqueeze(-1)
             actions = torch.from_numpy(trace["behavior_action"][step]).to(device, torch.float32)
-            evidence = torch.from_numpy(trace["learner_auxiliary_raw_evidence"][step]).to(device, torch.float32)
-        contexts = learner.model.context_random(2, generator=generator)
-        learner.replay.add(
-            ForwardBackwardTransitionBatch(
-                observations=current,
-                next_observations=returned,
-                final_observations=final,
-                actions=actions,
-                behavior_context=contexts,
-                environment_reward=torch.from_numpy(trace["environment_reward"][step])
-                .to(device, torch.float32)
-                .unsqueeze(-1)
-                if preset == "g1_lafan"
-                else torch.from_numpy(trace["reward"][step]).to(device, torch.float32).unsqueeze(-1),
-                auxiliary_reward_evidence=evidence,
-                terminated=torch.from_numpy(trace["terminated"][step]).to(device).unsqueeze(-1),
-                truncated=torch.from_numpy(trace["truncated"][step]).to(device).unsqueeze(-1),
-                context_changed=torch.zeros(2, 1, dtype=torch.bool, device=device),
-                action_applied=action_applied,
-                final_observation_valid=final_valid,
-            )
+        collected_actions = learner.act_random(current)
+        collected_actions.copy_(actions)
+        rewards = (
+            torch.from_numpy(trace["environment_reward"][step]).to(device, torch.float32)
+            if preset == "g1_lafan"
+            else torch.from_numpy(trace["reward"][step]).to(device, torch.float32)
+        )
+        truncated = torch.from_numpy(trace["truncated"][step]).to(device)
+        learner.process_env_step(
+            returned,
+            rewards,
+            done.squeeze(-1),
+            {
+                "time_outs": truncated,
+                "final_obs": final,
+                "final_obs_valid": final_valid,
+            },
         )
     learner.replay.assert_no_errors()
     if not learner.ready_to_update:
@@ -465,12 +480,8 @@ def _first_update_canary(
 
 
 def _normalized_runner_identity(runner: dict[str, object]) -> str:
-    """Hash the complete selected learner while normalizing its provider address."""
-    value = copy.deepcopy(runner)
-    provider = value["expert"]["provider"]
-    if callable(provider):
-        value["expert"]["provider"] = f"{provider.__module__}:{provider.__qualname__}"
-    return canonical_sha256(value)
+    """Hash the complete resolved learner configuration."""
+    return canonical_sha256(runner)
 
 
 def measure(args: argparse.Namespace) -> dict[str, object]:
@@ -484,12 +495,20 @@ def measure(args: argparse.Namespace) -> dict[str, object]:
         torch.cuda.reset_peak_memory_stats(device)
     construction = _construction_env(args.preset, args.source_artifact_root, args.reference_artifact_root, device)
     table = build_motion_task_table(construction.cfg.commands.motion, construction)
-    runner_cfg = resolve_presets(MotionForwardBackwardRunnerPresetsCfg(), selected={args.preset})
+    runner_selection = motion_environment_axes(args.preset) | motion_runner_axes(args.preset)
+    runner_cfg = resolve_presets(MotionForwardBackwardRunnerCfg(), selected=runner_selection)
     runner = runner_cfg.to_dict()
     env = _learner_env(table, construction.cfg, args.preset)
     expert = _expert_buffer(args.preset, env, runner)
     trace_path = TRACE_PATHS[args.preset]
-    audit = _expert_audit(args.preset, table, expert)
+    expert_cfg = runner["expert"]
+    audit = _expert_audit(
+        args.preset,
+        table,
+        expert,
+        expert_cfg["sampling_mode"],
+        expert_cfg["sampling_step_seconds"],
+    )
     canary = _first_update_canary(args.preset, env, runner, expert, trace_path)
     split = construction.cfg.commands.motion.task_table.source.train
     return {
@@ -526,7 +545,7 @@ def measure(args: argparse.Namespace) -> dict[str, object]:
         "first_update_canary": canary,
         "code_identity": {
             "evidence_sha256": _sha256(Path(__file__).resolve()),
-            "motion_expert_provider_sha256": _source_sha256(motion_expert_buffer_g1),
+            "motion_expert_provider_sha256": _source_sha256(forward_backward_expert_buffer),
             "rsl_algorithm_sha256": _source_sha256(ForwardBackward),
             "rsl_expert_buffer_sha256": _source_sha256(ForwardBackwardExpertBuffer),
             "rsl_replay_sha256": _source_sha256(ForwardBackwardTransitionBatch),

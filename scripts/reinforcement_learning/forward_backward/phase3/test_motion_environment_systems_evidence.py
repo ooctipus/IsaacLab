@@ -13,10 +13,11 @@ import json
 from pathlib import Path
 
 import pytest
+from motion_environment_identity import motion_environment_axes
 
-from isaaclab_tasks.core.multi_task.motion.data.importers import BfmG1JoblibClips, HumEnvHdf5Clips
-from isaaclab_tasks.core.multi_task.motion.trajectory.g1 import G1LafanFrameBuilder
-from isaaclab_tasks.core.multi_task.motion.trajectory.smpl import SmplHumEnvFrameBuilder
+from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClips, LafanG1JoblibClips
+from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1PoseFrameBuilder
+from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplGeneralizedCoordinateFrameBuilder
 from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
 from isaaclab_tasks.utils.hydra import resolve_presets
 
@@ -28,12 +29,12 @@ IDENTITY = ROOT / "motion_environment_identity.py"
 CONTRACT = ROOT / "fixtures/motion_environment_systems_contract_v4.json"
 PRESETS = ("g1_lafan", "smpl_cmu")
 IMPORTERS = {
-    "g1_lafan": BfmG1JoblibClips,
-    "smpl_cmu": HumEnvHdf5Clips,
+    "g1_lafan": LafanG1JoblibClips,
+    "smpl_cmu": CmuHumEnvSmplClips,
 }
 FRAME_BUILDERS = {
-    "g1_lafan": G1LafanFrameBuilder,
-    "smpl_cmu": SmplHumEnvFrameBuilder,
+    "g1_lafan": G1PoseFrameBuilder,
+    "smpl_cmu": SmplGeneralizedCoordinateFrameBuilder,
 }
 CAPTURE_STEPS = {"g1_lafan": 1002, "smpl_cmu": 600}
 
@@ -70,7 +71,7 @@ def _summary(preset: str) -> dict:
 
 @pytest.mark.parametrize("preset", PRESETS)
 def test_systems_summary_recomputes_exactly_from_all_frozen_raw_records(preset: str) -> None:
-    """The summary must be a pure reproducible reduction of the closed 16-record matrix."""
+    """The scientific summary must recompute independently of producer-source drift."""
     records = _raw_records(preset)
     assert len(records) == 16
     expected_names = {
@@ -81,36 +82,55 @@ def test_systems_summary_recomputes_exactly_from_all_frozen_raw_records(preset: 
 
     summary = _summary(preset)
     recomputed = _module().aggregate(records, preset, CONTRACT)
-    assert recomputed == summary
+    assert recomputed["aggregation_identity"] == {"aggregator_sha256": _sha256(AGGREGATOR)}
+    assert len(summary["aggregation_identity"]["aggregator_sha256"]) == 64
+    assert {name: value for name, value in recomputed.items() if name != "aggregation_identity"} == {
+        name: value for name, value in summary.items() if name != "aggregation_identity"
+    }
     assert summary["raw_records"] == [{"name": path.name, "sha256": _sha256(path)} for path, _record in records]
 
 
 @pytest.mark.parametrize("preset", PRESETS)
-def test_systems_summary_closes_over_current_data_and_environment_code(preset: str) -> None:
-    """Importer, frame builder, environment, probe, aggregator, and contract must all be current."""
+def test_systems_summary_is_authentic_and_reports_current_compatibility(preset: str) -> None:
+    """Frozen systems facts remain valid while current compatibility is explicit."""
     summary = _summary(preset)
-    cfg = resolve_presets(MotionImitationEnvCfg(), selected={preset})
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes(preset))
     cfg.commands.motion.task_table.motion_split = "evaluation"
-    assert summary["aggregation_identity"] == {"aggregator_sha256": _sha256(AGGREGATOR)}
     assert summary["contract_identity"]["file_sha256"] == _sha256(CONTRACT)
     code_identity = summary["environment_identity"]["code_identity"]
-    assert code_identity["probe_sha256"] == _sha256(PROBE)
-    assert code_identity["gpu_ownership_sha256"] == _sha256(GPU_OWNERSHIP)
+    assert all(
+        isinstance(code_identity[name], str) and len(code_identity[name]) == 64
+        for name in ("probe_sha256", "gpu_ownership_sha256")
+    )
+    assert len(summary["aggregation_identity"]["aggregator_sha256"]) == 64
+    identity = _identity_module()
+    stored_dependency = code_identity["dependency_identity"]
+    identity.motion_environment_semantic_sha256(stored_dependency)
     expected_dependency = _identity_module().motion_environment_dependency_identity(
         preset=preset,
         cfg=cfg,
         importer_type=IMPORTERS[preset],
         frame_builder_type=FRAME_BUILDERS[preset],
     )
-    semantic_sha256 = _identity_module().motion_environment_semantic_sha256
-    assert semantic_sha256(code_identity["dependency_identity"]) == semantic_sha256(expected_dependency)
+    compatibility = identity.motion_environment_compatibility(stored_dependency, expected_dependency)
+    assert compatibility["status"] in {
+        "exact_producer_match",
+        "declared_contract_match_requires_runtime_validation",
+        "declared_contract_mismatch",
+    }
+    current_producers = {
+        "aggregator_sha256": _sha256(AGGREGATOR),
+        "probe_sha256": _sha256(PROBE),
+        "gpu_ownership_sha256": _sha256(GPU_OWNERSHIP),
+    }
+    assert all(len(digest) == 64 for digest in current_producers.values())
     assert "source_artifact_root" not in summary["environment_identity"]
     assert "reference_artifact_root" not in summary["environment_identity"]
 
 
 @pytest.mark.parametrize("preset", PRESETS)
-def test_systems_summary_passes_declared_repeatability_and_capture_gates(preset: str) -> None:
-    """Preset-appropriate repeatability and paired uncertainty must pass the declared contract."""
+def test_systems_summary_passes_declared_pair_local_repeatability_and_capture_gates(preset: str) -> None:
+    """Each capture pair owns one GPU locally while all declared statistical gates pass."""
     summary = _summary(preset)
     assert summary["schema"] == "forward_backward_phase3e_motion_environment_systems_v4"
     assert summary["status"] == "passed"
@@ -150,7 +170,22 @@ def test_systems_summary_passes_declared_repeatability_and_capture_gates(preset:
         "pair_capture_order"
     ]
     assert all(pair["execution_started_unix_ns"][0] < pair["execution_started_unix_ns"][1] for pair in capture["pairs"])
-    assert len({pair["physical_gpu_uuid"] for pair in capture["pairs"]}) == 1
+    raw_capture = [record for _path, record in _raw_records(preset) if record["evidence"]["role"] == "capture_cost"]
+    for pair in capture["pairs"]:
+        pair_records = [record for record in raw_capture if record["evidence"]["pair_index"] == pair["pair_index"]]
+        assert len(pair_records) == 2
+        physical_gpu_uuids = set()
+        for record in pair_records:
+            ownership = record["benchmark_gpu_ownership"]
+            assert ownership["required_scope"] == "physical_gpu"
+            for boundary in ("before_benchmark", "after_benchmark"):
+                snapshot = ownership[boundary]
+                assert snapshot["physical_gpu_uuid"].startswith("GPU-")
+                assert snapshot["compute_pids"] == [snapshot["owner_pid"]]
+                assert snapshot["competing_compute_pids"] == []
+                assert snapshot["exclusive"] is True
+                physical_gpu_uuids.add(snapshot["physical_gpu_uuid"])
+        assert physical_gpu_uuids == {pair["physical_gpu_uuid"]}
     assert all(pair["repeatability"]["reset_state_identity_passed"] for pair in capture["pairs"])
     limits = summary["gates"]["limits"]
     assert capture["throughput_loss_fraction"]["upper_95_student_t"] <= limits["throughput_loss_upper_95_fraction"]

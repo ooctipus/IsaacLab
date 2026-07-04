@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Measure the shared motion environment at a fixed native-profile boundary."""
+"""Measure the shared motion environment at a fixed resolved-reproduction boundary."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import copy
 import hashlib
 import inspect
 import json
+import math
 import time
 import traceback
 from pathlib import Path
@@ -49,19 +50,20 @@ simulation_app = app_launcher.app
 
 import torch
 from gpu_ownership import exclusive_physical_gpu_snapshot, validate_same_exclusive_gpu
-from motion_environment_identity import motion_environment_dependency_identity
-
-from isaaclab_tasks.core.multi_task.motion.config.presets import (
-    G1_CMU_PROFILE_CFG,
-    G1_LAFAN_PROFILE_CFG,
-    SMPL_CMU_PROFILE_CFG,
+from motion_environment_identity import (
+    motion_action_term_cfg,
+    motion_environment_axes,
+    motion_environment_dependency_identity,
+    motion_runner_axes,
 )
-from isaaclab_tasks.core.multi_task.motion.data.importers import BfmG1JoblibClips, HumEnvHdf5Clips
+
+from isaaclab.envs import ManagerBasedRLEnv
+
+from isaaclab_tasks.core.multi_task.motion.config.agents import MotionForwardBackwardRunnerCfg
+from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClips, LafanG1JoblibClips
 from isaaclab_tasks.core.multi_task.motion.mdp.commands import MotionTaskTable
-from isaaclab_tasks.core.multi_task.motion.trajectory.g1 import G1LafanFrameBuilder
-from isaaclab_tasks.core.multi_task.motion.trajectory.g1_smpl import G1SmplHumEnvFrameBuilder
-from isaaclab_tasks.core.multi_task.motion.trajectory.smpl import SmplHumEnvFrameBuilder
-from isaaclab_tasks.core.multi_task.motion_env import MotionImitationEnv
+from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1LocalBodyPoseFrameBuilder, G1PoseFrameBuilder
+from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplGeneralizedCoordinateFrameBuilder
 from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
 from isaaclab_tasks.utils.hydra import resolve_presets
 
@@ -158,22 +160,12 @@ def _source_sha256(value: object) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def _validate_observation_routes(observations, profile) -> None:
-    """Validate every declared learner route against its fixed flattened width."""
-    routes = profile.routes
-    expected = (
-        ("actor", routes.actor_fields, routes.actor_width),
-        ("privileged", routes.privileged_fields, routes.privileged_width),
-        ("expert", routes.expert_fields, routes.expert_width),
-        ("forward", routes.forward_fields, routes.forward_width),
-    )
-    for route_name, fields, width in expected:
+def _validate_observation_routes(observations, routes: dict[str, list[str]]) -> None:
+    """Require every independently configured learner route from the live observations."""
+    for route_name, fields in routes.items():
         missing = tuple(name for name in fields if name not in observations)
         if missing:
             raise RuntimeError(f"{route_name} route is missing observation fields {missing}.")
-        actual = sum(observations[name].shape[-1] for name in fields)
-        if actual != width:
-            raise RuntimeError(f"{route_name} route has width {actual}, expected {width}.")
 
 
 def _semantic_pass(
@@ -200,14 +192,20 @@ def _semantic_pass(
     finite_rewards = torch.ones((), dtype=torch.bool, device=env.device)
     finite_final_observations = torch.ones((), dtype=torch.bool, device=env.device)
     counts = torch.zeros(5, dtype=torch.int64, device=env.device)
+    episode_steps = torch.zeros(env.num_envs, dtype=torch.int64, device=env.device)
+    action_applied = torch.ones(env.num_envs, dtype=torch.bool, device=env.device)
+    no_final_rows = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
     terminal_steps = []
     action_period = action_program.shape[0]
     one_edge_signature = None
 
     for step in range(num_steps):
         actions = action_program[step % action_period]
+        episode_steps.add_(1)
         observations, rewards, terminated, truncated, extras = env.step(actions)
         done = terminated | truncated
+        final = extras.get("final_obs")
+        final_valid = done if final is not None else no_final_rows
         if step == 0:
             edge_values = _motion_state_tensors(env, observations)
             edge_values.update(
@@ -215,9 +213,9 @@ def _semantic_pass(
                     "transition.reward": rewards,
                     "transition.terminated": terminated,
                     "transition.truncated": truncated,
-                    "transition.action_applied": extras["action_applied"],
-                    "transition.episode_steps": extras["episode_steps"],
-                    "transition.final_observation_valid": extras["final_obs_valid"],
+                    "transition.action_applied": action_applied,
+                    "transition.episode_steps": episode_steps,
+                    "transition.final_observation_valid": final_valid,
                 }
             )
             one_edge_signature = _numerical_signature(edge_values)
@@ -232,9 +230,7 @@ def _semantic_pass(
         reward_signature[0].add_(torch.sum(reward_float64))
         reward_signature[1].add_(torch.sum(torch.square(reward_float64)))
 
-        final = extras.get("final_obs")
-        final_valid = extras["final_obs_valid"].reshape(-1).bool()
-        captured = done & final_valid & (final is not None)
+        captured = final_valid
         if final is not None:
             _signature_add_(final_observation_signature, final, captured)
             for value in final.values():
@@ -245,8 +241,9 @@ def _semantic_pass(
         counts[1].add_(truncated.sum())
         counts[2].add_(done.sum())
         counts[3].add_(captured.sum())
-        counts[4].add_(extras["action_applied"].sum())
-        terminal_steps.append(extras["episode_steps"][done])
+        counts[4].add_(env.num_envs)
+        terminal_steps.append(episode_steps[done])
+        episode_steps.masked_fill_(done, 0)
 
     _synchronize(str(env.device))
     terminated_rows, truncated_rows, final_rows, captured_final_rows, applied_rows = (
@@ -288,7 +285,7 @@ def _semantic_pass(
         },
     }
     if terminal_episode_steps and terminal_episode_steps != [expected_terminal_step]:
-        raise RuntimeError(f"Shared motion timeout differs from its native profile: {result}")
+        raise RuntimeError(f"Shared motion timeout differs from the resolved environment contract: {result}")
     return result
 
 
@@ -328,7 +325,8 @@ def _benchmark_steps(
             _, _, terminated, truncated, extras = env.step(actions)
             done = terminated | truncated
             terminal_counts[0].add_(done.sum())
-            terminal_counts[1].add_((done & extras["final_obs_valid"].reshape(-1).bool()).sum())
+            if capture_final_obs and "final_obs" in extras:
+                terminal_counts[1].add_(done.sum())
         _synchronize(str(env.device))
         measured_seconds = time.perf_counter() - start
 
@@ -357,53 +355,48 @@ def _benchmark_steps(
     }
 
 
-def _resolved_applied_action_horizon(env: MotionImitationEnv, expected_actions: int) -> int:
-    """Return one horizon shared by termination, payload time, and the native profile."""
-    actions = env.cfg.terminations.time_out.params.get("applied_actions_before_timeout")
-    if (
-        type(actions) is not int
-        or actions < 1
-        or actions != env.cfg.commands.motion.payload.episode_length_steps
-        or actions != expected_actions
-    ):
-        raise RuntimeError(
-            "Termination, payload episode clock, and native profile must share one applied-action horizon."
-        )
-    return actions
+def _resolved_applied_action_horizon(env: ManagerBasedRLEnv) -> int:
+    """Return the environment-owned applied-action horizon."""
+    expected = math.ceil(env.cfg.episode_length_s / (env.cfg.sim.dt * env.cfg.decimation))
+    if expected < 1 or env.max_episode_length != expected:
+        raise RuntimeError("Resolved environment episode clock differs from its applied-action horizon.")
+    return expected
+
+
+def _validate_args(values: argparse.Namespace) -> None:
+    """Validate the probe execution contract before constructing simulation."""
+    if values.num_envs < 1:
+        raise ValueError("num_envs must be positive.")
+    if values.warmup_steps < 0:
+        raise ValueError("warmup_steps must be non-negative.")
+    if values.benchmark_steps < 1:
+        raise ValueError("benchmark_steps must be positive.")
+    if not 0.0 <= values.action_bound <= 1.0:
+        raise ValueError("action_bound must lie in [0, 1].")
+    if values.action_period_steps < 1:
+        raise ValueError("action_period_steps must be positive.")
+    if values.replicate < 0:
+        raise ValueError("replicate must be non-negative.")
+    if values.evidence_role == "capture_cost" and values.pair_index is None:
+        raise ValueError("Capture-cost evidence requires pair_index.")
+    if values.evidence_role == "capture_cost" and values.pair_position is None:
+        raise ValueError("Capture-cost evidence requires pair_position.")
+    if values.evidence_role != "capture_cost" and (values.pair_index is not None or values.pair_position is not None):
+        raise ValueError("pair_index and pair_position are only valid for capture-cost evidence.")
+    if values.pair_index is not None and values.pair_index < 0:
+        raise ValueError("pair_index must be non-negative.")
+    if values.preset != "smpl_cmu" and values.reference_artifact_root is None:
+        raise ValueError(f"Preset {values.preset!r} requires --reference_artifact_root.")
 
 
 def main() -> None:
-    """Construct one profile, run through a timeout, and persist exact evidence."""
-    if args.num_envs < 1:
-        raise ValueError("num_envs must be positive.")
-    if args.warmup_steps < 0:
-        raise ValueError("warmup_steps must be non-negative.")
-    if args.benchmark_steps < 1:
-        raise ValueError("benchmark_steps must be positive.")
-    if not 0.0 <= args.action_bound <= 1.0:
-        raise ValueError("action_bound must lie in [0, 1].")
-    if args.action_period_steps < 1:
-        raise ValueError("action_period_steps must be positive.")
-    if args.replicate < 0:
-        raise ValueError("replicate must be non-negative.")
-    if args.evidence_role == "capture_cost" and args.pair_index is None:
-        raise ValueError("Capture-cost evidence requires pair_index.")
-    if args.evidence_role == "capture_cost" and args.pair_position is None:
-        raise ValueError("Capture-cost evidence requires pair_position.")
-    if args.evidence_role != "capture_cost" and (args.pair_index is not None or args.pair_position is not None):
-        raise ValueError("pair_index and pair_position are only valid for capture-cost evidence.")
-    if args.pair_index is not None and args.pair_index < 0:
-        raise ValueError("pair_index must be non-negative.")
+    """Construct one resolved composition, run through a timeout, and persist exact evidence."""
+    _validate_args(args)
     execution_started_unix_ns = time.time_ns()
-
-    profiles = {
-        "smpl_cmu": SMPL_CMU_PROFILE_CFG,
-        "g1_lafan": G1_LAFAN_PROFILE_CFG,
-        "g1_cmu": G1_CMU_PROFILE_CFG,
-    }
-    if args.preset != "smpl_cmu" and args.reference_artifact_root is None:
-        raise ValueError(f"Preset {args.preset!r} requires --reference_artifact_root.")
-    cfg = resolve_presets(MotionImitationEnvCfg(), selected={args.preset})
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes(args.preset))
+    runner_selection = motion_environment_axes(args.preset) | motion_runner_axes(args.preset)
+    runner_cfg = resolve_presets(MotionForwardBackwardRunnerCfg(), selected=runner_selection)
+    runner_values = runner_cfg.to_dict()
     table_cfg = cfg.commands.motion.task_table
     table_cfg.source_artifact_root = str(args.source_artifact_root.expanduser().resolve())
     table_cfg.reference_artifact_root = (
@@ -414,9 +407,10 @@ def main() -> None:
     cfg.seed = args.seed
     cfg.sim.device = args.device
     configured_cfg = copy.deepcopy(cfg)
+    action_name, _action_cfg = motion_action_term_cfg(configured_cfg)
 
     construct_start = time.perf_counter()
-    env = MotionImitationEnv(cfg=cfg)
+    env = ManagerBasedRLEnv(cfg=cfg)
     _synchronize(args.device)
     if args.device.startswith("cuda"):
         device = torch.device(args.device)
@@ -432,7 +426,7 @@ def main() -> None:
     }
     if args.preset == "smpl_cmu":
         model = env.sim.physics_manager.get_model()
-        action = env.action_manager.get_term("joint_position")
+        action = env.action_manager.get_term(action_name)
         backend_details.update(
             {
                 "native_actuator_rows": int(model.custom_frequency_counts.get("mujoco:actuator", 0)),
@@ -442,17 +436,20 @@ def main() -> None:
 
     try:
         observations, _ = env.reset()
-        profile = profiles[args.preset]
         semantic_steps = args.num_steps
         default_horizon = semantic_steps is None
         table_cfg = env.cfg.commands.motion.task_table
-        table = env.command_manager.get_term("motion").payload.table
+        payload = env.command_manager.get_term("motion").payload
+        table = payload.table
         if not isinstance(table, MotionTaskTable):
             raise TypeError("The motion command did not construct a MotionTaskTable.")
-        importer_type = BfmG1JoblibClips if table_cfg.source.identifier == "g1_lafan" else HumEnvHdf5Clips
-        applied_actions_before_timeout = _resolved_applied_action_horizon(
-            env, profile.timing.applied_actions_before_timeout
-        )
+        if table_cfg.source.identifier == "cmu_humenv_smpl":
+            importer_type = CmuHumEnvSmplClips
+        elif table_cfg.source.identifier == "lafan_g1_29dof":
+            importer_type = LafanG1JoblibClips
+        else:
+            raise ValueError(f"Unsupported motion source identifier: {table_cfg.source.identifier!r}.")
+        applied_actions_before_timeout = _resolved_applied_action_horizon(env)
         if semantic_steps is None:
             semantic_steps = applied_actions_before_timeout
         if semantic_steps < 1:
@@ -479,18 +476,13 @@ def main() -> None:
             "sha256": hashlib.sha256(action_bytes).hexdigest(),
         }
         observation_shapes = _tensor_shapes(observations)
-        _validate_observation_routes(observations, profile)
-        if env.action_manager.total_action_dim != profile.routes.behavior_action_width:
-            raise RuntimeError(
-                f"Action route has width {env.action_manager.total_action_dim}, "
-                f"expected {profile.routes.behavior_action_width}."
-            )
+        _validate_observation_routes(observations, runner_values["obs_groups"])
         semantic = _semantic_pass(
             env,
             action_program,
             semantic_steps,
             applied_actions_before_timeout,
-            table.reset_source_names,
+            payload.sampler.reset_source_names,
         )
         ownership_before = (
             exclusive_physical_gpu_snapshot(args.device) if args.evidence_role == "capture_cost" else None
@@ -522,9 +514,9 @@ def main() -> None:
                     cfg=configured_cfg,
                     importer_type=importer_type,
                     frame_builder_type={
-                        "smpl_cmu": SmplHumEnvFrameBuilder,
-                        "g1_lafan": G1LafanFrameBuilder,
-                        "g1_cmu": G1SmplHumEnvFrameBuilder,
+                        "smpl_cmu": SmplGeneralizedCoordinateFrameBuilder,
+                        "g1_lafan": G1PoseFrameBuilder,
+                        "g1_cmu": G1LocalBodyPoseFrameBuilder,
                     }[args.preset],
                     reference_artifact_root=configured_cfg.commands.motion.task_table.reference_artifact_root,
                 ),
@@ -552,10 +544,10 @@ def main() -> None:
             "num_envs": env.num_envs,
             "action_width": env.action_manager.total_action_dim,
             "observation_shapes": observation_shapes,
-            "physics_dt": profile.timing.physics_dt,
-            "control_decimation": profile.timing.control_decimation,
-            "control_dt": profile.timing.control_dt,
-            "configured_horizon_steps": profile.timing.configured_horizon_steps,
+            "physics_dt": float(env.cfg.sim.dt),
+            "control_decimation": env.cfg.decimation,
+            "control_dt": float(env.step_dt),
+            "configured_horizon_steps": env.max_episode_length,
             "applied_actions_before_timeout": applied_actions_before_timeout,
             "production_capture_invariant": env.cfg.compute_final_obs,
             "construction_seconds": construction_seconds,
@@ -601,7 +593,7 @@ def main() -> None:
         if not env.cfg.compute_final_obs:
             raise RuntimeError("The benchmark did not restore the production final-observation invariant.")
         if benchmark["terminal_rows"] != expected_terminal_rows:
-            raise RuntimeError(f"Benchmark timeout count differs from its native timing profile: {report}")
+            raise RuntimeError(f"Benchmark timeout count differs from its resolved timing contract: {report}")
         if benchmark["capture_final_obs"]:
             if benchmark["missing_final_rows"]:
                 raise RuntimeError(f"Capture benchmark lost terminal observations: {report}")

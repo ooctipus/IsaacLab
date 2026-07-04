@@ -6,21 +6,21 @@
     "source_numerical_parity": "inherited_from_phase2_not_remeasured_here"
   },
   "code_identity": {
-    "evidence_sha256": "128bfeac95273f0ea21778dda058ed7330932214bdcea7272b9a9432ea0f5385",
-    "motion_expert_provider_sha256": "4c95cbd4711ff65e529c24f5b7e0ea59137bb6ab7fc3f4e857bb2b67fc495ca2",
+    "evidence_sha256": "94f285b6ffdb80c37c57bace00c242941d588d4c459bee51721dda3504dfda63",
+    "motion_expert_provider_sha256": "3193e5f32983a031ed1eaed116113d0892dd4448627c9f91bb2d6efb0742dce2",
     "native_trace_sha256": "97c7836c93dccde22c4229621f2a5c2b3cc065edd71312f53fb4683be9922439",
-    "rsl_algorithm_sha256": "aec6b66f7dff37486585b906a47d5749b6b1d18fdb5d10344c19a2ff39b498ca",
-    "rsl_expert_buffer_sha256": "8c10129e1e562adef1544058f0936866b1b57992cdcc6ce622b4be39bf66f7a3",
-    "rsl_replay_sha256": "8955d6b49ba11ee3a1c4cb39e9a985c09c5f617beb2d942ce30f8c26ed08fadb"
+    "rsl_algorithm_sha256": "99668a732f3a8f61f1dde33df9b62bfbc626ae681d8d715349aa219338468c4d",
+    "rsl_expert_buffer_sha256": "e22ca9222fd6582250eb11d156d78ec86d1a4f5f1eb137bd282267c9f96caa84",
+    "rsl_replay_sha256": "dad8ed69b08fd3550c410556e3b99b29afebdc74d0bfb05f4b8e5d4b38c43c38"
   },
   "expert": {
     "clip_count": 1638,
     "clip_offsets_sha256": "3b2e4af46e7e4714deea355d5ab00ae9932354b2d60d6e76f3cd388c4b6e56e1",
-    "expert_data_sha256": "74a5bf387e4ad72c796991e5155fc306583012cf2935630a3c8eb72b173c67a4",
+    "expert_data_sha256": "32c31711f5f19f0e63a9004a34957280bd56159869aea0296206f970e9162abc",
     "expert_feature_width": 358,
     "expert_frame_count": 730307,
-    "expert_frames_sha256": "a0642fa9d5a593af0ced65992abc977f4bd3623abccd170b91fdfec6825e8687",
-    "expert_schema_sha256": "544581e23062a1a2a2584ee6bb62d3d56039d8a324c7632019067807a02cbe1b",
+    "expert_frames_sha256": "756cddd4ad146f2d663a745358f6056b2bc9a1a49624dd37a05af2919f2793fd",
+    "expert_schema_sha256": "dbe53a1ba436915837f70c4b7fc067e2111923791333a8d7a5d05f7ce74ae1b0",
     "sample_grid": {
       "mode": "source_rows",
       "step_seconds": null
@@ -32,7 +32,7 @@
     "window_lengths": [
       8
     ],
-    "zero_copy_native_observations": true
+    "zero_copy_native_observations": false
   },
   "first_update_canary": {
     "batch_size": 8,
@@ -51,8 +51,8 @@
     ],
     "repeat_count": 2,
     "repeat_update_seconds": [
-      0.26317967695649713,
-      0.2666731949429959
+      0.2722642591688782,
+      0.26402148604393005
     ],
     "replay_capacity_transitions": 32,
     "result": {
@@ -66,32 +66,32 @@
         "target_value/discriminator",
         "value/discriminator"
       ],
-      "checkpoint_schema_sha256": "db28937993803e037acdb0ccc51f06ee6cd99a2989631d31713a9a691fed275b",
+      "checkpoint_schema_sha256": "5187df4162776fb73445f6bfdbfd842f2093fa21ef674935853dee7270e7baeb",
       "context_buffer_size": 8,
       "metrics": {
-        "actor/fb_value": 27.758119583129883,
-        "actor/helper_value": 0.013569428585469723,
-        "actor/loss": -28.134780883789062,
-        "discriminator/gradient_penalty": 0.1645703762769699,
-        "discriminator/logistic": 1.3952620029449463,
-        "discriminator/loss": 3.0409657955169678,
-        "fb/diagonal": -8.883636474609375,
-        "fb/implied_value": 28758530.0,
-        "fb/loss": 5962153.0,
-        "fb/measure": 57.705711364746094,
-        "fb/off_diagonal": 66.58934783935547,
+        "actor/fb_value": -19.730823516845703,
+        "actor/helper_value": 0.013974873349070549,
+        "actor/loss": 19.266542434692383,
+        "discriminator/gradient_penalty": 0.20605593919754028,
+        "discriminator/logistic": 1.3447718620300293,
+        "discriminator/loss": 3.4053311347961426,
+        "fb/diagonal": -10.940977096557617,
+        "fb/implied_value": 25506714.0,
+        "fb/loss": 5636994.0,
+        "fb/measure": 80.1061782836914,
+        "fb/off_diagonal": 91.04715728759766,
         "fb/orthogonality": 30862.423828125,
         "fb/orthogonality_diagonal": -256.0,
         "fb/orthogonality_off_diagonal": 31118.423828125,
-        "value/discriminator/loss": 0.328132301568985,
-        "value/discriminator/reward": 0.31692737340927124,
-        "value/discriminator/target": -0.2169468104839325
+        "value/discriminator/loss": 0.45585793256759644,
+        "value/discriminator/reward": 0.2779689431190491,
+        "value/discriminator/target": -0.2672034502029419
       },
-      "metrics_sha256": "81df9b81dc85d972a413632add7dcaef1e61a128431904eae363b66f7af7ed22",
-      "model_after": "2a2f3f205d31da7e495163718a221160e8026260f269c3d3bf22077721b308eb",
+      "metrics_sha256": "4a971714b56aade9e5d8a5c231da6d9709ed76476ac9998cde8f842e7ef57347",
+      "model_after": "3164634f27cdf058256ad1e0cc31ebe05bfefb18bdb04495631017090eacab83",
       "model_before": "fcaf76c9fdb1e2856e73266ab73baed4a74facbc1a08b85f2dc513c56ba29297",
       "replay_transitions": 8,
-      "update_seconds": 0.26317967695649713,
+      "update_seconds": 0.2722642591688782,
       "update_step": 1,
       "versions": {
         "actor": 1,
@@ -142,6 +142,7 @@
       },
       "initialization_type": "orthogonal",
       "normalization_eps": 1e-05,
+      "normalization_groups": [],
       "normalization_momentum": 0.01,
       "normalization_type": "exponential",
       "value_heads": [
@@ -183,7 +184,7 @@
         "policy"
       ]
     },
-    "runner_config_sha256": "7b69825b515a45d916daf448e3692999cccdd2466c529c3cd0d03c69c52c2bc7"
+    "runner_config_sha256": "5dbb54fabffff53547e0524b2e13ca87c0fe7a565298ce992db2d6fef752e40e"
   },
   "preset": "smpl_cmu",
   "runtime": {
@@ -201,15 +202,15 @@
   "source": {
     "artifact": "data_preparation/test_train_split/0-CMU_train_0.1.txt",
     "artifact_sha256": "99929805f4ab531a89bff89837d27c403625d4b4d89d1a4d381b88825548a996",
-    "identifier": "smpl_cmu",
+    "identifier": "cmu_humenv_smpl",
     "source_content_sha256": "fe17c0673e1f5d55d985ac135e36c895df81c2cac91417df0e966fd32eb3e6b6",
     "split": "train"
   },
   "status": "measured",
   "task_table": {
-    "frame_builder_identity_sha256": "07919e3437b711110369a148dc167ec8e1db4ab9854762996f78c4d10c6294b7",
+    "frame_builder_identity_sha256": "39bbbd6018268ab462b6b9f5ca511d191e571a1a8c0d27e74416fd833a546fce",
     "frame_builder_version": "smpl_humenv_exact_mjcf_v1",
-    "identity_sha256": "eb9e80a5a85c96b2dce5a509fa1fb1332ff6c051c83c74acc90413aa5476e170",
+    "identity_sha256": "58ae200a5c34806db4a7d6cfcb4a224c18c4152b28d5b1981225d56598517d20",
     "joint_names": [
       "L_Hip_x_L_Hip_y_L_Hip_z:0",
       "L_Hip_x_L_Hip_y_L_Hip_z:1",
@@ -281,6 +282,31 @@
       "R_Hand_x_R_Hand_y_R_Hand_z:1",
       "R_Hand_x_R_Hand_y_R_Hand_z:2"
     ],
-    "reference_frame_names": []
+    "reference_frame_names": [
+      "Pelvis",
+      "L_Hip",
+      "L_Knee",
+      "L_Ankle",
+      "L_Toe",
+      "R_Hip",
+      "R_Knee",
+      "R_Ankle",
+      "R_Toe",
+      "Torso",
+      "Spine",
+      "Chest",
+      "Neck",
+      "Head",
+      "L_Thorax",
+      "L_Shoulder",
+      "L_Elbow",
+      "L_Wrist",
+      "L_Hand",
+      "R_Thorax",
+      "R_Shoulder",
+      "R_Elbow",
+      "R_Wrist",
+      "R_Hand"
+    ]
   }
 }

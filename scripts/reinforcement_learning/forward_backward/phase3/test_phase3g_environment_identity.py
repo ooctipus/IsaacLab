@@ -12,24 +12,29 @@ from pathlib import Path
 
 import pytest
 from isaaclab_newton.sim import NewtonMjcfFileCfg
+from motion_environment_identity import motion_environment_axes
 
 import isaaclab.sim as sim_utils
 from isaaclab.managers import ActionTermCfg
 
-from isaaclab_tasks.core.multi_task.motion.config.robots.smpl import (
-    _SMPL_SIMULATOR_BODY_NAMES,
-    _SMPL_SIMULATOR_JOINT_NAMES,
-    SMPL_MOTION_ARTICULATION_CFG,
-)
-from isaaclab_tasks.core.multi_task.motion.data.importers import HumEnvHdf5Clips
-from isaaclab_tasks.core.multi_task.motion.trajectory.g1_smpl import G1SmplHumEnvFrameBuilder
-from isaaclab_tasks.core.multi_task.motion.trajectory.smpl import SmplHumEnvFrameBuilder
+from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClips
+from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1LocalBodyPoseFrameBuilder
+from isaaclab_tasks.core.multi_task.motion.robots.smpl.articulation import SMPL_MOTION_ARTICULATION_CFG
+from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplGeneralizedCoordinateFrameBuilder
 from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
 from isaaclab_tasks.utils import resolve_presets
 
 from isaaclab_assets.robots.smpl.smpl_cfg import SMPL_HUMANOID_CFG
+from isaaclab_assets.robots.smpl.smpl_constants import MUJOCO_BODY_NAMES
 
 IDENTITY = Path(__file__).parent / "motion_environment_identity.py"
+
+
+def _smpl_live_axes() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    joints = tuple(
+        f"{body}_x_{body}_y_{body}_z:{component}" for body in MUJOCO_BODY_NAMES[1:] for component in range(3)
+    )
+    return joints, MUJOCO_BODY_NAMES
 
 
 def _module():
@@ -44,8 +49,8 @@ def _smpl_identity(cfg: MotionImitationEnvCfg) -> dict[str, object]:
     return _module().motion_environment_dependency_identity(
         preset="smpl_cmu",
         cfg=cfg,
-        importer_type=HumEnvHdf5Clips,
-        frame_builder_type=SmplHumEnvFrameBuilder,
+        importer_type=CmuHumEnvSmplClips,
+        frame_builder_type=SmplGeneralizedCoordinateFrameBuilder,
     )
 
 
@@ -59,8 +64,8 @@ def _g1_cmu_identities(
     common = {
         "preset": "g1_cmu",
         "cfg": cfg,
-        "importer_type": HumEnvHdf5Clips,
-        "frame_builder_type": G1SmplHumEnvFrameBuilder,
+        "importer_type": CmuHumEnvSmplClips,
+        "frame_builder_type": G1LocalBodyPoseFrameBuilder,
         "reference_artifact_root": reference_artifact_root,
     }
     return (
@@ -74,23 +79,23 @@ def _g1_cmu_identities(
 
 def test_smpl_identity_uses_native_asset_axes_without_config_actuator() -> None:
     """Native SMPL control must resolve all live axes with no duplicate actuator owner."""
-    cfg = resolve_presets(MotionImitationEnvCfg(), selected={"smpl_cmu"})
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("smpl_cmu"))
     assert cfg.scene.robot.actuators == {}
 
     identity = _module().motion_environment_dependency_identity(
         preset="smpl_cmu",
         cfg=cfg,
-        importer_type=HumEnvHdf5Clips,
-        frame_builder_type=SmplHumEnvFrameBuilder,
+        importer_type=CmuHumEnvSmplClips,
+        frame_builder_type=SmplGeneralizedCoordinateFrameBuilder,
     )
 
     robot = identity["resolved_axes"]["robot"]
     construction = identity["resolved_axes"]["construction"]
-    assert robot["joint_names"] == list(_SMPL_SIMULATOR_JOINT_NAMES)
-    assert robot["body_names"] == list(_SMPL_SIMULATOR_BODY_NAMES)
-    assert robot["action_type"] == "MotionMujocoControlActionCfg"
+    assert robot["joint_names"] == list(_smpl_live_axes()[0])
+    assert robot["body_names"] == list(_smpl_live_axes()[1])
+    assert robot["action_name"] == "control"
+    assert robot["action_type"] == "NativeMujocoControlActionCfg"
     assert construction["task_row_mode"] == "source_frames"
-    assert construction["task_sampling_law"] == "clip_categorical_then_discrete_source_frame_v1"
     assert len(robot["joint_names"]) == 69
     assert len(identity["bundle_sha256"]) == 64
 
@@ -106,13 +111,12 @@ def test_motion_preset_owns_newton_native_smpl_composition() -> None:
 def test_live_axis_selector_follows_concrete_action_ownership() -> None:
     """Axis ownership must dispatch on the resolved control type, not a preset label."""
     module = _module()
-    smpl_cfg = resolve_presets(MotionImitationEnvCfg(), selected={"smpl_cmu"})
-    g1_cfg = resolve_presets(MotionImitationEnvCfg(), selected={"g1_lafan"})
+    smpl_cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("smpl_cmu"))
+    g1_cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("g1_lafan"))
 
-    assert module._motion_live_axes(smpl_cfg) == (
-        _SMPL_SIMULATOR_JOINT_NAMES,
-        _SMPL_SIMULATOR_BODY_NAMES,
-    )
+    assert module.motion_action_term_cfg(smpl_cfg)[0] == "control"
+    assert module.motion_action_term_cfg(g1_cfg)[0] == "joint_position"
+    assert module._motion_live_axes(smpl_cfg) == _smpl_live_axes()
     assert module._motion_live_axes(g1_cfg) == module.motion_g1_live_axes(g1_cfg)
 
     g1_cfg.actions.joint_position = ActionTermCfg(class_type="unsupported:Action")
@@ -122,7 +126,7 @@ def test_live_axis_selector_follows_concrete_action_ownership() -> None:
 
 def test_resolved_configuration_closes_solver_ground_and_mdp_drift() -> None:
     """Hydra overrides must change identity without relying on source-byte drift."""
-    baseline = _smpl_identity(resolve_presets(MotionImitationEnvCfg(), selected={"smpl_cmu"}))
+    baseline = _smpl_identity(resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("smpl_cmu")))
     configuration = baseline["resolved_configuration"]
     solver = configuration["sim"]["physics"]["solver_cfg"]
     ground = configuration["scene"]["ground"]["spawn"]
@@ -136,9 +140,9 @@ def test_resolved_configuration_closes_solver_ground_and_mdp_drift() -> None:
     assert ground["physics_material"]["static_friction"] == 0.7
     assert {"actions", "commands", "events", "observations", "terminations"} <= set(configuration)
 
-    native_ccd_cfg = resolve_presets(MotionImitationEnvCfg(), selected={"smpl_cmu"})
+    native_ccd_cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("smpl_cmu"))
     native_ccd_cfg.sim.physics.solver_cfg.enable_native_ccd = True
-    solimp_cfg = resolve_presets(MotionImitationEnvCfg(), selected={"smpl_cmu"})
+    solimp_cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("smpl_cmu"))
     solimp_cfg.scene.ground.spawn.collision_props.solimp = (0.98, 0.99, 0.003, 0.5, 2.0)
 
     for changed in (_smpl_identity(native_ccd_cfg), _smpl_identity(solimp_cfg)):
@@ -150,9 +154,9 @@ def test_resolved_configuration_closes_solver_ground_and_mdp_drift() -> None:
 
 def test_resolved_configuration_excludes_only_execution_placement() -> None:
     """Scale, device, trial seed, and artifact roots must not split one semantic identity."""
-    baseline_cfg = resolve_presets(MotionImitationEnvCfg(), selected={"smpl_cmu"})
+    baseline_cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("smpl_cmu"))
     baseline = _smpl_identity(baseline_cfg)
-    moved_cfg = resolve_presets(MotionImitationEnvCfg(), selected={"smpl_cmu"})
+    moved_cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("smpl_cmu"))
     moved_cfg.scene.num_envs = 1024
     moved_cfg.seed = 9917
     moved_cfg.sim.device = "cpu"
@@ -170,7 +174,7 @@ def test_resolved_configuration_excludes_only_execution_placement() -> None:
 
 def test_runtime_identity_closes_concrete_external_build_and_newton_owners() -> None:
     """The evidence must distinguish incompatible Newton/Warp/Isaac Sim installations."""
-    identity = _smpl_identity(resolve_presets(MotionImitationEnvCfg(), selected={"smpl_cmu"}))
+    identity = _smpl_identity(resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("smpl_cmu")))
     runtime = identity["runtime_dependencies"]
 
     assert set(runtime) == {
@@ -226,18 +230,41 @@ def test_runtime_identity_rejects_an_unknown_preset() -> None:
         _module()._runtime_dependencies("unknown")
 
 
+def test_g1_identity_records_named_transition_evidence_without_command_history() -> None:
+    """The environment receipt exposes stateless evidence and no command transition owner."""
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("g1_cmu"))
+    environment, _composition = _g1_cmu_identities(cfg)
+    runtime = environment["resolved_axes"]["runtime"]
+
+    assert runtime["transition_evidence_names"] == [
+        "penalty_torques",
+        "penalty_action_rate",
+        "limits_dof_pos",
+        "limits_torque",
+        "penalty_undesired_contact",
+        "penalty_feet_ori",
+        "penalty_ankle_roll",
+        "penalty_slippage",
+    ]
+    assert runtime["transition_evidence_concatenated"] is False
+    assert "transition_factory" not in runtime
+    assert "episode_length_steps" not in runtime
+    assert not hasattr(cfg.observations, "history_actor")
+    assert not hasattr(cfg.commands.motion.payload, "transition_factory")
+
+
 def test_composition_identity_excludes_mdp_runtime_but_closes_trajectory_inputs(tmp_path: Path) -> None:
     """Pure retarget identity must close data construction without owning the simulator MDP."""
-    baseline_cfg = resolve_presets(MotionImitationEnvCfg(), selected={"g1_cmu"})
+    baseline_cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("g1_cmu"))
     baseline_environment, baseline_composition = _g1_cmu_identities(baseline_cfg)
 
-    runtime_cfg = resolve_presets(MotionImitationEnvCfg(), selected={"g1_cmu"})
+    runtime_cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("g1_cmu"))
     runtime_cfg.compute_final_obs = not runtime_cfg.compute_final_obs
     runtime_environment, runtime_composition = _g1_cmu_identities(runtime_cfg)
     assert runtime_environment["bundle_sha256"] != baseline_environment["bundle_sha256"]
     assert runtime_composition == baseline_composition
 
-    source_cfg = resolve_presets(MotionImitationEnvCfg(), selected={"g1_cmu"})
+    source_cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("g1_cmu"))
     source_cfg.commands.motion.task_table.source.evaluation.source_content_sha256 = "b" * 64
     source_environment, source_composition = _g1_cmu_identities(source_cfg)
     assert source_environment["bundle_sha256"] != baseline_environment["bundle_sha256"]
@@ -260,12 +287,12 @@ def test_composition_identity_excludes_mdp_runtime_but_closes_trajectory_inputs(
 
 def test_g1_live_axes_require_exactly_one_actuator_owner() -> None:
     module = _module()
-    missing = resolve_presets(MotionImitationEnvCfg(), selected={"g1_lafan"})
+    missing = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("g1_lafan"))
     missing.scene.robot.actuators = {}
     with pytest.raises(ValueError, match="exactly one actuator"):
         module.motion_g1_live_axes(missing)
 
-    duplicate = resolve_presets(MotionImitationEnvCfg(), selected={"g1_lafan"})
+    duplicate = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("g1_lafan"))
     duplicate.scene.robot.actuators["duplicate"] = next(iter(duplicate.scene.robot.actuators.values()))
     with pytest.raises(ValueError, match="exactly one actuator"):
         module.motion_g1_live_axes(duplicate)

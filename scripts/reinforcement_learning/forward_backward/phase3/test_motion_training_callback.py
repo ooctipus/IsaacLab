@@ -25,6 +25,58 @@ def _module():
     return module
 
 
+@pytest.mark.parametrize(
+    ("axes", "profile"),
+    (
+        ({"smpl", "cmu", "newton_mjwarp", "timing_sim450_control30_horizon300", "sampling_source_rows"}, "smpl_cmu"),
+        ({"g1", "lafan", "physx", "timing_sim200_control50_horizon501", "sampling_clip_time"}, "g1_lafan"),
+    ),
+)
+def test_training_contract_profile_uses_all_native_environment_semantics(axes: set[str], profile: str) -> None:
+    from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
+    from isaaclab_tasks.utils import resolve_presets
+
+    assert _module()._preset(resolve_presets(MotionImitationEnvCfg(), selected=axes)) == profile
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("physics_dt", 1.0 / 200.0),
+        ("control_decimation", 4),
+        ("horizon_seconds", 301 / 30.0),
+        ("task_row_mode", "clip_time_ranges"),
+    ),
+)
+def test_training_contract_rejects_changed_native_semantics(field: str, value: object) -> None:
+    from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
+    from isaaclab_tasks.utils import resolve_presets
+
+    axes = {"smpl", "cmu", "newton_mjwarp", "timing_sim450_control30_horizon300", "sampling_source_rows"}
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=axes)
+    if field == "physics_dt":
+        cfg.sim.dt = value
+    elif field == "control_decimation":
+        cfg.decimation = value
+    elif field == "horizon_seconds":
+        cfg.episode_length_s = value
+    else:
+        cfg.commands.motion.task_table.task_row_mode = value
+
+    with pytest.raises(ValueError, match="no native reproduction contract"):
+        _module()._preset(cfg)
+
+
+def test_training_contract_rejects_cross_composition_without_a_native_reproduction_claim() -> None:
+    from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
+    from isaaclab_tasks.utils import resolve_presets
+
+    axes = {"g1", "cmu", "physx", "timing_sim200_control50_horizon501", "sampling_clip_time"}
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=axes)
+    with pytest.raises(ValueError, match="no native reproduction contract"):
+        _module()._preset(cfg)
+
+
 def test_training_callback_publishes_each_stage_beside_the_training_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -196,7 +248,7 @@ def test_launch_contract_rejects_identity_and_lifecycle_drift() -> None:
     assert "b" * 64 in str(error.value)
 
     agent.lifecycle_extension = {"class_name": "tracking"}
-    with pytest.raises(ValueError, match="lifecycle_extension=null"):
+    with pytest.raises(ValueError, match="tracking_off lifecycle preset"):
         module._assert_launch_contract(profile, expected_identity, env, runner, agent)
 
 
@@ -234,15 +286,25 @@ def test_resolved_agent_config_hash_closes_nested_non_schema_hyperparameters() -
 
     class AgentCfg:
         def __init__(self) -> None:
-            self.algorithm = {
-                "learning_rate": 3.0e-4,
-                "discriminator_gradient_penalty_coefficient": 10.0,
-                "value_cfg": {"auxiliary": {"reward_coefficients": (0.0, 0.1, 10.0)}},
-            }
+            self.algorithm = SimpleNamespace(
+                learning_rate=3.0e-4,
+                discriminator_gradient_penalty_coefficient=10.0,
+                value_cfg=SimpleNamespace(auxiliary=SimpleNamespace(reward_coefficients=(0.0, 0.1, 10.0))),
+            )
 
         def to_dict(self) -> dict[str, object]:
             return {
-                "algorithm": self.algorithm,
+                "algorithm": {
+                    "learning_rate": self.algorithm.learning_rate,
+                    "discriminator_gradient_penalty_coefficient": (
+                        self.algorithm.discriminator_gradient_penalty_coefficient
+                    ),
+                    "value_cfg": {
+                        "auxiliary": {
+                            "reward_coefficients": self.algorithm.value_cfg.auxiliary.reward_coefficients,
+                        }
+                    },
+                },
                 "expert": {"provider": expert_provider},
                 "model": {"actor_cfg": {"hidden_dim": 1024, "hidden_layers": 6}},
                 "replay": {"capacity_transitions": 12_288},
@@ -251,7 +313,7 @@ def test_resolved_agent_config_hash_closes_nested_non_schema_hyperparameters() -
 
     agent_cfg = AgentCfg()
     baseline = module._resolved_agent_config_sha256(agent_cfg)
-    agent_cfg.algorithm["discriminator_gradient_penalty_coefficient"] = 9.0
+    agent_cfg.algorithm.discriminator_gradient_penalty_coefficient = 9.0
 
     assert module._resolved_agent_config_sha256(agent_cfg) != baseline
 
@@ -312,7 +374,10 @@ def test_task_bridge_bundle_uses_actual_wrapper_config_and_expert_provider(
         pass
 
     class MotionRunnerCfg:
-        pass
+        class ExpertCfg:
+            provider = "fixture:expert_provider"
+
+        expert = ExpertCfg()
 
     def expert_provider() -> None:
         pass
@@ -321,14 +386,18 @@ def test_task_bridge_bundle_uses_actual_wrapper_config_and_expert_provider(
         pass
 
     agent_cfg = MotionRunnerCfg()
-    agent_cfg.expert = {"provider": expert_provider}
     observed: list[object] = []
+    providers = {
+        "fixture:expert_provider": expert_provider,
+        "fixture:other_expert_provider": other_expert_provider,
+    }
 
     def owner_source(owner: object) -> tuple[str, str]:
         observed.append(owner)
         return "fixture.shared", "a" * 64
 
     monkeypatch.setattr(module, "_owner_source", owner_source)
+    monkeypatch.setattr(module, "resolve_callable", providers.__getitem__)
 
     identity = module._task_bridge_identity(Wrapper(), agent_cfg)
     digest = identity["bundle_sha256"]
@@ -343,7 +412,7 @@ def test_task_bridge_bundle_uses_actual_wrapper_config_and_expert_provider(
     assert observed == [Wrapper, MotionRunnerCfg, expert_provider]
 
     observed.clear()
-    agent_cfg.expert["provider"] = other_expert_provider
+    agent_cfg.expert.provider = "fixture:other_expert_provider"
     assert module._task_bridge_bundle_sha256(Wrapper(), agent_cfg) != digest
     assert observed == [Wrapper, MotionRunnerCfg, other_expert_provider]
 

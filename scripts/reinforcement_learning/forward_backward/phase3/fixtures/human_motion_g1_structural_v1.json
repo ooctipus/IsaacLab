@@ -14,24 +14,20 @@
     ]
   },
   "code_identity": {
-    "environment_cfg_sha256": "7c561be9641ef80a355095e21058dbf74986fd50863d05a3705ebe5cdc5cb527",
-    "generator_sha256": "ce5b4e204214938dea5064559e658564b86ce5915d8c9a6d84a8ed5acad2e183",
-    "projection_sha256": "e89b560af40142c057c7d8e8e9a9877ca230fe6a6759e23e88950c21256a717b",
-    "target_builder_sha256": "b2b2696517899ddcd5425ed213659c2af8923bb2cef06fcb152ee2ce45beaa3a"
+    "environment_cfg_sha256": "f78ee24edbf35a1694817c92af766b8c66a44fab89fd073f0935ce105ce20b25",
+    "generator_sha256": "e48fe57b97377779a89f1cca132ff3f68f285217425dd7149e993eb87c058762",
+    "projection_sha256": "685493d05db3985f594457222c3a1c67ada2ec6d3d024f1882f38074e5c95579",
+    "target_builder_sha256": "b83e546ec1a33b9e8df8c478577e1db7192a05655280ffc64952a8825bdeac36"
   },
   "composition": {
     "control_decimation": 4,
     "control_dt_seconds": 0.02,
-    "expert_grid": {
-      "mode": "uniform_before_source_end",
-      "step_seconds": 0.02
-    },
     "identifier": "g1_analytical_human_50hz",
     "physics_dt_seconds": 0.005,
     "scene_robot": "g1_29dof",
     "selected_preset": "g1_cmu",
     "source_identifier": "analytical_human_motion",
-    "source_template": "smpl_cmu"
+    "source_template": "cmu_humenv_smpl"
   },
   "error_ownership": {
     "policy": {
@@ -74,10 +70,9 @@
         "frame_offsets",
         "source_fps",
         "root_translation",
-        "local_rotation_wxyz",
-        "valid"
+        "local_rotation_wxyz"
       ],
-      "sha256": "26ff8ee732a6e1854cea0e6d793b089fd955e19c762af822a5fec65588b67320",
+      "sha256": "6d9c9d4d7fa86d77da0256916c975a91dde402eca0080b7d2946739cf0f5535b",
       "tensors": {
         "clip_ids": {
           "dtype": "<U16",
@@ -113,13 +108,6 @@
         "source_fps": {
           "dtype": "float64",
           "sha256": "171eecb812c5f351754bb2ab287775e02132b9cdef6512ef8cca5b1f8adffca1",
-          "shape": [
-            2
-          ]
-        },
-        "valid": {
-          "dtype": "bool",
-          "sha256": "9dcf97a184f32623d11a73124ceb99a5709b083721e878a16d78f596718ba7b2",
           "shape": [
             2
           ]
@@ -629,7 +617,7 @@
     }
   },
   "target": {
-    "axis_contract_sha256": "47bcce287cfee9336fcb4f8bf52812f6412e74096091faae93251bd06c215d7d",
+    "axis_contract_sha256": "56bfcfa468308414e4ae09ec6fdf36bf5dc9f6f51b7800c677b30b976463bf17",
     "joint_names": [
       "left_hip_pitch_joint",
       "right_hip_pitch_joint",
@@ -730,6 +718,6 @@
       29
     ],
     "trajectory_builder_contract": "g1_human_ordered_hinge_fit_structural_v3",
-    "trajectory_builder_factory": "isaaclab_tasks.core.multi_task.motion.trajectory.g1_smpl:g1_smpl_humenv_frame_builder"
+    "trajectory_builder_factory": "isaaclab_tasks.core.multi_task.motion.robots.g1.reference:cmu_to_g1_frame_builder"
   }
 }

@@ -42,6 +42,7 @@ def test_controlled_v6_native_policy_artifact_recomputes_tracking_and_reward_dec
     """Serialized rows must independently recover tracking pass and reward inconclusion."""
     artifact, module = _copy_artifact(tmp_path)
     receipt = module.validate_native_policy_quality_artifact(artifact, GATE)
+    compatibility = receipt.pop("current_compatibility")
 
     assert receipt == {
         "schema": "forward_backward_phase3_g1_policy_quality_consumer_v2",
@@ -57,6 +58,11 @@ def test_controlled_v6_native_policy_artifact_recomputes_tracking_and_reward_dec
         "broad_reward_status": "inconclusive_protocol_identity",
         "broad_reward_point_gate": "not_met",
     }
+    assert compatibility["status"] in {
+        "exact_producer_match",
+        "producer_changed_requires_fresh_evaluation",
+    }
+    assert compatibility["runtime_validation_required"] is (compatibility["status"] != "exact_producer_match")
 
 
 def test_consumer_rejects_tracking_bytes_changed_after_publication(tmp_path: Path) -> None:
@@ -69,12 +75,12 @@ def test_consumer_rejects_tracking_bytes_changed_after_publication(tmp_path: Pat
         module.validate_native_policy_quality_artifact(artifact, GATE)
 
 
-def test_consumer_rejects_emd_transport_kernel_source_mutation(tmp_path: Path) -> None:
-    """Changing the transitive Warp kernel must invalidate otherwise unchanged evidence."""
+def test_consumer_reports_emd_transport_kernel_source_mutation(tmp_path: Path) -> None:
+    """Current kernel drift must not invalidate an authentic historical receipt."""
     artifact, module = _copy_artifact(tmp_path)
     original_source_path = module._module_source_path
     kernel_path = original_source_path(module._EMD_TRANSPORT_MODULE)
-    mutated_kernel = tmp_path / "uniform_emd_warp.py"
+    mutated_kernel = tmp_path / "uniform_assignment_warp.py"
     mutated_kernel.write_bytes(kernel_path.read_bytes() + b"\n# mutation\n")
 
     def source_path(module_name: str) -> Path:
@@ -83,8 +89,10 @@ def test_consumer_rejects_emd_transport_kernel_source_mutation(tmp_path: Path) -
         return original_source_path(module_name)
 
     module._module_source_path = source_path
-    with pytest.raises(ValueError, match="emd transport kernel bytes"):
-        module.validate_native_policy_quality_artifact(artifact, GATE)
+    receipt = module.validate_native_policy_quality_artifact(artifact, GATE)
+    assert receipt["status"] == "passed"
+    assert receipt["current_compatibility"]["status"] == "producer_changed_requires_fresh_evaluation"
+    assert "emd_transport_kernel_sha256" in receipt["current_compatibility"]["mismatched_fields"]
 
 
 def test_consumer_rejects_a_manifest_decision_not_derived_from_rows(tmp_path: Path) -> None:
@@ -134,7 +142,7 @@ def test_consumer_rejects_broad_reward_called_passed_without_paired_identity() -
 def test_policy_source_closure_hashes_module_bytes_without_host_path_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Moving equal source bytes may pass, while mutating those bytes must stale evidence."""
+    """Stored source provenance is validated without consulting the current host path."""
     module = _module()
     first = tmp_path / "host_a" / "runtime.py"
     second = tmp_path / "host_b" / "runtime.py"
@@ -147,9 +155,9 @@ def test_policy_source_closure_hashes_module_bytes_without_host_path_identity(
 
     module._validate_policy_python_sources("environment", sources, IDENTITY)
     second.write_text("VALUE = 2\n")
-
-    with pytest.raises(ValueError, match="environment.*example.runtime.*bytes differ"):
-        module._validate_policy_python_sources("environment", sources, IDENTITY)
+    module._validate_policy_python_sources("environment", sources, IDENTITY)
+    with pytest.raises(ValueError, match="invalid SHA-256"):
+        module._validate_policy_python_sources("environment", {"example.runtime": "bad"}, IDENTITY)
 
 
 def test_policy_dependency_checks_both_environment_and_composition_source_maps(
@@ -216,14 +224,27 @@ _LOCAL_POLICY_CODE_FIELDS = (
 
 
 @pytest.mark.parametrize("field", _LOCAL_POLICY_CODE_FIELDS)
-def test_consumer_rejects_each_changed_local_policy_code_owner(field: str) -> None:
-    """Every locally available producer source must be independently rehashed."""
+def test_consumer_reports_each_changed_local_policy_code_owner(field: str) -> None:
+    """Every current producer source remains independently visible as compatibility."""
     module = _module()
     stored = module._current_policy_code_identity(GATE)
     assert set(stored) == set(_LOCAL_POLICY_CODE_FIELDS)
     stored[field] = "0" * 64
 
-    with pytest.raises(ValueError, match=field.removesuffix("_sha256").replace("_", " ")):
+    result = module._local_policy_code_compatibility(stored, GATE)
+    assert result == {
+        "status": "producer_changed_requires_fresh_evaluation",
+        "mismatched_fields": [field],
+        "runtime_validation_required": True,
+    }
+
+
+def test_consumer_rejects_malformed_stored_local_policy_code_owner() -> None:
+    """Authenticity still rejects malformed producer provenance."""
+    module = _module()
+    stored = module._current_policy_code_identity(GATE)
+    stored[next(iter(stored))] = "bad"
+    with pytest.raises(ValueError, match="invalid stored digest"):
         module._validate_local_policy_code_identity(stored, GATE)
 
 

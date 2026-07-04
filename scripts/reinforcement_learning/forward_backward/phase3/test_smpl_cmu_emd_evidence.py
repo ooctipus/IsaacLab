@@ -16,12 +16,23 @@ import pytest
 import torch
 
 MODULE_PATH = Path(__file__).with_name("smpl_cmu_emd_evidence.py")
+TRACKING_PATH = Path(__file__).with_name("smpl_tracking_evaluation.py")
 
 
 @pytest.fixture(scope="module")
 def module():
     """Load the standalone EMD evidence producer without launching Isaac Sim."""
     spec = importlib.util.spec_from_file_location("smpl_cmu_emd_evidence", MODULE_PATH)
+    assert spec is not None and spec.loader is not None
+    loaded = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(loaded)
+    return loaded
+
+
+@pytest.fixture(scope="module")
+def tracking_module():
+    """Load the standalone packed tracking evaluator without launching Isaac Sim."""
+    spec = importlib.util.spec_from_file_location("smpl_tracking_evaluation", TRACKING_PATH)
     assert spec is not None and spec.loader is not None
     loaded = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(loaded)
@@ -74,9 +85,57 @@ def test_runtime_declares_evaluation_split_and_all_three_horizon_authorities(mod
     source = inspect.getsource(module._run)
 
     assert 'table_cfg.motion_split = "evaluation"' in source
-    assert "cfg.commands.motion.payload.episode_length_steps = evaluation_horizon" in source
-    assert 'cfg.terminations.time_out.params["applied_actions_before_timeout"] = evaluation_horizon' in source
+    assert "payload.episode_length_steps" not in source
+    assert "terminations.time_out.params" not in source
     assert "cfg.episode_length_s = evaluation_horizon * cfg.sim.dt * cfg.decimation" in source
+
+
+def test_packed_tracking_rejects_non_source_row_sampling_before_runtime_access(tracking_module) -> None:
+    """The faithful HumEnv evaluator must reject a changed sampling clock at its boundary."""
+    with pytest.raises(ValueError, match="literal source-row sampling"):
+        tracking_module.smpl_motion_tracking_evaluator_packed(
+            None,
+            None,
+            None,
+            (),
+            policy_count=1,
+            sampling_mode="uniform_before_source_end",
+            sampling_step_seconds=0.02,
+        )
+
+
+def test_runtime_uses_final_vecenv_and_named_tracking_projection(module) -> None:
+    """Standalone EMD must use the same VecEnv and projection contract as training."""
+    producer = inspect.getsource(module._run)
+    tracking = TRACKING_PATH.read_text()
+
+    assert "RslRlVecEnvWrapper(ManagerBasedRLEnv(cfg=cfg))" in producer
+    assert "observations_as_tensordict" not in tracking
+    assert '"feature_count"' not in tracking
+    assert '"assignment_metric": "uniform_assignment"' in tracking
+    assert "smpl_humenv_tracking_pose" in tracking
+    assert "observations, _reward, dones, extras = env.step" in tracking
+    assert "env.unwrapped.command_manager" in tracking
+
+
+def test_phase3_producers_do_not_restore_retired_scientific_names() -> None:
+    """Current evidence producers must name source and robot protocols explicitly."""
+    retired = (
+        "smpl_body_observation",
+        "smpl_released_tracking_pose",
+        "SmplMocapAndFallReset",
+        "g1_released_observation_state_pose",
+        "g1_expert_observation_fields",
+        "g1_privileged_observation",
+        "g1_privileged_body_observation",
+        "g1_expert_target",
+        "released_behavior_axes_v2",
+    )
+    phase3_root = Path(__file__).parent
+    producers = (path for path in phase3_root.glob("*.py") if not path.name.startswith("test_"))
+    live_source = "\n".join(path.read_text(encoding="utf-8") for path in producers)
+
+    assert all(name not in live_source for name in retired)
 
 
 def test_record_protocol_names_exact_native_projection_without_fake_diagnostic(module) -> None:
@@ -88,7 +147,7 @@ def test_record_protocol_names_exact_native_projection_without_fake_diagnostic(m
     assert "exact_uniform_optimal_assignment_float32_euclidean_cost" in source
     assert "uninterrupted_global_horizon_with_same_step_final_obs_fallback" in source
     assert "must not fabricate the G1-only obs_state_emd diagnostic" in source
-    assert '"uniform_emd_warp_sha256": _source_sha256(uniform_emd_warp)' in source
+    assert '"uniform_assignment_warp_sha256": _source_sha256(uniform_assignment_warp)' in source
 
 
 def test_source_identity_unwraps_decorated_runtime_boundaries(tmp_path: Path, module) -> None:

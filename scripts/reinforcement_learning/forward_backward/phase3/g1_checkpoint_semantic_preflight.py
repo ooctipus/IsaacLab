@@ -13,12 +13,15 @@ import json
 import math
 import time
 import traceback
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 _FIELD_WIDTHS = {
-    "state": 64,
+    "joint_position": 29,
+    "joint_velocity": 29,
+    "projected_gravity": 3,
+    "base_angular_velocity": 3,
     "last_action": 29,
     "history_actor": 372,
     "privileged_state": 463,
@@ -127,9 +130,8 @@ def _raw_physical_actor_observations(
     behavior_joint_ids: Any,
 ) -> dict[str, Any]:
     """Reproduce the former error that exposed raw physical joint columns to the policy."""
-    state = observations["state"].clone()
-    state[:, :29] = _scatter_behavior_to_physical(state[:, :29], behavior_joint_ids)
-    state[:, 29:58] = _scatter_behavior_to_physical(state[:, 29:58], behavior_joint_ids)
+    joint_position = _scatter_behavior_to_physical(observations["joint_position"], behavior_joint_ids)
+    joint_velocity = _scatter_behavior_to_physical(observations["joint_velocity"], behavior_joint_ids)
     last_action = _scatter_behavior_to_physical(observations["last_action"], behavior_joint_ids)
     history = observations["history_actor"].clone()
     for field_offset in (0, 128, 244):
@@ -139,7 +141,10 @@ def _raw_physical_actor_observations(
                 history[:, start : start + 29], behavior_joint_ids
             )
     return {
-        "state": state,
+        "joint_position": joint_position,
+        "joint_velocity": joint_velocity,
+        "projected_gravity": observations["projected_gravity"],
+        "base_angular_velocity": observations["base_angular_velocity"],
         "last_action": last_action,
         "history_actor": history,
         "privileged_state": observations["privileged_state"],
@@ -155,7 +160,19 @@ def _load_native_trace_observations(path: Path, device: Any):
     path = path.expanduser().resolve()
     digest = _sha256(path)
     with np.load(path, allow_pickle=False) as trace:
-        fields = {name: torch.from_numpy(trace[f"current_{name}"][0]).to(device=device) for name in _FIELD_WIDTHS}
+        state = torch.from_numpy(trace["current_state"][0]).to(device=device)
+        joint_position, joint_velocity, projected_gravity, base_angular_velocity = torch.split(
+            state, (29, 29, 3, 3), dim=-1
+        )
+        fields = {
+            "joint_position": joint_position,
+            "joint_velocity": joint_velocity,
+            "projected_gravity": projected_gravity,
+            "base_angular_velocity": base_angular_velocity,
+            "last_action": torch.from_numpy(trace["current_last_action"][0]).to(device=device),
+            "history_actor": torch.from_numpy(trace["current_history_actor"][0]).to(device=device),
+            "privileged_state": torch.from_numpy(trace["current_privileged_state"][0]).to(device=device),
+        }
     batch_size = next(iter(fields.values())).shape[0]
     for name, width in _FIELD_WIDTHS.items():
         if fields[name].shape != (batch_size, width) or fields[name].dtype is not torch.float32:
@@ -227,9 +244,29 @@ def _checkpoint_semantics(model: Any, observations: Any, behavior_joint_ids: Any
     }
 
 
+def _evaluation_history_factory(replay: Mapping[str, object]) -> Callable[[Any], Any]:
+    """Build direct-evaluation history from the learner's replay contract."""
+    from rsl_rl.algorithms.forward_backward import ForwardBackward
+    from rsl_rl.storage.forward_backward_replay import ForwardBackwardHistoryLayout
+
+    value = replay.get("history_layout")
+    if value is None:
+        return lambda _observations: None
+    if not isinstance(value, Mapping):
+        raise TypeError("Replay history_layout must be a mapping or None.")
+    options = dict(value)
+    sources = tuple(ForwardBackwardHistoryLayout.Source(**dict(source)) for source in options.pop("sources"))
+    layout = ForwardBackwardHistoryLayout(sources=sources, **options)
+    return lambda observations: ForwardBackward.EvaluationHistory(layout, observations)
+
+
 def _short_rollout(
     *,
     env: Any,
+    evaluation_scope: Any,
+    command: Any,
+    domain_scope: Any,
+    history_factory: Any,
     model: Any,
     context: Any,
     robot: Any,
@@ -248,18 +285,31 @@ def _short_rollout(
     processed_error = torch.zeros_like(request_error)
     target_error = torch.zeros_like(request_error)
     action_l2 = torch.zeros((), dtype=torch.float64, device=env.device)
-    with torch.inference_mode(), env.evaluation_transaction(seed):
+    with (
+        torch.inference_mode(),
+        evaluation_scope(
+            env,
+            command,
+            domain_scope,
+            seed,
+            reset_source_name=None,
+        ),
+    ):
         reset = env.reset()
         observations = _as_tensordict(reset[0] if isinstance(reset, tuple) else reset, env.num_envs)
+        history = history_factory(observations)
+        if history is not None:
+            observations = history.decorate_current(observations)
         for _ in range(steps):
             model.observation_schema.assert_valid(observations)
             actions = model.action_sample(observations, context, deterministic=True)
-            observations, rewards, terminated, truncated, extras = env.step(actions)
-            observations = _as_tensordict(observations, env.num_envs)
-            expected_processed = (actions * action_term.cfg.normalize_to).clamp(
-                -action_term.cfg.action_clip,
-                action_term.cfg.action_clip,
-            )
+            returned, rewards, terminated, truncated, extras = env.step(actions)
+            returned = _as_tensordict(returned, env.num_envs)
+            done = terminated | truncated
+            if history is not None:
+                history.advance(observations, returned, done)
+            observations = returned
+            expected_processed = (actions * action_term.cfg.scale).clamp(*action_term.cfg.clip[".*"])
             physical_target = robot.data.joint_pos_target.torch.index_select(1, action_term.joint_ids)
             torch.maximum(request_error, (action_term.raw_actions - actions).abs().max(), out=request_error)
             torch.maximum(
@@ -275,8 +325,9 @@ def _short_rollout(
             finite.logical_and_(rewards.isfinite().all())
             for value in observations.values():
                 finite.logical_and_(value.isfinite().all())
-            done_rows.add_((terminated | truncated).sum())
-            final_rows.add_(extras["final_obs_valid"].sum())
+            done_rows.add_(done.sum())
+            if "final_obs" in extras:
+                final_rows.add_(done.sum())
     if torch.device(env.device).type == "cuda":
         torch.cuda.synchronize(env.device)
     return {
@@ -330,12 +381,18 @@ def _require_preflight_pass(
 def _run(args: argparse.Namespace, process_started: float) -> dict[str, object]:
     """Construct the native environment and execute the seconds-scale semantic gate."""
     import torch
+    from motion_environment_identity import motion_environment_axes, motion_runner_axes
     from rsl_rl.models.forward_backward_model import ForwardBackwardModel
 
-    from isaaclab_tasks.core.multi_task.motion.config.agents import MotionForwardBackwardRunnerPresetsCfg
-    from isaaclab_tasks.core.multi_task.motion.config.robots import G1_BEHAVIOR_BODY_NAMES, G1_BEHAVIOR_JOINT_NAMES
-    from isaaclab_tasks.core.multi_task.motion_env import MotionImitationEnv
+    from isaaclab.envs import ManagerBasedRLEnv
+
+    from isaaclab_tasks.core.multi_task.motion.config.agents import MotionForwardBackwardRunnerCfg
+    from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import (
+        G1_BEHAVIOR_BODY_NAMES,
+        G1_BEHAVIOR_JOINT_NAMES,
+    )
     from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
+    from isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_tracking import forward_backward_evaluation_scope
     from isaaclab_tasks.utils import resolve_presets
 
     checkpoint = args.checkpoint.expanduser().resolve()
@@ -343,8 +400,9 @@ def _run(args: argparse.Namespace, process_started: float) -> dict[str, object]:
     if checkpoint_sha256 != args.checkpoint_sha256:
         raise ValueError("Preflight checkpoint SHA-256 differs from the accepted frozen policy.")
     trace, trace_identity = _load_native_trace_observations(args.native_trace, torch.device(args.device))
-    runner_values = resolve_presets(MotionForwardBackwardRunnerPresetsCfg(), selected={"g1_lafan"}).to_dict()
-    cfg = resolve_presets(MotionImitationEnvCfg(), selected={"g1_lafan"})
+    runner_selection = motion_environment_axes("g1_lafan") | motion_runner_axes("g1_lafan")
+    runner_values = resolve_presets(MotionForwardBackwardRunnerCfg(), selected=runner_selection).to_dict()
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("g1_lafan"))
     cfg.sim.device = args.device
     cfg.scene.num_envs = args.num_envs
     cfg.seed = args.seed
@@ -353,13 +411,17 @@ def _run(args: argparse.Namespace, process_started: float) -> dict[str, object]:
     table_cfg.reference_artifact_root = str(args.reference_artifact_root.expanduser().resolve())
     table_cfg.motion_split = "train"
 
-    env = MotionImitationEnv(cfg=cfg)
+    env = ManagerBasedRLEnv(cfg=cfg)
     try:
         table = env.command_manager.get_term("motion").table
         if len(table.clip_ids) != 862 or table.clip_index.total_frames != 258_600:
             raise RuntimeError("Preflight environment does not contain the frozen native BFM corpus.")
         reset = env.reset()
         observations = _as_tensordict(reset[0] if isinstance(reset, tuple) else reset, env.num_envs)
+        history_factory = _evaluation_history_factory(runner_values["replay"])
+        construction_history = history_factory(observations)
+        if construction_history is not None:
+            observations = construction_history.decorate_current(observations)
         model = ForwardBackwardModel.from_config(
             observations,
             runner_values["obs_groups"],
@@ -396,6 +458,10 @@ def _run(args: argparse.Namespace, process_started: float) -> dict[str, object]:
         semantics = _checkpoint_semantics(model, trace, action_term.joint_ids)
         rollout = _short_rollout(
             env=env,
+            evaluation_scope=forward_backward_evaluation_scope,
+            command=command,
+            domain_scope=command.payload.evaluation_scope,
+            history_factory=history_factory,
             model=model,
             context=semantics.pop("context"),
             robot=robot,

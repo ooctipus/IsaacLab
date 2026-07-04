@@ -16,6 +16,8 @@ from types import SimpleNamespace
 
 import pytest
 
+PROBE = Path(__file__).parent / "motion_environment_probe.py"
+
 IDENTITY = Path(__file__).parent / "motion_environment_identity.py"
 
 
@@ -27,8 +29,69 @@ def _module():
     return module
 
 
+def test_experiment_profiles_map_once_to_independent_axes() -> None:
+    module = _module()
+
+    assert module.motion_environment_axes("smpl_cmu") == {
+        "smpl",
+        "cmu",
+        "newton_mjwarp",
+        "timing_sim450_control30_horizon300",
+        "sampling_source_rows",
+    }
+    assert module.motion_environment_axes("g1_lafan") == {
+        "g1",
+        "lafan",
+        "physx",
+        "timing_sim200_control50_horizon501",
+        "sampling_clip_time",
+        "evidence_physical_auxiliary",
+        "randomization_physics_observation_pose_push",
+    }
+    assert module.motion_environment_axes("g1_cmu") == {
+        "g1",
+        "cmu",
+        "physx",
+        "timing_sim200_control50_horizon501",
+        "sampling_clip_time",
+        "evidence_physical_auxiliary",
+        "randomization_physics_observation_pose_push",
+    }
+    assert module.motion_runner_axes("smpl_cmu") == {
+        "helpers_discriminator",
+        "tracking_off",
+        "model_plain_2x1024",
+        "replay_transition_uniform_2m",
+        "schedule_50x10_5m",
+        "optimization_lr1e4_implied0p1_actor0p01",
+        "context_online_10k",
+        "exploration_std0p2_range1",
+        "seed_0",
+        "expert_clock_source_rows",
+    }
+    assert module.motion_runner_axes("g1_lafan") == {
+        "helpers_discriminator_auxiliary",
+        "tracking_reset_frame",
+        "tracking_interval_9p6m",
+        "model_residual_6x1024",
+        "replay_episode_uniform_5120k",
+        "schedule_1024x1_211p2m",
+        "optimization_lr3e4_implied0_actor0p05",
+        "context_expert_half_8192",
+        "exploration_std0p05_range5",
+        "seed_4728",
+        "expert_clock_50hz",
+    }
+    assert module.motion_runner_axes("g1_cmu") == module.motion_runner_axes("g1_lafan")
+    with pytest.raises(ValueError, match="Unsupported motion experiment profile"):
+        module.motion_environment_axes("unknown")
+    with pytest.raises(ValueError, match="Unsupported motion experiment profile"):
+        module.motion_runner_axes("unknown")
+
+
 def _dependency_identity(module, *, runtime_version: str = "one", source_sha256: str = "a" * 64) -> dict:
     resolved_axes = {"preset": "smpl_cmu"}
+
     resolved_configuration = {"compute_final_obs": True}
     runtime_dependencies = {"newton": {"module_version": runtime_version}}
     identity = {
@@ -44,6 +107,23 @@ def _dependency_identity(module, *, runtime_version: str = "one", source_sha256:
         "robot_assets": {"simulation/robot.xml": "b" * 64},
     }
     return {**identity, "bundle_sha256": module._json_hash(identity)}
+
+
+def test_probe_selects_importer_from_concrete_source_identity_without_fallback() -> None:
+    source = PROBE.read_text()
+
+    assert 'table_cfg.source.identifier == "cmu_humenv_smpl"' in source
+    assert 'table_cfg.source.identifier == "lafan_g1_29dof"' in source
+    assert 'table_cfg.source.identifier == "g1_lafan"' not in source
+    assert "else CmuHumEnvSmplClips" not in source
+
+
+def test_environment_identity_excludes_derived_sampler_law() -> None:
+    """Environment identity stores primitive row mode and reset policy, not a derived runtime label."""
+    source = IDENTITY.read_text()
+
+    assert "motion_task_sampling_law" not in source
+    assert '"task_sampling_law"' not in source
 
 
 def test_environment_identity_closes_procedural_ground_contact_and_native_mjcf_runtime() -> None:
@@ -62,6 +142,15 @@ def test_environment_identity_closes_procedural_ground_contact_and_native_mjcf_r
     assert "isaaclab_tasks.core.multi_task.motion.tracking" not in module._COMMON_MODULES
     assert "isaaclab_newton.sim.schemas.schemas_cfg" in module._SMPL_MODULES
 
+    assert "isaaclab_tasks.core.multi_task.motion.mdp.terminations" not in module._COMMON_MODULES
+    assert "isaaclab.envs.mdp.terminations" in module._COMMON_MODULES
+    assert "isaaclab_tasks.core.multi_task.motion.robots.g1.history" not in module._G1_MODULES
+    assert "isaaclab_tasks.core.multi_task.motion.mdp.commands.observations" not in module._COMMON_MODULES
+    assert "isaaclab_tasks.core.multi_task.motion.robots.g1.transition" not in module._G1_MODULES
+    assert "isaaclab_tasks.core.multi_task.motion.robots.g1.actions" in module._G1_MODULES
+    assert "isaaclab_tasks.core.multi_task.motion.robots.g1.rewards" not in module._G1_MODULES
+    assert module._SCHEMA.endswith("dependency_identity_v9")
+
     assert {
         "isaaclab_newton.sim.spawners.mjcf.mjcf",
         "isaaclab_newton.sim.spawners.mjcf.mjcf_cfg",
@@ -71,6 +160,21 @@ def test_environment_identity_closes_procedural_ground_contact_and_native_mjcf_r
         "isaaclab.sim.converters.mjcf_converter",
         "isaaclab.sim.spawners.from_files.from_files",
     }.isdisjoint(module._SMPL_MODULES)
+
+
+def test_environment_identity_closes_only_active_environment_sources() -> None:
+    """Provenance must follow the active generic environment, not learner-side evaluation."""
+    module = _module()
+    active_modules = {
+        "isaaclab.envs.manager_based_env",
+        "isaaclab.envs.manager_based_env_cfg",
+        "isaaclab.envs.manager_based_rl_env",
+        "isaaclab.envs.manager_based_rl_env_cfg",
+    }
+
+    assert active_modules <= set(module._COMMON_MODULES)
+    assert "isaaclab_tasks.core.multi_task.motion_env" not in module._COMMON_MODULES
+    assert all(module._module_source_path(name).is_file() for name in active_modules)
 
 
 def test_simulation_robot_assets_hashes_source_without_generated_cache(tmp_path: Path) -> None:
@@ -105,6 +209,31 @@ def test_environment_semantic_identity_excludes_host_runtime_but_closes_source_b
     stale["bundle_sha256"] = "0" * 64
     with pytest.raises(ValueError, match="not internally closed"):
         semantic_sha256(stale)
+
+
+def test_environment_compatibility_never_relabels_historical_provenance() -> None:
+    """Source and contract drift are explicit results, not receipt mutations."""
+    module = _module()
+    historical = _dependency_identity(module)
+
+    assert module.motion_environment_compatibility(historical, historical)["status"] == "exact_producer_match"
+
+    changed_source = _dependency_identity(module, source_sha256="c" * 64)
+    source_result = module.motion_environment_compatibility(historical, changed_source)
+    assert source_result["status"] == "declared_contract_match_requires_runtime_validation"
+    assert source_result["producer_sources_match"] is False
+    assert source_result["declared_contract_matches"] is True
+    assert historical["python_sources"] == {"motion": "a" * 64}
+
+    changed_contract = dict(historical)
+    changed_contract["resolved_configuration"] = {"compute_final_obs": False}
+    changed_contract["resolved_configuration_sha256"] = module._json_hash(changed_contract["resolved_configuration"])
+    payload = dict(changed_contract)
+    payload.pop("bundle_sha256")
+    changed_contract["bundle_sha256"] = module._json_hash(payload)
+    contract_result = module.motion_environment_compatibility(historical, changed_contract)
+    assert contract_result["status"] == "declared_contract_mismatch"
+    assert contract_result["declared_contract_matches"] is False
 
 
 def test_module_source_path_hashes_an_explicit_module_without_importing_it(

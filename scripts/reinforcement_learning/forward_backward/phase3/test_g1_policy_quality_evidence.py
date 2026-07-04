@@ -452,9 +452,9 @@ def test_evaluator_uses_one_shared_tracker_reward_operator_and_strict_load() -> 
     run_source = ast.get_source_segment(source, run_node)
     assert run_source is not None
     assert run_source.index("companion_evidence = _g1_cmu_companion_evidence") < run_source.index(
-        "tracking = g1_motion_tracking_evaluator"
+        "tracking = forward_backward_tracking_evaluator"
     )
-    environment_index = run_source.index("env = MotionImitationEnv")
+    environment_index = run_source.index("env = RslRlVecEnvWrapper(ManagerBasedRLEnv(cfg=cfg))")
     for immutable_input in (
         "operators = _load_bfm_reward_operators",
         "checkpoint_sha256 = _sha256(checkpoint)",
@@ -466,7 +466,8 @@ def test_evaluator_uses_one_shared_tracker_reward_operator_and_strict_load() -> 
         assert run_source.index(immutable_input) < environment_index
     assert "_load_bfm_reward_operators(args.bfm_reward_source_root)" in run_source
     assert "args.bfm_repo" not in run_source
-    assert "g1_motion_tracking_evaluator" in calls
+    assert "forward_backward_tracking_evaluator" in calls
+    assert "env=env.unwrapped" in run_source
     assert "_broad_reward_rollout" in calls
     assert "motion_environment_dependency_identity" in calls
     assert "_native_quality_decision" in calls
@@ -478,12 +479,12 @@ def test_evaluator_uses_one_shared_tracker_reward_operator_and_strict_load() -> 
     assert "assign=True" in source
     assert '"g1_lafan"' in source and '"g1_cmu"' in source
     assert "retarget_and_simulator_errors_are_not_policy_metrics" in source
-    assert '"expert_provider_sha256": _source_sha256(motion_expert_buffer_g1)' in source
+    assert '"expert_provider_sha256": _source_sha256(forward_backward_expert_buffer)' in source
     assert '"expert_buffer_sha256": _source_sha256(ForwardBackwardExpertBuffer)' in source
     assert '"learner_code_bundle_sha256": _python_package_bundle_sha256(package_root)' in source
     assert '"reward_kinematics_sha256": _source_sha256(NewtonKinematics)' in source
-    assert "from isaaclab_tasks.core.multi_task.motion.impl import uniform_emd_warp" in source
-    assert '"emd_transport_kernel_sha256": _source_sha256(uniform_emd_warp)' in source
+    assert "from isaaclab_tasks.core.multi_task.metrics.impl import uniform_assignment_warp" in source
+    assert '"emd_transport_kernel_sha256": _source_sha256(uniform_assignment_warp)' in source
     assert "map_location=args.device" in source
     assert '"stage_durations_seconds": broad_reward_timing' in source
     broad_call = next(
@@ -557,19 +558,29 @@ def test_reward_context_policy_delegates_only_backward_map_and_projection() -> N
             self.anchor = torch.nn.Parameter(torch.zeros(()))
 
         def backward_map(self, observations):
-            assert set(observations.keys()) == {"state", "privileged_state"}
-            return observations["state"] + observations["privileged_state"]
+            names = (
+                "joint_position",
+                "joint_velocity",
+                "projected_gravity",
+                "base_angular_velocity",
+                "privileged_state",
+            )
+            assert set(observations.keys()) == set(names)
+            return torch.cat(tuple(observations[name] for name in names), dim=-1)
 
         def context_project(self, context):
             return 2.0 * context
 
     policy = module._BFMRewardContextPolicy(Model())
     observations = {
-        "state": torch.ones(3, 2),
-        "privileged_state": 2.0 * torch.ones(3, 2),
-        "unused": torch.full((3, 2), 99.0),
+        "state": torch.arange(64, dtype=torch.float32).repeat(3, 1),
+        "privileged_state": 2.0 * torch.ones(3, 463),
+        "unused": torch.full((3, 1), 99.0),
     }
-    torch.testing.assert_close(policy.backward_map(observations), 3.0 * torch.ones(3, 2))
+    torch.testing.assert_close(
+        policy.backward_map(observations),
+        torch.cat((observations["state"], observations["privileged_state"]), dim=-1),
+    )
     torch.testing.assert_close(policy.project_z(torch.ones(3, 2)), 2.0 * torch.ones(3, 2))
     assert policy.device == torch.device("cpu")
 
@@ -591,17 +602,15 @@ def test_g1_qpos_qvel_uses_semantic_action_axis_and_preserves_released_root_fram
     data = SimpleNamespace(
         root_pos_w=SimpleNamespace(torch=torch.tensor(((11.0, 22.0, 33.0),))),
         root_quat_w=SimpleNamespace(torch=torch.tensor(((0.5, 0.1, 0.2, 0.3),))),
-        joint_pos=SimpleNamespace(torch=torch.tensor(((20.0, 10.0),))),
+        joint_pos=SimpleNamespace(torch=torch.arange(29, dtype=torch.float32).flip(0).unsqueeze(0)),
         root_lin_vel_w=SimpleNamespace(torch=torch.tensor(((1.0, 2.0, 3.0),))),
         root_ang_vel_b=SimpleNamespace(torch=torch.tensor(((4.0, 5.0, 6.0),))),
-        joint_vel=SimpleNamespace(torch=torch.tensor(((200.0, 100.0),))),
+        joint_vel=SimpleNamespace(torch=(100.0 + torch.arange(29)).flip(0).unsqueeze(0)),
     )
     robot = SimpleNamespace(data=data, joint_names=physical_names)
     action = SimpleNamespace(
         joint_names=semantic_names,
         joint_ids=torch.tensor([physical_names.index(name) for name in semantic_names]),
-        joint_position=torch.arange(29, dtype=torch.float32).unsqueeze(0),
-        joint_velocity=(100.0 + torch.arange(29, dtype=torch.float32)).unsqueeze(0),
     )
     payload = SimpleNamespace(
         robot=robot,
@@ -621,9 +630,9 @@ def test_g1_qpos_qvel_uses_semantic_action_axis_and_preserves_released_root_fram
     qpos, qvel = module._g1_qpos_qvel(env, resolved_robot, resolved_action)
 
     torch.testing.assert_close(qpos[:, :7], torch.tensor(((10.0, 20.0, 30.0, 0.5, 0.1, 0.2, 0.3),)))
-    torch.testing.assert_close(qpos[:, 7:], action.joint_position)
+    torch.testing.assert_close(qpos[:, 7:], torch.arange(29, dtype=torch.float32).unsqueeze(0))
     torch.testing.assert_close(qvel[:, :6], torch.tensor(((1.0, 2.0, 3.0, 4.0, 5.0, 6.0),)))
-    torch.testing.assert_close(qvel[:, 6:], action.joint_velocity)
+    torch.testing.assert_close(qvel[:, 6:], (100.0 + torch.arange(29)).unsqueeze(0))
 
 
 def test_broad_reward_rollout_streams_gpu_reductions_without_autograd() -> None:
@@ -652,13 +661,13 @@ def test_broad_reward_rollout_streams_gpu_reductions_without_autograd() -> None:
             root_quat_w=rotation,
             root_lin_vel_w=root,
             root_ang_vel_b=root,
+            joint_pos=joints,
+            joint_vel=joints,
         ),
     )
     action_term = SimpleNamespace(
         joint_names=joint_names,
         joint_ids=torch.arange(29),
-        joint_position=joints.torch,
-        joint_velocity=joints.torch,
     )
     payload = SimpleNamespace(
         robot=robot,
@@ -680,19 +689,14 @@ def test_broad_reward_rollout_streams_gpu_reductions_without_autograd() -> None:
         def __init__(self):
             self.transaction_seeds = []
 
-        def evaluation_transaction(self, seed):
-            self.transaction_seeds.append(seed)
-            return nullcontext()
-
         def reset(self):
             return {"state": torch.zeros(1, 1)}
 
         def step(self, action):
             assert not action.requires_grad
-            observations = {"state": torch.zeros(1, 1)}
+            observations = {"state": torch.zeros(1, 1), "transition": torch.empty(1, 0)}
             mask = torch.zeros(1, dtype=torch.bool)
-            extras = {"auxiliary_reward_evidence": torch.empty(1, 0)}
-            return observations, torch.zeros(1), mask, mask, extras
+            return observations, torch.zeros(1), mask, mask, {}
 
     operators = {
         "reward_context_policy": lambda model: model,
@@ -711,13 +715,25 @@ def test_broad_reward_rollout_streams_gpu_reductions_without_autograd() -> None:
     }
 
     env = Env()
+
+    def evaluation_scope(_env, _command, _domain_scope, seed: int, *, reset_source_name: str | None):
+        assert reset_source_name is None
+        env.transaction_seeds.append(seed)
+        return nullcontext()
+
     rows, timing = module._broad_reward_rollout(
         model=Model(),
         env=env,
+        scope_env=env,
+        evaluation_scope=evaluation_scope,
+        command=object(),
+        domain_scope=object(),
+        history_factory=lambda _observations: None,
         dataset=dataset,
         reward_runtime=SimpleNamespace(evaluate=lambda *_state: torch.zeros(1, 1)),
         runtime_setup_seconds=0.25,
         operators=operators,
+        auxiliary_evidence_names=(),
         episodes_per_task=1,
         horizon=1,
         batch_size=1,

@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Evaluate one accepted G1 policy on native LAFAN or zero-shot CMU motion."""
+"""Evaluate one accepted G1 policy on released G1-retargeted LAFAN or zero-shot CMU motion."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import importlib.util
 import inspect
 import json
 import math
+import random
 import time
 import traceback
 import xml.etree.ElementTree as ET
@@ -571,7 +572,16 @@ class _BFMRewardContextPolicy:
         """Encode reward-inference observations through the unified backward map."""
         import torch
 
-        fields = {name: observations[name] for name in ("state", "privileged_state")}
+        joint_position, joint_velocity, projected_gravity, base_angular_velocity = torch.split(
+            observations["state"], (29, 29, 3, 3), dim=-1
+        )
+        fields = {
+            "joint_position": joint_position,
+            "joint_velocity": joint_velocity,
+            "projected_gravity": projected_gravity,
+            "base_angular_velocity": base_angular_velocity,
+            "privileged_state": observations["privileged_state"],
+        }
         with torch.no_grad():
             return self.model.backward_map(_as_tensordict(fields, next(iter(fields.values())).shape[0]))
 
@@ -622,10 +632,10 @@ def _g1_qpos_qvel(
         raise ValueError("G1 qpos/qvel outputs have incompatible shapes.")
     torch.sub(robot.data.root_pos_w.torch, env.scene.env_origins, out=qpos[:, :3])
     qpos[:, 3:7].copy_(robot.data.root_quat_w.torch)
-    qpos[:, 7:].copy_(action.joint_position)
+    torch.index_select(robot.data.joint_pos.torch, 1, action.joint_ids, out=qpos[:, 7:])
     qvel[:, :3].copy_(robot.data.root_lin_vel_w.torch)
     qvel[:, 3:6].copy_(robot.data.root_ang_vel_b.torch)
-    qvel[:, 6:].copy_(action.joint_velocity)
+    torch.index_select(robot.data.joint_vel.torch, 1, action.joint_ids, out=qvel[:, 6:])
     return qpos, qvel
 
 
@@ -658,14 +668,36 @@ def _load_bfm_reward_operators(root: Path) -> dict[str, object]:
     }
 
 
+def _evaluation_history_factory(replay: Mapping[str, object]) -> Callable[[Any], Any]:
+    """Build direct-evaluation history from the learner's replay contract."""
+    from rsl_rl.algorithms.forward_backward import ForwardBackward
+    from rsl_rl.storage.forward_backward_replay import ForwardBackwardHistoryLayout
+
+    value = replay.get("history_layout")
+    if value is None:
+        return lambda _observations: None
+    if not isinstance(value, Mapping):
+        raise TypeError("Replay history_layout must be a mapping or None.")
+    options = dict(value)
+    sources = tuple(ForwardBackwardHistoryLayout.Source(**dict(source)) for source in options.pop("sources"))
+    layout = ForwardBackwardHistoryLayout(sources=sources, **options)
+    return lambda observations: ForwardBackward.EvaluationHistory(layout, observations)
+
+
 def _broad_reward_rollout(
     *,
     model: Any,
     env: Any,
+    scope_env: Any,
+    evaluation_scope: Any,
+    command: Any,
+    domain_scope: Any,
+    history_factory: Any,
     dataset: Mapping[str, object],
     reward_runtime: Any,
     runtime_setup_seconds: float,
     operators: Mapping[str, object],
+    auxiliary_evidence_names: tuple[str, ...],
     episodes_per_task: int,
     horizon: int,
     batch_size: int,
@@ -699,8 +731,8 @@ def _broad_reward_rollout(
         raise ValueError(f"Broad reward requires exactly {num_envs} environments, got {env.num_envs}.")
     contexts = contexts.repeat_interleave(episodes_per_task, dim=0)
     evidence_names = tuple(operators["auxiliary_names"])
-    if tuple(env.cfg.commands.motion.payload.auxiliary_evidence) != evidence_names:
-        raise ValueError("Motion environment and broad-reward auxiliary evidence orders differ.")
+    if auxiliary_evidence_names != evidence_names:
+        raise ValueError("Learner and broad-reward auxiliary evidence orders differ.")
     evidence_count = len(evidence_names)
     robot, action_term = _g1_reward_state_sources(env)
     qpos = torch.empty(num_envs, 36, device=env.device)
@@ -720,17 +752,39 @@ def _broad_reward_rollout(
         device=env.device,
     )
     rollout_started = time.perf_counter()
-    with torch.inference_mode(), env.evaluation_transaction(seed):
+    with (
+        torch.inference_mode(),
+        evaluation_scope(
+            scope_env,
+            command,
+            domain_scope,
+            seed,
+            reset_source_name=None,
+        ),
+    ):
         reset = env.reset()
         observations = reset[0] if isinstance(reset, tuple) else reset
         observations = _as_tensordict(observations, num_envs)
-        for step in range(horizon):
+        history = history_factory(observations)
+        if history is not None:
+            observations = history.decorate_current(observations)
+        for _ in range(horizon):
             action = model.action_sample(observations, contexts, deterministic=True).detach()
-            observations, _reward, terminated, truncated, extras = env.step(action)
-            observations = _as_tensordict(observations, num_envs)
+            returned, _reward, terminated, truncated, _extras = env.step(action)
+            returned = _as_tensordict(returned, num_envs)
+            done = terminated | truncated
+            if history is not None:
+                history.advance(observations, returned, done)
+            observations = returned
             _g1_qpos_qvel(env, robot, action_term, qpos, qvel)
             task_returns.add_(reward_runtime.evaluate(qpos, qvel))
-            step_evidence = extras["auxiliary_reward_evidence"].view(task_count, episodes_per_task, evidence_count)
+            if evidence_names:
+                transition = observations["transition"]
+                values = tuple(transition[name] for name in evidence_names)
+                values = tuple(value if value.ndim == 2 else value.unsqueeze(-1) for value in values)
+                step_evidence = torch.cat(values, dim=-1).view(task_count, episodes_per_task, evidence_count)
+            else:
+                step_evidence = evidence_sum[:, :, :0]
             active = step_evidence.ne(0.0)
             evidence_sum.add_(step_evidence)
             evidence_active_count.add_(active)
@@ -738,7 +792,7 @@ def _broad_reward_rollout(
             safety_violation_count.add_(active.index_select(-1, hard_columns).any(dim=-1))
             termination_count.add_((terminated & ~truncated).view(task_count, episodes_per_task))
             action_l2_sum.add_(torch.linalg.vector_norm(action.view(task_count, episodes_per_task, -1), dim=-1))
-            done_seen.logical_or_(terminated | truncated)
+            done_seen.logical_or_(done)
     synchronize()
     rollout_seconds = time.perf_counter() - rollout_started
     if bool(done_seen.any().item()):
@@ -901,32 +955,45 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
     from motion_environment_identity import (
         motion_composition_dependency_identity,
         motion_composition_semantic_sha256,
+        motion_environment_axes,
         motion_environment_dependency_identity,
         motion_environment_semantic_sha256,
+        motion_runner_axes,
     )
+    from motion_tracking_records import motion_tracking_metrics_to_dict
     from rsl_rl.models.forward_backward_model import ForwardBackwardModel
     from rsl_rl.storage.forward_backward_expert import ForwardBackwardExpertBuffer
 
+    from isaaclab.envs import ManagerBasedRLEnv
+
+    from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
+
     from isaaclab_tasks.core.multi_task.kinematics import NewtonKinematics, NewtonKinematicsCfg
-    from isaaclab_tasks.core.multi_task.motion.config.agents import MotionForwardBackwardRunnerPresetsCfg
-    from isaaclab_tasks.core.multi_task.motion.data.importers import BfmG1JoblibClips, HumEnvHdf5Clips
-    from isaaclab_tasks.core.multi_task.motion.impl import uniform_emd_warp
-    from isaaclab_tasks.core.multi_task.motion.rsl_rl import motion_expert_buffer_g1
-    from isaaclab_tasks.core.multi_task.motion.tracking import g1_motion_tracking_evaluator
-    from isaaclab_tasks.core.multi_task.motion.trajectory.g1 import G1LafanFrameBuilder
-    from isaaclab_tasks.core.multi_task.motion.trajectory.g1_smpl import G1SmplHumEnvFrameBuilder
-    from isaaclab_tasks.core.multi_task.motion_env import MotionImitationEnv
+    from isaaclab_tasks.core.multi_task.metrics.impl import uniform_assignment_warp
+    from isaaclab_tasks.core.multi_task.motion.config.agents import MotionForwardBackwardRunnerCfg
+    from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClips, LafanG1JoblibClips
+    from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import (
+        G1LocalBodyPoseFrameBuilder,
+        G1PoseFrameBuilder,
+    )
     from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
+    from isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_expert import forward_backward_expert_buffer
+    from isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_tracking import (
+        forward_backward_evaluation_scope,
+        forward_backward_tracking_evaluator,
+    )
     from isaaclab_tasks.utils import resolve_presets
 
-    importers = {"g1_lafan": BfmG1JoblibClips, "g1_cmu": HumEnvHdf5Clips}
-    frame_builders = {"g1_lafan": G1LafanFrameBuilder, "g1_cmu": G1SmplHumEnvFrameBuilder}
+    importers = {"g1_lafan": LafanG1JoblibClips, "g1_cmu": CmuHumEnvSmplClips}
+    frame_builders = {"g1_lafan": G1PoseFrameBuilder, "g1_cmu": G1LocalBodyPoseFrameBuilder}
     package_file = getattr(rsl_rl, "__file__", None)
     if not isinstance(package_file, str):
         raise RuntimeError("The imported rsl_rl package has no concrete source root.")
     package_root = Path(package_file).resolve().parent
-    runner_values = resolve_presets(MotionForwardBackwardRunnerPresetsCfg(), selected={args.preset}).to_dict()
-    native_values = resolve_presets(MotionForwardBackwardRunnerPresetsCfg(), selected={"g1_lafan"}).to_dict()
+    runner_selection = motion_environment_axes(args.preset) | motion_runner_axes(args.preset)
+    runner_values = resolve_presets(MotionForwardBackwardRunnerCfg(), selected=runner_selection).to_dict()
+    native_selection = motion_environment_axes("g1_lafan") | motion_runner_axes("g1_lafan")
+    native_values = resolve_presets(MotionForwardBackwardRunnerCfg(), selected=native_selection).to_dict()
     if runner_values["model"] != native_values["model"] or runner_values["obs_groups"] != native_values["obs_groups"]:
         raise RuntimeError("G1-CMU model or observation routes differ from the accepted native checkpoint schema.")
     quality_gate, quality_gate_sha256 = _load_policy_quality_gate()
@@ -957,7 +1024,7 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
     if output.exists():
         raise FileExistsError(f"Policy-quality output already exists: {output}.")
 
-    cfg = resolve_presets(MotionImitationEnvCfg(), selected={args.preset})
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes(args.preset))
     cfg.sim.device = args.device
     table_cfg = cfg.commands.motion.task_table
     table_cfg.source_artifact_root = str(args.source_artifact_root.expanduser().resolve())
@@ -972,10 +1039,10 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
         frame_builder_type=frame_builders[args.preset],
         reference_artifact_root=table_cfg.reference_artifact_root,
     )
-    env = MotionImitationEnv(cfg=cfg)
+    env = RslRlVecEnvWrapper(ManagerBasedRLEnv(cfg=cfg))
     try:
         corpus = _POLICY_CORPORA[args.preset]
-        table = env.command_manager.get_term("motion").table
+        table = env.unwrapped.command_manager.get_term("motion").table
         if len(table.clip_ids) != corpus["clip_count"] or table.clip_index.total_frames != corpus["frame_count"]:
             raise RuntimeError("Policy-quality motion corpus differs from its frozen profile.")
         composition_dependency_identity = motion_composition_dependency_identity(
@@ -986,13 +1053,15 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
             frame_builder_identity_sha256=table.frame_builder_identity_sha256,
             reference_artifact_root=table_cfg.reference_artifact_root,
         )
-        reset = env.reset()
-        observations = reset[0] if isinstance(reset, tuple) else reset
-        observations = _as_tensordict(observations, env.num_envs)
+        observations, _reset_info = env.reset()
+        history_factory = _evaluation_history_factory(runner_values["replay"])
+        construction_history = history_factory(observations)
+        if construction_history is not None:
+            observations = construction_history.decorate_current(observations)
         model = ForwardBackwardModel.from_config(
             observations,
             runner_values["obs_groups"],
-            env.action_manager.total_action_dim,
+            env.num_actions,
             runner_values["model"],
         ).to(env.device)
         saved = torch.load(checkpoint, map_location=env.device, weights_only=True)
@@ -1017,23 +1086,50 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
             )
 
         before_tracking = exclusive_physical_gpu_snapshot(args.device)
-        expert = motion_expert_buffer_g1(
+        expert_cfg = runner_values["expert"]
+        expert = forward_backward_expert_buffer(
             env,
             model.observation_schema,
             env.device,
-            command_name="motion",
-            window_lengths=(8, 257),
-            seed=runner_values["seed"],
+            source_bind=expert_cfg["source_bind"],
+            sampling_mode=expert_cfg["sampling_mode"],
+            sampling_step_seconds=expert_cfg["sampling_step_seconds"],
+            target_projection=expert_cfg["target_projection"],
+            target_projection_binds=tuple(expert_cfg["target_projection_binds"]),
+            window_lengths=tuple(expert_cfg["window_lengths"]),
+            seed=expert_cfg["seed"],
         )
-        with env.evaluation_transaction(args.evaluation_seed):
-            tracking = g1_motion_tracking_evaluator(model, env, expert, expert.clip_ids)
+        command = env.unwrapped.command_manager.get_term("motion")
+        with forward_backward_evaluation_scope(
+            env,
+            command,
+            command.payload.evaluation_scope,
+            args.evaluation_seed,
+            reset_source_name="reference",
+        ):
+            lifecycle = runner_values["lifecycle_extension"]
+            tracking = forward_backward_tracking_evaluator(
+                model,
+                env,
+                expert,
+                expert.clip_ids,
+                command=command,
+                history_factory=history_factory,
+                sequence_start_rows=table.clip_start_rows,
+                projections=tuple(lifecycle["projections"]),
+                context_window_length=lifecycle["context_window_length"],
+                include_reset_frame=lifecycle["include_reset_frame"],
+                allow_horizon_truncation=lifecycle["allow_horizon_truncation"],
+                shuffle_assignments=lifecycle["shuffle_assignments"],
+                assignment_rng=random.Random(args.evaluation_seed),
+            )
         after_tracking = exclusive_physical_gpu_snapshot(args.device)
 
         reward_runtime_started = time.perf_counter()
         reward_kinematics = NewtonKinematics(NewtonKinematicsCfg(mjcf_path=str(reward_model_path), device=env.device))
         reward_runtime = operators["runtime_type"](
             reward_kinematics,
-            env.action_manager.get_term("joint_position").joint_names,
+            env.unwrapped.action_manager.get_term("joint_position").joint_names,
             args.episodes_per_task,
         )
         if torch.device(env.device).type == "cuda":
@@ -1041,11 +1137,17 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
         reward_runtime_seconds = time.perf_counter() - reward_runtime_started
         reward_rows, broad_reward_timing = _broad_reward_rollout(
             model=model,
-            env=env,
+            env=env.unwrapped,
+            scope_env=env,
+            evaluation_scope=forward_backward_evaluation_scope,
+            command=command,
+            domain_scope=command.payload.evaluation_scope,
+            history_factory=history_factory,
             dataset=dataset,
             reward_runtime=reward_runtime,
             runtime_setup_seconds=reward_runtime_seconds,
             operators=operators,
+            auxiliary_evidence_names=tuple(runner_values["replay"]["auxiliary_evidence_names"]),
             episodes_per_task=args.episodes_per_task,
             horizon=args.reward_horizon,
             batch_size=args.inference_batch_size,
@@ -1054,10 +1156,10 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
         after_broad_reward = exclusive_physical_gpu_snapshot(args.device)
         physical_gpu_uuid = validate_same_exclusive_gpu(before_tracking, after_tracking, after_broad_reward)
 
-        tracking_metrics = tracking.serializable_metrics()
+        tracking_metrics = motion_tracking_metrics_to_dict(tracking)
         tracking_emd = [row["emd"] for row in tracking_metrics.values()]
         tracking_payload = {
-            "clip_ids": tracking.clip_ids,
+            "clip_ids": tracking.sequence_ids,
             "metrics": tracking_metrics,
             "emd": tracking_emd,
             "emd_statistics": _statistics(tracking_emd),
@@ -1093,7 +1195,7 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
             "domain_randomization": all(
                 getattr(cfg.events, name) is not None for name in ("robot_material", "body_mass", "torso_com", "push")
             ),
-            "observation_noise": bool(cfg.observations.state.enable_corruption),
+            "observation_noise": bool(cfg.observations.joint_position.enable_corruption),
             "reward_task_count": len(operators["tasks"]),
             "episodes_per_task": args.episodes_per_task,
             "reward_horizon": args.reward_horizon,
@@ -1136,9 +1238,9 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
 
         code_identity = {
             "evaluator_sha256": _source_sha256(_run),
-            "tracking_evaluator_sha256": _source_sha256(g1_motion_tracking_evaluator),
-            "emd_transport_kernel_sha256": _source_sha256(uniform_emd_warp),
-            "expert_provider_sha256": _source_sha256(motion_expert_buffer_g1),
+            "tracking_evaluator_sha256": _source_sha256(forward_backward_tracking_evaluator),
+            "emd_transport_kernel_sha256": _source_sha256(uniform_assignment_warp),
+            "expert_provider_sha256": _source_sha256(forward_backward_expert_buffer),
             "expert_buffer_sha256": _source_sha256(ForwardBackwardExpertBuffer),
             "model_sha256": _source_sha256(ForwardBackwardModel),
             "learner_code_bundle_sha256": _python_package_bundle_sha256(package_root),
@@ -1205,7 +1307,7 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
                 "tracking": {
                     "artifact": tracking_path.name,
                     "sha256": _sha256(tracking_path),
-                    "clip_count": len(tracking.clip_ids),
+                    "clip_count": len(tracking.sequence_ids),
                     "emd": tracking_payload["emd_statistics"],
                     "obs_state_emd": tracking_payload["obs_state_emd_statistics"],
                     "coverage": tracking_payload["coverage_statistics"],

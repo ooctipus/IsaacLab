@@ -228,40 +228,61 @@
   },
   "model": {
     "field_widths": {
+      "base_angular_velocity": 3,
       "history_actor": 372,
+      "joint_position": 29,
+      "joint_velocity": 29,
       "last_action": 29,
       "privileged_state": 463,
-      "state": 64
+      "projected_gravity": 3
     },
-    "observation_schema_sha256": "7b2f98047b1a4fcb5d079ee5d86c23af6a59692b913f570614b2b062f246d19e",
+    "observation_schema_sha256": "7c3777921396ea72f2c563444a08872199534641aa7ff104a0cc452b00c34543",
     "routes": {
       "actor": [
-        "state",
+        "joint_position",
+        "joint_velocity",
+        "projected_gravity",
+        "base_angular_velocity",
         "last_action",
         "history_actor"
       ],
       "backward": [
-        "state",
+        "joint_position",
+        "joint_velocity",
+        "projected_gravity",
+        "base_angular_velocity",
         "privileged_state"
       ],
       "critic_auxiliary": [
-        "state",
+        "joint_position",
+        "joint_velocity",
+        "projected_gravity",
+        "base_angular_velocity",
         "privileged_state",
         "last_action",
         "history_actor"
       ],
       "critic_discriminator": [
-        "state",
+        "joint_position",
+        "joint_velocity",
+        "projected_gravity",
+        "base_angular_velocity",
         "privileged_state",
         "last_action",
         "history_actor"
       ],
       "discriminator": [
-        "state",
+        "joint_position",
+        "joint_velocity",
+        "projected_gravity",
+        "base_angular_velocity",
         "privileged_state"
       ],
       "forward": [
-        "state",
+        "joint_position",
+        "joint_velocity",
+        "projected_gravity",
+        "base_angular_velocity",
         "privileged_state",
         "last_action",
         "history_actor"
@@ -278,11 +299,11 @@
     "limit_seconds": 120.0,
     "num_envs": 2,
     "rollout_steps": 4,
-    "seconds": 19.41217903792858
+    "seconds": 19.48711417405866
   },
   "schema": "forward_backward_phase3_g1_checkpoint_semantic_preflight_v1",
   "short_live_rollout": {
-    "action_l2_mean": 2.288489507157472,
+    "action_l2_mean": 2.3146459103407246,
     "action_request_max_abs_error": 0.0,
     "action_target_max_abs_error": 0.0,
     "done_rows": 0,
@@ -293,7 +314,7 @@
     "steps": 4
   },
   "source": {
-    "preflight_sha256": "e859769d462ff6a04e1054c63bf3df9192e1ba125e6315e8cba62d14e82f8a14",
+    "preflight_sha256": "ce8e6cec5292e4bea2551e3a9dbdcd926f31cae587b5a8bf5ad10de5f05b9fc3",
     "reference_artifact_root": "/home/zhengyuz/Projects/BFM-Zero",
     "source_artifact_root": "/home/zhengyuz/Projects/BFM-Zero"
   }

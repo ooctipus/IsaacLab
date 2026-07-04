@@ -13,8 +13,10 @@ import inspect
 import json
 from pathlib import Path
 
-from isaaclab_tasks.core.multi_task.motion.config.robots.g1 import _G1_MJCF_SHA256
+from motion_environment_identity import motion_environment_axes
+
 from isaaclab_tasks.core.multi_task.motion.mdp.commands import MotionTaskTableCfg
+from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1_REFERENCE_MJCF_SHA256
 from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
 from isaaclab_tasks.utils.hydra import resolve_presets
 
@@ -24,8 +26,8 @@ ROOT = Path(__file__).parent
 BENCHMARK = ROOT / "benchmark_motion_task_table.py"
 FIXTURES = ROOT / "fixtures"
 RECORDS = (
-    FIXTURES / "motion_task_table_lookup_smpl_cmu_cpu_v4.json",
-    FIXTURES / "motion_task_table_lookup_g1_lafan_cpu_v4.json",
+    FIXTURES / "motion_task_table_lookup_smpl_cmu_cpu_v5.json",
+    FIXTURES / "motion_task_table_lookup_g1_lafan_cpu_v5.json",
 )
 
 
@@ -33,29 +35,28 @@ _COMMON_CONSTRUCTION_MODULES = {
     "isaaclab.sim.schemas.schemas_cfg",
     "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics",
     "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics_cfg",
-    "isaaclab_tasks.core.multi_task.motion.config.source_skeletons",
-    "isaaclab_tasks.core.multi_task.motion.config.sources",
-    "isaaclab_tasks.core.multi_task.motion.data._identity",
+    "isaaclab_tasks.core.multi_task.motion.identity",
     "isaaclab_tasks.core.multi_task.motion.data.clip_index",
-    "isaaclab_tasks.core.multi_task.motion.data.importers._hashing",
-    "isaaclab_tasks.core.multi_task.motion.data.sample_grid",
+    "isaaclab_tasks.core.multi_task.motion.data.source",
     "isaaclab_tasks.core.multi_task.motion.data.skeleton",
-    "isaaclab_tasks.core.multi_task.motion.frames",
     "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_state_payload",
+    "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_sampler",
     "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table",
 }
 _PROFILE_CONSTRUCTION_MODULES = {
     "g1_lafan": {
-        "isaaclab_tasks.core.multi_task.motion.config.robots.g1",
-        "isaaclab_tasks.core.multi_task.motion.data.importers.bfm_g1_joblib",
-        "isaaclab_tasks.core.multi_task.motion.trajectory.g1",
+        "isaaclab_tasks.core.multi_task.motion.robots.g1.articulation",
+        "isaaclab_tasks.core.multi_task.motion.data.sources.lafan_g1_29dof",
+        "isaaclab_tasks.core.multi_task.motion.robots.g1.frames",
+        "isaaclab_tasks.core.multi_task.motion.robots.g1.reference",
     },
     "smpl_cmu": {
         "isaaclab_assets.robots.smpl.smpl_constants",
         "isaaclab_newton.sim.schemas.schemas_cfg",
-        "isaaclab_tasks.core.multi_task.motion.config.robots.smpl",
-        "isaaclab_tasks.core.multi_task.motion.data.importers.humenv_hdf5",
-        "isaaclab_tasks.core.multi_task.motion.trajectory.smpl",
+        "isaaclab_tasks.core.multi_task.motion.robots.smpl.articulation",
+        "isaaclab_tasks.core.multi_task.motion.data.sources.cmu_humenv_smpl",
+        "isaaclab_tasks.core.multi_task.motion.robots.smpl.frames",
+        "isaaclab_tasks.core.multi_task.motion.robots.smpl.reference",
     },
 }
 
@@ -69,6 +70,28 @@ def _json_hash(value: object) -> str:
     """Hash one canonical JSON-compatible evidence value."""
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _is_sha256(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(character in "0123456789abcdef" for character in value)
+
+
+def _validate_stored_code_identity(value: object) -> dict[str, object]:
+    """Validate one historical construction identity without consulting current sources."""
+    identity = dict(value)
+    payload = {name: member for name, member in identity.items() if name != "bundle_sha256"}
+    assert set(identity) == {
+        "python_sources",
+        "python_symbols",
+        "reference_assets",
+        "resolved_construction",
+        "bundle_sha256",
+    }
+    assert identity["bundle_sha256"] == _json_hash(payload)
+    for group in ("python_sources", "python_symbols", "reference_assets"):
+        assert identity[group]
+        assert all(isinstance(name, str) and name and _is_sha256(digest) for name, digest in identity[group].items())
+    return identity
 
 
 def _module_sha256(module_name: str) -> str:
@@ -96,12 +119,12 @@ def _callable_name(value: object) -> str:
 
 def _resolved_construction_contract(preset: str) -> dict[str, object]:
     """Independently project the resolved inputs that determine one table."""
-    cfg = resolve_presets(MotionImitationEnvCfg(), selected={preset})
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes(preset))
     table_cfg = cfg.commands.motion.task_table
+    payload_cfg = cfg.commands.motion.payload
     source = table_cfg.source
     split = source.train
     skeleton = source.build_skeleton()
-    grid = table_cfg.expert_sample_grid
     return {
         "preset": preset,
         "control_dt_seconds": float(cfg.sim.dt * cfg.decimation),
@@ -126,27 +149,36 @@ def _resolved_construction_contract(preset: str) -> dict[str, object]:
         "table": {
             "frame_builder_factory": _callable_name(table_cfg.frame_builder_factory),
             "reference_kinematics_factory": _callable_name(table_cfg.reference_kinematics_factory),
-            "expert_sample_grid": {
-                "mode": grid.mode.value,
-                "step_seconds": grid.step_seconds,
-            },
             "task_row_mode": table_cfg.task_row_mode,
-            "task_sampling_law": table_cfg.task_sampling_law,
-            "reset_sources": [list(value) for value in table_cfg.reset_sources],
         },
+        "sampler": {"reset_sources": [list(value) for value in payload_cfg.reset_sources]},
     }
 
 
 def _expected_code_identity(preset: str) -> dict[str, object]:
     """Recompute the exact profile-specific construction bundle."""
-    modules = _COMMON_CONSTRUCTION_MODULES | _PROFILE_CONSTRUCTION_MODULES[preset]
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes(preset))
+    table_cfg = cfg.commands.motion.task_table
+    modules = (
+        _COMMON_CONSTRUCTION_MODULES
+        | _PROFILE_CONSTRUCTION_MODULES[preset]
+        | {
+            value.__module__
+            for value in (
+                table_cfg.source.open_source,
+                table_cfg.source.skeleton_factory,
+                table_cfg.frame_builder_factory,
+                table_cfg.reference_kinematics_factory,
+            )
+        }
+    )
     python_sources = {name: _module_sha256(name) for name in sorted(modules)}
     python_sources["benchmark_motion_task_table"] = _sha256(BENCHMARK)
     python_symbols = {
         "isaaclab_tasks.core.multi_task.motion.mdp.commands.MotionTaskTableCfg": _symbol_sha256(MotionTaskTableCfg)
     }
     if preset == "g1_lafan":
-        reference_assets = {"reference/g1_29dof.xml": _G1_MJCF_SHA256}
+        reference_assets = {"reference/g1_29dof.xml": G1_REFERENCE_MJCF_SHA256}
     else:
         reference_assets = {f"reference/{Path(SMPL_HUMENV_MJCF_PATH).name}": SMPL_HUMENV_MJCF_SHA256}
     identity = {
@@ -168,10 +200,6 @@ def test_task_table_identity_owns_resolved_inputs_not_neighbor_mdp_modules() -> 
     excluded = {
         "isaaclab_tasks.utils.hydra",
         "isaaclab_tasks.core.multi_task.motion_env_cfg",
-        "isaaclab_tasks.core.multi_task.motion.config.environment",
-        "isaaclab_tasks.core.multi_task.motion.config.presets",
-        "isaaclab_tasks.core.multi_task.motion.config.profiles",
-        "isaaclab_tasks.core.multi_task.motion.config.simulations",
         "isaaclab_tasks.core.multi_task.motion.mdp.commands.commands_cfg",
     }
     assert _COMMON_CONSTRUCTION_MODULES.isdisjoint(excluded)
@@ -182,38 +210,43 @@ def test_task_table_identity_owns_resolved_inputs_not_neighbor_mdp_modules() -> 
         assert set(contract["table"]) == {
             "frame_builder_factory",
             "reference_kinematics_factory",
-            "expert_sample_grid",
             "task_row_mode",
-            "task_sampling_law",
-            "reset_sources",
         }
+        assert set(contract["sampler"]) == {"reset_sources"}
         assert set(identity["python_symbols"]) == {
             "isaaclab_tasks.core.multi_task.motion.mdp.commands.MotionTaskTableCfg"
         }
 
 
-def test_motion_task_table_records_close_over_exact_measured_code_and_sources() -> None:
-    """Every result identifies exact benchmark, table, resolver, builder, and source bytes."""
+def test_benchmark_derives_sampling_label_without_runtime_api() -> None:
+    """Receipt labeling must not expand the production sampler API."""
+    source = BENCHMARK.read_text()
+
+    assert "sampler.task_sampling_law" not in source
+    assert 'table_cfg.task_row_mode == "source_frames"' in source
+
+
+def test_motion_task_table_records_authenticate_measured_code_and_report_current_compatibility() -> None:
+    """Every result authenticates measured inputs while current construction drift stays explicit."""
     expected = {
         "smpl_cmu": {
             "split": "train",
             "clips": 1_638,
             "frames": 730_307,
             "control_dt_seconds": 1.0 / 30.0,
-            "physical_row_width": 509,
-            "logical_row_width": 509,
-            "root_reference_aliases": False,
+            "physical_row_width": 450,
+            "logical_row_width": 463,
+            "root_reference_aliases": True,
             "task_row_mode": "source_frames",
             "task_sampling_law": "clip_categorical_then_discrete_source_frame_v1",
             "reset_source_names": ["motion", "fall"],
             "stored_field_names": [
-                "root_position",
-                "root_rotation",
-                "root_linear_velocity",
-                "root_angular_velocity",
                 "joint_position",
                 "joint_velocity",
-                "observation",
+                "body_position",
+                "body_rotation",
+                "body_linear_velocity",
+                "body_angular_velocity",
             ],
         },
         "g1_lafan": {
@@ -241,8 +274,34 @@ def test_motion_task_table_records_close_over_exact_measured_code_and_sources() 
         record = _load(path)
         source = record["source"]
         declaration = expected[source["preset"]]
-        assert record["schema"] == "forward_backward_phase3c_motion_task_table_lookup_v4"
-        assert record["code_identity"] == _expected_code_identity(source["preset"])
+        assert record["schema"] == "forward_backward_phase3c_motion_task_table_lookup_v5"
+        stored_identity = _validate_stored_code_identity(record["code_identity"])
+        current_identity = _expected_code_identity(source["preset"])
+        compatibility = (
+            "exact_producer_match"
+            if stored_identity == current_identity
+            else "producer_changed_requires_fresh_benchmark"
+        )
+        assert compatibility in {"exact_producer_match", "producer_changed_requires_fresh_benchmark"}
+        construction = stored_identity["resolved_construction"]
+        assert construction["preset"] == source["preset"]
+        assert construction["control_dt_seconds"] == record["parameters"]["control_dt_seconds"]
+        split = construction["source"]["split"]
+        assert {
+            "split": split["name"],
+            "artifact": split["artifact"],
+            "artifact_sha256": split["artifact_sha256"],
+            "source_content_sha256": split["source_content_sha256"],
+            "clips": split["clip_count"],
+            "frames": split["frame_count"],
+        } == {
+            name: source[name]
+            for name in ("split", "artifact", "artifact_sha256", "source_content_sha256", "clips", "frames")
+        }
+        assert construction["table"]["task_row_mode"] == record["task_table"]["task_row_mode"]
+        assert [name for name, _probability in construction["sampler"]["reset_sources"]] == record["motion_sampler"][
+            "reset_source_names"
+        ]
         runtime = record["runtime"]
         dependencies = runtime["dependencies"]
         assert runtime["dependencies_sha256"] == _json_hash(dependencies)
@@ -255,26 +314,6 @@ def test_motion_task_table_records_close_over_exact_measured_code_and_sources() 
         assert set(dependencies["torch"]) == package_fields | {"cuda_version", "git_version"}
         assert set(dependencies["newton_owners"]) == {"model_builder_add_mjcf"}
         assert set(dependencies["newton_owners"]["model_builder_add_mjcf"]) == {"owner", "source_sha256"}
-        cfg = resolve_presets(MotionImitationEnvCfg(), selected={source["preset"]})
-        split = cfg.commands.motion.task_table.source.train
-        assert {
-            name: source[name]
-            for name in (
-                "split",
-                "artifact",
-                "artifact_sha256",
-                "source_content_sha256",
-                "clips",
-                "frames",
-            )
-        } == {
-            "split": split.name,
-            "artifact": split.artifact,
-            "artifact_sha256": split.artifact_sha256,
-            "source_content_sha256": split.source_content_sha256,
-            "clips": split.clip_count,
-            "frames": split.frame_count,
-        }
         assert {name: source[name] for name in ("split", "clips", "frames")} == {
             name: declaration[name] for name in ("split", "clips", "frames")
         }
@@ -284,23 +323,35 @@ def test_motion_task_table_records_close_over_exact_measured_code_and_sources() 
             "logical_row_width",
             "root_reference_aliases",
             "task_row_mode",
-            "task_sampling_law",
-            "reset_source_names",
             "stored_field_names",
         ):
             assert table[name] == declaration[name]
+        if source["preset"] == "smpl_cmu":
+            assert set(table["stored_field_names"]).isdisjoint(
+                {
+                    "root_position",
+                    "root_rotation",
+                    "root_linear_velocity",
+                    "root_angular_velocity",
+                    "observation",
+                }
+            )
+        sampler = record["motion_sampler"]
+        assert sampler["task_sampling_law"] == declaration["task_sampling_law"]
+        assert sampler["reset_source_names"] == declaration["reset_source_names"]
+        assert sampler["resident_bytes"] > 0
         assert source["remaining_clips_after_build"] == 0
         assert source["remaining_frames_after_build"] == 0
         assert record["parameters"]["control_dt_seconds"] == declaration["control_dt_seconds"]
 
 
 def test_task_table_benchmark_derives_live_bodies_from_declared_g1_axes() -> None:
-    """The benchmark must not depend on a deleted parallel body-name constant."""
+    """The benchmark must reuse the environment identity's concrete action-axis projection."""
     source = BENCHMARK.read_text()
     assert "_BODY_NAMES as G1_BODY_NAMES" not in source
-    assert "G1_BEHAVIOR_BODY_NAMES" in source
-    assert "G1_BEHAVIOR_JOINT_NAMES" in source
-    assert "_G1_BODY_BY_JOINT" in source
+    assert "_motion_live_axes(cfg)" in source
+    assert "G1_BEHAVIOR_BODY_NAMES" not in source
+    assert "G1_BEHAVIOR_JOINT_NAMES" not in source
 
 
 def test_motion_task_table_storage_pareto_accounts_for_unique_physical_storage() -> None:
@@ -308,8 +359,9 @@ def test_motion_task_table_storage_pareto_accounts_for_unique_physical_storage()
     expected_tiers = {
         "smpl_cmu": {
             "reset_state_only": (151, "derived_if_stored_alone"),
-            "expert_observation_only": (358, "derived_if_stored_alone"),
-            "production_state_and_observation": (509, "materialized"),
+            "expert_observation_if_stored_alone": (358, "derived_if_stored_alone"),
+            "production_shared_root_reference": (450, "materialized"),
+            "production_plus_duplicate_expert_projection": (808, "rejected_duplicate_corpus"),
         },
         "g1_lafan": {
             "reset_state_only": (71, "derived_if_stored_alone"),

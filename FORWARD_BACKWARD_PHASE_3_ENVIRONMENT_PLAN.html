@@ -3,900 +3,471 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Forward–Backward Phase 3 — Motion Environment Architecture</title>
-  <script>
-    window.MathJax = {
-      tex: {
-        inlineMath: [['\\(', '\\)']],
-        displayMath: [['\\[', '\\]']],
-        processEscapes: true
-      },
-      svg: {fontCache: 'global'}
-    };
-  </script>
-  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+  <title>Forward–Backward Phase 3 · Environment Architecture</title>
   <style>
-    :root{--ink:#17212b;--muted:#607080;--paper:#f5f7f5;--card:#fff;--line:#d8e0df;--blue:#155e75;--green:#166534;--amber:#92400e;--red:#991b1b;--violet:#6d28d9}
-    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--ink);background:var(--paper);font:15px/1.56 Inter,system-ui,sans-serif}main{max-width:1240px;margin:auto;padding:38px 28px 84px}
-    h1{font-size:40px;line-height:1.08;margin:.25rem 0 1rem}h2{margin:2.8rem 0 .8rem;font-size:27px}h3{margin:1.65rem 0 .55rem;font-size:19px}h4{margin:1.2rem 0 .4rem;font-size:16px}p{margin:.58rem 0}code{background:#edf1f0;padding:.08rem .3rem;border-radius:4px;font-size:.92em}a{color:var(--blue)}
-    .eyebrow{text-transform:uppercase;letter-spacing:.14em;color:var(--blue);font-size:12px;font-weight:750}.lede{max-width:1080px;font-size:18px;color:#344555}.status{display:inline-block;border:1px solid #8ec5a0;color:var(--green);background:#f1fbf4;padding:6px 11px;border-radius:999px;font-weight:700}
-    nav{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:7px;margin:24px 0 28px}nav a{display:block;text-decoration:none;background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:#334155}
-    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin:18px 0}.card,.callout{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}.card strong{display:block;margin-bottom:5px}.callout{border-left:5px solid var(--blue);margin:14px 0}.warning{border-left-color:var(--amber);background:#fffaf0}.stop{border-left-color:var(--red);background:#fff7f7}.good{border-left-color:var(--green);background:#f4fbf5}.future{border-left-color:var(--violet);background:#faf8ff}.retired{border-left-color:#475569;background:#f8fafc}
-    .table{overflow:auto;border:1px solid var(--line);border-radius:12px;background:#fff;margin:14px 0 20px}table{width:100%;border-collapse:collapse;min-width:920px}th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{background:#eaf1f1;color:#29424d;font-size:13px}tr:last-child td{border-bottom:0}.compact table{min-width:760px}.compact th,.compact td{padding:8px 10px}
-    ul,ol{margin:.5rem 0 .85rem;padding-left:1.35rem}li{margin:.34rem 0}.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:17px 0}.node{flex:1 1 175px;min-height:94px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px}.node b{display:block;color:#173f4b;margin-bottom:5px}.arrow{align-self:center;color:var(--blue);font-size:22px;font-weight:800}
-    .formula{overflow:auto;background:#eef4f5;border:1px solid var(--line);border-radius:10px;padding:14px 17px;font:16px/1.55 Georgia,serif;text-align:center;margin:14px 0}.formula.left{text-align:left}.phase{border-left:4px solid #8aa9b1;padding:0 0 3px 17px;margin:24px 0}.phase h3{margin-top:0}.gate{color:var(--green);font-weight:700}
-    .tag{white-space:nowrap;display:inline-block;border-radius:999px;padding:2px 7px;font-size:12px;font-weight:700}.measured{color:#14532d;background:#dcfce7}.source{color:#164e63;background:#cffafe}.derived{color:#713f12;background:#fef3c7}.decision{color:#581c87;background:#f3e8ff}.provisional{color:#7c2d12;background:#ffedd5}.pending{color:#7f1d1d;background:#fee2e2}.historical{color:#334155;background:#e2e8f0}.small{color:var(--muted);font-size:13px}.hash{font:12px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}
-    .review-head{background:linear-gradient(135deg,#edf8f1,#eef6fa);border:1px solid #bcd7cc;border-radius:14px;padding:19px;margin:18px 0}.proof-key{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.codeblock{overflow:auto;white-space:pre;background:#17212b;color:#e8f2ef;border-radius:10px;padding:14px 16px;font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
-    .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0}.kpi{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center}.kpi b{display:block;font-size:25px;color:var(--blue)}
-    .diagram-scroll{overflow:auto;margin:14px 0 20px}.pipeline{display:grid;grid-template-columns:repeat(11,minmax(65px,1fr));align-items:center;min-width:1060px;gap:7px}.pipe{min-height:112px;border:1px solid var(--line);border-radius:11px;padding:11px;background:#fff}.pipe b{display:block;color:#173f4b;margin-bottom:5px}.pipe small{color:var(--muted)}.pipe.source-box{background:#eef9fb}.pipe.build-box{background:#f3f0ff}.pipe.runtime-box{background:#f1f8f2}.pipe.learn-box{background:#fff6e8}.pipe-arrow{text-align:center;color:var(--blue);font-size:24px;font-weight:800}
-    .fork{display:grid;grid-template-columns:210px 55px repeat(3,minmax(215px,1fr));gap:8px;min-width:1080px;align-items:stretch}.fork .root{grid-row:1/5;display:grid;place-items:center;background:#17212b;color:#fff;border-radius:12px;padding:14px;text-align:center}.fork .join{grid-column:3;grid-row:1/5;display:grid;place-items:center;background:#f3f0ff;border:1px solid #c9bdf4;border-radius:12px;padding:14px}.fork .axis{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px}.fork .out{grid-column:4;grid-row:1/5;display:grid;place-items:center;background:#eef9fb;border:1px solid #acd3dc;border-radius:12px;padding:14px}.fork .next{grid-column:5;grid-row:1/5;display:grid;place-items:center;background:#f1f8f2;border:1px solid #b8d8bd;border-radius:12px;padding:14px}.fork-arrow{display:grid;place-items:center;color:var(--blue);font-size:22px;font-weight:800}
-    .sequence{display:grid;grid-template-columns:repeat(13,minmax(68px,1fr));align-items:stretch;gap:6px;min-width:1220px}.seq{border:1px solid var(--line);border-radius:10px;background:#fff;padding:10px}.seq b{display:block;color:#173f4b}.seq small{color:var(--muted)}.seq-arrow{display:grid;place-items:center;color:var(--blue);font-size:23px;font-weight:800}
-    .owner-dot{font-size:18px;color:var(--green);text-align:center}.owner-empty{color:#cbd5e1;text-align:center}.life{display:grid;grid-template-columns:220px 1fr 145px;gap:8px;align-items:center;margin:7px 0}.life-track{height:25px;background:#e7ecec;border-radius:7px;overflow:hidden}.life-bar{height:100%;display:flex;align-items:center;padding:0 9px;color:#fff;font-size:12px;font-weight:750}.life-build{width:24%;background:#6d28d9}.life-run{width:100%;background:#155e75}.life-episode{width:72%;background:#92400e}.life-edge{width:38%;background:#166534}
-    .gate-chart{display:grid;gap:8px;margin:14px 0}.gate-row{display:grid;grid-template-columns:55px repeat(4,1fr);gap:7px;align-items:stretch}.gate-row>strong{display:grid;place-items:center;background:#17212b;color:#fff;border-radius:8px}.gate-cell{border-radius:8px;padding:8px 9px;min-height:48px;font-size:12px;font-weight:700}.gate-done{background:#dcfce7;color:#14532d}.gate-active{background:#fef3c7;color:#713f12}.gate-open{background:#fee2e2;color:#7f1d1d}.gate-na{background:#edf1f0;color:#607080}
-    .ownership-compare{display:grid;grid-template-columns:1fr 1fr;gap:14px;min-width:1080px}.ownership-panel{border:2px solid var(--line);border-radius:14px;padding:14px;background:#fff}.ownership-panel.anti{border-color:#efb4b4;background:#fff8f8}.ownership-panel.correct{border-color:#9bc9a5;background:#f7fcf8}.ownership-title{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;font-weight:800}.owner-root-box{border-radius:10px;background:#17212b;color:#fff;padding:10px;text-align:center;font-weight:800}.owner-route{display:grid;grid-template-columns:minmax(170px,1fr) 34px minmax(180px,1fr);gap:6px;align-items:center;margin-top:8px}.owner-box{border:1px solid var(--line);border-radius:9px;background:#fff;padding:9px;min-height:58px}.owner-box b{display:block;margin-bottom:3px}.owner-box.bad{border-color:#e8a2a2;background:#fff0f0;color:#7f1d1d}.owner-box.good-edge{border-color:#91c99e;background:#effaf1;color:#14532d}.owner-box.muted-edge{border-style:dashed;color:#64748b;background:#f8fafc}.edge-bad,.edge-good{display:grid;place-items:center;font-size:22px;font-weight:900}.edge-bad{color:var(--red)}.edge-good{color:var(--green)}
-    .root-proof{display:grid;grid-template-columns:repeat(4,minmax(250px,1fr));gap:9px;min-width:1120px;align-items:stretch}.root-common{grid-column:1/5;border:2px solid #78909a;border-radius:11px;background:#17212b;color:#fff;padding:11px;text-align:center;font-weight:800}.root-common code{background:#334155}.root-column{display:grid;gap:7px;border:1px solid var(--line);border-radius:12px;background:#fff;padding:9px}.root-column.motion{border-color:#9cc8d2;background:#f8fdfe}.root-title{border-radius:8px;background:#e9f0f2;padding:8px;text-align:center;font-weight:800}.root-title.motion{background:#dff2f6;color:#164e63}.root-level{border:1px solid #cbd5e1;border-radius:8px;padding:8px;background:#f8fafc;font-size:12px}.root-level b{display:block;margin-bottom:3px}.root-command{border:1px solid #9cbfc8;border-radius:8px;padding:8px;background:#eef9fb;font-size:12px}.root-command b{display:block;margin-bottom:3px}.root-owners{display:grid;grid-template-columns:1fr 1fr;gap:6px}.root-owner{border-radius:8px;padding:8px;font-size:12px}.root-owner.table-owner{background:#f3f0ff;border:1px solid #c9bdf4}.root-owner.payload-owner{background:#effaf1;border:1px solid #a8d4b1}.root-owner b{display:block}.root-reject{grid-column:3/5;border:2px dashed #dc8d8d;border-radius:11px;background:#fff1f1;color:#7f1d1d;padding:10px;text-align:center}.root-reject code{background:#fee2e2}.root-relocate{grid-column:3/5;display:grid;grid-template-columns:1fr 1fr;gap:7px}.root-relocate div{border:1px solid #99c9a4;border-radius:9px;background:#f1fbf3;color:#14532d;padding:9px;text-align:center;font-size:12px;font-weight:750}
-    .clone-proof{display:grid;grid-template-columns:minmax(230px,1fr) 30px minmax(230px,1fr) 30px minmax(230px,1fr) 30px minmax(230px,1fr);gap:7px;min-width:1120px;align-items:stretch}.clone-node{border:1px solid var(--line);border-radius:11px;background:#fff;padding:11px;font-size:12px}.clone-node b{display:block;color:#173f4b;margin-bottom:4px}.clone-node.asset{background:#eef9fb;border-color:#acd3dc}.clone-node.global{background:#f8fafc;border-color:#cbd5e1}.clone-node.source-builder{background:#f3f0ff;border-color:#c9bdf4}.clone-node.world{background:#effaf1;border-color:#a8d4b1}.clone-arrow{display:grid;place-items:center;color:var(--blue);font-size:22px;font-weight:900}.clone-equations{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:9px 0}.clone-equation{border-radius:10px;padding:10px;text-align:center;font-weight:800}.clone-equation.reject{background:#fff1f1;border:1px solid #dc8d8d;color:#7f1d1d}.clone-equation.pass{background:#f1fbf3;border:1px solid #99c9a4;color:#14532d}
-    .architecture-grid{display:grid;grid-template-columns:repeat(4,minmax(250px,1fr));gap:10px;min-width:1120px;align-items:stretch}.arch-head,.arch-node,.arch-split{border:1px solid var(--line);border-radius:10px;background:#fff;padding:10px}.arch-head{background:#17212b;color:#fff;text-align:center;font-weight:800}.arch-head.motion-root{grid-column:3/5;background:#174653}.arch-branch{border:1px solid #acd3dc;border-radius:10px;background:#eef9fb;padding:9px;text-align:center;font-weight:800}.arch-node b,.arch-split b{display:block;color:#173f4b;margin-bottom:4px}.arch-arrow{text-align:center;color:var(--blue);font-size:21px;font-weight:900;line-height:1}.arch-split{display:grid;grid-template-columns:1fr 1fr;gap:7px;padding:7px}.arch-leaf{border-radius:8px;padding:8px;background:#f5f7f5;border:1px solid var(--line);font-size:12px}.arch-leaf.table-owner{background:#f3f0ff;border-color:#c9bdf4}.arch-leaf.payload-owner{background:#effaf1;border-color:#a8d4b1}.arch-leaf b{font-size:13px}.arch-output{border:1px solid #e4c68c;border-radius:10px;background:#fff8ea;padding:9px;font-size:12px}.architecture-legend{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.legend-chip{border-radius:999px;padding:3px 8px;font-size:12px;font-weight:750}.legend-table{background:#ede9fe;color:#5b21b6}.legend-payload{background:#dcfce7;color:#166534}.legend-shell{background:#e2e8f0;color:#334155}.legend-term{background:#fef3c7;color:#92400e}
-    details{margin:18px 0;border:1px solid var(--line);border-radius:11px;background:#fff;padding:0 14px 12px}summary{cursor:pointer;padding:13px 2px;font-weight:800;color:var(--blue)}footer{margin-top:46px;padding-top:18px;border-top:1px solid var(--line);color:var(--muted)}
-    @media(max-width:850px){.kpis{grid-template-columns:1fr 1fr}.life{grid-template-columns:140px 1fr}.life span:last-child{display:none}.gate-row{grid-template-columns:45px 1fr 1fr}.fork{min-width:980px}.ownership-compare{min-width:980px}.root-proof,.clone-proof,.architecture-grid{min-width:1080px}.clone-equations{grid-template-columns:1fr}}
+    :root {
+      color-scheme: dark;
+      --bg: #071018; --panel: #0d1924; --panel2: #112231; --line: #2a4358;
+      --text: #e7eef4; --muted: #9db0bf; --env: #2dd4bf; --data: #60a5fa;
+      --robot: #f59e0b; --learner: #c084fc; --gate: #f87171; --ok: #4ade80; --pending: #facc15;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0; color: var(--text);
+      background: radial-gradient(circle at 10% 0, rgba(45,212,191,.10), transparent 29rem),
+                  radial-gradient(circle at 92% 10%, rgba(192,132,252,.09), transparent 31rem), var(--bg);
+      font: 15px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { width: min(1500px, calc(100% - 36px)); margin: 0 auto 80px; }
+    header { padding: 58px 0 26px; }
+    h1 { max-width: 1150px; margin: 0 0 12px; font-size: clamp(34px,5vw,64px); line-height: 1.02; letter-spacing: -.045em; }
+    h2 { margin: 0 0 18px; font-size: clamp(24px,3vw,36px); letter-spacing: -.025em; }
+    h3 { margin: 26px 0 11px; font-size: 18px; }
+    p { color: var(--muted); }
+    a { color: #8cc8ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+    code { color: #d9e9f5; }
+    .lead { max-width: 980px; margin: 0; color: #cbd8e1; font-size: 18px; }
+    .kicker { color: var(--env); font-size: 12px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+    .badges, .legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 19px; }
+    .badge, .pill, .status {
+      display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px;
+      border: 1px solid var(--line); border-radius: 999px; background: rgba(13,25,36,.88); color: #dce7ef; font-size: 12px;
+    }
+    .status { padding: 2px 8px; font-size: 11px; font-weight: 800; }
+    .status.ok { color: #baf7cb; background: rgba(74,222,128,.11); }
+    .status.wait { color: #fff0a8; background: rgba(250,204,21,.11); }
+    .status.no { color: #facaca; background: rgba(248,113,113,.11); }
+    .dot { width: 9px; height: 9px; border-radius: 50%; }
+    nav {
+      position: sticky; top: 0; z-index: 20; display: flex; gap: 7px; overflow-x: auto;
+      margin: 0 -18px 24px; padding: 10px 18px; border-block: 1px solid rgba(42,67,88,.75);
+      background: rgba(7,16,24,.90); backdrop-filter: blur(14px);
+    }
+    nav a { flex: 0 0 auto; padding: 5px 9px; border-radius: 7px; color: #c4d2dc; font-size: 12px; }
+    nav a:hover { background: var(--panel2); text-decoration: none; }
+    section {
+      margin: 22px 0; padding: 28px; border: 1px solid var(--line); border-radius: 18px;
+      background: linear-gradient(145deg,rgba(13,25,36,.97),rgba(9,20,29,.98));
+      box-shadow: 0 14px 36px rgba(0,0,0,.27); scroll-margin-top: 58px;
+    }
+    .grid { display: grid; gap: 11px; }
+    .two { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .three { grid-template-columns: repeat(3,minmax(0,1fr)); }
+    .four { grid-template-columns: repeat(4,minmax(0,1fr)); }
+    .six { grid-template-columns: repeat(6,minmax(0,1fr)); }
+    .card, .node, .callout { min-width: 0; padding: 13px; border: 1px solid var(--line); border-radius: 11px; background: var(--panel2); }
+    .card b, .node b { display: block; margin-bottom: 4px; }
+    .card small, .node small { display: block; color: var(--muted); }
+    .env { border-color: rgba(45,212,191,.58); }
+    .data { border-color: rgba(96,165,250,.58); }
+    .robot { border-color: rgba(245,158,11,.58); }
+    .learner { border-color: rgba(192,132,252,.58); }
+    .gate { border-color: rgba(248,113,113,.58); }
+    .callout { color: #cbd7df; border-left-width: 4px; }
+    .callout.ok { border-left-color: var(--ok); }
+    .callout.wait { border-left-color: var(--pending); }
+    .callout.stop { border-left-color: var(--gate); }
+    .flow { display: grid; grid-template-columns: minmax(160px,1fr) auto minmax(190px,1.15fr) auto minmax(190px,1.15fr); gap: 9px; align-items: stretch; }
+    .arrow { display: grid; place-items: center; color: #7890a1; font-size: 22px; }
+    .stack { display: grid; gap: 8px; }
+    .lanes { display: grid; grid-template-columns: 130px repeat(4,minmax(140px,1fr)); gap: 8px; margin: 9px 0; }
+    .lane-label { display: grid; place-items: center; border: 1px solid var(--line); border-radius: 10px; font-weight: 800; }
+    .seq { display: flex; gap: 8px; align-items: stretch; overflow-x: auto; padding-bottom: 4px; }
+    .seq .node { flex: 1 0 145px; }
+    .seq .arrow { flex: 0 0 22px; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 11px; }
+    table { width: 100%; min-width: 760px; border-collapse: collapse; }
+    th, td { padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: #132536; color: #dce7ef; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+    td { color: #bccbd6; }
+    tr:last-child td { border-bottom: 0; }
+    .center td:not(:first-child), .center th:not(:first-child) { text-align: center; }
+    .yes { color: var(--ok); font-weight: 800; }
+    pre { margin: 12px 0 0; padding: 15px; overflow-x: auto; border: 1px solid var(--line); border-radius: 11px; background: #07131d; color: #cfe2ef; line-height: 1.5; }
+    .formula { padding: 15px; border: 1px solid rgba(192,132,252,.50); border-radius: 11px; background: rgba(192,132,252,.07); color: #eadcff; font: 15px/1.7 "SFMono-Regular",Consolas,monospace; }
+    .bar { height: 9px; margin-top: 8px; overflow: hidden; border-radius: 999px; background: #09131c; }
+    .bar > span { display: block; height: 100%; background: linear-gradient(90deg,var(--data),var(--env)); }
+    .caption { margin: 7px 0 0; color: #879cac; font-size: 12px; }
+    @media (max-width:1120px) {
+      .six, .four { grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .lanes { grid-template-columns: 1fr 1fr; }
+      .lane-label { grid-column: 1 / -1; padding: 7px; }
+    }
+    @media (max-width:820px) {
+      .flow { grid-template-columns: 1fr; }
+      .flow .arrow { transform: rotate(90deg); }
+      .three, .two { grid-template-columns: 1fr; }
+    }
+    @media (max-width:600px) {
+      main { width: min(100% - 20px,1500px); }
+      section { padding: 20px 13px; }
+      .six, .four, .lanes { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
-<body><main>
-  <p class="eyebrow">Forward–Backward unification · Phase 3 environment and data pillar</p>
-  <h1>The environment is the motion, transition, and reward contract</h1>
-  <p class="lede">Phase 3 builds one Position/Factory-style motion-imitation environment. A single public preset name resolves direct IsaacLab configuration axes; the scene articulation is the only robot object; source clips are converted once into simulator-ordered trajectory columns owned by the task table; the payload and transition runtime expose one exact logical edge to the unified RSL-RL learner.</p>
-  <p><span class="status">Phase 3 complete · all deterministic, systems, learner, native-quality, structural-composition, and corrected SMPL EMD K10 gates closed · stopped before Phase 4</span></p>
+<body>
+<main>
+  <header>
+    <div class="kicker">Phase 3 · current architecture map</div>
+    <h1>One environment shape; independent data, robot, evidence, and learner axes</h1>
+    <p class="lead">Position, Factory, and Motion share one manager root and one command-owned task-state pattern. Motion adds typed source representations, robot-coordinate frame builders, and a learner-owned value algebra—not a second environment framework.</p>
+    <div class="badges">
+      <span class="badge"><span class="dot" style="background:var(--ok)"></span>production-tree ownership</span>
+      <span class="badge"><span class="dot" style="background:var(--ok)"></span>negative architecture gates</span>
+      <span class="badge"><span class="dot" style="background:var(--pending)"></span>fresh GPU / EMD receipts not claimed</span>
+      <span class="badge">reconciled 2026-07-04</span>
+    </div>
+    <div class="legend">
+      <span class="pill"><span class="dot" style="background:var(--env)"></span>environment</span>
+      <span class="pill"><span class="dot" style="background:var(--data)"></span>data</span>
+      <span class="pill"><span class="dot" style="background:var(--robot)"></span>robot</span>
+      <span class="pill"><span class="dot" style="background:var(--learner)"></span>learner</span>
+      <span class="pill"><span class="dot" style="background:var(--gate)"></span>forbidden coupling</span>
+    </div>
+  </header>
 
   <nav>
-    <a href="#active-review">Active review</a>
-    <a href="#outcome">0 · Outcome</a>
-    <a href="#evidence">1 · Evidence</a>
-    <a href="#mdp">2 · Native MDPs</a>
-    <a href="#data">3 · Data paths</a>
-    <a href="#existing">4 · Config composition</a>
-    <a href="#algebra">5 · Reward/value algebra</a>
-    <a href="#contracts">6 · Contracts</a>
-    <a href="#timing">7 · Time / reset</a>
-    <a href="#runtime">8 · Runtime</a>
-    <a href="#storage">9 · Memory / compute</a>
-    <a href="#failures">10 · Bug prevention</a>
-    <a href="#files">11 · File ownership</a>
-    <a href="#validation">12 · Validation</a>
-    <a href="#execution">13 · 3A–3G execution</a>
-    <a href="#implemented-review">Historical 3A–3D</a>
-    <a href="#decisions">14 · Decisions</a>
+    <a href="#composition">Composition</a><a href="#axes">Axes</a><a href="#data">Data + command</a>
+    <a href="#edge">Transition</a><a href="#learner">Learner</a><a href="#files">Files</a>
+    <a href="#evidence">Evidence</a><a href="#execution">Execution</a>
   </nav>
 
-  <section id="active-review">
-    <div class="callout good"><strong>Root correction landed.</strong> The current design has no parallel robot description beside <code>scene.robot</code>, no aggregate composition object, and no separate trajectory store below the command table. The shared <code>PresetCfg</code> mechanism broadcasts one name across direct axes, exactly as Position and Factory do.</div>
-    <div class="review-head">
-      <p class="eyebrow">Active implementation review · 2026-07-02</p>
-      <h2>One direct environment root, three compositions, one learner</h2>
-      <div class="kpis">
-        <div class="kpi"><b>1</b>environment class</div>
-        <div class="kpi"><b>3</b>preset compositions</div>
-        <div class="kpi"><b>1</b>task-table contract</div>
-        <div class="kpi"><b>1</b>FB algorithm</div>
-      </div>
-      <p>The structural implementation is the source of truth. Native table, edge, systems, strict-reload, composition, policy-quality, and corrected ten-checkpoint SMPL EMD receipts have all been regenerated and frozen after the clip-first sampler correction.</p>
+  <section id="composition">
+    <div class="kicker">01 · config composition</div>
+    <h2>Position, Factory, and Motion have the same public silhouette</h2>
+    <div class="flow">
+      <div class="node env"><b><code>ManagerBasedRLEnvCfg</code></b><small>scene · sim · actions · observations · commands · events · rewards · terminations · curriculum</small></div>
+      <div class="arrow">→</div>
+      <div class="node data"><b><code>StateCommandCfg</code></b><small>one visible command owns a task table and a payload</small></div>
+      <div class="arrow">→</div>
+      <div class="node robot"><b>ordinary manager step</b><small>no Motion environment subclass · no product resolver · no hidden runtime</small></div>
     </div>
-
-    <h3 id="ownership-antipattern">Ownership correction: remove every root bypass</h3>
-    <div class="diagram-scroll"><div class="ownership-compare">
-      <div class="ownership-panel anti">
-        <div class="ownership-title"><span>BEFORE · duplicated domain authority</span><span class="tag pending">reject</span></div>
-        <div class="owner-root-box">MotionImitationEnvCfg<br><span class="small" style="color:#dbe7e6">manager root + motion-domain knobs</span></div>
-        <div class="owner-route">
-          <div class="owner-box bad"><b>root deployment selection</b><code>source_artifact_root</code><br><code>reference_artifact_root</code><br><code>motion_split</code></div>
-          <div class="edge-bad">⇢</div>
-          <div class="owner-box muted-edge"><b>source / builder</b>reads around <code>commands.motion.task_table</code></div>
-        </div>
-        <div class="owner-route">
-          <div class="owner-box bad"><b>root construction knobs</b><code>reference_kinematics_factory</code><br><code>expert_sample_grid</code></div>
-          <div class="edge-bad">⇢</div>
-          <div class="owner-box muted-edge"><b>builder / expert bridge</b>bypasses fields already declared by the table</div>
-        </div>
-        <div class="owner-route">
-          <div class="owner-box bad"><b>root transition knob</b><code>transition_state_factory</code></div>
-          <div class="edge-bad">⇢</div>
-          <div class="owner-box muted-edge"><b>environment runtime</b>bypasses the payload that owns transition state</div>
-        </div>
-        <div class="owner-route">
-          <div class="owner-box bad"><b>root boundary knob</b><code>applied_actions_before_timeout</code></div>
-          <div class="edge-bad">⇢</div>
-          <div class="owner-box muted-edge"><b>timeout function</b>boundary data sits outside the termination term</div>
-        </div>
-      </div>
-      <div class="ownership-panel correct">
-        <div class="ownership-title"><span>AFTER · one owner per temporal role</span><span class="tag measured">required</span></div>
-        <div class="owner-root-box">MotionImitationEnvCfg<br><span class="small" style="color:#dbe7e6">manager groups + framework timing only</span></div>
-        <div class="owner-route">
-          <div class="owner-box good-edge"><b>commands.motion.task_table</b>artifact roots + split; source; reference FK; frame builder; expert grid; task rows; reset sources</div>
-          <div class="edge-good">→</div>
-          <div class="owner-box good-edge"><b>MotionTaskTable</b>construction, immutable trajectory data, descriptor rows, expert clock</div>
-        </div>
-        <div class="owner-route">
-          <div class="owner-box good-edge"><b>commands.motion.payload</b>transition factory; episode clock; reset transform; history; raw and auxiliary evidence</div>
-          <div class="edge-good">→</div>
-          <div class="owner-box good-edge"><b>MotionStatePayload</b>per-environment reset/reference/transition state</div>
-        </div>
-        <div class="owner-route">
-          <div class="owner-box good-edge"><b>terminations.time_out</b>declares the applied-action boundary</div>
-          <div class="edge-good">→</div>
-          <div class="owner-box good-edge"><b>motion_time_out</b>reads the term parameter, not a root side channel</div>
-        </div>
-        <div class="owner-route">
-          <div class="owner-box"><b>root framework timing</b><code>sim</code>, <code>decimation</code>, <code>episode_length_s</code>, final-observation mode</div>
-          <div class="edge-good">→</div>
-          <div class="owner-box"><b>ManagerBasedRLEnv</b>simulation cadence and Gymnasium boundary machinery</div>
-        </div>
-      </div>
-    </div></div>
-    <div class="formula left"><strong>Mechanical invariant:</strong> <code>{field.name for field in fields(MotionImitationEnvCfg)} == {field.name for field in fields(ManagerBasedRLEnvCfg)}</code>. Therefore sampling, reference kinematics, transition factories, source deployment, and timeout policy can only be descendants of manager groups—not new root fields. Enforced by <a href="source/isaaclab_tasks/isaaclab_tasks/core/multi_task/tests/test_motion_root_architecture.py">test_motion_root_architecture.py</a>.</div>
-
-    <h3>Final claim ladder</h3>
-    <div class="table"><table><thead><tr><th>Layer</th><th>Current implementation</th><th>Justified claim</th><th>Frozen evidence</th></tr></thead><tbody>
-      <tr><td>Configuration</td><td><code>MotionImitationEnvCfg</code> contains normal manager groups and framework timing. <code>commands.motion.task_table</code>, <code>commands.motion.payload</code>, and <code>terminations.time_out</code> own motion construction, transition state, and applied-action boundary respectively.</td><td><span class="tag decision">structurally established</span> One public preset name composes the environment without a second environment class or root side channel.</td><td>Preset resolution and cross-axis identity tests pass in the complete Phase 3 suite.</td></tr>
-      <tr><td>Robot semantics</td><td><code>MotionSceneCfg.robot</code> resolves directly to an <code>ArticulationCfg</code>. Frame construction reads live joint/body names from that articulation.</td><td><span class="tag decision">single authority</span> Simulator order cannot silently diverge from an independent robot model.</td><td>Both native edge receipts pass reset, action, observation, lifecycle, final-state, and source-contract checks.</td></tr>
-      <tr><td>Trajectory data</td><td><code>MotionTaskTableCfg</code> owns deployment/split, source, reference FK, builder, expert clock, and row/reset laws; <code>MotionTaskTable</code> owns the resulting exact-capacity columns, named axes, clip metadata, descriptor rows, priorities, and RNG.</td><td><span class="tag decision">single construction/data owner</span> Reset, reference, evaluation, and expert construction use the same source truth.</td><td>Both v4 full-source task-table receipts close storage, construction, identity, and sampling-law evidence.</td></tr>
-      <tr><td>Runtime edge</td><td><code>MotionStatePayload</code> owns per-environment reference/reset/history/evidence state; the environment publishes action, episode step, auxiliary evidence, and exact final validity.</td><td><span class="tag decision">logical contract implemented</span></td><td>Both v4 systems matrices close 1/16/1,024-environment repeatability and final-capture cost.</td></tr>
-      <tr><td>Learner</td><td>Motion code builds the expert corpus from the task table; the generic RSL bridge stores online transitions; both feed one FB implementation.</td><td><span class="tag decision">no algorithm fork</span></td><td>Both strict-reload receipts pass; the corrected SMPL 0.5M–5.0M packed EMD curve is frozen. Phase 2 retains the independent algorithm non-inferiority claim.</td></tr>
-      <tr><td>Composition</td><td><code>g1_cmu</code> combines SMPL-CMU source data with the G1 articulation and G1 trajectory/runtime axes.</td><td><span class="tag measured">structural composition closed</span></td><td>Retarget and simulator evidence pass; learned cross-policy quality remains the explicit Phase 4 handoff.</td></tr>
-    </tbody></table></div>
-
-    <h3>What changed at the root</h3>
-    <div class="table compact"><table><thead><tr><th>Old pressure</th><th>Corrected abstraction</th><th>Invariant now enforced</th></tr></thead><tbody>
-      <tr><td>A robot description traveled beside the simulator asset.</td><td>The selected <code>ArticulationCfg</code> creates the live robot; builders consume its resolved names.</td><td><code>table.joint_names == tuple(env.scene["robot"].joint_names)</code>.</td></tr>
-      <tr><td>Trajectory storage and task rows were separate layers.</td><td><code>MotionTaskTable</code> owns both trajectory columns and selectable descriptors.</td><td>One identity covers source, builder, axes, columns, task-row mode, and named reset-source law.</td></tr>
-      <tr><td>One aggregate object manually composed environment pieces.</td><td>One preset name resolves independent typed axes through existing <code>PresetCfg</code>.</td><td>Adding a composition is a row across axes, not a new environment.</td></tr>
-      <tr><td>Body order was implied by tensor width.</td><td><code>reference_frame_names</code> names every stored physical or derived reference frame.</td><td>Names are unique and exactly match the body-column axis.</td></tr>
-      <tr><td>Joint order was inferred from source conventions.</td><td><code>joint_names</code> names the simulator-ordered joint axis.</td><td>Names are unique, width-exact, and checked again by payload/evaluator/bridge.</td></tr>
-    </tbody></table></div>
-
-    <div class="callout warning"><strong>Evidence reset rule.</strong> Native traces, source fingerprints, and analytical equations survive the refactor. Runtime throughput, memory, deterministic summaries, tracking, and policy-quality claims survive only when their identity closure names current source, builder, table, environment, and probe code.</div>
-  </section>
-
-  <section id="outcome">
-    <h2>0. Outcome, boundary, and falsification</h2>
-    <div class="formula"><strong>experiment composition</strong> = direct environment axes resolved by one preset name</div>
-    <div class="grid">
-      <div class="card"><strong>One MDP family</strong>MetaMotivo and BFM-Zero are reference behaviors, not environment frameworks.</div>
-      <div class="card"><strong>One robot authority</strong>The scene articulation owns physical joints, bodies, actuators, defaults, and simulator order.</div>
-      <div class="card"><strong>One table authority</strong>Trajectory columns, axes, clip identity, descriptor rows, and sampling state meet in one object.</div>
-      <div class="card"><strong>One transition law</strong>Behavior/emitted action, current/reached/returned/final observation, boundary, and history remain distinct.</div>
-      <div class="card"><strong>One helper algebra</strong>Environment evidence, discriminator, energy, FB-implied reward, and value are named channels with declared timing.</div>
-      <div class="card"><strong>Faithful before universal</strong>Native dt/action/reset/observation behavior reproduces before common timing or reward-provider experiments.</div>
+    <h3>Three roots, one composition grammar</h3>
+    <div class="grid three">
+      <div class="card env"><b>Position</b><small><code>LocomotionPositionCommandEnvCfg</code></small><div class="stack" style="margin-top:10px"><div class="node data"><b><code>commands.goal_point</code></b><small><code>TaskTableCfg</code> + position payload preset</small></div><div class="node env"><b>MDP managers</b><small>position reward · termination · curriculum</small></div></div></div>
+      <div class="card env"><b>Factory</b><small><code>FactoryBaseEnvCfg</code></small><div class="stack" style="margin-top:10px"><div class="node data"><b><code>commands.reset_state</code></b><small><code>FactoryResetStateTableCfg</code> + <code>FactoryAssemblyPayloadCfg</code></small></div><div class="node env"><b>MDP managers</b><small>assembly reward · success termination · sampler curriculum</small></div></div></div>
+      <div class="card env"><b>Motion</b><small><code>MotionImitationEnvCfg</code></small><div class="stack" style="margin-top:10px"><div class="node data"><b><code>commands.motion</code></b><small><code>MotionTaskTableCfg</code> + <code>MotionStatePayloadCfg</code></small></div><div class="node learner"><b>FB boundary</b><small>empty reward/curriculum managers · named transition evidence</small></div></div></div>
     </div>
-    <div class="callout stop"><strong>Reject the architecture</strong> if the common shell branches on an algorithm name; a source silently chooses a robot; another robot object is created beside <code>scene.robot</code>; tensor width substitutes for axis names; runtime parses source files; the learner teleports the simulator; final-state loss is hidden; or adding a composition requires copying the environment class.</div>
-    <p>The environment owns physics, reset, motion identity/time, current and reached facts, immediate evidence, and final provenance. RSL-RL owns F/B/D, learned reward providers, return/value propagation, context construction, storage, actor objectives, and normalization. The boundary is named tensors, not cross-layer object access.</p>
+    <div class="table-wrap" style="margin-top:12px">
+      <table class="center">
+        <thead><tr><th>Root concern</th><th>Position</th><th>Factory</th><th>Motion</th></tr></thead>
+        <tbody>
+          <tr><td>Public environment subclass</td><td>manager cfg only</td><td>manager cfg only</td><td class="yes">manager cfg only</td></tr>
+          <tr><td>Task data owner</td><td><code>goal_point</code> command</td><td><code>reset_state</code> command</td><td><code>motion</code> command</td></tr>
+          <tr><td>Reward manager</td><td>task reward terms</td><td>task reward terms</td><td class="yes">concrete empty cfg; helper rewards are learner algebra</td></tr>
+          <tr><td>Action manager</td><td>declared at root</td><td>declared at root</td><td><code>control</code> for HumEnv SMPL · <code>joint_position</code> for BFM G1</td></tr>
+          <tr><td>Curriculum manager</td><td>terrain/task sampling</td><td>success/task sampling</td><td class="yes">concrete empty cfg</td></tr>
+          <tr><td>Learner-specific code in environment</td><td>none</td><td>none</td><td class="yes">none</td></tr>
+        </tbody>
+      </table>
+    </div>
   </section>
 
-  <section id="evidence">
-    <h2>1. Evidence discipline</h2>
-    <div class="table compact"><table><thead><tr><th>Label</th><th>Meaning</th><th>Promotion rule</th></tr></thead><tbody>
-      <tr><td><span class="tag source">source</span></td><td>Behavior read from native repositories/artifacts, including defects.</td><td>Becomes a contract only after tensor order, units, timing, and boundary are explicit.</td></tr>
-      <tr><td><span class="tag derived">derived</span></td><td>Equation, dimension, memory, or lifecycle consequence.</td><td>Must list assumptions and match current tensor owners.</td></tr>
-      <tr><td><span class="tag decision">decision</span></td><td>Reviewed architecture implemented in the current tree.</td><td>Needs contract tests; it is not numerical reproduction.</td></tr>
-      <tr><td><span class="tag measured">measured</span></td><td>Executed result with byte/code/config identity closure.</td><td>Only the exact measured path may inherit the claim.</td></tr>
-      <tr><td><span class="tag historical">historical</span></td><td>Valid numerical observation produced by a retired root.</td><td>May guide thresholds; cannot close current integration gates.</td></tr>
-    </tbody></table></div>
-    <div class="table"><table><thead><tr><th>Question</th><th>Primary evidence</th><th>Contract carried into Phase 3</th></tr></thead><tbody>
-      <tr><td>Reward/value geometry</td><td><a href="FORWARD_BACKWARD_MATHEMATICAL_FOUNDATIONS.html#geometry">Mathematical foundations §4</a> and <a href="FORWARD_BACKWARD_MATHEMATICAL_FOUNDATIONS.html#helpers">§5</a></td><td>Gauge, provider/value separation, linear channels, partial observation.</td></tr>
-      <tr><td>Logical edge</td><td><a href="SF_CRITIC_DESIGN_REVISED.html#phase1-transition-contract">SF transition contract</a></td><td>Current/reached/returned/final distinction and exact truncation bootstrap.</td></tr>
-      <tr><td>Meta native behavior</td><td><a href="scripts/reinforcement_learning/forward_backward/phase3/fixtures/meta_humenv_next_step_trace_v2.json">HumEnv next-step trace</a></td><td>30 Hz control, 69-D control, 358-D observation, reset-only row semantics.</td></tr>
-      <tr><td>BFM native behavior</td><td><a href="scripts/reinforcement_learning/forward_backward/phase3/fixtures/g1_lafan_same_step_trace_v1.json">G1 same-step trace</a> and <a href="scripts/reinforcement_learning/forward_backward/phase3/fixtures/native_trace_manifest_v1.json">trace tensor manifest</a></td><td>29-D action law, 50 Hz control, history, reference frames, evidence, final edge.</td></tr>
-      <tr><td>Source identity</td><td><a href="scripts/reinforcement_learning/forward_backward/phase3/fixtures/native_importer_fingerprints_v1.json">Importer fingerprints</a> and <a href="scripts/reinforcement_learning/forward_backward/phase3/fixtures/native_motion_data_v1.json">motion data facts</a></td><td>Ordered clips, counts, fps, source semantics, content hashes.</td></tr>
-      <tr><td>IsaacLab patterns</td><td><code>core/multi_task/{terrain,factory}</code>, <code>state_command</code>, and upstream Same-Step final-observation support</td><td>Preset resolution, table/payload lifecycle, exact final provenance.</td></tr>
-    </tbody></table></div>
-  </section>
-
-  <section id="mdp">
-    <h2>2. Exact native MDP comparison</h2>
-    <h3>2.1 Control, reset, and boundary</h3>
-    <div class="table"><table><thead><tr><th>Contract</th><th>MetaMotivo / HumEnv</th><th>BFM-Zero / G1</th><th>Unified environment law</th></tr></thead><tbody>
-      <tr><td>Time</td><td>Physics <code>1/450 s</code>, repeat 15, control 30 Hz.</td><td>Physics <code>1/200 s</code>, decimation 4, control 50 Hz.</td><td>Physics dt, control dt, source fps, and expert grid are independent axes.</td></tr>
-      <tr><td>Action</td><td>69-D direct native control.</td><td>29-D raw action → normalize/clip → target offset → clipped PD torque.</td><td>Raw behavior action, processed/emitted action, target, and torque remain distinguishable.</td></tr>
-      <tr><td>Reset</td><td>80% motion frame, 20% fall; fall advances 0–4 random actions.</td><td>70% reference, 30% lie-down; reference time uniform over a clip.</td><td>Task descriptor and reset-source draw are independent.</td></tr>
-      <tr><td>Reference role</td><td>Reset/expert/evaluation; no tracking command to the FB actor.</td><td>Reset/expert/evaluation plus tracking evidence; not an actor command.</td><td>Reference roles are explicit consumers of one table.</td></tr>
-      <tr><td>Done</td><td>Timeout after 300 applied actions.</td><td>Native convention exposes a 500-step setting and 501 applied-edge boundary.</td><td>The profile retains both facts; one explicit termination parameter and the payload episode clock share the applied-edge count.</td></tr>
-      <tr><td>Autoreset oracle</td><td>Native next-step with reset-only rows.</td><td>Native same-step.</td><td>IsaacLab emits Same-Step for both; exact pre-reset final reconstructs the logical reached state.</td></tr>
-    </tbody></table></div>
-
-    <h3>2.2 Observation roles</h3>
-    <div class="table"><table><thead><tr><th>Route</th><th>SMPL-CMU</th><th>G1-LAFAN / G1-CMU</th><th>Invariant</th></tr></thead><tbody>
-      <tr><td>Actor</td><td><code>policy[358]</code>.</td><td><code>state[64] + last_action[29] + history_actor[372] = 465</code>.</td><td>Named groups define routes; widths assert them.</td></tr>
-      <tr><td>Privileged</td><td>Same 358-D information set.</td><td><code>privileged_state[463]</code> over 31 named reference frames.</td><td>Privileged state is a route, not another MDP.</td></tr>
-      <tr><td>Forward</td><td>358.</td><td>465 + 463 = 928.</td><td>The learner selects named fields once.</td></tr>
-      <tr><td>Backward / discriminator</td><td>358.</td><td>64 + 463 = 527.</td><td>Expert rows use the same basis as online rows.</td></tr>
-      <tr><td>History</td><td>No explicit BFM-style history.</td><td>Four newest-first frames of emitted action, root angular velocity, q, qd, gravity.</td><td>Reset seed is excluded; only applied transitions enter.</td></tr>
-    </tbody></table></div>
+  <section id="axes">
+    <div class="kicker">02 · independent axes</div>
+    <h2>No <code>smpl_cmu</code> or <code>g1_lafan</code> product preset</h2>
+    <div class="grid four">
+      <div class="card robot"><b>robot</b><small>SMPL · G1</small><small>asset · action · observation/projector · reset transform</small></div>
+      <div class="card data"><b>source</b><small><code>cmu_humenv_smpl</code> · <code>lafan_g1_29dof</code></small><small>format · representation · coordinates/interpreter · provenance</small></div>
+      <div class="card env"><b>backend</b><small>Newton MJWarp · PhysX</small><small>solver · contact implementation</small></div>
+      <div class="card env"><b>timing</b><small>450/30/300 · 200/50/501</small><small>physics Hz · control Hz · horizon</small></div>
+      <div class="card data"><b>reset + task rows</b><small><code>reference</code> is the shared motion branch</small><small>source rows / clip-time ranges · optional fall / lie_down</small></div>
+      <div class="card learner"><b>evidence</b><small>off · physical auxiliary</small><small>controller-owned + sensor/articulation transition facts</small></div>
+      <div class="card env"><b>randomization</b><small>off · physics/observation/pose/push</small><small>events and observation noise</small></div>
+      <div class="card learner"><b>tracking protocol</b><small>off · source-edge · reset-frame</small><small>learner lifecycle; not robot identity</small></div>
+    </div>
+    <div class="table-wrap" style="margin-top:12px">
+      <table>
+        <thead><tr><th>Axis</th><th>May select</th><th>Must not select</th></tr></thead>
+        <tbody>
+          <tr><td>robot</td><td>articulation, controller, behavior ordering, representation-specific frame builder, projector, reset decoding</td><td>source identity, timing, replay, training schedule</td></tr>
+          <tr><td>source</td><td>format reader, clip identity, representation protocol, skeleton/coordinates and required interpreter</td><td>live robot, controller, expert clock, algorithm</td></tr>
+          <tr><td>backend</td><td>solver, collision/contact implementation</td><td>source semantics, policy topology</td></tr>
+          <tr><td>timing</td><td>physics dt, decimation, sensor period, timeout</td><td>robot or dataset identity</td></tr>
+          <tr><td>reset policy</td><td>shared <code>reference</code> branch plus explicit synthetic branches; descriptor-row law</td><td>robot/source product identity</td></tr>
+          <tr><td>evidence</td><td>controller, articulation, and sensor transition facts</td><td>environment reward or value coefficients</td></tr>
+          <tr><td>randomization</td><td>events and observation corruption</td><td>robot selection by implication</td></tr>
+          <tr><td>tracking protocol</td><td>edge convention, context window, assignment policy</td><td>robot equations or source transport</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Named reproductions are token sets</h3>
+    <div class="table-wrap">
+      <table class="center">
+        <thead><tr><th>Fidelity target</th><th>Robot</th><th>Source</th><th>Action term</th><th>Backend</th><th>Timing</th><th>Task rows</th><th>Reset mix</th></tr></thead>
+        <tbody>
+          <tr><td>MetaMotivo / HumEnv</td><td>SMPL</td><td><code>cmu_humenv_smpl</code></td><td><code>control</code></td><td>Newton MJWarp</td><td>450 / 30 / 300</td><td>source rows</td><td><code>reference</code> .8 + fall .2</td></tr>
+          <tr><td>BFM-Zero</td><td>G1</td><td><code>lafan_g1_29dof</code></td><td><code>joint_position</code></td><td>PhysX</td><td>200 / 50 / 501</td><td>clip-time ranges</td><td><code>reference</code> .7 + lie_down .3</td></tr>
+          <tr><td>structural cross join</td><td>G1</td><td><code>cmu_humenv_smpl</code></td><td><code>joint_position</code></td><td>independent</td><td>independent</td><td>independent</td><td><code>reference</code> + explicit optional branch</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption">Validation rejects missing implementation edges; it does not rebuild a product preset.</p>
   </section>
 
   <section id="data">
-    <h2>3. Native data paths and scientific composition</h2>
-    <h3>3.1 Source artifacts</h3>
-    <div class="table"><table><thead><tr><th>Source</th><th>Native fields</th><th>Scientific level</th><th>Current consumer</th></tr></thead><tbody>
-      <tr><td>SMPL-CMU HumEnv HDF5</td><td>qpos 76, qvel 75, observation 358, boundary fields at 30 Hz.</td><td>Already SMPL-robot-oriented; exact native reproduction input, not canonical human motion.</td><td><code>SmplHumEnvFrameBuilder</code> or SMPL→G1 projection builder.</td></tr>
-      <tr><td>G1-LAFAN joblib</td><td>root translation and body-axis-angle representation at 30 Hz.</td><td>Already G1-oriented; equal shape is not a source-skeleton declaration.</td><td><code>G1LafanFrameBuilder</code>.</td></tr>
-      <tr><td>Canonical human source</td><td>Named hierarchy, local rotations, root path, units, fps, provenance.</td><td>Robot-independent input required for general composition.</td><td>A target-robot trajectory builder using declared source kinematics.</td></tr>
-    </tbody></table></div>
-
-    <h3>3.2 Semantic ladder</h3>
-    <div class="table"><table><thead><tr><th>Level</th><th>Definition</th><th>Owner</th><th>Failure if omitted</th></tr></thead><tbody>
-      <tr><td>L0 source</td><td>Names, parents, rest transforms, rotation/root conventions, units, fps, provenance.</td><td><code>MotionSkeleton</code> + <code>MotionClipIndex</code>.</td><td>Equal tensor shapes are mistaken for equal motion semantics.</td></tr>
-      <tr><td>L1 simulator pose</td><td>Root trajectory and target-articulation joint coordinates.</td><td>Trajectory builder, ordered by the live articulation.</td><td>Reset/action/reference joint axes disagree.</td></tr>
-      <tr><td>L2 trajectory facts</td><td>Root/joint state and optional named reference-frame kinematics.</td><td><code>MotionTaskTable.Frames</code>.</td><td>Runtime repeats FK or invents unnamed axes.</td></tr>
-      <tr><td>L3 observation/evidence</td><td>Named actor, forward, backward, privileged, history, and physical facts.</td><td>Environment observation/runtime terms.</td><td>Representation choices leak into FB equations.</td></tr>
-      <tr><td>L4 transition</td><td>Current/reached/returned/final states, actions, boundaries, channels, versions.</td><td>Environment + generic learner bridge.</td><td>Same-Step reset data is trained as a successor.</td></tr>
-    </tbody></table></div>
-
-    <h3>3.3 Three current compositions</h3>
-    <div class="table"><table><thead><tr><th>Preset name</th><th>Scene articulation</th><th>Source</th><th>Reference kinematics</th><th>Trajectory builder</th><th>Runtime basis</th></tr></thead><tbody>
-      <tr><td><code>smpl_cmu</code></td><td>SMPL humanoid</td><td>SMPL-CMU HDF5</td><td>Exact SMPL MJCF</td><td>Native SMPL row conversion</td><td>30 Hz, direct control, 358-D observation.</td></tr>
-      <tr><td><code>g1_lafan</code></td><td>G1 29-DoF</td><td>G1-LAFAN joblib</td><td>Exact G1 MJCF</td><td>G1 FK/velocity construction</td><td>50 Hz, PD control, G1 routes/history/evidence.</td></tr>
-      <tr><td><code>g1_cmu</code></td><td>G1 29-DoF</td><td>SMPL-CMU HDF5</td><td>Exact G1 MJCF</td><td>SMPL local rotations → ordered G1 hinge projection → G1 FK</td><td>Same G1 physical/runtime axes; different source construction.</td></tr>
-    </tbody></table></div>
-  </section>
-
-  <section id="existing">
-    <h2>4. Config composition as an ownership proof</h2>
-    <p class="small">Read directly from <code>position_env_cfg.py</code>, <code>factory_env_cfg.py</code>, their concrete command configs, and the motion preset tree.</p>
-    <h3 id="root-shape-proof">4.1 Root-shape proof: the old sidecar has nowhere legal to attach</h3>
-    <div class="diagram-scroll"><div class="root-proof">
-      <div class="root-common"><code>ManagerBasedRLEnvCfg</code> root contract · standard manager groups + framework timing only</div>
-
-      <div class="root-column">
-        <div class="root-title">Position</div>
-        <div class="root-level"><b><code>LocomotionPositionCommandEnvCfg</code></b><code>scene · sim · actions · observations · commands · rewards · terminations · events · curriculum</code></div>
-        <div class="root-command"><b><code>commands.goal_point</code></b><code>StateCommandCfg</code></div>
-        <div class="root-owners"><div class="root-owner table-owner"><b><code>task_table</code></b>retarget + IK + immutable rows</div><div class="root-owner payload-owner"><b><code>payload</code></b>reset + goal + errors</div></div>
-      </div>
-
-      <div class="root-column">
-        <div class="root-title">Factory</div>
-        <div class="root-level"><b><code>FactoryBaseEnvCfg</code></b><code>scene · sim · actions · observations · commands · rewards · terminations · events · curriculum</code></div>
-        <div class="root-command"><b><code>commands.reset_state</code></b><code>StateCommandCfg</code></div>
-        <div class="root-owners"><div class="root-owner table-owner"><b><code>task_table</code></b>Factory IK + immutable rows</div><div class="root-owner payload-owner"><b><code>payload</code></b>asset reset + assembly errors</div></div>
-      </div>
-
-      <div class="root-column motion">
-        <div class="root-title motion">Meta · <code>smpl_cmu</code></div>
-        <div class="root-level"><b><code>MotionImitationEnvCfg</code></b>same root class; preset resolves standard groups</div>
-        <div class="root-command"><b><code>commands.motion</code></b><code>StateCommandCfg</code></div>
-        <div class="root-owners"><div class="root-owner table-owner"><b><code>task_table</code></b>SMPL source + FK + expert grid</div><div class="root-owner payload-owner"><b><code>payload</code></b>SMPL reset + transition runtime</div></div>
-      </div>
-
-      <div class="root-column motion">
-        <div class="root-title motion">FBM · <code>g1_lafan</code></div>
-        <div class="root-level"><b><code>MotionImitationEnvCfg</code></b>same root class; preset resolves standard groups</div>
-        <div class="root-command"><b><code>commands.motion</code></b><code>StateCommandCfg</code></div>
-        <div class="root-owners"><div class="root-owner table-owner"><b><code>task_table</code></b>G1 source + FK + expert grid</div><div class="root-owner payload-owner"><b><code>payload</code></b>G1 reset + transition runtime</div></div>
-      </div>
-
-      <div class="root-reject"><b>✕ REJECTED ROOT SIDECAR</b><br><code>MotionImitationEnvCfg</code> ── illegal direct fields ── <code>expert_sample_grid</code> · <code>reference_kinematics_factory</code> · <code>transition_state_factory</code><br>These are domain construction/runtime choices, not environment-manager groups.</div>
-      <div class="root-relocate"><div>↳ <code>expert_sample_grid</code> + <code>reference_kinematics_factory</code><br>belong to <code>commands.motion.task_table</code></div><div>↳ <code>transition_state_factory</code><br>belongs to <code>commands.motion.payload</code></div></div>
-    </div></div>
-    <div class="formula left"><strong>Executable shape check:</strong> <code>fields(MotionImitationEnvCfg) == fields(ManagerBasedRLEnvCfg)</code>. The rejected sidecar makes this equality fail before simulation starts.</div>
-
-    <h3 id="four-way-composition">4.2 Expanded four-way composition</h3>
-    <div class="architecture-legend">
-      <span class="legend-chip legend-shell">generic manager / StateCommand shell</span>
-      <span class="legend-chip legend-table">construction + immutable table owner</span>
-      <span class="legend-chip legend-payload">per-environment payload owner</span>
-      <span class="legend-chip legend-term">boundary / published output</span>
+    <div class="kicker">03 · source representation → robot frames → reset</div>
+    <h2>Representation protocols connect sources to robots without product adapters</h2>
+    <div class="seq">
+      <div class="node data"><b>source artifact</b><small>HumEnv HDF5 · released BFM joblib</small></div><div class="arrow">→</div>
+      <div class="node data"><b>format decoder</b><small>identity · native fields · fps · checksum</small></div><div class="arrow">→</div>
+      <div class="node data"><b>representation protocol</b><small>generalized coordinate · pose axis-angle · local-body pose</small></div><div class="arrow">→</div>
+      <div class="node robot"><b><code>MotionFrameBuilder</code></b><small>robot-owned, named by input representation</small></div><div class="arrow">→</div>
+      <div class="node data"><b><code>MotionFrames</code></b><small>exact-capacity robot-coordinate tensors</small></div><div class="arrow">→</div>
+      <div class="node data"><b><code>MotionTaskTable</code></b><small>sealed fields · clip offsets · descriptor rows · identity</small></div>
     </div>
-    <div class="diagram-scroll"><div class="architecture-grid">
-      <div class="arch-head">Position</div>
-      <div class="arch-head">Factory</div>
-      <div class="arch-head motion-root">MotionImitationEnvCfg · shared by Meta and FBM</div>
-
-      <div class="arch-branch"><code>LocomotionPositionCommandEnvCfg</code></div>
-      <div class="arch-branch"><code>FactoryBaseEnvCfg</code></div>
-      <div class="arch-branch">Meta reproduction<br><code>presets=smpl_cmu</code></div>
-      <div class="arch-branch">FBM reproduction<br><code>presets=g1_lafan</code></div>
-
-      <div class="arch-node"><b>Direct manager axes</b><code>SceneCfg</code>: preset robot + terrain + sensors<br><code>sim.dt=.01</code>, decimation 4<br>observations, actions, rewards, terminations, events, curriculum</div>
-      <div class="arch-node"><b>Direct manager axes</b><code>FactorySceneCfg</code>: robot + board + held/fixed assets<br><code>sim.dt=.01</code>, decimation 4<br>observations, actions, rewards, terminations, events, curriculum</div>
-      <div class="arch-node"><b>Resolved physical axes</b><code>SMPL_MOTION_ARTICULATION_CFG</code><br>Newton/MJWarp: <code>1/450 × 15</code><br>69-D <code>MotionMujocoControlAction</code><br><code>policy[358]</code></div>
-      <div class="arch-node"><b>Resolved physical axes</b><code>G1_MOTION_ARTICULATION_CFG</code><br>PhysX: <code>1/200 × 4</code><br>29-D <code>MotionJointPositionAction</code><br>actor 465; privileged 463</div>
-
-      <div class="arch-arrow">↓</div><div class="arch-arrow">↓</div><div class="arch-arrow">↓</div><div class="arch-arrow">↓</div>
-
-      <div class="arch-node"><b><code>commands.goal_point</code></b><code>StateCommandCfg</code><br>command variants from <code>CommandsPresetCfg</code></div>
-      <div class="arch-node"><b><code>commands.reset_state</code></b><code>StateCommandCfg</code><br><code>FactoryAssemblyAssetCommandCfg</code></div>
-      <div class="arch-node"><b><code>commands.motion</code></b><code>StateCommandCfg</code><br>same generic lifecycle shell</div>
-      <div class="arch-node"><b><code>commands.motion</code></b><code>StateCommandCfg</code><br>same generic lifecycle shell</div>
-
-      <div class="arch-arrow">↓</div><div class="arch-arrow">↓</div><div class="arch-arrow">↓</div><div class="arch-arrow">↓</div>
-
-      <div class="arch-split">
-        <div class="arch-leaf table-owner"><b>TaskTableCfg</b>→ <code>RelativeStateTaskTable</code><br><code>RetargetPipelineCfg</code>; terrain cells; IK states; spawn × target rows</div>
-        <div class="arch-leaf payload-owner"><b>Base{Foot}StatePayloadCfg</b>→ <code>CommandPayloadBase{Foot}State</code><br>robot reset; goal frame; thresholds; errors/success</div>
-      </div>
-      <div class="arch-split">
-        <div class="arch-leaf table-owner"><b>FactoryResetStateTableCfg</b>→ <code>FactoryResetStateTaskTable</code><br><code>FactoryIKPipelineCfg</code>; boards; placements; IK rows; spawn × goal pairs</div>
-        <div class="arch-leaf payload-owner"><b>FactoryAssemblyPayloadCfg</b>→ <code>FactoryAssemblyPayload</code><br>asset resets; relative frames; symmetry; errors/success</div>
-      </div>
-      <div class="arch-split">
-        <div class="arch-leaf table-owner"><b>MotionTaskTableCfg</b>→ <code>MotionTaskTable</code><br>roots/split; <code>SMPL_CMU_SOURCE_CFG</code>; SMPL reference FK + frame builder; source-row expert grid; source-frame rows; motion .8 / fall .2</div>
-        <div class="arch-leaf payload-owner"><b>MotionStatePayloadCfg</b>→ <code>MotionStatePayload</code><br>SMPL transition runtime; episode clock; mocap/fall reset; link velocity frame; no explicit history/evidence vector</div>
-      </div>
-      <div class="arch-split">
-        <div class="arch-leaf table-owner"><b>MotionTaskTableCfg</b>→ <code>MotionTaskTable</code><br>roots/split; <code>G1_LAFAN_SOURCE_CFG</code>; G1 reference FK + frame builder; uniform .02 s expert grid; clip-time rows; reference .7 / lie-down .3</div>
-        <div class="arch-leaf payload-owner"><b>MotionStatePayloadCfg</b>→ <code>MotionStatePayload</code><br>G1 transition runtime; episode clock; lie-down reset; COM velocity frame; 4-frame history + named evidence</div>
-      </div>
-
-      <div class="arch-arrow">↓</div><div class="arch-arrow">↓</div><div class="arch-arrow">↓</div><div class="arch-arrow">↓</div>
-
-      <div class="arch-output"><b>Generic output</b><br>selected row, command/error tensors, metrics; locomotion payload owns reset/goal meaning</div>
-      <div class="arch-output"><b>Generic output</b><br>selected row, command/error tensors, metrics; factory payload owns reset/assembly meaning</div>
-      <div class="arch-output"><b>Boundary</b><br><code>MotionTerminationsCfg.time_out</code>: 300 applied actions<br>exact final observation + transition facts</div>
-      <div class="arch-output"><b>Boundary</b><br><code>MotionTerminationsCfg.time_out</code>: 501 applied actions<br>exact final observation + action/history/evidence</div>
-    </div></div>
-
-    <h3>4.3 Same shell, different owned data</h3>
-    <div class="table"><table><thead><tr><th>Layer</th><th>Position</th><th>Factory</th><th>Meta · <code>smpl_cmu</code></th><th>FBM · <code>g1_lafan</code></th></tr></thead><tbody>
-      <tr><td>Environment root</td><td><code>LocomotionPositionCommandEnvCfg</code></td><td><code>FactoryBaseEnvCfg</code></td><td colspan="2"><code>MotionImitationEnvCfg</code>; one preset name resolves normal manager fields</td></tr>
-      <tr><td>Command term</td><td><code>goal_point: StateCommandCfg</code></td><td><code>reset_state: StateCommandCfg</code></td><td colspan="2"><code>motion: StateCommandCfg</code></td></tr>
-      <tr><td>Table cfg → data</td><td><code>TaskTableCfg</code> → <code>RelativeStateTaskTable</code></td><td><code>FactoryResetStateTableCfg</code> → <code>FactoryResetStateTaskTable</code></td><td colspan="2"><code>MotionTaskTableCfg</code> → <code>MotionTaskTable</code></td></tr>
-      <tr><td>Table owns</td><td>Retarget pipeline, IK states, terrain-cell spawn/target rows.</td><td>Factory IK pipeline, board/placement states, spawn/goal rows.</td><td>Artifact roots/split, SMPL source, SMPL FK/builder, source-row expert clock, motion/fall descriptors.</td><td>Artifact roots/split, G1 source, G1 FK/builder, .02 s expert clock, reference/lie-down descriptors.</td></tr>
-      <tr><td>Payload cfg → runtime</td><td><code>Base{Foot}StatePayloadCfg</code> → <code>CommandPayloadBase{Foot}State</code></td><td><code>FactoryAssemblyPayloadCfg</code> → <code>FactoryAssemblyPayload</code></td><td colspan="2"><code>MotionStatePayloadCfg</code> → <code>MotionStatePayload</code></td></tr>
-      <tr><td>Payload owns</td><td>Reset writes, goal frame, thresholds, errors/success.</td><td>Asset reset writes, assembly frames, symmetry, errors/success.</td><td>SMPL transition runtime, reference clock, mocap/fall transform.</td><td>G1 transition runtime, reference clock, lie-down transform, history/evidence.</td></tr>
-      <tr><td>Boundary owner</td><td>Position termination terms.</td><td>Factory termination terms.</td><td><code>MotionTerminationsCfg.time_out(300)</code>.</td><td><code>MotionTerminationsCfg.time_out(501)</code>.</td></tr>
-    </tbody></table></div>
-    <div class="callout good"><strong>Shared law.</strong> <code>StateCommand</code> owns only row selection and lifecycle callbacks. Each table owns immutable domain data; each payload owns per-environment interpretation and writes. Meta and FBM differ by preset values, not by environment or command classes.</div>
-
-    <h3>4.4 SMPL asset and Newton clone ownership</h3>
-    <div class="diagram-scroll"><div class="clone-proof">
-      <div class="clone-node asset"><b>Packaged native asset is sole owner</b><a href="source/isaaclab_tasks/isaaclab_tasks/core/multi_task/motion/config/robots/smpl.py"><code>scene.robot → SMPL_MOTION_ARTICULATION_CFG</code></a><br>69 native controls + passive stiffness, damping, armature<br>motion config: <code>actuators == {}</code></div>
-      <div class="clone-arrow">→</div>
-      <div class="clone-node global"><b>Global scene import</b><code>NewtonMJWarpManager.create_builder()</code> registers MuJoCo fields once<br>scoped custom-frequency traversal excludes clone sources<br>source-owned MuJoCo rows: <strong>0</strong></div>
-      <div class="clone-arrow">→</div>
-      <div class="clone-node source-builder"><b>Source builder</b>same manager builder factory + <code>SchemaResolverMjc</code><br>source-scoped import reads the native rows exactly once<br>native rows: <strong>69</strong></div>
-      <div class="clone-arrow">→</div>
-      <div class="clone-node world"><b>Concrete world</b>replication assigns the 69 source rows to one world<br>required runtime rows: <strong>69</strong><br><span class="tag measured">durable GPU record measured</span></div>
-    </div></div>
-    <div class="clone-equations">
-      <div class="clone-equation reject"><span class="tag historical">historical failure</span><br>69 leaked global <code>world=None</code> + 69 replicated <code>world=0</code> = 138</div>
-      <div class="clone-equation pass"><span class="tag measured">regression-protected construction</span><br>0 source rows in global builder + 69 source/world rows = 69</div>
+    <div class="grid three" style="margin-top:12px">
+      <div class="card data"><b><code>MotionGeneralizedCoordinateClip</code></b><small>free-root qpos/qvel; CMU HumEnv SMPL satisfies this protocol</small></div>
+      <div class="card data"><b><code>MotionPoseAxisAngleClip</code></b><small>world root translation + target-body rotation vectors; released BFM LAFAN satisfies this protocol</small></div>
+      <div class="card data"><b><code>MotionLocalBodyPoseClip</code></b><small>world root translation + parent-local rotations; enables a source-coordinate cross join</small></div>
     </div>
-    <div class="callout good"><strong>Ownership is encoded at import, not repaired afterward.</strong> <a href="source/isaaclab_newton/isaaclab_newton/cloner/newton_clone_utils.py"><code>add_usd_with_scoped_custom_frequencies</code></a> applies the ordinary USD exclusions to every registered custom-frequency filter and restores the original callback identity after import. <a href="source/isaaclab_newton/isaaclab_newton/cloner/replicate.py"><code>_build_newton_builder_from_mapping</code></a> also preserves authored MuJoCo equality rows for native MJWarp while generic Newton solvers receive converted loop/mimic constraints. Protected by <a href="source/isaaclab_newton/test/cloner/test_rename_builder_labels.py"><code>TestCloneBuilderImportOwnership</code></a> and <a href="source/isaaclab_tasks/isaaclab_tasks/core/multi_task/tests/test_motion_presets.py"><code>test_smpl_articulation_has_one_native_actuator_authority</code></a>.</div>
-    <p class="small"><strong>Evidence boundary:</strong> fail-before/pass-after builder ownership is regression tested. The final one-environment runtime probe observed all 69 rows and closed current, reached, lifecycle, fixed-model, and source-contract checks in <code>smpl_native_edge_parity_v2.json</code> (SHA-256 <code>3c0a75eefb0441b43a8889050af6ab1ac1f30ad63519109c2f2a51d4f4376f1b</code>).</p>
-  </section>
-
-  <section id="algebra">
-    <h2>5. One algebra for reward, value, and helpers</h2>
-    <p>This is the environment realization of <a href="FORWARD_BACKWARD_MATHEMATICAL_FOUNDATIONS.html#helpers">Mathematical foundations §5</a>.</p>
-    <div class="formula left">
-      \[
-      \begin{aligned}
-      \mathbf r_t &amp;= [r_t^{env},d_t,-e_t,r_t^{FB},-p_{t,1},\ldots,-p_{t,J}]^\top,\\
-      \Psi_R(x_t,a_t) &amp;= \mathbb E_\pi\!\left[\sum_{k\ge0}\gamma^k\mathbf r_{t+k}\mid x_t,a_t\right],\\
-      \mathbf y_t^R &amp;= \mathbf r_t+c_t\gamma\Psi_R^-(x_{t+1}^{reach},a_{t+1}),\\
-      Q_\alpha &amp;= \alpha^\top\Psi_R,\qquad A_\alpha=\alpha^\top A_R.
-      \end{aligned}
-      \]
+    <div class="table-wrap" style="margin-top:12px">
+      <table>
+        <thead><tr><th>Source path</th><th>Decoded clip</th><th>Consumed as</th><th>Robot-owned builder</th><th>Output</th></tr></thead>
+        <tbody>
+          <tr><td>CMU HumEnv → SMPL</td><td><code>CmuHumEnvSmplClip</code></td><td>generalized coordinates</td><td><code>SmplGeneralizedCoordinateFrameBuilder</code></td><td>SMPL frames</td></tr>
+          <tr><td>released BFM LAFAN → G1</td><td><code>LafanG1Clip</code></td><td>pose axis-angle</td><td><code>G1PoseFrameBuilder</code></td><td>G1 frames</td></tr>
+          <tr><td>CMU HumEnv → G1</td><td><code>CmuHumEnvSmplClip</code></td><td>local-body pose</td><td><code>G1LocalBodyPoseFrameBuilder</code></td><td>G1 frames</td></tr>
+        </tbody>
+      </table>
     </div>
-    <div class="table"><table><thead><tr><th>Channel</th><th>Immediate owner</th><th>Temporal anchor</th><th>Gradient owner</th></tr></thead><tbody>
-      <tr><td>Environment reward / physical evidence</td><td>Environment transition runtime</td><td>Applied action and reached physics</td><td>No environment gradient; learner value heads consume detached facts.</td></tr>
-      <tr><td>Expert discriminator</td><td>RSL-RL learned provider</td><td>Declared current or transition timing</td><td>D update; actor consumes frozen/provider-versioned value.</td></tr>
-      <tr><td>Own-experience density ratio</td><td>RSL-RL learned provider</td><td>Declared data law</td><td>Provider update separated from actor update.</td></tr>
-      <tr><td>Energy</td><td>RSL-RL provider</td><td>State or transition, declared once</td><td>Energy update; actor sees frozen <code>-E</code> channel.</td></tr>
-      <tr><td>General value readout</td><td>RSL-RL value model</td><td>History state and true reached state</td><td>No direct actor gradient through a state-only value target.</td></tr>
-    </tbody></table></div>
-    <h3>5.1 Partial observation is a value statement</h3>
-    <div class="formula">\[V(H_t)=w(\psi(H_t)),\qquad r_t\approx V(H_t)-\gamma V(H_{t+1}^{reach})\]</div>
-    <p><code>phi(s)</code> need not reveal immediate reward. A bootstrapped successor/history representation may still carry correct value. Therefore <code>r=w(phi)</code> is not required; exact reached/final timing is required.</p>
-    <h3>5.2 Cleaner helper migration</h3>
-    <div class="table compact"><table><thead><tr><th>Stage</th><th>Immediate provider</th><th>Unchanged environment interface</th></tr></thead><tbody>
-      <tr><td>Native reproduction</td><td>Expert discriminator + native environment evidence.</td><td>Named raw evidence, observation routes, motion facts, exact edge.</td></tr>
-      <tr><td>Own experience</td><td>Experience-trained discriminator frozen per update block.</td><td>Same channels and provider version fields.</td></tr>
-      <tr><td>Energy</td><td>Calibrated <code>-E</code> state/transition channel.</td><td>Same timing/sign/continuation declaration.</td></tr>
-      <tr><td>General value</td><td>Linear \(\alpha^\top\Psi\) where compositional; nonlinear <code>h(psi)</code> only deliberately.</td><td>Same current/reached/final contract.</td></tr>
-    </tbody></table></div>
-  </section>
-
-  <section id="contracts">
-    <h2>6. Unified construction and runtime contracts</h2>
-    <h3>6.1 Concrete objects</h3>
-    <div class="table"><table><thead><tr><th>Object</th><th>Owns</th><th>Hard invariant</th><th>Lifetime</th></tr></thead><tbody>
-      <tr><td><code>ArticulationCfg</code> / live articulation</td><td>Physical asset, joints, bodies, actuators, defaults, limits, simulator ordering.</td><td>The scene has exactly one robot authority.</td><td>Config / whole environment.</td></tr>
-      <tr><td><code>MotionSkeleton</code></td><td>Source names, hierarchy, rest transforms, joint axes, rotation/root conventions.</td><td>Equal shape with unequal semantics is incompatible.</td><td>Construction provenance.</td></tr>
-      <tr><td><code>MotionClipIndex</code></td><td>Ordered clip IDs, counts, offsets, fps, split, validity, source/content identities.</td><td>Order and exact total frame count are immutable.</td><td>Whole table.</td></tr>
-      <tr><td><code>MotionFrameSource</code></td><td>Decoded clips in exactly the inspected order.</td><td><code>clips()</code> agrees with <code>inspect()</code>.</td><td>Construction only.</td></tr>
-      <tr><td><code>MotionFrameBuilder</code></td><td>Source→simulator conversion policy, shared reference kinematics, live axis resolution, construction identity.</td><td>Outputs live joint order and explicitly named reference frames.</td><td>Construction only.</td></tr>
-      <tr><td><code>MotionTaskTable.Frames</code></td><td>Separate contiguous float32 columns sharing one frame axis.</td><td>Required reset groups complete; optional reference-frame groups all-or-none.</td><td>Whole environment.</td></tr>
-      <tr><td><code>MotionTaskTable</code></td><td>Frames, axis names, clip metadata, task-row mode, task rows, reset-source probabilities, priorities, RNG.</td><td>Every valid clip covered; rows never cross clip time; metadata sealed.</td><td>Whole environment.</td></tr>
-      <tr><td><code>MotionStatePayload</code></td><td>Selected clip/time/source, preallocated resolver, reset writes, history, evidence, motion facts.</td><td>Table axes match the live articulation before any reset.</td><td>Whole environment; values change per reset/edge.</td></tr>
-      <tr><td>Transition runtime</td><td>Profile-specific current capture, reached measurement, environment reward, action/evidence publication.</td><td>One lifecycle interface; no source parsing or learner state.</td><td>Whole environment.</td></tr>
-    </tbody></table></div>
-
-    <h3>6.2 Two explicit semantic axes</h3>
-    <div class="table"><table><thead><tr><th>Axis</th><th>Meaning</th><th>Native SMPL</th><th>Native/cross G1</th><th>Validation sites</th></tr></thead><tbody>
-      <tr><td><code>joint_names</code></td><td>Exact live-articulation order of <code>joint_position</code>/<code>joint_velocity</code>.</td><td>Resolved simulator coordinates, even when source labels differ.</td><td>Resolved G1 articulation order.</td><td>Builder, table width, payload, action term, evaluator, expert bridge.</td></tr>
-      <tr><td><code>reference_frame_names</code></td><td>Exact order of optional position/rotation/velocity reference-frame columns.</td><td>Empty: native 358-D observation is stored directly.</td><td>Live physical body names followed by the released derived head frame.</td><td>Builder, table width, tracking evaluator, G1 expert projection.</td></tr>
-    </tbody></table></div>
-    <div class="callout good"><strong>Why both axes are necessary.</strong> Joint coordinates control/reset the simulator; reference frames define observation/tracking geometry. A derived head frame is not a simulated rigid body, so forcing both through one body-name list would reintroduce the ambiguity the refactor removed.</div>
-
-    <h3>6.3 Trajectory columns and consumers</h3>
-    <div class="table"><table><thead><tr><th>Column group</th><th>Interpolation</th><th>Required by</th><th>Storage rule</th></tr></thead><tbody>
-      <tr><td>Root position / rotation / linear / angular velocity</td><td>Linear, slerp, linear, linear</td><td>Reset and reference</td><td>All four required.</td></tr>
-      <tr><td>Joint position / velocity</td><td>Linear</td><td>Reset, reference, expert features</td><td>Both required and width-equal to <code>joint_names</code>.</td></tr>
-      <tr><td>Reference-frame position / rotation / linear / angular velocity</td><td>Linear, slerp, linear, linear</td><td>G1 privileged/expert/tracking paths</td><td>All four or none; axis equals <code>reference_frame_names</code>.</td></tr>
-      <tr><td>Source observation</td><td>Left sample</td><td>SMPL expert/native observation oracle</td><td>Optional 2-D column.</td></tr>
-    </tbody></table></div>
-
-    <h3>6.4 Logical transition</h3>
-    <div class="formula left">\[\tau_t=\{o_t,a_t^{behavior},a_t^{emitted},o_{t+1}^{reach},o_{t+1}^{returned},o_{t+1}^{final},terminated,truncated,action\_applied,final\_valid,r_t^{env},e_t,\nu_t,m_t\}.\]</div>
-    <div class="table compact"><table><thead><tr><th>Group</th><th>Distinction that must survive</th></tr></thead><tbody>
-      <tr><td>Observation</td><td>Same-Step returned state differs from reached state on done rows.</td></tr>
-      <tr><td>Action</td><td>Raw behavior action differs from processed action used by last-action/history and from physical torque.</td></tr>
-      <tr><td>Boundary</td><td>Episode continuation, bootstrap continuation, action validity, and context continuation are not one mask.</td></tr>
-      <tr><td>Evidence</td><td>Raw named transition facts are anchored and signed once.</td></tr>
-      <tr><td>Motion</td><td>Clip, reference time, episode-relative phase, reset source, and tail validity are explicit.</td></tr>
-    </tbody></table></div>
-  </section>
-
-  <section id="timing">
-    <h2>7. Time, reset, history, and exact final state</h2>
-    <div class="formula">\[\Delta t_{physics}\xrightarrow{decimation}\Delta t_{control},\qquad \Delta t_{source}=1/f_{clip}\]</div>
-    <div class="table"><table><thead><tr><th>Choice</th><th>SMPL-CMU</th><th>G1-LAFAN / G1-CMU</th><th>Common law</th></tr></thead><tbody>
-      <tr><td>Reference descriptor</td><td>One degenerate <code>[t,t]</code> row per source frame.</td><td>One continuous <code>[0,t_end]</code> row per clip.</td><td>Descriptor always selects clip plus reset-time interval.</td></tr>
-      <tr><td>Query</td><td>Source-row exact lookup.</td><td>Seconds→frame0/frame1/alpha with clip-end clamp.</td><td>Positions/velocities lerp, rotations slerp, source observation left-samples.</td></tr>
-      <tr><td>Reset source</td><td>Motion frame or fall.</td><td>Reference or lie-down.</td><td>Independent multinomial draw owned by table RNG.</td></tr>
-      <tr><td>Tail</td><td colspan="2">Episode may outlive the reference clip.</td><td>Tail validity and elapsed time are returned; no silent wrap.</td></tr>
-    </tbody></table></div>
-
-    <h3>7.1 Reset order</h3>
-    <ol>
-      <li>StateCommand samples a task row.</li>
-      <li>The table returns clip and reset-time interval; table RNG samples reset source and time.</li>
-      <li>The payload resolves reset columns into preallocated simulator-ready tensors.</li>
-      <li>The selected reset transform applies fall/lie-down policy using the same RNG owner.</li>
-      <li>The payload writes root and joint state to the live articulation.</li>
-      <li>Reference clock, episode phase, tail state, history eligibility, and transition runtime reset atomically.</li>
-    </ol>
-
-    <h3>7.2 Reached/bootstrap selection</h3>
-    <div class="formula left">\[o_{t+1}^{reach}=\begin{cases}o^{final}_{t+1}&amp;\text{same-step done and final-valid}\\o_t&amp;\text{same-step done and final unavailable (counted approximation)}\\o^{returned}_{t+1}&amp;\text{otherwise}\end{cases},\qquad c_t^{boot}=\mathbf 1[\neg terminated_t].\]</div>
-    <p>The learner chooses reached state once at transition reconstruction. Exact final is always preferred. Truncation bootstraps from the true final state; termination does not bootstrap but still needs the true reached state for evidence and timing.</p>
-
-    <h3>7.3 History</h3>
-    <p>Every history route declares source names, widths, order, length, update point, reset fill, and seed eligibility. G1 consumes processed action plus reached robot facts, excludes the external reset seed, and appends only applied transitions.</p>
-  </section>
-
-  <section id="runtime">
-    <h2>8. Construction and runtime architecture</h2>
-    <h3>8.1 Preset fork and construction join</h3>
-    <div class="diagram-scroll"><div class="fork">
-      <div class="root"><strong><code>presets=name</code></strong><br>one public selection</div>
-      <div class="fork-arrow">→</div><div class="axis"><b>Scene axis</b><br>direct robot articulation, ground, contact sensor</div>
-      <div class="join"><b>Trajectory builder factory</b><br>source skeleton + live joint/body names + shared reference kinematics</div>
-      <div class="out"><b>MotionTaskTable</b><br>trajectory columns + named axes + clip metadata + descriptor/sampling state</div>
-      <div class="next"><b>Payload / runtime / learner</b><br>reset · reference · history · evidence · final · expert rows</div>
-      <div class="fork-arrow">→</div><div class="axis"><b>Table axis</b><br>artifact roots, split, source, reference FK, builder, expert grid, row/reset laws</div>
-      <div class="fork-arrow">→</div><div class="axis"><b>Payload axis</b><br>transition runtime, clock, reset transform, history, evidence</div>
-      <div class="fork-arrow">→</div><div class="axis"><b>Other MDP axes</b><br>action, observation, framework timing, events, termination count</div>
-    </div></div>
-    <p>The join is the core correction: target order comes from the live scene articulation. Source structure and exact reference kinematics inform conversion, but neither becomes a second runtime robot.</p>
-
-    <h3>8.2 Construction sequence</h3>
-    <div class="diagram-scroll"><div class="sequence">
-      <div class="seq"><b>Resolve</b><small>all preset axes</small></div><div class="seq-arrow">→</div>
-      <div class="seq"><b>Snapshot</b><small>declared config after overrides; before <code>gym.make</code></small></div><div class="seq-arrow">→</div>
-      <div class="seq"><b>Create scene</b><small>live articulation exists; runtime config may normalize in place</small></div><div class="seq-arrow">→</div>
-      <div class="seq"><b>Open source</b><small>verify split hash/counts</small></div><div class="seq-arrow">→</div>
-      <div class="seq"><b>Build frames</b><small>allocate once; stream clips</small></div><div class="seq-arrow">→</div>
-      <div class="seq"><b>Seal table</b><small>axes, rows, priorities, RNG</small></div><div class="seq-arrow">→</div>
-      <div class="seq"><b>Attach runtime</b><small>payload then transition state</small></div>
-    </div></div>
-    <div class="callout good"><strong>Identity lifecycle.</strong> Semantic environment identity comes from the pre-construction snapshot; materialized task-table, expert, observation, and checkpoint identities come from the live environment and runner. Constructor normalization can therefore change runtime paths without rewriting the experiment declaration.</div>
-    <div class="codeblock">MotionImitationEnv.__init__
-  resolve_cfg_presets(cfg)
-  super().__init__(cfg)  # scene and managers
-
-StateCommand task-table construction
-  table_cfg = cfg.commands.motion.task_table
-  split  = source_cfg.train or source_cfg.evaluation
-  source = source_cfg.open_split(table_cfg.source_artifact_root, split)
-  index  = source.inspect(); verify hash, clip count, frame count
-  builder = table_cfg.frame_builder_factory(env)  # consumes live robot + table-owned reference FK
-  table   = MotionTaskTable.build(source, index, builder, task_row_mode, reset_sources)
-  payload = MotionStatePayload(cfg, env, table)
-
-MotionImitationEnv.load_managers
-  runtime = cfg.commands.motion.payload.transition_state_factory(env, payload)
-  payload.attach_transition_state(runtime)</div>
-
-    <h3>8.3 Runtime owner matrix</h3>
-    <div class="table"><table><thead><tr><th>Responsibility</th><th>Table</th><th>StateCommand</th><th>Payload</th><th>Transition runtime</th><th>Environment</th><th>RSL-RL</th></tr></thead><tbody>
-      <tr><td>Clip metadata, trajectory columns, descriptor rows, priorities/RNG</td><td class="owner-dot">●</td><td class="owner-empty">·</td><td class="owner-empty">·</td><td class="owner-empty">·</td><td class="owner-empty">·</td><td class="owner-empty">·</td></tr>
-      <tr><td>Selected task-row IDs and manager callbacks</td><td class="owner-empty">·</td><td class="owner-dot">●</td><td class="owner-empty">·</td><td class="owner-empty">·</td><td class="owner-empty">·</td><td class="owner-empty">·</td></tr>
-      <tr><td>Per-env clip/time/reset source, reset writes, reference, history</td><td class="owner-empty">·</td><td class="owner-empty">·</td><td class="owner-dot">●</td><td class="owner-empty">·</td><td class="owner-empty">·</td><td class="owner-empty">·</td></tr>
-      <tr><td>Profile-specific reached evidence and environment reward</td><td class="owner-empty">·</td><td class="owner-empty">·</td><td class="owner-empty">·</td><td class="owner-dot">●</td><td class="owner-empty">·</td><td class="owner-empty">·</td></tr>
-      <tr><td>Physics, observation manager, Same-Step reset, final publication</td><td class="owner-empty">·</td><td class="owner-empty">·</td><td class="owner-empty">·</td><td class="owner-empty">·</td><td class="owner-dot">●</td><td class="owner-empty">·</td></tr>
-      <tr><td>Expert projection, online replay, F/B/D/actor/value</td><td class="owner-empty">·</td><td class="owner-empty">·</td><td class="owner-empty">·</td><td class="owner-empty">·</td><td class="owner-empty">·</td><td class="owner-dot">●</td></tr>
-    </tbody></table></div>
-
-    <h3>8.4 Hot path</h3>
-    <ul>
-      <li>Preallocate per-environment clip/time/frame indices, interpolation scratch, reset state, reference outputs, history, evidence, and edge buffers.</li>
-      <li>No file I/O, source decoding, reference-model creation, per-environment Python, or duplicate trajectory corpus in <code>step()</code>.</li>
-      <li>Runtime resolver writes into fixed tensors; table convenience views may allocate only outside the graph-critical path.</li>
-      <li>Use Torch until a representative benchmark and direct Warp capture test show a material gain.</li>
-      <li>Use upstream exact final observation; any selective final optimization belongs in the shared observation manager, not a motion patch.</li>
-    </ul>
-  </section>
-
-  <section id="storage">
-    <h2>9. Memory, bandwidth, and theoretical limits</h2>
-    <div class="callout good"><strong>Current layout.</strong> Trajectory storage is a set of separate contiguous columns sharing frame axis <code>F</code>, not one packed <code>[F,W]</code> tensor. Memory is the exact sum of present columns plus compact table metadata and task/sampling tensors.</div>
-    <div class="table"><table><thead><tr><th>Corpus</th><th>Columns</th><th>Scalars/frame</th><th>Derived float32 bytes</th><th>Meaning</th></tr></thead><tbody>
-      <tr><td>SMPL-CMU train</td><td>Root 13 + joints 138 + observation 358</td><td>509</td><td>1,486,905,052 bytes</td><td>Exact reset plus direct native/expert observation.</td></tr>
-      <tr><td>SMPL-CMU test</td><td>Same columns</td><td>509</td><td>179,909,104 bytes</td><td>182 clips / 88,364 frames before compact metadata.</td></tr>
-      <tr><td>G1-LAFAN train</td><td>Joints 58 + 31 reference frames × 13</td><td>461</td><td>476,858,400 bytes</td><td>The derived head is explicit; logical root facts are zero-copy views of physical reference-frame row 0.</td></tr>
-      <tr><td>G1 reset lower bound</td><td>Joints 58 + one physical root frame × 13</td><td>71</td><td>73,442,400 bytes</td><td>Root reset facts come from the body row, never a duplicate root column; expert/tracking still require the full reference axis.</td></tr>
-      <tr><td>G1 expert projection</td><td>64 + 463</td><td>527</td><td>Separate learner-lifetime corpus when constructed.</td><td>Must be reported separately from environment table memory.</td></tr>
-    </tbody></table></div>
-    <p class="small">The G1 row arithmetic is <code>29 q + 29 qd + 31 × (3 position + 4 rotation + 3 linear velocity + 3 angular velocity) = 461</code> float32 scalars. Root position, rotation, and velocities are logical aliases of reference-frame row 0, so reset and interpolation reuse the same stored bytes instead of carrying a second 13-scalar root group.</p>
-    <div class="codeblock">stored G1 frame (461 float32)
-  joint_position[29] + joint_velocity[29]
-  body_position[31,3] + body_rotation[31,4]
-  body_linear_velocity[31,3] + body_angular_velocity[31,3]
-
-logical reset root (zero-copy views, no stored columns)
-  root_position         = body_position[:, 0]
-  root_rotation         = body_rotation[:, 0]
-  root_linear_velocity  = body_linear_velocity[:, 0]
-  root_angular_velocity = body_angular_velocity[:, 0]</div>
-
-    <h3>9.1 Lifetime graph</h3>
-    <div class="card">
-      <div class="life"><strong>Source reader + decoded clip</strong><div class="life-track"><div class="life-bar life-build">construction</div></div><span>released after build</span></div>
-      <div class="life"><strong>Builder + reference scratch</strong><div class="life-track"><div class="life-bar life-build">construction</div></div><span>not runtime robot state</span></div>
-      <div class="life"><strong>Table columns + metadata</strong><div class="life-track"><div class="life-bar life-run">whole environment</div></div><span>sealed trajectory facts</span></div>
-      <div class="life"><strong>Payload/resolver/history/evidence</strong><div class="life-track"><div class="life-bar life-run">whole environment</div></div><span>values reset/step in place</span></div>
-      <div class="life"><strong>Episode clock / selected descriptor</strong><div class="life-track"><div class="life-bar life-episode">episode</div></div><span>per environment</span></div>
-      <div class="life"><strong>Reached/final edge values</strong><div class="life-track"><div class="life-bar life-edge">one transition</div></div><span>copied into replay</span></div>
-      <div class="life"><strong>Expert projection / expert buffer</strong><div class="life-track"><div class="life-bar life-run">learner lifetime</div></div><span>account separately</span></div>
+    <div class="callout ok" style="margin-top:10px"><strong>Coordinate ownership:</strong> <code>smpl_humenv_reference_kinematics</code> lives beside <code>cmu_humenv_smpl_coordinates.py</code> because it interprets native HumEnv coordinates. The robot builder receives that interpreter; it does not own or rename the source convention.</div>
+    <div class="callout stop" style="margin-top:10px"><strong>Forbidden:</strong> dataset-named robot builders such as “G1 CMU builder” or “G1 LAFAN builder.” Builders name the representation they consume; source identifiers stay at the config boundary.</div>
+    <h3>One immutable table; one mutable sampler; reset-only payload</h3>
+    <div class="grid three">
+      <div class="card data"><b>Table</b><small>immutable fields, interpolation rules, clip metadata, sampled expert views</small></div>
+      <div class="card data"><b>Sampler</b><small>GPU RNG, clip priorities, descriptor rows, reset branch, reset time</small></div>
+      <div class="card env"><b>Payload</b><small>fixed reset scratch, one selected-row decode, articulation write</small></div>
     </div>
-    <div class="formula">\[M_{peak}\approx M_{table}+M_{largest\ decoded\ clip}+M_{builder\ scratch}+M_{source\ reader}+M_{runtime}+M_{learner\ expert}.\]</div>
-    <div class="formula">\[W_{step}=W_{physics}(N,decimation)+W_{obs}(N)+W_{reference}(N)+W_{evidence}(N)+W_{final}(N_{done}).\]</div>
-    <p>Report construction time/peak, resident table memory, expert-corpus memory, environment steps/s, transitions/s, learner update time, and final-capture overhead separately. A faster learner cannot hide a slow environment, and a compact table cannot hide a duplicate expert corpus.</p>
+    <h3>Reset path—not a reference clock</h3>
+    <div class="flow">
+      <div class="node data"><b>task row</b><small>clip id + legal reset-time range</small></div><div class="arrow">→</div>
+      <div class="node data"><b>sample once at reset</b><small><code>reference</code> or an explicit synthetic branch</small></div><div class="arrow">→</div>
+      <div class="node robot"><b>write simulator state</b><small>root pose/velocity + joint position/velocity</small></div>
+    </div>
+    <div class="callout ok" style="margin-top:10px"><strong>Unified vocabulary:</strong> both fidelity presets call real motion <code>reference</code>; SMPL may mix <code>fall</code>, while G1 may mix <code>lie_down</code>. After reset, <code>MotionStatePayload.update()</code> is a no-op and no command clock advances.</div>
+    <h3>Expert path uses an independent declared sampling clock</h3>
+    <div class="flow">
+      <div class="node data"><b>same immutable table</b><small>source fps remains provenance</small></div><div class="arrow">→</div>
+      <div class="node learner"><b><code>table.sample(mode, step_seconds)</code></b><small>source rows or uniform-before-source-end</small></div><div class="arrow">→</div>
+      <div class="node learner"><b>expert buffer</b><small>clip-safe windows · projection · schema/hash</small></div>
+    </div>
+    <div class="table-wrap" style="margin-top:12px">
+      <table>
+        <thead><tr><th>Owner</th><th>Owns</th><th>Explicitly does not own</th></tr></thead>
+        <tbody>
+          <tr><td><code>motion/data/source.py</code></td><td>decoded representation protocols and source lifetime</td><td>target robot, retarget policy</td></tr>
+          <tr><td><code>motion/data/sources</code></td><td>transport, source coordinates/interpreter, checksum</td><td>live robot, policy, replay</td></tr>
+          <tr><td><code>motion/robots/*/reference.py</code></td><td>representation-to-robot frame construction</td><td>dataset transport or dataset identity</td></tr>
+          <tr><td><code>MotionTaskTable</code></td><td>robot-coordinate trajectory tensors and descriptors</td><td>per-env episode state, reward coefficients</td></tr>
+          <tr><td><code>MotionSampler</code></td><td>mutable sampling policy and priorities</td><td>model mode, EMD geometry</td></tr>
+          <tr><td><code>MotionStatePayload</code></td><td>one reset batch and fixed scratch</td><td>history, transition evidence, scalar reward, reference-time advancement</td></tr>
+        </tbody>
+      </table>
+    </div>
   </section>
 
-  <section id="failures">
-    <h2>10. Phase 2 failures converted into Phase 3 gates</h2>
-    <div class="table"><table><thead><tr><th>Failure class</th><th>Correct owner</th><th>Required oracle</th></tr></thead><tbody>
-      <tr><td>Evaluation mutates RNG, command clock, priorities, or replay.</td><td>Explicit environment evaluation transaction + runner transaction.</td><td>Pre/post hashes for Python/NumPy/Torch/table RNG, command/event clocks, replay, normalizers, priorities.</td></tr>
-      <tr><td>External reset creates an invalid replay edge.</td><td>Generic transition collector.</td><td>Close exact reached edge, seed a new node, refresh returned observation.</td></tr>
-      <tr><td>Raw action enters last-action/history.</td><td>Action term + transition runtime.</td><td>Elementwise behavior→processed→target→torque→history trace.</td></tr>
-      <tr><td>Reset seed enters G1 history.</td><td>Payload history lifecycle.</td><td>Reset plus first four reached transitions against native trace.</td></tr>
-      <tr><td>Post-reset returned observation used as reached.</td><td>Environment final publication + generic bridge.</td><td>Timeout/termination × final present/missing matrix with counts and overhead.</td></tr>
-      <tr><td>Current/reached discriminator timing shifts.</td><td>RSL reward-channel declaration.</td><td>Controlled one-step shift test and provider version freeze.</td></tr>
-      <tr><td>Expert current/reached windows cross clips.</td><td>Expert buffer construction.</td><td>Sentinel monotonic clips, exact cardinality, all window lengths.</td></tr>
-      <tr><td>Global step substitutes for context phase.</td><td>Payload motion facts + learner context lifecycle.</td><td>Episode reset, context change, tail, and exact assignment tests.</td></tr>
-      <tr><td>Normalization changes during supposedly pure forward.</td><td>Runner/model normalization transaction.</td><td>Repeated-forward purity and explicit update/freeze/version checks.</td></tr>
-    </tbody></table></div>
-    <div class="callout stop"><strong>No long training before edge parity.</strong> Shape tests allowed Phase 2 errors to run for millions of transitions. Phase 3 requires elementwise source→table, reset, action, observation, history, evidence, expert, and final-edge parity first.</div>
+  <section id="edge">
+    <div class="kicker">04 · logical transition and one helper algebra</div>
+    <h2>The environment publishes facts; one typed algebra derives every learner view</h2>
+    <div class="seq">
+      <div class="node env"><b>current observation</b><code>o<sub>t</sub></code></div><div class="arrow">→</div>
+      <div class="node robot"><b>processed action</b><code>a<sub>t</sub></code></div><div class="arrow">→</div>
+      <div class="node env"><b>decimated simulation</b><small>completed physical edge</small></div><div class="arrow">→</div>
+      <div class="node data"><b>reached transition facts</b><small>controller · articulation · sensor</small></div><div class="arrow">→</div>
+      <div class="node env"><b>termination + exact final obs</b><small>captured before autoreset</small></div><div class="arrow">→</div>
+      <div class="node env"><b>same-step autoreset</b><small>returned done row may be next episode</small></div>
+    </div>
+    <div class="flow" style="margin-top:12px">
+      <div class="node learner"><b><code>ValueHelperCfg</code></b><small>name · route · ordered terms · pessimism · actor coefficient · normalization · target τ</small></div><div class="arrow">+</div>
+      <div class="node learner"><b><code>ValueTermCfg</code></b><small>name · coefficient · source · timing · context dependence · sign</small></div><div class="arrow">→</div>
+      <div class="node learner"><b>one <code>to_dict()</code> derivation</b><small>validates uniqueness and materializes the RSL-RL runtime contract once</small></div>
+    </div>
+    <div class="grid four" style="margin-top:12px">
+      <div class="card learner"><b>model</b><small><code>value_heads</code>: helper name, route, ordered reward channels</small></div>
+      <div class="card learner"><b>replay</b><small><code>reward_channels</code>, stored-evidence names, timing/sign/context policy</small></div>
+      <div class="card learner"><b>objectives</b><small><code>value_cfg</code>: coefficients, actor weight, pessimism, normalization, target τ</small></div>
+      <div class="card env"><b>environment reward binding</b><small>zero or one <code>source="environment"</code> transition term derives <code>environment_reward_name</code></small></div>
+    </div>
+    <div class="callout ok" style="margin-top:10px"><strong>Current Motion result:</strong> the environment reward manager is empty and no helper declares an environment term, so <code>environment_reward_name=None</code>. Discriminator reward is recomputed; BFM physical channels are stored transition evidence. There is no second list that can drift from the helper algebra.</div>
+    <div class="table-wrap" style="margin-top:12px">
+      <table>
+        <thead><tr><th>Value term</th><th>Fact owner</th><th>Term source / timing</th><th>Derived use</th></tr></thead>
+        <tbody>
+          <tr><td>G1 torque · action rate · torque limit</td><td><code>G1JointPositionAction</code> retains clipped PD torque and current/previous processed action</td><td><code>stored_evidence</code> / transition</td><td>auxiliary scalar value helper</td></tr>
+          <tr><td>joint-position limit · ankle roll</td><td>articulation state</td><td><code>stored_evidence</code> / transition</td><td>coefficient and negative sign from <code>ValueTermCfg</code></td></tr>
+          <tr><td>contact · foot orientation · slippage</td><td>contact sensor + articulation</td><td><code>stored_evidence</code> / transition</td><td>normalized auxiliary objective</td></tr>
+          <tr><td>discriminator</td><td>expert/current learner state</td><td><code>recomputed</code> / state</td><td>discriminator value helper</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout stop" style="margin-top:10px"><strong>No robot reward module:</strong> G1 controller evidence is implemented beside the controller in <code>robots/g1/actions.py</code>. A <code>robots/g1/rewards.py</code> file or environment reward term would invent the wrong owner.</div>
+    <div class="grid two" style="margin-top:12px">
+      <div class="formula">ψ<sub>t</sub> = E[φ<sub>t</sub> + γψ<sub>t+1</sub>]<br>V<sub>w</sub>(s<sub>t</sub>) = w(ψ<sub>t</sub>)<br>r<sub>t</sub> = V<sub>w</sub>(s<sub>t</sub>) − γV<sub>w</sub>(s<sub>t+1</sub>)</div>
+      <div class="callout ok"><strong>Partial observation remains valid.</strong> Immediate reward need not be recoverable from one visible frame. Exact reached/final timing lets successor/history state carry value without imposing <code>r = w(φ)</code>.</div>
+    </div>
+  </section>
+
+  <section id="learner">
+    <div class="kicker">05 · generic FB connector</div>
+    <h2>Expert, online replay, and tracking meet only at typed learner boundaries</h2>
+    <div class="lanes">
+      <div class="lane-label data">expert</div>
+      <div class="node data"><b>sampled table view</b><small>clip-safe fields + declared clock</small></div>
+      <div class="node robot"><b>named projector</b><small>robot-owned pure projection callable</small></div>
+      <div class="node learner"><b>expert buffer</b><small>immutable frames · windows · priorities</small></div>
+      <div class="node learner"><b>B / D targets</b><small>generic RSL-RL code</small></div>
+    </div>
+    <div class="lanes">
+      <div class="lane-label env">online</div>
+      <div class="node env"><b>VecEnv wrapper</b><small>current · returned · final · done · extras</small></div>
+      <div class="node learner"><b>algorithm history + mode</b><small>algorithm owns derived history and <code>eval_mode()</code>/<code>train_mode()</code></small></div>
+      <div class="node learner"><b>GPU replay</b><small>logical edges + named evidence</small></div>
+      <div class="node learner"><b>F / actor / helpers</b><small>unified update</small></div>
+    </div>
+    <h3>Tracking consumes only the RSL VecEnv contract</h3>
+    <div class="flow">
+      <div class="node env"><b>wrapper <code>step()</code></b><small>returned TensorDict · reward · dones · extras</small></div><div class="arrow">→</div>
+      <div class="node learner"><b>default reached row</b><small>use the wrapper-returned observation for continuing rows</small></div><div class="arrow">→</div>
+      <div class="node learner"><b>done + consumed row</b><small>replace with exact <code>extras["final_obs"]</code>; honor <code>final_obs_valid</code> when present</small></div>
+    </div>
+    <div class="callout ok" style="margin-top:10px"><strong>One-way fallback:</strong> a missing <code>final_obs</code> is allowed only when no consumed done row requires it. A required missing or invalid final observation fails; tracking never falls back to the pre-step state.</div>
+    <h3>One tracker; two explicit protocols</h3>
+    <div class="table-wrap">
+      <table class="center">
+        <thead><tr><th>Protocol</th><th>Metric rows</th><th>Context window</th><th>Reset frame</th><th>Horizon</th><th>Assignment</th></tr></thead>
+        <tbody>
+          <tr><td><code>tracking_source_edge</code></td><td>source edges 1…T−1</td><td>8</td><td>excluded</td><td>full sequence required</td><td>explicit uniform, stable</td></tr>
+          <tr><td><code>tracking_reset_frame</code></td><td>reset frame 0…T−1</td><td>1</td><td>included</td><td>declared truncation allowed</td><td>explicit uniform, seeded shuffle</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>GPU evaluation stores representative traces, not every duplicated lane</h3>
+    <div class="flow">
+      <div class="node learner"><b>N environment lanes</b><small>targets assigned uniformly; every target covered</small></div><div class="arrow">→</div>
+      <div class="node learner"><b>K representatives</b><small>one selected lane per target sequence</small></div><div class="arrow">→</div>
+      <div class="node learner"><b><code>UniformAssignmentWorkspace</code></b><small>K representative-only traces × K expert targets; no N-lane trace bank</small></div>
+    </div>
+    <div class="grid three" style="margin-top:12px">
+      <div class="card learner"><b>VecEnv wrapper owns rollout API</b><small>rollout uses only wrapper <code>reset()</code>/<code>step()</code>; <code>.unwrapped</code> appears only in configured binding expressions</small></div>
+      <div class="card learner"><b>Algorithm owns mode/history</b><small><code>ForwardBackwardTrackingLifecycle</code> uses algorithm mode APIs</small></div>
+      <div class="card robot"><b>Robot owns geometry</b><small><code>smpl_humenv_tracking_pose</code> 358→214 · <code>g1_bfm_observation_state_pose</code> 29→23</small></div>
+    </div>
+    <div class="callout stop" style="margin-top:10px"><strong>Forbidden:</strong> <code>motion/rsl_rl/g1_tracking.py</code>. Robot × algorithm × metric is a product module. The only lifecycle is generic <a href="source/isaaclab_tasks/isaaclab_tasks/core/multi_task/rl/rsl_rl/forward_backward_tracking.py"><code>ForwardBackwardTrackingLifecycle</code></a>; projections declare <code>projection</code> and <code>assignment_metric="uniform_assignment"</code>.</div>
   </section>
 
   <section id="files">
-    <h2>11. Current file ownership</h2>
-    <div class="table"><table><thead><tr><th>Location</th><th>Owns</th><th>Does not own</th></tr></thead><tbody>
-      <tr><td><code>motion_env_cfg.py</code></td><td>Position-style environment root and direct preset axes.</td><td>Source decoding, tensor conversion, learner math.</td></tr>
-      <tr><td><code>motion_env.py</code></td><td>Preset resolution, runtime attachment, exact evaluation reset, edge/final publication, evaluation transaction.</td><td>Trajectory construction or FB updates.</td></tr>
-      <tr><td><code>motion/config/robots/{smpl,g1}.py</code></td><td>Direct articulation configs and exact reference-kinematics factories.</td><td>Runtime trajectory storage or source choice.</td></tr>
-      <tr><td><code>motion/config/{sources,source_skeletons}.py</code></td><td>Source identity, split paths/hashes/counts, source skeleton factory, opener.</td><td>Target articulation or runtime reset.</td></tr>
-      <tr><td><code>motion/config/{environment,presets,profiles,simulations}.py</code></td><td>Preset axes for MDP components, timing, row/reset laws, routes, evidence, expert grid.</td><td>A second environment or aggregate runtime object.</td></tr>
-      <tr><td><code>motion/data/{skeleton,clip_index,sample_grid}.py</code></td><td>Source coordinate identity, ordered clip metadata, expert sample clock.</td><td>Simulator state.</td></tr>
-      <tr><td><code>motion/data/importers/</code></td><td>Strict HDF5/joblib/canonical source readers and fingerprints.</td><td>Step-time work.</td></tr>
-      <tr><td><code>motion/trajectory/{smpl,g1,g1_smpl,_time}.py</code></td><td>Source→simulator trajectory conversion using live axes and shared reference kinematics.</td><td>Manager lifecycle or learner state.</td></tr>
-      <tr><td><code>motion/mdp/commands/motion_task_table.py</code></td><td>Trajectory columns, explicit axes, clip/time descriptors, sampling, identity, convenience reference views.</td><td>Per-environment clocks or physics writes.</td></tr>
-      <tr><td><code>motion/mdp/commands/motion_state_payload.py</code></td><td>Per-env reset/reference/history/evidence/motion facts and fixed-size resolver.</td><td>Source parsing or F/B/D.</td></tr>
-      <tr><td><code>motion/mdp/{actions,observations,reset_sources,runtime,tracking}.py</code></td><td>Live action law, observation facts, reset transforms, edge measurement, evaluation.</td><td>Dataset decoding.</td></tr>
-      <tr><td><code>motion/rsl_rl.py</code></td><td>Task-table→expert-feature projection and expert buffer identity.</td><td>Online final reconstruction or algorithm implementation.</td></tr>
-      <tr><td><code>motion/config/agents/rsl_rl_fb_cfg.py</code></td><td>Named routes, reward channels, replay/model/algorithm presets, expert provider selection.</td><td>Environment physics.</td></tr>
-    </tbody></table></div>
+    <div class="kicker">06 · ownership and negative gates</div>
+    <h2>The tree exposes real boundaries and deletes product glue</h2>
+    <pre><code>core/multi_task/
+├── position_env_cfg.py
+├── factory_env_cfg.py
+├── motion_env_cfg.py                         # readable root; HumEnv/BFM fidelity choices visible
+├── motion/
+│   ├── data/
+│   │   ├── source.py                         # three decoded-representation protocols
+│   │   ├── frames.py                         # MotionFrameSource · MotionFrameBuilder · MotionFrames
+│   │   └── sources/
+│   │       ├── cmu_humenv_smpl.py            # HumEnv HDF5 transport/decoder
+│   │       ├── cmu_humenv_smpl_coordinates.py# HumEnv schema + exact coordinate interpreter
+│   │       └── lafan_g1_29dof.py             # released BFM joblib transport/decoder
+│   ├── mdp/commands/
+│   │   ├── motion_task_table.py              # immutable robot-coordinate trajectories
+│   │   ├── motion_sampler.py                 # mutable task-row/reset policy
+│   │   └── motion_state_payload.py           # fixed-capacity reset materialization
+│   ├── robots/
+│   │   ├── smpl/reference.py                 # generalized-coordinate → SMPL builder
+│   │   ├── g1/reference.py                   # pose/local-body-pose → G1 builders
+│   │   └── g1/actions.py                     # controller + controller-owned transition evidence
+│   └── config/agents/rsl_rl_fb_cfg.py        # semantic selections of generic typed FB cfg
+├── rl/rsl_rl/
+│   ├── rl_cfg.py                             # ValueHelper/ValueTerm + typed connector
+│   ├── forward_backward_expert.py            # domain-neutral expert construction
+│   └── forward_backward_tracking.py          # wrapper-only generic rollout/metric/lifecycle
+└── metrics/uniform_assignment.py             # reusable GPU assignment distance</code></pre>
+    <div class="table-wrap" style="margin-top:12px">
+      <table>
+        <thead><tr><th>Gate</th><th>Rejected structure</th><th>Required direction</th></tr></thead>
+        <tbody>
+          <tr><td>root shape</td><td>custom <code>motion_env.py</code>, hidden product resolver, runtime config resolution</td><td>one visible <code>MotionImitationEnvCfg</code></td></tr>
+          <tr><td>command umbrella</td><td>table/factory state attached directly to env cfg</td><td><code>commands.motion → table + payload</code></td></tr>
+          <tr><td>source representation</td><td>dataset switches inside builders; dataset-named robot builders</td><td>source protocols inward; representation-named <code>MotionFrameBuilder</code> outward</td></tr>
+          <tr><td>coordinate interpreter</td><td>HumEnv MJCF interpreter owned by SMPL robot code</td><td>HumEnv interpreter beside the source-coordinate declaration</td></tr>
+          <tr><td>helper algebra</td><td>parallel head/replay/objective/reward lists</td><td>one ordered <code>ValueHelperCfg</code>/<code>ValueTermCfg</code> derivation</td></tr>
+          <tr><td>controller evidence</td><td><code>robots/g1/rewards.py</code> or copied controller math</td><td><code>G1JointPositionAction</code> owns torque/action history; observations expose facts</td></tr>
+          <tr><td>tracking boundary</td><td>direct base-env step, <code>.unwrapped</code> rollout, pre-step done approximation</td><td>RSL VecEnv reset/step plus exact required <code>final_obs</code></td></tr>
+          <tr><td>learner boundary</td><td>generic RSL-RL imports Motion, SMPL, G1, HumEnv, BFM, CMU, or LAFAN</td><td>typed protocols + configured bindings/projectors</td></tr>
+          <tr><td>product files</td><td><code>motion/evaluation.py</code>, <code>motion/rsl_rl.py</code>, <code>motion/tracking.py</code>, <code>g1_tracking.py</code></td><td>generic RL connector + robot projectors</td></tr>
+          <tr><td>math/events</td><td>local quaternion/SciPy utilities; duplicate standard event functions</td><td>IsaacLab math + shared kinematics + standard events</td></tr>
+          <tr><td>compatibility glue</td><td>legacy aliases, fallback imports, deprecated new-branch paths</td><td>migrate controlled callers and delete</td></tr>
+        </tbody>
+      </table>
+    </div>
   </section>
 
-  <section id="validation">
-    <h2>12. Validation ladder</h2>
-    <ol>
-      <li><strong>Static source and axes:</strong> skeleton/clip identity, <code>joint_names</code>, <code>reference_frame_names</code>, shapes, dtypes, units, frames, interpolation.</li>
-      <li><strong>Pure trajectory construction:</strong> importer + shared reference kinematics + builder against HumEnv/MotionLib/canonical analytical oracles.</li>
-      <li><strong>Table seal:</strong> exact capacity, ordered clips, named axes, identity, row coverage, clip-safe time ranges, probabilities.</li>
-      <li><strong>Single reset:</strong> one selected row into live root/joint state; compare current observation.</li>
-      <li><strong>Action/control:</strong> behavior, processed action, target, torque, next state.</li>
-      <li><strong>Short trace:</strong> 1/2/8/boundary steps; current/reached/history/evidence/reference elementwise.</li>
-      <li><strong>Final matrix:</strong> timeout/termination, final present/missing, native next-step reconstruction, tail.</li>
-      <li><strong>Vector scale:</strong> 1/16/1,024 environments, asynchronous done, clone invariance, allocation/synchronization checks.</li>
-      <li><strong>Systems:</strong> construction peak, resident table and expert memory, step/final/provider throughput.</li>
-      <li><strong>Learning integration:</strong> exact expert attachment, deterministic first-update canaries, then one production-semantics update and strict checkpoint reload in each native live environment.</li>
-      <li><strong>Convergence boundary:</strong> Phase 2 retains the separate predeclared algorithm non-inferiority gates. Phase 3 reran the environment-owned native reproduction needed to close the corrected root: the SMPL 0.5M–5.0M curve. It does not relabel this as cross-source or Phase 4 evidence.</li>
-      <li><strong>Composition:</strong> canonical/non-native source→robot path with retarget, simulation, and policy errors reported separately.</li>
-    </ol>
-    <div class="table"><table><thead><tr><th>Boundary</th><th>Oracle</th><th>Failure owner</th></tr></thead><tbody>
-      <tr><td>Source→clip index</td><td>Known clip order, ids, fps, counts, content hash.</td><td>Source config/importer.</td></tr>
-      <tr><td>Source + reference kinematics→table frames</td><td>Root/q/body/velocity/observation fieldwise parity.</td><td>Trajectory builder or shared kinematics.</td></tr>
-      <tr><td>Table axes→live articulation</td><td>Exact joint-name equality; named reference-frame equality where used.</td><td>Preset axis or builder.</td></tr>
-      <tr><td>Task table→payload reset/reference</td><td>Same clip/time, interpolation, reset transform, tail.</td><td>Table row law or payload.</td></tr>
-      <tr><td>Action→physics</td><td>Native processed action, target, torque, successor.</td><td>Action term/articulation config.</td></tr>
-      <tr><td>Physics→observation/history/evidence</td><td>Native short trace.</td><td>Observation/runtime/history term.</td></tr>
-      <tr><td>Done→final→replay</td><td>Exact pre-reset row and fallback count.</td><td>Environment/generic bridge.</td></tr>
-      <tr><td>Table + expert grid→expert buffer</td><td>Routes, offsets, current/reached windows, cardinality, clip ids.</td><td>Motion expert projection/buffer.</td></tr>
-      <tr><td>Evaluation transaction</td><td>Owned RNG and control clocks restored; all environments then reset and the learner receives that reset before training resumes.</td><td>Environment evaluator/runner extension.</td></tr>
-    </tbody></table></div>
+  <section id="evidence">
+    <div class="kicker">07 · evidence model</div>
+    <h2>Historical authenticity and current-code compatibility are different questions</h2>
+    <div class="grid two">
+      <div class="card data"><b>Historical receipt</b><small>exact source hash + config/protocol hash + artifact identity + measurement</small><div class="bar"><span style="width:100%"></span></div><small>immutable; never rewrite hashes to match today</small></div>
+      <div class="card learner"><b>Current compatibility status</b><small>compares today’s producer/schema/protocol with the historical declaration</small><div class="bar"><span style="width:66%;background:linear-gradient(90deg,var(--learner),var(--pending))"></span></div><small>separate status; it never mutates the old receipt</small></div>
+    </div>
+    <div class="flow" style="margin-top:12px">
+      <div class="node data"><b>old measured run</b><small>authentic historical evidence</small></div><div class="arrow">≠</div>
+      <div class="node gate"><b>mechanically replaced hash</b><small>invalid provenance</small></div><div class="arrow">≠</div>
+      <div class="node learner"><b>fresh current run</b><small>only route to a current numerical receipt</small></div>
+    </div>
+    <div class="table-wrap" style="margin-top:12px">
+      <table>
+        <thead><tr><th>Compatibility status</th><th>Meaning</th><th>Numerical claim</th></tr></thead>
+        <tbody>
+          <tr><td><code>exact_producer_match</code></td><td>historical producer identity equals the current producer</td><td>historical measurement belongs to that exact producer</td></tr>
+          <tr><td><code>declared_contract_match_requires_runtime_validation</code></td><td>declared schema/protocol matches; producer identity changed</td><td>fresh runtime measurement still required</td></tr>
+          <tr><td><code>declared_contract_mismatch</code></td><td>current declared contract differs</td><td>old receipt remains authentic but is not current-code evidence</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Verified local CPU receipts visible at this handoff</h3>
+    <div class="grid four">
+      <div class="card data"><b>274 pass / 1 skip</b><small>integrated Motion suite</small></div>
+      <div class="card env"><b>99 pass</b><small>Position + Factory regressions</small></div>
+      <div class="card env"><b>351 pass</b><small>core math + config</small></div>
+      <div class="card learner"><b>330 pass</b><small>Phase 3 evidence suite</small></div>
+      <div class="card learner"><b>264 pass / 24 skip</b><small>adjacent RSL-RL suite</small></div>
+      <div class="card learner"><b>44 pass / 1 skip</b><small>P0 tracking focus; overlapping subset</small></div>
+      <div class="card data"><b>153 pass / 1 skip</b><small>source/config focus; overlapping subset</small></div>
+    </div>
+    <div class="callout wait" style="margin-top:10px"><strong>No grand total:</strong> the focused P0 tracking and source/config receipts overlap broader suites. None of these CPU counts imply fresh current-code GPU convergence or EMD; those claims require their own receipts.</div>
   </section>
 
   <section id="execution">
-    <h2>13. As-built structure and 3A–3G execution</h2>
-    <div class="review-head">
-      <p class="eyebrow">Current code map</p>
-      <h3>Preset axes → live articulation + source/kinematics → task table → payload/runtime → two learner inputs</h3>
-      <p>This is the only active architecture diagram in the document. The historical section below records why earlier work was retired; it is not an alternate implementation.</p>
+    <div class="kicker">08 · execution state</div>
+    <h2>Structural closure is distinct from numerical closure</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Layer</th><th>Decisive check</th><th>Verified evidence</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>Motion composition</td><td>readable root; independent source/robot/timing/helper axes; typed representation joins</td><td>274 pass / 1 skip; source/config focus 153 / 1</td><td><span class="status ok">green</span></td></tr>
+          <tr><td>Position + Factory</td><td>shared command/payload foundation, beta value shift, success timing and force semantics</td><td>99 pass</td><td><span class="status ok">green</span></td></tr>
+          <tr><td>shared core</td><td>quaternion/kinematics/config semantics</td><td>351 pass</td><td><span class="status ok">green</span></td></tr>
+          <tr><td>generic tracking</td><td>wrapper-only rollout, exact required final observation, mode/history and compact assignment</td><td>P0 focus: 44 pass / 1 skip</td><td><span class="status ok">green</span></td></tr>
+          <tr><td>FB implementation</td><td>typed runner boundary; replay/model/algorithm/value-helper semantics</td><td>adjacent RSL-RL: 264 pass / 24 skip</td><td><span class="status ok">green</span></td></tr>
+          <tr><td>evidence logic</td><td>authentic receipts, compatibility separation, current consumers</td><td>Phase 3 evidence: 330 pass</td><td><span class="status ok">green</span></td></tr>
+          <tr><td>current GPU training</td><td>fresh HumEnv SMPL and BFM-Zero G1 short training + strict reload</td><td>receipt required</td><td><span class="status wait">pending receipt</span></td></tr>
+          <tr><td>current EMD</td><td>fresh current checkpoint, exact protocol, immutable output bundle</td><td>receipt required</td><td><span class="status wait">pending receipt</span></td></tr>
+          <tr><td>cross training</td><td>G1–CMU and later robot/source Cartesian products</td><td>Phase 4</td><td><span class="status no">stop boundary</span></td></tr>
+        </tbody>
+      </table>
     </div>
-
-    <h3>13.A Root architecture map</h3>
-    <div class="flow">
-      <div class="node"><b>Preset name</b><code>smpl_cmu</code>, <code>g1_lafan</code>, <code>g1_cmu</code><br><span class="small">broadcast across typed config axes</span></div><div class="arrow">→</div>
-      <div class="node"><b>Scene robot</b>Direct <code>ArticulationCfg</code><br><span class="small">only physical robot authority</span></div><div class="arrow">+</div>
-      <div class="node"><b>Source + exact kinematics</b>Clip index, source skeleton, live names, reference model</div><div class="arrow">→</div>
-      <div class="node"><b>Trajectory builder</b>Simulator-ordered columns + explicit axes</div><div class="arrow">→</div>
-      <div class="node"><b>MotionTaskTable</b>Frames + clips + task rows + sampling state</div><div class="arrow">→</div>
-      <div class="node"><b>Payload/runtime</b>Reset + reference + history + evidence + final</div>
+    <div class="flow" style="margin-top:13px">
+      <div class="node gate"><b>mismatch</b><small>name the violated owner or axis</small></div><div class="arrow">→</div>
+      <div class="node env"><b>root repair</b><small>change the abstraction, not a fallback branch</small></div><div class="arrow">→</div>
+      <div class="node learner"><b>evidence ladder</b><small>narrow semantic gate → full suite → fresh numerical receipt</small></div>
     </div>
-
-    <h3>13.B Exact composition-axis matrix</h3>
-    <div class="table"><table><thead><tr><th>Axis</th><th><code>smpl_cmu</code></th><th><code>g1_lafan</code></th><th><code>g1_cmu</code></th></tr></thead><tbody>
-      <tr><td>Scene robot</td><td><code>SMPL_MOTION_ARTICULATION_CFG</code></td><td><code>G1_MOTION_ARTICULATION_CFG</code></td><td><code>G1_MOTION_ARTICULATION_CFG</code></td></tr>
-      <tr><td>Source</td><td><code>SMPL_CMU_SOURCE_CFG</code></td><td><code>G1_LAFAN_SOURCE_CFG</code></td><td><code>SMPL_CMU_SOURCE_CFG</code></td></tr>
-      <tr><td>Reference kinematics</td><td><code>smpl_reference_kinematics</code></td><td><code>g1_reference_kinematics</code></td><td><code>g1_reference_kinematics</code></td></tr>
-      <tr><td>Trajectory builder</td><td><code>smpl_humenv_frame_builder</code></td><td><code>g1_lafan_frame_builder</code></td><td><code>g1_smpl_humenv_frame_builder</code></td></tr>
-      <tr><td>Descriptor rows</td><td>One row per source frame</td><td>One time-range row per clip</td><td>One time-range row per clip</td></tr>
-      <tr><td>Reset sampling law</td><td>Clip categorical → discrete frame</td><td>Clip categorical → continuous time</td><td>Clip categorical → continuous time</td></tr>
-      <tr><td>Reset transform</td><td><code>SmplMocapAndFallReset</code></td><td><code>G1ReferenceAndLieDownReset</code></td><td><code>G1ReferenceAndLieDownReset</code></td></tr>
-      <tr><td>Action</td><td>69-D native control</td><td>29-D joint-position PD</td><td>29-D joint-position PD</td></tr>
-      <tr><td>Observation/runtime</td><td>SMPL 358 / SMPL runtime</td><td>G1 routes / G1 runtime</td><td>G1 routes / G1 runtime</td></tr>
-      <tr><td>Simulation</td><td>450 Hz physics / 30 Hz control</td><td>200 Hz physics / 50 Hz control</td><td>200 Hz physics / 50 Hz control</td></tr>
-      <tr><td>Expert grid</td><td>Source rows</td><td>0.02-s samples before source end</td><td>0.02-s samples before source end</td></tr>
-    </tbody></table></div>
-
-    <h3>13.C One logical edge</h3>
-    <div class="diagram-scroll"><div class="sequence">
-      <div class="seq"><b>Current</b><code>o_t</code><small>capture actor/history inputs</small></div><div class="seq-arrow">→</div>
-      <div class="seq"><b>Applied</b><code>a_t</code><small>process action; mark edge valid</small></div><div class="seq-arrow">→</div>
-      <div class="seq"><b>Reached</b><code>s_{t+1}</code><small>post-physics state</small></div><div class="seq-arrow">→</div>
-      <div class="seq"><b>Measure</b><code>r_t,e_t</code><small>record history/reference facts</small></div><div class="seq-arrow">→</div>
-      <div class="seq"><b>Same-Step</b><code>final_obs</code><small>pre-reset exact or explicit missing</small></div><div class="seq-arrow">→</div>
-      <div class="seq"><b>Replay</b><small>choose reached once; preserve masks</small></div>
-    </div></div>
-
-    <h3>13.D Two learner inputs, one algorithm</h3>
-    <div class="flow">
-      <div class="node"><b>Online lane</b>Named observations + reward + action provenance + evidence + final provenance</div><div class="arrow">→</div>
-      <div class="node"><b>Generic transition bridge</b>Current/reached reconstruction, replay rows, history reconstruction</div><div class="arrow">↘</div>
-      <div class="node"><b>Unified FB learner</b>One replay, expert buffer, F/B/D, actor, value heads, normalization</div>
-    </div>
-    <div class="flow">
-      <div class="node"><b>Expert lane</b><code>payload.table</code> + resolved expert sample grid</div><div class="arrow">→</div>
-      <div class="node"><b>Motion expert projection</b>SMPL 358 or G1 64+463, clip offsets and ids</div><div class="arrow">↗</div>
-      <div class="node"><b>Same learner</b>No profile branch below representation routing</div>
-    </div>
-
-    <h3>13.E Clip-first reset sampling</h3>
-    <div class="flow">
-      <div class="node"><b>Clip mass [C]</b><code>clip_priorities</code><br><span class="small">equal total mass by default</span></div><div class="arrow">→</div>
-      <div class="node"><b>Clip draw</b><code>multinomial → c</code></div><div class="arrow">→</div>
-      <div class="node"><b>Within clip</b>SMPL: discrete frame<br>G1: continuous time range</div><div class="arrow">→</div>
-      <div class="node"><b>Payload bind</b><code>t = lerp(low, high, U)</code></div>
-    </div>
-    <div class="table compact"><table><thead><tr><th>Law</th><th>Probability</th><th>Disposition</th></tr></thead><tbody>
-      <tr><td>Uniform over all frame rows</td><td><code>P(c) ∝ frame_count(c)</code></td><td><span class="tag historical">retired</span></td></tr>
-      <tr><td>SMPL source frames</td><td><code>P(c,k) = P(c) / frame_count(c)</code></td><td><span class="tag decision">clip categorical → discrete frame</span></td></tr>
-      <tr><td>G1 clip ranges</td><td><code>P(c,t) = P(c) · Uniform[0,T_c]</code></td><td><span class="tag decision">clip categorical → continuous time</span></td></tr>
-    </tbody></table></div>
-    <div class="formula left"><strong>One owner:</strong> <code>task_row_mode</code> determines the versioned <code>task_sampling_law</code>; config, table, environment identity, systems receipts, and training receipts all record that same value.</div>
-
-    <h3>13.F Frozen post-sampler evidence</h3>
-    <div class="table"><table><thead><tr><th>Gate</th><th>Frozen result</th><th>Receipt SHA-256</th><th>Status</th></tr></thead><tbody>
-      <tr><td>3C · G1 task table</td><td>862 clips · 258,600 frames · 461 physical / 474 logical scalars · continuous-time law · bundle <span class="hash">562df1a7444dff245a080a596239c7d4c77fd59f403672c08b9b6a15ef5d855d</span></td><td class="hash">0d639e5800ac1309ab2a697d66e69a9feca4da4bc8c8ce0b05a2365a39beae8d</td><td><span class="tag measured">closed</span></td></tr>
-      <tr><td>3C · SMPL task table</td><td>1,638 clips · 730,307 frames · 509 physical scalars · discrete-frame law · bundle <span class="hash">f282d913b749a4b79aaaa42dd5715999d15c95825cc6f85e155e5cde2b7abe24</span></td><td class="hash">ea020946950e8e96adbc744830a785fc27895da023e4948c71dd0b987a030eb3</td><td><span class="tag measured">closed</span></td></tr>
-      <tr><td>3E · systems matrices</td><td>Five paired 1,024-env capture trials plus two repeatability trials at each of 1/16/1,024 environments · 16/16 raw records per composition · capture-loss upper 95%: G1 0.437336%, SMPL 0.348165% · peak allocation Δ 0 B</td><td>G1 <span class="hash">688c80bc763078544b2f48c87d5c74c30c2f851cd3bbc80f3a07216c14444f02</span><br>SMPL <span class="hash">af7f3c7d4fa113726e601c46d35dd9cde8b98864cd4543ab95ad3930a86a1d83</span></td><td><span class="tag measured">passed</span></td></tr>
-      <tr><td>3E · native edge</td><td>G1 v3 exact synthetic contract passed · SMPL v2 lifecycle/current/reached/source contract passed</td><td>G1 <span class="hash">de337b35c6d98e8f4c4845e078ab4e9b93873c8f0282b623bbf791009b48f006</span><br>SMPL <span class="hash">3c0a75eefb0441b43a8889050af6ab1ac1f30ad63519109c2f2a51d4f4376f1b</span></td><td><span class="tag measured">passed</span></td></tr>
-      <tr><td>3F · strict reload</td><td>Contract <span class="hash">3c31aaac1f1f99bae5d2f1a5fb1ffa2240fb4d4b41af976c478cefd1a3063a7d</span> · G1 12,288 transitions / 16 updates / 2,111,935,133 B · SMPL 51,000 / 50 / 543,224,459 B · strict CPU mmap</td><td>G1 <span class="hash">ee093e105caf2fc1b354637859a887b881ec0e49bc4f553c37c501df9c3e5b0e</span><br>SMPL <span class="hash">fd302ea9f0934346b40aa333abc011b75e1ad1e87678d587f4468fd43fee330e</span></td><td><span class="tag measured">passed</span></td></tr>
-      <tr><td>3G · native G1 quality</td><td>862/862 clips · EMD 1.31727 vs 1.31711 · observation EMD 1.14444 vs 1.14462 · broad return 0.93135 remains diagnostic/inconclusive</td><td class="hash">5d0ba30082d932a06f7913ebb8b312336503346a07a3eec89505eeb404f0a1f7</td><td><span class="tag decision">tracking pass</span></td></tr>
-      <tr><td>3G · G1–CMU structure</td><td>182 clips / 88,364 frames · retarget mean 0.13024 rad · 64,883 active rows · 0 unexpected done · 6,471.48 rows/s</td><td>retarget <span class="hash">8c15ec846d35428d341d5f8b1d3197451ad532667e62d6aaecca5aa841abeee9</span><br>simulator <span class="hash">595fbe9c7c6ada89ca21b4f69dbdbc9fbcc0f1665d942a38307a9df1827049a2</span></td><td><span class="tag measured">structural pass</span></td></tr>
-      <tr><td>SMPL · corrected EMD K10</td><td>0.5M 2.94953 · 1.0M 2.42706 · 1.5M 2.05517 · 2.0M 1.89185 · 2.5M 1.98045 · 3.0M 1.87838 · 3.5M 1.83718 · 4.0M 1.78487 · 4.5M 1.78825 · 5.0M 1.72414 · all ten packed evaluations cover 182/182 clips</td><td>manifest <span class="hash">95ca453cba9232b320ca41cde1fe77fc30f52ce6a795b5b0f9a0879a29bd375d</span><br>500k <span class="hash">e0b1c1c17be08554da52dc87e5a64a78c466153af178e97f28d822492cc75d5d</span><br>5.0M <span class="hash">d5b5da1807413c3d7b830d64e0fa3e8f64a7c7e94a48f9819b0e31fa65941b2d</span></td><td><span class="tag measured">10/10 closed</span></td></tr>
-    </tbody></table></div>
-    <div class="callout good"><strong>Evidence identity follows implementations, not wrappers.</strong> Callable hashing uses <code>inspect.unwrap</code>. The strict SMPL K10 consumer recomputes six evaluator/inference identities, the complete 77-source environment closure, seven native Python owners, two robot assets, the semantic digest, batch identity, and every one of the 182 clip rows and statistics.</div>
-    <div class="callout good"><strong>Complete Phase 3 suite: 308 passed.</strong> No Phase 3 test or evidence slot remains pending.</div>
-    <div class="callout good"><strong>Corrected SMPL curve closed only with post-sampler data.</strong> The canonical manifest contains all ten packed receipts from 0.5M through 5.0M transitions under <code>phase3-smpl-cmu-post-sampler-seed0</code>; mean EMD improves from 2.94953 to 1.72414, with 182/182 clips at every milestone.</div>
-    <div class="flow">
-      <div class="node"><b>Future broad-reward bank</b>clip · time · reset/fall · randomization · counter-noise · push</div><div class="arrow">→</div>
-      <div class="node"><b>Identity closure</b>same episode-bank SHA<br>same realized-assignment SHA</div><div class="arrow">→</div>
-      <div class="node"><b>Paired authority</b>margin · confidence · acceptance frozen first</div>
-    </div>
-    <div class="callout good"><strong>Decision boundary.</strong> G1 tracking is authoritative; broad reward remains diagnostic until the paired episode-bank contract exists. G1–CMU retarget plus simulator execution closes structural composition; learned cross-policy quality begins in Phase 4.</div>
-
-    <div class="gate-chart">
-      <div class="gate-row"><strong>3A</strong><div class="gate-cell gate-done">native MDP/data contracts</div><div class="gate-cell gate-done">trace/source fixtures</div><div class="gate-cell gate-done">transition algebra</div><div class="gate-cell gate-done">carried forward</div></div>
-      <div class="gate-row"><strong>3B</strong><div class="gate-cell gate-done">generic shell narrowed</div><div class="gate-cell gate-done">Position migration</div><div class="gate-cell gate-done">Factory migration</div><div class="gate-cell gate-done">systems evidence</div></div>
-      <div class="gate-row"><strong>3C</strong><div class="gate-cell gate-done">typed sources/index</div><div class="gate-cell gate-done">table owns frames</div><div class="gate-cell gate-done">explicit axes</div><div class="gate-cell gate-done">clip-first law + v4 identity</div></div>
-      <div class="gate-row"><strong>3D</strong><div class="gate-cell gate-done">SMPL builder</div><div class="gate-cell gate-done">G1 builder</div><div class="gate-cell gate-done">SMPL→G1 builder</div><div class="gate-cell gate-done">final oracle sweep frozen</div></div>
-      <div class="gate-row"><strong>3E</strong><div class="gate-cell gate-done">one direct env root</div><div class="gate-cell gate-done">three compositions</div><div class="gate-cell gate-done">systems identity refresh</div><div class="gate-cell gate-done">native simulator parity</div></div>
-      <div class="gate-row"><strong>3F</strong><div class="gate-cell gate-done">expert attachment</div><div class="gate-cell gate-done">deterministic canaries</div><div class="gate-cell gate-done">strict reload receipts</div><div class="gate-cell gate-done">corrected SMPL K10: 10/10</div></div>
-      <div class="gate-row"><strong>3G</strong><div class="gate-cell gate-done">cross path implemented</div><div class="gate-cell gate-done">retarget + simulator measured</div><div class="gate-cell gate-done">structural composition closed</div><div class="gate-cell gate-na">learned cross policy → Phase 4</div></div>
-    </div>
-
-    <h3>13.G Phase gates and review questions</h3>
-    <div class="table"><table><thead><tr><th>Phase</th><th>Gate</th><th>Failure response</th></tr></thead><tbody>
-      <tr><td>3C</td><td>Exact source counts/identity, exact-capacity table, explicit axes, measured current storage and construction peak.</td><td>Change table/builder ownership, not add a compatibility store.</td></tr>
-      <tr><td>3D</td><td>Fieldwise native oracle across first/middle/last clips, interpolation, velocities, observation basis, action/control.</td><td>Correct source semantics, shared kinematics, or builder equations.</td></tr>
-      <tr><td>3E</td><td>Both native compositions pass reset, edge, final, history/evidence, 1/16/1,024 determinism, and capture overhead.</td><td>Correct environment/payload/runtime abstraction.</td></tr>
-      <tr><td>3F</td><td>Expert route/cardinality and deterministic canaries pass; both native environments produce exact updates and strict reload receipts; the corrected SMPL 0.5M–5.0M EMD curve is frozen.</td><td>Correct the owning representation/bridge/sampling law, then regenerate—not patch—the invalid receipts.</td></tr>
-      <tr><td>3G</td><td>Real non-native composition reports retarget and simulator errors separately under closed identity; native reproduction remains intact. Learned-policy cross evaluation is explicitly outside Phase 3.</td><td>Correct the composition boundary or admit the structural generality claim is false.</td></tr>
-    </tbody></table></div>
-
-    <details>
-      <summary>Current code evidence — narrow excerpts</summary>
-      <h4>Direct environment root</h4>
-      <div class="codeblock">class MotionSceneCfg(InteractiveSceneCfg):
-    robot: ArticulationCfg = RobotArticulationCfg()
-
-class MotionImitationEnvCfg(ManagerBasedRLEnvCfg):
-    scene = MotionSceneCfg(...)
-    sim = MotionSimulationPresetsCfg()
-    actions = MotionActionsPresetsCfg()
-    observations = MotionObservationsPresetsCfg()
-    commands = MotionCommandsPresetsCfg()
-    events = MotionEventsPresetsCfg()
-    rewards = MotionRewardsCfg()
-    terminations = MotionTerminationsPresetsCfg()
-    curriculum = MotionCurriculumPresetsCfg()
-    decimation = MotionControlDecimationCfg()
-    episode_length_s = MotionEpisodeLengthSecondsCfg()</div>
-      <h4>Table construction inputs</h4>
-      <div class="codeblock">MotionTaskTableCfg(
-    source=source,
-    source_artifact_root=source_artifact_root,
-    reference_artifact_root=reference_artifact_root,
-    motion_split=motion_split,
-    frame_builder_factory=frame_builder_factory,
-    reference_kinematics_factory=reference_kinematics_factory,
-    expert_sample_grid=expert_sample_grid,
-    task_row_mode=task_row_mode,
-    reset_sources=reset_sources,
-)</div>
-      <h4>Clip-first reset law</h4>
-      <div class="codeblock"># MotionTaskTable.sample_rows
-clip_slots = torch.multinomial(
-    self.clip_priorities,
-    count,
-    replacement=True,
-    generator=self.generator,
-)
-task_rows = self._sampling_row_starts[clip_slots]
-if self._task_row_mode == "source_frames":
-    fraction = torch.rand(count, device=self.device, generator=self.generator)
-    task_rows += torch.floor(fraction * self._sampling_row_counts[clip_slots]).to(torch.int64)
-
-# MotionStatePayload.bind
-clip_indices, reset_ranges = self.table.select(task_rows)
-reset_fraction = torch.rand(env_ids.shape[0], device=self._device, generator=self.table.generator)
-reset_time = torch.lerp(reset_ranges[:, 0], reset_ranges[:, 1], reset_fraction)</div>
-      <h4>Payload and boundary inputs</h4>
-      <div class="codeblock">MotionStatePayloadCfg(
-    transition_state_factory=transition_state_factory,
-    episode_length_steps=episode_length_steps,
-    reset_transform_factory=reset_transform_factory,
-    history_fields=history_fields,
-    raw_evidence=raw_evidence,
-    auxiliary_evidence=auxiliary_evidence,
-)
-
-MotionTerminationsCfg(
-    time_out=DoneTerm(params={"applied_actions_before_timeout": count}),
-)</div>
-      <h4>Axis closure</h4>
-      <div class="codeblock">source skeleton axis            --builder name map--&gt; table physical axis
-table.joint_names               == tuple(payload.robot.joint_names)
-table.reference_frame_names     == (*payload.robot.body_names, head_link)
-
-G1 behavior joint axis          --action.joint_ids--&gt; live articulation storage
-action.joint_position/velocity  == behavior-ordered gathered live facts
-policy state/history/action     == declared behavior joint order
-expert joint columns            == table physical --name map--&gt; behavior joint order
-
-G1 behavior body axis           --SceneEntityCfg preserve_order--&gt; live body ids
-policy privileged_state         == declared behavior body order
-expert body columns             == table physical --name map--&gt; behavior body order
-
-tracking assignment             == seeded shuffle → modulo motion → first env/motion
-tracking rollout horizon         == longest unique clip in each chunk
-tracking trace + exact EMD       == fixed-workspace GPU behavior-axis tensors</div>
-      <p class="small">Physical storage and behavior semantics are deliberately different axes. The table and reset path stay in live simulator order; the action term owns the behavior→live joint map once, observation/history read its behavior-ordered tensors, and expert projection performs the inverse name lookup once at construction. The declared G1 behavior body names are not a second robot model: they are the frozen checkpoint feature axis. This separation repaired the 27/29 joint and 27/30 body permutations found by policy-quality evaluation without changing physical storage or adding an evaluator shim.</p>
-      <h4>Environment edge publication</h4>
-      <div class="codeblock">self._motion_runtime.capture_current(self.obs_buf)
-observations, rewards, terminated, truncated, extras = super().step(action)
-extras["episode_steps"] = self._transition_episode_steps
-extras["action_applied"] = self._motion_runtime.action_applied
-extras["auxiliary_reward_evidence"] = self._motion_runtime.auxiliary_evidence
-extras["final_obs_valid"] = done if "final_obs" in extras else False</div>
-    </details>
   </section>
-
-  <section id="implemented-review" data-architecture-status="retired">
-    <div class="callout retired"><strong>Historical 3A–3D checkpoint — retired architecture.</strong> This section preserves the reasoning and numerical evidence that motivated the corrected root. Its former class graph, packed storage picture, and robot/config ownership are intentionally not reproduced here. Nothing in this section is an active implementation contract or a Phase 3 completion claim.</div>
-    <h2>Historical evidence retained after the root correction</h2>
-    <div class="table"><table><thead><tr><th>Phase</th><th>Evidence that remains scientifically useful</th><th>Architectural claim retired</th><th>Current successor</th></tr></thead><tbody>
-      <tr><td>3A</td><td>Native MDP, tensor, source, evidence, trace, autoreset, and tolerance fixtures.</td><td>None of the native facts depended on the later storage owner.</td><td>Current contracts reuse the same numerical oracles.</td></tr>
-      <tr><td>3B</td><td>StateCommand ownership migration and CPU/CUDA delegation measurements.</td><td>The motion-specific data object used by the first draft.</td><td>Generic shell + current <code>MotionTaskTable</code>/<code>MotionStatePayload</code>.</td></tr>
-      <tr><td>3C</td><td>Source fingerprints, clip counts, memory lower bounds, streaming lessons, and lookup workload shapes.</td><td>Separate packed trajectory storage and implied unnamed width axis.</td><td>Named column groups directly owned by <code>MotionTaskTable</code>.</td></tr>
-      <tr><td>3D</td><td>HumEnv and G1 numerical equations, exact reference traces, action/control parity, cross-robot hinge projection math.</td><td>A parallel robot/config wrapper and source-conversion layer detached from the live articulation.</td><td>Live-articulation-aware frame builders using shared reference kinematics.</td></tr>
-    </tbody></table></div>
-
-    <h3>Historical numerical records</h3>
-    <div class="table"><table><thead><tr><th>Record</th><th>What may be reused</th><th>What must be rerun</th></tr></thead><tbody>
-      <tr><td><a href="scripts/reinforcement_learning/forward_backward/phase3/fixtures/native_contract_manifest_v1.json">Native contract manifest</a></td><td>Reference MDP/data facts and hashes.</td><td>Only if source bytes or native revision changes.</td></tr>
-      <tr><td><a href="scripts/reinforcement_learning/forward_backward/phase3/fixtures/motion_task_table_lookup_smpl_cmu_cpu_v4.json">Current SMPL-CMU task-table record</a></td><td>Exact resolved construction identity, named 509-scalar storage, construction peak, lookup rate, oracle parity, and profile-specific implementation closure.</td><td>Only if its resolved table values, source, skeleton, robot/reference constants, builder, table, resolver, sample grid, or benchmark identity changes.</td></tr>
-      <tr><td><a href="scripts/reinforcement_learning/forward_backward/phase3/fixtures/motion_task_table_lookup_g1_lafan_cpu_v4.json">Current G1-LAFAN task-table record</a></td><td>Exact resolved construction identity, 461 physical/474 logical alias contract, construction peak, lookup rate, oracle parity, and profile-specific implementation closure.</td><td>Only if its resolved table values, source, skeleton, robot/reference constants, builder, table, resolver, sample grid, or benchmark identity changes.</td></tr>
-      <tr><td><a href="scripts/reinforcement_learning/forward_backward/phase3/fixtures/state_command_systems_v1.json">StateCommand systems record</a></td><td>Generic shell delegation cost.</td><td>Only if the generic shell changes.</td></tr>
-      <tr><td>Pre-correction environment runtime records</td><td>Expected horizon, route widths, and a diagnostic baseline.</td><td>All determinism, throughput, memory, final-cost, and completion claims.</td></tr>
-    </tbody></table></div>
-  </section>
-
-  <section id="decisions">
-    <h2>14. Frozen decisions, rejected shortcuts, and open measurements</h2>
-    <h3>14.1 Frozen</h3>
-    <ol>
-      <li>One environment class and one public preset name; normal direct config axes express compositions.</li>
-      <li><code>scene.robot</code> is the only physical robot object and the authority for live joint/body order.</li>
-      <li>Source structure, reference kinematics, and live articulation meet only in the construction-time trajectory builder.</li>
-      <li><code>MotionTaskTable</code> owns trajectory columns, explicit axes, clip identity, descriptor rows, priorities, and RNG.</li>
-      <li><code>joint_names</code> and <code>reference_frame_names</code> are separate semantic axes.</li>
-      <li>Payload owns per-environment reset/reference/history/evidence state; StateCommand remains a generic lifecycle shell.</li>
-      <li>Environment exports named raw facts and exact final provenance; RSL-RL owns learned providers and value.</li>
-      <li>Behavior/emitted action, current/reached/returned/final observation, and continuation masks remain distinct.</li>
-      <li>Native reproduction precedes common timing and helper-provider migration.</li>
-    </ol>
-
-    <h3>14.2 Rejected</h3>
-    <ul>
-      <li>Separate Meta and BFM environment classes.</li>
-      <li>A giant caller-assembled environment constructor.</li>
-      <li>A second robot model, joint map, or body layout beside the scene articulation.</li>
-      <li>One packed unnamed width axis when named column groups expose semantics directly.</li>
-      <li>Runtime source decoding, FK, or source-format branches.</li>
-      <li>Learner-owned simulator teleport/reset caches.</li>
-      <li>One ambiguous expert window or reward scalar.</li>
-      <li>Profile fallbacks that hide a failed shared invariant.</li>
-      <li>Warp kernels without representative speedup and capture evidence.</li>
-      <li>Long convergence runs before deterministic edge parity.</li>
-    </ul>
-
-    <h3>14.3 Deferred Phase 4 measurements — Phase 3 is closed</h3>
-    <div class="table"><table><thead><tr><th>Measurement</th><th>Compared choices</th><th>Decision criterion</th></tr></thead><tbody>
-      <tr><td>Trajectory columns</td><td>Reset-only vs retained reference-frame or native-observation columns.</td><td>End-to-end throughput, resident/peak memory, oracle parity.</td></tr>
-      <tr><td>Construction staging</td><td>Clip size/chunking/source reader retention.</td><td>Startup and peak without a duplicate final corpus.</td></tr>
-      <tr><td>Final computation</td><td>Dense upstream capture vs future shared selective capture.</td><td>Exact semantics and realistic overhead.</td></tr>
-      <tr><td>Lookup backend</td><td>Current Torch resolver vs measured Warp implementation.</td><td>Material gain and direct capture safety.</td></tr>
-      <tr><td>Universal timing</td><td>Native physics/control cells vs common candidates.</td><td>Both robots’ tracking, stability, learning, safety, and throughput.</td></tr>
-      <tr><td>Helper providers</td><td>Expert D, own-experience D, energy, linear/nonlinear successor readout.</td><td>Calibration, convergence, safety, composition, generalization.</td></tr>
-    </tbody></table></div>
-
-    <h3>14.4 Explicit Phase 4 handoff</h3>
-    <div class="table"><table><thead><tr><th>Phase 4 question</th><th>Required evidence</th><th>Why it is not Phase 3</th></tr></thead><tbody>
-      <tr><td>Frozen-policy transfer</td><td>Evaluate a native G1–LAFAN policy on G1–CMU with tracking, safety, termination, and helper-channel metrics.</td><td>This tests learned generalization after the environment composition itself is known to be valid.</td></tr>
-      <tr><td>Cross-source learning</td><td>Train or fine-tune on G1–CMU and compare against zero-shot, native G1–LAFAN, and source-specific baselines.</td><td>This is a new learning experiment, not a reproduction or environment-construction gate.</td></tr>
-      <tr><td>Evaluation–training closure</td><td>Use one declared observation/action/reward/helper contract for both evaluation and training; explain any remaining domain gap.</td><td>This is the central Phase 4 optimization and generalization question.</td></tr>
-    </tbody></table></div>
-
-    <div class="callout stop"><strong>Phase 3 complete; stop before Phase 4.</strong> Both native deterministic/environment/learner gates, native quality evidence, corrected SMPL K10, and the structural cross-composition retarget/simulator gate passed with durable identity-closed evidence. Frozen-policy cross evaluation, cross-source training, universal timing, and helper-provider migration begin in Phase 4.</div>
-  </section>
-
-  <footer>
-    Current architecture source: <code>source/isaaclab_tasks/isaaclab_tasks/core/multi_task/motion*</code>. Mathematical authority remains <a href="FORWARD_BACKWARD_MATHEMATICAL_FOUNDATIONS.html">Forward–Backward Mathematical Foundations</a> and <a href="SF_CRITIC_DESIGN_REVISED.html">SF Critic Design Revised</a>.
-  </footer>
-</main></body>
+</main>
+</body>
 </html>

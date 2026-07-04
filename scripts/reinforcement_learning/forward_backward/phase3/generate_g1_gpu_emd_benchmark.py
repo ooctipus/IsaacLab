@@ -17,7 +17,7 @@ from pathlib import Path
 import torch
 import warp as wp
 
-from isaaclab_tasks.core.multi_task.motion.tracking import _UniformEmdWorkspace
+from isaaclab_tasks.core.multi_task.metrics import UniformAssignmentWorkspace
 
 _CLIP_COUNT = 862
 _FRAME_COUNT = 499
@@ -32,7 +32,7 @@ def _sha256(path: Path) -> str:
 
 
 def _workspace_bytes(capacity: int, frames: int, feature_width: int) -> int:
-    """Return fixed bytes allocated by :class:`_UniformEmdWorkspace`."""
+    """Return fixed bytes allocated by :class:`UniformAssignmentWorkspace`."""
     return (
         4 * capacity * frames * frames
         + 2 * 4 * capacity * frames
@@ -52,7 +52,7 @@ def _device_uuid(properties: object) -> str:
 
 
 def _measure(
-    workspace: _UniformEmdWorkspace,
+    workspace: UniformAssignmentWorkspace,
     observed: torch.Tensor,
     target: torch.Tensor,
     output: torch.Tensor,
@@ -86,7 +86,7 @@ def main() -> None:
     wp.init()
 
     length_values = (_FRAME_COUNT,) * _CLIP_COUNT
-    workspace = _UniformEmdWorkspace(lengths=length_values, device=device, feature_width=max(_FEATURE_WIDTHS))
+    workspace = UniformAssignmentWorkspace(lengths=length_values, device=device, feature_width=max(_FEATURE_WIDTHS))
     output = torch.empty(_CLIP_COUNT, dtype=torch.float64, device=device)
     generator = torch.Generator(device=device).manual_seed(0)
     inputs = {
@@ -116,8 +116,8 @@ def main() -> None:
         )
 
     root = Path(__file__).resolve().parents[4]
-    tracking = root / "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/motion/tracking.py"
-    kernel = root / "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/motion/impl/uniform_emd_warp.py"
+    tracking = root / "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/rl/rsl_rl/forward_backward_tracking.py"
+    kernel = root / "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/metrics/impl/uniform_assignment_warp.py"
     properties = torch.cuda.get_device_properties(device)
     total_seconds = sum(float(call["seconds"]) for call in calls)
     report = {
@@ -156,8 +156,8 @@ def main() -> None:
         },
         "implementation_sha256": {
             "producer.py": _sha256(Path(__file__).resolve()),
-            "tracking.py": _sha256(tracking),
-            "uniform_emd_warp.py": _sha256(kernel),
+            "forward_backward_tracking.py": _sha256(tracking),
+            "uniform_assignment_warp.py": _sha256(kernel),
         },
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

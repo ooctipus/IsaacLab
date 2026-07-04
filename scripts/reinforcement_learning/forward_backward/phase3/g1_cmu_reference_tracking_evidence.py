@@ -74,8 +74,8 @@ def _reference_pd_behavior_action(
         * action.joint_stiffness
         / (action.cfg.action_scale * action.joint_effort_limit)
     )
-    processed.clamp_(-action.cfg.action_clip, action.cfg.action_clip)
-    behavior = processed / action.cfg.normalize_to
+    processed.clamp_(*action.cfg.clip[".*"])
+    behavior = processed / action.cfg.scale
     achievable = action.joint_default_position + default_joint_offset + processed * action.joint_target_gain
     return lookahead, bounded, achievable, behavior
 
@@ -98,7 +98,7 @@ def _policy_error_layer() -> dict[str, object]:
     return {
         "status": "not_measured_no_real_checkpoint_supplied",
         "reference_controller_is_policy_evidence": False,
-        "required_evaluator": "g1_motion_tracking_evaluator",
+        "required_evaluator": "motion_tracking_evaluator",
         "required_metrics": ["evaluation_emd", "broad_reward", "safety_violations"],
     }
 
@@ -270,18 +270,26 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
     from motion_environment_identity import (
         motion_composition_dependency_identity,
         motion_composition_semantic_sha256,
+        motion_environment_axes,
         motion_environment_dependency_identity,
     )
 
-    from isaaclab_tasks.core.multi_task.motion.data.importers import HumEnvHdf5Clips
-    from isaaclab_tasks.core.multi_task.motion.mdp.actions import MotionJointPositionAction
+    from isaaclab.envs import ManagerBasedRLEnv
+
+    from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
+
+    from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClips
     from isaaclab_tasks.core.multi_task.motion.mdp.commands import MotionStatePayload
-    from isaaclab_tasks.core.multi_task.motion.trajectory.g1_smpl import G1SmplHumEnvFrameBuilder
-    from isaaclab_tasks.core.multi_task.motion_env import MotionImitationEnv
+    from isaaclab_tasks.core.multi_task.motion.robots.g1.actions import G1JointPositionAction
+    from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1LocalBodyPoseFrameBuilder
     from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
+    from isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_tracking import (
+        forward_backward_evaluation_scope,
+        reset_tracking_sequences,
+    )
     from isaaclab_tasks.utils import resolve_presets
 
-    cfg = resolve_presets(MotionImitationEnvCfg(), selected={"g1_cmu"})
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("g1_cmu"))
     table_cfg = cfg.commands.motion.task_table
     source_cfg = table_cfg.source
     source_split = source_cfg.train if args.motion_split == "train" else source_cfg.evaluation
@@ -297,26 +305,27 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
     dependency_identity = motion_environment_dependency_identity(
         preset="g1_cmu",
         cfg=cfg,
-        importer_type=HumEnvHdf5Clips,
-        frame_builder_type=G1SmplHumEnvFrameBuilder,
+        importer_type=CmuHumEnvSmplClips,
+        frame_builder_type=G1LocalBodyPoseFrameBuilder,
         reference_artifact_root=table_cfg.reference_artifact_root,
     )
 
-    env = MotionImitationEnv(cfg=cfg)
+    env = ManagerBasedRLEnv(cfg=cfg)
+    vec_env = RslRlVecEnvWrapper(env)
     try:
         command = env.command_manager.get_term("motion")
         table = command.table
         payload = command.payload
         action = env.action_manager.get_term("joint_position")
-        if not isinstance(payload, MotionStatePayload) or not isinstance(action, MotionJointPositionAction):
+        if not isinstance(payload, MotionStatePayload) or not isinstance(action, G1JointPositionAction):
             raise TypeError("G1-CMU tracking requires the production payload and joint-position action.")
         if payload.table is not table:
             raise RuntimeError("The motion command payload must consume its command-owned task table.")
         composition_dependency_identity = motion_composition_dependency_identity(
             preset="g1_cmu",
             cfg=cfg,
-            importer_type=HumEnvHdf5Clips,
-            frame_builder_type=G1SmplHumEnvFrameBuilder,
+            importer_type=CmuHumEnvSmplClips,
+            frame_builder_type=G1LocalBodyPoseFrameBuilder,
             frame_builder_identity_sha256=table.frame_builder_identity_sha256,
             reference_artifact_root=table_cfg.reference_artifact_root,
         )
@@ -331,16 +340,25 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
             raise ValueError("Retarget evidence and simulator joint axes differ.")
         if list(table.reference_frame_names) != retarget_layer["reference_frame_names"]:
             raise ValueError("Retarget evidence and simulator reference-frame axes differ.")
-        valid_clips = torch.arange(len(table.source_clip_ids), device=env.device)[table.clip_valid]
-        if valid_clips.shape[0] < args.num_clips:
-            raise ValueError("num_clips exceeds the valid G1-CMU motion-bank clip count.")
-        selected = valid_clips[: args.num_clips]
-        selected_clip_ids = tuple(table.source_clip_ids[index] for index in selected.cpu().tolist())
+        clip_indices = torch.arange(len(table.clip_ids), device=env.device)
+        if clip_indices.shape[0] < args.num_clips:
+            raise ValueError("num_clips exceeds the G1-CMU motion-bank clip count.")
+        selected = clip_indices[: args.num_clips]
+        selected_clip_ids = tuple(table.clip_ids[index] for index in selected.cpu().tolist())
         missing_retarget = set(selected_clip_ids) - retarget_clip_ids
         if missing_retarget:
             raise ValueError(f"Simulator clips lack retarget evidence: {sorted(missing_retarget)}")
 
-        env.reset_motion_clips(selected)
+        sequence_indices = torch.arange(args.num_clips, dtype=torch.int64, device=env.device)
+        sequence_start_rows = table.clip_start_rows
+        with forward_backward_evaluation_scope(
+            vec_env,
+            command,
+            payload.evaluation_scope,
+            args.seed,
+            reset_source_name="reference",
+        ):
+            reset_tracking_sequences(vec_env, command, sequence_start_rows, sequence_indices)
         robot = payload.robot
         if table.joint_names != tuple(robot.joint_names):
             raise ValueError("The trajectory and articulation must share one physical joint axis.")
@@ -531,7 +549,7 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
             },
         }
     finally:
-        env.close()
+        vec_env.close()
 
 
 def main() -> None:

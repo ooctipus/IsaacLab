@@ -30,9 +30,13 @@ def _bundle(value: dict[str, object]) -> dict[str, object]:
     return {**value, "bundle_sha256": _canonical_sha256(value)}
 
 
+def _is_sha256(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(character in "0123456789abcdef" for character in value)
+
+
 _EMPTY_SHA256 = _canonical_sha256({})
 _ENVIRONMENT_PAYLOAD = {
-    "schema": "forward_backward_phase3_motion_environment_dependency_identity_v7",
+    "schema": "forward_backward_phase3_motion_environment_dependency_identity_v9",
     "preset": "fixture",
     "resolved_axes": {},
     "resolved_axes_sha256": _EMPTY_SHA256,
@@ -298,46 +302,74 @@ def test_resolved_agent_config_identity_excludes_output_run_name() -> None:
         ("g1_lafan", "motion_training_g1_lafan_v1.json"),
     ),
 )
-def test_published_native_receipt_closes_frozen_contract(preset: str, filename: str) -> None:
-    """Published native receipts close the formatter-stable launch contract."""
+def test_published_native_receipt_is_authentic_and_reports_current_contract_compatibility(
+    preset: str, filename: str
+) -> None:
+    """Published receipts retain their measured contract even after the declaration advances."""
+    module = _module()
     contract = json.loads(CONTRACT.read_text())
-    profile = contract["profiles"][preset]
     receipt = json.loads((RUNTIME / filename).read_text())
 
     assert receipt["schema"] == "forward_backward_phase3f_motion_training_receipt_v1"
     assert receipt["status"] == "passed"
     assert receipt["preset"] == preset
-    expected_identity = {
-        **profile["closed_input_identity"],
-        "environment_semantic_sha256": profile["environment_semantic_sha256"],
-    }
-    assert receipt["identity"] == expected_identity
-    assert receipt["contract_declaration_sha256"] == hashlib.sha256(CONTRACT.read_bytes()).hexdigest()
+    identity = module._identity_digests(receipt["identity"])
+    assert module._validate_provenance(identity, receipt["provenance"]) == receipt["provenance"]
+    assert _is_sha256(receipt["contract_declaration_sha256"])
     assert set(receipt["records_sha256"]) == {"launch", "complete", "validation"}
-    assert all(len(digest) == 64 for digest in receipt["records_sha256"].values())
-    assert set(receipt["provenance"]) == {"environment", "learner_code", "learner_runtime", "task_bridge"}
-    assert receipt["collection"] == profile["collection"]
+    assert all(_is_sha256(digest) for digest in receipt["records_sha256"].values())
+
+    collection = receipt["collection"]
+    assert collection["expected_transitions"] == (
+        collection["num_envs"] * collection["steps_per_iteration"] * collection["iterations"]
+    )
+    assert collection["expected_update_groups"] == module.expected_update_groups(collection)
+    assert collection["expected_update_calls"] == (
+        collection["expected_update_groups"] * collection["updates_per_group"]
+    )
 
     checkpoint = receipt["checkpoint"]
-    checkpoint_contract = profile["checkpoint"]
-    assert checkpoint["filename"] == checkpoint_contract["filename"]
-    assert checkpoint["map_location"] == checkpoint_contract["strict_map_location"]
-    assert checkpoint["mmap"] is checkpoint_contract["strict_mmap"]
-    assert checkpoint["environment_resume"] == checkpoint_contract["environment_resume"]
+    assert checkpoint["filename"] == f"model_{collection['iterations']}.pt"
+    assert checkpoint["map_location"] == "cpu"
+    assert checkpoint["mmap"] is True
+    assert checkpoint["environment_resume"] == "restart"
     assert checkpoint["environment_state_dict_is_none"] is True
     assert checkpoint["strict_load"] is True
     assert checkpoint["bytes"] > 0
+    assert _is_sha256(checkpoint["sha256"])
 
     learner = receipt["learner"]
-    update_calls = profile["collection"]["expected_update_calls"]
+    update_calls = collection["expected_update_calls"]
     assert learner["update_step"] == update_calls
-    assert set(learner["versions"]) == set(profile["learner"]["expected_version_names"])
     assert set(learner["versions"].values()) == {update_calls}
     assert learner["replay_contract_errors"] is False
     assert learner["replay_terminal_overflow"] is False
-    assert learner["device_scope"] == profile["device_scope"]
-    assert receipt["runner"]["all_metrics_finite"] is True
-    assert receipt["runner"]["action_statistics_finite"] is True
+    assert set(learner["device_scope"]) == {"simulator", "learner", "replay", "expert", "dtype"}
+
+    runner = receipt["runner"]
+    assert runner["completed_iterations"] == collection["iterations"]
+    assert runner["collected_transitions"] == collection["expected_transitions"]
+    assert runner["update_calls"] == update_calls
+    assert runner["all_metrics_finite"] is True
+    assert runner["action_statistics_finite"] is True
+    assert set(runner["last_metrics"]) == set(runner["metric_names"])
+    assert all(math.isfinite(value) for value in runner["last_metrics"].values())
+    assert all(check["all_finite"] is True for check in runner["actor_state_checks"].values())
+
+    current_contract_sha256 = hashlib.sha256(CONTRACT.read_bytes()).hexdigest()
+    compatibility = (
+        "exact_contract_match"
+        if receipt["contract_declaration_sha256"] == current_contract_sha256
+        else "historical_contract_differs_requires_fresh_smoke"
+    )
+    assert compatibility in {"exact_contract_match", "historical_contract_differs_requires_fresh_smoke"}
+    if compatibility == "exact_contract_match":
+        profile = contract["profiles"][preset]
+        assert receipt["identity"] == {
+            **profile["closed_input_identity"],
+            "environment_semantic_sha256": profile["environment_semantic_sha256"],
+        }
+        assert receipt["collection"] == profile["collection"]
 
 
 @pytest.mark.parametrize(

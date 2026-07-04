@@ -18,10 +18,92 @@ from collections.abc import Callable, Mapping
 from dataclasses import fields, is_dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-_SCHEMA = "forward_backward_phase3_motion_environment_dependency_identity_v7"
+if TYPE_CHECKING:
+    from isaaclab.managers import ActionTermCfg
+
+_SCHEMA = "forward_backward_phase3_motion_environment_dependency_identity_v9"
+_RETAINED_SCHEMAS = frozenset(
+    {
+        "forward_backward_phase3_motion_environment_dependency_identity_v7",
+        _SCHEMA,
+    }
+)
 _COMPOSITION_SCHEMA = "forward_backward_phase3_motion_composition_dependency_identity_v1"
+_PROFILE_ENVIRONMENT_AXES = {
+    "smpl_cmu": frozenset(
+        ("smpl", "cmu", "newton_mjwarp", "timing_sim450_control30_horizon300", "sampling_source_rows")
+    ),
+    "g1_lafan": frozenset(
+        (
+            "g1",
+            "lafan",
+            "physx",
+            "timing_sim200_control50_horizon501",
+            "sampling_clip_time",
+            "evidence_physical_auxiliary",
+            "randomization_physics_observation_pose_push",
+        )
+    ),
+    "g1_cmu": frozenset(
+        (
+            "g1",
+            "cmu",
+            "physx",
+            "timing_sim200_control50_horizon501",
+            "sampling_clip_time",
+            "evidence_physical_auxiliary",
+            "randomization_physics_observation_pose_push",
+        )
+    ),
+}
+_PROFILE_RUNNER_AXES = {
+    "smpl_cmu": frozenset(
+        (
+            "helpers_discriminator",
+            "tracking_off",
+            "model_plain_2x1024",
+            "replay_transition_uniform_2m",
+            "schedule_50x10_5m",
+            "optimization_lr1e4_implied0p1_actor0p01",
+            "context_online_10k",
+            "exploration_std0p2_range1",
+            "seed_0",
+            "expert_clock_source_rows",
+        )
+    ),
+    "g1_lafan": frozenset(
+        (
+            "helpers_discriminator_auxiliary",
+            "tracking_reset_frame",
+            "tracking_interval_9p6m",
+            "model_residual_6x1024",
+            "replay_episode_uniform_5120k",
+            "schedule_1024x1_211p2m",
+            "optimization_lr3e4_implied0_actor0p05",
+            "context_expert_half_8192",
+            "exploration_std0p05_range5",
+            "seed_4728",
+            "expert_clock_50hz",
+        )
+    ),
+    "g1_cmu": frozenset(
+        (
+            "helpers_discriminator_auxiliary",
+            "tracking_reset_frame",
+            "tracking_interval_9p6m",
+            "model_residual_6x1024",
+            "replay_episode_uniform_5120k",
+            "schedule_1024x1_211p2m",
+            "optimization_lr3e4_implied0_actor0p05",
+            "context_expert_half_8192",
+            "exploration_std0p05_range5",
+            "seed_4728",
+            "expert_clock_50hz",
+        )
+    ),
+}
 _SEMANTIC_CONFIGURATION_AXES = (
     "actions",
     "commands",
@@ -62,6 +144,8 @@ _COMMON_MODULES = (
     "isaaclab.sim.spawners.shapes.shapes_cfg",
     "isaaclab.sim.utils.prims",
     "isaaclab.utils.math",
+    "isaaclab.envs.manager_based_env",
+    "isaaclab.envs.manager_based_env_cfg",
     "isaaclab.envs.manager_based_rl_env",
     "isaaclab.envs.manager_based_rl_env_cfg",
     "isaaclab.managers.action_manager",
@@ -78,54 +162,43 @@ _COMMON_MODULES = (
     "isaaclab.physics.physics_manager",
     "isaaclab.physics.physics_manager_cfg",
     "isaaclab.sim.simulation_context",
+    "isaaclab_tasks.core.multi_task.kinematics.kinematic_tree",
     "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics",
     "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics_cfg",
-    "isaaclab_tasks.core.multi_task.motion_env",
     "isaaclab_tasks.core.multi_task.motion_env_cfg",
-    "isaaclab_tasks.core.multi_task.motion.config.environment",
-    "isaaclab_tasks.core.multi_task.motion.config.presets",
-    "isaaclab_tasks.core.multi_task.motion.config.profiles",
-    "isaaclab_tasks.core.multi_task.motion.config.simulations",
-    "isaaclab_tasks.core.multi_task.motion.config.source_skeletons",
-    "isaaclab_tasks.core.multi_task.motion.config.sources",
-    "isaaclab_tasks.core.multi_task.motion.data._identity",
+    "isaaclab_tasks.core.multi_task.motion.identity",
     "isaaclab_tasks.core.multi_task.motion.data.clip_index",
-    "isaaclab_tasks.core.multi_task.motion.data.sample_grid",
+    "isaaclab_tasks.core.multi_task.motion.data.source",
     "isaaclab_tasks.core.multi_task.motion.data.skeleton",
-    "isaaclab_tasks.core.multi_task.motion.data.importers._hashing",
-    "isaaclab_tasks.core.multi_task.motion.frames",
-    "isaaclab_tasks.core.multi_task.motion.mdp.actions",
-    "isaaclab_tasks.core.multi_task.motion.mdp.actions_cfg",
     "isaaclab_tasks.core.multi_task.motion.mdp.commands.commands_cfg",
     "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_state_payload",
     "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table",
-    "isaaclab_tasks.core.multi_task.motion.mdp.curriculums",
-    "isaaclab_tasks.core.multi_task.motion.mdp.events",
-    "isaaclab_tasks.core.multi_task.motion.mdp.history",
-    "isaaclab_tasks.core.multi_task.motion.mdp.observations",
-    "isaaclab_tasks.core.multi_task.motion.mdp.reset_sources",
-    "isaaclab_tasks.core.multi_task.motion.mdp.runtime",
-    "isaaclab_tasks.core.multi_task.motion.trajectory._time",
     "isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command",
     "isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command_cfg",
 )
 _COMPOSITION_COMMON_MODULES = (
     "isaaclab.utils.math",
+    "isaaclab_tasks.core.multi_task.kinematics.kinematic_tree",
     "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics",
     "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics_cfg",
-    "isaaclab_tasks.core.multi_task.motion.config.source_skeletons",
-    "isaaclab_tasks.core.multi_task.motion.config.sources",
-    "isaaclab_tasks.core.multi_task.motion.data._identity",
+    "isaaclab_tasks.core.multi_task.motion_env_cfg",
+    "isaaclab_tasks.core.multi_task.motion.identity",
     "isaaclab_tasks.core.multi_task.motion.data.clip_index",
+    "isaaclab_tasks.core.multi_task.motion.data.source",
     "isaaclab_tasks.core.multi_task.motion.data.skeleton",
-    "isaaclab_tasks.core.multi_task.motion.data.importers._hashing",
-    "isaaclab_tasks.core.multi_task.motion.frames",
     "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table",
-    "isaaclab_tasks.core.multi_task.motion.trajectory._time",
 )
 _G1_MODULES = (
-    "isaaclab_tasks.core.multi_task.motion.config.robots.g1",
-    "isaaclab_tasks.core.multi_task.motion.trajectory.g1",
+    "isaaclab_tasks.core.multi_task.mdp.curriculums",
+    "isaaclab_tasks.core.multi_task.mdp.events",
+    "isaaclab_tasks.core.multi_task.mdp.rewards",
+    "isaaclab_tasks.core.multi_task.motion.robots.g1.actions",
+    "isaaclab_tasks.core.multi_task.motion.robots.g1.actions_cfg",
+    "isaaclab_tasks.core.multi_task.motion.robots.g1.articulation",
+    "isaaclab_tasks.core.multi_task.motion.robots.g1.frames",
+    "isaaclab_tasks.core.multi_task.motion.robots.g1.observations",
+    "isaaclab_tasks.core.multi_task.motion.robots.g1.reference",
+    "isaaclab_tasks.core.multi_task.motion.robots.g1.reset",
 )
 _SMPL_MODULES = (
     "isaaclab_assets.robots.smpl.smpl_cfg",
@@ -133,8 +206,13 @@ _SMPL_MODULES = (
     "isaaclab_newton.sim.schemas.schemas_cfg",
     "isaaclab_newton.sim.spawners.mjcf.mjcf",
     "isaaclab_newton.sim.spawners.mjcf.mjcf_cfg",
-    "isaaclab_tasks.core.multi_task.motion.config.robots.smpl",
-    "isaaclab_tasks.core.multi_task.motion.trajectory.smpl",
+    "isaaclab_tasks.core.multi_task.mdp.native_mujoco_action",
+    "isaaclab_tasks.core.multi_task.mdp.native_mujoco_action_cfg",
+    "isaaclab_tasks.core.multi_task.motion.robots.smpl.articulation",
+    "isaaclab_tasks.core.multi_task.motion.robots.smpl.frames",
+    "isaaclab_tasks.core.multi_task.motion.robots.smpl.observations",
+    "isaaclab_tasks.core.multi_task.motion.robots.smpl.reference",
+    "isaaclab_tasks.core.multi_task.motion.robots.smpl.reset",
 )
 _PHYSX_MODULES = (
     "isaaclab_physx.assets.articulation.articulation",
@@ -158,6 +236,22 @@ _NEWTON_MJWARP_MODULES = (
     "isaaclab_newton.physics.newton_manager_cfg",
     "isaaclab_newton.physics.visualization_builder",
 )
+
+
+def motion_environment_axes(profile: str) -> frozenset[str]:
+    """Return explicit robot, dataset, and backend axes for an experiment profile."""
+    try:
+        return _PROFILE_ENVIRONMENT_AXES[profile]
+    except KeyError as error:
+        raise ValueError(f"Unsupported motion experiment profile: {profile!r}.") from error
+
+
+def motion_runner_axes(profile: str) -> frozenset[str]:
+    """Return explicit learner-policy axes for an experiment profile."""
+    try:
+        return _PROFILE_RUNNER_AXES[profile]
+    except KeyError as error:
+        raise ValueError(f"Unsupported motion experiment profile: {profile!r}.") from error
 
 
 def _sha256(path: Path) -> str:
@@ -220,8 +314,6 @@ def _python_sources(
     modules = list(_COMMON_MODULES)
     modules.extend(_G1_MODULES if preset in ("g1_lafan", "g1_cmu") else _SMPL_MODULES)
     modules.extend(_PHYSX_MODULES if preset in ("g1_lafan", "g1_cmu") else _NEWTON_MJWARP_MODULES)
-    if preset == "g1_cmu":
-        modules.extend((*_SMPL_MODULES, "isaaclab_tasks.core.multi_task.motion.trajectory.g1_smpl"))
     modules.extend((importer_type.__module__, frame_builder_factory.__module__, frame_builder_type.__module__))
     names = tuple(sorted(set(modules)))
     sources = {name: _sha256(_module_source_path(name)) for name in names}
@@ -243,12 +335,11 @@ def _composition_python_sources(
         modules.extend(
             (
                 "isaaclab_assets.robots.smpl.smpl_constants",
-                "isaaclab_tasks.core.multi_task.motion.config.robots.smpl",
-                "isaaclab_tasks.core.multi_task.motion.trajectory.smpl",
+                "isaaclab_tasks.core.multi_task.motion.robots.smpl.articulation",
+                "isaaclab_tasks.core.multi_task.motion.robots.smpl.frames",
+                "isaaclab_tasks.core.multi_task.motion.robots.smpl.reference",
             )
         )
-    if preset == "g1_cmu":
-        modules.append("isaaclab_tasks.core.multi_task.motion.trajectory.g1_smpl")
     source_cfg = table_cfg.source
     modules.extend(
         (
@@ -301,9 +392,9 @@ def _reference_assets(preset: str, reference_artifact_root: str | Path | None) -
         path = Path(SMPL_HUMENV_MJCF_PATH).resolve()
     else:
         if reference_artifact_root is None or not str(reference_artifact_root):
-            from isaaclab_tasks.core.multi_task.motion.config.robots.g1 import _G1_MJCF_SHA256
+            from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1_REFERENCE_MJCF_SHA256
 
-            return {"reference/g1_29dof.xml": _G1_MJCF_SHA256}
+            return {"reference/g1_29dof.xml": G1_REFERENCE_MJCF_SHA256}
         path = Path(reference_artifact_root).expanduser().resolve() / "humanoidverse/data/robots/g1/g1_29dof.xml"
     return {f"reference/{path.name}": _sha256(path)}
 
@@ -577,40 +668,50 @@ def _resolved_configuration(cfg: object) -> dict[str, object]:
 
 def motion_g1_live_axes(cfg: object) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Derive ordered G1 joint and body axes from concrete articulation ownership."""
-    from isaaclab_tasks.core.multi_task.motion.config.source_skeletons import g1_lafan_source_skeleton
+    from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import (
+        G1_BEHAVIOR_BODY_NAMES,
+        G1_BEHAVIOR_JOINT_NAMES,
+    )
 
     actuators = cfg.scene.robot.actuators
     if len(actuators) != 1:
         raise ValueError("The G1 articulation must declare exactly one actuator group.")
     actuator = next(iter(actuators.values()))
     joint_names = tuple(actuator.joint_names_expr)
-    skeleton = g1_lafan_source_skeleton()
-    if len(joint_names) != skeleton.num_joints or set(joint_names) != set(skeleton.joint_names):
-        raise ValueError("The resolved G1 articulation joint axis differs from the declared G1 skeleton.")
-    roots = tuple(index for index, parent in enumerate(skeleton.parent_indices) if parent == -1)
-    if len(roots) != 1:
-        raise ValueError("The declared G1 skeleton must contain one root body.")
-    joint_by_name = {name: index for index, name in enumerate(skeleton.joint_names)}
-    child_body_names = tuple(
-        skeleton.body_names[skeleton.joint_child_body_indices[joint_by_name[name]]] for name in joint_names
-    )
-    body_names = (skeleton.body_names[roots[0]], *child_body_names)
-    if len(set(body_names)) != skeleton.num_bodies:
+    if len(joint_names) != len(G1_BEHAVIOR_JOINT_NAMES) or set(joint_names) != set(G1_BEHAVIOR_JOINT_NAMES):
+        raise ValueError("The resolved G1 articulation joint axis differs from the robot behavior axis.")
+    body_by_joint = dict(zip(G1_BEHAVIOR_JOINT_NAMES, G1_BEHAVIOR_BODY_NAMES[1:], strict=True))
+    body_names = (G1_BEHAVIOR_BODY_NAMES[0], *(body_by_joint[name] for name in joint_names))
+    if len(set(body_names)) != len(G1_BEHAVIOR_BODY_NAMES):
         raise ValueError("The resolved G1 joint axis does not map one-to-one onto physical bodies.")
     return joint_names, body_names
 
 
+def motion_action_term_cfg(cfg: object) -> tuple[str, ActionTermCfg]:
+    """Return the one action term declared by a resolved motion environment."""
+    from isaaclab.managers import ActionTermCfg
+
+    actions = cfg.actions
+    if not is_dataclass(actions):
+        raise TypeError("Resolved motion actions must be a configclass.")
+    action_terms = tuple(
+        (field.name, value)
+        for field in fields(actions)
+        if isinstance(value := getattr(actions, field.name), ActionTermCfg)
+    )
+    if len(action_terms) != 1:
+        raise ValueError(f"Resolved motion actions must declare exactly one action term; got {len(action_terms)}.")
+    return action_terms[0]
+
+
 def _smpl_live_axes(cfg: object) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Return concrete axes owned by the packaged native SMPL asset."""
-    from isaaclab_tasks.core.multi_task.motion.config.robots.smpl import (
-        _SMPL_SIMULATOR_BODY_NAMES,
-        _SMPL_SIMULATOR_JOINT_NAMES,
-    )
+    from isaaclab_assets.robots.smpl.smpl_constants import MUJOCO_BODY_NAMES
 
     if cfg.scene.robot.actuators:
         raise ValueError("The native SMPL asset must be the sole owner of control and passive joint terms.")
-    joint_names = tuple(_SMPL_SIMULATOR_JOINT_NAMES)
-    body_names = tuple(_SMPL_SIMULATOR_BODY_NAMES)
+    body_names = MUJOCO_BODY_NAMES
+    joint_names = tuple(f"{body}_x_{body}_y_{body}_z:{component}" for body in body_names[1:] for component in range(3))
     if len(joint_names) != 69 or len(set(joint_names)) != len(joint_names):
         raise ValueError("The packaged SMPL articulation must declare 69 unique simulator joints.")
     if len(body_names) != 24 or len(set(body_names)) != len(body_names):
@@ -620,15 +721,13 @@ def _smpl_live_axes(cfg: object) -> tuple[tuple[str, ...], tuple[str, ...]]:
 
 def _motion_live_axes(cfg: object) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Resolve live axes from the concrete action/control ownership boundary."""
-    from isaaclab_tasks.core.multi_task.motion.mdp.actions_cfg import (
-        MotionJointPositionActionCfg,
-        MotionMujocoControlActionCfg,
-    )
+    from isaaclab_tasks.core.multi_task.mdp import NativeMujocoControlActionCfg
+    from isaaclab_tasks.core.multi_task.motion.robots.g1.actions_cfg import G1JointPositionActionCfg
 
-    action_cfg = cfg.actions.joint_position
-    if isinstance(action_cfg, MotionMujocoControlActionCfg):
+    _action_name, action_cfg = motion_action_term_cfg(cfg)
+    if isinstance(action_cfg, NativeMujocoControlActionCfg):
         return _smpl_live_axes(cfg)
-    if isinstance(action_cfg, MotionJointPositionActionCfg):
+    if isinstance(action_cfg, G1JointPositionActionCfg):
         return motion_g1_live_axes(cfg)
     raise TypeError(f"Unsupported motion action ownership: {type(action_cfg).__name__}.")
 
@@ -638,11 +737,21 @@ def _resolved_axes(preset: str, cfg: object, frame_builder_type: type) -> dict[s
     table_cfg = cfg.commands.motion.task_table
     source_cfg = table_cfg.source
     payload_cfg = cfg.commands.motion.payload
-    expert_grid = table_cfg.expert_sample_grid
-    timeout = cfg.terminations.time_out.params["applied_actions_before_timeout"]
-    if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout < 1:
-        raise ValueError("The resolved motion timeout must declare a positive applied-action count.")
+    transition_evidence = getattr(cfg.observations, "transition", None)
+    timeout = round(cfg.episode_length_s / (cfg.sim.dt * cfg.decimation))
+    if timeout < 1:
+        raise ValueError("The resolved motion horizon must contain at least one applied action.")
+    evidence_names = None
+    if transition_evidence is not None:
+        if not is_dataclass(transition_evidence):
+            raise TypeError("Transition evidence configuration must be a configclass.")
+        evidence_names = [
+            field.name
+            for field in fields(transition_evidence)
+            if type(getattr(transition_evidence, field.name)).__name__ == "ObservationTermCfg"
+        ]
     joint_names, body_names = _motion_live_axes(cfg)
+    action_name, action_cfg = motion_action_term_cfg(cfg)
     robot_asset_path = getattr(cfg.scene.robot.spawn, "asset_path", None)
     if not isinstance(robot_asset_path, str) or not robot_asset_path:
         robot_asset_path = cfg.scene.robot.spawn.usd_path
@@ -656,7 +765,8 @@ def _resolved_axes(preset: str, cfg: object, frame_builder_type: type) -> dict[s
             "asset_file": Path(robot_asset_path).name,
             "joint_names": list(joint_names),
             "body_names": list(body_names),
-            "action_type": type(cfg.actions.joint_position).__name__,
+            "action_name": action_name,
+            "action_type": type(action_cfg).__name__,
         },
         "source": {
             "identifier": source_cfg.identifier,
@@ -669,33 +779,23 @@ def _resolved_axes(preset: str, cfg: object, frame_builder_type: type) -> dict[s
             "frame_builder_factory": _callable_name(table_cfg.frame_builder_factory),
             "frame_builder_type": _callable_name(frame_builder_type),
             "task_row_mode": table_cfg.task_row_mode,
-            "task_sampling_law": table_cfg.task_sampling_law,
-            "reset_sources": [[name, probability] for name, probability in table_cfg.reset_sources],
             "reference_kinematics_factory": _callable_name(table_cfg.reference_kinematics_factory),
+        },
+        "sampling": {
+            "reset_sources": [[name, probability] for name, probability in payload_cfg.reset_sources],
         },
         "runtime": {
             "physics_dt_seconds": cfg.sim.dt,
             "control_decimation": cfg.decimation,
             "episode_length_seconds": cfg.episode_length_s,
             "applied_actions_before_timeout": timeout,
-            "transition_state_factory": _callable_name(payload_cfg.transition_state_factory),
-            "episode_length_steps": payload_cfg.episode_length_steps,
             "reset_transform_factory": _callable_name(payload_cfg.reset_transform_factory),
             "root_velocity_frame": payload_cfg.root_velocity_frame,
-            "step_fields": list(payload_cfg.step_fields),
-            "command_fields": list(payload_cfg.command_fields),
-            "history_fields": [list(field) for field in payload_cfg.history_fields],
-            "history_length": payload_cfg.history_length,
-            "raw_evidence": [
-                {"name": evidence.name, "width": evidence.width, "unit": evidence.unit, "anchor": evidence.anchor}
-                for evidence in payload_cfg.raw_evidence
-            ],
-            "auxiliary_evidence": list(payload_cfg.auxiliary_evidence),
+            "transition_evidence_names": evidence_names,
+            "transition_evidence_concatenated": (
+                None if transition_evidence is None else transition_evidence.concatenate_terms
+            ),
             "compute_final_obs": cfg.compute_final_obs,
-        },
-        "expert_grid": {
-            "mode": expert_grid.mode.value,
-            "step_seconds": expert_grid.step_seconds,
         },
     }
 
@@ -762,16 +862,18 @@ def _resolved_composition(
 
 def _validate_direct_dependency_types(preset: str, importer_type: type, frame_builder_type: type) -> None:
     """Require the importer and builder selected by one resolved preset."""
-    from isaaclab_tasks.core.multi_task.motion.data.importers import BfmG1JoblibClips, HumEnvHdf5Clips
-    from isaaclab_tasks.core.multi_task.motion.trajectory.g1 import G1LafanFrameBuilder
-    from isaaclab_tasks.core.multi_task.motion.trajectory.g1_smpl import G1SmplHumEnvFrameBuilder
-    from isaaclab_tasks.core.multi_task.motion.trajectory.smpl import SmplHumEnvFrameBuilder
+    from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClips, LafanG1JoblibClips
+    from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import (
+        G1LocalBodyPoseFrameBuilder,
+        G1PoseFrameBuilder,
+    )
+    from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplGeneralizedCoordinateFrameBuilder
 
-    expected_importer = BfmG1JoblibClips if preset == "g1_lafan" else HumEnvHdf5Clips
+    expected_importer = LafanG1JoblibClips if preset == "g1_lafan" else CmuHumEnvSmplClips
     expected_builder = {
-        "smpl_cmu": SmplHumEnvFrameBuilder,
-        "g1_lafan": G1LafanFrameBuilder,
-        "g1_cmu": G1SmplHumEnvFrameBuilder,
+        "smpl_cmu": SmplGeneralizedCoordinateFrameBuilder,
+        "g1_lafan": G1PoseFrameBuilder,
+        "g1_cmu": G1LocalBodyPoseFrameBuilder,
     }[preset]
     if importer_type is not expected_importer or frame_builder_type is not expected_builder:
         raise ValueError("Motion importer or trajectory-builder type differs from the selected direct axes.")
@@ -897,7 +999,7 @@ def motion_environment_semantic_sha256(value: object) -> str:
         "robot_assets",
         "bundle_sha256",
     }
-    if set(value) != expected_fields or value.get("schema") != _SCHEMA:
+    if set(value) != expected_fields or value.get("schema") not in _RETAINED_SCHEMAS:
         raise ValueError("Motion environment dependency identity has an unsupported structure.")
     payload = dict(value)
     bundle_sha256 = payload.pop("bundle_sha256")
@@ -920,6 +1022,81 @@ def motion_environment_semantic_sha256(value: object) -> str:
         )
     }
     return _json_hash(semantic)
+
+
+def motion_environment_contract_sha256(value: object) -> str:
+    """Hash the declared behavior contract of one internally closed identity.
+
+    Unlike :func:`motion_environment_semantic_sha256`, this projection excludes
+    producer source bytes. It therefore answers only whether two receipts declare
+    the same resolved environment, data, and asset contract. A matching digest is
+    not numerical proof after an implementation change; that requires a fresh
+    transfer or runtime receipt.
+
+    Args:
+        value: Full dependency identity produced by
+            :func:`motion_environment_dependency_identity`.
+
+    Returns:
+        SHA-256 digest of the declared behavior contract.
+    """
+    motion_environment_semantic_sha256(value)
+    assert isinstance(value, Mapping)
+    contract = {
+        name: value[name]
+        for name in (
+            "preset",
+            "resolved_axes",
+            "resolved_axes_sha256",
+            "resolved_configuration",
+            "resolved_configuration_sha256",
+            "robot_assets",
+        )
+    }
+    return _json_hash(contract)
+
+
+def motion_environment_compatibility(historical: object, current: object) -> dict[str, object]:
+    """Compare current code with an immutable historical environment identity.
+
+    Both identities are first validated against their own stored digests. The
+    result is deliberately separate from receipt authenticity: implementation
+    drift never authorizes rewriting the historical identity.
+
+    Args:
+        historical: Identity stored by the measured receipt.
+        current: Identity reconstructed from the current tree.
+
+    Returns:
+        Explicit exact-source and declared-contract compatibility status.
+    """
+    historical_semantic = motion_environment_semantic_sha256(historical)
+    current_semantic = motion_environment_semantic_sha256(current)
+    historical_contract = motion_environment_contract_sha256(historical)
+    current_contract = motion_environment_contract_sha256(current)
+    assert isinstance(historical, Mapping)
+    assert isinstance(current, Mapping)
+    exact_producer = historical["bundle_sha256"] == current["bundle_sha256"]
+    contract_matches = historical_contract == current_contract
+    if exact_producer:
+        status = "exact_producer_match"
+    elif contract_matches:
+        status = "declared_contract_match_requires_runtime_validation"
+    else:
+        status = "declared_contract_mismatch"
+    return {
+        "status": status,
+        "historical_bundle_sha256": historical["bundle_sha256"],
+        "current_bundle_sha256": current["bundle_sha256"],
+        "historical_semantic_sha256": historical_semantic,
+        "current_semantic_sha256": current_semantic,
+        "historical_contract_sha256": historical_contract,
+        "current_contract_sha256": current_contract,
+        "producer_sources_match": historical.get("python_sources") == current.get("python_sources"),
+        "runtime_dependencies_match": historical.get("runtime_dependencies") == current.get("runtime_dependencies"),
+        "declared_contract_matches": contract_matches,
+        "runtime_validation_required": not exact_producer,
+    }
 
 
 def motion_composition_semantic_sha256(value: object) -> str:
@@ -967,10 +1144,59 @@ def motion_composition_semantic_sha256(value: object) -> str:
     return _json_hash(semantic)
 
 
+def motion_composition_contract_sha256(value: object) -> str:
+    """Hash one internally closed source-to-target declaration without code bytes."""
+    motion_composition_semantic_sha256(value)
+    assert isinstance(value, Mapping)
+    return _json_hash(
+        {
+            "preset": value["preset"],
+            "composition": value["composition"],
+            "composition_sha256": value["composition_sha256"],
+            "reference_assets": value["reference_assets"],
+        }
+    )
+
+
+def motion_composition_compatibility(historical: object, current: object) -> dict[str, object]:
+    """Compare current composition code without mutating historical provenance."""
+    historical_semantic = motion_composition_semantic_sha256(historical)
+    current_semantic = motion_composition_semantic_sha256(current)
+    historical_contract = motion_composition_contract_sha256(historical)
+    current_contract = motion_composition_contract_sha256(current)
+    assert isinstance(historical, Mapping)
+    assert isinstance(current, Mapping)
+    exact_producer = historical["bundle_sha256"] == current["bundle_sha256"]
+    contract_matches = historical_contract == current_contract
+    if exact_producer:
+        status = "exact_producer_match"
+    elif contract_matches:
+        status = "declared_contract_match_requires_runtime_validation"
+    else:
+        status = "declared_contract_mismatch"
+    return {
+        "status": status,
+        "historical_bundle_sha256": historical["bundle_sha256"],
+        "current_bundle_sha256": current["bundle_sha256"],
+        "historical_semantic_sha256": historical_semantic,
+        "current_semantic_sha256": current_semantic,
+        "historical_contract_sha256": historical_contract,
+        "current_contract_sha256": current_contract,
+        "producer_sources_match": historical.get("python_sources") == current.get("python_sources"),
+        "runtime_dependencies_match": historical.get("runtime_dependencies") == current.get("runtime_dependencies"),
+        "declared_contract_matches": contract_matches,
+        "runtime_validation_required": not exact_producer,
+    }
+
+
 __all__ = [
+    "motion_composition_compatibility",
+    "motion_composition_contract_sha256",
     "motion_composition_dependency_identity",
     "motion_composition_runtime_dependencies",
     "motion_composition_semantic_sha256",
+    "motion_environment_compatibility",
+    "motion_environment_contract_sha256",
     "motion_environment_dependency_identity",
     "motion_environment_semantic_sha256",
     "motion_g1_live_axes",

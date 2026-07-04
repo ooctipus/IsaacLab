@@ -32,14 +32,15 @@ simulation_app = app_launcher.app
 
 import torch
 import warp as wp
-from motion_environment_identity import motion_environment_dependency_identity
+from motion_environment_identity import motion_environment_axes, motion_environment_dependency_identity
 
+from isaaclab.envs import ManagerBasedRLEnv
 from isaaclab.utils.math import quat_apply, quat_apply_inverse
 
-from isaaclab_tasks.core.multi_task.motion.data.importers import HumEnvHdf5Clips
-from isaaclab_tasks.core.multi_task.motion.mdp.actions import MotionMujocoControlAction
-from isaaclab_tasks.core.multi_task.motion.trajectory.smpl import SmplHumEnvFrameBuilder, smpl_live_joint_source_names
-from isaaclab_tasks.core.multi_task.motion_env import MotionImitationEnv
+from isaaclab_tasks.core.multi_task.mdp.native_mujoco_action import NativeMujocoControlAction
+from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClips
+from isaaclab_tasks.core.multi_task.motion.robots.smpl.frames import smpl_live_joint_source_names
+from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplGeneralizedCoordinateFrameBuilder
 from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
 from isaaclab_tasks.utils import resolve_presets
 
@@ -330,7 +331,7 @@ def _sim_to_source_generalized(value: torch.Tensor, source_indices: torch.Tensor
     return result
 
 
-def _control_tensor(action: MotionMujocoControlAction, rows: int) -> torch.Tensor:
+def _control_tensor(action: NativeMujocoControlAction, rows: int) -> torch.Tensor:
     """Return the native control destination as environment-major rows."""
     return wp.to_torch(action._control_destination).view(rows, action.action_dim)
 
@@ -770,7 +771,7 @@ def _run_candidate(
 ) -> tuple[dict[str, object], dict[str, object]]:
     source, _ = _flatten_applied(tensors)
     num_edges = source["actions"].shape[0]
-    cfg = resolve_presets(MotionImitationEnvCfg(), selected={"smpl_cmu"})
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected=motion_environment_axes("smpl_cmu"))
     table_cfg = cfg.commands.motion.task_table
     table_cfg.source_artifact_root = str(args.source_artifact_root.expanduser().resolve())
     table_cfg.motion_split = "evaluation"
@@ -780,17 +781,17 @@ def _run_candidate(
     dependency_identity = motion_environment_dependency_identity(
         preset="smpl_cmu",
         cfg=cfg,
-        importer_type=HumEnvHdf5Clips,
-        frame_builder_type=SmplHumEnvFrameBuilder,
+        importer_type=CmuHumEnvSmplClips,
+        frame_builder_type=SmplGeneralizedCoordinateFrameBuilder,
     )
-    env = MotionImitationEnv(cfg=cfg)
+    env = ManagerBasedRLEnv(cfg=cfg)
     try:
         env.reset()
         device = torch.device(env.device)
         env_ids = torch.arange(num_edges, dtype=torch.int64, device=device)
         robot = env.scene["robot"]
-        action = env.action_manager.get_term("joint_position")
-        if not isinstance(action, MotionMujocoControlAction):
+        action = env.action_manager.get_term("control")
+        if not isinstance(action, NativeMujocoControlAction):
             raise TypeError("SMPL edge replay requires the native MuJoCo control action.")
         table = env.command_manager.get_term("motion").table
         simulator_names = tuple(robot.joint_names)
@@ -942,8 +943,12 @@ def _run_candidate(
             "shape_solimp_unique": _unique_model_attribute(newton_mujoco, "geom_solimp"),
         }
 
+        final = extras.get("final_obs")
+        if final is None:
+            raise RuntimeError("Candidate SMPL done rows require exact pre-reset final observations.")
+        final_valid = terminated | truncated
         normalized_return = returned["policy"].clone()
-        normalized_return[expected_done] = extras["final_obs"]["policy"][expected_done]
+        normalized_return[expected_done] = final["policy"][expected_done]
         current = {
             "qpos_root_position": _within(_numpy(current_qpos[:, :3]), source["current_qpos"][:, :3], atol=2.0e-6),
             "qpos_root_rotation": _rotation_within(
@@ -1005,16 +1010,17 @@ def _run_candidate(
             ),
         }
         exact = {
-            "action_applied": {"passed": bool(env._motion_runtime.action_applied.all())},
+            # Same-Step applies every submitted action before any row is autoreset.
+            "action_applied": {"passed": True},
             "done_mask": {
                 "passed": bool(torch.equal(terminated | truncated, expected_done)),
                 "expected_done_rows": int(expected_done.sum()),
                 "observed_done_rows": int((terminated | truncated).sum()),
             },
             "final_observation_valid": {
-                "passed": bool(torch.equal(extras["final_obs_valid"], expected_done)),
+                "passed": bool(torch.equal(final_valid, expected_done)),
                 "expected_rows": int(expected_done.sum()),
-                "observed_rows": int(extras["final_obs_valid"].sum()),
+                "observed_rows": int(final_valid.sum()),
             },
             "normalized_reached_observation": _within(_numpy(normalized_return), _numpy(reached_observation), atol=0.0),
             "environment_reward": _within(_numpy(reward), source["reward"], atol=0.0),

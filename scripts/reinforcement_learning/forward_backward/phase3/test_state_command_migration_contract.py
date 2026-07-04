@@ -11,6 +11,8 @@ import json
 import re
 from pathlib import Path
 
+from isaaclab_tasks.core.multi_task.mdp.commands import StateCommand
+
 _FIXTURE = Path(__file__).parent / "fixtures" / "state_command_migration_v1.json"
 
 
@@ -51,6 +53,8 @@ def test_state_command_migration_preserves_only_the_public_shell_symbols():
         "success_rates",
         "set_reset_state call in _resample_command",
     } <= removals
+    assert not hasattr(StateCommand, "get_target_obs_cache")
+    assert not hasattr(StateCommand, "get_spawn_obs_cache")
 
 
 def test_state_command_migration_covers_each_controlled_domain_and_caller_test():

@@ -95,6 +95,12 @@ class _Payload:
         _spawn, target = self.table.gather(task_rows)
         self.resample(env_ids, task_rows, target, None)
 
+    def bind_target(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
+        self.bind(env_ids, task_rows)
+
+    def sample_rows(self, count: int) -> torch.Tensor:
+        return self.table.sample_rows(count)
+
     def resample(
         self,
         env_ids: torch.Tensor,
@@ -222,6 +228,7 @@ def _make_env(num_envs: int, device: torch.device) -> SimpleNamespace:
         num_envs=num_envs,
         device=device,
         step_dt=0.02,
+        common_step_counter=0,
         sim=SimpleNamespace(vis_marker_registry=_Registry()),
     )
 
@@ -244,6 +251,12 @@ def _build(
 def _sync(device: torch.device) -> None:
     if device.type == "cuda":
         torch.cuda.synchronize(device)
+
+
+def _advance_completed_step(term: Any) -> None:
+    """Advance the fake environment clock and refresh one completed logical edge."""
+    term._env.common_step_counter += 1
+    term._update_command()
 
 
 def _percentile(values: list[float], fraction: float) -> float:
@@ -463,7 +476,9 @@ def _implementation_record(
     def pinned_operation() -> None:
         pinned._resample_command(env_ids)
 
-    update_operation = randomized._update_command
+    def update_operation() -> None:
+        _advance_completed_step(randomized)
+
     return {
         "construction": _construction_record(command_class, profile_cfg, args, device),
         "randomized_resample": _timed(

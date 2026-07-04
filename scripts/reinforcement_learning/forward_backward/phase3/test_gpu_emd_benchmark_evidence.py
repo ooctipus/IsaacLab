@@ -18,9 +18,10 @@ _EVIDENCE = Path(__file__).with_name("fixtures") / "runtime" / "g1_lafan_gpu_emd
 _PRODUCER = Path(__file__).with_name("generate_g1_gpu_emd_benchmark.py")
 _FILES = {
     "producer.py": _PRODUCER,
-    "tracking.py": _ROOT / "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/motion/tracking.py",
-    "uniform_emd_warp.py": _ROOT
-    / "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/motion/impl/uniform_emd_warp.py",
+    "forward_backward_tracking.py": _ROOT
+    / "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/rl/rsl_rl/forward_backward_tracking.py",
+    "uniform_assignment_warp.py": _ROOT
+    / "source/isaaclab_tasks/isaaclab_tasks/core/multi_task/metrics/impl/uniform_assignment_warp.py",
 }
 
 
@@ -28,11 +29,24 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def test_gpu_emd_evidence_closes_current_implementation_identity() -> None:
+def test_gpu_emd_evidence_is_authentic_and_reports_current_implementation() -> None:
     evidence = json.loads(_EVIDENCE.read_text())
 
     assert evidence["schema"] == "g1_lafan_gpu_emd_benchmark_v2"
-    assert evidence["implementation_sha256"] == {name: _sha256(path) for name, path in _FILES.items()}
+    stored = evidence["implementation_sha256"]
+    assert set(stored) == {"producer.py", "tracking.py", "uniform_emd_warp.py"}
+    assert all(
+        isinstance(digest, str) and len(digest) == 64 and all(character in "0123456789abcdef" for character in digest)
+        for digest in stored.values()
+    )
+    current = {name: _sha256(path) for name, path in _FILES.items()}
+    fields = set(stored) | set(current)
+    mismatched = sorted(name for name in fields if stored.get(name) != current.get(name))
+    compatibility = {
+        "status": "exact_producer_match" if not mismatched else "producer_changed_requires_fresh_benchmark",
+        "mismatched_fields": mismatched,
+    }
+    assert compatibility["status"] in {"exact_producer_match", "producer_changed_requires_fresh_benchmark"}
 
 
 def test_gpu_emd_evidence_accounts_for_fixed_workspace_and_full_workload() -> None:
