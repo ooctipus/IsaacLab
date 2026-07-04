@@ -132,6 +132,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         # override configurations with non-hydra CLI arguments
         agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
         env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
+        agent_cfg.num_envs = env_cfg.scene.num_envs
 
         # handle deprecated configurations
         agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)

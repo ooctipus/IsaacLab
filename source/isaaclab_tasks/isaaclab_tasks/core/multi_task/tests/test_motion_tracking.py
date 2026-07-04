@@ -10,10 +10,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import inspect
-import json
-import math
 import random
-from contextlib import nullcontext
 from types import SimpleNamespace
 
 import numpy as np
@@ -22,30 +19,91 @@ import torch
 from rsl_rl.storage.forward_backward_expert import ForwardBackwardExpertBuffer, ForwardBackwardExpertSchema
 from tensordict import TensorDict
 
-from isaaclab.envs.mdp import randomize_rigid_body_material
-
-import isaaclab_tasks.core.multi_task.motion.tracking as tracking_module
-from isaaclab_tasks.core.multi_task.motion.data import MotionClipIndex, MotionSampleGrid
-from isaaclab_tasks.core.multi_task.motion.frames import G1_HEAD_FRAME_NAME
-from isaaclab_tasks.core.multi_task.motion.impl import uniform_emd_warp as uniform_emd_module
-from isaaclab_tasks.core.multi_task.motion.mdp.actions import MotionJointPositionAction, MotionMujocoControlAction
-from isaaclab_tasks.core.multi_task.motion.mdp.commands import MotionStatePayload, MotionTaskTable
-from isaaclab_tasks.core.multi_task.motion.mdp.curriculums import MotionPenaltyScaleCurriculum
-from isaaclab_tasks.core.multi_task.motion.mdp.events import MotionPushVelocity
-from isaaclab_tasks.core.multi_task.motion.tracking import (
-    MotionTrackingCurriculum,
-    MotionTrackingEvaluation,
-    g1_motion_tracking_evaluator,
-    motion_tracking_priorities,
+import isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_tracking as tracking_module
+from isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command import StateCommand
+from isaaclab_tasks.core.multi_task.metrics import UniformAssignmentWorkspace
+from isaaclab_tasks.core.multi_task.metrics.impl import uniform_assignment_warp as uniform_emd_module
+from isaaclab_tasks.core.multi_task.motion.data import MotionClipIndex, MotionFrames
+from isaaclab_tasks.core.multi_task.motion.mdp.commands import MotionSampler, MotionStatePayload, MotionTaskTable
+from isaaclab_tasks.core.multi_task.motion.robots.g1.frames import G1_HEAD_FRAME_NAME
+from isaaclab_tasks.core.multi_task.motion.robots.g1.observations import g1_bfm_observation_state_pose
+from isaaclab_tasks.core.multi_task.motion.robots.smpl.observations import (
+    smpl_humenv_observation,
+    smpl_humenv_tracking_pose,
 )
-from isaaclab_tasks.core.multi_task.motion_env import MotionImitationEnv
+from isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_tracking import (
+    ForwardBackwardTrackingEvaluation,
+    ForwardBackwardTrackingLifecycle,
+    forward_backward_tracking_evaluator,
+    forward_backward_tracking_priorities,
+)
 
 _CLIP_IDS = ("clip_a", "clip_b")
 _G1_JOINT_NAMES = tuple(f"joint_{index}" for index in range(29))
 _G1_BODY_NAMES = tuple(f"body_{index}" for index in range(30))
+_MOTION_RESET_SOURCES = (("reference", 0.7), ("lie_down", 0.3))
 _G1_REFERENCE_FRAME_NAMES = (*_G1_BODY_NAMES, G1_HEAD_FRAME_NAME)
+_G1_TRACKING_PROJECTIONS = (
+    {
+        "metric_name": "emd",
+        "target_name": "joint_position",
+        "observation_name": "joint_position_unnoised",
+        "projection": None,
+        "assignment_metric": "uniform_assignment",
+    },
+    {
+        "metric_name": "obs_state_emd",
+        "target_name": "joint_position",
+        "observation_name": "joint_position",
+        "projection": ("isaaclab_tasks.core.multi_task.motion.robots.g1.observations:g1_bfm_observation_state_pose"),
+        "assignment_metric": "uniform_assignment",
+    },
+)
+_TRACKING_PROTOCOL = {
+    "context_window_length": 1,
+    "include_reset_frame": True,
+    "allow_horizon_truncation": True,
+    "shuffle_assignments": True,
+}
+_PRIORITY_PROTOCOL = {
+    "metric_name": "emd",
+    "metric_minimum": 0.5,
+    "metric_maximum": 2.0,
+    "exponent_scale": 2.0,
+    "exponent_base": 2.0,
+}
+_CURRICULUM_PROTOCOL = {
+    **_TRACKING_PROTOCOL,
+    "command_bind": "env.unwrapped.command_manager.get_term('motion')",
+    "sequence_ids_bind": "command.table.clip_ids",
+    "sequence_start_rows_bind": "command.table.clip_start_rows",
+    "sampling_priorities_bind": "command.payload.sampler.clip_priorities",
+    "evaluation_scope_bind": "command.payload.sampler.reset_sampling_scope",
+    "priority_metric_name": "emd",
+    "priority_metric_minimum": 0.5,
+    "priority_metric_maximum": 2.0,
+    "priority_exponent_scale": 2.0,
+    "priority_exponent_base": 2.0,
+}
 _SMPL_CLIP_IDS = ("clip_a", "clip_b", "clip_c", "clip_d")
 _SMPL_LENGTHS = (6, 5, 4, 3)
+
+
+@pytest.fixture(autouse=True)
+def _stub_lifecycle_evaluator(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace only lifecycle-model evaluations with deterministic generic results."""
+    real_evaluator = tracking_module.forward_backward_tracking_evaluator
+
+    def evaluate(model, *args, **kwargs):
+        if isinstance(model, torch.nn.Linear):
+            model.evaluation_envs.append(args[0])
+            shuffled = list(range(8))
+            kwargs["assignment_rng"].shuffle(shuffled)
+            model.assignment_orders.append(tuple(shuffled))
+            return _evaluation()
+        return real_evaluator(model, *args, **kwargs)
+
+    monkeypatch.setattr(tracking_module, "forward_backward_tracking_evaluator", evaluate)
 
 
 def _hash(value: str) -> str:
@@ -68,7 +126,9 @@ def _expert() -> ForwardBackwardExpertBuffer:
         torch.tensor((0, 3, 6), dtype=torch.int64),
         torch.ones(2),
         schema,
+        seed=0,
         clip_ids=_CLIP_IDS,
+        clip_length_values=(3, 3),
     )
 
 
@@ -96,28 +156,39 @@ def _g1_tracking_expert(device: str | torch.device = "cpu") -> ForwardBackwardEx
         offset_tensor,
         torch.ones(len(_CLIP_IDS), device=device),
         schema,
+        seed=0,
         clip_ids=_CLIP_IDS,
+        clip_length_values=(3, 4),
     )
 
 
 class _TrackingObservationSchema:
-    field_widths = (("state", 64), ("privileged_state", 463))
+    field_widths = (
+        ("joint_position", 29),
+        ("joint_velocity", 29),
+        ("projected_gravity", 3),
+        ("base_angular_velocity", 3),
+        ("privileged_state", 463),
+    )
 
     @staticmethod
     def route(name: str) -> tuple[str, ...]:
         assert name == "backward"
-        return ("state", "privileged_state")
+        return ("joint_position", "joint_velocity", "projected_gravity", "base_angular_velocity", "privileged_state")
 
 
 class _TrackingModel:
     observation_schema = _TrackingObservationSchema()
+    context_dim = 4
+    context_normalization = False
 
-    def __init__(self) -> None:
+    def __init__(self, action_value: float = 0.0) -> None:
         self.deterministic_calls: list[bool] = []
+        self.action_value = action_value
 
     @staticmethod
     def backward_map(observations: TensorDict) -> torch.Tensor:
-        return observations["state"][:, :4]
+        return observations["joint_position"][:, :4]
 
     @staticmethod
     def context_project(context: torch.Tensor) -> torch.Tensor:
@@ -132,7 +203,7 @@ class _TrackingModel:
     ) -> torch.Tensor:
         self.deterministic_calls.append(deterministic)
         assert observations.batch_size == context.shape[:1]
-        return torch.zeros(context.shape[0], 29, device=context.device)
+        return torch.full((context.shape[0], 29), self.action_value, device=context.device)
 
 
 class _TrackingEnvironment:
@@ -141,63 +212,51 @@ class _TrackingEnvironment:
         expert: ForwardBackwardExpertBuffer,
         *,
         num_envs: int = 1,
+        clip_actions: float | None = None,
     ) -> None:
         self.expert = expert
         self.num_envs = num_envs
         self.max_episode_length = 4
-        self.cfg = SimpleNamespace(
-            commands=SimpleNamespace(motion=SimpleNamespace(payload=SimpleNamespace(episode_length_steps=4)))
-        )
         self.device = expert.device
-        self.default_joint_position = torch.linspace(-0.2, 0.2, 29, device=self.device)
-        robot = SimpleNamespace(
-            joint_names=_G1_JOINT_NAMES,
-            body_names=_G1_BODY_NAMES,
-            data=SimpleNamespace(
-                joint_pos=SimpleNamespace(torch=torch.empty(num_envs, 29, device=self.device)),
-            ),
-        )
+        self.clip_actions = clip_actions
+        self.applied_actions: list[torch.Tensor] = []
         table = _table()
         payload = object.__new__(MotionStatePayload)
         payload.table = table
-        payload.robot = robot
+        payload.sampler = _sampler(table)
         self.payload = payload
-        command = SimpleNamespace(table=table, payload=payload)
-        action = object.__new__(MotionJointPositionAction)
-        action._joint_names = _G1_JOINT_NAMES
-        action._joint_ids_tensor = torch.arange(29, dtype=torch.int64, device=self.device)
-        action._asset = robot
-        action._joint_position = torch.empty(num_envs, 29, device=self.device)
-        action.joint_default_position = self.default_joint_position
-        self.command_manager = SimpleNamespace(get_term=lambda name: command if name == "motion" else None)
-        self.action_manager = SimpleNamespace(get_term=lambda name: action if name == "joint_position" else None)
+        self.command = SimpleNamespace(table=table, payload=payload, randomize_command_indices=False)
+        self.command.bind_rows = self._bind_rows
+        self.command_manager = SimpleNamespace(get_term=lambda name: self.command if name == "motion" else None)
         self.reset_assignments: list[tuple[tuple[int, ...], tuple[int, ...]]] = []
         self._clips = torch.zeros(num_envs, dtype=torch.int64, device=self.device)
+        self._pending_clips = torch.zeros_like(self._clips)
         self._steps = torch.zeros(num_envs, dtype=torch.int64, device=self.device)
+
+    def _bind_rows(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
+        clip_start_rows = self.command.table.clip_start_rows.to(self.device)
+        self._pending_clips.index_copy_(0, env_ids, torch.searchsorted(clip_start_rows, task_rows))
 
     def _observation(self) -> TensorDict:
         lengths = self.expert.clip_lengths.index_select(0, self._clips)
         local_steps = torch.minimum(self._steps, lengths - 1)
         starts = self.expert.clip_offsets.index_select(0, self._clips)
         frames = self.expert.frames.index_select(0, starts + local_steps)
+        joint_position = frames[:, :29]
         return TensorDict(
             {
-                "state": frames[:, :64],
+                "joint_position": joint_position,
+                "joint_position_unnoised": joint_position,
+                "joint_velocity": frames[:, 29:58],
+                "projected_gravity": frames[:, 58:61],
+                "base_angular_velocity": frames[:, 61:64],
                 "last_action": torch.zeros(self.num_envs, 29, device=self.device),
-                "history_actor": torch.zeros(self.num_envs, 372, device=self.device),
                 "privileged_state": frames[:, 64:],
             },
             batch_size=[self.num_envs],
         )
 
-    def _write_joint_position(self) -> None:
-        lengths = self.expert.clip_lengths.index_select(0, self._clips)
-        local_steps = torch.minimum(self._steps, lengths - 1)
-        starts = self.expert.clip_offsets.index_select(0, self._clips)
-        target = self.expert.frames.index_select(0, starts + local_steps)[:, :29] + self.default_joint_position
-        self.payload.robot.data.joint_pos.torch.copy_(target)
-
-    def reset_motion_clips(
+    def reset_clips(
         self,
         clip_indices: torch.Tensor,
         *,
@@ -213,16 +272,18 @@ class _TrackingEnvironment:
                 tuple(clip_indices.cpu().tolist()),
             )
         )
-        self._write_joint_position()
         return self._observation(), {}
 
-    def step(self, _action: torch.Tensor):
+    def reset(self) -> tuple[TensorDict, dict]:
+        return self.reset_clips(self._pending_clips)
+
+    def step(self, action: torch.Tensor):
+        applied_action = action if self.clip_actions is None else action.clamp(-self.clip_actions, self.clip_actions)
+        self.applied_actions.append(applied_action.clone())
         self._steps.add_(1)
-        self._write_joint_position()
         return (
             self._observation(),
             torch.zeros(self.num_envs, device=self.device),
-            torch.zeros(self.num_envs, dtype=torch.bool, device=self.device),
             torch.zeros(self.num_envs, dtype=torch.bool, device=self.device),
             {},
         )
@@ -232,26 +293,20 @@ def _table() -> MotionTaskTable:
     clips = tuple(
         MotionClipIndex.Clip(
             clip_id=clip_id,
-            source_path=f"{clip_id}.tensor",
             frame_count=count,
             source_fps=50.0,
-            split="train",
-            tags=(),
             content_sha256=_hash(clip_id),
         )
         for clip_id, count in zip(_CLIP_IDS, (4, 5), strict=True)
     )
     index = MotionClipIndex(
         source_content_sha256=_hash("tracking-source"),
-        skeleton_sha256=_hash("tracking-skeleton"),
-        semantic_level="g1_tracking",
-        license="test-only",
         clips=clips,
     )
     frame_count = index.total_frames
     body_rotation = torch.zeros(frame_count, 31, 4)
     body_rotation[..., 3] = 1.0
-    frames = MotionTaskTable.Frames(
+    frames = MotionFrames(
         joint_position=torch.zeros(frame_count, 29),
         joint_velocity=torch.zeros(frame_count, 29),
         body_position=torch.zeros(frame_count, 31, 3),
@@ -259,7 +314,7 @@ def _table() -> MotionTaskTable:
         body_linear_velocity=torch.zeros(frame_count, 31, 3),
         body_angular_velocity=torch.zeros(frame_count, 31, 3),
     )
-    return MotionTaskTable.from_storage(
+    return MotionTaskTable(
         index,
         frames,
         _G1_JOINT_NAMES,
@@ -267,10 +322,87 @@ def _table() -> MotionTaskTable:
         "tracking_builder_v1",
         _hash("tracking-builder"),
         "clip_time_ranges",
-        (("reference", 0.7), ("lie_down", 0.3)),
-        MotionSampleGrid.uniform_before_source_end(step_seconds=0.02),
-        seed=0,
+        _hash("tracking-skeleton"),
     )
+
+
+def _sampler(table: MotionTaskTable) -> MotionSampler:
+    return MotionSampler(table, _MOTION_RESET_SOURCES, capacity=table.num_tasks, seed=0)
+
+
+def test_reset_tracking_sequences_requires_scope_and_performs_one_ordinary_reset() -> None:
+    """Exact evaluation reset must use command selection plus the normal reset lifecycle."""
+    table = _table()
+    payload = object.__new__(MotionStatePayload)
+    payload.sampler = _sampler(table)
+    payload.sampler.set_reset_time_mode("range_start")
+    command = SimpleNamespace(
+        table=table,
+        payload=payload,
+        randomize_command_indices=True,
+        cmd_indices=torch.empty(2, dtype=torch.int64),
+    )
+    command.bind_rows = lambda env_ids, task_rows: command.cmd_indices.__setitem__(env_ids, task_rows)
+    reset_calls = []
+
+    def reset() -> tuple[str, dict]:
+        reset_calls.append(command.cmd_indices.clone())
+        return "observations", {"reset": True}
+
+    env = SimpleNamespace(
+        num_envs=2,
+        device="cpu",
+        command_manager=SimpleNamespace(get_term=lambda name: command if name == "motion" else None),
+        reset=reset,
+    )
+    clip_indices = torch.tensor((1, 0), dtype=torch.int64)
+
+    with pytest.raises(RuntimeError, match="evaluation_scope"):
+        tracking_module.reset_tracking_sequences(env, command, table.clip_start_rows, clip_indices)
+    command.randomize_command_indices = False
+    result = tracking_module.reset_tracking_sequences(
+        env,
+        command,
+        table.clip_start_rows,
+        clip_indices,
+    )
+
+    expected_rows = table.clip_start_rows.index_select(0, clip_indices)
+    assert result == ("observations", {"reset": True})
+    assert command.randomize_command_indices is False
+    assert len(reset_calls) == 1
+    torch.testing.assert_close(reset_calls[0], expected_rows)
+
+
+def test_forward_backward_evaluation_scope_restores_randomization_after_exception() -> None:
+    """Evaluation must not leave ordinary training resets pinned to exact command rows."""
+    table = _table()
+    payload = object.__new__(MotionStatePayload)
+    payload.sampler = _sampler(table)
+    command = SimpleNamespace(table=table, payload=payload, randomize_command_indices=True)
+    env = SimpleNamespace(
+        device="cpu",
+        command_manager=SimpleNamespace(get_term=lambda name: command if name == "motion" else None),
+    )
+    generator_state = payload.sampler.generator.get_state().clone()
+    reset_probabilities = payload.sampler.reset_source_probabilities.clone()
+
+    with pytest.raises(RuntimeError, match="evaluation failed"):
+        with tracking_module.forward_backward_evaluation_scope(
+            env,
+            command,
+            payload.sampler.reset_sampling_scope,
+            17,
+            reset_source_name="reference",
+        ):
+            assert payload.sampler.reset_time_mode == "range_start"
+            assert command.randomize_command_indices is False
+            raise RuntimeError("evaluation failed")
+
+    assert command.randomize_command_indices is True
+    assert payload.sampler.reset_time_mode == "uniform"
+    torch.testing.assert_close(payload.sampler.generator.get_state(), generator_state)
+    torch.testing.assert_close(payload.sampler.reset_source_probabilities, reset_probabilities)
 
 
 def _smpl_tracking_expert_table(
@@ -279,49 +411,59 @@ def _smpl_tracking_expert_table(
     clips = tuple(
         MotionClipIndex.Clip(
             clip_id=clip_id,
-            source_path=f"{clip_id}.hdf5",
             frame_count=length,
             source_fps=50.0,
-            split="evaluation",
-            tags=(),
             content_sha256=_hash(f"smpl-{clip_id}"),
         )
         for clip_id, length in zip(_SMPL_CLIP_IDS, _SMPL_LENGTHS, strict=True)
     )
     index = MotionClipIndex(
         source_content_sha256=_hash("smpl-tracking-source"),
-        skeleton_sha256=_hash("smpl-tracking-skeleton"),
-        semantic_level="smpl_tracking",
-        license="test-only",
         clips=clips,
     )
     frame_count = index.total_frames
-    observation = torch.zeros(frame_count, 358, dtype=torch.float32, device=device)
+    phase = torch.empty(frame_count, dtype=torch.float32, device=device)
     for clip_index, (start, end) in enumerate(zip(index.offsets[:-1], index.offsets[1:], strict=True)):
-        phase = torch.arange(end - start, dtype=torch.float32, device=device) + 10.0 * clip_index
-        observation[start:end].copy_(phase[:, None] * torch.linspace(0.001, 0.358, 358, device=device))
-    root_rotation = torch.zeros(frame_count, 4, dtype=torch.float32, device=device)
-    root_rotation[:, 3] = 1.0
-    frames = MotionTaskTable.Frames(
-        root_position=torch.zeros(frame_count, 3, dtype=torch.float32, device=device),
-        root_rotation=root_rotation,
-        root_linear_velocity=torch.zeros(frame_count, 3, dtype=torch.float32, device=device),
-        root_angular_velocity=torch.zeros(frame_count, 3, dtype=torch.float32, device=device),
+        phase[start:end].copy_(torch.arange(end - start, dtype=torch.float32, device=device) + 10.0 * clip_index)
+    body_index = torch.arange(24, dtype=torch.float32, device=device)
+    linear_rate = 0.01 + body_index * 0.001
+    angular_rate = 0.005 + body_index * 0.0002
+    body_position = torch.zeros(frame_count, 24, 3, dtype=torch.float32, device=device)
+    body_position[..., 0] = phase[:, None] * linear_rate
+    body_position[..., 1] = body_index * 0.02
+    body_position[..., 2] = 1.0 + phase[:, None] * 0.005 + body_index * 0.001
+    angle = phase[:, None] * angular_rate
+    body_rotation = torch.zeros(frame_count, 24, 4, dtype=torch.float32, device=device)
+    body_rotation[..., 2] = torch.sin(0.5 * angle)
+    body_rotation[..., 3] = torch.cos(0.5 * angle)
+    body_linear_velocity = torch.zeros(frame_count, 24, 3, dtype=torch.float32, device=device)
+    body_linear_velocity[..., 0] = linear_rate * 50.0
+    body_linear_velocity[..., 2] = 0.25
+    body_angular_velocity = torch.zeros(frame_count, 24, 3, dtype=torch.float32, device=device)
+    body_angular_velocity[..., 2] = angular_rate * 50.0
+    frames = MotionFrames(
         joint_position=torch.zeros(frame_count, 69, dtype=torch.float32, device=device),
         joint_velocity=torch.zeros(frame_count, 69, dtype=torch.float32, device=device),
-        observation=observation,
+        body_position=body_position,
+        body_rotation=body_rotation,
+        body_linear_velocity=body_linear_velocity,
+        body_angular_velocity=body_angular_velocity,
     )
-    table = MotionTaskTable.from_storage(
+    table = MotionTaskTable(
         index,
         frames,
         tuple(f"joint_{index}" for index in range(69)),
-        (),
+        tuple(f"body_{index}" for index in range(24)),
         "smpl_tracking_builder_v1",
         _hash("smpl-tracking-builder"),
         "source_frames",
-        (("motion", 1.0),),
-        MotionSampleGrid.source_rows(),
-        seed=0,
+        _hash("smpl-tracking-skeleton"),
+    )
+    expert_frames = smpl_humenv_observation(
+        table.field("body_position"),
+        table.field("body_rotation"),
+        table.field("body_linear_velocity"),
+        table.field("body_angular_velocity"),
     )
     schema = ForwardBackwardExpertSchema(
         dataset_id="smpl-packed-tracking-test",
@@ -334,110 +476,74 @@ def _smpl_tracking_expert_table(
         window_lengths=(1,),
     )
     expert = ForwardBackwardExpertBuffer(
-        table.field("observation"),
+        expert_frames,
         table.clip_offsets,
         torch.ones(len(_SMPL_CLIP_IDS), device=device),
         schema,
         clip_ids=_SMPL_CLIP_IDS,
+        clip_length_values=_SMPL_LENGTHS,
     )
     return expert, table
 
 
-class _PackedTrackingObservationSchema:
-    field_widths = (("policy", 358),)
+def test_smpl_tracking_expert_projects_physical_table_frames() -> None:
+    expert, table = _smpl_tracking_expert_table("cpu")
+    expected = smpl_humenv_observation(
+        table.field("body_position"),
+        table.field("body_rotation"),
+        table.field("body_linear_velocity"),
+        table.field("body_angular_velocity"),
+    )
 
-    @staticmethod
-    def route(name: str) -> tuple[str, ...]:
-        assert name == "backward"
-        return ("policy",)
-
-
-class _PackedTrackingModel:
-    observation_schema = _PackedTrackingObservationSchema()
-    context_dim = 4
-
-    def __init__(self, policy_count: int) -> None:
-        self.policy_count = policy_count
-        self.action_calls = 0
-
-    @staticmethod
-    def backward_map(observations: TensorDict) -> torch.Tensor:
-        return observations["policy"][..., :4]
-
-    @staticmethod
-    def context_project(context: torch.Tensor) -> torch.Tensor:
-        return context
-
-    def action_deterministic(self, observations: TensorDict, context: torch.Tensor) -> torch.Tensor:
-        assert observations.batch_size == context.shape[:2]
-        self.action_calls += 1
-        return torch.zeros(*observations.batch_size, 69, dtype=torch.float32, device=context.device)
+    assert table.frames.root_storage == "body_row_zero"
+    assert "observation" not in table.frames.available_fields
+    assert table.reference_frame_names == tuple(f"body_{index}" for index in range(24))
+    assert expert.frames.shape == (sum(_SMPL_LENGTHS), 358)
+    torch.testing.assert_close(expert.frames, expected)
 
 
-class _PackedTrackingEnvironment:
-    def __init__(
-        self,
-        expert: ForwardBackwardExpertBuffer,
-        table: MotionTaskTable,
-        *,
-        policy_count: int,
-        lanes_per_policy: int,
-    ) -> None:
-        self.expert = expert
-        self.num_envs = policy_count * lanes_per_policy
-        self.max_episode_length = max(_SMPL_LENGTHS)
-        self.device = expert.device
-        self.policy_count = policy_count
-        self.lanes_per_policy = lanes_per_policy
-        payload = object.__new__(MotionStatePayload)
-        payload.table = table
-        command = SimpleNamespace(table=table, payload=payload)
-        action = object.__new__(MotionMujocoControlAction)
-        action.cfg = SimpleNamespace(action_width=69)
-        self.command_manager = SimpleNamespace(get_term=lambda name: command if name == "motion" else None)
-        self.action_manager = SimpleNamespace(get_term=lambda name: action if name == "joint_position" else None)
-        self._clips = torch.zeros(self.num_envs, dtype=torch.int64, device=self.device)
-        self._steps = torch.zeros(self.num_envs, dtype=torch.int64, device=self.device)
-        self.reset_events: list[tuple[tuple[int, ...], tuple[int, ...]]] = []
+def test_robot_tracking_projectors_own_named_protocol_geometry() -> None:
+    smpl = torch.arange(2 * 358, dtype=torch.float32).view(2, 358)
+    g1 = torch.arange(2 * 29, dtype=torch.float32).view(2, 29)
 
-    def _observation(self) -> TensorDict:
-        lengths = self.expert.clip_lengths.index_select(0, self._clips)
-        local_steps = torch.minimum(self._steps, lengths - 1)
-        starts = self.expert.clip_offsets.index_select(0, self._clips)
-        values = self.expert.frames.index_select(0, starts + local_steps).clone()
-        policies = torch.arange(self.num_envs, device=self.device) // self.lanes_per_policy
-        offsets = policies.to(torch.float32) * 0.25 + self._clips.to(torch.float32) * 0.05
-        values[:, :214].add_(offsets.unsqueeze(1))
-        return TensorDict({"policy": values}, batch_size=[self.num_envs])
+    smpl_pose = smpl_humenv_tracking_pose(smpl)
+    g1_pose = g1_bfm_observation_state_pose(g1)
 
-    def reset_motion_clips_selected(
-        self,
-        clip_indices: torch.Tensor,
-        *,
-        env_ids: torch.Tensor,
-    ) -> tuple[TensorDict, dict]:
-        self._clips.index_copy_(0, env_ids, clip_indices)
-        self._steps.index_fill_(0, env_ids, 0)
-        self.reset_events.append((tuple(env_ids.cpu().tolist()), tuple(clip_indices.cpu().tolist())))
-        return self._observation(), {}
-
-    def step(self, action: torch.Tensor):
-        assert action.shape == (self.num_envs, 69)
-        self._steps.add_(1)
-        return (
-            self._observation(),
-            torch.zeros(self.num_envs, device=self.device),
-            torch.zeros(self.num_envs, dtype=torch.bool, device=self.device),
-            torch.zeros(self.num_envs, dtype=torch.bool, device=self.device),
-            {},
-        )
+    assert smpl_pose.shape == (2, 214) and smpl_pose.untyped_storage().data_ptr() == smpl.untyped_storage().data_ptr()
+    assert g1_pose.shape == (2, 23) and g1_pose.untyped_storage().data_ptr() == g1.untyped_storage().data_ptr()
+    torch.testing.assert_close(smpl_pose, smpl[:, :214])
+    torch.testing.assert_close(g1_pose, g1[:, :23])
+    with pytest.raises(ValueError, match="358-wide"):
+        smpl_humenv_tracking_pose(smpl[:, :-1])
+    with pytest.raises(ValueError, match="29-joint"):
+        g1_bfm_observation_state_pose(g1[:, :-1])
 
 
 class _Algorithm:
     def __init__(self, expert: ForwardBackwardExpertBuffer) -> None:
         self.expert = expert
         self.model = torch.nn.Linear(1, 1)
+        self.model.target_network = torch.nn.Linear(1, 1)
+        self.model.observation_normalizers = torch.nn.ModuleDict({"state": torch.nn.Linear(1, 1)})
+        self.model.assignment_orders = []
+        self.model.evaluation_envs = []
         self.resets: list[tuple[TensorDict, torch.Tensor]] = []
+        self.eval_mode_calls = 0
+        self.train_mode_calls = 0
+        self.train_mode()
+
+    def eval_mode(self) -> None:
+        self.eval_mode_calls += 1
+        self.model.eval()
+
+    def train_mode(self) -> None:
+        self.train_mode_calls += 1
+        self.model.train()
+        self.model.target_network.eval()
+        self.model.observation_normalizers.eval()
+
+    def evaluation_history(self, _observations: TensorDict) -> None:
+        return None
 
     def process_env_reset(self, observations: TensorDict, reset: torch.Tensor) -> None:
         self.resets.append((observations, reset.clone()))
@@ -445,12 +551,44 @@ class _Algorithm:
 
 class _Environment:
     def __init__(self, table: MotionTaskTable, *, fail_reset: bool = False) -> None:
-        command = SimpleNamespace(table=table)
+        payload = object.__new__(MotionStatePayload)
+        payload.table = table
+        payload.sampler = _sampler(table)
+        command = object.__new__(StateCommand)
+        command.table = table
+        command.randomize_command_indices = True
+        command._payload = payload
+        command.time_left = torch.ones(2)
+        command.command_counter = torch.zeros(2, dtype=torch.int64)
+        command._update_step = 0
+        command_manager = SimpleNamespace(
+            active_terms=("motion",),
+            get_term=lambda name: command if name == "motion" else None,
+        )
         self.unwrapped = SimpleNamespace(
-            command_manager=SimpleNamespace(get_term=lambda name: command if name == "motion" else None),
-            evaluation_transaction=lambda _seed: nullcontext(),
+            num_envs=2,
+            device=torch.device("cpu"),
+            command_manager=command_manager,
+            observation_manager=SimpleNamespace(
+                _group_obs_class_term_cfgs={"state": []},
+                _group_obs_class_instances=[],
+                _group_obs_term_cfgs={
+                    "state": [SimpleNamespace(history_length=0, noise=None, modifiers=None)],
+                },
+            ),
+            event_manager=SimpleNamespace(
+                active_terms={},
+                _interval_term_time_left=[],
+                _reset_term_last_triggered_step_id=[],
+                _reset_term_last_triggered_once=[],
+            ),
+            curriculum_manager=SimpleNamespace(active_terms=(), _curriculum_state={}),
+            common_step_counter=0,
+            _sim_step_counter=0,
+            episode_length_buf=torch.zeros(2, dtype=torch.int64),
         )
         self.num_envs = 2
+        self.device = torch.device("cpu")
         self.reset_count = 0
         self.fail_reset = fail_reset
 
@@ -461,27 +599,37 @@ class _Environment:
         return TensorDict({"state": torch.zeros(2, 1)}, batch_size=[2]), {}
 
 
-def _evaluation() -> MotionTrackingEvaluation:
-    return MotionTrackingEvaluation(
-        clip_ids=("clip_b", "clip_a"),
-        emd=torch.tensor((3.0, 0.0)),
-        obs_state_emd=torch.tensor((2.0, 1.0)),
-        source_frame_counts=torch.tensor((4, 3), dtype=torch.int64),
-        evaluated_frame_counts=torch.tensor((4, 3), dtype=torch.int64),
+def _evaluation() -> ForwardBackwardTrackingEvaluation:
+    return ForwardBackwardTrackingEvaluation(
+        sequence_ids=_CLIP_IDS,
+        metric_values={"emd": torch.tensor((0.0, 3.0)), "obs_state_emd": torch.tensor((1.0, 2.0))},
+        source_frame_counts=torch.tensor((3, 4), dtype=torch.int64),
+        evaluated_frame_counts=torch.tensor((3, 4), dtype=torch.int64),
         coverage_fraction=torch.ones(2),
         duration_seconds=1.25,
     )
 
 
-def test_tracking_priority_formula_reorders_stable_ids_and_clamps_emd() -> None:
-    priorities = motion_tracking_priorities(_evaluation(), _CLIP_IDS, "cpu")
+def test_tracking_priority_formula_requires_stable_order_and_clamps_emd() -> None:
+    evaluation = _evaluation()
+    reversed_evaluation = ForwardBackwardTrackingEvaluation(
+        sequence_ids=tuple(reversed(_CLIP_IDS)),
+        metric_values={name: values.flip(0) for name, values in evaluation.metric_values.items()},
+        source_frame_counts=evaluation.source_frame_counts.flip(0),
+        evaluated_frame_counts=evaluation.evaluated_frame_counts.flip(0),
+        coverage_fraction=evaluation.coverage_fraction.flip(0),
+        duration_seconds=evaluation.duration_seconds,
+    )
+    with pytest.raises(ValueError, match="stable sequence order"):
+        forward_backward_tracking_priorities(reversed_evaluation, _CLIP_IDS, "cpu", **_PRIORITY_PROTOCOL)
 
+    priorities = forward_backward_tracking_priorities(evaluation, _CLIP_IDS, "cpu", **_PRIORITY_PROTOCOL)
     torch.testing.assert_close(priorities, torch.tensor((2.0, 16.0)))
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for the production EMD backend.")
-def test_gpu_uniform_emd_matches_released_pot_operator() -> None:
-    """Exact GPU assignment must match the released CPU oracle without a runtime dependency."""
+def test_gpu_uniform_emd_matches_bfm_pot_operator() -> None:
+    """Exact GPU assignment must match BFM-Zero's CPU oracle without a runtime dependency."""
     optimal_transport = pytest.importorskip("o" + "t")
     generator = torch.Generator().manual_seed(17)
     device = torch.device("cuda:0")
@@ -499,7 +647,7 @@ def test_gpu_uniform_emd_matches_released_pot_operator() -> None:
         weights = np.ones(count) / count
         expected = optimal_transport.emd2(weights, weights, cost, numItermax=100_000)
         output = torch.empty(1, dtype=torch.float64, device=device)
-        workspace = tracking_module._UniformEmdWorkspace(lengths=(count,), device=device, feature_width=width)
+        workspace = UniformAssignmentWorkspace(lengths=(count,), device=device, feature_width=width)
 
         workspace.compute(
             observed_cpu.to(device).unsqueeze(0),
@@ -512,8 +660,8 @@ def test_gpu_uniform_emd_matches_released_pot_operator() -> None:
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for the production EMD backend.")
 def test_gpu_uniform_emd_matches_frozen_cpu_oracle_for_variable_lengths() -> None:
-    """GPU assignment must preserve released exact costs without copying traces to the host."""
-    workspace_type = getattr(tracking_module, "_UniformEmdWorkspace")
+    """GPU assignment must preserve the frozen exact costs without copying traces to the host."""
+    workspace_type = UniformAssignmentWorkspace
     device = torch.device("cuda:0")
     observed = torch.tensor(
         (
@@ -552,7 +700,7 @@ def test_gpu_uniform_emd_flat_rows_match_dense_variable_length_costs() -> None:
     for row, (start, length) in enumerate(zip(starts, lengths, strict=True)):
         dense_observed[row, :length].copy_(observed_flat[start : start + length])
         dense_target[row, :length].copy_(target_flat[start : start + length])
-    workspace = tracking_module._UniformEmdWorkspace(lengths=lengths, device=device, feature_width=3)
+    workspace = UniformAssignmentWorkspace(lengths=lengths, device=device, feature_width=3)
     dense_output = torch.empty(3, dtype=torch.float64, device=device)
     flat_output = torch.empty_like(dense_output)
     start_tensor = torch.tensor(starts, dtype=torch.int64, device=device)
@@ -568,7 +716,7 @@ def test_gpu_uniform_emd_uses_stable_lowest_column_ties() -> None:
     """Equal costs must produce the same lowest-column assignment on every launch."""
     device = torch.device("cuda:0")
     values = torch.zeros(1, 4, 1, device=device)
-    workspace = tracking_module._UniformEmdWorkspace(lengths=(4,), device=device, feature_width=1)
+    workspace = UniformAssignmentWorkspace(lengths=(4,), device=device, feature_width=1)
     output = torch.empty(1, dtype=torch.float64, device=device)
 
     workspace.compute(values, values, output)
@@ -586,7 +734,7 @@ def test_gpu_uniform_emd_block_preserves_variable_length_ties_across_launches() 
     """Every cooperative clip block must retain deterministic lowest-column ties."""
     device = torch.device("cuda:0")
     values = torch.zeros(3, 64, 2, device=device)
-    workspace = tracking_module._UniformEmdWorkspace(lengths=(1, 17, 64), device=device, feature_width=2)
+    workspace = UniformAssignmentWorkspace(lengths=(1, 17, 64), device=device, feature_width=2)
     output = torch.empty(3, dtype=torch.float64, device=device)
 
     workspace.compute(values, values, output)
@@ -618,9 +766,9 @@ def test_gpu_uniform_emd_block_preserves_variable_length_ties_across_launches() 
 
 def test_gpu_uniform_emd_compute_reuses_preallocated_scratch() -> None:
     """The repeated assignment path must not allocate, synchronize, or repair layouts."""
-    constructor = inspect.getsource(tracking_module._UniformEmdWorkspace.__init__)
-    source = inspect.getsource(tracking_module._UniformEmdWorkspace.compute)
-    flat_source = inspect.getsource(tracking_module._UniformEmdWorkspace.compute_flat)
+    constructor = inspect.getsource(UniformAssignmentWorkspace.__init__)
+    source = inspect.getsource(UniformAssignmentWorkspace.compute)
+    flat_source = inspect.getsource(UniformAssignmentWorkspace.compute_flat)
 
     for forbidden in (".cpu(", ".tolist(", ".item(", ".contiguous("):
         assert forbidden not in constructor
@@ -631,13 +779,13 @@ def test_gpu_uniform_emd_compute_reuses_preallocated_scratch() -> None:
 
 def test_gpu_uniform_emd_dispatches_scalar_and_cooperative_kernels_by_bucket() -> None:
     """Exact assignment must avoid cooperative barrier overhead on short buckets."""
-    compute_source = inspect.getsource(tracking_module._UniformEmdWorkspace.compute)
+    compute_source = inspect.getsource(UniformAssignmentWorkspace.compute)
     scalar_source = inspect.getsource(uniform_emd_module.uniform_assignment_cost_scalar)
     cooperative_source = inspect.getsource(uniform_emd_module.uniform_assignment_cost)
     module_source = inspect.getsource(uniform_emd_module)
 
     assert uniform_emd_module.UNIFORM_ASSIGNMENT_BLOCK_DIM == 256
-    assert tracking_module._UniformEmdWorkspace._SCALAR_FRAME_EXTENT_MAX == 512
+    assert UniformAssignmentWorkspace._SCALAR_FRAME_EXTENT_MAX == 512
     assert "bucket.frame_extent <= self._SCALAR_FRAME_EXTENT_MAX" in compute_source
     assert "wp.launch(" in compute_source
     assert "wp.launch_tiled(" in compute_source
@@ -660,7 +808,7 @@ def test_gpu_uniform_emd_hybrid_dispatch_is_exact_across_boundary() -> None:
     observed = values.expand(2, -1, -1).contiguous()
     target = observed.clone()
     output = torch.empty(2, dtype=torch.float64, device=device)
-    workspace = tracking_module._UniformEmdWorkspace(lengths=(512, 513), device=device, feature_width=1)
+    workspace = UniformAssignmentWorkspace(lengths=(512, 513), device=device, feature_width=1)
 
     workspace.compute(observed, target, output)
 
@@ -672,7 +820,7 @@ def test_gpu_uniform_emd_workspace_uses_fixed_power_of_two_buckets() -> None:
     """Immutable clip lengths must determine compact dense buffers once at construction."""
     device = torch.device("cuda:0")
 
-    workspace = tracking_module._UniformEmdWorkspace(lengths=(27, 34, 64, 129, 499), device=device, feature_width=3)
+    workspace = UniformAssignmentWorkspace(lengths=(27, 34, 64, 129, 499), device=device, feature_width=3)
 
     assert workspace.capacity == 5
     assert workspace.max_frames == 499
@@ -689,7 +837,7 @@ def test_gpu_uniform_emd_workspace_uses_fixed_power_of_two_buckets() -> None:
 def test_gpu_uniform_emd_bucket_compute_reuses_every_device_allocation() -> None:
     """Repeated bucket calls must not grow current or peak device allocation after warmup."""
     device = torch.device("cuda:0")
-    workspace = tracking_module._UniformEmdWorkspace(lengths=(27, 34, 64, 129), device=device, feature_width=3)
+    workspace = UniformAssignmentWorkspace(lengths=(27, 34, 64, 129), device=device, feature_width=3)
     observed = torch.randn(4, 129, 3, device=device)
     target = torch.randn_like(observed)
     output = torch.empty(4, dtype=torch.float64, device=device)
@@ -712,7 +860,7 @@ def test_gpu_uniform_emd_flat_compute_reuses_every_device_allocation() -> None:
     device = torch.device("cuda:0")
     lengths = (27, 34, 64, 129)
     starts = (0, 27, 61, 125)
-    workspace = tracking_module._UniformEmdWorkspace(lengths=lengths, device=device, feature_width=3)
+    workspace = UniformAssignmentWorkspace(lengths=lengths, device=device, feature_width=3)
     observed = torch.randn(sum(lengths), 3, device=device)
     target_storage = torch.randn(sum(lengths), 5, device=device)
     target = target_storage[:, :3]
@@ -731,145 +879,48 @@ def test_gpu_uniform_emd_flat_compute_reuses_every_device_allocation() -> None:
     assert torch.cuda.max_memory_allocated(device) == baseline
 
 
-def test_motion_tracking_refill_queues_are_stable_and_cover_every_clip_once() -> None:
-    """Longest-work-first queues must use stable ids and assign every clip exactly once."""
-    queues = tracking_module._motion_tracking_refill_queues(
-        ("z", "a", "b", "c"),
-        (5, 5, 4, 2),
-        lane_count=2,
+def test_forward_backward_tracking_ownership_is_generic() -> None:
+    """Production tracking, lifecycle, metric, and sampling code have one clear owner each."""
+    assert forward_backward_tracking_evaluator.__module__.endswith("rl.rsl_rl.forward_backward_tracking")
+    assert ForwardBackwardTrackingEvaluation.__module__.endswith("rl.rsl_rl.forward_backward_tracking")
+    assert ForwardBackwardTrackingLifecycle.__module__.endswith("rl.rsl_rl.forward_backward_tracking")
+    assert UniformAssignmentWorkspace.__module__.endswith("multi_task.metrics.uniform_assignment")
+    tracking_source = inspect.getsource(tracking_module)
+    tree = ast.parse(tracking_source)
+    symbols = {
+        node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+    literals = tuple(
+        node.value.lower() for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)
     )
-
-    assert queues == ((1, 2), (0, 3))
-    assert sorted(clip for queue in queues for clip in queue) == [0, 1, 2, 3]
-    assert tuple(sum((5, 5, 4, 2)[clip] for clip in queue) for queue in queues) == (9, 7)
-
-    balanced = tracking_module._motion_tracking_refill_queues(
-        ("a", "b", "c", "d"),
-        (5, 4, 3, 2),
-        lane_count=2,
+    comparisons = {ast.unparse(node) for node in ast.walk(tree) if isinstance(node, ast.Compare)}
+    assert "_native_tracking_assignment" not in symbols
+    assert {
+        "ForwardBackwardSequenceCommand",
+        "ForwardBackwardEvaluationHistory",
+        "ForwardBackwardEvaluationHistoryFactory",
+        "ForwardBackwardEvaluationScope",
+        "ForwardBackwardTrackingMetric",
+    }.isdisjoint(symbols)
+    assert {"_SequenceCommand", "_EvaluationHistory", "_EvaluationScope", "_TrackingMetric"} <= symbols
+    assert "len(metrics) > 2" not in comparisons
+    assert all(all(token not in value for value in literals) for token in ("g1", "lafan", "smpl", "cmu"))
+    assert all(
+        all(token not in value for value in literals)
+        for token in ("obs_state_emd", "uniform_before_source_end", "sample_step_seconds")
     )
-    balanced_work = tuple(sum((5, 4, 3, 2)[clip] for clip in queue) for queue in balanced)
-    assert balanced_work == (7, 7)
-    assert max(balanced_work) == max(5, math.ceil(sum((5, 4, 3, 2)) / 2))
+    assert "json" not in tracking_source.lower()
+    assert "pathlib" not in tracking_source.lower()
 
 
-def test_motion_tracking_refill_lane_count_derives_smpl_theoretical_lower_bound() -> None:
-    """The frozen SMPL aggregate requires 25 lanes to approach its longest-clip bound."""
-    action_counts = (3663, 639, *((466,) * 180))
-
-    assert len(action_counts) == 182
-    assert sum(action_counts) == 88_182
-    assert tracking_module.motion_tracking_refill_lane_count(action_counts) == 25
-
-
-def test_smpl_packed_evaluator_has_explicit_additive_boundary() -> None:
-    """Packed checkpoint evaluation must not overload native curriculum semantics."""
-    evaluator = tracking_module.smpl_motion_tracking_evaluator_packed
-
-    assert tuple(inspect.signature(evaluator).parameters) == (
-        "model",
-        "env",
-        "expert",
-        "clip_ids",
-        "policy_count",
-    )
-    assert "motion_tracking_refill_lane_count" in tracking_module.__all__
-    assert "smpl_motion_tracking_evaluator_packed" in tracking_module.__all__
-
-
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for the production evaluator.")
-def test_smpl_packed_evaluator_refills_once_and_batches_exact_emd(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Checkpoint-major policies must share one rollout and one compact exact-EMD call."""
-    device = torch.device("cuda:0")
-    policy_count = 2
-    lanes_per_policy = 2
-    expert, table = _smpl_tracking_expert_table(device)
-    model = _PackedTrackingModel(policy_count)
-    env = _PackedTrackingEnvironment(
-        expert,
-        table,
-        policy_count=policy_count,
-        lanes_per_policy=lanes_per_policy,
-    )
-    compute_receipts: list[tuple[torch.Size, torch.Size, int]] = []
-    original_compute_flat = tracking_module._UniformEmdWorkspace.compute_flat
-
-    def compute_flat(workspace, observed, observed_starts, target, target_starts, output):
-        compute_receipts.append((observed.shape, target.shape, output.shape[0]))
-        return original_compute_flat(workspace, observed, observed_starts, target, target_starts, output)
-
-    synchronize_calls = 0
-    original_synchronize = torch.cuda.synchronize
-
-    def synchronize(device=None):
-        nonlocal synchronize_calls
-        synchronize_calls += 1
-        original_synchronize(device)
-
-    monkeypatch.setattr(tracking_module._UniformEmdWorkspace, "compute_flat", compute_flat)
-    monkeypatch.setattr(tracking_module.torch.cuda, "synchronize", synchronize)
-
-    evaluations = tracking_module.smpl_motion_tracking_evaluator_packed(
-        model,
-        env,
-        expert,
-        _SMPL_CLIP_IDS,
-        policy_count=policy_count,
-    )
-
-    assert env.reset_events == [
-        ((0, 1, 2, 3), (0, 1, 0, 1)),
-        ((1, 3), (2, 2)),
-        ((0, 2), (3, 3)),
-    ]
-    assert model.action_calls == 7
-    assert synchronize_calls == 1
-    assert compute_receipts == [(torch.Size((28, 214)), torch.Size((18, 214)), 8)]
-    assert len(evaluations) == policy_count
-    assert all(evaluation.clip_ids == _SMPL_CLIP_IDS for evaluation in evaluations)
-
-    metric_lengths = tuple(length - 1 for length in _SMPL_LENGTHS)
-    max_length = max(metric_lengths)
-    observed = torch.zeros(policy_count * len(_SMPL_CLIP_IDS), max_length, 214, device=device)
-    target = torch.zeros_like(observed)
-    for policy in range(policy_count):
-        for clip, (start, end, length) in enumerate(zip((0, 6, 11, 15), (6, 11, 15, 18), metric_lengths, strict=True)):
-            row = policy * len(_SMPL_CLIP_IDS) + clip
-            clip_target = expert.frames[start + 1 : end, :214]
-            target[row, :length].copy_(clip_target)
-            offset = torch.tensor(policy, dtype=torch.float32, device=device) * 0.25
-            offset.add_(torch.tensor(clip, dtype=torch.float32, device=device), alpha=0.05)
-            observed[row, :length].copy_(clip_target).add_(offset)
-    expected = torch.empty(policy_count * len(_SMPL_CLIP_IDS), dtype=torch.float64, device=device)
-    workspace = tracking_module._UniformEmdWorkspace(
-        lengths=metric_lengths * policy_count,
-        device=device,
-        feature_width=214,
-    )
-    workspace.compute(observed, target, expected)
-
-    actual = torch.stack(tuple(evaluation.emd for evaluation in evaluations))
-    torch.testing.assert_close(actual, expected.view(policy_count, len(_SMPL_CLIP_IDS)), rtol=0.0, atol=0.0)
-
-
-def test_smpl_packed_evaluator_keeps_compact_trace_and_single_transport_call() -> None:
-    """Packed rollout storage must scale with valid rows rather than clip padding."""
-    source = inspect.getsource(tracking_module.smpl_motion_tracking_evaluator_packed)
-
-    assert "trace = torch.empty(policy_count * metric_rows_per_policy, 214" in source
-    assert source.count("workspace.compute_flat(") == 1
-    assert "target_traces" not in source
-    assert ".cpu(" not in source
-    assert ".tolist(" not in source
-    assert ".item(" not in source
-
-
-def test_native_tracking_assignment_shuffles_fixed_domain_randomization_rows() -> None:
-    """The curriculum evaluator must retain released shuffled replica assignment."""
+def test_tracking_assignment_is_driven_by_shuffle_choice() -> None:
+    """Assignment policy must be explicit rather than hidden in the evaluator."""
     python_state = random.getstate()
     random.seed(17)
     try:
-        assigned, representatives = tracking_module._native_tracking_assignment(8, 3, torch.device("cpu"))
+        assigned, representatives = tracking_module._tracking_assignment(
+            8, 3, torch.device("cpu"), random.Random(17), shuffle=True
+        )
     finally:
         random.setstate(python_state)
 
@@ -877,85 +928,23 @@ def test_native_tracking_assignment_shuffles_fixed_domain_randomization_rows() -
     torch.testing.assert_close(representatives, torch.tensor((0, 1, 4)))
 
 
-def test_tracking_context_table_matches_released_clip_safe_future_mean() -> None:
-    """Rolling eight-style contexts must shorten at each clip tail without crossing clips."""
-
-    class Schema:
-        field_widths = (("policy", 3),)
-
-        @staticmethod
-        def route(name: str) -> tuple[str, ...]:
-            assert name == "backward"
-            return ("policy",)
-
-    class Model:
-        context_dim = 3
-        context_normalization = False
-        observation_schema = Schema()
-
-        @staticmethod
-        def backward_map(observations: TensorDict) -> torch.Tensor:
-            return observations["policy"]
-
-    frames = torch.arange(18, dtype=torch.float32).view(6, 3)
-    schema = ForwardBackwardExpertSchema(
-        dataset_id="context-test",
-        data_hash="data",
-        feature_schema_hash="features",
-        clip_offsets_hash="offsets",
-        expert_feature_width=3,
-        num_frames=6,
-        num_clips=2,
-        window_lengths=(1,),
-    )
-    expert = ForwardBackwardExpertBuffer(
-        frames,
-        torch.tensor((0, 3, 6), dtype=torch.int64),
-        torch.ones(2),
-        schema,
-        clip_ids=_CLIP_IDS,
-    )
-
-    contexts = tracking_module._tracking_context_table(
-        Model(),
-        expert,
-        (3, 3),
-        window_length=2,
-        inference_batch_size=2,
-    )
-
-    torch.testing.assert_close(contexts[1], frames[1:3].mean(dim=0))
-    torch.testing.assert_close(contexts[2], frames[2])
-    torch.testing.assert_close(contexts[4], frames[4:6].mean(dim=0))
-    torch.testing.assert_close(contexts[5], frames[5])
-
-
 def test_tracking_evaluation_omits_absent_profile_diagnostics() -> None:
-    """A profile with only native EMD must not fabricate a G1 obs-state diagnostic."""
-    evaluation = MotionTrackingEvaluation(
-        clip_ids=("clip",),
-        emd=torch.tensor((1.25,), dtype=torch.float64),
-        obs_state_emd=None,
+    """A single-metric profile must not fabricate an observation-state diagnostic."""
+    evaluation = ForwardBackwardTrackingEvaluation(
+        sequence_ids=("clip",),
+        metric_values={"emd": torch.tensor((1.25,), dtype=torch.float64)},
         source_frame_counts=torch.tensor((3,), dtype=torch.int64),
         evaluated_frame_counts=torch.tensor((3,), dtype=torch.int64),
         coverage_fraction=torch.ones(1, dtype=torch.float64),
         duration_seconds=0.5,
     )
 
-    assert evaluation.serializable_metrics() == {
-        "clip": {
-            "emd": 1.25,
-            "num_frames": 3,
-            "source_num_frames": 3,
-            "evaluated_num_frames": 3,
-            "coverage_fraction": 1.0,
-        }
-    }
+    assert set(evaluation.metric_values) == {"emd"}
 
 
 def test_smpl_tracking_accepts_exact_t_minus_one_episode_horizon() -> None:
     """Reset frame zero is not a metric row, so T source frames require exactly T-1 actions."""
-    metric, evaluated = tracking_module._tracking_frame_counts(
+    metric, evaluated = tracking_module.tracking_frame_counts(
         torch.tensor((4,), dtype=torch.int64),
         episode_length=3,
         include_reset_frame=False,
@@ -965,7 +954,7 @@ def test_smpl_tracking_accepts_exact_t_minus_one_episode_horizon() -> None:
     torch.testing.assert_close(metric, torch.tensor((3,), dtype=torch.int64))
     torch.testing.assert_close(evaluated, metric)
     with pytest.raises(RuntimeError, match="horizon is shorter"):
-        tracking_module._tracking_frame_counts(
+        tracking_module.tracking_frame_counts(
             torch.tensor((4,), dtype=torch.int64),
             episode_length=2,
             include_reset_frame=False,
@@ -975,37 +964,79 @@ def test_smpl_tracking_accepts_exact_t_minus_one_episode_horizon() -> None:
 
 def test_tracking_final_frame_uses_pre_reset_observation() -> None:
     """Same-step autoreset must not replace a valid final metric row with the new spawn."""
-    metric = tracking_module._TrackingMetricProjection(
-        torch.empty(0, 2),
-        lambda observations: observations["policy"],
-    )
+    metric = tracking_module._TrackingMetric("distance", torch.empty(1, 2), "policy")
     reached = torch.empty(2, 2)
     current = TensorDict({"policy": torch.tensor(((1.0, 1.0), (2.0, 2.0)))}, batch_size=[2])
     final = TensorDict({"policy": torch.tensor(((3.0, 3.0), (4.0, 4.0)))}, batch_size=[2])
-
-    tracking_module._write_tracking_reached_values(
-        reached,
-        metric,
-        current,
-        {"final_obs": final, "final_obs_valid": torch.tensor((False, True))},
-        2,
+    required_final = torch.tensor((False, True))
+    final = tracking_module._tracking_final_observations(
+        {"final_obs": final, "final_obs_valid": torch.tensor((False, True))}, required_final, 2
     )
+
+    tracking_module._write_tracking_reached_values(reached, metric, current, final, required_final)
 
     torch.testing.assert_close(reached, torch.tensor(((1.0, 1.0), (4.0, 4.0))))
 
 
-def test_tracking_done_is_allowed_only_at_the_final_reached_frame() -> None:
-    """A T=4 SMPL clip reaches its final metric row at zero-based action step two."""
-    counts = torch.tensor((3,), dtype=torch.int64)
+def test_tracking_real_wrapper_final_observation_uses_required_done_rows() -> None:
+    """The RSL wrapper forwards ``final_obs`` without inventing a validity side channel."""
+    metric = tracking_module._TrackingMetric("distance", torch.empty(1, 2), "policy")
+    reached = torch.empty(2, 2)
+    current = TensorDict({"policy": torch.tensor(((1.0, 1.0), (2.0, 2.0)))}, batch_size=[2])
+    required_final = torch.tensor((False, True))
+    final = tracking_module._tracking_final_observations(
+        {"final_obs": {"policy": torch.tensor(((3.0, 3.0), (4.0, 4.0)))}}, required_final, 2
+    )
 
-    assert tracking_module._tracking_done_is_premature(0, counts, include_reset_frame=False).item()
-    assert tracking_module._tracking_done_is_premature(1, counts, include_reset_frame=False).item()
-    assert not tracking_module._tracking_done_is_premature(2, counts, include_reset_frame=False).item()
+    tracking_module._write_tracking_reached_values(reached, metric, current, final, required_final)
+
+    torch.testing.assert_close(reached, torch.tensor(((1.0, 1.0), (4.0, 4.0))))
+
+
+def test_tracking_consumed_done_row_requires_final_observation() -> None:
+    with pytest.raises(RuntimeError, match="missing its exact final observation"):
+        tracking_module._tracking_final_observations({}, torch.tensor((False, True)), 2)
+
+
+def test_tracking_consumed_done_row_requires_valid_final_observation() -> None:
+    final = TensorDict({"policy": torch.zeros(2, 2)}, batch_size=[2])
+
+    with pytest.raises(RuntimeError, match="no valid final observation"):
+        tracking_module._tracking_final_observations(
+            {"final_obs": final, "final_obs_valid": torch.tensor((False, False))},
+            torch.tensor((False, True)),
+            2,
+        )
+
+
+def test_tracking_ignored_duplicate_done_row_does_not_require_final_observation() -> None:
+    metric = tracking_module._TrackingMetric("distance", torch.empty(1, 2), "policy")
+    observations = TensorDict(
+        {"policy": torch.tensor(((1.0, 2.0), (3.0, 4.0)))},
+        batch_size=[2],
+    )
+    reached = torch.empty(2, 2)
+
+    required_final = torch.zeros(2, dtype=torch.bool)
+    final = tracking_module._tracking_final_observations({}, required_final, 2)
+    tracking_module._write_tracking_reached_values(reached, metric, observations, final, required_final)
+
+    torch.testing.assert_close(reached, observations["policy"])
+
+
+def test_tracking_projection_uses_one_named_field_for_live_and_final_rows() -> None:
+    """Metric ownership stays in observations instead of robot, command, or action adapters."""
+    metric = tracking_module._TrackingMetric(
+        "distance", torch.empty(1, 2), "joint_position", lambda values: values[:, :2]
+    )
+    observations = TensorDict({"joint_position": torch.tensor(((1.0, 2.0, 3.0),))}, batch_size=[1])
+
+    torch.testing.assert_close(metric.observe(observations), torch.tensor(((1.0, 2.0),)))
 
 
 def test_tracking_evaluator_does_not_copy_rollout_traces_to_host() -> None:
     """The production evaluator must keep rollout traces and EMD calculation on the GPU."""
-    source = inspect.getsource(tracking_module._motion_tracking_evaluator)
+    source = inspect.getsource(forward_backward_tracking_evaluator)
     context_source = inspect.getsource(tracking_module._tracking_context_table)
 
     for forbidden in (".cpu(", ".tolist(", ".item("):
@@ -1013,17 +1044,33 @@ def test_tracking_evaluator_does_not_copy_rollout_traces_to_host() -> None:
         assert forbidden not in context_source
 
 
-def test_tracking_curriculum_retains_native_replicated_chunks() -> None:
-    """The shared evaluator must not substitute packed refill for native replicas."""
-    source = inspect.getsource(tracking_module._motion_tracking_evaluator)
+def test_tracking_context_table_materializes_the_first_sequence_row() -> None:
+    """A one-frame context window must define every row, including each clip's reset row."""
+    expert = _g1_tracking_expert()
+    model = _TrackingModel()
 
-    assert "_native_tracking_assignment(env.num_envs, chunk_count" in source
+    contexts = tracking_module._tracking_context_table(model, expert, window_length=1)
+    expected = model.backward_map(tracking_module.expert_frame_tensordict(model, expert.frames))
+
+    torch.testing.assert_close(contexts, expected)
+    for offset in expert.clip_offsets[:-1]:
+        torch.testing.assert_close(contexts[offset], expected[offset])
+
+
+def test_tracking_evaluator_uses_configured_assignment_for_complete_chunks() -> None:
+    """The shared evaluator must route assignment policy through its explicit input."""
+    source = inspect.getsource(forward_backward_tracking_evaluator)
+
+    assert "_tracking_assignment(" in source
+    assert "shuffle=shuffle_assignments" in source
     assert "representative_env_rows" in source
-    assert "env.reset_motion_clips(assigned_source)" in source
+    assert "reset_tracking_sequences(env, command, sequence_start_rows, assigned_expert)" in source
     assert "env_ids=" not in source
     assert "lengths=evaluated_length_values" in source
     assert "device=expert.device" in source
-    assert "workspace.compute(representative, target, output)" in source
+    assert "workspace.compute_flat(observed, observed_starts, metric.target_frames, target_starts, output)" in source
+    assert "torch.empty(env.num_envs, max_frames" not in source
+    assert "target_traces" not in source
 
 
 def test_tracking_runtime_does_not_import_transport_dependencies() -> None:
@@ -1040,33 +1087,54 @@ def test_tracking_runtime_does_not_import_transport_dependencies() -> None:
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for the production evaluator.")
 def test_concrete_tracking_evaluator_writes_stable_native_metrics() -> None:
-    """One shared evaluator must reset exact clips and retain released full/diagnostic metrics."""
+    """One shared evaluator must reset exact clips and retain BFM-Zero's full and diagnostic metrics."""
     expert = _g1_tracking_expert("cuda:0")
     model = _TrackingModel()
     env = _TrackingEnvironment(expert)
 
-    evaluation = g1_motion_tracking_evaluator(model, env, expert, _CLIP_IDS)
+    evaluation = forward_backward_tracking_evaluator(
+        model,
+        env,
+        expert,
+        _CLIP_IDS,
+        command=env.command,
+        history_factory=lambda _observations: None,
+        sequence_start_rows=env.command.table.clip_start_rows.to(expert.device),
+        projections=_G1_TRACKING_PROJECTIONS,
+        assignment_rng=random.Random(17),
+        **_TRACKING_PROTOCOL,
+    )
 
-    assert evaluation.clip_ids == _CLIP_IDS
+    assert evaluation.sequence_ids == _CLIP_IDS
     assert env.reset_assignments == [((0,), (0,)), ((0,), (1,))]
     assert model.deterministic_calls == [True] * 5
-    expected_emd = torch.tensor(
-        (0.0, 0.0009765625),
-        dtype=torch.float64,
-        device=expert.device,
-    )
-    torch.testing.assert_close(evaluation.emd, expected_emd)
-    assert evaluation.metrics["clip_a"]["num_frames"] == 3
-    assert evaluation.metrics["clip_b"]["num_frames"] == 4
-    assert evaluation.metrics["clip_a"]["coverage_fraction"] == 1.0
-    assert evaluation.metrics["clip_b"]["coverage_fraction"] == 1.0
-    assert evaluation.metrics["clip_a"]["emd"] == 0.0
+    expected_emd = torch.zeros(2, dtype=torch.float64, device=expert.device)
+    torch.testing.assert_close(evaluation.metric_values["emd"], expected_emd)
+    torch.testing.assert_close(evaluation.evaluated_frame_counts, torch.tensor((3, 4), device=expert.device))
+    torch.testing.assert_close(evaluation.coverage_fraction, torch.ones(2, dtype=torch.float64, device=expert.device))
     torch.testing.assert_close(
-        evaluation.metrics["clip_b"]["obs_state_emd"],
-        torch.tensor(0.0006905339541845024, dtype=torch.float64, device=expert.device),
+        evaluation.metric_values["obs_state_emd"],
+        expected_emd,
         rtol=0.0,
         atol=1.0e-12,
     )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for the production EMD backend.")
+def test_uniform_emd_is_invariant_to_one_shared_feature_translation() -> None:
+    """Relative and absolute joint coordinates must produce the same assignment cost."""
+    device = torch.device("cuda:0")
+    workspace = UniformAssignmentWorkspace(lengths=(4,), device=device, feature_width=3)
+    observed = torch.tensor((((0.0, 1.0, 2.0), (2.0, 3.0, 4.0), (1.0, 5.0, 2.0), (4.0, 0.0, 3.0)),), device=device)
+    target = torch.tensor((((1.0, 1.0, 1.0), (2.0, 4.0, 3.0), (0.0, 5.0, 2.0), (5.0, 0.0, 4.0)),), device=device)
+    translation = torch.tensor((1000.0, -2000.0, 3000.0), device=device)
+    relative = torch.empty(1, dtype=torch.float64, device=device)
+    absolute = torch.empty_like(relative)
+
+    workspace.compute(observed, target, relative)
+    workspace.compute(observed + translation, target + translation, absolute)
+
+    torch.testing.assert_close(absolute, relative, rtol=0.0, atol=0.0)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for the production evaluator.")
@@ -1075,18 +1143,48 @@ def test_native_tracking_evaluator_retains_more_envs_than_clips() -> None:
     expert = _g1_tracking_expert("cuda:0")
     model = _TrackingModel()
     env = _TrackingEnvironment(expert, num_envs=3)
-    python_state = random.getstate()
-    random.seed(17)
-    try:
-        evaluation = g1_motion_tracking_evaluator(model, env, expert, _CLIP_IDS)
-    finally:
-        random.setstate(python_state)
+    evaluation = forward_backward_tracking_evaluator(
+        model,
+        env,
+        expert,
+        _CLIP_IDS,
+        command=env.command,
+        history_factory=lambda _observations: None,
+        sequence_start_rows=env.command.table.clip_start_rows.to(expert.device),
+        projections=_G1_TRACKING_PROJECTIONS,
+        assignment_rng=random.Random(17),
+        **_TRACKING_PROTOCOL,
+    )
 
-    assert evaluation.clip_ids == _CLIP_IDS
+    assert evaluation.sequence_ids == _CLIP_IDS
     assert len(env.reset_assignments) == 1
     assert env.reset_assignments[0][0] == (0, 1, 2)
     assert set(env.reset_assignments[0][1]) == {0, 1}
     assert model.deterministic_calls == [True] * 3
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for the production evaluator.")
+def test_native_tracking_evaluator_keeps_vecenv_action_clipping() -> None:
+    """Evaluation actions must pass through the same VecEnv clipping boundary as training."""
+    expert = _g1_tracking_expert("cuda:0")
+    model = _TrackingModel(action_value=2.0)
+    env = _TrackingEnvironment(expert, clip_actions=0.25)
+
+    forward_backward_tracking_evaluator(
+        model,
+        env,
+        expert,
+        _CLIP_IDS,
+        command=env.command,
+        history_factory=lambda _observations: None,
+        sequence_start_rows=env.command.table.clip_start_rows.to(expert.device),
+        projections=_G1_TRACKING_PROJECTIONS,
+        assignment_rng=random.Random(17),
+        **_TRACKING_PROTOCOL,
+    )
+
+    assert env.applied_actions
+    assert all(torch.all(action == 0.25) for action in env.applied_actions)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for the production evaluator.")
@@ -1097,57 +1195,106 @@ def test_tracking_caps_long_clips_before_the_native_timeout_edge() -> None:
     env = _TrackingEnvironment(expert)
     env.max_episode_length = 3
 
-    evaluation = g1_motion_tracking_evaluator(model, env, expert, _CLIP_IDS)
+    evaluation = forward_backward_tracking_evaluator(
+        model,
+        env,
+        expert,
+        _CLIP_IDS,
+        command=env.command,
+        history_factory=lambda _observations: None,
+        sequence_start_rows=env.command.table.clip_start_rows.to(expert.device),
+        projections=_G1_TRACKING_PROJECTIONS,
+        assignment_rng=random.Random(17),
+        **_TRACKING_PROTOCOL,
+    )
 
-    assert evaluation.metrics["clip_a"]["source_num_frames"] == 3
-    assert evaluation.metrics["clip_a"]["evaluated_num_frames"] == 3
-    assert evaluation.metrics["clip_a"]["coverage_fraction"] == 1.0
-    assert evaluation.metrics["clip_b"]["source_num_frames"] == 4
-    assert evaluation.metrics["clip_b"]["evaluated_num_frames"] == 3
-    assert evaluation.metrics["clip_b"]["coverage_fraction"] == 0.75
+    torch.testing.assert_close(evaluation.source_frame_counts, torch.tensor((3, 4), device=expert.device))
+    torch.testing.assert_close(evaluation.evaluated_frame_counts, torch.tensor((3, 4), device=expert.device))
+    torch.testing.assert_close(evaluation.coverage_fraction, torch.ones(2, dtype=torch.float64, device=expert.device))
 
 
-def test_curriculum_validates_updates_resets_and_records_atomically(tmp_path) -> None:
+def test_curriculum_commits_paired_priorities_then_resets() -> None:
     table = _table()
     expert = _expert()
     algorithm = _Algorithm(expert)
     env = _Environment(table)
-    coordinator = MotionTrackingCurriculum(
+    coordinator = ForwardBackwardTrackingLifecycle(
         env,
         algorithm,
-        str(tmp_path),
+        None,
         "cpu",
-        evaluator=lambda *_args: _evaluation(),
+        projections=_G1_TRACKING_PROJECTIONS,
+        **_CURRICULUM_PROTOCOL,
+        reset_source_name=_MOTION_RESET_SOURCES[0][0],
     )
 
     observations = coordinator.on_transition(8)
 
-    torch.testing.assert_close(table.clip_priorities, torch.tensor((2.0, 16.0)))
+    torch.testing.assert_close(coordinator.sampling_priorities, torch.tensor((2.0, 16.0)))
     torch.testing.assert_close(expert.priorities, torch.tensor((2.0, 16.0)))
     assert env.reset_count == 1
     assert observations is algorithm.resets[0][0]
     assert torch.all(algorithm.resets[0][1])
-    record = json.loads((tmp_path / "tracking_curriculum" / "8.json").read_text())
-    assert record["schema"] == "motion_tracking_curriculum_v1"
-    assert record["clip_ids"] == list(_CLIP_IDS)
-    assert record["priorities"] == [2.0, 16.0]
-    assert record["duration_seconds"] == 1.25
-    assert record["metrics"]["clip_a"]["emd"] == 0.0
-    assert record["metrics"]["clip_b"]["source_num_frames"] == 4
 
 
-def test_curriculum_validates_both_targets_before_first_priority_mutation(tmp_path, monkeypatch) -> None:
+def test_lifecycle_uses_wrapper_and_restores_algorithm_owned_modes() -> None:
+    expert = _expert()
+    algorithm = _Algorithm(expert)
+    env = _Environment(_table())
+    coordinator = ForwardBackwardTrackingLifecycle(
+        env,
+        algorithm,
+        None,
+        "cpu",
+        projections=_G1_TRACKING_PROJECTIONS,
+        **_CURRICULUM_PROTOCOL,
+        reset_source_name=_MOTION_RESET_SOURCES[0][0],
+    )
+
+    coordinator.on_transition(8)
+
+    assert algorithm.model.evaluation_envs == [env]
+    assert algorithm.eval_mode_calls == 1
+    assert algorithm.train_mode_calls == 2
+    assert algorithm.model.training
+    assert not algorithm.model.target_network.training
+    assert not algorithm.model.observation_normalizers.training
+
+
+def test_curriculum_rejects_divergent_priority_owners_at_construction() -> None:
+    """Environment and expert samplers must enter the lifecycle with one shared value."""
+    table = _table()
+    expert = _expert()
+    env = _Environment(table)
+    sampling_priorities = env.unwrapped.command_manager.get_term("motion").payload.sampler.clip_priorities
+    sampling_priorities.copy_(torch.tensor((2.0, 1.0)))
+
+    with pytest.raises(ValueError, match="match at lifecycle construction"):
+        ForwardBackwardTrackingLifecycle(
+            env,
+            _Algorithm(expert),
+            None,
+            "cpu",
+            projections=_G1_TRACKING_PROJECTIONS,
+            **_CURRICULUM_PROTOCOL,
+            reset_source_name=_MOTION_RESET_SOURCES[0][0],
+        )
+
+
+def test_curriculum_validates_both_targets_before_first_priority_mutation(monkeypatch) -> None:
     table = _table()
     expert = _expert()
     algorithm = _Algorithm(expert)
-    coordinator = MotionTrackingCurriculum(
+    coordinator = ForwardBackwardTrackingLifecycle(
         _Environment(table),
         algorithm,
-        str(tmp_path),
+        None,
         "cpu",
-        evaluator=lambda *_args: _evaluation(),
+        projections=_G1_TRACKING_PROJECTIONS,
+        **_CURRICULUM_PROTOCOL,
+        reset_source_name=_MOTION_RESET_SOURCES[0][0],
     )
-    original = table.clip_priorities.clone()
+    original = coordinator.sampling_priorities.clone()
 
     def reject(_priorities: torch.Tensor) -> None:
         raise ValueError("expert rejected priorities")
@@ -1156,211 +1303,156 @@ def test_curriculum_validates_both_targets_before_first_priority_mutation(tmp_pa
     with pytest.raises(ValueError, match="expert rejected"):
         coordinator.on_transition(8)
 
-    torch.testing.assert_close(table.clip_priorities, original)
-    assert not (tmp_path / "tracking_curriculum" / "8.json").exists()
+    torch.testing.assert_close(coordinator.sampling_priorities, original)
 
 
-def test_curriculum_reset_failure_rolls_back_both_samplers_and_record(tmp_path) -> None:
-    """A failed reset must restore exact pre-event sampling state and publish nothing."""
+def test_curriculum_reset_failure_keeps_committed_sampler_state() -> None:
+    """A failed environment mutation must not pretend the environment transaction rolled back."""
     table = _table()
     expert = _expert()
     algorithm = _Algorithm(expert)
     env = _Environment(table, fail_reset=True)
-    coordinator = MotionTrackingCurriculum(
+    coordinator = ForwardBackwardTrackingLifecycle(
         env,
         algorithm,
-        str(tmp_path),
+        None,
         "cpu",
-        evaluator=lambda *_args: _evaluation(),
+        projections=_G1_TRACKING_PROJECTIONS,
+        **_CURRICULUM_PROTOCOL,
+        reset_source_name=_MOTION_RESET_SOURCES[0][0],
     )
 
     with pytest.raises(RuntimeError, match="reset failed"):
         coordinator.on_transition(8)
 
-    torch.testing.assert_close(table.clip_priorities, torch.ones(2))
-    torch.testing.assert_close(expert.priorities, torch.ones(2))
+    torch.testing.assert_close(coordinator.sampling_priorities, torch.tensor((2.0, 16.0)))
+    torch.testing.assert_close(expert.priorities, torch.tensor((2.0, 16.0)))
     assert env.reset_count == 1
-    assert not (tmp_path / "tracking_curriculum" / "8.json").exists()
-    assert not (tmp_path / "tracking_curriculum" / "8.tmp").exists()
 
 
-def test_curriculum_state_restores_both_priority_targets_and_event_history(tmp_path) -> None:
+def test_curriculum_requires_the_vecenv_reset_pair() -> None:
+    """Lifecycle reset cannot accept the unwrapped environment's observation-only result."""
+    expert = _expert()
+    algorithm = _Algorithm(expert)
+    env = _Environment(_table())
+    env.reset = lambda: TensorDict({"state": torch.zeros(2, 1)}, batch_size=[2])
+    coordinator = ForwardBackwardTrackingLifecycle(
+        env,
+        algorithm,
+        None,
+        "cpu",
+        projections=_G1_TRACKING_PROJECTIONS,
+        **_CURRICULUM_PROTOCOL,
+        reset_source_name=_MOTION_RESET_SOURCES[0][0],
+    )
+
+    with pytest.raises(TypeError, match="VecEnv TensorDict/info pair"):
+        coordinator.on_transition(8)
+
+    torch.testing.assert_close(coordinator.sampling_priorities, torch.tensor((2.0, 16.0)))
+    torch.testing.assert_close(expert.priorities, torch.tensor((2.0, 16.0)))
+
+
+def test_curriculum_state_restores_both_priority_targets() -> None:
     table = _table()
     expert = _expert()
-    coordinator = MotionTrackingCurriculum(
+    coordinator = ForwardBackwardTrackingLifecycle(
         _Environment(table),
         _Algorithm(expert),
-        str(tmp_path),
+        None,
         "cpu",
-        evaluator=lambda *_args: _evaluation(),
+        projections=_G1_TRACKING_PROJECTIONS,
+        **_CURRICULUM_PROTOCOL,
+        reset_source_name=_MOTION_RESET_SOURCES[0][0],
     )
     coordinator.on_transition(8)
     state = coordinator.state_dict()
-    assert "table_priorities_active" not in state
-    table.clip_priorities.fill_(1.0)
+    assert set(state) == {"protocol_hash", "sequence_ids", "assignment_rng_state", "priorities"}
+    torch.testing.assert_close(state["priorities"], torch.tensor((2.0, 16.0)))
+    coordinator.sampling_priorities.fill_(1.0)
     expert.set_priorities(torch.ones(2))
 
     coordinator.load_state_dict(state)
 
-    torch.testing.assert_close(table.clip_priorities, torch.tensor((2.0, 16.0)))
+    torch.testing.assert_close(coordinator.sampling_priorities, torch.tensor((2.0, 16.0)))
     torch.testing.assert_close(expert.priorities, torch.tensor((2.0, 16.0)))
-    assert coordinator.applied_transitions == [8]
 
 
-def test_curriculum_state_before_first_event_restores_uniform_sampler(tmp_path) -> None:
+def test_curriculum_state_before_first_event_restores_uniform_sampler() -> None:
     """A transition-zero-pending checkpoint must retain equal clip mass."""
     table = _table()
     expert = _expert()
-    coordinator = MotionTrackingCurriculum(
+    coordinator = ForwardBackwardTrackingLifecycle(
         _Environment(table),
         _Algorithm(expert),
-        str(tmp_path),
+        None,
         "cpu",
-        evaluator=lambda *_args: _evaluation(),
+        projections=_G1_TRACKING_PROJECTIONS,
+        **_CURRICULUM_PROTOCOL,
+        reset_source_name=_MOTION_RESET_SOURCES[0][0],
     )
     state = coordinator.state_dict()
-    table.set_clip_priorities(_CLIP_IDS, torch.tensor((2.0, 16.0)))
+    coordinator.sampling_priorities.copy_(torch.tensor((2.0, 16.0)))
     expert.set_priorities(torch.tensor((2.0, 16.0)))
-    coordinator.applied_transitions.append(8)
 
     coordinator.load_state_dict(state)
 
-    torch.testing.assert_close(table.clip_priorities, torch.ones(2))
+    torch.testing.assert_close(coordinator.sampling_priorities, torch.ones(2))
     torch.testing.assert_close(expert.priorities, torch.ones(2))
-    assert coordinator.applied_transitions == []
 
 
-def _motion_table_draws(table: MotionTaskTable) -> dict[str, torch.Tensor]:
-    """Draw the four stochastic reset decisions owned by one motion task table."""
-    count = 8
-    return {
-        "row": table.sample_rows(count),
-        "source": table.sample_reset_sources(count),
-        "time": torch.rand(count, generator=table.generator),
-        "fall": torch.randint(8192, (count,), generator=table.generator),
-    }
-
-
-def _assert_motion_table_draws_equal(
-    actual: dict[str, torch.Tensor],
-    expected: dict[str, torch.Tensor],
-) -> None:
-    for name in expected:
-        torch.testing.assert_close(actual[name], expected[name])
-
-
-def _run_motion_evaluation_transaction(prior_table_draws: int) -> dict[str, torch.Tensor]:
+def test_lifecycle_assignment_rng_advances_and_checkpoint_restores_next_mapping() -> None:
     table = _table()
-    table.generator.manual_seed(11)
-    torch.rand(prior_table_draws, generator=table.generator)
-    training_state = table.generator.get_state().clone()
-    expected_generator = torch.Generator()
-    expected_generator.set_state(training_state)
-    expected_table = _table()
-    object.__setattr__(expected_table, "generator", expected_generator)
-    expected_training_draws = _motion_table_draws(expected_table)
+    expert = _expert()
+    algorithm = _Algorithm(expert)
+    coordinator = ForwardBackwardTrackingLifecycle(
+        _Environment(table),
+        algorithm,
+        None,
+        "cpu",
+        projections=_G1_TRACKING_PROJECTIONS,
+        **_CURRICULUM_PROTOCOL,
+        reset_source_name=_MOTION_RESET_SOURCES[0][0],
+    )
 
-    term = SimpleNamespace(
-        table=table,
-        time_left=torch.tensor((1.0, 2.0)),
-        command_counter=torch.tensor((3, 4), dtype=torch.int64),
-    )
-    push = object.__new__(MotionPushVelocity)
-    push._elapsed_seconds = torch.tensor((11, 22), dtype=torch.int32)
-    push._interval_seconds = torch.tensor((1, 2), dtype=torch.int32)
-    startup_material = object.__new__(randomize_rigid_body_material)
-    penalty = object.__new__(MotionPenaltyScaleCurriculum)
-    penalty._scale = 0.25
-    penalty._average_episode_length = 41.0
-    event_manager = SimpleNamespace(
-        active_terms={"startup": ["robot_material"], "interval": ["push"]},
-        get_term_cfg=lambda name: SimpleNamespace(func={"robot_material": startup_material, "push": push}[name]),
-        _interval_term_time_left=[torch.tensor((0.25, 0.75))],
-        _reset_term_last_triggered_step_id=[torch.tensor((7, 9), dtype=torch.int32)],
-        _reset_term_last_triggered_once=[torch.tensor((True, False))],
-    )
-    curriculum_manager = SimpleNamespace(
-        active_terms=("penalty_scale",),
-        get_term=lambda name: penalty if name == "penalty_scale" else None,
-        _curriculum_state={
-            "penalty_scale": {
-                "penalty_scale": 0.25,
-                "average_episode_length": 41.0,
-            }
-        },
-    )
-    env = object.__new__(MotionImitationEnv)
-    env._is_closed = True
-    env.common_step_counter = 17
-    env._sim_step_counter = 255
-    env.episode_length_buf = torch.tensor((5, 6), dtype=torch.int64)
-    env.command_manager = SimpleNamespace(
-        active_terms=("motion",),
-        get_term=lambda name: term if name == "motion" else None,
-    )
-    env.event_manager = event_manager
-    env.curriculum_manager = curriculum_manager
-    random.seed(11)
-    np.random.seed(11)
-    torch.manual_seed(11)
-    expected_global = (random.random(), np.random.rand(), torch.rand(1))
-    random.seed(11)
-    np.random.seed(11)
-    torch.manual_seed(11)
+    coordinator.on_transition(8)
+    first_order = algorithm.model.assignment_orders[-1]
+    state = coordinator.state_dict()
+    coordinator.on_transition(16)
+    expected_next_order = algorithm.model.assignment_orders[-1]
 
-    with MotionImitationEnv.evaluation_transaction(env, 99):
-        evaluation_draws = _motion_table_draws(table)
-        random.random()
-        np.random.rand()
-        torch.rand(1)
-        env.common_step_counter = 100
-        env._sim_step_counter = 1500
-        env.episode_length_buf.zero_()
-        term.time_left.zero_()
-        term.command_counter.zero_()
-        env.event_manager._interval_term_time_left[0].zero_()
-        env.event_manager._reset_term_last_triggered_step_id[0].zero_()
-        env.event_manager._reset_term_last_triggered_once[0].logical_not_()
-        env.curriculum_manager._curriculum_state["penalty_scale"]["penalty_scale"] = 0.75
-        push._elapsed_seconds.zero_()
-        push._interval_seconds.fill_(3)
-        penalty._scale = 0.75
-        penalty._average_episode_length = 120.0
+    assert expected_next_order != first_order
 
-    actual_global = (random.random(), np.random.rand(), torch.rand(1))
-    assert actual_global[0] == expected_global[0]
-    assert actual_global[1] == expected_global[1]
-    torch.testing.assert_close(actual_global[2], expected_global[2])
-    _assert_motion_table_draws_equal(_motion_table_draws(table), expected_training_draws)
-    assert env.common_step_counter == 17
-    assert env._sim_step_counter == 255
-    torch.testing.assert_close(env.episode_length_buf, torch.tensor((5, 6)))
-    torch.testing.assert_close(term.time_left, torch.tensor((1.0, 2.0)))
-    torch.testing.assert_close(term.command_counter, torch.tensor((3, 4)))
-    torch.testing.assert_close(env.event_manager._interval_term_time_left[0], torch.tensor((0.25, 0.75)))
-    torch.testing.assert_close(
-        env.event_manager._reset_term_last_triggered_step_id[0],
-        torch.tensor((7, 9), dtype=torch.int32),
+    restored_expert = _expert()
+    restored_algorithm = _Algorithm(restored_expert)
+    restored = ForwardBackwardTrackingLifecycle(
+        _Environment(_table()),
+        restored_algorithm,
+        None,
+        "cpu",
+        projections=_G1_TRACKING_PROJECTIONS,
+        **_CURRICULUM_PROTOCOL,
+        reset_source_name=_MOTION_RESET_SOURCES[0][0],
     )
-    torch.testing.assert_close(
-        env.event_manager._reset_term_last_triggered_once[0],
-        torch.tensor((True, False)),
-    )
-    assert env.curriculum_manager._curriculum_state == {
-        "penalty_scale": {
-            "penalty_scale": 0.25,
-            "average_episode_length": 41.0,
-        }
-    }
-    torch.testing.assert_close(push._elapsed_seconds, torch.tensor((11, 22), dtype=torch.int32))
-    torch.testing.assert_close(push._interval_seconds, torch.tensor((1, 2), dtype=torch.int32))
-    assert penalty.scale == 0.25
-    assert penalty.average_episode_length == 41.0
-    return evaluation_draws
+    restored.load_state_dict(state)
+    restored.on_transition(16)
+
+    assert restored_algorithm.model.assignment_orders[-1] == expected_next_order
 
 
-def test_motion_evaluation_transaction_isolates_rng_clocks_and_stateful_terms() -> None:
-    """Evaluator draws are seed-only and every persistent training clock resumes exactly."""
-    first = _run_motion_evaluation_transaction(prior_table_draws=0)
-    second = _run_motion_evaluation_transaction(prior_table_draws=37)
-    _assert_motion_table_draws_equal(first, second)
+def test_lifecycle_checkpoint_rejects_changed_protocol() -> None:
+    expert = _expert()
+    coordinator = ForwardBackwardTrackingLifecycle(
+        _Environment(_table()),
+        _Algorithm(expert),
+        None,
+        "cpu",
+        projections=_G1_TRACKING_PROJECTIONS,
+        **_CURRICULUM_PROTOCOL,
+        reset_source_name=_MOTION_RESET_SOURCES[0][0],
+    )
+    state = coordinator.state_dict()
+    state["protocol_hash"] = "0" * 64
+
+    with pytest.raises(ValueError, match="protocol"):
+        coordinator.load_state_dict(state)

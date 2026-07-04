@@ -83,8 +83,12 @@ class SuccessEstimatorRolloutStorage(RolloutStorage):
                 self.success_values[step].copy_(transition.success_values)
             if transition.success_rewards is not None:
                 self.success_rewards[step].copy_(transition.success_rewards.view(-1, 1))
+            else:
+                self.success_rewards[step].zero_()
             if transition.success_mask is not None:
                 self.success_mask[step].copy_(transition.success_mask.view(-1, 1))
+            else:
+                self.success_mask[step].fill_(1.0)
 
     def mini_batch_generator(self, num_mini_batches: int, num_epochs: int = 8) -> Generator[Batch, None, None]:
         """Yield shuffled mini-batches including success-estimator data."""

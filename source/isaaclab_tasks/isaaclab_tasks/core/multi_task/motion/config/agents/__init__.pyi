@@ -3,8 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""RSL-RL configurations for independently composed motion imitation."""
+__all__ = [
+    "MotionForwardBackwardRunnerCfg",
+]
 
-from isaaclab.utils.module import lazy_export
-
-lazy_export()
+from .rsl_rl_fb_cfg import MotionForwardBackwardRunnerCfg

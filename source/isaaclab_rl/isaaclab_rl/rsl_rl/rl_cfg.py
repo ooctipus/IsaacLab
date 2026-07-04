@@ -392,6 +392,17 @@ class RslRlBaseRunnerCfg:
             return self.num_envs
         return env_num_envs
 
+    def resolve_max_iterations(self, cli_max_iterations: int | None) -> int:
+        """Resolve the training iteration count with CLI precedence.
+
+        Args:
+            cli_max_iterations: Explicit command-line iteration count, or ``None``.
+
+        Returns:
+            The selected training iteration count.
+        """
+        return self.max_iterations if cli_max_iterations is None else cli_max_iterations
+
 
 @configclass
 class RslRlOffPolicyRunnerCfg(RslRlBaseRunnerCfg):

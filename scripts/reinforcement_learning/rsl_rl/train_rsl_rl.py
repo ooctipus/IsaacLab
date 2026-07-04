@@ -160,10 +160,10 @@ def run(argv: list[str]) -> None:
     with launch_simulation(env_cfg, args_cli):
         agent_cfg = CLI_ARGS.update_rsl_rl_cfg(agent_cfg, args_cli)
         apply_env_overrides(args_cli, env_cfg)
-        env_cfg.scene.num_envs = agent_cfg.resolve_num_envs(args_cli.num_envs, env_cfg.scene.num_envs)
-        agent_cfg.max_iterations = (
-            args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
-        )
+        resolved_num_envs = agent_cfg.resolve_num_envs(args_cli.num_envs, env_cfg.scene.num_envs)
+        env_cfg.scene.num_envs = resolved_num_envs
+        agent_cfg.num_envs = resolved_num_envs
+        agent_cfg.max_iterations = agent_cfg.resolve_max_iterations(args_cli.max_iterations)
 
         agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
 

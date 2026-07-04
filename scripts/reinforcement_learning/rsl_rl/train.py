@@ -128,10 +128,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     with launch_simulation(env_cfg, args_cli):
         # override configurations with non-hydra CLI arguments
         agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
-        env_cfg.scene.num_envs = agent_cfg.resolve_num_envs(args_cli.num_envs, env_cfg.scene.num_envs)
-        agent_cfg.max_iterations = (
-            args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
-        )
+        resolved_num_envs = agent_cfg.resolve_num_envs(args_cli.num_envs, env_cfg.scene.num_envs)
+        env_cfg.scene.num_envs = resolved_num_envs
+        agent_cfg.num_envs = resolved_num_envs
+        agent_cfg.max_iterations = agent_cfg.resolve_max_iterations(args_cli.max_iterations)
 
         # handle deprecated configurations
         agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)

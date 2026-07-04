@@ -29,8 +29,8 @@ class SuccessEstimatorPPO(PPO):
 
     The success estimator predicts P(success | state) as a scalar in [0, 1] (via sigmoid). It is
     trained with BCE loss against gamma=1 return targets derived from episode termination labels:
-    success=1, timeout/failure=0. Envs whose termination is influenced by the estimator itself
-    are excluded from its training via ``extras["success_train_mask"]``.
+    success=1, timeout/failure=0. Outcome and optional training-mask tensors are resolved from
+    user-configured bindings; environments do not publish learner-specific transition keys.
     """
 
     success_estimator: MLPModel
@@ -42,6 +42,8 @@ class SuccessEstimatorPPO(PPO):
         critic: MLPModel,
         storage: SuccessEstimatorRolloutStorage,
         success_estimator: MLPModel,
+        success_outcome_bind: str,
+        success_train_mask_bind: str | None = None,
         success_estimator_learning_rate: float = 1e-4,
         success_loss_coef: float = 1.0,
         success_returns_method: str = "hindsight_mc",
@@ -50,6 +52,10 @@ class SuccessEstimatorPPO(PPO):
         """Initialize PPO with an additional success estimator network and optimizer.
 
         Args:
+            success_outcome_bind: Expression resolving to one completed-transition
+                success label per environment.
+            success_train_mask_bind: Optional expression resolving to one training
+                validity value per environment.
             success_returns_method: How to compute return targets for the success
                 estimator. ``"bootstrap"`` uses TD(0)-style single-step bootstrap
                 at every step. ``"hindsight_mc"`` uses the true episode outcome for
@@ -61,6 +67,11 @@ class SuccessEstimatorPPO(PPO):
         self.success_optimizer = optim.Adam(self.success_estimator.parameters(), lr=success_estimator_learning_rate)
         self.success_loss_coef = success_loss_coef
         self.success_returns_method = success_returns_method
+        self._success_outcome_bind = success_outcome_bind
+        self._success_train_mask_bind = success_train_mask_bind
+        self._success_outcome: torch.Tensor | None = None
+        self._success_train_mask: torch.Tensor | None = None
+        self._success_mask_enabled = success_train_mask_bind is not None
 
         self.success_predictions = torch.zeros(storage.num_envs, device=self.device)
         """Shared buffer of raw (pre-sigmoid) success predictions, shape ``(num_envs,)``.
@@ -75,6 +86,36 @@ class SuccessEstimatorPPO(PPO):
 
         self.transition = SuccessEstimatorRolloutStorage.Transition()
 
+    def bind_success_inputs(self, env: VecEnv) -> None:
+        """Resolve externally owned completed-transition labels from configured expressions.
+
+        Args:
+            env: Vectorized environment available to the configured expressions.
+        """
+        if not self._success_outcome_bind:
+            raise ValueError("SuccessEstimatorPPO requires a nonempty success_outcome_bind expression.")
+        namespace = {"env": env, "alg": self}
+        outcome = eval(self._success_outcome_bind, namespace)  # noqa: S307
+        self._validate_success_input("success_outcome_bind", outcome)
+        self._success_outcome = outcome
+        if self._success_train_mask_bind is not None:
+            mask = eval(self._success_train_mask_bind, namespace)  # noqa: S307
+            self._validate_success_input("success_train_mask_bind", mask)
+            self._success_train_mask = mask
+
+    def _validate_success_input(self, name: str, value: object) -> None:
+        """Validate one fixed learner input at the configured composition boundary."""
+        if not isinstance(value, torch.Tensor):
+            raise TypeError(f"{name} must resolve to a torch.Tensor.")
+        if value.shape != self.success_predictions.shape:
+            raise ValueError(
+                f"{name} must resolve to shape {tuple(self.success_predictions.shape)}, got {tuple(value.shape)}."
+            )
+        if value.device != self.success_predictions.device:
+            raise ValueError(f"{name} must be on {self.success_predictions.device}, got {value.device}.")
+        if value.dtype is not torch.bool and not torch.is_floating_point(value):
+            raise TypeError(f"{name} must resolve to a bool or floating-point tensor, got {value.dtype}.")
+
     def act(self, obs: TensorDict) -> torch.Tensor:
         """Sample actions, compute value estimates, and compute success estimates."""
         actions = super().act(obs)
@@ -85,30 +126,12 @@ class SuccessEstimatorPPO(PPO):
     def process_env_step(
         self, obs: TensorDict, rewards: torch.Tensor, dones: torch.Tensor, extras: dict[str, torch.Tensor]
     ) -> None:
-        """Record one environment step, including success reward construction.
-
-        The environment must provide:
-        - ``extras["successes"]``: ``(num_envs,)`` bool/float tensor, True/1.0 for envs that just succeeded.
-
-        Optional:
-        - ``extras["success_train_mask"]``: ``(num_envs,)`` float tensor (1.0 = train,
-          0.0 = exclude). Used to mask out envs whose termination was influenced by the
-          success estimator itself.
-        """
+        """Record one environment step from the bound transition labels."""
         self.success_estimator.update_normalization(obs)
-
-        success_rewards = torch.zeros(rewards.shape[0], device=self.device)
-
-        if "successes" in extras:
-            success_rewards += extras["successes"].float().to(self.device)
-
-        self.transition.success_rewards = success_rewards
-
-        if "success_train_mask" in extras:
-            self.transition.success_mask = extras["success_train_mask"].float().to(self.device)
-        else:
-            self.transition.success_mask = None
-
+        if self._success_outcome is None:
+            raise RuntimeError("SuccessEstimatorPPO success inputs have not been bound.")
+        self.transition.success_rewards = self._success_outcome
+        self.transition.success_mask = self._success_train_mask
         super().process_env_step(obs, rewards, dones, extras)
         self.success_estimator.reset(dones)
 
@@ -310,11 +333,11 @@ class SuccessEstimatorPPO(PPO):
             # Use the pre-augmentation observations to avoid interference from symmetry transforms.
             # The network outputs raw logits; BCE with logits applies sigmoid internally
             # and is numerically stable near 0 and 1.
-            # When success_train_mask is provided (via extras), excluded envs are masked out.
+            # When a success training mask is bound, excluded envs are masked out.
             success_logits = self.success_estimator(original_observations[:original_batch_size])
             success_targets = batch.success_returns[:original_batch_size].clamp(0.0, 1.0)
-            mask = batch.success_mask[:original_batch_size] if batch.success_mask is not None else None
-            if mask is not None and not mask.all():
+            if self._success_mask_enabled:
+                mask = batch.success_mask[:original_batch_size]
                 per_sample_loss = F.binary_cross_entropy_with_logits(success_logits, success_targets, reduction="none")
                 success_loss = (per_sample_loss * mask).sum() / mask.sum().clamp(min=1)
             else:
@@ -457,15 +480,13 @@ class SuccessEstimatorPPO(PPO):
             **cfg["algorithm"],
             multi_gpu_cfg=cfg["multi_gpu"],
         )
+        alg.bind_success_inputs(env)
 
         # Bind success estimator to env components via user-supplied expressions
         bind_ns = {"env": env, "alg": alg, "setattr": setattr}
         for key in ("success_estimator_bind", "state_buffer_bind"):
             bind_expr = cfg.get(key)
             if bind_expr is not None:
-                try:
-                    eval(bind_expr, bind_ns)  # noqa: S307
-                except Exception as e:
-                    print(f"[WARNING] {key} skipped: {e}")
+                eval(bind_expr, bind_ns)  # noqa: S307
 
         return alg
