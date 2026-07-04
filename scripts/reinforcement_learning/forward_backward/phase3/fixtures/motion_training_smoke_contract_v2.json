@@ -43,20 +43,20 @@
         "strict_mmap": true
       },
       "closed_input_identity": {
-        "checkpoint_schema_sha256": "589f35c871d124cddc77619e3d5b01ebf18e5c5917ed42a0e13276a210e32246",
-        "environment_dependency_bundle_sha256": "2c085cd9270b55f688d69c5585a0a7b54690a03b596bf77d646234ca63c47102",
-        "expert_schema_sha256": "1a025ce349e93a59ffe2f13d2182b9a73bb2fbff0ac7683e29989571fbe08d61",
-        "learner_code_bundle_sha256": "7ac2fa2588b9ce4014671ea24c4db55ec6aca8ca5846e6a461033a40a783737f",
+        "checkpoint_schema_sha256": "7a78a38acbe11bbbdc665ef8044b2456c2cb3ee9a5cd466195a7d4ce99f36f6b",
+        "environment_dependency_bundle_sha256": "965903d4c914134882f2edbe6624c6034b213d3dfb59fb960f5f310b90e16e39",
+        "expert_schema_sha256": "93d625cedb115830274306526837bc7489eed9050a5c5495143c5e40ac3b6f1a",
+        "learner_code_bundle_sha256": "5ac181183945dd4ef8732d69ff37e846909dbf3ac1234aa25be7b2d797694562",
         "learner_runtime_bundle_sha256": "0b27d9ce550690a79ceb23915323f483164d0a871e4907aaef797bd1d7cfc960",
-        "observation_schema_sha256": "7c3777921396ea72f2c563444a08872199534641aa7ff104a0cc452b00c34543",
+        "observation_schema_sha256": "a7bc8358de80da17d7beeca52c7461a584f41065e200f66762ac7d7e4ebbdf35",
         "python_source_identity_sha256": "393b12af83e11362ca214de8033f8a9c0df55420dd38d6da20bf5732d0686efd",
-        "receipt_code_sha256": "3a5e5590c4ac62b546bed28e9c3c0ade6bc9b0c768053fe10d8958da1732c2a0",
-        "resolved_agent_config_sha256": "69627daddbd38e5c2ef1c6bca66c2a5fa7a7963aca5f4e48f75a65b884e8c34e",
-        "resolved_axes_sha256": "a4e5b5bb1ebd6aedfc70ae47eec4253e3b30a90c4cc42d3d5337b363ac3ae4c7",
+        "receipt_code_sha256": "ff2d121b43eb979a84368cac1d74b2c90c61ee412510631f4540ec3f8b41956a",
+        "resolved_agent_config_sha256": "63d7f7bd2c96e4ebef2a3a9d0d1728dc1e35f3d2057f634a76731811e7c85928",
+        "resolved_axes_sha256": "99b3e631477c5ab80fd32ffb7f5a57f5e01b74d68cb04ebcc0f5ee414ab72f7e",
         "runner_source_sha256": "898f6a6e29bf8d9b692a4ae7b081f9b8a082f191237eb9e35c28d58e38f86bef",
-        "task_bridge_code_bundle_sha256": "383496a334a9cbcd5bab2428ceb6941d4de171f8ece72a9eab23897f3cf314c1",
-        "task_table_sha256": "cb63cdba1fa00c2b35495e63cdea496a0e05e024b5a3ec9df6c384727a7e1197",
-        "training_cli_sha256": "566c126c3d90b7385e71c71bd03e0e0a0fdb47c9700b587ab8bbf7fbcdc3d0a5"
+        "task_bridge_code_bundle_sha256": "58f9cacb86c86377243555b778cee8e16f8ca902e8c150dcc7dc982dbac139e6",
+        "task_table_sha256": "ce174ff165e6e79300c1f668a8ee380b7cb156d20bb9e7202b6a77ab7ea9308a",
+        "training_cli_sha256": "fef941cfc79450c8cd58c86ba31a0f47892e9a7baa22ec5a501b0b463f43b083"
       },
       "collection": {
         "expected_transitions": 12288,
@@ -96,7 +96,7 @@
         "replay": "cuda:0",
         "simulator": "cuda:0"
       },
-      "environment_semantic_sha256": "dcd9e934186c5f1f88e8223f6a1df4e2d94b2cede4ba3d8f4107039fe3a0842b",
+      "environment_semantic_sha256": "d4e269bb9fe506734d88094c7244dee0178f0ee8b6cf89cee81c56b827a18bf7",
       "execution_scale_overrides": {
         "lifecycle_extension": null,
         "max_iterations": 12,
@@ -172,20 +172,20 @@
         "strict_mmap": true
       },
       "closed_input_identity": {
-        "checkpoint_schema_sha256": "5187df4162776fb73445f6bfdbfd842f2093fa21ef674935853dee7270e7baeb",
-        "environment_dependency_bundle_sha256": "dc63271751cce3d309c241273e68409befcc62faea079c8c8319f13b741b189d",
-        "expert_schema_sha256": "dbe53a1ba436915837f70c4b7fc067e2111923791333a8d7a5d05f7ce74ae1b0",
-        "learner_code_bundle_sha256": "7ac2fa2588b9ce4014671ea24c4db55ec6aca8ca5846e6a461033a40a783737f",
+        "checkpoint_schema_sha256": "01988b4f41864e294abb3476dbb3b14cc290e4534dec2c469ab8698865d42456",
+        "environment_dependency_bundle_sha256": "03d1faddcf484e8a71338849ab7aaa34253b85c6512457dca97be802a2cb2ba6",
+        "expert_schema_sha256": "a38906667c8189bca202391423b7bbb91258ec281c27a1f64efd14529ca53e3f",
+        "learner_code_bundle_sha256": "5ac181183945dd4ef8732d69ff37e846909dbf3ac1234aa25be7b2d797694562",
         "learner_runtime_bundle_sha256": "0b27d9ce550690a79ceb23915323f483164d0a871e4907aaef797bd1d7cfc960",
         "observation_schema_sha256": "3ca6b1683360759cd862fce13fa3e128c15461ba258d05ef2b6c4013cd439a3c",
         "python_source_identity_sha256": "393b12af83e11362ca214de8033f8a9c0df55420dd38d6da20bf5732d0686efd",
-        "receipt_code_sha256": "3a5e5590c4ac62b546bed28e9c3c0ade6bc9b0c768053fe10d8958da1732c2a0",
-        "resolved_agent_config_sha256": "6ea2fc08b89c695326e2ee61c02f083cf87266335d04d904e844b5b8fa171b08",
-        "resolved_axes_sha256": "b4dd6dea384ae213f03fe7d187d82fc8ffb929b1b0b315a00798262c7f6280b3",
+        "receipt_code_sha256": "ff2d121b43eb979a84368cac1d74b2c90c61ee412510631f4540ec3f8b41956a",
+        "resolved_agent_config_sha256": "0ea37b364100b7b6297f6ab621cedfaf918fd08d1a7f5555a1ae405763c724f1",
+        "resolved_axes_sha256": "ae4258dd27e13c1551664c8aac7e0f6aef1930b6d27c121e853034eb79304cb8",
         "runner_source_sha256": "898f6a6e29bf8d9b692a4ae7b081f9b8a082f191237eb9e35c28d58e38f86bef",
-        "task_bridge_code_bundle_sha256": "383496a334a9cbcd5bab2428ceb6941d4de171f8ece72a9eab23897f3cf314c1",
-        "task_table_sha256": "58ae200a5c34806db4a7d6cfcb4a224c18c4152b28d5b1981225d56598517d20",
-        "training_cli_sha256": "566c126c3d90b7385e71c71bd03e0e0a0fdb47c9700b587ab8bbf7fbcdc3d0a5"
+        "task_bridge_code_bundle_sha256": "58f9cacb86c86377243555b778cee8e16f8ca902e8c150dcc7dc982dbac139e6",
+        "task_table_sha256": "48e4a19174a4869668613f3980ef19b72d4bb6e50b1d588a5d43bd8249a9237f",
+        "training_cli_sha256": "fef941cfc79450c8cd58c86ba31a0f47892e9a7baa22ec5a501b0b463f43b083"
       },
       "collection": {
         "expected_transitions": 51000,
@@ -224,7 +224,7 @@
         "replay": "cuda:0",
         "simulator": "cuda:0"
       },
-      "environment_semantic_sha256": "ffaa797b438b054cf94c87b6facc5bbbd35e1873b5c5a34a65d1ab5fbc195943",
+      "environment_semantic_sha256": "6a601e97ef67b3ae9986eb69ae79571482a6d33a442d91a6379e4820ac285640",
       "execution_scale_overrides": {
         "lifecycle_extension": null,
         "max_iterations": 102,

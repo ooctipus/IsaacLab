@@ -331,11 +331,11 @@ class MotionObservationsCfg(PresetCfg):
             @configclass
             class PhysicalAuxiliaryCfg(ObsGroup):
                 penalty_torques = ObsTerm(
-                    func="{DIR}.motion.robots.g1.actions:controller_torques_l2",
+                    func="isaaclab_tasks.core.multi_task.motion.robots.g1.actions:controller_torques_l2",
                     params={"action_name": "joint_position"},
                 )
                 penalty_action_rate = ObsTerm(
-                    func="{DIR}.motion.robots.g1.actions:controller_action_rate_l2",
+                    func="isaaclab_tasks.core.multi_task.motion.robots.g1.actions:controller_action_rate_l2",
                     params={"action_name": "joint_position"},
                 )
                 limits_dof_pos = ObsTerm(
@@ -350,7 +350,7 @@ class MotionObservationsCfg(PresetCfg):
                     },
                 )
                 limits_torque = ObsTerm(
-                    func="{DIR}.motion.robots.g1.actions:controller_torque_limits",
+                    func="isaaclab_tasks.core.multi_task.motion.robots.g1.actions:controller_torque_limits",
                     params={"action_name": "joint_position", "soft_ratio": 0.95},
                 )
                 penalty_undesired_contact = ObsTerm(

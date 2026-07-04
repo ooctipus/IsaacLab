@@ -1,0 +1,1068 @@
+{
+  "checkpoint": {
+    "bytes": 5900826151,
+    "environment_resume": "restart",
+    "environment_state_dict_is_none": true,
+    "filename": "model_102.pt",
+    "map_location": "cpu",
+    "mmap": true,
+    "sha256": "e2e1012578385b279419461c025304ab817ee7d3cf39f7bdb50288c2cab05793",
+    "strict_load": true
+  },
+  "collection": {
+    "expected_transitions": 51000,
+    "expected_update_calls": 50,
+    "expected_update_groups": 1,
+    "iterations": 102,
+    "num_envs": 50,
+    "random_action_transitions": 50000,
+    "steps_per_iteration": 10,
+    "updates_per_group": 50
+  },
+  "contract_declaration_sha256": "989fd2a96279548f4344f220b114e1fbf78b7e6dbdcbb92baaea83ddd6a35970",
+  "identity": {
+    "checkpoint_schema_sha256": "01988b4f41864e294abb3476dbb3b14cc290e4534dec2c469ab8698865d42456",
+    "environment_dependency_bundle_sha256": "03d1faddcf484e8a71338849ab7aaa34253b85c6512457dca97be802a2cb2ba6",
+    "environment_semantic_sha256": "6a601e97ef67b3ae9986eb69ae79571482a6d33a442d91a6379e4820ac285640",
+    "expert_schema_sha256": "a38906667c8189bca202391423b7bbb91258ec281c27a1f64efd14529ca53e3f",
+    "learner_code_bundle_sha256": "5ac181183945dd4ef8732d69ff37e846909dbf3ac1234aa25be7b2d797694562",
+    "learner_runtime_bundle_sha256": "0b27d9ce550690a79ceb23915323f483164d0a871e4907aaef797bd1d7cfc960",
+    "observation_schema_sha256": "3ca6b1683360759cd862fce13fa3e128c15461ba258d05ef2b6c4013cd439a3c",
+    "python_source_identity_sha256": "393b12af83e11362ca214de8033f8a9c0df55420dd38d6da20bf5732d0686efd",
+    "receipt_code_sha256": "ff2d121b43eb979a84368cac1d74b2c90c61ee412510631f4540ec3f8b41956a",
+    "resolved_agent_config_sha256": "0ea37b364100b7b6297f6ab621cedfaf918fd08d1a7f5555a1ae405763c724f1",
+    "resolved_axes_sha256": "ae4258dd27e13c1551664c8aac7e0f6aef1930b6d27c121e853034eb79304cb8",
+    "runner_source_sha256": "898f6a6e29bf8d9b692a4ae7b081f9b8a082f191237eb9e35c28d58e38f86bef",
+    "task_bridge_code_bundle_sha256": "58f9cacb86c86377243555b778cee8e16f8ca902e8c150dcc7dc982dbac139e6",
+    "task_table_sha256": "48e4a19174a4869668613f3980ef19b72d4bb6e50b1d588a5d43bd8249a9237f",
+    "training_cli_sha256": "fef941cfc79450c8cd58c86ba31a0f47892e9a7baa22ec5a501b0b463f43b083"
+  },
+  "learner": {
+    "context_buffer_size": 10000,
+    "device_scope": {
+      "dtype": "torch.float32",
+      "expert": "cuda:0",
+      "learner": "cuda:0",
+      "replay": "cuda:0",
+      "simulator": "cuda:0"
+    },
+    "replay_contract_errors": false,
+    "replay_terminal_overflow": false,
+    "update_step": 50,
+    "versions": {
+      "actor": 50,
+      "context": 50,
+      "discriminator": 50,
+      "normalizer": 50,
+      "representation": 50,
+      "target": 50,
+      "value/discriminator": 50
+    }
+  },
+  "preset": "smpl_cmu",
+  "provenance": {
+    "environment": {
+      "dependency_identity": {
+        "bundle_sha256": "03d1faddcf484e8a71338849ab7aaa34253b85c6512457dca97be802a2cb2ba6",
+        "preset": "smpl_cmu",
+        "python_sources": {
+          "isaaclab.assets.articulation.articulation_cfg": "90fe321c76e23785bc70cbdae7f45ea9301cae11dfed5245deaff4edec65bf53",
+          "isaaclab.assets.articulation.base_articulation": "61d38c3b817e086eac3a734a66410478219bc6cea9db9ce62b35a992522b1b40",
+          "isaaclab.assets.articulation.base_articulation_data": "80844346c1bc99b33ef66794c0aececaf2aa3724beebbf1fd7ca15f4b32ea4df",
+          "isaaclab.envs.manager_based_env": "42d20af7182397b34c6fa6cde3b620e1e28863947882bee60b7bd00a5668c312",
+          "isaaclab.envs.manager_based_env_cfg": "3bcd73dc5d4519131c7add1be74093d341ba771452f96a48cf25f9e4b526134d",
+          "isaaclab.envs.manager_based_rl_env": "b7a37b15f50495133c70e44f213799dd2cd75a9d3e3af142b3bf413fd71ba2f3",
+          "isaaclab.envs.manager_based_rl_env_cfg": "cacc7a0f4a187c041d9c871092ee5b73013836ecc74b48683a2c73deddaa0757",
+          "isaaclab.envs.mdp.terminations": "c72b39e47235b48699bd887ed021f66fa2ca02656f833271eadea55078519588",
+          "isaaclab.managers.action_manager": "2facb9eaee7722509603b0794c57bf760f8b6eb7290830d4899b413bbd40109d",
+          "isaaclab.managers.command_manager": "606a9ae2c985426c48d1138927b8a18cb0ff1ba4edfbf867b896f9f15af9fd33",
+          "isaaclab.managers.curriculum_manager": "a3a03d9c89ce094e5447b81c067e370699768586041bf1f1111729d69c196f4c",
+          "isaaclab.managers.event_manager": "e29960173b398f8e79c026b74e50c5d02f57fc0a0a1fea4f7dad7237e41fda75",
+          "isaaclab.managers.manager_base": "1010080f1a0dafd166e296ee7f3cea116f73f29c53bf2f1ed00f770add5901d5",
+          "isaaclab.managers.observation_manager": "de7c9b2c6b6e0bdb431a0574727982feebe72142ebf41b1140dce624b932d6b8",
+          "isaaclab.managers.reward_manager": "6be44a98df5aed8a0ebac2913ebea33010633e007e816697a6d99f7ccfd731db",
+          "isaaclab.managers.termination_manager": "cb6333f11fa6472f7d8034bae9835714e83ae3edde97894b767f1351a7eea99d",
+          "isaaclab.physics.physics_manager": "421b611d33ae338de62c2acb6b08fb1e2d7630c29aab845063bdbcca2ec432f5",
+          "isaaclab.physics.physics_manager_cfg": "6a43a6de20a9eef1d0720c51e06e0c31e5e9b782a7ef67fe986e1ccc65f937da",
+          "isaaclab.sim.schemas.schemas": "548ce8126c8e7ae989e4d4ab67dcb97f343f5f7732f1ec839f51385089e8c056",
+          "isaaclab.sim.schemas.schemas_cfg": "c23fde175d325b091f32a6eb8afc5f63bcafb4ba59dbced89fcff9ceefaa1a40",
+          "isaaclab.sim.simulation_context": "568407c1d9ec60833b37f341edde2f32ec6a872516df4d4204a0c624e97c4a41",
+          "isaaclab.sim.spawners.materials.physics_materials": "164037ec58e0411b55c25da6c0bb2f2323c7cd4274692b1ea5a8f722785c39c8",
+          "isaaclab.sim.spawners.materials.physics_materials_cfg": "54865641d6cd906042160dfbdf935471270d4e230e324c6c69c119153f376e45",
+          "isaaclab.sim.spawners.shapes.shapes": "d4eb750afc2a1d423cff752aae7c752dd196a58e20fb76993ff2ac3fbac44f86",
+          "isaaclab.sim.spawners.shapes.shapes_cfg": "022ddbb3cabf94ddbc51e92371af22787666f09efddab903e6b15aeef537052d",
+          "isaaclab.sim.utils.prims": "7f3c06684728ff2d3471073ab5de5ae9798246615fe3e622b4115c52813dfd46",
+          "isaaclab.utils.math": "b672fb08c7a213efc394d824671f29bfdc983b02741069408ec3cce67291badc",
+          "isaaclab_assets.robots.smpl.smpl_cfg": "f485e9c0236e669bc183ed7ad679384e345075317b724134215dbff122234357",
+          "isaaclab_assets.robots.smpl.smpl_constants": "bfffc385295bcac884bf744bf2ae7eb5e182d1ab3e92d5bcbb70f2f5c5ae39b0",
+          "isaaclab_newton.actuators.adapter": "18633536ebc03587d1813a0ce54e23fa3759589f8b37a7fe9c59956a36450026",
+          "isaaclab_newton.actuators.kernels": "b33aed455e6dade7417ae47aab0ebddabfb57fac5da158da9cd457b0881c8b60",
+          "isaaclab_newton.assets.articulation.articulation": "6a8cd79d8d731bf9cf6f1c7aae66bb65afe1c73764c40f4c55bd1a2a18b34449",
+          "isaaclab_newton.assets.articulation.articulation_data": "b48e0abfa79e3e1b3f18c069503d13dfbb1df585cefa332f9cf2fb611c723b0e",
+          "isaaclab_newton.assets.articulation.kernels": "2d74067c374ccc3e411de3aa8007998505c5f7d524233ea65df10ae5ed13341b",
+          "isaaclab_newton.cloner.newton_clone_utils": "fa592fbd480b338e50fe197fc16e2e5364c46524d1312c1b1959e320c6db8764",
+          "isaaclab_newton.cloner.replicate": "0e62c06127f1b0136a472c93ad60d5360afb9342e5ef181c6c628d344b1416b8",
+          "isaaclab_newton.physics.mjwarp_manager": "7ef5c090ec17449ad14799046768c5d061d683deaf81ad9b39cfcd91e1e7d7e6",
+          "isaaclab_newton.physics.mjwarp_manager_cfg": "2b38e51f2e8c6b7dad817bbf1226774c2eeb3907e3f5da07e83fc362534b0a4d",
+          "isaaclab_newton.physics.newton_collision_cfg": "8a104d8a4194c5d3a30f07656c26d6d06e7897cc2fa17d027a4eab5eac234d13",
+          "isaaclab_newton.physics.newton_manager": "2671c1bfc0e44860508664d353af9317a10d89ca59589a42f2e9793ed3f662f4",
+          "isaaclab_newton.physics.newton_manager_cfg": "12002848e3e71352929ed7a0d8b0fd90d2024fcadaa7c02654cf99c150a0d3d4",
+          "isaaclab_newton.physics.visualization_builder": "7ce4267b393be394578b7399367dc715e8a1e8468365e6aa78b45085f951fe2c",
+          "isaaclab_newton.sim.schemas.schemas_cfg": "ee2c0aa30ee1a03476a283e1a326277d149f20d772cee1d8bcec3d2ce24e6153",
+          "isaaclab_newton.sim.spawners.mjcf.mjcf": "2e1302b9b5a225576446b9dd9a8323cd99e8850bbe0b336dd6f8c6dc9c857810",
+          "isaaclab_newton.sim.spawners.mjcf.mjcf_cfg": "beb5f8f09452ee8c6a949c6e64aca5e03d398947527ec1e2b896e0526eebac27",
+          "isaaclab_tasks.core.multi_task.kinematics.kinematic_tree": "91f5873abb47863d1f9e2fc75f860b2cdcf4c57874645eaf672ef3c4cfb4a7f1",
+          "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics": "e450f76a2bfe11ff0986c60c5519a7ddc5009579477478547945e6958f85fbfd",
+          "isaaclab_tasks.core.multi_task.kinematics.newton_kinematics_cfg": "bb54968f13676e3d7185ae40bfe4792c38c5bb5029f9e10d68ea759f315d036c",
+          "isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command": "6dd445ec17f9c71bfcf5e5957cc17f3fc382c4d40aa09407ca7c42f22f145dfc",
+          "isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command_cfg": "a49a0cf2bed1f092b27fb15d70101d583cb046c2958703e2df56cd09376ed995",
+          "isaaclab_tasks.core.multi_task.mdp.native_mujoco_action": "61bddc4153c4b609496a37e1342c5aedf2d0d9cdb8d148dd7d20a8fe4c45eb6d",
+          "isaaclab_tasks.core.multi_task.mdp.native_mujoco_action_cfg": "501dff38faa830166485a45a92806f857fb640dc684acf8a3aa3b3f47168686e",
+          "isaaclab_tasks.core.multi_task.motion.data.clip_index": "9d90b83622b7ea868b2f63f1f3e46617de3e7e3c756d72c72fcc660a24aefd06",
+          "isaaclab_tasks.core.multi_task.motion.data.skeleton": "f3019bd34c08a960d0117fea2741fb464e4f10d478fcabbe15bf6a500cf5c810",
+          "isaaclab_tasks.core.multi_task.motion.data.source": "dafd4a391bf29cb50a64f876a23fbdbd3717ee83973a51206d9ca798b90a79a4",
+          "isaaclab_tasks.core.multi_task.motion.data.sources.cmu_humenv_smpl": "ee382eab09bb116d3fd9dfc331acbfa839d44a2ed2be98561c169507ec6dd44d",
+          "isaaclab_tasks.core.multi_task.motion.identity": "4a7dc69c4f398d91d3e6a69deee06ebf5704f76ece1b3368a2ec1d261de1be81",
+          "isaaclab_tasks.core.multi_task.motion.mdp.commands.commands_cfg": "75344cf31adb7965b6ceae6dfc9774bd474abad57bf631998428a7f24c5eb046",
+          "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_state_payload": "cc348602b2dcdfde62dc7893aca3b47aa4eafa9047921feede0b5245e5f9629d",
+          "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table": "5e7e3cd900fd24bb3a873dff4a252f6de8d1db298525e41bf4dfa6718eec4020",
+          "isaaclab_tasks.core.multi_task.motion.robots.smpl.articulation": "981c8a0781a9218971c5f881bb3a76c228b1daec6e99af4efe980a49b5a287ad",
+          "isaaclab_tasks.core.multi_task.motion.robots.smpl.frames": "2b07e6493780b330b3e49fe0eb9190c36653f62c632ed6f669585d623c442946",
+          "isaaclab_tasks.core.multi_task.motion.robots.smpl.observations": "de7ed7e66c94e24df00b32644d5a18666434a5cbf58383c7a3e6683857907f3d",
+          "isaaclab_tasks.core.multi_task.motion.robots.smpl.reference": "fac83006dddef4814f2cf35f4bd7e9f25f81804dc625349e5f58a68a6681ba07",
+          "isaaclab_tasks.core.multi_task.motion.robots.smpl.reset": "8e33280da3873debc04d5596ff642fd21fc4e033400773be89dfad0f4420a8ab",
+          "isaaclab_tasks.core.multi_task.motion_env_cfg": "437884a427700585619af241f8ce1f80d916e01e5aa3b4d2ccdca1d2801fd77b",
+          "motion_environment_identity": "ec4dcc9cc8ffec5500424dd90c32d69dfe62384fc51684e932f9e3a0efa5b708"
+        },
+        "resolved_axes": {
+          "construction": {
+            "frame_builder_factory": "isaaclab_tasks.core.multi_task.motion.robots.smpl.reference:smpl_generalized_coordinate_frame_builder",
+            "frame_builder_type": "isaaclab_tasks.core.multi_task.motion.robots.smpl.reference:SmplGeneralizedCoordinateFrameBuilder",
+            "reference_kinematics_factory": "isaaclab_tasks.core.multi_task.motion.data.sources.cmu_humenv_smpl_coordinates:smpl_humenv_reference_kinematics",
+            "task_row_mode": "source_frames"
+          },
+          "preset": "smpl_cmu",
+          "robot": {
+            "action_name": "control",
+            "action_type": "NativeMujocoControlActionCfg",
+            "asset_file": "robot.xml",
+            "body_names": [
+              "Pelvis",
+              "L_Hip",
+              "L_Knee",
+              "L_Ankle",
+              "L_Toe",
+              "R_Hip",
+              "R_Knee",
+              "R_Ankle",
+              "R_Toe",
+              "Torso",
+              "Spine",
+              "Chest",
+              "Neck",
+              "Head",
+              "L_Thorax",
+              "L_Shoulder",
+              "L_Elbow",
+              "L_Wrist",
+              "L_Hand",
+              "R_Thorax",
+              "R_Shoulder",
+              "R_Elbow",
+              "R_Wrist",
+              "R_Hand"
+            ],
+            "joint_names": [
+              "L_Hip_x_L_Hip_y_L_Hip_z:0",
+              "L_Hip_x_L_Hip_y_L_Hip_z:1",
+              "L_Hip_x_L_Hip_y_L_Hip_z:2",
+              "L_Knee_x_L_Knee_y_L_Knee_z:0",
+              "L_Knee_x_L_Knee_y_L_Knee_z:1",
+              "L_Knee_x_L_Knee_y_L_Knee_z:2",
+              "L_Ankle_x_L_Ankle_y_L_Ankle_z:0",
+              "L_Ankle_x_L_Ankle_y_L_Ankle_z:1",
+              "L_Ankle_x_L_Ankle_y_L_Ankle_z:2",
+              "L_Toe_x_L_Toe_y_L_Toe_z:0",
+              "L_Toe_x_L_Toe_y_L_Toe_z:1",
+              "L_Toe_x_L_Toe_y_L_Toe_z:2",
+              "R_Hip_x_R_Hip_y_R_Hip_z:0",
+              "R_Hip_x_R_Hip_y_R_Hip_z:1",
+              "R_Hip_x_R_Hip_y_R_Hip_z:2",
+              "R_Knee_x_R_Knee_y_R_Knee_z:0",
+              "R_Knee_x_R_Knee_y_R_Knee_z:1",
+              "R_Knee_x_R_Knee_y_R_Knee_z:2",
+              "R_Ankle_x_R_Ankle_y_R_Ankle_z:0",
+              "R_Ankle_x_R_Ankle_y_R_Ankle_z:1",
+              "R_Ankle_x_R_Ankle_y_R_Ankle_z:2",
+              "R_Toe_x_R_Toe_y_R_Toe_z:0",
+              "R_Toe_x_R_Toe_y_R_Toe_z:1",
+              "R_Toe_x_R_Toe_y_R_Toe_z:2",
+              "Torso_x_Torso_y_Torso_z:0",
+              "Torso_x_Torso_y_Torso_z:1",
+              "Torso_x_Torso_y_Torso_z:2",
+              "Spine_x_Spine_y_Spine_z:0",
+              "Spine_x_Spine_y_Spine_z:1",
+              "Spine_x_Spine_y_Spine_z:2",
+              "Chest_x_Chest_y_Chest_z:0",
+              "Chest_x_Chest_y_Chest_z:1",
+              "Chest_x_Chest_y_Chest_z:2",
+              "Neck_x_Neck_y_Neck_z:0",
+              "Neck_x_Neck_y_Neck_z:1",
+              "Neck_x_Neck_y_Neck_z:2",
+              "Head_x_Head_y_Head_z:0",
+              "Head_x_Head_y_Head_z:1",
+              "Head_x_Head_y_Head_z:2",
+              "L_Thorax_x_L_Thorax_y_L_Thorax_z:0",
+              "L_Thorax_x_L_Thorax_y_L_Thorax_z:1",
+              "L_Thorax_x_L_Thorax_y_L_Thorax_z:2",
+              "L_Shoulder_x_L_Shoulder_y_L_Shoulder_z:0",
+              "L_Shoulder_x_L_Shoulder_y_L_Shoulder_z:1",
+              "L_Shoulder_x_L_Shoulder_y_L_Shoulder_z:2",
+              "L_Elbow_x_L_Elbow_y_L_Elbow_z:0",
+              "L_Elbow_x_L_Elbow_y_L_Elbow_z:1",
+              "L_Elbow_x_L_Elbow_y_L_Elbow_z:2",
+              "L_Wrist_x_L_Wrist_y_L_Wrist_z:0",
+              "L_Wrist_x_L_Wrist_y_L_Wrist_z:1",
+              "L_Wrist_x_L_Wrist_y_L_Wrist_z:2",
+              "L_Hand_x_L_Hand_y_L_Hand_z:0",
+              "L_Hand_x_L_Hand_y_L_Hand_z:1",
+              "L_Hand_x_L_Hand_y_L_Hand_z:2",
+              "R_Thorax_x_R_Thorax_y_R_Thorax_z:0",
+              "R_Thorax_x_R_Thorax_y_R_Thorax_z:1",
+              "R_Thorax_x_R_Thorax_y_R_Thorax_z:2",
+              "R_Shoulder_x_R_Shoulder_y_R_Shoulder_z:0",
+              "R_Shoulder_x_R_Shoulder_y_R_Shoulder_z:1",
+              "R_Shoulder_x_R_Shoulder_y_R_Shoulder_z:2",
+              "R_Elbow_x_R_Elbow_y_R_Elbow_z:0",
+              "R_Elbow_x_R_Elbow_y_R_Elbow_z:1",
+              "R_Elbow_x_R_Elbow_y_R_Elbow_z:2",
+              "R_Wrist_x_R_Wrist_y_R_Wrist_z:0",
+              "R_Wrist_x_R_Wrist_y_R_Wrist_z:1",
+              "R_Wrist_x_R_Wrist_y_R_Wrist_z:2",
+              "R_Hand_x_R_Hand_y_R_Hand_z:0",
+              "R_Hand_x_R_Hand_y_R_Hand_z:1",
+              "R_Hand_x_R_Hand_y_R_Hand_z:2"
+            ],
+            "prim_path": "{ENV_REGEX_NS}/Robot"
+          },
+          "runtime": {
+            "applied_actions_before_timeout": 300,
+            "compute_final_obs": true,
+            "control_decimation": 15,
+            "episode_length_seconds": 10.0,
+            "physics_dt_seconds": 0.0022222222222222222,
+            "reset_transform_factory": "isaaclab_tasks.core.multi_task.motion.robots.smpl.reset:SmplHumEnvMocapAndFallReset",
+            "root_velocity_frame": "link",
+            "transition_evidence_concatenated": null,
+            "transition_evidence_names": null
+          },
+          "sampling": {
+            "reset_sources": [
+              [
+                "reference",
+                0.8
+              ],
+              [
+                "fall",
+                0.2
+              ]
+            ]
+          },
+          "source": {
+            "evaluation_content_sha256": "2621cf6d60231a1a6c319d9ab1c44d66c13bb76de4c7bad7e7bdef2d57f0ed32",
+            "format": "one_hdf5_file_per_clip_with_group_ep_0",
+            "identifier": "cmu_humenv_smpl",
+            "semantic_level": "smpl_robot_state_and_observation",
+            "train_content_sha256": "fe17c0673e1f5d55d985ac135e36c895df81c2cac91417df0e966fd32eb3e6b6"
+          }
+        },
+        "resolved_axes_sha256": "ae4258dd27e13c1551664c8aac7e0f6aef1930b6d27c121e853034eb79304cb8",
+        "resolved_configuration": {
+          "actions": {
+            "control": {
+              "action_width": 69,
+              "asset_name": "robot",
+              "class_type": "isaaclab_tasks.core.multi_task.mdp.native_mujoco_action:NativeMujocoControlAction",
+              "clip": null,
+              "debug_vis": false
+            }
+          },
+          "commands": {
+            "motion": {
+              "class_type": "isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command:StateCommand",
+              "cmd_kind": null,
+              "commands": {},
+              "debug_vis": false,
+              "element_names": null,
+              "payload": {
+                "class_type": "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_state_payload:MotionStatePayload",
+                "reset_sources": [
+                  [
+                    "reference",
+                    0.8
+                  ],
+                  [
+                    "fall",
+                    0.2
+                  ]
+                ],
+                "reset_transform_binds": {
+                  "live_joint_names": "tuple(payload.robot.joint_names)",
+                  "physics_dt_seconds": "env.physics_dt",
+                  "physics_steps_per_action": "round(env.step_dt / env.physics_dt)",
+                  "seed": "env.cfg.seed"
+                },
+                "reset_transform_factory": "isaaclab_tasks.core.multi_task.motion.robots.smpl.reset:SmplHumEnvMocapAndFallReset",
+                "reset_transform_params": {
+                  "control_range": [
+                    -0.5,
+                    0.5
+                  ],
+                  "fall_pool_size": 8192,
+                  "initial_root_height_m": 1.0,
+                  "initial_root_quaternion_component_range": [
+                    0.0,
+                    1.0
+                  ],
+                  "random_actions_high_exclusive": 5
+                },
+                "robot_asset_name": "robot",
+                "root_velocity_frame": "link"
+              },
+              "randomize_command_indices": true,
+              "resampling_time_range": [
+                1000000000.0,
+                1000000000.0
+              ],
+              "states_relative": true,
+              "task_table": {
+                "class_type": "isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table:build_motion_task_table",
+                "frame_builder_factory": "isaaclab_tasks.core.multi_task.motion.robots.smpl.reference:smpl_generalized_coordinate_frame_builder",
+                "motion_split": "train",
+                "reference_kinematics_factory": "isaaclab_tasks.core.multi_task.motion.data.sources.cmu_humenv_smpl_coordinates:smpl_humenv_reference_kinematics",
+                "source": {
+                  "clip_directory": "data_preparation/humenv_amass",
+                  "evaluation": {
+                    "artifact": "data_preparation/test_train_split/0-CMU_test_0.1.txt",
+                    "artifact_sha256": "c9b77782f5c35e0a33b3daa18c110856554acbebed00c4b2877b836d53f9b1b7",
+                    "clip_count": 182,
+                    "frame_count": 88364,
+                    "name": "test",
+                    "source_content_sha256": "2621cf6d60231a1a6c319d9ab1c44d66c13bb76de4c7bad7e7bdef2d57f0ed32"
+                  },
+                  "format": "one_hdf5_file_per_clip_with_group_ep_0",
+                  "identifier": "cmu_humenv_smpl",
+                  "license": "amass_cmu_and_smpl_registered_source_required",
+                  "open_source": "isaaclab_tasks.core.multi_task.motion.data.sources.cmu_humenv_smpl:open_cmu_humenv_smpl_source",
+                  "semantic_level": "smpl_robot_state_and_observation",
+                  "skeleton_factory": "isaaclab_tasks.core.multi_task.motion.data.sources.cmu_humenv_smpl_coordinates:cmu_humenv_smpl_skeleton",
+                  "source_fps": 30.0,
+                  "train": {
+                    "artifact": "data_preparation/test_train_split/0-CMU_train_0.1.txt",
+                    "artifact_sha256": "99929805f4ab531a89bff89837d27c403625d4b4d89d1a4d381b88825548a996",
+                    "clip_count": 1638,
+                    "frame_count": 730307,
+                    "name": "train",
+                    "source_content_sha256": "fe17c0673e1f5d55d985ac135e36c895df81c2cac91417df0e966fd32eb3e6b6"
+                  }
+                },
+                "task_row_mode": "source_frames"
+              }
+            }
+          },
+          "compute_final_obs": true,
+          "curriculum": {},
+          "decimation": 15,
+          "episode_length_s": 10.0,
+          "events": {},
+          "is_finite_horizon": false,
+          "num_rerenders_on_reset": 0,
+          "observations": {
+            "policy": {
+              "concatenate_dim": -1,
+              "concatenate_terms": true,
+              "enable_corruption": false,
+              "flatten_history_dim": true,
+              "history_length": null,
+              "observation": {
+                "clip": null,
+                "flatten_history_dim": true,
+                "func": "isaaclab_tasks.core.multi_task.motion.robots.smpl.observations:smpl_humenv_body_observation",
+                "history_length": 0,
+                "modifiers": null,
+                "noise": null,
+                "params": {
+                  "asset_cfg": {
+                    "body_ids": {
+                      "start": null,
+                      "step": null,
+                      "stop": null
+                    },
+                    "body_names": [
+                      "Pelvis",
+                      "L_Hip",
+                      "L_Knee",
+                      "L_Ankle",
+                      "L_Toe",
+                      "R_Hip",
+                      "R_Knee",
+                      "R_Ankle",
+                      "R_Toe",
+                      "Torso",
+                      "Spine",
+                      "Chest",
+                      "Neck",
+                      "Head",
+                      "L_Thorax",
+                      "L_Shoulder",
+                      "L_Elbow",
+                      "L_Wrist",
+                      "L_Hand",
+                      "R_Thorax",
+                      "R_Shoulder",
+                      "R_Elbow",
+                      "R_Wrist",
+                      "R_Hand"
+                    ],
+                    "fixed_tendon_ids": {
+                      "start": null,
+                      "step": null,
+                      "stop": null
+                    },
+                    "fixed_tendon_names": null,
+                    "joint_ids": {
+                      "start": null,
+                      "step": null,
+                      "stop": null
+                    },
+                    "joint_names": null,
+                    "name": "robot",
+                    "object_collection_ids": {
+                      "start": null,
+                      "step": null,
+                      "stop": null
+                    },
+                    "object_collection_names": null,
+                    "preserve_order": true
+                  }
+                },
+                "scale": null
+              }
+            }
+          },
+          "rerender_on_reset": false,
+          "rewards": {},
+          "scene": {
+            "class_type": "isaaclab.scene.interactive_scene:InteractiveScene",
+            "clone_in_fabric": false,
+            "contact_forces": null,
+            "dome_light": {
+              "class_type": null,
+              "collision_group": 0,
+              "debug_vis": false,
+              "disable_shape_checks": null,
+              "init_state": {
+                "pos": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "rot": [
+                  0.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              },
+              "prim_path": "/World/domeLight",
+              "spawn": {
+                "color": [
+                  1.0,
+                  1.0,
+                  1.0
+                ],
+                "color_temperature": 6500.0,
+                "copy_from_source": true,
+                "enable_color_temperature": false,
+                "exposure": 0.0,
+                "func": "isaaclab.sim.spawners.lights.lights:spawn_light",
+                "intensity": 750.0,
+                "normalize": false,
+                "prim_type": "DomeLight",
+                "semantic_tags": null,
+                "spawn_path": null,
+                "texture_file": null,
+                "texture_format": "automatic",
+                "visible": true,
+                "visible_in_primary_ray": true
+              }
+            },
+            "env_spacing": 3.0,
+            "filter_collisions": true,
+            "ground": {
+              "class_type": null,
+              "collision_group": 0,
+              "debug_vis": false,
+              "disable_shape_checks": null,
+              "init_state": {
+                "pos": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "rot": [
+                  0.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              },
+              "prim_path": "/World/ground",
+              "spawn": {
+                "activate_contact_sensors": false,
+                "axis": "Z",
+                "collision_props": {
+                  "_usd_applied_schema": "MjcCollisionAPI",
+                  "_usd_field_exceptions": {},
+                  "_usd_field_types": {
+                    "solimp": "DoubleArray",
+                    "solref": "DoubleArray"
+                  },
+                  "_usd_namespace": "mjc",
+                  "collision_enabled": true,
+                  "contact_gap": null,
+                  "contact_margin": null,
+                  "contact_offset": null,
+                  "margin": 0.001,
+                  "mesh_collision_property": null,
+                  "rest_offset": null,
+                  "solimp": [
+                    0.99,
+                    0.99,
+                    0.003,
+                    0.5,
+                    2.0
+                  ],
+                  "solref": [
+                    0.015,
+                    1.0
+                  ]
+                },
+                "copy_from_source": true,
+                "func": "isaaclab.sim.spawners.shapes.shapes:spawn_plane",
+                "mass_props": null,
+                "physics_material": {
+                  "_usd_applied_schema": "NewtonMaterialAPI",
+                  "_usd_field_exceptions": {},
+                  "_usd_namespace": "newton",
+                  "dynamic_friction": 0.7,
+                  "func": "isaaclab.sim.spawners.materials.physics_materials:spawn_rigid_body_material",
+                  "restitution": 0.0,
+                  "rolling_friction": 0.0001,
+                  "static_friction": 0.7,
+                  "torsional_friction": 0.005
+                },
+                "physics_material_path": "material",
+                "rigid_props": null,
+                "semantic_tags": null,
+                "size": [
+                  200.0,
+                  200.0
+                ],
+                "spawn_path": null,
+                "visible": true,
+                "visual_material": null,
+                "visual_material_path": "material"
+              }
+            },
+            "lazy_sensor_update": true,
+            "replicate_physics": true,
+            "robot": {
+              "actuator_value_resolution_debug_print": false,
+              "actuators": {},
+              "articulation_root_prim_path": "/humanoid",
+              "class_type": "isaaclab.assets.articulation.articulation:Articulation",
+              "collision_group": 0,
+              "debug_vis": false,
+              "disable_shape_checks": null,
+              "init_state": {
+                "ang_vel": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "joint_pos": {
+                  ".*": 0.0
+                },
+                "joint_vel": {
+                  ".*": 0.0
+                },
+                "lin_vel": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "pos": [
+                  0.0,
+                  0.0,
+                  0.95
+                ],
+                "rot": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  0.0
+                ]
+              },
+              "prim_path": "{ENV_REGEX_NS}/Robot",
+              "soft_joint_pos_limit_factor": 1.0,
+              "spawn": {
+                "copy_from_source": true,
+                "func": "isaaclab_newton.sim.spawners.mjcf.mjcf:spawn_newton_mjcf",
+                "self_collision": true,
+                "semantic_tags": null,
+                "source_asset_file": "robot.xml",
+                "spawn_path": null,
+                "visible": true
+              }
+            }
+          },
+          "sim": {
+            "create_stage_in_memory": false,
+            "dt": 0.0022222222222222222,
+            "enable_scene_query_support": false,
+            "gravity": [
+              0.0,
+              0.0,
+              -9.81
+            ],
+            "logging_level": "WARNING",
+            "physics": {
+              "class_type": "isaaclab_newton.physics.mjwarp_manager:NewtonMJWarpManager",
+              "collision_cfg": null,
+              "collision_decimation": 0,
+              "collision_pairing": null,
+              "debug_mode": false,
+              "default_shape_cfg": {
+                "gap": 0.01,
+                "kd": 100.0,
+                "ke": 2500.0,
+                "margin": 0.0
+              },
+              "num_substeps": 1,
+              "simplify_meshes": true,
+              "solver_cfg": {
+                "actuator_gears": null,
+                "ccd_iterations": 35,
+                "class_type": "isaaclab_newton.physics.mjwarp_manager:NewtonMJWarpManager",
+                "cone": "pyramidal",
+                "default_actuator_gear": null,
+                "disable_contacts": false,
+                "enable_multiccd": false,
+                "enable_native_ccd": false,
+                "impratio": 1.0,
+                "integrator": "implicitfast",
+                "iterations": 100,
+                "ls_iterations": 50,
+                "ls_parallel": false,
+                "nconmax": null,
+                "njmax": 300,
+                "solver": "newton",
+                "solver_type": "mujoco_warp",
+                "tolerance": 1e-08,
+                "update_data_interval": 1,
+                "use_mujoco_contacts": true,
+                "use_mujoco_cpu": false
+              },
+              "use_cuda_graph": true
+            },
+            "physics_material": {
+              "_usd_applied_schema": "PhysxMaterialAPI",
+              "_usd_field_exceptions": {},
+              "_usd_namespace": "physxMaterial",
+              "compliant_contact_damping": null,
+              "compliant_contact_stiffness": null,
+              "dynamic_friction": 0.5,
+              "friction_combine_mode": null,
+              "func": "isaaclab.sim.spawners.materials.physics_materials:spawn_rigid_body_material",
+              "restitution": 0.0,
+              "restitution_combine_mode": null,
+              "static_friction": 0.5
+            },
+            "physics_prim_path": "/physicsScene",
+            "render": {
+              "ambient_light_intensity": null,
+              "ambient_occlusion_denoiser_mode": null,
+              "antialiasing_mode": null,
+              "carb_settings": null,
+              "dlss_mode": null,
+              "dome_light_upper_lower_strategy": null,
+              "enable_ambient_occlusion": null,
+              "enable_direct_lighting": null,
+              "enable_dl_denoiser": null,
+              "enable_dlssg": null,
+              "enable_global_illumination": null,
+              "enable_reflections": null,
+              "enable_shadows": null,
+              "enable_translucency": null,
+              "max_bounces": null,
+              "rendering_mode": null,
+              "samples_per_pixel": null,
+              "split_clearcoat": null,
+              "split_glass": null,
+              "split_rough_reflection": null,
+              "view_tile_limit": null
+            },
+            "render_interval": 15,
+            "save_logs_to_file": true,
+            "use_fabric": true,
+            "use_newton_actuators": false,
+            "visualizer_cfgs": []
+          },
+          "terminations": {
+            "time_out": {
+              "func": "isaaclab.envs.mdp.terminations:time_out",
+              "params": {},
+              "time_out": true
+            }
+          }
+        },
+        "resolved_configuration_sha256": "5fdbdbabe33c1edd06384018bc7c357ed95287af5fa75459b99ff9ecf293ec4a",
+        "robot_assets": {
+          "reference/humenv.xml": "a38c014814929152ddeb3e2a4f18a99c5eb861f0c7f6678416624c39dba9b024",
+          "simulation/robot.xml": "f91b6d512f9fcece8d781ccf49afbea2ba5dfd33be0be376e84d5b5579e79fe2"
+        },
+        "runtime_dependencies": {
+          "h5py": {
+            "distribution_version": "3.16.0",
+            "module_source_sha256": "d4a46803087247cef67ee34a4d98d797be2f55b1f9230bc5f8a1fa358f8d1b87",
+            "module_version": "3.16.0"
+          },
+          "isaac_sim": {
+            "version": "6.0.1-alpha.1",
+            "version_sha256": "b048288c87b861bf6429130003e3787abc459920ff28f2eb6aa6a220308e1cb5"
+          },
+          "mujoco": {
+            "distribution_version": "3.8.1",
+            "module_source_sha256": "f8e5b528617004b6215e16cb0c945faf1f8c7b5d798e5b92e3aabce19c838497",
+            "module_version": "3.8.1"
+          },
+          "mujoco_warp": {
+            "distribution_version": "3.8.1",
+            "module_source_sha256": "3d6b9e6f8375ab70873eea89f25897ffad3acf2644d5f33a47358ce21329228b",
+            "module_version": "3.8.1"
+          },
+          "newton": {
+            "distribution_version": "1.4.0.dev0",
+            "module_source_sha256": "5527cc692d6ff881555f676bca70896f47aaf70213129239b65b47a12d25da31",
+            "module_version": "1.4.0.dev0"
+          },
+          "newton_owners": {
+            "model_builder_add_mjcf": {
+              "owner": "newton._src.sim.builder:ModelBuilder.add_mjcf",
+              "source_sha256": "7d4d18f30820b3dd4ec1f1893bddf2876d547b592d624ee977670fb8f8417c1f"
+            },
+            "model_builder_add_usd": {
+              "owner": "newton._src.sim.builder:ModelBuilder.add_usd",
+              "source_sha256": "7d4d18f30820b3dd4ec1f1893bddf2876d547b592d624ee977670fb8f8417c1f"
+            },
+            "schema_resolver_mjc": {
+              "owner": "newton._src.usd.schemas:SchemaResolverMjc",
+              "source_sha256": "19f6f3684dcd267f2d9d4027c991a87893f57e050df9effa915030e086038b8f"
+            },
+            "solver_mujoco": {
+              "owner": "newton._src.solvers.mujoco.solver_mujoco:SolverMuJoCo",
+              "source_sha256": "a482b6c0523b596f5a68350c60b2e9febbc75bf64a986b377d0355c74af5cd84"
+            }
+          },
+          "numpy": {
+            "distribution_version": "2.4.6",
+            "module_source_sha256": "92a46f791e453926d3292af2582b89995a289475f0eaaea71a949823200b838a",
+            "module_version": "2.4.6"
+          },
+          "torch": {
+            "cuda_version": "12.8",
+            "distribution_version": "2.10.0+cu128",
+            "git_version": "449b1768410104d3ed79d3bcfe4ba1d65c7f22c0",
+            "module_source_sha256": "51c90fe34a7cf869517d1bab4cd114498790e169ec668f1a154c35ec64117a5e",
+            "module_version": "2.10.0+cu128"
+          },
+          "warp": {
+            "distribution_version": "1.15.0.dev20260529",
+            "module_source_sha256": "f29f6368f025003a48a17a0dd6ed4eb1ef3d825c041026c07a6e1d00a31abc52",
+            "module_version": "1.15.0.dev20260529"
+          }
+        },
+        "runtime_dependencies_sha256": "2634604ed29838d89820a5214c54361a4bff7669dbd95fd3c0e05a3dc3502267",
+        "schema": "forward_backward_phase3_motion_environment_dependency_identity_v9"
+      },
+      "semantic_sha256": "6a601e97ef67b3ae9986eb69ae79571482a6d33a442d91a6379e4820ac285640"
+    },
+    "learner_code": {
+      "bundle_sha256": "5ac181183945dd4ef8732d69ff37e846909dbf3ac1234aa25be7b2d797694562",
+      "python_file_count": 40,
+      "python_files": [
+        {
+          "path": "__init__.py",
+          "sha256": "9b4c420fef3ae39683544833b6d2efbb26aecfc0583ec59be7f4eeb748fecf66"
+        },
+        {
+          "path": "algorithms/__init__.py",
+          "sha256": "d8236d8af5278dbd60d106b422255988f0091b8c74f137893e9cfb3573d03a2c"
+        },
+        {
+          "path": "algorithms/distillation.py",
+          "sha256": "2a2f7d720fbcb888c80435fb853986f82e7a37c7506893b75bbac3d1485ac43c"
+        },
+        {
+          "path": "algorithms/forward_backward.py",
+          "sha256": "36f11485b88b00680447b2e0f7b3d10a5cb22245cdcccefabb6281ca990e8666"
+        },
+        {
+          "path": "algorithms/ppo.py",
+          "sha256": "89af38d3f1a85f50ac55eab54b7d4f859f14be2083501f269b3ccf36d278812e"
+        },
+        {
+          "path": "env/__init__.py",
+          "sha256": "33bfc9562580377c2ce6388c37b0df2b8e992c22ce46923443681cbbf1960d60"
+        },
+        {
+          "path": "env/vec_env.py",
+          "sha256": "4a72df2fbf9b3e162e0e4b10e0b473511f02ad8c3ebaab0b7993ddfd63a9fa43"
+        },
+        {
+          "path": "extensions/__init__.py",
+          "sha256": "f514733e1ccf393644fed4a450c61b48e36293d10e1156fe0ab3b04bf320f8e0"
+        },
+        {
+          "path": "extensions/rnd.py",
+          "sha256": "7ff5a34f54bcfe8e9494cf5c27155102b6f50c9b10dff49f7a1d98f32e6e16ca"
+        },
+        {
+          "path": "extensions/successor.py",
+          "sha256": "a3e976c226e476eea780c2b3ae812cd0727efd9ddbdcade200e69f2b434340a0"
+        },
+        {
+          "path": "extensions/symmetry.py",
+          "sha256": "4121d8804c9555118f031f604bc5232c85db0b41ce8d8295a5a22b85190b4048"
+        },
+        {
+          "path": "extensions/value_shift.py",
+          "sha256": "0bfcd099fbaf8ed5ff6837a088982a0af17d4b6df2288c589284308e708e35be"
+        },
+        {
+          "path": "models/__init__.py",
+          "sha256": "ae717480d5d36daa5c0e1504af5472e3b01a67687f6632f9bb4288f766623c10"
+        },
+        {
+          "path": "models/cnn_model.py",
+          "sha256": "bc8119274d2058f0abe3482563e6e391aba312fa19c59d961413cfe09f4b0d93"
+        },
+        {
+          "path": "models/forward_backward_model.py",
+          "sha256": "40ece339862a7be6700a4bb1eeb3f0c4e543a6c983e1dd42fb8dc31377d368c0"
+        },
+        {
+          "path": "models/mlp_model.py",
+          "sha256": "00397a77091bfeb52ca48a1da7b8aeb3896c54846db49744c768de9d35a06ae1"
+        },
+        {
+          "path": "models/rnn_model.py",
+          "sha256": "80c1d6452ef021e4d7b174231ed7abac1ed0db8de9604561f8060148d4333ccc"
+        },
+        {
+          "path": "modules/__init__.py",
+          "sha256": "0952c3604564d2c4f51072818f2628b1e2fcea0682cc9a56f4fe10b4ca456e5b"
+        },
+        {
+          "path": "modules/cnn.py",
+          "sha256": "4f5bab5f192c42180125f32a4af350108dd1c247e1e84c81f6cf4ea560037ccf"
+        },
+        {
+          "path": "modules/distribution.py",
+          "sha256": "2a939a45b1874ce0b56f3086f6068f8004a5309c216e67ebcdca4caa30ee3bf3"
+        },
+        {
+          "path": "modules/forward_backward.py",
+          "sha256": "faf3af436ceb763bf025cfd1fb0c78c08e6558f60dcf2069b6f42a55ce71280d"
+        },
+        {
+          "path": "modules/mlp.py",
+          "sha256": "f586fcc39bd2bfa400219adaeab168ff3d7a4698f61b4fd17f9f61d99f480e2f"
+        },
+        {
+          "path": "modules/normalization.py",
+          "sha256": "8f2b4abcd7cf571774fafecbdaae74a894f7692961203021bf697f759f665eaf"
+        },
+        {
+          "path": "modules/reward_channels.py",
+          "sha256": "6b54c5770c5a09ed04dc88001aab531f804c2f76407cb6d7d2c33eecdd37de74"
+        },
+        {
+          "path": "modules/rnn.py",
+          "sha256": "07f0eec06c7f2638edbdbc3ba25f56122a7941cb0543138f4a6b04675b2a97e6"
+        },
+        {
+          "path": "runners/__init__.py",
+          "sha256": "412d5636b3ee4d86477458dc6d123b2656784145e9fed09f6e15183a4dabbb04"
+        },
+        {
+          "path": "runners/distillation_runner.py",
+          "sha256": "7445cbaf3e1fa241d742447ab17d941a659c92b6f8365ef22c5d818923d9e275"
+        },
+        {
+          "path": "runners/lifecycle.py",
+          "sha256": "0cff47fb74dc772a13365f42e271d47c81f5b5d598eb8e8fa8f61da6cd11be20"
+        },
+        {
+          "path": "runners/off_policy_runner.py",
+          "sha256": "898f6a6e29bf8d9b692a4ae7b081f9b8a082f191237eb9e35c28d58e38f86bef"
+        },
+        {
+          "path": "runners/on_policy_runner.py",
+          "sha256": "9bef1dc7dad91ae95401b3eeb86a58155a121a7bc7920de65e3db54939e7d245"
+        },
+        {
+          "path": "storage/__init__.py",
+          "sha256": "86be5af221238fabed3ccc3b45e06b569969554d33e09eb9aea861bfa309a854"
+        },
+        {
+          "path": "storage/forward_backward_expert.py",
+          "sha256": "b8d6c4b617c7a149ebf47c1baa0b76fc8db346fcc2fa29a04453845c78e2ae7a"
+        },
+        {
+          "path": "storage/forward_backward_replay.py",
+          "sha256": "c5f04754d657130942b163d2662f2feea0475b61071c1ad242fb68280f3c6efc"
+        },
+        {
+          "path": "storage/rollout_storage.py",
+          "sha256": "24a995c8f6feb86bacf2f4f2de401184db8fc910284f245de594938150863734"
+        },
+        {
+          "path": "utils/__init__.py",
+          "sha256": "c02c98fbcd51724d026af809af0629759d2ae86068860f9fdb12b4e2a9511d6d"
+        },
+        {
+          "path": "utils/log_writer.py",
+          "sha256": "53e9447d4337ab7e2d9f48f6ee8ee07ab865789ff1c722e2bc8b3f44ee247693"
+        },
+        {
+          "path": "utils/logger.py",
+          "sha256": "159811185d360181e3bd924152346c05044716527be47e90ae83747d8920f7dc"
+        },
+        {
+          "path": "utils/neptune_log_writer.py",
+          "sha256": "e528253f887ed377266cdaba29115a3388f4b2d586ae001ec6c5878a869bab0c"
+        },
+        {
+          "path": "utils/utils.py",
+          "sha256": "625bcdb8d47c67b90ab2a745937701e143d536083d47542e7f8a0ce142f4b226"
+        },
+        {
+          "path": "utils/wandb_log_writer.py",
+          "sha256": "8a3b349c8c7739eb4c9921bf5ab0df73b038208322c0c3e8e4878f7c6edf1322"
+        }
+      ]
+    },
+    "learner_runtime": {
+      "bundle_sha256": "0b27d9ce550690a79ceb23915323f483164d0a871e4907aaef797bd1d7cfc960",
+      "packages": {
+        "gymnasium": {
+          "distribution_version": "1.3.0",
+          "module_source_sha256": "98f7ecc957123d8194869b6543a567758019a6b686a2630a37ad468bd5fda651",
+          "module_version": "1.3.0"
+        },
+        "tensordict": {
+          "distribution_version": "0.12.4",
+          "module_source_sha256": "1b9a2a7a90ff9b6cd9fc24b9c839971b94721056eb425408f649e1f17ece562e",
+          "module_version": "0.12.4"
+        }
+      },
+      "schema": "forward_backward_phase3f_learner_runtime_identity_v1"
+    },
+    "task_bridge": {
+      "bundle_sha256": "58f9cacb86c86377243555b778cee8e16f8ca902e8c150dcc7dc982dbac139e6",
+      "source_owner_count": 3,
+      "source_owners": {
+        "environment_wrapper": {
+          "owner": "isaaclab_rl.rsl_rl.vecenv_wrapper:RslRlVecEnvWrapper",
+          "source_sha256": "6f7c071c9b1b947235b9c1f9091841b0ad38be55efa347e4dbd0dcedb0feffa2"
+        },
+        "motion_expert_provider": {
+          "owner": "isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_expert:forward_backward_expert_buffer",
+          "source_sha256": "3193e5f32983a031ed1eaed116113d0892dd4448627c9f91bb2d6efb0742dce2"
+        },
+        "motion_runner_config": {
+          "owner": "isaaclab_tasks.core.multi_task.motion.config.agents.rsl_rl_fb_cfg:MotionForwardBackwardRunnerCfg",
+          "source_sha256": "d8c9d0cfcd78bc8d7d9c597e554f9d6b9c363355ef583681079fdcf3d93a3df4"
+        }
+      }
+    }
+  },
+  "records_sha256": {
+    "complete": "804ae56e6364d5dc98fcbf22165b1ec31517f95109f08621770ed649a50b63b2",
+    "launch": "4ab60a845a970e8bd918b905fe489677e67965e88e3706ab255f2ebba856b7c0",
+    "validation": "f98cde88ae712556a67d1bd24991bf675c9660fcfc79a3a56fc0668086a0b7ee"
+  },
+  "runner": {
+    "action_statistics_finite": true,
+    "action_std_maximum": 0.20000000298023224,
+    "action_std_minimum": 0.20000000298023224,
+    "actor_state_checks": {
+      "action_distribution_cached_params": {
+        "all_finite": true,
+        "scalar_count": 141312,
+        "tensor_count": 2
+      },
+      "actor_network_parameters": {
+        "all_finite": true,
+        "scalar_count": 4220997,
+        "tensor_count": 18
+      }
+    },
+    "all_metrics_finite": true,
+    "collected_transitions": 51000,
+    "completed_iterations": 102,
+    "last_metrics": {
+      "actor/fb_value": 3.1174044609069824,
+      "actor/helper_value": -0.007091803941875696,
+      "actor/loss": -3.0428905487060547,
+      "discriminator/gradient_penalty": 0.17444534599781036,
+      "discriminator/logistic": 0.9268839955329895,
+      "discriminator/loss": 2.671337604522705,
+      "fb/diagonal": -6.581750869750977,
+      "fb/implied_value": 1338.5279541015625,
+      "fb/loss": 43723.55078125,
+      "fb/measure": 58.964027404785156,
+      "fb/off_diagonal": 65.5457763671875,
+      "fb/orthogonality": 435.3073425292969,
+      "fb/orthogonality_diagonal": -256.0,
+      "fb/orthogonality_off_diagonal": 691.3073120117188,
+      "value/discriminator/loss": 0.35379934310913086,
+      "value/discriminator/reward": 0.1324554830789566,
+      "value/discriminator/target": -0.4873018264770508
+    },
+    "metric_names": [
+      "discriminator/loss",
+      "discriminator/logistic",
+      "discriminator/gradient_penalty",
+      "fb/loss",
+      "fb/measure",
+      "fb/off_diagonal",
+      "fb/diagonal",
+      "fb/orthogonality",
+      "fb/orthogonality_off_diagonal",
+      "fb/orthogonality_diagonal",
+      "fb/implied_value",
+      "value/discriminator/loss",
+      "value/discriminator/reward",
+      "value/discriminator/target",
+      "actor/loss",
+      "actor/fb_value",
+      "actor/helper_value"
+    ],
+    "update_calls": 50
+  },
+  "schema": "forward_backward_phase3f_motion_training_receipt_v1",
+  "status": "passed"
+}

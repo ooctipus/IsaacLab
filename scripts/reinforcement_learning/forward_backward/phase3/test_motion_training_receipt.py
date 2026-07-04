@@ -20,6 +20,15 @@ SCRIPT = Path(__file__).parent / "motion_training_receipt.py"
 CONTRACT = Path(__file__).parent / "fixtures" / "motion_training_smoke_contract_v2.json"
 RUNTIME = Path(__file__).parent / "fixtures" / "runtime"
 
+_HISTORICAL_RECEIPT_SHA256 = {
+    "motion_training_g1_lafan_v1.json": "be75d4572f03bd712b3d4688f5577feb7fb0c05331d3739d641c1ce1d4a1d431",
+    "motion_training_smpl_cmu_v1.json": "84f8270b1d6d3ee4bff09e55b8754c954e9257c766f2062a879952904c4116d4",
+}
+_CURRENT_RECEIPT_SHA256 = {
+    "motion_training_g1_lafan_v2.json": "0f4de26a456361e3e30f70b14378ea7cd9db710dcad582123045534221da0922",
+    "motion_training_smpl_cmu_v2.json": "5ed4ecd7218243f511ac7f1c3a0d30abdf8faaca311a3611dac00dbe3316e8ad",
+}
+
 
 def _canonical_sha256(value: object) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
@@ -302,14 +311,14 @@ def test_resolved_agent_config_identity_excludes_output_run_name() -> None:
         ("g1_lafan", "motion_training_g1_lafan_v1.json"),
     ),
 )
-def test_published_native_receipt_is_authentic_and_reports_current_contract_compatibility(
-    preset: str, filename: str
-) -> None:
-    """Published receipts retain their measured contract even after the declaration advances."""
+def test_historical_v1_receipt_remains_byte_authentic(preset: str, filename: str) -> None:
+    """Published v1 evidence remains immutable after the frozen declaration advances."""
     module = _module()
     contract = json.loads(CONTRACT.read_text())
-    receipt = json.loads((RUNTIME / filename).read_text())
+    receipt_path = RUNTIME / filename
+    receipt = json.loads(receipt_path.read_text())
 
+    assert hashlib.sha256(receipt_path.read_bytes()).hexdigest() == _HISTORICAL_RECEIPT_SHA256[filename]
     assert receipt["schema"] == "forward_backward_phase3f_motion_training_receipt_v1"
     assert receipt["status"] == "passed"
     assert receipt["preset"] == preset
@@ -356,20 +365,46 @@ def test_published_native_receipt_is_authentic_and_reports_current_contract_comp
     assert all(math.isfinite(value) for value in runner["last_metrics"].values())
     assert all(check["all_finite"] is True for check in runner["actor_state_checks"].values())
 
-    current_contract_sha256 = hashlib.sha256(CONTRACT.read_bytes()).hexdigest()
-    compatibility = (
-        "exact_contract_match"
-        if receipt["contract_declaration_sha256"] == current_contract_sha256
-        else "historical_contract_differs_requires_fresh_smoke"
-    )
-    assert compatibility in {"exact_contract_match", "historical_contract_differs_requires_fresh_smoke"}
-    if compatibility == "exact_contract_match":
-        profile = contract["profiles"][preset]
-        assert receipt["identity"] == {
-            **profile["closed_input_identity"],
-            "environment_semantic_sha256": profile["environment_semantic_sha256"],
-        }
-        assert receipt["collection"] == profile["collection"]
+    assert receipt["contract_declaration_sha256"] != hashlib.sha256(CONTRACT.read_bytes()).hexdigest()
+    assert receipt["identity"] != {
+        **contract["profiles"][preset]["closed_input_identity"],
+        "environment_semantic_sha256": contract["profiles"][preset]["environment_semantic_sha256"],
+    }
+
+
+@pytest.mark.parametrize(
+    "preset,filename",
+    (
+        ("smpl_cmu", "motion_training_smpl_cmu_v2.json"),
+        ("g1_lafan", "motion_training_g1_lafan_v2.json"),
+    ),
+)
+def test_current_v2_receipt_exactly_matches_frozen_contract(preset: str, filename: str) -> None:
+    """Fresh v2 evidence must close the exact current declaration and runtime contract."""
+    module = _module()
+    contract = json.loads(CONTRACT.read_text())
+    profile = contract["profiles"][preset]
+    receipt_path = RUNTIME / filename
+    receipt = json.loads(receipt_path.read_text())
+
+    assert hashlib.sha256(receipt_path.read_bytes()).hexdigest() == _CURRENT_RECEIPT_SHA256[filename]
+    assert receipt["schema"] == "forward_backward_phase3f_motion_training_receipt_v1"
+    assert receipt["status"] == "passed"
+    assert receipt["preset"] == preset
+    assert receipt["contract_declaration_sha256"] == hashlib.sha256(CONTRACT.read_bytes()).hexdigest()
+    assert receipt["identity"] == {
+        **profile["closed_input_identity"],
+        "environment_semantic_sha256": profile["environment_semantic_sha256"],
+    }
+    assert receipt["collection"] == profile["collection"]
+    assert receipt["learner"]["device_scope"] == profile["device_scope"]
+    assert set(receipt["learner"]["versions"]) == set(profile["learner"]["expected_version_names"])
+    assert set(receipt["runner"]["metric_names"]) == set(profile["learner"]["required_metrics"])
+    assert receipt["checkpoint"]["filename"] == profile["checkpoint"]["filename"]
+    assert receipt["checkpoint"]["map_location"] == profile["checkpoint"]["strict_map_location"]
+    assert receipt["checkpoint"]["mmap"] is profile["checkpoint"]["strict_mmap"]
+    identity = module._identity_digests(receipt["identity"])
+    assert module._validate_provenance(identity, receipt["provenance"]) == receipt["provenance"]
 
 
 @pytest.mark.parametrize(

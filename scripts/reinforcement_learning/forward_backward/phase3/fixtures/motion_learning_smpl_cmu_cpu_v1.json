@@ -6,21 +6,21 @@
     "source_numerical_parity": "inherited_from_phase2_not_remeasured_here"
   },
   "code_identity": {
-    "evidence_sha256": "94f285b6ffdb80c37c57bace00c242941d588d4c459bee51721dda3504dfda63",
+    "evidence_sha256": "eb7af056e265886bff2c7fd9116e6180b3f225a7a016174d6f7ffd2785611a0a",
     "motion_expert_provider_sha256": "3193e5f32983a031ed1eaed116113d0892dd4448627c9f91bb2d6efb0742dce2",
     "native_trace_sha256": "97c7836c93dccde22c4229621f2a5c2b3cc065edd71312f53fb4683be9922439",
-    "rsl_algorithm_sha256": "99668a732f3a8f61f1dde33df9b62bfbc626ae681d8d715349aa219338468c4d",
-    "rsl_expert_buffer_sha256": "e22ca9222fd6582250eb11d156d78ec86d1a4f5f1eb137bd282267c9f96caa84",
-    "rsl_replay_sha256": "dad8ed69b08fd3550c410556e3b99b29afebdc74d0bfb05f4b8e5d4b38c43c38"
+    "rsl_algorithm_sha256": "36f11485b88b00680447b2e0f7b3d10a5cb22245cdcccefabb6281ca990e8666",
+    "rsl_expert_buffer_sha256": "b8d6c4b617c7a149ebf47c1baa0b76fc8db346fcc2fa29a04453845c78e2ae7a",
+    "rsl_replay_sha256": "c5f04754d657130942b163d2662f2feea0475b61071c1ad242fb68280f3c6efc"
   },
   "expert": {
     "clip_count": 1638,
     "clip_offsets_sha256": "3b2e4af46e7e4714deea355d5ab00ae9932354b2d60d6e76f3cd388c4b6e56e1",
-    "expert_data_sha256": "32c31711f5f19f0e63a9004a34957280bd56159869aea0296206f970e9162abc",
+    "expert_data_sha256": "34062607966afb5a954c05d7850c0aa5a04881fcac82eb3d465e195024b29033",
     "expert_feature_width": 358,
     "expert_frame_count": 730307,
     "expert_frames_sha256": "756cddd4ad146f2d663a745358f6056b2bc9a1a49624dd37a05af2919f2793fd",
-    "expert_schema_sha256": "dbe53a1ba436915837f70c4b7fc067e2111923791333a8d7a5d05f7ce74ae1b0",
+    "expert_schema_sha256": "a38906667c8189bca202391423b7bbb91258ec281c27a1f64efd14529ca53e3f",
     "sample_grid": {
       "mode": "source_rows",
       "step_seconds": null
@@ -51,8 +51,8 @@
     ],
     "repeat_count": 2,
     "repeat_update_seconds": [
-      0.2722642591688782,
-      0.26402148604393005
+      0.26585609815083444,
+      0.2413872699253261
     ],
     "replay_capacity_transitions": 32,
     "result": {
@@ -66,7 +66,7 @@
         "target_value/discriminator",
         "value/discriminator"
       ],
-      "checkpoint_schema_sha256": "5187df4162776fb73445f6bfdbfd842f2093fa21ef674935853dee7270e7baeb",
+      "checkpoint_schema_sha256": "122560c17dff552752cc6282ad94e1cf9f50c917e12df794b1e4c0e48ba57ab5",
       "context_buffer_size": 8,
       "metrics": {
         "actor/fb_value": -19.730823516845703,
@@ -91,7 +91,7 @@
       "model_after": "3164634f27cdf058256ad1e0cc31ebe05bfefb18bdb04495631017090eacab83",
       "model_before": "fcaf76c9fdb1e2856e73266ab73baed4a74facbc1a08b85f2dc513c56ba29297",
       "replay_transitions": 8,
-      "update_seconds": 0.2722642591688782,
+      "update_seconds": 0.26585609815083444,
       "update_step": 1,
       "versions": {
         "actor": 1,
@@ -147,12 +147,7 @@
       "normalization_type": "exponential",
       "value_heads": [
         {
-          "network": {
-            "embedding_layers": 2,
-            "hidden_dim": 1024,
-            "hidden_layers": 2,
-            "residual": false
-          },
+          "network": null,
           "spec": {
             "ensemble_size": 2,
             "has_target": true,
@@ -184,7 +179,7 @@
         "policy"
       ]
     },
-    "runner_config_sha256": "5dbb54fabffff53547e0524b2e13ca87c0fe7a565298ce992db2d6fef752e40e"
+    "runner_config_sha256": "2e8f1753cf34ea4802b16e76d324ea08d566e57becf8217a5316303838f74565"
   },
   "preset": "smpl_cmu",
   "runtime": {
@@ -208,9 +203,9 @@
   },
   "status": "measured",
   "task_table": {
-    "frame_builder_identity_sha256": "39bbbd6018268ab462b6b9f5ca511d191e571a1a8c0d27e74416fd833a546fce",
-    "frame_builder_version": "smpl_humenv_exact_mjcf_v1",
-    "identity_sha256": "58ae200a5c34806db4a7d6cfcb4a224c18c4152b28d5b1981225d56598517d20",
+    "frame_builder_identity_sha256": "0dea2d393284f34cab12dd4178a4d7ea1ce7577eaecf46fad876e1fa39fab26e",
+    "frame_builder_version": "smpl_generalized_coordinate_exact_mjcf_v1",
+    "identity_sha256": "48e4a19174a4869668613f3980ef19b72d4bb6e50b1d588a5d43bd8249a9237f",
     "joint_names": [
       "L_Hip_x_L_Hip_y_L_Hip_z:0",
       "L_Hip_x_L_Hip_y_L_Hip_z:1",

@@ -17,6 +17,7 @@ from isaaclab.envs import mdp as isaaclab_mdp
 from isaaclab.managers import ActionTermCfg, ObservationTermCfg
 from isaaclab.sim.schemas import CollisionBaseCfg
 from isaaclab.utils.noise import UniformNoiseCfg
+from isaaclab.utils.string import string_to_callable
 
 from isaaclab_tasks.core.multi_task.motion.config.agents import MotionForwardBackwardRunnerCfg
 from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
@@ -329,6 +330,10 @@ def test_physical_auxiliary_evidence_selects_only_evidence_and_sensor(
     assert type(env.events).__name__ == "EmptyCfg"
     assert env.actions.joint_position.default_joint_offset_range == (0.0, 0.0)
     assert env.observations.joint_position.value.noise is None
+    for name in ("penalty_torques", "penalty_action_rate", "limits_torque"):
+        term = getattr(env.observations.transition, name)
+        resolved = string_to_callable(term.func) if isinstance(term.func, str) else term.func
+        assert resolved.__module__ == "isaaclab_tasks.core.multi_task.motion.robots.g1.actions"
 
 
 def test_physical_observation_pose_push_randomization_selects_no_evidence() -> None:

@@ -117,7 +117,8 @@
     <div class="badges">
       <span class="badge"><span class="dot" style="background:var(--ok)"></span>production-tree ownership</span>
       <span class="badge"><span class="dot" style="background:var(--ok)"></span>negative architecture gates</span>
-      <span class="badge"><span class="dot" style="background:var(--pending)"></span>fresh GPU / EMD receipts not claimed</span>
+      <span class="badge"><span class="dot" style="background:var(--ok)"></span>fresh GPU training receipts closed</span>
+      <span class="badge"><span class="dot" style="background:var(--pending)"></span>fresh EMD receipt not claimed</span>
       <span class="badge">reconciled 2026-07-04</span>
     </div>
     <div class="legend">
@@ -439,8 +440,11 @@
       <div class="card learner"><b>264 pass / 24 skip</b><small>adjacent RSL-RL suite</small></div>
       <div class="card learner"><b>44 pass / 1 skip</b><small>P0 tracking focus; overlapping subset</small></div>
       <div class="card data"><b>153 pass / 1 skip</b><small>source/config focus; overlapping subset</small></div>
+      <div class="card learner"><b>SMPL · 51,000 transitions</b><small>102 iterations · 50 FB updates · strict 5.90 GB checkpoint reload</small></div>
+      <div class="card learner"><b>G1 · 12,288 transitions</b><small>12 iterations · 16 FB updates · strict 19.55 GB checkpoint reload</small></div>
+      <div class="card data"><b>37 pass</b><small>v1 authenticity + exact current-v2 training receipt focus</small></div>
     </div>
-    <div class="callout wait" style="margin-top:10px"><strong>No grand total:</strong> the focused P0 tracking and source/config receipts overlap broader suites. None of these CPU counts imply fresh current-code GPU convergence or EMD; those claims require their own receipts.</div>
+    <div class="callout ok" style="margin-top:10px"><strong>Current training evidence:</strong> both fresh receipts bind the exact frozen <code>motion_training_smoke_contract_v2.json</code> bytes, current environment/learner identities, finite required metrics, expected update counts, and strict CPU-mapped checkpoint reloads. Historical v1 files remain byte-authentic. EMD remains a separate pending claim.</div>
   </section>
 
   <section id="execution">
@@ -456,7 +460,7 @@
           <tr><td>generic tracking</td><td>wrapper-only rollout, exact required final observation, mode/history and compact assignment</td><td>P0 focus: 44 pass / 1 skip</td><td><span class="status ok">green</span></td></tr>
           <tr><td>FB implementation</td><td>typed runner boundary; replay/model/algorithm/value-helper semantics</td><td>adjacent RSL-RL: 264 pass / 24 skip</td><td><span class="status ok">green</span></td></tr>
           <tr><td>evidence logic</td><td>authentic receipts, compatibility separation, current consumers</td><td>Phase 3 evidence: 330 pass</td><td><span class="status ok">green</span></td></tr>
-          <tr><td>current GPU training</td><td>fresh HumEnv SMPL and BFM-Zero G1 short training + strict reload</td><td>receipt required</td><td><span class="status wait">pending receipt</span></td></tr>
+          <tr><td>current GPU training</td><td>fresh HumEnv SMPL and BFM-Zero G1 short training + strict reload</td><td>SMPL: 51,000 transitions / 50 updates; G1: 12,288 / 16; 2 exact-contract v2 receipts</td><td><span class="status ok">green</span></td></tr>
           <tr><td>current EMD</td><td>fresh current checkpoint, exact protocol, immutable output bundle</td><td>receipt required</td><td><span class="status wait">pending receipt</span></td></tr>
           <tr><td>cross training</td><td>G1–CMU and later robot/source Cartesian products</td><td>Phase 4</td><td><span class="status no">stop boundary</span></td></tr>
         </tbody>

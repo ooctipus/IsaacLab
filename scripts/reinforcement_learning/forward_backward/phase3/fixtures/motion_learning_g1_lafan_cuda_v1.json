@@ -6,21 +6,21 @@
     "source_numerical_parity": "inherited_from_phase2_not_remeasured_here"
   },
   "code_identity": {
-    "evidence_sha256": "94f285b6ffdb80c37c57bace00c242941d588d4c459bee51721dda3504dfda63",
+    "evidence_sha256": "eb7af056e265886bff2c7fd9116e6180b3f225a7a016174d6f7ffd2785611a0a",
     "motion_expert_provider_sha256": "3193e5f32983a031ed1eaed116113d0892dd4448627c9f91bb2d6efb0742dce2",
     "native_trace_sha256": "0959ba0435e37496cac0a716d7221fb7986f44aa236dd1180db4f184fc1927c3",
-    "rsl_algorithm_sha256": "99668a732f3a8f61f1dde33df9b62bfbc626ae681d8d715349aa219338468c4d",
-    "rsl_expert_buffer_sha256": "e22ca9222fd6582250eb11d156d78ec86d1a4f5f1eb137bd282267c9f96caa84",
-    "rsl_replay_sha256": "dad8ed69b08fd3550c410556e3b99b29afebdc74d0bfb05f4b8e5d4b38c43c38"
+    "rsl_algorithm_sha256": "36f11485b88b00680447b2e0f7b3d10a5cb22245cdcccefabb6281ca990e8666",
+    "rsl_expert_buffer_sha256": "b8d6c4b617c7a149ebf47c1baa0b76fc8db346fcc2fa29a04453845c78e2ae7a",
+    "rsl_replay_sha256": "c5f04754d657130942b163d2662f2feea0475b61071c1ad242fb68280f3c6efc"
   },
   "expert": {
     "clip_count": 862,
     "clip_offsets_sha256": "4ff0af3c3eaaffcc1d0548dd9c231d5afa7e536fb0e77e47e8dbcf6fea11ffbd",
-    "expert_data_sha256": "61a1e9370fa3683f6b58886d43787e48e388db568cd7569f7afddcfc5ac63014",
+    "expert_data_sha256": "a9e40e5b9d10c26cd676ec5a2c7f4e5f8aeac58680f4cf81dd7be93da4072f4d",
     "expert_feature_width": 527,
     "expert_frame_count": 430138,
     "expert_frames_sha256": "415cf89c313b6d3ff051b28416dcd031f1db86a92a941740f8cdda210733b0c8",
-    "expert_schema_sha256": "1a025ce349e93a59ffe2f13d2182b9a73bb2fbff0ac7683e29989571fbe08d61",
+    "expert_schema_sha256": "93d625cedb115830274306526837bc7489eed9050a5c5495143c5e40ac3b6f1a",
     "sample_grid": {
       "mode": "uniform_before_source_end",
       "step_seconds": 0.02
@@ -53,8 +53,8 @@
     ],
     "repeat_count": 2,
     "repeat_update_seconds": [
-      0.16798748401924968,
-      0.06104559893719852
+      0.16462586005218327,
+      0.06394086708314717
     ],
     "replay_capacity_transitions": 32,
     "result": {
@@ -70,7 +70,7 @@
         "value/auxiliary",
         "value/discriminator"
       ],
-      "checkpoint_schema_sha256": "589f35c871d124cddc77619e3d5b01ebf18e5c5917ed42a0e13276a210e32246",
+      "checkpoint_schema_sha256": "fa935ded771ed4e05a80ca2b76b936971592b5ef8dbb29e9295b0ea73f4c7462",
       "context_buffer_size": 8,
       "metrics": {
         "actor/fb_value": -38.92479705810547,
@@ -98,7 +98,7 @@
       "model_after": "58918dc20addf65baba12ad5d3da40d1c0d459ac432b066613853edfaaaf6490",
       "model_before": "86216bd2eb5bba9837f05843358cf84a021731b5bc621156be6027e63ab8049f",
       "replay_transitions": 10,
-      "update_seconds": 0.16798748401924968,
+      "update_seconds": 0.16462586005218327,
       "update_step": 1,
       "versions": {
         "actor": 1,
@@ -166,12 +166,7 @@
       "normalization_type": "exponential",
       "value_heads": [
         {
-          "network": {
-            "embedding_layers": 6,
-            "hidden_dim": 1024,
-            "hidden_layers": 6,
-            "residual": true
-          },
+          "network": null,
           "spec": {
             "ensemble_size": 2,
             "has_target": true,
@@ -184,12 +179,7 @@
           }
         },
         {
-          "network": {
-            "embedding_layers": 6,
-            "hidden_dim": 1024,
-            "hidden_layers": 6,
-            "residual": true
-          },
+          "network": null,
           "spec": {
             "ensemble_size": 2,
             "has_target": true,
@@ -206,12 +196,12 @@
               "penalty_slippage"
             ],
             "reward_composition": "scalar",
-            "route": "critic_auxiliary"
+            "route": "critic_discriminator"
           }
         }
       ]
     },
-    "observation_schema_sha256": "7c3777921396ea72f2c563444a08872199534641aa7ff104a0cc452b00c34543",
+    "observation_schema_sha256": "a7bc8358de80da17d7beeca52c7461a584f41065e200f66762ac7d7e4ebbdf35",
     "routes": {
       "actor": [
         "joint_position",
@@ -227,15 +217,6 @@
         "projected_gravity",
         "base_angular_velocity",
         "privileged_state"
-      ],
-      "critic_auxiliary": [
-        "joint_position",
-        "joint_velocity",
-        "projected_gravity",
-        "base_angular_velocity",
-        "privileged_state",
-        "last_action",
-        "history_actor"
       ],
       "critic_discriminator": [
         "joint_position",
@@ -263,12 +244,12 @@
         "history_actor"
       ]
     },
-    "runner_config_sha256": "2b764aadc3575ec3e480c86e588eceb8c83ca95f402f391cd3ab6f71db14e04b"
+    "runner_config_sha256": "b14b4658f31cfaf4264decbfa0161c5858cc84d2e198507d1ee913ae33947295"
   },
   "preset": "g1_lafan",
   "runtime": {
     "cuda_device_name": "NVIDIA GeForce RTX 5090",
-    "cuda_peak_allocated_bytes": 3864226304,
+    "cuda_peak_allocated_bytes": 3864225280,
     "deterministic_algorithms": true,
     "device": "cuda:0",
     "numpy": "2.4.6",
@@ -289,7 +270,7 @@
   "task_table": {
     "frame_builder_identity_sha256": "972141c31e47ca05ba3d68305b3f385956b0113b3601c84b0f380fc8887a71dc",
     "frame_builder_version": "g1_pose_exact_mjcf_v1",
-    "identity_sha256": "cb63cdba1fa00c2b35495e63cdea496a0e05e024b5a3ec9df6c384727a7e1197",
+    "identity_sha256": "ce174ff165e6e79300c1f668a8ee380b7cb156d20bb9e7202b6a77ab7ea9308a",
     "joint_names": [
       "left_hip_pitch_joint",
       "right_hip_pitch_joint",
