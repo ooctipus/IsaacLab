@@ -15,11 +15,11 @@ from pathlib import Path
 import pytest
 import torch
 
-from isaaclab_tasks.core.multi_task.kinematics import NewtonKinematics, NewtonKinematicsCfg
+from isaaclab_tasks.core.multi_task.kinematics import KinematicTree, NewtonKinematics, NewtonKinematicsCfg
+from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1_REFERENCE_MJCF_SHA256
 
 from isaaclab_assets import ISAACLAB_ASSETS_DATA_DIR
 
-_G1_MJCF_SHA256 = "439c1ec0806583d73b492da9484b0cb9e9eae215e0d9506e3c2fa69016733532"
 _G1_BODY_NAMES = (
     "pelvis",
     "left_hip_pitch_link",
@@ -153,7 +153,7 @@ def _g1_mjcf_path() -> Path:
     path = next((candidate for candidate in candidates if candidate is not None and candidate.is_file()), None)
     if path is None:
         pytest.skip("The exact BFM-Zero G1 MJCF checkout is unavailable.")
-    assert hashlib.sha256(path.read_bytes()).hexdigest() == _G1_MJCF_SHA256
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == G1_REFERENCE_MJCF_SHA256
     return path
 
 
@@ -193,6 +193,12 @@ def test_mjcf_model_derives_exact_g1_dimensions_and_order(g1_kinematics: NewtonK
         "floating_base_joint:angular_velocity_z",
     )
     assert tuple(kin.joint_qd_names[6:]) == _G1_JOINT_NAMES[1:]
+    tree = KinematicTree.from_newton(kin)
+    assert tree.body_names == _G1_BODY_NAMES
+    assert tree.joint_names == _G1_JOINT_NAMES[1:]
+    assert tree.root_body_index == 0
+    assert tree.joint_child_body_indices == tuple(range(1, 30))
+    assert tree.num_bodies == 30 and tree.num_joints == 29
 
 
 def test_mjcf_torch_batched_fk_matches_frozen_bfm_oracle_without_output_allocation(

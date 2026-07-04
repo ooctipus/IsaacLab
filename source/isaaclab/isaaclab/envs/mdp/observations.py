@@ -188,6 +188,7 @@ def body_projected_gravity_b(
     # backend) or scene-wide gravity (PhysX backend).
     gravity_w = asset.data.GRAVITY_VEC_W.torch
     gravity_dir = torch.nn.functional.normalize(gravity_w, dim=-1).unsqueeze(1)
+    gravity_dir = gravity_dir.expand(*body_quat.shape[:-1], 3)
     return math_utils.quat_apply_inverse(body_quat, gravity_dir).view(env.num_envs, -1)
 
 
@@ -759,16 +760,26 @@ Actions.
 
 
 @generic_io_descriptor(dtype=torch.float32, observation_type="Action", on_inspect=[record_shape])
-def last_action(env: ManagerBasedEnv, action_name: str | None = None) -> torch.Tensor:
-    """The last input action to the environment.
+def last_action(env: ManagerBasedEnv, action_name: str | None = None, *, processed: bool = False) -> torch.Tensor:
+    """Return the last raw or processed action.
 
-    The name of the action term for which the action is required. If None, the
-    entire action tensor is returned.
+    Args:
+        env: Environment whose action manager owns the action.
+        action_name: Action term name. When omitted, return the complete raw action tensor.
+        processed: Whether to return the named term's processed action.
+
+    Returns:
+        The last action tensor.
+
+    Raises:
+        ValueError: If processed actions are requested without naming an action term.
     """
     if action_name is None:
+        if processed:
+            raise ValueError("processed=True requires an action_name.")
         return env.action_manager.action
-    else:
-        return env.action_manager.get_term(action_name).raw_actions
+    action = env.action_manager.get_term(action_name)
+    return action.processed_actions if processed else action.raw_actions
 
 
 """

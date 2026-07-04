@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Domain-agnostic observation terms shared across terrain and factory tasks.
+"""Domain-agnostic observation terms shared across multi-task environments.
 
 Groups:
 
@@ -17,6 +17,8 @@ Groups:
 - **Frame-relative obs** — ``target_asset_pose_in_root_asset_frame``,
   ``asset_link_velocity_in_root_asset_frame``. Read pose/velocity of one
   scene asset relative to another. Pure rigid-body math.
+- **Heading-local body obs** — ``body_heading_local_observation`` projects one
+  physical body state into a root-heading feature vector without robot policy.
 """
 
 from __future__ import annotations
@@ -186,6 +188,55 @@ def time_left(env: ManagerBasedRLEnv) -> torch.Tensor:
     """
     time_left_frac = 1 - env.episode_length_buf / env.max_episode_length
     return time_left_frac.view(env.num_envs, -1)
+
+
+# ---------------------------------------------------------------------------
+# Heading-local body observation.
+# ---------------------------------------------------------------------------
+
+
+def body_heading_local_observation(
+    body_position_world: torch.Tensor,
+    body_rotation_xyzw: torch.Tensor,
+    body_linear_velocity_world: torch.Tensor,
+    body_angular_velocity_world: torch.Tensor,
+    heading_rotation_xyzw: torch.Tensor,
+) -> torch.Tensor:
+    """Project body state into the root-heading frame.
+
+    The feature layout is root height [m], non-root positions [m], body rotation
+    x/z basis vectors, linear velocities [m/s], and angular velocities [rad/s].
+
+    Args:
+        body_position_world: Body positions [m], shape ``[batch, bodies, 3]``.
+        body_rotation_xyzw: Body rotations, shape ``[batch, bodies, 4]``.
+        body_linear_velocity_world: Body linear velocities [m/s], shape ``[batch, bodies, 3]``.
+        body_angular_velocity_world: Body angular velocities [rad/s], shape ``[batch, bodies, 3]``.
+        heading_rotation_xyzw: Root rotation used to define heading, shape ``[batch, 4]``.
+
+    Returns:
+        Flattened heading-local body features, shape ``[batch, 15 * bodies - 2]``.
+    """
+    batch, body_count = body_position_world.shape[:2]
+    root_position = body_position_world[:, 0]
+    heading_inverse = math_utils.quat_conjugate(math_utils.yaw_quat(heading_rotation_xyzw))
+    heading_inverse = heading_inverse[:, None].expand_as(body_rotation_xyzw)
+
+    local_position = math_utils.quat_apply(heading_inverse, body_position_world - root_position[:, None])
+    local_rotation = math_utils.matrix_from_quat(math_utils.quat_mul(heading_inverse, body_rotation_xyzw))
+    local_rotation = torch.cat((local_rotation[..., 0], local_rotation[..., 2]), dim=-1)
+    local_linear_velocity = math_utils.quat_apply(heading_inverse, body_linear_velocity_world)
+    local_angular_velocity = math_utils.quat_apply(heading_inverse, body_angular_velocity_world)
+    return torch.cat(
+        (
+            root_position[:, 2:3],
+            local_position[:, 1:].reshape(batch, 3 * (body_count - 1)),
+            local_rotation.reshape(batch, 6 * body_count),
+            local_linear_velocity.reshape(batch, 3 * body_count),
+            local_angular_velocity.reshape(batch, 3 * body_count),
+        ),
+        dim=-1,
+    )
 
 
 # ---------------------------------------------------------------------------

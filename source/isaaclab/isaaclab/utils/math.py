@@ -575,13 +575,9 @@ def quat_mul(q1: torch.Tensor, q2: torch.Tensor) -> torch.Tensor:
     if q1.shape != q2.shape:
         msg = f"Expected input quaternion shape mismatch: {q1.shape} != {q2.shape}."
         raise ValueError(msg)
-    # reshape to (N, 4) for multiplication
-    shape = q1.shape
-    q1 = q1.reshape(-1, 4)
-    q2 = q2.reshape(-1, 4)
     # extract components from quaternions (xyzw format)
-    x1, y1, z1, w1 = q1[:, 0], q1[:, 1], q1[:, 2], q1[:, 3]
-    x2, y2, z2, w2 = q2[:, 0], q2[:, 1], q2[:, 2], q2[:, 3]
+    x1, y1, z1, w1 = q1.unbind(-1)
+    x2, y2, z2, w2 = q2.unbind(-1)
     # perform multiplication
     ww = (z1 + x1) * (x2 + y2)
     yy = (w1 - y1) * (w2 + z2)
@@ -593,7 +589,7 @@ def quat_mul(q1: torch.Tensor, q2: torch.Tensor) -> torch.Tensor:
     y = qq - yy + (w1 - x1) * (y2 + z2)
     z = qq - zz + (z1 + y1) * (w2 - x2)
 
-    return torch.stack([x, y, z, w], dim=-1).view(shape)
+    return torch.stack([x, y, z, w], dim=-1)
 
 
 @torch.jit.script
@@ -670,15 +666,10 @@ def quat_apply(quat: torch.Tensor, vec: torch.Tensor) -> torch.Tensor:
     Returns:
         The rotated vector in (x, y, z). Shape is (..., 3).
     """
-    # store shape
-    shape = vec.shape
-    # reshape to (N, 3) for multiplication
-    quat = quat.reshape(-1, 4)
-    vec = vec.reshape(-1, 3)
     # extract components from quaternions (xyzw format)
-    xyz = quat[:, :3]
+    xyz = quat[..., :3]
     t = xyz.cross(vec, dim=-1) * 2
-    return (vec + quat[:, 3:4] * t + xyz.cross(t, dim=-1)).view(shape)
+    return vec + quat[..., 3:4] * t + xyz.cross(t, dim=-1)
 
 
 @torch.jit.script
@@ -692,15 +683,10 @@ def quat_apply_inverse(quat: torch.Tensor, vec: torch.Tensor) -> torch.Tensor:
     Returns:
         The rotated vector in (x, y, z). Shape is (..., 3).
     """
-    # store shape
-    shape = vec.shape
-    # reshape to (N, 3) for multiplication
-    quat = quat.reshape(-1, 4)
-    vec = vec.reshape(-1, 3)
     # extract components from quaternions (xyzw format)
-    xyz = quat[:, :3]
+    xyz = quat[..., :3]
     t = xyz.cross(vec, dim=-1) * 2
-    return (vec - quat[:, 3:4] * t + xyz.cross(t, dim=-1)).view(shape)
+    return vec - quat[..., 3:4] * t + xyz.cross(t, dim=-1)
 
 
 @torch.jit.script
@@ -1796,40 +1782,46 @@ def pose_in_A_to_pose_in_B(pose_in_A: torch.Tensor, pose_A_in_B: torch.Tensor) -
     return torch.matmul(pose_A_in_B, pose_in_A)
 
 
-def quat_slerp(q1: torch.Tensor, q2: torch.Tensor, tau: float) -> torch.Tensor:
-    """Performs spherical linear interpolation (SLERP) between two quaternions.
-
-    This function does not support batch processing.
+def quat_slerp(q1: torch.Tensor, q2: torch.Tensor, tau: float | torch.Tensor) -> torch.Tensor:
+    """Interpolate quaternions along the sign-invariant shortest arc.
 
     Args:
-        q1: First quaternion in (x, y, z, w) format.
-        q2: Second quaternion in (x, y, z, w) format.
-        tau: Interpolation coefficient between 0 (q1) and 1 (q2).
+        q1: First quaternions in ``(x, y, z, w)`` format, shape ``(..., 4)``.
+        q2: Second quaternions in ``(x, y, z, w)`` format, shape ``(..., 4)``.
+        tau: Interpolation coefficient between zero and one. Tensor coefficients may cover any prefix of the
+            quaternion leading dimensions; omitted trailing dimensions are broadcast.
 
     Returns:
-        Interpolated quaternion in (x, y, z, w) format.
+        Interpolated quaternions in ``(x, y, z, w)`` format, shape ``(..., 4)``.
+
+    Raises:
+        ValueError: If the quaternion shapes differ, do not end in four, or ``tau`` has too many dimensions.
+        TypeError: If either quaternion is not a floating-point tensor.
     """
-    assert isinstance(q1, torch.Tensor), "Input must be a torch tensor"
-    assert isinstance(q2, torch.Tensor), "Input must be a torch tensor"
-    if tau == 0.0:
-        return q1
-    elif tau == 1.0:
-        return q2
-    d = torch.dot(q1, q2)
-    if abs(abs(d) - 1.0) < torch.finfo(q1.dtype).eps * 4.0:
-        return q1
-    if d < 0.0:
-        # Invert rotation
-        d = -d
-        q2 *= -1.0
-    angle = torch.acos(torch.clamp(d, -1, 1))
-    if abs(angle) < torch.finfo(q1.dtype).eps * 4.0:
-        return q1
-    isin = 1.0 / torch.sin(angle)
-    q1 = q1 * torch.sin((1.0 - tau) * angle) * isin
-    q2 = q2 * torch.sin(tau * angle) * isin
-    q1 = q1 + q2
-    return q1
+    if not isinstance(q1, torch.Tensor) or not isinstance(q2, torch.Tensor):
+        raise TypeError("Quaternion inputs must be tensors.")
+    if q1.shape != q2.shape or q1.ndim < 1 or q1.shape[-1] != 4:
+        raise ValueError("Quaternion inputs must have equal shapes ending in four.")
+    if not q1.is_floating_point() or not q2.is_floating_point():
+        raise TypeError("Quaternion inputs must be floating-point tensors.")
+
+    dot = torch.sum(q1 * q2, dim=-1)
+    q2_shortest = torch.where((dot < 0.0).unsqueeze(-1), -q2, q2)
+    dot = torch.abs(dot).clamp(max=1.0)
+    fraction = torch.as_tensor(tau, dtype=dot.dtype, device=dot.device)
+    if fraction.ndim > dot.ndim:
+        raise ValueError("Interpolation coefficients have more dimensions than the quaternion batch.")
+    while fraction.ndim < dot.ndim:
+        fraction = fraction.unsqueeze(-1)
+
+    angle = torch.acos(dot)
+    sine = torch.sin(angle)
+    safe_sine = sine.clamp_min(torch.finfo(q1.dtype).eps)
+    first_weight = torch.sin((1.0 - fraction) * angle) / safe_sine
+    second_weight = torch.sin(fraction * angle) / safe_sine
+    spherical = first_weight.unsqueeze(-1) * q1 + second_weight.unsqueeze(-1) * q2_shortest
+    linear = torch.nn.functional.normalize(q1 + fraction.unsqueeze(-1) * (q2_shortest - q1), dim=-1)
+    return torch.where((dot > 0.9995).unsqueeze(-1), linear, spherical)
 
 
 def interpolate_rotations(R1: torch.Tensor, R2: torch.Tensor, num_steps: int, axis_angle: bool = True) -> torch.Tensor:

@@ -949,6 +949,81 @@ def test_quat_slerp(device):
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+def test_quat_slerp_uses_shortest_arc_without_mutating_inputs(device):
+    """Shortest-arc interpolation must not rewrite either caller-owned endpoint."""
+    q1 = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float64, device=device)
+    q2 = -torch.tensor([0.0, 0.0, math.sin(math.pi / 4.0), math.cos(math.pi / 4.0)], dtype=torch.float64, device=device)
+    q1_before = q1.clone()
+    q2_before = q2.clone()
+
+    result = math_utils.quat_slerp(q1, q2, 0.5)
+
+    expected = torch.tensor(
+        [0.0, 0.0, math.sin(math.pi / 8.0), math.cos(math.pi / 8.0)], dtype=torch.float64, device=device
+    )
+    torch.testing.assert_close(result, expected)
+    torch.testing.assert_close(q1, q1_before)
+    torch.testing.assert_close(q2, q2_before)
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+def test_quat_slerp_supports_tensor_tau_and_arbitrary_leading_dimensions(device):
+    """A tensor coefficient must broadcast over all trailing quaternion batch axes."""
+    q1 = torch.zeros(2, 3, 4, dtype=torch.float64, device=device)
+    q1[..., 3] = 1.0
+    q2 = torch.zeros_like(q1)
+    q2[..., 2] = 1.0
+    tau = torch.tensor([0.0, 0.75], dtype=torch.float64, device=device)
+
+    result = math_utils.quat_slerp(q1, q2, tau)
+
+    expected = torch.empty_like(result)
+    expected[0] = q1[0]
+    expected[1, :, 0:2] = 0.0
+    expected[1, :, 2] = math.sin(3.0 * math.pi / 8.0)
+    expected[1, :, 3] = math.cos(3.0 * math.pi / 8.0)
+    torch.testing.assert_close(result, expected)
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+def test_quat_slerp_preserves_shortest_arc_endpoints_and_near_identical_rotations(device):
+    """Endpoint and near-identical paths must stay finite, normalized, and sign invariant."""
+    small_angle = 1.0e-3
+    q1 = torch.tensor(
+        [[0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]],
+        dtype=torch.float64,
+        device=device,
+    )
+    q2 = torch.tensor(
+        [
+            [0.0, 0.0, math.sin(small_angle / 2.0), math.cos(small_angle / 2.0)],
+            [0.0, 0.0, -math.sin(math.pi / 4.0), -math.cos(math.pi / 4.0)],
+            [0.0, 0.0, math.sin(small_angle / 2.0), math.cos(small_angle / 2.0)],
+        ],
+        dtype=torch.float64,
+        device=device,
+    )
+    tau = torch.tensor([0.25, 1.0, 0.0], dtype=torch.float64, device=device)
+
+    result = math_utils.quat_slerp(q1, q2, tau)
+
+    expected_near = torch.tensor(
+        [0.0, 0.0, math.sin(small_angle / 8.0), math.cos(small_angle / 8.0)],
+        dtype=torch.float64,
+        device=device,
+    )
+    torch.testing.assert_close(result[0], expected_near, rtol=2.0e-8, atol=3.0e-12)
+    torch.testing.assert_close(
+        result[1],
+        torch.tensor([0.0, 0.0, math.sin(math.pi / 4.0), math.cos(math.pi / 4.0)], device=device, dtype=torch.float64),
+    )
+    torch.testing.assert_close(result[2], q1[2])
+    torch.testing.assert_close(
+        torch.linalg.vector_norm(result, dim=-1), torch.ones(3, device=device, dtype=torch.float64)
+    )
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
 def test_matrix_from_quat(device):
     """test matrix_from_quat against scipy."""
     # prepare random quaternions and vectors
@@ -1064,6 +1139,37 @@ def test_quat_apply_inverse(device):
     )
     apply_result = math_utils.quat_apply_inverse(q_rand, v_rand)
     torch.testing.assert_close(scipy_result.to(device=device), apply_result, atol=2e-4, rtol=2e-4)
+
+
+@pytest.mark.parametrize("operation_name", ("quat_apply", "quat_apply_inverse"))
+def test_quat_apply_noncontiguous_inputs_do_not_hide_flattening_copies(operation_name):
+    """Quaternion application must operate directly on strided leading dimensions."""
+    quaternion_storage = torch.empty(7, 5, 8)
+    quaternion = quaternion_storage[..., 1:5]
+    quaternion.copy_(math_utils.random_orientation(num=35, device="cpu").view(7, 5, 4))
+    vector_storage = torch.randn(7, 5, 7)
+    vector = vector_storage[..., 2:5]
+    assert not quaternion.is_contiguous()
+    assert not vector.is_contiguous()
+    quaternion_before = quaternion.clone()
+    vector_before = vector.clone()
+    operation = getattr(math_utils, operation_name)
+    expected = operation(quaternion.contiguous(), vector.contiguous())
+
+    with torch.autograd.profiler.profile(profile_memory=True) as profile:
+        actual = operation(quaternion, vector)
+
+    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(quaternion, quaternion_before)
+    torch.testing.assert_close(vector, vector_before)
+    event_names = {event.name for event in profile.function_events}
+    forbidden = {
+        "aten::clone",
+        "aten::contiguous",
+        "aten::flatten",
+        "aten::reshape",
+    }
+    assert event_names.isdisjoint(forbidden)
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda:0"])

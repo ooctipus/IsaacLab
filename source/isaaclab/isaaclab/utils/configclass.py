@@ -45,7 +45,8 @@ def configclass(cls, **kwargs):
 
     This function provides a decorator that wraps around Python's `dataclass`_ utility to deal with
     the above two issues. It also provides additional helper functions for dictionary <-> class
-    conversion and easily copying class instances.
+    conversion and easily copying class instances. An explicit or inherited custom ``to_dict`` method
+    is preserved; classes without one receive the generic recursive serializer.
 
     Usage:
 
@@ -106,7 +107,11 @@ def configclass(cls, **kwargs):
     else:
         setattr(cls, "__post_init__", _custom_post_init)
     # add helper functions for dictionary conversion
-    setattr(cls, "to_dict", _class_to_dict)
+    # Keep an explicit or inherited custom serializer. This lets a specialized
+    # configuration define a public shape and a different runtime dictionary
+    # without every decorated subclass having to reinstall the override.
+    if getattr(cls, "to_dict", _class_to_dict) is _class_to_dict:
+        setattr(cls, "to_dict", _class_to_dict)
     setattr(cls, "from_dict", _update_class_from_dict)
     setattr(cls, "replace", _replace_class_with_kwargs)
     setattr(cls, "copy", _copy_class)

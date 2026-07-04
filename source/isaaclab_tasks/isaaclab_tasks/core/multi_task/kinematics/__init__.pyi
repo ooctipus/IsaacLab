@@ -4,6 +4,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 __all__ = [
+    "KinematicTree",
+    "KinematicTreeRotationProjection",
     "NewtonKinematics",
     "NewtonKinematicsCfg",
     "IKObjectiveGravityTorque",
@@ -13,8 +15,22 @@ __all__ = [
     "IKObjectiveTerrainCollision",
     "IKObjectiveTerrainContact",
     "_build_collision_probes",
+    "fit_ordered_hinge_coordinates",
+    "ordered_hinge_rotation",
+    "time_gaussian_filter",
+    "time_gradient",
+    "time_quaternion_angular_velocity",
 ]
 
+from .kinematic_tree import (
+    KinematicTree,
+    KinematicTreeRotationProjection,
+    fit_ordered_hinge_coordinates,
+    ordered_hinge_rotation,
+    time_gaussian_filter,
+    time_gradient,
+    time_quaternion_angular_velocity,
+)
 from .newton_kinematics import NewtonKinematics
 from .newton_kinematics_cfg import NewtonKinematicsCfg
 

@@ -6,8 +6,14 @@
 """Shared MDP terms (observations, rewards, terminations) and utilities for multi-task envs."""
 
 __all__ = [
+    "NativeMujocoControlAction",
+    "NativeMujocoControlActionCfg",
+    "RewardScaled",
+    "EpisodeLengthScaleCurriculum",
+    "RootVelocityPushDiscrete",
     "success_rate_sampler",
     "vision_obs",
+    "body_heading_local_observation",
     "time_left",
     "command_progress",
     "command_reach",
@@ -21,6 +27,12 @@ __all__ = [
     "action_l2_clamped",
     "mechanical_power",
     "contact_penalty",
+    "joint_position_target_l2",
+    "joint_position_limits",
+    "contact_undesired",
+    "body_orientation_contact",
+    "body_contact_velocity",
+    "body_heading_alignment",
     "abnormal_robot_state",
     "out_of_bound",
     "illegal_contact_ratio",
@@ -29,9 +41,13 @@ __all__ = [
 ]
 
 
-from .curriculums import success_rate_sampler
+from .curriculums import EpisodeLengthScaleCurriculum, success_rate_sampler
+from .events import RootVelocityPushDiscrete
+from .native_mujoco_action import NativeMujocoControlAction
+from .native_mujoco_action_cfg import NativeMujocoControlActionCfg
 from .observations import (
     asset_link_velocity_in_root_asset_frame,
+    body_heading_local_observation,
     command_active,
     command_progress,
     command_reach,
@@ -41,5 +57,18 @@ from .observations import (
     time_left,
     vision_obs,
 )
-from .rewards import action_l2_clamped, action_rate_l2_clamped, command_task_reward, contact_penalty, mechanical_power
+from .rewards import (
+    RewardScaled,
+    action_l2_clamped,
+    action_rate_l2_clamped,
+    body_contact_velocity,
+    body_heading_alignment,
+    body_orientation_contact,
+    command_task_reward,
+    contact_undesired,
+    contact_penalty,
+    joint_position_limits,
+    joint_position_target_l2,
+    mechanical_power,
+)
 from .terminations import BaseTerminationsCfg, abnormal_robot_state, illegal_contact_ratio, joint_reaction_overload, out_of_bound
