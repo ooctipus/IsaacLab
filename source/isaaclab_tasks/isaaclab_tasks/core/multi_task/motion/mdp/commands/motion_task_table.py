@@ -8,134 +8,56 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Literal, Protocol
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Literal
 
 import torch
 
-from ...data._identity import canonical_sha256, validate_nonempty, validate_sha256
+from isaaclab.utils.math import quat_slerp
+
 from ...data.clip_index import MotionClipIndex
-from ...data.sample_grid import MotionSampleGrid
-from ...data.skeleton import MotionSkeleton
+from ...data.frames import Interpolation, MotionFrameBuilder, MotionFrames
+from ...identity import canonical_sha256, validate_nonempty, validate_sha256
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
     from ....mdp.commands.state_command.state_command_cfg import StateCommandCfg
 
-Interpolation = Literal["linear", "slerp", "left"]
-TaskSamplingLaw = Literal[
-    "clip_categorical_then_discrete_source_frame_v1",
-    "clip_categorical_then_continuous_time_v1",
-]
-
-
-def _task_sampling_law(task_row_mode: str) -> TaskSamplingLaw:
-    """Return the sampling law owned by one controlled task-row mode."""
-    if task_row_mode == "source_frames":
-        return "clip_categorical_then_discrete_source_frame_v1"
-    if task_row_mode == "clip_time_ranges":
-        return "clip_categorical_then_continuous_time_v1"
-    raise ValueError(f"Unsupported task-row mode: {task_row_mode!r}.")
-
-
-class MotionFrameSource(Protocol):
-    """Decoded clips consumed once in their declared order."""
-
-    def inspect(self) -> MotionClipIndex:
-        """Return compact ordered clip metadata."""
-
-    def clips(self) -> Iterator[tuple[str, Mapping[str, object]]]:
-        """Yield decoded clips in the order returned by :meth:`inspect`."""
-
-    def close(self) -> None:
-        """Release source-format resources retained during table construction."""
-
-
-class MotionFrameBuilder(Protocol):
-    """Convert source clips into simulator-ordered trajectory tensors.
-
-    The builder is created from the selected preset and live articulation. It
-    resolves robot names and ordering once, before the table exists. The table
-    therefore owns trajectory data, not a second robot model.
-    """
-
-    source_skeleton: MotionSkeleton
-    joint_names: tuple[str, ...]
-    reference_frame_names: tuple[str, ...]
-    version: str
-    construction_identity_sha256: str
-
-    def allocate(self, frame_count: int, *, device: str | torch.device) -> MotionTaskTable.Frames:
-        """Allocate exact-capacity output tensors for all source frames."""
-
-    def build_frames(self, fields: Mapping[str, object], *, device: str | torch.device) -> MotionTaskTable.Frames:
-        """Convert one decoded clip to simulator-ordered trajectory tensors."""
-
-
-_FRAME_INTERPOLATION: dict[str, Interpolation] = {
-    "root_position": "linear",
-    "root_rotation": "slerp",
-    "root_linear_velocity": "linear",
-    "root_angular_velocity": "linear",
-    "joint_position": "linear",
-    "joint_velocity": "linear",
-    "body_position": "linear",
-    "body_rotation": "slerp",
-    "body_linear_velocity": "linear",
-    "body_angular_velocity": "linear",
-    "observation": "left",
-}
-
-
-def _quaternion_slerp(q0: torch.Tensor, q1: torch.Tensor, fraction: torch.Tensor) -> torch.Tensor:
-    """Interpolate unit quaternions along the sign-invariant shortest arc."""
-    dot = torch.sum(q0 * q1, dim=-1)
-    q1 = torch.where((dot < 0.0).unsqueeze(-1), -q1, q1)
-    dot = torch.abs(dot).clamp(max=1.0)
-    while fraction.ndim < dot.ndim:
-        fraction = fraction.unsqueeze(-1)
-
-    angle = torch.acos(dot)
-    sine = torch.sin(angle)
-    safe_sine = sine.clamp_min(torch.finfo(q0.dtype).eps)
-    first_weight = torch.sin((1.0 - fraction) * angle) / safe_sine
-    second_weight = torch.sin(fraction * angle) / safe_sine
-    spherical = first_weight.unsqueeze(-1) * q0 + second_weight.unsqueeze(-1) * q1
-    linear = torch.nn.functional.normalize(q0 + fraction.unsqueeze(-1) * (q1 - q0), dim=-1)
-    return torch.where((dot > 0.9995).unsqueeze(-1), linear, spherical)
-
 
 def _table_identity(
     clip_index: MotionClipIndex,
-    frames: MotionTaskTable.Frames,
+    source_skeleton_identity_sha256: str,
+    frames: MotionFrames,
     joint_names: tuple[str, ...],
     reference_frame_names: tuple[str, ...],
     frame_builder_version: str,
     frame_builder_identity_sha256: str,
     task_row_mode: Literal["source_frames", "clip_time_ranges"],
-    reset_sources: tuple[tuple[str, float], ...],
-    expert_sample_grid: MotionSampleGrid,
 ) -> str:
     """Return deterministic trajectory-data provenance without robot ownership."""
     validate_nonempty("frame_builder_version", frame_builder_version)
+    validate_sha256("source_skeleton_identity_sha256", source_skeleton_identity_sha256)
     validate_sha256("frame_builder_identity_sha256", frame_builder_identity_sha256)
     stored_column_shapes = {name: tuple(frames.field(name).shape[1:]) for name in frames.stored_fields}
     return canonical_sha256(
         {
-            "source_content_hash": clip_index.content_identity_sha256,
-            "source_skeleton_hash": clip_index.skeleton_sha256,
+            "source_content_hash": clip_index.source_content_sha256,
+            "source_clips": [
+                {
+                    "clip_id": clip.clip_id,
+                    "frame_count": clip.frame_count,
+                    "source_fps": clip.source_fps,
+                    "content_sha256": clip.content_sha256,
+                }
+                for clip in clip_index.clips
+            ],
+            "source_skeleton_hash": source_skeleton_identity_sha256,
             "frame_builder_version": frame_builder_version,
             "joint_names": joint_names,
             "reference_frame_names": reference_frame_names,
             "frame_builder_identity_sha256": frame_builder_identity_sha256,
             "task_row_mode": task_row_mode,
-            "reset_sources": reset_sources,
-            "expert_sample_grid": {
-                "mode": expert_sample_grid.mode.value,
-                "step_seconds": expert_sample_grid.step_seconds,
-            },
             "stored_columns": stored_column_shapes,
             "root_storage": frames.root_storage,
         }
@@ -150,50 +72,19 @@ def _task_rows(
     """Build deterministic descriptor rows from one controlled mode."""
     if mode not in ("source_frames", "clip_time_ranges"):
         raise ValueError("task_row_mode must be 'source_frames' or 'clip_time_ranges'.")
-    clip_valid = torch.tensor([clip.valid for clip in clip_index.clips], dtype=torch.bool, device=device)
     frame_counts = torch.tensor([clip.frame_count for clip in clip_index.clips], dtype=torch.int64, device=device)
     source_fps = torch.tensor([clip.source_fps for clip in clip_index.clips], dtype=torch.float32, device=device)
-    valid_clips = torch.arange(len(clip_index.clips), device=device)[clip_valid]
+    clip_indices = torch.arange(len(clip_index.clips), dtype=torch.int64, device=device)
     if mode == "clip_time_ranges":
-        end = (frame_counts[valid_clips] - 1) / source_fps[valid_clips]
-        return valid_clips, torch.stack((torch.zeros_like(end), end), dim=-1)
+        end = (frame_counts - 1) / source_fps
+        return clip_indices, torch.stack((torch.zeros_like(end), end), dim=-1)
 
-    valid_frame_counts = frame_counts[valid_clips]
-    clips = torch.repeat_interleave(valid_clips, valid_frame_counts)
-    output_offsets = torch.cumsum(valid_frame_counts, dim=0) - valid_frame_counts
-    repeated_output_offsets = torch.repeat_interleave(output_offsets, valid_frame_counts)
+    clips = torch.repeat_interleave(clip_indices, frame_counts)
+    output_offsets = torch.cumsum(frame_counts, dim=0) - frame_counts
+    repeated_output_offsets = torch.repeat_interleave(output_offsets, frame_counts)
     local_frames = torch.arange(clips.shape[0], device=device) - repeated_output_offsets
     times = local_frames / source_fps[clips]
     return clips, torch.stack((times, times), dim=-1)
-
-
-def _reset_source_data(
-    reset_sources: tuple[tuple[str, float], ...],
-    device: torch.device,
-) -> tuple[tuple[str, ...], torch.Tensor]:
-    """Validate ordered reset-source data and place probabilities on the table device."""
-    if not isinstance(reset_sources, tuple) or not reset_sources:
-        raise ValueError("reset_sources must be a nonempty tuple of name/probability pairs.")
-    names: list[str] = []
-    probabilities: list[float] = []
-    for source in reset_sources:
-        if not isinstance(source, tuple) or len(source) != 2:
-            raise ValueError("Each reset source must be one (name, probability) tuple.")
-        name, probability = source
-        if not isinstance(name, str) or not name:
-            raise ValueError("Reset-source names must be nonempty strings.")
-        if isinstance(probability, bool) or not isinstance(probability, int | float):
-            raise ValueError("Reset-source probabilities must be real scalars.")
-        probability = float(probability)
-        if not math.isfinite(probability) or probability < 0.0:
-            raise ValueError("Reset-source probabilities must be finite and nonnegative.")
-        names.append(name)
-        probabilities.append(probability)
-    if len(set(names)) != len(names):
-        raise ValueError("Reset-source names must be unique.")
-    if not math.isclose(sum(probabilities), 1.0, rel_tol=0.0, abs_tol=1.0e-6):
-        raise ValueError("Reset-source probabilities must sum to one.")
-    return tuple(names), torch.tensor(probabilities, dtype=torch.float32, device=device)
 
 
 class MotionTaskTable:
@@ -202,319 +93,8 @@ class MotionTaskTable:
     Robot identity, kinematic structure, control, and defaults remain owned by
     the selected preset and scene articulation. Builders resolve source data to
     live simulator order once; this table then owns only concrete task tensors,
-    clip boundaries, descriptor rows, priorities, and sampling state.
+    clip boundaries, and descriptor rows.
     """
-
-    @dataclass(frozen=True, slots=True)
-    class Frames:
-        """Concrete trajectory columns sharing one frame axis and device.
-
-        Every present tensor is contiguous, detached float32, and read-only
-        after construction by contract. Joint columns are in live simulator
-        order. Positions and velocities are world-frame SI values, and rotations
-        are xyzw quaternions. Root columns are required simulator-reset facts;
-        body columns are optional reference/evidence frames ordered by the
-        table's ``reference_frame_names`` and may append non-rigid derived
-        frames. ``observation`` is an optional already-derived source observation
-        whose temporal rule is left-sample.
-        """
-
-        root_position: torch.Tensor | None = None
-        """Root-link position [m], shape [frame_count, 3], float."""
-
-        root_rotation: torch.Tensor | None = None
-        """Root-link xyzw orientation, shape [frame_count, 4], float."""
-
-        root_linear_velocity: torch.Tensor | None = None
-        """Root-link linear velocity [m/s], shape [frame_count, 3], float."""
-
-        root_angular_velocity: torch.Tensor | None = None
-        """Root-link angular velocity [rad/s], shape [frame_count, 3], float."""
-
-        joint_position: torch.Tensor | None = None
-        """Simulator-ordered joint positions [rad], shape [frame_count, joint_count], float."""
-
-        joint_velocity: torch.Tensor | None = None
-        """Simulator-ordered joint velocities [rad/s], shape [frame_count, joint_count], float."""
-
-        body_position: torch.Tensor | None = None
-        """Reference-frame positions [m], shape [frame_count, reference_frame_count, 3], float."""
-
-        body_rotation: torch.Tensor | None = None
-        """Reference-frame xyzw orientations, shape [frame_count, reference_frame_count, 4], float."""
-
-        body_linear_velocity: torch.Tensor | None = None
-        """Reference-frame linear velocities [m/s], shape [frame_count, reference_frame_count, 3], float."""
-
-        body_angular_velocity: torch.Tensor | None = None
-        """Reference-frame angular velocities [rad/s], shape [frame_count, reference_frame_count, 3], float."""
-
-        observation: torch.Tensor | None = None
-        """Optional derived observation, shape [frame_count, observation_width], float."""
-
-        _NAMES: ClassVar[tuple[str, ...]] = tuple(_FRAME_INTERPOLATION)
-        _ROOT_FIELDS: ClassVar[tuple[str, ...]] = (
-            "root_position",
-            "root_rotation",
-            "root_linear_velocity",
-            "root_angular_velocity",
-        )
-
-        def __post_init__(self) -> None:
-            """Validate fixed trajectory semantics and a shared frame axis."""
-            values = {name: getattr(self, name) for name in self._NAMES}
-            present = {name: value for name, value in values.items() if value is not None}
-            if not present:
-                raise ValueError("Motion trajectory frames must contain at least one column.")
-            first = next(iter(present.values()))
-            frame_count = first.shape[0] if first.ndim > 0 else -1
-            for name, value in present.items():
-                if (
-                    value.ndim < 2
-                    or value.shape[0] != frame_count
-                    or value.dtype is not torch.float32
-                    or value.device != first.device
-                    or not value.is_contiguous()
-                    or value.requires_grad
-                ):
-                    raise ValueError(
-                        f"Trajectory column {name!r} must be contiguous detached float32 with "
-                        f"frame axis {frame_count} on {first.device}."
-                    )
-
-            self._validate_group(values, ("joint_position", "joint_velocity"), required=True)
-            self._validate_group(
-                values,
-                ("root_position", "root_rotation", "root_linear_velocity", "root_angular_velocity"),
-            )
-            self._validate_group(
-                values,
-                ("body_position", "body_rotation", "body_linear_velocity", "body_angular_velocity"),
-            )
-            root_stored = values["root_position"] is not None
-            body_stored = values["body_position"] is not None
-            if root_stored == body_stored:
-                raise ValueError("Trajectory frames require exactly one root owner: explicit root or body row zero.")
-
-            expected_tail = {
-                "root_position": (3,),
-                "root_rotation": (4,),
-                "root_linear_velocity": (3,),
-                "root_angular_velocity": (3,),
-            }
-            for name, shape in expected_tail.items():
-                value = values[name]
-                if value is not None and value.shape[1:] != shape:
-                    raise ValueError(f"Trajectory column {name!r} must end in {shape}.")
-
-            joint_position = values["joint_position"]
-            joint_velocity = values["joint_velocity"]
-            assert joint_position is not None and joint_velocity is not None
-            if joint_position.ndim != 2 or joint_velocity.shape != joint_position.shape:
-                raise ValueError("Joint position and velocity must share shape [frame_count, joint_count].")
-
-            body_position = values["body_position"]
-            if body_position is not None:
-                body_rotation = values["body_rotation"]
-                body_linear_velocity = values["body_linear_velocity"]
-                body_angular_velocity = values["body_angular_velocity"]
-                assert body_rotation is not None
-                assert body_linear_velocity is not None
-                assert body_angular_velocity is not None
-                body_shape = body_position.shape[:2]
-                if (
-                    body_position.shape != (*body_shape, 3)
-                    or body_rotation.shape != (*body_shape, 4)
-                    or body_linear_velocity.shape != (*body_shape, 3)
-                    or body_angular_velocity.shape != (*body_shape, 3)
-                ):
-                    raise ValueError("Reference-frame columns must share [frame_count, reference_frame_count, ...].")
-
-            observation = values["observation"]
-            if observation is not None and observation.ndim != 2:
-                raise ValueError("Source observations must have shape [frame_count, observation_width].")
-
-        def validate_values(self) -> None:
-            """Reject nonfinite trajectory values and nonunit stored quaternions.
-
-            This validation runs only while a table is constructed. Runtime
-            reference lookup therefore retains its allocation-free hot path.
-            """
-            for name in self.stored_fields:
-                value = self.field(name)
-                if not bool(torch.all(torch.isfinite(value))):
-                    raise ValueError(f"Trajectory column {name!r} must contain only finite values.")
-            for name in ("root_rotation", "body_rotation"):
-                value = getattr(self, name)
-                if value is None:
-                    continue
-                norms = torch.linalg.vector_norm(value, dim=-1)
-                if not torch.allclose(norms, torch.ones_like(norms), rtol=1.0e-5, atol=1.0e-5):
-                    raise ValueError(f"Trajectory column {name!r} must contain unit quaternions.")
-
-        @staticmethod
-        def _validate_group(
-            values: dict[str, torch.Tensor | None], names: tuple[str, ...], *, required: bool = False
-        ) -> None:
-            present = tuple(values[name] is not None for name in names)
-            if required and not all(present):
-                raise ValueError(f"Trajectory columns {names} are required together.")
-            if any(present) and not all(present):
-                raise ValueError(f"Trajectory columns {names} must be all present or all absent.")
-
-        @property
-        def stored_fields(self) -> tuple[str, ...]:
-            """Names of concrete columns present in this trajectory."""
-            return tuple(name for name in self._NAMES if getattr(self, name) is not None)
-
-        @property
-        def available_fields(self) -> tuple[str, ...]:
-            """Names of logical columns available to runtime consumers."""
-            return tuple(name for name in self._NAMES if getattr(self, name) is not None or name in self._ROOT_FIELDS)
-
-        @property
-        def root_storage(self) -> Literal["explicit", "body_row_zero"]:
-            """Physical owner of the logical root columns."""
-            return "explicit" if self.root_position is not None else "body_row_zero"
-
-        @property
-        def frame_count(self) -> int:
-            """Number of stored trajectory frames."""
-            return self.field(self.stored_fields[0]).shape[0]
-
-        @property
-        def device(self) -> torch.device:
-            """Shared tensor device."""
-            return self.field(self.stored_fields[0]).device
-
-        @property
-        def memory_bytes(self) -> int:
-            """Resident bytes in all concrete trajectory columns."""
-            return sum(self.field(name).numel() * self.field(name).element_size() for name in self.stored_fields)
-
-        def field(self, name: str) -> torch.Tensor:
-            """Return one stored column or a logical root view over body row zero."""
-            if name not in self._NAMES:
-                raise KeyError(f"Unknown motion trajectory field: {name!r}.")
-            value = getattr(self, name)
-            if value is None and name in self._ROOT_FIELDS:
-                body_value = getattr(self, name.replace("root_", "body_", 1))
-                if body_value is not None:
-                    return body_value[:, 0]
-            if value is None:
-                raise KeyError(f"Motion trajectory field {name!r} is absent in this composition.")
-            return value
-
-        def copy_clip_(self, start: int, end: int, source: MotionTaskTable.Frames) -> None:
-            """Copy one built clip into its exact destination range."""
-            if source.stored_fields != self.stored_fields:
-                raise ValueError(
-                    "Built clip columns differ from the allocated table columns: "
-                    f"expected {self.stored_fields}, got {source.stored_fields}."
-                )
-            if source.frame_count != end - start or source.device != self.device:
-                raise ValueError("Built clip frame count or device differs from its destination range.")
-            for name in self.stored_fields:
-                destination = self.field(name)[start:end]
-                value = source.field(name)
-                if value.shape[1:] != destination.shape[1:]:
-                    raise ValueError(
-                        f"Built {name!r} shape {tuple(value.shape)} differs from "
-                        f"destination {tuple(destination.shape)}."
-                    )
-                destination.copy_(value)
-
-    class Writer:
-        """Single-pass exact-capacity writer that seals into one task table."""
-
-        __slots__ = (
-            "_clip_index",
-            "_finished",
-            "_expert_sample_grid",
-            "_frame_builder_identity_sha256",
-            "_frame_builder_version",
-            "_frames",
-            "_joint_names",
-            "_next_clip",
-            "_reference_frame_names",
-            "_reset_sources",
-            "_seed",
-            "_task_row_mode",
-        )
-
-        def __init__(
-            self,
-            clip_index: MotionClipIndex,
-            frames: MotionTaskTable.Frames,
-            joint_names: tuple[str, ...],
-            reference_frame_names: tuple[str, ...],
-            frame_builder_version: str,
-            frame_builder_identity_sha256: str,
-            task_row_mode: Literal["source_frames", "clip_time_ranges"],
-            reset_sources: tuple[tuple[str, float], ...],
-            expert_sample_grid: MotionSampleGrid,
-            seed: int,
-        ) -> None:
-            if frames.frame_count != clip_index.total_frames:
-                raise ValueError("Allocated trajectory capacity must equal the source frame count exactly.")
-            validate_nonempty("frame_builder_version", frame_builder_version)
-            validate_sha256("frame_builder_identity_sha256", frame_builder_identity_sha256)
-            if not isinstance(seed, int) or isinstance(seed, bool):
-                raise TypeError("Motion task seed must be an integer.")
-            self._clip_index = clip_index
-            self._frames = frames
-            self._frame_builder_version = frame_builder_version
-            self._joint_names = joint_names
-            self._reference_frame_names = reference_frame_names
-            self._frame_builder_identity_sha256 = frame_builder_identity_sha256
-            self._task_row_mode = task_row_mode
-            self._reset_sources = reset_sources
-            self._expert_sample_grid = expert_sample_grid
-            self._seed = seed
-            self._next_clip = 0
-            self._finished = False
-
-        @property
-        def frames(self) -> MotionTaskTable.Frames:
-            """Preallocated writable construction tensors."""
-            return self._frames
-
-        def write_clip(self, clip_id: str, frames: MotionTaskTable.Frames) -> None:
-            """Copy the next built clip into its exact flat range."""
-            if self._finished:
-                raise RuntimeError("The writer is already finished.")
-            if self._next_clip == len(self._clip_index.clips):
-                raise RuntimeError("Every declared clip is already written.")
-            clip = self._clip_index.clips[self._next_clip]
-            if clip_id != clip.clip_id:
-                raise ValueError(f"Writer expected clip {clip.clip_id!r}, got {clip_id!r}.")
-            start = self._clip_index.offsets[self._next_clip]
-            end = self._clip_index.offsets[self._next_clip + 1]
-            self._frames.copy_clip_(start, end, frames)
-            self._next_clip += 1
-
-        def finish(self) -> MotionTaskTable:
-            """Seal complete trajectory and descriptor tensors without copying."""
-            if self._finished:
-                raise RuntimeError("The writer is already finished.")
-            if self._next_clip != len(self._clip_index.clips):
-                raise ValueError(
-                    f"Motion table is incomplete: wrote {self._next_clip} of {len(self._clip_index.clips)} clips."
-                )
-            table = MotionTaskTable.from_storage(
-                self._clip_index,
-                self._frames,
-                self._joint_names,
-                self._reference_frame_names,
-                self._frame_builder_version,
-                self._frame_builder_identity_sha256,
-                self._task_row_mode,
-                self._reset_sources,
-                self._expert_sample_grid,
-                seed=self._seed,
-            )
-            self._finished = True
-            return table
 
     class ReferenceView:
         """Batched continuous-time reference lookup with explicit tail validity."""
@@ -558,58 +138,75 @@ class MotionTaskTable:
             values = self.table.field(name)
             value0 = values[self._global_frame0]
             interpolation = self.table.interpolation(name)
-            if interpolation == "left":
-                return value0
             value1 = values[self._global_frame1]
             if interpolation == "slerp":
-                return _quaternion_slerp(value0, value1, self._alpha)
+                return quat_slerp(value0, value1, self._alpha)
             fraction = self._alpha
             while fraction.ndim < value0.ndim:
                 fraction = fraction.unsqueeze(-1)
             return torch.lerp(value0, value1, fraction)
 
+    class SampledSequence:
+        """Clip-safe trajectory view on one declared sample clock."""
+
+        __slots__ = ("_field", "clip_ids", "clip_offsets", "data_hash", "dataset_id", "device", "source")
+
+        def __init__(
+            self,
+            source: MotionTaskTable,
+            clip_offsets: tuple[int, ...],
+            sampling_mode: Literal["source_rows", "uniform_before_source_end"],
+            sampling_step_seconds: float | None,
+            field: Callable[[str], torch.Tensor],
+        ) -> None:
+            self.source = source
+            self.device = source.device
+            self.clip_ids = source.clip_ids
+            self.clip_offsets = clip_offsets
+            self.dataset_id = f"{source.clip_index.source_content_sha256}:{source.frame_builder_version}"
+            self.data_hash = canonical_sha256(
+                {
+                    "source": source.cache_identity,
+                    "sampling_mode": sampling_mode,
+                    "sampling_step_seconds": sampling_step_seconds,
+                }
+            )
+            self._field = field
+
+        def field(self, name: str) -> torch.Tensor:
+            """Return one sampled trajectory field."""
+            return self._field(name)
+
     __slots__ = (
         "_cache_identity",
-        "_clip_ids",
         "_clip_index",
         "_clip_offsets",
         "_clip_start_rows",
-        "_clip_valid",
         "_frame_builder_identity_sha256",
         "_frame_builder_version",
         "_frame_counts",
         "_frames",
         "_joint_names",
         "_reference_frame_names",
-        "_sampling_row_counts",
-        "_sampling_row_starts",
         "_sealed",
-        "_source_fps",
         "_task_row_mode",
+        "_source_fps",
         "clip_indices",
-        "clip_priorities",
-        "generator",
-        "expert_sample_grid",
-        "reset_source_probabilities",
-        "reset_source_names",
         "reset_time_ranges_seconds",
-        "seed",
     )
 
     def __init__(
         self,
         clip_index: MotionClipIndex,
-        frames: MotionTaskTable.Frames,
+        frames: MotionFrames,
         joint_names: tuple[str, ...],
         reference_frame_names: tuple[str, ...],
         frame_builder_version: str,
         frame_builder_identity_sha256: str,
         task_row_mode: Literal["source_frames", "clip_time_ranges"],
-        reset_sources: tuple[tuple[str, float], ...],
-        expert_sample_grid: MotionSampleGrid,
-        *,
-        seed: int,
+        source_skeleton_identity_sha256: str,
     ) -> None:
+        validate_sha256("source_skeleton_identity_sha256", source_skeleton_identity_sha256)
         if frames.frame_count != clip_index.total_frames:
             raise ValueError("Trajectory capacity must equal the declared source frame count exactly.")
         validate_nonempty("frame_builder_version", frame_builder_version)
@@ -636,60 +233,33 @@ class MotionTaskTable:
             raise ValueError("Trajectory reference_frame_names must match the reference-frame column axis exactly.")
 
         validate_sha256("frame_builder_identity_sha256", frame_builder_identity_sha256)
-        if not isinstance(expert_sample_grid, MotionSampleGrid):
-            raise TypeError("expert_sample_grid must be MotionSampleGrid.")
-        if not isinstance(seed, int) or isinstance(seed, bool):
-            raise TypeError("Motion task seed must be an integer.")
         frames.validate_values()
 
         device = frames.device
         clip_offsets = torch.tensor(clip_index.offsets, dtype=torch.int64, device=device)
         frame_counts = torch.tensor([clip.frame_count for clip in clip_index.clips], dtype=torch.int64, device=device)
         source_fps = torch.tensor([clip.source_fps for clip in clip_index.clips], dtype=torch.float32, device=device)
-        clip_valid = torch.tensor([clip.valid for clip in clip_index.clips], dtype=torch.bool, device=device)
         clip_indices, reset_time_ranges_seconds = _task_rows(clip_index, device, task_row_mode)
-        reset_source_names, reset_source_probabilities = _reset_source_data(reset_sources, device)
-        normalized_reset_sources = tuple((name, float(probability)) for name, probability in reset_sources)
         num_tasks = clip_indices.shape[0]
-        row = 0
-        clip_start_rows_values: list[int] = []
-        sampling_row_starts_values: list[int] = []
-        sampling_row_counts_values: list[int] = []
-        for clip in clip_index.clips:
-            clip_start_rows_values.append(row if clip.valid else -1)
-            if clip.valid:
-                row_count = clip.frame_count if task_row_mode == "source_frames" else 1
-                sampling_row_starts_values.append(row)
-                sampling_row_counts_values.append(row_count)
-                row += row_count
-        if row != num_tasks:
-            raise RuntimeError("Derived clip-start rows do not cover the motion task table.")
-        clip_start_rows = torch.tensor(clip_start_rows_values, dtype=torch.int64, device=device)
-        sampling_row_starts = torch.tensor(sampling_row_starts_values, dtype=torch.int64, device=device)
-        sampling_row_counts = torch.tensor(sampling_row_counts_values, dtype=torch.int64, device=device)
+        if task_row_mode == "source_frames":
+            clip_start_rows = torch.tensor(clip_index.offsets[:-1], dtype=torch.int64, device=device)
+        else:
+            clip_start_rows = torch.arange(len(clip_index.clips), dtype=torch.int64, device=device)
         if (
             clip_indices.ndim != 1
             or clip_indices.dtype is not torch.int64
             or reset_time_ranges_seconds.shape != (num_tasks, 2)
             or not reset_time_ranges_seconds.is_floating_point()
-            or reset_source_probabilities.ndim != 1
-            or reset_source_probabilities.shape[0] < 1
-            or not reset_source_probabilities.is_floating_point()
             or num_tasks == 0
         ):
-            raise ValueError(
-                "Motion tasks require clip [N], reset-time-range [N, 2], and reset-source-probability [S] tensors."
-            )
-        if any(
-            value.device != device for value in (clip_indices, reset_time_ranges_seconds, reset_source_probabilities)
-        ):
+            raise ValueError("Motion tasks require clip [N] and reset-time-range [N, 2] tensors.")
+        if clip_indices.device != device or reset_time_ranges_seconds.device != device:
             raise ValueError("Motion task and trajectory tensors must share one device.")
 
         torch._assert_async(
             torch.all((clip_indices >= 0) & (clip_indices < len(clip_index.clips))),
             "Motion task clip indices are outside the stored clips.",
         )
-        torch._assert_async(torch.all(clip_valid[clip_indices]), "Motion task rows include an invalid source clip.")
         low, high = reset_time_ranges_seconds.unbind(-1)
         clip_end = (frame_counts[clip_indices] - 1) / source_fps[clip_indices]
         torch._assert_async(
@@ -700,59 +270,37 @@ class MotionTaskTable:
             torch.all((high >= low) & (high <= clip_end)),
             "A motion reset-time range crosses its clip boundary.",
         )
-        torch._assert_async(
-            torch.all(torch.isfinite(reset_source_probabilities) & (reset_source_probabilities >= 0.0)),
-            "Motion reset-source probabilities must be finite and nonnegative.",
-        )
-        torch._assert_async(
-            torch.isclose(reset_source_probabilities.sum(), reset_source_probabilities.new_tensor(1.0)),
-            "Motion reset-source probabilities must sum to one.",
-        )
-        valid_indices = tuple(index for index, clip in enumerate(clip_index.clips) if clip.valid)
-        expected = torch.tensor(valid_indices, dtype=torch.int64, device=device)
+        expected = torch.arange(len(clip_index.clips), dtype=torch.int64, device=device)
         if not torch.equal(torch.unique(clip_indices, sorted=True), expected):
-            raise ValueError("Motion task rows must cover every valid clip in stable source order.")
+            raise ValueError("Motion task rows must cover every clip in stable source order.")
 
-        generator = torch.Generator(device=device)
-        generator.manual_seed(seed)
         object.__setattr__(self, "_clip_index", clip_index)
         object.__setattr__(self, "_frames", frames)
         object.__setattr__(self, "_frame_builder_version", frame_builder_version)
         object.__setattr__(self, "_frame_builder_identity_sha256", frame_builder_identity_sha256)
         object.__setattr__(self, "_joint_names", joint_names)
         object.__setattr__(self, "_reference_frame_names", reference_frame_names)
-        object.__setattr__(self, "_task_row_mode", task_row_mode)
         object.__setattr__(self, "_clip_offsets", clip_offsets)
         object.__setattr__(self, "_clip_start_rows", clip_start_rows)
-        object.__setattr__(self, "_sampling_row_starts", sampling_row_starts)
-        object.__setattr__(self, "_sampling_row_counts", sampling_row_counts)
         object.__setattr__(self, "_frame_counts", frame_counts)
         object.__setattr__(self, "_source_fps", source_fps)
-        object.__setattr__(self, "_clip_valid", clip_valid)
         object.__setattr__(self, "clip_indices", clip_indices)
         object.__setattr__(self, "reset_time_ranges_seconds", reset_time_ranges_seconds)
-        object.__setattr__(self, "reset_source_probabilities", reset_source_probabilities)
-        object.__setattr__(self, "reset_source_names", reset_source_names)
-        object.__setattr__(self, "seed", seed)
-        object.__setattr__(self, "expert_sample_grid", expert_sample_grid)
-        object.__setattr__(self, "generator", generator)
-        object.__setattr__(self, "_clip_ids", tuple(clip_index.clip_ids[index] for index in valid_indices))
-        object.__setattr__(self, "clip_priorities", torch.ones(len(valid_indices), dtype=torch.float32, device=device))
         object.__setattr__(
             self,
             "_cache_identity",
             _table_identity(
                 clip_index,
+                source_skeleton_identity_sha256,
                 frames,
                 joint_names,
                 reference_frame_names,
                 frame_builder_version,
                 frame_builder_identity_sha256,
                 task_row_mode,
-                normalized_reset_sources,
-                expert_sample_grid,
             ),
         )
+        object.__setattr__(self, "_task_row_mode", task_row_mode)
         object.__setattr__(self, "_sealed", True)
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -760,102 +308,8 @@ class MotionTaskTable:
             raise AttributeError("MotionTaskTable metadata is immutable.")
         object.__setattr__(self, name, value)
 
-    @classmethod
-    def writer(
-        cls,
-        clip_index: MotionClipIndex,
-        frames: MotionTaskTable.Frames,
-        joint_names: tuple[str, ...],
-        reference_frame_names: tuple[str, ...],
-        frame_builder_version: str,
-        frame_builder_identity_sha256: str,
-        task_row_mode: Literal["source_frames", "clip_time_ranges"],
-        reset_sources: tuple[tuple[str, float], ...],
-        expert_sample_grid: MotionSampleGrid,
-        *,
-        seed: int,
-    ) -> Writer:
-        """Bind exact-capacity construction tensors to a single-pass writer."""
-        return cls.Writer(
-            clip_index,
-            frames,
-            joint_names,
-            reference_frame_names,
-            frame_builder_version,
-            frame_builder_identity_sha256,
-            task_row_mode,
-            reset_sources,
-            expert_sample_grid,
-            seed,
-        )
-
-    @classmethod
-    def build(
-        cls,
-        source: MotionFrameSource,
-        clip_index: MotionClipIndex,
-        frame_builder: MotionFrameBuilder,
-        task_row_mode: Literal["source_frames", "clip_time_ranges"],
-        reset_sources: tuple[tuple[str, float], ...],
-        expert_sample_grid: MotionSampleGrid,
-        *,
-        seed: int,
-        device: str | torch.device,
-    ) -> MotionTaskTable:
-        """Stream one decoded source directly into one exact-capacity task table."""
-        source_clip_index = source.inspect()
-        if source_clip_index.identity_sha256 != clip_index.identity_sha256:
-            raise ValueError("Motion source clip index identity differs from the declared clip index identity.")
-        if clip_index.skeleton_sha256 != frame_builder.source_skeleton.identity_sha256:
-            raise ValueError("The source clip index and frame-builder skeleton identities differ.")
-        frames = frame_builder.allocate(clip_index.total_frames, device=device)
-        writer = cls.writer(
-            clip_index,
-            frames,
-            frame_builder.joint_names,
-            frame_builder.reference_frame_names,
-            frame_builder.version,
-            frame_builder.construction_identity_sha256,
-            task_row_mode,
-            reset_sources,
-            expert_sample_grid,
-            seed=seed,
-        )
-        for clip_id, fields in source.clips():
-            writer.write_clip(clip_id, frame_builder.build_frames(fields, device=device))
-        return writer.finish()
-
-    @classmethod
-    def from_storage(
-        cls,
-        clip_index: MotionClipIndex,
-        frames: MotionTaskTable.Frames,
-        joint_names: tuple[str, ...],
-        reference_frame_names: tuple[str, ...],
-        frame_builder_version: str,
-        frame_builder_identity_sha256: str,
-        task_row_mode: Literal["source_frames", "clip_time_ranges"],
-        reset_sources: tuple[tuple[str, float], ...],
-        expert_sample_grid: MotionSampleGrid,
-        *,
-        seed: int,
-    ) -> MotionTaskTable:
-        """Bind validated trajectory and descriptor tensors without copying."""
-        return cls(
-            clip_index,
-            frames,
-            joint_names,
-            reference_frame_names,
-            frame_builder_version,
-            frame_builder_identity_sha256,
-            task_row_mode,
-            reset_sources,
-            expert_sample_grid,
-            seed=seed,
-        )
-
     @property
-    def frames(self) -> Frames:
+    def frames(self) -> MotionFrames:
         """Concrete trajectory tensor owner."""
         return self._frames
 
@@ -890,11 +344,6 @@ class MotionTaskTable:
         return self._task_row_mode
 
     @property
-    def task_sampling_law(self) -> TaskSamplingLaw:
-        """Sampling law implied by :attr:`task_row_mode`."""
-        return _task_sampling_law(self._task_row_mode)
-
-    @property
     def cache_identity(self) -> str:
         """Deterministic source, builder, columns, and timing identity."""
         return self._cache_identity
@@ -906,7 +355,7 @@ class MotionTaskTable:
 
     @property
     def clip_start_rows(self) -> torch.Tensor:
-        """First selectable task row per source clip, with ``-1`` for invalid clips."""
+        """First selectable task row per source clip."""
         return self._clip_start_rows
 
     @property
@@ -920,47 +369,14 @@ class MotionTaskTable:
         return self._source_fps
 
     @property
-    def clip_valid(self) -> torch.Tensor:
-        """Declared source validity per clip."""
-        return self._clip_valid
-
-    @property
     def clip_ids(self) -> tuple[str, ...]:
-        """Valid clip identifiers covered by selectable descriptor rows."""
-        return self._clip_ids
-
-    @property
-    def source_clip_ids(self) -> tuple[str, ...]:
-        """All clip identifiers in trajectory storage order."""
+        """Clip identifiers covered by selectable descriptor rows."""
         return self._clip_index.clip_ids
-
-    @property
-    def splits(self) -> tuple[str, ...]:
-        """Dataset split per stored clip."""
-        return tuple(clip.split for clip in self._clip_index.clips)
 
     @property
     def device(self) -> torch.device:
         """Shared trajectory and descriptor device."""
         return self._frames.device
-
-    @property
-    def memory_bytes(self) -> int:
-        """Resident bytes owned by trajectory, clip, descriptor, and priority tensors."""
-        tensors = (
-            self._clip_offsets,
-            self._clip_start_rows,
-            self._sampling_row_starts,
-            self._sampling_row_counts,
-            self._frame_counts,
-            self._source_fps,
-            self._clip_valid,
-            self.clip_indices,
-            self.reset_time_ranges_seconds,
-            self.reset_source_probabilities,
-            self.clip_priorities,
-        )
-        return self._frames.memory_bytes + sum(value.numel() * value.element_size() for value in tensors)
 
     @property
     def num_tasks(self) -> int:
@@ -973,8 +389,7 @@ class MotionTaskTable:
 
     def interpolation(self, name: str) -> Interpolation:
         """Return the fixed temporal rule for one concrete trajectory field."""
-        self._frames.field(name)
-        return _FRAME_INTERPOLATION[name]
+        return self._frames.interpolation(name)
 
     def _validate_clip_indices(self, clip_indices: torch.Tensor) -> None:
         if clip_indices.ndim != 1 or clip_indices.dtype is not torch.int64 or clip_indices.device != self.device:
@@ -983,7 +398,6 @@ class MotionTaskTable:
             torch.all((clip_indices >= 0) & (clip_indices < len(self._clip_index.clips))),
             "clip_indices are outside the motion table.",
         )
-        torch._assert_async(torch.all(self._clip_valid[clip_indices]), "clip_indices include an invalid source clip.")
 
     def reference_view(self, clip_indices: torch.Tensor, time_seconds: torch.Tensor) -> ReferenceView:
         """Resolve clamped continuous-time reference interpolation."""
@@ -1018,59 +432,49 @@ class MotionTaskTable:
             tail_valid,
         )
 
-    def sample_rows(self, count: int) -> torch.Tensor:
-        """Sample a clip by total mass, then a supported row uniformly within it."""
-        clip_slots = torch.multinomial(
-            self.clip_priorities,
-            count,
-            replacement=True,
-            generator=self.generator,
+    def sample(
+        self,
+        mode: Literal["source_rows", "uniform_before_source_end"],
+        step_seconds: float | None,
+    ) -> SampledSequence:
+        """Return clips on one source-row or uniform sample clock."""
+        if mode == "source_rows":
+            if step_seconds is not None:
+                raise ValueError("Source-row sampling does not declare step_seconds.")
+        elif mode == "uniform_before_source_end":
+            if step_seconds is None or not math.isfinite(step_seconds) or step_seconds <= 0.0:
+                raise ValueError("Uniform sampling requires finite positive step_seconds.")
+        else:
+            raise ValueError(f"Unsupported sampling mode: {mode!r}.")
+
+        counts = tuple(
+            clip.frame_count
+            if mode == "source_rows"
+            else math.ceil((clip.frame_count - 1) / clip.source_fps / step_seconds)
+            for clip in self.clip_index.clips
         )
-        task_rows = self._sampling_row_starts[clip_slots]
-        if self._task_row_mode == "source_frames":
-            fraction = torch.rand(count, device=self.device, generator=self.generator)
-            task_rows += torch.floor(fraction * self._sampling_row_counts[clip_slots]).to(torch.int64)
-        return task_rows
+        if any(count < 1 for count in counts):
+            raise ValueError("Every sampled clip must contain at least one sample before its source endpoint.")
+        offsets = [0]
+        for count in counts:
+            offsets.append(offsets[-1] + count)
+        clip_offsets = tuple(offsets)
 
-    def validate_clip_priorities(self, clip_ids: tuple[str, ...], priorities: torch.Tensor) -> None:
-        """Validate a stable-ID priority update without mutating table state."""
-        if clip_ids != self.clip_ids:
-            raise ValueError("Motion priority clip ids do not match the task table.")
-        if (
-            priorities.shape != self.clip_priorities.shape
-            or not priorities.is_floating_point()
-            or priorities.device != self.device
-            or priorities.requires_grad
-        ):
-            raise ValueError("Motion priorities must be detached floating point values on the table device.")
-        if not torch.all(torch.isfinite(priorities)):
-            raise ValueError("Motion priorities must be finite.")
-        if torch.any(priorities < 0.0) or not torch.any(priorities > 0.0):
-            raise ValueError("Motion priorities must be non-negative with positive total mass.")
+        if mode == "source_rows":
+            return self.SampledSequence(self, clip_offsets, mode, step_seconds, self.field)
 
-    def set_clip_priorities(self, clip_ids: tuple[str, ...], priorities: torch.Tensor) -> None:
-        """Set total sampling mass per stable clip."""
-        self.validate_clip_priorities(clip_ids, priorities)
-        self.clip_priorities.copy_(priorities)
-
-    def reset_clip_priorities(self) -> None:
-        """Restore equal total sampling mass for every valid clip."""
-        self.clip_priorities.fill_(1.0)
-
-    def sample_reset_sources(self, count: int) -> torch.Tensor:
-        """Sample reset-source indices independently from motion descriptors."""
-        return torch.multinomial(
-            self.reset_source_probabilities,
-            count,
-            replacement=True,
-            generator=self.generator,
+        counts_tensor = torch.tensor(counts, dtype=torch.int64, device=self.device)
+        clip_positions = torch.repeat_interleave(
+            torch.arange(len(self.clip_index.clips), dtype=torch.int64, device=self.device),
+            counts_tensor,
         )
-
-    def select(self, task_rows: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return source clip indices and continuous reset ranges [s]."""
-        if task_rows.ndim != 1 or task_rows.dtype is not torch.int64 or task_rows.device != self.device:
-            raise ValueError("task_rows must be a one-dimensional int64 tensor on the table device.")
-        return self.clip_indices[task_rows], self.reset_time_ranges_seconds[task_rows]
+        flat_indices = torch.arange(clip_offsets[-1], dtype=torch.int64, device=self.device)
+        starts = torch.tensor(clip_offsets[:-1], dtype=torch.int64, device=self.device)
+        local_samples = flat_indices - starts[clip_positions]
+        clip_indices = clip_positions
+        sample_times = local_samples * step_seconds
+        reference = self.reference_view(clip_indices, sample_times)
+        return self.SampledSequence(self, clip_offsets, mode, step_seconds, reference.field)
 
 
 def build_motion_task_table(cfg: StateCommandCfg, env: ManagerBasedRLEnv) -> MotionTaskTable:
@@ -1091,18 +495,35 @@ def build_motion_task_table(cfg: StateCommandCfg, env: ManagerBasedRLEnv) -> Mot
                 f"hash={clip_index.source_content_sha256}, clips={len(clip_index.clips)}, "
                 f"frames={clip_index.total_frames}."
             )
-        seed = env.cfg.seed
-        if not isinstance(seed, int) or isinstance(seed, bool):
-            raise TypeError("Motion environments require an integer seed.")
-        return MotionTaskTable.build(
-            source,
+        source_skeleton = source_cfg.build_skeleton()
+        reference = table_cfg.reference_kinematics_factory(table_cfg.reference_artifact_root, env.device)
+        frame_builder = table_cfg.frame_builder_factory(
+            source_skeleton, reference, env.scene[cfg.payload.robot_asset_name]
+        )
+        if not isinstance(frame_builder, MotionFrameBuilder):
+            raise TypeError("frame_builder_factory must return a MotionFrameBuilder.")
+        frames = frame_builder.allocate(clip_index.total_frames, device=env.device)
+        clip_count = 0
+        for clip_id, clip in source.clips():
+            if clip_count == len(clip_index.clips):
+                raise ValueError(f"Motion source yielded undeclared clip {clip_id!r}.")
+            expected = clip_index.clips[clip_count]
+            if clip_id != expected.clip_id:
+                raise ValueError(f"Motion source expected clip {expected.clip_id!r}, got {clip_id!r}.")
+            start, end = clip_index.offsets[clip_count : clip_count + 2]
+            frames._copy_clip_(start, end, frame_builder.build_frames(clip, device=env.device))
+            clip_count += 1
+        if clip_count != len(clip_index.clips):
+            raise ValueError(f"Motion source yielded {clip_count} of {len(clip_index.clips)} declared clips.")
+        return MotionTaskTable(
             clip_index,
-            table_cfg.frame_builder_factory(env),
+            frames,
+            frame_builder.joint_names,
+            frame_builder.reference_frame_names,
+            frame_builder.version,
+            frame_builder.construction_identity_sha256,
             table_cfg.task_row_mode,
-            table_cfg.reset_sources,
-            table_cfg.expert_sample_grid,
-            seed=seed,
-            device=env.device,
+            source_skeleton.identity_sha256,
         )
     finally:
         source.close()

@@ -3,14 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Typed source metadata for motion trajectory importers."""
+"""Typed source metadata and clips for motion trajectory construction."""
 
-from .sample_grid import MotionSampleGrid
-from .clip_index import MotionClipIndex
-from .skeleton import MotionSkeleton
+from isaaclab.utils.module import lazy_export
 
-__all__ = [
-    "MotionClipIndex",
-    "MotionSampleGrid",
-    "MotionSkeleton",
-]
+lazy_export()

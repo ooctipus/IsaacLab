@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from ._identity import canonical_sha256, validate_nonempty, validate_sha256
+from ..identity import canonical_sha256, validate_nonempty, validate_sha256
 
 
 @dataclass(frozen=True, slots=True)

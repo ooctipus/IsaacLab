@@ -14,20 +14,18 @@ import numpy as np
 import pytest
 import torch
 
-from isaaclab.managers import ActionTerm
+from isaaclab.envs.mdp.actions import JointAction
 
-from isaaclab_tasks.core.multi_task.motion.config.robots import G1_MOTION_ARTICULATION_CFG
-from isaaclab_tasks.core.multi_task.motion.config.robots.g1 import (
+from isaaclab_tasks.core.multi_task.mdp import NativeMujocoControlActionCfg
+from isaaclab_tasks.core.multi_task.motion.robots.g1.actions import G1JointPositionAction
+from isaaclab_tasks.core.multi_task.motion.robots.g1.actions_cfg import G1JointPositionActionCfg
+from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import (
     _SIMULATOR_JOINT_NAMES as _G1_SIMULATOR_JOINT_NAMES,
 )
-from isaaclab_tasks.core.multi_task.motion.config.robots.g1 import (
+from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import (
     G1_BEHAVIOR_JOINT_NAMES as _G1_BEHAVIOR_JOINT_NAMES,
 )
-from isaaclab_tasks.core.multi_task.motion.mdp.actions import MotionJointPositionAction
-from isaaclab_tasks.core.multi_task.motion.mdp.actions_cfg import (
-    MotionJointPositionActionCfg,
-    MotionMujocoControlActionCfg,
-)
+from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import G1_MOTION_ARTICULATION_CFG
 
 
 def _phase3_fixtures() -> Path:
@@ -77,50 +75,51 @@ class _ConfiguredAsset(_Asset):
         super().set_joint_position_target_index(target=target, joint_ids=torch.arange(self.num_joints))
 
 
-def test_motion_action_cfg_rejects_ignored_base_clip() -> None:
-    """Custom motion actions must reject the base clip knob they do not implement."""
+def test_native_mujoco_action_cfg_rejects_ignored_base_clip() -> None:
+    """Native MuJoCo control must reject the base clip knob it does not implement."""
     with pytest.raises(ValueError, match="does not use ActionTermCfg.clip"):
-        MotionJointPositionActionCfg(asset_name="robot", joint_names=[".*"], clip={".*": (-1.0, 1.0)})
-    with pytest.raises(ValueError, match="does not use ActionTermCfg.clip"):
-        MotionMujocoControlActionCfg(asset_name="robot", action_width=69, clip={".*": (-1.0, 1.0)})
+        NativeMujocoControlActionCfg(asset_name="robot", action_width=69, clip={".*": (-1.0, 1.0)})
 
 
 @pytest.mark.parametrize("preserve_order", (False, True))
-def test_motion_joint_action_owns_minimal_resolution_and_slices_natural_all_joint_order(
+def test_g1_joint_action_reuses_joint_action_resolution_and_processing(
     preserve_order: bool,
 ) -> None:
-    """Natural all-joint control must avoid indexed gathers and expose truthful action metadata."""
-    assert MotionJointPositionAction.__bases__ == (ActionTerm,)
+    """G1 control must reuse the common joint-action axis and affine processing contract."""
+    assert G1JointPositionAction.__bases__ == (JointAction,)
     asset = _ConfiguredAsset(3, ("joint_a", "joint_b", "joint_c"))
     env = SimpleNamespace(
         num_envs=3,
         device="cpu",
         scene={"robot": asset},
     )
-    cfg = MotionJointPositionActionCfg(
+    cfg = G1JointPositionActionCfg(
         asset_name="robot",
         joint_names=[".*"],
         preserve_order=preserve_order,
-        normalize_to=5.0,
-        action_clip=5.0,
         action_scale=0.25,
     )
 
-    action = MotionJointPositionAction(cfg, env)
+    action = G1JointPositionAction(cfg, env)
     action.process_actions(torch.ones(3, 3))
     action.apply_actions()
 
-    assert action._joint_ids == slice(None)
+    expected_joint_ids = list(range(3)) if preserve_order else slice(None)
+    assert action._joint_ids == expected_joint_ids
     torch.testing.assert_close(action.joint_ids, torch.arange(3))
-    assert asset.target_joint_ids == slice(None)
+    assert asset.target_joint_ids == expected_joint_ids
     assert asset.preserve_order is preserve_order
     assert action.action_dim == 3
-    assert action.IO_descriptor.shape == (3,)
-    assert action.IO_descriptor.dtype == "torch.float32"
-    assert action.IO_descriptor.action_type == "JointPosition"
-    assert action.IO_descriptor.extras["joint_names"] == asset.joint_names
-    assert action.IO_descriptor.extras["normalize_to"] == 5.0
-    assert action.IO_descriptor.extras["processed_action_clip"] == (-5.0, 5.0)
+    torch.testing.assert_close(action.processed_actions, torch.full((3, 3), 5.0))
+    torch.testing.assert_close(action.joint_position_target, torch.full((3, 3), 0.625))
+    descriptor = action.IO_descriptor
+    assert descriptor.shape == (3,)
+    assert descriptor.dtype == "torch.float32"
+    assert descriptor.action_type == "JointAction"
+    assert descriptor.joint_names == asset.joint_names
+    assert descriptor.scale == 5.0
+    assert descriptor.offset == 0.0
+    assert descriptor.clip == [[-5.0, 5.0]] * 3
 
 
 def test_g1_action_maps_declared_behavior_axis_to_live_articulation_once() -> None:
@@ -129,13 +128,13 @@ def test_g1_action_maps_declared_behavior_axis_to_live_articulation_once() -> No
     asset.data.joint_pos.torch.copy_(torch.arange(29, dtype=torch.float32).repeat(2, 1))
     asset.data.joint_vel.torch.copy_(torch.arange(29, dtype=torch.float32).repeat(2, 1).neg_())
     env = SimpleNamespace(num_envs=2, device="cpu", scene={"robot": asset})
-    cfg = MotionJointPositionActionCfg(
+    cfg = G1JointPositionActionCfg(
         asset_name="robot",
         joint_names=list(_G1_BEHAVIOR_JOINT_NAMES),
         preserve_order=True,
     )
 
-    action = MotionJointPositionAction(cfg, env)
+    action = G1JointPositionAction(cfg, env)
     expected_ids = torch.tensor(
         [_G1_SIMULATOR_JOINT_NAMES.index(name) for name in _G1_BEHAVIOR_JOINT_NAMES],
         dtype=torch.int64,
@@ -145,24 +144,20 @@ def test_g1_action_maps_declared_behavior_axis_to_live_articulation_once() -> No
     torch.testing.assert_close(action.joint_ids, expected_ids)
     assert action._joint_ids == expected_ids.tolist()
     assert asset.preserve_order
-    position = action.joint_position
-    velocity = action.joint_velocity
-    torch.testing.assert_close(position, asset.data.joint_pos.torch.index_select(1, expected_ids))
-    torch.testing.assert_close(velocity, asset.data.joint_vel.torch.index_select(1, expected_ids))
-    assert action.joint_position.data_ptr() == position.data_ptr()
-    assert action.joint_velocity.data_ptr() == velocity.data_ptr()
+    assert not hasattr(action, "joint_position")
+    assert not hasattr(action, "joint_velocity")
 
 
 def test_g1_action_reset_writes_selected_nonzero_default_offsets() -> None:
     """A subset reset must retain its sampled default-pose offsets in persistent action state."""
     asset = _ConfiguredAsset(4, ("joint_a", "joint_b"))
     env = SimpleNamespace(num_envs=4, device="cpu", scene={"robot": asset})
-    cfg = MotionJointPositionActionCfg(
+    cfg = G1JointPositionActionCfg(
         asset_name="robot",
         joint_names=[".*"],
         default_joint_offset_range=(0.25, 0.25),
     )
-    action = MotionJointPositionAction(cfg, env)
+    action = G1JointPositionAction(cfg, env)
     action._raw_actions.fill_(1.0)
     action._processed_actions.fill_(1.0)
     action._applied_torque.fill_(1.0)
@@ -183,12 +178,12 @@ def test_g1_action_full_slice_reset_uses_full_buffers_without_scratch() -> None:
     """The manager's full slice must take the allocation-free whole-buffer reset path."""
     asset = _ConfiguredAsset(4, ("joint_a", "joint_b"))
     env = SimpleNamespace(num_envs=4, device="cpu", scene={"robot": asset})
-    cfg = MotionJointPositionActionCfg(
+    cfg = G1JointPositionActionCfg(
         asset_name="robot",
         joint_names=[".*"],
         default_joint_offset_range=(0.25, 0.25),
     )
-    action = MotionJointPositionAction(cfg, env)
+    action = G1JointPositionAction(cfg, env)
     action._raw_actions.fill_(1.0)
     action._processed_actions.fill_(1.0)
     action._applied_torque.fill_(1.0)
@@ -221,13 +216,17 @@ def test_g1_action_matches_native_processed_target_and_torque() -> None:
             [asset_cfg.init_state.joint_pos[name] for name in _G1_BEHAVIOR_JOINT_NAMES],
             dtype=torch.float32,
         )
-        action = object.__new__(MotionJointPositionAction)
-        action.cfg = SimpleNamespace(normalize_to=5.0, action_clip=5.0, action_scale=0.25)
+        action = object.__new__(G1JointPositionAction)
+        action.cfg = SimpleNamespace(clip={".*": (-5.0, 5.0)}, action_scale=0.25)
         action._asset = _Asset(joint_position, joint_velocity)
         action._joint_ids = torch.arange(29)
         action._joint_ids_tensor = torch.arange(29)
         action._raw_actions = torch.empty_like(behavior)
         action._processed_actions = torch.empty_like(behavior)
+        action._previous_processed_actions = torch.zeros_like(behavior)
+        action._scale = 5.0
+        action._offset = 0.0
+        action._clip = torch.tensor((-5.0, 5.0)).view(1, 1, 2).expand(behavior.shape[0], 29, 2)
         action._joint_position = torch.empty_like(behavior)
         action._joint_velocity = torch.empty_like(behavior)
         action.default_joint_offset = offset

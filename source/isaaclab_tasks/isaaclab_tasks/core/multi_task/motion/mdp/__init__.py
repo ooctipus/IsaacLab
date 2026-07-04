@@ -4,10 +4,3 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """Runtime MDP terms for motion imitation."""
-
-from .history import AppliedTransitionHistory, AppliedTransitionHistoryLayout
-
-__all__ = [
-    "AppliedTransitionHistory",
-    "AppliedTransitionHistoryLayout",
-]

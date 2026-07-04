@@ -7,18 +7,12 @@
 
 import gymnasium as gym
 
-from isaaclab.utils.module import lazy_export
-
-from . import agents
-
 gym.register(
     id="Isaac-Motion-Imitation-v0",
-    entry_point="isaaclab_tasks.core.multi_task.motion_env:MotionImitationEnv",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": "isaaclab_tasks.core.multi_task.motion_env_cfg:MotionImitationEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_fb_cfg:MotionForwardBackwardRunnerPresetsCfg",
+        "rsl_rl_cfg_entry_point": "isaaclab_tasks.core.multi_task.motion.config.agents.rsl_rl_fb_cfg:MotionForwardBackwardRunnerCfg",
     },
 )
-
-lazy_export()

@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Focused tests for motion-imitation curriculum terms."""
+"""Focused tests for the shared episode-length scale curriculum."""
 
 from __future__ import annotations
 
@@ -14,30 +14,48 @@ import torch
 
 from isaaclab.managers import CurriculumTermCfg
 
-from isaaclab_tasks.core.multi_task.motion.mdp.curriculums import MotionPenaltyScaleCurriculum
+from isaaclab_tasks.core.multi_task.mdp import EpisodeLengthScaleCurriculum
+
+_PARAMS = {
+    "sample_budget": 10_000,
+    "initial_scale": 0.1,
+    "scale_rate": 1.0e-5,
+    "lower_threshold": 40.0,
+    "upper_threshold": 42.0,
+    "minimum_scale": 0.0,
+    "maximum_scale": 1.0,
+}
 
 
-def _curriculum(episode_lengths: torch.Tensor) -> tuple[SimpleNamespace, MotionPenaltyScaleCurriculum]:
+def _curriculum(episode_lengths: torch.Tensor) -> tuple[SimpleNamespace, EpisodeLengthScaleCurriculum]:
     env = SimpleNamespace(
         device=str(episode_lengths.device),
         num_envs=episode_lengths.numel(),
         episode_length_buf=episode_lengths,
     )
-    cfg = CurriculumTermCfg(func=MotionPenaltyScaleCurriculum)
-    return env, MotionPenaltyScaleCurriculum(cfg, env)
+    cfg = CurriculumTermCfg(func=EpisodeLengthScaleCurriculum, params=_PARAMS)
+    return env, EpisodeLengthScaleCurriculum(cfg, env)
+
+
+def _update(
+    env: SimpleNamespace,
+    curriculum: EpisodeLengthScaleCurriculum,
+    env_ids: slice | torch.Tensor,
+) -> dict[str, torch.Tensor]:
+    return curriculum(env, env_ids, **_PARAMS)
 
 
 def test_penalty_curriculum_reads_completed_lengths_before_they_are_cleared() -> None:
     """A reset update must consume terminal lengths rather than post-reset zeros."""
     env, curriculum = _curriculum(torch.full((10_000,), 43, dtype=torch.long))
 
-    state = curriculum(env, slice(None))
+    state = _update(env, curriculum, slice(None))
     env.episode_length_buf.zero_()
 
-    assert curriculum.average_episode_length == pytest.approx(43.0)
-    assert curriculum.scale == pytest.approx(0.1 * (1.0 + 1.0e-5))
+    torch.testing.assert_close(curriculum.average_episode_length, torch.tensor(43.0))
+    torch.testing.assert_close(curriculum.scale, torch.tensor(0.1 * (1.0 + 1.0e-5)))
     assert state == {
-        "penalty_scale": curriculum.scale,
+        "scale": curriculum.scale,
         "average_episode_length": curriculum.average_episode_length,
     }
 
@@ -51,54 +69,53 @@ def test_penalty_curriculum_reads_completed_lengths_before_they_are_cleared() ->
         (43, 1.0 + 1.0e-5),
     ),
 )
-def test_penalty_curriculum_uses_strict_released_thresholds(episode_length: int, scale_factor: float) -> None:
+def test_penalty_curriculum_uses_strict_bfm_thresholds(episode_length: int, scale_factor: float) -> None:
     """Only averages strictly outside the 40--42 deadband change the scale."""
     env, curriculum = _curriculum(torch.full((10_000,), episode_length, dtype=torch.long))
 
-    curriculum(env, slice(None))
+    _update(env, curriculum, slice(None))
 
-    assert curriculum.average_episode_length == pytest.approx(float(episode_length))
-    assert curriculum.scale == pytest.approx(0.1 * scale_factor)
+    torch.testing.assert_close(curriculum.average_episode_length, torch.tensor(float(episode_length)))
+    torch.testing.assert_close(curriculum.scale, torch.tensor(0.1 * scale_factor))
 
 
 def test_penalty_curriculum_weights_only_the_reset_batch() -> None:
-    """Partial resets must contribute their exact fraction of the 10,000-sample budget."""
+    """Partial resets contribute their exact fraction of the configured sample budget."""
     episode_lengths = torch.full((10_000,), 50, dtype=torch.long)
     env, curriculum = _curriculum(episode_lengths)
-    curriculum(env, slice(None))
+    _update(env, curriculum, slice(None))
 
     env.episode_length_buf[2] = 10
     env.episode_length_buf[7] = 30
-    curriculum(env, torch.tensor((2, 7)))
+    _update(env, curriculum, torch.tensor((2, 7)))
 
     expected = 50.0 * (1.0 - 2.0 / 10_000.0) + 20.0 * (2.0 / 10_000.0)
-    assert curriculum.average_episode_length == pytest.approx(expected)
+    torch.testing.assert_close(curriculum.average_episode_length, torch.tensor(expected))
 
 
-def test_penalty_curriculum_reset_preserves_state_and_properties_are_read_only() -> None:
-    """Manager reset must preserve learned state, which callers can only read."""
+def test_penalty_curriculum_reset_preserves_device_state_and_storage() -> None:
+    """Manager reset leaves the bound device tensors unchanged and address-stable."""
     env, curriculum = _curriculum(torch.full((10_000,), 43, dtype=torch.long))
-    curriculum(env, slice(None))
-    before = (curriculum.scale, curriculum.average_episode_length)
+    _update(env, curriculum, slice(None))
+    before = (curriculum.scale.clone(), curriculum.average_episode_length.clone())
+    pointers = (curriculum.scale.data_ptr(), curriculum.average_episode_length.data_ptr())
 
     curriculum.reset(env_ids=torch.tensor((1, 3)))
 
-    assert (curriculum.scale, curriculum.average_episode_length) == before
-    with pytest.raises(AttributeError):
-        curriculum.scale = 0.5
-    with pytest.raises(AttributeError):
-        curriculum.average_episode_length = 0.0
+    torch.testing.assert_close(curriculum.scale, before[0])
+    torch.testing.assert_close(curriculum.average_episode_length, before[1])
+    assert (curriculum.scale.data_ptr(), curriculum.average_episode_length.data_ptr()) == pointers
 
 
-def test_penalty_curriculum_clamps_scale_to_unit_interval() -> None:
-    """Multiplicative updates must not move the scale outside the released bounds."""
+def test_penalty_curriculum_clamps_scale_to_configured_interval() -> None:
+    """Multiplicative updates cannot move the scale outside configured bounds."""
     high_env, high = _curriculum(torch.full((10_000,), 43, dtype=torch.long))
-    high._scale = 1.0
-    high(high_env, slice(None))
+    high.scale.fill_(1.0)
+    _update(high_env, high, slice(None))
 
     low_env, low = _curriculum(torch.full((10_000,), 39, dtype=torch.long))
-    low._scale = 0.0
-    low(low_env, slice(None))
+    low.scale.zero_()
+    _update(low_env, low, slice(None))
 
-    assert high.scale == 1.0
-    assert low.scale == 0.0
+    torch.testing.assert_close(high.scale, torch.tensor(1.0))
+    torch.testing.assert_close(low.scale, torch.tensor(0.0))

@@ -5,18 +5,34 @@
 
 """Tests for exact motion-imitation event schedules."""
 
+import ast
+import inspect
+import textwrap
+from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 import warp as wp
 
+from isaaclab.envs import mdp as isaaclab_mdp
 from isaaclab.managers import EventTermCfg, SceneEntityCfg
+from isaaclab.utils.math import quat_from_angle_axis, quat_mul
 
-from isaaclab_tasks.core.multi_task.motion.config.environment import MotionEventsPresetsCfg
-from isaaclab_tasks.core.multi_task.motion.mdp.commands import MotionStatePayload
-from isaaclab_tasks.core.multi_task.motion.mdp.events import MotionPushVelocity
-from isaaclab_tasks.core.multi_task.motion.mdp.reset_sources import SmplMocapAndFallReset
+from isaaclab_tasks.core.multi_task.mdp import RootVelocityPushDiscrete
+from isaaclab_tasks.core.multi_task.motion.data import MotionResetState
+from isaaclab_tasks.core.multi_task.motion.robots.g1.reset import G1ReferenceAndLieDownReset
+from isaaclab_tasks.core.multi_task.motion.robots.smpl.articulation import SMPL_MOTION_ARTICULATION_CFG
+from isaaclab_tasks.core.multi_task.motion.robots.smpl.reset import SmplHumEnvMocapAndFallReset
+from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
+from isaaclab_tasks.utils import resolve_presets
+
+from isaaclab_assets.robots.smpl import smpl_constants
+
+_SMPL_LIVE_JOINT_NAMES = tuple(
+    f"{body}_x_{body}_y_{body}_z:{component}" for body in smpl_constants.MUJOCO_BODY_NAMES[1:] for component in range(3)
+)
 
 
 class _Asset:
@@ -42,42 +58,50 @@ def _make_term(
     event_interval_seconds: float = 1.0,
     is_global_time: bool = True,
     interval_seconds: tuple[int, int] = (1, 3),
-) -> tuple[MotionPushVelocity, _Asset]:
+    velocity_range: dict[str, tuple[float, float]] | None = None,
+) -> tuple[RootVelocityPushDiscrete, _Asset]:
     asset = _Asset(num_envs)
+    if velocity_range is None:
+        velocity_range = {
+            "x": (-0.5, 0.5),
+            "y": (-0.5, 0.5),
+            "z": (0.0, 0.0),
+            "roll": (-0.5, 0.5),
+            "pitch": (-0.5, 0.5),
+            "yaw": (-0.5, 0.5),
+        }
     env = SimpleNamespace(
         num_envs=num_envs,
         device="cpu",
         scene={"robot": asset},
     )
     cfg = EventTermCfg(
-        func=MotionPushVelocity,
+        func=RootVelocityPushDiscrete,
         mode="interval",
         interval_range_s=(event_interval_seconds, event_interval_seconds),
         is_global_time=is_global_time,
         resample_interval_on_reset=False,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
-            "interval_seconds_integer_high_exclusive": interval_seconds,
-            "linear_velocity_range_m_s": (-0.5, 0.5),
-            "angular_velocity_range_rad_s": (-0.5, 0.5),
+            "interval_seconds_range": interval_seconds,
+            "velocity_range": velocity_range,
         },
     )
-    return MotionPushVelocity(cfg, env), asset
+    return RootVelocityPushDiscrete(cfg, env), asset
 
 
-def _step(term: MotionPushVelocity) -> None:
+def _step(term: RootVelocityPushDiscrete) -> None:
     params = term.cfg.params
     term(
         term._env,
         None,
         params["asset_cfg"],
-        params["interval_seconds_integer_high_exclusive"],
-        params["linear_velocity_range_m_s"],
-        params["angular_velocity_range_rad_s"],
+        params["interval_seconds_range"],
+        params["velocity_range"],
     )
 
 
-def test_integer_second_intervals_match_released_schedule() -> None:
+def test_integer_second_intervals_match_bfm_schedule() -> None:
     term, _ = _make_term(num_envs=4096)
 
     assert term._interval_second_choices.tolist() == [1, 2]
@@ -85,11 +109,84 @@ def test_integer_second_intervals_match_released_schedule() -> None:
 
 
 def test_g1_push_uses_global_one_second_event_cadence() -> None:
-    push = MotionEventsPresetsCfg().g1_lafan.push
+    push = resolve_presets(
+        MotionImitationEnvCfg(),
+        selected={
+            "g1",
+            "lafan",
+            "physx",
+            "timing_sim200_control50_horizon501",
+            "sampling_clip_time",
+            "randomization_physics_observation_pose_push",
+        },
+    ).events.push
 
     assert push.interval_range_s == (1.0, 1.0)
     assert push.is_global_time
-    assert not push.resample_interval_on_reset
+    assert push.func is RootVelocityPushDiscrete
+    assert push.params["interval_seconds_range"] == (1, 3)
+    assert push.params["velocity_range"] == {
+        "x": (-0.5, 0.5),
+        "y": (-0.5, 0.5),
+        "z": (0.0, 0.0),
+        "roll": (-0.5, 0.5),
+        "pitch": (-0.5, 0.5),
+        "yaw": (-0.5, 0.5),
+    }
+
+
+def test_motion_startup_randomization_reuses_isaaclab_events() -> None:
+    events = resolve_presets(
+        MotionImitationEnvCfg(),
+        selected={
+            "g1",
+            "lafan",
+            "physx",
+            "timing_sim200_control50_horizon501",
+            "sampling_clip_time",
+            "randomization_physics_observation_pose_push",
+        },
+    ).events
+
+    assert events.robot_material.func is isaaclab_mdp.randomize_rigid_body_material
+    assert events.robot_material.params["num_buckets"] == 1024
+    assert events.body_mass.func is isaaclab_mdp.randomize_rigid_body_mass
+    assert events.torso_com.func is isaaclab_mdp.randomize_rigid_body_com
+
+
+def test_smpl_native_asset_owns_exact_humenv_inertial_properties() -> None:
+    """The selected MJCF must carry exact masses and inertias without a startup rewrite."""
+    mujoco = pytest.importorskip("mujoco")
+    robot = mujoco.MjModel.from_xml_path(smpl_constants.SMPL_ROBOT_MJCF_PATH)
+    reference = mujoco.MjModel.from_xml_path(smpl_constants.SMPL_HUMENV_MJCF_PATH)
+    robot_ids = np.asarray(
+        [mujoco.mj_name2id(robot, mujoco.mjtObj.mjOBJ_BODY, name) for name in smpl_constants.MUJOCO_BODY_NAMES]
+    )
+    reference_ids = np.asarray(
+        [mujoco.mj_name2id(reference, mujoco.mjtObj.mjOBJ_BODY, name) for name in smpl_constants.MUJOCO_BODY_NAMES]
+    )
+
+    assert SMPL_MOTION_ARTICULATION_CFG.spawn.asset_path == smpl_constants.SMPL_ROBOT_MJCF_PATH
+    assert np.all(robot_ids >= 0) and np.all(reference_ids >= 0)
+    np.testing.assert_array_equal(robot.body_mass[robot_ids], reference.body_mass[reference_ids])
+    np.testing.assert_array_equal(robot.body_inertia[robot_ids], reference.body_inertia[reference_ids])
+    np.testing.assert_array_equal(robot.body_iquat[robot_ids], reference.body_iquat[reference_ids])
+
+
+def test_smpl_inertial_startup_rewrite_stays_absent() -> None:
+    """SMPL physics is asset data, not duplicated constants or an environment event."""
+    motion_root = Path(__file__).parents[1] / "motion"
+    root_source = (motion_root.parent / "motion_env_cfg.py").read_text(encoding="utf-8")
+    smpl = resolve_presets(
+        MotionImitationEnvCfg(),
+        selected={"smpl", "cmu", "newton_mjwarp", "timing_sim450_control30_horizon300", "sampling_source_rows"},
+    )
+
+    assert vars(smpl.events) == {}
+    assert "set_smpl_body_mass_inertia" not in root_source
+    assert not (motion_root / "mdp" / "events.py").exists()
+    assert not hasattr(smpl_constants, "HUMENV_BODY_MASS")
+    assert not hasattr(smpl_constants, "HUMENV_BODY_INERTIA")
 
 
 def test_only_exact_elapsed_seconds_match_triggers_and_resample() -> None:
@@ -173,25 +270,82 @@ def test_push_requires_one_global_event_per_second(event_interval_seconds: float
         _make_term(event_interval_seconds=event_interval_seconds, is_global_time=is_global_time)
 
 
+@pytest.mark.parametrize(
+    "velocity_range",
+    ({"forward": (-0.5, 0.5)}, {"x": (0.5, -0.5)}, {"yaw": (0.0, float("inf"))}),
+)
+def test_invalid_root_velocity_range_fails_at_construction(
+    velocity_range: dict[str, tuple[float, float]],
+) -> None:
+    with pytest.raises(ValueError, match="Root velocity range"):
+        _make_term(velocity_range=velocity_range)
+
+
 @pytest.mark.parametrize("physics_dt_seconds", (0.0, -0.01, float("nan"), float("inf")))
 def test_smpl_fall_reset_requires_positive_finite_physics_timestep(physics_dt_seconds: float) -> None:
-    """Fall synthesis must consume one valid timestep from the selected profile."""
+    """Fall synthesis must require one finite positive physics timestep."""
     with pytest.raises(ValueError, match="finite positive physics timestep"):
-        SmplMocapAndFallReset(
-            object(),
-            random_actions_high_exclusive=5,
+        SmplHumEnvMocapAndFallReset(
+            seed=0,
+            device="cpu",
+            capacity=1,
+            live_joint_names=tuple(smpl_constants.MUJOCO_JOINT_NAMES),
             physics_dt_seconds=physics_dt_seconds,
             physics_steps_per_action=15,
+            random_actions_high_exclusive=5,
+            fall_pool_size=1,
+            initial_root_height_m=1.0,
+            initial_root_quaternion_component_range=(0.0, 1.0),
+            control_range=(-0.5, 0.5),
         )
 
 
-def test_smpl_native_reset_preserves_source_state_without_physx_ground_snap() -> None:
-    """Native MuJoCo resets must not rewrite a valid source state for PhysX."""
+@pytest.mark.parametrize("physics_steps_per_action", (0, -1))
+def test_smpl_fall_reset_requires_positive_physics_steps_per_action(physics_steps_per_action: int) -> None:
+    """Fall synthesis must require a positive number of physics steps per action."""
+    with pytest.raises(ValueError, match="positive action and physics-step counts"):
+        SmplHumEnvMocapAndFallReset(
+            seed=0,
+            device="cpu",
+            capacity=1,
+            live_joint_names=tuple(smpl_constants.MUJOCO_JOINT_NAMES),
+            physics_dt_seconds=1.0 / 450.0,
+            physics_steps_per_action=physics_steps_per_action,
+            random_actions_high_exclusive=5,
+            fall_pool_size=1,
+            initial_root_height_m=1.0,
+            initial_root_quaternion_component_range=(0.0, 1.0),
+            control_range=(-0.5, 0.5),
+        )
+
+
+def test_smpl_fall_reset_requires_positive_pool_size() -> None:
+    """Fall synthesis must require a positive reservoir capacity."""
+    with pytest.raises(ValueError, match="positive pool size"):
+        SmplHumEnvMocapAndFallReset(
+            seed=0,
+            device="cpu",
+            capacity=1,
+            live_joint_names=tuple(smpl_constants.MUJOCO_JOINT_NAMES),
+            physics_dt_seconds=1.0 / 450.0,
+            physics_steps_per_action=15,
+            random_actions_high_exclusive=5,
+            fall_pool_size=0,
+            initial_root_height_m=1.0,
+            initial_root_quaternion_component_range=(0.0, 1.0),
+            control_range=(-0.5, 0.5),
+        )
+
+
+def test_smpl_native_reset_preserves_source_state_without_physx_ground_snap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Native MuJoCo resets preserve references in fixed-capacity output storage."""
     joint_position = torch.stack((torch.zeros(69), torch.linspace(-1.2, 1.2, 69)))
     root_position = torch.tensor(((0.0, 0.0, -0.1), (0.0, 0.0, 0.2)))
     root_rotation = torch.zeros(2, 4)
     root_rotation[:, 3] = 1.0
-    reference = MotionStatePayload.ResetState(
+    reference = MotionResetState(
         root_position=root_position,
         root_rotation_xyzw=root_rotation,
         root_linear_velocity_world=torch.zeros(2, 3),
@@ -199,9 +353,7 @@ def test_smpl_native_reset_preserves_source_state_without_physx_ground_snap() ->
         joint_position=joint_position,
         joint_velocity=torch.zeros_like(joint_position),
     )
-    reset = object.__new__(SmplMocapAndFallReset)
-    reset._POOL_SIZE = 1
-    reset._pool = MotionStatePayload.ResetState(
+    pool = MotionResetState(
         root_position=reference.root_position[:1],
         root_rotation_xyzw=reference.root_rotation_xyzw[:1],
         root_linear_velocity_world=reference.root_linear_velocity_world[:1],
@@ -209,12 +361,93 @@ def test_smpl_native_reset_preserves_source_state_without_physx_ground_snap() ->
         joint_position=reference.joint_position[:1],
         joint_velocity=reference.joint_velocity[:1],
     )
-
-    selected = reset(
-        reference,
-        torch.zeros(2, dtype=torch.int64),
-        torch.Generator(device="cpu").manual_seed(0),
+    monkeypatch.setattr(SmplHumEnvMocapAndFallReset, "_build_pool", lambda _self, _device: pool)
+    reset = SmplHumEnvMocapAndFallReset(
+        seed=0,
+        device="cpu",
+        capacity=2,
+        live_joint_names=_SMPL_LIVE_JOINT_NAMES,
+        physics_dt_seconds=1.0 / 450.0,
+        physics_steps_per_action=15,
+        random_actions_high_exclusive=5,
+        fall_pool_size=1,
+        initial_root_height_m=1.0,
+        initial_root_quaternion_component_range=(0.0, 1.0),
+        control_range=(-0.5, 0.5),
     )
+    generator = torch.Generator(device="cpu").manual_seed(0)
+    assert reset._pool is pool
+    selected = reset(reference, torch.zeros(2, dtype=torch.int64), generator)
 
     for field in reference.__dataclass_fields__:
         torch.testing.assert_close(getattr(selected, field), getattr(reference, field))
+    pointers = {field: getattr(selected, field).data_ptr() for field in reference.__dataclass_fields__}
+
+    repeated = reset(reference, torch.zeros(2, dtype=torch.int64), generator)
+    partial_reference = MotionResetState(
+        **{field: getattr(reference, field)[:1] for field in reference.__dataclass_fields__}
+    )
+    partial = reset(partial_reference, torch.zeros(1, dtype=torch.int64), generator)
+    assert {field: getattr(repeated, field).data_ptr() for field in reference.__dataclass_fields__} == pointers
+    assert {field: getattr(partial, field).data_ptr() for field in reference.__dataclass_fields__} == pointers
+
+
+def test_g1_lie_down_reset_matches_shared_quaternion_math_and_reuses_storage() -> None:
+    """G1 lie-down resets preserve BFM-Zero's random law in fixed storage."""
+    root_rotation = torch.zeros(2, 4)
+    root_rotation[:, 3] = 1.0
+    reference = MotionResetState(
+        root_position=torch.tensor(((0.0, 0.0, 1.0), (1.0, 2.0, 1.2))),
+        root_rotation_xyzw=root_rotation,
+        root_linear_velocity_world=torch.zeros(2, 3),
+        root_angular_velocity_world=torch.zeros(2, 3),
+        joint_position=torch.zeros(2, 29),
+        joint_velocity=torch.zeros(2, 29),
+    )
+    reset = G1ReferenceAndLieDownReset(
+        capacity=2,
+        device="cpu",
+        lie_down_root_height_m=0.5,
+        lie_down_roll_magnitude_rad=0.5 * torch.pi,
+        lie_down_negative_roll_probability=0.5,
+    )
+    generator = torch.Generator(device="cpu").manual_seed(7)
+    selected = reset(reference, torch.tensor((0, 1), dtype=torch.int64), generator)
+
+    oracle_generator = torch.Generator(device="cpu").manual_seed(7)
+    sign = 1.0 if torch.rand((), generator=oracle_generator) < 0.5 else -1.0
+    angle = torch.tensor((sign * (-0.5 * torch.pi),))
+    axis = torch.tensor(((1.0, 0.0, 0.0),))
+    expected_rotation = quat_mul(quat_from_angle_axis(angle, axis), reference.root_rotation_xyzw[1:2])
+    torch.testing.assert_close(selected.root_position[0], reference.root_position[0])
+    torch.testing.assert_close(selected.root_position[1, 2], torch.tensor(0.5))
+    torch.testing.assert_close(selected.root_rotation_xyzw[0], reference.root_rotation_xyzw[0])
+    torch.testing.assert_close(selected.root_rotation_xyzw[1:2], expected_rotation)
+    pointers = {field: getattr(selected, field).data_ptr() for field in reference.__dataclass_fields__}
+
+    repeated = reset(reference, torch.tensor((1, 0), dtype=torch.int64), generator)
+    partial_reference = MotionResetState(
+        **{field: getattr(reference, field)[:1] for field in reference.__dataclass_fields__}
+    )
+    partial = reset(partial_reference, torch.zeros(1, dtype=torch.int64), generator)
+    assert {field: getattr(repeated, field).data_ptr() for field in reference.__dataclass_fields__} == pointers
+    assert {field: getattr(partial, field).data_ptr() for field in reference.__dataclass_fields__} == pointers
+
+
+def test_motion_reset_hot_paths_write_torch_ops_through_out_buffers() -> None:
+    """Every tensor-producing reset operation writes caller-stable storage."""
+    out_operations = {"eq", "index_select", "lt", "mul", "rand", "randint", "where"}
+    for function in (
+        G1ReferenceAndLieDownReset.__call__,
+        SmplHumEnvMocapAndFallReset.__call__,
+        SmplHumEnvMocapAndFallReset._select,
+    ):
+        tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            if isinstance(node.func.value, ast.Name) and node.func.value.id == "torch":
+                if node.func.attr in out_operations:
+                    assert any(keyword.arg == "out" for keyword in node.keywords), (function, node.func.attr)
+                assert node.func.attr not in {"cat", "empty", "stack", "tensor", "zeros"}
+            assert node.func.attr not in {"clone", "contiguous", "new_tensor"}

@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Motion task-table and payload integration for the shared state command."""
+"""Typed native motion clips and their controlled decoders."""
 
 from isaaclab.utils.module import lazy_export
 
