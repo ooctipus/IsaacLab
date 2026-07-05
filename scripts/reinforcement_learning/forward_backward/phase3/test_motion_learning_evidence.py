@@ -286,7 +286,7 @@ def test_native_training_smoke_changes_only_declared_execution_scale(preset: str
     production = _runner_cfg(preset).to_dict()
     smoke = copy.deepcopy(production)
     smoke["max_iterations"] = overrides["max_iterations"]
-    smoke["lifecycle_extension"] = overrides["lifecycle_extension"]
+    smoke["tracking_curriculum"] = overrides["tracking_curriculum"]
     smoke["replay"]["capacity_transitions"] = overrides["replay_capacity_transitions"]
 
     def changed_paths(left: object, right: object, prefix: str = "") -> set[str]:
@@ -301,12 +301,12 @@ def test_native_training_smoke_changes_only_declared_execution_scale(preset: str
         return set() if left == right else {prefix}
 
     expected = {"max_iterations", "replay.capacity_transitions"}
-    if production["lifecycle_extension"] is not None:
-        expected.add("lifecycle_extension")
+    if production["tracking_curriculum"] is not None:
+        expected.add("tracking_curriculum")
     assert changed_paths(production, smoke) == expected
     assert overrides == {
         "max_iterations": profile["collection"]["iterations"],
-        "lifecycle_extension": None,
+        "tracking_curriculum": None,
         "replay_capacity_transitions": profile["collection"]["expected_transitions"],
     }
     assert overrides["replay_capacity_transitions"] % profile["collection"]["num_envs"] == 0
@@ -315,7 +315,7 @@ def test_native_training_smoke_changes_only_declared_execution_scale(preset: str
     selected = set(selection.removeprefix("presets=").split(","))
     assert "tracking_off" in selected
     assert selected.isdisjoint({"tracking_source_edge", "tracking_reset_frame"})
-    assert not any(token.startswith("agent.lifecycle_extension=") for token in command)
+    assert not any(token.startswith("agent.tracking_curriculum=") for token in command)
     assert f"agent.replay.capacity_transitions={overrides['replay_capacity_transitions']}" in command
     assert not any(token.startswith("agent.run_name=") for token in command)
 
@@ -338,7 +338,7 @@ def test_native_training_smoke_reports_current_learner_compatibility(preset: str
     overrides = profile["execution_scale_overrides"]
     agent_cfg = _runner_cfg(preset)
     agent_cfg.max_iterations = overrides["max_iterations"]
-    agent_cfg.lifecycle_extension = overrides["lifecycle_extension"]
+    agent_cfg.tracking_curriculum = overrides["tracking_curriculum"]
     agent_cfg.replay.capacity_transitions = overrides["replay_capacity_transitions"]
     wrapper = object.__new__(RslRlVecEnvWrapper)
     package_root = Path(rsl_rl.__file__).resolve().parent
@@ -472,7 +472,7 @@ def test_native_training_smoke_overrides_resolve_through_real_task_registry(
     assert table_cfg.source.identifier == expected_source
     assert table_cfg.source_artifact_root == source_root
     assert table_cfg.reference_artifact_root == ("" if preset == "smpl_cmu" else reference_root)
-    assert agent_cfg.lifecycle_extension is None
+    assert agent_cfg.tracking_curriculum is None
     assert agent_cfg.replay.capacity_transitions == profile["collection"]["expected_transitions"]
 
 
@@ -489,13 +489,13 @@ def test_native_training_smokes_are_predeclared_but_not_launched() -> None:
     for preset, profile in contract["profiles"].items():
         runner = _runner_cfg(preset)
         collection = profile["collection"]
-        assert collection["num_envs"] == runner.schedule.num_envs
-        assert collection["steps_per_iteration"] == runner.schedule.num_steps_per_env
-        assert collection["random_action_transitions"] == runner.schedule.random_action_steps
+        assert collection["num_envs"] == runner.num_envs
+        assert collection["steps_per_iteration"] == runner.num_steps_per_env
+        assert collection["random_action_transitions"] == runner.algorithm.random_action_transitions
         assert collection["expected_transitions"] == (
             collection["num_envs"] * collection["steps_per_iteration"] * collection["iterations"]
         )
-        assert collection["updates_per_group"] == runner.schedule.num_updates_per_iteration
+        assert collection["updates_per_group"] == runner.num_updates_per_iteration
         assert collection["expected_update_groups"] == 1
         assert collection["expected_update_calls"] == (
             collection["expected_update_groups"] * collection["updates_per_group"]

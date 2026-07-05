@@ -1092,22 +1092,23 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
             model.observation_schema,
             env.device,
             source_bind=expert_cfg["source_bind"],
+            priorities_bind=expert_cfg["priorities_bind"],
             sampling_mode=expert_cfg["sampling_mode"],
             sampling_step_seconds=expert_cfg["sampling_step_seconds"],
             target_projection=expert_cfg["target_projection"],
             target_projection_binds=tuple(expert_cfg["target_projection_binds"]),
             window_lengths=tuple(expert_cfg["window_lengths"]),
-            seed=expert_cfg["seed"],
+            seed=runner_values["seed"],
         )
         command = env.unwrapped.command_manager.get_term("motion")
         with forward_backward_evaluation_scope(
             env,
             command,
-            command.payload.evaluation_scope,
+            command.payload.sampler.reset_sampling_scope,
             args.evaluation_seed,
             reset_source_name="reference",
         ):
-            lifecycle = runner_values["lifecycle_extension"]
+            tracking_cfg = runner_values["tracking_curriculum"]
             tracking = forward_backward_tracking_evaluator(
                 model,
                 env,
@@ -1116,11 +1117,11 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
                 command=command,
                 history_factory=history_factory,
                 sequence_start_rows=table.clip_start_rows,
-                projections=tuple(lifecycle["projections"]),
-                context_window_length=lifecycle["context_window_length"],
-                include_reset_frame=lifecycle["include_reset_frame"],
-                allow_horizon_truncation=lifecycle["allow_horizon_truncation"],
-                shuffle_assignments=lifecycle["shuffle_assignments"],
+                projections=tuple(tracking_cfg["projections"]),
+                context_window_length=tracking_cfg["context_window_length"],
+                include_reset_frame=tracking_cfg["include_reset_frame"],
+                allow_horizon_truncation=tracking_cfg["allow_horizon_truncation"],
+                shuffle_assignments=tracking_cfg["shuffle_assignments"],
                 assignment_rng=random.Random(args.evaluation_seed),
             )
         after_tracking = exclusive_physical_gpu_snapshot(args.device)
@@ -1141,7 +1142,7 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
             scope_env=env,
             evaluation_scope=forward_backward_evaluation_scope,
             command=command,
-            domain_scope=command.payload.evaluation_scope,
+            domain_scope=command.payload.sampler.reset_sampling_scope,
             history_factory=history_factory,
             dataset=dataset,
             reward_runtime=reward_runtime,

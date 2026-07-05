@@ -200,3 +200,11 @@ def test_source_inspection_closes_its_controlled_lifetime(module) -> None:
 
     assert "source_index = source.inspect()" in source
     assert "finally:\n        source.close()" in source
+
+
+def test_runtime_compares_the_exact_clip_index_without_a_parallel_identity(module) -> None:
+    """The immutable clip index itself must close source/table equality."""
+    source = inspect.getsource(module._run)
+
+    assert "table.clip_index != source_index" in source
+    assert "content_identity_sha256" not in source

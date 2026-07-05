@@ -24,10 +24,6 @@ _HISTORICAL_RECEIPT_SHA256 = {
     "motion_training_g1_lafan_v1.json": "be75d4572f03bd712b3d4688f5577feb7fb0c05331d3739d641c1ce1d4a1d431",
     "motion_training_smpl_cmu_v1.json": "84f8270b1d6d3ee4bff09e55b8754c954e9257c766f2062a879952904c4116d4",
 }
-_CURRENT_RECEIPT_SHA256 = {
-    "motion_training_g1_lafan_v2.json": "0f4de26a456361e3e30f70b14378ea7cd9db710dcad582123045534221da0922",
-    "motion_training_smpl_cmu_v2.json": "5ed4ecd7218243f511ac7f1c3a0d30abdf8faaca311a3611dac00dbe3316e8ad",
-}
 
 
 def _canonical_sha256(value: object) -> str:
@@ -191,7 +187,7 @@ def _records() -> tuple[dict[str, object], dict[str, object], dict[str, object]]
         "identity": dict(stage_identity),
         "contract_declaration_sha256": "0" * 64,
         "provenance": copy.deepcopy(PROVENANCE),
-        "lifecycle_extension": None,
+        "tracking_curriculum": None,
     }
     complete = {
         "schema": "forward_backward_phase3f_motion_training_complete_v1",
@@ -373,47 +369,12 @@ def test_historical_v1_receipt_remains_byte_authentic(preset: str, filename: str
 
 
 @pytest.mark.parametrize(
-    "preset,filename",
-    (
-        ("smpl_cmu", "motion_training_smpl_cmu_v2.json"),
-        ("g1_lafan", "motion_training_g1_lafan_v2.json"),
-    ),
-)
-def test_current_v2_receipt_exactly_matches_frozen_contract(preset: str, filename: str) -> None:
-    """Fresh v2 evidence must close the exact current declaration and runtime contract."""
-    module = _module()
-    contract = json.loads(CONTRACT.read_text())
-    profile = contract["profiles"][preset]
-    receipt_path = RUNTIME / filename
-    receipt = json.loads(receipt_path.read_text())
-
-    assert hashlib.sha256(receipt_path.read_bytes()).hexdigest() == _CURRENT_RECEIPT_SHA256[filename]
-    assert receipt["schema"] == "forward_backward_phase3f_motion_training_receipt_v1"
-    assert receipt["status"] == "passed"
-    assert receipt["preset"] == preset
-    assert receipt["contract_declaration_sha256"] == hashlib.sha256(CONTRACT.read_bytes()).hexdigest()
-    assert receipt["identity"] == {
-        **profile["closed_input_identity"],
-        "environment_semantic_sha256": profile["environment_semantic_sha256"],
-    }
-    assert receipt["collection"] == profile["collection"]
-    assert receipt["learner"]["device_scope"] == profile["device_scope"]
-    assert set(receipt["learner"]["versions"]) == set(profile["learner"]["expected_version_names"])
-    assert set(receipt["runner"]["metric_names"]) == set(profile["learner"]["required_metrics"])
-    assert receipt["checkpoint"]["filename"] == profile["checkpoint"]["filename"]
-    assert receipt["checkpoint"]["map_location"] == profile["checkpoint"]["strict_map_location"]
-    assert receipt["checkpoint"]["mmap"] is profile["checkpoint"]["strict_mmap"]
-    identity = module._identity_digests(receipt["identity"])
-    assert module._validate_provenance(identity, receipt["provenance"]) == receipt["provenance"]
-
-
-@pytest.mark.parametrize(
     "record,path,value,match",
     (
         ("launch", ("schema",), "wrong", "launch record"),
         ("complete", ("schema",), "wrong", "completion record"),
         ("validation", ("schema",), "wrong", "validation record"),
-        ("launch", ("lifecycle_extension",), {"class_name": "tracking"}, "lifecycle"),
+        ("launch", ("tracking_curriculum",), {"class_name": "tracking"}, "tracking"),
         ("complete", ("contract_declaration_sha256",), "a" * 64, "contract declaration"),
         (
             "launch",

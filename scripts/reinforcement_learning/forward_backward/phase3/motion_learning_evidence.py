@@ -222,12 +222,13 @@ def _expert_buffer(preset: str, env: SimpleNamespace, runner: dict[str, object])
         schema,
         str(env.unwrapped.command_manager.get_term("motion").payload.table.device),
         source_bind=expert_cfg["source_bind"],
+        priorities_bind=expert_cfg["priorities_bind"],
         sampling_mode=expert_cfg["sampling_mode"],
         sampling_step_seconds=expert_cfg["sampling_step_seconds"],
         target_projection=expert_cfg["target_projection"],
         target_projection_binds=tuple(expert_cfg["target_projection_binds"]),
         window_lengths=tuple(expert_cfg["window_lengths"]),
-        seed=int(expert_cfg["seed"]),
+        seed=int(runner["seed"]),
     )
 
 
@@ -324,7 +325,7 @@ def _canary_config(
     cfg["replay"]["capacity_transitions"] = CANARY_REPLAY_TRANSITIONS
     cfg["algorithm"]["batch_size"] = CANARY_BATCH_SIZE
     cfg["torch_compile_mode"] = None
-    expert_seed = int(cfg["expert"]["seed"])
+    expert_seed = int(cfg["seed"])
 
     def provider(_env, _observation_schema, _device, **_kwargs):
         return _clone_expert(expert, expert_seed)

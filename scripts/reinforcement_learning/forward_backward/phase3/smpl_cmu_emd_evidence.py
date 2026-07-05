@@ -437,12 +437,7 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
         if env.max_episode_length < evaluation_horizon:
             raise RuntimeError("Resolved evaluation horizon is shorter than the longest held-out clip.")
         table = env.unwrapped.command_manager.get_term("motion").table
-        if (
-            table.clip_ids != source_index.clip_ids
-            or len(table.clip_ids) != _EXPECTED_CLIPS
-            or table.clip_index.total_frames != _EXPECTED_SOURCE_FRAMES
-            or table.clip_index.content_identity_sha256 != source_index.content_identity_sha256
-        ):
+        if table.clip_index != source_index:
             raise RuntimeError("Materialized SMPL evaluation table differs from the inspected source identity.")
 
         observations, _reset_info = env.reset()
@@ -477,12 +472,13 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
             model.observation_schema,
             env.device,
             source_bind=expert_cfg["source_bind"],
+            priorities_bind=expert_cfg["priorities_bind"],
             sampling_mode=expert_cfg["sampling_mode"],
             sampling_step_seconds=expert_cfg["sampling_step_seconds"],
             target_projection=expert_cfg["target_projection"],
             target_projection_binds=tuple(expert_cfg["target_projection_binds"]),
             window_lengths=tuple(expert_cfg["window_lengths"]),
-            seed=expert_cfg["seed"],
+            seed=runner_values["seed"],
         )
         if expert.clip_ids != table.clip_ids or expert.frames.shape != (table.clip_index.total_frames, 358):
             raise RuntimeError("SMPL evaluator expert projection does not cover the physical table rows.")
@@ -492,7 +488,7 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
         with forward_backward_evaluation_scope(
             env,
             command,
-            command.payload.evaluation_scope,
+            command.payload.sampler.reset_sampling_scope,
             args.evaluation_seed,
             reset_source_name="reference",
         ):
@@ -547,7 +543,6 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
         source_identity = {
             "split_artifact_sha256": source_cfg.evaluation.artifact_sha256,
             "source_content_sha256": source_index.source_content_sha256,
-            "source_index_content_identity_sha256": source_index.content_identity_sha256,
             "table_cache_identity": table.cache_identity,
             "frame_builder_identity_sha256": table.frame_builder_identity_sha256,
             "expert_data_hash": expert.schema.data_hash,

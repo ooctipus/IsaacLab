@@ -109,7 +109,7 @@ def test_training_callback_publishes_each_stage_beside_the_training_checkpoint(
             "identity": identity,
             "contract_declaration_sha256": contract_digest,
             "provenance": provenance,
-            "lifecycle_extension": None,
+            "tracking_curriculum": None,
         },
     )
     monkeypatch.setattr(
@@ -180,7 +180,7 @@ def test_training_callback_rejects_contract_drift_after_launch(tmp_path: Path, m
             "identity": identity,
             "contract_declaration_sha256": "2" * 64,
             "provenance": provenance,
-            "lifecycle_extension": None,
+            "tracking_curriculum": None,
         }
 
     monkeypatch.setattr(module, "_launch_record", launch_record)
@@ -233,12 +233,12 @@ def test_launch_contract_rejects_identity_and_lifecycle_drift() -> None:
     }
     env = SimpleNamespace(num_envs=4)
     runner = SimpleNamespace(
-        lifecycle_extension=None,
+        tracking_curriculum=None,
         cfg={"num_steps_per_env": 2},
-        random_action_steps=8,
+        alg=SimpleNamespace(random_action_transitions=8),
         num_updates_per_iteration=3,
     )
-    agent = SimpleNamespace(lifecycle_extension=None, max_iterations=4)
+    agent = SimpleNamespace(tracking_curriculum=None, max_iterations=4)
 
     expected_identity = {"bundle": "a" * 64, "environment_semantic_sha256": "c" * 64}
     drifted_identity = {"bundle": "b" * 64, "environment_semantic_sha256": "c" * 64}
@@ -247,8 +247,8 @@ def test_launch_contract_rejects_identity_and_lifecycle_drift() -> None:
     assert "a" * 64 in str(error.value)
     assert "b" * 64 in str(error.value)
 
-    agent.lifecycle_extension = {"class_name": "tracking"}
-    with pytest.raises(ValueError, match="tracking_off lifecycle preset"):
+    agent.tracking_curriculum = {"class_name": "tracking"}
+    with pytest.raises(ValueError, match="tracking_off curriculum preset"):
         module._assert_launch_contract(profile, expected_identity, env, runner, agent)
 
 
@@ -518,12 +518,12 @@ def test_prepare_callback_materializes_one_exclusive_live_identity_record(
     provenance = {"owners": "retained"}
     configured_env_cfg = object()
     constructed_env_cfg = object()
-    agent_cfg = SimpleNamespace(lifecycle_extension=None, max_iterations=4)
+    agent_cfg = SimpleNamespace(tracking_curriculum=None, max_iterations=4)
     env = SimpleNamespace(num_envs=4)
     runner = SimpleNamespace(
-        lifecycle_extension=None,
+        tracking_curriculum=None,
         cfg={"num_steps_per_env": 2},
-        random_action_steps=8,
+        alg=SimpleNamespace(random_action_transitions=8),
         num_updates_per_iteration=3,
     )
     monkeypatch.setattr(module, "_preset", lambda _cfg: "smpl_cmu")
@@ -532,7 +532,7 @@ def test_prepare_callback_materializes_one_exclusive_live_identity_record(
     monkeypatch.setattr(module, "_live_identity_evidence", lambda *_args: (identity, provenance))
     monkeypatch.setattr(module, "_validate_provenance", lambda _identity, value: value)
 
-    runner.random_action_steps = 7
+    runner.alg.random_action_transitions = 7
     with pytest.raises(ValueError, match="runner cadence"):
         module.training_callback(
             stage="prepare",
@@ -544,7 +544,7 @@ def test_prepare_callback_materializes_one_exclusive_live_identity_record(
             log_dir=tmp_path,
         )
     assert not (tmp_path / "phase3f_identity_freeze.json").exists()
-    runner.random_action_steps = 8
+    runner.alg.random_action_transitions = 8
 
     module.training_callback(
         stage="prepare",

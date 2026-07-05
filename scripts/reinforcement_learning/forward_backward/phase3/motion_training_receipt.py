@@ -211,8 +211,8 @@ def validate_smoke_records(
         if record.get("schema") != expected_schema:
             raise ValueError(f"Phase 3F {name} record has an unsupported schema.")
 
-    if launch.get("lifecycle_extension") is not None:
-        raise ValueError("Phase 3F learner integration must disable the evaluator lifecycle extension.")
+    if launch.get("tracking_curriculum") is not None:
+        raise ValueError("Phase 3F learner integration must disable tracking curriculum.")
     presets = {record.get("preset") for record in (launch, complete, validation)}
     if len(presets) != 1 or None in presets:
         raise ValueError("Phase 3F record preset identities differ.")
@@ -869,15 +869,15 @@ def _assert_runtime_contract(
     runner: object,
     agent_cfg: object,
 ) -> None:
-    """Require the exact frozen lifecycle, collection cadence, and update math."""
-    if agent_cfg.lifecycle_extension is not None or runner.lifecycle_extension is not None:
-        raise ValueError("Phase 3F learner integration must select the tracking_off lifecycle preset.")
+    """Require the exact frozen tracking, collection cadence, and update math."""
+    if agent_cfg.tracking_curriculum is not None or runner.tracking_curriculum is not None:
+        raise ValueError("Phase 3F learner integration must select the tracking_off curriculum preset.")
     collection = _mapping(profile.get("collection"), "collection")
     actual = {
         "num_envs": env.num_envs,
         "steps_per_iteration": int(runner.cfg["num_steps_per_env"]),
         "iterations": agent_cfg.max_iterations,
-        "random_action_transitions": runner.random_action_steps,
+        "random_action_transitions": runner.alg.random_action_transitions,
         "updates_per_group": runner.num_updates_per_iteration,
     }
     if any(collection.get(name) != value for name, value in actual.items()):
@@ -989,7 +989,7 @@ def _launch_record(
         "identity": dict(identity),
         "contract_declaration_sha256": contract_declaration_sha256,
         "provenance": dict(provenance),
-        "lifecycle_extension": None,
+        "tracking_curriculum": None,
     }
 
 

@@ -323,7 +323,7 @@ def _short_rollout(
             action_l2.add_(actions.to(dtype=torch.float64).norm(dim=-1).mean())
             finite.logical_and_(actions.isfinite().all())
             finite.logical_and_(rewards.isfinite().all())
-            for value in observations.values():
+            for _name, value in observations.items(include_nested=True, leaves_only=True):
                 finite.logical_and_(value.isfinite().all())
             done_rows.add_(done.sum())
             if "final_obs" in extras:
@@ -460,7 +460,7 @@ def _run(args: argparse.Namespace, process_started: float) -> dict[str, object]:
             env=env,
             evaluation_scope=forward_backward_evaluation_scope,
             command=command,
-            domain_scope=command.payload.evaluation_scope,
+            domain_scope=command.payload.sampler.reset_sampling_scope,
             history_factory=history_factory,
             model=model,
             context=semantics.pop("context"),

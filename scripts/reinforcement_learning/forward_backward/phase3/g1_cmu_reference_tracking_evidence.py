@@ -354,7 +354,7 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
         with forward_backward_evaluation_scope(
             vec_env,
             command,
-            payload.evaluation_scope,
+            payload.sampler.reset_sampling_scope,
             args.seed,
             reset_source_name="reference",
         ):

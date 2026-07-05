@@ -98,7 +98,7 @@
       },
       "environment_semantic_sha256": "d4e269bb9fe506734d88094c7244dee0178f0ee8b6cf89cee81c56b827a18bf7",
       "execution_scale_overrides": {
-        "lifecycle_extension": null,
+        "tracking_curriculum": null,
         "max_iterations": 12,
         "replay_capacity_transitions": 12288
       },
@@ -226,7 +226,7 @@
       },
       "environment_semantic_sha256": "6a601e97ef67b3ae9986eb69ae79571482a6d33a442d91a6379e4820ac285640",
       "execution_scale_overrides": {
-        "lifecycle_extension": null,
+        "tracking_curriculum": null,
         "max_iterations": 102,
         "replay_capacity_transitions": 51000
       },
