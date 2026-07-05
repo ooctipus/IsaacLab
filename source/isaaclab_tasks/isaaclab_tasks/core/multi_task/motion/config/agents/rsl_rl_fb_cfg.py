@@ -260,9 +260,9 @@ _AUXILIARY_HELPER = RslRlForwardBackwardValueHelperCfg(
 class MotionValueHelpersPresetCfg(PresetCfg):
     """Complete value algebras selected by the helper axis."""
 
-    default = (_DISCRIMINATOR_HELPER,)
+    default = [_DISCRIMINATOR_HELPER]
     helpers_discriminator = default
-    helpers_discriminator_auxiliary = (_DISCRIMINATOR_HELPER, _AUXILIARY_HELPER)
+    helpers_discriminator_auxiliary = [_DISCRIMINATOR_HELPER, _AUXILIARY_HELPER]
 
 
 @configclass

@@ -96,6 +96,7 @@ def test_metamotivo_profile_keeps_its_faithful_direct_values() -> None:
     assert cfg.tracking_curriculum is None
     assert cfg.class_type == "rsl_rl.runners:OffPolicyRunner"
     assert tuple(helper.name for helper in cfg.value_helpers) == ("discriminator",)
+    assert cfg.value_helpers[0].actor_coefficient == 0.01
 
 
 def test_bfm_profile_keeps_its_faithful_direct_values() -> None:
@@ -133,6 +134,7 @@ def test_bfm_profile_keeps_its_faithful_direct_values() -> None:
         "base_angular_velocity",
     )
     assert tuple(helper.name for helper in cfg.value_helpers) == ("discriminator", "auxiliary")
+    assert cfg.value_helpers[0].actor_coefficient == 0.05
     assert cfg.tracking_curriculum is not None
     assert cfg.tracking_curriculum.interval_transitions == 9_600_000
 

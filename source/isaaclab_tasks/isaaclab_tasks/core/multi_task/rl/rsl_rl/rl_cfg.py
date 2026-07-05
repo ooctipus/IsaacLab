@@ -347,7 +347,7 @@ class RslRlForwardBackwardRunnerCfg(isaaclab_rl.rsl_rl.RslRlOffPolicyRunnerCfg):
     replay: RslRlForwardBackwardReplayCfg = MISSING
     expert: RslRlForwardBackwardExpertCfg = MISSING
     algorithm: RslRlForwardBackwardAlgorithmCfg = MISSING  # type: ignore[assignment]
-    value_helpers: tuple[RslRlForwardBackwardValueHelperCfg, ...] = MISSING
+    value_helpers: list[RslRlForwardBackwardValueHelperCfg] = MISSING
 
     torch_compile_mode: str | None = None
     """Optional :func:`torch.compile` mode applied during FB construction."""
