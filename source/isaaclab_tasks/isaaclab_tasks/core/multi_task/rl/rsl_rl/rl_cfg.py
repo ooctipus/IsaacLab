@@ -191,83 +191,17 @@ class RslRlHerCfg:
 
 
 @configclass
-class RslRlForwardBackwardRunnerCfg(isaaclab_rl.rsl_rl.RslRlOffPolicyRunnerCfg):
-    """Typed connector from IsaacLab configuration to the RSL-RL FB runner."""
-
-    @configclass
-    class ObservationRoutesCfg:
-        """Fixed observation routes consumed by the FB learner."""
-
-        actor: list[str] = MISSING
-        forward: list[str] = MISSING
-        backward: list[str] = MISSING
-        discriminator: list[str] = MISSING
-        critic_discriminator: list[str] = MISSING
+class RslRlForwardBackwardModelCfg:
+    """Configuration consumed directly by the forward-backward model."""
 
     @configclass
     class NetworkCfg:
-        """Architecture of one FB residual or plain MLP."""
+        """Architecture of one plain or residual MLP."""
 
         hidden_dim: int = MISSING
         hidden_layers: int = MISSING
         embedding_layers: int = MISSING
         residual: bool = MISSING
-
-    @configclass
-    class ScheduleCfg:
-        """One coherent collection, update, and checkpoint schedule."""
-
-        num_envs: int = MISSING
-        num_steps_per_env: int = MISSING
-        num_updates_per_iteration: int = MISSING
-        random_action_steps: int = MISSING
-        max_iterations: int = MISSING
-        save_interval: int = MISSING
-
-    @configclass
-    class ModelTopologyCfg:
-        """Actor and forward-map architectures selected as one model policy."""
-
-        actor: RslRlForwardBackwardRunnerCfg.NetworkCfg = MISSING
-        forward: RslRlForwardBackwardRunnerCfg.NetworkCfg = MISSING
-
-    @configclass
-    class ReplayPolicyCfg:
-        """Capacity and sampling semantics selected as one replay policy."""
-
-        capacity_transitions: int = MISSING
-        terminal_capacity_per_env: int = MISSING
-        sampling: Literal["transition_uniform", "episode_uniform"] = MISSING
-
-    @configclass
-    class ExpertClockCfg:
-        """Relation between source time and sampled expert rows."""
-
-        sampling_mode: Literal["source_rows", "uniform_before_source_end"] = MISSING
-        sampling_step_seconds: float | None = MISSING
-
-    @configclass
-    class OptimizationCfg:
-        """Coordinated representation and value-helper optimization policy."""
-
-        learning_rate: float = MISSING
-        implied_value_coefficient: float = MISSING
-
-    @configclass
-    class ContextPolicyCfg:
-        """Expert windows and online context relabeling selected as one policy."""
-
-        expert_window_lengths: tuple[int, ...] = MISSING
-        buffer_capacity: int = MISSING
-        refresh_steps: int = MISSING
-        rollout_expert_fraction: float = MISSING
-
-    @configclass
-    class ExplorationCfg:
-        """Actor distribution and random warm-up action range."""
-
-        distribution: RslRlForwardBackwardRunnerCfg.DistributionCfg = MISSING
-        random_action_range: tuple[float, float] = MISSING
 
     @configclass
     class DistributionCfg:
@@ -279,125 +213,76 @@ class RslRlForwardBackwardRunnerCfg(isaaclab_rl.rsl_rl.RslRlOffPolicyRunnerCfg):
         noise_clip: float = 0.3
 
     @configclass
-    class ValueSpecCfg:
-        """Identity and reward routing for one value helper."""
+    class NormalizationGroupCfg:
+        """Semantic fields that share one normalization statistic."""
 
         name: str = MISSING
-        kind: Literal["critic"] = "critic"
-        route: str = MISSING
-        reward_channels: list[str] = MISSING
-        ensemble_size: int = 2
-        has_target: bool = True
+        fields: tuple[str, ...] = MISSING
 
-    @configclass
-    class ScalarValueSpecCfg(ValueSpecCfg):
-        """Value-helper specification with scalar reward composition."""
+    class_name: str = "rsl_rl.models.forward_backward_model:ForwardBackwardModel"
+    context_dim: int = 256
+    actor_cfg: NetworkCfg = MISSING
+    forward_cfg: NetworkCfg = MISSING
+    backward_hidden_dims: list[int] = [256]
+    backward_normalization: bool = True
+    discriminator_hidden_dims: list[int] = [1024, 1024, 1024]
+    distribution_cfg: DistributionCfg = MISSING
+    initialization_type: str = "orthogonal"
+    normalization_type: str = "exponential"
+    normalization_eps: float = 1.0e-5
+    normalization_momentum: float = 0.01
+    normalization_groups: tuple[NormalizationGroupCfg, ...] = ()
+    context_normalization: bool = True
 
-        reward_composition: Literal["scalar"] = "scalar"
 
-    @configclass
-    class ValueHeadCfg:
-        """One value-helper specification and optional architecture override."""
-
-        spec: RslRlForwardBackwardRunnerCfg.ValueSpecCfg = MISSING
-        network: RslRlForwardBackwardRunnerCfg.NetworkCfg | None = None
-
-    @configclass
-    class ModelCfg:
-        """Unified FB model configuration."""
-
-        @configclass
-        class NormalizationGroupCfg:
-            """One ordered set of semantic fields sharing normalization statistics."""
-
-            name: str = MISSING
-            fields: tuple[str, ...] = MISSING
-
-        class_name: str = "rsl_rl.models.forward_backward_model:ForwardBackwardModel"
-        context_dim: int = 256
-        topology: RslRlForwardBackwardRunnerCfg.ModelTopologyCfg = MISSING
-        backward_hidden_dims: list[int] = [256]
-        backward_normalization: bool = True
-        discriminator_hidden_dims: list[int] = [1024, 1024, 1024]
-        initialization_type: str = "orthogonal"
-        normalization_type: str = "exponential"
-        normalization_eps: float = 1.0e-5
-        normalization_momentum: float = 0.01
-        normalization_groups: tuple[NormalizationGroupCfg, ...] = ()
-        context_normalization: bool = True
-
-    @configclass
-    class RewardChannelCfg:
-        """One named reward channel and its temporal semantics."""
-
-        name: str = MISSING
-        provider_name: str = MISSING
-        source: Literal["environment", "recomputed", "stored_evidence"] = MISSING
-        timing: Literal["state", "next_state", "transition"] = MISSING
-        context_dependent: bool = MISSING
-        sign: Literal[-1, 1] = MISSING
-
-    @configclass
-    class HistorySourceCfg:
-        """One complete named observation packed into replay history."""
-
-        observation_name: str = MISSING
+@configclass
+class RslRlForwardBackwardReplayCfg:
+    """Replay storage consumed directly by the FB construction root."""
 
     @configclass
     class HistoryLayoutCfg:
         """Field-major reached-transition history layout."""
 
+        @configclass
+        class SourceCfg:
+            """One complete observation field packed into history."""
+
+            observation_name: str = MISSING
+
         history_field: str = MISSING
         history_length: int = MISSING
         include_seed_observations: bool = False
-        sources: list[RslRlForwardBackwardRunnerCfg.HistorySourceCfg] = MISSING
+        sources: list[SourceCfg] = MISSING
+
+    class_name: str = "rsl_rl.storage.forward_backward_replay:ForwardBackwardReplay"
+    capacity_transitions: int = MISSING
+    terminal_capacity_per_env: int = MISSING
+    sampling: Literal["transition_uniform", "episode_uniform"] = MISSING
+    autoreset_mode: Literal["disabled", "same_step", "next_step"] = "same_step"
+    history_layout: HistoryLayoutCfg | None = None
+
+
+@configclass
+class RslRlForwardBackwardExpertCfg:
+    """Sequence expert corpus consumed directly by the FB construction root."""
+
+    provider: str = MISSING
+    source_bind: str = MISSING
+    priorities_bind: str = MISSING
+    sampling_mode: Literal["source_rows", "uniform_before_source_end"] = MISSING
+    sampling_step_seconds: float | None = MISSING
+    target_projection: str = MISSING
+    target_projection_binds: tuple[str, ...] = MISSING
+    window_lengths: tuple[int, ...] = MISSING
+
+
+@configclass
+class RslRlForwardBackwardValueHelperCfg:
+    """One value helper and its complete ordered reward algebra."""
 
     @configclass
-    class ReplayCfg:
-        """Replay storage and reward-channel contract."""
-
-        class_name: str = "rsl_rl.storage.forward_backward_replay:ForwardBackwardReplay"
-        policy: RslRlForwardBackwardRunnerCfg.ReplayPolicyCfg = MISSING
-        autoreset_mode: Literal["disabled", "same_step", "next_step"] = MISSING
-        seed: int | None = None
-        history_layout: RslRlForwardBackwardRunnerCfg.HistoryLayoutCfg | None = None
-
-    @configclass
-    class ExpertCfg:
-        """Base expert-corpus provider configuration."""
-
-        provider: str = MISSING
-        seed: int | None = None
-
-    @configclass
-    class SequenceExpertCfg(ExpertCfg):
-        """Expert provider backed by a bound sequence source."""
-
-        source_bind: str = MISSING
-        clock: RslRlForwardBackwardRunnerCfg.ExpertClockCfg = MISSING
-        target_projection: str = MISSING
-        target_projection_binds: tuple[str, ...] = MISSING
-
-    @configclass
-    class ValueObjectiveCfg:
-        """Optimization settings for one value helper."""
-
-        pessimism: float = MISSING
-        reward_coefficients: tuple[float, ...] = MISSING
-        actor_coefficient: float = MISSING
-        target_tau: float = MISSING
-
-    @configclass
-    class NormalizedValueObjectiveCfg(ValueObjectiveCfg):
-        """Value objective with online reward normalization."""
-
-        normalize_rewards: bool = True
-        reward_normalization_decay: float = MISSING
-        reward_normalization_epsilon: float = MISSING
-
-    @configclass
-    class ValueTermCfg:
-        """One ordered reward term consumed by a value helper."""
+    class TermCfg:
+        """One reward term consumed by the helper."""
 
         name: str = MISSING
         coefficient: float = MISSING
@@ -406,296 +291,66 @@ class RslRlForwardBackwardRunnerCfg(isaaclab_rl.rsl_rl.RslRlOffPolicyRunnerCfg):
         context_dependent: bool = MISSING
         sign: Literal[-1, 1] = MISSING
 
-    @configclass
-    class ValueHelperCfg:
-        """One value helper and its complete ordered reward algebra."""
+    name: str = MISSING
+    route: str = MISSING
+    terms: tuple[TermCfg, ...] = MISSING
+    reward_composition: Literal["vector", "scalar"] = "vector"
+    pessimism: float = MISSING
+    actor_coefficient: float = MISSING
+    normalize_rewards: bool = False
+    reward_normalization_decay: float | None = None
+    reward_normalization_epsilon: float | None = None
+    target_tau: float = MISSING
 
-        name: str = MISSING
-        route: str = MISSING
-        terms: tuple[RslRlForwardBackwardRunnerCfg.ValueTermCfg, ...] = MISSING
-        reward_composition: Literal["scalar"] | None = None
-        pessimism: float = MISSING
-        actor_coefficient: float = MISSING
-        normalize_rewards: bool = False
-        reward_normalization_decay: float | None = None
-        reward_normalization_epsilon: float | None = None
-        target_tau: float = MISSING
 
-    @configclass
-    class AlgorithmCfg:
-        """Unified FB optimization configuration."""
+@configclass
+class RslRlForwardBackwardAlgorithmCfg:
+    """Optimization configuration consumed directly by the FB learner."""
 
-        class_name: str = "rsl_rl.algorithms.forward_backward:ForwardBackward"
-        batch_size: int = MISSING
-        expert_sequence_length: int = MISSING
-        gamma: float = MISSING
-        optimization: RslRlForwardBackwardRunnerCfg.OptimizationCfg = MISSING
-        backward_learning_rate: float = MISSING
-        discriminator_learning_rate: float = MISSING
-        optimizer: str = MISSING
-        weight_decay: float = MISSING
-        discriminator_weight_decay: float = MISSING
-        fb_pessimism: float = MISSING
-        actor_pessimism: float = MISSING
-        orthogonality_coefficient: float = MISSING
-        implied_reward_ridge: float = MISSING
-        discriminator_gradient_penalty_coefficient: float = MISSING
-        context_goal_fraction: float = MISSING
-        context_expert_fraction: float = MISSING
-        relabel_fraction: float = MISSING
-        fb_target_tau: float = MISSING
-        scale_actor_helpers: bool = MISSING
-        max_grad_norm: float | None = None
-        seed: int | None = None
-        rollout_expert_steps: int = MISSING
-        rollout_expert_context_steps: int = MISSING
+    class_name: str = "rsl_rl.algorithms.forward_backward:ForwardBackward"
+    batch_size: int = MISSING
+    expert_sequence_length: int = MISSING
+    gamma: float = MISSING
+    learning_rate: float = MISSING
+    backward_learning_rate: float = MISSING
+    discriminator_learning_rate: float = MISSING
+    optimizer: str = MISSING
+    weight_decay: float = MISSING
+    discriminator_weight_decay: float = MISSING
+    fb_pessimism: float = MISSING
+    actor_pessimism: float = MISSING
+    orthogonality_coefficient: float = MISSING
+    implied_value_coefficient: float = MISSING
+    implied_reward_ridge: float = MISSING
+    discriminator_gradient_penalty_coefficient: float = MISSING
+    context_goal_fraction: float = MISSING
+    context_expert_fraction: float = MISSING
+    relabel_fraction: float = MISSING
+    context_buffer_capacity: int = MISSING
+    fb_target_tau: float = MISSING
+    scale_actor_helpers: bool = MISSING
+    max_grad_norm: float | None = None
+    random_action_transitions: int = MISSING
+    random_action_range: tuple[float, float] = MISSING
+    rollout_context_refresh_steps: int = MISSING
+    rollout_expert_fraction: float = MISSING
+    rollout_expert_steps: int = MISSING
+    rollout_expert_context_steps: int = MISSING
 
-    @configclass
-    class LifecycleCfg:
-        """Base transition-count lifecycle extension."""
 
-        class_name: str = MISSING
-        transition_interval: int = MISSING
+@configclass
+class RslRlForwardBackwardRunnerCfg(isaaclab_rl.rsl_rl.RslRlOffPolicyRunnerCfg):
+    """Direct typed configuration for the RSL-RL FB runner."""
 
-    @configclass
-    class TrackingLifecycleCfg(LifecycleCfg):
-        """Generic sequence-tracking lifecycle configured through bindings."""
+    obs_groups: dict[str, list[str]] = MISSING
+    model: RslRlForwardBackwardModelCfg = MISSING
+    replay: RslRlForwardBackwardReplayCfg = MISSING
+    expert: RslRlForwardBackwardExpertCfg = MISSING
+    algorithm: RslRlForwardBackwardAlgorithmCfg = MISSING  # type: ignore[assignment]
+    value_helpers: tuple[RslRlForwardBackwardValueHelperCfg, ...] = MISSING
 
-        @configclass
-        class ProjectionCfg:
-            """One expert-target to reached-observation metric projection."""
-
-            metric_name: str = MISSING
-            target_name: str = MISSING
-            observation_name: str = MISSING
-            projection: str | None = None
-            assignment_metric: str = "uniform_assignment"
-
-        command_bind: str = MISSING
-        sequence_ids_bind: str = MISSING
-        sequence_start_rows_bind: str = MISSING
-        sampling_priorities_bind: str = MISSING
-        evaluation_scope_bind: str = MISSING
-        projections: tuple[ProjectionCfg, ...] = MISSING
-        context_window_length: int = 1
-        include_reset_frame: bool = True
-        allow_horizon_truncation: bool = True
-        shuffle_assignments: bool = True
-        priority_metric_name: str = MISSING
-        priority_metric_minimum: float = MISSING
-        priority_metric_maximum: float = MISSING
-        priority_exponent_scale: float = MISSING
-        priority_exponent_base: float = MISSING
-        reset_source_name: str = MISSING
-        evaluation_seed: int = 0
-
-    obs_groups: ObservationRoutesCfg = MISSING  # type: ignore[assignment]
-    """Typed FB observation routes."""
-
-    model: ModelCfg = MISSING
-    """Unified FB model."""
-
-    replay: ReplayCfg = MISSING
-    """Replay storage contract."""
-
-    expert: ExpertCfg = MISSING
-    """Expert-corpus provider."""
-
-    algorithm: AlgorithmCfg = MISSING  # type: ignore[assignment]
-    """Unified FB optimization."""
-
-    lifecycle_extension: LifecycleCfg | None = None  # type: ignore[assignment]
-    """Optional completed-transition lifecycle extension."""
-
-    schedule: ScheduleCfg = MISSING
-    """Structured collection, update, and checkpoint schedule."""
-
-    context_policy: ContextPolicyCfg = MISSING
-    """Structured expert-window and online-context policy."""
-
-    exploration: ExplorationCfg = MISSING
-    """Structured actor and random warm-up exploration policy."""
-
-    value_helpers: list[ValueHelperCfg] = MISSING
-    """Ordered value helpers that derive model, replay, and objective runtime views."""
-
-    def to_dict(self) -> dict[str, object]:
-        """Serialize the typed connector into the ordinary RSL-RL runtime contract."""
-        values = super().to_dict()
-
-        schedule = values.pop("schedule")
-        schedule_names = (
-            "num_envs",
-            "num_steps_per_env",
-            "num_updates_per_iteration",
-            "random_action_steps",
-            "max_iterations",
-            "save_interval",
-        )
-        for name in schedule_names:
-            values[name] = schedule.pop(name)
-        if schedule:
-            raise ValueError(f"Unknown forward-backward schedule fields: {tuple(schedule)}.")
-        if self.num_envs is not None:
-            values["num_envs"] = self.num_envs
-        if not isinstance(self.max_iterations, type(MISSING)):
-            values["max_iterations"] = self.max_iterations
-
-        exploration = values.pop("exploration")
-        context_policy = values.pop("context_policy")
-        value_helpers = values.pop("value_helpers")
-
-        model = values["model"]
-        topology = model.pop("topology")
-        model["actor_cfg"] = topology.pop("actor")
-        model["forward_cfg"] = topology.pop("forward")
-        model["distribution_cfg"] = exploration.pop("distribution")
-        if topology:
-            raise ValueError(f"Unknown forward-backward topology fields: {tuple(topology)}.")
-
-        replay = values["replay"]
-        replay.update(replay.pop("policy"))
-
-        expert = values["expert"]
-        expert.update(expert.pop("clock"))
-        expert["window_lengths"] = context_policy.pop("expert_window_lengths")
-
-        algorithm = values["algorithm"]
-        optimization = algorithm.pop("optimization")
-        algorithm["learning_rate"] = optimization.pop("learning_rate")
-        algorithm["implied_value_coefficient"] = optimization.pop("implied_value_coefficient")
-        algorithm["context_buffer_capacity"] = context_policy.pop("buffer_capacity")
-        algorithm["rollout_context_refresh_steps"] = context_policy.pop("refresh_steps")
-        algorithm["rollout_expert_fraction"] = context_policy.pop("rollout_expert_fraction")
-        algorithm["random_action_range"] = exploration.pop("random_action_range")
-        if optimization or context_policy or exploration:
-            raise ValueError("Unknown forward-backward optimization, context, or exploration fields.")
-
-        if not value_helpers:
-            raise ValueError("At least one value helper must be configured.")
-        model["value_heads"] = []
-        replay["reward_channels"] = []
-        algorithm["value_cfg"] = {}
-        helper_names: set[str] = set()
-        term_names: set[str] = set()
-        environment_reward_name: str | None = None
-        stored_evidence_names: list[str] = []
-        for helper in value_helpers:
-            helper_name = helper.pop("name")
-            terms = helper.pop("terms")
-            names = [term["name"] for term in terms]
-            coefficients = tuple(term.pop("coefficient") for term in terms)
-            if (
-                not helper_name
-                or helper_name in helper_names
-                or not names
-                or any(not name for name in names)
-                or term_names.intersection(names)
-                or len(names) != len(set(names))
-            ):
-                raise ValueError("Value helper and reward-term names must be non-empty and globally unique.")
-            helper_names.add(helper_name)
-            term_names.update(names)
-
-            reward_composition = helper.pop("reward_composition")
-            if reward_composition not in (None, "scalar"):
-                raise ValueError(f"Unsupported reward composition: {reward_composition!r}.")
-            spec_type = (
-                RslRlForwardBackwardRunnerCfg.ValueSpecCfg
-                if reward_composition is None
-                else RslRlForwardBackwardRunnerCfg.ScalarValueSpecCfg
-            )
-            model["value_heads"].append(
-                RslRlForwardBackwardRunnerCfg.ValueHeadCfg(
-                    spec=spec_type(
-                        name=helper_name,
-                        route=helper.pop("route"),
-                        reward_channels=names,
-                    ),
-                ).to_dict()
-            )
-            for term in terms:
-                name = term.pop("name")
-                source = term.pop("source")
-                timing = term.pop("timing")
-                if source == "environment":
-                    if timing != "transition":
-                        raise ValueError("Environment rewards must describe a completed transition.")
-                    if environment_reward_name is not None:
-                        raise ValueError("At most one environment reward term may be configured.")
-                    environment_reward_name = name
-                elif source == "stored_evidence":
-                    if timing != "transition":
-                        raise ValueError("Stored evidence must describe a completed transition.")
-                    stored_evidence_names.append(name)
-                replay["reward_channels"].append(
-                    RslRlForwardBackwardRunnerCfg.RewardChannelCfg(
-                        name=name,
-                        provider_name=name,
-                        source=source,
-                        timing=timing,
-                        context_dependent=term.pop("context_dependent"),
-                        sign=term.pop("sign"),
-                    ).to_dict()
-                )
-                if term:
-                    raise ValueError(f"Unknown value term fields: {tuple(term)}.")
-
-            normalize_rewards = helper.pop("normalize_rewards")
-            normalization_decay = helper.pop("reward_normalization_decay")
-            normalization_epsilon = helper.pop("reward_normalization_epsilon")
-            objective_type = (
-                RslRlForwardBackwardRunnerCfg.NormalizedValueObjectiveCfg
-                if normalize_rewards
-                else RslRlForwardBackwardRunnerCfg.ValueObjectiveCfg
-            )
-            objective_args = dict(
-                pessimism=helper.pop("pessimism"),
-                actor_coefficient=helper.pop("actor_coefficient"),
-                reward_coefficients=coefficients,
-                target_tau=helper.pop("target_tau"),
-            )
-            if normalize_rewards:
-                if normalization_decay is None or normalization_epsilon is None:
-                    raise ValueError("Normalized value helpers require decay and epsilon.")
-                objective_args.update(
-                    normalize_rewards=True,
-                    reward_normalization_decay=normalization_decay,
-                    reward_normalization_epsilon=normalization_epsilon,
-                )
-            elif normalization_decay is not None or normalization_epsilon is not None:
-                raise ValueError("Unnormalized value helpers cannot declare normalization parameters.")
-            objective = objective_type(**objective_args).to_dict()
-            objective["learning_rate"] = algorithm["learning_rate"]
-            algorithm["value_cfg"][helper_name] = objective
-            if helper:
-                raise ValueError(f"Unknown value helper fields: {tuple(helper)}.")
-        replay["environment_reward_name"] = environment_reward_name
-        replay["auxiliary_evidence_names"] = stored_evidence_names
-        replay["auxiliary_evidence_observation_group"] = "transition" if stored_evidence_names else None
-
-        root_seed = values["seed"]
-        if type(root_seed) is not int:
-            raise TypeError("Forward-backward runner seed must be an integer.")
-        for name, section in (("replay", replay), ("expert", expert), ("algorithm", algorithm)):
-            configured_seed = section.get("seed")
-            if configured_seed not in (None, root_seed):
-                raise ValueError(f"{name} seed must be omitted or equal the runner seed.")
-            section["seed"] = root_seed
-        return values
-
-    def resolve_num_envs(self, cli_num_envs: int | None, env_num_envs: int) -> int:
-        """Resolve CLI, explicit runner, then structured-schedule environment count."""
-        del env_num_envs
-        if cli_num_envs is not None:
-            return cli_num_envs
-        return self.schedule.num_envs if self.num_envs is None else self.num_envs
-
-    def resolve_max_iterations(self, cli_max_iterations: int | None) -> int:
-        """Resolve CLI, explicit runner, then structured-schedule iteration count."""
-        if cli_max_iterations is not None:
-            return cli_max_iterations
-        return self.schedule.max_iterations if isinstance(self.max_iterations, type(MISSING)) else self.max_iterations
+    torch_compile_mode: str | None = None
+    """Optional :func:`torch.compile` mode applied during FB construction."""
 
 
 @configclass

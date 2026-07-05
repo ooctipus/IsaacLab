@@ -30,7 +30,10 @@ def test_off_policy_cfg_serializes_the_official_runner_contract() -> None:
     assert str(cfg.class_type) == "rsl_rl.runners:OffPolicyRunner"
     assert cfg.get_algorithm_class_name() == "package:Algorithm"
     assert cfg.to_dict()["num_updates_per_iteration"] == 2
-    assert cfg.to_dict()["random_action_steps"] == 0
+    assert "random_action_steps" not in cfg.to_dict()
+    assert "lifecycle_extension" not in cfg.to_dict()
+    assert "empirical_normalization" not in cfg.to_dict()
+    assert "torch_compile_mode" not in cfg.to_dict()
     assert cfg.to_dict()["num_envs"] is None
     assert cfg.init_at_random_ep_len
 

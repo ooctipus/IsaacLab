@@ -273,13 +273,6 @@ class RslRlBaseRunnerCfg:
     max_iterations: int = MISSING
     """The maximum number of iterations."""
 
-    empirical_normalization: bool = MISSING
-    """This parameter is deprecated and will be removed in the future.
-
-    For rsl-rl < 4.0.0, use `actor_obs_normalization` and `critic_obs_normalization` of the policy instead.
-    For rsl-rl >= 4.0.0, use `obs_normalization` of the model instead.
-    """
-
     obs_groups: dict[str, list[str]] = MISSING
     """A mapping from observation groups to observation sets.
 
@@ -414,22 +407,11 @@ class RslRlOffPolicyRunnerCfg(RslRlBaseRunnerCfg):
     class_name: str = "OffPolicyRunner"
     """The runner class name. Defaults to ``"OffPolicyRunner"``."""
 
-    empirical_normalization: bool = False
-    """Deprecated runner-level normalization, disabled for model-owned normalization."""
-
     num_updates_per_iteration: int = MISSING
     """Number of replay updates after each fixed collection block."""
 
-    random_action_steps: int = 0
-    """Number of environment transitions collected from the algorithm's random policy."""
-
     algorithm: dict[str, object] = MISSING
     """Off-policy algorithm configuration."""
-
-    torch_compile_mode: str | None = None
-    """Optional :func:`torch.compile` mode applied by the algorithm constructor."""
-    lifecycle_extension: dict[str, object] | None = None
-    """Optional extension invoked at exact completed-transition boundaries."""
 
 
 @configclass
@@ -441,6 +423,13 @@ class RslRlOnPolicyRunnerCfg(RslRlBaseRunnerCfg):
 
     class_name: str = "OnPolicyRunner"
     """The runner class name. Defaults to OnPolicyRunner."""
+
+    empirical_normalization: bool = MISSING
+    """Deprecated legacy-policy normalization setting.
+
+    For rsl-rl < 4.0.0, configure actor and critic normalization on :attr:`policy` instead.
+    For rsl-rl >= 4.0.0, configure :attr:`RslRlModelCfg.obs_normalization` instead.
+    """
 
     actor: RslRlMLPModelCfg = MISSING
     """The actor configuration."""

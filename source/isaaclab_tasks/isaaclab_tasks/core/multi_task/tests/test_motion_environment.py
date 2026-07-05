@@ -226,7 +226,7 @@ def test_explicit_axes_select_the_g1_lafan_environment_and_runner(monkeypatch: p
     assert env_cfg.decimation == 4
     assert str(env_cfg.actions.joint_position.class_type).endswith(":G1JointPositionAction")
     assert isinstance(runner_cfg, MotionForwardBackwardRunnerCfg)
-    assert runner_cfg.schedule.num_envs == 1024
+    assert runner_cfg.num_envs == 1024
     assert runner_cfg.resolve_num_envs(None, env_cfg.scene.num_envs) == 1024
 
 

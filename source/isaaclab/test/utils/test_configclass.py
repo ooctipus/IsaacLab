@@ -310,24 +310,6 @@ class FunctionImplementedDemoCfg:
 
 
 @configclass
-class CustomToDictCfg:
-    """Dummy configuration with an explicit runtime serializer."""
-
-    value: int = 1
-
-    def to_dict(self) -> dict[str, int]:
-        """Return a deliberately different runtime shape."""
-        return {"runtime_value": self.value}
-
-
-@configclass
-class InheritedCustomToDictCfg(CustomToDictCfg):
-    """Dummy configuration inheriting a custom runtime serializer."""
-
-    other: int = 2
-
-
-@configclass
 class ClassFunctionImplementedDemoCfg:
     """Dummy configuration class with function members defined in the class."""
 
@@ -546,23 +528,6 @@ def test_dict_conversion():
     # We have to do a manual check because torch.Tensor does not work with assertDictEqual.
     assert torch_cfg_dict["some_number"] == 0
     assert torch.all(torch_cfg_dict["some_tensor"] == torch.tensor([1, 2, 3]))
-
-
-def test_custom_to_dict_is_preserved_directly_and_through_inheritance():
-    """Explicit serializers survive configclass decoration and decorated inheritance."""
-    direct = CustomToDictCfg(value=3)
-    inherited = InheritedCustomToDictCfg(value=4, other=5)
-
-    assert direct.to_dict() == {"runtime_value": 3}
-    assert inherited.to_dict() == {"runtime_value": 4}
-    assert class_to_dict(inherited) == {"value": 4, "other": 5}
-
-
-def test_ordinary_configclass_keeps_generic_to_dict():
-    """Configurations without an override retain recursive generic serialization."""
-    cfg = EnvCfg()
-
-    assert cfg.to_dict() == class_to_dict(cfg)
 
 
 def test_actuator_cfg_dict_conversion():

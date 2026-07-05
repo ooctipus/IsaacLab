@@ -51,6 +51,7 @@ _SMPL_TARGET = "isaaclab_tasks.core.multi_task.motion.robots.smpl.observations:s
 _SMPL_BINDS = ("env.unwrapped.scene['robot']",)
 _G1_BINDS = _SMPL_BINDS + ("env.unwrapped.action_manager.get_term('joint_position')",)
 _SOURCE_BIND = "env.unwrapped.command_manager.get_term('motion').table"
+_PRIORITIES_BIND = "env.unwrapped.command_manager.get_term('motion').payload.sampler.clip_priorities"
 
 
 def _hash(value: str) -> str:
@@ -191,7 +192,7 @@ def _env(
     default_joint_position: torch.Tensor | None = None,
     default_joint_offset: torch.Tensor | None = None,
 ):
-    payload = SimpleNamespace(table=table)
+    payload = SimpleNamespace(table=table, sampler=SimpleNamespace(clip_priorities=torch.ones(len(table.clip_ids))))
     command = SimpleNamespace(payload=payload, table=table)
     command_manager = SimpleNamespace(get_term=lambda name: command if name == "motion" else None)
     physical_body_names = table.reference_frame_names
@@ -246,6 +247,7 @@ def test_projection_bind_expressions_are_resolved_once() -> None:
         schema,
         "cpu",
         source_bind=_SOURCE_BIND,
+        priorities_bind=_PRIORITIES_BIND,
         sampling_mode="uniform_before_source_end",
         sampling_step_seconds=0.02,
         target_projection=_G1_TARGET,
@@ -269,6 +271,7 @@ def test_smpl_provider_projects_target_physical_body_fields() -> None:
         schema,
         "cpu",
         source_bind=_SOURCE_BIND,
+        priorities_bind=_PRIORITIES_BIND,
         sampling_mode="source_rows",
         sampling_step_seconds=None,
         target_projection=_SMPL_TARGET,
@@ -298,6 +301,7 @@ def test_g1_provider_projects_exact_state_and_privileged_facts_at_50_hz() -> Non
         schema,
         "cpu",
         source_bind=_SOURCE_BIND,
+        priorities_bind=_PRIORITIES_BIND,
         sampling_mode="uniform_before_source_end",
         sampling_step_seconds=0.02,
         target_projection=_G1_TARGET,
@@ -352,6 +356,7 @@ def test_g1_expert_identity_tracks_canonical_defaults_but_not_randomized_offsets
             schema,
             "cpu",
             source_bind=_SOURCE_BIND,
+            priorities_bind=_PRIORITIES_BIND,
             sampling_mode="uniform_before_source_end",
             sampling_step_seconds=0.02,
             target_projection=_G1_TARGET,
@@ -385,6 +390,7 @@ def test_g1_expert_rejects_per_environment_default_rows() -> None:
             schema,
             "cpu",
             source_bind=_SOURCE_BIND,
+            priorities_bind=_PRIORITIES_BIND,
             sampling_mode="uniform_before_source_end",
             sampling_step_seconds=0.02,
             target_projection=_G1_TARGET,
@@ -408,6 +414,7 @@ def test_g1_provider_accepts_smpl_source_after_target_frame_building() -> None:
         schema,
         "cpu",
         source_bind=_SOURCE_BIND,
+        priorities_bind=_PRIORITIES_BIND,
         sampling_mode="uniform_before_source_end",
         sampling_step_seconds=0.02,
         target_projection=_G1_TARGET,
@@ -433,6 +440,7 @@ def test_g1_provider_packs_named_targets_in_declared_backward_order() -> None:
     )
     kwargs = {
         "source_bind": _SOURCE_BIND,
+        "priorities_bind": _PRIORITIES_BIND,
         "sampling_mode": "uniform_before_source_end",
         "sampling_step_seconds": 0.02,
         "target_projection": _G1_TARGET,
@@ -446,3 +454,27 @@ def test_g1_provider_packs_named_targets_in_declared_backward_order() -> None:
     torch.testing.assert_close(
         reordered.frames, torch.cat((canonical.frames[:, 64:], canonical.frames[:, :64]), dim=-1)
     )
+
+
+def test_expert_provider_retains_the_command_sampler_priority_tensor() -> None:
+    table = _smpl_table((5, 4))
+    schema = ForwardBackwardObservationSchema.from_config({"policy": 358}, {"backward": ("policy",)})
+    env = _env(table)
+    priorities = env.unwrapped.command_manager.get_term("motion").payload.sampler.clip_priorities
+
+    expert = forward_backward_expert_buffer(
+        env,
+        schema,
+        "cpu",
+        source_bind=_SOURCE_BIND,
+        priorities_bind=_PRIORITIES_BIND,
+        sampling_mode="source_rows",
+        sampling_step_seconds=None,
+        target_projection=_SMPL_TARGET,
+        target_projection_binds=_SMPL_BINDS,
+        window_lengths=(2,),
+    )
+    expert.set_priorities(torch.tensor((2.0, 3.0)))
+
+    assert expert.priorities.data_ptr() == priorities.data_ptr()
+    torch.testing.assert_close(priorities, torch.tensor((2.0, 3.0)))

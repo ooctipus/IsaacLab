@@ -32,8 +32,9 @@ from isaaclab_tasks.core.multi_task.motion.robots.smpl.observations import (
     smpl_humenv_tracking_pose,
 )
 from isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_tracking import (
+    ForwardBackwardTrackingCurriculum,
     ForwardBackwardTrackingEvaluation,
-    ForwardBackwardTrackingLifecycle,
+    ForwardBackwardTrackingRunner,
     forward_backward_tracking_evaluator,
     forward_backward_tracking_priorities,
 )
@@ -75,10 +76,6 @@ _PRIORITY_PROTOCOL = {
 _CURRICULUM_PROTOCOL = {
     **_TRACKING_PROTOCOL,
     "command_bind": "env.unwrapped.command_manager.get_term('motion')",
-    "sequence_ids_bind": "command.table.clip_ids",
-    "sequence_start_rows_bind": "command.table.clip_start_rows",
-    "sampling_priorities_bind": "command.payload.sampler.clip_priorities",
-    "evaluation_scope_bind": "command.payload.sampler.reset_sampling_scope",
     "priority_metric_name": "emd",
     "priority_metric_minimum": 0.5,
     "priority_metric_maximum": 2.0,
@@ -90,8 +87,8 @@ _SMPL_LENGTHS = (6, 5, 4, 3)
 
 
 @pytest.fixture(autouse=True)
-def _stub_lifecycle_evaluator(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replace only lifecycle-model evaluations with deterministic generic results."""
+def _stub_curriculum_evaluator(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace only curriculum-model evaluations with deterministic generic results."""
     real_evaluator = tracking_module.forward_backward_tracking_evaluator
 
     def evaluate(model, *args, **kwargs):
@@ -110,7 +107,7 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def _expert() -> ForwardBackwardExpertBuffer:
+def _expert(priorities: torch.Tensor | None = None) -> ForwardBackwardExpertBuffer:
     schema = ForwardBackwardExpertSchema(
         dataset_id="tracking-test",
         data_hash="data",
@@ -124,7 +121,7 @@ def _expert() -> ForwardBackwardExpertBuffer:
     return ForwardBackwardExpertBuffer(
         torch.zeros(6, 3),
         torch.tensor((0, 3, 6), dtype=torch.int64),
-        torch.ones(2),
+        torch.ones(2) if priorities is None else priorities,
         schema,
         seed=0,
         clip_ids=_CLIP_IDS,
@@ -880,10 +877,10 @@ def test_gpu_uniform_emd_flat_compute_reuses_every_device_allocation() -> None:
 
 
 def test_forward_backward_tracking_ownership_is_generic() -> None:
-    """Production tracking, lifecycle, metric, and sampling code have one clear owner each."""
+    """Production tracking, curriculum, metric, and sampling code have one clear owner each."""
     assert forward_backward_tracking_evaluator.__module__.endswith("rl.rsl_rl.forward_backward_tracking")
     assert ForwardBackwardTrackingEvaluation.__module__.endswith("rl.rsl_rl.forward_backward_tracking")
-    assert ForwardBackwardTrackingLifecycle.__module__.endswith("rl.rsl_rl.forward_backward_tracking")
+    assert ForwardBackwardTrackingCurriculum.__module__.endswith("rl.rsl_rl.forward_backward_tracking")
     assert UniformAssignmentWorkspace.__module__.endswith("multi_task.metrics.uniform_assignment")
     tracking_source = inspect.getsource(tracking_module)
     tree = ast.parse(tracking_source)
@@ -1213,45 +1210,45 @@ def test_tracking_caps_long_clips_before_the_native_timeout_edge() -> None:
     torch.testing.assert_close(evaluation.coverage_fraction, torch.ones(2, dtype=torch.float64, device=expert.device))
 
 
-def test_curriculum_commits_paired_priorities_then_resets() -> None:
+def _curriculum_environment() -> tuple[_Environment, ForwardBackwardExpertBuffer, _Algorithm]:
     table = _table()
-    expert = _expert()
-    algorithm = _Algorithm(expert)
     env = _Environment(table)
-    coordinator = ForwardBackwardTrackingLifecycle(
+    priorities = env.unwrapped.command_manager.get_term("motion").payload.sampler.clip_priorities
+    expert = _expert(priorities)
+    return env, expert, _Algorithm(expert)
+
+
+def _curriculum(env: _Environment, algorithm: _Algorithm) -> ForwardBackwardTrackingCurriculum:
+    return ForwardBackwardTrackingCurriculum(
         env,
         algorithm,
-        None,
         "cpu",
         projections=_G1_TRACKING_PROJECTIONS,
         **_CURRICULUM_PROTOCOL,
         reset_source_name=_MOTION_RESET_SOURCES[0][0],
     )
 
-    observations = coordinator.on_transition(8)
 
-    torch.testing.assert_close(coordinator.sampling_priorities, torch.tensor((2.0, 16.0)))
+def test_curriculum_updates_one_shared_priority_owner_then_resets() -> None:
+    env, expert, algorithm = _curriculum_environment()
+    coordinator = _curriculum(env, algorithm)
+    sampler_priorities = env.unwrapped.command_manager.get_term("motion").payload.sampler.clip_priorities
+
+    observations = coordinator.update()
+
+    assert expert.priorities.data_ptr() == sampler_priorities.data_ptr()
     torch.testing.assert_close(expert.priorities, torch.tensor((2.0, 16.0)))
+    torch.testing.assert_close(expert._eligible_priorities[1], torch.tensor((2.0, 16.0)))
     assert env.reset_count == 1
     assert observations is algorithm.resets[0][0]
     assert torch.all(algorithm.resets[0][1])
 
 
-def test_lifecycle_uses_wrapper_and_restores_algorithm_owned_modes() -> None:
-    expert = _expert()
-    algorithm = _Algorithm(expert)
-    env = _Environment(_table())
-    coordinator = ForwardBackwardTrackingLifecycle(
-        env,
-        algorithm,
-        None,
-        "cpu",
-        projections=_G1_TRACKING_PROJECTIONS,
-        **_CURRICULUM_PROTOCOL,
-        reset_source_name=_MOTION_RESET_SOURCES[0][0],
-    )
+def test_curriculum_uses_wrapper_and_restores_algorithm_owned_modes() -> None:
+    env, _expert_buffer, algorithm = _curriculum_environment()
+    coordinator = _curriculum(env, algorithm)
 
-    coordinator.on_transition(8)
+    coordinator.update()
 
     assert algorithm.model.evaluation_envs == [env]
     assert algorithm.eval_mode_calls == 1
@@ -1261,198 +1258,129 @@ def test_lifecycle_uses_wrapper_and_restores_algorithm_owned_modes() -> None:
     assert not algorithm.model.observation_normalizers.training
 
 
-def test_curriculum_rejects_divergent_priority_owners_at_construction() -> None:
-    """Environment and expert samplers must enter the lifecycle with one shared value."""
-    table = _table()
+def test_curriculum_rejects_mirrored_priority_owners() -> None:
+    env = _Environment(_table())
     expert = _expert()
-    env = _Environment(table)
-    sampling_priorities = env.unwrapped.command_manager.get_term("motion").payload.sampler.clip_priorities
-    sampling_priorities.copy_(torch.tensor((2.0, 1.0)))
 
-    with pytest.raises(ValueError, match="match at lifecycle construction"):
-        ForwardBackwardTrackingLifecycle(
-            env,
-            _Algorithm(expert),
-            None,
-            "cpu",
-            projections=_G1_TRACKING_PROJECTIONS,
-            **_CURRICULUM_PROTOCOL,
-            reset_source_name=_MOTION_RESET_SOURCES[0][0],
-        )
+    with pytest.raises(ValueError, match="share one canonical priority tensor"):
+        _curriculum(env, _Algorithm(expert))
 
 
-def test_curriculum_validates_both_targets_before_first_priority_mutation(monkeypatch) -> None:
-    table = _table()
-    expert = _expert()
-    algorithm = _Algorithm(expert)
-    coordinator = ForwardBackwardTrackingLifecycle(
-        _Environment(table),
-        algorithm,
-        None,
-        "cpu",
-        projections=_G1_TRACKING_PROJECTIONS,
-        **_CURRICULUM_PROTOCOL,
-        reset_source_name=_MOTION_RESET_SOURCES[0][0],
-    )
-    original = coordinator.sampling_priorities.clone()
+def test_curriculum_validates_priorities_before_mutating_shared_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    env, expert, algorithm = _curriculum_environment()
+    coordinator = _curriculum(env, algorithm)
+    original = expert.priorities.clone()
 
     def reject(_priorities: torch.Tensor) -> None:
         raise ValueError("expert rejected priorities")
 
     monkeypatch.setattr(expert, "validate_priorities", reject)
     with pytest.raises(ValueError, match="expert rejected"):
-        coordinator.on_transition(8)
+        coordinator.update()
 
-    torch.testing.assert_close(coordinator.sampling_priorities, original)
+    torch.testing.assert_close(expert.priorities, original)
 
 
 def test_curriculum_reset_failure_keeps_committed_sampler_state() -> None:
-    """A failed environment mutation must not pretend the environment transaction rolled back."""
     table = _table()
-    expert = _expert()
-    algorithm = _Algorithm(expert)
     env = _Environment(table, fail_reset=True)
-    coordinator = ForwardBackwardTrackingLifecycle(
-        env,
-        algorithm,
-        None,
-        "cpu",
-        projections=_G1_TRACKING_PROJECTIONS,
-        **_CURRICULUM_PROTOCOL,
-        reset_source_name=_MOTION_RESET_SOURCES[0][0],
-    )
+    priorities = env.unwrapped.command_manager.get_term("motion").payload.sampler.clip_priorities
+    expert = _expert(priorities)
+    coordinator = _curriculum(env, _Algorithm(expert))
 
     with pytest.raises(RuntimeError, match="reset failed"):
-        coordinator.on_transition(8)
+        coordinator.update()
 
-    torch.testing.assert_close(coordinator.sampling_priorities, torch.tensor((2.0, 16.0)))
     torch.testing.assert_close(expert.priorities, torch.tensor((2.0, 16.0)))
     assert env.reset_count == 1
 
 
 def test_curriculum_requires_the_vecenv_reset_pair() -> None:
-    """Lifecycle reset cannot accept the unwrapped environment's observation-only result."""
-    expert = _expert()
-    algorithm = _Algorithm(expert)
-    env = _Environment(_table())
+    env, expert, algorithm = _curriculum_environment()
     env.reset = lambda: TensorDict({"state": torch.zeros(2, 1)}, batch_size=[2])
-    coordinator = ForwardBackwardTrackingLifecycle(
-        env,
-        algorithm,
-        None,
-        "cpu",
-        projections=_G1_TRACKING_PROJECTIONS,
-        **_CURRICULUM_PROTOCOL,
-        reset_source_name=_MOTION_RESET_SOURCES[0][0],
-    )
+    coordinator = _curriculum(env, algorithm)
 
     with pytest.raises(TypeError, match="VecEnv TensorDict/info pair"):
-        coordinator.on_transition(8)
+        coordinator.update()
 
-    torch.testing.assert_close(coordinator.sampling_priorities, torch.tensor((2.0, 16.0)))
     torch.testing.assert_close(expert.priorities, torch.tensor((2.0, 16.0)))
 
 
-def test_curriculum_state_restores_both_priority_targets() -> None:
-    table = _table()
-    expert = _expert()
-    coordinator = ForwardBackwardTrackingLifecycle(
-        _Environment(table),
-        _Algorithm(expert),
-        None,
-        "cpu",
-        projections=_G1_TRACKING_PROJECTIONS,
-        **_CURRICULUM_PROTOCOL,
-        reset_source_name=_MOTION_RESET_SOURCES[0][0],
-    )
-    coordinator.on_transition(8)
+def test_curriculum_checkpoint_owns_rng_but_not_shared_priorities() -> None:
+    env, expert, algorithm = _curriculum_environment()
+    coordinator = _curriculum(env, algorithm)
+    coordinator.update()
     state = coordinator.state_dict()
-    assert set(state) == {"protocol_hash", "sequence_ids", "assignment_rng_state", "priorities"}
-    torch.testing.assert_close(state["priorities"], torch.tensor((2.0, 16.0)))
-    coordinator.sampling_priorities.fill_(1.0)
     expert.set_priorities(torch.ones(2))
 
     coordinator.load_state_dict(state)
 
-    torch.testing.assert_close(coordinator.sampling_priorities, torch.tensor((2.0, 16.0)))
-    torch.testing.assert_close(expert.priorities, torch.tensor((2.0, 16.0)))
-
-
-def test_curriculum_state_before_first_event_restores_uniform_sampler() -> None:
-    """A transition-zero-pending checkpoint must retain equal clip mass."""
-    table = _table()
-    expert = _expert()
-    coordinator = ForwardBackwardTrackingLifecycle(
-        _Environment(table),
-        _Algorithm(expert),
-        None,
-        "cpu",
-        projections=_G1_TRACKING_PROJECTIONS,
-        **_CURRICULUM_PROTOCOL,
-        reset_source_name=_MOTION_RESET_SOURCES[0][0],
-    )
-    state = coordinator.state_dict()
-    coordinator.sampling_priorities.copy_(torch.tensor((2.0, 16.0)))
-    expert.set_priorities(torch.tensor((2.0, 16.0)))
-
-    coordinator.load_state_dict(state)
-
-    torch.testing.assert_close(coordinator.sampling_priorities, torch.ones(2))
+    assert set(state) == {"protocol_hash", "sequence_ids", "assignment_rng_state"}
     torch.testing.assert_close(expert.priorities, torch.ones(2))
 
 
-def test_lifecycle_assignment_rng_advances_and_checkpoint_restores_next_mapping() -> None:
-    table = _table()
-    expert = _expert()
-    algorithm = _Algorithm(expert)
-    coordinator = ForwardBackwardTrackingLifecycle(
-        _Environment(table),
-        algorithm,
-        None,
-        "cpu",
-        projections=_G1_TRACKING_PROJECTIONS,
-        **_CURRICULUM_PROTOCOL,
-        reset_source_name=_MOTION_RESET_SOURCES[0][0],
-    )
+def test_curriculum_assignment_rng_advances_and_checkpoint_restores_next_mapping() -> None:
+    env, _expert_buffer, algorithm = _curriculum_environment()
+    coordinator = _curriculum(env, algorithm)
 
-    coordinator.on_transition(8)
+    coordinator.update()
     first_order = algorithm.model.assignment_orders[-1]
     state = coordinator.state_dict()
-    coordinator.on_transition(16)
+    coordinator.update()
     expected_next_order = algorithm.model.assignment_orders[-1]
 
     assert expected_next_order != first_order
 
-    restored_expert = _expert()
-    restored_algorithm = _Algorithm(restored_expert)
-    restored = ForwardBackwardTrackingLifecycle(
-        _Environment(_table()),
-        restored_algorithm,
-        None,
-        "cpu",
-        projections=_G1_TRACKING_PROJECTIONS,
-        **_CURRICULUM_PROTOCOL,
-        reset_source_name=_MOTION_RESET_SOURCES[0][0],
-    )
+    restored_env, _restored_expert, restored_algorithm = _curriculum_environment()
+    restored = _curriculum(restored_env, restored_algorithm)
     restored.load_state_dict(state)
-    restored.on_transition(16)
+    restored.update()
 
     assert restored_algorithm.model.assignment_orders[-1] == expected_next_order
 
 
-def test_lifecycle_checkpoint_rejects_changed_protocol() -> None:
-    expert = _expert()
-    coordinator = ForwardBackwardTrackingLifecycle(
-        _Environment(_table()),
-        _Algorithm(expert),
-        None,
-        "cpu",
-        projections=_G1_TRACKING_PROJECTIONS,
-        **_CURRICULUM_PROTOCOL,
-        reset_source_name=_MOTION_RESET_SOURCES[0][0],
-    )
+def test_curriculum_checkpoint_rejects_changed_protocol() -> None:
+    env, _expert_buffer, algorithm = _curriculum_environment()
+    coordinator = _curriculum(env, algorithm)
     state = coordinator.state_dict()
     state["protocol_hash"] = "0" * 64
 
     with pytest.raises(ValueError, match="protocol"):
         coordinator.load_state_dict(state)
+
+
+def test_tracking_runner_cadence_uses_transition_zero_and_periodic_boundaries() -> None:
+    runner = object.__new__(ForwardBackwardTrackingRunner)
+    reset_observations = TensorDict({"state": torch.ones(2, 1)}, batch_size=[2])
+    updates: list[int] = []
+    runner.env = SimpleNamespace(num_envs=2)
+    runner.device = "cpu"
+    runner.tracking_interval_transitions = 8
+    runner._tracking_last_transition = None
+    runner.tracking_curriculum = SimpleNamespace(update=lambda: updates.append(1) or reset_observations)
+    current = TensorDict({"state": torch.zeros(2, 1)}, batch_size=[2])
+
+    first = runner._run_tracking_curriculum(0, None)
+    assert runner._run_tracking_curriculum(4, current) is current
+    second = runner._run_tracking_curriculum(8, current)
+    torch.testing.assert_close(first["state"], reset_observations["state"])
+    torch.testing.assert_close(second["state"], reset_observations["state"])
+    assert len(updates) == 2
+    assert runner._tracking_last_transition == 8
+
+
+def test_tracking_runner_learn_runs_transition_zero_before_collection(monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = object.__new__(ForwardBackwardTrackingRunner)
+    calls: list[tuple[str, int | None]] = []
+    runner.tracking_curriculum = object()
+    runner._tracking_last_transition = None
+    runner._run_tracking_curriculum = lambda transition, _observations: calls.append(("tracking", transition))
+    monkeypatch.setattr(
+        tracking_module.OffPolicyRunner,
+        "learn",
+        lambda _self, iterations, _random: calls.append(("collection", iterations)),
+    )
+
+    runner.learn(3)
+
+    assert calls == [("tracking", 0), ("collection", 3)]

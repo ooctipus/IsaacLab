@@ -97,6 +97,7 @@ def forward_backward_expert_buffer(
     device: str,
     *,
     source_bind: str,
+    priorities_bind: str,
     sampling_mode: Literal["source_rows", "uniform_before_source_end"],
     sampling_step_seconds: float | None,
     target_projection: str,
@@ -111,6 +112,7 @@ def forward_backward_expert_buffer(
         observation_schema: Learner observation fields and routes.
         device: Learner tensor device.
         source_bind: Expression resolving the domain-owned sequence source.
+        priorities_bind: Expression resolving the source's canonical clip-sampling weights.
         sampling_mode: Relation between stored source rows and expert samples.
         sampling_step_seconds: Uniform sample period [s], or None for source rows.
         target_projection: Qualified pure projection callable selected by domain config.
@@ -122,6 +124,9 @@ def forward_backward_expert_buffer(
         Immutable clip-safe expert buffer on the declared sampling clock.
     """
     source = _source(env, source_bind, device)
+    if not isinstance(priorities_bind, str) or not priorities_bind:
+        raise TypeError("priorities_bind must be a nonempty expression.")
+    priorities = eval(priorities_bind, {}, {"env": env})  # noqa: S307
     sampled = source.sample(sampling_mode, sampling_step_seconds)
     if not isinstance(sampled, ForwardBackwardSampledSequence):
         raise TypeError("Sequence source sample() must return a ForwardBackwardSampledSequence.")
@@ -129,6 +134,12 @@ def forward_backward_expert_buffer(
         raise ValueError("Sampled sequence must retain its source and device.")
     if len(sampled.clip_offsets) != len(sampled.clip_ids) + 1:
         raise ValueError("Sampled clip offsets and stable identifiers must align.")
+    if not isinstance(priorities, torch.Tensor):
+        raise TypeError("priorities_bind must resolve to a tensor.")
+    if priorities.shape != (len(sampled.clip_ids),) or priorities.dtype is not torch.float32:
+        raise ValueError("Canonical clip priorities must contain one float32 value per sampled clip.")
+    if priorities.device != sampled.device or priorities.requires_grad:
+        raise ValueError("Canonical clip priorities must be detached on the sampled-sequence device.")
     if sampled.clip_offsets[0] != 0 or any(
         end <= start for start, end in zip(sampled.clip_offsets[:-1], sampled.clip_offsets[1:], strict=True)
     ):
@@ -163,7 +174,6 @@ def forward_backward_expert_buffer(
         }
     )
     clip_offsets = torch.tensor(sampled.clip_offsets, dtype=torch.int64, device=sampled.device)
-    priorities = torch.ones(len(sampled.clip_ids), dtype=torch.float32, device=sampled.device)
     schema = ForwardBackwardExpertSchema(
         dataset_id=sampled.dataset_id,
         data_hash=data_hash,
