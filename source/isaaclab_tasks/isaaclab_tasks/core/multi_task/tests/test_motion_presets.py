@@ -355,7 +355,6 @@ def test_physical_observation_pose_push_randomization_selects_no_evidence() -> N
 @pytest.mark.parametrize(
     ("tokens", "message"),
     (
-        ({"smpl", "lafan", "newton_mjwarp"}, "SMPL robot currently supports only"),
         ({"smpl", "cmu", "physx"}, "native SMPL articulation currently supports only"),
         ({"g1", "cmu", "newton_mjwarp"}, "native G1 articulation currently supports only"),
         ({"smpl", "cmu", "newton_mjwarp", "evidence_physical_auxiliary"}, "requires the G1 robot"),

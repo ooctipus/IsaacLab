@@ -119,6 +119,7 @@ def test_lafan_typed_clip_preserves_direct_g1_frame_construction(tmp_path: Path)
 
     typed = builder.build_frames(clip, device="cpu")
     assert isinstance(clip, MotionPoseAxisAngleClip)
+    assert isinstance(clip, MotionLocalBodyPoseClip)
     direct = builder.build_pose_frames(torch.from_numpy(pose), torch.from_numpy(root), 30.0)
 
     assert typed.stored_fields == direct.stored_fields
@@ -356,11 +357,12 @@ def test_smpl_robot_does_not_own_humenv_reference_interpreter() -> None:
         encoding="utf-8"
     )
 
-    for forbidden in ("SMPL_HUMENV_MJCF_PATH", "SMPL_HUMENV_MJCF_SHA256", "def smpl_reference_kinematics"):
+    for forbidden in ("SMPL_HUMENV_MJCF_PATH", "def smpl_reference_kinematics"):
         assert forbidden not in robot_source
     assert "def smpl_humenv_reference_kinematics" in coordinate_source
 
     assert "file_sha256(reference.mjcf_path)" in robot_source
+    assert "reference_mjcf_sha256 != SMPL_HUMENV_MJCF_SHA256" in robot_source
 
 
 def test_g1_robot_does_not_own_generic_kinematics_or_temporal_math() -> None:
