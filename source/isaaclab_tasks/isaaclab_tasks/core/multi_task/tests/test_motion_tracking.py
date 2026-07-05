@@ -34,7 +34,6 @@ from isaaclab_tasks.core.multi_task.motion.robots.smpl.observations import (
 from isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_tracking import (
     ForwardBackwardTrackingCurriculum,
     ForwardBackwardTrackingEvaluation,
-    ForwardBackwardTrackingRunner,
     forward_backward_tracking_evaluator,
     forward_backward_tracking_priorities,
 )
@@ -76,6 +75,10 @@ _PRIORITY_PROTOCOL = {
 _CURRICULUM_PROTOCOL = {
     **_TRACKING_PROTOCOL,
     "command_bind": "env.unwrapped.command_manager.get_term('motion')",
+    "sequence_ids_bind": "env.unwrapped.command_manager.get_term('motion').table.clip_ids",
+    "sequence_start_rows_bind": "env.unwrapped.command_manager.get_term('motion').table.clip_start_rows",
+    "sampling_priorities_bind": "env.unwrapped.command_manager.get_term('motion').payload.sampler.clip_priorities",
+    "evaluation_scope_bind": "env.unwrapped.command_manager.get_term('motion').payload.sampler.reset_sampling_scope",
     "priority_metric_name": "emd",
     "priority_metric_minimum": 0.5,
     "priority_metric_maximum": 2.0,
@@ -1347,40 +1350,3 @@ def test_curriculum_checkpoint_rejects_changed_protocol() -> None:
 
     with pytest.raises(ValueError, match="protocol"):
         coordinator.load_state_dict(state)
-
-
-def test_tracking_runner_cadence_uses_transition_zero_and_periodic_boundaries() -> None:
-    runner = object.__new__(ForwardBackwardTrackingRunner)
-    reset_observations = TensorDict({"state": torch.ones(2, 1)}, batch_size=[2])
-    updates: list[int] = []
-    runner.env = SimpleNamespace(num_envs=2)
-    runner.device = "cpu"
-    runner.tracking_interval_transitions = 8
-    runner._tracking_last_transition = None
-    runner.tracking_curriculum = SimpleNamespace(update=lambda: updates.append(1) or reset_observations)
-    current = TensorDict({"state": torch.zeros(2, 1)}, batch_size=[2])
-
-    first = runner._run_tracking_curriculum(0, None)
-    assert runner._run_tracking_curriculum(4, current) is current
-    second = runner._run_tracking_curriculum(8, current)
-    torch.testing.assert_close(first["state"], reset_observations["state"])
-    torch.testing.assert_close(second["state"], reset_observations["state"])
-    assert len(updates) == 2
-    assert runner._tracking_last_transition == 8
-
-
-def test_tracking_runner_learn_runs_transition_zero_before_collection(monkeypatch: pytest.MonkeyPatch) -> None:
-    runner = object.__new__(ForwardBackwardTrackingRunner)
-    calls: list[tuple[str, int | None]] = []
-    runner.tracking_curriculum = object()
-    runner._tracking_last_transition = None
-    runner._run_tracking_curriculum = lambda transition, _observations: calls.append(("tracking", transition))
-    monkeypatch.setattr(
-        tracking_module.OffPolicyRunner,
-        "learn",
-        lambda _self, iterations, _random: calls.append(("collection", iterations)),
-    )
-
-    runner.learn(3)
-
-    assert calls == [("tracking", 0), ("collection", 3)]

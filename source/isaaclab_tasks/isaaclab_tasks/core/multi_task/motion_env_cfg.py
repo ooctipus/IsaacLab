@@ -713,12 +713,10 @@ class MotionImitationEnvCfg(ManagerBasedRLEnvCfg):
     compute_final_obs: bool = True
 
     def validate_config(self) -> None:
-        """Reject robot, source, and backend combinations without a real implementation edge."""
+        """Reject incompatible robot capabilities and physics backends."""
         if isinstance(self.actions, PresetCfg):
             return
 
-        source = self.commands.motion.task_table.source.identifier
-        frame_builder = self.commands.motion.task_table.frame_builder_factory
         physics = self.sim.physics
         is_g1 = isinstance(self.actions, MotionActionsCfg.G1Cfg)
         evidence_enabled = self.scene.contact_forces is not None
@@ -732,23 +730,9 @@ class MotionImitationEnvCfg(ManagerBasedRLEnvCfg):
                 "Physical auxiliary evidence requires both its contact sensor and transition observation group."
             )
         if isinstance(self.actions, MotionActionsCfg.SmplCfg):
-            frame_builders = {
-                "cmu_humenv_smpl": smpl_generalized_coordinate_frame_builder,
-                "lafan_g1_29dof": smpl_g1_hinge_frame_builder,
-            }
-            expected_builder = frame_builders.get(source)
-            if expected_builder is None or frame_builder is not expected_builder:
-                raise ValueError(f"The SMPL robot has no frame builder for source {source!r}.")
             if not isinstance(physics, NewtonCfg):
                 raise ValueError("The native SMPL articulation currently supports only Newton MJWarp physics.")
         elif isinstance(self.actions, MotionActionsCfg.G1Cfg):
-            frame_builders = {
-                "cmu_humenv_smpl": g1_local_body_pose_frame_builder,
-                "lafan_g1_29dof": g1_pose_frame_builder,
-            }
-            expected_builder = frame_builders.get(source)
-            if expected_builder is None or frame_builder is not expected_builder:
-                raise ValueError(f"The G1 robot has no frame builder for source {source!r}.")
             if not isinstance(physics, PhysxCfg):
                 raise ValueError("The native G1 articulation currently supports only PhysX physics.")
         else:

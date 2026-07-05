@@ -94,7 +94,7 @@ def test_metamotivo_profile_keeps_its_faithful_direct_values() -> None:
     assert cfg.model.actor_cfg.hidden_layers == cfg.model.forward_cfg.hidden_layers == 2
     assert cfg.model.actor_cfg.residual is cfg.model.forward_cfg.residual is False
     assert cfg.tracking_curriculum is None
-    assert cfg.class_type == "rsl_rl.runners:OffPolicyRunner"
+    assert cfg.class_type == "rsl_rl.runners:ForwardBackwardRunner"
     assert tuple(helper.name for helper in cfg.value_helpers) == ("discriminator",)
     assert cfg.value_helpers[0].actor_coefficient == 0.01
 
@@ -123,7 +123,7 @@ def test_bfm_profile_keeps_its_faithful_direct_values() -> None:
     assert cfg.expert.sampling_mode == "uniform_before_source_end"
     assert cfg.expert.sampling_step_seconds == 0.02
     assert cfg.expert.window_lengths == (8, 257)
-    assert str(cfg.class_type).endswith(":ForwardBackwardTrackingRunner")
+    assert cfg.class_type == "rsl_rl.runners:ForwardBackwardRunner"
     assert cfg.model.actor_cfg.hidden_layers == cfg.model.forward_cfg.hidden_layers == 6
     assert cfg.model.actor_cfg.embedding_layers == 2
     assert cfg.model.forward_cfg.embedding_layers == 6
@@ -136,6 +136,11 @@ def test_bfm_profile_keeps_its_faithful_direct_values() -> None:
     assert tuple(helper.name for helper in cfg.value_helpers) == ("discriminator", "auxiliary")
     assert cfg.value_helpers[0].actor_coefficient == 0.05
     assert cfg.tracking_curriculum is not None
+    assert cfg.tracking_curriculum.class_name.endswith(":ForwardBackwardTrackingCurriculum")
+    assert cfg.tracking_curriculum.sequence_ids_bind.endswith(".table.clip_ids")
+    assert cfg.tracking_curriculum.sequence_start_rows_bind.endswith(".table.clip_start_rows")
+    assert cfg.tracking_curriculum.sampling_priorities_bind.endswith(".payload.sampler.clip_priorities")
+    assert cfg.tracking_curriculum.evaluation_scope_bind.endswith(".payload.sampler.reset_sampling_scope")
     assert cfg.tracking_curriculum.interval_transitions == 9_600_000
 
 

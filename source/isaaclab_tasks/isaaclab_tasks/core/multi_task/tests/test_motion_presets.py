@@ -364,7 +364,7 @@ def test_physical_observation_pose_push_randomization_selects_no_evidence() -> N
         ),
     ),
 )
-def test_motion_environment_rejects_unimplemented_composition_edges(
+def test_motion_environment_rejects_incompatible_robot_capabilities_and_backends(
     tokens: set[str],
     message: str,
 ) -> None:

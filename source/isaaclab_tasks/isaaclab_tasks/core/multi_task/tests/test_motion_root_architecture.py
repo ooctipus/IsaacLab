@@ -89,6 +89,22 @@ def test_motion_environment_root_owns_visible_composition() -> None:
     assert 'reset_sources=(("motion", 0.8), ("fall", 0.2))' not in text
 
 
+def test_motion_environment_validation_does_not_duplicate_robot_source_composition() -> None:
+    """Frame-builder constructors own source-schema validation for every selected edge."""
+    source = _MULTI_TASK_ROOT / "motion_env_cfg.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    environment = next(
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MotionImitationEnvCfg"
+    )
+    validator = next(
+        node for node in environment.body if isinstance(node, ast.FunctionDef) and node.name == "validate_config"
+    )
+    validator_source = ast.unparse(validator)
+
+    forbidden = ("source.identifier", "frame_builder_factory", "frame_builders", "cmu_humenv_smpl", "lafan_g1_29dof")
+    assert all(name not in validator_source for name in forbidden)
+
+
 def test_motion_command_module_contains_only_reusable_schemas() -> None:
     source = _MULTI_TASK_ROOT / "motion" / "mdp" / "commands" / "commands_cfg.py"
     text = source.read_text(encoding="utf-8")
@@ -241,6 +257,10 @@ def test_generic_tracking_has_no_robot_geometry_or_unwrapped_rollout() -> None:
         "evaluate_forward_backward_tracking",
         "g1_tracking",
         "smpl_tracking",
+        'getattr(command, "table"',
+        'getattr(command, "payload"',
+        'getattr(payload, "sampler"',
+        "class ForwardBackwardTrackingRunner",
     ):
         assert forbidden not in text
     assert "from rsl_rl.env import VecEnv" in text

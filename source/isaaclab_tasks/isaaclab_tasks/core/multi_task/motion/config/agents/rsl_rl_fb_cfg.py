@@ -319,8 +319,15 @@ class MotionTrackingCurriculumCfg:
         projection: str | None = None
         assignment_metric: str = "uniform_assignment"
 
+    class_name: str = (
+        "isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_tracking:ForwardBackwardTrackingCurriculum"
+    )
     interval_transitions: int = MISSING
     command_bind: str = MISSING
+    sequence_ids_bind: str = MISSING
+    sequence_start_rows_bind: str = MISSING
+    sampling_priorities_bind: str = MISSING
+    evaluation_scope_bind: str = MISSING
     projections: tuple[ProjectionCfg, ...] = MISSING
     context_window_length: int = MISSING
     include_reset_frame: bool = MISSING
@@ -373,6 +380,10 @@ class MotionTrackingCurriculumPresetCfg(PresetCfg):
             default=5_000_000, tracking_interval_5m=5_000_000, tracking_interval_9p6m=9_600_000
         ),
         command_bind="env.unwrapped.command_manager.get_term('motion')",
+        sequence_ids_bind="env.unwrapped.command_manager.get_term('motion').table.clip_ids",
+        sequence_start_rows_bind="env.unwrapped.command_manager.get_term('motion').table.clip_start_rows",
+        sampling_priorities_bind="env.unwrapped.command_manager.get_term('motion').payload.sampler.clip_priorities",
+        evaluation_scope_bind="env.unwrapped.command_manager.get_term('motion').payload.sampler.reset_sampling_scope",
         projections=MotionTrackingProjectionsPresetCfg(),  # type: ignore[arg-type]
         context_window_length=8,
         include_reset_frame=False,
@@ -390,6 +401,10 @@ class MotionTrackingCurriculumPresetCfg(PresetCfg):
             default=5_000_000, tracking_interval_5m=5_000_000, tracking_interval_9p6m=9_600_000
         ),
         command_bind="env.unwrapped.command_manager.get_term('motion')",
+        sequence_ids_bind="env.unwrapped.command_manager.get_term('motion').table.clip_ids",
+        sequence_start_rows_bind="env.unwrapped.command_manager.get_term('motion').table.clip_start_rows",
+        sampling_priorities_bind="env.unwrapped.command_manager.get_term('motion').payload.sampler.clip_priorities",
+        evaluation_scope_bind="env.unwrapped.command_manager.get_term('motion').payload.sampler.reset_sampling_scope",
         projections=MotionTrackingProjectionsPresetCfg(),  # type: ignore[arg-type]
         context_window_length=1,
         include_reset_frame=True,
@@ -408,16 +423,8 @@ class MotionTrackingCurriculumPresetCfg(PresetCfg):
 class MotionForwardBackwardRunnerCfg(RslRlForwardBackwardRunnerCfg):
     """Compose one motion FB learner from independent semantic axes."""
 
-    class_type = preset(
-        default="rsl_rl.runners:OffPolicyRunner",
-        tracking_source_edge="isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_tracking:ForwardBackwardTrackingRunner",
-        tracking_reset_frame="isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_tracking:ForwardBackwardTrackingRunner",
-    )
-    class_name = preset(
-        default="OffPolicyRunner",
-        tracking_source_edge="ForwardBackwardTrackingRunner",
-        tracking_reset_frame="ForwardBackwardTrackingRunner",
-    )
+    class_type = "rsl_rl.runners:ForwardBackwardRunner"
+    class_name = "ForwardBackwardRunner"
     seed = preset(default=0, seed_0=0, seed_4728=4728)
     num_envs = preset(default=50, schedule_50x10_5m=50, schedule_1024x1_211p2m=1024)
     num_steps_per_env = preset(default=10, schedule_50x10_5m=10, schedule_1024x1_211p2m=1)

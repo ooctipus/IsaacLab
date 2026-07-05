@@ -19,7 +19,6 @@ import torch
 from rsl_rl.env import VecEnv
 from rsl_rl.modules.forward_backward import trajectory_context_sequence
 from rsl_rl.modules.reward_channels import get_forward_backward_schema_hash
-from rsl_rl.runners import OffPolicyRunner
 from rsl_rl.storage.forward_backward_expert import ForwardBackwardExpertBuffer
 from rsl_rl.utils import resolve_callable
 from tensordict import TensorDict, TensorDictBase
@@ -708,6 +707,10 @@ class ForwardBackwardTrackingCurriculum:
         device: str,
         *,
         command_bind: str,
+        sequence_ids_bind: str,
+        sequence_start_rows_bind: str,
+        sampling_priorities_bind: str,
+        evaluation_scope_bind: str,
         projections: tuple[Mapping[str, object], ...],
         context_window_length: int,
         include_reset_frame: bool,
@@ -722,15 +725,13 @@ class ForwardBackwardTrackingCurriculum:
         evaluation_seed: int = 0,
     ) -> None:
         """Bind one motion command and the learner state that shares its sampling weights."""
-        command = _resolve_binding(command_bind, {"env": env, "algorithm": algorithm})
-        table = getattr(command, "table", None)
-        payload = getattr(command, "payload", None)
-        sampler = getattr(payload, "sampler", None)
+        values = {"env": env, "algorithm": algorithm}
+        command = _resolve_binding(command_bind, values)
+        sequence_ids = _resolve_binding(sequence_ids_bind, values)
+        sequence_start_rows = _resolve_binding(sequence_start_rows_bind, values)
+        sampling_priorities = _resolve_binding(sampling_priorities_bind, values)
+        evaluation_scope = _resolve_binding(evaluation_scope_bind, values)
         expert = algorithm.expert
-        sequence_ids = getattr(table, "clip_ids", None)
-        sequence_start_rows = getattr(table, "clip_start_rows", None)
-        sampling_priorities = getattr(sampler, "clip_priorities", None)
-        evaluation_scope = getattr(sampler, "reset_sampling_scope", None)
         if not callable(getattr(command, "bind_rows", None)) or not isinstance(
             getattr(command, "randomize_command_indices", None), bool
         ):
@@ -740,17 +741,17 @@ class ForwardBackwardTrackingCurriculum:
         if not isinstance(sequence_ids, tuple) or any(
             not isinstance(value, str) or not value for value in sequence_ids
         ):
-            raise TypeError("The bound command table must expose a tuple of nonempty clip ids.")
+            raise TypeError("The sequence_ids binding must resolve to a tuple of nonempty clip ids.")
         if sequence_ids != expert.clip_ids:
             raise ValueError("Environment and expert stable sequence ids must match exactly.")
         if not isinstance(sequence_start_rows, torch.Tensor):
-            raise TypeError("The bound command table must expose tensor clip start rows.")
+            raise TypeError("The sequence_start_rows binding must resolve to a tensor.")
         if not isinstance(sampling_priorities, torch.Tensor):
-            raise TypeError("The bound command sampler must expose tensor clip priorities.")
+            raise TypeError("The sampling_priorities binding must resolve to a tensor.")
         if sampling_priorities.data_ptr() != expert.priorities.data_ptr():
             raise ValueError("The environment sampler and expert buffer must share one canonical priority tensor.")
         if not callable(evaluation_scope):
-            raise TypeError("The bound command sampler must expose reset_sampling_scope().")
+            raise TypeError("The evaluation_scope binding must resolve to a callable.")
         if not callable(getattr(algorithm, "evaluation_history", None)):
             raise TypeError("Tracking curriculum requires the learner evaluation_history() factory.")
         if not callable(getattr(algorithm, "eval_mode", None)) or not callable(getattr(algorithm, "train_mode", None)):
@@ -792,6 +793,7 @@ class ForwardBackwardTrackingCurriculum:
                 "allow_horizon_truncation": allow_horizon_truncation,
                 "command_bind": command_bind,
                 "context_window_length": context_window_length,
+                "evaluation_scope_bind": evaluation_scope_bind,
                 "evaluation_seed": evaluation_seed,
                 "expert_schema_hash": expert.schema.schema_hash,
                 "include_reset_frame": include_reset_frame,
@@ -802,10 +804,13 @@ class ForwardBackwardTrackingCurriculum:
                 "priority_metric_name": priority_metric_name,
                 "projections": resolved_projections,
                 "reset_source_name": reset_source_name,
+                "sampling_priorities_bind": sampling_priorities_bind,
                 "sequence_ids": sequence_ids,
+                "sequence_ids_bind": sequence_ids_bind,
                 "sequence_start_rows": sequence_start_rows.detach().cpu().tolist(),
+                "sequence_start_rows_bind": sequence_start_rows_bind,
                 "shuffle_assignments": shuffle_assignments,
-                "version": 2,
+                "version": 3,
             }
         )
 
@@ -888,105 +893,3 @@ class ForwardBackwardTrackingCurriculum:
         assignment_rng = random.Random()
         assignment_rng.setstate(state_dict["assignment_rng_state"])
         self.assignment_rng.setstate(assignment_rng.getstate())
-
-
-class ForwardBackwardTrackingRunner(OffPolicyRunner):
-    """Run off-policy FB learning with an optional sequence-tracking curriculum."""
-
-    def __init__(self, env: VecEnv, train_cfg: dict, log_dir: str | None = None, device: str = "cpu") -> None:
-        """Construct the learner and its declared tracking curriculum."""
-        super().__init__(env, train_cfg, log_dir, device)
-        self.tracking_curriculum: ForwardBackwardTrackingCurriculum | None = None
-        self.tracking_interval_transitions: int | None = None
-        self._tracking_last_transition: int | None = None
-        configured = self.cfg["tracking_curriculum"]
-        if configured is None:
-            return
-        curriculum_cfg = dict(configured)
-        interval = curriculum_cfg.pop("interval_transitions")
-        if type(interval) is not int:
-            raise TypeError("Tracking curriculum interval_transitions must be an integer.")
-        collection_block = self.env.num_envs * int(self.cfg["num_steps_per_env"])
-        if interval < 1 or interval % collection_block:
-            raise ValueError("Tracking curriculum interval must be a positive multiple of one collection block.")
-        self.tracking_curriculum = ForwardBackwardTrackingCurriculum(self.env, self.alg, self.device, **curriculum_cfg)
-        self.tracking_interval_transitions = interval
-
-    def _run_tracking_curriculum(self, transition: int, observations: TensorDictBase | None) -> TensorDictBase:
-        """Run one due curriculum update and return its reset observations."""
-        curriculum = self.tracking_curriculum
-        interval = self.tracking_interval_transitions
-        if curriculum is None or interval is None:
-            raise RuntimeError("Tracking curriculum work requires a configured curriculum.")
-        if transition and transition % interval:
-            if observations is None:
-                raise ValueError("Periodic tracking requires current observations when no update is due.")
-            return observations
-        if self._tracking_last_transition is not None and transition <= self._tracking_last_transition:
-            if transition == self._tracking_last_transition and observations is not None:
-                return observations
-            raise RuntimeError("Tracking curriculum transitions must increase monotonically.")
-        reset_observations = curriculum.update()
-        if tuple(reset_observations.batch_size) != (self.env.num_envs,):
-            raise ValueError("Tracking reset observations must contain one row per environment.")
-        self._tracking_last_transition = transition
-        return reset_observations.to(self.device)
-
-    def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False) -> None:
-        """Run transition-zero tracking once, then use the ordinary off-policy loop."""
-        if self.tracking_curriculum is not None and self._tracking_last_transition is None:
-            self._run_tracking_curriculum(0, None)
-        super().learn(num_learning_iterations, init_at_random_ep_len)
-
-    def _update(self, observations: TensorDictBase) -> tuple[TensorDictBase, list[dict[str, torch.Tensor]]]:
-        """Update the learner, then run tracking at due transition counts."""
-        observations, metrics = super()._update(observations)
-        if self.tracking_curriculum is not None:
-            observations = self._run_tracking_curriculum(self.collected_transitions, observations)
-        return observations, metrics
-
-    def state_dict(self) -> dict[str, object]:
-        """Extend the ordinary runner checkpoint with curriculum cadence and RNG state."""
-        state_dict = super().state_dict()
-        state_dict["tracking_curriculum"] = (
-            None
-            if self.tracking_curriculum is None
-            else {
-                "last_transition": self._tracking_last_transition,
-                "state_dict": self.tracking_curriculum.state_dict(),
-            }
-        )
-        return state_dict
-
-    def load_state_dict(
-        self,
-        state_dict: dict[str, object],
-        load_cfg: dict | None = None,
-        strict: bool = True,
-    ) -> None:
-        """Restore learner state followed by the matching tracking curriculum state."""
-        super().load_state_dict(state_dict, load_cfg, strict)
-        tracking_state = state_dict.get("tracking_curriculum")
-        curriculum = self.tracking_curriculum
-        interval = self.tracking_interval_transitions
-        if curriculum is None:
-            if tracking_state is not None:
-                raise ValueError("Checkpoint tracking curriculum differs from the configured runner.")
-            return
-        if interval is None or not isinstance(tracking_state, dict):
-            raise ValueError("Checkpoint is missing configured tracking curriculum state.")
-        last_transition = tracking_state.get("last_transition")
-        if last_transition is not None:
-            if type(last_transition) is not int or last_transition < 0:
-                raise ValueError("Tracking curriculum last_transition must be null or a non-negative integer.")
-            if last_transition and last_transition % interval:
-                raise ValueError("Checkpoint tracking transition is outside the configured cadence.")
-            if last_transition > self.collected_transitions:
-                raise ValueError("Checkpoint tracking transition exceeds collected transitions.")
-        elif self.collected_transitions:
-            raise ValueError("A checkpoint without a tracking event cannot contain transitions.")
-        curriculum_state = tracking_state.get("state_dict")
-        if not isinstance(curriculum_state, dict):
-            raise TypeError("Checkpoint tracking curriculum state_dict must be a dictionary.")
-        curriculum.load_state_dict(curriculum_state)
-        self._tracking_last_transition = last_transition
