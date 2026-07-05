@@ -18,6 +18,7 @@ from isaaclab.utils.math import convert_quat, quat_apply, quat_apply_inverse, qu
 from isaaclab_assets.robots.smpl.smpl_constants import SMPL_HUMENV_MJCF_SHA256
 
 from ....kinematics import (
+    ORDERED_HINGE_OPERATOR_VERSION,
     fit_ordered_hinge_coordinates,
     time_gradient,
     time_quaternion_angular_velocity,
@@ -45,35 +46,97 @@ class _SmplTargetFrameBuilder:
     live_joint_names: tuple[str, ...]
     live_body_names: tuple[str, ...]
     construction_identity_sha256: str = field(init=False)
+    reference_coordinate_names: tuple[str, ...] = field(init=False)
     _live_from_reference_indices: torch.Tensor = field(init=False, repr=False)
     _body_com: torch.Tensor = field(init=False, repr=False)
     _live_body_from_reference_indices: torch.Tensor = field(init=False, repr=False)
+    _reference_from_canonical_indices: torch.Tensor = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Resolve the live articulation against the exact target reference once."""
         reference = self.reference_kinematics
         reference_body_names = tuple(reference.body_names)
-        reference_joint_names = tuple(reference.joint_names[1:])
-        expected_joint_names = tuple(f"{body_name}_{axis}" for body_name in reference_body_names[1:] for axis in "xyz")
-        if reference_joint_names != expected_joint_names:
-            raise ValueError("The SMPL reference must expose one ordered XYZ coordinate chain per non-root body.")
         if (
             len(self.live_body_names) != len(reference_body_names)
             or self.live_body_names[0] != reference_body_names[0]
             or set(self.live_body_names) != set(reference_body_names)
         ):
             raise ValueError("The live SMPL bodies differ from the exact reference MJCF.")
-        if reference.model.joint_coord_count != 7 + len(reference_joint_names):
-            raise ValueError("The exact SMPL MJCF generalized-position width differs from its named coordinates.")
-        if reference.model.joint_dof_count != 6 + len(reference_joint_names):
-            raise ValueError("The exact SMPL MJCF generalized-velocity width differs from its named coordinates.")
+        model = reference.model
+        coordinate_count = 3 * (len(reference_body_names) - 1)
+        if model.body_count != len(reference_body_names) or model.joint_count != len(reference_body_names):
+            raise ValueError("The exact SMPL reference must expose one root and one joint per body.")
+        if len(reference.joint_names) != model.joint_count:
+            raise ValueError("The exact SMPL reference joint labels differ from its model joints.")
+        if model.joint_coord_count != 7 + coordinate_count or model.joint_dof_count != 6 + coordinate_count:
+            raise ValueError("The exact SMPL reference generalized-coordinate widths are invalid.")
+
+        joint_child = wp.to_torch(model.joint_child).cpu()
+        joint_q_start = wp.to_torch(model.joint_q_start).cpu()
+        joint_qd_start = wp.to_torch(model.joint_qd_start).cpu()
+        joint_axis = wp.to_torch(model.joint_axis).cpu()
+        if (
+            joint_child.shape != (model.joint_count,)
+            or joint_q_start.shape != (model.joint_count + 1,)
+            or joint_qd_start.shape != (model.joint_count + 1,)
+            or joint_axis.shape != (model.joint_dof_count, 3)
+        ):
+            raise ValueError("The exact SMPL reference joint metadata shapes are invalid.")
+
+        child_indices = tuple(int(value) for value in joint_child.tolist())
+        q_starts = tuple(int(value) for value in joint_q_start.tolist())
+        qd_starts = tuple(int(value) for value in joint_qd_start.tolist())
+        axes = tuple(tuple(float(component) for component in axis) for axis in joint_axis.tolist())
+        if q_starts[:2] != (0, 7) or qd_starts[:2] != (0, 6):
+            raise ValueError("The exact SMPL reference must expose one free root joint.")
+
+        axis_names = {(1.0, 0.0, 0.0): "x", (0.0, 1.0, 0.0): "y", (0.0, 0.0, 1.0): "z"}
+        body_joint_counts = [0] * len(reference_body_names)
+        q_coordinate_names = [""] * coordinate_count
+        qd_coordinate_names = [""] * coordinate_count
+        for joint_index in range(1, model.joint_count):
+            child_index = child_indices[joint_index]
+            if child_index <= 0 or child_index >= len(reference_body_names):
+                raise ValueError("Every non-root SMPL joint must own one non-root child body.")
+            body_joint_counts[child_index] += 1
+            q_begin, q_end = q_starts[joint_index : joint_index + 2]
+            qd_begin, qd_end = qd_starts[joint_index : joint_index + 2]
+            if q_end - q_begin != 3 or qd_end - qd_begin != 3:
+                raise ValueError("Every non-root SMPL body must own one three-coordinate joint.")
+            coordinate_axes: list[str] = []
+            for offset in range(3):
+                axis_name = axis_names.get(axes[qd_begin + offset])
+                if axis_name is None:
+                    raise ValueError("SMPL joint axes must be positive cardinal directions.")
+                coordinate_axes.append(axis_name)
+                q_index = q_begin + offset - 7
+                qd_index = qd_begin + offset - 6
+                if q_index < 0 or q_index >= coordinate_count or qd_index < 0 or qd_index >= coordinate_count:
+                    raise ValueError("SMPL joint coordinate indices exceed the non-root ranges.")
+                coordinate_name = f"{reference_body_names[child_index]}_{axis_name}"
+                if q_coordinate_names[q_index] or qd_coordinate_names[qd_index]:
+                    raise ValueError("SMPL joint metadata assigns one generalized coordinate more than once.")
+                q_coordinate_names[q_index] = coordinate_name
+                qd_coordinate_names[qd_index] = coordinate_name
+            if set(coordinate_axes) != set("xyz"):
+                raise ValueError("Every non-root SMPL joint must expose one positive X, Y, and Z axis.")
+
+        if body_joint_counts != [0, *([1] * (len(reference_body_names) - 1))]:
+            raise ValueError("Every non-root SMPL body must own exactly one joint.")
+        reference_coordinate_names = tuple(q_coordinate_names)
+        if not all(reference_coordinate_names) or tuple(qd_coordinate_names) != reference_coordinate_names:
+            raise ValueError("SMPL generalized-position and generalized-velocity coordinate orders differ.")
+        canonical_coordinate_names = tuple(
+            f"{body_name}_{axis}" for body_name in reference_body_names[1:] for axis in "xyz"
+        )
+        reference_from_canonical = tuple(canonical_coordinate_names.index(name) for name in reference_coordinate_names)
 
         live_reference_names = smpl_live_joint_source_names(self.live_joint_names)
-        if len(live_reference_names) != len(reference_joint_names) or set(live_reference_names) != set(
-            reference_joint_names
+        if len(live_reference_names) != coordinate_count or set(live_reference_names) != set(
+            reference_coordinate_names
         ):
             raise ValueError("The live SMPL joint coordinates differ from the exact reference MJCF.")
-        live_from_reference = tuple(reference_joint_names.index(name) for name in live_reference_names)
+        live_from_reference = tuple(reference_coordinate_names.index(name) for name in live_reference_names)
         live_body_from_reference = tuple(reference_body_names.index(name) for name in self.live_body_names)
         body_com = wp.to_torch(reference.model.body_com)
         if body_com.shape != (len(reference_body_names), 3) or body_com.dtype is not torch.float32:
@@ -83,6 +146,12 @@ class _SmplTargetFrameBuilder:
 
         validate_sha256("reference_mjcf_sha256", self.reference_mjcf_sha256)
         object.__setattr__(self, "_body_com", body_com)
+        object.__setattr__(self, "reference_coordinate_names", reference_coordinate_names)
+        object.__setattr__(
+            self,
+            "_reference_from_canonical_indices",
+            torch.tensor(reference_from_canonical, dtype=torch.int64, device=reference.device),
+        )
         object.__setattr__(
             self,
             "_live_body_from_reference_indices",
@@ -100,7 +169,8 @@ class _SmplTargetFrameBuilder:
                 {
                     "reference_mjcf_sha256": self.reference_mjcf_sha256,
                     "reference_body_names": reference_body_names,
-                    "reference_joint_names": reference_joint_names,
+                    "reference_coordinate_names": reference_coordinate_names,
+                    "reference_from_canonical": reference_from_canonical,
                     "live_body_names": self.live_body_names,
                     "live_joint_names": self.live_joint_names,
                     "live_body_from_reference": live_body_from_reference,
@@ -139,7 +209,7 @@ class _SmplTargetFrameBuilder:
     ) -> MotionFrames:
         """Build target-SMPL frames from wxyz positions and root-local velocities."""
         frame_count = generalized_position.shape[0]
-        coordinate_count = len(self.reference_kinematics.joint_names) - 1
+        coordinate_count = len(self.reference_coordinate_names)
         if generalized_position.shape != (frame_count, 7 + coordinate_count) or generalized_velocity.shape != (
             frame_count,
             6 + coordinate_count,
@@ -210,7 +280,7 @@ class SmplGeneralizedCoordinateFrameBuilder:
         )
         if tuple(self.reference_kinematics.body_names) != self.source_skeleton.body_names:
             raise ValueError("The SMPL source-body order differs from the exact reference MJCF.")
-        if tuple(self.reference_kinematics.joint_names[1:]) != self.source_skeleton.joint_names:
+        if target.reference_coordinate_names != self.source_skeleton.joint_names:
             raise ValueError("The SMPL source-coordinate order differs from the exact reference MJCF.")
         object.__setattr__(self, "_target", target)
         object.__setattr__(
@@ -229,6 +299,11 @@ class SmplGeneralizedCoordinateFrameBuilder:
     def joint_names(self) -> tuple[str, ...]:
         """Live-articulation order of the output joint axis."""
         return self._target.joint_names
+
+    @property
+    def reference_coordinate_names(self) -> tuple[str, ...]:
+        """Generalized-coordinate order required by the exact SMPL reference."""
+        return self._target.reference_coordinate_names
 
     @property
     def reference_frame_names(self) -> tuple[str, ...]:
@@ -282,7 +357,7 @@ class _SmplG1HingeFrameBuilder:
     reference_mjcf_sha256: str
     live_joint_names: tuple[str, ...]
     live_body_names: tuple[str, ...]
-    version: str = "smpl_from_g1_hinge_local_rotation_minimum_norm_v1"
+    version: str = "smpl_from_g1_hinge_local_rotation_minimum_norm_v2"
     construction_identity_sha256: str = field(init=False)
     _target: _SmplTargetFrameBuilder = field(init=False, repr=False)
     _source_body_chains: tuple[tuple[int, ...], ...] = field(init=False, repr=False)
@@ -316,6 +391,7 @@ class _SmplG1HingeFrameBuilder:
             canonical_sha256(
                 {
                     "math_version": self.version,
+                    "ordered_hinge_operator_version": ORDERED_HINGE_OPERATOR_VERSION,
                     "source_skeleton_sha256": self.source_skeleton.identity_sha256,
                     "target_construction_sha256": target.construction_identity_sha256,
                     "target_source_body_chains": _SMPL_TARGET_SOURCE_BODY_CHAINS,
@@ -361,19 +437,21 @@ class _SmplG1HingeFrameBuilder:
         root_translation = torch.as_tensor(clip.root_translation, device=device)
         root_rotation_xyzw = source_local_xyzw[:, 0]
         step_seconds = 1.0 / clip.source_fps
+        canonical_coordinates = target_coordinates.flatten(1)
+        reference_coordinates = canonical_coordinates.index_select(1, self._target._reference_from_canonical_indices)
         generalized_position = torch.empty(
-            frame_count, 7 + target_coordinates.shape[1] * 3, dtype=torch.float32, device=device
+            frame_count, 7 + len(self._target.reference_coordinate_names), dtype=torch.float32, device=device
         )
         generalized_position[:, :3].copy_(root_translation)
         generalized_position[:, 3:7].copy_(convert_quat(root_rotation_xyzw, to="wxyz"))
-        generalized_position[:, 7:].copy_(target_coordinates.flatten(1))
+        generalized_position[:, 7:].copy_(reference_coordinates)
 
         root_linear_velocity = time_gradient(root_translation.unsqueeze(0), step_seconds).squeeze(0)
         root_angular_velocity_world = time_quaternion_angular_velocity(
             root_rotation_xyzw.unsqueeze(0), step_seconds
         ).squeeze(0)
         root_angular_velocity_local = quat_apply_inverse(root_rotation_xyzw, root_angular_velocity_world)
-        joint_velocity = time_gradient(target_coordinates.flatten(1).unsqueeze(0), step_seconds).squeeze(0)
+        joint_velocity = time_gradient(reference_coordinates.unsqueeze(0), step_seconds).squeeze(0)
         generalized_velocity = torch.cat((root_linear_velocity, root_angular_velocity_local, joint_velocity), dim=-1)
         return self._target.build_generalized_frames(generalized_position, generalized_velocity)
 

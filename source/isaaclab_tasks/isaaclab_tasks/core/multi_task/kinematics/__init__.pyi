@@ -6,6 +6,7 @@
 __all__ = [
     "KinematicTree",
     "KinematicTreeRotationProjection",
+    "ORDERED_HINGE_OPERATOR_VERSION",
     "NewtonKinematics",
     "NewtonKinematicsCfg",
     "IKObjectiveGravityTorque",
@@ -26,6 +27,7 @@ __all__ = [
 from .kinematic_tree import (
     KinematicTree,
     KinematicTreeRotationProjection,
+    ORDERED_HINGE_OPERATOR_VERSION,
     fit_ordered_hinge_coordinates,
     ordered_hinge_rotation,
     time_gaussian_filter,

@@ -26,6 +26,8 @@ from isaaclab.utils.math import (
 if TYPE_CHECKING:
     from .newton_kinematics import NewtonKinematics
 
+ORDERED_HINGE_OPERATOR_VERSION = "ordered_orthogonal_hinge_fit_v2"
+
 
 @dataclass(frozen=True, slots=True)
 class KinematicTree:

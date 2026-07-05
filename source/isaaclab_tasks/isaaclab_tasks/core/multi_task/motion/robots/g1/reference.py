@@ -17,6 +17,7 @@ import torch
 from isaaclab.utils.math import quat_from_rotation_vector
 
 from ....kinematics import (
+    ORDERED_HINGE_OPERATOR_VERSION,
     KinematicTree,
     KinematicTreeRotationProjection,
     time_gaussian_filter,
@@ -374,7 +375,7 @@ class G1LocalBodyPoseFrameBuilder:
     target_builder: G1PoseFrameBuilder
     projection: KinematicTreeRotationProjection
     target_tree_identity_sha256: str
-    version: str = "g1_local_body_pose_ordered_hinge_fit_v1"
+    version: str = "g1_local_body_pose_ordered_hinge_fit_v2"
     construction_identity_sha256: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -385,7 +386,7 @@ class G1LocalBodyPoseFrameBuilder:
             raise ValueError("The G1 projection and pose builder target trees differ.")
         projection_identity = canonical_sha256(
             {
-                "policy": "ordered_orthogonal_hinge_fit_v1",
+                "policy": ORDERED_HINGE_OPERATOR_VERSION,
                 "source_skeleton_sha256": self.source_skeleton.identity_sha256,
                 "target_builder_sha256": self.target_builder.construction_identity_sha256,
                 "target_skeleton_sha256": self.target_tree_identity_sha256,
@@ -401,6 +402,7 @@ class G1LocalBodyPoseFrameBuilder:
                 {
                     "math_version": self.version,
                     "source_skeleton_sha256": self.source_skeleton.identity_sha256,
+                    "ordered_hinge_operator_version": ORDERED_HINGE_OPERATOR_VERSION,
                     "projection_sha256": projection_identity,
                     "input_representation": "world_root_translation_and_parent_local_wxyz_v1",
                 }

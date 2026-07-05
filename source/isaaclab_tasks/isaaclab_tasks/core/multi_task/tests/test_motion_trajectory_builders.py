@@ -64,15 +64,50 @@ def _file_sha256(path: Path) -> str:
 class _ReferenceKinematics:
     """Small exact-contract FK stand-in for construction-boundary unit tests."""
 
-    def __init__(self, skeleton, path: Path, *, smpl: bool = False, body_com: torch.Tensor | None = None) -> None:
+    def __init__(
+        self,
+        skeleton,
+        path: Path,
+        *,
+        smpl: bool = False,
+        body_com: torch.Tensor | None = None,
+        smpl_joint_body_indices: tuple[int, ...] | None = None,
+    ) -> None:
         self.body_names = list(skeleton.body_names)
-        self.joint_names = ["root", *skeleton.joint_names]
         self.mjcf_path = str(path)
         self.device = "cpu"
+        if smpl:
+            joint_body_indices = smpl_joint_body_indices or tuple(range(1, skeleton.num_bodies))
+            self.joint_names = ["root", *(f"{skeleton.body_names[index]}_xyz" for index in joint_body_indices)]
+            joint_q_start = [0, *range(7, 7 + 3 * (len(joint_body_indices) + 1), 3)]
+            joint_qd_start = [0, *range(6, 6 + 3 * (len(joint_body_indices) + 1), 3)]
+            joint_child = [0, *joint_body_indices]
+            joint_axis = torch.cat(
+                (
+                    torch.zeros(6, 3, dtype=torch.float32),
+                    torch.eye(3, dtype=torch.float32).repeat(len(joint_body_indices), 1),
+                )
+            )
+        else:
+            self.joint_names = ["root", *skeleton.joint_names]
+            joint_q_start = [0, *range(7, 7 + skeleton.num_joints + 1)]
+            joint_qd_start = [0, *range(6, 6 + skeleton.num_joints + 1)]
+            joint_child = [0, *skeleton.joint_child_body_indices]
+            joint_axis = torch.cat(
+                (
+                    torch.zeros(6, 3, dtype=torch.float32),
+                    torch.tensor(skeleton.joint_axes, dtype=torch.float32),
+                )
+            )
         self.model = SimpleNamespace(
             body_count=skeleton.num_bodies,
+            joint_count=len(self.joint_names),
             joint_coord_count=(7 + skeleton.num_joints),
             joint_dof_count=(6 + skeleton.num_joints),
+            joint_child=wp.array(joint_child, dtype=wp.int32, device="cpu"),
+            joint_q_start=wp.array(joint_q_start, dtype=wp.int32, device="cpu"),
+            joint_qd_start=wp.array(joint_qd_start, dtype=wp.int32, device="cpu"),
+            joint_axis=wp.from_torch(joint_axis, dtype=wp.vec3),
             body_com=(
                 wp.zeros(skeleton.num_bodies, dtype=wp.vec3, device="cpu")
                 if body_com is None
@@ -158,10 +193,24 @@ def _smpl_builder(
     )
 
 
-def _smpl_cross_builder(reference_path: Path) -> _SmplG1HingeFrameBuilder:
+def test_smpl_builder_derives_scalar_coordinates_from_grouped_newton_joints(reference_path: Path) -> None:
+    """Canonical SMPL coordinates come from grouped Newton child, range, and axis metadata."""
+    builder = _smpl_builder(reference_path)
+
+    assert builder.reference_coordinate_names == builder.source_skeleton.joint_names
+
+
+def test_smpl_builder_rejects_an_unrelated_source_schema(reference_path: Path) -> None:
+    """The native SMPL builder owns its exact source-coordinate contract."""
+    with pytest.raises(ValueError, match="source-body order differs"):
+        replace(_smpl_builder(reference_path), source_skeleton=lafan_g1_29dof_skeleton())
+
+
+def _smpl_cross_builder(reference_path: Path, *, reverse_reference_joints: bool = False) -> _SmplG1HingeFrameBuilder:
     source = lafan_g1_29dof_skeleton()
     target = cmu_humenv_smpl_skeleton()
-    reference = _ReferenceKinematics(target, reference_path, smpl=True)
+    joint_body_indices = tuple(range(target.num_bodies - 1, 0, -1)) if reverse_reference_joints else None
+    reference = _ReferenceKinematics(target, reference_path, smpl=True, smpl_joint_body_indices=joint_body_indices)
     return _SmplG1HingeFrameBuilder(
         source_skeleton=source,
         reference_kinematics=reference,
@@ -171,9 +220,18 @@ def _smpl_cross_builder(reference_path: Path) -> _SmplG1HingeFrameBuilder:
     )
 
 
-def test_smpl_cross_builder_declares_lossy_g1_hinge_reconstruction(reference_path: Path) -> None:
+def test_smpl_cross_builder_rejects_an_unrelated_source_schema(reference_path: Path) -> None:
+    """The cross builder rejects a source without its declared G1 hinge semantics."""
+    with pytest.raises(ValueError, match="requires pelvis as its root body"):
+        replace(_smpl_cross_builder(reference_path), source_skeleton=cmu_humenv_smpl_skeleton())
+
+
+@pytest.mark.parametrize("reverse_reference_joints", (False, True), ids=("canonical", "reordered-reference"))
+def test_smpl_cross_builder_declares_lossy_g1_hinge_reconstruction(
+    reference_path: Path, reverse_reference_joints: bool
+) -> None:
     """The reverse cross edge reconstructs mapped joints and explicitly zeros absent target bodies."""
-    builder = _smpl_cross_builder(reference_path)
+    builder = _smpl_cross_builder(reference_path, reverse_reference_joints=reverse_reference_joints)
     source = lafan_g1_29dof_skeleton()
     pose = np.zeros((4, 30, 3), dtype=np.float32)
     source_by_name = {name: index for index, name in enumerate(source.body_names)}
@@ -197,7 +255,7 @@ def test_smpl_cross_builder_declares_lossy_g1_hinge_reconstruction(reference_pat
         source_local[:, source_by_name["left_hip_yaw_link"]],
     )
 
-    assert builder.version == "smpl_from_g1_hinge_local_rotation_minimum_norm_v1"
+    assert builder.version == "smpl_from_g1_hinge_local_rotation_minimum_norm_v2"
     torch.testing.assert_close(torch.abs(torch.sum(reconstructed * expected, dim=-1)), torch.ones(4))
     absent = ("L_Toe", "R_Toe", "Spine", "Chest", "Neck", "Head", "L_Thorax", "L_Hand", "R_Thorax", "R_Hand")
     absent_ids = [by_name[f"{body}_{axis}"] for body in absent for axis in "xyz"]
@@ -560,6 +618,7 @@ def test_cross_builder_preserves_target_axis_identity(reference_path: Path) -> N
     )
 
     assert builder.joint_names == target.joint_names
+    assert builder.version == "g1_local_body_pose_ordered_hinge_fit_v2"
     assert builder.reference_frame_names == target.reference_frame_names
     assert len(builder.construction_identity_sha256) == 64
 
