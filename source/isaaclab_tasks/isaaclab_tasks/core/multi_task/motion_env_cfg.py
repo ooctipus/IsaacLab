@@ -63,7 +63,10 @@ from .motion.robots.g1.reference import (
 from .motion.robots.g1.reset import G1ReferenceAndLieDownReset
 from .motion.robots.smpl import observations as smpl_observations
 from .motion.robots.smpl.articulation import SMPL_MOTION_ARTICULATION_CFG
-from .motion.robots.smpl.reference import smpl_generalized_coordinate_frame_builder
+from .motion.robots.smpl.reference import (
+    smpl_g1_hinge_frame_builder,
+    smpl_generalized_coordinate_frame_builder,
+)
 from .motion.robots.smpl.reset import SmplHumEnvMocapAndFallReset
 
 
@@ -496,7 +499,9 @@ class MotionCommandsCfg:
 
         default = MotionTaskTableCfg(
             source=MotionSourcesCfg(),  # type: ignore[arg-type]
-            frame_builder_factory=smpl_generalized_coordinate_frame_builder,
+            frame_builder_factory=preset(
+                default=smpl_generalized_coordinate_frame_builder, lafan=smpl_g1_hinge_frame_builder
+            ),
             reference_kinematics_factory=smpl_humenv_reference_kinematics,
             task_row_mode=preset(
                 default="source_frames", sampling_source_rows="source_frames", sampling_clip_time="clip_time_ranges"
@@ -727,8 +732,13 @@ class MotionImitationEnvCfg(ManagerBasedRLEnvCfg):
                 "Physical auxiliary evidence requires both its contact sensor and transition observation group."
             )
         if isinstance(self.actions, MotionActionsCfg.SmplCfg):
-            if source != "cmu_humenv_smpl" or frame_builder is not smpl_generalized_coordinate_frame_builder:
-                raise ValueError("The SMPL robot currently supports only the CMU HumEnv motion source.")
+            frame_builders = {
+                "cmu_humenv_smpl": smpl_generalized_coordinate_frame_builder,
+                "lafan_g1_29dof": smpl_g1_hinge_frame_builder,
+            }
+            expected_builder = frame_builders.get(source)
+            if expected_builder is None or frame_builder is not expected_builder:
+                raise ValueError(f"The SMPL robot has no frame builder for source {source!r}.")
             if not isinstance(physics, NewtonCfg):
                 raise ValueError("The native SMPL articulation currently supports only Newton MJWarp physics.")
         elif isinstance(self.actions, MotionActionsCfg.G1Cfg):

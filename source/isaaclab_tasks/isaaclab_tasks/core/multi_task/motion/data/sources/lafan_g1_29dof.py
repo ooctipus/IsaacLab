@@ -14,9 +14,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import torch
+
+from isaaclab.utils.math import convert_quat, quat_from_rotation_vector
 
 from ...identity import validate_sha256
 from ..clip_index import MotionClipIndex
+from ..skeleton import MotionSkeleton
 from ..source import MotionSourceCfg
 
 NativeField = np.ndarray | int | str
@@ -134,6 +138,25 @@ class LafanG1Clip:
     def frame_count(self) -> int:
         """Number of native source frames."""
         return int(self.root_translation.shape[0])
+
+    def local_body_rotation_wxyz(self, source_skeleton: MotionSkeleton, *, device: str | torch.device) -> torch.Tensor:
+        """Decode the released G1 hinge rows as parent-local body rotations."""
+        expected_children = tuple(range(1, source_skeleton.num_bodies))
+        if (
+            source_skeleton.num_bodies != self.pose_axis_angle.shape[1]
+            or source_skeleton.joint_child_body_indices != expected_children
+            or source_skeleton.root_rotation_convention != "axis_angle"
+        ):
+            raise ValueError("LAFAN G1 pose rows differ from the declared scalar-hinge source skeleton.")
+        pose_axis_angle = torch.as_tensor(self.pose_axis_angle, device=device)
+        if not torch.all(torch.isfinite(pose_axis_angle)):
+            raise ValueError("LAFAN G1 pose rows must contain only finite values.")
+        axes = pose_axis_angle.new_tensor(source_skeleton.joint_axes)
+        joint_rotation = pose_axis_angle[:, 1:]
+        coordinate = torch.sum(joint_rotation * axes, dim=-1, keepdim=True)
+        if not torch.allclose(joint_rotation, coordinate * axes, atol=2.0e-6, rtol=2.0e-6):
+            raise ValueError("LAFAN G1 non-root rotations must lie on their declared hinge axes.")
+        return convert_quat(quat_from_rotation_vector(pose_axis_angle), to="wxyz")
 
 
 class LafanG1JoblibClips:

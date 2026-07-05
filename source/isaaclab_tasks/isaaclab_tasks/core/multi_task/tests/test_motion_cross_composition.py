@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Structural tests for direct SMPL-source to G1 cross composition."""
+"""Structural tests for independent source and live-robot cross composition."""
 
 from __future__ import annotations
 
@@ -34,6 +34,13 @@ _PROFILE_AXES = {
         "evidence_physical_auxiliary",
         "randomization_physics_observation_pose_push",
     },
+    "smpl_lafan": {
+        "smpl",
+        "lafan",
+        "newton_mjwarp",
+        "timing_sim450_control30_horizon300",
+        "sampling_source_rows",
+    },
 }
 
 
@@ -61,6 +68,25 @@ def test_g1_cmu_composes_smpl_source_with_the_same_physical_g1_preset() -> None:
     assert cross.commands.motion.task_table.source.identifier == "cmu_humenv_smpl"
     assert native.commands.motion.task_table.frame_builder_factory.__name__ == "g1_pose_frame_builder"
     assert cross.commands.motion.task_table.frame_builder_factory.__name__ == "g1_local_body_pose_frame_builder"
+
+
+def test_smpl_lafan_composes_g1_coordinates_with_the_same_physical_smpl_preset() -> None:
+    """Reverse cross composition changes only source construction, not the live SMPL robot."""
+    native = _resolved("smpl_cmu")
+    cross = _resolved("smpl_lafan")
+    cross.validate()
+
+    assert native.scene.robot.spawn.asset_path == cross.scene.robot.spawn.asset_path
+    assert native.scene.robot.init_state == cross.scene.robot.init_state
+    assert native.scene.robot.actuators.keys() == cross.scene.robot.actuators.keys()
+    assert type(native.actions) is type(cross.actions)
+    assert type(native.observations) is type(cross.observations)
+    assert native.commands.motion.task_table.source.identifier == "cmu_humenv_smpl"
+    assert cross.commands.motion.task_table.source.identifier == "lafan_g1_29dof"
+    assert native.commands.motion.task_table.frame_builder_factory.__name__ == (
+        "smpl_generalized_coordinate_frame_builder"
+    )
+    assert cross.commands.motion.task_table.frame_builder_factory.__name__ == "smpl_g1_hinge_frame_builder"
 
 
 def test_g1_robot_does_not_select_timing_or_task_sampling() -> None:

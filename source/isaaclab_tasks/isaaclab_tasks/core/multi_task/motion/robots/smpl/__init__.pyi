@@ -6,8 +6,13 @@
 __all__ = [
     "SmplGeneralizedCoordinateFrameBuilder",
     "smpl_generalized_coordinate_frame_builder",
+    "smpl_g1_hinge_frame_builder",
     "smpl_live_joint_source_names",
 ]
 
 from .frames import smpl_live_joint_source_names
-from .reference import SmplGeneralizedCoordinateFrameBuilder, smpl_generalized_coordinate_frame_builder
+from .reference import (
+    SmplGeneralizedCoordinateFrameBuilder,
+    smpl_generalized_coordinate_frame_builder,
+    smpl_g1_hinge_frame_builder,
+)

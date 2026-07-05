@@ -29,6 +29,7 @@ from isaaclab_tasks.core.multi_task.kinematics import (
     KinematicTree,
     KinematicTreeRotationProjection,
     fit_ordered_hinge_coordinates,
+    ordered_hinge_rotation,
     time_gaussian_filter,
     time_gradient,
     time_quaternion_angular_velocity,
@@ -43,7 +44,10 @@ from isaaclab_tasks.core.multi_task.motion.data.sources import (
 from isaaclab_tasks.core.multi_task.motion.robots.g1.frames import G1_HEAD_OFFSET_M, G1_HEAD_PARENT_BODY_NAME
 from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1LocalBodyPoseFrameBuilder, G1PoseFrameBuilder
 from isaaclab_tasks.core.multi_task.motion.robots.smpl.frames import smpl_live_joint_source_names
-from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplGeneralizedCoordinateFrameBuilder
+from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import (
+    SmplGeneralizedCoordinateFrameBuilder,
+    _SmplG1HingeFrameBuilder,
+)
 
 from isaaclab_assets.robots.smpl.smpl_constants import MUJOCO_BODY_NAMES
 
@@ -60,7 +64,7 @@ def _file_sha256(path: Path) -> str:
 class _ReferenceKinematics:
     """Small exact-contract FK stand-in for construction-boundary unit tests."""
 
-    def __init__(self, skeleton, path: Path, *, smpl: bool = False) -> None:
+    def __init__(self, skeleton, path: Path, *, smpl: bool = False, body_com: torch.Tensor | None = None) -> None:
         self.body_names = list(skeleton.body_names)
         self.joint_names = ["root", *skeleton.joint_names]
         self.mjcf_path = str(path)
@@ -69,7 +73,11 @@ class _ReferenceKinematics:
             body_count=skeleton.num_bodies,
             joint_coord_count=(7 + skeleton.num_joints),
             joint_dof_count=(6 + skeleton.num_joints),
-            body_com=wp.zeros(skeleton.num_bodies, dtype=wp.vec3, device="cpu"),
+            body_com=(
+                wp.zeros(skeleton.num_bodies, dtype=wp.vec3, device="cpu")
+                if body_com is None
+                else wp.from_torch(body_com, dtype=wp.vec3)
+            ),
         )
         self.smpl = smpl
 
@@ -118,9 +126,29 @@ def test_g1_builder_rejects_invalid_pose_coordinate_digest(reference_path: Path)
         replace(_g1_builder(reference_path), pose_coordinate_identity_sha256="invalid")
 
 
-def _smpl_builder(reference_path: Path) -> SmplGeneralizedCoordinateFrameBuilder:
+def test_lafan_clip_decodes_declared_g1_hinges_as_local_rotations() -> None:
+    """The source boundary exposes the G1-retargeted rows as local rotations without target policy."""
+    skeleton = lafan_g1_29dof_skeleton()
+    pose = np.zeros((3, 30, 3), dtype=np.float32)
+    pose[:, 0, 2] = np.array((0.0, 0.1, 0.2), dtype=np.float32)
+    pose[:, 1] = np.array((0.0, 0.3, 0.0), dtype=np.float32)
+    clip = LafanG1Clip(
+        root_translation=np.zeros((3, 3), dtype=np.float32),
+        pose_axis_angle=pose,
+        source_fps=30.0,
+    )
+
+    local_wxyz = clip.local_body_rotation_wxyz(skeleton, device="cpu")
+    expected = convert_quat(quat_from_rotation_vector(torch.from_numpy(pose)), to="wxyz")
+
+    torch.testing.assert_close(local_wxyz, expected)
+
+
+def _smpl_builder(
+    reference_path: Path, *, body_com: torch.Tensor | None = None
+) -> SmplGeneralizedCoordinateFrameBuilder:
     skeleton = cmu_humenv_smpl_skeleton()
-    reference = _ReferenceKinematics(skeleton, reference_path, smpl=True)
+    reference = _ReferenceKinematics(skeleton, reference_path, smpl=True, body_com=body_com)
     return SmplGeneralizedCoordinateFrameBuilder(
         source_skeleton=skeleton,
         reference_kinematics=reference,
@@ -128,6 +156,53 @@ def _smpl_builder(reference_path: Path) -> SmplGeneralizedCoordinateFrameBuilder
         live_joint_names=SMPL_LIVE_JOINT_NAMES,
         live_body_names=skeleton.body_names,
     )
+
+
+def _smpl_cross_builder(reference_path: Path) -> _SmplG1HingeFrameBuilder:
+    source = lafan_g1_29dof_skeleton()
+    target = cmu_humenv_smpl_skeleton()
+    reference = _ReferenceKinematics(target, reference_path, smpl=True)
+    return _SmplG1HingeFrameBuilder(
+        source_skeleton=source,
+        reference_kinematics=reference,
+        reference_mjcf_sha256=_file_sha256(reference_path),
+        live_joint_names=SMPL_LIVE_JOINT_NAMES,
+        live_body_names=target.body_names,
+    )
+
+
+def test_smpl_cross_builder_declares_lossy_g1_hinge_reconstruction(reference_path: Path) -> None:
+    """The reverse cross edge reconstructs mapped joints and explicitly zeros absent target bodies."""
+    builder = _smpl_cross_builder(reference_path)
+    source = lafan_g1_29dof_skeleton()
+    pose = np.zeros((4, 30, 3), dtype=np.float32)
+    source_by_name = {name: index for index, name in enumerate(source.body_names)}
+    pose[:, source_by_name["left_hip_pitch_link"], 1] = 0.2
+    pose[:, source_by_name["left_hip_roll_link"], 0] = -0.1
+    pose[:, source_by_name["left_hip_yaw_link"], 2] = 0.3
+    root = np.zeros((4, 3), dtype=np.float32)
+    root[:, 2] = 0.8
+
+    clip = LafanG1Clip(root, pose, 30.0)
+    frames = builder.build_frames(clip, device="cpu")
+    by_name = {name: index for index, name in enumerate(smpl_live_joint_source_names(builder.joint_names))}
+    hip_ids = [by_name[f"L_Hip_{axis}"] for axis in "xyz"]
+    reconstructed = ordered_hinge_rotation(frames.joint_position[:, hip_ids], torch.eye(3))
+    source_local = convert_quat(clip.local_body_rotation_wxyz(source, device="cpu"), to="xyzw")
+    expected = quat_mul(
+        quat_mul(
+            source_local[:, source_by_name["left_hip_pitch_link"]],
+            source_local[:, source_by_name["left_hip_roll_link"]],
+        ),
+        source_local[:, source_by_name["left_hip_yaw_link"]],
+    )
+
+    assert builder.version == "smpl_from_g1_hinge_local_rotation_minimum_norm_v1"
+    torch.testing.assert_close(torch.abs(torch.sum(reconstructed * expected, dim=-1)), torch.ones(4))
+    absent = ("L_Toe", "R_Toe", "Spine", "Chest", "Neck", "Head", "L_Thorax", "L_Hand", "R_Thorax", "R_Hand")
+    absent_ids = [by_name[f"{body}_{axis}"] for body in absent for axis in "xyz"]
+    torch.testing.assert_close(frames.joint_position[:, absent_ids], torch.zeros(4, len(absent_ids)))
+    torch.testing.assert_close(frames.body_position[:, 0, 2], torch.full((4,), 0.8))
 
 
 def _cmu_clip(qpos: np.ndarray, qvel: np.ndarray | None = None) -> CmuHumEnvSmplClip:
@@ -313,8 +388,7 @@ def test_smpl_builder_maps_live_axes_and_materializes_physical_body_fields(refer
 
 def test_smpl_builder_converts_nonzero_com_velocities_between_root_and_link_frames(reference_path: Path) -> None:
     """Root-COM FK velocities must return to link-origin velocities with the correct world-frame signs."""
-    builder = _smpl_builder(reference_path)
-    body_count = builder.source_skeleton.num_bodies
+    body_count = cmu_humenv_smpl_skeleton().num_bodies
     body_index = torch.arange(body_count, dtype=torch.float32)
     body_com = torch.stack(
         (
@@ -324,7 +398,7 @@ def test_smpl_builder_converts_nonzero_com_velocities_between_root_and_link_fram
         ),
         dim=-1,
     )
-    builder._body_com.copy_(body_com)
+    builder = _smpl_builder(reference_path, body_com=body_com)
 
     frame_count = 3
     root_rotation = torch.tensor((0.23, -0.31, 0.17, 0.88), dtype=torch.float32)
