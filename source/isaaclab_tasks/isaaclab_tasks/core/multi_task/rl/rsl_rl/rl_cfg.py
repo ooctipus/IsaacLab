@@ -240,6 +240,14 @@ class RslRlForwardBackwardReplayCfg:
     """Replay storage consumed directly by the FB construction root."""
 
     @configclass
+    class PolicyCfg:
+        """Replay capacity and sampling policy."""
+
+        capacity_transitions: int = MISSING
+        terminal_capacity_per_env: int = MISSING
+        sampling: Literal["transition_uniform", "episode_uniform"] = MISSING
+
+    @configclass
     class HistoryLayoutCfg:
         """Field-major reached-transition history layout."""
 
@@ -255,9 +263,7 @@ class RslRlForwardBackwardReplayCfg:
         sources: list[SourceCfg] = MISSING
 
     class_name: str = "rsl_rl.storage.forward_backward_replay:ForwardBackwardReplay"
-    capacity_transitions: int = MISSING
-    terminal_capacity_per_env: int = MISSING
-    sampling: Literal["transition_uniform", "episode_uniform"] = MISSING
+    policy: PolicyCfg = MISSING
     autoreset_mode: Literal["disabled", "same_step", "next_step"] = "same_step"
     history_layout: HistoryLayoutCfg | None = None
 
@@ -266,11 +272,17 @@ class RslRlForwardBackwardReplayCfg:
 class RslRlForwardBackwardExpertCfg:
     """Sequence expert corpus consumed directly by the FB construction root."""
 
+    @configclass
+    class ClockCfg:
+        """Relation between source time and sampled expert rows."""
+
+        sampling_mode: Literal["source_rows", "uniform_before_source_end"] = MISSING
+        sampling_step_seconds: float | None = MISSING
+
     provider: str = MISSING
     source_bind: str = MISSING
     priorities_bind: str = MISSING
-    sampling_mode: Literal["source_rows", "uniform_before_source_end"] = MISSING
-    sampling_step_seconds: float | None = MISSING
+    clock: ClockCfg = MISSING
     target_projection: str = MISSING
     target_projection_binds: tuple[str, ...] = MISSING
     window_lengths: tuple[int, ...] = MISSING
@@ -292,6 +304,7 @@ class RslRlForwardBackwardValueHelperCfg:
         sign: Literal[-1, 1] = MISSING
 
     name: str = MISSING
+    learning_rate: float = MISSING
     route: str = MISSING
     terms: tuple[TermCfg, ...] = MISSING
     reward_composition: Literal["vector", "scalar"] = "vector"
@@ -307,40 +320,95 @@ class RslRlForwardBackwardValueHelperCfg:
 class RslRlForwardBackwardAlgorithmCfg:
     """Optimization configuration consumed directly by the FB learner."""
 
+    @configclass
+    class OptimizationCfg:
+        """Optimizer family and learning rates for trainable FB modules."""
+
+        learning_rate: float = MISSING
+        backward_learning_rate: float = MISSING
+        discriminator_learning_rate: float = MISSING
+        optimizer: str = MISSING
+        weight_decay: float = MISSING
+        discriminator_weight_decay: float = MISSING
+        max_grad_norm: float | None = None
+
+    @configclass
+    class ContextCfg:
+        """Context relabeling, buffering, and rollout assignment policy."""
+
+        goal_fraction: float = MISSING
+        expert_fraction: float = MISSING
+        relabel_fraction: float = MISSING
+        buffer_capacity: int = MISSING
+        refresh_steps: int = MISSING
+        rollout_expert_fraction: float = MISSING
+        rollout_expert_steps: int = MISSING
+        rollout_expert_context_steps: int = MISSING
+
+    @configclass
+    class ExplorationCfg:
+        """Random-policy warm-up semantics."""
+
+        random_action_transitions: int = MISSING
+        random_action_range: tuple[float, float] = MISSING
+
     class_name: str = "rsl_rl.algorithms.forward_backward:ForwardBackward"
     batch_size: int = MISSING
     expert_sequence_length: int = MISSING
     gamma: float = MISSING
-    learning_rate: float = MISSING
-    backward_learning_rate: float = MISSING
-    discriminator_learning_rate: float = MISSING
-    optimizer: str = MISSING
-    weight_decay: float = MISSING
-    discriminator_weight_decay: float = MISSING
+    optimization: OptimizationCfg = MISSING
+    context: ContextCfg = MISSING
+    exploration: ExplorationCfg = MISSING
     fb_pessimism: float = MISSING
     actor_pessimism: float = MISSING
     orthogonality_coefficient: float = MISSING
     implied_value_coefficient: float = MISSING
     implied_reward_ridge: float = MISSING
     discriminator_gradient_penalty_coefficient: float = MISSING
-    context_goal_fraction: float = MISSING
-    context_expert_fraction: float = MISSING
-    relabel_fraction: float = MISSING
-    context_buffer_capacity: int = MISSING
     fb_target_tau: float = MISSING
     scale_actor_helpers: bool = MISSING
-    max_grad_norm: float | None = None
-    random_action_transitions: int = MISSING
-    random_action_range: tuple[float, float] = MISSING
-    rollout_context_refresh_steps: int = MISSING
-    rollout_expert_fraction: float = MISSING
-    rollout_expert_steps: int = MISSING
-    rollout_expert_context_steps: int = MISSING
 
 
 @configclass
 class RslRlForwardBackwardRunnerCfg(isaaclab_rl.rsl_rl.RslRlOffPolicyRunnerCfg):
     """Direct typed configuration for the RSL-RL FB runner."""
+
+    class_type: type[Any] | str = "rsl_rl.runners:ForwardBackwardRunner"
+    class_name: str = "ForwardBackwardRunner"
+
+    @configclass
+    class TrackingCurriculumCfg:
+        """Periodic sequence tracking configured through explicit environment bindings."""
+
+        @configclass
+        class ProjectionCfg:
+            """One expert-target to reached-observation metric projection."""
+
+            metric_name: str = MISSING
+            target_name: str = MISSING
+            observation_name: str = MISSING
+            projection: str | None = None
+
+        class_name: str = (
+            "isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_tracking:ForwardBackwardTrackingCurriculum"
+        )
+        interval_transitions: int = MISSING
+        command_bind: str = MISSING
+        sequence_ids_bind: str = MISSING
+        sequence_start_rows_bind: str = MISSING
+        evaluation_scope_bind: str = MISSING
+        projections: tuple[ProjectionCfg, ...] = MISSING
+        context_window_length: int = MISSING
+        include_reset_frame: bool = MISSING
+        allow_horizon_truncation: bool = MISSING
+        shuffle_assignments: bool = MISSING
+        priority_metric_name: str = MISSING
+        priority_metric_minimum: float = MISSING
+        priority_metric_maximum: float = MISSING
+        priority_exponent_scale: float = MISSING
+        priority_exponent_base: float = MISSING
+        reset_source_name: str = MISSING
+        evaluation_seed: int = 0
 
     obs_groups: dict[str, list[str]] = MISSING
     model: RslRlForwardBackwardModelCfg = MISSING
@@ -348,6 +416,8 @@ class RslRlForwardBackwardRunnerCfg(isaaclab_rl.rsl_rl.RslRlOffPolicyRunnerCfg):
     expert: RslRlForwardBackwardExpertCfg = MISSING
     algorithm: RslRlForwardBackwardAlgorithmCfg = MISSING  # type: ignore[assignment]
     value_helpers: list[RslRlForwardBackwardValueHelperCfg] = MISSING
+
+    tracking_curriculum: TrackingCurriculumCfg | None = None
 
     torch_compile_mode: str | None = None
     """Optional :func:`torch.compile` mode applied during FB construction."""

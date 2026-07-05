@@ -98,8 +98,7 @@ def forward_backward_expert_buffer(
     *,
     source_bind: str,
     priorities_bind: str,
-    sampling_mode: Literal["source_rows", "uniform_before_source_end"],
-    sampling_step_seconds: float | None,
+    clock: Mapping[str, object],
     target_projection: str,
     target_projection_binds: tuple[str, ...],
     window_lengths: tuple[int, ...],
@@ -113,8 +112,7 @@ def forward_backward_expert_buffer(
         device: Learner tensor device.
         source_bind: Expression resolving the domain-owned sequence source.
         priorities_bind: Expression resolving the source's canonical clip-sampling weights.
-        sampling_mode: Relation between stored source rows and expert samples.
-        sampling_step_seconds: Uniform sample period [s], or None for source rows.
+        clock: Required sampling mode and uniform sample period [s].
         target_projection: Qualified pure projection callable selected by domain config.
         target_projection_binds: Expressions resolving the projection's explicitly owned inputs.
         window_lengths: Expert edge-window lengths available to the learner.
@@ -124,6 +122,24 @@ def forward_backward_expert_buffer(
         Immutable clip-safe expert buffer on the declared sampling clock.
     """
     source = _source(env, source_bind, device)
+    if not isinstance(clock, Mapping):
+        raise TypeError("clock must be a mapping.")
+    clock = dict(clock)
+    try:
+        sampling_mode = clock.pop("sampling_mode")
+        sampling_step_seconds = clock.pop("sampling_step_seconds")
+    except KeyError as error:
+        raise ValueError(f"clock is missing required field {error.args[0]!r}.") from error
+    if clock:
+        raise ValueError(f"Unknown expert clock fields: {tuple(clock)}.")
+    if sampling_mode not in ("source_rows", "uniform_before_source_end"):
+        raise ValueError(f"Unsupported expert sampling mode: {sampling_mode!r}.")
+    if sampling_step_seconds is not None and (
+        isinstance(sampling_step_seconds, bool)
+        or not isinstance(sampling_step_seconds, (int, float))
+        or sampling_step_seconds <= 0.0
+    ):
+        raise ValueError("sampling_step_seconds must be a positive number or None.")
     if not isinstance(priorities_bind, str) or not priorities_bind:
         raise TypeError("priorities_bind must be a nonempty expression.")
     priorities = eval(priorities_bind, {}, {"env": env})  # noqa: S307

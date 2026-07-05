@@ -5,8 +5,6 @@
 
 """RSL-RL configuration for unified forward-backward motion learning."""
 
-from dataclasses import MISSING
-
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.utils import PresetCfg, preset
@@ -166,19 +164,43 @@ class MotionHistoryLayoutPresetCfg(PresetCfg):
 
 
 @configclass
-class MotionForwardBackwardReplayCfg(RslRlForwardBackwardReplayCfg):
-    """Replay storage selected by storage, helper, and robot axes."""
+class MotionReplayPolicyPresetCfg(PresetCfg):
+    """Complete replay policies selected by the replay axis."""
 
-    capacity_transitions = preset(
-        default=2_000_000, replay_transition_uniform_2m=2_000_000, replay_episode_uniform_5120k=5_120_000
+    default = RslRlForwardBackwardReplayCfg.PolicyCfg(
+        capacity_transitions=2_000_000,
+        terminal_capacity_per_env=384,
+        sampling="transition_uniform",
     )
-    terminal_capacity_per_env = preset(default=384, replay_transition_uniform_2m=384, replay_episode_uniform_5120k=17)
-    sampling = preset(
-        default="transition_uniform",
-        replay_transition_uniform_2m="transition_uniform",
-        replay_episode_uniform_5120k="episode_uniform",
+    replay_transition_uniform_2m = default
+    replay_episode_uniform_5120k = default.replace(
+        capacity_transitions=5_120_000,
+        terminal_capacity_per_env=17,
+        sampling="episode_uniform",
     )
+
+
+@configclass
+class MotionForwardBackwardReplayCfg(RslRlForwardBackwardReplayCfg):
+    """Replay storage selected by independent replay and robot axes."""
+
+    policy: RslRlForwardBackwardReplayCfg.PolicyCfg = MotionReplayPolicyPresetCfg()  # type: ignore[assignment]
     history_layout = MotionHistoryLayoutPresetCfg()
+
+
+@configclass
+class MotionExpertClockPresetCfg(PresetCfg):
+    """Complete expert sampling clocks selected by the dataset clock axis."""
+
+    default = RslRlForwardBackwardExpertCfg.ClockCfg(
+        sampling_mode="source_rows",
+        sampling_step_seconds=None,
+    )
+    expert_clock_source_rows = default
+    expert_clock_50hz = default.replace(
+        sampling_mode="uniform_before_source_end",
+        sampling_step_seconds=0.02,
+    )
 
 
 @configclass
@@ -188,10 +210,7 @@ class MotionForwardBackwardExpertCfg(RslRlForwardBackwardExpertCfg):
     provider = "isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_expert:forward_backward_expert_buffer"
     source_bind = "env.unwrapped.command_manager.get_term('motion').table"
     priorities_bind = "env.unwrapped.command_manager.get_term('motion').payload.sampler.clip_priorities"
-    sampling_mode = preset(
-        default="source_rows", expert_clock_source_rows="source_rows", expert_clock_50hz="uniform_before_source_end"
-    )
-    sampling_step_seconds = preset(default=None, expert_clock_source_rows=None, expert_clock_50hz=0.02)
+    clock: RslRlForwardBackwardExpertCfg.ClockCfg = MotionExpertClockPresetCfg()  # type: ignore[assignment]
     target_projection = preset(
         default="isaaclab_tasks.core.multi_task.motion.robots.smpl.observations:smpl_expert_target",
         g1="isaaclab_tasks.core.multi_task.motion.robots.g1.observations:g1_bfm_expert_target",
@@ -203,10 +222,11 @@ class MotionForwardBackwardExpertCfg(RslRlForwardBackwardExpertCfg):
     window_lengths = preset(default=(8,), context_online_10k=(8,), context_expert_half_8192=(8, 257))
 
 
-_DISCRIMINATOR_HELPER = RslRlForwardBackwardValueHelperCfg(
-    name="discriminator",
-    route="critic_discriminator",
-    terms=(
+@configclass
+class MotionDiscriminatorHelperPresetCfg(PresetCfg):
+    """Complete discriminator-value objectives selected by the optimization profile."""
+
+    _TERMS = (
         RslRlForwardBackwardValueHelperCfg.TermCfg(
             name="discriminator",
             coefficient=1.0,
@@ -215,18 +235,28 @@ _DISCRIMINATOR_HELPER = RslRlForwardBackwardValueHelperCfg(
             context_dependent=True,
             sign=1,
         ),
-    ),
-    pessimism=0.5,
-    actor_coefficient=preset(
-        default=0.01, optimization_lr1e4_implied0p1_actor0p01=0.01, optimization_lr3e4_implied0_actor0p05=0.05
-    ),
-    target_tau=0.005,
-)
+    )
+    default = RslRlForwardBackwardValueHelperCfg(
+        name="discriminator",
+        learning_rate=1.0e-4,
+        route="critic_discriminator",
+        terms=_TERMS,
+        pessimism=0.5,
+        actor_coefficient=0.01,
+        target_tau=0.005,
+    )
+    optimization_lr1e4_implied0p1_actor0p01 = default
+    optimization_lr3e4_implied0_actor0p05 = default.replace(
+        learning_rate=3.0e-4,
+        actor_coefficient=0.05,
+    )
 
-_AUXILIARY_HELPER = RslRlForwardBackwardValueHelperCfg(
-    name="auxiliary",
-    route="critic_discriminator",
-    terms=tuple(
+
+@configclass
+class MotionAuxiliaryHelperPresetCfg(PresetCfg):
+    """Complete auxiliary-value objectives selected by the optimization profile."""
+
+    _TERMS = tuple(
         RslRlForwardBackwardValueHelperCfg.TermCfg(
             name=name,
             coefficient=coefficient,
@@ -245,101 +275,112 @@ _AUXILIARY_HELPER = RslRlForwardBackwardValueHelperCfg(
             ("penalty_ankle_roll", 4.0),
             ("penalty_slippage", 2.0),
         )
-    ),
-    reward_composition="scalar",
-    pessimism=0.5,
-    actor_coefficient=0.02,
-    normalize_rewards=True,
-    reward_normalization_decay=0.99,
-    reward_normalization_epsilon=1.0e-8,
-    target_tau=0.005,
-)
+    )
+    default = RslRlForwardBackwardValueHelperCfg(
+        name="auxiliary",
+        learning_rate=1.0e-4,
+        route="critic_discriminator",
+        terms=_TERMS,
+        reward_composition="scalar",
+        pessimism=0.5,
+        actor_coefficient=0.02,
+        normalize_rewards=True,
+        reward_normalization_decay=0.99,
+        reward_normalization_epsilon=1.0e-8,
+        target_tau=0.005,
+    )
+    optimization_lr1e4_implied0p1_actor0p01 = default
+    optimization_lr3e4_implied0_actor0p05 = default.replace(learning_rate=3.0e-4)
 
 
 @configclass
 class MotionValueHelpersPresetCfg(PresetCfg):
-    """Complete value algebras selected by the helper axis."""
+    """Value-helper presence selected independently from optimization details."""
 
-    default = [_DISCRIMINATOR_HELPER]
+    default = [MotionDiscriminatorHelperPresetCfg()]
     helpers_discriminator = default
-    helpers_discriminator_auxiliary = [_DISCRIMINATOR_HELPER, _AUXILIARY_HELPER]
+    helpers_discriminator_auxiliary = [
+        MotionDiscriminatorHelperPresetCfg(),
+        MotionAuxiliaryHelperPresetCfg(),
+    ]
+
+
+@configclass
+class MotionOptimizationPresetCfg(PresetCfg):
+    """Complete module-optimization policies selected by the optimization profile."""
+
+    default = RslRlForwardBackwardAlgorithmCfg.OptimizationCfg(
+        learning_rate=1.0e-4,
+        backward_learning_rate=1.0e-5,
+        discriminator_learning_rate=1.0e-5,
+        optimizer="adam",
+        weight_decay=0.0,
+        discriminator_weight_decay=0.0,
+        max_grad_norm=None,
+    )
+    optimization_lr1e4_implied0p1_actor0p01 = default
+    optimization_lr3e4_implied0_actor0p05 = default.replace(learning_rate=3.0e-4)
+
+
+@configclass
+class MotionContextPresetCfg(PresetCfg):
+    """Complete context policies selected by the context axis."""
+
+    default = RslRlForwardBackwardAlgorithmCfg.ContextCfg(
+        goal_fraction=0.2,
+        expert_fraction=0.6,
+        relabel_fraction=0.8,
+        buffer_capacity=10_000,
+        refresh_steps=150,
+        rollout_expert_fraction=0.0,
+        rollout_expert_steps=250,
+        rollout_expert_context_steps=8,
+    )
+    context_online_10k = default
+    context_expert_half_8192 = default.replace(
+        buffer_capacity=8192,
+        refresh_steps=100,
+        rollout_expert_fraction=0.5,
+    )
+
+
+@configclass
+class MotionExplorationPresetCfg(PresetCfg):
+    """Complete random warm-up policies selected by the exploration axis."""
+
+    default = RslRlForwardBackwardAlgorithmCfg.ExplorationCfg(
+        random_action_transitions=50_000,
+        random_action_range=(-1.0, 1.0),
+    )
+    exploration_std0p2_range1 = default
+    exploration_std0p05_range5 = default.replace(
+        random_action_transitions=10_240,
+        random_action_range=(-5.0, 5.0),
+    )
 
 
 @configclass
 class MotionForwardBackwardAlgorithmCfg(RslRlForwardBackwardAlgorithmCfg):
-    """FB optimization with independent schedule, context, and exploration axes."""
+    """FB optimization composed from independent policy records."""
 
     batch_size = 1024
     expert_sequence_length = 8
     gamma = 0.98
-    learning_rate = preset(
-        default=1.0e-4, optimization_lr1e4_implied0p1_actor0p01=1.0e-4, optimization_lr3e4_implied0_actor0p05=3.0e-4
-    )
-    backward_learning_rate = 1.0e-5
-    discriminator_learning_rate = 1.0e-5
-    optimizer = "adam"
-    weight_decay = 0.0
-    discriminator_weight_decay = 0.0
+    optimization = MotionOptimizationPresetCfg()
+    context = MotionContextPresetCfg()
+    exploration = MotionExplorationPresetCfg()
     fb_pessimism = 0.0
     actor_pessimism = 0.5
     orthogonality_coefficient = 100.0
     implied_value_coefficient = preset(
-        default=0.1, optimization_lr1e4_implied0p1_actor0p01=0.1, optimization_lr3e4_implied0_actor0p05=0.0
+        default=0.1,
+        optimization_lr1e4_implied0p1_actor0p01=0.1,
+        optimization_lr3e4_implied0_actor0p05=0.0,
     )
     implied_reward_ridge = 0.0
     discriminator_gradient_penalty_coefficient = 10.0
-    context_goal_fraction = 0.2
-    context_expert_fraction = 0.6
-    relabel_fraction = 0.8
-    context_buffer_capacity = preset(default=10_000, context_online_10k=10_000, context_expert_half_8192=8192)
     fb_target_tau = 0.01
     scale_actor_helpers = True
-    max_grad_norm = None
-    random_action_transitions = preset(default=50_000, schedule_50x10_5m=50_000, schedule_1024x1_211p2m=10_240)
-    random_action_range = preset(
-        default=(-1.0, 1.0), exploration_std0p2_range1=(-1.0, 1.0), exploration_std0p05_range5=(-5.0, 5.0)
-    )
-    rollout_context_refresh_steps = preset(default=150, context_online_10k=150, context_expert_half_8192=100)
-    rollout_expert_fraction = preset(default=0.0, context_online_10k=0.0, context_expert_half_8192=0.5)
-    rollout_expert_steps = 250
-    rollout_expert_context_steps = 8
-
-
-@configclass
-class MotionTrackingCurriculumCfg:
-    """Periodic sequence-tracking evaluation and sampling curriculum."""
-
-    @configclass
-    class ProjectionCfg:
-        """One expert-target to reached-observation metric projection."""
-
-        metric_name: str = MISSING
-        target_name: str = MISSING
-        observation_name: str = MISSING
-        projection: str | None = None
-        assignment_metric: str = "uniform_assignment"
-
-    class_name: str = (
-        "isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_tracking:ForwardBackwardTrackingCurriculum"
-    )
-    interval_transitions: int = MISSING
-    command_bind: str = MISSING
-    sequence_ids_bind: str = MISSING
-    sequence_start_rows_bind: str = MISSING
-    sampling_priorities_bind: str = MISSING
-    evaluation_scope_bind: str = MISSING
-    projections: tuple[ProjectionCfg, ...] = MISSING
-    context_window_length: int = MISSING
-    include_reset_frame: bool = MISSING
-    allow_horizon_truncation: bool = MISSING
-    shuffle_assignments: bool = MISSING
-    priority_metric_name: str = MISSING
-    priority_metric_minimum: float = MISSING
-    priority_metric_maximum: float = MISSING
-    priority_exponent_scale: float = MISSING
-    priority_exponent_base: float = MISSING
-    reset_source_name: str = MISSING
-    evaluation_seed: int = 0
 
 
 @configclass
@@ -347,7 +388,7 @@ class MotionTrackingProjectionsPresetCfg(PresetCfg):
     """Tracking metric geometry selected by robot."""
 
     default = (
-        MotionTrackingCurriculumCfg.ProjectionCfg(
+        RslRlForwardBackwardRunnerCfg.TrackingCurriculumCfg.ProjectionCfg(
             metric_name="emd",
             target_name="policy",
             observation_name="policy",
@@ -355,12 +396,12 @@ class MotionTrackingProjectionsPresetCfg(PresetCfg):
         ),
     )
     g1 = (
-        MotionTrackingCurriculumCfg.ProjectionCfg(
+        RslRlForwardBackwardRunnerCfg.TrackingCurriculumCfg.ProjectionCfg(
             metric_name="emd",
             target_name="joint_position",
             observation_name="joint_position_unnoised",
         ),
-        MotionTrackingCurriculumCfg.ProjectionCfg(
+        RslRlForwardBackwardRunnerCfg.TrackingCurriculumCfg.ProjectionCfg(
             metric_name="obs_state_emd",
             target_name="joint_position",
             observation_name="joint_position",
@@ -373,16 +414,15 @@ class MotionTrackingProjectionsPresetCfg(PresetCfg):
 class MotionTrackingCurriculumPresetCfg(PresetCfg):
     """Optional tracking curricula selected independently from robot geometry."""
 
-    default: MotionTrackingCurriculumCfg | None = None
+    default: RslRlForwardBackwardRunnerCfg.TrackingCurriculumCfg | None = None
     tracking_off = default
-    tracking_source_edge = MotionTrackingCurriculumCfg(
+    tracking_source_edge = RslRlForwardBackwardRunnerCfg.TrackingCurriculumCfg(
         interval_transitions=preset(
             default=5_000_000, tracking_interval_5m=5_000_000, tracking_interval_9p6m=9_600_000
         ),
         command_bind="env.unwrapped.command_manager.get_term('motion')",
         sequence_ids_bind="env.unwrapped.command_manager.get_term('motion').table.clip_ids",
         sequence_start_rows_bind="env.unwrapped.command_manager.get_term('motion').table.clip_start_rows",
-        sampling_priorities_bind="env.unwrapped.command_manager.get_term('motion').payload.sampler.clip_priorities",
         evaluation_scope_bind="env.unwrapped.command_manager.get_term('motion').payload.sampler.reset_sampling_scope",
         projections=MotionTrackingProjectionsPresetCfg(),  # type: ignore[arg-type]
         context_window_length=8,
@@ -396,14 +436,13 @@ class MotionTrackingCurriculumPresetCfg(PresetCfg):
         priority_exponent_base=2.0,
         reset_source_name="reference",
     )
-    tracking_reset_frame = MotionTrackingCurriculumCfg(
+    tracking_reset_frame = RslRlForwardBackwardRunnerCfg.TrackingCurriculumCfg(
         interval_transitions=preset(
             default=5_000_000, tracking_interval_5m=5_000_000, tracking_interval_9p6m=9_600_000
         ),
         command_bind="env.unwrapped.command_manager.get_term('motion')",
         sequence_ids_bind="env.unwrapped.command_manager.get_term('motion').table.clip_ids",
         sequence_start_rows_bind="env.unwrapped.command_manager.get_term('motion').table.clip_start_rows",
-        sampling_priorities_bind="env.unwrapped.command_manager.get_term('motion').payload.sampler.clip_priorities",
         evaluation_scope_bind="env.unwrapped.command_manager.get_term('motion').payload.sampler.reset_sampling_scope",
         projections=MotionTrackingProjectionsPresetCfg(),  # type: ignore[arg-type]
         context_window_length=1,
@@ -423,8 +462,6 @@ class MotionTrackingCurriculumPresetCfg(PresetCfg):
 class MotionForwardBackwardRunnerCfg(RslRlForwardBackwardRunnerCfg):
     """Compose one motion FB learner from independent semantic axes."""
 
-    class_type = "rsl_rl.runners:ForwardBackwardRunner"
-    class_name = "ForwardBackwardRunner"
     seed = preset(default=0, seed_0=0, seed_4728=4728)
     num_envs = preset(default=50, schedule_50x10_5m=50, schedule_1024x1_211p2m=1024)
     num_steps_per_env = preset(default=10, schedule_50x10_5m=10, schedule_1024x1_211p2m=1)
@@ -439,4 +476,4 @@ class MotionForwardBackwardRunnerCfg(RslRlForwardBackwardRunnerCfg):
     expert = MotionForwardBackwardExpertCfg()
     algorithm = MotionForwardBackwardAlgorithmCfg()
     value_helpers = MotionValueHelpersPresetCfg()
-    tracking_curriculum: MotionTrackingCurriculumCfg | None = MotionTrackingCurriculumPresetCfg()  # type: ignore[assignment]
+    tracking_curriculum = MotionTrackingCurriculumPresetCfg()

@@ -64,7 +64,44 @@ def test_fb_config_is_the_runtime_contract() -> None:
     assert isinstance(cfg.expert, RslRlForwardBackwardExpertCfg)
     assert isinstance(cfg.algorithm, RslRlForwardBackwardAlgorithmCfg)
     assert all(isinstance(helper, RslRlForwardBackwardValueHelperCfg) for helper in cfg.value_helpers)
-    assert {"schedule", "context_policy", "exploration", "lifecycle_extension"}.isdisjoint(values)
+    assert {"schedule", "context_policy", "lifecycle_extension"}.isdisjoint(values)
+    assert {"capacity_transitions", "terminal_capacity_per_env", "sampling"}.isdisjoint(values["replay"])
+    assert set(values["replay"]["policy"]) == {
+        "capacity_transitions",
+        "terminal_capacity_per_env",
+        "sampling",
+    }
+    assert {"sampling_mode", "sampling_step_seconds"}.isdisjoint(values["expert"])
+    assert set(values["expert"]["clock"]) == {"sampling_mode", "sampling_step_seconds"}
+    assert set(values["algorithm"]["optimization"]) == {
+        "learning_rate",
+        "backward_learning_rate",
+        "discriminator_learning_rate",
+        "optimizer",
+        "weight_decay",
+        "discriminator_weight_decay",
+        "max_grad_norm",
+    }
+    assert set(values["algorithm"]["context"]) == {
+        "goal_fraction",
+        "expert_fraction",
+        "relabel_fraction",
+        "buffer_capacity",
+        "refresh_steps",
+        "rollout_expert_fraction",
+        "rollout_expert_steps",
+        "rollout_expert_context_steps",
+    }
+    assert set(values["algorithm"]["exploration"]) == {
+        "random_action_transitions",
+        "random_action_range",
+    }
+    assert {
+        "learning_rate",
+        "context_buffer_capacity",
+        "rollout_context_refresh_steps",
+        "random_action_transitions",
+    }.isdisjoint(values["algorithm"])
     assert {"value_heads"}.isdisjoint(values["model"])
     assert {
         "reward_channels",
@@ -80,22 +117,23 @@ def test_metamotivo_profile_keeps_its_faithful_direct_values() -> None:
 
     assert (cfg.seed, cfg.num_envs, cfg.num_steps_per_env, cfg.num_updates_per_iteration) == (0, 50, 10, 50)
     assert cfg.max_iterations * cfg.num_envs * cfg.num_steps_per_env == 5_000_000
-    assert cfg.algorithm.random_action_transitions == 50_000
-    assert cfg.algorithm.learning_rate == 1.0e-4
+    assert cfg.algorithm.exploration.random_action_transitions == 50_000
+    assert cfg.algorithm.optimization.learning_rate == 1.0e-4
     assert cfg.algorithm.implied_value_coefficient == 0.1
-    assert cfg.algorithm.context_buffer_capacity == 10_000
-    assert cfg.algorithm.rollout_expert_fraction == 0.0
-    assert cfg.replay.capacity_transitions == 2_000_000
-    assert cfg.replay.sampling == "transition_uniform"
+    assert cfg.algorithm.context.buffer_capacity == 10_000
+    assert cfg.algorithm.context.rollout_expert_fraction == 0.0
+    assert cfg.replay.policy.capacity_transitions == 2_000_000
+    assert cfg.replay.policy.sampling == "transition_uniform"
     assert cfg.replay.history_layout is None
-    assert cfg.expert.sampling_mode == "source_rows"
-    assert cfg.expert.sampling_step_seconds is None
+    assert cfg.expert.clock.sampling_mode == "source_rows"
+    assert cfg.expert.clock.sampling_step_seconds is None
     assert cfg.expert.window_lengths == (8,)
     assert cfg.model.actor_cfg.hidden_layers == cfg.model.forward_cfg.hidden_layers == 2
     assert cfg.model.actor_cfg.residual is cfg.model.forward_cfg.residual is False
     assert cfg.tracking_curriculum is None
     assert cfg.class_type == "rsl_rl.runners:ForwardBackwardRunner"
     assert tuple(helper.name for helper in cfg.value_helpers) == ("discriminator",)
+    assert cfg.value_helpers[0].learning_rate == 1.0e-4
     assert cfg.value_helpers[0].actor_coefficient == 0.01
 
 
@@ -104,14 +142,14 @@ def test_bfm_profile_keeps_its_faithful_direct_values() -> None:
 
     assert (cfg.seed, cfg.num_envs, cfg.num_steps_per_env, cfg.num_updates_per_iteration) == (4728, 1024, 1, 16)
     assert cfg.max_iterations * cfg.num_envs * cfg.num_steps_per_env == 211_200_000
-    assert cfg.algorithm.random_action_transitions == 10_240
-    assert cfg.algorithm.learning_rate == 3.0e-4
+    assert cfg.algorithm.exploration.random_action_transitions == 10_240
+    assert cfg.algorithm.optimization.learning_rate == 3.0e-4
     assert cfg.algorithm.implied_value_coefficient == 0.0
-    assert cfg.algorithm.context_buffer_capacity == 8192
-    assert cfg.algorithm.rollout_expert_fraction == 0.5
-    assert cfg.replay.capacity_transitions == 5_120_000
-    assert cfg.replay.terminal_capacity_per_env == 17
-    assert cfg.replay.sampling == "episode_uniform"
+    assert cfg.algorithm.context.buffer_capacity == 8192
+    assert cfg.algorithm.context.rollout_expert_fraction == 0.5
+    assert cfg.replay.policy.capacity_transitions == 5_120_000
+    assert cfg.replay.policy.terminal_capacity_per_env == 17
+    assert cfg.replay.policy.sampling == "episode_uniform"
     assert cfg.replay.history_layout is not None
     assert tuple(source.observation_name for source in cfg.replay.history_layout.sources) == (
         "last_action",
@@ -120,8 +158,8 @@ def test_bfm_profile_keeps_its_faithful_direct_values() -> None:
         "joint_velocity",
         "projected_gravity",
     )
-    assert cfg.expert.sampling_mode == "uniform_before_source_end"
-    assert cfg.expert.sampling_step_seconds == 0.02
+    assert cfg.expert.clock.sampling_mode == "uniform_before_source_end"
+    assert cfg.expert.clock.sampling_step_seconds == 0.02
     assert cfg.expert.window_lengths == (8, 257)
     assert cfg.class_type == "rsl_rl.runners:ForwardBackwardRunner"
     assert cfg.model.actor_cfg.hidden_layers == cfg.model.forward_cfg.hidden_layers == 6
@@ -134,12 +172,12 @@ def test_bfm_profile_keeps_its_faithful_direct_values() -> None:
         "base_angular_velocity",
     )
     assert tuple(helper.name for helper in cfg.value_helpers) == ("discriminator", "auxiliary")
+    assert tuple(helper.learning_rate for helper in cfg.value_helpers) == (3.0e-4, 3.0e-4)
     assert cfg.value_helpers[0].actor_coefficient == 0.05
     assert cfg.tracking_curriculum is not None
     assert cfg.tracking_curriculum.class_name.endswith(":ForwardBackwardTrackingCurriculum")
     assert cfg.tracking_curriculum.sequence_ids_bind.endswith(".table.clip_ids")
     assert cfg.tracking_curriculum.sequence_start_rows_bind.endswith(".table.clip_start_rows")
-    assert cfg.tracking_curriculum.sampling_priorities_bind.endswith(".payload.sampler.clip_priorities")
     assert cfg.tracking_curriculum.evaluation_scope_bind.endswith(".payload.sampler.reset_sampling_scope")
     assert cfg.tracking_curriculum.interval_transitions == 9_600_000
 
@@ -162,6 +200,16 @@ def test_reward_algebra_has_one_declared_order() -> None:
         ("penalty_ankle_roll", 4.0),
         ("penalty_slippage", 2.0),
     )
+
+
+def test_helper_presence_and_optimization_profiles_remain_independent() -> None:
+    meta_with_auxiliary = _runner((_META_TOKENS - {"helpers_discriminator"}) | {"helpers_discriminator_auxiliary"})
+    bfm_without_auxiliary = _runner((_BFM_TOKENS - {"helpers_discriminator_auxiliary"}) | {"helpers_discriminator"})
+
+    assert tuple(helper.name for helper in meta_with_auxiliary.value_helpers) == ("discriminator", "auxiliary")
+    assert tuple(helper.learning_rate for helper in meta_with_auxiliary.value_helpers) == (1.0e-4, 1.0e-4)
+    assert tuple(helper.name for helper in bfm_without_auxiliary.value_helpers) == ("discriminator",)
+    assert bfm_without_auxiliary.value_helpers[0].learning_rate == 3.0e-4
 
 
 def test_robot_and_dataset_axes_remain_independent() -> None:

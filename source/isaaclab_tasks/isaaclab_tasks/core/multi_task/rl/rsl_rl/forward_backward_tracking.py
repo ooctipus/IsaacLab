@@ -214,7 +214,6 @@ class _TrackingMetric:
     target_frames: torch.Tensor
     observation_name: str
     projection: Callable[[torch.Tensor], torch.Tensor] | None = None
-    assignment_metric: str = "uniform_assignment"
 
     def __post_init__(self) -> None:
         """Reject unnamed or empty observation projections."""
@@ -222,8 +221,6 @@ class _TrackingMetric:
             raise ValueError("Tracking metric and observation names must be nonempty.")
         if self.target_frames.ndim != 2 or self.target_frames.dtype is not torch.float32:
             raise ValueError("Tracking targets must be a frame-by-feature matrix.")
-        if self.assignment_metric != "uniform_assignment":
-            raise ValueError("Tracking supports only the explicit uniform_assignment metric.")
 
     def observe(self, observations: TensorDictBase) -> torch.Tensor:
         """Return the configured live observation projection."""
@@ -389,7 +386,7 @@ def forward_backward_tracking_evaluator(  # noqa: C901
 
     expert_observations = expert_frame_tensordict(model, expert.frames)
     metrics = []
-    projection_fields = {"metric_name", "target_name", "observation_name", "projection", "assignment_metric"}
+    projection_fields = {"metric_name", "target_name", "observation_name", "projection"}
     for projection_cfg in projections:
         if set(projection_cfg) != projection_fields:
             raise ValueError("Tracking projections must contain the exact typed projection fields.")
@@ -397,19 +394,16 @@ def forward_backward_tracking_evaluator(  # noqa: C901
         target_name = projection_cfg["target_name"]
         observation_name = projection_cfg["observation_name"]
         projection_path = projection_cfg["projection"]
-        assignment_metric = projection_cfg["assignment_metric"]
         if not all(isinstance(value, str) and value for value in (metric_name, target_name, observation_name)):
             raise TypeError("Tracking metric, target, and observation names must be nonempty strings.")
         if projection_path is not None and (not isinstance(projection_path, str) or not projection_path):
             raise TypeError("Tracking projection must be a qualified callable path or None.")
-        if not isinstance(assignment_metric, str):
-            raise TypeError("Tracking assignment metric must be a string.")
         projection = None if projection_path is None else resolve_callable(projection_path)
         target = expert_observations.get(target_name)
         if target is None:
             raise ValueError(f"Expert observations do not contain tracking target {target_name!r}.")
         target = (target if projection is None else projection(target)).contiguous()
-        metrics.append(_TrackingMetric(metric_name, target, observation_name, projection, assignment_metric))
+        metrics.append(_TrackingMetric(metric_name, target, observation_name, projection))
     if not metrics or len({metric.name for metric in metrics}) != len(metrics):
         raise ValueError("Tracking metric names must be nonempty and unique.")
     if any(
@@ -709,7 +703,6 @@ class ForwardBackwardTrackingCurriculum:
         command_bind: str,
         sequence_ids_bind: str,
         sequence_start_rows_bind: str,
-        sampling_priorities_bind: str,
         evaluation_scope_bind: str,
         projections: tuple[Mapping[str, object], ...],
         context_window_length: int,
@@ -729,7 +722,6 @@ class ForwardBackwardTrackingCurriculum:
         command = _resolve_binding(command_bind, values)
         sequence_ids = _resolve_binding(sequence_ids_bind, values)
         sequence_start_rows = _resolve_binding(sequence_start_rows_bind, values)
-        sampling_priorities = _resolve_binding(sampling_priorities_bind, values)
         evaluation_scope = _resolve_binding(evaluation_scope_bind, values)
         expert = algorithm.expert
         if not callable(getattr(command, "bind_rows", None)) or not isinstance(
@@ -746,10 +738,6 @@ class ForwardBackwardTrackingCurriculum:
             raise ValueError("Environment and expert stable sequence ids must match exactly.")
         if not isinstance(sequence_start_rows, torch.Tensor):
             raise TypeError("The sequence_start_rows binding must resolve to a tensor.")
-        if not isinstance(sampling_priorities, torch.Tensor):
-            raise TypeError("The sampling_priorities binding must resolve to a tensor.")
-        if sampling_priorities.data_ptr() != expert.priorities.data_ptr():
-            raise ValueError("The environment sampler and expert buffer must share one canonical priority tensor.")
         if not callable(evaluation_scope):
             raise TypeError("The evaluation_scope binding must resolve to a callable.")
         if not callable(getattr(algorithm, "evaluation_history", None)):
@@ -804,7 +792,6 @@ class ForwardBackwardTrackingCurriculum:
                 "priority_metric_name": priority_metric_name,
                 "projections": resolved_projections,
                 "reset_source_name": reset_source_name,
-                "sampling_priorities_bind": sampling_priorities_bind,
                 "sequence_ids": sequence_ids,
                 "sequence_ids_bind": sequence_ids_bind,
                 "sequence_start_rows": sequence_start_rows.detach().cpu().tolist(),

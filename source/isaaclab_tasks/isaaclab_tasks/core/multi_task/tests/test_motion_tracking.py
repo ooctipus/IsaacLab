@@ -49,14 +49,12 @@ _G1_TRACKING_PROJECTIONS = (
         "target_name": "joint_position",
         "observation_name": "joint_position_unnoised",
         "projection": None,
-        "assignment_metric": "uniform_assignment",
     },
     {
         "metric_name": "obs_state_emd",
         "target_name": "joint_position",
         "observation_name": "joint_position",
         "projection": ("isaaclab_tasks.core.multi_task.motion.robots.g1.observations:g1_bfm_observation_state_pose"),
-        "assignment_metric": "uniform_assignment",
     },
 )
 _TRACKING_PROTOCOL = {
@@ -77,7 +75,6 @@ _CURRICULUM_PROTOCOL = {
     "command_bind": "env.unwrapped.command_manager.get_term('motion')",
     "sequence_ids_bind": "env.unwrapped.command_manager.get_term('motion').table.clip_ids",
     "sequence_start_rows_bind": "env.unwrapped.command_manager.get_term('motion').table.clip_start_rows",
-    "sampling_priorities_bind": "env.unwrapped.command_manager.get_term('motion').payload.sampler.clip_priorities",
     "evaluation_scope_bind": "env.unwrapped.command_manager.get_term('motion').payload.sampler.reset_sampling_scope",
     "priority_metric_name": "emd",
     "priority_metric_minimum": 0.5,
@@ -1259,14 +1256,6 @@ def test_curriculum_uses_wrapper_and_restores_algorithm_owned_modes() -> None:
     assert algorithm.model.training
     assert not algorithm.model.target_network.training
     assert not algorithm.model.observation_normalizers.training
-
-
-def test_curriculum_rejects_mirrored_priority_owners() -> None:
-    env = _Environment(_table())
-    expert = _expert()
-
-    with pytest.raises(ValueError, match="share one canonical priority tensor"):
-        _curriculum(env, _Algorithm(expert))
 
 
 def test_curriculum_validates_priorities_before_mutating_shared_state(monkeypatch: pytest.MonkeyPatch) -> None:

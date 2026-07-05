@@ -212,6 +212,49 @@ def _env(
     )
 
 
+def test_expert_provider_consumes_one_strict_clock_record() -> None:
+    """The runtime expert boundary must consume the grouped clock without flattening."""
+    table = _smpl_table((5, 4))
+    schema = ForwardBackwardObservationSchema.from_config({"policy": 358}, {"backward": ("policy",)})
+    kwargs = {
+        "source_bind": _SOURCE_BIND,
+        "priorities_bind": _PRIORITIES_BIND,
+        "target_projection": _SMPL_TARGET,
+        "target_projection_binds": _SMPL_BINDS,
+        "window_lengths": (2,),
+    }
+
+    expert = forward_backward_expert_buffer(
+        _env(table),
+        schema,
+        "cpu",
+        clock={"sampling_mode": "source_rows", "sampling_step_seconds": None},
+        **kwargs,
+    )
+
+    assert expert.frames.shape == (9, 358)
+    parameters = inspect.signature(forward_backward_expert_buffer).parameters
+    assert "clock" in parameters
+    assert {"sampling_mode", "sampling_step_seconds"}.isdisjoint(parameters)
+
+    with pytest.raises(ValueError, match="missing required field"):
+        forward_backward_expert_buffer(
+            _env(table),
+            schema,
+            "cpu",
+            clock={"sampling_mode": "source_rows"},
+            **kwargs,
+        )
+    with pytest.raises(ValueError, match="Unknown expert clock fields"):
+        forward_backward_expert_buffer(
+            _env(table),
+            schema,
+            "cpu",
+            clock={"sampling_mode": "source_rows", "sampling_step_seconds": None, "extra": True},
+            **kwargs,
+        )
+
+
 def test_projection_bind_expressions_are_resolved_once() -> None:
     """Each explicitly owned projection input must be resolved once at expert construction."""
     table = _g1_table((10,))
@@ -248,8 +291,7 @@ def test_projection_bind_expressions_are_resolved_once() -> None:
         "cpu",
         source_bind=_SOURCE_BIND,
         priorities_bind=_PRIORITIES_BIND,
-        sampling_mode="uniform_before_source_end",
-        sampling_step_seconds=0.02,
+        clock={"sampling_mode": "uniform_before_source_end", "sampling_step_seconds": 0.02},
         target_projection=_G1_TARGET,
         target_projection_binds=_G1_BINDS,
         window_lengths=(2,),
@@ -272,8 +314,7 @@ def test_smpl_provider_projects_target_physical_body_fields() -> None:
         "cpu",
         source_bind=_SOURCE_BIND,
         priorities_bind=_PRIORITIES_BIND,
-        sampling_mode="source_rows",
-        sampling_step_seconds=None,
+        clock={"sampling_mode": "source_rows", "sampling_step_seconds": None},
         target_projection=_SMPL_TARGET,
         target_projection_binds=_SMPL_BINDS,
         window_lengths=(2,),
@@ -302,8 +343,7 @@ def test_g1_provider_projects_exact_state_and_privileged_facts_at_50_hz() -> Non
         "cpu",
         source_bind=_SOURCE_BIND,
         priorities_bind=_PRIORITIES_BIND,
-        sampling_mode="uniform_before_source_end",
-        sampling_step_seconds=0.02,
+        clock={"sampling_mode": "uniform_before_source_end", "sampling_step_seconds": 0.02},
         target_projection=_G1_TARGET,
         target_projection_binds=_G1_BINDS,
         window_lengths=(2,),
@@ -357,8 +397,7 @@ def test_g1_expert_identity_tracks_canonical_defaults_but_not_randomized_offsets
             "cpu",
             source_bind=_SOURCE_BIND,
             priorities_bind=_PRIORITIES_BIND,
-            sampling_mode="uniform_before_source_end",
-            sampling_step_seconds=0.02,
+            clock={"sampling_mode": "uniform_before_source_end", "sampling_step_seconds": 0.02},
             target_projection=_G1_TARGET,
             target_projection_binds=_G1_BINDS,
             window_lengths=(2,),
@@ -391,8 +430,7 @@ def test_g1_expert_rejects_per_environment_default_rows() -> None:
             "cpu",
             source_bind=_SOURCE_BIND,
             priorities_bind=_PRIORITIES_BIND,
-            sampling_mode="uniform_before_source_end",
-            sampling_step_seconds=0.02,
+            clock={"sampling_mode": "uniform_before_source_end", "sampling_step_seconds": 0.02},
             target_projection=_G1_TARGET,
             target_projection_binds=_G1_BINDS,
             window_lengths=(2,),
@@ -415,8 +453,7 @@ def test_g1_provider_accepts_smpl_source_after_target_frame_building() -> None:
         "cpu",
         source_bind=_SOURCE_BIND,
         priorities_bind=_PRIORITIES_BIND,
-        sampling_mode="uniform_before_source_end",
-        sampling_step_seconds=0.02,
+        clock={"sampling_mode": "uniform_before_source_end", "sampling_step_seconds": 0.02},
         target_projection=_G1_TARGET,
         target_projection_binds=_G1_BINDS,
         window_lengths=(2,),
@@ -441,8 +478,7 @@ def test_g1_provider_packs_named_targets_in_declared_backward_order() -> None:
     kwargs = {
         "source_bind": _SOURCE_BIND,
         "priorities_bind": _PRIORITIES_BIND,
-        "sampling_mode": "uniform_before_source_end",
-        "sampling_step_seconds": 0.02,
+        "clock": {"sampling_mode": "uniform_before_source_end", "sampling_step_seconds": 0.02},
         "target_projection": _G1_TARGET,
         "target_projection_binds": _G1_BINDS,
         "window_lengths": (2,),
@@ -468,8 +504,7 @@ def test_expert_provider_retains_the_command_sampler_priority_tensor() -> None:
         "cpu",
         source_bind=_SOURCE_BIND,
         priorities_bind=_PRIORITIES_BIND,
-        sampling_mode="source_rows",
-        sampling_step_seconds=None,
+        clock={"sampling_mode": "source_rows", "sampling_step_seconds": None},
         target_projection=_SMPL_TARGET,
         target_projection_binds=_SMPL_BINDS,
         window_lengths=(2,),
