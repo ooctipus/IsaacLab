@@ -167,7 +167,7 @@ class RslRlVecEnvWrapper(VecEnv):
     def reset(self) -> tuple[TensorDict, dict]:  # noqa: D102
         # reset the environment
         obs_dict, extras = self.env.reset()
-        return TensorDict(obs_dict, batch_size=[self.num_envs]), extras
+        return self._convert_observations(obs_dict), extras
 
     def get_observations(self) -> TensorDict:
         """Returns the current observations of the environment."""
@@ -175,7 +175,7 @@ class RslRlVecEnvWrapper(VecEnv):
             obs_dict = self.unwrapped.observation_manager.compute()
         else:
             obs_dict = self.unwrapped._get_observations()
-        return TensorDict(obs_dict, batch_size=[self.num_envs])
+        return self._convert_observations(obs_dict)
 
     def step(self, actions: torch.Tensor) -> tuple[TensorDict, torch.Tensor, torch.Tensor, dict]:
         # clip actions
@@ -185,12 +185,15 @@ class RslRlVecEnvWrapper(VecEnv):
         obs_dict, rew, terminated, truncated, extras = self.env.step(actions)
         # compute dones for compatibility with RSL-RL
         dones = (terminated | truncated).to(dtype=torch.long)
+        # expose final observations through the same public contract as ordinary observations
+        if "final_obs" in extras:
+            extras["final_obs"] = self._convert_observations(extras["final_obs"])
         # move time out information to the extras dict
         # this is only needed for infinite horizon tasks
         if not self.unwrapped.cfg.is_finite_horizon:
             extras["time_outs"] = truncated
         # return the step information
-        return TensorDict(obs_dict, batch_size=[self.num_envs]), rew, dones, extras
+        return self._convert_observations(obs_dict), rew, dones, extras
 
     def close(self):  # noqa: D102
         return self.env.close()
@@ -198,6 +201,10 @@ class RslRlVecEnvWrapper(VecEnv):
     """
     Helper functions
     """
+
+    def _convert_observations(self, observations: dict) -> TensorDict:
+        """Convert one raw environment observation tree to the public RSL-RL contract."""
+        return TensorDict(observations, batch_size=[self.num_envs])
 
     def _modify_action_space(self):
         """Modifies the action space to the clip range."""
