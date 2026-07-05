@@ -18,9 +18,7 @@ from isaaclab.utils.math import (
     axis_angle_from_quat,
     convert_quat,
     euler_xyz_from_quat,
-    matrix_from_quat,
     quat_conjugate,
-    quat_from_matrix,
     quat_from_rotation_vector,
     quat_mul,
 )
@@ -219,8 +217,15 @@ def ordered_hinge_rotation(coordinates: torch.Tensor, axes: torch.Tensor) -> tor
     return quaternion
 
 
-def _time_unwrap_angles(coordinates: torch.Tensor) -> torch.Tensor:
-    """Choose the continuous time representative of principal angles."""
+def time_unwrap_angles(coordinates: torch.Tensor) -> torch.Tensor:
+    """Choose continuous representatives of principal angles along time.
+
+    Args:
+        coordinates: Principal angles [rad], shape ``[frame_count, coordinate_count]``.
+
+    Returns:
+        Continuous angles [rad] with the same shape as :paramref:`coordinates`.
+    """
     if coordinates.ndim != 2:
         raise ValueError("Time unwrapping requires [frame_count, hinge_count] coordinates.")
     if coordinates.shape[0] < 2:
@@ -279,10 +284,15 @@ def fit_ordered_hinge_coordinates(
         parity = torch.dot(cross, third)
         if not torch.isclose(parity.abs(), parity.new_tensor(1.0), atol=1.0e-6):
             raise ValueError("A three-hinge chain must contain distinct cardinal directions.")
-        basis = torch.stack((first, second, cross), dim=-1)
-        matrix = matrix_from_quat(rotation_xyzw)
-        canonical_inverse = torch.matmul(torch.matmul(basis.transpose(0, 1), matrix), basis).transpose(-1, -2)
-        inverse_xyzw = quat_from_matrix(canonical_inverse)
+        inverse_xyzw = torch.stack(
+            (
+                -(vector * first).sum(dim=-1),
+                -(vector * second).sum(dim=-1),
+                -(vector * cross).sum(dim=-1),
+                scalar,
+            ),
+            dim=-1,
+        )
         first_angle, second_angle, third_angle = euler_xyz_from_quat(inverse_xyzw.reshape(-1, 4))
         coordinates = torch.stack((-first_angle, -second_angle, -parity * third_angle), dim=-1).reshape(
             *rotation_xyzw.shape[:-1], 3
@@ -384,7 +394,7 @@ class KinematicTreeRotationProjection:
             coordinates, _ = fit_ordered_hinge_coordinates(
                 local_rotation_xyzw[:, source_body_index], self._target_axes[start:stop]
             )
-            coordinates = _time_unwrap_angles(coordinates)
+            coordinates = time_unwrap_angles(coordinates)
             children = self._target_child_indices[start:stop]
             pose_axis_angle[:, children] = coordinates[..., None] * self._target_axes[start:stop]
         return pose_axis_angle

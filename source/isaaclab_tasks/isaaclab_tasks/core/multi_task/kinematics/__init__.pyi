@@ -20,6 +20,7 @@ __all__ = [
     "time_gaussian_filter",
     "time_gradient",
     "time_quaternion_angular_velocity",
+    "time_unwrap_angles",
 ]
 
 from .kinematic_tree import (
@@ -30,6 +31,7 @@ from .kinematic_tree import (
     time_gaussian_filter,
     time_gradient,
     time_quaternion_angular_velocity,
+    time_unwrap_angles,
 )
 from .newton_kinematics import NewtonKinematics
 from .newton_kinematics_cfg import NewtonKinematicsCfg
