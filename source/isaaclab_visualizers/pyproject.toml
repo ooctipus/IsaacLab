@@ -29,24 +29,24 @@ Repository = "https://github.com/isaac-sim/IsaacLab"
 kit = []
 newton = [
     "warp-lang",
-    "newton[sim] @ git+https://github.com/ooctipus/newton.git@has_applied_api",
+    "newton[sim] @ git+https://github.com/ooctipus/newton.git@ab45c157c3237ea1399959b7fd33d66a2430d250",
     "PyOpenGL-accelerate",
     "pyglet>=2.1.6,<3",
     "imgui-bundle>=1.92.5",
     "typing-extensions>=4.15.0",
 ]
 rerun = [
-    "newton[sim] @ git+https://github.com/ooctipus/newton.git@has_applied_api",
+    "newton[sim] @ git+https://github.com/ooctipus/newton.git@ab45c157c3237ea1399959b7fd33d66a2430d250",
     "rerun-sdk>=0.29.0",
     "pyarrow==22.0.0",
 ]
 viser = [
-    "newton[sim] @ git+https://github.com/ooctipus/newton.git@has_applied_api",
+    "newton[sim] @ git+https://github.com/ooctipus/newton.git@ab45c157c3237ea1399959b7fd33d66a2430d250",
     "viser>=1.0.16",
 ]
 all = [
     "imgui-bundle>=1.92.5",
-    "newton[sim] @ git+https://github.com/ooctipus/newton.git@has_applied_api",
+    "newton[sim] @ git+https://github.com/ooctipus/newton.git@ab45c157c3237ea1399959b7fd33d66a2430d250",
     "PyOpenGL-accelerate",
     "pyglet>=2.1.6,<3",
     # Match rerun-sdk's supported Arrow stack and avoid resolver drift across environments.

@@ -27,7 +27,7 @@ all = [
     "prettytable>=3.3.0",
     "PyOpenGL-accelerate>=3.1.0",
     "pyglet>=2.1.6,<3",
-    "newton[sim] @ git+https://github.com/ooctipus/newton.git@has_applied_api",
+    "newton[sim] @ git+https://github.com/ooctipus/newton.git@ab45c157c3237ea1399959b7fd33d66a2430d250",
 ]
 
 [tool.setuptools]
