@@ -17,12 +17,14 @@ import warp as wp
 from isaaclab_tasks.core.multi_task.terrain.retarget.buffer import RetargetBuffer
 from isaaclab_tasks.core.multi_task.terrain.retarget.criteria import (
     JointWithinLimit,
+    SolverCostOutlier,
     evaluate_foot_position_error,
     evaluate_support_polygon_stability,
 )
 from isaaclab_tasks.core.multi_task.terrain.retarget.criteria_cfg import (
     FootPositionErrorCfg,
     JointWithinLimitCfg,
+    SolverCostOutlierCfg,
     SupportPolygonStabilityCfg,
 )
 
@@ -84,7 +86,7 @@ def test_joint_within_limit_uses_scaled_interval():
     buf.joint_q_result_t[3, 7:10] = torch.tensor([0.0, -1.81, 0.0], device=device)
 
     criterion = JointWithinLimit(JointWithinLimitCfg(limit_ratio=0.9), pipeline)
-    result = criterion(buf, N=4)
+    result = criterion(buf, torch.arange(4, device=device))
 
     assert bool(result[0])
     assert bool(result[1])
@@ -102,7 +104,7 @@ def test_joint_within_limit_uses_scaled_interval():
     unbounded_buf.joint_q_result_t[1, 7:10] = torch.tensor([0.91, 0.0, 0.0], device=device)
 
     unbounded_criterion = JointWithinLimit(JointWithinLimitCfg(limit_ratio=0.9), unbounded_pipeline)
-    unbounded_result = unbounded_criterion(unbounded_buf, N=2)
+    unbounded_result = unbounded_criterion(unbounded_buf, torch.arange(2, device=device))
     assert bool(unbounded_result[0])
     assert not bool(unbounded_result[1])
 
@@ -117,14 +119,16 @@ def test_foot_position_error_reads_cached_measure_and_masks_air_slots() -> None:
     buffer.is_contact_t[:8] = is_contact.reshape(-1)
     candidates = SimpleNamespace(
         buffer=buffer,
+        num_rows=2,
         foot_position_error=torch.tensor(
             ((0.0, 0.0, 0.0, 0.5), (0.0, 0.0, 0.0, 0.5)),
             device=device,
         ),
     )
-    max_result = evaluate_foot_position_error(FootPositionErrorCfg(max_err=0.02, aggregate="max"), candidates)
+    rows = torch.arange(2, device=device)
+    max_result = evaluate_foot_position_error(FootPositionErrorCfg(max_err=0.02, aggregate="max"), candidates, rows)
     assert max_result.tolist() == [True, False]
-    sum_result = evaluate_foot_position_error(FootPositionErrorCfg(max_err=0.02, aggregate="sum"), candidates)
+    sum_result = evaluate_foot_position_error(FootPositionErrorCfg(max_err=0.02, aggregate="sum"), candidates, rows)
     assert sum_result.tolist() == [True, False]
 
 
@@ -135,9 +139,23 @@ def test_support_polygon_stability_reads_objective_margin_and_contact_count() ->
         active_contact_count=torch.tensor((4, 2, 3), dtype=torch.int32),
     )
     cfg = SupportPolygonStabilityCfg(minimum_contacts=3, minimum_margin=0.0)
-    result = evaluate_support_polygon_stability(cfg, candidates)
+    rows = torch.arange(3)
+    result = evaluate_support_polygon_stability(cfg, candidates, rows)
     assert result.tolist() == [True, False, False]
     strict = evaluate_support_polygon_stability(
-        SupportPolygonStabilityCfg(minimum_contacts=4, minimum_margin=0.15), candidates
+        SupportPolygonStabilityCfg(minimum_contacts=4, minimum_margin=0.15), candidates, rows
     )
     assert strict.tolist() == [False, False, False]
+
+
+def test_solver_cost_outlier_keeps_the_complete_solved_population_threshold() -> None:
+    """Active-row filtering must not recompute a population statistic on prior survivors."""
+    costs = torch.tensor((1.0, 2.0, 100.0, 101.0))
+    criterion = SolverCostOutlier(
+        SolverCostOutlierCfg(threshold_multiplier=10.0),
+        SimpleNamespace(solver_costs=costs),
+    )
+
+    result = criterion(None, torch.tensor((2, 3)))
+
+    assert result.tolist() == [False, False]

@@ -179,6 +179,16 @@ class PositionTerrainStanceCandidates:
     foot_position_error: torch.Tensor | None = None
     solve_statistics: IKExecutionStatistics | None = None
 
+    @property
+    def num_rows(self) -> int:
+        """Number of geometry-valid rows entering the criterion cascade."""
+        return self.buffer.num_geometry_valid
+
+    @property
+    def device(self) -> str:
+        """Device carrying candidate rows."""
+        return self.buffer.device
+
 
 @dataclass(slots=True)
 class _PositionIKWorkspace:

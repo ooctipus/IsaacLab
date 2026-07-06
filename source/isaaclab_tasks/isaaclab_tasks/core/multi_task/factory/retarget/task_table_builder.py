@@ -134,6 +134,18 @@ class FactoryFamilyCandidates:
     gripper_clearance: float = 0.0
     solve_statistics: IKExecutionStatistics | None = None
 
+    @property
+    def num_rows(self) -> int:
+        """Number of solved rows entering the criterion cascade."""
+        if self.joint_q is None:
+            raise RuntimeError("Factory criteria require solved candidate rows.")
+        return self.joint_q.shape[0]
+
+    @property
+    def device(self) -> str:
+        """Device carrying candidate rows."""
+        return self.geometry.device
+
 
 @dataclass(slots=True)
 class _FactoryIKWorkspace:
@@ -452,30 +464,34 @@ def _factory_pads_world(geometry: FactoryGeometry, body_q: torch.Tensor) -> torc
     )
 
 
-def _factory_for_each_fk(candidates: FactoryFamilyCandidates, consume) -> None:
-    """Evaluate and consume body poses one solver-capacity interval at a time."""
+def _factory_for_each_fk(candidates: FactoryFamilyCandidates, consume, source_rows: torch.Tensor | None = None) -> None:
+    """Evaluate and consume selected body poses one solver-capacity interval at a time."""
     if candidates.solve_statistics is None or candidates.joint_q is None:
         raise RuntimeError("Factory FK requires solved coordinates and execution statistics.")
+    row_count = candidates.num_rows if source_rows is None else source_rows.shape[0]
     kinematics = candidates.kinematics
-    capacity = min(candidates.solve_statistics.batch_capacity, candidates.joint_q.shape[0])
-    device = candidates.geometry.device
+    capacity = min(candidates.solve_statistics.batch_capacity, row_count)
+    device = candidates.device
     workspace = _FactoryFKWorkspace(
         joint_qd=wp.zeros((capacity, kinematics.model.joint_dof_count), dtype=wp.float32, device=device),
         body_q=wp.empty((capacity, kinematics.model.body_count), dtype=wp.transformf, device=device),
         body_qd=wp.empty((capacity, kinematics.model.body_count), dtype=wp.spatial_vectorf, device=device),
         capacity=capacity,
     )
-    for start in range(0, candidates.joint_q.shape[0], capacity):
-        stop = min(start + capacity, candidates.joint_q.shape[0])
+    for start in range(0, row_count, capacity):
+        stop = min(start + capacity, row_count)
+        output_rows = slice(start, stop)
+        candidate_rows = output_rows if source_rows is None else source_rows[output_rows]
+        joint_q = candidates.joint_q[candidate_rows].contiguous()
         active_count = stop - start
         kinematics.eval_fk_batched(
-            wp.from_torch(candidates.joint_q[start:stop]),
+            wp.from_torch(joint_q),
             workspace.joint_qd[:active_count],
             workspace.body_q[:active_count],
             workspace.body_qd[:active_count],
         )
         body_q = wp.to_torch(workspace.body_q)[:active_count].view(active_count, kinematics.model.body_count, 7)
-        consume(start, stop, body_q)
+        consume(output_rows, candidate_rows, body_q)
 
 
 def _factory_joints_within_limit(geometry: FactoryGeometry, joint_q: torch.Tensor, limit_ratio: float) -> torch.Tensor:
@@ -644,16 +660,16 @@ def _factory_solve_family(candidates: FactoryFamilyCandidates, solve_cfg) -> Fac
     candidates.target_error_m = torch.empty(count, device=geometry.device)
     candidates.ee_approach = torch.empty((count, 3), device=geometry.device)
 
-    def measure(start: int, stop: int, body_q: torch.Tensor) -> None:
+    def measure(_output_rows: slice, source_rows: slice, body_q: torch.Tensor) -> None:
         measure_grasp_targets(
             body_q,
             geometry.pad_bodies_wp,
             geometry.pad_offsets_wp,
-            candidates.t_plus[start:stop],
-            candidates.t_minus[start:stop],
+            candidates.t_plus[source_rows],
+            candidates.t_minus[source_rows],
             geometry.ee_body,
-            candidates.target_error_m[start:stop],
-            candidates.ee_approach[start:stop],
+            candidates.target_error_m[source_rows],
+            candidates.ee_approach[source_rows],
             geometry.device,
         )
 
@@ -974,15 +990,15 @@ def factory_solve_ik(cfg, candidates: FactoryFamilyCandidates) -> FactoryFamilyC
     return candidates
 
 
-def factory_target_error_criterion(cfg, candidates: FactoryFamilyCandidates) -> torch.Tensor:
-    """Accept rows whose cached fingertip target error meets the declared bound."""
+def factory_target_error_criterion(cfg, candidates: FactoryFamilyCandidates, rows: torch.Tensor) -> torch.Tensor:
+    """Accept active rows whose cached fingertip target error meets the declared bound."""
     if cfg.max_error_m <= 0.0:
         raise ValueError("Factory target-error bound must be positive.")
-    return candidates.target_error_m <= cfg.max_error_m
+    return candidates.target_error_m[rows] <= cfg.max_error_m
 
 
-def factory_held_pose_bounds_criterion(cfg, candidates: FactoryFamilyCandidates) -> torch.Tensor:
-    """Accept rows whose generated held pose lies inside declared axis bounds."""
+def factory_held_pose_bounds_criterion(cfg, candidates: FactoryFamilyCandidates, rows: torch.Tensor) -> torch.Tensor:
+    """Accept active rows whose generated held pose lies inside declared axis bounds."""
     axes = ("x", "y", "z")
     lower = torch.tensor(
         [cfg.bounds.get(axis, (-torch.inf, torch.inf))[0] for axis in axes], device=candidates.held_pose.device
@@ -990,38 +1006,39 @@ def factory_held_pose_bounds_criterion(cfg, candidates: FactoryFamilyCandidates)
     upper = torch.tensor(
         [cfg.bounds.get(axis, (-torch.inf, torch.inf))[1] for axis in axes], device=candidates.held_pose.device
     )
-    return ((candidates.held_pose[:, :3] >= lower) & (candidates.held_pose[:, :3] <= upper)).all(dim=-1)
+    held_position = candidates.held_pose[rows, :3]
+    return ((held_position >= lower) & (held_position <= upper)).all(dim=-1)
 
 
-def factory_joint_limit_criterion(cfg, candidates: FactoryFamilyCandidates) -> torch.Tensor:
-    """Accept rows whose solved arm remains inside the declared joint interval."""
-    return _factory_joints_within_limit(candidates.geometry, candidates.joint_q, cfg.limit_ratio)
+def factory_joint_limit_criterion(cfg, candidates: FactoryFamilyCandidates, rows: torch.Tensor) -> torch.Tensor:
+    """Accept active rows whose solved arm remains inside the declared joint interval."""
+    return _factory_joints_within_limit(candidates.geometry, candidates.joint_q[rows], cfg.limit_ratio)
 
 
-def factory_collision_criterion(cfg, candidates: FactoryFamilyCandidates) -> torch.Tensor:
-    """Certify collisions one solver-capacity FK interval at a time."""
+def factory_collision_criterion(cfg, candidates: FactoryFamilyCandidates, rows: torch.Tensor) -> torch.Tensor:
+    """Certify active rows in solver-capacity FK intervals."""
     geometry = candidates.geometry
-    accepted = torch.empty(candidates.joint_q.shape[0], dtype=torch.bool, device=geometry.device)
+    accepted = torch.empty(rows.shape[0], dtype=torch.bool, device=geometry.device)
 
-    def certify(start: int, stop: int, body_q: torch.Tensor) -> None:
-        board_asset_poses = {name: poses[start:stop] for name, poses in candidates.board_asset_poses.items()}
-        robot_ok = _factory_robot_clear(geometry, body_q, candidates.board_pose[start:stop], board_asset_poses, cfg)
-        forward, reverse = _factory_gripper_held_distance(geometry, body_q, candidates.held_pose[start:stop], cfg)
+    def certify(output_rows: slice, source_rows: torch.Tensor, body_q: torch.Tensor) -> None:
+        board_asset_poses = {name: poses[source_rows] for name, poses in candidates.board_asset_poses.items()}
+        robot_ok = _factory_robot_clear(geometry, body_q, candidates.board_pose[source_rows], board_asset_poses, cfg)
+        forward, reverse = _factory_gripper_held_distance(geometry, body_q, candidates.held_pose[source_rows], cfg)
         grasp_ok = (forward >= -cfg.max_pen) & (reverse >= -cfg.max_pen)
         reach_ok = (forward >= candidates.gripper_clearance) & (reverse >= candidates.gripper_clearance)
-        gripper_ok = torch.where(candidates.is_grasped[start:stop], grasp_ok, reach_ok)
+        gripper_ok = torch.where(candidates.is_grasped[source_rows], grasp_ok, reach_ok)
         held_ok = _factory_held_obstacle_clear(
             geometry,
-            candidates.held_pose[start:stop],
-            candidates.board_pose[start:stop],
+            candidates.held_pose[source_rows],
+            candidates.board_pose[source_rows],
             board_asset_poses,
-            candidates.allow_fixed_contact[start:stop],
-            candidates.allow_board_contact[start:stop],
+            candidates.allow_fixed_contact[source_rows],
+            candidates.allow_board_contact[source_rows],
             cfg,
         )
-        accepted[start:stop].copy_(robot_ok & gripper_ok & held_ok & _factory_self_clear(geometry, body_q, cfg))
+        accepted[output_rows].copy_(robot_ok & gripper_ok & held_ok & _factory_self_clear(geometry, body_q, cfg))
 
-    _factory_for_each_fk(candidates, certify)
+    _factory_for_each_fk(candidates, certify, rows)
     return accepted
 
 

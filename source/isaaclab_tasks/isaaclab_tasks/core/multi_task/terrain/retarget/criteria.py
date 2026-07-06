@@ -41,7 +41,7 @@ class RetargetCriterionContext:
     solver_costs: torch.Tensor
 
 
-def _evaluate(criterion_type, cfg, candidates) -> torch.Tensor:
+def _evaluate(criterion_type, cfg, candidates, rows: torch.Tensor) -> torch.Tensor:
     """Evaluate one criterion against solved family candidates."""
     if candidates.solver_costs is None:
         raise RuntimeError("Retarget criteria require solved candidates.")
@@ -53,15 +53,17 @@ def _evaluate(criterion_type, cfg, candidates) -> torch.Tensor:
         solver_costs=candidates.solver_costs,
     )
     criterion = criterion_type(cfg, context)
-    return criterion(candidates.buffer, candidates.buffer.num_geometry_valid)
+    return criterion(candidates.buffer, rows)
 
 
-def evaluate_foot_position_error(cfg, candidates) -> torch.Tensor:
+def evaluate_foot_position_error(cfg, candidates, rows: torch.Tensor) -> torch.Tensor:
     if candidates.foot_position_error is None:
         raise RuntimeError("Foot-position criterion requires the cached final FK measure.")
-    per_foot = candidates.foot_position_error
-    count, contact_count = per_foot.shape
-    is_contact = candidates.buffer.is_contact_t[: count * contact_count].view(count, contact_count)
+    contact_count = candidates.foot_position_error.shape[1]
+    per_foot = candidates.foot_position_error[rows]
+    is_contact = candidates.buffer.is_contact_t[: candidates.num_rows * contact_count].view(
+        candidates.num_rows, contact_count
+    )[rows]
     if cfg.aggregate == "sum":
         error = torch.where(is_contact, per_foot, torch.zeros_like(per_foot)).sum(dim=-1)
     elif cfg.aggregate == "max":
@@ -71,30 +73,30 @@ def evaluate_foot_position_error(cfg, candidates) -> torch.Tensor:
     return error <= cfg.max_err
 
 
-def evaluate_lateral_hip_limit(cfg, candidates) -> torch.Tensor:
-    return _evaluate(LateralHipLimit, cfg, candidates)
+def evaluate_lateral_hip_limit(cfg, candidates, rows: torch.Tensor) -> torch.Tensor:
+    return _evaluate(LateralHipLimit, cfg, candidates, rows)
 
 
-def evaluate_joint_within_limit(cfg, candidates) -> torch.Tensor:
-    return _evaluate(JointWithinLimit, cfg, candidates)
+def evaluate_joint_within_limit(cfg, candidates, rows: torch.Tensor) -> torch.Tensor:
+    return _evaluate(JointWithinLimit, cfg, candidates, rows)
 
 
-def evaluate_support_polygon_stability(cfg, candidates) -> torch.Tensor:
+def evaluate_support_polygon_stability(cfg, candidates, rows: torch.Tensor) -> torch.Tensor:
     if candidates.stability_margin is None or candidates.active_contact_count is None:
         raise RuntimeError("Stability criterion requires the cached final objective measure.")
     if cfg.minimum_contacts < 3:
         raise ValueError("Support-polygon stability requires at least three active contacts.")
-    return (candidates.active_contact_count >= cfg.minimum_contacts) & (
-        candidates.stability_margin >= cfg.minimum_margin
+    return (candidates.active_contact_count[rows] >= cfg.minimum_contacts) & (
+        candidates.stability_margin[rows] >= cfg.minimum_margin
     )
 
 
-def evaluate_solver_cost_outlier(cfg, candidates) -> torch.Tensor:
-    return _evaluate(SolverCostOutlier, cfg, candidates)
+def evaluate_solver_cost_outlier(cfg, candidates, rows: torch.Tensor) -> torch.Tensor:
+    return _evaluate(SolverCostOutlier, cfg, candidates, rows)
 
 
-def evaluate_collision_check(cfg, candidates) -> torch.Tensor:
-    return _evaluate(CollisionCheck, cfg, candidates)
+def evaluate_collision_check(cfg, candidates, rows: torch.Tensor) -> torch.Tensor:
+    return _evaluate(CollisionCheck, cfg, candidates, rows)
 
 
 class LateralHipLimit:
@@ -116,11 +118,11 @@ class LateralHipLimit:
         self.max_angle = cfg.max_angle
         self._joint_indices = context.kinematics.find_joint_scalar_coordinates(pattern)[0]
 
-    def __call__(self, buffer: RetargetBuffer, N: int) -> torch.Tensor:
+    def __call__(self, buffer: RetargetBuffer, rows: torch.Tensor) -> torch.Tensor:
         if not self._joint_indices:
-            return torch.ones(N, device=buffer.device, dtype=torch.bool)
+            return torch.ones(rows.shape[0], device=buffer.device, dtype=torch.bool)
         joint_indices = torch.tensor(self._joint_indices, device=buffer.device, dtype=torch.long)
-        return buffer.joint_q_result_t[:N, joint_indices].abs().max(dim=-1).values <= self.max_angle
+        return buffer.joint_q_result_t[rows][:, joint_indices].abs().max(dim=-1).values <= self.max_angle
 
 
 class JointWithinLimit:
@@ -163,8 +165,8 @@ class JointWithinLimit:
         self._safe_lo = lo + half_margin * span
         self._safe_hi = hi - half_margin * span
 
-    def __call__(self, buffer: RetargetBuffer, N: int) -> torch.Tensor:
-        jq = buffer.joint_q_result_t[:N, self._coordinate_indices]
+    def __call__(self, buffer: RetargetBuffer, rows: torch.Tensor) -> torch.Tensor:
+        jq = buffer.joint_q_result_t[rows][:, self._coordinate_indices]
         return ((jq >= self._safe_lo) & (jq <= self._safe_hi)).all(dim=-1)
 
 
@@ -178,9 +180,9 @@ class BaseZError:
 
     max_err: float = 0.3
 
-    def __call__(self, buffer: RetargetBuffer, N: int) -> torch.Tensor:
-        base_z = buffer.joint_q_result_t[:N, 2]
-        target_z = buffer.base_target_pos_t[:N, 2]
+    def __call__(self, buffer: RetargetBuffer, rows: torch.Tensor) -> torch.Tensor:
+        base_z = buffer.joint_q_result_t[rows, 2]
+        target_z = buffer.base_target_pos_t[rows, 2]
         return (base_z - target_z).abs() <= self.max_err
 
 
@@ -201,10 +203,9 @@ class SolverCostOutlier:
         self.solver_costs = context.solver_costs
         self.threshold_multiplier = cfg.threshold_multiplier
 
-    def __call__(self, buffer: RetargetBuffer, N: int) -> torch.Tensor:
-        costs = self.solver_costs[:N]
-        median = costs.median()
-        return costs < median * self.threshold_multiplier
+    def __call__(self, buffer: RetargetBuffer, rows: torch.Tensor) -> torch.Tensor:
+        median = self.solver_costs.median()
+        return self.solver_costs[rows] < median * self.threshold_multiplier
 
 
 class CollisionCheck:
@@ -245,23 +246,25 @@ class CollisionCheck:
             )
         return self._wp_bufs[device]
 
-    def __call__(self, buffer: RetargetBuffer, N: int) -> torch.Tensor:
+    def __call__(self, buffer: RetargetBuffer, rows: torch.Tensor) -> torch.Tensor:
+        count = buffer.num_geometry_valid
+        row_count = rows.shape[0]
         nb = self.kin.model.body_count
-        body_q_wp = wp.from_torch(
-            buffer.body_q_t[: N * nb].contiguous(),
-            dtype=wp.transformf,
-        )
+        body_q = buffer.body_q_t[: count * nb].view(count, nb, 7)[rows].reshape(-1, 7).contiguous()
+        body_q_wp = wp.from_torch(body_q, dtype=wp.transformf)
         probe_body, probe_offset, probe_foot_slot = self._get_wp_bufs(buffer.device)
-        # Slot-ordered per-problem contact flag; contact feet shouldn't be
-        # flagged for "penetrating" terrain since they're meant to touch.
-        is_contact_u8 = buffer.is_contact_t[: N * self._n_feet].view(N, self._n_feet).to(torch.uint8).contiguous()
+        # Slot-ordered per-problem contact flag; contact feet should not be
+        # flagged for "penetrating" terrain since they are meant to touch.
+        is_contact_u8 = (
+            buffer.is_contact_t[: count * self._n_feet].view(count, self._n_feet)[rows].to(torch.uint8).contiguous()
+        )
         is_contact_wp = wp.from_torch(is_contact_u8, dtype=wp.uint8)
 
-        pen_out = torch.zeros(N * self._n_probes, device=buffer.device, dtype=torch.float32)
+        pen_out = torch.zeros(row_count * self._n_probes, device=buffer.device, dtype=torch.float32)
         wp_pen = wp.from_torch(pen_out)
         wp.launch(
             _collision_check_kernel,
-            dim=[N, self._n_probes],
+            dim=[row_count, self._n_probes],
             inputs=[
                 body_q_wp,
                 nb,
@@ -277,7 +280,7 @@ class CollisionCheck:
             device=buffer.device,
         )
         wp.synchronize()
-        return pen_out.view(N, self._n_probes).max(dim=-1).values <= self.max_pen
+        return pen_out.view(row_count, self._n_probes).max(dim=-1).values <= self.max_pen
 
 
 @wp.kernel

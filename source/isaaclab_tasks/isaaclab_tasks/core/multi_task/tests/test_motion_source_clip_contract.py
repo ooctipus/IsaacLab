@@ -324,7 +324,7 @@ def test_semantic_residual_criterion_rejects_a_bad_finite_solution() -> None:
         if isinstance(item, MotionObjectiveMeasureCriterionCfg) and item.objective == "landmark_position"
     )
 
-    accepted = motion_criterion_objective_measure(criterion, candidate)
+    accepted = motion_criterion_objective_measure(criterion, candidate, torch.tensor((0,)))
 
     torch.testing.assert_close(accepted, torch.tensor((False,)))
 
@@ -353,7 +353,7 @@ def test_semantic_orientation_is_quality_evidence_not_an_acceptance_gate() -> No
     )
 
     assert tuple(item.objective for item in objective_criteria) == ("landmark_position",)
-    accepted = motion_criterion_objective_measure(objective_criteria[0], candidate)
+    accepted = motion_criterion_objective_measure(objective_criteria[0], candidate, torch.tensor((0,)))
     torch.testing.assert_close(accepted, torch.tensor((True,)))
 
 

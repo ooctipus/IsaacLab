@@ -62,7 +62,12 @@ class StateCommandCfg(CommandTermCfg):
 
         @configclass
         class CriterionCfg:
-            """One ordered post-generation acceptance criterion."""
+            """One ordered post-generation acceptance criterion.
+
+            The callable receives ``(cfg, candidates, active_rows)`` and returns
+            one boolean for each active original candidate row. Criteria run in
+            declaration order, so later terms inspect only earlier survivors.
+            """
 
             class_type: Callable | str = MISSING
 

@@ -51,6 +51,10 @@ if TYPE_CHECKING:
     )
     from .model import FactoryGeometry
 
+# Bound only the temporary query-by-template distance matrix. Query-row
+# chunking preserves the exact nearest-template problem and its source order.
+_SEED_DISTANCE_WORKSPACE_BYTES = 256 * 1024 * 1024
+
 # per-contact surface regions (held body frame, hole axis = z)
 _REGIONS = ("outer", "bore", "axial")
 # family id = (min_region * 3 + max_region) * 2 + mode; slots with region_a >
@@ -495,28 +499,34 @@ class GraspPairSampler:
         """Repeat targets across nearby arm seeds that span unconstrained roll."""
         k = max(1, min(int(ik_seeds_per_grasp), int(self.tpl_feats.shape[0])))
         target_features = pair_features(t_plus, t_minus, self.cfg.seed_axis_scale)
-        feature_distance = torch.cdist(target_features, self.tpl_feats)
         pool_size = min(8 * k, int(self.tpl_feats.shape[0]))
-        pool_indices = feature_distance.topk(pool_size, dim=1, largest=False).indices
+        distance_row_bytes = self.tpl_feats.shape[0] * self.tpl_feats.element_size()
+        chunk_rows = max(1, _SEED_DISTANCE_WORKSPACE_BYTES // distance_row_bytes)
+        seed_indices = torch.empty((t_plus.shape[0], k), dtype=torch.long, device=self.device)
 
-        axis = torch.nn.functional.normalize(t_plus - t_minus, dim=-1)
-        pool_approach = self.tpl_approach[pool_indices]
-        pool_approach = pool_approach - (pool_approach * axis[:, None]).sum(dim=-1, keepdim=True) * axis[:, None]
-        pool_approach = torch.nn.functional.normalize(pool_approach, dim=-1)
-        selected = torch.empty((t_plus.shape[0], k), dtype=torch.long, device=self.device)
-        selected[:, 0] = 0
-        roll_distance = 2.0 - 2.0 * (pool_approach * pool_approach[:, :1]).sum(dim=-1)
-        roll_distance[:, 0] = -1.0
-        rows = torch.arange(t_plus.shape[0], device=self.device)
-        for index in range(1, k):
-            next_index = roll_distance.argmax(dim=-1)
-            selected[:, index] = next_index
-            next_approach = pool_approach[rows, next_index]
-            next_distance = 2.0 - 2.0 * (pool_approach * next_approach[:, None]).sum(dim=-1)
-            roll_distance = torch.minimum(roll_distance, next_distance)
-            roll_distance[rows, next_index] = -1.0
+        for start in range(0, t_plus.shape[0], chunk_rows):
+            stop = min(start + chunk_rows, t_plus.shape[0])
+            feature_distance = torch.cdist(target_features[start:stop], self.tpl_feats)
+            pool_indices = feature_distance.topk(pool_size, dim=1, largest=False).indices
+            axis = torch.nn.functional.normalize(t_plus[start:stop] - t_minus[start:stop], dim=-1)
+            pool_approach = self.tpl_approach[pool_indices]
+            pool_approach = pool_approach - (pool_approach * axis[:, None]).sum(dim=-1, keepdim=True) * axis[:, None]
+            pool_approach = torch.nn.functional.normalize(pool_approach, dim=-1)
+            selected = torch.empty((stop - start, k), dtype=torch.long, device=self.device)
+            selected[:, 0] = 0
+            roll_distance = 2.0 - 2.0 * (pool_approach * pool_approach[:, :1]).sum(dim=-1)
+            roll_distance[:, 0] = -1.0
+            rows = torch.arange(stop - start, device=self.device)
+            for index in range(1, k):
+                next_index = roll_distance.argmax(dim=-1)
+                selected[:, index] = next_index
+                next_approach = pool_approach[rows, next_index]
+                next_distance = 2.0 - 2.0 * (pool_approach * next_approach[:, None]).sum(dim=-1)
+                roll_distance = torch.minimum(roll_distance, next_distance)
+                roll_distance[rows, next_index] = -1.0
+            seed_indices[start:stop].copy_(pool_indices.gather(1, selected))
 
-        seed_index = pool_indices.gather(1, selected).reshape(-1)
+        seed_index = seed_indices.reshape(-1)
         source_index = torch.arange(t_plus.shape[0], device=self.device).repeat_interleave(k)
         return (
             t_plus.repeat_interleave(k, 0),

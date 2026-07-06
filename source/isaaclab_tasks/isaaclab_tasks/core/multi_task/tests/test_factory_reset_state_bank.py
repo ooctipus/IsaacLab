@@ -95,6 +95,44 @@ def test_grasp_seed_selection_preserves_unconstrained_roll() -> None:
     assert set((seed_arm[:, 0].long() // 8).tolist()) == {0, 1, 2, 3}
 
 
+def test_grasp_seed_selection_chunks_pairwise_distance_without_changing_rows(monkeypatch) -> None:
+    """Seed lookup bounds pairwise scratch while preserving every selected template exactly."""
+    from isaaclab_tasks.core.multi_task.factory.retarget import samplers as factory_samplers
+
+    sampler = object.__new__(factory_samplers.GraspPairSampler)
+    sampler.device = torch.device("cpu")
+    sampler.cfg = SimpleNamespace(seed_axis_scale=0.3)
+    target_a = torch.tensor(((0.0, 0.05, 0.0),)).repeat(7, 1)
+    target_a[:, 0] = torch.arange(7) * 1.0e-3
+    target_b = target_a.clone()
+    target_b[:, 1] = -0.05
+    target_features = factory_samplers.pair_features(target_a[:1], target_b[:1], sampler.cfg.seed_axis_scale)
+    generator = torch.Generator().manual_seed(7)
+    sampler.tpl_feats = torch.randn((32, target_features.shape[1]), generator=generator)
+    sampler.tpl_approach = torch.nn.functional.normalize(
+        torch.randn((32, 3), generator=generator),
+        dim=-1,
+    )
+    sampler.tpl_arm = torch.arange(32, dtype=torch.float32).unsqueeze(-1)
+    expected = sampler.seed_targets(target_a, target_b, ik_seeds_per_grasp=4)
+
+    distance_row_bytes = sampler.tpl_feats.shape[0] * sampler.tpl_feats.element_size()
+    monkeypatch.setattr(factory_samplers, "_SEED_DISTANCE_WORKSPACE_BYTES", 2 * distance_row_bytes)
+    original_cdist = torch.cdist
+    chunk_sizes: list[int] = []
+
+    def bounded_cdist(left, right):
+        chunk_sizes.append(left.shape[0])
+        return original_cdist(left, right)
+
+    monkeypatch.setattr(torch, "cdist", bounded_cdist)
+    actual = sampler.seed_targets(target_a, target_b, ik_seeds_per_grasp=4)
+
+    assert chunk_sizes == [2, 2, 2, 1]
+    for actual_value, expected_value in zip(actual, expected, strict=True):
+        assert torch.equal(actual_value, expected_value)
+
+
 def test_gripper_collision_probes_include_exact_pad_points(monkeypatch) -> None:
     """Final collision certification must include both exact pad points."""
     from isaaclab_tasks.core.multi_task.factory.retarget import model as factory_model

@@ -82,6 +82,13 @@ class _MotionCorpusCandidate:
     frame_finite: torch.Tensor | None = None
     solve_statistics: IKExecutionStatistics | None = None
 
+    @property
+    def num_rows(self) -> int:
+        """Number of materialized clip or frame rows entering criteria."""
+        if self.frame_finite is None:
+            raise RuntimeError("Motion criteria require materialized finiteness evidence.")
+        return self.frame_finite.shape[0]
+
 
 @dataclass(slots=True)
 class _MotionSemanticWorkspace:
@@ -563,24 +570,26 @@ def motion_objective_landmark_rotation(
 def motion_criterion_frame_finite(
     _cfg: MotionFrameFiniteCriterionCfg,
     candidate: _MotionCorpusCandidate,
+    rows: torch.Tensor,
 ) -> torch.Tensor:
-    """Accept each materialized clip only when all of its stored values are finite."""
+    """Accept active materialized clips or frames only when every stored value is finite."""
     if candidate.frame_finite is None:
         raise ValueError("Frame finiteness requires materialized corpus evidence.")
-    return candidate.frame_finite
+    return candidate.frame_finite[rows]
 
 
 def motion_criterion_objective_measure(
     cfg: MotionObjectiveMeasureCriterionCfg,
     candidate: _MotionCorpusCandidate,
+    rows: torch.Tensor,
 ) -> torch.Tensor:
-    """Accept each cached semantic objective measure when finite and bounded."""
+    """Accept active cached semantic objective measures when finite and bounded."""
     if candidate.semantic_quality is None:
         raise ValueError("Semantic objective criteria require a completed solve.")
     if cfg.objective == "landmark_position":
-        values = candidate.semantic_quality[:, 0]
+        values = candidate.semantic_quality[rows, 0]
     elif cfg.objective == "landmark_rotation":
-        values = candidate.semantic_quality[:, 1]
+        values = candidate.semantic_quality[rows, 1]
     else:
         raise ValueError(f"Unknown semantic objective measure: {cfg.objective!r}.")
     return torch.isfinite(values) & (values <= cfg.upper)

@@ -76,9 +76,11 @@ def execute_task_family(
 
     Stage callables receive their own config first. Generate callables then
     receive ``(candidates, rng)``, the solver receives ``candidates``, criteria
-    receive ``candidates``, and selection receives
+    receive ``(candidates, active_rows)``, and selection receives
     ``(candidates, accepted_mask, target_count, rng)``. Candidate storage stays
-    domain-owned; this function owns only the visible stage order.
+    domain-owned; this function owns only the visible stage order. Stored gate
+    masks are neutral for rows rejected earlier, so diagnostics attribute each
+    rejected row to its first failing declared criterion.
 
     Args:
         family: Family stage configuration.
@@ -95,8 +97,22 @@ def execute_task_family(
     if family.solve is not None:
         candidates = _callable(family.solve.class_type, "solve")(family.solve, candidates)
 
-    masks = tuple(_callable(criterion.class_type, "criterion")(criterion, candidates) for criterion in family.criteria)
-    accepted = _intersect_criteria(masks)
+    masks_list: list[torch.Tensor] = []
+    accepted = None
+    if family.criteria:
+        active_rows = torch.arange(candidates.num_rows, dtype=torch.int64, device=candidates.device)
+        for criterion in family.criteria:
+            criterion_fn = _callable(criterion.class_type, "criterion")
+            gate_mask = torch.ones(candidates.num_rows, dtype=torch.bool, device=candidates.device)
+            if active_rows.numel():
+                local_mask = criterion_fn(criterion, candidates, active_rows)
+                _validate_criterion_mask(local_mask, active_rows)
+                gate_mask[active_rows] = local_mask
+                active_rows = active_rows[local_mask]
+            masks_list.append(gate_mask)
+        accepted = torch.zeros(candidates.num_rows, dtype=torch.bool, device=candidates.device)
+        accepted[active_rows] = True
+    masks = tuple(masks_list)
     selected = _callable(family.selection.class_type, "selection")(
         family.selection,
         candidates,
@@ -118,18 +134,9 @@ def _callable(value: object, stage: str):
     raise TypeError(f"Task-family {stage} class_type must resolve to a callable.")
 
 
-def _intersect_criteria(masks: tuple[torch.Tensor, ...]) -> torch.Tensor | None:
-    if not masks:
-        return None
-    first = masks[0]
-    if first.dtype is not torch.bool or first.ndim != 1:
-        raise ValueError("Task-family criteria must return one-dimensional boolean tensors.")
-    accepted = first.clone()
-    for mask in masks[1:]:
-        if mask.dtype is not torch.bool or mask.shape != first.shape or mask.device != first.device:
-            raise ValueError("Task-family criterion masks must share shape, dtype, and device.")
-        accepted.logical_and_(mask)
-    return accepted
+def _validate_criterion_mask(mask: torch.Tensor, active_rows: torch.Tensor) -> None:
+    if mask.dtype is not torch.bool or mask.shape != active_rows.shape or mask.device != active_rows.device:
+        raise ValueError("Task-family criteria must return one boolean per active original row on the same device.")
 
 
 def _validate_selection(selected: torch.Tensor, accepted: torch.Tensor | None) -> None:
@@ -157,7 +164,7 @@ def _log_family_summary(
 ) -> None:
     """Log one explicitly requested construction summary for a task family."""
     if accepted is None:
-        generated_count = _candidate_count(candidates, selected)
+        generated_count = candidates.num_rows
         accepted_count = generated_count
         failure_counts: tuple[int, ...] = ()
     else:
@@ -177,16 +184,6 @@ def _log_family_summary(
         selected.numel(),
         failures,
     )
-
-
-def _candidate_count(candidates: Any, selected: torch.Tensor) -> int:
-    """Return a readable generated count for a criterion-free inspected family."""
-    if isinstance(candidates, torch.Tensor):
-        return candidates.shape[0]
-    try:
-        return len(candidates)
-    except TypeError:
-        return selected.numel()
 
 
 def _criterion_name(criterion: StateCommandCfg.TaskTableCfg.CriterionCfg) -> str:
