@@ -42,6 +42,7 @@ class HfRandomUniformTerrainCfg(HfTerrainBaseCfg):
     """Configuration for a random uniform height field terrain."""
 
     function: str = "{DIR}.hf_terrains:random_uniform_terrain"
+    function_rng: str = "{DIR}.hf_terrains:random_uniform_terrain"
 
     noise_range: tuple[float, float] = MISSING
     """The minimum and maximum height noise (i.e. along z) of the terrain (in m)."""
@@ -130,6 +131,7 @@ class HfDiscreteObstaclesTerrainCfg(HfTerrainBaseCfg):
     """Configuration for a discrete obstacles height field terrain."""
 
     function: str = "{DIR}.hf_terrains:discrete_obstacles_terrain"
+    function_rng: str = "{DIR}.hf_terrains:discrete_obstacles_terrain"
 
     obstacle_height_mode: str = "choice"
     """The mode to use for the obstacle height. Defaults to "choice".
@@ -168,6 +170,7 @@ class HfSteppingStonesTerrainCfg(HfTerrainBaseCfg):
     """Configuration for a stepping stones height field terrain."""
 
     function: str = "{DIR}.hf_terrains:stepping_stones_terrain"
+    function_rng: str = "{DIR}.hf_terrains:stepping_stones_terrain"
 
     stone_height_max: float = MISSING
     """The maximum height of the stones (in m)."""

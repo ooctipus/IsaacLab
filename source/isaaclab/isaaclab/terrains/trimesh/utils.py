@@ -104,6 +104,8 @@ def make_box(
     center: tuple[float, float, float],
     max_yx_angle: float = 0,
     degrees: bool = True,
+    *,
+    rng: np.random.Generator | None = None,
 ) -> trimesh.Trimesh:
     """Generate a box mesh with a random orientation.
 
@@ -114,6 +116,7 @@ def make_box(
         center: The center of the cylinder (in m).
         max_yx_angle: The maximum angle along the y and x axis. Defaults to 0.
         degrees: Whether the angle is in degrees. Defaults to True.
+        rng: Random generator. When omitted, the legacy global NumPy generator is used.
 
     Returns:
         A trimesh.Trimesh object for the cylinder.
@@ -122,7 +125,7 @@ def make_box(
     transform = np.eye(4)
     transform[0:3, -1] = np.asarray(center)
     # -- create a random rotation
-    euler_zyx = tf.Rotation.random().as_euler("zyx")  # returns rotation of shape (3,)
+    euler_zyx = tf.Rotation.random(random_state=rng).as_euler("zyx")  # returns rotation of shape (3,)
     # -- cap the rotation along the y and x axis
     if degrees:
         max_yx_angle = max_yx_angle / 180.0
@@ -131,11 +134,19 @@ def make_box(
     transform[0:3, 0:3] = tf.Rotation.from_euler("zyx", euler_zyx).as_matrix()
     # create the box
     dims = (length, width, height)
-    return trimesh.creation.box(dims, transform=transform)
+    mesh = trimesh.creation.box(dims)
+    mesh.vertices = trimesh.transform_points(mesh.vertices, transform)
+    return mesh
 
 
 def make_cylinder(
-    radius: float, height: float, center: tuple[float, float, float], max_yx_angle: float = 0, degrees: bool = True
+    radius: float,
+    height: float,
+    center: tuple[float, float, float],
+    max_yx_angle: float = 0,
+    degrees: bool = True,
+    *,
+    rng: np.random.Generator | None = None,
 ) -> trimesh.Trimesh:
     """Generate a cylinder mesh with a random orientation.
 
@@ -145,6 +156,7 @@ def make_cylinder(
         center: The center of the cylinder (in m).
         max_yx_angle: The maximum angle along the y and x axis. Defaults to 0.
         degrees: Whether the angle is in degrees. Defaults to True.
+        rng: Random generator. When omitted, the legacy global NumPy generator is used.
 
     Returns:
         A trimesh.Trimesh object for the cylinder.
@@ -153,7 +165,7 @@ def make_cylinder(
     transform = np.eye(4)
     transform[0:3, -1] = np.asarray(center)
     # -- create a random rotation
-    euler_zyx = tf.Rotation.random().as_euler("zyx")  # returns rotation of shape (3,)
+    euler_zyx = tf.Rotation.random(random_state=rng).as_euler("zyx")  # returns rotation of shape (3,)
     # -- cap the rotation along the y and x axis
     if degrees:
         max_yx_angle = max_yx_angle / 180.0
@@ -161,11 +173,20 @@ def make_cylinder(
     # -- apply the rotation
     transform[0:3, 0:3] = tf.Rotation.from_euler("zyx", euler_zyx).as_matrix()
     # create the cylinder
-    return trimesh.creation.cylinder(radius, height, sections=np.random.randint(4, 6), transform=transform)
+    sections = np.random.randint(4, 6) if rng is None else rng.integers(4, 6)
+    mesh = trimesh.creation.cylinder(radius, height, sections=sections)
+    mesh.vertices = trimesh.transform_points(mesh.vertices, transform)
+    return mesh
 
 
 def make_cone(
-    radius: float, height: float, center: tuple[float, float, float], max_yx_angle: float = 0, degrees: bool = True
+    radius: float,
+    height: float,
+    center: tuple[float, float, float],
+    max_yx_angle: float = 0,
+    degrees: bool = True,
+    *,
+    rng: np.random.Generator | None = None,
 ) -> trimesh.Trimesh:
     """Generate a cone mesh with a random orientation.
 
@@ -175,6 +196,7 @@ def make_cone(
         center: The center of the cone (in m).
         max_yx_angle: The maximum angle along the y and x axis. Defaults to 0.
         degrees: Whether the angle is in degrees. Defaults to True.
+        rng: Random generator. When omitted, the legacy global NumPy generator is used.
 
     Returns:
         A trimesh.Trimesh object for the cone.
@@ -183,7 +205,7 @@ def make_cone(
     transform = np.eye(4)
     transform[0:3, -1] = np.asarray(center)
     # -- create a random rotation
-    euler_zyx = tf.Rotation.random().as_euler("zyx")  # returns rotation of shape (3,)
+    euler_zyx = tf.Rotation.random(random_state=rng).as_euler("zyx")  # returns rotation of shape (3,)
     # -- cap the rotation along the y and x axis
     if degrees:
         max_yx_angle = max_yx_angle / 180.0
@@ -191,4 +213,7 @@ def make_cone(
     # -- apply the rotation
     transform[0:3, 0:3] = tf.Rotation.from_euler("zyx", euler_zyx).as_matrix()
     # create the cone
-    return trimesh.creation.cone(radius, height, sections=np.random.randint(4, 6), transform=transform)
+    sections = np.random.randint(4, 6) if rng is None else rng.integers(4, 6)
+    mesh = trimesh.creation.cone(radius, height, sections=sections)
+    mesh.vertices = trimesh.transform_points(mesh.vertices, transform)
+    return mesh

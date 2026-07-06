@@ -103,12 +103,14 @@ class TerrainGenerator:
     Similarly, the key "target_spawn" maps to a tensor containing the flat patches for setting targets.
     """
 
-    def __init__(self, cfg: TerrainGeneratorCfg, device: str = "cpu"):
+    def __init__(self, cfg: TerrainGeneratorCfg, device: str = "cpu", *, rng: np.random.Generator | None = None):
         """Initialize the terrain generator.
 
         Args:
             cfg: Configuration for the terrain generator.
             device: The device to use for the flat patches tensor.
+            rng: Random generator to consume during terrain construction. When
+                omitted, a private generator is created from :attr:`TerrainGeneratorCfg.seed`.
         """
         # check inputs
         if len(cfg.sub_terrains) == 0:
@@ -145,7 +147,7 @@ class TerrainGenerator:
         # set the seed for reproducibility
         # note: we create a new random number generator to avoid affecting the global state
         #  in the other places where random numbers are used.
-        self.np_rng = np.random.default_rng(seed)
+        self.np_rng = np.random.default_rng(seed) if rng is None else rng
 
         # buffer for storing valid patches
         self.flat_patches = {}
@@ -381,7 +383,9 @@ class TerrainGenerator:
         cfg = cfg.copy()
         # add other parameters to the sub-terrain configuration
         cfg.difficulty = float(difficulty)
-        cfg.seed = self.cfg.seed
+        cfg.seed = (
+            int(self.np_rng.integers(0, np.iinfo(np.int64).max)) if cfg.function_rng is not None else self.cfg.seed
+        )
         # generate hash for the sub-terrain
         sub_terrain_hash = dict_to_md5_hash(cfg.to_dict())
         # generate the file name
@@ -399,7 +403,12 @@ class TerrainGenerator:
             return mesh, origin
 
         # generate the terrain
-        meshes, origin = cfg.function(difficulty, cfg)
+        if cfg.function_rng is not None:
+            meshes, origin = cfg.function_rng(difficulty, cfg, rng=np.random.default_rng(cfg.seed))
+        elif cfg.function is not None:
+            meshes, origin = cfg.function(difficulty, cfg)
+        else:
+            raise ValueError(f"Sub-terrain {type(cfg).__name__} declares neither function nor function_rng.")
         mesh = trimesh.util.concatenate(meshes)
         # offset mesh such that they are in their center
         transform = np.eye(4)

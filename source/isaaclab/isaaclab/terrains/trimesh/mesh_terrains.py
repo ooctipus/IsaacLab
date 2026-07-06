@@ -249,7 +249,7 @@ def inverted_pyramid_stairs_terrain(
 
 
 def random_grid_terrain(
-    difficulty: float, cfg: mesh_terrains_cfg.MeshRandomGridTerrainCfg
+    difficulty: float, cfg: mesh_terrains_cfg.MeshRandomGridTerrainCfg, *, rng: np.random.Generator | None = None
 ) -> tuple[list[trimesh.Trimesh], np.ndarray]:
     """Generate a terrain with cells of random heights and fixed width.
 
@@ -270,6 +270,7 @@ def random_grid_terrain(
     Args:
         difficulty: The difficulty of the terrain. This is a value between 0 and 1.
         cfg: The configuration for the terrain.
+        rng: Random generator. When omitted, the legacy global NumPy generator is used.
 
     Returns:
         A tuple containing the tri-mesh of the terrain and the origin of the terrain (in m).
@@ -278,6 +279,7 @@ def random_grid_terrain(
         ValueError: If the terrain is not square. This method only supports square terrains.
         RuntimeError: If the grid width is large such that the border width is negative.
     """
+    generator = np.random if rng is None else rng
     # check to ensure square terrain
     if cfg.size[0] != cfg.size[1]:
         raise ValueError(f"The terrain must be square. Received size: {cfg.size}.")
@@ -291,7 +293,7 @@ def random_grid_terrain(
     num_boxes_y = int(cfg.size[1] / cfg.grid_width)
     # constant parameters
     terrain_height = 1.0
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    device = torch.device("cpu")
 
     # generate the border
     border_width = cfg.size[0] - min(num_boxes_x, num_boxes_y) * cfg.grid_width
@@ -345,7 +347,7 @@ def random_grid_terrain(
     num_boxes = len(vertices)
     # create noise for the z-axis
     h_noise = torch.zeros((num_boxes, 3), device=device)
-    h_noise[:, 2].uniform_(-grid_height, grid_height)
+    h_noise[:, 2].copy_(torch.as_tensor(generator.uniform(-grid_height, grid_height, size=num_boxes), device=device))
     # reshape noise to match the vertices (num_boxes, 4, 3)
     # only the top vertices of the box are affected
     vertices_noise = torch.zeros((num_boxes, 4, 3), device=device)
@@ -720,7 +722,7 @@ def star_terrain(
 
 
 def repeated_objects_terrain(
-    difficulty: float, cfg: mesh_terrains_cfg.MeshRepeatedObjectsTerrainCfg
+    difficulty: float, cfg: mesh_terrains_cfg.MeshRepeatedObjectsTerrainCfg, *, rng: np.random.Generator | None = None
 ) -> tuple[list[trimesh.Trimesh], np.ndarray]:
     """Generate a terrain with a set of repeated objects.
 
@@ -745,6 +747,7 @@ def repeated_objects_terrain(
     Args:
         difficulty: The difficulty of the terrain. This is a value between 0 and 1.
         cfg: The configuration for the terrain.
+        rng: Random generator. When omitted, the legacy global NumPy generator is used.
 
     Returns:
         A tuple containing the tri-mesh of the terrain and the origin of the terrain (in m).
@@ -752,6 +755,7 @@ def repeated_objects_terrain(
     Raises:
         ValueError: If the object type is not supported. It must be either a string or a callable.
     """
+    generator = np.random if rng is None else rng
     # import the object functions -- this is done here to avoid circular imports
     from .mesh_terrains_cfg import (
         MeshRepeatedBoxesTerrainCfg,
@@ -807,6 +811,8 @@ def repeated_objects_terrain(
         }
     else:
         raise ValueError(f"Unknown terrain configuration: {cfg}")
+    if rng is not None:
+        object_kwargs["rng"] = rng
     # constants for the terrain
     platform_clearance = 0.1
 
@@ -830,8 +836,8 @@ def repeated_objects_terrain(
     while np.any(mask_objects_left):
         # only sample the centers of the remaining invalid objects
         num_objects_left = mask_objects_left.sum()
-        object_centers[mask_objects_left, 0] = np.random.uniform(0, cfg.size[0], num_objects_left)
-        object_centers[mask_objects_left, 1] = np.random.uniform(0, cfg.size[1], num_objects_left)
+        object_centers[mask_objects_left, 0] = generator.uniform(0, cfg.size[0], num_objects_left)
+        object_centers[mask_objects_left, 1] = generator.uniform(0, cfg.size[1], num_objects_left)
         # filter out the centers that are on the platform
         is_within_platform_x = np.logical_and(
             object_centers[mask_objects_left, 0] >= platform_corners[0, 0],
@@ -847,8 +853,8 @@ def repeated_objects_terrain(
     # generate obstacles (but keep platform clean)
     for index in range(len(object_centers)):
         # randomize the height of the object
-        abs_height_noise = np.random.uniform(cfg.abs_height_noise[0], cfg.abs_height_noise[1])
-        rel_height_noise = np.random.uniform(cfg.rel_height_noise[0], cfg.rel_height_noise[1])
+        abs_height_noise = generator.uniform(cfg.abs_height_noise[0], cfg.abs_height_noise[1])
+        rel_height_noise = generator.uniform(cfg.rel_height_noise[0], cfg.rel_height_noise[1])
         ob_height = height * rel_height_noise + abs_height_noise
         if ob_height > 0.0:
             object_mesh = object_func(center=object_centers[index], height=ob_height, **object_kwargs)

@@ -12,6 +12,7 @@ import torch
 
 from isaaclab.terrains import FlatPatchSamplingCfg, TerrainGenerator, TerrainGeneratorCfg
 from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG
+from isaaclab.terrains.trimesh import MeshRandomGridTerrainCfg
 from isaaclab.utils.seed import configure_seed
 
 
@@ -146,8 +147,37 @@ def test_terrain_flat_patches():
     # check if flat patches are generated
     assert terrain_generator.flat_patches
     # check the size of the flat patches
-    assert terrain_generator.flat_patches["root_spawn"].shape == (cfg.num_rows, cfg.num_cols, 8, 3)
-    assert terrain_generator.flat_patches["target_spawn"].shape == (cfg.num_rows, cfg.num_cols, 5, 3)
-    # check that no flat patches are zero
+    assert terrain_generator.flat_patches["root_spawn"].shape == (cfg.num_rows, cfg.num_cols, 8, 7)
+    assert terrain_generator.flat_patches["target_spawn"].shape == (cfg.num_rows, cfg.num_cols, 5, 7)
+    # check that no flat-patch positions are zero
     for _, flat_patches in terrain_generator.flat_patches.items():
-        assert not torch.allclose(flat_patches, torch.zeros_like(flat_patches))
+        positions = flat_patches[..., :3]
+        assert not torch.allclose(positions, torch.zeros_like(positions))
+
+
+def test_stochastic_cache_preserves_rng_stream(tmp_path):
+    """Cache hits consume the same recorded child seeds as cache misses."""
+    cfg = TerrainGeneratorCfg(
+        seed=17,
+        size=(4.0, 4.0),
+        num_rows=1,
+        num_cols=2,
+        curriculum=False,
+        use_cache=True,
+        cache_dir=str(tmp_path),
+        sub_terrains={
+            "grid": MeshRandomGridTerrainCfg(
+                grid_width=0.75,
+                grid_height_range=(0.1, 0.3),
+                platform_width=1.0,
+            )
+        },
+    )
+    first = TerrainGenerator(cfg.copy())
+    cache_entries = set(os.listdir(tmp_path))
+    second = TerrainGenerator(cfg.copy())
+
+    assert set(os.listdir(tmp_path)) == cache_entries
+    np.testing.assert_allclose(first.terrain_mesh.vertices, second.terrain_mesh.vertices, atol=1.0e-8)
+    np.testing.assert_array_equal(first.terrain_mesh.faces, second.terrain_mesh.faces)
+    np.testing.assert_allclose(first.terrain_origins, second.terrain_origins, atol=1.0e-8)
