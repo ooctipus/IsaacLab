@@ -85,7 +85,7 @@ G1_BEHAVIOR_JOINT_NAMES = (
     "right_wrist_pitch_joint",
     "right_wrist_yaw_joint",
 )
-_SIMULATOR_JOINT_NAMES = (
+G1_SIMULATOR_JOINT_NAMES = (
     "left_hip_pitch_joint",
     "right_hip_pitch_joint",
     "waist_yaw_joint",
@@ -116,6 +116,42 @@ _SIMULATOR_JOINT_NAMES = (
     "left_wrist_yaw_joint",
     "right_wrist_yaw_joint",
 )
+"""Exact joint traversal order exposed by the packaged simulator articulation."""
+
+G1_SIMULATOR_BODY_NAMES = (
+    "pelvis",
+    "left_hip_pitch_link",
+    "right_hip_pitch_link",
+    "waist_yaw_link",
+    "left_hip_roll_link",
+    "right_hip_roll_link",
+    "waist_roll_link",
+    "left_hip_yaw_link",
+    "right_hip_yaw_link",
+    "torso_link",
+    "left_knee_link",
+    "right_knee_link",
+    "left_shoulder_pitch_link",
+    "right_shoulder_pitch_link",
+    "left_ankle_pitch_link",
+    "right_ankle_pitch_link",
+    "left_shoulder_roll_link",
+    "right_shoulder_roll_link",
+    "left_ankle_roll_link",
+    "right_ankle_roll_link",
+    "left_shoulder_yaw_link",
+    "right_shoulder_yaw_link",
+    "left_elbow_link",
+    "right_elbow_link",
+    "left_wrist_roll_link",
+    "right_wrist_roll_link",
+    "left_wrist_pitch_link",
+    "right_wrist_pitch_link",
+    "left_wrist_yaw_link",
+    "right_wrist_yaw_link",
+)
+"""Exact rigid-body traversal order exposed by the packaged simulator articulation."""
+
 _DEFAULT_JOINT_POSITION = (-0.1, 0.0, 0.0, 0.3, -0.2, 0.0) * 2 + (0.0,) * 17
 _STIFFNESS = (
     99.09843,
@@ -312,7 +348,7 @@ G1_MOTION_ARTICULATION_CFG = ArticulationCfg(
     soft_joint_pos_limit_factor=0.9,
     actuators={
         "motion": ImplicitActuatorCfg(
-            joint_names_expr=list(_SIMULATOR_JOINT_NAMES),
+            joint_names_expr=list(G1_SIMULATOR_JOINT_NAMES),
             effort_limit_sim=_by_joint(_EFFORT_LIMIT),
             velocity_limit_sim=_by_joint(_VELOCITY_LIMIT),
             stiffness=_by_joint(_STIFFNESS),

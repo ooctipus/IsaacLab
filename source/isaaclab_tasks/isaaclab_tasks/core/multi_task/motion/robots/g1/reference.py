@@ -30,6 +30,7 @@ from ...retarget import (
     MotionSemanticProjection,
     MotionSemanticTargets,
 )
+from .articulation import G1_SIMULATOR_BODY_NAMES, G1_SIMULATOR_JOINT_NAMES
 from .frames import (
     G1_HEAD_FRAME_NAME,
     G1_HEAD_OFFSET_M,
@@ -434,8 +435,8 @@ def g1_frame_builder(
         pose_coordinate_identity_sha256=target_tree_identity_sha256,
         reference_kinematics=reference,
         reference_mjcf_sha256=G1_REFERENCE_MJCF_SHA256,
-        live_joint_names=tuple(reference.joint_names[1:]),
-        live_body_names=tuple(reference.body_names),
+        live_joint_names=G1_SIMULATOR_JOINT_NAMES,
+        live_body_names=G1_SIMULATOR_BODY_NAMES,
         version="g1_target_local_body_pose_projection_v1",
     )
     semantic = MotionSemanticProjection(

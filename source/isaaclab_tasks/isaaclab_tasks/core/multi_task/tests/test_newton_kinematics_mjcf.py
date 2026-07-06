@@ -46,6 +46,11 @@ from isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table import
     motion_solve_semantic_sequence,
 )
 from isaaclab_tasks.core.multi_task.motion.retarget import MotionSemanticProjection, MotionSemanticTargets
+from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import (
+    G1_SIMULATOR_BODY_NAMES,
+    G1_SIMULATOR_JOINT_NAMES,
+)
+from isaaclab_tasks.core.multi_task.motion.robots.g1.frames import G1_HEAD_FRAME_NAME
 from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import (
     G1_REFERENCE_MJCF_SHA256,
     G1FrameBuilder,
@@ -629,7 +634,7 @@ def test_g1_exact_profile_matches_frozen_bfm_fk_and_analytic_velocity(g1_kinemat
 
     frames = builder.build_exact_coordinates(joint_q, joint_qd, clip.source_fps)
 
-    body_indices = torch.tensor(_G1_BODY_INDICES)
+    body_indices = torch.tensor([G1_SIMULATOR_BODY_NAMES.index(_G1_BODY_NAMES[index]) for index in _G1_BODY_INDICES])
     frozen_pose = torch.tensor(_G1_BODY_POSE_XYZW, dtype=torch.float32)
     translation = torch.from_numpy(frame_time * root_velocity)
     expected_position = frozen_pose[None, :, :3] + translation[:, None]
@@ -649,6 +654,39 @@ def test_g1_exact_profile_matches_frozen_bfm_fk_and_analytic_velocity(g1_kinemat
         frames.body_angular_velocity, torch.zeros_like(frames.body_angular_velocity), atol=1.0e-5, rtol=0.0
     )
     torch.testing.assert_close(frames.joint_velocity, torch.zeros_like(frames.joint_velocity), atol=2.0e-6, rtol=0.0)
+
+
+def test_g1_builder_maps_reference_coordinates_to_the_live_articulation_axes(
+    g1_kinematics: NewtonKinematics,
+) -> None:
+    """The table boundary must expose exact frames in non-identity simulator order."""
+    builder = g1_frame_builder(lafan_g1_29dof_skeleton(), g1_kinematics)
+    reference_joint_names = tuple(g1_kinematics.joint_names[1:])
+    reference_body_names = tuple(g1_kinematics.body_names)
+    joint_permutation = torch.tensor([reference_joint_names.index(name) for name in G1_SIMULATOR_JOINT_NAMES])
+    body_permutation = torch.tensor([reference_body_names.index(name) for name in G1_SIMULATOR_BODY_NAMES])
+
+    assert tuple(joint_permutation.tolist()) != tuple(range(29))
+    assert tuple(body_permutation.tolist()) != tuple(range(30))
+    assert builder.joint_names == G1_SIMULATOR_JOINT_NAMES
+    assert builder.reference_frame_names == (*G1_SIMULATOR_BODY_NAMES, G1_HEAD_FRAME_NAME)
+
+    joint_q = torch.zeros(3, g1_kinematics.model.joint_coord_count)
+    joint_q[:, 6] = 1.0
+    joint_q[:, 7:] = torch.arange(29, dtype=torch.float32)
+    frames = builder.build_exact_coordinates(joint_q, None, 30.0)
+    body_q = torch.empty(3, g1_kinematics.model.body_count, 7)
+    body_qd = torch.empty(3, g1_kinematics.model.body_count, 6)
+    g1_kinematics.eval_fk_batched_torch(
+        joint_q,
+        torch.zeros(3, g1_kinematics.model.joint_dof_count),
+        body_q,
+        body_qd,
+    )
+
+    torch.testing.assert_close(frames.joint_position, joint_q[:, 7:].index_select(1, joint_permutation))
+    torch.testing.assert_close(frames.body_position[:, :-1], body_q[..., :3].index_select(1, body_permutation))
+    torch.testing.assert_close(frames.body_rotation[:, :-1], body_q[..., 3:].index_select(1, body_permutation))
 
 
 def test_smpl_exact_profile_matches_independent_tree_fk_and_analytic_velocity(

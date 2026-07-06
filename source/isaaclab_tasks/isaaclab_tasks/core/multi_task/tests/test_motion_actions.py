@@ -20,12 +20,12 @@ from isaaclab_tasks.core.multi_task.mdp import NativeMujocoControlActionCfg
 from isaaclab_tasks.core.multi_task.motion.robots.g1.actions import G1JointPositionAction
 from isaaclab_tasks.core.multi_task.motion.robots.g1.actions_cfg import G1JointPositionActionCfg
 from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import (
-    _SIMULATOR_JOINT_NAMES as _G1_SIMULATOR_JOINT_NAMES,
-)
-from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import (
     G1_BEHAVIOR_JOINT_NAMES as _G1_BEHAVIOR_JOINT_NAMES,
 )
-from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import G1_MOTION_ARTICULATION_CFG
+from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import (
+    G1_MOTION_ARTICULATION_CFG,
+    G1_SIMULATOR_JOINT_NAMES,
+)
 
 
 def _phase3_fixtures() -> Path:
@@ -124,7 +124,7 @@ def test_g1_joint_action_reuses_joint_action_resolution_and_processing(
 
 def test_g1_action_maps_declared_behavior_axis_to_live_articulation_once() -> None:
     """Behavior actions and observations must share one exact named joint axis."""
-    asset = _ConfiguredAsset(2, _G1_SIMULATOR_JOINT_NAMES)
+    asset = _ConfiguredAsset(2, G1_SIMULATOR_JOINT_NAMES)
     asset.data.joint_pos.torch.copy_(torch.arange(29, dtype=torch.float32).repeat(2, 1))
     asset.data.joint_vel.torch.copy_(torch.arange(29, dtype=torch.float32).repeat(2, 1).neg_())
     env = SimpleNamespace(num_envs=2, device="cpu", scene={"robot": asset})
@@ -136,7 +136,7 @@ def test_g1_action_maps_declared_behavior_axis_to_live_articulation_once() -> No
 
     action = G1JointPositionAction(cfg, env)
     expected_ids = torch.tensor(
-        [_G1_SIMULATOR_JOINT_NAMES.index(name) for name in _G1_BEHAVIOR_JOINT_NAMES],
+        [G1_SIMULATOR_JOINT_NAMES.index(name) for name in _G1_BEHAVIOR_JOINT_NAMES],
         dtype=torch.int64,
     )
 
@@ -211,7 +211,7 @@ def test_g1_action_matches_native_processed_target_and_torque() -> None:
         joint_velocity = torch.from_numpy(tensors["current_qvel"])[..., 6:].flatten(0, 1)
 
         asset_cfg = G1_MOTION_ARTICULATION_CFG
-        assert tuple(asset_cfg.actuators["motion"].joint_names_expr) == _G1_SIMULATOR_JOINT_NAMES
+        assert tuple(asset_cfg.actuators["motion"].joint_names_expr) == G1_SIMULATOR_JOINT_NAMES
         joint_default = torch.tensor(
             [asset_cfg.init_state.joint_pos[name] for name in _G1_BEHAVIOR_JOINT_NAMES],
             dtype=torch.float32,

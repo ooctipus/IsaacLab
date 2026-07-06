@@ -21,13 +21,16 @@ import isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_expert as exper
 from isaaclab_tasks.core.multi_task.motion.data import MotionClipIndex, MotionFrames
 from isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table import MotionTaskTable
 from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import (
-    _SIMULATOR_JOINT_NAMES as _G1_LIVE_JOINT_NAMES,
-)
-from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import (
     G1_BEHAVIOR_BODY_NAMES as _G1_BEHAVIOR_BODY_NAMES,
 )
 from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import (
     G1_BEHAVIOR_JOINT_NAMES as _G1_BEHAVIOR_JOINT_NAMES,
+)
+from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import (
+    G1_SIMULATOR_BODY_NAMES as _G1_LIVE_BODY_NAMES,
+)
+from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import (
+    G1_SIMULATOR_JOINT_NAMES as _G1_LIVE_JOINT_NAMES,
 )
 from isaaclab_tasks.core.multi_task.motion.robots.g1.frames import G1_HEAD_FRAME_NAME
 from isaaclab_tasks.core.multi_task.motion.robots.g1.observations import (
@@ -59,11 +62,6 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-_G1_LIVE_BODY_NAMES = (
-    _G1_BEHAVIOR_BODY_NAMES[0],
-    *_G1_BEHAVIOR_BODY_NAMES[1::2],
-    *_G1_BEHAVIOR_BODY_NAMES[2::2],
-)
 _G1_REFERENCE_FRAME_NAMES = (*_G1_LIVE_BODY_NAMES, G1_HEAD_FRAME_NAME)
 _SMPL_JOINT_NAMES = tuple(f"joint_{index}" for index in range(69))
 _SMPL_BODY_NAMES = tuple(f"body_{index}" for index in range(24))
