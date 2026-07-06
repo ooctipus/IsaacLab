@@ -109,7 +109,7 @@ KUKA_ALLEGRO_CFG = ArticulationCfg(
                 "thumb_joint_(0|1|2|3)": 0.01,
             },
             armature={
-                ".*": 0.01,
+                ".*": 0.1,
             },
         ),
     },
