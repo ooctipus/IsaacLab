@@ -83,7 +83,7 @@ def create_prim_from_mesh(prim_path: str, mesh: trimesh.Trimesh, **kwargs):
     # create parent prim
     sim_utils.create_prim(prim_path, "Xform")
     # create mesh prim
-    prim = sim_utils.create_prim(
+    sim_utils.create_prim(
         f"{prim_path}/mesh",
         "Mesh",
         translation=kwargs.get("translation"),

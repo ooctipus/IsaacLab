@@ -10,13 +10,14 @@ import itertools
 import logging
 import math
 import re
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from typing import TYPE_CHECKING, Any
 
 import torch
 
-from pxr import Sdf, Usd, UsdGeom
+from pxr import Sdf, Usd, UsdGeom, UsdUtils
 
+from . import _fabric_notices
 from .clone_plan import ClonePlan
 from .cloner_strategies import sequential
 
