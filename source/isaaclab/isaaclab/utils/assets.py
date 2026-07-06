@@ -246,6 +246,8 @@ def _resolve_git_asset_source_path(local_path: str, git_asset_dir: str) -> str:
     except ValueError as exc:
         raise ValueError(f"Git asset path resolves outside git repository: {local_path}") from exc
     return source_path
+
+
 LOCAL_ASSET_PATH_DIR: str = os.path.normpath(
     os.path.join(os.path.dirname(__file__), *([".."] * 4), "source", "isaaclab_assets", "data", "Assets")
 )
