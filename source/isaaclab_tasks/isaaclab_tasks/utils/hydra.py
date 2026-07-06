@@ -32,8 +32,8 @@ import functools
 import re
 import sys
 import warnings
-from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, MutableMapping
+from dataclasses import replace
 
 import hydra
 from hydra.core.config_store import ConfigStore
@@ -213,12 +213,14 @@ def _preset_fields(preset_obj) -> dict:
 def _iter_cfg_items(cfg):
     if isinstance(cfg, Mapping):
         return cfg.items()
-    if isinstance(cfg, list):
+    if isinstance(cfg, (list, tuple)):
         return enumerate(cfg)
     return ((n, v) for n in dir(cfg) if not n.startswith("_") for v in [getattr(cfg, n, None)] if v is not None)
 
 
 def _is_walkable_cfg(cfg) -> bool:
+    if isinstance(cfg, tuple):
+        return any(_is_walkable_cfg(value) for value in cfg)
     return hasattr(cfg, "__dataclass_fields__") or isinstance(cfg, (Mapping, list))
 
 
@@ -250,7 +252,7 @@ def _copy_preset_value(value):
 def _walk_cfg(cfg, path: str, on_preset: Callable) -> None:
     """Depth-first walk of a config tree, calling *on_preset(parent, key, obj, path)*
     for every :class:`PresetCfg` node.  Recurses through dataclass attrs, dicts,
-    nested dicts, and lists transparently."""
+    nested dicts, lists, and tuples transparently."""
     for key, val in _iter_cfg_items(cfg):
         child_path = f"{path}.{key}" if path else str(key)
         if isinstance(val, PresetCfg):
@@ -262,7 +264,7 @@ def _walk_cfg(cfg, path: str, on_preset: Callable) -> None:
 def collect_presets(cfg, path: str = "") -> dict:
     """Recursively discover :class:`PresetCfg` nodes in the config tree.
 
-    Walks dataclass fields and dict values at any nesting depth.
+    Walks dataclass fields, mappings, lists, and tuples at any nesting depth.
 
     Args:
         cfg: A configclass instance to walk.
@@ -284,7 +286,7 @@ def collect_presets(cfg, path: str = "") -> dict:
                 for v in alt.values():
                     if _is_walkable_cfg(v):
                         result.update(collect_presets(v, preset_path))
-            elif isinstance(alt, list):
+            elif isinstance(alt, (list, tuple)):
                 for v in alt:
                     if _is_walkable_cfg(v):
                         result.update(collect_presets(v, preset_path))
@@ -390,7 +392,7 @@ def _resolve_active_presets(
     """Resolve presets by walking only the currently active tree.
 
     Preset alternatives are choice nodes. Once a choice is resolved, only the
-    selected replacement is queued for further traversal, so inactive sibling
+    selected replacement is traversed further, so inactive sibling
     branches cannot contribute descendant presets.
     """
     explicit = explicit or {}
@@ -425,28 +427,44 @@ def _resolve_active_presets(
             )
         return val
 
-    if isinstance(cfg, PresetCfg):
-        cfg = resolve_chain(cfg, root_path or "<root>")
+    def resolve_node(obj, path: str):
+        if isinstance(obj, PresetCfg):
+            obj = resolve_chain(obj, path or "<root>")
+        if isinstance(obj, tuple):
+            resolved = tuple(
+                resolve_node(value, f"{path}.{index}" if path else str(index)) for index, value in enumerate(obj)
+            )
+            return obj if all(old is new for old, new in zip(obj, resolved, strict=True)) else resolved
+        if isinstance(obj, list):
+            for index, value in enumerate(obj):
+                obj[index] = resolve_node(value, f"{path}.{index}" if path else str(index))
+            return obj
+        if isinstance(obj, MutableMapping):
+            for key, value in tuple(obj.items()):
+                obj[key] = resolve_node(value, f"{path}.{key}" if path else str(key))
+            return obj
+        if isinstance(obj, Mapping):
+            resolved = tuple(
+                (key, resolve_node(value, f"{path}.{key}" if path else str(key))) for key, value in obj.items()
+            )
+            if any(obj[key] is not value for key, value in resolved):
+                raise TypeError(f"Cannot replace a preset inside immutable mapping {type(obj).__name__} at {path!r}.")
+            return obj
+        if hasattr(obj, "__dataclass_fields__"):
+            updates = {}
+            for key, value in _iter_cfg_items(obj):
+                child_path = f"{path}.{key}" if path else str(key)
+                resolved = resolve_node(value, child_path)
+                if resolved is not value:
+                    updates[key] = resolved
+            if updates:
+                if obj.__dataclass_params__.frozen:
+                    return replace(obj, **updates)
+                for key, value in updates.items():
+                    setattr(obj, key, value)
+        return obj
 
-    queue = deque([(root_path, cfg)])
-    while queue:
-        path, obj = queue.popleft()
-        if not _is_walkable_cfg(obj):
-            continue
-        for key, val in _iter_cfg_items(obj):
-            child_path = f"{path}.{key}" if path else str(key)
-            if isinstance(val, PresetCfg):
-                resolved = resolve_chain(val, child_path or "<root>")
-                if isinstance(obj, list):
-                    obj[int(key)] = resolved
-                elif isinstance(obj, dict):
-                    obj[key] = resolved
-                else:
-                    setattr(obj, key, resolved)
-                if _is_walkable_cfg(resolved):
-                    queue.append((child_path, resolved))
-            elif _is_walkable_cfg(val):
-                queue.append((child_path, val))
+    cfg = resolve_node(cfg, root_path)
 
     missing = sorted(set(explicit) - consumed_explicit)
     if strict_explicit and missing:

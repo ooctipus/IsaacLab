@@ -747,6 +747,48 @@ def test_scalar_presetcfg_path_selection():
 
 
 # =============================================================================
+# Tests: PresetCfg nested inside tuple composition
+# =============================================================================
+
+
+@configclass
+class TupleTermCfg:
+    armature: ScalarPresetCfg = ScalarPresetCfg()
+
+
+@configclass
+class TuplePresetEnvCfg:
+    terms: tuple[TupleTermCfg, ...] = (TupleTermCfg(),)
+
+
+@configclass
+class TupleLeafPresetEnvCfg:
+    values: tuple[object, ...] = (ScalarPresetCfg(),)
+
+
+def test_collect_presets_traverses_tuple_values():
+    """collect_presets finds PresetCfg inside tuple-held configclass values."""
+    presets = collect_presets(TuplePresetEnvCfg())
+    assert presets["terms.0.armature"]["default"] == 0.0
+    assert presets["terms.0.armature"]["newton_mjwarp"] == 0.01
+
+
+def test_resolve_presets_traverses_tuple_values():
+    """resolve_presets replaces PresetCfg inside tuple-held configclass values."""
+    resolved = resolve_presets(TuplePresetEnvCfg(), selected={"newton_mjwarp"})
+    assert resolved.terms[0].armature == 0.01
+
+
+def test_resolve_presets_reconstructs_direct_tuple_values():
+    """resolve_presets reconstructs a tuple whose direct PresetCfg element changes."""
+    cfg = TupleLeafPresetEnvCfg()
+    original_values = cfg.values
+    resolved = resolve_presets(cfg, selected={"newton_mjwarp"})
+    assert resolved.values == (0.01,)
+    assert resolved.values is not original_values
+
+
+# =============================================================================
 # Tests: PresetCfg inside dict values (e.g., actuators["legs"].armature)
 # =============================================================================
 
