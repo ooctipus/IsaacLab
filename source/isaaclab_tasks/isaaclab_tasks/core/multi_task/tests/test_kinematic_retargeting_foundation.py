@@ -74,31 +74,26 @@ def test_rest_forward_kinematics_derives_anatomical_root_alignment() -> None:
 def test_semantic_edges_share_nonidentity_root_alignment_with_rotations() -> None:
     """Rest and rigid-root target edges must use the same non-identity alignment as orientation."""
     axis = torch.nn.functional.normalize(torch.tensor((0.3, -0.5, 0.8)), dim=0)
-    root_delta = matrix_from_quat(quat_from_angle_axis(torch.tensor(0.7), axis))
-    alignment = matrix_from_quat(
-        quat_from_angle_axis(torch.tensor(-0.6), torch.nn.functional.normalize(torch.tensor((0.2, 0.9, -0.3)), dim=0))
+    root_delta_xyzw = quat_from_angle_axis(torch.tensor(0.7), axis)
+    root_delta = matrix_from_quat(root_delta_xyzw)
+    alignment_xyzw = quat_from_angle_axis(
+        torch.tensor(-0.6), torch.nn.functional.normalize(torch.tensor((0.2, 0.9, -0.3)), dim=0)
     )
-    source_rest_rotation = matrix_from_quat(
-        quat_from_angle_axis(
-            torch.tensor((0.2, -0.4, 0.3)),
-            torch.nn.functional.normalize(torch.tensor(((1.0, 2.0, -1.0), (-2.0, 1.0, 0.5), (0.3, -0.7, 1.0))), dim=-1),
-        )
-    )
-    target_rest_rotation = matrix_from_quat(
-        quat_from_angle_axis(
-            torch.tensor((-0.3, 0.5, -0.2)),
-            torch.nn.functional.normalize(torch.tensor(((0.5, -1.0, 2.0), (1.0, 0.2, -0.4), (-0.8, 0.6, 0.1))), dim=-1),
-        )
+    alignment = matrix_from_quat(alignment_xyzw)
+    source_rest_rotation_xyzw = quat_from_angle_axis(
+        torch.tensor((0.2, -0.4, 0.3)),
+        torch.nn.functional.normalize(torch.tensor(((1.0, 2.0, -1.0), (-2.0, 1.0, 0.5), (0.3, -0.7, 1.0))), dim=-1),
     )
     target_rest_edges = torch.tensor(((0.0, 0.0, 0.0), (0.2, 0.1, 0.4), (-0.1, 0.3, 0.2)))
-    aligned_rest_rotation = alignment @ target_rest_rotation
     aligned_rest_edges = (alignment @ target_rest_edges.unsqueeze(-1)).squeeze(-1)
-    source_rotation = torch.stack((source_rest_rotation, root_delta @ source_rest_rotation), dim=1)
-    target_rotation = source_rotation @ source_rest_rotation[:, None].transpose(-1, -2) @ aligned_rest_rotation[:, None]
+    moved_source_rotation_xyzw = quat_mul(
+        root_delta_xyzw.expand_as(source_rest_rotation_xyzw), source_rest_rotation_xyzw
+    )
+    source_rotation_xyzw = torch.stack((source_rest_rotation_xyzw, moved_source_rotation_xyzw), dim=1)
     root_position = torch.tensor(((0.3, -0.2, 0.8), (-0.4, 0.5, 1.1)))
 
     position = kinematic_retarget_positions(
-        root_position, target_rotation, aligned_rest_rotation, aligned_rest_edges, (-1, 0, 1)
+        root_position, source_rotation_xyzw, source_rest_rotation_xyzw, aligned_rest_edges, (-1, 0, 1)
     )
     expected_rest = torch.stack(
         (

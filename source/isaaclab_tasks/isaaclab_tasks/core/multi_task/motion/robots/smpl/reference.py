@@ -277,7 +277,7 @@ _SMPL_RETARGET_TARGETS = (
 )
 _SMPL_ROOT_BASIS_ROLES = ("pelvis", "left_hip", "right_hip", "torso")
 _SMPL_SUPPORT_ROLES = ("left_ankle", "right_ankle")
-_SMPL_RETARGET_MATH_VERSION = "semantic_landmark_newton_ik_v3"
+_SMPL_RETARGET_MATH_VERSION = "semantic_landmark_newton_ik_v4"
 _SMPL_RETARGET_DERIVATIVE_POLICY = "first_order_edge_central_interior_no_smoothing_v1"
 
 

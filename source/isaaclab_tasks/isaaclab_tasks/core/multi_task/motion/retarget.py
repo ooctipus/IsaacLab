@@ -13,7 +13,14 @@ from typing import TYPE_CHECKING, Protocol
 import torch
 import warp as wp
 
-from isaaclab.utils.math import convert_quat, matrix_from_quat, quat_apply, quat_apply_inverse, quat_from_matrix
+from isaaclab.utils.math import (
+    convert_quat,
+    quat_apply,
+    quat_apply_inverse,
+    quat_conjugate,
+    quat_from_matrix,
+    quat_mul,
+)
 
 from ..kinematics import (
     kinematic_pose_forward,
@@ -268,8 +275,8 @@ class MotionSemanticProjection:
     _target_marker_lengths_m: torch.Tensor = field(init=False, repr=False)
     _target_marker_length_values_m: tuple[float, ...] = field(init=False, repr=False)
     _aligned_target_rest_edges_m: torch.Tensor = field(init=False, repr=False)
-    _aligned_target_rest_rotation: torch.Tensor = field(init=False, repr=False)
-    _marker_rotation_correction: torch.Tensor = field(init=False, repr=False)
+    _source_marker_rest_rotation_xyzw: torch.Tensor = field(init=False, repr=False)
+    _marker_rotation_correction_xyzw: torch.Tensor = field(init=False, repr=False)
     _root_motion_scale: float = field(init=False, repr=False)
     _source_support_indices: torch.Tensor = field(init=False, repr=False)
     _target_support_indices: torch.Tensor = field(init=False, repr=False)
@@ -312,20 +319,25 @@ class MotionSemanticProjection:
         source_rest_rotation = convert_quat(
             torch.tensor(self.source_skeleton.rest_rotation_wxyz, dtype=torch.float32, device=device), to="xyzw"
         )
+        source_rest_rotation.div_(torch.linalg.vector_norm(source_rest_rotation, dim=-1, keepdim=True))
         source_rest_position, source_rest_world_rotation = kinematic_tree_forward(
             source_rest_translation, source_rest_rotation, self.source_skeleton.parent_indices
         )
         target_rest_world = torch.tensor(reference.default_body_q, dtype=torch.float32, device=device)
         target_rest_position = target_rest_world[:, :3]
         target_rest_world_rotation = target_rest_world[:, 3:7]
+        target_rest_world_rotation.div_(torch.linalg.vector_norm(target_rest_world_rotation, dim=-1, keepdim=True))
 
         source_basis_indices = tuple(
             source_by_name[source_landmarks[role].position_body_name] for role in self.root_basis_roles
         )
         target_basis_indices = tuple(target_by_name[target_by_role[role]] for role in self.root_basis_roles)
-        root_alignment = kinematic_root_basis(source_rest_position, *source_basis_indices) @ kinematic_root_basis(
-            target_rest_position, *target_basis_indices
-        ).transpose(-1, -2)
+        source_basis_rotation = quat_from_matrix(kinematic_root_basis(source_rest_position, *source_basis_indices))
+        source_basis_rotation.div_(torch.linalg.vector_norm(source_basis_rotation, dim=-1, keepdim=True))
+        target_basis_rotation = quat_from_matrix(kinematic_root_basis(target_rest_position, *target_basis_indices))
+        target_basis_rotation.div_(torch.linalg.vector_norm(target_basis_rotation, dim=-1, keepdim=True))
+        root_alignment_xyzw = quat_mul(source_basis_rotation, quat_conjugate(target_basis_rotation))
+        root_alignment_xyzw.div_(torch.linalg.vector_norm(root_alignment_xyzw, dim=-1, keepdim=True))
 
         source_position_indices = torch.tensor(source_marker_position_indices, dtype=torch.int64, device=device)
         source_rotation_indices = torch.tensor(source_marker_rotation_indices, dtype=torch.int64, device=device)
@@ -343,7 +355,7 @@ class MotionSemanticProjection:
         target_edges = target_rest_position[target_indices[1:]] - target_rest_position[target_parent_indices]
         source_marker_lengths[1:] = torch.linalg.vector_norm(source_edges, dim=-1)
         target_marker_lengths[1:] = torch.linalg.vector_norm(target_edges, dim=-1)
-        aligned_target_rest_edges[1:] = torch.matmul(root_alignment, target_edges.unsqueeze(-1)).squeeze(-1)
+        aligned_target_rest_edges[1:] = quat_apply(root_alignment_xyzw.expand(target_edges.shape[0], 4), target_edges)
         torch._assert_async(
             torch.all(
                 torch.isfinite(source_marker_lengths[1:])
@@ -356,12 +368,23 @@ class MotionSemanticProjection:
         target_marker_lengths[0] = target_marker_lengths[1:].mean()
         target_marker_length_values = tuple(float(value) for value in target_marker_lengths.cpu().tolist())
 
-        source_marker_rest_rotation = matrix_from_quat(
-            source_rest_world_rotation.index_select(0, source_rotation_indices)
+        source_marker_rest_rotation_xyzw = source_rest_world_rotation.index_select(0, source_rotation_indices)
+        source_marker_rest_rotation_xyzw.div_(
+            torch.linalg.vector_norm(source_marker_rest_rotation_xyzw, dim=-1, keepdim=True)
         )
-        target_marker_rest_rotation = matrix_from_quat(target_rest_world_rotation.index_select(0, target_indices))
-        aligned_target_rest_rotation = root_alignment @ target_marker_rest_rotation
-        marker_rotation_correction = source_marker_rest_rotation.transpose(-1, -2) @ aligned_target_rest_rotation
+        target_marker_rest_rotation_xyzw = target_rest_world_rotation.index_select(0, target_indices)
+        aligned_target_rest_rotation_xyzw = quat_mul(
+            root_alignment_xyzw.expand_as(target_marker_rest_rotation_xyzw), target_marker_rest_rotation_xyzw
+        )
+        aligned_target_rest_rotation_xyzw.div_(
+            torch.linalg.vector_norm(aligned_target_rest_rotation_xyzw, dim=-1, keepdim=True)
+        )
+        marker_rotation_correction_xyzw = quat_mul(
+            quat_conjugate(source_marker_rest_rotation_xyzw), aligned_target_rest_rotation_xyzw
+        )
+        marker_rotation_correction_xyzw.div_(
+            torch.linalg.vector_norm(marker_rotation_correction_xyzw, dim=-1, keepdim=True)
+        )
 
         support_rows = tuple(required_roles.index(role) for role in self.support_roles)
         source_support_indices = source_position_indices[list(support_rows)]
@@ -404,8 +427,8 @@ class MotionSemanticProjection:
         object.__setattr__(self, "_target_marker_lengths_m", target_marker_lengths)
         object.__setattr__(self, "_target_marker_length_values_m", target_marker_length_values)
         object.__setattr__(self, "_aligned_target_rest_edges_m", aligned_target_rest_edges)
-        object.__setattr__(self, "_aligned_target_rest_rotation", aligned_target_rest_rotation)
-        object.__setattr__(self, "_marker_rotation_correction", marker_rotation_correction)
+        object.__setattr__(self, "_source_marker_rest_rotation_xyzw", source_marker_rest_rotation_xyzw)
+        object.__setattr__(self, "_marker_rotation_correction_xyzw", marker_rotation_correction_xyzw)
         object.__setattr__(self, "_root_motion_scale", root_motion_scale)
         object.__setattr__(self, "_source_support_indices", source_support_indices)
         object.__setattr__(self, "_target_support_indices", target_support_indices)
@@ -421,9 +444,11 @@ class MotionSemanticProjection:
                     "target_landmarks": self.target_landmarks,
                     "root_basis_roles": self.root_basis_roles,
                     "support_roles": self.support_roles,
-                    "orientation_law": "R_source(t) @ R_source(rest).T @ A_root @ R_target(rest)",
+                    "rotation_operator": "normalized_xyzw_quaternion_v1",
+                    "orientation_law": "q_source(t) * conj(q_source(rest)) * q_align * q_target(rest)",
                     "edge_law": (
-                        "R_target_parent(t) @ (A_root @ R_target_parent(rest)).T @ A_root @ target_rest_parent_edge"
+                        "apply(q_source_parent(t) * conj(q_source_parent(rest)), "
+                        "apply(q_align, target_rest_parent_edge))"
                     ),
                     "root_xy_law": "source_root_xy(0) + target/source support-chain scale * source displacement",
                     "root_motion_scale": root_motion_scale,
@@ -452,12 +477,13 @@ class MotionSemanticProjection:
             source_root_position,
             self.source_skeleton.parent_indices,
         )
-        source_marker_rotation = source_rotation.index_select(1, self._source_marker_rotation_indices)
-        target_marker_rotation = (
-            quat_from_matrix(matrix_from_quat(source_marker_rotation) @ self._marker_rotation_correction[None])
-            .transpose(0, 1)
-            .contiguous()
+        source_marker_rotation = source_rotation.index_select(1, self._source_marker_rotation_indices).transpose(0, 1)
+        source_marker_rotation.div_(torch.linalg.vector_norm(source_marker_rotation, dim=-1, keepdim=True))
+        target_marker_rotation = quat_mul(
+            source_marker_rotation,
+            self._marker_rotation_correction_xyzw[:, None].expand_as(source_marker_rotation),
         )
+        target_marker_rotation.div_(torch.linalg.vector_norm(target_marker_rotation, dim=-1, keepdim=True))
         target_root_rotation = target_marker_rotation[0]
         source_support_height = source_position.index_select(1, self._source_support_indices)[..., 2].amin(dim=1)
         target_support_offset_world = quat_apply(
@@ -469,8 +495,8 @@ class MotionSemanticProjection:
         target_root_position[:, 2] = source_support_height - target_support_offset_world[..., 2].amin(dim=1)
         target_marker_position = kinematic_retarget_positions(
             target_root_position,
-            matrix_from_quat(target_marker_rotation),
-            self._aligned_target_rest_rotation,
+            source_marker_rotation,
+            self._source_marker_rest_rotation_xyzw,
             self._aligned_target_rest_edges_m,
             self._marker_parent_rows,
         )

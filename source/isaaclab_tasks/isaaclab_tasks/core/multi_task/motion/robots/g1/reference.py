@@ -346,7 +346,7 @@ _G1_RETARGET_TARGETS = (
 )
 _G1_ROOT_BASIS_ROLES = ("pelvis", "left_hip", "right_hip", "torso")
 _G1_SUPPORT_ROLES = ("left_ankle", "right_ankle")
-_G1_RETARGET_MATH_VERSION = "g1_semantic_landmark_newton_ik_v3"
+_G1_RETARGET_MATH_VERSION = "g1_semantic_landmark_newton_ik_v4"
 
 
 @dataclass(frozen=True, slots=True)

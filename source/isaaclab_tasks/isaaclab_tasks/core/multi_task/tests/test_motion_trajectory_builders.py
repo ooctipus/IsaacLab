@@ -52,6 +52,10 @@ from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import (
 )
 from isaaclab_tasks.core.multi_task.motion.robots.smpl.articulation import smpl_live_joint_mujoco_names
 from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import (
+    _SMPL_RETARGET_MATH_VERSION,
+    _SMPL_RETARGET_TARGETS,
+    _SMPL_ROOT_BASIS_ROLES,
+    _SMPL_SUPPORT_ROLES,
     _smpl_coordinates_match,
     _SmplTargetFrameBuilder,
 )
@@ -79,10 +83,11 @@ class _ReferenceKinematics:
         smpl: bool = False,
         body_com: torch.Tensor | None = None,
         smpl_joint_body_indices: tuple[int, ...] | None = None,
+        device: str = "cpu",
     ) -> None:
         self.body_names = list(skeleton.body_names)
         self.mjcf_path = str(path)
-        self.device = "cpu"
+        self.device = device
         if smpl:
             joint_body_indices = smpl_joint_body_indices or tuple(range(1, skeleton.num_bodies))
             self.joint_names = ["root", *(f"{skeleton.body_names[index]}_xyz" for index in joint_body_indices)]
@@ -126,18 +131,18 @@ class _ReferenceKinematics:
             joint_count=len(self.joint_names),
             joint_coord_count=(7 + skeleton.num_joints),
             joint_dof_count=(6 + skeleton.num_joints),
-            joint_parent=wp.array(joint_parent, dtype=wp.int32, device="cpu"),
-            joint_child=wp.array(joint_child, dtype=wp.int32, device="cpu"),
-            joint_q_start=wp.array(joint_q_start, dtype=wp.int32, device="cpu"),
-            joint_qd_start=wp.array(joint_qd_start, dtype=wp.int32, device="cpu"),
-            joint_dof_dim=wp.array(joint_dof_dim, dtype=wp.vec2i, device="cpu"),
-            joint_axis=wp.from_torch(joint_axis, dtype=wp.vec3),
-            joint_limit_lower=wp.full(6 + skeleton.num_joints, -float("inf"), dtype=wp.float32, device="cpu"),
-            joint_limit_upper=wp.full(6 + skeleton.num_joints, float("inf"), dtype=wp.float32, device="cpu"),
+            joint_parent=wp.array(joint_parent, dtype=wp.int32, device=device),
+            joint_child=wp.array(joint_child, dtype=wp.int32, device=device),
+            joint_q_start=wp.array(joint_q_start, dtype=wp.int32, device=device),
+            joint_qd_start=wp.array(joint_qd_start, dtype=wp.int32, device=device),
+            joint_dof_dim=wp.array(joint_dof_dim, dtype=wp.vec2i, device=device),
+            joint_axis=wp.from_torch(joint_axis.to(device), dtype=wp.vec3),
+            joint_limit_lower=wp.full(6 + skeleton.num_joints, -float("inf"), dtype=wp.float32, device=device),
+            joint_limit_upper=wp.full(6 + skeleton.num_joints, float("inf"), dtype=wp.float32, device=device),
             body_com=(
-                wp.zeros(skeleton.num_bodies, dtype=wp.vec3, device="cpu")
+                wp.zeros(skeleton.num_bodies, dtype=wp.vec3, device=device)
                 if body_com is None
-                else wp.from_torch(body_com, dtype=wp.vec3)
+                else wp.from_torch(body_com.to(device), dtype=wp.vec3)
             ),
         )
         self.topology = SimpleNamespace(
@@ -171,7 +176,7 @@ class _ReferenceKinematics:
         """Fill deterministic world poses while preserving root orientation."""
         body_q.zero_()
         body_q[..., :3].copy_(joint_q[:, None, :3])
-        body_q[..., 0].add_(torch.arange(body_q.shape[1], dtype=torch.float32)[None] * 0.001)
+        body_q[..., 0].add_(torch.arange(body_q.shape[1], dtype=torch.float32, device=body_q.device)[None] * 0.001)
         body_q[..., 3:].copy_(joint_q[:, None, 3:7])
         body_qd.zero_()
 
@@ -186,9 +191,9 @@ def reference_path(tmp_path: Path) -> Path:
     return path
 
 
-def _g1_builder(reference_path: Path, *, reverse_joints: bool = False) -> _G1TargetFrameBuilder:
+def _g1_builder(reference_path: Path, *, reverse_joints: bool = False, device: str = "cpu") -> _G1TargetFrameBuilder:
     skeleton = lafan_g1_29dof_skeleton()
-    reference = _ReferenceKinematics(skeleton, reference_path)
+    reference = _ReferenceKinematics(skeleton, reference_path, device=device)
     joint_names = skeleton.joint_names[::-1] if reverse_joints else skeleton.joint_names
     return _G1TargetFrameBuilder(
         target_tree=_kinematic_tree(skeleton),
@@ -224,9 +229,11 @@ def test_lafan_clip_decodes_declared_g1_hinges_as_local_rotations() -> None:
     torch.testing.assert_close(local_xyzw, expected)
 
 
-def _smpl_builder(reference_path: Path, *, body_com: torch.Tensor | None = None) -> _SmplTargetFrameBuilder:
+def _smpl_builder(
+    reference_path: Path, *, body_com: torch.Tensor | None = None, device: str = "cpu"
+) -> _SmplTargetFrameBuilder:
     skeleton = cmu_humenv_smpl_skeleton()
-    reference = _ReferenceKinematics(skeleton, reference_path, smpl=True, body_com=body_com)
+    reference = _ReferenceKinematics(skeleton, reference_path, smpl=True, body_com=body_com, device=device)
     return _SmplTargetFrameBuilder(
         reference_kinematics=reference,
         reference_mjcf_sha256=_file_sha256(reference_path),
@@ -648,3 +655,70 @@ def test_cross_builder_preserves_target_axis_identity(reference_path: Path) -> N
     assert builder.target is target
     assert builder.version == _G1_RETARGET_MATH_VERSION
     assert len(builder.construction_identity_sha256) == 64
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required to exercise TF32 matmul policy.")
+@pytest.mark.parametrize("target_robot", ("g1", "smpl"), ids=("g1_from_cmu", "smpl_from_lafan"))
+def test_cross_projection_stays_finite_with_training_tf32(reference_path: Path, target_robot: str) -> None:
+    """Training's TF32 policy must preserve finite unit semantic targets for both cross-compositions."""
+    if target_robot == "g1":
+        source = cmu_humenv_smpl_skeleton()
+        target = _g1_builder(reference_path, device="cuda:0")
+        landmarks = _G1_RETARGET_TARGETS
+        root_basis_roles = _G1_ROOT_BASIS_ROLES
+        support_roles = _G1_SUPPORT_ROLES
+        version = _G1_RETARGET_MATH_VERSION
+    else:
+        source = lafan_g1_29dof_skeleton()
+        target = _smpl_builder(reference_path, device="cuda:0")
+        landmarks = _SMPL_RETARGET_TARGETS
+        root_basis_roles = _SMPL_ROOT_BASIS_ROLES
+        support_roles = _SMPL_SUPPORT_ROLES
+        version = _SMPL_RETARGET_MATH_VERSION
+
+    frame_count = 128
+    rotation_vector = torch.linspace(
+        -2.8,
+        2.8,
+        frame_count * source.num_bodies * 3,
+        dtype=torch.float32,
+        device="cuda",
+    ).reshape(frame_count, source.num_bodies, 3)
+    if target_robot == "smpl":
+        rotation_vector[:, 1:].zero_()
+        joint_angles = torch.linspace(
+            -2.8,
+            2.8,
+            frame_count * source.num_joints,
+            dtype=torch.float32,
+            device="cuda",
+        ).reshape(frame_count, source.num_joints)
+        child_indices = torch.tensor(source.joint_child_body_indices, dtype=torch.int64, device="cuda")
+        joint_axes = torch.tensor(source.joint_axes, dtype=torch.float32, device="cuda")
+        rotation_vector[:, child_indices] = joint_angles[..., None] * joint_axes[None]
+    root_position = torch.zeros(frame_count, 3, dtype=torch.float32, device="cuda")
+    root_position[:, 0] = torch.linspace(-0.4, 0.4, frame_count, device="cuda")
+    root_position[:, 2] = 1.0
+
+    previous_tf32 = torch.backends.cuda.matmul.allow_tf32
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        projection = MotionSemanticProjection(source, target, landmarks, root_basis_roles, support_roles, version)
+        targets = projection.generate_targets(root_position, quat_from_rotation_vector(rotation_vector))
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = previous_tf32
+
+    assert version.endswith("_v4")
+    prior_version = f"{version[:-1]}3"
+    prior_projection = MotionSemanticProjection(
+        source, target, landmarks, root_basis_roles, support_roles, prior_version
+    )
+    assert projection.construction_identity_sha256 != prior_projection.construction_identity_sha256
+    assert torch.isfinite(targets.position_m).all()
+    assert torch.isfinite(targets.rotation_xyzw).all()
+    torch.testing.assert_close(
+        torch.linalg.vector_norm(targets.rotation_xyzw, dim=-1),
+        torch.ones(targets.rotation_xyzw.shape[:-1], device="cuda"),
+        atol=5.0e-6,
+        rtol=5.0e-6,
+    )

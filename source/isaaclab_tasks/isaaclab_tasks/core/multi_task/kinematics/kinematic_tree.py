@@ -371,18 +371,18 @@ def kinematic_root_basis(
 
 def kinematic_retarget_positions(
     root_position_m: torch.Tensor,
-    target_rotation: torch.Tensor,
-    aligned_target_rest_rotation: torch.Tensor,
+    source_rotation_xyzw: torch.Tensor,
+    source_rest_rotation_xyzw: torch.Tensor,
     aligned_target_rest_edges_m: torch.Tensor,
     parent_indices: tuple[int, ...],
 ) -> torch.Tensor:
-    """Transfer target-parent rotation deltas onto exact target-rest marker edges.
+    """Transfer source-parent rotation deltas onto aligned target-rest marker edges.
 
     Args:
         root_position_m: Desired root positions [m], shape ``[frame_count, 3]``.
-        target_rotation: Desired marker rotation matrices, shape ``[landmark_count, frame_count, 3, 3]``.
-        aligned_target_rest_rotation: Target-rest rotations aligned into the source root basis, shape
-            ``[landmark_count, 3, 3]``.
+        source_rotation_xyzw: Source marker world rotations in xyzw order, shape
+            ``[landmark_count, frame_count, 4]``.
+        source_rest_rotation_xyzw: Source marker rest-world rotations in xyzw order, shape ``[landmark_count, 4]``.
         aligned_target_rest_edges_m: Target-rest parent edges aligned into the source root basis [m], shape
             ``[landmark_count, 3]``.
         parent_indices: Parent row of each semantic landmark, with root row zero equal to ``-1``.
@@ -390,11 +390,11 @@ def kinematic_retarget_positions(
     Returns:
         Desired world marker positions [m], shape ``[landmark_count, frame_count, 3]``.
     """
-    landmark_count, frame_count = target_rotation.shape[:2]
-    expected = (landmark_count, frame_count, 3, 3)
+    landmark_count, frame_count = source_rotation_xyzw.shape[:2]
+    expected = (landmark_count, frame_count, 4)
     if (
-        target_rotation.shape != expected
-        or aligned_target_rest_rotation.shape != (landmark_count, 3, 3)
+        source_rotation_xyzw.shape != expected
+        or source_rest_rotation_xyzw.shape != (landmark_count, 4)
         or aligned_target_rest_edges_m.shape != (landmark_count, 3)
         or root_position_m.shape != (frame_count, 3)
         or len(parent_indices) != landmark_count
@@ -405,8 +405,12 @@ def kinematic_retarget_positions(
     position_m = torch.empty(landmark_count, frame_count, 3, dtype=root_position_m.dtype, device=root_position_m.device)
     position_m[0].copy_(root_position_m)
     for row, parent in enumerate(parent_indices[1:], start=1):
-        parent_rotation_delta = target_rotation[parent] @ aligned_target_rest_rotation[parent].transpose(-1, -2)
-        position_m[row] = position_m[parent] + parent_rotation_delta @ aligned_target_rest_edges_m[row]
+        source_rest_inverse = quat_conjugate(source_rest_rotation_xyzw[parent]).expand(frame_count, 4)
+        parent_rotation_delta = quat_mul(source_rotation_xyzw[parent], source_rest_inverse)
+        parent_rotation_delta.div_(torch.linalg.vector_norm(parent_rotation_delta, dim=-1, keepdim=True))
+        position_m[row] = position_m[parent] + quat_apply(
+            parent_rotation_delta, aligned_target_rest_edges_m[row].expand(frame_count, 3)
+        )
     return position_m
 
 
