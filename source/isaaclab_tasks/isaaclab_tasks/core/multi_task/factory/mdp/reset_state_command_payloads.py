@@ -10,13 +10,13 @@ from typing import TYPE_CHECKING
 import torch
 import warp as wp
 
+from isaaclab.assets import Articulation, RigidObject
 from isaaclab.utils.warp.proxy_array import ProxyArray
 
-from ...curriculum import set_reset_state
+from ...mdp.commands.state_command.reset_state_writer import ResetStateWriter
 from ...utils.symmetry import Symmetry
 
 if TYPE_CHECKING:
-    from isaaclab.assets import Articulation, RigidObject
     from isaaclab.envs import ManagerBasedRLEnv
 
     from ...mdp.commands.state_command.state_command_cfg import StateCommandCfg
@@ -97,13 +97,17 @@ class FactoryAssemblyPayload:
         self._device = env.device
         self._states_relative = cfg.states_relative
         self.table = table
-        self.reset_assets = sorted(
-            (set(env.scene._articulations) | set(env.scene._rigid_objects)) & set(payload_cfg.reset_assets)
-        )
+        self.reset_assets = tuple(cfg.reset_assets)
+        if table.states.layout.names != self.reset_assets:
+            raise ValueError(
+                "Factory table layout must exactly match StateCommandCfg.reset_assets: "
+                f"{table.states.layout.names} != {self.reset_assets}."
+            )
+        self._reset_state_writer = ResetStateWriter(env, table.states, self.reset_assets, cfg.states_relative)
         self.held_asset: Articulation | RigidObject = env.scene[payload_cfg.held_asset_cfg.name]
         self.fixed_asset: Articulation | RigidObject = env.scene[payload_cfg.fixed_asset_cfg.name]
         self.robot: Articulation = env.scene[payload_cfg.robot_cfg.name]
-        self._held_asset_root_offset = self._root_state_offset("held_asset")
+        self._held_asset_index = table.states.layout.entity_index(payload_cfg.held_asset_cfg.name)
 
         # symmetry reducer: one asset type for the single-held-asset factory.
         # The single-cyclic fast path ignores type_id; the zero buffer keeps the
@@ -144,24 +148,6 @@ class FactoryAssemblyPayload:
 
         self._viz_cfg = payload_cfg.held_asset_visualizer_cfg
 
-    def _root_state_offset(self, asset_name: str) -> int:
-        """Return the root-state offset for an asset in rows returned by ``get_reset_state``."""
-        offset = 0
-        reset_asset_set = set(self.reset_assets)
-        for name, articulation in self._env.scene._articulations.items():
-            if name not in reset_asset_set:
-                continue
-            if name == asset_name:
-                return offset
-            offset += 13 + 2 * articulation.num_joints
-        for name in self._env.scene._rigid_objects:
-            if name not in reset_asset_set:
-                continue
-            if name == asset_name:
-                return offset
-            offset += 13
-        raise ValueError(f"Asset '{asset_name}' is not part of reset_assets: {self.reset_assets}.")
-
     def command_std(self) -> torch.Tensor:
         """Per-env success thresholds ``[N, 2]``: orientation [rad], position [m]."""
         return self.command_thresholds
@@ -180,42 +166,28 @@ class FactoryAssemblyPayload:
 
     def bind(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
         """Bind selected assembly rows and write their simulator reset state."""
-        spawn_states, target_states = self.table.gather(task_rows)
+        spawn_rows, target_rows = self.table.gather(task_rows)
         target_origin = self._env.scene.env_origins[env_ids] if self._states_relative else None
-        self._bind_target(env_ids, task_rows, target_states, target_origin)
-        set_reset_state(
-            self._env,
-            spawn_states,
-            env_ids,
-            self.reset_assets,
-            is_relative=self._states_relative,
-        )
+        self._bind_target(env_ids, target_rows, target_origin)
+        self._reset_state_writer.write(env_ids, spawn_rows)
 
     def bind_target(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
         """Bind selected assembly targets and write their target simulator state."""
-        _, target_states = self.table.gather(task_rows)
+        _, target_rows = self.table.gather(task_rows)
         target_origin = self._env.scene.env_origins[env_ids] if self._states_relative else None
-        self._bind_target(env_ids, task_rows, target_states, target_origin)
-        set_reset_state(
-            self._env,
-            target_states,
-            env_ids,
-            self.reset_assets,
-            is_relative=self._states_relative,
-        )
+        self._bind_target(env_ids, target_rows, target_origin)
+        self._reset_state_writer.write(env_ids, target_rows)
 
     def _bind_target(
         self,
         env_ids: torch.Tensor,
-        task_rows: torch.Tensor,
-        target_states: torch.Tensor,
+        target_rows: torch.Tensor,
         target_origin: torch.Tensor | None,
     ) -> None:
         """Sample the command variant + hold time and set the goal held-asset pose.
 
-        ``target_states`` are the paired target slot's reset-state rows; the
-        held-asset pose is sliced out and lifted to world by ``target_origin``
-        (the env origin when the table stores env-local states).
+        The held-asset pose is read by entity index and lifted to world by
+        target_origin when the table stores environment-local states.
         """
         if self.randomize_command_indices:
             self.command_indices[env_ids] = torch.randint(
@@ -229,11 +201,11 @@ class FactoryAssemblyPayload:
         self.duration_required[env_ids] += ranges[:, 0]
         self.duration_held[env_ids] = 0.0
 
-        off = self._held_asset_root_offset
-        target_pos_w = target_states[:, off : off + 3]
+        target_pose = self.table.states.root_pose[target_rows, self._held_asset_index]
+        target_pos_w = target_pose[:, :3]
         if target_origin is not None:
             target_pos_w = target_pos_w + target_origin
-        self.set_target(env_ids, target_pos_w, target_states[:, off + 3 : off + 7])
+        self.set_target(env_ids, target_pos_w, target_pose[:, 3:7])
 
     def set_target(self, env_ids: torch.Tensor, pos_w: torch.Tensor, quat_w: torch.Tensor) -> None:
         """Scatter the goal held-asset world pose into ``env_ids`` (the sampled target slot)."""

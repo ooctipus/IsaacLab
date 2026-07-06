@@ -85,18 +85,39 @@ class CmuHumEnvSmplClip:
         """Number of native source frames."""
         return int(self.generalized_position.shape[0])
 
-    @property
-    def root_translation(self) -> np.ndarray:
-        """Root translation [m], shape ``[frame_count, 3]``."""
-        return self.generalized_position[:, :3]
-
-    def local_body_rotation_wxyz(
+    def free_root_coordinates(
         self,
         source_skeleton: MotionSkeleton,
         *,
         device: str | torch.device,
-    ) -> torch.Tensor:
-        """Decode native HumEnv coordinates into parent-local body rotations."""
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Decode exact SMPL free-root coordinates in Newton conventions."""
+        _validate_smpl_xyz_chains(source_skeleton)
+        native_position = torch.as_tensor(self.generalized_position, device=device)
+        native_velocity = torch.as_tensor(self.generalized_velocity, device=device)
+        expected_position = (self.frame_count, 7 + source_skeleton.num_joints)
+        expected_velocity = (self.frame_count, 6 + source_skeleton.num_joints)
+        if (
+            native_position.shape != expected_position
+            or native_velocity.shape != expected_velocity
+            or native_position.dtype is not torch.float32
+            or native_velocity.dtype is not torch.float32
+        ):
+            raise ValueError("HumEnv generalized coordinates differ from the declared SMPL source skeleton.")
+        root_rotation = convert_quat(native_position[:, 3:7], to="xyzw")
+        position = torch.cat((native_position[:, :3], root_rotation, native_position[:, 7:]), dim=-1)
+        velocity = native_velocity
+        if not torch.all(torch.isfinite(position)) or not torch.all(torch.isfinite(velocity)):
+            raise ValueError("HumEnv generalized coordinates must contain only finite values.")
+        return position, velocity
+
+    def semantic_local_pose(
+        self,
+        source_skeleton: MotionSkeleton,
+        *,
+        device: str | torch.device,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Decode the HumEnv world root rotation and non-root local pose deltas."""
         _validate_smpl_xyz_chains(source_skeleton)
         generalized_position = torch.as_tensor(self.generalized_position, device=device)
         expected_shape = (self.frame_count, 7 + source_skeleton.num_joints)
@@ -117,7 +138,7 @@ class CmuHumEnvSmplClip:
         coordinates = generalized_position[:, 7:].view(self.frame_count, source_skeleton.num_bodies - 1, 3)
         axes = generalized_position.new_tensor(source_skeleton.joint_axes).view(source_skeleton.num_bodies - 1, 3, 3)
         local_xyzw[:, 1:].copy_(ordered_hinge_rotation(coordinates, axes))
-        return convert_quat(local_xyzw, to="wxyz")
+        return generalized_position[:, :3], local_xyzw
 
 
 def _validate_smpl_xyz_chains(skeleton: MotionSkeleton) -> None:

@@ -15,13 +15,19 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 
 from isaaclab.utils.math import quat_from_rotation_vector, quat_slerp
 
 import isaaclab_tasks.core.multi_task.motion.data as motion_data_module
-from isaaclab_tasks.core.multi_task.motion.data import MotionClipIndex, MotionFrames, MotionResetState, MotionSkeleton
+from isaaclab_tasks.core.multi_task.motion.data import (
+    MotionClipIndex,
+    MotionFrames,
+    MotionResetState,
+    MotionSkeleton,
+)
 from isaaclab_tasks.core.multi_task.motion.mdp.commands import (
     MotionSampler,
     MotionStatePayload,
@@ -31,6 +37,7 @@ from isaaclab_tasks.core.multi_task.motion.mdp.commands import (
 )
 from isaaclab_tasks.core.multi_task.motion.mdp.commands import commands_cfg as commands_cfg_module
 from isaaclab_tasks.core.multi_task.motion.mdp.commands import motion_task_table as table_module
+from isaaclab_tasks.core.multi_task.tests.motion_table_test_utils import motion_task_table
 
 
 def _hash(label: str) -> str:
@@ -38,6 +45,16 @@ def _hash(label: str) -> str:
 
 
 _LIVE_JOINT_NAMES = ("joint_b", "joint_a")
+
+
+def _reference() -> SimpleNamespace:
+    """Return the exact mechanics fields retained by a synthetic table."""
+    return SimpleNamespace(
+        model=SimpleNamespace(joint_coord_count=7 + len(_LIVE_JOINT_NAMES)),
+        n_root_coords=7,
+        builder=object(),
+        default_joint_q=[0.0] * (7 + len(_LIVE_JOINT_NAMES)),
+    )
 
 
 def _skeleton() -> MotionSkeleton:
@@ -87,6 +104,82 @@ def _empty_frames(frame_count: int) -> MotionFrames:
     )
 
 
+def test_motion_table_identity_changes_with_joint_order() -> None:
+    """Robot joint-column order participates exactly once in table identity."""
+    index = _index()
+    frames = _empty_frames(index.total_frames)
+    arguments = (
+        index,
+        _hash("source-skeleton"),
+        frames,
+    )
+    suffix = (
+        (),
+        "test_builder_v1",
+        _hash("builder"),
+        "source_frames",
+        "exact_coordinates",
+        _hash("exact-family"),
+    )
+
+    ordered = table_module._table_identity(*arguments, ("joint_a", "joint_b"), *suffix)
+    repeated = table_module._table_identity(*arguments, ("joint_a", "joint_b"), *suffix)
+    reversed_order = table_module._table_identity(*arguments, ("joint_b", "joint_a"), *suffix)
+
+    assert ordered == repeated
+    assert ordered != reversed_order
+
+
+def test_motion_table_identity_changes_with_selected_family_policy() -> None:
+    """Generation, solve, acceptance, and selection policy participates in table identity."""
+    index = _index()
+    frames = _empty_frames(index.total_frames)
+    arguments = (
+        index,
+        _hash("source-skeleton"),
+        frames,
+        ("joint_a", "joint_b"),
+        (),
+        "test_builder_v1",
+        _hash("builder"),
+        "source_frames",
+        "semantic_sequence",
+    )
+
+    original = table_module._table_identity(*arguments, _hash("semantic-family-v1"))
+    changed = table_module._table_identity(*arguments, _hash("semantic-family-v2"))
+
+    assert original != changed
+
+
+def test_motion_table_identity_hashes_each_source_clip_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The source provenance list preserves exact source cardinality and order."""
+    index = _index()
+    captured: dict[str, object] = {}
+
+    def capture(value: dict[str, object]) -> str:
+        captured.update(value)
+        return _hash("captured-table")
+
+    monkeypatch.setattr(table_module, "canonical_sha256", capture)
+    table_module._table_identity(
+        index,
+        _hash("source-skeleton"),
+        _empty_frames(index.total_frames),
+        ("joint_a", "joint_b"),
+        (),
+        "test_builder_v1",
+        _hash("builder"),
+        "source_frames",
+        "exact_coordinates",
+        _hash("exact-family"),
+    )
+
+    source_clips = captured["source_clips"]
+    assert isinstance(source_clips, list)
+    assert [clip["clip_id"] for clip in source_clips] == list(index.clip_ids)
+
+
 def _clip_frames(clip_number: int, frame_count: int) -> MotionFrames:
     frame = torch.arange(frame_count, dtype=torch.float32)
     base = 100.0 * clip_number + frame
@@ -107,13 +200,89 @@ def _clip_frames(clip_number: int, frame_count: int) -> MotionFrames:
     )
 
 
+class _SyntheticMotionClip:
+    """Small exact-coordinate source clip used by table-construction tests."""
+
+    def __init__(self, clip_number: int, frame_count: int, source_fps: float) -> None:
+        self.clip_number = clip_number
+        self.frame_count = frame_count
+        self.source_fps = source_fps
+
+    def free_root_coordinates(
+        self, source_skeleton: MotionSkeleton, *, device: str | torch.device
+    ) -> tuple[torch.Tensor, None]:
+        del source_skeleton
+        joint_q = torch.full((self.frame_count, 1), float(self.clip_number), dtype=torch.float32, device=device)
+        return joint_q, None
+
+    def semantic_local_pose(
+        self, source_skeleton: MotionSkeleton, *, device: str | torch.device
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        del source_skeleton, device
+        raise AssertionError("The exact-coordinate fixture must not decode semantic poses.")
+
+
+class _SyntheticExactBuilder:
+    """Complete exact-stage builder whose tensors remain easy to inspect."""
+
+    version = "test_builder_v1"
+    construction_identity_sha256 = _hash("test-builder-construction")
+    joint_names = _LIVE_JOINT_NAMES
+    reference_frame_names: tuple[str, ...] = ()
+    exact_coordinates = True
+
+    def __init__(
+        self,
+        source_skeleton: MotionSkeleton,
+        *,
+        failure: str | None = None,
+        nonfinite_clip: int | None = None,
+    ) -> None:
+        self.source_skeleton = source_skeleton
+        self.failure = failure
+        self.nonfinite_clip = nonfinite_clip
+        self.allocated: MotionFrames | None = None
+
+    def allocate(self, frame_count: int, *, device: str | torch.device) -> MotionFrames:
+        assert torch.device(device) == torch.device("cpu")
+        self.allocated = _empty_frames(frame_count)
+        return self.allocated
+
+    def build_exact_coordinates(
+        self, joint_q: torch.Tensor, joint_qd: torch.Tensor | None, source_fps: float
+    ) -> MotionFrames:
+        del joint_qd, source_fps
+        if self.failure is not None:
+            raise RuntimeError(self.failure)
+        frames = _clip_frames(int(joint_q[0, 0]), joint_q.shape[0])
+        if int(joint_q[0, 0]) == self.nonfinite_clip:
+            frames.root_position[0, 0] = torch.nan
+        return frames
+
+    def generate_semantic_targets(self, root_position: torch.Tensor, local_rotation_xyzw: torch.Tensor):
+        del root_position, local_rotation_xyzw
+        raise AssertionError("The exact-coordinate fixture must not generate semantic targets.")
+
+    @property
+    def semantic_reference_kinematics(self):
+        raise AssertionError("The exact-coordinate fixture has no semantic mechanics.")
+
+    @property
+    def semantic_target_tree(self):
+        raise AssertionError("The exact-coordinate fixture has no semantic topology.")
+
+    def build_semantic_corpus(self, joint_q: torch.Tensor, clip_index: MotionClipIndex) -> MotionFrames:
+        del joint_q, clip_index
+        raise AssertionError("The exact-coordinate fixture must not materialize a semantic corpus.")
+
+
 def _table(*, task_row_mode: str = "source_frames") -> MotionTaskTable:
     index = _index()
     frames = _empty_frames(index.total_frames)
     for clip_number, clip in enumerate(index.clips):
         start, end = index.offsets[clip_number : clip_number + 2]
         frames._copy_clip_(start, end, _clip_frames(clip_number, clip.frame_count))
-    return MotionTaskTable(
+    return motion_task_table(
         index,
         frames,
         _LIVE_JOINT_NAMES,
@@ -249,7 +418,7 @@ def test_uniform_sample_clock_rejects_a_clip_without_a_pre_endpoint_sample() -> 
     original = _index()
     index = replace(original, clips=(replace(original.clips[0], frame_count=1),))
     frames = _clip_frames(0, 1)
-    table = MotionTaskTable(
+    table = motion_task_table(
         index,
         frames,
         _LIVE_JOINT_NAMES,
@@ -341,29 +510,13 @@ def test_motion_task_table_cfg_streams_direct_source_into_exact_table_storage() 
 
         def clips(self):
             for clip_number, clip in enumerate(index.clips):
-                yield clip.clip_id, {"clip_number": clip_number, "frame_count": clip.frame_count}
+                yield clip.clip_id, _SyntheticMotionClip(clip_number, clip.frame_count, clip.source_fps)
 
         def close(self) -> None:
             self.closed = True
 
-    class Builder:
-        version = "test_builder_v1"
-        construction_identity_sha256 = _hash("test-builder-construction")
-        joint_names = _LIVE_JOINT_NAMES
-        reference_frame_names: tuple[str, ...] = ()
-        allocated: MotionFrames | None = None
-
-        def allocate(self, frame_count: int, *, device: str | torch.device) -> MotionFrames:
-            assert torch.device(device) == torch.device("cpu")
-            self.allocated = _empty_frames(frame_count)
-            return self.allocated
-
-        def build_frames(self, fields: dict[str, int], *, device: str | torch.device) -> MotionFrames:
-            assert torch.device(device) == torch.device("cpu")
-            return _clip_frames(fields["clip_number"], fields["frame_count"])
-
     source = Source()
-    builder = Builder()
+    builder = _SyntheticExactBuilder(_skeleton())
     split = SimpleNamespace(
         source_content_sha256=index.source_content_sha256,
         clip_count=len(index.clips),
@@ -379,18 +532,13 @@ def test_motion_task_table_cfg_streams_direct_source_into_exact_table_storage() 
         source=source_cfg,
         source_artifact_root="unused",
         motion_split="train",
-        frame_builder_factory=lambda _source_skeleton, _reference, _robot: builder,
-        reference_kinematics_factory=lambda _root, _device: object(),
+        target_kinematics=MotionTaskTableCfg.TargetKinematicsCfg(
+            frame_builder_factory=lambda _source_skeleton, _reference: builder,
+            reference_kinematics_factory=lambda _root, _device: _reference(),
+        ),
         task_row_mode="clip_time_ranges",
     )
-    env = SimpleNamespace(
-        device=torch.device("cpu"),
-        cfg=SimpleNamespace(seed=7301),
-        scene={"robot": object()},
-    )
-    table = build_motion_task_table(
-        SimpleNamespace(task_table=cfg, payload=SimpleNamespace(robot_asset_name="robot")), env
-    )
+    table = build_motion_task_table(SimpleNamespace(task_table=cfg), None, "cpu")
 
     assert table.frames is builder.allocated
     torch.testing.assert_close(table.clip_indices, torch.tensor((0, 1)))
@@ -399,6 +547,279 @@ def test_motion_task_table_cfg_streams_direct_source_into_exact_table_storage() 
         torch.tensor(((0.0, 1.0), (0.0, 0.75))),
     )
     assert source.closed
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for TorchScript fusion.")
+def test_motion_table_native_smpl_is_invariant_to_torchscript_cache_phase() -> None:
+    """Native SMPL corpus values must not depend on cold versus fused scripted math."""
+    from isaaclab.utils.math import quat_apply
+
+    from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClip, cmu_humenv_smpl_skeleton
+    from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import (
+        smpl_frame_builder,
+        smpl_reference_kinematics,
+    )
+
+    frame_count = 257
+    time = np.arange(frame_count, dtype=np.float32) / np.float32(30.0)
+    coordinate = np.arange(69, dtype=np.float32)[None]
+    angle = np.float32(0.2) * np.sin(np.float32(0.3) * time)
+    generalized_position = np.zeros((frame_count, 76), dtype=np.float32)
+    generalized_position[:, 2] = 1.0
+    generalized_position[:, 3] = np.cos(angle)
+    generalized_position[:, 6] = np.sin(angle)
+    generalized_position[:, 7:] = np.float32(0.1) * np.sin(
+        time[:, None] * (np.float32(0.3) + coordinate * np.float32(0.01)) + coordinate * np.float32(0.02)
+    )
+    generalized_velocity = np.zeros((frame_count, 75), dtype=np.float32)
+    generalized_velocity[:, :3] = np.stack(
+        (
+            np.float32(0.2) * np.cos(time),
+            -np.float32(0.07) * np.sin(np.float32(0.7) * time),
+            np.float32(0.039) * np.cos(np.float32(1.3) * time),
+        ),
+        axis=-1,
+    )
+    generalized_velocity[:, 3:6] = np.stack(
+        (
+            np.float32(0.1) * np.sin(np.float32(0.2) * time),
+            np.float32(0.2) * np.cos(np.float32(0.4) * time),
+            np.float32(0.3) * np.sin(np.float32(0.6) * time),
+        ),
+        axis=-1,
+    )
+    generalized_velocity[:, 6:] = np.float32(0.01) * np.cos(
+        time[:, None] * (np.float32(0.3) + coordinate * np.float32(0.01)) + coordinate * np.float32(0.02)
+    )
+    clip = CmuHumEnvSmplClip(generalized_position, generalized_velocity, 30.0)
+    index = MotionClipIndex(
+        source_content_sha256=_hash("native-smpl-cache-phase-source"),
+        clips=(
+            MotionClipIndex.Clip(
+                clip_id="native_smpl",
+                frame_count=frame_count,
+                source_fps=30.0,
+                content_sha256=_hash("native-smpl-cache-phase-clip"),
+            ),
+        ),
+    )
+
+    class Source:
+        def inspect(self) -> MotionClipIndex:
+            return index
+
+        def clips(self):
+            yield "native_smpl", clip
+
+        def close(self) -> None:
+            pass
+
+    split = SimpleNamespace(
+        source_content_sha256=index.source_content_sha256,
+        clip_count=1,
+        frame_count=frame_count,
+    )
+    source_cfg = SimpleNamespace(
+        train=split,
+        evaluation=split,
+        open_split=lambda _root, _split: Source(),
+        build_skeleton=cmu_humenv_smpl_skeleton,
+    )
+    cfg = MotionTaskTableCfg(
+        source=source_cfg,
+        source_artifact_root="unused",
+        motion_split="train",
+        target_kinematics=MotionTaskTableCfg.TargetKinematicsCfg(
+            frame_builder_factory=smpl_frame_builder,
+            reference_kinematics_factory=smpl_reference_kinematics,
+        ),
+        task_row_mode="clip_time_ranges",
+    )
+
+    quat_apply._debug_flush_compilation_cache()
+    cpu_rng = torch.random.get_rng_state().clone()
+    cuda_rng = torch.cuda.get_rng_state().clone()
+    first = build_motion_task_table(SimpleNamespace(task_table=cfg), None, "cuda:0")
+    second = build_motion_task_table(SimpleNamespace(task_table=cfg), None, "cuda:0")
+
+    assert first.frames.stored_fields == second.frames.stored_fields
+    for name in first.frames.stored_fields:
+        assert torch.equal(first.field(name), second.field(name)), name
+    assert torch.equal(torch.random.get_rng_state(), cpu_rng)
+    assert torch.equal(torch.cuda.get_rng_state(), cuda_rng)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for TorchScript fusion.")
+def test_motion_table_g1_angular_velocity_is_invariant_to_torchscript_cache_phase() -> None:
+    """G1-shaped quaternion differentiation must be stable across graph phases."""
+    from isaaclab.utils.math import axis_angle_from_quat, quat_conjugate, quat_mul
+
+    from isaaclab_tasks.core.multi_task.kinematics import time_gaussian_filter, time_quaternion_angular_velocity
+
+    index = MotionClipIndex(
+        source_content_sha256=_hash("g1-angular-cache-phase-source"),
+        clips=(
+            MotionClipIndex.Clip(
+                clip_id="g1_angular",
+                frame_count=257,
+                source_fps=30.0,
+                content_sha256=_hash("g1-angular-cache-phase-clip"),
+            ),
+        ),
+    )
+
+    class Source:
+        def inspect(self) -> MotionClipIndex:
+            return index
+
+        def clips(self):
+            yield "g1_angular", _SyntheticMotionClip(0, 257, 30.0)
+
+        def close(self) -> None:
+            pass
+
+    class G1AngularBuilder(_SyntheticExactBuilder):
+        def allocate(self, frame_count: int, *, device: str | torch.device) -> MotionFrames:
+            return MotionFrames(
+                root_position=torch.empty(frame_count, 3, device=device),
+                root_rotation=torch.empty(frame_count, 4, device=device),
+                root_linear_velocity=torch.empty(frame_count, 3, device=device),
+                root_angular_velocity=torch.empty(frame_count, 3, device=device),
+                joint_position=torch.empty(frame_count, 2, device=device),
+                joint_velocity=torch.empty(frame_count, 2, device=device),
+            )
+
+        def build_exact_coordinates(
+            self, joint_q: torch.Tensor, joint_qd: torch.Tensor | None, source_fps: float
+        ) -> MotionFrames:
+            del joint_qd
+            frame_count = joint_q.shape[0]
+            time = torch.arange(frame_count, dtype=torch.float32, device=joint_q.device) / source_fps
+            angle = 0.7 * torch.sin(0.4 * time)
+            root_rotation = torch.zeros(frame_count, 4, dtype=torch.float32, device=joint_q.device)
+            root_rotation[:, 2] = torch.sin(0.5 * angle)
+            root_rotation[:, 3] = torch.cos(0.5 * angle)
+            body_rotation = root_rotation[:, None].expand(frame_count, 31, 4).contiguous()
+            body_angular_velocity = time_gaussian_filter(
+                time_quaternion_angular_velocity(body_rotation.unsqueeze(0), 1.0 / source_fps)
+            ).squeeze(0)
+            return MotionFrames(
+                root_position=torch.zeros(frame_count, 3, device=joint_q.device),
+                root_rotation=root_rotation,
+                root_linear_velocity=torch.zeros(frame_count, 3, device=joint_q.device),
+                root_angular_velocity=body_angular_velocity[:, 0].contiguous(),
+                joint_position=torch.zeros(frame_count, 2, device=joint_q.device),
+                joint_velocity=torch.zeros(frame_count, 2, device=joint_q.device),
+            )
+
+    builder = G1AngularBuilder(_skeleton())
+    split = SimpleNamespace(source_content_sha256=index.source_content_sha256, clip_count=1, frame_count=257)
+    source_cfg = SimpleNamespace(
+        train=split,
+        evaluation=split,
+        open_split=lambda _root, _split: Source(),
+        build_skeleton=_skeleton,
+    )
+    cfg = MotionTaskTableCfg(
+        source=source_cfg,
+        source_artifact_root="unused",
+        motion_split="train",
+        target_kinematics=MotionTaskTableCfg.TargetKinematicsCfg(
+            frame_builder_factory=lambda _source_skeleton, _reference: builder,
+            reference_kinematics_factory=lambda _root, _device: _reference(),
+        ),
+        task_row_mode="clip_time_ranges",
+    )
+
+    for function in (quat_mul, quat_conjugate, axis_angle_from_quat):
+        function._debug_flush_compilation_cache()
+    first = build_motion_task_table(SimpleNamespace(task_table=cfg), None, "cuda:0")
+    second = build_motion_task_table(SimpleNamespace(task_table=cfg), None, "cuda:0")
+
+    for name in first.frames.stored_fields:
+        assert torch.equal(first.field(name), second.field(name)), name
+
+
+def test_motion_source_iteration_rejects_a_clock_changed_after_inspection() -> None:
+    """Decoded clips must use the exact sample rate retained by the source index."""
+    index = _index()
+
+    class Source:
+        def clips(self):
+            for clip_number, clip in enumerate(index.clips):
+                source_fps = 3.0 if clip_number == 0 else clip.source_fps
+                yield clip.clip_id, _SyntheticMotionClip(clip_number, clip.frame_count, source_fps)
+
+    candidate = table_module._MotionCorpusCandidate(
+        builder=object(),
+        source=Source(),
+        clip_index=index,
+        device="cpu",
+        frames=object(),
+    )
+
+    with pytest.raises(ValueError, match="sample rate"):
+        tuple(table_module._source_clips(candidate))
+
+
+def test_motion_family_selects_corpus_once_and_compacts_pass_fail_pass_frames() -> None:
+    """A rejected middle clip must not abort or leave a hole in the selected corpus."""
+    index = MotionClipIndex(
+        source_content_sha256=_hash("pass-fail-pass-source"),
+        clips=tuple(
+            MotionClipIndex.Clip(
+                clip_id=f"clip_{index}",
+                frame_count=frame_count,
+                source_fps=2.0,
+                content_sha256=_hash(f"pass-fail-pass-{index}"),
+            )
+            for index, frame_count in enumerate((2, 3, 4))
+        ),
+    )
+
+    class Source:
+        def inspect(self) -> MotionClipIndex:
+            return index
+
+        def clips(self):
+            for clip_number, clip in enumerate(index.clips):
+                yield clip.clip_id, _SyntheticMotionClip(clip_number, clip.frame_count, clip.source_fps)
+
+        def close(self) -> None:
+            pass
+
+    builder = _SyntheticExactBuilder(_skeleton(), nonfinite_clip=1)
+    split = SimpleNamespace(
+        source_content_sha256=index.source_content_sha256,
+        clip_count=len(index.clips),
+        frame_count=index.total_frames,
+    )
+    source_cfg = SimpleNamespace(
+        train=split,
+        evaluation=split,
+        open_split=lambda _root, _split: Source(),
+        build_skeleton=_skeleton,
+    )
+    cfg = MotionTaskTableCfg(
+        source=source_cfg,
+        source_artifact_root="unused",
+        motion_split="train",
+        target_kinematics=MotionTaskTableCfg.TargetKinematicsCfg(
+            frame_builder_factory=lambda _source_skeleton, _reference: builder,
+            reference_kinematics_factory=lambda _root, _device: _reference(),
+        ),
+        task_row_mode="clip_time_ranges",
+    )
+
+    table = build_motion_task_table(SimpleNamespace(task_table=cfg), None, "cpu")
+
+    assert table.clip_ids == ("clip_0", "clip_2")
+    assert table.clip_index.offsets == (0, 2, 6)
+    torch.testing.assert_close(
+        table.frames.field("root_position")[:, 0], torch.tensor((0.0, 1.0, 200.0, 201.0, 202.0, 203.0))
+    )
+    torch.testing.assert_close(table.view.sequences.offsets, torch.tensor((0, 2, 6)))
+    torch.testing.assert_close(table.view.quality.values[:, 1], torch.ones(2))
 
 
 def test_motion_task_table_rejects_incomplete_frame_builder_before_allocation() -> None:
@@ -442,14 +863,14 @@ def test_motion_task_table_rejects_incomplete_frame_builder_before_allocation() 
         source=source_cfg,
         source_artifact_root="unused",
         motion_split="train",
-        frame_builder_factory=lambda _source_skeleton, _reference, _robot: IncompleteBuilder(),
-        reference_kinematics_factory=lambda _root, _device: object(),
+        target_kinematics=MotionTaskTableCfg.TargetKinematicsCfg(
+            frame_builder_factory=lambda _source_skeleton, _reference: IncompleteBuilder(),
+            reference_kinematics_factory=lambda _root, _device: _reference(),
+        ),
         task_row_mode="clip_time_ranges",
     )
-    env = SimpleNamespace(device=torch.device("cpu"), cfg=SimpleNamespace(seed=7301), scene={"robot": object()})
-
     with pytest.raises(TypeError, match="MotionFrameBuilder"):
-        build_motion_task_table(SimpleNamespace(task_table=cfg, payload=SimpleNamespace(robot_asset_name="robot")), env)
+        build_motion_task_table(SimpleNamespace(task_table=cfg), None, "cpu")
     assert source.closed
 
 
@@ -464,22 +885,11 @@ def test_motion_task_table_cfg_closes_source_when_frame_construction_fails() -> 
             return index
 
         def clips(self):
-            yield index.clips[0].clip_id, {}
+            clip = index.clips[0]
+            yield clip.clip_id, _SyntheticMotionClip(0, clip.frame_count, clip.source_fps)
 
         def close(self) -> None:
             self.closed = True
-
-    class Builder:
-        version = "test_builder_v1"
-        construction_identity_sha256 = _hash("test-builder-construction")
-        joint_names = _LIVE_JOINT_NAMES
-        reference_frame_names: tuple[str, ...] = ()
-
-        def allocate(self, frame_count: int, *, device: str | torch.device) -> MotionFrames:
-            return _empty_frames(frame_count)
-
-        def build_frames(self, fields: dict, *, device: str | torch.device) -> MotionFrames:
-            raise RuntimeError("synthetic frame construction failure")
 
     source = Source()
     split = SimpleNamespace(
@@ -497,14 +907,16 @@ def test_motion_task_table_cfg_closes_source_when_frame_construction_fails() -> 
         source=source_cfg,
         source_artifact_root="unused",
         motion_split="train",
-        frame_builder_factory=lambda _source_skeleton, _reference, _robot: Builder(),
-        reference_kinematics_factory=lambda _root, _device: object(),
+        target_kinematics=MotionTaskTableCfg.TargetKinematicsCfg(
+            frame_builder_factory=lambda source_skeleton, _reference: _SyntheticExactBuilder(
+                source_skeleton, failure="synthetic frame construction failure"
+            ),
+            reference_kinematics_factory=lambda _root, _device: _reference(),
+        ),
         task_row_mode="clip_time_ranges",
     )
-    env = SimpleNamespace(device=torch.device("cpu"), cfg=SimpleNamespace(seed=7301), scene={"robot": object()})
-
     with pytest.raises(RuntimeError, match="synthetic frame construction failure"):
-        build_motion_task_table(SimpleNamespace(task_table=cfg, payload=SimpleNamespace(robot_asset_name="robot")), env)
+        build_motion_task_table(SimpleNamespace(task_table=cfg), None, "cpu")
     assert source.closed
 
 

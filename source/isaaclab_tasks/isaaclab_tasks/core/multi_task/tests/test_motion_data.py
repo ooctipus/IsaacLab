@@ -30,6 +30,7 @@ from isaaclab_tasks.core.multi_task.motion.data.sources import cmu_humenv_smpl a
 from isaaclab_tasks.core.multi_task.motion.data.sources import lafan_g1_29dof as lafan_g1_29dof_module
 from isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_sampler import MotionSampler
 from isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table import MotionTaskTable
+from isaaclab_tasks.core.multi_task.tests.motion_table_test_utils import motion_task_table
 
 _SYNTHETIC_JOINT_NAMES = ("joint_a", "joint_b")
 _SYNTHETIC_REFERENCE_FRAME_NAMES: tuple[str, ...] = ()
@@ -129,7 +130,7 @@ def _synthetic_table() -> MotionTaskTable:
     for clip_number, clip in enumerate(index.clips):
         start, end = index.offsets[clip_number : clip_number + 2]
         frames._copy_clip_(start, end, _clip_frames(clip_number, clip.frame_count))
-    return MotionTaskTable(
+    return motion_task_table(
         index,
         frames,
         _SYNTHETIC_JOINT_NAMES,
@@ -194,6 +195,22 @@ def test_frozen_g1_skeleton_and_explicit_frames_construct_exact_typed_contracts(
     assert not hasattr(MotionTaskTable, "FrameLayout")
 
 
+def test_motion_table_view_addresses_exact_stored_integer_frames() -> None:
+    """The shared inspector boundary reads the stored robot state without interpolation."""
+    table = _synthetic_table()
+    sequence_ids = torch.tensor((0, 1), dtype=torch.int64)
+    frame_ids = torch.tensor((2, 1), dtype=torch.int64)
+    rows = table.view.sequences.state_rows(sequence_ids, frame_ids)
+
+    torch.testing.assert_close(table.view.state_bank.root_pose[:, 0, :3], table.field("root_position"))
+    torch.testing.assert_close(table.view.state_bank.root_pose[:, 0, 3:], table.field("root_rotation"))
+    torch.testing.assert_close(table.view.state_bank.joint_position, table.field("joint_position"))
+    joint_q = torch.empty(rows.numel(), table.view.kinematic_view.joint_q_default.numel())
+    table.view.kinematic_view.joint_q_into(table.view.state_bank, rows, joint_q)
+    torch.testing.assert_close(joint_q[:, :7], table.view.state_bank.root_pose[rows, 0])
+    torch.testing.assert_close(joint_q[:, 7:], table.view.state_bank.joint_position[rows])
+
+
 def test_frames_reject_partial_groups_and_noncontiguous_columns() -> None:
     with pytest.raises(ValueError, match="required together"):
         MotionFrames(
@@ -242,7 +259,7 @@ def test_table_rejects_nonfinite_and_nonunit_physical_rows(field_name: str) -> N
         match = "unit quaternion"
 
     with pytest.raises(ValueError, match=match):
-        MotionTaskTable(
+        motion_task_table(
             index,
             frames,
             _SYNTHETIC_JOINT_NAMES,
@@ -252,6 +269,20 @@ def test_table_rejects_nonfinite_and_nonunit_physical_rows(field_name: str) -> N
             "source_frames",
             _synthetic_skeleton().identity_sha256,
         )
+
+
+def test_skeleton_landmarks_are_validated_and_identity_bearing() -> None:
+    """Semantic roles bind existing position/orientation bodies and affect source identity."""
+    skeleton = _synthetic_skeleton()
+    landmark = MotionSkeleton.Landmark("tip", "child", "child")
+    semantic = dataclasses.replace(skeleton, landmarks=(landmark,))
+
+    assert semantic.landmarks == (landmark,)
+    assert semantic.identity_sha256 != skeleton.identity_sha256
+    with pytest.raises(ValueError, match="landmark bodies"):
+        dataclasses.replace(skeleton, landmarks=(MotionSkeleton.Landmark("tip", "missing", "child"),))
+    with pytest.raises(ValueError, match="landmark names"):
+        dataclasses.replace(skeleton, landmarks=(landmark, landmark))
 
 
 def test_skeleton_represents_hinge_and_unrestricted_source_joints() -> None:
@@ -310,6 +341,8 @@ def test_clip_index_retains_only_runtime_fields_and_changes_with_clip_metadata()
         "frame_count",
         "source_fps",
         "content_sha256",
+        "source_clip_id",
+        "source_frame_start",
     )
     assert tuple(field.name for field in dataclasses.fields(MotionClipIndex)) == (
         "source_content_sha256",
@@ -320,6 +353,17 @@ def test_clip_index_retains_only_runtime_fields_and_changes_with_clip_metadata()
     assert index.clip_ids == ("clip_a", "clip_b")
     assert index.total_frames == 9
     assert index != changed_fps
+    assert index.clips[0].source_clip_id is None
+    assert index.clips[0].source_frame_start == 0
+    assert index.clips[0].source_frame_stop == 5
+    derived = dataclasses.replace(
+        index.clips[0],
+        clip_id="clip_a_segment",
+        frame_count=3,
+        source_clip_id="clip_a",
+        source_frame_start=1,
+    )
+    assert derived.source_frame_stop == 4
 
 
 def test_frozen_g1_training_index_has_exact_capacity_without_loading_joblib() -> None:
@@ -350,7 +394,7 @@ def test_frozen_g1_training_index_has_exact_capacity_without_loading_joblib() ->
 def test_table_identity_invalidates_scientific_inputs_without_robot_schema() -> None:
     table = _synthetic_table()
     index = _synthetic_index()
-    same = MotionTaskTable(
+    same = motion_task_table(
         index,
         table.frames,
         _SYNTHETIC_JOINT_NAMES,
@@ -360,7 +404,7 @@ def test_table_identity_invalidates_scientific_inputs_without_robot_schema() -> 
         "source_frames",
         _synthetic_skeleton().identity_sha256,
     )
-    changed_source = MotionTaskTable(
+    changed_source = motion_task_table(
         _synthetic_index(source_hash=_hash("changed-source")),
         table.frames,
         _SYNTHETIC_JOINT_NAMES,
@@ -370,7 +414,7 @@ def test_table_identity_invalidates_scientific_inputs_without_robot_schema() -> 
         "source_frames",
         _synthetic_skeleton().identity_sha256,
     )
-    changed_builder = MotionTaskTable(
+    changed_builder = motion_task_table(
         index,
         table.frames,
         _SYNTHETIC_JOINT_NAMES,
@@ -380,7 +424,7 @@ def test_table_identity_invalidates_scientific_inputs_without_robot_schema() -> 
         "source_frames",
         _synthetic_skeleton().identity_sha256,
     )
-    changed_construction = MotionTaskTable(
+    changed_construction = motion_task_table(
         index,
         table.frames,
         _SYNTHETIC_JOINT_NAMES,
@@ -390,7 +434,7 @@ def test_table_identity_invalidates_scientific_inputs_without_robot_schema() -> 
         "source_frames",
         _synthetic_skeleton().identity_sha256,
     )
-    changed_mode = MotionTaskTable(
+    changed_mode = motion_task_table(
         index,
         table.frames,
         _SYNTHETIC_JOINT_NAMES,
@@ -433,7 +477,7 @@ def test_task_row_modes_generate_exact_rows_and_expose_reset_source_names() -> N
     torch.testing.assert_close(source_frames.reset_time_ranges_seconds[:, 0], expected_times)
     torch.testing.assert_close(source_frames.reset_time_ranges_seconds[:, 1], expected_times)
 
-    clip_ranges = MotionTaskTable(
+    clip_ranges = motion_task_table(
         source_frames.clip_index,
         source_frames.frames,
         source_frames.joint_names,
@@ -459,7 +503,7 @@ def test_table_binds_preallocated_storage_without_copy() -> None:
         start, end = index.offsets[clip_number : clip_number + 2]
         frames._copy_clip_(start, end, _clip_frames(clip_number, clip.frame_count))
         assert {name: frames.field(name).data_ptr() for name in frames.stored_fields} == pointers
-    table = MotionTaskTable(
+    table = motion_task_table(
         index,
         frames,
         _SYNTHETIC_JOINT_NAMES,
@@ -503,7 +547,7 @@ def test_table_binds_preallocated_storage_without_copy() -> None:
 
 def test_storage_binding_reuses_tensors_and_seals_metadata() -> None:
     table = _synthetic_table()
-    rebound = MotionTaskTable(
+    rebound = motion_task_table(
         table.clip_index,
         table.frames,
         table.joint_names,
@@ -527,7 +571,7 @@ def test_storage_binding_rejects_invalid_physical_values() -> None:
     table.frames.root_rotation[0].zero_()
 
     with pytest.raises(ValueError, match="unit quaternion"):
-        MotionTaskTable(
+        motion_task_table(
             table.clip_index,
             table.frames,
             table.joint_names,
@@ -812,6 +856,7 @@ def test_native_motion_sources_expose_only_consumed_runtime_state() -> None:
     fields = tuple(field.name for field in dataclasses.fields(cmu_humenv_smpl_module.CmuHumEnvSmplClip))
 
     assert fields == ("generalized_position", "generalized_velocity", "source_fps")
+    assert not hasattr(cmu_humenv_smpl_module.CmuHumEnvSmplClip, "root_translation")
     assert not hasattr(LafanG1JoblibClips, "remaining_clips")
     assert not hasattr(LafanG1JoblibClips, "remaining_frames")
     assert not hasattr(LafanG1JoblibClips, "__enter__")

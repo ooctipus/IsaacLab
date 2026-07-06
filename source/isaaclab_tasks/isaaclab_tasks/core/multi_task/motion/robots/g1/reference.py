@@ -14,19 +14,22 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from isaaclab.utils.math import quat_from_rotation_vector
-
 from ....kinematics import (
-    ORDERED_HINGE_OPERATOR_VERSION,
     KinematicTree,
-    KinematicTreeRotationProjection,
+    time_forward_difference_segmented,
     time_gaussian_filter,
+    time_gaussian_filter_segmented,
     time_gradient,
+    time_gradient_segmented,
     time_quaternion_angular_velocity,
+    time_quaternion_angular_velocity_segmented,
 )
-from ...data import MotionFrames, MotionSkeleton
-from ...data.source import MotionLocalBodyPoseClip, MotionPoseAxisAngleClip
+from ...data import MotionClipIndex, MotionFrames, MotionSkeleton
 from ...identity import canonical_sha256, file_sha256, validate_sha256
+from ...retarget import (
+    MotionSemanticProjection,
+    MotionSemanticTargets,
+)
 from .frames import (
     G1_HEAD_FRAME_NAME,
     G1_HEAD_OFFSET_M,
@@ -36,12 +39,12 @@ from .frames import (
 )
 
 if TYPE_CHECKING:
-    from isaaclab.assets import Articulation
-
     from ....kinematics import NewtonKinematics
 
 _G1_REFERENCE_MJCF_RELATIVE_PATH = "humanoidverse/data/robots/g1/g1_29dof.xml"
 G1_REFERENCE_MJCF_SHA256 = "439c1ec0806583d73b492da9484b0cb9e9eae215e0d9506e3c2fa69016733532"
+G1_EXACT_COORDINATE_PROFILE_SHA256 = "b2cd2371cdc8cfff1caa1e2b502537a1d8be9fcbf42a6d3daf7b27c7880618ab"
+"""Complete G1 axis-angle source-coordinate contract accepted by the exact route."""
 
 
 def g1_reference_kinematics(reference_artifact_root: str, device: str | torch.device) -> NewtonKinematics:
@@ -67,7 +70,7 @@ def _g1_target_tree(reference: NewtonKinematics) -> KinematicTree:
     if not reference.mjcf_path:
         raise TypeError("The G1 target tree requires an MJCF-backed reference model.")
     tree = KinematicTree.from_newton(reference)
-    if tree.num_bodies != 30 or tree.num_joints != 29:
+    if tree.num_bodies != 30 or tree.num_coordinates != 29:
         raise ValueError("The target G1 model must contain 30 bodies and 29 hinge coordinates.")
     if tree.root_body_index != 0 or tree.joint_child_body_indices != tuple(range(1, 30)):
         raise ValueError("The target G1 model must expose root-first, one-body-per-hinge coordinates.")
@@ -83,38 +86,29 @@ def _g1_target_tree_identity(tree: KinematicTree, content_sha256: str) -> str:
             "joint_names": tree.joint_names,
             "parent_indices": tree.parent_indices,
             "joint_child_body_indices": tree.joint_child_body_indices,
-            "joint_axes": tree.joint_axes,
+            "coordinate_axes": tree.coordinate_axes,
         }
     )
 
 
-def _validate_source_target_coordinates(
-    source: MotionSkeleton, target: KinematicTree, reference_mjcf_sha256: str
-) -> None:
-    """Require one source row per target coordinate without aliasing either owner."""
-    if source.content_sha256 != reference_mjcf_sha256:
-        raise ValueError("The G1 source coordinates were not declared from the exact reference MJCF.")
-    if source.joint_names != target.joint_names:
-        raise ValueError("The G1 source-coordinate order differs from the exact reference MJCF.")
-    if source.body_names != target.body_names:
-        raise ValueError("The G1 source-body order differs from the exact reference MJCF.")
-    if source.parent_indices != target.parent_indices:
-        raise ValueError("The G1 source topology differs from the exact reference MJCF.")
-    if source.joint_child_body_indices != target.joint_child_body_indices:
-        raise ValueError("The G1 source joint-child mapping differs from the exact reference MJCF.")
-    if source.joint_axes != target.joint_axes:
-        raise ValueError("The G1 source hinge axes differ from the exact reference MJCF.")
-    if (
-        source.root_translation_frame != "world"
-        or source.root_rotation_convention != "axis_angle"
-        or source.position_unit != "m"
-        or source.angle_unit != "rad"
-    ):
-        raise ValueError("The G1 source root or unit conventions differ from the pose-builder contract.")
+def _g1_coordinates_match(source: MotionSkeleton, target: KinematicTree) -> bool:
+    """Return whether source rows already describe the exact target coordinates."""
+    return (
+        source.coordinate_identity_sha256 == G1_EXACT_COORDINATE_PROFILE_SHA256
+        and source.joint_names == target.joint_names
+        and source.body_names == target.body_names
+        and source.parent_indices == target.parent_indices
+        and source.joint_child_body_indices == target.joint_child_body_indices
+        and source.joint_axes == target.coordinate_axes
+        and source.root_translation_frame == "world"
+        and source.root_rotation_convention == "axis_angle"
+        and source.position_unit == "m"
+        and source.angle_unit == "rad"
+    )
 
 
 @dataclass(frozen=True, slots=True)
-class G1PoseFrameBuilder:
+class _G1TargetFrameBuilder:
     """Build simulator-ordered G1 frames from target-body pose-axis-angle coordinates."""
 
     target_tree: KinematicTree
@@ -125,10 +119,8 @@ class G1PoseFrameBuilder:
     live_body_names: tuple[str, ...]
     version: str = "g1_pose_exact_mjcf_v1"
     construction_identity_sha256: str = field(init=False)
-    _live_joint_from_reference: tuple[int, ...] = field(init=False, repr=False)
     _live_joint_from_reference_indices: torch.Tensor = field(init=False, repr=False)
     _head_parent_body_index: int = field(init=False, repr=False)
-    _live_body_from_reference: tuple[int, ...] = field(init=False, repr=False)
     _live_body_from_reference_indices: torch.Tensor = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -158,6 +150,7 @@ class G1PoseFrameBuilder:
         identity = canonical_sha256(
             {
                 "math_version": self.version,
+                "exact_coordinate_profile_sha256": G1_EXACT_COORDINATE_PROFILE_SHA256,
                 "pose_coordinate_identity_sha256": self.pose_coordinate_identity_sha256,
                 "reference_mjcf_sha256": self.reference_mjcf_sha256,
                 "reference_joint_names": reference_joint_names,
@@ -176,14 +169,12 @@ class G1PoseFrameBuilder:
                 "derivative_policy": _DERIVATIVE_POLICY,
             }
         )
-        object.__setattr__(self, "_live_joint_from_reference", live_joint_from_reference)
         object.__setattr__(
             self,
             "_live_joint_from_reference_indices",
             torch.tensor(live_joint_from_reference, dtype=torch.int64, device=reference.device),
         )
         object.__setattr__(self, "_head_parent_body_index", head_parent)
-        object.__setattr__(self, "_live_body_from_reference", live_body_from_reference)
         object.__setattr__(
             self,
             "_live_body_from_reference_indices",
@@ -214,58 +205,43 @@ class G1PoseFrameBuilder:
             body_angular_velocity=torch.empty(frame_count, body_count, 3, dtype=torch.float32, device=device),
         )
 
-    def build_pose_frames(
+    def build_generalized_frames(
         self,
-        pose_axis_angle: torch.Tensor,
-        root_translation: torch.Tensor,
+        joint_q: torch.Tensor,
         source_fps: float,
     ) -> MotionFrames:
-        """Build one target-G1 trajectory sampled at ``source_fps`` [Hz]."""
+        """Build one target-G1 trajectory from free-root coordinates."""
         reference = self.reference_kinematics
-        frame_count = pose_axis_angle.shape[0]
-        expected_pose = (frame_count, reference.model.body_count, 3)
-        if pose_axis_angle.shape != expected_pose or root_translation.shape != (frame_count, 3):
-            raise ValueError("G1 pose and root translation shapes do not match the reference MJCF.")
-        if pose_axis_angle.dtype != torch.float32 or root_translation.dtype != torch.float32:
-            raise ValueError("G1 trajectory construction requires float32 pose tensors.")
-        if pose_axis_angle.device != root_translation.device:
-            raise ValueError("G1 pose and root translation must share one device.")
+        frame_count = joint_q.shape[0]
+        if joint_q.shape != (frame_count, reference.model.joint_coord_count) or joint_q.dtype is not torch.float32:
+            raise ValueError("G1 generalized positions differ from the exact reference MJCF.")
         if not math.isfinite(source_fps) or source_fps <= 0.0:
             raise ValueError("source_fps must be finite and positive [Hz].")
 
-        joint_position_reference = pose_axis_angle.sum(dim=-1)[:, 1:]
-        joint_q = torch.empty(
-            frame_count,
-            reference.model.joint_coord_count,
-            dtype=torch.float32,
-            device=pose_axis_angle.device,
-        )
-        joint_q[:, :3].copy_(root_translation)
-        joint_q[:, 3:7].copy_(quat_from_rotation_vector(pose_axis_angle[:, 0]))
-        joint_q[:, 7:].copy_(joint_position_reference)
+        joint_position_reference = joint_q[:, 7:]
         joint_qd = torch.zeros(
             frame_count,
             reference.model.joint_dof_count,
             dtype=torch.float32,
-            device=pose_axis_angle.device,
+            device=joint_q.device,
         )
         body_q = torch.empty(
             frame_count,
             reference.model.body_count,
             7,
             dtype=torch.float32,
-            device=pose_axis_angle.device,
+            device=joint_q.device,
         )
         body_qd_scratch = torch.empty(
             frame_count,
             reference.model.body_count,
             6,
             dtype=torch.float32,
-            device=pose_axis_angle.device,
+            device=joint_q.device,
         )
         if (
-            self._live_joint_from_reference_indices.device != pose_axis_angle.device
-            or self._live_body_from_reference_indices.device != pose_axis_angle.device
+            self._live_joint_from_reference_indices.device != joint_q.device
+            or self._live_body_from_reference_indices.device != joint_q.device
         ):
             raise ValueError("G1 trajectory tensors must use the reference-kinematics device.")
         reference.eval_fk_batched_torch(joint_q, joint_qd, body_q, body_qd_scratch)
@@ -289,6 +265,58 @@ class G1PoseFrameBuilder:
         if difference.shape[0] < 2:
             raise ValueError("G1 joint velocity construction requires at least three source frames.")
         joint_velocity_reference = torch.cat((difference, difference[-2:-1]), dim=0)
+        joint_position = joint_position_reference.index_select(1, self._live_joint_from_reference_indices)
+        joint_velocity = joint_velocity_reference.index_select(1, self._live_joint_from_reference_indices)
+        frames = MotionFrames(
+            joint_position=joint_position,
+            joint_velocity=joint_velocity,
+            body_position=body_position,
+            body_rotation=body_rotation,
+            body_linear_velocity=body_linear_velocity,
+            body_angular_velocity=body_angular_velocity,
+        )
+        return frames
+
+    def build_generalized_corpus(self, joint_q: torch.Tensor, clip_index: MotionClipIndex) -> MotionFrames:
+        """Build one compact target-G1 corpus with segment-correct derivatives."""
+        reference = self.reference_kinematics
+        frame_count = joint_q.shape[0]
+        if (
+            joint_q.shape != (clip_index.total_frames, reference.model.joint_coord_count)
+            or joint_q.dtype is not torch.float32
+        ):
+            raise ValueError("G1 semantic corpus coordinates must match the compact clip index and reference model.")
+        offsets = torch.tensor(clip_index.offsets, dtype=torch.int64, device=joint_q.device)
+        step_seconds = torch.tensor(
+            [1.0 / clip.source_fps for clip in clip_index.clips], dtype=torch.float32, device=joint_q.device
+        )
+        if any(clip.frame_count < 3 for clip in clip_index.clips):
+            raise ValueError("G1 semantic materialization requires at least three frames per segment.")
+        if (
+            self._live_joint_from_reference_indices.device != joint_q.device
+            or self._live_body_from_reference_indices.device != joint_q.device
+        ):
+            raise ValueError("G1 trajectory tensors must use the reference-kinematics device.")
+
+        joint_position_reference = joint_q[:, 7:]
+        joint_qd = torch.zeros(frame_count, reference.model.joint_dof_count, dtype=torch.float32, device=joint_q.device)
+        body_q = torch.empty(frame_count, reference.model.body_count, 7, dtype=torch.float32, device=joint_q.device)
+        body_qd_scratch = torch.empty(
+            frame_count, reference.model.body_count, 6, dtype=torch.float32, device=joint_q.device
+        )
+        reference.eval_fk_batched_torch(joint_q, joint_qd, body_q, body_qd_scratch)
+        body_position = body_q[..., :3].index_select(1, self._live_body_from_reference_indices).contiguous()
+        body_rotation = body_q[..., 3:].index_select(1, self._live_body_from_reference_indices).contiguous()
+        body_position, body_rotation = append_g1_head_pose(
+            body_position, body_rotation, parent_body_index=self._head_parent_body_index
+        )
+        body_linear_velocity = time_gaussian_filter_segmented(
+            time_gradient_segmented(body_position, offsets, step_seconds), offsets
+        ).contiguous()
+        body_angular_velocity = time_gaussian_filter_segmented(
+            time_quaternion_angular_velocity_segmented(body_rotation, offsets, step_seconds), offsets
+        ).contiguous()
+        joint_velocity_reference = time_forward_difference_segmented(joint_position_reference, offsets, step_seconds)
         return MotionFrames(
             joint_position=joint_position_reference.index_select(1, self._live_joint_from_reference_indices),
             joint_velocity=joint_velocity_reference.index_select(1, self._live_joint_from_reference_indices),
@@ -298,175 +326,129 @@ class G1PoseFrameBuilder:
             body_angular_velocity=body_angular_velocity,
         )
 
-    def build_frames(
-        self,
-        clip: MotionPoseAxisAngleClip,
-        *,
-        device: str | torch.device,
-    ) -> MotionFrames:
-        """Build one target pose-axis-angle clip through exact reference FK."""
-        return self.build_pose_frames(
-            torch.as_tensor(clip.pose_axis_angle, device=device),
-            torch.as_tensor(clip.root_translation, device=device),
-            clip.source_fps,
-        )
 
-
-def g1_pose_frame_builder(
-    source_skeleton: MotionSkeleton,
-    reference: NewtonKinematics,
-    robot: Articulation,
-) -> G1PoseFrameBuilder:
-    """Build the target-pose trajectory edge from the live articulation and exact MJCF."""
-    from ....kinematics import NewtonKinematics
-
-    if not isinstance(reference, NewtonKinematics) or not reference.mjcf_path:
-        raise TypeError("G1 frame construction requires an MJCF-backed NewtonKinematics reference.")
-    target_tree = _g1_target_tree(reference)
-    _validate_source_target_coordinates(source_skeleton, target_tree, G1_REFERENCE_MJCF_SHA256)
-    return G1PoseFrameBuilder(
-        target_tree=target_tree,
-        pose_coordinate_identity_sha256=source_skeleton.identity_sha256,
-        reference_kinematics=reference,
-        reference_mjcf_sha256=G1_REFERENCE_MJCF_SHA256,
-        live_joint_names=tuple(robot.joint_names),
-        live_body_names=tuple(robot.body_names),
-    )
-
-
-_G1_TARGET_JOINT_LOCAL_BODY_NAMES = (
-    "L_Hip",
-    "L_Hip",
-    "L_Hip",
-    "L_Knee",
-    "L_Ankle",
-    "L_Ankle",
-    "R_Hip",
-    "R_Hip",
-    "R_Hip",
-    "R_Knee",
-    "R_Ankle",
-    "R_Ankle",
-    "Torso",
-    "Torso",
-    "Torso",
-    "L_Shoulder",
-    "L_Shoulder",
-    "L_Shoulder",
-    "L_Elbow",
-    "L_Wrist",
-    "L_Wrist",
-    "L_Wrist",
-    "R_Shoulder",
-    "R_Shoulder",
-    "R_Shoulder",
-    "R_Elbow",
-    "R_Wrist",
-    "R_Wrist",
-    "R_Wrist",
+_G1_RETARGET_TARGETS = (
+    ("pelvis", "pelvis", -1),
+    ("left_hip", "left_hip_yaw_link", 0),
+    ("left_knee", "left_knee_link", 1),
+    ("left_ankle", "left_ankle_roll_link", 2),
+    ("right_hip", "right_hip_yaw_link", 0),
+    ("right_knee", "right_knee_link", 4),
+    ("right_ankle", "right_ankle_roll_link", 5),
+    ("torso", "torso_link", 0),
+    ("left_shoulder", "left_shoulder_yaw_link", 7),
+    ("left_elbow", "left_elbow_link", 8),
+    ("left_wrist", "left_wrist_yaw_link", 9),
+    ("right_shoulder", "right_shoulder_yaw_link", 7),
+    ("right_elbow", "right_elbow_link", 11),
+    ("right_wrist", "right_wrist_yaw_link", 12),
 )
+_G1_ROOT_BASIS_ROLES = ("pelvis", "left_hip", "right_hip", "torso")
+_G1_SUPPORT_ROLES = ("left_ankle", "right_ankle")
+_G1_RETARGET_MATH_VERSION = "g1_semantic_landmark_newton_ik_v3"
 
 
 @dataclass(frozen=True, slots=True)
-class G1LocalBodyPoseFrameBuilder:
-    """Project parent-local body rotations into exact target-G1 frames."""
+class G1FrameBuilder:
+    """One source-independent G1 builder exposing exact and semantic stages."""
 
     source_skeleton: MotionSkeleton
-    target_builder: G1PoseFrameBuilder
-    projection: KinematicTreeRotationProjection
-    target_tree_identity_sha256: str
-    version: str = "g1_local_body_pose_ordered_hinge_fit_v2"
-    construction_identity_sha256: str = field(init=False)
-
-    def __post_init__(self) -> None:
-        """Validate source identity and freeze the complete source-to-target policy."""
-        if self.projection.source_body_count != self.source_skeleton.num_bodies:
-            raise ValueError("The SMPL projection and frame-builder source body counts differ.")
-        if self.projection.target_tree != self.target_builder.target_tree:
-            raise ValueError("The G1 projection and pose builder target trees differ.")
-        projection_identity = canonical_sha256(
-            {
-                "policy": ORDERED_HINGE_OPERATOR_VERSION,
-                "source_skeleton_sha256": self.source_skeleton.identity_sha256,
-                "target_builder_sha256": self.target_builder.construction_identity_sha256,
-                "target_skeleton_sha256": self.target_tree_identity_sha256,
-                "source_root_body_index": self.projection.source_root_body_index,
-                "target_joint_source_body_indices": self.projection.target_joint_source_body_indices,
-                "joint_groups": self.projection.joint_groups,
-            }
-        )
-        object.__setattr__(
-            self,
-            "construction_identity_sha256",
-            canonical_sha256(
-                {
-                    "math_version": self.version,
-                    "source_skeleton_sha256": self.source_skeleton.identity_sha256,
-                    "ordered_hinge_operator_version": ORDERED_HINGE_OPERATOR_VERSION,
-                    "projection_sha256": projection_identity,
-                    "input_representation": "world_root_translation_and_parent_local_wxyz_v1",
-                }
-            ),
-        )
+    target: _G1TargetFrameBuilder
+    semantic: MotionSemanticProjection
+    exact_coordinates: bool
 
     @property
     def joint_names(self) -> tuple[str, ...]:
-        """Target-G1 articulation order of the output joint axis."""
-        return self.target_builder.joint_names
+        """Live G1 joint order."""
+        return self.target.joint_names
 
     @property
     def reference_frame_names(self) -> tuple[str, ...]:
-        """Target-G1 physical and derived reference-frame axis."""
-        return self.target_builder.reference_frame_names
+        """Live and derived G1 reference-frame order."""
+        return self.target.reference_frame_names
+
+    @property
+    def semantic_reference_kinematics(self) -> NewtonKinematics:
+        """Exact G1 mechanics used by semantic IK."""
+        return self.target.reference_kinematics
+
+    @property
+    def semantic_target_tree(self) -> KinematicTree:
+        """Grouped G1 topology used to seed semantic IK."""
+        return self.target.target_tree
+
+    @property
+    def version(self) -> str:
+        """Selected coordinate-construction policy version."""
+        return self.target.version if self.exact_coordinates else self.semantic.version
+
+    @property
+    def construction_identity_sha256(self) -> str:
+        """Selected coordinate-construction identity."""
+        return (
+            self.target.construction_identity_sha256
+            if self.exact_coordinates
+            else self.semantic.construction_identity_sha256
+        )
 
     def allocate(self, frame_count: int, *, device: str | torch.device) -> MotionFrames:
-        """Allocate the exact target-G1 trajectory columns."""
-        return self.target_builder.allocate(frame_count, device=device)
+        """Allocate exact-capacity G1 trajectory columns."""
+        return self.target.allocate(frame_count, device=device)
 
-    def build_frames(
+    def build_exact_coordinates(
         self,
-        clip: MotionLocalBodyPoseClip,
-        *,
-        device: str | torch.device,
+        joint_q: torch.Tensor,
+        joint_qd: torch.Tensor | None,
+        source_fps: float,
     ) -> MotionFrames:
-        """Build one local-body-pose clip as target-G1 trajectory facts."""
-        root_translation = torch.as_tensor(clip.root_translation, device=device)
-        local_rotation_wxyz = clip.local_body_rotation_wxyz(self.source_skeleton, device=device)
-        pose_axis_angle = self.projection.project(local_rotation_wxyz)
-        return self.target_builder.build_pose_frames(pose_axis_angle, root_translation, clip.source_fps)
+        """Materialize an exact-coordinate source clip."""
+        del joint_qd
+        return self.target.build_generalized_frames(joint_q, source_fps)
+
+    def generate_semantic_targets(
+        self,
+        root_position: torch.Tensor,
+        local_rotation_xyzw: torch.Tensor,
+    ) -> MotionSemanticTargets:
+        """Generate target-G1 semantic landmark tensors."""
+        return self.semantic.generate_targets(root_position, local_rotation_xyzw)
+
+    def build_semantic_corpus(self, joint_q: torch.Tensor, clip_index: MotionClipIndex) -> MotionFrames:
+        """Materialize one compact solved target-G1 corpus."""
+        return self.target.build_generalized_corpus(joint_q, clip_index)
 
 
-def g1_local_body_pose_frame_builder(
+def g1_frame_builder(
     source_skeleton: MotionSkeleton,
     reference: NewtonKinematics,
-    robot: Articulation,
-) -> G1LocalBodyPoseFrameBuilder:
-    """Build a local-body-pose projection from source and target owners."""
+) -> G1FrameBuilder:
+    """Build one G1 coordinate owner for exact and semantic sources."""
     from ....kinematics import NewtonKinematics
 
     if not isinstance(reference, NewtonKinematics) or not reference.mjcf_path:
         raise TypeError("G1 frame construction requires an MJCF-backed NewtonKinematics reference.")
     target_tree = _g1_target_tree(reference)
     target_tree_identity_sha256 = _g1_target_tree_identity(target_tree, G1_REFERENCE_MJCF_SHA256)
-    target_builder = G1PoseFrameBuilder(
+    target_builder = _G1TargetFrameBuilder(
         target_tree=target_tree,
         pose_coordinate_identity_sha256=target_tree_identity_sha256,
         reference_kinematics=reference,
         reference_mjcf_sha256=G1_REFERENCE_MJCF_SHA256,
-        live_joint_names=tuple(robot.joint_names),
-        live_body_names=tuple(robot.body_names),
+        live_joint_names=tuple(reference.joint_names[1:]),
+        live_body_names=tuple(reference.body_names),
         version="g1_target_local_body_pose_projection_v1",
     )
-    source_by_name = {name: index for index, name in enumerate(source_skeleton.body_names)}
-    projection = KinematicTreeRotationProjection(
-        source_body_count=source_skeleton.num_bodies,
-        target_tree=target_tree,
-        target_joint_source_body_indices=tuple(source_by_name[name] for name in _G1_TARGET_JOINT_LOCAL_BODY_NAMES),
-        device=reference.device,
-    )
-    return G1LocalBodyPoseFrameBuilder(
+    semantic = MotionSemanticProjection(
         source_skeleton=source_skeleton,
-        target_builder=target_builder,
-        projection=projection,
-        target_tree_identity_sha256=target_tree_identity_sha256,
+        target=target_builder,
+        target_landmarks=_G1_RETARGET_TARGETS,
+        root_basis_roles=_G1_ROOT_BASIS_ROLES,
+        support_roles=_G1_SUPPORT_ROLES,
+        version=_G1_RETARGET_MATH_VERSION,
+    )
+    return G1FrameBuilder(
+        source_skeleton=source_skeleton,
+        target=target_builder,
+        semantic=semantic,
+        exact_coordinates=_g1_coordinates_match(source_skeleton, target_tree),
     )

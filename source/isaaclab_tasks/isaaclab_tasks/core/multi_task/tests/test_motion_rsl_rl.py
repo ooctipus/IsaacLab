@@ -37,6 +37,7 @@ from isaaclab_tasks.core.multi_task.motion.robots.g1.observations import (
 )
 from isaaclab_tasks.core.multi_task.motion.robots.smpl.observations import smpl_expert_target, smpl_humenv_observation
 from isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_expert import forward_backward_expert_buffer
+from isaaclab_tasks.core.multi_task.tests.motion_table_test_utils import motion_task_table
 
 _G1_FIELD_WIDTHS = {
     "joint_position": 29,
@@ -104,7 +105,7 @@ def _table(
     *,
     frame_builder_version: str,
 ) -> MotionTaskTable:
-    return MotionTaskTable(
+    return motion_task_table(
         index,
         frames,
         joint_names,
@@ -513,3 +514,28 @@ def test_expert_provider_retains_the_command_sampler_priority_tensor() -> None:
 
     assert expert.priorities.data_ptr() == priorities.data_ptr()
     torch.testing.assert_close(priorities, torch.tensor((2.0, 3.0)))
+
+
+def test_segment_boundaries_control_short_and_long_expert_window_eligibility() -> None:
+    """Expert windows of length 8 and 257 never cross retained semantic segment boundaries."""
+    table = _smpl_table((9, 258, 8, 257))
+    schema = ForwardBackwardObservationSchema.from_config({"policy": 358}, {"backward": ("policy",)})
+    expert = forward_backward_expert_buffer(
+        _env(table),
+        schema,
+        "cpu",
+        source_bind=_SOURCE_BIND,
+        priorities_bind=_PRIORITIES_BIND,
+        clock={"sampling_mode": "source_rows", "sampling_step_seconds": None},
+        target_projection=_SMPL_TARGET,
+        target_projection_binds=_SMPL_BINDS,
+        window_lengths=(8, 257),
+        seed=23,
+    )
+
+    torch.testing.assert_close(expert._eligible_priorities[8], torch.tensor((1.0, 1.0, 0.0, 1.0)))
+    torch.testing.assert_close(expert._eligible_priorities[257], torch.tensor((0.0, 1.0, 0.0, 0.0)))
+    for window_length in (8, 257):
+        batch = expert.sample(64, window_length)
+        segment_ends = expert.clip_offsets.index_select(0, batch.clip_ids + 1)
+        assert torch.all(batch.frame_indices[:, -1] < segment_ends)

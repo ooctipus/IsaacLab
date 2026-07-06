@@ -14,20 +14,19 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import MISSING
-from typing import TYPE_CHECKING
 
 import isaaclab.sim as sim_utils
 from isaaclab.markers import BLUE_ARROW_X_MARKER_CFG, VisualizationMarkersCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 
+from ....kinematics.ik_objectives.cfg import IKObjectiveBaseCfg
+from ....kinematics.newton_kinematics_cfg import NewtonKinematicsBuildCfg
 from ....mdp.commands.state_command.state_command_cfg import StateCommandCfg
+from ...retarget.cfg import SamplerBaseCfg
+from ...retarget.criteria_cfg import CriterionBaseCfg
 from .state_command_payloads import CommandPayloadBaseFootState, CommandPayloadBaseState
 from .task_table_builder import build_relative_state_task_table
-
-if TYPE_CHECKING:
-    from ...retarget.cfg import RetargetPipelineCfg
-
 
 # Default debug-vis marker cfgs shared by the base/foot payloads (configclass
 # deep-copies these per instance).
@@ -60,14 +59,59 @@ _CURRENT_VEL_VISUALIZER_CFG.markers["arrow"].scale = (0.5, 0.5, 0.5)
 
 
 @configclass
+class PositionTerrainStanceGenerateCfg(StateCommandCfg.TaskTableCfg.GenerateTermCfg):
+    """Generate terrain contacts, base targets, and IK seeds."""
+
+    class_type: Callable = "{DIR}.task_table_builder:generate_position_terrain_stance"
+    sampler: SamplerBaseCfg = MISSING  # type: ignore[assignment]
+    foot_body_names: list[str] | str = MISSING  # type: ignore[assignment]
+
+
+@configclass
+class PositionIKSolveCfg(StateCommandCfg.TaskTableCfg.SolveCfg):
+    """Solve one flat tuple of declared Newton IK objectives."""
+
+    class_type: Callable = "{DIR}.task_table_builder:solve_position_terrain_stance"
+    objectives: tuple[IKObjectiveBaseCfg, ...] = ()
+
+
+@configclass
+class PositionFpsSelectionCfg(StateCommandCfg.TaskTableCfg.SelectionCfg):
+    """Thin accepted terrain states in one declared feature space."""
+
+    class_type: Callable = "{DIR}.task_table_builder:select_position_terrain_stance"
+    features: Callable | None = None
+
+
+@configclass
+class PositionTerrainStanceFamilyCfg(StateCommandCfg.TaskTableCfg.FamilyCfg):
+    """One terrain-stance construction family."""
+
+    name: str = "terrain_stance"
+    generate: tuple[PositionTerrainStanceGenerateCfg, ...] = ()
+    solve: PositionIKSolveCfg | None = None
+    criteria: tuple[CriterionBaseCfg, ...] = ()
+    selection: PositionFpsSelectionCfg = PositionFpsSelectionCfg()
+
+
+@configclass
+class PositionSameCellPairingCfg:
+    """Pair selected Position states only within one terrain cell."""
+
+    exclude_self: bool = True
+    max_spawns_per_cell: int = 0
+    num_targets_per_cell: int = 0
+
+
+@configclass
 class TaskTableCfg(StateCommandCfg.TaskTableCfg):
-    """Task-table builder configuration for the locomotion command."""
+    """Visible Position mechanics, density, family, and pairing policy."""
 
     class_type: Callable = build_relative_state_task_table
     """Callable that builds the task table."""
 
-    pipeline_cfg: RetargetPipelineCfg = MISSING  # type: ignore[assignment]
-    """Retarget pipeline configuration for generating IK-solved spawn states."""
+    kinematics: NewtonKinematicsBuildCfg = NewtonKinematicsBuildCfg()
+    """Newton robot mechanics shared by every Position family."""
 
     pool_spacing: float = 1.0
     """Target spacing between final IK-solved terrain states [m].
@@ -87,31 +131,8 @@ class TaskTableCfg(StateCommandCfg.TaskTableCfg):
     sampler is clipped to this centered window before pool sizing and sampling.
     """
 
-    exclude_self_pairs: bool = True
-    """Whether to drop ``(spawn == target)`` pairs from the per-cell Cartesian product.
-
-    When ``True``, the per-cell ``n × n`` pair grid is reduced to ``n × (n - 1)``
-    by removing the diagonal. Cells with fewer than two valid states then
-    contribute no pairs.
-    """
-
-    max_spawns_per_cell: int = 0
-    """Optional cap on per-cell spawn states for the spawn × target pairing.
-
-    ``0`` keeps every IK-solved state in the cell as a possible spawn.
-    A positive integer ``N`` first picks ``min(N, n_c)`` spawn states via
-    :func:`~isaaclab_tasks.core.multi_task.utils.grid_downsample.grid_bucket_downsample`.
-    Target states are then selected from the remaining non-spawn states
-    when any remain, falling back to the full cell state pool otherwise.
-    """
-
-    num_targets_per_cell: int = 0
-    """Optional cap on per-cell target states for the spawn × target pairing.
-
-    ``0`` keeps the full per-cell Cartesian product. A positive ``N`` first
-    picks ``min(N, n_c)`` targets per cell, then pairs every spawn with each
-    picked target.
-    """
+    pairing: PositionSameCellPairingCfg = PositionSameCellPairingCfg()
+    """Table-global spawn/target pairing after family selection."""
 
 
 @configclass

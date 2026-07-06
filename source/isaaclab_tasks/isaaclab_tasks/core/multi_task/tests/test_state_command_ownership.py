@@ -182,12 +182,12 @@ def test_factory_success_monitor_reads_command_edge_before_same_step_reset() -> 
     assert not hasattr(TimeoutTerminationsCfg(), "success")
 
 
-def test_factory_payload_owns_descriptor_binding_and_relative_reset(monkeypatch) -> None:
+def test_factory_payload_owns_descriptor_binding_and_relative_reset() -> None:
     """Factory framing and reset writes must stay behind its payload boundary."""
     from isaaclab_tasks.core.multi_task.factory.mdp import reset_state_command_payloads as factory_payloads
 
-    spawn = torch.arange(30, dtype=torch.float32).reshape(2, 15)
-    target = spawn + 100.0
+    spawn_rows = torch.tensor([8, 4], dtype=torch.long)
+    target_rows = torch.tensor([9, 5], dtype=torch.long)
     task_rows = torch.tensor([3, 1], dtype=torch.long)
     env_ids = torch.tensor([0, 2], dtype=torch.long)
     origins = torch.tensor([[1.0, 2.0, 3.0], [0.0, 0.0, 0.0], [4.0, 5.0, 6.0]])
@@ -197,53 +197,48 @@ def test_factory_payload_owns_descriptor_binding_and_relative_reset(monkeypatch)
         @staticmethod
         def gather(rows: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
             torch.testing.assert_close(rows, task_rows)
-            return spawn, target
+            return spawn_rows, target_rows
 
     payload = object.__new__(factory_payloads.FactoryAssemblyPayload)
     payload.table = _Table()
     payload._env = SimpleNamespace(scene=SimpleNamespace(env_origins=origins))
     payload._states_relative = True
-    payload.reset_assets = ["robot", "held_asset"]
 
     def bind_target(
         bound_env_ids: torch.Tensor,
-        bound_task_rows: torch.Tensor,
-        target_states: torch.Tensor,
+        bound_target_rows: torch.Tensor,
         target_origin: torch.Tensor,
     ) -> None:
-        calls["target"] = (bound_env_ids, bound_task_rows, target_states, target_origin)
+        calls["target"] = (bound_env_ids, bound_target_rows, target_origin)
 
-    def set_reset_state(env, states, bound_env_ids, reset_assets, is_relative):
-        calls["reset"] = (env, states, bound_env_ids, reset_assets, is_relative)
+    def write_state_rows(bound_env_ids: torch.Tensor, state_rows: torch.Tensor) -> None:
+        calls["reset"] = (bound_env_ids, state_rows)
 
     payload._bind_target = bind_target
-    monkeypatch.setattr(factory_payloads, "set_reset_state", set_reset_state)
+    payload._reset_state_writer = SimpleNamespace(write=write_state_rows)
 
     payload.bind(env_ids, task_rows)
 
     target_call = calls["target"]
     torch.testing.assert_close(target_call[0], env_ids)
-    torch.testing.assert_close(target_call[1], task_rows)
-    torch.testing.assert_close(target_call[2], target)
-    torch.testing.assert_close(target_call[3], origins[env_ids])
+    torch.testing.assert_close(target_call[1], target_rows)
+    torch.testing.assert_close(target_call[2], origins[env_ids])
     reset_call = calls["reset"]
-    torch.testing.assert_close(reset_call[1], spawn)
-    torch.testing.assert_close(reset_call[2], env_ids)
-    assert reset_call[3:] == (payload.reset_assets, True)
+    torch.testing.assert_close(reset_call[0], env_ids)
+    torch.testing.assert_close(reset_call[1], spawn_rows)
 
     payload.bind_target(env_ids, task_rows)
     reset_call = calls["reset"]
-    torch.testing.assert_close(reset_call[1], target)
-    torch.testing.assert_close(reset_call[2], env_ids)
-    assert reset_call[3:] == (payload.reset_assets, True)
+    torch.testing.assert_close(reset_call[0], env_ids)
+    torch.testing.assert_close(reset_call[1], target_rows)
 
 
-def test_position_payload_bind_target_writes_target_state(monkeypatch) -> None:
-    """Position goal materialization must write target rows rather than spawn rows."""
+def test_position_payload_bind_target_writes_target_state() -> None:
+    """Position goal materialization must write target row ids rather than spawn row ids."""
     from isaaclab_tasks.core.multi_task.terrain.mdp.commands import state_command_payloads
 
-    spawn = torch.arange(30, dtype=torch.float32).reshape(2, 15)
-    target = spawn + 100.0
+    spawn_rows = torch.tensor([4, 7], dtype=torch.long)
+    target_rows = torch.tensor([8, 2], dtype=torch.long)
     task_rows = torch.tensor([1, 0], dtype=torch.long)
     env_ids = torch.tensor([0, 2], dtype=torch.long)
     origins = torch.tensor([[1.0, 2.0, 3.0], [0.0, 0.0, 0.0], [4.0, 5.0, 6.0]])
@@ -253,7 +248,7 @@ def test_position_payload_bind_target_writes_target_state(monkeypatch) -> None:
         @staticmethod
         def gather(rows: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
             torch.testing.assert_close(rows, task_rows)
-            return spawn, target
+            return spawn_rows, target_rows
 
     payload = object.__new__(state_command_payloads.CommandPayloadBase)
     payload.table = _Table()
@@ -264,49 +259,29 @@ def test_position_payload_bind_target_writes_target_state(monkeypatch) -> None:
     def bind_target(
         bound_env_ids: torch.Tensor,
         bound_task_rows: torch.Tensor,
-        target_states: torch.Tensor,
+        bound_target_rows: torch.Tensor,
         target_origin: torch.Tensor,
     ) -> None:
-        calls["target"] = (bound_env_ids, bound_task_rows, target_states, target_origin)
+        calls["target"] = (bound_env_ids, bound_task_rows, bound_target_rows, target_origin)
 
-    def set_reset_state(env, states, bound_env_ids, reset_assets, is_relative):
-        calls["reset"] = (env, states, bound_env_ids, reset_assets, is_relative)
+    def write_state(bound_env_ids: torch.Tensor, state_rows: torch.Tensor) -> None:
+        calls["reset"] = (bound_env_ids, state_rows)
 
     payload._bind_target = bind_target
-    monkeypatch.setattr(state_command_payloads, "set_reset_state", set_reset_state)
+    payload._write_state = write_state
 
     payload.bind_target(env_ids, task_rows)
 
-    torch.testing.assert_close(calls["target"][2], target)
+    torch.testing.assert_close(calls["target"][2], target_rows)
     torch.testing.assert_close(calls["target"][3], origins[env_ids])
-    torch.testing.assert_close(calls["reset"][1], target)
-    assert calls["reset"][3:] == (payload.reset_assets, True)
-
-
-def test_state_command_retained_deprecated_views_delegate_to_new_owners() -> None:
-    """Retained command views should delegate without restoring materialization ownership."""
-    term = object.__new__(StateCommand)
-    term.cmd_indices = torch.zeros(2, dtype=torch.long)
-    term.cfg = SimpleNamespace(states_relative=True)
-    rates = torch.tensor([0.25, 0.75])
-    sampler_term = SimpleNamespace(
-        sample_indices=term.cmd_indices,
-        success_rates=rates,
-    )
-    terms = {"terrain_levels": sampler_term}
-    manager = SimpleNamespace(active_terms=list(terms), get_term=terms.__getitem__)
-    term._env = SimpleNamespace(curriculum_manager=manager)
-
-    with pytest.warns(DeprecationWarning, match="states_relative"):
-        assert term.states_relative is True
-    with pytest.warns(DeprecationWarning, match="success_rates"):
-        assert term.success_rates is rates
+    torch.testing.assert_close(calls["reset"][0], env_ids)
+    torch.testing.assert_close(calls["reset"][1], target_rows)
 
 
 def test_state_command_has_no_learner_cache_compatibility_accessors() -> None:
-    """Learner caches must be bound directly instead of routed through the command."""
-    assert not hasattr(StateCommand, "get_spawn_obs_cache")
-    assert not hasattr(StateCommand, "get_target_obs_cache")
+    """Learner, payload, and curriculum state must not be mirrored through the command."""
+    for name in ("get_spawn_obs_cache", "get_target_obs_cache", "states_relative", "success_rates"):
+        assert not hasattr(StateCommand, name)
 
 
 def test_state_command_rejects_payload_capabilities_that_are_not_owned() -> None:
@@ -342,24 +317,34 @@ def test_state_command_source_has_no_domain_or_learner_ownership() -> None:
         assert forbidden not in source
 
 
-def test_factory_selected_rows_match_frozen_lifecycle_oracle(monkeypatch) -> None:
+def test_factory_selected_rows_match_frozen_lifecycle_oracle() -> None:
     """Factory success includes the action that crosses the required hold duration."""
     from isaaclab_tasks.core.multi_task.factory.mdp import reset_state_command_payloads as factory_payloads
     from isaaclab_tasks.core.multi_task.factory.mdp.rewards import success_reward
     from isaaclab_tasks.core.multi_task.factory.mdp.terminations import success_termination
+    from isaaclab_tasks.core.multi_task.mdp.commands.state_command import ResetStateBank, ResetStateLayout
 
     class _Table:
         num_tasks = 2
 
         def __init__(self) -> None:
-            self.spawn = torch.zeros(2, 13)
-            self.spawn[:, 6] = 1.0
-            self.target = self.spawn.clone()
-            self.target[0, :3] = torch.tensor([4.0, 5.0, 6.0])
-            self.target[1, :3] = torch.tensor([1.0, 2.0, 3.0])
+            spawn = torch.zeros(2, 1, 7)
+            spawn[:, :, 6] = 1.0
+            target = spawn.clone()
+            target[0, 0, :3] = torch.tensor([4.0, 5.0, 6.0])
+            target[1, 0, :3] = torch.tensor([1.0, 2.0, 3.0])
+            self.states = ResetStateBank(
+                layout=ResetStateLayout(("held_asset",), ("rigid_object",), ((),), (0, 0)),
+                root_pose=torch.cat((spawn, target)),
+                root_velocity=torch.zeros(4, 1, 6),
+                joint_position=torch.empty(4, 0),
+                joint_velocity=torch.empty(4, 0),
+            )
+            self.spawn_index = torch.tensor([0, 1])
+            self.target_index = torch.tensor([2, 3])
 
         def gather(self, rows: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-            return self.spawn[rows], self.target[rows]
+            return self.spawn_index[rows], self.target_index[rows]
 
     class _IdentitySymmetry:
         @staticmethod
@@ -381,8 +366,7 @@ def test_factory_selected_rows_match_frozen_lifecycle_oracle(monkeypatch) -> Non
     payload._device = torch.device("cpu")
     payload._states_relative = True
     payload.table = table
-    payload.reset_assets = ["held_asset"]
-    payload._held_asset_root_offset = 0
+    payload._held_asset_index = 0
     payload.randomize_command_indices = False
     payload._command_names = ["precise", "loose"]
     payload.command_indices = torch.tensor([0, 0, 1], dtype=torch.long)
@@ -416,12 +400,12 @@ def test_factory_selected_rows_match_frozen_lifecycle_oracle(monkeypatch) -> Non
     payload.orientation_error = ProxyArray(wp.zeros(num_envs, dtype=wp.float32, device="cpu"))
     payload._nearest_quat = ProxyArray(wp.zeros(num_envs, dtype=wp.quatf, device="cpu"))
 
-    reset_calls: list[tuple[torch.Tensor, torch.Tensor, list[str], bool]] = []
+    reset_calls: list[tuple[torch.Tensor, torch.Tensor]] = []
 
-    def set_reset_state(_env, states, env_ids, reset_assets, is_relative):
-        reset_calls.append((states.clone(), env_ids.clone(), reset_assets, is_relative))
+    def write_state_rows(env_ids: torch.Tensor, state_rows: torch.Tensor) -> None:
+        reset_calls.append((state_rows.clone(), env_ids.clone()))
 
-    monkeypatch.setattr(factory_payloads, "set_reset_state", set_reset_state)
+    payload._reset_state_writer = SimpleNamespace(write=write_state_rows)
     env_ids = torch.tensor([0, 2], dtype=torch.long)
     task_rows = torch.tensor([1, 0], dtype=torch.long)
     payload.bind(env_ids, task_rows)
@@ -432,9 +416,8 @@ def test_factory_selected_rows_match_frozen_lifecycle_oracle(monkeypatch) -> Non
     torch.testing.assert_close(payload.command_thresholds[env_ids], torch.tensor([[0.05, 0.05], [0.10, 0.10]]))
     torch.testing.assert_close(payload.duration_required[env_ids], torch.tensor([0.2, 0.3]))
     torch.testing.assert_close(payload.duration_held[env_ids], torch.zeros(2))
-    torch.testing.assert_close(reset_calls[0][0], table.spawn[task_rows])
+    torch.testing.assert_close(reset_calls[0][0], table.spawn_index[task_rows])
     torch.testing.assert_close(reset_calls[0][1], env_ids)
-    assert reset_calls[0][2:] == (payload.reset_assets, True)
 
     command = torch.empty(num_envs, payload.command_dim)
     error = torch.empty(num_envs, payload.error_dim)

@@ -29,7 +29,32 @@ from isaaclab.utils.configclass import configclass
 from isaaclab_tasks.core.multi_task.sensors import FastTerrainScannerCfg
 from isaaclab_tasks.utils import PresetCfg, preset
 
+from .kinematics import NewtonKinematicsBuildCfg
+from .kinematics.ik_objectives.cfg import (
+    BodyPointsCfg,
+    EntityPositionCfg,
+    EntityRotationCfg,
+    IKObjectiveGravityTorqueCfg,
+    IKObjectiveJointDefaultCfg,
+    IKObjectiveJointLimitCfg,
+    IKObjectiveMeshCollisionCfg,
+    IKObjectivePositionCfg,
+    IKObjectiveRotationCfg,
+    IKObjectiveStabilityMarginCfg,
+)
 from .terrain import mdp, mdp_presets
+from .terrain.mdp_presets.command_presets import CommandPayloadPresetCfg, CommandsPresetCfg
+from .terrain.mdp_presets.robots.robot_presets import FootBodyNamesCfg, RetargetLateralHipJointPatternCfg
+from .terrain.retarget.cfg import PatchSamplingCfg, SamplerCfg, SamplerSizingCfg
+from .terrain.retarget.criteria_cfg import (
+    CollisionCheckCfg,
+    FootPositionErrorCfg,
+    JointWithinLimitCfg,
+    LateralHipLimitCfg,
+    SolverCostOutlierCfg,
+    SupportPolygonStabilityCfg,
+)
+from .terrain.retarget.feature_extractors import XYZYawFeatures
 
 
 @configclass
@@ -49,6 +74,7 @@ class SceneCfg(InteractiveSceneCfg):
         terrain_type="generator",
         use_terrain_origins=True,
         terrain_generator=TerrainGeneratorCfg(
+            seed=0,
             size=(10.0, 10.0),
             border_width=20.0,
             num_rows=10,
@@ -109,6 +135,87 @@ class ActionsCfg:
 
 
 @configclass
+class CommandsCfg:
+    """Position command variants and complete terrain-state construction."""
+
+    goal_point = mdp.StateCommandCfg(
+        resampling_time_range=(10.0, 10.0),
+        debug_vis=True,
+        reset_assets=("robot",),
+        randomize_command_indices=False,
+        states_relative=False,
+        commands=CommandsPresetCfg(),  # type: ignore[arg-type]
+        task_table=mdp.TaskTableCfg(
+            kinematics=NewtonKinematicsBuildCfg(collapse_fixed_joints=False),
+            pool_spacing=0.5,
+            families=(
+                mdp.PositionTerrainStanceFamilyCfg(
+                    generate=(
+                        mdp.PositionTerrainStanceGenerateCfg(
+                            sampler=SamplerCfg(
+                                patch=PatchSamplingCfg(
+                                    contact_radius=0.04,
+                                    max_height_diff=0.03,
+                                    horizontal_scale=0.01,
+                                    oversample_ratio=5.0,
+                                ),
+                                sizing=SamplerSizingCfg(criteria_yield=0.10),
+                                min_contacts=3,
+                                terrain_snap_distance=0.2,
+                                outward_snap_penalty=1.0,
+                            ),
+                            foot_body_names=FootBodyNamesCfg(),  # type: ignore[arg-type]
+                        ),
+                    ),
+                    solve=mdp.PositionIKSolveCfg(
+                        objectives=(
+                            IKObjectivePositionCfg(
+                                name="foot_targets",
+                                current=BodyPointsCfg(asset="robot", bodies=FootBodyNamesCfg()),  # type: ignore[arg-type]
+                                target_bind="generated.foot_targets",
+                                weight=1.0,
+                            ),
+                            IKObjectivePositionCfg(
+                                name="base_position",
+                                current=EntityPositionCfg(asset="robot"),
+                                target_bind="generated.base_position",
+                                weight=0.05,
+                            ),
+                            IKObjectiveRotationCfg(
+                                name="base_rotation",
+                                current=EntityRotationCfg(asset="robot"),
+                                target_bind="generated.base_rotation",
+                                weight=0.5,
+                            ),
+                            IKObjectiveJointLimitCfg(weight=10.0),
+                            IKObjectiveMeshCollisionCfg(weight=2.0, margin=0.05, n_samples=4),
+                            IKObjectiveStabilityMarginCfg(weight=1.0),
+                            IKObjectiveGravityTorqueCfg(weight=0.02),
+                            IKObjectiveJointDefaultCfg(weight=0.5),
+                        ),
+                        max_iterations=200,
+                    ),
+                    criteria=(
+                        CollisionCheckCfg(n_samples=16, max_pen=0.02),
+                        JointWithinLimitCfg(limit_ratio=0.9),
+                        LateralHipLimitCfg(
+                            joint_pattern=RetargetLateralHipJointPatternCfg(),  # type: ignore[arg-type]
+                            max_angle=1.05,
+                        ),
+                        SupportPolygonStabilityCfg(),
+                        FootPositionErrorCfg(max_err=0.4, aggregate="sum"),
+                        SolverCostOutlierCfg(threshold_multiplier=3.0),
+                    ),
+                    selection=mdp.PositionFpsSelectionCfg(features=XYZYawFeatures(yaw_scale=0.1)),
+                ),
+            ),
+            pairing=mdp.PositionSameCellPairingCfg(max_spawns_per_cell=20, num_targets_per_cell=20),
+        ),
+        payload=CommandPayloadPresetCfg(),  # type: ignore[arg-type]
+    )
+
+
+@configclass
 class EventsCfg:
     # startup
     physical_material = EventTerm(
@@ -165,7 +272,7 @@ class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
     sim: SimulationCfg = SimulationCfg(physics=PositionPhysicsCfg())  # type: ignore
     observations: mdp_presets.ObservationsCfg = mdp_presets.ObservationsCfg()  # type: ignore
     actions: ActionsCfg = ActionsCfg()
-    commands: mdp_presets.CommandsCfg = mdp_presets.CommandsCfg()
+    commands: CommandsCfg = CommandsCfg()
     rewards: mdp_presets.RewardsCfg = mdp_presets.RewardsCfg()
     terminations: mdp_presets.TerminationsCfg = mdp_presets.TerminationsCfg()
     events: EventsCfg = EventsCfg()

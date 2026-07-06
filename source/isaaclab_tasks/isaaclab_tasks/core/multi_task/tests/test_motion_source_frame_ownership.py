@@ -8,27 +8,24 @@
 from __future__ import annotations
 
 import ast
-import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import torch
 
-from isaaclab.utils.math import quat_from_rotation_vector, quat_mul
+from isaaclab.utils.math import convert_quat, quat_from_rotation_vector, quat_mul
 
 from isaaclab_tasks.core.multi_task.kinematics import KinematicTree, ordered_hinge_rotation
 from isaaclab_tasks.core.multi_task.motion.data import (
-    MotionGeneralizedCoordinateClip,
-    MotionLocalBodyPoseClip,
-    MotionPoseAxisAngleClip,
     MotionSkeleton,
+    MotionSourceClip,
 )
 from isaaclab_tasks.core.multi_task.motion.data.sources import (
     CmuHumEnvSmplClip,
     LafanG1Clip,
 )
-from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1PoseFrameBuilder
 
 
 def _g1_skeleton() -> MotionSkeleton:
@@ -66,65 +63,52 @@ def _smpl_skeleton() -> MotionSkeleton:
     )
 
 
-class _ReferenceKinematics:
-    def __init__(self, skeleton: MotionSkeleton, path: Path) -> None:
-        self.body_names = list(skeleton.body_names)
-        self.joint_names = ["root", *skeleton.joint_names]
-        self.mjcf_path = str(path)
-        self.device = "cpu"
-        self.model = SimpleNamespace(
-            body_count=skeleton.num_bodies,
-            joint_coord_count=7 + skeleton.num_joints,
-            joint_dof_count=6 + skeleton.num_joints,
-        )
-
-    def eval_fk_batched_torch(
-        self,
-        joint_q: torch.Tensor,
-        joint_qd: torch.Tensor,
-        body_q: torch.Tensor,
-        body_qd: torch.Tensor,
-    ) -> None:
-        del joint_qd
-        body_q.zero_()
-        body_q[..., :3].copy_(joint_q[:, None, :3])
-        body_q[..., 3:].copy_(joint_q[:, None, 3:7])
-        body_qd.zero_()
-
-
-def test_lafan_typed_clip_preserves_direct_g1_frame_construction(tmp_path: Path) -> None:
-    """The typed source seam must not change any target-G1 frame tensor."""
-    path = tmp_path / "g1.xml"
-    path.write_text("<mujoco/>", encoding="utf-8")
+def test_lafan_typed_clip_exposes_exact_and_semantic_views_once() -> None:
+    """The LAFAN decoder exposes identical coordinate and semantic root facts."""
     skeleton = _g1_skeleton()
-    with path.open("rb") as stream:
-        reference_mjcf_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
-    builder = G1PoseFrameBuilder(
-        target_tree=KinematicTree(
-            body_names=skeleton.body_names,
-            joint_names=skeleton.joint_names,
-            parent_indices=skeleton.parent_indices,
-            joint_child_body_indices=skeleton.joint_child_body_indices,
-            joint_axes=tuple(axis for axis in skeleton.joint_axes if axis is not None),
-        ),
-        pose_coordinate_identity_sha256=skeleton.identity_sha256,
-        reference_kinematics=_ReferenceKinematics(skeleton, path),
-        reference_mjcf_sha256=reference_mjcf_sha256,
-        live_joint_names=skeleton.joint_names,
-        live_body_names=skeleton.body_names,
-    )
     pose = np.zeros((5, 30, 3), dtype=np.float32)
     root = np.arange(15, dtype=np.float32).reshape(5, 3) * 0.01
     clip = LafanG1Clip(root_translation=root, pose_axis_angle=pose, source_fps=30.0)
 
-    typed = builder.build_frames(clip, device="cpu")
-    assert isinstance(clip, MotionPoseAxisAngleClip)
-    assert isinstance(clip, MotionLocalBodyPoseClip)
-    direct = builder.build_pose_frames(torch.from_numpy(pose), torch.from_numpy(root), 30.0)
+    assert isinstance(clip, MotionSourceClip)
+    joint_q, joint_qd = clip.free_root_coordinates(skeleton, device="cpu")
+    semantic_root, semantic_rotation = clip.semantic_local_pose(skeleton, device="cpu")
+    assert joint_qd is None
+    torch.testing.assert_close(joint_q[:, :3], semantic_root)
+    torch.testing.assert_close(joint_q[:, 3:7], semantic_rotation[:, 0])
+    torch.testing.assert_close(joint_q[:, 7:], torch.zeros(5, 29))
 
-    assert typed.stored_fields == direct.stored_fields
-    for name in typed.stored_fields:
-        torch.testing.assert_close(typed.field(name), direct.field(name))
+
+def test_lafan_exact_view_does_not_materialize_semantic_rotations(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The native-coordinate route must not enter the semantic-pose route."""
+    skeleton = _g1_skeleton()
+    pose = np.zeros((5, 30, 3), dtype=np.float32)
+    root = np.arange(15, dtype=np.float32).reshape(5, 3) * 0.01
+    clip = LafanG1Clip(root_translation=root, pose_axis_angle=pose, source_fps=30.0)
+
+    def reject_semantic_materialization(*_args, **_kwargs):
+        raise AssertionError("exact decoding entered semantic materialization")
+
+    monkeypatch.setattr(LafanG1Clip, "semantic_local_pose", reject_semantic_materialization)
+
+    joint_q, joint_qd = clip.free_root_coordinates(skeleton, device="cpu")
+
+    assert joint_qd is None
+    torch.testing.assert_close(joint_q[:, :3], torch.from_numpy(root))
+    torch.testing.assert_close(joint_q[:, 7:], torch.zeros(5, 29))
+
+
+@pytest.mark.parametrize("field_name", ("root_translation", "pose_axis_angle"))
+def test_lafan_clip_rejects_nonfinite_source_rows(field_name: str) -> None:
+    """The typed source boundary rejects non-finite positions and rotations once."""
+    values = {
+        "root_translation": np.zeros((5, 3), dtype=np.float32),
+        "pose_axis_angle": np.zeros((5, 30, 3), dtype=np.float32),
+    }
+    values[field_name].reshape(-1)[0] = np.nan
+
+    with pytest.raises(ValueError, match="finite"):
+        LafanG1Clip(**values, source_fps=30.0)
 
 
 def test_cmu_typed_clip_preserves_humenv_local_rotation_decode() -> None:
@@ -139,17 +123,17 @@ def test_cmu_typed_clip_preserves_humenv_local_rotation_decode() -> None:
         source_fps=30.0,
     )
 
-    assert isinstance(clip, MotionGeneralizedCoordinateClip)
-    assert isinstance(clip, MotionLocalBodyPoseClip)
-    rotation = clip.local_body_rotation_wxyz(_smpl_skeleton(), device="cpu")
+    assert isinstance(clip, MotionSourceClip)
+    root, rotation = clip.semantic_local_pose(_smpl_skeleton(), device="cpu")
     half_angle = 0.5 * torch.from_numpy(qpos[:, 7])
     expected = torch.stack(
         (torch.cos(half_angle), torch.sin(half_angle), torch.zeros_like(half_angle), torch.zeros_like(half_angle)),
         dim=-1,
     )
 
-    torch.testing.assert_close(rotation[:, 0], torch.tensor((1.0, 0.0, 0.0, 0.0)).expand(frame_count, 4))
-    torch.testing.assert_close(rotation[:, 1], expected)
+    torch.testing.assert_close(root, torch.zeros(frame_count, 3))
+    torch.testing.assert_close(rotation[:, 0], torch.tensor((0.0, 0.0, 0.0, 1.0)).expand(frame_count, 4))
+    torch.testing.assert_close(rotation[:, 1], convert_quat(expected, to="xyzw"))
 
 
 def test_ordered_hinge_rotation_preserves_source_multiply_order_bitwise() -> None:
@@ -178,13 +162,20 @@ def test_kinematic_tree_is_derived_from_reference_model(tmp_path: Path) -> None:
         mjcf_path=str(path),
         body_names=["pelvis", *(f"body_{index}" for index in range(1, 30))],
         joint_names=["root", *(f"joint_{index}" for index in range(29))],
-        model=SimpleNamespace(
+        joint_q_names=[*(f"root_{index}" for index in range(7)), *(f"joint_{index}" for index in range(29))],
+        topology=SimpleNamespace(
             body_count=30,
             joint_count=30,
-            joint_parent=torch.tensor((-1, *range(29)), dtype=torch.int32),
-            joint_child=torch.arange(30, dtype=torch.int32),
-            joint_qd_start=torch.tensor((0, 6, *range(7, 36)), dtype=torch.int32),
-            joint_axis=axes,
+            coordinate_count=36,
+            joint_parent=np.asarray((-1, *range(29)), dtype=np.int32),
+            joint_child=np.arange(30, dtype=np.int32),
+            joint_q_start=np.asarray((0, 7, *range(8, 37)), dtype=np.int32),
+            joint_qd_start=np.asarray((0, 6, *range(7, 36)), dtype=np.int32),
+            joint_dof_dim=np.asarray(((0, 6), *((0, 1),) * 29), dtype=np.int32),
+            joint_axis=axes.numpy(),
+            joint_limit_lower=np.full(35, -1.0, dtype=np.float32),
+            joint_limit_upper=np.full(35, 1.0, dtype=np.float32),
+            body_parent=np.asarray((-1, *range(29)), dtype=np.int32),
         ),
     )
 
@@ -192,7 +183,7 @@ def test_kinematic_tree_is_derived_from_reference_model(tmp_path: Path) -> None:
 
     assert target.parent_indices == (-1, *range(29))
     assert target.joint_child_body_indices == tuple(range(1, 30))
-    assert target.joint_axes == ((1.0, 0.0, 0.0),) * 29
+    assert target.coordinate_axes == ((1.0, 0.0, 0.0),) * 29
     assert target.root_body_index == 0
 
 
@@ -259,7 +250,7 @@ def test_source_declarations_are_visible_at_the_root_and_old_facades_are_absent(
     assert 'identifier="cmu_humenv_smpl"' in root_source
     assert 'identifier="lafan_g1_29dof"' in root_source
     assert "from .motion.data.sources import (" in root_source
-    assert "reference_kinematics_factory=smpl_humenv_reference_kinematics" in root_source
+    assert "reference_kinematics_factory=smpl_reference_kinematics" in root_source
     assert not (motion_root / "config" / "sources.py").exists()
     assert not (motion_root / "config" / "source_skeletons.py").exists()
 
@@ -312,11 +303,11 @@ def test_g1_robot_schema_does_not_alias_lafan_source_schema() -> None:
     assert "g1_humenv_frame_builder" not in robot_text
 
     materializer_text = (g1_root / "reference.py").read_text(encoding="utf-8")
-    assert "if source.joint_names != target.joint_names:" in materializer_text
+    assert "source.joint_names == target.joint_names" in materializer_text
     assert "G1HumEnvFrameBuilder" not in robot_text
     assert "cmu_to_g1_frame_builder" not in robot_text
     assert "retargeted_lafan_to_g1_frame_builder" not in robot_text
-    assert "if source.body_names != target.body_names:" in materializer_text
+    assert "source.body_names == target.body_names" in materializer_text
 
     articulation = ast.parse((g1_root / "articulation.py").read_text(encoding="utf-8"))
     assignments = {
@@ -349,18 +340,18 @@ def test_smpl_articulation_does_not_alias_dataset_coordinates() -> None:
     assert "data.sources" not in source
 
 
-def test_smpl_robot_does_not_own_humenv_reference_interpreter() -> None:
-    """HumEnv interpreter assets and construction belong to the source-coordinate owner."""
+def test_smpl_target_reference_model_is_robot_owned() -> None:
+    """The reusable target Newton model belongs to SMPL, not one concrete motion source."""
     motion_root = Path(__file__).parents[1] / "motion"
     robot_source = (motion_root / "robots" / "smpl" / "reference.py").read_text(encoding="utf-8")
     coordinate_source = (motion_root / "data" / "sources" / "cmu_humenv_smpl_coordinates.py").read_text(
         encoding="utf-8"
     )
 
-    for forbidden in ("SMPL_HUMENV_MJCF_PATH", "def smpl_reference_kinematics"):
-        assert forbidden not in robot_source
-    assert "def smpl_humenv_reference_kinematics" in coordinate_source
-
+    assert "SMPL_HUMENV_MJCF_PATH" in robot_source
+    assert "def smpl_reference_kinematics" in robot_source
+    assert "SMPL_HUMENV_MJCF_PATH" not in coordinate_source
+    assert "def smpl_reference_kinematics" not in coordinate_source
     assert "file_sha256(reference.mjcf_path)" in robot_source
     assert "reference_mjcf_sha256 != SMPL_HUMENV_MJCF_SHA256" in robot_source
 
@@ -383,6 +374,27 @@ def test_g1_robot_does_not_own_generic_kinematics_or_temporal_math() -> None:
         "MotionSkeleton |",
     ):
         assert forbidden not in text
+
+
+def test_cross_robot_builders_resolve_source_owned_landmarks() -> None:
+    """Target robot modules must not encode the other robot's source body names."""
+    motion_root = Path(__file__).parents[1] / "motion"
+    smpl_reference = (motion_root / "robots" / "smpl" / "reference.py").read_text(encoding="utf-8")
+    g1_reference = (motion_root / "robots" / "g1" / "reference.py").read_text(encoding="utf-8")
+    retarget = (motion_root / "retarget.py").read_text(encoding="utf-8")
+
+    for source_body_name in (
+        "left_hip_pitch_link",
+        "left_hip_yaw_link",
+        "right_hip_pitch_link",
+        "left_wrist_roll_link",
+        "right_wrist_yaw_link",
+    ):
+        assert source_body_name not in smpl_reference
+    assert "source_skeleton.landmarks" not in smpl_reference
+    assert "source_skeleton.landmarks" not in g1_reference
+    assert "self.source_skeleton.landmarks" in retarget
+    assert "KinematicTreeRotationProjection" not in g1_reference
 
 
 def test_cmu_source_reuses_shared_ordered_hinge_rotation() -> None:

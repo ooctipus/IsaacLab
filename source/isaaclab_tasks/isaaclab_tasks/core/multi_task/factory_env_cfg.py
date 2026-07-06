@@ -40,20 +40,31 @@ from .factory.mdp_presets import RobotActionsCfg
 from .factory.reset_env_cfg import FACTORY_RESET_SAMPLER_PRESETS
 from .factory.retarget import (
     BoardLibraryCfg,
-    CollisionAvoidanceCfg,
     CollisionCheckCfg,
-    FactoryIKPipelineCfg,
+    FactoryApproachTargetGenerateCfg,
+    FactoryAssemblyPoseGenerateCfg,
+    FactoryFamilyCfg,
+    FactoryFpsSelectionCfg,
+    FactoryFreePoseGenerateCfg,
+    FactoryGeometryCfg,
+    FactoryGraspTargetGenerateCfg,
+    FactoryHeldPoseBoundsCriterionCfg,
+    FactoryIKSolveCfg,
     FactoryRobotCfg,
-    FingerPinObjectiveCfg,
+    FactoryRobotSeedGenerateCfg,
+    FactorySupportPoseGenerateCfg,
+    FactoryTargetErrorCriterionCfg,
     GraspSamplingCfg,
-    IKSolveCfg,
-    JointDefaultObjectiveCfg,
-    JointLimitObjectiveCfg,
     JointWithinLimitCfg,
-    PlacementSamplingCfg,
-    ReachRowsCfg,
 )
-from .factory.viz.sampler_images import log_factory_board_grid
+from .kinematics import NewtonKinematicsBuildCfg
+from .kinematics.ik_objectives.cfg import (
+    BodyPointsCfg,
+    IKObjectiveJointDefaultCfg,
+    IKObjectiveJointLimitCfg,
+    IKObjectiveJointPinCfg,
+    IKObjectivePositionCfg,
+)
 
 
 @configclass
@@ -167,12 +178,23 @@ class FactoryEventCfg:
 
 
 @configclass
+class FactoryResetAssetsCfg(PresetCfg):
+    """Complete reset-entity tuple selected by the independent task variant."""
+
+    default: tuple[str, ...] = ("robot", "nistboard", "fixed_asset", "held_asset")
+    gear_mesh_small: tuple[str, ...] = default + ("medium_gear", "large_gear")
+    gear_mesh_medium: tuple[str, ...] = default + ("small_gear", "large_gear")
+    gear_mesh_large: tuple[str, ...] = default + ("small_gear", "medium_gear")
+
+
+@configclass
 class FactoryCommandsCfg:
     """Command specifications for Factory."""
 
     reset_state = mdp.StateCommandCfg(
         resampling_time_range=(1.0e9, 1.0e9),
         debug_vis=True,
+        reset_assets=FactoryResetAssetsCfg(),  # type: ignore[arg-type]
         randomize_command_indices=False,
         states_relative=True,
         commands={
@@ -183,21 +205,22 @@ class FactoryCommandsCfg:
             )
         },
         payload=mdp.FactoryAssemblyPayloadCfg(
-            reset_assets=["nistboard", "fixed_asset", "held_asset", "robot"],
             held_asset_cfg=SceneEntityCfg("held_asset"),
             fixed_asset_cfg=SceneEntityCfg("fixed_asset"),
             robot_cfg=SceneEntityCfg("robot"),
             symmetry=HeldAssetSymmetryCfg(),  # type: ignore[arg-type]
         ),
         task_table=mdp.FactoryResetStateTableCfg(
-            pipeline_cfg=FactoryIKPipelineCfg(
-                # identity: scene entities + robot presets -- USD paths, stance, and
-                # device resolve from the live env at wiring time (no assumptions here)
-                board=BoardLibraryCfg(  # stage 1: the WORLD cells (terrain-grid analog)
+            kinematics=NewtonKinematicsBuildCfg(collapse_fixed_joints=False),
+            geometry=FactoryGeometryCfg(
+                held_asset_cfg=SceneEntityCfg("held_asset"),
+                board=BoardLibraryCfg(
                     board_asset_cfg=SceneEntityCfg("nistboard"),
                     fixed_asset_cfg=SceneEntityCfg("fixed_asset"),
                     fixed_asset_map=FixedAssetMapCfg(),  # type: ignore[arg-type]
                     num_boards=16,
+                    library_oversample=4.0,
+                    oversample=10.0,
                     pose_range={
                         "x": (-0.1, 0.1),
                         "y": (-0.1, 0.1),
@@ -207,47 +230,258 @@ class FactoryCommandsCfg:
                         "yaw": (-0.8, 0.8),
                     },
                 ),
-                placement=PlacementSamplingCfg(  # stage 2: states WITHIN each configuration
-                    held_asset_cfg=SceneEntityCfg("held_asset"),
-                    assembly_profile=FactoryAssemblyProfileCfg(),  # type: ignore[arg-type]
-                    align_offset=HeldAssetAlignOffsetCfg(),  # type: ignore[arg-type]
-                    placement_weights={"on_bolt": 0.5, "on_table": 0.2, "in_air": 0.3},
-                    assembly_bands={
-                        "near_seated": (0.0, 0.33),
-                        "mid_insertion": (0.33, 0.85),
-                        "above_tip": (0.85, 1.6),
-                    },
-                    grasp=GraspSamplingCfg(  # antipodal pairs on the held mesh
-                        friction_mu=0.5,
-                        aperture_range=(0.002, 0.08),
-                        n_pairs_retained=512,
-                    ),
-                ),
-                # stage 3 budget: rows_per_board is the requested output; these
-                # convert it into the one-shot raw IK candidate budget.
-                yield_ratio=0.05,
-                diversity_knob=4.0,
-                robot=FactoryRobotCfg(  # stage 3: place the robot on each candidate + accept
+                robot=FactoryRobotCfg(
                     asset_cfg=SceneEntityCfg("robot"),
                     ee_body_name=EndEffectorBodyCfg(),  # type: ignore[arg-type]
                     finger_body_names=FingerBodyNamesCfg(),  # type: ignore[arg-type]
                     gripper_body_names=GripperBodyNamesCfg(),  # type: ignore[arg-type]
-                    solve=IKSolveCfg(
-                        iterations=250,
-                        refine_iterations=40,
-                        pos_tol=0.004,
-                        objectives=[  # soft constraint terms; membership enables (mirror of criteria)
-                            JointLimitObjectiveCfg(weight=10.0),
-                            JointDefaultObjectiveCfg(weight=0.025),  # gentle arm centering (0.05 kills mm-reach)
-                            FingerPinObjectiveCfg(weight=10.0),
-                            CollisionAvoidanceCfg(weight=20.0, margin=0.001, n_samples=48),
-                        ],
+                ),
+            ),
+            families=(
+                FactoryFamilyCfg(
+                    name="assembly_grasp",
+                    fraction=0.25,
+                    candidate_oversample=1280.0,
+                    generate=(
+                        FactoryAssemblyPoseGenerateCfg(
+                            assembly_profile=FactoryAssemblyProfileCfg(),  # type: ignore[arg-type]
+                            align_offset=HeldAssetAlignOffsetCfg(),  # type: ignore[arg-type]
+                            assembly_bands={
+                                "near_seated": (0.0, 0.33),
+                                "mid_insertion": (0.33, 0.85),
+                                "above_tip": (0.85, 1.6),
+                            },
+                        ),
+                        FactoryGraspTargetGenerateCfg(
+                            sampling=GraspSamplingCfg(
+                                friction_mu=0.5,
+                                aperture_range=(0.002, 0.08),
+                                n_pairs_retained=512,
+                            ),
+                            grasps_per_placement=8,
+                        ),
+                        FactoryRobotSeedGenerateCfg(ik_seeds_per_grasp=4),
                     ),
-                    criteria=[
-                        JointWithinLimitCfg(limit_ratio=0.8),  # not parked against a joint stop
+                    solve=FactoryIKSolveCfg(
+                        objectives=(
+                            IKObjectivePositionCfg(
+                                name="grasp",
+                                current=BodyPointsCfg(
+                                    asset="robot",
+                                    bodies=FingerBodyNamesCfg(),  # type: ignore[arg-type]
+                                ),
+                                target_bind="generated.grasp_points",
+                                weight=1.0,
+                            ),
+                            IKObjectiveJointLimitCfg(weight=10.0),
+                            IKObjectiveJointDefaultCfg(weight=0.025),
+                            IKObjectiveJointPinCfg(weight=10.0),
+                        ),
+                    ),
+                    criteria=(
+                        FactoryTargetErrorCriterionCfg(max_error_m=0.004),
+                        FactoryHeldPoseBoundsCriterionCfg(
+                            bounds={"x": (0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)}
+                        ),
+                        JointWithinLimitCfg(limit_ratio=0.8),
                         CollisionCheckCfg(n_samples=240, max_pen=0.0005, self_max_pen=0.002, adjacency_hops=2),
-                    ],
-                    reach=ReachRowsCfg(per_grasp=1, standoff_range=(0.03, 0.15), clearance=0.005),
+                    ),
+                    selection=FactoryFpsSelectionCfg(position_frame="fixed_asset"),
+                ),
+                FactoryFamilyCfg(
+                    name="assembly_approach",
+                    fraction=0.25,
+                    candidate_oversample=80.0,
+                    generate=(
+                        FactoryAssemblyPoseGenerateCfg(
+                            assembly_profile=FactoryAssemblyProfileCfg(),  # type: ignore[arg-type]
+                            align_offset=HeldAssetAlignOffsetCfg(),  # type: ignore[arg-type]
+                            assembly_bands={
+                                "near_seated": (0.0, 0.33),
+                                "mid_insertion": (0.33, 0.85),
+                                "above_tip": (0.85, 1.6),
+                            },
+                        ),
+                        FactoryGraspTargetGenerateCfg(
+                            sampling=GraspSamplingCfg(
+                                friction_mu=0.5,
+                                aperture_range=(0.002, 0.08),
+                                n_pairs_retained=512,
+                            ),
+                            grasps_per_placement=8,
+                        ),
+                        FactoryRobotSeedGenerateCfg(ik_seeds_per_grasp=4),
+                        FactoryApproachTargetGenerateCfg(standoff_range=(0.03, 0.15), clearance=0.005),
+                    ),
+                    solve=FactoryIKSolveCfg(
+                        objectives=(
+                            IKObjectivePositionCfg(
+                                name="grasp",
+                                current=BodyPointsCfg(
+                                    asset="robot",
+                                    bodies=FingerBodyNamesCfg(),  # type: ignore[arg-type]
+                                ),
+                                target_bind="generated.grasp_points",
+                                weight=1.0,
+                            ),
+                            IKObjectiveJointLimitCfg(weight=10.0),
+                            IKObjectiveJointDefaultCfg(weight=0.025),
+                            IKObjectiveJointPinCfg(weight=10.0),
+                        ),
+                    ),
+                    criteria=(
+                        FactoryTargetErrorCriterionCfg(max_error_m=0.004),
+                        FactoryHeldPoseBoundsCriterionCfg(
+                            bounds={"x": (0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)}
+                        ),
+                        JointWithinLimitCfg(limit_ratio=0.8),
+                        CollisionCheckCfg(n_samples=240, max_pen=0.0005, self_max_pen=0.002, adjacency_hops=2),
+                    ),
+                    selection=FactoryFpsSelectionCfg(position_frame="fixed_asset"),
+                ),
+                FactoryFamilyCfg(
+                    name="support_grasp",
+                    fraction=0.1,
+                    candidate_oversample=1280.0,
+                    generate=(
+                        FactorySupportPoseGenerateCfg(
+                            pose_range={"x": (0.25, 0.6), "y": (-0.25, 0.25), "yaw": (-3.14, 3.14)},
+                            table_height=0.04,
+                        ),
+                        FactoryGraspTargetGenerateCfg(
+                            sampling=GraspSamplingCfg(
+                                friction_mu=0.5,
+                                aperture_range=(0.002, 0.08),
+                                n_pairs_retained=512,
+                            ),
+                            grasps_per_placement=8,
+                        ),
+                        FactoryRobotSeedGenerateCfg(ik_seeds_per_grasp=4),
+                    ),
+                    solve=FactoryIKSolveCfg(
+                        objectives=(
+                            IKObjectivePositionCfg(
+                                name="grasp",
+                                current=BodyPointsCfg(
+                                    asset="robot",
+                                    bodies=FingerBodyNamesCfg(),  # type: ignore[arg-type]
+                                ),
+                                target_bind="generated.grasp_points",
+                                weight=1.0,
+                            ),
+                            IKObjectiveJointLimitCfg(weight=10.0),
+                            IKObjectiveJointDefaultCfg(weight=0.025),
+                            IKObjectiveJointPinCfg(weight=10.0),
+                        ),
+                    ),
+                    criteria=(
+                        FactoryTargetErrorCriterionCfg(max_error_m=0.004),
+                        FactoryHeldPoseBoundsCriterionCfg(
+                            bounds={"x": (0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)}
+                        ),
+                        JointWithinLimitCfg(limit_ratio=0.8),
+                        CollisionCheckCfg(n_samples=240, max_pen=0.0005, self_max_pen=0.002, adjacency_hops=2),
+                    ),
+                    selection=FactoryFpsSelectionCfg(position_frame="world", position_axes=(0, 1)),
+                ),
+                FactoryFamilyCfg(
+                    name="support_approach",
+                    fraction=0.1,
+                    candidate_oversample=80.0,
+                    generate=(
+                        FactorySupportPoseGenerateCfg(
+                            tag="on_table",
+                            pose_range={"x": (0.25, 0.6), "y": (-0.25, 0.25), "yaw": (-3.14, 3.14)},
+                            table_height=0.04,
+                        ),
+                        FactoryGraspTargetGenerateCfg(
+                            sampling=GraspSamplingCfg(
+                                friction_mu=0.5,
+                                aperture_range=(0.002, 0.08),
+                                n_pairs_retained=512,
+                            ),
+                            grasps_per_placement=8,
+                        ),
+                        FactoryRobotSeedGenerateCfg(ik_seeds_per_grasp=4),
+                        FactoryApproachTargetGenerateCfg(standoff_range=(0.03, 0.15), clearance=0.005),
+                    ),
+                    solve=FactoryIKSolveCfg(
+                        objectives=(
+                            IKObjectivePositionCfg(
+                                name="grasp",
+                                current=BodyPointsCfg(
+                                    asset="robot",
+                                    bodies=FingerBodyNamesCfg(),  # type: ignore[arg-type]
+                                ),
+                                target_bind="generated.grasp_points",
+                                weight=1.0,
+                            ),
+                            IKObjectiveJointLimitCfg(weight=10.0),
+                            IKObjectiveJointDefaultCfg(weight=0.025),
+                            IKObjectiveJointPinCfg(weight=10.0),
+                        ),
+                    ),
+                    criteria=(
+                        FactoryTargetErrorCriterionCfg(max_error_m=0.004),
+                        FactoryHeldPoseBoundsCriterionCfg(
+                            bounds={"x": (0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)}
+                        ),
+                        JointWithinLimitCfg(limit_ratio=0.8),
+                        CollisionCheckCfg(n_samples=240, max_pen=0.0005, self_max_pen=0.002, adjacency_hops=2),
+                    ),
+                    selection=FactoryFpsSelectionCfg(position_frame="world", position_axes=(0, 1)),
+                ),
+                FactoryFamilyCfg(
+                    name="free_grasp",
+                    fraction=0.3,
+                    candidate_oversample=1280.0,
+                    generate=(
+                        FactoryFreePoseGenerateCfg(
+                            tag="in_air",
+                            pose_range={
+                                "x": (-0.15, 0.5),
+                                "y": (-0.5, 0.5),
+                                "z": (0.015, 0.2),
+                                "roll": (-1.57, 1.57),
+                                "pitch": (-1.57, 1.57),
+                                "yaw": (-3.14, 3.14),
+                            },
+                        ),
+                        FactoryGraspTargetGenerateCfg(
+                            sampling=GraspSamplingCfg(
+                                friction_mu=0.5,
+                                aperture_range=(0.002, 0.08),
+                                n_pairs_retained=512,
+                            ),
+                            grasps_per_placement=8,
+                        ),
+                        FactoryRobotSeedGenerateCfg(ik_seeds_per_grasp=4),
+                    ),
+                    solve=FactoryIKSolveCfg(
+                        objectives=(
+                            IKObjectivePositionCfg(
+                                name="grasp",
+                                current=BodyPointsCfg(
+                                    asset="robot",
+                                    bodies=FingerBodyNamesCfg(),  # type: ignore[arg-type]
+                                ),
+                                target_bind="generated.grasp_points",
+                                weight=1.0,
+                            ),
+                            IKObjectiveJointLimitCfg(weight=10.0),
+                            IKObjectiveJointDefaultCfg(weight=0.025),
+                            IKObjectiveJointPinCfg(weight=10.0),
+                        ),
+                    ),
+                    criteria=(
+                        FactoryTargetErrorCriterionCfg(max_error_m=0.004),
+                        FactoryHeldPoseBoundsCriterionCfg(
+                            bounds={"x": (0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)}
+                        ),
+                        JointWithinLimitCfg(limit_ratio=0.8),
+                        CollisionCheckCfg(n_samples=240, max_pen=0.0005, self_max_pen=0.002, adjacency_hops=2),
+                    ),
+                    selection=FactoryFpsSelectionCfg(position_frame="world"),
                 ),
             ),
             rows_per_board=50,  # table size = this x board.num_boards
@@ -259,10 +493,6 @@ class FactoryCommandsCfg:
                 default=None,
                 seated_air=[("near_seated", "in_air"), ("in_air", "near_seated")],
             ),
-            # reject reset states whose nut spawns outside the oob box (else they
-            # terminate on step 0). Keep in sync with SuccessTerminationsCfg.oob.
-            nut_bounds={"x": (-0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)},
-            stash_viz_geometry=True,  # precompute silhouettes for the success-grid image logger
         ),
     )
 
@@ -303,8 +533,6 @@ class FactoryCurriculumsCfg:
             # rasterization-bound (not cacheable -- colors change every call), so the
             # logger draws 8 states/board at dpi 70 (~1.5 s total); the period is kept
             # large to stay negligible against training throughput.
-            "sampler_visual_logger": log_factory_board_grid,
-            "sampler_visual_log_period": 2000,
         },
     )
 

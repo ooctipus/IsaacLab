@@ -273,7 +273,11 @@ def test_success_rate_sampler_owns_rates_and_binds_selected_rows():
 def test_factory_sampler_config_separates_command_and_curriculum_state():
     from isaaclab_tasks.core.multi_task.curriculum import ValueShiftSamplingStrategyCfg
     from isaaclab_tasks.core.multi_task.factory.reset_env_cfg import FACTORY_RESET_SAMPLER_PRESETS
-    from isaaclab_tasks.core.multi_task.factory_env_cfg import FactoryCommandsCfg, FactoryCurriculumsCfg
+    from isaaclab_tasks.core.multi_task.factory_env_cfg import (
+        FactoryCommandsCfg,
+        FactoryCurriculumsCfg,
+        FactoryResetAssetsCfg,
+    )
 
     commands = FactoryCommandsCfg()
     curriculum = FactoryCurriculumsCfg()
@@ -281,14 +285,23 @@ def test_factory_sampler_config_separates_command_and_curriculum_state():
     assert list(commands.reset_state.commands.keys()) == ["assembly_asset"]
     assert commands.reset_state.commands["assembly_asset"].position_threshold == 0.005
     assert commands.reset_state.commands["assembly_asset"].duration == (0.0, 1.0)
-    assert commands.reset_state.payload.reset_assets == ["nistboard", "fixed_asset", "held_asset", "robot"]
-    assert commands.reset_state.task_table.pipeline_cfg is not None
-    pcfg = commands.reset_state.task_table.pipeline_cfg
-    assert pcfg.yield_ratio > 0.0
-    assert pcfg.diversity_knob > 0.0
-    assert not hasattr(pcfg.placement, "placements_per_board")
-    assert not hasattr(pcfg.placement.grasp, "grasps_per_placement")
-    assert not hasattr(pcfg.placement.grasp, "ik_seeds_per_grasp")
+    assert isinstance(commands.reset_state.reset_assets, FactoryResetAssetsCfg)
+    assert commands.reset_state.reset_assets.default == ("robot", "nistboard", "fixed_asset", "held_asset")
+    assert len(commands.reset_state.reset_assets.gear_mesh_small) == 6
+    table_cfg = commands.reset_state.task_table
+    assert table_cfg.geometry.board.num_boards == 16
+    assert table_cfg.geometry.board.library_oversample == 4.0
+    assert table_cfg.geometry.board.oversample == 10.0
+    assert tuple(family.name for family in table_cfg.families) == (
+        "assembly_grasp",
+        "assembly_approach",
+        "support_grasp",
+        "support_approach",
+        "free_grasp",
+    )
+    assert sum(family.fraction for family in table_cfg.families) == 1.0
+    assert all(family.candidate_oversample >= 1.0 for family in table_cfg.families)
+    assert all(family.generate and family.solve is not None and family.criteria for family in table_cfg.families)
     assert int(commands.reset_state.task_table.rows_per_board) > 0
     assert commands.reset_state.task_table.targets_per_board == commands.reset_state.task_table.rows_per_board
     assert commands.reset_state.randomize_command_indices is False

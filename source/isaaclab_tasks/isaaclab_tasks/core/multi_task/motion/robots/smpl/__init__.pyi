@@ -4,15 +4,11 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 __all__ = [
-    "SmplGeneralizedCoordinateFrameBuilder",
-    "smpl_generalized_coordinate_frame_builder",
-    "smpl_g1_hinge_frame_builder",
-    "smpl_live_joint_source_names",
+    "SmplFrameBuilder",
+    "smpl_frame_builder",
+    "smpl_reference_kinematics",
+    "smpl_live_joint_mujoco_names",
 ]
 
-from .frames import smpl_live_joint_source_names
-from .reference import (
-    SmplGeneralizedCoordinateFrameBuilder,
-    smpl_generalized_coordinate_frame_builder,
-    smpl_g1_hinge_frame_builder,
-)
+from .articulation import smpl_live_joint_mujoco_names
+from .reference import SmplFrameBuilder, smpl_frame_builder, smpl_reference_kinematics

@@ -35,8 +35,9 @@ from isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_tracking import (
     ForwardBackwardTrackingCurriculum,
     ForwardBackwardTrackingEvaluation,
     forward_backward_tracking_evaluator,
-    forward_backward_tracking_priorities,
+    forward_backward_tracking_priority_scores,
 )
+from isaaclab_tasks.core.multi_task.tests.motion_table_test_utils import motion_task_table
 
 _CLIP_IDS = ("clip_a", "clip_b")
 _G1_JOINT_NAMES = tuple(f"joint_{index}" for index in range(29))
@@ -311,7 +312,7 @@ def _table() -> MotionTaskTable:
         body_linear_velocity=torch.zeros(frame_count, 31, 3),
         body_angular_velocity=torch.zeros(frame_count, 31, 3),
     )
-    return MotionTaskTable(
+    return motion_task_table(
         index,
         frames,
         _G1_JOINT_NAMES,
@@ -446,7 +447,7 @@ def _smpl_tracking_expert_table(
         body_linear_velocity=body_linear_velocity,
         body_angular_velocity=body_angular_velocity,
     )
-    table = MotionTaskTable(
+    table = motion_task_table(
         index,
         frames,
         tuple(f"joint_{index}" for index in range(69)),
@@ -618,10 +619,10 @@ def test_tracking_priority_formula_requires_stable_order_and_clamps_emd() -> Non
         duration_seconds=evaluation.duration_seconds,
     )
     with pytest.raises(ValueError, match="stable sequence order"):
-        forward_backward_tracking_priorities(reversed_evaluation, _CLIP_IDS, "cpu", **_PRIORITY_PROTOCOL)
+        forward_backward_tracking_priority_scores(reversed_evaluation, _CLIP_IDS, "cpu", **_PRIORITY_PROTOCOL)
 
-    priorities = forward_backward_tracking_priorities(evaluation, _CLIP_IDS, "cpu", **_PRIORITY_PROTOCOL)
-    torch.testing.assert_close(priorities, torch.tensor((2.0, 16.0)))
+    scores = forward_backward_tracking_priority_scores(evaluation, _CLIP_IDS, "cpu", **_PRIORITY_PROTOCOL)
+    torch.testing.assert_close(scores, torch.tensor((2.0, 16.0)))
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for the production EMD backend.")
@@ -1210,10 +1211,14 @@ def test_tracking_caps_long_clips_before_the_native_timeout_edge() -> None:
     torch.testing.assert_close(evaluation.coverage_fraction, torch.ones(2, dtype=torch.float64, device=expert.device))
 
 
-def _curriculum_environment() -> tuple[_Environment, ForwardBackwardExpertBuffer, _Algorithm]:
+def _curriculum_environment(
+    base_priorities: torch.Tensor | None = None,
+) -> tuple[_Environment, ForwardBackwardExpertBuffer, _Algorithm]:
     table = _table()
     env = _Environment(table)
     priorities = env.unwrapped.command_manager.get_term("motion").payload.sampler.clip_priorities
+    if base_priorities is not None:
+        priorities.copy_(base_priorities)
     expert = _expert(priorities)
     return env, expert, _Algorithm(expert)
 
@@ -1242,6 +1247,34 @@ def test_curriculum_updates_one_shared_priority_owner_then_resets() -> None:
     assert env.reset_count == 1
     assert observations is algorithm.resets[0][0]
     assert torch.all(algorithm.resets[0][1])
+
+
+def test_curriculum_multiplies_immutable_base_priorities_without_compounding() -> None:
+    env, expert, algorithm = _curriculum_environment(torch.tensor((0.25, 1.0)))
+    coordinator = _curriculum(env, algorithm)
+
+    coordinator.update()
+    torch.testing.assert_close(expert.priorities, torch.tensor((0.5, 16.0)))
+
+    coordinator.update()
+    torch.testing.assert_close(expert.priorities, torch.tensor((0.5, 16.0)))
+
+
+def test_curriculum_checkpoint_restores_dynamic_priorities_and_retains_base_mass() -> None:
+    env, expert, algorithm = _curriculum_environment(torch.tensor((0.25, 1.0)))
+    coordinator = _curriculum(env, algorithm)
+    coordinator.update()
+    expert_state = expert.state_dict()
+    curriculum_state = coordinator.state_dict()
+
+    restored_env, restored_expert, restored_algorithm = _curriculum_environment(torch.tensor((0.25, 1.0)))
+    restored_coordinator = _curriculum(restored_env, restored_algorithm)
+    restored_expert.load_state_dict(expert_state)
+    restored_coordinator.load_state_dict(curriculum_state)
+
+    torch.testing.assert_close(restored_expert.priorities, torch.tensor((0.5, 16.0)))
+    restored_coordinator.update()
+    torch.testing.assert_close(restored_expert.priorities, torch.tensor((0.5, 16.0)))
 
 
 def test_curriculum_uses_wrapper_and_restores_algorithm_owned_modes() -> None:

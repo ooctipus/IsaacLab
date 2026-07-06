@@ -12,17 +12,13 @@ __all__ = [
     "LafanG1Clip",
     "LafanG1JoblibClips",
     "cmu_humenv_smpl_skeleton",
-    "smpl_humenv_reference_kinematics",
     "lafan_g1_29dof_skeleton",
     "open_cmu_humenv_smpl_source",
     "open_lafan_g1_source",
 ]
 
 from .cmu_humenv_smpl import CmuHumEnvSmplClip, CmuHumEnvSmplClips, open_cmu_humenv_smpl_source
-from .cmu_humenv_smpl_coordinates import (
-    cmu_humenv_smpl_skeleton,
-    smpl_humenv_reference_kinematics,
-)
+from .cmu_humenv_smpl_coordinates import cmu_humenv_smpl_skeleton
 from .lafan_g1_29dof import LafanG1Clip, LafanG1JoblibClips, open_lafan_g1_source
 from .lafan_g1_29dof_coordinates import (
     LAFAN_G1_BODY_NAMES,

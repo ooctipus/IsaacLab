@@ -19,7 +19,6 @@ from isaaclab_tasks.utils import preset
 
 import isaaclab_assets.robots.anymal as anymal
 
-from ...retarget.criteria import BaseZError, FootPositionError, JointMargin
 from .robot_presets import (
     AsyncFootPairsCfg,
     BaseBodyNameCfg,
@@ -27,7 +26,6 @@ from .robot_presets import (
     FootBodyNamesCfg,
     HeightScannerPrimPathCfg,
     NonFootContactBodyNamesCfg,
-    RetargetJointRegularizeTargetsCfg,
     RetargetLateralHipJointPatternCfg,
     RobotArticulationCfg,
     SyncFootPairsCfg,
@@ -100,14 +98,3 @@ ANYMAL_C_LATERAL_HIP_PATTERN = ".*HAA"
 """Regex matching ANYmal-C lateral hip joint names."""
 
 RetargetLateralHipJointPatternCfg.anymal_c = ANYMAL_C_LATERAL_HIP_PATTERN
-# Pull lateral hips toward 0 (base near support-polygon centroid) and knees
-# toward their init-pose flexion (front knees tuck forward, hind knees back).
-# Hip flexion/extension is left free so IK can adjust stride.
-RetargetJointRegularizeTargetsCfg.anymal_c = {
-    ANYMAL_C_LATERAL_HIP_PATTERN: 0.0,
-    ".*F_KFE": -0.8,
-    ".*H_KFE": 0.8,
-}
-
-# Re-export generic criteria used by existing terrain tuning scripts.
-__all__ += ["FootPositionError", "JointMargin", "BaseZError"]

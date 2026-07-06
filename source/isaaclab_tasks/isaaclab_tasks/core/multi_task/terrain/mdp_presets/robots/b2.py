@@ -25,7 +25,6 @@ from .robot_presets import (
     FootBodyNamesCfg,
     HeightScannerPrimPathCfg,
     NonFootContactBodyNamesCfg,
-    RetargetJointRegularizeTargetsCfg,
     RetargetLateralHipJointPatternCfg,
     RobotArticulationCfg,
 )
@@ -46,8 +45,3 @@ if hasattr(unitree, "B2_CFG"):
     FootBodyNamesCfg.b2 = ".*foot"
     ExperimentNameCfg.b2 = "b2_position_command"
     RetargetLateralHipJointPatternCfg.b2 = B2_LATERAL_HIP_PATTERN
-    # Same lateral-hip/knee naming convention as Go2.
-    RetargetJointRegularizeTargetsCfg.b2 = {
-        B2_LATERAL_HIP_PATTERN: 0.0,
-        ".*_calf_joint": -0.873,
-    }

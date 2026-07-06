@@ -13,7 +13,6 @@ rule. Curriculum statistics belong to the curriculum term.
 
 from __future__ import annotations
 
-import warnings
 from typing import TYPE_CHECKING
 
 import torch
@@ -32,14 +31,13 @@ class StateCommand(CommandTerm):
     cfg: StateCommandCfg
 
     def __init__(self, cfg: StateCommandCfg, env: ManagerBasedRLEnv):
-        # table first, then the payload bound to that table (one construction
-        # order for every domain). The factory table reads ``cfg.payload`` for
-        # its reset-asset set, so it needs no constructed payload. Both are built
-        # BEFORE ``super().__init__`` because the base initializer invokes
+        # Table first, then the payload bound to that table (one construction
+        # order for every domain). Both are built BEFORE ``super().__init__``
+        # because the base initializer invokes
         # ``set_debug_vis`` -> ``_set_debug_vis_impl``, which delegates to the
-        # payload. The builders take ``env``/``cfg`` directly, so no ``self``
-        # state from the base is needed yet.
-        self.table = cfg.task_table.class_type(cfg, env)
+        # payload. Table construction receives resolved configuration and a
+        # device, never a live scene.
+        self.table = cfg.task_table.build(cfg, env.cfg.scene, env.device)
         self._payload = cfg.payload.class_type(cfg, env, self.table)
 
         super().__init__(cfg, env)
@@ -70,16 +68,6 @@ class StateCommand(CommandTerm):
         return self._payload
 
     @property
-    def states_relative(self) -> bool:
-        """Deprecated mirror of :attr:`StateCommandCfg.states_relative`."""
-        warnings.warn(
-            "StateCommand.states_relative is deprecated; read StateCommand.cfg.states_relative.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.cfg.states_relative
-
-    @property
     def command(self) -> torch.Tensor:
         """Policy-facing command observation written by the active payload."""
         self._refresh()
@@ -90,24 +78,6 @@ class StateCommand(CommandTerm):
         """Per-env, per-group command error written by the active payload."""
         self._refresh()
         return self._err
-
-    @property
-    def success_rates(self) -> torch.Tensor:
-        """Return curriculum-owned success rates through the deprecated command boundary."""
-        warnings.warn(
-            "StateCommand.success_rates is deprecated; read the owning curriculum term's success_rates.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        manager = getattr(self._env, "curriculum_manager", None)
-        if manager is not None:
-            for name in manager.active_terms:
-                term = manager.get_term(name)
-                if getattr(term, "sample_indices", None) is self.cmd_indices:
-                    rates = getattr(term, "success_rates", None)
-                    if isinstance(rates, torch.Tensor):
-                        return rates
-        raise RuntimeError("No curriculum term owns this StateCommand's selected rows.")
 
     @property
     def command_std(self) -> torch.Tensor:

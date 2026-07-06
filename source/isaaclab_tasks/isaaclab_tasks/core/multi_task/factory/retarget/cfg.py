@@ -3,34 +3,24 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Configuration for the offline factory Newton-IK reset-state pipeline.
+"""Configuration for the simulator-free Factory reset-state builder.
 
-Mirrors the terrain ``RetargetPipelineCfg`` shape: the usage site reads like the
-pipeline itself -- a placement sampler, a grasp-pair sampler, the IK solve, ONE
-avoidance objective family (``None`` disables steering), a typed CRITERIA list
-whose membership controls which acceptance gates run, and the reach-row pass::
-
-    FactoryIKPipelineCfg(
-        placement=PlacementSamplingCfg(...),
-        solve=IKSolveCfg(iterations=250, pos_tol=0.004, avoidance=CollisionAvoidanceCfg(weight=20.0)),
-        criteria=[
-            CollisionCheckCfg(max_pen=0.0005, self_max_pen=0.002),
-        ],
-        reach=ReachRowsCfg(standoff_range=(0.03, 0.15)),
-    )
-
-This replaces the sim-in-the-loop ``FactoryResetStateCommand`` table fill
-(``CollisionAnalyzer`` + ``RigidObjectHasher`` + in-sim DLS IK) with an offline
-batched Newton-IK solve over fingertip contact-pair targets.
+The composition root declares independent board geometry and explicit task
+families. Each family owns its generate, solve, criteria, and selection stages;
+there is no hidden global placement mixture or empirical yield conversion.
 """
 
 from __future__ import annotations
 
-from dataclasses import field
+from collections.abc import Callable
+from dataclasses import MISSING, field
+from typing import Literal
 
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils.configclass import configclass
 
+from ...kinematics.ik_objectives.cfg import IKObjectiveBaseCfg
+from ...mdp.commands.state_command import StateCommandCfg
 from ..factory_presets import (
     EndEffectorBodyCfg,
     FactoryAssemblyProfileCfg,
@@ -66,7 +56,7 @@ class BoardLibraryCfg:
     num_boards: int = 128
     """Library size: how many distinct board+bolt configurations exist."""
 
-    library_oversample: float = 2.0
+    library_oversample: float = 4.0
     """Candidate configurations sampled per kept one. Feasibility is proven by the
     single build round itself -- a candidate qualifies when it supplies at least
     ``rows_per_board`` accepted rows -- and ``num_boards`` qualified candidates
@@ -83,16 +73,16 @@ class BoardLibraryCfg:
         }
     )
     """Board pose DELTA [m, rad] around its scene init pose. Poses are
-    oversampled, collision-rejected against the table and robot base, and
+    oversampled, collision-rejected against the table and complete default robot, and
     FPS-downsampled to :attr:`num_boards`; arm reachability is left to the IK
     funnel."""
 
-    oversample: float = 4.0
+    oversample: float = 10.0
     """Poses sampled per library slot before rejection + FPS (single shot, no
     resample loop)."""
 
     clear_tol: float = 0.0005
-    """Reject a board whose surface probes penetrate the table or the robot base
+    """Reject a board group intersecting the table or any default-pose robot collider
     deeper than this [m]."""
 
 
@@ -136,37 +126,12 @@ class GraspSamplingCfg:
 
 
 @configclass
-class PlacementSamplingCfg:
-    """Nut placement sampling WITHIN the board configurations.
+class FactoryAssemblyPoseGenerateCfg(StateCommandCfg.TaskTableCfg.GenerateTermCfg):
+    """Generate held-asset poses along the declared assembly path."""
 
-    Each placement puts the nut concentric on its configuration's bolt at a
-    sampled assembly fraction (``on_bolt``), resting on its board (``on_table``),
-    or floating freely (``in_air``). Always *nut-first*: the nut pose is sampler
-    data (the assets are not in the kinematic chain), grasp pairs are sampled on
-    it, and the arm is IK-solved to put the finger pads on them.
-    """
-
-    held_asset_cfg: SceneEntityCfg = SceneEntityCfg("held_asset")
-    """The held (grasped) scene entity -- the object whose states are sampled."""
-
+    class_type: Callable | str = "{DIR}.task_table_builder:factory_generate_assembly_pose"
     assembly_profile: object = FactoryAssemblyProfileCfg()  # type: ignore[assignment]
-    """Assembly-path profile (variant preset) the on-bolt bands sample along."""
-
     align_offset: object = HeldAssetAlignOffsetCfg()  # type: ignore[assignment]
-    """Held-asset alignment keypoint offset (variant preset)."""
-
-    grasp: GraspSamplingCfg = GraspSamplingCfg()
-    """How each placement becomes states: antipodal grasp pairs cast onto the
-    placed nut. The per-build candidate budget is derived from
-    :attr:`FactoryIKPipelineCfg.yield_ratio`, :attr:`FactoryIKPipelineCfg.diversity_knob`,
-    and the requested ``rows_per_board`` rather than exposed as direct count knobs."""
-
-    placement_weights: dict[str, float] = field(
-        default_factory=lambda: {"on_bolt": 0.5, "on_table": 0.2, "in_air": 0.3}
-    )
-    """Relative sampling weight per placement type. Keys must be a subset of
-    ``{"on_bolt", "on_table", "in_air"}``; placements are split proportionally."""
-
     assembly_bands: dict[str, tuple[float, float]] = field(
         default_factory=lambda: {
             "near_seated": (0.0, 0.33),
@@ -174,10 +139,27 @@ class PlacementSamplingCfg:
             "above_tip": (0.85, 1.6),
         }
     )
-    """``on_bolt`` assembly-fraction bands (fraction along the insertion axis).
-    Each band becomes its own tag so the curriculum can monitor seating depth."""
 
-    in_air_pose_range: dict[str, tuple[float, float]] = field(
+
+@configclass
+class FactorySupportPoseGenerateCfg(StateCommandCfg.TaskTableCfg.GenerateTermCfg):
+    """Generate held-asset poses supported by the board."""
+
+    class_type: Callable | str = "{DIR}.task_table_builder:factory_generate_support_pose"
+    tag: str = "on_table"
+    pose_range: dict[str, tuple[float, float]] = field(
+        default_factory=lambda: {"x": (0.25, 0.6), "y": (-0.25, 0.25), "yaw": (-3.14, 3.14)}
+    )
+    table_height: float = 0.04
+
+
+@configclass
+class FactoryFreePoseGenerateCfg(StateCommandCfg.TaskTableCfg.GenerateTermCfg):
+    """Generate free-space held-asset poses."""
+
+    class_type: Callable | str = "{DIR}.task_table_builder:factory_generate_free_pose"
+    tag: str = "in_air"
+    pose_range: dict[str, tuple[float, float]] = field(
         default_factory=lambda: {
             "x": (-0.15, 0.5),
             "y": (-0.5, 0.5),
@@ -187,135 +169,65 @@ class PlacementSamplingCfg:
             "yaw": (-3.14, 3.14),
         }
     )
-    """Free-space nut pose range [m, rad], relative to the franka base. Matches the
-    original ``GRIPPER_GRASP_ASSET_IN_AIR.reset_asset_in_air`` range."""
-
-    on_table_pose_range: dict[str, tuple[float, float]] = field(
-        default_factory=lambda: {
-            "x": (0.25, 0.6),
-            "y": (-0.25, 0.25),
-            "yaw": (-3.14, 3.14),
-        }
-    )
-    """Board-resting nut xy/yaw range [m, rad], expressed in WORLD at the board's
-    canonical scene pose; the sampled pose is re-expressed in the board frame and
-    rides the per-sub-world board (so a tilted board carries its resting nut).
-    Height is pinned to :attr:`table_height`; roll/pitch are zero (nut lies flat
-    on the board)."""
-
-    table_height: float = 0.04
-    """Nut-root height [m] when resting on the board AT ITS CANONICAL scene pose
-    (board top + nut half-height); rides the sampled board like the xy/yaw range."""
 
 
 @configclass
-class CollisionAvoidanceCfg:
-    """Differentiable avoidance objectives steering the refine phase.
+class FactoryGraspTargetGenerateCfg(StateCommandCfg.TaskTableCfg.GenerateTermCfg):
+    """Generate antipodal held-asset contact targets."""
 
-    One instance per obstacle is created automatically: every robot link (base
-    excluded) vs each static obstacle and the posed board + bolt, plus the hand
-    vs the per-problem-posed nut (pad probes exempt -- they grasp it). Objectives
-    STEER; the criteria below remain the correctness guarantee. Set
-    :attr:`FactoryIKPipelineCfg.avoidance` to ``None`` to disable steering."""
-
-    weight: float = 20.0
-    """Penalty weight."""
-
-    margin: float = 0.001
-    """Softplus smoothing scale [m]. Keep small (~1 mm) so the penalty reacts to
-    near-contact/penetration only, not to centimetre-scale clearance."""
-
-    n_samples: int = 48
-    """Probe budget PER OBSTACLE (a strided subset of the criteria probe sets).
-    Steering needs far fewer probes than gating; LM cost scales with this."""
-
-    max_dist: float = 0.25
-    """``wp.mesh_query_point`` search radius [m] -- steering only needs the near field."""
+    class_type: Callable | str = "{DIR}.task_table_builder:factory_generate_grasp_targets"
+    sampling: GraspSamplingCfg = GraspSamplingCfg()
+    grasps_per_placement: int = 8
 
 
 @configclass
-class JointLimitObjectiveCfg:
-    """Soft joint-limit objective in the LM solve."""
+class FactoryRobotSeedGenerateCfg(StateCommandCfg.TaskTableCfg.GenerateTermCfg):
+    """Choose robot IK seeds for generated grasp targets."""
 
-    weight: float = 10.0
-    """Objective weight."""
-
-
-@configclass
-class JointDefaultObjectiveCfg:
-    """Pulls every ARM coord toward the robot's stance (locomotion's
-    ``IKObjectiveJointDefault``, arm-only: finger coords are owned by
-    :class:`FingerPinObjectiveCfg`). Small weight -- it only takes up slack the
-    fingertip targets leave."""
-
-    weight: float = 0.002
-    """Uniform residual weight applied to every arm coord. Factory needs
-    millimetre fingertip accuracy, so this must stay ~25x below locomotion's
-    0.05 (measured: 0.05 -> 99% unreachable; 0.002 IMPROVES reach and halves
-    joint-limit rejections by centering the arm)."""
+    class_type: Callable | str = "{DIR}.task_table_builder:factory_generate_robot_seeds"
+    ik_seeds_per_grasp: int = 4
 
 
 @configclass
-class FingerPinObjectiveCfg:
-    """Pins the finger coords to half the pair separation -- enforces the gripper
-    mimic constraint structurally and conditions the LM solve."""
+class FactoryIKSolveCfg(StateCommandCfg.TaskTableCfg.SolveCfg):
+    """One batched LM solve over per-fingertip targets.
 
-    weight: float = 10.0
-    """Objective weight."""
-
-
-@configclass
-class IKSolveCfg:
-    """The batched LM solve over per-fingertip position targets.
-
-    Two phases: a reach-only solve for every candidate, then -- when
-    :attr:`FactoryIKPipelineCfg.avoidance` is set -- a warm-seeded avoidance
-    refine for the reachable survivors only (collision steering never improves
-    reach, so the unreachable are culled before paying for it).
+    Independent criteria certify target accuracy, limits, and collision geometry.
     """
 
-    iterations: int = 250
-    """Maximum LM iterations for the reach phase."""
+    class_type: Callable | str = "{DIR}.task_table_builder:factory_solve_ik"
+    max_iterations: int = 250
+    """Maximum continuous LM iterations for the target solve."""
 
-    convergence_threshold: float = 1e-7
-    """Stop early when the mean-cost change between iteration batches drops below this."""
-
-    refine_iterations: int = 40
-    """Max LM iterations for the avoidance-refine phase. Starting from the
-    converged reach solution, it only trades millimetres of clearance, not finds
-    the basin."""
-
-    pos_tol: float = 0.004
-    """Max per-fingertip position error [m] for a candidate to count as reachable
-    (the phase-1 cull and the final reachability gate)."""
-
-    objectives: list = field(
-        default_factory=lambda: [
-            JointLimitObjectiveCfg(),
-            FingerPinObjectiveCfg(),
-            CollisionAvoidanceCfg(),
-        ]
-    )
-    """Soft constraint terms in the LM solve (the fingertip position targets are
-    the solve itself, not a member). Membership enables a term -- the mirror of
-    :attr:`FactoryRobotCfg.criteria` for hard gates. Omit
-    :class:`CollisionAvoidanceCfg` to solve without obstacle steering."""
+    objectives: tuple[IKObjectiveBaseCfg, ...] = MISSING
+    """Complete flat objective tuple for the numerical solve."""
 
 
 @configclass
-class CollisionCheckCfg:
+class FactoryApproachTargetGenerateCfg(StateCommandCfg.TaskTableCfg.GenerateTermCfg):
+    """Offset grasp targets along the seed end-effector approach axis."""
+
+    class_type: Callable | str = "{DIR}.task_table_builder:factory_generate_approach_targets"
+    standoff_range: tuple[float, float] = (0.03, 0.15)
+    """Approach standoff range [m]."""
+    clearance: float = 0.005
+    """Required gripper-to-held clearance [m]."""
+
+
+@configclass
+class CollisionCheckCfg(StateCommandCfg.TaskTableCfg.CriterionCfg):
     """No unintended penetration between ANY participating bodies.
 
     One gate, four tests under the hood: robot links vs the obstacles and the
     posed board + bolt (point signed distance PLUS exact edge-vs-mesh crossing
     tests -- points alone miss the ~4 mm board slicing between them), gripper vs
-    the held asset (SYMMETRIC, post aperture-relief), held asset vs the
-    obstacles, and robot link-vs-link. Which contacts are INTENDED is pipeline
-    policy, not configuration: grasp pads on the held surface, the nut on the
-    bolt within its assembly band, the nut resting on the board for ``on_table``,
-    and design-mounted link clusters within :attr:`adjacency_hops`.
+    the held asset (symmetric), held asset vs the obstacles, and robot
+    link-vs-link. Generated family facts explicitly identify pad contact,
+    fixed-asset contact, and board support; design-mounted link clusters are
+    excluded by :attr:`adjacency_hops`.
     """
 
+    class_type: Callable | str = "{DIR}.task_table_builder:factory_collision_criterion"
     n_samples: int = 240
     """Surface probe points (FPS) per checked body set."""
 
@@ -335,55 +247,60 @@ class CollisionCheckCfg:
 
 
 @configclass
-class JointWithinLimitCfg:
+class JointWithinLimitCfg(StateCommandCfg.TaskTableCfg.CriterionCfg):
     """Criterion: every arm coord inside its effective interval, shrunk by
     ``limit_ratio`` (locomotion semantics: Newton joint limits intersected with
     ``stance +- fk_joint_range``, then shrunk around the center). Rejects
-    solutions parked against a joint stop -- reachable on paper, fragile in sim."""
+    solutions parked against a joint stop, which are numerically valid but fragile in simulation."""
 
+    class_type: Callable | str = "{DIR}.task_table_builder:factory_joint_limit_criterion"
     limit_ratio: float = 0.9
     """Allowed fraction of the effective joint interval."""
 
 
 @configclass
-class ReachRowsCfg:
-    """Approach poses derived from accepted grasps: pad targets backed off along
-    the achieved approach axis and re-solved (warm-seeded). in_air parents are
-    excluded -- a floating nut with a non-grasping gripper is not a physical
-    state. ``None`` on the pipeline cfg disables reach rows."""
+class FactoryTargetErrorCriterionCfg(StateCommandCfg.TaskTableCfg.CriterionCfg):
+    """Accept candidates whose solved fingertip target error meets the solve tolerance."""
 
-    per_grasp: int = 1
-    """Approach poses generated per accepted grasp."""
+    class_type: Callable | str = "{DIR}.task_table_builder:factory_target_error_criterion"
+    max_error_m: float = MISSING
+    """Maximum accepted per-fingertip target error [m]."""
 
-    standoff_range: tuple[float, float] = (0.03, 0.15)
-    """Standoff distance [m] sampled per reach row along the approach axis."""
 
-    clearance: float = 0.005
-    """Min gripper<->nut clearance [m] (no contact intended)."""
+@configclass
+class FactoryHeldPoseBoundsCriterionCfg(StateCommandCfg.TaskTableCfg.CriterionCfg):
+    """Accept generated held-object positions inside declared world-local bounds."""
+
+    class_type: Callable | str = "{DIR}.task_table_builder:factory_held_pose_bounds_criterion"
+    bounds: dict[str, tuple[float, float]] = MISSING
+
+
+@configclass
+class FactoryFpsSelectionCfg(StateCommandCfg.TaskTableCfg.SelectionCfg):
+    """Select an exact quota per board in one family-specific feature space."""
+
+    class_type: Callable | str = "{DIR}.task_table_builder:factory_fps_selection"
+    position_frame: Literal["fixed_asset", "world"] = "world"
+    position_axes: tuple[int, ...] = (0, 1, 2)
+    position_weight: float = 1.0
+    approach_weight: float = 0.15
+    tag_weight: float = 0.2
+
+
+@configclass
+class FactoryFamilyCfg(StateCommandCfg.TaskTableCfg.FamilyCfg):
+    """One explicit Factory placement, solve, acceptance, and selection route."""
+
+    fraction: float = 0.0
+    candidate_oversample: float = 80.0
 
 
 @configclass
 class FactoryRobotCfg:
-    """The ROBOT side of the pipeline: who the robot is and how it is placed on
-    each sampled candidate -- identity, the batched IK solve (with its avoidance
-    objectives), the acceptance criteria, and the derived reach rows. The
-    counterpart of the board/placement SAMPLER side, mirroring locomotion's
-    kin + IK weights + objectives + criteria group."""
+    """Robot identity needed by every Factory task family."""
 
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
-    """The robot scene entity (USD resolved from the pipeline ``scene`` /
-    :attr:`usd_path`)."""
-
-    usd_path: str = ""
-    """Robot USD path override. Empty resolves from the scene's robot entry; the
-    production wiring patches it from ``env.scene["robot"].cfg.spawn.usd_path``
-    (the terrain ``kin.usd_path`` pattern)."""
-
-    default_joint_q: dict[str, float] | None = None
-    """Joint-name -> stance value [rad or m] for the FK-library center and IK seed
-    fallback. ``None`` resolves from the scene robot's ``init_state.joint_pos``
-    (name patterns supported); the production wiring patches the live robot's
-    default joint state."""
+    """Scene articulation providing the USD and default joint state directly."""
 
     ee_body_name: str = EndEffectorBodyCfg()  # type: ignore[assignment]
     """End-effector body (robot preset): the jaw-axis reference frame for pad
@@ -395,148 +312,23 @@ class FactoryRobotCfg:
     gripper_body_names: list[str] = GripperBodyNamesCfg()  # type: ignore[assignment]
     """Robot bodies probed for the gripper-vs-held-asset checks (robot preset)."""
 
-    solve: IKSolveCfg = IKSolveCfg()
-    """The two-phase batched LM solve (avoidance objectives nested)."""
-
-    criteria: list = field(
-        default_factory=lambda: [
-            CollisionCheckCfg(),
-        ]
-    )
-    """Acceptance gates, applied as a waterfall after the solve. Membership
-    controls which gates run; each carries its own probe budget and tolerance."""
-
-    reach: ReachRowsCfg | None = ReachRowsCfg()
-    """Reach/standoff row generation from accepted grasps (``None`` disables)."""
-
 
 @configclass
-class RowSelectionCfg:
-    """Per-board final-row FPS diversity weights: which axes the kept rows spread over.
-
-    Each board farthest-point-downsamples its solved rows to ``rows_per_board`` in a
-    weighted feature space; higher ``nut_weight`` relative to the others packs more
-    DISTINCT nut positions per board (fewer grasps/approaches per nut), higher
-    ``approach_weight`` / ``tag_weight`` keeps more grasp-approach / state-kind variety.
-    """
-
-    nut_weight: float = 1.0
-    """Weight on the nut position in the bolt frame [per m]."""
-
-    approach_weight: float = 0.15
-    """Weight on the end-effector approach direction (a unit vector) [m per unit]."""
-
-    tag_weight: float = 0.2
-    """Weight on the placement-strategy tag one-hot."""
-
-
-@configclass
-class FactoryIKPipelineCfg:
-    """Full offline factory Newton-IK reset-state pipeline configuration."""
-
-    class_type: type | str = "{DIR}.pipeline:FactoryIKPipeline"
-    """Pipeline implementation class."""
-
-    scene: object | None = None
-    """The RESOLVED scene cfg the assets come from: the production wiring assigns
-    ``env.cfg.scene``; standalone tools assign a ``FactorySceneCfg`` variant via
-    :func:`resolve_standalone`. Asset USDs, spawn scales, and init poses all
-    resolve from here -- the pipeline holds no asset paths of its own. A ``None``
-    placeholder (the terrain ``kin.usd_path=""`` pattern) survives env-cfg
-    validation; the model fails loud if it is still unset at build time."""
-
-    device: str = "cuda:0"
-    """Warp/torch device for the model and batched solve (the production wiring
-    patches ``env.device``)."""
-
-    seed: int = 42
-    """Torch RNG seed for the sampling stages (pair sampling, FK library, placements)."""
+class FactoryGeometryCfg:
+    """Shared Factory mechanics and geometry used by declared task families."""
 
     obstacle_asset_names: list[str] = field(default_factory=lambda: ["table"])
     """Scene assets treated as STATIC collision obstacles, resolved from the
     variant's ``FactorySceneCfg`` entry (USD collider + init pose). Only rigid
     assets with a USD spawn qualify -- not every scene object is collidable
     (ground plane, lights, sensors, the robot itself). The nistboard and the fixed
-    asset are NOT static: they form the per-sub-world posed assembly group
-    (:attr:`PlacementSamplingCfg.board_pose_range`)."""
+    asset are not static: they form the per-board posed assembly group."""
 
     board: BoardLibraryCfg = BoardLibraryCfg()
     """The fixed board+bolt configuration library (the world; terrain-grid analog)."""
 
-    placement: PlacementSamplingCfg = PlacementSamplingCfg()
-    """Nut placement sampling within the board configurations."""
-
-    yield_ratio: float = 0.05
-    """Expected useful-row yield per raw IK candidate in a build round.
-
-    ``rows_per_board * diversity_knob / yield_ratio`` estimates the raw IK
-    work needed to produce enough accepted rows before final per-board FPS. The value is deliberately an
-    estimate: the build still validates feasibility from actual accepted rows and
-    fails clearly if the candidate library does not qualify.
-    """
-
-    diversity_knob: float = 4.0
-    """Oversampling factor applied to the requested rows before final FPS.
-
-    Larger values solve more raw IK candidates per requested row, giving the
-    per-board FPS step more nut placements, approach directions, and arm branches
-    to choose from. This is the single tuning knob for reset-table diversity.
-    """
+    held_asset_cfg: SceneEntityCfg = SceneEntityCfg("held_asset")
+    """Held rigid object whose pose and contact geometry are generated."""
 
     robot: FactoryRobotCfg = FactoryRobotCfg()
-    """The robot and how it is placed on each candidate (identity, two-phase
-    solve, acceptance criteria, reach rows)."""
-
-    row_selection: RowSelectionCfg = RowSelectionCfg()
-    """Per-board final-row diversity weighting (nut position vs grasp approach vs
-    tag). Raise ``nut_weight`` relative to the others for more distinct nut
-    positions per board."""
-
-
-def find_criterion(criteria: list, cls: type):
-    """Return the first criterion cfg of type ``cls`` in ``criteria``, or ``None``.
-
-    Membership in the criteria list is what enables a gate, so consumers resolve
-    their cfg through this and skip the gate (and its probe buffers) when absent.
-    """
-    for c in criteria:
-        if isinstance(c, cls):
-            return c
-    return None
-
-
-def resolve_from_task(
-    task: str = "Isaac-Factory-v0", agent: str = "rsl_rl_cfg_entry_point"
-) -> FactoryResetStateTableCfg:  # noqa: F821
-    """Resolve the PRODUCTION reset-state table cfg for standalone (no-env) tools.
-
-    Mirrors ``terrain/scripts/validate_spawn_points.py``: registers the factory
-    task, resolves the env cfg exactly the way the train script does (the
-    ``presets=...`` tokens in ``sys.argv``), and reuses the env's scene and robot
-    identity -- so validators and visualizers reflect training behaviour instead
-    of hand-rolled constants. Safe to call before Kit launches.
-
-    Returns the env's ``commands.reset_state.task_table`` cfg with
-    ``pipeline_cfg.scene`` and ``pipeline_cfg.robot.usd_path`` populated (the robot
-    USD is downloaded from Nucleus when needed). The robot stance resolves from
-    ``scene.robot.init_state`` inside the model, as in the live wiring.
-    """
-    import importlib
-
-    from isaaclab.utils.assets import check_file_path, retrieve_file_path
-
-    from isaaclab_tasks.utils.hydra import resolve_task_config
-
-    importlib.import_module("isaaclab_tasks.core.multi_task.factory.config")
-    env_cfg, _ = resolve_task_config(task, agent)
-    table_cfg = env_cfg.commands.reset_state.task_table
-    pcfg = table_cfg.pipeline_cfg
-    pcfg.scene = env_cfg.scene
-    usd_path = env_cfg.scene.robot.spawn.usd_path
-    status = check_file_path(usd_path)
-    if status == 0:
-        raise FileNotFoundError(f"robot USD not found: {usd_path}")
-    if status == 2:
-        usd_path = retrieve_file_path(usd_path, force_download=False)
-    pcfg.robot.usd_path = usd_path
-    return table_cfg
+    """Robot identity shared by all families."""

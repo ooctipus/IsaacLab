@@ -17,6 +17,14 @@ from isaaclab.utils.configclass import configclass
 
 
 @configclass
+class NewtonKinematicsBuildCfg:
+    """Parse choices applied when scene-owned articulation data is resolved."""
+
+    collapse_fixed_joints: bool = False
+    """Merge fixed joints for a simpler kinematic tree."""
+
+
+@configclass
 class NewtonKinematicsCfg:
     """Configuration for building a :class:`NewtonKinematics` model.
 

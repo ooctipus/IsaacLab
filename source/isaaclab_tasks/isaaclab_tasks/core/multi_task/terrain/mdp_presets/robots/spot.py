@@ -17,7 +17,6 @@ from .robot_presets import (
     ExperimentNameCfg,
     FootBodyNamesCfg,
     HeightScannerPrimPathCfg,
-    RetargetJointRegularizeTargetsCfg,
     RetargetLateralHipJointPatternCfg,
     RobotArticulationCfg,
     SyncFootPairsCfg,
@@ -48,9 +47,3 @@ SPOT_LATERAL_HIP_PATTERN = ".*hip_x"
 """Regex matching Spot lateral hip joint names."""
 
 RetargetLateralHipJointPatternCfg.spot = SPOT_LATERAL_HIP_PATTERN
-# Pull lateral hips toward 0 and knees toward Spot's crouched init-pose angle;
-# hip flexion/extension is left free.
-RetargetJointRegularizeTargetsCfg.spot = {
-    SPOT_LATERAL_HIP_PATTERN: 0.0,
-    ".*_kn": -1.5,
-}

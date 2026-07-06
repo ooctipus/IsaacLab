@@ -6,16 +6,16 @@
 __all__ = [
     "IKObjectiveGravityTorque",
     "IKObjectiveJointDefault",
+    "IKObjectiveJointPin",
     "IKObjectiveJointRegularize",
+    "IKObjectiveMeshCollision",
     "IKObjectiveStabilityMargin",
-    "IKObjectiveTerrainCollision",
-    "IKObjectiveTerrainContact",
-    "_build_collision_probes",
+    "collision_probes_sample",
 ]
 
 from .gravity_torque import IKObjectiveGravityTorque
 from .joint_default import IKObjectiveJointDefault
+from .joint_pin import IKObjectiveJointPin
 from .joint_regularize import IKObjectiveJointRegularize
+from .mesh_collision import IKObjectiveMeshCollision, collision_probes_sample
 from .stability_margin import IKObjectiveStabilityMargin
-from .terrain_collision import IKObjectiveTerrainCollision, _build_collision_probes
-from .terrain_contact import IKObjectiveTerrainContact

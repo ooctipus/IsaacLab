@@ -36,6 +36,7 @@ def test_motion_environment_root_owns_visible_composition() -> None:
         "class MotionActionsCfg(PresetCfg):",
         "class MotionObservationsCfg(PresetCfg):",
         "class MotionSourcesCfg(PresetCfg):",
+        "class MotionTargetKinematicsCfg(PresetCfg):",
         "class MotionCommandsCfg:",
         "class MotionEventsCfg(PresetCfg):",
         "class MotionRewardsCfg:",
@@ -44,7 +45,7 @@ def test_motion_environment_root_owns_visible_composition() -> None:
         "class MotionPhysicsCfg(PresetCfg):",
         "class MotionImitationEnvCfg(ManagerBasedRLEnvCfg):",
         "class MotionTimingCfg(PresetCfg):",
-        "task_table=TaskTableCfg()",
+        "task_table=MotionTaskTableCfg(",
         "payload=PayloadCfg()",
         "sim: SimulationCfg = MotionTimingCfg()",
         "decimation: int = preset(default=15, timing_sim200_control50_horizon501=4)",
@@ -80,9 +81,9 @@ def test_motion_environment_root_owns_visible_composition() -> None:
         "update_period=preset(",
     ):
         assert forbidden not in text
-    assert text.count('source_artifact_root=""') == 2
-    assert text.count('reference_artifact_root=""') == 2
-    assert text.count('motion_split="train"') == 2
+    assert text.count('source_artifact_root=""') == 1
+    assert text.count('reference_artifact_root=""') == 1
+    assert text.count('motion_split="train"') == 1
     assert "control = multi_task_mdp.NativeMujocoControlActionCfg(" in text
     assert "joint_position = multi_task_mdp.NativeMujocoControlActionCfg(" not in text
     assert 'reset_sources=(("reference", 0.8), ("fall", 0.2))' in text
@@ -117,12 +118,10 @@ def test_motion_command_module_contains_only_reusable_schemas() -> None:
     assert "class MotionStatePayloadCfg" in text
     assert "class MotionCommandsCfg" not in text
     assert "source: MotionSourceCfg = MISSING" in text
-    frame_builder_annotation = (
-        "frame_builder_factory: Callable[[MotionSkeleton, NewtonKinematics, Articulation], "
-        "MotionFrameBuilder] = MISSING"
-    )
-    assert frame_builder_annotation in text
+    assert "class TargetKinematicsCfg" in text
+    assert "frame_builder_factory: Callable[[MotionSkeleton, NewtonKinematics], MotionFrameBuilder] = MISSING" in text
     assert "reference_kinematics_factory: Callable[[str, str | torch.device], NewtonKinematics] = MISSING" in text
+    assert "target_kinematics: TargetKinematicsCfg = MISSING" in text
     assert "reset_transform_factory: Callable[..., object] = MISSING" in text
     assert "reset_transform_binds: dict[str, str] = {}" in text
     assert "transition_factory" not in payload_cfg_source
@@ -167,6 +166,7 @@ def test_motion_manager_wiring_lives_only_in_root() -> None:
         "MotionContactSensorBackendCfg",
         "MotionContactSensorCfg",
         "MotionSourcesCfg",
+        "MotionTargetKinematicsCfg",
         "MotionEventsCfg",
     }
 
@@ -177,11 +177,10 @@ def test_motion_manager_wiring_lives_only_in_root() -> None:
     for name in selectors:
         assert any(isinstance(base, ast.Name) and base.id == "PresetCfg" for base in classes[name].bases)
     command_classes = {node.name: node for node in classes["MotionCommandsCfg"].body if isinstance(node, ast.ClassDef)}
-    assert command_classes.keys() == {"TaskTableCfg", "PayloadCfg"}
+    assert command_classes.keys() == {"PayloadCfg"}
     for name in ("MotionRewardsCfg", "MotionTerminationsCfg", "MotionCurriculumCfg"):
         assert not classes[name].bases
-    for node in command_classes.values():
-        assert any(isinstance(base, ast.Name) and base.id == "PresetCfg" for base in node.bases)
+    assert any(isinstance(base, ast.Name) and base.id == "PresetCfg" for base in command_classes["PayloadCfg"].bases)
     assigned_names = {
         target.id
         for node in ast.walk(tree)
@@ -209,6 +208,10 @@ def test_removed_motion_config_layers_stay_absent() -> None:
     motion_root = _MULTI_TASK_ROOT / "motion"
     for relative in (
         "config/environment.py",
+        "config/physics.py",
+        "config/registrations.py",
+        "config/simulations.py",
+        "config/source_presets.py",
         "config/ground.py",
         "config/legacy_reproductions.py",
         "config/presets.py",
@@ -219,8 +222,11 @@ def test_removed_motion_config_layers_stay_absent() -> None:
         "config/sources.py",
         "config/agents/expert_sampling.py",
         "config/agents/rsl_rl_expert.py",
+        "config/agents/rsl_rl_tracking.py",
+        "config/agents/rsl_rl_tracking_curriculum.py",
         "config/agents/tracking.py",
         "config/agents/tracking_curriculum.py",
+        "data/_identity.py",
         "data/sample_grid.py",
         "data/sources/_hashing.py",
         "evaluation",
@@ -230,11 +236,15 @@ def test_removed_motion_config_layers_stay_absent() -> None:
         "rsl_rl.py",
         "rsl_rl/g1_tracking.py",
         "tracking.py",
+        "trajectory",
+        "robots/g1/curriculum.py",
         "robots/g1/events.py",
+        "robots/g1/rewards.py",
         "robots/g1/history.py",
         "robots/g1/transition.py",
         "robots/g1/preset.py",
         "robots/g1/tracking.py",
+        "robots/smpl/frames.py",
         "robots/smpl/preset.py",
         "robots/smpl/tracking.py",
     ):
@@ -371,6 +381,34 @@ def test_motion_config_is_registration_only_and_learner_owns_rsl_rl_runtime() ->
         assert path.is_file()
         assert not any(token in text.lower() for token in ("g1", "smpl", "lafan", "cmu"))
         assert not any("multi_task.motion" in module for module in (*imports, *imported_from))
+
+
+def test_motion_semantic_retarget_has_one_stateless_motion_owner() -> None:
+    """Motion owns projection math and its task-table stage owns bounded execution."""
+    kinematics = (_MULTI_TASK_ROOT / "kinematics" / "newton_kinematics.py").read_text(encoding="utf-8")
+    retarget = (_MULTI_TASK_ROOT / "motion" / "retarget.py").read_text(encoding="utf-8")
+    task_table = (_MULTI_TASK_ROOT / "motion" / "mdp" / "commands" / "motion_task_table.py").read_text(encoding="utf-8")
+
+    for symbol in (
+        "semantic_retarget",
+        "semantic_retarget_policy",
+        "MotionSemanticSolution",
+        "MotionSemanticSolverPolicy",
+    ):
+        assert symbol not in kinematics + retarget + task_table
+    assert "class MotionSemanticTargets:" in retarget
+    assert "class MotionSemanticProjection:" in retarget
+    assert "execute_ik_batches(" in task_table
+    assert "class _MotionSemanticWorkspace:" in task_table
+    assert "IKObjectivePosition" not in retarget
+    assert "IKObjectiveRotation" not in retarget
+
+    for robot in ("g1", "smpl"):
+        reference = (_MULTI_TASK_ROOT / "motion" / "robots" / robot / "reference.py").read_text(encoding="utf-8")
+        assert "solve_semantic_targets" not in reference
+        assert "class _G1SemanticProjection" not in reference
+        assert "class _SmplSemanticProjection" not in reference
+        assert "kinematic_retarget_positions" not in reference
 
 
 def test_motion_runtime_modules_do_not_define_manual_export_lists() -> None:

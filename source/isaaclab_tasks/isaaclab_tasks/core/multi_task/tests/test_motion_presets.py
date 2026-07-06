@@ -79,7 +79,7 @@ _PROFILES = {
         (
             set(_SMPL_ENV_AXES),
             "cmu_humenv_smpl",
-            "smpl_generalized_coordinate_frame_builder",
+            "smpl_frame_builder",
             "source_frames",
             "NewtonCfg",
             _META_RUNNER_AXES,
@@ -87,7 +87,7 @@ _PROFILES = {
         (
             set(_G1_LAFAN_ENV_AXES),
             "lafan_g1_29dof",
-            "g1_pose_frame_builder",
+            "g1_frame_builder",
             "clip_time_ranges",
             "PhysxCfg",
             _BFM_RUNNER_AXES,
@@ -95,7 +95,7 @@ _PROFILES = {
         (
             set(_G1_CMU_ENV_AXES),
             "cmu_humenv_smpl",
-            "g1_local_body_pose_frame_builder",
+            "g1_frame_builder",
             "clip_time_ranges",
             "PhysxCfg",
             _BFM_RUNNER_AXES,
@@ -115,7 +115,7 @@ def test_independent_axes_resolve_three_motion_profiles(
     table = env.commands.motion.task_table
 
     assert table.source.identifier == source
-    assert table.frame_builder_factory.__name__ == builder
+    assert table.target_kinematics.frame_builder_factory.__name__ == builder
     assert table.task_row_mode == row_mode
     assert type(env.sim.physics).__name__ == physics
     assert isinstance(runner, MotionForwardBackwardRunnerCfg)
@@ -135,7 +135,7 @@ def test_fused_internal_config_modules_are_deleted() -> None:
 _PROFILE_SEMANTICS = {
     "smpl_cmu": {
         "source": "cmu_humenv_smpl",
-        "builder": "smpl_generalized_coordinate_frame_builder",
+        "builder": "smpl_frame_builder",
         "row_mode": "source_frames",
         "reset_sources": (("reference", 0.8), ("fall", 0.2)),
         "action_term": ("control", "NativeMujocoControlActionCfg"),
@@ -156,7 +156,7 @@ _PROFILE_SEMANTICS = {
     },
     "g1_lafan": {
         "source": "lafan_g1_29dof",
-        "builder": "g1_pose_frame_builder",
+        "builder": "g1_frame_builder",
         "row_mode": "clip_time_ranges",
         "reset_sources": (("reference", 0.7), ("lie_down", 0.3)),
         "action_term": ("joint_position", "G1JointPositionActionCfg"),
@@ -177,7 +177,7 @@ _PROFILE_SEMANTICS = {
     },
     "g1_cmu": {
         "source": "cmu_humenv_smpl",
-        "builder": "g1_local_body_pose_frame_builder",
+        "builder": "g1_frame_builder",
         "row_mode": "clip_time_ranges",
         "reset_sources": (("reference", 0.7), ("lie_down", 0.3)),
         "action_term": ("joint_position", "G1JointPositionActionCfg"),
@@ -215,7 +215,7 @@ def test_profiles_preserve_the_frozen_environment_semantics(profile: str) -> Non
     )
 
     assert table.source.identifier == expected["source"]
-    assert table.frame_builder_factory.__name__ == expected["builder"]
+    assert table.target_kinematics.frame_builder_factory.__name__ == expected["builder"]
     assert table.task_row_mode == expected["row_mode"]
     assert payload.reset_sources == expected["reset_sources"]
     action_terms = tuple(
@@ -267,7 +267,7 @@ def test_default_motion_axes_are_smpl_cmu() -> None:
     env = resolve_presets(MotionImitationEnvCfg(), selected=set())
 
     assert env.commands.motion.task_table.source.identifier == "cmu_humenv_smpl"
-    assert env.commands.motion.task_table.frame_builder_factory.__name__ == "smpl_generalized_coordinate_frame_builder"
+    assert env.commands.motion.task_table.target_kinematics.frame_builder_factory.__name__ == "smpl_frame_builder"
     assert env.commands.motion.task_table.task_row_mode == "source_frames"
     assert type(env.actions).__name__ == "SmplCfg"
     assert type(env.sim.physics).__name__ == "NewtonCfg"
@@ -281,7 +281,7 @@ def test_g1_cmu_resolves_from_independent_axes() -> None:
     )
 
     assert env.commands.motion.task_table.source.identifier == "cmu_humenv_smpl"
-    assert env.commands.motion.task_table.frame_builder_factory.__name__ == "g1_local_body_pose_frame_builder"
+    assert env.commands.motion.task_table.target_kinematics.frame_builder_factory.__name__ == "g1_frame_builder"
     assert env.commands.motion.task_table.task_row_mode == "clip_time_ranges"
     assert type(env.actions).__name__ == "G1Cfg"
     assert type(env.sim.physics).__name__ == "PhysxCfg"

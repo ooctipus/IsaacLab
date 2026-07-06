@@ -28,7 +28,7 @@ class MotionObservationGroupsPresetCfg(PresetCfg):
         "forward": ["policy"],
         "backward": ["policy"],
         "discriminator": ["policy"],
-        "critic_discriminator": ["policy"],
+        "critic_value": ["policy"],
     }
     g1 = {
         "actor": [
@@ -62,7 +62,7 @@ class MotionObservationGroupsPresetCfg(PresetCfg):
             "base_angular_velocity",
             "privileged_state",
         ],
-        "critic_discriminator": [
+        "critic_value": [
             "joint_position",
             "joint_velocity",
             "projected_gravity",
@@ -239,7 +239,7 @@ class MotionDiscriminatorHelperPresetCfg(PresetCfg):
     default = RslRlForwardBackwardValueHelperCfg(
         name="discriminator",
         learning_rate=1.0e-4,
-        route="critic_discriminator",
+        route="critic_value",
         terms=_TERMS,
         pessimism=0.5,
         actor_coefficient=0.01,
@@ -279,7 +279,7 @@ class MotionAuxiliaryHelperPresetCfg(PresetCfg):
     default = RslRlForwardBackwardValueHelperCfg(
         name="auxiliary",
         learning_rate=1.0e-4,
-        route="critic_discriminator",
+        route="critic_value",
         terms=_TERMS,
         reward_composition="scalar",
         pessimism=0.5,

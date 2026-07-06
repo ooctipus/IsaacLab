@@ -25,6 +25,8 @@ class MotionClipIndex:
         frame_count: int
         source_fps: float
         content_sha256: str
+        source_clip_id: str | None = None
+        source_frame_start: int = 0
 
         def __post_init__(self) -> None:
             """Validate one compact clip descriptor."""
@@ -34,6 +36,17 @@ class MotionClipIndex:
                 raise ValueError("frame_count must be positive.")
             if not math.isfinite(self.source_fps) or self.source_fps <= 0.0:
                 raise ValueError("source_fps must be finite and positive.")
+            if self.source_clip_id is not None:
+                validate_nonempty("source_clip_id", self.source_clip_id)
+            elif self.source_frame_start != 0:
+                raise ValueError("Original clips must start at source frame zero.")
+            if type(self.source_frame_start) is not int or self.source_frame_start < 0:
+                raise ValueError("source_frame_start must be a non-negative integer.")
+
+        @property
+        def source_frame_stop(self) -> int:
+            """Exclusive source-frame end retained by this clip."""
+            return self.source_frame_start + self.frame_count
 
     source_content_sha256: str
     clips: tuple[Clip, ...]

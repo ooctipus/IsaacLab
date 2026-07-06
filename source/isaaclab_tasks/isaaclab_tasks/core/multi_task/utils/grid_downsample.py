@@ -37,7 +37,12 @@ def extract_features(states: torch.Tensor, extractor: Callable | None) -> torch.
     return extractor(states)
 
 
-def grid_bucket_downsample(pts: torch.Tensor, k: int) -> torch.Tensor:
+def grid_bucket_downsample(
+    pts: torch.Tensor,
+    k: int,
+    *,
+    generator: torch.Generator | None = None,
+) -> torch.Tensor:
     """Downsample ``pts`` to ~``k`` samples with uniform spatial coverage.
 
     Partitions the D-dimensional axis-aligned bounding box of ``pts`` into
@@ -55,6 +60,7 @@ def grid_bucket_downsample(pts: torch.Tensor, k: int) -> torch.Tensor:
     Args:
         pts: Candidate positions, shape ``[N, D]``.
         k: Desired number of samples.
+        generator: Optional device-local generator for randomized tie-breaking.
 
     Returns:
         Indices into ``pts`` of the chosen samples, shape ``[min(k, N)]``.
@@ -89,7 +95,7 @@ def grid_bucket_downsample(pts: torch.Tensor, k: int) -> torch.Tensor:
     bucket_id = (bidx.to(torch.int64) * strides).sum(dim=-1)
 
     # Random integer priority — tie-break per bucket without fp noise.
-    priority = torch.randint(0, 1 << 30, (n,), dtype=torch.int64, device=pts.device)
+    priority = torch.randint(0, 1 << 30, (n,), dtype=torch.int64, device=pts.device, generator=generator)
     key = bucket_id * (1 << 30) + priority
     perm = torch.argsort(key)
     bucket_sorted = bucket_id[perm]
@@ -99,7 +105,7 @@ def grid_bucket_downsample(pts: torch.Tensor, k: int) -> torch.Tensor:
     chosen = perm[first_mask]
 
     if chosen.numel() > k:
-        sub = torch.randperm(chosen.numel(), device=pts.device)[:k]
+        sub = torch.randperm(chosen.numel(), device=pts.device, generator=generator)[:k]
         return chosen[sub]
     if chosen.numel() < k:
         # Grid collapsed below ``k`` cells — fill the remainder with random
@@ -109,6 +115,6 @@ def grid_bucket_downsample(pts: torch.Tensor, k: int) -> torch.Tensor:
         chosen_mask[chosen] = True
         remaining = (~chosen_mask).nonzero(as_tuple=False).squeeze(-1)
         need = k - chosen.numel()
-        extra = remaining[torch.randperm(remaining.numel(), device=pts.device)[:need]]
+        extra = remaining[torch.randperm(remaining.numel(), device=pts.device, generator=generator)[:need]]
         chosen = torch.cat([chosen, extra])
     return chosen

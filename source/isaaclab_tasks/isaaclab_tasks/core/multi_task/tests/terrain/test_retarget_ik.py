@@ -9,6 +9,8 @@ FK round-trip: IK result -> FK -> foot positions match targets.
 Requires Newton + Warp (no IsaacSim).
 """
 
+import importlib
+
 import newton.ik as ik
 import numpy as np
 import pytest
@@ -24,17 +26,18 @@ def _init_warp():
     wp.init()
 
 
-ANYMAL_USD = "/home/zhengyuz/Downloads/ANYmal-C/anymal_c.usd"
 DEVICE = "cuda:0"
 FOOT_ERR_TOL = 0.02
 
-DEFAULT_JPOS = {
-    ".*HAA": 0.0,
-    ".*F_HFE": 0.4,
-    ".*H_HFE": -0.4,
-    ".*F_KFE": -0.8,
-    ".*H_KFE": 0.8,
-}
+
+def _resolve_usd(usd_path: str) -> str:
+    """Resolve the declared robot asset to a local path or skip when unavailable."""
+    from isaaclab.utils.assets import check_file_path, retrieve_file_path
+
+    status = check_file_path(usd_path)
+    if status == 0:
+        pytest.skip(f"USD not found: {usd_path}")
+    return retrieve_file_path(usd_path, force_download=False) if status == 2 else usd_path
 
 
 def _make_solver(model, foot_ids, base_body_id, n_problems):
@@ -102,16 +105,25 @@ def _fill_buf(buf, foot_pos, jq, N, nc):
 
 @pytest.fixture(scope="module")
 def robot_setup():
+    importlib.import_module("isaaclab_tasks.core.multi_task.terrain.mdp_presets.robots.anymal_c")
+    from isaaclab_tasks.core.multi_task.terrain.mdp_presets.robots.robot_presets import (
+        FootBodyNamesCfg,
+        RobotArticulationCfg,
+    )
+    from isaaclab_tasks.core.multi_task.terrain.retarget.sampler_base import resolve_contact_body_names
+
+    robot_cfg = RobotArticulationCfg.anymal_c
     kin = NewtonKinematics(
         NewtonKinematicsCfg(
-            usd_path=ANYMAL_USD,
+            usd_path=_resolve_usd(robot_cfg.spawn.usd_path),
             device=DEVICE,
-            default_pos=(0, 0, 0.6),
-            default_joint_pos=DEFAULT_JPOS,
+            default_pos=robot_cfg.init_state.pos,
+            default_joint_pos=robot_cfg.init_state.joint_pos,
         )
     )
-    foot_ids = [i for i, n in enumerate(kin.body_names) if "FOOT" in n.upper()]
-    foot_pos = np.array([kin.default_body_q[fid][:3] for fid in foot_ids])
+    foot_names = resolve_contact_body_names(FootBodyNamesCfg.anymal_c, kin.body_names)
+    foot_ids = kin.find_body_indices(foot_names)
+    foot_pos = np.array([kin.default_body_q[body_id][:3] for body_id in foot_ids])
     return kin, foot_ids, kin.default_joint_q, foot_pos
 
 

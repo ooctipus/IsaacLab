@@ -3,13 +3,11 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Newton-based kinematics: model wrapper and IK objectives.
+"""Simulator-free Newton kinematics, topology, and IK objectives.
 
-The module implementations (``newton_kinematics``, ``ik_objectives``) pull in
-``newton`` → ``pxr``, which must not be loaded before Kit has launched during
-env-cfg construction. Public symbols are exposed lazily via ``lazy_export``
-(backed by ``__init__.pyi``) so importing this package does not trigger the
-Newton → USD chain until a symbol is first accessed.
+Public symbols are exposed lazily through ``__init__.pyi`` so configuration
+imports do not pay for Newton/OpenUSD construction until a table builder needs
+it. Newton and OpenUSD remain valid without Kit or a simulation context.
 """
 
 from isaaclab.utils.module import lazy_export

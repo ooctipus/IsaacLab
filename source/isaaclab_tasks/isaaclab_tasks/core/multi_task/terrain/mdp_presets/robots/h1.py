@@ -18,7 +18,6 @@ from .robot_presets import (
     FootBodyNamesCfg,
     HeightScannerPrimPathCfg,
     NonFootContactBodyNamesCfg,
-    RetargetJointRegularizeTargetsCfg,
     RobotArticulationCfg,
     SyncFootPairsCfg,
 )
@@ -37,21 +36,3 @@ NonFootContactBodyNamesCfg.h1 = "^(?!.*ankle_link).*$"
 AsyncFootPairsCfg.h1 = (("left_ankle_link", "right_ankle_link"),)
 SyncFootPairsCfg.h1 = ()
 ExperimentNameCfg.h1 = "h1_position_command"
-
-
-# ---------------------------------------------------------------------------
-# Retarget validation criteria for Unitree H1
-# ---------------------------------------------------------------------------
-
-# Regularize lateral-hip, torso, and arm DOFs toward the default stance.
-# Hip pitch, knee, and ankle pitch are left free so IK can tune the stance
-# for terrain.
-RetargetJointRegularizeTargetsCfg.h1 = {
-    ".*_hip_yaw": 0.0,
-    ".*_hip_roll": 0.0,
-    "torso": 0.0,
-    ".*_shoulder_pitch": 0.28,
-    ".*_shoulder_roll": 0.0,
-    ".*_shoulder_yaw": 0.0,
-    ".*_elbow": 0.52,
-}

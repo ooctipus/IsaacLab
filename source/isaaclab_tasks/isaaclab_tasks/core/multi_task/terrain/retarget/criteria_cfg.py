@@ -5,11 +5,9 @@
 
 """Configuration dataclasses for retarget acceptance criteria.
 
-Each :class:`CriterionBaseCfg` subclass declares the static parameters of
-a criterion and sets :attr:`class_type` to the criterion implementation.
-The pipeline instantiates criteria via ``cfg.class_type(cfg, pipeline,
-wp_mesh)``; the criterion's ``__init__`` pulls any runtime state it
-needs (kinematics, foot indices, solver costs) from ``pipeline``.
+Each :class:`CriterionBaseCfg` subclass declares one post-solve predicate.
+Its :attr:`class_type` is called by the shared family executor with the
+configuration and the explicit solved candidate data.
 """
 
 from __future__ import annotations
@@ -44,7 +42,7 @@ class CollisionCheckCfg(CriterionBaseCfg):
     """
 
     name: str = "collision"
-    class_type: type | str = "{DIR}.criteria:CollisionCheck"
+    class_type: type | str = "{DIR}.criteria:evaluate_collision_check"
 
     n_samples: int = 16
     """Surface probe points per body."""
@@ -57,17 +55,15 @@ class CollisionCheckCfg(CriterionBaseCfg):
 class LateralHipLimitCfg(CriterionBaseCfg):
     """Config for :class:`LateralHipLimit`.
 
-    :attr:`joint_pattern` is resolved on the criterion side: when ``None``,
-    falls back to :attr:`RetargetPipelineCfg.lateral_hip_joint_pattern`
-    (the robot-preset regex). Skip the criterion entirely by omitting it
-    from the pipeline config's ``criteria`` list.
+    Robot presets resolve :attr:`joint_pattern` explicitly at the composition
+    root. Skip the criterion by omitting it from the family.
     """
 
     name: str = "lateral_hip_limit"
-    class_type: type | str = "{DIR}.criteria:LateralHipLimit"
+    class_type: type | str = "{DIR}.criteria:evaluate_lateral_hip_limit"
 
     joint_pattern: str | None = None
-    """Override regex for lateral hip joint names. ``None`` uses the pipeline cfg's pattern."""
+    """Regex for lateral hip joint names."""
 
     max_angle: float = 1.05
     """Maximum absolute lateral hip angle [rad]."""
@@ -86,7 +82,7 @@ class JointWithinLimitCfg(CriterionBaseCfg):
     """
 
     name: str = "joint_limit"
-    class_type: type | str = "{DIR}.criteria:JointWithinLimit"
+    class_type: type | str = "{DIR}.criteria:evaluate_joint_within_limit"
 
     limit_ratio: float = 0.9
     """Allowed fraction of the effective retarget joint interval."""
@@ -94,36 +90,24 @@ class JointWithinLimitCfg(CriterionBaseCfg):
 
 @configclass
 class SupportPolygonStabilityCfg(CriterionBaseCfg):
-    """Config for :class:`SupportPolygonStability`.
-
-    The lateral tolerance only applies when the number of contacts is
-    exactly two (support collapses to a segment). For ``nc >= 3`` the
-    criterion is parameter-free (strict hull inclusion).
-    """
+    """Acceptance bounds for the objective's cached signed stability margin."""
 
     name: str = "stability"
-    class_type: type | str = "{DIR}.criteria:SupportPolygonStability"
+    class_type: type | str = "{DIR}.criteria:evaluate_support_polygon_stability"
 
-    segment_tol_frac: float = 0.05
-    """``nc == 2`` lateral tolerance fraction [unitless].
+    minimum_contacts: int = 3
+    """Minimum active contacts required to define a support polygon."""
 
-    Effective tolerance is ``segment_tol_frac × segment_length``;
-    segment-length scaling is a finite-foot-footprint regularization of
-    the otherwise measure-zero segment-support balance condition. Unused
-    when ``nc != 2``.
-    """
+    minimum_margin: float = 0.0
+    """Minimum accepted signed CoM-to-support-edge margin [m]."""
 
 
 @configclass
 class FootPositionErrorCfg(CriterionBaseCfg):
-    """Config for :class:`FootPositionError`.
-
-    ``num_bodies`` and ``foot_ids`` are pulled from the pipeline's
-    :class:`NewtonKinematics` at construction time by the criterion.
-    """
+    """Acceptance bound for the cached final-FK foot position error."""
 
     name: str = "foot_err"
-    class_type: type | str = "{DIR}.criteria:FootPositionError"
+    class_type: type | str = "{DIR}.criteria:evaluate_foot_position_error"
 
     max_err: float = 0.1
     """Error threshold [m] applied to the aggregated per-foot error."""
@@ -137,7 +121,7 @@ class SolverCostOutlierCfg(CriterionBaseCfg):
     """Config for :class:`SolverCostOutlier` (residual IK-quality filter)."""
 
     name: str = "cost"
-    class_type: type | str = "{DIR}.criteria:SolverCostOutlier"
+    class_type: type | str = "{DIR}.criteria:evaluate_solver_cost_outlier"
 
     threshold_multiplier: float = 3.0
     """Multiplier on batch-median cost above which a candidate is rejected."""

@@ -66,8 +66,10 @@ def test_g1_cmu_composes_smpl_source_with_the_same_physical_g1_preset() -> None:
     assert native.actions.joint_position.preserve_order and cross.actions.joint_position.preserve_order
     assert native.commands.motion.task_table.source.identifier == "lafan_g1_29dof"
     assert cross.commands.motion.task_table.source.identifier == "cmu_humenv_smpl"
-    assert native.commands.motion.task_table.frame_builder_factory.__name__ == "g1_pose_frame_builder"
-    assert cross.commands.motion.task_table.frame_builder_factory.__name__ == "g1_local_body_pose_frame_builder"
+    assert native.commands.motion.task_table.target_kinematics.frame_builder_factory.__name__ == "g1_frame_builder"
+    assert cross.commands.motion.task_table.target_kinematics.frame_builder_factory.__name__ == "g1_frame_builder"
+    assert native.commands.motion.task_table.route.exact_family == "exact_coordinates"
+    assert cross.commands.motion.task_table.route.semantic_family == "semantic_sequence"
 
 
 def test_smpl_lafan_composes_g1_coordinates_with_the_same_physical_smpl_preset() -> None:
@@ -83,10 +85,8 @@ def test_smpl_lafan_composes_g1_coordinates_with_the_same_physical_smpl_preset()
     assert type(native.observations) is type(cross.observations)
     assert native.commands.motion.task_table.source.identifier == "cmu_humenv_smpl"
     assert cross.commands.motion.task_table.source.identifier == "lafan_g1_29dof"
-    assert native.commands.motion.task_table.frame_builder_factory.__name__ == (
-        "smpl_generalized_coordinate_frame_builder"
-    )
-    assert cross.commands.motion.task_table.frame_builder_factory.__name__ == "smpl_g1_hinge_frame_builder"
+    assert native.commands.motion.task_table.target_kinematics.frame_builder_factory.__name__ == "smpl_frame_builder"
+    assert cross.commands.motion.task_table.target_kinematics.frame_builder_factory.__name__ == "smpl_frame_builder"
 
 
 def test_g1_robot_does_not_select_timing_or_task_sampling() -> None:
@@ -169,7 +169,7 @@ def test_cross_composition_has_no_post_resolution_composition_hook() -> None:
 
     assert not hasattr(cross, "compose_motion")
     assert not hasattr(cross, "motion")
-    assert callable(cross.commands.motion.task_table.frame_builder_factory)
-    assert callable(cross.commands.motion.task_table.reference_kinematics_factory)
+    assert callable(cross.commands.motion.task_table.target_kinematics.frame_builder_factory)
+    assert callable(cross.commands.motion.task_table.target_kinematics.reference_kinematics_factory)
     assert callable(cross.commands.motion.payload.reset_transform_factory)
     assert not hasattr(cross.commands.motion.payload, "transition_factory")

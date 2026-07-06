@@ -13,7 +13,6 @@ from dataclasses import MISSING
 from pathlib import Path
 from typing import Protocol, TypeVar, runtime_checkable
 
-import numpy as np
 import torch
 
 from isaaclab.utils.configclass import configclass
@@ -26,23 +25,17 @@ SourceClipT = TypeVar("SourceClipT", covariant=True)
 
 
 @runtime_checkable
-class MotionGeneralizedCoordinateClip(Protocol):
-    """One free-root clip represented by generalized positions and velocities.
+class MotionSourceClip(Protocol):
+    """One decoded clip exposing exact coordinates and semantic pose lazily.
 
-    Position rows contain world root translation, wxyz root rotation, then joint
-    coordinates. Velocity rows contain world root-linear, root-local angular,
-    then joint velocities.
+    Sources own representation decoding. A selected robot consumes exactly one
+    of the two views after the table resolves the exact or semantic family.
+    Generalized positions use world translation and an xyzw free-root
+    quaternion. Generalized velocities, when native evidence exists, use world
+    root linear velocity, root-local angular velocity, then joint rates.
     """
 
     @property
-    def generalized_position(self) -> np.ndarray:
-        """Free-root generalized positions [m, unit quaternion, rad], shape [frame_count, coordinate_count]."""
-
-    @property
-    def generalized_velocity(self) -> np.ndarray:
-        """Free-root generalized velocities [m/s, rad/s], shape [frame_count, degree_of_freedom_count]."""
-
-    @property
     def source_fps(self) -> float:
         """Native sample rate [Hz]."""
 
@@ -50,58 +43,30 @@ class MotionGeneralizedCoordinateClip(Protocol):
     def frame_count(self) -> int:
         """Number of native source frames."""
 
-
-@runtime_checkable
-class MotionPoseAxisAngleClip(Protocol):
-    """One target-body clip represented by world root translation and rotation vectors."""
-
-    @property
-    def root_translation(self) -> np.ndarray:
-        """World-frame root translation [m], shape [frame_count, 3]."""
-
-    @property
-    def pose_axis_angle(self) -> np.ndarray:
-        """Root and joint rotation vectors [rad], shape [frame_count, body_count, 3]."""
-
-    @property
-    def source_fps(self) -> float:
-        """Native sample rate [Hz]."""
-
-    @property
-    def frame_count(self) -> int:
-        """Number of native source frames."""
-
-
-@runtime_checkable
-class MotionLocalBodyPoseClip(Protocol):
-    """One source clip represented by world root translation and parent-local rotations."""
-
-    @property
-    def root_translation(self) -> np.ndarray:
-        """World-frame root translation [m], shape [frame_count, 3]."""
-
-    @property
-    def source_fps(self) -> float:
-        """Native sample rate [Hz]."""
-
-    @property
-    def frame_count(self) -> int:
-        """Number of native source frames."""
-
-    def local_body_rotation_wxyz(
+    def free_root_coordinates(
         self,
         source_skeleton: MotionSkeleton,
         *,
         device: str | torch.device,
-    ) -> torch.Tensor:
-        """Decode parent-local body rotations on the requested device.
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        """Decode source free-root positions and optional velocities."""
+
+    def semantic_local_pose(
+        self,
+        source_skeleton: MotionSkeleton,
+        *,
+        device: str | torch.device,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Decode world root positions and xyzw root/local body rotations.
 
         Args:
             source_skeleton: Declared source-body topology and coordinate convention.
             device: Destination device for the decoded tensor.
 
         Returns:
-            Parent-local unit wxyz quaternions, shape [frame_count, body_count, 4].
+            Root positions [m], shape [frame_count, 3], and unit xyzw
+            rotations, shape [frame_count, body_count, 4]. Rotation row zero is
+            world-root orientation; remaining rows are parent-local deltas.
         """
 
 

@@ -12,6 +12,12 @@ def test_locomotion_position_uses_future_command_and_curriculum():
     """The working position env should use the future task-table command stack."""
     from isaaclab.managers import EventTermCfg
 
+    from isaaclab_tasks.core.multi_task.kinematics import NewtonKinematicsBuildCfg
+    from isaaclab_tasks.core.multi_task.kinematics.ik_objectives.cfg import (
+        BodyPointsCfg,
+        EntityPositionCfg,
+        EntityRotationCfg,
+    )
     from isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command_cfg import StateCommandCfg
     from isaaclab_tasks.core.multi_task.mdp.curriculums import success_rate_sampler
     from isaaclab_tasks.core.multi_task.position_env_cfg import LocomotionPositionCommandEnvCfg
@@ -26,13 +32,28 @@ def test_locomotion_position_uses_future_command_and_curriculum():
     assert cfg.scene.terrain.use_terrain_origins is True
     assert cfg.scene.height_scanner.mesh_prim_paths == ["/World/ground"]
     assert not hasattr(cfg.commands.goal_point.task_table, "state_frame")
+    assert isinstance(cfg.commands.goal_point.task_table.kinematics, NewtonKinematicsBuildCfg)
+    for name in ("usd_path", "mjcf_path", "device", "default_pos", "default_quat", "default_joint_pos"):
+        assert not hasattr(cfg.commands.goal_point.task_table.kinematics, name)
     assert cfg.curriculum.terrain_levels.func is success_rate_sampler
     assert "success_rates_bind" not in cfg.curriculum.terrain_levels.params
+    family = cfg.commands.goal_point.task_table.families[0]
+    foot, base_position, base_rotation = family.solve.objectives[:3]
+    assert isinstance(foot.current, BodyPointsCfg)
+    assert foot.target_bind == "generated.foot_targets"
+    assert isinstance(base_position.current, EntityPositionCfg)
+    assert base_position.target_bind == "generated.base_position"
+    assert isinstance(base_rotation.current, EntityRotationCfg)
+    assert base_rotation.target_bind == "generated.base_rotation"
+    assert not any(hasattr(objective, "target") for objective in family.solve.objectives)
+    assert family.solve.max_iterations == 200
+    assert family.solve.convergence_tolerance == 1.0e-6
+    assert family.solve.convergence_check_interval == 1
     assert any(
         isinstance(criteria_cfg, JointWithinLimitCfg)
         and criteria_cfg.limit_ratio == 0.9
         and criteria_cfg.name == "joint_limit"
-        for criteria_cfg in cfg.commands.goal_point.task_table.pipeline_cfg.criteria
+        for criteria_cfg in family.criteria
     )
 
     reset_terms = [
@@ -41,7 +62,7 @@ def test_locomotion_position_uses_future_command_and_curriculum():
     assert reset_terms == []
 
 
-def test_locomotion_position_uses_verified_legacy_terminations():
+def test_locomotion_position_uses_verified_terminations():
     """Position tasks should keep the termination surface from the working runs."""
     from isaaclab.envs import mdp as base_mdp
     from isaaclab.managers import TerminationTermCfg as DoneTerm
@@ -90,12 +111,14 @@ def test_locomotion_position_anymal_c_command_resolves_without_robot_preset():
     goal_cfg = cfg.commands.goal_point
     assert isinstance(goal_cfg, StateCommandCfg)
     assert isinstance(goal_cfg.payload, BaseStatePayloadCfg)
-    assert goal_cfg.task_table.pipeline_cfg.foot_body_names == ".*FOOT.*"
-    assert goal_cfg.task_table.pipeline_cfg.lateral_hip_joint_pattern == ".*HAA"
+    family = goal_cfg.task_table.families[0]
+    assert family.generate[0].foot_body_names == ".*FOOT.*"
+    lateral_hip = next(criterion for criterion in family.criteria if criterion.name == "lateral_hip_limit")
+    assert lateral_hip.joint_pattern == ".*HAA"
 
 
 def test_locomotion_position_subterrains_do_not_request_flat_patches():
-    """Position terrain presets should rely on the task-table pipeline, not terrain flat patches."""
+    """Position terrain presets should rely on its task family, not terrain flat patches."""
     from isaaclab_tasks.core.multi_task.terrain.mdp_presets import SubTerrainPresetCfg
 
     presets = SubTerrainPresetCfg()

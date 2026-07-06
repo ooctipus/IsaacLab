@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Validate the analytic Jacobian of :class:`IKObjectiveTerrainCollision`.
+"""Validate the analytic Jacobian of :class:`IKObjectiveMeshCollision`.
 
 The softplus-smoothed collision residual has a closed-form Jacobian that
 composes the signed-distance gradient with Newton's spatial motion
@@ -22,15 +22,17 @@ from __future__ import annotations
 import newton.ik as ik
 import numpy as np
 import pytest
+import torch
 import trimesh
 import warp as wp
 
 from isaaclab.utils.warp import convert_to_warp_mesh
 
 from isaaclab_tasks.core.multi_task.kinematics import (
-    IKObjectiveTerrainCollision,
+    IKObjectiveMeshCollision,
     NewtonKinematics,
     NewtonKinematicsCfg,
+    collision_probes_sample,
 )
 
 
@@ -39,15 +41,7 @@ def _init_warp():
     wp.init()
 
 
-ANYMAL_USD = "/home/zhengyuz/Downloads/ANYmal-C/anymal_c.usd"
 DEVICE = "cuda:0"
-DEFAULT_JPOS = {
-    ".*HAA": 0.0,
-    ".*F_HFE": 0.4,
-    ".*H_HFE": -0.4,
-    ".*F_KFE": -0.8,
-    ".*H_KFE": 0.8,
-}
 
 
 def _make_flat_terrain_mesh(device: str):
@@ -63,14 +57,9 @@ def _make_flat_terrain_mesh(device: str):
 
 
 @pytest.fixture(scope="module")
-def setup():
+def setup(canonical_topology_mjcf):
     kin = NewtonKinematics(
-        NewtonKinematicsCfg(
-            usd_path=ANYMAL_USD,
-            device=DEVICE,
-            default_pos=(0, 0, 0.6),
-            default_joint_pos=DEFAULT_JPOS,
-        )
+        NewtonKinematicsCfg(mjcf_path=str(canonical_topology_mjcf), device=DEVICE, collapse_fixed_joints=False)
     )
     foot_ids = [i for i, n in enumerate(kin.body_names) if "FOOT" in n.upper()]
     wp_mesh = _make_flat_terrain_mesh(DEVICE)
@@ -92,17 +81,25 @@ def _make_optimizer(
     Returns ``(impl, obj)`` where ``impl`` is the low-level
     :class:`newton.ik.IKOptimizerLM` and ``obj`` is the collision objective.
     """
-    from types import SimpleNamespace
-
     from newton._src.sim.ik.ik_lm_optimizer import IKOptimizerLM
 
-    from isaaclab_tasks.core.multi_task.kinematics.ik_objectives.cfg import (
-        IKObjectiveTerrainCollisionCfg,
+    probe_bodies, probe_offsets, probe_slots = collision_probes_sample(kin.builder, foot_ids, n_samples)
+    obstacle_pose = torch.zeros(1, 7, dtype=torch.float32, device=DEVICE)
+    obstacle_pose[:, 6] = 1.0
+    contact_mask = torch.ones(1, len(foot_ids), dtype=torch.uint8, device=DEVICE)
+    obj = IKObjectiveMeshCollision(
+        probe_offsets=probe_offsets,
+        probe_bodies=probe_bodies,
+        probe_affects_dof=kin.topology.body_dof_ancestry[probe_bodies],
+        mesh=wp_mesh,
+        obstacle_pose=obstacle_pose,
+        weight=weight,
+        margin=margin,
+        max_distance=2.0,
+        probe_contact_slots=probe_slots,
+        contact_mask=contact_mask,
+        one_sided_up_axis=(0.0, 0.0, 1.0),
     )
-
-    cfg = IKObjectiveTerrainCollisionCfg(weight=weight, margin=margin, n_samples=n_samples)
-    pipeline = SimpleNamespace(kin=kin, foot_body_ids=foot_ids)
-    obj = IKObjectiveTerrainCollision(cfg, pipeline, wp_mesh)
     impl = IKOptimizerLM(
         model=kin.model,
         n_batch=1,
@@ -182,7 +179,7 @@ class TestTerrainCollisionAnalytic:
     @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
     @pytest.mark.parametrize(
         "regime,base_z",
-        [("far_above", 2.0), ("near_surface", 0.3), ("penetrating", -0.2)],
+        [("far_above", 2.0), ("near_surface", 0.54), ("penetrating", 0.0)],
     )
     def test_analytic_matches_autodiff(self, setup, regime, base_z):
         kin, foot_ids, wp_mesh = setup
@@ -205,7 +202,7 @@ class TestTerrainCollisionAnalytic:
     @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
     @pytest.mark.parametrize(
         "regime,base_z",
-        [("far_above", 2.0), ("near_surface", 0.3), ("penetrating", -0.2)],
+        [("far_above", 2.0), ("near_surface", 0.54), ("penetrating", 0.0)],
     )
     def test_analytic_matches_fd(self, setup, regime, base_z):
         kin, foot_ids, wp_mesh = setup
@@ -241,7 +238,7 @@ class TestTerrainCollisionAnalytic:
         Jacobians -- which would also pass ``test_analytic_matches_fd``.
         """
         kin, foot_ids, wp_mesh = setup
-        jq = _make_test_config(kin, -0.2)
+        jq = _make_test_config(kin, 0.0)
 
         impl_a, _ = _make_optimizer(kin, wp_mesh, foot_ids, ik.IKJacobianType.ANALYTIC)
         J = _compute_jacobian(impl_a, jq)

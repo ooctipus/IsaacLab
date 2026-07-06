@@ -44,9 +44,23 @@ from .motion.data.sources import (
     lafan_g1_29dof_skeleton,
     open_cmu_humenv_smpl_source,
     open_lafan_g1_source,
-    smpl_humenv_reference_kinematics,
 )
-from .motion.mdp.commands.commands_cfg import MotionStatePayloadCfg, MotionTaskTableCfg
+from .motion.mdp.commands.commands_cfg import (
+    MotionClipSelectionCfg,
+    MotionCoordinateRouteCfg,
+    MotionExactCoordinatesGenerateCfg,
+    MotionExactFamilyCfg,
+    MotionFrameFiniteCriterionCfg,
+    MotionLandmarkPositionObjectiveCfg,
+    MotionLandmarkRotationObjectiveCfg,
+    MotionObjectiveMeasureCriterionCfg,
+    MotionSemanticFamilyCfg,
+    MotionSemanticSegmentSelectionCfg,
+    MotionSemanticSolveCfg,
+    MotionSemanticTargetsGenerateCfg,
+    MotionStatePayloadCfg,
+    MotionTaskTableCfg,
+)
 from .motion.robots.g1 import observations as g1_observations
 from .motion.robots.g1.actions_cfg import G1JointPositionActionCfg
 from .motion.robots.g1.articulation import (
@@ -55,18 +69,11 @@ from .motion.robots.g1.articulation import (
     G1_MOTION_ARTICULATION_CFG,
 )
 from .motion.robots.g1.frames import G1_HEAD_PARENT_BODY_NAME
-from .motion.robots.g1.reference import (
-    g1_local_body_pose_frame_builder,
-    g1_pose_frame_builder,
-    g1_reference_kinematics,
-)
+from .motion.robots.g1.reference import g1_frame_builder, g1_reference_kinematics
 from .motion.robots.g1.reset import G1ReferenceAndLieDownReset
 from .motion.robots.smpl import observations as smpl_observations
 from .motion.robots.smpl.articulation import SMPL_MOTION_ARTICULATION_CFG
-from .motion.robots.smpl.reference import (
-    smpl_g1_hinge_frame_builder,
-    smpl_generalized_coordinate_frame_builder,
-)
+from .motion.robots.smpl.reference import smpl_frame_builder, smpl_reference_kinematics
 from .motion.robots.smpl.reset import SmplHumEnvMocapAndFallReset
 
 
@@ -490,37 +497,23 @@ class MotionSourcesCfg(PresetCfg):
 
 
 @configclass
+class MotionTargetKinematicsCfg(PresetCfg):
+    """Target robot frame construction and exact reference kinematics."""
+
+    default = MotionTaskTableCfg.TargetKinematicsCfg(
+        frame_builder_factory=smpl_frame_builder,
+        reference_kinematics_factory=smpl_reference_kinematics,
+    )
+    smpl = default
+    g1 = MotionTaskTableCfg.TargetKinematicsCfg(
+        frame_builder_factory=g1_frame_builder,
+        reference_kinematics_factory=g1_reference_kinematics,
+    )
+
+
+@configclass
 class MotionCommandsCfg:
     """Source-to-robot task table and reset-state command."""
-
-    @configclass
-    class TaskTableCfg(PresetCfg):
-        """Robot-specific construction of one dataset-selected motion table."""
-
-        default = MotionTaskTableCfg(
-            source=MotionSourcesCfg(),  # type: ignore[arg-type]
-            frame_builder_factory=preset(
-                default=smpl_generalized_coordinate_frame_builder, lafan=smpl_g1_hinge_frame_builder
-            ),
-            reference_kinematics_factory=smpl_humenv_reference_kinematics,
-            task_row_mode=preset(
-                default="source_frames", sampling_source_rows="source_frames", sampling_clip_time="clip_time_ranges"
-            ),
-            source_artifact_root="",
-            reference_artifact_root="",
-            motion_split="train",
-        )
-        g1 = MotionTaskTableCfg(
-            source=MotionSourcesCfg(),  # type: ignore[arg-type]
-            frame_builder_factory=preset(default=g1_local_body_pose_frame_builder, lafan=g1_pose_frame_builder),
-            reference_kinematics_factory=g1_reference_kinematics,
-            task_row_mode=preset(
-                default="source_frames", sampling_source_rows="source_frames", sampling_clip_time="clip_time_ranges"
-            ),
-            source_artifact_root="",
-            reference_artifact_root="",
-            motion_split="train",
-        )
 
     @configclass
     class PayloadCfg(PresetCfg):
@@ -560,10 +553,58 @@ class MotionCommandsCfg:
     motion = StateCommandCfg(
         resampling_time_range=(1.0e9, 1.0e9),
         debug_vis=False,
+        reset_assets=("robot",),
         randomize_command_indices=True,
         states_relative=True,
         commands={},
-        task_table=TaskTableCfg(),  # type: ignore[arg-type]
+        task_table=MotionTaskTableCfg(
+            source=MotionSourcesCfg(),  # type: ignore[arg-type]
+            target_kinematics=MotionTargetKinematicsCfg(),  # type: ignore[arg-type]
+            route=MotionCoordinateRouteCfg(
+                exact_family="exact_coordinates",
+                semantic_family="semantic_sequence",
+            ),
+            families=(
+                MotionExactFamilyCfg(
+                    name="exact_coordinates",
+                    generate=(MotionExactCoordinatesGenerateCfg(),),
+                    solve=None,
+                    criteria=(MotionFrameFiniteCriterionCfg(),),
+                    selection=MotionClipSelectionCfg(),
+                ),
+                MotionSemanticFamilyCfg(
+                    name="semantic_sequence",
+                    generate=(MotionSemanticTargetsGenerateCfg(),),
+                    solve=MotionSemanticSolveCfg(
+                        objectives=(
+                            MotionLandmarkPositionObjectiveCfg(weight=1.0, root_weight=10.0),
+                            MotionLandmarkRotationObjectiveCfg(weight=1.0, root_weight=10.0, canonicalize_error=True),
+                        ),
+                        lambda_initial=0.1,
+                        lambda_factor=2.0,
+                        lambda_min=1.0e-5,
+                        lambda_max=1.0e10,
+                        rho_min=1.0e-3,
+                        history_length=10,
+                        h0_scale=1.0,
+                        wolfe_c1=1.0e-4,
+                        wolfe_c2=0.9,
+                        support_landmark_atol_m=2.0e-6,
+                    ),
+                    criteria=(
+                        MotionObjectiveMeasureCriterionCfg(objective="landmark_position", upper=0.15),
+                        MotionFrameFiniteCriterionCfg(),
+                    ),
+                    selection=MotionSemanticSegmentSelectionCfg(max_branch_jump_rad=math.pi),
+                ),
+            ),
+            task_row_mode=preset(
+                default="source_frames", sampling_source_rows="source_frames", sampling_clip_time="clip_time_ranges"
+            ),
+            source_artifact_root="",
+            reference_artifact_root="",
+            motion_split="train",
+        ),
         payload=PayloadCfg(),  # type: ignore[arg-type]
     )
 

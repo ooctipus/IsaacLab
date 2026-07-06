@@ -8,7 +8,113 @@
 import pytest
 import torch
 
-from isaaclab_tasks.core.multi_task.kinematics import fit_ordered_hinge_coordinates, ordered_hinge_rotation
+from isaaclab.utils.math import quat_from_rotation_vector
+
+from isaaclab_tasks.core.multi_task.kinematics import (
+    fit_ordered_hinge_coordinates,
+    ordered_hinge_rotation,
+    time_forward_difference_segmented,
+    time_gaussian_filter,
+    time_gaussian_filter_segmented,
+    time_gradient,
+    time_gradient_segmented,
+    time_quaternion_angular_velocity,
+    time_quaternion_angular_velocity_segmented,
+)
+
+
+def test_quaternion_angular_velocity_ignores_alternating_representation_signs() -> None:
+    """Equivalent per-frame quaternion signs must produce the same angular velocity."""
+    step_seconds = 0.1
+    angle = torch.arange(6, dtype=torch.float64) * 0.2
+    rotation_vector = torch.zeros(1, 6, 3, dtype=torch.float64)
+    rotation_vector[..., 2] = angle
+    rotation = quat_from_rotation_vector(rotation_vector)
+    alternating_sign = torch.tensor((1.0, -1.0, 1.0, -1.0, 1.0, -1.0), dtype=torch.float64).view(1, 6, 1)
+
+    angular_velocity = time_quaternion_angular_velocity(rotation * alternating_sign, step_seconds)
+
+    expected = torch.zeros_like(rotation_vector)
+    expected[:, :-1, 2] = 2.0
+    torch.testing.assert_close(angular_velocity, expected, rtol=1.0e-12, atol=1.0e-12)
+
+
+def test_quaternion_angular_velocity_tracks_a_full_turn_across_the_sign_boundary() -> None:
+    """A 0-to-2pi sweep must retain its analytical rate through a quaternion sign boundary."""
+    step_seconds = 0.01
+    angle = torch.linspace(0.0, 2.0 * torch.pi, 65, dtype=torch.float64)
+    rotation_vector = torch.zeros(1, 65, 3, dtype=torch.float64)
+    rotation_vector[..., 1] = angle
+    rotation = quat_from_rotation_vector(rotation_vector)
+    rotation = torch.where(rotation[..., 3:] < 0.0, -rotation, rotation)
+
+    angular_velocity = time_quaternion_angular_velocity(rotation, step_seconds)
+
+    expected = torch.zeros_like(rotation_vector)
+    expected[:, :-1, 1] = (angle[1] - angle[0]) / step_seconds
+    torch.testing.assert_close(angular_velocity, expected, rtol=1.0e-12, atol=1.0e-12)
+
+
+def test_segmented_gradient_does_not_cross_a_discontinuous_boundary() -> None:
+    """Flat differentiation must equal independent differentiation of each segment."""
+    values = torch.tensor((0.0, 1.0, 3.0, 100.0, 104.0, 110.0), dtype=torch.float64)[:, None]
+    offsets = torch.tensor((0, 3, 6), dtype=torch.int64)
+    steps = torch.tensor((0.5, 2.0), dtype=torch.float32)
+
+    actual = time_gradient_segmented(values, offsets, steps)
+    expected = torch.cat(
+        tuple(time_gradient(segment[None], float(step)).squeeze(0) for segment, step in zip(values.split(3), steps))
+    )
+
+    torch.testing.assert_close(actual, expected, rtol=1.0e-12, atol=1.0e-12)
+
+
+def test_segmented_quaternion_velocity_does_not_cross_a_discontinuous_boundary() -> None:
+    """The first rotation of a new segment must not form an edge with the preceding segment."""
+    angles = torch.tensor((0.0, 0.1, 0.3, 2.0, 2.4, 3.0), dtype=torch.float64)
+    rotation_vector = torch.zeros(6, 3, dtype=torch.float64)
+    rotation_vector[:, 2] = angles
+    rotation = quat_from_rotation_vector(rotation_vector)
+    offsets = torch.tensor((0, 3, 6), dtype=torch.int64)
+    steps = torch.tensor((0.1, 0.2), dtype=torch.float32)
+
+    actual = time_quaternion_angular_velocity_segmented(rotation, offsets, steps)
+    expected = torch.cat(
+        tuple(
+            time_quaternion_angular_velocity(segment[None], float(step)).squeeze(0)
+            for segment, step in zip(rotation.split(3), steps)
+        )
+    )
+
+    torch.testing.assert_close(actual, expected, rtol=1.0e-12, atol=1.0e-12)
+    torch.testing.assert_close(actual[(2, 5), :], torch.zeros(2, 3, dtype=torch.float64))
+
+
+def test_segmented_gaussian_filter_does_not_blend_adjacent_segments() -> None:
+    """Nearest padding must clamp at each segment boundary rather than only the flat tensor boundary."""
+    values = torch.tensor((0.0, 1.0, 2.0, 100.0, 101.0, 102.0), dtype=torch.float32)[:, None]
+    offsets = torch.tensor((0, 3, 6), dtype=torch.int64)
+
+    actual = time_gaussian_filter_segmented(values, offsets)
+    expected = torch.cat(tuple(time_gaussian_filter(segment[None]).squeeze(0) for segment in values.split(3)))
+
+    torch.testing.assert_close(actual, expected, rtol=1.0e-6, atol=1.0e-6)
+
+
+def test_segmented_forward_difference_restarts_and_repeats_each_penultimate_edge() -> None:
+    """The released G1 tail law must be local to every retained segment."""
+    values = torch.tensor((0.0, 1.0, 3.0, 100.0, 104.0, 110.0), dtype=torch.float32)[:, None]
+    offsets = torch.tensor((0, 3, 6), dtype=torch.int64)
+    steps = torch.tensor((0.5, 2.0), dtype=torch.float32)
+
+    actual = time_forward_difference_segmented(values, offsets, steps)
+    expected_parts = []
+    for segment, step in zip(values.split(3), steps):
+        difference = (segment[1:] - segment[:-1]) / step
+        expected_parts.append(torch.cat((difference, difference[-2:-1])))
+    expected = torch.cat(expected_parts)
+
+    torch.testing.assert_close(actual, expected)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required to exercise training-time TF32 matmul.")
@@ -36,3 +142,67 @@ def test_three_hinge_fit_remains_finite_with_training_tf32() -> None:
     reconstructed = ordered_hinge_rotation(coordinates, axes)
     expected = torch.nn.functional.normalize(rotation, dim=-1)
     torch.testing.assert_close(reconstructed, expected, atol=2.0e-6, rtol=2.0e-6)
+
+
+def test_segmented_time_operators_reject_nonfloating_values() -> None:
+    """Every segmented temporal operator requires floating-point physical values."""
+    values = torch.arange(6, dtype=torch.int64)[:, None]
+    rotations = torch.zeros(6, 4, dtype=torch.int64)
+    offsets = torch.tensor((0, 3, 6), dtype=torch.int64)
+    steps = torch.tensor((0.1, 0.2), dtype=torch.float32)
+
+    for operator in (time_gradient_segmented, time_forward_difference_segmented):
+        with pytest.raises(ValueError, match="floating-point"):
+            operator(values, offsets, steps)
+    with pytest.raises(ValueError, match="floating-point"):
+        time_quaternion_angular_velocity_segmented(rotations, offsets, steps)
+    with pytest.raises(ValueError, match="floating-point"):
+        time_gaussian_filter_segmented(values, offsets)
+
+
+def test_segmented_time_operators_are_bitwise_equal_for_duplicate_segments() -> None:
+    """Duplicate segments must produce exactly duplicate derivatives and filtered values."""
+    segment = torch.tensor(((0.0, 1.0), (1.0, 3.0), (3.0, 6.0)), dtype=torch.float32)
+    values = segment.repeat(2, 1)
+    rotation_vector = torch.zeros(3, 3)
+    rotation_vector[:, 1] = torch.tensor((0.0, 0.2, 0.5))
+    rotation = quat_from_rotation_vector(rotation_vector).repeat(2, 1)
+    offsets = torch.tensor((0, 3, 6), dtype=torch.int64)
+    steps = torch.tensor((0.1, 0.1), dtype=torch.float32)
+
+    results = (
+        time_gradient_segmented(values, offsets, steps),
+        time_quaternion_angular_velocity_segmented(rotation, offsets, steps),
+        time_gaussian_filter_segmented(values, offsets),
+        time_forward_difference_segmented(values, offsets, steps),
+    )
+
+    for result in results:
+        assert torch.equal(result[:3], result[3:])
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for segmented temporal parity.")
+def test_segmented_time_operators_match_cpu_on_cuda() -> None:
+    """CUDA segmented operators must retain the Torch CPU laws within float32 tolerance."""
+    values = torch.tensor((0.0, 1.0, 3.0, 100.0, 104.0, 110.0), dtype=torch.float32)[:, None]
+    rotation_vector = torch.zeros(6, 3)
+    rotation_vector[:, 2] = torch.tensor((0.0, 0.1, 0.3, 2.0, 2.4, 3.0))
+    rotation = quat_from_rotation_vector(rotation_vector)
+    offsets = torch.tensor((0, 3, 6), dtype=torch.int64)
+    steps = torch.tensor((0.1, 0.2), dtype=torch.float32)
+
+    expected = (
+        time_gradient_segmented(values, offsets, steps),
+        time_quaternion_angular_velocity_segmented(rotation, offsets, steps),
+        time_gaussian_filter_segmented(values, offsets),
+        time_forward_difference_segmented(values, offsets, steps),
+    )
+    actual = (
+        time_gradient_segmented(values.cuda(), offsets.cuda(), steps.cuda()),
+        time_quaternion_angular_velocity_segmented(rotation.cuda(), offsets.cuda(), steps.cuda()),
+        time_gaussian_filter_segmented(values.cuda(), offsets.cuda()),
+        time_forward_difference_segmented(values.cuda(), offsets.cuda(), steps.cuda()),
+    )
+
+    for cpu, cuda in zip(expected, actual, strict=True):
+        torch.testing.assert_close(cuda.cpu(), cpu, rtol=2.0e-6, atol=2.0e-6)

@@ -50,7 +50,8 @@ class TerrainGenCfg(MeshObjTerrainCfg):
 class MeshStonesEverywhereTerrainCfg(terrains.SubTerrainBaseCfg):
     """A terrain with stones everywhere."""
 
-    function = "{DIR}.mesh_terrains:stones_everywhere_terrain"
+    function = None
+    function_rng = "{DIR}.mesh_terrains:stones_everywhere_terrain"
 
     w_gap: tuple[float, float] = MISSING
     """Stone gap width."""
@@ -75,7 +76,8 @@ class MeshStonesEverywhereTerrainCfg(terrains.SubTerrainBaseCfg):
 class MeshBalanceBeamsTerrainCfg(terrains.SubTerrainBaseCfg):
     """A terrain with balance-beams."""
 
-    function = "{DIR}.mesh_terrains:balance_beams_terrain"
+    function = None
+    function_rng = "{DIR}.mesh_terrains:balance_beams_terrain"
 
     platform_width: float = MISSING
     """Platform width [m]."""
@@ -94,7 +96,8 @@ class MeshBalanceBeamsTerrainCfg(terrains.SubTerrainBaseCfg):
 class MeshSteppingBeamsTerrainCfg(terrains.SubTerrainBaseCfg):
     """A terrain with stepping-beams."""
 
-    function = "{DIR}.mesh_terrains:stepping_beams_terrain"
+    function = None
+    function_rng = "{DIR}.mesh_terrains:stepping_beams_terrain"
 
     platform_width: float = MISSING
     """Platform width [m]."""
@@ -141,7 +144,8 @@ class MeshDiversityBoxTerrainCfg(terrains.SubTerrainBaseCfg):
 class MeshPassageTerrainCfg(terrains.SubTerrainBaseCfg):
     """A terrain with passage."""
 
-    function = "{DIR}.mesh_terrains:passage_terrain"
+    function = None
+    function_rng = "{DIR}.mesh_terrains:passage_terrain"
 
     passage_width: float | tuple[float, float] = MISSING
     """Passage width (y direction) [m]."""
@@ -157,7 +161,8 @@ class MeshPassageTerrainCfg(terrains.SubTerrainBaseCfg):
 class MeshStructuredTerrainCfg(terrains.SubTerrainBaseCfg):
     """Configuration for a structured terrain."""
 
-    function = "{DIR}.mesh_terrains:structured_terrain"
+    function = None
+    function_rng = "{DIR}.mesh_terrains:structured_terrain"
     terrain_type: Literal["stairs", "inverted_stairs", "obstacles", "walls"] = MISSING
 
 
@@ -175,7 +180,8 @@ class MeshMazeTerrainCfg(terrains.SubTerrainBaseCfg):
     Cell size is derived automatically from ``size / grid_dims``.
     """
 
-    function = "{DIR}.mesh_terrains:maze_terrain"
+    function = None
+    function_rng = "{DIR}.mesh_terrains:maze_terrain"
 
     grid_cols: int | tuple[int, int] = 5
     """Number of maze columns. A tuple ``(easy, hard)`` is interpolated.
@@ -226,7 +232,8 @@ class MeshContourTerrainCfg(terrains.SubTerrainBaseCfg):
     and valleys.
     """
 
-    function = "{DIR}.mesh_terrains:contour_terrain"
+    function = None
+    function_rng = "{DIR}.mesh_terrains:contour_terrain"
 
     num_levels: int | tuple[int, int] = 6
     """Number of contour levels. A tuple ``(easy, hard)`` is interpolated.
@@ -367,10 +374,6 @@ class MeshRadiatingBeamTerrainCfg(terrains.MeshStarTerrainCfg):
       [m], interpolated with difficulty.
     """
 
-    # backward-compatible aliases
-    FlatBeamCfg = FlatBeamCfg
-    BoxBeamCfg = BoxBeamCfg
-
     @configclass
     class SquareBorderCfg:
         """Rectangular border ring surrounding the terrain."""
@@ -388,7 +391,8 @@ class MeshRadiatingBeamTerrainCfg(terrains.MeshStarTerrainCfg):
         radius: float = MISSING
         """Radius of each endpoint platform cylinder [m]."""
 
-    function = "{DIR}.mesh_terrains:beam_terrain"
+    function = None
+    function_rng = "{DIR}.mesh_terrains:beam_terrain"
 
     border: SquareBorderCfg | PlatformBorderCfg | None = MISSING
     """Outer border configuration."""
@@ -439,10 +443,6 @@ class MeshFloatingIslandTerrainCfg(terrains.SubTerrainBaseCfg):
        :class:`FlatBeamCfg` / :class:`BoxBeamCfg`.
     """
 
-    # backward-compatible aliases
-    FlatBeamCfg = FlatBeamCfg
-    BoxBeamCfg = BoxBeamCfg
-
     @configclass
     class CylinderIslandCfg:
         """Cylindrical island platforms."""
@@ -478,7 +478,8 @@ class MeshFloatingIslandTerrainCfg(terrains.SubTerrainBaseCfg):
         k: int = 3
         """Number of nearest neighbors per island."""
 
-    function = "{DIR}.mesh_terrains:floating_island_terrain"
+    function = None
+    function_rng = "{DIR}.mesh_terrains:floating_island_terrain"
 
     num_islands: int | tuple[int, int] = 8
     """Number of islands. A tuple ``(easy, hard)`` is interpolated."""

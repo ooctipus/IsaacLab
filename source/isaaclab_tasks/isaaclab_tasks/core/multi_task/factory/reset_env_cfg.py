@@ -5,13 +5,7 @@
 
 from __future__ import annotations
 
-"""Factory reset-state sampler presets.
-
-The sim-in-the-loop reset strategies that used to live here (``SCENE_RESET`` and
-its three tagged branches) were replaced by the offline Newton-IK pipeline
-(:mod:`..factory.retarget`), wired through
-:attr:`FactoryResetStateTableCfg.pipeline_cfg`.
-"""
+"""Factory reset-state curriculum sampler presets."""
 
 from isaaclab_tasks.core.multi_task.curriculum import (
     BetaSamplingStrategyCfg,

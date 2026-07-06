@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from isaaclab.utils.math import convert_quat, quat_from_rotation_vector
+from isaaclab.utils.math import quat_from_rotation_vector
 
 from ...identity import validate_sha256
 from ..clip_index import MotionClipIndex
@@ -131,6 +131,8 @@ class LafanG1Clip:
             raise ValueError("LAFAN G1 clip tensors must use float32.")
         if not self.root_translation.flags.c_contiguous or not self.pose_axis_angle.flags.c_contiguous:
             raise ValueError("LAFAN G1 clip tensors must be C-contiguous.")
+        if not np.isfinite(self.root_translation).all() or not np.isfinite(self.pose_axis_angle).all():
+            raise ValueError("LAFAN G1 root translations and pose rows must contain only finite values.")
         if self.source_fps != 30.0:
             raise ValueError("LAFAN G1 clips must use the native 30 Hz sample rate.")
 
@@ -139,8 +141,13 @@ class LafanG1Clip:
         """Number of native source frames."""
         return int(self.root_translation.shape[0])
 
-    def local_body_rotation_wxyz(self, source_skeleton: MotionSkeleton, *, device: str | torch.device) -> torch.Tensor:
-        """Decode the released G1 hinge rows as parent-local body rotations."""
+    def _validated_pose_rows(
+        self,
+        source_skeleton: MotionSkeleton,
+        *,
+        device: str | torch.device,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return validated root positions, pose rows, and scalar hinge coordinates."""
         expected_children = tuple(range(1, source_skeleton.num_bodies))
         if (
             source_skeleton.num_bodies != self.pose_axis_angle.shape[1]
@@ -148,15 +155,29 @@ class LafanG1Clip:
             or source_skeleton.root_rotation_convention != "axis_angle"
         ):
             raise ValueError("LAFAN G1 pose rows differ from the declared scalar-hinge source skeleton.")
+        root_position = torch.as_tensor(self.root_translation, device=device)
         pose_axis_angle = torch.as_tensor(self.pose_axis_angle, device=device)
-        if not torch.all(torch.isfinite(pose_axis_angle)):
-            raise ValueError("LAFAN G1 pose rows must contain only finite values.")
         axes = pose_axis_angle.new_tensor(source_skeleton.joint_axes)
         joint_rotation = pose_axis_angle[:, 1:]
-        coordinate = torch.sum(joint_rotation * axes, dim=-1, keepdim=True)
-        if not torch.allclose(joint_rotation, coordinate * axes, atol=2.0e-6, rtol=2.0e-6):
+        coordinate = torch.sum(joint_rotation * axes, dim=-1)
+        if not torch.allclose(joint_rotation, coordinate[..., None] * axes, atol=2.0e-6, rtol=2.0e-6):
             raise ValueError("LAFAN G1 non-root rotations must lie on their declared hinge axes.")
-        return convert_quat(quat_from_rotation_vector(pose_axis_angle), to="wxyz")
+        return root_position, pose_axis_angle, coordinate
+
+    def free_root_coordinates(
+        self, source_skeleton: MotionSkeleton, *, device: str | torch.device
+    ) -> tuple[torch.Tensor, None]:
+        """Decode exact G1 free-root coordinates without deriving velocities."""
+        root_position, pose_axis_angle, coordinates = self._validated_pose_rows(source_skeleton, device=device)
+        root_rotation = quat_from_rotation_vector(pose_axis_angle[:, 0])
+        return torch.cat((root_position, root_rotation, coordinates), dim=-1), None
+
+    def semantic_local_pose(
+        self, source_skeleton: MotionSkeleton, *, device: str | torch.device
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Decode the released world root rotation and non-root hinge pose deltas."""
+        root_position, pose_axis_angle, _ = self._validated_pose_rows(source_skeleton, device=device)
+        return root_position, quat_from_rotation_vector(pose_axis_angle)
 
 
 class LafanG1JoblibClips:

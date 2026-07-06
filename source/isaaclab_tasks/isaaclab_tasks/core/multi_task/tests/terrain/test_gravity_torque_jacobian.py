@@ -14,13 +14,14 @@ free-joint integration convention).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import newton.ik as ik
 import numpy as np
 import pytest
 import torch
 import warp as wp
 
-ANYMAL_USD = "/home/zhengyuz/Downloads/ANYmal-C/anymal_c.usd"
 DEVICE = "cuda:0"
 
 
@@ -63,7 +64,7 @@ def _init_warp():
 
 
 @pytest.mark.skipif(not wp.is_device_available(DEVICE), reason="GPU required")
-def test_gravity_torque_analytic_matches_fd():
+def test_gravity_torque_analytic_matches_fd(canonical_topology_mjcf: Path):
     from isaaclab_tasks.core.multi_task.kinematics import (
         NewtonKinematics,
         NewtonKinematicsCfg,
@@ -71,30 +72,19 @@ def test_gravity_torque_analytic_matches_fd():
     from isaaclab_tasks.core.multi_task.kinematics.ik_objectives.cfg import (
         IKObjectiveGravityTorqueCfg,
     )
+    from isaaclab_tasks.core.multi_task.kinematics.ik_objectives.context import IKObjectiveBuildContext
     from isaaclab_tasks.core.multi_task.kinematics.ik_objectives.gravity_torque import (
         IKObjectiveGravityTorque,
         _compute_subtree_com,
         _gravity_torque_residuals,
     )
 
-    DEFAULT_JPOS = {
-        ".*HAA": 0.0,
-        ".*F_HFE": 0.4,
-        ".*H_HFE": -0.4,
-        ".*F_KFE": -0.8,
-        ".*H_KFE": 0.8,
-    }
     kin = NewtonKinematics(
-        NewtonKinematicsCfg(usd_path=ANYMAL_USD, device=DEVICE, default_pos=(0, 0, 0.6), default_joint_pos=DEFAULT_JPOS)
+        NewtonKinematicsCfg(mjcf_path=str(canonical_topology_mjcf), device=DEVICE, collapse_fixed_joints=False)
     )
-
-    class _PipelineMock:
-        def __init__(self, k):
-            self.kin = k
-
-    obj = IKObjectiveGravityTorque(IKObjectiveGravityTorqueCfg(weight=0.5), _PipelineMock(kin))
-
     N = 4
+    context = IKObjectiveBuildContext(kinematics=kin, asset_name="robot", batch_size=N)
+    obj = IKObjectiveGravityTorque(IKObjectiveGravityTorqueCfg(weight=0.5), context)
     n_rev = obj.n_rev
     n_dofs = kin.model.joint_dof_count
     n_jq = kin.model.joint_coord_count

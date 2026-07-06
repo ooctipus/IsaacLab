@@ -104,7 +104,14 @@ class MotionSampler:
         self._local_rows = torch.empty(capacity, dtype=torch.int64, device=table.device)
         self.reset_source_names = reset_source_names
         self.reset_source_probabilities = reset_source_probabilities
-        self.clip_priorities = torch.ones(len(table.clip_ids), dtype=torch.float32, device=table.device)
+        base_priority = table.base_priorities
+        if (
+            base_priority.shape != (len(table.clip_ids),)
+            or not bool(torch.all(torch.isfinite(base_priority)))
+            or not bool(torch.all(base_priority > 0.0))
+        ):
+            raise ValueError("Motion base priorities must be finite positive values aligned with clips.")
+        self.clip_priorities = base_priority.clone()
         self.generator = generator
         self._reset_time_mode: Literal["uniform", "range_start"] = "uniform"
 

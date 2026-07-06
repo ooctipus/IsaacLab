@@ -27,12 +27,27 @@ class MotionSkeleton:
         joint_names: Joint coordinates in source order.
         joint_child_body_indices: Child body moved by each joint coordinate.
         joint_axes: Unitless hinge axes, or ``None`` for unrestricted rotation.
+        landmarks: Semantic source landmarks used by cross-skeleton reconstruction.
         root_translation_frame: Frame of source root translations.
         root_rotation_convention: Source root-rotation representation.
         position_unit: Source position unit. Trajectory builders emit SI units.
         angle_unit: Source angle unit. Trajectory builders emit radians.
         identity_sha256: Deterministic hash of every interpreting field.
     """
+
+    @dataclass(frozen=True, slots=True)
+    class Landmark:
+        """One semantic role and its source position/orientation bodies."""
+
+        name: str
+        position_body_name: str
+        rotation_body_name: str
+
+        def __post_init__(self) -> None:
+            """Reject unnamed semantic roles or body bindings."""
+            validate_nonempty("landmark name", self.name)
+            validate_nonempty("landmark position_body_name", self.position_body_name)
+            validate_nonempty("landmark rotation_body_name", self.rotation_body_name)
 
     identifier: str
     content_sha256: str
@@ -45,9 +60,11 @@ class MotionSkeleton:
     joint_axes: tuple[tuple[float, float, float] | None, ...]
     root_translation_frame: str
     root_rotation_convention: str
+    landmarks: tuple[Landmark, ...] = ()
     position_unit: str = "m"
     angle_unit: str = "rad"
     identity_sha256: str = field(init=False)
+    coordinate_identity_sha256: str = field(init=False)
 
     def __post_init__(self) -> None:
         """Validate topology and freeze a canonical identity."""
@@ -59,6 +76,11 @@ class MotionSkeleton:
         validate_nonempty("angle_unit", self.angle_unit)
         if not self.body_names or len(set(self.body_names)) != len(self.body_names):
             raise ValueError("body_names must be nonempty and unique.")
+        if len({landmark.name for landmark in self.landmarks}) != len(self.landmarks):
+            raise ValueError("Motion-skeleton landmark names must be unique.")
+        for landmark in self.landmarks:
+            if landmark.position_body_name not in self.body_names or landmark.rotation_body_name not in self.body_names:
+                raise ValueError("Motion-skeleton landmark bodies must exist in body_names.")
         if len(self.parent_indices) != len(self.body_names):
             raise ValueError("parent_indices must contain one entry per body.")
         if self.parent_indices[0] != -1:
@@ -104,23 +126,36 @@ class MotionSkeleton:
         ):
             raise ValueError("Source-skeleton hinge axes must be finite unit vectors.")
 
+        coordinates = {
+            "body_names": self.body_names,
+            "parent_indices": self.parent_indices,
+            "rest_translation_m": self.rest_translation_m,
+            "rest_rotation_wxyz": self.rest_rotation_wxyz,
+            "joint_child_body_indices": self.joint_child_body_indices,
+            "joint_names": self.joint_names,
+            "joint_axes": self.joint_axes,
+            "root_translation_frame": self.root_translation_frame,
+            "root_rotation_convention": self.root_rotation_convention,
+            "position_unit": self.position_unit,
+            "angle_unit": self.angle_unit,
+        }
+        coordinate_identity = canonical_sha256(coordinates)
         identity = canonical_sha256(
             {
                 "identifier": self.identifier,
                 "content_sha256": self.content_sha256,
-                "body_names": self.body_names,
-                "parent_indices": self.parent_indices,
-                "rest_translation_m": self.rest_translation_m,
-                "rest_rotation_wxyz": self.rest_rotation_wxyz,
-                "joint_child_body_indices": self.joint_child_body_indices,
-                "joint_names": self.joint_names,
-                "joint_axes": self.joint_axes,
-                "root_translation_frame": self.root_translation_frame,
-                "root_rotation_convention": self.root_rotation_convention,
-                "position_unit": self.position_unit,
-                "angle_unit": self.angle_unit,
+                "coordinates": coordinates,
+                "landmarks": tuple(
+                    {
+                        "name": landmark.name,
+                        "position_body_name": landmark.position_body_name,
+                        "rotation_body_name": landmark.rotation_body_name,
+                    }
+                    for landmark in self.landmarks
+                ),
             }
         )
+        object.__setattr__(self, "coordinate_identity_sha256", coordinate_identity)
         object.__setattr__(self, "identity_sha256", identity)
 
     @property

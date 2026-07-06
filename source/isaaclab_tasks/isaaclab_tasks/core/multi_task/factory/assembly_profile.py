@@ -20,8 +20,8 @@ import torch
 
 import isaaclab.utils.math as math_utils
 
+from ..geom.pose_offset import Offset
 from ..utils.symmetry.asset_symmetry import KIND_CYCLIC
-from .assembly_keypoints import Offset
 
 if TYPE_CHECKING:
     from .assembly_profile_cfg import (
@@ -36,12 +36,13 @@ if TYPE_CHECKING:
 # Start-sampler type and callable classes
 # ---------------------------------------------------------------------------
 
-StartSampler = Callable[[int, str | torch.device], tuple[torch.Tensor, torch.Tensor]]
+StartSampler = Callable[[int, str | torch.device, torch.Generator], tuple[torch.Tensor, torch.Tensor]]
 """Callable that generates noise for the start pose of a segment.
 
 Args:
     num_envs: Number of environments.
     device: Torch device.
+    generator: Table-owned Torch random generator.
 
 Returns:
     ``(pos_offset, quat)`` noise tensors, shapes ``(num_envs, 3)`` and ``(num_envs, 4)``.
@@ -59,17 +60,19 @@ class SymmetryOrbit:
         self.cfg = cfg
         self._symmetry = cfg.symmetry.class_type(cfg.symmetry)
 
-    def __call__(self, num_envs: int, device: str | torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+    def __call__(
+        self, num_envs: int, device: str | torch.device, generator: torch.Generator
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         device = torch.device(device)
         pos = torch.zeros(num_envs, 3, device=device)
         table = self._symmetry.table
         if table.kind == KIND_CYCLIC and table.order == 0:
             axis = torch.as_tensor(table.axis, dtype=torch.float32, device=device).expand(num_envs, -1)
-            angle = torch.empty(num_envs, device=device).uniform_(-math.pi, math.pi)
+            angle = torch.empty(num_envs, device=device).uniform_(-math.pi, math.pi, generator=generator)
             quat = math_utils.quat_from_angle_axis(angle, axis)
         else:
             orbit = torch.as_tensor(self._symmetry.finite_orbit_quat, dtype=torch.float32, device=device)
-            quat = orbit[torch.randint(0, orbit.shape[0], (num_envs,), device=device)]
+            quat = orbit[torch.randint(0, orbit.shape[0], (num_envs,), device=device, generator=generator)]
         return pos, quat
 
 
@@ -79,12 +82,15 @@ class UniformPoseNoise:
     def __init__(self, cfg: UniformPoseNoiseCfg):
         self.cfg = cfg
 
-    def __call__(self, num_envs: int, device: str | torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+    def __call__(
+        self, num_envs: int, device: str | torch.device, generator: torch.Generator
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         ranges = torch.tensor(
             [self.cfg.x, self.cfg.y, self.cfg.z, self.cfg.roll, self.cfg.pitch, self.cfg.yaw],
             device=device,
         )
-        samples = math_utils.sample_uniform(ranges[:, 0], ranges[:, 1], (num_envs, 6), device=device)
+        samples = torch.rand((num_envs, 6), device=device, generator=generator)
+        samples.mul_(ranges[:, 1] - ranges[:, 0]).add_(ranges[:, 0])
         pos = samples[:, :3]
         quat = math_utils.quat_from_euler_xyz(samples[:, 3], samples[:, 4], samples[:, 5])
         return pos, quat
@@ -201,6 +207,8 @@ class AssemblyProfile:
         fraction_range: tuple[float, float],
         num_envs: int,
         device: str | torch.device,
+        *,
+        generator: torch.Generator,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Sample assembly poses for all envs in one vectorized pass.
 
@@ -208,6 +216,7 @@ class AssemblyProfile:
             fraction_range: ``(lo, hi)`` fraction range to sample from.
             num_envs: Number of environments.
             device: Torch device.
+            generator: Table-owned Torch random generator.
 
         Returns:
             ``(pos, quat)`` each of shape ``(num_envs, 3)`` and ``(num_envs, 4)``.
@@ -221,7 +230,8 @@ class AssemblyProfile:
         assert self._seg_aa_deltas is not None
         assert self._seg_euler_totals is not None
 
-        fractions = math_utils.sample_uniform(fraction_range[0], fraction_range[1], (num_envs, 1), device=device)
+        fractions = torch.rand((num_envs, 1), device=device, generator=generator)
+        fractions.mul_(fraction_range[1] - fraction_range[0]).add_(fraction_range[0])
 
         seg_idx = torch.searchsorted(self._boundaries[1:], fractions.squeeze(-1)).clamp(0, len(self.segments) - 1)
 
@@ -249,7 +259,7 @@ class AssemblyProfile:
 
         if not self._all_no_noise:
             if len(self._samplers) == 1 and self._samplers[0] is not None:
-                noise_pos, noise_quat = self._samplers[0](num_envs, device)
+                noise_pos, noise_quat = self._samplers[0](num_envs, device, generator)
                 pos = pos + noise_pos
                 quat = math_utils.quat_mul(noise_quat, quat)
             else:
@@ -260,7 +270,7 @@ class AssemblyProfile:
                     if not mask.any():
                         continue
                     n = int(mask.sum().item())
-                    noise_pos, noise_quat = sampler(n, device)
+                    noise_pos, noise_quat = sampler(n, device, generator)
                     pos[mask] = pos[mask] + noise_pos
                     quat[mask] = math_utils.quat_mul(noise_quat, quat[mask])
 

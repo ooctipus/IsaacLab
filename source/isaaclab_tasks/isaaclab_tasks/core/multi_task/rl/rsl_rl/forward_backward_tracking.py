@@ -659,7 +659,7 @@ def _tracking_context_table(
     return contexts
 
 
-def forward_backward_tracking_priorities(
+def forward_backward_tracking_priority_scores(
     evaluation: ForwardBackwardTrackingEvaluation,
     sequence_ids: tuple[str, ...],
     device: str | torch.device,
@@ -670,7 +670,7 @@ def forward_backward_tracking_priorities(
     exponent_scale: float,
     exponent_base: float,
 ) -> torch.Tensor:
-    """Map one named metric to exponential priorities in stable sequence order."""
+    """Map one named metric to exponential sampling scores in stable sequence order."""
     if evaluation.sequence_ids != sequence_ids:
         raise ValueError("Tracking evaluation must retain the configured stable sequence order.")
     if metric_name not in evaluation.metric_values:
@@ -831,7 +831,7 @@ class ForwardBackwardTrackingCurriculum:
                     )
             finally:
                 self.algorithm.train_mode()
-            priorities = forward_backward_tracking_priorities(
+            priority_scores = forward_backward_tracking_priority_scores(
                 evaluation,
                 self.sequence_ids,
                 self.expert.device,
@@ -841,6 +841,7 @@ class ForwardBackwardTrackingCurriculum:
                 exponent_scale=self.priority_exponent_scale,
                 exponent_base=self.priority_exponent_base,
             )
+            priorities = self.expert.base_priorities * priority_scores
             self.expert.validate_priorities(priorities)
         except BaseException:
             self.assignment_rng.setstate(assignment_rng_state)

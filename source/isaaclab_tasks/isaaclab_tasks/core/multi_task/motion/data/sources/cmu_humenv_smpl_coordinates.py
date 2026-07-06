@@ -7,23 +7,14 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import TYPE_CHECKING
-
-import torch
-
 from isaaclab_assets.robots.smpl.smpl_constants import (
     MUJOCO_BODY_NAMES,
     MUJOCO_JOINT_NAMES,
-    SMPL_HUMENV_MJCF_PATH,
     SMPL_HUMENV_MJCF_SHA256,
 )
 
-from ...identity import file_sha256
 from ..skeleton import MotionSkeleton
 
-if TYPE_CHECKING:
-    from ....kinematics import NewtonKinematics
 _PARENT_INDICES = (
     -1,
     0,
@@ -78,6 +69,22 @@ _REST_TRANSLATION_M = (
 )
 _JOINT_CHILD_BODY_INDICES = tuple(body_index for body_index in range(1, 24) for _ in range(3))
 _JOINT_AXES = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)) * 23
+_LANDMARKS = (
+    MotionSkeleton.Landmark("pelvis", "Pelvis", "Pelvis"),
+    MotionSkeleton.Landmark("left_hip", "L_Hip", "L_Hip"),
+    MotionSkeleton.Landmark("left_knee", "L_Knee", "L_Knee"),
+    MotionSkeleton.Landmark("left_ankle", "L_Ankle", "L_Ankle"),
+    MotionSkeleton.Landmark("right_hip", "R_Hip", "R_Hip"),
+    MotionSkeleton.Landmark("right_knee", "R_Knee", "R_Knee"),
+    MotionSkeleton.Landmark("right_ankle", "R_Ankle", "R_Ankle"),
+    MotionSkeleton.Landmark("torso", "Torso", "Torso"),
+    MotionSkeleton.Landmark("left_shoulder", "L_Shoulder", "L_Shoulder"),
+    MotionSkeleton.Landmark("left_elbow", "L_Elbow", "L_Elbow"),
+    MotionSkeleton.Landmark("left_wrist", "L_Wrist", "L_Wrist"),
+    MotionSkeleton.Landmark("right_shoulder", "R_Shoulder", "R_Shoulder"),
+    MotionSkeleton.Landmark("right_elbow", "R_Elbow", "R_Elbow"),
+    MotionSkeleton.Landmark("right_wrist", "R_Wrist", "R_Wrist"),
+)
 
 
 def cmu_humenv_smpl_skeleton() -> MotionSkeleton:
@@ -92,25 +99,7 @@ def cmu_humenv_smpl_skeleton() -> MotionSkeleton:
         joint_names=MUJOCO_JOINT_NAMES,
         joint_child_body_indices=_JOINT_CHILD_BODY_INDICES,
         joint_axes=_JOINT_AXES,
+        landmarks=_LANDMARKS,
         root_translation_frame="world",
         root_rotation_convention="wxyz",
-    )
-
-
-def smpl_humenv_reference_kinematics(
-    reference_artifact_root: str,
-    device: str | torch.device,
-) -> NewtonKinematics:
-    """Build the hash-verified HumEnv coordinate interpreter on the requested device."""
-    from ....kinematics import NewtonKinematics, NewtonKinematicsCfg
-
-    del reference_artifact_root
-    path = Path(SMPL_HUMENV_MJCF_PATH)
-    actual = file_sha256(path)
-    if actual != SMPL_HUMENV_MJCF_SHA256:
-        raise ValueError(
-            f"SMPL HumEnv interpreter MJCF hash differs: expected {SMPL_HUMENV_MJCF_SHA256}, got {actual}."
-        )
-    return NewtonKinematics(
-        NewtonKinematicsCfg(usd_path=None, mjcf_path=str(path), device=str(device), collapse_fixed_joints=False)
     )

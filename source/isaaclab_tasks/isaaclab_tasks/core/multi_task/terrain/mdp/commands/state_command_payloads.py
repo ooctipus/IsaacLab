@@ -32,7 +32,7 @@ from isaaclab.utils.math import (
     quat_mul,
 )
 
-from isaaclab_tasks.core.multi_task.curriculum import set_reset_state
+from ....mdp.commands.state_command.reset_state_writer import ResetStateWriter
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
@@ -59,6 +59,31 @@ class CommandPayloadBase:
         self.table = table
         self.device = env.device
         self.num_envs = env.num_envs
+        if tuple(cfg.reset_assets) != table.states.layout.names:
+            raise ValueError(
+                "Position reset assets must exactly match the canonical table layout: "
+                f"cfg={tuple(cfg.reset_assets)}, table={table.states.layout.names}."
+            )
+        if table.states.layout.kinds != ("articulation",):
+            raise ValueError("Position task tables must contain exactly one articulation.")
+        self.reset_assets = tuple(cfg.reset_assets)
+        self._reset_state_writer = ResetStateWriter(env, table.states, self.reset_assets, cfg.states_relative)
+        self._state_entity_index = 0
+        self._state_joint_slice = table.states.layout.joint_slice(cfg.reset_assets[0])
+
+    def _bind_robot(self, robot) -> None:
+        """Resolve the Position-specific contact bodies on the bound robot."""
+        foot_body_ids, foot_body_names = robot.find_bodies(list(self.table.contact_body_names), preserve_order=True)
+        if tuple(foot_body_names) != self.table.contact_body_names:
+            raise RuntimeError(
+                "Runtime foot-body order differs from the Position table: "
+                f"runtime={tuple(foot_body_names)}, table={self.table.contact_body_names}."
+            )
+        self.foot_body_ids = tuple(foot_body_ids)
+
+    def _write_state(self, env_ids: torch.Tensor, state_rows: torch.Tensor) -> None:
+        """Write canonical Position state rows to the runtime articulation."""
+        self._reset_state_writer.write(env_ids, state_rows)
 
     def _alloc_lifecycle(self) -> None:
         """Allocate the shared buffers once dimensions are known (subclass calls this)."""
@@ -73,36 +98,24 @@ class CommandPayloadBase:
 
     def bind(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
         """Bind selected terrain rows and write their simulator reset state."""
-        spawn_states, target_states = self.table.gather(task_rows)
+        spawn_rows, target_rows = self.table.gather(task_rows)
         target_origin = self._env.scene.env_origins[env_ids] if self._states_relative else None
-        self._bind_target(env_ids, task_rows, target_states, target_origin)
-        set_reset_state(
-            self._env,
-            spawn_states,
-            env_ids,
-            self.reset_assets,
-            is_relative=self._states_relative,
-        )
+        self._bind_target(env_ids, task_rows, target_rows, target_origin)
+        self._write_state(env_ids, spawn_rows)
 
     def bind_target(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
         """Bind selected terrain targets and write their target simulator state."""
-        _, target_states = self.table.gather(task_rows)
+        _, target_rows = self.table.gather(task_rows)
         target_origin = self._env.scene.env_origins[env_ids] if self._states_relative else None
-        self._bind_target(env_ids, task_rows, target_states, target_origin)
-        set_reset_state(
-            self._env,
-            target_states,
-            env_ids,
-            self.reset_assets,
-            is_relative=self._states_relative,
-        )
+        self._bind_target(env_ids, task_rows, target_rows, target_origin)
+        self._write_state(env_ids, target_rows)
 
     def _init_success_gates(self, cfg: StateCommandCfg, env: ManagerBasedEnv) -> None:
         """Bind old position-task success gates to the payload."""
         payload_cfg = cfg.payload
-        if self.table.foot_body_ids is None or len(self.table.foot_body_ids) == 0:
-            raise ValueError("Command payload success gates require table foot_body_ids.")
-        self._foot_ids = list(self.table.foot_body_ids)
+        if not self.foot_body_ids:
+            raise ValueError("Command payload success gates require resolved foot-body ids.")
+        self._foot_ids = list(self.foot_body_ids)
         self._wrench_sensor = env.scene[payload_cfg.joint_wrench_sensor_name]
         self._contact_sensor = env.scene[payload_cfg.contact_sensor_name]
         robot_body_names = list(self.robot.data.body_names)
@@ -281,19 +294,18 @@ class CommandPayloadBaseState(CommandPayloadBase):
 
     def __init__(self, cfg: StateCommandCfg, env: ManagerBasedEnv, table: RelativeStateTaskTable):
         super().__init__(cfg, env, table)
-        if cfg.task_table.pipeline_cfg.asset_cfg is None:
-            raise ValueError("CommandPayloadBaseState requires cfg.task_table.pipeline_cfg.asset_cfg.")
-        robot = env.scene[cfg.task_table.pipeline_cfg.asset_cfg.name]
+        if len(cfg.reset_assets) != 1:
+            raise ValueError("CommandPayloadBaseState requires exactly one reset articulation.")
+        robot = env.scene[cfg.reset_assets[0]]
         device = env.device
         self.robot = robot
-        self.reset_assets = [cfg.task_table.pipeline_cfg.asset_cfg.name]
+        self._bind_robot(robot)
         self.command_dim = 12
         self.state_dim = 12 + robot.num_joints + 1
         self.mask_dim = 12 + robot.num_joints
         self.num_joints = robot.num_joints
         self.time_idx = 12 + robot.num_joints
         self.cmd_joint_pos_slice = slice(12, 12 + robot.num_joints)
-        self.reset_joint_pos_slice = slice(13, 13 + robot.num_joints)
         payload_cfg = cfg.payload
         self.normalize_command_obs = payload_cfg.normalize_command_obs
 
@@ -320,33 +332,35 @@ class CommandPayloadBaseState(CommandPayloadBase):
         self,
         env_ids: torch.Tensor,
         task_rows: torch.Tensor,
-        target_states: torch.Tensor,
+        target_rows: torch.Tensor,
         target_origin: torch.Tensor | None,
     ) -> None:
         """Write target state for selected rows."""
         self._store_task_selection(env_ids, task_rows)
+        states = self.table.states
+        target_root_pose = states.root_pose[target_rows, self._state_entity_index]
+        target_position = target_root_pose[:, :3]
         if target_origin is not None:
-            target_states = target_states.clone()
-            target_states[:, :3] += target_origin
+            target_position = target_position + target_origin
+        target_joint_position = states.joint_position[target_rows, self._state_joint_slice]
         num_resets = env_ids.numel()
         target_cmd = torch.empty(num_resets, self.state_dim, device=self.cmd_buf.device)
         task_params = self.table.params[task_rows]
         uses_terrain_target = self.table.payload_flags[task_rows, 0]
 
         target_cmd.zero_()
-        target_cmd[:, :3].copy_(target_states[:, :3])
+        target_cmd[:, :3].copy_(target_position)
         target_cmd[:, :3].add_(task_params[:, :3])
         target_cmd[:, 3:12].copy_(task_params[:, 3:12])
-        target_cmd[:, self.cmd_joint_pos_slice].copy_(target_states[:, self.reset_joint_pos_slice])
+        target_cmd[:, self.cmd_joint_pos_slice].copy_(target_joint_position)
         if bool(uses_terrain_target.any()):
             if bool(uses_terrain_target.all()):
-                target_cmd[:, :3].copy_(target_states[:, :3])
-                target_cmd[:, 3], target_cmd[:, 4], target_cmd[:, 5] = euler_xyz_from_quat(target_states[:, 3:7])
+                target_cmd[:, :3].copy_(target_position)
+                target_cmd[:, 3], target_cmd[:, 4], target_cmd[:, 5] = euler_xyz_from_quat(target_root_pose[:, 3:7])
             else:
                 terrain_local_ids = uses_terrain_target.nonzero(as_tuple=False).squeeze(-1)
-                terrain_target_state = target_states[terrain_local_ids]
-                target_cmd[terrain_local_ids, :3] = terrain_target_state[:, :3]
-                roll, pitch, yaw = euler_xyz_from_quat(terrain_target_state[:, 3:7])
+                target_cmd[terrain_local_ids, :3] = target_position[terrain_local_ids]
+                roll, pitch, yaw = euler_xyz_from_quat(target_root_pose[terrain_local_ids, 3:7])
                 target_cmd[terrain_local_ids, 3] = roll
                 target_cmd[terrain_local_ids, 4] = pitch
                 target_cmd[terrain_local_ids, 5] = yaw
@@ -432,32 +446,24 @@ class CommandPayloadBaseFootState(CommandPayloadBase):
 
     def __init__(self, cfg: StateCommandCfg, env: ManagerBasedEnv, table: RelativeStateTaskTable):
         super().__init__(cfg, env, table)
-        if cfg.task_table.pipeline_cfg.asset_cfg is None:
-            raise ValueError("CommandPayloadBaseFootState requires cfg.task_table.pipeline_cfg.asset_cfg.")
-        robot = env.scene[cfg.task_table.pipeline_cfg.asset_cfg.name]
-        if (
-            table.foot_body_ids is None
-            or table.newton_foot_body_ids is None
-            or table.isaac_to_newton_joint_order is None
-            or table.target_fk_kin is None
-        ):
-            raise ValueError("CommandPayloadBaseFootState requires foot metadata on the task table.")
+        if len(cfg.reset_assets) != 1:
+            raise ValueError("CommandPayloadBaseFootState requires exactly one reset articulation.")
+        robot = env.scene[cfg.reset_assets[0]]
         device = env.device
         num_joints = robot.num_joints
         payload_cfg = cfg.payload
         self.robot = robot
-        self.reset_assets = [cfg.task_table.pipeline_cfg.asset_cfg.name]
+        self._bind_robot(robot)
         self.num_joints = num_joints
-        self.foot_body_ids = table.foot_body_ids
-        self.newton_foot_body_ids = table.newton_foot_body_ids
+        self.contact_body_ids = table.contact_body_ids
         self.num_feet = len(self.foot_body_ids)
         self.command_dim = 12 + 3 * self.num_feet
         self.state_dim = 12 + num_joints + 1
         self.mask_dim = 12 + num_joints
         self.time_idx = 12 + num_joints
-        self.joint_pos_slice = slice(13, 13 + num_joints)
-        self.isaac_to_newton_joint_order = table.isaac_to_newton_joint_order
-        self.target_fk_kin = table.target_fk_kin
+        self.kinematics = table.kinematics
+        self.kinematic_view = table.view.kinematic_view
+        self._target_root_q_indices = self.kinematic_view.root_q_indices[0]
 
         std_attrs = ("pos_std", "rot_std", "lin_vel_std", "ang_vel_std")
         global_stds = (payload_cfg.pos_std, payload_cfg.rot_std, payload_cfg.lin_vel_std, payload_cfg.ang_vel_std)
@@ -488,7 +494,7 @@ class CommandPayloadBaseFootState(CommandPayloadBase):
         self._foot_delta_b = torch.zeros_like(self._target_foot_pos_resample)
         self._foot_cross = torch.empty_like(self._target_foot_pos_resample)
         self._foot_cross2 = torch.empty_like(self._target_foot_pos_resample)
-        model = self.target_fk_kin.model
+        model = self.kinematics.model
         self._target_fk_joint_q = torch.empty(env.num_envs, int(model.joint_coord_count), device=device)
         self._target_fk_joint_qd = wp.zeros((env.num_envs, int(model.joint_dof_count)), dtype=wp.float32, device=device)
         self._target_fk_body_q_t = torch.empty(env.num_envs, int(model.body_count), 7, device=device)
@@ -503,14 +509,17 @@ class CommandPayloadBaseFootState(CommandPayloadBase):
         self,
         env_ids: torch.Tensor,
         task_rows: torch.Tensor,
-        target_states: torch.Tensor,
+        target_rows: torch.Tensor,
         target_origin: torch.Tensor | None,
     ) -> None:
         """Write target state for selected rows."""
         self._store_task_selection(env_ids, task_rows)
+        states = self.table.states
+        target_root_pose = states.root_pose[target_rows, self._state_entity_index]
+        target_position = target_root_pose[:, :3]
         if target_origin is not None:
-            target_states = target_states.clone()
-            target_states[:, :3] += target_origin
+            target_position = target_position + target_origin
+        target_joint_position = states.joint_position[target_rows, self._state_joint_slice]
         num_resets = env_ids.numel()
         target_cmd = torch.empty(num_resets, self.state_dim, device=self.device)
         task_params = self.table.params[task_rows]
@@ -518,19 +527,18 @@ class CommandPayloadBaseFootState(CommandPayloadBase):
         uses_foot_target = uses_terrain_target
 
         target_cmd.zero_()
-        target_cmd[:, :3].copy_(target_states[:, :3])
+        target_cmd[:, :3].copy_(target_position)
         target_cmd[:, :3].add_(task_params[:, :3])
         target_cmd[:, 3:12].copy_(task_params[:, 3:12])
-        target_cmd[:, 12 : 12 + self.num_joints].copy_(target_states[:, self.joint_pos_slice])
+        target_cmd[:, 12 : 12 + self.num_joints].copy_(target_joint_position)
         if bool(uses_terrain_target.any()):
             if bool(uses_terrain_target.all()):
-                target_cmd[:, :3].copy_(target_states[:, :3])
-                target_cmd[:, 3], target_cmd[:, 4], target_cmd[:, 5] = euler_xyz_from_quat(target_states[:, 3:7])
+                target_cmd[:, :3].copy_(target_position)
+                target_cmd[:, 3], target_cmd[:, 4], target_cmd[:, 5] = euler_xyz_from_quat(target_root_pose[:, 3:7])
             else:
                 terrain_local_ids = uses_terrain_target.nonzero(as_tuple=False).squeeze(-1)
-                terrain_target_state = target_states[terrain_local_ids]
-                target_cmd[terrain_local_ids, :3] = terrain_target_state[:, :3]
-                roll, pitch, yaw = euler_xyz_from_quat(terrain_target_state[:, 3:7])
+                target_cmd[terrain_local_ids, :3] = target_position[terrain_local_ids]
+                roll, pitch, yaw = euler_xyz_from_quat(target_root_pose[terrain_local_ids, 3:7])
                 target_cmd[terrain_local_ids, 3] = roll
                 target_cmd[terrain_local_ids, 4] = pitch
                 target_cmd[terrain_local_ids, 5] = yaw
@@ -542,21 +550,16 @@ class CommandPayloadBaseFootState(CommandPayloadBase):
         if bool(uses_foot_target.any()):
             joint_q = self._target_fk_joint_q[:num_resets]
             body_q_t = self._target_fk_body_q_t[:num_resets]
-            joint_q[:, :7] = target_states[:, :7]
-            torch.index_select(
-                target_states[:, self.joint_pos_slice],
-                1,
-                self.isaac_to_newton_joint_order,
-                out=joint_q[:, 7:],
-            )
+            self.kinematic_view.joint_q_into(states, target_rows, joint_q)
+            joint_q[:, self._target_root_q_indices[:3]] = target_position
 
-            self.target_fk_kin.eval_fk_batched(
+            self.kinematics.eval_fk_batched(
                 wp.from_torch(joint_q),
                 self._target_fk_joint_qd[:num_resets],
                 self._target_fk_body_q[:num_resets],
                 self._target_fk_body_qd[:num_resets],
             )
-            for foot_id, body_id in enumerate(self.newton_foot_body_ids):
+            for foot_id, body_id in enumerate(self.contact_body_ids):
                 target_foot_pos[:num_resets, foot_id].copy_(body_q_t[:, body_id, :3])
         else:
             target_foot_pos.zero_()

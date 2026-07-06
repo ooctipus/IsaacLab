@@ -27,9 +27,8 @@ from isaaclab.utils.math import (
 
 from isaaclab_tasks.core.multi_task.kinematics import (
     KinematicTree,
-    KinematicTreeRotationProjection,
     fit_ordered_hinge_coordinates,
-    ordered_hinge_rotation,
+    kinematic_tree_forward,
     time_gaussian_filter,
     time_gradient,
     time_quaternion_angular_velocity,
@@ -41,12 +40,20 @@ from isaaclab_tasks.core.multi_task.motion.data.sources import (
     cmu_humenv_smpl_skeleton,
     lafan_g1_29dof_skeleton,
 )
+from isaaclab_tasks.core.multi_task.motion.retarget import MotionSemanticProjection
 from isaaclab_tasks.core.multi_task.motion.robots.g1.frames import G1_HEAD_OFFSET_M, G1_HEAD_PARENT_BODY_NAME
-from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1LocalBodyPoseFrameBuilder, G1PoseFrameBuilder
-from isaaclab_tasks.core.multi_task.motion.robots.smpl.frames import smpl_live_joint_source_names
+from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import (
+    _G1_RETARGET_MATH_VERSION,
+    _G1_RETARGET_TARGETS,
+    _G1_ROOT_BASIS_ROLES,
+    _G1_SUPPORT_ROLES,
+    _g1_coordinates_match,
+    _G1TargetFrameBuilder,
+)
+from isaaclab_tasks.core.multi_task.motion.robots.smpl.articulation import smpl_live_joint_mujoco_names
 from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import (
-    SmplGeneralizedCoordinateFrameBuilder,
-    _SmplG1HingeFrameBuilder,
+    _smpl_coordinates_match,
+    _SmplTargetFrameBuilder,
 )
 
 from isaaclab_assets.robots.smpl.smpl_constants import MUJOCO_BODY_NAMES
@@ -79,9 +86,15 @@ class _ReferenceKinematics:
         if smpl:
             joint_body_indices = smpl_joint_body_indices or tuple(range(1, skeleton.num_bodies))
             self.joint_names = ["root", *(f"{skeleton.body_names[index]}_xyz" for index in joint_body_indices)]
+            self.joint_q_names = [
+                *(f"root_{index}" for index in range(7)),
+                *(f"{skeleton.body_names[index]}_{axis}" for index in joint_body_indices for axis in "xyz"),
+            ]
             joint_q_start = [0, *range(7, 7 + 3 * (len(joint_body_indices) + 1), 3)]
             joint_qd_start = [0, *range(6, 6 + 3 * (len(joint_body_indices) + 1), 3)]
             joint_child = [0, *joint_body_indices]
+            joint_parent = [-1, *(skeleton.parent_indices[index] for index in joint_body_indices)]
+            joint_dof_dim = [(0, 6), *((0, 3),) * len(joint_body_indices)]
             joint_axis = torch.cat(
                 (
                     torch.zeros(6, 3, dtype=torch.float32),
@@ -90,28 +103,60 @@ class _ReferenceKinematics:
             )
         else:
             self.joint_names = ["root", *skeleton.joint_names]
+            self.joint_q_names = [*(f"root_{index}" for index in range(7)), *skeleton.joint_names]
             joint_q_start = [0, *range(7, 7 + skeleton.num_joints + 1)]
             joint_qd_start = [0, *range(6, 6 + skeleton.num_joints + 1)]
             joint_child = [0, *skeleton.joint_child_body_indices]
+            joint_parent = [-1, *(skeleton.parent_indices[index] for index in skeleton.joint_child_body_indices)]
+            joint_dof_dim = [(0, 6), *((0, 1),) * skeleton.num_joints]
             joint_axis = torch.cat(
                 (
                     torch.zeros(6, 3, dtype=torch.float32),
                     torch.tensor(skeleton.joint_axes, dtype=torch.float32),
                 )
             )
+        rest_position, rest_rotation = kinematic_tree_forward(
+            torch.tensor(skeleton.rest_translation_m, dtype=torch.float32),
+            convert_quat(torch.tensor(skeleton.rest_rotation_wxyz, dtype=torch.float32), to="xyzw"),
+            skeleton.parent_indices,
+        )
+        self.default_body_q = torch.cat((rest_position, rest_rotation), dim=-1).numpy()
         self.model = SimpleNamespace(
             body_count=skeleton.num_bodies,
             joint_count=len(self.joint_names),
             joint_coord_count=(7 + skeleton.num_joints),
             joint_dof_count=(6 + skeleton.num_joints),
+            joint_parent=wp.array(joint_parent, dtype=wp.int32, device="cpu"),
             joint_child=wp.array(joint_child, dtype=wp.int32, device="cpu"),
             joint_q_start=wp.array(joint_q_start, dtype=wp.int32, device="cpu"),
             joint_qd_start=wp.array(joint_qd_start, dtype=wp.int32, device="cpu"),
+            joint_dof_dim=wp.array(joint_dof_dim, dtype=wp.vec2i, device="cpu"),
             joint_axis=wp.from_torch(joint_axis, dtype=wp.vec3),
+            joint_limit_lower=wp.full(6 + skeleton.num_joints, -float("inf"), dtype=wp.float32, device="cpu"),
+            joint_limit_upper=wp.full(6 + skeleton.num_joints, float("inf"), dtype=wp.float32, device="cpu"),
             body_com=(
                 wp.zeros(skeleton.num_bodies, dtype=wp.vec3, device="cpu")
                 if body_com is None
                 else wp.from_torch(body_com, dtype=wp.vec3)
+            ),
+        )
+        self.topology = SimpleNamespace(
+            body_count=skeleton.num_bodies,
+            joint_count=len(self.joint_names),
+            coordinate_count=7 + skeleton.num_joints,
+            joint_parent=np.asarray(joint_parent, dtype=np.int32),
+            joint_child=np.asarray(joint_child, dtype=np.int32),
+            joint_q_start=np.asarray(joint_q_start, dtype=np.int32),
+            joint_qd_start=np.asarray(joint_qd_start, dtype=np.int32),
+            joint_dof_dim=np.asarray(joint_dof_dim, dtype=np.int32),
+            joint_axis=joint_axis.numpy().copy(),
+            joint_limit_lower=np.full(6 + skeleton.num_joints, -np.inf, dtype=np.float32),
+            joint_limit_upper=np.full(6 + skeleton.num_joints, np.inf, dtype=np.float32),
+            body_parent=np.asarray(skeleton.parent_indices, dtype=np.int32),
+            body_com=(
+                np.zeros((skeleton.num_bodies, 3), dtype=np.float32)
+                if body_com is None
+                else body_com.detach().cpu().numpy().copy()
             ),
         )
         self.smpl = smpl
@@ -141,11 +186,11 @@ def reference_path(tmp_path: Path) -> Path:
     return path
 
 
-def _g1_builder(reference_path: Path, *, reverse_joints: bool = False) -> G1PoseFrameBuilder:
+def _g1_builder(reference_path: Path, *, reverse_joints: bool = False) -> _G1TargetFrameBuilder:
     skeleton = lafan_g1_29dof_skeleton()
     reference = _ReferenceKinematics(skeleton, reference_path)
     joint_names = skeleton.joint_names[::-1] if reverse_joints else skeleton.joint_names
-    return G1PoseFrameBuilder(
+    return _G1TargetFrameBuilder(
         target_tree=_kinematic_tree(skeleton),
         pose_coordinate_identity_sha256=skeleton.identity_sha256,
         reference_kinematics=reference,
@@ -173,19 +218,16 @@ def test_lafan_clip_decodes_declared_g1_hinges_as_local_rotations() -> None:
         source_fps=30.0,
     )
 
-    local_wxyz = clip.local_body_rotation_wxyz(skeleton, device="cpu")
-    expected = convert_quat(quat_from_rotation_vector(torch.from_numpy(pose)), to="wxyz")
+    _, local_xyzw = clip.semantic_local_pose(skeleton, device="cpu")
+    expected = quat_from_rotation_vector(torch.from_numpy(pose))
 
-    torch.testing.assert_close(local_wxyz, expected)
+    torch.testing.assert_close(local_xyzw, expected)
 
 
-def _smpl_builder(
-    reference_path: Path, *, body_com: torch.Tensor | None = None
-) -> SmplGeneralizedCoordinateFrameBuilder:
+def _smpl_builder(reference_path: Path, *, body_com: torch.Tensor | None = None) -> _SmplTargetFrameBuilder:
     skeleton = cmu_humenv_smpl_skeleton()
     reference = _ReferenceKinematics(skeleton, reference_path, smpl=True, body_com=body_com)
-    return SmplGeneralizedCoordinateFrameBuilder(
-        source_skeleton=skeleton,
+    return _SmplTargetFrameBuilder(
         reference_kinematics=reference,
         reference_mjcf_sha256=_file_sha256(reference_path),
         live_joint_names=SMPL_LIVE_JOINT_NAMES,
@@ -193,74 +235,57 @@ def _smpl_builder(
     )
 
 
+def _g1_pose_frames(
+    builder: _G1TargetFrameBuilder,
+    pose_axis_angle: torch.Tensor,
+    root_translation: torch.Tensor,
+    source_fps: float,
+):
+    joint_q = torch.empty(pose_axis_angle.shape[0], 36)
+    joint_q[:, :3].copy_(root_translation)
+    joint_q[:, 3:7].copy_(quat_from_rotation_vector(pose_axis_angle[:, 0]))
+    joint_q[:, 7:].copy_(pose_axis_angle.sum(dim=-1)[:, 1:])
+    return builder.build_generalized_frames(joint_q, source_fps)
+
+
+def _smpl_exact_frames(builder: _SmplTargetFrameBuilder, clip: CmuHumEnvSmplClip):
+    joint_q, joint_qd = clip.free_root_coordinates(cmu_humenv_smpl_skeleton(), device="cpu")
+    assert joint_qd is not None
+    generalized_position = torch.cat((joint_q[:, :3], convert_quat(joint_q[:, 3:7], to="wxyz"), joint_q[:, 7:]), dim=-1)
+    return builder.build_generalized_frames(generalized_position, joint_qd)
+
+
 def test_smpl_builder_derives_scalar_coordinates_from_grouped_newton_joints(reference_path: Path) -> None:
     """Canonical SMPL coordinates come from grouped Newton child, range, and axis metadata."""
     builder = _smpl_builder(reference_path)
 
-    assert builder.reference_coordinate_names == builder.source_skeleton.joint_names
+    assert builder.reference_coordinate_names == cmu_humenv_smpl_skeleton().joint_names
 
 
 def test_smpl_builder_rejects_an_unrelated_source_schema(reference_path: Path) -> None:
     """The native SMPL builder owns its exact source-coordinate contract."""
-    with pytest.raises(ValueError, match="source-body order differs"):
-        replace(_smpl_builder(reference_path), source_skeleton=lafan_g1_29dof_skeleton())
+    assert not _smpl_coordinates_match(lafan_g1_29dof_skeleton(), _smpl_builder(reference_path))
 
 
-def _smpl_cross_builder(reference_path: Path, *, reverse_reference_joints: bool = False) -> _SmplG1HingeFrameBuilder:
-    source = lafan_g1_29dof_skeleton()
-    target = cmu_humenv_smpl_skeleton()
-    joint_body_indices = tuple(range(target.num_bodies - 1, 0, -1)) if reverse_reference_joints else None
-    reference = _ReferenceKinematics(target, reference_path, smpl=True, smpl_joint_body_indices=joint_body_indices)
-    return _SmplG1HingeFrameBuilder(
-        source_skeleton=source,
-        reference_kinematics=reference,
-        reference_mjcf_sha256=_file_sha256(reference_path),
-        live_joint_names=SMPL_LIVE_JOINT_NAMES,
-        live_body_names=target.body_names,
+def test_exact_route_requires_the_complete_robot_coordinate_profile(reference_path: Path) -> None:
+    """Rest geometry and topology changes must route through semantic retargeting."""
+    g1_source = lafan_g1_29dof_skeleton()
+    g1_target = _g1_builder(reference_path).target_tree
+    changed_g1 = replace(
+        g1_source,
+        rest_translation_m=((9.0, 9.0, 9.0), *g1_source.rest_translation_m[1:]),
     )
+    assert _g1_coordinates_match(g1_source, g1_target)
+    assert not _g1_coordinates_match(changed_g1, g1_target)
 
-
-def test_smpl_cross_builder_rejects_an_unrelated_source_schema(reference_path: Path) -> None:
-    """The cross builder rejects a source without its declared G1 hinge semantics."""
-    with pytest.raises(ValueError, match="requires pelvis as its root body"):
-        replace(_smpl_cross_builder(reference_path), source_skeleton=cmu_humenv_smpl_skeleton())
-
-
-@pytest.mark.parametrize("reverse_reference_joints", (False, True), ids=("canonical", "reordered-reference"))
-def test_smpl_cross_builder_declares_lossy_g1_hinge_reconstruction(
-    reference_path: Path, reverse_reference_joints: bool
-) -> None:
-    """The reverse cross edge reconstructs mapped joints and explicitly zeros absent target bodies."""
-    builder = _smpl_cross_builder(reference_path, reverse_reference_joints=reverse_reference_joints)
-    source = lafan_g1_29dof_skeleton()
-    pose = np.zeros((4, 30, 3), dtype=np.float32)
-    source_by_name = {name: index for index, name in enumerate(source.body_names)}
-    pose[:, source_by_name["left_hip_pitch_link"], 1] = 0.2
-    pose[:, source_by_name["left_hip_roll_link"], 0] = -0.1
-    pose[:, source_by_name["left_hip_yaw_link"], 2] = 0.3
-    root = np.zeros((4, 3), dtype=np.float32)
-    root[:, 2] = 0.8
-
-    clip = LafanG1Clip(root, pose, 30.0)
-    frames = builder.build_frames(clip, device="cpu")
-    by_name = {name: index for index, name in enumerate(smpl_live_joint_source_names(builder.joint_names))}
-    hip_ids = [by_name[f"L_Hip_{axis}"] for axis in "xyz"]
-    reconstructed = ordered_hinge_rotation(frames.joint_position[:, hip_ids], torch.eye(3))
-    source_local = convert_quat(clip.local_body_rotation_wxyz(source, device="cpu"), to="xyzw")
-    expected = quat_mul(
-        quat_mul(
-            source_local[:, source_by_name["left_hip_pitch_link"]],
-            source_local[:, source_by_name["left_hip_roll_link"]],
-        ),
-        source_local[:, source_by_name["left_hip_yaw_link"]],
+    smpl_source = cmu_humenv_smpl_skeleton()
+    smpl_target = _smpl_builder(reference_path)
+    changed_smpl = replace(
+        smpl_source,
+        parent_indices=(-1, 0, 1, 1, *smpl_source.parent_indices[4:]),
     )
-
-    assert builder.version == "smpl_from_g1_hinge_local_rotation_minimum_norm_v2"
-    torch.testing.assert_close(torch.abs(torch.sum(reconstructed * expected, dim=-1)), torch.ones(4))
-    absent = ("L_Toe", "R_Toe", "Spine", "Chest", "Neck", "Head", "L_Thorax", "L_Hand", "R_Thorax", "R_Hand")
-    absent_ids = [by_name[f"{body}_{axis}"] for body in absent for axis in "xyz"]
-    torch.testing.assert_close(frames.joint_position[:, absent_ids], torch.zeros(4, len(absent_ids)))
-    torch.testing.assert_close(frames.body_position[:, 0, 2], torch.full((4,), 0.8))
+    assert _smpl_coordinates_match(smpl_source, smpl_target)
+    assert not _smpl_coordinates_match(changed_smpl, smpl_target)
 
 
 def _cmu_clip(qpos: np.ndarray, qvel: np.ndarray | None = None) -> CmuHumEnvSmplClip:
@@ -273,12 +298,19 @@ def _cmu_clip(qpos: np.ndarray, qvel: np.ndarray | None = None) -> CmuHumEnvSmpl
 
 
 def _kinematic_tree(skeleton) -> KinematicTree:
+    coordinate_count = skeleton.num_joints
     return KinematicTree(
         body_names=skeleton.body_names,
-        joint_names=skeleton.joint_names,
         parent_indices=skeleton.parent_indices,
+        joint_names=skeleton.joint_names,
         joint_child_body_indices=skeleton.joint_child_body_indices,
-        joint_axes=tuple(axis for axis in skeleton.joint_axes if axis is not None),
+        joint_coordinate_ranges=tuple((index, index + 1) for index in range(coordinate_count)),
+        coordinate_names=skeleton.joint_names,
+        coordinate_axes=tuple(axis for axis in skeleton.joint_axes if axis is not None),
+        coordinate_q_indices=tuple(range(7, 7 + coordinate_count)),
+        coordinate_qd_indices=tuple(range(6, 6 + coordinate_count)),
+        coordinate_lower_limits_rad=(-float("inf"),) * coordinate_count,
+        coordinate_upper_limits_rad=(float("inf"),) * coordinate_count,
     )
 
 
@@ -341,7 +373,7 @@ def test_g1_builder_reorders_reference_bodies_once_before_head_derivation(refere
     skeleton = lafan_g1_29dof_skeleton()
     reference = _ReferenceKinematics(skeleton, reference_path)
     live_body_names = (skeleton.body_names[0], *skeleton.body_names[:0:-1])
-    builder = G1PoseFrameBuilder(
+    builder = _G1TargetFrameBuilder(
         target_tree=_kinematic_tree(skeleton),
         pose_coordinate_identity_sha256=skeleton.identity_sha256,
         reference_kinematics=reference,
@@ -353,8 +385,10 @@ def test_g1_builder_reorders_reference_bodies_once_before_head_derivation(refere
 
     assert builder.construction_identity_sha256 != canonical.construction_identity_sha256
     assert builder.reference_frame_names == (*live_body_names, "head_link")
-    frames = builder.build_pose_frames(torch.zeros(5, 30, 3), torch.zeros(5, 3), 30.0)
-    expected_reference_indices = torch.tensor(builder._live_body_from_reference, dtype=torch.float32)
+    frames = _g1_pose_frames(builder, torch.zeros(5, 30, 3), torch.zeros(5, 3), 30.0)
+    expected_reference_indices = torch.tensor(
+        [reference.body_names.index(name) for name in live_body_names], dtype=torch.float32
+    )
     torch.testing.assert_close(frames.body_position[0, :-1, 0], expected_reference_indices * 0.001)
     parent = live_body_names.index(G1_HEAD_PARENT_BODY_NAME)
     torch.testing.assert_close(frames.body_position[:, -1, :2], frames.body_position[:, parent, :2])
@@ -371,7 +405,7 @@ def test_g1_builder_restores_bfm_reference_head_derivative_law(reference_path: P
     pose = torch.zeros(frame_count, 30, 3)
     pose[:, 0, 1] = torch.linspace(0.0, 1.2, frame_count)
     translation = torch.zeros(frame_count, 3)
-    frames = builder.build_pose_frames(pose, translation, 30.0)
+    frames = _g1_pose_frames(builder, pose, translation, 30.0)
 
     expected = time_gaussian_filter(time_gradient(frames.body_position[:, -1].unsqueeze(0), 1.0 / 30.0)).squeeze(0)
     torch.testing.assert_close(frames.body_linear_velocity[:, -1], expected)
@@ -392,7 +426,7 @@ def test_g1_builder_maps_source_joints_once_and_exposes_body_row_zero_root(refer
     pose = torch.zeros(frame_count, 30, 3)
     pose[:, 1:, 0] = torch.arange(29, dtype=torch.float32)
     translation = torch.arange(frame_count, dtype=torch.float32)[:, None].expand(-1, 3).clone()
-    frames = builder.build_pose_frames(pose, translation, 30.0)
+    frames = _g1_pose_frames(builder, pose, translation, 30.0)
 
     assert frames.root_position is None
     assert frames.root_storage == "body_row_zero"
@@ -403,6 +437,36 @@ def test_g1_builder_maps_source_joints_once_and_exposes_body_row_zero_root(refer
     torch.testing.assert_close(frames.field("root_rotation"), frames.body_rotation[:, 0])
     torch.testing.assert_close(frames.field("root_linear_velocity"), frames.body_linear_velocity[:, 0])
     torch.testing.assert_close(frames.field("root_angular_velocity"), frames.body_angular_velocity[:, 0])
+
+
+def test_exact_coordinate_materialization_preserves_native_joint_and_root_state(reference_path: Path) -> None:
+    """Native G1 and SMPL source coordinates reach target storage without semantic projection."""
+    g1_skeleton = lafan_g1_29dof_skeleton()
+    g1_coordinates = torch.linspace(-0.4, 0.4, 4 * g1_skeleton.num_joints).view(4, -1)
+    g1_pose = torch.zeros(4, g1_skeleton.num_bodies, 3)
+    g1_pose[:, 1:] = g1_coordinates[..., None] * torch.tensor(g1_skeleton.joint_axes)[None]
+    g1_root = torch.arange(12, dtype=torch.float32).view(4, 3) * 0.01
+    g1_clip = LafanG1Clip(g1_root.numpy(), g1_pose.numpy(), 30.0)
+    g1_joint_q, _ = g1_clip.free_root_coordinates(g1_skeleton, device="cpu")
+    g1_builder = _g1_builder(reference_path)
+    g1_frames = g1_builder.build_generalized_frames(g1_joint_q, g1_clip.source_fps)
+
+    torch.testing.assert_close(g1_frames.joint_position, g1_coordinates)
+    torch.testing.assert_close(g1_frames.field("root_position"), g1_root)
+
+    smpl_skeleton = cmu_humenv_smpl_skeleton()
+    smpl_q = torch.zeros(4, 7 + smpl_skeleton.num_joints)
+    smpl_q[:, :3].copy_(g1_root)
+    smpl_q[:, 3] = 1.0
+    smpl_q[:, 7:] = torch.linspace(-0.3, 0.3, 4 * smpl_skeleton.num_joints).view(4, -1)
+    smpl_qd = torch.zeros(4, 6 + smpl_skeleton.num_joints)
+    smpl_builder = _smpl_builder(reference_path)
+    smpl_frames = smpl_builder.build_generalized_frames(smpl_q, smpl_qd)
+    live_names = smpl_live_joint_mujoco_names(SMPL_LIVE_JOINT_NAMES)
+    live_indices = torch.tensor([smpl_skeleton.joint_names.index(name) for name in live_names])
+
+    torch.testing.assert_close(smpl_frames.joint_position, smpl_q[:, 7:].index_select(1, live_indices))
+    torch.testing.assert_close(smpl_frames.field("root_position"), g1_root)
 
 
 def test_lafan_typed_clip_rejects_source_dtype_instead_of_repairing_it() -> None:
@@ -416,7 +480,7 @@ def test_lafan_typed_clip_rejects_source_dtype_instead_of_repairing_it() -> None
 
 def test_smpl_builder_maps_live_axes_and_materializes_physical_body_fields(reference_path: Path) -> None:
     builder = _smpl_builder(reference_path)
-    skeleton = builder.source_skeleton
+    skeleton = cmu_humenv_smpl_skeleton()
     frame_count = 4
     qpos = np.zeros((frame_count, 76), dtype=np.float32)
     qvel = np.zeros((frame_count, 75), dtype=np.float32)
@@ -426,9 +490,9 @@ def test_smpl_builder_maps_live_axes_and_materializes_physical_body_fields(refer
     qpos[:, 7:] = np.arange(69, dtype=np.float32)
     qvel[:, 3] = 2.0
     clip = _cmu_clip(qpos, qvel)
-    frames = builder.build_frames(clip, device="cpu")
+    frames = _smpl_exact_frames(builder, clip)
 
-    live_source_names = smpl_live_joint_source_names(SMPL_LIVE_JOINT_NAMES)
+    live_source_names = smpl_live_joint_mujoco_names(SMPL_LIVE_JOINT_NAMES)
     live_indices = torch.tensor([skeleton.joint_names.index(name) for name in live_source_names])
     torch.testing.assert_close(frames.joint_position[0], torch.arange(69, dtype=torch.float32)[live_indices])
     expected_rotation = convert_quat(torch.from_numpy(qpos[:, 3:7]), to="xyzw")
@@ -472,7 +536,7 @@ def test_smpl_builder_converts_nonzero_com_velocities_between_root_and_link_fram
     qvel[:, :3] = root_linear_velocity.numpy()
     qvel[:, 3:6] = root_angular_velocity_local.numpy()
 
-    frames = builder.build_frames(_cmu_clip(qpos, qvel), device="cpu")
+    frames = _smpl_exact_frames(builder, _cmu_clip(qpos, qvel))
 
     root_angular_velocity = quat_apply(root_rotation, root_angular_velocity_local)
     root_com_world = quat_apply(root_rotation, body_com[0].expand(frame_count, 3))
@@ -518,12 +582,12 @@ def test_humenv_importer_keeps_unconsumed_native_fields_out_of_smpl_table(
         source_fps=30.0,
     )
     _, decoded = next(source.clips())
-    frames = builder.build_frames(decoded, device="cpu")
+    frames = _smpl_exact_frames(builder, decoded)
 
     assert decoded.generalized_position.dtype == np.float32
     assert decoded.generalized_velocity.dtype == np.float32
     assert frames.body_position.dtype == torch.float32
-    assert frames.body_position.shape == (frame_count, builder.source_skeleton.num_bodies, 3)
+    assert frames.body_position.shape == (frame_count, cmu_humenv_smpl_skeleton().num_bodies, 3)
     assert not hasattr(frames, "observation")
 
 
@@ -556,7 +620,7 @@ def test_humenv_xyz_coordinates_reconstruct_before_g1_projection() -> None:
     qpos = torch.zeros(3, 76)
     qpos[:, 3] = 1.0
     qpos[:, 7:10] = torch.tensor((0.2, -0.3, 0.4))
-    local_wxyz = _cmu_clip(qpos.numpy()).local_body_rotation_wxyz(skeleton, device="cpu")
+    _, local_xyzw = _cmu_clip(qpos.numpy()).semantic_local_pose(skeleton, device="cpu")
 
     axes = torch.eye(3)
     expected = torch.zeros(3, 4)
@@ -566,141 +630,21 @@ def test_humenv_xyz_coordinates_reconstruct_before_g1_projection() -> None:
             expected,
             quat_from_rotation_vector(qpos[:, 7 + index, None] * axes[index]),
         )
-    torch.testing.assert_close(convert_quat(local_wxyz[:, 1], to="xyzw"), expected)
+    torch.testing.assert_close(local_xyzw[:, 1], expected)
 
 
 def test_cross_builder_preserves_target_axis_identity(reference_path: Path) -> None:
     source = cmu_humenv_smpl_skeleton()
     target = _g1_builder(reference_path, reverse_joints=True)
-    source_by_name = {name: index for index, name in enumerate(source.body_names)}
-    source_names = (
-        "L_Hip",
-        "L_Hip",
-        "L_Hip",
-        "L_Knee",
-        "L_Ankle",
-        "L_Ankle",
-        "R_Hip",
-        "R_Hip",
-        "R_Hip",
-        "R_Knee",
-        "R_Ankle",
-        "R_Ankle",
-        "Torso",
-        "Torso",
-        "Torso",
-        "L_Shoulder",
-        "L_Shoulder",
-        "L_Shoulder",
-        "L_Elbow",
-        "L_Wrist",
-        "L_Wrist",
-        "L_Wrist",
-        "R_Shoulder",
-        "R_Shoulder",
-        "R_Shoulder",
-        "R_Elbow",
-        "R_Wrist",
-        "R_Wrist",
-        "R_Wrist",
-    )
-    projection = KinematicTreeRotationProjection(
-        source_body_count=source.num_bodies,
-        target_tree=target.target_tree,
-        target_joint_source_body_indices=tuple(source_by_name[name] for name in source_names),
-        device=target.reference_kinematics.device,
-    )
-    builder = G1LocalBodyPoseFrameBuilder(
+    builder = MotionSemanticProjection(
         source_skeleton=source,
-        target_builder=target,
-        projection=projection,
-        target_tree_identity_sha256=target.pose_coordinate_identity_sha256,
+        target=target,
+        target_landmarks=_G1_RETARGET_TARGETS,
+        root_basis_roles=_G1_ROOT_BASIS_ROLES,
+        support_roles=_G1_SUPPORT_ROLES,
+        version=_G1_RETARGET_MATH_VERSION,
     )
 
-    assert builder.joint_names == target.joint_names
-    assert builder.version == "g1_local_body_pose_ordered_hinge_fit_v2"
-    assert builder.reference_frame_names == target.reference_frame_names
+    assert builder.target is target
+    assert builder.version == _G1_RETARGET_MATH_VERSION
     assert len(builder.construction_identity_sha256) == 64
-
-
-def test_cross_builder_builds_finite_continuous_target_g1_frames(reference_path: Path) -> None:
-    """The full HumEnv decode and projection path must emit known target-G1 values."""
-    source = cmu_humenv_smpl_skeleton()
-    target = _g1_builder(reference_path)
-    source_by_name = {name: index for index, name in enumerate(source.body_names)}
-    source_names = (
-        "L_Hip",
-        "L_Hip",
-        "L_Hip",
-        "L_Knee",
-        "L_Ankle",
-        "L_Ankle",
-        "R_Hip",
-        "R_Hip",
-        "R_Hip",
-        "R_Knee",
-        "R_Ankle",
-        "R_Ankle",
-        "Torso",
-        "Torso",
-        "Torso",
-        "L_Shoulder",
-        "L_Shoulder",
-        "L_Shoulder",
-        "L_Elbow",
-        "L_Wrist",
-        "L_Wrist",
-        "L_Wrist",
-        "R_Shoulder",
-        "R_Shoulder",
-        "R_Shoulder",
-        "R_Elbow",
-        "R_Wrist",
-        "R_Wrist",
-        "R_Wrist",
-    )
-    projection = KinematicTreeRotationProjection(
-        source_body_count=source.num_bodies,
-        target_tree=target.target_tree,
-        target_joint_source_body_indices=tuple(source_by_name[name] for name in source_names),
-        device=target.reference_kinematics.device,
-    )
-    builder = G1LocalBodyPoseFrameBuilder(
-        source_skeleton=source,
-        target_builder=target,
-        projection=projection,
-        target_tree_identity_sha256=target.pose_coordinate_identity_sha256,
-    )
-
-    source_angles = np.asarray((3.0, 3.1, -3.1, -3.0, -2.9), dtype=np.float32)
-    expected_angles = torch.tensor((3.0, 3.1, 2.0 * np.pi - 3.1, 2.0 * np.pi - 3.0, 2.0 * np.pi - 2.9))
-    frame_count = source_angles.shape[0]
-    qpos = np.zeros((frame_count, 76), dtype=np.float32)
-    qpos[:, :3] = np.stack(
-        (
-            np.linspace(0.0, 0.4, frame_count, dtype=np.float32),
-            np.zeros(frame_count, dtype=np.float32),
-            np.ones(frame_count, dtype=np.float32),
-        ),
-        axis=-1,
-    )
-    qpos[:, 3] = 1.0
-    qpos[:, 8] = source_angles
-    clip = _cmu_clip(qpos)
-
-    frames = builder.build_frames(clip, device="cpu")
-
-    torch.testing.assert_close(frames.joint_position[:, 0], expected_angles, atol=2.0e-6, rtol=2.0e-6)
-    torch.testing.assert_close(frames.joint_position[:, 1:], torch.zeros(frame_count, 28), atol=2.0e-6, rtol=0.0)
-    torch.testing.assert_close(frames.field("root_position"), torch.from_numpy(qpos[:, :3]))
-    assert torch.all(torch.isfinite(frames.joint_velocity))
-    assert torch.max(torch.abs(torch.diff(frames.joint_position[:, 0]))) < 0.2
-    for name in frames.stored_fields:
-        assert torch.all(torch.isfinite(frames.field(name)))
-    assert frames.body_rotation is not None
-    torch.testing.assert_close(
-        torch.linalg.vector_norm(frames.body_rotation, dim=-1),
-        torch.ones(frame_count, len(builder.reference_frame_names)),
-        atol=2.0e-6,
-        rtol=2.0e-6,
-    )

@@ -24,7 +24,7 @@ __all__ = [
     "SyncFootPairsCfg",
 ]
 
-from .command_presets import CommandPayloadPresetCfg, CommandsCfg, CommandsPresetCfg
+from .command_presets import CommandPayloadPresetCfg, CommandsPresetCfg
 from .multitask_presets import MultiTaskTasksPresetCfg
 from .curriculum_presets import CurriculumPresetCfg
 from .observation_presets import ObservationsCfg

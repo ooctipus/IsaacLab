@@ -28,7 +28,7 @@ so the task still loads without a robot picked (except for
 loudly if resolution happens with no robot selected).
 """
 
-from dataclasses import MISSING, field
+from dataclasses import MISSING
 
 from isaaclab.assets import ArticulationCfg
 from isaaclab.utils.configclass import configclass
@@ -83,8 +83,7 @@ class NonFootContactBodyNamesCfg(PresetCfg):
 class FootBodyNamesCfg(PresetCfg):
     """Body-name regex matching the robot's feet.
 
-    Drives reward terms that index foot bodies and the retarget pipeline's
-    terrain-contact bodies.
+    Drives reward terms and Position terrain-contact generation.
     """
 
     default: str = ".*FOOT.*"
@@ -115,23 +114,7 @@ class ExperimentNameCfg(PresetCfg):
 class RetargetLateralHipJointPatternCfg(PresetCfg):
     """Regex matching lateral hip joints for retarget validation.
 
-    Consumed by :attr:`RetargetPipelineCfg.lateral_hip_joint_pattern`.
-    ``None`` disables lateral-hip angle validation -- appropriate for
-    robots with no lateral hip joints or where over-splay is not a concern.
+    ``None`` disables the Position family's lateral-hip criterion.
     """
 
     default: str | None = None
-
-
-@configclass
-class RetargetJointRegularizeTargetsCfg(PresetCfg):
-    """Per-robot joint-name regex -> target-angle dict for retarget IK.
-
-    Consumed by :attr:`RetargetPipelineCfg.joint_regularize_targets`.
-    Each entry pulls its matched DOFs toward the listed angle during
-    IK; unmatched DOFs are left free. Empty dict disables the
-    regularizer entirely -- appropriate for robots where no joint-
-    space prior is needed.
-    """
-
-    default: dict[str, float] = field(default_factory=dict)

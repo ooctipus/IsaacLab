@@ -32,30 +32,27 @@ def _init_warp():
     wp.init()
 
 
-ANYMAL_USD = "/home/zhengyuz/Downloads/ANYmal-C/anymal_c.usd"
 DEVICE = "cuda:0"
-DEFAULT_JPOS = {
-    ".*HAA": 0.0,
-    ".*F_HFE": 0.4,
-    ".*H_HFE": -0.4,
-    ".*F_KFE": -0.8,
-    ".*H_KFE": 0.8,
-}
-
-KIN_CFG = NewtonKinematicsCfg(
-    usd_path=ANYMAL_USD,
-    device=DEVICE,
-    default_pos=(0, 0, 0.6),
-    default_joint_pos=DEFAULT_JPOS,
-)
 
 
 @pytest.fixture(scope="module")
-def robot():
-    kin = NewtonKinematics(KIN_CFG)
-    foot_names = [n for n in kin.body_names if "FOOT" in n.upper()]
-    foot_ids = kin.find_body_indices(foot_names)
-    return kin, foot_ids
+def robot(_robot_presets_registered):
+    from isaaclab_tasks.core.multi_task.terrain.mdp_presets.robots.robot_presets import (
+        FootBodyNamesCfg,
+        RobotArticulationCfg,
+    )
+    from isaaclab_tasks.core.multi_task.terrain.retarget.sampler_base import resolve_contact_body_names
+
+    robot_cfg = RobotArticulationCfg.anymal_c
+    kin = NewtonKinematics(
+        NewtonKinematicsCfg(
+            usd_path=_resolve_usd(robot_cfg.spawn.usd_path),
+            device=DEVICE,
+            default_pos=robot_cfg.init_state.pos,
+            default_joint_pos=robot_cfg.init_state.joint_pos,
+        )
+    )
+    return kin, kin.find_body_indices(resolve_contact_body_names(FootBodyNamesCfg.anymal_c, kin.body_names))
 
 
 def _make_flat_mesh(size: float = 10.0, device: str = DEVICE) -> wp.Mesh:
@@ -90,7 +87,8 @@ def _make_stair_mesh(
 def _make_sampler(kin, foot_ids, cfg=None):
     if cfg is None:
         cfg = SamplerCfg()
-    return Sampler(cfg, kin=kin, foot_body_ids=foot_ids)
+    generator = torch.Generator(device=DEVICE).manual_seed(17)
+    return Sampler(cfg, kin=kin, foot_body_ids=foot_ids, generator=generator)
 
 
 class TestSampleContactsFlat:
@@ -102,7 +100,7 @@ class TestSampleContactsFlat:
         wp_mesh = _make_flat_mesh()
         buf = RetargetBuffer(200, kin.model.joint_coord_count, kin.model.body_count, len(foot_ids), device=DEVICE)
         sampler = _make_sampler(kin, foot_ids)
-        out = sampler(wp_mesh, np.zeros(3), buf, 50)
+        out = sampler(wp_mesh, np.zeros(3), buf, 50, seed=17)
         n, reject = out.num_written, out.reject_stats
         assert n > 0, f"Expected at least some candidates on flat terrain, got 0. Rejections: {reject}"
 
@@ -120,7 +118,7 @@ class TestSampleContactsConvexHull:
         wp_mesh = _make_flat_mesh()
         buf = RetargetBuffer(200, kin.model.joint_coord_count, kin.model.body_count, len(foot_ids), device=DEVICE)
         sampler = _make_sampler(kin, foot_ids)
-        out = sampler(wp_mesh, np.zeros(3), buf, 50)
+        out = sampler(wp_mesh, np.zeros(3), buf, 50, seed=17)
         n = out.num_written
         if n == 0:
             pytest.skip("No valid candidates on flat mesh")
@@ -178,7 +176,7 @@ def _build_sampler_for_robot(robot_name: str):
         FootBodyNamesCfg,
         RobotArticulationCfg,
     )
-    from isaaclab_tasks.core.multi_task.terrain.retarget import resolve_foot_body_names
+    from isaaclab_tasks.core.multi_task.terrain.retarget.sampler_base import resolve_contact_body_names
 
     robot_cfg = getattr(RobotArticulationCfg, robot_name)
     usd_path = _resolve_usd(robot_cfg.spawn.usd_path)
@@ -189,9 +187,10 @@ def _build_sampler_for_robot(robot_name: str):
         default_joint_pos=robot_cfg.init_state.joint_pos,
     )
     kin = NewtonKinematics(kin_cfg)
-    foot_names = resolve_foot_body_names(getattr(FootBodyNamesCfg, robot_name), kin.body_names)
+    foot_names = resolve_contact_body_names(getattr(FootBodyNamesCfg, robot_name), kin.body_names)
     foot_ids = kin.find_body_indices(foot_names)
-    sampler = Sampler(SamplerCfg(), kin=kin, foot_body_ids=foot_ids)
+    generator = torch.Generator(device=DEVICE).manual_seed(17)
+    sampler = Sampler(SamplerCfg(), kin=kin, foot_body_ids=foot_ids, generator=generator)
     return kin, foot_ids, sampler
 
 
@@ -236,7 +235,7 @@ class TestMultiRobotReachablePatches:
         wp_mesh = _make_flat_mesh()
         buf = RetargetBuffer(400, kin.model.joint_coord_count, kin.model.body_count, len(foot_ids), device=DEVICE)
         n_desired = 100
-        out = sampler(wp_mesh, np.zeros(3), buf, n_desired)
+        out = sampler(wp_mesh, np.zeros(3), buf, n_desired, seed=17)
         n, reject = out.num_written, out.reject_stats
         assert n >= n_desired // 2, (
             f"[{robot_name}] flat terrain yielded only {n}/{n_desired} polygons. Rejections: {reject}"
@@ -253,7 +252,7 @@ class TestMultiRobotReachablePatches:
         # unreachable for that robot).
         wp_mesh = _make_stair_mesh(n_steps=6, step_height=0.08, step_depth=0.35, width=4.0)
         buf = RetargetBuffer(400, kin.model.joint_coord_count, kin.model.body_count, len(foot_ids), device=DEVICE)
-        out = sampler(wp_mesh, np.zeros(3), buf, 100)
+        out = sampler(wp_mesh, np.zeros(3), buf, 100, seed=17)
         n, reject = out.num_written, out.reject_stats
         # Stair terrain can be tight for some robots; require only that at
         # least a handful of reachable polygons were produced (not zero).
@@ -285,12 +284,7 @@ class TestStairSlopeDiversity:
         step_d = 0.22
         wp_mesh = _make_stair_mesh(n_steps=12, step_height=step_h, step_depth=step_d, width=5.0)
         buf = RetargetBuffer(800, kin.model.joint_coord_count, kin.model.body_count, len(foot_ids), device=DEVICE)
-        # Morphological patch sampling consumes the global torch RNG before the
-        # sampler reseeds it, so pin the global state here to keep the test
-        # deterministic across pytest orderings.
-        torch.manual_seed(0)
-        torch.cuda.manual_seed_all(0)
-        out = sampler(wp_mesh, np.zeros(3), buf, 400)
+        out = sampler(wp_mesh, np.zeros(3), buf, 400, seed=17)
         n, reject = out.num_written, out.reject_stats
         assert n >= 20, f"[{robot_name}] stair terrain produced only {n} polygons. Rejections: {reject}"
 

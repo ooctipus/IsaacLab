@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Template-projection contact sampling strategy for the retarget pipeline.
+"""Template-projection contact sampling for the Position terrain-stance family.
 
 Build-time: random-joint FK (with joints clamped to ``default ± fk_joint_range``
 to avoid wrap-around leg configurations) produces a library of canonical
@@ -27,17 +27,15 @@ above the local terrain surface).
 
 from __future__ import annotations
 
-import time
-from contextlib import contextmanager
-
 import numpy as np
 import torch
 import warp as wp
 
 from ...kinematics import NewtonKinematics
+from ...kinematics.collider_geometry import model_body_collider_z_min
 from ...utils.grid_downsample import grid_bucket_downsample
 from ..terrains.patch_sampling.cfg import CircleFootprintCfg, MorphologicalPatchSamplingCfg
-from ..terrains.patch_sampling.morph import MORPH_TIMINGS
+from ..terrains.patch_sampling.morph import find_flat_patches_morphological
 from .buffer import RetargetBuffer
 from .canonical_shape import canonicalize_shape
 from .cfg import PatchSamplingCfg, SamplerCfg, SamplerSizingCfg
@@ -49,7 +47,7 @@ def _prepare_ik_batched(
     v_contact: torch.Tensor,
     v_base: torch.Tensor,
     v_yaw: torch.Tensor,
-    jq_rev_seed: torch.Tensor,
+    joint_q_seed: torch.Tensor,
     buffer: RetargetBuffer,
 ) -> None:
     """Plane-fit foot polygon → base pitch/roll → per-problem IK seed.
@@ -77,8 +75,9 @@ def _prepare_ik_batched(
         v_base: Per-placement base target position [m],
             shape ``[n_ik, 3]``.
         v_yaw: Per-placement base target yaw [rad], shape ``[n_ik]``.
-        jq_rev_seed: Per-placement revolute-joint IK seed [rad],
-            shape ``[n_ik, n_rev]``. Populated from the matched FK
+        joint_q_seed: Per-placement generalized-position IK seed
+            [m or rad, depending on joint type], shape ``[n_ik, joint_q_count]``.
+            Populated from the matched FK
             template's joint configuration so IK starts in the same
             basin of attraction as the target stance, avoiding the
             crossed-leg local minimum that a uniform default-stance
@@ -86,8 +85,6 @@ def _prepare_ik_batched(
         buffer: Retarget buffer to scatter the prepared IK problem into.
     """
     n_ik, nc, _ = v_contact.shape
-    n_rev = jq_rev_seed.shape[1]
-    jc = 7 + n_rev
 
     centroid = v_contact.mean(dim=-2, keepdim=True)  # [n_ik, 1, 3]
     delta = v_contact - centroid  # [n_ik, nc, 3]
@@ -142,9 +139,9 @@ def _prepare_ik_batched(
     buffer.contact_targets_t[: n_ik * nc] = v_contact.reshape(-1, 3)
     buffer.base_target_pos_t[:n_ik] = v_base
     buffer.base_target_rot_t[:n_ik] = quat_half
+    buffer.joint_q_init_t[:n_ik].copy_(joint_q_seed)
     buffer.joint_q_init_t[:n_ik, :3] = v_base
     buffer.joint_q_init_t[:n_ik, 3:7] = quat_full
-    buffer.joint_q_init_t[:n_ik, 7:jc] = jq_rev_seed
 
 
 class Sampler(SamplerBase):
@@ -164,13 +161,11 @@ class Sampler(SamplerBase):
         foot_body_ids: Newton body indices for the feet.
     """
 
-    def __init__(self, cfg: SamplerCfg, kin: NewtonKinematics, foot_body_ids: list[int]):
-        super().__init__(cfg, kin, foot_body_ids)
+    def __init__(self, cfg: SamplerCfg, kin: NewtonKinematics, foot_body_ids: list[int], generator: torch.Generator):
+        super().__init__(cfg, kin, foot_body_ids, generator)
 
-        # ``foot_ground_offset`` is the foot-body-to-sole z offset, derived
-        # from the foot's actual collision geometry (sphere/capsule/box/mesh).
-        geom = kin.foot_geometry(foot_body_ids)
-        self.foot_ground_offset: float = float(geom["foot_ground_offset"])
+        foot_z_min = model_body_collider_z_min(kin.builder, tuple(foot_body_ids))
+        self.foot_ground_offset = float(-foot_z_min.min())
         self.default_joint_q = kin.default_joint_q
 
         # Per-foot nominal angle, canonical-shape library, and standing
@@ -181,10 +176,10 @@ class Sampler(SamplerBase):
         # measured in the polygon-centroid frame.
         self._compute_foot_reachability()
 
-    def _compute_foot_reachability(self, seed: int = 0) -> None:
+    def _compute_foot_reachability(self) -> None:
         """Build the canonical FK shape library and derived scalars.
 
-        Samples ``cfg.fk_num_samples`` random revolute joint configurations
+        Samples ``cfg.fk_num_samples`` random scalar-joint configurations
         (base held at default pose; per-joint range clamped to
         ``default ± cfg.fk_joint_range`` intersected with URDF limits to
         avoid wrap-around jq whose FK foot positions look plausible but
@@ -202,8 +197,8 @@ class Sampler(SamplerBase):
           :func:`~.canonical_shape.canonicalize_shape`.
         * ``_fk_shape_samples`` — canonical foot-polygon shapes,
           ``float32 [n_retained, nc, 3]``.
-        * ``_fk_joint_q_rev`` — revolute-joint configurations that
-          generated each retained shape, ``float32 [n_retained, n_rev]``.
+        * ``_fk_joint_q_seed`` — full generalized-position configurations that
+          generated each retained shape, ``float32 [n_retained, joint_q_count]``.
           Used at query time to seed IK from the matched template's
           own joint configuration, avoiding crossed-leg local minima
           that a uniform default-stance seed is vulnerable to.
@@ -214,12 +209,8 @@ class Sampler(SamplerBase):
         device = kin.device
         n_samples = int(self.cfg.fk_num_samples)
 
-        if device.startswith("cuda"):
-            torch.cuda.synchronize()
-        t0 = time.perf_counter()
-
-        jl_lo = wp.to_torch(kin.model.joint_limit_lower)  # type: ignore[arg-type]
-        jl_hi = wp.to_torch(kin.model.joint_limit_upper)  # type: ignore[arg-type]
+        jl_lo = torch.tensor(kin.topology.joint_limit_lower, device=device)
+        jl_hi = torch.tensor(kin.topology.joint_limit_upper, device=device)
         # Clamp to ``default ± fk_joint_range`` (with per-pattern overrides)
         # so continuous joints (URDF limits ``±1e10`` after USD conversion)
         # don't produce wrap-around jq where e.g. a lateral hip is swung 90° and the
@@ -229,27 +220,28 @@ class Sampler(SamplerBase):
         import re
 
         default_q = torch.from_numpy(kin.default_joint_q).float().to(device)
-        rev_default = default_q[7:]
-        n_rev = rev_default.shape[0]
-        joint_range = torch.full((n_rev,), float(self.cfg.fk_joint_range), device=device)
+        coordinates, velocities, coordinate_names = kin.find_joint_scalar_coordinates(".*")
+        if not coordinates:
+            raise ValueError("Position reachability sampling requires at least one scalar joint coordinate.")
+        coordinate_indices = torch.tensor(coordinates, dtype=torch.long, device=device)
+        velocity_indices = torch.tensor(velocities, dtype=torch.long, device=device)
+        scalar_default = default_q[coordinate_indices]
+        num_scalar = len(coordinates)
+        joint_range = torch.full((num_scalar,), float(self.cfg.fk_joint_range), device=device)
         overrides = dict(self.cfg.fk_joint_range_overrides)
         if overrides:
-            # ``joint_names[0]`` is the floating-base root; revolute names
-            # follow in 1-based slot order matching jl_lo[6:] / jl_hi[6:].
-            rev_names = kin.joint_names[1 : 1 + n_rev]
             for pattern, clamp in overrides.items():
                 regex = re.compile(pattern)
-                for i, name in enumerate(rev_names):
+                for i, name in enumerate(coordinate_names):
                     if regex.fullmatch(name):
                         joint_range[i] = float(clamp)
-        rev_lo = torch.maximum(jl_lo[6:], rev_default - joint_range)
-        rev_hi = torch.minimum(jl_hi[6:], rev_default + joint_range)
+        scalar_lo = torch.maximum(jl_lo[velocity_indices], scalar_default - joint_range)
+        scalar_hi = torch.minimum(jl_hi[velocity_indices], scalar_default + joint_range)
 
         # Uniform random joint sampling across the clamped physical range.
-        gen = torch.Generator(device=device).manual_seed(seed)
         jq = default_q.unsqueeze(0).expand(n_samples, -1).contiguous()
-        rand_u = torch.rand(n_samples, n_rev, device=device, generator=gen)
-        jq[:, 7 : 7 + n_rev] = rand_u * (rev_hi - rev_lo) + rev_lo
+        rand_u = torch.rand(n_samples, num_scalar, device=device, generator=self.generator)
+        jq[:, coordinate_indices] = rand_u * (scalar_hi - scalar_lo) + scalar_lo
 
         body_q_wp, _ = kin.eval_fk_batched(wp.from_torch(jq))
         body_q_t = wp.to_torch(body_q_wp).view(n_samples, -1, 7)  # type: ignore[arg-type]
@@ -274,7 +266,7 @@ class Sampler(SamplerBase):
         foot_ids_t_world = torch.tensor(self.foot_body_ids, device=device, dtype=torch.long)
         foot_z_min = body_q_t[:, foot_ids_t_world, 2].amin(dim=-1)  # [n_samples]
         base_z = body_q_t[:, 0, 2]  # [n_samples]
-        self.standing_height = float(torch.quantile(base_z - foot_z_min, 0.95).item())
+        self.standing_height = torch.quantile(base_z - foot_z_min, 0.95)
 
         # Per-foot canonical shape. Canonicalize each FK-produced polygon
         # the same way query time will (centroid-center + plane-fit +
@@ -306,12 +298,8 @@ class Sampler(SamplerBase):
         perm_correct = (order_ccw == nominal_perm.unsqueeze(0)).all(dim=-1)  # [n_samples]
 
         hull_valid = hull_convex & perm_correct
-        n_hull_valid = int(hull_valid.sum().item())
-        if n_hull_valid < n_samples:
-            foot_xyz = foot_xyz[hull_valid]
-            jq_rev = jq[hull_valid, 7 : 7 + n_rev]
-        else:
-            jq_rev = jq[:, 7 : 7 + n_rev]
+        foot_xyz = foot_xyz[hull_valid]
+        joint_q_seed = jq[hull_valid]
 
         canon_all = canonicalize_shape(foot_xyz, self._nominal_angle_t)
         n_retained = int(min(self.cfg.fk_num_retained, canon_all.shape[0]))
@@ -322,12 +310,12 @@ class Sampler(SamplerBase):
             # joint-space distribution — FPS ensures random ``tpl_idx``
             # at query time evenly covers the FK shape manifold.
             flat = canon_all.reshape(canon_all.shape[0], -1)
-            keep_idx = grid_bucket_downsample(flat, n_retained)
+            keep_idx = grid_bucket_downsample(flat, n_retained, generator=self.generator)
             self._fk_shape_samples = canon_all[keep_idx].contiguous()
-            self._fk_joint_q_rev = jq_rev[keep_idx].contiguous()
+            self._fk_joint_q_seed = joint_q_seed[keep_idx].contiguous()
         else:
             self._fk_shape_samples = canon_all.contiguous()
-            self._fk_joint_q_rev = jq_rev.contiguous()
+            self._fk_joint_q_seed = joint_q_seed.contiguous()
 
         # Cache the maximum per-foot distance from template centroid:
         # this bounds how far a projected foot can sit from the candidate
@@ -336,15 +324,6 @@ class Sampler(SamplerBase):
         # keeps the hash-grid search tight for small robots and elastic
         # for larger ones without hard-coded heuristics.
         self._fk_max_foot_reach = float(self._fk_shape_samples[..., :2].norm(dim=-1).max().item())
-
-        if device.startswith("cuda"):
-            torch.cuda.synchronize()
-        dt = time.perf_counter() - t0
-        self.init_info = (
-            f"reachability: {n_samples} FK samples in {dt:.3f}s"
-            f" ({n_samples - n_hull_valid} dropped for non-convex hull,"
-            f" retained {self._fk_shape_samples.shape[0]} shape samples)"
-        )
 
     def sizing(self, n_desired: int) -> SamplerSizing:
         """Back-derive stage sizes for a given final-robot target.
@@ -363,26 +342,14 @@ class Sampler(SamplerBase):
             patches_per_polygon=len(self.foot_body_ids),
         )
 
-    @contextmanager
-    def _time(self, name: str):
-        """Record wall time for a sampler sub-phase, with CUDA sync on enter/exit."""
-        dev = self.kin.device
-        if dev.startswith("cuda"):
-            torch.cuda.synchronize()
-        t0 = time.perf_counter()
-        try:
-            yield
-        finally:
-            if dev.startswith("cuda"):
-                torch.cuda.synchronize()
-            self.sub_timings[name] = self.sub_timings.get(name, 0.0) + (time.perf_counter() - t0)
-
     def __call__(
         self,
         wp_mesh: wp.Mesh,
         origin: np.ndarray,
         buffer: RetargetBuffer,
         n_desired: int,
+        *,
+        seed: int,
     ) -> SamplerOutput:
         """Template-projection query path.
 
@@ -394,7 +361,6 @@ class Sampler(SamplerBase):
         targets; feet farther away become air targets (z clamped above
         local terrain).
         """
-        self.sub_timings.clear()
         patch: PatchSamplingCfg = self.cfg.patch
         nc = buffer.num_contacts
         max_n = buffer.max_candidates
@@ -402,24 +368,20 @@ class Sampler(SamplerBase):
         sizing = self.sizing(n_desired)
         num_patches = max(200, sizing.n_morph_patches)
 
-        with self._time("morph"):
-            fc_cfg = MorphologicalPatchSamplingCfg(
-                num_patches=num_patches,
-                footprint=CircleFootprintCfg(radius=patch.contact_radius),
-                max_height_diff=patch.max_height_diff,
-                horizontal_scale=patch.horizontal_scale,
-                oversample_ratio=patch.oversample_ratio,
-                x_range=patch.x_range if patch.x_range is not None else (-1e6, 1e6),
-                y_range=patch.y_range if patch.y_range is not None else (-1e6, 1e6),
-            )
-            fp = fc_cfg.func(wp_mesh, origin, fc_cfg)
-            dev_str = fp.device
-            origin_t = torch.tensor(origin, dtype=torch.float, device=dev_str)
-            fp[:, :3] += origin_t
-            patch_pts = fp[:, :3].contiguous()  # [N_p, 3]
-        for _sub_name, _sub_dt in MORPH_TIMINGS.items():
-            key = f"morph.{_sub_name}"
-            self.sub_timings[key] = self.sub_timings.get(key, 0.0) + _sub_dt
+        fc_cfg = MorphologicalPatchSamplingCfg(
+            num_patches=num_patches,
+            footprint=CircleFootprintCfg(radius=patch.contact_radius),
+            max_height_diff=patch.max_height_diff,
+            horizontal_scale=patch.horizontal_scale,
+            oversample_ratio=patch.oversample_ratio,
+            x_range=patch.x_range if patch.x_range is not None else (-1e6, 1e6),
+            y_range=patch.y_range if patch.y_range is not None else (-1e6, 1e6),
+        )
+        fp = find_flat_patches_morphological(wp_mesh, origin, fc_cfg, generator=self.generator)
+        dev_str = fp.device
+        origin_t = torch.tensor(origin, dtype=torch.float, device=dev_str)
+        fp[:, :3] += origin_t
+        patch_pts = fp[:, :3].contiguous()  # [N_p, 3]
 
         # ``K`` (polygon pool) lives in cheap per-polygon scratches local
         # to this sampler — independent of the buffer's per-body slots.
@@ -428,124 +390,74 @@ class Sampler(SamplerBase):
         K = sizing.max_neighborhoods
         target_n = min(n_desired * sizing.oversample_candidates, max_n)
 
-        torch.manual_seed(42)
-        if torch.device(dev_str).type == "cuda":
-            torch.cuda.manual_seed_all(42)
+        # Sampler config -- pulled from cfg once and forwarded to the fused kernel.
+        radius = float(self.cfg.terrain_snap_distance)
+        outward_pen = float(self.cfg.outward_snap_penalty)
+        raw_mc = int(self.cfg.min_contacts)
+        min_contacts = nc if (raw_mc < 0 or raw_mc > nc) else max(1, raw_mc)
+        force_all_snap = min_contacts >= nc
+        query_radius = self._fk_max_foot_reach + 4.0 * radius
 
-        with self._time("project"):
-            # Sampler config -- pulled from cfg once and forwarded to the
-            # fused kernel below. ``force_all_snap`` (every foot must
-            # contact a patch) is set when ``min_contacts>=nc`` and
-            # widens the search radius to ``query_radius``; otherwise
-            # contacts are gated at the tighter ``terrain_snap_distance``.
-            radius = float(self.cfg.terrain_snap_distance)
-            outward_pen = float(self.cfg.outward_snap_penalty)
-            raw_mc = int(self.cfg.min_contacts)
-            min_contacts = nc if (raw_mc < 0 or raw_mc > nc) else max(1, raw_mc)
-            force_all_snap = min_contacts >= nc
-            query_radius = self._fk_max_foot_reach + 4.0 * radius
+        outputs = run_fused_sampler(
+            seed=seed,
+            K=K,
+            patch_pts=patch_pts,
+            fk_shape_samples=self._fk_shape_samples,
+            nominal_angles=self._nominal_angle_t,
+            radius=radius,
+            query_radius=query_radius,
+            outward_pen=outward_pen,
+            force_all_snap=force_all_snap,
+            foot_ground_offset=self.foot_ground_offset,
+        )
+        yaws = outputs["yaws"]
+        tpl_idx = outputs["tpl_idx"]
+        is_contact_full = outputs["is_contact_full"]
+        contact_ik = outputs["contact_ik"]
+        n_found = outputs["n_found"]
+        no_convex = outputs["no_convex"]
 
-            # Single Warp kernel: per candidate slot, sample
-            # ``(center, yaw, tpl_idx)``, un-canonicalize the FK template,
-            # query the morph-patch hashgrid for the top-nc nearest
-            # patches per foot, then iterate the foot-rank permutations
-            # with cost / distinctness / force-contact / winding /
-            # convex-hull penalties and emit the best survivor's
-            # outputs. All per-thread intermediates live in registers,
-            # so the only K-sized memory the sampler needs is the
-            # output tensors ``run_fused_sampler`` allocates internally.
-            if torch.device(dev_str).type == "cuda":
-                torch.cuda.synchronize()
-            fused_t0 = time.perf_counter()
-            outputs = run_fused_sampler(
-                seed=42,
-                K=K,
-                patch_pts=patch_pts,
-                fk_shape_samples=self._fk_shape_samples,
-                nominal_angles=self._nominal_angle_t,
-                radius=radius,
-                query_radius=query_radius,
-                outward_pen=outward_pen,
-                force_all_snap=force_all_snap,
-                foot_ground_offset=self.foot_ground_offset,
-            )
-            if torch.device(dev_str).type == "cuda":
-                torch.cuda.synchronize()
-            fused_dt = time.perf_counter() - fused_t0
-            self.sub_timings["project.fused_kernel"] = self.sub_timings.get("project.fused_kernel", 0.0) + fused_dt
-            throughput = K / max(fused_dt, 1.0e-12) / 1.0e6
-            print(
-                f"[contact_sampling] fused single-kernel sampler over K={K} placements "
-                f"in {fused_dt:.3f} s ({throughput:.2f} M placements/s)",
-                flush=True,
-            )
-            yaws = outputs["yaws"]
-            tpl_idx = outputs["tpl_idx"]
-            is_contact_full = outputs["is_contact_full"]
-            contact_ik = outputs["contact_ik"]
-            n_found = outputs["n_found"]
-            no_convex = outputs["no_convex"]
+        out_of_reach = n_found < min_contacts
+        valid = ~out_of_reach & ~no_convex
+        all_valid_idx = valid.nonzero(as_tuple=False).squeeze(-1)
+        n_all_valid = all_valid_idx.shape[0]
+        n_valid = min(n_all_valid, target_n, max_n)
 
-            out_of_reach = n_found < min_contacts
-            valid = ~out_of_reach & ~no_convex
-            all_valid_idx = valid.nonzero(as_tuple=False).squeeze(-1)
-            n_all_valid = all_valid_idx.shape[0]
-            n_valid = min(n_all_valid, target_n, max_n)
-
-        with self._time("sampler_fps"):
-            if n_all_valid > n_valid:
-                # Compute the centroid mean over full ``contact_ik`` first
-                # then index, instead of ``contact_ik[idx].mean(...)``. The
-                # latter allocates a transient ``[n_valid, nc, 3]`` (~1.4 GiB
-                # at K=60M with 50% valid) before reducing to ``[n_valid, 3]``;
-                # the former allocates only ``[K, 3]`` once (~720 MiB at
-                # K=60M) and indexes that to a smaller ``[n_valid, 3]``.
-                centroid_xyz_full = contact_ik.mean(dim=-2)
-                centroid_xyz = centroid_xyz_full[all_valid_idx]
-                del centroid_xyz_full
-                local_idx = grid_bucket_downsample(centroid_xyz, n_valid)
-                valid_idx = all_valid_idx[local_idx]
-            else:
-                valid_idx = all_valid_idx
+        if n_all_valid > n_valid:
+            # Reduce before indexing to avoid a transient [n_valid, nc, 3] tensor.
+            centroid_xyz = contact_ik.mean(dim=-2)[all_valid_idx]
+            local_idx = grid_bucket_downsample(centroid_xyz, n_valid, generator=self.generator)
+            valid_idx = all_valid_idx[local_idx]
+        else:
+            valid_idx = all_valid_idx
 
         reject = {
             "out_of_reach": int(out_of_reach.sum()),
             "non_convex_stance": int((no_convex & ~out_of_reach).sum()),
         }
-        diagnostics: dict[str, object] = {
-            "n_contact_histogram": torch.bincount(n_found[valid_idx], minlength=nc + 1).detach().clone(),
-        }
-
         if n_valid == 0:
             buffer.num_written = 0
             buffer.num_geometry_valid = 0
-            return SamplerOutput(num_written=0, reject_stats=reject, diagnostics=diagnostics)
+            return SamplerOutput(num_written=0, reject_stats=reject)
 
-        with self._time("prepare_ik"):
-            v_contact = contact_ik[valid_idx].contiguous()  # [n_valid, nc, 3]
-            is_contact_ik = is_contact_full[valid_idx].contiguous()
-            centroid_sel = v_contact.mean(dim=-2)
-            v_base = torch.stack(
-                [centroid_sel[..., 0], centroid_sel[..., 1], centroid_sel[..., 2] + self.standing_height],
-                dim=-1,
-            )
-            v_yaw = yaws[valid_idx].contiguous()
-            # Seed IK from the matched template's own joint configuration
-            # so the solver starts in the correct basin of attraction —
-            # crucial for avoiding crossed-leg local minima on twisted
-            # poses where default-stance seeds have to route legs through
-            # each other.
-            jq_rev_seed = self._fk_joint_q_rev[tpl_idx[valid_idx]].contiguous()
+        v_contact = contact_ik[valid_idx].contiguous()  # [n_valid, nc, 3]
+        is_contact_ik = is_contact_full[valid_idx].contiguous()
+        centroid_sel = v_contact.mean(dim=-2)
+        v_base = torch.stack(
+            [centroid_sel[..., 0], centroid_sel[..., 1], centroid_sel[..., 2] + self.standing_height],
+            dim=-1,
+        )
+        v_yaw = yaws[valid_idx].contiguous()
+        joint_q_seed = self._fk_joint_q_seed[tpl_idx[valid_idx]].contiguous()
 
-            n_ik = v_contact.shape[0]
-            _prepare_ik_batched(v_contact, v_base, v_yaw, jq_rev_seed, buffer)
-            buffer._geom_valid[:n_ik] = True
-            buffer.num_written = n_ik
-            buffer.num_geometry_valid = n_ik
+        n_ik = v_contact.shape[0]
+        _prepare_ik_batched(v_contact, v_base, v_yaw, joint_q_seed, buffer)
+        buffer._geom_valid[:n_ik] = True
+        buffer.num_written = n_ik
+        buffer.num_geometry_valid = n_ik
 
         return SamplerOutput(
             num_written=n_ik,
             reject_stats=reject,
             is_contact=is_contact_ik,
-            diagnostics=diagnostics,
         )

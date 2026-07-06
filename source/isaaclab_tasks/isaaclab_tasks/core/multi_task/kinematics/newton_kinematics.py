@@ -15,18 +15,22 @@ No IsaacSim dependency -- only Newton + Warp.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import newton
 import newton.ik as ik
 import numpy as np
 import torch
 import warp as wp
-from newton import GeoType, JointType
+from newton import JointType
 from newton._src.sim.ik.ik_common import eval_fk_batched as _newton_eval_fk_batched
 
-from .newton_kinematics_cfg import NewtonKinematicsCfg  # re-exported for backcompat
+from .newton_asset import resolve_newton_asset_path
+from .newton_kinematics_cfg import NewtonKinematicsBuildCfg, NewtonKinematicsCfg
 
-__all__ = ["NewtonKinematics", "NewtonKinematicsCfg"]
+if TYPE_CHECKING:
+    from isaaclab.assets import ArticulationCfg
 
 
 class NewtonKinematics:
@@ -38,6 +42,53 @@ class NewtonKinematics:
     Args:
         cfg: Kinematics configuration.
     """
+
+    @dataclass(frozen=True, slots=True)
+    class Topology:
+        """Canonical host-side topology and inertial facts parsed from one Newton model."""
+
+        joint_type: np.ndarray
+        joint_parent: np.ndarray
+        joint_child: np.ndarray
+        joint_transform_parent: np.ndarray
+        joint_transform_child: np.ndarray
+        joint_q_start: np.ndarray
+        joint_qd_start: np.ndarray
+        joint_dof_dim: np.ndarray
+        joint_axis: np.ndarray
+        joint_limit_lower: np.ndarray
+        joint_limit_upper: np.ndarray
+        body_parent: np.ndarray
+        body_joint: np.ndarray
+        dof_joint: np.ndarray
+        body_dof_ancestry: np.ndarray
+        joint_subtree_bodies: np.ndarray
+        joint_subtree_offsets: np.ndarray
+        joint_subtree_mass: np.ndarray
+        joint_subtree_inverse_mass: np.ndarray
+        body_mass: np.ndarray
+        body_com: np.ndarray
+        gravity: np.ndarray
+
+        @property
+        def body_count(self) -> int:
+            """Number of rigid bodies."""
+            return self.body_parent.shape[0]
+
+        @property
+        def joint_count(self) -> int:
+            """Number of joints, including the root joint."""
+            return self.joint_parent.shape[0]
+
+        @property
+        def coordinate_count(self) -> int:
+            """Number of generalized-position coordinates."""
+            return int(self.joint_q_start[-1])
+
+        @property
+        def dof_count(self) -> int:
+            """Number of generalized velocities."""
+            return int(self.joint_qd_start[-1])
 
     model: newton.Model
     """Finalized Newton model."""
@@ -59,6 +110,8 @@ class NewtonKinematics:
 
     joint_qd_names: list[str]
     """Ordered labels for every Newton joint velocity."""
+    topology: Topology
+    """Canonical host-side topology and inertial facts parsed exactly once."""
 
     def __init__(self, cfg: NewtonKinematicsCfg):
         self.cfg = cfg
@@ -67,7 +120,7 @@ class NewtonKinematics:
         mjcf_path = cfg.mjcf_path if isinstance(cfg.mjcf_path, str) and cfg.mjcf_path else None
         if (usd_path is None) == (mjcf_path is None):
             raise ValueError("NewtonKinematicsCfg must define exactly one of usd_path or mjcf_path.")
-        self.usd_path = usd_path or ""
+        self.usd_path = resolve_newton_asset_path(usd_path) if usd_path is not None else ""
         self.mjcf_path = mjcf_path or ""
 
         self.builder = newton.ModelBuilder()
@@ -93,21 +146,22 @@ class NewtonKinematics:
         else:
             self.body_names = self._names_from_model_labels(self.model.body_label, "body")
             self.joint_names = self._names_from_model_labels(self.model.joint_label, "joint")
+        self.topology = self._build_topology(self.model)
 
         model_joint_names = [
             label.rsplit("/", 1)[-1] or f"joint_{index}" for index, label in enumerate(self.model.joint_label)
         ]
         self.joint_q_names = self._coordinate_names(
             model_joint_names,
-            self.model.joint_q_start.numpy(),
-            self.model.joint_type.numpy(),
+            self.topology.joint_q_start,
+            self.topology.joint_type,
             self.model.joint_coord_count,
             velocity=False,
         )
         self.joint_qd_names = self._coordinate_names(
             model_joint_names,
-            self.model.joint_qd_start.numpy(),
-            self.model.joint_type.numpy(),
+            self.topology.joint_qd_start,
+            self.topology.joint_type,
             self.model.joint_dof_count,
             velocity=True,
         )
@@ -130,6 +184,173 @@ class NewtonKinematics:
         state = self.eval_fk(wp.array(jq, dtype=float, device=cfg.device))
         self._default_joint_q = jq
         self._default_body_q = state.body_q.numpy()
+
+    @classmethod
+    def from_articulation(
+        cls, cfg: NewtonKinematicsBuildCfg, articulation_cfg: ArticulationCfg, device: str | torch.device
+    ) -> NewtonKinematics:
+        """Build mechanics from one resolved IsaacLab articulation declaration.
+
+        Args:
+            cfg: Newton parse policy.
+            articulation_cfg: Scene-owned articulation asset and initial state.
+            device: Torch/Warp device used to finalize the kinematic model.
+
+        Returns:
+            Kinematics containing the articulation's parsed model and default state.
+        """
+        spawn = getattr(articulation_cfg, "spawn", None)
+        usd_path = getattr(spawn, "usd_path", None)
+        init_state = getattr(articulation_cfg, "init_state", None)
+        if not isinstance(usd_path, str) or not usd_path or init_state is None:
+            raise ValueError("Newton kinematics requires an articulation with a declared USD and initial state.")
+        return cls(
+            NewtonKinematicsCfg(
+                usd_path=usd_path,
+                device=str(device),
+                default_pos=init_state.pos,
+                default_quat=init_state.rot,
+                default_joint_pos=init_state.joint_pos,
+                collapse_fixed_joints=cfg.collapse_fixed_joints,
+            )
+        )
+
+    @classmethod
+    def _build_topology(cls, model: newton.Model) -> Topology:
+        """Parse one immutable host-side topology and inertial record.
+
+        Args:
+            model: Finalized Newton model.
+
+        Returns:
+            Canonical topology whose NumPy arrays reject mutation.
+        """
+
+        def readonly(values, dtype) -> np.ndarray:
+            array = np.asarray(values, dtype=dtype).copy()
+            array.setflags(write=False)
+            return array
+
+        joint_count = model.joint_count
+        body_count = model.body_count
+        dof_count = model.joint_dof_count
+        coordinate_count = model.joint_coord_count
+        joint_type = np.asarray(model.joint_type.numpy(), dtype=np.int32)
+        joint_parent = np.asarray(model.joint_parent.numpy(), dtype=np.int32)
+        joint_child = np.asarray(model.joint_child.numpy(), dtype=np.int32)
+        joint_transform_parent = np.asarray(model.joint_X_p.numpy(), dtype=np.float32)
+        joint_transform_child = np.asarray(model.joint_X_c.numpy(), dtype=np.float32)
+        joint_q_start = np.asarray(model.joint_q_start.numpy(), dtype=np.int32)
+        joint_qd_start = np.asarray(model.joint_qd_start.numpy(), dtype=np.int32)
+        joint_dof_dim = np.asarray(model.joint_dof_dim.numpy(), dtype=np.int32)
+        joint_axis = np.asarray(model.joint_axis.numpy(), dtype=np.float32)
+        joint_limit_lower = np.asarray(model.joint_limit_lower.numpy(), dtype=np.float32)
+        joint_limit_upper = np.asarray(model.joint_limit_upper.numpy(), dtype=np.float32)
+        body_mass = np.asarray(model.body_mass.numpy(), dtype=np.float32)
+        body_com = np.asarray(model.body_com.numpy(), dtype=np.float32)
+        gravity = np.asarray(model.gravity.numpy(), dtype=np.float32).reshape(-1, 3)[0]
+
+        if (
+            joint_type.shape != (joint_count,)
+            or joint_parent.shape != (joint_count,)
+            or joint_child.shape != (joint_count,)
+            or joint_transform_parent.shape != (joint_count, 7)
+            or joint_transform_child.shape != (joint_count, 7)
+            or joint_q_start.shape != (joint_count + 1,)
+            or joint_qd_start.shape != (joint_count + 1,)
+            or joint_dof_dim.shape != (joint_count, 2)
+            or joint_axis.shape != (dof_count, 3)
+            or joint_limit_lower.shape != (dof_count,)
+            or joint_limit_upper.shape != (dof_count,)
+            or body_mass.shape != (body_count,)
+            or body_com.shape != (body_count, 3)
+            or int(joint_q_start[-1]) != coordinate_count
+            or int(joint_qd_start[-1]) != dof_count
+        ):
+            raise ValueError("Newton model exposes inconsistent topology or inertial array shapes.")
+
+        body_parent = np.full(body_count, -2, dtype=np.int32)
+        body_joint = np.full(body_count, -1, dtype=np.int32)
+        children: list[list[int]] = [[] for _ in range(body_count)]
+        for joint_index, child in enumerate(joint_child):
+            child_index = int(child)
+            if child_index < 0:
+                continue
+            if child_index >= body_count or body_joint[child_index] >= 0:
+                raise ValueError("Every Newton body must be owned by exactly one valid child joint.")
+            parent_index = int(joint_parent[joint_index])
+            if parent_index >= body_count:
+                raise ValueError("Newton joint parent index exceeds the body count.")
+            body_parent[child_index] = parent_index
+            body_joint[child_index] = joint_index
+            if parent_index >= 0:
+                children[parent_index].append(child_index)
+        if np.any(body_joint < 0) or np.count_nonzero(body_parent == -1) != 1:
+            raise ValueError("Newton topology must contain one rooted articulation covering every body.")
+
+        subtree_rows: list[list[int]] = []
+        for child in joint_child:
+            root = int(child)
+            if root < 0:
+                subtree_rows.append([])
+                continue
+            row: list[int] = []
+            stack = [root]
+            while stack:
+                body = stack.pop()
+                row.append(body)
+                stack.extend(reversed(children[body]))
+            subtree_rows.append(row)
+        joint_subtree_offsets = np.zeros(joint_count + 1, dtype=np.int32)
+        for joint_index, bodies in enumerate(subtree_rows):
+            joint_subtree_offsets[joint_index + 1] = joint_subtree_offsets[joint_index] + len(bodies)
+        joint_subtree_bodies = np.asarray(
+            [body for bodies in subtree_rows for body in bodies],
+            dtype=np.int32,
+        )
+        joint_subtree_mass = np.asarray(
+            [body_mass[bodies].sum() if bodies else 0.0 for bodies in subtree_rows],
+            dtype=np.float32,
+        )
+        joint_subtree_inverse_mass = np.zeros_like(joint_subtree_mass)
+        positive_mass = joint_subtree_mass > 0.0
+        joint_subtree_inverse_mass[positive_mass] = 1.0 / joint_subtree_mass[positive_mass]
+
+        dof_joint = np.full(dof_count, -1, dtype=np.int32)
+        body_dof_ancestry = np.zeros((body_count, dof_count), dtype=np.uint8)
+        for joint_index, bodies in enumerate(subtree_rows):
+            begin = int(joint_qd_start[joint_index])
+            end = int(joint_qd_start[joint_index + 1])
+            dof_joint[begin:end] = joint_index
+            if bodies and end > begin:
+                body_dof_ancestry[np.ix_(bodies, range(begin, end))] = 1
+        if np.any(dof_joint < 0):
+            raise ValueError("Newton joint velocity ranges must cover every degree of freedom exactly once.")
+
+        return cls.Topology(
+            joint_type=readonly(joint_type, np.int32),
+            joint_parent=readonly(joint_parent, np.int32),
+            joint_child=readonly(joint_child, np.int32),
+            joint_transform_parent=readonly(joint_transform_parent, np.float32),
+            joint_transform_child=readonly(joint_transform_child, np.float32),
+            joint_q_start=readonly(joint_q_start, np.int32),
+            joint_qd_start=readonly(joint_qd_start, np.int32),
+            joint_dof_dim=readonly(joint_dof_dim, np.int32),
+            joint_axis=readonly(joint_axis, np.float32),
+            joint_limit_lower=readonly(joint_limit_lower, np.float32),
+            joint_limit_upper=readonly(joint_limit_upper, np.float32),
+            body_parent=readonly(body_parent, np.int32),
+            body_joint=readonly(body_joint, np.int32),
+            dof_joint=readonly(dof_joint, np.int32),
+            body_dof_ancestry=readonly(body_dof_ancestry, np.uint8),
+            joint_subtree_bodies=readonly(joint_subtree_bodies, np.int32),
+            joint_subtree_offsets=readonly(joint_subtree_offsets, np.int32),
+            joint_subtree_mass=readonly(joint_subtree_mass, np.float32),
+            joint_subtree_inverse_mass=readonly(joint_subtree_inverse_mass, np.float32),
+            body_mass=readonly(body_mass, np.float32),
+            body_com=readonly(body_com, np.float32),
+            gravity=readonly(gravity, np.float32),
+        )
 
     @staticmethod
     def _names_from_path_map(path_map: dict[str, int], count: int) -> list[str]:
@@ -234,8 +455,8 @@ class NewtonKinematics:
         n_root = self._n_root_coords
         n_coords = self.model.joint_coord_count - n_root
         jpos = np.zeros(n_coords, dtype=np.float32)
-        q_start = self.model.joint_q_start.numpy()
-        joint_type = self.model.joint_type.numpy()
+        q_start = self.topology.joint_q_start
+        joint_type = self.topology.joint_type
         single_dof = (int(JointType.PRISMATIC), int(JointType.REVOLUTE))
         for pattern, value in joint_pos_map.items():
             regex = re.compile(pattern)
@@ -259,8 +480,7 @@ class NewtonKinematics:
         """
         if self.model.joint_count <= 1:
             return int(self.model.joint_coord_count)
-        q_start = self.model.joint_q_start.numpy()
-        return int(q_start[1] - q_start[0])
+        return int(self.topology.joint_q_start[1] - self.topology.joint_q_start[0])
 
     @property
     def device(self) -> str:
@@ -300,117 +520,102 @@ class NewtonKinematics:
             indices.append(self.body_names.index(name))
         return indices
 
-    def find_joint_dof_indices(self, pattern: str) -> list[int]:
-        """Find revolute-joint DOF indices matching a regex pattern.
-
-        Returns indices into ``joint_q[n_root_coords:]`` (i.e. excluding the
-        root coordinates).  Uses ``joint_q_start`` for correct mapping even
-        when the model contains non-revolute joints.
+    def find_joint_scalar_coordinates(self, pattern: str) -> tuple[list[int], list[int], list[str]]:
+        """Find matching scalar joints as absolute position and velocity indices.
 
         Args:
             pattern: Regex matched against each joint name.
 
         Returns:
-            Sorted list of matching DOF indices.
+            Ordered absolute ``joint_q`` indices, absolute ``joint_qd`` indices,
+            and matching joint names. Fixed, ball, and free joints are omitted
+            because they do not have a one-to-one scalar q/qd representation.
         """
         regex = re.compile(pattern)
-        q_start = self.model.joint_q_start.numpy()
-        joint_type = self.model.joint_type.numpy()
-        indices = []
-        for jidx in range(1, len(self.joint_names)):
-            if int(joint_type[jidx]) != 1:
+        q_start = self.topology.joint_q_start
+        qd_start = self.topology.joint_qd_start
+        coordinates: list[int] = []
+        velocities: list[int] = []
+        names: list[str] = []
+        for joint_index, joint_name in enumerate(self.joint_names):
+            q_begin, q_end = int(q_start[joint_index]), int(q_start[joint_index + 1])
+            qd_begin, qd_end = int(qd_start[joint_index]), int(qd_start[joint_index + 1])
+            if q_end - q_begin != 1 or qd_end - qd_begin != 1 or not regex.fullmatch(joint_name):
                 continue
-            if regex.fullmatch(self.joint_names[jidx]):
-                indices.append(int(q_start[jidx]) - self._n_root_coords)
-        return sorted(indices)
+            coordinates.append(q_begin)
+            velocities.append(qd_begin)
+            names.append(joint_name)
+        return coordinates, velocities, names
 
-    def foot_geometry(self, foot_body_ids: list[int]) -> dict[str, np.ndarray | float]:
-        """Derive foot geometry from the default stance + collision shapes.
-
-        ``foot_ground_offset`` is the z offset from the foot body's origin
-        to the lowest point of its collision geometry — a pure-geometric
-        quantity independent of the URDF default pose. Pipeline uses it
-        to lift contact targets by this offset so IK places the foot's
-        *sole* (not body origin) on the terrain surface.
+    def find_body_chain_joint_coordinates(self, body_name: str) -> tuple[list[int], list[int], list[str]]:
+        """Return coordinate, velocity, and joint-name axes from the root to one body.
 
         Args:
-            foot_body_ids: Newton body indices for the feet.
+            body_name: Exact body name at the end of the kinematic chain.
 
         Returns:
-            Dict with ``foot_offsets`` (body-to-base xyz at default),
-            ``standing_height`` (default base-z minus default foot-mean-z),
-            ``foot_ground_offset`` (negated min local-z of foot collision
-            geometry, fallback to default foot-z if no shapes attached).
+            Ordered joint-coordinate indices, joint-velocity indices, and one
+            joint name per coordinate from root to body.
         """
-        base_pos = self._default_body_q[0][:3]
-        foot_pos = np.array([self._default_body_q[fid][:3] for fid in foot_body_ids])
+        body = self.find_body_indices([body_name])[0]
+        q_start = self.topology.joint_q_start
+        qd_start = self.topology.joint_qd_start
+        coordinates: list[int] = []
+        velocities: list[int] = []
+        names: list[str] = []
+        while body >= 0:
+            joint = int(self.topology.body_joint[body])
+            joint_coordinates = list(range(int(q_start[joint]), int(q_start[joint + 1])))
+            coordinates = joint_coordinates + coordinates
+            velocities = list(range(int(qd_start[joint]), int(qd_start[joint + 1]))) + velocities
+            names = [self.joint_names[joint]] * len(joint_coordinates) + names
+            body = int(self.topology.body_parent[body])
+        return coordinates, velocities, names
 
-        # Per-foot local-z-min from attached collision shapes. For each
-        # shape type, compute the lowest-z offset the shape reaches in the
-        # body frame (rotation assumed identity -- matches every foot
-        # geometry we've seen in practice).
-        builder = self.builder
-        foot_ids_set = set(int(f) for f in foot_body_ids)
-        z_min_local: float | None = None
-        for si in range(len(builder.shape_body)):
-            bid = int(builder.shape_body[si])
-            if bid not in foot_ids_set:
-                continue
-            zmin = self._shape_local_z_min(
-                int(builder.shape_type[si]),
-                builder.shape_scale[si],
-                builder.shape_transform[si],
-                builder.shape_source[si],
-            )
-            if zmin is None:
-                continue
-            if z_min_local is None or zmin < z_min_local:
-                z_min_local = zmin
+    def find_body_child_joint_coordinates(self, body_names: list[str]) -> tuple[list[int], list[int], list[str]]:
+        """Return coordinates and velocities of joints whose children are named bodies.
 
-        if z_min_local is not None:
-            # foot_body_z + (-z_min_local) = terrain_z  →  sole on terrain.
-            foot_ground_offset = float(-z_min_local)
-        else:
-            # Fallback: URDF default pose (assumes default places soles at z = 0).
-            foot_ground_offset = float(foot_pos[:, 2].min())
+        Args:
+            body_names: Exact child-body names in the requested output order.
 
-        return {
-            "foot_offsets": foot_pos - base_pos,
-            "standing_height": float(base_pos[2] - foot_pos[:, 2].mean()),
-            "foot_ground_offset": foot_ground_offset,
-        }
-
-    @staticmethod
-    def _shape_local_z_min(
-        shape_type: int,
-        shape_scale,
-        shape_transform,
-        shape_source,
-    ) -> float | None:
-        """Lowest body-frame z coordinate reachable by a shape's surface.
-
-        Handles the geometry primitives we encounter in practice (mesh,
-        sphere, box, capsule, cylinder, plane). Returns ``None`` for
-        unsupported types so the caller can fall back or skip.
+        Returns:
+            Ordered joint-coordinate indices, joint-velocity indices, and one
+            joint name per coordinate.
         """
-        pos_z = float(shape_transform[2])
-        if shape_type == int(GeoType.MESH) or shape_type == int(GeoType.CONVEX_MESH):
-            if shape_source is None or not hasattr(shape_source, "vertices"):
-                return None
-            verts = np.asarray(shape_source.vertices).reshape(-1, 3)
-            if verts.size == 0:
-                return None
-            scale_z = float(shape_scale[2])
-            return pos_z + float(verts[:, 2].min()) * scale_z
-        if shape_type == int(GeoType.SPHERE):
-            return pos_z - float(shape_scale[0])
-        if shape_type == int(GeoType.BOX):
-            return pos_z - 0.5 * float(shape_scale[2])
-        if shape_type == int(GeoType.CAPSULE):
-            return pos_z - float(shape_scale[1]) - float(shape_scale[0])
-        if shape_type == int(GeoType.CYLINDER):
-            return pos_z - float(shape_scale[1])
-        return None
+        body_indices = self.find_body_indices(body_names)
+        q_start = self.topology.joint_q_start
+        qd_start = self.topology.joint_qd_start
+        coordinates: list[int] = []
+        velocities: list[int] = []
+        names: list[str] = []
+        for body in body_indices:
+            joint = int(self.topology.body_joint[body])
+            joint_coordinates = list(range(int(q_start[joint]), int(q_start[joint + 1])))
+            coordinates.extend(joint_coordinates)
+            velocities.extend(range(int(qd_start[joint]), int(qd_start[joint + 1])))
+            names.extend([self.joint_names[joint]] * len(joint_coordinates))
+        return coordinates, velocities, names
+
+    def body_adjacency(self, max_joint_hops: int) -> np.ndarray:
+        """Return body pairs separated by at most the declared joint hops.
+
+        Args:
+            max_joint_hops: Maximum number of parent-child edges between paired bodies.
+
+        Returns:
+            Symmetric uint8 adjacency matrix with shape [body_count, body_count].
+        """
+        if max_joint_hops < 0:
+            raise ValueError("Maximum joint hops cannot be negative.")
+        step = np.eye(self.topology.body_count, dtype=np.int32)
+        for body, parent in enumerate(self.topology.body_parent):
+            if parent >= 0:
+                step[int(parent), body] = 1
+                step[body, int(parent)] = 1
+        reach = np.eye(self.topology.body_count, dtype=np.int32)
+        for _ in range(max_joint_hops):
+            reach = (reach @ step > 0).astype(np.int32)
+        return (reach > 0).astype(np.uint8)
 
     def create_ik_solver(
         self,

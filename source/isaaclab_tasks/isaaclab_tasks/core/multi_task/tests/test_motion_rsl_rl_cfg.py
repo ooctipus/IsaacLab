@@ -133,6 +133,8 @@ def test_metamotivo_profile_keeps_its_faithful_direct_values() -> None:
     assert cfg.tracking_curriculum is None
     assert cfg.class_type == "rsl_rl.runners:ForwardBackwardRunner"
     assert tuple(helper.name for helper in cfg.value_helpers) == ("discriminator",)
+    assert cfg.value_helpers[0].route == "critic_value"
+    assert "critic_discriminator" not in cfg.obs_groups
     assert cfg.value_helpers[0].learning_rate == 1.0e-4
     assert cfg.value_helpers[0].actor_coefficient == 0.01
 
@@ -172,6 +174,8 @@ def test_bfm_profile_keeps_its_faithful_direct_values() -> None:
         "base_angular_velocity",
     )
     assert tuple(helper.name for helper in cfg.value_helpers) == ("discriminator", "auxiliary")
+    assert {helper.route for helper in cfg.value_helpers} == {"critic_value"}
+    assert "critic_discriminator" not in cfg.obs_groups
     assert tuple(helper.learning_rate for helper in cfg.value_helpers) == (3.0e-4, 3.0e-4)
     assert cfg.value_helpers[0].actor_coefficient == 0.05
     assert cfg.tracking_curriculum is not None

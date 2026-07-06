@@ -38,12 +38,66 @@ class StateCommandCfg(CommandTermCfg):
     class TaskTableCfg:
         """Base immutable task-table builder configuration."""
 
+        @configclass
+        class GenerateTermCfg:
+            """One declaration-order candidate or target generation term."""
+
+            class_type: Callable | str = MISSING
+
+        @configclass
+        class ObjectiveCfg:
+            """One numerical preference in a family's flat solve tuple."""
+
+            class_type: Callable | str = MISSING
+
+        @configclass
+        class SolveCfg:
+            """One optional solve over a flat objective tuple."""
+
+            class_type: Callable | str = MISSING
+            objectives: tuple[StateCommandCfg.TaskTableCfg.ObjectiveCfg, ...] = ()
+            max_iterations: int = 200
+            convergence_tolerance: float | None = 1.0e-6
+            convergence_check_interval: int = 1
+
+        @configclass
+        class CriterionCfg:
+            """One ordered post-generation acceptance criterion."""
+
+            class_type: Callable | str = MISSING
+
+        @configclass
+        class SelectionCfg:
+            """One accepted-candidate thinning or ordering policy."""
+
+            class_type: Callable | str = MISSING
+
+        @configclass
+        class FamilyCfg:
+            """Visible generate, optional-solve, accept, and select stages."""
+
+            name: str = MISSING
+            generate: tuple[StateCommandCfg.TaskTableCfg.GenerateTermCfg, ...] = ()
+            solve: StateCommandCfg.TaskTableCfg.SolveCfg | None = None
+            criteria: tuple[StateCommandCfg.TaskTableCfg.CriterionCfg, ...] = ()
+            selection: StateCommandCfg.TaskTableCfg.SelectionCfg = MISSING
+
         class_type: Callable | str = MISSING
-        """Builder invoked as class_type(cfg, env).
+        """Pure builder invoked with the command cfg, resolved scene cfg, and device.
 
         The result exposes ``num_tasks``; its remaining typed data is consumed
         only by the matching payload, which owns ``sample_rows(count)``.
         """
+
+        def build(self, command_cfg: StateCommandCfg, scene_cfg: object, device: str) -> Any:
+            """Build one immutable table without reading a live environment."""
+            return self.class_type(command_cfg, scene_cfg, device)
+
+        seed: int = 0
+        """Independent seed used by every stochastic table-construction stage."""
+
+        families: tuple[StateCommandCfg.TaskTableCfg.FamilyCfg, ...] = ()
+        """Visible generate, solve, accept, and select policies in declaration order."""
 
     @configclass
     class PayloadCfg:
@@ -57,6 +111,9 @@ class StateCommandCfg(CommandTermCfg):
         """
 
     class_type: type | str = "{DIR}.state_command:StateCommand"
+
+    reset_assets: tuple[str, ...] = MISSING
+    """Ordered scene assets represented by every physical task-table state."""
 
     task_table: TaskTableCfg = MISSING
     """Task-table builder cfg (a :class:`TaskTableCfg` subclass)."""

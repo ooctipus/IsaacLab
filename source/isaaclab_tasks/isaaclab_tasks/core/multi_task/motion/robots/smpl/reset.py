@@ -17,7 +17,7 @@ from isaaclab.utils.math import convert_quat, quat_apply
 from isaaclab_assets.robots.smpl.smpl_constants import MUJOCO_JOINT_NAMES, SMPL_HUMENV_MJCF_PATH
 
 from ...data import MotionResetState
-from .frames import smpl_live_joint_source_names
+from .articulation import smpl_live_joint_mujoco_names
 
 
 class SmplHumEnvMocapAndFallReset:
@@ -69,7 +69,7 @@ class SmplHumEnvMocapAndFallReset:
         self._initial_root_quaternion_component_width = quaternion_high - quaternion_low
         self._control_low = control_low
         self._control_width = control_high - control_low
-        live_mujoco_names = smpl_live_joint_source_names(live_joint_names)
+        live_mujoco_names = smpl_live_joint_mujoco_names(live_joint_names)
         self._live_from_mujoco = torch.tensor(
             [MUJOCO_JOINT_NAMES.index(name) for name in live_mujoco_names],
             dtype=torch.int64,

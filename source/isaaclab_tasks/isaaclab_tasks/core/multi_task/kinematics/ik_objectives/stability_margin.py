@@ -6,7 +6,7 @@
 """IK objective: stability margin (CoM inside support polygon).
 
 Penalizes configurations where the CoM projects outside the convex hull
-of the foot positions (static instability under gravity). No gradient
+of the support body positions (static instability under gravity). No gradient
 inside the polygon — any interior position is stable — so the objective
 does not bias the solve toward the polygon centroid.
 """
@@ -18,118 +18,54 @@ from typing import TYPE_CHECKING
 import newton
 import newton.ik as ik
 import numpy as np
+import torch
 import warp as wp
 
 from ._kernels import jac_fill_row
 
 if TYPE_CHECKING:
-    from isaaclab_tasks.core.multi_task.terrain.retarget.pipeline import RetargetPipeline
-
+    from ..newton_kinematics import NewtonKinematics
     from .cfg import IKObjectiveStabilityMarginCfg
-
-
-def _build_stability_jac_relations(model: newton.Model, foot_body_ids: list[int]) -> dict:
-    """Precompute tables used by the analytic Jacobian kernel.
-
-    For each dof, we need the joint that owns it (so we can index into the
-    per-joint subtree COM cache). For each joint, we need its subtree
-    bodies (for the per-iteration COM compute) and total mass. For each
-    foot, we need a (foot, dof) bitmap saying whether motion of that dof
-    moves that foot.
-    """
-    jp = model.joint_parent.numpy()
-    jc = model.joint_child.numpy()
-    bm = model.body_mass.numpy()
-    qd_start = model.joint_qd_start.numpy()
-    n_joints = model.joint_count
-    n_bodies = model.body_count
-    n_dofs = model.joint_dof_count
-
-    dof_to_joint = np.zeros(n_dofs, dtype=np.int32)
-    for jg in range(n_joints):
-        end = qd_start[jg + 1] if jg + 1 < len(qd_start) else n_dofs
-        for d in range(int(qd_start[jg]), int(end)):
-            dof_to_joint[d] = jg
-
-    children: dict[int, list[int]] = {b: [] for b in range(-1, n_bodies)}
-    for jg in range(n_joints):
-        children[int(jp[jg])].append(int(jc[jg]))
-
-    def _subtree(child_body: int) -> list[int]:
-        if child_body < 0:
-            return []
-        out, queue = [child_body], [child_body]
-        while queue:
-            x = queue.pop()
-            for ch in children[x]:
-                out.append(ch)
-                queue.append(ch)
-        return out
-
-    flat, offsets, masses = [], [0], []
-    subtree_set: list[set[int]] = []
-    for jg in range(n_joints):
-        bodies = _subtree(int(jc[jg]))
-        flat.extend(bodies)
-        offsets.append(len(flat))
-        masses.append(float(sum(bm[b] for b in bodies)))
-        subtree_set.append(set(bodies))
-
-    foot_in_subtree = np.zeros((len(foot_body_ids), n_dofs), dtype=np.uint8)
-    for fi, f_body in enumerate(foot_body_ids):
-        for d in range(n_dofs):
-            if int(f_body) in subtree_set[int(dof_to_joint[d])]:
-                foot_in_subtree[fi, d] = 1
-
-    return {
-        "dof_to_joint": dof_to_joint,
-        "joint_subtree_bodies": np.array(flat, dtype=np.int32),
-        "joint_subtree_offsets": np.array(offsets, dtype=np.int32),
-        "joint_subtree_mass": np.array(masses, dtype=np.float32),
-        "foot_in_subtree": foot_in_subtree,
-    }
+    from .context import IKContactObjectiveBuildContext
 
 
 @wp.kernel
-def _compute_joint_subtree_origin_coms(
+def _compute_joint_subtree_coms(
     body_q: wp.array2d(dtype=wp.transform),
+    body_com: wp.array1d(dtype=wp.vec3),
     body_mass: wp.array1d(dtype=wp.float32),
     subtree_bodies: wp.array1d(dtype=wp.int32),
     subtree_offsets: wp.array1d(dtype=wp.int32),
     subtree_inv_mass: wp.array1d(dtype=wp.float32),
     out_com: wp.array2d(dtype=wp.vec3),
 ):
-    """Mass-weighted average of body **origin** positions per joint subtree.
-
-    Matches the residual kernel's CoM aggregation, which weights body
-    origin positions (not body-COM offsets) by mass. Using origin keeps
-    the residual and Jacobian consistent so analytic = derivative of what
-    the residual actually computes.
-    """
+    """Mass-weighted body COM positions per joint subtree [m]."""
     p, j = wp.tid()
     s = subtree_offsets[j]
     e = subtree_offsets[j + 1]
     com = wp.vec3(0.0, 0.0, 0.0)
     for i in range(s, e):
         b = subtree_bodies[i]
-        com = com + body_mass[b] * wp.transform_get_translation(body_q[p, b])
+        com = com + body_mass[b] * wp.transform_point(body_q[p, b], body_com[b])
     out_com[p, j] = com * subtree_inv_mass[j]
 
 
 @wp.kernel
 def _stability_margin_residuals(
     body_q: wp.array2d(dtype=wp.transform),
+    body_com: wp.array1d(dtype=wp.vec3),
     body_mass: wp.array1d(dtype=wp.float32),
     n_bodies: int,
-    foot_body_indices: wp.array1d(dtype=wp.int32),
+    support_body_indices: wp.array1d(dtype=wp.int32),
     is_contact: wp.array2d(dtype=wp.uint8),
     scratch_xy: wp.array2d(dtype=wp.vec2),
     scratch_slot: wp.array2d(dtype=wp.int32),
-    n_feet: int,
+    n_supports: int,
     total_mass_inv: float,
     weight: float,
     start_idx: int,
     residuals: wp.array2d(dtype=wp.float32),
+    signed_margin: wp.array1d(dtype=wp.float32),
     active_a_slot: wp.array1d(dtype=wp.int32),
     active_b_slot: wp.array1d(dtype=wp.int32),
     active_e_xy: wp.array1d(dtype=wp.vec2),
@@ -138,46 +74,47 @@ def _stability_margin_residuals(
 ):
     """Residual = ``max(0, -margin)`` where margin is the signed distance
     from the CoM (XY projection) to the nearest edge of the *active*
-    support polygon. Only feet with ``is_contact[row, i] != 0`` form
-    polygon vertices; lifted feet are skipped. Active contacts are sorted
+    support polygon. Only support bodies with ``is_contact[row, i] != 0`` form
+    polygon vertices; lifted support bodies are skipped. Active contacts are sorted
     CCW per-problem by their angle around the active centroid.
 
-    Returns zero residual when fewer than 3 feet are in contact (support
-    collapses to a point or segment -- measure-zero stability, left to
-    the :class:`SupportPolygonStability` criterion to gate rigorously).
+    Returns zero residual and zero signed margin when fewer than three support
+    bodies are in contact. The separate active-contact count disambiguates that
+    sentinel when acceptance applies its minimum-contact bound.
 
     Also writes the active edge cache (``active_*``) used by the analytic
-    Jacobian kernel: foot slot indices forming the violating edge, and
+    Jacobian kernel: support body slot indices forming the violating edge, and
     the edge / com-vector / edge-length values that the chain rule needs.
     Sets ``active_a_slot = -1`` when residual = 0 (hinge, no gradient).
     """
     row = wp.tid()
 
-    # Gather active feet xy + their original slot indices into scratch.
+    # Gather active support bodies xy + their original slot indices into scratch.
     n_active = int(0)
-    for i in range(n_feet):
+    for i in range(n_supports):
         if is_contact[row, i] != wp.uint8(0):
-            pos = wp.transform_get_translation(body_q[row, foot_body_indices[i]])
+            pos = wp.transform_get_translation(body_q[row, support_body_indices[i]])
             scratch_xy[row, n_active] = wp.vec2(pos[0], pos[1])
             scratch_slot[row, n_active] = i
             n_active = n_active + 1
     if n_active < 3:
         residuals[row, start_idx] = 0.0
+        signed_margin[row] = 0.0
         active_a_slot[row] = -1
         return
 
-    # Mass-weighted CoM in XY (over the whole body, not just active feet --
+    # Mass-weighted CoM in XY (over the whole body, not just active support bodies --
     # physical CoM doesn't care about contact state).
     com_x = float(0.0)
     com_y = float(0.0)
     for b in range(n_bodies):
-        pos_b = wp.transform_get_translation(body_q[row, b])
+        pos_b = wp.transform_point(body_q[row, b], body_com[b])
         com_x = com_x + body_mass[b] * pos_b[0]
         com_y = com_y + body_mass[b] * pos_b[1]
     com_x = com_x * total_mass_inv
     com_y = com_y * total_mass_inv
 
-    # Sort active feet CCW by angle around their own centroid (carrying slot ids).
+    # Sort active support bodies CCW by angle around their own centroid (carrying slot ids).
     cx = float(0.0)
     cy = float(0.0)
     for k in range(n_active):
@@ -218,6 +155,7 @@ def _stability_margin_residuals(
             min_signed = signed
             active_i = i
 
+    signed_margin[row] = min_signed
     violation = wp.max(0.0, -min_signed)
     residuals[row, start_idx] = weight * violation
 
@@ -241,8 +179,8 @@ def _stability_margin_residuals(
 @wp.kernel
 def _stability_margin_jac_analytic(
     body_q: wp.array2d(dtype=wp.transform),
-    foot_body_indices: wp.array1d(dtype=wp.int32),
-    foot_in_subtree: wp.array2d(dtype=wp.uint8),
+    support_body_indices: wp.array1d(dtype=wp.int32),
+    support_in_subtree: wp.array2d(dtype=wp.uint8),
     joint_S_s: wp.array2d(dtype=wp.spatial_vector),
     dof_to_joint: wp.array1d(dtype=wp.int32),
     joint_subtree_mass: wp.array1d(dtype=wp.float32),
@@ -261,8 +199,8 @@ def _stability_margin_jac_analytic(
     polygon (encoded by ``active_a_slot < 0``). When outside, only the
     active edge contributes; the chain rule combines:
 
-    * Foot velocity at each endpoint via ``v_d + ω_d × pos_foot`` gated
-      by the precomputed ``foot_in_subtree`` membership table.
+    * Foot velocity at each endpoint via ``v_d + ω_d × pos_support`` gated
+      by the precomputed ``support_in_subtree`` membership table.
     * CoM velocity via ``(M_s / M_total) * (v_d + ω_d × C_s)`` where
       ``M_s`` and ``C_s`` are the total mass and COM of the subtree of
       the dof's joint.
@@ -290,8 +228,8 @@ def _stability_margin_jac_analytic(
     p_xy = active_p_xy[p]
     L = active_edge_len[p]
 
-    a_body = foot_body_indices[a_slot]
-    b_body = foot_body_indices[b_slot]
+    a_body = support_body_indices[a_slot]
+    b_body = support_body_indices[b_slot]
     pos_a = wp.transform_get_translation(body_q[p, a_body])
     pos_b = wp.transform_get_translation(body_q[p, b_body])
 
@@ -300,10 +238,10 @@ def _stability_margin_jac_analytic(
     omega = wp.vec3(S[3], S[4], S[5])
 
     d_pos_a = wp.vec3(0.0, 0.0, 0.0)
-    if foot_in_subtree[a_slot, d] != wp.uint8(0):
+    if support_in_subtree[a_slot, d] != wp.uint8(0):
         d_pos_a = v + wp.cross(omega, pos_a)
     d_pos_b = wp.vec3(0.0, 0.0, 0.0)
-    if foot_in_subtree[b_slot, d] != wp.uint8(0):
+    if support_in_subtree[b_slot, d] != wp.uint8(0):
         d_pos_b = v + wp.cross(omega, pos_b)
 
     j_d = dof_to_joint[d]
@@ -329,48 +267,137 @@ def _stability_margin_jac_analytic(
     jacobian[p, start_idx, d] = -weight * d_signed
 
 
+def stability_margin_measure(
+    kinematics: NewtonKinematics,
+    body_q: torch.Tensor,
+    support_body_indices: tuple[int, ...],
+    is_contact: torch.Tensor,
+    batch_capacity: int | None = None,
+    output: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Compute the objective signed stability margin with bounded scratch [m].
+
+    Args:
+        kinematics: Owner of canonical body mass and body-local COM offsets.
+        body_q: Final body poses [m, quaternion xyzw], shape [row_count, body_count, 7].
+        support_body_indices: Support-body indices matching contact-mask columns.
+        is_contact: Active support mask, shape [row_count, support_count].
+        batch_capacity: Maximum rows held by temporary measure workspaces.
+        output: Optional preallocated signed-margin output, shape [row_count].
+
+    Returns:
+        Signed nearest-edge margin [m], shape [row_count].
+    """
+    topology = kinematics.topology
+    if (
+        body_q.ndim != 3
+        or body_q.shape[1:] != (topology.body_count, 7)
+        or body_q.dtype is not torch.float32
+        or not body_q.is_contiguous()
+    ):
+        raise ValueError("Stability body poses must be contiguous float32 [row_count, body_count, 7].")
+    count = body_q.shape[0]
+    support_count = len(support_body_indices)
+    if is_contact.shape != (count, support_count) or is_contact.device != body_q.device:
+        raise ValueError("Stability contact mask must match body-pose rows, support columns, and device.")
+    if count == 0:
+        return torch.empty(0, dtype=torch.float32, device=body_q.device)
+    capacity = count if batch_capacity is None else min(count, batch_capacity)
+    if capacity < 1:
+        raise ValueError("Stability batch_capacity must be positive.")
+
+    device = str(body_q.device)
+    body_q_wp = wp.from_torch(body_q, dtype=wp.transformf)
+    contact_u8 = torch.empty((capacity, support_count), dtype=torch.uint8, device=body_q.device)
+    contact_wp = wp.from_torch(contact_u8, dtype=wp.uint8)
+    support_wp = wp.array(support_body_indices, dtype=wp.int32, device=device)
+    scratch_xy = wp.zeros((capacity, support_count), dtype=wp.vec2, device=device)
+    scratch_slot = wp.zeros((capacity, support_count), dtype=wp.int32, device=device)
+    residuals = wp.zeros((capacity, 1), dtype=wp.float32, device=device)
+    if output is not None and (
+        output.shape != (count,) or output.dtype is not torch.float32 or output.device != body_q.device
+    ):
+        raise ValueError("Stability output must be float32 [row_count] on the body-pose device.")
+    margin = torch.empty(count, dtype=torch.float32, device=body_q.device) if output is None else output
+    margin_wp = wp.from_torch(margin)
+    active_a = wp.empty(capacity, dtype=wp.int32, device=device)
+    active_b = wp.empty(capacity, dtype=wp.int32, device=device)
+    active_e = wp.empty(capacity, dtype=wp.vec2, device=device)
+    active_p = wp.empty(capacity, dtype=wp.vec2, device=device)
+    active_length = wp.empty(capacity, dtype=wp.float32, device=device)
+    body_com = wp.array(topology.body_com, dtype=wp.vec3, device=device)
+    body_mass = wp.array(topology.body_mass, dtype=wp.float32, device=device)
+    for start in range(0, count, capacity):
+        stop = min(start + capacity, count)
+        active_count = stop - start
+        contact_u8[:active_count].copy_(is_contact[start:stop])
+        wp.launch(
+            _stability_margin_residuals,
+            dim=active_count,
+            inputs=[
+                body_q_wp[start:stop],
+                body_com,
+                body_mass,
+                topology.body_count,
+                support_wp,
+                contact_wp[:active_count],
+                scratch_xy[:active_count],
+                scratch_slot[:active_count],
+                support_count,
+                float(1.0 / topology.body_mass.sum()),
+                0.0,
+                0,
+            ],
+            outputs=[
+                residuals[:active_count],
+                margin_wp[start:stop],
+                active_a[:active_count],
+                active_b[:active_count],
+                active_e[:active_count],
+                active_p[:active_count],
+                active_length[:active_count],
+            ],
+            device=device,
+        )
+    return margin
+
+
 class IKObjectiveStabilityMargin(ik.IKObjective):
     """Hinge penalty on CoM projecting outside the support polygon.
 
     Residual is zero whenever the mass-weighted CoM's XY projection lies
-    inside the convex hull of the feet, and grows linearly with distance
+    inside the convex hull of the support bodies, and grows linearly with distance
     when outside. This matches the physical static-balance condition
     (CoM must lie over the support polygon) without biasing the IK
     toward the polygon centroid.
 
     Args:
         cfg: :class:`~.cfg.IKObjectiveStabilityMarginCfg` with ``weight``.
-        pipeline: Live :class:`RetargetPipeline` — read for
-            ``kin.model`` (body masses, kinematic tree), ``foot_body_ids``
-            (slot order), and ``buffer.is_contact_t`` (per-problem active
-            contacts snapshotted at IK build time).
-        wp_mesh: Unused (kept for uniform construction signature).
+        context: Explicit mechanics, contact-body identities, and active-contact scratch.
     """
 
     def __init__(
         self,
         cfg: IKObjectiveStabilityMarginCfg,
-        pipeline: RetargetPipeline,
-        wp_mesh: object = None,
+        context: IKContactObjectiveBuildContext,
     ) -> None:
         super().__init__()
         self.weight = cfg.weight
-        self._foot_body_indices_np = np.asarray(pipeline.foot_body_ids, dtype=np.int32)
-        self.n_feet = int(self._foot_body_indices_np.shape[0])
-        model = pipeline.kin.model
-        self.n_bodies = model.body_count
-        self.n_joints = model.joint_count
-        bm = model.body_mass.numpy()
-        self._total_mass_inv = float(1.0 / (bm.sum() + 1e-10))
-        self._body_mass_np = bm.astype(np.float32)
-        rel = _build_stability_jac_relations(model, list(pipeline.foot_body_ids))
-        self._dof_to_joint_np = rel["dof_to_joint"]
-        self._joint_subtree_bodies_np = rel["joint_subtree_bodies"]
-        self._joint_subtree_offsets_np = rel["joint_subtree_offsets"]
-        self._joint_subtree_mass_np = rel["joint_subtree_mass"]
-        self._joint_subtree_inv_mass_np = (1.0 / (self._joint_subtree_mass_np + 1e-10)).astype(np.float32)
-        self._foot_in_subtree_np = rel["foot_in_subtree"]
-        self._pipeline = pipeline
+        self._support_body_indices_np = np.asarray(context.contact_body_ids, dtype=np.int32)
+        self.n_supports = int(self._support_body_indices_np.shape[0])
+        topology = context.kinematics.topology
+        self.n_bodies = topology.body_count
+        self.n_joints = topology.joint_count
+        self._total_mass_inv = float(1.0 / topology.body_mass.sum())
+        self._body_mass_np = topology.body_mass
+        self._body_com_np = topology.body_com
+        self._dof_to_joint_np = topology.dof_joint
+        self._joint_subtree_bodies_np = topology.joint_subtree_bodies
+        self._joint_subtree_offsets_np = topology.joint_subtree_offsets
+        self._joint_subtree_mass_np = topology.joint_subtree_mass
+        self._joint_subtree_inv_mass_np = topology.joint_subtree_inverse_mass
+        self._support_in_subtree_np = topology.body_dof_ancestry[self._support_body_indices_np]
+        self._contact_mask = context.contact_mask
 
     def supports_analytic(self) -> bool:
         return True
@@ -383,24 +410,21 @@ class IKObjectiveStabilityMargin(ik.IKObjective):
         d = self.device
         n = self.n_batch
 
-        self._foot_body_indices = wp.array(self._foot_body_indices_np, dtype=wp.int32, device=d)
+        self._support_body_indices = wp.array(self._support_body_indices_np, dtype=wp.int32, device=d)
         self._body_mass_dev = wp.array(self._body_mass_np, dtype=wp.float32, device=d)
+        self._body_com_dev = wp.array(self._body_com_np, dtype=wp.vec3, device=d)
 
-        # Snapshot ``is_contact`` per problem from the populated buffer.
-        # The sampler ran before IK objectives were built, so buffer
-        # contents are stable. Slot order matches ``foot_body_indices``.
-        import torch  # local import to avoid top-level torch dep
+        # The solver owner refreshes this fixed-size scratch before each
+        # chunk. Warp retains a view, so chunk reuse sees the active rows.
+        self._is_contact_t = self._contact_mask
+        self._is_contact = wp.from_torch(self._is_contact_t, dtype=wp.uint8)
 
-        buf = self._pipeline.buffer
-        is_c_u8 = buf.is_contact_t[: n * self.n_feet].view(n, self.n_feet).to(torch.uint8).contiguous()
-        self._is_contact_t = is_c_u8  # keep torch reference alive for Warp view
-        self._is_contact = wp.from_torch(is_c_u8, dtype=wp.uint8)
-
-        self._scratch_xy = wp.zeros(shape=(n, self.n_feet), dtype=wp.vec2, device=d)
-        self._scratch_slot = wp.zeros(shape=(n, self.n_feet), dtype=wp.int32, device=d)
+        self._scratch_xy = wp.zeros(shape=(n, self.n_supports), dtype=wp.vec2, device=d)
+        self._scratch_slot = wp.zeros(shape=(n, self.n_supports), dtype=wp.int32, device=d)
 
         # Active-edge cache populated by the residual kernel and read by
         # the analytic Jacobian kernel on the same iteration.
+        self._signed_margin = wp.zeros(shape=(n,), dtype=wp.float32, device=d)
         self._active_a_slot = wp.zeros(shape=(n,), dtype=wp.int32, device=d)
         self._active_b_slot = wp.zeros(shape=(n,), dtype=wp.int32, device=d)
         self._active_e_xy = wp.zeros(shape=(n,), dtype=wp.vec2, device=d)
@@ -414,7 +438,7 @@ class IKObjectiveStabilityMargin(ik.IKObjective):
         self._joint_subtree_mass = wp.array(self._joint_subtree_mass_np, dtype=wp.float32, device=d)
         self._joint_subtree_inv_mass = wp.array(self._joint_subtree_inv_mass_np, dtype=wp.float32, device=d)
         self._joint_subtree_com_buf = wp.zeros(shape=(n, self.n_joints), dtype=wp.vec3, device=d)
-        self._foot_in_subtree = wp.array(self._foot_in_subtree_np, dtype=wp.uint8, device=d)
+        self._support_in_subtree = wp.array(self._support_in_subtree_np, dtype=wp.uint8, device=d)
 
         # Autodiff scratch only when the solver may take that path.
         self._e_array: wp.array | None = None
@@ -424,13 +448,52 @@ class IKObjectiveStabilityMargin(ik.IKObjective):
                 e[b, self.residual_offset] = 1.0
             self._e_array = wp.array(e.flatten(), dtype=wp.float32, device=d)
 
+    def estimate_memory(
+        self,
+        model: newton.Model,
+        jacobian_mode: ik.IKJacobianType,
+        n_problems: int,
+        n_batch: int,
+        total_residuals: int,
+    ) -> int:
+        """Estimate immutable support facts and active-edge workspaces [byte]."""
+        del model, n_problems
+        fixed_bytes = sum(
+            values.nbytes
+            for values in (
+                self._support_body_indices_np,
+                self._body_mass_np,
+                self._body_com_np,
+                self._dof_to_joint_np,
+                self._joint_subtree_bodies_np,
+                self._joint_subtree_offsets_np,
+                self._joint_subtree_mass_np,
+                self._joint_subtree_inv_mass_np,
+                self._support_in_subtree_np,
+            )
+        )
+        vec2_bytes = wp.types.type_size_in_bytes(wp.vec2)
+        int_bytes = wp.types.type_size_in_bytes(wp.int32)
+        float_bytes = wp.types.type_size_in_bytes(wp.float32)
+        workspace_bytes = n_batch * (
+            self.n_supports * (vec2_bytes + int_bytes)
+            + self.n_joints * wp.types.type_size_in_bytes(wp.vec3)
+            + 3 * float_bytes
+            + 2 * int_bytes
+            + 2 * vec2_bytes
+        )
+        if jacobian_mode == ik.IKJacobianType.AUTODIFF:
+            workspace_bytes += n_batch * total_residuals * float_bytes
+        return int(fixed_bytes + workspace_bytes)
+
     def compute_residuals(self, body_q, joint_q, model, residuals, start_idx, problem_idx) -> None:
         n = body_q.shape[0]
         wp.launch(
-            _compute_joint_subtree_origin_coms,
+            _compute_joint_subtree_coms,
             dim=[n, self.n_joints],
             inputs=[
                 body_q,
+                self._body_com_dev,
                 self._body_mass_dev,
                 self._joint_subtree_bodies,
                 self._joint_subtree_offsets,
@@ -444,19 +507,21 @@ class IKObjectiveStabilityMargin(ik.IKObjective):
             dim=n,
             inputs=[
                 body_q,
+                self._body_com_dev,
                 self._body_mass_dev,
                 self.n_bodies,
-                self._foot_body_indices,
+                self._support_body_indices,
                 self._is_contact,
                 self._scratch_xy,
                 self._scratch_slot,
-                self.n_feet,
+                self.n_supports,
                 self._total_mass_inv,
                 self.weight,
                 start_idx,
             ],
             outputs=[
                 residuals,
+                self._signed_margin,
                 self._active_a_slot,
                 self._active_b_slot,
                 self._active_e_xy,
@@ -478,8 +543,8 @@ class IKObjectiveStabilityMargin(ik.IKObjective):
             dim=[self.n_batch, n_dofs],
             inputs=[
                 body_q,
-                self._foot_body_indices,
-                self._foot_in_subtree,
+                self._support_body_indices,
+                self._support_in_subtree,
                 joint_S_s,
                 self._dof_to_joint,
                 self._joint_subtree_mass,

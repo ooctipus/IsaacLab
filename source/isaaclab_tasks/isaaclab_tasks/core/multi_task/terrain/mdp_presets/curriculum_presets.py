@@ -29,7 +29,7 @@ class PositionCurriculumSamplerCfg:
         params={
             "sample_indices_bind": "env.command_manager.get_term('goal_point').cmd_indices",
             "layout": StateLayoutCfg(
-                coords_bind="env.command_manager.get_term('goal_point').table.spawn_states[:, :2]",
+                coords_bind="env.command_manager.get_term('goal_point').table.states.root_pose[:, 0, :2]",
                 spawn_index_bind="env.command_manager.get_term('goal_point').table.spawn_index",
                 target_index_bind="env.command_manager.get_term('goal_point').table.target_index",
                 task_partition_bind="env.command_manager.get_term('goal_point').table.task_partition",
@@ -94,7 +94,7 @@ class CRLSamplerCfg:
         params={
             "sample_indices_bind": "env.command_manager.get_term('goal_point').cmd_indices",
             "layout": StateLayoutCfg(
-                coords_bind="env.command_manager.get_term('goal_point').table.spawn_states[:, :2]",
+                coords_bind="env.command_manager.get_term('goal_point').table.states.root_pose[:, 0, :2]",
                 spawn_index_bind="env.command_manager.get_term('goal_point').table.spawn_index",
                 target_index_bind="env.command_manager.get_term('goal_point').table.target_index",
                 task_partition_bind="env.command_manager.get_term('goal_point').table.task_partition",

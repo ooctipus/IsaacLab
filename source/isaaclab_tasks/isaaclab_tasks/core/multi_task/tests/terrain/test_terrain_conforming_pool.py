@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Integration test: terrain generation -> IK pipeline -> task table builder.
+"""Integration test: terrain generation -> Position family -> task table.
 
 No IsaacSim required -- uses TerrainGenerator + Newton + Warp directly.
 """
@@ -11,6 +11,8 @@ No IsaacSim required -- uses TerrainGenerator + Newton + Warp directly.
 from __future__ import annotations
 
 import time
+from dataclasses import fields
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -21,17 +23,30 @@ from isaaclab.terrains import TerrainGeneratorCfg
 from isaaclab.terrains.terrain_generator import TerrainGenerator
 from isaaclab.terrains.trimesh.mesh_terrains_cfg import MeshPlaneTerrainCfg
 
-from isaaclab_tasks.core.multi_task.kinematics import NewtonKinematicsCfg
+from isaaclab_tasks.core.multi_task.kinematics import NewtonKinematicsBuildCfg, NewtonKinematicsCfg
+from isaaclab_tasks.core.multi_task.kinematics.ik_objectives.cfg import (
+    BodyPointsCfg,
+    EntityPositionCfg,
+    EntityRotationCfg,
+    IKObjectiveJointLimitCfg,
+    IKObjectivePositionCfg,
+    IKObjectiveRotationCfg,
+)
+from isaaclab_tasks.core.multi_task.mdp.commands.state_command.task_family import make_task_table_rng
+from isaaclab_tasks.core.multi_task.terrain.mdp.commands.commands_cfg import (
+    PositionIKSolveCfg,
+    PositionTerrainStanceFamilyCfg,
+    PositionTerrainStanceGenerateCfg,
+    TaskTableCfg,
+)
 from isaaclab_tasks.core.multi_task.terrain.mdp.commands.task_table_builder import (
     _centered_sampling_bounds,
-    _joint_order_from_names,
-    _pipeline_with_inner_sampling_bounds,
+    _sampler_with_inner_sampling_bounds,
     _state_count_from_spacing,
     _synthesize_terrain_origins,
     _terrain_grid_bounds,
     build_task_table,
 )
-from isaaclab_tasks.core.multi_task.terrain.retarget import RetargetPipelineCfg
 from isaaclab_tasks.core.multi_task.terrain.retarget.cfg import SamplerCfg
 
 
@@ -47,8 +62,8 @@ CELL_SIZE = (8.0, 8.0)
 
 
 @pytest.fixture(scope="module")
-def pipeline_cfg():
-    """Pipeline cfg for ANYmal-C."""
+def kinematics_cfg():
+    """Newton kinematics configuration for ANYmal-C."""
     from isaaclab.utils.assets import check_file_path, retrieve_file_path
 
     usd = "http://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/4.2/Isaac/Robots/ANYbotics/anymal_c.usd"
@@ -58,22 +73,28 @@ def pipeline_cfg():
     elif fs == 0:
         pytest.skip("ANYmal USD not available")
 
-    return RetargetPipelineCfg(
-        kin=NewtonKinematicsCfg(
-            usd_path=usd,
-            device=DEVICE,
-            default_pos=(0.0, 0.0, 0.6),
-            default_joint_pos={
-                ".*HAA": 0.0,
-                ".*F_HFE": 0.4,
-                ".*H_HFE": -0.4,
-                ".*F_KFE": -0.8,
-                ".*H_KFE": 0.8,
-            },
-        ),
-        sampler=SamplerCfg(),
-        foot_body_names=["LF_FOOT", "RF_FOOT", "LH_FOOT", "RH_FOOT"],
+    return NewtonKinematicsCfg(
+        usd_path=usd,
+        device=DEVICE,
+        default_pos=(0.0, 0.0, 0.6),
+        default_joint_pos={
+            ".*HAA": 0.0,
+            ".*F_HFE": 0.4,
+            ".*H_HFE": -0.4,
+            ".*F_KFE": -0.8,
+            ".*H_KFE": 0.8,
+        },
     )
+
+
+@pytest.fixture(scope="module")
+def articulation_cfg(kinematics_cfg):
+    """ANYmal-C scene declaration using the same local artifact as Newton."""
+    from isaaclab_assets.robots.anymal import ANYMAL_C_CFG
+
+    cfg = ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    cfg.spawn.usd_path = kinematics_cfg.usd_path
+    return cfg
 
 
 @pytest.fixture(scope="module")
@@ -90,6 +111,48 @@ def simple_commands():
     }
 
 
+def _table_cfg(_kinematics_cfg: NewtonKinematicsCfg, pool_spacing: float) -> TaskTableCfg:
+    """Return the public Position family declaration used by integration tests."""
+    return TaskTableCfg(
+        kinematics=NewtonKinematicsBuildCfg(collapse_fixed_joints=False),
+        pool_spacing=pool_spacing,
+        families=(
+            PositionTerrainStanceFamilyCfg(
+                generate=(
+                    PositionTerrainStanceGenerateCfg(
+                        sampler=SamplerCfg(),
+                        foot_body_names=("LF_FOOT", "RF_FOOT", "LH_FOOT", "RH_FOOT"),
+                    ),
+                ),
+                solve=PositionIKSolveCfg(
+                    objectives=(
+                        IKObjectivePositionCfg(
+                            name="foot_targets",
+                            current=BodyPointsCfg(asset="robot", bodies=("LF_FOOT", "RF_FOOT", "LH_FOOT", "RH_FOOT")),
+                            target_bind="generated.foot_targets",
+                            weight=1.0,
+                        ),
+                        IKObjectivePositionCfg(
+                            name="base_position",
+                            current=EntityPositionCfg(asset="robot"),
+                            target_bind="generated.base_position",
+                            weight=0.05,
+                        ),
+                        IKObjectiveRotationCfg(
+                            name="base_rotation",
+                            current=EntityRotationCfg(asset="robot"),
+                            target_bind="generated.base_rotation",
+                            weight=0.5,
+                        ),
+                        IKObjectiveJointLimitCfg(weight=10.0),
+                    ),
+                    max_iterations=200,
+                ),
+            ),
+        ),
+    )
+
+
 class TestTaskTableSizingHelpers:
     """CPU-only checks for spacing-mode sizing and sampler bounds patching."""
 
@@ -101,6 +164,7 @@ class TestTaskTableSizingHelpers:
 
         x_range, y_range = _terrain_grid_bounds(origins, (10.0, 10.0))
 
+        assert len(x_range) == len(y_range) == 2
         assert x_range == pytest.approx((-25.0, 25.0))
         assert y_range == pytest.approx((-25.0, 25.0))
         assert _state_count_from_spacing(x_range, y_range, spacing=1.0, area_divisor=3.0) == 833
@@ -126,29 +190,20 @@ class TestTaskTableSizingHelpers:
         assert y_range == pytest.approx((-2.0, 2.0))
 
     def test_inner_sampling_bounds_do_not_mutate_input_cfg(self):
-        cfg = RetargetPipelineCfg(
-            kin=NewtonKinematicsCfg(),
-            sampler=SamplerCfg(),
-            foot_body_names=["LF_FOOT", "RF_FOOT", "LH_FOOT", "RH_FOOT"],
-        )
+        cfg = SamplerCfg()
 
-        patched = _pipeline_with_inner_sampling_bounds(cfg, (-25.0, 25.0), (-25.0, 25.0))
+        patched = _sampler_with_inner_sampling_bounds(cfg, (-25.0, 25.0), (-25.0, 25.0))
 
-        assert cfg.sampler.patch.x_range is None
-        assert cfg.sampler.patch.y_range is None
-        assert patched.sampler.patch.x_range == (-25.0, 25.0)
-        assert patched.sampler.patch.y_range == (-25.0, 25.0)
-
-    def test_joint_order_from_names_reorders_to_articulation_order(self):
-        source_joint_names = ["LF_HAA", "LF_HFE", "LF_KFE", "RF_HAA"]
-        target_joint_names = ["RF_HAA", "LF_HFE", "LF_HAA", "LF_KFE"]
-
-        assert _joint_order_from_names(source_joint_names, target_joint_names) == [3, 1, 0, 2]
+        assert cfg.patch.x_range is None
+        assert cfg.patch.y_range is None
+        assert patched.patch.x_range == (-25.0, 25.0)
+        assert patched.patch.y_range == (-25.0, 25.0)
 
     def test_command_preset_uses_deferred_kinematics_and_spacing(self):
         import importlib
 
-        from isaaclab_tasks.core.multi_task.terrain.mdp_presets.command_presets import CommandsCfg
+        from isaaclab_tasks.core.multi_task.position_env_cfg import CommandsCfg
+        from isaaclab_tasks.core.multi_task.terrain.mdp_presets import command_presets
         from isaaclab_tasks.utils import resolve_presets
 
         importlib.import_module("isaaclab_tasks.core.multi_task.terrain.mdp_presets.robots")
@@ -156,17 +211,50 @@ class TestTaskTableSizingHelpers:
         goal_cfg = cfg.goal_point
         table_cfg = goal_cfg.task_table
 
-        assert table_cfg.pipeline_cfg.kin.usd_path == ""
+        assert not hasattr(table_cfg.kinematics, "usd_path")
         assert table_cfg.pool_spacing == pytest.approx(0.5)
         assert table_cfg.pool_spacing_area_divisor == pytest.approx(3.0)
         assert table_cfg.pool_sampling_size is None
-        assert table_cfg.pipeline_cfg.sampler.min_contacts == 3
-        assert table_cfg.pipeline_cfg.sampler.terrain_snap_distance == pytest.approx(0.2)
-        assert table_cfg.pipeline_cfg.sampler.fk_joint_range_overrides == {}
-        assert table_cfg.pipeline_cfg.sampler.outward_snap_penalty == pytest.approx(1.0)
+        assert len(table_cfg.families) == 1
+        family = table_cfg.families[0]
+        assert family.name == "terrain_stance"
+        assert family.generate[0].sampler.min_contacts == 3
+        assert family.generate[0].sampler.terrain_snap_distance == pytest.approx(0.2)
+        assert family.generate[0].sampler.fk_joint_range_overrides == {}
+        assert family.generate[0].sampler.outward_snap_penalty == pytest.approx(1.0)
         assert "IKObjectiveJointRegularizeCfg" not in {
-            type(objective).__name__ for objective in table_cfg.pipeline_cfg.extra_objectives
+            type(objective).__name__ for objective in family.solve.objectives
         }
+        assert not hasattr(table_cfg, "pipeline_cfg")
+        assert table_cfg.pairing.max_spawns_per_cell == 20
+        assert table_cfg.pairing.num_targets_per_cell == 20
+        assert not hasattr(command_presets, "CommandsCfg")
+        assert [criterion.name for criterion in family.criteria] == [
+            "collision",
+            "joint_limit",
+            "lateral_hip_limit",
+            "stability",
+            "foot_err",
+            "cost",
+        ]
+
+    def test_position_table_schema_and_sources_reject_removed_pipeline(self):
+        from isaaclab_tasks.core.multi_task.terrain.mdp.commands.task_table_builder import RelativeStateTaskTable
+
+        table_fields = {field.name for field in fields(RelativeStateTaskTable)}
+        assert RelativeStateTaskTable.__dataclass_params__.frozen
+        assert hasattr(RelativeStateTaskTable, "__slots__")
+        assert {"states", "view", "kinematics", "contact_body_names", "contact_body_ids"} <= table_fields
+        assert not {"target_fk_kin", "newton_joint_names", "newton_foot_body_ids"} & table_fields
+
+        multi_task = Path(__file__).parents[2]
+        builder_source = (multi_task / "terrain/mdp/commands/task_table_builder.py").read_text()
+        assert "pipeline_cfg" not in builder_source
+        assert "trace_span" not in builder_source
+        assert "print(" not in builder_source
+        assert not (multi_task / "terrain/retarget/pipeline.py").exists()
+        assert not (multi_task / "kinematics/ik_objectives/terrain_collision.py").exists()
+        assert not (multi_task / "kinematics/ik_objectives/terrain_contact.py").exists()
 
 
 def _bin_xy(xy: torch.Tensor, origins: torch.Tensor, cell_size, num_rows, num_cols):
@@ -204,8 +292,8 @@ def flat_terrain():
 
 
 @pytest.fixture(scope="module")
-def flat_task_table(flat_terrain, pipeline_cfg, simple_commands):
-    """Shared task-table build on the flat grid (pipeline runs once per module).
+def flat_task_table(flat_terrain, kinematics_cfg, articulation_cfg, simple_commands):
+    """Shared task-table build on the flat grid (family runs once per module).
 
     ``pool_spacing = 1.0`` yields about 20 states per tile, so the same
     result covers the uniformity-CV check (which needs many states per tile)
@@ -219,14 +307,27 @@ def flat_task_table(flat_terrain, pipeline_cfg, simple_commands):
         terrain_mesh=flat_terrain.terrain_mesh,
         terrain_origins=origins,
         cell_size=CELL_SIZE,
-        pipeline_cfg=pipeline_cfg,
-        env=None,
+        table_cfg=_table_cfg(kinematics_cfg, 1.0),
+        articulation_cfg=articulation_cfg,
+        asset_name="robot",
         commands=simple_commands,
-        num_joints=12,
         device=DEVICE,
-        pool_spacing=1.0,
+        rng=make_task_table_rng(42, DEVICE),
     )
     return {"result": result, "origins": origins, "n_tiles": n_tiles}
+
+
+def test_position_view_shares_terrain_and_repeats_only_robot(flat_task_table) -> None:
+    """Position retains one global terrain while each displayed state owns one robot."""
+    kinematics = flat_task_table["result"].view.kinematic_view
+
+    assert kinematics.model_builder_shared is not None
+    assert kinematics.model_builder_shared.shape_count == 1
+    assert kinematics.model_builder_shared.joint_coord_count == 0
+    assert kinematics.model_builder_state.body_count > 0
+    assert kinematics.model_builder_state.shape_count > 0
+    assert kinematics.model_builder_state.joint_coord_count == kinematics.joint_q_default.numel()
+    assert kinematics.world_spacing == (0.0, 0.0, 0.0)
 
 
 class TestIsolation:
@@ -235,20 +336,20 @@ class TestIsolation:
     def test_spawn_target_match_tile_index(self, flat_task_table):
         result = flat_task_table["result"]
         origins = flat_task_table["origins"]
-        spawn_states = result["spawn_states"]
-        spawn_idx = result["spawn_index"]
-        target_idx = result["target_index"]
-        tile_idx = result["tile_index"]
+        root_pose = result.states.root_pose[:, 0]
+        spawn_idx = result.spawn_index
+        target_idx = result.target_index
+        tile_idx = result.tile_index
 
         spawn_tile, spawn_in = _bin_xy(
-            spawn_states[spawn_idx, :2],
+            root_pose[spawn_idx, :2],
             origins,
             CELL_SIZE,
             NUM_ROWS,
             NUM_COLS,
         )
         target_tile, target_in = _bin_xy(
-            spawn_states[target_idx, :2],
+            root_pose[target_idx, :2],
             origins,
             CELL_SIZE,
             NUM_ROWS,
@@ -267,8 +368,8 @@ class TestUniformity:
         result = flat_task_table["result"]
         origins = flat_task_table["origins"]
         n_tiles = flat_task_table["n_tiles"]
-        spawn_states = result["spawn_states"]
-        tile, in_grid = _bin_xy(spawn_states[:, :2], origins, CELL_SIZE, NUM_ROWS, NUM_COLS)
+        root_pose = result.states.root_pose[:, 0]
+        tile, in_grid = _bin_xy(root_pose[:, :2], origins, CELL_SIZE, NUM_ROWS, NUM_COLS)
         counts = torch.bincount(tile[in_grid], minlength=n_tiles).float()
 
         coverage = (counts > 0).float().mean().item()
@@ -319,7 +420,7 @@ def realistic_terrain():
         use_cache=False,
         seed=42,
         curriculum=True,
-        sub_terrains=SubTerrainPresetCfg().curriculum,
+        sub_terrains=SubTerrainPresetCfg().terrain_curriculum,
     )
     return TerrainGenerator(cfg=cfg, device=DEVICE)
 
@@ -335,8 +436,8 @@ class TestRealistic:
     """
 
     @pytest.fixture(scope="class")
-    def real_result(self, realistic_terrain, pipeline_cfg, simple_commands):
-        """Run the full pipeline once at production scale; share across tests.
+    def real_result(self, realistic_terrain, kinematics_cfg, articulation_cfg, simple_commands):
+        """Run the Position family once at production scale; share across tests.
 
         One ``build_task_table`` invocation covers all three assertions. The
         pipeline dominates ~97% of total time, so a separate timed
@@ -356,12 +457,12 @@ class TestRealistic:
             terrain_mesh=realistic_terrain.terrain_mesh,
             terrain_origins=origins,
             cell_size=REAL_CELL_SIZE,
-            pipeline_cfg=pipeline_cfg,
-            env=None,
+            table_cfg=_table_cfg(kinematics_cfg, REAL_POOL_SPACING),
+            articulation_cfg=articulation_cfg,
+            asset_name="robot",
             commands=simple_commands,
-            num_joints=12,
             device=DEVICE,
-            pool_spacing=REAL_POOL_SPACING,
+            rng=make_task_table_rng(42, DEVICE),
         )
         torch.cuda.synchronize()
         t_total = time.perf_counter() - t0
@@ -377,11 +478,11 @@ class TestRealistic:
         """Per-tile coverage + count CV on the real terrain mix."""
         table = real_result["table"]
         origins = real_result["origins"]
-        spawn_states = table["spawn_states"]
+        root_pose = table.states.root_pose[:, 0]
         n_tiles = REAL_NUM_ROWS * REAL_NUM_COLS
 
         tile, in_grid = _bin_xy(
-            spawn_states[:, :2],
+            root_pose[:, :2],
             origins,
             REAL_CELL_SIZE,
             REAL_NUM_ROWS,
@@ -395,7 +496,7 @@ class TestRealistic:
         n_border = int((~in_grid).sum().item())
         print(
             f"\n  Realistic uniformity (pool_spacing={REAL_POOL_SPACING}, grid={REAL_NUM_ROWS}x{REAL_NUM_COLS}):"
-            f"\n    in-grid states:  {int(counts.sum())} / {spawn_states.shape[0]} "
+            f"\n    in-grid states:  {int(counts.sum())} / {root_pose.shape[0]} "
             f"(border/out-of-grid dropped: {n_border})"
             f"\n    tile coverage:   {coverage:.1%}  ({int((counts > 0).sum())}/{n_tiles} tiles)"
             f"\n    per-tile counts: mean={mean:.1f} cv={cv:.2f} "
@@ -410,8 +511,8 @@ class TestRealistic:
     def test_speed(self, real_result):
         """End-to-end wall time at production scale."""
         t_total = real_result["t_total"]
-        n_states = real_result["table"]["spawn_states"].shape[0]
-        n_tasks = real_result["table"]["num_tasks"]
+        n_states = real_result["table"].states.row_count
+        n_tasks = real_result["table"].num_tasks
         print(
             f"\n  Realistic speed (pool_spacing={REAL_POOL_SPACING}):"
             f"\n    build_task_table: {t_total * 1000:8.1f} ms "
@@ -427,9 +528,10 @@ class TestRealistic:
 
         table = real_result["table"]
         terrain_mesh = real_result["terrain"].terrain_mesh
-        spawn_states = table["spawn_states"]
+        states = table.states
+        root_pose = states.root_pose[:, 0]
 
-        bases = spawn_states[:, :3].cpu().numpy()
+        bases = root_pose[:, :3].cpu().numpy()
         # Cast downward starting just above the base: the first hit is the
         # support surface the IK solved for. Starting from high altitude would
         # catch obstacle tops on multi-level sub-terrains (floating_island,
@@ -456,8 +558,13 @@ class TestRealistic:
         gap_hit = gap[hit]
 
         n = bases.shape[0]
-        quat_norm = spawn_states[:, 3:7].norm(dim=-1)
-        finite = torch.isfinite(spawn_states).all(dim=-1)
+        quat_norm = root_pose[:, 3:7].norm(dim=-1)
+        finite = (
+            torch.isfinite(states.root_pose).all(dim=(1, 2))
+            & torch.isfinite(states.root_velocity).all(dim=(1, 2))
+            & torch.isfinite(states.joint_position).all(dim=1)
+            & torch.isfinite(states.joint_velocity).all(dim=1)
+        )
         print(
             f"\n  Realistic accuracy ({n} states):"
             f"\n    finite-state fraction:     {finite.float().mean().item():.1%}"
@@ -470,7 +577,7 @@ class TestRealistic:
             f"min={gap_hit.min():.3f} max={gap_hit.max():.3f}"
         )
 
-        assert bool(finite.all()), "spawn_states contains non-finite values"
+        assert bool(finite.all()), "Position reset-state bank contains non-finite values"
         torch.testing.assert_close(
             quat_norm,
             torch.ones_like(quat_norm),

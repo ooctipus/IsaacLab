@@ -8,12 +8,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar, Literal, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, runtime_checkable
 
 import torch
 
 Interpolation = Literal["linear", "slerp"]
-ClipT_contra = TypeVar("ClipT_contra", contravariant=True)
+if TYPE_CHECKING:
+    from ...kinematics import KinematicTree, NewtonKinematics
+    from ..retarget import MotionSemanticTargets
+    from .clip_index import MotionClipIndex
+    from .skeleton import MotionSkeleton
 
 
 _FRAME_INTERPOLATION: dict[str, Interpolation] = {
@@ -50,8 +54,11 @@ class MotionFrameSource(Protocol):
 
 
 @runtime_checkable
-class MotionFrameBuilder(Protocol[ClipT_contra]):
-    """Construction boundary from one decoded clip representation to robot frames."""
+class MotionFrameBuilder(Protocol):
+    """Robot-owned exact and semantic construction stages."""
+
+    source_skeleton: MotionSkeleton
+    exact_coordinates: bool
 
     @property
     def joint_names(self) -> tuple[str, ...]:
@@ -60,6 +67,14 @@ class MotionFrameBuilder(Protocol[ClipT_contra]):
     @property
     def reference_frame_names(self) -> tuple[str, ...]:
         """Ordered physical and derived reference-frame names."""
+
+    @property
+    def semantic_reference_kinematics(self) -> NewtonKinematics:
+        """Exact target-robot mechanics used by semantic IK."""
+
+    @property
+    def semantic_target_tree(self) -> KinematicTree:
+        """Grouped target-robot topology used to seed semantic IK."""
 
     @property
     def version(self) -> str:
@@ -72,8 +87,27 @@ class MotionFrameBuilder(Protocol[ClipT_contra]):
     def allocate(self, frame_count: int, *, device: str | torch.device) -> MotionFrames:
         """Allocate exact-capacity robot-frame storage on the requested device."""
 
-    def build_frames(self, clip: ClipT_contra, *, device: str | torch.device) -> MotionFrames:
-        """Materialize one decoded source clip in robot coordinates."""
+    def build_exact_coordinates(
+        self,
+        joint_q: torch.Tensor,
+        joint_qd: torch.Tensor | None,
+        source_fps: float,
+    ) -> MotionFrames:
+        """Materialize and certify one exact free-root coordinate clip."""
+
+    def generate_semantic_targets(
+        self,
+        root_position: torch.Tensor,
+        local_rotation_xyzw: torch.Tensor,
+    ) -> MotionSemanticTargets:
+        """Generate concrete target-robot semantics."""
+
+    def build_semantic_corpus(
+        self,
+        joint_q: torch.Tensor,
+        clip_index: MotionClipIndex,
+    ) -> MotionFrames:
+        """Materialize one compact solved corpus with segment-correct derivatives."""
 
 
 @dataclass(frozen=True, slots=True)

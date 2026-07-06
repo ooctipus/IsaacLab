@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import subprocess
 import sys
 import textwrap
@@ -121,6 +122,58 @@ def test_motion_config_resolution_does_not_import_pxr_before_simulation_app() ->
     )
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_motion_registry_resolution_reports_no_simulator_runtime_imports() -> None:
+    """Fresh registry resolution reports every simulator module and its first importer."""
+    code = textwrap.dedent(
+        """
+        import builtins
+        import json
+        import sys
+        import traceback
+
+        forbidden = ("isaacsim", "omni", "carb")
+        first_importer = {}
+        original_import = builtins.__import__
+
+        def traced_import(name, *args, **kwargs):
+            prefix = name.split(".", 1)[0]
+            if prefix in forbidden and prefix not in first_importer:
+                first_importer[prefix] = "".join(traceback.format_stack(limit=16))
+            return original_import(name, *args, **kwargs)
+
+        builtins.__import__ = traced_import
+        try:
+            import isaaclab_tasks  # noqa: F401
+            from isaaclab_tasks.utils.hydra import resolve_presets
+            from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry
+
+            config = load_cfg_from_registry("Isaac-Motion-Imitation-v0", "env_cfg_entry_point")
+            config = resolve_presets(config, frozenset())
+            config.to_dict()
+        finally:
+            builtins.__import__ = original_import
+
+        loaded = sorted(name for name in sys.modules if name.split(".", 1)[0] in forbidden)
+        report = {
+            "loaded": loaded,
+            "first_importer": {
+                prefix: first_importer.get(prefix, "<loaded outside builtins.__import__>")
+                for prefix in sorted({name.split(".", 1)[0] for name in loaded})
+            },
+        }
+        print("__MOTION_IMPORT_REPORT__" + json.dumps(report))
+        """
+    )
+    completed = subprocess.run((sys.executable, "-c", code), capture_output=True, text=True, check=False)
+    report_line = next(
+        (line for line in completed.stdout.splitlines() if line.startswith("__MOTION_IMPORT_REPORT__")), None
+    )
+    assert completed.returncode == 0 and report_line is not None, completed.stdout + completed.stderr
+    report = json.loads(report_line.removeprefix("__MOTION_IMPORT_REPORT__"))
+
+    assert report["loaded"] == [], json.dumps(report, indent=2)
 
 
 def test_motion_task_registration_uses_one_shared_environment() -> None:

@@ -3,323 +3,445 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Build the Factory reset-state task table (the analog of the locomotion
-``RelativeStateTaskTable``).
-
-The offline Newton-IK pipeline fills candidate rows, then rows are serialized
-directly into the same layout as ``get_reset_state``. No live-env batching or
-sim stepping is involved. Survivors are paired spawn x target WITHIN each board
-configuration. The result is a flat, index-based
-:class:`FactoryResetStateTaskTable` the command term consumes; the command
-itself only owns per-env lifecycle tensors.
-"""
+"""Build the simulator-free Factory reset-state task table."""
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import newton
 import torch
-import warp as wp
 
+from isaaclab.assets import ArticulationCfg, RigidObjectCfg
+
+from isaaclab_tasks.core.multi_task.mdp.commands.state_command import (
+    ResetStateBank,
+    ResetStateLayout,
+    TaskTableKinematicView,
+    TaskTablePointEvidence,
+    TaskTableQuality,
+    TaskTableSequenceIndex,
+    TaskTableView,
+    make_task_table_rng,
+)
 from isaaclab_tasks.core.multi_task.utils.grid_downsample import extract_features, grid_bucket_downsample
 
 if TYPE_CHECKING:
-    from isaaclab.envs import ManagerBasedRLEnv
+    from isaaclab.scene import InteractiveSceneCfg
 
     from ...mdp.commands.state_command.state_command_cfg import StateCommandCfg
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class FactoryResetStateTaskTable:
-    """Flat, index-based reset-state table for the factory :class:`~...mdp.commands.StateCommand`.
+    """Canonical Factory states and paired spawn/target endpoints."""
 
-    Attributes:
-        state_data: Reset-state rows [num_states, row_dim] in env-local
-            serialization (the exact :func:`get_reset_state` layout).
-        state_tag_indices: Placement-strategy tag per row [num_states].
-        state_board_indices: Board-configuration index per row [num_states].
-        state_tag_names: Human-readable tag names (index = tag id).
-        state_coords: FPS features per row [num_states, feat] for sampler layout.
-        spawn_index: Spawn row index per task slot [num_slots].
-        target_index: Goal row index per task slot [num_slots], paired within a board.
-        slot_indices: ``arange(num_slots)``.
-        task_tag_indices: Spawn tag per slot [num_slots].
-        num_states: Stored row count.
-        built_size: Rows produced before the final geometric filters.
-        target_size: Density target ``rows_per_board x num_boards``.
-    """
+    states: ResetStateBank
+    """Immutable entity-major reset-state bank."""
 
-    state_data: torch.Tensor
+    view: TaskTableView
+    """Exact endpoint sequences and retained Newton mechanics."""
+
     state_tag_indices: torch.Tensor
-    state_board_indices: torch.Tensor
-    state_tag_names: list[str]
-    state_coords: torch.Tensor
-    spawn_index: torch.Tensor
-    target_index: torch.Tensor
-    slot_indices: torch.Tensor
-    task_tag_indices: torch.Tensor
-    num_states: int
-    built_size: int
-    target_size: int
+    """Placement-strategy tag per state, shape [num_states]."""
 
-    # optional success-grid geometry (numpy), stashed only when
-    # ``FactoryResetStateTableCfg.stash_viz_geometry`` is set; see
-    # :mod:`~..viz.geometry` and :mod:`~..viz.sampler_images`.
-    viz_link_polys: object | None = None
-    viz_nut_polys: object | None = None
-    viz_board_polys: object | None = None
-    viz_bolt_polys: object | None = None
-    viz_cell_of_state: object | None = None
-    viz_n_boards: int | None = None
+    state_board_indices: torch.Tensor
+    """Board-configuration index per state, shape [num_states]."""
+
+    state_tag_names: tuple[str, ...]
+    """Placement-strategy names indexed by state_tag_indices."""
+
+    state_family_indices: torch.Tensor
+    """Declared task-family index per state, shape [num_states]."""
+
+    state_family_names: tuple[str, ...]
+    """Declared task-family names indexed by state_family_indices."""
+
+    state_coords: torch.Tensor
+    """Curriculum feature coordinates per state, shape [num_states, feature_dim]."""
+
+    spawn_index: torch.Tensor
+    """Spawn-state index per task, shape [num_tasks]."""
+
+    target_index: torch.Tensor
+    """Target-state index per task, shape [num_tasks]."""
+
+    @property
+    def num_states(self) -> int:
+        """Number of canonical states."""
+        return self.states.row_count
 
     @property
     def num_tasks(self) -> int:
-        """Number of task slots (spawn x target pairs)."""
+        """Number of paired spawn/target tasks."""
         return int(self.spawn_index.shape[0])
 
     def sample_rows(self, count: int) -> torch.Tensor:
-        """Sample task slots uniformly on the table device."""
+        """Sample task indices uniformly on the table device."""
         return torch.randint(0, self.num_tasks, (count,), device=self.spawn_index.device)
 
     def gather(self, task_rows: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return ``(spawn_states, target_states)`` reset-state rows for the slots.
-
-        Args:
-            task_rows: Task-slot indices ``[n]``.
-
-        Returns:
-            Spawn and target reset-state rows, each ``[n, row_dim]``.
-        """
-        spawn_states = self.state_data[self.spawn_index[task_rows]]
-        target_states = self.state_data[self.target_index[task_rows]]
-        return spawn_states, target_states
+        """Return canonical spawn and target state indices for task rows."""
+        return self.spawn_index[task_rows], self.target_index[task_rows]
 
 
-def build_factory_reset_state_task_table(cfg: StateCommandCfg, env: ManagerBasedRLEnv) -> FactoryResetStateTaskTable:
-    """Fill the table from the offline Newton-IK pipeline, then pair.
+def factory_family_quotas(rows_per_board: int, families) -> tuple[int, ...]:
+    """Allocate exact per-board family quotas by stable largest remainder."""
+    if type(rows_per_board) is not int or rows_per_board < 1:
+        raise ValueError("Factory rows_per_board must be a positive integer.")
+    if not families:
+        raise ValueError("Factory requires at least one placement family.")
+    names = tuple(family.name for family in families)
+    if any(not name for name in names) or len(set(names)) != len(names):
+        raise ValueError("Factory family names must be nonempty and unique.")
+    fractions = tuple(float(family.fraction) for family in families)
+    if any(not math.isfinite(value) or value < 0.0 for value in fractions):
+        raise ValueError("Factory family fractions must be finite and non-negative.")
+    if not math.isclose(sum(fractions), 1.0, rel_tol=0.0, abs_tol=1.0e-8):
+        raise ValueError(f"Factory family fractions must sum to one, got {sum(fractions)}.")
+    if any(
+        not math.isfinite(float(family.candidate_oversample)) or float(family.candidate_oversample) < 1.0
+        for family in families
+    ):
+        raise ValueError("Factory family candidate_oversample values must be finite and at least one.")
+
+    ideal = tuple(rows_per_board * fraction for fraction in fractions)
+    quotas = [math.floor(value) for value in ideal]
+    remaining = rows_per_board - sum(quotas)
+    order = sorted(range(len(families)), key=lambda index: (-(ideal[index] - quotas[index]), index))
+    for index in order[:remaining]:
+        quotas[index] += 1
+    return tuple(quotas)
+
+
+def build_factory_reset_state_task_table(
+    command_cfg: StateCommandCfg,
+    scene_cfg: InteractiveSceneCfg,
+    device: str,
+) -> FactoryResetStateTaskTable:
+    """Build one Factory table from declared command and scene configuration.
 
     Args:
-        cfg: The command cfg (``task_table`` carries the pipeline + density knobs;
-            ``payload.reset_assets`` defines the row layout).
-        env: The live env whose scene resolves asset identity and row layout.
+        command_cfg: Factory state-command configuration.
+        scene_cfg: Resolved scene configuration containing every reset asset.
+        device: Torch and Newton construction device.
 
     Returns:
-        The finalized :class:`FactoryResetStateTaskTable`.
+        Canonical states and paired task endpoints.
     """
-    table_cfg = cfg.task_table
-    # the reset-asset set is derivable from the cfg, so the table is built before
-    # the payload (one construction order shared with the locomotion command)
-    reset_assets = sorted(
-        (set(env.scene._articulations) | set(env.scene._rigid_objects)) & set(cfg.payload.reset_assets)
+    table_cfg = command_cfg.task_table
+    reset_assets = tuple(command_cfg.reset_assets)
+    if not reset_assets:
+        raise ValueError("Factory reset_assets must declare at least one entity.")
+
+    geometry_cfg = table_cfg.geometry
+    _validate_reset_asset_owners(reset_assets, geometry_cfg)
+    rng = make_task_table_rng(int(table_cfg.seed), str(device))
+    (
+        state,
+        state_tag_indices,
+        state_board_indices,
+        state_tag_names,
+        state_family_indices,
+        state_family_names,
+        pad_targets,
+        quality,
+        builder,
+    ) = _precollect_from_builder(table_cfg, geometry_cfg, scene_cfg, str(device), reset_assets, rng)
+    feature_rows = _feature_rows(state)
+    state_coords = extract_features(feature_rows, table_cfg.state_table_fps_features).contiguous()
+    spawn_index, target_index = _pair_within_boards(
+        table_cfg,
+        state_coords,
+        state_tag_indices,
+        state_board_indices,
+        state_tag_names,
+        rng.torch,
     )
-    state_data, state_tag_indices, state_board_indices, state_tag_names, built, target, viz_geom = (
-        _precollect_from_pipeline(env, table_cfg, reset_assets)
-    )
-    coords, spawn_index, target_index, slot_indices, task_tag_indices = _pair_within_boards(
-        table_cfg, state_data, state_tag_indices, state_board_indices, state_tag_names
-    )
+    view = _task_table_view(builder, state, spawn_index, target_index, pad_targets, quality)
     return FactoryResetStateTaskTable(
-        state_data=state_data,
+        states=state,
+        view=view,
         state_tag_indices=state_tag_indices,
         state_board_indices=state_board_indices,
         state_tag_names=state_tag_names,
-        state_coords=coords,
+        state_family_indices=state_family_indices,
+        state_family_names=state_family_names,
+        state_coords=state_coords,
         spawn_index=spawn_index,
         target_index=target_index,
-        slot_indices=slot_indices,
-        task_tag_indices=task_tag_indices,
-        num_states=int(state_data.shape[0]),
-        built_size=built,
-        target_size=target,
-        **(viz_geom or {}),
     )
 
 
-def _precollect_from_pipeline(env, table_cfg, reset_assets):
-    """Run the offline pipeline and serialize geometric survivor rows."""
-    from ..retarget import FactoryIKPipeline
+def _validate_reset_asset_owners(reset_assets: tuple[str, ...], geometry_cfg) -> None:
+    """Require one declared owner for every Factory reset entity."""
+    if len(reset_assets) != len(set(reset_assets)):
+        raise ValueError(f"Factory reset_assets contains duplicate names: {reset_assets}.")
+    board_cfg = geometry_cfg.board
+    roles = (
+        geometry_cfg.robot.asset_cfg.name,
+        board_cfg.board_asset_cfg.name,
+        geometry_cfg.held_asset_cfg.name,
+        *tuple(board_cfg.fixed_asset_map),
+    )
+    if len(roles) != len(set(roles)):
+        raise ValueError(f"Factory robot, board, held, and board-attached entity owners must be unique: {roles}.")
+    fixed_name = board_cfg.fixed_asset_cfg.name
+    if fixed_name not in board_cfg.fixed_asset_map:
+        raise ValueError(f"Factory primary fixed asset {fixed_name!r} is absent from fixed_asset_map.")
+    missing = sorted(set(roles) - set(reset_assets))
+    extra = sorted(set(reset_assets) - set(roles))
+    if missing or extra:
+        raise ValueError(
+            "Factory reset_assets must exactly contain robot, board, held, and every board-attached entity; "
+            f"missing={missing}, extra={extra}."
+        )
 
-    pcfg = table_cfg.pipeline_cfg
-    robot = env.scene[pcfg.robot.asset_cfg.name]
-    # the pipeline holds no asset paths or robot identity of its own: assets
-    # resolve from THIS env's scene cfg, the robot USD and stance from the live
-    # articulation (the terrain ``kin.usd_path`` patching pattern)
-    pcfg.device = str(env.device)
-    pcfg.scene = env.cfg.scene
-    if getattr(robot.cfg.spawn, "usd_path", None):
-        pcfg.robot.usd_path = robot.cfg.spawn.usd_path
-    default_q = wp.to_torch(robot.data.default_joint_pos)[0]
-    pcfg.robot.default_joint_q = {name: float(q) for name, q in zip(robot.joint_names, default_q)}
-    pipeline = FactoryIKPipeline(pcfg)
-    # the table size is DERIVED: rows-per-configuration density x library size
-    target_size = int(table_cfg.rows_per_board) * int(pcfg.board.num_boards)
-    result = pipeline.build_balanced_table(target_size)
-    tag_names = list(result.tag_names)
-    m = pipeline.model
 
-    # pipeline poses are in the robot base frame; stored rows are env-local, so
-    # the robot base must sit at its env origin with identity rotation.
-    root_rel = wp.to_torch(robot.data.root_pos_w)[0] - env.scene.env_origins[0]
-    if float(root_rel.norm()) > 1e-3:
-        raise RuntimeError(f"robot base is {root_rel.tolist()} m off its env origin; pipeline frames assume 0")
+def _precollect_from_builder(table_cfg, geometry_cfg, scene_cfg, device: str, reset_assets: tuple[str, ...], rng):
+    """Run the simulator-free builder and encode geometric survivors canonically."""
+    from ..retarget.task_table_builder import FactoryTaskTableBuilder
 
-    # newton coord -> robot joint index, mapped by joint name (mimic'd follower
-    # fingers may be absent from the articulation -- the present ones suffice)
-    names = list(robot.joint_names)
-    arm_pairs = [(c, names.index(n)) for c, n in zip(m.arm_coords, m.arm_joint_names)]
-    finger_pairs = [(c, names.index(n)) for c, n in zip(m.finger_coords, m.finger_joint_names) if n in names]
-    if not finger_pairs:
-        raise RuntimeError(f"none of the finger joints {m.finger_joint_names} exist on the robot: {names}")
+    builder = FactoryTaskTableBuilder(
+        table_cfg.kinematics,
+        geometry_cfg,
+        scene_cfg,
+        device,
+        tuple(table_cfg.families),
+        rng,
+    )
+    result = builder.build_family_table(int(table_cfg.rows_per_board), tuple(table_cfg.families), rng)
+    geometry = builder.geometry
 
-    n_base = len(pipeline.placement_sampler.tag_names)
-    grasped = result.tag < n_base
-    # closing direction is mode-dependent: pinch grasps squeeze by closing,
-    # expansion grasps (inside a bore) by opening
-    squeeze = torch.where(result.family % 2 == 1, table_cfg.finger_squeeze, -table_cfg.finger_squeeze)
-    squeeze = torch.where(grasped, squeeze, torch.zeros_like(squeeze))
+    coordinate_indices, _, coordinate_names = geometry.kinematics.find_joint_scalar_coordinates(".*")
+    coordinate_names = tuple(coordinate_names)
+    coordinate_indices = tuple(coordinate_indices)
+    robot_name = geometry_cfg.robot.asset_cfg.name
+    layout = _reset_state_layout(scene_cfg, reset_assets, robot_name, coordinate_names)
 
-    total = result.joint_q.shape[0]
-    valid = _nut_bounds_mask(table_cfg, result.nut_pose[:, :3])
-    state_data = _serialize_pipeline_rows(
-        env,
-        table_cfg,
-        reset_assets,
-        robot,
+    state = _build_reset_state_bank(
+        geometry_cfg,
+        scene_cfg,
+        layout,
         result,
-        arm_pairs,
-        finger_pairs,
-        squeeze,
-        valid,
+        coordinate_indices,
     )
-    state_tag_indices = result.tag[valid].contiguous()
-    state_board_indices = result.board_index[valid].contiguous()
-    survived = int(valid.sum())
-    per_tag = _tag_counts(state_tag_indices, tag_names)
-    print(f"[reset_state] geometric pipeline table: {total} rows -> {survived} stored {per_tag}")
-    viz_geom = _build_viz_geometry(table_cfg, pipeline, result, valid)
-    return state_data, state_tag_indices, state_board_indices, tag_names, total, target_size, viz_geom
+    state_tag_indices = result.tag.contiguous()
+    state_board_indices = result.board_index.contiguous()
+    state_tag_names = tuple(result.tag_names)
+    state_family_indices = result.task_family.contiguous()
+    state_family_names = result.task_family_names
+    pad_targets = result.pad_targets.contiguous()
+    quality = TaskTableQuality(result.quality_names, result.quality.contiguous(), scope="state")
+    return (
+        state,
+        state_tag_indices,
+        state_board_indices,
+        state_tag_names,
+        state_family_indices,
+        state_family_names,
+        pad_targets,
+        quality,
+        builder,
+    )
 
 
-def _nut_bounds_mask(table_cfg, nut_xyz: torch.Tensor) -> torch.Tensor:
-    """Return the configured geometric survivor mask for held-asset root positions."""
-    if table_cfg.nut_bounds is None:
-        return torch.ones(nut_xyz.shape[0], dtype=torch.bool, device=nut_xyz.device)
-    axes = ("x", "y", "z")
-    lo = torch.tensor([table_cfg.nut_bounds.get(axis, (-1e9, 1e9))[0] for axis in axes], device=nut_xyz.device)
-    hi = torch.tensor([table_cfg.nut_bounds.get(axis, (-1e9, 1e9))[1] for axis in axes], device=nut_xyz.device)
-    return ((nut_xyz >= lo) & (nut_xyz <= hi)).all(dim=1)
-
-
-def _serialize_pipeline_rows(env, table_cfg, reset_assets, robot, result, arm_pairs, finger_pairs, squeeze, valid):
-    """Serialize geometric pipeline rows in the exact ``get_reset_state(..., relative=True)`` layout."""
-    pcfg = table_cfg.pipeline_cfg
-    reset_asset_set = set(reset_assets)
-    pose_by_asset = {
-        pcfg.placement.held_asset_cfg.name: result.nut_pose[valid],
-        pcfg.board.board_asset_cfg.name: result.board_pose[valid],
-        pcfg.board.fixed_asset_cfg.name: result.bolt_pose[valid],
-    }
-    row_count = int(valid.sum())
-    states: list[torch.Tensor] = []
-    for name, articulation in env.scene._articulations.items():
-        if name not in reset_asset_set:
-            continue
-        if name == pcfg.robot.asset_cfg.name:
-            root_state = _repeat_root_state_relative(env, articulation, row_count)
-            joint_pos = _robot_joint_pos_from_pipeline(
-                robot, result.joint_q[valid], arm_pairs, finger_pairs, squeeze[valid]
+def _reset_state_layout(
+    scene_cfg,
+    reset_assets: tuple[str, ...],
+    robot_name: str,
+    robot_joint_names: tuple[str, ...],
+) -> ResetStateLayout:
+    """Resolve canonical entity and joint axes in declared reset order."""
+    kinds: list[str] = []
+    joint_names: list[tuple[str, ...]] = []
+    offsets = [0]
+    for name in reset_assets:
+        if not hasattr(scene_cfg, name):
+            raise ValueError(f"Factory reset asset {name!r} is absent from the declared scene config.")
+        asset_cfg = getattr(scene_cfg, name)
+        if isinstance(asset_cfg, ArticulationCfg):
+            if name != robot_name:
+                raise ValueError(
+                    f"Factory reset articulation {name!r} has no declared mechanics; only {robot_name!r} is resolved."
+                )
+            kind = "articulation"
+            names = robot_joint_names
+        elif isinstance(asset_cfg, RigidObjectCfg):
+            kind = "rigid_object"
+            names = ()
+        else:
+            raise TypeError(
+                f"Factory reset asset {name!r} must be ArticulationCfg or RigidObjectCfg, "
+                f"got {type(asset_cfg).__name__}."
             )
-            joint_vel = torch.zeros_like(joint_pos)
-            states.extend((root_state, joint_pos, joint_vel))
-        else:
-            root_state = _repeat_root_state_relative(env, articulation, row_count)
-            joint_pos = wp.to_torch(articulation.data.default_joint_pos)[0].expand(row_count, -1).clone()
-            joint_vel = torch.zeros_like(joint_pos)
-            states.extend((root_state, joint_pos, joint_vel))
+        kinds.append(kind)
+        joint_names.append(names)
+        offsets.append(offsets[-1] + len(names))
+    return ResetStateLayout(reset_assets, tuple(kinds), tuple(joint_names), tuple(offsets))
 
-    for name, rigid_object in env.scene._rigid_objects.items():
-        if name not in reset_asset_set:
+
+def _build_reset_state_bank(
+    geometry_cfg,
+    scene_cfg,
+    layout: ResetStateLayout,
+    result,
+    coordinate_indices: tuple[int, ...],
+) -> ResetStateBank:
+    """Encode accepted builder rows into one entity-major state bank."""
+    row_count = result.joint_q.shape[0]
+    device = result.joint_q.device
+    root_pose = torch.empty((row_count, layout.entity_count, 7), dtype=torch.float32, device=device)
+    root_velocity = torch.empty((row_count, layout.entity_count, 6), dtype=torch.float32, device=device)
+    joint_position = torch.empty((row_count, layout.joint_offsets[-1]), dtype=torch.float32, device=device)
+    joint_velocity = torch.zeros_like(joint_position)
+
+    pose_by_asset = {
+        geometry_cfg.held_asset_cfg.name: result.held_pose,
+        geometry_cfg.board.board_asset_cfg.name: result.board_pose,
+    }
+    pose_by_asset.update(result.board_asset_poses)
+    robot_name = geometry_cfg.robot.asset_cfg.name
+
+    for entity_index, (name, kind) in enumerate(zip(layout.names, layout.kinds, strict=True)):
+        asset_cfg = getattr(scene_cfg, name)
+        pose = pose_by_asset.get(name)
+        if pose is None:
+            if name != robot_name:
+                raise ValueError(f"Factory reset asset {name!r} has no generated pose owner.")
+            pose = torch.tensor((*asset_cfg.init_state.pos, *asset_cfg.init_state.rot), device=device).expand(
+                row_count, -1
+            )
+        root_pose[:, entity_index].copy_(pose)
+        root_velocity[:, entity_index, :3] = torch.tensor(asset_cfg.init_state.lin_vel, device=device)
+        root_velocity[:, entity_index, 3:] = torch.tensor(asset_cfg.init_state.ang_vel, device=device)
+
+        if kind != "articulation":
             continue
-        if name in pose_by_asset:
-            states.append(_root_state_from_pose(pose_by_asset[name]))
-        else:
-            states.append(_repeat_root_state_relative(env, rigid_object, row_count))
-    if not states:
-        raise RuntimeError(f"no reset assets from {reset_assets} exist in the factory scene")
-    return torch.cat(states, dim=-1).contiguous()
+        joint_slice = layout.joint_slice(name)
+        if name == robot_name:
+            joint_position[:, joint_slice].copy_(result.joint_q[:, list(coordinate_indices)])
 
-
-def _robot_joint_pos_from_pipeline(robot, joint_q, arm_pairs, finger_pairs, squeeze):
-    """Map Newton joint coordinates into the live robot articulation joint order."""
-    joint_pos = wp.to_torch(robot.data.default_joint_pos)[0].expand(joint_q.shape[0], -1).clone()
-    joint_pos[:, [i for _, i in arm_pairs]] = joint_q[:, [c for c, _ in arm_pairs]]
-    joint_pos[:, [i for _, i in finger_pairs]] = joint_q[:, [c for c, _ in finger_pairs]] + squeeze.unsqueeze(-1)
-    return joint_pos
-
-
-def _root_state_from_pose(pose: torch.Tensor) -> torch.Tensor:
-    """Create root-state rows from env-local pose rows and zero root velocity."""
-    root_state = torch.zeros(pose.shape[0], 13, device=pose.device, dtype=pose.dtype)
-    root_state[:, :7] = pose
-    return root_state
-
-
-def _repeat_root_state_relative(env, asset, row_count: int) -> torch.Tensor:
-    """Repeat the first env's current root state in env-local coordinates."""
-    root_state = wp.to_torch(asset.data.root_state_w)[0].clone()
-    root_state[:3] -= env.scene.env_origins[0]
-    return root_state.unsqueeze(0).expand(row_count, -1).clone()
-
-
-def _build_viz_geometry(table_cfg, pipeline, result, valid):
-    """Build optional success-grid geometry for the kept geometric rows."""
-    if not bool(getattr(table_cfg, "stash_viz_geometry", False)) or not bool(valid.any()):
-        return None
-    from ..viz.geometry import build_success_grid_geometry
-
-    torch.cuda.empty_cache()  # the table build runs at peak sim memory
-    return build_success_grid_geometry(
-        pipeline.model,
-        result.joint_q[valid],
-        result.nut_pose[valid],
-        result.bolt_pose[valid],
-        result.board_pose[valid],
-        result.board_index[valid],
+    return ResetStateBank(
+        layout=layout,
+        root_pose=root_pose.contiguous(),
+        root_velocity=root_velocity.contiguous(),
+        joint_position=joint_position.contiguous(),
+        joint_velocity=joint_velocity.contiguous(),
     )
 
 
-def _tag_counts(state_tag_indices: torch.Tensor, tag_names: list[str]) -> dict[str, int]:
-    """Return non-empty per-tag counts for table-build logging."""
-    return {name: int((state_tag_indices == tag).sum()) for tag, name in enumerate(tag_names)}
+def _task_table_view(
+    table_builder,
+    states: ResetStateBank,
+    spawn_index: torch.Tensor,
+    target_index: torch.Tensor,
+    pad_targets: torch.Tensor,
+    quality: TaskTableQuality,
+) -> TaskTableView:
+    """Compose exact endpoint sequences and retained production geometry."""
+    geometry_model = table_builder.geometry
+    builder = newton.ModelBuilder()
+    for name, (vertices, faces) in geometry_model.obstacle_geom.items():
+        builder.add_shape_mesh(
+            body=-1,
+            mesh=newton.Mesh(vertices, faces.reshape(-1), compute_inertia=False),
+            label=name,
+        )
+    builder.add_builder(geometry_model.builder)
+    if len(builder.joint_q) != geometry_model.nq:
+        raise RuntimeError("Retained Factory robot builder changed generalized-coordinate layout.")
+
+    geometry = {
+        table_builder.cfg.board.board_asset_cfg.name: (geometry_model.board_verts, geometry_model.board_faces),
+        table_builder.cfg.held_asset_cfg.name: (geometry_model.held_verts, geometry_model.held_faces),
+    }
+    geometry.update(geometry_model.board_asset_geom)
+    root_entity_names: list[str] = []
+    root_state_indices: list[int] = []
+    root_q_indices: list[list[int]] = []
+    for entity_index, (name, kind) in enumerate(zip(states.layout.names, states.layout.kinds, strict=True)):
+        if kind != "rigid_object":
+            continue
+        if name not in geometry:
+            raise ValueError(f"Factory view has no retained production geometry for reset entity {name!r}.")
+        vertices, faces = geometry[name]
+        q_start = len(builder.joint_q)
+        body = builder.add_body(label=name)
+        builder.add_shape_mesh(
+            body=body,
+            mesh=newton.Mesh(vertices, faces.reshape(-1), compute_inertia=False),
+            label=name,
+        )
+        root_entity_names.append(name)
+        root_state_indices.append(entity_index)
+        root_q_indices.append(list(range(q_start, q_start + 7)))
+
+    robot_name = table_builder.cfg.robot.asset_cfg.name
+    coordinate_indices, _, coordinate_names = geometry_model.kinematics.find_joint_scalar_coordinates(".*")
+    joint_slice = states.layout.joint_slice(robot_name)
+    joint_state_indices = torch.arange(joint_slice.start, joint_slice.stop, device=states.root_pose.device)
+    if joint_state_indices.numel() != len(coordinate_names):
+        raise ValueError("Factory robot table joints and retained Newton coordinates differ.")
+
+    device = states.root_pose.device
+    kinematic_view = TaskTableKinematicView(
+        model_builder_state=builder,
+        joint_q_default=torch.tensor(builder.joint_q, dtype=torch.float32, device=device),
+        root_entity_names=tuple(root_entity_names),
+        root_state_indices=torch.tensor(root_state_indices, dtype=torch.int64, device=device),
+        root_q_indices=torch.tensor(root_q_indices, dtype=torch.int64, device=device).reshape(-1, 7),
+        joint_coordinate_names=tuple((robot_name, name) for name in coordinate_names),
+        joint_state_indices=joint_state_indices,
+        joint_q_indices=torch.tensor(coordinate_indices, dtype=torch.int64, device=device),
+    )
+    sequence_count = spawn_index.shape[0]
+    offsets = torch.arange(0, 2 * (sequence_count + 1), 2, dtype=torch.int64, device=device)
+    state_indices = torch.stack((spawn_index, target_index), dim=1).reshape(-1).contiguous()
+    return TaskTableView(
+        sequences=TaskTableSequenceIndex(offsets=offsets, state_indices=state_indices),
+        state_bank=states,
+        kinematic_view=kinematic_view,
+        points=(TaskTablePointEvidence("grasp_pad_targets", pad_targets),),
+        quality=quality,
+    )
 
 
-def _pair_within_boards(table_cfg, state_data, state_tag_indices, state_board_indices, state_tag_names):
-    """Pair spawn x target WITHIN each board configuration (per-cell pairing).
+def _feature_rows(state: ResetStateBank) -> torch.Tensor:
+    """Materialize existing curriculum feature input without storing it."""
+    chunks: list[torch.Tensor] = []
+    for entity_index, name in enumerate(state.layout.names):
+        chunks.extend((state.root_pose[:, entity_index], state.root_velocity[:, entity_index]))
+        joint_slice = state.layout.joint_slice(name)
+        if joint_slice.start != joint_slice.stop:
+            chunks.extend((state.joint_position[:, joint_slice], state.joint_velocity[:, joint_slice]))
+    return torch.cat(chunks, dim=-1)
 
-    When ``table_cfg.allowed_tag_pairs`` is set, only slots whose ``(spawn_tag,
-    target_tag)`` placement-tag names appear in that list survive (e.g. eval-time
-    seated<->in-air only); ``None`` keeps every spawn x target pair.
-    """
-    coords = extract_features(state_data, table_cfg.state_table_fps_features).contiguous()
-    num_states = int(state_data.shape[0])
-    state_ids = torch.arange(num_states, device=state_data.device, dtype=torch.long)
-    # a goal solved against a different board pose would point at the wrong bolt.
-    # Goals are a spatially-spread SUBSET of the board's own rows
-    # (targets_per_board <= rows_per_board by contract); geometric filters can
-    # leave a board with fewer rows, in which case all of them serve as goals.
+
+def _pair_within_boards(
+    table_cfg,
+    state_coords: torch.Tensor,
+    state_tag_indices: torch.Tensor,
+    state_board_indices: torch.Tensor,
+    state_tag_names: tuple[str, ...],
+    generator: torch.Generator,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Pair spawn and target states only within each board configuration."""
+    num_states = int(state_coords.shape[0])
+    state_ids = torch.arange(num_states, device=state_coords.device, dtype=torch.long)
     targets_per_board = int(table_cfg.targets_per_board)
     if targets_per_board <= 0 or targets_per_board > int(table_cfg.rows_per_board):
         raise ValueError(
-            f"targets_per_board={targets_per_board} must be in [1, rows_per_board="
-            f"{int(table_cfg.rows_per_board)}]: targets are picked FROM each board's stored rows."
+            f"targets_per_board={targets_per_board} must be in [1, rows_per_board={int(table_cfg.rows_per_board)}]."
         )
     spawn_chunks: list[torch.Tensor] = []
     target_chunks: list[torch.Tensor] = []
     for board in torch.unique(state_board_indices):
         board_ids = state_ids[state_board_indices == board]
-        k = min(targets_per_board, int(board_ids.shape[0]))
-        local_target = grid_bucket_downsample(coords[board_ids], k).sort().values
+        count = min(targets_per_board, int(board_ids.shape[0]))
+        local_target = grid_bucket_downsample(state_coords[board_ids], count, generator=generator).sort().values
         board_targets = board_ids[local_target]
         spawn_chunks.append(board_ids.repeat_interleave(int(board_targets.shape[0])))
         target_chunks.append(board_targets.repeat(int(board_ids.shape[0])))
@@ -328,22 +450,15 @@ def _pair_within_boards(table_cfg, state_data, state_tag_indices, state_board_in
     spawn_index, target_index = _filter_allowed_tag_pairs(
         table_cfg, spawn_index, target_index, state_tag_indices, state_tag_names
     )
-    slot_indices = torch.arange(spawn_index.shape[0], device=state_data.device, dtype=torch.long)
-    task_tag_indices = state_tag_indices[spawn_index]
-    return coords, spawn_index, target_index, slot_indices, task_tag_indices
+    return spawn_index, target_index
 
 
 def _filter_allowed_tag_pairs(table_cfg, spawn_index, target_index, state_tag_indices, state_tag_names):
-    """Keep only slots whose ``(spawn_tag, target_tag)`` names are in ``allowed_tag_pairs``.
-
-    ``None``/empty leaves the full spawn x target product untouched (training
-    default). Unknown tag names or a filter that matches zero slots raise here, at
-    the table boundary, rather than silently producing an empty curriculum.
-    """
+    """Keep only task endpoints whose placement-tag pair is allowed."""
     allowed = table_cfg.allowed_tag_pairs
     if not allowed:
         return spawn_index, target_index
-    name_to_id = {name: i for i, name in enumerate(state_tag_names)}
+    name_to_id = {name: index for index, name in enumerate(state_tag_names)}
     unknown = sorted({name for pair in allowed for name in pair} - set(name_to_id))
     if unknown:
         raise ValueError(
@@ -356,6 +471,6 @@ def _filter_allowed_tag_pairs(table_cfg, spawn_index, target_index, state_tag_in
     for spawn_id, target_id in pair_ids:
         keep |= (spawn_tags == spawn_id) & (target_tags == target_id)
     if not bool(keep.any()):
-        present = sorted(state_tag_names[i] for i in torch.unique(state_tag_indices).tolist())
-        raise ValueError(f"allowed_tag_pairs={allowed} matched 0 task slots; tags present in the table: {present}.")
+        present = sorted(state_tag_names[index] for index in torch.unique(state_tag_indices).tolist())
+        raise ValueError(f"allowed_tag_pairs={allowed} matched 0 task slots; tags present: {present}.")
     return spawn_index[keep], target_index[keep]
