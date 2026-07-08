@@ -20,7 +20,6 @@ __all__ = [
     "orientation_command_error_tanh",
     "position_command_error_tanh",
     "success_reward",
-    "abnormal_robot_state",
     "out_of_bound",
 ]
 
@@ -43,5 +42,5 @@ from .rewards import (
     position_command_error_tanh,
     success_reward,
 )
-from .terminations import abnormal_robot_state, out_of_bound
+from .terminations import out_of_bound
 from isaaclab.envs.mdp import *

@@ -12,7 +12,7 @@ from isaaclab_visualizers.kit import KitVisualizerCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
-from isaaclab.envs import ManagerBasedEnvCfg, ViewerCfg
+from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
@@ -48,7 +48,7 @@ OBJECT_PHYSICS = {
 
 @configclass
 class ObjectCfg(PresetCfg):
-    shapes = sim_utils.MultiAssetSpawnerCfg(
+    default = sim_utils.MultiAssetSpawnerCfg(
         assets_cfg=[
             MeshCuboidCfg(size=(0.05, 0.1, 0.1), **OBJECT_PHYSICS),
             MeshCuboidCfg(size=(0.05, 0.05, 0.1), **OBJECT_PHYSICS),
@@ -75,8 +75,9 @@ class ObjectCfg(PresetCfg):
         collision_props=sim_utils.CollisionPropertiesCfg(),
         mass_props=sim_utils.MassPropertiesCfg(mass=0.2),
     )
+    # Alternative preset: a single cuboid instead of the shape variety (select via a ``...=cube`` preset).
     cube = sim_utils.CuboidCfg(
-        size=(0.05, 0.1, 0.1),
+        size=(0.05, 0.05, 0.05),
         physics_material=RigidBodyMaterialCfg(static_friction=0.5),
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             solver_position_iteration_count=16,
@@ -86,7 +87,6 @@ class ObjectCfg(PresetCfg):
         collision_props=sim_utils.CollisionPropertiesCfg(),
         mass_props=sim_utils.MassPropertiesCfg(mass=0.2),
     )
-    default = shapes
 
 
 @configclass
@@ -175,7 +175,7 @@ class ObservationsCfg:
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True
-            self.history_length = 5
+            # self.history_length = 5
 
     @configclass
     class ProprioObsCfg(ObsGroup):
@@ -199,7 +199,7 @@ class ObservationsCfg:
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True
-            self.history_length = 5
+            # self.history_length = 5
 
     @configclass
     class PerceptionObsCfg(ObsGroup):
@@ -217,7 +217,7 @@ class ObservationsCfg:
             self.concatenate_dim = 0
             self.concatenate_terms = True
             self.flatten_history_dim = True
-            self.history_length = 5
+            # self.history_length = 5
 
     # observation groups
     policy: PolicyCfg = PolicyCfg()
@@ -385,7 +385,7 @@ class RewardsCfg:
         weight=4.0,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
-            "std": 1.5,
+            "std": 1.0,
             "command_name": "object_pose",
             "align_asset_cfg": SceneEntityCfg("object"),
         },
@@ -397,13 +397,13 @@ class RewardsCfg:
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "pos_std": 0.05,
-            "rot_std": 0.5,
+            "rot_std": 0.4,
             "command_name": "object_pose",
             "align_asset_cfg": SceneEntityCfg("object"),
         },
     )
 
-    early_termination = RewTerm(func=mdp.is_terminated_term, weight=-1, params={"term_keys": "abnormal_robot"})
+    early_termination = RewTerm(func=mdp.is_terminated_term, weight=-5.0, params={"term_keys": "joint_vel_out_of_limit"})
 
 
 @configclass
@@ -420,7 +420,7 @@ class TerminationsCfg:
         },
     )
 
-    abnormal_robot = DoneTerm(func=mdp.abnormal_robot_state)
+    joint_vel_out_of_limit = DoneTerm(func=mdp.joint_vel_out_of_limit)
 
 
 @configclass
@@ -437,7 +437,7 @@ class PhysicsCfg(PresetCfg):
             njmax=300,
             nconmax=200,
             impratio=10.0,
-            cone="elliptic",
+            cone="pyramidal",
             update_data_interval=2,
             iterations=100,
             ls_iterations=15,
@@ -446,14 +446,14 @@ class PhysicsCfg(PresetCfg):
         ),
         collision_cfg=NewtonCollisionPipelineCfg(),
         default_shape_cfg=NewtonShapeCfg(),
-        num_substeps=2,
+        num_substeps=4,
         debug_mode=False,
     )
     physx = default
 
 
 @configclass
-class DexsuiteReorientEnvCfg(ManagerBasedEnvCfg):
+class DexsuiteReorientEnvCfg(ManagerBasedRLEnvCfg):
     """Dexsuite reorientation task definition, also the base definition for derivative Lift task and evaluation task"""
 
     # Scene settings
@@ -497,26 +497,6 @@ class DexsuiteReorientEnvCfg(ManagerBasedEnvCfg):
         self.commands.object_pose.position_only = False
         self.episode_length_s = 6.0
         self.is_finite_horizon = False
-        self.sim.visualizer_cfgs = preset(  # type: ignore
-            default=[KitVisualizerCfg(
-                headless=True,
-                visible_env_indices=[0, 1],
-                eye=(-2.25, 0.0, 0.75),
-                lookat=(0.0, 0.0, 0.45),
-            )],
-            newton_mjwarp=[NewtonVisualizerCfg(
-                # headless=True,
-                eye=(-1.75, 0.0, 0.75),
-                lookat=(0.0, 0.0, 0.45),
-                visible_env_indices=[0, 1],
-            )],
-            physx=[KitVisualizerCfg(
-                headless=True,
-                visible_env_indices=[0, 1],
-                eye=(-2.25, 0.0, 0.75),
-                lookat=(0.0, 0.0, 0.45),
-            )]
-        )
 
         # simulation settings
         self.sim.dt = 1 / 120

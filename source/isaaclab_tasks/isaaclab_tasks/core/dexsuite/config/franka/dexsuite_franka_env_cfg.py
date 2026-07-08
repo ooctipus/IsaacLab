@@ -7,11 +7,11 @@ from isaaclab.assets import ArticulationCfg
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import CameraCfg, ContactSensorCfg
-from isaaclab.sim import MeshConeCfg, MeshSphereCfg
+from isaaclab.sim import MeshCapsuleCfg, MeshCuboidCfg, MeshSphereCfg, RigidBodyMaterialCfg
 from isaaclab.utils.configclass import configclass
 
+import isaaclab.sim as sim_utils
 from isaaclab_tasks.utils import preset
-
 from isaaclab_assets.robots import FRANKA_PANDA_CFG
 from isaaclab_assets.robots.franka import NEWTON_ACTUATOR_CFG, PHYSX_ACTUATOR_CFG
 
@@ -22,32 +22,10 @@ from .camera_cfg import StateObservationCfg
 FINGERTIP_LIST = ["panda_rightfinger", "panda_leftfinger"]
 THUMB_SENSOR = "panda_leftfinger_object_s"
 FINGER_SENSORS = [f"{name}_object_s" for name in FINGERTIP_LIST if name != THUMB_SENSOR.replace("_object_s", "")]
-
-
-def _spawn_franka_with_finger_equality(prim_path, cfg, translation=None, orientation=None, **kwargs):
-    """Spawn the Franka USD, then couple the two gripper fingers with a MuJoCo joint-equality.
-
-    Newton/mjwarp honors ``MjcEqualityJointAPI`` (``finger_joint2 = finger_joint1``); PhysX ignores it
-    and keeps its own coupling. Joint prims in the Panda USD are authored at articulation scope (not
-    inside the instanceable link prims), so they are editable directly - no de-instancing needed
-    (de-instancing breaks the finger contact sensors).
-    """
-    from pxr import Sdf, Usd  # noqa: PLC0415
-
-    import isaaclab.sim as sim_utils  # noqa: PLC0415
-
-    prim = sim_utils.spawn_from_usd(prim_path, cfg, translation, orientation, **kwargs)
-    for root in sim_utils.find_matching_prims(prim_path):
-        joints = {p.GetName(): p for p in Usd.PrimRange(root) if p.GetName().startswith("panda_finger_joint")}
-        j1, j2 = joints.get("panda_finger_joint1"), joints.get("panda_finger_joint2")
-        if j1 is None or j2 is None:
-            continue
-        j2.AddAppliedSchema("MjcEqualityJointAPI")
-        j2.CreateRelationship("mjc:target").SetTargets([j1.GetPath()])
-        j2.CreateAttribute("mjc:coef0", Sdf.ValueTypeNames.Double).Set(0.0)
-        j2.CreateAttribute("mjc:coef1", Sdf.ValueTypeNames.Double).Set(1.0)
-    return prim
-
+OBJECT_PHYSICS = {
+    "physics_material": RigidBodyMaterialCfg(static_friction=0.5),
+    "collision_props": sim_utils.CollisionPropertiesCfg(contact_offset=0.002),
+}
 
 @configclass
 class FrankaSceneCfg(dexsuite.SceneCfg):
@@ -64,8 +42,6 @@ class FrankaSceneCfg(dexsuite.SceneCfg):
     def __post_init__(self):
         super().__post_init__()
         self.robot.spawn.activate_contact_sensors = True
-        # author a MuJoCo finger-coupling equality at spawn (read by Newton/mjwarp; PhysX ignores it)
-        self.robot.spawn.func = _spawn_franka_with_finger_equality
         actuator_cfg = preset(physx=PHYSX_ACTUATOR_CFG, newton_mjwarp=NEWTON_ACTUATOR_CFG, default=PHYSX_ACTUATOR_CFG)
         self.robot.actuators = actuator_cfg
         self.robot.init_state.rot = (0.0, 0.0, 1.0, 0.0)
@@ -78,12 +54,14 @@ class FrankaSceneCfg(dexsuite.SceneCfg):
                     filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"],
                 ),
             )
-        graspable_assets_cfg = []
-        for assets_cfg in self.object.spawn.shapes.assets_cfg:
-            if not isinstance(assets_cfg, (MeshSphereCfg, MeshConeCfg)):
-                graspable_assets_cfg.append(assets_cfg)
-        self.object.spawn.shapes.assets_cfg = graspable_assets_cfg
-
+        self.object.spawn.default.assets_cfg = [
+            MeshCuboidCfg(size=(0.05, 0.05, 0.1), **OBJECT_PHYSICS),
+            MeshCuboidCfg(size=(0.025, 0.05, 0.1), **OBJECT_PHYSICS),
+            MeshCuboidCfg(size=(0.025, 0.025, 0.1), **OBJECT_PHYSICS),
+            MeshSphereCfg(radius=0.02, **OBJECT_PHYSICS),
+            MeshCapsuleCfg(radius=0.01, height=0.15, **OBJECT_PHYSICS),
+            MeshCapsuleCfg(radius=0.02, height=0.15, **OBJECT_PHYSICS),
+        ]
 
 @configclass
 class FrankaRelJointPosActionCfg:
@@ -94,8 +72,8 @@ class FrankaRelJointPosActionCfg:
 class FrankaReorientRewardCfg(dexsuite.RewardsCfg):
     good_finger_contact = RewTerm(
         func=mdp.contacts,
-        weight=0.125,
-        params={"threshold": 0.1, "thumb_name": THUMB_SENSOR, "finger_names": FINGER_SENSORS},
+        weight=0.25,
+        params={"threshold": 0.01, "thumb_name": THUMB_SENSOR, "finger_names": FINGER_SENSORS},
     )
 
     contact_count = RewTerm(
@@ -120,7 +98,7 @@ class FrankaReorientRewardCfg(dexsuite.RewardsCfg):
 
 @configclass
 class FrankaMixinCfg:
-    scene: FrankaSceneCfg = FrankaSceneCfg(num_envs=4096, env_spacing=0, replicate_physics=True)
+    scene: FrankaSceneCfg = FrankaSceneCfg(num_envs=4096, env_spacing=1.5, replicate_physics=True)
     rewards: FrankaReorientRewardCfg = FrankaReorientRewardCfg()
     observations: StateObservationCfg = StateObservationCfg()
     actions: FrankaRelJointPosActionCfg = FrankaRelJointPosActionCfg()

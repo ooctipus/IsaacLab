@@ -59,12 +59,3 @@ class out_of_bound(ManagerTermBase):
 
         pos_w = self._object.data.root_pos_w.torch
         return ((pos_w < self._lower) | (pos_w > self._upper)).any(dim=1)
-
-
-def abnormal_robot_state(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
-    """Terminating environment when violation of velocity limits detects, this usually indicates unstable physics caused
-    by very bad, or aggressive action"""
-    robot: Articulation = env.scene[asset_cfg.name]
-    joint_vel = robot.data.joint_vel.torch
-    joint_vel_limits = robot.data.joint_vel_limits.torch
-    return (joint_vel.abs() > (joint_vel_limits * 2)).any(dim=1)
