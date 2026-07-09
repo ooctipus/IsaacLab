@@ -232,7 +232,7 @@ class NewtonSiteFrameView(BaseFrameView):
         self._prims = []
 
         stage = sim_utils.get_current_stage() if stage is None else stage
-        self._site_specs = self._resolve_site_specs(stage, validate_xform_ops)
+        self._site_specs: list[NewtonSiteFrameView._SiteSpec] = []
         self._site_labels: list[str] = []
         self._site_label_scales: list[tuple[float, float, float]] = []
         self._site_body: wp.array | None = None
@@ -253,30 +253,93 @@ class NewtonSiteFrameView(BaseFrameView):
 
         model = NewtonManager.get_model()
         if model is not None:
+            registered = NewtonManager._cl_registered_frames.get(tuple(self._prim_paths))
+            if registered is not None and all(label in NewtonManager._cl_site_index_map for label in registered[0]):
+                # The frame was pre-registered (see :meth:`register_frame`) and its sites
+                # were injected during replication — initialize from them directly.
+                self._site_labels = list(registered[0])
+                self._site_label_scales = list(registered[1])
+                self._initialize_from_site_map(model)
+                return
+            self._site_specs = self._resolve_site_specs(self._prim_paths, stage, validate_xform_ops)
             self._initialize_from_specs(model)
         else:
-            for spec in self._site_specs:
-                if spec.body_patterns is None:
-                    self._site_labels.append(NewtonManager.cl_register_site(None, spec.xform, per_world=spec.per_world))
-                    self._site_label_scales.append(spec.scale)
-                else:
-                    for body_pattern in spec.body_patterns:
-                        self._site_labels.append(NewtonManager.cl_register_site(body_pattern, spec.xform))
-                        self._site_label_scales.append(spec.scale)
+            self._site_specs = self._resolve_site_specs(self._prim_paths, stage, validate_xform_ops)
+            self._site_labels, self._site_label_scales = self._register_site_specs(self._site_specs)
             self._physics_ready_handle = NewtonManager.register_callback(
                 self._on_physics_ready, PhysicsEvent.PHYSICS_READY, name=f"site_view_{self._prim_path}"
             )
 
-    def _resolve_site_specs(self, stage, validate_xform_ops: bool) -> list[NewtonSiteFrameView._SiteSpec]:
-        """Resolve source prims into Newton site registration specs."""
+    @classmethod
+    def register_frame(
+        cls, prim_path: str | list[str], stage: object | None = None, validate_xform_ops: bool = True
+    ) -> bool:
+        """Pre-register a frame's site requests for injection during replication.
+
+        Sensors call this while constructing (before the Newton model is finalized),
+        mirroring direct :meth:`NewtonManager.cl_register_site` users such as the IMU.
+        Replication injects the sites into the source builders, and a view constructed
+        later with the same ``prim_path`` initializes from the injected sites instead
+        of resolving bodies against the finalized model.
+
+        Args:
+            prim_path: User-facing frame path pattern, or list of patterns.
+            stage: USD stage that contains the source prims. Defaults to the current stage.
+            validate_xform_ops: Whether to validate source USD xform ops.
+
+        Returns:
+            True once the frame's site requests are recorded.
+        """
+        stage = sim_utils.get_current_stage() if stage is None else stage
+        prim_paths = [prim_path] if isinstance(prim_path, str) else list(prim_path)
+        specs = cls._resolve_site_specs(prim_paths, stage, validate_xform_ops, use_clone_body_pattern=True)
+        NewtonManager._cl_registered_frames[tuple(prim_paths)] = cls._register_site_specs(specs)
+        return True
+
+    @classmethod
+    def _register_site_specs(
+        cls, specs: list[NewtonSiteFrameView._SiteSpec]
+    ) -> tuple[list[str], list[tuple[float, float, float]]]:
+        """Register site requests for the given specs and return labels with scales."""
+        labels: list[str] = []
+        scales: list[tuple[float, float, float]] = []
+        for spec in specs:
+            if spec.body_patterns is None:
+                labels.append(NewtonManager.cl_register_site(None, spec.xform, per_world=spec.per_world))
+                scales.append(spec.scale)
+            else:
+                for body_pattern in spec.body_patterns:
+                    labels.append(NewtonManager.cl_register_site(body_pattern, spec.xform))
+                    scales.append(spec.scale)
+        return labels, scales
+
+    @classmethod
+    def _resolve_site_specs(
+        cls,
+        prim_paths: list[str],
+        stage,
+        validate_xform_ops: bool,
+        use_clone_body_pattern: bool | None = None,
+    ) -> list[NewtonSiteFrameView._SiteSpec]:
+        """Resolve source prims into Newton site registration specs.
+
+        Args:
+            prim_paths: Frame path expressions to resolve.
+            stage: USD stage that contains the source prims.
+            validate_xform_ops: Whether to validate source USD xform ops.
+            use_clone_body_pattern: Whether body specs carry one cloned ``.*`` pattern
+                (site-registration flavor) instead of per-environment body paths.
+                Defaults to ``True`` while the Newton model is not finalized.
+        """
         plan = sim_utils.SimulationContext.instance().get_clone_plan()
         model = NewtonManager.get_model()
         body_labels = list(model.body_label) if model is not None else ()
         shape_labels = list(model.shape_label) if model is not None else ()
-        use_clone_body_pattern = model is None
+        if use_clone_body_pattern is None:
+            use_clone_body_pattern = model is None
         specs: list[NewtonSiteFrameView._SiteSpec] = []
 
-        for path_expr in self._prim_paths:
+        for path_expr in prim_paths:
             if resolve_matching_names(path_expr, body_labels, raise_when_no_match=False)[1]:
                 raise ValueError(
                     f"FrameView prim '{path_expr}' is a Newton physics body. "
@@ -298,7 +361,7 @@ class NewtonSiteFrameView(BaseFrameView):
                     if source_prim is None or not source_prim.IsValid():
                         raise RuntimeError(f"FrameView '{path_expr}' could not resolve source prim '{source_path}'.")
                     specs.append(
-                        self._resolve_source_prim(
+                        cls._resolve_source_prim(
                             source_prim,
                             validate_xform_ops,
                             source_root,
@@ -314,13 +377,14 @@ class NewtonSiteFrameView(BaseFrameView):
             if prim is None or not prim.IsValid():
                 raise RuntimeError(f"FrameView '{path_expr}' could not resolve a source prim.")
             specs.append(
-                self._resolve_source_prim(prim, validate_xform_ops, None, None, None, use_clone_body_pattern, stage)
+                cls._resolve_source_prim(prim, validate_xform_ops, None, None, None, use_clone_body_pattern, stage)
             )
 
         return specs
 
+    @classmethod
     def _resolve_source_prim(
-        self,
+        cls,
         prim,
         validate_xform_ops: bool,
         source_root: str | None,
@@ -367,7 +431,7 @@ class NewtonSiteFrameView(BaseFrameView):
                                 raise RuntimeError(
                                     f"FrameView destination root '{destination_root}' does not end with '{suffix}'."
                                 )
-                            return self._SiteSpec(
+                            return cls._SiteSpec(
                                 (destination_root[: -len(suffix)],),
                                 wp.transform(pos, quat),
                                 scale,
@@ -383,7 +447,7 @@ class NewtonSiteFrameView(BaseFrameView):
                                     f"FrameView destination root '{destination_root}' does not end with '{suffix}'."
                                 )
                             body_patterns.append(destination_root[: -len(suffix)])
-                        return self._SiteSpec(
+                        return cls._SiteSpec(
                             tuple(body_patterns),
                             wp.transform(pos, quat),
                             scale,
@@ -399,7 +463,7 @@ class NewtonSiteFrameView(BaseFrameView):
                         body_patterns = tuple(destination_template.format(env_id) + suffix for env_id in env_ids)
                 else:
                     body_patterns = (body_path,)
-                return self._SiteSpec(
+                return cls._SiteSpec(
                     body_patterns, wp.transform(pos, quat), scale, False, env_ids, source_body_path=body_path
                 )
             body_prim = body_prim.GetParent()
@@ -412,7 +476,7 @@ class NewtonSiteFrameView(BaseFrameView):
                 ref_path = source_root[: -len(source_suffix)] if source_suffix else source_root
         ref_prim = stage.GetPrimAtPath(ref_path) if ref_path is not None else None
         pos, quat = sim_utils.resolve_prim_pose(prim, ref_prim if ref_prim and ref_prim.IsValid() else None)
-        return self._SiteSpec(None, wp.transform(pos, quat), scale, source_root is not None, env_ids)
+        return cls._SiteSpec(None, wp.transform(pos, quat), scale, source_root is not None, env_ids)
 
     def _on_physics_ready(self, _event) -> None:
         """Callback invoked when the Newton model becomes available."""

@@ -339,6 +339,11 @@ class NewtonManager(PhysicsManager):
     # ``_cl_body_offsets[source][world] + source_local_index``, letting consumers
     # (e.g. FrameView) resolve bodies without matching the renamed body labels.
     _cl_body_offsets: dict[str, dict[int, int]] = {}
+    # Site labels and xform scales pre-registered per FrameView prim-path expression
+    # via ``NewtonSiteFrameView.register_frame``. Views constructed after model
+    # finalization for a registered expression initialize from the injected sites
+    # instead of resolving bodies against the finalized model.
+    _cl_registered_frames: dict[tuple[str, ...], tuple[list[str], list[tuple[float, float, float]]]] = {}
     _deformable_registry: list = []
     _per_world_builder_hooks: list[Callable[[ModelBuilder, int, list[float], list[float]], None]] = []
     _post_replicate_hooks: list[Callable[[ModelBuilder], None]] = []
@@ -851,6 +856,7 @@ class NewtonManager(PhysicsManager):
         NewtonManager._world_xforms = None
         NewtonManager._cl_protos = {}
         NewtonManager._cl_body_offsets = {}
+        NewtonManager._cl_registered_frames = {}
         NewtonManager._pending_extended_state_attributes = set()
         NewtonManager._pending_extended_contact_attributes = set()
         NewtonManager._views = []

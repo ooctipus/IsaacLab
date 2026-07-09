@@ -178,6 +178,30 @@ def test_view_can_resolve_from_body_labels_after_reset(device):
     ctx.__exit__(None, None, None)
 
 
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+def test_registered_frame_resolves_from_injected_sites(device):
+    """A pre-registered frame initializes from injected sites after reset (camera flow)."""
+    num_envs = 3
+    ctx = _sim_context(device, num_envs=num_envs)
+    sim = ctx.__enter__()
+    sim._app_control_on_stop_handle = None
+    InteractiveScene(_SceneCfg(num_envs=num_envs, env_spacing=2.0))
+    sim_utils.create_prim("/World/envs/env_0/Cube/CameraMount", translation=CHILD_OFFSET)
+
+    assert FrameView.register_frame("/World/envs/env_.*/Cube/CameraMount") is True
+    sim.reset()
+    view = FrameView("/World/envs/env_.*/Cube/CameraMount", device=device)
+
+    # Initialized from the injected sites: labels recorded, no post-finalize spec resolution.
+    assert view._site_labels
+    assert view._site_specs == []
+    assert view.count == num_envs
+    pos = view.get_world_poses()[0].torch
+    expected = _get_body_positions(num_envs, device) + torch.tensor(CHILD_OFFSET, device=device)
+    torch.testing.assert_close(pos, expected, atol=1e-5, rtol=0)
+    ctx.__exit__(None, None, None)
+
+
 # ==================================================================
 # Newton edge case: world-attached prim (body=-1)
 # ==================================================================

@@ -174,6 +174,12 @@ class Camera(SensorBase):
                 raise RuntimeError(f"Could not find prim with path {spawn_target!r}.")
         queue_usd_replication(self._source_cfg)
 
+        # Pre-register the camera frame with the physics backend so replication can
+        # inject its sites before the model is finalized (mirrors site-based sensors
+        # like the IMU). The FrameView constructed in ``_initialize_impl`` then
+        # initializes from the injected sites.
+        FrameView.register_frame(self.cfg.prim_path, stage=self.stage)
+
         # An ISP (any ``isp_cfg`` other than ``None``) requires the HDR AOV;
         # an explicit ``"rgb_hdr"`` in ``data_types`` also requires the
         # HDR-routing flag flipped on the RTX-bearing backends.
@@ -813,3 +819,5 @@ class Camera(SensorBase):
         super()._invalidate_initialize_callback(event)
         # set all existing views to None to invalidate them
         self._view = None
+        # Re-register the camera frame so a subsequent start_simulation picks it up.
+        FrameView.register_frame(self.cfg.prim_path, stage=self.stage)

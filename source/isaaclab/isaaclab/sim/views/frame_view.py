@@ -52,6 +52,32 @@ class FrameView(FactoryBase, BaseFrameView):
             return "ovphysx"
         return "physx"
 
+    @classmethod
+    def register_frame(cls, prim_path: str | list[str], stage: object | None = None) -> bool:
+        """Pre-register a frame with the active physics backend before finalization.
+
+        Backends that inject frame sites during replication (Newton) record the
+        registration so a view constructed later for the same ``prim_path``
+        initializes from the injected sites. Backends without pre-registration
+        (PhysX, OVPhysX) ignore the call.
+
+        Args:
+            prim_path: User-facing frame path pattern, or list of patterns.
+            stage: USD stage that contains the source prims. Defaults to the current stage.
+
+        Returns:
+            Whether the active backend recorded the registration.
+        """
+        from isaaclab.sim.simulation_context import SimulationContext  # noqa: PLC0415
+
+        if SimulationContext.instance() is None:
+            return False
+        impl = cls.resolve_class(prim_path, stage=stage)
+        backend_register = getattr(impl, "register_frame", None)
+        if backend_register is None:
+            return False
+        return backend_register(prim_path, stage=stage)
+
     def __new__(cls, *args, **kwargs) -> BaseFrameView:
         """Create a new FrameView for the active physics backend."""
         return super().__new__(cls, *args, **kwargs)
