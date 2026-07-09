@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 import warp as wp
 
@@ -184,6 +185,28 @@ class NewtonSiteFrameView(BaseFrameView):
     into Newton body-local or world-local sites.
     """
 
+    @dataclass(frozen=True)
+    class _SiteSpec:
+        """Site registration spec resolved from one source prim."""
+
+        body_patterns: tuple[str, ...] | None
+        """Newton body label patterns to anchor to, or ``None`` for world-anchored frames."""
+
+        xform: wp.transform
+        """Frame transform local to the anchoring body (or world/env root)."""
+
+        scale: tuple[float, float, float]
+        """Authored xform scale of the source prim."""
+
+        per_world: bool
+        """Whether a world-anchored frame replicates per environment."""
+
+        env_ids: tuple[int, ...] | None
+        """Environment ids covered by the owning clone-plan entry, or ``None`` without a plan."""
+
+        source_body_path: str | None = None
+        """USD path of the anchoring body in source space, for structural index resolution."""
+
     def __init__(
         self,
         prim_path: str | list[str],
@@ -232,30 +255,26 @@ class NewtonSiteFrameView(BaseFrameView):
         if model is not None:
             self._initialize_from_specs(model)
         else:
-            for body_patterns, xform, scale, per_world, _env_ids in self._site_specs:
-                if body_patterns is None:
-                    self._site_labels.append(NewtonManager.cl_register_site(None, xform, per_world=per_world))
-                    self._site_label_scales.append(scale)
+            for spec in self._site_specs:
+                if spec.body_patterns is None:
+                    self._site_labels.append(NewtonManager.cl_register_site(None, spec.xform, per_world=spec.per_world))
+                    self._site_label_scales.append(spec.scale)
                 else:
-                    for body_pattern in body_patterns:
-                        self._site_labels.append(NewtonManager.cl_register_site(body_pattern, xform))
-                        self._site_label_scales.append(scale)
+                    for body_pattern in spec.body_patterns:
+                        self._site_labels.append(NewtonManager.cl_register_site(body_pattern, spec.xform))
+                        self._site_label_scales.append(spec.scale)
             self._physics_ready_handle = NewtonManager.register_callback(
                 self._on_physics_ready, PhysicsEvent.PHYSICS_READY, name=f"site_view_{self._prim_path}"
             )
 
-    def _resolve_site_specs(
-        self, stage, validate_xform_ops: bool
-    ) -> list[tuple[tuple[str, ...] | None, wp.transform, tuple[float, float, float], bool, tuple[int, ...] | None]]:
+    def _resolve_site_specs(self, stage, validate_xform_ops: bool) -> list[NewtonSiteFrameView._SiteSpec]:
         """Resolve source prims into Newton site registration specs."""
         plan = sim_utils.SimulationContext.instance().get_clone_plan()
         model = NewtonManager.get_model()
         body_labels = list(model.body_label) if model is not None else ()
         shape_labels = list(model.shape_label) if model is not None else ()
         use_clone_body_pattern = model is None
-        specs: list[
-            tuple[tuple[str, ...] | None, wp.transform, tuple[float, float, float], bool, tuple[int, ...] | None]
-        ] = []
+        specs: list[NewtonSiteFrameView._SiteSpec] = []
 
         for path_expr in self._prim_paths:
             if resolve_matching_names(path_expr, body_labels, raise_when_no_match=False)[1]:
@@ -309,7 +328,7 @@ class NewtonSiteFrameView(BaseFrameView):
         env_ids: tuple[int, ...] | None,
         use_clone_body_pattern: bool,
         stage,
-    ) -> tuple[tuple[str, ...] | None, wp.transform, tuple[float, float, float], bool, tuple[int, ...] | None]:
+    ) -> NewtonSiteFrameView._SiteSpec:
         """Resolve one source prim into body patterns, local frame, and xform scale."""
         prim_path = prim.GetPath().pathString
         if prim.HasAPI(UsdPhysics.RigidBodyAPI) or prim.HasAPI(UsdPhysics.ArticulationRootAPI):
@@ -348,7 +367,14 @@ class NewtonSiteFrameView(BaseFrameView):
                                 raise RuntimeError(
                                     f"FrameView destination root '{destination_root}' does not end with '{suffix}'."
                                 )
-                            return (destination_root[: -len(suffix)],), wp.transform(pos, quat), scale, False, env_ids
+                            return self._SiteSpec(
+                                (destination_root[: -len(suffix)],),
+                                wp.transform(pos, quat),
+                                scale,
+                                False,
+                                env_ids,
+                                source_body_path=body_path,
+                            )
                         body_patterns = []
                         for env_id in env_ids:
                             destination_root = destination_template.format(env_id)
@@ -357,7 +383,14 @@ class NewtonSiteFrameView(BaseFrameView):
                                     f"FrameView destination root '{destination_root}' does not end with '{suffix}'."
                                 )
                             body_patterns.append(destination_root[: -len(suffix)])
-                        return tuple(body_patterns), wp.transform(pos, quat), scale, False, env_ids
+                        return self._SiteSpec(
+                            tuple(body_patterns),
+                            wp.transform(pos, quat),
+                            scale,
+                            False,
+                            env_ids,
+                            source_body_path=body_path,
+                        )
                     else:
                         raise RuntimeError(f"FrameView source body '{body_path}' is not under '{source_root}'.")
                     if use_clone_body_pattern:
@@ -366,7 +399,9 @@ class NewtonSiteFrameView(BaseFrameView):
                         body_patterns = tuple(destination_template.format(env_id) + suffix for env_id in env_ids)
                 else:
                     body_patterns = (body_path,)
-                return body_patterns, wp.transform(pos, quat), scale, False, env_ids
+                return self._SiteSpec(
+                    body_patterns, wp.transform(pos, quat), scale, False, env_ids, source_body_path=body_path
+                )
             body_prim = body_prim.GetParent()
 
         ref_path = source_root
@@ -377,7 +412,7 @@ class NewtonSiteFrameView(BaseFrameView):
                 ref_path = source_root[: -len(source_suffix)] if source_suffix else source_root
         ref_prim = stage.GetPrimAtPath(ref_path) if ref_path is not None else None
         pos, quat = sim_utils.resolve_prim_pose(prim, ref_prim if ref_prim and ref_prim.IsValid() else None)
-        return None, wp.transform(pos, quat), scale, source_root is not None, env_ids
+        return self._SiteSpec(None, wp.transform(pos, quat), scale, source_root is not None, env_ids)
 
     def _on_physics_ready(self, _event) -> None:
         """Callback invoked when the Newton model becomes available."""
@@ -404,51 +439,105 @@ class NewtonSiteFrameView(BaseFrameView):
 
         self._create_buffers(site_bodies, site_locals, site_scales)
 
+    def _resolve_body_indices_from_replication(self, spec: NewtonSiteFrameView._SiteSpec) -> list[int] | None:
+        """Resolve global body indices from replication metadata, one per environment.
+
+        Mirrors the injected-site path: the anchoring body is located once in its
+        source builder and per-environment indices come from the body offsets recorded
+        during replication, so the fully cloned body-label list is never pattern-matched.
+
+        Returns:
+            Global body indices ordered like :attr:`_SiteSpec.env_ids`, or ``None`` when
+            the frame cannot be resolved structurally (e.g. no clone plan, or the model
+            was built without replication metadata) and label matching must be used.
+        """
+        if spec.source_body_path is None or spec.env_ids is None:
+            return None
+        protos = NewtonManager._cl_protos
+        body_offsets = NewtonManager._cl_body_offsets
+        if not protos or not body_offsets:
+            return None
+        # The owning source builder is the one whose root is the longest prefix of the
+        # body path. This also covers bodies above the frame's own clone source (e.g. a
+        # separately cloned camera anchored to a robot link from another plan entry).
+        body_path = spec.source_body_path
+        owners = [source for source in protos if body_path == source or body_path.startswith(source + "/")]
+        if not owners:
+            return None
+        source = max(owners, key=len)
+        source_offsets = body_offsets.get(source)
+        if source_offsets is None:
+            return None
+        try:
+            local_index = list(protos[source].body_label).index(body_path)
+        except ValueError:
+            return None
+        body_indices: list[int] = []
+        for env_id in spec.env_ids:
+            offset = source_offsets.get(env_id)
+            if offset is None:
+                return None
+            body_indices.append(offset + local_index)
+        return body_indices
+
     def _initialize_from_specs(self, model) -> None:
-        """Initialize arrays directly from resolved specs and Newton body labels."""
-        body_labels = list(model.body_label)
-        # Exact label -> index map, built once. Replicated frames expand to one concrete
-        # body path per environment, so matching each against every label via regex is
-        # ``O(num_envs * num_bodies)`` (quadratic in ``num_envs``). Fast-pathing literal
-        # paths through this map keeps the common per-environment case linear; genuine
-        # regex patterns (e.g. the cloned ``.*`` pattern) still fall back to a full scan.
-        label_to_index = {label: idx for idx, label in enumerate(body_labels)}
+        """Initialize arrays directly from resolved specs and replication metadata.
+
+        Body-anchored frames resolve through :meth:`_resolve_body_indices_from_replication`
+        first; only frames without structural metadata fall back to matching the flat
+        Newton body labels.
+        """
+        body_labels: list[str] | None = None
+        label_to_index: dict[str, int] | None = None
         site_bodies: list[int] = []
         site_locals: list[list[float]] = []
         site_scales: list[tuple[float, float, float]] = []
 
-        for body_patterns, xform, scale, per_world, env_ids in self._site_specs:
-            if body_patterns is None:
-                if per_world:
+        for spec in self._site_specs:
+            if spec.body_patterns is None:
+                if spec.per_world:
                     if NewtonManager._world_xforms is None:
                         raise RuntimeError(f"FrameView '{self._prim_path}' needs Newton cloned-world transforms.")
-                    world_ids = range(len(NewtonManager._world_xforms)) if env_ids is None else env_ids
+                    world_ids = range(len(NewtonManager._world_xforms)) if spec.env_ids is None else spec.env_ids
                     for world_id in world_ids:
                         world_xform = NewtonManager._world_xforms[world_id]
                         site_bodies.append(WORLD_BODY_INDEX)
-                        site_locals.append([float(v) for v in wp.transform_multiply(world_xform, xform)])
-                        site_scales.append(scale)
+                        site_locals.append([float(v) for v in wp.transform_multiply(world_xform, spec.xform)])
+                        site_scales.append(spec.scale)
                 else:
                     site_bodies.append(WORLD_BODY_INDEX)
-                    site_locals.append([float(v) for v in xform])
-                    site_scales.append(scale)
+                    site_locals.append([float(v) for v in spec.xform])
+                    site_scales.append(spec.scale)
                 continue
 
-            for body_pattern in body_patterns:
-                exact_index = label_to_index.get(body_pattern) if not _has_regex_tokens(body_pattern) else None
-                if exact_index is not None:
-                    matched_indices = [exact_index]
-                else:
-                    matched_indices, _ = resolve_matching_names(body_pattern, body_labels, raise_when_no_match=False)
-                if not matched_indices:
-                    raise ValueError(
-                        f"FrameView '{self._prim_path}' body pattern '{body_pattern}' matched no Newton bodies."
-                    )
+            body_indices = self._resolve_body_indices_from_replication(spec)
+            if body_indices is None:
+                # Fallback: match patterns against the flat Newton body labels. Literal
+                # paths use an exact dict lookup (built once, lazily) so replicated
+                # frames stay linear in ``num_envs``; genuine regex patterns (e.g. the
+                # cloned ``.*`` pattern) still fall back to a full scan.
+                if body_labels is None or label_to_index is None:
+                    body_labels = list(model.body_label)
+                    label_to_index = {label: idx for idx, label in enumerate(body_labels)}
+                body_indices = []
+                for body_pattern in spec.body_patterns:
+                    exact_index = label_to_index.get(body_pattern) if not _has_regex_tokens(body_pattern) else None
+                    if exact_index is not None:
+                        matched_indices = [exact_index]
+                    else:
+                        matched_indices, _ = resolve_matching_names(
+                            body_pattern, body_labels, raise_when_no_match=False
+                        )
+                    if not matched_indices:
+                        raise ValueError(
+                            f"FrameView '{self._prim_path}' body pattern '{body_pattern}' matched no Newton bodies."
+                        )
+                    body_indices.extend(matched_indices)
 
-                for body_idx in matched_indices:
-                    site_bodies.append(body_idx)
-                    site_locals.append([float(v) for v in xform])
-                    site_scales.append(scale)
+            for body_idx in body_indices:
+                site_bodies.append(body_idx)
+                site_locals.append([float(v) for v in spec.xform])
+                site_scales.append(spec.scale)
 
         self._create_buffers(site_bodies, site_locals, site_scales)
 

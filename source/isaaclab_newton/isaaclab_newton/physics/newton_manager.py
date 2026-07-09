@@ -334,6 +334,11 @@ class NewtonManager(PhysicsManager):
     # path. Single-model consumers (e.g. batched Newton IK) finalize a single-env
     # model from these and resolve it via ``resolve_clone_plan_source``.
     _cl_protos: dict[str, ModelBuilder] = {}
+    # Per-world body offsets recorded during replication, keyed by clone-plan source
+    # path then world index. A replicated body's global index is
+    # ``_cl_body_offsets[source][world] + source_local_index``, letting consumers
+    # (e.g. FrameView) resolve bodies without matching the renamed body labels.
+    _cl_body_offsets: dict[str, dict[int, int]] = {}
     _deformable_registry: list = []
     _per_world_builder_hooks: list[Callable[[ModelBuilder, int, list[float], list[float]], None]] = []
     _post_replicate_hooks: list[Callable[[ModelBuilder], None]] = []
@@ -845,6 +850,7 @@ class NewtonManager(PhysicsManager):
         NewtonManager._cl_fabric_body_bindings = None
         NewtonManager._world_xforms = None
         NewtonManager._cl_protos = {}
+        NewtonManager._cl_body_offsets = {}
         NewtonManager._pending_extended_state_attributes = set()
         NewtonManager._pending_extended_contact_attributes = set()
         NewtonManager._views = []
@@ -1322,7 +1328,7 @@ class NewtonManager(PhysicsManager):
             quaternions = torch.tensor([quat for _, quat in poses], dtype=torch.float32)
             mapping = torch.ones((1, len(env_paths)), dtype=torch.bool)
             replicate_args = (builder, (proto_path,), mapping, positions, quaternions, source_builders)
-            local_site_map, world_xforms = replicate_builder_mapping(
+            local_site_map, world_xforms, body_offsets = replicate_builder_mapping(
                 *replicate_args,
                 source_site_indices=source_site_indices,
                 env_root_sites=env_root_sites,
@@ -1334,6 +1340,7 @@ class NewtonManager(PhysicsManager):
                 (label, (None, per_world)) for label, per_world in local_site_map.items()
             )
             NewtonManager._world_xforms = world_xforms
+            NewtonManager._cl_body_offsets = body_offsets
             NewtonManager._num_envs = len(env_paths)
 
         cls.set_builder(builder)

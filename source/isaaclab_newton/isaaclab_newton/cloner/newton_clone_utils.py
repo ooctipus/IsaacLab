@@ -60,13 +60,22 @@ def replicate_builder_mapping(
     env_root_sites: dict[str, wp.transform] | None = None,
     per_world_builder_hooks: Sequence[Callable[[ModelBuilder, int, list[float], list[float]], None]] = (),
     post_replicate_hooks: Sequence[Callable[[ModelBuilder], None]] = (),
-) -> tuple[dict[str, list[list[int]]], list[wp.transform]]:
-    """Replicate source builders into per-env Newton worlds."""
+) -> tuple[dict[str, list[list[int]]], list[wp.transform], dict[str, dict[int, int]]]:
+    """Replicate source builders into per-env Newton worlds.
+
+    Returns:
+        Tuple of ``(local_site_map, world_xforms, body_offsets)``. *body_offsets* maps
+        ``{source_path: {world_index: body_offset}}``, where *body_offset* is the global
+        index of the source builder's first body in that world. Consumers can derive any
+        replicated body index as ``body_offset + source_local_index`` without matching
+        the renamed body labels.
+    """
     source_site_indices = source_site_indices or {}
     env_root_sites = env_root_sites or {}
     num_worlds = mapping.size(1)
     local_site_map: dict[str, list[list[int]]] = {}
     world_xforms: list[wp.transform] = []
+    body_offsets: dict[str, dict[int, int]] = {}
     source_world_indices = mapping.to(dtype=torch.int64).argmax(dim=1)
 
     for col in range(num_worlds):
@@ -79,8 +88,10 @@ def replicate_builder_mapping(
             local_site_map.setdefault(label, [[] for _ in range(num_worlds)])[col].append(site_idx)
 
         for row in torch.nonzero(mapping[:, col], as_tuple=True)[0].tolist():
-            source_builder = source_builders[sources[int(row)]]
+            source_path = sources[int(row)]
+            source_builder = source_builders[source_path]
             offset = builder.shape_count
+            body_offsets.setdefault(source_path, {})[col] = builder.body_count
             source_col = int(source_world_indices[int(row)])
             source_xform = wp.transform(positions[source_col], quaternions[source_col])
             builder.add_builder(
@@ -97,7 +108,7 @@ def replicate_builder_mapping(
 
     for hook in post_replicate_hooks:
         hook(builder)
-    return local_site_map, world_xforms
+    return local_site_map, world_xforms, body_offsets
 
 
 _BUILTIN_LABEL_TYPES: tuple[str, ...] = (
