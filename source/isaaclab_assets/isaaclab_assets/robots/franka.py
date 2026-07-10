@@ -14,10 +14,12 @@ The following configurations are available:
 Reference: https://github.com/frankaemika/franka_ros
 """
 
+import os
+
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ActuatorBaseCfg, ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 ##
 # Configuration
@@ -48,50 +50,54 @@ PHYSX_ACTUATOR_CFG: dict[str, ActuatorBaseCfg] = {
 }
 
 
+# Gains follow the MuJoCo Menagerie mjx_panda reference actuators (the tuning
+# validated for MJX cube-lift training). No velocity_limit_sim: a motor's speed
+# limit is not a solver-level clamp (PhysX maxJointVelocity), and MuJoCo/mjwarp
+# does not enforce one -- keeping both backends unclamped preserves parity. The MJCF's passive joint damping
+# (40 on joints 1-4, 2 on joints 5-7, 10 on the fingers) is folded into the
+# drive damping (kd = kv + joint damping) because the USD assets do not carry
+# passive joint damping on every backend:
+#   joints 1-2: kp 1000, kd 20 + 40   joints 3-4: kp 750, kd 4 + 40
+#   joints 5-7: kp  300, kd  2 + 2    fingers:    kp 350, kd 10 + 10
 NEWTON_ACTUATOR_CFG: dict[str, ActuatorBaseCfg] = {
     "panda_joint12": ImplicitActuatorCfg(
         joint_names_expr=["panda_joint[1-2]"],
         effort_limit_sim=87.0,
-        velocity_limit_sim=2.618,
-        stiffness=4500.0,
-        damping=450.0,
+        stiffness=1000.0,
+        damping=60.0,
         armature=0.1,
     ),
     "panda_joint34": ImplicitActuatorCfg(
         joint_names_expr=["panda_joint[3-4]"],
         effort_limit_sim=87.0,
-        velocity_limit_sim=2.618,
-        stiffness=3500.0,
-        damping=350.0,
+        stiffness=750.0,
+        damping=44.0,
         armature=0.1,
     ),
     "panda_forearm": ImplicitActuatorCfg(
         joint_names_expr=["panda_joint[5-7]"],
         effort_limit_sim=12.0,
-        velocity_limit_sim=5.253,
-        stiffness=2000.0,
-        damping=200.0,
+        stiffness=300.0,
+        damping=4.0,
         armature=0.1,
     ),
     "panda_hand": ImplicitActuatorCfg(
         joint_names_expr=["panda_finger_joint.*"],
-        # MuJoCo Menagerie drives the coupled Panda fingers with one tendon actuator
-        # using kp=100 N/m, kd=10 N*s/m, and force limits of +/-100 N on the
-        # split tendon. With 0.5 tendon coefficients on both finger joints, the
-        # independent-joint approximation is half those values per finger.
-        effort_limit_sim=50.0,
-        stiffness=50.0,
-        damping=5.0,
+        effort_limit_sim=70.0,
+        stiffness=350.0,
+        damping=20.0,
         armature=0.1,
-        # Keep the watchdog above the real-hardware USD velocity limit; the MuJoCo
-        # reference model does not enforce that limit for simulated gripper commands.
-        velocity_limit_sim=5.0,
     ),
 }
 
 FRANKA_PANDA_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Robots/FrankaEmika/panda_instanceable.usd",
+        # menagerie-converted asset: carries the identified Franka inertial parameters that
+        # NEWTON_ACTUATOR_CFG is calibrated against (panda_instanceable authors collision-
+        # derived masses/inertias that differ substantially from the identified values)
+        usd_path=os.path.expanduser(
+            "/home/zhengyuz/mujoco_menagerie/franka_emika_panda/mjx_panda_renamed/mjx_panda_renamed/mjx_panda_renamed.usda"
+        ),
         activate_contact_sensors=False,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,

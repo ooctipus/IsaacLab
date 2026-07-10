@@ -22,31 +22,6 @@ FINGERTIP_LIST = ["panda_rightfinger", "panda_leftfinger"]
 THUMB_SENSOR = "panda_leftfinger_object_s"
 FINGER_SENSORS = [f"{name}_object_s" for name in FINGERTIP_LIST if name != THUMB_SENSOR.replace("_object_s", "")]
 
-
-def _spawn_franka_with_finger_equality(prim_path, cfg, translation=None, orientation=None, **kwargs):
-    """Spawn the Franka USD, then couple the two gripper fingers with a MuJoCo joint-equality.
-
-    Newton/mjwarp honors ``MjcEqualityJointAPI`` (``finger_joint2 = finger_joint1``); PhysX ignores it
-    and keeps its own coupling. Joint prims in the Panda USD are authored at articulation scope (not
-    inside the instanceable link prims), so they are editable directly - no de-instancing needed
-    (de-instancing breaks the finger contact sensors).
-    """
-    import isaaclab.sim as sim_utils  # noqa: PLC0415
-    from pxr import Sdf, Usd  # noqa: PLC0415
-
-    prim = sim_utils.spawn_from_usd(prim_path, cfg, translation, orientation, **kwargs)
-    for root in sim_utils.find_matching_prims(prim_path):
-        joints = {p.GetName(): p for p in Usd.PrimRange(root) if p.GetName().startswith("panda_finger_joint")}
-        j1, j2 = joints.get("panda_finger_joint1"), joints.get("panda_finger_joint2")
-        if j1 is None or j2 is None:
-            continue
-        j2.AddAppliedSchema("MjcEqualityJointAPI")
-        j2.CreateRelationship("mjc:target").SetTargets([j1.GetPath()])
-        j2.CreateAttribute("mjc:coef0", Sdf.ValueTypeNames.Double).Set(0.0)
-        j2.CreateAttribute("mjc:coef1", Sdf.ValueTypeNames.Double).Set(1.0)
-    return prim
-
-
 @configclass
 class FrankaSceneCfg(dexsuite.SceneCfg):
     """Franka scene for the dexsuite lift/reorient tasks.
@@ -62,9 +37,12 @@ class FrankaSceneCfg(dexsuite.SceneCfg):
     def __post_init__(self):
         super().__post_init__()
         self.robot.spawn.activate_contact_sensors = True
-        # author a MuJoCo finger-coupling equality at spawn (read by Newton/mjwarp; PhysX ignores it)
-        self.robot.spawn.func = _spawn_franka_with_finger_equality
-        actuator_cfg = preset(physx=PHYSX_ACTUATOR_CFG, newton_mjwarp=NEWTON_ACTUATOR_CFG, default=PHYSX_ACTUATOR_CFG)
+        # the converted menagerie asset already authors the finger-coupling mimic in its
+        # physics payload; re-enable _spawn_franka_with_finger_equality only for assets
+        # that lack it (e.g. panda_instanceable)
+        # menagerie-reference gains on every backend; PHYSX_ACTUATOR_CFG keeps the
+        # upstream tuning for the classic (non-dexsuite) franka tasks
+        actuator_cfg = preset(physx=NEWTON_ACTUATOR_CFG, newton_mjwarp=NEWTON_ACTUATOR_CFG, default=NEWTON_ACTUATOR_CFG)
         self.robot.actuators = actuator_cfg
         self.robot.init_state.rot = (0.0, 0.0, 1.0, 0.0)
         for link_name in FINGERTIP_LIST:
@@ -72,7 +50,7 @@ class FrankaSceneCfg(dexsuite.SceneCfg):
                 self,
                 f"{link_name}_object_s",
                 ContactSensorCfg(
-                    prim_path="{ENV_REGEX_NS}/Robot/" + link_name,
+                    prim_path="{ENV_REGEX_NS}/Robot/Geometry/panda_link0/panda_link1/panda_link2/panda_link3/panda_link4/panda_link5/panda_link6/panda_link7/panda_hand/" + link_name,
                     filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"],
                 ),
             )

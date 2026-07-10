@@ -829,9 +829,6 @@ def activate_contact_sensors(prim_path: str, threshold: float = 0.0, stage: Usd.
         # get current prim
         child_prim = all_prims.pop(0)
         # check if prim is a rigid body
-        # nested rigid bodies are not allowed by SDK so we can safely assume that
-        # if a prim has a rigid body API, it is a rigid body and we don't need to
-        # check its children
         if child_prim.HasAPI(UsdPhysics.RigidBodyAPI):
             # set sleep threshold to zero
             child_applied = child_prim.GetAppliedSchemas()
@@ -844,9 +841,9 @@ def activate_contact_sensors(prim_path: str, threshold: float = 0.0, stage: Usd.
             safe_set_attribute_on_usd_prim(child_prim, "physxContactReport:threshold", threshold, camel_case=False)
             # increment number of contact sensors
             num_contact_sensors += 1
-        else:
-            # add all children to tree
-            all_prims += child_prim.GetChildren()
+        # keep descending: articulation links may be authored as nested rigid bodies
+        # (e.g. MuJoCo-converted assets), so a rigid body can have rigid-body children
+        all_prims += child_prim.GetChildren()
     # check if no contact sensors were found
     if num_contact_sensors == 0:
         descendant_count = 0

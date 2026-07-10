@@ -37,7 +37,7 @@ BASE_CAMERA_CFG = CameraCfg(
 )
 
 WRIST_CAMERA_CFG = CameraCfg(
-    prim_path="/World/envs/env_.*/Robot/panda_hand/Camera",
+    prim_path="/World/envs/env_.*/Robot/Geometry/panda_link0/panda_link1/panda_link2/panda_link3/panda_link4/panda_link5/panda_link6/panda_link7/panda_hand/Camera",
     offset=CameraCfg.OffsetCfg(
         pos=(0.038, -0.38, -0.18),
         rot=(0.641, 0.641, -0.299, 0.299),
@@ -85,7 +85,7 @@ BASE_RAYCASTER_CAMERA_CFG = MultiMeshRayCasterCameraCfg(
 )
 
 WRIST_RAYCASTER_CAMERA_CFG = MultiMeshRayCasterCameraCfg(
-    prim_path="/World/envs/env_.*/Robot/panda_hand/Camera",
+    prim_path="/World/envs/env_.*/Robot/Geometry/panda_link0/panda_link1/panda_link2/panda_link3/panda_link4/panda_link5/panda_link6/panda_link7/panda_hand/Camera",
     offset=MultiMeshRayCasterCameraCfg.OffsetCfg(
         pos=(0.038, -0.38, -0.18),
         rot=(0.641, 0.641, -0.299, 0.299),
