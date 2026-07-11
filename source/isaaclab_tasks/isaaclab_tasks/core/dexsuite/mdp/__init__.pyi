@@ -4,6 +4,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 __all__ = [
+    "TemporalDRRelativeJointPositionAction",
+    "TemporalDRRelativeJointPositionActionCfg",
     "ObjectUniformPoseCommandCfg",
     "DifficultyScheduler",
     "initial_final_interpolate_fn",
@@ -24,6 +26,8 @@ __all__ = [
     "out_of_bound",
 ]
 
+from .actions import TemporalDRRelativeJointPositionAction
+from .actions_cfg import TemporalDRRelativeJointPositionActionCfg
 from .commands import ObjectUniformPoseCommandCfg
 from .curriculums import DifficultyScheduler, initial_final_interpolate_fn
 from .observations import (

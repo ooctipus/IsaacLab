@@ -51,9 +51,12 @@ PHYSX_ACTUATOR_CFG: dict[str, ActuatorBaseCfg] = {
 
 
 # Gains follow the MuJoCo Menagerie mjx_panda reference actuators (the tuning
-# validated for MJX cube-lift training). No velocity_limit_sim: a motor's speed
-# limit is not a solver-level clamp (PhysX maxJointVelocity), and MuJoCo/mjwarp
-# does not enforce one -- keeping both backends unclamped preserves parity. The MJCF's passive joint damping
+# validated for MJX cube-lift training). velocity_limit is the datasheet motor
+# speed (feeds terminations/rewards via the data buffers). velocity_limit_sim is
+# set to ~10x the motor limit: it is NOT a behavior clamp (a motor's speed limit
+# is not a solver constraint, and mjwarp does not enforce one) but a numerical
+# guard -- without it, PhysX reset-interpenetration kicks can blow up to NaN at
+# large env counts. The MJCF's passive joint damping
 # (40 on joints 1-4, 2 on joints 5-7, 10 on the fingers) is folded into the
 # drive damping (kd = kv + joint damping) because the USD assets do not carry
 # passive joint damping on every backend:
@@ -63,6 +66,8 @@ NEWTON_ACTUATOR_CFG: dict[str, ActuatorBaseCfg] = {
     "panda_joint12": ImplicitActuatorCfg(
         joint_names_expr=["panda_joint[1-2]"],
         effort_limit_sim=87.0,
+        velocity_limit=2.175,
+        velocity_limit_sim=20.0,
         stiffness=1000.0,
         damping=60.0,
         armature=0.1,
@@ -70,6 +75,8 @@ NEWTON_ACTUATOR_CFG: dict[str, ActuatorBaseCfg] = {
     "panda_joint34": ImplicitActuatorCfg(
         joint_names_expr=["panda_joint[3-4]"],
         effort_limit_sim=87.0,
+        velocity_limit=2.175,
+        velocity_limit_sim=20.0,
         stiffness=750.0,
         damping=44.0,
         armature=0.1,
@@ -77,15 +84,34 @@ NEWTON_ACTUATOR_CFG: dict[str, ActuatorBaseCfg] = {
     "panda_forearm": ImplicitActuatorCfg(
         joint_names_expr=["panda_joint[5-7]"],
         effort_limit_sim=12.0,
+        velocity_limit=2.61,
+        velocity_limit_sim=25.0,
         stiffness=300.0,
         damping=4.0,
         armature=0.1,
     ),
+    # The real hand has a single motor driving both fingers through a coupling; model it the
+    # same way in sim: one drive on finger_joint1, finger_joint2 passive and coupled via the
+    # mimic (PhysX) / equality (Newton) constraint. Driving both joints is also inconsistent
+    # across engines: the Newton/MuJoCo import keeps finger_joint2 unactuated (its drive is
+    # silently dropped), so a two-drive config grips ~2x harder on PhysX than on Newton.
+    # Single-drive measured transmission matches across engines (F/tau 0.45 vs 0.44).
     "panda_hand": ImplicitActuatorCfg(
-        joint_names_expr=["panda_finger_joint.*"],
+        joint_names_expr=["panda_finger_joint1"],
         effort_limit_sim=70.0,
+        velocity_limit=0.2,
+        velocity_limit_sim=2.0,
         stiffness=350.0,
         damping=20.0,
+        armature=0.1,
+    ),
+    "panda_finger2_passive": ImplicitActuatorCfg(
+        joint_names_expr=["panda_finger_joint2"],
+        effort_limit_sim=1.0,
+        velocity_limit=0.2,
+        velocity_limit_sim=2.0,
+        stiffness=0.0,
+        damping=0.0,
         armature=0.1,
     ),
 }
@@ -95,9 +121,7 @@ FRANKA_PANDA_CFG = ArticulationCfg(
         # menagerie-converted asset: carries the identified Franka inertial parameters that
         # NEWTON_ACTUATOR_CFG is calibrated against (panda_instanceable authors collision-
         # derived masses/inertias that differ substantially from the identified values)
-        usd_path=os.path.expanduser(
-            "/home/zhengyuz/mujoco_menagerie/franka_emika_panda/mjx_panda_renamed/mjx_panda_renamed/mjx_panda_renamed.usda"
-        ),
+        usd_path=os.path.expanduser("/home/zhengyuz/Downloads/panda/franka_panda.usda"),
         activate_contact_sensors=False,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,

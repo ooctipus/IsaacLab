@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from isaaclab.assets import ArticulationCfg
+from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import CameraCfg, ContactSensorCfg
@@ -45,6 +46,8 @@ class FrankaSceneCfg(dexsuite.SceneCfg):
         actuator_cfg = preset(physx=NEWTON_ACTUATOR_CFG, newton_mjwarp=NEWTON_ACTUATOR_CFG, default=NEWTON_ACTUATOR_CFG)
         self.robot.actuators = actuator_cfg
         self.robot.init_state.rot = (0.0, 0.0, 1.0, 0.0)
+        # keep action targets off the hard stops: the policy must not learn to ride
+        # joint limits (a compliant-limit affordance that does not transfer across engines)
         for link_name in FINGERTIP_LIST:
             setattr(
                 self,
@@ -63,7 +66,11 @@ class FrankaSceneCfg(dexsuite.SceneCfg):
 
 @configclass
 class FrankaRelJointPosActionCfg:
-    action = mdp.RelativeJointPositionActionCfg(asset_name="robot", joint_names=[".*"], scale=0.1)
+    # temporal-response DR: per-episode action latency (0-2 steps) + bandwidth (EMA beta)
+    # randomization so the policy cannot overfit one engine's transient texture
+    action = mdp.TemporalDRRelativeJointPositionActionCfg(
+        asset_name="robot", joint_names=[".*"], scale=0.1, delay_steps=(0, 2), ema_beta_range=(0.5, 1.0)
+    )
 
 
 @configclass
@@ -107,6 +114,27 @@ class FrankaMixinCfg:
         self.events.reset_robot_wrist_joint.params["asset_cfg"] = SceneEntityCfg("robot", joint_names="panda_joint7")
         # Franka base is rotated 180 deg about z, so the workspace mirrors to positive x.
         self.commands.object_pose.ranges.pos_x = (0.3, 0.7)
+        # keep the generic gain randomization off the fingers: their damping is randomized
+        # by the dedicated closing-speed term below, and stacking the x2 scale on top would
+        # push kd into the regime where residual vibration cancels the grip force entirely.
+        self.events.joint_stiffness_and_damping.params["asset_cfg"] = SceneEntityCfg(
+            "robot", joint_names="panda_joint.*"
+        )
+        # gripper closing-speed randomization: closing speed = stiffness * action_scale /
+        # damping, so kd in [175, 750] spans 0.2 .. ~0.05 m/s (real Franka hand: 0.05-0.2)
+        # while the stall force stays at the damping-independent 35 N. A policy that cannot
+        # predict closure timing must gate lifting on the contact sensor instead.
+        self.events.gripper_closing_speed = EventTerm(
+            func=mdp.randomize_actuator_gains,
+            mode="startup",
+            params={
+                # only the driven finger joint: finger_joint2 is passive (single-motor hand);
+                # adding damping to the passive joint would drag the mimic asymmetrically.
+                "asset_cfg": SceneEntityCfg("robot", joint_names="panda_finger_joint1"),
+                "damping_distribution_params": (0.0, 575.0),
+                "operation": "add",
+            },
+        )
 
 
 @configclass
@@ -116,7 +144,10 @@ class DexsuiteFrankaReorientEnvCfg(FrankaMixinCfg, dexsuite.DexsuiteReorientEnvC
 
 @configclass
 class DexsuiteFrankaReorientEnvCfg_PLAY(FrankaMixinCfg, dexsuite.DexsuiteReorientEnvCfg_PLAY):
-    pass
+    def __post_init__(self):
+        super().__post_init__()
+        # deploy/eval at the nominal gripper speed (0.2 m/s): no closing-speed randomization
+        self.events.gripper_closing_speed = None
 
 
 @configclass
@@ -126,4 +157,7 @@ class DexsuiteFrankaLiftEnvCfg(FrankaMixinCfg, dexsuite.DexsuiteLiftEnvCfg):
 
 @configclass
 class DexsuiteFrankaLiftEnvCfg_PLAY(FrankaMixinCfg, dexsuite.DexsuiteLiftEnvCfg_PLAY):
-    pass
+    def __post_init__(self):
+        super().__post_init__()
+        # deploy/eval at the nominal gripper speed (0.2 m/s): no closing-speed randomization
+        self.events.gripper_closing_speed = None

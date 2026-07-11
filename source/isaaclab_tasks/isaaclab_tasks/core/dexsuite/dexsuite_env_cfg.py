@@ -192,6 +192,10 @@ class ObservationsCfg:
             # and quaternion are unlikely to exceed -2 to 2 range
             clip=(-2.0, 2.0),
             params={
+                # pose-only: body velocities are the most engine-sensitive observables
+                # (derivative signals amplify solver differences) and do not transfer
+                # across physics backends; the observation history carries velocity info
+                "include_vel": False,   
                 "body_asset_cfg": SceneEntityCfg("robot"),
                 "base_asset_cfg": SceneEntityCfg("robot"),
             },
@@ -367,7 +371,7 @@ class RewardsCfg:
 
     action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-0.005)
 
-    action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-0.005)
+    action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-0.025)
 
     fingers_to_object = RewTerm(func=mdp.object_ee_distance, params={"std": 0.4}, weight=0.25)
 
@@ -492,7 +496,7 @@ class DexsuiteReorientEnvCfg(ManagerBasedEnvCfg):
     def __post_init__(self):
         """Post initialization."""
         # general settings
-        self.decimation = 2  # 50 Hz
+        self.decimation = 4  # 50 Hz
 
         # *single-goal setup
         self.commands.object_pose.resampling_time_range = (2.0, 3.0)
@@ -524,6 +528,7 @@ class DexsuiteReorientEnvCfg_PLAY(DexsuiteReorientEnvCfg):
         super().__post_init__()
         self.commands.object_pose.debug_vis = True
         self.curriculum.adr.params["init_difficulty"] = self.curriculum.adr.params["max_difficulty"]
+        self.curriculum.adr.params["promotion_only"] = True
 
 
 class DexsuiteLiftEnvCfg_PLAY(DexsuiteLiftEnvCfg):
@@ -534,3 +539,4 @@ class DexsuiteLiftEnvCfg_PLAY(DexsuiteLiftEnvCfg):
         self.commands.object_pose.debug_vis = True
         self.commands.object_pose.position_only = True
         self.curriculum.adr.params["init_difficulty"] = self.curriculum.adr.params["max_difficulty"]
+        self.curriculum.adr.params["promotion_only"] = True

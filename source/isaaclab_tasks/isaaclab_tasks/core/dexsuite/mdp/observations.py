@@ -42,6 +42,7 @@ def body_state_b(
     env: ManagerBasedRLEnv,
     body_asset_cfg: SceneEntityCfg,
     base_asset_cfg: SceneEntityCfg,
+    include_vel: bool = True,
 ) -> torch.Tensor:
     """Body state (pos, quat, lin vel, ang vel) in the base asset's root frame.
 
@@ -72,7 +73,13 @@ def body_state_b(
     body_lin_vel_b = quat_apply_inverse(root_quat_w, body_lin_vel_w)
     body_ang_vel_b = quat_apply_inverse(root_quat_w, body_ang_vel_w)
     # concate and return
-    out = torch.cat((body_pos_b, body_quat_b, body_lin_vel_b, body_ang_vel_b), dim=1)
+    # note: body velocities are the most engine/solver-sensitive observables (derivative
+    # signals amplify integrator and contact-response differences); pose-only states with
+    # observation history transfer across physics backends, velocity states do not.
+    if include_vel:
+        out = torch.cat((body_pos_b, body_quat_b, body_lin_vel_b, body_ang_vel_b), dim=1)
+    else:
+        out = torch.cat((body_pos_b, body_quat_b), dim=1)
     return out.view(env.num_envs, -1)
 
 
