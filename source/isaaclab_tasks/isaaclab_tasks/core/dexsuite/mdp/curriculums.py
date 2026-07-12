@@ -27,8 +27,7 @@ def initial_final_interpolate_fn(env: ManagerBasedRLEnv, env_id, data, initial_v
     frac = difficulty_term.difficulty_frac
     if frac < 0.1:
         return mdp.modify_env_param.NO_CHANGE
-    # initial/final values and frac are Python scalars: interpolate host-side (a device
-    # round-trip here costs several stream syncs per ADR term on every reset batch)
+    # Python scalars: interpolate host-side, a device round-trip syncs the stream
     return _recurse(initial_value, final_value, data, frac)
 
 
@@ -81,7 +80,6 @@ class DifficultyScheduler(ManagerTermBase):
             self.current_adr_difficulties[env_ids] + 1,
             demot,
         ).clamp(min=min_difficulty, max=max_difficulty)
-        # expose as a Python float: every downstream ADR term compares and interpolates with
-        # this value, so paying one device sync here replaces one per term per reset batch
+        # Python float: downstream ADR terms compare and interpolate host-side
         self.difficulty_frac = (torch.mean(self.current_adr_difficulties) / max(max_difficulty, 1)).item()
         return self.difficulty_frac

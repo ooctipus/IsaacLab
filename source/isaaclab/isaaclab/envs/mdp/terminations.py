@@ -112,8 +112,7 @@ def joint_pos_out_of_manual_limit(
 class joint_vel_out_of_limit(ManagerTermBase):
     """Terminate when the asset's joint velocities are outside of the soft joint limits.
 
-    The joint indices are materialized as a device tensor once at construction: indexing with a
-    per-call Python list re-uploads the indices with a synchronizing copy every step.
+    The joint indices are materialized as a device tensor once at construction.
     """
 
     def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedRLEnv):

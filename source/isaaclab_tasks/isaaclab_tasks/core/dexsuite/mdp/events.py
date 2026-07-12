@@ -125,9 +125,7 @@ class conditional_reset(ManagerTermBase):
     On the first reset, the wrapped terms are re-rolled and the states satisfying
     :paramref:`valid_criteria` are harvested into a buffer of :paramref:`buffer_size_per_group`
     samples per group (rejection sampling, amortized once). Every subsequent reset restores a
-    random banked sample — the wrapped terms and criteria never run again, so the hot path is
-    a single state gather and write (the per-reset criteria kernels alone cost ~8 ms/step at
-    8192 environments).
+    random banked sample — the wrapped terms and criteria never run again.
 
     The captured state is the reset surface of the scene (see :func:`get_reset_state`):
     root pose/velocity plus joint positions/velocities of every articulation, and the root
@@ -220,18 +218,12 @@ class conditional_reset(ManagerTermBase):
                     " reset terms for those environments."
                 )
             self._prefilled = True
-            # prefill is the only consumer of the wrapped terms and criteria: drop them so
-            # everything they hold (collision meshes, vertex arrays, point clouds, sampler
-            # state) is garbage-collected — the hot path only touches the bank. The dicts
-            # are the very objects stored in the term params, so clearing them in place
-            # drops the references permanently.
+            # drop the prefill-only terms/criteria so their device memory is freed
             terms.clear()
             valid_criteria.clear()
 
-        # every reset restores a banked state from the env's own asset-combination
-        # partition; ``rand * fill`` floors to a uniform draw in ``[0, fill)`` per env,
-        # so partially filled partitions stay in-range. No sampling, no criteria, no
-        # host synchronization.
+        # ``rand * fill`` floors to a uniform draw in ``[0, fill)``, so partially filled
+        # partitions stay in-range
         groups = self._group[env_ids]
         donor = (torch.rand(len(env_ids), device=env_ids.device) * self._fill[groups]).long()
         rows = groups * buffer_size_per_group + donor
@@ -324,10 +316,8 @@ def _object_points_mesh_min(
     dist = out_min[i]
     for m in range(mesh_ids.shape[0]):
         point_local = wp.transform_point(wp.transform_inverse(body_pose[env, mesh_body[m]]), point_world)
-        # bounding-sphere prefilter: the true signed distance is at least
-        # |p - center| - radius, so a point that cannot get under the clearance
-        # threshold (nor be contained) skips the BVH winding-number query. This is
-        # exact for the criterion: skipped pairs cannot flip `out_min >= min_clearance`.
+        # bounding-sphere prefilter: |p - center| - radius lower-bounds the signed distance,
+        # so skipped pairs cannot flip ``out_min >= min_clearance``
         lower_bound = wp.length(point_local - mesh_center[m]) - mesh_radius[m]
         if lower_bound > min_clearance and lower_bound > 0.0:
             continue

@@ -141,7 +141,7 @@ class TerminationManager(ManagerBase):
             env_ids = slice(None)
         # add to episode dict
         extras = {}
-        # move to host once: per-element .item() on a device tensor syncs per term
+        # move to host once; per-element .item() would sync per term
         last_episode_done_stats = self._last_episode_dones.float().mean(dim=0).cpu()
         for i, key in enumerate(self._term_names):
             # store information

@@ -1047,8 +1047,7 @@ class randomize_physics_scene_gravity(ManagerTermBase):
             operation: The operation to apply ('add', 'scale', or 'abs').
             distribution: The distribution type (cached at init, param ignored at runtime).
         """
-        # rewrite the baked device tensors only when the (curriculum-driven) ranges actually
-        # change: each element write is a small host-to-device copy, paid per reset batch
+        # rewrite the baked device tensors only when the curriculum-driven ranges change
         params = (tuple(gravity_distribution_params[0]), tuple(gravity_distribution_params[1]))
         if params != getattr(self, "_last_gravity_params", None):
             self._last_gravity_params = params
@@ -1790,8 +1789,7 @@ class reset_root_state_uniform(ManagerTermBase):
     dictionary are ``x``, ``y``, ``z``, ``roll``, ``pitch``, and ``yaw``. The values are tuples of the form
     ``(min, max)``. If the dictionary does not contain a key, the position or velocity is set to zero for that axis.
 
-    The range dictionaries are materialized as device tensors once at construction: rebuilding
-    them on every reset performs a synchronizing host-to-device copy per call.
+    The range dictionaries are materialized as device tensors once at construction.
     """
 
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedEnv):

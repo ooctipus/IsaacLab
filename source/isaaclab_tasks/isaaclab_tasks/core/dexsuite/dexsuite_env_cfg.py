@@ -313,14 +313,8 @@ class EventCfg:
         },
     )
 
-    # The state-writing reset terms run under conditional_reset so every downstream task
-    # gets validity-guaranteed resets: the wrapped terms roll once per reset, and envs whose
-    # fresh state fails valid_criteria are patched from a prefilled buffer of known-valid
-    # states. The base ships the robot-agnostic object-vs-robot criterion; robot configs add
-    # their static-obstacle geometry to ``params["valid_criteria"]``.
+    # robot configs add their static-obstacle geometry to ``params["valid_criteria"]``
     conditional_reset = EventTerm(
-        # resolvable string: keeps the implementation module (warp/pxr imports) out of
-        # config parsing, which runs before the simulation app starts
         func="isaaclab_tasks.core.dexsuite.mdp.events:conditional_reset",
         mode="reset",
         params={
@@ -385,10 +379,6 @@ class EventCfg:
                     },
                 ),
             },
-            # after prefill, every reset restores a banked criteria-validated state; the
-            # wrapped terms and criteria never run again (measured at 8192 envs: 30.0
-            # ms/step with per-reset criteria vs ~21 banked — the mesh winding-number
-            # criterion alone is ~6 ms/step when run every reset)
             "buffer_size_per_group": 2048,
             "valid_criteria": {
                 "object_robot_clearance": mdp.MeshClearanceCfg(
@@ -400,12 +390,9 @@ class EventCfg:
                 ),
                 "robot_table_clearance": mdp.SlabClearanceCfg(
                     asset_name="robot",
-                    # robot configs must fill this, excluding their ground-mounted base link
-                    # (else the ground check is unsatisfiable); enforced by config validation
-                    body_names=MISSING,
+                    body_names=MISSING,  # overridden by robot configs
                     object_name="object",
-                    # table top over its footprint; ground plane everywhere
-                    obstacle_slabs=[((-0.95, -0.15), (-0.75, 0.75), 0.255), (None, None, 0.0)],
+                    obstacle_slabs=[((-0.95, -0.15), (-0.75, 0.75), 0.255), (None, None, 0.0)],  # table dimension
                     num_object_points=64,
                     min_clearance=0.02,
                 ),

@@ -189,10 +189,8 @@ class CircularBuffer:
             self._buffer.narrow(k_pos, k - 1, 1).copy_(data.unsqueeze(k_pos))
 
         if self._need_reset:
-            # branchless first-push backfill: boolean-mask indexing runs a host-synchronizing
-            # nonzero, and the any() gate converts a device scalar to a Python bool — both
-            # stall the stream every append while resets are pending. torch.where with
-            # ``out=`` keeps the backfill entirely on-device.
+            # branchless backfill: boolean-mask indexing and an any() gate both synchronize
+            # the stream; torch.where(out=...) stays on-device
             is_first_push = self._num_pushes == 0
             if self._stack_dim_internal is None:
                 mask = is_first_push.view(1, -1, *([1] * (data.ndim - 1)))

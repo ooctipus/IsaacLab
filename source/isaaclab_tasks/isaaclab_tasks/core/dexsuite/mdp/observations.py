@@ -45,9 +45,7 @@ class body_state_b(ManagerTermBase):
     The state for each body is stacked horizontally as
     ``[position(3), quaternion(4)(wxyz), linvel(3), angvel(3)]`` and then concatenated over bodies.
 
-    The body indices are baked to a device tensor at construction (indexing with a Python
-    list uploads it with a synchronizing copy on every call), and the velocity gathers only
-    run when velocities are requested.
+    The body indices are baked to a device tensor at construction.
     """
 
     def __init__(self, cfg: ObservationTermCfg, env: ManagerBasedRLEnv):

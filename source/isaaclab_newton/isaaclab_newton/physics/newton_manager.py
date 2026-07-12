@@ -273,9 +273,7 @@ class NewtonManager(PhysicsManager):
     # Per-world reset masks (allocated in start_simulation, consumed in step)
     _world_reset_mask: wp.array | None = None  # (num_envs,) wp.bool — for SolverKamino.reset(world_mask=...)
     _fk_reset_mask: wp.array | None = None  # (articulation_count,) wp.bool — for eval_fk(mask=...)
-    # host-side mirror of "any bit set in the reset masks": lets step() skip the
-    # mask-consuming launches on the (typical) sub-steps where nothing was dirtied
-    _reset_masks_dirty: bool = True
+    _reset_masks_dirty: bool = True  # host-side mirror of "any bit set in the reset masks"
 
     # Newton actuator adapter (owns actuators and double-buffered states)
     _adapter: NewtonActuatorAdapter | None = None
@@ -674,28 +672,16 @@ class NewtonManager(PhysicsManager):
             else:
                 logger.warning("Newton deferred CUDA graph capture failed; using eager execution")
 
-        # Ensure body_q is up-to-date before solvers read rigid transforms.
-        # After env resets or kinematic root writes, joint_q is written but
-        # body_q is stale until FK runs. Collision-based solvers need this for
-        # broadphase/narrowphase; collider-based solvers such as MPM need it
-        # for their internal collider queries.
-        # Only runs FK for dirtied articulations via the accumulated mask.
-        # The whole consumption block is skipped when no write dirtied the masks
-        # since the last step (clean masks make every launch a GPU no-op, but the
-        # host dispatch still costs ~2 launches + 2 memsets per sim step).
+        # Consume the reset masks: refresh body_q for dirtied articulations (solvers read
+        # rigid transforms before stepping) and clear the MuJoCo solver's per-world
+        # carry-over (qacc_warmstart, qfrc_applied) for teleported environments — stale
+        # warm-start accelerations kick the lightest DOFs at episode birth. ctrl/act are
+        # NOT cleared: actuator targets are rewritten each step and zeroing them drops one
+        # step of drive action. Skipped entirely when nothing dirtied the masks.
         if cls._reset_masks_dirty:
             if cls._needs_collision_pipeline or cls._needs_fk_before_step:
                 eval_fk(cls._model, cls._state_0.joint_q, cls._state_0.joint_qd, cls._state_0, cls._fk_reset_mask)
 
-            # Clear the MuJoCo solver's per-world carry-over for environments whose state
-            # was teleported since the last step. The solver warm-starts each solve from the
-            # previous step's accelerations (qacc_warmstart); after a teleport those belong
-            # to a different state and the phantom correction lands on the lightest DOFs
-            # (measured: a passive mimic-coupled finger spikes past its motor velocity limit
-            # at episode birth; clearing removes the spike, 0.58 -> 0.004 rad-equiv/s).
-            # Applied-force inputs are stale for the same reason. ctrl/act are NOT cleared
-            # here: actuator targets are rewritten each step and zeroing them drops one step
-            # of drive action.
             mjw_data = getattr(cls._solver, "mjw_data", None)
             if cls._world_reset_mask is not None and mjw_data is not None:
                 wp.launch(
