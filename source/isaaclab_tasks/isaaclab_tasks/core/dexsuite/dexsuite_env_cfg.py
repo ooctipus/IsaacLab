@@ -504,7 +504,7 @@ class PhysicsCfg(PresetCfg):
             use_mujoco_contacts=False,
             ccd_iterations=35,
         ),
-        collision_cfg=NewtonCollisionPipelineCfg(rigid_contact_max=2000000),
+        collision_cfg=NewtonCollisionPipelineCfg(rigid_contact_max=4000000),
         default_shape_cfg=NewtonShapeCfg(),
         num_substeps=2,
         debug_mode=False,
