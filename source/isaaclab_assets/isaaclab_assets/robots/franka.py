@@ -102,7 +102,7 @@ FRANKA_PANDA_CFG = ArticulationCfg(
             velocity_limit=0.2,
             velocity_limit_sim=2.0,
             stiffness=350.0,
-            damping=20.0,
+            damping=175.0,
             armature=0.1,
         ),
         "panda_finger2_passive": ImplicitActuatorCfg(

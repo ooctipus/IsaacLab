@@ -27,11 +27,9 @@ def initial_final_interpolate_fn(env: ManagerBasedRLEnv, env_id, data, initial_v
     frac = difficulty_term.difficulty_frac
     if frac < 0.1:
         return mdp.modify_env_param.NO_CHANGE
-
-    initial_value_tensor = torch.tensor(initial_value, device=env.device)
-    final_value_tensor = torch.tensor(final_value, device=env.device)
-
-    return _recurse(initial_value_tensor.tolist(), final_value_tensor.tolist(), data, frac)
+    # initial/final values and frac are Python scalars: interpolate host-side (a device
+    # round-trip here costs several stream syncs per ADR term on every reset batch)
+    return _recurse(initial_value, final_value, data, frac)
 
 
 def _recurse(iv_elem, fv_elem, data_elem, frac):
@@ -39,8 +37,8 @@ def _recurse(iv_elem, fv_elem, data_elem, frac):
         return type(data_elem)(_recurse(iv_e, fv_e, d_e, frac) for iv_e, fv_e, d_e in zip(iv_elem, fv_elem, data_elem))
     new_val = frac * (fv_elem - iv_elem) + iv_elem
     if isinstance(data_elem, int):
-        return int(new_val.item())
-    return new_val.item()
+        return int(new_val)
+    return new_val
 
 
 class DifficultyScheduler(ManagerTermBase):
@@ -83,5 +81,7 @@ class DifficultyScheduler(ManagerTermBase):
             self.current_adr_difficulties[env_ids] + 1,
             demot,
         ).clamp(min=min_difficulty, max=max_difficulty)
-        self.difficulty_frac = torch.mean(self.current_adr_difficulties) / max(max_difficulty, 1)
+        # expose as a Python float: every downstream ADR term compares and interpolates with
+        # this value, so paying one device sync here replaces one per term per reset batch
+        self.difficulty_frac = (torch.mean(self.current_adr_difficulties) / max(max_difficulty, 1)).item()
         return self.difficulty_frac

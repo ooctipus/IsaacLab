@@ -112,6 +112,23 @@ class FrankaMixinCfg:
         # resets). Scope the randomization to the arm; the fingers keep their consistent
         # defaults from the asset reset.
         reset_terms["reset_robot_joints"].params["asset_cfg"] = SceneEntityCfg("robot", joint_names="panda_joint.*")
+        # gripper width: one shared draw for the coupled finger pair (independent draws
+        # violate the equality constraint; startup settling otherwise banks closed fingers)
+        reset_terms["reset_gripper_width"] = EventTerm(
+            func="isaaclab_tasks.core.dexsuite.mdp.events:reset_joints_shared_offset",
+            mode="reset",
+            params={
+                "position_range": [-0.04, 0.0],
+                "asset_cfg": SceneEntityCfg("robot", joint_names="panda_finger_joint.*"),
+            },
+        )
+        reset_terms["reset_object_to_target"].params["target_cfg"] = SceneEntityCfg("robot", body_names="panda_hand")
+        # grasp center sits ~0.10 m along the hand z-axis (fingertip plane)
+        reset_terms["reset_object_to_target"].params["pose_range"] = {
+            "x": [-0.02, 0.02],
+            "y": [-0.02, 0.02],
+            "z": [0.08, 0.12],
+        }
         # reset validity: plain +-0.5 rad offsets put the wrist/hand inside the table in
         # ~20% of draws, and the depenetration slams panda_joint6 to 3-40x its velocity
         # limit within 5 steps of reset — the irreducible abnormal_robot floor.
@@ -144,7 +161,7 @@ class FrankaMixinCfg:
                 # adding damping to the passive joint would drag the mimic asymmetrically.
                 "asset_cfg": SceneEntityCfg("robot", joint_names="panda_finger_joint1"),
                 "damping_distribution_params": (
-                    hand_cfg.stiffness * self.actions.action.scale / 0.2 - hand_cfg.damping,
+                    hand_cfg.damping,
                     hand_cfg.stiffness * self.actions.action.scale / 0.01 - hand_cfg.damping,
                 ),
                 "operation": "add",

@@ -325,22 +325,6 @@ class EventCfg:
         mode="reset",
         params={
             "terms": {
-                "reset_object": EventTerm(
-                    func=mdp.reset_root_state_uniform,
-                    mode="reset",
-                    params={
-                        "pose_range": {
-                            "x": [-0.2, 0.2],
-                            "y": [-0.2, 0.2],
-                            "z": [0.0, 0.4],
-                            "roll": [-3.14, 3.14],
-                            "pitch": [-3.14, 3.14],
-                            "yaw": [-3.14, 3.14],
-                        },
-                        "velocity_range": {"x": [-0.0, 0.0], "y": [-0.0, 0.0], "z": [-0.0, 0.0]},
-                        "asset_cfg": SceneEntityCfg("object"),
-                    },
-                ),
                 "reset_root": EventTerm(
                     func=mdp.reset_root_state_uniform,
                     mode="reset",
@@ -362,20 +346,57 @@ class EventCfg:
                     func=mdp.reset_joints_by_offset,
                     mode="reset",
                     params={
-                        "asset_cfg": SceneEntityCfg("robot", joint_names="wrist"),
+                        "asset_cfg": SceneEntityCfg("robot", joint_names=["wrist"]),
                         "position_range": [-3, 3],
                         "velocity_range": [0.0, 0.0],
                     },
                 ),
+                "reset_object": EventTerm(
+                    func=mdp.reset_root_state_uniform,
+                    mode="reset",
+                    params={
+                        "pose_range": {
+                            "x": [-0.2, 0.2],
+                            "y": [-0.2, 0.2],
+                            "z": [0.0, 0.4],
+                            "roll": [-3.14, 3.14],
+                            "pitch": [-3.14, 3.14],
+                            "yaw": [-3.14, 3.14],
+                        },
+                        "velocity_range": {"x": [-0.0, 0.0], "y": [-0.0, 0.0], "z": [-0.0, 0.0]},
+                        "asset_cfg": SceneEntityCfg("object"),
+                    },
+                ),
+                # spawn-in-hand curriculum: a small share of episodes starts with the
+                # object at the gripper (uniform random orientation, small body-frame
+                # offset); interpenetrating draws are rejected by object_robot_clearance.
+                # Must stay LAST: it reads the gripper pose after the robot reset terms.
+                "reset_object_to_target": EventTerm(
+                    func="isaaclab_tasks.core.dexsuite.mdp.events:reset_to_target",
+                    mode="reset",
+                    params={
+                        "pose_range": {"x": [-0.04, 0.04], "y": [-0.04, 0.04], "z": [-0.04, 0.04]},
+                        "velocity_range": {},
+                        "probability": 0.05,
+                        # robot configs must point this at their gripper body and may shift
+                        # the z range along the approach axis (e.g. between the fingertips)
+                        "target_cfg": MISSING,
+                        "asset_cfg": SceneEntityCfg("object"),
+                    },
+                ),
             },
-            "buffer_size_per_group": 20,
+            # after prefill, every reset restores a banked criteria-validated state; the
+            # wrapped terms and criteria never run again (measured at 8192 envs: 30.0
+            # ms/step with per-reset criteria vs ~21 banked — the mesh winding-number
+            # criterion alone is ~6 ms/step when run every reset)
+            "buffer_size_per_group": 2048,
             "valid_criteria": {
                 "object_robot_clearance": mdp.MeshClearanceCfg(
                     asset_name="robot",
                     body_names=".*",
                     object_name="object",
                     num_object_points=64,
-                    min_clearance=0.02,
+                    min_clearance=0.0,
                 ),
                 "robot_table_clearance": mdp.SlabClearanceCfg(
                     asset_name="robot",
@@ -406,7 +427,7 @@ class RewardsCfg:
 
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-0.025)
 
-    fingers_to_object = RewTerm(func=mdp.object_ee_distance, params={"std": 0.4}, weight=0.1)
+    fingers_to_object = RewTerm(func=mdp.object_ee_distance, params={"std": 0.4}, weight=0.05)
 
     position_tracking = RewTerm(
         func=mdp.position_command_error_tanh,
@@ -442,7 +463,7 @@ class RewardsCfg:
         },
     )
 
-    early_termination = RewTerm(func=mdp.is_terminated_term, weight=-50, params={"term_keys": "abnormal_robot"})
+    early_termination = RewTerm(func=mdp.is_terminated_term, weight=-50, params={"term_keys": ["abnormal_robot"]})
 
 
 @configclass

@@ -1047,12 +1047,17 @@ class randomize_physics_scene_gravity(ManagerTermBase):
             operation: The operation to apply ('add', 'scale', or 'abs').
             distribution: The distribution type (cached at init, param ignored at runtime).
         """
-        self._dist_param_0[0] = gravity_distribution_params[0][0]
-        self._dist_param_1[0] = gravity_distribution_params[1][0]
-        self._dist_param_0[1] = gravity_distribution_params[0][1]
-        self._dist_param_1[1] = gravity_distribution_params[1][1]
-        self._dist_param_0[2] = gravity_distribution_params[0][2]
-        self._dist_param_1[2] = gravity_distribution_params[1][2]
+        # rewrite the baked device tensors only when the (curriculum-driven) ranges actually
+        # change: each element write is a small host-to-device copy, paid per reset batch
+        params = (tuple(gravity_distribution_params[0]), tuple(gravity_distribution_params[1]))
+        if params != getattr(self, "_last_gravity_params", None):
+            self._last_gravity_params = params
+            self._dist_param_0[0] = gravity_distribution_params[0][0]
+            self._dist_param_1[0] = gravity_distribution_params[1][0]
+            self._dist_param_0[1] = gravity_distribution_params[0][1]
+            self._dist_param_1[1] = gravity_distribution_params[1][1]
+            self._dist_param_0[2] = gravity_distribution_params[0][2]
+            self._dist_param_1[2] = gravity_distribution_params[1][2]
 
         if self._backend == "newton":
             self._call_newton(env, env_ids, operation)

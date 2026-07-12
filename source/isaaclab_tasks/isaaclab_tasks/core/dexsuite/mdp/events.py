@@ -7,19 +7,111 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import torch
 import warp as wp
-from typing import TYPE_CHECKING
 
-from isaaclab.managers import EventTermCfg, ManagerTermBase, ManagerTermBaseCfg
+from isaaclab.managers import EventTermCfg, ManagerTermBase, ManagerTermBaseCfg, SceneEntityCfg
+from isaaclab.utils.math import quat_apply, random_orientation, sample_uniform
 
 from .utils import collect_body_collision_meshes, get_reset_state, sample_object_point_cloud, set_reset_state
 
 if TYPE_CHECKING:
-    from isaaclab.envs import ManagerBasedEnv
     from isaaclab.assets import Articulation
+    from isaaclab.envs import ManagerBasedEnv
+
     from .events_cfg import MeshClearanceCfg, SlabClearanceCfg
+
+
+def reset_joints_shared_offset(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    position_range: tuple[float, float],
+    asset_cfg: SceneEntityCfg,
+):
+    """Reset joints with a single shared offset per environment.
+
+    Like :func:`isaaclab.envs.mdp.reset_joints_by_offset`, but all configured joints of an
+    environment receive the SAME offset draw. For mechanically coupled joints (e.g. a
+    two-finger gripper driven by one motor through an equality constraint), independent
+    per-joint draws write constraint-violating states that the solver snaps shut at episode
+    birth; a shared draw keeps the pair consistent while still randomizing the width.
+
+    Args:
+        env: The environment.
+        env_ids: Environments to reset.
+        position_range: Uniform offset range around the default joint positions
+            [m or rad, depending on joint type].
+        asset_cfg: The asset and coupled joints to reset.
+    """
+    asset = env.scene[asset_cfg.name]
+    default = asset.data.default_joint_pos.torch[env_ids][:, asset_cfg.joint_ids]
+    limits = asset.data.soft_joint_pos_limits.torch[env_ids][:, asset_cfg.joint_ids]
+    offset = sample_uniform(position_range[0], position_range[1], (len(env_ids), 1), device=default.device)
+    positions = (default + offset).clamp(limits[..., 0], limits[..., 1])
+    asset.write_joint_position_to_sim_index(position=positions, joint_ids=asset_cfg.joint_ids, env_ids=env_ids)
+    asset.write_joint_velocity_to_sim_index(
+        velocity=torch.zeros_like(positions), joint_ids=asset_cfg.joint_ids, env_ids=env_ids
+    )
+
+
+def reset_to_target(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    pose_range: dict[str, tuple[float, float]],
+    velocity_range: dict[str, tuple[float, float]],
+    probability: float,
+    target_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+):
+    """Reset a fraction of the assets onto a target body with a uniformly random orientation.
+
+    Each environment is selected with :paramref:`probability`; selected assets are placed at
+    the target body's current position plus a position offset sampled from
+    :paramref:`pose_range` (``x``/``y``/``z`` keys; orientation is sampled uniformly from
+    SO(3), so ``roll``/``pitch``/``yaw`` keys are ignored). Non-selected environments are left
+    untouched, so this term composes with a preceding uniform reset as a spawn-in-hand
+    curriculum: a small share of episodes starts with the object at the gripper, keeping
+    contact-rich starts in the distribution. Interpenetrating draws are expected to be
+    rejected by the criteria of the wrapping :class:`conditional_reset`.
+
+    The target body pose is read from the live simulation state, so the term must run after
+    the reset terms that pose the target asset (dict order inside the wrapper).
+
+    Args:
+        env: The environment.
+        env_ids: Environments being reset.
+        pose_range: Position offset ranges in the target body frame [m], keys ``x``/``y``/``z``.
+        velocity_range: Velocity ranges, keys ``x``/``y``/``z``/``roll``/``pitch``/``yaw``
+            [m/s, rad/s].
+        probability: Per-environment selection probability.
+        target_cfg: Target body (e.g. the gripper palm) to spawn the asset at.
+        asset_cfg: The asset to reset.
+    """
+    picked = env_ids[torch.rand(len(env_ids), device=env.device) < probability]
+    if len(picked) == 0:
+        return
+    asset = env.scene[asset_cfg.name]
+    target = env.scene[target_cfg.name]
+    target_pos = target.data.body_pos_w.torch[picked][:, target_cfg.body_ids, :].reshape(len(picked), -1)[:, :3]
+    target_quat = target.data.body_quat_w.torch[picked][:, target_cfg.body_ids, :].reshape(len(picked), -1)[:, :4]
+
+    keys = ("x", "y", "z")
+    offsets = torch.tensor([tuple(pose_range.get(key, (0.0, 0.0))) for key in keys], device=asset.device)
+    # offsets are expressed in the target body frame, so e.g. a +z range places the object
+    # along the gripper approach axis (between the fingertips) at any hand orientation
+    local_offsets = sample_uniform(offsets[:, 0], offsets[:, 1], (len(picked), 3), device=asset.device)
+    positions = target_pos + quat_apply(target_quat, local_offsets)
+    orientations = random_orientation(len(picked), device=asset.device)
+
+    keys = ("x", "y", "z", "roll", "pitch", "yaw")
+    vel_ranges = torch.tensor([tuple(velocity_range.get(key, (0.0, 0.0))) for key in keys], device=asset.device)
+    velocities = sample_uniform(vel_ranges[:, 0], vel_ranges[:, 1], (len(picked), 6), device=asset.device)
+
+    asset.write_root_pose_to_sim_index(root_pose=torch.cat([positions, orientations], dim=-1), env_ids=picked)
+    asset.write_root_velocity_to_sim_index(root_velocity=velocities, env_ids=picked)
 
 
 class conditional_reset(ManagerTermBase):
@@ -32,9 +124,10 @@ class conditional_reset(ManagerTermBase):
 
     On the first reset, the wrapped terms are re-rolled and the states satisfying
     :paramref:`valid_criteria` are harvested into a buffer of :paramref:`buffer_size_per_group`
-    samples per group (rejection sampling, amortized once). On subsequent resets the wrapped terms run
-    exactly once; environments whose fresh state fails the criterion are overwritten with a
-    random buffered sample instead of re-rolling, keeping resets constant-time.
+    samples per group (rejection sampling, amortized once). Every subsequent reset restores a
+    random banked sample — the wrapped terms and criteria never run again, so the hot path is
+    a single state gather and write (the per-reset criteria kernels alone cost ~8 ms/step at
+    8192 environments).
 
     The captured state is the reset surface of the scene (see :func:`get_reset_state`):
     root pose/velocity plus joint positions/velocities of every articulation, and the root
@@ -66,13 +159,13 @@ class conditional_reset(ManagerTermBase):
         buffer_size_per_group: int = 20,
         max_prefill_iters: int = 50,
     ):
-        """Apply the wrapped reset terms, patching criterion failures from the valid-state buffer.
+        """Restore banked criterion-valid states, prefilling the bank on the first reset.
 
         Args:
             env: The environment.
             env_ids: Environments being reset.
-            terms: Reset event terms to wrap, applied in insertion order. Resolved by the
-                event manager before the first call.
+            terms: Reset event terms to wrap, applied in insertion order during prefill.
+                Resolved by the event manager before the first call.
             valid_criteria: Criteria as term configs (e.g. :class:`SlabClearanceCfg`,
                 :class:`MeshClearanceCfg`), each evaluated as
                 ``func(env, env_ids, **params) -> BoolTensor`` over the freshly reset
@@ -127,22 +220,22 @@ class conditional_reset(ManagerTermBase):
                     " reset terms for those environments."
                 )
             self._prefilled = True
+            # prefill is the only consumer of the wrapped terms and criteria: drop them so
+            # everything they hold (collision meshes, vertex arrays, point clouds, sampler
+            # state) is garbage-collected — the hot path only touches the bank. The dicts
+            # are the very objects stored in the term params, so clearing them in place
+            # drops the references permanently.
+            terms.clear()
+            valid_criteria.clear()
 
-        ok = roll_once()
-        # Branchless patching: draw a donor row for every resetting env from its own
-        # asset-combination partition and blend by the validity mask. Checking the mask on
-        # the host instead (``bool(ok.all())``, per-group ``.tolist()``/``.sum()`` loop)
-        # stalls the CPU on the whole GPU pipeline once per step — measured at half of the
-        # env.step host time at 4096 envs, where some env resets nearly every step.
-        # ``rand * fill`` floors to a uniform draw in ``[0, fill)`` per env, so partially
-        # filled partitions stay in-range. Valid envs are rewritten with their own freshly
-        # read state — an identity round-trip through the same write path.
+        # every reset restores a banked state from the env's own asset-combination
+        # partition; ``rand * fill`` floors to a uniform draw in ``[0, fill)`` per env,
+        # so partially filled partitions stay in-range. No sampling, no criteria, no
+        # host synchronization.
         groups = self._group[env_ids]
         donor = (torch.rand(len(env_ids), device=env_ids.device) * self._fill[groups]).long()
         rows = groups * buffer_size_per_group + donor
-        fresh = get_reset_state(env, env_ids, self._reset_assets, is_relative=True)
-        blended = torch.where(ok.unsqueeze(-1), fresh, self._buffer[rows])
-        set_reset_state(env, blended, env_ids, self._reset_assets, is_relative=True)
+        set_reset_state(env, self._buffer[rows], env_ids, self._reset_assets, is_relative=True)
 
 
 @wp.func
@@ -219,6 +312,9 @@ def _object_points_mesh_min(
     body_pose: wp.array2d(dtype=wp.transformf),
     mesh_ids: wp.array(dtype=wp.uint64),
     mesh_body: wp.array(dtype=wp.int32),
+    mesh_center: wp.array(dtype=wp.vec3),
+    mesh_radius: wp.array(dtype=wp.float32),
+    min_clearance: float,
     max_dist: float,
     out_min: wp.array(dtype=wp.float32),
 ):
@@ -228,6 +324,13 @@ def _object_points_mesh_min(
     dist = out_min[i]
     for m in range(mesh_ids.shape[0]):
         point_local = wp.transform_point(wp.transform_inverse(body_pose[env, mesh_body[m]]), point_world)
+        # bounding-sphere prefilter: the true signed distance is at least
+        # |p - center| - radius, so a point that cannot get under the clearance
+        # threshold (nor be contained) skips the BVH winding-number query. This is
+        # exact for the criterion: skipped pairs cannot flip `out_min >= min_clearance`.
+        lower_bound = wp.length(point_local - mesh_center[m]) - mesh_radius[m]
+        if lower_bound > min_clearance and lower_bound > 0.0:
+            continue
         query = wp.mesh_query_point_sign_winding_number(mesh_ids[m], point_local, max_dist)
         if query.result:
             mesh_dist = wp.length(point_local - wp.mesh_eval_position(mesh_ids[m], query.face, query.u, query.v))
@@ -269,6 +372,8 @@ class mesh_clearance(ManagerTermBase):
         body_meshes, _ = collect_body_collision_meshes(self._robot, cfg.body_names)
         self._meshes = []
         mesh_body = []
+        mesh_center = []
+        mesh_radius = []
         for body_id, mesh in body_meshes.items():
             self._meshes.append(
                 wp.Mesh(
@@ -278,8 +383,14 @@ class mesh_clearance(ManagerTermBase):
                 )
             )
             mesh_body.append(body_id)
+            # bounding sphere (body frame) for the kernel's query prefilter
+            center = mesh.vertices.mean(axis=0)
+            mesh_center.append(center)
+            mesh_radius.append(float(np.linalg.norm(mesh.vertices - center, axis=1).max()))
         self._mesh_ids = wp.array([mesh.id for mesh in self._meshes], dtype=wp.uint64, device=device)
         self._mesh_body = wp.array(mesh_body, dtype=wp.int32, device=device)
+        self._mesh_center = wp.array(np.stack(mesh_center), dtype=wp.vec3, device=device)
+        self._mesh_radius = wp.array(mesh_radius, dtype=wp.float32, device=device)
         # query horizon: must exceed both the clearance and plausible penetration depths so
         # contained points still resolve a (negative) signed distance
         self._max_dist = max(4.0 * cfg.min_clearance, 0.15)
@@ -297,6 +408,9 @@ class mesh_clearance(ManagerTermBase):
                 self._robot.data.body_link_pose_w.warp,
                 self._mesh_ids,
                 self._mesh_body,
+                self._mesh_center,
+                self._mesh_radius,
+                self.cfg.min_clearance,
                 self._max_dist,
                 out_min,
             ],

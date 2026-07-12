@@ -66,9 +66,9 @@ class KukaAllegroReorientRewardCfg(dexsuite.RewardsCfg):
 
     def __post_init__(self):
         super().__post_init__()
-        self.fingers_to_object.params["asset_cfg"] = SceneEntityCfg("robot", body_names=["palm_link", ".*_tip"])
-        self.fingers_to_object.params["thumb_name"] = THUMB_SENSOR
-        self.fingers_to_object.params["finger_names"] = FINGER_SENSORS
+        # self.fingers_to_object.params["asset_cfg"] = SceneEntityCfg("robot", body_names=["palm_link", ".*_tip"])
+        # self.fingers_to_object.params["thumb_name"] = THUMB_SENSOR
+        # self.fingers_to_object.params["finger_names"] = FINGER_SENSORS
         self.position_tracking.params["thumb_name"] = THUMB_SENSOR
         self.position_tracking.params["finger_names"] = FINGER_SENSORS
         if self.orientation_tracking:
@@ -90,6 +90,9 @@ class KukaAllegroMixinCfg:
         self.commands.object_pose.body_name = "palm_link"
         self.events.conditional_reset.params["terms"]["reset_robot_wrist_joint"].params["asset_cfg"] = SceneEntityCfg(
             "robot", joint_names="iiwa7_joint_7"
+        )
+        self.events.conditional_reset.params["terms"]["reset_object_to_target"].params["target_cfg"] = SceneEntityCfg(
+            "robot", body_names="palm_link"
         )
         # table/ground clearance: everything but the ground-mounted arm base (allegro finger links
         # are also named *_link_N, so exclude exactly iiwa7_link_0)
