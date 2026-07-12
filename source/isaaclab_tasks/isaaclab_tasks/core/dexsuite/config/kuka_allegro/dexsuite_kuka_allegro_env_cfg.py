@@ -88,7 +88,14 @@ class KukaAllegroMixinCfg:
     def __post_init__(self: dexsuite.DexsuiteReorientEnvCfg):
         super().__post_init__()
         self.commands.object_pose.body_name = "palm_link"
-        self.events.reset_robot_wrist_joint.params["asset_cfg"] = SceneEntityCfg("robot", joint_names="iiwa7_joint_7")
+        self.events.conditional_reset.params["terms"]["reset_robot_wrist_joint"].params["asset_cfg"] = SceneEntityCfg(
+            "robot", joint_names="iiwa7_joint_7"
+        )
+        # table/ground clearance: everything but the ground-mounted arm base (allegro finger links
+        # are also named *_link_N, so exclude exactly iiwa7_link_0)
+        self.events.conditional_reset.params["valid_criteria"][
+            "robot_table_clearance"
+        ].body_names = "(?!iiwa7_link_0$).*"
 
 
 @configclass

@@ -195,7 +195,7 @@ class ObservationsCfg:
                 # pose-only: body velocities are the most engine-sensitive observables
                 # (derivative signals amplify solver differences) and do not transfer
                 # across physics backends; the observation history carries velocity info
-                "include_vel": False,   
+                "include_vel": False,
                 "body_asset_cfg": SceneEntityCfg("robot"),
                 "base_asset_cfg": SceneEntityCfg("robot"),
             },
@@ -313,49 +313,82 @@ class EventCfg:
         },
     )
 
-    reset_object = EventTerm(
-        func=mdp.reset_root_state_uniform,
+    # The state-writing reset terms run under conditional_reset so every downstream task
+    # gets validity-guaranteed resets: the wrapped terms roll once per reset, and envs whose
+    # fresh state fails valid_criteria are patched from a prefilled buffer of known-valid
+    # states. The base ships the robot-agnostic object-vs-robot criterion; robot configs add
+    # their static-obstacle geometry to ``params["valid_criteria"]``.
+    conditional_reset = EventTerm(
+        # resolvable string: keeps the implementation module (warp/pxr imports) out of
+        # config parsing, which runs before the simulation app starts
+        func="isaaclab_tasks.core.dexsuite.mdp.events:conditional_reset",
         mode="reset",
         params={
-            "pose_range": {
-                "x": [-0.2, 0.2],
-                "y": [-0.2, 0.2],
-                "z": [0.0, 0.4],
-                "roll": [-3.14, 3.14],
-                "pitch": [-3.14, 3.14],
-                "yaw": [-3.14, 3.14],
+            "terms": {
+                "reset_object": EventTerm(
+                    func=mdp.reset_root_state_uniform,
+                    mode="reset",
+                    params={
+                        "pose_range": {
+                            "x": [-0.2, 0.2],
+                            "y": [-0.2, 0.2],
+                            "z": [0.0, 0.4],
+                            "roll": [-3.14, 3.14],
+                            "pitch": [-3.14, 3.14],
+                            "yaw": [-3.14, 3.14],
+                        },
+                        "velocity_range": {"x": [-0.0, 0.0], "y": [-0.0, 0.0], "z": [-0.0, 0.0]},
+                        "asset_cfg": SceneEntityCfg("object"),
+                    },
+                ),
+                "reset_root": EventTerm(
+                    func=mdp.reset_root_state_uniform,
+                    mode="reset",
+                    params={
+                        "pose_range": {"x": [-0.0, 0.0], "y": [-0.0, 0.0], "yaw": [-0.0, 0.0]},
+                        "velocity_range": {"x": [-0.0, 0.0], "y": [-0.0, 0.0], "z": [-0.0, 0.0]},
+                        "asset_cfg": SceneEntityCfg("robot"),
+                    },
+                ),
+                "reset_robot_joints": EventTerm(
+                    func=mdp.reset_joints_by_offset,
+                    mode="reset",
+                    params={
+                        "position_range": [-0.50, 0.50],
+                        "velocity_range": [0.0, 0.0],
+                    },
+                ),
+                "reset_robot_wrist_joint": EventTerm(
+                    func=mdp.reset_joints_by_offset,
+                    mode="reset",
+                    params={
+                        "asset_cfg": SceneEntityCfg("robot", joint_names="wrist"),
+                        "position_range": [-3, 3],
+                        "velocity_range": [0.0, 0.0],
+                    },
+                ),
             },
-            "velocity_range": {"x": [-0.0, 0.0], "y": [-0.0, 0.0], "z": [-0.0, 0.0]},
-            "asset_cfg": SceneEntityCfg("object"),
-        },
-    )
-
-    reset_root = EventTerm(
-        func=mdp.reset_root_state_uniform,
-        mode="reset",
-        params={
-            "pose_range": {"x": [-0.0, 0.0], "y": [-0.0, 0.0], "yaw": [-0.0, 0.0]},
-            "velocity_range": {"x": [-0.0, 0.0], "y": [-0.0, 0.0], "z": [-0.0, 0.0]},
-            "asset_cfg": SceneEntityCfg("robot"),
-        },
-    )
-
-    reset_robot_joints = EventTerm(
-        func=mdp.reset_joints_by_offset,
-        mode="reset",
-        params={
-            "position_range": [-0.50, 0.50],
-            "velocity_range": [0.0, 0.0],
-        },
-    )
-
-    reset_robot_wrist_joint = EventTerm(
-        func=mdp.reset_joints_by_offset,
-        mode="reset",
-        params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names="wrist"),
-            "position_range": [-3, 3],
-            "velocity_range": [0.0, 0.0],
+            "buffer_size_per_group": 20,
+            "valid_criteria": {
+                "object_robot_clearance": mdp.MeshClearanceCfg(
+                    asset_name="robot",
+                    body_names=".*",
+                    object_name="object",
+                    num_object_points=64,
+                    min_clearance=0.02,
+                ),
+                "robot_table_clearance": mdp.SlabClearanceCfg(
+                    asset_name="robot",
+                    # robot configs must fill this, excluding their ground-mounted base link
+                    # (else the ground check is unsatisfiable); enforced by config validation
+                    body_names=MISSING,
+                    object_name="object",
+                    # table top over its footprint; ground plane everywhere
+                    obstacle_slabs=[((-0.95, -0.15), (-0.75, 0.75), 0.255), (None, None, 0.0)],
+                    num_object_points=64,
+                    min_clearance=0.02,
+                ),
+            },
         },
     )
 
@@ -373,7 +406,7 @@ class RewardsCfg:
 
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-0.025)
 
-    fingers_to_object = RewTerm(func=mdp.object_ee_distance, params={"std": 0.4}, weight=0.25)
+    fingers_to_object = RewTerm(func=mdp.object_ee_distance, params={"std": 0.4}, weight=0.1)
 
     position_tracking = RewTerm(
         func=mdp.position_command_error_tanh,
@@ -409,7 +442,7 @@ class RewardsCfg:
         },
     )
 
-    early_termination = RewTerm(func=mdp.is_terminated_term, weight=-1, params={"term_keys": "abnormal_robot"})
+    early_termination = RewTerm(func=mdp.is_terminated_term, weight=-50, params={"term_keys": "abnormal_robot"})
 
 
 @configclass
@@ -426,7 +459,7 @@ class TerminationsCfg:
         },
     )
 
-    abnormal_robot = DoneTerm(func=mdp.abnormal_robot_state)
+    abnormal_robot = DoneTerm(func=mdp.joint_vel_out_of_limit)
 
 
 @configclass
