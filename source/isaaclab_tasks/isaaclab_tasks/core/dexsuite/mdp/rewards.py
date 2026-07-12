@@ -170,10 +170,10 @@ class success_reward(ManagerTermBase):
         if rot_std:
             rot_dist = torch.linalg.norm(rot_err, dim=1)
             reward = (1 - torch.tanh(pos_dist / pos_std)) * (1 - torch.tanh(rot_dist / rot_std)) * contact_mask.float()
-            self.succeeded |= contact_mask & (pos_dist < pos_std) & (rot_dist < rot_std)
+            self.succeeded |= (pos_dist < pos_std) & (rot_dist < rot_std) & contact_mask
         else:
             reward = ((1 - torch.tanh(pos_dist / pos_std)) ** 2) * contact_mask.float()
-            self.succeeded |= contact_mask & (pos_dist < pos_std)
+            self.succeeded |= (pos_dist < pos_std) & contact_mask
 
         return reward
 

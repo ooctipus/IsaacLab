@@ -139,6 +139,22 @@ def _or_reset_masks_from_mask(
 
 
 @wp.kernel(enable_backward=False)
+def _clear_world_rows_kernel(
+    world_mask: wp.array(dtype=wp.bool),
+    qacc_warmstart: wp.array2d(dtype=float),
+    qfrc_applied: wp.array2d(dtype=float),
+):
+    """Zero solver warm-start and applied-force rows for masked worlds."""
+    world, col = wp.tid()
+    if not world_mask[world]:
+        return
+    if col < qacc_warmstart.shape[1]:
+        qacc_warmstart[world, col] = 0.0
+    if col < qfrc_applied.shape[1]:
+        qfrc_applied[world, col] = 0.0
+
+
+@wp.kernel(enable_backward=False)
 def _scatter_reset_masks_from_ids(
     env_ids: wp.array(dtype=int),
     articulation_ids: wp.array2d(dtype=int),
@@ -271,6 +287,7 @@ class NewtonManager(PhysicsManager):
     # Per-world reset masks (allocated in start_simulation, consumed in step/forward).
     _world_reset_mask: wp.array | None = None  # (num_envs,) wp.bool — for SolverKamino.reset(world_mask=...)
     _fk_reset_mask: wp.array | None = None  # (articulation_count,) wp.bool — for eval_fk(mask=...)
+    _reset_masks_dirty: bool = True  # host-side mirror of "any bit set in the reset masks"
     # Solver-specialized FK delegate. Bound in initialize_solver() to the active subclass's choice of FK implementation.
     _eval_fk: Callable[[wp.array | None, wp.array | None], None] = _eval_fk_unbound
 
@@ -705,19 +722,30 @@ class NewtonManager(PhysicsManager):
             else:
                 logger.warning("Newton deferred CUDA graph capture failed; using eager execution")
 
-        # Ensure body_q is up-to-date before solvers read rigid transforms.
-        # After env resets or kinematic root writes, joint_q is written but
-        # body_q is stale until FK runs. Collision-based solvers need this for
-        # broadphase/narrowphase; collider-based solvers such as MPM need it
-        # for their internal collider queries. Maximal-coordinate solvers
-        # that treat body state as the main state (e.g. Kamino) require FK before step.
-        # Only runs FK for dirtied articulations via the accumulated mask.
-        if cls._needs_collision_pipeline or cls._needs_fk_before_step:
-            cls._eval_fk(cls._world_reset_mask, cls._fk_reset_mask)
+        # Consume the reset masks: refresh body_q for dirtied articulations (solvers read
+        # rigid transforms before stepping; the solver-specialized FK delegate handles
+        # collision- and collider-based solvers alike) and clear the MuJoCo solver's
+        # per-world carry-over (qacc_warmstart, qfrc_applied) for teleported environments —
+        # stale warm-start accelerations kick the lightest DOFs at episode birth. ctrl/act
+        # are NOT cleared: actuator targets are rewritten each step and zeroing them drops
+        # one step of drive action. Skipped entirely when nothing dirtied the masks.
+        if cls._reset_masks_dirty:
+            if cls._needs_collision_pipeline or cls._needs_fk_before_step:
+                cls._eval_fk(cls._world_reset_mask, cls._fk_reset_mask)
 
-        # Zero both masks after consumption
-        NewtonManager._world_reset_mask.zero_()
-        NewtonManager._fk_reset_mask.zero_()
+            mjw_data = getattr(cls._solver, "mjw_data", None)
+            if cls._world_reset_mask is not None and mjw_data is not None:
+                wp.launch(
+                    _clear_world_rows_kernel,
+                    dim=(mjw_data.nworld, max(mjw_data.qacc_warmstart.shape[1], mjw_data.qfrc_applied.shape[1])),
+                    inputs=[cls._world_reset_mask, mjw_data.qacc_warmstart, mjw_data.qfrc_applied],
+                    device=PhysicsManager._device,
+                )
+
+            # Zero both masks after consumption
+            NewtonManager._world_reset_mask.zero_()
+            NewtonManager._fk_reset_mask.zero_()
+            NewtonManager._reset_masks_dirty = False
 
         physics_dt = cls._solver_dt * cls._num_substeps
         use_graph = cfg is not None and cfg.use_cuda_graph and cls._graph is not None and "cuda" in device  # type: ignore[union-attr]
@@ -826,6 +854,7 @@ class NewtonManager(PhysicsManager):
         NewtonManager._use_newton_actuators_active = False
         NewtonManager._decimation = 1
         # Per-world reset masks
+        NewtonManager._reset_masks_dirty = True
         NewtonManager._world_reset_mask = None
         NewtonManager._fk_reset_mask = None
         NewtonManager._graph = None
@@ -1121,6 +1150,7 @@ class NewtonManager(PhysicsManager):
 
         if cls._world_reset_mask is None or cls._fk_reset_mask is None:
             return
+        NewtonManager._reset_masks_dirty = True
 
         if articulation_ids is not None and env_mask is not None:
             wp.launch(

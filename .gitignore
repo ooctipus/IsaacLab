@@ -85,3 +85,6 @@ _build
 
 # Superpowers (Claude Code plugin artifacts)
 docs/superpowers/
+
+# local uv virtual environments
+.venv/
