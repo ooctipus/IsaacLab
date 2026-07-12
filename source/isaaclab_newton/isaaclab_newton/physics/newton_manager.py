@@ -206,6 +206,18 @@ class NewtonSceneDataBackend(SceneDataBackend):
         return NewtonManager.get_state_0()
 
 
+def _eval_fk_unbound(world_reset_mask: wp.array | None, fk_mask: wp.array | None) -> None:
+    """Default :attr:`NewtonManager._eval_fk` value before a solver is initialized.
+
+    Raises so a stray ``forward()`` / ``step()`` before ``initialize_solver()`` fails loudly
+    instead of silently running a wrong (or no) FK.
+    """
+    raise RuntimeError(
+        "FK hook is not bound. NewtonManager.initialize_solver() must run "
+        "(via reset()) before forward()/step() can run forward kinematics."
+    )
+
+
 class NewtonManager(PhysicsManager):
     """Abstract Newton physics manager for Isaac Lab.
 
@@ -215,7 +227,8 @@ class NewtonManager(PhysicsManager):
     Concrete subclasses (one per solver) implement :meth:`_build_solver` and
     may extend :meth:`_initialize_contacts`, :meth:`_prepare_builder_for_finalize`,
     :meth:`_step_solver`, :meth:`_supports_cuda_graph_capture`,
-    :meth:`_solver_specific_clear`, and :meth:`_log_solver_debug`.
+    :meth:`_reset_solver_internals`, :meth:`_solver_specific_clear`, and
+    :meth:`_log_solver_debug`.
 
     Subclasses are selected via :attr:`NewtonSolverCfg.class_type`, which
     :meth:`NewtonCfg.__post_init__` propagates onto :attr:`NewtonCfg.class_type`
@@ -270,10 +283,13 @@ class NewtonManager(PhysicsManager):
     _pending_extended_state_attributes: set[str] = set()
     _pending_extended_contact_attributes: set[str] = set()
     _report_contacts: bool = False
-    # Per-world reset masks (allocated in start_simulation, consumed in step)
+
+    # Per-world reset masks (allocated in start_simulation, consumed in step/forward).
     _world_reset_mask: wp.array | None = None  # (num_envs,) wp.bool — for SolverKamino.reset(world_mask=...)
     _fk_reset_mask: wp.array | None = None  # (articulation_count,) wp.bool — for eval_fk(mask=...)
     _reset_masks_dirty: bool = True  # host-side mirror of "any bit set in the reset masks"
+    # Solver-specialized FK delegate. Bound in initialize_solver() to the active subclass's choice of FK implementation.
+    _eval_fk: Callable[[wp.array | None, wp.array | None], None] = _eval_fk_unbound
 
     # Newton actuator adapter (owns actuators and double-buffered states)
     _adapter: NewtonActuatorAdapter | None = None
@@ -281,6 +297,11 @@ class NewtonManager(PhysicsManager):
     # substeps, in registration order. Multiple articulations register their
     # implicit-DOF telemetry / FF-routing kernels here.
     _post_actuator_callbacks: list[Callable[[], None]] = []
+    # In-graph hooks invoked after the last solver substep and before sensors,
+    # in registration order. Articulations with non-identity ordering register
+    # their backend-to-user state republish kernels here so the reorders are
+    # recorded into every captured graph.
+    _post_step_callbacks: list[Callable[[], None]] = []
 
     # CUDA graphing
     _graph = None
@@ -381,16 +402,42 @@ class NewtonManager(PhysicsManager):
             cls.initialize_solver()
 
     @classmethod
+    def _eval_fk_impl(cls, world_reset_mask: wp.array | None, fk_mask: wp.array | None) -> None:
+        """Update body states from joint coordinates.
+
+        Solver-specialized FK implementation. The base implementation runs Newton's generic
+        ``eval_fk`` over the articulations selected by ``fk_mask``. Subclasses may override
+        this method to use a solver-specific FK.
+
+        Args:
+            world_reset_mask: Per-world mask of environments to reset (``None`` means all).
+                Unused by the base implementation; consumed by solver-specific overrides such as
+                :meth:`NewtonKaminoManager._eval_fk_impl`.
+            fk_mask: Per-articulation mask of articulations to update (``None`` means all).
+        """
+        eval_fk(cls._model, cls._state_0.joint_q, cls._state_0.joint_qd, cls._state_0, fk_mask)
+
+    @classmethod
     def forward(cls) -> None:
         """Update articulation kinematics without stepping physics.
 
-        Runs Newton's generic forward kinematics (``eval_fk``) over **all**
-        articulations to compute body poses from joint coordinates. This is
-        the full (unmasked) FK path used during initial setup. For incremental
-        per-environment updates after resets, see :meth:`invalidate_fk` which
-        accumulates masks consumed by :meth:`step`.
+        Update body poses from joint coordinates via the solver-specialized FK delegate
+        (:attr:`_eval_fk`, bound to the active subclass's :meth:`_eval_fk_impl` in
+        :meth:`initialize_solver`). Only the articulations flagged dirty in
+        :attr:`_fk_reset_mask` and :attr:`_world_reset_mask` (see :meth:`invalidate_fk`) are
+        updated. The masks are consumed (zeroed) afterwards so the next :meth:`step` does not
+        redundantly re-solve them.
+
+        The delegate (rather than a direct ``cls._eval_fk_impl`` call) is required because the
+        data layer invokes ``NewtonManager.forward()`` on the base class, where ``cls`` is the
+        base ``NewtonManager``; the bound delegate dispatches to the concrete subclass override.
         """
-        eval_fk(cls._model, cls._state_0.joint_q, cls._state_0.joint_qd, cls._state_0, None)
+        cls._reset_solver_internals(cls._world_reset_mask)
+        cls._eval_fk(cls._world_reset_mask, cls._fk_reset_mask)
+        if cls._fk_reset_mask is not None:
+            cls._fk_reset_mask.zero_()
+        if cls._world_reset_mask is not None:
+            cls._world_reset_mask.zero_()
 
     @classmethod
     def pre_render(cls) -> None:
@@ -654,6 +701,8 @@ class NewtonManager(PhysicsManager):
         if sim is None or not sim.is_playing():
             return
 
+        cls._reset_solver_internals(cls._world_reset_mask)
+
         # Notify solver of model changes
         if cls._model_changes:
             with wp.ScopedDevice(PhysicsManager._device):
@@ -668,19 +717,26 @@ class NewtonManager(PhysicsManager):
             NewtonManager._graph_capture_pending = False
             NewtonManager._graph = cls._capture_relaxed_graph(device)
             if cls._graph is not None:
+                # Kamino: StateKamino.from_newton() lazily allocates body_f_total,
+                # joint_q_prev, and joint_lambdas via wp.clone/wp.zeros during the
+                # first step() inside graph capture. Replay once to pin those
+                # memory-pool addresses before any eager solver.reset() call.
+                if isinstance(cls._solver, SolverKamino):
+                    wp.capture_launch(cls._graph)
                 logger.info("Newton CUDA graph captured (deferred relaxed mode, RTX-compatible)")
             else:
                 logger.warning("Newton deferred CUDA graph capture failed; using eager execution")
 
         # Consume the reset masks: refresh body_q for dirtied articulations (solvers read
-        # rigid transforms before stepping) and clear the MuJoCo solver's per-world
-        # carry-over (qacc_warmstart, qfrc_applied) for teleported environments — stale
-        # warm-start accelerations kick the lightest DOFs at episode birth. ctrl/act are
-        # NOT cleared: actuator targets are rewritten each step and zeroing them drops one
-        # step of drive action. Skipped entirely when nothing dirtied the masks.
+        # rigid transforms before stepping; the solver-specialized FK delegate handles
+        # collision- and collider-based solvers alike) and clear the MuJoCo solver's
+        # per-world carry-over (qacc_warmstart, qfrc_applied) for teleported environments —
+        # stale warm-start accelerations kick the lightest DOFs at episode birth. ctrl/act
+        # are NOT cleared: actuator targets are rewritten each step and zeroing them drops
+        # one step of drive action. Skipped entirely when nothing dirtied the masks.
         if cls._reset_masks_dirty:
             if cls._needs_collision_pipeline or cls._needs_fk_before_step:
-                eval_fk(cls._model, cls._state_0.joint_q, cls._state_0.joint_qd, cls._state_0, cls._fk_reset_mask)
+                cls._eval_fk(cls._world_reset_mask, cls._fk_reset_mask)
 
             mjw_data = getattr(cls._solver, "mjw_data", None)
             if cls._world_reset_mask is not None and mjw_data is not None:
@@ -787,6 +843,7 @@ class NewtonManager(PhysicsManager):
         NewtonManager._contacts = None
         NewtonManager._needs_collision_pipeline = False
         NewtonManager._needs_fk_before_step = False
+        NewtonManager._eval_fk = _eval_fk_unbound
         NewtonManager._collision_pipeline = None
         NewtonManager._collision_cfg = None
         NewtonManager._newton_contact_sensors = {}
@@ -795,6 +852,7 @@ class NewtonManager(PhysicsManager):
         NewtonManager._report_contacts = False
         NewtonManager._adapter = None
         NewtonManager._post_actuator_callbacks = []
+        NewtonManager._post_step_callbacks = []
         # Set by an articulation that took the ``use_newton_actuators=True``
         # branch in ``_process_actuators_cfg``.  Together with the adapter
         # check, this gates whether the decimation loop can be captured into
@@ -853,12 +911,19 @@ class NewtonManager(PhysicsManager):
         Returns:
             New builder with up-axis and per-shape defaults (gap, margin) applied.
         """
-        builder = ModelBuilder(up_axis=up_axis or cls._up_axis, **kwargs)
-        cls._register_builder_attributes(builder)
         # Resolve which NewtonShapeCfg to apply: user override if active config
         # is NewtonCfg, else the wrapper's own defaults so callers from non-Newton
         # contexts (tests, early construction) still get the rough-terrain margin.
         cfg = PhysicsManager._cfg
+
+        builder = ModelBuilder(up_axis=up_axis or cls._up_axis, **kwargs)
+        builder.default_bvh_cfg = ModelBuilder.BvhConfig(
+            mesh_constructor=cfg.bvh_constructor_geometry if isinstance(cfg, NewtonCfg) else None,
+            gaussian_constructor=cfg.bvh_constructor_gaussian if isinstance(cfg, NewtonCfg) else None,
+            shape_constructor=cfg.bvh_constructor_scene if isinstance(cfg, NewtonCfg) else None,
+        )
+
+        cls._register_builder_attributes(builder)
         shape_cfg = cfg.default_shape_cfg if isinstance(cfg, NewtonCfg) else NewtonShapeCfg()
         checked_apply(shape_cfg, builder.default_shape_cfg)
         return builder
@@ -1156,7 +1221,8 @@ class NewtonManager(PhysicsManager):
         NewtonManager._state_0 = cls._model.state()
         NewtonManager._state_1 = cls._model.state()
         NewtonManager._control = cls._model.control()
-        eval_fk(cls._model, cls._state_0.joint_q, cls._state_0.joint_qd, cls._state_0, None)
+        # The initial body-state update from joint coordinates is deferred to the tail of
+        # initialize_solver(), where it runs through the solver-specialized FK delegate after the solver is initialized.
 
         # The single global actuator adapter is built lazily on the first
         # call to ``activate_newton_actuator_path`` from any Newton-fast-path
@@ -1166,7 +1232,7 @@ class NewtonManager(PhysicsManager):
         NewtonManager._adapter = None
         NewtonManager._use_newton_actuators_active = False
 
-        # Allocate per-world reset masks (used by all solvers for masked FK, and by Kamino for masked reset)
+        # Allocate per-world reset masks (used by all solvers for masked FK, and by Kamino for masked reset).
         NewtonManager._world_reset_mask = wp.zeros(cls._model.world_count, dtype=wp.bool, device=device)
         NewtonManager._fk_reset_mask = wp.zeros(cls._model.articulation_count, dtype=wp.bool, device=device)
 
@@ -1265,6 +1331,16 @@ class NewtonManager(PhysicsManager):
 
         schema_resolvers = [SchemaResolverNewton(), SchemaResolverPhysx()]
 
+        # NOTE: None of the add_usd calls below pass joint_ordering or
+        # bodies_follow_joint_ordering, so the live articulation's native
+        # joint/body order comes from Newton's ModelBuilder.add_usd defaults
+        # (joint_ordering="dfs", bodies_follow_joint_ordering=True).
+        # isaaclab.assets.articulation.ordering_resolvers hardcodes matching
+        # constants to emulate that same order for cross-backend name
+        # resolution (see _get_mjwarp_names_from_newton_usd_builder). If
+        # ordering arguments are ever passed here, update the resolver
+        # constants in lockstep or MJWarp resolution will silently diverge
+        # from the live backend.
         if not env_paths:
             # No env Xforms — flat loading
             builder.add_usd(stage, schema_resolvers=schema_resolvers)
@@ -1401,6 +1477,24 @@ class NewtonManager(PhysicsManager):
         (e.g. constraint violations, contact forces, etc.) after stepping.
         """
 
+    @classmethod
+    def _reset_solver_internals(cls, world_mask: wp.array | None) -> None:
+        """Clear solver-internal state for environments reset since the last boundary.
+
+        The hook runs immediately before reset masks are consumed by :meth:`step`
+        and :meth:`forward`. The base implementation delegates to
+        :meth:`SolverBase.reset` with ``flags=0``, preserving the joint state
+        authored by Isaac Lab while clearing solver-owned buffers. Solvers with
+        no reset implementation are unaffected.
+
+        Args:
+            world_mask: Per-world reset mask, or ``None`` when no simulation
+                state is available.
+        """
+        if world_mask is None:
+            return
+        cls._solver.reset(cls._state_0, world_mask=world_mask, flags=0)
+
     # ----- Lifecycle orchestration ----------------------------------------
 
     @classmethod
@@ -1438,6 +1532,17 @@ class NewtonManager(PhysicsManager):
                     "NewtonManager._use_single_state, and NewtonManager._needs_collision_pipeline."
                 )
             cls._initialize_contacts()
+
+        # Bind the solver-specialized FK delegate to the active subclass's _eval_fk_impl so
+        # that forward()/step() dispatch correctly even when forward() is invoked through the
+        # base class (the data layer imports NewtonManager directly). ``cls`` is the concrete
+        # subclass here, since initialize_solver is reached via sim.physics_manager.reset().
+        NewtonManager._eval_fk = cls._eval_fk_impl
+
+        # Establish the initial kinematically-consistent body state through the
+        # solver-specialized FK delegate, now that the solver and the delegate both exist.
+        # Runs before graph capture below so the capture warmup sees a valid body_q.
+        cls._eval_fk(None, None)
 
         if cls._usdrt_stage is not None:
             cls._setup_cubric_bindings()
@@ -1506,7 +1611,7 @@ class NewtonManager(PhysicsManager):
             with Timer(name="newton_cuda_graph", msg="CUDA graph took:"):
                 if cls._usdrt_stage is None:
                     simulate = cls._simulate_full if cls._is_all_graphable() else cls._simulate_physics_only
-                    with wp.ScopedCapture() as capture:
+                    with wp.ScopedCapture(device=device) as capture:
                         simulate()
                     NewtonManager._graph = capture.graph
                     logger.info("Newton CUDA graph captured (standard Warp mode)")
@@ -1675,7 +1780,7 @@ class NewtonManager(PhysicsManager):
                     cls._collision_pipeline.collide(cls._state_0, contacts)
         else:
             cfg = PhysicsManager._cfg
-            need_copy_on_last = (cfg is not None and cfg.use_cuda_graph) and cls._num_substeps % 2 == 1  # type: ignore[union-attr]
+            need_copy_on_last = cfg is not None and cls._num_substeps % 2 == 1
             for i in range(cls._num_substeps):
                 cls._step_solver(cls._state_0, cls._state_1, cls._control, contacts, cls._solver_dt)
                 if need_copy_on_last and i == cls._num_substeps - 1:
@@ -1726,6 +1831,8 @@ class NewtonManager(PhysicsManager):
 
             cls._run_solver_substeps(contacts)
 
+        for cb in cls._post_step_callbacks:
+            cb()
         cls._update_sensors(contacts)
 
     @classmethod
@@ -1742,6 +1849,8 @@ class NewtonManager(PhysicsManager):
             contacts = None
 
         cls._run_solver_substeps(contacts)
+        for cb in cls._post_step_callbacks:
+            cb()
         cls._update_sensors(contacts)
 
     # State accessors (used extensively by articulation/rigid object data)
@@ -2021,6 +2130,36 @@ class NewtonManager(PhysicsManager):
         registered callbacks fire in registration order each step.
         """
         cls._post_actuator_callbacks.append(callback)
+
+    @classmethod
+    def register_post_step_callback(cls, callback: Callable[[], None]) -> None:
+        """Append a hook to the list invoked after the last solver substep on every step.
+
+        Each callback runs inside the stepped (and, when
+        :meth:`_is_all_graphable` is ``True``, captured) region right after the
+        final solver substep of the decimation loop and before
+        :meth:`_update_sensors`, so the launches it issues are recorded into
+        every captured CUDA graph and replayed on each tick. Callbacks must be
+        graph-safe (fixed shapes, no host branching on device data) and must be
+        registered before capture. Articulations with non-identity ordering
+        register their backend-to-user state republish here; all registered
+        callbacks fire in registration order each step.
+        """
+        cls._post_step_callbacks.append(callback)
+
+    @classmethod
+    def unregister_post_step_callback(cls, callback: Callable[[], None]) -> None:
+        """Remove a previously registered post-step callback.
+
+        Symmetric to :meth:`register_post_step_callback`, this lets an
+        articulation deregister its republish hook when its callbacks are
+        cleared so the bound method does not linger on the class-level list
+        after the articulation is gone. Removing a callback that was never
+        registered (or was already removed) is a safe no-op, matching the
+        tolerant deregistration of other handles.
+        """
+        with contextlib.suppress(ValueError):
+            cls._post_step_callbacks.remove(callback)
 
     @classmethod
     def set_decimation(cls, decimation: int) -> None:

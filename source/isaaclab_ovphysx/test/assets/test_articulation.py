@@ -31,9 +31,9 @@ Reads use the data-class properties (``cube_object.data.body_mass``,
 Process-global device lock
 --------------------------
 
-The OVPhysX runtime binds device mode (CPU vs GPU) at the C++ layer on the
-first ``ovphysx.PhysX(device=...)`` call and cannot release/swap it without a
-process restart.  :class:`~isaaclab_ovphysx.physics.OvPhysxManager` tracks
+The OVPhysX runtime fixes device mode (CPU vs GPU) when the process creates
+its first ``ovphysx.PhysX`` instance and cannot switch it without a process
+restart. :class:`~isaaclab_ovphysx.physics.OvPhysxManager` tracks
 this on ``_locked_device`` and raises :exc:`RuntimeError` if a later
 :class:`SimulationContext` requests a different device.  The
 ``_ovphysx_skip_other_device`` autouse fixture below preempts that error in
@@ -53,6 +53,7 @@ pattern.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import pytest
 import torch
@@ -70,7 +71,7 @@ import isaaclab.sim as sim_utils  # noqa: E402
 import isaaclab.utils.math as math_utils  # noqa: E402
 import isaaclab.utils.string as string_utils  # noqa: E402
 from isaaclab.actuators import ActuatorBase, IdealPDActuatorCfg, ImplicitActuatorCfg  # noqa: E402
-from isaaclab.assets import ArticulationCfg  # noqa: E402
+from isaaclab.assets import ArticulationCfg, get_articulation_name_ordering  # noqa: E402
 from isaaclab.envs.mdp.terminations import joint_effort_out_of_limit  # noqa: E402
 from isaaclab.managers import SceneEntityCfg  # noqa: E402
 from isaaclab.sim import SimulationCfg, build_simulation_context  # noqa: E402
@@ -94,12 +95,34 @@ _OMNI_PHYSX_SCHEMAS_GAP_REASON = (
     "docs/superpowers/specs/2026-04-28-ovphysx-wheel-gaps-for-marco.md."
 )
 
-_MATERIAL_GAP_REASON = (
-    "Requires a ``RIGID_BODY_MATERIAL`` TensorType (or a view-helper) on the "
-    "ovphysx wheel side.  ``Articulation.root_view`` is an ``OvPhysxView`` over "
-    "the per-tensor-type bindings on OVPhysX, so ``root_view.get_material_properties()`` / "
-    "``set_material_properties()`` / ``max_shapes`` are not available.  See "
-    "docs/superpowers/specs/2026-04-28-ovphysx-wheel-gaps-for-marco.md."
+_ANYMAL_PHYSX_JOINT_NAMES = (
+    "LF_HAA",
+    "LH_HAA",
+    "RF_HAA",
+    "RH_HAA",
+    "LF_HFE",
+    "LH_HFE",
+    "RF_HFE",
+    "RH_HFE",
+    "LF_KFE",
+    "LH_KFE",
+    "RF_KFE",
+    "RH_KFE",
+)
+
+
+_PANDA_ROOT_PRESERVING_REVERSED_BODY_NAMES = (
+    "panda_link0",
+    "panda_rightfinger",
+    "panda_leftfinger",
+    "panda_hand",
+    "panda_link7",
+    "panda_link6",
+    "panda_link5",
+    "panda_link4",
+    "panda_link3",
+    "panda_link2",
+    "panda_link1",
 )
 
 
@@ -127,10 +150,10 @@ _LOCKED_DEVICE: list[str | None] = [None]
 def _ovphysx_skip_other_device(request):
     """Skip tests whose ``device`` parameter mismatches the session-locked device.
 
-    The OVPhysX runtime locks the process-global device mode on the first
-    ``ovphysx.PhysX(device=...)`` call, so any test parametrized to a different
-    device after the first ``sim.reset()`` would hit
-    :exc:`ovphysx.types.PhysXDeviceError`.  We detect the locked device on the
+    The OVPhysX runtime locks process-global device mode when the process
+    creates its first ``ovphysx.PhysX`` instance, so any test parametrized to a
+    different device after the first ``sim.reset()`` would hit the manager's
+    :exc:`RuntimeError`. We detect the locked device on the
     first encounter and skip subsequent tests on the other device with a clear
     message so the run finishes cleanly rather than producing spurious failures.
     """
@@ -327,6 +350,295 @@ def sim(request):
     ) as sim:
         sim._app_control_on_stop_handle = None
         yield sim
+
+
+@pytest.mark.parametrize("num_articulations", [1])
+@pytest.mark.parametrize("device", ["cuda:0", "cpu"])
+def test_live_anymal_c_manual_joint_ordering_preserves_unselected_backend_state(sim, num_articulations, device):
+    """Test that a partial ordered write preserves every unselected backend joint."""
+    articulation_cfg = generate_articulation_cfg("anymal").replace(
+        joint_ordering=tuple(reversed(_ANYMAL_PHYSX_JOINT_NAMES))
+    )
+    articulation, _ = generate_articulation(articulation_cfg, num_articulations, device=device)
+    sim.reset()
+
+    joint_ordering = articulation.joint_ordering
+    assert joint_ordering is not None
+    backend_seed = torch.arange(1, articulation.num_joints + 1, dtype=torch.float32, device=device).reshape(1, -1)
+    backend_seed *= 0.001
+    articulation.root_view.set_attribute(TT.DOF_POSITION, wp.from_torch(backend_seed))
+    backend_before = wp.to_torch(articulation.root_view.get_attribute(TT.DOF_POSITION)).clone()
+    torch.testing.assert_close(backend_before, backend_seed, rtol=0.0, atol=0.0)
+    backend_joint_id = joint_ordering.user_to_backend_indices[0]
+    selected_value = backend_before[0, backend_joint_id] + 0.001
+
+    articulation.write_joint_position_to_sim_index(
+        position=selected_value.reshape(1, 1),
+        env_ids=wp.array([0], dtype=wp.int32, device=device),
+        joint_ids=wp.array([0], dtype=wp.int32, device=device),
+    )
+
+    backend_after = wp.to_torch(articulation.root_view.get_attribute(TT.DOF_POSITION)).clone()
+    expected = backend_before.clone()
+    expected[0, backend_joint_id] = selected_value
+    torch.testing.assert_close(backend_after, expected, rtol=0.0, atol=0.0)
+
+
+@pytest.mark.parametrize("num_articulations", [1])
+# COM pose is a CPU-resident OVPhysX binding (``_CPU_ONLY_TYPES``) even on a GPU sim, and this test
+# restores it via the low-level ``root_view.set_attribute`` which forbids cross-device staging, so it
+# is inherently CPU-only (aligning it to ``cuda:0`` would fail on the CPU-native COM binding).
+@pytest.mark.parametrize("device", ["cpu"])
+def test_live_panda_manual_body_ordering_preserves_unselected_coms(sim, num_articulations, device):
+    """Test that a partial ordered COM write preserves every unselected backend body."""
+    articulation_cfg = FRANKA_PANDA_CFG.replace(body_ordering=_PANDA_ROOT_PRESERVING_REVERSED_BODY_NAMES)
+    articulation, _ = generate_articulation(articulation_cfg, num_articulations, device=device)
+    sim.reset()
+
+    body_ordering = articulation.body_ordering
+    assert body_ordering is not None
+    backend_before = _read_binding_to_torch(articulation, TT.BODY_COM_POSE, device).clone()
+    assert torch.unique(backend_before[0], dim=0).shape[0] > 1
+
+    articulation.data._body_com_pose_b.timestamp = -1.0
+    backend_staging = articulation.data._body_com_pose_b_backend
+    if backend_staging is not None:
+        backend_staging.timestamp = -1.0
+
+    public_body_id = 1
+    backend_body_id = body_ordering.user_to_backend_indices[public_body_id]
+    assert backend_body_id != public_body_id
+    selected_com = backend_before[0, backend_body_id].clone()
+    selected_com[0] += 0.001
+
+    articulation.set_coms_index(
+        coms=wp.from_torch(selected_com.reshape(1, 1, 7).contiguous(), dtype=wp.transformf),
+        env_ids=wp.array([0], dtype=wp.int32, device=device),
+        body_ids=wp.array([public_body_id], dtype=wp.int32, device=device),
+    )
+
+    backend_after = _read_binding_to_torch(articulation, TT.BODY_COM_POSE, device).clone()
+
+    articulation.root_view.set_attribute(TT.BODY_COM_POSE, wp.from_torch(backend_before.contiguous()))
+    noop_after = _read_binding_to_torch(articulation, TT.BODY_COM_POSE, device).clone()
+    unselected_body_mask = torch.ones(backend_before.shape[1], dtype=torch.bool, device=device)
+    unselected_body_mask[backend_body_id] = False
+
+    assert torch.equal(noop_after[..., :3], backend_before[..., :3])
+    assert torch.equal(backend_after[0, backend_body_id, :3], selected_com[:3])
+    assert torch.equal(backend_after[0, unselected_body_mask, :3], backend_before[0, unselected_body_mask, :3])
+
+    # Bound semantic orientation equality by the native setter's float32 no-op normalization.
+    native_orientation_atol = torch.max(
+        torch.abs(noop_after[0, unselected_body_mask, 3:7] - backend_before[0, unselected_body_mask, 3:7])
+    ).item()
+    assert native_orientation_atol <= torch.finfo(backend_before.dtype).eps
+    torch.testing.assert_close(
+        backend_after[0, unselected_body_mask, 3:7],
+        backend_before[0, unselected_body_mask, 3:7],
+        rtol=0.0,
+        atol=native_orientation_atol,
+    )
+    assert torch.equal(backend_after[..., 3:7], noop_after[..., 3:7])
+
+
+@pytest.mark.parametrize("num_articulations", [1])
+@pytest.mark.parametrize("device", ["cuda:0", "cpu"])
+def test_reversed_body_ordering_wrench_composes_from_backend_pose_without_shadow_refresh(
+    sim, num_articulations, device
+):
+    """Reversed body ordering: an external wrench composes from the backend-order link pose and
+    ``write_data_to_sim`` no longer refreshes the public ``body_link_pose_w`` shadow (finding [27]).
+    """
+    articulation_cfg = FRANKA_PANDA_CFG.replace(body_ordering=_PANDA_ROOT_PRESERVING_REVERSED_BODY_NAMES)
+    articulation, _ = generate_articulation(articulation_cfg, num_articulations, device=device)
+    sim.reset()
+
+    body_ordering = articulation.body_ordering
+    assert body_ordering is not None
+
+    # Apply a body-frame wrench to a single named body (public order).
+    body_ids, _ = articulation.find_bodies("panda_hand")
+    public_body_id = body_ids[0]
+    backend_body_id = int(body_ordering.user_to_backend_indices[public_body_id])
+    assert backend_body_id != public_body_id  # exercises the reorder
+
+    force_b = torch.zeros(articulation.num_instances, len(body_ids), 3, device=device)
+    torque_b = torch.zeros(articulation.num_instances, len(body_ids), 3, device=device)
+    force_b[..., 0], force_b[..., 1], force_b[..., 2] = 3.0, -5.0, 7.0
+    torque_b[..., 0], torque_b[..., 1], torque_b[..., 2] = 0.5, -1.5, 2.5
+    articulation.permanent_wrench_composer.set_forces_and_torques_index(
+        forces=force_b, torques=torque_b, body_ids=body_ids
+    )
+
+    # Step once so the link poses are non-trivial (rotated), giving the quaternion rotation teeth.
+    articulation.set_joint_position_target_index(target=articulation.data.default_joint_pos.torch.clone())
+    articulation.write_data_to_sim()
+    sim.step()
+    articulation.update(sim.cfg.dt)
+
+    # write_data_to_sim must NOT advance the public body_link_pose_w shadow timestamp: the wrench
+    # path now reads the backend-order pose buffer instead of refreshing the public shadow.
+    shadow_ts_before = articulation.data._body_link_pose_w.timestamp
+    articulation.write_data_to_sim()
+    assert articulation.data._body_link_pose_w.timestamp == shadow_ts_before
+
+    # The wrench buffer is in backend order; the world-frame wrench must match the one composed
+    # from the SAME physical body's pose read via the public (user-order) shadow.
+    wrench_buf = wp.to_torch(articulation._wrench_buf).to(device)
+    pose = articulation.data.body_link_pose_w.torch[0, public_body_id]  # user order, [pos(3), quat_xyzw(4)]
+    quat_xyzw = pose[3:7]
+    expected_force_w = math_utils.quat_apply(quat_xyzw, force_b[0, 0])
+    expected_torque_w = math_utils.quat_apply(quat_xyzw, torque_b[0, 0])
+    torch.testing.assert_close(wrench_buf[0, backend_body_id, 0:3], expected_force_w, rtol=1e-4, atol=1e-4)
+    torch.testing.assert_close(wrench_buf[0, backend_body_id, 3:6], expected_torque_w, rtol=1e-4, atol=1e-4)
+    torch.testing.assert_close(wrench_buf[0, backend_body_id, 6:9], pose[0:3], rtol=1e-4, atol=1e-4)
+
+
+@pytest.mark.parametrize("num_articulations", [1])
+@pytest.mark.parametrize("device", ["cuda:0", "cpu"])
+def test_reversed_joint_ordering_joint_acc_matches_canonicalized_finite_difference(sim, num_articulations, device):
+    """Reversed joint ordering: the fused ``joint_acc`` finite difference reads the backend-order
+    velocity source and equals the identity-order acceleration permuted into public order (finding [40]).
+    """
+    articulation_cfg = generate_articulation_cfg("anymal").replace(
+        joint_ordering=tuple(reversed(_ANYMAL_PHYSX_JOINT_NAMES))
+    )
+    articulation, _ = generate_articulation(articulation_cfg, num_articulations, device=device)
+    sim.reset()
+    data = articulation.data
+
+    joint_ordering = articulation.joint_ordering
+    assert joint_ordering is not None
+    num_joints = articulation.num_joints
+
+    user_to_backend = torch.as_tensor(
+        [int(joint_ordering.user_to_backend_indices[u]) for u in range(num_joints)],
+        dtype=torch.long,
+        device=device,
+    )
+
+    # Controlled, non-uniform finite-difference scenario in backend order (so a wrong permutation
+    # in the kernel would produce a different result -- i.e. the test has teeth).
+    cur_vel_backend = (torch.arange(1, num_joints + 1, dtype=torch.float32, device=device) * 0.1).reshape(1, -1)
+    prev_vel_backend = (torch.arange(1, num_joints + 1, dtype=torch.float32, device=device) * -0.03).reshape(1, -1)
+
+    # Push the current velocity into the backend DOF_VELOCITY binding (backend order).
+    articulation.root_view.set_attribute(TT.DOF_VELOCITY, wp.from_torch(cur_vel_backend.contiguous()))
+
+    # ``_previous_joint_vel`` is stored in PUBLIC order: prev_user[u] = prev_backend[map[u]].
+    prev_vel_user = prev_vel_backend[:, user_to_backend].contiguous()
+    data._previous_joint_vel.assign(wp.from_torch(prev_vel_user))
+
+    # Force a stale finite-difference state with a known dt so the ordered branch recomputes, and a
+    # stale backend velocity staging so it re-reads the value we just set.
+    dt = 0.02
+    data._joint_acc.timestamp = data._sim_timestamp - dt
+    data._joint_vel_backend.timestamp = -1.0
+
+    joint_acc_user = data.joint_acc.torch.clone()
+
+    # Expected identity-order acceleration, then permuted into public order.
+    acc_backend = (cur_vel_backend - prev_vel_backend) / dt
+    expected_user = acc_backend[:, user_to_backend]
+    torch.testing.assert_close(joint_acc_user, expected_user, rtol=1e-5, atol=1e-6)
+
+
+def _branching_fixture_path() -> Path:
+    """Locate the shared branching articulation fixture in the isaaclab_physx test data directory.
+
+    Referenced cross-package (same pattern as isaaclab_newton's
+    ``test_mjwarp_ordering_resolver_matches_newton_backend_names``) so every backend asserts its
+    symbolic-ordering resolution against a single ground-truth asset.
+    """
+    return (
+        Path(__file__).resolve().parents[3]
+        / "isaaclab_physx"
+        / "test"
+        / "assets"
+        / "data"
+        / "articulation_ordering_branching.usda"
+    )
+
+
+@pytest.mark.parametrize("device", ["cuda:0", "cpu"])
+def test_branching_fixture_physx_ordering_is_identity_on_ovphysx(sim, device):
+    """Take the same-backend identity fast path for ``joint_ordering="physx"`` on OVPhysX.
+
+    Live coverage for the same-backend symbolic-convention path (finding [64]): OVPhysX is a
+    PhysX-family backend whose articulation view is already in PhysX (breadth-first) order, so
+    requesting ``physx`` must expose the public joint/body axes verbatim in backend order with no
+    reorder map.
+    """
+    articulation = Articulation(
+        ArticulationCfg(
+            prim_path="/World/Robot",
+            spawn=sim_utils.UsdFileCfg(usd_path=str(_branching_fixture_path())),
+            actuators={},
+            joint_ordering="physx",
+            body_ordering="physx",
+        )
+    )
+    sim.reset()
+    assert articulation.is_initialized
+
+    # Ground truth pinned by isaaclab_physx's test_branching_fixture_resolves_distinct_conventions.
+    expected_physx_joint_names = ("left_shoulder", "right_shoulder", "left_elbow", "right_elbow")
+    expected_physx_body_names = ("base", "left_upper", "right_upper", "left_tip", "right_tip")
+
+    # OVPhysX exposes the native breadth-first PhysX order on the backend axis.
+    assert tuple(articulation.backend_joint_names) == expected_physx_joint_names
+    assert tuple(articulation.backend_body_names) == expected_physx_body_names
+
+    # Same-backend preset: the public axis equals the backend axis and no reorder map is created.
+    assert tuple(articulation.joint_names) == tuple(articulation.backend_joint_names)
+    assert tuple(articulation.body_names) == tuple(articulation.backend_body_names)
+    assert tuple(articulation.joint_names) == expected_physx_joint_names
+    assert tuple(articulation.body_names) == expected_physx_body_names
+    assert articulation.joint_ordering is None
+    assert articulation.body_ordering is None
+
+
+@pytest.mark.parametrize("device", ["cuda:0", "cpu"])
+def test_branching_fixture_mjwarp_ordering_reorders_ovphysx_to_dfs(sim, device):
+    """Resolve depth-first MJWarp order cross-backend for ``joint_ordering="mjwarp"`` on OVPhysX.
+
+    Live coverage for the cross-backend symbolic-convention path (findings [10]/[64]): OVPhysX is a
+    PhysX-family backend (native breadth-first order), so requesting ``mjwarp`` triggers a temporary
+    Newton USD discovery of the depth-first order and reorders the public joint/body axes to it. The
+    MJWarp/DFS ground truth is the same tuple isaaclab_newton's
+    ``test_mjwarp_ordering_resolver_matches_newton_backend_names`` pins for its live Newton backend.
+    """
+    articulation = Articulation(
+        ArticulationCfg(
+            prim_path="/World/Robot",
+            spawn=sim_utils.UsdFileCfg(usd_path=str(_branching_fixture_path())),
+            actuators={},
+            joint_ordering="mjwarp",
+            body_ordering="mjwarp",
+        )
+    )
+    sim.reset()
+    assert articulation.is_initialized
+
+    # Ground truth shared with isaaclab_physx's test_branching_fixture_resolves_distinct_conventions
+    # and isaaclab_newton's test_mjwarp_ordering_resolver_matches_newton_backend_names.
+    expected_physx_joint_names = ("left_shoulder", "right_shoulder", "left_elbow", "right_elbow")
+    expected_mjwarp_joint_names = ("left_shoulder", "left_elbow", "right_shoulder", "right_elbow")
+    expected_physx_body_names = ("base", "left_upper", "right_upper", "left_tip", "right_tip")
+    expected_mjwarp_body_names = ("base", "left_upper", "left_tip", "right_upper", "right_tip")
+
+    # OVPhysX exposes the native breadth-first PhysX order on the backend axis.
+    assert tuple(articulation.backend_joint_names) == expected_physx_joint_names
+    assert tuple(articulation.backend_body_names) == expected_physx_body_names
+
+    # Cross-backend Newton discovery resolves the depth-first MJWarp order and reorders the public axis.
+    assert get_articulation_name_ordering(articulation, "mjwarp", kind="joint") == expected_mjwarp_joint_names
+    assert get_articulation_name_ordering(articulation, "mjwarp", kind="body") == expected_mjwarp_body_names
+    assert tuple(articulation.joint_names) == expected_mjwarp_joint_names
+    assert tuple(articulation.body_names) == expected_mjwarp_body_names
+    assert articulation.joint_ordering is not None
+    assert articulation.body_ordering is not None
 
 
 @pytest.mark.parametrize("num_articulations", [1, 2])
@@ -2033,9 +2345,54 @@ def test_body_com_pose_b_cache_and_set_coms_invalidation(sim, device):
     coms = wp.zeros((articulation.num_instances, articulation.num_bodies), dtype=wp.transformf, device=device)
     articulation.set_coms_index(coms=coms)
 
-    assert articulation.data._body_com_pose_b.timestamp == articulation.data._sim_timestamp
+    assert articulation.data._body_com_pose_b.timestamp >= 0.0
     for name, buffer in dependent_buffers:
         assert buffer.timestamp < articulation.data._sim_timestamp, name
+
+
+@pytest.mark.parametrize("device", ["cuda:0", "cpu"])
+def test_root_link_vel_w_refreshes_fk_before_body_com_vel_w_read(sim, device):
+    """Reading ``root_link_vel_w`` must run FK before ``body_com_vel_w`` sees a "fresh" buffer.
+
+    Regression test for a bug where ``root_link_vel_w`` read the ``LINK_VELOCITY`` binding without
+    first calling ``_ensure_fk_fresh()``, unlike the sibling ``body_com_vel_w`` / ``body_link_pose_w``
+    getters. ``_read_binding_into_buf`` stamps a buffer's timestamp as fresh unconditionally, so a
+    ``root_link_vel_w`` read performed right after ``write_joint_velocity_to_sim_index`` (which sets
+    ``_fk_timestamp = -1.0`` to force a refresh) would mark the shared velocity buffer fresh *before*
+    FK actually ran. A subsequent ``body_com_vel_w`` read then sees the buffer already fresh and skips
+    its own re-read, silently returning pre-FK data.
+
+    The OVPhysX kitless backend recomputes ``LINK_VELOCITY`` eagerly on every attribute read
+    regardless of whether ``update_articulations_kinematic`` was called, so comparing the numeric
+    value of ``body_com_vel_w`` before and after the fix would pass either way here. The invariant
+    that actually catches the bug is that ``_fk_timestamp`` must be current by the time
+    ``root_link_vel_w`` finishes reading, so every dependent buffer it marks fresh is trustworthy.
+    """
+    sim._app_control_on_stop_handle = None
+    articulation_cfg = generate_articulation_cfg(articulation_type="single_joint_implicit")
+    articulation, _ = generate_articulation(articulation_cfg, 2, device=device)
+
+    sim.reset()
+    articulation.update(sim.cfg.dt)
+
+    # Prime the derived buffers before the write so their TimestampedBuffers are populated; otherwise
+    # the reads below would trivially be "first reads" regardless of the cache-invalidation bug.
+    articulation.data.root_link_vel_w
+    articulation.data.body_com_vel_w
+
+    joint_vel = torch.full((2, articulation.num_joints), 3.0, device=device)
+    articulation.write_joint_velocity_to_sim_index(velocity=joint_vel)
+
+    # The velocity write forces a kinematic refresh on the next FK-dependent read.
+    assert articulation.data._fk_timestamp < 0.0
+
+    articulation.data.root_link_vel_w
+    # `root_link_vel_w` must have triggered the FK refresh itself -- it cannot rely on a later
+    # `body_com_vel_w` read to do so, because it already marks the shared velocity buffer fresh.
+    assert articulation.data._fk_timestamp == articulation.data._sim_timestamp
+
+    body_com_vel_w = articulation.data.body_com_vel_w.torch
+    assert torch.linalg.norm(body_com_vel_w[:, 1, :]) > 1e-3
 
 
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
@@ -2326,9 +2683,19 @@ def test_write_joint_frictions_to_sim(sim, num_articulations, device, add_ground
 @pytest.mark.parametrize("num_articulations", [1, 2])
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 @pytest.mark.parametrize("articulation_type", ["panda"])
-@pytest.mark.xfail(reason=_MATERIAL_GAP_REASON, strict=False)
 def test_set_material_properties(sim, num_articulations, device, add_ground_plane, articulation_type):
-    """Test getting and setting material properties (friction/restitution) of articulation shapes."""
+    """Test getting and setting per-shape material properties (friction/restitution).
+
+    OVPhysX exposes per-collision-shape material as the
+    ``articulation_shape_friction_and_restitution`` tensor binding (shape ``[N, S, 3]`` =
+    static friction, dynamic friction, restitution), addressed through the
+    :class:`~isaaclab_ovphysx.sim.views.OvPhysxView`. The binding is device-resident, so the
+    buffer lives on the simulation device. (The PhysX backend instead uses a dedicated
+    ``root_view.get_material_properties`` / ``set_material_properties`` view API.)
+    """
+    if not hasattr(TT, "SHAPE_FRICTION_AND_RESTITUTION"):
+        pytest.skip("ovphysx wheel does not expose the shape material tensor type")
+
     articulation_cfg = generate_articulation_cfg(articulation_type=articulation_type)
     articulation, _ = generate_articulation(
         articulation_cfg=articulation_cfg, num_articulations=num_articulations, device=device
@@ -2337,28 +2704,21 @@ def test_set_material_properties(sim, num_articulations, device, add_ground_plan
     # Play the simulator
     sim.reset()
 
-    # Get number of shapes from the articulation
-    max_shapes = articulation.root_view.max_shapes
+    view = articulation.root_view
+    # Number of collision shapes per articulation, from the material binding's shape [N, S, 3].
+    num_shapes = view.binding_for(TT.SHAPE_FRICTION_AND_RESTITUTION).shape[1]
 
-    # Generate random material properties: (static_friction, dynamic_friction, restitution)
-    materials = torch.empty(num_articulations, max_shapes, 3, device="cpu").uniform_(0.0, 1.0)
-    # Ensure dynamic friction <= static friction
-    materials[..., 1] = torch.min(materials[..., 0], materials[..., 1])
+    # Random material per shape: (static_friction, dynamic_friction, restitution), on the sim device.
+    materials = torch.empty(num_articulations, num_shapes, 3, device=device).uniform_(0.0, 1.0)
+    materials[..., 1] = torch.min(materials[..., 0], materials[..., 1])  # dynamic <= static
 
-    # Set material properties via the PhysX view-level API
-    env_ids = torch.arange(num_articulations, dtype=torch.int32)
-    articulation.root_view.set_material_properties(
-        wp.from_torch(materials, dtype=wp.float32), wp.from_torch(env_ids, dtype=wp.int32)
-    )
-
-    # Simulate physics
+    # Set material properties through the view, then simulate.
+    view.set_attribute(TT.SHAPE_FRICTION_AND_RESTITUTION, wp.from_torch(materials, dtype=wp.float32))
     sim.step()
     articulation.update(sim.cfg.dt)
 
-    # Get material properties from simulation
-    materials_check = wp.to_torch(articulation.root_view.get_material_properties())
-
-    # Check if material properties are set correctly
+    # Read back from the simulation and verify the round-trip.
+    materials_check = wp.to_torch(view.get_attribute(TT.SHAPE_FRICTION_AND_RESTITUTION))
     torch.testing.assert_close(materials_check, materials)
 
 

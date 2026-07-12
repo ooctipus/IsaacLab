@@ -1,6 +1,149 @@
 Changelog
 ---------
 
+6.3.0 (2026-07-09)
+~~~~~~~~~~~~~~~~~~
+
+Added
+^^^^^
+
+* Added :data:`~isaaclab_ovphysx.tensor_types.RIGID_BODY_SHAPE_FRICTION_AND_RESTITUTION` alias for
+  the per-collision-shape rigid-body material tensor type (static friction, dynamic friction,
+  restitution) exposed by the ovphysx wheel. Read and write it through
+  :class:`~isaaclab_ovphysx.sim.views.OvPhysxView`, e.g.
+  ``root_view.get_attribute(tensor_types.RIGID_BODY_SHAPE_FRICTION_AND_RESTITUTION)``.
+
+
+6.2.0 (2026-07-08)
+~~~~~~~~~~~~~~~~~~
+
+Added
+^^^^^
+
+* Added :meth:`~isaaclab_ovphysx.sim.views.OvPhysxFrameView.get_local_scales`
+  and :meth:`~isaaclab_ovphysx.sim.views.OvPhysxFrameView.get_world_scales`,
+  which delegate to the internal :class:`~isaaclab.sim.views.UsdFrameView`.
+  Scale writes go through the writer scope (see the ``xform-space-writer``
+  fragment).
+* Added :data:`~isaaclab_ovphysx.tensor_types.SHAPE_FRICTION_AND_RESTITUTION` and
+  :data:`~isaaclab_ovphysx.tensor_types.RIGID_BODY_SHAPE_FRICTION_AND_RESTITUTION` aliases for
+  the per-collision-shape material tensor types (static friction, dynamic friction,
+  restitution) exposed by the ovphysx wheel. Read and write them through
+  :class:`~isaaclab_ovphysx.sim.views.OvPhysxView`, e.g.
+  ``root_view.get_attribute(tensor_types.SHAPE_FRICTION_AND_RESTITUTION)``.
+
+Changed
+^^^^^^^
+
+* :class:`~isaaclab_ovphysx.sim.views.OvPhysxFrameView` now ships
+  pass-through ``FrameViewWorldSpaceWriter`` / ``FrameViewLocalSpaceWriter``
+  implementations so writes follow the new
+  :meth:`~isaaclab.sim.views.BaseFrameView.xform_world_space_writer` /
+  :meth:`~isaaclab.sim.views.BaseFrameView.xform_local_space_writer` context API.
+  ``set_world_poses`` / ``set_local_poses`` shims still work (one-time
+  ``DeprecationWarning`` per class).  Scale writes inside the writer scope
+  delegate to the internal :class:`~isaaclab.sim.views.UsdFrameView` and
+  land in the USD stage (no propagation to OVPhysX-side collision-shape
+  scales).
+
+Deprecated
+^^^^^^^^^^
+
+* Deprecated :meth:`~isaaclab_ovphysx.sim.views.OvPhysxFrameView.get_scales` and
+  :meth:`~isaaclab_ovphysx.sim.views.OvPhysxFrameView.set_scales`.  For reads,
+  use the explicit ``get_local_scales`` (operates on ``xformOp:scale``) or
+  ``get_world_scales``.  For writes, use the writer scope's
+  ``set_scales``.  The deprecated methods still work but emit a
+  ``DeprecationWarning`` and default to local scales, preserving prior
+  behavior.
+
+
+6.1.1 (2026-07-07)
+~~~~~~~~~~~~~~~~~~
+
+Fixed
+^^^^^
+
+* Fixed the OVPhysX optional runtime dependency to install
+  ``ovphysx==0.5.2+head.f62c22207c``, matching the supported runtime wheel.
+
+
+6.1.0 (2026-07-06)
+~~~~~~~~~~~~~~~~~~
+
+Added
+^^^^^
+
+* Added :attr:`~isaaclab_ovphysx.physics.OvPhysxCfg.enable_enhanced_determinism` and
+  :attr:`~isaaclab_ovphysx.physics.OvPhysxCfg.enable_external_forces_every_iteration`, mirroring the
+  equivalent PhysX solver settings already exposed on
+  :class:`~isaaclab_physx.physics.PhysxCfg`.
+
+
+6.0.0 (2026-07-03)
+~~~~~~~~~~~~~~~~~~
+
+Changed
+^^^^^^^
+
+* **Breaking:** :attr:`~isaaclab_ovphysx.assets.RigidObjectCollection.root_view` now returns an
+  :class:`~isaaclab_ovphysx.sim.views.OvPhysxView` binding manager instead of a raw ``dict``
+  mapping ``TensorType`` to ``TensorBinding``. The view wraps the fused multi-prim bindings
+  (``prim_paths=[...]``) and stores each under the collection's ``LINK_*``/``BODY_*`` data-class
+  key via ``key_aliases`` (mapped from the underlying ``RIGID_BODY_*`` type). Replace
+  ``root_view[tensor_type]`` with ``root_view.try_binding_for(tensor_type)``.
+
+Fixed
+^^^^^
+
+* Updated :class:`~isaaclab_ovphysx.physics.OvPhysxManager` for the current
+  OVPhysX constructor, stage-reset, and synchronous-step APIs.
+* Synchronized GPU-to-host property staging before OVPhysX consumes the pinned
+  host buffers.
+
+
+5.0.1 (2026-07-01)
+~~~~~~~~~~~~~~~~~~
+
+Fixed
+^^^^^
+
+* Fixed center-of-mass writes in :class:`~isaaclab_ovphysx.assets.RigidObject`,
+  :class:`~isaaclab_ovphysx.assets.RigidObjectCollection`, and
+  :class:`~isaaclab_ovphysx.assets.Articulation` for compatibility with Warp
+  1.15.
+
+
+5.0.0 (2026-06-27)
+~~~~~~~~~~~~~~~~~~
+
+Changed
+^^^^^^^
+
+* **Breaking:** :attr:`~isaaclab_ovphysx.assets.Articulation.root_view` now returns an
+  :class:`~isaaclab_ovphysx.sim.views.OvPhysxView` binding manager instead of a raw
+  ``dict`` mapping ``TensorType`` to ``TensorBinding``. The view owns all tensor-binding
+  creation, caching, reads, and writes for the articulation. Address bindings by attribute
+  name or ``TensorType`` member through
+  :meth:`~isaaclab_ovphysx.sim.views.OvPhysxView.try_binding_for` /
+  :meth:`~isaaclab_ovphysx.sim.views.OvPhysxView.get_attribute` rather than indexing the
+  dict, e.g. replace ``root_view[tensor_type]`` with
+  ``root_view.try_binding_for(tensor_type)`` and ``tensor_type in root_view`` with
+  ``root_view.try_binding_for(tensor_type) is not None``.
+* **Breaking:** :attr:`~isaaclab_ovphysx.assets.RigidObject.root_view` now returns an
+  :class:`~isaaclab_ovphysx.sim.views.OvPhysxView` binding manager instead of a raw
+  ``dict`` mapping ``TensorType`` to ``TensorBinding``. The view owns all tensor-binding
+  creation, caching, reads, and writes for the rigid object. Replace ``root_view[tensor_type]``
+  with ``root_view.try_binding_for(tensor_type)`` /
+  :meth:`~isaaclab_ovphysx.sim.views.OvPhysxView.get_attribute`.
+
+Fixed
+^^^^^
+
+* Fixed repeated OVPhysX articulation body-frame center-of-mass pose reads by caching them as model
+  properties and invalidating dependent buffers when center-of-mass offsets are updated.
+
+
 4.0.0 (2026-06-26)
 ~~~~~~~~~~~~~~~~~~
 

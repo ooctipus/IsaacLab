@@ -44,6 +44,7 @@ Guidelines for modifications:
 
 ## Contributors
 
+* Agon Serifi
 * Alessandro Assirelli
 * Alex Omar
 * Alexander Millane
@@ -73,6 +74,7 @@ Guidelines for modifications:
 * CY (Chien-Ying) Chen
 * David Leon
 * David Yang
+* Daniela Hasenbring
 * Dhananjay Shendre
 * Dhyan Thakkar
 * Dongxuan Fan
@@ -118,6 +120,7 @@ Guidelines for modifications:
 * Kousheek Chakraborty
 * Kris Wilson
 * Krishna Lakhi
+* Lin He
 * Lionel Gulich
 * Lorenz Wellhausen
 * Lotus Li
@@ -127,10 +130,12 @@ Guidelines for modifications:
 * Marco Alesiani
 * Masoud Moghani
 * Mateo Guaman Castro
+* Matthew Taylor
 * Maurice Rahme
 * Michael Gussert
 * Michael Lin
 * Michael Noseworthy
+* Michal Hapala
 * Miguel Alonso Jr
 * Mihir Kulkarni
 * Mingxue Gu

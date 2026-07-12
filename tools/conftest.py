@@ -738,6 +738,9 @@ def run_individual_tests(test_files, workspace_root, isaacsim_ci, test_node_ids_
     xml_reports = []
     cold_cache_applied = False
     test_node_ids_by_file = test_node_ids_by_file or {}
+    global_k_expr = os.environ.get("TEST_K_EXPR", "").strip() or None
+    if global_k_expr is not None:
+        print(f"Applying global pytest -k expression to every test file: '{global_k_expr}'")
 
     for test_file in test_files:
         print(f"\n\n🚀 Running {test_file} independently...\n")
@@ -786,6 +789,8 @@ def run_individual_tests(test_files, workspace_root, isaacsim_ci, test_node_ids_
 
         merged_status: dict | None = None
         for suffix, k_expr in passes:
+            if global_k_expr is not None:
+                k_expr = f"({k_expr}) and ({global_k_expr})" if k_expr else global_k_expr
             report, status, was_failure = _run_one_pass(ctx, k_expr=k_expr, suffix=suffix)
             if report is not None:
                 xml_reports.append(report)
@@ -856,7 +861,10 @@ def _collect_test_files(
 
                 test_files.append(full_path)
 
-    # Apply file-level sharding: sort deterministically, then select every Nth file.
+    # Sort test files deterministically to ensure consistent test ordering.
+    test_files.sort()
+
+    # Apply file-level sharding: select every Nth file from the deterministic order.
     # Skip when include_files is set — in that case the test's own conftest handles
     # sharding at the test-item level (e.g. parametrized test cases).
     shard_index = os.environ.get("TEST_SHARD_INDEX", "")
@@ -864,7 +872,6 @@ def _collect_test_files(
     if shard_index and shard_count and not include_files:
         shard_index = int(shard_index)
         shard_count = int(shard_count)
-        test_files.sort()
         test_files = [f for i, f in enumerate(test_files) if i % shard_count == shard_index]
         print(f"Shard {shard_index}/{shard_count}: selected {len(test_files)} test files")
 
