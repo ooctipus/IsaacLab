@@ -241,7 +241,6 @@ def compute_deps_hash(kitless: bool) -> str:
         build_recipe,
         Path("docker/docker-compose.yaml"),
         Path("pyproject.toml"),
-        Path("uv.lock"),
         Path("isaaclab.sh"),
     ]:
         hash_file(md5, REPO_ROOT / rel_path, rel_path.as_posix())
@@ -451,7 +450,7 @@ def build_overlay(ctx: BuildContext, plan: BuildPlan, docker_env: dict[str, str]
     """Build a source-only or source+pip overlay image."""
 
     if plan.run_pip_install:
-        print("Using prepared image, copying source and syncing Python deps...")
+        print("Using prepared image, copying source and installing Python deps...")
     else:
         print("Using prepared image, copying source only...")
 
