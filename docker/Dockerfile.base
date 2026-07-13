@@ -178,18 +178,23 @@ ENV PATH=${ISAACLAB_PATH}/.venv/bin:${PATH}
 USER isaaclab
 
 # Install Isaac Lab and its dependencies with uv, as the non-root user so the
-# venv is created already-owned (see the chown note above). The environment is
-# built on the Isaac Sim bundled interpreter with --system-site-packages so the
-# image-provided ``isaacsim``/``omni`` stay importable, while uv manages isaaclab
-# + newton + rsl_rl in the venv's own site-packages. ``UV_PYTHON_PREFERENCE=system``
+# venv is created already-owned (see the chown note above). The venv is built on
+# the Isaac Sim bundled interpreter (so the ABI matches the native libs Isaac Sim
+# loads at runtime) but WITHOUT --system-site-packages. This keeps the venv's only
+# Python-side USD the pip ``usd-core`` (OpenUSD) that uv installs; Isaac Sim's
+# ``isaacsim``/``omni`` are exposed at run time via ``isaaclab.sh`` sourcing
+# ``setup_*_env.sh`` (PYTHONPATH), mirroring the local source setup. Crucially,
+# this avoids folding Isaac Sim's bundled ``pxr`` into the venv alongside the pip
+# ``usd-core`` -- two USD builds in one process re-register USD/Tf C++ types and
+# crash (``No to_python converter for ...UsdTimeCode``). ``UV_PYTHON_PREFERENCE=system``
 # lets uv use the bundled interpreter despite ``python-preference = "only-managed"``;
 # ``--frozen`` installs exactly what ``uv.lock`` pins; ``--inexact`` keeps uv from
-# pruning the system-site Isaac Sim packages it does not manage. On arm64, nlopt
+# pruning the manually pip-installed arm64 build deps below. On arm64, nlopt
 # 2.6.2 (pinned via isaacteleop) has no wheel and is built with --no-build-isolation.
 RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/uv,uid=1000,gid=1000 \
     cd ${ISAACLAB_PATH} && \
     UV_PYTHON_PREFERENCE=system \
-    uv venv --system-site-packages --python ${ISAACSIM_ROOT_PATH}/kit/python/bin/python3 ${ISAACLAB_PATH}/.venv && \
+    uv venv --python ${ISAACSIM_ROOT_PATH}/kit/python/bin/python3 ${ISAACLAB_PATH}/.venv && \
     if [ "$(dpkg --print-architecture)" = "arm64" ]; then \
         uv pip install setuptools wheel numpy && \
         uv pip install --no-build-isolation nlopt==2.6.2; \
