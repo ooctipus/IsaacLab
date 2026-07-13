@@ -26,27 +26,25 @@ RUN --mount=type=bind,source=source,target=/tmp/isaaclab_overlay/source,readonly
     --mount=type=bind,source=scripts,target=/tmp/isaaclab_overlay/scripts,readonly \
     --mount=type=bind,source=tools,target=/tmp/isaaclab_overlay/tools,readonly \
     --mount=type=bind,source=pyproject.toml,target=/tmp/isaaclab_overlay/pyproject.toml,readonly \
-    --mount=type=bind,source=uv.lock,target=/tmp/isaaclab_overlay/uv.lock,readonly \
     --mount=type=bind,source=isaaclab.sh,target=/tmp/isaaclab_overlay/isaaclab.sh,readonly \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     rm -rf "${ISAACLAB_PATH:?}/source" "${ISAACLAB_PATH:?}/scripts" "${ISAACLAB_PATH:?}/tools" && \
     cp -a /tmp/isaaclab_overlay/source "${ISAACLAB_PATH}/source" && \
     cp -a /tmp/isaaclab_overlay/scripts "${ISAACLAB_PATH}/scripts" && \
     cp -a /tmp/isaaclab_overlay/tools "${ISAACLAB_PATH}/tools" && \
-    cp -a /tmp/isaaclab_overlay/pyproject.toml /tmp/isaaclab_overlay/uv.lock "${ISAACLAB_PATH}/" && \
+    cp -a /tmp/isaaclab_overlay/pyproject.toml "${ISAACLAB_PATH}/pyproject.toml" && \
     cp -a /tmp/isaaclab_overlay/isaaclab.sh "${ISAACLAB_PATH}/isaaclab.sh" && \
     chown -R isaaclab:isaaclab \
       "${ISAACLAB_PATH}/source" \
       "${ISAACLAB_PATH}/scripts" \
       "${ISAACLAB_PATH}/tools" \
       "${ISAACLAB_PATH}/pyproject.toml" \
-      "${ISAACLAB_PATH}/uv.lock" \
       "${ISAACLAB_PATH}/isaaclab.sh" && \
     ln -sfn ${ISAACSIM_ROOT_PATH_ARG} "${ISAACLAB_PATH}/_isaac_sim" && \
     find "${ISAACLAB_PATH}/source" -type f -name "*.sh" -exec sed -i 's/\r$//' {} + && \
     (find ${ISAACSIM_ROOT_PATH_ARG}/extscache -path "*/pip_prebundle/typing_extensions.py" -delete 2>/dev/null || true) && \
     sed -i 's/^include-system-site-packages *= *true/include-system-site-packages = false/' "${ISAACLAB_PATH}/.venv/pyvenv.cfg" && \
     if [ "${RUN_PIP_INSTALL}" = "1" ]; then \
-      cd "${ISAACLAB_PATH}" && uv sync --frozen --inexact --python "${ISAACLAB_PATH}/.venv/bin/python"; \
+      cd "${ISAACLAB_PATH}" && "${ISAACLAB_PATH}/isaaclab.sh" --install; \
     fi
 USER isaaclab
