@@ -18,10 +18,13 @@ ARG ISAACSIM_ROOT_PATH_ARG=/isaac-sim
 
 # Copy source files and local dependency overrides (deps already installed in base).
 # Keep the repo layout intact so editable installs resolve packages from source/.
-COPY source ${ISAACLAB_PATH}/source
-COPY dep ${ISAACLAB_PATH}/dep
-COPY scripts ${ISAACLAB_PATH}/scripts
-COPY tools ${ISAACLAB_PATH}/tools
+# ``--chown=isaaclab:isaaclab`` matches the user/group set up in ``Dockerfile.base``
+# (uid/gid 1000) so editable ``pip install -e ...`` can write ``*.egg-info/`` back
+# into the source tree under the non-root runtime user.
+COPY --chown=isaaclab:isaaclab source ${ISAACLAB_PATH}/source
+COPY --chown=isaaclab:isaaclab dep ${ISAACLAB_PATH}/dep
+COPY --chown=isaaclab:isaaclab scripts ${ISAACLAB_PATH}/scripts
+COPY --chown=isaaclab:isaaclab tools ${ISAACLAB_PATH}/tools
 
 # Optionally re-run pip install (skipped for source-only, enabled for --force-pip-only)
 ARG RUN_PIP_INSTALL=0
