@@ -777,8 +777,26 @@ def enter_container(tag: str, *, mount_local: bool) -> None:
         "/root/.cache/NVIDIA/OptixCache",
     )
 
+    # ``models_tmp`` is bind-mounted and written by the in-container user (uid 1000),
+    # while host-side tools (e.g. the wandb checkpoint download in ``play``) write to
+    # it as the host user. Those uids differ, so make the mount point world-writable
+    # and self-heal a stale, non-writable one a previous container left behind. The
+    # repo root is user-owned, so an *empty* foreign-owned ``models_tmp`` can be
+    # replaced without sudo (deletion is governed by the parent directory's perms).
     models_tmp = REPO_ROOT / "models_tmp"
+    if models_tmp.is_dir() and not os.access(models_tmp, os.W_OK):
+        try:
+            models_tmp.rmdir()  # only succeeds if empty; never touches foreign files
+        except OSError:
+            print(
+                f"   WARNING: {models_tmp} is not writable and not empty. Host-side "
+                f"checkpoint writes may fail; run 'sudo rm -rf {models_tmp}' to reset it."
+            )
     models_tmp.mkdir(exist_ok=True)
+    try:
+        models_tmp.chmod(0o777)
+    except PermissionError:
+        pass
     docker_args += ["-v", f"{models_tmp}:/workspace/isaaclab/models_tmp:rw"]
     if mount_local:
         docker_args += ["-v", f"{REPO_ROOT}:/local:rw"]
