@@ -77,13 +77,13 @@ class FrankaRelJointPosActionCfg:
 class FrankaReorientRewardCfg(dexsuite.RewardsCfg):
     good_finger_contact = RewTerm(
         func=mdp.contacts,
-        weight=0.125,
+        weight=1.0,
         params={"threshold": 0.1, "thumb_name": THUMB_SENSOR, "finger_names": FINGER_SENSORS},
     )
 
     contact_count = RewTerm(
         func=mdp.contact_count,
-        weight=0.25,
+        weight=0.125,
         params={"threshold": 0.01, "sensor_names": FINGER_SENSORS + [THUMB_SENSOR]},
     )
 

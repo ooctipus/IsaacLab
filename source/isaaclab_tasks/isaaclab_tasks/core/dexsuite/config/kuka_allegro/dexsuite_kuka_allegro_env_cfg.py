@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from isaaclab.assets import ArticulationCfg
+from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import CameraCfg, ContactSensorCfg
@@ -28,7 +29,13 @@ class KukaAllegroSceneCfg(dexsuite.SceneCfg):
     camera env config populates them (see ``dexsuite_kuka_allegro_camera_env_cfg``).
     """
 
-    robot: ArticulationCfg = KUKA_ALLEGRO_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    # canonical cross-backend ordering: newton orders the allegro's branching finger tree
+    # depth-first, physx breadth-first — 16/23 joint slots permuted. Pinning both backends
+    # to the physx convention makes the obs/action surface backend-invariant (required for
+    # sim-to-sim transfer; a checkpoint trained without this cannot cross engines).
+    robot: ArticulationCfg = KUKA_ALLEGRO_CFG.replace(
+        prim_path="{ENV_REGEX_NS}/Robot", joint_ordering="physx", body_ordering="physx"
+    )
     base_camera: CameraCfg | None = None
     wrist_camera: CameraCfg | None = None
 
@@ -47,22 +54,22 @@ class KukaAllegroSceneCfg(dexsuite.SceneCfg):
 
 @configclass
 class KukaAllegroRelJointPosActionCfg:
-    action = mdp.RelativeJointPositionActionCfg(asset_name="robot", joint_names=[".*"], scale=0.1)
+    action = mdp.RelativeJointPositionActionCfg(asset_name="robot", joint_names=[".*"], scale=0.02)
 
 
 @configclass
 class KukaAllegroReorientRewardCfg(dexsuite.RewardsCfg):
     good_finger_contact = RewTerm(
         func=mdp.contacts,
-        weight=0.5,
+        weight=1.0,
         params={"threshold": 0.1, "thumb_name": THUMB_SENSOR, "finger_names": FINGER_SENSORS},
     )
 
-    contact_count = RewTerm(
-        func=mdp.contact_count,
-        weight=1.0,
-        params={"threshold": 0.01, "sensor_names": FINGER_SENSORS + [THUMB_SENSOR]},
-    )
+    # contact_count = RewTerm(
+    #     func=mdp.contact_count,
+    #     weight=0.1,
+    #     params={"threshold": 0.01, "sensor_names": FINGER_SENSORS + [THUMB_SENSOR]},
+    # )
 
     def __post_init__(self):
         super().__post_init__()
@@ -88,22 +95,30 @@ class KukaAllegroMixinCfg:
     def __post_init__(self: dexsuite.DexsuiteReorientEnvCfg):
         super().__post_init__()
         self.commands.object_pose.body_name = "palm_link"
-        self.events.conditional_reset.params["terms"]["reset_robot_wrist_joint"].params["asset_cfg"] = SceneEntityCfg(
-            "robot", joint_names="iiwa7_joint_7"
-        )
-        self.events.conditional_reset.params["terms"]["reset_object_to_target"].params["target_cfg"] = SceneEntityCfg(
-            "robot", body_names="palm_link"
-        )
-        self.events.conditional_reset.params["terms"]["reset_object_to_target"].params["pose_range"] = {
-            "x": [0.03, 0.07],
-            "y": [-0.04, 0.04],
-            "z": [0.02, 0.08],
+        events = self.events.conditional_reset.params["terms"]
+        events["reset_robot_wrist_joint"].params["asset_cfg"] = SceneEntityCfg("robot", joint_names="iiwa7_joint_7")
+        events["reset_object_to_target"].params["target_cfg"] = SceneEntityCfg("robot", body_names="palm_link")
+        events["reset_object_to_target"].params["pose_range"] = {
+            "x": [0.03, 0.07], "y": [-0.04, 0.04], "z": [0.02, 0.08]
         }
+        events["reset_object_to_target"].params["probability"] = 0.5
         # table/ground clearance: everything but the ground-mounted arm base (allegro finger links
         # are also named *_link_N, so exclude exactly iiwa7_link_0)
         self.events.conditional_reset.params["valid_criteria"][
             "robot_table_clearance"
         ].body_names = "(?!iiwa7_link_0$).*"
+        # finger closing-speed DR: armature sets tau/M, i.e. how fast a finger can close
+        # (scale 1.0 = real reflected rotor inertia ~0.6 s per rad; 0.1 = snappy ~0.2 s).
+        self.events.finger_closing_speed = EventTerm(
+            func=mdp.randomize_joint_parameters,
+            mode="startup",
+            params={
+                "asset_cfg": SceneEntityCfg("robot", joint_names="(index|middle|ring|thumb)_joint_(0|1|2|3)"),
+                "armature_distribution_params": (0.1, 1.0),
+                "operation": "scale",
+                "distribution": "log_uniform",
+            },
+        )
 
 
 @configclass

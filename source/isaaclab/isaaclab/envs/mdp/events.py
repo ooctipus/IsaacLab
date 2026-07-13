@@ -1075,6 +1075,7 @@ class randomize_physics_scene_gravity(ManagerTermBase):
 
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedEnv):
         super().__init__(cfg, env)
+        self._last_gravity_params: tuple | None = None
 
         manager_name = env.sim.physics_manager.__name__.lower()
         if "newton" in manager_name:
@@ -1128,7 +1129,7 @@ class randomize_physics_scene_gravity(ManagerTermBase):
         """
         # rewrite the baked device tensors only when the curriculum-driven ranges change
         params = (tuple(gravity_distribution_params[0]), tuple(gravity_distribution_params[1]))
-        if params != getattr(self, "_last_gravity_params", None):
+        if params != self._last_gravity_params:
             self._last_gravity_params = params
             self._dist_param_0[0] = gravity_distribution_params[0][0]
             self._dist_param_1[0] = gravity_distribution_params[1][0]

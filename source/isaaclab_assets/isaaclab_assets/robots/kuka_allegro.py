@@ -74,32 +74,48 @@ KUKA_ALLEGRO_CFG = ArticulationCfg(
                 "ring_joint_(0|1|2|3)",
                 "thumb_joint_(0|1|2|3)",
             ],
+            # iiwa7: KUKA LBR iiwa 7 R800 datasheet values, as recorded in
+            # https://github.com/RobotLocomotion/models/blob/master/iiwa_description/sdf/iiwa7_no_collision.sdf
+            # allegro: Wonik spec (0.7 N*m max torque), https://www.wonikrobotics.com/robot-hand and
+            # https://github.com/RobotLocomotion/models/blob/master/allegro_hand_description/sdf/allegro_hand_description_right.sdf
             effort_limit_sim={
-                "iiwa7_joint_(1|2|3|4|5|6|7)": 300.0,
-                "index_joint_(0|1|2|3)": 0.5,
-                "middle_joint_(0|1|2|3)": 0.5,
-                "ring_joint_(0|1|2|3)": 0.5,
-                "thumb_joint_(0|1|2|3)": 0.5,
+                "iiwa7_joint_(1|2)": 176.0,
+                "iiwa7_joint_(3|4|5)": 110.0,
+                "iiwa7_joint_(6|7)": 40.0,
+                "(index|middle|ring|thumb)_joint_(0|1|2|3)": 0.7,
             },
+            # motor velocity limits — deliberately NOT velocity_limit_sim: on PhysX that would
+            # author maxJointVelocity (a kinematic state clamp = simulation limit, and an
+            # enforcement asymmetry vs mjwarp which has no such clamp). The engine keeps the
+            # USD's loose blowup guard; these values are actuator/motor-level data.
+            velocity_limit={
+                "iiwa7_joint_(1|2)": 1.7104,
+                "iiwa7_joint_3": 1.7453,
+                "iiwa7_joint_4": 2.2689,
+                "iiwa7_joint_5": 2.4435,
+                "iiwa7_joint_(6|7)": 3.1416,
+                # Wonik datasheet no-load speed 0.11 s/60deg -> 9.52 rad/s
+                # (https://www.wonikrobotics.com/robot-hand; ROS URDFs use 7.0 as loaded working value)
+                "(index|middle|ring|thumb)_joint_(0|1|2|3)": 9.52,
+            },
+            # iiwa7: kp per FRI joint-impedance practice; kd = 2*zeta*sqrt(kp*M_jj) with zeta=0.7
+            # (KUKA damping-ratio convention) and M_jj = measured link inertia + armature at the
+            # task init pose (pose-dependent; re-derive if init_state or armature changes).
+            # allegro: real research-driver PD gains (zeta ~= 0.08 with real armature; the physical
+            # hand is damped by geartrain friction, not kd).
             stiffness={
-                "iiwa7_joint_(1|2|3|4)": 300.0,
-                "iiwa7_joint_5": 100.0,
-                "iiwa7_joint_6": 50.0,
-                "iiwa7_joint_7": 25.0,
-                "index_joint_(0|1|2|3)": 3.0,
-                "middle_joint_(0|1|2|3)": 3.0,
-                "ring_joint_(0|1|2|3)": 3.0,
-                "thumb_joint_(0|1|2|3)": 3.0,
+                "iiwa7_joint_(1|2|3|4|5|6|7)": 200.0,
+                "(index|middle|ring|thumb)_joint_(0|1|2|3)": 3.0,
             },
             damping={
-                "iiwa7_joint_(1|2|3|4)": 45.0,
-                "iiwa7_joint_5": 20.0,
-                "iiwa7_joint_6": 15.0,
-                "iiwa7_joint_7": 15.0,
-                "index_joint_(0|1|2|3)": 0.1,
-                "middle_joint_(0|1|2|3)": 0.1,
-                "ring_joint_(0|1|2|3)": 0.1,
-                "thumb_joint_(0|1|2|3)": 0.1,
+                "iiwa7_joint_1": 42.2,
+                "iiwa7_joint_2": 54.4,
+                "iiwa7_joint_3": 45.6,
+                "iiwa7_joint_4": 37.8,
+                "iiwa7_joint_5": 25.3,
+                "iiwa7_joint_6": 25.5,
+                "iiwa7_joint_7": 23.5,
+                "(index|middle|ring|thumb)_joint_(0|1|2|3)": 0.1,
             },
             friction={
                 "iiwa7_joint_(1|2|3|4|5|6|7)": 1.0,
@@ -108,8 +124,22 @@ KUKA_ALLEGRO_CFG = ArticulationCfg(
                 "ring_joint_(0|1|2|3)": 0.01,
                 "thumb_joint_(0|1|2|3)": 0.01,
             },
+            # reflected rotor inertia = rotor_inertia * gear_ratio^2 [kg*m^2].
+            # iiwa7: per-joint <rotor_inertia> + <gear_ratio>160</gear_ratio> from
+            # https://github.com/RobotLocomotion/models/blob/master/iiwa_description/sdf/iiwa7_no_collision.sdf
+            # (added in https://github.com/RobotLocomotion/drake/pull/20420; e.g. J1: 7.171875e-5 * 160^2 = 1.836).
+            # allegro: rotor 1e-6 (estimate from
+            # https://github.com/RobotLocomotion/drake/blob/master/examples/allegro_hand/allegro_single_object_simulation.cc)
+            # * gear 369^2 (1:369 Wonik spec, https://www.wonikrobotics.com/robot-hand) = 0.136.
             armature={
-                ".*": 0.01,
+                "iiwa7_joint_1": 1.836,
+                "iiwa7_joint_2": 4.447,
+                "iiwa7_joint_3": 3.242,
+                "iiwa7_joint_4": 1.817,
+                "iiwa7_joint_5": 1.392,
+                "iiwa7_joint_6": 1.402,
+                "iiwa7_joint_7": 1.392,
+                "(index|middle|ring|thumb)_joint_(0|1|2|3)": 0.136,
             },
         ),
     },

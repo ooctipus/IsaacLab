@@ -546,7 +546,7 @@ class DexsuiteReorientEnvCfg(ManagerBasedRLEnvCfg):
         self.is_finite_horizon = False
 
         # simulation settings
-        self.sim.dt = 1 / 120
+        self.sim.dt = 1 / 100
         self.sim.render_interval = self.decimation
         self.sim.physics = PhysicsCfg()
 
