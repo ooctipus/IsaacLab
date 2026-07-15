@@ -42,10 +42,6 @@ keywords = ["experience", "app", "usd"]
 "isaacsim.asset.importer.mjcf" = {}
 "isaacsim.asset.importer.urdf" = {}
 "omni.physx.bundle" = {}
-# enable fabric at startup: enabling it at runtime (physx_manager._load_fabric) re-solves
-# the full extension graph, which fails on builds where an enabled extension has
-# locally-unresolvable dependencies (e.g. isaacsim.robot.policy.examples -> omni.isaac.ml_archive).
-"omni.physx.fabric" = {}
 "omni.physx.tensors" = {}
 "omni.replicator.core" = {}
 "omni.replicator.replicator_yaml" = {}
