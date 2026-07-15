@@ -14,12 +14,10 @@ The following configurations are available:
 Reference: https://github.com/frankaemika/franka_ros
 """
 
-import os
-
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 
 ##
 # Configuration
@@ -31,7 +29,7 @@ FRANKA_PANDA_CFG = ArticulationCfg(
         # menagerie-converted asset: carries the identified Franka inertial parameters that
         # NEWTON_ACTUATOR_CFG is calibrated against (panda_instanceable authors collision-
         # derived masses/inertias that differ substantially from the identified values)
-        usd_path=os.path.expanduser("/home/zhengyuz/Downloads/panda/franka_panda.usda"),
+        usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Robots/FrankaEmika/franka_panda.usda",
         activate_contact_sensors=False,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
