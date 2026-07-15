@@ -196,6 +196,35 @@ A few quick showroom scripts to run and checkout:
       :alt: Multiple assets managed through the same simulation handles
 
 
+-  Compose registered task scenes into one heterogeneous simulation using clone combinations:
+
+   .. tab-set::
+      :sync-group: os
+
+      .. tab-item:: :icon:`fa-brands fa-linux` Linux
+         :sync: linux
+
+         .. code:: bash
+
+            ./isaaclab.sh -p scripts/demos/heterogeneous_scene.py
+
+      .. tab-item:: :icon:`fa-brands fa-windows` Windows
+         :sync: windows
+
+         .. code:: batch
+
+            isaaclab.bat -p scripts\demos\heterogeneous_scene.py
+
+   .. image:: ../_static/demos/heterogeneous_scene.jpg
+      :width: 100%
+      :alt: Registered task scenes composed into one heterogeneous cloned simulation
+
+   The demo gathers every registered flat-floor PhysX task scene, folds them into a
+   single scene with :func:`~isaaclab.scene.add`, and clones the combined scene so
+   each environment hosts one task's assets. Use ``--num_task`` and ``--num_envs``
+   to run a smaller composition.
+
+
 -  Use the RigidObjectCollection spawn and view manipulation to demonstrate bin-packing example:
 
    .. tab-set::

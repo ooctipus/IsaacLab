@@ -16,10 +16,10 @@ floor are reported and skipped.
 .. code-block:: bash
 
     # Usage with every supported registered task scene.
-    ./isaaclab.sh -p scripts/demos/multitask_clone_scene.py
+    ./isaaclab.sh -p scripts/demos/heterogeneous_scene.py
 
     # Usage with a smaller composition.
-    ./isaaclab.sh -p scripts/demos/multitask_clone_scene.py --num_task 3 --num_envs 3
+    ./isaaclab.sh -p scripts/demos/heterogeneous_scene.py --num_task 3 --num_envs 3
 
 """
 
@@ -168,7 +168,7 @@ def main() -> None:
 
         sim_dt = sim.get_physics_dt()
         # Step while a visualizer window is still open (or none exist, e.g. headless).
-        while sim.is_headless_or_exist_active_visualizer():
+        while True:
             if not sim.is_playing():
                 sim.step()
                 continue
