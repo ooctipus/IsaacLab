@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,7 @@ from ...identity import validate_sha256
 from ..clip_index import MotionClipIndex
 from ..skeleton import MotionSkeleton
 from ..source import MotionSourceCfg
+from .lafan_g1_29dof_coordinates import LAFAN_G1_JOINT_AXES, lafan_g1_29dof_skeleton
 
 NativeField = np.ndarray | int | str
 
@@ -107,6 +109,34 @@ def _validate_clip(clip_id: str, fields: object) -> tuple[int, str]:
     return frame_count, _clip_sha256(fields, field_order)
 
 
+def _window_provenance(
+    clip_id: str,
+    fields: Mapping[str, NativeField],
+    frame_count: int,
+    next_window_indices: dict[str, int],
+    next_frame_starts: dict[str, int],
+) -> tuple[str | None, int]:
+    """Resolve one BFM training window back to its original LAFAN clip."""
+    motion_name = fields.get("motion_name")
+    if motion_name is None:
+        return None, 0
+    assert isinstance(motion_name, str)
+    match = re.fullmatch(rf"{re.escape(motion_name)}_clip(0|[1-9]\d*)", clip_id)
+    if match is None:
+        raise ValueError(f"LAFAN G1 window {clip_id!r} does not encode motion_name {motion_name!r}.")
+    window_index = int(match.group(1))
+    expected_index = next_window_indices.get(motion_name, 0)
+    if window_index != expected_index:
+        raise ValueError(
+            f"LAFAN G1 windows for {motion_name!r} must be numbered contiguously from zero; "
+            f"expected {expected_index}, got {window_index}."
+        )
+    frame_start = next_frame_starts.get(motion_name, 0)
+    next_window_indices[motion_name] = expected_index + 1
+    next_frame_starts[motion_name] = frame_start + frame_count
+    return motion_name, frame_start
+
+
 @dataclass(frozen=True, slots=True)
 class LafanG1Clip:
     """One validated released BFM G1-retargeted LAFAN 29-DoF pose clip."""
@@ -133,6 +163,11 @@ class LafanG1Clip:
             raise ValueError("LAFAN G1 clip tensors must be C-contiguous.")
         if not np.isfinite(self.root_translation).all() or not np.isfinite(self.pose_axis_angle).all():
             raise ValueError("LAFAN G1 root translations and pose rows must contain only finite values.")
+        axes = np.asarray(LAFAN_G1_JOINT_AXES, dtype=np.float32)
+        joint_rotation = self.pose_axis_angle[:, 1:]
+        coordinate = np.sum(joint_rotation * axes, axis=-1)
+        if not np.allclose(joint_rotation, coordinate[..., None] * axes, atol=2.0e-6, rtol=2.0e-6):
+            raise ValueError("LAFAN G1 non-root rotations must lie on their declared hinge axes.")
         if self.source_fps != 30.0:
             raise ValueError("LAFAN G1 clips must use the native 30 Hz sample rate.")
 
@@ -160,8 +195,6 @@ class LafanG1Clip:
         axes = pose_axis_angle.new_tensor(source_skeleton.joint_axes)
         joint_rotation = pose_axis_angle[:, 1:]
         coordinate = torch.sum(joint_rotation * axes, dim=-1)
-        if not torch.allclose(joint_rotation, coordinate[..., None] * axes, atol=2.0e-6, rtol=2.0e-6):
-            raise ValueError("LAFAN G1 non-root rotations must lie on their declared hinge axes.")
         return root_position, pose_axis_angle, coordinate
 
     def free_root_coordinates(
@@ -172,7 +205,7 @@ class LafanG1Clip:
         root_rotation = quat_from_rotation_vector(pose_axis_angle[:, 0])
         return torch.cat((root_position, root_rotation, coordinates), dim=-1), None
 
-    def semantic_local_pose(
+    def local_pose(
         self, source_skeleton: MotionSkeleton, *, device: str | torch.device
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Decode the released world root rotation and non-root hinge pose deltas."""
@@ -187,11 +220,13 @@ class LafanG1JoblibClips:
         "_clips",
         "_index",
         "_source_sha256",
+        "_skeleton",
     )
 
     def __init__(self, clips: dict[str, dict[str, NativeField]], source_sha256: str) -> None:
         self._clips: dict[str, dict[str, NativeField]] | None = clips
         self._source_sha256 = source_sha256
+        self._skeleton = lafan_g1_29dof_skeleton()
         self._index: MotionClipIndex | None = None
 
     @classmethod
@@ -236,30 +271,48 @@ class LafanG1JoblibClips:
             return self._index
         clips = self._require_open()
         descriptors = []
+        next_window_indices: dict[str, int] = {}
+        next_frame_starts: dict[str, int] = {}
         for clip_id, fields in clips.items():
             frame_count, digest = _validate_clip(clip_id, fields)
+            source_clip_id, source_frame_start = _window_provenance(
+                clip_id, fields, frame_count, next_window_indices, next_frame_starts
+            )
             descriptors.append(
                 MotionClipIndex.Clip(
                     clip_id=clip_id,
                     frame_count=frame_count,
                     source_fps=30.0,
                     content_sha256=digest,
+                    skeleton_id=0,
+                    source_clip_id=source_clip_id,
+                    source_frame_start=source_frame_start,
                 )
             )
         self._index = MotionClipIndex(
             source_content_sha256=self._source_sha256,
+            skeleton_identity_sha256s=(self._skeleton.identity_sha256,),
             clips=tuple(descriptors),
         )
         return self._index
 
-    def clips(self) -> Iterator[tuple[str, LafanG1Clip]]:
-        """Pop native mappings and yield typed clips in declared order."""
+    def skeleton(self, skeleton_id: int) -> MotionSkeleton:
+        """Return the prepared G1 coordinate system."""
+        if type(skeleton_id) is not int or skeleton_id != 0:
+            raise ValueError(f"Unknown skeleton id: {skeleton_id!r}.")
+        return self._skeleton
+
+    def clips(self, clip_indices: tuple[int, ...]) -> Iterator[tuple[int, LafanG1Clip]]:
+        """Pop selected native mappings and yield source-index and clip pairs."""
         index = self.inspect()
         clips = self._require_open()
-        for clip in index.clips:
+        for clip_index in clip_indices:
+            if type(clip_index) is not int or clip_index < 0 or clip_index >= len(index.clips):
+                raise IndexError(f"Clip index is out of range: {clip_index!r}.")
+            clip = index.clips[clip_index]
             fields = clips.pop(clip.clip_id)
             yield (
-                clip.clip_id,
+                clip_index,
                 LafanG1Clip(
                     root_translation=fields["root_trans_offset"],
                     pose_axis_angle=fields["pose_aa"],

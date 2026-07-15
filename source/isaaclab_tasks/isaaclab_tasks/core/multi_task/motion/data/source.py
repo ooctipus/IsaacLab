@@ -11,7 +11,7 @@ import math
 from collections.abc import Callable, Iterator
 from dataclasses import MISSING
 from pathlib import Path
-from typing import Protocol, TypeVar, runtime_checkable
+from typing import Literal, Protocol, TypeVar, runtime_checkable
 
 import torch
 
@@ -29,7 +29,7 @@ class MotionSourceClip(Protocol):
     """One decoded clip exposing exact coordinates and semantic pose lazily.
 
     Sources own representation decoding. A selected robot consumes exactly one
-    of the two views after the table resolves the exact or semantic family.
+    of the available views after the table resolves its coordinate route.
     Generalized positions use world translation and an xyzw free-root
     quaternion. Generalized velocities, when native evidence exists, use world
     root linear velocity, root-local angular velocity, then joint rates.
@@ -51,7 +51,7 @@ class MotionSourceClip(Protocol):
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Decode source free-root positions and optional velocities."""
 
-    def semantic_local_pose(
+    def local_pose(
         self,
         source_skeleton: MotionSkeleton,
         *,
@@ -76,8 +76,11 @@ class MotionClipSource(Protocol[SourceClipT]):
     def inspect(self) -> MotionClipIndex:
         """Return compact ordered clip metadata."""
 
-    def clips(self) -> Iterator[tuple[str, SourceClipT]]:
-        """Yield decoded clips in the order returned by :meth:`inspect`."""
+    def skeleton(self, skeleton_id: int) -> MotionSkeleton:
+        """Return one immutable source coordinate system declared by :meth:`inspect`."""
+
+    def clips(self, clip_indices: tuple[int, ...]) -> Iterator[tuple[int, SourceClipT]]:
+        """Yield selected decoded clips as source-index and clip pairs."""
 
     def close(self) -> None:
         """Release source-format resources retained during table construction."""
@@ -86,6 +89,23 @@ class MotionClipSource(Protocol[SourceClipT]):
 @configclass
 class MotionSourceCfg:
     """One immutable native source and its construction-time opener."""
+
+    @configclass
+    class DependencyCfg:
+        """One named immutable artifact required by every split decoder."""
+
+        name: str = MISSING
+        artifact: str = MISSING
+        artifact_sha256: str = MISSING
+
+        def __post_init__(self) -> None:
+            """Require a source-root-relative, hash-identified dependency."""
+            if not self.name or not self.artifact:
+                raise ValueError("Motion source dependency names and artifacts must be nonempty.")
+            artifact = Path(self.artifact)
+            if artifact.is_absolute() or ".." in artifact.parts:
+                raise ValueError("Motion source dependencies must be source-root-relative.")
+            validate_sha256("motion source dependency artifact_sha256", self.artifact_sha256)
 
     @configclass
     class SplitCfg:
@@ -119,8 +139,8 @@ class MotionSourceCfg:
 
     format: str = MISSING
     semantic_level: str = MISSING
-    skeleton_factory: Callable[[], MotionSkeleton] = MISSING
-    """Construct declared source kinematics outside Hydra serialization."""
+    decoder_version: str = MISSING
+    """Version of the native-format decoder and coordinate semantics."""
 
     source_fps: float | None = MISSING
     """Uniform source sample rate [Hz], or None when clips declare their own rates."""
@@ -128,33 +148,52 @@ class MotionSourceCfg:
     license: str = MISSING
     clip_directory: str | None = MISSING
     """Source-root-relative directory containing files named by a split artifact, if any."""
+    dependencies: tuple[DependencyCfg, ...] = ()
+    """Named immutable artifacts shared by both source splits."""
 
     train: SplitCfg = MISSING
     evaluation: SplitCfg = MISSING
+    purpose: Literal["production", "oracle"] = "production"
+    """Whether this source may build runtime tables or is inspection evidence only."""
 
     def __post_init__(self) -> None:
         """Validate the scientific identity and native source clock [Hz]."""
-        if any(not value for value in (self.identifier, self.format, self.semantic_level, self.license)):
+        if any(
+            not value
+            for value in (self.identifier, self.format, self.semantic_level, self.decoder_version, self.license)
+        ):
             raise ValueError("Motion source text fields must be nonempty.")
         if not callable(self.open_source):
             raise TypeError("Motion source open_source must be callable.")
         if self.source_fps is not None and (not math.isfinite(self.source_fps) or self.source_fps <= 0.0):
             raise ValueError("Motion source source_fps must be finite and positive [Hz].")
-        if not callable(self.skeleton_factory):
-            raise TypeError("Motion source skeleton_factory must be callable.")
         if self.clip_directory is not None:
             clip_directory = Path(self.clip_directory)
             if not self.clip_directory or clip_directory.is_absolute() or ".." in clip_directory.parts:
                 raise ValueError("Motion source clip_directory must be source-root-relative when provided.")
+        dependency_names = tuple(dependency.name for dependency in self.dependencies)
+        if len(set(dependency_names)) != len(dependency_names):
+            raise ValueError("Motion source dependency names must be unique.")
         if self.train.name == self.evaluation.name:
             raise ValueError("Motion source train and evaluation split names must differ.")
+        if self.purpose not in ("production", "oracle"):
+            raise ValueError("Motion source purpose must be 'production' or 'oracle'.")
 
-    def build_skeleton(self) -> MotionSkeleton:
-        """Construct and validate the immutable source coordinate system."""
-        skeleton = self.skeleton_factory()
-        if not isinstance(skeleton, MotionSkeleton):
-            raise TypeError("Motion source skeleton_factory must return MotionSkeleton.")
-        return skeleton
+    def resolve_dependencies(self, source_root: Path) -> dict[str, Path]:
+        """Verify and return every named source dependency exactly once."""
+        resolved: dict[str, Path] = {}
+        for dependency in self.dependencies:
+            path = source_root / dependency.artifact
+            if not path.is_file():
+                raise FileNotFoundError(f"Motion source dependency does not exist: {path}")
+            actual = file_sha256(path)
+            if actual != dependency.artifact_sha256:
+                raise ValueError(
+                    f"Motion source dependency hash differs for {dependency.artifact}: "
+                    f"expected {dependency.artifact_sha256}, got {actual}."
+                )
+            resolved[dependency.name] = path
+        return resolved
 
     def open_split(self, source_artifact_root: str | Path, split: SplitCfg) -> MotionClipSource:
         """Verify and open one source-root-relative split artifact."""

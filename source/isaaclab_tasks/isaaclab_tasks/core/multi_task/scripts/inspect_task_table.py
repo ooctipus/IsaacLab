@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 import argparse
+import heapq
 import logging
+import math
 import sys
 import time
 from collections.abc import Iterator, Sequence
@@ -18,28 +20,32 @@ _TASK_FAMILY_LOGGER = "isaaclab_tasks.core.multi_task.mdp.commands.state_command
 _VISER_INSTALL_GUIDANCE = "Install Viser with: ./isaaclab.sh -i 'visualizer[viser]'"
 
 
-def _timeline_events(frame_counts: Sequence[int], frame_dt: Sequence[float]) -> Iterator[tuple[float, tuple[int, ...]]]:
-    """Yield the union of exact stored-frame timestamps without interpolation."""
+def _timeline_events(
+    frame_counts: Sequence[int], frame_dt: Sequence[float]
+) -> Iterator[tuple[float, tuple[tuple[int, int], ...]]]:
+    """Merge stored-frame clocks into sparse sequence/frame updates."""
     if len(frame_counts) != len(frame_dt) or not frame_counts:
         raise ValueError("Timeline frame counts and sample periods must be matching nonempty sequences.")
     if any(count < 1 for count in frame_counts) or any(step <= 0.0 for step in frame_dt):
         raise ValueError("Timeline sequences require frames and positive sample periods [s].")
 
-    frames = [0] * len(frame_counts)
-    yield 0.0, tuple(frames)
-    while True:
-        next_times = [
-            (frame + 1) * step if frame + 1 < count else float("inf")
-            for frame, count, step in zip(frames, frame_counts, frame_dt, strict=True)
-        ]
-        event_time = min(next_times)
-        if event_time == float("inf"):
-            return
-        tolerance = max(1.0, abs(event_time)) * 1.0e-9
-        for index, next_time in enumerate(next_times):
-            if abs(next_time - event_time) <= tolerance:
-                frames[index] += 1
-        yield event_time, tuple(frames)
+    yield 0.0, tuple((sequence_index, 0) for sequence_index in range(len(frame_counts)))
+    pending = [
+        (step, sequence_index, 1)
+        for sequence_index, (count, step) in enumerate(zip(frame_counts, frame_dt, strict=True))
+        if count > 1
+    ]
+    heapq.heapify(pending)
+    while pending:
+        event_time = pending[0][0]
+        updates = []
+        while pending and math.isclose(pending[0][0], event_time, rel_tol=1.0e-12, abs_tol=1.0e-12):
+            _, sequence_index, frame_index = heapq.heappop(pending)
+            updates.append((sequence_index, frame_index))
+            next_frame = frame_index + 1
+            if next_frame < frame_counts[sequence_index]:
+                heapq.heappush(pending, (next_frame * frame_dt[sequence_index], sequence_index, next_frame))
+        yield event_time, tuple(updates)
 
 
 def _repeat_kinematic_model(view, world_count: int):
@@ -168,20 +174,15 @@ def _inspect_timed(view, viewer_type: type, sequence_count: int) -> None:
     import newton  # noqa: PLC0415
     import torch  # noqa: PLC0415
 
-    sequence_indices = torch.arange(sequence_count, dtype=torch.int64, device=view.sequences.offsets.device)
     offsets = view.sequences.offsets[: sequence_count + 1].detach().cpu()
     frame_counts = tuple(int(value) for value in offsets[1:] - offsets[:-1])
     frame_dt = tuple(float(value) for value in view.sequences.frame_dt[:sequence_count].detach().cpu())
-    events = tuple(_timeline_events(frame_counts, frame_dt))
-    event_times = tuple(event[0] for event in events)
-    event_frames = torch.tensor(tuple(event[1] for event in events), dtype=torch.int64, device=sequence_indices.device)
-    repeated_sequences = sequence_indices.expand(event_frames.shape[0], -1).reshape(-1)
-    event_state_rows = view.sequences.state_rows(repeated_sequences, event_frames.reshape(-1)).reshape(
-        event_frames.shape
-    )
-    del event_frames, events, offsets, repeated_sequences
+    sequence_starts = tuple(int(value) for value in offsets[:-1])
+    device = view.sequences.offsets.device
+    flat_indices = view.sequences.offsets[:sequence_count].clone()
+    state_rows = torch.empty(sequence_count, dtype=torch.int64, device=device)
     sequence_quality = (
-        view.quality.values[sequence_indices] if view.quality is not None and view.quality.scope == "sequence" else None
+        view.quality.values[:sequence_count] if view.quality is not None and view.quality.scope == "sequence" else None
     )
     model, state, joint_q, joint_q_warp, joint_qd_zero = _repeat_kinematic_model(view, sequence_count)
     viewer = viewer_type()
@@ -193,14 +194,19 @@ def _inspect_timed(view, viewer_type: type, sequence_count: int) -> None:
         cycle = 0
         wall_start = time.monotonic()
         while viewer.is_running():
-            for event_index, event_time in enumerate(event_times):
+            for event_index, (event_time, updates) in enumerate(_timeline_events(frame_counts, frame_dt)):
                 absolute_time = cycle * cycle_duration + event_time
                 delay = absolute_time - (time.monotonic() - wall_start)
                 if delay > 0.0:
                     time.sleep(delay)
                 if not viewer.is_running():
                     break
-                state_rows = event_state_rows[event_index]
+                for sequence_index, frame_index in updates:
+                    flat_indices[sequence_index] = sequence_starts[sequence_index] + frame_index
+                if view.sequences.state_indices is None:
+                    state_rows.copy_(flat_indices)
+                else:
+                    torch.index_select(view.sequences.state_indices, 0, flat_indices, out=state_rows)
                 view.kinematic_view.joint_q_into(view.state_bank, state_rows, joint_q)
                 newton.eval_fk(model, joint_q_warp, joint_qd_zero, state)
                 viewer.begin_frame(absolute_time)
@@ -264,7 +270,9 @@ def main(argv: list[str] | None = None) -> None:
     family_logger.propagate = False
     started = time.perf_counter()
     try:
-        table = command_cfg.task_table.build(command_cfg, env_cfg.scene, env_cfg.sim.device)
+        view = command_cfg.task_table.build_inspection_view(
+            command_cfg, env_cfg.scene, env_cfg.sim.device, sequence_limit=_SEQUENCE_LIMIT
+        )
     finally:
         family_logger.removeHandler(handler)
         handler.close()
@@ -272,10 +280,6 @@ def main(argv: list[str] | None = None) -> None:
         family_logger.disabled = previous_disabled
         family_logger.propagate = previous_propagate
     build_seconds = time.perf_counter() - started
-    if not hasattr(table, "view"):
-        raise TypeError("The configured task table does not expose a TaskTableView through .view.")
-
-    view = table.view
     print(
         f"Task table built: seconds={build_seconds:.3f} states={view.state_bank.row_count} "
         f"sequences={view.sequences.sequence_count} frames={view.sequences.frame_count}"

@@ -73,6 +73,7 @@ class PositionIKSolveCfg(StateCommandCfg.TaskTableCfg.SolveCfg):
 
     class_type: Callable = "{DIR}.task_table_builder:solve_position_terrain_stance"
     objectives: tuple[IKObjectiveBaseCfg, ...] = ()
+    max_iterations: int = 200
 
 
 @configclass

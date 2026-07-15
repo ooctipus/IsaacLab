@@ -72,24 +72,28 @@ def _synthetic_skeleton() -> MotionSkeleton:
         joint_child_body_indices=(1,),
         root_translation_frame="world",
         root_rotation_convention="wxyz",
+        landmark_rotation_policy="calibrated_body",
     )
 
 
 def _synthetic_index(*, source_hash: str | None = None) -> MotionClipIndex:
     return MotionClipIndex(
         source_content_sha256=source_hash or _hash("source-table"),
+        skeleton_identity_sha256s=(_synthetic_skeleton().identity_sha256,),
         clips=(
             MotionClipIndex.Clip(
                 clip_id="clip_a",
                 frame_count=5,
                 source_fps=30.0,
                 content_sha256=_hash("clip-a"),
+                skeleton_id=0,
             ),
             MotionClipIndex.Clip(
                 clip_id="clip_b",
                 frame_count=4,
                 source_fps=20.0,
                 content_sha256=_hash("clip-b"),
+                skeleton_id=0,
             ),
         ),
     )
@@ -138,7 +142,7 @@ def _synthetic_table() -> MotionTaskTable:
         "synthetic_builder_v1",
         _hash("synthetic-builder-construction-v1"),
         "source_frames",
-        _synthetic_skeleton().identity_sha256,
+        "synthetic_decoder_v1",
     )
 
 
@@ -158,6 +162,7 @@ def test_frozen_g1_skeleton_and_explicit_frames_construct_exact_typed_contracts(
         joint_child_body_indices=tuple(range(1, len(physical["body_names"]))),
         root_translation_frame=physical["root"]["translation_frame"],
         root_rotation_convention=physical["root"]["rotation_convention"],
+        landmark_rotation_policy="calibrated_body",
     )
     frames = MotionFrames(
         joint_position=torch.zeros(2, 29),
@@ -267,7 +272,7 @@ def test_table_rejects_nonfinite_and_nonunit_physical_rows(field_name: str) -> N
             "synthetic_builder_v1",
             _hash("synthetic-builder-construction-v1"),
             "source_frames",
-            _synthetic_skeleton().identity_sha256,
+            "synthetic_decoder_v1",
         )
 
 
@@ -279,10 +284,24 @@ def test_skeleton_landmarks_are_validated_and_identity_bearing() -> None:
 
     assert semantic.landmarks == (landmark,)
     assert semantic.identity_sha256 != skeleton.identity_sha256
+    assert semantic.coordinate_identity_sha256 == skeleton.coordinate_identity_sha256
     with pytest.raises(ValueError, match="landmark bodies"):
         dataclasses.replace(skeleton, landmarks=(MotionSkeleton.Landmark("tip", "missing", "child"),))
     with pytest.raises(ValueError, match="landmark names"):
         dataclasses.replace(skeleton, landmarks=(landmark, landmark))
+
+
+def test_skeleton_landmark_rotation_policy_is_validated_and_identity_bearing() -> None:
+    """Rotation evidence changes semantic identity without changing native coordinates."""
+    calibrated = _synthetic_skeleton()
+    anatomical = dataclasses.replace(calibrated, landmark_rotation_policy="anatomical_root")
+
+    assert calibrated.identity_sha256 != anatomical.identity_sha256
+    assert calibrated.coordinate_identity_sha256 == anatomical.coordinate_identity_sha256
+    with pytest.raises(ValueError, match="landmark_rotation_policy"):
+        dataclasses.replace(calibrated, landmark_rotation_policy="unknown")
+    with pytest.raises(ValueError, match="landmark_rotation_policy"):
+        dataclasses.replace(calibrated, landmark_rotation_policy="root_only")
 
 
 def test_skeleton_represents_hinge_and_unrestricted_source_joints() -> None:
@@ -305,6 +324,7 @@ def test_skeleton_represents_multiple_joint_coordinates_on_one_body() -> None:
         joint_axes=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
         root_translation_frame="world",
         root_rotation_convention="wxyz",
+        landmark_rotation_policy="calibrated_body",
     )
 
     assert skeleton.num_bodies == 2
@@ -341,16 +361,21 @@ def test_clip_index_retains_only_runtime_fields_and_changes_with_clip_metadata()
         "frame_count",
         "source_fps",
         "content_sha256",
+        "skeleton_id",
         "source_clip_id",
         "source_frame_start",
     )
     assert tuple(field.name for field in dataclasses.fields(MotionClipIndex)) == (
         "source_content_sha256",
+        "skeleton_identity_sha256s",
         "clips",
         "clip_ids",
+        "skeleton_ids",
         "offsets",
     )
     assert index.clip_ids == ("clip_a", "clip_b")
+    assert index.skeleton_ids == (0,)
+    assert index.for_skeleton(0) == (0, 1)
     assert index.total_frames == 9
     assert index != changed_fps
     assert index.clips[0].source_clip_id is None
@@ -366,6 +391,24 @@ def test_clip_index_retains_only_runtime_fields_and_changes_with_clip_metadata()
     assert derived.source_frame_stop == 4
 
 
+def test_clip_index_groups_dense_source_skeletons_in_first_occurrence_order() -> None:
+    base = _synthetic_index()
+    clips = (base.clips[0], dataclasses.replace(base.clips[1], skeleton_id=1))
+    index = MotionClipIndex(
+        source_content_sha256=base.source_content_sha256,
+        skeleton_identity_sha256s=(_hash("skeleton-a"), _hash("skeleton-b")),
+        clips=clips,
+    )
+
+    assert index.skeleton_ids == (0, 1)
+    assert index.for_skeleton(0) == (0,)
+    assert index.for_skeleton(1) == (1,)
+    with pytest.raises(ValueError, match="dense in first-occurrence order"):
+        dataclasses.replace(index, clips=(clips[1], clips[0]))
+    with pytest.raises(ValueError, match="Every declared skeleton identity"):
+        dataclasses.replace(index, clips=(clips[0],))
+
+
 def test_frozen_g1_training_index_has_exact_capacity_without_loading_joblib() -> None:
     fixture = json.loads((_phase3_fixtures() / "native_motion_data_v1.json").read_text())
     g1 = fixture["collections"]["g1_lafan_50hz"]
@@ -377,11 +420,13 @@ def test_frozen_g1_training_index_has_exact_capacity_without_loading_joblib() ->
             frame_count=training["frames_per_clip"],
             source_fps=source_fps,
             content_sha256=_hash(f"lafan-{clip_index}"),
+            skeleton_id=0,
         )
         for clip_index in range(training["clips"])
     )
     index = MotionClipIndex(
         source_content_sha256=training["sha256"],
+        skeleton_identity_sha256s=(_hash("frozen-g1-skeleton"),),
         clips=clips,
     )
 
@@ -402,7 +447,7 @@ def test_table_identity_invalidates_scientific_inputs_without_robot_schema() -> 
         "synthetic_builder_v1",
         _hash("synthetic-builder-construction-v1"),
         "source_frames",
-        _synthetic_skeleton().identity_sha256,
+        "synthetic_decoder_v1",
     )
     changed_source = motion_task_table(
         _synthetic_index(source_hash=_hash("changed-source")),
@@ -412,7 +457,7 @@ def test_table_identity_invalidates_scientific_inputs_without_robot_schema() -> 
         "synthetic_builder_v1",
         _hash("synthetic-builder-construction-v1"),
         "source_frames",
-        _synthetic_skeleton().identity_sha256,
+        "synthetic_decoder_v1",
     )
     changed_builder = motion_task_table(
         index,
@@ -422,7 +467,7 @@ def test_table_identity_invalidates_scientific_inputs_without_robot_schema() -> 
         "synthetic_builder_v2",
         _hash("synthetic-builder-construction-v2"),
         "source_frames",
-        _synthetic_skeleton().identity_sha256,
+        "synthetic_decoder_v1",
     )
     changed_construction = motion_task_table(
         index,
@@ -432,7 +477,7 @@ def test_table_identity_invalidates_scientific_inputs_without_robot_schema() -> 
         "synthetic_builder_v1",
         _hash("changed-reference-kinematics-and-order"),
         "source_frames",
-        _synthetic_skeleton().identity_sha256,
+        "synthetic_decoder_v1",
     )
     changed_mode = motion_task_table(
         index,
@@ -442,7 +487,7 @@ def test_table_identity_invalidates_scientific_inputs_without_robot_schema() -> 
         "synthetic_builder_v1",
         _hash("synthetic-builder-construction-v1"),
         "clip_time_ranges",
-        _synthetic_skeleton().identity_sha256,
+        "synthetic_decoder_v1",
     )
 
     assert same.cache_identity == table.cache_identity
@@ -482,10 +527,10 @@ def test_task_row_modes_generate_exact_rows_and_expose_reset_source_names() -> N
         source_frames.frames,
         source_frames.joint_names,
         source_frames.reference_frame_names,
-        source_frames.frame_builder_version,
-        source_frames.frame_builder_identity_sha256,
+        source_frames.construction_version,
+        source_frames.construction_identity_sha256,
         "clip_time_ranges",
-        _synthetic_skeleton().identity_sha256,
+        "synthetic_decoder_v1",
     )
     torch.testing.assert_close(clip_ranges.clip_indices, torch.tensor((0, 1)))
     torch.testing.assert_close(clip_ranges.clip_start_rows, torch.tensor((0, 1)))
@@ -511,7 +556,7 @@ def test_table_binds_preallocated_storage_without_copy() -> None:
         "synthetic_builder_v1",
         _hash("synthetic-builder-construction-v1"),
         "source_frames",
-        _synthetic_skeleton().identity_sha256,
+        "synthetic_decoder_v1",
     )
 
     assert table.frames is frames
@@ -552,10 +597,10 @@ def test_storage_binding_reuses_tensors_and_seals_metadata() -> None:
         table.frames,
         table.joint_names,
         table.reference_frame_names,
-        table.frame_builder_version,
-        table.frame_builder_identity_sha256,
+        table.construction_version,
+        table.construction_identity_sha256,
         "source_frames",
-        _synthetic_skeleton().identity_sha256,
+        "synthetic_decoder_v1",
     )
 
     assert rebound.frames is table.frames
@@ -576,10 +621,10 @@ def test_storage_binding_rejects_invalid_physical_values() -> None:
             table.frames,
             table.joint_names,
             table.reference_frame_names,
-            table.frame_builder_version,
-            table.frame_builder_identity_sha256,
+            table.construction_version,
+            table.construction_identity_sha256,
             "source_frames",
-            _synthetic_skeleton().identity_sha256,
+            "synthetic_decoder_v1",
         )
 
 
@@ -679,10 +724,14 @@ def _humenv_arrays(frame_count: int, offset: float) -> dict[str, np.ndarray]:
 
 def _bfm_arrays(frame_count: int, offset: float, motion_name: str) -> dict[str, np.ndarray | int | str]:
     values = np.arange(frame_count, dtype=np.float32) + offset
+    joint_position = np.repeat(values[:, None], 29, axis=1)
+    pose_axis_angle = np.zeros((frame_count, 30, 3), dtype=np.float32)
+    pose_axis_angle[:, 0] = values[:, None]
+    pose_axis_angle[:, 1:] = joint_position[..., None] * np.asarray(lafan_g1_29dof_module.LAFAN_G1_JOINT_AXES)
     return {
         "root_trans_offset": np.repeat(values[:, None], 3, axis=1),
-        "pose_aa": np.repeat(values[:, None, None], 30 * 3, axis=1).reshape(frame_count, 30, 3),
-        "dof": np.repeat(values[:, None], 29, axis=1),
+        "pose_aa": pose_axis_angle,
+        "dof": joint_position,
         "root_rot": np.repeat(values[:, None], 4, axis=1),
         "smpl_joints": np.repeat(values[:, None, None], 24 * 3, axis=1).reshape(frame_count, 24, 3),
         "fps": 30,
@@ -726,7 +775,7 @@ def test_source_boundary_hashes_artifact_once_and_passes_explicit_root(
         open_source=open_source,
         format="split_list",
         semantic_level="test",
-        skeleton_factory=_synthetic_skeleton,
+        decoder_version="test_v1",
         source_fps=30.0,
         license="test-only",
         clip_directory=None,
@@ -779,7 +828,7 @@ def test_cmu_source_uses_explicit_clip_directory_and_hashes_each_clip_once(
         open_source=cmu_humenv_smpl_module.open_cmu_humenv_smpl_source,
         format="one_hdf5_file_per_clip_with_group_ep_0",
         semantic_level="smpl_robot_state_and_observation",
-        skeleton_factory=_synthetic_skeleton,
+        decoder_version="test_v1",
         source_fps=30.0,
         license="test-only",
         clip_directory="native/cmu",
@@ -798,7 +847,7 @@ def test_cmu_source_uses_explicit_clip_directory_and_hashes_each_clip_once(
 
     assert scanned_paths == list(paths)
     assert source.inspect().source_content_sha256 == content_sha256
-    assert [clip_id for clip_id, _ in source.clips()] == list(clip_names)
+    assert [source.inspect().clip_ids[clip_index] for clip_index, _ in source.clips((0, 1))] == list(clip_names)
     assert scanned_paths == list(paths)
     with paths[0].open("ab") as stream:
         stream.write(b"corrupt")
@@ -824,8 +873,11 @@ def test_humenv_hdf5_import_preserves_explicit_caller_order_and_streams_files(tm
     index = source.inspect()
     assert index.clip_ids == ("caller_first", "caller_second")
     assert index.offsets == (0, 4, 7)
-    decoded = list(source.clips())
-    assert [clip_id for clip_id, _ in decoded] == ["caller_first", "caller_second"]
+    assert index.skeleton_identity_sha256s == (source.skeleton(0).identity_sha256,)
+    with pytest.raises(ValueError, match="Unknown skeleton id"):
+        source.skeleton(1)
+    decoded = list(source.clips((0, 1)))
+    assert [clip_index for clip_index, _ in decoded] == [0, 1]
     assert decoded[0][1].generalized_position.dtype == np.float32
     assert decoded[0][1].generalized_velocity.dtype == np.float32
     assert decoded[1][1].generalized_position.shape == (3, 76)
@@ -868,8 +920,8 @@ def test_lafan_joblib_import_preserves_insertion_order_and_yields_typed_clips(tm
     path = tmp_path / "bfm.pkl"
     joblib.dump(
         {
-            "z_clip": _bfm_arrays(5, 10.0, "z_motion"),
-            "a_clip": _bfm_arrays(4, 20.0, "a_motion"),
+            "z_motion_clip0": _bfm_arrays(5, 10.0, "z_motion"),
+            "a_motion_clip0": _bfm_arrays(4, 20.0, "a_motion"),
         },
         path,
     )
@@ -879,30 +931,66 @@ def test_lafan_joblib_import_preserves_insertion_order_and_yields_typed_clips(tm
     )
     try:
         index = source.inspect()
-        assert index.clip_ids == ("z_clip", "a_clip")
+        assert index.clip_ids == ("z_motion_clip0", "a_motion_clip0")
         assert index.offsets == (0, 5, 9)
+        assert index.skeleton_identity_sha256s == (source.skeleton(0).identity_sha256,)
+        assert tuple((clip.source_clip_id, clip.source_frame_start) for clip in index.clips) == (
+            ("z_motion", 0),
+            ("a_motion", 0),
+        )
 
-        clips = source.clips()
+        clips = source.clips((0, 1))
         first_id, first = next(clips)
-        assert first_id == "z_clip"
+        assert first_id == 0
         assert first.pose_axis_angle.shape == (5, 30, 3)
         assert type(first.pose_axis_angle) is np.ndarray
         assert first.pose_axis_angle.flags.writeable
         second_id, second = next(clips)
-        assert second_id == "a_clip"
+        assert second_id == 1
         assert second.frame_count == 4
         with pytest.raises(StopIteration):
             next(clips)
     finally:
         source.close()
     with pytest.raises(RuntimeError, match="closed"):
-        next(source.clips())
+        next(source.clips((0,)))
+
+
+def test_bfm_training_windows_retain_original_clip_intervals_and_reject_numbering(tmp_path: Path) -> None:
+    joblib = pytest.importorskip("joblib")
+    path = tmp_path / "windows.pkl"
+    joblib.dump(
+        {
+            "motion_clip0": _bfm_arrays(3, 10.0, "motion"),
+            "motion_clip1": _bfm_arrays(4, 20.0, "motion"),
+        },
+        path,
+    )
+    source = LafanG1JoblibClips.load(path, verified_artifact_sha256=_file_hash(path))
+    try:
+        index = source.inspect()
+    finally:
+        source.close()
+
+    assert tuple((clip.source_clip_id, clip.source_frame_start, clip.source_frame_stop) for clip in index.clips) == (
+        ("motion", 0, 3),
+        ("motion", 3, 7),
+    )
+
+    malformed = tmp_path / "malformed_windows.pkl"
+    joblib.dump({"motion_clip1": _bfm_arrays(3, 10.0, "motion")}, malformed)
+    source = LafanG1JoblibClips.load(malformed, verified_artifact_sha256=_file_hash(malformed))
+    try:
+        with pytest.raises(ValueError, match="numbered contiguously from zero"):
+            source.inspect()
+    finally:
+        source.close()
 
 
 def test_source_boundary_rejects_lafan_artifact_corruption(tmp_path: Path) -> None:
     joblib = pytest.importorskip("joblib")
     path = tmp_path / "bfm.pkl"
-    joblib.dump({"clip": _bfm_arrays(3, 10.0, "motion")}, path)
+    joblib.dump({"motion_clip0": _bfm_arrays(3, 10.0, "motion")}, path)
     split = MotionSourceCfg.SplitCfg(
         name="train",
         artifact="bfm.pkl",
@@ -916,7 +1004,7 @@ def test_source_boundary_rejects_lafan_artifact_corruption(tmp_path: Path) -> No
         open_source=lafan_g1_29dof_module.open_lafan_g1_source,
         format="joblib_pickle_mapping_clip_name_to_field_mapping",
         semantic_level="robot_pose",
-        skeleton_factory=_synthetic_skeleton,
+        decoder_version="test_v1",
         source_fps=30.0,
         license="test-only",
         clip_directory=None,
@@ -934,7 +1022,7 @@ def test_bfm_joblib_normalizes_native_variants_to_frame_builder_fields(tmp_path:
     training = _bfm_arrays(4, 10.0, "training_motion")
     evaluation = _bfm_arrays(3, 20.0, "unused")
     del evaluation["motion_name"]
-    joblib.dump({"training_clip": training, "evaluation_clip": evaluation}, path)
+    joblib.dump({"training_motion_clip0": training, "evaluation_clip": evaluation}, path)
 
     source = LafanG1JoblibClips.load(
         path,
@@ -942,12 +1030,12 @@ def test_bfm_joblib_normalizes_native_variants_to_frame_builder_fields(tmp_path:
     )
     try:
         index = source.inspect()
-        assert index.clip_ids == ("training_clip", "evaluation_clip")
-        decoded = list(source.clips())
+        assert index.clip_ids == ("training_motion_clip0", "evaluation_clip")
+        decoded = list(source.clips((0, 1)))
     finally:
         source.close()
 
-    assert [clip_id for clip_id, _ in decoded] == ["training_clip", "evaluation_clip"]
+    assert [clip_index for clip_index, _ in decoded] == [0, 1]
     assert all(fields.source_fps == 30.0 and fields.pose_axis_angle.shape[1:] == (30, 3) for _, fields in decoded)
 
 
@@ -957,7 +1045,7 @@ def test_bfm_loaded_source_never_rescans_the_boundary_verified_artifact(
 ) -> None:
     joblib = pytest.importorskip("joblib")
     path = tmp_path / "bfm_verified.pkl"
-    joblib.dump({"clip": _bfm_arrays(3, 10.0, "motion")}, path)
+    joblib.dump({"motion_clip0": _bfm_arrays(3, 10.0, "motion")}, path)
     artifact_sha256 = _file_hash(path)
 
     def reject_scan(_source_path: Path) -> str:
@@ -970,5 +1058,5 @@ def test_bfm_loaded_source_never_rescans_the_boundary_verified_artifact(
     )
 
     source.inspect()
-    list(source.clips())
+    list(source.clips((0,)))
     source.close()

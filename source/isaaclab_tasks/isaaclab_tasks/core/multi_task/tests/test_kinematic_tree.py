@@ -8,18 +8,20 @@
 import pytest
 import torch
 
-from isaaclab.utils.math import quat_from_rotation_vector
+from isaaclab.utils.math import quat_apply, quat_from_rotation_vector, quat_mul
 
 from isaaclab_tasks.core.multi_task.kinematics import (
     fit_ordered_hinge_coordinates,
+    ordered_hinge_coordinate_velocity,
     ordered_hinge_rotation,
-    time_forward_difference_segmented,
     time_gaussian_filter,
     time_gaussian_filter_segmented,
     time_gradient,
     time_gradient_segmented,
     time_quaternion_angular_velocity,
     time_quaternion_angular_velocity_segmented,
+    time_unwrap_angles,
+    time_unwrap_angles_segmented,
 )
 
 
@@ -90,6 +92,29 @@ def test_segmented_quaternion_velocity_does_not_cross_a_discontinuous_boundary()
     torch.testing.assert_close(actual[(2, 5), :], torch.zeros(2, 3, dtype=torch.float64))
 
 
+def test_segmented_derivatives_write_caller_owned_strided_outputs() -> None:
+    """Motion qd assembly reuses one output tensor without a full-width return allocation."""
+    offsets = torch.tensor((0, 3, 6), dtype=torch.int64)
+    steps = torch.tensor((0.1, 0.2), dtype=torch.float32)
+    values = torch.arange(18, dtype=torch.float32).view(6, 3)
+    rotation_vector = torch.zeros(6, 3)
+    rotation_vector[:, 2] = torch.tensor((0.0, 0.1, 0.3, 2.0, 2.4, 3.0))
+    rotation = quat_from_rotation_vector(rotation_vector)
+    expected_gradient = time_gradient_segmented(values, offsets, steps)
+    expected_angular = time_quaternion_angular_velocity_segmented(rotation, offsets, steps)
+    output = torch.empty(6, 6)
+    gradient_output = output[:, :3]
+    angular_output = output[:, 3:]
+
+    gradient_result = time_gradient_segmented(values, offsets, steps, gradient_output)
+    angular_result = time_quaternion_angular_velocity_segmented(rotation, offsets, steps, angular_output)
+
+    assert gradient_result is gradient_output
+    assert angular_result is angular_output
+    torch.testing.assert_close(gradient_output, expected_gradient)
+    torch.testing.assert_close(angular_output, expected_angular)
+
+
 def test_segmented_gaussian_filter_does_not_blend_adjacent_segments() -> None:
     """Nearest padding must clamp at each segment boundary rather than only the flat tensor boundary."""
     values = torch.tensor((0.0, 1.0, 2.0, 100.0, 101.0, 102.0), dtype=torch.float32)[:, None]
@@ -101,20 +126,36 @@ def test_segmented_gaussian_filter_does_not_blend_adjacent_segments() -> None:
     torch.testing.assert_close(actual, expected, rtol=1.0e-6, atol=1.0e-6)
 
 
-def test_segmented_forward_difference_restarts_and_repeats_each_penultimate_edge() -> None:
-    """The released G1 tail law must be local to every retained segment."""
-    values = torch.tensor((0.0, 1.0, 3.0, 100.0, 104.0, 110.0), dtype=torch.float32)[:, None]
+def test_segmented_angle_unwrap_restarts_at_each_clip() -> None:
+    """Angle representatives are continuous within clips without coupling adjacent clips."""
+    values = torch.tensor(((3.0,), (-3.0,), (-2.8,), (-3.0,), (3.0,), (2.8,)))
     offsets = torch.tensor((0, 3, 6), dtype=torch.int64)
-    steps = torch.tensor((0.5, 2.0), dtype=torch.float32)
 
-    actual = time_forward_difference_segmented(values, offsets, steps)
-    expected_parts = []
-    for segment, step in zip(values.split(3), steps):
-        difference = (segment[1:] - segment[:-1]) / step
-        expected_parts.append(torch.cat((difference, difference[-2:-1])))
-    expected = torch.cat(expected_parts)
+    actual = time_unwrap_angles_segmented(values, offsets)
+    expected = torch.cat(tuple(time_unwrap_angles(segment) for segment in values.split(3)))
 
     torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(actual[3], values[3])
+
+
+def test_ordered_hinge_coordinate_velocity_inverts_the_non_small_angle_jacobian() -> None:
+    """D6 coordinate rates must invert rotated instantaneous axes, not fixed-axis projections."""
+    coordinates = torch.tensor(((0.7, -0.5, 1.1), (-0.9, 0.4, -0.6)), dtype=torch.float32)
+    expected = torch.tensor(((1.2, -0.8, 0.4), (-0.3, 0.9, 1.4)), dtype=torch.float32)
+    axes = torch.eye(3, dtype=torch.float32)
+    axis_0 = axes[0].expand(2, 3)
+    axis_1_local = axes[1].expand(2, 3)
+    axis_2_local = axes[2].expand(2, 3)
+    first = quat_from_rotation_vector(coordinates[:, :1] * axis_0)
+    second = quat_mul(first, quat_from_rotation_vector(coordinates[:, 1:2] * axis_1_local))
+    jacobian = torch.stack((axis_0, quat_apply(first, axis_1_local), quat_apply(second, axis_2_local)), dim=-1)
+    angular_velocity = (jacobian @ expected.unsqueeze(-1)).squeeze(-1)
+
+    actual = ordered_hinge_coordinate_velocity(coordinates, axes, angular_velocity)
+    fixed_axis_projection = angular_velocity @ axes.T
+
+    torch.testing.assert_close(actual, expected, atol=2.0e-6, rtol=2.0e-6)
+    assert torch.max(torch.abs(fixed_axis_projection - expected)) > 0.2
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required to exercise training-time TF32 matmul.")
@@ -151,9 +192,8 @@ def test_segmented_time_operators_reject_nonfloating_values() -> None:
     offsets = torch.tensor((0, 3, 6), dtype=torch.int64)
     steps = torch.tensor((0.1, 0.2), dtype=torch.float32)
 
-    for operator in (time_gradient_segmented, time_forward_difference_segmented):
-        with pytest.raises(ValueError, match="floating-point"):
-            operator(values, offsets, steps)
+    with pytest.raises(ValueError, match="floating-point"):
+        time_gradient_segmented(values, offsets, steps)
     with pytest.raises(ValueError, match="floating-point"):
         time_quaternion_angular_velocity_segmented(rotations, offsets, steps)
     with pytest.raises(ValueError, match="floating-point"):
@@ -174,7 +214,6 @@ def test_segmented_time_operators_are_bitwise_equal_for_duplicate_segments() -> 
         time_gradient_segmented(values, offsets, steps),
         time_quaternion_angular_velocity_segmented(rotation, offsets, steps),
         time_gaussian_filter_segmented(values, offsets),
-        time_forward_difference_segmented(values, offsets, steps),
     )
 
     for result in results:
@@ -195,13 +234,11 @@ def test_segmented_time_operators_match_cpu_on_cuda() -> None:
         time_gradient_segmented(values, offsets, steps),
         time_quaternion_angular_velocity_segmented(rotation, offsets, steps),
         time_gaussian_filter_segmented(values, offsets),
-        time_forward_difference_segmented(values, offsets, steps),
     )
     actual = (
         time_gradient_segmented(values.cuda(), offsets.cuda(), steps.cuda()),
         time_quaternion_angular_velocity_segmented(rotation.cuda(), offsets.cuda(), steps.cuda()),
         time_gaussian_filter_segmented(values.cuda(), offsets.cuda()),
-        time_forward_difference_segmented(values.cuda(), offsets.cuda(), steps.cuda()),
     )
 
     for cpu, cuda in zip(expected, actual, strict=True):

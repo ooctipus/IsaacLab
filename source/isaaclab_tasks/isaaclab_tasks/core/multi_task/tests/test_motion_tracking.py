@@ -294,11 +294,13 @@ def _table() -> MotionTaskTable:
             frame_count=count,
             source_fps=50.0,
             content_sha256=_hash(clip_id),
+            skeleton_id=0,
         )
         for clip_id, count in zip(_CLIP_IDS, (4, 5), strict=True)
     )
     index = MotionClipIndex(
         source_content_sha256=_hash("tracking-source"),
+        skeleton_identity_sha256s=(_hash("tracking-skeleton"),),
         clips=clips,
     )
     frame_count = index.total_frames
@@ -320,7 +322,7 @@ def _table() -> MotionTaskTable:
         "tracking_builder_v1",
         _hash("tracking-builder"),
         "clip_time_ranges",
-        _hash("tracking-skeleton"),
+        "tracking_decoder_v1",
     )
 
 
@@ -412,11 +414,13 @@ def _smpl_tracking_expert_table(
             frame_count=length,
             source_fps=50.0,
             content_sha256=_hash(f"smpl-{clip_id}"),
+            skeleton_id=0,
         )
         for clip_id, length in zip(_SMPL_CLIP_IDS, _SMPL_LENGTHS, strict=True)
     )
     index = MotionClipIndex(
         source_content_sha256=_hash("smpl-tracking-source"),
+        skeleton_identity_sha256s=(_hash("smpl-tracking-skeleton"),),
         clips=clips,
     )
     frame_count = index.total_frames
@@ -455,7 +459,7 @@ def _smpl_tracking_expert_table(
         "smpl_tracking_builder_v1",
         _hash("smpl-tracking-builder"),
         "source_frames",
-        _hash("smpl-tracking-skeleton"),
+        "smpl_tracking_decoder_v1",
     )
     expert_frames = smpl_humenv_observation(
         table.field("body_position"),

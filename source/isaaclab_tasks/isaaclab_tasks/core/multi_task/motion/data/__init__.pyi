@@ -6,17 +6,29 @@
 __all__ = [
     "MotionClipIndex",
     "MotionClipSource",
-    "MotionFrameBuilder",
     "MotionFrames",
+    "MotionGeneralizedCoordinates",
     "MotionSourceClip",
     "MotionFrameSource",
     "MotionResetState",
     "MotionSkeleton",
+    "MotionSourceProjection",
+    "MotionSourceProjectionAnalytic",
+    "MotionSourceProjectionExact",
+    "MotionSourceProjectionTrajectory",
     "MotionSourceCfg",
 ]
 
 from .clip_index import MotionClipIndex
-from .frames import MotionFrameBuilder, MotionFrames, MotionFrameSource
+from .frames import (
+    MotionFrames,
+    MotionFrameSource,
+    MotionGeneralizedCoordinates,
+    MotionSourceProjection,
+    MotionSourceProjectionAnalytic,
+    MotionSourceProjectionExact,
+    MotionSourceProjectionTrajectory,
+)
 from .reset_state import MotionResetState
 from .skeleton import MotionSkeleton
 from .source import MotionClipSource, MotionSourceCfg, MotionSourceClip

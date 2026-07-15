@@ -32,6 +32,14 @@ class IKObjectiveBaseCfg:
 
 
 @configclass
+class IKConstraintBaseCfg:
+    """Base configuration for a hard retarget IK constraint."""
+
+    class_type: type | str = MISSING  # type: ignore[assignment]
+    """Constraint builder called as ``class_type(cfg, context)``."""
+
+
+@configclass
 class BodyPointsCfg:
     """Body origins on the articulation represented by one kinematic model."""
 
@@ -121,6 +129,47 @@ class IKObjectiveMeshCollisionCfg(IKObjectiveBaseCfg):
 
 
 @configclass
+class IKObjectiveMeshNonpenetrationCfg(IKObjectiveBaseCfg):
+    """Ungated one-sided nonpenetration hinge over robot collision probes."""
+
+    class_type: type | str = "{DIR}.mesh_collision:build_mesh_nonpenetration_objective"
+
+    tolerance_m: float = 0.002
+    """Penetration residual normalization scale [m]."""
+
+    maximum_penetration_m: float = 0.0
+    """Depth [m] below which the hinge is inactive."""
+
+    n_samples: int = 4
+    """Surface probe points per body."""
+
+    max_distance: float = 2.0
+    """Mesh query radius [m]."""
+
+    one_sided_up_axis: tuple[float, float, float] | None = (0.0, 0.0, 1.0)
+    """Optional world up axis for one-sided surface penetration."""
+
+
+@configclass
+class IKConstraintMeshClearanceCfg(IKConstraintBaseCfg):
+    """Hard signed clearance for robot probes against one obstacle mesh."""
+
+    class_type: type | str = "{DIR}.mesh_collision:build_mesh_clearance_constraint"
+
+    n_samples: int = 4
+    """Surface probe points per body."""
+
+    max_distance: float = 2.0
+    """Mesh query radius [m]."""
+
+    minimum_clearance_m: float = 0.0
+    """Minimum signed probe-to-surface clearance [m]; negative values permit bounded penetration."""
+
+    one_sided_up_axis: tuple[float, float, float] | None = (0.0, 0.0, 1.0)
+    """Optional world up axis for one-sided surface clearance."""
+
+
+@configclass
 class IKObjectiveStabilityMarginCfg(IKObjectiveBaseCfg):
     """Config for :class:`IKObjectiveStabilityMargin`.
 
@@ -178,7 +227,7 @@ class IKObjectiveJointDefaultCfg(IKObjectiveBaseCfg):
     Use a small weight (typical ``0.02``--``0.1``) so the foot-contact,
     base-pose, and stability objectives still dominate the solve and the
     objective only nudges the IK toward the robot's nominal pose where
-    the contact constraints leave slack.
+    the higher-priority objectives leave slack.
     """
 
     class_type: type | str = "{DIR}.standard:build_joint_default_objective"

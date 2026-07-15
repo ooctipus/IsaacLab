@@ -43,6 +43,7 @@ def _g1_skeleton() -> MotionSkeleton:
         joint_axes=tuple(axes[index % 3] for index in range(29)),
         root_translation_frame="world",
         root_rotation_convention="axis_angle",
+        landmark_rotation_policy="calibrated_body",
     )
 
 
@@ -60,6 +61,7 @@ def _smpl_skeleton() -> MotionSkeleton:
         joint_axes=axes * 23,
         root_translation_frame="world",
         root_rotation_convention="wxyz",
+        landmark_rotation_policy="calibrated_body",
     )
 
 
@@ -72,7 +74,7 @@ def test_lafan_typed_clip_exposes_exact_and_semantic_views_once() -> None:
 
     assert isinstance(clip, MotionSourceClip)
     joint_q, joint_qd = clip.free_root_coordinates(skeleton, device="cpu")
-    semantic_root, semantic_rotation = clip.semantic_local_pose(skeleton, device="cpu")
+    semantic_root, semantic_rotation = clip.local_pose(skeleton, device="cpu")
     assert joint_qd is None
     torch.testing.assert_close(joint_q[:, :3], semantic_root)
     torch.testing.assert_close(joint_q[:, 3:7], semantic_rotation[:, 0])
@@ -89,7 +91,7 @@ def test_lafan_exact_view_does_not_materialize_semantic_rotations(monkeypatch: p
     def reject_semantic_materialization(*_args, **_kwargs):
         raise AssertionError("exact decoding entered semantic materialization")
 
-    monkeypatch.setattr(LafanG1Clip, "semantic_local_pose", reject_semantic_materialization)
+    monkeypatch.setattr(LafanG1Clip, "local_pose", reject_semantic_materialization)
 
     joint_q, joint_qd = clip.free_root_coordinates(skeleton, device="cpu")
 
@@ -124,7 +126,7 @@ def test_cmu_typed_clip_preserves_humenv_local_rotation_decode() -> None:
     )
 
     assert isinstance(clip, MotionSourceClip)
-    root, rotation = clip.semantic_local_pose(_smpl_skeleton(), device="cpu")
+    root, rotation = clip.local_pose(_smpl_skeleton(), device="cpu")
     half_angle = 0.5 * torch.from_numpy(qpos[:, 7])
     expected = torch.stack(
         (torch.cos(half_angle), torch.sin(half_angle), torch.zeros_like(half_angle), torch.zeros_like(half_angle)),
@@ -249,19 +251,51 @@ def test_source_declarations_are_visible_at_the_root_and_old_facades_are_absent(
     assert "class MotionSourcesCfg(PresetCfg):" in root_source
     assert 'identifier="cmu_humenv_smpl"' in root_source
     assert 'identifier="lafan_g1_29dof"' in root_source
-    assert "from .motion.data.sources import (" in root_source
-    assert "reference_kinematics_factory=smpl_reference_kinematics" in root_source
+    assert "from .motion.data.sources import open_cmu_humenv_smpl_source, open_lafan_g1_source" in root_source
+    assert "reference_kinematics_factory" not in root_source
     assert not (motion_root / "config" / "sources.py").exists()
     assert not (motion_root / "config" / "source_skeletons.py").exists()
 
 
+def test_source_skeleton_has_no_source_owned_distal_endpoint_schema() -> None:
+    """Sources own landmark frames while target robots own endpoint geometry."""
+    motion_root = Path(__file__).parents[1] / "motion"
+    skeleton_source = (motion_root / "data" / "skeleton.py").read_text(encoding="utf-8")
+    concrete_sources = (
+        motion_root / "data" / "sources" / "lafan_bvh.py",
+        motion_root / "data" / "sources" / "amass_smplh.py",
+        motion_root / "data" / "sources" / "cmu_humenv_smpl_coordinates.py",
+        motion_root / "data" / "sources" / "lafan_g1_29dof_coordinates.py",
+    )
+    source_text = "\n".join(path.read_text(encoding="utf-8") for path in concrete_sources)
+
+    assert "rotation_body_name" in skeleton_source
+    for forbidden in ("class DistalPoint", "distal_points"):
+        assert forbidden not in skeleton_source
+    assert "MotionSkeleton.DistalPoint" not in source_text
+    assert "distal_points" not in source_text
+
+
 def test_robot_and_data_runtime_dependency_direction_is_one_way() -> None:
     """Robot and data implementations must not depend on downstream command or learner owners."""
+
+    def runtime_imports(tree: ast.Module) -> tuple[ast.Import | ast.ImportFrom, ...]:
+        """Return imports that execute outside TYPE_CHECKING guards."""
+        guarded = {
+            child
+            for node in tree.body
+            if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING"
+            for child in ast.walk(node)
+        }
+        return tuple(
+            node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom)) and node not in guarded
+        )
+
     motion_root = Path(__file__).parents[1] / "motion"
     forbidden_robot_modules = ("rsl_rl", ".config.agents", ".evaluation")
     for path in sorted((motion_root / "robots").rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
+        for node in runtime_imports(tree):
             if isinstance(node, ast.ImportFrom):
                 module = node.module or ""
                 assert not any(token in module for token in forbidden_robot_modules), (path, module)
@@ -274,7 +308,7 @@ def test_robot_and_data_runtime_dependency_direction_is_one_way() -> None:
 
     for path in sorted((motion_root / "data").rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
+        for node in runtime_imports(tree):
             if isinstance(node, ast.ImportFrom):
                 module = node.module or ""
                 imports_robot = (node.level > 0 and module.startswith("robots")) or ".motion.robots" in module
@@ -352,8 +386,8 @@ def test_smpl_target_reference_model_is_robot_owned() -> None:
     assert "def smpl_reference_kinematics" in robot_source
     assert "SMPL_HUMENV_MJCF_PATH" not in coordinate_source
     assert "def smpl_reference_kinematics" not in coordinate_source
-    assert "file_sha256(reference.mjcf_path)" in robot_source
-    assert "reference_mjcf_sha256 != SMPL_HUMENV_MJCF_SHA256" in robot_source
+    assert "reference.mechanics_identity_sha256" in robot_source
+    assert "scene-derived NewtonKinematics" in robot_source
 
 
 def test_g1_robot_does_not_own_generic_kinematics_or_temporal_math() -> None:

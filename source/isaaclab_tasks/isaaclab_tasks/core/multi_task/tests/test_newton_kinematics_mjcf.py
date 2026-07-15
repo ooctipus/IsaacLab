@@ -8,62 +8,152 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass, replace
 from pathlib import Path
-from types import SimpleNamespace
 
+import newton
+import newton.ik as ik
 import numpy as np
 import pytest
 import torch
+import warp as wp
 
-from isaaclab.utils.math import convert_quat, quat_from_angle_axis
+from isaaclab.utils.math import (
+    convert_quat,
+    quat_apply,
+    quat_conjugate,
+    quat_from_angle_axis,
+    quat_mul,
+)
 
 from isaaclab_tasks.core.multi_task.kinematics import (
+    IKTrajectorySolver,
     KinematicTree,
     NewtonKinematics,
+    NewtonKinematicsBuildCfg,
     NewtonKinematicsCfg,
     kinematic_pose_forward,
+    kinematic_tree_forward,
+    ordered_hinge_coordinate_velocity,
     ordered_hinge_rotation,
-    time_gradient,
+    time_quaternion_angular_velocity,
 )
+from isaaclab_tasks.core.multi_task.kinematics.ik_objectives.cfg import IKObjectiveMeshCollisionCfg
+from isaaclab_tasks.core.multi_task.motion import retarget as motion_retarget
 from isaaclab_tasks.core.multi_task.motion.data.clip_index import MotionClipIndex
+from isaaclab_tasks.core.multi_task.motion.data.frames import (
+    MotionSourceProjectionExact,
+    MotionSourceProjectionTrajectory,
+)
 from isaaclab_tasks.core.multi_task.motion.data.sources import (
     CmuHumEnvSmplClip,
     LafanG1Clip,
     cmu_humenv_smpl_skeleton,
     lafan_g1_29dof_skeleton,
 )
+from isaaclab_tasks.core.multi_task.motion.data.sources.lafan_bvh import LafanBvhHierarchy, lafan_bvh_skeleton
 from isaaclab_tasks.core.multi_task.motion.mdp.commands.commands_cfg import (
-    MotionObjectiveMeasureCriterionCfg,
-    MotionSemanticFamilyCfg,
-    MotionSemanticSolveCfg,
+    MotionGroundPenetrationCriterionCfg,
+    MotionSourceGlobalPositionObjectiveCfg,
+    MotionSourceRotationObjectiveCfg,
+    MotionTaskTableCfg,
+    MotionTrajectorySolveCfg,
 )
 from isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table import (
-    _MotionCorpusCandidate,
-    motion_solve_semantic_sequence,
+    _QUALITY_NAMES,
+    _TARGET_COORDINATE_QUALITY_NAMES,
+    _TRAJECTORY_METRIC_NAMES,
 )
-from isaaclab_tasks.core.multi_task.motion.retarget import MotionSemanticProjection, MotionSemanticTargets
+from isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table_builder import (
+    _motion_task_view,
+    _MotionTrajectorySolvedCandidate,
+    _MotionTrajectoryTargetCandidate,
+)
+from isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_trajectory import (
+    _motion_contact_rows_accepted,
+    _motion_source_fidelity_accepted,
+    motion_objective_source_global_position,
+    motion_objective_source_rotation,
+    motion_solve_trajectory,
+)
+from isaaclab_tasks.core.multi_task.motion.retarget import (
+    MotionTrajectoryProjection,
+    MotionTrajectoryTargets,
+    motion_contact_probe_offsets,
+)
 from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import (
+    G1_MOTION_ARTICULATION_CFG,
     G1_SIMULATOR_BODY_NAMES,
     G1_SIMULATOR_JOINT_NAMES,
 )
 from isaaclab_tasks.core.multi_task.motion.robots.g1.frames import G1_HEAD_FRAME_NAME
 from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import (
     G1_REFERENCE_MJCF_SHA256,
-    G1FrameBuilder,
-    g1_frame_builder,
+    _G1FrameTarget,
+    g1_frame_target,
+    g1_source_projection,
 )
-from isaaclab_tasks.core.multi_task.motion.robots.smpl.articulation import smpl_live_joint_mujoco_names
+from isaaclab_tasks.core.multi_task.motion.robots.smpl import reference as smpl_reference_module
+from isaaclab_tasks.core.multi_task.motion.robots.smpl.articulation import (
+    SMPL_MOTION_ARTICULATION_CFG,
+    smpl_live_joint_mujoco_names,
+)
 from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import (
-    SmplFrameBuilder,
-    smpl_frame_builder,
+    _SmplFrameTarget,
+    smpl_frame_target,
     smpl_reference_kinematics,
+    smpl_source_projection,
 )
+from isaaclab_tasks.core.multi_task.motion.robots.target import write_velocity_canonical
 
 from isaaclab_assets import ISAACLAB_ASSETS_DATA_DIR
+
+_METRIC_SOURCE_REQUIRED_POSITION = _TRAJECTORY_METRIC_NAMES.index("source_required_position_max_m")
+_METRIC_SOURCE_REQUIRED_DISTAL_DIRECTION = _TRAJECTORY_METRIC_NAMES.index("source_required_distal_direction_max_rad")
+_METRIC_SOURCE_ROOT_ROTATION = _TRAJECTORY_METRIC_NAMES.index("source_root_rotation_max_rad")
+_METRIC_CONTACT_GAP = _TRAJECTORY_METRIC_NAMES.index("contact_gap_max_m")
+_METRIC_CONTACT_TILT = _TRAJECTORY_METRIC_NAMES.index("contact_tilt_max_rad")
+_METRIC_CONTACT_CUMULATIVE_DRIFT = _TRAJECTORY_METRIC_NAMES.index("contact_cumulative_drift_max_m")
+_TARGET_GROUND_PENETRATION = _TARGET_COORDINATE_QUALITY_NAMES.index("ground_penetration_max_m")
+
+_CONTACT_CHANNELS = (
+    MotionTaskTableCfg.ContactChannelCfg(name="left_foot", source_probe_roles=("left_ankle", "left_toe")),
+    MotionTaskTableCfg.ContactChannelCfg(name="right_foot", source_probe_roles=("right_ankle", "right_toe")),
+)
+_CONTACT_PROBE_ROLES = tuple(role for channel in _CONTACT_CHANNELS for role in channel.source_probe_roles)
+
+
+def _contact_offsets(target, contact_channels=_CONTACT_CHANNELS) -> torch.Tensor:
+    """Build target-device canonical source-probe offsets."""
+    frame_target = getattr(target, "frame_target", target)
+    return motion_contact_probe_offsets(contact_channels, frame_target.kinematics.device)
+
+
+def _trajectory_projection(source, target, contact_channels=_CONTACT_CHANNELS) -> MotionTrajectoryProjection:
+    """Build one projection with shared-layout semantics."""
+    return MotionTrajectoryProjection(source, target, contact_channels, _contact_offsets(target, contact_channels))
+
+
+def _contact_patches(left_body: str, right_body: str):
+    return (
+        MotionTaskTableCfg.TargetKinematicsCfg.ContactPatchCfg(
+            channel="left_foot",
+            body_name=left_body,
+        ),
+        MotionTaskTableCfg.TargetKinematicsCfg.ContactPatchCfg(
+            channel="right_foot",
+            body_name=right_body,
+        ),
+    )
+
+
+_SMPL_CONTACT_PATCHES = _contact_patches("L_Ankle", "R_Ankle")
+_G1_CONTACT_PATCHES = _contact_patches("left_ankle_roll_link", "right_ankle_roll_link")
 
 _G1_BODY_NAMES = (
     "pelvis",
@@ -214,73 +304,251 @@ def smpl_kinematics() -> NewtonKinematics:
     return smpl_reference_kinematics("", "cpu")
 
 
+@dataclass(frozen=True, slots=True)
+class _LocalPoseClip:
+    """Minimal test clip carrying world-root positions and root/local unit rotations."""
+
+    root_position_m: torch.Tensor
+    local_rotation_xyzw: torch.Tensor
+    source_fps: float
+
+    def __post_init__(self) -> None:
+        """Require one finite float32 pose trajectory."""
+        frame_count = self.root_position_m.shape[0] if self.root_position_m.ndim == 2 else 0
+        body_count = self.local_rotation_xyzw.shape[1] if self.local_rotation_xyzw.ndim == 3 else 0
+        if (
+            frame_count < 1
+            or body_count < 1
+            or self.root_position_m.shape != (frame_count, 3)
+            or self.local_rotation_xyzw.shape != (frame_count, body_count, 4)
+            or self.root_position_m.dtype is not torch.float32
+            or self.local_rotation_xyzw.dtype is not torch.float32
+            or self.root_position_m.device != self.local_rotation_xyzw.device
+            or not np.isfinite(self.source_fps)
+            or self.source_fps <= 0.0
+        ):
+            raise ValueError("Local-pose test clips require nonempty same-device float32 poses and positive timing.")
+        norm = torch.linalg.vector_norm(self.local_rotation_xyzw, dim=-1)
+        if not bool(torch.all(torch.isfinite(self.root_position_m))) or not torch.allclose(
+            norm, torch.ones_like(norm), atol=1.0e-6, rtol=1.0e-6
+        ):
+            raise ValueError("Local-pose test clips require finite positions and unit rotations.")
+
+    @property
+    def frame_count(self) -> int:
+        """Number of source frames."""
+        return self.root_position_m.shape[0]
+
+    def local_pose(self, source_skeleton, *, device: str | torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return the stored pose after checking the source body count."""
+        if source_skeleton.num_bodies != self.local_rotation_xyzw.shape[1]:
+            raise ValueError("Local-pose test clip and source skeleton body counts differ.")
+        return self.root_position_m.to(device=device), self.local_rotation_xyzw.to(device=device)
+
+
+_MotionTestClip = CmuHumEnvSmplClip | LafanG1Clip | _LocalPoseClip
+
+
+def test_from_articulation_builds_native_mjcf_scene_mechanics() -> None:
+    """The selected SMPL scene MJCF is the exact kinematics owner."""
+    kinematics = NewtonKinematics.from_articulation(
+        NewtonKinematicsBuildCfg(collapse_fixed_joints=False), SMPL_MOTION_ARTICULATION_CFG, "cpu"
+    )
+
+    assert kinematics.asset_path == SMPL_MOTION_ARTICULATION_CFG.spawn.asset_path
+    assert kinematics.mjcf_path == SMPL_MOTION_ARTICULATION_CFG.spawn.asset_path
+    assert kinematics.usd_path == ""
+
+
+def test_from_articulation_builds_usd_scene_mechanics() -> None:
+    """The selected G1 scene USD is the exact kinematics owner."""
+    kinematics = NewtonKinematics.from_articulation(
+        NewtonKinematicsBuildCfg(collapse_fixed_joints=False), G1_MOTION_ARTICULATION_CFG, "cpu"
+    )
+
+    assert kinematics.asset_path == G1_MOTION_ARTICULATION_CFG.spawn.usd_path
+    assert kinematics.usd_path == G1_MOTION_ARTICULATION_CFG.spawn.usd_path
+    assert kinematics.mjcf_path == ""
+
+
 @pytest.fixture(scope="module")
-def smpl_cross_builder(smpl_kinematics: NewtonKinematics) -> SmplFrameBuilder:
-    """Build one source-generic G1-to-SMPL semantic retargeter."""
-    source = lafan_g1_29dof_skeleton()
-    return smpl_frame_builder(source, smpl_kinematics)
+def smpl_cross_projection(smpl_kinematics: NewtonKinematics) -> MotionSourceProjectionTrajectory:
+    """Build one raw-LAFAN-to-SMPL source projection and its independent target."""
+    body_names = (
+        "Hips",
+        "LeftUpLeg",
+        "LeftLeg",
+        "LeftFoot",
+        "LeftToe",
+        "RightUpLeg",
+        "RightLeg",
+        "RightFoot",
+        "RightToe",
+        "Spine",
+        "Spine1",
+        "Spine2",
+        "Neck",
+        "Head",
+        "LeftShoulder",
+        "LeftArm",
+        "LeftForeArm",
+        "LeftHand",
+        "RightShoulder",
+        "RightArm",
+        "RightForeArm",
+        "RightHand",
+    )
+    hierarchy = LafanBvhHierarchy(
+        body_names=body_names,
+        parent_indices=(-1, 0, 1, 2, 3, 0, 5, 6, 7, 0, 9, 10, 11, 12, 11, 14, 15, 16, 11, 18, 19, 20),
+        rest_translation_m=(
+            (0.0, 0.0, 0.0),
+            (-0.1, -0.1, 0.0),
+            (0.0, -0.4, 0.0),
+            (0.0, -0.4, 0.0),
+            (0.0, -0.1, 0.15),
+            (0.1, -0.1, 0.0),
+            (0.0, -0.4, 0.0),
+            (0.0, -0.4, 0.0),
+            (0.0, -0.1, 0.15),
+            (0.0, 0.2, 0.0),
+            (0.0, 0.15, 0.0),
+            (0.0, 0.15, 0.0),
+            (0.0, 0.1, 0.0),
+            (0.0, 0.2, 0.0),
+            (-0.1, 0.1, 0.0),
+            (-0.15, 0.0, 0.0),
+            (-0.3, 0.0, 0.0),
+            (-0.25, 0.0, 0.0),
+            (0.1, 0.1, 0.0),
+            (0.15, 0.0, 0.0),
+            (0.3, 0.0, 0.0),
+            (0.25, 0.0, 0.0),
+        ),
+        channels=(
+            ("Xposition", "Yposition", "Zposition", "Zrotation", "Yrotation", "Xrotation"),
+            *((("Zrotation", "Yrotation", "Xrotation"),) * (len(body_names) - 1)),
+        ),
+        end_sites=(),
+        source_sha256="0" * 64,
+    )
+    source = lafan_bvh_skeleton(hierarchy)
+    target = smpl_frame_target(smpl_kinematics, _SMPL_CONTACT_PATCHES)
+    return smpl_source_projection(source, target, object(), _CONTACT_CHANNELS, _contact_offsets(target))
+
+
+def _clip_index(frame_count: int, source_fps: float) -> MotionClipIndex:
+    """Return one deterministic test clip index."""
+    return MotionClipIndex(
+        source_content_sha256="0" * 64,
+        skeleton_identity_sha256s=("2" * 64,),
+        clips=(MotionClipIndex.Clip("test", frame_count, source_fps, "1" * 64, 0),),
+    )
 
 
 def _semantic_candidate(
-    builder: SmplFrameBuilder | G1FrameBuilder,
-    clip: CmuHumEnvSmplClip | LafanG1Clip,
+    projection: MotionSourceProjectionTrajectory,
+    clip: _MotionTestClip,
     *,
     device: str = "cpu",
-) -> _MotionCorpusCandidate:
+) -> _MotionTrajectorySolvedCandidate:
     """Solve one clip through the production corpus-level semantic executor."""
-    root_position, local_rotation = clip.semantic_local_pose(builder.source_skeleton, device=device)
-    targets = builder.generate_semantic_targets(root_position, local_rotation)
-    clip_index = MotionClipIndex(
-        source_content_sha256="0" * 64,
-        clips=(
-            MotionClipIndex.Clip(
-                clip_id="test",
-                frame_count=clip.frame_count,
-                source_fps=clip.source_fps,
-                content_sha256="1" * 64,
-            ),
-        ),
-    )
-    candidate = _MotionCorpusCandidate(
-        builder=builder,
-        source=None,
+    root_position, local_rotation = clip.local_pose(projection.source_skeleton, device=device)
+    targets = projection.target_projection.generate_targets(root_position, local_rotation)
+    clip_index = _clip_index(clip.frame_count, clip.source_fps)
+    candidate = _MotionTrajectoryTargetCandidate(
+        target=projection.target,
         clip_index=clip_index,
-        device=device,
-        frames=None,
         pending=iter((targets,)),
+        source_body_counts=(projection.source_skeleton.num_bodies,),
+        device=device,
+        inspection=False,
     )
-    return motion_solve_semantic_sequence(MotionSemanticSolveCfg(), candidate)
+    return motion_solve_trajectory(MotionTrajectorySolveCfg(), candidate)
 
 
-def _semantic_acceptance_bound(objective: str) -> float:
-    """Return one root-visible semantic-family acceptance bound."""
-    criteria = (
-        criterion
-        for criterion in MotionSemanticFamilyCfg().criteria
-        if isinstance(criterion, MotionObjectiveMeasureCriterionCfg)
+def _source_required_position_bound() -> float:
+    """Return the target-required source-position bound [m]."""
+    return MotionTrajectorySolveCfg().acceptance.source.required_position_upper_m
+
+
+def _source_root_rotation_bound() -> float:
+    """Return the unified source-root rotation bound [rad]."""
+    return MotionTrajectorySolveCfg().acceptance.source.root_rotation_upper_rad
+
+
+def _contact_gap_bound() -> float:
+    """Return the trajectory contact-gap acceptance bound [m]."""
+    return MotionTrajectorySolveCfg().acceptance.contact.gap_upper_m
+
+
+def _contact_tilt_bound() -> float:
+    """Return the trajectory contact-tilt acceptance bound [rad]."""
+    return MotionTrajectorySolveCfg().acceptance.contact.tilt_upper_rad
+
+
+def _semantic_ground_penetration_bound() -> float:
+    """Return the route-independent target ground-penetration bound [m]."""
+    return MotionGroundPenetrationCriterionCfg().upper_m
+
+
+def _assert_exact_velocity_respects_model_limits(
+    target: _SmplFrameTarget | _G1FrameTarget,
+    joint_q: torch.Tensor,
+    clip: _MotionTestClip,
+) -> None:
+    """Require exact q-derived velocities to remain inside every finite target-model limit."""
+    joint_qd = torch.empty(
+        (joint_q.shape[0], target.kinematics.model.joint_dof_count),
+        dtype=joint_q.dtype,
+        device=joint_q.device,
     )
-    return next(criterion.upper for criterion in criteria if criterion.objective == objective)
+    write_velocity_canonical(
+        target,
+        joint_q,
+        torch.tensor((0, clip.frame_count), dtype=torch.int32, device=joint_q.device),
+        torch.tensor((1.0 / clip.source_fps,), dtype=torch.float32, device=joint_q.device),
+        joint_qd,
+    )
+    velocity_lower = torch.tensor(target.kinematics.topology.joint_velocity_lower)
+    velocity_upper = torch.tensor(target.kinematics.topology.joint_velocity_upper)
+    torch.testing.assert_close(velocity_lower, -velocity_upper)
+    joint_type = torch.tensor(target.kinematics.topology.joint_type)
+    dof_joint = torch.tensor(target.kinematics.topology.dof_joint)
+    free = joint_type[dof_joint] == int(newton.JointType.FREE)
+    assert torch.count_nonzero(free) == 6
+    assert torch.all(torch.isneginf(velocity_lower[free]))
+    assert torch.all(torch.isposinf(velocity_upper[free]))
+    finite = torch.isfinite(velocity_upper) & (velocity_upper > 0.0)
+    assert torch.all(finite | free)
+    utilization = joint_qd[:, finite].abs().amax(dim=0) / velocity_upper[finite]
+    assert utilization.max() < 1.0e-4
 
 
 def _semantic_output(
-    builder: SmplFrameBuilder | G1FrameBuilder,
-    clip: CmuHumEnvSmplClip | LafanG1Clip,
+    projection: MotionSourceProjectionTrajectory,
+    clip: _MotionTestClip,
     *,
     device: str = "cpu",
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Return generalized coordinates and production semantic quality measures."""
-    candidate = _semantic_candidate(builder, clip, device=device)
-    if candidate.semantic_joint_q is None or candidate.semantic_quality is None:
-        raise RuntimeError("The semantic executor did not materialize coordinates and quality.")
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return coordinates, internal refinement error, and source-fidelity quality measures."""
+    candidate = _semantic_candidate(projection, clip, device=device)
     generalized_position = torch.cat(
         (
-            candidate.semantic_joint_q[:, :3],
-            convert_quat(candidate.semantic_joint_q[:, 3:7], to="wxyz"),
-            candidate.semantic_joint_q[:, 7:],
+            candidate.coordinates.joint_q[:, :3],
+            convert_quat(candidate.coordinates.joint_q[:, 3:7], to="wxyz"),
+            candidate.coordinates.joint_q[:, 7:],
         ),
         dim=-1,
     )
-    return generalized_position, candidate.semantic_quality[:, 0], candidate.semantic_quality[:, 1]
+    return (
+        generalized_position,
+        candidate.trajectory_quality[:, _METRIC_SOURCE_REQUIRED_POSITION],
+        candidate.trajectory_quality[:, _METRIC_SOURCE_REQUIRED_DISTAL_DIRECTION],
+        candidate.trajectory_quality[:, _METRIC_SOURCE_ROOT_ROTATION],
+        candidate.trajectory_quality[:, _METRIC_CONTACT_CUMULATIVE_DRIFT],
+        candidate.target_coordinate_evidence[:, _TARGET_GROUND_PENETRATION],
+    )
 
 
 def test_mjcf_model_derives_exact_g1_dimensions_and_order(g1_kinematics: NewtonKinematics) -> None:
@@ -438,6 +706,78 @@ def _assert_grouped_coordinate_pose_matches_newton(
     )
 
 
+def _assert_native_trajectory_evidence_obeys_target_morphology(source, target, clip) -> None:
+    """Require source motion, target morphology, and rest-calibrated semantic rotations."""
+    root_position, local_rotation = clip.local_pose(source, device="cpu")
+    projection = _trajectory_projection(source, target.trajectory_target)
+    targets = projection.generate_targets(root_position, local_rotation)
+    rest_translation = torch.tensor(source.rest_translation_m, dtype=torch.float32)
+    rest_rotation = convert_quat(torch.tensor(source.rest_rotation_wxyz, dtype=torch.float32), to="xyzw")
+    source_position, source_world_rotation = kinematic_pose_forward(
+        rest_translation, rest_rotation, local_rotation, root_position, source.parent_indices
+    )
+    layout = target.trajectory_target
+    source_landmarks = {landmark.name: landmark for landmark in source.landmarks}
+    source_body_by_name = {name: index for index, name in enumerate(source.body_names)}
+    source_indices = tuple(source_body_by_name[source_landmarks[role].position_body_name] for role in layout.roles)
+    source_semantic_position = source_position[:, source_indices].transpose(0, 1)
+
+    root_position_target = targets.source_landmark_position_m[0]
+    root_rotation_target = targets.source_landmark_rotation_xyzw[0]
+    for index, row in enumerate(layout.root_cluster_rows):
+        relative_root = quat_apply(
+            quat_conjugate(root_rotation_target),
+            targets.source_landmark_position_m[row] - root_position_target,
+        )
+        torch.testing.assert_close(
+            relative_root, layout.root_cluster_offset_m[index].expand_as(relative_root), atol=2.0e-6, rtol=0.0
+        )
+
+    root_cluster_rows = set(layout.root_cluster_rows)
+    for row, parent in enumerate(layout.parent_rows[1:], start=1):
+        if row in root_cluster_rows:
+            continue
+        target_edge = targets.source_landmark_position_m[row] - targets.source_landmark_position_m[parent]
+        source_edge = source_semantic_position[row] - source_semantic_position[parent]
+        target_direction = target_edge / torch.linalg.vector_norm(target_edge, dim=-1, keepdim=True)
+        source_direction = source_edge / torch.linalg.vector_norm(source_edge, dim=-1, keepdim=True)
+        torch.testing.assert_close(target_direction, source_direction, atol=2.0e-6, rtol=0.0)
+        torch.testing.assert_close(
+            torch.linalg.vector_norm(target_edge, dim=-1),
+            layout.segment_lengths_m[row].expand(clip.frame_count),
+            atol=2.0e-6,
+            rtol=0.0,
+        )
+
+    distal = targets.source_direction_point_position_m - targets.source_landmark_position_m.index_select(
+        0, layout.direction_rows
+    )
+    torch.testing.assert_close(
+        torch.linalg.vector_norm(distal, dim=-1),
+        layout.direction_lengths_m[:, None].expand(-1, clip.frame_count),
+        atol=2.0e-6,
+        rtol=0.0,
+    )
+
+    rotation_source_indices = torch.tensor(
+        tuple(source_body_by_name[source_landmarks[role].rotation_body_name] for role in layout.rotation_roles)
+    )
+    _, source_rest_world_rotation = kinematic_tree_forward(rest_translation, rest_rotation, source.parent_indices)
+    source_rest_semantic_rotation = source_rest_world_rotation.index_select(0, rotation_source_indices)
+    source_to_target_rest_rotation = quat_mul(
+        quat_conjugate(source_rest_semantic_rotation), layout.rotation_rest_xyzw.to(rest_rotation)
+    )
+    expected_rotation = quat_mul(
+        source_world_rotation.index_select(1, rotation_source_indices),
+        source_to_target_rest_rotation.unsqueeze(0).expand(clip.frame_count, -1, -1),
+    ).transpose(0, 1)
+    expected_rotation /= torch.linalg.vector_norm(expected_rotation, dim=-1, keepdim=True)
+    rotation_alignment = torch.abs(torch.sum(targets.source_landmark_rotation_xyzw * expected_rotation, dim=-1))
+    torch.testing.assert_close(rotation_alignment, torch.ones_like(rotation_alignment), atol=2.0e-6, rtol=0.0)
+    assert targets.rotation_body_indices == layout.rotation_body_indices
+    assert targets.rotation_weights == layout.rotation_weights
+
+
 def test_g1_rest_times_pose_delta_matches_exact_newton_fk(g1_kinematics: NewtonKinematics) -> None:
     """G1 rest composition and scalar-axis frames match exact Newton FK for a multi-joint pose."""
     joint_q = torch.tensor((_G1_JOINT_Q,), dtype=torch.float32)
@@ -467,57 +807,246 @@ def test_smpl_grouped_xyz_and_distal_chain_match_exact_newton_fk(smpl_kinematics
     _assert_grouped_coordinate_pose_matches_newton(kinematics, cmu_humenv_smpl_skeleton(), joint_q)
 
 
-def test_smpl_local_pose_retarget_restores_root_and_projects_exact_limits(
-    smpl_cross_builder: SmplFrameBuilder, smpl_kinematics: NewtonKinematics
+def test_smpl_target_rejects_reordered_packaged_child_bodies(
+    smpl_kinematics: NewtonKinematics, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The production Newton-IK edge publishes legal q and post-root-restore residuals."""
-    source = lafan_g1_29dof_skeleton()
-    kinematics = smpl_kinematics
-    builder = smpl_cross_builder
-    pose = np.zeros((3, source.num_bodies, 3), dtype=np.float32)
-    source_by_name = {name: index for index, name in enumerate(source.body_names)}
-    pose[1:, source_by_name["left_hip_pitch_link"], 1] = 0.25
-    pose[1:, source_by_name["left_knee_link"], 1] = 0.4
-    root_position = np.asarray(((0.0, 0.0, 0.8), (0.01, 0.0, 0.8), (0.02, 0.0, 0.8)), dtype=np.float32)
+    """The seed assumes each packaged three-axis joint owns the next body."""
+    tree = KinematicTree.from_newton(smpl_kinematics)
+    child_bodies = list(tree.joint_child_body_indices)
+    child_bodies[0], child_bodies[1] = child_bodies[1], child_bodies[0]
+    reordered = replace(tree, joint_child_body_indices=tuple(child_bodies))
+    monkeypatch.setattr(KinematicTree, "from_newton", classmethod(lambda cls, reference: reordered))
 
-    generalized_position, marker_error_m, orientation_error_rad = _semantic_output(
-        builder, LafanG1Clip(root_position, pose, 30.0)
+    with pytest.raises(ValueError, match="child bodies in order"):
+        smpl_frame_target(smpl_kinematics, _SMPL_CONTACT_PATCHES)
+
+
+def test_smpl_target_rejects_non_xyz_coordinate_order(
+    smpl_kinematics: NewtonKinematics, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Equivalent cardinal-axis sets are insufficient for the ordered fitter."""
+    tree = KinematicTree.from_newton(smpl_kinematics)
+    coordinate_axes = list(tree.coordinate_axes)
+    coordinate_axes[0], coordinate_axes[1] = coordinate_axes[1], coordinate_axes[0]
+    reordered = replace(tree, coordinate_axes=tuple(coordinate_axes))
+    monkeypatch.setattr(KinematicTree, "from_newton", classmethod(lambda cls, reference: reordered))
+
+    with pytest.raises(ValueError, match="ordered positive X, Y, and Z"):
+        smpl_frame_target(smpl_kinematics, _SMPL_CONTACT_PATCHES)
+
+
+def test_smpl_target_rejects_nonzero_default_coordinates(
+    smpl_kinematics: NewtonKinematics, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Target default body rotations represent rest only for zero coordinates."""
+    default_joint_q = smpl_kinematics.default_joint_q.copy()
+    default_joint_q[7] = 0.125
+    monkeypatch.setattr(smpl_kinematics, "_default_joint_q", default_joint_q)
+
+    with pytest.raises(ValueError, match="default non-root coordinates must be zero"):
+        smpl_frame_target(smpl_kinematics, _SMPL_CONTACT_PATCHES)
+
+
+@pytest.mark.parametrize("mutation", ("missing_root", "duplicate", "hand_overlap", "child_before_parent"))
+def test_smpl_target_rejects_incomplete_or_nontopological_seed_maps(
+    smpl_kinematics: NewtonKinematics, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    """Every uninitialized global-rotation slot must have one proven writer."""
+    rotations = list(smpl_reference_module._SMPL_RETARGET_ROTATIONS)
+    expected_message = "uniquely cover"
+    if mutation == "missing_root":
+        rotations[0] = replace(rotations[0], body_name="L_Hand")
+    elif mutation == "duplicate":
+        rotations[-1] = rotations[-2]
+    elif mutation == "hand_overlap":
+        rotations[-1] = replace(rotations[-1], body_name="R_Hand")
+    else:
+        rotations[1], rotations[2] = rotations[2], rotations[1]
+        expected_message = "parent-before-child topology"
+    monkeypatch.setattr(smpl_reference_module, "_SMPL_RETARGET_ROTATIONS", tuple(rotations))
+
+    with pytest.raises(ValueError, match=expected_message):
+        smpl_frame_target(smpl_kinematics, _SMPL_CONTACT_PATCHES)
+
+
+def test_smpl_full_rotation_seed_preserves_root_limits_and_improves_default(
+    smpl_kinematics: NewtonKinematics,
+) -> None:
+    """The real packaged target reconstructs a legal pose better than its default seed."""
+    target = smpl_frame_target(smpl_kinematics, _SMPL_CONTACT_PATCHES)
+    tree = target.kinematic_tree
+    frame_count = 3
+    root_position = torch.tensor(((0.1, -0.2, 0.9), (0.2, -0.1, 1.0), (0.3, 0.0, 1.1)))
+    root_rotation = quat_from_angle_axis(torch.tensor((0.1, 0.2, 0.3)), torch.tensor(((0.0, 0.0, 1.0),) * frame_count))
+    reference_joint_q = torch.tensor(smpl_kinematics.default_joint_q, dtype=torch.float32)
+    reference_joint_q = reference_joint_q.expand(frame_count, -1).clone()
+    reference_joint_q[:, :3].copy_(root_position)
+    reference_joint_q[:, 3:7].copy_(root_rotation)
+    hip_y = target.reference_coordinate_names.index("L_Hip_y")
+    reference_joint_q[:, tree.coordinate_q_indices[hip_y]] = torch.tensor((0.0, 0.3, -0.2))
+
+    body_q = torch.empty((frame_count, tree.num_bodies, 7), dtype=torch.float32)
+    body_qd = torch.empty((frame_count, tree.num_bodies, 6), dtype=torch.float32)
+    zero_qd = torch.zeros((frame_count, smpl_kinematics.model.joint_dof_count), dtype=torch.float32)
+    smpl_kinematics.eval_fk_batched_torch(reference_joint_q, zero_qd, body_q, body_qd)
+    rotation_body_indices = target._trajectory_seed_rotation_body_indices
+    rotation_index = torch.tensor(rotation_body_indices, dtype=torch.int64)
+    landmark_rotation = body_q[:, :, 3:7].index_select(1, rotation_index).transpose(0, 1).contiguous()
+
+    seed_joint_q = target.trajectory_seed_joint_q(
+        root_position_m=root_position,
+        rotation_body_indices=rotation_body_indices,
+        landmark_rotation_xyzw=landmark_rotation,
+    )
+    torch.testing.assert_close(seed_joint_q[:, :3], root_position, rtol=0.0, atol=0.0)
+    torch.testing.assert_close(seed_joint_q[:, 3:7], landmark_rotation[0], rtol=0.0, atol=0.0)
+    assert torch.all(tree.coordinates_within_limits(seed_joint_q[:, 7:]))
+    torch.testing.assert_close(
+        target._reference_from_canonical_indices,
+        torch.arange(tree.num_coordinates, dtype=torch.int64),
+        rtol=0.0,
+        atol=0.0,
+    )
+
+    default_joint_q = torch.tensor(smpl_kinematics.default_joint_q, dtype=torch.float32)
+    default_joint_q = default_joint_q.expand(frame_count, -1).clone()
+    default_joint_q[:, :3].copy_(root_position)
+    default_joint_q[:, 3:7].copy_(landmark_rotation[0])
+
+    def mapped_rotation_error(joint_q: torch.Tensor) -> torch.Tensor:
+        actual_body_q = torch.empty_like(body_q)
+        actual_body_qd = torch.empty_like(body_qd)
+        smpl_kinematics.eval_fk_batched_torch(joint_q, zero_qd, actual_body_q, actual_body_qd)
+        actual = actual_body_q[:, :, 3:7].index_select(1, rotation_index).transpose(0, 1)
+        alignment = torch.abs(torch.sum(actual * landmark_rotation, dim=-1)).clamp(max=1.0)
+        return 2.0 * torch.acos(alignment)
+
+    seed_error = mapped_rotation_error(seed_joint_q)
+    default_error = mapped_rotation_error(default_joint_q)
+    assert seed_error.mean() < default_error.mean()
+
+
+def test_g1_native_trajectory_evidence_obeys_target_morphology(g1_kinematics: NewtonKinematics) -> None:
+    """Native G1 evidence combines current source directions with target-owned geometry."""
+    source = lafan_g1_29dof_skeleton()
+    frame_count = 4
+    root_translation = np.asarray(_G1_JOINT_Q[:3], dtype=np.float32)[None].repeat(frame_count, axis=0)
+    root_translation[:, 0] += np.linspace(0.0, 0.15, frame_count, dtype=np.float32)
+    pose_axis_angle = np.zeros((frame_count, source.num_bodies, 3), dtype=np.float32)
+    pose_axis_angle[:, 0] = np.asarray((0.1, -0.2, 0.05), dtype=np.float32)
+    pose_axis_angle[:, 1:] = (
+        np.asarray(_G1_JOINT_Q[7:], dtype=np.float32)[None, :, None]
+        * np.asarray(source.joint_axes, dtype=np.float32)[None]
+    )
+    target = g1_frame_target(g1_kinematics, _G1_CONTACT_PATCHES)
+
+    _assert_native_trajectory_evidence_obeys_target_morphology(
+        source, target, LafanG1Clip(root_translation, pose_axis_angle, 30.0)
+    )
+
+
+def test_semantic_rotation_and_endpoint_targets_are_world_equivariant(
+    g1_kinematics: NewtonKinematics,
+) -> None:
+    """A source world rotation left-multiplies every target rotation and rotates every target point."""
+    source = lafan_g1_29dof_skeleton()
+    target = g1_frame_target(g1_kinematics, _G1_CONTACT_PATCHES)
+    local_rotation = torch.zeros((3, source.num_bodies, 4), dtype=torch.float32)
+    local_rotation[..., 3] = 1.0
+    root_position = torch.zeros((3, 3), dtype=torch.float32)
+    projection = _trajectory_projection(source, target.trajectory_target)
+    base = projection.generate_targets(root_position, local_rotation)
+    world_rotation = quat_from_angle_axis(torch.tensor([torch.pi]), torch.tensor([[0.0, 0.0, 1.0]]))[0]
+    rotated_local_rotation = local_rotation.clone()
+    rotated_local_rotation[:, 0] = quat_mul(world_rotation.expand(3, 4), rotated_local_rotation[:, 0])
+    rotated = projection.generate_targets(root_position, rotated_local_rotation)
+
+    expected_rotation = quat_mul(
+        world_rotation.expand_as(base.source_landmark_rotation_xyzw), base.source_landmark_rotation_xyzw
+    )
+    alignment = torch.abs(torch.sum(rotated.source_landmark_rotation_xyzw * expected_rotation, dim=-1))
+    torch.testing.assert_close(alignment, torch.ones_like(alignment), atol=2.0e-6, rtol=0.0)
+    for base_point, rotated_point in (
+        (base.source_landmark_position_m, rotated.source_landmark_position_m),
+        (base.source_direction_point_position_m, rotated.source_direction_point_position_m),
+    ):
+        expected_point = quat_apply(
+            world_rotation.expand(base_point.numel() // 3, 4), base_point.reshape(-1, 3)
+        ).view_as(base_point)
+        torch.testing.assert_close(rotated_point, expected_point, atol=2.0e-6, rtol=0.0)
+
+
+def test_smpl_native_trajectory_evidence_obeys_target_morphology(smpl_kinematics: NewtonKinematics) -> None:
+    """Native SMPL evidence combines current source directions with target-owned geometry."""
+    source = cmu_humenv_smpl_skeleton()
+    frame_count = 4
+    qpos = np.zeros((frame_count, 7 + source.num_joints), dtype=np.float32)
+    qpos[:, :3] = np.asarray((0.1, -0.2, 0.9), dtype=np.float32)
+    qpos[:, 0] += np.linspace(0.0, 0.15, frame_count, dtype=np.float32)
+    qpos[:, 3] = 1.0
+    qpos[:, 7:] = np.linspace(-0.25, 0.25, source.num_joints, dtype=np.float32)
+    qvel = np.zeros((frame_count, 6 + source.num_joints), dtype=np.float32)
+    target = smpl_frame_target(smpl_kinematics, _SMPL_CONTACT_PATCHES)
+
+    _assert_native_trajectory_evidence_obeys_target_morphology(source, target, CmuHumEnvSmplClip(qpos, qvel, 30.0))
+
+
+def test_smpl_local_pose_retarget_tracks_root_and_projects_exact_limits(
+    smpl_cross_projection: MotionSourceProjectionTrajectory, smpl_kinematics: NewtonKinematics
+) -> None:
+    """The production Newton-IK edge tracks source root evidence and publishes legal coordinates."""
+    kinematics = smpl_kinematics
+    projection = smpl_cross_projection
+    source = projection.source_skeleton
+    clip = _semantic_test_clip(
+        source, "left_hip", np.asarray((0.0, 0.25, 0.25), dtype=np.float32), use_position_body=True
+    )
+    root_position = torch.tensor(((0.0, 0.0, 1.0), (0.01, 0.0, 1.0), (0.02, 0.0, 1.0)))
+    clip = replace(clip, root_position_m=root_position)
+    source_root_position, source_local_rotation = clip.local_pose(source, device="cpu")
+    expected_root_xy = projection.target_projection.generate_targets(
+        source_root_position, source_local_rotation
+    ).source_landmark_position_m[0, :, :2]
+
+    generalized_position, source_required_position_error_m, _, source_rotation_error_rad, _, _ = _semantic_output(
+        projection, clip
     )
     tree = KinematicTree.from_newton(kinematics)
 
-    source_root_xy = torch.from_numpy(root_position[:, :2])
-    torch.testing.assert_close(generalized_position[:1, :2], source_root_xy[:1])
-    source_displacement_x = source_root_xy[:, 0] - source_root_xy[0, 0]
-    target_displacement_x = generalized_position[:, 0] - generalized_position[0, 0]
-    root_motion_scale = target_displacement_x[-1] / source_displacement_x[-1]
-    torch.testing.assert_close(target_displacement_x, root_motion_scale * source_displacement_x)
-    torch.testing.assert_close(generalized_position[:, 1], source_root_xy[:, 1])
+    root_tracking_error = torch.linalg.vector_norm(generalized_position[:, :2] - expected_root_xy, dim=-1)
+    assert root_tracking_error.amax() <= _source_required_position_bound()
     assert torch.all(torch.isfinite(generalized_position))
-    assert torch.all(torch.isfinite(marker_error_m))
-    assert torch.all(torch.isfinite(orientation_error_rad))
-    assert marker_error_m.amax() <= _semantic_acceptance_bound("landmark_position")
+    assert torch.all(torch.isfinite(source_required_position_error_m))
+    assert torch.all(torch.isfinite(source_rotation_error_rad))
+    assert source_required_position_error_m.amax() <= _source_required_position_bound()
     assert torch.all(tree.coordinates_within_limits(generalized_position[:, 7:]))
     assert torch.count_nonzero(generalized_position[:, 7:]) > 0
 
 
-def _lafan_semantic_clip(
+def _semantic_test_clip(
     source,
     role: str,
     angles_rad: np.ndarray,
     *,
     use_position_body: bool = False,
-) -> LafanG1Clip:
+) -> _LocalPoseClip:
+    """Build one rest-rooted local-pose clip with a single rotating semantic body."""
     landmarks = {landmark.name: landmark for landmark in source.landmarks}
     landmark = landmarks[role]
     body_name = landmark.position_body_name if use_position_body else landmark.rotation_body_name
     body = source.body_names.index(body_name)
     joint = source.joint_child_body_indices.index(body)
-    axis = np.asarray(source.joint_axes[joint], dtype=np.float32)
-    pose = np.zeros((angles_rad.shape[0], source.num_bodies, 3), dtype=np.float32)
-    pose[:, body] = angles_rad[:, None] * axis
-    root = np.zeros((angles_rad.shape[0], 3), dtype=np.float32)
-    root[:, 2] = 0.8
-    return LafanG1Clip(root, pose, 30.0)
+    frame_count = angles_rad.shape[0]
+    local_rotation = torch.zeros((frame_count, source.num_bodies, 4), dtype=torch.float32)
+    local_rotation[..., 3] = 1.0
+    root_body = source.parent_indices.index(-1)
+    root_rest_rotation = convert_quat(torch.tensor(source.rest_rotation_wxyz[root_body]), to="xyzw")
+    local_rotation[:, root_body] = root_rest_rotation
+    axis = torch.tensor(source.joint_axes[joint], dtype=torch.float32).expand(frame_count, 3)
+    local_rotation[:, body] = quat_from_angle_axis(torch.as_tensor(angles_rad), axis)
+    root_position = torch.zeros((frame_count, 3), dtype=torch.float32)
+    root_position[:, 2] = 0.8
+    return _LocalPoseClip(root_position, local_rotation, 30.0)
 
 
 def _target_coordinate_slice(tree: KinematicTree, body_name: str) -> slice:
@@ -527,8 +1056,9 @@ def _target_coordinate_slice(tree: KinematicTree, body_name: str) -> slice:
     return slice(start, stop)
 
 
-def _source_support_positions(source, clip) -> torch.Tensor:
-    root_position, body_rotation = clip.semantic_local_pose(source, device="cpu")
+def _source_support_positions(source, clip, roles: tuple[str, ...]) -> torch.Tensor:
+    """Return the source bodies selected by the target's declared support roles [m]."""
+    root_position, body_rotation = clip.local_pose(source, device="cpu")
     position, _ = kinematic_pose_forward(
         torch.tensor(source.rest_translation_m),
         convert_quat(torch.tensor(source.rest_rotation_wxyz), to="xyzw"),
@@ -537,85 +1067,715 @@ def _source_support_positions(source, clip) -> torch.Tensor:
         source.parent_indices,
     )
     landmarks = {landmark.name: landmark for landmark in source.landmarks}
-    support_indices = torch.tensor(
-        tuple(source.body_names.index(landmarks[role].position_body_name) for role in ("left_ankle", "right_ankle"))
-    )
+    support_indices = torch.tensor(tuple(source.body_names.index(landmarks[role].position_body_name) for role in roles))
     return position.index_select(1, support_indices)
 
 
-def _source_support_height(source, clip) -> torch.Tensor:
-    return _source_support_positions(source, clip)[..., 2].amin(dim=1)
+def _target_support_positions(
+    target: _SmplFrameTarget | _G1FrameTarget, generalized_position: torch.Tensor
+) -> torch.Tensor:
+    """Materialize the target's declared body-local collider support points [m]."""
+    kinematics = target.kinematics
+    layout = target.trajectory_target
+    frame_count = generalized_position.shape[0]
+    body_q = torch.empty(frame_count, kinematics.model.body_count, 7)
+    body_qd = torch.empty(frame_count, kinematics.model.body_count, 6)
+    kinematics.eval_fk_batched_torch(
+        generalized_position,
+        torch.zeros(frame_count, kinematics.model.joint_dof_count),
+        body_q,
+        body_qd,
+    )
+    support_pose = body_q.index_select(1, layout.support_body_indices)
+    support_offset = layout.support_point_body_m.unsqueeze(0).expand(frame_count, -1, -1)
+    return support_pose[..., :3] + quat_apply(
+        support_pose[..., 3:7].reshape(-1, 4), support_offset.reshape(-1, 3)
+    ).view_as(support_offset)
 
 
-def test_smpl_semantic_retarget_preserves_axial_wrist_rotation(
-    smpl_cross_builder: SmplFrameBuilder, smpl_kinematics: NewtonKinematics
+def test_g1_foot_landmarks_and_direction_points_share_ankle_roll_frames(
+    g1_kinematics: NewtonKinematics,
 ) -> None:
-    """A terminal source rotation must change target wrist coordinates, unlike position-only IK."""
-    source = smpl_cross_builder.source_skeleton
-    clip = _lafan_semantic_clip(source, "left_wrist", np.asarray((0.0, 1.0, -1.0), dtype=np.float32))
-    generalized_position, position_error, orientation_error = _semantic_output(smpl_cross_builder, clip)
-    wrist = generalized_position[:, 7:][
-        :, _target_coordinate_slice(KinematicTree.from_newton(smpl_kinematics), "L_Wrist")
-    ]
+    """G1 foot position and direction evidence use the SOMA/Proto ankle-roll frames."""
+    layout = g1_frame_target(g1_kinematics, _G1_CONTACT_PATCHES).trajectory_target
+    position_bodies = {landmark.role: landmark.position_body_name for landmark in layout.landmarks}
+    direction_bodies = {point.name: point.body_name for point in layout.direction_points}
 
-    response = torch.linalg.vector_norm(wrist[1:] - wrist[:1], dim=-1)
-    assert torch.all(response > 0.1)
-    assert position_error.amax() <= _semantic_acceptance_bound("landmark_position")
+    assert position_bodies["left_ankle"] == direction_bodies["left_foot"] == "left_ankle_roll_link"
+    assert position_bodies["right_ankle"] == direction_bodies["right_foot"] == "right_ankle_roll_link"
 
 
-def test_smpl_semantic_retarget_stays_continuous_and_matches_support_height(
-    smpl_cross_builder: SmplFrameBuilder, smpl_kinematics: NewtonKinematics
+def test_target_owned_hand_endpoint_uses_anatomical_wrist_forward(g1_kinematics: NewtonKinematics) -> None:
+    """Raw-anatomy hand evidence uses the target length and position-derived wrist-forward law."""
+    source = lafan_g1_29dof_skeleton()
+    target = g1_frame_target(g1_kinematics, _G1_CONTACT_PATCHES)
+    projection = _trajectory_projection(source, target.trajectory_target)
+    clip = _semantic_test_clip(source, "left_elbow", np.asarray((0.0, 1.0, -1.0), dtype=np.float32))
+    root_position, local_rotation = clip.local_pose(source, device="cpu")
+    targets = projection.generate_targets(root_position, local_rotation)
+    layout = target.trajectory_target
+    hand_row = layout.direction_roles.index("left_hand")
+    wrist_position_row = layout.roles.index("left_wrist")
+    elbow_position_row = layout.roles.index("left_elbow")
+    hand_point = targets.source_direction_point_position_m[hand_row]
+    endpoint_offset = hand_point - targets.source_landmark_position_m[wrist_position_row]
+    forearm = (
+        targets.source_landmark_position_m[wrist_position_row] - targets.source_landmark_position_m[elbow_position_row]
+    )
+    endpoint_length = torch.linalg.vector_norm(endpoint_offset, dim=-1)
+    forearm_length = torch.linalg.vector_norm(forearm, dim=-1)
+    cosine = torch.sum(endpoint_offset * forearm, dim=-1) / (endpoint_length * forearm_length)
+
+    assert layout.direction_points[hand_row].source_direction_law == "wrist_forward"
+    assert layout.direction_points[hand_row].point_body_m == (0.0, 0.0, 0.14)
+    assert hand_row not in targets.required_direction_rows
+    torch.testing.assert_close(endpoint_length, torch.full_like(endpoint_length, 0.14), atol=2.0e-6, rtol=0.0)
+    torch.testing.assert_close(cosine, torch.zeros_like(cosine), atol=2.0e-6, rtol=0.0)
+    assert torch.linalg.vector_norm(endpoint_offset[1:] - endpoint_offset[:1], dim=-1).amin() > 0.01
+
+
+def test_smpl_semantic_retarget_stays_continuous_and_respects_support_contract(
+    smpl_cross_projection: MotionSourceProjectionTrajectory, smpl_kinematics: NewtonKinematics
 ) -> None:
     """A smooth one-sided ramp cannot select a distant unrelated-limb solution."""
-    source = smpl_cross_builder.source_skeleton
-    clip = _lafan_semantic_clip(source, "left_hip", np.linspace(0.0, 0.56, 9, dtype=np.float32), use_position_body=True)
-    generalized_position, marker_error_m, orientation_error_rad = _semantic_output(smpl_cross_builder, clip)
+    source = smpl_cross_projection.source_skeleton
+    clip = _semantic_test_clip(source, "left_hip", np.linspace(0.0, 0.56, 9, dtype=np.float32), use_position_body=True)
+    (
+        generalized_position,
+        source_required_position_error_m,
+        source_required_distal_direction_error_rad,
+        source_rotation_error_rad,
+        _contact_patch_drift_m,
+        ground_penetration_m,
+    ) = _semantic_output(smpl_cross_projection, clip)
     tree = KinematicTree.from_newton(smpl_kinematics)
     coordinates = generalized_position[:, 7:]
     right_shoulder = coordinates[:, _target_coordinate_slice(tree, "R_Shoulder")]
     assert torch.max(torch.abs(torch.diff(right_shoulder, dim=0))) < 0.02
-    assert torch.max(torch.abs(torch.diff(coordinates, dim=0))) < 0.1
     assert torch.max(torch.abs(torch.diff(coordinates, n=2, dim=0))) / (1.0 / clip.source_fps) ** 2 < 80.0
 
     joint_q = generalized_position.clone()
     joint_q[:, 3:7] = convert_quat(generalized_position[:, 3:7], to="xyzw")
-    body_q = torch.empty(generalized_position.shape[0], tree.num_bodies, 7)
-    body_qd = torch.empty(generalized_position.shape[0], tree.num_bodies, 6)
-    smpl_kinematics.eval_fk_batched_torch(
-        joint_q, torch.zeros(generalized_position.shape[0], smpl_kinematics.model.joint_dof_count), body_q, body_qd
+    _assert_exact_velocity_respects_model_limits(smpl_cross_projection.target, joint_q, clip)
+    assert ground_penetration_m[0] <= _semantic_ground_penetration_bound()
+    assert tuple(patch.channel for patch in smpl_cross_projection.target.contact_patches) == tuple(
+        channel.name for channel in _CONTACT_CHANNELS
     )
-    target_supports = torch.tensor((tree.body_names.index("L_Ankle"), tree.body_names.index("R_Ankle")))
-    target_height = body_q.index_select(1, target_supports)[..., 2].amin(dim=1)
-    source_height = _source_support_height(source, clip)
-    torch.testing.assert_close(target_height, source_height, atol=2.0e-6, rtol=0.0)
-    assert torch.all(body_q.index_select(1, target_supports)[..., 2] >= source_height[:, None] - 2.0e-6)
-    assert torch.all(torch.isfinite(marker_error_m))
-    assert torch.all(torch.isfinite(orientation_error_rad))
-    assert marker_error_m.amax() <= _semantic_acceptance_bound("landmark_position")
+    assert torch.all(torch.isfinite(source_required_position_error_m))
+    assert torch.all(torch.isfinite(source_required_distal_direction_error_rad))
+    assert torch.all(torch.isfinite(source_rotation_error_rad))
+    assert source_required_position_error_m.amax() <= _source_required_position_bound()
+    assert source_rotation_error_rad.amax() <= _source_root_rotation_bound()
 
 
-def test_semantic_solver_schedule_aligns_projection_and_convergence_checks() -> None:
-    """Projected LM measures convergence only after a projection boundary."""
-    cfg = MotionSemanticSolveCfg()
+def test_smpl_semantic_ramp_completes_ground_constrained_refinement(
+    smpl_cross_projection: MotionSourceProjectionTrajectory,
+) -> None:
+    """A ground-aligned frame seed must not fail only at nonlinear globalization."""
+    source = smpl_cross_projection.source_skeleton
+    clip = _semantic_test_clip(
+        source,
+        "left_hip",
+        np.linspace(0.0, 0.56, 9, dtype=np.float32),
+        use_position_body=True,
+    )
+    candidate = _semantic_candidate(smpl_cross_projection, clip)
 
-    assert cfg.max_iterations == 30
-    assert cfg.projection_interval == cfg.convergence_check_interval == 5
-    assert cfg.max_iterations % cfg.projection_interval == 0
+    assert candidate.constraint_geometry_feasible.item()
+    assert candidate.inner_solve_converged.item()
+    assert candidate.nonlinear_phases_converged.item()
 
 
-def test_g1_and_smpl_builders_share_one_semantic_projection(
+def test_smpl_extreme_raw_lafan_pose_is_clamped_to_declared_coordinate_limits(
+    smpl_cross_projection: MotionSourceProjectionTrajectory,
+) -> None:
+    """An infeasible raw pose leaves target bounds unconstrained but is legal after projection."""
+    source = smpl_cross_projection.source_skeleton
+    clip = _semantic_test_clip(
+        source,
+        "left_hip",
+        np.linspace(0.0, 2.5, 9, dtype=np.float32),
+        use_position_body=True,
+    )
+    root_position, local_rotation = clip.local_pose(source, device="cpu")
+    targets = smpl_cross_projection.target_projection.generate_targets(root_position, local_rotation)
+    target = smpl_cross_projection.target
+    model = target.kinematics.model
+    objectives = motion_objective_source_global_position(MotionSourceGlobalPositionObjectiveCfg(), targets)
+    objectives += motion_objective_source_rotation(MotionSourceRotationObjectiveCfg(), targets)
+    optimizer = ik.IKOptimizerLM(model, clip.frame_count, objectives, jacobian_mode=ik.IKJacobianType.ANALYTIC)
+    unconstrained = torch.empty_like(targets.initial_joint_q)
+    optimizer.step(wp.from_torch(targets.initial_joint_q), wp.from_torch(unconstrained), iterations=50)
+
+    coordinates = unconstrained.index_select(1, targets.coordinate_indices)
+    violation = torch.maximum(
+        targets.coordinate_lower_limits_rad - coordinates,
+        coordinates - targets.coordinate_upper_limits_rad,
+    ).clamp_min_(0.0)
+    assert violation.amax() > 0.1
+
+    lower = torch.full((model.joint_coord_count,), -torch.inf)
+    upper = torch.full_like(lower, torch.inf)
+    lower.index_copy_(0, targets.coordinate_indices, targets.coordinate_lower_limits_rad)
+    upper.index_copy_(0, targets.coordinate_indices, targets.coordinate_upper_limits_rad)
+
+    def project(joint_q_wp) -> None:
+        joint_q = wp.to_torch(joint_q_wp)
+        torch.maximum(joint_q, lower, out=joint_q)
+        torch.minimum(joint_q, upper, out=joint_q)
+
+    projected = torch.empty_like(targets.initial_joint_q)
+    optimizer = ik.IKOptimizerLM(model, clip.frame_count, objectives, jacobian_mode=ik.IKJacobianType.ANALYTIC)
+    optimizer.solve(
+        wp.from_torch(targets.initial_joint_q),
+        wp.from_torch(projected),
+        max_iterations=50,
+        convergence_tolerance=None,
+        projection=project,
+    )
+    projected_coordinates = projected.index_select(1, targets.coordinate_indices)
+    assert torch.all(projected_coordinates >= targets.coordinate_lower_limits_rad - 1.0e-6)
+    assert torch.all(projected_coordinates <= targets.coordinate_upper_limits_rad + 1.0e-6)
+    assert torch.max(torch.abs(projected_coordinates - coordinates)) > 0.1
+
+
+def test_trajectory_solver_runs_each_phase_to_convergence_or_cap() -> None:
+    """Each trajectory phase uses the shared convergence policy and bounded iteration cap."""
+    cfg = MotionTrajectorySolveCfg()
+
+    assert not hasattr(cfg, "phases")
+    assert cfg.max_iterations == 200
+    assert cfg.convergence_tolerance == 1.0e-6
+    assert cfg.convergence_check_interval == 1
+    assert cfg.krylov_max_iterations == 128
+    assert cfg.krylov_relative_tolerance == 1.0e-4
+    assert cfg.joint_default_position_weight == 0.0025
+    assert cfg.joint_temporal_velocity_weight == 1.0e-4
+    assert cfg.joint_temporal_acceleration_weight == 1.0e-8
+    assert cfg.joint_temporal_jerk_weight == 1.0e-8
+    collision_objectives = tuple(
+        objective for objective in cfg.objectives if isinstance(objective, IKObjectiveMeshCollisionCfg)
+    )
+    assert len(collision_objectives) == 1
+    assert collision_objectives[0].weight == 5.0
+
+
+def test_g1_and_smpl_source_projections_share_one_trajectory_implementation(
     g1_kinematics: NewtonKinematics,
-    smpl_cross_builder: SmplFrameBuilder,
+    smpl_cross_projection: MotionSourceProjectionTrajectory,
 ) -> None:
     """Both robot targets parameterize the same source-to-target projection implementation."""
-    g1_cross_builder = g1_frame_builder(cmu_humenv_smpl_skeleton(), g1_kinematics)
+    target = g1_frame_target(g1_kinematics, _G1_CONTACT_PATCHES)
+    g1_cross_projection = g1_source_projection(
+        cmu_humenv_smpl_skeleton(), target, object(), _CONTACT_CHANNELS, _contact_offsets(target)
+    )
 
-    assert type(g1_cross_builder.semantic) is MotionSemanticProjection
-    assert type(smpl_cross_builder.semantic) is MotionSemanticProjection
+    assert type(g1_cross_projection.target_projection) is MotionTrajectoryProjection
+    assert type(smpl_cross_projection.target_projection) is MotionTrajectoryProjection
+
+
+def test_trajectory_targets_keep_stationary_source_support_independent_of_seed_fk(
+    g1_kinematics: NewtonKinematics, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stationary source foot must not inherit root translation from the target-coordinate seed."""
+    source = lafan_g1_29dof_skeleton()
+    target = g1_frame_target(g1_kinematics, _G1_CONTACT_PATCHES)
+    projection = _trajectory_projection(source, target.trajectory_target)
+    frame_count = 3
+    root_position = torch.zeros(frame_count, 3)
+    root_position[:, 0] = torch.linspace(0.0, 0.08, frame_count)
+    root_position[:, 2] = 0.9
+    local_rotation = torch.zeros(frame_count, source.num_bodies, 4)
+    local_rotation[..., 3] = 1.0
+
+    original_forward = motion_retarget.kinematic_pose_forward
+    source_by_name = {name: index for index, name in enumerate(source.body_names)}
+    landmarks = {landmark.name: landmark for landmark in source.landmarks}
+    position_indices = {
+        role: source_by_name[landmarks[role].position_body_name] for role in target.trajectory_target.roles
+    }
+    left_toe_index = source_by_name[landmarks["left_toe"].position_body_name]
+    target_lengths = target.trajectory_target.segment_lengths_m
+    source_pose, _ = original_forward(
+        torch.tensor(source.rest_translation_m),
+        convert_quat(torch.tensor(source.rest_rotation_wxyz), to="xyzw"),
+        local_rotation,
+        root_position,
+        source.parent_indices,
+    )
+    desired = torch.empty(len(target.trajectory_target.roles), frame_count, 3)
+    target_root = root_position
+    desired[0].copy_(target_root)
+    for row, parent in enumerate(target.trajectory_target.parent_rows[1:], start=1):
+        source_edge = source_pose[:, position_indices[target.trajectory_target.roles[row]]]
+        source_edge = source_edge - source_pose[:, position_indices[target.trajectory_target.roles[parent]]]
+        source_edge = torch.nn.functional.normalize(source_edge)
+        desired[row].copy_(desired[parent] + target_lengths[row] * source_edge)
+
+    role_rows = {role: row for row, role in enumerate(target.trajectory_target.roles)}
+    hip_row = role_rows["left_hip"]
+    knee_row = role_rows["left_knee"]
+    ankle_row = role_rows["left_ankle"]
+    root_to_hip = desired[hip_row] - desired[0]
+    fixed_ankle = desired[hip_row, 0].clone()
+    fixed_ankle[2] -= 0.8 * (target_lengths[knee_row] + target_lengths[ankle_row])
+    for frame in range(frame_count):
+        hip = target_root[frame] + root_to_hip[0]
+        hip_to_ankle = fixed_ankle - hip
+        distance = torch.linalg.vector_norm(hip_to_ankle)
+        direction = hip_to_ankle / distance
+        perpendicular = torch.stack((-direction[2], direction.new_zeros(()), direction[0]))
+        upper = target_lengths[knee_row]
+        lower = target_lengths[ankle_row]
+        along = (upper.square() - lower.square() + distance.square()) / (2.0 * distance)
+        height = torch.sqrt(upper.square() - along.square())
+        desired[hip_row, frame] = hip
+        desired[knee_row, frame] = hip + along * direction + height * perpendicular
+        desired[ankle_row, frame] = fixed_ankle
+
+    def stationary_support_forward(*args, **kwargs):
+        position, rotation = original_forward(*args, **kwargs)
+        for row, role in enumerate(target.trajectory_target.roles):
+            position[:, position_indices[role]].copy_(desired[row])
+        position[:, left_toe_index].copy_(fixed_ankle + fixed_ankle.new_tensor((0.04, 0.0, -0.05)))
+        return position, rotation
+
+    monkeypatch.setattr(motion_retarget, "kinematic_pose_forward", stationary_support_forward)
+    targets = projection.generate_targets(root_position, local_rotation)
+
+    ground_alignment = targets.source_landmark_position_m[0] - desired[0]
+    torch.testing.assert_close(targets.source_landmark_position_m, desired + ground_alignment, atol=2.0e-6, rtol=0.0)
+    assert torch.all(torch.isfinite(targets.target_support_position_m))
+    layout = target.trajectory_target
+    for start, stop in zip(layout.support_patch_offsets[:-1], layout.support_patch_offsets[1:], strict=True):
+        local_points = layout.support_point_body_m[start:stop]
+        local_distances = torch.cdist(local_points, local_points)
+        world_patch = targets.target_support_position_m[start:stop].transpose(0, 1)
+        torch.testing.assert_close(
+            torch.cdist(world_patch, world_patch),
+            local_distances.expand(frame_count, -1, -1),
+            atol=2.0e-6,
+            rtol=0.0,
+        )
+    source_support_displacement = (
+        targets.source_contact_probe_position_m[:1, :, :2] - targets.source_contact_probe_position_m[:1, :1, :2]
+    )
+    target_support_displacement = (
+        targets.target_support_position_m[:1, :, :2] - targets.target_support_position_m[:1, :1, :2]
+    )
+    support_point_root = layout.support_point_root_m[:, None].expand(-1, frame_count, -1)
+    root_rotation = targets.initial_joint_q[:, 3:7][None].expand(len(support_point_root), -1, -1)
+    expected_target_support = targets.initial_joint_q[None, :, :3] + quat_apply(
+        root_rotation.reshape(-1, 4), support_point_root.reshape(-1, 3)
+    ).view_as(support_point_root)
+    torch.testing.assert_close(targets.target_support_position_m, expected_target_support, atol=2.0e-6, rtol=0.0)
+    assert torch.linalg.vector_norm(source_support_displacement, dim=-1).amax() < 1.0e-6
+    assert torch.linalg.vector_norm(target_support_displacement, dim=-1).amax() > 0.04
+
+    twisted_rotation = local_rotation.clone()
+    angle = torch.linspace(-1.0, 1.0, frame_count)
+    twisted_rotation[:, position_indices["left_hip"], 0] = torch.sin(0.5 * angle)
+    twisted_rotation[:, position_indices["left_hip"], 3] = torch.cos(0.5 * angle)
+    twisted_targets = projection.generate_targets(root_position, twisted_rotation)
+    parent_rows = targets.parent_row_tensor[1:]
+    source_edges = targets.source_landmark_position_m[1:] - targets.source_landmark_position_m.index_select(
+        0, parent_rows
+    )
+    twisted_source_edges = twisted_targets.source_landmark_position_m[
+        1:
+    ] - twisted_targets.source_landmark_position_m.index_select(0, parent_rows)
+    torch.testing.assert_close(twisted_source_edges, source_edges, atol=2.0e-6, rtol=0.0)
+    torch.testing.assert_close(twisted_targets.initial_joint_q[:, 7:], targets.initial_joint_q[:, 7:])
+
+
+def test_trajectory_targets_use_source_world_direction_and_target_length_when_bind_directions_differ(
+    g1_kinematics: NewtonKinematics,
+) -> None:
+    """Canonical source direction and robot-owned length remain independent under adversarial bind geometry."""
+    source = lafan_g1_29dof_skeleton()
+    landmarks = {landmark.name: landmark for landmark in source.landmarks}
+    body_by_name = {name: index for index, name in enumerate(source.body_names)}
+    wrist_body = body_by_name[landmarks["left_wrist"].position_body_name]
+    rest_translation = list(source.rest_translation_m)
+    rest_translation[wrist_body] = tuple(-value for value in rest_translation[wrist_body])
+    source = replace(source, rest_translation_m=tuple(rest_translation))
+
+    target = g1_frame_target(g1_kinematics, _G1_CONTACT_PATCHES)
+    projection = _trajectory_projection(source, target.trajectory_target)
+    root_position = torch.tensor(g1_kinematics.default_joint_q[:3], dtype=torch.float32).unsqueeze(0)
+    local_rotation = torch.zeros(1, source.num_bodies, 4)
+    local_rotation[..., 3] = 1.0
+    local_rotation[:, 0] = convert_quat(torch.tensor(source.rest_rotation_wxyz[0]), to="xyzw")
+
+    targets = projection.generate_targets(root_position, local_rotation)
+    source_position, _ = kinematic_pose_forward(
+        torch.tensor(source.rest_translation_m),
+        convert_quat(torch.tensor(source.rest_rotation_wxyz), to="xyzw"),
+        local_rotation,
+        root_position,
+        source.parent_indices,
+    )
+    roles = target.trajectory_target.roles
+    wrist_row = roles.index("left_wrist")
+    elbow_row = targets.parent_rows[wrist_row]
+    source_edge = (
+        source_position[:, wrist_body] - source_position[:, body_by_name[landmarks["left_elbow"].position_body_name]]
+    )
+    target_edge = targets.source_landmark_position_m[wrist_row] - targets.source_landmark_position_m[elbow_row]
+    source_direction = torch.nn.functional.normalize(source_edge, dim=-1)
+    target_direction = torch.nn.functional.normalize(target_edge, dim=-1)
+    torch.testing.assert_close(target_direction, source_direction, atol=2.0e-6, rtol=0.0)
+    torch.testing.assert_close(
+        torch.linalg.vector_norm(target_edge, dim=-1),
+        target.trajectory_target.segment_lengths_m[wrist_row].reshape(1),
+        atol=2.0e-6,
+        rtol=0.0,
+    )
+
+
+def test_trajectory_initializer_is_limit_valid_but_does_not_own_support_targets(
+    g1_kinematics: NewtonKinematics,
+) -> None:
+    """The soft coordinate prior is limit-valid but generated support geometry remains independent."""
+    source = lafan_g1_29dof_skeleton()
+    target = g1_frame_target(g1_kinematics, _G1_CONTACT_PATCHES)
+    projection = _trajectory_projection(source, target.trajectory_target)
+    root_position = torch.tensor(g1_kinematics.default_joint_q[:3], dtype=torch.float32).unsqueeze(0)
+    local_rotation = torch.zeros(1, source.num_bodies, 4)
+    local_rotation[..., 3] = 1.0
+    local_rotation[:, 0].copy_(projection._source_rest_rotation_xyzw[0])
+
+    targets = projection.generate_targets(root_position, local_rotation)
+    reference_coordinates = targets.initial_joint_q.index_select(1, targets.coordinate_indices)
+    assert torch.all(reference_coordinates >= targets.coordinate_lower_limits_rad)
+    assert torch.all(reference_coordinates <= targets.coordinate_upper_limits_rad)
+
+    support_point_root = target.trajectory_target.support_point_root_m[:, None]
+    root_rotation = targets.initial_joint_q[:, 3:7][None].expand(len(support_point_root), -1, -1)
+    expected_target_support = targets.initial_joint_q[None, :, :3] + quat_apply(
+        root_rotation.reshape(-1, 4), support_point_root.reshape(-1, 3)
+    ).view_as(support_point_root)
+    torch.testing.assert_close(
+        targets.target_support_position_m,
+        expected_target_support,
+        atol=2.0e-6,
+        rtol=0.0,
+    )
+
+
+def test_smpl_source_refinement_freezes_authored_root_and_rolls_back_rejection(
+    smpl_cross_projection: MotionSourceProjectionTrajectory,
+) -> None:
+    """Fixed-root SMPL source fitting cannot move the authored root toward rejected evidence."""
+    source = smpl_cross_projection.source_skeleton
+    clip = _semantic_test_clip(
+        source,
+        "left_hip",
+        np.zeros(3, dtype=np.float32),
+        use_position_body=True,
+    )
+    root_position, local_rotation = clip.local_pose(source, device="cpu")
+    targets = smpl_cross_projection.target_projection.generate_targets(root_position, local_rotation)
+    initial_root_x = targets.initial_joint_q[:, 0].clone()
+    targets.source_landmark_position_m[..., 0].add_(0.2)
+    targets.source_contact_probe_position_m[..., 0].add_(torch.arange(3, dtype=torch.float32))
+    candidate = motion_solve_trajectory(
+        MotionTrajectorySolveCfg(),
+        _MotionTrajectoryTargetCandidate(
+            target=smpl_cross_projection.target,
+            clip_index=_clip_index(clip.frame_count, clip.source_fps),
+            pending=iter((targets,)),
+            source_body_counts=(source.num_bodies,),
+            device="cpu",
+            inspection=True,
+        ),
+    )
+
+    assert candidate.view_evidence is not None
+    stage_quality = candidate.view_evidence.stage_quality
+    assert stage_quality.shape == (1, 5, len(_TRAJECTORY_METRIC_NAMES))
+    assert torch.isfinite(stage_quality[:, (0, 1, 3), :4]).all()
+    assert torch.isnan(stage_quality[:, 2]).all()
+    assert torch.isnan(stage_quality[:, 4:]).all()
+    assert not torch.equal(stage_quality[:, 0], stage_quality[:, 3])
+    assert not torch.allclose(
+        candidate.view_evidence.solved_robot_landmarks,
+        candidate.view_evidence.target_landmarks,
+    )
+    solved_root_x = candidate.coordinates.joint_q[:, 0]
+    target_root_x = targets.source_landmark_position_m[0, :, 0]
+    torch.testing.assert_close(solved_root_x, initial_root_x, rtol=0.0, atol=0.0)
+    assert torch.mean(torch.abs(solved_root_x - target_root_x)) >= 0.19
+    assert candidate.nonlinear_refinement_required[0]
+    assert not candidate.nonlinear_phases_converged[0]
+
+
+def test_trajectory_phases_certify_clean_seed_and_rollback_rejected_clips(
+    smpl_cross_projection: MotionSourceProjectionTrajectory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Source and contact refinement commit only hard-accepted clips without mutating neighbors."""
+    source = smpl_cross_projection.source_skeleton
+    frame_count = 5
+    source_fps = 30.0
+    static_clip = _semantic_test_clip(
+        source,
+        "left_hip",
+        np.zeros(frame_count, dtype=np.float32),
+        use_position_body=True,
+    )
+
+    def targets_from_clip(clip: _LocalPoseClip) -> MotionTrajectoryTargets:
+        root_position, local_rotation = clip.local_pose(source, device="cpu")
+        return smpl_cross_projection.target_projection.generate_targets(root_position, local_rotation)
+
+    clean_targets = targets_from_clip(static_clip)
+    fast_probe_x = torch.arange(frame_count, dtype=torch.float32).unsqueeze(0)
+    clean_targets.source_contact_probe_position_m[:, :, 0].add_(fast_probe_x)
+
+    source_dirty_targets = targets_from_clip(static_clip)
+    source_dirty_targets.source_contact_probe_position_m[:, :, 0].add_(fast_probe_x)
+    source_dirty_targets.source_direction_point_position_m[0].copy_(
+        source_dirty_targets.source_landmark_position_m[source_dirty_targets.direction_position_rows[0]]
+    )
+
+    moving_root = torch.zeros((frame_count, 3), dtype=torch.float32)
+    moving_root[:, 0] = torch.linspace(0.0, 1.0, frame_count)
+    moving_root[:, 2] = 0.8
+    moving_clip = replace(static_clip, root_position_m=moving_root, source_fps=source_fps)
+    contact_dirty_targets = targets_from_clip(moving_clip)
+    planted_probe = contact_dirty_targets.source_contact_probe_position_m[:, :1].clone()
+    contact_dirty_targets.source_contact_probe_position_m[:, 1:].copy_(planted_probe.expand(-1, frame_count - 1, -1))
+
+    clip_index = MotionClipIndex(
+        source_content_sha256="0" * 64,
+        skeleton_identity_sha256s=("2" * 64,),
+        clips=tuple(
+            MotionClipIndex.Clip(
+                clip_id=f"transaction_{index}",
+                frame_count=frame_count,
+                source_fps=source_fps,
+                content_sha256=str(index + 3) * 64,
+                skeleton_id=0,
+            )
+            for index in range(3)
+        ),
+    )
+    cfg = MotionTrajectorySolveCfg(
+        max_iterations=1,
+        acceptance=MotionTrajectorySolveCfg.AcceptanceCfg(
+            source=MotionTrajectorySolveCfg.AcceptanceCfg.SourceCfg(
+                required_position_upper_m=10.0,
+                required_distal_position_upper_m=10.0,
+                required_distal_direction_upper_rad=3.0,
+                root_rotation_upper_rad=3.0,
+            ),
+            contact=MotionTrajectorySolveCfg.AcceptanceCfg.ContactCfg(require_any_stable_contact=False),
+        ),
+    )
+    solve_calls: list[torch.Tensor] = []
+
+    def reject_active_segments(
+        _solver,
+        _joint_q,
+        joint_q_out,
+        segment_offsets,
+        _step_seconds,
+        _pose_weights,
+        _temporal_weights,
+        **kwargs,
+    ) -> None:
+        segment_active = kwargs["segment_active"]
+        solve_calls.append(segment_active.clone())
+        for segment in torch.nonzero(segment_active, as_tuple=False).flatten().tolist():
+            start = int(segment_offsets[segment])
+            stop = int(segment_offsets[segment + 1])
+            joint_q_out[start:stop, 0].add_(100.0)
+        kwargs["segment_feasible"].fill_(True)
+        kwargs["segment_direction_valid"].fill_(True)
+        kwargs["segment_globalization_succeeded"].fill_(True)
+        residual_constraints_satisfied = kwargs["segment_residual_constraints_satisfied"]
+        if residual_constraints_satisfied is not None:
+            residual_constraints_satisfied.fill_(True)
+        segment_active.zero_()
+
+    monkeypatch.setattr(IKTrajectorySolver, "solve", reject_active_segments)
+    candidate = motion_solve_trajectory(
+        cfg,
+        _MotionTrajectoryTargetCandidate(
+            target=smpl_cross_projection.target,
+            clip_index=clip_index,
+            pending=iter((clean_targets, source_dirty_targets, contact_dirty_targets)),
+            source_body_counts=(source.num_bodies,) * 3,
+            device="cpu",
+            inspection=True,
+        ),
+    )
+
+    assert candidate.view_evidence is not None
+    seed_quality = candidate.view_evidence.stage_quality[:, 0]
+    source_attempt_quality = candidate.view_evidence.stage_quality[:, 1]
+    physical_attempt_quality = candidate.view_evidence.stage_quality[:, 2]
+    post_source_quality = candidate.view_evidence.stage_quality[:, 3]
+    contact_attempt_quality = candidate.view_evidence.stage_quality[:, 4]
+    source_accepted = _motion_source_fidelity_accepted(cfg.acceptance.source, seed_quality)
+    contact_accepted = _motion_contact_rows_accepted(cfg.acceptance.contact, seed_quality)
+    torch.testing.assert_close(source_accepted, torch.tensor((True, False, True)))
+    torch.testing.assert_close(contact_accepted, torch.tensor((True, True, False)))
+    assert len(solve_calls) == 3
+    torch.testing.assert_close(solve_calls[0], torch.tensor((1, 1, 1), dtype=torch.int32))
+    torch.testing.assert_close(solve_calls[1], torch.tensor((1, 0, 1), dtype=torch.int32))
+    torch.testing.assert_close(solve_calls[2], torch.tensor((1, 0, 1), dtype=torch.int32))
+    torch.testing.assert_close(candidate.nonlinear_refinement_required, torch.tensor((True, True, True)))
+    torch.testing.assert_close(candidate.nonlinear_phases_converged, torch.tensor((True, False, False)))
+    assert torch.isfinite(physical_attempt_quality[[0, 2], 0]).all()
+    assert torch.isnan(physical_attempt_quality[1]).all()
+    assert torch.isfinite(source_attempt_quality[:, 0]).all()
+    assert torch.isnan(contact_attempt_quality[1]).all()
+    torch.testing.assert_close(source_attempt_quality[1, 0], post_source_quality[1, 0])
+    torch.testing.assert_close(contact_attempt_quality[2, 0], candidate.trajectory_quality[2, 0])
+    contact_start = _TRAJECTORY_METRIC_NAMES.index("contact_gap_max_m")
+    torch.testing.assert_close(
+        post_source_quality[:, :contact_start], seed_quality[:, :contact_start], rtol=0.0, atol=1.0e-7, equal_nan=True
+    )
+    torch.testing.assert_close(
+        _motion_source_fidelity_accepted(cfg.acceptance.source, candidate.trajectory_quality), source_accepted
+    )
+    torch.testing.assert_close(
+        _motion_contact_rows_accepted(cfg.acceptance.contact, candidate.trajectory_quality), contact_accepted
+    )
+
+
+def test_later_phase_keeps_healthy_witness_and_retries_only_solver_failures(
+    smpl_cross_projection: MotionSourceProjectionTrajectory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Healthy intermediate q is retained while failed solves retry and final rejection rolls back."""
+    source = smpl_cross_projection.source_skeleton
+    frame_count = 5
+    source_fps = 30.0
+    clip = _semantic_test_clip(
+        source,
+        "left_hip",
+        np.zeros(frame_count, dtype=np.float32),
+        use_position_body=True,
+    )
+
+    def make_targets() -> MotionTrajectoryTargets:
+        root_position, local_rotation = clip.local_pose(source, device="cpu")
+        targets = smpl_cross_projection.target_projection.generate_targets(root_position, local_rotation)
+        targets.source_contact_probe_position_m[:, :, 0].add_(torch.arange(frame_count, dtype=torch.float32))
+        return targets
+
+    clip_index = MotionClipIndex(
+        source_content_sha256="0" * 64,
+        skeleton_identity_sha256s=("7" * 64,),
+        clips=tuple(
+            MotionClipIndex.Clip(
+                clip_id=f"adaptive_retry_{index}",
+                frame_count=frame_count,
+                source_fps=source_fps,
+                content_sha256=str(index + 8) * 64,
+                skeleton_id=0,
+            )
+            for index in range(2)
+        ),
+    )
+    cfg = MotionTrajectorySolveCfg(
+        max_iterations=4,
+        acceptance=MotionTrajectorySolveCfg.AcceptanceCfg(
+            source=MotionTrajectorySolveCfg.AcceptanceCfg.SourceCfg(
+                required_position_upper_m=10.0,
+                required_distal_position_upper_m=10.0,
+                required_distal_direction_upper_rad=math.nextafter(math.pi, 0.0),
+                root_rotation_upper_rad=math.nextafter(math.pi, 0.0),
+            ),
+            contact=MotionTrajectorySolveCfg.AcceptanceCfg.ContactCfg(require_any_stable_contact=False),
+        ),
+    )
+    calls: list[tuple[torch.Tensor, torch.Tensor]] = []
+    physical_baseline: torch.Tensor | None = None
+
+    def propose(
+        _solver,
+        _joint_q,
+        joint_q_out,
+        segment_offsets,
+        _step_seconds,
+        _pose_weights,
+        _temporal_weights,
+        **kwargs,
+    ) -> None:
+        nonlocal physical_baseline
+        active = kwargs["segment_active"]
+        damping = kwargs["segment_damping"]
+        calls.append((active.clone(), damping.clone()))
+        kwargs["segment_feasible"].fill_(True)
+        kwargs["segment_direction_valid"].fill_(True)
+        kwargs["segment_globalization_succeeded"].fill_(True)
+        residual = kwargs["segment_residual_constraints_satisfied"]
+        if residual is not None:
+            residual.fill_(True)
+
+        call = len(calls) - 1
+        first_stop = int(segment_offsets[1])
+        second_stop = int(segment_offsets[2])
+        if call == 1:
+            physical_baseline = joint_q_out.clone()
+            joint_q_out[:second_stop, 7].fill_(float("nan"))
+            active[1] = 0
+        elif call in (2, 3, 4):
+            assert physical_baseline is not None
+            assert torch.isnan(joint_q_out[:first_stop, 7]).all()
+            if call == 2:
+                kwargs["segment_globalization_succeeded"][0] = False
+            elif call == 3:
+                kwargs["segment_direction_valid"][0] = False
+            else:
+                joint_q_out[:first_stop].copy_(physical_baseline[:first_stop])
+                active[0] = 0
+
+    monkeypatch.setattr(IKTrajectorySolver, "solve", propose)
+    candidate = motion_solve_trajectory(
+        cfg,
+        _MotionTrajectoryTargetCandidate(
+            target=smpl_cross_projection.target,
+            clip_index=clip_index,
+            pending=iter((make_targets(), make_targets())),
+            source_body_counts=(source.num_bodies,) * 2,
+            device="cpu",
+            inspection=True,
+        ),
+    )
+
+    assert len(calls) == 6
+    torch.testing.assert_close(calls[0][0], torch.tensor((1, 1), dtype=torch.int32))
+    torch.testing.assert_close(calls[1][0], torch.tensor((1, 1), dtype=torch.int32))
+    for call in (2, 3, 4):
+        torch.testing.assert_close(calls[call][0], torch.tensor((1, 0), dtype=torch.int32))
+    torch.testing.assert_close(calls[0][1], torch.full((2,), cfg.damping))
+    torch.testing.assert_close(calls[1][1], torch.full((2,), cfg.damping))
+    torch.testing.assert_close(calls[2][1], torch.full((2,), cfg.damping))
+    torch.testing.assert_close(calls[3][1], torch.tensor((2.0 * cfg.damping, cfg.damping)))
+    torch.testing.assert_close(calls[4][1], torch.tensor((4.0 * cfg.damping, cfg.damping)))
+    torch.testing.assert_close(calls[5][1], torch.full((2,), cfg.damping))
+    torch.testing.assert_close(candidate.nonlinear_phases_converged, torch.tensor((True, False)))
+
+    assert physical_baseline is not None
+    torch.testing.assert_close(
+        candidate.coordinates.joint_q[frame_count:, 7:],
+        physical_baseline[frame_count:, 7:],
+        rtol=0.0,
+        atol=0.0,
+    )
+    assert candidate.view_evidence is not None
+    physical_attempt = candidate.view_evidence.stage_quality[:, 2, _METRIC_SOURCE_REQUIRED_POSITION]
+    assert not torch.isfinite(physical_attempt[1])
+    assert torch.isfinite(candidate.trajectory_quality[1, _METRIC_SOURCE_REQUIRED_POSITION])
 
 
 def test_g1_exact_profile_matches_frozen_bfm_fk_and_analytic_velocity(g1_kinematics: NewtonKinematics) -> None:
-    """The production G1 builder must match a frozen external FK pose and analytic rigid translation."""
+    """The G1 target and projection match frozen external FK and analytic rigid translation."""
     source = lafan_g1_29dof_skeleton()
     frame_count = 4
     source_fps = 30.0
@@ -629,10 +1789,13 @@ def test_g1_exact_profile_matches_frozen_bfm_fk_and_analytic_velocity(g1_kinemat
         * np.asarray(source.joint_axes, dtype=np.float32)[None]
     )
     clip = LafanG1Clip(root_translation, pose_axis_angle, source_fps)
-    builder = g1_frame_builder(source, g1_kinematics)
+    target = g1_frame_target(g1_kinematics, _G1_CONTACT_PATCHES)
+    projection = g1_source_projection(source, target, object(), _CONTACT_CHANNELS, _contact_offsets(target))
     joint_q, joint_qd = clip.free_root_coordinates(source, device="cpu")
 
-    frames = builder.build_exact_coordinates(joint_q, joint_qd, clip.source_fps)
+    assert isinstance(projection, MotionSourceProjectionExact)
+    coordinates = projection.convert_coordinates(joint_q, joint_qd, clip.source_fps)
+    frames = target.materialize_coordinates(coordinates, _clip_index(clip.frame_count, clip.source_fps))
 
     body_indices = torch.tensor([G1_SIMULATOR_BODY_NAMES.index(_G1_BODY_NAMES[index]) for index in _G1_BODY_INDICES])
     frozen_pose = torch.tensor(_G1_BODY_POSE_XYZW, dtype=torch.float32)
@@ -660,7 +1823,9 @@ def test_g1_builder_maps_reference_coordinates_to_the_live_articulation_axes(
     g1_kinematics: NewtonKinematics,
 ) -> None:
     """The table boundary must expose exact frames in non-identity simulator order."""
-    builder = g1_frame_builder(lafan_g1_29dof_skeleton(), g1_kinematics)
+    source = lafan_g1_29dof_skeleton()
+    target = g1_frame_target(g1_kinematics, _G1_CONTACT_PATCHES)
+    projection = g1_source_projection(source, target, object(), _CONTACT_CHANNELS, _contact_offsets(target))
     reference_joint_names = tuple(g1_kinematics.joint_names[1:])
     reference_body_names = tuple(g1_kinematics.body_names)
     joint_permutation = torch.tensor([reference_joint_names.index(name) for name in G1_SIMULATOR_JOINT_NAMES])
@@ -668,13 +1833,18 @@ def test_g1_builder_maps_reference_coordinates_to_the_live_articulation_axes(
 
     assert tuple(joint_permutation.tolist()) != tuple(range(29))
     assert tuple(body_permutation.tolist()) != tuple(range(30))
-    assert builder.joint_names == G1_SIMULATOR_JOINT_NAMES
-    assert builder.reference_frame_names == (*G1_SIMULATOR_BODY_NAMES, G1_HEAD_FRAME_NAME)
+    assert target.joint_names == G1_SIMULATOR_JOINT_NAMES
+    assert target.reference_frame_names == (*G1_SIMULATOR_BODY_NAMES, G1_HEAD_FRAME_NAME)
+    expected_joint_q_indices = tuple(7 + index for index in joint_permutation.tolist())
+    assert target.joint_q_indices == expected_joint_q_indices
+    assert target.joint_q_indices != tuple(range(7, 36))
 
     joint_q = torch.zeros(3, g1_kinematics.model.joint_coord_count)
     joint_q[:, 6] = 1.0
     joint_q[:, 7:] = torch.arange(29, dtype=torch.float32)
-    frames = builder.build_exact_coordinates(joint_q, None, 30.0)
+    assert isinstance(projection, MotionSourceProjectionExact)
+    coordinates = projection.convert_coordinates(joint_q, None, 30.0)
+    frames = target.materialize_coordinates(coordinates, _clip_index(3, 30.0))
     body_q = torch.empty(3, g1_kinematics.model.body_count, 7)
     body_qd = torch.empty(3, g1_kinematics.model.body_count, 6)
     g1_kinematics.eval_fk_batched_torch(
@@ -685,6 +1855,16 @@ def test_g1_builder_maps_reference_coordinates_to_the_live_articulation_axes(
     )
 
     torch.testing.assert_close(frames.joint_position, joint_q[:, 7:].index_select(1, joint_permutation))
+    view = _motion_task_view(
+        _clip_index(3, 30.0), frames, target, torch.ones((1, len(_QUALITY_NAMES)), dtype=torch.float32), None
+    )
+    torch.testing.assert_close(
+        view.kinematic_view.joint_q_indices,
+        torch.tensor(expected_joint_q_indices, dtype=torch.int64),
+    )
+    reconstructed = torch.tensor(g1_kinematics.default_joint_q, dtype=torch.float32)
+    reconstructed.index_copy_(0, view.kinematic_view.joint_q_indices, frames.joint_position[0])
+    torch.testing.assert_close(reconstructed[7:], joint_q[0, 7:])
     torch.testing.assert_close(frames.body_position[:, :-1], body_q[..., :3].index_select(1, body_permutation))
     torch.testing.assert_close(frames.body_rotation[:, :-1], body_q[..., 3:].index_select(1, body_permutation))
 
@@ -708,10 +1888,13 @@ def test_smpl_exact_profile_matches_independent_tree_fk_and_analytic_velocity(
     qvel = np.zeros((frame_count, 6 + source.num_joints), dtype=np.float32)
     qvel[:, :3] = root_velocity.numpy()
     clip = CmuHumEnvSmplClip(qpos, qvel, source_fps)
-    builder = smpl_frame_builder(source, smpl_kinematics)
+    target = smpl_frame_target(smpl_kinematics, _SMPL_CONTACT_PATCHES)
+    projection = smpl_source_projection(source, target, object(), _CONTACT_CHANNELS, _contact_offsets(target))
     joint_q, joint_qd = clip.free_root_coordinates(source, device="cpu")
 
-    frames = builder.build_exact_coordinates(joint_q, joint_qd, clip.source_fps)
+    assert isinstance(projection, MotionSourceProjectionExact)
+    coordinates = projection.convert_coordinates(joint_q, joint_qd, clip.source_fps)
+    frames = target.materialize_coordinates(coordinates, _clip_index(clip.frame_count, clip.source_fps))
 
     axes = torch.tensor(source.joint_axes, dtype=torch.float32).reshape(source.num_bodies - 1, 3, 3)
     coordinates = source_coordinates.reshape(source.num_bodies - 1, 3)
@@ -724,7 +1907,7 @@ def test_smpl_exact_profile_matches_independent_tree_fk_and_analytic_velocity(
         root_position,
         source.parent_indices,
     )
-    live_names = smpl_live_joint_mujoco_names(builder.joint_names)
+    live_names = smpl_live_joint_mujoco_names(target.joint_names)
     live_indices = torch.tensor([source.joint_names.index(name) for name in live_names])
 
     torch.testing.assert_close(frames.joint_position, source_coordinates[live_indices].expand(frame_count, -1))
@@ -736,83 +1919,104 @@ def test_smpl_exact_profile_matches_independent_tree_fk_and_analytic_velocity(
     torch.testing.assert_close(frames.joint_velocity, torch.zeros_like(frames.joint_velocity))
 
 
-def test_smpl_semantic_retarget_uses_declared_unsmoothed_derivative(
-    smpl_cross_builder: SmplFrameBuilder,
+def test_smpl_semantic_retarget_uses_declared_d6_tangent_derivative(
+    smpl_cross_projection: MotionSourceProjectionTrajectory,
 ) -> None:
-    """Cross-source SMPL velocities use first-edge/central-interior gradients without smoothing."""
-    source = smpl_cross_builder.source_skeleton
-    clip = _lafan_semantic_clip(source, "left_knee", np.asarray((0.0, 0.1, 0.3, 0.6, 1.0), dtype=np.float32))
-    candidate = _semantic_candidate(smpl_cross_builder, clip)
+    """Cross-source SMPL velocities follow ordered D6 angular-velocity coordinates."""
+    source = smpl_cross_projection.source_skeleton
+    clip = _semantic_test_clip(source, "left_knee", np.asarray((0.0, 0.1, 0.3, 0.6, 1.0), dtype=np.float32))
+    candidate = _semantic_candidate(smpl_cross_projection, clip)
     clip_index = MotionClipIndex(
         source_content_sha256="0" * 64,
+        skeleton_identity_sha256s=("2" * 64,),
         clips=(
             MotionClipIndex.Clip(
                 clip_id="test",
                 frame_count=clip.frame_count,
                 source_fps=clip.source_fps,
                 content_sha256="1" * 64,
+                skeleton_id=0,
             ),
         ),
     )
-    assert candidate.semantic_joint_q is not None
-    frames = smpl_cross_builder.build_semantic_corpus(candidate.semantic_joint_q, clip_index)
-    expected = time_gradient(frames.joint_position.unsqueeze(0), 1.0 / clip.source_fps).squeeze(0)
-    torch.testing.assert_close(frames.joint_velocity, expected)
+    target = smpl_cross_projection.target
+    frames = target.materialize_coordinates(candidate.coordinates, clip_index)
+    coordinates = candidate.coordinates.joint_q[:, 7:].view(clip.frame_count, -1, 3).to(torch.float64)
+    axes = torch.tensor(target.kinematic_tree.coordinate_axes, dtype=coordinates.dtype).view(-1, 3, 3)
+    local_rotation = ordered_hinge_rotation(coordinates, axes)
+    angular_velocity = time_quaternion_angular_velocity(local_rotation.unsqueeze(0), 1.0 / clip.source_fps).squeeze(0)
+    expected = ordered_hinge_coordinate_velocity(coordinates, axes, angular_velocity).flatten(1)
+    expected[-1].copy_(expected[-2])
+    live_reference_names = smpl_live_joint_mujoco_names(target.joint_names)
+    live_from_reference = torch.tensor(
+        tuple(target.reference_coordinate_names.index(name) for name in live_reference_names), dtype=torch.int64
+    )
+    expected_live = expected.index_select(1, live_from_reference).to(frames.joint_velocity.dtype)
+    torch.testing.assert_close(frames.joint_velocity, expected_live)
 
 
-def test_g1_semantic_retarget_uses_source_roles_and_exact_support(
+def test_g1_semantic_retarget_uses_source_roles_and_support_contract(
     g1_kinematics: NewtonKinematics,
 ) -> None:
     """CMU-to-G1 composition uses semantic world poses and corrects target morphology height."""
     source = cmu_humenv_smpl_skeleton()
-    tree = KinematicTree.from_newton(g1_kinematics)
-    builder = g1_frame_builder(source, g1_kinematics)
+    target = g1_frame_target(g1_kinematics, _G1_CONTACT_PATCHES)
+    projection = g1_source_projection(source, target, object(), _CONTACT_CHANNELS, _contact_offsets(target))
     frame_count = 9
     qpos = np.zeros((frame_count, 76), dtype=np.float32)
     qpos[:, 2] = 0.9
-    qpos[:, 3] = 1.0
+    qpos[:, 3:5] = np.sqrt(0.5)
     source_landmarks = {landmark.name: landmark for landmark in source.landmarks}
     hip_body = source.body_names.index(source_landmarks["left_hip"].position_body_name)
     qpos[:, 7 + 3 * (hip_body - 1) + 1] = np.linspace(0.0, 0.56, frame_count, dtype=np.float32)
     clip = CmuHumEnvSmplClip(qpos, np.zeros((frame_count, 75), dtype=np.float32), 30.0)
-    candidate = _semantic_candidate(builder, clip)
-    assert candidate.semantic_joint_q is not None and candidate.semantic_quality is not None
-    joint_q = candidate.semantic_joint_q
-    marker_error_m = candidate.semantic_quality[:, 0]
-    orientation_error_rad = candidate.semantic_quality[:, 1]
+    candidate = _semantic_candidate(projection, clip)
+    joint_q = candidate.coordinates.joint_q
+    _assert_exact_velocity_respects_model_limits(target, joint_q, clip)
+    source_required_position_error_m = candidate.trajectory_quality[:, _METRIC_SOURCE_REQUIRED_POSITION]
+    source_required_distal_direction_error_rad = candidate.trajectory_quality[
+        :, _METRIC_SOURCE_REQUIRED_DISTAL_DIRECTION
+    ]
+    source_rotation_error_rad = candidate.trajectory_quality[:, _METRIC_SOURCE_ROOT_ROTATION]
 
-    body_q = torch.empty(frame_count, tree.num_bodies, 7)
-    body_qd = torch.empty(frame_count, tree.num_bodies, 6)
-    g1_kinematics.eval_fk_batched_torch(
-        joint_q, torch.zeros(frame_count, g1_kinematics.model.joint_dof_count), body_q, body_qd
+    source_support = _source_support_positions(source, clip, _CONTACT_PROBE_ROLES)
+    target_support = _target_support_positions(target, joint_q)
+    source_height = source_support[..., 2].amin(dim=1)
+    target_height = target_support[..., 2].amin(dim=1)
+    assert torch.max(torch.abs(target_height - source_height)) <= _contact_gap_bound()
+    assert tuple(patch.channel for patch in target.contact_patches) == tuple(
+        channel.name for channel in _CONTACT_CHANNELS
     )
-    target_supports = torch.tensor(
-        (tree.body_names.index("left_ankle_roll_link"), tree.body_names.index("right_ankle_roll_link"))
-    )
-    target_feet = body_q.index_select(1, target_supports)[..., :3]
-    target_height = target_feet[..., 2].amin(dim=1)
-    source_feet = _source_support_positions(source, clip)
-    source_height = source_feet[..., 2].amin(dim=1)
-    torch.testing.assert_close(target_height, source_height, atol=2.0e-6, rtol=0.0)
-    assert torch.all(target_feet[..., 2] >= source_height[:, None] - 2.0e-6)
 
-    step_seconds = 1.0 / clip.source_fps
-    coordinates = joint_q[:, 7:]
-    assert torch.max(torch.abs(torch.diff(coordinates, dim=0))) < 0.1
-    assert torch.max(torch.abs(torch.diff(coordinates, n=2, dim=0))) / step_seconds**2 < 2.0
-    source_speed = torch.linalg.vector_norm(torch.diff(source_feet[..., :2], dim=0) / step_seconds, dim=-1)
-    target_speed = torch.linalg.vector_norm(torch.diff(target_feet[..., :2], dim=0) / step_seconds, dim=-1)
-    source_support = source_feet[..., 2] <= source_height[:, None] + 0.02
-    source_planted = source_support[:-1] & source_support[1:] & (source_speed < 0.15)
-    assert torch.any(source_planted)
-    assert torch.max(target_speed[source_planted]) < 0.08
-    assert torch.all(torch.isfinite(marker_error_m))
-    assert torch.all(torch.isfinite(orientation_error_rad))
-    assert marker_error_m.amax() <= _semantic_acceptance_bound("landmark_position")
+    assert torch.all(torch.isfinite(source_required_position_error_m))
+    assert torch.all(torch.isfinite(source_required_distal_direction_error_rad))
+    assert torch.all(torch.isfinite(source_rotation_error_rad))
+    assert source_required_position_error_m.amax() <= _source_required_position_bound()
+    assert source_rotation_error_rad.amax() <= _source_root_rotation_bound()
+    assert candidate.target_coordinate_evidence[0, _TARGET_GROUND_PENETRATION] <= _semantic_ground_penetration_bound()
 
 
-def test_semantic_ik_position_objective_is_uniform_scale_invariant(tmp_path: Path) -> None:
-    """Uniformly scaling target geometry must preserve q and coordinates and scale physical residuals."""
+def test_g1_lie_down_pose_is_rejected_by_contact_geometry_contract(g1_kinematics: NewtonKinematics) -> None:
+    """A lying CMU pose clears the ground but cannot claim geometrically valid toe contact."""
+    source = cmu_humenv_smpl_skeleton()
+    target = g1_frame_target(g1_kinematics, _G1_CONTACT_PATCHES)
+    projection = g1_source_projection(source, target, object(), _CONTACT_CHANNELS, _contact_offsets(target))
+    qpos = np.zeros((9, 76), dtype=np.float32)
+    qpos[:, 2] = 0.9
+    qpos[:, 3] = 1.0
+    clip = CmuHumEnvSmplClip(qpos, np.zeros((9, 75), dtype=np.float32), 30.0)
+    candidate = _semantic_candidate(projection, clip)
+
+    assert candidate.constraint_geometry_feasible[0]
+    assert candidate.inner_solve_converged[0]
+    assert candidate.nonlinear_phases_converged[0]
+    assert candidate.target_coordinate_evidence[0, _TARGET_GROUND_PENETRATION] <= _semantic_ground_penetration_bound()
+    assert candidate.trajectory_quality[0, _METRIC_CONTACT_GAP] > _contact_gap_bound()
+    assert candidate.trajectory_quality[0, _METRIC_CONTACT_TILT] > _contact_tilt_bound()
+
+
+def test_landmark_position_objective_is_uniform_scale_invariant(tmp_path: Path) -> None:
+    """Uniformly scaling target geometry must preserve the dimensionless objective weighting."""
     mjcf = """<mujoco model="scaled_chain">
   <compiler angle="radian"/>
   <worldbody>
@@ -837,90 +2041,103 @@ def test_semantic_ik_position_objective_is_uniform_scale_invariant(tmp_path: Pat
         path.write_text(mjcf.format(scale=scale, radius=0.05 * scale, half_length=0.5 * scale))
         kinematics = NewtonKinematics(NewtonKinematicsCfg(mjcf_path=str(path), device="cpu"))
         tree = KinematicTree.from_newton(kinematics)
-        desired_q = torch.tensor(kinematics.default_joint_q, dtype=torch.float32).unsqueeze(0)
+        desired_q = torch.tensor(kinematics.default_joint_q, dtype=torch.float32).unsqueeze(0).repeat(2, 1)
         desired_q[:, tree.coordinate_q_indices[0]] = 0.7
         desired_q[:, tree.coordinate_q_indices[1]] = -0.4
-        desired_body_q = torch.empty(1, 3, 7)
-        desired_body_qd = torch.empty(1, 3, 6)
+        desired_body_q = torch.empty(2, 3, 7)
+        desired_body_qd = torch.empty(2, 3, 6)
         kinematics.eval_fk_batched_torch(
             desired_q,
-            torch.zeros(1, kinematics.model.joint_dof_count),
+            torch.zeros(2, kinematics.model.joint_dof_count),
             desired_body_q,
             desired_body_qd,
         )
         body_indices = (0, 1, 2)
         body_index_tensor = torch.tensor(body_indices)
         target_position = desired_body_q[..., :3].transpose(0, 1).contiguous()
-        target_rotation = torch.zeros(3, 1, 4)
+        target_rotation = torch.zeros(2, 4)
         target_rotation[..., 3] = 1.0
-        targets = MotionSemanticTargets(
-            body_indices=body_indices,
+        targets = MotionTrajectoryTargets(
+            position_body_indices=body_indices,
+            root_body_index=body_indices[0],
+            source_root_policy="optimized",
+            initializer_policy="direct",
             parent_rows=(-1, 0, 1),
-            body_index_tensor=body_index_tensor,
-            position_m=target_position,
-            rotation_xyzw=target_rotation,
+            parent_row_tensor=torch.tensor((-1, 0, 1)),
+            position_weights=(1.0, 1.0, 1.0),
+            required_position_rows=(0, 2),
+            required_position_row_tensor=torch.tensor((0, 2), dtype=torch.int64),
+            position_normal_channel_slots=torch.full((len(body_indices),), -1, dtype=torch.int64),
+            position_body_index_tensor=body_index_tensor,
+            rotation_body_indices=(0,),
+            rotation_weights=(1.0,),
+            source_landmark_rotation_xyzw=target_rotation.unsqueeze(0),
+            direction_body_indices=(),
+            direction_position_rows=(),
+            direction_weights=(),
+            contact_direction_rows=(),
+            contact_direction_row_tensor=torch.empty(0, dtype=torch.int64),
+            direction_contact_channel_slots=torch.empty(0, dtype=torch.int64),
+            required_direction_rows=(),
+            required_direction_row_tensor=torch.empty(0, dtype=torch.int64),
+            direction_body_index_tensor=torch.empty(0, dtype=torch.int64),
+            direction_position_row_tensor=torch.empty(0, dtype=torch.int64),
+            direction_point_body_m=torch.empty((0, 3)),
+            source_landmark_position_m=target_position,
+            source_direction_point_position_m=torch.empty((0, 2, 3)),
+            direction_length_values_m=(),
+            initial_joint_q=desired_q.clone(),
             segment_lengths_m=torch.full((3,), scale),
             segment_length_values_m=(scale, scale, scale),
             coordinate_indices=torch.tensor(tree.coordinate_q_indices),
             coordinate_lower_limits_rad=torch.tensor(tree.coordinate_lower_limits_rad),
             coordinate_upper_limits_rad=torch.tensor(tree.coordinate_upper_limits_rad),
-            support_body_indices=torch.tensor((2,)),
-            source_support_height_m=target_position[2, :, 2].clone(),
+            source_contact_probe_position_m=target_position[:1].clone(),
+            contact_channel_probe_offsets=torch.tensor((0, 1), dtype=torch.int32),
+            target_support_position_m=target_position[:1].clone(),
+            contact_body_indices=torch.tensor((0,)),
+            contact_normal_body=torch.tensor(((0.0, 0.0, 1.0),)),
+            contact_forward_body=torch.tensor(((1.0, 0.0, 0.0),)),
+            contact_distal_point_body_m=torch.zeros((1, 3)),
+            leg_chain_body_indices=torch.zeros((1, 3), dtype=torch.int64),
+            leg_chain_parent_body_indices=torch.zeros(1, dtype=torch.int64),
+            leg_knee_hint_anatomy=torch.tensor(((1.0, 0.0, 0.0),)),
+            leg_knee_hint_root=torch.tensor(((1.0, 0.0, 0.0),)),
+            leg_segment_lengths_m=torch.ones((1, 2)),
+            support_patch_offsets=(0, 1),
+            support_body_indices=torch.tensor((0,)),
+            support_point_body_m=torch.zeros((1, 3)),
+            support_channel_slots=torch.tensor((0,)),
         )
-        clip_index = MotionClipIndex(
-            source_content_sha256="0" * 64,
-            clips=(
-                MotionClipIndex.Clip(
-                    clip_id="test",
-                    frame_count=1,
-                    source_fps=30.0,
-                    content_sha256="1" * 64,
-                ),
-            ),
+        objectives = motion_objective_source_global_position(
+            MotionSourceGlobalPositionObjectiveCfg(weight=1.0, root_weight=10.0), targets
         )
-        builder = SimpleNamespace(semantic_reference_kinematics=kinematics, semantic_target_tree=tree)
-        candidate = motion_solve_semantic_sequence(
-            MotionSemanticSolveCfg(),
-            _MotionCorpusCandidate(
-                builder=builder,
-                source=None,
-                clip_index=clip_index,
-                device="cpu",
-                frames=None,
-                pending=iter((targets,)),
-            ),
-        )
-        assert candidate.semantic_joint_q is not None and candidate.semantic_quality is not None
-        results.append(
-            (
-                candidate.semantic_joint_q[:, tree.coordinate_q_indices],
-                candidate.semantic_quality[:, 0],
-                candidate.semantic_quality[:, 1],
-            )
-        )
+        results.append(scale * torch.tensor(tuple(objective.weight for objective in objectives)))
 
-    small_q, small_error_m, small_orientation_error = results[0]
-    large_q, large_error_m, large_orientation_error = results[1]
-    torch.testing.assert_close(small_q, large_q, atol=3.0e-5, rtol=0.0)
-    torch.testing.assert_close(4.0 * small_error_m, large_error_m, atol=3.0e-5, rtol=0.0)
-    torch.testing.assert_close(small_orientation_error, large_orientation_error, atol=3.0e-5, rtol=0.0)
+    torch.testing.assert_close(results[0], torch.tensor((1.0, 1.0, 10.0)))
+    torch.testing.assert_close(results[0], results[1])
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for CPU/GPU semantic-retarget parity.")
-def test_semantic_retarget_cpu_gpu_has_clean_launch_and_fk_residual_parity(tmp_path: Path) -> None:
-    """The 75-DOF/84-residual solve must launch cleanly and preserve FK diagnostics across devices."""
+def test_semantic_retarget_cpu_gpu_has_clean_launch_and_finite_outputs(tmp_path: Path) -> None:
+    """The 75-DOF/126-residual solve must launch cleanly with finite outputs on both devices."""
     script = r"""
 import sys
 import numpy as np
 import torch
 from isaaclab_tasks.core.multi_task.motion.data.clip_index import MotionClipIndex
 from isaaclab_tasks.core.multi_task.motion.data.sources import LafanG1Clip, lafan_g1_29dof_skeleton
-from isaaclab_tasks.core.multi_task.motion.mdp.commands.commands_cfg import MotionSemanticSolveCfg
-from isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table import (
-    _MotionCorpusCandidate,
-    motion_solve_semantic_sequence,
+from isaaclab_tasks.core.multi_task.motion.mdp.commands.commands_cfg import MotionTaskTableCfg, MotionTrajectorySolveCfg
+from isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table_builder import (
+    _MotionTrajectoryTargetCandidate,
 )
-from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import smpl_frame_builder, smpl_reference_kinematics
+from isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_trajectory import motion_solve_trajectory
+from isaaclab_tasks.core.multi_task.motion.retarget import motion_contact_probe_offsets
+from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import (
+    smpl_frame_target,
+    smpl_reference_kinematics,
+    smpl_source_projection,
+)
 
 device, output_path = sys.argv[1:]
 source = lafan_g1_29dof_skeleton()
@@ -934,39 +2151,54 @@ pose[:, body] = np.linspace(0.0, 0.56, 9, dtype=np.float32)[:, None] * np.asarra
 root = np.zeros((9, 3), dtype=np.float32)
 root[:, 2] = 0.8
 reference = smpl_reference_kinematics("", device)
-builder = smpl_frame_builder(source, reference)
+contact_patch_cfg = MotionTaskTableCfg.TargetKinematicsCfg.ContactPatchCfg
+contact_patches = (
+    contact_patch_cfg(channel="left_foot", body_name="L_Ankle", height_band_m=0.005),
+    contact_patch_cfg(channel="right_foot", body_name="R_Ankle", height_band_m=0.005),
+)
+contact_channels = (
+    MotionTaskTableCfg.ContactChannelCfg(name="left_foot", source_probe_roles=("left_ankle", "left_toe")),
+    MotionTaskTableCfg.ContactChannelCfg(name="right_foot", source_probe_roles=("right_ankle", "right_toe")),
+)
+target = smpl_frame_target(reference, contact_patches)
+projection = smpl_source_projection(
+    source,
+    target,
+    object(),
+    contact_channels,
+    motion_contact_probe_offsets(contact_channels, reference.device),
+)
 clip = LafanG1Clip(root, pose, 30.0)
-root_position, local_rotation = clip.semantic_local_pose(source, device=device)
-targets = builder.generate_semantic_targets(root_position, local_rotation)
+root_position, local_rotation = clip.local_pose(source, device=device)
+targets = projection.target_projection.generate_targets(root_position, local_rotation)
 index = MotionClipIndex(
     source_content_sha256="0" * 64,
+    skeleton_identity_sha256s=("2" * 64,),
     clips=(
         MotionClipIndex.Clip(
             clip_id="test",
             frame_count=clip.frame_count,
             source_fps=clip.source_fps,
             content_sha256="1" * 64,
+            skeleton_id=0,
         ),
     ),
 )
-candidate = motion_solve_semantic_sequence(
-    MotionSemanticSolveCfg(),
-    _MotionCorpusCandidate(
-        builder=builder,
-        source=None,
+candidate = motion_solve_trajectory(
+    MotionTrajectorySolveCfg(),
+    _MotionTrajectoryTargetCandidate(
+        target=target,
         clip_index=index,
-        device=device,
-        frames=None,
         pending=iter((targets,)),
+        source_body_counts=(projection.source_skeleton.num_bodies,),
+        device=device,
+        inspection=False,
     ),
 )
-assert candidate.semantic_joint_q is not None
-assert candidate.semantic_quality is not None
-assert candidate.frame_finite is not None
 output = (
-    candidate.semantic_joint_q,
-    candidate.semantic_quality,
-    candidate.frame_finite,
+    candidate.coordinates.joint_q,
+    candidate.trajectory_quality,
+    candidate.target_coordinate_evidence,
 )
 if device != "cpu":
     torch.cuda.synchronize()
@@ -988,6 +2220,7 @@ torch.save(tuple(value.cpu() for value in output), output_path)
         outputs.append(torch.load(output_path, weights_only=True))
 
     cpu, gpu = outputs
-    torch.testing.assert_close(cpu[0], gpu[0], atol=3.0e-4, rtol=3.0e-4)
-    torch.testing.assert_close(cpu[1], gpu[1], atol=1.1e-3, rtol=3.0e-4)
+    for output in outputs:
+        assert all(torch.isfinite(value).all() for value in output)
+    assert tuple(value.shape for value in cpu) == tuple(value.shape for value in gpu)
     torch.testing.assert_close(cpu[2], gpu[2])

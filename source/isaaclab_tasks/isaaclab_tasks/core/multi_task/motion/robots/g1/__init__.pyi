@@ -12,6 +12,7 @@ __all__ = [
     "append_g1_head_pose",
     "append_g1_head_runtime_frame",
     "g1_frame_builder",
+    "g1_reference_kinematics",
 ]
 
 from .frames import (
@@ -22,4 +23,4 @@ from .frames import (
     append_g1_head_pose,
     append_g1_head_runtime_frame,
 )
-from .reference import G1FrameBuilder, g1_frame_builder
+from .reference import G1FrameBuilder, g1_frame_builder, g1_reference_kinematics

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -27,7 +28,7 @@ from isaaclab.utils.math import (
 if TYPE_CHECKING:
     from .newton_kinematics import NewtonKinematics
 
-ORDERED_HINGE_OPERATOR_VERSION = "ordered_orthogonal_hinge_fit_v2"
+ORDERED_HINGE_OPERATOR_VERSION = "ordered_independent_hinge_fit_v3"
 
 
 @dataclass(frozen=True, slots=True)
@@ -369,51 +370,6 @@ def kinematic_root_basis(
     return torch.stack((forward, left, up), dim=-1)
 
 
-def kinematic_retarget_positions(
-    root_position_m: torch.Tensor,
-    source_rotation_xyzw: torch.Tensor,
-    source_rest_rotation_xyzw: torch.Tensor,
-    aligned_target_rest_edges_m: torch.Tensor,
-    parent_indices: tuple[int, ...],
-) -> torch.Tensor:
-    """Transfer source-parent rotation deltas onto aligned target-rest marker edges.
-
-    Args:
-        root_position_m: Desired root positions [m], shape ``[frame_count, 3]``.
-        source_rotation_xyzw: Source marker world rotations in xyzw order, shape
-            ``[landmark_count, frame_count, 4]``.
-        source_rest_rotation_xyzw: Source marker rest-world rotations in xyzw order, shape ``[landmark_count, 4]``.
-        aligned_target_rest_edges_m: Target-rest parent edges aligned into the source root basis [m], shape
-            ``[landmark_count, 3]``.
-        parent_indices: Parent row of each semantic landmark, with root row zero equal to ``-1``.
-
-    Returns:
-        Desired world marker positions [m], shape ``[landmark_count, frame_count, 3]``.
-    """
-    landmark_count, frame_count = source_rotation_xyzw.shape[:2]
-    expected = (landmark_count, frame_count, 4)
-    if (
-        source_rotation_xyzw.shape != expected
-        or source_rest_rotation_xyzw.shape != (landmark_count, 4)
-        or aligned_target_rest_edges_m.shape != (landmark_count, 3)
-        or root_position_m.shape != (frame_count, 3)
-        or len(parent_indices) != landmark_count
-        or parent_indices[0] != -1
-        or any(parent < 0 or parent >= row for row, parent in enumerate(parent_indices[1:], start=1))
-    ):
-        raise ValueError("Semantic retarget position inputs have incompatible shapes or topology.")
-    position_m = torch.empty(landmark_count, frame_count, 3, dtype=root_position_m.dtype, device=root_position_m.device)
-    position_m[0].copy_(root_position_m)
-    for row, parent in enumerate(parent_indices[1:], start=1):
-        source_rest_inverse = quat_conjugate(source_rest_rotation_xyzw[parent]).expand(frame_count, 4)
-        parent_rotation_delta = quat_mul(source_rotation_xyzw[parent], source_rest_inverse)
-        parent_rotation_delta.div_(torch.linalg.vector_norm(parent_rotation_delta, dim=-1, keepdim=True))
-        position_m[row] = position_m[parent] + quat_apply(
-            parent_rotation_delta, aligned_target_rest_edges_m[row].expand(frame_count, 3)
-        )
-    return position_m
-
-
 def time_gradient(values: torch.Tensor, step_seconds: float) -> torch.Tensor:
     """Differentiate time axis one with first-order edges and central interiors.
 
@@ -527,6 +483,7 @@ def time_gradient_segmented(
     values: torch.Tensor,
     offsets: torch.Tensor,
     step_seconds: torch.Tensor,
+    out: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Differentiate a flat segmented time axis without crossing segment boundaries.
 
@@ -534,23 +491,30 @@ def time_gradient_segmented(
         values: Values with shape ``[frame_count, ...]``.
         offsets: Segment offsets with shape ``[segment_count + 1]``.
         step_seconds: Uniform sample interval within each segment [s], shape ``[segment_count]``.
+        out: Optional caller-owned derivative storage with the same shape as :paramref:`values`.
 
     Returns:
         Time derivative with the same shape as :paramref:`values`.
     """
     rows, starts, stops, steps = _time_segment_rows(values, offsets, step_seconds, minimum_frames=2)
+    if out is None:
+        out = torch.empty_like(values)
+    elif out.shape != values.shape or out.dtype != values.dtype or out.device != values.device:
+        raise ValueError("Segmented gradient output must match the input shape, dtype, and device.")
     previous = torch.maximum(rows - 1, starts)
     following = torch.minimum(rows + 1, stops - 1)
     denominator = (following - previous).to(step_seconds.dtype) * steps
     while denominator.ndim < values.ndim:
         denominator = denominator.unsqueeze(-1)
-    return (values.index_select(0, following) - values.index_select(0, previous)) / denominator
+    torch.sub(values.index_select(0, following), values.index_select(0, previous), out=out)
+    return out.div_(denominator)
 
 
 def time_quaternion_angular_velocity_segmented(
     rotation_xyzw: torch.Tensor,
     offsets: torch.Tensor,
     step_seconds: torch.Tensor,
+    out: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Differentiate flat segmented unit quaternions with a zero segment tail.
 
@@ -558,12 +522,19 @@ def time_quaternion_angular_velocity_segmented(
         rotation_xyzw: Unit quaternions in xyzw order with shape ``[frame_count, ..., 4]``.
         offsets: Segment offsets with shape ``[segment_count + 1]``.
         step_seconds: Uniform sample interval within each segment [s], shape ``[segment_count]``.
+        out: Optional caller-owned angular-velocity storage ending in xyz.
 
     Returns:
         Angular velocities [rad/s] with the same leading shape and a final xyz axis.
     """
     if rotation_xyzw.ndim < 2 or rotation_xyzw.shape[-1] != 4:
         raise ValueError("Segmented quaternion velocities require values ending in four.")
+    output_shape = (*rotation_xyzw.shape[:-1], 3)
+    if out is None:
+        out = rotation_xyzw.new_empty(output_shape)
+    elif out.shape != output_shape or out.dtype != rotation_xyzw.dtype or out.device != rotation_xyzw.device:
+        raise ValueError("Segmented quaternion-velocity output must match the input leading shape, dtype, and device.")
+
     rows, _starts, stops, steps = _time_segment_rows(rotation_xyzw, offsets, step_seconds, minimum_frames=1)
     following = torch.minimum(rows + 1, stops - 1)
     relative = quat_mul(rotation_xyzw.index_select(0, following), quat_conjugate(rotation_xyzw))
@@ -573,7 +544,8 @@ def time_quaternion_angular_velocity_segmented(
         steps = steps.unsqueeze(-1)
     angular_velocity = angular_velocity / steps
     angular_velocity[rows == stops - 1] = 0.0
-    return angular_velocity
+    out.copy_(angular_velocity)
+    return out
 
 
 def time_gaussian_filter_segmented(
@@ -606,31 +578,110 @@ def time_gaussian_filter_segmented(
     return filtered.to(values.dtype)
 
 
+def time_backward_difference_segmented(
+    values: torch.Tensor,
+    offsets: torch.Tensor,
+    step_seconds: torch.Tensor,
+    out: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Differentiate canonical backward edges and repeat the first segment edge.
+
+    Args:
+        values: Values with shape ``[frame_count, ...]``.
+        offsets: Segment offsets with shape ``[segment_count + 1]``.
+        step_seconds: Uniform sample interval within each segment [s].
+        out: Optional caller-owned derivative storage matching :paramref:`values`.
+
+    Returns:
+        Backward-edge derivatives with the same shape as :paramref:`values`.
+    """
+    rows, starts, _stops, steps = _time_segment_rows(values, offsets, step_seconds, minimum_frames=2)
+    first = rows == starts
+    current = torch.where(first, rows + 1, rows)
+    previous = torch.where(first, rows, rows - 1)
+    if out is None:
+        out = torch.empty_like(values)
+    elif out.shape != values.shape or out.dtype != values.dtype or out.device != values.device:
+        raise ValueError("Segmented backward-difference output must match the input.")
+    while steps.ndim < values.ndim:
+        steps = steps.unsqueeze(-1)
+    torch.sub(values.index_select(0, current), values.index_select(0, previous), out=out)
+    return out.div_(steps)
+
+
+def time_quaternion_angular_velocity_backward_segmented(
+    rotation_xyzw: torch.Tensor,
+    offsets: torch.Tensor,
+    step_seconds: torch.Tensor,
+    out: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Differentiate canonical backward quaternion edges and repeat each first edge.
+
+    Args:
+        rotation_xyzw: Unit quaternions in xyzw order, shape ``[frame_count, ..., 4]``.
+        offsets: Segment offsets with shape ``[segment_count + 1]``.
+        step_seconds: Uniform sample interval within each segment [s].
+        out: Optional caller-owned angular-velocity storage ending in xyz.
+
+    Returns:
+        World angular velocities [rad/s] with the same leading shape and final xyz axis.
+    """
+    if rotation_xyzw.ndim < 2 or rotation_xyzw.shape[-1] != 4:
+        raise ValueError("Segmented quaternion velocities require values ending in four.")
+    rows, starts, _stops, steps = _time_segment_rows(rotation_xyzw, offsets, step_seconds, minimum_frames=2)
+    first = rows == starts
+    current = torch.where(first, rows + 1, rows)
+    previous = torch.where(first, rows, rows - 1)
+    relative = quat_mul(rotation_xyzw.index_select(0, current), quat_conjugate(rotation_xyzw.index_select(0, previous)))
+    relative.div_(relative.norm(p=2, dim=-1, keepdim=True).clamp_min_(1.0e-9))
+    angular_velocity = axis_angle_from_quat(relative)
+    while steps.ndim < angular_velocity.ndim:
+        steps = steps.unsqueeze(-1)
+    angular_velocity.div_(steps)
+    output_shape = (*rotation_xyzw.shape[:-1], 3)
+    if out is None:
+        return angular_velocity
+    if out.shape != output_shape or out.dtype != rotation_xyzw.dtype or out.device != rotation_xyzw.device:
+        raise ValueError("Segmented backward quaternion-velocity output must match the input leading shape.")
+    out.copy_(angular_velocity)
+    return out
+
+
 def time_forward_difference_segmented(
     values: torch.Tensor,
     offsets: torch.Tensor,
     step_seconds: torch.Tensor,
+    out: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Apply the released G1 forward difference independently within each segment.
-
-    The final row repeats the segment's penultimate forward difference, matching
-    the released three-frame-minimum construction law.
+    """Apply the deprecated released-G1 forward-difference policy.
 
     Args:
         values: Values with shape ``[frame_count, ...]``.
         offsets: Segment offsets with shape ``[segment_count + 1]``.
         step_seconds: Uniform sample interval within each segment [s], shape ``[segment_count]``.
+        out: Optional caller-owned derivative storage matching :paramref:`values`.
 
     Returns:
         Time derivative with the same shape as :paramref:`values`.
     """
+    warnings.warn(
+        "time_forward_difference_segmented() is deprecated; "
+        "the released derivative policy is owned by G1 frame construction.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     rows, _starts, stops, steps = _time_segment_rows(values, offsets, step_seconds, minimum_frames=3)
+    if out is None:
+        out = torch.empty_like(values)
+    elif out.shape != values.shape or out.dtype != values.dtype or out.device != values.device:
+        raise ValueError("Segmented forward-difference output must match the input.")
     tail = rows == stops - 1
     previous = torch.where(tail, stops - 3, rows)
     following = torch.where(tail, stops - 2, rows + 1)
     while steps.ndim < values.ndim:
         steps = steps.unsqueeze(-1)
-    return (values.index_select(0, following) - values.index_select(0, previous)) / steps
+    torch.sub(values.index_select(0, following), values.index_select(0, previous), out=out)
+    return out.div_(steps)
 
 
 def ordered_hinge_rotation(coordinates: torch.Tensor, axes: torch.Tensor) -> torch.Tensor:
@@ -667,6 +718,61 @@ def ordered_hinge_rotation(coordinates: torch.Tensor, axes: torch.Tensor) -> tor
     return quaternion
 
 
+def ordered_hinge_coordinate_velocity(
+    coordinates: torch.Tensor, axes: torch.Tensor, angular_velocity: torch.Tensor
+) -> torch.Tensor:
+    """Resolve parent-frame angular velocity into three ordered hinge rates.
+
+    Args:
+        coordinates: Ordered hinge angles [rad], shape ``[..., 3]``.
+        axes: Right-handed unit hinge axes, shape ``[3, 3]`` or
+            ``[..., 3, 3]`` broadcastable into :paramref:`coordinates`.
+        angular_velocity: Parent-frame angular velocity [rad/s], shape ``[..., 3]``.
+
+    Returns:
+        Ordered hinge coordinate velocities [rad/s], shape ``[..., 3]``.
+    """
+    if coordinates.ndim < 1 or coordinates.shape[-1] != 3:
+        raise ValueError("Ordered hinge velocity conversion requires exactly three coordinates.")
+    if axes.ndim < 2 or axes.shape[-2:] != (3, 3):
+        raise ValueError("Ordered hinge velocity axes must end in [3, 3].")
+    if angular_velocity.shape != coordinates.shape:
+        raise ValueError("Ordered hinge angular velocity must match the coordinate shape.")
+    if (
+        not coordinates.is_floating_point()
+        or axes.dtype != coordinates.dtype
+        or angular_velocity.dtype != coordinates.dtype
+    ):
+        raise ValueError("Ordered hinge velocity inputs must share one floating-point dtype.")
+    if axes.device != coordinates.device or angular_velocity.device != coordinates.device:
+        raise ValueError("Ordered hinge velocity inputs must share one device.")
+    try:
+        leading_shape = torch.broadcast_shapes(coordinates.shape[:-1], axes.shape[:-2])
+    except RuntimeError as error:
+        raise ValueError("Ordered hinge velocity axes are not broadcastable into the coordinates.") from error
+    if leading_shape != coordinates.shape[:-1]:
+        raise ValueError("Ordered hinge velocity axes must not expand the coordinate batch shape.")
+
+    axis_0 = torch.broadcast_to(axes[..., 0, :], coordinates.shape)
+    axis_1_local = torch.broadcast_to(axes[..., 1, :], coordinates.shape)
+    axis_2_local = torch.broadcast_to(axes[..., 2, :], coordinates.shape)
+    first_rotation = quat_from_rotation_vector(coordinates[..., 0, None] * axis_0)
+    axis_1 = quat_apply(first_rotation, axis_1_local)
+    second_rotation = quat_mul(first_rotation, quat_from_rotation_vector(coordinates[..., 1, None] * axis_1_local))
+    axis_2 = quat_apply(second_rotation, axis_2_local)
+    cross_12 = torch.cross(axis_1, axis_2, dim=-1)
+    cross_02 = torch.cross(axis_0, axis_2, dim=-1)
+    cross_01 = torch.cross(axis_0, axis_1, dim=-1)
+    return torch.stack(
+        (
+            torch.sum(angular_velocity * cross_12, dim=-1) / torch.sum(axis_0 * cross_12, dim=-1),
+            torch.sum(angular_velocity * cross_02, dim=-1) / torch.sum(axis_1 * cross_02, dim=-1),
+            torch.sum(angular_velocity * cross_01, dim=-1) / torch.sum(axis_2 * cross_01, dim=-1),
+        ),
+        dim=-1,
+    )
+
+
 def time_unwrap_angles(coordinates: torch.Tensor) -> torch.Tensor:
     """Choose continuous representatives of principal angles along time.
 
@@ -685,15 +791,155 @@ def time_unwrap_angles(coordinates: torch.Tensor) -> torch.Tensor:
     return torch.cat((coordinates[:1], coordinates[:1] + torch.cumsum(difference, dim=0)), dim=0)
 
 
+def time_unwrap_angles_segmented(coordinates: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
+    """Choose continuous angle representatives independently within each clip.
+
+    Args:
+        coordinates: Principal angles [rad], shape ``[frame_count, coordinate_count]``.
+        offsets: Clip offsets with shape ``[clip_count + 1]``.
+
+    Returns:
+        Clip-local continuous angles [rad] with the same shape as :paramref:`coordinates`.
+    """
+    if coordinates.ndim != 2:
+        raise ValueError("Segmented time unwrapping requires [frame_count, hinge_count] coordinates.")
+    _rows, _starts, _stops, segments = _time_segment_bounds(coordinates, offsets, minimum_frames=1)
+    unwrapped = time_unwrap_angles(coordinates)
+    segment_starts = offsets[:-1]
+    shifts = coordinates.index_select(0, segment_starts) - unwrapped.index_select(0, segment_starts)
+    return unwrapped + shifts.index_select(0, segments)
+
+
+def _fit_independent_hinge_coordinates(rotation_xyzw: torch.Tensor, axes: torch.Tensor) -> torch.Tensor:
+    """Fit one ordered product of independent, nonorthogonal hinge axes."""
+    hinge_count = axes.shape[0]
+    batch_shape = rotation_xyzw.shape[:-1]
+    target = rotation_xyzw.reshape(-1, 4)
+    coordinates = torch.zeros(target.shape[0], hinge_count, dtype=torch.float32, device=target.device)
+    identity = torch.zeros(target.shape[0], 4, dtype=torch.float32, device=target.device)
+    identity[:, 3] = 1.0
+    damping = 1.0e-6 * torch.eye(hinge_count, dtype=torch.float32, device=target.device)
+    for _ in range(8):
+        fitted = identity.clone()
+        spatial_axes = []
+        for index in range(hinge_count):
+            axis = axes[index].expand(target.shape[0], 3)
+            spatial_axes.append(quat_apply(fitted, axis))
+            fitted = quat_mul(
+                fitted,
+                quat_from_rotation_vector(coordinates[:, index, None] * axes[index]),
+            )
+        relative = quat_mul(quat_conjugate(fitted), target)
+        error = axis_angle_from_quat(relative)
+        spatial_axes = torch.stack(spatial_axes, dim=1)
+        inverse_fitted = quat_conjugate(fitted)[:, None].expand(-1, hinge_count, -1)
+        body_axes = quat_apply(inverse_fitted.reshape(-1, 4), spatial_axes.reshape(-1, 3)).view_as(spatial_axes)
+        jacobian = body_axes.transpose(1, 2)
+        normal = jacobian.transpose(1, 2) @ jacobian + damping
+        right_hand_side = (jacobian.transpose(1, 2) @ error.unsqueeze(-1)).squeeze(-1)
+        step = torch.linalg.solve(normal, right_hand_side).clamp_(-0.5, 0.5)
+        coordinates.add_(step)
+    return coordinates.reshape(*batch_shape, hinge_count)
+
+
+def _fit_redundant_hinge_coordinates(
+    rotation_xyzw: torch.Tensor,
+    axes: torch.Tensor,
+    initial_coordinates: torch.Tensor,
+    lower: torch.Tensor,
+    upper: torch.Tensor,
+) -> torch.Tensor:
+    """Fit a redundant serial path while preserving its caller-owned default posture."""
+    target = torch.nn.functional.normalize(rotation_xyzw.reshape(-1, 4), dim=-1)
+    coordinate_count = axes.shape[0]
+    coordinates = initial_coordinates.reshape(-1, coordinate_count).clone()
+    coordinates.clamp_(lower, upper)
+    identity = torch.zeros(target.shape[0], 4, dtype=torch.float32, device=target.device)
+    identity[:, 3] = 1.0
+    damping = 1.0e-6 * torch.eye(3, dtype=torch.float32, device=target.device)
+    for _ in range(12):
+        fitted = identity.clone()
+        spatial_axes = []
+        for index in range(coordinate_count):
+            axis = axes[index].expand(target.shape[0], 3)
+            spatial_axes.append(quat_apply(fitted, axis))
+            fitted = quat_mul(fitted, quat_from_rotation_vector(coordinates[:, index, None] * axes[index]))
+        error = axis_angle_from_quat(quat_mul(quat_conjugate(fitted), target))
+        spatial_axes = torch.stack(spatial_axes, dim=1)
+        inverse_fitted = quat_conjugate(fitted)[:, None].expand(-1, coordinate_count, -1)
+        body_axes = quat_apply(inverse_fitted.reshape(-1, 4), spatial_axes.reshape(-1, 3)).view_as(spatial_axes)
+        jacobian = body_axes.transpose(1, 2)
+        task_normal = jacobian @ jacobian.transpose(1, 2) + damping
+        task_step = torch.linalg.solve(task_normal, error.unsqueeze(-1))
+        step = (jacobian.transpose(1, 2) @ task_step).squeeze(-1)
+        step.mul_(0.5 / step.abs().amax(dim=-1, keepdim=True).clamp_min_(0.5))
+        coordinates.add_(step).clamp_(lower, upper)
+    return coordinates.reshape_as(initial_coordinates)
+
+
+def _fit_coupled_hinge_coordinates(
+    target_rotations_xyzw: tuple[torch.Tensor, ...],
+    axes_by_path: tuple[torch.Tensor, ...],
+    coordinate_positions_by_path: tuple[torch.Tensor, ...],
+    initial_coordinates: torch.Tensor,
+    lower: torch.Tensor,
+    upper: torch.Tensor,
+) -> torch.Tensor:
+    """Fit coupled semantic paths that share target coordinates."""
+    path_count = len(target_rotations_xyzw)
+    problem_count, coordinate_count = initial_coordinates.shape
+    coordinates = initial_coordinates.clone()
+    coordinates.clamp_(lower, upper)
+    identity = torch.zeros(problem_count, 4, dtype=torch.float32, device=coordinates.device)
+    identity[:, 3] = 1.0
+    damping = 1.0e-6 * torch.eye(3 * path_count, dtype=torch.float32, device=coordinates.device)
+    error = torch.empty(problem_count, 3 * path_count, dtype=torch.float32, device=coordinates.device)
+    jacobian = torch.empty(
+        problem_count, 3 * path_count, coordinate_count, dtype=torch.float32, device=coordinates.device
+    )
+    for _ in range(12):
+        jacobian.zero_()
+        for path_index, (target, axes, coordinate_positions) in enumerate(
+            zip(target_rotations_xyzw, axes_by_path, coordinate_positions_by_path, strict=True)
+        ):
+            fitted = identity.clone()
+            spatial_axes = []
+            path_coordinates = coordinates.index_select(1, coordinate_positions)
+            for coordinate_index in range(axes.shape[0]):
+                axis = axes[coordinate_index].expand(problem_count, 3)
+                spatial_axes.append(quat_apply(fitted, axis))
+                fitted = quat_mul(
+                    fitted,
+                    quat_from_rotation_vector(path_coordinates[:, coordinate_index, None] * axes[coordinate_index]),
+                )
+            error[:, 3 * path_index : 3 * path_index + 3] = axis_angle_from_quat(
+                quat_mul(quat_conjugate(fitted), target)
+            )
+            if spatial_axes:
+                spatial_axes_tensor = torch.stack(spatial_axes, dim=1)
+                inverse_fitted = quat_conjugate(fitted)[:, None].expand(-1, axes.shape[0], -1)
+                body_axes = quat_apply(inverse_fitted.reshape(-1, 4), spatial_axes_tensor.reshape(-1, 3)).view_as(
+                    spatial_axes_tensor
+                )
+                jacobian[:, 3 * path_index : 3 * path_index + 3].index_copy_(
+                    2, coordinate_positions, body_axes.transpose(1, 2)
+                )
+        task_step = torch.linalg.solve(jacobian @ jacobian.transpose(1, 2) + damping, error.unsqueeze(-1))
+        step = (jacobian.transpose(1, 2) @ task_step).squeeze(-1)
+        step.mul_(0.5 / step.abs().amax(dim=-1, keepdim=True).clamp_min_(0.5))
+        coordinates.add_(step).clamp_(lower, upper)
+    return coordinates
+
+
 def fit_ordered_hinge_coordinates(
     rotation_xyzw: torch.Tensor,
     axes: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Fit one local rotation to one, two, or three ordered orthogonal hinges.
+    """Fit one local rotation to one, two, or three ordered independent hinges.
 
     Args:
         rotation_xyzw: Unit quaternions in xyzw order.
-        axes: One to three ordered orthonormal hinge axes.
+        axes: One to three ordered independent unit hinge axes.
 
     Returns:
         Principal hinge coordinates [rad] and geodesic residuals [rad].
@@ -708,10 +954,19 @@ def fit_ordered_hinge_coordinates(
     if rotation_xyzw.device != axes.device:
         raise ValueError("Ordered-hinge rotations and axes must share one device.")
     gram = axes @ axes.transpose(0, 1)
-    if not torch.allclose(gram, torch.eye(hinge_count, dtype=axes.dtype, device=axes.device), atol=1.0e-6):
-        raise ValueError("Ordered hinge axes must be mutually orthonormal.")
+    if not torch.allclose(torch.diagonal(gram), torch.ones(hinge_count, device=axes.device), atol=1.0e-6) or (
+        hinge_count > 1 and bool(torch.linalg.det(gram) < 1.0e-6)
+    ):
+        raise ValueError("Ordered hinge axes must be independent unit vectors.")
 
     rotation_xyzw = torch.nn.functional.normalize(rotation_xyzw, dim=-1)
+    orthogonal = torch.allclose(gram, torch.eye(hinge_count, dtype=axes.dtype, device=axes.device), atol=1.0e-6)
+    if not orthogonal:
+        coordinates = _fit_independent_hinge_coordinates(rotation_xyzw, axes)
+        fitted_xyzw = ordered_hinge_rotation(coordinates, axes)
+        relative = quat_mul(quat_conjugate(fitted_xyzw), rotation_xyzw)
+        residual = 2.0 * torch.atan2(torch.linalg.vector_norm(relative[..., :3], dim=-1), relative[..., 3].abs())
+        return coordinates, residual
     vector = rotation_xyzw[..., :3]
     scalar = rotation_xyzw[..., 3]
     if hinge_count == 1:
@@ -763,13 +1018,13 @@ def kinematic_seed_target_rotations(
     target_parent_rows: tuple[int, ...],
     target_rotation_xyzw: torch.Tensor,
     joint_q: torch.Tensor,
-) -> None:
-    """Seed direct target joints from desired semantic world rotations.
+) -> torch.Tensor:
+    """Fit complete semantic paths by zero-coordinate product of exponentials.
 
-    A row is seeded only when its target body is connected to its declared
-    semantic parent by one rotational joint represented by one to three
-    ordered hinges. Rows spanning fixed or multiple joints remain at the
-    caller-provided default coordinates for the shared IK solver to resolve.
+    Fixed joint transforms define each path's zero-coordinate rotation. The
+    ordered hinge axes are expressed in the reached semantic-parent frame,
+    fitted together when paths share coordinates, and written as absolute
+    target coordinates.
 
     Args:
         tree: Exact grouped rotational target topology.
@@ -777,10 +1032,14 @@ def kinematic_seed_target_rotations(
         target_body_indices: Target body for each semantic row.
         target_parent_rows: Semantic parent row, with row zero equal to -1.
         target_rotation_xyzw: Desired world rotations, shape
-            [semantic_row_count, problem_count, 4].
-        joint_q: Initial generalized positions
-            [problem_count, joint_coordinate_count] [m or rad, depending on
-            joint type], modified in place.
+            ``[semantic_row_count, problem_count, 4]``.
+        joint_q: Generalized positions
+            ``[problem_count, joint_coordinate_count]`` [m or rad, depending
+            on joint type], modified in place.
+
+    Returns:
+        Reached-to-desired semantic rotation residuals [rad], shape
+        ``[semantic_row_count, problem_count]``.
     """
     row_count = len(target_body_indices)
     if (
@@ -796,13 +1055,13 @@ def kinematic_seed_target_rotations(
         or joint_q.shape[1] != topology.coordinate_count
         or joint_q.shape[0] != target_rotation_xyzw.shape[1]
     ):
-        raise ValueError("Semantic target rotations, parents, bodies, and initial coordinates are incompatible.")
+        raise ValueError("Semantic target rotations, parents, bodies, and coordinates are incompatible.")
     if (
         target_rotation_xyzw.dtype is not torch.float32
         or joint_q.dtype is not torch.float32
         or target_rotation_xyzw.device != joint_q.device
     ):
-        raise ValueError("Semantic target rotations and initial coordinates must share float32 storage.")
+        raise ValueError("Semantic target rotations and coordinates must share float32 storage.")
     if (
         len(set(target_body_indices)) != row_count
         or any(body < 0 or body >= tree.num_bodies for body in target_body_indices)
@@ -815,83 +1074,202 @@ def kinematic_seed_target_rotations(
     ):
         raise ValueError("Semantic target rotations must contain finite unit quaternions.")
 
-    row_by_body = {body: row for row, body in enumerate(target_body_indices)}
     joint_by_child = {body: joint for joint, body in enumerate(tree.joint_child_body_indices)}
     device = joint_q.device
     problem_count = joint_q.shape[0]
+    identity = torch.zeros(problem_count, 4, dtype=torch.float32, device=device)
+    identity[:, 3] = 1.0
+    path_coordinate_indices_by_row: list[tuple[int, ...]] = []
+    path_coordinate_rows_by_row: list[tuple[int, ...]] = []
+    path_axes_by_row: list[torch.Tensor] = []
+    zero_rotations_by_row: list[torch.Tensor] = []
+    for row, parent_row in enumerate(target_parent_rows[1:], start=1):
+        parent_body = target_body_indices[parent_row]
+        child_body = target_body_indices[row]
+        path = []
+        body = child_body
+        while body != parent_body:
+            if body == tree.root_body_index:
+                raise ValueError("A semantic target parent must be an ancestor of its child body.")
+            path.append(body)
+            body = tree.parent_indices[body]
+        path.reverse()
+        if not path:
+            raise ValueError("A semantic target edge must contain at least one target body.")
+
+        zero_rotation = identity.clone()
+        path_coordinate_indices: list[int] = []
+        path_coordinate_rows: list[int] = []
+        path_axes: list[torch.Tensor] = []
+        for body in path:
+            tree_joint = joint_by_child[body]
+            coordinate_start, coordinate_stop = tree.joint_coordinate_ranges[tree_joint]
+            joint = int(topology.body_joint[body])
+            if (
+                int(topology.joint_parent[joint]) != tree.parent_indices[body]
+                or int(topology.joint_child[joint]) != body
+            ):
+                raise ValueError("Canonical Newton and grouped target topology disagree on a target joint.")
+            parent_frame = torch.tensor(
+                topology.joint_transform_parent[joint][3:7], dtype=torch.float32, device=device
+            ).expand(problem_count, 4)
+            child_frame = torch.tensor(
+                topology.joint_transform_child[joint][3:7], dtype=torch.float32, device=device
+            ).expand(problem_count, 4)
+            joint_frame = quat_mul(zero_rotation, parent_frame)
+            for coordinate_row in range(coordinate_start, coordinate_stop):
+                axis = torch.tensor(tree.coordinate_axes[coordinate_row], dtype=torch.float32, device=device)
+                path_axes.append(quat_apply(joint_frame[:1], axis.expand(1, 3)).squeeze(0))
+                path_coordinate_indices.append(tree.coordinate_q_indices[coordinate_row])
+                path_coordinate_rows.append(coordinate_row)
+            zero_rotation = quat_mul(quat_mul(zero_rotation, parent_frame), quat_conjugate(child_frame))
+
+        coordinate_indices_tuple = tuple(path_coordinate_indices)
+        path_coordinate_indices_by_row.append(coordinate_indices_tuple)
+        path_coordinate_rows_by_row.append(tuple(path_coordinate_rows))
+        path_axes_by_row.append(
+            torch.stack(path_axes) if path_axes else torch.empty((0, 3), dtype=torch.float32, device=device)
+        )
+        zero_rotations_by_row.append(zero_rotation)
+
+    coordinate_sets = tuple(set(path) for path in path_coordinate_indices_by_row)
+    unassigned = set(range(len(coordinate_sets)))
+    components: list[tuple[int, ...]] = []
+    while unassigned:
+        first = min(unassigned)
+        unassigned.remove(first)
+        component = [first]
+        component_coordinates = set(coordinate_sets[first])
+        while True:
+            linked = {index for index in unassigned if component_coordinates.intersection(coordinate_sets[index])}
+            if not linked:
+                break
+            unassigned.difference_update(linked)
+            component.extend(sorted(linked))
+            for index in linked:
+                component_coordinates.update(coordinate_sets[index])
+        components.append(tuple(component))
+
+    coordinate_row_by_index = dict(zip(tree.coordinate_q_indices, range(tree.num_coordinates), strict=True))
+    for component in components:
+        if len(component) == 1:
+            path_index = component[0]
+            coordinate_indices_tuple = path_coordinate_indices_by_row[path_index]
+            if not coordinate_indices_tuple:
+                continue
+            row = path_index + 1
+            axes = path_axes_by_row[path_index]
+            coordinate_indices = torch.tensor(coordinate_indices_tuple, dtype=torch.int64, device=device)
+            coordinate_rows = path_coordinate_rows_by_row[path_index]
+            lower = torch.tensor(
+                [tree.coordinate_lower_limits_rad[index] for index in coordinate_rows],
+                dtype=torch.float32,
+                device=device,
+            )
+            upper = torch.tensor(
+                [tree.coordinate_upper_limits_rad[index] for index in coordinate_rows],
+                dtype=torch.float32,
+                device=device,
+            )
+            desired_relative = quat_mul(
+                quat_conjugate(target_rotation_xyzw[target_parent_rows[row]]), target_rotation_xyzw[row]
+            )
+            desired_hinge_rotation = quat_mul(desired_relative, quat_conjugate(zero_rotations_by_row[path_index]))
+            if len(coordinate_indices_tuple) <= 3:
+                coordinates, _ = fit_ordered_hinge_coordinates(desired_hinge_rotation, axes)
+            else:
+                coordinates = _fit_redundant_hinge_coordinates(
+                    desired_hinge_rotation,
+                    axes,
+                    joint_q.index_select(1, coordinate_indices),
+                    lower,
+                    upper,
+                )
+            gram = axes @ axes.transpose(0, 1)
+            if len(coordinate_indices_tuple) == 3 and torch.allclose(
+                gram, torch.eye(3, dtype=torch.float32, device=device), atol=1.0e-6
+            ):
+                alternate = torch.stack(
+                    (
+                        coordinates[:, 0] + math.pi,
+                        math.pi - coordinates[:, 1],
+                        coordinates[:, 2] + math.pi,
+                    ),
+                    dim=-1,
+                )
+                alternate = torch.atan2(torch.sin(alternate), torch.cos(alternate))
+                projected = coordinates.clamp(lower, upper)
+                alternate_projected = alternate.clamp(lower, upper)
+                projection_error = torch.square(coordinates - projected).sum(dim=-1)
+                alternate_error = torch.square(alternate - alternate_projected).sum(dim=-1)
+                coordinates = torch.where((alternate_error < projection_error)[:, None], alternate, coordinates)
+            joint_q.index_copy_(1, coordinate_indices, coordinates)
+            continue
+
+        unique_coordinate_indices = tuple(
+            dict.fromkeys(index for path_index in component for index in path_coordinate_indices_by_row[path_index])
+        )
+        coordinate_indices = torch.tensor(unique_coordinate_indices, dtype=torch.int64, device=device)
+        position_by_coordinate = {coordinate: position for position, coordinate in enumerate(unique_coordinate_indices)}
+        coordinate_positions_by_path = tuple(
+            torch.tensor(
+                tuple(position_by_coordinate[index] for index in path_coordinate_indices_by_row[path_index]),
+                dtype=torch.int64,
+                device=device,
+            )
+            for path_index in component
+        )
+        lower = torch.tensor(
+            [tree.coordinate_lower_limits_rad[coordinate_row_by_index[index]] for index in unique_coordinate_indices],
+            dtype=torch.float32,
+            device=device,
+        )
+        upper = torch.tensor(
+            [tree.coordinate_upper_limits_rad[coordinate_row_by_index[index]] for index in unique_coordinate_indices],
+            dtype=torch.float32,
+            device=device,
+        )
+        target_hinge_rotations = tuple(
+            quat_mul(
+                quat_mul(
+                    quat_conjugate(target_rotation_xyzw[target_parent_rows[path_index + 1]]),
+                    target_rotation_xyzw[path_index + 1],
+                ),
+                quat_conjugate(zero_rotations_by_row[path_index]),
+            )
+            for path_index in component
+        )
+        coordinates = _fit_coupled_hinge_coordinates(
+            target_hinge_rotations,
+            tuple(path_axes_by_row[path_index] for path_index in component),
+            coordinate_positions_by_path,
+            joint_q.index_select(1, coordinate_indices),
+            lower,
+            upper,
+        )
+        joint_q.index_copy_(1, coordinate_indices, coordinates)
+
     world_rotation = torch.empty(problem_count, tree.num_bodies, 4, dtype=torch.float32, device=device)
     world_rotation[:, tree.root_body_index].copy_(target_rotation_xyzw[0])
-
-    for body, parent_body in enumerate(tree.parent_indices):
-        if parent_body == -1:
-            continue
-        tree_joint = joint_by_child[body]
-        coordinate_start, coordinate_stop = tree.joint_coordinate_ranges[tree_joint]
-        coordinate_count = coordinate_stop - coordinate_start
-        joint = int(topology.body_joint[body])
-        if int(topology.joint_parent[joint]) != parent_body or int(topology.joint_child[joint]) != body:
-            raise ValueError("Canonical Newton and grouped target topology disagree on a target joint.")
-        parent_frame = torch.tensor(
-            topology.joint_transform_parent[joint][3:7], dtype=torch.float32, device=device
-        ).expand(problem_count, 4)
-        child_frame = torch.tensor(
-            topology.joint_transform_child[joint][3:7], dtype=torch.float32, device=device
-        ).expand(problem_count, 4)
-
-        if coordinate_count:
-            coordinate_indices = torch.tensor(
-                tree.coordinate_q_indices[coordinate_start:coordinate_stop], dtype=torch.int64, device=device
-            )
-            axes = torch.tensor(
-                tree.coordinate_axes[coordinate_start:coordinate_stop], dtype=torch.float32, device=device
-            )
-            coordinates = joint_q.index_select(1, coordinate_indices)
-            row = row_by_body.get(body)
-            if row is not None and target_body_indices[target_parent_rows[row]] == parent_body:
-                lower = torch.tensor(
-                    tree.coordinate_lower_limits_rad[coordinate_start:coordinate_stop],
-                    dtype=torch.float32,
-                    device=device,
-                )
-                upper = torch.tensor(
-                    tree.coordinate_upper_limits_rad[coordinate_start:coordinate_stop],
-                    dtype=torch.float32,
-                    device=device,
-                )
-                desired_joint = quat_mul(
-                    quat_mul(
-                        quat_mul(quat_conjugate(parent_frame), quat_conjugate(world_rotation[:, parent_body])),
-                        target_rotation_xyzw[row],
-                    ),
-                    child_frame,
-                )
-                coordinates, _ = fit_ordered_hinge_coordinates(desired_joint, axes)
-                if coordinate_count == 3:
-                    alternate = torch.stack(
-                        (
-                            coordinates[:, 0] + math.pi,
-                            math.pi - coordinates[:, 1],
-                            coordinates[:, 2] + math.pi,
-                        ),
-                        dim=-1,
-                    )
-                    alternate = torch.atan2(torch.sin(alternate), torch.cos(alternate))
-                    projected = coordinates.clamp(lower, upper)
-                    alternate_projected = alternate.clamp(lower, upper)
-                    projection_error = torch.square(coordinates - projected).sum(dim=-1)
-                    alternate_error = torch.square(alternate - alternate_projected).sum(dim=-1)
-                    coordinates = torch.where((alternate_error < projection_error)[:, None], alternate, coordinates)
-                coordinates = coordinates.clamp(lower, upper)
-                joint_q[:, coordinate_indices] = coordinates
-            hinge_rotation = ordered_hinge_rotation(coordinates, axes)
-        else:
-            hinge_rotation = torch.zeros(problem_count, 4, dtype=torch.float32, device=device)
-            hinge_rotation[:, 3] = 1.0
-
-        world_rotation[:, body] = quat_mul(
-            quat_mul(
-                quat_mul(world_rotation[:, parent_body], parent_frame),
-                hinge_rotation,
-            ),
-            quat_conjugate(child_frame),
+    residual = torch.zeros(row_count, problem_count, dtype=torch.float32, device=device)
+    for path_index, (parent_row, coordinate_indices_tuple, axes, zero_rotation) in enumerate(
+        zip(
+            target_parent_rows[1:],
+            path_coordinate_indices_by_row,
+            path_axes_by_row,
+            zero_rotations_by_row,
+            strict=True,
         )
+    ):
+        reached_relative = zero_rotation
+        if coordinate_indices_tuple:
+            coordinate_indices = torch.tensor(coordinate_indices_tuple, dtype=torch.int64, device=device)
+            reached_relative = quat_mul(
+                ordered_hinge_rotation(joint_q.index_select(1, coordinate_indices), axes), zero_rotation
+            )
+        row = path_index + 1
+        reached_world = quat_mul(world_rotation[:, target_body_indices[parent_row]], reached_relative)
+        world_rotation[:, target_body_indices[row]] = reached_world
+        error = quat_mul(quat_conjugate(reached_world), target_rotation_xyzw[row])
+        residual[row] = 2.0 * torch.atan2(torch.linalg.vector_norm(error[:, :3], dim=-1), error[:, 3].abs())
+    return residual

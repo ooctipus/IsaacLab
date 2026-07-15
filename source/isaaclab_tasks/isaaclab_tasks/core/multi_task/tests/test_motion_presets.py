@@ -48,11 +48,11 @@ _BFM_RUNNER_AXES = (
     "seed_4728",
     "expert_clock_50hz",
 )
-_SMPL_ENV_AXES = ("smpl", "cmu", "newton_mjwarp", "timing_sim450_control30_horizon300", "sampling_source_rows")
+_SMPL_ENV_AXES = ("smpl", "humenv_cmu", "newton_mjwarp", "timing_sim450_control30_horizon300", "sampling_source_rows")
 _G1_CAPABILITY_AXES = ("evidence_physical_auxiliary", "randomization_physics_observation_pose_push")
 _G1_LAFAN_ENV_AXES = (
     "g1",
-    "lafan",
+    "bfm_lafan",
     "physx",
     "timing_sim200_control50_horizon501",
     "sampling_clip_time",
@@ -74,12 +74,13 @@ _PROFILES = {
 
 
 @pytest.mark.parametrize(
-    ("tokens", "source", "builder", "row_mode", "physics", "runner_axes"),
+    ("tokens", "source", "target", "projection", "row_mode", "physics", "runner_axes"),
     (
         (
             set(_SMPL_ENV_AXES),
             "cmu_humenv_smpl",
-            "smpl_frame_builder",
+            "smpl_frame_target",
+            "smpl_source_projection",
             "source_frames",
             "NewtonCfg",
             _META_RUNNER_AXES,
@@ -87,15 +88,17 @@ _PROFILES = {
         (
             set(_G1_LAFAN_ENV_AXES),
             "lafan_g1_29dof",
-            "g1_frame_builder",
+            "g1_frame_target",
+            "g1_source_projection",
             "clip_time_ranges",
             "PhysxCfg",
             _BFM_RUNNER_AXES,
         ),
         (
             set(_G1_CMU_ENV_AXES),
-            "cmu_humenv_smpl",
-            "g1_frame_builder",
+            "amass_cmu_smplh",
+            "g1_frame_target",
+            "g1_source_projection",
             "clip_time_ranges",
             "PhysxCfg",
             _BFM_RUNNER_AXES,
@@ -105,7 +108,8 @@ _PROFILES = {
 def test_independent_axes_resolve_three_motion_profiles(
     tokens: set[str],
     source: str,
-    builder: str,
+    target: str,
+    projection: str,
     row_mode: str,
     physics: str,
     runner_axes: tuple[str, ...],
@@ -115,7 +119,8 @@ def test_independent_axes_resolve_three_motion_profiles(
     table = env.commands.motion.task_table
 
     assert table.source.identifier == source
-    assert table.target_kinematics.frame_builder_factory.__name__ == builder
+    assert table.target_kinematics.target_factory.__name__ == target
+    assert table.target_kinematics.source_projection_factory.__name__ == projection
     assert table.task_row_mode == row_mode
     assert type(env.sim.physics).__name__ == physics
     assert isinstance(runner, MotionForwardBackwardRunnerCfg)
@@ -135,7 +140,8 @@ def test_fused_internal_config_modules_are_deleted() -> None:
 _PROFILE_SEMANTICS = {
     "smpl_cmu": {
         "source": "cmu_humenv_smpl",
-        "builder": "smpl_frame_builder",
+        "target": "smpl_frame_target",
+        "projection": "smpl_source_projection",
         "row_mode": "source_frames",
         "reset_sources": (("reference", 0.8), ("fall", 0.2)),
         "action_term": ("control", "NativeMujocoControlActionCfg"),
@@ -156,7 +162,8 @@ _PROFILE_SEMANTICS = {
     },
     "g1_lafan": {
         "source": "lafan_g1_29dof",
-        "builder": "g1_frame_builder",
+        "target": "g1_frame_target",
+        "projection": "g1_source_projection",
         "row_mode": "clip_time_ranges",
         "reset_sources": (("reference", 0.7), ("lie_down", 0.3)),
         "action_term": ("joint_position", "G1JointPositionActionCfg"),
@@ -176,8 +183,9 @@ _PROFILE_SEMANTICS = {
         "physics": "PhysxCfg",
     },
     "g1_cmu": {
-        "source": "cmu_humenv_smpl",
-        "builder": "g1_frame_builder",
+        "source": "amass_cmu_smplh",
+        "target": "g1_frame_target",
+        "projection": "g1_source_projection",
         "row_mode": "clip_time_ranges",
         "reset_sources": (("reference", 0.7), ("lie_down", 0.3)),
         "action_term": ("joint_position", "G1JointPositionActionCfg"),
@@ -215,7 +223,8 @@ def test_profiles_preserve_the_frozen_environment_semantics(profile: str) -> Non
     )
 
     assert table.source.identifier == expected["source"]
-    assert table.target_kinematics.frame_builder_factory.__name__ == expected["builder"]
+    assert table.target_kinematics.target_factory.__name__ == expected["target"]
+    assert table.target_kinematics.source_projection_factory.__name__ == expected["projection"]
     assert table.task_row_mode == expected["row_mode"]
     assert payload.reset_sources == expected["reset_sources"]
     action_terms = tuple(
@@ -263,11 +272,16 @@ def test_g1_transition_evidence_is_named_and_not_concatenated() -> None:
     assert not hasattr(env.observations, "history_actor")
 
 
-def test_default_motion_axes_are_smpl_cmu() -> None:
+def test_default_motion_axes_are_smpl_raw_cmu() -> None:
     env = resolve_presets(MotionImitationEnvCfg(), selected=set())
 
-    assert env.commands.motion.task_table.source.identifier == "cmu_humenv_smpl"
-    assert env.commands.motion.task_table.target_kinematics.frame_builder_factory.__name__ == "smpl_frame_builder"
+    assert env.commands.motion.task_table.source.identifier == "amass_cmu_smplh"
+    target = env.commands.motion.task_table.target_kinematics
+    assert target.target_factory.__name__ == "smpl_frame_target"
+    assert target.source_projection_factory.__name__ == "smpl_source_projection"
+    assert tuple(physics_type.__name__ for physics_type in target.physics_types) == ("NewtonCfg",)
+    assert not target.supports_physical_evidence
+    assert not target.supports_randomization
     assert env.commands.motion.task_table.task_row_mode == "source_frames"
     assert type(env.actions).__name__ == "SmplCfg"
     assert type(env.sim.physics).__name__ == "NewtonCfg"
@@ -280,8 +294,13 @@ def test_g1_cmu_resolves_from_independent_axes() -> None:
         selected=set(_G1_CMU_ENV_AXES),
     )
 
-    assert env.commands.motion.task_table.source.identifier == "cmu_humenv_smpl"
-    assert env.commands.motion.task_table.target_kinematics.frame_builder_factory.__name__ == "g1_frame_builder"
+    assert env.commands.motion.task_table.source.identifier == "amass_cmu_smplh"
+    target = env.commands.motion.task_table.target_kinematics
+    assert target.target_factory.__name__ == "g1_frame_target"
+    assert target.source_projection_factory.__name__ == "g1_source_projection"
+    assert tuple(physics_type.__name__ for physics_type in target.physics_types) == ("NewtonCfg", "PhysxCfg")
+    assert target.supports_physical_evidence
+    assert target.supports_randomization
     assert env.commands.motion.task_table.task_row_mode == "clip_time_ranges"
     assert type(env.actions).__name__ == "G1Cfg"
     assert type(env.sim.physics).__name__ == "PhysxCfg"
@@ -298,7 +317,7 @@ def test_bare_g1_selects_only_robot_geometry_and_control(
     backend: str,
     collision_type: type,
 ) -> None:
-    env = resolve_presets(MotionImitationEnvCfg(), selected={"g1", "cmu", backend})
+    env = resolve_presets(MotionImitationEnvCfg(), selected={"g1", "humenv_cmu", backend})
 
     assert isinstance(env.scene.ground.spawn.collision_props, collision_type)
     assert env.scene.ground.spawn.physics_material.static_friction == 0.7
@@ -321,7 +340,7 @@ def test_physical_auxiliary_evidence_selects_only_evidence_and_sensor(
 ) -> None:
     env = resolve_presets(
         MotionImitationEnvCfg(),
-        selected={"g1", "cmu", backend, "evidence_physical_auxiliary"},
+        selected={"g1", "humenv_cmu", backend, "evidence_physical_auxiliary"},
     )
 
     assert isinstance(env.scene.contact_forces, sensor_type)
@@ -339,7 +358,7 @@ def test_physical_auxiliary_evidence_selects_only_evidence_and_sensor(
 def test_physical_observation_pose_push_randomization_selects_no_evidence() -> None:
     env = resolve_presets(
         MotionImitationEnvCfg(),
-        selected={"g1", "cmu", "physx", "randomization_physics_observation_pose_push"},
+        selected={"g1", "humenv_cmu", "physx", "randomization_physics_observation_pose_push"},
     )
 
     assert env.scene.contact_forces is None
@@ -353,14 +372,52 @@ def test_physical_observation_pose_push_randomization_selects_no_evidence() -> N
 
 
 @pytest.mark.parametrize(
+    ("robot", "backend", "action_type", "physics_type"),
+    (
+        ("smpl", "newton_mjwarp", "MotionActionsCfg.SmplCfg", "NewtonCfg"),
+        ("g1", "newton_mjwarp", "MotionActionsCfg.G1Cfg", "NewtonCfg"),
+        ("g1", "physx", "MotionActionsCfg.G1Cfg", "PhysxCfg"),
+    ),
+)
+def test_motion_environment_composes_supported_robot_backend_pairs(
+    robot: str,
+    backend: str,
+    action_type: str,
+    physics_type: str,
+) -> None:
+    env = resolve_presets(MotionImitationEnvCfg(), selected={robot, "humenv_cmu", backend})
+
+    env.validate()
+    assert f"{type(env.actions).__module__}.{type(env.actions).__qualname__}".endswith(action_type)
+    assert type(env.sim.physics).__name__ == physics_type
+
+
+def test_motion_environment_robot_identity_does_not_depend_on_action_config_class() -> None:
+    """Target kinematics, rather than an action wrapper type, identifies the robot."""
+
+    class CustomActionsCfg:
+        pass
+
+    env = resolve_presets(MotionImitationEnvCfg(), selected={"g1", "humenv_cmu", "physx"})
+    env.actions = CustomActionsCfg()
+
+    env.validate_config()
+
+
+@pytest.mark.parametrize(
     ("tokens", "message"),
     (
-        ({"smpl", "cmu", "physx"}, "native SMPL articulation currently supports only"),
-        ({"g1", "cmu", "newton_mjwarp"}, "native G1 articulation currently supports only"),
-        ({"smpl", "cmu", "newton_mjwarp", "evidence_physical_auxiliary"}, "requires the G1 robot"),
         (
-            {"smpl", "cmu", "newton_mjwarp", "randomization_physics_observation_pose_push"},
-            "requires the G1 robot",
+            {"smpl", "humenv_cmu", "newton_mjwarp", "evidence_physical_auxiliary"},
+            "does not support physical auxiliary evidence",
+        ),
+        (
+            {"smpl", "humenv_cmu", "physx"},
+            "requires one of these physics types: NewtonCfg",
+        ),
+        (
+            {"smpl", "humenv_cmu", "newton_mjwarp", "randomization_physics_observation_pose_push"},
+            "does not support physical and observation randomization",
         ),
     ),
 )

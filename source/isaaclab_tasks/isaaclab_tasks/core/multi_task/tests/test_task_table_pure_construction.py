@@ -8,6 +8,7 @@
 import inspect
 import random
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -19,8 +20,11 @@ from isaaclab.terrains.terrain_generator import TerrainGenerator
 from isaaclab_tasks.core.multi_task.factory.mdp.reset_state_task_table import (
     build_factory_reset_state_task_table,
 )
+from isaaclab_tasks.core.multi_task.kinematics.ik_objectives.cfg import IKObjectiveMeshCollisionCfg
+from isaaclab_tasks.core.multi_task.kinematics.ik_objectives.context import IKObjectiveBuild
 from isaaclab_tasks.core.multi_task.motion.mdp.commands.motion_task_table import build_motion_task_table
 from isaaclab_tasks.core.multi_task.terrain.mdp.commands.task_table_builder import (
+    _build_ik_objectives,
     build_relative_state_task_table,
 )
 from isaaclab_tasks.core.multi_task.terrain.terrains.trimesh import (
@@ -70,6 +74,41 @@ def test_position_builder_uses_the_declared_generator_and_one_table_rng() -> Non
     assert "terrain_generator_cfg.class_type" in source
     assert "rng=rng.numpy" in source
     assert "TerrainGenerator(" not in source
+
+
+def test_position_mesh_objective_receives_float_contact_confidence() -> None:
+    """Position keeps uint8 contact identity while mesh probes receive mutable float32 confidence."""
+    captured = []
+
+    def build(_cfg, context):
+        captured.append(context)
+        return IKObjectiveBuild(objectives=())
+
+    objective_cfg = IKObjectiveMeshCollisionCfg(class_type=build, n_samples=1)
+    candidates = SimpleNamespace(
+        kinematics=object(),
+        asset_name="robot",
+        contact_body_ids=(0,),
+        collision_mesh=object(),
+    )
+    contact_mask = torch.tensor(((1,), (0,)), dtype=torch.uint8)
+    contact_confidence = contact_mask.float()
+    obstacle_pose = torch.zeros((2, 7), dtype=torch.float32)
+    probes = {1: (np.array((0,), dtype=np.int32), np.zeros((1, 3), dtype=np.float32), np.array((0,), dtype=np.int32))}
+
+    _build_ik_objectives(
+        candidates,
+        (objective_cfg,),
+        batch_size=2,
+        contact_mask=contact_mask,
+        contact_confidence=contact_confidence,
+        obstacle_pose=obstacle_pose,
+        collision_probes=probes,
+    )
+
+    assert len(captured) == 1
+    assert captured[0].contact_confidence is contact_confidence
+    assert captured[0].contact_confidence.dtype is torch.float32
 
 
 def test_custom_terrains_have_no_ambient_random_calls() -> None:

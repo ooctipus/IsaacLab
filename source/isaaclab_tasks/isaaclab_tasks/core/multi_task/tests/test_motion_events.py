@@ -113,7 +113,7 @@ def test_g1_push_uses_global_one_second_event_cadence() -> None:
         MotionImitationEnvCfg(),
         selected={
             "g1",
-            "lafan",
+            "bfm_lafan",
             "physx",
             "timing_sim200_control50_horizon501",
             "sampling_clip_time",
@@ -140,7 +140,7 @@ def test_motion_startup_randomization_reuses_isaaclab_events() -> None:
         MotionImitationEnvCfg(),
         selected={
             "g1",
-            "lafan",
+            "bfm_lafan",
             "physx",
             "timing_sim200_control50_horizon501",
             "sampling_clip_time",
@@ -179,7 +179,7 @@ def test_smpl_inertial_startup_rewrite_stays_absent() -> None:
     root_source = (motion_root.parent / "motion_env_cfg.py").read_text(encoding="utf-8")
     smpl = resolve_presets(
         MotionImitationEnvCfg(),
-        selected={"smpl", "cmu", "newton_mjwarp", "timing_sim450_control30_horizon300", "sampling_source_rows"},
+        selected={"smpl", "humenv_cmu", "newton_mjwarp", "timing_sim450_control30_horizon300", "sampling_source_rows"},
     )
 
     assert vars(smpl.events) == {}

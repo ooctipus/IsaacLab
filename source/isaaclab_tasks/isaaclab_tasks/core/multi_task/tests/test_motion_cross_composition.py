@@ -7,18 +7,19 @@
 
 from __future__ import annotations
 
+import pytest
+
 from isaaclab.envs import mdp as isaaclab_mdp
 
-from isaaclab_tasks.core.multi_task.motion.data.sources import cmu_humenv_smpl_skeleton, lafan_g1_29dof_skeleton
 from isaaclab_tasks.core.multi_task.motion.robots.g1.articulation import G1_BEHAVIOR_JOINT_NAMES
 from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
 from isaaclab_tasks.utils.hydra import resolve_presets
 
 _PROFILE_AXES = {
-    "smpl_cmu": {"smpl", "cmu", "newton_mjwarp", "timing_sim450_control30_horizon300", "sampling_source_rows"},
+    "smpl_cmu": {"smpl", "humenv_cmu", "newton_mjwarp", "timing_sim450_control30_horizon300", "sampling_source_rows"},
     "g1_lafan": {
         "g1",
-        "lafan",
+        "bfm_lafan",
         "physx",
         "timing_sim200_control50_horizon501",
         "sampling_clip_time",
@@ -44,14 +45,39 @@ _PROFILE_AXES = {
 }
 
 
+@pytest.mark.parametrize(
+    ("robot", "dataset", "source_identifier", "target_factory", "projection_factory"),
+    (
+        ("smpl", "cmu", "amass_cmu_smplh", "smpl_frame_target", "smpl_source_projection"),
+        ("g1", "cmu", "amass_cmu_smplh", "g1_frame_target", "g1_source_projection"),
+        ("smpl", "lafan", "lafan1_bvh_ground", "smpl_frame_target", "smpl_source_projection"),
+        ("g1", "lafan", "lafan1_bvh_ground", "g1_frame_target", "g1_source_projection"),
+    ),
+)
+def test_raw_motion_sources_compose_with_each_robot_target(
+    robot: str,
+    dataset: str,
+    source_identifier: str,
+    target_factory: str,
+    projection_factory: str,
+) -> None:
+    """Each raw source resolves independently with either robot target and projection."""
+    cfg = resolve_presets(MotionImitationEnvCfg(), selected={robot, dataset})
+    table = cfg.commands.motion.task_table
+
+    assert table.source.identifier == source_identifier
+    assert table.target_kinematics.target_factory.__name__ == target_factory
+    assert table.target_kinematics.source_projection_factory.__name__ == projection_factory
+
+
 def _resolved(profile: str) -> MotionImitationEnvCfg:
     cfg = resolve_presets(MotionImitationEnvCfg(), selected=_PROFILE_AXES[profile])
     assert isinstance(cfg, MotionImitationEnvCfg)
     return cfg
 
 
-def test_g1_cmu_composes_smpl_source_with_the_same_physical_g1_preset() -> None:
-    """Cross composition changes source and builder, not the live robot/control preset."""
+def test_g1_cmu_composes_raw_amass_with_the_same_physical_g1_preset() -> None:
+    """Raw cross composition changes source projection, not the live robot/control preset."""
     native = _resolved("g1_lafan")
     cross = _resolved("g1_cmu")
 
@@ -65,15 +91,24 @@ def test_g1_cmu_composes_smpl_source_with_the_same_physical_g1_preset() -> None:
     )
     assert native.actions.joint_position.preserve_order and cross.actions.joint_position.preserve_order
     assert native.commands.motion.task_table.source.identifier == "lafan_g1_29dof"
-    assert cross.commands.motion.task_table.source.identifier == "cmu_humenv_smpl"
-    assert native.commands.motion.task_table.target_kinematics.frame_builder_factory.__name__ == "g1_frame_builder"
-    assert cross.commands.motion.task_table.target_kinematics.frame_builder_factory.__name__ == "g1_frame_builder"
-    assert native.commands.motion.task_table.route.exact_family == "exact_coordinates"
-    assert cross.commands.motion.task_table.route.semantic_family == "semantic_sequence"
+    assert cross.commands.motion.task_table.source.identifier == "amass_cmu_smplh"
+    native_target = native.commands.motion.task_table.target_kinematics
+    cross_target = cross.commands.motion.task_table.target_kinematics
+    assert native_target.target_factory.__name__ == cross_target.target_factory.__name__ == "g1_frame_target"
+    assert (
+        native_target.source_projection_factory.__name__
+        == cross_target.source_projection_factory.__name__
+        == "g1_source_projection"
+    )
+    expected_routes = ("exact", "analytic", "trajectory")
+    assert not hasattr(native.commands.motion.task_table, "route")
+    assert not hasattr(cross.commands.motion.task_table, "route")
+    assert tuple(family.name for family in native.commands.motion.task_table.families) == expected_routes
+    assert tuple(family.name for family in cross.commands.motion.task_table.families) == expected_routes
 
 
-def test_smpl_lafan_composes_g1_coordinates_with_the_same_physical_smpl_preset() -> None:
-    """Reverse cross composition changes only source construction, not the live SMPL robot."""
+def test_smpl_lafan_composes_raw_bvh_with_the_same_physical_smpl_preset() -> None:
+    """Raw reverse composition changes only source construction, not the live SMPL robot."""
     native = _resolved("smpl_cmu")
     cross = _resolved("smpl_lafan")
     cross.validate()
@@ -84,9 +119,15 @@ def test_smpl_lafan_composes_g1_coordinates_with_the_same_physical_smpl_preset()
     assert type(native.actions) is type(cross.actions)
     assert type(native.observations) is type(cross.observations)
     assert native.commands.motion.task_table.source.identifier == "cmu_humenv_smpl"
-    assert cross.commands.motion.task_table.source.identifier == "lafan_g1_29dof"
-    assert native.commands.motion.task_table.target_kinematics.frame_builder_factory.__name__ == "smpl_frame_builder"
-    assert cross.commands.motion.task_table.target_kinematics.frame_builder_factory.__name__ == "smpl_frame_builder"
+    assert cross.commands.motion.task_table.source.identifier == "lafan1_bvh_ground"
+    native_target = native.commands.motion.task_table.target_kinematics
+    cross_target = cross.commands.motion.task_table.target_kinematics
+    assert native_target.target_factory.__name__ == cross_target.target_factory.__name__ == "smpl_frame_target"
+    assert (
+        native_target.source_projection_factory.__name__
+        == cross_target.source_projection_factory.__name__
+        == "smpl_source_projection"
+    )
 
 
 def test_g1_robot_does_not_select_timing_or_task_sampling() -> None:
@@ -96,7 +137,7 @@ def test_g1_robot_does_not_select_timing_or_task_sampling() -> None:
         MotionImitationEnvCfg(),
         selected={
             "g1",
-            "lafan",
+            "bfm_lafan",
             "physx",
             "timing_sim450_control30_horizon300",
             "sampling_source_rows",
@@ -119,15 +160,12 @@ def test_g1_robot_does_not_select_timing_or_task_sampling() -> None:
 
 def test_cross_composition_uses_source_provenance_without_a_second_robot_model() -> None:
     """Source skeletons describe decoded coordinates and do not own simulation assets."""
-    g1_source = lafan_g1_29dof_skeleton()
-    smpl_source = cmu_humenv_smpl_skeleton()
     cross = _resolved("g1_cmu")
 
-    assert g1_source.num_bodies == 30
-    assert g1_source.num_joints == 29
-    assert smpl_source.num_bodies == 24
-    assert smpl_source.num_joints == 69
-    assert smpl_source.identity_sha256 == cross.commands.motion.task_table.source.build_skeleton().identity_sha256
+    assert cross.commands.motion.task_table.source.identifier == "amass_cmu_smplh"
+    assert cross.commands.motion.task_table.source.semantic_level == "smplh_pose_shape"
+    assert cross.commands.motion.task_table.source.open_source.__module__.endswith(".amass_smplh")
+    assert cross.commands.motion.task_table.source.decoder_version == "amass_smplh_clip_rows_v2"
     assert not hasattr(cross.commands.motion.task_table.source, "robot")
     assert not hasattr(cross.commands.motion.task_table.source, "asset")
 
@@ -169,7 +207,10 @@ def test_cross_composition_has_no_post_resolution_composition_hook() -> None:
 
     assert not hasattr(cross, "compose_motion")
     assert not hasattr(cross, "motion")
-    assert callable(cross.commands.motion.task_table.target_kinematics.frame_builder_factory)
-    assert callable(cross.commands.motion.task_table.target_kinematics.reference_kinematics_factory)
+    target = cross.commands.motion.task_table.target_kinematics
+    assert callable(target.target_factory)
+    assert callable(target.source_projection_factory)
+    assert not hasattr(target, "reference_kinematics_factory")
+    assert not hasattr(target, "frame_builder_factory")
     assert callable(cross.commands.motion.payload.reset_transform_factory)
     assert not hasattr(cross.commands.motion.payload, "transition_factory")

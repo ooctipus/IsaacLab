@@ -80,7 +80,7 @@ def motion_task_table(
         frames,
         joint_names,
         *args,
-        family_name=kwargs.pop("family_name", "exact_coordinates"),
+        family_name=kwargs.pop("family_name", "exact"),
         family_identity_sha256=kwargs.pop("family_identity_sha256", _EXACT_FAMILY_IDENTITY),
         view=view,
         **kwargs,

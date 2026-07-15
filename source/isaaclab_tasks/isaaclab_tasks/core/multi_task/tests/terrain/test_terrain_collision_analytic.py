@@ -29,11 +29,13 @@ import warp as wp
 from isaaclab.utils.warp import convert_to_warp_mesh
 
 from isaaclab_tasks.core.multi_task.kinematics import (
+    IKConstraintMeshClearance,
     IKObjectiveMeshCollision,
     NewtonKinematics,
     NewtonKinematicsCfg,
     collision_probes_sample,
 )
+from isaaclab_tasks.core.multi_task.kinematics.ik_objectives.mesh_collision import IKObjectiveMeshNonpenetration
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -75,18 +77,19 @@ def _make_optimizer(
     weight: float = 3.0,
     margin: float = 0.05,
     n_samples: int = 4,
+    contact_confidence: float = 1.0,
 ) -> tuple:
     """Build a single-problem LM optimizer with only the collision objective.
 
     Returns ``(impl, obj)`` where ``impl`` is the low-level
     :class:`newton.ik.IKOptimizerLM` and ``obj`` is the collision objective.
     """
-    from newton._src.sim.ik.ik_lm_optimizer import IKOptimizerLM
+    from newton.ik import IKOptimizerLM
 
     probe_bodies, probe_offsets, probe_slots = collision_probes_sample(kin.builder, foot_ids, n_samples)
     obstacle_pose = torch.zeros(1, 7, dtype=torch.float32, device=DEVICE)
     obstacle_pose[:, 6] = 1.0
-    contact_mask = torch.ones(1, len(foot_ids), dtype=torch.uint8, device=DEVICE)
+    confidence = torch.full((1, len(foot_ids)), contact_confidence, dtype=torch.float32, device=DEVICE)
     obj = IKObjectiveMeshCollision(
         probe_offsets=probe_offsets,
         probe_bodies=probe_bodies,
@@ -97,7 +100,7 @@ def _make_optimizer(
         margin=margin,
         max_distance=2.0,
         probe_contact_slots=probe_slots,
-        contact_mask=contact_mask,
+        contact_confidence=confidence,
         one_sided_up_axis=(0.0, 0.0, 1.0),
     )
     impl = IKOptimizerLM(
@@ -107,6 +110,72 @@ def _make_optimizer(
         jacobian_mode=jacobian_mode,
     )
     return impl, obj
+
+
+def _make_clearance_optimizer(
+    kin: NewtonKinematics,
+    wp_mesh,
+    foot_ids: list[int],
+    *,
+    n_samples: int = 4,
+) -> tuple:
+    """Build a single-problem optimizer exposing physical signed clearance."""
+    from newton.ik import IKOptimizerLM
+
+    probe_bodies, probe_offsets, _ = collision_probes_sample(kin.builder, foot_ids, n_samples)
+    obstacle_pose = torch.zeros(1, 7, dtype=torch.float32, device=DEVICE)
+    obstacle_pose[:, 6] = 1.0
+    constraint = IKConstraintMeshClearance(
+        probe_offsets=probe_offsets,
+        probe_bodies=probe_bodies,
+        probe_affects_dof=kin.topology.body_dof_ancestry[probe_bodies],
+        mesh=wp_mesh,
+        obstacle_pose=obstacle_pose,
+        max_distance=2.0,
+        one_sided_up_axis=(0.0, 0.0, 1.0),
+    )
+    optimizer = IKOptimizerLM(
+        model=kin.model,
+        n_batch=1,
+        objectives=[constraint],
+        jacobian_mode=ik.IKJacobianType.ANALYTIC,
+    )
+    return optimizer, constraint
+
+
+def _make_nonpenetration_optimizer(
+    kin: NewtonKinematics,
+    wp_mesh,
+    foot_ids: list[int],
+    *,
+    n_samples: int = 4,
+    tolerance_m: float = 0.002,
+    maximum_penetration_m: float = 0.0,
+) -> tuple:
+    """Build a single-problem optimizer with an ungated nonpenetration hinge."""
+    from newton.ik import IKOptimizerLM
+
+    probe_bodies, probe_offsets, _ = collision_probes_sample(kin.builder, foot_ids, n_samples)
+    obstacle_pose = torch.zeros(1, 7, dtype=torch.float32, device=DEVICE)
+    obstacle_pose[:, 6] = 1.0
+    objective = IKObjectiveMeshNonpenetration(
+        probe_offsets=probe_offsets,
+        probe_bodies=probe_bodies,
+        probe_affects_dof=kin.topology.body_dof_ancestry[probe_bodies],
+        mesh=wp_mesh,
+        obstacle_pose=obstacle_pose,
+        tolerance_m=tolerance_m,
+        maximum_penetration_m=maximum_penetration_m,
+        max_distance=2.0,
+        one_sided_up_axis=(0.0, 0.0, 1.0),
+    )
+    optimizer = IKOptimizerLM(
+        model=kin.model,
+        n_batch=1,
+        objectives=[objective],
+        jacobian_mode=ik.IKJacobianType.ANALYTIC,
+    )
+    return optimizer, objective
 
 
 def _compute_residuals(impl, jq_np: np.ndarray) -> np.ndarray:
@@ -243,3 +312,149 @@ class TestTerrainCollisionAnalytic:
         impl_a, _ = _make_optimizer(kin, wp_mesh, foot_ids, ik.IKJacobianType.ANALYTIC)
         J = _compute_jacobian(impl_a, jq)
         assert np.abs(J).max() > 1e-2, f"expected nonzero gradient on penetrating config, got {np.abs(J).max():.3e}"
+
+    @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
+    def test_contact_confidence_scales_residual_and_jacobian(self, setup):
+        """A mapped collision row is scaled by sqrt(1-c) for c in {0, .25, 1}."""
+        kin, foot_ids, wp_mesh = setup
+        joint_q = _make_test_config(kin, 0.0)
+        evidence = {}
+        mapped = None
+        for confidence in (0.0, 0.25, 1.0):
+            optimizer, objective = _make_optimizer(
+                kin, wp_mesh, foot_ids, ik.IKJacobianType.ANALYTIC, contact_confidence=confidence
+            )
+            evidence[confidence] = (_compute_residuals(optimizer, joint_q), _compute_jacobian(optimizer, joint_q))
+            mapped = objective._probe_contact_slots_np >= 0
+
+        assert mapped is not None and mapped.any() and (~mapped).any()
+        residual_zero, jacobian_zero = evidence[0.0]
+        assert np.abs(residual_zero[mapped]).max() > 1.0e-4
+        assert np.abs(jacobian_zero[mapped]).max() > 1.0e-2
+        scale = np.sqrt(0.75)
+        np.testing.assert_allclose(evidence[0.25][0][mapped], scale * residual_zero[mapped], atol=2.0e-6, rtol=2.0e-6)
+        np.testing.assert_allclose(evidence[0.25][1][mapped], scale * jacobian_zero[mapped], atol=2.0e-6, rtol=2.0e-6)
+        np.testing.assert_array_equal(evidence[1.0][0][mapped], 0.0)
+        np.testing.assert_array_equal(evidence[1.0][1][mapped], 0.0)
+        np.testing.assert_allclose(evidence[0.25][0][~mapped], residual_zero[~mapped])
+        np.testing.assert_allclose(evidence[1.0][1][~mapped], jacobian_zero[~mapped])
+
+
+class TestTerrainClearanceConstraint:
+    """Validate the hard feature physical units and analytic derivative."""
+
+    @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
+    def test_signed_clearance_is_ungated_and_measured_in_meters(self, setup):
+        kin, foot_ids, wp_mesh = setup
+        optimizer, _ = _make_clearance_optimizer(kin, wp_mesh, foot_ids)
+        penetrating = _make_test_config(kin, 0.50)
+        near_surface = _make_test_config(kin, 0.54)
+        raised = near_surface.copy()
+        raised[2] += 0.1
+
+        penetration = _compute_residuals(optimizer, penetrating)
+        near_surface_clearance = _compute_residuals(optimizer, near_surface)
+        raised_clearance = _compute_residuals(optimizer, raised)
+
+        assert penetration.max() > 0.0
+        np.testing.assert_allclose(raised_clearance - near_surface_clearance, -0.1, atol=2.0e-5, rtol=0.0)
+
+    @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
+    def test_analytic_vertical_derivative_matches_finite_difference(self, setup):
+        kin, foot_ids, wp_mesh = setup
+        optimizer, _ = _make_clearance_optimizer(kin, wp_mesh, foot_ids)
+        joint_q = _make_test_config(kin, 0.54)
+        analytic = _compute_jacobian(optimizer, joint_q)[:, 2]
+        epsilon = 1.0e-4
+        above = joint_q.copy()
+        below = joint_q.copy()
+        above[2] += epsilon
+        below[2] -= epsilon
+        finite_difference = (_compute_residuals(optimizer, above) - _compute_residuals(optimizer, below)) / (
+            2.0 * epsilon
+        )
+
+        np.testing.assert_allclose(analytic, finite_difference, atol=5.0e-3, rtol=5.0e-3)
+
+
+class TestTerrainNonpenetrationObjective:
+    """Validate the ungated zero-at-contact hinge and analytic derivative."""
+
+    @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
+    def test_clear_and_allowed_boundary_have_exactly_zero_rows(self, setup):
+        kin, foot_ids, wp_mesh = setup
+        optimizer, _ = _make_nonpenetration_optimizer(kin, wp_mesh, foot_ids)
+        clear = _make_test_config(kin, 2.0)
+
+        np.testing.assert_array_equal(_compute_residuals(optimizer, clear), 0.0)
+        np.testing.assert_array_equal(_compute_jacobian(optimizer, clear), 0.0)
+
+        clearance_optimizer, _ = _make_clearance_optimizer(kin, wp_mesh, foot_ids)
+        penetrating = _make_test_config(kin, 0.50)
+        allowed_depth = float(_compute_residuals(clearance_optimizer, penetrating).max())
+        assert allowed_depth > 0.0
+        boundary_optimizer, _ = _make_nonpenetration_optimizer(
+            kin, wp_mesh, foot_ids, maximum_penetration_m=allowed_depth
+        )
+        np.testing.assert_array_equal(_compute_residuals(boundary_optimizer, penetrating), 0.0)
+        np.testing.assert_array_equal(_compute_jacobian(boundary_optimizer, penetrating), 0.0)
+
+    @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
+    def test_penetration_is_normalized_by_tolerance(self, setup):
+        kin, foot_ids, wp_mesh = setup
+        tolerance_m = 0.002
+        clearance_optimizer, _ = _make_clearance_optimizer(kin, wp_mesh, foot_ids)
+        optimizer, _ = _make_nonpenetration_optimizer(kin, wp_mesh, foot_ids, tolerance_m=tolerance_m)
+        penetrating = _make_test_config(kin, 0.50)
+
+        physical_depth = _compute_residuals(clearance_optimizer, penetrating)
+        residual = _compute_residuals(optimizer, penetrating)
+        expected = np.maximum(physical_depth, 0.0) / tolerance_m
+
+        assert residual.max() > 0.0
+        np.testing.assert_allclose(residual, expected, atol=2.0e-5, rtol=2.0e-6)
+
+    @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
+    def test_analytic_vertical_derivative_matches_finite_difference_away_from_knee(self, setup):
+        kin, foot_ids, wp_mesh = setup
+        optimizer, _ = _make_nonpenetration_optimizer(kin, wp_mesh, foot_ids)
+        joint_q = _make_test_config(kin, 0.50)
+        residual = _compute_residuals(optimizer, joint_q)
+        active = residual > 1.0
+        assert active.any()
+
+        analytic = _compute_jacobian(optimizer, joint_q)[:, 2]
+        epsilon = 1.0e-4
+        above = joint_q.copy()
+        below = joint_q.copy()
+        above[2] += epsilon
+        below[2] -= epsilon
+        finite_difference = (_compute_residuals(optimizer, above) - _compute_residuals(optimizer, below)) / (
+            2.0 * epsilon
+        )
+
+        np.testing.assert_allclose(analytic[active], finite_difference[active], atol=0.5, rtol=5.0e-3)
+
+    @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
+    def test_active_contact_confidence_does_not_gate_nonpenetration(self, setup):
+        kin, foot_ids, wp_mesh = setup
+        joint_q = _make_test_config(kin, 0.0)
+        soft_optimizer, soft_objective = _make_optimizer(
+            kin, wp_mesh, foot_ids, ik.IKJacobianType.ANALYTIC, contact_confidence=1.0
+        )
+        hinge_optimizer, _ = _make_nonpenetration_optimizer(kin, wp_mesh, foot_ids)
+        mapped = soft_objective._probe_contact_slots_np >= 0
+        soft_residual = _compute_residuals(soft_optimizer, joint_q)
+        hinge_residual = _compute_residuals(hinge_optimizer, joint_q)
+
+        assert mapped.any()
+        np.testing.assert_array_equal(soft_residual[mapped], 0.0)
+        assert hinge_residual[mapped].max() > 0.0
+
+    @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
+    def test_invalid_hinge_scales_are_rejected(self, setup):
+        kin, foot_ids, wp_mesh = setup
+        with pytest.raises(ValueError, match="tolerance_m"):
+            _make_nonpenetration_optimizer(kin, wp_mesh, foot_ids, tolerance_m=0.0)
+        with pytest.raises(ValueError, match="maximum_penetration_m"):
+            _make_nonpenetration_optimizer(kin, wp_mesh, foot_ids, maximum_penetration_m=-1.0e-3)

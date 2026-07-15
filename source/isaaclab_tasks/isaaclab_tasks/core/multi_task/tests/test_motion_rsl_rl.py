@@ -89,10 +89,15 @@ def _index(frame_counts: tuple[int, ...]) -> MotionClipIndex:
             frame_count=count,
             source_fps=30.0,
             content_sha256=_hash(f"clip-{index}"),
+            skeleton_id=0,
         )
         for index, count in enumerate(frame_counts)
     )
-    return MotionClipIndex(source_content_sha256=_hash("source"), clips=clips)
+    return MotionClipIndex(
+        source_content_sha256=_hash("source"),
+        skeleton_identity_sha256s=(_hash("source-skeleton"),),
+        clips=clips,
+    )
 
 
 def _table(
@@ -111,7 +116,7 @@ def _table(
         frame_builder_version,
         _hash(f"{frame_builder_version}-construction"),
         "clip_time_ranges",
-        _hash("source-skeleton"),
+        "test_decoder_v1",
     )
 
 

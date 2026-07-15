@@ -33,7 +33,7 @@ from isaaclab_tasks.core.multi_task.motion_env_cfg import (
 from isaaclab_tasks.utils import resolve_presets
 
 _BFM_PRESETS = (
-    "presets=g1,lafan,physx,timing_sim200_control50_horizon501,sampling_clip_time,"
+    "presets=g1,bfm_lafan,physx,timing_sim200_control50_horizon501,sampling_clip_time,"
     "evidence_physical_auxiliary,randomization_physics_observation_pose_push,"
     "helpers_discriminator_auxiliary,tracking_reset_frame,tracking_interval_9p6m,model_residual_6x1024,"
     "replay_episode_uniform_5120k,schedule_1024x1_211p2m,optimization_lr3e4_implied0_actor0p05,"
@@ -71,10 +71,10 @@ def test_motion_config_resolution_does_not_import_pxr_before_simulation_app() ->
         )
         profiles = {
             "smpl_cmu": (
-                f"presets=smpl,cmu,newton_mjwarp,timing_sim450_control30_horizon300,"
+                f"presets=smpl,humenv_cmu,newton_mjwarp,timing_sim450_control30_horizon300,"
                 f"sampling_source_rows,{meta_runner}"
             ),
-            "g1_lafan": f"presets=g1,lafan,{g1_environment},{bfm_runner}",
+            "g1_lafan": f"presets=g1,bfm_lafan,{g1_environment},{bfm_runner}",
             "g1_cmu": f"presets=g1,cmu,{g1_environment},{bfm_runner}",
         }
         for profile, selection in profiles.items():
@@ -83,7 +83,11 @@ def test_motion_config_resolution_does_not_import_pxr_before_simulation_app() ->
                 "Isaac-Motion-Imitation-v0",
                 "rsl_rl_cfg_entry_point",
             )
-            expected_source = "cmu_humenv_smpl" if profile in ("smpl_cmu", "g1_cmu") else "lafan_g1_29dof"
+            expected_source = {
+                "smpl_cmu": "cmu_humenv_smpl",
+                "g1_lafan": "lafan_g1_29dof",
+                "g1_cmu": "amass_cmu_smplh",
+            }[profile]
             assert env_cfg.commands.motion.task_table.source.identifier == expected_source
             assert env_cfg.decimation == (15 if profile == "smpl_cmu" else 4)
             assert runner_cfg is not None
@@ -189,7 +193,7 @@ def test_motion_scene_uses_a_local_native_collision_plane() -> None:
     """Ground construction must be local and preserve native SMPL floor facts."""
     env = resolve_presets(
         MotionImitationEnvCfg(),
-        selected={"smpl", "cmu", "newton_mjwarp", "timing_sim450_control30_horizon300", "sampling_source_rows"},
+        selected={"smpl", "humenv_cmu", "newton_mjwarp", "timing_sim450_control30_horizon300", "sampling_source_rows"},
     )
     scene = env.scene
 
@@ -213,7 +217,6 @@ def test_motion_scene_uses_a_local_native_collision_plane() -> None:
     ("robot", "backend", "capabilities", "collision_type", "sensor_type", "friction"),
     (
         ("smpl", "newton_mjwarp", frozenset(), MujocoCollisionPropertiesCfg, None, 0.7),
-        ("smpl", "physx", frozenset(), CollisionBaseCfg, None, 0.7),
         (
             "g1",
             "newton_mjwarp",
@@ -240,7 +243,7 @@ def test_motion_ground_and_sensor_compose_robot_and_backend_axes(
     sensor_type: type | None,
     friction: float,
 ) -> None:
-    env = resolve_presets(MotionImitationEnvCfg(), selected={robot, "cmu", backend, *capabilities})
+    env = resolve_presets(MotionImitationEnvCfg(), selected={robot, "humenv_cmu", backend, *capabilities})
 
     assert isinstance(env.scene.ground.spawn.collision_props, collision_type)
     assert env.scene.ground.spawn.physics_material.static_friction == friction

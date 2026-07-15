@@ -55,15 +55,33 @@ class IKPositionObjectiveBuildContext(IKObjectiveBuildContext):
 
 
 @dataclass(frozen=True, slots=True)
-class IKMeshCollisionObjectiveBuildContext(IKObjectiveBuildContext):
-    """Solve context with explicit probes, obstacle poses, and optional contact gating."""
+class IKObjectiveMeshCollisionBuildContext(IKObjectiveBuildContext):
+    """Solve context with explicit probes, obstacle poses, and optional continuous contact confidence."""
 
     collision_mesh: wp.Mesh
     obstacle_pose: torch.Tensor
     probe_offsets: np.ndarray
     probe_bodies: np.ndarray
     probe_contact_slots: np.ndarray | None = None
-    contact_mask: torch.Tensor | None = None
+    contact_confidence: torch.Tensor | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class IKConstraintMeshClearanceBuildContext(IKObjectiveBuildContext):
+    """Solve context with ungated probes and obstacle poses for hard clearance."""
+
+    collision_mesh: wp.Mesh
+    obstacle_pose: torch.Tensor
+    probe_offsets: np.ndarray
+    probe_bodies: np.ndarray
+
+
+@dataclass(frozen=True, slots=True)
+class IKConstraintBuild:
+    """Linearizable constraint features and their ordered upper bounds."""
+
+    features: tuple[ik.IKObjective, ...]
+    upper: tuple[float, ...]
 
 
 @dataclass(frozen=True, slots=True)

@@ -18,7 +18,7 @@ from isaaclab_tasks.utils import resolve_presets
 
 _META_TOKENS = {
     "smpl",
-    "cmu",
+    "humenv_cmu",
     "helpers_discriminator",
     "tracking_off",
     "model_plain_2x1024",
@@ -32,7 +32,7 @@ _META_TOKENS = {
 }
 _BFM_TOKENS = {
     "g1",
-    "lafan",
+    "bfm_lafan",
     "helpers_discriminator_auxiliary",
     "tracking_reset_frame",
     "tracking_interval_9p6m",
@@ -218,7 +218,7 @@ def test_helper_presence_and_optimization_profiles_remain_independent() -> None:
 
 def test_robot_and_dataset_axes_remain_independent() -> None:
     lafan = _runner(_BFM_TOKENS)
-    cmu = _runner((_BFM_TOKENS - {"lafan"}) | {"cmu"})
+    cmu = _runner((_BFM_TOKENS - {"bfm_lafan"}) | {"humenv_cmu"})
 
     assert lafan.to_dict() == cmu.to_dict()
     assert "g1_lafan" not in repr(lafan.to_dict())

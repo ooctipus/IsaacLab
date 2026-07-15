@@ -15,6 +15,9 @@ from isaaclab_assets.robots.smpl.smpl_constants import (
 
 from ..skeleton import MotionSkeleton
 
+HUMENV_SMPL_COORDINATE_PROFILE_SHA256 = "2694fb6b394120bbbbf6166f0d206c3d37f629b2fc751ad19f9deb75a5232150"
+"""Complete HumEnv SMPL generalized-coordinate contract."""
+
 _PARENT_INDICES = (
     -1,
     0,
@@ -74,10 +77,18 @@ _LANDMARKS = (
     MotionSkeleton.Landmark("left_hip", "L_Hip", "L_Hip"),
     MotionSkeleton.Landmark("left_knee", "L_Knee", "L_Knee"),
     MotionSkeleton.Landmark("left_ankle", "L_Ankle", "L_Ankle"),
+    MotionSkeleton.Landmark("left_toe", "L_Toe", "L_Toe"),
     MotionSkeleton.Landmark("right_hip", "R_Hip", "R_Hip"),
     MotionSkeleton.Landmark("right_knee", "R_Knee", "R_Knee"),
     MotionSkeleton.Landmark("right_ankle", "R_Ankle", "R_Ankle"),
+    MotionSkeleton.Landmark("right_toe", "R_Toe", "R_Toe"),
     MotionSkeleton.Landmark("torso", "Torso", "Torso"),
+    MotionSkeleton.Landmark("spine", "Spine", "Spine"),
+    MotionSkeleton.Landmark("chest", "Chest", "Chest"),
+    MotionSkeleton.Landmark("neck", "Neck", "Neck"),
+    MotionSkeleton.Landmark("left_thorax", "L_Thorax", "L_Thorax"),
+    MotionSkeleton.Landmark("right_thorax", "R_Thorax", "R_Thorax"),
+    MotionSkeleton.Landmark("head", "Head", "Head"),
     MotionSkeleton.Landmark("left_shoulder", "L_Shoulder", "L_Shoulder"),
     MotionSkeleton.Landmark("left_elbow", "L_Elbow", "L_Elbow"),
     MotionSkeleton.Landmark("left_wrist", "L_Wrist", "L_Wrist"),
@@ -102,4 +113,5 @@ def cmu_humenv_smpl_skeleton() -> MotionSkeleton:
         landmarks=_LANDMARKS,
         root_translation_frame="world",
         root_rotation_convention="wxyz",
+        landmark_rotation_policy="calibrated_body",
     )

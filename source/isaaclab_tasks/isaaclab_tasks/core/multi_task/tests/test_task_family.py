@@ -98,6 +98,19 @@ def test_task_family_runs_visible_stages_once_in_declaration_order() -> None:
     assert execution.selected_indices.shape[0] <= 2
 
 
+def test_task_family_can_stop_after_acceptance_without_selection() -> None:
+    """A domain that publishes every candidate does not invent a thinning stage."""
+    events: list[str] = []
+    family = _family(events)
+    family.selection = None
+
+    execution = execute_task_family(family, _Candidates(torch.zeros(4)), None, make_task_table_rng(17, "cpu"))
+
+    assert events == ["generate_first", "generate_second", "solve", "criterion_positive", "criterion_below"]
+    assert execution.accepted_mask is not None
+    assert execution.selected_indices is None
+
+
 def test_task_family_criteria_receive_only_declaration_order_survivors() -> None:
     """Later criteria receive the accumulated original-row indices and preserve exact selection."""
     seen: list[torch.Tensor] = []
@@ -291,11 +304,12 @@ def test_task_family_info_log_reports_named_counts(caplog) -> None:
 def test_task_family_schema_has_no_rejected_relation_or_objective_set_layers() -> None:
     names = {field.name for field in fields(StateCommandCfg.TaskTableCfg.FamilyCfg)}
     assert names == {"name", "generate", "solve", "criteria", "selection"}
+    generate_names = {field.name for field in fields(StateCommandCfg.TaskTableCfg.GenerateTermCfg)}
+    assert generate_names == {"class_type"}
     solve_names = {field.name for field in fields(StateCommandCfg.TaskTableCfg.SolveCfg)}
     assert solve_names == {
         "class_type",
         "objectives",
-        "max_iterations",
         "convergence_tolerance",
         "convergence_check_interval",
     }

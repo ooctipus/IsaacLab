@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import torch
+import warp as wp
 
 from isaaclab.utils.math import combine_frame_transforms
 
@@ -23,6 +24,82 @@ G1_HEAD_OFFSET_M = (0.0, 0.0, 0.35)
 
 G1_HEAD_POSE_POLICY = "torso_local_offset_pose_v1"
 """Geometry law shared by reference and live derived G1 head frames."""
+
+
+@wp.kernel
+def _g1_joint_velocity_canonical_warp(
+    joint_q: wp.array2d(dtype=wp.float32),
+    clip_offsets: wp.array(dtype=wp.int32),
+    step_seconds: wp.array(dtype=wp.float32),
+    segment_count: int,
+    frame_count: int,
+    joint_count: int,
+    output: wp.array2d(dtype=wp.float32),
+):
+    """Write destination-indexed scalar-hinge velocity edges."""
+    frame, joint = wp.tid()
+    if frame >= frame_count or joint >= joint_count:
+        return
+    low = int(0)
+    high = segment_count
+    while low + 1 < high:
+        middle = (low + high) // 2
+        if frame < clip_offsets[middle]:
+            high = middle
+        else:
+            low = middle
+    start = clip_offsets[low]
+    current = frame
+    previous = frame - 1
+    if frame == start:
+        current = start + 1
+        previous = start
+    output[frame, joint + 6] = (joint_q[current, joint + 7] - joint_q[previous, joint + 7]) / step_seconds[low]
+
+
+def _time_forward_difference_segmented(
+    values: torch.Tensor,
+    offsets: torch.Tensor,
+    step_seconds: torch.Tensor,
+    out: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Apply the released G1 forward-difference law independently per clip."""
+    if values.ndim < 1 or values.shape[0] < 1:
+        raise ValueError("Segmented time values require a nonempty leading frame axis.")
+    if not values.is_floating_point():
+        raise ValueError("Segmented time values must use a floating-point dtype.")
+    if offsets.ndim != 1 or offsets.dtype is not torch.int64 or not offsets.is_contiguous() or offsets.shape[0] < 2:
+        raise ValueError("Segment offsets must be contiguous int64 with at least two entries.")
+    if offsets.device != values.device:
+        raise ValueError("Segment values and offsets must share one device.")
+    if int(offsets[0]) != 0 or int(offsets[-1]) != values.shape[0] or bool(torch.any(offsets[1:] - offsets[:-1] < 3)):
+        raise ValueError("Segment offsets must span the values with at least 3 frames per segment.")
+    if (
+        step_seconds.shape != (offsets.shape[0] - 1,)
+        or step_seconds.dtype is not torch.float32
+        or not step_seconds.is_contiguous()
+    ):
+        raise ValueError("Segment sample intervals must be contiguous float32 with one value per segment.")
+    if step_seconds.device != values.device:
+        raise ValueError("Segment values and sample intervals must share one device.")
+    if bool(torch.any(~torch.isfinite(step_seconds) | (step_seconds <= 0.0))):
+        raise ValueError("Segment sample intervals must be finite and positive [s].")
+    if out is None:
+        out = torch.empty_like(values)
+    elif out.shape != values.shape or out.dtype != values.dtype or out.device != values.device:
+        raise ValueError("Segmented forward-difference output must match the input.")
+
+    rows = torch.arange(values.shape[0], dtype=torch.int64, device=values.device)
+    segments = torch.searchsorted(offsets[1:], rows, right=True)
+    stops = offsets.index_select(0, segments + 1)
+    steps = step_seconds.index_select(0, segments)
+    tail = rows == stops - 1
+    previous = torch.where(tail, stops - 3, rows)
+    following = torch.where(tail, stops - 2, rows + 1)
+    while steps.ndim < values.ndim:
+        steps = steps.unsqueeze(-1)
+    torch.sub(values.index_select(0, following), values.index_select(0, previous), out=out)
+    return out.div_(steps)
 
 
 def append_g1_head_pose(

@@ -24,6 +24,8 @@ from typing import Any
 from isaaclab.managers import CommandTermCfg
 from isaaclab.utils.configclass import configclass
 
+from .task_table_view import TaskTableView
+
 
 @configclass
 class StateCommandCfg(CommandTermCfg):
@@ -46,17 +48,16 @@ class StateCommandCfg(CommandTermCfg):
 
         @configclass
         class ObjectiveCfg:
-            """One numerical preference in a family's flat solve tuple."""
+            """One numerical term in a family's flat solve tuple."""
 
             class_type: Callable | str = MISSING
 
         @configclass
         class SolveCfg:
-            """One optional solve over a flat objective tuple."""
+            """One optional solve over a flat declared objective tuple."""
 
             class_type: Callable | str = MISSING
             objectives: tuple[StateCommandCfg.TaskTableCfg.ObjectiveCfg, ...] = ()
-            max_iterations: int = 200
             convergence_tolerance: float | None = 1.0e-6
             convergence_check_interval: int = 1
 
@@ -79,13 +80,13 @@ class StateCommandCfg(CommandTermCfg):
 
         @configclass
         class FamilyCfg:
-            """Visible generate, optional-solve, accept, and select stages."""
+            """Visible generate, optional-solve, accept, and optional-select stages."""
 
             name: str = MISSING
             generate: tuple[StateCommandCfg.TaskTableCfg.GenerateTermCfg, ...] = ()
             solve: StateCommandCfg.TaskTableCfg.SolveCfg | None = None
             criteria: tuple[StateCommandCfg.TaskTableCfg.CriterionCfg, ...] = ()
-            selection: StateCommandCfg.TaskTableCfg.SelectionCfg = MISSING
+            selection: StateCommandCfg.TaskTableCfg.SelectionCfg | None = MISSING
 
         class_type: Callable | str = MISSING
         """Pure builder invoked with the command cfg, resolved scene cfg, and device.
@@ -97,6 +98,23 @@ class StateCommandCfg(CommandTermCfg):
         def build(self, command_cfg: StateCommandCfg, scene_cfg: object, device: str) -> Any:
             """Build one immutable table without reading a live environment."""
             return self.class_type(command_cfg, scene_cfg, device)
+
+        def build_inspection_view(
+            self,
+            command_cfg: StateCommandCfg,
+            scene_cfg: object,
+            device: str,
+            *,
+            sequence_limit: int,
+        ) -> TaskTableView:
+            """Build the simulator-free view consumed by the shared inspector.
+
+            Runtime tables expose their retained states by default. Domain tables
+            may override this method when inspection intentionally retains more
+            construction evidence than the runtime table.
+            """
+            del sequence_limit
+            return self.build(command_cfg, scene_cfg, device).view
 
         seed: int = 0
         """Independent seed used by every stochastic table-construction stage."""

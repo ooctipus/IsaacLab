@@ -7,17 +7,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, TypeAlias
 
 import torch
 
 Interpolation = Literal["linear", "slerp"]
 if TYPE_CHECKING:
-    from ...kinematics import KinematicTree, NewtonKinematics
-    from ..retarget import MotionSemanticTargets
+    from ..retarget import MotionTrajectoryProjection
+    from ..robots.target import MotionFrameTarget
     from .clip_index import MotionClipIndex
     from .skeleton import MotionSkeleton
+    from .source import MotionSourceClip
 
 
 _FRAME_INTERPOLATION: dict[str, Interpolation] = {
@@ -53,61 +55,114 @@ class MotionFrameSource(Protocol):
         """Return one named robot-oriented frame tensor."""
 
 
-@runtime_checkable
-class MotionFrameBuilder(Protocol):
-    """Robot-owned exact and semantic construction stages."""
+@dataclass(frozen=True, slots=True)
+class MotionGeneralizedCoordinates:
+    """Compact target generalized coordinates retained before frame materialization.
+
+    Attributes:
+        joint_q: Generalized positions [m or rad, depending on joint type].
+        joint_qd: Generalized velocities [m/s or rad/s, depending on joint type], or ``None`` when target-owned
+            conversion derives the stored velocity fields.
+    """
+
+    joint_q: torch.Tensor
+    joint_qd: torch.Tensor | None
+
+    def __post_init__(self) -> None:
+        """Require one contiguous float32 frame axis on one device."""
+        if self.joint_q.ndim != 2 or self.joint_q.dtype is not torch.float32 or not self.joint_q.is_contiguous():
+            raise ValueError("Generalized positions must be contiguous float32 [frame_count, coordinate_count].")
+        if self.joint_q.shape[0] < 1 or self.joint_q.shape[1] < 1:
+            raise ValueError("Generalized positions must contain at least one frame and coordinate.")
+        if self.joint_qd is not None and (
+            self.joint_qd.ndim != 2
+            or self.joint_qd.dtype is not torch.float32
+            or not self.joint_qd.is_contiguous()
+            or self.joint_qd.shape[0] != self.joint_q.shape[0]
+            or self.joint_qd.shape[1] < 1
+            or self.joint_qd.device != self.joint_q.device
+        ):
+            raise ValueError("Generalized velocities must be contiguous float32 with the same frame axis and device.")
+
+    @property
+    def frame_count(self) -> int:
+        """Number of generalized-coordinate frames."""
+        return self.joint_q.shape[0]
+
+    @property
+    def device(self) -> torch.device:
+        """Device shared by generalized positions and velocities."""
+        return self.joint_q.device
+
+    def _copy_clip_(self, start: int, stop: int, source: MotionGeneralizedCoordinates) -> None:
+        """Copy one exact-width clip into a preallocated corpus interval."""
+        if (
+            start < 0
+            or stop <= start
+            or stop > self.frame_count
+            or source.frame_count != stop - start
+            or source.joint_q.shape[1:] != self.joint_q.shape[1:]
+            or (source.joint_qd is None) != (self.joint_qd is None)
+        ):
+            raise ValueError("Generalized-coordinate clip differs from its destination interval.")
+        self.joint_q[start:stop].copy_(source.joint_q)
+        if self.joint_qd is not None and source.joint_qd is not None:
+            if source.joint_qd.shape[1:] != self.joint_qd.shape[1:]:
+                raise ValueError("Generalized-velocity clip width differs from its destination.")
+            self.joint_qd[start:stop].copy_(source.joint_qd)
+
+    def index_select(self, indices: torch.Tensor) -> MotionGeneralizedCoordinates:
+        """Return selected frames in explicit index order."""
+        return MotionGeneralizedCoordinates(
+            self.joint_q.index_select(0, indices).contiguous(),
+            None if self.joint_qd is None else self.joint_qd.index_select(0, indices).contiguous(),
+        )
+
+    def validate_values(self) -> None:
+        """Require all retained generalized-coordinate values to be finite."""
+        if not bool(torch.isfinite(self.joint_q).all()) or (
+            self.joint_qd is not None and not bool(torch.isfinite(self.joint_qd).all())
+        ):
+            raise ValueError("Generalized coordinates must contain only finite values.")
+
+
+@dataclass(frozen=True, slots=True)
+class MotionSourceProjectionExact:
+    """Exact source coordinates and their target-robot conversion."""
 
     source_skeleton: MotionSkeleton
-    exact_coordinates: bool
+    target: MotionFrameTarget
+    version: str
+    construction_identity_sha256: str
+    convert_coordinates: Callable[[torch.Tensor, torch.Tensor | None, float], MotionGeneralizedCoordinates]
 
-    @property
-    def joint_names(self) -> tuple[str, ...]:
-        """Ordered simulator joint names."""
 
-    @property
-    def reference_frame_names(self) -> tuple[str, ...]:
-        """Ordered physical and derived reference-frame names."""
+@dataclass(frozen=True, slots=True)
+class MotionSourceProjectionAnalytic:
+    """Analytic source conversion with an explicitly transformed output clock."""
 
-    @property
-    def semantic_reference_kinematics(self) -> NewtonKinematics:
-        """Exact target-robot mechanics used by semantic IK."""
+    source_skeleton: MotionSkeleton
+    target: MotionFrameTarget
+    version: str
+    construction_identity_sha256: str
+    output_clip_index: Callable[[MotionClipIndex], MotionClipIndex]
+    convert_clip: Callable[[MotionSourceClip], MotionGeneralizedCoordinates]
 
-    @property
-    def semantic_target_tree(self) -> KinematicTree:
-        """Grouped target-robot topology used to seed semantic IK."""
 
-    @property
-    def version(self) -> str:
-        """Declared frame-construction math version."""
+@dataclass(frozen=True, slots=True)
+class MotionSourceProjectionTrajectory:
+    """Semantic source motion projected through one target-robot trajectory model."""
 
-    @property
-    def construction_identity_sha256(self) -> str:
-        """Complete frame-construction policy identity."""
+    source_skeleton: MotionSkeleton
+    target: MotionFrameTarget
+    version: str
+    construction_identity_sha256: str
+    target_projection: MotionTrajectoryProjection
 
-    def allocate(self, frame_count: int, *, device: str | torch.device) -> MotionFrames:
-        """Allocate exact-capacity robot-frame storage on the requested device."""
 
-    def build_exact_coordinates(
-        self,
-        joint_q: torch.Tensor,
-        joint_qd: torch.Tensor | None,
-        source_fps: float,
-    ) -> MotionFrames:
-        """Materialize and certify one exact free-root coordinate clip."""
-
-    def generate_semantic_targets(
-        self,
-        root_position: torch.Tensor,
-        local_rotation_xyzw: torch.Tensor,
-    ) -> MotionSemanticTargets:
-        """Generate concrete target-robot semantics."""
-
-    def build_semantic_corpus(
-        self,
-        joint_q: torch.Tensor,
-        clip_index: MotionClipIndex,
-    ) -> MotionFrames:
-        """Materialize one compact solved corpus with segment-correct derivatives."""
+MotionSourceProjection: TypeAlias = (
+    MotionSourceProjectionExact | MotionSourceProjectionAnalytic | MotionSourceProjectionTrajectory
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,7 +218,7 @@ class MotionFrames:
     )
 
     def __post_init__(self) -> None:
-        """Validate fixed trajectory semantics and a shared frame axis."""
+        """Validate fixed trajectory layouts and a shared frame axis."""
         values = {name: getattr(self, name) for name in self._NAMES}
         present = {name: value for name, value in values.items() if value is not None}
         if not present:

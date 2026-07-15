@@ -24,6 +24,7 @@ from ...identity import file_sha256, validate_sha256
 from ..clip_index import MotionClipIndex
 from ..skeleton import MotionSkeleton
 from ..source import MotionSourceCfg
+from .cmu_humenv_smpl_coordinates import cmu_humenv_smpl_skeleton
 
 HUMENV_HDF5_FIELDS = ("motion_id", "observation", "qpos", "qvel", "terminated", "truncated")
 _FIELD_DTYPES = {
@@ -77,6 +78,8 @@ class CmuHumEnvSmplClip:
                 raise ValueError(f"CMU HumEnv SMPL field {name!r} has the wrong dtype or shape.")
             if not value.flags.c_contiguous:
                 raise ValueError(f"CMU HumEnv SMPL field {name!r} must be C-contiguous.")
+            if not np.isfinite(value).all():
+                raise ValueError(f"CMU HumEnv SMPL field {name!r} must contain only finite values.")
         if not math.isfinite(self.source_fps) or self.source_fps <= 0.0:
             raise ValueError("CMU HumEnv SMPL source_fps must be finite and positive [Hz].")
 
@@ -107,11 +110,9 @@ class CmuHumEnvSmplClip:
         root_rotation = convert_quat(native_position[:, 3:7], to="xyzw")
         position = torch.cat((native_position[:, :3], root_rotation, native_position[:, 7:]), dim=-1)
         velocity = native_velocity
-        if not torch.all(torch.isfinite(position)) or not torch.all(torch.isfinite(velocity)):
-            raise ValueError("HumEnv generalized coordinates must contain only finite values.")
         return position, velocity
 
-    def semantic_local_pose(
+    def local_pose(
         self,
         source_skeleton: MotionSkeleton,
         *,
@@ -123,8 +124,6 @@ class CmuHumEnvSmplClip:
         expected_shape = (self.frame_count, 7 + source_skeleton.num_joints)
         if generalized_position.shape != expected_shape or generalized_position.dtype is not torch.float32:
             raise ValueError(f"HumEnv generalized positions must be float32 with shape {expected_shape}.")
-        if not torch.all(torch.isfinite(generalized_position)):
-            raise ValueError("HumEnv generalized positions must contain only finite values.")
 
         local_xyzw = torch.zeros(
             self.frame_count,
@@ -170,6 +169,7 @@ class CmuHumEnvSmplClips:
         "_file_sha256s",
         "_paths",
         "_source_fps",
+        "_skeleton",
     )
 
     def __init__(
@@ -200,6 +200,7 @@ class CmuHumEnvSmplClips:
         if len(self._clip_ids) != len(self._paths):
             raise ValueError("HumEnv clip_ids must contain one identifier per path.")
         self._source_fps = source_fps
+        self._skeleton = cmu_humenv_smpl_skeleton()
         self._index: MotionClipIndex | None = None
 
     @staticmethod
@@ -247,25 +248,36 @@ class CmuHumEnvSmplClips:
                     frame_count=frame_count,
                     source_fps=self._source_fps,
                     content_sha256=digest,
+                    skeleton_id=0,
                 )
             )
         self._index = MotionClipIndex(
             source_content_sha256=_ordered_sources_sha256(sources),
+            skeleton_identity_sha256s=(self._skeleton.identity_sha256,),
             clips=tuple(clips),
         )
         return self._index
 
-    def clips(self) -> Iterator[tuple[str, CmuHumEnvSmplClip]]:
-        """Yield one typed clip after closing its HDF5 file."""
+    def skeleton(self, skeleton_id: int) -> MotionSkeleton:
+        """Return the prepared SMPL coordinate system."""
+        if type(skeleton_id) is not int or skeleton_id != 0:
+            raise ValueError(f"Unknown skeleton id: {skeleton_id!r}.")
+        return self._skeleton
+
+    def clips(self, clip_indices: tuple[int, ...]) -> Iterator[tuple[int, CmuHumEnvSmplClip]]:
+        """Yield selected typed clips after closing each HDF5 file."""
         index = self.inspect()
         h5py = _h5py()
-        for clip, path in zip(index.clips, self._paths, strict=True):
+        for clip_index in clip_indices:
+            if type(clip_index) is not int or clip_index < 0 or clip_index >= len(index.clips):
+                raise IndexError(f"Clip index is out of range: {clip_index!r}.")
+            path = self._paths[clip_index]
             with h5py.File(path, "r") as stream:
                 episode = stream["ep_0"]
                 generalized_position = np.asarray(episode["qpos"][...])
                 generalized_velocity = np.asarray(episode["qvel"][...])
             yield (
-                clip.clip_id,
+                clip_index,
                 CmuHumEnvSmplClip(
                     generalized_position=generalized_position,
                     generalized_velocity=generalized_velocity,

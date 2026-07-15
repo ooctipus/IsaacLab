@@ -202,7 +202,7 @@ def test_mesh_collision_memory_estimate_matches_owned_array_layout() -> None:
     objective._probe_bodies_np = np.zeros(4, np.int32)
     objective._probe_contact_slots_np = np.zeros(4, np.int32)
     objective._probe_affects_dof_np = np.zeros((4, 5), np.uint8)
-    objective._contact_mask_t = torch.empty(1, 4, dtype=torch.uint8)
+    objective._owns_contact_confidence = False
     base = (
         objective._probe_offsets_np.nbytes
         + objective._probe_bodies_np.nbytes

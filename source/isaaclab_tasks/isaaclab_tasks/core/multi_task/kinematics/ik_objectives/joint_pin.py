@@ -97,12 +97,11 @@ class IKObjectiveJointPin(ik.IKObjective):
         n_batch: int,
         total_residuals: int,
     ) -> int:
-        """Estimate immutable indices and per-problem pin targets [byte]."""
-        del model, jacobian_mode, n_batch, total_residuals
+        """Estimate objective-owned immutable coordinate and DOF indices [byte]."""
+        del model, jacobian_mode, n_problems, n_batch, total_residuals
         count = self._coordinate_indices_np.shape[0]
         int_bytes = wp.types.type_size_in_bytes(wp.int32)
-        float_bytes = wp.types.type_size_in_bytes(wp.float32)
-        return 2 * count * int_bytes + n_problems * count * float_bytes
+        return 2 * count * int_bytes
 
     def compute_residuals(self, body_q, joint_q, model, residuals, start_idx, problem_idx) -> None:
         """Write weighted coordinate errors for every problem."""

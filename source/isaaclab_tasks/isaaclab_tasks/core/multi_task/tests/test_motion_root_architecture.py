@@ -61,6 +61,7 @@ def test_motion_environment_root_owns_visible_composition() -> None:
         "_g1_reset_transform",
         "def motion_ground",
         "__all__",
+        "MotionCoordinateRouteCfg",
         "smpl_cmu =",
         "g1_lafan =",
         "g1_cmu =",
@@ -79,11 +80,15 @@ def test_motion_environment_root_owns_visible_composition() -> None:
         "decimation: int = preset(default=15, g1=4)",
         'task_row_mode="clip_time_ranges"',
         "update_period=preset(",
+        "reference_artifact_root",
     ):
         assert forbidden not in text
     assert text.count('source_artifact_root=""') == 1
-    assert text.count('reference_artifact_root=""') == 1
+    assert text.count('target_artifact_root=""') == 1
     assert text.count('motion_split="train"') == 1
+    assert text.count("MotionContactObjectiveCfg(),") == 1
+    assert "g1_reference_kinematics" not in text
+    assert "smpl_reference_kinematics" not in text
     assert "control = multi_task_mdp.NativeMujocoControlActionCfg(" in text
     assert "joint_position = multi_task_mdp.NativeMujocoControlActionCfg(" not in text
     assert 'reset_sources=(("reference", 0.8), ("fall", 0.2))' in text
@@ -91,7 +96,7 @@ def test_motion_environment_root_owns_visible_composition() -> None:
 
 
 def test_motion_environment_validation_does_not_duplicate_robot_source_composition() -> None:
-    """Frame-builder constructors own source-schema validation for every selected edge."""
+    """Target and source factories own schema validation for every selected edge."""
     source = _MULTI_TASK_ROOT / "motion_env_cfg.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
     environment = next(
@@ -102,7 +107,17 @@ def test_motion_environment_validation_does_not_duplicate_robot_source_compositi
     )
     validator_source = ast.unparse(validator)
 
-    forbidden = ("source.identifier", "frame_builder_factory", "frame_builders", "cmu_humenv_smpl", "lafan_g1_29dof")
+    forbidden = (
+        "source.identifier",
+        "frame_builder_factory",
+        "frame_builders",
+        "cmu_humenv_smpl",
+        "lafan_g1_29dof",
+        "MotionActionsCfg",
+        "target_factory is",
+        "g1_frame_target",
+        "smpl_frame_target",
+    )
     assert all(name not in validator_source for name in forbidden)
 
 
@@ -119,8 +134,16 @@ def test_motion_command_module_contains_only_reusable_schemas() -> None:
     assert "class MotionCommandsCfg" not in text
     assert "source: MotionSourceCfg = MISSING" in text
     assert "class TargetKinematicsCfg" in text
-    assert "frame_builder_factory: Callable[[MotionSkeleton, NewtonKinematics], MotionFrameBuilder] = MISSING" in text
-    assert "reference_kinematics_factory: Callable[[str, str | torch.device], NewtonKinematics] = MISSING" in text
+    assert "class ContactChannelCfg:" in text
+    assert "contact_channels: tuple[ContactChannelCfg, ...] = MISSING" in text
+    assert "class ContactPatchCfg:" in text
+    assert "contact_patches: tuple[ContactPatchCfg, ...] = MISSING" in text
+    assert "MotionClipSource" in table_cfg_source
+    assert "tuple[MotionTaskTableCfg.ContactChannelCfg, ...]" in table_cfg_source
+    assert 'asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")' in text
+    assert "kinematics: NewtonKinematicsBuildCfg = NewtonKinematicsBuildCfg()" in text
+    assert "reference_kinematics_factory" not in text
+    assert "reference_artifact_root" not in text
     assert "target_kinematics: TargetKinematicsCfg = MISSING" in text
     assert "reset_transform_factory: Callable[..., object] = MISSING" in text
     assert "reset_transform_binds: dict[str, str] = {}" in text
@@ -135,6 +158,37 @@ def test_motion_command_module_contains_only_reusable_schemas() -> None:
     assert "episode_length_steps" not in text
     assert "Smpl" not in text
     assert "G1" not in text
+    assert "frame_builder_factory" not in text
+    assert "MotionFrameBuilder" not in text
+
+    builder = (_MULTI_TASK_ROOT / "motion" / "mdp" / "commands" / "motion_task_table_builder.py").read_text(
+        encoding="utf-8"
+    )
+    assert "del scene_cfg" not in builder
+    assert "NewtonKinematics.from_articulation(" in builder
+    assert "getattr(scene_cfg, target_kinematics.asset_cfg.name)" in builder
+
+
+def test_motion_corpus_scope_has_no_accepted_only_filter_or_production_cap() -> None:
+    """Motion publication owns one complete source manifest without thinning."""
+    commands = (_MULTI_TASK_ROOT / "motion" / "mdp" / "commands" / "commands_cfg.py").read_text(encoding="utf-8")
+    builder = (_MULTI_TASK_ROOT / "motion" / "mdp" / "commands" / "motion_task_table_builder.py").read_text(
+        encoding="utf-8"
+    )
+    root = (_MULTI_TASK_ROOT / "motion_env_cfg.py").read_text(encoding="utf-8")
+
+    for forbidden in ("MotionClipSelectionCfg", "max_clips"):
+        assert forbidden not in commands
+        assert forbidden not in root
+    for forbidden in (
+        "motion_select_source_order",
+        "source_indices[accepted]",
+        "route.selected_indices",
+        "record.selected",
+        "selected_records",
+        "max_clips",
+    ):
+        assert forbidden not in builder
 
 
 def test_motion_payload_has_no_learner_history_or_reward_transition_state() -> None:
@@ -249,11 +303,13 @@ def test_removed_motion_config_layers_stay_absent() -> None:
         "robots/smpl/tracking.py",
     ):
         assert not (motion_root / relative).exists()
-    assert all(
-        "MotionSampleGrid" not in path.read_text(encoding="utf-8")
-        for path in motion_root.rglob("*")
-        if path.suffix in {".py", ".pyi"}
-    )
+    for path in motion_root.rglob("*"):
+        if path.suffix not in {".py", ".pyi"}:
+            continue
+        text = path.read_text(encoding="utf-8")
+        assert "MotionSampleGrid" not in text
+        assert "MotionSemantic" not in text
+        assert "semantic_correct_support" not in text
 
 
 def test_generic_tracking_has_no_robot_geometry_or_unwrapped_rollout() -> None:
@@ -348,6 +404,140 @@ def test_motion_packages_declare_public_surfaces_in_stubs() -> None:
         assert "__all__ = [" in stub
 
 
+def test_motion_public_route_contracts_and_private_implementations_are_separated() -> None:
+    """Route contracts and deprecated boundaries are public while active implementations remain private."""
+    motion_root = _MULTI_TASK_ROOT / "motion"
+    kinematics_root = _MULTI_TASK_ROOT / "kinematics"
+    kinematics_stub = (kinematics_root / "__init__.pyi").read_text(encoding="utf-8")
+    data_stub = (motion_root / "data" / "__init__.pyi").read_text(encoding="utf-8")
+    source_stub = (motion_root / "data" / "sources" / "__init__.pyi").read_text(encoding="utf-8")
+    g1_stub = (motion_root / "robots" / "g1" / "__init__.pyi").read_text(encoding="utf-8")
+    smpl_stub = (motion_root / "robots" / "smpl" / "__init__.pyi").read_text(encoding="utf-8")
+
+    for name in (
+        "MotionGeneralizedCoordinates",
+        "MotionSourceProjection",
+        "MotionSourceProjectionExact",
+        "MotionSourceProjectionAnalytic",
+        "MotionSourceProjectionTrajectory",
+    ):
+        assert name in data_stub
+    assert "MotionFrameTarget" not in data_stub
+    for name in ("SmplLbsModel", "load_smpl_lbs_model"):
+        assert name not in data_stub
+    for name in ("AmassSmplhClip", "LafanBvhClip", "open_amass_smplh_source", "open_lafan_bvh_source"):
+        assert name not in source_stub
+    for name in ("g1_frame_target", "g1_source_projection"):
+        assert name not in g1_stub
+    for name in ("smpl_frame_target", "smpl_source_projection"):
+        assert name not in smpl_stub
+    assert "smpl_live_joint_mujoco_names" in smpl_stub
+    assert "MotionFrameBuilder" not in data_stub
+    for name in ("G1FrameBuilder", "g1_frame_builder", "g1_reference_kinematics"):
+        assert name in g1_stub
+    for name in ("SmplFrameBuilder", "smpl_frame_builder", "smpl_reference_kinematics"):
+        assert name in smpl_stub
+    assert "kinematic_retarget_positions" not in kinematics_stub
+    assert not (kinematics_root / "deprecated_retarget.py").exists()
+    assert not (motion_root / "data" / "deprecated_frame_builder.py").exists()
+    assert not (motion_root / "robots" / "g1" / "deprecated_frame_builder.py").exists()
+    assert not (motion_root / "robots" / "smpl" / "deprecated_frame_builder.py").exists()
+
+
+def test_motion_target_contract_and_collision_certificate_have_single_owners() -> None:
+    """Target contracts and certificate collision probes must each have one owner."""
+    motion_root = _MULTI_TASK_ROOT / "motion"
+    builder_path = motion_root / "mdp" / "commands" / "motion_task_table_builder.py"
+    target_path = motion_root / "robots" / "target.py"
+    frames_path = motion_root / "data" / "frames.py"
+    commands_path = motion_root / "mdp" / "commands" / "commands_cfg.py"
+    trajectory_path = motion_root / "mdp" / "commands" / "motion_trajectory.py"
+
+    target_source = target_path.read_text(encoding="utf-8")
+    builder_source = builder_path.read_text(encoding="utf-8")
+    frames_source = frames_path.read_text(encoding="utf-8")
+    commands_source = commands_path.read_text(encoding="utf-8")
+    trajectory_source = trajectory_path.read_text(encoding="utf-8")
+    target_tree = ast.parse(target_source)
+    frames_tree = ast.parse(frames_source)
+    commands_tree = ast.parse(commands_source)
+
+    class_owners = {
+        path
+        for path in motion_root.rglob("*.py")
+        if any(
+            isinstance(node, ast.ClassDef) and node.name == "MotionFrameTarget"
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        )
+    }
+    assert class_owners == {target_path}
+
+    type_checking_blocks = [
+        node
+        for node in frames_tree.body
+        if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING"
+    ]
+    assert len(type_checking_blocks) == 1
+    frame_target_imports = [
+        node
+        for node in ast.walk(frames_tree)
+        if isinstance(node, ast.ImportFrom) and any(alias.name == "MotionFrameTarget" for alias in node.names)
+    ]
+    assert len(frame_target_imports) == 1
+    assert frame_target_imports[0] in tuple(ast.walk(type_checking_blocks[0]))
+    assert (frame_target_imports[0].level, frame_target_imports[0].module) == (2, "robots.target")
+
+    command_target_imports = [
+        node
+        for node in commands_tree.body
+        if isinstance(node, ast.ImportFrom) and any(alias.name == "MotionFrameTarget" for alias in node.names)
+    ]
+    assert len(command_target_imports) == 1
+    assert (command_target_imports[0].level, command_target_imports[0].module) == (3, "robots.target")
+    assert "from ...data.frames import MotionFrameTarget" not in commands_source
+
+    data_stub = (motion_root / "data" / "__init__.pyi").read_text(encoding="utf-8")
+    assert "MotionFrameTarget" not in data_stub
+
+    collision_sampler_owners = {
+        path for path in motion_root.rglob("*.py") if "collision_probes_sample" in path.read_text(encoding="utf-8")
+    }
+    sampler_imports = [
+        node
+        for node in ast.walk(target_tree)
+        if isinstance(node, ast.ImportFrom) and any(alias.name == "collision_probes_sample" for alias in node.names)
+    ]
+    sampler_calls = [
+        node
+        for node in ast.walk(target_tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "collision_probes_sample"
+    ]
+    assert collision_sampler_owners == {target_path}
+    assert len(sampler_imports) == 1
+    assert len(sampler_calls) == 1
+    for symbol in (
+        "_motion_ground_penetration_frames",
+        "validate_collision_probe_geometry",
+        "write_ground_penetration",
+    ):
+        owners = {
+            path
+            for path in motion_root.rglob("*.py")
+            if any(
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == symbol
+                for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            )
+        }
+        assert owners == {target_path}
+    assert "write_ground_penetration(" in builder_source
+    assert "_motion_ground_penetration_frames" not in builder_source
+    assert "collision_probe_body_indices" not in builder_source
+    assert "collision_probe_body_indices" not in trajectory_source
+    assert "validate_collision_probe_geometry" in trajectory_source
+    assert "collision_probes_sample" not in trajectory_source
+    assert "ground_penetration" not in trajectory_source
+
+
 def test_motion_config_is_registration_only_and_learner_owns_rsl_rl_runtime() -> None:
     """Environment registration and learner runtime remain in their owning domains."""
     motion_root = _MULTI_TASK_ROOT / "motion"
@@ -383,32 +573,152 @@ def test_motion_config_is_registration_only_and_learner_owns_rsl_rl_runtime() ->
         assert not any("multi_task.motion" in module for module in (*imports, *imported_from))
 
 
-def test_motion_semantic_retarget_has_one_stateless_motion_owner() -> None:
-    """Motion owns projection math and its task-table stage owns bounded execution."""
+def test_motion_trajectory_retarget_has_one_stateless_motion_owner() -> None:
+    """Motion owns projection, construction, runtime querying, and trajectory solving separately."""
     kinematics = (_MULTI_TASK_ROOT / "kinematics" / "newton_kinematics.py").read_text(encoding="utf-8")
     retarget = (_MULTI_TASK_ROOT / "motion" / "retarget.py").read_text(encoding="utf-8")
-    task_table = (_MULTI_TASK_ROOT / "motion" / "mdp" / "commands" / "motion_task_table.py").read_text(encoding="utf-8")
+    command_root = _MULTI_TASK_ROOT / "motion" / "mdp" / "commands"
+    runtime = (command_root / "motion_task_table.py").read_text(encoding="utf-8")
+    builder = (command_root / "motion_task_table_builder.py").read_text(encoding="utf-8")
+    trajectory = (command_root / "motion_trajectory.py").read_text(encoding="utf-8")
+    motion = retarget + runtime + builder + trajectory
 
     for symbol in (
         "semantic_retarget",
         "semantic_retarget_policy",
-        "MotionSemanticSolution",
-        "MotionSemanticSolverPolicy",
+        "MotionTrajectorySolution",
+        "MotionTrajectorySolverPolicy",
     ):
-        assert symbol not in kinematics + retarget + task_table
-    assert "class MotionSemanticTargets:" in retarget
-    assert "class MotionSemanticProjection:" in retarget
-    assert "execute_ik_batches(" in task_table
-    assert "class _MotionSemanticWorkspace:" in task_table
+        assert symbol not in kinematics + motion
+    assert "class MotionTrajectoryTargets:" in retarget
+    assert "class MotionTrajectoryProjection:" in retarget
+    assert "IKTrajectorySolver(" in trajectory
+    assert "plan_trajectory_memory(" in trajectory
+    assert "execute_ik_batches(" not in motion
+    assert "class _MotionTrajectoryWorkspace:" in trajectory
+    assert "_MotionSourceRelativePointObjective" not in trajectory
+    assert "_source_relative_point_" not in trajectory
+    assert "ik.IKObjectivePosition(" in trajectory
     assert "IKObjectivePosition" not in retarget
     assert "IKObjectiveRotation" not in retarget
 
     for robot in ("g1", "smpl"):
         reference = (_MULTI_TASK_ROOT / "motion" / "robots" / robot / "reference.py").read_text(encoding="utf-8")
+        assert "SemanticProjection" not in reference
         assert "solve_semantic_targets" not in reference
-        assert "class _G1SemanticProjection" not in reference
-        assert "class _SmplSemanticProjection" not in reference
         assert "kinematic_retarget_positions" not in reference
+
+
+def test_motion_contact_and_required_direction_rows_are_declared_separately() -> None:
+    """Contact state and publication evidence select distal rows independently."""
+    path = _MULTI_TASK_ROOT / "motion" / "retarget.py"
+    text = path.read_text(encoding="utf-8")
+    tree = ast.parse(text)
+    target = next(
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "_MotionTrajectoryTarget"
+    )
+    post_init = next(node for node in target.body if isinstance(node, ast.FunctionDef) and node.name == "__post_init__")
+    assignments = {
+        target.id: node.value
+        for node in ast.walk(post_init)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+
+    contact_rows = ast.unparse(assignments["contact_direction_rows"])
+    required_rows = ast.unparse(assignments["required_direction_rows"])
+    coupled_comparisons = [
+        ast.unparse(node)
+        for node in ast.walk(post_init)
+        if isinstance(node, ast.Compare)
+        and "contact_channel_names" in ast.unparse(node)
+        and "required_direction_roles" in ast.unparse(node)
+    ]
+
+    assert "contact_channel_names" in contact_rows
+    assert "required_direction_roles" not in contact_rows
+    assert "self.required_direction_roles" in required_rows
+    assert "contact_channel_names" not in required_rows
+    assert coupled_comparisons == []
+    assert "any(channel not in self.required_direction_roles for channel in contact_channel_names)" in text
+
+
+def test_motion_task_table_modules_have_one_way_ownership() -> None:
+    """Runtime, builder, and trajectory files reject dependency inversion and product policy."""
+    command_root = _MULTI_TASK_ROOT / "motion" / "mdp" / "commands"
+    runtime = (command_root / "motion_task_table.py").read_text(encoding="utf-8")
+    builder = (command_root / "motion_task_table_builder.py").read_text(encoding="utf-8")
+    trajectory = (command_root / "motion_trajectory.py").read_text(encoding="utf-8")
+
+    for forbidden in ("newton", "warp", "IKTrajectory", "MotionClipSource", "execute_task_family"):
+        assert forbidden not in runtime
+    for forbidden in ("newton.ik", "import warp", "robots.g1", "robots.smpl", "data.sources"):
+        assert forbidden not in builder
+    for forbidden in (
+        "robots.g1",
+        "robots.smpl",
+        "data.sources",
+        "motion_state_payload",
+        "motion_sampler",
+        "ManagerBased",
+    ):
+        assert forbidden not in trajectory
+    assert "class MotionTaskTable:" in runtime
+    assert "def _build_motion_task_table(" in builder
+    assert "def motion_solve_trajectory(" in trajectory
+    assert "def build_motion_task_table(" in runtime
+    assert "kinematics.trajectory import _trajectory_free_root_velocity_backward" not in trajectory
+
+
+def test_product_coordinate_policies_live_only_in_robot_leaves() -> None:
+    """Production robot code cannot import G1 or HumEnv policies from shared kinematics."""
+    kinematics_root = _MULTI_TASK_ROOT / "kinematics"
+    shared_source = (kinematics_root / "kinematic_tree.py").read_text(encoding="utf-8")
+    public_source = (kinematics_root / "__init__.pyi").read_text(encoding="utf-8")
+    g1_frames = (_MULTI_TASK_ROOT / "motion" / "robots" / "g1" / "frames.py").read_text(encoding="utf-8")
+    shared_modules = {path: path.read_text(encoding="utf-8") for path in kinematics_root.rglob("*.py")}
+    shared_policy_sources = {
+        path.relative_to(kinematics_root)
+        for path, source in shared_modules.items()
+        if "_time_forward_difference_segmented" in source or "time_select_euler_xyz_branches_segmented" in source
+    }
+    assert not shared_policy_sources
+
+    g1_reference = (_MULTI_TASK_ROOT / "motion" / "robots" / "g1" / "reference.py").read_text(encoding="utf-8")
+    smpl_reference = (_MULTI_TASK_ROOT / "motion" / "robots" / "smpl" / "reference.py").read_text(encoding="utf-8")
+
+    assert "time_select_euler_xyz_branches_segmented" not in shared_source
+    assert "time_select_euler_xyz_branches_segmented" not in public_source
+    assert "motion.robots" not in shared_source
+    assert "kinematic_tree_warp" not in shared_source
+    assert "import warp as wp" not in shared_source
+    assert not (kinematics_root / "impl" / "kinematic_tree_warp.py").exists()
+    assert (_MULTI_TASK_ROOT / "motion" / "robots" / "smpl" / "reference_warp.py").is_file()
+
+    wrapper = next(
+        node
+        for node in ast.parse(shared_source).body
+        if isinstance(node, ast.FunctionDef) and node.name == "time_forward_difference_segmented"
+    )
+    wrapper_source = ast.unparse(wrapper)
+    assert "warnings.warn" in wrapper_source
+    assert "_time_segment_rows" in wrapper_source
+    assert not any(isinstance(node, ast.ImportFrom) for node in ast.walk(wrapper))
+    assert "def _time_forward_difference_segmented(" in g1_frames
+    assert "def _time_select_euler_xyz_branches_segmented(" in smpl_reference
+
+    for source, forbidden in (
+        (g1_reference, "time_forward_difference_segmented"),
+        (smpl_reference, "time_select_euler_xyz_branches_segmented"),
+    ):
+        imports = {
+            alias.name
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.ImportFrom) and node.module is not None and node.module.endswith("kinematics")
+            for alias in node.names
+        }
+        assert forbidden not in imports
 
 
 def test_motion_runtime_modules_do_not_define_manual_export_lists() -> None:
@@ -448,3 +758,28 @@ def test_retired_motion_scientific_names_stay_absent() -> None:
     live_source = "\n".join(path.read_text(encoding="utf-8") for path in roots)
 
     assert all(name not in live_source for name in retired)
+
+
+def test_motion_contact_contract_has_no_packed_public_compatibility_api() -> None:
+    """Only Motion owns source contact inference and target support-patch visualization policy."""
+    commands = (_MULTI_TASK_ROOT / "motion" / "mdp" / "commands" / "commands_cfg.py").read_text(encoding="utf-8")
+    builder = (_MULTI_TASK_ROOT / "motion" / "mdp" / "commands" / "motion_task_table_builder.py").read_text(
+        encoding="utf-8"
+    )
+    public_kinematics = (_MULTI_TASK_ROOT / "kinematics" / "__init__.pyi").read_text(encoding="utf-8")
+
+    for forbidden in (
+        "MotionContactEvidenceCfg",
+        "MotionStanceDriftCriterionCfg",
+        "ContactPointCfg",
+        "contact_points:",
+    ):
+        assert forbidden not in commands
+    for forbidden in (
+        "IKTrajectoryContactEvidence",
+        "infer_trajectory_contact_schedule",
+        "bind_trajectory_contact_anchors",
+    ):
+        assert forbidden not in public_kinematics
+    assert '"contact_target_offsets"' in builder
+    assert '"contact_patch_anchor_offsets"' not in builder

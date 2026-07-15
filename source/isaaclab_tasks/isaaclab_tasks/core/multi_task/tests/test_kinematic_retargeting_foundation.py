@@ -15,6 +15,7 @@ import torch
 from isaaclab.utils.math import (
     convert_quat,
     matrix_from_quat,
+    quat_apply,
     quat_conjugate,
     quat_from_angle_axis,
     quat_from_matrix,
@@ -24,11 +25,11 @@ from isaaclab.utils.math import (
 from isaaclab_tasks.core.multi_task.kinematics import (
     KinematicTree,
     fit_ordered_hinge_coordinates,
-    kinematic_retarget_positions,
     kinematic_root_basis,
     kinematic_seed_target_rotations,
     kinematic_tree_forward,
     ordered_hinge_rotation,
+    time_unwrap_angles_segmented,
 )
 from isaaclab_tasks.core.multi_task.motion.data import MotionSkeleton
 from isaaclab_tasks.core.multi_task.motion.data.sources import (
@@ -69,46 +70,6 @@ def test_rest_forward_kinematics_derives_anatomical_root_alignment() -> None:
     torch.testing.assert_close(target_to_source @ target_basis, source_basis, atol=1.0e-6, rtol=1.0e-6)
     torch.testing.assert_close(target_to_source @ target_to_source.T, torch.eye(3), atol=1.0e-6, rtol=1.0e-6)
     torch.testing.assert_close(torch.linalg.det(target_to_source), torch.tensor(1.0), atol=1.0e-6, rtol=1.0e-6)
-
-
-def test_semantic_edges_share_nonidentity_root_alignment_with_rotations() -> None:
-    """Rest and rigid-root target edges must use the same non-identity alignment as orientation."""
-    axis = torch.nn.functional.normalize(torch.tensor((0.3, -0.5, 0.8)), dim=0)
-    root_delta_xyzw = quat_from_angle_axis(torch.tensor(0.7), axis)
-    root_delta = matrix_from_quat(root_delta_xyzw)
-    alignment_xyzw = quat_from_angle_axis(
-        torch.tensor(-0.6), torch.nn.functional.normalize(torch.tensor((0.2, 0.9, -0.3)), dim=0)
-    )
-    alignment = matrix_from_quat(alignment_xyzw)
-    source_rest_rotation_xyzw = quat_from_angle_axis(
-        torch.tensor((0.2, -0.4, 0.3)),
-        torch.nn.functional.normalize(torch.tensor(((1.0, 2.0, -1.0), (-2.0, 1.0, 0.5), (0.3, -0.7, 1.0))), dim=-1),
-    )
-    target_rest_edges = torch.tensor(((0.0, 0.0, 0.0), (0.2, 0.1, 0.4), (-0.1, 0.3, 0.2)))
-    aligned_rest_edges = (alignment @ target_rest_edges.unsqueeze(-1)).squeeze(-1)
-    moved_source_rotation_xyzw = quat_mul(
-        root_delta_xyzw.expand_as(source_rest_rotation_xyzw), source_rest_rotation_xyzw
-    )
-    source_rotation_xyzw = torch.stack((source_rest_rotation_xyzw, moved_source_rotation_xyzw), dim=1)
-    root_position = torch.tensor(((0.3, -0.2, 0.8), (-0.4, 0.5, 1.1)))
-
-    position = kinematic_retarget_positions(
-        root_position, source_rotation_xyzw, source_rest_rotation_xyzw, aligned_rest_edges, (-1, 0, 1)
-    )
-    expected_rest = torch.stack(
-        (
-            root_position[0],
-            root_position[0] + alignment @ target_rest_edges[1],
-            root_position[0] + alignment @ (target_rest_edges[1] + target_rest_edges[2]),
-        )
-    )
-    torch.testing.assert_close(position[:, 0], expected_rest, atol=1.0e-6, rtol=1.0e-6)
-    torch.testing.assert_close(
-        position[:, 1] - root_position[1],
-        (root_delta @ (expected_rest - root_position[0]).T).T,
-        atol=1.0e-6,
-        rtol=1.0e-6,
-    )
 
 
 def test_g1_knee_flexion_reexpresses_as_smpl_knee_flexion() -> None:
@@ -240,8 +201,62 @@ def test_direct_semantic_joint_seed_uses_exact_parent_and_child_frames() -> None
     torch.testing.assert_close(joint_q[:, 7:10], target_coordinates, atol=1.0e-6, rtol=0.0)
 
 
-def test_serial_semantic_path_seed_leaves_unsupported_joints_at_default() -> None:
-    """A semantic edge spanning multiple target joints must defer to shared IK without partial seeding."""
+def test_target_seed_unwraps_each_clip_before_one_physical_clamp() -> None:
+    """Principal hinge fits unwrap within clips before one final bounds projection."""
+    tree = KinematicTree(
+        body_names=("root", "hand"),
+        parent_indices=(-1, 0),
+        joint_names=("wrist",),
+        joint_child_body_indices=(1,),
+        joint_coordinate_ranges=((0, 1),),
+        coordinate_names=("wrist_x",),
+        coordinate_axes=((1.0, 0.0, 0.0),),
+        coordinate_q_indices=(7,),
+        coordinate_qd_indices=(6,),
+        coordinate_lower_limits_rad=(-10.0,),
+        coordinate_upper_limits_rad=(10.0,),
+    )
+    identity = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+    topology = SimpleNamespace(
+        body_count=2,
+        coordinate_count=8,
+        body_joint=np.asarray((0, 1)),
+        joint_parent=np.asarray((-1, 0)),
+        joint_child=np.asarray((0, 1)),
+        joint_transform_parent=np.asarray((identity, identity)),
+        joint_transform_child=np.asarray((identity, identity)),
+    )
+    angles = torch.tensor((3.0, -3.0, -2.8, -3.0, 3.0, 2.8))
+    root_rotation = torch.zeros(6, 4)
+    root_rotation[:, 3] = 1.0
+    child_rotation = quat_from_angle_axis(angles, torch.tensor((1.0, 0.0, 0.0)).expand(6, 3))
+    target_rotation = torch.stack((root_rotation, child_rotation))
+    joint_q = torch.zeros(6, 8)
+    joint_q[:, 6] = 1.0
+
+    kinematic_seed_target_rotations(
+        tree,
+        topology,
+        target_body_indices=(0, 1),
+        target_parent_rows=(-1, 0),
+        target_rotation_xyzw=target_rotation,
+        joint_q=joint_q,
+    )
+    offsets = torch.tensor((0, 3, 6), dtype=torch.int64)
+    coordinates = time_unwrap_angles_segmented(joint_q[:, 7:], offsets)
+    coordinates.clamp_(torch.tensor((-10.0,)), torch.tensor((10.0,)))
+    joint_q[:, 7:].copy_(coordinates)
+
+    expected = torch.tensor(
+        (3.0, 2.0 * torch.pi - 3.0, 2.0 * torch.pi - 2.8, -3.0, -2.0 * torch.pi + 3.0, -2.0 * torch.pi + 2.8)
+    )
+    torch.testing.assert_close(joint_q[:, 7], expected)
+    torch.testing.assert_close(joint_q[:, :3], torch.zeros(6, 3))
+    torch.testing.assert_close(joint_q[:, 3:7], root_rotation)
+
+
+def test_serial_semantic_path_seed_fits_one_ordered_rotation_group() -> None:
+    """A semantic edge spanning multiple target joints must seed their coupled rotation."""
     tree = KinematicTree(
         body_names=("root", "elbow", "hand"),
         parent_indices=(-1, 0, 1),
@@ -269,8 +284,6 @@ def test_serial_semantic_path_seed_leaves_unsupported_joints_at_default() -> Non
     target_rotation[..., 3] = 1.0
     target_rotation[1] = quat_from_angle_axis(torch.tensor(0.7), torch.tensor((1.0, 0.0, 0.0)))
     joint_q = torch.tensor(((0.0,) * 7 + (0.2, -0.4),))
-    expected = joint_q.clone()
-
     kinematic_seed_target_rotations(
         tree,
         topology,
@@ -280,11 +293,285 @@ def test_serial_semantic_path_seed_leaves_unsupported_joints_at_default() -> Non
         joint_q=joint_q,
     )
 
-    torch.testing.assert_close(joint_q, expected)
+    torch.testing.assert_close(joint_q[:, 7], torch.zeros(1), atol=1.0e-6, rtol=0.0)
+    torch.testing.assert_close(joint_q[:, 8], torch.full((1,), 0.7), atol=1.0e-6, rtol=0.0)
 
 
-def test_direct_child_seed_uses_propagated_parent_when_semantic_parent_was_skipped() -> None:
-    """A direct child must fit against its parent's reachable default rotation, not its desired rotation."""
+def test_redundant_semantic_path_preserves_default_nullspace_posture() -> None:
+    """A six-coordinate path must take the minimum target-space step from its default posture."""
+    tree = KinematicTree(
+        body_names=("root", "link_1", "link_2", "link_3", "link_4", "link_5", "link_6"),
+        parent_indices=(-1, 0, 1, 2, 3, 4, 5),
+        joint_names=("joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"),
+        joint_child_body_indices=(1, 2, 3, 4, 5, 6),
+        joint_coordinate_ranges=((0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6)),
+        coordinate_names=("joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"),
+        coordinate_axes=((1.0, 0.0, 0.0),) * 6,
+        coordinate_q_indices=(7, 8, 9, 10, 11, 12),
+        coordinate_qd_indices=(6, 7, 8, 9, 10, 11),
+        coordinate_lower_limits_rad=(-2.0,) * 6,
+        coordinate_upper_limits_rad=(2.0,) * 6,
+    )
+    identity = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+    topology = SimpleNamespace(
+        body_count=7,
+        coordinate_count=13,
+        body_joint=np.arange(7),
+        joint_parent=np.asarray((-1, 0, 1, 2, 3, 4, 5)),
+        joint_child=np.arange(7),
+        joint_transform_parent=np.asarray((identity,) * 7),
+        joint_transform_child=np.asarray((identity,) * 7),
+    )
+    default_coordinates = torch.tensor(((0.1, -0.2, 0.3, -0.4, 0.5, -0.1),))
+    expected_coordinates = default_coordinates + 0.1
+    root_rotation = torch.tensor(((0.0, 0.0, 0.0, 1.0),))
+    child_rotation = quat_from_angle_axis(torch.tensor(0.8), torch.tensor((1.0, 0.0, 0.0))).unsqueeze(0)
+    target_rotation = torch.stack((root_rotation, child_rotation))
+    joint_q = torch.zeros(1, 13)
+    joint_q[:, 6] = 1.0
+    joint_q[:, 7:].copy_(default_coordinates)
+
+    with pytest.raises(ValueError, match="one to three"):
+        fit_ordered_hinge_coordinates(child_rotation, torch.tensor(tree.coordinate_axes))
+    residual = kinematic_seed_target_rotations(
+        tree,
+        topology,
+        target_body_indices=(0, 6),
+        target_parent_rows=(-1, 0),
+        target_rotation_xyzw=target_rotation,
+        joint_q=joint_q,
+    )
+
+    torch.testing.assert_close(joint_q[:, 7:], expected_coordinates, atol=2.0e-6, rtol=0.0)
+    torch.testing.assert_close(residual[1], torch.zeros(1), atol=2.0e-6, rtol=0.0)
+
+
+def test_branching_semantic_paths_solve_shared_coordinates_together() -> None:
+    """Sibling endpoints must share one upstream solution with minimum change from defaults."""
+    tree = KinematicTree(
+        body_names=("root", "shared", "left", "right"),
+        parent_indices=(-1, 0, 1, 1),
+        joint_names=("shared", "left", "right"),
+        joint_child_body_indices=(1, 2, 3),
+        joint_coordinate_ranges=((0, 1), (1, 2), (2, 3)),
+        coordinate_names=("shared", "left", "right"),
+        coordinate_axes=((1.0, 0.0, 0.0),) * 3,
+        coordinate_q_indices=(7, 8, 9),
+        coordinate_qd_indices=(6, 7, 8),
+        coordinate_lower_limits_rad=(-2.0,) * 3,
+        coordinate_upper_limits_rad=(2.0,) * 3,
+    )
+    identity = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+    topology = SimpleNamespace(
+        body_count=4,
+        coordinate_count=10,
+        body_joint=np.arange(4),
+        joint_parent=np.asarray((-1, 0, 1, 1)),
+        joint_child=np.arange(4),
+        joint_transform_parent=np.asarray((identity,) * 4),
+        joint_transform_child=np.asarray((identity,) * 4),
+    )
+    root_rotation = torch.tensor(((0.0, 0.0, 0.0, 1.0),))
+    left_rotation = quat_from_angle_axis(torch.tensor(0.6), torch.tensor((1.0, 0.0, 0.0))).unsqueeze(0)
+    right_rotation = quat_from_angle_axis(torch.tensor(-0.2), torch.tensor((1.0, 0.0, 0.0))).unsqueeze(0)
+    target_rotation = torch.stack((root_rotation, left_rotation, right_rotation))
+    joint_q = torch.zeros(1, 10)
+    joint_q[:, 6] = 1.0
+    joint_q[:, 7:].copy_(torch.tensor(((0.2, -0.1, 0.4),)))
+
+    residual = kinematic_seed_target_rotations(
+        tree,
+        topology,
+        target_body_indices=(0, 2, 3),
+        target_parent_rows=(-1, 0, 0),
+        target_rotation_xyzw=target_rotation,
+        joint_q=joint_q,
+    )
+
+    torch.testing.assert_close(joint_q[:, 7:], torch.tensor(((0.1, 0.5, -0.3),)), atol=2.0e-6, rtol=0.0)
+    torch.testing.assert_close(residual[1:], torch.zeros(2, 1), atol=2.0e-6, rtol=0.0)
+
+
+def test_disjoint_semantic_path_remains_analytic_beside_coupled_branch() -> None:
+    """An independent limb must not enter the shared-coordinate task matrix."""
+    tree = KinematicTree(
+        body_names=("root", "shared", "left", "right", "solo"),
+        parent_indices=(-1, 0, 1, 1, 0),
+        joint_names=("shared", "left", "right", "solo"),
+        joint_child_body_indices=(1, 2, 3, 4),
+        joint_coordinate_ranges=((0, 1), (1, 2), (2, 3), (3, 4)),
+        coordinate_names=("shared", "left", "right", "solo"),
+        coordinate_axes=((1.0, 0.0, 0.0),) * 3 + ((0.0, 1.0, 0.0),),
+        coordinate_q_indices=(7, 8, 9, 10),
+        coordinate_qd_indices=(6, 7, 8, 9),
+        coordinate_lower_limits_rad=(-2.0,) * 4,
+        coordinate_upper_limits_rad=(2.0,) * 4,
+    )
+    identity = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+    topology = SimpleNamespace(
+        body_count=5,
+        coordinate_count=11,
+        body_joint=np.arange(5),
+        joint_parent=np.asarray((-1, 0, 1, 1, 0)),
+        joint_child=np.arange(5),
+        joint_transform_parent=np.asarray((identity,) * 5),
+        joint_transform_child=np.asarray((identity,) * 5),
+    )
+    root_rotation = torch.tensor(((0.0, 0.0, 0.0, 1.0),))
+    left_rotation = quat_from_angle_axis(torch.tensor(0.6), torch.tensor((1.0, 0.0, 0.0))).unsqueeze(0)
+    right_rotation = quat_from_angle_axis(torch.tensor(-0.2), torch.tensor((1.0, 0.0, 0.0))).unsqueeze(0)
+    solo_rotation = quat_from_angle_axis(torch.tensor(0.4), torch.tensor((0.0, 1.0, 0.0))).unsqueeze(0)
+    target_rotation = torch.stack((root_rotation, left_rotation, right_rotation, solo_rotation))
+    joint_q = torch.zeros(1, 11)
+    joint_q[:, 6] = 1.0
+    joint_q[:, 7:].copy_(torch.tensor(((0.2, -0.1, 0.4, -0.3),)))
+
+    residual = kinematic_seed_target_rotations(
+        tree,
+        topology,
+        target_body_indices=(0, 2, 3, 4),
+        target_parent_rows=(-1, 0, 0, 0),
+        target_rotation_xyzw=target_rotation,
+        joint_q=joint_q,
+    )
+
+    torch.testing.assert_close(joint_q[:, 7:], torch.tensor(((0.1, 0.5, -0.3, 0.4),)), atol=2.0e-6, rtol=0.0)
+    torch.testing.assert_close(residual[1:], torch.zeros(3, 1), atol=2.0e-6, rtol=0.0)
+
+
+def test_serial_semantic_path_seed_crosses_fixed_intermediate_body() -> None:
+    """A fixed body inside a semantic path must propagate without creating a hinge."""
+    tree = KinematicTree(
+        body_names=("root", "fixed", "elbow", "hand"),
+        parent_indices=(-1, 0, 1, 2),
+        joint_names=("fixed_joint", "shoulder", "wrist"),
+        joint_child_body_indices=(1, 2, 3),
+        joint_coordinate_ranges=((0, 0), (0, 1), (1, 2)),
+        coordinate_names=("shoulder", "wrist"),
+        coordinate_axes=((0.0, 1.0, 0.0), (1.0, 0.0, 0.0)),
+        coordinate_q_indices=(7, 8),
+        coordinate_qd_indices=(6, 7),
+        coordinate_lower_limits_rad=(-1.0, -1.0),
+        coordinate_upper_limits_rad=(1.0, 1.0),
+    )
+    identity = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+    topology = SimpleNamespace(
+        body_count=4,
+        coordinate_count=9,
+        body_joint=np.asarray((0, 1, 2, 3)),
+        joint_parent=np.asarray((-1, 0, 1, 2)),
+        joint_child=np.asarray((0, 1, 2, 3)),
+        joint_transform_parent=np.asarray((identity,) * 4),
+        joint_transform_child=np.asarray((identity,) * 4),
+    )
+    target_rotation = torch.zeros(2, 1, 4)
+    target_rotation[..., 3] = 1.0
+    target_rotation[1] = quat_from_angle_axis(torch.tensor(0.6), torch.tensor((1.0, 0.0, 0.0)))
+    joint_q = torch.tensor(((0.0,) * 7 + (0.2, -0.4),))
+
+    kinematic_seed_target_rotations(
+        tree,
+        topology,
+        target_body_indices=(0, 3),
+        target_parent_rows=(-1, 0),
+        target_rotation_xyzw=target_rotation,
+        joint_q=joint_q,
+    )
+
+    torch.testing.assert_close(joint_q[:, 7], torch.zeros(1), atol=1.0e-6, rtol=0.0)
+    torch.testing.assert_close(joint_q[:, 8], torch.full((1,), 0.6), atol=1.0e-6, rtol=0.0)
+
+
+def test_nonorthogonal_serial_path_recovers_default_coordinates_and_rotation() -> None:
+    """Nonidentity fixed frames must preserve one independent nonorthogonal three-axis fit."""
+    tree = KinematicTree(
+        body_names=("root", "fixed", "first", "second", "third"),
+        parent_indices=(-1, 0, 1, 2, 3),
+        joint_names=("fixed", "first", "second", "third"),
+        joint_child_body_indices=(1, 2, 3, 4),
+        joint_coordinate_ranges=((0, 0), (0, 1), (1, 2), (2, 3)),
+        coordinate_names=("first", "second", "third"),
+        coordinate_axes=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        coordinate_q_indices=(7, 8, 9),
+        coordinate_qd_indices=(6, 7, 8),
+        coordinate_lower_limits_rad=(-2.0, -2.0, -2.0),
+        coordinate_upper_limits_rad=(2.0, 2.0, 2.0),
+    )
+    identity_q = torch.tensor((0.0, 0.0, 0.0, 1.0))
+
+    def rotation(angle: float, axis: tuple[float, float, float]) -> torch.Tensor:
+        return quat_from_angle_axis(torch.tensor(angle), torch.tensor(axis))
+
+    parent_rotation = (
+        identity_q,
+        rotation(0.35, (0.0, 0.0, 1.0)),
+        rotation(0.25, (0.0, 1.0, 0.0)),
+        rotation(0.20, (0.70710678, 0.70710678, 0.0)),
+        rotation(-0.18, (1.0, 0.0, 0.0)),
+    )
+    child_rotation = (
+        identity_q,
+        rotation(-0.20, (1.0, 0.0, 0.0)),
+        rotation(0.15, (0.0, 0.0, 1.0)),
+        rotation(-0.30, (0.0, 1.0, 0.0)),
+        rotation(0.27, (0.0, 0.0, 1.0)),
+    )
+    transforms_parent = np.asarray(tuple((0.0, 0.0, 0.0, *value.tolist()) for value in parent_rotation))
+    transforms_child = np.asarray(tuple((0.0, 0.0, 0.0, *value.tolist()) for value in child_rotation))
+    topology = SimpleNamespace(
+        body_count=5,
+        coordinate_count=10,
+        body_joint=np.arange(5),
+        joint_parent=np.asarray((-1, 0, 1, 2, 3)),
+        joint_child=np.arange(5),
+        joint_transform_parent=transforms_parent,
+        joint_transform_child=transforms_child,
+    )
+
+    zero = identity_q.unsqueeze(0)
+    axes = []
+    local_axes = tuple(torch.tensor(axis) for axis in tree.coordinate_axes)
+    axis_index = 0
+    for body in range(1, 5):
+        parent = parent_rotation[body].unsqueeze(0)
+        child = child_rotation[body].unsqueeze(0)
+        joint_frame = quat_mul(zero, parent)
+        if body > 1:
+            axes.append(quat_apply(joint_frame, local_axes[axis_index].unsqueeze(0)).squeeze(0))
+            axis_index += 1
+        zero = quat_mul(quat_mul(zero, parent), quat_conjugate(child))
+    axes = torch.stack(axes)
+    gram = axes @ axes.T
+    assert torch.linalg.det(gram) > 1.0e-3
+    assert torch.max(torch.abs(gram - torch.eye(3))) > 0.05
+
+    default_coordinates = torch.tensor(((0.23, -0.31, 0.18),))
+    desired_relative = quat_mul(ordered_hinge_rotation(default_coordinates, axes), zero)
+    target_rotation = torch.stack((identity_q.unsqueeze(0), desired_relative))
+    joint_q = torch.zeros(1, 10)
+    joint_q[:, 6] = 1.0
+
+    residual = kinematic_seed_target_rotations(
+        tree,
+        topology,
+        target_body_indices=(0, 4),
+        target_parent_rows=(-1, 0),
+        target_rotation_xyzw=target_rotation,
+        joint_q=joint_q,
+    )
+
+    reached = quat_mul(ordered_hinge_rotation(joint_q[:, 7:10], axes), zero)
+    rotation_delta = quat_mul(quat_conjugate(reached), desired_relative)
+    rotation_error = 2.0 * torch.atan2(
+        torch.linalg.vector_norm(rotation_delta[:, :3], dim=-1), rotation_delta[:, 3].abs()
+    )
+    torch.testing.assert_close(joint_q[:, 7:10], default_coordinates, atol=2.0e-5, rtol=0.0)
+    torch.testing.assert_close(residual[1], torch.zeros(1), atol=2.0e-5, rtol=0.0)
+    torch.testing.assert_close(rotation_error, torch.zeros(1), atol=2.0e-5, rtol=0.0)
+
+
+def test_direct_child_seed_uses_newly_seeded_serial_parent() -> None:
+    """A direct child must fit against the parent rotation reached by the preceding semantic edge."""
     tree = KinematicTree(
         body_names=("root", "bridge", "parent", "child"),
         parent_indices=(-1, 0, 1, 2),
@@ -316,14 +603,12 @@ def test_direct_child_seed_uses_propagated_parent_when_semantic_parent_was_skipp
     )
     default_parent_coordinates = torch.tensor(((0.2, -0.1),))
     desired_child_coordinates = torch.tensor(((0.4, -0.2, 0.1),))
-    bridge_rotation = ordered_hinge_rotation(default_parent_coordinates[:, :1], torch.tensor(((0.0, 1.0, 0.0),)))
-    parent_local = ordered_hinge_rotation(default_parent_coordinates[:, 1:], torch.tensor(((0.0, 0.0, 1.0),)))
-    actual_parent = quat_mul(bridge_rotation, parent_local)
-    target_child = quat_mul(actual_parent, ordered_hinge_rotation(desired_child_coordinates, torch.eye(3)))
+    desired_parent = quat_from_angle_axis(torch.tensor(1.0), torch.tensor((0.0, 0.0, 1.0))).unsqueeze(0)
+    target_child = quat_mul(desired_parent, ordered_hinge_rotation(desired_child_coordinates, torch.eye(3)))
     target_rotation = torch.stack(
         (
             torch.tensor(((0.0, 0.0, 0.0, 1.0),)),
-            quat_from_angle_axis(torch.tensor(1.0), torch.tensor((0.0, 0.0, 1.0))).unsqueeze(0),
+            desired_parent,
             target_child,
         )
     )
@@ -339,5 +624,5 @@ def test_direct_child_seed_uses_propagated_parent_when_semantic_parent_was_skipp
         joint_q=joint_q,
     )
 
-    torch.testing.assert_close(joint_q[:, 7:9], default_parent_coordinates)
+    torch.testing.assert_close(joint_q[:, 7:9], torch.tensor(((0.0, 1.0),)), atol=1.0e-6, rtol=0.0)
     torch.testing.assert_close(joint_q[:, 9:12], desired_child_coordinates, atol=1.0e-6, rtol=0.0)

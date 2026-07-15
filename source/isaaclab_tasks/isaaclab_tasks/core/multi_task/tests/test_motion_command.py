@@ -10,23 +10,33 @@ from __future__ import annotations
 import hashlib
 import inspect
 import math
+import weakref
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 import torch
+import warp as wp
 
 from isaaclab.utils.math import quat_from_rotation_vector, quat_slerp
 
 import isaaclab_tasks.core.multi_task.motion.data as motion_data_module
+from isaaclab_tasks.core.multi_task.kinematics import NewtonKinematics
+from isaaclab_tasks.core.multi_task.mdp.commands.state_command import TaskTableView
 from isaaclab_tasks.core.multi_task.motion.data import (
     MotionClipIndex,
     MotionFrames,
     MotionResetState,
     MotionSkeleton,
+)
+from isaaclab_tasks.core.multi_task.motion.data.frames import (
+    MotionGeneralizedCoordinates,
+    MotionSourceProjectionAnalytic,
+    MotionSourceProjectionExact,
 )
 from isaaclab_tasks.core.multi_task.motion.mdp.commands import (
     MotionSampler,
@@ -37,6 +47,8 @@ from isaaclab_tasks.core.multi_task.motion.mdp.commands import (
 )
 from isaaclab_tasks.core.multi_task.motion.mdp.commands import commands_cfg as commands_cfg_module
 from isaaclab_tasks.core.multi_task.motion.mdp.commands import motion_task_table as table_module
+from isaaclab_tasks.core.multi_task.motion.mdp.commands import motion_task_table_builder as table_builder_module
+from isaaclab_tasks.core.multi_task.motion.mdp.commands import motion_trajectory as trajectory_module
 from isaaclab_tasks.core.multi_task.tests.motion_table_test_utils import motion_task_table
 
 
@@ -57,6 +69,22 @@ def _reference() -> SimpleNamespace:
     )
 
 
+def _build_synthetic_task_table(cfg: MotionTaskTableCfg, device: str) -> MotionTaskTable:
+    """Build through the production scene-owned mechanics path with a test reference."""
+    scene_cfg = SimpleNamespace(robot=object())
+    with patch.object(NewtonKinematics, "from_articulation", return_value=_reference()):
+        return build_motion_task_table(SimpleNamespace(task_table=cfg), scene_cfg, device)
+
+
+def _inspect_synthetic_task_table(cfg: MotionTaskTableCfg, device: str, *, sequence_limit: int = 16) -> TaskTableView:
+    """Inspect through the production scene-owned mechanics path with a test reference."""
+    scene_cfg = SimpleNamespace(robot=object())
+    with patch.object(NewtonKinematics, "from_articulation", return_value=_reference()):
+        return table_builder_module.build_motion_task_table_inspection(
+            SimpleNamespace(task_table=cfg), scene_cfg, device, sequence_limit=sequence_limit
+        )
+
+
 def _skeleton() -> MotionSkeleton:
     return MotionSkeleton(
         identifier="motion_command_test",
@@ -70,24 +98,28 @@ def _skeleton() -> MotionSkeleton:
         joint_axes=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
         root_translation_frame="world",
         root_rotation_convention="wxyz",
+        landmark_rotation_policy="calibrated_body",
     )
 
 
 def _index() -> MotionClipIndex:
     return MotionClipIndex(
         source_content_sha256=_hash("source"),
+        skeleton_identity_sha256s=(_skeleton().identity_sha256,),
         clips=(
             MotionClipIndex.Clip(
                 clip_id="clip_a",
                 frame_count=3,
                 source_fps=2.0,
                 content_sha256=_hash("clip-a"),
+                skeleton_id=0,
             ),
             MotionClipIndex.Clip(
                 clip_id="clip_b",
                 frame_count=4,
                 source_fps=4.0,
                 content_sha256=_hash("clip-b"),
+                skeleton_id=0,
             ),
         ),
     )
@@ -110,7 +142,7 @@ def test_motion_table_identity_changes_with_joint_order() -> None:
     frames = _empty_frames(index.total_frames)
     arguments = (
         index,
-        _hash("source-skeleton"),
+        "test_decoder_v1",
         frames,
     )
     suffix = (
@@ -118,7 +150,7 @@ def test_motion_table_identity_changes_with_joint_order() -> None:
         "test_builder_v1",
         _hash("builder"),
         "source_frames",
-        "exact_coordinates",
+        "exact",
         _hash("exact-family"),
     )
 
@@ -136,14 +168,14 @@ def test_motion_table_identity_changes_with_selected_family_policy() -> None:
     frames = _empty_frames(index.total_frames)
     arguments = (
         index,
-        _hash("source-skeleton"),
+        "test_decoder_v1",
         frames,
         ("joint_a", "joint_b"),
         (),
         "test_builder_v1",
         _hash("builder"),
         "source_frames",
-        "semantic_sequence",
+        "trajectory",
     )
 
     original = table_module._table_identity(*arguments, _hash("semantic-family-v1"))
@@ -164,20 +196,47 @@ def test_motion_table_identity_hashes_each_source_clip_once(monkeypatch: pytest.
     monkeypatch.setattr(table_module, "canonical_sha256", capture)
     table_module._table_identity(
         index,
-        _hash("source-skeleton"),
+        "test_decoder_v1",
         _empty_frames(index.total_frames),
         ("joint_a", "joint_b"),
         (),
         "test_builder_v1",
         _hash("builder"),
         "source_frames",
-        "exact_coordinates",
+        "exact",
         _hash("exact-family"),
     )
 
     source_clips = captured["source_clips"]
     assert isinstance(source_clips, list)
     assert [clip["clip_id"] for clip in source_clips] == list(index.clip_ids)
+
+
+def test_motion_table_identity_changes_with_decoder_and_clip_skeleton_assignment() -> None:
+    """Decoder math and clip-to-skeleton ownership are table provenance."""
+    index = _index()
+    frames = _empty_frames(index.total_frames)
+    suffix = (
+        frames,
+        ("joint_a", "joint_b"),
+        (),
+        "test_builder_v1",
+        _hash("builder"),
+        "source_frames",
+        "exact",
+        _hash("exact-family"),
+    )
+    original = table_module._table_identity(index, "decoder_v1", *suffix)
+    changed_decoder = table_module._table_identity(index, "decoder_v2", *suffix)
+    assigned = MotionClipIndex(
+        source_content_sha256=index.source_content_sha256,
+        skeleton_identity_sha256s=(index.skeleton_identity_sha256s[0], _hash("second-skeleton")),
+        clips=(index.clips[0], replace(index.clips[1], skeleton_id=1)),
+    )
+    changed_assignment = table_module._table_identity(assigned, "decoder_v1", *suffix)
+
+    assert original != changed_decoder
+    assert original != changed_assignment
 
 
 def _clip_frames(clip_number: int, frame_count: int) -> MotionFrames:
@@ -200,6 +259,14 @@ def _clip_frames(clip_number: int, frame_count: int) -> MotionFrames:
     )
 
 
+def _synthetic_joint_q(clip_number: int, frame_count: int, device: str | torch.device) -> torch.Tensor:
+    """Return one valid free-root corpus in the synthetic target's Newton order."""
+    joint_q = torch.zeros((frame_count, 7 + len(_LIVE_JOINT_NAMES)), dtype=torch.float32, device=device)
+    joint_q[:, 0] = float(clip_number)
+    joint_q[:, 6] = 1.0
+    return joint_q
+
+
 class _SyntheticMotionClip:
     """Small exact-coordinate source clip used by table-construction tests."""
 
@@ -212,68 +279,262 @@ class _SyntheticMotionClip:
         self, source_skeleton: MotionSkeleton, *, device: str | torch.device
     ) -> tuple[torch.Tensor, None]:
         del source_skeleton
-        joint_q = torch.full((self.frame_count, 1), float(self.clip_number), dtype=torch.float32, device=device)
-        return joint_q, None
+        return _synthetic_joint_q(self.clip_number, self.frame_count, device), None
 
-    def semantic_local_pose(
+    def local_pose(
         self, source_skeleton: MotionSkeleton, *, device: str | torch.device
     ) -> tuple[torch.Tensor, torch.Tensor]:
         del source_skeleton, device
         raise AssertionError("The exact-coordinate fixture must not decode semantic poses.")
 
 
-class _SyntheticExactBuilder:
-    """Complete exact-stage builder whose tensors remain easy to inspect."""
+class _SyntheticFrameTarget:
+    """One synthetic robot target owning coordinate storage and materialization."""
 
-    version = "test_builder_v1"
-    construction_identity_sha256 = _hash("test-builder-construction")
+    version = "test_target_v1"
+    construction_identity_sha256 = _hash("test-target-construction")
+    coordinate_profile_sha256 = _hash("test-target-coordinate-profile")
     joint_names = _LIVE_JOINT_NAMES
+    collision_geometry_identity_sha256 = _hash("test-target-collision-geometry")
+    joint_q_indices = (7, 8)
     reference_frame_names: tuple[str, ...] = ()
-    exact_coordinates = True
 
     def __init__(
         self,
-        source_skeleton: MotionSkeleton,
         *,
-        failure: str | None = None,
-        nonfinite_clip: int | None = None,
+        coordinate_refs: list[weakref.ReferenceType[torch.Tensor]] | None = None,
+        coordinate_live_scalars: list[int] | None = None,
     ) -> None:
-        self.source_skeleton = source_skeleton
-        self.failure = failure
-        self.nonfinite_clip = nonfinite_clip
-        self.allocated: MotionFrames | None = None
+        self.coordinate_refs = [] if coordinate_refs is None else coordinate_refs
+        self.coordinate_live_scalars = [] if coordinate_live_scalars is None else coordinate_live_scalars
+        self.allocation_sizes: list[int] = []
+        self.materialize_calls = 0
+        self.live_coordinate_scalars_at_materialization = 0
+        self._device = torch.device("cpu")
+        self._kinematic_tree = SimpleNamespace(
+            num_coordinates=len(_LIVE_JOINT_NAMES),
+            root_body_index=0,
+            coordinate_q_indices=(7, 8),
+            coordinate_qd_indices=(6, 7),
+            coordinate_lower_limits_rad=(-1.0e6, -1.0e6),
+            coordinate_upper_limits_rad=(1.0e6, 1.0e6),
+        )
+        self._kinematics = SimpleNamespace(
+            n_root_coords=7,
+            device=self._device,
+            model=SimpleNamespace(
+                joint_coord_count=9,
+                joint_dof_count=8,
+                body_count=1,
+                body_com=wp.array([(0.0, 0.0, 0.0)], dtype=wp.vec3, device="cpu"),
+            ),
+            builder=object(),
+            default_joint_q=[0.0] * 9,
+            topology=SimpleNamespace(
+                joint_velocity_lower=np.full(8, -1.0e6, dtype=np.float32),
+                joint_velocity_upper=np.full(8, 1.0e6, dtype=np.float32),
+            ),
+            eval_fk_batched_torch=self._eval_fk_batched_torch,
+        )
 
-    def allocate(self, frame_count: int, *, device: str | torch.device) -> MotionFrames:
-        assert torch.device(device) == torch.device("cpu")
-        self.allocated = _empty_frames(frame_count)
-        return self.allocated
+    @property
+    def materialization_minimum_frames(self) -> int:
+        """Minimum complete synthetic clip length."""
+        return 1
 
-    def build_exact_coordinates(
-        self, joint_q: torch.Tensor, joint_qd: torch.Tensor | None, source_fps: float
+    def trajectory_seed_joint_q(
+        self,
+        *,
+        root_position_m: torch.Tensor,
+        rotation_body_indices: tuple[int, ...],
+        landmark_rotation_xyzw: torch.Tensor,
+    ) -> torch.Tensor:
+        """Seed the synthetic free root while leaving its two nonroot coordinates at zero."""
+        frame_count = root_position_m.shape[0] if root_position_m.ndim == 2 else -1
+        if (
+            frame_count < 1
+            or root_position_m.shape != (frame_count, 3)
+            or rotation_body_indices != (0,)
+            or landmark_rotation_xyzw.shape != (1, frame_count, 4)
+            or root_position_m.dtype is not torch.float32
+            or landmark_rotation_xyzw.dtype is not torch.float32
+            or root_position_m.device != self._device
+            or landmark_rotation_xyzw.device != self._device
+            or not bool(torch.all(torch.isfinite(root_position_m)))
+            or not bool(torch.all(torch.isfinite(landmark_rotation_xyzw)))
+        ):
+            raise ValueError("Synthetic trajectory seed requires one finite target-root pose per frame.")
+        joint_q = torch.zeros((frame_count, 9), dtype=torch.float32, device=self._device)
+        joint_q[:, :3].copy_(root_position_m)
+        joint_q[:, 3:7].copy_(landmark_rotation_xyzw[0])
+        return joint_q
+
+    def allocate_coordinates(self, frame_count: int, *, device: str | torch.device) -> MotionGeneralizedCoordinates:
+        self._device = torch.device(device)
+        assert self._device.type in ("cpu", "cuda")
+        self._kinematics.device = self._device
+        coordinates = MotionGeneralizedCoordinates(
+            torch.empty((frame_count, 9), dtype=torch.float32, device=device), None
+        )
+        self.coordinate_refs.append(weakref.ref(coordinates.joint_q))
+        self.allocation_sizes.append(frame_count)
+        live_tensors = (reference() for reference in self.coordinate_refs)
+        live_storages = {
+            tensor.untyped_storage().data_ptr(): tensor.untyped_storage().nbytes() // tensor.element_size()
+            for tensor in live_tensors
+            if tensor is not None
+        }
+        self.coordinate_live_scalars.append(sum(live_storages.values()))
+        return coordinates
+
+    @property
+    def kinematics(self):
+        return self._kinematics
+
+    @property
+    def kinematic_tree(self):
+        return self._kinematic_tree
+
+    @property
+    def collision_probe_body_indices(self) -> torch.Tensor:
+        return torch.tensor((0,), dtype=torch.int64, device=self._device)
+
+    @property
+    def collision_probe_offsets_m(self) -> torch.Tensor:
+        return torch.zeros((1, 3), dtype=torch.float32, device=self._device)
+
+    @property
+    def collision_probe_contact_slots(self) -> torch.Tensor:
+        return torch.full((1,), -1, dtype=torch.int64, device=self._device)
+
+    @property
+    def collision_probe_normal_channel_slots(self) -> torch.Tensor:
+        return torch.full((1,), -1, dtype=torch.int64, device=self._device)
+
+    @staticmethod
+    def _eval_fk_batched_torch(
+        joint_q: torch.Tensor,
+        joint_qd: torch.Tensor,
+        body_q: torch.Tensor,
+        body_qd: torch.Tensor,
+    ) -> None:
+        """Evaluate the synthetic one-body free root without allocating."""
+        del joint_qd
+        body_q[:, 0].copy_(joint_q[:, :7])
+        body_qd.zero_()
+
+    def coordinates_from_newton(
+        self, joint_q: torch.Tensor, clip_index: MotionClipIndex
+    ) -> MotionGeneralizedCoordinates:
+        if joint_q.shape != (clip_index.total_frames, 9):
+            raise ValueError("Synthetic Newton coordinates differ from the declared corpus.")
+        return MotionGeneralizedCoordinates(joint_q.contiguous(), None)
+
+    def write_joint_position_newton(self, coordinates: MotionGeneralizedCoordinates, output: torch.Tensor) -> None:
+        """Write synthetic coordinates without changing their representation."""
+        output.copy_(coordinates.joint_q)
+
+    def write_nonroot_velocity_canonical(
+        self,
+        joint_q: torch.Tensor,
+        clip_offsets: torch.Tensor,
+        step_seconds: torch.Tensor,
+        output: torch.Tensor,
+    ) -> None:
+        """Write zero synthetic target velocities into Newton storage."""
+        del joint_q, clip_offsets, step_seconds
+        output[:, 6:].zero_()
+
+    def materialize_coordinates(
+        self, coordinates: MotionGeneralizedCoordinates, clip_index: MotionClipIndex
     ) -> MotionFrames:
-        del joint_qd, source_fps
-        if self.failure is not None:
-            raise RuntimeError(self.failure)
-        frames = _clip_frames(int(joint_q[0, 0]), joint_q.shape[0])
-        if int(joint_q[0, 0]) == self.nonfinite_clip:
-            frames.root_position[0, 0] = torch.nan
+        self.materialize_calls += 1
+        tensors = [reference() for reference in self.coordinate_refs]
+        tensors.append(coordinates.joint_q)
+        storages = {
+            tensor.untyped_storage().data_ptr(): tensor.untyped_storage().nbytes() // tensor.element_size()
+            for tensor in tensors
+            if tensor is not None
+        }
+        self.live_coordinate_scalars_at_materialization = sum(storages.values())
+        frames = _empty_frames(clip_index.total_frames)
+        for clip_index_value, clip in enumerate(clip_index.clips):
+            start, stop = clip_index.offsets[clip_index_value : clip_index_value + 2]
+            clip_number = int(coordinates.joint_q[start, 0])
+            frames._copy_clip_(start, stop, _clip_frames(clip_number, clip.frame_count))
         return frames
 
-    def generate_semantic_targets(self, root_position: torch.Tensor, local_rotation_xyzw: torch.Tensor):
-        del root_position, local_rotation_xyzw
-        raise AssertionError("The exact-coordinate fixture must not generate semantic targets.")
 
-    @property
-    def semantic_reference_kinematics(self):
-        raise AssertionError("The exact-coordinate fixture has no semantic mechanics.")
+def _SyntheticExactProjection(
+    source_skeleton: MotionSkeleton,
+    target: _SyntheticFrameTarget,
+    *,
+    failure: str | None = None,
+    nonfinite_clip: int | None = None,
+) -> MotionSourceProjectionExact:
+    """Return one concrete exact source route with optional failure injection."""
 
-    @property
-    def semantic_target_tree(self):
-        raise AssertionError("The exact-coordinate fixture has no semantic topology.")
+    def convert(
+        joint_q: torch.Tensor, joint_qd: torch.Tensor | None, source_fps: float
+    ) -> MotionGeneralizedCoordinates:
+        del joint_qd, source_fps
+        if failure is not None:
+            raise RuntimeError(failure)
+        coordinates = joint_q.clone()
+        if int(joint_q[0, 0]) == nonfinite_clip:
+            coordinates[0, 0] = torch.nan
+        return MotionGeneralizedCoordinates(coordinates, None)
 
-    def build_semantic_corpus(self, joint_q: torch.Tensor, clip_index: MotionClipIndex) -> MotionFrames:
-        del joint_q, clip_index
-        raise AssertionError("The exact-coordinate fixture must not materialize a semantic corpus.")
+    return MotionSourceProjectionExact(
+        source_skeleton=source_skeleton,
+        target=target,
+        version="test_builder_v1",
+        construction_identity_sha256=_hash("test-builder-construction"),
+        convert_coordinates=convert,
+    )
+
+
+_CONTACT_CHANNELS = (
+    MotionTaskTableCfg.ContactChannelCfg(name="left_foot", source_probe_roles=("left_ankle", "left_toe")),
+    MotionTaskTableCfg.ContactChannelCfg(name="right_foot", source_probe_roles=("right_ankle", "right_toe")),
+)
+
+
+def _fixed_projection_factory(projection: object) -> Callable:
+    """Return one source-projection factory that always yields the same fixture."""
+
+    def factory(*_args):
+        return projection
+
+    return factory
+
+
+def _synthetic_target_kinematics(
+    target: _SyntheticFrameTarget,
+    source_projection_factory: Callable,
+) -> MotionTaskTableCfg.TargetKinematicsCfg:
+    """Bind one synthetic target and a caller-owned source projection factory."""
+
+    def target_factory(
+        _reference,
+        _contact_patches,
+        *,
+        calibration_artifact_root: str,
+        calibration: MotionTaskTableCfg.TargetKinematicsCfg.CalibrationCfg | None,
+    ) -> _SyntheticFrameTarget:
+        del calibration_artifact_root
+        assert calibration is None
+        return target
+
+    return MotionTaskTableCfg.TargetKinematicsCfg(
+        target_factory=target_factory,
+        source_projection_factory=source_projection_factory,
+        physics_types=(object,),
+        contact_patches=(
+            MotionTaskTableCfg.TargetKinematicsCfg.ContactPatchCfg(channel="left_foot", body_name="left_support"),
+            MotionTaskTableCfg.TargetKinematicsCfg.ContactPatchCfg(channel="right_foot", body_name="right_support"),
+        ),
+    )
 
 
 def _table(*, task_row_mode: str = "source_frames") -> MotionTaskTable:
@@ -290,7 +551,7 @@ def _table(*, task_row_mode: str = "source_frames") -> MotionTaskTable:
         "test_builder_v1",
         _hash("test-builder-construction"),
         task_row_mode,
-        _skeleton().identity_sha256,
+        "test_decoder_v1",
     )
 
 
@@ -498,8 +759,12 @@ def test_motion_payload_writes_reset_velocity_in_declared_root_frame() -> None:
     torch.testing.assert_close(robot.root_state[:, 7:], torch.tensor(((30.0, 31.0, 32.0, 40.0, 41.0, 42.0),)))
 
 
-def test_motion_task_table_cfg_streams_direct_source_into_exact_table_storage() -> None:
-    """Config construction must allocate once and bind builder output directly."""
+@pytest.mark.parametrize(
+    ("route_name", "family_name"),
+    (("exact", "native_coordinates"), ("analytic", "direct_coordinates")),
+)
+def test_motion_production_accepts_declared_stored_coordinate_routes(route_name: str, family_name: str) -> None:
+    """Production executes exact and analytic routes through their declared families."""
     index = _index()
 
     class Source:
@@ -508,45 +773,133 @@ def test_motion_task_table_cfg_streams_direct_source_into_exact_table_storage() 
         def inspect(self) -> MotionClipIndex:
             return index
 
-        def clips(self):
-            for clip_number, clip in enumerate(index.clips):
-                yield clip.clip_id, _SyntheticMotionClip(clip_number, clip.frame_count, clip.source_fps)
+        def skeleton(self, skeleton_id: int) -> MotionSkeleton:
+            assert skeleton_id == 0
+            return _skeleton()
+
+        def clips(self, clip_indices: tuple[int, ...]):
+            for clip_number in clip_indices:
+                clip = index.clips[clip_number]
+                yield clip_number, _SyntheticMotionClip(clip_number, clip.frame_count, clip.source_fps)
 
         def close(self) -> None:
             self.closed = True
 
     source = Source()
-    builder = _SyntheticExactBuilder(_skeleton())
+    target = _SyntheticFrameTarget()
+    if route_name == "exact":
+        projection = _SyntheticExactProjection(_skeleton(), target)
+    else:
+        projection = MotionSourceProjectionAnalytic(
+            source_skeleton=_skeleton(),
+            target=target,
+            version="test_analytic_v1",
+            construction_identity_sha256=_hash("test-analytic-construction"),
+            output_clip_index=lambda source_index: source_index,
+            convert_clip=lambda clip: MotionGeneralizedCoordinates(
+                _synthetic_joint_q(clip.clip_number, clip.frame_count, "cpu"), None
+            ),
+        )
     split = SimpleNamespace(
         source_content_sha256=index.source_content_sha256,
         clip_count=len(index.clips),
         frame_count=index.total_frames,
     )
     source_cfg = SimpleNamespace(
+        purpose="production",
         train=split,
         evaluation=split,
         open_split=lambda _root, _split: source,
-        build_skeleton=_skeleton,
+        decoder_version="test_decoder_v1",
     )
     cfg = MotionTaskTableCfg(
         source=source_cfg,
+        contact_channels=_CONTACT_CHANNELS,
         source_artifact_root="unused",
         motion_split="train",
-        target_kinematics=MotionTaskTableCfg.TargetKinematicsCfg(
-            frame_builder_factory=lambda _source_skeleton, _reference: builder,
-            reference_kinematics_factory=lambda _root, _device: _reference(),
+        target_kinematics=_synthetic_target_kinematics(target, _fixed_projection_factory(projection)),
+        families=(
+            commands_cfg_module.MotionExactFamilyCfg(name="native_coordinates"),
+            commands_cfg_module.MotionAnalyticFamilyCfg(name="direct_coordinates"),
+            commands_cfg_module.MotionTrajectoryFamilyCfg(name="trajectory_solve"),
         ),
         task_row_mode="clip_time_ranges",
     )
-    table = build_motion_task_table(SimpleNamespace(task_table=cfg), None, "cpu")
+    table = _build_synthetic_task_table(cfg, "cpu")
 
-    assert table.frames is builder.allocated
-    torch.testing.assert_close(table.clip_indices, torch.tensor((0, 1)))
-    torch.testing.assert_close(
-        table.reset_time_ranges_seconds,
-        torch.tensor(((0.0, 1.0), (0.0, 0.75))),
-    )
+    assert table.family_name == family_name
+    assert table.construction_version == projection.version
+    assert table.clip_index.total_frames == index.total_frames
+    assert target.allocation_sizes == [index.total_frames, max(clip.frame_count for clip in index.clips)]
     assert source.closed
+
+
+def test_motion_analytic_capacity_uses_declared_output_clock_when_upsampling() -> None:
+    """Analytic capacity follows its declared output index, not raw input frame count."""
+    source_index = MotionClipIndex(
+        source_content_sha256=_hash("analytic-upsample-source"),
+        skeleton_identity_sha256s=(_skeleton().identity_sha256,),
+        clips=(MotionClipIndex.Clip("clip", 2, 10.0, _hash("analytic-upsample-clip"), 0),),
+    )
+
+    class Source:
+        def inspect(self) -> MotionClipIndex:
+            return source_index
+
+        def skeleton(self, skeleton_id: int) -> MotionSkeleton:
+            assert skeleton_id == 0
+            return _skeleton()
+
+        def clips(self, clip_indices: tuple[int, ...]):
+            assert clip_indices == (0,)
+            yield 0, _SyntheticMotionClip(0, 2, 10.0)
+
+        def close(self) -> None:
+            pass
+
+    def output_index(index: MotionClipIndex) -> MotionClipIndex:
+        clip = index.clips[0]
+        return MotionClipIndex(
+            source_content_sha256=index.source_content_sha256,
+            skeleton_identity_sha256s=index.skeleton_identity_sha256s,
+            clips=(replace(clip, frame_count=4, source_fps=20.0),),
+        )
+
+    def convert_clip(clip: _SyntheticMotionClip) -> MotionGeneralizedCoordinates:
+        return MotionGeneralizedCoordinates(_synthetic_joint_q(clip.clip_number, 4, "cpu"), None)
+
+    target = _SyntheticFrameTarget()
+    projection = MotionSourceProjectionAnalytic(
+        source_skeleton=_skeleton(),
+        target=target,
+        version="test_analytic_v1",
+        construction_identity_sha256=_hash("test-analytic-construction"),
+        output_clip_index=output_index,
+        convert_clip=convert_clip,
+    )
+    split = SimpleNamespace(source_content_sha256=source_index.source_content_sha256, clip_count=1, frame_count=2)
+    cfg = MotionTaskTableCfg(
+        source=SimpleNamespace(
+            train=split,
+            purpose="oracle",
+            evaluation=split,
+            open_split=lambda _root, _split: Source(),
+            decoder_version="analytic_upsample_v1",
+        ),
+        contact_channels=_CONTACT_CHANNELS,
+        source_artifact_root="unused",
+        motion_split="train",
+        target_kinematics=_synthetic_target_kinematics(target, _fixed_projection_factory(projection)),
+        task_row_mode="clip_time_ranges",
+    )
+
+    inspection = _inspect_synthetic_task_table(cfg, "cpu", sequence_limit=1)
+
+    assert target.allocation_sizes == [4, 4]
+    assert target.coordinate_live_scalars == [36, 72]
+    assert target.live_coordinate_scalars_at_materialization == 36
+    torch.testing.assert_close(inspection.sequences.offsets, torch.tensor((0, 4)))
+    torch.testing.assert_close(inspection.sequences.frame_dt, torch.tensor((0.05,)))
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for TorchScript fusion.")
@@ -555,9 +908,10 @@ def test_motion_table_native_smpl_is_invariant_to_torchscript_cache_phase() -> N
     from isaaclab.utils.math import quat_apply
 
     from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClip, cmu_humenv_smpl_skeleton
+    from isaaclab_tasks.core.multi_task.motion.robots.smpl.articulation import SMPL_MOTION_ARTICULATION_CFG
     from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import (
-        smpl_frame_builder,
-        smpl_reference_kinematics,
+        smpl_frame_target,
+        smpl_source_projection,
     )
 
     frame_count = 257
@@ -568,9 +922,6 @@ def test_motion_table_native_smpl_is_invariant_to_torchscript_cache_phase() -> N
     generalized_position[:, 2] = 1.0
     generalized_position[:, 3] = np.cos(angle)
     generalized_position[:, 6] = np.sin(angle)
-    generalized_position[:, 7:] = np.float32(0.1) * np.sin(
-        time[:, None] * (np.float32(0.3) + coordinate * np.float32(0.01)) + coordinate * np.float32(0.02)
-    )
     generalized_velocity = np.zeros((frame_count, 75), dtype=np.float32)
     generalized_velocity[:, :3] = np.stack(
         (
@@ -594,12 +945,14 @@ def test_motion_table_native_smpl_is_invariant_to_torchscript_cache_phase() -> N
     clip = CmuHumEnvSmplClip(generalized_position, generalized_velocity, 30.0)
     index = MotionClipIndex(
         source_content_sha256=_hash("native-smpl-cache-phase-source"),
+        skeleton_identity_sha256s=(cmu_humenv_smpl_skeleton().identity_sha256,),
         clips=(
             MotionClipIndex.Clip(
                 clip_id="native_smpl",
                 frame_count=frame_count,
                 source_fps=30.0,
                 content_sha256=_hash("native-smpl-cache-phase-clip"),
+                skeleton_id=0,
             ),
         ),
     )
@@ -608,8 +961,13 @@ def test_motion_table_native_smpl_is_invariant_to_torchscript_cache_phase() -> N
         def inspect(self) -> MotionClipIndex:
             return index
 
-        def clips(self):
-            yield "native_smpl", clip
+        def skeleton(self, skeleton_id: int) -> MotionSkeleton:
+            assert skeleton_id == 0
+            return cmu_humenv_smpl_skeleton()
+
+        def clips(self, clip_indices: tuple[int, ...]):
+            assert clip_indices == (0,)
+            yield 0, clip
 
         def close(self) -> None:
             pass
@@ -620,18 +978,31 @@ def test_motion_table_native_smpl_is_invariant_to_torchscript_cache_phase() -> N
         frame_count=frame_count,
     )
     source_cfg = SimpleNamespace(
+        purpose="production",
         train=split,
         evaluation=split,
         open_split=lambda _root, _split: Source(),
-        build_skeleton=cmu_humenv_smpl_skeleton,
+        decoder_version="test_decoder_v1",
     )
     cfg = MotionTaskTableCfg(
         source=source_cfg,
+        contact_channels=_CONTACT_CHANNELS,
         source_artifact_root="unused",
         motion_split="train",
         target_kinematics=MotionTaskTableCfg.TargetKinematicsCfg(
-            frame_builder_factory=smpl_frame_builder,
-            reference_kinematics_factory=smpl_reference_kinematics,
+            target_factory=smpl_frame_target,
+            source_projection_factory=smpl_source_projection,
+            physics_types=(object,),
+            contact_patches=(
+                MotionTaskTableCfg.TargetKinematicsCfg.ContactPatchCfg(
+                    channel="left_foot",
+                    body_name="L_Ankle",
+                ),
+                MotionTaskTableCfg.TargetKinematicsCfg.ContactPatchCfg(
+                    channel="right_foot",
+                    body_name="R_Ankle",
+                ),
+            ),
         ),
         task_row_mode="clip_time_ranges",
     )
@@ -639,8 +1010,9 @@ def test_motion_table_native_smpl_is_invariant_to_torchscript_cache_phase() -> N
     quat_apply._debug_flush_compilation_cache()
     cpu_rng = torch.random.get_rng_state().clone()
     cuda_rng = torch.cuda.get_rng_state().clone()
-    first = build_motion_task_table(SimpleNamespace(task_table=cfg), None, "cuda:0")
-    second = build_motion_task_table(SimpleNamespace(task_table=cfg), None, "cuda:0")
+    scene_cfg = SimpleNamespace(robot=SMPL_MOTION_ARTICULATION_CFG)
+    first = build_motion_task_table(SimpleNamespace(task_table=cfg), scene_cfg, "cuda:0")
+    second = build_motion_task_table(SimpleNamespace(task_table=cfg), scene_cfg, "cuda:0")
 
     assert first.frames.stored_fields == second.frames.stored_fields
     for name in first.frames.stored_fields:
@@ -658,12 +1030,14 @@ def test_motion_table_g1_angular_velocity_is_invariant_to_torchscript_cache_phas
 
     index = MotionClipIndex(
         source_content_sha256=_hash("g1-angular-cache-phase-source"),
+        skeleton_identity_sha256s=(_skeleton().identity_sha256,),
         clips=(
             MotionClipIndex.Clip(
                 clip_id="g1_angular",
                 frame_count=257,
                 source_fps=30.0,
                 content_sha256=_hash("g1-angular-cache-phase-clip"),
+                skeleton_id=0,
             ),
         ),
     )
@@ -672,31 +1046,29 @@ def test_motion_table_g1_angular_velocity_is_invariant_to_torchscript_cache_phas
         def inspect(self) -> MotionClipIndex:
             return index
 
-        def clips(self):
-            yield "g1_angular", _SyntheticMotionClip(0, 257, 30.0)
+        def skeleton(self, skeleton_id: int) -> MotionSkeleton:
+            assert skeleton_id == 0
+            return _skeleton()
+
+        def clips(self, clip_indices: tuple[int, ...]):
+            assert clip_indices == (0,)
+            yield 0, _SyntheticMotionClip(0, 257, 30.0)
 
         def close(self) -> None:
             pass
 
-    class G1AngularBuilder(_SyntheticExactBuilder):
-        def allocate(self, frame_count: int, *, device: str | torch.device) -> MotionFrames:
-            return MotionFrames(
-                root_position=torch.empty(frame_count, 3, device=device),
-                root_rotation=torch.empty(frame_count, 4, device=device),
-                root_linear_velocity=torch.empty(frame_count, 3, device=device),
-                root_angular_velocity=torch.empty(frame_count, 3, device=device),
-                joint_position=torch.empty(frame_count, 2, device=device),
-                joint_velocity=torch.empty(frame_count, 2, device=device),
-            )
-
-        def build_exact_coordinates(
-            self, joint_q: torch.Tensor, joint_qd: torch.Tensor | None, source_fps: float
+    class G1AngularTarget(_SyntheticFrameTarget):
+        def materialize_coordinates(
+            self,
+            coordinates: MotionGeneralizedCoordinates,
+            clip_index: MotionClipIndex,
         ) -> MotionFrames:
-            del joint_qd
-            frame_count = joint_q.shape[0]
-            time = torch.arange(frame_count, dtype=torch.float32, device=joint_q.device) / source_fps
+            del coordinates
+            frame_count = clip_index.total_frames
+            source_fps = clip_index.clips[0].source_fps
+            time = torch.arange(frame_count, dtype=torch.float32, device="cuda:0") / source_fps
             angle = 0.7 * torch.sin(0.4 * time)
-            root_rotation = torch.zeros(frame_count, 4, dtype=torch.float32, device=joint_q.device)
+            root_rotation = torch.zeros(frame_count, 4, dtype=torch.float32, device="cuda:0")
             root_rotation[:, 2] = torch.sin(0.5 * angle)
             root_rotation[:, 3] = torch.cos(0.5 * angle)
             body_rotation = root_rotation[:, None].expand(frame_count, 31, 4).contiguous()
@@ -704,37 +1076,37 @@ def test_motion_table_g1_angular_velocity_is_invariant_to_torchscript_cache_phas
                 time_quaternion_angular_velocity(body_rotation.unsqueeze(0), 1.0 / source_fps)
             ).squeeze(0)
             return MotionFrames(
-                root_position=torch.zeros(frame_count, 3, device=joint_q.device),
+                root_position=torch.zeros(frame_count, 3, device="cuda:0"),
                 root_rotation=root_rotation,
-                root_linear_velocity=torch.zeros(frame_count, 3, device=joint_q.device),
+                root_linear_velocity=torch.zeros(frame_count, 3, device="cuda:0"),
                 root_angular_velocity=body_angular_velocity[:, 0].contiguous(),
-                joint_position=torch.zeros(frame_count, 2, device=joint_q.device),
-                joint_velocity=torch.zeros(frame_count, 2, device=joint_q.device),
+                joint_position=torch.zeros(frame_count, 2, device="cuda:0"),
+                joint_velocity=torch.zeros(frame_count, 2, device="cuda:0"),
             )
 
-    builder = G1AngularBuilder(_skeleton())
+    target = G1AngularTarget()
+    projection = _SyntheticExactProjection(_skeleton(), target)
     split = SimpleNamespace(source_content_sha256=index.source_content_sha256, clip_count=1, frame_count=257)
     source_cfg = SimpleNamespace(
+        purpose="production",
         train=split,
         evaluation=split,
         open_split=lambda _root, _split: Source(),
-        build_skeleton=_skeleton,
+        decoder_version="test_decoder_v1",
     )
     cfg = MotionTaskTableCfg(
         source=source_cfg,
+        contact_channels=_CONTACT_CHANNELS,
         source_artifact_root="unused",
         motion_split="train",
-        target_kinematics=MotionTaskTableCfg.TargetKinematicsCfg(
-            frame_builder_factory=lambda _source_skeleton, _reference: builder,
-            reference_kinematics_factory=lambda _root, _device: _reference(),
-        ),
+        target_kinematics=_synthetic_target_kinematics(target, _fixed_projection_factory(projection)),
         task_row_mode="clip_time_ranges",
     )
 
     for function in (quat_mul, quat_conjugate, axis_angle_from_quat):
         function._debug_flush_compilation_cache()
-    first = build_motion_task_table(SimpleNamespace(task_table=cfg), None, "cuda:0")
-    second = build_motion_task_table(SimpleNamespace(task_table=cfg), None, "cuda:0")
+    first = _build_synthetic_task_table(cfg, "cuda:0")
+    second = _build_synthetic_task_table(cfg, "cuda:0")
 
     for name in first.frames.stored_fields:
         assert torch.equal(first.field(name), second.field(name)), name
@@ -745,33 +1117,42 @@ def test_motion_source_iteration_rejects_a_clock_changed_after_inspection() -> N
     index = _index()
 
     class Source:
-        def clips(self):
-            for clip_number, clip in enumerate(index.clips):
+        def clips(self, clip_indices: tuple[int, ...]):
+            for clip_number in clip_indices:
+                clip = index.clips[clip_number]
                 source_fps = 3.0 if clip_number == 0 else clip.source_fps
-                yield clip.clip_id, _SyntheticMotionClip(clip_number, clip.frame_count, source_fps)
+                yield clip_number, _SyntheticMotionClip(clip_number, clip.frame_count, source_fps)
 
-    candidate = table_module._MotionCorpusCandidate(
-        builder=object(),
+    candidate = table_builder_module._MotionExactSourceCandidate(
+        target=object(),
+        projections=(object(),),
+        projection_indices=(0, 0),
         source=Source(),
-        clip_index=index,
+        source_index=index,
+        output_index=index,
+        source_clip_indices=tuple(range(len(index.clips))),
         device="cpu",
-        frames=object(),
+        coordinates=MotionGeneralizedCoordinates(torch.empty((index.total_frames, 1)), None),
     )
 
-    with pytest.raises(ValueError, match="sample rate"):
-        tuple(table_module._source_clips(candidate))
+    with pytest.raises(ValueError, match="clock or identity"):
+        tuple(trajectory_module._source_clips(candidate))
 
 
-def test_motion_family_selects_corpus_once_and_compacts_pass_fail_pass_frames() -> None:
-    """A rejected middle clip must not abort or leave a hole in the selected corpus."""
+def test_motion_inspection_retains_pass_fail_pass_without_compaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inspection retains every source clip and its original acceptance result."""
     index = MotionClipIndex(
         source_content_sha256=_hash("pass-fail-pass-source"),
+        skeleton_identity_sha256s=(_skeleton().identity_sha256,),
         clips=tuple(
             MotionClipIndex.Clip(
                 clip_id=f"clip_{index}",
                 frame_count=frame_count,
                 source_fps=2.0,
                 content_sha256=_hash(f"pass-fail-pass-{index}"),
+                skeleton_id=0,
             )
             for index, frame_count in enumerate((2, 3, 4))
         ),
@@ -781,49 +1162,272 @@ def test_motion_family_selects_corpus_once_and_compacts_pass_fail_pass_frames() 
         def inspect(self) -> MotionClipIndex:
             return index
 
-        def clips(self):
-            for clip_number, clip in enumerate(index.clips):
-                yield clip.clip_id, _SyntheticMotionClip(clip_number, clip.frame_count, clip.source_fps)
+        def skeleton(self, skeleton_id: int) -> MotionSkeleton:
+            assert skeleton_id == 0
+            return _skeleton()
+
+        def clips(self, clip_indices: tuple[int, ...]):
+            for clip_number in clip_indices:
+                clip = index.clips[clip_number]
+                yield clip_number, _SyntheticMotionClip(clip_number, clip.frame_count, clip.source_fps)
 
         def close(self) -> None:
             pass
 
-    builder = _SyntheticExactBuilder(_skeleton(), nonfinite_clip=1)
+    target = _SyntheticFrameTarget()
+    projection = _SyntheticExactProjection(_skeleton(), target)
+    coordinate_finite = table_builder_module.motion_criterion_target_coordinates
+
+    def reject_middle(cfg, candidate, rows):
+        return coordinate_finite(cfg, candidate, rows) & (rows != 1)
+
+    monkeypatch.setattr(table_builder_module, "motion_criterion_target_coordinates", reject_middle)
+    split = SimpleNamespace(
+        source_content_sha256=index.source_content_sha256,
+        clip_count=len(index.clips),
+        frame_count=index.total_frames,
+    )
+    cfg = MotionTaskTableCfg(
+        source=SimpleNamespace(
+            purpose="oracle",
+            train=split,
+            evaluation=split,
+            open_split=lambda _root, _split: Source(),
+            decoder_version="test_decoder_v1",
+        ),
+        contact_channels=_CONTACT_CHANNELS,
+        source_artifact_root="unused",
+        motion_split="train",
+        target_kinematics=_synthetic_target_kinematics(target, _fixed_projection_factory(projection)),
+        task_row_mode="clip_time_ranges",
+    )
+
+    inspection = _inspect_synthetic_task_table(cfg, "cpu", sequence_limit=3)
+
+    torch.testing.assert_close(inspection.sequences.offsets, torch.tensor((0, 2, 5, 9)))
+    torch.testing.assert_close(
+        inspection.state_bank.root_pose[:, 0, 0],
+        torch.tensor((0.0, 1.0, 100.0, 101.0, 102.0, 200.0, 201.0, 202.0, 203.0)),
+    )
+    accepted = inspection.quality.values[:, inspection.quality.names.index("accepted")].bool()
+    torch.testing.assert_close(accepted, torch.tensor((True, False, True)))
+    rejected = next(point for point in inspection.points if point.name == "rejected_frames")
+    torch.testing.assert_close(
+        rejected.valid.squeeze(1),
+        torch.tensor((False, False, True, True, True, False, False, False, False)),
+    )
+
+
+def test_motion_oracle_inspection_retains_rejected_multiskeleton_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Oracle inspection retains every source candidate and its original rejection marker."""
+    skeletons = (
+        _skeleton(),
+        replace(_skeleton(), identifier="motion_command_test_survivor", content_sha256=_hash("survivor-skeleton")),
+        replace(_skeleton(), identifier="motion_command_test_late", content_sha256=_hash("late-skeleton")),
+    )
+    index = MotionClipIndex(
+        source_content_sha256=_hash("rejected-group-source"),
+        skeleton_identity_sha256s=tuple(skeleton.identity_sha256 for skeleton in skeletons),
+        clips=tuple(
+            MotionClipIndex.Clip(
+                clip_id=f"clip_{clip_index}",
+                frame_count=2,
+                source_fps=10.0,
+                content_sha256=_hash(f"rejected-group-{clip_index}"),
+                skeleton_id=clip_index,
+            )
+            for clip_index in range(3)
+        ),
+    )
+
+    class Source:
+        def inspect(self) -> MotionClipIndex:
+            return index
+
+        def skeleton(self, skeleton_id: int) -> MotionSkeleton:
+            return skeletons[skeleton_id]
+
+        def clips(self, clip_indices: tuple[int, ...]):
+            for clip_index in clip_indices:
+                clip = index.clips[clip_index]
+                yield clip_index, _SyntheticMotionClip(clip_index, clip.frame_count, clip.source_fps)
+
+        def close(self) -> None:
+            pass
+
+    target = _SyntheticFrameTarget()
+
+    def source_projection(
+        source_skeleton: MotionSkeleton,
+        _target: object,
+        _source: object,
+        _contact_channels: object,
+        _contact_offsets: torch.Tensor,
+    ):
+        return _SyntheticExactProjection(source_skeleton, target)
+
+    coordinate_finite = table_builder_module.motion_criterion_target_coordinates
+
+    def reject_first_skeleton(cfg, candidate, rows):
+        accepted = coordinate_finite(cfg, candidate, rows)
+        clip_starts = torch.tensor(candidate.clip_index.offsets[:-1], dtype=torch.int64, device=rows.device)
+        clip_numbers = candidate.coordinates.joint_q.index_select(0, clip_starts)[:, 0].to(torch.int64)
+        return accepted & (clip_numbers[rows] != 0)
+
+    monkeypatch.setattr(table_builder_module, "motion_criterion_target_coordinates", reject_first_skeleton)
+
     split = SimpleNamespace(
         source_content_sha256=index.source_content_sha256,
         clip_count=len(index.clips),
         frame_count=index.total_frames,
     )
     source_cfg = SimpleNamespace(
+        purpose="oracle",
         train=split,
         evaluation=split,
         open_split=lambda _root, _split: Source(),
-        build_skeleton=_skeleton,
+        decoder_version="rejected_group_decoder_v1",
     )
     cfg = MotionTaskTableCfg(
         source=source_cfg,
+        contact_channels=_CONTACT_CHANNELS,
         source_artifact_root="unused",
         motion_split="train",
-        target_kinematics=MotionTaskTableCfg.TargetKinematicsCfg(
-            frame_builder_factory=lambda _source_skeleton, _reference: builder,
-            reference_kinematics_factory=lambda _root, _device: _reference(),
+        target_kinematics=_synthetic_target_kinematics(target, source_projection),
+        families=(
+            commands_cfg_module.MotionExactFamilyCfg(),
+            commands_cfg_module.MotionAnalyticFamilyCfg(),
+            commands_cfg_module.MotionTrajectoryFamilyCfg(),
         ),
         task_row_mode="clip_time_ranges",
     )
 
-    table = build_motion_task_table(SimpleNamespace(task_table=cfg), None, "cpu")
+    diagnostic_calls = []
+    populate_contact_quality = trajectory_module._populate_motion_contact_quality
+    record_calls = []
+    store_motion_route = table_builder_module._store_motion_route
 
-    assert table.clip_ids == ("clip_0", "clip_2")
-    assert table.clip_index.offsets == (0, 2, 6)
-    torch.testing.assert_close(
-        table.frames.field("root_position")[:, 0], torch.tensor((0.0, 1.0, 200.0, 201.0, 202.0, 203.0))
+    def track_stored_records(*args):
+        store_motion_route(*args)
+        records = args[5]
+        record_calls.append(tuple(record.source_clip_index for record in records))
+
+    monkeypatch.setattr(table_builder_module, "_store_motion_route", track_stored_records)
+
+    def track_contact_quality(*args):
+        diagnostic_calls.append("inspection")
+        return populate_contact_quality(*args)
+
+    monkeypatch.setattr(table_builder_module, "_populate_motion_contact_quality", track_contact_quality)
+    inspection = _inspect_synthetic_task_table(cfg, "cpu", sequence_limit=len(index.clips))
+    assert diagnostic_calls == ["inspection"]
+    assert record_calls == [(0, 1, 2)]
+
+    assert inspection.sequences.sequence_count == 3
+    assert inspection.sequences.frame_count == 6
+    accepted = inspection.quality.values[:, inspection.quality.names.index("accepted")].bool()
+    torch.testing.assert_close(accepted, torch.tensor((False, True, True)))
+    rejected = next(point for point in inspection.points if point.name == "rejected_frames")
+    torch.testing.assert_close(rejected.valid.squeeze(1), torch.tensor((True, True, False, False, False, False)))
+
+    def reject_every_skeleton(_cfg, _candidate, rows):
+        return torch.zeros_like(rows, dtype=torch.bool)
+
+    cfg.families[0].criteria[0].class_type = reject_every_skeleton
+    all_rejected = _inspect_synthetic_task_table(cfg, "cpu", sequence_limit=len(index.clips))
+    all_rejected_accepted = all_rejected.quality.values[:, all_rejected.quality.names.index("accepted")]
+    assert all_rejected.sequences.sequence_count == 3
+    assert not bool(torch.any(all_rejected_accepted))
+    all_rejected_markers = next(point for point in all_rejected.points if point.name == "rejected_frames")
+    assert bool(torch.all(all_rejected_markers.valid))
+    assert diagnostic_calls == ["inspection", "inspection"]
+    assert record_calls == [(0, 1, 2), (0, 1, 2)]
+
+
+def test_motion_inspection_limits_the_source_prefix_before_projection_decode_and_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inspection solves exactly source rows ``[0, limit)`` without accepted-row backfill."""
+    skeletons = (
+        _skeleton(),
+        replace(_skeleton(), identifier="motion_command_test_late", content_sha256=_hash("late-skeleton")),
     )
-    torch.testing.assert_close(table.view.sequences.offsets, torch.tensor((0, 2, 6)))
-    torch.testing.assert_close(table.view.quality.values[:, 1], torch.ones(2))
+    index = MotionClipIndex(
+        source_content_sha256=_hash("inspection-prefix-source"),
+        skeleton_identity_sha256s=tuple(skeleton.identity_sha256 for skeleton in skeletons),
+        clips=(
+            MotionClipIndex.Clip("clip_0", 2, 10.0, _hash("inspection-prefix-clip-0"), 0),
+            MotionClipIndex.Clip("clip_1", 3, 10.0, _hash("inspection-prefix-clip-1"), 1),
+        ),
+    )
+    skeleton_calls = []
+    clip_calls = []
+
+    class Source:
+        def inspect(self) -> MotionClipIndex:
+            return index
+
+        def skeleton(self, skeleton_id: int) -> MotionSkeleton:
+            skeleton_calls.append(skeleton_id)
+            return skeletons[skeleton_id]
+
+        def clips(self, clip_indices: tuple[int, ...]):
+            clip_calls.append(clip_indices)
+            for clip_index in clip_indices:
+                clip = index.clips[clip_index]
+                yield clip_index, _SyntheticMotionClip(clip_index, clip.frame_count, clip.source_fps)
+
+        def close(self) -> None:
+            pass
+
+    target = _SyntheticFrameTarget()
+    projection_calls = []
+
+    def source_projection(source_skeleton: MotionSkeleton, target: object, *_args):
+        projection_calls.append(source_skeleton.identifier)
+        return _SyntheticExactProjection(source_skeleton, target)
+
+    coordinate_finite = table_builder_module.motion_criterion_target_coordinates
+
+    def reject_first_source(cfg, candidate, rows):
+        return coordinate_finite(cfg, candidate, rows) & (rows != 0)
+
+    monkeypatch.setattr(table_builder_module, "motion_criterion_target_coordinates", reject_first_source)
+    split = SimpleNamespace(
+        source_content_sha256=index.source_content_sha256,
+        clip_count=len(index.clips),
+        frame_count=index.total_frames,
+    )
+    cfg = MotionTaskTableCfg(
+        source=SimpleNamespace(
+            purpose="production",
+            train=split,
+            evaluation=split,
+            open_split=lambda _root, _split: Source(),
+            decoder_version="inspection_prefix_decoder_v1",
+        ),
+        contact_channels=_CONTACT_CHANNELS,
+        source_artifact_root="unused",
+        motion_split="train",
+        target_kinematics=_synthetic_target_kinematics(target, source_projection),
+        task_row_mode="clip_time_ranges",
+    )
+
+    inspection = _inspect_synthetic_task_table(cfg, "cpu", sequence_limit=1)
+
+    assert skeleton_calls == [0, 1]
+    assert projection_calls == [skeletons[0].identifier]
+    assert clip_calls == [(0,)]
+    assert target.allocation_sizes == [2, 2]
+    assert inspection.sequences.sequence_count == 1
+    accepted = inspection.quality.values[:, inspection.quality.names.index("accepted")]
+    torch.testing.assert_close(accepted, torch.zeros(1))
 
 
-def test_motion_task_table_rejects_incomplete_frame_builder_before_allocation() -> None:
-    """The source table validates one complete builder contract before allocating frame storage."""
+def test_motion_task_table_rejects_incomplete_source_projection_before_allocation() -> None:
+    """The source table validates each projection before allocating coordinate storage."""
     index = _index()
 
     class Source:
@@ -832,13 +1436,17 @@ def test_motion_task_table_rejects_incomplete_frame_builder_before_allocation() 
         def inspect(self) -> MotionClipIndex:
             return index
 
-        def clips(self):
-            raise AssertionError("An invalid frame builder must fail before consuming source clips.")
+        def skeleton(self, skeleton_id: int) -> MotionSkeleton:
+            assert skeleton_id == 0
+            return _skeleton()
+
+        def clips(self, clip_indices: tuple[int, ...]):
+            raise AssertionError("An invalid source projection must fail before consuming source clips.")
 
         def close(self) -> None:
             self.closed = True
 
-    class IncompleteBuilder:
+    class IncompleteProjection:
         version = "test_builder_v1"
         construction_identity_sha256 = _hash("test-builder-construction")
         joint_names = _LIVE_JOINT_NAMES
@@ -854,23 +1462,29 @@ def test_motion_task_table_rejects_incomplete_frame_builder_before_allocation() 
         frame_count=index.total_frames,
     )
     source_cfg = SimpleNamespace(
+        purpose="production",
         train=split,
         evaluation=split,
         open_split=lambda _root, _split: source,
-        build_skeleton=_skeleton,
+        decoder_version="test_decoder_v1",
     )
+
+    def incomplete_projection_factory(*_args):
+        return IncompleteProjection()
+
     cfg = MotionTaskTableCfg(
         source=source_cfg,
+        contact_channels=_CONTACT_CHANNELS,
         source_artifact_root="unused",
         motion_split="train",
-        target_kinematics=MotionTaskTableCfg.TargetKinematicsCfg(
-            frame_builder_factory=lambda _source_skeleton, _reference: IncompleteBuilder(),
-            reference_kinematics_factory=lambda _root, _device: _reference(),
+        target_kinematics=_synthetic_target_kinematics(
+            _SyntheticFrameTarget(),
+            incomplete_projection_factory,
         ),
         task_row_mode="clip_time_ranges",
     )
-    with pytest.raises(TypeError, match="MotionFrameBuilder"):
-        build_motion_task_table(SimpleNamespace(task_table=cfg), None, "cpu")
+    with pytest.raises(TypeError, match="source_projection_factory"):
+        _build_synthetic_task_table(cfg, "cpu")
     assert source.closed
 
 
@@ -884,9 +1498,14 @@ def test_motion_task_table_cfg_closes_source_when_frame_construction_fails() -> 
         def inspect(self) -> MotionClipIndex:
             return index
 
-        def clips(self):
-            clip = index.clips[0]
-            yield clip.clip_id, _SyntheticMotionClip(0, clip.frame_count, clip.source_fps)
+        def skeleton(self, skeleton_id: int) -> MotionSkeleton:
+            assert skeleton_id == 0
+            return _skeleton()
+
+        def clips(self, clip_indices: tuple[int, ...]):
+            clip_number = clip_indices[0]
+            clip = index.clips[clip_number]
+            yield clip_number, _SyntheticMotionClip(0, clip.frame_count, clip.source_fps)
 
         def close(self) -> None:
             self.closed = True
@@ -898,25 +1517,29 @@ def test_motion_task_table_cfg_closes_source_when_frame_construction_fails() -> 
         frame_count=index.total_frames,
     )
     source_cfg = SimpleNamespace(
+        purpose="oracle",
         train=split,
         evaluation=split,
         open_split=lambda _root, _split: source,
-        build_skeleton=_skeleton,
+        decoder_version="test_decoder_v1",
     )
+
+    def failing_projection_factory(source_skeleton, target, *_args):
+        return _SyntheticExactProjection(source_skeleton, target, failure="synthetic frame construction failure")
+
     cfg = MotionTaskTableCfg(
         source=source_cfg,
+        contact_channels=_CONTACT_CHANNELS,
         source_artifact_root="unused",
         motion_split="train",
-        target_kinematics=MotionTaskTableCfg.TargetKinematicsCfg(
-            frame_builder_factory=lambda source_skeleton, _reference: _SyntheticExactBuilder(
-                source_skeleton, failure="synthetic frame construction failure"
-            ),
-            reference_kinematics_factory=lambda _root, _device: _reference(),
+        target_kinematics=_synthetic_target_kinematics(
+            _SyntheticFrameTarget(),
+            failing_projection_factory,
         ),
         task_row_mode="clip_time_ranges",
     )
     with pytest.raises(RuntimeError, match="synthetic frame construction failure"):
-        build_motion_task_table(SimpleNamespace(task_table=cfg), None, "cpu")
+        _inspect_synthetic_task_table(cfg, "cpu", sequence_limit=len(index.clips))
     assert source.closed
 
 
@@ -1464,3 +2087,181 @@ def test_motion_task_table_excludes_mutable_sampling_ownership() -> None:
     assert "self.sampler = MotionSampler(" in payload_source
     assert "payload_cfg.reset_sources" in payload_source
     assert "table_cfg.reset_sources" not in payload_source
+
+
+def test_motion_table_builds_interleaved_source_skeleton_groups_before_decoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every skeleton decodes separately inside one route execution and returns to source order."""
+    skeletons = (
+        _skeleton(),
+        replace(_skeleton(), identifier="motion_command_test_tall", content_sha256=_hash("skeleton-tall")),
+    )
+    index = MotionClipIndex(
+        source_content_sha256=_hash("interleaved-source"),
+        skeleton_identity_sha256s=tuple(skeleton.identity_sha256 for skeleton in skeletons),
+        clips=tuple(
+            MotionClipIndex.Clip(
+                clip_id=f"clip_{clip_index}",
+                frame_count=frame_count,
+                source_fps=10.0,
+                content_sha256=_hash(f"interleaved-clip-{clip_index}"),
+                skeleton_id=skeleton_id,
+            )
+            for clip_index, (frame_count, skeleton_id) in enumerate(((2, 0), (3, 1), (2, 0), (3, 1)))
+        ),
+    )
+
+    class Source:
+        def __init__(self) -> None:
+            self.skeleton_calls: list[int] = []
+            self.clip_calls: list[tuple[int, ...]] = []
+
+        def inspect(self) -> MotionClipIndex:
+            return index
+
+        def skeleton(self, skeleton_id: int) -> MotionSkeleton:
+            self.skeleton_calls.append(skeleton_id)
+            return skeletons[skeleton_id]
+
+        def clips(self, clip_indices: tuple[int, ...]):
+            assert self.skeleton_calls == [0, 1]
+            self.clip_calls.append(clip_indices)
+            for clip_index in clip_indices:
+                clip = index.clips[clip_index]
+                yield clip_index, _SyntheticMotionClip(clip_index, clip.frame_count, clip.source_fps)
+
+        def close(self) -> None:
+            pass
+
+    source = Source()
+    coordinate_refs: list[weakref.ReferenceType[torch.Tensor]] = []
+    coordinate_live_scalars: list[int] = []
+    target = _SyntheticFrameTarget(coordinate_refs=coordinate_refs, coordinate_live_scalars=coordinate_live_scalars)
+    projections = []
+    contact_offsets_seen = []
+
+    def source_projection(
+        source_skeleton: MotionSkeleton,
+        _target: object,
+        _source: object,
+        _contact_channels: object,
+        contact_offsets: torch.Tensor,
+    ):
+        contact_offsets_seen.append(contact_offsets)
+        projection = _SyntheticExactProjection(source_skeleton, target)
+        projections.append(projection)
+        return projection
+
+    split = SimpleNamespace(
+        source_content_sha256=index.source_content_sha256,
+        clip_count=len(index.clips),
+        frame_count=index.total_frames,
+    )
+    source_cfg = SimpleNamespace(
+        purpose="oracle",
+        train=split,
+        evaluation=split,
+        open_split=lambda _root, _split: source,
+        decoder_version="interleaved_decoder_v1",
+    )
+    cfg = MotionTaskTableCfg(
+        source=source_cfg,
+        contact_channels=_CONTACT_CHANNELS,
+        source_artifact_root="unused",
+        motion_split="train",
+        target_kinematics=_synthetic_target_kinematics(target, source_projection),
+        task_row_mode="clip_time_ranges",
+    )
+
+    family_executions = 0
+    execute_task_family = table_builder_module.execute_task_family
+
+    def count_family_execution(*args, **kwargs):
+        nonlocal family_executions
+        family_executions += 1
+        return execute_task_family(*args, **kwargs)
+
+    monkeypatch.setattr(table_builder_module, "execute_task_family", count_family_execution)
+    inspection = _inspect_synthetic_task_table(cfg, "cpu", sequence_limit=len(index.clips))
+
+    assert family_executions == 1
+    assert not hasattr(table_module, "_combine_motion_groups")
+    assert "coordinates" in table_builder_module._MotionBuiltRoute.__dataclass_fields__
+    assert "frames" not in table_builder_module._MotionBuiltRoute.__dataclass_fields__
+    assert len(projections) == 2
+    assert contact_offsets_seen[0] is contact_offsets_seen[1]
+    assert target.materialize_calls == 1
+    assert target.live_coordinate_scalars_at_materialization >= index.total_frames
+    assert source.clip_calls == [(0, 2), (1, 3)]
+    torch.testing.assert_close(inspection.sequences.offsets, torch.tensor(index.offsets))
+    torch.testing.assert_close(
+        inspection.state_bank.root_pose[:, 0, 0],
+        torch.tensor((0.0, 1.0, 100.0, 101.0, 102.0, 200.0, 201.0, 300.0, 301.0, 302.0)),
+    )
+    accepted = inspection.quality.values[:, inspection.quality.names.index("accepted")]
+    torch.testing.assert_close(accepted, torch.ones(4))
+
+
+def test_motion_inspection_validates_full_skeleton_identity_before_source_prefix() -> None:
+    """A skeleton beyond the inspection prefix is verified before any source clip is decoded."""
+    skeletons = (
+        _skeleton(),
+        replace(_skeleton(), identifier="motion_command_test_tall", content_sha256=_hash("skeleton-tall")),
+    )
+    index = MotionClipIndex(
+        source_content_sha256=_hash("changed-skeleton-source"),
+        skeleton_identity_sha256s=(skeletons[0].identity_sha256, _hash("wrong-skeleton-identity")),
+        clips=(
+            MotionClipIndex.Clip("clip_0", 2, 10.0, _hash("changed-skeleton-clip-0"), 0),
+            MotionClipIndex.Clip("clip_1", 2, 10.0, _hash("changed-skeleton-clip-1"), 1),
+        ),
+    )
+
+    class Source:
+        decoded = False
+
+        def inspect(self) -> MotionClipIndex:
+            return index
+
+        def skeleton(self, skeleton_id: int) -> MotionSkeleton:
+            return skeletons[skeleton_id]
+
+        def clips(self, clip_indices: tuple[int, ...]):
+            self.decoded = True
+            raise AssertionError(f"Unexpected decode: {clip_indices}")
+
+        def close(self) -> None:
+            pass
+
+    source = Source()
+    split = SimpleNamespace(
+        source_content_sha256=index.source_content_sha256,
+        clip_count=len(index.clips),
+        frame_count=index.total_frames,
+    )
+
+    def exact_projection_factory(source_skeleton, target, *_args):
+        return _SyntheticExactProjection(source_skeleton, target)
+
+    cfg = MotionTaskTableCfg(
+        source=SimpleNamespace(
+            purpose="production",
+            train=split,
+            evaluation=split,
+            open_split=lambda _root, _split: source,
+            decoder_version="changed_skeleton_decoder_v1",
+        ),
+        contact_channels=_CONTACT_CHANNELS,
+        source_artifact_root="unused",
+        motion_split="train",
+        target_kinematics=_synthetic_target_kinematics(
+            _SyntheticFrameTarget(),
+            exact_projection_factory,
+        ),
+        task_row_mode="clip_time_ranges",
+    )
+
+    with pytest.raises(ValueError, match="identity changed after inspection"):
+        _inspect_synthetic_task_table(cfg, "cpu", sequence_limit=1)
+    assert not source.decoded

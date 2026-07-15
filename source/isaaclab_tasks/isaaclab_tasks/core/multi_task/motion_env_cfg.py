@@ -37,29 +37,40 @@ from isaaclab_tasks.utils import PresetCfg, preset
 from isaaclab_assets.robots.smpl.smpl_constants import MUJOCO_BODY_NAMES
 
 from . import mdp as multi_task_mdp
+from .kinematics.ik_objectives.cfg import (
+    IKObjectiveJointDefaultCfg,
+    IKObjectiveJointPinCfg,
+    IKObjectiveMeshCollisionCfg,
+    IKObjectiveMeshNonpenetrationCfg,
+)
+from .kinematics.newton_kinematics_cfg import NewtonKinematicsBuildCfg
 from .mdp.commands.state_command.state_command_cfg import StateCommandCfg
 from .motion.data.source import MotionSourceCfg
-from .motion.data.sources import (
-    cmu_humenv_smpl_skeleton,
-    lafan_g1_29dof_skeleton,
-    open_cmu_humenv_smpl_source,
-    open_lafan_g1_source,
-)
+from .motion.data.sources import open_cmu_humenv_smpl_source, open_lafan_g1_source
+from .motion.data.sources.amass_smplh import open_amass_smplh_source
+from .motion.data.sources.lafan_bvh import open_lafan_bvh_source
 from .motion.mdp.commands.commands_cfg import (
-    MotionClipSelectionCfg,
-    MotionCoordinateRouteCfg,
+    MotionAnalyticCoordinatesGenerateCfg,
+    MotionAnalyticFamilyCfg,
+    MotionConstraintGeometryFeasibleCriterionCfg,
+    MotionContactCriterionCfg,
+    MotionContactObjectiveCfg,
     MotionExactCoordinatesGenerateCfg,
     MotionExactFamilyCfg,
-    MotionFrameFiniteCriterionCfg,
-    MotionLandmarkPositionObjectiveCfg,
-    MotionLandmarkRotationObjectiveCfg,
-    MotionObjectiveMeasureCriterionCfg,
-    MotionSemanticFamilyCfg,
-    MotionSemanticSegmentSelectionCfg,
-    MotionSemanticSolveCfg,
-    MotionSemanticTargetsGenerateCfg,
+    MotionGroundPenetrationCriterionCfg,
+    MotionInnerSolveConvergedCriterionCfg,
+    MotionRequiredRefinementConvergedCriterionCfg,
+    MotionSourceDirectionPointObjectiveCfg,
+    MotionSourceEvidenceGenerateCfg,
+    MotionSourceFidelityCriterionCfg,
+    MotionSourceGlobalPositionObjectiveCfg,
+    MotionSourceRotationObjectiveCfg,
     MotionStatePayloadCfg,
+    MotionTargetCoordinateCriterionCfg,
+    MotionTargetCoordinateLimitsCriterionCfg,
     MotionTaskTableCfg,
+    MotionTrajectoryFamilyCfg,
+    MotionTrajectorySolveCfg,
 )
 from .motion.robots.g1 import observations as g1_observations
 from .motion.robots.g1.actions_cfg import G1JointPositionActionCfg
@@ -69,11 +80,11 @@ from .motion.robots.g1.articulation import (
     G1_MOTION_ARTICULATION_CFG,
 )
 from .motion.robots.g1.frames import G1_HEAD_PARENT_BODY_NAME
-from .motion.robots.g1.reference import g1_frame_builder, g1_reference_kinematics
+from .motion.robots.g1.reference import g1_frame_target, g1_source_projection
 from .motion.robots.g1.reset import G1ReferenceAndLieDownReset
 from .motion.robots.smpl import observations as smpl_observations
 from .motion.robots.smpl.articulation import SMPL_MOTION_ARTICULATION_CFG
-from .motion.robots.smpl.reference import smpl_frame_builder, smpl_reference_kinematics
+from .motion.robots.smpl.reference import smpl_frame_target, smpl_source_projection
 from .motion.robots.smpl.reset import SmplHumEnvMocapAndFallReset
 
 
@@ -164,7 +175,7 @@ class MotionActionsCfg(PresetCfg):
 
     @configclass
     class SmplCfg:
-        """SMPL MuJoCo control route."""
+        """Native MuJoCo control evaluated by MJWarp."""
 
         control = multi_task_mdp.NativeMujocoControlActionCfg(asset_name="robot", action_width=69)
 
@@ -441,12 +452,13 @@ class MotionObservationsCfg(PresetCfg):
 class MotionSourcesCfg(PresetCfg):
     """Motion datasets selected independently from robot and backend."""
 
-    default = MotionSourceCfg(
+    humenv_cmu = MotionSourceCfg(
         identifier="cmu_humenv_smpl",
+        purpose="oracle",
         open_source=open_cmu_humenv_smpl_source,
         format="one_hdf5_file_per_clip_with_group_ep_0",
         semantic_level="smpl_robot_state_and_observation",
-        skeleton_factory=cmu_humenv_smpl_skeleton,
+        decoder_version="cmu_humenv_smpl_v1",
         source_fps=30.0,
         license="amass_cmu_and_smpl_registered_source_required",
         clip_directory="data_preparation/humenv_amass",
@@ -467,13 +479,58 @@ class MotionSourcesCfg(PresetCfg):
             frame_count=88_364,
         ),
     )
-    cmu = default
-    lafan = MotionSourceCfg(
+    cmu = MotionSourceCfg(
+        identifier="amass_cmu_smplh",
+        open_source=open_amass_smplh_source,
+        format="concrete_clip_rows_over_amass_smplh_npz",
+        semantic_level="smplh_pose_shape",
+        decoder_version="amass_smplh_clip_rows_v2",
+        source_fps=None,
+        license="amass_cmu_and_smpl_registered_source_required",
+        clip_directory="data_preparation/AMASS/datasets/CMU",
+        dependencies=(
+            MotionSourceCfg.DependencyCfg(
+                name="smpl_female",
+                artifact="data_preparation/AMASS/models/compact/SMPL_FEMALE.npz",
+                artifact_sha256="821491737fe7e0dd01e4c8a522974c09ec3a47a460cd9b416f4d824d64dbfee4",
+            ),
+            MotionSourceCfg.DependencyCfg(
+                name="smpl_male",
+                artifact="data_preparation/AMASS/models/compact/SMPL_MALE.npz",
+                artifact_sha256="7f2cfa91c256cc9901157ad952a45f0904a0483f97770a983e33e0b9d2e6417b",
+            ),
+            MotionSourceCfg.DependencyCfg(
+                name="smpl_neutral",
+                artifact="data_preparation/AMASS/models/compact/SMPL_NEUTRAL.npz",
+                artifact_sha256="b5c2b6e0a50e58dfba892011ba59bf00c198bc1db8a69e4a6113f9c5009081df",
+            ),
+        ),
+        train=MotionSourceCfg.SplitCfg(
+            name="train",
+            artifact="data_preparation/test_train_split/0-CMU_train_raw.csv",
+            artifact_sha256="ce6cfc57492f48f35f1a7ee1e6f69c1a295d0bf3bc3a20eee215d1eb0c757233",
+            source_content_sha256="0ed6a96f777e11fd1b5834e5072403b6a6a01d56f189dc9de64ea9020d69d488",
+            clip_count=1_638,
+            frame_count=2_705_926,
+        ),
+        evaluation=MotionSourceCfg.SplitCfg(
+            name="test",
+            artifact="data_preparation/test_train_split/0-CMU_test_raw.csv",
+            artifact_sha256="3f3f854f219b73464b37b8786dc4a33259e3b4b0aeb9cfb7dcf59b2966143cc8",
+            source_content_sha256="583ea9b431201ecee1c51e9a9c494c86d448ef2c729e4247446270eb8d12dbe9",
+            clip_count=182,
+            frame_count=319_508,
+        ),
+    )
+    default = cmu
+
+    bfm_lafan = MotionSourceCfg(
         identifier="lafan_g1_29dof",
         open_source=open_lafan_g1_source,
+        purpose="oracle",
         format="joblib_pickle_mapping_clip_name_to_field_mapping",
         semantic_level="robot_pose_g1_not_canonical_lafan",
-        skeleton_factory=lafan_g1_29dof_skeleton,
+        decoder_version="lafan_g1_29dof_v1",
         source_fps=30.0,
         license="retargeted_lafan_redistribution_requires_provenance_review",
         clip_directory=None,
@@ -494,20 +551,93 @@ class MotionSourcesCfg(PresetCfg):
             frame_count=264_705,
         ),
     )
+    lafan = MotionSourceCfg(
+        identifier="lafan1_bvh_ground",
+        open_source=open_lafan_bvh_source,
+        format="concrete_clip_rows_over_official_lafan1_bvh_zip",
+        semantic_level="source_skeleton_local_pose",
+        decoder_version="lafan_bvh_clip_rows_v4",
+        source_fps=None,
+        license="ubisoft_laforge_lafan1_research_dataset",
+        clip_directory=None,
+        dependencies=(
+            MotionSourceCfg.DependencyCfg(
+                name="lafan_zip",
+                artifact="lafan1.zip",
+                artifact_sha256="ea918082b500a5d158e9d3aa39039df04cd42e25f5c02fe8f7e88e8e9365a977",
+            ),
+        ),
+        train=MotionSourceCfg.SplitCfg(
+            name="ground_training_windows",
+            artifact="lafan_ground_train.csv",
+            artifact_sha256="5d712e5442e396f64e22f598257c338cd493e05b7f6f1f8a600aa2ae3554f841",
+            source_content_sha256="430cbae6ff52756ec3e196d3f3c68274cf629464f7f4166ceb3b79f42ecdb44f",
+            clip_count=862,
+            frame_count=258_600,
+        ),
+        evaluation=MotionSourceCfg.SplitCfg(
+            name="ground_evaluation_clips",
+            artifact="lafan_ground_evaluation.csv",
+            artifact_sha256="ca8dfa15b6e426df4353e7d4a65101e472d90b04e61f662df5d54b55057d96e5",
+            source_content_sha256="74ad40e43d0b173e7cef8fc71936808fe62717df130c25a8c3fb6b325272ff04",
+            clip_count=40,
+            frame_count=264_705,
+        ),
+    )
 
 
 @configclass
 class MotionTargetKinematicsCfg(PresetCfg):
-    """Target robot frame construction and exact reference kinematics."""
+    """Target robot semantics bound to the selected scene articulation."""
 
     default = MotionTaskTableCfg.TargetKinematicsCfg(
-        frame_builder_factory=smpl_frame_builder,
-        reference_kinematics_factory=smpl_reference_kinematics,
+        target_factory=smpl_frame_target,
+        source_projection_factory=smpl_source_projection,
+        calibration=MotionTaskTableCfg.TargetKinematicsCfg.CalibrationCfg(
+            artifact="data_preparation/AMASS/models/compact/SMPL_NEUTRAL.npz",
+            artifact_sha256="b5c2b6e0a50e58dfba892011ba59bf00c198bc1db8a69e4a6113f9c5009081df",
+        ),
+        asset_cfg=SceneEntityCfg("robot"),
+        kinematics=NewtonKinematicsBuildCfg(collapse_fixed_joints=False),
+        physics_types=(NewtonCfg,),
+        contact_patches=(
+            MotionTaskTableCfg.TargetKinematicsCfg.ContactPatchCfg(
+                channel="left_foot",
+                body_name="L_Ankle",
+                points_per_body=3,
+                height_band_m=0.005,
+            ),
+            MotionTaskTableCfg.TargetKinematicsCfg.ContactPatchCfg(
+                channel="right_foot",
+                body_name="R_Ankle",
+                points_per_body=3,
+                height_band_m=0.005,
+            ),
+        ),
     )
     smpl = default
     g1 = MotionTaskTableCfg.TargetKinematicsCfg(
-        frame_builder_factory=g1_frame_builder,
-        reference_kinematics_factory=g1_reference_kinematics,
+        target_factory=g1_frame_target,
+        source_projection_factory=g1_source_projection,
+        asset_cfg=SceneEntityCfg("robot"),
+        kinematics=NewtonKinematicsBuildCfg(collapse_fixed_joints=False),
+        physics_types=(NewtonCfg, PhysxCfg),
+        supports_physical_evidence=True,
+        supports_randomization=True,
+        contact_patches=(
+            MotionTaskTableCfg.TargetKinematicsCfg.ContactPatchCfg(
+                channel="left_foot",
+                body_name="left_ankle_roll_link",
+                points_per_body=3,
+                height_band_m=0.005,
+            ),
+            MotionTaskTableCfg.TargetKinematicsCfg.ContactPatchCfg(
+                channel="right_foot",
+                body_name="right_ankle_roll_link",
+                points_per_body=3,
+                height_band_m=0.005,
+            ),
+        ),
     )
 
 
@@ -559,50 +689,83 @@ class MotionCommandsCfg:
         commands={},
         task_table=MotionTaskTableCfg(
             source=MotionSourcesCfg(),  # type: ignore[arg-type]
-            target_kinematics=MotionTargetKinematicsCfg(),  # type: ignore[arg-type]
-            route=MotionCoordinateRouteCfg(
-                exact_family="exact_coordinates",
-                semantic_family="semantic_sequence",
+            contact_channels=(
+                MotionTaskTableCfg.ContactChannelCfg(name="left_foot", source_probe_roles=("left_ankle", "left_toe")),
+                MotionTaskTableCfg.ContactChannelCfg(
+                    name="right_foot", source_probe_roles=("right_ankle", "right_toe")
+                ),
             ),
+            target_kinematics=MotionTargetKinematicsCfg(),  # type: ignore[arg-type]
             families=(
                 MotionExactFamilyCfg(
-                    name="exact_coordinates",
+                    name="exact",
                     generate=(MotionExactCoordinatesGenerateCfg(),),
                     solve=None,
-                    criteria=(MotionFrameFiniteCriterionCfg(),),
-                    selection=MotionClipSelectionCfg(),
+                    criteria=(MotionTargetCoordinateCriterionCfg(),),
                 ),
-                MotionSemanticFamilyCfg(
-                    name="semantic_sequence",
-                    generate=(MotionSemanticTargetsGenerateCfg(),),
-                    solve=MotionSemanticSolveCfg(
+                MotionAnalyticFamilyCfg(
+                    name="analytic",
+                    generate=(MotionAnalyticCoordinatesGenerateCfg(),),
+                    solve=None,
+                    criteria=(MotionTargetCoordinateCriterionCfg(),),
+                ),
+                MotionTrajectoryFamilyCfg(
+                    name="trajectory",
+                    generate=(MotionSourceEvidenceGenerateCfg(),),
+                    solve=MotionTrajectorySolveCfg(
                         objectives=(
-                            MotionLandmarkPositionObjectiveCfg(weight=1.0, root_weight=10.0),
-                            MotionLandmarkRotationObjectiveCfg(weight=1.0, root_weight=10.0, canonicalize_error=True),
+                            MotionSourceGlobalPositionObjectiveCfg(weight=1.0, root_weight=10.0),
+                            MotionSourceRotationObjectiveCfg(),
+                            MotionSourceDirectionPointObjectiveCfg(weight=0.25),
+                            MotionContactObjectiveCfg(),
+                            IKObjectiveJointDefaultCfg(weight=1.0),
+                            IKObjectiveJointPinCfg(weight=1.0),
+                            IKObjectiveMeshCollisionCfg(weight=5.0, margin=0.03, n_samples=4),
+                            IKObjectiveMeshNonpenetrationCfg(tolerance_m=0.002, maximum_penetration_m=0.0, n_samples=4),
                         ),
-                        lambda_initial=0.1,
-                        lambda_factor=2.0,
-                        lambda_min=1.0e-5,
-                        lambda_max=1.0e10,
-                        rho_min=1.0e-3,
-                        history_length=10,
-                        h0_scale=1.0,
-                        wolfe_c1=1.0e-4,
-                        wolfe_c2=0.9,
-                        support_landmark_atol_m=2.0e-6,
+                        contact=MotionTrajectorySolveCfg.ContactCfg(
+                            enter_height_m=0.03,
+                            exit_height_m=0.06,
+                            enter_speed_mps=0.15,
+                            exit_speed_mps=0.30,
+                            persistence_seconds=0.08,
+                        ),
+                        dynamics=MotionTrajectorySolveCfg.DynamicsCfg(
+                            friction_coefficient=0.7,
+                            iterations=96,
+                            effort_weight=1.0,
+                            force_regularization=1.0e-6,
+                        ),
+                        source_position_velocity_weight=1.0e-4,
+                        source_position_acceleration_weight=1.0e-8,
+                        source_rotation_velocity_weight=1.0e-4,
+                        source_rotation_acceleration_weight=1.0e-8,
+                        joint_default_position_weight=2.5e-3,
+                        joint_temporal_velocity_weight=1.0e-4,
+                        joint_temporal_acceleration_weight=1.0e-8,
+                        joint_temporal_jerk_weight=1.0e-8,
+                        damping=1.0e-4,
+                        krylov_max_iterations=128,
+                        krylov_relative_tolerance=1.0e-4,
+                        kkt_relative_tolerance=1.0e-4,
                     ),
                     criteria=(
-                        MotionObjectiveMeasureCriterionCfg(objective="landmark_position", upper=0.15),
-                        MotionFrameFiniteCriterionCfg(),
+                        MotionConstraintGeometryFeasibleCriterionCfg(),
+                        MotionInnerSolveConvergedCriterionCfg(),
+                        MotionRequiredRefinementConvergedCriterionCfg(),
+                        MotionSourceFidelityCriterionCfg(),
+                        MotionContactCriterionCfg(),
+                        MotionTargetCoordinateCriterionCfg(),
+                        MotionTargetCoordinateLimitsCriterionCfg(),
+                        MotionGroundPenetrationCriterionCfg(),
                     ),
-                    selection=MotionSemanticSegmentSelectionCfg(max_branch_jump_rad=math.pi),
                 ),
             ),
             task_row_mode=preset(
                 default="source_frames", sampling_source_rows="source_frames", sampling_clip_time="clip_time_ranges"
             ),
             source_artifact_root="",
-            reference_artifact_root="",
+            target_artifact_root="",
             motion_split="train",
         ),
         payload=PayloadCfg(),  # type: ignore[arg-type]
@@ -759,22 +922,17 @@ class MotionImitationEnvCfg(ManagerBasedRLEnvCfg):
             return
 
         physics = self.sim.physics
-        is_g1 = isinstance(self.actions, MotionActionsCfg.G1Cfg)
+        target = self.commands.motion.task_table.target_kinematics
         evidence_enabled = self.scene.contact_forces is not None
         randomization_enabled = isinstance(self.events, MotionEventsCfg.RandomizationCfg)
-        if evidence_enabled and not is_g1:
-            raise ValueError("Physical auxiliary evidence currently requires the G1 robot.")
-        if randomization_enabled and not is_g1:
-            raise ValueError("Physical, observation, pose, and push randomization currently requires the G1 robot.")
-        if is_g1 and evidence_enabled != (self.observations.transition is not None):
+        if evidence_enabled and not target.supports_physical_evidence:
+            raise ValueError("The selected robot target does not support physical auxiliary evidence.")
+        if randomization_enabled and not target.supports_randomization:
+            raise ValueError("The selected robot target does not support physical and observation randomization.")
+        if target.supports_physical_evidence and evidence_enabled != (self.observations.transition is not None):
             raise ValueError(
                 "Physical auxiliary evidence requires both its contact sensor and transition observation group."
             )
-        if isinstance(self.actions, MotionActionsCfg.SmplCfg):
-            if not isinstance(physics, NewtonCfg):
-                raise ValueError("The native SMPL articulation currently supports only Newton MJWarp physics.")
-        elif isinstance(self.actions, MotionActionsCfg.G1Cfg):
-            if not isinstance(physics, PhysxCfg):
-                raise ValueError("The native G1 articulation currently supports only PhysX physics.")
-        else:
-            raise TypeError(f"Unsupported motion action configuration: {type(self.actions).__name__}.")
+        if not isinstance(physics, target.physics_types):
+            supported = ", ".join(physics_type.__name__ for physics_type in target.physics_types)
+            raise ValueError(f"The selected robot target requires one of these physics types: {supported}.")

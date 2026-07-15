@@ -28,8 +28,8 @@ from ....kinematics import IKExecutionStatistics, NewtonKinematics, execute_ik_b
 from ....kinematics.ik_objectives.cfg import IKObjectiveMeshCollisionCfg
 from ....kinematics.ik_objectives.context import (
     IKContactObjectiveBuildContext,
-    IKMeshCollisionObjectiveBuildContext,
     IKObjectiveBuild,
+    IKObjectiveMeshCollisionBuildContext,
 )
 from ....kinematics.ik_objectives.mesh_collision import collision_probes_sample
 from ....kinematics.ik_objectives.stability_margin import stability_margin_measure
@@ -197,6 +197,7 @@ class _PositionIKWorkspace:
     solver: ik.IKSolver
     targets: dict[str, list[ik.IKObjective]]
     contact_mask: torch.Tensor
+    contact_confidence: torch.Tensor
     joint_q_tail: torch.Tensor | None
     capacity: int
 
@@ -247,6 +248,7 @@ def _build_ik_objectives(
     objective_cfgs,
     batch_size: int,
     contact_mask: torch.Tensor,
+    contact_confidence: torch.Tensor,
     obstacle_pose: torch.Tensor,
     collision_probes: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]],
 ):
@@ -264,7 +266,7 @@ def _build_ik_objectives(
         context = contact_context
         if isinstance(objective_cfg, IKObjectiveMeshCollisionCfg):
             probe_bodies, probe_offsets, probe_slots = collision_probes[objective_cfg.n_samples]
-            context = IKMeshCollisionObjectiveBuildContext(
+            context = IKObjectiveMeshCollisionBuildContext(
                 kinematics=candidates.kinematics,
                 asset_name=candidates.asset_name,
                 batch_size=batch_size,
@@ -273,7 +275,7 @@ def _build_ik_objectives(
                 probe_offsets=probe_offsets,
                 probe_bodies=probe_bodies,
                 probe_contact_slots=probe_slots,
-                contact_mask=contact_mask,
+                contact_confidence=contact_confidence,
             )
         built = objective_cfg.class_type(objective_cfg, context)
         if not isinstance(built, IKObjectiveBuild):
@@ -311,14 +313,26 @@ def solve_position_terrain_stance(cfg, candidates: PositionTerrainStanceCandidat
 
     def build_objectives(batch_size: int):
         contact_mask = torch.empty((batch_size, contact_count), dtype=torch.uint8, device=buffer.device)
+        contact_confidence = torch.empty((batch_size, contact_count), dtype=torch.float32, device=buffer.device)
         obstacle_pose = torch.zeros((batch_size, 7), dtype=torch.float32, device=buffer.device)
         obstacle_pose[:, 6] = 1.0
         objectives, targets = _build_ik_objectives(
-            candidates, cfg.objectives, batch_size, contact_mask, obstacle_pose, collision_probes
+            candidates,
+            cfg.objectives,
+            batch_size,
+            contact_mask,
+            contact_confidence,
+            obstacle_pose,
+            collision_probes,
         )
-        return contact_mask, objectives, targets
+        return contact_mask, contact_confidence, objectives, targets
 
-    representative_contact_mask, representative_objectives, representative_targets = build_objectives(1)
+    (
+        representative_contact_mask,
+        representative_contact_confidence,
+        representative_objectives,
+        representative_targets,
+    ) = build_objectives(1)
     del representative_targets
     jacobian_mode = (
         ik.IKJacobianType.MIXED
@@ -336,12 +350,14 @@ def solve_position_terrain_stance(cfg, candidates: PositionTerrainStanceCandidat
         solver_bytes = ik.IKSolver.estimate_memory(
             model, batch_size, representative_objectives, jacobian_mode=jacobian_mode
         ).total_bytes
-        binding_bytes = batch_size * (contact_count * uint8_bytes + 7 * float_bytes + coordinate_count * float_bytes)
+        binding_bytes = batch_size * (
+            contact_count * (uint8_bytes + float_bytes) + 7 * float_bytes + coordinate_count * float_bytes
+        )
         fk_scratch_bytes = batch_size * (dof_count * float_bytes + body_count * spatial_bytes)
         return max(solver_bytes + binding_bytes, fk_scratch_bytes)
 
     def build_batch(batch_size: int) -> _PositionIKWorkspace:
-        contact_mask, objectives, targets = build_objectives(batch_size)
+        contact_mask, contact_confidence, objectives, targets = build_objectives(batch_size)
         contact_targets = targets.get("generated.foot_targets", [])
         base_position_targets = targets.get("generated.base_position", [])
         base_rotation_targets = targets.get("generated.base_rotation", [])
@@ -354,6 +370,7 @@ def solve_position_terrain_stance(cfg, candidates: PositionTerrainStanceCandidat
             solver=solver,
             targets=targets,
             contact_mask=contact_mask,
+            contact_confidence=contact_confidence,
             joint_q_tail=(
                 None
                 if count % batch_size == 0
@@ -372,6 +389,7 @@ def solve_position_terrain_stance(cfg, candidates: PositionTerrainStanceCandidat
         workspace.contact_mask[:active_count].copy_(
             buffer.is_contact_t[start * contact_count : stop * contact_count].view(active_count, contact_count)
         )
+        workspace.contact_confidence[:active_count].copy_(workspace.contact_mask[:active_count])
         contact_targets = workspace.targets["generated.foot_targets"]
         buffer.scatter_contact_targets(contact_targets, active_count, src_offset=start)
         wp.copy(
@@ -418,7 +436,7 @@ def solve_position_terrain_stance(cfg, candidates: PositionTerrainStanceCandidat
         convergence_tolerance=cfg.convergence_tolerance,
         convergence_check_interval=cfg.convergence_check_interval,
     )
-    del representative_contact_mask
+    del representative_contact_mask, representative_contact_confidence
 
     batch_size = candidates.solve_statistics.batch_capacity
     joint_qd = wp.zeros((batch_size, dof_count), dtype=wp.float32, device=buffer.device)
@@ -715,6 +733,8 @@ def build_task_table(
     candidates = execution.candidates
     buffer = candidates.buffer
     survivors_idx = execution.selected_indices
+    if survivors_idx is None:
+        raise TypeError("Position task families require an explicit selection stage.")
     target_count = int(survivors_idx.numel())
     joint_pose = buffer.joint_q_result_t[survivors_idx].clone()
     contact_targets = buffer.contact_targets_t.view(buffer.max_candidates, buffer.num_contacts, 3)[

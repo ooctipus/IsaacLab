@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Literal
 
 from ..identity import canonical_sha256, validate_nonempty, validate_sha256
 
@@ -28,6 +29,7 @@ class MotionSkeleton:
         joint_child_body_indices: Child body moved by each joint coordinate.
         joint_axes: Unitless hinge axes, or ``None`` for unrestricted rotation.
         landmarks: Semantic source landmarks used by cross-skeleton reconstruction.
+        landmark_rotation_policy: Rotation evidence carried by semantic landmarks.
         root_translation_frame: Frame of source root translations.
         root_rotation_convention: Source root-rotation representation.
         position_unit: Source position unit. Trajectory builders emit SI units.
@@ -60,6 +62,7 @@ class MotionSkeleton:
     joint_axes: tuple[tuple[float, float, float] | None, ...]
     root_translation_frame: str
     root_rotation_convention: str
+    landmark_rotation_policy: Literal["anatomical_root", "calibrated_body"]
     landmarks: tuple[Landmark, ...] = ()
     position_unit: str = "m"
     angle_unit: str = "rad"
@@ -72,6 +75,8 @@ class MotionSkeleton:
         validate_sha256("content_sha256", self.content_sha256)
         validate_nonempty("root_translation_frame", self.root_translation_frame)
         validate_nonempty("root_rotation_convention", self.root_rotation_convention)
+        if self.landmark_rotation_policy not in ("anatomical_root", "calibrated_body"):
+            raise ValueError("landmark_rotation_policy must be 'anatomical_root' or 'calibrated_body'.")
         validate_nonempty("position_unit", self.position_unit)
         validate_nonempty("angle_unit", self.angle_unit)
         if not self.body_names or len(set(self.body_names)) != len(self.body_names):
@@ -145,6 +150,7 @@ class MotionSkeleton:
                 "identifier": self.identifier,
                 "content_sha256": self.content_sha256,
                 "coordinates": coordinates,
+                "landmark_rotation_policy": self.landmark_rotation_policy,
                 "landmarks": tuple(
                     {
                         "name": landmark.name,
