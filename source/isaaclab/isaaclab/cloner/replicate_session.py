@@ -92,6 +92,7 @@ class ReplicateSession:
         stage: Usd.Stage,
         clone_strategy: Callable = sequential,
         valid_set: torch.Tensor | None = None,
+        valid_set_combination_ids: torch.Tensor | None = None,
     ):
         """Capture arguments for :func:`make_clone_plan` and :func:`replicate`.
 
@@ -104,6 +105,8 @@ class ReplicateSession:
             clone_strategy: Prototype-to-env assignment function.
             valid_set: Optional ``[num_combos, num_groups]`` long tensor of valid
                 prototype combinations; ``None`` uses the full cartesian product.
+            valid_set_combination_ids: Optional long tensor ``[num_combos]`` mapping
+                valid rows to semantic clone-combination IDs.
         """
         self._cfgs = cfgs
         self._stage = stage
@@ -113,6 +116,7 @@ class ReplicateSession:
             device=device,
             clone_strategy=clone_strategy,
             valid_set=valid_set,
+            valid_set_combination_ids=valid_set_combination_ids,
         )
         self._plan: ClonePlan | None = None
 

@@ -229,7 +229,8 @@ def make_valid_clone_combinations(
     device: str = "cpu",
     *,
     all_asset_names: Sequence[str] | None = None,
-) -> torch.Tensor:
+    return_combination_ids: bool = False,
+) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
     """Build the valid clone-combination variant tensor.
 
     Each combination contributes rows in proportion to its weight, split evenly
@@ -245,10 +246,14 @@ def make_valid_clone_combinations(
         device: Torch device for the output tensor. Defaults to ``"cpu"``.
         all_asset_names: Optional full scene asset-name list; combination
             entries may reference assets that are not clone-planned.
+        return_combination_ids: Whether to also return the original clone-combination
+            ID associated with each valid row. Defaults to :data:`False`.
 
     Returns:
         A ``[num_valid_combinations, num_assets]`` tensor of source variant
-        indices, ``-1`` where an asset is absent.
+        indices, ``-1`` where an asset is absent. When ``return_combination_ids``
+        is :data:`True`, also returns a long tensor ``[num_valid_combinations]``
+        whose entries refer to the original ``clone_combinations`` order.
 
     Raises:
         ValueError: If the inputs are inconsistent or no valid rows result.
@@ -262,7 +267,10 @@ def make_valid_clone_combinations(
 
     if not clone_combinations:
         rows = itertools.product(*[range(count) for count in variant_counts])
-        return torch.tensor(list(rows), dtype=torch.long, device=device)
+        rows_tensor = torch.tensor(list(rows), dtype=torch.long, device=device)
+        if return_combination_ids:
+            return rows_tensor, torch.arange(len(rows_tensor), dtype=torch.long, device=device)
+        return rows_tensor
 
     clone_asset_names = set(asset_names)
     known_assets = set(all_asset_names) if all_asset_names is not None else clone_asset_names
@@ -277,15 +285,15 @@ def make_valid_clone_combinations(
 
     claimed_assets = set().union(*combination_assets) if combination_assets else set()
 
-    expanded: list[tuple[int, list[tuple[int, ...]]]] = []
-    for combination, active_assets in zip(clone_combinations, combination_assets):
+    expanded: list[tuple[int, int, list[tuple[int, ...]]]] = []
+    for combination_id, (combination, active_assets) in enumerate(zip(clone_combinations, combination_assets)):
         if combination.weight == 0:
             continue
         variant_ranges = []
         for asset_name, count in zip(asset_names, variant_counts):
             is_active = asset_name not in claimed_assets or asset_name in active_assets
             variant_ranges.append(range(count) if is_active else (-1,))
-        expanded.append((combination.weight, list(itertools.product(*variant_ranges))))
+        expanded.append((combination_id, combination.weight, list(itertools.product(*variant_ranges))))
 
     if not expanded:
         raise ValueError("Clone combinations produced no valid clone rows.")
@@ -294,15 +302,20 @@ def make_valid_clone_combinations(
     # Integer multiplicities require a common denominator across variant counts.
     # Rows are emitted round-robin across combinations so a truncated prefix
     # (fewer environments than rows) still samples every combination.
-    common_multiple = math.lcm(*[len(variants) for _, variants in expanded])
+    common_multiple = math.lcm(*[len(variants) for _, _, variants in expanded])
     rows = []
+    row_combination_ids = []
     cursors = [0] * len(expanded)
     for _ in range(common_multiple):
-        for index, (weight, variants) in enumerate(expanded):
+        for index, (combination_id, weight, variants) in enumerate(expanded):
             for _ in range(weight):
                 rows.append(variants[cursors[index] % len(variants)])
+                row_combination_ids.append(combination_id)
                 cursors[index] += 1
-    return torch.tensor(rows, dtype=torch.long, device=device)
+    rows_tensor = torch.tensor(rows, dtype=torch.long, device=device)
+    if return_combination_ids:
+        return rows_tensor, torch.tensor(row_combination_ids, dtype=torch.long, device=device)
+    return rows_tensor
 
 
 def make_clone_plan(
@@ -313,6 +326,7 @@ def make_clone_plan(
     *,
     clone_strategy: Callable = sequential,
     valid_set: torch.Tensor | None = None,
+    valid_set_combination_ids: torch.Tensor | None = None,
 ) -> ClonePlan:
     """Build a :class:`~isaaclab.cloner.ClonePlan` from asset cfgs.
 
@@ -336,6 +350,9 @@ def make_clone_plan(
         valid_set: Optional ``[num_combos, num_groups]`` long tensor of valid prototype
             combinations. ``None`` (default) uses the full cartesian product of every
             group's prototype indices.
+        valid_set_combination_ids: Optional long tensor ``[num_combos]`` mapping valid
+            rows to semantic clone-combination IDs. When omitted, valid-row indices
+            become the combination IDs.
 
     Returns:
         A :class:`ClonePlan` whose ``sources``/``destinations``/``clone_mask`` describe
@@ -386,6 +403,7 @@ def make_clone_plan(
             env_ids=env_ids,
             positions=positions,
             cfg_rows={},
+            combination_ids=torch.full((num_clones,), -1, dtype=torch.long, device=device),
         )
 
     # 3) Homogeneous (every cfg is single-variant): emit the simpler env-root plan.
@@ -400,6 +418,7 @@ def make_clone_plan(
             env_ids=env_ids,
             positions=positions,
             cfg_rows=cfg_rows,
+            combination_ids=torch.zeros(num_clones, dtype=torch.long, device=device),
         )
 
     # 4) Heterogeneous: enumerate prototype combos, build per-row mask, mutate spawn paths.
@@ -424,11 +443,21 @@ def make_clone_plan(
         return combos
 
     if valid_set is None:
+        if valid_set_combination_ids is not None:
+            raise ValueError("valid_set_combination_ids requires valid_set.")
         all_combos = list(itertools.product(*[range(s) for s in group_sizes]))
         combos = torch.tensor(all_combos, dtype=torch.long, device=device)
+        combo_ids = torch.arange(len(combos), dtype=torch.long, device=device)
     else:
         combos = validate_combo_tensor(valid_set, "valid_set")
+        if valid_set_combination_ids is None:
+            combo_ids = torch.arange(len(combos), dtype=torch.long, device=device)
+        else:
+            combo_ids = valid_set_combination_ids.to(device=device, dtype=torch.long)
+            if combo_ids.ndim != 1 or len(combo_ids) != len(combos):
+                raise ValueError("valid_set_combination_ids must be a 1-D tensor with one entry per valid_set row.")
     chosen = validate_combo_tensor(clone_strategy(combos, num_clones, device), "clone_strategy result", num_clones)
+    combination_ids = _resolve_combination_ids(combos, combo_ids, chosen)
 
     group_offsets = torch.tensor([0] + list(itertools.accumulate(group_sizes[:-1])), dtype=torch.long, device=device)
     active = chosen >= 0
@@ -468,7 +497,34 @@ def make_clone_plan(
         env_ids=env_ids,
         positions=positions,
         cfg_rows=cfg_rows,
+        combination_ids=combination_ids,
     )
+
+
+def _resolve_combination_ids(
+    valid_combinations: torch.Tensor,
+    valid_combination_ids: torch.Tensor,
+    chosen_combinations: torch.Tensor,
+) -> torch.Tensor:
+    """Map chosen combination rows back to their semantic IDs."""
+    all_combinations = torch.cat((valid_combinations, chosen_combinations), dim=0)
+    _, inverse = torch.unique(all_combinations, dim=0, return_inverse=True)
+    valid_keys = inverse[: len(valid_combinations)]
+    chosen_keys = inverse[len(valid_combinations) :]
+
+    sentinel = len(valid_combinations)
+    first_valid_row = torch.full((len(all_combinations),), sentinel, dtype=torch.long, device=valid_combinations.device)
+    first_valid_row.scatter_reduce_(
+        0,
+        valid_keys,
+        torch.arange(len(valid_combinations), dtype=torch.long, device=valid_combinations.device),
+        reduce="amin",
+        include_self=True,
+    )
+    chosen_rows = first_valid_row[chosen_keys]
+    if (chosen_rows == sentinel).any():
+        raise ValueError("clone_strategy result contains a row outside the valid combinations.")
+    return valid_combination_ids[chosen_rows]
 
 
 def filter_collisions(
