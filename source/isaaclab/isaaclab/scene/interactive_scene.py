@@ -165,7 +165,6 @@ class InteractiveScene:
         self.env_prim_paths = [self._env_fmt.format(i) for i in range(self.cfg.num_envs)]
         self._scene_asset_names: list[str] = []
         self._clone_valid_set: torch.Tensor | None = None
-        self._clone_valid_set_combination_ids: torch.Tensor | None = None
 
         # create source prim
         self.stage.DefinePrim(self.env_prim_paths[0], "Xform")
@@ -193,7 +192,6 @@ class InteractiveScene:
             stage=self.stage,
             clone_strategy=self.cloner_cfg.clone_strategy,
             valid_set=self._clone_valid_set,
-            valid_set_combination_ids=self._clone_valid_set_combination_ids,
         ):
             if self._is_scene_setup_from_cfg():
                 self._add_entities_from_cfg()
@@ -233,17 +231,15 @@ class InteractiveScene:
                 cfgs.append(child)
 
         if self.cloner_cfg.clone_combinations and clone_asset_names:
-            self._clone_valid_set, self._clone_valid_set_combination_ids = cloner.make_valid_clone_combinations(
+            self._clone_valid_set = cloner.make_valid_clone_combinations(
                 clone_asset_names,
                 variant_counts,
                 self.cloner_cfg.clone_combinations,
                 self.device,
                 all_asset_names=self._scene_asset_names,
-                return_combination_ids=True,
             )
         else:
             self._clone_valid_set = None
-            self._clone_valid_set_combination_ids = None
         return cfgs
 
     def _aggregate_scene_data_requirements(self, visualizer_types=()) -> None:

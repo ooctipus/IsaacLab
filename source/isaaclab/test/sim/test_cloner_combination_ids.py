@@ -10,34 +10,11 @@ from types import ModuleType, SimpleNamespace
 
 import torch
 
-from isaaclab.cloner import InclusionSet, make_clone_plan, make_valid_clone_combinations
-
-
-def test_make_valid_clone_combinations_preserves_semantic_ids():
-    """Weights and variants preserve the original inclusion-set ID for every valid row."""
-    rows, combination_ids = make_valid_clone_combinations(
-        asset_names=["stairs", "chair"],
-        variant_counts=[2, 1],
-        clone_combinations=[
-            InclusionSet(assets=["stairs"], weight=2),
-            InclusionSet(assets=["chair"], weight=1),
-        ],
-        return_combination_ids=True,
-    )
-
-    assert rows.tolist() == [
-        [0, -1],
-        [1, -1],
-        [-1, 0],
-        [0, -1],
-        [1, -1],
-        [-1, 0],
-    ]
-    assert combination_ids.tolist() == [0, 0, 1, 0, 0, 1]
+from isaaclab.cloner import make_clone_plan
 
 
 def test_make_clone_plan_stores_combination_ids(monkeypatch):
-    """The clone plan maps strategy-selected valid rows back to semantic combination IDs."""
+    """The clone plan identifies the effective combination selected for each environment."""
 
     class MultiAssetSpawnerCfg:
         pass
@@ -59,7 +36,6 @@ def test_make_clone_plan_stores_combination_ids(monkeypatch):
         spawn=SimpleNamespace(spawn_path=None),
     )
     valid_set = torch.tensor([[0, -1], [-1, 0]], dtype=torch.long)
-    valid_set_combination_ids = torch.tensor([4, 9], dtype=torch.long)
 
     def choose_rows(combinations, num_clones, device):
         del num_clones
@@ -72,7 +48,8 @@ def test_make_clone_plan_stores_combination_ids(monkeypatch):
         device="cpu",
         clone_strategy=choose_rows,
         valid_set=valid_set,
-        valid_set_combination_ids=valid_set_combination_ids,
     )
 
-    assert plan.combination_ids.tolist() == [9, 4, 9]
+    assert plan.combination_rows.tolist() == [[-1, 0], [0, -1]]
+    assert plan.combination_ids.tolist() == [0, 1, 0]
+    assert torch.equal(plan.combination_rows[plan.combination_ids], valid_set[torch.tensor([1, 0, 1])])

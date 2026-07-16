@@ -36,13 +36,11 @@ class ClonePlan:
     cfg_rows: dict[int, tuple[int, ...]] = field(default_factory=dict)
     """``id(cfg)`` to the row indices the cfg owns."""
 
-    combination_ids: torch.Tensor | None = None
-    """Long tensor ``[num_clones]`` identifying each environment's clone combination.
+    combination_rows: torch.Tensor | None = None
+    """Unique effective clone-combination rows, or ``None`` for a homogeneous plan."""
 
-    IDs refer to the original clone-combination order before weights and spawn
-    variants expand it into valid rows. Homogeneous plans use ID ``0`` and plans
-    without environment-scoped assets use ``-1``.
-    """
+    combination_ids: torch.Tensor | None = None
+    """Long tensor ``[num_clones]`` indexing :attr:`combination_rows`, or ``None``."""
 
     @classmethod
     def from_env_0(
@@ -83,5 +81,4 @@ class ClonePlan:
             env_ids=torch.arange(num_clones, dtype=torch.long, device=device),
             positions=positions,
             cfg_rows=cfg_rows,
-            combination_ids=torch.zeros(num_clones, dtype=torch.long, device=device),
         )
