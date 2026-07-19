@@ -24,6 +24,7 @@ from isaaclab_tasks.core.dexsuite.config.kuka_allegro.dexsuite_kuka_allegro_env_
     DexsuiteKukaAllegroLiftEnvCfg,
     KukaAllegroMixinCfg,
 )
+from isaaclab_tasks.core.dexsuite.dexsuite_env_cfg import PhysicsCfg as DexsuitePhysicsCfg
 from isaaclab_tasks.core.reach.config.franka.joint_pos_env_cfg import FrankaReachEnvCfg
 from isaaclab_tasks.core.reach.config.ur_10.joint_pos_env_cfg import UR10ReachEnvCfg
 from isaaclab_tasks.core.reach.reach_env_cfg import ReachPhysicsCfg
@@ -34,6 +35,11 @@ from isaaclab_tasks.core.velocity.config.h1.flat_env_cfg import H1FlatEnvCfg
 from isaaclab_tasks.core.velocity.config.h1.flat_env_cfg import PhysicsCfg as H1FlatPhysicsCfg
 from isaaclab_tasks.core.velocity.config.h1.rough_env_cfg import H1RoughEnvCfg
 from isaaclab_tasks.utils.hydra import resolve_presets
+
+
+def test_dexsuite_feather_pgs_keeps_cuda_graph_capture_enabled():
+    """The shared DexSuite preset should retain graph-captured high-environment execution."""
+    assert DexsuitePhysicsCfg().feather_pgs.use_cuda_graph is True
 
 
 @pytest.mark.parametrize(
@@ -48,7 +54,7 @@ from isaaclab_tasks.utils.hydra import resolve_presets
         "terrain_contacts",
     ),
     (
-        (DexsuiteKukaAllegroLiftEnvCfg, 2, 0.1, 384, 64, "par_row", True, False),
+        (DexsuiteKukaAllegroLiftEnvCfg, 2, 0.1, 384, 64, "auto", True, False),
         (UnitreeA1FlatEnvCfg, 1, 0.1, 64, 512, "auto", False, True),
         (AnymalBFlatEnvCfg, 1, math.inf, 128, 32, "auto", True, True),
         (AnymalBRoughEnvCfg, 2, 0.1, 128, 32, "auto", True, True),

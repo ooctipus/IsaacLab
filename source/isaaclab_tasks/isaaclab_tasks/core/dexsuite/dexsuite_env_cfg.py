@@ -528,7 +528,7 @@ class PhysicsCfg(PresetCfg):
         default_shape_cfg=NewtonShapeCfg(),
         num_substeps=12,
         debug_mode=False,
-        use_cuda_graph=False,
+        use_cuda_graph=True,
     )
     physx = default
 
