@@ -195,12 +195,6 @@ class RslRlPpoAlgorithmCfg:
     optimizer: Literal["adam", "adamw", "sgd", "rmsprop"] = "adam"
     """The optimizer to use. Defaults to adam."""
 
-    weight_decay: float = 0.0
-    """Weight decay coefficient applied by the policy optimizer. Defaults to 0.0."""
-
-    log_weight_decay_metrics: bool = True
-    """Whether to log weight-decay parameter-norm diagnostics when weight decay is non-zero. Defaults to True."""
-
     value_loss_coef: float = MISSING
     """The coefficient for the value loss."""
 
