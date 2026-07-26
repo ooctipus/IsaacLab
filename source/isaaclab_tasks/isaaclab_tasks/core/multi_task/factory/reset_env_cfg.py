@@ -264,7 +264,12 @@ GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER = EventTerm(
                     "holding_body_cfg": SceneEntityCfg("robot", body_names=EndEffectorBodyCfg()),
                     "held_asset_cfg": SceneEntityCfg("held_asset"),
                     "held_asset_graspable_offset": HeldAssetGraspPointCfg(),
-                    "held_asset_inhand_range": {},
+                    "held_asset_inhand_range": {
+                        "x": (-0.005, 0.005),
+                        "y": (-0.005, 0.005),
+                        "z": (-0.000, 0.005),
+                        "pitch": (-1.0, 1.0),
+                    },
                     "gripper_grasp_offset": GripperGraspOffsetCfg(),
                 },
             ),
@@ -325,7 +330,7 @@ SCENE_RESET = EventTerm(
                             "start_assembled": ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
                             "start_grasped_then_assembled": GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER,
                         },
-                        eval={"grasp_asset_in_air": GRIPPER_GRASP_ASSET_IN_AIR},
+                        eval={"grasp_asset_in_air": GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER},
                     ),
                     "sampling": preset(
                         default=SamplerCfg(
@@ -362,11 +367,27 @@ ACCUMULATOR_RESET = EventTerm(
         "reset_assets": ["nistboard", "fixed_asset", "held_asset", "robot"],
         "acceptance_conditions": {
             "object_collision_free": mdp.CollisionAnalyzerCfg(
-                num_points=32,
+                num_points=256,
                 max_dist=0.5,
                 min_dist=-0.0005,
                 asset_cfg=SceneEntityCfg("held_asset"),
-                obstacle_cfgs=[SceneEntityCfg("fixed_asset"), SceneEntityCfg("robot")],
+                obstacle_cfgs=[
+                    SceneEntityCfg("fixed_asset"),
+                    SceneEntityCfg("robot"),
+                    SceneEntityCfg("nistboard"),
+                    SceneEntityCfg("table"),
+                ],
+            ),
+            "robot_collision_free": mdp.CollisionAnalyzerCfg(
+                num_points=1024,
+                max_dist=0.5,
+                min_dist=-0.002,
+                asset_cfg=SceneEntityCfg("robot"),
+                obstacle_cfgs=[
+                    SceneEntityCfg("table"),
+                    SceneEntityCfg("nistboard"),
+                    SceneEntityCfg("fixed_asset"),
+                ],
             ),
         },
         "state_table_size": preset(default=32768, eval=512),
@@ -376,7 +397,7 @@ ACCUMULATOR_RESET = EventTerm(
         "sampling": preset(
             default=SamplerCfg(
                 strategies=[
-                    BetaSamplingStrategyCfg(target=0.5, kappa=1.0, weight=1.0, success_rate_bind="success_rates")
+                    BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates")
                 ],
                 eps=1e-4,
             ),

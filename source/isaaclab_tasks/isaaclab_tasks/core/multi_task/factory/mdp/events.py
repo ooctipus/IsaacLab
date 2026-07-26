@@ -109,18 +109,21 @@ def reset_held_asset_in_gripper(
     end_effector_quat_w = wp.to_torch(robot.data.body_link_quat_w)[env_ids, holding_body_cfg.body_ids].view(-1, 4)
     end_effector_pos_w = wp.to_torch(robot.data.body_link_pos_w)[env_ids, holding_body_cfg.body_ids].view(-1, 3)
     grasp_quat = gripper_grasp_offset.quat_t(env.device).expand(len(env_ids), -1)
-    translated_held_asset_pos, translated_held_asset_quat = held_asset_graspable_offset.subtract(
-        end_effector_pos_w,
-        math_utils.quat_mul(end_effector_quat_w, grasp_quat),
-    )
 
-    # Add randomization
+    # Randomize the grasp target (at the grasp point) BEFORE solving for the asset root, so the
+    # pose noise pivots about the grasp point and the graspable frame stays coincident with the
+    # gripper. Applying the noise to the root pose afterward rotates about the (offset) root, which
+    # swings the graspable point off the gripper — the asset stops being held at the grasp point.
     range_list = [held_asset_inhand_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
     ranges = torch.tensor(range_list, device=env.device)
     samples = math_utils.sample_uniform(ranges[:, 0], ranges[:, 1], (len(env_ids), 6), device=env.device)
-    new_pos_w = translated_held_asset_pos + samples[:, 0:3]
-    quat_b = math_utils.quat_from_euler_xyz(samples[:, 3], samples[:, 4], samples[:, 5])
-    new_quat_w = math_utils.quat_mul(translated_held_asset_quat, quat_b)
+    grasp_pos_w = end_effector_pos_w + samples[:, 0:3]
+    grasp_quat_w = math_utils.quat_mul(
+        math_utils.quat_mul(end_effector_quat_w, grasp_quat),
+        math_utils.quat_from_euler_xyz(samples[:, 3], samples[:, 4], samples[:, 5]),
+    )
+
+    new_pos_w, new_quat_w = held_asset_graspable_offset.subtract(grasp_pos_w, grasp_quat_w)
 
     held_asset.write_root_link_pose_to_sim(torch.cat([new_pos_w, new_quat_w], dim=1), env_ids=env_ids)  # type: ignore
     held_asset.write_root_com_velocity_to_sim(
@@ -205,13 +208,18 @@ class reset_end_effector_around_asset(ManagerTermBase):
         # Error Rate 75% ^ 10 = 0.05 (final error)
         lo, hi = ik_iterations
         k = int(torch.randint(low=lo, high=hi + 1, size=(1,)).item())
+        # Clamp every write to the joint limits: unconstrained DLS steps walk joints past
+        # their limits near workspace edges, and beyond-limit states written to sim produce
+        # huge limit-constraint impulses (NaN on the mjwarp Newton solver at first step).
+        limits = wp.to_torch(self.robot.data.joint_pos_limits)[env_ids][:, self.joint_ids]
         for _ in range(k):
             self.solver.apply_actions()
             delta_joint_pos = 0.25 * (
                 wp.to_torch(self.robot.data.joint_pos_target)[env_ids] - wp.to_torch(self.robot.data.joint_pos)[env_ids]
             )
+            new_joint_pos = (delta_joint_pos + wp.to_torch(self.robot.data.joint_pos)[env_ids])[:, self.joint_ids]
             self.robot.write_joint_position_to_sim(
-                position=(delta_joint_pos + wp.to_torch(self.robot.data.joint_pos)[env_ids])[:, self.joint_ids],
+                position=torch.clamp(new_joint_pos, limits[..., 0], limits[..., 1]),
                 joint_ids=self.joint_ids,
                 env_ids=env_ids,  # type: ignore
             )
@@ -222,7 +230,6 @@ class reset_end_effector_around_asset(ManagerTermBase):
         # self.robot.write_joint_position_to_sim(position=wrist_pos, joint_ids=self.wrist_idx, env_ids=env_ids)
         if self.is_physx:
             self.robot.root_physx_view.get_jacobians()
-
 
 
 def reset_root_state_uniform_on_offset(
