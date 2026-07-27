@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import re
+import subprocess
 import unittest
 from unittest import mock
 
@@ -152,6 +154,85 @@ class BuildnpushTest(unittest.TestCase):
     def test_parse_build_args_rejects_multiple_depth_flags(self) -> None:
         with self.assertRaisesRegex(bp.BuildError, "choose only one"):
             bp.parse_build_args(["factory", "-s", "-p"])
+
+    def test_deps_rebuild_forces_dependency_resync(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory", deps=True))
+        with self._mock_images({ctx.deps_image: "2026-06-16T20:00:00Z"}):
+            plan = bp.determine_plan(ctx)
+
+        self.assertFalse(plan.skip_deps)
+        self.assertTrue(plan.run_pip_install)
+        self.assertTrue(plan.bust_deps_cache)
+
+    def test_cached_deps_build_does_not_force_dependency_resync(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory"))
+        with self._mock_images({ctx.deps_image: "2026-06-16T20:00:00Z"}):
+            plan = bp.determine_plan(ctx)
+
+        self.assertFalse(plan.bust_deps_cache)
+
+    def test_deps_hash_changes_when_only_the_lock_changes(self) -> None:
+        lock = bp.REPO_ROOT / "uv.lock"
+        if not lock.is_file():
+            self.skipTest("uv.lock is not present in this checkout")
+        original = lock.read_bytes()
+        before = bp.compute_deps_hash(False)
+        try:
+            lock.write_bytes(original + b"\n# deps-hash probe\n")
+            after = bp.compute_deps_hash(False)
+        finally:
+            lock.write_bytes(original)
+
+        self.assertNotEqual(before, after)
+
+    def _mock_uv_check(self, returncode: int, stderr: str = ""):
+        """Patch the ``docker run`` that executes ``uv sync --check`` inside the built image."""
+        captured: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            captured.append(cmd)
+            return subprocess.CompletedProcess(cmd, returncode, stdout="", stderr=stderr)
+
+        return mock.patch.object(bp.subprocess, "run", fake_run), captured
+
+    def test_verify_synced_deps_rejects_an_environment_that_drifted_from_the_lock(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory"))
+        docker_env = {"DOCKER_ISAACLAB_PATH": "/workspace/isaaclab"}
+        patcher, _ = self._mock_uv_check(1, stderr="The environment is outdated")
+        with patcher:
+            with self.assertRaisesRegex(bp.BuildError, "out of sync with uv.lock"):
+                bp.verify_synced_deps(ctx, docker_env)
+
+    def test_verify_synced_deps_accepts_an_environment_that_matches_the_lock(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory"))
+        docker_env = {"DOCKER_ISAACLAB_PATH": "/workspace/isaaclab"}
+        patcher, captured = self._mock_uv_check(0)
+        with patcher:
+            bp.verify_synced_deps(ctx, docker_env)
+
+        self.assertIn("uv sync --check --frozen --offline " + bp.BASE_UV_SYNC_EXTRAS, captured[0][-1])
+
+    def test_verify_synced_deps_checks_the_kitless_extras_for_a_kitless_build(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory", kitless=True))
+        docker_env = {"DOCKER_ISAACLAB_PATH": "/workspace/isaaclab"}
+        patcher, captured = self._mock_uv_check(0)
+        with patcher:
+            bp.verify_synced_deps(ctx, docker_env)
+
+        self.assertIn("uv sync --check --frozen --offline " + bp.KITLESS_UV_SYNC_EXTRAS, captured[0][-1])
+
+    def test_uv_sync_extras_match_the_dockerfiles(self) -> None:
+        """The extras used to verify an image must match the ones it was built with."""
+        for dockerfile, expected in (
+            ("docker/Dockerfile.base", bp.BASE_UV_SYNC_EXTRAS),
+            ("docker/Dockerfile.kitless", bp.KITLESS_UV_SYNC_EXTRAS),
+        ):
+            with self.subTest(dockerfile=dockerfile):
+                text = (bp.REPO_ROOT / dockerfile).read_text()
+                match = re.search(r'^ARG ISAACLAB_UV_SYNC_ARGS="([^"]*)"', text, re.MULTILINE)
+                if match is None:
+                    self.fail(f"{dockerfile} does not define ISAACLAB_UV_SYNC_ARGS")
+                self.assertEqual(match.group(1), expected)
 
 
 if __name__ == "__main__":
