@@ -10,8 +10,8 @@
 # Unlike Dockerfile.base (which layers uv on top of the NGC Isaac Sim image and
 # inherits the bundled isaacsim/omni via --system-site-packages), this image
 # starts from a plain CUDA/Ubuntu base and lets uv manage its own CPython 3.12.
-# The install CLI installs the workspace (isaaclab* editable + Newton + RL
-# dependencies), which does not include the Isaac Sim pip package.
+# The environment is built with ``uv sync`` from ``uv.lock`` (isaaclab* editable +
+# Newton + RL dependencies), which does not include the Isaac Sim pip package.
 # As a result PhysX, Kit rendering, RTX, and ROS workflows are unavailable; the
 # Newton physics backend (incl. MuJoCo-Warp) and the Newton visualizer work.
 
@@ -84,7 +84,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.9.4 /uv /uvx /usr/local/bin/
 # ``--chown=1000:1000`` (numeric, since the isaaclab user is created later) sets
 # ownership as the files are written, so we avoid a slow recursive ``chown`` over
 # source/ (incl. the bulky isaaclab_assets/data) on overlayfs.
-COPY --chown=1000:1000 ../isaaclab.* ../environment.yml ../pyproject.toml ${ISAACLAB_PATH}/
+COPY --chown=1000:1000 ../isaaclab.* ../environment.yml ../pyproject.toml ../uv.lock ${ISAACLAB_PATH}/
 COPY --chown=1000:1000 ../tools/ ${ISAACLAB_PATH}/tools/
 COPY --chown=1000:1000 ../source/ ${ISAACLAB_PATH}/source/
 
@@ -152,14 +152,26 @@ ENV PATH=${ISAACLAB_PATH}/.venv/bin:${PATH}
 USER isaaclab
 
 # Create the uv environment on uv's own managed CPython 3.12 (no bundled
-# interpreter to inherit, so no --system-site-packages) and install Isaac Lab
-# through its canonical install CLI. The default install excludes the Isaac Sim
-# pip package, so this stays kit-less. The cache mount is owned by uid/gid 1000
-# so the non-root user can populate it.
+# interpreter to inherit, so no --system-site-packages) and build it from
+# ``uv.lock``. ``uv sync`` resolves nothing: it materializes exactly what the lock
+# pins, so the image matches a local source checkout package-for-package. Do NOT
+# swap this for ``isaaclab.sh --install``; that re-resolves at build time and lets
+# the image drift away from the lock.
+#
+# The extras mirror what ``isaaclab.sh --install`` used to pull here (``rtx``
+# comes in via the newton feature) and deliberately omit ``isaacsim``, so this
+# stays kit-less. The cache mount is owned by uid/gid 1000 so the non-root user
+# can populate it.
+ARG ISAACLAB_UV_SYNC_ARGS="--extra all --extra rtx"
+# Changing this token re-runs the sync below without discarding the system layers
+# above it. ``buildnpush.py`` sets it for ``-d/--deps`` so a dependency rebuild
+# cannot silently reuse a previously resolved environment.
+ARG DEPS_CACHE_BUST=0
 RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/uv,uid=1000,gid=1000 \
+    echo "dependency sync token: ${DEPS_CACHE_BUST}" && \
     cd ${ISAACLAB_PATH} && \
     uv venv --python 3.12 ${ISAACLAB_PATH}/.venv && \
-    ${ISAACLAB_PATH}/isaaclab.sh --install
+    uv sync ${ISAACLAB_UV_SYNC_ARGS}
 
 # copy the rest of the files
 COPY --chown=isaaclab:isaaclab ../ ${ISAACLAB_PATH}/

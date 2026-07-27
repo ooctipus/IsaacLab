@@ -493,7 +493,7 @@ def _install_root_extra(extra: str) -> None:
     python_exe = extract_python_exe()
     pip_cmd = get_pip_command(python_exe)
     print_info(f"Installing '{extra}' extra dependencies from the root pyproject...")
-    run_command(pip_cmd + ["install", "--upgrade", "--upgrade-strategy", "only-if-needed"] + dependencies)
+    run_command(pip_cmd + ["install"] + dependencies)
 
 
 def _install_centralized_dependencies(pip_cmd: list[str], optional_submodules: list[str]) -> None:
@@ -761,14 +761,7 @@ def _install_isaaclab_submodules(isaaclab_submodules: list[str]) -> None:
             print_warning(f"Submodule directory not found or missing pyproject.toml: {item}")
             continue
         print_info(f"Installing submodule: {pkg_name}")
-        # ``--upgrade --upgrade-strategy only-if-needed`` makes ``pip install -e``
-        # actually re-resolve transitive deps that no longer satisfy the package's
-        # pins (e.g. after bumping ``warp-lang`` in ``setup.py`` on top of an
-        # existing image). Without this flag pip silently keeps the stale version
-        # installed and only emits a post-install conflict warning. ``only-if-needed``
-        # keeps satisfying versions untouched (avoids churning numpy/pillow/
-        # etc. that come bundled with Isaac Sim's kit python).
-        run_command(pip_cmd + ["install", "--upgrade", "--upgrade-strategy", "only-if-needed", "--editable", str(item)])
+        run_command(pip_cmd + ["install", "--editable", str(item)])
         _upgrade_extension_pip_dependencies(
             python_exe,
             pip_cmd,
@@ -873,17 +866,7 @@ def _install_extra_feature(feature_name: str, selector: str = "") -> None:
         local_rsl_rl = ISAACLAB_ROOT / "dep" / "rsl_rl"
         if "rsl-rl" in frameworks and local_rsl_rl.is_dir():
             pip_cmd = get_pip_command(extract_python_exe())
-            run_command(
-                pip_cmd
-                + [
-                    "install",
-                    "--upgrade",
-                    "--upgrade-strategy",
-                    "only-if-needed",
-                    "--editable",
-                    str(local_rsl_rl),
-                ]
-            )
+            run_command(pip_cmd + ["install", "--editable", str(local_rsl_rl)])
     elif feature_name == "tetrahedralization":
         if selector:
             print_warning(f"tetrahedralization does not support selectors (got {selector!r}).")

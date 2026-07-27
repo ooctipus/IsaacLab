@@ -84,7 +84,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.9.4 /uv /uvx /usr/local/bin/
 # ``--chown=1000:1000`` (numeric, since the isaaclab user is created later) sets
 # ownership as the files are written, so we avoid a slow recursive ``chown`` over
 # source/ (incl. the bulky isaaclab_assets/data) on overlayfs.
-COPY --chown=1000:1000 ../isaaclab.* ../environment.yml ../pyproject.toml ${ISAACLAB_PATH}/
+COPY --chown=1000:1000 ../isaaclab.* ../environment.yml ../pyproject.toml ../uv.lock ${ISAACLAB_PATH}/
 COPY --chown=1000:1000 ../tools/ ${ISAACLAB_PATH}/tools/
 COPY --chown=1000:1000 ../source/ ${ISAACLAB_PATH}/source/
 
@@ -125,15 +125,15 @@ RUN touch /bin/nvidia-smi && \
     mkdir -p /var/run/nvidia-persistenced && \
     touch /var/run/nvidia-persistenced/socket
 
-# robomimic declares imageio-ffmpeg for optional video helpers. Keep its
-# bundled FFmpeg binary out of the distributed image and let users who
-# enable video recording install MoviePy and its video backend explicitly.
-RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/pip \
-    ${ISAACLAB_PATH}/isaaclab.sh --install && \
-    ${ISAACLAB_PATH}/isaaclab.sh -p -m pip uninstall -y imageio-ffmpeg
-
-# HACK: Remove install of quadprog dependency
-RUN ${ISAACLAB_PATH}/isaaclab.sh -p -m pip uninstall -y quadprog
+# On arm64, nlopt 2.6.2 has no wheel and is built from source by the dependency
+# sync further below, which needs swig. It is purged again once the sync is done
+# so it does not survive into the final image.
+RUN if [ "$(dpkg --print-architecture)" = "arm64" ]; then \
+        apt-get update && \
+        apt-get install -y --no-install-recommends swig && \
+        apt-get clean && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
 
 # aliasing isaaclab.sh and python for convenience
 RUN echo "export ISAACLAB_PATH=${ISAACLAB_PATH}" >> ${DOCKER_USER_HOME}/.bashrc && \
@@ -177,29 +177,42 @@ ENV PATH=${ISAACLAB_PATH}/.venv/bin:${PATH}
 
 USER isaaclab
 
-# Install Isaac Lab and its dependencies, as the non-root user so the
-# venv is created already-owned (see the chown note above). The venv is built on
-# uv's own managed CPython 3.12 (NOT the Isaac Sim bundled interpreter) and
-# WITHOUT --system-site-packages. CPython 3.12 is ABI-stable across patch
-# releases, so Isaac Sim's ``cp312`` native extensions (``isaacsim``/``omni``,
-# exposed at run time via ``isaaclab.sh`` sourcing ``setup_*_env.sh`` on
-# PYTHONPATH) load fine on the managed interpreter -- this mirrors the working
-# local source setup. Building the venv on the bundled interpreter instead makes
-# installing into the bundled interpreter lays down a mixed ``pxr``:
-# ``usd-core`` and ``usd-exchange`` both
-# ship a ``pxr/`` tree and clobber each other's shared objects in an order that
-# links ``pxr.Usd`` against one USD build and ``pxr.UsdGeom`` against another, so
+# Install Isaac Lab and its dependencies, as the non-root user so the venv is
+# created already-owned (see the chown note above). ``uv sync`` resolves nothing:
+# it materializes exactly what ``uv.lock`` pins, so the image matches a local
+# source checkout package-for-package. Do NOT swap this for a plain
+# ``uv pip install``/``isaaclab.sh --install``; those re-resolve at build time and
+# let the image drift away from the lock.
+#
+# The venv is built on uv's own managed CPython 3.12 (NOT the Isaac Sim bundled
+# interpreter) and WITHOUT --system-site-packages. CPython 3.12 is ABI-stable
+# across patch releases, so Isaac Sim's ``cp312`` native extensions
+# (``isaacsim``/``omni``, exposed at run time via ``isaaclab.sh`` sourcing
+# ``setup_*_env.sh`` on PYTHONPATH) load fine on the managed interpreter -- this
+# mirrors the working local source setup. Installing into the bundled interpreter
+# instead lays down a mixed ``pxr``: ``usd-core`` and ``usd-exchange`` both ship a
+# ``pxr/`` tree and clobber each other's shared objects in an order that links
+# ``pxr.Usd`` against one USD build and ``pxr.UsdGeom`` against another, so
 # importing them together re-registers USD/Tf C++ types and crashes with
-# ``No to_python converter for ...UsdTimeCode``. On arm64, nlopt 2.6.2 (pinned
-# via isaacteleop) has no wheel and is built with --no-build-isolation.
+# ``No to_python converter for ...UsdTimeCode``. On arm64, nlopt 2.6.2 (pinned via
+# isaacteleop) has no wheel and is built with --no-build-isolation.
+#
+# The args select which extras to install; do NOT add ``--extra isaacsim`` (Isaac
+# Sim is the binary base image, not a pip package). Override to change the extras.
+ARG ISAACLAB_UV_SYNC_ARGS="--extra all --extra rtx --extra ov"
+# Changing this token re-runs the sync below without discarding the system layers
+# above it. ``buildnpush.py`` sets it for ``-d/--deps`` so a dependency rebuild
+# cannot silently reuse a previously resolved environment.
+ARG DEPS_CACHE_BUST=0
 RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/uv,uid=1000,gid=1000 \
+    echo "dependency sync token: ${DEPS_CACHE_BUST}" && \
     cd ${ISAACLAB_PATH} && \
     uv venv --python 3.12 ${ISAACLAB_PATH}/.venv && \
     if [ "$(dpkg --print-architecture)" = "arm64" ]; then \
         uv pip install setuptools wheel numpy && \
         uv pip install --no-build-isolation nlopt==2.6.2; \
     fi && \
-    ${ISAACLAB_PATH}/isaaclab.sh --install
+    uv sync ${ISAACLAB_UV_SYNC_ARGS}
 
 # Isaac Sim's pip prebundle can appear before the project venv on PYTHONPATH
 # after ``setup_conda_env.sh`` is sourced. Its stale ``typing_extensions`` copy
@@ -207,6 +220,14 @@ RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/uv,uid=1000,gid=1000 \
 USER root
 
 RUN find ${ISAACSIM_ROOT_PATH}/extscache -path "*/pip_prebundle/typing_extensions.py" -delete
+
+# The arm64 nlopt source build is done, so drop its swig build dependency again.
+RUN if [ "$(dpkg --print-architecture)" = "arm64" ]; then \
+        apt-get purge -y --auto-remove swig && \
+        apt-get clean && \
+        rm -rf /var/lib/apt/lists/* && \
+        if command -v swig >/dev/null 2>&1; then exit 1; fi; \
+    fi
 
 USER isaaclab
 
