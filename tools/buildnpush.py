@@ -17,6 +17,7 @@ here so the image roles stay explicit:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import os
 import re
@@ -40,6 +41,12 @@ NGC = Path("/home/zhengyuz/ngc-cli/ngc")
 
 ASSETS_DATA_DIR = Path("source/isaaclab_assets/data")
 EXTRA_SYMLINKS = [Path("dep"), Path("dep/rsl_rl")]
+
+# Extras the images are synced with. These mirror the ``ISAACLAB_UV_SYNC_ARGS`` defaults in
+# the Dockerfiles and are only used to re-run ``uv sync --check`` against a built image;
+# ``test_uv_sync_extras_match_the_dockerfiles`` fails if the two drift apart.
+BASE_UV_SYNC_EXTRAS = "--extra all --extra rtx --extra ov"
+KITLESS_UV_SYNC_EXTRAS = "--extra all --extra rtx"
 
 
 class BuildError(RuntimeError):
@@ -69,6 +76,8 @@ class BuildPlan:
     run_pip_install: bool
     reason: str
     build_base_image: str
+    # Force the dependency-sync layer to re-run while keeping the system layers cached.
+    bust_deps_cache: bool = False
 
 
 @dataclass
@@ -236,11 +245,14 @@ def compute_deps_hash(kitless: bool) -> str:
     else:
         build_recipe = Path("docker/Dockerfile.base")
 
+    # ``uv.lock`` pins the resolved dependency set (exact git revisions included), so a
+    # lock-only bump must invalidate the deps image even when pyproject.toml is unchanged.
     for rel_path in [
         Path("docker/.env.base"),
         build_recipe,
         Path("docker/docker-compose.yaml"),
         Path("pyproject.toml"),
+        Path("uv.lock"),
         Path("isaaclab.sh"),
     ]:
         hash_file(md5, REPO_ROOT / rel_path, rel_path.as_posix())
@@ -355,7 +367,7 @@ def determine_plan(ctx: BuildContext) -> BuildPlan:
         return BuildPlan(False, False, True, "full rebuild (-a/--all)", ctx.deps_image)
 
     if args.deps:
-        return BuildPlan(False, True, True, "deps rebuild (-d/--deps)", ctx.deps_image)
+        return BuildPlan(False, True, True, "deps rebuild (-d/--deps)", ctx.deps_image, bust_deps_cache=True)
 
     if args.pip:
         return BuildPlan(
@@ -403,6 +415,7 @@ def print_build_config(ctx: BuildContext, plan: BuildPlan) -> None:
     if plan.skip_deps:
         print(f"   Overlay Base:  {plan.build_base_image}")
     print(f"   Docker Cache:  {'YES' if plan.use_cache else 'NO'}")
+    print(f"   Dep Re-sync:   {'FORCED' if plan.bust_deps_cache or not plan.use_cache else 'cache-permitting'}")
     print(f"   Push to NGC:   {'SKIP' if ctx.args.skip_push else 'YES'}\n")
 
 
@@ -416,6 +429,14 @@ def build_full_deps(ctx: BuildContext, plan: BuildPlan, docker_env: dict[str, st
         env["ISAACLAB_NOCACHE"] = "1"
     else:
         unset_env.append("ISAACLAB_NOCACHE")
+
+    # A cached dependency-sync layer would otherwise keep the previously resolved
+    # packages even when the lock changed; a fresh token forces that layer to re-run.
+    if plan.bust_deps_cache:
+        env["DEPS_CACHE_BUST"] = str(int(time.time()))
+        print(f"   forcing dependency re-sync (DEPS_CACHE_BUST={env['DEPS_CACHE_BUST']})")
+    else:
+        unset_env.append("DEPS_CACHE_BUST")
 
     if ctx.args.kitless:
         cache_flag = [] if plan.use_cache else ["--no-cache"]
@@ -431,6 +452,8 @@ def build_full_deps(ctx: BuildContext, plan: BuildPlan, docker_env: dict[str, st
             f"ISAACLAB_PATH_ARG={docker_env['DOCKER_ISAACLAB_PATH']}",
             "--build-arg",
             f"DOCKER_USER_HOME_ARG={docker_env['DOCKER_USER_HOME']}",
+            "--build-arg",
+            f"DEPS_CACHE_BUST={env.get('DEPS_CACHE_BUST', '0')}",
             "-t",
             BASE_IMAGE,
             ".",
@@ -444,6 +467,12 @@ def build_full_deps(ctx: BuildContext, plan: BuildPlan, docker_env: dict[str, st
 
     print(f"Caching deps image as {ctx.deps_image}")
     docker("tag", BASE_IMAGE, ctx.deps_image)
+
+
+def uv_sync_extras(ctx: BuildContext) -> str:
+    """Return the ``uv sync`` extras the image for this build is expected to carry."""
+
+    return KITLESS_UV_SYNC_EXTRAS if ctx.args.kitless else BASE_UV_SYNC_EXTRAS
 
 
 def build_overlay(ctx: BuildContext, plan: BuildPlan, docker_env: dict[str, str]) -> None:
@@ -467,6 +496,8 @@ def build_overlay(ctx: BuildContext, plan: BuildPlan, docker_env: dict[str, str]
         f"ISAACSIM_ROOT_PATH_ARG={docker_env['DOCKER_ISAACSIM_ROOT_PATH']}",
         "--build-arg",
         f"RUN_PIP_INSTALL={1 if plan.run_pip_install else 0}",
+        "--build-arg",
+        f"ISAACLAB_UV_SYNC_ARGS={uv_sync_extras(ctx)}",
         "-t",
         BASE_IMAGE,
         ".",
@@ -484,6 +515,46 @@ def build_overlay(ctx: BuildContext, plan: BuildPlan, docker_env: dict[str, str]
         else:
             print(f"Layer count {layers} >= {MAX_LAYERS_FOR_DEPS_CACHE}; skipping deps-cache promotion.")
             print("Run -d/--deps to flatten back to a low-layer dependency image.")
+
+
+def verify_synced_deps(ctx: BuildContext, docker_env: dict[str, str]) -> None:
+    """Fail when the freshly built image's environment does not match the repository's lock.
+
+    A cached or partially applied dependency layer leaves an older resolved environment inside
+    an image that is about to be tagged as current. That is invisible at tag time and only
+    surfaces as a version mismatch at run time. Comparing ``uv.lock`` files would not catch it,
+    because the final source copy overwrites the lock in the image regardless of what was
+    installed, so ask uv whether the *installed* packages still satisfy the lock.
+
+    Args:
+        ctx: Build context, used to pick the extras the image was synced with.
+        docker_env: Parsed ``docker/.env.base`` values, used to locate Isaac Lab in the image.
+
+    Raises:
+        BuildError: If the image's environment is out of sync with the lock.
+    """
+    if not (REPO_ROOT / "uv.lock").is_file():
+        return
+    isaaclab_path = docker_env["DOCKER_ISAACLAB_PATH"]
+    extras = uv_sync_extras(ctx)
+    # ``--check`` only inspects the environment against the lock; ``--frozen`` keeps it from
+    # re-locking (which would need the network) and ``--offline`` makes that failure explicit.
+    check_cmd = f"cd {isaaclab_path} && uv sync --check --frozen --offline {extras}"
+    proc = subprocess.run(
+        ["docker", "run", "--rm", "--entrypoint", "bash", BASE_IMAGE, "-lc", check_cmd],
+        cwd=REPO_ROOT,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        details = (proc.stderr or proc.stdout).strip()
+        raise BuildError(
+            f"{BASE_IMAGE} environment is out of sync with uv.lock.\n"
+            f"{details}\n"
+            "The build reused a stale dependency layer. Rebuild with './buildnpush.sh <tag> -a'."
+        )
+    print("Verified image environment matches the repository's uv.lock.")
 
 
 def tag_and_push(ctx: BuildContext, plan: BuildPlan) -> None:
@@ -601,6 +672,8 @@ def build_image(args: BuildArgs) -> None:
             build_overlay(ctx, plan, docker_env)
         else:
             build_full_deps(ctx, plan, docker_env)
+        if plan.run_pip_install or not plan.skip_deps:
+            verify_synced_deps(ctx, docker_env)
         tag_and_push(ctx, plan)
     if ctx.deps_hash:
         update_state_and_cleanup(ctx)
@@ -810,10 +883,8 @@ def enter_container(tag: str, *, mount_local: bool) -> None:
                 f"checkpoint writes may fail; run 'sudo rm -rf {models_tmp}' to reset it."
             )
     models_tmp.mkdir(exist_ok=True)
-    try:
+    with contextlib.suppress(PermissionError):
         models_tmp.chmod(0o777)
-    except PermissionError:
-        pass
     docker_args += ["-v", f"{models_tmp}:/workspace/isaaclab/models_tmp:rw"]
     if mount_local:
         docker_args += ["-v", f"{REPO_ROOT}:/local:rw"]

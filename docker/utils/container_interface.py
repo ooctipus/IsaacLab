@@ -167,6 +167,17 @@ class ContainerInterface:
         """
         return self._does_image_exist(self.image_name)
 
+    @property
+    def build_flags(self) -> list[str]:
+        """Extra flags appended to every ``docker compose build`` invocation.
+
+        Setting ``ISAACLAB_NOCACHE`` to a truthy value disables the Docker layer cache, so a
+        rebuild cannot silently reuse previously resolved dependency layers.
+        """
+        if os.environ.get("ISAACLAB_NOCACHE", "").strip().lower() in ("1", "true", "yes", "on"):
+            return ["--no-cache"]
+        return []
+
     def build(self, pull: bool = False):
         """Build the Docker image, optionally refreshing its parent images.
 
@@ -183,6 +194,7 @@ class ContainerInterface:
                 + ["--profile", "base"]
                 + ["--env-file", ".env.base"]
                 + ["build"]
+                + self.build_flags
                 + (["--pull"] if pull else [])
                 + [self.base_service_name]
             )
@@ -198,6 +210,7 @@ class ContainerInterface:
                 + self.add_profiles
                 + self.add_env_files
                 + ["build"]
+                + self.build_flags
                 + (["--pull"] if pull else [])
                 + [self.service_name]
             )
@@ -229,6 +242,7 @@ class ContainerInterface:
                 + ["--profile", "base"]
                 + ["--env-file", ".env.base"]
                 + ["build", self.base_service_name]
+                + self.build_flags
             )
             self._run_docker_command(cmd, "build the docker image for the profile 'base'")
 
@@ -239,10 +253,11 @@ class ContainerInterface:
                 + self.add_profiles
                 + self.add_env_files
                 + ["build", self.service_name]
+                + self.build_flags
             )
             if not build:
                 print(f"[INFO] Docker image '{self.image_name}' does not exist. Building it once before start.\n")
-            subprocess.run(cmd, check=False, cwd=self.context_dir, env=self.environ)
+            self._run_build(cmd, self.service_name)
 
         # start the container without forcing a rebuild
         cmd = (
