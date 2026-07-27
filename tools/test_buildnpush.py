@@ -14,6 +14,25 @@ from unittest import mock
 
 import buildnpush as bp
 
+# Real ``uv sync --check`` output shapes. Editable workspace members are reported on every check
+# even when the image is correct, so only the git/registry entries indicate an actually stale image.
+_UV_CHECK_WORKSPACE_ONLY = """Would download 14 packages
+Would uninstall 14 packages
+Would install 14 packages
+ - isaaclab==13.2.1 (from file:///workspace/isaaclab/source/isaaclab)
+ + isaaclab @ file:///workspace/isaaclab/source/isaaclab
+ - isaaclab-newton==2.2.0 (from file:///workspace/isaaclab/source/isaaclab_newton)
+ + isaaclab-newton @ file:///workspace/isaaclab/source/isaaclab_newton
+The environment is outdated; run `uv sync` to update the environment
+"""
+
+_UV_CHECK_DRIFTED_DEPENDENCY = """Would install 1 package
+ - isaaclab==13.2.1 (from file:///workspace/isaaclab/source/isaaclab)
+ + isaaclab @ file:///workspace/isaaclab/source/isaaclab
+ + newton @ git+https://github.com/newton-physics/newton.git@d7581b73
+The environment is outdated; run `uv sync` to update the environment
+"""
+
 
 def _ctx(args: bp.BuildArgs) -> bp.BuildContext:
     return bp.BuildContext(
@@ -198,10 +217,33 @@ class BuildnpushTest(unittest.TestCase):
     def test_verify_synced_deps_rejects_an_environment_that_drifted_from_the_lock(self) -> None:
         ctx = _ctx(bp.BuildArgs(tag="factory"))
         docker_env = {"DOCKER_ISAACLAB_PATH": "/workspace/isaaclab"}
-        patcher, _ = self._mock_uv_check(1, stderr="The environment is outdated")
+        patcher, _ = self._mock_uv_check(1, stderr=_UV_CHECK_DRIFTED_DEPENDENCY)
         with patcher:
             with self.assertRaisesRegex(bp.BuildError, "out of sync with uv.lock"):
                 bp.verify_synced_deps(ctx, docker_env)
+
+    def test_verify_synced_deps_accepts_an_environment_whose_only_diff_is_workspace_members(self) -> None:
+        """uv always re-reports the editable ``source/`` packages, which must not fail the build."""
+        ctx = _ctx(bp.BuildArgs(tag="factory"))
+        docker_env = {"DOCKER_ISAACLAB_PATH": "/workspace/isaaclab"}
+        patcher, _ = self._mock_uv_check(1, stderr=_UV_CHECK_WORKSPACE_ONLY)
+        with patcher:
+            bp.verify_synced_deps(ctx, docker_env)
+
+    def test_verify_synced_deps_rejects_a_check_that_could_not_run(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory"))
+        docker_env = {"DOCKER_ISAACLAB_PATH": "/workspace/isaaclab"}
+        patcher, _ = self._mock_uv_check(127, stderr="bash: uv: command not found")
+        with patcher:
+            with self.assertRaisesRegex(bp.BuildError, "could not verify"):
+                bp.verify_synced_deps(ctx, docker_env)
+
+    def test_out_of_sync_packages_keeps_only_non_workspace_entries(self) -> None:
+        self.assertEqual(bp.out_of_sync_packages(_UV_CHECK_WORKSPACE_ONLY), [])
+        self.assertEqual(
+            bp.out_of_sync_packages(_UV_CHECK_DRIFTED_DEPENDENCY),
+            ["+ newton @ git+https://github.com/newton-physics/newton.git@d7581b73"],
+        )
 
     def test_verify_synced_deps_accepts_an_environment_that_matches_the_lock(self) -> None:
         ctx = _ctx(bp.BuildArgs(tag="factory"))
