@@ -47,6 +47,9 @@ EXTRA_SYMLINKS = [Path("dep"), Path("dep/rsl_rl")]
 # ``test_uv_sync_extras_match_the_dockerfiles`` fails if the two drift apart.
 BASE_UV_SYNC_EXTRAS = "--extra all --extra rtx --extra ov"
 KITLESS_UV_SYNC_EXTRAS = "--extra all --extra rtx"
+# Emitted by ``uv sync --check`` when it did run and found the environment stale. Its absence on a
+# failure means the check itself broke (missing uv, unreadable lock) rather than the image drifting.
+UV_OUTDATED_MARKER = "The environment is outdated"
 
 
 class BuildError(RuntimeError):
@@ -517,6 +520,30 @@ def build_overlay(ctx: BuildContext, plan: BuildPlan, docker_env: dict[str, str]
             print("Run -d/--deps to flatten back to a low-layer dependency image.")
 
 
+def out_of_sync_packages(check_output: str) -> list[str]:
+    """Return the third-party packages ``uv sync --check`` wants to change.
+
+    ``uv`` reports every editable workspace member as needing a reinstall on each check: their
+    recorded metadata never matches what a fresh sync would produce, so all of ``source/`` shows
+    up even when the environment is exactly right. Those entries always resolve to a local
+    ``file://`` path, whereas a genuinely drifted dependency resolves to a registry or git URL
+    (Newton, for instance, is pinned to a git revision). Keep only the latter.
+
+    Args:
+        check_output: Combined stdout/stderr of ``uv sync --check``.
+
+    Returns:
+        The plan lines uv printed for non-workspace packages, in the order they appeared.
+    """
+    offenders = []
+    for line in check_output.splitlines():
+        stripped = line.strip()
+        if not re.match(r"^[-+] [A-Za-z0-9._-]+", stripped) or "file://" in stripped:
+            continue
+        offenders.append(stripped)
+    return offenders
+
+
 def verify_synced_deps(ctx: BuildContext, docker_env: dict[str, str]) -> None:
     """Fail when the freshly built image's environment does not match the repository's lock.
 
@@ -531,7 +558,8 @@ def verify_synced_deps(ctx: BuildContext, docker_env: dict[str, str]) -> None:
         docker_env: Parsed ``docker/.env.base`` values, used to locate Isaac Lab in the image.
 
     Raises:
-        BuildError: If the image's environment is out of sync with the lock.
+        BuildError: If a third-party package in the image is out of sync with the lock, or if the
+            check could not be run at all.
     """
     if not (REPO_ROOT / "uv.lock").is_file():
         return
@@ -547,14 +575,22 @@ def verify_synced_deps(ctx: BuildContext, docker_env: dict[str, str]) -> None:
         text=True,
         capture_output=True,
     )
-    if proc.returncode != 0:
-        details = (proc.stderr or proc.stdout).strip()
+    if proc.returncode == 0:
+        print("Verified image environment matches the repository's uv.lock.")
+        return
+
+    combined = f"{proc.stdout}\n{proc.stderr}".strip()
+    offenders = out_of_sync_packages(combined)
+    if offenders:
+        listed = "\n".join(offenders)
         raise BuildError(
-            f"{BASE_IMAGE} environment is out of sync with uv.lock.\n"
-            f"{details}\n"
+            f"{BASE_IMAGE} environment is out of sync with uv.lock:\n"
+            f"{listed}\n"
             "The build reused a stale dependency layer. Rebuild with './buildnpush.sh <tag> -a'."
         )
-    print("Verified image environment matches the repository's uv.lock.")
+    if UV_OUTDATED_MARKER not in combined:
+        raise BuildError(f"could not verify {BASE_IMAGE} against uv.lock; 'uv sync --check' failed:\n{combined}")
+    print("Verified image environment matches the repository's uv.lock (workspace members aside).")
 
 
 def tag_and_push(ctx: BuildContext, plan: BuildPlan) -> None:
