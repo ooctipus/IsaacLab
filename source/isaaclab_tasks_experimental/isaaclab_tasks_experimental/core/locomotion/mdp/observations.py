@@ -70,7 +70,11 @@ def _base_up_proj_kernel(
     gravity_w: wp.array(dtype=wp.vec3f),
     out: wp.array(dtype=wp.float32, ndim=2),
 ):
-    """Project base up vector onto world up: -gravity_b[2]."""
+    """Project base up vector onto world up: -gravity_b[2].
+
+    ``gravity_w`` carries m/s^2 magnitude per env; normalize to keep the
+    projection in [-1, 1].
+    """
     i = wp.tid()
     out[i, 0] = -rotate_vec_to_body_frame(wp.normalize(gravity_w[i]), root_pose_w[i])[2]
 

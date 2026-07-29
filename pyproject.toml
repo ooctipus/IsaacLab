@@ -421,6 +421,14 @@ torchvision = [
     { index = "pytorch-cu130", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
     { index = "pytorch-cu130", marker = "sys_platform == 'linux' and platform_machine == 'arm64'" },
 ]
+# pytorch3d has no PyPI wheel for our torch/CUDA build, so pin the prebuilt wheel matching
+# torch 2.10.0 + cu128 on py3.12 / linux x86_64 (torch_packages_builder). This is the uv
+# equivalent of the old setup.py ``pytorch3d @ <wheel-url>`` selection; the ``[project]``
+# dependency (``pytorch3d==0.7.9; <same marker>``) supplies the version constraint and this
+# source supplies the URL. The marker mirrors the dependency so other platforms don't try to use it.
+pytorch3d = [
+    { url = "https://github.com/MiroPsota/torch_packages_builder/releases/download/pytorch3d-0.7.9/pytorch3d-0.7.9%2Bpt2.10.0cu128-cp312-cp312-linux_x86_64.whl", marker = "sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64') and python_version == '3.12'" },
+]
 
 [tool.uv.pip]
 index-strategy = "unsafe-best-match"

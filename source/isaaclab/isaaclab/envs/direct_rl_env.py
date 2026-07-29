@@ -592,7 +592,14 @@ class DirectRLEnv(gym.Env):
     def close(self):
         """Cleanup for the environment."""
         if not self._is_closed:
-            # Stop simulation first to allow physics to clean up properly
+            # Tear down the viewport camera controller before sim.stop(): the latter pumps
+            # Kit app events (omni.kit.app.get_app().update()), which would otherwise fire
+            # the controller's still-subscribed post-update callback against assets whose
+            # physics views were just invalidated by the timeline-stop event.
+            if self.viewport_camera_controller is not None:
+                del self.viewport_camera_controller
+
+            # Stop simulation to allow physics to clean up properly
             self.sim.stop()
 
             # Drop cached observation tensors so they don't survive close via
@@ -605,8 +612,6 @@ class DirectRLEnv(gym.Env):
             if self.cfg.events:
                 del self.event_manager
             del self.scene
-            if self.viewport_camera_controller is not None:
-                del self.viewport_camera_controller
 
             self.sim.clear_instance()
 

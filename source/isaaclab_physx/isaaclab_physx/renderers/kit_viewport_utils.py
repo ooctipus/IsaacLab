@@ -44,7 +44,13 @@ def set_kit_renderer_camera_view(
     target: tuple[float, float, float] | list[float],
     camera_prim_path: str = "/OmniverseKit_Persp",
 ) -> None:
-    """Set camera view for the renderer/viewport camera only.
+    """Set the renderer/viewport camera pose.
+
+    Routes through :class:`isaacsim.core.rendering_manager.ViewportManager`, which
+    authors the camera prim (if absent) and wires it into the RTX render path so
+    that :func:`omni.replicator.core.create.render_product` produces real frames
+    instead of zero-filled placeholders. The dependency is declared in the
+    rendering Kit experiences (``apps/isaaclab.python.[headless.]rendering.kit``).
 
     This does not broadcast to visualizers.
     """

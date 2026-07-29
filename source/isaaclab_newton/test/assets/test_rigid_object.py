@@ -887,7 +887,8 @@ def test_gravity_vec_w(num_cubes, device, gravity_enabled):
         # Create a scene with random cubes
         cube_object, _ = generate_cubes_scene(num_cubes=num_cubes, device=device)
 
-        # Obtain gravity direction
+        # GRAVITY_VEC_W binds directly to Newton's per-env gravity array, so it
+        # carries the full m/s^2 value (not a unit direction).
         if gravity_enabled:
             expected_g = (0.0, 0.0, -9.81)
         else:

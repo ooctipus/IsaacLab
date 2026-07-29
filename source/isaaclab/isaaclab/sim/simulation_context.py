@@ -307,9 +307,7 @@ class SimulationContext:
 
     def has_active_visualizers(self) -> bool:
         """Return whether any visualizer path is active for rendering/camera control."""
-        return bool(self.get_setting("/isaaclab/visualizer/types")) or bool(
-            self.get_setting("/isaaclab/video/auto_start_kit")
-        )
+        return bool(self.get_setting("/isaaclab/visualizer/types")) or bool(self.get_setting("/isaaclab/video/enabled"))
 
     def is_headless_or_exist_active_visualizer(self) -> bool:
         """Return whether the simulation should keep stepping without visualizers or with an active visualizer."""

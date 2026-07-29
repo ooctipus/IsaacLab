@@ -10,6 +10,7 @@ __all__ = [
     "add",
     "clone_plan_from_env_0",
     "disabled_fabric_change_notifies",
+    "fabric_replicate",
     "filter_collisions",
     "grid_transforms",
     "make_clone_plan",

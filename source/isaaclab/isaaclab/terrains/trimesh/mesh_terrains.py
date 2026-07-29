@@ -759,11 +759,14 @@ def repeated_objects_terrain(
         MeshRepeatedPyramidsTerrainCfg,
     )
 
-    # if object type is a string, get the function: make_{object_type}
-    if isinstance(cfg.object_type, str):
+    # resolve the object factory: ResolvableString is callable, plain strings
+    # like "box" are looked up as make_{name} in this module's globals
+    if callable(cfg.object_type):
+        object_func = cfg.object_type
+    elif isinstance(cfg.object_type, str):
         object_func = globals().get(f"make_{cfg.object_type}")
     else:
-        object_func = cfg.object_type
+        object_func = None
     if not callable(object_func):
         raise ValueError(f"The attribute 'object_type' must be a string or a callable. Received: {object_func}")
 

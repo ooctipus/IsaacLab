@@ -224,7 +224,7 @@ class vision_camera(ManagerTermBase):
         torch.nan_to_num_(images, nan=1e6)
         if normalize:
             images = self.norm_fn(images)
-            images = images.permute(0, 3, 1, 2).contiguous()
+            images = images.permute(0, 3, 1, 2).contiguous(memory_format=torch.channels_last)
         return images
 
     def _rgb_norm(self, images: torch.Tensor) -> torch.Tensor:
