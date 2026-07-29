@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
 import subprocess
 import unittest
@@ -96,6 +97,36 @@ class BuildnpushTest(unittest.TestCase):
         with self._mock_images({}):
             with self.assertRaisesRegex(bp.BuildError, "No prepared image"):
                 bp.determine_plan(ctx)
+
+    def test_source_only_build_verifies_the_image_against_the_lock(self) -> None:
+        """A ``-s`` overlay inherits its environment from a prepared image built against an older
+        lock, so it is the path most likely to ship stale dependencies and must not skip the gate."""
+
+        def reject_deps_build(*args, **kwargs):
+            raise AssertionError("a source-only build must not rebuild dependencies")
+
+        verified: list[str] = []
+        with mock.patch.multiple(
+            bp,
+            clean_stale_egg_info=lambda: None,
+            determine_plan=lambda ctx: bp.BuildPlan(
+                skip_deps=True,
+                use_cache=True,
+                run_pip_install=False,
+                reason="source",
+                build_base_image=ctx.prepared_image,
+            ),
+            print_build_config=lambda ctx, plan: None,
+            parse_env_file=lambda path: {"DOCKER_ISAACLAB_PATH": "/workspace/isaaclab"},
+            resolved_symlinks=contextlib.nullcontext,
+            build_overlay=lambda ctx, plan, docker_env: None,
+            build_full_deps=reject_deps_build,
+            verify_synced_deps=lambda ctx, docker_env: verified.append(ctx.args.tag),
+            tag_and_push=lambda ctx, plan: None,
+        ):
+            bp.build_image(bp.BuildArgs(tag="factory", source=True, skip_push=True))
+
+        self.assertEqual(verified, ["factory"])
 
     def test_pip_overlay_uses_prepared_image_before_deps_cache(self) -> None:
         ctx = _ctx(bp.BuildArgs(tag="factory", pip=True))
