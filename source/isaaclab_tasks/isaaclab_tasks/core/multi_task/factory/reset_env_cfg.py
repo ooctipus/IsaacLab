@@ -23,7 +23,6 @@ from isaaclab_tasks.core.multi_task.curriculum import (
 from isaaclab_tasks.utils import preset
 
 from . import mdp
-from .assembly_keypoints import NIST_BOARD_CFG
 from .factory_presets import (
     EndEffectorBodyCfg,
     FactoryAssemblyProfileCfg,
@@ -303,18 +302,20 @@ SCENE_RESET = EventTerm(
                     "asset_cfg": SceneEntityCfg("robot"),
                 },
             ),
-            "reset_board": EventTerm(
-                func=mdp.reset_root_state_uniform_on_offset,
+            # Fixed asset first: sample a filled uniform x-y patch (+ full yaw) about its nominal
+            # board pose. Deriving the board from a yaw-randomized center used to smear the fixed
+            # asset over a ring/donut; placing it directly avoids that. Tune the x-y extent.
+            "reset_fixed_asset": EventTerm(
+                func=mdp.reset_fixed_asset_uniform,
                 mode="reset",
                 params={
-                    "offset": NIST_BOARD_CFG.nist_board_center,
-                    "pose_range": {"x": (-0.00, 0.00), "y": (-0.05, 0.05), "yaw": (-3.14, 3.14)},
-                    "velocity_range": {},
-                    "asset_cfg": SceneEntityCfg("nistboard"),
+                    "asset_map": FixedAssetMapCfg(),
+                    "pose_range": {"x": (0.075, 0.25), "y": (-0.25, 0.25), "yaw": (-3.14, 3.14)},
                 },
             ),
-            "reset_fixed_asset": EventTerm(
-                func=mdp.reset_fixed_assets,
+            # Board follows: seat it (and any extra board assets) under the placed fixed asset.
+            "reset_board": EventTerm(
+                func=mdp.reset_board_under_fixed_asset,
                 mode="reset",
                 params={
                     "asset_map": FixedAssetMapCfg(),
@@ -330,7 +331,7 @@ SCENE_RESET = EventTerm(
                             "start_assembled": ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
                             "start_grasped_then_assembled": GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER,
                         },
-                        eval={"grasp_asset_in_air": GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER},
+                        eval={"grasp_asset_in_air": GRIPPER_GRASP_ASSET_IN_AIR},
                     ),
                     "sampling": preset(
                         default=SamplerCfg(

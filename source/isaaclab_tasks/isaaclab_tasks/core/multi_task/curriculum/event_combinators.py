@@ -165,6 +165,14 @@ class reset_accumulator(ManagerTermBase):
                 pbar.update(state_size - prev_size)
             pbar.close()
             self.precollecting_phase = False
+            if self.state_tag_names is not None:
+                tags = self.state_tag_indices[: self.state_data.shape[0]]
+                counts = torch.bincount(tags[tags >= 0], minlength=len(self.state_tag_names))
+                print(
+                    "[reset_accumulator] state table filled per category: "
+                    + ", ".join(f"{name}={int(counts[i])}" for i, name in enumerate(self.state_tag_names))
+                    + f" (total={int(counts.sum())})"
+                )
 
         if self.success_monitor is None:
             n_slots = self.state_data.shape[0]

@@ -228,3 +228,41 @@ def update_root_poses(
     eid = wp.tid()
     dst_pos[obs_idx, eid] = src_pos[eid]
     dst_quat[obs_idx, eid] = src_quat[eid]
+
+
+# ---------------------------------------------------------------------------
+# @wp.kernel — refresh articulated obstacles' collider transforms per call
+# ---------------------------------------------------------------------------
+
+
+@wp.kernel
+def update_articulated_collider_transforms(
+    body_pos_w: wp.array(dtype=wp.vec3, ndim=2),
+    body_quat_w: wp.array(dtype=wp.quat, ndim=2),
+    coll_env_ids: wp.array(dtype=wp.int32),
+    coll_body_ids: wp.array(dtype=wp.int32),
+    coll_slots: wp.array(dtype=wp.int32),
+    rel_pos: wp.array(dtype=wp.vec3),
+    rel_mat: wp.array(dtype=wp.mat33),
+    out: wp.array(dtype=ColliderTransform),
+):
+    """Recompose an articulated obstacle's collider transforms from live body poses.
+
+    A rigid obstacle's colliders are static relative to its root, so the
+    kernel-side ``root_pose x rel`` composition stays correct as the root
+    moves. An articulated obstacle's colliders ride on its BODY LINKS, whose
+    poses change with the joint configuration — caching them root-relative
+    freezes the obstacle in its spawn articulation. This kernel writes each
+    collider's WORLD transform (body pose x static body-relative offset)
+    directly into the packed collider slot; the obstacle's stacked root pose
+    is kept at identity so the query kernel needs no changes.
+    """
+    i = wp.tid()
+    e = coll_env_ids[i]
+    b = coll_body_ids[i]
+    rot = wp.quat_to_matrix(body_quat_w[e, b])
+    ct = ColliderTransform()
+    ct.mat = rot * rel_mat[i]
+    ct.mat_inv = wp.inverse(ct.mat)
+    ct.pos = body_pos_w[e, b] + rot * rel_pos[i]
+    out[coll_slots[i]] = ct

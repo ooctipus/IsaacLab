@@ -8,6 +8,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
+import numpy as np
 import torch
 import warp as wp
 
@@ -19,6 +20,7 @@ from .sdf import (
     ColliderTransform,
     get_signed_distance_mega,
     pack_collider_transforms,
+    update_articulated_collider_transforms,
     update_root_poses,
 )
 
@@ -33,7 +35,7 @@ class CollisionAnalyzer:
     cfg: CollisionAnalyzerCfg
 
     def __init__(self, cfg: CollisionAnalyzerCfg, env: ManagerBasedRLEnv):
-        from pxr import UsdPhysics
+        from pxr import UsdGeom, UsdPhysics
 
         self.cfg = cfg
         self.asset: RigidObject = env.scene[cfg.asset_cfg.name]
@@ -84,6 +86,12 @@ class CollisionAnalyzer:
         obs_flat_env_ids: list[torch.Tensor] = []
         obs_flat_handles: list[list[int]] = []
 
+        # Articulated obstacles (multiple body links): the hasher's root-relative
+        # transforms freeze the spawn articulation, so also capture each collider's
+        # owning body link and its static BODY-relative transform. The runtime pass
+        # recomposes world transforms from live body poses instead of the root pose.
+        art_flat: dict[int, dict[str, torch.Tensor]] = {}
+
         for i, obstacle in enumerate(self.obstacles):
             start = time.perf_counter()
             obs_h = RigidObjectHasher(num_envs, prim_path_pattern=obstacle.cfg.prim_path, device=device)
@@ -113,6 +121,48 @@ class CollisionAnalyzer:
 
             num_coll_per_obs_env[i] = torch.bincount(obs_h.collider_prim_env_ids)
             obstacle_root_scales[i] = obs_h.root_prim_scales
+
+            if len(obstacle.body_names) > 1:
+                xform_cache = UsdGeom.XformCache()
+                per_prim: dict[str, tuple[int, torch.Tensor, torch.Tensor]] = {}
+                body_ids_flat: list[int] = []
+                rel_pos_body: list[torch.Tensor] = []
+                rel_mat_body: list[torch.Tensor] = []
+                for prim in obs_h.collider_prims:
+                    key = str(prim.GetPath())
+                    cached = per_prim.get(key)
+                    if cached is None:
+                        link = prim
+                        while link.IsValid() and not link.HasAPI(UsdPhysics.RigidBodyAPI):
+                            link = link.GetParent()
+                        if not link.IsValid() or link.GetName() not in obstacle.body_names:
+                            raise RuntimeError(
+                                f"Collider '{key}' of articulated obstacle '{obstacle.cfg.prim_path}' has no"
+                                " rigid-body ancestor matching one of its body links."
+                            )
+                        rel4 = np.array(
+                            xform_cache.GetLocalToWorldTransform(prim)
+                            * xform_cache.GetLocalToWorldTransform(link).GetInverse(),
+                            dtype=np.float64,
+                        )
+                        cached = (
+                            obstacle.body_names.index(link.GetName()),
+                            torch.tensor(rel4[3, :3], dtype=torch.float32),
+                            torch.tensor(rel4[:3, :3].T, dtype=torch.float32),
+                        )
+                        per_prim[key] = cached
+                    body_ids_flat.append(cached[0])
+                    rel_pos_body.append(cached[1])
+                    rel_mat_body.append(cached[2])
+                art_flat[i] = {
+                    "body_ids": torch.tensor(body_ids_flat, dtype=torch.int32),
+                    "rel_pos": torch.stack(rel_pos_body),
+                    "rel_mat": torch.stack(rel_mat_body),
+                }
+                # Body-relative transforms already carry the body->collider scale, so
+                # the kernel-side root composition must stay identity (scale = 1).
+                obstacle_root_scales[i] = 1.0
+
             pc_time = time.perf_counter() - start
             print(f"Sampled {len(obs_h.collider_prims)} wp meshes at '{obstacle.cfg.prim_path}' in {pc_time:.3f}s")
 
@@ -142,6 +192,9 @@ class CollisionAnalyzer:
             mat_buf[dst] = obs_flat_mat[obs_idx]
             mat_inv_buf[dst] = obs_flat_mat_inv[obs_idx]
             handle_buf[dst] = torch.tensor(obs_flat_handles[obs_idx], dtype=torch.int64)
+            if obs_idx in art_flat:
+                art_flat[obs_idx]["slots"] = dst.to(torch.int32)
+                art_flat[obs_idx]["env_ids"] = collider_env_ids.to(torch.int32)
 
         # Bulk upload to GPU + zero-copy wrap + pack kernel
         self._coll_pos_t = pos_buf.contiguous().to(device)
@@ -171,8 +224,31 @@ class CollisionAnalyzer:
 
         self._obs_root_scales = obstacle_root_scales.contiguous()
         self.wp_obs_root_scale = wp.from_torch(self._obs_root_scales, dtype=wp.vec3)
-        self.wp_obs_root_pos = wp.zeros((num_obstacles, num_envs), dtype=wp.vec3, device=device)
-        self.wp_obs_root_quat = wp.zeros((num_obstacles, num_envs), dtype=wp.quat, device=device)
+        # Articulated obstacles skip the per-call root update and keep identity rows
+        # (their collider slots hold world transforms), so initialize quats to identity.
+        self._obs_root_pos_t = torch.zeros((num_obstacles, num_envs, 3), device=device)
+        self._obs_root_quat_t = torch.zeros((num_obstacles, num_envs, 4), device=device)
+        self._obs_root_quat_t[..., 3] = 1.0
+        self.wp_obs_root_pos = wp.from_torch(self._obs_root_pos_t, dtype=wp.vec3)
+        self.wp_obs_root_quat = wp.from_torch(self._obs_root_quat_t, dtype=wp.quat)
+
+        # Persistent GPU data for the per-call articulated collider refresh.
+        self._articulated: dict[int, dict] = {}
+        for obs_idx, flat in art_flat.items():
+            pack = {
+                "n": int(flat["env_ids"].numel()),
+                "_env_ids": flat["env_ids"].contiguous().to(device),
+                "_body_ids": flat["body_ids"].contiguous().to(device),
+                "_slots": flat["slots"].contiguous().to(device),
+                "_rel_pos": flat["rel_pos"].contiguous().to(device),
+                "_rel_mat": flat["rel_mat"].contiguous().to(device),
+            }
+            pack["wp_env_ids"] = wp.from_torch(pack["_env_ids"], dtype=wp.int32)
+            pack["wp_body_ids"] = wp.from_torch(pack["_body_ids"], dtype=wp.int32)
+            pack["wp_slots"] = wp.from_torch(pack["_slots"], dtype=wp.int32)
+            pack["wp_rel_pos"] = wp.from_torch(pack["_rel_pos"], dtype=wp.vec3)
+            pack["wp_rel_mat"] = wp.from_torch(pack["_rel_mat"], dtype=wp.mat33)
+            self._articulated[obs_idx] = pack
 
         # Pre-allocate reusable buffers
         num_bodies = len(self.body_ids_list)
@@ -187,12 +263,30 @@ class CollisionAnalyzer:
         num_points = self.cfg.num_points
 
         for i, obs in enumerate(self.obstacles):
-            wp.launch(
-                update_root_poses,
-                dim=env.num_envs,
-                inputs=[self.wp_obs_root_pos, self.wp_obs_root_quat, obs.data.root_pos_w, obs.data.root_quat_w, i],
-                device=env.device,
-            )
+            art = self._articulated.get(i)
+            if art is not None:
+                wp.launch(
+                    update_articulated_collider_transforms,
+                    dim=art["n"],
+                    inputs=[
+                        obs.data.body_link_pos_w,
+                        obs.data.body_link_quat_w,
+                        art["wp_env_ids"],
+                        art["wp_body_ids"],
+                        art["wp_slots"],
+                        art["wp_rel_pos"],
+                        art["wp_rel_mat"],
+                    ],
+                    outputs=[self.wp_colliders],
+                    device=env.device,
+                )
+            else:
+                wp.launch(
+                    update_root_poses,
+                    dim=env.num_envs,
+                    inputs=[self.wp_obs_root_pos, self.wp_obs_root_quat, obs.data.root_pos_w, obs.data.root_quat_w, i],
+                    device=env.device,
+                )
 
         self._env_ids_i32[:num_query_envs] = env_ids[:num_query_envs].to(torch.int32)
         wp_env_ids = wp.from_torch(self._env_ids_i32[:num_query_envs], dtype=wp.int32)

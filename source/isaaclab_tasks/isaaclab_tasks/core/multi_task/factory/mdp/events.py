@@ -46,6 +46,81 @@ def reset_fixed_assets(env: ManagerBasedRLEnv, env_ids: torch.tensor, asset_map:
         asset.write_root_velocity_to_sim(torch.zeros_like(wp.to_torch(asset.data.root_vel_w)[env_ids]), env_ids=env_ids)
 
 
+def reset_fixed_asset_uniform(
+    env: ManagerBasedRLEnv,
+    env_ids: torch.Tensor,
+    asset_map: dict[str, str],
+    pose_range: dict[str, tuple[float, float]],
+):
+    """Randomize the primary fixed asset uniformly about its nominal board pose.
+
+    Samples ``pose_range`` about the pose the fixed asset would occupy on the board at its default
+    placement, then writes it directly. Placing the fixed asset first (instead of deriving it from a
+    yaw-randomized board) turns its distribution from a ring/donut into a filled uniform patch; the
+    board is seated under it afterward by :func:`reset_board_under_fixed_asset`.
+
+    Args:
+        asset_map: Mapping from scene entity key to :class:`NistBoardKeyPointsCfg` attribute name.
+            The ``"fixed_asset"`` entry selects the board keypoint used as the nominal center.
+        pose_range: Per-axis ``(min, max)`` sample ranges, keys ``x``/``y``/``z`` [m] and
+            ``roll``/``pitch``/``yaw`` [rad]. Missing axes stay at the nominal value.
+    """
+    nistboard: RigidObject = env.scene["nistboard"]
+    fixed_asset: Articulation | RigidObject = env.scene["fixed_asset"]
+    keypoint: Offset = getattr(NIST_BOARD_CFG, asset_map["fixed_asset"])
+
+    board_default = wp.to_torch(nistboard.data.default_root_state)[env_ids]
+    board_pos = board_default[:, 0:3] + env.scene.env_origins[env_ids]
+    nominal_pos, nominal_quat = keypoint.combine(board_pos, board_default[:, 3:7])
+
+    range_list = [pose_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
+    ranges = torch.tensor(range_list, device=env.device)
+    samples = math_utils.sample_uniform(ranges[:, 0], ranges[:, 1], (len(env_ids), 6), device=env.device)
+    new_pos = nominal_pos + samples[:, 0:3]
+    new_quat = math_utils.quat_mul(
+        nominal_quat, math_utils.quat_from_euler_xyz(samples[:, 3], samples[:, 4], samples[:, 5])
+    )
+
+    fixed_asset.write_root_pose_to_sim(torch.cat([new_pos, new_quat], dim=1), env_ids=env_ids)
+    fixed_asset.write_root_velocity_to_sim(
+        torch.zeros_like(wp.to_torch(fixed_asset.data.root_vel_w)[env_ids]), env_ids=env_ids
+    )
+
+
+def reset_board_under_fixed_asset(env: ManagerBasedRLEnv, env_ids: torch.Tensor, asset_map: dict[str, str]):
+    """Seat the NIST board (and any extra board assets) under the already-placed fixed asset.
+
+    Inverse of the board-first placement: solves the board root so ``board ∘ keypoint`` matches the
+    fixed asset's current pose, then places every other asset in ``asset_map`` (e.g. non-held gears)
+    at its own board keypoint. Run after :func:`reset_fixed_asset_uniform`.
+
+    Args:
+        asset_map: Mapping from scene entity key to :class:`NistBoardKeyPointsCfg` attribute name.
+            ``"fixed_asset"`` selects the keypoint solved against; the rest ride along on the board.
+    """
+    nistboard: RigidObject = env.scene["nistboard"]
+    fixed_asset: Articulation | RigidObject = env.scene["fixed_asset"]
+    keypoint: Offset = getattr(NIST_BOARD_CFG, asset_map["fixed_asset"])
+
+    fixed_pos = wp.to_torch(fixed_asset.data.root_pos_w)[env_ids]
+    fixed_quat = wp.to_torch(fixed_asset.data.root_quat_w)[env_ids]
+    board_pos, board_quat = keypoint.subtract(fixed_pos, fixed_quat)
+    nistboard.write_root_pose_to_sim(torch.cat([board_pos, board_quat], dim=1), env_ids=env_ids)
+    nistboard.write_root_velocity_to_sim(
+        torch.zeros_like(wp.to_torch(nistboard.data.root_vel_w)[env_ids]), env_ids=env_ids
+    )
+
+    for scene_key, keypoint_attr in asset_map.items():
+        if scene_key == "fixed_asset":
+            continue
+        extra: Articulation | RigidObject = env.scene[scene_key]
+        extra_pos, extra_quat = getattr(NIST_BOARD_CFG, keypoint_attr).combine(board_pos, board_quat)
+        extra.write_root_pose_to_sim(torch.cat([extra_pos, extra_quat], dim=1), env_ids=env_ids)
+        extra.write_root_velocity_to_sim(
+            torch.zeros_like(wp.to_torch(extra.data.root_vel_w)[env_ids]), env_ids=env_ids
+        )
+
+
 _PROFILE_CACHE: dict[int, AssemblyProfile] = {}
 
 

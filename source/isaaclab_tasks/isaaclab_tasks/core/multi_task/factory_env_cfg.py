@@ -3,6 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
 from isaaclab_physx.physics import PhysxCfg
 
 from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
@@ -14,7 +15,6 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.utils.configclass import configclass
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
 from isaaclab_tasks.utils import PresetCfg, preset
 
 from .factory import mdp
@@ -117,6 +117,20 @@ class FactoryEventCfg:
             "restitution_range": (0.0, 0.0),
             "num_buckets": 64,
             "asset_cfg": SceneEntityCfg("held_asset"),
+        },
+    )
+
+    # # Held-asset (nut) angular-instability fix: its small rotational inertia (~0.012 kg·m²) under the
+    # # stiff contact (ke=1e7) lets contact torque run the angular velocity away exponentially → NaN
+    # # (observed in the grasp_asset_in_air reset). Bump the diagonal inertia to damp it.
+    held_asset_inertia = EventTerm(
+        func=mdp.randomize_rigid_body_inertia,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("held_asset"),
+            "inertia_distribution_params": [0.001, 0.001],
+            "operation": "add",
+            "diagonal_only": True,
         },
     )
 
@@ -226,13 +240,20 @@ _OOB = DoneTerm(
     },
 )
 
-
 @configclass
 class TimeoutTerminationsCfg(BaseTerminationsCfg):
     """Termination terms for the timeout-terminate formulation."""
 
     oob = _OOB
     progress_context = _PROGRESS_CONTEXT
+    abnormal = DoneTerm(
+        func=mdp.joint_vel_out_of_limit,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names="panda_joint[1-6]")},
+    )
+    wrist_limit = DoneTerm(
+        func=mdp.joint_vel_out_of_manual_limit,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names="panda_joint7"), "max_velocity": 4.0},
+    )
 
 
 @configclass
@@ -241,6 +262,14 @@ class SuccessTerminationsCfg(BaseTerminationsCfg):
 
     oob = _OOB
     progress_context = _PROGRESS_CONTEXT
+    abnormal = DoneTerm(
+        func=mdp.joint_vel_out_of_limit,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names="panda_joint[1-6]")},
+    )
+    wrist_limit = DoneTerm(
+        func=mdp.joint_vel_out_of_manual_limit,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names="panda_joint7"), "max_velocity": 4.0},
+    )
     success = DoneTerm(func=mdp.success_termination)
 
 
@@ -288,6 +317,7 @@ class FactoryCurriculumsCfg:
 # Environment configuration
 ##
 
+
 @configclass
 class FactoryPhysicsCfg(PresetCfg):
     """Physics-backend preset for Factory tasks.
@@ -295,8 +325,9 @@ class FactoryPhysicsCfg(PresetCfg):
     Selected via ``presets=physx`` (default) or ``presets=newton_mjwarp``. The PhysX
     variant keeps Factory's contact-rich solver tuning; the Newton variant follows Newton's
     reference ``example_nut_bolt_sdf`` (MuJoCo/Newton solver path): few constraint iterations
-    with many line-search iterations, ``impratio=1.0``, ``num_substeps=5``, a small global
-    shape gap, and Newton's SDF collision pipeline (rather than MuJoCo's internal contacts).
+    with many line-search iterations, ``impratio=1.0``, ``num_substeps=16`` (more than the
+    demo's 5, for a smaller solver ``dt`` and stiffer stable contact), a small global shape
+    gap, and Newton's SDF collision pipeline (rather than MuJoCo's internal contacts).
     Capacity knobs (``njmax``/``nconmax``) are kept larger than the bare nut/bolt demo since
     Factory's scene also contains the robot, NIST board, and table.
     """
@@ -319,7 +350,7 @@ class FactoryPhysicsCfg(PresetCfg):
             solver="newton",
             integrator="implicitfast",
             njmax=1500,
-            nconmax=300,
+            nconmax=400,
             impratio=1.0,
             cone="pyramidal",
             update_data_interval=2,
@@ -331,8 +362,7 @@ class FactoryPhysicsCfg(PresetCfg):
             max_triangle_pairs=60_000_000,
             rigid_contact_max=5_000_000,
         ),
-        default_shape_cfg=NewtonShapeCfg(margin=0.0, gap=0.001, ke=1e7, kd=1e4),
-        num_substeps=4,
+        num_substeps=16,
         debug_mode=False,
         use_cuda_graph=True,
     )
@@ -368,6 +398,3 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
 
         self.sim.physics_material.static_friction = 0.5
         self.sim.physics_material.dynamic_friction = 0.5
-
-        self.sim.render.enable_ambient_occlusion = True
-        self.sim.render.enable_dlssg = True

@@ -22,6 +22,7 @@ from isaaclab_tasks.core.multi_task.geom.sdf import (
     get_signed_distance_mega,
     query_collider_sdf,
     scale_mat33_columns,
+    update_articulated_collider_transforms,
 )
 
 # ---------------------------------------------------------------------------
@@ -329,6 +330,94 @@ class TestMegaKernel:
         result = wp.to_torch(signs)
         assert result[0].item() == pytest.approx(0.5, abs=1e-4)  # (1,0,0) → outside
         assert result[1].item() == pytest.approx(-0.5, abs=1e-4)  # (0,0,0) → inside
+
+    def test_articulated_collider_update_composes_world_transform(self):
+        """Collider on body 1 (translated + 90Z): slot 1 gets body_pose x rel, slot 0 untouched."""
+        a = math.pi / 4
+        body_pos = wp.array([[wp.vec3(0, 0, 0), wp.vec3(1, 0, 0)]], dtype=wp.vec3, device="cpu")
+        body_quat = wp.array(
+            [[wp.quat(0, 0, 0, 1), wp.quat(0, 0, math.sin(a), math.cos(a))]], dtype=wp.quat, device="cpu"
+        )
+        env_ids = wp.array([0], dtype=wp.int32, device="cpu")
+        body_ids = wp.array([1], dtype=wp.int32, device="cpu")
+        slots = wp.array([1], dtype=wp.int32, device="cpu")
+        rel_pos = wp.array([wp.vec3(0.5, 0, 0)], dtype=wp.vec3, device="cpu")
+        rel_mat = wp.array([wp.mat33(1, 0, 0, 0, 1, 0, 0, 0, 1)], dtype=wp.mat33, device="cpu")
+        out = wp.zeros(2, dtype=ColliderTransform, device="cpu")
+
+        wp.launch(
+            update_articulated_collider_transforms,
+            dim=1,
+            inputs=[body_pos, body_quat, env_ids, body_ids, slots, rel_pos, rel_mat],
+            outputs=[out],
+            device="cpu",
+        )
+
+        packed = out.numpy()
+        np.testing.assert_allclose(packed["pos"][0], [0, 0, 0], atol=1e-6)
+        # world pos = body_pos + R(90Z) @ rel_pos = (1, 0, 0) + (0, 0.5, 0)
+        np.testing.assert_allclose(packed["pos"][1], [1.0, 0.5, 0.0], atol=1e-5)
+        r90z = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]], dtype=np.float32)
+        np.testing.assert_allclose(packed["mat"][1], r90z, atol=1e-5)
+        np.testing.assert_allclose(packed["mat_inv"][1], r90z.T, atol=1e-5)
+
+    def test_articulated_collider_tracks_live_body_pose(self):
+        """Refreshed collider + identity root: SDF distance follows the obstacle body as it moves."""
+        mesh = _make_cube()
+
+        # sampled asset: one body at origin, one point at its origin
+        body_pos = wp.array([[wp.vec3(0, 0, 0)]], dtype=wp.vec3, device="cpu")
+        body_quat = wp.array([[wp.quat(0, 0, 0, 1)]], dtype=wp.quat, device="cpu")
+        body_ids = wp.array([0], dtype=wp.int32, device="cpu")
+        local_pts = wp.array([[[wp.vec3(0, 0, 0)]]], dtype=wp.vec3, device="cpu")
+        env_ids = wp.array([0], dtype=wp.int32, device="cpu")
+
+        # articulated obstacle: identity stacked root; collider rides its body link
+        obs_pos = wp.array([[wp.vec3(0, 0, 0)]], dtype=wp.vec3, device="cpu")
+        obs_quat = wp.array([[wp.quat(0, 0, 0, 1)]], dtype=wp.quat, device="cpu")
+        obs_scale = wp.array([[wp.vec3(1, 1, 1)]], dtype=wp.vec3, device="cpu")
+        coll_env_ids = wp.array([0], dtype=wp.int32, device="cpu")
+        coll_body_ids = wp.array([0], dtype=wp.int32, device="cpu")
+        coll_slots = wp.array([0], dtype=wp.int32, device="cpu")
+        rel_pos = wp.array([wp.vec3(0, 0, 0)], dtype=wp.vec3, device="cpu")
+        rel_mat = wp.array([wp.mat33(1, 0, 0, 0, 1, 0, 0, 0, 1)], dtype=wp.mat33, device="cpu")
+        colliders = wp.zeros(1, dtype=ColliderTransform, device="cpu")
+        handles = wp.array([mesh.id], dtype=wp.uint64, device="cpu")
+        counts = wp.array([1], dtype=wp.int32, device="cpu")
+        signs = wp.zeros(1, dtype=float, device="cpu")
+        mega_inputs = [
+            body_pos,
+            body_quat,
+            body_ids,
+            local_pts,
+            env_ids,
+            obs_pos,
+            obs_quat,
+            obs_scale,
+            colliders,
+            handles,
+            counts,
+            10.0,
+            True,
+            1,
+            1,
+            1,
+            1,
+            1,
+        ]
+
+        for obs_body_x, expected in [(2.0, 1.5), (1.0, 0.5)]:
+            obs_body_pos = wp.array([[wp.vec3(obs_body_x, 0, 0)]], dtype=wp.vec3, device="cpu")
+            obs_body_quat = wp.array([[wp.quat(0, 0, 0, 1)]], dtype=wp.quat, device="cpu")
+            wp.launch(
+                update_articulated_collider_transforms,
+                dim=1,
+                inputs=[obs_body_pos, obs_body_quat, coll_env_ids, coll_body_ids, coll_slots, rel_pos, rel_mat],
+                outputs=[colliders],
+                device="cpu",
+            )
+            wp.launch(get_signed_distance_mega, dim=1, inputs=mega_inputs, outputs=[signs], device="cpu")
+            assert wp.to_torch(signs)[0].item() == pytest.approx(expected, abs=1e-4)
 
     def test_root_scale_world_distance(self):
         """Root scale 0.1 (mesh 10x). Query at (0.1, 0, 0) → 0.05 world outside."""

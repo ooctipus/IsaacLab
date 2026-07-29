@@ -3,14 +3,19 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+from isaaclab_newton.sim.spawners.materials import NewtonMaterialCfg
+
 import isaaclab.sim as sim_utils
-from isaaclab.utils.configclass import configclass
 from isaaclab.actuators.actuator_cfg import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
+from isaaclab.sim.spawners.materials import UsdPhysicsRigidBodyMaterialCfg
 
 # This is where we will get the Robot that we want to use
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR, LOCAL_ASSET_PATH_DIR
-from isaaclab_tasks.utils import PresetCfg
+from isaaclab.utils.configclass import configclass
+
+from isaaclab_tasks.utils import PresetCfg, preset
+
 from .assembly_keypoints import NIST_BOARD_CFG
 
 ASSET_DIR = f"{ISAACLAB_NUCLEUS_DIR}/Factory"
@@ -26,6 +31,7 @@ ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG = sim_utils.RigidBodyPropertiesCfg(
     solver_position_iteration_count=192,
     solver_velocity_iteration_count=1,
 )
+
 
 @configclass
 class _SocketCollisionPropsCfg(PresetCfg):
@@ -58,10 +64,39 @@ class _PlugCollisionPropsCfg(PresetCfg):
     physx = default
 
 
-
 ASSEMBLY_SOCKET_COLLISION_PROPS_CFG = _SocketCollisionPropsCfg()
 
 ASSEMBLY_PLUG_COLLISION_PROPS_CFG = _PlugCollisionPropsCfg()
+
+# Newton-only stiff contact material for the assembly pair. Raising stiffness globally
+# (default_shape_cfg) makes the grasped-nut-vs-gripper contact explode on banked reset
+# states (the reset acceptance gate cannot see the closed-finger pose); scoping ke/kd to
+# the nut/bolt shapes keeps threading stiff while robot/board/table contacts stay soft.
+# newton:contactStiffness/Damping map to shape ke/kd -> geom_solref = (2/kd, (kd/2)/sqrt(ke)).
+# The friction fragment is REQUIRED: binding a material that authors no physics:*Friction
+# resolves the shape's friction to 0, and mu=0 contacts with condim=3 zero the pyramidal
+# row invweight -> efc_D is floored to 1/MJ_MINVAL (~1e15) -> the float32 Newton-solver
+# Hessian degenerates -> NaN on contact-rich states (seated insertion; mjwarp warns
+# "friction[0] < MJ_MINMU with condim=3 may cause NaN" at model build).
+ASSEMBLY_CONTACT_MATERIAL_CFG = preset(
+    default=None,
+    newton_mjwarp=[
+        UsdPhysicsRigidBodyMaterialCfg(static_friction=0.75, dynamic_friction=0.75),
+        NewtonMaterialCfg(contact_stiffness=2.56e6, contact_damping=3200.0),
+    ],
+)
+
+# Newton-only stiff contact material for the ROBOT colliders. Same friction-fragment
+# requirement as above (stiffness-only binding would zero mu). Friction 1.0 matches the
+# robot USD's authored value; the robot_material startup event overrides it at init.
+# (1e6, 2000) -> solref (1e-3, 1.0), damping-matched.
+ROBOT_CONTACT_MATERIAL_CFG = preset(
+    default=None,
+    newton_mjwarp=[
+        UsdPhysicsRigidBodyMaterialCfg(static_friction=1.0, dynamic_friction=1.0),
+        NewtonMaterialCfg(contact_stiffness=1.0e6, contact_damping=2000.0),
+    ],
+)
 
 GROUND_CFG = AssetBaseCfg(
     prim_path="/World/ground",
@@ -78,27 +113,65 @@ DOMELIGHT_CFG = AssetBaseCfg(
 FRANKA_ACTUATORS_CFG = {
     "panda_shoulder": ImplicitActuatorCfg(  # type:ignore
         joint_names_expr=["panda_joint[1-4]"],
-        effort_limit_sim=87.0,
+        effort_limit=87.0,
+        effort_limit_sim=870.0,
+        velocity_limit=2.175,
+        velocity_limit_sim=21.75,
         stiffness=80.0,
         damping=4.0,
-        armature=0.1,
+        armature=0.0,
     ),
     "panda_forearm": ImplicitActuatorCfg(  # type:ignore
         joint_names_expr=["panda_joint[5-7]"],
-        effort_limit_sim=12.0,
+        effort_limit=12.0,
+        effort_limit_sim=120.0,
+        velocity_limit=2.61,
+        velocity_limit_sim=26.1,
         stiffness=80.0,
         damping=4.0,
-        armature=0.1,
+        armature=0.0,
     ),
     "panda_hand": ImplicitActuatorCfg(  # type:ignore
         joint_names_expr=["panda_finger_joint.*"],
-        effort_limit_sim=12.0,
-        stiffness=12.0,
-        damping=4.0,
-        armature=0.1,
+        effort_limit=40.0,
+        effort_limit_sim=400.0,
+        velocity_limit=0.2,
+        velocity_limit_sim=2.0,
+        stiffness=7500.0,
+        damping=173.0,
+        friction=0.1,
+        armature=0.0,
     ),
 }
 
+
+# FRANKA_ACTUATORS_CFG = {
+#     "panda_shoulder": ImplicitActuatorCfg(  # type:ignore
+#         joint_names_expr=["panda_joint[1-4]"],
+#         effort_limit_sim=87.0,
+#         velocity_limit_sim=2.175,
+#         stiffness=80.0,
+#         damping=4.0,
+#         armature=0.0,
+#     ),
+#     "panda_forearm": ImplicitActuatorCfg(  # type:ignore
+#         joint_names_expr=["panda_joint[5-7]"],
+#         effort_limit_sim=12.0,
+#         velocity_limit_sim=2.61,
+#         stiffness=80.0,
+#         damping=4.0,
+#         armature=0.0,
+#     ),
+#     "panda_hand": ImplicitActuatorCfg(  # type:ignore
+#         joint_names_expr=["panda_finger_joint.*"],
+#         effort_limit_sim=40.0,
+#         velocity_limit_sim=0.2,
+#         stiffness=7500.0,
+#         damping=173.0,
+#         friction=0.1,
+#         armature=0.0,
+#     ),
+# }
 
 FRANKA_DEFAULT_STATE_CFG = ArticulationCfg.InitialStateCfg(
     joint_pos={
@@ -153,6 +226,7 @@ FRANKA_PANDA_NEWTON_CFG = ArticulationCfg(
             rest_offset=0.0,
             mesh_collision_property=sim_utils.NewtonMeshCollisionPropertiesCfg(mesh_approximation_name="convexHull"),
         ),
+        physics_material=ROBOT_CONTACT_MATERIAL_CFG,
         joint_drive_props=sim_utils.JointDrivePropertiesCfg(ensure_drives_exist=True),
     ),
     init_state=FRANKA_DEFAULT_STATE_CFG,
@@ -193,6 +267,7 @@ BOLT_M16_CFG = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -204,6 +279,7 @@ NUT_M16_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.03),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -215,6 +291,7 @@ BOLT_M12_CFG = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -226,6 +303,7 @@ NUT_M12_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.03),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -237,6 +315,7 @@ BOLT_M8_CFG = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -248,6 +327,7 @@ NUT_M8_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.03),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -259,6 +339,7 @@ BOLT_M4_CFG = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -270,6 +351,7 @@ NUT_M4_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.03),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -280,6 +362,7 @@ HOLE_16MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -291,6 +374,7 @@ ROD_16MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -302,6 +386,7 @@ HOLE_12MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -313,6 +398,7 @@ ROD_12MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -324,6 +410,7 @@ HOLE_8MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -335,6 +422,7 @@ ROD_8MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -346,6 +434,7 @@ HOLE_4MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -357,6 +446,7 @@ ROD_4MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -368,6 +458,7 @@ RECTANGULAR_HOLE_16MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -379,6 +470,7 @@ RECTANGULAR_PEG_16MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -390,6 +482,7 @@ RECTANGULAR_HOLE_12MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -401,6 +494,7 @@ RECTANGULAR_PEG_12MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -412,6 +506,7 @@ RECTANGULAR_HOLE_8MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -423,6 +518,7 @@ RECTANGULAR_PEG_8MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -434,6 +530,7 @@ RECTANGULAR_HOLE_4MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -445,6 +542,7 @@ RECTANGULAR_PEG_4MM_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -456,6 +554,7 @@ LARGE_GEAR_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -467,6 +566,7 @@ MEDIUM_GEAR_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.012),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -478,6 +578,7 @@ SMALL_GEAR_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.019),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -488,6 +589,7 @@ GEAR_BASE_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -499,6 +601,7 @@ USBA_PLUG_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -509,6 +612,7 @@ USBA_SOCKET_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.012),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -520,6 +624,7 @@ WATERPROOF_SOCKET_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -530,6 +635,7 @@ WATERPROOF_PLUG_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -541,6 +647,7 @@ DSUB_SOCKET_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -552,6 +659,7 @@ DSUB_PLUG_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.005),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -563,6 +671,7 @@ BNC_SOCKET_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -574,6 +683,7 @@ BNC_PLUG_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -585,6 +695,7 @@ RJ45_SOCKET_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
 
@@ -596,5 +707,6 @@ RJ45_PLUG_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )

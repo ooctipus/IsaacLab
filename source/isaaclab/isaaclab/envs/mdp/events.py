@@ -291,12 +291,16 @@ class _RandomizeRigidBodyMaterialNewton:
         self._static_friction_range = cfg.params.get("static_friction_range", (1.0, 1.0))
         self._restitution_range = cfg.params.get("restitution_range", (0.0, 0.0))
 
-        # get friction/restitution view-level bindings
-        model = self._newton_manager.get_model()
-        self._friction_binding = asset._root_view.get_attribute("shape_material_mu", model)[:, 0]  # type: ignore
-        self._restitution_binding = asset._root_view.get_attribute("shape_material_restitution", model)[:, 0]  # type: ignore
+        # Resolve the asset's GLOBAL shape indices from the model's shape prim paths.
+        # The ArticulationView shape layout cannot be used here: it assumes each body's
+        # shapes are contiguous in the global shape array, but the cloner orders shapes
+        # into type-homogeneous blocks (visuals and collisions separated), so the view's
+        # per-body range covers only the visual block -- writes through it randomize
+        # render materials and never reach the collision shapes.
+        import re  # noqa: PLC0415
 
-        # compute shape indices for body-specific randomization
+        model = self._newton_manager.get_model()
+        prim_expr = asset.cfg.prim_path.replace(".*", r"\d+")
         if isinstance(asset, NewtonArticulation) and asset_cfg.body_ids != slice(None):
             # ``body_ids`` are public IDs, while shape bindings use backend order; convert the
             # selected IDs once and index the backend-ordered shape counts directly.
@@ -309,7 +313,22 @@ class _RandomizeRigidBodyMaterialNewton:
                 shape_indices_list.extend(range(start_idx, end_idx))
             self._shape_indices = torch.tensor(shape_indices_list, dtype=torch.long)
         else:
-            self._shape_indices = torch.arange(self._friction_binding.shape[1], dtype=torch.long)
+            pattern = re.compile(prim_expr + "(/|$)")
+        env_re = re.compile(r"env_(\d+)(/|$)")
+        shape_ids: list[int] = []
+        owner_envs: list[int] = []
+        for i, label in enumerate(model.shape_label):
+            if not pattern.search(label):
+                continue
+            m = env_re.search(label)
+            shape_ids.append(i)
+            owner_envs.append(int(m.group(1)) if m else 0)
+        if not shape_ids:
+            raise ValueError(
+                f"randomize_rigid_body_material: no model shapes matched prim path '{asset.cfg.prim_path}'"
+            )
+        self._shape_ids = torch.tensor(shape_ids, dtype=torch.long, device=env.device)
+        self._owner_envs = torch.tensor(owner_envs, dtype=torch.long, device=env.device)
 
     def __call__(
         self,
@@ -323,14 +342,12 @@ class _RandomizeRigidBodyMaterialNewton:
         make_consistent: bool = False,
     ):
         device = env.device
-        # resolve environment ids
+        # resolve the selected shapes: all of the asset's shapes, or those of the selected envs
         if env_ids is None:
-            env_ids = torch.arange(env.scene.num_envs, device=device, dtype=torch.int32)
+            sel = torch.arange(self._shape_ids.numel(), device=device)
         else:
-            env_ids = env_ids.to(device)
-
-        num_shapes = len(self._shape_indices)
-        shape_idx = self._shape_indices.to(device)
+            sel = torch.nonzero(torch.isin(self._owner_envs, env_ids.to(device=device, dtype=torch.long))).ravel()
+        shape_ids = self._shape_ids[sel]
 
         friction_range = torch.tensor(self._static_friction_range, device=device)
         restitution_range_t = torch.tensor(self._restitution_range, device=device)

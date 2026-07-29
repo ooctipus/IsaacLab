@@ -103,6 +103,8 @@ installed_version = metadata.version("rsl-rl-lib")
 @hydra_task_config(args_cli.task, args_cli.agent, play_mode=not args_cli.train_env_cfg)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
     """Play with RSL-RL agent."""
+    from rsl_rl.runners import DistillationRunner, OnPolicyRunner
+
     with launch_simulation(env_cfg, args_cli):
         task_name = args_cli.task.split(":")[-1]
         train_task_name = task_name.replace("-Play", "")
