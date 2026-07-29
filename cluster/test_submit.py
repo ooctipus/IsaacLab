@@ -267,6 +267,24 @@ class TestApplyAutoResources:
         with pytest.raises(SystemExit):
             apply_auto_resources(p, [self._node()])
 
+    def test_full_pool_blocks_submit(self):
+        # Node can fit the job by capacity but has nothing free right now (pool full).
+        # This is the condition that surfaces as the nvidia.com/mlnxnics failure, so
+        # submission must be blocked rather than queued.
+        node = self._node(
+            available_gpu=0,
+            available_cpu=0,
+            available_memory=0,
+            available_storage=0,
+            allocatable_gpu=8,
+            allocatable_cpu=120,
+            allocatable_memory=976,
+            allocatable_storage=3164,
+        )
+        p = parse_args(["pool=groot-l40s-03", "num_gpu=8", "num_node=1"])
+        with pytest.raises(SystemExit):
+            apply_auto_resources(p, [node])
+
 
 # =============================================================================
 # build_combos

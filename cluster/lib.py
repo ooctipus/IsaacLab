@@ -47,6 +47,7 @@ POOL_TO_PLATFORM = {
     "isaac-dex-l40s-02": "ovx-l40s",
     "isaac-dex-l40s-03": "ovx-l40s",
     "isaac-dex-l40s-04": "ovx-l40s",
+    "isaac-lab-l30s-03": "ovx-l40s",
     # GB200
     "groot-gb200-02": "gb200",
     # AGX Orin
@@ -378,12 +379,9 @@ def apply_auto_resources(p: ParsedArgs, nodes: list[PoolNodeResources] | None = 
             basis = available_candidates
             plan.source = "osmo-free"
         else:
+            # Size against capacity so the block message below reports the real request.
             basis = capacity_candidates
             plan.source = "osmo-capacity"
-            plan.warnings.append(
-                f"pool '{p.pool}' currently has {len(available_candidates)} free node(s) with "
-                f"{num_gpu} GPU(s); {num_node} are required, so the job may queue."
-            )
 
         for key in AUTO_RESOURCE_KEYS:
             if key in p.cluster_overrides:
@@ -412,10 +410,27 @@ def apply_auto_resources(p: ParsedArgs, nodes: list[PoolNodeResources] | None = 
             sys.exit(1)
         available_fit = _nodes_that_fit(nodes, num_gpu, final_cpu, final_memory, final_storage, available=True)
         if len(available_fit) < num_node:
-            plan.warnings.append(
-                f"requested resources currently fit {len(available_fit)} free node(s) in pool '{p.pool}', "
-                f"but num_node={num_node}; the job may queue."
-            )
+            free_gpus = sorted((node.available_gpu for node in nodes), reverse=True)
+            max_free = free_gpus[0] if free_gpus else 0
+            total_free = sum(free_gpus)
+            full_node_gpu = max((node.allocatable_gpu for node in nodes), default=0)
+            whole_free = sum(1 for node in nodes if full_node_gpu and node.available_gpu >= full_node_gpu)
+            print(f"Error: pool '{p.pool}' is full for num_gpu={num_gpu} num_node={num_node}. Not submitting.", file=sys.stderr)
+            if total_free <= 0:
+                print("  Free now: 0 GPU free in this pool -- wait, or try another pool.", file=sys.stderr)
+            elif max_free < num_gpu:
+                print(
+                    f"  Free now: best node {max_free}/{full_node_gpu} GPU, {whole_free} whole node(s) free, "
+                    f"{total_free} GPU total. Highest that fits now: num_gpu={max_free} num_node=1.",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"  Free now: {max_free} GPU free on the best node, but cpu/memory/storage did not fit -- "
+                    f"lower num_cpu/memory/storage or wait.",
+                    file=sys.stderr,
+                )
+            sys.exit(1)
     else:
         for key, value in defaults.items():
             if key in p.cluster_overrides:
