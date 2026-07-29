@@ -586,7 +586,9 @@ def verify_synced_deps(ctx: BuildContext, docker_env: dict[str, str]) -> None:
         raise BuildError(
             f"{BASE_IMAGE} environment is out of sync with uv.lock:\n"
             f"{listed}\n"
-            "The build reused a stale dependency layer. Rebuild with './buildnpush.sh <tag> -a'."
+            "The build reused a stale dependency layer, which a -s/--source overlay cannot update.\n"
+            "Rebuild with './buildnpush.sh <tag>' to rebase onto the lock-matched deps image, or\n"
+            "'./buildnpush.sh <tag> -d' to re-resolve the dependencies from scratch."
         )
     if UV_OUTDATED_MARKER not in combined:
         raise BuildError(f"could not verify {BASE_IMAGE} against uv.lock; 'uv sync --check' failed:\n{combined}")
@@ -708,8 +710,10 @@ def build_image(args: BuildArgs) -> None:
             build_overlay(ctx, plan, docker_env)
         else:
             build_full_deps(ctx, plan, docker_env)
-        if plan.run_pip_install or not plan.skip_deps:
-            verify_synced_deps(ctx, docker_env)
+        # Every path needs this gate, including the source-only overlay: that overlay inherits its
+        # environment from a prepared image that may have been built against an older lock, so it is
+        # the path most likely to ship a stale dependency set.
+        verify_synced_deps(ctx, docker_env)
         tag_and_push(ctx, plan)
     if ctx.deps_hash:
         update_state_and_cleanup(ctx)
