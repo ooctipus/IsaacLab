@@ -34,6 +34,15 @@ class VisualMaterialCfg:
     class_type: type["VisualMaterial"] | str = "{DIR}.visual_material:VisualMaterial"
     """The associated entity class (resolved lazily so composing configs never imports it)."""
 
+    cloning_contexts: tuple[str | type, ...] | None = ()
+    """Physics cloning contexts for this entity. Defaults to no contexts.
+
+    A visual material has no physics representation, so it must never register a physics
+    context; the empty tuple is what tells :func:`~isaaclab.cloner.replicate` to skip the
+    backend's default one. USD replication is unaffected and still runs under Kit, which is how
+    a per-environment material reaches each environment.
+    """
+
     prim_path: str = MISSING
     """Prim path of the material.
 
