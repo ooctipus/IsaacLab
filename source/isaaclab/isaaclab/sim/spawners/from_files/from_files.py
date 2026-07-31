@@ -29,8 +29,8 @@ from isaaclab.sim.utils import (
     select_usd_variants,
     set_prim_visibility,
 )
+from isaaclab.sim.utils.prims import bind_visual_material_exact, resolve_env_material_target
 from isaaclab.utils.assets import check_file_path, retrieve_file_path
-from isaaclab.utils.version import has_kit
 
 if TYPE_CHECKING:
     from pxr import Gf, Sdf, Usd, UsdGeom  # noqa: F401
@@ -279,6 +279,28 @@ Helper functions.
 """
 
 
+def _bind_part_visual_materials(prim_path: str, cfg: from_files_cfg.FileCfg, stage) -> None:
+    """Bind existing shared materials to the asset parts named in ``cfg.visual_material_bindings``.
+
+    Each binding is authored on the exact named prim (not nested-walked): unlike physics schemas, a
+    material binding is legal on an instanceable prim and inherits into its instanced geometry.
+    """
+    if not cfg.visual_material_bindings:
+        return
+    for part_path, material_path in cfg.visual_material_bindings.items():
+        if part_path.startswith("/"):
+            raise ValueError(
+                f"Visual material binding part '{part_path}' must be an asset-relative prim path;"
+                f" it is bound below '{prim_path}'."
+            )
+        if not stage.GetPrimAtPath(f"{prim_path}/{part_path}").IsValid():
+            raise ValueError(f"Visual material binding part '{prim_path}/{part_path}' does not exist.")
+        material_path = resolve_env_material_target(material_path, prim_path)
+        if not stage.GetPrimAtPath(material_path).IsValid():
+            raise ValueError(f"Visual material '{material_path}' does not exist.")
+        bind_visual_material_exact(f"{prim_path}/{part_path}", material_path, stage)
+
+
 def _spawn_from_usd_file(
     prim_path: str,
     usd_path: str,
@@ -487,19 +509,23 @@ def _spawn_from_usd_file(
                 and should be set through deformable_props with mass=<value>."""
             )
 
-    # apply visual material
+    # apply visual material ({ENV_REGEX_NS} targets resolve to the bound prim's own environment)
+    visual_material_path = resolve_env_material_target(cfg.visual_material_path, prim_path)
     if cfg.visual_material is not None:
-        if not has_kit():
-            logger.warning("Skipping visual material application for '%s' in kitless mode.", prim_path)
+        if not visual_material_path.startswith("/"):
+            material_path = f"{prim_path}/{visual_material_path}"
         else:
-            if not cfg.visual_material_path.startswith("/"):
-                material_path = f"{prim_path}/{cfg.visual_material_path}"
-            else:
-                material_path = cfg.visual_material_path
-            # create material
-            cfg.visual_material.func(material_path, cfg.visual_material)
-            # apply material
-            bind_visual_material(prim_path, material_path, stage=stage)
+            material_path = visual_material_path
+        # create material
+        cfg.visual_material.func(material_path, cfg.visual_material)
+        # apply material
+        bind_visual_material(prim_path, material_path, stage=stage)
+    elif visual_material_path.startswith("/"):
+        # bind an existing shared material (e.g. a scene-level VisualMaterial entity)
+        bind_visual_material(prim_path, visual_material_path, stage=stage)
+
+    # bind existing shared materials to specific parts of the asset
+    _bind_part_visual_materials(prim_path, cfg, stage)
 
     # apply physics material
     if cfg.physics_material is not None:

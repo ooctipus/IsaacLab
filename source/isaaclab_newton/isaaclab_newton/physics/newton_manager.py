@@ -89,6 +89,7 @@ from isaaclab.utils.string import resolve_matching_names
 from isaaclab.utils.timer import Timer
 from isaaclab.utils.version import has_kit
 
+from isaaclab_newton.assets.visual_material.shape_writer import VisualMaterialShapeWriter
 from isaaclab_newton.cloner.newton_clone_utils import (
     _restore_visible_colliders_without_visual_shapes,
     replicate_builder_mapping,
@@ -296,6 +297,7 @@ class NewtonManager(PhysicsManager):
     # Newton model and state
     _builder: ModelBuilder = None
     _model: Model = None
+    _visual_material_writer = None
     _solver: SolverBase | None = None
     _use_single_state: bool | None = None
     """Use only one state for both input and output for solver stepping. Requires solver support."""
@@ -893,6 +895,35 @@ class NewtonManager(PhysicsManager):
         return False
 
     @classmethod
+    def get_visual_material_writer(cls):
+        """Return the visual-material shape writer for the current model (created on first use).
+
+        Owned here because the manager owns the model's lifetime: the helper caches
+        model-derived indexing and must die with the model it indexes. The writer receives the
+        source-space shape → bound-material map captured when the builders imported the stage
+        (see :func:`~isaaclab.sim.utils.newton_model_utils.replace_newton_builder_shape_colors`),
+        merged over the global builder and the replication prototypes.
+
+        Raises:
+            RuntimeError: If the Newton model is not initialized yet.
+        """
+        if cls._visual_material_writer is None:
+            model = cls.get_model()
+            if model is None:
+                raise RuntimeError("Visual-material writes require an initialized Newton model.")
+            source_shape_materials: dict[str, str] = {}
+            for source_builder in (cls._builder, *(cls._cl_protos or {}).values()):
+                labels = getattr(source_builder, "shape_label", None) or []
+                materials = getattr(source_builder, "shape_material_label", None) or []
+                # on the composed builder the capture covers only the global (pre-replication)
+                # prefix of shape_label; those labels are never renamed, so the pairing holds
+                for label, material in zip(labels, materials):
+                    if material is not None:
+                        source_shape_materials[label] = material
+            cls._visual_material_writer = VisualMaterialShapeWriter(model, source_shape_materials)
+        return cls._visual_material_writer
+
+    @classmethod
     def clear(cls):
         """Clear all Newton-specific state (callbacks cleared by super().close())."""
         if cls._cubric is not None and cls._cubric_adapter is not None:
@@ -903,6 +934,7 @@ class NewtonManager(PhysicsManager):
         NewtonManager._newton_fabric_ready = False
         NewtonManager._builder = None
         NewtonManager._model = None
+        NewtonManager._visual_material_writer = None
         NewtonManager._solver = None
         NewtonManager._use_single_state = None
         NewtonManager._state_0 = None
@@ -1340,6 +1372,8 @@ class NewtonManager(PhysicsManager):
         cls._prepare_builder_for_finalize(cls._builder)
         with Timer(name="newton_finalize_builder", msg="Finalize builder took:"):
             NewtonManager._model = cls._builder.finalize(device=device)
+            # the writer caches model-derived indexing, so it must not outlive the model it indexes
+            NewtonManager._visual_material_writer = None
             cls._model.set_gravity(cls._gravity_vector)
             cls._model.num_envs = cls._num_envs
 
@@ -2351,6 +2385,8 @@ class NewtonManager(PhysicsManager):
         device = PhysicsManager._device or "cpu"
         try:
             NewtonManager._model = builder.finalize(device=device)
+            # the writer caches model-derived indexing, so it must not outlive the model it indexes
+            NewtonManager._visual_material_writer = None
             NewtonManager._state_0 = cls._model.state()
             cls._model.num_envs = cls._num_envs
 
@@ -2360,6 +2396,7 @@ class NewtonManager(PhysicsManager):
                 "visualization (sim backend is PhysX)."
             )
             NewtonManager._model = None
+            NewtonManager._visual_material_writer = None
             NewtonManager._state_0 = None
 
     @classmethod

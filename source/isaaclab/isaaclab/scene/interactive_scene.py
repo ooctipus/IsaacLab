@@ -31,6 +31,8 @@ from isaaclab.assets import (
     RigidObjectCfg,
     RigidObjectCollection,
     RigidObjectCollectionCfg,
+    VisualMaterial,
+    VisualMaterialCfg,
 )
 from isaaclab.physics.scene_data_requirements import aggregate_requirements, resolve_scene_data_requirements
 from isaaclab.sensors import ContactSensorCfg, FrameTransformerCfg, SensorBase, SensorBaseCfg
@@ -146,6 +148,7 @@ class InteractiveScene:
         self._rigid_object_collections = dict()
         self._sensors = dict()
         self._surface_grippers = dict()
+        self._visual_materials = dict()
         self._extras = dict()
         # get stage handle
         self.sim = SimulationContext.instance()
@@ -159,6 +162,8 @@ class InteractiveScene:
         self.cloner_cfg = copy.deepcopy(self.cfg.clone_cfg)
         self.cloner_cfg.device = self.device
         self.cloner_cfg.replicate_physics = self.cfg.replicate_physics
+        if self.cfg.random_heterogeneous_cloning:
+            self.cloner_cfg.clone_strategy = cloner.random
         self._env_regex_ns = self.cloner_cfg.clone_regex
         self._env_fmt = self._env_regex_ns.replace(".*", "{}")
         self._env_ns = self._env_regex_ns.rsplit("/", 1)[0]
@@ -213,6 +218,8 @@ class InteractiveScene:
         cfg_fields = InteractiveSceneCfg.__dataclass_fields__
         items = [(name, cfg) for name, cfg in self.cfg.__dict__.items() if name not in cfg_fields and cfg is not None]
         self._scene_asset_names = [name for name, _ in items]
+        # visual materials flow through like any other cfg: bucket materials (global paths) are
+        # skipped by make_clone_plan itself, per-environment materials get their own plan row
         ordered_items = [item for item in items if not isinstance(item[1], SensorBaseCfg)]
         ordered_items += [item for item in items if isinstance(item[1], SensorBaseCfg)]
 
@@ -457,6 +464,17 @@ class InteractiveScene:
         assignment mask. ``None`` until :func:`isaaclab.cloner.replicate` has run.
         """
         return self.sim.get_clone_plan()
+
+    @property
+    def visual_materials(self) -> dict[str, VisualMaterial]:
+        """A dictionary of the :class:`~isaaclab.assets.VisualMaterial` entities in the scene.
+
+        The keys are the names of the material entities declared in the scene configuration. A
+        bucket material lives at one concrete prim path outside the environment namespace and is
+        shared by all environments that bind it; a per-environment material (a ``{ENV_REGEX_NS}``
+        prim path) is cloned with the environments and addressed per environment.
+        """
+        return self._visual_materials
 
     @property
     def extras(self) -> dict[str, AssetBaseCfg]:
@@ -723,6 +741,7 @@ class InteractiveScene:
             self._rigid_object_collections,
             self._sensors,
             self._surface_grippers,
+            self._visual_materials,
             self._extras,
         ]:
             all_keys += list(asset_family.keys())
@@ -750,6 +769,7 @@ class InteractiveScene:
             self._rigid_object_collections,
             self._sensors,
             self._surface_grippers,
+            self._visual_materials,
             self._extras,
         ]:
             out = asset_family.get(key)
@@ -783,18 +803,31 @@ class InteractiveScene:
 
         # store paths that are in global collision filter
         self._global_prim_paths = list()
-        # Process non-sensor entities before sensors so that asset prims exist in the template
-        # when sensors (e.g. cameras attached to robot links) need to spawn under them.
+        # Process visual materials first (assets may bind them at spawn), then remaining non-sensor
+        # entities, then sensors so that asset prims exist in the template when sensors (e.g. cameras
+        # attached to robot links) need to spawn under them.
         all_items = [
             (k, v)
             for k, v in self.cfg.__dict__.items()
             if k not in InteractiveSceneCfg.__dataclass_fields__ and v is not None
         ]
-        ordered_items = [(k, v) for k, v in all_items if not isinstance(v, SensorBaseCfg)] + [
-            (k, v) for k, v in all_items if isinstance(v, SensorBaseCfg)
-        ]
+        ordered_items = (
+            [(k, v) for k, v in all_items if isinstance(v, VisualMaterialCfg)]
+            + [(k, v) for k, v in all_items if not isinstance(v, (SensorBaseCfg, VisualMaterialCfg))]
+            + [(k, v) for k, v in all_items if isinstance(v, SensorBaseCfg)]
+        )
 
         for asset_name, asset_cfg in ordered_items:
+            # visual materials are constructed directly (no asset machinery). Bucket materials
+            # live at concrete paths outside the environment namespace; per-environment materials
+            # spawn into their clone-planned source environment and replicate like any other
+            # env-scoped spawn.
+            if isinstance(asset_cfg, VisualMaterialCfg):
+                material = asset_cfg.class_type(asset_cfg)
+                self._visual_materials[asset_name] = material
+                if material.is_per_env:
+                    cloner.queue_replication(asset_cfg)
+                continue
             # resolve prim_path with env regex
             if hasattr(asset_cfg, "prim_path"):
                 asset_cfg.prim_path = asset_cfg.prim_path.format(ENV_REGEX_NS=self.env_regex_ns)

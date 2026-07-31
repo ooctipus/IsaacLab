@@ -177,7 +177,7 @@ def test_get_omnipbr_albedo(
 def test_resolve_shape_color_invalid_prim():
     """Invalid prim path yields ``None`` (no replacement)."""
     stage = Usd.Stage.CreateInMemory()
-    assert _resolve_shape_color(stage, "/World/Missing", {}) is None
+    assert _resolve_shape_color(stage, "/World/Missing", {}) == (None, None)
 
 
 def test_resolve_shape_color_guide_purpose():
@@ -190,7 +190,7 @@ def test_resolve_shape_color_guide_purpose():
     assert purpose_attr.IsValid()
     purpose_attr.Set(UsdGeom.Tokens.guide)
 
-    assert _resolve_shape_color(stage, "/World/GuideMesh", {}) is None
+    assert _resolve_shape_color(stage, "/World/GuideMesh", {}) == (None, None)
 
 
 def test_resolve_shape_color_no_material_binding():
@@ -202,8 +202,9 @@ def test_resolve_shape_color_no_material_binding():
 
     # Default fallback gray should be returned when there is no material binding and no display color.
     material_color_cache: dict[str, tuple[float, float, float] | None] = {}
-    out = _resolve_shape_color(stage, "/World/Mesh", material_color_cache)
+    out, material = _resolve_shape_color(stage, "/World/Mesh", material_color_cache)
     assert out == pytest.approx(_UNBOUND_DEFAULT_FALLBACK_GRAY, rel=1e-5)
+    assert material is None
 
     # Add display color primvar
     pv = UsdGeom.PrimvarsAPI(mesh).CreatePrimvar(
@@ -215,8 +216,9 @@ def test_resolve_shape_color_no_material_binding():
     pv.Set([Gf.Vec3f(*display_color)])
 
     # The display color should be returned instead of the fallback gray.
-    out = _resolve_shape_color(stage, "/World/Mesh", material_color_cache)
+    out, material = _resolve_shape_color(stage, "/World/Mesh", material_color_cache)
     assert out == pytest.approx(display_color, rel=1e-5)
+    assert material is None
 
 
 @pytest.mark.parametrize(("diffuse_color_constant", "diffuse_tint"), _OMNIPBR_ALBEDO_INPUT_CASES)
@@ -228,14 +230,17 @@ def test_resolve_shape_color_omnipbr_binding(
     stage, _shader, mesh_path = _make_mesh_bound_to_omnipbr_test_material(diffuse_color_constant, diffuse_tint)
     expected_albedo = _expected_omnipbr_linear_albedo(diffuse_color_constant, diffuse_tint)
 
-    out = _resolve_shape_color(stage, mesh_path, {})
+    out, material = _resolve_shape_color(stage, mesh_path, {})
     assert out == pytest.approx(expected_albedo, rel=1e-5)
+    assert material == "/World/Mat"
 
 
 def test_resolve_shape_color_neutral_material_binding():
     """Bound ``UsdPreviewSurface`` material: not OmniPBR, so resolution is ``None`` (Newton row unchanged)."""
     stage, mesh_path = _make_preview_surface_bound_mesh_stage()
-    assert _resolve_shape_color(stage, mesh_path, {}) is None
+    color, material = _resolve_shape_color(stage, mesh_path, {})
+    assert color is None
+    assert material is not None
 
 
 def test_replace_newton_builder_shape_colors_warning():
@@ -298,6 +303,7 @@ def test_replace_newton_builder_shape_colors_no_material_binding():
     assert tuple(builder.shape_color[1]) == pytest.approx(
         _reference_linear_to_srgb(_UNBOUND_DEFAULT_FALLBACK_GRAY), rel=1e-5
     )
+    assert builder.shape_material_label == [None, None]
 
 
 @pytest.mark.parametrize(("diffuse_color_constant", "diffuse_tint"), _OMNIPBR_ALBEDO_INPUT_CASES)
@@ -313,6 +319,7 @@ def test_replace_newton_builder_shape_colors_omnipbr_binding(
     assert _replace_newton_builder_shape_colors_wrapper(builder, stage) == 1
     exp = _reference_linear_to_srgb(_expected_omnipbr_linear_albedo(diffuse_color_constant, diffuse_tint))
     assert tuple(builder.shape_color[0]) == pytest.approx(exp, rel=1e-5)
+    assert builder.shape_material_label == ["/World/Mat"]
 
 
 def test_replace_newton_builder_shape_colors_neutral_material():
@@ -324,6 +331,8 @@ def test_replace_newton_builder_shape_colors_neutral_material():
 
     assert _replace_newton_builder_shape_colors_wrapper(builder, stage) == 0
     assert tuple(builder.shape_color[0]) == pytest.approx(initial)
+    # the bound material is still captured: capture follows the binding, not the color rewrite
+    assert builder.shape_material_label[0] is not None
 
 
 def test_replace_newton_builder_shape_colors_respects_binding_strength():

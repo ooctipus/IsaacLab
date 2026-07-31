@@ -773,6 +773,38 @@ Material bindings.
 """
 
 
+def resolve_env_material_target(target: str, prim_path: str | Sdf.Path) -> str:
+    """Resolve the ``{ENV_REGEX_NS}`` token in a material binding target to source space.
+
+    A token target declares that the prim binds its own environment's clone of a per-environment
+    :class:`~isaaclab.assets.VisualMaterial`. Like every replication input, the binding is
+    authored in *source space* — the token resolves to the source environment's namespace
+    (``/World/envs/env_0``) — and replication owns the per-environment remap: whole-environment
+    copy rows remap the target during the copy itself, and per-asset rows are re-anchored per
+    environment by the USD replication context's cross-row relationship retargeting. Targets
+    without the token pass through unchanged.
+
+    Args:
+        target: The configured binding target, possibly ``{ENV_REGEX_NS}``-prefixed.
+        prim_path: The prim the material will be bound to.
+
+    Raises:
+        ValueError: If the target uses the token but the prim is not under the cloned environment
+            namespace — a global spawn is never cloned, so it has no environment of its own to
+            bind.
+    """
+    if "{ENV_REGEX_NS}" not in target:
+        return target
+    match = re.match(r"(/World/envs)/[^/]+(?:/|$)", str(prim_path))
+    if match is None:
+        raise ValueError(
+            f"Visual material target '{target}' uses the per-environment token, but the bound prim"
+            f" '{prim_path}' is not under the cloned environment namespace ('/World/envs/...'):"
+            " a global spawn has no environment of its own to bind."
+        )
+    return target.format(ENV_REGEX_NS=f"{match.group(1)}/env_0")
+
+
 @apply_nested
 def bind_visual_material(
     prim_path: str | Sdf.Path,
@@ -782,7 +814,8 @@ def bind_visual_material(
 ):
     """Bind a visual material to a prim.
 
-    This function is a wrapper around the USD command `BindMaterialCommand`_.
+    This function is a wrapper around the USD command `BindMaterialCommand`_ when Kit is available,
+    and falls back to :class:`UsdShade.MaterialBindingAPI` otherwise.
 
     .. note::
         The function is decorated with :meth:`apply_nested` to allow applying the function to a prim path
@@ -801,17 +834,18 @@ def bind_visual_material(
     Raises:
         ValueError: If the provided prim paths do not exist on stage.
     """
-    if not has_kit():
-        return False
     # get stage handle
     if stage is None:
         stage = get_current_stage()
 
     # check if prim and material exists
     if not stage.GetPrimAtPath(prim_path).IsValid():
-        raise ValueError(f"Target prim '{material_path}' does not exist.")
+        raise ValueError(f"Target prim '{prim_path}' does not exist.")
     if not stage.GetPrimAtPath(material_path).IsValid():
         raise ValueError(f"Visual material '{material_path}' does not exist.")
+
+    if not has_kit():
+        return bind_visual_material_exact(prim_path, material_path, stage, stronger_than_descendants)
 
     # resolve token for weaker than descendants
     # bind material command expects a string token
@@ -819,6 +853,7 @@ def bind_visual_material(
         binding_strength = "strongerThanDescendants"
     else:
         binding_strength = "weakerThanDescendants"
+
     # obtain material binding API
     # note: we prefer using the command here as it is more robust than the USD API
     import omni.kit.commands
@@ -830,8 +865,38 @@ def bind_visual_material(
         strength=binding_strength,
         stage=stage,
     )
-    # return success
     return bool(success)
+
+
+def bind_visual_material_exact(
+    prim_path: str | Sdf.Path,
+    material_path: str | Sdf.Path,
+    stage: Usd.Stage,
+    stronger_than_descendants: bool = True,
+) -> bool:
+    """Bind a visual material on exactly one prim through ``UsdShade``.
+
+    Unlike :func:`bind_visual_material`, there is no nested walk: the binding is authored on the
+    named prim itself, which is also legal on instanceable prims (the binding inherits into the
+    instanced geometry).
+
+    Args:
+        prim_path: The prim path where to apply the material.
+        material_path: The prim path of the material to apply.
+        stage: The stage where the prim and material exist.
+        stronger_than_descendants: Whether the material should override the material of its
+            descendants. Defaults to True.
+    """
+    from pxr import UsdShade  # noqa: PLC0415
+
+    strength = (
+        UsdShade.Tokens.strongerThanDescendants
+        if stronger_than_descendants
+        else (UsdShade.Tokens.weakerThanDescendants)
+    )
+    material = UsdShade.Material(stage.GetPrimAtPath(material_path))
+    binding_api = UsdShade.MaterialBindingAPI.Apply(stage.GetPrimAtPath(prim_path))
+    return bool(binding_api.Bind(material, bindingStrength=strength))
 
 
 @apply_nested

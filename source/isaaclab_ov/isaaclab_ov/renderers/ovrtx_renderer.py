@@ -24,6 +24,7 @@ import logging
 import math
 import os
 import re
+from collections.abc import Sequence
 from itertools import compress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, cast
@@ -404,6 +405,56 @@ class OVRTXRenderer(BaseRenderer):
                 " value. Check that ovrtx is installed correctly and its native dependencies are available."
             )
         logger.info("OVRTX renderer created successfully")
+
+    def notify_visual_material_written(self, writes: Sequence[Any]) -> None:
+        """Mirror visual-material channel writes into the detached OVRTX stage.
+
+        Each write carries one row per shader prim: a bucket material contributes its single shared
+        shader (loaded once from the exported stage; writing it restyles every environment bound to
+        the bucket), while a per-environment material contributes one row per selected environment
+        clone (replicated internally from the clone plan). Writes arrive pre-grouped by attribute
+        name, so each one is a single ``write_attribute`` batch. Invalidates temporal accumulation
+        afterwards.
+
+        Raises:
+            RuntimeError: If the renderer scene is not initialized, or a ``texture``-semantic
+                write is received — the ovrtx attribute-write API cannot write asset-typed Fabric
+                attributes (token writes carry 8-byte handles while Fabric stores asset attributes
+                as 16 bytes), so texture swaps are unsupported on OVRTX until the native API grows
+                asset-write and texture-rebind support.
+        """
+        if len(writes) == 0:
+            return
+        if not self._initialized_scene:
+            raise RuntimeError("OVRTX visual material writes require an initialized renderer scene.")
+        # validate every write before applying any: a batch either lands whole or not at all
+        prepared: list[tuple[list[str], str, Any]] = []
+        for write in writes:
+            if write.semantic == "texture":
+                raise RuntimeError(
+                    "OVRTX does not support the 'texture' channel: its attribute-write API cannot"
+                    " write asset-typed Fabric attributes. Drop 'texture' from the channels used"
+                    " with OVRTX cameras, or use the Newton / Isaac RTX backends for texture"
+                    " randomization."
+                )
+            values = write.values.detach().to(device="cpu", dtype=torch.float32).contiguous().numpy()
+            # scalar channels are written as flat (N,) tensors; vector channels keep (N, c)
+            if values.ndim == 2 and values.shape[1] == 1:
+                values = values.reshape(-1)
+            if values.shape[0] != len(write.shader_paths):
+                raise ValueError(
+                    f"Visual-material write for '{write.attr_name}' carries {values.shape[0]} value"
+                    f" rows for {len(write.shader_paths)} shader prims; one row per shader is"
+                    " required."
+                )
+            prepared.append((list(write.shader_paths), write.attr_name, values))
+        for shader_paths, attr_name, values in prepared:
+            self._renderer.write_attribute(
+                prim_paths=shader_paths,
+                attribute_name=attr_name,
+                tensor=values,
+            )
+        self._renderer.reset()
 
     def prepare_cameras(self, stage: Any, spec: CameraRenderSpec) -> None:
         """Resolve the camera's PPISP cfg and apply OVRTX-specific USD overrides.

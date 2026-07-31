@@ -18,6 +18,15 @@ class VisualMaterialCfg:
     func: Callable = MISSING
     """The function to use for creating the material."""
 
+    spawn_path: str | None = None
+    """Concrete prototype path assigned by clone planning. Defaults to None.
+
+    Set by :func:`~isaaclab.cloner.make_clone_plan` when the material is declared inside the
+    cloned environment namespace (a per-environment
+    :class:`~isaaclab.assets.VisualMaterialCfg` entity), so the entity spawns the prototype into
+    its source environment. Not set for bucket materials at global paths.
+    """
+
 
 @configclass
 class PreviewSurfaceCfg(VisualMaterialCfg):
@@ -80,6 +89,25 @@ class MdlFileCfg(VisualMaterialCfg):
 
     If None, then the default setting in the MDL material will be used.
     """
+
+
+@configclass
+class PbrMdlCfg(MdlFileCfg):
+    """Configuration parameters for loading the OmniPBR MDL material.
+
+    This is a convenience class for loading the OmniPBR MDL material with an explicit albedo. OmniPBR
+    is the material family whose ``diffuse_color_constant`` input is consumed by all rendering backends
+    (Isaac RTX, OVRTX, and the Newton model import), which makes it the recommended material for
+    :class:`~isaaclab.assets.VisualMaterial` color randomization.
+    """
+
+    mdl_path: str = "OmniPBR.mdl"
+    """The path to the MDL material. Defaults to the OmniPBR material shipped with the renderers."""
+    diffuse_color_constant: tuple[float, float, float] = (0.18, 0.18, 0.18)
+    """The RGB albedo of the surface in linear color space. Defaults to a dark gray."""
+    reflection_roughness_constant: float | None = None
+    """The roughness for the specular lobe. Ranges from 0 (smooth) to 1 (rough). Defaults to None,
+    in which case the default setting in the MDL material is used."""
 
 
 @configclass

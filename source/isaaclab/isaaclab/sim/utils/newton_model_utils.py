@@ -82,16 +82,39 @@ def _is_omnipbr_shader(shader_prim: Usd.Prim) -> bool:
 def _get_bound_material_prim(shape_prim: Usd.Prim) -> Usd.Prim:
     """Resolve the effective bound *visual* material path for a geometry prim.
 
-    This uses :meth:`UsdShade.MaterialBindingAPI.ComputeBoundMaterial` so inherited bindings and
-    binding-strength semantics (e.g. ``strongerThanDescendants``) are handled correctly.
+    Handles inherited bindings and binding-strength semantics (``strongerThanDescendants``)
+    without querying ``ComputeBoundMaterial`` on prims that author ``material:binding`` but never
+    apply ``MaterialBindingAPI`` (common in converted assets) — USD emits a warning per such
+    query, which floods the log at one warning per mesh.
     """
-    if shape_prim.IsValid():
+    if not shape_prim.IsValid():
+        return Usd.Prim()
+    if shape_prim.HasAPI(UsdShade.MaterialBindingAPI):
         material, _ = UsdShade.MaterialBindingAPI(shape_prim).ComputeBoundMaterial()
-        if material:
-            material_prim = material.GetPrim()
-            if material_prim.IsValid():
-                return material_prim
-
+        if material and material.GetPrim().IsValid():
+            return material.GetPrim()
+    # ancestor overrides (applied API + strongerThanDescendants — how shared buckets bind)
+    ancestor = shape_prim.GetParent()
+    while ancestor and ancestor.IsValid() and not ancestor.IsPseudoRoot():
+        if ancestor.HasAPI(UsdShade.MaterialBindingAPI):
+            api = UsdShade.MaterialBindingAPI(ancestor)
+            rel = api.GetDirectBindingRel()
+            if (
+                rel
+                and UsdShade.MaterialBindingAPI.GetMaterialBindingStrength(rel)
+                == UsdShade.Tokens.strongerThanDescendants
+            ):
+                material = api.GetDirectBinding().GetMaterial()
+                if material and material.GetPrim().IsValid():
+                    return material.GetPrim()
+        ancestor = ancestor.GetParent()
+    # raw relationship fallback for assets that author bindings without the schema
+    rel = shape_prim.GetRelationship("material:binding")
+    targets = rel.GetTargets() if rel else []
+    if targets:
+        material_prim = shape_prim.GetStage().GetPrimAtPath(targets[0])
+        if material_prim and material_prim.IsValid():
+            return material_prim
     return Usd.Prim()
 
 
@@ -174,36 +197,40 @@ def _resolve_shape_color(
     stage: Usd.Stage,
     prim_path: str,
     material_color_cache: dict[str, tuple[float, float, float] | None],
-) -> tuple[float, float, float] | None:
-    """Resolve replacement linear RGB for one prim path (sRGB encoding is applied in the scatter kernel).
+) -> tuple[tuple[float, float, float] | None, str | None]:
+    """Resolve replacement linear RGB and the bound material for one prim path.
+
+    sRGB encoding of the returned color is applied in the scatter kernel.
 
     Returns:
-        Linear RGB to pass, or ``None`` to leave the row unchanged.
+        Tuple of (linear RGB to pass or ``None`` to leave the row unchanged, bound material
+        prim path or ``None`` when no material is bound).
     """
     shape_prim = stage.GetPrimAtPath(prim_path)
     if not shape_prim.IsValid():
-        return None
+        return None, None
 
     # Newton's random color palette is designed for guide shapes so we keep them unchanged.
     imageable = UsdGeom.Imageable(shape_prim)
     if bool(imageable) and imageable.ComputePurpose() == UsdGeom.Tokens.guide:
-        return None
+        return None, None
 
     material_prim = _get_bound_material_prim(shape_prim)
     if not material_prim.IsValid():
         display_color = _get_primvar_display_color(shape_prim)
-        return display_color or _UNBOUND_DEFAULT_FALLBACK_GRAY
+        return display_color or _UNBOUND_DEFAULT_FALLBACK_GRAY, None
 
+    material_path = material_prim.GetPath().pathString
     material_key = _canonical_prim_lookup_key(material_prim)
     if material_key in material_color_cache:
-        return material_color_cache[material_key]
+        return material_color_cache[material_key], material_path
 
     # We only overwrite color if the material is OmniPBR. Otherwise, we leave the existing color unchanged.
     shader_prim = _get_surface_shader(material_prim)
     material_color = _get_omnipbr_albedo(shader_prim) if _is_omnipbr_shader(shader_prim) else None
 
     material_color_cache[material_key] = material_color
-    return material_color
+    return material_color, material_path
 
 
 def replace_newton_builder_shape_colors(builder: Any, stage: Usd.Stage) -> int:
@@ -220,6 +247,11 @@ def replace_newton_builder_shape_colors(builder: Any, stage: Usd.Stage) -> int:
       stays on the Newton palette.
 
     Linear RGB values are encoded to sRGB before being written into ``builder.shape_color``.
+
+    The walk also records each shape's bound material prim path on the builder as
+    ``shape_material_label`` (``None`` for unbound shapes), aligned with ``shape_label``. The
+    Newton visual-material write path groups shape rows by material from this capture, so
+    material addressing never queries the stage after import.
 
     Args:
         builder: Object with ``shape_label`` (``list`` of USD prim paths) and ``shape_color``
@@ -259,8 +291,9 @@ def replace_newton_builder_shape_colors(builder: Any, stage: Usd.Stage) -> int:
     ):
         num_color_updates = 0
         material_color_cache: dict[str, tuple[float, float, float] | None] = {}
+        shape_material_label: list[str | None] = [None] * len(shape_labels)
         for i, label in enumerate(shape_labels):
-            rgb = _resolve_shape_color(stage, label, material_color_cache)
+            rgb, shape_material_label[i] = _resolve_shape_color(stage, label, material_color_cache)
             if rgb is not None:
                 shape_colors[i] = wp.vec3(
                     _linear_channel_to_srgb(rgb[0]),
@@ -268,6 +301,10 @@ def replace_newton_builder_shape_colors(builder: Any, stage: Usd.Stage) -> int:
                     _linear_channel_to_srgb(rgb[2]),
                 )
                 num_color_updates += 1
+
+        # attach the bound-material walk result: the visual-material write path groups the final
+        # model's shape rows by material from this capture instead of re-querying the stage
+        builder.shape_material_label = shape_material_label
 
         logger.debug("Replaced builder colors for %d / %d shapes", num_color_updates, len(shape_labels))
         return num_color_updates

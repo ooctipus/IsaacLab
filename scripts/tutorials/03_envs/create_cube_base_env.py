@@ -54,7 +54,7 @@ import torch
 
 import isaaclab.envs.mdp as mdp
 import isaaclab.sim as sim_utils
-from isaaclab.assets import AssetBaseCfg, RigidObject, RigidObjectCfg
+from isaaclab.assets import AssetBaseCfg, RigidObject, RigidObjectCfg, VisualMaterialCfg
 from isaaclab.envs import ManagerBasedEnv, ManagerBasedEnvCfg
 from isaaclab.managers import ActionTerm, ActionTermCfg, SceneEntityCfg
 from isaaclab.managers import EventTermCfg as EventTerm
@@ -175,6 +175,14 @@ class MySceneCfg(InteractiveSceneCfg):
     # add terrain
     terrain = TerrainImporterCfg(prim_path="/World/ground", terrain_type="plane", debug_vis=False)
 
+    # add a shared visual material: one material prim outside the environment namespace that the
+    # cubes of all environments bind, so recoloring it (see 'EventCfg.randomize_color') recolors
+    # every cube at once.
+    cube_material = VisualMaterialCfg(
+        prim_path="/World/Materials/cube_material",
+        spawn=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.5, 0.0, 0.0)),
+    )
+
     # add cube
     cube: RigidObjectCfg = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/cube",
@@ -183,7 +191,7 @@ class MySceneCfg(InteractiveSceneCfg):
             rigid_props=sim_utils.RigidBodyPropertiesCfg(max_depenetration_velocity=1.0, disable_gravity=True),
             mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
             physics_material=sim_utils.RigidBodyMaterialCfg(),
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.5, 0.0, 0.0)),
+            visual_material_path="/World/Materials/cube_material",
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 5)),
     )
@@ -260,17 +268,16 @@ class EventCfg:
         },
     )
 
-    # This event term randomizes the visual color of the cube.
-    # Similar to the scale randomization, this is also a USD-level randomization and requires the flag
-    # 'replicate_physics' to be set to False.
+    # This event term randomizes the color of the shared cube material ('MySceneCfg.cube_material').
+    # The material is one prim bound by the cubes of all environments, so each fire samples one
+    # color and recolors every cube — declare several materials and bind different environments to
+    # different ones when more color diversity is needed.
     randomize_color = EventTerm(
         func=mdp.randomize_visual_color,
-        mode="prestartup",
+        mode="reset",
         params={
             "colors": {"r": (0.0, 1.0), "g": (0.0, 1.0), "b": (0.0, 1.0)},
-            "asset_cfg": SceneEntityCfg("cube"),
-            "mesh_name": "geometry/mesh",
-            "event_name": "rep_cube_randomize_color",
+            "materials": [SceneEntityCfg("cube_material")],
         },
     )
 

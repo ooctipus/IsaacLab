@@ -50,11 +50,6 @@ def spawn_preview_surface(prim_path: str, cfg: visual_materials_cfg.PreviewSurfa
     Raises:
         ValueError: If a prim already exists at the given path.
     """
-    # check if Kit is available (required for shader creation commands)
-    if not has_kit():
-        logger.warning("Skipping preview surface material at '%s' — Kit is not available.", prim_path)
-        return None
-
     # get stage handle
     stage = get_current_stage()
 
@@ -66,21 +61,31 @@ def spawn_preview_surface(prim_path: str, cfg: visual_materials_cfg.PreviewSurfa
         # handle scene creation on a custom stage.
         material_prim = UsdShade.Material.Define(stage, prim_path)
         if material_prim:
-            from omni.usd.commands import CreateShaderPrimFromSdrCommand
+            if has_kit():
+                from omni.usd.commands import CreateShaderPrimFromSdrCommand
 
-            shader_prim = CreateShaderPrimFromSdrCommand(
-                parent_path=prim_path,
-                identifier="UsdPreviewSurface",
-                stage_or_context=stage,
-                prim_name="Shader",
-            ).do()
+                shader = CreateShaderPrimFromSdrCommand(
+                    parent_path=prim_path,
+                    identifier="UsdPreviewSurface",
+                    stage_or_context=stage,
+                    prim_name="Shader",
+                ).do()
+            else:
+                # The Sdr registry needs Kit; authoring the UsdPreviewSurface shader directly is
+                # equivalent for renderers that consume the composed stage.
+                from pxr import Sdf  # noqa: PLC0415
+
+                shader = UsdShade.Shader.Define(stage, f"{prim_path}/Shader")
+                shader.CreateIdAttr("UsdPreviewSurface")
+                shader.CreateOutput("surface", Sdf.ValueTypeNames.Token)
+                shader.CreateOutput("displacement", Sdf.ValueTypeNames.Token)
             # bind the shader graph to the material
-            if shader_prim:
-                surface_out = shader_prim.GetOutput("surface")
+            if shader:
+                surface_out = shader.GetOutput("surface")
                 if surface_out:
                     material_prim.CreateSurfaceOutput().ConnectToSource(surface_out)
 
-                displacement_out = shader_prim.GetOutput("displacement")
+                displacement_out = shader.GetOutput("displacement")
                 if displacement_out:
                     material_prim.CreateDisplacementOutput().ConnectToSource(displacement_out)
         else:
@@ -96,6 +101,7 @@ def spawn_preview_surface(prim_path: str, cfg: visual_materials_cfg.PreviewSurfa
     # apply properties
     cfg = cfg.to_dict()  # type: ignore
     del cfg["func"]
+    cfg.pop("spawn_path", None)  # clone-planning metadata, not a shader input
     for attr_name, attr_value in cfg.items():
         safe_set_attribute_on_usd_prim(prim, f"inputs:{attr_name}", attr_value, camel_case=True)
 
@@ -133,11 +139,6 @@ def spawn_from_mdl_file(
     Raises:
         ValueError: If a prim already exists at the given path.
     """
-    # check if Kit is available (required for MDL material creation commands)
-    if not has_kit():
-        logger.warning("Skipping MDL material at '%s' — Kit is not available.", prim_path)
-        return None
-
     # get stage handle
     stage = get_current_stage()
 
@@ -145,15 +146,30 @@ def spawn_from_mdl_file(
     if not stage.GetPrimAtPath(prim_path).IsValid():
         # extract material name from path
         material_name = cfg.mdl_path.split("/")[-1].split(".")[0]
-        from omni.usd.commands import CreateMdlMaterialPrimCommand
+        mdl_url = cfg.mdl_path.format(NVIDIA_NUCLEUS_DIR=NVIDIA_NUCLEUS_DIR)
+        if has_kit():
+            from omni.usd.commands import CreateMdlMaterialPrimCommand
 
-        CreateMdlMaterialPrimCommand(
-            mtl_url=cfg.mdl_path.format(NVIDIA_NUCLEUS_DIR=NVIDIA_NUCLEUS_DIR),
-            mtl_name=material_name,
-            mtl_path=prim_path,
-            stage=stage,
-            select_new_prim=False,
-        ).do()
+            CreateMdlMaterialPrimCommand(
+                mtl_url=mdl_url,
+                mtl_name=material_name,
+                mtl_path=prim_path,
+                stage=stage,
+                select_new_prim=False,
+            ).do()
+        else:
+            # The Kit command needs the MDL runtime; authoring the sourceAsset shader directly is
+            # equivalent for renderers that consume the composed stage (e.g. OVRTX, Newton import).
+            from pxr import Sdf  # noqa: PLC0415
+
+            material_prim = UsdShade.Material.Define(stage, prim_path)
+            shader = UsdShade.Shader.Define(stage, f"{prim_path}/Shader")
+            shader.SetSourceAsset(Sdf.AssetPath(mdl_url), "mdl")
+            shader.SetSourceAssetSubIdentifier(material_name, "mdl")
+            shader_out = shader.CreateOutput("out", Sdf.ValueTypeNames.Token)
+            material_prim.CreateSurfaceOutput("mdl").ConnectToSource(shader_out)
+            material_prim.CreateDisplacementOutput("mdl").ConnectToSource(shader_out)
+            material_prim.CreateVolumeOutput("mdl").ConnectToSource(shader_out)
     else:
         raise ValueError(f"A prim already exists at path: '{prim_path}'.")
     # obtain prim
@@ -165,6 +181,7 @@ def spawn_from_mdl_file(
     cfg = cfg.to_dict()  # type: ignore
     del cfg["func"]
     del cfg["mdl_path"]
+    cfg.pop("spawn_path", None)  # clone-planning metadata, not a shader input
     for attr_name, attr_value in cfg.items():
         safe_set_attribute_on_usd_prim(prim, f"inputs:{attr_name}", attr_value, camel_case=False)
     # return prim

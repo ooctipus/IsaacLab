@@ -99,6 +99,12 @@ class UsdReplicateContext:
 
         # Suspend Fabric's per-Sdf.CopySpec notice listener for the duration of the copy work;
         # no-op outside a live Kit application.
+        #
+        # ``Sdf.CopySpec`` remaps relationship targets that fall inside the copied subtree, so a
+        # whole-environment copy re-anchors internal bindings (e.g. a ``material:binding`` to a
+        # per-environment material) to each environment automatically. Cross-row targets — a
+        # per-asset layout whose material is replicated by its own row — are not remapped by the
+        # copy; those depend on the backend cloner performing the same target remap.
         with disabled_fabric_change_notifies(self.stage):
             self._apply_queue()
 

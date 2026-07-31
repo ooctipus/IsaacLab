@@ -44,6 +44,7 @@ from isaaclab.envs.utils.camera_view import (
     remove_generated_prims,
     resolve_tiled_env_indices,
 )
+from isaaclab.sim import SimulationContext
 from isaaclab.visualizers.base_visualizer import BaseVisualizer
 
 from isaaclab_visualizers.newton.newton_visualization_markers import render_newton_visualization_markers
@@ -671,6 +672,7 @@ class NewtonVisualizer(BaseVisualizer):
             self._viewer.renderer._light_color = self._viewer._coerce_color3(self.cfg.light_color)
 
         self._setup_camera_sensor_view(num_envs)
+        self._register_visual_material_listener()
         num_visualized_envs = (
             len(self._resolved_visible_env_ids) if self._resolved_visible_env_ids is not None else num_envs
         )
@@ -893,6 +895,49 @@ class NewtonVisualizer(BaseVisualizer):
     def _uses_camera_sensor_view(self) -> bool:
         """Return whether the visualizer displays camera sensor images instead of interactive camera controls."""
         return bool(self.cfg.tiled_cam_view)
+
+    def _register_visual_material_listener(self) -> None:
+        """Mirror bucket-material texture swaps onto the viewer's logged meshes.
+
+        Colors reach the viewer through ``model.shape_color`` (synced every frame); textures are
+        uploaded per logged mesh at population time, so swaps must be pushed explicitly. Logged
+        meshes are shared per asset variant, which matches the shared-bucket granularity of
+        :class:`~isaaclab.assets.VisualMaterial` writes.
+        """
+        sim = SimulationContext.instance()
+        if sim is None or self._viewer is None:
+            return
+        if not hasattr(self._viewer, "register_textures"):
+            # this Newton build predates pooled viewer texture swapping (newton PR #3353)
+            logger.warning(
+                "This Newton build's viewer does not support runtime texture swapping; declared"
+                " texture pools will not randomize in the viewer."
+            )
+            return
+
+        def _on_writes(writes) -> None:
+            if self._viewer is None:
+                return
+            texture_writes = [w for w in writes if w.semantic == "texture"]
+            if not texture_writes:
+                return
+            from isaaclab_newton.physics import NewtonManager
+
+            if NewtonManager.get_model() is None:
+                return
+            rows_by_material = NewtonManager.get_visual_material_writer().rows_by_material()
+            for write in texture_writes:
+                for material_path, texture in zip(write.material_paths, write.values, strict=True):
+                    rows = rows_by_material.get(material_path)
+                    if rows is not None and rows.numel() > 0:
+                        self._viewer.update_shape_textures(rows.tolist(), texture)
+
+        # register the declared texture pool with the viewer's GPU pool: registration decodes and
+        # uploads each candidate exactly once, so per-reset swaps are pure texture-handle writes —
+        # the same pay-at-registration contract as the tiled-camera sensor's pool.
+        declared = sim.render_context._register_visual_material_listener(_on_writes)
+        if declared:
+            self._viewer.register_textures(declared)
 
     def _setup_camera_sensor_view(self, num_envs: int) -> None:
         """Resolve or create the camera sensor used by non-interactive image views."""

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any, cast
 
 from isaaclab.sensors.camera.camera_data import CameraData
@@ -37,6 +38,8 @@ class RenderContext:
         "_prepared_renderer_ids",
         "_prepared_num_envs",
         "_last_scene_state_step",
+        "_declared_texture_paths",
+        "_visual_material_listeners",
     )
 
     def __init__(self) -> None:
@@ -45,6 +48,8 @@ class RenderContext:
         self._prepared_renderer_ids: set[int] = set()
         self._prepared_num_envs: int | None = None
         self._last_scene_state_step: int | None = None
+        self._declared_texture_paths: list[str] = []
+        self._visual_material_listeners: list = []
 
     def _check_global_settings_compatible(self, cfg: RendererCfg) -> None:
         """Reject conflicting process-global renderer settings."""
@@ -78,6 +83,8 @@ class RenderContext:
                 return r
         new_renderer = cast(BaseRenderer, Renderer(cfg))  # type: ignore[misc]
         self._renderer_entries.append((cfg, new_renderer))
+        if self._declared_texture_paths:
+            new_renderer.register_visual_material_textures(list(self._declared_texture_paths))
         logger.info(
             "Created new renderer for simulation: %s",
             type(new_renderer).__name__,
@@ -93,6 +100,53 @@ class RenderContext:
         self._physics_initialized = True
         for _cfg, renderer in self._renderer_entries:
             renderer.initialize()
+
+    def notify_visual_material_written(self, writes: Sequence[Any]) -> None:
+        """Broadcast batched visual-material channel writes to every registered backend.
+
+        No-op before the PHYSICS_READY callback: values authored earlier are picked up by each
+        backend's own stage export or model build (:meth:`ensure_prepare_stage`), so there is
+        nothing to synchronize yet.
+
+        Args:
+            writes: :class:`~isaaclab.renderers.base_renderer.VisualMaterialWrite` entries, one
+                per written shader attribute.
+        """
+        if not self._physics_initialized:
+            return
+        for _cfg, renderer in self._renderer_entries:
+            renderer.notify_visual_material_written(writes)
+        for listener in self._visual_material_listeners:
+            listener(writes)
+
+    def _register_visual_material_listener(self, listener) -> list[str]:
+        """Register a callback for visual-material writes and return the declared texture paths.
+
+        Consumers that mirror material writes outside the renderer registry subscribe here — the
+        Newton viewer uses it to swap its logged-mesh textures. The returned texture paths are
+        everything declared so far (see :meth:`register_visual_material_textures`), so the
+        listener can preload its own pool at registration.
+
+        Args:
+            listener: Callable invoked with the list of
+                :class:`~isaaclab.renderers.base_renderer.VisualMaterialWrite` on every write.
+        """
+        self._visual_material_listeners.append(listener)
+        return list(self._declared_texture_paths)
+
+    def register_visual_material_textures(self, texture_paths: Sequence[str]) -> None:
+        """Declare candidate ``texture``-channel textures to every registered backend.
+
+        Declarations are also replayed to backends registered later (entities typically declare
+        their pools before cameras create their renderers), so ordering between material entities
+        and camera construction does not matter.
+
+        Args:
+            texture_paths: Asset paths of the candidate textures.
+        """
+        self._declared_texture_paths.extend(texture_paths)
+        for _cfg, renderer in self._renderer_entries:
+            renderer.register_visual_material_textures(texture_paths)
 
     def ensure_prepare_stage(self, stage: Any, num_envs: int) -> None:
         """Call :meth:`BaseRenderer.prepare_stage` for each registered backend (once per backend).

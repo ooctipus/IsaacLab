@@ -40,7 +40,11 @@ class MeshCfg(RigidObjectSpawnerCfg, DeformableObjectSpawnerCfg):
     """Path to the visual material to use for the prim. Defaults to "material".
 
     If the path is relative, then it will be relative to the prim's path.
-    This parameter is ignored if `visual_material` is not None.
+
+    If the path is absolute and :attr:`visual_material` is None, the prim is bound to the existing
+    material at that path. Binding a material outside the cloned environment namespace (e.g. a
+    scene-level :class:`~isaaclab.assets.VisualMaterial` entity at ``/World/Materials/...``) makes
+    all environments share that one material.
     """
 
     visual_material: materials.VisualMaterialCfg | None = None

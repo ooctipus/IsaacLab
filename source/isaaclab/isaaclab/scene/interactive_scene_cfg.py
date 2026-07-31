@@ -95,6 +95,21 @@ class InteractiveSceneCfg:
     number of environments is greater than one.
     """
 
+    random_heterogeneous_cloning: bool = False
+    """Assign multi-asset prototypes to environments randomly. Default is False.
+
+    Governs how :class:`~isaaclab.sim.spawners.wrappers.MultiAssetSpawnerCfg` (and
+    :class:`~isaaclab.sim.spawners.wrappers.MultiUsdFileCfg`) variants map to environments:
+    ``True`` samples a variant per environment uniformly with replacement (some variants may
+    repeat or be absent); ``False`` assigns them round-robin by environment index
+    (``env_id % num_variants``), which is deterministic and covers every variant when
+    ``num_envs >= num_variants``.
+
+    This is a shorthand over :attr:`clone_cfg`: ``True`` selects
+    :func:`~isaaclab.cloner.random` as the clone strategy, while ``False`` leaves whatever
+    strategy :attr:`clone_cfg` declares in place.
+    """
+
     lazy_sensor_update: bool = True
     """Whether to update sensors only when they are accessed. Default is True.
 

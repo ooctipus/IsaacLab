@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -397,6 +398,8 @@ class NewtonWarpRenderer(BaseRenderer):
         self._stage: Any = None
         # Shared, scene-static segmentation lookup builder, created lazily in ``create_render_data``.
         self._seg_mapper: NewtonSegmentationMapper | None = None
+        self._texture_pool_ids: dict[str, int] = {}
+        self._pending_texture_paths: list[str] = []
 
         sim = SimulationContext.instance()
         current_req = sim.get_scene_data_requirements()
@@ -441,6 +444,77 @@ class NewtonWarpRenderer(BaseRenderer):
 
         if self.cfg.create_default_light:
             self.newton_sensor.utils.create_default_light(enable_shadows=self.cfg.enable_shadows)
+
+        # texture pools declared before the sensor existed register now, so every candidate
+        # texture is resident before the first swap
+        if self._pending_texture_paths:
+            pending, self._pending_texture_paths = self._pending_texture_paths, []
+            self._register_texture_pool(pending)
+
+    def notify_visual_material_written(self, writes: Sequence[Any]) -> None:
+        """Apply shared-material texture writes to the sensor's texture pool indices.
+
+        Only ``texture``-semantic writes arrive here: the Newton
+        :class:`~isaaclab_newton.assets.visual_material.VisualMaterial` writes colors into
+        ``model.shape_color`` directly (which this sensor reads like every Newton consumer),
+        so this backend consumes only what is sensor-specific — the texture pool.
+        """
+        for write in writes:
+            if write.semantic == "texture":
+                self._write_visual_material_textures(tuple(write.material_paths), write.values)
+            elif write.semantic != "color":
+                logger.debug(
+                    "NewtonWarpRenderer has no representation for visual-material attribute '%s'"
+                    " (semantic '%s'); the write is skipped on this backend.",
+                    write.attr_name,
+                    write.semantic,
+                )
+
+    def register_visual_material_textures(self, texture_paths: Sequence[str]) -> None:
+        """Load candidate ``texture``-channel textures into the sensor's texture pool.
+
+        Before the sensor exists (pre-``initialize``), declarations are buffered and registered
+        in :meth:`initialize`; afterwards they register immediately. Registration loads each
+        texture once, so later swaps are pure index scatters with no I/O.
+        """
+        pending = [path for path in texture_paths if path not in self._texture_pool_ids]
+        if not pending:
+            return
+        if getattr(self, "newton_sensor", None) is None:
+            self._pending_texture_paths.extend(pending)
+            return
+        self._register_texture_pool(pending)
+
+    def _register_texture_pool(self, texture_paths: list[str]) -> None:
+        """Register textures with the Newton sensor, mapping asset path → pool index."""
+        if not hasattr(self.newton_sensor.utils, "register_textures"):
+            raise RuntimeError(
+                "This Newton build does not expose SensorTiledCamera.utils.register_textures;"
+                " texture-channel randomization requires a Newton version with runtime texture"
+                " swapping support."
+            )
+        pool_ids = self.newton_sensor.utils.register_textures(texture_paths)
+        self._texture_pool_ids.update(zip(texture_paths, pool_ids, strict=True))
+
+    def _write_visual_material_textures(self, material_paths: tuple[str, ...], asset_paths: list[str]) -> None:
+        """Scatter one texture-pool index per notified material to its bound shape rows."""
+        from ..physics.newton_manager import NewtonManager  # noqa: PLC0415
+
+        plan = NewtonManager.get_visual_material_writer().plan(material_paths)
+        if plan.dim == 0:
+            return
+        try:
+            ids = [self._texture_pool_ids[path] for path in asset_paths]
+        except KeyError as exc:
+            raise ValueError(
+                f"Texture '{exc.args[0]}' was not declared in any material's 'texture_pool';"
+                " every candidate texture must be declared up front so it is loaded before use."
+            ) from exc
+        # expand K pool indices to one id per bound shape row (K and the row count are small,
+        # so the per-fire allocations here are noise next to the swap itself)
+        device = wp.device_to_torch(self._newton_model.device)
+        ids_per_row = torch.tensor(ids, dtype=torch.int32, device=device)[wp.to_torch(plan.material_index).long()]
+        self.newton_sensor.utils.set_shape_texture_ids(plan.shape_rows, wp.from_torch(ids_per_row, dtype=wp.int32))
 
     def supported_output_types(self) -> dict[RenderBufferKind, RenderBufferSpec]:
         """Publish the per-output layout this Newton Warp backend writes.

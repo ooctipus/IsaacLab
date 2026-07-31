@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from .camera_render_spec import CameraRenderSpec
@@ -16,6 +18,27 @@ from .output_contract import RenderBufferKind, RenderBufferSpec
 if TYPE_CHECKING:
     from isaaclab.sensors.camera.camera_data import CameraData
     from isaaclab.utils.warp import ProxyArray
+
+
+@dataclass
+class VisualMaterialWrite:
+    """One batched visual-material attribute write, grouped by resolved shader attribute.
+
+    Produced by :meth:`isaaclab.assets.VisualMaterial.write_channels`: all materials whose
+    channel resolved to the same shader attribute name are batched into one entry, so detached
+    renderers can mirror each entry with a single attribute write.
+    """
+
+    material_paths: list[str]
+    """Absolute paths of the written ``UsdShade.Material`` prims."""
+    shader_paths: list[str]
+    """Absolute paths of the corresponding surface shader prims, aligned with :attr:`material_paths`."""
+    attr_name: str
+    """Namespaced shader attribute name (e.g. ``inputs:diffuse_tint``)."""
+    semantic: str
+    """How backends mirror the write: ``color``, ``float3``, ``scalar``, ``float2``, or ``texture``."""
+    values: Any
+    """CPU float tensor of shape (len(shader_paths), c), or ``list[str]`` for ``texture`` writes."""
 
 
 class BaseRenderer(ABC):
@@ -42,6 +65,34 @@ class BaseRenderer(ABC):
 
     def initialize(self) -> None:
         """Post-physics one-time initialization hook. Called only once."""
+        return
+
+    def notify_visual_material_written(self, writes: Sequence[VisualMaterialWrite]) -> None:
+        """Synchronize the backend after visual material channels were written to the USD stage.
+
+        The stage is the authoritative representation: callers author the values on the material
+        shaders before this hook fires. The default implementation is a no-op, which is correct for
+        renderers that consume the live stage (e.g. Isaac RTX). Detached renderers override this to
+        mirror the writes into their own representation, filtering by each write's semantic (e.g.
+        Newton mirrors only ``color``-semantic writes into ``model.shape_color``).
+
+        Args:
+            writes: One entry per written shader attribute, each batching all materials that
+                resolved a channel to the same attribute name.
+        """
+        return
+
+    def register_visual_material_textures(self, texture_paths: Sequence[str]) -> None:
+        """Declare candidate textures for the ``texture`` channel ahead of any swap.
+
+        Backends that swap textures by index into a pre-built pool (e.g. Newton) load every
+        declared texture once — at declaration time or at :meth:`initialize` — so later swaps
+        are pure index writes with no I/O. The default implementation is a no-op, which is
+        correct for renderers that resolve asset paths through the live stage (Isaac RTX).
+
+        Args:
+            texture_paths: Asset paths of the candidate textures.
+        """
         return
 
     def prepare_cameras(self, stage: Any, spec: CameraRenderSpec) -> None:
