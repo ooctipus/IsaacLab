@@ -389,6 +389,9 @@ class OVRTXRenderer(BaseRenderer):
         # Selected once at construction so every dispatch method below sees a stable path for the
         # lifetime of the renderer, even if the environment variable changes mid-process.
         self._use_ovstage = ovrtx_use_ovstage_enabled()
+        # visual-material writes are dropped on the ovstage path; warn on the first one only, since
+        # the randomization event re-fires every reset
+        self._warned_ovstage_material_write = False
         self._init_fields()
 
         logger.info("Creating OVRTX renderer...")
@@ -416,6 +419,10 @@ class OVRTXRenderer(BaseRenderer):
         name, so each one is a single ``write_attribute`` batch. Invalidates temporal accumulation
         afterwards.
 
+        On the opt-in ovstage path the write is dropped with a one-time warning instead of being
+        applied, because ovrtx rejects ``ovrtx_write_attribute`` in borrow mode; the scene keeps
+        rendering with each material's authored color.
+
         Raises:
             RuntimeError: If the renderer scene is not initialized, or a ``texture``-semantic
                 write is received — the ovrtx attribute-write API cannot write asset-typed Fabric
@@ -427,6 +434,21 @@ class OVRTXRenderer(BaseRenderer):
             return
         if not self._initialized_scene:
             raise RuntimeError("OVRTX visual material writes require an initialized renderer scene.")
+        if self._use_ovstage:
+            # ovrtx rejects ``ovrtx_write_attribute`` while attached to an ovstage in borrow mode,
+            # so the shader inputs cannot be reached through the renderer on this path. Drop the
+            # write instead of raising: the scene keeps rendering with the material's authored
+            # color, so the randomization is visibly absent rather than fatal.
+            if not self._warned_ovstage_material_write:
+                self._warned_ovstage_material_write = True
+                logger.warning(
+                    "Visual-material writes are dropped on the OVRTX ovstage path:"
+                    " 'ovrtx_write_attribute' is rejected while the renderer is attached to an"
+                    " ovstage in borrow mode, so randomized colors will not appear. Unset"
+                    f" {_USE_OVSTAGE_ENV}=1 to use the legacy path, or use the Newton / Isaac RTX"
+                    " backends for visual-material randomization."
+                )
+            return
         # validate every write before applying any: a batch either lands whole or not at all
         prepared: list[tuple[list[str], str, Any]] = []
         for write in writes:

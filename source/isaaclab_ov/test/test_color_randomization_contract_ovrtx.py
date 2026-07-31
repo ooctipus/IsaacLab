@@ -57,10 +57,16 @@ def test_visual_color_contract_ovrtx():
     assert_color_contract(OVRTXRendererCfg(), physics_cfg=NewtonCfg(solver_cfg=MJWarpSolverCfg()))
 
 
-@pytest.mark.skip(
-    reason="Per-environment materials need OVRTX 'clone_usd' to remap material:binding targets into"
-    " each cloned environment (as Sdf.CopySpec does for the Kit stage); the native clone copies the"
-    " source binding verbatim, so a cloned prim renders env_0's material. Tracked upstream in ovrtx."
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="Per-environment materials need OVRTX to remap material:binding targets into each cloned"
+    " environment (as Sdf.CopySpec does for the Kit stage); both native clone paths ('clone_usd' on"
+    " the legacy path, 'Stage.clone' on the ovstage path) copy the source binding verbatim, so a"
+    " cloned prim renders env_0's material and env 1 reads back env 0's color. Tracked upstream in"
+    " ovrtx. Narrowed to AssertionError so an unrelated failure still reports as a real failure;"
+    " strict=True turns an unexpected pass into one, so this marker is removed when ovrtx lands the"
+    " remap.",
 )
 def test_per_env_visual_color_contract_ovrtx():
     """One logical per-env material diverges the envs and honors env_ids on the OVRTX renderer."""
