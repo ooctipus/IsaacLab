@@ -16,7 +16,7 @@ ARG RUN_PIP_INSTALL=0
 # the base or the kit-less dependency image, which carry different extras, so
 # ``buildnpush.py`` always passes the matching set; the default below only covers
 # a direct ``docker build`` of this file.
-ARG ISAACLAB_UV_SYNC_ARGS="--extra all --extra rtx --extra ov"
+ARG ISAACLAB_UV_SYNC_ARGS="--extra all --extra ovrtx --extra ov"
 
 ENV ISAACLAB_PATH=${ISAACLAB_PATH_ARG}
 
