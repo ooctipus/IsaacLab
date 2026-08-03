@@ -162,7 +162,7 @@ USER isaaclab
 # comes in via the newton feature) and deliberately omit ``isaacsim``, so this
 # stays kit-less. The cache mount is owned by uid/gid 1000 so the non-root user
 # can populate it.
-ARG ISAACLAB_UV_SYNC_ARGS="--extra all --extra rtx"
+ARG ISAACLAB_UV_SYNC_ARGS="--extra all --extra ovrtx"
 # Changing this token re-runs the sync below without discarding the system layers
 # above it. ``buildnpush.py`` sets it for ``-d/--deps`` so a dependency rebuild
 # cannot silently reuse a previously resolved environment.

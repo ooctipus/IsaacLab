@@ -199,7 +199,7 @@ USER isaaclab
 #
 # The args select which extras to install; do NOT add ``--extra isaacsim`` (Isaac
 # Sim is the binary base image, not a pip package). Override to change the extras.
-ARG ISAACLAB_UV_SYNC_ARGS="--extra all --extra rtx --extra ov"
+ARG ISAACLAB_UV_SYNC_ARGS="--extra all --extra ovrtx --extra ov"
 # Changing this token re-runs the sync below without discarding the system layers
 # above it. ``buildnpush.py`` sets it for ``-d/--deps`` so a dependency rebuild
 # cannot silently reuse a previously resolved environment.

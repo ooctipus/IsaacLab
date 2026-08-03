@@ -45,8 +45,8 @@ EXTRA_SYMLINKS = [Path("dep"), Path("dep/rsl_rl")]
 # Extras the images are synced with. These mirror the ``ISAACLAB_UV_SYNC_ARGS`` defaults in
 # the Dockerfiles and are only used to re-run ``uv sync --check`` against a built image;
 # ``test_uv_sync_extras_match_the_dockerfiles`` fails if the two drift apart.
-BASE_UV_SYNC_EXTRAS = "--extra all --extra rtx --extra ov"
-KITLESS_UV_SYNC_EXTRAS = "--extra all --extra rtx"
+BASE_UV_SYNC_EXTRAS = "--extra all --extra ovrtx --extra ov"
+KITLESS_UV_SYNC_EXTRAS = "--extra all --extra ovrtx"
 # Emitted by ``uv sync --check`` when it did run and found the environment stale. Its absence on a
 # failure means the check itself broke (missing uv, unreadable lock) rather than the image drifting.
 UV_OUTDATED_MARKER = "The environment is outdated"
