@@ -56,6 +56,12 @@ MAX_DIFFERENT_PIXELS_PERCENTAGE_BY_ENV_NAME = {
     # Texture aliasing artifacts on the ground (NVBUG#6116767)
     "dexsuite_kuka_homo": 8.0,
     "dexsuite_kuka_hetero": 8.0,
+    # Deliberately far tighter than the other Dexsuite lanes. This golden exists to pin the robot's
+    # randomized colour, and the robot covers ~7.8% of the frame - so at the 8.0 the other lanes use,
+    # a completely recoloured robot lands at 7.78% and passes. Measured on this scene: an identical
+    # render differs by 0.089%, a recoloured one by 7.78%. 4.0 sits between them with ~45x headroom
+    # over render noise and 2x margin under a recolour.
+    "dexsuite_kuka_visual_dr": 4.0,
 }
 
 # Allow OVRTX Cartpole RGB/RGBA variation tracked by NVBUG#6152566; the SSIM gate remains enabled.
@@ -73,6 +79,9 @@ _SSIM_THRESHOLD_BY_ENV_NAME = {
     # Texture aliasing artifacts on the ground (NVBUG#6116767)
     "dexsuite_kuka_homo": 0.95,
     "dexsuite_kuka_hetero": 0.95,
+    # Tightened for the same reason as the pixel threshold above: a recoloured robot scores 0.9785
+    # and would pass the 0.95 the other Dexsuite lanes use, while an identical render scores 0.99945.
+    "dexsuite_kuka_visual_dr": 0.99,
 }
 
 # Data types for which the SSIM gate is not enforced. SSIM assumes natural-image statistics and is unreliable on
