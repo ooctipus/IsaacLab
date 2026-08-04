@@ -23,7 +23,6 @@ __all__ = [
     "success_reward",
     "action_rate_l2_clamped",
     "action_l2_clamped",
-    "gripper_asymetric_contact_penalty",
     "out_of_bound",
     "abnormal_robot_state",
     "progress_context",
@@ -54,7 +53,6 @@ from .observations import (
 from .observations import get_state
 from .rewards import action_l2_clamped, action_rate_l2_clamped
 from .rewards import (
-    gripper_asymetric_contact_penalty,
     progress_reward,
     success_reward,
 )

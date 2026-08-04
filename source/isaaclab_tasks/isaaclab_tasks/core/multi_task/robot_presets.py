@@ -28,8 +28,6 @@ selected.
 from dataclasses import MISSING
 
 from isaaclab.assets import ArticulationCfg
-from isaaclab.managers import RewardTermCfg as RewTerm
-from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.utils import PresetCfg
@@ -56,28 +54,3 @@ class RobotActionsCfg(PresetCfg):
     """
 
     default: object = MISSING  # type: ignore[assignment]
-
-
-@configclass
-class GripperLeftContactSensorCfg(PresetCfg):
-    """Robot-specific contact sensor on the left finger / gripper pad."""
-
-    default: ContactSensorCfg | None = None
-
-
-@configclass
-class GripperRightContactSensorCfg(PresetCfg):
-    """Robot-specific contact sensor on the right finger / gripper pad."""
-
-    default: ContactSensorCfg | None = None
-
-
-@configclass
-class GripperAsymContactPenaltyCfg(PresetCfg):
-    """Robot-specific reward term penalizing asymmetric finger contacts.
-
-    Default is ``None`` (no penalty); robots with paired finger sensors set
-    this to a :class:`RewardTermCfg` referencing those sensors.
-    """
-
-    default: RewTerm | None = None

@@ -9,8 +9,6 @@ from __future__ import annotations
 
 __all__: list[str] = []
 
-from isaaclab.managers import RewardTermCfg as RewTerm
-from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.utils import preset
@@ -26,9 +24,6 @@ from ..factory_presets import (
     JointEffortNamesCfg,
 )
 from ..robot_presets import (
-    GripperAsymContactPenaltyCfg,
-    GripperLeftContactSensorCfg,
-    GripperRightContactSensorCfg,
     RobotActionsCfg,
     RobotArticulationCfg,
 )
@@ -65,10 +60,3 @@ class FrankaActionsCfg:
 
 
 RobotActionsCfg.franka = FrankaActionsCfg()
-GripperLeftContactSensorCfg.franka = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/panda_leftfinger")
-GripperRightContactSensorCfg.franka = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/panda_rightfinger")
-GripperAsymContactPenaltyCfg.franka = RewTerm(
-    func=mdp.gripper_asymetric_contact_penalty,
-    weight=-0.02,
-    params={"threshold": 1.0},
-)

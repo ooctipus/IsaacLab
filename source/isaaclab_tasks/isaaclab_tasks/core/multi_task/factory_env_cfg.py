@@ -30,7 +30,7 @@ from .factory_presets import (
 )
 from .factory_scenes_cfg import FactorySceneCfg
 from .reset_env_cfg import RESET_STRATEGIES
-from .robot_presets import GripperAsymContactPenaltyCfg, RobotActionsCfg
+from .robot_presets import RobotActionsCfg
 
 
 @configclass
@@ -168,7 +168,6 @@ class FactoryRewardsCfg:
     )
     early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-0.01)
     success_reward = RewTerm(func=mdp.success_reward, weight=100.0)
-    bad_finger_contact: RewTerm | None = GripperAsymContactPenaltyCfg()  # type: ignore
 
 
 @configclass

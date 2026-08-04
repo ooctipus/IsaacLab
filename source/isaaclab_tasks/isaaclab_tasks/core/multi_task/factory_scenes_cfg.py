@@ -12,15 +12,12 @@ Each scene class inherits from :class:`FactorySceneBase` and specifies the
 
 from isaaclab.assets import ArticulationCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.utils import PresetCfg
 
 from . import factory_assets_cfg as assets
 from .robot_presets import (
-    GripperLeftContactSensorCfg,
-    GripperRightContactSensorCfg,
     RobotArticulationCfg,
 )
 
@@ -38,32 +35,12 @@ class FactorySceneBase(InteractiveSceneCfg):
     table = assets.TABLE_CFG
     nistboard = assets.NISTBOARD_CFG
     robot: ArticulationCfg = RobotArticulationCfg()  # type: ignore
-    panda_leftfinger_object_s: ContactSensorCfg | None = GripperLeftContactSensorCfg()  # type: ignore
-    panda_rightfinger_object_s: ContactSensorCfg | None = GripperRightContactSensorCfg()  # type: ignore
     dome_light = assets.DOMELIGHT_CFG
 
 
 # ---------------------------------------------------------------------------
 # Nut threading (4 sizes)
 # ---------------------------------------------------------------------------
-
-
-@configclass
-class NutThreadM4SceneCfg(FactorySceneBase):
-    fixed_asset: RigidObjectCfg = assets.BOLT_M4_CFG
-    held_asset: RigidObjectCfg = assets.NUT_M4_CFG
-
-
-@configclass
-class NutThreadM8SceneCfg(FactorySceneBase):
-    fixed_asset: RigidObjectCfg = assets.BOLT_M8_CFG
-    held_asset: RigidObjectCfg = assets.NUT_M8_CFG
-
-
-@configclass
-class NutThreadM12SceneCfg(FactorySceneBase):
-    fixed_asset: RigidObjectCfg = assets.BOLT_M12_CFG
-    held_asset: RigidObjectCfg = assets.NUT_M12_CFG
 
 
 @configclass
@@ -165,43 +142,9 @@ class PegInsert16MMSceneCfg(FactorySceneBase):
 
 
 @configclass
-class ConnectorUSBASceneCfg(FactorySceneBase):
-    fixed_asset: RigidObjectCfg = assets.USBA_SOCKET_CFG
-    held_asset: RigidObjectCfg = assets.USBA_PLUG_CFG
-
-
-@configclass
-class ConnectorWaterproofSceneCfg(FactorySceneBase):
-    fixed_asset: RigidObjectCfg = assets.WATERPROOF_SOCKET_CFG
-    held_asset: RigidObjectCfg = assets.WATERPROOF_PLUG_CFG
-
-
-@configclass
-class ConnectorBNCSceneCfg(FactorySceneBase):
-    fixed_asset: RigidObjectCfg = assets.BNC_SOCKET_CFG
-    held_asset: RigidObjectCfg = assets.BNC_PLUG_CFG
-
-
-@configclass
-class ConnectorDSUBSceneCfg(FactorySceneBase):
-    fixed_asset: RigidObjectCfg = assets.DSUB_SOCKET_CFG
-    held_asset: RigidObjectCfg = assets.DSUB_PLUG_CFG
-
-
-@configclass
-class ConnectorRJ45SceneCfg(FactorySceneBase):
-    fixed_asset: RigidObjectCfg = assets.RJ45_SOCKET_CFG
-    held_asset: RigidObjectCfg = assets.RJ45_PLUG_CFG
-
-
-@configclass
 class FactorySceneCfg(PresetCfg):
     """Task scene preset — resolves to the complete scene for the active task."""
 
-    # Nut threading
-    nut_thread_m4: NutThreadM4SceneCfg = NutThreadM4SceneCfg(num_envs=2, env_spacing=2.0)
-    nut_thread_m8: NutThreadM8SceneCfg = NutThreadM8SceneCfg(num_envs=2, env_spacing=2.0)
-    nut_thread_m12: NutThreadM12SceneCfg = NutThreadM12SceneCfg(num_envs=2, env_spacing=2.0)
     nut_thread_m16: NutThreadM16SceneCfg = NutThreadM16SceneCfg(num_envs=2, env_spacing=2.0)
 
     # Gear mesh
@@ -220,12 +163,5 @@ class FactorySceneCfg(PresetCfg):
     peg_insert_8mm: PegInsert8MMSceneCfg = PegInsert8MMSceneCfg(num_envs=2, env_spacing=2.0)
     peg_insert_12mm: PegInsert12MMSceneCfg = PegInsert12MMSceneCfg(num_envs=2, env_spacing=2.0)
     peg_insert_16mm: PegInsert16MMSceneCfg = PegInsert16MMSceneCfg(num_envs=2, env_spacing=2.0)
-
-    # Connector insert
-    usba: ConnectorUSBASceneCfg = ConnectorUSBASceneCfg(num_envs=2, env_spacing=2.0)
-    waterproof: ConnectorWaterproofSceneCfg = ConnectorWaterproofSceneCfg(num_envs=2, env_spacing=2.0)
-    bnc: ConnectorBNCSceneCfg = ConnectorBNCSceneCfg(num_envs=2, env_spacing=2.0)
-    dsub: ConnectorDSUBSceneCfg = ConnectorDSUBSceneCfg(num_envs=2, env_spacing=2.0)
-    rj45: ConnectorRJ45SceneCfg = ConnectorRJ45SceneCfg(num_envs=2, env_spacing=2.0)
 
     default: NutThreadM16SceneCfg = nut_thread_m16

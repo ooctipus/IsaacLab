@@ -109,15 +109,3 @@ def success_reward(env: ManagerBasedRLEnv, context: str = "progress_context") ->
     position_centered: torch.Tensor = getattr(context_term, "position_centered")
     z_distance_reached: torch.Tensor = getattr(context_term, "z_distance_reached")
     return torch.where(orientation_aligned & position_centered & z_distance_reached, 1.0, 0.0)
-
-
-def gripper_asymetric_contact_penalty(env: ManagerBasedRLEnv, threshold: float = 1.0) -> torch.Tensor:
-    left_finger_contact_sensor: ContactSensor = env.scene.sensors["panda_leftfinger_object_s"]
-    right_finger_contact_sensor: ContactSensor = env.scene.sensors["panda_rightfinger_object_s"]
-
-    left_finger_contact = wp.to_torch(left_finger_contact_sensor.data.net_forces_w).view(env.num_envs, 3)
-    right_finger_contact = wp.to_torch(right_finger_contact_sensor.data.net_forces_w).view(env.num_envs, 3)
-
-    left_finger_in_contact = torch.norm(left_finger_contact, dim=-1) > threshold
-    right_finger_in_contact = torch.norm(right_finger_contact, dim=-1) > threshold
-    return (left_finger_in_contact != right_finger_in_contact).float()
