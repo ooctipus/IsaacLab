@@ -32,11 +32,12 @@ from tqdm import tqdm
 
 from isaaclab.managers import EventTermCfg, ManagerTermBase
 
-from ..utils.grid_downsample import extract_features, grid_bucket_downsample
+from isaaclab_tasks.core.lift.mdp.events_cfg import SuccessMonitorCfg
+
 from . import reset_state
+from .grid_downsample import extract_features, grid_bucket_downsample
 from .sampling import Sampler, SamplerCfg
 from .state_layout import StateLayout
-from .success_monitor_cfg import SuccessMonitorCfg
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -176,13 +177,12 @@ class reset_accumulator(ManagerTermBase):
 
         if self.success_monitor is None:
             n_slots = self.state_data.shape[0]
-            self.monitor_success_rate = torch.zeros(n_slots, device=env.device)
             monitor_cfg = self._success_monitor_cfg
-            monitor_cfg.num_monitored_data = n_slots
-            monitor_cfg.device = env.device
-            if monitor_cfg.max_updates is None:
-                monitor_cfg.max_updates = env.num_envs
-            self.success_monitor = monitor_cfg.class_type(monitor_cfg, self.monitor_success_rate)
+            # one partition: the bank draws across every slot, and the samplers below do the
+            # drawing themselves. ``success_rate`` is updated in place, so aliasing it here keeps
+            # the strategies' ``success_rates`` binding live.
+            self.success_monitor = monitor_cfg.class_type(monitor_cfg, 1, n_slots, env.device)
+            self.monitor_success_rate = self.success_monitor.success_rate
 
         progress = env.termination_manager.get_term_cfg("progress_context").func
         monitor_ids = env_ids
@@ -264,10 +264,23 @@ class TermChoice(ManagerTermBase):
         self.term_partitions: dict[str, EventTermCfg] = cfg.params["terms"]  # type: ignore
         self.num_partitions = len(self.term_partitions)
         self.term_samples = torch.zeros((env.num_envs,), dtype=torch.long, device=env.device)
-        self.term_success_rate = torch.zeros(self.num_partitions, device=env.device)
         self._sampling_cfg: SamplerCfg = cfg.params["sampling"]
         if self._sampling_cfg.max_samples is None:
             self._sampling_cfg.max_samples = env.num_envs
+
+        # Need a monitor when the sampler has any non-uniform strategy, or when the user
+        # explicitly requested reporting. Decided from the strategy configs because the monitor
+        # owns the rate tensor the sampler binds, so it has to exist first.
+        needs_rates = cfg.params.get("report", False) or any(
+            "Uniform" not in str(strategy.class_type) for strategy in self._sampling_cfg.strategies
+        )
+        if needs_rates:
+            monitor_cfg: SuccessMonitorCfg = cfg.params["success_monitor_cfg"]
+            self.success_monitor = monitor_cfg.class_type(monitor_cfg, 1, self.num_partitions, env.device)
+            self.term_success_rate = self.success_monitor.success_rate
+        else:
+            self.success_monitor = None
+            self.term_success_rate = torch.zeros(self.num_partitions, device=env.device)
 
         layout = StateLayout(
             coords=torch.zeros(self.num_partitions, 1, device=env.device),
@@ -277,18 +290,6 @@ class TermChoice(ManagerTermBase):
         self._sampler = self._sampling_cfg.class_type(
             self._sampling_cfg, layout, env=env, success_rates=self.term_success_rate
         )
-
-        # Need a monitor when the sampler has any non-uniform strategy,
-        # or when the user explicitly requested reporting.
-        needs_rates = any(name != "uniform" for name in self._sampler.names)
-        if cfg.params.get("report", False) or needs_rates:
-            monitor_cfg: SuccessMonitorCfg = cfg.params["success_monitor_cfg"]
-            monitor_cfg.num_monitored_data = self.num_partitions
-            monitor_cfg.device = env.device
-            monitor_cfg.max_updates = env.num_envs if monitor_cfg.max_updates is None else monitor_cfg.max_updates
-            self.success_monitor = monitor_cfg.class_type(monitor_cfg, self.term_success_rate)
-        else:
-            self.success_monitor = None
 
     def __call__(
         self,

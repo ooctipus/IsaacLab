@@ -21,11 +21,6 @@ from ..utils.pose_offset import Offset
 __all__ = ["Offset"]
 
 
-# =============================================================================
-# Kit Tray — positions of assets sitting in the tray
-# =============================================================================
-
-
 @configclass
 class KitTrayKeyPointsCfg:
     """Offsets of each asset's resting pose in the kit tray, relative to the tray root."""
@@ -55,11 +50,6 @@ class KitTrayKeyPointsCfg:
     large_gear: Offset = Offset(pos=(0.039, 0.086, 0.005), quat=(0.0, 0.0, 0.7071, -0.70711))
     medium_gear: Offset = Offset(pos=(0.0061, -0.0475, 0.005), quat=(0.0, 0.0, -0.70711, 0.7071))
     small_gear: Offset = Offset(pos=(0.0595, -0.0875, 0.005), quat=(0.0, 0.0, 0.7071, -0.70711))
-
-
-# =============================================================================
-# NIST Board — socket/hole positions on the board
-# =============================================================================
 
 
 @configclass

@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from isaaclab_tasks.core.multi_task.curriculum import (
+from isaaclab_tasks.core.multi_task.utils import (
     BetaSamplingStrategyCfg,
     FrontierSamplingStrategyCfg,
     Sampler,

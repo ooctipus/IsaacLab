@@ -110,40 +110,6 @@ def sample_joint_positions_within_limits(
     return torch.clamp(joint_position, min=limits[..., 0], max=limits[..., 1])
 
 
-def farthest_point_sampling(points: torch.Tensor, num_samples: int) -> torch.Tensor:
-    """Select a spatially spread-out subset of each point set.
-
-    Starting from the first point of every set, repeatedly selects the candidate whose
-    distance to the already-selected points is largest. The greedy choice gives near-uniform
-    coverage of the input's spatial extent, which matters when the selected points feed
-    geometric queries such as signed-distance collision checks. The deterministic start
-    makes the result reproducible without touching the global random state.
-
-    Args:
-        points: Candidate point sets [m], shape ``(B, N, D)``.
-        num_samples: Number of points to select from each set. Clamped to ``N``.
-
-    Returns:
-        Indices of the selected points into :paramref:`points`, shape ``(B, min(num_samples, N))``.
-    """
-    if points.ndim != 3:
-        raise ValueError(f"Expected points of shape (B, N, D), got {tuple(points.shape)}.")
-    num_sets, num_candidates, _ = points.shape
-    num_samples = min(num_samples, num_candidates)
-
-    indices = torch.empty(num_sets, num_samples, dtype=torch.long, device=points.device)
-    # squared distances suffice: the square root is monotonic and only the arg-maximum is read
-    min_sq_distance = torch.full((num_sets, num_candidates), torch.inf, dtype=points.dtype, device=points.device)
-    set_ids = torch.arange(num_sets, device=points.device)
-    selected = torch.zeros(num_sets, dtype=torch.long, device=points.device)
-    for i in range(num_samples):
-        indices[:, i] = selected
-        sq_distance = (points - points[set_ids, selected].unsqueeze(1)).pow(2).sum(dim=-1)
-        min_sq_distance = torch.minimum(min_sq_distance, sq_distance)
-        selected = min_sq_distance.argmax(dim=1)
-    return indices
-
-
 def random_xy_rotation(count: int, device: str | torch.device) -> torch.Tensor:
     """Sample the Direct tasks' sequential random X/Y rotation.
 

@@ -26,9 +26,9 @@ from typing import TYPE_CHECKING
 import torch
 
 import isaaclab.utils.math as math_utils
-from isaaclab.managers import ManagerTermBase, SceneEntityCfg
+from isaaclab.managers import SceneEntityCfg
 
-from isaaclab_tasks.core.multi_task.curriculum import get_reset_state
+from isaaclab_tasks.core.multi_task.utils import get_reset_state
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject
@@ -40,115 +40,6 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Vision observation.
 # ---------------------------------------------------------------------------
-
-
-class vision_obs(ManagerTermBase):
-    """Unified 2D vision observation for camera-style sensors and grid raycasters.
-
-    Args:
-        sensor_cfg: Scene sensor to read.
-        normalize: If ``True``, return normalized ``(B, C, H, W)`` images.
-            If ``False``, return raw ``(B, H, W, C)`` images.
-        offset: Height offset [m] subtracted from grid raycaster heights.
-    """
-
-    def __init__(self, cfg, env: ManagerBasedRLEnv):
-        super().__init__(cfg, env)
-        sensor_cfg: SceneEntityCfg = cfg.params["sensor_cfg"]
-        self.sensor = env.scene.sensors[sensor_cfg.name]
-
-        # Camera-style sensors expose ``data.output[type]``; check them first because
-        # ``RayCasterCamera`` inherits from ``RayCaster`` and would otherwise be routed
-        # into the grid path.
-        from isaaclab.sensors import RayCaster, RayCasterCamera, TiledCamera
-
-        if isinstance(self.sensor, (TiledCamera, RayCasterCamera)):
-            self._sensor_type = self.sensor.cfg.data_types[0]
-            self._fetch = self._fetch_camera
-            self._norm = (
-                self._depth_norm if self._sensor_type in ("distance_to_image_plane", "depth") else self._rgb_norm
-            )
-        elif isinstance(self.sensor, RayCaster):
-            pattern_cfg = self.sensor.cfg.pattern_cfg
-            self._nx = round(pattern_cfg.size[0] / pattern_cfg.resolution) + 1
-            self._ny = round(pattern_cfg.size[1] / pattern_cfg.resolution) + 1
-            self._ordering = pattern_cfg.ordering
-            self._fetch = self._fetch_raycaster
-            self._norm = self._depth_norm
-        else:
-            raise TypeError(
-                f"vision_obs supports TiledCamera, RayCasterCamera, or RayCaster; got {type(self.sensor).__name__}"
-            )
-
-    def __call__(
-        self,
-        env: ManagerBasedRLEnv,
-        sensor_cfg: SceneEntityCfg,
-        normalize: bool = True,
-        offset: float = 0.5,
-    ) -> torch.Tensor:
-        images = self._fetch(offset)  # (B, H, W, C)
-        torch.nan_to_num_(images, nan=1e6)
-        if normalize:
-            images = self._norm(images)
-            images = images.permute(0, 3, 1, 2).contiguous(memory_format=torch.channels_last)
-        return images
-
-    def _fetch_camera(self, offset: float) -> torch.Tensor:
-        return self.sensor.data.output[self._sensor_type]
-
-    def _fetch_raycaster(self, offset: float) -> torch.Tensor:
-        flat = self.sensor.data.pos_w.torch[:, 2].unsqueeze(1) - self.sensor.data.ray_hits_w.torch[..., 2] - offset
-        # (B, num_rays) -> (B, H, W, 1) NHWC. ordering="xy" -> rows are constant-y -> (Ny, Nx).
-        if self._ordering == "xy":
-            return flat.view(self.num_envs, self._ny, self._nx, 1)
-        return flat.view(self.num_envs, self._nx, self._ny, 1)
-
-    def _rgb_norm(self, images: torch.Tensor) -> torch.Tensor:
-        images = images.float() / 255.0
-        images = images - torch.mean(images, dim=(1, 2), keepdim=True)
-        return images
-
-    def _depth_norm(self, images: torch.Tensor) -> torch.Tensor:
-        images = torch.tanh(images / 2) * 2
-        images = images - torch.mean(images, dim=(1, 2), keepdim=True)
-        return images
-
-    def collage(self, offset: float = 0.5, save_path: str = "./collage.png"):
-        """Save a turbo-colormapped collage of the raw sensor tiles to disk."""
-        import os
-
-        import matplotlib
-        import numpy as np
-        from PIL import Image
-
-        images = self._fetch(offset)
-        torch.nan_to_num_(images, nan=0.0)
-        images = images.clamp(-10.0, 10.0)
-        a = images.detach().cpu().numpy()
-        n, h, w, c = a.shape
-        s = int(np.ceil(np.sqrt(n)))
-        canvas = np.full((s * h, s * w, 3), 255, np.uint8)
-        turbo = matplotlib.colormaps["turbo"]
-        for i in range(n):
-            r, col = divmod(i, s)
-            img = a[i]
-            if c == 1:
-                d = img[..., 0]
-                finite = np.isfinite(d)
-                if finite.any():
-                    lo, hi = d[finite].min(), d[finite].max()
-                else:
-                    lo, hi = 0.0, 1.0
-                d = np.clip(d, lo, hi)
-                d = (d - lo) / (hi - lo + 1e-8)
-                rgb = (turbo(d)[..., :3] * 255).astype(np.uint8)
-            else:
-                x = img if img.max() > 1 else img * 255
-                rgb = np.clip(x, 0, 255).astype(np.uint8)
-            canvas[r * h : (r + 1) * h, col * w : (col + 1) * w] = rgb
-        save_path = os.path.expanduser(save_path)
-        Image.fromarray(canvas).save(save_path)
 
 
 # ---------------------------------------------------------------------------

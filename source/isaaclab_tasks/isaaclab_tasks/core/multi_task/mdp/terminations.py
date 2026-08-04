@@ -19,9 +19,6 @@ Three terms and one base cfg live here:
   contact-sensor body's force exceeds ``ratio × total_bodyweight``. The
   threshold is computed at init from the articulation's per-body mass, so
   the same cfg works across robots without per-robot tuning.
-- :class:`BaseTerminationsCfg` — shared cfg with ``time_out`` + ``abnormal``
-  defaults. Domain-specific cfgs (factory, terrain) extend this and add their
-  own ``oob`` term with appropriate ``asset_cfg`` + ``in_bound_range``.
 """
 
 from __future__ import annotations
@@ -32,11 +29,9 @@ import torch
 import warp as wp
 
 import isaaclab.utils.math as math_utils
-from isaaclab.envs.mdp import time_out as _time_out
 from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.managers import TerminationTermCfg as DoneTermCfg
-from isaaclab.utils.configclass import configclass
 
 from ..factory.assembly_keypoints import Offset
 from ..factory.assembly_profile import AssemblyProfile
@@ -132,23 +127,6 @@ class illegal_contact_ratio(ManagerTermBase):
         return torch.any(max_force > self._threshold, dim=1)
 
 
-@configclass
-class BaseTerminationsCfg:
-    """Shared termination defaults for terrain + factory tasks.
-
-    Domain-specific cfgs add ``oob`` (with their own ``asset_cfg`` +
-    ``in_bound_range``) plus any task-specific terms (``base_contact``,
-    ``progress_context``, ``success``, …) by inheriting from this class.
-    """
-
-    time_out = DoneTerm(func=_time_out, time_out=True)
-    """Episode-length timeout — fires when the env's step counter reaches
-    ``max_episode_length``. ``time_out=True`` so rsl_rl bootstraps off it."""
-
-    abnormal = DoneTerm(func=abnormal_robot_state)
-    """Joint-velocity-limit watchdog. Catches diverged simulations."""
-
-
 class progress_context(ManagerTermBase):
     def __init__(self, cfg: DoneTermCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
@@ -206,25 +184,3 @@ class progress_context(ManagerTermBase):
 
 def success_termination(env: ManagerBasedRLEnv, context: str = "progress_context") -> torch.Tensor:
     return env.termination_manager.get_term_cfg(context).func.is_success
-
-
-def split_time_out(
-    env: ManagerBasedRLEnv,
-    short_episode_length_s: float = 2.0,
-    split_ratio: float = 0.5,
-) -> torch.Tensor:
-    """Timeout with a shorter episode length for the first ``split_ratio`` fraction of envs.
-
-    The first ``split_ratio * num_envs`` envs use ``short_episode_length_s`` as their
-    timeout. The remaining envs use the environment's default ``max_episode_length``.
-
-    Args:
-        short_episode_length_s: Episode length [s] for the short-horizon group.
-        split_ratio: Fraction of envs in the short-horizon group.
-    """
-    n_short = int(env.num_envs * split_ratio)
-    short_max_length = int(short_episode_length_s / env.step_dt)
-    result = env.episode_length_buf >= env.max_episode_length
-    result[:n_short] = env.episode_length_buf[:n_short] >= short_max_length
-
-    return result

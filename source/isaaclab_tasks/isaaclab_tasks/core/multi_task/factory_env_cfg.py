@@ -16,7 +16,7 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_tasks.core.multi_task.curriculum import SamplerCfg, UniformSamplingStrategyCfg
+from isaaclab_tasks.core.multi_task.utils import SamplerCfg, UniformSamplingStrategyCfg
 from isaaclab_tasks.utils import PresetCfg, preset
 
 from . import mdp
@@ -31,24 +31,11 @@ from .factory.factory_presets import (
 from .factory.factory_scenes_cfg import FactorySceneCfg
 from .factory.reset_env_cfg import RESET_STRATEGIES
 from .factory.robot_presets import GripperAsymContactPenaltyCfg, RobotActionsCfg
-from .mdp.terminations import BaseTerminationsCfg
 
 
 @configclass
 class FactoryObservationsCfg:
     """Observation specifications for Factory."""
-
-    @configclass
-    class SuccessEstimatorInputCfg(ObsGroup):
-        state = ObsTerm(
-            func=mdp.get_state, params={"reset_assets": ["nistboard", "fixed_asset", "held_asset", "robot"]}
-        )
-
-        time_left = ObsTerm(func=mdp.time_left)
-
-        def __post_init__(self):
-            self.enable_corruption = False
-            self.concatenate_terms = True
 
     @configclass
     class PolicyCfg(ObsGroup):
@@ -98,7 +85,6 @@ class FactoryObservationsCfg:
 
     policy: PolicyCfg = PolicyCfg()
     critic: PolicyCfg = PolicyCfg()
-    success: SuccessEstimatorInputCfg = SuccessEstimatorInputCfg()
 
 
 @configclass
@@ -122,9 +108,9 @@ class FactoryEventCfg:
         },
     )
 
-    # # Held-asset (nut) angular-instability fix: its small rotational inertia (~0.012 kg·m²) under the
-    # # stiff contact (ke=1e7) lets contact torque run the angular velocity away exponentially → NaN
-    # # (observed in the grasp_asset_in_air reset). Bump the diagonal inertia to damp it.
+    # (Octi): Held-asset angular-instability fix: its small rotational inertia (~0.012 kg·m²) under the
+    # stiff contact (ke=1e7) lets contact torque run the angular velocity away exponentially → NaN
+    # (observed in the grasp_asset_in_air reset). Bump the diagonal inertia to damp it.
     held_asset_inertia = EventTerm(
         func=mdp.randomize_rigid_body_inertia,
         mode="startup",
@@ -170,34 +156,8 @@ class FactoryEventCfg:
 
 
 @configclass
-class TimeoutRewardsCfg:
-    """Reward terms for the timeout-terminate formulation (success is not terminal)."""
-
-    action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-1e-4)
-    action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-1e-4)
-    joint_effort = RewTerm(
-        func=mdp.joint_torques_l2,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=JointEffortNamesCfg())},  # type:ignore
-        weight=-1e-4,
-    )
-    early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-0.01)
-    reach_reward = RewTerm(
-        func=mdp.reach_reward,
-        weight=0.1,
-        params={
-            "std": 1.0,
-            "held_asset_cfg": SceneEntityCfg("held_asset"),
-            "ee_cfg": SceneEntityCfg("robot", body_names=EndEffectorBodyCfg()),  # type:ignore
-        },
-    )
-    progress_reward_fine = RewTerm(func=mdp.progress_reward, weight=0.1, params={"std": 0.005})
-    success_reward = RewTerm(func=mdp.success_reward, weight=1.0)
-    bad_finger_contact: RewTerm | None = GripperAsymContactPenaltyCfg()  # type: ignore
-
-
-@configclass
-class SuccessRewardsCfg:
-    """Reward terms for the success-terminate formulation (success is terminal)."""
+class FactoryRewardsCfg:
+    """Reward terms for Factory. Success is terminal and carries the dominant weight."""
 
     action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-1e-4)
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-1e-4)
@@ -212,78 +172,47 @@ class SuccessRewardsCfg:
 
 
 @configclass
-class FactoryRewardsCfg(PresetCfg):
-    """Reward configuration preset for Factory tasks."""
+class FactoryTerminationsCfg:
+    """Termination terms for Factory. Reaching the assembled pose ends the episode."""
 
-    timeout_terminate: TimeoutRewardsCfg = TimeoutRewardsCfg()
-    success_terminate: SuccessRewardsCfg = SuccessRewardsCfg()
-    default: SuccessRewardsCfg = success_terminate
+    time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
+    oob = DoneTerm(
+        func=mdp.out_of_bound,
+        params={
+            "asset_cfg": SceneEntityCfg("held_asset"),
+            "in_bound_range": {"x": (-0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)},
+        },
+    )
 
-_PROGRESS_CONTEXT = DoneTerm(
-    func=mdp.progress_context,
-    params={
-        "success_threshold": 0.001,
-        "held_asset_cfg": SceneEntityCfg("held_asset"),
-        "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
-        "held_asset_offset": HeldAssetAlignOffsetCfg(),
-        "assembly_profile": FactoryAssemblyProfileCfg(),
-    },
-)
+    progress_context = DoneTerm(
+        func=mdp.progress_context,
+        params={
+            "success_threshold": 0.001,
+            "held_asset_cfg": SceneEntityCfg("held_asset"),
+            "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
+            "held_asset_offset": HeldAssetAlignOffsetCfg(),
+            "assembly_profile": FactoryAssemblyProfileCfg(),
+        },
+    )
 
-_OOB = DoneTerm(
-    func=mdp.out_of_bound,
-    params={
-        "asset_cfg": SceneEntityCfg("held_asset"),
-        "in_bound_range": {"x": (-0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)},
-    },
-)
-
-
-@configclass
-class TimeoutTerminationsCfg(BaseTerminationsCfg):
-    """Termination terms for the timeout-terminate formulation."""
-
-    oob = _OOB
-    progress_context = _PROGRESS_CONTEXT
     abnormal = DoneTerm(
         func=mdp.joint_vel_out_of_limit,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names="panda_joint[1-6]")},
     )
-    wrist_limit = DoneTerm(
-        func=mdp.joint_vel_out_of_manual_limit,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names="panda_joint7"), "max_velocity": 4.0},
-    )
 
-
-@configclass
-class SuccessTerminationsCfg(BaseTerminationsCfg):
-    """Termination terms for the success-terminate formulation."""
-
-    oob = _OOB
-    progress_context = _PROGRESS_CONTEXT
-    abnormal = DoneTerm(
-        func=mdp.joint_vel_out_of_limit,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names="panda_joint[1-6]")},
-    )
     wrist_limit = DoneTerm(
         func=mdp.joint_vel_out_of_manual_limit,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names="panda_joint7"), "max_velocity": 8.0},
     )
+
     success = DoneTerm(func=mdp.success_termination)
 
 
 @configclass
-class FactoryTerminationsCfg(PresetCfg):
-    """Termination configuration preset for Factory tasks."""
-
-    timeout_terminate: TimeoutTerminationsCfg = TimeoutTerminationsCfg()
-    success_terminate: SuccessTerminationsCfg = SuccessTerminationsCfg()
-    default: SuccessTerminationsCfg = success_terminate
-
-
-@configclass
 class FactoryCurriculumsCfg:
+    """Curriculum terms for Factory."""
+
     difficulty_scheduler = CurrTerm(
         func=mdp.DifficultyScheduler,
         params={
@@ -415,9 +344,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
         uniform = SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=1.0)], eps=0.0)
 
         reset = self.events.reset_strategies.params
-        # ``presets=accumulator`` (the default) wraps the scene reset in the state-bank
-        # accumulator; ``presets=choice`` uses the scene reset directly and has neither
-        # of these params.
+
         if "state_table_size" in reset:
             reset["state_table_size"] = 512
         if "sampling" in reset:

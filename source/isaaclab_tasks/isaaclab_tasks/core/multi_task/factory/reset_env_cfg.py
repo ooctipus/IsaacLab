@@ -8,10 +8,10 @@ from __future__ import annotations
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
 
-from isaaclab_tasks.core.multi_task.curriculum import (
+from isaaclab_tasks.core.lift.mdp.events_cfg import SuccessMonitorCfg
+from isaaclab_tasks.core.multi_task.utils import (
     BetaSamplingStrategyCfg,
     SamplerCfg,
-    SuccessMonitorCfg,
 )
 from isaaclab_tasks.utils import preset
 

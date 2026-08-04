@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -17,44 +16,6 @@ from newton import GeoType, ModelBuilder, ShapeFlags, solvers
 from pxr import Usd, UsdGeom, UsdPhysics
 
 from isaaclab.sim.utils.newton_model_utils import replace_newton_builder_shape_colors
-
-# USD ``physics:approximation`` token (lower case) -> Newton remeshing method.
-# Mirrors Newton's own importer mapping; ``none`` keeps the raw trimesh.
-_APPROXIMATION_TO_REMESHING_METHOD = {
-    "convexdecomposition": "coacd",
-    "convexhull": "convex_hull",
-    "boundingsphere": "bounding_sphere",
-    "boundingcube": "bounding_box",
-    "meshsimplification": "quadratic",
-}
-
-
-def _authored_collision_approximations(stage: Usd.Stage) -> dict[str, str]:
-    """Prim path -> authored ``physics:approximation`` token (lower case).
-
-    SDF collision prims are excluded: the attribute has no meaning on a shape with
-    ``NewtonSDFCollisionAPI`` applied (matching Newton's importer semantics).
-    """
-    authored: dict[str, str] = {}
-    for prim in stage.Traverse():
-        attr = UsdPhysics.MeshCollisionAPI(prim).GetApproximationAttr()
-        if attr and attr.HasAuthoredValue() and "NewtonSDFCollisionAPI" not in prim.GetAppliedSchemas():
-            authored[prim.GetPath().pathString] = str(attr.Get()).lower()
-    return authored
-
-
-def _apply_authored_approximations(builder: ModelBuilder, path_shape_map: dict, authored: dict[str, str]) -> set[int]:
-    """Remesh authored collision shapes (visual shapes preserved); return their indices."""
-    authored_shape_indices: set[int] = set()
-    for path, mode in authored.items():
-        index = path_shape_map.get(path)
-        if index is None:
-            continue
-        authored_shape_indices.add(index)
-        method = _APPROXIMATION_TO_REMESHING_METHOD.get(mode)
-        if method is not None:
-            builder.approximate_meshes(method, shape_indices=[index], keep_visual_shapes=True)
-    return authored_shape_indices
 
 
 def _has_visible_non_collision_geometry(stage: Usd.Stage, prim_path: str) -> bool:
@@ -83,10 +44,10 @@ def _restore_visible_colliders_without_visual_shapes(
     """Show viewport-visible colliders on bodies without separate visual shapes.
 
     Newton normally hides every collider when any visual-only shape exists in the
-    imported model. Isaac Lab procedural shapes and single-mesh assets use one
-    default-purpose USD geometry for both collision and visualization, so an unrelated
-    visual asset must not hide them. Guide-purpose collision geometry and colliders on
-    bodies with separate visual shapes remain hidden.
+    imported model. Isaac Lab procedural shapes use one default-purpose USD geometry
+    for both collision and visualization, so an unrelated visual asset must not hide
+    them. Imported collision meshes, guide-purpose collision geometry, and
+    colliders on bodies with separate visual shapes remain hidden.
 
     With ``load_visual_shapes=False`` the pass is skipped: Newton never hides a collider
     when the model holds no visual-only shapes, so every flag it would set is already set,
@@ -108,6 +69,7 @@ def _restore_visible_colliders_without_visual_shapes(
         body_index = builder.shape_body[index]
         if (
             not flags & ShapeFlags.COLLIDE_SHAPES
+            or builder.shape_type[index] == GeoType.MESH
             or body_index in bodies_with_visual_shapes
         ):
             continue
@@ -137,13 +99,10 @@ def build_source_builders(
 ) -> dict[str, ModelBuilder]:
     """Build one Newton builder for each clone source prim path.
 
-    Colliders follow the asset: the cloner approximates nothing on its own. USD-authored
-    ``physics:approximation`` modes are honored (applied after import so visual shapes are
-    preserved for visualization/rendering), and every other collider keeps the geometry it
-    was authored with -- USD defaults the token to ``none``, meaning "use the mesh as-is".
-
-    :class:`SolverMuJoCo` requires homogeneous worlds, which is likewise an asset-authoring
-    concern: author the same approximation on every per-world variant of a slot.
+    The cloner approximates nothing. Collision geometry is whatever the asset authored:
+    Newton's importer applies each shape's ``physics:approximation`` while importing, and
+    USD defaults that token to ``none``, meaning "use the mesh as-is". Change it where it
+    is authored -- the mesh-collision schema fragments on the spawner -- not here.
 
     Args:
         stage: USD stage containing the source prims.
@@ -155,11 +114,8 @@ def build_source_builders(
             USD parse time and memory that only pays off when the shapes are rendered
             or ray cast.
     """
-    authored = _authored_collision_approximations(stage)
     return {
-        source: _build_source_builder(
-            stage, source, create_builder, schema_resolvers, ignore_paths, authored, load_visual_shapes
-        )
+        source: _build_source_builder(stage, source, create_builder, schema_resolvers, ignore_paths, load_visual_shapes)
         for source in sources
     }
 
@@ -170,10 +126,9 @@ def _build_source_builder(
     create_builder: Callable[[], ModelBuilder],
     schema_resolvers: Sequence[Any],
     ignore_paths: Sequence[str] | None,
-    authored: dict[str, str],
     load_visual_shapes: bool = True,
 ) -> ModelBuilder:
-    """Build one source builder; an empty ``authored`` map drops the honored modes."""
+    """Build one source builder."""
     builder = create_builder()
     solvers.SolverMuJoCo.register_custom_attributes(builder)
     solvers.SolverKamino.register_custom_attributes(builder)
@@ -182,14 +137,13 @@ def _build_source_builder(
         root_path=source,
         load_visual_shapes=load_visual_shapes,
         hide_collision_shapes=True,
-        skip_mesh_approximation=True,
+        skip_mesh_approximation=False,
         schema_resolvers=schema_resolvers,
         ignore_paths=ignore_paths,
     )
     _restore_visible_colliders_without_visual_shapes(
         builder, stage, import_result["path_shape_map"], load_visual_shapes
     )
-    _apply_authored_approximations(builder, import_result["path_shape_map"], authored)
     replace_newton_builder_shape_colors(builder, stage)
     return builder
 

@@ -15,8 +15,6 @@ import warp as wp
 
 from isaaclab.utils.warp import convert_to_warp_mesh
 
-from isaaclab_tasks.core.utils import farthest_point_sampling
-
 from .rigid_object_hasher import RigidObjectHasher
 
 if TYPE_CHECKING:
@@ -24,7 +22,13 @@ if TYPE_CHECKING:
 
 
 def _gather_farthest_points(points: torch.Tensor, num_samples: int) -> torch.Tensor:
-    """Return the points chosen by :func:`farthest_point_sampling` instead of their indices.
+    """Select a spatially spread-out subset of each point set.
+
+    Starting from the first point of every set, repeatedly takes the candidate whose distance
+    to the already-selected points is largest. The greedy choice gives near-uniform coverage of
+    the input's spatial extent, which is what makes the returned cloud usable for the
+    signed-distance collision queries downstream. Starting deterministically keeps the result
+    reproducible without touching the global random state.
 
     Args:
         points: Candidate point sets [m], shape ``(B, N, D)``.
@@ -33,7 +37,21 @@ def _gather_farthest_points(points: torch.Tensor, num_samples: int) -> torch.Ten
     Returns:
         Selected points [m], shape ``(B, min(num_samples, N), D)``.
     """
-    indices = farthest_point_sampling(points, num_samples)
+    if points.ndim != 3:
+        raise ValueError(f"Expected points of shape (B, N, D), got {tuple(points.shape)}.")
+    num_sets, num_candidates, _ = points.shape
+    num_samples = min(num_samples, num_candidates)
+
+    indices = torch.empty(num_sets, num_samples, dtype=torch.long, device=points.device)
+    # squared distances suffice: the square root is monotonic and only the arg-maximum is read
+    min_sq_distance = torch.full((num_sets, num_candidates), torch.inf, dtype=points.dtype, device=points.device)
+    set_ids = torch.arange(num_sets, device=points.device)
+    selected = torch.zeros(num_sets, dtype=torch.long, device=points.device)
+    for i in range(num_samples):
+        indices[:, i] = selected
+        sq_distance = (points - points[set_ids, selected].unsqueeze(1)).pow(2).sum(dim=-1)
+        min_sq_distance = torch.minimum(min_sq_distance, sq_distance)
+        selected = min_sq_distance.argmax(dim=1)
     return torch.gather(points, 1, indices.unsqueeze(-1).expand(-1, -1, points.shape[-1]))
 
 

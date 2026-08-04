@@ -165,14 +165,13 @@ def test_env_cfg_to_dict_serialises(task_name: str) -> None:
         # now a sibling-package or has been renamed. Modules that pull in
         # Kit / Newton / USD must NOT be added here -- they segfault when
         # imported outside a launched Kit app.
-        "isaaclab_tasks.core.multi_task.curriculum.sampling",
-        "isaaclab_tasks.core.multi_task.curriculum.sampling.sampler",
-        "isaaclab_tasks.core.multi_task.curriculum.sampling.sampler_cfg",
-        "isaaclab_tasks.core.multi_task.curriculum.sampling.sampling_strategies",
-        "isaaclab_tasks.core.multi_task.curriculum.sampling.sampling_strategies_cfg",
-        "isaaclab_tasks.core.multi_task.curriculum.state_layout",
-        "isaaclab_tasks.core.multi_task.curriculum.success_monitor",
-        "isaaclab_tasks.core.multi_task.curriculum.reset_state",
+        "isaaclab_tasks.core.multi_task.utils.sampling",
+        "isaaclab_tasks.core.multi_task.utils.sampling.sampler",
+        "isaaclab_tasks.core.multi_task.utils.sampling.sampler_cfg",
+        "isaaclab_tasks.core.multi_task.utils.sampling.sampling_strategies",
+        "isaaclab_tasks.core.multi_task.utils.sampling.sampling_strategies_cfg",
+        "isaaclab_tasks.core.multi_task.utils.state_layout",
+        "isaaclab_tasks.core.multi_task.utils.reset_state",
         "isaaclab_tasks.core.multi_task.factory.assembly_profile",
         "isaaclab_tasks.core.multi_task.factory.assembly_profile_cfg",
     ],
