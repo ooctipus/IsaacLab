@@ -15,7 +15,7 @@ from isaaclab_tasks.core.multi_task.utils import (
 )
 from isaaclab_tasks.utils import preset
 
-from .. import mdp
+from . import mdp
 from .factory_presets import (
     EndEffectorBodyCfg,
     FactoryAssemblyProfileCfg,

@@ -20,7 +20,7 @@ from isaaclab_tasks.core.multi_task.utils import SamplerCfg, UniformSamplingStra
 from isaaclab_tasks.utils import PresetCfg, preset
 
 from . import mdp
-from .factory.factory_presets import (
+from .factory_presets import (
     EndEffectorBodyCfg,
     FactoryAssemblyProfileCfg,
     FixedAssetTipCfg,
@@ -28,9 +28,9 @@ from .factory.factory_presets import (
     HeldAssetTipCfg,
     JointEffortNamesCfg,
 )
-from .factory.factory_scenes_cfg import FactorySceneCfg
-from .factory.reset_env_cfg import RESET_STRATEGIES
-from .factory.robot_presets import GripperAsymContactPenaltyCfg, RobotActionsCfg
+from .factory_scenes_cfg import FactorySceneCfg
+from .reset_env_cfg import RESET_STRATEGIES
+from .robot_presets import GripperAsymContactPenaltyCfg, RobotActionsCfg
 
 
 @configclass

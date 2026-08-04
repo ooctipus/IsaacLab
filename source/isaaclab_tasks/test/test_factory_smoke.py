@@ -172,8 +172,8 @@ def test_env_cfg_to_dict_serialises(task_name: str) -> None:
         "isaaclab_tasks.core.multi_task.utils.sampling.sampling_strategies_cfg",
         "isaaclab_tasks.core.multi_task.utils.state_layout",
         "isaaclab_tasks.core.multi_task.utils.reset_state",
-        "isaaclab_tasks.core.multi_task.factory.assembly_profile",
-        "isaaclab_tasks.core.multi_task.factory.assembly_profile_cfg",
+        "isaaclab_tasks.core.multi_task.assembly_profile",
+        "isaaclab_tasks.core.multi_task.assembly_profile_cfg",
     ],
 )
 def test_relocated_module_imports(module_path: str) -> None:

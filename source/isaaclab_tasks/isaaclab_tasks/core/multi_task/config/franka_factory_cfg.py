@@ -15,7 +15,7 @@ from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.utils import preset
 
-from ... import mdp
+from .. import mdp
 from ..assembly_keypoints import PANDA_HAND
 from ..factory_assets_cfg import FRANKA_PANDA_NEWTON_CFG, FRANKA_PANDA_PHYSX_CFG
 from ..factory_presets import (

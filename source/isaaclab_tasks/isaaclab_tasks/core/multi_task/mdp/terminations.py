@@ -33,9 +33,9 @@ from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.managers import TerminationTermCfg as DoneTermCfg
 
-from ..factory.assembly_keypoints import Offset
-from ..factory.assembly_profile import AssemblyProfile
-from ..factory.assembly_profile_cfg import AssemblyProfileCfg
+from ..assembly_keypoints import Offset
+from ..assembly_profile import AssemblyProfile
+from ..assembly_profile_cfg import AssemblyProfileCfg
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject
