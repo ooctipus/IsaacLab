@@ -28,6 +28,7 @@ Example usage::
 
 import ast
 import functools
+import re
 import sys
 import warnings
 from collections import deque
@@ -220,6 +221,10 @@ def _is_walkable_cfg(cfg) -> bool:
     return hasattr(cfg, "__dataclass_fields__") or isinstance(cfg, (Mapping, list))
 
 
+def _is_leaf_preset(preset_obj: PresetCfg) -> bool:
+    return all(not _is_walkable_cfg(value) for value in _preset_fields(preset_obj).values())
+
+
 def _walk_cfg(cfg, path: str, on_preset: Callable) -> None:
     """Depth-first walk of a config tree, calling *on_preset(parent, key, obj, path)*
     for every :class:`PresetCfg` node.  Recurses through dataclass attrs, dicts,
@@ -359,6 +364,16 @@ def _resolve_active_presets(
     explicit = explicit or {}
     consumed_explicit = consumed_explicit if consumed_explicit is not None else set()
 
+    def explicit_preset_name(preset_obj: PresetCfg, path: str) -> str | None:
+        if path not in explicit:
+            return None
+        fields = _preset_fields(preset_obj)
+        name = _normalize_preset_name(explicit[path], set(fields))
+        if name in fields or not _is_leaf_preset(preset_obj):
+            consumed_explicit.add(path)
+            return explicit[path]
+        return None
+
     def resolve_chain(preset_obj: PresetCfg, path: str):
         seen: set[int] = set()
         val = preset_obj
@@ -372,15 +387,13 @@ def _resolve_active_presets(
                 val,
                 selected,
                 path=path,
-                explicit_name=explicit.get(path),
+                explicit_name=explicit_preset_name(val, path),
                 consumed_selected=consumed_selected,
                 typed_hits=typed_hits,
             )
         return val
 
     if isinstance(cfg, PresetCfg):
-        if root_path in explicit:
-            consumed_explicit.add(root_path)
         cfg = resolve_chain(cfg, root_path or "<root>")
 
     queue = deque([(root_path, cfg)])
@@ -391,8 +404,6 @@ def _resolve_active_presets(
         for key, val in _iter_cfg_items(obj):
             child_path = f"{path}.{key}" if path else str(key)
             if isinstance(val, PresetCfg):
-                if child_path in explicit:
-                    consumed_explicit.add(child_path)
                 resolved = resolve_chain(val, child_path or "<root>")
                 if isinstance(obj, list):
                     obj[int(key)] = resolved
@@ -702,8 +713,26 @@ def register_task(task_name: str, agent_entry: str, play_mode: bool = False) -> 
     cfg_dict = replace_slices_with_strings({"env": env_dict, "agent": agent_dict})
 
     # Register plain config (no groups) - Hydra only handles global scalars
-    ConfigStore.instance().store(name=task_name, node=OmegaConf.create(cfg_dict))
+    ConfigStore.instance().store(name=task_name, node=OmegaConf.create(_to_omegaconf_safe(cfg_dict)))
     return env_cfg, agent_cfg, hydra_args
+
+
+def _to_omegaconf_safe(value):
+    """Coerce values OmegaConf rejects into equivalents it accepts.
+
+    OmegaConf validates value types by exact match rather than :func:`isinstance`, so a ``str``
+    subclass is refused even though it is a string. Config trees carry such values -- e.g.
+    ``cloning_contexts`` holds :class:`~isaaclab.utils.string.ResolvableString` entries so a
+    ``module:Callable`` target can resolve lazily. Only the Hydra ``ConfigStore`` node is
+    rewritten; the returned config objects keep their original values.
+    """
+    if isinstance(value, dict):
+        return {k: _to_omegaconf_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_omegaconf_safe(v) for v in value]
+    if isinstance(value, str) and type(value) is not str:
+        return str(value)
+    return value
 
 
 def parse_overrides(args: list[str], presets: dict) -> tuple:
@@ -799,15 +828,81 @@ def _apply_preset_scalars(cfgs: dict, hydra_cfg: dict, preset_scalar: list) -> N
             _setattr(hydra_cfg, full_path, val)
 
 
+_INDEX_RE = re.compile(r"\[(-?\d+)\]")
+
+
+def _step(obj, key: str):
+    """Resolve one ``.``-separated path segment, supporting list indices.
+
+    The segment may contain ``[N]`` index suffixes (e.g. ``foo[0][2]``) and,
+    when ``obj`` is a list/tuple, may itself be a bare integer literal
+    (e.g. ``foo.3.bar``). Plain string segments are looked up as
+    :class:`Mapping` keys or attribute names.
+    """
+    indices: list[int] = []
+    while True:
+        m = _INDEX_RE.search(key)
+        if not m:
+            break
+        indices.append(int(m.group(1)))
+        key = key[: m.start()] + key[m.end() :]
+    if key:
+        if isinstance(obj, Mapping):
+            obj = obj[key]
+        elif isinstance(obj, (list, tuple)) and key.lstrip("-").isdigit():
+            obj = obj[int(key)]
+        else:
+            obj = getattr(obj, key)
+    for i in indices:
+        obj = obj[i]
+    return obj
+
+
 def _setattr(obj, path: str, val):
-    """Set nested attribute/key (e.g., "actions.arm_action.scale")."""
+    """Set nested attribute / dict key / list index.
+
+    Supports three addressing styles per ``.``-separated segment, in
+    addition to plain attribute / dict-key access:
+
+    * ``foo[3]``                — bracketed integer index (lists)
+    * ``foo.3.bar``             — bare integer segment (lists)
+    * ``foo[1][2]`` / nested    — chained bracket indices
+
+    Examples::
+
+        _setattr(cfg, "actions.arm_action.scale", 0.1)
+        _setattr(cfg, "extra_objectives.3.weight", 0.25)
+        _setattr(cfg, "extra_objectives[3].weight", 0.25)
+        _setattr(cfg, "extra_objectives[3]", new_obj_cfg)
+    """
     *parts, leaf = path.split(".")
     for p in parts:
-        obj = obj[p] if isinstance(obj, Mapping) else getattr(obj, p)
-    if isinstance(obj, dict):
-        obj[leaf] = val
-    else:
-        setattr(obj, leaf, val)
+        obj = _step(obj, p)
+    indices: list[int] = []
+    while True:
+        m = _INDEX_RE.search(leaf)
+        if not m:
+            break
+        indices.append(int(m.group(1)))
+        leaf = leaf[: m.start()] + leaf[m.end() :]
+    if not indices:
+        if isinstance(obj, dict):
+            obj[leaf] = val
+        elif isinstance(obj, list) and leaf.lstrip("-").isdigit():
+            obj[int(leaf)] = val
+        else:
+            setattr(obj, leaf, val)
+        return
+    if leaf:
+        if isinstance(obj, Mapping):
+            obj = obj[leaf]
+        elif isinstance(obj, (list, tuple)) and leaf.lstrip("-").isdigit():
+            obj = obj[int(leaf)]
+        else:
+            obj = getattr(obj, leaf)
+    for i in indices[:-1]:
+        obj = obj[i]
+    obj[indices[-1]] = val
 
 
 def _parse_val(s: str):

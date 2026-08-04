@@ -19,6 +19,7 @@ from pxr import Usd, UsdPhysics
 from isaaclab.sensors.joint_wrench import BaseJointWrenchSensor
 from isaaclab.sim.utils.queries import resolve_matching_prims_from_source
 
+from isaaclab_physx.cloner.clone_plan_paths import expand_clone_plan_path
 from isaaclab_physx.physics import PhysxManager as SimulationManager
 
 from .joint_wrench_sensor_data import JointWrenchSensorData

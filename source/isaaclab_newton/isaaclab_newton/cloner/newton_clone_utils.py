@@ -57,17 +57,6 @@ def _apply_authored_approximations(builder: ModelBuilder, path_shape_map: dict, 
     return authored_shape_indices
 
 
-def _unauthored_collision_mesh_shapes(builder: ModelBuilder, authored_shape_indices: set[int]) -> list[int]:
-    """Colliding mesh shapes not covered by an authored ``physics:approximation``."""
-    return [
-        index
-        for index, shape_type in enumerate(builder.shape_type)
-        if shape_type == GeoType.MESH
-        and (builder.shape_flags[index] & ShapeFlags.COLLIDE_SHAPES)
-        and index not in authored_shape_indices
-    ]
-
-
 def _has_visible_non_collision_geometry(stage: Usd.Stage, prim_path: str) -> bool:
     """Return whether a prim hierarchy contains visible geometry without collision."""
     root_prim = stage.GetPrimAtPath(prim_path)
@@ -94,10 +83,10 @@ def _restore_visible_colliders_without_visual_shapes(
     """Show viewport-visible colliders on bodies without separate visual shapes.
 
     Newton normally hides every collider when any visual-only shape exists in the
-    imported model. Isaac Lab procedural shapes use one default-purpose USD geometry
-    for both collision and visualization, so an unrelated visual asset must not hide
-    them. Imported collision meshes, guide-purpose collision geometry, and
-    colliders on bodies with separate visual shapes remain hidden.
+    imported model. Isaac Lab procedural shapes and single-mesh assets use one
+    default-purpose USD geometry for both collision and visualization, so an unrelated
+    visual asset must not hide them. Guide-purpose collision geometry and colliders on
+    bodies with separate visual shapes remain hidden.
 
     With ``load_visual_shapes=False`` the pass is skipped: Newton never hides a collider
     when the model holds no visual-only shapes, so every flag it would set is already set,
@@ -119,7 +108,6 @@ def _restore_visible_colliders_without_visual_shapes(
         body_index = builder.shape_body[index]
         if (
             not flags & ShapeFlags.COLLIDE_SHAPES
-            or builder.shape_type[index] == GeoType.MESH
             or body_index in bodies_with_visual_shapes
         ):
             continue
@@ -145,16 +133,17 @@ def build_source_builders(
     schema_resolvers: Sequence[Any],
     *,
     ignore_paths: Sequence[str] | None = None,
-    simplify_meshes: bool = True,
     load_visual_shapes: bool = True,
 ) -> dict[str, ModelBuilder]:
     """Build one Newton builder for each clone source prim path.
 
-    USD-authored ``physics:approximation`` modes are honored (applied after import so
-    visual shapes are preserved for visualization/rendering). Exception: when the
-    honored modes leave multiple sources with differing shape-type sequences (e.g.
-    heterogeneous asset variants), every mesh falls back to the uniform convex-hull
-    treatment, because :class:`SolverMuJoCo` requires homogeneous worlds.
+    Colliders follow the asset: the cloner approximates nothing on its own. USD-authored
+    ``physics:approximation`` modes are honored (applied after import so visual shapes are
+    preserved for visualization/rendering), and every other collider keeps the geometry it
+    was authored with -- USD defaults the token to ``none``, meaning "use the mesh as-is".
+
+    :class:`SolverMuJoCo` requires homogeneous worlds, which is likewise an asset-authoring
+    concern: author the same approximation on every per-world variant of a slot.
 
     Args:
         stage: USD stage containing the source prims.
@@ -162,43 +151,17 @@ def build_source_builders(
         create_builder: Factory returning a fresh :class:`ModelBuilder`.
         schema_resolvers: Schema resolvers forwarded to Newton's USD importer.
         ignore_paths: Prim paths skipped during import.
-        simplify_meshes: Whether to run convex-hull mesh approximation.
         load_visual_shapes: Whether to import visual-only geometry. Importing it costs
             USD parse time and memory that only pays off when the shapes are rendered
             or ray cast.
     """
     authored = _authored_collision_approximations(stage)
-    builders = {
+    return {
         source: _build_source_builder(
-            stage, source, create_builder, schema_resolvers, ignore_paths, simplify_meshes, authored, load_visual_shapes
+            stage, source, create_builder, schema_resolvers, ignore_paths, authored, load_visual_shapes
         )
         for source in sources
     }
-
-    if authored and len(builders) > 1:
-        shape_sequences = {tuple(int(t) for t in b.shape_type) for b in builders.values()}
-        if len(shape_sequences) > 1:
-            warnings.warn(
-                "Clone sources have differing collision shape sequences after honoring authored"
-                " physics:approximation modes, which SolverMuJoCo's homogeneous-worlds requirement"
-                " does not support. Falling back to uniform convex-hull approximation for all"
-                " collision meshes.",
-                stacklevel=2,
-            )
-            builders = {
-                source: _build_source_builder(
-                    stage,
-                    source,
-                    create_builder,
-                    schema_resolvers,
-                    ignore_paths,
-                    simplify_meshes,
-                    {},
-                    load_visual_shapes,
-                )
-                for source in sources
-            }
-    return builders
 
 
 def _build_source_builder(
@@ -207,11 +170,10 @@ def _build_source_builder(
     create_builder: Callable[[], ModelBuilder],
     schema_resolvers: Sequence[Any],
     ignore_paths: Sequence[str] | None,
-    simplify_meshes: bool,
     authored: dict[str, str],
     load_visual_shapes: bool = True,
 ) -> ModelBuilder:
-    """Build one source builder; an empty ``authored`` map restores hull-everything."""
+    """Build one source builder; an empty ``authored`` map drops the honored modes."""
     builder = create_builder()
     solvers.SolverMuJoCo.register_custom_attributes(builder)
     solvers.SolverKamino.register_custom_attributes(builder)
@@ -227,16 +189,7 @@ def _build_source_builder(
     _restore_visible_colliders_without_visual_shapes(
         builder, stage, import_result["path_shape_map"], load_visual_shapes
     )
-    if authored:
-        authored_shape_indices = _apply_authored_approximations(builder, import_result["path_shape_map"], authored)
-        if simplify_meshes:
-            builder.approximate_meshes(
-                "convex_hull",
-                shape_indices=_unauthored_collision_mesh_shapes(builder, authored_shape_indices),
-                keep_visual_shapes=True,
-            )
-    elif simplify_meshes:
-        builder.approximate_meshes("convex_hull", keep_visual_shapes=True)
+    _apply_authored_approximations(builder, import_result["path_shape_map"], authored)
     replace_newton_builder_shape_colors(builder, stage)
     return builder
 

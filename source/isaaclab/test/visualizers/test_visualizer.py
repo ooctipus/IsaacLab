@@ -63,6 +63,31 @@ def test_create_visualizer_rerun_import_error_recommends_uv_extra(monkeypatch):
     assert "pip install isaaclab_visualizers" not in str(exc_info.value)
 
 
+@pytest.mark.skipif(
+    not importlib.util.find_spec("isaaclab_visualizers"),
+    reason="isaaclab_visualizers not installed",
+)
+def test_kit_visualizer_cfg_defaults_to_viewport_camera():
+    from isaaclab_visualizers.kit import KitVisualizerCfg
+
+    cfg = KitVisualizerCfg()
+
+    assert cfg.cam_source == "prim_path"
+    assert cfg.cam_prim_path == "/OmniverseKit_Persp"
+
+
+@pytest.mark.skipif(
+    not importlib.util.find_spec("isaaclab_visualizers"),
+    reason="isaaclab_visualizers not installed",
+)
+def test_viser_visualizer_cfg_defaults_to_cfg_camera():
+    from isaaclab_visualizers.viser import ViserVisualizerCfg
+
+    cfg = ViserVisualizerCfg()
+
+    assert cfg.cam_source == "cfg"
+
+
 #
 # Base visualizer (env filtering, camera pose)
 #

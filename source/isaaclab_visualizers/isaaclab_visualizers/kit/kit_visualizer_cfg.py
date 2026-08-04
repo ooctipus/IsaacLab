@@ -18,6 +18,13 @@ class KitVisualizerCfg(VisualizerCfg):
     visualizer_type: str = "kit"
     """Type identifier for Kit visualizer."""
 
+    cam_prim_path: str = "/OmniverseKit_Persp"
+    """USD path to the Kit viewport camera when :attr:`cam_source` is ``"prim_path"``.
+
+    Kit visualizer defaults to the standard viewport camera instead of assuming the
+    scene contains a task-authored camera prim at ``/World/envs/env_0/Camera``.
+    """
+
     viewport_name: str | None = None
     """Name for a new viewport window when :attr:`create_viewport` is ``True``.
 
@@ -38,3 +45,8 @@ class KitVisualizerCfg(VisualizerCfg):
 
     window_height: int = 720
     """Viewport height in pixels (when :attr:`create_viewport` is ``True``)."""
+
+    def __post_init__(self) -> None:
+        """Normalize the inherited visualizer camera default for Kit viewports."""
+        if self.cam_prim_path == "/World/envs/env_0/Camera":
+            self.cam_prim_path = "/OmniverseKit_Persp"

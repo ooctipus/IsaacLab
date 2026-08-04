@@ -26,6 +26,7 @@
 **/*.sif
 docker/cluster/exports/
 docker/.container.cfg
+docker/.isaac-lab-host-cache.yaml
 
 # IDE
 **/.idea/
@@ -80,6 +81,13 @@ _build
 
 # Ruff cache
 **/.ruff_cache/
+
+# Dev-time files, generated stuff
+**/__*
+# ...but keep real source files whose names happen to start with `__`
+!**/__init__.py
+!**/__init__.pyi
+!**/__main__.py
 
 # Isaac Lab CI environments in native mode
 **/_isaaclab_install_ci_*

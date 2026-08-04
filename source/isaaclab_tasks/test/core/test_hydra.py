@@ -19,6 +19,7 @@ from isaaclab_tasks.utils import hydra as hydra_mod
 from isaaclab_tasks.utils.hydra import (
     PresetCfg,
     _format_unknown_presets_error,
+    _setattr,
     apply_overrides,
     collect_presets,
     parse_overrides,

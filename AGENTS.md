@@ -107,6 +107,9 @@ uv run isaaclab -f
 ## Changelog
 
 - **Do not edit `CHANGELOG.rst` or `config/extension.toml` directly.** Each PR adds a fragment file under `source/<package>/changelog.d/`; the changelog and version are compiled by the nightly CI workflow.
+- **Octi multi_task exception:** Do not create or update changelog fragments for
+  `source/isaaclab_tasks/isaaclab_tasks/manager_based/multi_task/` work unless
+  the user explicitly asks for one.
 - **Add one fragment per touched package.** Pick any short, unique slug for the filename — your branch name (with `/` replaced by `-`) is a good default. The filename suffix declares the bump tier; within a batch the highest tier wins for the package.
 
   | Filename | Effect |

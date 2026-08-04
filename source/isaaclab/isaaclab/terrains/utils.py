@@ -92,12 +92,6 @@ def create_prim_from_mesh(prim_path: str, mesh: trimesh.Trimesh, **kwargs):
         "Mesh",
         translation=kwargs.get("translation"),
         orientation=kwargs.get("orientation"),
-        attributes={
-            "points": mesh.vertices,
-            "faceVertexIndices": mesh.faces.flatten(),
-            "faceVertexCounts": np.asarray([3] * len(mesh.faces)),
-            "subdivisionScheme": "bilinear",
-        },
     )
     # apply collider properties
     collider_cfg = sim_utils.CollisionPropertiesCfg(collision_enabled=True)

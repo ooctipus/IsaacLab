@@ -7,7 +7,9 @@
 
 from __future__ import annotations
 
-from isaaclab.utils.configclass import configclass
+from typing import Literal
+
+from isaaclab.utils import configclass
 from isaaclab.visualizers.visualizer_cfg import VisualizerCfg
 
 
@@ -17,6 +19,13 @@ class ViserVisualizerCfg(VisualizerCfg):
 
     visualizer_type: str = "viser"
     """Type identifier for Viser visualizer."""
+
+    cam_source: Literal["cfg", "prim_path"] = "cfg"
+    """Camera source mode.
+
+    Viser defaults to the configured eye/look-at pose so it can start for scenes
+    that do not author a camera prim.
+    """
 
     port: int = 8080
     """Port of the local viser web server."""
@@ -47,3 +56,8 @@ class ViserVisualizerCfg(VisualizerCfg):
 
     record_to_viser: str | None = None
     """Path to save a .viser recording file. None = no recording."""
+
+    def __post_init__(self) -> None:
+        """Normalize inherited visualizer camera defaults for camera-less scenes."""
+        if self.cam_source == "prim_path" and self.cam_prim_path == "/World/envs/env_0/Camera":
+            self.cam_source = "cfg"

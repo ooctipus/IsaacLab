@@ -15,13 +15,11 @@ import time
 import gymnasium as gym
 import torch
 from packaging import version
-from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
 from isaaclab.app import add_launcher_args, launch_simulation
 from isaaclab.envs import DirectMARLEnvCfg, DirectRLEnvCfg, ManagerBasedRLEnvCfg
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
-from isaaclab.utils.seed import configure_seed
 from isaaclab.utils.string import list_intersection, string_to_callable
 
 from isaaclab_rl.entrypoints.backends import cli_args_rsl_rl as cli_args
@@ -105,6 +103,8 @@ installed_version = metadata.version("rsl-rl-lib")
 @hydra_task_config(args_cli.task, args_cli.agent, play_mode=not args_cli.train_env_cfg)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
     """Play with RSL-RL agent."""
+    from rsl_rl.runners import DistillationRunner, OnPolicyRunner
+
     with launch_simulation(env_cfg, args_cli):
         task_name = args_cli.task.split(":")[-1]
         train_task_name = task_name.replace("-Play", "")
@@ -152,11 +152,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         )
 
         if args_cli.video:
+            # Per-seed sub-directory so concurrent renders with different seeds
+            # don't clobber each other. Falls back to "play" when no seed is set.
+            _video_subdir = f"seed_{args_cli.seed}" if args_cli.seed is not None else "play"
             video_kwargs = {
-                "video_folder": os.path.join(log_dir, "videos", "play"),
+                "video_folder": os.path.join(log_dir, "videos", _video_subdir),
                 "step_trigger": lambda step: step == 0,
                 "video_length": args_cli.video_length,
                 "disable_logger": True,
+                "fps": 20,
             }
             print("[INFO] Recording videos during play.")
             print_dict(video_kwargs, nesting=4)

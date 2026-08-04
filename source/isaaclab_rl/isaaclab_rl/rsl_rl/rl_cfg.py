@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import MISSING
-from typing import Literal
+from typing import Any, Literal
 
 from isaaclab.utils.configclass import configclass
 
@@ -212,7 +212,16 @@ class RslRlPpoAlgorithmCfg:
     """
 
     share_cnn_encoders: bool = False
-    """Whether to share the CNN networks between actor and critic, in case CNNModels are used. Defaults to False."""
+    """Whether to share the CNN networks between actor and critic, in case CNNModels are used. Defaults to False.
+
+    When ``True``, actor and critic hold the *same* :class:`torch.nn.ModuleDict` of CNN encoders.
+    PPO additionally computes the encoder forward exactly once per minibatch and threads the
+    resulting features to both heads, halving the conv compute (the dominant cost of the PPO
+    update on CNN-encoded configurations). Mathematically identical to two separate forwards
+    through the shared module, since the same module on the same input produces the same
+    outputs — no user-facing flag for the compute-sharing path, it's automatic when the
+    encoder modules are shared.
+    """
 
     rnd_cfg: RslRlRndCfg | None = None
     """The RND configuration. Defaults to None, in which case RND is not used."""
@@ -229,6 +238,9 @@ class RslRlPpoAlgorithmCfg:
 @configclass
 class RslRlBaseRunnerCfg:
     """Base configuration of the runner."""
+
+    class_type: type[Any] | str = MISSING
+    """The runner class."""
 
     seed: int = 42
     """The seed for the experiment. Defaults to 42."""
@@ -278,6 +290,16 @@ class RslRlBaseRunnerCfg:
         This clipping is performed inside the :class:`RslRlVecEnvWrapper` wrapper.
     """
 
+    obs_storage_dtypes: dict[str, str] | None = None
+    """Optional per-key dtype overrides for the rollout-buffer observations storage.
+
+    Keys are observation names (e.g. ``"height_scan"``); values are torch dtype names
+    (e.g. ``"float16"``, ``"bfloat16"``). When set, the matching key is allocated in the
+    reduced-precision dtype in the rollout buffer and upcast back to the env-side dtype
+    when the storage yields mini-batches. This is intended to cut memory of large
+    image-like obs (e.g. CNN height-scans) without changing the policy's input precision.
+    """
+
     check_for_nan: bool = True
     """Whether to check for NaN values coming from the environment."""
 
@@ -294,6 +316,8 @@ class RslRlBaseRunnerCfg:
     then it is appended to the run directory's name, i.e. the logging directory's name will become
     ``{time-stamp}_{run_name}``.
     """
+    run_id: str | None = None
+    """The run ID (e.g. for Weights & Biases). This is the unique identifier for the run as set by the logger."""
 
     logger: Literal["tensorboard", "neptune", "wandb"] = "tensorboard"
     """The logger to use. Defaults to tensorboard."""
@@ -326,6 +350,9 @@ class RslRlBaseRunnerCfg:
 @configclass
 class RslRlOnPolicyRunnerCfg(RslRlBaseRunnerCfg):
     """Configuration of the runner for on-policy algorithms."""
+
+    class_type: type[Any] | str = "rsl_rl.runners:OnPolicyRunner"
+    """The runner class. Defaults to OnPolicyRunner."""
 
     class_name: str = "OnPolicyRunner"
     """The runner class name. Defaults to OnPolicyRunner."""
