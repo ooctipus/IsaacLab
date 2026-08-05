@@ -49,6 +49,7 @@ from .motion.data.source import MotionSourceCfg
 from .motion.data.sources import open_cmu_humenv_smpl_source, open_lafan_g1_source
 from .motion.data.sources.amass_smplh import open_amass_smplh_source
 from .motion.data.sources.lafan_bvh import open_lafan_bvh_source
+from .motion.data.sources.retarget_dump_v5 import CMU_RETARGET_DUMP_SOURCE, LAFAN_RETARGET_DUMP_SOURCE
 from .motion.mdp.commands.commands_cfg import (
     MotionAnalyticCoordinatesGenerateCfg,
     MotionAnalyticFamilyCfg,
@@ -585,9 +586,8 @@ class MotionSourcesCfg(PresetCfg):
         ),
     )
 
-    # BFM campaign 2026-08-05 (bfm-env-20260805) control arms: clones of the two oracle
-    # sources so the original corpora can serve as A/B CONTROL training arms via explicit
-    # tokens only; oracle registrations and the builder's oracle refusal stay untouched.
+    # BFM campaign (bfm-env-20260805) A/B CONTROL arms: explicit-token clones of the two
+    # oracle sources; oracle registrations and the builder's oracle refusal stay untouched.
     humenv_cmu_control = MotionSourceCfg(
         identifier="cmu_humenv_smpl",
         purpose="training-control",
@@ -642,6 +642,9 @@ class MotionSourcesCfg(PresetCfg):
             frame_count=264_705,
         ),
     )
+
+    cmu_retarget = CMU_RETARGET_DUMP_SOURCE  # bfm-converter-20260805 our-data arms; pins live with the decoder
+    lafan_retarget = LAFAN_RETARGET_DUMP_SOURCE
 
 
 @configclass
