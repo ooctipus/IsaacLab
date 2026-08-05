@@ -57,6 +57,22 @@ _PROFILE_ENVIRONMENT_AXES = {
             "randomization_physics_observation_pose_push",
         )
     ),
+    # bfm-converter-20260805 campaign profiles: identical semantics with the
+    # v5-dump data arms selected by the retarget source tokens.
+    "smpl_cmu_retarget": frozenset(
+        ("smpl", "cmu_retarget", "newton_mjwarp", "timing_sim450_control30_horizon300", "sampling_source_rows")
+    ),
+    "g1_lafan_retarget": frozenset(
+        (
+            "g1",
+            "lafan_retarget",
+            "physx",
+            "timing_sim200_control50_horizon501",
+            "sampling_clip_time",
+            "evidence_physical_auxiliary",
+            "randomization_physics_observation_pose_push",
+        )
+    ),
 }
 _PROFILE_RUNNER_AXES = {
     "smpl_cmu": frozenset(
@@ -104,6 +120,9 @@ _PROFILE_RUNNER_AXES = {
         )
     ),
 }
+# bfm-converter-20260805: the data arms share the base learners exactly.
+_PROFILE_RUNNER_AXES["smpl_cmu_retarget"] = _PROFILE_RUNNER_AXES["smpl_cmu"]
+_PROFILE_RUNNER_AXES["g1_lafan_retarget"] = _PROFILE_RUNNER_AXES["g1_lafan"]
 _SEMANTIC_CONFIGURATION_AXES = (
     "actions",
     "commands",
@@ -311,8 +330,18 @@ def _native_skeleton_module(source_cfg: object) -> str:
 
     bfm-env-20260805 campaign patch: HEAD removed MotionSourceCfg.skeleton_factory;
     native decoders own their skeleton in a sibling ``*_coordinates`` module.
+    bfm-converter-20260805: the v5-dump decoder reuses the packaged exact-route
+    skeleton contracts verbatim; the reused coordinates module is the skeleton owner.
     """
-    module_name = f"{source_cfg.open_source.__module__}_coordinates"
+    decoder_module = source_cfg.open_source.__module__
+    if decoder_module.endswith(".retarget_dump_v5"):
+        prefix = decoder_module.rsplit(".", 1)[0]
+        module_name = {
+            "cmu_smpl_retarget_dump_v5": f"{prefix}.cmu_humenv_smpl_coordinates",
+            "lafan_g1_retarget_dump_v5": f"{prefix}.lafan_g1_29dof_coordinates",
+        }[source_cfg.identifier]
+    else:
+        module_name = f"{decoder_module}_coordinates"
     _module_source_path(module_name)
     return module_name
 
@@ -325,8 +354,8 @@ def _python_sources(
 ) -> dict[str, str]:
     """Hash the explicit source owners of construction, reset, step, and capture."""
     modules = list(_COMMON_MODULES)
-    modules.extend(_G1_MODULES if preset in ("g1_lafan", "g1_cmu") else _SMPL_MODULES)
-    modules.extend(_PHYSX_MODULES if preset in ("g1_lafan", "g1_cmu") else _NEWTON_MJWARP_MODULES)
+    modules.extend(_G1_MODULES if preset in ("g1_lafan", "g1_cmu", "g1_lafan_retarget") else _SMPL_MODULES)
+    modules.extend(_PHYSX_MODULES if preset in ("g1_lafan", "g1_cmu", "g1_lafan_retarget") else _NEWTON_MJWARP_MODULES)
     modules.extend((importer_type.__module__, frame_builder_factory.__module__, frame_builder_type.__module__))
     names = tuple(sorted(set(modules)))
     sources = {name: _sha256(_module_source_path(name)) for name in names}
@@ -342,7 +371,7 @@ def _composition_python_sources(
 ) -> dict[str, str]:
     """Hash only code that converts declared source rows into target-robot facts."""
     modules = list(_COMPOSITION_COMMON_MODULES)
-    if preset in ("g1_lafan", "g1_cmu"):
+    if preset in ("g1_lafan", "g1_cmu", "g1_lafan_retarget"):
         modules.extend(_G1_MODULES)
     else:
         modules.extend(
@@ -405,7 +434,7 @@ def _simulation_robot_assets(robot_cfg: object) -> dict[str, str]:
 
 def _reference_assets(preset: str, reference_artifact_root: str | Path | None) -> dict[str, str]:
     """Hash the exact reference MJCF used to construct trajectory frames."""
-    if preset == "smpl_cmu":
+    if preset in ("smpl_cmu", "smpl_cmu_retarget"):
         from isaaclab_assets.robots.smpl.smpl_constants import SMPL_HUMENV_MJCF_PATH
 
         path = Path(SMPL_HUMENV_MJCF_PATH).resolve()
@@ -509,7 +538,7 @@ def _isaac_sim_build_identity() -> dict[str, str]:
 
 def _runtime_dependencies(preset: str) -> dict[str, object]:
     """Return build identity for the external runtime that executes one preset."""
-    if preset not in ("smpl_cmu", "g1_lafan", "g1_cmu"):
+    if preset not in ("smpl_cmu", "g1_lafan", "g1_cmu", "smpl_cmu_retarget", "g1_lafan_retarget"):
         raise ValueError(f"Unsupported motion dependency preset: {preset!r}.")
 
     import newton
@@ -536,7 +565,7 @@ def _runtime_dependencies(preset: str) -> dict[str, object]:
         import joblib
 
         dependencies["joblib"] = _runtime_package_identity(joblib, "joblib")
-    if preset == "smpl_cmu":
+    if preset in ("smpl_cmu", "smpl_cmu_retarget"):
         import mujoco
         import mujoco_warp
         from newton.solvers import SolverMuJoCo
@@ -563,7 +592,7 @@ def motion_composition_runtime_dependencies(preset: str) -> dict[str, object]:
     Returns:
         Exact package and concrete Newton MJCF-loader identities.
     """
-    if preset not in ("smpl_cmu", "g1_lafan", "g1_cmu"):
+    if preset not in ("smpl_cmu", "g1_lafan", "g1_cmu", "smpl_cmu_retarget", "g1_lafan_retarget"):
         raise ValueError(f"Unsupported motion dependency preset: {preset!r}.")
 
     import newton
@@ -888,15 +917,27 @@ def _validate_direct_dependency_types(preset: str, importer_type: type, frame_bu
     """Require the importer and builder selected by one resolved preset."""
     # bfm-env-20260805 campaign patch: HEAD renamed the frame builders and unified
     # the two G1 builders into one G1FrameBuilder.
-    from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClips, LafanG1JoblibClips
+    from isaaclab_tasks.core.multi_task.motion.data.sources import (
+        CmuHumEnvSmplClips,
+        LafanG1JoblibClips,
+        RetargetDumpV5Clips,
+    )
     from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1FrameBuilder
     from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplFrameBuilder
 
-    expected_importer = LafanG1JoblibClips if preset == "g1_lafan" else CmuHumEnvSmplClips
+    expected_importer = {
+        "smpl_cmu": CmuHumEnvSmplClips,
+        "g1_lafan": LafanG1JoblibClips,
+        "g1_cmu": CmuHumEnvSmplClips,
+        "smpl_cmu_retarget": RetargetDumpV5Clips,
+        "g1_lafan_retarget": RetargetDumpV5Clips,
+    }[preset]
     expected_builder = {
         "smpl_cmu": SmplFrameBuilder,
         "g1_lafan": G1FrameBuilder,
         "g1_cmu": G1FrameBuilder,
+        "smpl_cmu_retarget": SmplFrameBuilder,
+        "g1_lafan_retarget": G1FrameBuilder,
     }[preset]
     if importer_type is not expected_importer or frame_builder_type is not expected_builder:
         raise ValueError("Motion importer or trajectory-builder type differs from the selected direct axes.")
@@ -928,7 +969,7 @@ def motion_composition_dependency_identity(
     Returns:
         Closed dependency identity for pure source-to-target composition.
     """
-    if preset not in ("smpl_cmu", "g1_lafan", "g1_cmu"):
+    if preset not in ("smpl_cmu", "g1_lafan", "g1_cmu", "smpl_cmu_retarget", "g1_lafan_retarget"):
         raise ValueError(f"Unsupported motion dependency preset: {preset!r}.")
     if hasattr(cfg, "motion"):
         raise ValueError("Motion evidence requires resolved direct axes, not an aggregate motion config.")
@@ -964,7 +1005,7 @@ def motion_environment_dependency_identity(
     reference_artifact_root: str | Path | None = None,
 ) -> dict[str, object]:
     """Return one broad host-independent identity for every motion collector."""
-    if preset not in ("smpl_cmu", "g1_lafan", "g1_cmu"):
+    if preset not in ("smpl_cmu", "g1_lafan", "g1_cmu", "smpl_cmu_retarget", "g1_lafan_retarget"):
         raise ValueError(f"Unsupported motion dependency preset: {preset!r}.")
     if hasattr(cfg, "motion"):
         raise ValueError("Motion evidence requires resolved direct axes, not an aggregate motion config.")

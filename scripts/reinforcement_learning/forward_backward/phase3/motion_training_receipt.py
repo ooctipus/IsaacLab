@@ -33,9 +33,12 @@ _FREEZE_SCHEMA = "forward_backward_phase3f_identity_freeze_v1"
 _LAUNCH_SCHEMA = "forward_backward_phase3f_motion_training_launch_v1"
 _COMPLETE_SCHEMA = "forward_backward_phase3f_motion_training_complete_v1"
 _VALIDATION_SCHEMA = "forward_backward_phase3f_motion_training_validation_v1"
-_CONTRACT_SCHEMA = "forward_backward_phase3_motion_training_smoke_contract_v2"
-_CONTRACT = Path(__file__).parent / "fixtures" / "motion_training_smoke_contract_v2.json"
-_NATIVE_PRESETS = frozenset({"smpl_cmu", "g1_lafan"})
+# bfm-converter-20260805: v3 contract carries the two original-data control
+# profiles plus the two v5-dump data-arm profiles so code and data changes stay
+# unconfounded at one code state.
+_CONTRACT_SCHEMA = "forward_backward_phase3_motion_training_smoke_contract_v3"
+_CONTRACT = Path(__file__).parent / "fixtures" / "motion_training_smoke_contract_v3.json"
+_NATIVE_PRESETS = frozenset({"smpl_cmu", "g1_lafan", "smpl_cmu_retarget", "g1_lafan_retarget"})
 _DERIVED_PROFILE_FIELDS = frozenset({"closed_input_identity", "environment_semantic_sha256"})
 
 
@@ -766,6 +769,10 @@ def _preset(env_cfg: object) -> str:
         source = "cmu"
     elif source_id == "lafan_g1_29dof":
         source = "lafan"
+    elif source_id == "cmu_smpl_retarget_dump_v5":
+        source = "cmu_retarget"
+    elif source_id == "lafan_g1_retarget_dump_v5":
+        source = "lafan_retarget"
     else:
         raise ValueError(f"Unsupported Phase 3F motion source: {source_id!r}.")
 
@@ -783,6 +790,8 @@ def _preset(env_cfg: object) -> str:
     native_profiles = {
         ("smpl", "cmu", "newton_mjwarp", 1.0 / 450.0, 15, 300, "source_frames"): "smpl_cmu",
         ("g1", "lafan", "physx", 1.0 / 200.0, 4, 501, "clip_time_ranges"): "g1_lafan",
+        ("smpl", "cmu_retarget", "newton_mjwarp", 1.0 / 450.0, 15, 300, "source_frames"): "smpl_cmu_retarget",
+        ("g1", "lafan_retarget", "physx", 1.0 / 200.0, 4, 501, "clip_time_ranges"): "g1_lafan_retarget",
     }
     if semantics not in native_profiles:
         raise ValueError(f"Phase 3F has no native reproduction contract for resolved semantics {semantics!r}.")
@@ -793,12 +802,20 @@ def _native_types(preset: str) -> tuple[type, type]:
     # bfm-env-20260805 campaign patch: frame builders were renamed at HEAD
     # (G1PoseFrameBuilder -> G1FrameBuilder, SmplGeneralizedCoordinateFrameBuilder
     # -> SmplFrameBuilder); the receipt harness must name the live classes.
-    from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClips, LafanG1JoblibClips
+    from isaaclab_tasks.core.multi_task.motion.data.sources import (
+        CmuHumEnvSmplClips,
+        LafanG1JoblibClips,
+        RetargetDumpV5Clips,
+    )
     from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1FrameBuilder
     from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplFrameBuilder
 
     if preset == "smpl_cmu":
         return CmuHumEnvSmplClips, SmplFrameBuilder
+    if preset == "smpl_cmu_retarget":
+        return RetargetDumpV5Clips, SmplFrameBuilder
+    if preset == "g1_lafan_retarget":
+        return RetargetDumpV5Clips, G1FrameBuilder
     return LafanG1JoblibClips, G1FrameBuilder
 
 
