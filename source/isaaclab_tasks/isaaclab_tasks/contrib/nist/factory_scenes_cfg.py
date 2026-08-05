@@ -45,6 +45,24 @@ class FactorySceneBase(InteractiveSceneCfg):
 
 
 @configclass
+class NutThreadM4SceneCfg(FactorySceneBase):
+    fixed_asset: RigidObjectCfg = assets.BOLT_M4_CFG
+    held_asset: RigidObjectCfg = assets.NUT_M4_CFG
+
+
+@configclass
+class NutThreadM8SceneCfg(FactorySceneBase):
+    fixed_asset: RigidObjectCfg = assets.BOLT_M8_CFG
+    held_asset: RigidObjectCfg = assets.NUT_M8_CFG
+
+
+@configclass
+class NutThreadM12SceneCfg(FactorySceneBase):
+    fixed_asset: RigidObjectCfg = assets.BOLT_M12_CFG
+    held_asset: RigidObjectCfg = assets.NUT_M12_CFG
+
+
+@configclass
 class NutThreadM16SceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.BOLT_M16_CFG
     held_asset: RigidObjectCfg = assets.NUT_M16_CFG
@@ -143,9 +161,43 @@ class PegInsert16MMSceneCfg(FactorySceneBase):
 
 
 @configclass
+class ConnectorUSBASceneCfg(FactorySceneBase):
+    fixed_asset: RigidObjectCfg = assets.USBA_SOCKET_CFG
+    held_asset: RigidObjectCfg = assets.USBA_PLUG_CFG
+
+
+@configclass
+class ConnectorWaterproofSceneCfg(FactorySceneBase):
+    fixed_asset: RigidObjectCfg = assets.WATERPROOF_SOCKET_CFG
+    held_asset: RigidObjectCfg = assets.WATERPROOF_PLUG_CFG
+
+
+@configclass
+class ConnectorBNCSceneCfg(FactorySceneBase):
+    fixed_asset: RigidObjectCfg = assets.BNC_SOCKET_CFG
+    held_asset: RigidObjectCfg = assets.BNC_PLUG_CFG
+
+
+@configclass
+class ConnectorDSUBSceneCfg(FactorySceneBase):
+    fixed_asset: RigidObjectCfg = assets.DSUB_SOCKET_CFG
+    held_asset: RigidObjectCfg = assets.DSUB_PLUG_CFG
+
+
+@configclass
+class ConnectorRJ45SceneCfg(FactorySceneBase):
+    fixed_asset: RigidObjectCfg = assets.RJ45_SOCKET_CFG
+    held_asset: RigidObjectCfg = assets.RJ45_PLUG_CFG
+
+
+@configclass
 class FactorySceneCfg(PresetCfg):
     """Task scene preset — resolves to the complete scene for the active task."""
 
+    # Nut threading
+    nut_thread_m4: NutThreadM4SceneCfg = NutThreadM4SceneCfg(env_spacing=2.0)
+    nut_thread_m8: NutThreadM8SceneCfg = NutThreadM8SceneCfg(env_spacing=2.0)
+    nut_thread_m12: NutThreadM12SceneCfg = NutThreadM12SceneCfg(env_spacing=2.0)
     nut_thread_m16: NutThreadM16SceneCfg = NutThreadM16SceneCfg(env_spacing=2.0)
 
     # Gear mesh
@@ -164,5 +216,12 @@ class FactorySceneCfg(PresetCfg):
     peg_insert_8mm: PegInsert8MMSceneCfg = PegInsert8MMSceneCfg(env_spacing=2.0)
     peg_insert_12mm: PegInsert12MMSceneCfg = PegInsert12MMSceneCfg(env_spacing=2.0)
     peg_insert_16mm: PegInsert16MMSceneCfg = PegInsert16MMSceneCfg(env_spacing=2.0)
+
+    # Connector insert
+    usba: ConnectorUSBASceneCfg = ConnectorUSBASceneCfg(env_spacing=2.0)
+    waterproof: ConnectorWaterproofSceneCfg = ConnectorWaterproofSceneCfg(env_spacing=2.0)
+    bnc: ConnectorBNCSceneCfg = ConnectorBNCSceneCfg(env_spacing=2.0)
+    dsub: ConnectorDSUBSceneCfg = ConnectorDSUBSceneCfg(env_spacing=2.0)
+    rj45: ConnectorRJ45SceneCfg = ConnectorRJ45SceneCfg(env_spacing=2.0)
 
     default: NutThreadM16SceneCfg = nut_thread_m16

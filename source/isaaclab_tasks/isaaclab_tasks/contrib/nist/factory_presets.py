@@ -8,11 +8,12 @@
 Each preset maps task variant names to the corresponding keypoint-derived values.
 The ``default`` field selects which variant is active when no CLI override is given.
 
-Task categories (12 total):
-  - ``nut_thread_m16`` — nut threading
+Task categories (21 total):
+  - ``nut_thread_m{4,8,12,16}`` — nut threading
   - ``gear_mesh_{small,medium,large}`` — gear meshing
   - ``rod_insert_{4,8,12,16}mm`` — round rod insertion
   - ``peg_insert_{4,8,12,16}mm`` — rectangular peg insertion
+  - ``{usba,waterproof,bnc,dsub,rj45}`` — connector insertion
 
 Robot-specific presets (``EndEffectorBodyCfg``, ``JointEffortNamesCfg``) map robot
 variant names (``franka``) to body/joint name strings.
@@ -31,6 +32,7 @@ from . import assembly_keypoints as kpts
 from .assembly_profile_cfg import (
     AssemblyProfileCfg,
     DiscreteYawCfg,
+    EndPointsSegmentCfg,
     IncrementalSegmentCfg,
     UniformPoseNoiseCfg,
     UniformYawCfg,
@@ -108,6 +110,10 @@ class JointEffortNamesCfg(PresetCfg):
 class FixedAssetMapCfg(PresetCfg):
     """Mapping from scene entity key to :class:`NistBoardKeyPointsCfg` attribute name."""
 
+    # Nut threading
+    nut_thread_m4: dict = dict(fixed_asset="bolt_m4")
+    nut_thread_m8: dict = dict(fixed_asset="bolt_m8")
+    nut_thread_m12: dict = dict(fixed_asset="bolt_m12")
     nut_thread_m16: dict = dict(fixed_asset="bolt_m16")
 
     # Gear mesh — non-held gears are placed on the board as extra scene entities
@@ -127,11 +133,22 @@ class FixedAssetMapCfg(PresetCfg):
     peg_insert_12mm: dict = dict(fixed_asset="rectangular_hole_12mm")
     peg_insert_16mm: dict = dict(fixed_asset="rectangular_hole_16mm")
 
+    # Connector insert
+    usba: dict = dict(fixed_asset="usba_socket")
+    waterproof: dict = dict(fixed_asset="waterproof_socket")
+    bnc: dict = dict(fixed_asset="bnc_socket")
+    dsub: dict = dict(fixed_asset="dsub_socket")
+    rj45: dict = dict(fixed_asset="rj45_socket")
+
     default: dict = nut_thread_m16
 
 
 @configclass
 class HeldAssetTipCfg(PresetCfg):
+    # Nut threading — tip of the bolt shaft where the nut enters
+    nut_thread_m4: kpts.Offset = kpts.BOLT_M4.bolt_tip_offset
+    nut_thread_m8: kpts.Offset = kpts.BOLT_M8.bolt_tip_offset
+    nut_thread_m12: kpts.Offset = kpts.BOLT_M12.bolt_tip_offset
     nut_thread_m16: kpts.Offset = kpts.BOLT_M16.bolt_tip_offset
 
     # Gear mesh — tip of the gear shaft on the base
@@ -151,11 +168,22 @@ class HeldAssetTipCfg(PresetCfg):
     peg_insert_12mm: kpts.Offset = kpts.RECTANGULAR_HOLE_12MM.hole_tip_offset
     peg_insert_16mm: kpts.Offset = kpts.RECTANGULAR_HOLE_16MM.hole_tip_offset
 
+    # Connector insert
+    usba: kpts.Offset = kpts.USB_A_SOCKET.entry
+    waterproof: kpts.Offset = kpts.WATERPROOF_SOCKET.entry
+    bnc: kpts.Offset = kpts.BNC_SOCKET.entry
+    dsub: kpts.Offset = kpts.D_SUB_SOCKET.entry
+    rj45: kpts.Offset = kpts.RJ45_SOCKET.entry
+
     default: kpts.Offset = nut_thread_m16
 
 
 @configclass
 class FixedAssetTipCfg(PresetCfg):
+    # Nut threading
+    nut_thread_m4: kpts.Offset = kpts.BOLT_M4.bolt_tip_offset
+    nut_thread_m8: kpts.Offset = kpts.BOLT_M8.bolt_tip_offset
+    nut_thread_m12: kpts.Offset = kpts.BOLT_M12.bolt_tip_offset
     nut_thread_m16: kpts.Offset = kpts.BOLT_M16.bolt_tip_offset
 
     # Gear mesh
@@ -175,6 +203,13 @@ class FixedAssetTipCfg(PresetCfg):
     peg_insert_12mm: kpts.Offset = kpts.RECTANGULAR_HOLE_12MM.hole_tip_offset
     peg_insert_16mm: kpts.Offset = kpts.RECTANGULAR_HOLE_16MM.hole_tip_offset
 
+    # Connector insert
+    usba: kpts.Offset = kpts.USB_A_SOCKET.entry
+    waterproof: kpts.Offset = kpts.WATERPROOF_SOCKET.entry
+    bnc: kpts.Offset = kpts.BNC_SOCKET.plug_assembled
+    dsub: kpts.Offset = kpts.D_SUB_SOCKET.entry
+    rj45: kpts.Offset = kpts.RJ45_SOCKET.entry
+
     default: kpts.Offset = nut_thread_m16
 
 
@@ -191,6 +226,34 @@ class FactoryAssemblyProfileCfg(PresetCfg):
     path geometry (segment endpoints, screw ratios, start noise).
     """
 
+    # Nut threading — IncrementalSegment with screw pitch
+    nut_thread_m4: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                start_pose=kpts.BOLT_M4.fully_screwed_nut_offset,
+                distance=_dist(kpts.BOLT_M4.fully_screwed_nut_offset, kpts.BOLT_M4.bolt_tip_offset),
+                ratio=(0.0, 0.0, kpts.NUT_M4.screw_ratio / (2.0 * math.pi)),
+            )
+        ]
+    )
+    nut_thread_m8: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                start_pose=kpts.BOLT_M8.fully_screwed_nut_offset,
+                distance=_dist(kpts.BOLT_M8.fully_screwed_nut_offset, kpts.BOLT_M8.bolt_tip_offset),
+                ratio=(0.0, 0.0, kpts.NUT_M8.screw_ratio / (2.0 * math.pi)),
+            )
+        ]
+    )
+    nut_thread_m12: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                start_pose=kpts.BOLT_M12.fully_screwed_nut_offset,
+                distance=_dist(kpts.BOLT_M12.fully_screwed_nut_offset, kpts.BOLT_M12.bolt_tip_offset),
+                ratio=(0.0, 0.0, kpts.NUT_M12.screw_ratio / (2.0 * math.pi)),
+            )
+        ]
+    )
     nut_thread_m16: AssemblyProfileCfg = AssemblyProfileCfg(
         segments=[
             IncrementalSegmentCfg(
@@ -367,11 +430,66 @@ class FactoryAssemblyProfileCfg(PresetCfg):
         ]
     )
 
+    # Connector insert — pure linear, no yaw noise (keyed)
+    usba: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                start_pose=kpts.USB_A_SOCKET.plug_assembled,
+                distance=_dist(kpts.USB_A_SOCKET.plug_assembled, kpts.USB_A_SOCKET.entry),
+            )
+        ]
+    )
+    waterproof: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                start_pose=kpts.WATERPROOF_SOCKET.plug_assembled,
+                distance=_dist(kpts.WATERPROOF_SOCKET.plug_assembled, kpts.WATERPROOF_SOCKET.entry),
+            )
+        ]
+    )
+    dsub: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                start_pose=kpts.D_SUB_SOCKET.plug_assembled,
+                distance=_dist(kpts.D_SUB_SOCKET.plug_assembled, kpts.D_SUB_SOCKET.entry),
+            )
+        ]
+    )
+    rj45: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            IncrementalSegmentCfg(
+                start_pose=kpts.RJ45_SOCKET.plug_assembled,
+                distance=_dist(kpts.RJ45_SOCKET.plug_assembled, kpts.RJ45_SOCKET.entry),
+            )
+        ]
+    )
+
+    # BNC — two-segment: linear insertion then 90-deg bayonet twist
+    bnc: AssemblyProfileCfg = AssemblyProfileCfg(
+        segments=[
+            EndPointsSegmentCfg(
+                fraction=(0.0, 0.4),
+                start_pose=kpts.BNC_SOCKET.plug_assembled,
+                end_pose=kpts.BNC_SOCKET.insert_start,
+                revolutions=(0.0, 0.0, 0.25),
+            ),
+            EndPointsSegmentCfg(
+                fraction=(0.4, 1.0),
+                start_pose=kpts.BNC_SOCKET.insert_start,
+                end_pose=kpts.BNC_SOCKET.entry,
+            ),
+        ]
+    )
+
     default: AssemblyProfileCfg = nut_thread_m16
 
 
 @configclass
 class HeldAssetAlignOffsetCfg(PresetCfg):
+    # Nut threading — bottom of nut center axis for alignment
+    nut_thread_m4: kpts.Offset = kpts.NUT_M4.center_axis_bottom
+    nut_thread_m8: kpts.Offset = kpts.NUT_M8.center_axis_bottom
+    nut_thread_m12: kpts.Offset = kpts.NUT_M12.center_axis_bottom
     nut_thread_m16: kpts.Offset = kpts.NUT_M16.center_axis_bottom
 
     # Gear mesh
@@ -391,11 +509,22 @@ class HeldAssetAlignOffsetCfg(PresetCfg):
     peg_insert_12mm: kpts.Offset = kpts.RECTANGULAR_PEG_12MM.peg_tip
     peg_insert_16mm: kpts.Offset = kpts.RECTANGULAR_PEG_16MM.peg_tip
 
+    # Connector insert — insertion tip of the plug
+    usba: kpts.Offset = kpts.USB_A_PLUG.insertion_tip
+    waterproof: kpts.Offset = kpts.WATERPROOF_PLUG.insertion_tip
+    bnc: kpts.Offset = kpts.BNC_PLUG.insertion_tip
+    dsub: kpts.Offset = kpts.D_SUB_PLUG.insertion_tip
+    rj45: kpts.Offset = kpts.RJ45_PLUG.insertion_tip
+
     default: kpts.Offset = nut_thread_m16
 
 
 @configclass
 class HeldAssetGraspPointCfg(PresetCfg):
+    # Nut threading
+    nut_thread_m4: kpts.Offset = kpts.NUT_M4.grasp_point
+    nut_thread_m8: kpts.Offset = kpts.NUT_M8.grasp_point
+    nut_thread_m12: kpts.Offset = kpts.NUT_M12.grasp_point
     nut_thread_m16: kpts.Offset = kpts.NUT_M16.grasp_point
 
     # Gear mesh
@@ -415,11 +544,22 @@ class HeldAssetGraspPointCfg(PresetCfg):
     peg_insert_12mm: kpts.Offset = kpts.RECTANGULAR_PEG_12MM.grasp_point
     peg_insert_16mm: kpts.Offset = kpts.RECTANGULAR_PEG_16MM.grasp_point
 
+    # Connector insert
+    usba: kpts.Offset = kpts.USB_A_PLUG.grasp_point
+    waterproof: kpts.Offset = kpts.WATERPROOF_PLUG.grasp_point
+    bnc: kpts.Offset = kpts.BNC_PLUG.grasp_point
+    dsub: kpts.Offset = kpts.D_SUB_PLUG.grasp_point
+    rj45: kpts.Offset = kpts.RJ45_PLUG.grasp_point
+
     default: kpts.Offset = nut_thread_m16
 
 
 @configclass
 class HeldAssetGraspDiameterCfg(PresetCfg):
+    # Nut threading
+    nut_thread_m4: float = kpts.NUT_M4.grasp_diameter
+    nut_thread_m8: float = kpts.NUT_M8.grasp_diameter
+    nut_thread_m12: float = kpts.NUT_M12.grasp_diameter
     nut_thread_m16: float = kpts.NUT_M16.grasp_diameter
 
     # Gear mesh
@@ -439,6 +579,13 @@ class HeldAssetGraspDiameterCfg(PresetCfg):
     peg_insert_12mm: float = kpts.RECTANGULAR_PEG_12MM.grasp_diameter
     peg_insert_16mm: float = kpts.RECTANGULAR_PEG_16MM.grasp_diameter
 
+    # Connector insert
+    usba: float = kpts.USB_A_PLUG.grasp_diameter
+    waterproof: float = kpts.WATERPROOF_PLUG.grasp_diameter
+    bnc: float = kpts.BNC_PLUG.grasp_diameter
+    dsub: float = kpts.D_SUB_PLUG.grasp_diameter
+    rj45: float = kpts.RJ45_PLUG.grasp_diameter
+
     default: float = nut_thread_m16
 
 
@@ -450,6 +597,10 @@ class HeldAssetGraspMiddleCfg(PresetCfg):
     while for all other variants it is the grasp_point.
     """
 
+    # Nut threading — center axis middle for threading approach
+    nut_thread_m4: kpts.Offset = kpts.NUT_M4.center_axis_middle
+    nut_thread_m8: kpts.Offset = kpts.NUT_M8.center_axis_middle
+    nut_thread_m12: kpts.Offset = kpts.NUT_M12.center_axis_middle
     nut_thread_m16: kpts.Offset = kpts.NUT_M16.center_axis_middle
 
     # Gear mesh
@@ -468,6 +619,13 @@ class HeldAssetGraspMiddleCfg(PresetCfg):
     peg_insert_8mm: kpts.Offset = kpts.RECTANGULAR_PEG_8MM.grasp_point
     peg_insert_12mm: kpts.Offset = kpts.RECTANGULAR_PEG_12MM.grasp_point
     peg_insert_16mm: kpts.Offset = kpts.RECTANGULAR_PEG_16MM.grasp_point
+
+    # Connector insert
+    usba: kpts.Offset = kpts.USB_A_PLUG.grasp_point
+    waterproof: kpts.Offset = kpts.WATERPROOF_PLUG.grasp_point
+    bnc: kpts.Offset = kpts.BNC_PLUG.grasp_point
+    dsub: kpts.Offset = kpts.D_SUB_PLUG.grasp_point
+    rj45: kpts.Offset = kpts.RJ45_PLUG.grasp_point
 
     default: kpts.Offset = nut_thread_m16
 
@@ -503,6 +661,10 @@ _INSERT_GRASPED_RANGE = dict(
 class GraspedPoseRangeCfg(PresetCfg):
     """Pose range for the ``start_grasped_then_assembled`` reset strategy."""
 
+    # Nut threading
+    nut_thread_m4: dict = _NUT_GRASPED_RANGE
+    nut_thread_m8: dict = _NUT_GRASPED_RANGE
+    nut_thread_m12: dict = _NUT_GRASPED_RANGE
     nut_thread_m16: dict = _NUT_GRASPED_RANGE
 
     # Gear mesh
@@ -521,6 +683,13 @@ class GraspedPoseRangeCfg(PresetCfg):
     peg_insert_8mm: dict = _INSERT_GRASPED_RANGE
     peg_insert_12mm: dict = _INSERT_GRASPED_RANGE
     peg_insert_16mm: dict = _INSERT_GRASPED_RANGE
+
+    # Connector insert
+    usba: dict = _INSERT_GRASPED_RANGE
+    waterproof: dict = _INSERT_GRASPED_RANGE
+    bnc: dict = _INSERT_GRASPED_RANGE
+    dsub: dict = _INSERT_GRASPED_RANGE
+    rj45: dict = _INSERT_GRASPED_RANGE
 
     default: dict = nut_thread_m16
 

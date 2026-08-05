@@ -282,6 +282,77 @@ NUT_M16_CFG: RigidObjectCfg = RigidObjectCfg(
 )
 
 
+BOLT_M12_CFG = RigidObjectCfg(
+    prim_path="/World/envs/env_.*/BOLT_M12",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_DIR}/NIST/bolt_m12.usd",
+        rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
+        collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
+    ),
+)
+
+
+NUT_M12_CFG: RigidObjectCfg = RigidObjectCfg(
+    prim_path="/World/envs/env_.*/NUT_M12",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_DIR}/NIST/nut_m12.usd",
+        rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.03),
+        collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
+    ),
+)
+
+
+BOLT_M8_CFG = RigidObjectCfg(
+    prim_path="/World/envs/env_.*/BOLT_M8",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_DIR}/NIST/bolt_m8.usd",
+        rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
+        collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
+    ),
+)
+
+
+NUT_M8_CFG: RigidObjectCfg = RigidObjectCfg(
+    prim_path="/World/envs/env_.*/NUT_M8",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_DIR}/NIST/nut_m8.usd",
+        rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.03),
+        collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
+    ),
+)
+
+
+BOLT_M4_CFG = RigidObjectCfg(
+    prim_path="/World/envs/env_.*/BOLT_M4",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_DIR}/NIST/bolt_m4.usd",
+        rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
+        collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
+    ),
+)
+
+
+NUT_M4_CFG: RigidObjectCfg = RigidObjectCfg(
+    prim_path="/World/envs/env_.*/NUT_M4",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_DIR}/NIST/nut_m4.usd",
+        rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.03),
+        collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
+    ),
+)
+
 HOLE_16MM_CFG: RigidObjectCfg = RigidObjectCfg(
     prim_path="/World/envs/env_.*/HOLE_16MM",
     spawn=sim_utils.UsdFileCfg(
@@ -516,6 +587,124 @@ GEAR_BASE_CFG: RigidObjectCfg = RigidObjectCfg(
         rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
+    ),
+)
+
+
+USBA_PLUG_CFG: RigidObjectCfg = RigidObjectCfg(
+    prim_path="/World/envs/env_.*/USB_A_PLUG",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_DIR}/NIST/usb_a_plug.usd",
+        rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
+        collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
+    ),
+)
+
+USBA_SOCKET_CFG: RigidObjectCfg = RigidObjectCfg(
+    prim_path="/World/envs/env_.*/USB_A_Socket",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_DIR}/NIST/usb_a_socket.usd",
+        rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.012),
+        collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
+    ),
+)
+
+
+WATERPROOF_SOCKET_CFG: RigidObjectCfg = RigidObjectCfg(
+    prim_path="/World/envs/env_.*/WATERPROOF_SOCKET",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_DIR}/NIST/waterproof_socket.usd",
+        rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
+        collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
+    ),
+)
+
+WATERPROOF_PLUG_CFG: RigidObjectCfg = RigidObjectCfg(
+    prim_path="/World/envs/env_.*/WATERPROOF_PLUG",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_DIR}/NIST/waterproof_plug.usd",
+        rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
+        collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
+    ),
+)
+
+
+DSUB_SOCKET_CFG: RigidObjectCfg = RigidObjectCfg(
+    prim_path="/World/envs/env_.*/D_SUB_SOCKET",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_DIR}/NIST/dsub_socket.usd",
+        rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
+        collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
+    ),
+)
+
+
+DSUB_PLUG_CFG: RigidObjectCfg = RigidObjectCfg(
+    prim_path="/World/envs/env_.*/D_SUB_PLUG",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_DIR}/NIST/dsub_plug.usd",
+        rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.005),
+        collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
+    ),
+)
+
+
+BNC_SOCKET_CFG: RigidObjectCfg = RigidObjectCfg(
+    prim_path="/World/envs/env_.*/BNC_SOCKET",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_DIR}/NIST/bnc_socket.usd",
+        rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
+        collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
+    ),
+)
+
+
+BNC_PLUG_CFG: RigidObjectCfg = RigidObjectCfg(
+    prim_path="/World/envs/env_.*/BNC_PLUG",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_DIR}/NIST/bnc_plug.usd",
+        rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
+        collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
+    ),
+)
+
+
+RJ45_SOCKET_CFG: RigidObjectCfg = RigidObjectCfg(
+    prim_path="/World/envs/env_.*/RJ45_SOCKET",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_DIR}/NIST/rj45_socket.usd",
+        rigid_props=ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG,
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
+        collision_props=ASSEMBLY_SOCKET_COLLISION_PROPS_CFG,
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
+    ),
+)
+
+
+RJ45_PLUG_CFG: RigidObjectCfg = RigidObjectCfg(
+    prim_path="/World/envs/env_.*/RJ45_PLUG",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_DIR}/NIST/rj45_plug.usd",
+        rigid_props=ASSEMBLY_PLUG_RIGID_BODY_PROPS_CFG,
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
+        collision_props=ASSEMBLY_PLUG_COLLISION_PROPS_CFG,
         physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
     ),
 )
