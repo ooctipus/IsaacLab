@@ -153,8 +153,13 @@ class MotionSourceCfg:
 
     train: SplitCfg = MISSING
     evaluation: SplitCfg = MISSING
-    purpose: Literal["production", "oracle"] = "production"
-    """Whether this source may build runtime tables or is inspection evidence only."""
+    purpose: Literal["production", "oracle", "training-control"] = "production"
+    """Whether this source may build runtime tables or is inspection evidence only.
+
+    ``training-control`` is a campaign-scoped exception (bfm-env-20260805): it marks an
+    explicitly registered clone of an oracle source as a control-arm training corpus for
+    A/B data-source experiments. Oracle sources themselves remain runtime-refused.
+    """
 
     def __post_init__(self) -> None:
         """Validate the scientific identity and native source clock [Hz]."""
@@ -176,8 +181,8 @@ class MotionSourceCfg:
             raise ValueError("Motion source dependency names must be unique.")
         if self.train.name == self.evaluation.name:
             raise ValueError("Motion source train and evaluation split names must differ.")
-        if self.purpose not in ("production", "oracle"):
-            raise ValueError("Motion source purpose must be 'production' or 'oracle'.")
+        if self.purpose not in ("production", "oracle", "training-control"):
+            raise ValueError("Motion source purpose must be 'production', 'oracle', or 'training-control'.")
 
     def resolve_dependencies(self, source_root: Path) -> dict[str, Path]:
         """Verify and return every named source dependency exactly once."""

@@ -585,6 +585,64 @@ class MotionSourcesCfg(PresetCfg):
         ),
     )
 
+    # BFM campaign 2026-08-05 (bfm-env-20260805) control arms: clones of the two oracle
+    # sources so the original corpora can serve as A/B CONTROL training arms via explicit
+    # tokens only; oracle registrations and the builder's oracle refusal stay untouched.
+    humenv_cmu_control = MotionSourceCfg(
+        identifier="cmu_humenv_smpl",
+        purpose="training-control",
+        open_source=open_cmu_humenv_smpl_source,
+        format="one_hdf5_file_per_clip_with_group_ep_0",
+        semantic_level="smpl_robot_state_and_observation",
+        decoder_version="cmu_humenv_smpl_v1",
+        source_fps=30.0,
+        license="amass_cmu_and_smpl_registered_source_required",
+        clip_directory="data_preparation/humenv_amass",
+        train=MotionSourceCfg.SplitCfg(
+            name="train",
+            artifact="data_preparation/test_train_split/0-CMU_train_0.1.txt",
+            artifact_sha256="99929805f4ab531a89bff89837d27c403625d4b4d89d1a4d381b88825548a996",
+            source_content_sha256="fe17c0673e1f5d55d985ac135e36c895df81c2cac91417df0e966fd32eb3e6b6",
+            clip_count=1_638,
+            frame_count=730_307,
+        ),
+        evaluation=MotionSourceCfg.SplitCfg(
+            name="test",
+            artifact="data_preparation/test_train_split/0-CMU_test_0.1.txt",
+            artifact_sha256="c9b77782f5c35e0a33b3daa18c110856554acbebed00c4b2877b836d53f9b1b7",
+            source_content_sha256="2621cf6d60231a1a6c319d9ab1c44d66c13bb76de4c7bad7e7bdef2d57f0ed32",
+            clip_count=182,
+            frame_count=88_364,
+        ),
+    )
+    bfm_lafan_control = MotionSourceCfg(
+        identifier="lafan_g1_29dof",
+        purpose="training-control",
+        open_source=open_lafan_g1_source,
+        format="joblib_pickle_mapping_clip_name_to_field_mapping",
+        semantic_level="robot_pose_g1_not_canonical_lafan",
+        decoder_version="lafan_g1_29dof_v1",
+        source_fps=30.0,
+        license="retargeted_lafan_redistribution_requires_provenance_review",
+        clip_directory=None,
+        train=MotionSourceCfg.SplitCfg(
+            name="training",
+            artifact="humanoidverse/data/lafan_29dof_10s-clipped.pkl",
+            artifact_sha256="7f5aa36957808ee2e972472b18add8510533742710ba312d8b8c6e6014f1c010",
+            source_content_sha256="7f5aa36957808ee2e972472b18add8510533742710ba312d8b8c6e6014f1c010",
+            clip_count=862,
+            frame_count=258_600,
+        ),
+        evaluation=MotionSourceCfg.SplitCfg(
+            name="evaluation",
+            artifact="humanoidverse/data/lafan_29dof.pkl",
+            artifact_sha256="f3a0c2810363f5c50bf4146fa2db33c1ff5b90d00cb7c0bc2aa4622696375e11",
+            source_content_sha256="f3a0c2810363f5c50bf4146fa2db33c1ff5b90d00cb7c0bc2aa4622696375e11",
+            clip_count=40,
+            frame_count=264_705,
+        ),
+    )
+
 
 @configclass
 class MotionTargetKinematicsCfg(PresetCfg):
